@@ -8,13 +8,14 @@
 #include <xxhash.h>
 
 #include "defs.h"
+#include "xd.h"
 #include "types2_core.h"
 
 typedef struct t2_node {
-        uint64_t hash;
-        uint64_t payload;
+        u64 hash;
+        u64 payload;
         char *text;
-        uint32_t arity;
+        u32 arity;
         T2TypeKind kind;
         T2VariableKind variable_kind;
         uint8_t flags;
@@ -22,46 +23,43 @@ typedef struct t2_node {
 } T2Node;
 
 enum {
-        T2_NODE_META = 1,
-        T2_NODE_VARIABLE = 2,
-        T2_NODE_RECURSIVE_VARIABLE = 4,
-        T2_NODE_GRADUAL = 8
+        T2_NODE_META                = 1,
+        T2_NODE_VARIABLE            = 2,
+        T2_NODE_RECURSIVE_VARIABLE  = 4,
+        T2_NODE_GRADUAL             = 8
 };
 
 static uint8_t
 node_flags_for(T2TypeKind kind)
 {
         switch (kind) {
-        case T2_TYPE_META: return T2_NODE_META;
-        case T2_TYPE_VARIABLE: return T2_NODE_VARIABLE;
-        case T2_TYPE_RECURSIVE_VARIABLE: return T2_NODE_RECURSIVE_VARIABLE;
         case T2_TYPE_DYNAMIC:
         case T2_TYPE_ANY:
-        case T2_TYPE_UNKNOWN: return T2_NODE_GRADUAL;
-        default: return 0;
+        case T2_TYPE_UNKNOWN:            return T2_NODE_GRADUAL;
+        case T2_TYPE_META:               return T2_NODE_META;
+        case T2_TYPE_VARIABLE:           return T2_NODE_VARIABLE;
+        case T2_TYPE_RECURSIVE_VARIABLE: return T2_NODE_RECURSIVE_VARIABLE;
+        default:                         return 0;
         }
 }
 
 typedef struct t2_nominal_info {
-        uint64_t symbol;
+        u64 symbol;
         char *name;
-        size_t arity;
+        usize arity;
         T2Variance *variance;
-        T2Type *supertypes;
-        size_t supertype_count;
-        size_t supertype_capacity;
+        vec(T2Type) supertypes;
         bool instantiated;
         bool interface;
 } T2NominalInfo;
 
 typedef struct t2_applied_nominal {
         T2Type instance;
-        T2Type *supertypes;
-        size_t supertype_count;
+        vec(T2Type) supertypes;
 } T2AppliedNominal;
 
 typedef struct t2_recursive_info {
-        uint32_t binder;
+        u32 binder;
         T2Type type;
 } T2RecursiveInfo;
 
@@ -70,67 +68,37 @@ typedef struct t2_computed_result {
         T2Type result;
 } T2ComputedResult;
 
-typedef struct t2_type_snapshot_node {
-        uint64_t payload;
-        char *text;
-        uint32_t *children;
-        uint32_t arity;
-        T2TypeKind kind;
-        T2VariableKind variable_kind;
-} T2TypeSnapshotNode;
-
-struct t2_type_snapshot {
-        T2TypeSnapshotNode *nodes;
-        size_t node_count;
-        size_t node_capacity;
-        uint32_t root;
-};
-
 struct t2_universe {
-        T2Node **nodes;
-        size_t node_count;
-        size_t node_capacity;
+        vec(T2Node *) nodes;
 
         T2Type *table;
-        size_t table_count;
-        size_t table_capacity;
+        usize table_count;
+        usize table_capacity;
 
         T2Type primitives[T2_TYPE_KIND_COUNT];
         T2Type primitive_nominals[T2_TYPE_KIND_COUNT];
 
-        T2NominalInfo *nominals;
-        size_t nominal_count;
-        size_t nominal_capacity;
+        vec(T2NominalInfo) nominals;
 
-        T2AppliedNominal *applied_nominals;
-        size_t applied_nominal_count;
-        size_t applied_nominal_capacity;
+        vec(T2AppliedNominal) applied_nominals;
 
-        T2RecursiveInfo *recursive;
-        size_t recursive_count;
-        size_t recursive_capacity;
+        vec(T2RecursiveInfo) recursive;
 
-        T2ComputedResult *computed_results;
-        size_t computed_result_count;
-        size_t computed_result_capacity;
+        vec(T2ComputedResult) computed_results;
         T2Index nominal_index;
         T2Index applied_index;
         T2Index relation_memo;
 
-        uint32_t next_solver_id;
-        uint32_t next_recursive_id;
+        u32 next_solver_id;
+        u32 next_recursive_id;
         bool failed;
 };
 
-typedef struct t2_watch_vector {
-        uint64_t *items;
-        size_t count;
-        size_t capacity;
-} T2WatchVector;
+typedef vec(u64) T2WatchVector;
 
 typedef struct t2_meta {
-        uint32_t parent;
-        uint32_t level;
+        u32 parent;
+        u32 level;
         uint8_t rank;
         T2VariableKind variable_kind;
         T2Type lower;
@@ -143,17 +111,17 @@ typedef struct t2_meta {
 } T2Meta;
 
 typedef struct t2_edge {
-        uint32_t subtype;
-        uint32_t supertype;
+        u32 subtype;
+        u32 supertype;
         char const *provenance;
-        uint64_t self_retry_epoch;
+        u64 self_retry_epoch;
 } T2Edge;
 
 typedef struct t2_obligation {
         T2Predicate predicate;
         char *name;
         char *provenance;
-        uint64_t self_retry_epoch;
+        u64 self_retry_epoch;
         bool active;
 } T2Obligation;
 
@@ -177,48 +145,36 @@ typedef enum t2_undo_kind {
 
 typedef struct t2_undo {
         T2UndoKind kind;
-        uint32_t index;
-        uint64_t old;
+        u32 index;
+        u64 old;
 } T2Undo;
 
 struct t2_solver {
         T2Universe *universe;
-        uint32_t id;
+        u32 id;
 
-        T2Meta *metas;
-        size_t meta_count;
-        size_t meta_capacity;
+        vec(T2Meta) metas;
 
-        T2Edge *edges;
-        size_t edge_count;
-        size_t edge_capacity;
+        vec(T2Edge) edges;
 
-        T2Obligation *obligations;
-        size_t obligation_count;
-        size_t obligation_capacity;
+        vec(T2Obligation) obligations;
 
         T2PredicateResolver *predicate_resolver;
         void *predicate_context;
 
-        uint64_t *work;
-        size_t work_count;
-        size_t work_capacity;
-        size_t work_index;
-        uint64_t work_steps;
-        uint64_t active_work;
-        uint64_t drain_epoch;
+        vec(u64) work;
+        usize work_index;
+        u64 work_steps;
+        u64 active_work;
+        u64 drain_epoch;
         bool draining_work;
         bool processing_work;
         bool rerun_active_work;
 
-        T2Undo *undo;
-        size_t undo_count;
-        size_t undo_capacity;
+        vec(T2Undo) undo;
         unsigned transaction_depth;
 
-        T2Cause *causes;
-        size_t cause_count;
-        size_t cause_capacity;
+        vec(T2Cause) causes;
 
         bool failed;
         char error[512];
@@ -232,24 +188,15 @@ struct t2_scheme {
         T2Universe *universe;
         T2Quantifier *quantifiers;
         char **names;
-        size_t quantifier_count;
+        usize quantifier_count;
         T2Type body;
         T2Predicate *predicates;
-        size_t predicate_count;
+        usize predicate_count;
 };
 
-typedef struct t2_type_vector {
-        T2Type *items;
-        size_t count;
-        size_t capacity;
-} T2TypeVector;
+typedef vec(T2Type) T2TypeVector;
 
-typedef struct t2_string_buffer {
-        char *items;
-        size_t count;
-        size_t capacity;
-        bool failed;
-} T2StringBuffer;
+typedef byte_vector T2StringBuffer;
 
 static T2Type rebuild_type(
         T2Universe *universe,
@@ -259,93 +206,25 @@ static T2Type rebuild_type(
 
 enum { T2_RELATION_DEPTH_LIMIT = 256 };
 
-static uint64_t const T2_WATCH_OBLIGATION = UINT64_C(1) << 63;
+static u64 const T2_WATCH_OBLIGATION = UINT64_C(1) << 63;
 
 enum {
-        T2_FIELD_PRESENCE_MASK = 0x3,
-        T2_FIELD_WRITABLE_BIT = 0x4,
-        T2_PARAMETER_KIND_MASK = 0x7,
-        T2_PARAMETER_REQUIRED = 0x8,
-        T2_RANGE_HAS_LOWER = 0x1,
-        T2_RANGE_HAS_UPPER = 0x2,
+        T2_FIELD_PRESENCE_MASK   = 0x3,
+        T2_FIELD_WRITABLE_BIT    = 0x4,
+
+        T2_PARAMETER_KIND_MASK   = 0x7,
+        T2_PARAMETER_REQUIRED    = 0x8,
+
+        T2_RANGE_HAS_LOWER       = 0x1,
+        T2_RANGE_HAS_UPPER       = 0x2,
         T2_RANGE_UPPER_INCLUSIVE = 0x4
 };
 
-static uint64_t
-mix64(uint64_t value)
+
+static usize
+index_slot(T2Index const *index, u64 key)
 {
-        value ^= value >> 30;
-        value *= UINT64_C(0xbf58476d1ce4e5b9);
-        value ^= value >> 27;
-        value *= UINT64_C(0x94d049bb133111eb);
-        value ^= value >> 31;
-        return value;
-}
-
-static uint64_t
-hash_combine(uint64_t seed, uint64_t value)
-{
-        return seed ^ (value + UINT64_C(0x9e3779b97f4a7c15) + (seed << 6) + (seed >> 2));
-}
-
-inline static uint64_t
-hash_string(char const *text)
-{
-        if (text == NULL) {
-                return 146959810393466560;
-        }
-
-        return XXH3_64bits(text, strlen(text));
-}
-
-static char *
-copy_string(char const *text)
-{
-        if (text == NULL) {
-                return NULL;
-        }
-
-        size_t length = strlen(text) + 1;
-        char *copy = ty_malloc(length);
-        if (copy != NULL) {
-                memcpy(copy, text, length);
-        }
-        return copy;
-}
-
-static bool
-reserve_array(void **items, size_t *capacity, size_t needed, size_t item_size)
-{
-        if (*capacity >= needed) {
-                return true;
-        }
-
-        size_t next = *capacity == 0 ? 8 : *capacity;
-        while (next < needed) {
-                if (next > SIZE_MAX / 2) {
-                        return false;
-                }
-                next *= 2;
-        }
-
-        if (next > SIZE_MAX / item_size) {
-                return false;
-        }
-
-        void *resized = ty_realloc(*items, next * item_size);
-        if (resized == NULL) {
-                return false;
-        }
-
-        *items = resized;
-        *capacity = next;
-        return true;
-}
-
-static size_t
-index_slot(T2Index const *index, uint64_t key)
-{
-        size_t slot = (size_t)mix64(key) & (index->capacity - 1);
+        usize slot = (usize)hash64(key) & (index->capacity - 1);
         while (index->entries[slot].used && index->entries[slot].key != key) {
                 slot = (slot + 1) & (index->capacity - 1);
         }
@@ -353,10 +232,10 @@ index_slot(T2Index const *index, uint64_t key)
 }
 
 bool
-t2_index_find(T2Index const *index, uint64_t key, uint32_t *value)
+t2_index_find(T2Index const *index, u64 key, u32 *value)
 {
         if (index->capacity == 0) return false;
-        size_t slot = index_slot(index, key);
+        usize slot = index_slot(index, key);
         if (!index->entries[slot].used) return false;
         *value = index->entries[slot].value;
         return true;
@@ -365,11 +244,11 @@ t2_index_find(T2Index const *index, uint64_t key, uint32_t *value)
 static bool
 index_grow(T2Index *index)
 {
-        size_t capacity = index->capacity == 0 ? 64 : index->capacity * 2;
+        usize capacity = index->capacity == 0 ? 64 : index->capacity * 2;
         T2IndexEntry *entries = ty_calloc(capacity, sizeof *entries);
         if (entries == NULL) return false;
         T2Index grown = { .entries = entries, .capacity = capacity };
-        for (size_t i = 0; i < index->capacity; ++i) {
+        for (usize i = 0; i < index->capacity; ++i) {
                 T2IndexEntry const *entry = &index->entries[i];
                 if (!entry->used) continue;
                 grown.entries[index_slot(&grown, entry->key)] = *entry;
@@ -381,12 +260,12 @@ index_grow(T2Index *index)
 }
 
 bool
-t2_index_put(T2Index *index, uint64_t key, uint32_t value)
+t2_index_put(T2Index *index, u64 key, u32 value)
 {
         if ((index->count + 1) * 4 > index->capacity * 3 && !index_grow(index)) {
                 return false;
         }
-        size_t slot = index_slot(index, key);
+        usize slot = index_slot(index, key);
         index->count += !index->entries[slot].used;
         index->entries[slot] = (T2IndexEntry) { .key = key, .value = value, .used = true };
         return true;
@@ -417,10 +296,10 @@ forget_relations(T2Universe *universe)
 static T2Node const *
 get_node(T2Universe const *universe, T2Type type)
 {
-        if (universe == NULL || type == T2_TYPE_INVALID || type > universe->node_count) {
+        if (universe == NULL || type == T2_TYPE_INVALID || type > vN(universe->nodes)) {
                 return NULL;
         }
-        return universe->nodes[type - 1];
+        return v__(universe->nodes, type - 1);
 }
 
 static bool
@@ -428,10 +307,10 @@ same_candidate(
         T2Node const *node,
         T2TypeKind kind,
         T2VariableKind variable_kind,
-        uint64_t payload,
+        u64 payload,
         char const *text,
         T2Type const *children,
-        size_t arity
+        usize arity
 )
 {
         if (
@@ -446,7 +325,7 @@ same_candidate(
         if ((node->text == NULL) != (text == NULL)) {
                 return false;
         }
-        if (node->text != NULL && strcmp(node->text, text) != 0) {
+        if (node->text != NULL && !s_eq(node->text, text)) {
                 return false;
         }
 
@@ -455,7 +334,7 @@ same_candidate(
 }
 
 static bool
-resize_intern_table(T2Universe *universe, size_t capacity)
+resize_intern_table(T2Universe *universe, usize capacity)
 {
         T2Type *table = ty_calloc(capacity, sizeof *table);
         if (table == NULL) {
@@ -463,10 +342,10 @@ resize_intern_table(T2Universe *universe, size_t capacity)
                 return false;
         }
 
-        for (size_t i = 0; i < universe->node_count; ++i) {
+        for (usize i = 0; i < vN(universe->nodes); ++i) {
                 T2Type type = (T2Type)(i + 1);
-                T2Node const *node = universe->nodes[i];
-                size_t slot = (size_t)node->hash & (capacity - 1);
+                T2Node const *node = v__(universe->nodes, i);
+                usize slot = (usize)node->hash & (capacity - 1);
                 while (table[slot] != T2_TYPE_INVALID) {
                         slot = (slot + 1) & (capacity - 1);
                 }
@@ -476,7 +355,7 @@ resize_intern_table(T2Universe *universe, size_t capacity)
         ty_free(universe->table);
         universe->table = table;
         universe->table_capacity = capacity;
-        universe->table_count = universe->node_count;
+        universe->table_count = vN(universe->nodes);
         return true;
 }
 
@@ -485,10 +364,10 @@ intern_type(
         T2Universe *universe,
         T2TypeKind kind,
         T2VariableKind variable_kind,
-        uint64_t payload,
+        u64 payload,
         char const *text,
         T2Type const *children,
-        size_t arity
+        usize arity
 )
 {
         if (
@@ -497,32 +376,32 @@ intern_type(
              || kind >= T2_TYPE_KIND_COUNT
              || arity > UINT32_MAX
              || (arity != 0 && children == NULL)
-             || universe->node_count >= UINT32_MAX
+             || vN(universe->nodes) >= UINT32_MAX
         ) {
                 return T2_TYPE_INVALID;
         }
 
-        uint64_t hash = mix64((uint64_t)kind + 1);
-        hash = hash_combine(hash, variable_kind);
-        hash = hash_combine(hash, payload);
-        hash = hash_combine(hash, hash_string(text));
-        hash = hash_combine(hash, arity);
+        u64 hash = hash64((u64)kind + 1);
+        hash = HashCombine(hash, variable_kind);
+        hash = HashCombine(hash, payload);
+        hash = HashCombine(hash, text == NULL ? UINT64_C(146959810393466560) : hash64z(text));
+        hash = HashCombine(hash, arity);
         uint8_t flags = node_flags_for(kind);
-        for (size_t i = 0; i < arity; ++i) {
+        for (usize i = 0; i < arity; ++i) {
                 T2Node const *child = get_node(universe, children[i]);
                 if (child == NULL) {
                         return T2_TYPE_INVALID;
                 }
-                hash = hash_combine(hash, child->hash);
+                hash = HashCombine(hash, child->hash);
                 flags |= child->flags;
         }
-        hash = mix64(hash);
+        hash = hash64(hash);
 
         if (
                 universe->table_capacity == 0
              || (universe->table_count + 1) * 4 >= universe->table_capacity * 3
         ) {
-                size_t capacity = universe->table_capacity == 0
+                usize capacity = universe->table_capacity == 0
                                 ? 64
                                 : universe->table_capacity * 2;
                 if (!resize_intern_table(universe, capacity)) {
@@ -530,7 +409,7 @@ intern_type(
                 }
         }
 
-        size_t slot = (size_t)hash & (universe->table_capacity - 1);
+        usize slot = (usize)hash & (universe->table_capacity - 1);
         while (universe->table[slot] != T2_TYPE_INVALID) {
                 T2Type type = universe->table[slot];
                 T2Node const *node = get_node(universe, type);
@@ -551,18 +430,6 @@ intern_type(
                 slot = (slot + 1) & (universe->table_capacity - 1);
         }
 
-        if (
-                !reserve_array(
-                        (void **)&universe->nodes,
-                        &universe->node_capacity,
-                        universe->node_count + 1,
-                        sizeof *universe->nodes
-                )
-        ) {
-                universe->failed = true;
-                return T2_TYPE_INVALID;
-        }
-
         if (arity > (SIZE_MAX - sizeof (T2Node)) / sizeof (T2Type)) {
                 universe->failed = true;
                 return T2_TYPE_INVALID;
@@ -574,7 +441,7 @@ intern_type(
                 return T2_TYPE_INVALID;
         }
 
-        char *owned_text = copy_string(text);
+        char *owned_text = S2N(text);
         if (text != NULL && owned_text == NULL) {
                 ty_free(node);
                 universe->failed = true;
@@ -585,7 +452,7 @@ intern_type(
                 .hash = hash,
                 .payload = payload,
                 .text = owned_text,
-                .arity = (uint32_t)arity,
+                .arity = (u32)arity,
                 .kind = kind,
                 .variable_kind = variable_kind,
                 .flags = flags
@@ -594,11 +461,39 @@ intern_type(
                 memcpy(node->children, children, arity * sizeof *children);
         }
 
-        T2Type type = (T2Type)(universe->node_count + 1);
-        universe->nodes[universe->node_count++] = node;
+        T2Type type = (T2Type)(vN(universe->nodes) + 1);
+        xvP(universe->nodes, node);
         universe->table[slot] = type;
         universe->table_count += 1;
         return type;
+}
+
+void
+t2_universe_report(T2Universe const *universe, FILE *out)
+{
+        usize kinds[T2_TYPE_KIND_COUNT] = {0};
+        usize with_metas = 0;
+        for (usize i = 0; i < vN(universe->nodes); ++i) {
+                T2Node const *node = v__(universe->nodes, i);
+                if (node == NULL) continue;
+                kinds[node->kind] += 1;
+                with_metas += (node->flags & T2_NODE_META) != 0;
+        }
+        fprintf(
+                out,
+                "types2 universe: nodes=%zu containing-metas=%zu metas=%zu nominals=%zu applied=%zu recursive=%zu computed=%zu memo=%zu\n",
+                vN(universe->nodes),
+                with_metas,
+                kinds[T2_TYPE_META],
+                vN(universe->nominals),
+                vN(universe->applied_nominals),
+                vN(universe->recursive),
+                vN(universe->computed_results),
+                universe->relation_memo.count
+        );
+        for (usize kind = 0; kind < T2_TYPE_KIND_COUNT; ++kind) {
+                if (kinds[kind] != 0) fprintf(out, "  kind %zu: %zu\n", kind, kinds[kind]);
+        }
 }
 
 T2Universe *
@@ -619,25 +514,25 @@ t2_universe_free(T2Universe *universe)
                 return;
         }
 
-        for (size_t i = 0; i < universe->node_count; ++i) {
-                ty_free(universe->nodes[i]->text);
-                ty_free(universe->nodes[i]);
+        for (usize i = 0; i < vN(universe->nodes); ++i) {
+                ty_free(v__(universe->nodes, i)->text);
+                ty_free(v__(universe->nodes, i));
         }
-        for (size_t i = 0; i < universe->nominal_count; ++i) {
-                ty_free(universe->nominals[i].name);
-                ty_free(universe->nominals[i].variance);
-                ty_free(universe->nominals[i].supertypes);
+        for (usize i = 0; i < vN(universe->nominals); ++i) {
+                ty_free(v__(universe->nominals, i).name);
+                ty_free(v__(universe->nominals, i).variance);
+                xvF(v__(universe->nominals, i).supertypes);
         }
-        for (size_t i = 0; i < universe->applied_nominal_count; ++i) {
-                ty_free(universe->applied_nominals[i].supertypes);
+        for (usize i = 0; i < vN(universe->applied_nominals); ++i) {
+                xvF(v__(universe->applied_nominals, i).supertypes);
         }
 
-        ty_free(universe->nodes);
+        xvF(universe->nodes);
         ty_free(universe->table);
-        ty_free(universe->nominals);
-        ty_free(universe->applied_nominals);
-        ty_free(universe->recursive);
-        ty_free(universe->computed_results);
+        xvF(universe->nominals);
+        xvF(universe->applied_nominals);
+        xvF(universe->recursive);
+        xvF(universe->computed_results);
         t2_index_free(&universe->nominal_index);
         t2_index_free(&universe->applied_index);
         t2_index_free(&universe->relation_memo);
@@ -650,13 +545,13 @@ t2_universe_ok(T2Universe const *universe)
         return universe != NULL && !universe->failed;
 }
 
-size_t
+usize
 t2_universe_type_count(T2Universe const *universe)
 {
-        return universe == NULL ? 0 : universe->node_count;
+        return universe == NULL ? 0 : vN(universe->nodes);
 }
 
-uint32_t
+u32
 t2_universe_fresh_recursive_binder(T2Universe *universe)
 {
         if (universe == NULL || universe->next_recursive_id == 0) return 0;
@@ -706,13 +601,13 @@ t2_literal_bool(T2Universe *universe, bool value)
 }
 
 T2Type
-t2_literal_int(T2Universe *universe, int64_t value)
+t2_literal_int(T2Universe *universe, i64 value)
 {
         return intern_type(
                 universe,
                 T2_TYPE_LITERAL_INT,
                 T2_VARIABLE_FLEXIBLE,
-                (uint64_t)value,
+                (u64)value,
                 NULL,
                 NULL,
                 0
@@ -749,8 +644,8 @@ t2_integer_range(
         }
 
         T2Type bounds[2];
-        size_t count = 0;
-        uint64_t payload = 0;
+        usize count = 0;
+        u64 payload = 0;
         if (lower != T2_TYPE_INVALID) {
                 if (get_node(universe, lower) == NULL) return T2_TYPE_INVALID;
                 payload |= T2_RANGE_HAS_LOWER;
@@ -769,8 +664,8 @@ t2_integer_range(
                         low->kind == T2_TYPE_LITERAL_INT
                      && high->kind == T2_TYPE_LITERAL_INT
                 ) {
-                        int64_t lo = (int64_t)low->payload;
-                        int64_t hi = (int64_t)high->payload;
+                        i64 lo = (i64)low->payload;
+                        i64 hi = (i64)high->payload;
                         if (upper_inclusive ? lo > hi : lo >= hi) {
                                 return t2_primitive(universe, T2_TYPE_NEVER);
                         }
@@ -830,10 +725,10 @@ t2_refinement(T2Universe *universe, T2Type base, T2Type argument)
 T2Type
 t2_computed_type(
         T2Universe *universe,
-        uint64_t identity,
+        u64 identity,
         char const *name,
         T2Type const *arguments,
-        size_t argument_count
+        usize argument_count
 )
 {
         if (
@@ -857,9 +752,9 @@ static T2ComputedResult const *
 find_computed_result(T2Universe const *universe, T2Type computed)
 {
         if (universe == NULL) return NULL;
-        for (size_t i = 0; i < universe->computed_result_count; ++i) {
-                if (universe->computed_results[i].computed == computed) {
-                        return &universe->computed_results[i];
+        for (usize i = 0; i < vN(universe->computed_results); ++i) {
+                if (v__(universe->computed_results, i).computed == computed) {
+                        return v_(universe->computed_results, i);
                 }
         }
         return NULL;
@@ -882,7 +777,7 @@ t2_type_resolve_computed(T2Universe const *universe, T2Type type)
         T2Node const *head = get_node(universe, type);
         if (head == NULL) return T2_TYPE_INVALID;
         if (head->kind != T2_TYPE_SCHEME && head->kind != T2_TYPE_COMPUTED) return type;
-        size_t remaining = universe->computed_result_count + 1;
+        usize remaining = vN(universe->computed_results) + 1;
         while (remaining-- != 0) {
                 type = t2_type_scheme_body(universe, type);
                 T2Node const *node = get_node(universe, type);
@@ -903,8 +798,8 @@ computed_result_reaches(
 )
 {
         if (source == target) return true;
-        if (source == T2_TYPE_INVALID || source > universe->node_count) return true;
-        size_t index = (size_t)source - 1;
+        if (source == T2_TYPE_INVALID || source > vN(universe->nodes)) return true;
+        usize index = (usize)source - 1;
         if (visiting[index]) return false;
         visiting[index] = true;
 
@@ -919,7 +814,7 @@ computed_result_reaches(
                         visiting
                 );
         }
-        for (size_t i = 0; !reaches && i < node->arity; ++i) {
+        for (usize i = 0; !reaches && i < node->arity; ++i) {
                 reaches = computed_result_reaches(
                         universe,
                         node->children[i],
@@ -950,7 +845,7 @@ t2_computed_type_set_result(
         T2ComputedResult const *existing = find_computed_result(universe, computed);
         if (existing != NULL) return existing->result == result;
 
-        bool *visiting = ty_calloc(universe->node_count, sizeof *visiting);
+        bool *visiting = ty_calloc(vN(universe->nodes), sizeof *visiting);
         if (visiting == NULL) {
                 universe->failed = true;
                 return false;
@@ -964,23 +859,13 @@ t2_computed_type_set_result(
         ty_free(visiting);
         if (cyclic_or_solver_local) return false;
 
-        if (!reserve_array(
-                (void **)&universe->computed_results,
-                &universe->computed_result_capacity,
-                universe->computed_result_count + 1,
-                sizeof *universe->computed_results
-        )) {
-                universe->failed = true;
-                return false;
-        }
-        universe->computed_results[universe->computed_result_count++] =
-                (T2ComputedResult) { .computed = computed, .result = result };
+        xvP(universe->computed_results, ((T2ComputedResult) { .computed = computed, .result = result }));
         forget_relations(universe);
         return true;
 }
 
 T2Type
-t2_variable(T2Universe *universe, T2VariableKind kind, uint32_t id)
+t2_variable(T2Universe *universe, T2VariableKind kind, u32 id)
 {
         return intern_type(
                 universe,
@@ -994,17 +879,17 @@ t2_variable(T2Universe *universe, T2VariableKind kind, uint32_t id)
 }
 
 static T2NominalInfo const *
-find_nominal(T2Universe const *universe, uint64_t symbol)
+find_nominal(T2Universe const *universe, u64 symbol)
 {
-        uint32_t index;
+        u32 index;
         if (universe == NULL || !t2_index_find(&universe->nominal_index, symbol, &index)) {
                 return NULL;
         }
-        return &universe->nominals[index];
+        return v_(universe->nominals, index);
 }
 
 static T2NominalInfo *
-find_nominal_mutable(T2Universe *universe, uint64_t symbol)
+find_nominal_mutable(T2Universe *universe, u64 symbol)
 {
         return (T2NominalInfo *)find_nominal(universe, symbol);
 }
@@ -1012,9 +897,9 @@ find_nominal_mutable(T2Universe *universe, uint64_t symbol)
 bool
 t2_declare_nominal(
         T2Universe *universe,
-        uint64_t symbol,
+        u64 symbol,
         char const *name,
-        size_t arity,
+        usize arity,
         T2Variance const *variance
 )
 {
@@ -1025,28 +910,16 @@ t2_declare_nominal(
         forget_relations(universe);
         T2NominalInfo *existing = find_nominal_mutable(universe, symbol);
         if (existing != NULL) {
-                if (existing->arity != arity || strcmp(existing->name, name) != 0) {
+                if (existing->arity != arity || !s_eq(existing->name, name)) {
                         return false;
                 }
-                for (size_t i = 0; i < arity; ++i) {
+                for (usize i = 0; i < arity; ++i) {
                         existing->variance[i] = variance == NULL ? T2_INVARIANT : variance[i];
                 }
                 return true;
         }
 
-        if (
-                !reserve_array(
-                        (void **)&universe->nominals,
-                        &universe->nominal_capacity,
-                        universe->nominal_count + 1,
-                        sizeof *universe->nominals
-                )
-        ) {
-                universe->failed = true;
-                return false;
-        }
-
-        char *owned_name = copy_string(name);
+        char *owned_name = S2N(name);
         T2Variance *owned_variance = arity == 0
                                    ? NULL
                                    : ty_malloc(arity * sizeof *owned_variance);
@@ -1057,20 +930,20 @@ t2_declare_nominal(
                 return false;
         }
 
-        for (size_t i = 0; i < arity; ++i) {
+        for (usize i = 0; i < arity; ++i) {
                 owned_variance[i] = variance == NULL ? T2_INVARIANT : variance[i];
         }
 
-        universe->nominals[universe->nominal_count++] = (T2NominalInfo) {
+        xvP(universe->nominals, ((T2NominalInfo) {
                 .symbol = symbol,
                 .name = owned_name,
                 .arity = arity,
                 .variance = owned_variance
-        };
+        }));
         if (!t2_index_put(
                 &universe->nominal_index,
                 symbol,
-                (uint32_t)(universe->nominal_count - 1)
+                (u32)(vN(universe->nominals) - 1)
         )) {
                 universe->failed = true;
                 return false;
@@ -1079,7 +952,7 @@ t2_declare_nominal(
 }
 
 bool
-t2_nominal_declared(T2Universe const *universe, uint64_t symbol, size_t *arity)
+t2_nominal_declared(T2Universe const *universe, u64 symbol, usize *arity)
 {
         T2NominalInfo const *info = find_nominal(universe, symbol);
         if (info == NULL) return false;
@@ -1088,20 +961,20 @@ t2_nominal_declared(T2Universe const *universe, uint64_t symbol, size_t *arity)
 }
 
 T2Type
-t2_nominal_type_parameter(T2Universe *universe, uint32_t index)
+t2_nominal_type_parameter(T2Universe *universe, u32 index)
 {
         if (index == UINT32_MAX) return T2_TYPE_INVALID;
         return t2_variable(universe, T2_VARIABLE_QUANTIFIED, index + 1);
 }
 
 static T2Type primitive_nominal(T2Universe const *universe, T2Node const *node);
-static T2Type nominal_project_x(T2Universe const *universe, T2Type subtype, uint64_t target_symbol, unsigned depth);
+static T2Type nominal_project_x(T2Universe const *universe, T2Type subtype, u64 target_symbol, unsigned depth);
 
 static bool
 nominal_reaches(
         T2Universe const *universe,
-        uint64_t from,
-        uint64_t wanted,
+        u64 from,
+        u64 wanted,
         unsigned depth
 )
 {
@@ -1109,8 +982,8 @@ nominal_reaches(
         if (depth > T2_RELATION_DEPTH_LIMIT) return true;
         T2NominalInfo const *info = find_nominal(universe, from);
         if (info == NULL) return false;
-        for (size_t i = 0; i < info->supertype_count; ++i) {
-                T2Node const *supertype = get_node(universe, info->supertypes[i]);
+        for (usize i = 0; i < vN(info->supertypes); ++i) {
+                T2Node const *supertype = get_node(universe, v__(info->supertypes, i));
                 if (
                         supertype != NULL
                      && supertype->kind == T2_TYPE_NOMINAL
@@ -1127,7 +1000,7 @@ nominal_reaches(
 
 static bool backfill_nominal_super(
         T2Universe *universe,
-        uint64_t symbol,
+        u64 symbol,
         T2Type supertype_template
 );
 
@@ -1139,7 +1012,7 @@ static T2AppliedNominal const *find_applied_nominal(
 bool
 t2_nominal_add_super(
         T2Universe *universe,
-        uint64_t symbol,
+        u64 symbol,
         T2Type supertype_template
 )
 {
@@ -1152,25 +1025,16 @@ t2_nominal_add_super(
              || find_nominal(universe, supertype->payload) == NULL
              || nominal_reaches(universe, supertype->payload, symbol, 0)
         ) return false;
-        for (size_t i = 0; i < info->supertype_count; ++i) {
-                if (info->supertypes[i] == supertype_template) return true;
+        for (usize i = 0; i < vN(info->supertypes); ++i) {
+                if (v__(info->supertypes, i) == supertype_template) return true;
         }
-        if (!reserve_array(
-                (void **)&info->supertypes,
-                &info->supertype_capacity,
-                info->supertype_count + 1,
-                sizeof *info->supertypes
-        )) {
-                universe->failed = true;
-                return false;
-        }
-        info->supertypes[info->supertype_count++] = supertype_template;
+        xvP(info->supertypes, supertype_template);
         forget_relations(universe);
         return backfill_nominal_super(universe, symbol, supertype_template);
 }
 
 bool
-t2_nominal_mark_interface(T2Universe *universe, uint64_t symbol)
+t2_nominal_mark_interface(T2Universe *universe, u64 symbol)
 {
         T2NominalInfo *info = universe == NULL
                             ? NULL
@@ -1216,7 +1080,7 @@ static T2Type
 nominal_project_x(
         T2Universe const *universe,
         T2Type subtype,
-        uint64_t target_symbol,
+        u64 target_symbol,
         unsigned depth
 )
 {
@@ -1230,10 +1094,10 @@ nominal_project_x(
         if (node->payload == target_symbol) return subtype;
         T2AppliedNominal const *applied = find_applied_nominal(universe, subtype);
         if (applied == NULL) return T2_TYPE_INVALID;
-        for (size_t i = 0; i < applied->supertype_count; ++i) {
+        for (usize i = 0; i < vN(applied->supertypes); ++i) {
                 T2Type projected = nominal_project_x(
                         universe,
-                        applied->supertypes[i],
+                        v__(applied->supertypes, i),
                         target_symbol,
                         depth + 1
                 );
@@ -1246,7 +1110,7 @@ T2Type
 t2_nominal_project(
         T2Universe const *universe,
         T2Type subtype,
-        uint64_t target_symbol
+        u64 target_symbol
 )
 {
         subtype = t2_type_resolve_computed(universe, subtype);
@@ -1300,7 +1164,7 @@ validate_variance_occurrences(
         if (node->kind == T2_TYPE_NOMINAL) {
                 T2NominalInfo const *used = find_nominal(universe, node->payload);
                 if (used == NULL || used->arity != node->arity) return false;
-                for (size_t i = 0; i < node->arity; ++i) {
+                for (usize i = 0; i < node->arity; ++i) {
                         unsigned child_polarity = polarity;
                         if (used->variance[i] == T2_CONTRAVARIANT) {
                                 child_polarity = flip_polarity(polarity);
@@ -1320,9 +1184,9 @@ validate_variance_occurrences(
         }
 
         if (node->kind == T2_TYPE_FUNCTION) {
-                size_t count = (size_t)node->payload;
+                usize count = (usize)node->payload;
                 if (node->arity != count + 3) return false;
-                for (size_t i = 0; i < count; ++i) {
+                for (usize i = 0; i < count; ++i) {
                         T2Node const *parameter = get_node(universe, node->children[i]);
                         if (
                                 parameter == NULL
@@ -1357,7 +1221,7 @@ validate_variance_occurrences(
         }
 
         if (node->kind == T2_TYPE_RECORD || node->kind == T2_TYPE_ROW) {
-                for (size_t i = 0; i + 1 < node->arity; ++i) {
+                for (usize i = 0; i + 1 < node->arity; ++i) {
                         T2Node const *field = get_node(universe, node->children[i]);
                         unsigned child_polarity = (
                                 field->payload & T2_FIELD_WRITABLE_BIT
@@ -1392,7 +1256,7 @@ validate_variance_occurrences(
         }
 
         if (node->kind == T2_TYPE_COMPUTED) {
-                for (size_t i = 0; i < node->arity; ++i) {
+                for (usize i = 0; i < node->arity; ++i) {
                         if (!validate_variance_occurrences(
                                 universe,
                                 declaration,
@@ -1404,7 +1268,7 @@ validate_variance_occurrences(
                 return true;
         }
 
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 if (!validate_variance_occurrences(
                         universe,
                         declaration,
@@ -1419,7 +1283,7 @@ validate_variance_occurrences(
 bool
 t2_nominal_validate_variance(
         T2Universe const *universe,
-        uint64_t symbol,
+        u64 symbol,
         T2Type public_contract
 )
 {
@@ -1442,10 +1306,8 @@ typedef struct t2_nominal_substitution_entry {
 typedef struct t2_nominal_substitution {
         T2Universe *universe;
         T2Type const *arguments;
-        size_t arity;
-        T2NominalSubstitutionEntry *entries;
-        size_t count;
-        size_t capacity;
+        usize arity;
+        vec(T2NominalSubstitutionEntry) entries;
 } T2NominalSubstitution;
 
 static T2Type
@@ -1460,9 +1322,9 @@ substitute_nominal_template(T2NominalSubstitution *substitution, T2Type source)
              && node->payload <= substitution->arity
         ) return substitution->arguments[node->payload - 1];
 
-        for (size_t i = 0; i < substitution->count; ++i) {
-                if (substitution->entries[i].source == source) {
-                        return substitution->entries[i].result;
+        for (usize i = 0; i < vN(substitution->entries); ++i) {
+                if (v__(substitution->entries, i).source == source) {
+                        return v__(substitution->entries, i).result;
                 }
         }
         if (node->arity == 0) return source;
@@ -1473,7 +1335,7 @@ substitute_nominal_template(T2NominalSubstitution *substitution, T2Type source)
                 return T2_TYPE_INVALID;
         }
         bool changed = false;
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 children[i] = substitute_nominal_template(
                         substitution,
                         node->children[i]
@@ -1490,31 +1352,22 @@ substitute_nominal_template(T2NominalSubstitution *substitution, T2Type source)
                       : source;
         ty_free(children);
         if (result == T2_TYPE_INVALID) return result;
-        if (!reserve_array(
-                (void **)&substitution->entries,
-                &substitution->capacity,
-                substitution->count + 1,
-                sizeof *substitution->entries
-        )) {
-                substitution->universe->failed = true;
-                return T2_TYPE_INVALID;
-        }
-        substitution->entries[substitution->count++] = (T2NominalSubstitutionEntry) {
+        xvP(substitution->entries, ((T2NominalSubstitutionEntry) {
                 .source = source,
                 .result = result
-        };
+        }));
         return result;
 }
 
 static bool
 backfill_nominal_super(
         T2Universe *universe,
-        uint64_t symbol,
+        u64 symbol,
         T2Type supertype_template
 )
 {
-        for (size_t i = 0; i < universe->applied_nominal_count; ++i) {
-                T2AppliedNominal *applied = &universe->applied_nominals[i];
+        for (usize i = 0; i < vN(universe->applied_nominals); ++i) {
+                T2AppliedNominal *applied = v_(universe->applied_nominals, i);
                 T2Node const *instance = get_node(universe, applied->instance);
                 if (
                         instance == NULL
@@ -1530,19 +1383,19 @@ backfill_nominal_super(
                         &substitution,
                         supertype_template
                 );
-                ty_free(substitution.entries);
+                xvF(substitution.entries);
                 if (supertype == T2_TYPE_INVALID) return false;
-                applied = &universe->applied_nominals[i];
+                applied = v_(universe->applied_nominals, i);
                 T2Type *supertypes = ty_realloc(
-                        applied->supertypes,
-                        (applied->supertype_count + 1) * sizeof *supertypes
+                        vv(applied->supertypes),
+                        (vN(applied->supertypes) + 1) * sizeof *supertypes
                 );
                 if (supertypes == NULL) {
                         universe->failed = true;
                         return false;
                 }
-                applied->supertypes = supertypes;
-                applied->supertypes[applied->supertype_count++] = supertype;
+                vv(applied->supertypes) = supertypes;
+                xvP(applied->supertypes, supertype);
         }
         return true;
 }
@@ -1550,17 +1403,17 @@ backfill_nominal_super(
 static T2AppliedNominal const *
 find_applied_nominal(T2Universe const *universe, T2Type instance)
 {
-        uint32_t index;
+        u32 index;
         if (!t2_index_find(&universe->applied_index, instance, &index)) return NULL;
-        return &universe->applied_nominals[index];
+        return v_(universe->applied_nominals, index);
 }
 
 T2Type
 t2_nominal(
         T2Universe *universe,
-        uint64_t symbol,
+        u64 symbol,
         T2Type const *arguments,
-        size_t arity
+        usize arity
 )
 {
         T2NominalInfo *info = find_nominal_mutable(universe, symbol);
@@ -1580,28 +1433,17 @@ t2_nominal(
                 return instance;
         }
 
-        if (!reserve_array(
-                (void **)&universe->applied_nominals,
-                &universe->applied_nominal_capacity,
-                universe->applied_nominal_count + 1,
-                sizeof *universe->applied_nominals
-        )) {
-                universe->failed = true;
-                return T2_TYPE_INVALID;
-        }
-        size_t applied_index = universe->applied_nominal_count++;
-        universe->applied_nominals[applied_index] = (T2AppliedNominal) {
-                .instance = instance
-        };
-        if (!t2_index_put(&universe->applied_index, instance, (uint32_t)applied_index)) {
+        usize applied_index = vN(universe->applied_nominals);
+        xvP(universe->applied_nominals, ((T2AppliedNominal) { .instance = instance }));
+        if (!t2_index_put(&universe->applied_index, instance, (u32)applied_index)) {
                 universe->failed = true;
                 return T2_TYPE_INVALID;
         }
         info->instantiated = true;
 
-        if (info->supertype_count != 0) {
+        if (vN(info->supertypes) != 0) {
                 T2Type *supertypes = ty_malloc(
-                        info->supertype_count * sizeof *supertypes
+                        vN(info->supertypes) * sizeof *supertypes
                 );
                 if (supertypes == NULL) {
                         universe->failed = true;
@@ -1612,20 +1454,20 @@ t2_nominal(
                         .arguments = arguments,
                         .arity = arity
                 };
-                for (size_t i = 0; i < info->supertype_count; ++i) {
+                for (usize i = 0; i < vN(info->supertypes); ++i) {
                         supertypes[i] = substitute_nominal_template(
                                 &substitution,
-                                info->supertypes[i]
+                                v__(info->supertypes, i)
                         );
                         if (supertypes[i] == T2_TYPE_INVALID) {
-                                ty_free(substitution.entries);
+                                xvF(substitution.entries);
                                 ty_free(supertypes);
                                 return T2_TYPE_INVALID;
                         }
                 }
-                ty_free(substitution.entries);
-                universe->applied_nominals[applied_index].supertypes = supertypes;
-                universe->applied_nominals[applied_index].supertype_count = info->supertype_count;
+                xvF(substitution.entries);
+                vv(v__(universe->applied_nominals, applied_index).supertypes) = supertypes;
+                vN(v__(universe->applied_nominals, applied_index).supertypes) = vN(info->supertypes);
         }
         return instance;
 }
@@ -1677,7 +1519,7 @@ T2Type
 t2_function(
         T2Universe *universe,
         T2Type const *parameters,
-        size_t parameter_count,
+        usize parameter_count,
         T2Type result
 )
 {
@@ -1697,7 +1539,7 @@ t2_function(
                 universe->failed = true;
                 return T2_TYPE_INVALID;
         }
-        for (size_t i = 0; i < parameter_count; ++i) {
+        for (usize i = 0; i < parameter_count; ++i) {
                 specs[i] = (T2ParameterSpec) {
                         .type = parameters[i],
                         .kind = T2_PARAMETER_POSITIONAL_ONLY,
@@ -1717,14 +1559,14 @@ t2_function(
 }
 
 static bool
-parameter_shape_valid(T2ParameterSpec const *parameters, size_t count)
+parameter_shape_valid(T2ParameterSpec const *parameters, usize count)
 {
         bool saw_keyword_only = false;
         bool saw_positional_rest = false;
         bool saw_keyword_rest = false;
         bool saw_pack = false;
 
-        for (size_t i = 0; i < count; ++i) {
+        for (usize i = 0; i < count; ++i) {
                 T2ParameterSpec const *parameter = &parameters[i];
                 if (
                         parameter->type == T2_TYPE_INVALID
@@ -1777,10 +1619,10 @@ parameter_shape_valid(T2ParameterSpec const *parameters, size_t count)
                 }
 
                 if (parameter->name != NULL) {
-                        for (size_t j = 0; j < i; ++j) {
+                        for (usize j = 0; j < i; ++j) {
                                 if (
                                         parameters[j].name != NULL
-                                     && strcmp(parameters[j].name, parameter->name) == 0
+                                     && s_eq(parameters[j].name, parameter->name)
                                 ) return false;
                         }
                 }
@@ -1792,7 +1634,7 @@ static T2Type
 callable_type(
         T2Universe *universe,
         T2ParameterSpec const *parameters,
-        size_t parameter_count,
+        usize parameter_count,
         T2Type result,
         T2Type yield,
         T2Type send,
@@ -1815,8 +1657,8 @@ callable_type(
                 return T2_TYPE_INVALID;
         }
 
-        for (size_t i = 0; i < parameter_count; ++i) {
-                uint64_t payload = (uint64_t)parameters[i].kind;
+        for (usize i = 0; i < parameter_count; ++i) {
+                u64 payload = (u64)parameters[i].kind;
                 if (parameters[i].required) payload |= T2_PARAMETER_REQUIRED;
                 parts[i] = intern_type(
                         universe,
@@ -1853,7 +1695,7 @@ T2Type
 t2_callable(
         T2Universe *universe,
         T2ParameterSpec const *parameters,
-        size_t parameter_count,
+        usize parameter_count,
         T2Type result,
         T2Type yield,
         T2Type send
@@ -1874,7 +1716,7 @@ T2Type
 t2_effectful_callable(
         T2Universe *universe,
         T2ParameterSpec const *parameters,
-        size_t parameter_count,
+        usize parameter_count,
         T2Type result,
         T2Type yield,
         T2Type send
@@ -1891,20 +1733,20 @@ t2_effectful_callable(
         );
 }
 
-size_t
+usize
 t2_callable_parameter_count(T2Universe const *universe, T2Type callable)
 {
         T2Node const *node = get_node(universe, callable);
         return node == NULL || node->kind != T2_TYPE_FUNCTION
              ? 0
-             : (size_t)node->payload;
+             : (usize)node->payload;
 }
 
 bool
 t2_callable_parameter(
         T2Universe const *universe,
         T2Type callable,
-        size_t index,
+        usize index,
         T2ParameterSpec *parameter
 )
 {
@@ -1912,7 +1754,7 @@ t2_callable_parameter(
         if (
                 node == NULL
              || node->kind != T2_TYPE_FUNCTION
-             || index >= (size_t)node->payload
+             || index >= (usize)node->payload
              || parameter == NULL
         ) return false;
         T2Node const *part = get_node(universe, node->children[index]);
@@ -1927,11 +1769,11 @@ t2_callable_parameter(
 }
 
 static T2Type
-callable_output(T2Universe const *universe, T2Type callable, size_t offset)
+callable_output(T2Universe const *universe, T2Type callable, usize offset)
 {
         T2Node const *node = get_node(universe, callable);
         if (node == NULL || node->kind != T2_TYPE_FUNCTION) return T2_TYPE_INVALID;
-        size_t count = (size_t)node->payload;
+        usize count = (usize)node->payload;
         return node->arity == count + 3
              ? node->children[count + offset]
              : T2_TYPE_INVALID;
@@ -1965,7 +1807,7 @@ t2_callable_is_effectful(T2Universe const *universe, T2Type callable)
 }
 
 T2Type
-t2_tuple(T2Universe *universe, T2Type const *items, size_t count)
+t2_tuple(T2Universe *universe, T2Type const *items, usize count)
 {
         return intern_type(
                 universe,
@@ -1979,11 +1821,11 @@ t2_tuple(T2Universe *universe, T2Type const *items, size_t count)
 }
 
 T2Type
-t2_multi(T2Universe *universe, T2Type const *items, size_t count)
+t2_multi(T2Universe *universe, T2Type const *items, usize count)
 {
         T2Type nil = t2_primitive(universe, T2_TYPE_NIL);
         if (nil == T2_TYPE_INVALID) return T2_TYPE_INVALID;
-        for (size_t i = 0; i < count; ++i) {
+        for (usize i = 0; i < count; ++i) {
                 if (get_node(universe, items[i]) == NULL) return T2_TYPE_INVALID;
         }
         while (count != 0 && items[count - 1] == nil) count -= 1;
@@ -2001,7 +1843,7 @@ t2_multi(T2Universe *universe, T2Type const *items, size_t count)
 }
 
 T2Type
-t2_multi_item(T2Universe const *universe, T2Type type, size_t index)
+t2_multi_item(T2Universe const *universe, T2Type type, usize index)
 {
         T2Node const *node = get_node(universe, type);
         if (node == NULL) return T2_TYPE_INVALID;
@@ -2013,7 +1855,7 @@ t2_multi_item(T2Universe const *universe, T2Type type, size_t index)
              : universe->primitives[T2_TYPE_NIL];
 }
 
-static size_t
+static usize
 multi_arity(T2Node const *node)
 {
         return node->kind == T2_TYPE_MULTI ? node->arity : 1;
@@ -2042,7 +1884,7 @@ row_tail_valid(T2Universe const *universe, T2Type tail)
              || (node->kind == T2_TYPE_VARIABLE && node->variable_kind == T2_VARIABLE_ROW)
         ) return true;
         if (node->kind != T2_TYPE_INTERSECTION || node->arity == 0) return false;
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 if (!row_tail_valid(universe, node->children[i])) return false;
         }
         return true;
@@ -2052,7 +1894,7 @@ T2Type
 t2_row(
         T2Universe *universe,
         T2FieldSpec const *fields,
-        size_t field_count,
+        usize field_count,
         T2Type tail
 )
 {
@@ -2080,7 +1922,7 @@ T2Type
 t2_record(
         T2Universe *universe,
         T2FieldSpec const *fields,
-        size_t field_count,
+        usize field_count,
         T2Type row_tail,
         T2RecordExactness exactness
 )
@@ -2112,7 +1954,7 @@ t2_record(
                 return T2_TYPE_INVALID;
         }
 
-        for (size_t i = 0; i < field_count; ++i) {
+        for (usize i = 0; i < field_count; ++i) {
                 if (
                         fields[i].name == NULL
                      || fields[i].type == T2_TYPE_INVALID
@@ -2122,7 +1964,7 @@ t2_record(
                         ty_free(parts);
                         return T2_TYPE_INVALID;
                 }
-                uint64_t payload = fields[i].presence;
+                u64 payload = fields[i].presence;
                 if (fields[i].capability == T2_FIELD_WRITABLE) {
                         payload |= T2_FIELD_WRITABLE_BIT;
                 }
@@ -2141,10 +1983,10 @@ t2_record(
                 }
         }
 
-        for (size_t i = 1; i < field_count; ++i) {
+        for (usize i = 1; i < field_count; ++i) {
                 T2Type item = parts[i];
                 T2Node const *item_node = get_node(universe, item);
-                size_t j = i;
+                usize j = i;
                 while (j != 0) {
                         T2Node const *previous = get_node(universe, parts[j - 1]);
                         if (strcmp(item_node->text, previous->text) >= 0) break;
@@ -2153,10 +1995,10 @@ t2_record(
                 }
                 parts[j] = item;
         }
-        for (size_t i = 1; i < field_count; ++i) {
+        for (usize i = 1; i < field_count; ++i) {
                 T2Node const *left = get_node(universe, parts[i - 1]);
                 T2Node const *right = get_node(universe, parts[i]);
-                if (strcmp(left->text, right->text) == 0) {
+                if (s_eq(left->text, right->text)) {
                         ty_free(parts);
                         return T2_TYPE_INVALID;
                 }
@@ -2167,7 +2009,7 @@ t2_record(
                 universe,
                 T2_TYPE_RECORD,
                 T2_VARIABLE_FLEXIBLE,
-                (uint64_t)exactness,
+                (u64)exactness,
                 NULL,
                 parts,
                 field_count + 1
@@ -2179,10 +2021,10 @@ t2_record(
 static T2Node const *
 find_record_field_node(T2Universe const *universe, T2Node const *record, char const *name)
 {
-        size_t low = 0;
-        size_t high = record->arity - 1;
+        usize low = 0;
+        usize high = record->arity - 1;
         while (low < high) {
-                size_t middle = low + (high - low) / 2;
+                usize middle = low + (high - low) / 2;
                 T2Node const *field = get_node(universe, record->children[middle]);
                 int comparison = strcmp(field->text, name);
                 if (comparison < 0) low = middle + 1;
@@ -2190,7 +2032,7 @@ find_record_field_node(T2Universe const *universe, T2Node const *record, char co
         }
         if (low >= record->arity - 1) return NULL;
         T2Node const *field = get_node(universe, record->children[low]);
-        return strcmp(field->text, name) == 0 ? field : NULL;
+        return s_eq(field->text, name) ? field : NULL;
 }
 
 static T2Node const *
@@ -2205,7 +2047,7 @@ find_row_field_node(
         T2Node const *node = get_node(universe, row);
         if (node == NULL) return NULL;
         if (node->kind == T2_TYPE_INTERSECTION) {
-                for (size_t i = 0; i < node->arity; ++i) {
+                for (usize i = 0; i < node->arity; ++i) {
                         T2Node const *field = find_row_field_node(
                                 universe,
                                 node->children[i],
@@ -2238,7 +2080,7 @@ row_tail_has_variable(T2Universe const *universe, T2Type row, unsigned depth)
              && node->variable_kind == T2_VARIABLE_ROW
         ) return true;
         if (node->kind == T2_TYPE_INTERSECTION) {
-                for (size_t i = 0; i < node->arity; ++i) {
+                for (usize i = 0; i < node->arity; ++i) {
                         if (row_tail_has_variable(
                                 universe,
                                 node->children[i],
@@ -2293,7 +2135,7 @@ t2_record_field_type(
         return field->children[0];
 }
 
-size_t
+usize
 t2_record_field_count(T2Universe const *universe, T2Type record)
 {
         T2Node const *node = get_node(universe, record);
@@ -2309,7 +2151,7 @@ bool
 t2_record_field(
         T2Universe const *universe,
         T2Type record,
-        size_t index,
+        usize index,
         T2FieldSpec *field
 )
 {
@@ -2387,7 +2229,7 @@ T2Type
 t2_pack(
         T2Universe *universe,
         T2Type const *prefix,
-        size_t prefix_count,
+        usize prefix_count,
         T2Type tail
 )
 {
@@ -2437,7 +2279,7 @@ type_contains_pack_variable(
                 (node->kind == T2_TYPE_META || node->kind == T2_TYPE_VARIABLE)
              && node->variable_kind == T2_VARIABLE_PACK
         ) return true;
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 if (type_contains_pack_variable(universe, node->children[i], depth + 1)) {
                         return true;
                 }
@@ -2483,14 +2325,14 @@ pack_fold(T2Universe *universe, T2Type pack, bool intersection)
              && !type_contains_pack_variable(universe, node->children[0], 0)
         ) return node->children[0];
         if (node->kind == T2_TYPE_PACK) {
-                size_t count = (size_t)node->payload;
+                usize count = (usize)node->payload;
                 T2Type result = pack_fold(
                         universe,
                         node->children[count],
                         intersection
                 );
                 if (result == T2_TYPE_INVALID) return result;
-                for (size_t i = 0; i < count; ++i) {
+                for (usize i = 0; i < count; ++i) {
                         result = intersection
                                ? t2_intersection(
                                        universe,
@@ -2535,7 +2377,7 @@ T2Type
 t2_variadic_tuple(
         T2Universe *universe,
         T2Type const *prefix,
-        size_t prefix_count,
+        usize prefix_count,
         T2Type tail
 )
 {
@@ -2551,7 +2393,7 @@ t2_variadic_tuple(
                 return t2_tuple(universe, prefix, prefix_count);
         }
         if (tail_node->kind == T2_TYPE_PACK) {
-                size_t extra = (size_t)tail_node->payload;
+                usize extra = (usize)tail_node->payload;
                 if (prefix_count > SIZE_MAX - extra) return T2_TYPE_INVALID;
                 T2Type *combined = ty_malloc(
                         (prefix_count + extra) * sizeof *combined
@@ -2634,7 +2476,7 @@ rebuild_type(
                 return t2_pack(
                         universe,
                         children,
-                        (size_t)node->payload,
+                        (usize)node->payload,
                         children[node->payload]
                 );
         case T2_TYPE_PACK_EXPANSION:
@@ -2647,7 +2489,7 @@ rebuild_type(
                 return t2_variadic_tuple(
                         universe,
                         children,
-                        (size_t)node->payload,
+                        (usize)node->payload,
                         children[node->payload]
                 );
         case T2_TYPE_UNION:
@@ -2668,7 +2510,7 @@ rebuild_type(
 }
 
 T2Type
-t2_recursive_variable(T2Universe *universe, uint32_t binder)
+t2_recursive_variable(T2Universe *universe, u32 binder)
 {
         if (binder == 0) return T2_TYPE_INVALID;
         return intern_type(
@@ -2686,7 +2528,7 @@ static bool
 guarded_occurrences(
         T2Universe const *universe,
         T2Type type,
-        uint32_t binder,
+        u32 binder,
         bool guarded,
         unsigned depth
 )
@@ -2713,7 +2555,7 @@ guarded_occurrences(
              || node->kind == T2_TYPE_RECURSIVE
         ) contractive = guarded;
 
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 if (!guarded_occurrences(
                         universe,
                         node->children[i],
@@ -2729,7 +2571,7 @@ static bool
 contains_recursive_binder(
         T2Universe const *universe,
         T2Type type,
-        uint32_t binder,
+        u32 binder,
         unsigned depth
 )
 {
@@ -2739,7 +2581,7 @@ contains_recursive_binder(
         if (node->kind == T2_TYPE_RECURSIVE_VARIABLE) {
                 return node->payload == binder;
         }
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 if (contains_recursive_binder(
                         universe,
                         node->children[i],
@@ -2751,7 +2593,7 @@ contains_recursive_binder(
 }
 
 T2Type
-t2_recursive(T2Universe *universe, uint32_t binder, T2Type body)
+t2_recursive(T2Universe *universe, u32 binder, T2Type body)
 {
         if (
                 universe == NULL
@@ -2759,9 +2601,6 @@ t2_recursive(T2Universe *universe, uint32_t binder, T2Type body)
              || get_node(universe, body) == NULL
         ) return T2_TYPE_INVALID;
 
-        /* A vacuous mu binder is exactly its body.  Keeping the wrapper makes
-         * every ordinary alias look recursive to expression inference and
-         * defeats canonical hashing/display. */
         if (!contains_recursive_binder(universe, body, binder, 0)) return body;
         if (!guarded_occurrences(universe, body, binder, false, 0)) {
                 return T2_TYPE_INVALID;
@@ -2771,11 +2610,11 @@ t2_recursive(T2Universe *universe, uint32_t binder, T2Type body)
                 universe->next_recursive_id = binder == UINT32_MAX ? 0 : binder + 1;
         }
 
-        for (size_t i = 0; i < universe->recursive_count; ++i) {
-                if (universe->recursive[i].binder != binder) continue;
-                T2Node const *existing = get_node(universe, universe->recursive[i].type);
+        for (usize i = 0; i < vN(universe->recursive); ++i) {
+                if (v__(universe->recursive, i).binder != binder) continue;
+                T2Node const *existing = get_node(universe, v__(universe->recursive, i).type);
                 if (existing != NULL && existing->children[0] == body) {
-                        return universe->recursive[i].type;
+                        return v__(universe->recursive, i).type;
                 }
                 return T2_TYPE_INVALID;
         }
@@ -2790,19 +2629,10 @@ t2_recursive(T2Universe *universe, uint32_t binder, T2Type body)
                 1
         );
         if (type == T2_TYPE_INVALID) return type;
-        if (!reserve_array(
-                (void **)&universe->recursive,
-                &universe->recursive_capacity,
-                universe->recursive_count + 1,
-                sizeof *universe->recursive
-        )) {
-                universe->failed = true;
-                return T2_TYPE_INVALID;
-        }
-        universe->recursive[universe->recursive_count++] = (T2RecursiveInfo) {
+        xvP(universe->recursive, ((T2RecursiveInfo) {
                 .binder = binder,
                 .type = type
-        };
+        }));
         forget_relations(universe);
         return type;
 }
@@ -2816,7 +2646,7 @@ t2_recursive_is_guarded(T2Universe const *universe, T2Type type)
             && guarded_occurrences(
                     universe,
                     node->children[0],
-                    (uint32_t)node->payload,
+                    (u32)node->payload,
                     false,
                     0
             );
@@ -2848,7 +2678,7 @@ compare_types(T2Universe const *universe, T2Type left, T2Type right, unsigned de
                 if (comparison != 0) return comparison;
         }
         if (a->arity != b->arity) return a->arity < b->arity ? -1 : 1;
-        for (size_t i = 0; i < a->arity; ++i) {
+        for (usize i = 0; i < a->arity; ++i) {
                 int comparison = compare_types(
                         universe,
                         a->children[i],
@@ -2863,17 +2693,7 @@ compare_types(T2Universe const *universe, T2Type left, T2Type right, unsigned de
 static bool
 push_type(T2TypeVector *types, T2Type type)
 {
-        if (
-                !reserve_array(
-                        (void **)&types->items,
-                        &types->capacity,
-                        types->count + 1,
-                        sizeof *types->items
-                )
-        ) {
-                return false;
-        }
-        types->items[types->count++] = type;
+        xvP(*types, type);
         return true;
 }
 
@@ -2892,7 +2712,7 @@ collect_set_arms(
         if (node->kind != kind) {
                 return push_type(arms, type);
         }
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 if (!collect_set_arms(universe, kind, node->children[i], arms)) {
                         return false;
                 }
@@ -2915,11 +2735,9 @@ typedef struct t2_relation_pair {
 
 typedef struct t2_relation_context {
         T2Universe const *universe;
-        T2RelationPair *pairs;
-        size_t pair_count;
-        size_t pair_capacity;
-        size_t steps;
-        size_t step_limit;
+        vec(T2RelationPair) pairs;
+        usize steps;
+        usize step_limit;
         bool failed;
 } T2RelationContext;
 
@@ -2981,9 +2799,9 @@ range_bound(
         bool lower
 )
 {
-        uint64_t flag = lower ? T2_RANGE_HAS_LOWER : T2_RANGE_HAS_UPPER;
+        u64 flag = lower ? T2_RANGE_HAS_LOWER : T2_RANGE_HAS_UPPER;
         if (range == NULL || (range->payload & flag) == 0) return NULL;
-        size_t index = !lower && (range->payload & T2_RANGE_HAS_LOWER) != 0;
+        usize index = !lower && (range->payload & T2_RANGE_HAS_LOWER) != 0;
         return get_node(universe, range->children[index]);
 }
 
@@ -2997,7 +2815,7 @@ literal_in_range(
         if (literal == NULL || literal->kind != T2_TYPE_LITERAL_INT) {
                 return T2_RELATION_NO;
         }
-        int64_t value = (int64_t)literal->payload;
+        i64 value = (i64)literal->payload;
         T2Node const *lower = range_bound(universe, range, true);
         T2Node const *upper = range_bound(universe, range, false);
         if (lower != NULL) {
@@ -3007,7 +2825,7 @@ literal_in_range(
                 ) return T2_RELATION_DEFERRED;
                 if (
                         lower->kind != T2_TYPE_LITERAL_INT
-                     || value < (int64_t)lower->payload
+                     || value < (i64)lower->payload
                 ) return T2_RELATION_NO;
         }
         if (upper != NULL) {
@@ -3016,7 +2834,7 @@ literal_in_range(
                      || upper->kind == T2_TYPE_VARIABLE
                 ) return T2_RELATION_DEFERRED;
                 if (upper->kind != T2_TYPE_LITERAL_INT) return T2_RELATION_NO;
-                int64_t high = (int64_t)upper->payload;
+                i64 high = (i64)upper->payload;
                 bool inclusive = (range->payload & T2_RANGE_UPPER_INCLUSIVE) != 0;
                 if (inclusive ? value > high : value >= high) return T2_RELATION_NO;
         }
@@ -3043,8 +2861,8 @@ range_subtype_range(
                 if (
                         actual_lower->kind != T2_TYPE_LITERAL_INT
                      || expected_lower->kind != T2_TYPE_LITERAL_INT
-                     || (int64_t)actual_lower->payload
-                            < (int64_t)expected_lower->payload
+                     || (i64)actual_lower->payload
+                            < (i64)expected_lower->payload
                 ) return T2_RELATION_NO;
         }
 
@@ -3062,8 +2880,8 @@ range_subtype_range(
                         actual_upper->kind != T2_TYPE_LITERAL_INT
                      || expected_upper->kind != T2_TYPE_LITERAL_INT
                 ) return T2_RELATION_NO;
-                int64_t actual_high = (int64_t)actual_upper->payload;
-                int64_t expected_high = (int64_t)expected_upper->payload;
+                i64 actual_high = (i64)actual_upper->payload;
+                i64 expected_high = (i64)expected_upper->payload;
                 if (actual_high > expected_high) return T2_RELATION_NO;
                 if (
                         actual_high == expected_high
@@ -3101,11 +2919,11 @@ object_value_kind(T2TypeKind kind)
 }
 
 static T2Type
-recursive_definition(T2Universe const *universe, uint32_t binder)
+recursive_definition(T2Universe const *universe, u32 binder)
 {
-        for (size_t i = 0; i < universe->recursive_count; ++i) {
-                if (universe->recursive[i].binder == binder) {
-                        return universe->recursive[i].type;
+        for (usize i = 0; i < vN(universe->recursive); ++i) {
+                if (v__(universe->recursive, i).binder == binder) {
+                        return v__(universe->recursive, i).type;
                 }
         }
         return T2_TYPE_INVALID;
@@ -3122,7 +2940,7 @@ unfold_recursive_head(T2Universe const *universe, T2Type type, bool *changed)
                 return node->children[0];
         }
         if (node->kind == T2_TYPE_RECURSIVE_VARIABLE) {
-                T2Type definition = recursive_definition(universe, (uint32_t)node->payload);
+                T2Type definition = recursive_definition(universe, (u32)node->payload);
                 T2Node const *recursive = get_node(universe, definition);
                 if (recursive == NULL || recursive->kind != T2_TYPE_RECURSIVE) {
                         return T2_TYPE_INVALID;
@@ -3203,7 +3021,7 @@ record_subtype(
         if (actual_tail == NULL || expected_tail == NULL) return T2_RELATION_NO;
 
         T2Relation relation = T2_RELATION_YES;
-        for (size_t i = 0; i + 1 < expected->arity; ++i) {
+        for (usize i = 0; i + 1 < expected->arity; ++i) {
                 T2Node const *wanted = get_node(context->universe, expected->children[i]);
                 T2Node const *have = find_record_field_node(
                         context->universe,
@@ -3247,7 +3065,7 @@ record_subtype(
                         actual_tail->kind != T2_TYPE_ROW_EMPTY
                      || (T2RecordExactness)actual->payload != T2_RECORD_EXACT
                 ) return T2_RELATION_NO;
-                for (size_t i = 0; i + 1 < actual->arity; ++i) {
+                for (usize i = 0; i + 1 < actual->arity; ++i) {
                         T2Node const *field = get_node(context->universe, actual->children[i]);
                         T2Node const *wanted = find_record_field_node(
                                 context->universe,
@@ -3290,7 +3108,7 @@ row_subtype(
         if (actual_tail == NULL || expected_tail == NULL) return T2_RELATION_NO;
 
         T2Relation relation = T2_RELATION_YES;
-        for (size_t i = 0; i + 1 < expected->arity; ++i) {
+        for (usize i = 0; i + 1 < expected->arity; ++i) {
                 T2Node const *wanted = get_node(context->universe, expected->children[i]);
                 T2Node const *have = find_record_field_node(
                         context->universe,
@@ -3330,7 +3148,7 @@ row_subtype(
         }
 
         if (expected_tail->kind == T2_TYPE_ROW_EMPTY) {
-                for (size_t i = 0; i + 1 < actual->arity; ++i) {
+                for (usize i = 0; i + 1 < actual->arity; ++i) {
                         T2Node const *field = get_node(context->universe, actual->children[i]);
                         if (
                                 find_record_field_node(
@@ -3378,12 +3196,12 @@ static T2Node const *
 function_positional_parameter(
         T2Universe const *universe,
         T2Node const *function,
-        size_t position
+        usize position
 )
 {
-        size_t seen = 0;
-        size_t count = (size_t)function->payload;
-        for (size_t i = 0; i < count; ++i) {
+        usize seen = 0;
+        usize count = (usize)function->payload;
+        for (usize i = 0; i < count; ++i) {
                 T2Node const *parameter = get_node(universe, function->children[i]);
                 if (!parameter_accepts_position(parameter)) continue;
                 if (seen++ == position) return parameter;
@@ -3398,8 +3216,8 @@ function_parameter_kind(
         T2ParameterKind wanted
 )
 {
-        size_t count = (size_t)function->payload;
-        for (size_t i = 0; i < count; ++i) {
+        usize count = (usize)function->payload;
+        for (usize i = 0; i < count; ++i) {
                 T2Node const *parameter = get_node(universe, function->children[i]);
                 T2ParameterKind kind = (T2ParameterKind)(
                         parameter->payload & T2_PARAMETER_KIND_MASK
@@ -3416,13 +3234,13 @@ function_keyword_parameter(
         char const *name
 )
 {
-        size_t count = (size_t)function->payload;
-        for (size_t i = 0; i < count; ++i) {
+        usize count = (usize)function->payload;
+        for (usize i = 0; i < count; ++i) {
                 T2Node const *parameter = get_node(universe, function->children[i]);
                 if (
                         parameter_accepts_keyword(parameter)
                      && parameter->text != NULL
-                     && strcmp(parameter->text, name) == 0
+                     && s_eq(parameter->text, name)
                 ) return parameter;
         }
         return NULL;
@@ -3457,7 +3275,7 @@ subtype_relation_ignoring_nil(
                 return subtype_relation(context, subtype, supertype, progress);
         }
         T2Relation relation = T2_RELATION_YES;
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 T2Node const *arm = get_node(context->universe, node->children[i]);
                 if (arm != NULL && arm->kind == T2_TYPE_NIL) continue;
                 relation = combine_all(
@@ -3507,8 +3325,8 @@ function_subtype(
         unsigned progress
 )
 {
-        size_t actual_count = (size_t)actual->payload;
-        size_t expected_count = (size_t)expected->payload;
+        usize actual_count = (usize)actual->payload;
+        usize expected_count = (usize)expected->payload;
         if (actual->arity != actual_count + 3 || expected->arity != expected_count + 3) {
                 return T2_RELATION_NO;
         }
@@ -3545,12 +3363,12 @@ function_subtype(
         );
 
         T2Relation relation = T2_RELATION_YES;
-        size_t expected_positions = 0;
-        for (size_t i = 0; i < expected_count; ++i) {
+        usize expected_positions = 0;
+        for (usize i = 0; i < expected_count; ++i) {
                 T2Node const *parameter = get_node(context->universe, expected->children[i]);
                 if (parameter_accepts_position(parameter)) expected_positions += 1;
         }
-        for (size_t i = 0; i < expected_positions; ++i) {
+        for (usize i = 0; i < expected_positions; ++i) {
                 T2Node const *wanted = function_positional_parameter(
                         context->universe,
                         expected,
@@ -3578,7 +3396,7 @@ function_subtype(
                 if (relation == T2_RELATION_NO) return relation;
         }
 
-        for (size_t i = 0; i < expected_count; ++i) {
+        for (usize i = 0; i < expected_count; ++i) {
                 T2Node const *wanted = get_node(context->universe, expected->children[i]);
                 if (!parameter_accepts_keyword(wanted)) continue;
                 T2Node const *have = function_keyword_parameter(
@@ -3601,7 +3419,7 @@ function_subtype(
                 if (relation == T2_RELATION_NO) return relation;
         }
 
-        for (size_t i = 0; i < actual_count; ++i) {
+        for (usize i = 0; i < actual_count; ++i) {
                 T2Node const *required = get_node(context->universe, actual->children[i]);
                 if ((required->payload & T2_PARAMETER_REQUIRED) == 0) continue;
                 T2ParameterKind kind = (T2ParameterKind)(
@@ -3612,8 +3430,8 @@ function_subtype(
                         kind == T2_PARAMETER_POSITIONAL_ONLY
                      || kind == T2_PARAMETER_POSITIONAL_OR_KEYWORD
                 ) {
-                        size_t position = 0;
-                        for (size_t j = 0; j < i; ++j) {
+                        usize position = 0;
+                        for (usize j = 0; j < i; ++j) {
                                 T2Node const *prior = get_node(
                                         context->universe,
                                         actual->children[j]
@@ -3718,8 +3536,8 @@ pack_subtype(
                 }
                 if (actual->kind == T2_TYPE_PACK) {
                         T2Relation relation = T2_RELATION_YES;
-                        size_t count = (size_t)actual->payload;
-                        for (size_t i = 0; i < count; ++i) {
+                        usize count = (usize)actual->payload;
+                        for (usize i = 0; i < count; ++i) {
                                 relation = combine_all(
                                         relation,
                                         subtype_relation(
@@ -3763,7 +3581,7 @@ pack_subtype(
         }
         if (actual->payload != expected->payload) return T2_RELATION_NO;
         T2Relation relation = T2_RELATION_YES;
-        for (size_t i = 0; i < actual->arity; ++i) {
+        for (usize i = 0; i < actual->arity; ++i) {
                 relation = combine_all(
                         relation,
                         subtype_relation(
@@ -3781,19 +3599,19 @@ static T2Relation
 tuple_remainder_subtype(
         T2RelationContext *context,
         T2Node const *tuple,
-        size_t offset,
+        usize offset,
         T2Node const *expected,
         unsigned progress
 )
 {
-        size_t remaining = tuple->arity - offset;
+        usize remaining = tuple->arity - offset;
         if (expected->kind == T2_TYPE_PACK_ANY) return T2_RELATION_YES;
         if (expected->kind == T2_TYPE_PACK_EMPTY) {
                 return remaining == 0 ? T2_RELATION_YES : T2_RELATION_NO;
         }
         if (expected->kind == T2_TYPE_PACK_EXPANSION) {
                 T2Relation relation = T2_RELATION_YES;
-                for (size_t i = offset; i < tuple->arity; ++i) {
+                for (usize i = offset; i < tuple->arity; ++i) {
                         relation = combine_all(
                                 relation,
                                 subtype_relation(
@@ -3812,10 +3630,10 @@ tuple_remainder_subtype(
         ) return T2_RELATION_DEFERRED;
         if (expected->kind != T2_TYPE_PACK) return T2_RELATION_NO;
 
-        size_t prefix = (size_t)expected->payload;
+        usize prefix = (usize)expected->payload;
         if (remaining < prefix) return T2_RELATION_NO;
         T2Relation relation = T2_RELATION_YES;
-        for (size_t i = 0; i < prefix; ++i) {
+        for (usize i = 0; i < prefix; ++i) {
                 relation = combine_all(
                         relation,
                         subtype_relation(
@@ -3846,10 +3664,10 @@ tuple_subtype_variadic(
         unsigned progress
 )
 {
-        size_t prefix = (size_t)expected->payload;
+        usize prefix = (usize)expected->payload;
         if (actual->arity < prefix) return T2_RELATION_NO;
         T2Relation relation = T2_RELATION_YES;
-        for (size_t i = 0; i < prefix; ++i) {
+        for (usize i = 0; i < prefix; ++i) {
                 relation = combine_all(
                         relation,
                         subtype_relation(
@@ -3898,7 +3716,7 @@ subtype_compute(
 
         if (a->kind == T2_TYPE_UNION) {
                 T2Relation relation = T2_RELATION_YES;
-                for (size_t i = 0; i < a->arity; ++i) {
+                for (usize i = 0; i < a->arity; ++i) {
                         relation = combine_all(
                                 relation,
                                 subtype_relation(context, a->children[i], supertype, progress)
@@ -3909,7 +3727,7 @@ subtype_compute(
         }
         if (b->kind == T2_TYPE_UNION) {
                 T2Relation relation = T2_RELATION_NO;
-                for (size_t i = 0; i < b->arity; ++i) {
+                for (usize i = 0; i < b->arity; ++i) {
                         relation = combine_any(
                                 relation,
                                 subtype_relation(context, subtype, b->children[i], progress)
@@ -3920,7 +3738,7 @@ subtype_compute(
         }
         if (b->kind == T2_TYPE_INTERSECTION) {
                 T2Relation relation = T2_RELATION_YES;
-                for (size_t i = 0; i < b->arity; ++i) {
+                for (usize i = 0; i < b->arity; ++i) {
                         relation = combine_all(
                                 relation,
                                 subtype_relation(context, subtype, b->children[i], progress)
@@ -3931,7 +3749,7 @@ subtype_compute(
         }
         if (b->kind == T2_TYPE_OVERLOAD) {
                 T2Relation relation = T2_RELATION_YES;
-                for (size_t i = 0; i < b->arity; ++i) {
+                for (usize i = 0; i < b->arity; ++i) {
                         relation = combine_all(
                                 relation,
                                 subtype_relation(context, subtype, b->children[i], progress)
@@ -3941,7 +3759,7 @@ subtype_compute(
         }
         if (a->kind == T2_TYPE_INTERSECTION) {
                 T2Relation relation = T2_RELATION_NO;
-                for (size_t i = 0; i < a->arity; ++i) {
+                for (usize i = 0; i < a->arity; ++i) {
                         relation = combine_any(
                                 relation,
                                 subtype_relation(context, a->children[i], supertype, progress)
@@ -3952,7 +3770,7 @@ subtype_compute(
         }
         if (a->kind == T2_TYPE_OVERLOAD) {
                 T2Relation relation = T2_RELATION_NO;
-                for (size_t i = 0; i < a->arity; ++i) {
+                for (usize i = 0; i < a->arity; ++i) {
                         relation = combine_any(
                                 relation,
                                 subtype_relation(context, a->children[i], supertype, progress)
@@ -3969,23 +3787,13 @@ subtype_compute(
                 return subtype_relation(context, a->children[1], supertype, progress);
         }
 
-        /* Set structure must be considered before treating variables as
-         * opaque.  This proves tautologies such as T <: T | nil while still
-         * retaining genuinely undecidable relations such as nil <: T. */
         if (a->kind == T2_TYPE_META || b->kind == T2_TYPE_META) {
                 return T2_RELATION_DEFERRED;
         }
         if (a->kind == T2_TYPE_VARIABLE || b->kind == T2_TYPE_VARIABLE) {
-                /* Quantified and rigid variables are intentionally opaque here.
-                 * Distinct variables are not interchangeable, but a relation
-                 * involving one may be a scheme predicate that can only be
-                 * decided after instantiation. */
                 return T2_RELATION_DEFERRED;
         }
 
-        /* A native computed type is an immutable, memoizable promise.  Until
-         * the single-evaluation broker supplies its result, no strict subtype
-         * fact beyond canonical identity is justified. */
         if (a->kind == T2_TYPE_COMPUTED || b->kind == T2_TYPE_COMPUTED) {
                 return T2_RELATION_DEFERRED;
         }
@@ -4065,12 +3873,12 @@ subtype_compute(
                         );
                         if (applied == NULL) return T2_RELATION_NO;
                         T2Relation inherited = T2_RELATION_NO;
-                        for (size_t i = 0; i < applied->supertype_count; ++i) {
+                        for (usize i = 0; i < vN(applied->supertypes); ++i) {
                                 inherited = combine_any(
                                         inherited,
                                         subtype_relation(
                                                 context,
-                                                applied->supertypes[i],
+                                                v__(applied->supertypes, i),
                                                 supertype,
                                                 progress + 1
                                         )
@@ -4081,7 +3889,7 @@ subtype_compute(
                 }
                 T2NominalInfo const *info = find_nominal(universe, a->payload);
                 T2Relation relation = T2_RELATION_YES;
-                for (size_t i = 0; i < a->arity; ++i) {
+                for (usize i = 0; i < a->arity; ++i) {
                         T2Variance variance = info == NULL ? T2_INVARIANT : info->variance[i];
                         T2Relation item;
                         if (variance == T2_COVARIANT) {
@@ -4154,11 +3962,11 @@ subtype_compute(
         }
 
         if (a->kind == T2_TYPE_MULTI || b->kind == T2_TYPE_MULTI) {
-                size_t count = multi_arity(a) > multi_arity(b)
+                usize count = multi_arity(a) > multi_arity(b)
                              ? multi_arity(a)
                              : multi_arity(b);
                 T2Relation relation = T2_RELATION_YES;
-                for (size_t i = 0; i < count; ++i) {
+                for (usize i = 0; i < count; ++i) {
                         relation = combine_all(
                                 relation,
                                 subtype_relation(
@@ -4176,7 +3984,7 @@ subtype_compute(
         if (a->kind == T2_TYPE_TUPLE && b->kind == T2_TYPE_TUPLE) {
                 if (a->arity != b->arity) return T2_RELATION_NO;
                 T2Relation relation = T2_RELATION_YES;
-                for (size_t i = 0; i < a->arity; ++i) {
+                for (usize i = 0; i < a->arity; ++i) {
                         relation = combine_all(
                                 relation,
                                 subtype_relation(
@@ -4196,11 +4004,11 @@ subtype_compute(
                 a->kind == T2_TYPE_VARIADIC_TUPLE
              && b->kind == T2_TYPE_VARIADIC_TUPLE
         ) {
-                size_t actual_prefix = (size_t)a->payload;
-                size_t expected_prefix = (size_t)b->payload;
+                usize actual_prefix = (usize)a->payload;
+                usize expected_prefix = (usize)b->payload;
                 if (actual_prefix != expected_prefix) return T2_RELATION_NO;
                 T2Relation relation = T2_RELATION_YES;
-                for (size_t i = 0; i < actual_prefix; ++i) {
+                for (usize i = 0; i < actual_prefix; ++i) {
                         relation = combine_all(
                                 relation,
                                 subtype_relation(
@@ -4286,8 +4094,8 @@ subtype_relation(
         }
         if (subtype == supertype) return T2_RELATION_YES;
 
-        for (size_t i = 0; i < context->pair_count; ++i) {
-                T2RelationPair const *pair = &context->pairs[i];
+        for (usize i = 0; i < vN(context->pairs); ++i) {
+                T2RelationPair const *pair = v_(context->pairs, i);
                 if (pair->subtype != subtype || pair->supertype != supertype) continue;
                 if (pair->state == T2_PAIR_COMPLETE) return pair->result;
                 return progress > pair->progress
@@ -4295,42 +4103,33 @@ subtype_relation(
                      : T2_RELATION_COMPLEXITY;
         }
 
-        if (!reserve_array(
-                (void **)&context->pairs,
-                &context->pair_capacity,
-                context->pair_count + 1,
-                sizeof *context->pairs
-        )) {
-                context->failed = true;
-                return T2_RELATION_COMPLEXITY;
-        }
-        size_t pair_index = context->pair_count++;
-        context->pairs[pair_index] = (T2RelationPair) {
+        usize pair_index = vN(context->pairs);
+        xvP(context->pairs, ((T2RelationPair) {
                 .subtype = subtype,
                 .supertype = supertype,
                 .progress = progress,
                 .state = T2_PAIR_IN_PROGRESS,
                 .result = T2_RELATION_COMPLEXITY
-        };
+        }));
         T2Relation result = subtype_compute(context, subtype, supertype, progress);
-        context->pairs[pair_index].state = T2_PAIR_COMPLETE;
-        context->pairs[pair_index].result = result;
+        v__(context->pairs, pair_index).state = T2_PAIR_COMPLETE;
+        v__(context->pairs, pair_index).result = result;
         return result;
 }
 
 static void
-remember_relation(T2Universe const *universe, uint64_t key, T2Relation relation)
+remember_relation(T2Universe const *universe, u64 key, T2Relation relation)
 {
         T2Index *memo = &((T2Universe *)universe)->relation_memo;
-        if (memo->count >= ((size_t)1 << 20)) t2_index_clear(memo);
-        (void)t2_index_put(memo, key, (uint32_t)relation);
+        if (memo->count >= ((usize)1 << 20)) t2_index_clear(memo);
+        (void)t2_index_put(memo, key, (u32)relation);
 }
 
 T2Relation
 t2_subtype(T2Universe const *universe, T2Type subtype, T2Type supertype)
 {
-        uint64_t key = (uint64_t)subtype << 32 | supertype;
-        uint32_t remembered;
+        u64 key = (u64)subtype << 32 | supertype;
+        u32 remembered;
         if (
                 universe != NULL
              && t2_index_find(&universe->relation_memo, key, &remembered)
@@ -4340,7 +4139,7 @@ t2_subtype(T2Universe const *universe, T2Type subtype, T2Type supertype)
                 .step_limit = 1000000
         };
         T2Relation relation = subtype_relation(&context, subtype, supertype, 0);
-        ty_free(context.pairs);
+        xvF(context.pairs);
         if (context.failed) return T2_RELATION_COMPLEXITY;
         if (
                 universe != NULL
@@ -4379,214 +4178,6 @@ combine_any(T2Relation aggregate, T2Relation next)
         return T2_RELATION_NO;
 }
 
-#if 0
-static T2Relation
-subtype_x(
-        T2Universe const *universe,
-        T2Type subtype,
-        T2Type supertype,
-        unsigned depth
-)
-{
-        if (subtype == supertype && subtype != T2_TYPE_INVALID) {
-                return T2_RELATION_YES;
-        }
-        if (depth > T2_RELATION_DEPTH_LIMIT) {
-                return T2_RELATION_COMPLEXITY;
-        }
-
-        T2Node const *a = get_node(universe, subtype);
-        T2Node const *b = get_node(universe, supertype);
-        if (a == NULL || b == NULL) {
-                return T2_RELATION_NO;
-        }
-
-        if (a->kind == T2_TYPE_ERROR || b->kind == T2_TYPE_ERROR) {
-                return T2_RELATION_YES;
-        }
-        if (a->kind == T2_TYPE_NEVER) {
-                return T2_RELATION_YES;
-        }
-        if (b->kind == T2_TYPE_ANY || b->kind == T2_TYPE_UNKNOWN) {
-                return T2_RELATION_YES;
-        }
-        if (a->kind == T2_TYPE_UNKNOWN) {
-                return T2_RELATION_NO;
-        }
-        if (a->kind == T2_TYPE_DYNAMIC) {
-                return b->kind == T2_TYPE_DYNAMIC ? T2_RELATION_YES : T2_RELATION_NO;
-        }
-        if (a->kind == T2_TYPE_META || b->kind == T2_TYPE_META) {
-                return T2_RELATION_DEFERRED;
-        }
-        if (a->kind == T2_TYPE_VARIABLE || b->kind == T2_TYPE_VARIABLE) {
-                return T2_RELATION_NO;
-        }
-
-        if (b->kind == T2_TYPE_OBJECT && object_value_kind(a->kind)) {
-                return T2_RELATION_YES;
-        }
-
-        if (a->kind == T2_TYPE_UNION) {
-                T2Relation relation = T2_RELATION_YES;
-                for (size_t i = 0; i < a->arity; ++i) {
-                        relation = combine_all(
-                                relation,
-                                subtype_x(universe, a->children[i], supertype, depth + 1)
-                        );
-                        if (relation == T2_RELATION_NO) break;
-                }
-                return relation;
-        }
-        if (b->kind == T2_TYPE_UNION) {
-                T2Relation relation = T2_RELATION_NO;
-                for (size_t i = 0; i < b->arity; ++i) {
-                        relation = combine_any(
-                                relation,
-                                subtype_x(universe, subtype, b->children[i], depth + 1)
-                        );
-                        if (relation == T2_RELATION_YES) break;
-                }
-                return relation;
-        }
-        if (b->kind == T2_TYPE_INTERSECTION) {
-                T2Relation relation = T2_RELATION_YES;
-                for (size_t i = 0; i < b->arity; ++i) {
-                        relation = combine_all(
-                                relation,
-                                subtype_x(universe, subtype, b->children[i], depth + 1)
-                        );
-                        if (relation == T2_RELATION_NO) break;
-                }
-                return relation;
-        }
-        if (a->kind == T2_TYPE_INTERSECTION) {
-                T2Relation relation = T2_RELATION_NO;
-                for (size_t i = 0; i < a->arity; ++i) {
-                        relation = combine_any(
-                                relation,
-                                subtype_x(universe, a->children[i], supertype, depth + 1)
-                        );
-                        if (relation == T2_RELATION_YES) break;
-                }
-                return relation;
-        }
-
-        if (
-                a->kind == T2_TYPE_LITERAL_BOOL
-             && b->kind == T2_TYPE_BOOL
-        ) return T2_RELATION_YES;
-        if (
-                a->kind == T2_TYPE_LITERAL_INT
-             && b->kind == T2_TYPE_INT
-        ) return T2_RELATION_YES;
-        if (
-                a->kind == T2_TYPE_LITERAL_STRING
-             && b->kind == T2_TYPE_STRING
-        ) return T2_RELATION_YES;
-
-        if (a->kind == T2_TYPE_NOMINAL && b->kind == T2_TYPE_NOMINAL) {
-                if (a->payload != b->payload || a->arity != b->arity) {
-                        return T2_RELATION_NO;
-                }
-                T2NominalInfo const *info = find_nominal(universe, a->payload);
-                T2Relation relation = T2_RELATION_YES;
-                for (size_t i = 0; i < a->arity; ++i) {
-                        T2Variance variance = info == NULL
-                                            ? T2_INVARIANT
-                                            : info->variance[i];
-                        T2Relation item;
-                        if (variance == T2_COVARIANT) {
-                                item = subtype_x(
-                                        universe,
-                                        a->children[i],
-                                        b->children[i],
-                                        depth + 1
-                                );
-                        } else if (variance == T2_CONTRAVARIANT) {
-                                item = subtype_x(
-                                        universe,
-                                        b->children[i],
-                                        a->children[i],
-                                        depth + 1
-                                );
-                        } else if (variance == T2_BIVARIANT) {
-                                item = combine_any(
-                                        subtype_x(
-                                                universe,
-                                                a->children[i],
-                                                b->children[i],
-                                                depth + 1
-                                        ),
-                                        subtype_x(
-                                                universe,
-                                                b->children[i],
-                                                a->children[i],
-                                                depth + 1
-                                        )
-                                );
-                        } else {
-                                item = a->children[i] == b->children[i]
-                                     ? T2_RELATION_YES
-                                     : T2_RELATION_NO;
-                        }
-                        relation = combine_all(relation, item);
-                }
-                return relation;
-        }
-
-        if (a->kind == T2_TYPE_TUPLE && b->kind == T2_TYPE_TUPLE) {
-                if (a->arity != b->arity) return T2_RELATION_NO;
-                T2Relation relation = T2_RELATION_YES;
-                for (size_t i = 0; i < a->arity; ++i) {
-                        relation = combine_all(
-                                relation,
-                                subtype_x(
-                                        universe,
-                                        a->children[i],
-                                        b->children[i],
-                                        depth + 1
-                                )
-                        );
-                }
-                return relation;
-        }
-
-        if (a->kind == T2_TYPE_FUNCTION && b->kind == T2_TYPE_FUNCTION) {
-                if (a->arity != b->arity) return T2_RELATION_NO;
-                T2Relation relation = T2_RELATION_YES;
-                size_t parameter_count = a->arity - 1;
-                for (size_t i = 0; i < parameter_count; ++i) {
-                        relation = combine_all(
-                                relation,
-                                subtype_x(
-                                        universe,
-                                        b->children[i],
-                                        a->children[i],
-                                        depth + 1
-                                )
-                        );
-                }
-                return combine_all(
-                        relation,
-                        subtype_x(
-                                universe,
-                                a->children[parameter_count],
-                                b->children[parameter_count],
-                                depth + 1
-                        )
-                );
-        }
-
-        return T2_RELATION_NO;
-}
-
-T2Relation
-t2_subtype(T2Universe const *universe, T2Type subtype, T2Type supertype)
-{
-        return subtype_x(universe, subtype, supertype, 0);
-}
-#endif
 
 static bool
 definitely_disjoint(T2Universe const *universe, T2Type left, T2Type right)
@@ -4644,7 +4235,7 @@ definitely_disjoint(T2Universe const *universe, T2Type left, T2Type right)
         if (
                 a->kind == T2_TYPE_LITERAL_STRING
              && b->kind == T2_TYPE_LITERAL_STRING
-        ) return strcmp(a->text, b->text) != 0;
+        ) return !s_eq(a->text, b->text);
         if (a->kind == T2_TYPE_LITERAL_INT && b->kind == T2_TYPE_INT_RANGE) {
                 return literal_in_range(universe, a, b) == T2_RELATION_NO;
         }
@@ -4660,8 +4251,8 @@ definitely_disjoint(T2Universe const *universe, T2Type left, T2Type right)
                      && a_upper->kind == T2_TYPE_LITERAL_INT
                      && b_lower->kind == T2_TYPE_LITERAL_INT
                 ) {
-                        int64_t high = (int64_t)a_upper->payload;
-                        int64_t low = (int64_t)b_lower->payload;
+                        i64 high = (i64)a_upper->payload;
+                        i64 low = (i64)b_lower->payload;
                         if ((a->payload & T2_RANGE_UPPER_INCLUSIVE) != 0
                                 ? high < low
                                 : high <= low) return true;
@@ -4674,8 +4265,8 @@ definitely_disjoint(T2Universe const *universe, T2Type left, T2Type right)
                      && b_upper->kind == T2_TYPE_LITERAL_INT
                      && a_lower->kind == T2_TYPE_LITERAL_INT
                 ) {
-                        int64_t high = (int64_t)b_upper->payload;
-                        int64_t low = (int64_t)a_lower->payload;
+                        i64 high = (i64)b_upper->payload;
+                        i64 low = (i64)a_lower->payload;
                         if ((b->payload & T2_RANGE_UPPER_INCLUSIVE) != 0
                                 ? high < low
                                 : high <= low) return true;
@@ -4750,16 +4341,16 @@ record_meet(T2Universe *universe, T2Type left, T2Type right)
              || b->kind != T2_TYPE_RECORD
         ) return T2_TYPE_INVALID;
 
-        size_t a_count = a->arity - 1;
-        size_t b_count = b->arity - 1;
+        usize a_count = a->arity - 1;
+        usize b_count = b->arity - 1;
         T2FieldSpec *fields = ty_calloc(a_count + b_count, sizeof *fields);
         if (a_count + b_count != 0 && fields == NULL) {
                 universe->failed = true;
                 return T2_TYPE_INVALID;
         }
-        size_t ai = 0;
-        size_t bi = 0;
-        size_t count = 0;
+        usize ai = 0;
+        usize bi = 0;
+        usize count = 0;
         bool a_exact = (T2RecordExactness)a->payload == T2_RECORD_EXACT;
         bool b_exact = (T2RecordExactness)b->payload == T2_RECORD_EXACT;
         T2Type never = t2_primitive(universe, T2_TYPE_NEVER);
@@ -4875,7 +4466,7 @@ make_set(
         T2Universe *universe,
         T2TypeKind kind,
         T2Type const *types,
-        size_t count
+        usize count
 )
 {
         T2TypeVector arms = {0};
@@ -4883,15 +4474,15 @@ make_set(
         bool saw_unknown = false;
         bool saw_dynamic = false;
 
-        for (size_t i = 0; i < count; ++i) {
+        for (usize i = 0; i < count; ++i) {
                 T2Node const *node = get_node(universe, types[i]);
                 if (node == NULL) {
-                        ty_free(arms.items);
+                        xvF(arms);
                         return T2_TYPE_INVALID;
                 }
 
                 if (node->kind == T2_TYPE_ERROR) {
-                        ty_free(arms.items);
+                        xvF(arms);
                         return t2_primitive(universe, T2_TYPE_ERROR);
                 }
 
@@ -4905,7 +4496,7 @@ make_set(
                         }
                 } else {
                         if (node->kind == T2_TYPE_NEVER) {
-                                ty_free(arms.items);
+                                xvF(arms);
                                 return t2_primitive(universe, T2_TYPE_NEVER);
                         }
                         if (node->kind == T2_TYPE_UNKNOWN) {
@@ -4929,61 +4520,61 @@ make_set(
         }
 
         if (kind == T2_TYPE_UNION && saw_unknown) {
-                ty_free(arms.items);
+                xvF(arms);
                 return t2_primitive(universe, T2_TYPE_UNKNOWN);
         }
         if (kind == T2_TYPE_UNION && saw_any) {
-                ty_free(arms.items);
+                xvF(arms);
                 return t2_primitive(universe, T2_TYPE_ANY);
         }
         if (kind == T2_TYPE_UNION && saw_dynamic) {
-                ty_free(arms.items);
+                xvF(arms);
                 return t2_primitive(universe, T2_TYPE_DYNAMIC);
         }
 
-        for (size_t i = 1; i < arms.count; ++i) {
-                T2Type item = arms.items[i];
-                size_t j = i;
+        for (usize i = 1; i < vN(arms); ++i) {
+                T2Type item = v__(arms, i);
+                usize j = i;
                 while (
                         j != 0
-                     && compare_types(universe, item, arms.items[j - 1], 0) < 0
+                     && compare_types(universe, item, v__(arms, j - 1), 0) < 0
                 ) {
-                        arms.items[j] = arms.items[j - 1];
+                        v__(arms, j) = v__(arms, j - 1);
                         --j;
                 }
-                arms.items[j] = item;
+                v__(arms, j) = item;
         }
 
-        size_t unique = 0;
-        for (size_t i = 0; i < arms.count; ++i) {
-                if (unique == 0 || arms.items[i] != arms.items[unique - 1]) {
-                        arms.items[unique++] = arms.items[i];
+        usize unique = 0;
+        for (usize i = 0; i < vN(arms); ++i) {
+                if (unique == 0 || v__(arms, i) != v__(arms, unique - 1)) {
+                        v__(arms, unique++) = v__(arms, i);
                 }
         }
-        arms.count = unique;
+        vN(arms) = unique;
 
-        bool *removed = arms.count == 0 ? NULL : ty_calloc(arms.count, sizeof *removed);
-        if (arms.count != 0 && removed == NULL) {
+        bool *removed = vN(arms) == 0 ? NULL : ty_calloc(vN(arms), sizeof *removed);
+        if (vN(arms) != 0 && removed == NULL) {
                 universe->failed = true;
                 goto Fail;
         }
 
-        for (size_t i = 0; i < arms.count; ++i) {
+        for (usize i = 0; i < vN(arms); ++i) {
                 if (removed[i]) continue;
-                for (size_t j = i + 1; j < arms.count; ++j) {
+                for (usize j = i + 1; j < vN(arms); ++j) {
                         if (removed[j]) continue;
 
                         if (
                                 kind == T2_TYPE_INTERSECTION
-                             && definitely_disjoint(universe, arms.items[i], arms.items[j])
+                             && definitely_disjoint(universe, v__(arms, i), v__(arms, j))
                         ) {
                                 ty_free(removed);
-                                ty_free(arms.items);
+                                xvF(arms);
                                 return t2_primitive(universe, T2_TYPE_NEVER);
                         }
 
-                        T2Relation ij = t2_subtype(universe, arms.items[i], arms.items[j]);
-                        T2Relation ji = t2_subtype(universe, arms.items[j], arms.items[i]);
+                        T2Relation ij = t2_subtype(universe, v__(arms, i), v__(arms, j));
+                        T2Relation ji = t2_subtype(universe, v__(arms, j), v__(arms, i));
                         if (kind == T2_TYPE_UNION) {
                                 if (ij == T2_RELATION_YES) removed[i] = true;
                                 else if (ji == T2_RELATION_YES) removed[j] = true;
@@ -4995,15 +4586,15 @@ make_set(
                 }
         }
 
-        size_t kept = 0;
-        for (size_t i = 0; i < arms.count; ++i) {
-                if (!removed[i]) arms.items[kept++] = arms.items[i];
+        usize kept = 0;
+        for (usize i = 0; i < vN(arms); ++i) {
+                if (!removed[i]) v__(arms, kept++) = v__(arms, i);
         }
         ty_free(removed);
-        arms.count = kept;
+        vN(arms) = kept;
 
-        if (arms.count == 0) {
-                ty_free(arms.items);
+        if (vN(arms) == 0) {
+                xvF(arms);
                 if (kind == T2_TYPE_UNION) {
                         return t2_primitive(universe, T2_TYPE_NEVER);
                 }
@@ -5013,9 +4604,9 @@ make_set(
                                     : saw_unknown ? T2_TYPE_UNKNOWN : T2_TYPE_ANY
                 );
         }
-        if (arms.count == 1) {
-                T2Type only = arms.items[0];
-                ty_free(arms.items);
+        if (vN(arms) == 1) {
+                T2Type only = v__(arms, 0);
+                xvF(arms);
                 return only;
         }
 
@@ -5025,34 +4616,34 @@ make_set(
                 T2_VARIABLE_FLEXIBLE,
                 0,
                 NULL,
-                arms.items,
-                arms.count
+                vv(arms),
+                vN(arms)
         );
-        ty_free(arms.items);
+        xvF(arms);
         return result;
 
 Fail:
-        ty_free(arms.items);
+        xvF(arms);
         return T2_TYPE_INVALID;
 }
 
 T2Type
-t2_union(T2Universe *universe, T2Type const *arms, size_t count)
+t2_union(T2Universe *universe, T2Type const *arms, usize count)
 {
         return make_set(universe, T2_TYPE_UNION, arms, count);
 }
 
 T2Type
-t2_intersection(T2Universe *universe, T2Type const *arms, size_t count)
+t2_intersection(T2Universe *universe, T2Type const *arms, usize count)
 {
         if (count != 0) {
                 bool all_records = true;
-                for (size_t i = 0; i < count; ++i) {
+                for (usize i = 0; i < count; ++i) {
                         all_records &= t2_type_kind(universe, arms[i]) == T2_TYPE_RECORD;
                 }
                 if (all_records) {
                         T2Type result = arms[0];
-                        for (size_t i = 1; i < count; ++i) {
+                        for (usize i = 1; i < count; ++i) {
                                 result = record_meet(universe, result, arms[i]);
                                 if (
                                         result == T2_TYPE_INVALID
@@ -5075,7 +4666,7 @@ append_overload_candidates(
         T2Node const *node = get_node(universe, candidate);
         if (node == NULL) return false;
         if (node->kind != T2_TYPE_OVERLOAD) return push_type(flat, candidate);
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 if (!append_overload_candidates(universe, flat, node->children[i])) {
                         return false;
                 }
@@ -5084,37 +4675,37 @@ append_overload_candidates(
 }
 
 T2Type
-t2_overload(T2Universe *universe, T2Type const *candidates, size_t count)
+t2_overload(T2Universe *universe, T2Type const *candidates, usize count)
 {
         if (count == 0) return t2_primitive(universe, T2_TYPE_NEVER);
         if (candidates == NULL) return T2_TYPE_INVALID;
         T2TypeVector flat = {0};
-        for (size_t i = 0; i < count; ++i) {
+        for (usize i = 0; i < count; ++i) {
                 if (get_node(universe, candidates[i]) == NULL) {
-                        ty_free(flat.items);
+                        xvF(flat);
                         return T2_TYPE_INVALID;
                 }
                 if (!append_overload_candidates(universe, &flat, candidates[i])) {
-                        ty_free(flat.items);
+                        xvF(flat);
                         universe->failed = true;
                         return T2_TYPE_INVALID;
                 }
         }
-        if (flat.count == 1) {
-                T2Type result = flat.items[0];
-                ty_free(flat.items);
+        if (vN(flat) == 1) {
+                T2Type result = v__(flat, 0);
+                xvF(flat);
                 return result;
         }
         T2Type result = intern_type(
                 universe,
                 T2_TYPE_OVERLOAD,
                 T2_VARIABLE_FLEXIBLE,
-                flat.count,
+                vN(flat),
                 NULL,
-                flat.items,
-                flat.count
+                vv(flat),
+                vN(flat)
         );
-        ty_free(flat.items);
+        xvF(flat);
         return result;
 }
 
@@ -5200,21 +4791,21 @@ meet_x(T2Universe *universe, T2Type left, T2Type right, unsigned depth)
                 T2TypeVector results = {0};
                 T2Type never = t2_primitive(universe, T2_TYPE_NEVER);
 
-                for (size_t i = 0; i < u->arity; ++i) {
+                for (usize i = 0; i < u->arity; ++i) {
                         T2Type item = meet_x(universe, u->children[i], other, depth + 1);
                         if (item == T2_TYPE_INVALID) {
-                                ty_free(results.items);
+                                xvF(results);
                                 return item;
                         }
                         if (item != never && !push_type(&results, item)) {
-                                ty_free(results.items);
+                                xvF(results);
                                 universe->failed = true;
                                 return T2_TYPE_INVALID;
                         }
                 }
 
-                T2Type result = t2_union(universe, results.items, results.count);
-                ty_free(results.items);
+                T2Type result = t2_union(universe, vv(results), vN(results));
+                xvF(results);
                 return result;
         }
         if (definitely_disjoint(universe, left, right)) {
@@ -5278,7 +4869,7 @@ t2_type_variable_kind(T2Universe const *universe, T2Type type)
         return node == NULL ? T2_VARIABLE_FLEXIBLE : node->variable_kind;
 }
 
-size_t
+usize
 t2_type_arity(T2Universe const *universe, T2Type type)
 {
         T2Node const *node = get_node(universe, type);
@@ -5286,7 +4877,7 @@ t2_type_arity(T2Universe const *universe, T2Type type)
 }
 
 T2Type
-t2_type_child(T2Universe const *universe, T2Type type, size_t index)
+t2_type_child(T2Universe const *universe, T2Type type, usize index)
 {
         T2Node const *node = get_node(universe, type);
         return node == NULL || index >= node->arity
@@ -5294,7 +4885,7 @@ t2_type_child(T2Universe const *universe, T2Type type, size_t index)
              : node->children[index];
 }
 
-uint64_t
+u64
 t2_type_payload(T2Universe const *universe, T2Type type)
 {
         T2Node const *node = get_node(universe, type);
@@ -5308,7 +4899,7 @@ t2_type_name(T2Universe const *universe, T2Type type)
         return node == NULL ? NULL : node->text;
 }
 
-uint64_t
+u64
 t2_type_hash(T2Universe const *universe, T2Type type)
 {
         T2Node const *node = get_node(universe, type);
@@ -5321,36 +4912,13 @@ t2_type_same(T2Universe const *universe, T2Type left, T2Type right)
         return universe != NULL && left != T2_TYPE_INVALID && left == right;
 }
 
-static bool
-buffer_reserve(T2StringBuffer *buffer, size_t extra)
-{
-        if (buffer->failed || extra > SIZE_MAX - buffer->count - 1) {
-                buffer->failed = true;
-                return false;
-        }
-        size_t needed = buffer->count + extra + 1;
-        if (
-                !reserve_array(
-                        (void **)&buffer->items,
-                        &buffer->capacity,
-                        needed,
-                        sizeof *buffer->items
-                )
-        ) {
-                buffer->failed = true;
-                return false;
-        }
-        return true;
-}
-
 static void
 buffer_text(T2StringBuffer *buffer, char const *text)
 {
-        size_t length = strlen(text);
-        if (!buffer_reserve(buffer, length)) return;
-        memcpy(buffer->items + buffer->count, text, length);
-        buffer->count += length;
-        buffer->items[buffer->count] = '\0';
+        usize length = strlen(text);
+        xvR(*buffer, vN(*buffer) + length + 1);
+        xvPn(*buffer, text, length);
+        *vZ(*buffer) = '\0';
 }
 
 static void
@@ -5362,13 +4930,14 @@ buffer_format(T2StringBuffer *buffer, char const *format, ...)
         va_copy(copy, ap);
         int length = vsnprintf(NULL, 0, format, copy);
         va_end(copy);
-        if (length < 0 || !buffer_reserve(buffer, (size_t)length)) {
+        if (length < 0) {
                 va_end(ap);
                 return;
         }
-        vsnprintf(buffer->items + buffer->count, (size_t)length + 1, format, ap);
+        xvR(*buffer, vN(*buffer) + (usize)length + 1);
+        vsnprintf(vv(*buffer) + vN(*buffer), (usize)length + 1, format, ap);
         va_end(ap);
-        buffer->count += (size_t)length;
+        vN(*buffer) += (usize)length;
 }
 
 static char const *
@@ -5414,16 +4983,14 @@ static T2Predicate
 predicate_from_node(T2Node const *node);
 
 typedef struct t2_name_entry {
-        uint64_t id;
+        u64 id;
         bool meta;
         bool dead;
         char name[24];
 } T2NameEntry;
 
 struct t2_names {
-        T2NameEntry *entries;
-        size_t count;
-        size_t capacity;
+        vec(T2NameEntry) entries;
         unsigned variables;
         unsigned metas;
 };
@@ -5438,48 +5005,43 @@ void
 t2_names_free(T2Names *names)
 {
         if (names == NULL) return;
-        ty_free(names->entries);
+        xvF(names->entries);
         ty_free(names);
 }
 
 static T2NameEntry *
-find_name(T2Names const *names, bool meta, uint64_t id)
+find_name(T2Names const *names, bool meta, u64 id)
 {
-        for (size_t i = names->count; i != 0; --i) {
-                T2NameEntry *entry = &names->entries[i - 1];
+        for (usize i = vN(names->entries); i != 0; --i) {
+                T2NameEntry *entry = v_(names->entries, i - 1);
                 if (!entry->dead && entry->meta == meta && entry->id == id) return entry;
         }
         return NULL;
 }
 
 static void
-spell_name(unsigned ordinal, bool meta, char *out, size_t size)
+spell_name(unsigned ordinal, bool meta, char *out, usize size)
 {
         unsigned letter = ordinal % 26;
         unsigned round = ordinal / 26;
         if (round == 0) {
-                snprintf(out, size, "%s%c", meta ? "?" : "", 'a' + letter);
+                ty_snprintf(out, size, "%s%c", meta ? "?" : "", 'a' + letter);
         } else {
-                snprintf(out, size, "%s%c%u", meta ? "?" : "", 'a' + letter, round);
+                ty_snprintf(out, size, "%s%c%u", meta ? "?" : "", 'a' + letter, round);
         }
 }
 
 static T2NameEntry *
-name_entry(T2Names *names, bool meta, uint64_t id, char const *chosen)
+name_entry(T2Names *names, bool meta, u64 id, char const *chosen)
 {
         T2NameEntry *entry = chosen == NULL ? find_name(names, meta, id) : NULL;
         if (entry != NULL) return entry;
-        if (!reserve_array(
-                (void **)&names->entries,
-                &names->capacity,
-                names->count + 1,
-                sizeof *names->entries
-        )) return NULL;
-        entry = &names->entries[names->count++];
+        xvP(names->entries, ((T2NameEntry) {0}));
+        entry = v_(names->entries, vN(names->entries) - 1);
         entry->meta = meta;
         entry->id = id;
         if (chosen != NULL) {
-                snprintf(entry->name, sizeof entry->name, "%s", chosen);
+                ty_snprintf(entry->name, sizeof entry->name, "%s", chosen);
         } else if (meta) {
                 spell_name(names->metas++, true, entry->name, sizeof entry->name);
         } else {
@@ -5511,87 +5073,63 @@ typedef enum t2_doc_kind {
 } T2DocKind;
 
 typedef struct t2_doc {
-        uint32_t next;
-        uint32_t child;
-        uint32_t text;
-        uint32_t length;
-        int32_t indent;
+        u32 next;
+        u32 child;
+        u32 text;
+        u32 length;
+        i32 indent;
         T2DocKind kind;
         T2TokenKind token;
 } T2Doc;
 
 typedef struct t2_container {
-        uint32_t doc;
-        uint32_t tail;
+        u32 doc;
+        u32 tail;
 } T2Container;
 
 typedef struct t2_printer {
         T2Universe const *universe;
         T2PrintOptions options;
         T2Names *names;
-        T2Doc *docs;
-        size_t doc_count;
-        size_t doc_capacity;
-        char *text;
-        size_t text_count;
-        size_t text_capacity;
-        T2Container *open;
-        size_t open_count;
-        size_t open_capacity;
+        vec(T2Doc) docs;
+        vec(char) text;
+        vec(T2Container) open;
         bool failed;
 } T2Printer;
 
-static uint32_t
+static u32
 new_doc(T2Printer *printer, T2DocKind kind)
 {
         if (printer->failed) return 0;
-        if (!reserve_array(
-                (void **)&printer->docs,
-                &printer->doc_capacity,
-                printer->doc_count + 1,
-                sizeof *printer->docs
-        )) {
-                printer->failed = true;
-                return 0;
-        }
-        uint32_t index = (uint32_t)printer->doc_count++;
-        printer->docs[index] = (T2Doc) { .kind = kind };
+        u32 index = (u32)vN(printer->docs);
+        xvP(printer->docs, ((T2Doc) { .kind = kind }));
         return index;
 }
 
 static void
-attach(T2Printer *printer, uint32_t doc)
+attach(T2Printer *printer, u32 doc)
 {
-        if (printer->failed || doc == 0 || printer->open_count == 0) return;
-        T2Container *container = &printer->open[printer->open_count - 1];
-        if (container->tail == 0) printer->docs[container->doc].child = doc;
-        else printer->docs[container->tail].next = doc;
+        if (printer->failed || doc == 0 || vN(printer->open) == 0) return;
+        T2Container *container = v_(printer->open, vN(printer->open) - 1);
+        if (container->tail == 0) v__(printer->docs, container->doc).child = doc;
+        else v__(printer->docs, container->tail).next = doc;
         container->tail = doc;
 }
 
 static void
-open_container(T2Printer *printer, T2DocKind kind, int32_t indent)
+open_container(T2Printer *printer, T2DocKind kind, i32 indent)
 {
-        uint32_t doc = new_doc(printer, kind);
+        u32 doc = new_doc(printer, kind);
         if (printer->failed) return;
-        printer->docs[doc].indent = indent;
+        v__(printer->docs, doc).indent = indent;
         attach(printer, doc);
-        if (!reserve_array(
-                (void **)&printer->open,
-                &printer->open_capacity,
-                printer->open_count + 1,
-                sizeof *printer->open
-        )) {
-                printer->failed = true;
-                return;
-        }
-        printer->open[printer->open_count++] = (T2Container) { .doc = doc };
+        xvP(printer->open, (T2Container) { .doc = doc });
 }
 
 static void
 close_container(T2Printer *printer)
 {
-        if (!printer->failed && printer->open_count > 1) printer->open_count -= 1;
+        if (!printer->failed && vN(printer->open) > 1) vN(printer->open) -= 1;
 }
 
 static void
@@ -5603,28 +5141,18 @@ open_group(T2Printer *printer)
 static void
 open_nest(T2Printer *printer)
 {
-        open_container(printer, T2_DOC_NEST, (int32_t)printer->options.indent);
+        open_container(printer, T2_DOC_NEST, (i32)printer->options.indent);
 }
 
 static void
-text_n(T2Printer *printer, T2TokenKind token, char const *text, size_t length)
+text_n(T2Printer *printer, T2TokenKind token, char const *text, usize length)
 {
-        uint32_t doc = new_doc(printer, T2_DOC_TEXT);
+        u32 doc = new_doc(printer, T2_DOC_TEXT);
         if (printer->failed) return;
-        if (!reserve_array(
-                (void **)&printer->text,
-                &printer->text_capacity,
-                printer->text_count + length + 1,
-                1
-        )) {
-                printer->failed = true;
-                return;
-        }
-        memcpy(printer->text + printer->text_count, text, length);
-        printer->docs[doc].text = (uint32_t)printer->text_count;
-        printer->docs[doc].length = (uint32_t)length;
-        printer->docs[doc].token = token;
-        printer->text_count += length;
+        v__(printer->docs, doc).text = (u32)vN(printer->text);
+        v__(printer->docs, doc).length = (u32)length;
+        v__(printer->docs, doc).token = token;
+        xvPn(printer->text, text, length);
         attach(printer, doc);
 }
 
@@ -5667,7 +5195,7 @@ begin_list(T2Printer *printer, T2TokenKind token, char const *open)
 }
 
 static void
-list_separator(T2Printer *printer, size_t index)
+list_separator(T2Printer *printer, usize index)
 {
         if (index == 0) return;
         text(printer, T2_TOKEN_PUNCTUATION, ",");
@@ -5729,7 +5257,7 @@ doc_row_tail(T2Printer *printer, T2Type tail, bool after_fields, unsigned depth)
 static void
 doc_fields(T2Printer *printer, T2Node const *node, bool decorated, unsigned depth)
 {
-        for (size_t i = 0; i + 1 < node->arity; ++i) {
+        for (usize i = 0; i + 1 < node->arity; ++i) {
                 T2Node const *field = get_node(printer->universe, node->children[i]);
                 list_separator(printer, i);
                 if (decorated && (field->payload & T2_FIELD_WRITABLE_BIT) == 0) {
@@ -5763,7 +5291,7 @@ doc_arguments(T2Printer *printer, T2Node const *node, unsigned depth)
 {
         if (node->arity == 0) return;
         begin_list(printer, T2_TOKEN_BRACKET, "[");
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 list_separator(printer, i);
                 doc_type(printer, node->children[i], depth);
         }
@@ -5792,7 +5320,7 @@ doc_arms(T2Printer *printer, T2Node const *node, char const *operator, unsigned 
         open_group(printer);
         doc_operand(printer, node->children[0], depth);
         open_nest(printer);
-        for (size_t i = 1; i < node->arity; ++i) {
+        for (usize i = 1; i < node->arity; ++i) {
                 line(printer);
                 text(printer, T2_TOKEN_OPERATOR, operator);
                 text(printer, T2_TOKEN_PUNCTUATION, " ");
@@ -5805,10 +5333,10 @@ doc_arms(T2Printer *printer, T2Node const *node, char const *operator, unsigned 
 static void
 doc_function(T2Printer *printer, T2Node const *node, unsigned depth)
 {
-        size_t parameter_count = (size_t)node->payload;
+        usize parameter_count = (usize)node->payload;
         open_group(printer);
         begin_list(printer, T2_TOKEN_FUNCTION, "(");
-        for (size_t i = 0; i < parameter_count; ++i) {
+        for (usize i = 0; i < parameter_count; ++i) {
                 T2Node const *parameter = get_node(printer->universe, node->children[i]);
                 list_separator(printer, i);
                 T2ParameterKind kind = (T2ParameterKind)(
@@ -5858,14 +5386,14 @@ doc_pack(T2Printer *printer, T2Node const *node, unsigned depth)
 {
         text(printer, T2_TOKEN_KEYWORD, "pack");
         begin_list(printer, T2_TOKEN_BRACKET, "[");
-        for (size_t i = 0; i < (size_t)node->payload; ++i) {
+        for (usize i = 0; i < (usize)node->payload; ++i) {
                 list_separator(printer, i);
                 doc_type(printer, node->children[i], depth);
         }
         if (node->arity != 0) {
                 T2Node const *tail = get_node(printer->universe, node->children[node->arity - 1]);
                 if (tail->kind != T2_TYPE_PACK_EMPTY) {
-                        list_separator(printer, (size_t)node->payload);
+                        list_separator(printer, (usize)node->payload);
                         text(printer, T2_TOKEN_PUNCTUATION, ".. ");
                         doc_type(printer, node->children[node->arity - 1], depth);
                 }
@@ -5877,16 +5405,16 @@ static void
 doc_predicate(T2Printer *printer, T2Predicate const *predicate, unsigned depth);
 
 static void
-doc_where(T2Printer *printer, T2Predicate const *predicates, size_t count, unsigned depth);
+doc_where(T2Printer *printer, T2Predicate const *predicates, usize count, unsigned depth);
 
 static void
 doc_scheme_node(T2Printer *printer, T2Node const *node, unsigned depth)
 {
-        size_t quantifier_count = (size_t)node->payload;
-        size_t predicate_count = node->arity - quantifier_count - 1;
-        size_t scope = printer->names->count;
-        size_t bound = 0;
-        for (size_t i = 0; i < quantifier_count; ++i) {
+        usize quantifier_count = (usize)node->payload;
+        usize predicate_count = node->arity - quantifier_count - 1;
+        usize scope = vN(printer->names->entries);
+        usize bound = 0;
+        for (usize i = 0; i < quantifier_count; ++i) {
                 T2Node const *binder = get_node(printer->universe, node->children[i]);
                 if (binder->text == NULL || printer->options.raw) continue;
                 if (name_entry(printer->names, false, binder->payload, binder->text) == NULL) {
@@ -5902,7 +5430,7 @@ doc_scheme_node(T2Printer *printer, T2Node const *node, unsigned depth)
                 printer->failed = true;
                 return;
         }
-        for (size_t i = 0; i < predicate_count; ++i) {
+        for (usize i = 0; i < predicate_count; ++i) {
                 predicates[i] = predicate_from_node(
                         get_node(printer->universe, node->children[quantifier_count + 1 + i])
                 );
@@ -5912,8 +5440,8 @@ doc_scheme_node(T2Printer *printer, T2Node const *node, unsigned depth)
         doc_where(printer, predicates, predicate_count, depth);
         close_container(printer);
         ty_free(predicates);
-        for (size_t i = 0; i < bound; ++i) {
-                printer->names->entries[scope + i].dead = true;
+        for (usize i = 0; i < bound; ++i) {
+                v__(printer->names->entries, scope + i).dead = true;
         }
 }
 
@@ -5943,7 +5471,7 @@ doc_type(T2Printer *printer, T2Type type, unsigned depth)
                 text(printer, T2_TOKEN_LITERAL, node->payload ? "true" : "false");
                 break;
         case T2_TYPE_LITERAL_INT:
-                formatted(printer, T2_TOKEN_LITERAL, "%" PRId64, (int64_t)node->payload);
+                formatted(printer, T2_TOKEN_LITERAL, "%" PRId64, (i64)node->payload);
                 break;
         case T2_TYPE_LITERAL_STRING:
         {
@@ -5951,9 +5479,8 @@ doc_type(T2Printer *printer, T2Type type, unsigned depth)
                 buffer_text(&quoted, "'");
                 buffer_text(&quoted, node->text);
                 buffer_text(&quoted, "'");
-                if (quoted.failed) printer->failed = true;
-                else text(printer, T2_TOKEN_LITERAL, quoted.items);
-                ty_free(quoted.items);
+                text(printer, T2_TOKEN_LITERAL, vv(quoted));
+                xvF(quoted);
                 break;
         }
         case T2_TYPE_INT_RANGE:
@@ -5967,7 +5494,7 @@ doc_type(T2Printer *printer, T2Type type, unsigned depth)
                         (node->payload & T2_RANGE_UPPER_INCLUSIVE) != 0 ? "..." : ".."
                 );
                 if (upper != NULL) {
-                        size_t index = (node->payload & T2_RANGE_HAS_LOWER) != 0;
+                        usize index = (node->payload & T2_RANGE_HAS_LOWER) != 0;
                         doc_type(printer, node->children[index], depth);
                 }
                 break;
@@ -5983,7 +5510,7 @@ doc_type(T2Printer *printer, T2Type type, unsigned depth)
                 text(printer, T2_TOKEN_PUNCTUATION, " ");
                 text(printer, T2_TOKEN_NOMINAL, node->text);
                 begin_list(printer, T2_TOKEN_STRUCTURE, "(");
-                for (size_t i = 0; i < node->arity; ++i) {
+                for (usize i = 0; i < node->arity; ++i) {
                         list_separator(printer, i);
                         doc_type(printer, node->children[i], depth);
                 }
@@ -6012,7 +5539,7 @@ doc_type(T2Printer *printer, T2Type type, unsigned depth)
                 break;
         case T2_TYPE_TUPLE:
                 begin_list(printer, T2_TOKEN_STRUCTURE, "(");
-                for (size_t i = 0; i < node->arity; ++i) {
+                for (usize i = 0; i < node->arity; ++i) {
                         list_separator(printer, i);
                         doc_type(printer, node->children[i], depth);
                 }
@@ -6021,7 +5548,7 @@ doc_type(T2Printer *printer, T2Type type, unsigned depth)
                 break;
         case T2_TYPE_MULTI:
                 begin_list(printer, T2_TOKEN_STRUCTURE, "|");
-                for (size_t i = 0; i < node->arity; ++i) {
+                for (usize i = 0; i < node->arity; ++i) {
                         list_separator(printer, i);
                         doc_type(printer, node->children[i], depth);
                 }
@@ -6029,9 +5556,9 @@ doc_type(T2Printer *printer, T2Type type, unsigned depth)
                 break;
         case T2_TYPE_VARIADIC_TUPLE:
         {
-                size_t prefix = (size_t)node->payload;
+                usize prefix = (usize)node->payload;
                 begin_list(printer, T2_TOKEN_STRUCTURE, "(");
-                for (size_t i = 0; i < prefix; ++i) {
+                for (usize i = 0; i < prefix; ++i) {
                         list_separator(printer, i);
                         doc_type(printer, node->children[i], depth);
                 }
@@ -6116,7 +5643,7 @@ doc_type(T2Printer *printer, T2Type type, unsigned depth)
         case T2_TYPE_OVERLOAD:
                 text(printer, T2_TOKEN_KEYWORD, "overload");
                 begin_list(printer, T2_TOKEN_STRUCTURE, "{");
-                for (size_t i = 0; i < node->arity; ++i) {
+                for (usize i = 0; i < node->arity; ++i) {
                         if (i != 0) {
                                 text(printer, T2_TOKEN_PUNCTUATION, ";");
                                 line(printer);
@@ -6208,7 +5735,7 @@ doc_predicate(T2Printer *printer, T2Predicate const *predicate, unsigned depth)
 }
 
 static void
-doc_where(T2Printer *printer, T2Predicate const *predicates, size_t count, unsigned depth)
+doc_where(T2Printer *printer, T2Predicate const *predicates, usize count, unsigned depth)
 {
         if (count == 0) return;
         open_nest(printer);
@@ -6216,7 +5743,7 @@ doc_where(T2Printer *printer, T2Predicate const *predicates, size_t count, unsig
         text(printer, T2_TOKEN_KEYWORD, "where");
         open_group(printer);
         open_nest(printer);
-        for (size_t i = 0; i < count; ++i) {
+        for (usize i = 0; i < count; ++i) {
                 if (i != 0) text(printer, T2_TOKEN_PUNCTUATION, ",");
                 line(printer);
                 doc_predicate(printer, &predicates[i], depth);
@@ -6236,15 +5763,13 @@ doc_scheme(T2Printer *printer, T2Scheme const *scheme)
 }
 
 typedef struct t2_frame {
-        uint32_t doc;
-        int32_t indent;
+        u32 doc;
+        i32 indent;
         bool flat;
 } T2Frame;
 
 typedef struct t2_frame_stack {
-        T2Frame *items;
-        size_t count;
-        size_t capacity;
+        vec(T2Frame) frames;
         bool failed;
 } T2FrameStack;
 
@@ -6252,23 +5777,14 @@ static void
 push_frame(T2FrameStack *stack, T2Frame frame)
 {
         if (frame.doc == 0 || stack->failed) return;
-        if (!reserve_array(
-                (void **)&stack->items,
-                &stack->capacity,
-                stack->count + 1,
-                sizeof *stack->items
-        )) {
-                stack->failed = true;
-                return;
-        }
-        stack->items[stack->count++] = frame;
+        xvP(stack->frames, frame);
 }
 
-static size_t
-visible_width(char const *text, size_t length)
+static usize
+visible_width(char const *text, usize length)
 {
-        size_t width = 0;
-        for (size_t i = 0; i < length; ++i) {
+        usize width = 0;
+        for (usize i = 0; i < length; ++i) {
                 width += ((unsigned char)text[i] & 0xC0) != 0x80;
         }
         return width;
@@ -6279,24 +5795,24 @@ fits(T2Printer const *printer, long remaining, T2Frame candidate, T2FrameStack c
 {
         T2FrameStack scratch = {0};
         push_frame(&scratch, candidate);
-        size_t rest_index = rest->count;
+        usize rest_index = vN(rest->frames);
         bool answer = true;
         for (;;) {
                 if (scratch.failed) {
                         answer = false;
                         break;
                 }
-                if (scratch.count == 0) {
+                if (vN(scratch.frames) == 0) {
                         if (rest_index == 0) break;
-                        push_frame(&scratch, rest->items[--rest_index]);
+                        push_frame(&scratch, v__(rest->frames, --rest_index));
                         continue;
                 }
-                T2Frame frame = scratch.items[--scratch.count];
-                T2Doc const *doc = &printer->docs[frame.doc];
+                T2Frame frame = v__(scratch.frames, --vN(scratch.frames));
+                T2Doc const *doc = v_(printer->docs, frame.doc);
                 push_frame(&scratch, (T2Frame) { doc->next, frame.indent, frame.flat });
                 switch (doc->kind) {
                 case T2_DOC_TEXT:
-                        remaining -= (long)visible_width(printer->text + doc->text, doc->length);
+                        remaining -= (long)visible_width(vv(printer->text) + doc->text, doc->length);
                         break;
                 case T2_DOC_LINE:
                         if (!frame.flat) goto Done;
@@ -6316,12 +5832,12 @@ fits(T2Printer const *printer, long remaining, T2Frame candidate, T2FrameStack c
                 }
         }
 Done:
-        ty_free(scratch.items);
+        xvF(scratch.frames);
         return answer;
 }
 
 static void
-emit_indent(T2StringBuffer *out, unsigned hang, int32_t indent)
+emit_indent(T2StringBuffer *out, unsigned hang, i32 indent)
 {
         buffer_text(out, "\n");
         long spaces = (long)hang + indent;
@@ -6339,10 +5855,9 @@ emit_text(T2Printer const *printer, T2StringBuffer *out, T2Doc const *doc)
                 buffer_text(out, style);
                 buffer_text(out, "m");
         }
-        if (!buffer_reserve(out, doc->length)) return;
-        memcpy(out->items + out->count, printer->text + doc->text, doc->length);
-        out->count += doc->length;
-        out->items[out->count] = '\0';
+        xvR(*out, vN(*out) + doc->length + 1);
+        xvPn(*out, vv(printer->text) + doc->text, doc->length);
+        vv(*out)[vN(*out)] = '\0';
         if (style != NULL && *style != '\0') buffer_text(out, "\x1b[0m");
 }
 
@@ -6354,15 +5869,15 @@ layout(T2Printer *printer)
         T2FrameStack stack = {0};
         long column = (long)printer->options.column;
         long width = printer->options.width == 0 ? LONG_MAX : (long)printer->options.width;
-        push_frame(&stack, (T2Frame) { printer->docs[0].child, 0, printer->options.width == 0 });
-        while (stack.count != 0 && !stack.failed) {
-                T2Frame frame = stack.items[--stack.count];
-                T2Doc const *doc = &printer->docs[frame.doc];
+        push_frame(&stack, (T2Frame) { v__(printer->docs, 0).child, 0, printer->options.width == 0 });
+        while (vN(stack.frames) != 0 && !stack.failed) {
+                T2Frame frame = vv(stack.frames)[--vN(stack.frames)];
+                T2Doc const *doc = v_(printer->docs, frame.doc);
                 push_frame(&stack, (T2Frame) { doc->next, frame.indent, frame.flat });
                 switch (doc->kind) {
                 case T2_DOC_TEXT:
                         emit_text(printer, &out, doc);
-                        column += (long)visible_width(printer->text + doc->text, doc->length);
+                        column += (long)visible_width(vv(printer->text) + doc->text, doc->length);
                         break;
                 case T2_DOC_LINE:
                         if (frame.flat) {
@@ -6393,13 +5908,13 @@ layout(T2Printer *printer)
                 }
                 }
         }
-        bool failed = stack.failed || out.failed;
-        ty_free(stack.items);
+        bool failed = stack.failed;
+        xvF(stack.frames);
         if (failed) {
-                ty_free(out.items);
+                xvF(out);
                 return NULL;
         }
-        return out.items == NULL ? copy_string("") : out.items;
+        return vv(out) == NULL ? S2("") : vv(out);
 }
 
 static void
@@ -6418,18 +5933,9 @@ printer_init(T2Printer *printer, T2Universe const *universe, T2PrintOptions cons
                 printer->failed = true;
                 return;
         }
-        uint32_t root = new_doc(printer, T2_DOC_NEST);
+        u32 root = new_doc(printer, T2_DOC_NEST);
         if (printer->failed) return;
-        if (!reserve_array(
-                (void **)&printer->open,
-                &printer->open_capacity,
-                1,
-                sizeof *printer->open
-        )) {
-                printer->failed = true;
-                return;
-        }
-        printer->open[printer->open_count++] = (T2Container) { .doc = root };
+        xvP(printer->open, (T2Container) { .doc = root });
 }
 
 static char *
@@ -6437,9 +5943,9 @@ printer_finish(T2Printer *printer)
 {
         char *result = layout(printer);
         if (printer->options.names == NULL) t2_names_free(printer->names);
-        ty_free(printer->docs);
-        ty_free(printer->text);
-        ty_free(printer->open);
+        xvF(printer->docs);
+        xvF(printer->text);
+        xvF(printer->open);
         return result;
 }
 
@@ -6491,9 +5997,9 @@ t2_string_free(char *text)
 
 typedef struct t2_substitution {
         T2Universe *universe;
-        uint32_t const *ids;
+        u32 const *ids;
         T2Type const *replacements;
-        size_t count;
+        usize count;
 } T2Substitution;
 
 static T2Type
@@ -6502,7 +6008,7 @@ substitute_type(T2Substitution const *substitution, T2Type source, unsigned dept
         T2Node const *node = get_node(substitution->universe, source);
         if (node == NULL || depth > T2_RELATION_DEPTH_LIMIT) return source;
         if (node->kind == T2_TYPE_VARIABLE) {
-                for (size_t i = 0; i < substitution->count; ++i) {
+                for (usize i = 0; i < substitution->count; ++i) {
                         if (node->payload == substitution->ids[i]) {
                                 return substitution->replacements[i];
                         }
@@ -6513,7 +6019,7 @@ substitute_type(T2Substitution const *substitution, T2Type source, unsigned dept
         T2Type *children = ty_malloc(node->arity * sizeof *children);
         if (children == NULL) return T2_TYPE_INVALID;
         bool changed = false;
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 children[i] = substitute_type(substitution, node->children[i], depth + 1);
                 if (children[i] == T2_TYPE_INVALID) {
                         ty_free(children);
@@ -6532,9 +6038,9 @@ T2Type
 t2_type_substitute(
         T2Universe *universe,
         T2Type type,
-        uint32_t const *ids,
+        u32 const *ids,
         T2Type const *replacements,
-        size_t count
+        usize count
 )
 {
         if (universe == NULL || (count != 0 && (ids == NULL || replacements == NULL))) {
@@ -6549,278 +6055,50 @@ t2_type_substitute(
         return substitute_type(&substitution, type, 0);
 }
 
-typedef struct t2_snapshot_build {
-        T2Universe const *universe;
-        T2TypeSnapshot *snapshot;
-        uint32_t *indices;
-        unsigned char *state;
-        bool failed;
-} T2SnapshotBuild;
-
-static bool
-snapshot_visit(T2SnapshotBuild *build, T2Type type, uint32_t *result)
-{
-        if (
-                build->failed
-             || type == T2_TYPE_INVALID
-             || type > build->universe->node_count
-        ) return false;
-        size_t source_index = (size_t)type - 1;
-        if (build->indices[source_index] != UINT32_MAX) {
-                *result = build->indices[source_index];
-                return true;
-        }
-        if (build->state[source_index] != 0) {
-                build->failed = true;
-                return false;
-        }
-
-        T2Node const *source = get_node(build->universe, type);
-        if (source == NULL || source->kind == T2_TYPE_META) {
-                build->failed = true;
-                return false;
-        }
-        build->state[source_index] = 1;
-        uint32_t *children = source->arity == 0
-                           ? NULL
-                           : ty_malloc(source->arity * sizeof *children);
-        if (source->arity != 0 && children == NULL) {
-                build->failed = true;
-                return false;
-        }
-        for (size_t i = 0; i < source->arity; ++i) {
-                if (!snapshot_visit(build, source->children[i], &children[i])) {
-                        ty_free(children);
-                        return false;
-                }
-        }
-
-        if (
-                build->snapshot->node_count >= UINT32_MAX
-             || !reserve_array(
-                    (void **)&build->snapshot->nodes,
-                    &build->snapshot->node_capacity,
-                    build->snapshot->node_count + 1,
-                    sizeof *build->snapshot->nodes
-                )
-        ) {
-                ty_free(children);
-                build->failed = true;
-                return false;
-        }
-        char *text = copy_string(source->text);
-        if (source->text != NULL && text == NULL) {
-                ty_free(children);
-                build->failed = true;
-                return false;
-        }
-        uint32_t snapshot_index = (uint32_t)build->snapshot->node_count;
-        build->snapshot->nodes[build->snapshot->node_count++] =
-                (T2TypeSnapshotNode) {
-                        .payload = source->payload,
-                        .text = text,
-                        .children = children,
-                        .arity = source->arity,
-                        .kind = source->kind,
-                        .variable_kind = source->variable_kind
-                };
-        build->indices[source_index] = snapshot_index;
-        build->state[source_index] = 2;
-        *result = snapshot_index;
-        return true;
-}
-
-T2TypeSnapshot *
-t2_type_snapshot_new(T2Universe const *universe, T2Type type)
-{
-        if (get_node(universe, type) == NULL) return NULL;
-        T2TypeSnapshot *snapshot = ty_calloc(1, sizeof *snapshot);
-        uint32_t *indices = ty_malloc(universe->node_count * sizeof *indices);
-        unsigned char *state = ty_calloc(universe->node_count, sizeof *state);
-        if (snapshot == NULL || indices == NULL || state == NULL) {
-                ty_free(snapshot);
-                ty_free(indices);
-                ty_free(state);
-                return NULL;
-        }
-        for (size_t i = 0; i < universe->node_count; ++i) {
-                indices[i] = UINT32_MAX;
-        }
-        T2SnapshotBuild build = {
-                .universe = universe,
-                .snapshot = snapshot,
-                .indices = indices,
-                .state = state
-        };
-        bool ok = snapshot_visit(&build, type, &snapshot->root);
-        ty_free(indices);
-        ty_free(state);
-        if (!ok || build.failed) {
-                t2_type_snapshot_free(snapshot);
-                return NULL;
-        }
-        return snapshot;
-}
-
-void
-t2_type_snapshot_free(T2TypeSnapshot *snapshot)
-{
-        if (snapshot == NULL) return;
-        for (size_t i = 0; i < snapshot->node_count; ++i) {
-                ty_free(snapshot->nodes[i].text);
-                ty_free(snapshot->nodes[i].children);
-        }
-        ty_free(snapshot->nodes);
-        ty_free(snapshot);
-}
-
-size_t
-t2_type_snapshot_node_count(T2TypeSnapshot const *snapshot)
-{
-        return snapshot == NULL ? 0 : snapshot->node_count;
-}
-
-T2Type
-t2_type_snapshot_import(
-        T2Universe *universe,
-        T2TypeSnapshot const *snapshot
-)
-{
-        if (
-                universe == NULL
-             || snapshot == NULL
-             || snapshot->node_count == 0
-             || snapshot->root >= snapshot->node_count
-        ) return T2_TYPE_INVALID;
-
-        T2Type *types = ty_malloc(snapshot->node_count * sizeof *types);
-        if (types == NULL) {
-                universe->failed = true;
-                return T2_TYPE_INVALID;
-        }
-        T2Type result = T2_TYPE_INVALID;
-        for (size_t i = 0; i < snapshot->node_count; ++i) {
-                T2TypeSnapshotNode const *source = &snapshot->nodes[i];
-                if (source->kind >= T2_TYPE_KIND_COUNT || source->kind == T2_TYPE_META) {
-                        goto Done;
-                }
-                T2Node *node = ty_malloc(
-                        sizeof *node + (size_t)source->arity * sizeof *node->children
-                );
-                if (node == NULL) {
-                        universe->failed = true;
-                        goto Done;
-                }
-                *node = (T2Node) {
-                        .payload = source->payload,
-                        .text = source->text,
-                        .arity = source->arity,
-                        .kind = source->kind,
-                        .variable_kind = source->variable_kind
-                };
-                bool valid = true;
-                for (size_t j = 0; j < source->arity; ++j) {
-                        if (source->children[j] >= i) {
-                                valid = false;
-                                break;
-                        }
-                        node->children[j] = types[source->children[j]];
-                }
-                if (!valid) {
-                        ty_free(node);
-                        goto Done;
-                }
-                if (source->kind == T2_TYPE_RECURSIVE_VARIABLE) {
-                        types[i] = t2_recursive_variable(
-                                universe,
-                                (uint32_t)source->payload
-                        );
-                } else if (source->kind == T2_TYPE_RECURSIVE) {
-                        types[i] = source->arity == 1
-                                 ? t2_recursive(
-                                         universe,
-                                         (uint32_t)source->payload,
-                                         node->children[0]
-                                   )
-                                 : T2_TYPE_INVALID;
-                } else {
-                        types[i] = rebuild_type(universe, node, node->children);
-                }
-                ty_free(node);
-                if (types[i] == T2_TYPE_INVALID) goto Done;
-        }
-        result = types[snapshot->root];
-
-Done:
-        ty_free(types);
-        return result;
-}
 
 enum { T2_WIRE_NO_TEXT = UINT32_MAX };
 
-static bool
-bytes_reserve(T2Bytes *bytes, size_t extra)
+bool
+t2_bytes_append(byte_vector *bytes, void const *data, usize size)
 {
-        size_t needed = bytes->size + extra;
-        if (needed <= bytes->capacity) return true;
-        size_t capacity = bytes->capacity == 0 ? 256 : bytes->capacity;
-        while (capacity < needed) capacity *= 2;
-        unsigned char *grown = ty_realloc(bytes->data, capacity);
-        if (grown == NULL) return false;
-        bytes->data = grown;
-        bytes->capacity = capacity;
+        xvPn(*bytes, data, size);
         return true;
 }
 
 bool
-t2_bytes_append(T2Bytes *bytes, void const *data, size_t size)
+t2_bytes_u8(byte_vector *bytes, uint8_t value)
 {
-        if (!bytes_reserve(bytes, size)) return false;
-        memcpy(bytes->data + bytes->size, data, size);
-        bytes->size += size;
+        xvP(*bytes, (char)value);
         return true;
 }
 
 bool
-t2_bytes_u8(T2Bytes *bytes, uint8_t value)
-{
-        return t2_bytes_append(bytes, &value, 1);
-}
-
-bool
-t2_bytes_u32(T2Bytes *bytes, uint32_t value)
+t2_bytes_u32(byte_vector *bytes, u32 value)
 {
         unsigned char raw[4];
-        for (size_t i = 0; i < 4; ++i) raw[i] = (unsigned char)(value >> (8 * i));
+        for (usize i = 0; i < 4; ++i) raw[i] = (unsigned char)(value >> (8 * i));
         return t2_bytes_append(bytes, raw, sizeof raw);
 }
 
 bool
-t2_bytes_u64(T2Bytes *bytes, uint64_t value)
+t2_bytes_u64(byte_vector *bytes, u64 value)
 {
         unsigned char raw[8];
-        for (size_t i = 0; i < 8; ++i) raw[i] = (unsigned char)(value >> (8 * i));
+        for (usize i = 0; i < 8; ++i) raw[i] = (unsigned char)(value >> (8 * i));
         return t2_bytes_append(bytes, raw, sizeof raw);
 }
 
 bool
-t2_bytes_string(T2Bytes *bytes, char const *text)
+t2_bytes_string(byte_vector *bytes, char const *text)
 {
         if (text == NULL) return t2_bytes_u32(bytes, T2_WIRE_NO_TEXT);
-        size_t length = strlen(text);
+        usize length = strlen(text);
         if (length >= T2_WIRE_NO_TEXT) return false;
-        return t2_bytes_u32(bytes, (uint32_t)length) && t2_bytes_append(bytes, text, length);
-}
-
-void
-t2_bytes_free(T2Bytes *bytes)
-{
-        ty_free(bytes->data);
-        *bytes = (T2Bytes) {0};
+        return t2_bytes_u32(bytes, (u32)length) && t2_bytes_append(bytes, text, length);
 }
 
 bool
-t2_read_u8(unsigned char const *data, size_t size, size_t *position, uint8_t *value)
+t2_read_u8(unsigned char const *data, usize size, usize *position, uint8_t *value)
 {
         if (*position + 1 > size) return false;
         *value = data[*position];
@@ -6829,22 +6107,22 @@ t2_read_u8(unsigned char const *data, size_t size, size_t *position, uint8_t *va
 }
 
 bool
-t2_read_u32(unsigned char const *data, size_t size, size_t *position, uint32_t *value)
+t2_read_u32(unsigned char const *data, usize size, usize *position, u32 *value)
 {
         if (*position + 4 > size) return false;
-        uint32_t result = 0;
-        for (size_t i = 0; i < 4; ++i) result |= (uint32_t)data[*position + i] << (8 * i);
+        u32 result = 0;
+        for (usize i = 0; i < 4; ++i) result |= (u32)data[*position + i] << (8 * i);
         *position += 4;
         *value = result;
         return true;
 }
 
 bool
-t2_read_u64(unsigned char const *data, size_t size, size_t *position, uint64_t *value)
+t2_read_u64(unsigned char const *data, usize size, usize *position, u64 *value)
 {
         if (*position + 8 > size) return false;
-        uint64_t result = 0;
-        for (size_t i = 0; i < 8; ++i) result |= (uint64_t)data[*position + i] << (8 * i);
+        u64 result = 0;
+        for (usize i = 0; i < 8; ++i) result |= (u64)data[*position + i] << (8 * i);
         *position += 8;
         *value = result;
         return true;
@@ -6853,19 +6131,19 @@ t2_read_u64(unsigned char const *data, size_t size, size_t *position, uint64_t *
 bool
 t2_read_string(
         unsigned char const *data,
-        size_t size,
-        size_t *position,
+        usize size,
+        usize *position,
         char **text
 )
 {
-        uint32_t length;
+        u32 length;
         if (!t2_read_u32(data, size, position, &length)) return false;
         if (length == T2_WIRE_NO_TEXT) {
                 *text = NULL;
                 return true;
         }
         if (*position + length > size) return false;
-        char *copy = ty_malloc((size_t)length + 1);
+        char *copy = ty_malloc((usize)length + 1);
         if (copy == NULL) return false;
         memcpy(copy, data + *position, length);
         copy[length] = '\0';
@@ -6878,8 +6156,8 @@ struct t2_type_writer {
         T2Universe *universe;
         T2SymbolRemap remap;
         T2Index memo;
-        T2Bytes table;
-        uint32_t count;
+        byte_vector table;
+        u32 count;
 };
 
 T2TypeWriter *
@@ -6894,28 +6172,28 @@ t2_type_writer_new(T2Universe *universe, T2SymbolRemap remap)
 }
 
 static bool
-writer_visit(T2TypeWriter *writer, T2Type type, uint32_t *index)
+writer_visit(T2TypeWriter *writer, T2Type type, u32 *index)
 {
         T2Universe *universe = writer->universe;
         type = t2_type_resolve_computed(universe, type);
         T2Node const *node = get_node(universe, type);
         if (node == NULL) return false;
-        uint32_t known;
+        u32 known;
         if (t2_index_find(&writer->memo, type, &known)) {
                 *index = known;
                 return true;
         }
-        uint64_t payload = node->payload;
+        u64 payload = node->payload;
         if (node->kind == T2_TYPE_NOMINAL) {
                 if (writer->remap.out == NULL) return false;
                 payload = writer->remap.out(writer->remap.context, payload);
                 if (payload == UINT64_MAX) return false;
         }
-        uint32_t *children = node->arity == 0
+        u32 *children = node->arity == 0
                            ? NULL
                            : ty_malloc(node->arity * sizeof *children);
         if (node->arity != 0 && children == NULL) return false;
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 if (!writer_visit(writer, node->children[i], &children[i])) {
                         ty_free(children);
                         return false;
@@ -6926,7 +6204,7 @@ writer_visit(T2TypeWriter *writer, T2Type type, uint32_t *index)
                && t2_bytes_u64(&writer->table, payload)
                && t2_bytes_string(&writer->table, node->text)
                && t2_bytes_u32(&writer->table, node->arity);
-        for (size_t i = 0; ok && i < node->arity; ++i) {
+        for (usize i = 0; ok && i < node->arity; ++i) {
                 ok = t2_bytes_u32(&writer->table, children[i]);
         }
         ty_free(children);
@@ -6938,24 +6216,24 @@ writer_visit(T2TypeWriter *writer, T2Type type, uint32_t *index)
 }
 
 bool
-t2_type_writer_add(T2TypeWriter *writer, T2Type type, uint32_t *index)
+t2_type_writer_add(T2TypeWriter *writer, T2Type type, u32 *index)
 {
         if (writer == NULL || index == NULL) return false;
         return writer_visit(writer, type, index);
 }
 
-size_t
+usize
 t2_type_writer_count(T2TypeWriter const *writer)
 {
         return writer == NULL ? 0 : writer->count;
 }
 
 bool
-t2_type_writer_encode(T2TypeWriter const *writer, T2Bytes *out)
+t2_type_writer_encode(T2TypeWriter const *writer, byte_vector *out)
 {
         if (writer == NULL || out == NULL) return false;
         return t2_bytes_u32(out, writer->count)
-            && t2_bytes_append(out, writer->table.data, writer->table.size);
+            && t2_bytes_append(out, vv(writer->table), vN(writer->table));
 }
 
 void
@@ -6963,31 +6241,31 @@ t2_type_writer_free(T2TypeWriter *writer)
 {
         if (writer == NULL) return;
         t2_index_free(&writer->memo);
-        t2_bytes_free(&writer->table);
+        xvF(writer->table);
         ty_free(writer);
 }
 
 struct t2_type_reader {
         T2Universe *universe;
         T2Type *types;
-        uint32_t count;
-        uint32_t variable_limit;
-        uint32_t variable_floor;
-        uint32_t variable_base;
+        u32 count;
+        u32 variable_limit;
+        u32 variable_floor;
+        u32 variable_base;
         bool rebased;
 };
 
 struct wire_record {
-        uint64_t payload;
+        u64 payload;
         char *text;
-        uint32_t arity;
-        uint32_t first_child;
+        u32 arity;
+        u32 first_child;
         uint8_t kind;
         uint8_t variable_kind;
 };
 
-static uint32_t
-rebase_variable(T2TypeReader const *reader, uint32_t id)
+static u32
+rebase_variable(T2TypeReader const *reader, u32 id)
 {
         if (!reader->rebased || id < reader->variable_floor) return id;
         return id - reader->variable_floor + reader->variable_base;
@@ -7001,10 +6279,10 @@ reader_build(
         T2Index *binders,
         T2TypeKind kind,
         T2VariableKind variable_kind,
-        uint64_t payload,
+        u64 payload,
         char const *text,
         T2Type const *children,
-        uint32_t arity
+        u32 arity
 )
 {
         switch (kind) {
@@ -7022,7 +6300,7 @@ reader_build(
         case T2_TYPE_RECURSIVE_VARIABLE:
         case T2_TYPE_RECURSIVE:
         {
-                uint32_t binder;
+                u32 binder;
                 if (!t2_index_find(binders, payload, &binder)) {
                         binder = t2_universe_fresh_recursive_binder(universe);
                         if (binder == 0 || !t2_index_put(binders, payload, binder)) {
@@ -7039,7 +6317,7 @@ reader_build(
         default:
                 break;
         }
-        T2Node *node = ty_malloc(sizeof *node + (size_t)arity * sizeof *node->children);
+        T2Node *node = ty_malloc(sizeof *node + (usize)arity * sizeof *node->children);
         if (node == NULL) return T2_TYPE_INVALID;
         *node = (T2Node) {
                 .payload = payload,
@@ -7060,12 +6338,12 @@ t2_type_reader_new(
         T2SymbolRemap remap,
         T2ReadHooks hooks,
         unsigned char const *data,
-        size_t size,
-        size_t *position
+        usize size,
+        usize *position
 )
 {
         if (universe == NULL || data == NULL || position == NULL) return NULL;
-        uint32_t count;
+        u32 count;
         if (!t2_read_u32(data, size, position, &count)) return NULL;
         T2TypeReader *reader = ty_calloc(1, sizeof *reader);
         T2Type *types = count == 0 ? NULL : ty_calloc(count, sizeof *types);
@@ -7080,14 +6358,14 @@ t2_type_reader_new(
         reader->types = types;
         reader->count = count;
         reader->variable_floor = hooks.floor;
-        uint32_t *children = NULL;
-        size_t child_capacity = 0;
-        uint32_t child_count = 0;
-        uint32_t widest = 0;
-        uint32_t highest = 0;
+        u32 *children = NULL;
+        usize child_capacity = 0;
+        u32 child_count = 0;
+        u32 widest = 0;
+        u32 highest = 0;
         bool floating = false;
         bool ok = true;
-        for (uint32_t i = 0; ok && i < count; ++i) {
+        for (u32 i = 0; ok && i < count; ++i) {
                 struct wire_record *record = &records[i];
                 ok = t2_read_u8(data, size, position, &record->kind)
                   && t2_read_u8(data, size, position, &record->variable_kind)
@@ -7097,9 +6375,9 @@ t2_type_reader_new(
                   && record->kind < T2_TYPE_KIND_COUNT
                   && record->arity <= UINT32_MAX - child_count;
                 if (ok && child_count + record->arity > child_capacity) {
-                        size_t capacity = child_capacity == 0 ? 64 : child_capacity;
+                        usize capacity = child_capacity == 0 ? 64 : child_capacity;
                         while (capacity < child_count + record->arity) capacity *= 2;
-                        uint32_t *grown = ty_realloc(children, capacity * sizeof *grown);
+                        u32 *grown = ty_realloc(children, capacity * sizeof *grown);
                         if (grown == NULL) ok = false;
                         else {
                                 children = grown;
@@ -7107,8 +6385,8 @@ t2_type_reader_new(
                         }
                 }
                 record->first_child = child_count;
-                for (uint32_t j = 0; ok && j < record->arity; ++j) {
-                        uint32_t child;
+                for (u32 j = 0; ok && j < record->arity; ++j) {
+                        u32 child;
                         ok = t2_read_u32(data, size, position, &child) && child < i;
                         if (ok) children[child_count++] = child;
                 }
@@ -7121,7 +6399,7 @@ t2_type_reader_new(
                      && hooks.reserve != NULL
                 ) {
                         floating = true;
-                        if ((uint32_t)record->payload > highest) highest = (uint32_t)record->payload;
+                        if ((u32)record->payload > highest) highest = (u32)record->payload;
                 }
         }
         if (ok && floating) {
@@ -7132,16 +6410,16 @@ t2_type_reader_new(
         T2Type *arguments = widest == 0 ? NULL : ty_malloc(widest * sizeof *arguments);
         ok = ok && (widest == 0 || arguments != NULL);
         T2Index binders = {0};
-        for (uint32_t i = 0; ok && i < count; ++i) {
+        for (u32 i = 0; ok && i < count; ++i) {
                 struct wire_record const *record = &records[i];
-                for (uint32_t j = 0; j < record->arity; ++j) {
+                for (u32 j = 0; j < record->arity; ++j) {
                         arguments[j] = types[children[record->first_child + j]];
                 }
-                uint64_t payload = record->payload;
+                u64 payload = record->payload;
                 if (record->kind == T2_TYPE_VARIABLE && payload < UINT32_MAX) {
-                        payload = rebase_variable(reader, (uint32_t)payload);
+                        payload = rebase_variable(reader, (u32)payload);
                         if (payload + 1 > reader->variable_limit) {
-                                reader->variable_limit = (uint32_t)payload + 1;
+                                reader->variable_limit = (u32)payload + 1;
                         }
                 }
                 types[i] = reader_build(
@@ -7158,7 +6436,7 @@ t2_type_reader_new(
                 );
                 ok = types[i] != T2_TYPE_INVALID;
         }
-        for (uint32_t i = 0; i < count; ++i) ty_free(records[i].text);
+        for (u32 i = 0; i < count; ++i) ty_free(records[i].text);
         ty_free(records);
         ty_free(children);
         ty_free(arguments);
@@ -7171,13 +6449,13 @@ t2_type_reader_new(
 }
 
 T2Type
-t2_type_reader_type(T2TypeReader const *reader, uint32_t index)
+t2_type_reader_type(T2TypeReader const *reader, u32 index)
 {
         if (reader == NULL || index >= reader->count) return T2_TYPE_INVALID;
         return reader->types[index];
 }
 
-uint32_t
+u32
 t2_type_reader_variable_limit(T2TypeReader const *reader)
 {
         return reader == NULL ? 0 : reader->variable_limit;
@@ -7192,13 +6470,13 @@ t2_type_reader_free(T2TypeReader *reader)
 }
 
 bool
-t2_scheme_encode(T2Scheme const *scheme, T2TypeWriter *writer, T2Bytes *out)
+t2_scheme_encode(T2Scheme const *scheme, T2TypeWriter *writer, byte_vector *out)
 {
         if (scheme == NULL || writer == NULL || out == NULL) return false;
-        uint32_t body;
+        u32 body;
         if (!t2_type_writer_add(writer, scheme->body, &body)) return false;
-        if (!t2_bytes_u32(out, (uint32_t)scheme->quantifier_count)) return false;
-        for (size_t i = 0; i < scheme->quantifier_count; ++i) {
+        if (!t2_bytes_u32(out, (u32)scheme->quantifier_count)) return false;
+        for (usize i = 0; i < scheme->quantifier_count; ++i) {
                 if (
                         !t2_bytes_u32(out, scheme->quantifiers[i].id)
                      || !t2_bytes_u8(out, (uint8_t)scheme->quantifiers[i].kind)
@@ -7206,12 +6484,12 @@ t2_scheme_encode(T2Scheme const *scheme, T2TypeWriter *writer, T2Bytes *out)
                 ) return false;
         }
         if (!t2_bytes_u32(out, body)) return false;
-        if (!t2_bytes_u32(out, (uint32_t)scheme->predicate_count)) return false;
-        for (size_t i = 0; i < scheme->predicate_count; ++i) {
+        if (!t2_bytes_u32(out, (u32)scheme->predicate_count)) return false;
+        for (usize i = 0; i < scheme->predicate_count; ++i) {
                 T2Predicate const *predicate = &scheme->predicates[i];
-                uint32_t subtype;
-                uint32_t supertype;
-                uint32_t operand = UINT32_MAX;
+                u32 subtype;
+                u32 supertype;
+                u32 operand = UINT32_MAX;
                 if (
                         !t2_type_writer_add(writer, predicate->subtype, &subtype)
                      || !t2_type_writer_add(writer, predicate->supertype, &supertype)
@@ -7236,12 +6514,12 @@ T2Scheme *
 t2_scheme_decode(
         T2TypeReader *reader,
         unsigned char const *data,
-        size_t size,
-        size_t *position
+        usize size,
+        usize *position
 )
 {
         if (reader == NULL || data == NULL || position == NULL) return NULL;
-        uint32_t quantifier_count;
+        u32 quantifier_count;
         if (!t2_read_u32(data, size, position, &quantifier_count)) return NULL;
         T2Quantifier *quantifiers = quantifier_count == 0
                                   ? NULL
@@ -7250,10 +6528,10 @@ t2_scheme_decode(
                      ? NULL
                      : ty_calloc(quantifier_count, sizeof *names);
         T2Predicate *predicates = NULL;
-        uint32_t predicate_count = 0;
+        u32 predicate_count = 0;
         T2Scheme *scheme = NULL;
         bool ok = quantifier_count == 0 || (quantifiers != NULL && names != NULL);
-        for (uint32_t i = 0; ok && i < quantifier_count; ++i) {
+        for (u32 i = 0; ok && i < quantifier_count; ++i) {
                 uint8_t kind;
                 ok = t2_read_u32(data, size, position, &quantifiers[i].id)
                   && t2_read_u8(data, size, position, &kind)
@@ -7263,7 +6541,7 @@ t2_scheme_decode(
                         quantifiers[i].kind = (T2VariableKind)kind;
                 }
         }
-        uint32_t body_index = 0;
+        u32 body_index = 0;
         ok = ok
           && t2_read_u32(data, size, position, &body_index)
           && t2_read_u32(data, size, position, &predicate_count);
@@ -7271,11 +6549,11 @@ t2_scheme_decode(
                 predicates = ty_calloc(predicate_count, sizeof *predicates);
                 ok = predicates != NULL;
         }
-        for (uint32_t i = 0; ok && i < predicate_count; ++i) {
+        for (u32 i = 0; ok && i < predicate_count; ++i) {
                 uint8_t kind;
-                uint32_t subtype;
-                uint32_t supertype;
-                uint32_t operand;
+                u32 subtype;
+                u32 supertype;
+                u32 operand;
                 char *name = NULL;
                 char *provenance = NULL;
                 ok = t2_read_u8(data, size, position, &kind)
@@ -7313,15 +6591,15 @@ t2_scheme_decode(
                         predicates,
                         predicate_count
                 );
-                for (uint32_t i = 0; scheme != NULL && i < quantifier_count; ++i) {
+                for (u32 i = 0; scheme != NULL && i < quantifier_count; ++i) {
                         if (names[i] != NULL) t2_scheme_name_quantifier(scheme, i, names[i]);
                 }
         }
-        for (uint32_t i = 0; i < predicate_count; ++i) {
+        for (u32 i = 0; i < predicate_count; ++i) {
                 ty_free((char *)predicates[i].name);
                 ty_free((char *)predicates[i].provenance);
         }
-        for (uint32_t i = 0; i < quantifier_count; ++i) ty_free(names[i]);
+        for (u32 i = 0; i < quantifier_count; ++i) ty_free(names[i]);
         ty_free(predicates);
         ty_free(quantifiers);
         ty_free(names);
@@ -7365,7 +6643,7 @@ union_runtime_facts(
         };
         bool have_value = false;
         bool nullable = false;
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 T2RuntimeFacts arm = runtime_facts_x(
                         universe,
                         node->children[i],
@@ -7404,7 +6682,7 @@ intersection_runtime_facts(
 )
 {
         T2RuntimeFacts result = unknown_runtime_facts();
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 T2RuntimeFacts arm = runtime_facts_x(
                         universe,
                         node->children[i],
@@ -7487,59 +6765,34 @@ t2_type_runtime_facts(
         return true;
 }
 
-static bool
-solver_reserve(
-        T2Solver *solver,
-        void **items,
-        size_t *capacity,
-        size_t needed,
-        size_t item_size
-)
-{
-        if (reserve_array(items, capacity, needed, item_size)) {
-                return true;
-        }
-        solver->failed = true;
-        snprintf(solver->error, sizeof solver->error, "types2 solver ran out of memory");
-        return false;
-}
 
 static bool
 push_undo(T2Solver *solver, T2Undo undo)
 {
         if (solver->transaction_depth == 0) return true;
-        if (
-                !solver_reserve(
-                        solver,
-                        (void **)&solver->undo,
-                        &solver->undo_capacity,
-                        solver->undo_count + 1,
-                        sizeof *solver->undo
-                )
-        ) return false;
-        solver->undo[solver->undo_count++] = undo;
+        xvP(solver->undo, undo);
         return true;
 }
 
-static uint32_t
+static u32
 meta_from_type(T2Solver const *solver, T2Type type)
 {
         T2Node const *node = get_node(solver->universe, type);
         if (node == NULL || node->kind != T2_TYPE_META) return 0;
-        uint32_t solver_id = (uint32_t)(node->payload >> 32);
-        uint32_t meta = (uint32_t)node->payload;
-        if (solver_id != solver->id || meta == 0 || meta > solver->meta_count) return 0;
+        u32 solver_id = (u32)(node->payload >> 32);
+        u32 meta = (u32)node->payload;
+        if (solver_id != solver->id || meta == 0 || meta > vN(solver->metas)) return 0;
         return meta;
 }
 
 static T2Type
-meta_type(T2Solver *solver, uint32_t meta)
+meta_type(T2Solver *solver, u32 meta)
 {
-        uint64_t payload = ((uint64_t)solver->id << 32) | meta;
+        u64 payload = ((u64)solver->id << 32) | meta;
         return intern_type(
                 solver->universe,
                 T2_TYPE_META,
-                solver->metas[meta - 1].variable_kind,
+                v__(solver->metas, meta - 1).variable_kind,
                 payload,
                 NULL,
                 NULL,
@@ -7547,12 +6800,12 @@ meta_type(T2Solver *solver, uint32_t meta)
         );
 }
 
-static uint32_t
-find_root(T2Solver *solver, uint32_t meta)
+static u32
+find_root(T2Solver *solver, u32 meta)
 {
-        T2Meta *node = &solver->metas[meta - 1];
+        T2Meta *node = v_(solver->metas, meta - 1);
         if (node->parent == meta) return meta;
-        uint32_t root = find_root(solver, node->parent);
+        u32 root = find_root(solver, node->parent);
         if (node->parent != root) {
                 if (!push_undo(solver, (T2Undo) {
                         .kind = T2_UNDO_PARENT,
@@ -7567,10 +6820,10 @@ find_root(T2Solver *solver, uint32_t meta)
 static T2Type
 resolve_sort_solution(T2Solver *solver, T2Type type)
 {
-        uint32_t meta = meta_from_type(solver, type);
+        u32 meta = meta_from_type(solver, type);
         if (meta == 0) return type;
         meta = find_root(solver, meta);
-        T2Meta const *node = &solver->metas[meta - 1];
+        T2Meta const *node = v_(solver->metas, meta - 1);
         return node->solution == T2_TYPE_INVALID ? meta_type(solver, meta) : node->solution;
 }
 
@@ -7578,10 +6831,10 @@ static T2Type
 resolve_pack_solutions(T2Solver *solver, T2Type type, unsigned depth)
 {
         if (depth > T2_RELATION_DEPTH_LIMIT) return type;
-        uint32_t meta = meta_from_type(solver, type);
+        u32 meta = meta_from_type(solver, type);
         if (meta != 0) {
                 meta = find_root(solver, meta);
-                T2Meta const *node = &solver->metas[meta - 1];
+                T2Meta const *node = v_(solver->metas, meta - 1);
                 if (
                         node->variable_kind != T2_VARIABLE_PACK
                      || node->solution == T2_TYPE_INVALID
@@ -7598,7 +6851,7 @@ resolve_pack_solutions(T2Solver *solver, T2Type type, unsigned depth)
         T2Type *children = ty_malloc(node->arity * sizeof *children);
         if (children == NULL) {
                 solver->failed = true;
-                snprintf(
+                ty_snprintf(
                         solver->error,
                         sizeof solver->error,
                         "types2 solver ran out of memory"
@@ -7606,7 +6859,7 @@ resolve_pack_solutions(T2Solver *solver, T2Type type, unsigned depth)
                 return T2_TYPE_INVALID;
         }
         bool changed = false;
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 children[i] = resolve_pack_solutions(
                         solver,
                         node->children[i],
@@ -7625,16 +6878,16 @@ static bool
 type_contains_solved_pack_meta(T2Solver *solver, T2Type type, unsigned depth)
 {
         if (depth > T2_RELATION_DEPTH_LIMIT) return false;
-        uint32_t meta = meta_from_type(solver, type);
+        u32 meta = meta_from_type(solver, type);
         if (meta != 0) {
                 meta = find_root(solver, meta);
-                T2Meta const *node = &solver->metas[meta - 1];
+                T2Meta const *node = v_(solver->metas, meta - 1);
                 return node->variable_kind == T2_VARIABLE_PACK
                     && node->solution != T2_TYPE_INVALID;
         }
         T2Node const *node = get_node(solver->universe, type);
         if (node == NULL) return false;
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 if (type_contains_solved_pack_meta(
                         solver,
                         node->children[i],
@@ -7645,20 +6898,20 @@ type_contains_solved_pack_meta(T2Solver *solver, T2Type type, unsigned depth)
 }
 
 static bool
-type_contains_meta(T2Solver *solver, T2Type type, uint32_t wanted, unsigned depth)
+type_contains_meta(T2Solver *solver, T2Type type, u32 wanted, unsigned depth)
 {
         if (depth > T2_RELATION_DEPTH_LIMIT) return true;
-        uint32_t meta = meta_from_type(solver, type);
+        u32 meta = meta_from_type(solver, type);
         if (meta != 0) {
                 meta = find_root(solver, meta);
                 if (meta == wanted) return true;
-                T2Type solution = solver->metas[meta - 1].solution;
+                T2Type solution = v__(solver->metas, meta - 1).solution;
                 return solution != T2_TYPE_INVALID
                     && type_contains_meta(solver, solution, wanted, depth + 1);
         }
         T2Node const *node = get_node(solver->universe, type);
         if (node == NULL || (node->flags & T2_NODE_META) == 0) return false;
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 if (type_contains_meta(solver, node->children[i], wanted, depth + 1)) {
                         return true;
                 }
@@ -7667,29 +6920,20 @@ type_contains_meta(T2Solver *solver, T2Type type, uint32_t wanted, unsigned dept
 }
 
 static bool
-push_watch(T2Solver *solver, uint32_t meta, uint64_t watch)
+push_watch(T2Solver *solver, u32 meta, u64 watch)
 {
-        T2Meta *node = &solver->metas[meta - 1];
-        if (
-                !solver_reserve(
-                        solver,
-                        (void **)&node->watchers.items,
-                        &node->watchers.capacity,
-                        node->watchers.count + 1,
-                        sizeof *node->watchers.items
-                )
-        ) return false;
+        T2Meta *node = v_(solver->metas, meta - 1);
         if (!push_undo(solver, (T2Undo) {
                 .kind = T2_UNDO_WATCH_COUNT,
                 .index = meta,
-                .old = node->watchers.count
+                .old = vN(node->watchers)
         })) return false;
-        node->watchers.items[node->watchers.count++] = watch;
+        xvP(node->watchers, watch);
         return true;
 }
 
 static bool
-enqueue(T2Solver *solver, uint64_t work)
+enqueue(T2Solver *solver, u64 work)
 {
         if (
                 solver->draining_work
@@ -7699,28 +6943,19 @@ enqueue(T2Solver *solver, uint64_t work)
                 solver->rerun_active_work = true;
                 return true;
         }
-        for (size_t i = solver->work_index; i < solver->work_count; ++i) {
-                if (solver->work[i] == work) return true;
+        for (usize i = solver->work_index; i < vN(solver->work); ++i) {
+                if (v__(solver->work, i) == work) return true;
         }
-        if (
-                !solver_reserve(
-                        solver,
-                        (void **)&solver->work,
-                        &solver->work_capacity,
-                        solver->work_count + 1,
-                        sizeof *solver->work
-                )
-        ) return false;
-        solver->work[solver->work_count++] = work;
+        xvP(solver->work, work);
         return true;
 }
 
 static void
-wake_meta(T2Solver *solver, uint32_t meta)
+wake_meta(T2Solver *solver, u32 meta)
 {
-        T2Meta const *node = &solver->metas[meta - 1];
-        for (size_t i = 0; i < node->watchers.count; ++i) {
-                if (!enqueue(solver, node->watchers.items[i])) return;
+        T2Meta const *node = v_(solver->metas, meta - 1);
+        for (usize i = 0; i < vN(node->watchers); ++i) {
+                if (!enqueue(solver, v__(node->watchers, i))) return;
         }
 }
 
@@ -7750,10 +6985,10 @@ set_solver_error(
         solver->failure_left = left;
         solver->failure_right = right;
         ty_free(solver->failure_provenance);
-        solver->failure_provenance = copy_string(provenance);
+        solver->failure_provenance = S2N(provenance);
         char *left_string = t2_type_string(solver->universe, left);
         char *right_string = t2_type_string(solver->universe, right);
-        snprintf(
+        ty_snprintf(
                 solver->error,
                 sizeof solver->error,
                 "%s: %s is not a subtype of %s%s%s",
@@ -7776,26 +7011,18 @@ record_cause(
         char const *provenance
 )
 {
-        if (!solver_reserve(
-                solver,
-                (void **)&solver->causes,
-                &solver->cause_capacity,
-                solver->cause_count + 1,
-                sizeof *solver->causes
-        )) return NULL;
-
-        char *owned = copy_string(provenance);
+        char *owned = S2N(provenance);
         if (provenance != NULL && owned == NULL) {
                 solver->failed = true;
-                snprintf(solver->error, sizeof solver->error, "types2 solver ran out of memory");
+                ty_snprintf(solver->error, sizeof solver->error, "types2 solver ran out of memory");
                 return NULL;
         }
-        solver->causes[solver->cause_count++] = (T2Cause) {
+        xvP(solver->causes, ((T2Cause) {
                 .kind = kind,
                 .left = left,
                 .right = right,
                 .provenance = owned
-        };
+        }));
         return owned;
 }
 
@@ -7828,23 +7055,23 @@ void
 t2_solver_free(T2Solver *solver)
 {
         if (solver == NULL) return;
-        for (size_t i = 0; i < solver->meta_count; ++i) {
-                ty_free(solver->metas[i].watchers.items);
-                ty_free(solver->metas[i].provenance);
+        for (usize i = 0; i < vN(solver->metas); ++i) {
+                xvF(v__(solver->metas, i).watchers);
+                ty_free(v__(solver->metas, i).provenance);
         }
-        for (size_t i = 0; i < solver->cause_count; ++i) {
-                ty_free(solver->causes[i].provenance);
+        for (usize i = 0; i < vN(solver->causes); ++i) {
+                ty_free(v__(solver->causes, i).provenance);
         }
-        for (size_t i = 0; i < solver->obligation_count; ++i) {
-                ty_free(solver->obligations[i].name);
-                ty_free(solver->obligations[i].provenance);
+        for (usize i = 0; i < vN(solver->obligations); ++i) {
+                ty_free(v__(solver->obligations, i).name);
+                ty_free(v__(solver->obligations, i).provenance);
         }
-        ty_free(solver->metas);
-        ty_free(solver->edges);
-        ty_free(solver->obligations);
-        ty_free(solver->work);
-        ty_free(solver->undo);
-        ty_free(solver->causes);
+        xvF(solver->metas);
+        xvF(solver->edges);
+        xvF(solver->obligations);
+        xvF(solver->work);
+        xvF(solver->undo);
+        xvF(solver->causes);
         ty_free(solver->failure_provenance);
         ty_free(solver);
 }
@@ -7853,7 +7080,7 @@ T2Type
 t2_solver_new_meta(
         T2Solver *solver,
         T2VariableKind kind,
-        uint32_t level,
+        u32 level,
         char const *provenance
 )
 {
@@ -7861,34 +7088,24 @@ t2_solver_new_meta(
         if (kind == T2_VARIABLE_RIGID || kind == T2_VARIABLE_QUANTIFIED) {
                 return T2_TYPE_INVALID;
         }
-        if (
-                !solver_reserve(
-                        solver,
-                        (void **)&solver->metas,
-                        &solver->meta_capacity,
-                        solver->meta_count + 1,
-                        sizeof *solver->metas
-                )
-        ) return T2_TYPE_INVALID;
-
-        uint32_t id = (uint32_t)(solver->meta_count + 1);
-        char *owned_provenance = copy_string(provenance);
+        u32 id = (u32)(vN(solver->metas) + 1);
+        char *owned_provenance = S2N(provenance);
         if (provenance != NULL && owned_provenance == NULL) {
                 solver->failed = true;
-                snprintf(solver->error, sizeof solver->error, "types2 solver ran out of memory");
+                ty_snprintf(solver->error, sizeof solver->error, "types2 solver ran out of memory");
                 return T2_TYPE_INVALID;
         }
-        solver->metas[solver->meta_count++] = (T2Meta) {
+        xvP(solver->metas, ((T2Meta) {
                 .parent = id,
                 .level = level,
                 .variable_kind = kind,
                 .lower = t2_primitive(solver->universe, T2_TYPE_NEVER),
                 .upper = t2_primitive(solver->universe, T2_TYPE_ANY),
                 .provenance = owned_provenance
-        };
+        }));
         if (!t2_universe_ok(solver->universe)) {
                 solver->failed = true;
-                snprintf(solver->error, sizeof solver->error, "types2 type allocation failed");
+                ty_snprintf(solver->error, sizeof solver->error, "types2 type allocation failed");
                 return T2_TYPE_INVALID;
         }
         return meta_type(solver, id);
@@ -7903,22 +7120,16 @@ static T2Relation constrain_internal(
 );
 
 static T2Relation
-check_bounds(T2Solver *solver, uint32_t meta, char const *provenance)
+check_bounds(T2Solver *solver, u32 meta, char const *provenance)
 {
         meta = find_root(solver, meta);
-        T2Meta const *node = &solver->metas[meta - 1];
+        T2Meta const *node = v_(solver->metas, meta - 1);
         if (node->checking_bounds) {
                 return t2_subtype(solver->universe, node->lower, node->upper);
         }
         T2Type lower = node->lower;
         T2Type upper = node->upper;
-        solver->metas[meta - 1].checking_bounds = true;
-        /* Maintaining LB <: UB is itself a constraint-solving operation.
-         * A pure subtype probe can establish compatibility, but it cannot
-         * propagate relationships between nested metas (notably a forward
-         * function declaration's result and the later definition's result).
-         * Do not retain a second top-level obligation here: nested metas and
-         * edges already carry the dependencies that can make progress. */
+        v__(solver->metas, meta - 1).checking_bounds = true;
         T2Relation relation = constrain_internal(
                 solver,
                 lower,
@@ -7926,7 +7137,7 @@ check_bounds(T2Solver *solver, uint32_t meta, char const *provenance)
                 provenance,
                 false
         );
-        solver->metas[meta - 1].checking_bounds = false;
+        v__(solver->metas, meta - 1).checking_bounds = false;
         if (relation == T2_RELATION_NO) {
                 set_solver_error(
                         solver,
@@ -7951,7 +7162,7 @@ static bool
 direct_union_without_meta(
         T2Solver *solver,
         T2Type type,
-        uint32_t wanted,
+        u32 wanted,
         T2Type *remainder
 )
 {
@@ -7961,14 +7172,14 @@ direct_union_without_meta(
         T2Type *arms = ty_malloc(node->arity * sizeof *arms);
         if (arms == NULL) {
                 solver->failed = true;
-                snprintf(solver->error, sizeof solver->error, "types2 solver ran out of memory");
+                ty_snprintf(solver->error, sizeof solver->error, "types2 solver ran out of memory");
                 return false;
         }
-        size_t count = 0;
+        usize count = 0;
         bool removed = false;
         wanted = find_root(solver, wanted);
-        for (size_t i = 0; i < node->arity; ++i) {
-                uint32_t child = meta_from_type(solver, node->children[i]);
+        for (usize i = 0; i < node->arity; ++i) {
+                u32 child = meta_from_type(solver, node->children[i]);
                 if (child != 0 && find_root(solver, child) == wanted) {
                         removed = true;
                         continue;
@@ -7985,10 +7196,10 @@ direct_union_without_meta(
 }
 
 static T2Relation
-update_lower(T2Solver *solver, uint32_t meta, T2Type lower, char const *provenance)
+update_lower(T2Solver *solver, u32 meta, T2Type lower, char const *provenance)
 {
         meta = find_root(solver, meta);
-        T2Meta *node = &solver->metas[meta - 1];
+        T2Meta *node = v_(solver->metas, meta - 1);
         T2Type remainder = T2_TYPE_INVALID;
         if (direct_union_without_meta(solver, lower, meta, &remainder)) {
                 if (remainder == T2_TYPE_INVALID || solver->failed) {
@@ -8023,10 +7234,10 @@ update_lower(T2Solver *solver, uint32_t meta, T2Type lower, char const *provenan
 }
 
 static T2Relation
-update_upper(T2Solver *solver, uint32_t meta, T2Type upper, char const *provenance)
+update_upper(T2Solver *solver, u32 meta, T2Type upper, char const *provenance)
 {
         meta = find_root(solver, meta);
-        T2Meta *node = &solver->metas[meta - 1];
+        T2Meta *node = v_(solver->metas, meta - 1);
         T2Type remainder = T2_TYPE_INVALID;
         if (direct_union_without_meta(solver, upper, meta, &remainder)) {
                 return solver->failed
@@ -8085,7 +7296,7 @@ term_sort(T2Universe const *universe, T2Type type)
                 if (sort != T2_VARIABLE_ROW && sort != T2_VARIABLE_PACK) {
                         return T2_VARIABLE_FLEXIBLE;
                 }
-                for (size_t i = 1; i < node->arity; ++i) {
+                for (usize i = 1; i < node->arity; ++i) {
                         if (term_sort(universe, node->children[i]) != sort) {
                                 return T2_VARIABLE_FLEXIBLE;
                         }
@@ -8097,31 +7308,31 @@ term_sort(T2Universe const *universe, T2Type type)
 
 static T2Relation merge_meta_roots(
         T2Solver *solver,
-        uint32_t left,
-        uint32_t right,
+        u32 left,
+        u32 right,
         char const *provenance
 );
 
 static T2Relation
 bind_sort_meta(
         T2Solver *solver,
-        uint32_t meta,
+        u32 meta,
         T2Type value,
         char const *provenance
 )
 {
         meta = find_root(solver, meta);
-        T2Meta *node = &solver->metas[meta - 1];
+        T2Meta *node = v_(solver->metas, meta - 1);
         T2VariableKind sort = node->variable_kind;
         if (sort != T2_VARIABLE_ROW && sort != T2_VARIABLE_PACK) {
                 return T2_RELATION_NO;
         }
 
-        uint32_t other = meta_from_type(solver, value);
+        u32 other = meta_from_type(solver, value);
         if (other != 0) {
                 other = find_root(solver, other);
                 if (other == meta) return T2_RELATION_YES;
-                if (solver->metas[other - 1].variable_kind != sort) {
+                if (v__(solver->metas, other - 1).variable_kind != sort) {
                         set_solver_error(
                                 solver,
                                 "cannot equate different variable kinds",
@@ -8167,122 +7378,63 @@ bind_sort_meta(
         return T2_RELATION_YES;
 }
 
+typedef vec(u32) T2MetaList;
+
 static bool
-collect_live_meta_roots(
-        T2Solver *solver,
-        T2Type type,
-        uint32_t **roots,
-        size_t *count,
-        size_t *capacity,
-        unsigned depth
-)
+collect_live_meta_roots(T2Solver *solver, T2Type type, T2MetaList *roots, unsigned depth)
 {
         if (depth > T2_RELATION_DEPTH_LIMIT) return true;
-        uint32_t meta = meta_from_type(solver, type);
+        u32 meta = meta_from_type(solver, type);
         if (meta != 0) {
                 meta = find_root(solver, meta);
-                for (size_t i = 0; i < *count; ++i) {
-                        if ((*roots)[i] == meta) return true;
+                for (usize i = 0; i < vN(*roots); ++i) {
+                        if (v__(*roots, i) == meta) return true;
                 }
-                if (!solver_reserve(
-                        solver,
-                        (void **)roots,
-                        capacity,
-                        *count + 1,
-                        sizeof **roots
-                )) return false;
-                (*roots)[(*count)++] = meta;
-                T2Meta const *node = &solver->metas[meta - 1];
+                xvP(*roots, meta);
+                T2Meta const *node = v_(solver->metas, meta - 1);
                 if (node->solution != T2_TYPE_INVALID) {
-                        return collect_live_meta_roots(
-                                solver,
-                                node->solution,
-                                roots,
-                                count,
-                                capacity,
-                                depth + 1
-                        );
+                        return collect_live_meta_roots(solver, node->solution, roots, depth + 1);
                 }
-                return collect_live_meta_roots(
-                        solver,
-                        node->lower,
-                        roots,
-                        count,
-                        capacity,
-                        depth + 1
-                ) && collect_live_meta_roots(
-                        solver,
-                        node->upper,
-                        roots,
-                        count,
-                        capacity,
-                        depth + 1
-                );
+                return collect_live_meta_roots(solver, node->lower, roots, depth + 1)
+                    && collect_live_meta_roots(solver, node->upper, roots, depth + 1);
         }
 
         T2Node const *node = get_node(solver->universe, type);
         if (node == NULL) return false;
-        for (size_t i = 0; i < node->arity; ++i) {
-                if (!collect_live_meta_roots(
-                        solver,
-                        node->children[i],
-                        roots,
-                        count,
-                        capacity,
-                        depth + 1
-                )) return false;
+        for (usize i = 0; i < node->arity; ++i) {
+                if (!collect_live_meta_roots(solver, node->children[i], roots, depth + 1)) {
+                        return false;
+                }
         }
         return true;
 }
 
 static bool
-meta_watches(T2Solver const *solver, uint32_t meta, uint64_t watch)
+meta_watches(T2Solver const *solver, u32 meta, u64 watch)
 {
-        T2WatchVector const *watchers = &solver->metas[meta - 1].watchers;
-        for (size_t i = 0; i < watchers->count; ++i) {
-                if (watchers->items[i] == watch) return true;
+        T2WatchVector const *watchers = &v__(solver->metas, meta - 1).watchers;
+        for (usize i = 0; i < vN(*watchers); ++i) {
+                if (v__(*watchers, i) == watch) return true;
         }
         return false;
 }
 
 static bool
-watch_obligation(T2Solver *solver, size_t index)
+watch_obligation(T2Solver *solver, usize index)
 {
-        T2Predicate const *predicate = &solver->obligations[index].predicate;
-        uint64_t watch = T2_WATCH_OBLIGATION | index;
-        uint32_t *roots = NULL;
-        size_t count = 0;
-        size_t capacity = 0;
-        bool ok = collect_live_meta_roots(
-                solver,
-                predicate->subtype,
-                &roots,
-                &count,
-                &capacity,
-                0
-        ) && collect_live_meta_roots(
-                solver,
-                predicate->supertype,
-                &roots,
-                &count,
-                &capacity,
-                0
-        );
+        T2Predicate const *predicate = &v__(solver->obligations, index).predicate;
+        u64 watch = T2_WATCH_OBLIGATION | index;
+        T2MetaList roots = {0};
+        bool ok = collect_live_meta_roots(solver, predicate->subtype, &roots, 0)
+               && collect_live_meta_roots(solver, predicate->supertype, &roots, 0);
         if (ok && predicate->operand != T2_TYPE_INVALID) {
-                ok = collect_live_meta_roots(
-                        solver,
-                        predicate->operand,
-                        &roots,
-                        &count,
-                        &capacity,
-                        0
-                );
+                ok = collect_live_meta_roots(solver, predicate->operand, &roots, 0);
         }
-        for (size_t i = 0; ok && i < count; ++i) {
-                if (meta_watches(solver, roots[i], watch)) continue;
-                ok = push_watch(solver, roots[i], watch);
+        for (usize i = 0; ok && i < vN(roots); ++i) {
+                if (meta_watches(solver, v__(roots, i), watch)) continue;
+                ok = push_watch(solver, v__(roots, i), watch);
         }
-        ty_free(roots);
+        xvF(roots);
         return ok;
 }
 
@@ -8292,16 +7444,8 @@ retain_predicate(
         T2Predicate const *predicate
 )
 {
-        if (!solver_reserve(
-                solver,
-                (void **)&solver->obligations,
-                &solver->obligation_capacity,
-                solver->obligation_count + 1,
-                sizeof *solver->obligations
-        )) return T2_RELATION_COMPLEXITY;
-
-        char *name = copy_string(predicate->name);
-        char *provenance = copy_string(predicate->provenance);
+        char *name = S2N(predicate->name);
+        char *provenance = S2N(predicate->provenance);
         if (
                 (predicate->name != NULL && name == NULL)
              || (predicate->provenance != NULL && provenance == NULL)
@@ -8309,7 +7453,7 @@ retain_predicate(
                 ty_free(name);
                 ty_free(provenance);
                 solver->failed = true;
-                snprintf(
+                ty_snprintf(
                         solver->error,
                         sizeof solver->error,
                         "types2 solver ran out of memory"
@@ -8317,15 +7461,15 @@ retain_predicate(
                 return T2_RELATION_COMPLEXITY;
         }
 
-        size_t index = solver->obligation_count++;
-        solver->obligations[index] = (T2Obligation) {
+        usize index = vN(solver->obligations);
+        xvP(solver->obligations, ((T2Obligation) {
                 .predicate = *predicate,
                 .name = name,
                 .provenance = provenance,
                 .active = true
-        };
-        solver->obligations[index].predicate.name = name;
-        solver->obligations[index].predicate.provenance = provenance;
+        }));
+        v__(solver->obligations, index).predicate.name = name;
+        v__(solver->obligations, index).predicate.provenance = provenance;
 
         return watch_obligation(solver, index)
              ? T2_RELATION_DEFERRED
@@ -8352,8 +7496,8 @@ retain_obligation(
 static T2Relation
 add_edge(
         T2Solver *solver,
-        uint32_t subtype,
-        uint32_t supertype,
+        u32 subtype,
+        u32 supertype,
         char const *provenance
 )
 {
@@ -8361,8 +7505,8 @@ add_edge(
         supertype = find_root(solver, supertype);
         if (subtype == supertype) return T2_RELATION_YES;
 
-        T2VariableKind sub_kind = solver->metas[subtype - 1].variable_kind;
-        T2VariableKind sup_kind = solver->metas[supertype - 1].variable_kind;
+        T2VariableKind sub_kind = v__(solver->metas, subtype - 1).variable_kind;
+        T2VariableKind sup_kind = v__(solver->metas, supertype - 1).variable_kind;
         if (
                 (sub_kind == T2_VARIABLE_ROW) != (sup_kind == T2_VARIABLE_ROW)
              || (sub_kind == T2_VARIABLE_PACK) != (sup_kind == T2_VARIABLE_PACK)
@@ -8377,33 +7521,25 @@ add_edge(
                 return T2_RELATION_NO;
         }
 
-        T2WatchVector const *watches = &solver->metas[subtype - 1].watchers;
-        for (size_t i = 0; i < watches->count; ++i) {
-                uint64_t watch = watches->items[i];
-                if ((watch & T2_WATCH_OBLIGATION) != 0 || watch >= solver->edge_count) {
+        T2WatchVector const *watches = &v__(solver->metas, subtype - 1).watchers;
+        for (usize i = 0; i < vN(*watches); ++i) {
+                u64 watch = v__(*watches, i);
+                if ((watch & T2_WATCH_OBLIGATION) != 0 || watch >= vN(solver->edges)) {
                         continue;
                 }
-                T2Edge const *edge = &solver->edges[watch];
+                T2Edge const *edge = v_(solver->edges, watch);
                 if (
                         find_root(solver, edge->subtype) == subtype
                      && find_root(solver, edge->supertype) == supertype
                 ) return T2_RELATION_YES;
         }
 
-        if (!solver_reserve(
-                solver,
-                (void **)&solver->edges,
-                &solver->edge_capacity,
-                solver->edge_count + 1,
-                sizeof *solver->edges
-        )) return T2_RELATION_COMPLEXITY;
-
-        size_t edge_index = solver->edge_count++;
-        solver->edges[edge_index] = (T2Edge) {
+        usize edge_index = vN(solver->edges);
+        xvP(solver->edges, ((T2Edge) {
                 .subtype = subtype,
                 .supertype = supertype,
                 .provenance = provenance
-        };
+        }));
 
         if (
                 !push_watch(solver, subtype, edge_index)
@@ -8424,7 +7560,7 @@ constrain_children(
 )
 {
         T2Relation result = T2_RELATION_YES;
-        for (size_t i = 0; i < a->arity; ++i) {
+        for (usize i = 0; i < a->arity; ++i) {
                 T2Relation item = constrain_internal(
                         solver,
                         a->children[i],
@@ -8446,30 +7582,30 @@ without_nil_arms(T2Universe *universe, T2Type type)
         if (node->kind == T2_TYPE_NIL) return t2_primitive(universe, T2_TYPE_NEVER);
         if (node->kind != T2_TYPE_UNION) return type;
         T2TypeVector arms = {0};
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 T2Node const *arm = get_node(universe, node->children[i]);
                 if (arm != NULL && arm->kind == T2_TYPE_NIL) continue;
                 if (!push_type(&arms, node->children[i])) {
-                        ty_free(arms.items);
+                        xvF(arms);
                         universe->failed = true;
                         return T2_TYPE_INVALID;
                 }
         }
-        T2Type result = t2_union(universe, arms.items, arms.count);
-        ty_free(arms.items);
+        T2Type result = t2_union(universe, vv(arms), vN(arms));
+        xvF(arms);
         return result;
 }
 
 static T2Type
 erase_callable_types(T2Universe *universe, T2Type callable)
 {
-        size_t count = t2_callable_parameter_count(universe, callable);
+        usize count = t2_callable_parameter_count(universe, callable);
         T2ParameterSpec *parameters = count == 0
                                     ? NULL
                                     : ty_malloc(count * sizeof *parameters);
         if (count != 0 && parameters == NULL) return T2_TYPE_INVALID;
         T2Type dynamic = t2_primitive(universe, T2_TYPE_DYNAMIC);
-        for (size_t i = 0; i < count; ++i) {
+        for (usize i = 0; i < count; ++i) {
                 if (!t2_callable_parameter(universe, callable, i, &parameters[i])) {
                         ty_free(parameters);
                         return T2_TYPE_INVALID;
@@ -8553,8 +7689,8 @@ constrain_function_types(
                 return shape;
         }
 
-        size_t actual_count = (size_t)actual->payload;
-        size_t expected_count = (size_t)expected->payload;
+        usize actual_count = (usize)actual->payload;
+        usize expected_count = (usize)expected->payload;
         T2Node const *actual_rest = function_parameter_kind(
                 solver->universe,
                 actual,
@@ -8587,12 +7723,12 @@ constrain_function_types(
         );
         T2Relation result = T2_RELATION_YES;
 
-        size_t expected_positions = 0;
-        for (size_t i = 0; i < expected_count; ++i) {
+        usize expected_positions = 0;
+        for (usize i = 0; i < expected_count; ++i) {
                 T2Node const *parameter = get_node(solver->universe, expected->children[i]);
                 expected_positions += parameter_accepts_position(parameter);
         }
-        for (size_t i = 0; i < expected_positions; ++i) {
+        for (usize i = 0; i < expected_positions; ++i) {
                 T2Node const *wanted = function_positional_parameter(
                         solver->universe,
                         expected,
@@ -8629,7 +7765,7 @@ constrain_function_types(
                 );
                 if (solver->failed) return T2_RELATION_NO;
         }
-        for (size_t i = 0; i < expected_count; ++i) {
+        for (usize i = 0; i < expected_count; ++i) {
                 T2Node const *wanted = get_node(solver->universe, expected->children[i]);
                 if (!parameter_accepts_keyword(wanted)) continue;
                 T2Node const *have = function_keyword_parameter(
@@ -8721,7 +7857,7 @@ solver_find_row_field(
         T2Node const *node = get_node(solver->universe, row);
         if (node == NULL) return NULL;
         if (node->kind == T2_TYPE_INTERSECTION) {
-                for (size_t i = 0; i < node->arity; ++i) {
+                for (usize i = 0; i < node->arity; ++i) {
                         T2Node const *field = solver_find_row_field(
                                 solver,
                                 node->children[i],
@@ -8782,10 +7918,10 @@ require_field_in_row(
 )
 {
         row = resolve_sort_solution(solver, row);
-        uint32_t meta = meta_from_type(solver, row);
+        u32 meta = meta_from_type(solver, row);
         if (meta == 0) return T2_RELATION_DEFERRED;
         meta = find_root(solver, meta);
-        uint32_t level = solver->metas[meta - 1].level;
+        u32 level = v__(solver->metas, meta - 1).level;
         T2Type field_meta = t2_solver_new_meta(
                 solver,
                 T2_VARIABLE_FLEXIBLE,
@@ -8834,7 +7970,7 @@ constrain_record_types(
         }
 
         T2Relation result = T2_RELATION_YES;
-        for (size_t i = 0; i + 1 < expected->arity; ++i) {
+        for (usize i = 0; i + 1 < expected->arity; ++i) {
                 T2Node const *wanted = get_node(solver->universe, expected->children[i]);
                 T2Node const *have = solver_find_record_field(
                         solver,
@@ -8873,14 +8009,14 @@ constrain_record_types(
         T2Type expected_tail = expected->children[expected->arity - 1];
         T2Node const *expected_tail_node = get_node(solver->universe, expected_tail);
         if (expected_tail_node->kind != T2_TYPE_ROW_ANY) {
-                size_t extra_count = 0;
+                usize extra_count = 0;
                 T2FieldSpec *extras = ty_calloc(actual->arity - 1, sizeof *extras);
                 if (actual->arity > 1 && extras == NULL) {
                         solver->failed = true;
-                        snprintf(solver->error, sizeof solver->error, "types2 solver ran out of memory");
+                        ty_snprintf(solver->error, sizeof solver->error, "types2 solver ran out of memory");
                         return T2_RELATION_COMPLEXITY;
                 }
-                for (size_t i = 0; i + 1 < actual->arity; ++i) {
+                for (usize i = 0; i + 1 < actual->arity; ++i) {
                         T2Node const *field = get_node(solver->universe, actual->children[i]);
                         if (
                                 find_record_field_node(
@@ -8937,13 +8073,13 @@ constrain_mapped_pack_expansion(
                 return T2_RELATION_DEFERRED;
         }
 
-        size_t pack_index = SIZE_MAX;
-        uint32_t pack_root = 0;
-        for (size_t i = 0; i < pattern->arity; ++i) {
-                uint32_t meta = meta_from_type(solver, pattern->children[i]);
+        usize pack_index = SIZE_MAX;
+        u32 pack_root = 0;
+        for (usize i = 0; i < pattern->arity; ++i) {
+                u32 meta = meta_from_type(solver, pattern->children[i]);
                 if (meta == 0) continue;
                 meta = find_root(solver, meta);
-                if (solver->metas[meta - 1].variable_kind != T2_VARIABLE_PACK) {
+                if (v__(solver->metas, meta - 1).variable_kind != T2_VARIABLE_PACK) {
                         continue;
                 }
                 if (pack_index != SIZE_MAX && pack_root != meta) {
@@ -8954,7 +8090,7 @@ constrain_mapped_pack_expansion(
         }
         if (pack_index == SIZE_MAX) return T2_RELATION_DEFERRED;
 
-        size_t count = (size_t)actual->payload;
+        usize count = (usize)actual->payload;
         if (actual->arity != count + 1) return T2_RELATION_DEFERRED;
         T2Node const *tail = get_node(
                 solver->universe,
@@ -8968,7 +8104,7 @@ constrain_mapped_pack_expansion(
         T2Type *elements = count == 0 ? NULL : ty_malloc(count * sizeof *elements);
         if (count != 0 && elements == NULL) {
                 solver->failed = true;
-                snprintf(
+                ty_snprintf(
                         solver->error,
                         sizeof solver->error,
                         "types2 solver ran out of memory"
@@ -8981,7 +8117,7 @@ constrain_mapped_pack_expansion(
                 pattern->payload
         );
         T2Relation result = T2_RELATION_YES;
-        for (size_t i = 0; i < count; ++i) {
+        for (usize i = 0; i < count; ++i) {
                 T2Type item = actual->children[i];
                 T2Node const *item_node = get_node(solver->universe, item);
                 if (
@@ -9022,7 +8158,7 @@ constrain_mapped_pack_expansion(
                 }
                 elements[i] = projection->children[pack_index];
 
-                for (size_t j = 0; j < pattern->arity; ++j) {
+                for (usize j = 0; j < pattern->arity; ++j) {
                         if (j == pack_index) continue;
                         T2Variance variance = info == NULL
                                             ? T2_INVARIANT
@@ -9157,8 +8293,8 @@ constrain_pack_types(
                 }
                 if (actual->kind == T2_TYPE_PACK) {
                         T2Relation result = T2_RELATION_YES;
-                        size_t count = (size_t)actual->payload;
-                        for (size_t i = 0; i < count; ++i) {
+                        usize count = (usize)actual->payload;
+                        for (usize i = 0; i < count; ++i) {
                                 result = combine_all(
                                         result,
                                         constrain_internal(
@@ -9214,11 +8350,11 @@ constrain_pack_types(
                 return T2_RELATION_NO;
         }
 
-        size_t actual_count = (size_t)actual->payload;
-        size_t expected_count = (size_t)expected->payload;
-        size_t common = actual_count < expected_count ? actual_count : expected_count;
+        usize actual_count = (usize)actual->payload;
+        usize expected_count = (usize)expected->payload;
+        usize common = actual_count < expected_count ? actual_count : expected_count;
         T2Relation result = T2_RELATION_YES;
-        for (size_t i = 0; i < common; ++i) {
+        for (usize i = 0; i < common; ++i) {
                 result = combine_all(
                         result,
                         constrain_internal(
@@ -9278,10 +8414,10 @@ resolve_exact_meta_head(T2Solver *solver, T2Type type, unsigned outer_depth)
                 ++depth
         ) {
                 type = t2_type_resolve_computed(solver->universe, type);
-                uint32_t meta = meta_from_type(solver, type);
+                u32 meta = meta_from_type(solver, type);
                 if (meta == 0) return type;
                 meta = find_root(solver, meta);
-                T2Meta const *node = &solver->metas[meta - 1];
+                T2Meta const *node = v_(solver->metas, meta - 1);
                 T2Type root = meta_type(solver, meta);
                 T2Type exact = node->solution;
                 if (
@@ -9299,12 +8435,6 @@ resolve_exact_meta_head(T2Solver *solver, T2Type type, unsigned outer_depth)
         return type;
 }
 
-/* Immutable terms that were distinct when a union was interned can become
- * identical after their embedded metavariables are merged.  The universe
- * deliberately does not rewrite such terms, so recognize this narrow form of
- * solver equality when choosing a union arm.  Bounds are used only when they
- * have collapsed to one exact type; selecting a mere lower or upper bound here
- * would make an ambiguous union choice unsound. */
 static bool
 solver_types_identical(
         T2Solver *solver,
@@ -9335,10 +8465,10 @@ solver_types_identical(
              || (a->text == NULL) != (b->text == NULL)
              || (
                         a->text != NULL
-                     && strcmp(a->text, b->text) != 0
+                     && !s_eq(a->text, b->text)
                 )
         ) return false;
-        for (size_t i = 0; i < a->arity; ++i) {
+        for (usize i = 0; i < a->arity; ++i) {
                 if (!solver_types_identical(
                         solver,
                         a->children[i],
@@ -9353,16 +8483,16 @@ static bool
 type_has_open_meta(T2Solver *solver, T2Type type, unsigned depth)
 {
         if (depth > T2_RELATION_DEPTH_LIMIT || type == T2_TYPE_INVALID) return false;
-        uint32_t meta = meta_from_type(solver, type);
+        u32 meta = meta_from_type(solver, type);
         if (meta != 0) {
                 meta = find_root(solver, meta);
-                T2Type solution = solver->metas[meta - 1].solution;
+                T2Type solution = v__(solver->metas, meta - 1).solution;
                 if (solution == T2_TYPE_INVALID) return true;
                 return type_has_open_meta(solver, solution, depth + 1);
         }
         T2Node const *node = get_node(solver->universe, type);
         if (node == NULL) return false;
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 if (type_has_open_meta(solver, node->children[i], depth + 1)) {
                         return true;
                 }
@@ -9373,8 +8503,8 @@ type_has_open_meta(T2Solver *solver, T2Type type, unsigned depth)
 static bool
 callable_parameters_open(T2Solver *solver, T2Node const *callable)
 {
-        size_t count = (size_t)callable->payload;
-        for (size_t i = 0; i < count && i < callable->arity; ++i) {
+        usize count = (usize)callable->payload;
+        for (usize i = 0; i < count && i < callable->arity; ++i) {
                 if (type_has_open_meta(solver, callable->children[i], 0)) return true;
         }
         return false;
@@ -9394,9 +8524,9 @@ resolve_meta_solution(T2Solver *solver, T2Type type)
 {
         for (unsigned depth = 0; depth < 64; ++depth) {
                 type = resolve_sort_solution(solver, type);
-                uint32_t meta = meta_from_type(solver, type);
+                u32 meta = meta_from_type(solver, type);
                 if (meta == 0) return type;
-                T2Meta const *node = &solver->metas[find_root(solver, meta) - 1];
+                T2Meta const *node = v_(solver->metas, find_root(solver, meta) - 1);
                 T2Type solution = node->solution;
                 if (solution == T2_TYPE_INVALID && node->lower == node->upper) {
                         solution = node->lower;
@@ -9492,17 +8622,13 @@ constrain_internal(
              || solver_types_identical(solver, subtype, supertype, 0)
         ) return T2_RELATION_YES;
 
-        uint32_t a_meta = meta_from_type(solver, subtype);
-        uint32_t b_meta = meta_from_type(solver, supertype);
+        u32 a_meta = meta_from_type(solver, subtype);
+        u32 b_meta = meta_from_type(solver, supertype);
         T2Node const *a_term = get_node(solver->universe, subtype);
         T2Node const *b_term = get_node(solver->universe, supertype);
 
-        /* Set equations such as a <: a | T and a | T <: a are finite
-         * constraints, not recursive types.  The former is tautological; the
-         * latter contributes only T <: a.  Reduce the direct self arm before
-         * the ordinary metavariable occurs check sees the enclosing union. */
         if (a_meta != 0 && b_term != NULL && b_term->kind == T2_TYPE_UNION) {
-                for (size_t i = 0; i < b_term->arity; ++i) {
+                for (usize i = 0; i < b_term->arity; ++i) {
                         if (solver_types_identical(
                                 solver,
                                 subtype,
@@ -9514,7 +8640,7 @@ constrain_internal(
         if (b_meta != 0 && a_term != NULL && a_term->kind == T2_TYPE_UNION) {
                 T2Relation result = T2_RELATION_YES;
                 bool removed_self = false;
-                for (size_t i = 0; i < a_term->arity; ++i) {
+                for (usize i = 0; i < a_term->arity; ++i) {
                         if (solver_types_identical(
                                 solver,
                                 a_term->children[i],
@@ -9542,14 +8668,14 @@ constrain_internal(
                 return add_edge(solver, a_meta, b_meta, provenance);
         }
         if (a_meta != 0) {
-                T2VariableKind kind = solver->metas[find_root(solver, a_meta) - 1].variable_kind;
+                T2VariableKind kind = v__(solver->metas, find_root(solver, a_meta) - 1).variable_kind;
                 if (kind == T2_VARIABLE_ROW || kind == T2_VARIABLE_PACK) {
                         return bind_sort_meta(solver, a_meta, supertype, provenance);
                 }
                 return update_upper(solver, a_meta, supertype, provenance);
         }
         if (b_meta != 0) {
-                T2VariableKind kind = solver->metas[find_root(solver, b_meta) - 1].variable_kind;
+                T2VariableKind kind = v__(solver->metas, find_root(solver, b_meta) - 1).variable_kind;
                 if (kind == T2_VARIABLE_ROW || kind == T2_VARIABLE_PACK) {
                         return bind_sort_meta(solver, b_meta, subtype, provenance);
                 }
@@ -9569,7 +8695,7 @@ constrain_internal(
 
         if (a->kind == T2_TYPE_UNION) {
                 T2Relation result = T2_RELATION_YES;
-                for (size_t i = 0; i < a->arity; ++i) {
+                for (usize i = 0; i < a->arity; ++i) {
                         result = combine_all(
                                 result,
                                 constrain_internal(
@@ -9585,10 +8711,7 @@ constrain_internal(
                 return result;
         }
         if (b->kind == T2_TYPE_UNION) {
-                /* A proof that needs no solver mutation wins immediately.  In
-                 * particular, T <: nil | T must not remain ambiguous merely
-                 * because nil <: T is deferred. */
-                for (size_t i = 0; i < b->arity; ++i) {
+                for (usize i = 0; i < b->arity; ++i) {
                         if (
                                 solver_types_identical(
                                         solver,
@@ -9608,9 +8731,9 @@ constrain_internal(
                                 )
                         ) return T2_RELATION_YES;
                 }
-                size_t applicable = 0;
-                size_t selected = 0;
-                for (size_t i = 0; i < b->arity; ++i) {
+                usize applicable = 0;
+                usize selected = 0;
+                for (usize i = 0; i < b->arity; ++i) {
                         T2SolverMark mark = t2_solver_mark(solver);
                         T2Relation trial = constrain_internal(
                                 solver,
@@ -9650,7 +8773,7 @@ constrain_internal(
         }
         if (b->kind == T2_TYPE_INTERSECTION) {
                 T2Relation result = T2_RELATION_YES;
-                for (size_t i = 0; i < b->arity; ++i) {
+                for (usize i = 0; i < b->arity; ++i) {
                         result = combine_all(
                                 result,
                                 constrain_internal(
@@ -9671,11 +8794,11 @@ constrain_internal(
              && !sentinel_kind(a->kind)
              && !sentinel_kind(b->kind)
         ) {
-                size_t count = multi_arity(a) > multi_arity(b)
+                usize count = multi_arity(a) > multi_arity(b)
                              ? multi_arity(a)
                              : multi_arity(b);
                 T2Relation result = T2_RELATION_YES;
-                for (size_t i = 0; i < count; ++i) {
+                for (usize i = 0; i < count; ++i) {
                         result = combine_all(
                                 result,
                                 constrain_internal(
@@ -9699,7 +8822,7 @@ constrain_internal(
 
         if (b->kind == T2_TYPE_OVERLOAD) {
                 T2Relation result = T2_RELATION_YES;
-                for (size_t i = 0; i < b->arity; ++i) {
+                for (usize i = 0; i < b->arity; ++i) {
                         result = combine_all(
                                 result,
                                 constrain_internal(
@@ -9728,9 +8851,9 @@ constrain_internal(
                 );
         }
         if (a->kind == T2_TYPE_OVERLOAD && b->kind == T2_TYPE_FUNCTION) {
-                size_t applicable = 0;
-                size_t selected = 0;
-                for (size_t i = 0; i < a->arity; ++i) {
+                usize applicable = 0;
+                usize selected = 0;
+                for (usize i = 0; i < a->arity; ++i) {
                         T2SolverMark mark = t2_solver_mark(solver);
                         T2Relation trial = constrain_internal(
                                 solver,
@@ -9851,7 +8974,7 @@ constrain_internal(
         ) {
                 T2NominalInfo const *info = find_nominal(solver->universe, a->payload);
                 T2Relation result = T2_RELATION_YES;
-                for (size_t i = 0; i < a->arity; ++i) {
+                for (usize i = 0; i < a->arity; ++i) {
                         T2Variance variance = info == NULL
                                             ? T2_INVARIANT
                                             : info->variance[i];
@@ -9913,11 +9036,11 @@ constrain_internal(
                         subtype
                 );
                 if (applied != NULL) {
-                        for (size_t i = 0; i < applied->supertype_count; ++i) {
+                        for (usize i = 0; i < vN(applied->supertypes); ++i) {
                                 T2SolverMark mark = t2_solver_mark(solver);
                                 T2Relation trial = constrain_internal(
                                         solver,
-                                        applied->supertypes[i],
+                                        v__(applied->supertypes, i),
                                         supertype,
                                         provenance,
                                         retain_deferred
@@ -9958,24 +9081,24 @@ drain_work(T2Solver *solver)
         solver->draining_work = true;
         solver->drain_epoch += 1;
         if (solver->drain_epoch == 0) {
-                for (size_t i = 0; i < solver->edge_count; ++i) {
-                        solver->edges[i].self_retry_epoch = 0;
+                for (usize i = 0; i < vN(solver->edges); ++i) {
+                        v__(solver->edges, i).self_retry_epoch = 0;
                 }
-                for (size_t i = 0; i < solver->obligation_count; ++i) {
-                        solver->obligations[i].self_retry_epoch = 0;
+                for (usize i = 0; i < vN(solver->obligations); ++i) {
+                        v__(solver->obligations, i).self_retry_epoch = 0;
                 }
                 solver->drain_epoch = 1;
         }
-        while (!solver->failed && solver->work_index < solver->work_count) {
-                uint64_t work = solver->work[solver->work_index++];
+        while (!solver->failed && solver->work_index < vN(solver->work)) {
+                u64 work = v__(solver->work, solver->work_index++);
                 solver->active_work = work;
                 solver->processing_work = true;
                 solver->rerun_active_work = false;
                 solver->work_steps += 1;
                 if ((work & T2_WATCH_OBLIGATION) != 0) {
-                        size_t index = (size_t)(work & ~T2_WATCH_OBLIGATION);
-                        if (index >= solver->obligation_count) goto WorkDone;
-                        T2Obligation *obligation = &solver->obligations[index];
+                        usize index = (usize)(work & ~T2_WATCH_OBLIGATION);
+                        if (index >= vN(solver->obligations)) goto WorkDone;
+                        T2Obligation *obligation = v_(solver->obligations, index);
                         if (!obligation->active) goto WorkDone;
                         T2Predicate predicate = obligation->predicate;
                         T2Relation relation;
@@ -9996,11 +9119,11 @@ drain_work(T2Solver *solver)
                         } else {
                                 relation = T2_RELATION_DEFERRED;
                         }
-                        obligation = &solver->obligations[index];
+                        obligation = v_(solver->obligations, index);
                         if (relation == T2_RELATION_YES) {
                                 if (!push_undo(solver, (T2Undo) {
                                         .kind = T2_UNDO_OBLIGATION_ACTIVE,
-                                        .index = (uint32_t)index,
+                                        .index = (u32)index,
                                         .old = obligation->active
                                 })) break;
                                 obligation->active = false;
@@ -10022,14 +9145,14 @@ drain_work(T2Solver *solver)
                                 );
                         }
                 } else {
-                        size_t index = (size_t)work;
-                        if (index >= solver->edge_count) goto WorkDone;
-                        T2Edge edge = solver->edges[index];
-                        uint32_t sub = find_root(solver, edge.subtype);
-                        uint32_t sup = find_root(solver, edge.supertype);
+                        usize index = (usize)work;
+                        if (index >= vN(solver->edges)) goto WorkDone;
+                        T2Edge edge = v__(solver->edges, index);
+                        u32 sub = find_root(solver, edge.subtype);
+                        u32 sup = find_root(solver, edge.supertype);
                         if (sub == sup) goto WorkDone;
-                        T2Meta const *sub_node = &solver->metas[sub - 1];
-                        T2Meta const *sup_node = &solver->metas[sup - 1];
+                        T2Meta const *sub_node = v_(solver->metas, sub - 1);
+                        T2Meta const *sup_node = v_(solver->metas, sup - 1);
                         if (
                                 update_lower(
                                         solver,
@@ -10051,18 +9174,18 @@ WorkDone:
                 solver->processing_work = false;
                 if (solver->rerun_active_work && !solver->failed) {
                         solver->rerun_active_work = false;
-                        uint64_t *epoch;
+                        u64 *epoch;
                         if ((work & T2_WATCH_OBLIGATION) != 0) {
-                                size_t index = (size_t)(
+                                usize index = (usize)(
                                         work & ~T2_WATCH_OBLIGATION
                                 );
-                                epoch = index < solver->obligation_count
-                                      ? &solver->obligations[index].self_retry_epoch
+                                epoch = index < vN(solver->obligations)
+                                      ? &v__(solver->obligations, index).self_retry_epoch
                                       : NULL;
                         } else {
-                                size_t index = (size_t)work;
-                                epoch = index < solver->edge_count
-                                      ? &solver->edges[index].self_retry_epoch
+                                usize index = (usize)work;
+                                epoch = index < vN(solver->edges)
+                                      ? &v__(solver->edges, index).self_retry_epoch
                                       : NULL;
                         }
                         if (epoch != NULL && *epoch != solver->drain_epoch) {
@@ -10076,9 +9199,9 @@ WorkDone:
         solver->rerun_active_work = false;
         solver->active_work = 0;
 
-        if (solver->work_index == solver->work_count) {
+        if (solver->work_index == vN(solver->work)) {
                 solver->work_index = 0;
-                solver->work_count = 0;
+                vN(solver->work) = 0;
         }
 }
 
@@ -10091,8 +9214,8 @@ t2_solver_constrain_subtype(
 )
 {
         if (solver == NULL || solver->failed) return T2_RELATION_NO;
-        uint32_t subtype_meta = meta_from_type(solver, subtype);
-        uint32_t supertype_meta = meta_from_type(solver, supertype);
+        u32 subtype_meta = meta_from_type(solver, subtype);
+        u32 supertype_meta = meta_from_type(solver, supertype);
         T2CauseKind cause_kind = T2_CAUSE_PREDICATE;
         if (subtype_meta != 0 && supertype_meta != 0) cause_kind = T2_CAUSE_EDGE;
         else if (subtype_meta != 0) cause_kind = T2_CAUSE_UPPER;
@@ -10172,8 +9295,8 @@ t2_solver_constrain_predicate(
 static T2Relation
 merge_meta_roots(
         T2Solver *solver,
-        uint32_t left,
-        uint32_t right,
+        u32 left,
+        u32 right,
         char const *provenance
 )
 {
@@ -10181,8 +9304,8 @@ merge_meta_roots(
         right = find_root(solver, right);
         if (left == right) return T2_RELATION_YES;
 
-        T2Meta *a = &solver->metas[left - 1];
-        T2Meta *b = &solver->metas[right - 1];
+        T2Meta *a = v_(solver->metas, left - 1);
+        T2Meta *b = v_(solver->metas, right - 1);
         if (
                 (a->variable_kind == T2_VARIABLE_ROW) != (b->variable_kind == T2_VARIABLE_ROW)
              || (a->variable_kind == T2_VARIABLE_PACK) != (b->variable_kind == T2_VARIABLE_PACK)
@@ -10219,11 +9342,11 @@ merge_meta_roots(
         }
 
         if (a->rank < b->rank) {
-                uint32_t temporary = left;
+                u32 temporary = left;
                 left = right;
                 right = temporary;
-                a = &solver->metas[left - 1];
-                b = &solver->metas[right - 1];
+                a = v_(solver->metas, left - 1);
+                b = v_(solver->metas, right - 1);
         }
 
         if (!push_undo(solver, (T2Undo) {
@@ -10278,8 +9401,8 @@ merge_meta_roots(
         })) return T2_RELATION_COMPLEXITY;
         a->solution = solution;
 
-        for (size_t i = 0; i < b->watchers.count; ++i) {
-                if (!push_watch(solver, left, b->watchers.items[i])) {
+        for (usize i = 0; i < vN(b->watchers); ++i) {
+                if (!push_watch(solver, left, v__(b->watchers, i))) {
                         return T2_RELATION_COMPLEXITY;
                 }
         }
@@ -10307,8 +9430,8 @@ t2_solver_unify(
         );
         if (solver->failed) return T2_RELATION_NO;
 
-        uint32_t a_meta = meta_from_type(solver, left);
-        uint32_t b_meta = meta_from_type(solver, right);
+        u32 a_meta = meta_from_type(solver, left);
+        u32 b_meta = meta_from_type(solver, right);
         T2Relation result;
 
         if (a_meta != 0 && b_meta != 0) {
@@ -10331,20 +9454,20 @@ T2Type
 t2_solver_lower_bound(T2Solver *solver, T2Type meta)
 {
         if (solver == NULL) return T2_TYPE_INVALID;
-        uint32_t id = meta_from_type(solver, meta);
+        u32 id = meta_from_type(solver, meta);
         if (id == 0) return T2_TYPE_INVALID;
         id = find_root(solver, id);
-        return solver->metas[id - 1].lower;
+        return v__(solver->metas, id - 1).lower;
 }
 
 T2Type
 t2_solver_upper_bound(T2Solver *solver, T2Type meta)
 {
         if (solver == NULL) return T2_TYPE_INVALID;
-        uint32_t id = meta_from_type(solver, meta);
+        u32 id = meta_from_type(solver, meta);
         if (id == 0) return T2_TYPE_INVALID;
         id = find_root(solver, id);
-        return solver->metas[id - 1].upper;
+        return v__(solver->metas, id - 1).upper;
 }
 
 T2Type
@@ -10355,11 +9478,11 @@ t2_solver_solution(
 )
 {
         if (solver == NULL) return T2_TYPE_INVALID;
-        uint32_t id = meta_from_type(solver, meta);
+        u32 id = meta_from_type(solver, meta);
         if (id == 0) return T2_TYPE_INVALID;
         id = find_root(solver, id);
-        if (solver->metas[id - 1].solution != T2_TYPE_INVALID) {
-                return solver->metas[id - 1].solution;
+        if (v__(solver->metas, id - 1).solution != T2_TYPE_INVALID) {
+                return v__(solver->metas, id - 1).solution;
         }
         T2Type lower = t2_solver_lower_bound(solver, meta);
         T2Type upper = t2_solver_upper_bound(solver, meta);
@@ -10370,7 +9493,7 @@ t2_solver_solution(
         T2Type never = t2_primitive(solver->universe, T2_TYPE_NEVER);
         T2Type any = t2_primitive(solver->universe, T2_TYPE_ANY);
 
-        if (solver->metas[id - 1].retired) {
+        if (v__(solver->metas, id - 1).retired) {
                 if (lower != never) return lower;
                 if (upper != any) return upper;
                 return meta;
@@ -10402,18 +9525,18 @@ t2_solver_error(T2Solver const *solver)
 }
 
 static char *
-solver_explain_from(T2Solver const *solver, size_t cause_start)
+solver_explain_from(T2Solver const *solver, usize cause_start)
 {
-        if (solver == NULL) return copy_string("invalid types2 solver");
-        if (cause_start > solver->cause_count) cause_start = solver->cause_count;
+        if (solver == NULL) return S2("invalid types2 solver");
+        if (cause_start > vN(solver->causes)) cause_start = vN(solver->causes);
 
         T2StringBuffer buffer = {0};
         if (solver->error[0] != '\0') {
                 buffer_text(&buffer, solver->error);
                 buffer_text(&buffer, "\n");
         }
-        for (size_t i = cause_start; i < solver->cause_count; ++i) {
-                T2Cause const *cause = &solver->causes[i];
+        for (usize i = cause_start; i < vN(solver->causes); ++i) {
+                T2Cause const *cause = v_(solver->causes, i);
                 char const *kind = "predicate";
                 switch (cause->kind) {
                 case T2_CAUSE_LOWER: kind = "lower bound"; break;
@@ -10439,11 +9562,7 @@ solver_explain_from(T2Solver const *solver, size_t cause_start)
                 ty_free(left);
                 ty_free(right);
         }
-        if (buffer.failed) {
-                ty_free(buffer.items);
-                return NULL;
-        }
-        return buffer.items == NULL ? copy_string("") : buffer.items;
+        return vv(buffer) == NULL ? S2("") : vv(buffer);
 }
 
 char *
@@ -10458,13 +9577,13 @@ t2_solver_explain_since(T2Solver const *solver, T2SolverMark mark)
         return solver_explain_from(solver, mark.cause_count);
 }
 
-size_t
+usize
 t2_solver_pending_obligations(T2Solver const *solver)
 {
         if (solver == NULL) return 0;
-        size_t count = 0;
-        for (size_t i = 0; i < solver->obligation_count; ++i) {
-                count += solver->obligations[i].active;
+        usize count = 0;
+        for (usize i = 0; i < vN(solver->obligations); ++i) {
+                count += v__(solver->obligations, i).active;
         }
         return count;
 }
@@ -10472,13 +9591,13 @@ t2_solver_pending_obligations(T2Solver const *solver)
 bool
 t2_solver_pending_obligation(
         T2Solver const *solver,
-        size_t index,
+        usize index,
         T2Predicate *predicate
 )
 {
         if (solver == NULL || predicate == NULL) return false;
-        for (size_t i = 0; i < solver->obligation_count; ++i) {
-                T2Obligation const *obligation = &solver->obligations[i];
+        for (usize i = 0; i < vN(solver->obligations); ++i) {
+                T2Obligation const *obligation = v_(solver->obligations, i);
                 if (!obligation->active) continue;
                 if (index-- != 0) continue;
                 *predicate = obligation->predicate;
@@ -10487,19 +9606,19 @@ t2_solver_pending_obligation(
         return false;
 }
 
-size_t
+usize
 t2_solver_meta_count(T2Solver const *solver)
 {
-        return solver == NULL ? 0 : solver->meta_count;
+        return solver == NULL ? 0 : vN(solver->metas);
 }
 
-size_t
+usize
 t2_solver_edge_count(T2Solver const *solver)
 {
-        return solver == NULL ? 0 : solver->edge_count;
+        return solver == NULL ? 0 : vN(solver->edges);
 }
 
-uint64_t
+u64
 t2_solver_work_steps(T2Solver const *solver)
 {
         return solver == NULL ? 0 : solver->work_steps;
@@ -10510,13 +9629,13 @@ t2_solver_mark(T2Solver *solver)
 {
         if (solver == NULL) return (T2SolverMark){0};
         T2SolverMark mark = {
-                .undo_count = solver->undo_count,
-                .meta_count = solver->meta_count,
-                .edge_count = solver->edge_count,
-                .obligation_count = solver->obligation_count,
-                .work_count = solver->work_count,
+                .undo_count = vN(solver->undo),
+                .meta_count = vN(solver->metas),
+                .edge_count = vN(solver->edges),
+                .obligation_count = vN(solver->obligations),
+                .work_count = vN(solver->work),
                 .work_index = solver->work_index,
-                .cause_count = solver->cause_count,
+                .cause_count = vN(solver->causes),
                 .transaction_depth = solver->transaction_depth,
                 .failed = solver->failed
         };
@@ -10531,7 +9650,7 @@ t2_solver_commit(T2Solver *solver, T2SolverMark mark)
                 return;
         }
         solver->transaction_depth = mark.transaction_depth;
-        if (solver->transaction_depth == 0) solver->undo_count = 0;
+        if (solver->transaction_depth == 0) vN(solver->undo) = 0;
 }
 
 bool
@@ -10540,15 +9659,15 @@ t2_solver_cancel_obligations_since(T2Solver *solver, T2SolverMark mark)
         if (
                 solver == NULL
              || solver->transaction_depth != mark.transaction_depth + 1
-             || mark.obligation_count > solver->obligation_count
+             || mark.obligation_count > vN(solver->obligations)
         ) return false;
 
-        for (size_t i = mark.obligation_count; i < solver->obligation_count; ++i) {
-                T2Obligation *obligation = &solver->obligations[i];
+        for (usize i = mark.obligation_count; i < vN(solver->obligations); ++i) {
+                T2Obligation *obligation = v_(solver->obligations, i);
                 if (!obligation->active) continue;
                 if (!push_undo(solver, (T2Undo) {
                         .kind = T2_UNDO_OBLIGATION_ACTIVE,
-                        .index = (uint32_t)i,
+                        .index = (u32)i,
                         .old = obligation->active
                 })) return false;
                 obligation->active = false;
@@ -10563,73 +9682,73 @@ t2_solver_rollback(T2Solver *solver, T2SolverMark mark)
                 return;
         }
 
-        while (solver->undo_count > mark.undo_count) {
-                T2Undo undo = solver->undo[--solver->undo_count];
+        while (vN(solver->undo) > mark.undo_count) {
+                T2Undo undo = v__(solver->undo, --vN(solver->undo));
                 switch (undo.kind) {
                 case T2_UNDO_PARENT:
-                        solver->metas[undo.index - 1].parent = (uint32_t)undo.old;
+                        v__(solver->metas, undo.index - 1).parent = (u32)undo.old;
                         break;
                 case T2_UNDO_RANK:
-                        solver->metas[undo.index - 1].rank = (uint8_t)undo.old;
+                        v__(solver->metas, undo.index - 1).rank = (uint8_t)undo.old;
                         break;
                 case T2_UNDO_VARIABLE_KIND:
-                        solver->metas[undo.index - 1].variable_kind = (T2VariableKind)undo.old;
+                        v__(solver->metas, undo.index - 1).variable_kind = (T2VariableKind)undo.old;
                         break;
                 case T2_UNDO_LOWER:
-                        solver->metas[undo.index - 1].lower = (T2Type)undo.old;
+                        v__(solver->metas, undo.index - 1).lower = (T2Type)undo.old;
                         break;
                 case T2_UNDO_UPPER:
-                        solver->metas[undo.index - 1].upper = (T2Type)undo.old;
+                        v__(solver->metas, undo.index - 1).upper = (T2Type)undo.old;
                         break;
                 case T2_UNDO_SOLUTION:
-                        solver->metas[undo.index - 1].solution = (T2Type)undo.old;
+                        v__(solver->metas, undo.index - 1).solution = (T2Type)undo.old;
                         break;
                 case T2_UNDO_WATCH_COUNT:
-                        solver->metas[undo.index - 1].watchers.count = (size_t)undo.old;
+                        v__(solver->metas, undo.index - 1).watchers.count = (usize)undo.old;
                         break;
                 case T2_UNDO_OBLIGATION_ACTIVE:
-                        solver->obligations[undo.index].active = undo.old;
+                        v__(solver->obligations, undo.index).active = undo.old;
                         break;
                 }
         }
 
-        for (size_t i = mark.meta_count; i < solver->meta_count; ++i) {
-                ty_free(solver->metas[i].watchers.items);
-                ty_free(solver->metas[i].provenance);
-                memset(&solver->metas[i], 0, sizeof solver->metas[i]);
+        for (usize i = mark.meta_count; i < vN(solver->metas); ++i) {
+                xvF(v__(solver->metas, i).watchers);
+                ty_free(v__(solver->metas, i).provenance);
+                memset(v_(solver->metas, i), 0, sizeof v__(solver->metas, i));
         }
 
-        for (size_t i = mark.cause_count; i < solver->cause_count; ++i) {
-                ty_free(solver->causes[i].provenance);
-                memset(&solver->causes[i], 0, sizeof solver->causes[i]);
+        for (usize i = mark.cause_count; i < vN(solver->causes); ++i) {
+                ty_free(v__(solver->causes, i).provenance);
+                memset(v_(solver->causes, i), 0, sizeof v__(solver->causes, i));
         }
 
-        for (size_t i = mark.obligation_count; i < solver->obligation_count; ++i) {
-                ty_free(solver->obligations[i].name);
-                ty_free(solver->obligations[i].provenance);
-                memset(&solver->obligations[i], 0, sizeof solver->obligations[i]);
+        for (usize i = mark.obligation_count; i < vN(solver->obligations); ++i) {
+                ty_free(v__(solver->obligations, i).name);
+                ty_free(v__(solver->obligations, i).provenance);
+                memset(v_(solver->obligations, i), 0, sizeof v__(solver->obligations, i));
         }
 
-        solver->meta_count = mark.meta_count;
-        solver->edge_count = mark.edge_count;
-        solver->obligation_count = mark.obligation_count;
-        solver->work_count = mark.work_count;
+        vN(solver->metas) = mark.meta_count;
+        vN(solver->edges) = mark.edge_count;
+        vN(solver->obligations) = mark.obligation_count;
+        vN(solver->work) = mark.work_count;
         solver->work_index = mark.work_index;
-        solver->cause_count = mark.cause_count;
+        vN(solver->causes) = mark.cause_count;
         solver->transaction_depth = mark.transaction_depth;
         solver->failed = mark.failed;
         if (!solver->failed) clear_solver_failure(solver);
-        if (solver->transaction_depth == 0) solver->undo_count = 0;
+        if (solver->transaction_depth == 0) vN(solver->undo) = 0;
 }
 
 T2Scheme *
 t2_scheme_new(
         T2Universe *universe,
         T2Quantifier const *quantifiers,
-        size_t quantifier_count,
+        usize quantifier_count,
         T2Type body,
         T2Predicate const *predicates,
-        size_t predicate_count
+        usize predicate_count
 )
 {
         if (
@@ -10639,16 +9758,16 @@ t2_scheme_new(
              || (predicate_count != 0 && predicates == NULL)
         ) return NULL;
 
-        for (size_t i = 0; i < quantifier_count; ++i) {
+        for (usize i = 0; i < quantifier_count; ++i) {
                 if (
                         quantifiers[i].kind == T2_VARIABLE_RIGID
                      || quantifiers[i].kind == T2_VARIABLE_WEAK
                 ) return NULL;
-                for (size_t j = 0; j < i; ++j) {
+                for (usize j = 0; j < i; ++j) {
                         if (quantifiers[j].id == quantifiers[i].id) return NULL;
                 }
         }
-        for (size_t i = 0; i < predicate_count; ++i) {
+        for (usize i = 0; i < predicate_count; ++i) {
                 if (
                         get_node(universe, predicates[i].subtype) == NULL
                      || get_node(universe, predicates[i].supertype) == NULL
@@ -10678,12 +9797,12 @@ t2_scheme_new(
                 scheme->predicates = ty_calloc(predicate_count, sizeof *scheme->predicates);
                 if (scheme->predicates == NULL) goto Fail;
                 scheme->predicate_count = predicate_count;
-                for (size_t i = 0; i < predicate_count; ++i) {
+                for (usize i = 0; i < predicate_count; ++i) {
                         scheme->predicates[i] = predicates[i];
-                        scheme->predicates[i].name = copy_string(
+                        scheme->predicates[i].name = S2N(
                                 predicates[i].name
                         );
-                        scheme->predicates[i].provenance = copy_string(
+                        scheme->predicates[i].provenance = S2N(
                                 predicates[i].provenance
                         );
                         if (
@@ -10709,12 +9828,12 @@ void
 t2_scheme_free(T2Scheme *scheme)
 {
         if (scheme == NULL) return;
-        for (size_t i = 0; i < scheme->predicate_count; ++i) {
+        for (usize i = 0; i < scheme->predicate_count; ++i) {
                 ty_free((char *)scheme->predicates[i].name);
                 ty_free((char *)scheme->predicates[i].provenance);
         }
         ty_free(scheme->predicates);
-        for (size_t i = 0; scheme->names != NULL && i < scheme->quantifier_count; ++i) {
+        for (usize i = 0; scheme->names != NULL && i < scheme->quantifier_count; ++i) {
                 ty_free(scheme->names[i]);
         }
         ty_free(scheme->names);
@@ -10723,14 +9842,14 @@ t2_scheme_free(T2Scheme *scheme)
 }
 
 bool
-t2_scheme_name_quantifier(T2Scheme *scheme, size_t index, char const *name)
+t2_scheme_name_quantifier(T2Scheme *scheme, usize index, char const *name)
 {
         if (scheme == NULL || index >= scheme->quantifier_count) return false;
         if (scheme->names == NULL) {
                 scheme->names = ty_calloc(scheme->quantifier_count, sizeof *scheme->names);
                 if (scheme->names == NULL) return false;
         }
-        char *owned = copy_string(name);
+        char *owned = S2N(name);
         if (name != NULL && owned == NULL) return false;
         ty_free(scheme->names[index]);
         scheme->names[index] = owned;
@@ -10738,7 +9857,7 @@ t2_scheme_name_quantifier(T2Scheme *scheme, size_t index, char const *name)
 }
 
 char const *
-t2_scheme_quantifier_name(T2Scheme const *scheme, size_t index)
+t2_scheme_quantifier_name(T2Scheme const *scheme, usize index)
 {
         if (scheme == NULL || scheme->names == NULL || index >= scheme->quantifier_count) {
                 return NULL;
@@ -10750,11 +9869,11 @@ T2Type
 t2_scheme_type(T2Universe *universe, T2Scheme const *scheme)
 {
         if (universe == NULL || scheme == NULL) return T2_TYPE_INVALID;
-        size_t arity = scheme->quantifier_count + 1 + scheme->predicate_count;
+        usize arity = scheme->quantifier_count + 1 + scheme->predicate_count;
         T2Type *children = ty_malloc(arity * sizeof *children);
         if (children == NULL) return T2_TYPE_INVALID;
-        size_t count = 0;
-        for (size_t i = 0; i < scheme->quantifier_count; ++i) {
+        usize count = 0;
+        for (usize i = 0; i < scheme->quantifier_count; ++i) {
                 T2Quantifier const *quantifier = &scheme->quantifiers[i];
                 children[count++] = intern_type(
                         universe,
@@ -10767,7 +9886,7 @@ t2_scheme_type(T2Universe *universe, T2Scheme const *scheme)
                 );
         }
         children[count++] = scheme->body;
-        for (size_t i = 0; i < scheme->predicate_count; ++i) {
+        for (usize i = 0; i < scheme->predicate_count; ++i) {
                 T2Predicate const *predicate = &scheme->predicates[i];
                 T2Type parts[3] = {
                         predicate->subtype,
@@ -10778,7 +9897,7 @@ t2_scheme_type(T2Universe *universe, T2Scheme const *scheme)
                         universe,
                         T2_TYPE_PREDICATE,
                         T2_VARIABLE_FLEXIBLE,
-                        (uint64_t)predicate->kind,
+                        (u64)predicate->kind,
                         predicate->name,
                         parts,
                         predicate->operand == T2_TYPE_INVALID ? 2 : 3
@@ -10814,8 +9933,8 @@ t2_type_scheme(T2Universe *universe, T2Type type)
 {
         T2Node const *node = get_node(universe, type);
         if (node == NULL || node->kind != T2_TYPE_SCHEME) return NULL;
-        size_t quantifier_count = (size_t)node->payload;
-        size_t predicate_count = node->arity - quantifier_count - 1;
+        usize quantifier_count = (usize)node->payload;
+        usize predicate_count = node->arity - quantifier_count - 1;
         T2Quantifier *quantifiers = ty_calloc(quantifier_count + 1, sizeof *quantifiers);
         T2Predicate *predicates = ty_calloc(predicate_count + 1, sizeof *predicates);
         if (quantifiers == NULL || predicates == NULL) {
@@ -10823,14 +9942,14 @@ t2_type_scheme(T2Universe *universe, T2Type type)
                 ty_free(predicates);
                 return NULL;
         }
-        for (size_t i = 0; i < quantifier_count; ++i) {
+        for (usize i = 0; i < quantifier_count; ++i) {
                 T2Node const *binder = get_node(universe, node->children[i]);
                 quantifiers[i] = (T2Quantifier) {
-                        .id = (uint32_t)binder->payload,
+                        .id = (u32)binder->payload,
                         .kind = binder->variable_kind
                 };
         }
-        for (size_t i = 0; i < predicate_count; ++i) {
+        for (usize i = 0; i < predicate_count; ++i) {
                 predicates[i] = predicate_from_node(
                         get_node(universe, node->children[quantifier_count + 1 + i])
                 );
@@ -10843,7 +9962,7 @@ t2_type_scheme(T2Universe *universe, T2Type type)
                 predicates,
                 predicate_count
         );
-        for (size_t i = 0; scheme != NULL && i < quantifier_count; ++i) {
+        for (usize i = 0; scheme != NULL && i < quantifier_count; ++i) {
                 T2Node const *binder = get_node(universe, node->children[i]);
                 if (binder->text != NULL) {
                         (void)t2_scheme_name_quantifier(scheme, i, binder->text);
@@ -10863,7 +9982,7 @@ static void
 count_occurrences(
         T2Universe const *universe,
         T2Type type,
-        uint32_t id,
+        u32 id,
         bool positive,
         T2Occurrence *out,
         unsigned depth
@@ -10879,8 +9998,8 @@ count_occurrences(
                 return;
         case T2_TYPE_FUNCTION:
         {
-                size_t count = (size_t)node->payload;
-                for (size_t i = 0; i < count; ++i) {
+                usize count = (usize)node->payload;
+                for (usize i = 0; i < count; ++i) {
                         count_occurrences(universe, node->children[i], id, !positive, out, depth + 1);
                 }
                 count_occurrences(universe, node->children[count], id, positive, out, depth + 1);
@@ -10891,7 +10010,7 @@ count_occurrences(
         case T2_TYPE_NOMINAL:
         {
                 T2NominalInfo const *info = find_nominal(universe, node->payload);
-                for (size_t i = 0; i < node->arity; ++i) {
+                for (usize i = 0; i < node->arity; ++i) {
                         T2Variance variance = info != NULL
                                            && info->variance != NULL
                                            && i < info->arity
@@ -10913,13 +10032,13 @@ count_occurrences(
                 }
                 return;
         case T2_TYPE_TYPE_VALUE:
-                for (size_t i = 0; i < node->arity; ++i) {
+                for (usize i = 0; i < node->arity; ++i) {
                         count_occurrences(universe, node->children[i], id, positive, out, depth + 1);
                         count_occurrences(universe, node->children[i], id, !positive, out, depth + 1);
                 }
                 return;
         default:
-                for (size_t i = 0; i < node->arity; ++i) {
+                for (usize i = 0; i < node->arity; ++i) {
                         count_occurrences(universe, node->children[i], id, positive, out, depth + 1);
                 }
                 return;
@@ -10927,7 +10046,7 @@ count_occurrences(
 }
 
 static bool
-mentions_variable(T2Universe const *universe, T2Type type, uint32_t id)
+mentions_variable(T2Universe const *universe, T2Type type, u32 id)
 {
         T2Occurrence occurrence = {0};
         if (type == T2_TYPE_INVALID) return false;
@@ -10936,7 +10055,7 @@ mentions_variable(T2Universe const *universe, T2Type type, uint32_t id)
 }
 
 static void
-remove_predicate(T2Scheme *scheme, size_t index)
+remove_predicate(T2Scheme *scheme, usize index)
 {
         ty_free((char *)scheme->predicates[index].name);
         ty_free((char *)scheme->predicates[index].provenance);
@@ -10949,7 +10068,7 @@ remove_predicate(T2Scheme *scheme, size_t index)
 }
 
 static void
-remove_quantifier(T2Scheme *scheme, size_t index)
+remove_quantifier(T2Scheme *scheme, usize index)
 {
         memmove(
                 &scheme->quantifiers[index],
@@ -10977,7 +10096,7 @@ static bool
 substitution_preserves_predicate(
         T2Universe const *universe,
         T2Predicate const *predicate,
-        uint32_t id,
+        u32 id,
         bool minimal
 )
 {
@@ -10996,7 +10115,7 @@ substitution_preserves_predicate(
 }
 
 static T2Type
-substitute_variable(T2Universe *universe, T2Type type, uint32_t id, T2Type replacement)
+substitute_variable(T2Universe *universe, T2Type type, u32 id, T2Type replacement)
 {
         return type == T2_TYPE_INVALID
              ? type
@@ -11004,7 +10123,7 @@ substitute_variable(T2Universe *universe, T2Type type, uint32_t id, T2Type repla
 }
 
 static bool
-eliminate_bound_variable(T2Scheme *scheme, size_t index, bool minimal)
+eliminate_bound_variable(T2Scheme *scheme, usize index, bool minimal)
 {
         T2Universe *universe = scheme->universe;
         T2Predicate const *predicate = &scheme->predicates[index];
@@ -11013,9 +10132,9 @@ eliminate_bound_variable(T2Scheme *scheme, size_t index, bool minimal)
         T2Node const *node = get_node(universe, variable);
         if (node == NULL || node->kind != T2_TYPE_VARIABLE) return false;
         if (node->variable_kind != T2_VARIABLE_QUANTIFIED) return false;
-        uint32_t id = (uint32_t)node->payload;
-        size_t quantifier = scheme->quantifier_count;
-        for (size_t i = 0; i < scheme->quantifier_count; ++i) {
+        u32 id = (u32)node->payload;
+        usize quantifier = scheme->quantifier_count;
+        for (usize i = 0; i < scheme->quantifier_count; ++i) {
                 if (scheme->quantifiers[i].id == id) quantifier = i;
         }
         if (quantifier == scheme->quantifier_count) return false;
@@ -11023,7 +10142,7 @@ eliminate_bound_variable(T2Scheme *scheme, size_t index, bool minimal)
         T2Occurrence body = {0};
         count_occurrences(universe, scheme->body, id, true, &body, 0);
         if (minimal ? body.negative != 0 : body.positive != 0) return false;
-        for (size_t i = 0; i < scheme->predicate_count; ++i) {
+        for (usize i = 0; i < scheme->predicate_count; ++i) {
                 if (i == index) continue;
                 if (!substitution_preserves_predicate(
                         universe,
@@ -11034,7 +10153,7 @@ eliminate_bound_variable(T2Scheme *scheme, size_t index, bool minimal)
         }
         T2Type substituted = substitute_variable(universe, scheme->body, id, replacement);
         if (substituted == T2_TYPE_INVALID) return false;
-        for (size_t i = 0; i < scheme->predicate_count; ++i) {
+        for (usize i = 0; i < scheme->predicate_count; ++i) {
                 T2Predicate *other = &scheme->predicates[i];
                 if (i == index) continue;
                 other->subtype = substitute_variable(universe, other->subtype, id, replacement);
@@ -11056,15 +10175,15 @@ same_predicate(T2Predicate const *a, T2Predicate const *b)
             && a->operand == b->operand
             && (
                         a->name == b->name
-                     || (a->name != NULL && b->name != NULL && strcmp(a->name, b->name) == 0)
+                     || (a->name != NULL && b->name != NULL && s_eq(a->name, b->name))
                );
 }
 
 static bool
 drop_duplicate_predicate(T2Scheme *scheme)
 {
-        for (size_t i = 0; i < scheme->predicate_count; ++i) {
-                for (size_t j = i + 1; j < scheme->predicate_count; ++j) {
+        for (usize i = 0; i < scheme->predicate_count; ++i) {
+                for (usize j = i + 1; j < scheme->predicate_count; ++j) {
                         if (!same_predicate(&scheme->predicates[i], &scheme->predicates[j])) {
                                 continue;
                         }
@@ -11076,7 +10195,7 @@ drop_duplicate_predicate(T2Scheme *scheme)
 }
 
 static bool
-quantified_variable_id(T2Universe const *universe, T2Type type, uint32_t *id)
+quantified_variable_id(T2Universe const *universe, T2Type type, u32 *id)
 {
         T2Node const *node = get_node(universe, type);
         if (
@@ -11084,7 +10203,7 @@ quantified_variable_id(T2Universe const *universe, T2Type type, uint32_t *id)
              || node->kind != T2_TYPE_VARIABLE
              || node->variable_kind != T2_VARIABLE_QUANTIFIED
         ) return false;
-        *id = (uint32_t)node->payload;
+        *id = (u32)node->payload;
         return true;
 }
 
@@ -11092,9 +10211,9 @@ static bool
 merge_bounds(T2Scheme *scheme, bool lower)
 {
         T2Universe *universe = scheme->universe;
-        for (size_t i = 0; i < scheme->predicate_count; ++i) {
+        for (usize i = 0; i < scheme->predicate_count; ++i) {
                 T2Predicate const *first = &scheme->predicates[i];
-                uint32_t id;
+                u32 id;
                 if (
                         first->kind != T2_PREDICATE_SUBTYPE
                      || !quantified_variable_id(
@@ -11104,8 +10223,8 @@ merge_bounds(T2Scheme *scheme, bool lower)
                         )
                 ) continue;
                 T2Type variable = lower ? first->supertype : first->subtype;
-                size_t count = 0;
-                for (size_t j = 0; j < scheme->predicate_count; ++j) {
+                usize count = 0;
+                for (usize j = 0; j < scheme->predicate_count; ++j) {
                         T2Predicate const *other = &scheme->predicates[j];
                         if (
                                 other->kind == T2_PREDICATE_SUBTYPE
@@ -11115,8 +10234,8 @@ merge_bounds(T2Scheme *scheme, bool lower)
                 if (count < 2) continue;
                 T2Type *arms = ty_malloc(count * sizeof *arms);
                 if (arms == NULL) return false;
-                size_t filled = 0;
-                for (size_t j = scheme->predicate_count; j != 0; --j) {
+                usize filled = 0;
+                for (usize j = scheme->predicate_count; j != 0; --j) {
                         T2Predicate const *other = &scheme->predicates[j - 1];
                         if (
                                 other->kind != T2_PREDICATE_SUBTYPE
@@ -11145,7 +10264,7 @@ t2_scheme_simplify(T2Scheme *scheme)
                 changed = drop_duplicate_predicate(scheme)
                        || merge_bounds(scheme, true)
                        || merge_bounds(scheme, false);
-                for (size_t i = 0; i < scheme->predicate_count && !changed; ++i) {
+                for (usize i = 0; i < scheme->predicate_count && !changed; ++i) {
                         if (scheme->predicates[i].kind != T2_PREDICATE_SUBTYPE) continue;
                         changed = eliminate_bound_variable(scheme, i, true)
                                || eliminate_bound_variable(scheme, i, false);
@@ -11164,7 +10283,7 @@ t2_type_scheme_body(T2Universe const *universe, T2Type type)
         }
 }
 
-size_t
+usize
 t2_scheme_quantifier_count(T2Scheme const *scheme)
 {
         return scheme == NULL ? 0 : scheme->quantifier_count;
@@ -11173,7 +10292,7 @@ t2_scheme_quantifier_count(T2Scheme const *scheme)
 bool
 t2_scheme_quantifier(
         T2Scheme const *scheme,
-        size_t index,
+        usize index,
         T2Quantifier *quantifier
 )
 {
@@ -11190,7 +10309,7 @@ t2_scheme_body(T2Scheme const *scheme)
         return scheme == NULL ? T2_TYPE_INVALID : scheme->body;
 }
 
-size_t
+usize
 t2_scheme_predicate_count(T2Scheme const *scheme)
 {
         return scheme == NULL ? 0 : scheme->predicate_count;
@@ -11199,7 +10318,7 @@ t2_scheme_predicate_count(T2Scheme const *scheme)
 bool
 t2_scheme_predicate(
         T2Scheme const *scheme,
-        size_t index,
+        usize index,
         T2Predicate *predicate
 )
 {
@@ -11216,20 +10335,16 @@ typedef struct t2_instantiated_node {
 } T2InstantiatedNode;
 
 typedef struct t2_binder_substitution {
-        uint32_t source;
-        uint32_t result;
+        u32 source;
+        u32 result;
 } T2BinderSubstitution;
 
 typedef struct t2_instantiation {
         T2Scheme const *scheme;
         T2Solver *solver;
         T2Type *replacements;
-        T2InstantiatedNode *nodes;
-        size_t node_count;
-        size_t node_capacity;
-        T2BinderSubstitution *binders;
-        size_t binder_count;
-        size_t binder_capacity;
+        vec(T2InstantiatedNode) nodes;
+        vec(T2BinderSubstitution) binders;
         bool failed;
 } T2Instantiation;
 
@@ -11243,10 +10358,10 @@ collect_generalization_polarity(
 )
 {
         if (depth > T2_RELATION_DEPTH_LIMIT) return false;
-        uint32_t meta = meta_from_type(solver, type);
+        u32 meta = meta_from_type(solver, type);
         if (meta != 0) {
                 meta = find_root(solver, meta);
-                T2Meta const *node = &solver->metas[meta - 1];
+                T2Meta const *node = v_(solver->metas, meta - 1);
                 if (node->solution != T2_TYPE_INVALID) {
                         return collect_generalization_polarity(
                                 solver,
@@ -11269,7 +10384,7 @@ collect_generalization_polarity(
                         node->payload
                 );
                 if (nominal == NULL) return false;
-                for (size_t i = 0; i < node->arity; ++i) {
+                for (usize i = 0; i < node->arity; ++i) {
                         unsigned child = polarity;
                         if (nominal->variance[i] == T2_CONTRAVARIANT) {
                                 child = flip_polarity(polarity);
@@ -11287,8 +10402,8 @@ collect_generalization_polarity(
                 return true;
         }
         if (node->kind == T2_TYPE_FUNCTION) {
-                size_t count = (size_t)node->payload;
-                for (size_t i = 0; i < count; ++i) {
+                usize count = (usize)node->payload;
+                for (usize i = 0; i < count; ++i) {
                         T2Node const *parameter = get_node(
                                 solver->universe,
                                 node->children[i]
@@ -11322,7 +10437,7 @@ collect_generalization_polarity(
                 );
         }
         if (node->kind == T2_TYPE_RECORD || node->kind == T2_TYPE_ROW) {
-                for (size_t i = 0; i + 1 < node->arity; ++i) {
+                for (usize i = 0; i + 1 < node->arity; ++i) {
                         T2Node const *field = get_node(
                                 solver->universe,
                                 node->children[i]
@@ -11346,7 +10461,7 @@ collect_generalization_polarity(
                         depth + 1
                 );
         }
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 if (!collect_generalization_polarity(
                         solver,
                         node->children[i],
@@ -11367,10 +10482,10 @@ type_touches_marked_meta(
 )
 {
         if (depth > T2_RELATION_DEPTH_LIMIT) return false;
-        uint32_t meta = meta_from_type(solver, type);
+        u32 meta = meta_from_type(solver, type);
         if (meta != 0) {
                 meta = find_root(solver, meta);
-                T2Meta const *node = &solver->metas[meta - 1];
+                T2Meta const *node = v_(solver->metas, meta - 1);
                 if (node->solution != T2_TYPE_INVALID) {
                         return type_touches_marked_meta(
                                 solver,
@@ -11383,7 +10498,7 @@ type_touches_marked_meta(
         }
         T2Node const *node = get_node(solver->universe, type);
         if (node == NULL || (node->flags & T2_NODE_META) == 0) return false;
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 if (type_touches_marked_meta(
                         solver,
                         node->children[i],
@@ -11399,15 +10514,15 @@ type_contains_variable(
         T2Solver *solver,
         T2Type type,
         T2VariableKind variable_kind,
-        uint32_t variable_id,
+        u32 variable_id,
         unsigned depth
 )
 {
         if (depth > T2_RELATION_DEPTH_LIMIT) return false;
-        uint32_t meta = meta_from_type(solver, type);
+        u32 meta = meta_from_type(solver, type);
         if (meta != 0) {
                 meta = find_root(solver, meta);
-                T2Type solution = solver->metas[meta - 1].solution;
+                T2Type solution = v__(solver->metas, meta - 1).solution;
                 return solution != T2_TYPE_INVALID
                     && type_contains_variable(
                             solver,
@@ -11425,7 +10540,7 @@ type_contains_variable(
              && node->variable_kind == variable_kind
              && node->payload == variable_id
         ) return true;
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 if (type_contains_variable(
                         solver,
                         node->children[i],
@@ -11441,7 +10556,7 @@ static bool type_reaches_variable(
         T2Solver *solver,
         T2Type type,
         T2VariableKind variable_kind,
-        uint32_t variable_id,
+        u32 variable_id,
         unsigned depth
 );
 
@@ -11454,10 +10569,10 @@ types_share_variable(
 )
 {
         if (depth > T2_RELATION_DEPTH_LIMIT) return false;
-        uint32_t meta = meta_from_type(solver, exported);
+        u32 meta = meta_from_type(solver, exported);
         if (meta != 0) {
                 meta = find_root(solver, meta);
-                T2Type solution = solver->metas[meta - 1].solution;
+                T2Type solution = v__(solver->metas, meta - 1).solution;
                 return solution != T2_TYPE_INVALID
                     && types_share_variable(
                             solver,
@@ -11474,11 +10589,11 @@ types_share_variable(
                         solver,
                         candidate,
                         node->variable_kind,
-                        (uint32_t)node->payload,
+                        (u32)node->payload,
                         0
                 );
         }
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 if (types_share_variable(
                         solver,
                         node->children[i],
@@ -11494,15 +10609,15 @@ type_reaches_variable(
         T2Solver *solver,
         T2Type type,
         T2VariableKind variable_kind,
-        uint32_t variable_id,
+        u32 variable_id,
         unsigned depth
 )
 {
         if (depth > T2_RELATION_DEPTH_LIMIT) return false;
-        uint32_t meta = meta_from_type(solver, type);
+        u32 meta = meta_from_type(solver, type);
         if (meta != 0) {
                 meta = find_root(solver, meta);
-                T2Meta const *node = &solver->metas[meta - 1];
+                T2Meta const *node = v_(solver->metas, meta - 1);
                 if (node->solution != T2_TYPE_INVALID) {
                         return type_reaches_variable(
                                 solver,
@@ -11539,7 +10654,7 @@ type_reaches_variable(
              && node->variable_kind == variable_kind
              && node->payload == variable_id
         ) return true;
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 if (type_reaches_variable(
                         solver,
                         node->children[i],
@@ -11574,22 +10689,22 @@ predicate_shares_exported_variable(
 static bool
 close_generalization_constraints(T2Solver *solver, unsigned *polarities)
 {
-        if (solver->meta_count == 0) return true;
-        unsigned *previous = ty_malloc(solver->meta_count * sizeof *previous);
+        if (vN(solver->metas) == 0) return true;
+        unsigned *previous = ty_malloc(vN(solver->metas) * sizeof *previous);
         if (previous == NULL) return false;
 
-        size_t remaining = solver->meta_count * 2 + 1;
+        usize remaining = vN(solver->metas) * 2 + 1;
         bool changed;
         do {
                 memcpy(
                         previous,
                         polarities,
-                        solver->meta_count * sizeof *previous
+                        vN(solver->metas) * sizeof *previous
                 );
-                for (size_t i = 0; i < solver->meta_count; ++i) {
+                for (usize i = 0; i < vN(solver->metas); ++i) {
                         if (polarities[i] == 0) continue;
-                        if (find_root(solver, (uint32_t)i + 1) != i + 1) continue;
-                        T2Meta const *meta = &solver->metas[i];
+                        if (find_root(solver, (u32)i + 1) != i + 1) continue;
+                        T2Meta const *meta = v_(solver->metas, i);
                         unsigned polarity = polarities[i];
                         if (!collect_generalization_polarity(
                                 solver,
@@ -11605,17 +10720,17 @@ close_generalization_constraints(T2Solver *solver, unsigned *polarities)
                                 0
                         )) goto Fail;
                 }
-                for (size_t i = 0; i < solver->edge_count; ++i) {
-                        uint32_t subtype = find_root(solver, solver->edges[i].subtype);
-                        uint32_t supertype = find_root(solver, solver->edges[i].supertype);
+                for (usize i = 0; i < vN(solver->edges); ++i) {
+                        u32 subtype = find_root(solver, v__(solver->edges, i).subtype);
+                        u32 supertype = find_root(solver, v__(solver->edges, i).supertype);
                         unsigned connected = polarities[subtype - 1]
                                            | polarities[supertype - 1];
                         if (connected == 0) continue;
                         polarities[subtype - 1] |= connected;
                         polarities[supertype - 1] |= connected;
                 }
-                for (size_t i = 0; i < solver->obligation_count; ++i) {
-                        T2Obligation const *obligation = &solver->obligations[i];
+                for (usize i = 0; i < vN(solver->obligations); ++i) {
+                        T2Obligation const *obligation = v_(solver->obligations, i);
                         if (!obligation->active) continue;
                         T2Predicate const *predicate = &obligation->predicate;
                         if (
@@ -11668,7 +10783,7 @@ close_generalization_constraints(T2Solver *solver, unsigned *polarities)
                 changed = memcmp(
                         previous,
                         polarities,
-                        solver->meta_count * sizeof *previous
+                        vN(solver->metas) * sizeof *previous
                 ) != 0;
         } while (changed && remaining-- != 0);
 
@@ -11689,11 +10804,11 @@ type_touches_replacement(
 )
 {
         if (depth > T2_RELATION_DEPTH_LIMIT) return false;
-        uint32_t meta = meta_from_type(solver, type);
+        u32 meta = meta_from_type(solver, type);
         if (meta != 0) {
                 meta = find_root(solver, meta);
                 if (replacements[meta - 1] != T2_TYPE_INVALID) return true;
-                T2Type solution = solver->metas[meta - 1].solution;
+                T2Type solution = v__(solver->metas, meta - 1).solution;
                 return solution != T2_TYPE_INVALID
                     && type_touches_replacement(
                             solver,
@@ -11704,7 +10819,7 @@ type_touches_replacement(
         }
         T2Node const *node = get_node(solver->universe, type);
         if (node == NULL) return false;
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 if (type_touches_replacement(
                         solver,
                         node->children[i],
@@ -11722,7 +10837,7 @@ type_contains_solver_meta(T2Solver *solver, T2Type type, unsigned depth)
         if (meta_from_type(solver, type) != 0) return true;
         T2Node const *node = get_node(solver->universe, type);
         if (node == NULL) return true;
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 if (type_contains_solver_meta(
                         solver,
                         node->children[i],
@@ -11740,12 +10855,8 @@ typedef struct t2_generalization_entry {
 typedef struct t2_generalization {
         T2Solver *solver;
         T2Type *replacements;
-        T2GeneralizationEntry *entries;
-        size_t count;
-        size_t capacity;
-        T2BinderSubstitution *binders;
-        size_t binder_count;
-        size_t binder_capacity;
+        vec(T2GeneralizationEntry) entries;
+        vec(T2BinderSubstitution) binders;
 } T2Generalization;
 
 static T2Type generalize_type(T2Generalization *generalization, T2Type source);
@@ -11754,21 +10865,15 @@ static T2Type
 generalize_recursive(T2Generalization *generalization, T2Node const *node)
 {
         T2Universe *universe = generalization->solver->universe;
-        uint32_t binder = t2_universe_fresh_recursive_binder(universe);
+        u32 binder = t2_universe_fresh_recursive_binder(universe);
         if (binder == 0) return T2_TYPE_INVALID;
-        if (!reserve_array(
-                (void **)&generalization->binders,
-                &generalization->binder_capacity,
-                generalization->binder_count + 1,
-                sizeof *generalization->binders
-        )) return T2_TYPE_INVALID;
-        size_t mark = generalization->binder_count;
-        generalization->binders[generalization->binder_count++] = (T2BinderSubstitution) {
-                .source = (uint32_t)node->payload,
+        usize mark = vN(generalization->binders);
+        xvP(generalization->binders, ((T2BinderSubstitution) {
+                .source = (u32)node->payload,
                 .result = binder
-        };
+        }));
         T2Type body = generalize_type(generalization, node->children[0]);
-        generalization->binder_count = mark;
+        vN(generalization->binders) = mark;
         return body == T2_TYPE_INVALID
              ? body
              : t2_recursive(universe, binder, body);
@@ -11778,13 +10883,13 @@ static T2Type
 generalize_type(T2Generalization *generalization, T2Type source)
 {
         T2Solver *solver = generalization->solver;
-        uint32_t meta = meta_from_type(solver, source);
+        u32 meta = meta_from_type(solver, source);
         if (meta != 0) {
                 meta = find_root(solver, meta);
                 if (generalization->replacements[meta - 1] != T2_TYPE_INVALID) {
                         return generalization->replacements[meta - 1];
                 }
-                T2Type solution = solver->metas[meta - 1].solution;
+                T2Type solution = v__(solver->metas, meta - 1).solution;
                 return solution == T2_TYPE_INVALID
                      ? meta_type(solver, meta)
                      : generalize_type(generalization, solution);
@@ -11794,8 +10899,8 @@ generalize_type(T2Generalization *generalization, T2Type source)
         if (node == NULL) return T2_TYPE_INVALID;
         if ((node->flags & (T2_NODE_META | T2_NODE_RECURSIVE_VARIABLE)) == 0) return source;
         if (node->kind == T2_TYPE_RECURSIVE_VARIABLE) {
-                for (size_t i = generalization->binder_count; i != 0; --i) {
-                        T2BinderSubstitution const *binder = &generalization->binders[i - 1];
+                for (usize i = vN(generalization->binders); i != 0; --i) {
+                        T2BinderSubstitution const *binder = v_(generalization->binders, i - 1);
                         if (binder->source == node->payload) {
                                 return t2_recursive_variable(
                                         solver->universe,
@@ -11808,9 +10913,9 @@ generalize_type(T2Generalization *generalization, T2Type source)
         if (node->kind == T2_TYPE_RECURSIVE) {
                 return generalize_recursive(generalization, node);
         }
-        for (size_t i = 0; i < generalization->count; ++i) {
-                if (generalization->entries[i].source == source) {
-                        return generalization->entries[i].result;
+        for (usize i = 0; i < vN(generalization->entries); ++i) {
+                if (v__(generalization->entries, i).source == source) {
+                        return v__(generalization->entries, i).result;
                 }
         }
         if (node->arity == 0) return source;
@@ -11818,7 +10923,7 @@ generalize_type(T2Generalization *generalization, T2Type source)
         T2Type *children = ty_malloc(node->arity * sizeof *children);
         if (children == NULL) return T2_TYPE_INVALID;
         bool changed = false;
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 children[i] = generalize_type(generalization, node->children[i]);
                 if (children[i] == T2_TYPE_INVALID) {
                         ty_free(children);
@@ -11831,16 +10936,10 @@ generalize_type(T2Generalization *generalization, T2Type source)
                       : source;
         ty_free(children);
         if (result == T2_TYPE_INVALID) return result;
-        if (!reserve_array(
-                (void **)&generalization->entries,
-                &generalization->capacity,
-                generalization->count + 1,
-                sizeof *generalization->entries
-        )) return T2_TYPE_INVALID;
-        generalization->entries[generalization->count++] = (T2GeneralizationEntry) {
+        xvP(generalization->entries, ((T2GeneralizationEntry) {
                 .source = source,
                 .result = result
-        };
+        }));
         return result;
 }
 
@@ -11848,15 +10947,15 @@ static T2Type
 weak_lower_view(
         T2Solver *solver,
         T2Type type,
-        uint32_t const *active,
-        size_t active_count
+        u32 const *active,
+        usize active_count
 )
 {
         if (active_count > T2_RELATION_DEPTH_LIMIT) return type;
-        uint32_t meta = meta_from_type(solver, type);
+        u32 meta = meta_from_type(solver, type);
         if (meta != 0) {
                 meta = find_root(solver, meta);
-                T2Meta const *node = &solver->metas[meta - 1];
+                T2Meta const *node = v_(solver->metas, meta - 1);
                 if (node->solution != T2_TYPE_INVALID) {
                         return weak_lower_view(
                                 solver,
@@ -11868,19 +10967,19 @@ weak_lower_view(
                 if (node->variable_kind != T2_VARIABLE_WEAK) {
                         return meta_type(solver, meta);
                 }
-                for (size_t i = 0; i < active_count; ++i) {
+                for (usize i = 0; i < active_count; ++i) {
                         if (active[i] == meta) return meta_type(solver, meta);
                 }
-                uint32_t stack[T2_RELATION_DEPTH_LIMIT + 2];
+                u32 stack[T2_RELATION_DEPTH_LIMIT + 2];
                 if (active_count != 0) {
                         memcpy(stack, active, active_count * sizeof *stack);
                 }
                 stack[active_count] = meta;
                 T2Type never = t2_primitive(solver->universe, T2_TYPE_NEVER);
                 T2Type view = node->lower;
-                for (size_t i = 0; i < solver->edge_count; ++i) {
-                        uint32_t sub = find_root(solver, solver->edges[i].subtype);
-                        uint32_t sup = find_root(solver, solver->edges[i].supertype);
+                for (usize i = 0; i < vN(solver->edges); ++i) {
+                        u32 sub = find_root(solver, v__(solver->edges, i).subtype);
+                        u32 sup = find_root(solver, v__(solver->edges, i).supertype);
                         if (sub == meta || sup != meta) continue;
                         T2Type below = weak_lower_view(
                                 solver,
@@ -11904,7 +11003,7 @@ weak_lower_view(
         T2Type *children = ty_malloc(node->arity * sizeof *children);
         if (children == NULL) return T2_TYPE_INVALID;
         bool changed = false;
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 children[i] = weak_lower_view(
                         solver,
                         node->children[i],
@@ -11944,15 +11043,15 @@ obligation_view(T2Solver *solver, T2Predicate const *predicate)
 static bool
 generalizable_meta(
         T2Solver *solver,
-        size_t index,
+        usize index,
         unsigned polarity,
-        uint32_t binding_level,
+        u32 binding_level,
         bool expansive
 )
 {
         if (polarity == 0) return false;
-        if (find_root(solver, (uint32_t)index + 1) != index + 1) return false;
-        T2Meta const *meta = &solver->metas[index];
+        if (find_root(solver, (u32)index + 1) != index + 1) return false;
+        T2Meta const *meta = v_(solver->metas, index);
         return meta->level > binding_level
             && meta->variable_kind != T2_VARIABLE_WEAK
             && meta->solution == T2_TYPE_INVALID
@@ -11964,10 +11063,10 @@ solver_generalize(
         T2Solver *solver,
         T2Type type,
         T2Type const *environment,
-        size_t environment_count,
-        uint32_t binding_level,
+        usize environment_count,
+        u32 binding_level,
         bool expansive,
-        size_t scoped_obligation_start
+        usize scoped_obligation_start
 )
 {
         if (
@@ -11977,7 +11076,7 @@ solver_generalize(
              || (environment_count != 0 && environment == NULL)
         ) return NULL;
 
-        size_t count = solver->meta_count;
+        usize count = vN(solver->metas);
         unsigned *polarities = ty_calloc(count, sizeof *polarities);
         bool *environment_free = ty_calloc(count, sizeof *environment_free);
         T2Type *replacements = ty_calloc(count, sizeof *replacements);
@@ -11994,11 +11093,11 @@ solver_generalize(
         )) goto Fail;
         if (scoped_obligation_start != SIZE_MAX) {
                 for (
-                        size_t i = scoped_obligation_start;
-                        i < solver->obligation_count;
+                        usize i = scoped_obligation_start;
+                        i < vN(solver->obligations);
                         ++i
                 ) {
-                        T2Obligation const *obligation = &solver->obligations[i];
+                        T2Obligation const *obligation = v_(solver->obligations, i);
                         if (!obligation->active) continue;
                         T2Predicate viewed = obligation_view(
                                 solver,
@@ -12038,7 +11137,7 @@ solver_generalize(
         if (!close_generalization_constraints(solver, polarities)) goto Fail;
 
         bool candidates = false;
-        for (size_t i = 0; i < count && !candidates; ++i) {
+        for (usize i = 0; i < count && !candidates; ++i) {
                 candidates = generalizable_meta(
                         solver,
                         i,
@@ -12050,7 +11149,7 @@ solver_generalize(
         if (candidates) {
                 unsigned *environment_marks = ty_calloc(count, sizeof *environment_marks);
                 if (count != 0 && environment_marks == NULL) goto Fail;
-                for (size_t i = 0; i < environment_count; ++i) {
+                for (usize i = 0; i < environment_count; ++i) {
                         if (!collect_generalization_polarity(
                                 solver,
                                 environment[i],
@@ -12066,14 +11165,14 @@ solver_generalize(
                         ty_free(environment_marks);
                         goto Fail;
                 }
-                for (size_t i = 0; i < count; ++i) {
+                for (usize i = 0; i < count; ++i) {
                         environment_free[i] = environment_marks[i] == 0;
                 }
                 ty_free(environment_marks);
         }
 
-        size_t quantifier_count = 0;
-        for (size_t i = 0; i < count; ++i) {
+        usize quantifier_count = 0;
+        for (usize i = 0; i < count; ++i) {
                 if (
                         environment_free[i]
                      && generalizable_meta(solver, i, polarities[i], binding_level, expansive)
@@ -12084,26 +11183,26 @@ solver_generalize(
                                   ? NULL
                                   : ty_malloc(quantifier_count * sizeof *quantifiers);
         if (quantifier_count != 0 && quantifiers == NULL) goto Fail;
-        size_t qi = 0;
-        for (size_t i = 0; i < count; ++i) {
+        usize qi = 0;
+        for (usize i = 0; i < count; ++i) {
                 if (
                         !environment_free[i]
                      || !generalizable_meta(solver, i, polarities[i], binding_level, expansive)
                 ) continue;
-                T2Meta const *meta = &solver->metas[i];
+                T2Meta const *meta = v_(solver->metas, i);
                 T2VariableKind variable_kind = meta->variable_kind;
                 if (
                         variable_kind != T2_VARIABLE_ROW
                      && variable_kind != T2_VARIABLE_PACK
                 ) variable_kind = T2_VARIABLE_QUANTIFIED;
                 quantifiers[qi] = (T2Quantifier) {
-                        .id = (uint32_t)qi + 1,
+                        .id = (u32)qi + 1,
                         .kind = variable_kind
                 };
                 replacements[i] = t2_variable(
                         solver->universe,
                         variable_kind,
-                        (uint32_t)qi + 1
+                        (u32)qi + 1
                 );
                 qi += 1;
         }
@@ -12115,44 +11214,44 @@ solver_generalize(
         T2Type body = generalize_type(&generalization, type);
         if (body == T2_TYPE_INVALID) {
                 ty_free(quantifiers);
-                ty_free(generalization.entries);
-                ty_free(generalization.binders);
+                xvF(generalization.entries);
+                xvF(generalization.binders);
                 goto Fail;
         }
 
-        size_t predicate_capacity = quantifier_count * 2
-                                  + solver->edge_count
-                                  + solver->obligation_count;
+        usize predicate_capacity = quantifier_count * 2
+                                  + vN(solver->edges)
+                                  + vN(solver->obligations);
         T2Predicate *predicates = predicate_capacity == 0
                                 ? NULL
                                 : ty_calloc(predicate_capacity, sizeof *predicates);
-        size_t *captured_obligations = solver->obligation_count == 0
+        usize *captured_obligations = vN(solver->obligations) == 0
                                      ? NULL
                                      : ty_malloc(
-                                             solver->obligation_count
+                                             vN(solver->obligations)
                                            * sizeof *captured_obligations
                                        );
         if (predicate_capacity != 0 && predicates == NULL) {
                 ty_free(quantifiers);
-                ty_free(generalization.entries);
-                ty_free(generalization.binders);
+                xvF(generalization.entries);
+                xvF(generalization.binders);
                 ty_free(captured_obligations);
                 goto Fail;
         }
-        if (solver->obligation_count != 0 && captured_obligations == NULL) {
+        if (vN(solver->obligations) != 0 && captured_obligations == NULL) {
                 ty_free(predicates);
                 ty_free(quantifiers);
-                ty_free(generalization.entries);
-                ty_free(generalization.binders);
+                xvF(generalization.entries);
+                xvF(generalization.binders);
                 goto Fail;
         }
-        size_t predicate_count = 0;
-        size_t captured_count = 0;
+        usize predicate_count = 0;
+        usize captured_count = 0;
         T2Type never = t2_primitive(solver->universe, T2_TYPE_NEVER);
         T2Type any = t2_primitive(solver->universe, T2_TYPE_ANY);
-        for (size_t i = 0; i < count; ++i) {
+        for (usize i = 0; i < count; ++i) {
                 if (replacements[i] == T2_TYPE_INVALID) continue;
-                T2Meta const *meta = &solver->metas[i];
+                T2Meta const *meta = v_(solver->metas, i);
                 if (meta->lower != never) {
                         predicates[predicate_count++] = (T2Predicate) {
                                 .subtype = generalize_type(&generalization, meta->lower),
@@ -12168,9 +11267,9 @@ solver_generalize(
                         };
                 }
         }
-        for (size_t i = 0; i < solver->edge_count; ++i) {
-                uint32_t sub = find_root(solver, solver->edges[i].subtype);
-                uint32_t sup = find_root(solver, solver->edges[i].supertype);
+        for (usize i = 0; i < vN(solver->edges); ++i) {
+                u32 sub = find_root(solver, v__(solver->edges, i).subtype);
+                u32 sup = find_root(solver, v__(solver->edges, i).supertype);
                 if (
                         replacements[sub - 1] == T2_TYPE_INVALID
                      && replacements[sup - 1] == T2_TYPE_INVALID
@@ -12184,11 +11283,11 @@ solver_generalize(
                                 &generalization,
                                 meta_type(solver, sup)
                         ),
-                        .provenance = solver->edges[i].provenance
+                        .provenance = v__(solver->edges, i).provenance
                 };
         }
-        for (size_t i = 0; i < solver->obligation_count; ++i) {
-                T2Obligation const *obligation = &solver->obligations[i];
+        for (usize i = 0; i < vN(solver->obligations); ++i) {
+                T2Obligation const *obligation = v_(solver->obligations, i);
                 if (!obligation->active) continue;
                 T2Predicate viewed = obligation_view(
                         solver,
@@ -12259,7 +11358,7 @@ solver_generalize(
         }
 
         bool valid = body != T2_TYPE_INVALID;
-        for (size_t i = 0; i < predicate_count; ++i) {
+        for (usize i = 0; i < predicate_count; ++i) {
                 valid &= predicates[i].subtype != T2_TYPE_INVALID;
                 valid &= predicates[i].supertype != T2_TYPE_INVALID;
         }
@@ -12274,13 +11373,13 @@ solver_generalize(
                            )
                          : NULL;
         if (scheme != NULL) {
-                for (size_t i = 0; i < captured_count; ++i) {
-                        size_t index = captured_obligations[i];
-                        T2Obligation *obligation = &solver->obligations[index];
+                for (usize i = 0; i < captured_count; ++i) {
+                        usize index = captured_obligations[i];
+                        T2Obligation *obligation = v_(solver->obligations, index);
                         if (!obligation->active) continue;
                         if (!push_undo(solver, (T2Undo) {
                                 .kind = T2_UNDO_OBLIGATION_ACTIVE,
-                                .index = (uint32_t)index,
+                                .index = (u32)index,
                                 .old = obligation->active
                         })) {
                                 t2_scheme_free(scheme);
@@ -12293,8 +11392,8 @@ solver_generalize(
         ty_free(captured_obligations);
         ty_free(predicates);
         ty_free(quantifiers);
-        ty_free(generalization.entries);
-        ty_free(generalization.binders);
+        xvF(generalization.entries);
+        xvF(generalization.binders);
         ty_free(polarities);
         ty_free(environment_free);
         ty_free(replacements);
@@ -12312,8 +11411,8 @@ t2_solver_generalize(
         T2Solver *solver,
         T2Type type,
         T2Type const *environment,
-        size_t environment_count,
-        uint32_t binding_level,
+        usize environment_count,
+        u32 binding_level,
         bool expansive
 )
 {
@@ -12333,15 +11432,15 @@ t2_solver_generalize_scoped(
         T2Solver *solver,
         T2Type type,
         T2Type const *environment,
-        size_t environment_count,
-        uint32_t binding_level,
+        usize environment_count,
+        u32 binding_level,
         bool expansive,
         T2SolverMark scope
 )
 {
         if (
                 solver == NULL
-             || scope.obligation_count > solver->obligation_count
+             || scope.obligation_count > vN(solver->obligations)
              || solver->transaction_depth != scope.transaction_depth + 1
         ) return NULL;
         return solver_generalize(
@@ -12355,10 +11454,10 @@ t2_solver_generalize_scoped(
         );
 }
 
-static size_t
+static usize
 find_quantifier(T2Scheme const *scheme, T2Node const *variable)
 {
-        for (size_t i = 0; i < scheme->quantifier_count; ++i) {
+        for (usize i = 0; i < scheme->quantifier_count; ++i) {
                 T2Quantifier const *quantifier = &scheme->quantifiers[i];
                 if (quantifier->id != variable->payload) continue;
                 if (
@@ -12382,21 +11481,15 @@ static T2Type
 instantiate_recursive(T2Instantiation *instantiation, T2Node const *node)
 {
         T2Universe *universe = instantiation->solver->universe;
-        uint32_t binder = t2_universe_fresh_recursive_binder(universe);
+        u32 binder = t2_universe_fresh_recursive_binder(universe);
         if (binder == 0) return T2_TYPE_INVALID;
-        if (!reserve_array(
-                (void **)&instantiation->binders,
-                &instantiation->binder_capacity,
-                instantiation->binder_count + 1,
-                sizeof *instantiation->binders
-        )) return T2_TYPE_INVALID;
-        size_t mark = instantiation->binder_count;
-        instantiation->binders[instantiation->binder_count++] = (T2BinderSubstitution) {
-                .source = (uint32_t)node->payload,
+        usize mark = vN(instantiation->binders);
+        xvP(instantiation->binders, ((T2BinderSubstitution) {
+                .source = (u32)node->payload,
                 .result = binder
-        };
+        }));
         T2Type body = instantiate_type(instantiation, node->children[0]);
-        instantiation->binder_count = mark;
+        vN(instantiation->binders) = mark;
         if (body == T2_TYPE_INVALID) return body;
         return t2_recursive(universe, binder, body);
 }
@@ -12412,12 +11505,12 @@ instantiate_type(T2Instantiation *instantiation, T2Type source)
         }
 
         if (node->kind == T2_TYPE_VARIABLE) {
-                size_t quantifier = find_quantifier(instantiation->scheme, node);
+                usize quantifier = find_quantifier(instantiation->scheme, node);
                 if (quantifier != SIZE_MAX) return instantiation->replacements[quantifier];
         }
         if (node->kind == T2_TYPE_RECURSIVE_VARIABLE) {
-                for (size_t i = instantiation->binder_count; i != 0; --i) {
-                        T2BinderSubstitution const *binder = &instantiation->binders[i - 1];
+                for (usize i = vN(instantiation->binders); i != 0; --i) {
+                        T2BinderSubstitution const *binder = v_(instantiation->binders, i - 1);
                         if (binder->source == node->payload) {
                                 return t2_recursive_variable(universe, binder->result);
                         }
@@ -12428,9 +11521,9 @@ instantiate_type(T2Instantiation *instantiation, T2Type source)
                 return instantiate_recursive(instantiation, node);
         }
 
-        for (size_t i = 0; i < instantiation->node_count; ++i) {
-                if (instantiation->nodes[i].source == source) {
-                        return instantiation->nodes[i].result;
+        for (usize i = 0; i < vN(instantiation->nodes); ++i) {
+                if (v__(instantiation->nodes, i).source == source) {
+                        return v__(instantiation->nodes, i).result;
                 }
         }
         if (node->arity == 0) return source;
@@ -12438,7 +11531,7 @@ instantiate_type(T2Instantiation *instantiation, T2Type source)
         T2Type *children = ty_malloc(node->arity * sizeof *children);
         if (children == NULL) return T2_TYPE_INVALID;
         bool changed = false;
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 children[i] = instantiate_type(instantiation, node->children[i]);
                 if (children[i] == T2_TYPE_INVALID) {
                         ty_free(children);
@@ -12452,16 +11545,10 @@ instantiate_type(T2Instantiation *instantiation, T2Type source)
         ty_free(children);
         if (result == T2_TYPE_INVALID) return result;
 
-        if (!reserve_array(
-                (void **)&instantiation->nodes,
-                &instantiation->node_capacity,
-                instantiation->node_count + 1,
-                sizeof *instantiation->nodes
-        )) return T2_TYPE_INVALID;
-        instantiation->nodes[instantiation->node_count++] = (T2InstantiatedNode) {
+        xvP(instantiation->nodes, ((T2InstantiatedNode) {
                 .source = source,
                 .result = result
-        };
+        }));
         return result;
 }
 
@@ -12469,7 +11556,7 @@ T2Type
 t2_scheme_instantiate(
         T2Scheme const *scheme,
         T2Solver *solver,
-        uint32_t level,
+        u32 level,
         char const *provenance
 )
 {
@@ -12491,7 +11578,7 @@ t2_scheme_instantiate(
                 );
                 if (instantiation.replacements == NULL) goto Fail;
         }
-        for (size_t i = 0; i < scheme->quantifier_count; ++i) {
+        for (usize i = 0; i < scheme->quantifier_count; ++i) {
                 T2VariableKind kind = scheme->quantifiers[i].kind;
                 if (
                         kind != T2_VARIABLE_ROW
@@ -12509,7 +11596,7 @@ t2_scheme_instantiate(
 
         T2Type body = instantiate_type(&instantiation, scheme->body);
         if (body == T2_TYPE_INVALID) goto Fail;
-        for (size_t i = 0; i < scheme->predicate_count; ++i) {
+        for (usize i = 0; i < scheme->predicate_count; ++i) {
                 T2Type subtype = instantiate_type(
                         &instantiation,
                         scheme->predicates[i].subtype
@@ -12544,15 +11631,15 @@ t2_scheme_instantiate(
         }
 
         ty_free(instantiation.replacements);
-        ty_free(instantiation.nodes);
-        ty_free(instantiation.binders);
+        xvF(instantiation.nodes);
+        xvF(instantiation.binders);
         t2_solver_commit(solver, mark);
         return body;
 
 Fail:
         ty_free(instantiation.replacements);
-        ty_free(instantiation.nodes);
-        ty_free(instantiation.binders);
+        xvF(instantiation.nodes);
+        xvF(instantiation.binders);
         t2_solver_rollback(solver, mark);
         return T2_TYPE_INVALID;
 }
@@ -12562,7 +11649,7 @@ scheme_apply_x(
         T2Scheme const *scheme,
         T2Solver *solver,
         T2Type const *arguments,
-        size_t argument_count,
+        usize argument_count,
         char const *provenance,
         bool relaxed
 )
@@ -12575,7 +11662,7 @@ scheme_apply_x(
              || argument_count != scheme->quantifier_count
              || (argument_count != 0 && arguments == NULL)
         ) return T2_TYPE_INVALID;
-        for (size_t i = 0; i < argument_count; ++i) {
+        for (usize i = 0; i < argument_count; ++i) {
                 if (get_node(solver->universe, arguments[i]) == NULL) {
                         return T2_TYPE_INVALID;
                 }
@@ -12605,7 +11692,7 @@ scheme_apply_x(
 
         T2Type body = instantiate_type(&instantiation, scheme->body);
         if (body == T2_TYPE_INVALID) goto Fail;
-        for (size_t i = 0; i < scheme->predicate_count; ++i) {
+        for (usize i = 0; i < scheme->predicate_count; ++i) {
                 T2Type subtype = instantiate_type(
                         &instantiation,
                         scheme->predicates[i].subtype
@@ -12642,15 +11729,15 @@ scheme_apply_x(
                 t2_solver_rollback(solver, step);
         }
         ty_free(instantiation.replacements);
-        ty_free(instantiation.nodes);
-        ty_free(instantiation.binders);
+        xvF(instantiation.nodes);
+        xvF(instantiation.binders);
         t2_solver_commit(solver, mark);
         return body;
 
 Fail:
         ty_free(instantiation.replacements);
-        ty_free(instantiation.nodes);
-        ty_free(instantiation.binders);
+        xvF(instantiation.nodes);
+        xvF(instantiation.binders);
         t2_solver_rollback(solver, mark);
         return T2_TYPE_INVALID;
 }
@@ -12660,7 +11747,7 @@ t2_scheme_apply(
         T2Scheme const *scheme,
         T2Solver *solver,
         T2Type const *arguments,
-        size_t argument_count,
+        usize argument_count,
         char const *provenance
 )
 {
@@ -12672,7 +11759,7 @@ t2_scheme_apply_relaxed(
         T2Scheme const *scheme,
         T2Solver *solver,
         T2Type const *arguments,
-        size_t argument_count,
+        usize argument_count,
         char const *provenance
 )
 {
@@ -12687,15 +11774,9 @@ typedef struct t2_zonk_entry {
 typedef struct t2_zonk_context {
         T2Solver *solver;
         T2SolutionPreference preference;
-        T2ZonkEntry *entries;
-        size_t count;
-        size_t capacity;
-        uint32_t *active_metas;
-        size_t active_meta_count;
-        size_t active_meta_capacity;
-        T2BinderSubstitution *binders;
-        size_t binder_count;
-        size_t binder_capacity;
+        vec(T2ZonkEntry) entries;
+        vec(u32) active_metas;
+        vec(T2BinderSubstitution) binders;
         bool failed;
 } T2ZonkContext;
 
@@ -12705,21 +11786,15 @@ static T2Type
 zonk_recursive(T2ZonkContext *context, T2Node const *node)
 {
         T2Universe *universe = context->solver->universe;
-        uint32_t binder = t2_universe_fresh_recursive_binder(universe);
+        u32 binder = t2_universe_fresh_recursive_binder(universe);
         if (binder == 0) return T2_TYPE_INVALID;
-        if (!reserve_array(
-                (void **)&context->binders,
-                &context->binder_capacity,
-                context->binder_count + 1,
-                sizeof *context->binders
-        )) return T2_TYPE_INVALID;
-        size_t mark = context->binder_count;
-        context->binders[context->binder_count++] = (T2BinderSubstitution) {
-                .source = (uint32_t)node->payload,
+        usize mark = vN(context->binders);
+        xvP(context->binders, ((T2BinderSubstitution) {
+                .source = (u32)node->payload,
                 .result = binder
-        };
+        }));
         T2Type body = zonk_type(context, node->children[0]);
-        context->binder_count = mark;
+        vN(context->binders) = mark;
         return body == T2_TYPE_INVALID
              ? body
              : t2_recursive(universe, binder, body);
@@ -12729,12 +11804,12 @@ static T2Type
 zonk_type(T2ZonkContext *context, T2Type source)
 {
         T2Solver *solver = context->solver;
-        uint32_t meta = meta_from_type(solver, source);
+        u32 meta = meta_from_type(solver, source);
         if (meta != 0) {
                 meta = find_root(solver, meta);
                 T2Type root_type = meta_type(solver, meta);
-                for (size_t i = 0; i < context->active_meta_count; ++i) {
-                        if (context->active_metas[i] == meta) return root_type;
+                for (usize i = 0; i < vN(context->active_metas); ++i) {
+                        if (v__(context->active_metas, i) == meta) return root_type;
                 }
                 T2Type solution = t2_solver_solution(
                         solver,
@@ -12742,18 +11817,9 @@ zonk_type(T2ZonkContext *context, T2Type source)
                         context->preference
                 );
                 if (solution == root_type) return root_type;
-                if (!reserve_array(
-                        (void **)&context->active_metas,
-                        &context->active_meta_capacity,
-                        context->active_meta_count + 1,
-                        sizeof *context->active_metas
-                )) {
-                        context->failed = true;
-                        return T2_TYPE_INVALID;
-                }
-                context->active_metas[context->active_meta_count++] = meta;
+                xvP(context->active_metas, meta);
                 T2Type result = zonk_type(context, solution);
-                context->active_meta_count -= 1;
+                vN(context->active_metas) -= 1;
                 return result;
         }
 
@@ -12761,8 +11827,8 @@ zonk_type(T2ZonkContext *context, T2Type source)
         if (node == NULL) return T2_TYPE_INVALID;
         if ((node->flags & (T2_NODE_META | T2_NODE_RECURSIVE_VARIABLE)) == 0) return source;
         if (node->kind == T2_TYPE_RECURSIVE_VARIABLE) {
-                for (size_t i = context->binder_count; i != 0; --i) {
-                        T2BinderSubstitution const *binder = &context->binders[i - 1];
+                for (usize i = vN(context->binders); i != 0; --i) {
+                        T2BinderSubstitution const *binder = v_(context->binders, i - 1);
                         if (binder->source == node->payload) {
                                 return t2_recursive_variable(
                                         solver->universe,
@@ -12773,15 +11839,15 @@ zonk_type(T2ZonkContext *context, T2Type source)
                 return source;
         }
         if (node->kind == T2_TYPE_RECURSIVE) return zonk_recursive(context, node);
-        for (size_t i = 0; i < context->count; ++i) {
-                if (context->entries[i].source == source) return context->entries[i].result;
+        for (usize i = 0; i < vN(context->entries); ++i) {
+                if (v__(context->entries, i).source == source) return v__(context->entries, i).result;
         }
         if (node->arity == 0) return source;
 
         T2Type *children = ty_malloc(node->arity * sizeof *children);
         if (children == NULL) return T2_TYPE_INVALID;
         bool changed = false;
-        for (size_t i = 0; i < node->arity; ++i) {
+        for (usize i = 0; i < node->arity; ++i) {
                 children[i] = zonk_type(context, node->children[i]);
                 if (children[i] == T2_TYPE_INVALID) {
                         ty_free(children);
@@ -12794,16 +11860,10 @@ zonk_type(T2ZonkContext *context, T2Type source)
                       : source;
         ty_free(children);
         if (result == T2_TYPE_INVALID) return result;
-        if (!reserve_array(
-                (void **)&context->entries,
-                &context->capacity,
-                context->count + 1,
-                sizeof *context->entries
-        )) return T2_TYPE_INVALID;
-        context->entries[context->count++] = (T2ZonkEntry) {
+        xvP(context->entries, ((T2ZonkEntry) {
                 .source = source,
                 .result = result
-        };
+        }));
         return result;
 }
 
@@ -12829,9 +11889,9 @@ t2_solver_zonk(
                 .preference = preference
         };
         T2Type result = zonk_type(&context, type);
-        ty_free(context.entries);
-        ty_free(context.active_metas);
-        ty_free(context.binders);
+        xvF(context.entries);
+        xvF(context.active_metas);
+        xvF(context.binders);
         return result;
 }
 
@@ -12844,23 +11904,23 @@ zonk_for_display(T2Solver *solver, T2Type type)
                 .preference = T2_PREFER_LOWER_BOUND
         };
         T2Type result = zonk_type(&context, type);
-        ty_free(context.entries);
-        ty_free(context.active_metas);
-        ty_free(context.binders);
+        xvF(context.entries);
+        xvF(context.active_metas);
+        xvF(context.binders);
         return result == T2_TYPE_INVALID ? type : result;
 }
 
-size_t
+usize
 t2_solver_cause_count(T2Solver const *solver)
 {
-        return solver == NULL ? 0 : solver->cause_count;
+        return solver == NULL ? 0 : vN(solver->causes);
 }
 
 bool
-t2_solver_cause(T2Solver *solver, size_t index, T2CauseInfo *info)
+t2_solver_cause(T2Solver *solver, usize index, T2CauseInfo *info)
 {
-        if (solver == NULL || info == NULL || index >= solver->cause_count) return false;
-        T2Cause const *cause = &solver->causes[index];
+        if (solver == NULL || info == NULL || index >= vN(solver->causes)) return false;
+        T2Cause const *cause = v_(solver->causes, index);
         *info = (T2CauseInfo) {
                 .kind = cause->kind,
                 .left = zonk_for_display(solver, cause->left),
@@ -12897,17 +11957,17 @@ bool
 t2_solver_meta_solved(T2Solver *solver, T2Type meta)
 {
         if (solver == NULL) return false;
-        uint32_t id = meta_from_type(solver, meta);
+        u32 id = meta_from_type(solver, meta);
         if (id == 0) return false;
         id = find_root(solver, id);
-        return solver->metas[id - 1].solution != T2_TYPE_INVALID;
+        return v__(solver->metas, id - 1).solution != T2_TYPE_INVALID;
 }
 void
 t2_solver_retire_metas_since(T2Solver *solver, T2SolverMark mark)
 {
         if (solver == NULL) return;
-        for (size_t id = mark.meta_count + 1; id <= solver->meta_count; ++id) {
-                solver->metas[id - 1].retired = true;
+        for (usize id = mark.meta_count + 1; id <= vN(solver->metas); ++id) {
+                v__(solver->metas, id - 1).retired = true;
         }
 }
 

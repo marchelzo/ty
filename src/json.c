@@ -702,7 +702,7 @@ static Value
 checked_value(Ty *ty, T2Type t0)
 {
         Value v = value(ty);
-        if (!types2_check(ty, t0, &v)) {
+        if (!t2_check(ty, t0, &v)) {
                 FAIL;
         }
         return v;
@@ -752,7 +752,7 @@ typed_dict(Ty *ty, T2Type val_type)
 static Value
 typed_tuple(Ty *ty, T2Type t0, size_t typed_count)
 {
-        T2Universe *universe = types2_universe();
+        T2Universe *universe = t2_global_universe();
 
         if (next() != '[') FAIL;
 
@@ -787,7 +787,7 @@ typed_tuple(Ty *ty, T2Type t0, size_t typed_count)
 static Value
 typed_record(Ty *ty, T2Type t0)
 {
-        T2Universe *universe = types2_universe();
+        T2Universe *universe = t2_global_universe();
 
         if (next() != '{') FAIL;
 
@@ -861,7 +861,7 @@ typed_record(Ty *ty, T2Type t0)
 static Value
 typed_union(Ty *ty, T2Type t0)
 {
-        T2Universe *universe = types2_universe();
+        T2Universe *universe = t2_global_universe();
         char const *saved_json = json;
         usize saved_len = len;
         size_t arity = t2_type_arity(universe, t0);
@@ -888,9 +888,9 @@ typed_union(Ty *ty, T2Type t0)
 static Value
 typed_nominal(Ty *ty, T2Type t0)
 {
-        T2Universe *universe = types2_universe();
+        T2Universe *universe = t2_global_universe();
         uint64_t symbol = t2_type_payload(universe, t0);
-        int class = types2_symbol_class(symbol);
+        int class = t2_symbol_class(symbol);
 
         switch (class) {
         case CLASS_INT:    return typed_value(ty, t2_primitive(universe, T2_TYPE_INT));
@@ -906,7 +906,7 @@ typed_nominal(Ty *ty, T2Type t0)
 static Value
 typed_value(Ty *ty, T2Type t0)
 {
-        T2Universe *universe = types2_universe();
+        T2Universe *universe = t2_global_universe();
         t0 = t2_type_scheme_body(universe, t0);
 
         space();
@@ -1001,7 +1001,7 @@ json_parse_typed(Ty *ty, T2Type t0, char const *s, usize n)
                 GC_RESUME();
                 zP(
                         "json.parse(): failed to parse JSON as %s",
-                        types2_show(ty, t0)
+                        t2_show(ty, t0)
                 );
         }
 
@@ -1012,7 +1012,7 @@ json_parse_typed(Ty *ty, T2Type t0, char const *s, usize n)
                 GC_RESUME();
                 zP(
                         "json.parse(): unexpected trailing data after parsing %s",
-                        types2_show(ty, t0)
+                        t2_show(ty, t0)
                 );
         }
 

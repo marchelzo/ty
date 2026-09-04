@@ -1,9 +1,11 @@
-#ifndef TYPES2_CORE_H_INCLUDED
-#define TYPES2_CORE_H_INCLUDED
+#ifndef T2_CORE_H_INCLUDED
+#define T2_CORE_H_INCLUDED
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#include "defs.h"
 
 typedef uint32_t T2Type;
 
@@ -218,7 +220,6 @@ typedef struct t2_runtime_facts {
 typedef struct t2_universe T2Universe;
 typedef struct t2_solver T2Solver;
 typedef struct t2_scheme T2Scheme;
-typedef struct t2_type_snapshot T2TypeSnapshot;
 
 typedef T2Relation T2PredicateResolver(
         void *context,
@@ -240,6 +241,9 @@ typedef struct t2_solver_mark {
 
 T2Universe *
 t2_universe_new(void);
+
+void
+t2_universe_report(T2Universe const *universe, FILE *out);
 
 void
 t2_universe_free(T2Universe *universe);
@@ -757,56 +761,27 @@ t2_type_substitute(
 );
 
 /*
- * A snapshot is an owned, solver-free representation of one immutable term
- * graph.  It is suitable for dormant reflection/JIT adapters and for passing
- * an already materialized computed-type result through a neutral boundary.
- * Nominal symbols must already be declared in the importing universe.
- */
-T2TypeSnapshot *
-t2_type_snapshot_new(T2Universe const *universe, T2Type type);
-
-void
-t2_type_snapshot_free(T2TypeSnapshot *snapshot);
-
-size_t
-t2_type_snapshot_node_count(T2TypeSnapshot const *snapshot);
-
-T2Type
-t2_type_snapshot_import(
-        T2Universe *universe,
-        T2TypeSnapshot const *snapshot
-);
-
-/*
  * Wire format for persisting types across runs.  A writer accumulates a
  * table of type nodes in dependency order and hands out indices; a reader
  * rebuilds the table in a universe, remapping nominal symbols and recursive
  * binders through the caller.  Metas are recreated through the reader's
  * meta hook; unresolved computed terms keep their identity.
  */
-typedef struct t2_bytes {
-        unsigned char *data;
-        size_t size;
-        size_t capacity;
-} T2Bytes;
+bool
+t2_bytes_u8(byte_vector *bytes, uint8_t value);
 
 bool
-t2_bytes_u8(T2Bytes *bytes, uint8_t value);
+t2_bytes_u32(byte_vector *bytes, uint32_t value);
 
 bool
-t2_bytes_u32(T2Bytes *bytes, uint32_t value);
+t2_bytes_u64(byte_vector *bytes, uint64_t value);
 
 bool
-t2_bytes_u64(T2Bytes *bytes, uint64_t value);
+t2_bytes_string(byte_vector *bytes, char const *text);
 
 bool
-t2_bytes_string(T2Bytes *bytes, char const *text);
+t2_bytes_append(byte_vector *bytes, void const *data, size_t size);
 
-bool
-t2_bytes_append(T2Bytes *bytes, void const *data, size_t size);
-
-void
-t2_bytes_free(T2Bytes *bytes);
 
 bool
 t2_read_u8(unsigned char const *data, size_t size, size_t *position, uint8_t *value);
@@ -843,7 +818,7 @@ size_t
 t2_type_writer_count(T2TypeWriter const *writer);
 
 bool
-t2_type_writer_encode(T2TypeWriter const *writer, T2Bytes *out);
+t2_type_writer_encode(T2TypeWriter const *writer, byte_vector *out);
 
 void
 t2_type_writer_free(T2TypeWriter *writer);
@@ -877,7 +852,7 @@ void
 t2_type_reader_free(T2TypeReader *reader);
 
 bool
-t2_scheme_encode(T2Scheme const *scheme, T2TypeWriter *writer, T2Bytes *out);
+t2_scheme_encode(T2Scheme const *scheme, T2TypeWriter *writer, byte_vector *out);
 
 T2Scheme *
 t2_scheme_decode(

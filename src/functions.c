@@ -9489,12 +9489,12 @@ BUILTIN_FUNCTION(ty_ctx)
 static Value
 MethodSummary(Ty *ty, T2Type t0, Expr const *fun)
 {
-        T2Type u0 = types2_member_type(ty, t0, fun->_type);
+        T2Type u0 = t2_member_type(ty, t0, fun->_type);
 
         return vTn(
                 "name", vSsz(fun->name),
                 "doc", (fun->doc != NULL) ? vSsz(fun->doc) : NIL,
-                "type", types2_to_ty(ty, u0)
+                "type", t2_to_ty(ty, u0)
         );
 }
 
@@ -9503,7 +9503,7 @@ static Value
 ClassSummary(Ty *ty, T2Type t0, ClassDefinition *def)
 {
         if (t0 == T2_TYPE_INVALID) {
-                t0 = types2_class_template(ty, class_get(ty, def->symbol));
+                t0 = t2_class_template(ty, class_get(ty, def->symbol));
         }
 
         GC_STOP();
@@ -9547,38 +9547,38 @@ ClassSummary(Ty *ty, T2Type t0, ClassDefinition *def)
                 char const *name = (field->type == EXPRESSION_IDENTIFIER)
                                  ? field->identifier
                                  : field->target->identifier;
-                T2Type u0 = types2_member_type(ty, t0, field->_type);
+                T2Type u0 = t2_member_type(ty, t0, field->_type);
                 vAp(
                         fields,
                         vTn(
                                 "name", vSsz(name),
-                                "type", types2_to_ty(ty, u0)
+                                "type", t2_to_ty(ty, u0)
                         )
                 );
         }
 
         for (int i = 0; i < vN(def->traits); ++i) {
-                T2Type tr0 = types2_resolve(ty, v__(def->traits, i));
-                vAp(traits, types2_to_ty(ty, types2_member_type(ty, t0, tr0)));
+                T2Type tr0 = t2_resolve(ty, v__(def->traits, i));
+                vAp(traits, t2_to_ty(ty, t2_member_type(ty, t0, tr0)));
         }
 
         for (int i = 0; i < vN(def->type_params); ++i) {
-                T2Type parameter = types2_class_parameter(
+                T2Type parameter = t2_class_parameter(
                         ty,
                         class_get(ty, def->symbol),
                         (size_t)i
                 );
-                vAp(params, types2_to_ty(ty, parameter));
+                vAp(params, t2_to_ty(ty, parameter));
         }
 
         Value super;
         if (def->super != NULL) {
-                super = types2_to_ty(
+                super = t2_to_ty(
                         ty,
-                        types2_member_type(
+                        t2_member_type(
                                 ty,
                                 t0,
-                                types2_resolve(ty, def->super)
+                                t2_resolve(ty, def->super)
                         )
                 );
         } else {
@@ -9634,7 +9634,7 @@ ScopeDict(Ty *ty, Scope *scope, bool public_only)
                                 Value *pval = vm_global(ty, sym->i);
                                 Value   val = (pval->type == VALUE_UNINITIALIZED) ? NIL : *pval;
 
-                                Value type = types2_to_ty(ty, sym->type);
+                                Value type = t2_to_ty(ty, sym->type);
 
                                 Value kind = SymbolIsTypeAlias(sym) ? xSz("type")
                                            : SymbolIsTag(sym)       ? xSz("tag")
@@ -9991,7 +9991,7 @@ BUILTIN_FUNCTION(ty_type_type)
 
         Value arg0 = ARG(0);
 
-        return types2_to_ty(ty, types2_from_ty(ty, &arg0));
+        return t2_to_ty(ty, t2_from_ty(ty, &arg0));
 }
 
 BUILTIN_FUNCTION(ty_type_resolve)
@@ -10005,13 +10005,13 @@ BUILTIN_FUNCTION(ty_type_resolve)
                 return NIL;
         }
 
-        T2Type t0 = types2_resolve(ty, expr);
+        T2Type t0 = t2_resolve(ty, expr);
 
         if (t0 == T2_TYPE_INVALID) {
                 return NIL;
         }
 
-        return types2_to_ty(ty, t0);
+        return t2_to_ty(ty, t0);
 }
 
 BUILTIN_FUNCTION(ty_type_info)
@@ -10019,20 +10019,20 @@ BUILTIN_FUNCTION(ty_type_info)
         ASSERT_ARGC("ty.types.info()", 1);
 
         Value arg0 = ARG(0);
-        T2Type t0 = types2_from_ty(ty, &arg0);
-        T2Universe *universe = types2_universe();
+        T2Type t0 = t2_from_ty(ty, &arg0);
+        T2Universe *universe = t2_global_universe();
 
         if (t2_type_kind(universe, t0) == T2_TYPE_TYPE_VALUE) {
                 t0 = t2_type_child(universe, t0, 0);
         }
 
-        Class *class = types2_class_of(ty, t0);
+        Class *class = t2_class_of(ty, t0);
 
         if (class == NULL || class->def == NULL) {
                 return NIL;
         }
-        if (t0 == types2_object_type(ty, class)) {
-                t0 = types2_class_template(ty, class);
+        if (t0 == t2_object_type(ty, class)) {
+                t0 = t2_class_template(ty, class);
         }
 
         return ClassSummary(ty, t0, &class->def->class);
@@ -10041,7 +10041,7 @@ BUILTIN_FUNCTION(ty_type_info)
 static uint32_t
 TypeParameterId(Ty *ty, char const *_name__, Value const *sub)
 {
-        T2Universe *universe = types2_universe();
+        T2Universe *universe = t2_global_universe();
 
         switch (sub->type) {
         case VALUE_INTEGER:
@@ -10049,7 +10049,7 @@ TypeParameterId(Ty *ty, char const *_name__, Value const *sub)
 
         case VALUE_TYPE:
                 if (t2_type_kind(universe, as_type(sub)) != T2_TYPE_VARIABLE) {
-                        char *shown = types2_show(ty, as_type(sub));
+                        char *shown = t2_show(ty, as_type(sub));
                         zP(
                                 "%s: invalid type used as parameter "
                                 "in substitution list: %s",
@@ -10082,10 +10082,10 @@ BUILTIN_FUNCTION(ty_type_inst)
         CHECK_ARGC(1, 2);
 
         Value v0 = ARG(0);
-        T2Type t0 = types2_from_ty(ty, &v0);
+        T2Type t0 = t2_from_ty(ty, &v0);
 
         if (argc == 1) {
-                return types2_to_ty(ty, t0);
+                return t2_to_ty(ty, t0);
         }
 
         Value subs = ARGx(1, VALUE_ARRAY);
@@ -10096,15 +10096,15 @@ BUILTIN_FUNCTION(ty_type_inst)
         for (size_t i = 0; i < count; ++i) {
                 Value *sub = v_(*subs.array, i);
                 if (sub->type == VALUE_TUPLE && sub->count == 2) {
-                        args[i] = types2_from_ty(ty, &sub->items[1]);
+                        args[i] = t2_from_ty(ty, &sub->items[1]);
                         sub = &sub->items[0];
                 } else {
-                        args[i] = types2_primitive(T2_TYPE_DYNAMIC);
+                        args[i] = t2_primitive(t2_global_universe(), T2_TYPE_DYNAMIC);
                 }
                 ids[i] = TypeParameterId(ty, _name__, sub);
         }
 
-        return types2_to_ty(ty, types2_substitute(t0, ids, args, count));
+        return t2_to_ty(ty, t2_substitute(t0, ids, args, count));
 }
 
 BUILTIN_FUNCTION(ty_type_infer)
@@ -10118,7 +10118,7 @@ BUILTIN_FUNCTION(ty_type_infer)
                 return NIL;
         }
 
-        return types2_to_ty(ty, types2_infer(ty, expr));
+        return t2_to_ty(ty, t2_infer(ty, expr));
 }
 
 BUILTIN_FUNCTION(ty_type_check)
@@ -10128,11 +10128,13 @@ BUILTIN_FUNCTION(ty_type_check)
         Value t0 = ARG(0);
         Value t1 = ARG(1);
 
+        T2Type sub = t2_from_ty(ty, &t0);
+        T2Type super = t2_from_ty(ty, &t1);
+
         return BOOLEAN(
-                types2_subtype(
-                        types2_from_ty(ty, &t0),
-                        types2_from_ty(ty, &t1)
-                )
+                sub == T2_TYPE_INVALID
+             || super == T2_TYPE_INVALID
+             || t2_subtype(t2_global_universe(), sub, super) != T2_RELATION_NO
         );
 }
 
@@ -10141,7 +10143,7 @@ BUILTIN_FUNCTION(ty_type_show)
         ASSERT_ARGC("ty.types.show()", 1);
 
         Value t = ARG(0);
-        char *shown = types2_show(ty, types2_from_ty(ty, &t));
+        char *shown = t2_show(ty, t2_from_ty(ty, &t));
         Value result = vSsz(shown);
         t2_string_free(shown);
 

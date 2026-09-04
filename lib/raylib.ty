@@ -401,7 +401,7 @@ C! raylib function EndScissorMode() -> c.void                                   
 // NOTE: Shader functionality is not available on OpenGL 1.1
 C! raylib function LoadShader(c.ptr /* vsFileName */, c.ptr /* fsFileName */) -> Shader_C    // Load shader from files and bind default locations
 C! raylib function LoadShaderFromMemory(c.ptr /* vsCode */, c.ptr /* fsCode */) -> Shader_C  // Load shader from code strings and bind default locations
-C! raylib function IsShaderReady(Shader_C shader) -> c.u8                                    // Check if a shader is ready
+C! raylib function IsShaderValid(Shader_C shader) -> c.u8                                    // Check if a shader is ready
 C! raylib function GetShaderLocation(Shader_C shader, c.ptr /* uniformName */) -> c.int        // Get shader uniform location
 C! raylib function GetShaderLocationAttrib(Shader_C shader, c.ptr /* attribName */) -> c.int   // Get shader attribute location
 C! raylib function SetShaderValue(Shader_C shader, c.int /* locIndex */, c.ptr /* void *value */, c.int /* uniformType */) -> c.void                // Set shader uniform value
@@ -411,7 +411,7 @@ C! raylib function SetShaderValueTexture(Shader_C shader, c.int /* locIndex */, 
 C! raylib function UnloadShader(Shader_C shader) -> c.void                                     // Unload shader from GPU memory (VRAM)
 
 // Screen-space-related functions
-C! raylib function GetMouseRay(Vector2_C mousePosition, Camera_C camera) -> Ray_C       // Get a ray trace from mouse position
+C! raylib function GetScreenToWorldRay(Vector2_C mousePosition, Camera_C camera) -> Ray_C       // Get a ray trace from mouse position
 C! raylib function GetCameraMatrix(Camera_C camera) -> Matrix_C                       // Get camera transform matrix (view matrix)
 C! raylib function GetCameraMatrix2D(Camera2D_C camera) -> Matrix_C                   // Get camera 2d transform matrix
 C! raylib function GetWorldToScreen(Vector3_C position, Camera_C camera) -> Vector2_C   // Get the screen space position for a 3d world space position
@@ -627,11 +627,11 @@ C! raylib function GetMasterVolume() -> c.float                                 
 // Wave/Sound loading/unloading functions
 C! raylib function LoadWave(c.ptr fileName) -> Wave                             // Load wave data from file
 C! raylib function LoadWaveFromMemory(c.ptr fileType, c.ptr fileData, c.int dataSize) -> Wave  // Load wave from memory buffer, fileType refers to extension: i.e. '.wav'
-C! raylib function IsWaveReady(Wave wave) -> c.u8                                     // Checks if wave data is ready
+C! raylib function IsWaveValid(Wave wave) -> c.u8                                     // Checks if wave data is ready
 C! raylib function LoadSound(c.ptr fileName) -> Sound                           // Load sound from file
 C! raylib function LoadSoundFromWave(Wave wave) -> Sound                              // Load sound from wave data
 C! raylib function LoadSoundAlias(Sound source) -> Sound                              // Create a new sound that shares the same sample data as the source sound, does not own the sound data
-C! raylib function IsSoundReady(Sound sound) -> c.u8                                  // Checks if a sound is ready
+C! raylib function IsSoundValid(Sound sound) -> c.u8                                  // Checks if a sound is ready
 C! raylib function UpdateSound(Sound sound, c.ptr data, c.int sampleCount) -> c.void  // Update sound buffer with new data
 C! raylib function UnloadWave(Wave wave) -> c.void                                      // Unload wave data
 C! raylib function UnloadSound(Sound sound) -> c.void                                   // Unload sound
@@ -657,7 +657,7 @@ C! raylib function UnloadWaveSamples(c.ptr samples) -> c.void                   
 // Music management functions
 C! raylib function LoadMusicStream(c.ptr fileName) -> Music                     // Load music stream from file
 C! raylib function LoadMusicStreamFromMemory(c.ptr fileType, c.ptr data, c.int dataSize) -> Music  // Load music stream from data
-C! raylib function IsMusicReady(Music music) -> c.u8                                  // Checks if a music stream is ready
+C! raylib function IsMusicValid(Music music) -> c.u8                                  // Checks if a music stream is ready
 C! raylib function UnloadMusicStream(Music music) -> c.void                             // Unload music stream
 C! raylib function PlayMusicStream(Music music) -> c.void                               // Start music playing
 C! raylib function IsMusicStreamPlaying(Music music) -> c.u8                          // Check if music is playing
@@ -674,7 +674,7 @@ C! raylib function GetMusicTimePlayed(Music music) -> c.float                   
 
 // AudioStream management functions
 C! raylib function LoadAudioStream(c.uint sampleRate, c.uint sampleSize, c.uint channels) -> AudioStream  // Load audio stream (to stream raw audio pcm data)
-C! raylib function IsAudioStreamReady(AudioStream stream) -> c.u8                     // Checks if an audio stream is ready
+C! raylib function IsAudioStreamValid(AudioStream stream) -> c.u8                     // Checks if an audio stream is ready
 C! raylib function UnloadAudioStream(AudioStream stream) -> c.void                      // Unload audio stream and free memory
 C! raylib function UpdateAudioStream(AudioStream stream, c.ptr data, c.int frameCount) -> c.void  // Update audio stream buffers with data
 C! raylib function IsAudioStreamProcessed(AudioStream stream) -> c.u8                 // Check if any audio stream buffers requires refill

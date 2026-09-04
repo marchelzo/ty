@@ -938,25 +938,6 @@ extern usize TotalBytesAllocated;
 #endif
 #define TY_RETHROW()     (vm_rethrow(ty))
 
-#ifdef _WIN32
-#  define UNLIKELY(x)  (x)
-#  define LIKELY(x)    (x)
-#  define EXPECT(x, y) (x)
-#  ifndef TY_RELEASE
-#    define UNREACHABLE(msg) assert(! "" msg)
-#  else
-#    define UNREACHABLE(msg) __assume(0)
-#  endif
-#else
-#  define UNLIKELY(x)  __builtin_expect((x), 0)
-#  define LIKELY(x)    __builtin_expect((x), 1)
-#  define EXPECT(x, y) __builtin_expect((x), (y))
-#  ifndef TY_RELEASE
-#    define UNREACHABLE(msg) assert(! "" msg)
-#  else
-#    define UNREACHABLE(msg) __builtin_unreachable()
-#  endif
-#endif
 
 #define TODO(msg) UNREACHABLE("TODO: " msg)
 
@@ -1371,18 +1352,6 @@ enum {
 #define pP(p) (((uptr)(p)) & ~PMASK3)
 
 #define STACK (ty->stack)
-
-inline static void *
-mrealloc(void *p, usize n)
-{
-        p = ty_realloc(p, n);
-
-        if (UNLIKELY(p == NULL)) {
-                panic("Out of memory!");
-        }
-
-        return p;
-}
 
 inline static void *
 alloc0(usize n)

@@ -915,6 +915,7 @@ if __module__ == 'main' {
         with term = TermIO() {
             while let $ev = term.next-event() {
                 match ev {
+                    [5] => nil,
                     event.Key(_key) as key => pp(event.Key({*_key, nice: key.nice-name()})),
                     _                      => pp(ev)
                 }

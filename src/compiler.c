@@ -1583,7 +1583,7 @@ ProposeMemberDefinition(Ty *ty, Location start, Location end, Expr const *o, cha
                         .type = T2_TYPE_INVALID
                 };
 
-                Expr const *member = types2_find_member(ty, o->_type, m);
+                Expr const *member = t2_find_member(ty, o->_type, m);
                 T2Type t0 = (member != NULL) ? member->_type : T2_TYPE_INVALID;
                 char const *name = NULL;
                 char const *doc = NULL;
@@ -1714,8 +1714,8 @@ Restart:
                 goto Restart;
 
         default:
-                c = (spec->type == EXPRESSION_TYPE && types2_class_of(ty, spec->_type) != NULL)
-                  ? types2_class_of(ty, spec->_type)->i
+                c = (spec->type == EXPRESSION_TYPE && t2_class_of(ty, spec->_type) != NULL)
+                  ? t2_class_of(ty, spec->_type)->i
                   : -1;
                 if (c < 0) {
 Sorry:
@@ -2631,15 +2631,15 @@ Expr2Op(Expr const *e)
 static void
 resolve_type_choices(Ty *ty, T2Type t0, int_vector *cs)
 {
-        T2Universe *universe = types2_universe();
+        T2Universe *universe = t2_global_universe();
         t0 = t2_type_scheme_body(universe, t0);
 
         switch (t2_type_kind(universe, t0)) {
         case T2_TYPE_NOMINAL:
         {
                 uint64_t symbol = t2_type_payload(universe, t0);
-                int tag = types2_symbol_tag(symbol);
-                avP(*cs, tag > 0 ? tags_get_class(ty, tag)->i : types2_symbol_class(symbol));
+                int tag = t2_symbol_tag(symbol);
+                avP(*cs, tag > 0 ? tags_get_class(ty, tag)->i : t2_symbol_class(symbol));
                 break;
         }
 
@@ -2673,9 +2673,9 @@ resolve_type_choices(Ty *ty, T2Type t0, int_vector *cs)
 
         default:
         {
-                Class *class = types2_class_of(ty, t0);
+                Class *class = t2_class_of(ty, t0);
                 if (class == NULL) {
-                        char *shown = types2_show(ty, t0);
+                        char *shown = t2_show(ty, t0);
                         fail("bad operator signature: %s", shown);
                 }
                 avP(*cs, class->i);
@@ -3316,7 +3316,7 @@ RegexCapture(Ty *ty, Scope *scope, int i)
         ty_snprintf(id, sizeof id, "$%d", i);
 
         Symbol *var = addsymbol(ty, scope, sclonea(ty, id));
-        var->type = types2_primitive(T2_TYPE_STRING);
+        var->type = t2_primitive(t2_global_universe(), T2_TYPE_STRING);
 
         return var;
 }
@@ -3348,7 +3348,7 @@ add_captures(Ty *ty, Expr *pattern, Scope *scope)
                                 /*
                                  * Don't think clone is necessary here...
                                  */
-                                addsymbol(ty, scope, nt)->type = types2_primitive(T2_TYPE_STRING);
+                                addsymbol(ty, scope, nt)->type = t2_primitive(t2_global_universe(), T2_TYPE_STRING);
                                 goto NextCapture;
                         }
                 }
@@ -6746,7 +6746,7 @@ emit_function(Ty *ty, Expr const *e)
                                 array_of->subscript = constraint;
                                 if (constraint->annotated && constraint->_type != T2_TYPE_INVALID) {
                                         array_of->annotated = true;
-                                        array_of->_type = types2_class_instance(
+                                        array_of->_type = t2_class_instance(
                                                 ty,
                                                 CLASS_ARRAY,
                                                 &constraint->_type,
@@ -9575,8 +9575,8 @@ BeginRangeLoop(
         Expr *start = !reverse ? range->left  : range->right;
         Expr *stop  = !reverse ? range->right : range->left;
 
-        Expr zero = { .type = EXPRESSION_INTEGER, .integer = 0,          ._type = types2_primitive(T2_TYPE_INT) };
-        Expr inf  = { .type = EXPRESSION_INTEGER, .integer = INTMAX_MAX, ._type = types2_primitive(T2_TYPE_INT) };
+        Expr zero = { .type = EXPRESSION_INTEGER, .integer = 0,          ._type = t2_primitive(t2_global_universe(), T2_TYPE_INT) };
+        Expr inf  = { .type = EXPRESSION_INTEGER, .integer = INTMAX_MAX, ._type = t2_primitive(t2_global_universe(), T2_TYPE_INT) };
 
         if (start == NULL) start = &zero;
         if (stop  == NULL) stop  = (reverse ? &zero : &inf);
@@ -10181,7 +10181,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
 
         case EXPRESSION_TYPE_OF:
         {
-                T2Type instance = t2_type_value_instance(types2_universe(), e->_type);
+                T2Type instance = t2_type_value_instance(t2_global_universe(), e->_type);
                 INSN(TYPE);
                 EP((uptr)(instance == T2_TYPE_INVALID ? e->operand->_type : instance));
                 break;
@@ -12199,7 +12199,7 @@ lowkey(Expr *e, Scope *scope, void *ctx)
 
                 case EXPRESSION_FUNCTION:
                         if (e->class != NULL) {
-                                Expr o = { ._type = types2_object_type(ty, e->class) };
+                                Expr o = { ._type = t2_object_type(ty, e->class) };
                                 ProposeMemberDefinition(ty, e->start, e->end, &o, e->name);
                         }
                         break;
@@ -12399,42 +12399,42 @@ compiler_current_imports(Ty *ty)
 static Stmt **
 resolve_prog(Ty *ty, Stmt **p)
 {
-        Types2Shadow *shadow = types2_shadow_begin(ty, STATE.module);
+        T2Checker *checker = t2_checker_begin(ty, STATE.module);
 
         if (TY_CATCH_ERROR()) {
-                types2_shadow_abort(shadow);
+                t2_checker_abort(checker);
                 TY_RETHROW();
         }
 
-        int types2_class_ops = 0;
+        int t2_class_ops = 0;
         for (usize i = 0; p[i] != NULL; ++i) {
                 InjectRedpill(ty, p[i]);
-                while (types2_class_ops < vN(STATE.class_ops)) {
-                        types2_shadow_observe_statement(
+                while (t2_class_ops < vN(STATE.class_ops)) {
+                        t2_checker_observe(
                                 ty,
-                                shadow,
-                                v__(STATE.class_ops, types2_class_ops),
-                                TYPES2_SHADOW_CLASS_OPERATOR_DECLARATION,
-                                types2_class_ops
+                                checker,
+                                v__(STATE.class_ops, t2_class_ops),
+                                T2_CHECKPOINT_CLASS_OPERATOR_DECLARATION,
+                                t2_class_ops
                         );
-                        types2_class_ops += 1;
+                        t2_class_ops += 1;
                 }
-                types2_shadow_observe_statement(
+                t2_checker_observe(
                         ty,
-                        shadow,
+                        checker,
                         p[i],
-                        TYPES2_SHADOW_DECLARATION,
+                        T2_CHECKPOINT_DECLARATION,
                         i
                 );
         }
 
         for (usize i = 0; p[i] != NULL; ++i) {
                 symbolize_statement(ty, STATE.global, p[i]);
-                types2_shadow_observe_statement(
+                t2_checker_observe(
                         ty,
-                        shadow,
+                        checker,
                         p[i],
-                        TYPES2_SHADOW_STATEMENT,
+                        T2_CHECKPOINT_STATEMENT,
                         i
                 );
         }
@@ -12447,18 +12447,18 @@ resolve_prog(Ty *ty, Stmt **p)
                 ) {
                         symbolize_statement(ty, STATE.global, def);
                 }
-                types2_shadow_observe_statement(
+                t2_checker_observe(
                         ty,
-                        shadow,
+                        checker,
                         def,
-                        TYPES2_SHADOW_CLASS_OPERATOR,
+                        T2_CHECKPOINT_CLASS_OPERATOR,
                         i
                 );
         }
 
         TY_CATCH_END();
 
-        types2_shadow_finish(ty, shadow);
+        t2_checker_finish(ty, checker);
 
         ScopeFinalize(ty, STATE.global);
 
@@ -15258,7 +15258,7 @@ cexpr(Ty *ty, Value *v)
         case TyType:
         {
                 e->type = EXPRESSION_TYPE;
-                e->_type = types2_from_ty(ty, &_v);
+                e->_type = t2_from_ty(ty, &_v);
                 break;
         }
 
@@ -16397,7 +16397,7 @@ tyeval(Ty *ty, Expr *e, Value *ret, Scope *scope)
 
         if (e->xscope == NULL) {
                 symbolize_expression(ty, scope, e);
-                types2_check_expression(ty, e);
+                t2_check_expression(ty, e);
         }
 
         EE(e);
@@ -16887,7 +16887,7 @@ define_class(Ty *ty, Stmt *s)
                         Expr *this;
                         if (CheckTypes) {
                                 this = NewExpr(ty, EXPRESSION_TYPE);
-                                this->_type = types2_object_type(ty, class);
+                                this->_type = t2_object_type(ty, class);
                         } else {
                                 this = NewExpr(ty, EXPRESSION_IDENTIFIER);
                                 this->identifier = cd->name;
@@ -17266,7 +17266,7 @@ compiler_set_type_of(Ty *ty, Stmt *stmt)
 {
         symbolize_lvalue(ty, GetNamespace(ty, stmt->ns), stmt->target, 0);
         symbolize_expression(ty, GetNamespace(ty, stmt->ns), stmt->value);
-        stmt->target->symbol->type = types2_resolve(ty, stmt->value);
+        stmt->target->symbol->type = t2_resolve(ty, stmt->value);
 }
 
 void
@@ -18702,7 +18702,7 @@ DumpProgram(
                 CASE(TYPE)
                         READVALUE_(s);
                         if (!DebugScan) {
-                                char *shown = types2_show(ty, (T2Type)s);
+                                char *shown = t2_show(ty, (T2Type)s);
                                 dump(out, " %s", shown);
                                 t2_string_free(shown);
                         }
@@ -19541,7 +19541,7 @@ SymbolToCompletionItem(Ty *ty, Symbol const *sym, i32 depth)
         return vTn(
                 "name",  xSz(sym->identifier),
                 "doc",   (sym->doc == NULL) ? NIL : xSz(sym->doc),
-                "type",  xSz(types2_show(ty, sym->type)),
+                "type",  xSz(t2_show(ty, sym->type)),
                 "kind",  INTEGER(6),
                 "depth", INTEGER(depth)
         );
@@ -19657,7 +19657,7 @@ CompilerSuggestCompletions(
                         );
                 } else {
                         LOG("OBJECT IS NOT A MODULE: %s", QueryExpr->object->name);
-                        types2_completions(
+                        t2_completions(
                                 ty,
                                 QueryExpr->object->_type,
                                 QueryExpr->member->identifier,

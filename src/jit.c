@@ -3841,7 +3841,7 @@ bc_push_integer(JitCtx *ctx, intmax_t val)
         ctx->sp++;
         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
 
-        ctx->op_types[ctx->sp - 1] = types2_primitive(T2_TYPE_INT);
+        ctx->op_types[ctx->sp - 1] = t2_primitive(t2_global_universe(), T2_TYPE_INT);
 }
 
 static void
@@ -3863,7 +3863,7 @@ bc_push_bool(JitCtx *ctx, bool val)
         ctx->sp++;
         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
 
-        ctx->op_types[ctx->sp - 1] = types2_primitive(T2_TYPE_BOOL);
+        ctx->op_types[ctx->sp - 1] = t2_primitive(t2_global_universe(), T2_TYPE_BOOL);
 }
 
 static void
@@ -3882,7 +3882,7 @@ bc_push_nil(JitCtx *ctx)
         ctx->sp++;
         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
 
-        ctx->op_types[ctx->sp - 1] = types2_primitive(T2_TYPE_NIL);
+        ctx->op_types[ctx->sp - 1] = t2_primitive(t2_global_universe(), T2_TYPE_NIL);
 }
 
 // a = ops[sp-2], b = ops[sp-1], result = ops[sp-2], sp--
@@ -5453,8 +5453,8 @@ bc_emit_cmp(JitCtx *ctx, void *helper)
         bool is_eq_or_ne = (helper == (void *)jit_rt_eq || helper == (void *)jit_rt_ne);
         Class *cls = expected_class_of(ctx->ty, ctx->op_types[ctx->sp - 1]);
 
-        bool inline_nil = types2_is_nil(ctx->op_types[ctx->sp - 1])
-                       || types2_is_nil(ctx->op_types[ctx->sp - 2]);
+        bool inline_nil = t2_is_nil(ctx->op_types[ctx->sp - 1])
+                       || t2_is_nil(ctx->op_types[ctx->sp - 2]);
 
         // For non-equality ops with no int/float fast path, just call the helper
         if (!is_eq_or_ne && (cls == NULL || (cls->i != CLASS_INT && cls->i != CLASS_FLOAT))) {
@@ -5787,7 +5787,7 @@ bc_emit_trampoline_signal(JitCtx *ctx, int status, int idx)
 static Class *
 expected_class_of(Ty *ty, T2Type t)
 {
-        return types2_class_of(ty, t);
+        return t2_class_of(ty, t);
 }
 
 static T2Type
@@ -5997,10 +5997,10 @@ bc_inline_plan_types(JitCtx *ctx, Value const *callee, TyInlinePlan const *plan)
         }
 
         T2Type function = type_of(callee);
-        if (!types2_is_callable(function)) {
+        if (!t2_is_callable(function)) {
                 return false;
         }
-        Class *result = expected_class_of(ctx->ty, types2_callable_result(function));
+        Class *result = expected_class_of(ctx->ty, t2_callable_result_type(function));
         if (result == NULL) {
                 return false;
         }
@@ -6990,7 +6990,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 
         TypeHintVector const *hints = &expr_of(ctx->func)->type_hints;
 
-        T2Type ARRAY_TYPE = types2_object_type(ty, class_get(ty, CLASS_ARRAY));
+        T2Type ARRAY_TYPE = t2_object_type(ty, class_get(ty, CLASS_ARRAY));
 
 #define BC_READ(var)  do { __builtin_memcpy(&var, ip, sizeof var); ip += sizeof var; } while (0)
 #define BC_SKIP(type) (ip += sizeof(type))
@@ -7020,7 +7020,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 e ? e->start.line + 1 : 0,
                                 name_of(ctx->func),
                                 off,
-                                types2_show(ty, hint0));
+                                t2_show(ty, hint0));
 #endif
                 }
 
@@ -7906,7 +7906,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         bool try_str = (a_cls != NULL && a_cls->i == CLASS_STRING)
                                     || (b_cls != NULL && b_cls->i == CLASS_STRING);
 
-                        bool try_nil = types2_is_nil(a0) || types2_is_nil(b0) || (a_cls == NULL) || (b_cls == NULL);
+                        bool try_nil = t2_is_nil(a0) || t2_is_nil(b0) || (a_cls == NULL) || (b_cls == NULL);
 
                         int lbl_nil_check = bc_next_label(ctx);
                         int lbl_slow = bc_next_label(ctx);
@@ -8288,7 +8288,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         }
 
                         T2Type t0 = (ctx->self_class != NULL)
-                                  ? types2_object_type(ctx->ty, ctx->self_class)
+                                  ? t2_object_type(ctx->ty, ctx->self_class)
                                   : T2_TYPE_INVALID;
 
                         ctx->sp++; // make room for result (helper will write to sp-1)
@@ -9969,7 +9969,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         bc_emit_runtime_call(ctx, BC_CALL);
                         ctx->sp++;
                         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
-                        ctx->op_types[ctx->sp - 1] = types2_primitive(T2_TYPE_STRING);
+                        ctx->op_types[ctx->sp - 1] = t2_primitive(t2_global_universe(), T2_TYPE_STRING);
                         break;
                 }
 
@@ -9997,7 +9997,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 
                         ctx->sp++;
                         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
-                        ctx->op_types[ctx->sp - 1] = types2_primitive(T2_TYPE_FLOAT);
+                        ctx->op_types[ctx->sp - 1] = t2_primitive(t2_global_universe(), T2_TYPE_FLOAT);
                         break;
                 }
 
@@ -10013,7 +10013,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         if (!bc_emit_builtin_count(ctx)) {
                                 bc_emit_unop_helper(ctx, (void *)jit_rt_count);
                         }
-                        ctx->op_types[ctx->sp - 1] = types2_primitive(T2_TYPE_INT);
+                        ctx->op_types[ctx->sp - 1] = t2_primitive(t2_global_universe(), T2_TYPE_INT);
                         break;
 
                 CASE(GET_TAG) {

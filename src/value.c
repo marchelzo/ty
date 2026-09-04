@@ -273,23 +273,6 @@ str_hash(char const *str, u32 len)
 }
 
 inline static u64
-hash64(u64 x)
-{
-        x ^= x >> 30;
-        x *= 0xBF58476D1CE4E5B9ULL;
-        x ^= x >> 27;
-        x *= 0x94D049BB133111EBULL;
-        x ^= x >> 31;
-        return x;
-}
-
-inline static u64
-ptr_hash(void const *p)
-{
-        return hash64((u64)(uptr)p);
-}
-
-inline static u64
 flt_hash(double _x)
 {
         u64 x;
@@ -606,7 +589,7 @@ show_impl(
                         int rows;
                         int columns;
                         bool sized = color && get_terminal_size(1, &rows, &columns);
-                        char *s = types2_render(ty, as_type(&v), (Types2Render) {
+                        char *s = t2_render(ty, as_type(&v), (T2Render) {
                                 .color = color,
                                 .width = sized ? (unsigned)columns : 0
                         });

@@ -117,7 +117,6 @@ usage(void)
                 "    -M MODULE     Like -m, but uses an unqualified import: import MODULE (..)            \0"
                 "    -p            Print the value of the last-evaluated expression before exiting        \0"
                 "    -q            Ignore constraints on function parameters and return values            \0"
-                "    -t            Check with the experimental types2 checker instead of the legacy one    \0"
                 "    -S FILE       Write the program's annotated disassembly to FILE                      \0"
                 "                    (- is interpreted as stdout, and @ is interpreted as stderr)         \0"
                 "    --test        Any top-level functions decorated with @test will be executed after    \0"
@@ -208,7 +207,7 @@ execln(Ty *ty, char *line)
                         int rows;
                         int columns;
                         bool sized = get_terminal_size(1, &rows, &columns);
-                        char *shown = types2_render(ty, types2_infer(ty, &expr), (Types2Render) {
+                        char *shown = t2_render(ty, t2_infer(ty, &expr), (T2Render) {
                                 .color = ColorStdout,
                                 .width = sized ? (unsigned)columns : 0
                         });
@@ -236,10 +235,14 @@ execln(Ty *ty, char *line)
 
                 Expr *pair = TyToCExpr(ty, vm_get(ty, -1));
 
-                T2Type t0 = types2_resolve(ty, v__(pair->es, 0));
-                T2Type t1 = types2_resolve(ty, v__(pair->es, 1));
+                T2Type t0 = t2_resolve(ty, v__(pair->es, 0));
+                T2Type t1 = t2_resolve(ty, v__(pair->es, 1));
 
-                puts(types2_subtype(t0, t1) ? "true" : "false");
+                bool related = t0 == T2_TYPE_INVALID
+                            || t1 == T2_TYPE_INVALID
+                            || t2_subtype(t2_global_universe(), t0, t1) != T2_RELATION_NO;
+
+                puts(related ? "true" : "false");
 
                 goto End;
 #endif
@@ -514,9 +517,6 @@ ProcessArgs(char *argv[], bool first)
                                         DetailedExceptions = false;
                                         break;
 
-                                case 't':
-                                        break;
-
                                 case 'b':
                                         basic = true;
                                         break;
@@ -713,7 +713,7 @@ main(int argc, char **argv)
                 return -1;
         }
 
-        types2_startup_finished();
+        t2_startup_finished();
 
         argv += ProcessArgs(argv, false);
 

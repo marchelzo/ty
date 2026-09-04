@@ -357,7 +357,7 @@ main(int argc, char *argv[])
                                 "line",  INTEGER(sym->loc.line),
                                 "col",   INTEGER(sym->loc.col),
                                 "file",  xSz(sym->mod ? sym->mod->path : "<unknown>"),
-                                "type",  xSz(types2_show(ty, sym->type)),
+                                "type",  xSz(t2_show(ty, sym->type)),
                                 "doc",   (sym->doc == NULL) ? NIL : xSz(sym->doc)
                         );
                         break;
@@ -378,7 +378,7 @@ main(int argc, char *argv[])
 
                         result = vTn(
                                 "source",      xSs(QueryExpr->start.s, QueryExpr->end.s - QueryExpr->start.s),
-                                "type",        xSz(types2_show(ty, QueryExpr->_type)),
+                                "type",        xSz(t2_show(ty, QueryExpr->_type)),
                                 "completions", ARRAY((Array *)&items)
                         );
                         break;

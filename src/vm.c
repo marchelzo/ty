@@ -911,23 +911,23 @@ add_builtins(Ty *ty, int ac, char **av)
                 xvP(Globals, builtins[i].value);
                 switch (ClassOf(v)) {
                 case CLASS_INT:
-                        sym->type = types2_literal_int(v->z);
+                        sym->type = t2_literal_int(t2_global_universe(), v->z);
                         sym->flags |= SYM_CONST;
                         break;
 
                 case CLASS_STRING:
-                        sym->type = types2_literal_string(TY_C_STR(*v));
+                        sym->type = t2_literal_string(t2_global_universe(), TY_C_STR(*v));
                         sym->flags |= SYM_CONST;
                         break;
 
                 case CLASS_BOOL:
-                        sym->type = types2_literal_bool(v->boolean);
+                        sym->type = t2_literal_bool(t2_global_universe(), v->boolean);
                         sym->flags |= SYM_CONST;
                         break;
 
                 case CLASS_FLOAT:
                 case CLASS_PTR:
-                        sym->type = types2_object_type(ty, class_get(ty, ClassOf(v)));
+                        sym->type = t2_object_type(ty, class_get(ty, ClassOf(v)));
                         sym->flags |= SYM_CONST;
                         break;
                 }
@@ -6232,7 +6232,7 @@ DoCheckMatch(Ty *ty, bool exec)
         case VALUE_TYPE:
                 v = pop();
                 value = pop();
-                xpush(BOOLEAN(types2_check(ty, as_type(&v), &value)));
+                xpush(BOOLEAN(t2_check(ty, as_type(&v), &value)));
                 break;
 
         case VALUE_NIL:

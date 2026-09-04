@@ -130,6 +130,12 @@ S2(char const *s)
         return new;
 }
 
+static inline char *
+S2N(char const *s)
+{
+        return s == NULL ? NULL : S2(s);
+}
+
 char *
 slurp(Ty *ty, char const *path);
 
@@ -146,6 +152,35 @@ inline static u64
 hash64z(char const *s)
 {
         return XXH3_64bits(s, strlen(s));
+}
+
+inline static u64
+hash64(u64 x)
+{
+        x ^= x >> 30;
+        x *= 0xBF58476D1CE4E5B9ULL;
+        x ^= x >> 27;
+        x *= 0x94D049BB133111EBULL;
+        x ^= x >> 31;
+        return x;
+}
+
+inline static u64
+ptr_hash(void const *p)
+{
+        return hash64((u64)(uptr)p);
+}
+
+inline static void *
+mrealloc(void *p, usize n)
+{
+        p = ty_realloc(p, n);
+
+        if (p == NULL) {
+                panic("Out of memory!");
+        }
+
+        return p;
 }
 
 inline static int

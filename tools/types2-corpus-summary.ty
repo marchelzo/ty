@@ -2,7 +2,7 @@ import json
 import os (exit)
 
 const USAGE = 'usage: ty tools/types2-corpus-summary.ty [--classification FILE] [--seed] [--strict] LOG...'
-const EVENT_SCHEMA = 'ty.types2.shadow.v1'
+const EVENT_SCHEMA = 'ty.types2.log.v1'
 const CLASSIFICATION_SCHEMA = 'ty.types2.classification.v1'
 
 const CLASSIFICATIONS = [
@@ -290,8 +290,8 @@ fn print-units(summary: Summary) {
     for unit in summary.units {
         let classes: _ = unit['deferred_classes'] ?? %{}
         let row = [
-            unit['types2_errors'],
-            unit['types2_warnings'],
+            unit['t2_errors'],
+            unit['t2_warnings'],
             unit['deferred_nodes'],
             unit['pending_obligations'],
             *DEFERRED_CLASSES.map(kind -> classes[kind] ?? 0),

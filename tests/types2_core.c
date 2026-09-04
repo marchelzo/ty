@@ -25,18 +25,6 @@ check_string(T2Universe *universe, T2Type type, char const *expected)
         t2_string_free(actual);
 }
 
-static void
-check_snapshot(T2Universe *universe, T2Type type)
-{
-        T2TypeSnapshot *snapshot = t2_type_snapshot_new(universe, type);
-        CHECK(snapshot != NULL);
-        if (snapshot != NULL) {
-                CHECK(t2_type_snapshot_node_count(snapshot) != 0);
-                CHECK(t2_type_snapshot_import(universe, snapshot) == type);
-        }
-        t2_type_snapshot_free(snapshot);
-}
-
 typedef struct predicate_test_context {
         T2Universe *universe;
         size_t calls;
@@ -162,26 +150,26 @@ check_wire_round_trip(T2Universe *universe)
 
         T2SymbolRemap remap = { .out = remap_out, .in = remap_in };
         T2TypeWriter *writer = t2_type_writer_new(universe, remap);
-        T2Bytes payload = {0};
+        byte_vector payload = {0};
         uint32_t either_index;
         CHECK(t2_type_writer_add(writer, either, &either_index));
         CHECK(t2_scheme_encode(scheme, writer, &payload));
-        T2Bytes table = {0};
+        byte_vector table = {0};
         CHECK(t2_type_writer_encode(writer, &table));
         t2_type_writer_free(writer);
 
         size_t position = 0;
         T2ReadHooks identity = {0};
-        T2TypeReader *reader = t2_type_reader_new(universe, remap, identity, table.data, table.size, &position);
+        T2TypeReader *reader = t2_type_reader_new(universe, remap, identity, vv(table), vN(table), &position);
         CHECK(reader != NULL);
-        CHECK(position == table.size);
+        CHECK(position == vN(table));
         if (reader != NULL) {
                 CHECK(t2_type_reader_type(reader, either_index) == either);
                 CHECK(t2_type_reader_variable_limit(reader) == 4097);
                 position = 0;
-                T2Scheme *decoded = t2_scheme_decode(reader, payload.data, payload.size, &position);
+                T2Scheme *decoded = t2_scheme_decode(reader, vv(payload), vN(payload), &position);
                 CHECK(decoded != NULL);
-                CHECK(position == payload.size);
+                CHECK(position == vN(payload));
                 if (decoded != NULL) {
                         CHECK(t2_scheme_quantifier_count(decoded) == 1);
                         CHECK(t2_scheme_predicate_count(decoded) == 1);
@@ -200,13 +188,13 @@ check_wire_round_trip(T2Universe *universe)
         uint32_t reserved = 0;
         T2ReadHooks rebase = { .floor = 4000, .reserve = reserve_block, .context = &reserved };
         position = 0;
-        T2TypeReader *rebased = t2_type_reader_new(universe, remap, rebase, table.data, table.size, &position);
+        T2TypeReader *rebased = t2_type_reader_new(universe, remap, rebase, vv(table), vN(table), &position);
         CHECK(rebased != NULL);
         CHECK(reserved == 97);
         if (rebased != NULL) {
                 CHECK(t2_type_reader_variable_limit(rebased) == 9097);
                 position = 0;
-                T2Scheme *decoded = t2_scheme_decode(rebased, payload.data, payload.size, &position);
+                T2Scheme *decoded = t2_scheme_decode(rebased, vv(payload), vN(payload), &position);
                 CHECK(decoded != NULL);
                 if (decoded != NULL) {
                         T2Predicate copy;
@@ -217,8 +205,8 @@ check_wire_round_trip(T2Universe *universe)
                 }
                 t2_type_reader_free(rebased);
         }
-        t2_bytes_free(&table);
-        t2_bytes_free(&payload);
+        xvF(table);
+        xvF(payload);
         t2_scheme_free(scheme);
 }
 
@@ -353,7 +341,6 @@ main(void)
                 2
         );
         check_string(universe, int_string_values, "|Int, String|");
-        check_snapshot(universe, int_string_values);
         CHECK(t2_multi(universe, (T2Type[]) { integer, nil }, 2) == integer);
         CHECK(t2_multi(universe, &integer, 1) == integer);
         CHECK(t2_multi(universe, NULL, 0) == nil);
@@ -603,7 +590,6 @@ main(void)
                 computed_chain_b,
                 computed_chain_a
         ));
-        check_snapshot(universe, flatten_int);
 
         T2Type array_constructor = t2_function(
                 universe,
@@ -628,7 +614,6 @@ main(void)
                 t2_primitive(universe, T2_TYPE_OBJECT)
         ) == T2_RELATION_YES);
         check_string(universe, array_type_value, "type[Array[Int]]");
-        check_snapshot(universe, array_type_value);
 
         T2Type wide_parameter = t2_function(
                 universe,
@@ -944,7 +929,6 @@ main(void)
         CHECK(effectful_callable != narrow_yield_wide_send);
         CHECK(!t2_callable_is_effectful(universe, narrow_yield_wide_send));
         CHECK(t2_callable_is_effectful(universe, effectful_callable));
-        check_snapshot(universe, effectful_callable);
 
         T2Type first_overloads = t2_overload(
                 universe,
@@ -1010,39 +994,9 @@ main(void)
         CHECK(t2_recursive_is_guarded(universe, recursive_1));
         CHECK(t2_subtype(universe, recursive_1, recursive_2) == T2_RELATION_YES);
         CHECK(t2_subtype(universe, recursive_2, recursive_1) == T2_RELATION_YES);
-        check_snapshot(universe, recursive_1);
         CHECK(t2_type_runtime_facts(universe, recursive_1, &runtime_facts));
         CHECK(runtime_facts.exact);
         CHECK(runtime_facts.kind == T2_RUNTIME_RECORD);
-        T2Universe *reflection_universe = t2_universe_new();
-        CHECK(reflection_universe != NULL);
-        T2TypeSnapshot *recursive_snapshot = t2_type_snapshot_new(
-                universe,
-                recursive_1
-        );
-        CHECK(recursive_snapshot != NULL);
-        T2Type reflected_recursive = t2_type_snapshot_import(
-                reflection_universe,
-                recursive_snapshot
-        );
-        CHECK(reflected_recursive != T2_TYPE_INVALID);
-        CHECK(t2_recursive_is_guarded(
-                reflection_universe,
-                reflected_recursive
-        ));
-        char *source_recursive = t2_type_string(universe, recursive_1);
-        char *target_recursive = t2_type_string(
-                reflection_universe,
-                reflected_recursive
-        );
-        CHECK(source_recursive != NULL && target_recursive != NULL);
-        if (source_recursive != NULL && target_recursive != NULL) {
-                CHECK(strcmp(source_recursive, target_recursive) == 0);
-        }
-        t2_string_free(source_recursive);
-        t2_string_free(target_recursive);
-        t2_type_snapshot_free(recursive_snapshot);
-        t2_universe_free(reflection_universe);
         CHECK(t2_recursive(universe, 1004, integer) == integer);
         T2Type unguarded = t2_recursive_variable(universe, 1003);
         CHECK(t2_recursive(universe, 1003, unguarded) == T2_TYPE_INVALID);
@@ -1337,7 +1291,6 @@ main(void)
                 0,
                 "inferred heterogeneous pack"
         );
-        CHECK(t2_type_snapshot_new(universe, inferred_pack) == NULL);
         T2Type inferred_pack_union = t2_pack_fold_union(universe, inferred_pack);
         CHECK(t2_type_kind(universe, inferred_pack_union) == T2_TYPE_PACK_FOLD_UNION);
         CHECK(t2_solver_constrain_subtype(
