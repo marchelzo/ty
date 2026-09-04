@@ -1275,7 +1275,7 @@ instantiate_binding(
                 T2Type type = t2_scheme_instantiate(
                         binding->scheme,
                         checker->solver,
-                        checker->level,
+                        checker->level + 1,
                         source_provenance(
                                 checker,
                                 site,
@@ -2866,7 +2866,9 @@ lower_function_type(T2Checker *checker, Expr const *expression)
                         positional_closed
                      && kind == T2_PARAMETER_POSITIONAL_OR_KEYWORD
                 ) kind = T2_PARAMETER_KEYWORD_ONLY;
-                char const *name = sequence && i < (usize)vN(input->names)
+                char const *name = sequence
+                                && parameter->type != EXPRESSION_SPREAD
+                                && i < (usize)vN(input->names)
                                  ? v__(input->names, (int)i)
                                  : NULL;
                 if (kind != T2_PARAMETER_POSITIONAL_ONLY && name == NULL) {
@@ -2888,7 +2890,10 @@ lower_function_type(T2Checker *checker, Expr const *expression)
                 if (
                         is_pack_type(checker, parameter_type)
                      && kind != T2_PARAMETER_KEYWORD_REST
-                ) kind = T2_PARAMETER_PACK;
+                ) {
+                        kind = T2_PARAMETER_PACK;
+                        required = false;
+                }
                 positional_closed |= kind == T2_PARAMETER_POSITIONAL_REST
                                   || kind == T2_PARAMETER_PACK;
                 parameters[i] = (T2ParameterSpec) {
@@ -12293,6 +12298,25 @@ promote_generator_frame(
 
 typedef vec(T2Type) T2TypeList;
 
+static T2Type
+splatted_pack(T2Checker *checker, T2Type resolved)
+{
+        T2Nominal *nominal = nominal_from_type(checker, resolved);
+        if (
+                nominal == NULL
+             || nominal->class_id != CLASS_ARRAY
+             || t2_type_arity(checker->universe, resolved) != 1
+        ) return T2_TYPE_INVALID;
+        T2Type element = t2_type_child(checker->universe, resolved, 0);
+        if (t2_type_kind(checker->universe, element) != T2_TYPE_PACK_FOLD_UNION) {
+                return T2_TYPE_INVALID;
+        }
+        return t2_pack_expansion(
+                checker->universe,
+                t2_type_child(checker->universe, element, 0)
+        );
+}
+
 static bool
 expand_fixed_tuple_call_splats(
         T2Checker *checker,
@@ -12322,6 +12346,26 @@ expand_fixed_tuple_call_splats(
                         for (usize j = 0; j < arity; ++j) {
                                 xvP(*expanded, t2_type_child(checker->universe, resolved, j));
                         }
+                        continue;
+                }
+                T2Type forwarded = splat ? splatted_pack(checker, resolved) : T2_TYPE_INVALID;
+                if (forwarded != T2_TYPE_INVALID) {
+                        xvP(*expanded, forwarded);
+                        continue;
+                }
+                if (splat && t2_type_kind(checker->universe, resolved) == T2_TYPE_VARIADIC_TUPLE) {
+                        usize prefix = (usize)t2_type_payload(checker->universe, resolved);
+                        for (usize j = 0; j < prefix; ++j) {
+                                xvP(*expanded, t2_type_child(checker->universe, resolved, j));
+                        }
+                        T2Type tail = t2_type_child(checker->universe, resolved, prefix);
+                        T2Type expansion = t2_pack_expansion(checker->universe, tail);
+                        if (expansion == T2_TYPE_INVALID) {
+                                xvF(*expanded);
+                                v00(*expanded);
+                                return false;
+                        }
+                        xvP(*expanded, expansion);
                         continue;
                 }
                 if (splat) {
@@ -15459,6 +15503,15 @@ named_scheme_type(T2Checker *checker, T2Scheme *scheme)
         return t2_scheme_type(checker->universe, scheme);
 }
 
+static bool
+typeof_operand_expansive(Expr const *operand)
+{
+        Expr const *expression = operand == NULL ? NULL : unfurl(operand);
+        if (expression == NULL) return false;
+        return expression->type != EXPRESSION_MEMBER_ACCESS
+            && expression_is_expansive(expression);
+}
+
 static T2Type
 typeof_operand_type(T2Checker *checker, Expr const *operand)
 {
@@ -15482,6 +15535,10 @@ typeof_operand_type(T2Checker *checker, Expr const *operand)
         T2Type *environment = environment_types(checker, NULL, &environment_count);
         T2SolverMark scope = t2_solver_mark(checker->solver);
         T2Type instance = infer_expression(checker, operand);
+        T2Type zonked = instance == T2_TYPE_INVALID
+                      ? T2_TYPE_INVALID
+                      : t2_solver_zonk(checker->solver, instance, T2_PREFER_LOWER_BOUND);
+        if (zonked != T2_TYPE_INVALID) instance = zonked;
         T2Scheme *scheme = instance == T2_TYPE_INVALID || checker->failed
                          ? NULL
                          : t2_solver_generalize_scoped(
@@ -15490,7 +15547,7 @@ typeof_operand_type(T2Checker *checker, Expr const *operand)
                                  environment,
                                  environment_count,
                                  checker->level,
-                                 expression_is_expansive(operand),
+                                 typeof_operand_expansive(operand),
                                  scope
                            );
         t2_solver_commit(checker->solver, scope);
@@ -18859,6 +18916,11 @@ infer_member_functions(
                         if (!t2_solver_failed(checker->solver)) checker->failed = true;
                         return;
                 }
+                set_node_type(
+                        checker,
+                        function,
+                        t2_scheme_type(checker->universe, scheme)
+                );
                 (void)add_member(
                         checker,
                         class_id,
@@ -25255,6 +25317,29 @@ t2_resolve(Ty *ty, Expr *type_expression)
 }
 
 T2Type
+t2_resolve_in_class(Ty *ty, Class *class, Expr *type_expression)
+{
+        if (type_expression == NULL) return T2_TYPE_INVALID;
+        T2Checker *checker = scratch_checker(ty);
+        if (checker == NULL) return T2_TYPE_INVALID;
+        ClassDefinition const *definition = class == NULL || class->def == NULL
+                                          ? NULL
+                                          : &class->def->class;
+        usize arity = definition == NULL
+                     ? 0
+                     : (usize)vN(definition->type_params);
+        for (usize i = 0; i < arity; ++i) {
+                Expr const *parameter = v__(definition->type_params, (int)i);
+                (void)add_type_variable(
+                        checker,
+                        parameter->symbol,
+                        t2_nominal_type_parameter(checker->universe, (u32)i)
+                );
+        }
+        return finish_scratch(checker, lower_type(checker, type_expression));
+}
+
+T2Type
 t2_infer(Ty *ty, Expr *expression)
 {
         if (expression == NULL) return T2_TYPE_INVALID;
@@ -25735,6 +25820,79 @@ canonical_class_parameters(T2Type receiver, T2Type member, usize arity)
         return result == T2_TYPE_INVALID ? member : result;
 }
 
+static T2Type
+scheme_member_type(
+        T2Universe *universe,
+        T2Scheme const *scheme,
+        T2Type receiver,
+        usize arity
+)
+{
+        usize count = t2_scheme_quantifier_count(scheme);
+        if (count < arity) return T2_TYPE_INVALID;
+        u32 *ids = ty_malloc(arity * sizeof *ids);
+        T2Type *arguments = ty_malloc(arity * sizeof *arguments);
+        T2Quantifier *rest = ty_malloc((count - arity + 1) * sizeof *rest);
+        T2Predicate *predicates = NULL;
+        T2Type result = T2_TYPE_INVALID;
+        if (ids == NULL || arguments == NULL || rest == NULL) goto Done;
+        for (usize i = 0; i < count; ++i) {
+                T2Quantifier quantifier;
+                if (!t2_scheme_quantifier(scheme, i, &quantifier)) goto Done;
+                if (i < arity) {
+                        ids[i] = quantifier.id;
+                        arguments[i] = t2_type_child(universe, receiver, i);
+                } else {
+                        rest[i - arity] = quantifier;
+                }
+        }
+        T2Type body = t2_type_substitute(
+                universe,
+                t2_scheme_body(scheme),
+                ids,
+                arguments,
+                arity
+        );
+        if (body == T2_TYPE_INVALID || count == arity) {
+                result = body;
+                goto Done;
+        }
+        usize predicate_count = t2_scheme_predicate_count(scheme);
+        predicates = ty_malloc((predicate_count + 1) * sizeof *predicates);
+        if (predicates == NULL) goto Done;
+        for (usize i = 0; i < predicate_count; ++i) {
+                if (!t2_scheme_predicate(scheme, i, &predicates[i])) goto Done;
+                T2Type *parts[] = {
+                        &predicates[i].subtype,
+                        &predicates[i].supertype,
+                        &predicates[i].operand
+                };
+                for (usize j = 0; j < 3; ++j) {
+                        if (*parts[j] == T2_TYPE_INVALID) continue;
+                        *parts[j] = t2_type_substitute(universe, *parts[j], ids, arguments, arity);
+                        if (*parts[j] == T2_TYPE_INVALID) goto Done;
+                }
+        }
+        T2Scheme *remaining = t2_scheme_new(
+                universe,
+                rest,
+                count - arity,
+                body,
+                predicates,
+                predicate_count
+        );
+        if (remaining != NULL) {
+                result = t2_scheme_type(universe, remaining);
+                t2_scheme_free(remaining);
+        }
+Done:
+        ty_free(ids);
+        ty_free(arguments);
+        ty_free(rest);
+        ty_free(predicates);
+        return result;
+}
+
 T2Type
 t2_member_type(Ty *ty, T2Type receiver, T2Type member)
 {
@@ -25747,6 +25905,12 @@ t2_member_type(Ty *ty, T2Type receiver, T2Type member)
         ) return member;
         usize arity = t2_type_arity(universe, receiver);
         if (arity == 0) return member;
+        T2Scheme *scheme = t2_type_scheme(universe, member);
+        if (scheme != NULL) {
+                T2Type result = scheme_member_type(universe, scheme, receiver, arity);
+                t2_scheme_free(scheme);
+                return result == T2_TYPE_INVALID ? member : result;
+        }
         u32 *ids = ty_malloc(arity * sizeof *ids);
         T2Type *arguments = ty_malloc(arity * sizeof *arguments);
         if (ids == NULL || arguments == NULL) {
@@ -25807,7 +25971,7 @@ reflect_nominal(Ty *ty, T2Type type, unsigned depth)
 }
 
 static Value
-reflect_function(Ty *ty, T2Type type, unsigned depth)
+reflect_function(Ty *ty, T2Type type, Array *quantifiers, unsigned depth)
 {
         T2Universe *universe = t2_global_universe();
         usize count = t2_callable_parameter_count(universe, type);
@@ -25820,7 +25984,10 @@ reflect_function(Ty *ty, T2Type type, unsigned depth)
                         vTn(
                                 "name", parameter.name == NULL ? NIL : vSsz(parameter.name),
                                 "type", reflect_type(ty, parameter.type, depth + 1),
-                                "gather", BOOLEAN(parameter.kind == T2_PARAMETER_POSITIONAL_REST),
+                                "gather", BOOLEAN(
+                                        parameter.kind == T2_PARAMETER_POSITIONAL_REST
+                                     || parameter.kind == T2_PARAMETER_PACK
+                                ),
                                 "kwargs", BOOLEAN(parameter.kind == T2_PARAMETER_KEYWORD_REST),
                                 "required", BOOLEAN(parameter.required)
                         )
@@ -25829,11 +25996,81 @@ reflect_function(Ty *ty, T2Type type, unsigned depth)
         return tagged(
                 ty,
                 TyFuncT,
-                ARRAY(vA()),
+                ARRAY(quantifiers),
                 ARRAY(parameters),
                 reflect_type(ty, t2_callable_result(universe, type), depth + 1),
                 NONE
         );
+}
+
+static bool
+lower_bounded_quantifier(
+        T2Universe *universe,
+        T2Scheme const *scheme,
+        T2Quantifier quantifier,
+        T2Type *bound
+)
+{
+        usize count = t2_scheme_predicate_count(scheme);
+        *bound = T2_TYPE_INVALID;
+        for (usize i = 0; i < count; ++i) {
+                T2Predicate predicate;
+                if (!t2_scheme_predicate(scheme, i, &predicate)) return false;
+                if (predicate.kind != T2_PREDICATE_SUBTYPE) return false;
+                bool above = t2_type_kind(universe, predicate.supertype) == T2_TYPE_VARIABLE
+                          && t2_type_payload(universe, predicate.supertype) == quantifier.id;
+                bool below = t2_type_kind(universe, predicate.subtype) == T2_TYPE_VARIABLE
+                          && t2_type_payload(universe, predicate.subtype) == quantifier.id;
+                if (below) return false;
+                if (!above) continue;
+                *bound = *bound == T2_TYPE_INVALID
+                       ? predicate.subtype
+                       : t2_join(universe, *bound, predicate.subtype);
+        }
+        return *bound != T2_TYPE_INVALID;
+}
+
+static Value
+reflect_scheme(Ty *ty, T2Type type, unsigned depth)
+{
+        T2Universe *universe = t2_global_universe();
+        T2Scheme *scheme = t2_type_scheme(universe, type);
+        if (scheme == NULL) return TAG(TyUnknownT);
+        usize count = t2_scheme_quantifier_count(scheme);
+        Array *quantifiers = vAn(count);
+        u32 *ids = ty_malloc((count + 1) * sizeof *ids);
+        T2Type *bounds = ty_malloc((count + 1) * sizeof *bounds);
+        usize bounded = 0;
+        for (usize i = 0; i < count; ++i) {
+                T2Quantifier quantifier;
+                if (!t2_scheme_quantifier(scheme, i, &quantifier)) continue;
+                T2Type bound;
+                if (
+                        ids != NULL
+                     && bounds != NULL
+                     && lower_bounded_quantifier(universe, scheme, quantifier, &bound)
+                ) {
+                        ids[bounded] = quantifier.id;
+                        bounds[bounded] = bound;
+                        bounded += 1;
+                        continue;
+                }
+                vPx(
+                        *quantifiers,
+                        tagged(ty, TyVarT, INTEGER((i64)quantifier.id), NONE)
+                );
+        }
+        T2Type body = t2_scheme_body(scheme);
+        if (bounded != 0) {
+                T2Type narrowed = t2_type_substitute(universe, body, ids, bounds, bounded);
+                if (narrowed != T2_TYPE_INVALID) body = narrowed;
+        }
+        ty_free(ids);
+        ty_free(bounds);
+        t2_scheme_free(scheme);
+        return t2_type_kind(universe, body) == T2_TYPE_FUNCTION
+             ? reflect_function(ty, body, quantifiers, depth)
+             : reflect_type(ty, body, depth + 1);
 }
 
 static Value
@@ -25866,7 +26103,6 @@ static Value
 reflect_type(Ty *ty, T2Type type, unsigned depth)
 {
         T2Universe *universe = t2_global_universe();
-        type = t2_type_scheme_body(universe, type);
         if (type == T2_TYPE_INVALID) return TAG(TyUnknownT);
         if (depth > 64) return TAG(TyAnyT);
         switch (t2_type_kind(universe, type)) {
@@ -25889,6 +26125,7 @@ reflect_type(Ty *ty, T2Type type, unsigned depth)
         case T2_TYPE_LITERAL_STRING:
                 return tagged(ty, TyStringT, vSsz(t2_type_name(universe, type)), NONE);
         case T2_TYPE_REFINEMENT:
+        case T2_TYPE_PACK_EXPANSION:
                 return reflect_type(ty, t2_type_child(universe, type, 0), depth + 1);
         case T2_TYPE_COMPUTED:
         {
@@ -25907,8 +26144,10 @@ reflect_type(Ty *ty, T2Type type, unsigned depth)
                 }
                 return tagged(ty, TyClassT, CLASS(class), NONE);
         }
+        case T2_TYPE_SCHEME:
+                return reflect_scheme(ty, type, depth);
         case T2_TYPE_FUNCTION:
-                return reflect_function(ty, type, depth);
+                return reflect_function(ty, type, vA(), depth);
         case T2_TYPE_TUPLE:
                 return reflect_tuple(ty, type, t2_type_arity(universe, type), depth);
         case T2_TYPE_VARIADIC_TUPLE:

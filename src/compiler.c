@@ -1358,28 +1358,6 @@ colorize_code_multiline(
         }
 }
 
-char *
-ContextString(Ty *ty)
-{
-        char buffer[1024];
-        int i = 0;
-
-        ContextEntry *ctx = ContextList;
-
-        while (ctx != NULL) {
-                i += sprintf(
-                        buffer + i,
-                        "%p[%p]%s",
-                        ctx,
-                        ctx->e,
-                        (ctx->next == NULL) ? "\n" : " -> "
-                );
-                ctx = ctx->next;
-        }
-
-        return sclone(ty, buffer);
-}
-
 static void *
 PushContext(Ty *ty, void const *ctx)
 {
@@ -2109,7 +2087,7 @@ try_slurp_module(Ty *ty, char const *name, char const **path_out)
 
         for (int i = 0; i < vN(*search); ++i) {
                 ty_snprintf(path, sizeof path, "%s/%s.ty", ss(v__(*search, i)), name);
-                if ((source = slurp(ty, path)) != NULL) {
+                if ((source = slurp(path)) != NULL) {
                         break;
                 }
         }
@@ -2122,7 +2100,7 @@ try_slurp_module(Ty *ty, char const *name, char const **path_out)
                         }
                 }
                 ty_snprintf(path, sizeof path, "%s/%s.ty", root, name);
-                if ((source = slurp(ty, path)) == NULL) {
+                if ((source = slurp(path)) == NULL) {
                         return NULL;
                 }
         }

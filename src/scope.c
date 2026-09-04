@@ -14,34 +14,28 @@ static i64 SYMBOL;
 char const *
 scope_name(Ty *ty, Scope const *s)
 {
-        _Thread_local static char b[4096];
+        _Thread_local static byte_vector buf;
+        _Thread_local static vec(Scope const *) stack;
 
-        vec(Scope const *) stack = {0};
+        v0(buf);
+        v0(stack);
 
         while (s != NULL) {
                 xvP(stack, s);
                 s = s->parent;
         }
 
-        b[0] = '\0';
-
-        int remaining = sizeof b - 1;
-
         for (int i = vN(stack) - 1; i >= 0; --i) {
                 s = v__(stack, i);
-                int n = strlen(s->name) + (i != 0);
-                if (n + 3 > remaining)
-                        break;
-                if (s->function == s) { strcat(b, "#"); }
-                strcat(b, s->name);
-                if (s->function == s) { strcat(b, "#"); }
-                strcat(b, "." + (i == 0));
-                remaining -= n;
+                dump(
+                        &buf,
+                        (s->function == s) ? "#%s#%s" : "%s%s",
+                        s->name,
+                        &"."[i == 0]
+                );
         }
 
-        xvF(stack);
-
-        return sclone(ty, b);
+        return S2(vv(buf));
 }
 #endif
 

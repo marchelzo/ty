@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define STB_SPRINTF_IMPLEMENTATION
 #include "types2_core.h"
 
 static int failures;

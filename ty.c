@@ -727,7 +727,7 @@ main(int argc, char **argv)
                 repl(ty);
         }
 
-        char *source = fslurp(ty, file);
+        char *source = fslurp(file);
 
         if (HighlightOnly) {
                 if (!vm_load_program(ty, source, SourceFileName)) {

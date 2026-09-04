@@ -121,7 +121,7 @@ S2(char const *s)
         usize n = strlen(s);
         char *new = ty_malloc(n + 1);
 
-        if (new == NULL) {
+        if (UNLIKELY(new == NULL)) {
                 panic("out of memory");
         }
 
@@ -137,10 +137,13 @@ S2N(char const *s)
 }
 
 char *
-slurp(Ty *ty, char const *path);
+slurp(char const *path);
+
+int
+xslurp(char const *path, byte_vector *out);
 
 char *
-fslurp(Ty *ty, FILE *f);
+fslurp(FILE *f);
 
 inline static u64
 HashCombine(u64 seed, u64 hash)

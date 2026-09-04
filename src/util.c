@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <ctype.h>
+#include <errno.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include "polyfill_unistd.h"
@@ -59,21 +60,39 @@ sclonea(Ty *ty, char const *s)
 }
 
 char *
-fslurp(Ty *ty, FILE *f)
+fslurp(FILE *f)
 {
         byte_vector s = {0};
 
-        vvP(s, '\0');
-        for (int c; (c = fgetc(f)) != EOF;) {
-                vvP(s, c);
+        xvP(s, '\0');
+        for (int c; (c = fgetc_unlocked(f)) != EOF;) {
+                xvP(s, c);
         }
-        vvP(s, '\0');
+        xvP(s, '\0');
 
-        return vv(s) + 1;
+        return &vv(s)[1];
+}
+
+int
+xslurp(char const *path, byte_vector *out)
+{
+        FILE *f = fopen(path, "rb");
+        if (f == NULL) {
+                return errno;
+        }
+
+        for (int c; (c = getc_unlocked(f)) != EOF;) {
+                xvP(*out, c);
+        }
+
+        int err = ferror_unlocked(f);
+        (void)fclose(f);
+
+        return err;
 }
 
 char *
-slurp(Ty *ty, char const *path)
+slurp(char const *path)
 {
         int fd = open(path, O_RDONLY);
         if (fd == -1) {
@@ -84,7 +103,7 @@ slurp(Ty *ty, char const *path)
         fstat(fd, &st);
 
         if (false && (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode))) {
-                int n = st.st_size;
+                isize n = st.st_size;
 
 #ifdef _WIN32
                 void *p = VirtualAlloc(NULL, n, MEM_RESERVE, PAGE_READWRITE);
@@ -95,7 +114,7 @@ slurp(Ty *ty, char const *path)
                         return NULL;
                 }
 
-                char *s = mA(n + 2);
+                char *s = xmA(n + 2);
                 memcpy(s + 1, p, n);
                 s[0] = s[n + 1] = '\0';
 
@@ -108,16 +127,16 @@ slurp(Ty *ty, char const *path)
 
                 return s + 1;
         } else {
-                vec(char) s = {0};
+                byte_vector s = {0};
 
-                char b[1UL << 14];
-                int r;
+                char b[8192];
+                isize n;
 
-                vvP(s, '\0');
-                while ((r = read(fd, b, sizeof b)) > 0) {
-                        vvPn(s, b, r);
+                xvP(s, '\0');
+                while ((n = read(fd, b, sizeof b)) > 0) {
+                        xvPn(s, b, n);
                 }
-                vvP(s, '\0');
+                xvP(s, '\0');
 
                 close(fd);
 

@@ -13,11 +13,11 @@
       "severity": "error",
       "message": "member does not satisfy the declared trait contract: incompatible callable protocol: (key: $q1073742031) -> nil | $q1073742032 is not a subtype of (i: Int) -> nil | ($q1073742031, $q1073742032) at member does not satisfy the declared trait contract at /home/brad/ty/lib/prelude.ty:1039:5\npredicate: (key: $q1073742031) -> nil | $q1073742032 <: (i: Int) -> nil | ($q1073742031, $q1073742032) from member does not satisfy the declared trait contract at /home/brad/ty/lib/prelude.ty:1039:5\n"
     },
-    "prelude:2095:9:bad-call": {
-      "classification": "incomplete-feature",
-      "note": "forwarding a mapped pack parameter (*its: ...Iterable[U]) into another mapped-pack parameter (__iter__().zip(*its)) is unsolved: the pack expansion of a pack is not related to the callee's mapped pack",
-      "severity": "error",
-      "message": "arguments do not satisfy the callable's names, defaults, rests, and types: constraint failed: ...(...Iterable[$pack917] |) is not a subtype of Iterable[$pack918] at call argument at /home/brad/ty/lib/prelude.ty:2095:9\npredicate: ......(...Iterable[$pack917] |) <: ...Iterable[$pack918] from call argument at /home/brad/ty/lib/prelude.ty:2095:9\n"
+    "term:918:21:unreachable-pattern": {
+      "classification": "library-defect",
+      "note": "the demo main in term.ty matches `[5] => nil` against ?event.Event; the array pattern can never match, so the arm is dead",
+      "severity": "warning",
+      "message": "array pattern cannot match the subject type"
     }
   }
 }

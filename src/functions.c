@@ -1114,7 +1114,7 @@ Coerce:
         case VALUE_ARRAY:   v.z = a.array->count;                   return v;
         case VALUE_DICT:    v.z = a.dict->count;                    return v;
         case VALUE_BLOB:    v.z = a.blob->count;                    return v;
-        case VALUE_PTR:     return INTEGER((uintptr_t)a.ptr);
+        case VALUE_PTR:     return INTEGER((uptr)a.ptr);
 
         case VALUE_STRING:
                 base = 0;
@@ -3865,7 +3865,7 @@ BUILTIN_FUNCTION(os_spawn)
         HANDLE hChildStdErrWrite = NULL;
 
         SECURITY_ATTRIBUTES saAttr;
-        saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
+        saAttr.nLength = sizeof (SECURITY_ATTRIBUTES);
         saAttr.bInheritHandle = TRUE;
         saAttr.lpSecurityDescriptor = NULL;
 
@@ -3902,7 +3902,7 @@ BUILTIN_FUNCTION(os_spawn)
                                 0,
                                 PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
                                 inheritHandles,
-                                inheritHandleCount * sizeof(HANDLE),
+                                inheritHandleCount * sizeof (HANDLE),
                                 NULL,
                                 NULL)) {
                 // Handle error
@@ -3920,7 +3920,7 @@ BUILTIN_FUNCTION(os_spawn)
         siStartInfo.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
 
         PROCESS_INFORMATION piProcInfo;
-        ZeroMemory(&piProcInfo, sizeof(PROCESS_INFORMATION));
+        ZeroMemory(&piProcInfo, sizeof (PROCESS_INFORMATION));
 
         char *cmdline = make_cmdline(cmd.array);
 
@@ -3969,7 +3969,7 @@ BUILTIN_FUNCTION(os_spawn)
         int stdin_fd = -1, stdout_fd = -1, stderr_fd = -1;
 
         if (!share_stdin) {
-                stdin_fd = _open_osfhandle((intptr_t)hChildStdInWrite, _O_WRONLY);
+                stdin_fd = _open_osfhandle((iptr)hChildStdInWrite, _O_WRONLY);
                 if (stdin_fd == -1) {
                         // Handle error
                         return NIL;
@@ -3977,7 +3977,7 @@ BUILTIN_FUNCTION(os_spawn)
         }
 
         if (!share_stdout) {
-                stdout_fd = _open_osfhandle((intptr_t)hChildStdOutRead, _O_RDONLY);
+                stdout_fd = _open_osfhandle((iptr)hChildStdOutRead, _O_RDONLY);
                 if (stdout_fd == -1) {
                         // Handle error
                         return NIL;
@@ -3985,7 +3985,7 @@ BUILTIN_FUNCTION(os_spawn)
         }
 
         if (!share_stderr && !combine) {
-                stderr_fd = _open_osfhandle((intptr_t)hChildStdErrRead, _O_RDONLY);
+                stderr_fd = _open_osfhandle((iptr)hChildStdErrRead, _O_RDONLY);
                 if (stderr_fd == -1) {
                         // Handle error
                         return NIL;
@@ -6377,7 +6377,7 @@ BUILTIN_FUNCTION(os_sigwaitinfo)
                 "fd",      INTEGER(info.si_fd),
 #endif
                 "value",   INTEGER(info.si_value.sival_int),
-                "addr",    INTEGER((imax)(uintptr_t)info.si_addr),
+                "addr",    INTEGER((imax)(uptr)info.si_addr),
                 "band",    INTEGER(info.si_band)
         );
 
@@ -7498,24 +7498,24 @@ BUILTIN_FUNCTION(time_localtime)
  * which is important because Ty programs may call time functions concurrently.
  * TZif v2+ files contain a complete 64-bit transition table after the legacy
  * 32-bit table; v1 files use the first table. */
-static uint32_t
+static u32
 tz_u32(unsigned char const *p)
 {
-        return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16)
-             | ((uint32_t)p[2] << 8) | p[3];
+        return ((u32)p[0] << 24) | ((u32)p[1] << 16)
+             | ((u32)p[2] << 8) | p[3];
 }
 
-static int64_t
+static i64
 tz_i64(unsigned char const *p)
 {
-        uint64_t n = 0;
+        i64 n = 0;
         for (int i = 0; i < 8; i++)
                 n = (n << 8) | p[i];
-        return (int64_t)n;
+        return (i64)n;
 }
 
 static bool
-tz_header(unsigned char const *p, size_t n, uint32_t c[6])
+tz_header(unsigned char const *p, usize n, u32 c[6])
 {
         if (n < 44 || memcmp(p, "TZif", 4) != 0)
                 return false;
@@ -7525,11 +7525,11 @@ tz_header(unsigned char const *p, size_t n, uint32_t c[6])
 }
 
 static bool
-tz_name_ok(char const *s, size_t n)
+tz_name_ok(char const *s, usize n)
 {
         if (n == 0 || s[0] == '/' || s[0] == '\\')
                 return false;
-        for (size_t i = 0; i < n; i++) {
+        for (usize i = 0; i < n; i++) {
                 unsigned char c = s[i];
                 if (!(isalnum(c) || c == '/' || c == '_' || c == '-' || c == '+' || c == '.'))
                         return false;
@@ -7547,8 +7547,8 @@ typedef struct {
 } TzMonthRule;
 
 typedef struct {
-        int32_t standard_offset;
-        int32_t daylight_offset;
+        i32 standard_offset;
+        i32 daylight_offset;
         bool has_daylight;
         TzMonthRule start;
         TzMonthRule end;
@@ -7558,16 +7558,21 @@ static bool
 tz_parse_number(char const **sp, char const *end, int *out)
 {
         char const *s = *sp;
-        if (s == end || !isdigit((unsigned char)*s))
+        if (s == end || !isdigit((unsigned char)*s)) {
                 return false;
+        }
+
         int n = 0;
         while (s < end && isdigit((unsigned char)*s)) {
                 n = n * 10 + (*s++ - '0');
-                if (n > 1000000)
+                if (n > 1000000) {
                         return false;
+                }
         }
+
         *sp = s;
         *out = n;
+
         return true;
 }
 
@@ -7575,18 +7580,30 @@ static bool
 tz_skip_name(char const **sp, char const *end)
 {
         char const *s = *sp;
+
         if (s < end && *s == '<') {
-                s++;
-                char const *start = s;
-                while (s < end && *s != '>') s++;
-                if (s == end || s == start) return false;
+                char const *start = ++s;
+                while (s < end && *s != '>') {
+                        s++;
+                }
+                if (s == end || s == start) {
+                        return false;
+                }
                 *sp = s + 1;
                 return true;
         }
+
         char const *start = s;
-        while (s < end && isalpha((unsigned char)*s)) s++;
-        if (s - start < 3) return false;
+        while (s < end && isalpha((unsigned char)*s)) {
+                s++;
+        }
+
+        if (s - start < 3) {
+                return false;
+        }
+
         *sp = s;
+
         return true;
 }
 
@@ -7597,22 +7614,35 @@ tz_parse_hms(char const **sp, char const *end, int *out, bool reverse)
 {
         char const *s = *sp;
         int sign = 1;
+
         if (s < end && (*s == '+' || *s == '-')) {
-                if (*s++ == '-') sign = -1;
-        }
-        int h, m = 0, sec = 0;
-        if (!tz_parse_number(&s, end, &h)) return false;
-        if (s < end && *s == ':') {
-                s++;
-                if (!tz_parse_number(&s, end, &m) || m > 59) return false;
-                if (s < end && *s == ':') {
-                        s++;
-                        if (!tz_parse_number(&s, end, &sec) || sec > 59) return false;
+                if (*s++ == '-') {
+                        sign = -1;
                 }
         }
+
+        int h, m = 0, sec = 0;
+        if (!tz_parse_number(&s, end, &h)) {
+                return false;
+        }
+
+        if (s < end && *s == ':') {
+                s++;
+                if (!tz_parse_number(&s, end, &m) || m > 59) {
+                        return false;
+                }
+                if (s < end && *s == ':') {
+                        s++;
+                        if (!tz_parse_number(&s, end, &sec) || sec > 59) {
+                                return false;
+                        }
+                }
+        }
+
         int n = sign * (h * 3600 + m * 60 + sec);
         *out = reverse ? -n : n;
         *sp = s;
+
         return true;
 }
 
@@ -7668,8 +7698,8 @@ tz_days_in_month(int year, int month)
         return n;
 }
 
-static int64_t
-tz_rule_instant(int year, TzMonthRule const *rule, int32_t offset_before)
+static i64
+tz_rule_instant(int year, TzMonthRule const *rule, i32 offset_before)
 {
         struct tm first = { .tm_year = year - 1900, .tm_mon = rule->month - 1, .tm_mday = 1 };
         time_t first_seconds = timegm(&first);
@@ -7678,121 +7708,172 @@ tz_rule_instant(int year, TzMonthRule const *rule, int32_t offset_before)
         int day = 1 + (rule->weekday - first_utc.tm_wday + 7) % 7 + (rule->week - 1) * 7;
         int dim = tz_days_in_month(year, rule->month);
         if (day > dim) day -= 7;
-        return (int64_t)first_seconds + (day - 1) * 86400LL + rule->seconds - offset_before;
+        return (i64)first_seconds + (day - 1) * 86400LL + rule->seconds - offset_before;
 }
 
 static bool
-tz_footer_offset(char const *s, char const *end, int64_t when,
-                 int32_t *offset, bool *isdst)
+tz_footer_offset(char const *s, char const *end, i64 when, i32 *offset, bool *isdst)
 {
         TzFooter footer;
-        if (!tz_parse_footer(s, end, &footer)) return false;
+
+        if (!tz_parse_footer(s, end, &footer)) {
+                return false;
+        }
+
         if (!footer.has_daylight) {
                 *offset = footer.standard_offset;
                 *isdst = false;
                 return true;
         }
+
         time_t t = (time_t)when;
         struct tm utc;
+
         gmtime_r(&t, &utc);
-        int year = utc.tm_year + 1900;
-        int64_t start = tz_rule_instant(year, &footer.start, footer.standard_offset);
-        int64_t finish = tz_rule_instant(year, &footer.end, footer.daylight_offset);
+
+        int  year     = utc.tm_year + 1900;
+        i64  start    = tz_rule_instant(year, &footer.start, footer.standard_offset);
+        i64  finish   = tz_rule_instant(year, &footer.end, footer.daylight_offset);
         bool daylight = start < finish ? (when >= start && when < finish)
                                        : (when >= start || when < finish);
+
         *offset = daylight ? footer.daylight_offset : footer.standard_offset;
-        *isdst = daylight;
+        *isdst  = daylight;
+
         return true;
 }
 
 static bool
-tz_offset_at(char const *name, size_t name_n, int64_t when,
-             int32_t *offset, bool *isdst)
+tz_offset_at(
+        char const *name,
+        usize name_n,
+        i64 when,
+        i32 *offset,
+        bool *isdst
+)
 {
 #ifdef _WIN32
         (void)name; (void)name_n; (void)when; (void)offset; (void)isdst;
         return false;
 #else
-        if (!tz_name_ok(name, name_n))
+        if (!tz_name_ok(name, name_n)) {
                 return false;
+        }
 
         static char const *roots[] = {
-                "/usr/share/zoneinfo/", "/usr/share/lib/zoneinfo/",
-                "/var/db/timezone/zoneinfo/", NULL
+                "/usr/share/zoneinfo/",
+                "/usr/share/lib/zoneinfo/",
+                "/var/db/timezone/zoneinfo/",
+                NULL
         };
-        FILE *f = NULL;
-        char path[PATH_MAX];
-        for (int i = 0; roots[i] != NULL && f == NULL; i++) {
-                int m = snprintf(path, sizeof(path), "%s%.*s", roots[i],
-                                 (int)name_n, name);
-                if (m > 0 && (size_t)m < sizeof(path))
-                        f = fopen(path, "rb");
-        }
-        if (f == NULL)
-                return false;
-        if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return false; }
-        long file_n = ftell(f);
-        if (file_n < 44 || fseek(f, 0, SEEK_SET) != 0) { fclose(f); return false; }
-        unsigned char *buf = malloc((size_t)file_n);
-        if (buf == NULL) { fclose(f); return false; }
-        bool ok = fread(buf, 1, (size_t)file_n, f) == (size_t)file_n;
-        fclose(f);
-        if (!ok) { free(buf); return false; }
 
-        uint32_t c[6];
+        byte_vector _buf = {0};
+        char path[PATH_MAX];
+
+        for (int i = 0; roots[i] != NULL; i++) {
+                int m = ty_snprintf(path, sizeof path, "%s%.*s", roots[i], (int)name_n, name);
+                if (m > 0 && (usize)m < sizeof path) {
+                        if (xslurp(path, &_buf) == 0) {
+                                break;
+                        }
+                        v0(_buf);
+                }
+        }
+
+        if (vN(_buf) == 0) {
+                xvF(_buf);
+                return false;
+        }
+
+        unsigned char *buf = (unsigned char *)vv(_buf);
+        usize sz = vN(_buf);
+        u32 c[6];
         unsigned char const *h = buf;
         int width = 4;
-        if (!tz_header(h, (size_t)file_n, c)) { free(buf); return false; }
+
+        if (!tz_header(h, sz, c)) {
+                xvF(_buf);
+                return false;
+        }
+
         if (h[4] >= '2' && h[4] <= '4') {
-                uint64_t block = (uint64_t)c[3] * 4 + c[3]
-                               + (uint64_t)c[4] * 6 + c[5]
-                               + (uint64_t)c[2] * 8 + c[1] + c[0];
-                uint64_t next = 44 + block;
-                if (next + 44 > (uint64_t)file_n
-                 || !tz_header(buf + next, (size_t)file_n - next, c)) {
-                        free(buf); return false;
+                u64 block = (u64)c[3] * 4 + c[3]
+                          + (u64)c[4] * 6 + c[5]
+                          + (u64)c[2] * 8 + c[1] + c[0];
+                u64 next = 44 + block;
+                if (
+                        (next + 44 > sz)
+                     || !tz_header(buf + next, sz - next, c)
+                ) {
+                        xvF(_buf);
+                        return false;
                 }
                 h = buf + next;
                 width = 8;
         }
 
-        uint32_t timecnt = c[3], typecnt = c[4];
-        uint64_t need = 44 + (uint64_t)timecnt * width + timecnt
-                      + (uint64_t)typecnt * 6;
-        if (typecnt == 0 || need > (uint64_t)(buf + file_n - h)) {
-                free(buf); return false;
+        u32 timecnt = c[3], typecnt = c[4];
+        u64 need = 44 + (u64)timecnt * width + timecnt
+                      + (u64)typecnt * 6;
+
+        if (typecnt == 0 || need > (u64)(buf + sz - h)) {
+                xvF(_buf);
+                return false;
         }
+
         unsigned char const *times = h + 44;
-        unsigned char const *indices = times + (uint64_t)timecnt * width;
+        unsigned char const *indices = times + (u64)timecnt * width;
         unsigned char const *types = indices + timecnt;
-        uint32_t chosen = 0;
-        int64_t last_transition = INT64_MIN;
-        for (uint32_t i = 0; i < timecnt; i++) {
-                int64_t transition = width == 8 ? tz_i64(times + (uint64_t)i * 8)
-                                                : (int32_t)tz_u32(times + (uint64_t)i * 4);
+
+        u32 chosen = 0;
+        i64 last_transition = INT64_MIN;
+
+        for (u32 i = 0; i < timecnt; i++) {
+                i64 transition = width == 8 ? (i64)tz_i64(times + (u64)i * 8)
+                                            : (i64)tz_u32(times + (u64)i * 4);
                 last_transition = transition;
-                if (transition > when)
+                if (transition > when) {
                         break;
+                }
                 chosen = indices[i];
         }
-        uint64_t block_end = 44 + (uint64_t)timecnt * width + timecnt
-                           + (uint64_t)typecnt * 6 + c[5]
-                           + (uint64_t)c[2] * (width + 4) + c[1] + c[0];
-        if (width == 8 && when > last_transition && block_end + 2 <= (uint64_t)(buf + file_n - h)) {
+
+        u64 block_end = 44 + (u64)timecnt * width + timecnt
+                           + (u64)typecnt * 6 + c[5]
+                           + (u64)c[2] * (width + 4) + c[1] + c[0];
+        if (
+                (width == 8)
+             && (when > last_transition)
+             && (block_end + 2 <= (u64)(buf + sz - h))
+        ) {
                 char const *tail = (char const *)(h + block_end);
-                char const *file_end = (char const *)(buf + file_n);
-                if (*tail == '\n') tail++;
+                char const *file_end = (char const *)(buf + sz);
+                if (*tail == '\n') {
+                        tail++;
+                }
                 char const *tail_end = tail;
-                while (tail_end < file_end && *tail_end != '\n' && *tail_end != '\0') tail_end++;
+                while (
+                        (tail_end < file_end)
+                     && (*tail_end != '\n')
+                     && (*tail_end != '\0')
+                ) {
+                        tail_end++;
+                }
                 if (tail_end > tail && tz_footer_offset(tail, tail_end, when, offset, isdst)) {
-                        free(buf);
+                        xvF(_buf);
                         return true;
                 }
         }
-        if (chosen >= typecnt) { free(buf); return false; }
-        *offset = (int32_t)tz_u32(types + (uint64_t)chosen * 6);
-        *isdst = types[(uint64_t)chosen * 6 + 4] != 0;
-        free(buf);
+        if (chosen >= typecnt) {
+                xvF(_buf);
+                return false;
+        }
+
+        *offset = (i32)tz_u32(types + (u64)chosen * 6);
+        *isdst = types[(u64)chosen * 6 + 4] != 0;
+
+        xvF(_buf);
+
         return true;
 #endif
 }
@@ -7800,10 +7881,12 @@ tz_offset_at(char const *name, size_t name_n, int64_t when,
 BUILTIN_FUNCTION(time_zonetime)
 {
         ASSERT_ARGC("time.zonetime()", 2);
+
         Value t_arg = ARGx(0, VALUE_INTEGER);
-        Value zone = ARGx(1, VALUE_STRING);
-        int64_t seconds = t_arg.z;
-        int32_t offset;
+        Value zone  = ARGx(1, VALUE_STRING);
+
+        i64 seconds = t_arg.z;
+        i32 offset;
         bool isdst;
         if (!tz_offset_at((char const *)ss(zone), sN(zone), seconds, &offset, &isdst))
                 return NIL;
@@ -9502,8 +9585,10 @@ MethodSummary(Ty *ty, T2Type t0, Expr const *fun)
 static Value
 ClassSummary(Ty *ty, T2Type t0, ClassDefinition *def)
 {
+        Class *class = class_get(ty, def->symbol);
+
         if (t0 == T2_TYPE_INVALID) {
-                t0 = t2_class_template(ty, class_get(ty, def->symbol));
+                t0 = t2_class_template(ty, class);
         }
 
         GC_STOP();
@@ -9558,16 +9643,12 @@ ClassSummary(Ty *ty, T2Type t0, ClassDefinition *def)
         }
 
         for (int i = 0; i < vN(def->traits); ++i) {
-                T2Type tr0 = t2_resolve(ty, v__(def->traits, i));
+                T2Type tr0 = t2_resolve_in_class(ty, class, v__(def->traits, i));
                 vAp(traits, t2_to_ty(ty, t2_member_type(ty, t0, tr0)));
         }
 
         for (int i = 0; i < vN(def->type_params); ++i) {
-                T2Type parameter = t2_class_parameter(
-                        ty,
-                        class_get(ty, def->symbol),
-                        (size_t)i
-                );
+                T2Type parameter = t2_class_parameter(ty, class, (usize)i);
                 vAp(params, t2_to_ty(ty, parameter));
         }
 
@@ -9578,7 +9659,7 @@ ClassSummary(Ty *ty, T2Type t0, ClassDefinition *def)
                         t2_member_type(
                                 ty,
                                 t0,
-                                t2_resolve(ty, def->super)
+                                t2_resolve_in_class(ty, class, def->super)
                         )
                 );
         } else {
@@ -10038,14 +10119,14 @@ BUILTIN_FUNCTION(ty_type_info)
         return ClassSummary(ty, t0, &class->def->class);
 }
 
-static uint32_t
+static u32
 TypeParameterId(Ty *ty, char const *_name__, Value const *sub)
 {
         T2Universe *universe = t2_global_universe();
 
         switch (sub->type) {
         case VALUE_INTEGER:
-                return (uint32_t)sub->z;
+                return (u32)sub->z;
 
         case VALUE_TYPE:
                 if (t2_type_kind(universe, as_type(sub)) != T2_TYPE_VARIABLE) {
@@ -10057,14 +10138,14 @@ TypeParameterId(Ty *ty, char const *_name__, Value const *sub)
                                 shown
                         );
                 }
-                return (uint32_t)t2_type_payload(universe, as_type(sub));
+                return (u32)t2_type_payload(universe, as_type(sub));
 
         default:
                 if (
                         (tags_first(ty, sub->tags) == TyVarT)
                      && (unwrap(ty, sub).type == VALUE_INTEGER)
                 ) {
-                        return (uint32_t)unwrap(ty, sub).z;
+                        return (u32)unwrap(ty, sub).z;
                 }
                 zP(
                         "%s: invalid value used as parameter "
@@ -10089,11 +10170,11 @@ BUILTIN_FUNCTION(ty_type_inst)
         }
 
         Value subs = ARGx(1, VALUE_ARRAY);
-        size_t count = vN(*subs.array);
-        uint32_t *ids = count == 0 ? NULL : smA(count * sizeof *ids);
+        usize count = vN(*subs.array);
+        u32 *ids = count == 0 ? NULL : smA(count * sizeof *ids);
         T2Type *args = count == 0 ? NULL : smA(count * sizeof *args);
 
-        for (size_t i = 0; i < count; ++i) {
+        for (usize i = 0; i < count; ++i) {
                 Value *sub = v_(*subs.array, i);
                 if (sub->type == VALUE_TUPLE && sub->count == 2) {
                         args[i] = t2_from_ty(ty, &sub->items[1]);
@@ -10595,7 +10676,7 @@ BUILTIN_FUNCTION(ptr_untyped)
 BUILTIN_FUNCTION(ptr_from_int)
 {
         ASSERT_ARGC("ptr.fromInt()", 1);
-        return PTR((void *)(uintptr_t)INT_ARG(0));
+        return PTR((void *)(uptr)INT_ARG(0));
 }
 
 BUILTIN_FUNCTION(tdb_eval)

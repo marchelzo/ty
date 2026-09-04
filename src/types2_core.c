@@ -1572,7 +1572,10 @@ parameter_shape_valid(T2ParameterSpec const *parameters, usize count)
                         parameter->type == T2_TYPE_INVALID
                      || parameter->kind > T2_PARAMETER_PACK
                      || (
-                                parameter->kind != T2_PARAMETER_POSITIONAL_ONLY
+                                (
+                                        parameter->kind == T2_PARAMETER_POSITIONAL_OR_KEYWORD
+                                     || parameter->kind == T2_PARAMETER_KEYWORD_ONLY
+                                )
                              && parameter->name == NULL
                         )
                      || (
@@ -6175,8 +6178,11 @@ static bool
 writer_visit(T2TypeWriter *writer, T2Type type, u32 *index)
 {
         T2Universe *universe = writer->universe;
-        type = t2_type_resolve_computed(universe, type);
         T2Node const *node = get_node(universe, type);
+        if (node != NULL && node->kind == T2_TYPE_COMPUTED) {
+                type = t2_type_resolve_computed(universe, type);
+                node = get_node(universe, type);
+        }
         if (node == NULL) return false;
         u32 known;
         if (t2_index_find(&writer->memo, type, &known)) {
@@ -6416,7 +6422,9 @@ t2_type_reader_new(
                         arguments[j] = types[children[record->first_child + j]];
                 }
                 u64 payload = record->payload;
-                if (record->kind == T2_TYPE_VARIABLE && payload < UINT32_MAX) {
+                bool variable = record->kind == T2_TYPE_VARIABLE
+                             || record->kind == T2_TYPE_BINDER;
+                if (variable && payload < UINT32_MAX) {
                         payload = rebase_variable(reader, (u32)payload);
                         if (payload + 1 > reader->variable_limit) {
                                 reader->variable_limit = (u32)payload + 1;
@@ -7660,6 +7668,151 @@ constrain_parameter_types(
         );
 }
 
+static T2Type
+replace_type(
+        T2Universe *universe,
+        T2Type type,
+        T2Type from,
+        T2Type to,
+        unsigned depth
+)
+{
+        if (type == from) return to;
+        T2Node const *node = get_node(universe, type);
+        if (
+                node == NULL
+             || node->arity == 0
+             || node->kind == T2_TYPE_RECURSIVE
+             || depth > T2_RELATION_DEPTH_LIMIT
+        ) return type;
+        T2Type *children = ty_malloc(node->arity * sizeof *children);
+        if (children == NULL) return T2_TYPE_INVALID;
+        bool changed = false;
+        for (usize i = 0; i < node->arity; ++i) {
+                children[i] = replace_type(universe, node->children[i], from, to, depth + 1);
+                if (children[i] == T2_TYPE_INVALID) {
+                        ty_free(children);
+                        return T2_TYPE_INVALID;
+                }
+                changed |= children[i] != node->children[i];
+        }
+        T2Type result = changed ? rebuild_type(universe, node, children) : type;
+        ty_free(children);
+        return result;
+}
+
+static T2Type
+closed_pack_in(T2Universe const *universe, T2Type type, unsigned depth)
+{
+        T2Node const *node = get_node(universe, type);
+        if (node == NULL || depth > T2_RELATION_DEPTH_LIMIT) return T2_TYPE_INVALID;
+        if (node->kind == T2_TYPE_PACK) {
+                T2Node const *tail = get_node(universe, node->children[node->payload]);
+                return tail != NULL && tail->kind == T2_TYPE_PACK_EMPTY
+                     ? type
+                     : T2_TYPE_INVALID;
+        }
+        for (usize i = 0; i < node->arity; ++i) {
+                T2Type found = closed_pack_in(universe, node->children[i], depth + 1);
+                if (found != T2_TYPE_INVALID) return found;
+        }
+        return T2_TYPE_INVALID;
+}
+
+static T2Type
+expand_pack_parameter(T2Solver *solver, T2Type callable)
+{
+        T2Universe *universe = solver->universe;
+        T2Node const *node = get_node(universe, callable);
+        if (node == NULL || node->kind != T2_TYPE_FUNCTION) return callable;
+        usize count = (usize)node->payload;
+        T2Node const *parameter = function_parameter_kind(universe, node, T2_PARAMETER_PACK);
+        if (parameter == NULL) return callable;
+        T2Type resolved = resolve_pack_solutions(solver, parameter->children[0], 0);
+        T2Node const *resolved_node = get_node(universe, resolved);
+        if (resolved_node == NULL) return callable;
+        T2Type pattern = T2_TYPE_INVALID;
+        T2Type pack = resolved;
+        if (resolved_node->kind == T2_TYPE_PACK_EXPANSION) {
+                pattern = resolved_node->children[0];
+                pack = closed_pack_in(universe, pattern, 0);
+        } else {
+                pack = closed_pack_in(universe, resolved, 0) == resolved ? resolved : T2_TYPE_INVALID;
+        }
+        T2Node const *pack_node = get_node(universe, pack);
+        if (pack_node == NULL) return callable;
+        usize elements = (usize)pack_node->payload;
+        T2ParameterSpec *specs = ty_malloc((count + elements) * sizeof *specs);
+        if (specs == NULL) return callable;
+        usize expanded = 0;
+        for (usize i = 0; i < count; ++i) {
+                if (get_node(universe, node->children[i]) != parameter) {
+                        (void)t2_callable_parameter(universe, callable, i, &specs[expanded++]);
+                        continue;
+                }
+                for (usize j = 0; j < elements; ++j) {
+                        T2Type element = pack_node->children[j];
+                        T2Type type = pattern == T2_TYPE_INVALID
+                                    ? element
+                                    : replace_type(universe, pattern, pack, element, 0);
+                        if (type == T2_TYPE_INVALID) {
+                                ty_free(specs);
+                                return callable;
+                        }
+                        specs[expanded++] = (T2ParameterSpec) {
+                                .type = type,
+                                .kind = T2_PARAMETER_POSITIONAL_ONLY,
+                                .required = true
+                        };
+                }
+        }
+        T2Type result = callable_type(
+                universe,
+                specs,
+                expanded,
+                t2_callable_result(universe, callable),
+                t2_callable_yield(universe, callable),
+                t2_callable_send(universe, callable),
+                t2_callable_is_effectful(universe, callable)
+        );
+        ty_free(specs);
+        return result == T2_TYPE_INVALID ? callable : result;
+}
+
+static T2Relation
+constrain_positional_suffix_pack(
+        T2Solver *solver,
+        T2Node const *actual,
+        usize skip,
+        T2Type expected_pack,
+        char const *provenance,
+        bool retain_deferred
+)
+{
+        T2Universe *universe = solver->universe;
+        usize count = 0;
+        while (function_positional_parameter(universe, actual, skip + count) != NULL) {
+                count += 1;
+        }
+        T2Type *elements = count == 0 ? NULL : ty_malloc(count * sizeof *elements);
+        if (count != 0 && elements == NULL) {
+                solver->failed = true;
+                return T2_RELATION_COMPLEXITY;
+        }
+        for (usize i = 0; i < count; ++i) {
+                T2Node const *parameter = function_positional_parameter(
+                        universe,
+                        actual,
+                        skip + i
+                );
+                elements[i] = parameter->children[0];
+        }
+        T2Type pack = t2_pack(universe, elements, count, T2_TYPE_INVALID);
+        ty_free(elements);
+        if (pack == T2_TYPE_INVALID) return T2_RELATION_COMPLEXITY;
+        return constrain_internal(solver, pack, expected_pack, provenance, retain_deferred);
+}
+
 static T2Relation
 constrain_function_types(
         T2Solver *solver,
@@ -7671,24 +7824,19 @@ constrain_function_types(
         bool retain_deferred
 )
 {
-        T2Relation shape = callable_shape_relation(
-                solver->universe,
-                actual_type,
-                expected_type
-        );
-        if (shape == T2_RELATION_NO || shape == T2_RELATION_COMPLEXITY) {
-                set_solver_error(
+        T2Type expanded_actual = expand_pack_parameter(solver, actual_type);
+        T2Type expanded_expected = expand_pack_parameter(solver, expected_type);
+        if (expanded_actual != actual_type || expanded_expected != expected_type) {
+                return constrain_function_types(
                         solver,
-                        shape == T2_RELATION_NO
-                            ? "incompatible callable protocol"
-                            : "callable comparison exceeded its complexity limit",
-                        actual_type,
-                        expected_type,
-                        provenance
+                        expanded_actual,
+                        expanded_expected,
+                        get_node(solver->universe, expanded_actual),
+                        get_node(solver->universe, expanded_expected),
+                        provenance,
+                        retain_deferred
                 );
-                return shape;
         }
-
         usize actual_count = (usize)actual->payload;
         usize expected_count = (usize)expected->payload;
         T2Node const *actual_rest = function_parameter_kind(
@@ -7711,6 +7859,28 @@ constrain_function_types(
                 expected,
                 T2_PARAMETER_PACK
         );
+        bool suffix_pack = expected_pack != NULL
+                        && actual_rest == NULL
+                        && actual_pack == NULL;
+        T2Relation shape = suffix_pack
+                         ? T2_RELATION_YES
+                         : callable_shape_relation(
+                                   solver->universe,
+                                   actual_type,
+                                   expected_type
+                           );
+        if (shape == T2_RELATION_NO || shape == T2_RELATION_COMPLEXITY) {
+                set_solver_error(
+                        solver,
+                        shape == T2_RELATION_NO
+                            ? "incompatible callable protocol"
+                            : "callable comparison exceeded its complexity limit",
+                        actual_type,
+                        expected_type,
+                        provenance
+                );
+                return shape;
+        }
         T2Node const *actual_kwrest = function_parameter_kind(
                 solver->universe,
                 actual,
@@ -7752,7 +7922,20 @@ constrain_function_types(
                 );
                 if (solver->failed) return T2_RELATION_NO;
         }
-        if (expected_rest != NULL || expected_pack != NULL) {
+        if (suffix_pack) {
+                result = combine_all(
+                        result,
+                        constrain_positional_suffix_pack(
+                                solver,
+                                actual,
+                                expected_positions,
+                                expected_pack->children[0],
+                                provenance,
+                                retain_deferred
+                        )
+                );
+                if (solver->failed) return T2_RELATION_NO;
+        } else if (expected_rest != NULL || expected_pack != NULL) {
                 result = combine_all(
                         result,
                         constrain_parameter_types(
@@ -8665,6 +8848,10 @@ constrain_internal(
                 if (removed_self) return result;
         }
         if (a_meta != 0 && b_meta != 0) {
+                T2VariableKind kind = v__(solver->metas, find_root(solver, a_meta) - 1).variable_kind;
+                if (kind == T2_VARIABLE_ROW || kind == T2_VARIABLE_PACK) {
+                        return bind_sort_meta(solver, a_meta, supertype, provenance);
+                }
                 return add_edge(solver, a_meta, b_meta, provenance);
         }
         if (a_meta != 0) {

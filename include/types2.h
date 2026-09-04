@@ -119,6 +119,9 @@ t2_resolve(Ty *ty, Expr *type_expression);
 T2Type
 t2_infer(Ty *ty, Expr *expression);
 
+T2Type
+t2_resolve_in_class(Ty *ty, Class *class, Expr *type_expression);
+
 bool
 t2_check(Ty *ty, T2Type type, Value const *value);
 

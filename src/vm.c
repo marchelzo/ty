@@ -9337,7 +9337,7 @@ Next:
 bool
 vm_execute_file(Ty *ty, char const *path)
 {
-        char *source = slurp(ty, path);
+        char *source = slurp(path);
         if (source == NULL) {
                 dump(
                         &ErrorBuffer,
@@ -9350,12 +9350,7 @@ vm_execute_file(Ty *ty, char const *path)
 
         bool success = vm_execute(ty, source, path);
 
-        /*
-         * When we read the file, we copy into an allocated buffer with a 0 byte at
-         * the beginning, so we need to subtract 1 here to get something appropriate
-         * for free().
-         */
-        mF(source - 1);
+        xmF(source - 1);
 
         return success;
 }
