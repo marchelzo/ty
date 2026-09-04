@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "ast.h"
 #include "operators.h"
@@ -129,16 +130,42 @@ typedef enum types2_diagnostic_severity {
         TYPES2_DIAGNOSTIC_NOTE
 } Types2DiagnosticSeverity;
 
+typedef enum types2_note_kind {
+        TYPES2_NOTE_TEXT,
+        TYPES2_NOTE_CAUSE,
+        TYPES2_NOTE_PREDICATE
+} Types2NoteKind;
+
+typedef struct types2_note {
+        Types2NoteKind kind;
+        T2CauseKind cause;
+        T2PredicateKind predicate;
+        T2Type left;
+        T2Type right;
+        T2Type operand;
+        char *text;
+        char *provenance;
+} Types2Note;
+
+typedef struct types2_notes {
+        Types2Note *items;
+        size_t count;
+        size_t capacity;
+} Types2Notes;
+
 typedef struct types2_diagnostic {
         uint64_t node;
+        Expr const *syntax;
         Location location;
+        Location end;
         Types2DiagnosticSeverity severity;
         char *code;
         char *message;
-        char *actual;
-        char *expected;
+        T2Type actual;
+        T2Type expected;
         uint64_t actual_hash;
         uint64_t expected_hash;
+        Types2Notes notes;
 } Types2Diagnostic;
 
 typedef enum types2_flow_bit {
@@ -282,6 +309,10 @@ struct types2_shadow {
         size_t node_count;
         size_t node_capacity;
         uint64_t next_node_id;
+
+        void const **roots;
+        size_t root_count;
+        size_t root_capacity;
 
         uint64_t checkpoints[TYPES2_SHADOW_CHECKPOINT_COUNT];
         uint64_t constructs[UINT8_MAX + 1];
@@ -631,7 +662,7 @@ shadow_reserve(
                 shadow->failed = true;
                 return false;
         }
-        void *resized = realloc(*items, next * item_size);
+        void *resized = ty_realloc(*items, next * item_size);
         if (resized == NULL) {
                 shadow->failed = true;
                 return false;
@@ -646,7 +677,7 @@ shadow_copy_string(Types2Shadow *shadow, char const *text)
 {
         if (text == NULL) return NULL;
         size_t length = strlen(text) + 1;
-        char *copy = malloc(length);
+        char *copy = ty_malloc(length);
         if (copy == NULL) {
                 shadow->failed = true;
                 return NULL;
@@ -674,7 +705,7 @@ source_provenance(
                 site->start.col + 1
         );
         if (length < 0) return description;
-        char *text = malloc((size_t)length + 1);
+        char *text = ty_malloc((size_t)length + 1);
         if (text == NULL) {
                 shadow->failed = true;
                 return description;
@@ -695,7 +726,7 @@ source_provenance(
                 shadow->provenance_count + 1,
                 sizeof *shadow->provenances
         )) {
-                free(text);
+                ty_free(text);
                 return description;
         }
         shadow->provenances[shadow->provenance_count++] = text;
@@ -705,7 +736,7 @@ source_provenance(
 static bool
 resize_nodes(Types2Shadow *shadow, size_t capacity)
 {
-        Types2Node *nodes = calloc(capacity, sizeof *nodes);
+        Types2Node *nodes = ty_calloc(capacity, sizeof *nodes);
 
         if (nodes == NULL) {
                 shadow->failed = true;
@@ -725,12 +756,18 @@ resize_nodes(Types2Shadow *shadow, size_t capacity)
                 nodes[slot] = node;
         }
 
-        free(shadow->nodes);
+        ty_free(shadow->nodes);
         shadow->nodes = nodes;
         shadow->node_capacity = capacity;
 
         return true;
 }
+
+static T2Type
+snapshot_type(Types2Shadow *shadow, T2Type type);
+
+static T2Type
+typeof_operand_type(Types2Shadow *shadow, Expr const *operand);
 
 static Types2Node *
 remember_node(
@@ -784,7 +821,6 @@ remember_node(
         return node;
 }
 
-static char *diagnostic_type_snapshot(Types2Shadow *shadow, T2Type type);
 
 static Types2Node *
 lookup_node(Types2Shadow *shadow, void const *syntax)
@@ -853,7 +889,10 @@ set_node_type(Types2Shadow *shadow, Expr const *expr, T2Type type)
              && !shadow->importing
              && shadow->muted == 0
         ) {
-                char *display = diagnostic_type_snapshot(shadow, type);
+                char *display = t2_type_string(
+                        shadow->universe,
+                        snapshot_type(shadow, type)
+                );
                 log_prefix(shadow, "node_type");
                 fprintf(
                         shadow->log,
@@ -898,7 +937,7 @@ set_node_type(Types2Shadow *shadow, Expr const *expr, T2Type type)
                         }
                 }
                 log_end(shadow);
-                free(display);
+                ty_free(display);
         }
 }
 
@@ -1004,24 +1043,68 @@ deferred_class_total(Types2Shadow const *shadow, Types2DeferClass class)
         return total;
 }
 
-static char *
-diagnostic_type_snapshot(Types2Shadow *shadow, T2Type type)
+static T2Type
+snapshot_type(Types2Shadow *shadow, T2Type type)
 {
-        if (type == T2_TYPE_INVALID) return NULL;
-
-        T2Type display = type;
-        if (!t2_solver_failed(shadow->solver)) {
-                T2Type zonked = t2_solver_zonk(
-                        shadow->solver,
-                        type,
-                        T2_PREFER_LOWER_BOUND
-                );
-                if (zonked != T2_TYPE_INVALID) display = zonked;
-        }
-        return t2_type_string(shadow->universe, display);
+        if (type == T2_TYPE_INVALID || t2_solver_failed(shadow->solver)) return type;
+        T2Type zonked = t2_solver_zonk(shadow->solver, type, T2_PREFER_LOWER_BOUND);
+        return zonked == T2_TYPE_INVALID ? type : zonked;
 }
 
 static void
+free_notes(Types2Notes *notes)
+{
+        for (size_t i = 0; i < notes->count; ++i) {
+                ty_free(notes->items[i].text);
+                ty_free(notes->items[i].provenance);
+        }
+        ty_free(notes->items);
+        *notes = (Types2Notes) {0};
+}
+
+static bool
+push_note(Types2Notes *notes, Types2Note note)
+{
+        if (notes->count == notes->capacity) {
+                size_t capacity = notes->capacity == 0 ? 4 : notes->capacity * 2;
+                Types2Note *items = ty_realloc(notes->items, capacity * sizeof *items);
+                if (items == NULL) {
+                        ty_free(note.text);
+                        ty_free(note.provenance);
+                        return false;
+                }
+                notes->items = items;
+                notes->capacity = capacity;
+        }
+        notes->items[notes->count++] = note;
+        return true;
+}
+
+static void
+split_message_notes(Types2Diagnostic *diagnostic)
+{
+        char *newline = strchr(diagnostic->message, '\n');
+        if (newline == NULL) return;
+        *newline = '\0';
+        for (char *rest = newline + 1; *rest != '\0';) {
+                char *next = strchr(rest, '\n');
+                size_t length = next == NULL ? strlen(rest) : (size_t)(next - rest);
+                if (length != 0) {
+                        char *text = ty_malloc(length + 1);
+                        if (text == NULL) return;
+                        memcpy(text, rest, length);
+                        text[length] = '\0';
+                        push_note(&diagnostic->notes, (Types2Note) {
+                                .kind = TYPES2_NOTE_TEXT,
+                                .text = text
+                        });
+                }
+                if (next == NULL) break;
+                rest = next + 1;
+        }
+}
+
+static Types2Diagnostic *
 add_diagnostic(
         Types2Shadow *shadow,
         Expr const *expr,
@@ -1039,14 +1122,14 @@ add_diagnostic(
              || shadow->building_interface
              || shadow->importing
              || shadow->muted != 0
-        ) return;
+        ) return NULL;
         if (!shadow_reserve(
                 shadow,
                 (void **)&shadow->diagnostics,
                 &shadow->diagnostic_capacity,
                 shadow->diagnostic_count + 1,
                 sizeof *shadow->diagnostics
-        )) return;
+        )) return NULL;
 
         va_list arguments;
         va_start(arguments, format);
@@ -1057,13 +1140,13 @@ add_diagnostic(
         if (length < 0) {
                 va_end(arguments);
                 shadow->failed = true;
-                return;
+                return NULL;
         }
-        char *message = malloc((size_t)length + 1);
+        char *message = ty_malloc((size_t)length + 1);
         if (message == NULL) {
                 va_end(arguments);
                 shadow->failed = true;
-                return;
+                return NULL;
         }
         vsnprintf(message, (size_t)length + 1, format, arguments);
         va_end(arguments);
@@ -1080,30 +1163,19 @@ add_diagnostic(
                            );
         char *owned_code = shadow_copy_string(shadow, code);
         if (owned_code == NULL) {
-                free(message);
-                return;
-        }
-        char *actual_snapshot = diagnostic_type_snapshot(shadow, actual);
-        char *expected_snapshot = diagnostic_type_snapshot(shadow, expected);
-        if (
-                (actual != T2_TYPE_INVALID && actual_snapshot == NULL)
-             || (expected != T2_TYPE_INVALID && expected_snapshot == NULL)
-        ) {
-                free(owned_code);
-                free(message);
-                free(actual_snapshot);
-                free(expected_snapshot);
-                shadow->failed = true;
-                return;
+                ty_free(message);
+                return NULL;
         }
         shadow->diagnostics[shadow->diagnostic_count++] = (Types2Diagnostic) {
                 .node = node == NULL ? 0 : node->id,
+                .syntax = expr,
                 .location = expr == NULL ? (Location){0} : expr->start,
+                .end = expr == NULL ? (Location){0} : expr->end,
                 .severity = severity,
                 .code = owned_code,
                 .message = message,
-                .actual = actual_snapshot,
-                .expected = expected_snapshot,
+                .actual = snapshot_type(shadow, actual),
+                .expected = snapshot_type(shadow, expected),
                 .actual_hash = actual == T2_TYPE_INVALID
                              ? 0
                              : t2_type_hash(shadow->universe, actual),
@@ -1111,6 +1183,51 @@ add_diagnostic(
                                ? 0
                                : t2_type_hash(shadow->universe, expected)
         };
+        Types2Diagnostic *diagnostic = &shadow->diagnostics[shadow->diagnostic_count - 1];
+        split_message_notes(diagnostic);
+        return diagnostic;
+}
+
+static Types2Notes
+capture_causes(Types2Shadow *shadow, T2SolverMark mark)
+{
+        Types2Notes notes = {0};
+        T2CauseInfo info;
+        if (t2_solver_failure(shadow->solver, &info)) {
+                push_note(&notes, (Types2Note) {
+                        .kind = TYPES2_NOTE_CAUSE,
+                        .cause = T2_CAUSE_FAILURE,
+                        .left = info.left,
+                        .right = info.right,
+                        .text = info.message == NULL ? NULL : S2(info.message),
+                        .provenance = info.provenance == NULL ? NULL : S2(info.provenance)
+                });
+        }
+        size_t count = t2_solver_cause_count(shadow->solver);
+        for (size_t i = mark.cause_count; i < count; ++i) {
+                if (!t2_solver_cause(shadow->solver, i, &info)) continue;
+                push_note(&notes, (Types2Note) {
+                        .kind = TYPES2_NOTE_CAUSE,
+                        .cause = info.kind,
+                        .left = info.left,
+                        .right = info.right,
+                        .provenance = info.provenance == NULL ? NULL : S2(info.provenance)
+                });
+        }
+        return notes;
+}
+
+static void
+attach_notes(Types2Diagnostic *diagnostic, Types2Notes notes)
+{
+        if (diagnostic == NULL) {
+                free_notes(&notes);
+                return;
+        }
+        for (size_t i = 0; i < notes.count; ++i) {
+                push_note(&diagnostic->notes, notes.items[i]);
+        }
+        ty_free(notes.items);
 }
 
 static Types2Binding *
@@ -1288,7 +1405,7 @@ literal_symbol_type(Types2Shadow *shadow, Symbol const *symbol)
         case COMPILER_LITERAL_STRING:
         {
                 if (literal.string_length == SIZE_MAX) return T2_TYPE_INVALID;
-                char *text = malloc(literal.string_length + 1);
+                char *text = ty_malloc(literal.string_length + 1);
                 if (text == NULL) {
                         shadow->failed = true;
                         return T2_TYPE_INVALID;
@@ -1296,7 +1413,7 @@ literal_symbol_type(Types2Shadow *shadow, Symbol const *symbol)
                 memcpy(text, literal.string, literal.string_length);
                 text[literal.string_length] = '\0';
                 T2Type result = t2_literal_string(shadow->universe, text);
-                free(text);
+                ty_free(text);
                 return result;
         }
         case COMPILER_LITERAL_NONE:
@@ -1436,7 +1553,7 @@ ensure_nominal(
         };
         nominal = &shadow->nominals[index];
 
-        T2Variance *variance = arity == 0 ? NULL : calloc(arity, sizeof *variance);
+        T2Variance *variance = arity == 0 ? NULL : ty_calloc(arity, sizeof *variance);
         if (arity != 0 && variance == NULL) {
                 shadow->failed = true;
                 return NULL;
@@ -1459,7 +1576,7 @@ ensure_nominal(
                 arity,
                 variance
         );
-        free(variance);
+        ty_free(variance);
         nominal->declared = declared;
         if (!declared) return NULL;
 
@@ -1482,7 +1599,7 @@ ensure_nominal(
                 if (super != NULL) {
                         T2Type *arguments = super->arity == 0
                                           ? NULL
-                                          : malloc(super->arity * sizeof *arguments);
+                                          : ty_malloc(super->arity * sizeof *arguments);
                         if (super->arity != 0 && arguments == NULL) {
                                 shadow->failed = true;
                                 return nominal;
@@ -1504,7 +1621,7 @@ ensure_nominal(
                                 arguments,
                                 super->arity
                         );
-                        free(arguments);
+                        ty_free(arguments);
                         if (supertype != T2_TYPE_INVALID) {
                                 (void)t2_nominal_add_super(
                                         shadow->universe,
@@ -1920,16 +2037,16 @@ prepend_scheme_quantifiers(
         size_t count = prefix_count + inner_quantifiers;
         T2Quantifier *quantifiers = count == 0
                                   ? NULL
-                                  : malloc(count * sizeof *quantifiers);
+                                  : ty_malloc(count * sizeof *quantifiers);
         T2Predicate *predicates = inner_predicates == 0
                                 ? NULL
-                                : malloc(inner_predicates * sizeof *predicates);
+                                : ty_malloc(inner_predicates * sizeof *predicates);
         if (
                 (count != 0 && quantifiers == NULL)
              || (inner_predicates != 0 && predicates == NULL)
         ) {
-                free(quantifiers);
-                free(predicates);
+                ty_free(quantifiers);
+                ty_free(predicates);
                 shadow->failed = true;
                 return NULL;
         }
@@ -1938,15 +2055,15 @@ prepend_scheme_quantifiers(
         }
         for (size_t i = 0; i < inner_quantifiers; ++i) {
                 if (!t2_scheme_quantifier(inner, i, &quantifiers[prefix_count + i])) {
-                        free(quantifiers);
-                        free(predicates);
+                        ty_free(quantifiers);
+                        ty_free(predicates);
                         return NULL;
                 }
         }
         for (size_t i = 0; i < inner_predicates; ++i) {
                 if (!t2_scheme_predicate(inner, i, &predicates[i])) {
-                        free(quantifiers);
-                        free(predicates);
+                        ty_free(quantifiers);
+                        ty_free(predicates);
                         return NULL;
                 }
         }
@@ -1959,8 +2076,8 @@ prepend_scheme_quantifiers(
                 predicates,
                 inner_predicates
         );
-        free(quantifiers);
-        free(predicates);
+        ty_free(quantifiers);
+        ty_free(predicates);
         return result;
 }
 
@@ -2139,7 +2256,7 @@ instantiate_member(
                 if (projected != T2_TYPE_INVALID) receiver = projected;
         }
         size_t count = t2_scheme_quantifier_count(member->scheme);
-        T2Type *arguments = count == 0 ? NULL : malloc(count * sizeof *arguments);
+        T2Type *arguments = count == 0 ? NULL : ty_malloc(count * sizeof *arguments);
         if (count != 0 && arguments == NULL) {
                 shadow->failed = true;
                 return T2_TYPE_INVALID;
@@ -2152,7 +2269,7 @@ instantiate_member(
         for (size_t i = 0; i < count; ++i) {
                 T2Quantifier quantifier;
                 if (!t2_scheme_quantifier(member->scheme, i, &quantifier)) {
-                        free(arguments);
+                        ty_free(arguments);
                         return T2_TYPE_INVALID;
                 }
                 if (i < member->class_arity && i < receiver_arity) {
@@ -2179,7 +2296,7 @@ instantiate_member(
                 count,
                 member->name
         );
-        free(arguments);
+        ty_free(arguments);
         if (result == T2_TYPE_INVALID) {
                 add_diagnostic(
                         shadow,
@@ -2297,7 +2414,7 @@ resolve_alias(Types2Shadow *shadow, Types2Alias *alias, Expr const *site)
         size_t arity = (size_t)vN(definition->type_params);
         T2Quantifier *quantifiers = arity == 0
                                   ? NULL
-                                  : malloc(arity * sizeof *quantifiers);
+                                  : ty_malloc(arity * sizeof *quantifiers);
         if (arity != 0 && quantifiers == NULL) {
                 shadow->failed = true;
                 alias->state = TYPES2_ALIAS_FAILED;
@@ -2319,7 +2436,7 @@ resolve_alias(Types2Shadow *shadow, Types2Alias *alias, Expr const *site)
                         .kind = kind
                 };
                 if (!add_type_variable(shadow, parameter->symbol, variable)) {
-                        free(quantifiers);
+                        ty_free(quantifiers);
                         pop_type_variables(shadow, mark);
                         alias->state = TYPES2_ALIAS_FAILED;
                         return T2_TYPE_INVALID;
@@ -2335,7 +2452,7 @@ resolve_alias(Types2Shadow *shadow, Types2Alias *alias, Expr const *site)
               : NULL;
         pop_type_variables(shadow, mark);
         if (alias == NULL || alias->symbol != alias_symbol) {
-                free(quantifiers);
+                ty_free(quantifiers);
                 shadow->failed = true;
                 return T2_TYPE_INVALID;
         }
@@ -2354,7 +2471,7 @@ resolve_alias(Types2Shadow *shadow, Types2Alias *alias, Expr const *site)
                         alias_symbol->identifier
                 );
                 alias->state = TYPES2_ALIAS_FAILED;
-                free(quantifiers);
+                ty_free(quantifiers);
                 return t2_primitive(shadow->universe, T2_TYPE_ERROR);
         }
         alias->scheme = t2_scheme_new(
@@ -2365,7 +2482,7 @@ resolve_alias(Types2Shadow *shadow, Types2Alias *alias, Expr const *site)
                 NULL,
                 0
         );
-        free(quantifiers);
+        ty_free(quantifiers);
         if (alias->scheme == NULL) {
                 shadow->failed = true;
                 alias->state = TYPES2_ALIAS_FAILED;
@@ -2638,7 +2755,7 @@ lower_function_type(Types2Shadow *shadow, Expr const *expression)
         if (sequence) count = (size_t)vN(input->es);
         T2ParameterSpec *parameters = count == 0
                                     ? NULL
-                                    : calloc(count, sizeof *parameters);
+                                    : ty_calloc(count, sizeof *parameters);
         if (count != 0 && parameters == NULL) {
                 shadow->failed = true;
                 return T2_TYPE_INVALID;
@@ -2710,7 +2827,7 @@ lower_function_type(Types2Shadow *shadow, Expr const *expression)
                 t2_primitive(shadow->universe, T2_TYPE_NEVER),
                 t2_primitive(shadow->universe, T2_TYPE_NIL)
         );
-        free(parameters);
+        ty_free(parameters);
         return callable;
 }
 
@@ -2819,7 +2936,7 @@ lower_type(Types2Shadow *shadow, Expr const *source)
         case EXPRESSION_LIST:
         {
                 size_t count = (size_t)vN(expression->es);
-                T2Type *types = count == 0 ? NULL : malloc(count * sizeof *types);
+                T2Type *types = count == 0 ? NULL : ty_malloc(count * sizeof *types);
                 if (count != 0 && types == NULL) {
                         shadow->failed = true;
                         break;
@@ -2842,13 +2959,13 @@ lower_type(Types2Shadow *shadow, Expr const *source)
                                 "a type pack cannot be a union arm or a multiple-value item"
                         );
                         result = t2_primitive(shadow->universe, T2_TYPE_ERROR);
-                        free(types);
+                        ty_free(types);
                         break;
                 }
                 result = expression->type == EXPRESSION_TYPE_UNION
                        ? t2_union(shadow->universe, types, count)
                        : t2_multi(shadow->universe, types, count);
-                free(types);
+                ty_free(types);
                 break;
         }
         case EXPRESSION_BIT_OR:
@@ -2868,7 +2985,7 @@ lower_type(Types2Shadow *shadow, Expr const *source)
                 if (tuple_is_record(expression)) {
                         T2FieldSpec *fields = count == 0
                                             ? NULL
-                                            : calloc(count, sizeof *fields);
+                                            : ty_calloc(count, sizeof *fields);
                         if (count != 0 && fields == NULL) {
                                 shadow->failed = true;
                                 break;
@@ -2916,9 +3033,9 @@ lower_type(Types2Shadow *shadow, Expr const *source)
                                         T2_RECORD_OPEN
                                 );
                         }
-                        free(fields);
+                        ty_free(fields);
                 } else {
-                        T2Type *items = count == 0 ? NULL : malloc(count * sizeof *items);
+                        T2Type *items = count == 0 ? NULL : ty_malloc(count * sizeof *items);
                         if (count != 0 && items == NULL) {
                                 shadow->failed = true;
                                 break;
@@ -2960,7 +3077,7 @@ lower_type(Types2Shadow *shadow, Expr const *source)
                         } else {
                                 result = t2_tuple(shadow->universe, items, count);
                         }
-                        free(items);
+                        ty_free(items);
                 }
                 break;
         }
@@ -2999,7 +3116,7 @@ lower_type(Types2Shadow *shadow, Expr const *source)
                         count = (size_t)vN(expression->subscript->es);
                 }
                 else count = 1;
-                T2Type *arguments = count == 0 ? NULL : malloc(count * sizeof *arguments);
+                T2Type *arguments = count == 0 ? NULL : ty_malloc(count * sizeof *arguments);
                 if (count != 0 && arguments == NULL) {
                         shadow->failed = true;
                         break;
@@ -3049,7 +3166,7 @@ lower_type(Types2Shadow *shadow, Expr const *source)
                                         T2_TYPE_ERROR
                                 );
                         }
-                        free(arguments);
+                        ty_free(arguments);
                         break;
                 }
                 Types2Alias *alias = name == NULL
@@ -3106,7 +3223,7 @@ lower_type(Types2Shadow *shadow, Expr const *source)
                                 (void)resolve_alias(shadow, alias, name);
                                 alias = find_alias(shadow, alias_symbol);
                                 if (alias == NULL) {
-                                        free(arguments);
+                                        ty_free(arguments);
                                         shadow->failed = true;
                                         return T2_TYPE_INVALID;
                                 }
@@ -3214,7 +3331,7 @@ lower_type(Types2Shadow *shadow, Expr const *source)
                 } else {
                         if (shadow->building_interface) {
                                 result = t2_primitive(shadow->universe, T2_TYPE_DYNAMIC);
-                                free(arguments);
+                                ty_free(arguments);
                                 break;
                         }
                         add_diagnostic(
@@ -3231,7 +3348,7 @@ lower_type(Types2Shadow *shadow, Expr const *source)
                         );
                         result = t2_primitive(shadow->universe, T2_TYPE_ERROR);
                 }
-                free(arguments);
+                ty_free(arguments);
                 break;
         }
         case EXPRESSION_ARRAY:
@@ -3261,7 +3378,7 @@ lower_type(Types2Shadow *shadow, Expr const *source)
                 size_t count = (size_t)vN(expression->args);
                 T2Type *arguments = count == 0
                                   ? NULL
-                                  : malloc(count * sizeof *arguments);
+                                  : ty_malloc(count * sizeof *arguments);
                 if (count != 0 && arguments == NULL) {
                         shadow->failed = true;
                         break;
@@ -3295,7 +3412,7 @@ lower_type(Types2Shadow *shadow, Expr const *source)
                                arguments,
                                count
                          );
-                free(arguments);
+                ty_free(arguments);
                 shadow->computed_type_terms += result != T2_TYPE_INVALID;
                 defer_node(shadow, TYPES2_DEFER_COMPUTED_TYPE, expression, name);
                 break;
@@ -3701,21 +3818,21 @@ constrain_type(
                 t2_solver_commit(shadow->solver, mark);
                 return true;
         }
-        char *explanation = t2_solver_explain_since(shadow->solver, mark);
+        Types2Notes causes = capture_causes(shadow, mark);
         t2_solver_rollback(shadow->solver, mark);
-        add_diagnostic(
-                shadow,
-                site,
-                TYPES2_DIAGNOSTIC_ERROR,
-                code,
-                actual,
-                expected,
-                "%s%s%s",
-                description,
-                explanation == NULL || *explanation == '\0' ? "" : ": ",
-                explanation == NULL ? "" : explanation
+        attach_notes(
+                add_diagnostic(
+                        shadow,
+                        site,
+                        TYPES2_DIAGNOSTIC_ERROR,
+                        code,
+                        actual,
+                        expected,
+                        "%s",
+                        description
+                ),
+                causes
         );
-        free(explanation);
         return false;
 }
 
@@ -3799,21 +3916,21 @@ constrain_predicate(
                 t2_solver_commit(shadow->solver, mark);
                 return true;
         }
-        char *explanation = t2_solver_explain_since(shadow->solver, mark);
+        Types2Notes causes = capture_causes(shadow, mark);
         t2_solver_rollback(shadow->solver, mark);
-        add_diagnostic(
-                shadow,
-                site,
-                TYPES2_DIAGNOSTIC_ERROR,
-                code,
-                predicate.subtype,
-                predicate.supertype,
-                "%s%s%s",
-                description,
-                explanation == NULL || *explanation == '\0' ? "" : ": ",
-                explanation == NULL ? "" : explanation
+        attach_notes(
+                add_diagnostic(
+                        shadow,
+                        site,
+                        TYPES2_DIAGNOSTIC_ERROR,
+                        code,
+                        predicate.subtype,
+                        predicate.supertype,
+                        "%s",
+                        description
+                ),
+                causes
         );
-        free(explanation);
         return false;
 }
 
@@ -3893,7 +4010,7 @@ declared_function_receiver(Types2Shadow *shadow, Expr const *function)
         size_t arity = definition == NULL
                      ? 0
                      : (size_t)vN(definition->type_params);
-        T2Type *arguments = arity == 0 ? NULL : malloc(arity * sizeof *arguments);
+        T2Type *arguments = arity == 0 ? NULL : ty_malloc(arity * sizeof *arguments);
         if (arity != 0 && arguments == NULL) {
                 shadow->failed = true;
                 return T2_TYPE_INVALID;
@@ -3902,7 +4019,7 @@ declared_function_receiver(Types2Shadow *shadow, Expr const *function)
                 Expr const *parameter = v__(definition->type_params, (int)i);
                 arguments[i] = find_type_variable(shadow, parameter->symbol);
                 if (arguments[i] == T2_TYPE_INVALID) {
-                        free(arguments);
+                        ty_free(arguments);
                         return T2_TYPE_INVALID;
                 }
         }
@@ -3913,7 +4030,7 @@ declared_function_receiver(Types2Shadow *shadow, Expr const *function)
                 arity,
                 function
         );
-        free(arguments);
+        ty_free(arguments);
         return receiver;
 }
 
@@ -3960,7 +4077,7 @@ interface_function_scheme(
         size_t quantifier_count = class_arity + method_arity;
         T2Quantifier *quantifiers = quantifier_count == 0
                                   ? NULL
-                                  : malloc(quantifier_count * sizeof *quantifiers);
+                                  : ty_malloc(quantifier_count * sizeof *quantifiers);
         if (quantifier_count != 0 && quantifiers == NULL) {
                 shadow->failed = true;
                 return NULL;
@@ -3991,9 +4108,9 @@ interface_function_scheme(
         size_t parameter_count = (size_t)vN(function->params);
         T2ParameterSpec *parameters = parameter_count == 0
                                     ? NULL
-                                    : calloc(parameter_count, sizeof *parameters);
+                                    : ty_calloc(parameter_count, sizeof *parameters);
         if (parameter_count != 0 && parameters == NULL) {
-                free(quantifiers);
+                ty_free(quantifiers);
                 pop_type_variables(shadow, type_mark);
                 shadow->failed = true;
                 return NULL;
@@ -4073,8 +4190,8 @@ interface_function_scheme(
                 NULL,
                 0
         );
-        free(parameters);
-        free(quantifiers);
+        ty_free(parameters);
+        ty_free(quantifiers);
         pop_type_variables(shadow, type_mark);
         return scheme;
 }
@@ -4084,7 +4201,7 @@ free_scheme_array(T2Scheme **schemes, size_t count)
 {
         if (schemes == NULL) return;
         for (size_t i = 0; i < count; ++i) t2_scheme_free(schemes[i]);
-        free(schemes);
+        ty_free(schemes);
 }
 
 static T2Scheme *
@@ -4108,7 +4225,7 @@ interface_callable_scheme(
         size_t entry_count = (size_t)vN(function->functions);
         T2Scheme **schemes = entry_count == 0
                            ? NULL
-                           : calloc(entry_count, sizeof *schemes);
+                           : ty_calloc(entry_count, sizeof *schemes);
         if (entry_count != 0 && schemes == NULL) {
                 shadow->failed = true;
                 return NULL;
@@ -4142,25 +4259,25 @@ interface_callable_scheme(
                            : 1;
         }
         if (scheme_count == 0) {
-                free(schemes);
+                ty_free(schemes);
                 return NULL;
         }
 
         T2Quantifier *quantifiers = quantifier_capacity == 0
                                   ? NULL
-                                  : malloc(quantifier_capacity * sizeof *quantifiers);
+                                  : ty_malloc(quantifier_capacity * sizeof *quantifiers);
         T2Predicate *predicates = predicate_count == 0
                                 ? NULL
-                                : malloc(predicate_count * sizeof *predicates);
-        T2Type *arms = arm_count == 0 ? NULL : malloc(arm_count * sizeof *arms);
+                                : ty_malloc(predicate_count * sizeof *predicates);
+        T2Type *arms = arm_count == 0 ? NULL : ty_malloc(arm_count * sizeof *arms);
         if (
                 (quantifier_capacity != 0 && quantifiers == NULL)
              || (predicate_count != 0 && predicates == NULL)
              || (arm_count != 0 && arms == NULL)
         ) {
-                free(quantifiers);
-                free(predicates);
-                free(arms);
+                ty_free(quantifiers);
+                ty_free(predicates);
+                ty_free(arms);
                 free_scheme_array(schemes, scheme_count);
                 shadow->failed = true;
                 return NULL;
@@ -4214,9 +4331,9 @@ interface_callable_scheme(
                                  predicates,
                                  predicates_used
                            );
-        free(quantifiers);
-        free(predicates);
-        free(arms);
+        ty_free(quantifiers);
+        ty_free(predicates);
+        ty_free(arms);
         free_scheme_array(schemes, scheme_count);
         return result;
 }
@@ -4569,7 +4686,7 @@ interface_builtin_methods(
 
         if (class_id == CLASS_FUNCTION) {
                 /* VM function-like values expose this metadata field directly.
-                 * It is nil for free/foreign functions and a class value for
+                 * It is nil for ty_free/foreign functions and a class value for
                  * bound methods. */
                 T2Type class_or_nil = t2_join(
                         shadow->universe,
@@ -5241,7 +5358,7 @@ ensure_class_interface(Types2Shadow *shadow, int class_id)
         size_t type_mark = push_type_variables(shadow);
         T2Quantifier *quantifiers = arity == 0
                                   ? NULL
-                                  : malloc(arity * sizeof *quantifiers);
+                                  : ty_malloc(arity * sizeof *quantifiers);
         if (arity != 0 && quantifiers == NULL) {
                 shadow->failed = true;
                 nominal = find_class_nominal(shadow, class_id);
@@ -5348,7 +5465,7 @@ ensure_class_interface(Types2Shadow *shadow, int class_id)
         if (class->super != NULL && class->super->i != class_id) {
                 (void)ensure_class_interface(shadow, class->super->i);
         }
-        free(quantifiers);
+        ty_free(quantifiers);
         pop_type_variables(shadow, type_mark);
         nominal = find_class_nominal(shadow, class_id);
         if (nominal != NULL) {
@@ -5401,7 +5518,7 @@ relax_literal(Types2Shadow *shadow, T2Type type)
         {
                 T2TypeKind kind = t2_type_kind(shadow->universe, type);
                 size_t count = t2_type_arity(shadow->universe, type);
-                T2Type *items = count == 0 ? NULL : malloc(count * sizeof *items);
+                T2Type *items = count == 0 ? NULL : ty_malloc(count * sizeof *items);
                 if (count != 0 && items == NULL) {
                         shadow->failed = true;
                         return T2_TYPE_INVALID;
@@ -5417,7 +5534,7 @@ relax_literal(Types2Shadow *shadow, T2Type type)
                               : kind == T2_TYPE_MULTI
                                 ? t2_multi(shadow->universe, items, count)
                                 : t2_tuple(shadow->universe, items, count);
-                free(items);
+                ty_free(items);
                 return result;
         }
         default:
@@ -5467,7 +5584,7 @@ static T2Type
 infer_value_list_items(Types2Shadow *shadow, ExprVec const *items)
 {
         size_t count = (size_t)vN(*items);
-        T2Type *values = count == 0 ? NULL : malloc(count * sizeof *values);
+        T2Type *values = count == 0 ? NULL : ty_malloc(count * sizeof *values);
         if (count != 0 && values == NULL) {
                 shadow->failed = true;
                 return T2_TYPE_INVALID;
@@ -5479,10 +5596,10 @@ infer_value_list_items(Types2Shadow *shadow, ExprVec const *items)
                        ? t2_type_arity(shadow->universe, values[i])
                        : 1;
         }
-        T2Type *spliced = total == 0 ? NULL : malloc(total * sizeof *spliced);
+        T2Type *spliced = total == 0 ? NULL : ty_malloc(total * sizeof *spliced);
         if (total != 0 && spliced == NULL) {
                 shadow->failed = true;
-                free(values);
+                ty_free(values);
                 return T2_TYPE_INVALID;
         }
         size_t n = 0;
@@ -5501,8 +5618,8 @@ infer_value_list_items(Types2Shadow *shadow, ExprVec const *items)
                 }
         }
         T2Type result = t2_multi(shadow->universe, spliced, n);
-        free(spliced);
-        free(values);
+        ty_free(spliced);
+        ty_free(values);
         return result;
 }
 
@@ -6239,7 +6356,7 @@ apply_callable_candidate(
         ) return T2_TYPE_INVALID;
         bool *assigned = parameter_count == 0
                        ? NULL
-                       : calloc(parameter_count, sizeof *assigned);
+                       : ty_calloc(parameter_count, sizeof *assigned);
         if (parameter_count != 0 && assigned == NULL) {
                 shadow->failed = true;
                 return T2_TYPE_INVALID;
@@ -6358,7 +6475,7 @@ apply_callable_candidate(
                                         keyword_count,
                                         site
                                 )) {
-                                        free(assigned);
+                                        ty_free(assigned);
                                         return T2_TYPE_INVALID;
                                 }
                                 gradual_positional_spread = true;
@@ -6366,7 +6483,7 @@ apply_callable_candidate(
                                 continue;
                         }
                         if (!found) {
-                                free(assigned);
+                                ty_free(assigned);
                                 return T2_TYPE_INVALID;
                         }
                         if (parameter.kind == T2_PARAMETER_POSITIONAL_REST) {
@@ -6377,7 +6494,7 @@ apply_callable_candidate(
                                         NULL,
                                         site
                                 )) {
-                                        free(assigned);
+                                        ty_free(assigned);
                                         return T2_TYPE_INVALID;
                                 }
                                 continue;
@@ -6393,7 +6510,7 @@ apply_callable_candidate(
                                         site
                                 )
                         ) break;
-                        free(assigned);
+                        ty_free(assigned);
                         return T2_TYPE_INVALID;
                 }
                 if (found && parameter.kind == T2_PARAMETER_PACK) {
@@ -6404,13 +6521,13 @@ apply_callable_candidate(
                                 T2_TYPE_INVALID
                         );
                         if (!candidate_argument(shadow, pack, parameter.type, NULL, site)) {
-                                free(assigned);
+                                ty_free(assigned);
                                 return T2_TYPE_INVALID;
                         }
                         break;
                 }
                 if (!found) {
-                        free(assigned);
+                        ty_free(assigned);
                         return T2_TYPE_INVALID;
                 }
                 Expr const *literal = positional_argument_expression(site, i);
@@ -6426,7 +6543,7 @@ apply_callable_candidate(
                         literal,
                         site
                 )) {
-                        free(assigned);
+                        ty_free(assigned);
                         return T2_TYPE_INVALID;
                 }
         }
@@ -6450,7 +6567,7 @@ apply_callable_candidate(
                         T2_TYPE_INVALID
                 );
                 if (!candidate_argument(shadow, empty, parameter.type, NULL, site)) {
-                        free(assigned);
+                        ty_free(assigned);
                         return T2_TYPE_INVALID;
                 }
                 assigned[i] = true;
@@ -6475,7 +6592,7 @@ apply_callable_candidate(
                                 "keyword-spread",
                                 "spread value must provide keywords accepted by the callable"
                         )) {
-                                free(assigned);
+                                ty_free(assigned);
                                 return T2_TYPE_INVALID;
                         }
                         continue;
@@ -6528,7 +6645,7 @@ apply_callable_candidate(
                             site
                         )
                 ) {
-                        free(assigned);
+                        ty_free(assigned);
                         return T2_TYPE_INVALID;
                 }
                 if (parameter.kind != T2_PARAMETER_KEYWORD_REST) {
@@ -6553,11 +6670,11 @@ apply_callable_candidate(
                                         == T2_PARAMETER_POSITIONAL_OR_KEYWORD
                                 )
                         ) continue;
-                        free(assigned);
+                        ty_free(assigned);
                         return T2_TYPE_INVALID;
                 }
         }
-        free(assigned);
+        ty_free(assigned);
         return t2_callable_result(shadow->universe, callable);
 }
 
@@ -6680,7 +6797,7 @@ infer_call_types(
                 size_t count = argument_count + keyword_count;
                 T2ParameterSpec *parameters = count == 0
                                             ? NULL
-                                            : calloc(count, sizeof *parameters);
+                                            : ty_calloc(count, sizeof *parameters);
                 if (count != 0 && parameters == NULL) {
                         shadow->failed = true;
                         return T2_TYPE_INVALID;
@@ -6733,7 +6850,7 @@ infer_call_types(
                         t2_primitive(shadow->universe, T2_TYPE_NEVER),
                         t2_primitive(shadow->universe, T2_TYPE_NIL)
                 );
-                free(parameters);
+                ty_free(parameters);
                 if (constrain_type_maybe_diagnose(
                         shadow,
                         site,
@@ -6775,7 +6892,7 @@ infer_call_types(
                                                 "union-call-coverage",
                                                 callee,
                                                 T2_TYPE_INVALID,
-                                                "every reachable union arm must support the call"
+                                                "not every arm of this union is callable"
                                         );
                                 }
                                 return t2_primitive(shadow->universe, T2_TYPE_ERROR);
@@ -6868,16 +6985,16 @@ infer_call_types(
                 if (split != T2_TYPE_INVALID) {
                         T2Type *positional = argument_count == 0
                                            ? NULL
-                                           : malloc(argument_count * sizeof *positional);
+                                           : ty_malloc(argument_count * sizeof *positional);
                         T2Type *named = keyword_count == 0
                                      ? NULL
-                                     : malloc(keyword_count * sizeof *named);
+                                     : ty_malloc(keyword_count * sizeof *named);
                         if (
                                 (argument_count != 0 && positional == NULL)
                              || (keyword_count != 0 && named == NULL)
                         ) {
-                                free(positional);
-                                free(named);
+                                ty_free(positional);
+                                ty_free(named);
                                 shadow->failed = true;
                                 return T2_TYPE_INVALID;
                         }
@@ -6944,8 +7061,8 @@ infer_call_types(
                                         arm_result
                                 );
                         }
-                        free(positional);
-                        free(named);
+                        ty_free(positional);
+                        ty_free(named);
                         if (covered) {
                                 t2_solver_commit(shadow->solver, coverage);
                                 return result;
@@ -6960,7 +7077,7 @@ infer_call_types(
                                 "no-overload",
                                 callee,
                                 T2_TYPE_INVALID,
-                                "no overload accepts this complete call shape"
+                                "no overload accepts these arguments"
                         );
                 }
                 return t2_primitive(shadow->universe, T2_TYPE_ERROR);
@@ -6983,22 +7100,24 @@ infer_call_types(
                         record_call_effect(shadow, callee);
                         return result;
                 }
-                char *reason = t2_solver_explain_since(shadow->solver, mark);
+                Types2Notes causes = diagnose
+                                   ? capture_causes(shadow, mark)
+                                   : (Types2Notes) {0};
                 t2_solver_rollback(shadow->solver, mark);
                 if (diagnose) {
-                        add_diagnostic(
-                                shadow,
-                                site,
-                                TYPES2_DIAGNOSTIC_ERROR,
-                                "bad-call",
-                                callee,
-                                T2_TYPE_INVALID,
-                                "arguments do not satisfy the callable's names, defaults, rests, and types%s%s",
-                                reason == NULL || *reason == '\0' ? "" : ": ",
-                                reason == NULL ? "" : reason
+                        attach_notes(
+                                add_diagnostic(
+                                        shadow,
+                                        site,
+                                        TYPES2_DIAGNOSTIC_ERROR,
+                                        "bad-call",
+                                        callee,
+                                        T2_TYPE_INVALID,
+                                        "the arguments do not match the callee's parameters"
+                                ),
+                                causes
                         );
                 }
-                free(reason);
                 return t2_primitive(shadow->universe, T2_TYPE_ERROR);
         }
 
@@ -7100,7 +7219,7 @@ infer_call_types(
                         "not-callable",
                         callee,
                         T2_TYPE_INVALID,
-                        "value is not callable on every reachable path"
+                        "this value is not callable"
                 );
         }
         return t2_primitive(shadow->universe, T2_TYPE_ERROR);
@@ -7413,8 +7532,8 @@ retain_operator_predicate(
                         left == NULL ? "?" : left,
                         right == NULL ? "?" : right
                 );
-                free(left);
-                free(right);
+                ty_free(left);
+                ty_free(right);
         }
         bool valid = constrain_predicate_maybe_diagnose(
                 shadow,
@@ -7478,7 +7597,7 @@ infer_registered_operator_call(
                                 (int)applicable,
                                 operator_scheme_specificity(shadow, candidate->scheme)
                         );
-                        free(body);
+                        ty_free(body);
                 }
                 if (!applicable) continue;
                 applicable_count += 1;
@@ -7824,7 +7943,7 @@ infer_binary_pair(
                                                 "union-operator-coverage",
                                                 left,
                                                 right,
-                                                "every reachable union operand combination must support the operator"
+                                                "not every arm of this union supports the operator"
                                         );
                                 }
                                 return arm_result;
@@ -8108,7 +8227,7 @@ infer_subscript_protocol(
                 T2SolverMark protocol = t2_solver_mark(shadow->solver);
                 T2Type *parameters = argument_count == 0
                                    ? NULL
-                                   : malloc(argument_count * sizeof *parameters);
+                                   : ty_malloc(argument_count * sizeof *parameters);
                 if (argument_count != 0 && parameters == NULL) {
                         shadow->failed = true;
                         t2_solver_rollback(shadow->solver, protocol);
@@ -8146,7 +8265,7 @@ infer_subscript_protocol(
                         argument_count,
                         result
                 );
-                free(parameters);
+                ty_free(parameters);
                 T2Type row = t2_solver_new_meta(
                         shadow->solver,
                         T2_VARIABLE_ROW,
@@ -8234,7 +8353,7 @@ infer_subscript_protocol(
                 shadow->failed = true;
                 return T2_TYPE_INVALID;
         }
-        T2Type *operator_arguments = malloc(
+        T2Type *operator_arguments = ty_malloc(
                 (argument_count + 1) * sizeof *operator_arguments
         );
         if (operator_arguments == NULL) {
@@ -8257,7 +8376,7 @@ infer_subscript_protocol(
                 site,
                 false
         );
-        free(operator_arguments);
+        ty_free(operator_arguments);
         return result;
 }
 
@@ -8300,7 +8419,7 @@ infer_subscript_type(
                                                 "union-subscript-coverage",
                                                 container,
                                                 index,
-                                                "every reachable union arm must support this subscript"
+                                                "not every arm of this union supports the subscript"
                                         );
                                 }
                                 return arm;
@@ -8470,7 +8589,7 @@ infer_member_type(
                                                         "union-member-coverage",
                                                         object,
                                                         T2_TYPE_INVALID,
-                                                        "field `%s` must exist on every reachable union arm",
+                                                        "field `%s` is missing from some arms of this union",
                                                         name
                                                 );
                                         }
@@ -8741,7 +8860,7 @@ infer_member_type(
                         return safe ? t2_join(shadow->universe, value, nil) : value;
                 }
                 /* A recursive member lookup can discover trait/superclass
-                 * nominals and reallocate the nominal table. */
+                 * nominals and ty_reallocate the nominal table. */
                 nominal = find_class_nominal(shadow, class_id);
                 if (nominal == NULL || !nominal->complete) {
                         defer_node(shadow, TYPES2_DEFER_INCOMPLETE_INTERFACE, site, name);
@@ -8764,7 +8883,7 @@ infer_member_type(
                         "missing-field",
                         object,
                         T2_TYPE_INVALID,
-                        "field `%s` is not present",
+                        "field `%s` does not exist on this type",
                         name
                 );
         }
@@ -8852,7 +8971,7 @@ infer_method_type(
                                         "union-method-coverage",
                                         object,
                                         T2_TYPE_INVALID,
-                                        "method `%s` must exist on every reachable union arm",
+                                        "method `%s` is missing from some arms of this union",
                                         name
                                 );
                                 return arm;
@@ -9160,7 +9279,7 @@ check_membership(
                                         "union-membership-coverage",
                                         item,
                                         container,
-                                        "every reachable union arm must support membership"
+                                        "not every arm of this union supports the `in` test"
                                 );
                                 return false;
                         }
@@ -9291,7 +9410,7 @@ check_subscript_write(
                                         "union-subscript-write-coverage",
                                         container,
                                         value,
-                                        "every reachable union arm must support this subscript write"
+                                        "not every arm of this union supports the subscript assignment"
                                 );
                                 return false;
                         }
@@ -9714,7 +9833,7 @@ check_member_write(
                 "field-not-writable",
                 object,
                 value,
-                "field `%s` is absent or readonly",
+                "field `%s` cannot be assigned on this type",
                 name
         );
         return false;
@@ -9977,7 +10096,7 @@ contextual_fresh_literal_x(
                 size_t count = (size_t)vN(expression->es);
                 T2FieldSpec *fields = count == 0
                                     ? NULL
-                                    : calloc(count, sizeof *fields);
+                                    : ty_calloc(count, sizeof *fields);
                 if (count != 0 && fields == NULL) {
                         shadow->failed = true;
                         return false;
@@ -10031,7 +10150,7 @@ contextual_fresh_literal_x(
                                           T2_RECORD_EXACT
                                     )
                                   : T2_TYPE_INVALID;
-                free(fields);
+                ty_free(fields);
                 return valid
                     && contextual != T2_TYPE_INVALID
                     && constrain_type_maybe_diagnose(
@@ -10307,7 +10426,7 @@ assign_value_list(
 )
 {
         size_t count = (size_t)vN(target->es);
-        T2Type *items = malloc(count * sizeof *items);
+        T2Type *items = ty_malloc(count * sizeof *items);
         if (items == NULL) {
                 shadow->failed = true;
                 return false;
@@ -10316,7 +10435,7 @@ assign_value_list(
                 items[i] = multi_value_item(shadow, value, i);
         }
         bool valid = assign_list_items(shadow, target, items, declaration);
-        free(items);
+        ty_free(items);
         set_node_type(
                 shadow,
                 target,
@@ -10648,7 +10767,7 @@ assign_lvalue_x(
                         value,
                         expected,
                         "assignment-type",
-                        "assigned value does not satisfy the writable target type"
+                        "the assigned value does not match the target type"
                 );
                 if (valid) settle_callable_slot(shadow, value, expected);
                 if (valid && was_forward && was_initialized && annotation != T2_TYPE_INVALID) {
@@ -10658,7 +10777,7 @@ assign_lvalue_x(
                                 expected,
                                 binding->type,
                                 "forward-declaration",
-                                "declared type does not satisfy the forward uses"
+                                "the declared type does not match the earlier uses"
                         );
                 }
                 /* Constraint discharge can populate class interfaces, which
@@ -10769,7 +10888,7 @@ assign_lvalue_x(
                         set_node_type(shadow, target, dynamic);
                         return valid;
                 }
-                T2Type *items = count == 0 ? NULL : malloc(count * sizeof *items);
+                T2Type *items = count == 0 ? NULL : ty_malloc(count * sizeof *items);
                 if (count != 0 && items == NULL) {
                         shadow->failed = true;
                         return false;
@@ -10806,7 +10925,7 @@ assign_lvalue_x(
                                            );
                         }
                 }
-                free(items);
+                ty_free(items);
                 set_node_type(
                         shadow,
                         target,
@@ -11000,7 +11119,7 @@ binding_effective_type(Types2Binding const *binding)
 static T2Type *
 snapshot_refinements(Types2Shadow *shadow, size_t count)
 {
-        T2Type *snapshot = count == 0 ? NULL : malloc(count * sizeof *snapshot);
+        T2Type *snapshot = count == 0 ? NULL : ty_malloc(count * sizeof *snapshot);
         if (count != 0 && snapshot == NULL) {
                 shadow->failed = true;
                 return NULL;
@@ -11014,7 +11133,7 @@ snapshot_refinements(Types2Shadow *shadow, size_t count)
 static T2Type *
 snapshot_effective_types(Types2Shadow *shadow, size_t count)
 {
-        T2Type *snapshot = count == 0 ? NULL : malloc(count * sizeof *snapshot);
+        T2Type *snapshot = count == 0 ? NULL : ty_malloc(count * sizeof *snapshot);
         if (count != 0 && snapshot == NULL) {
                 shadow->failed = true;
                 return NULL;
@@ -11218,7 +11337,7 @@ condition_test_type(Types2Shadow *shadow, Expr const *source)
         if (nominal == NULL) return T2_TYPE_INVALID;
         T2Type *arguments = nominal->arity == 0
                           ? NULL
-                          : malloc(nominal->arity * sizeof *arguments);
+                          : ty_malloc(nominal->arity * sizeof *arguments);
         if (nominal->arity != 0 && arguments == NULL) {
                 shadow->failed = true;
                 return T2_TYPE_INVALID;
@@ -11232,7 +11351,7 @@ condition_test_type(Types2Shadow *shadow, Expr const *source)
                 arguments,
                 nominal->arity
         );
-        free(arguments);
+        ty_free(arguments);
         return result;
 }
 
@@ -11686,7 +11805,7 @@ infer_slice_type(
                                         "union-slice-coverage",
                                         container,
                                         T2_TYPE_INVALID,
-                                        "every reachable union arm must support slicing"
+                                        "not every arm of this union supports slicing"
                                 );
                                 return t2_primitive(shadow->universe, T2_TYPE_ERROR);
                         }
@@ -11807,7 +11926,7 @@ infer_count_type(
                                         "union-count-coverage",
                                         operand,
                                         T2_TYPE_INVALID,
-                                        "every reachable union arm must support prefix #"
+                                        "not every arm of this union supports prefix #"
                                 );
                                 return t2_primitive(shadow->universe, T2_TYPE_ERROR);
                         }
@@ -11898,7 +12017,7 @@ infer_count_type(
                 "count-contract",
                 operand,
                 T2_TYPE_INVALID,
-                "prefix # requires a sized value or a zero-argument # method"
+                "prefix # needs a sized value or a zero-argument # method"
         );
         return t2_primitive(shadow->universe, T2_TYPE_ERROR);
 }
@@ -11945,7 +12064,7 @@ infer_prefix_minus_type(
                                         "union-unary-operator-coverage",
                                         operand,
                                         T2_TYPE_INVALID,
-                                        "every reachable union arm must support prefix minus"
+                                        "not every arm of this union supports prefix minus"
                                 );
                                 return t2_primitive(
                                         shadow->universe,
@@ -12159,7 +12278,7 @@ expand_fixed_tuple_call_splats(
                                         &capacity,
                                         t2_type_child(shadow->universe, resolved, j)
                                 )) {
-                                        free(*expanded);
+                                        ty_free(*expanded);
                                         *expanded = NULL;
                                         *expanded_count = 0;
                                         return false;
@@ -12198,7 +12317,7 @@ expand_fixed_tuple_call_splats(
                                         expansion
                                 )
                         ) {
-                                free(*expanded);
+                                ty_free(*expanded);
                                 *expanded = NULL;
                                 *expanded_count = 0;
                                 return false;
@@ -12212,7 +12331,7 @@ expand_fixed_tuple_call_splats(
                         &capacity,
                         type
                 )) {
-                        free(*expanded);
+                        ty_free(*expanded);
                         *expanded = NULL;
                         *expanded_count = 0;
                         return false;
@@ -12345,7 +12464,7 @@ overlay_record_types_x(
                 T2Type other = base_kind == T2_TYPE_UNION ? overlay : base;
                 size_t count = t2_type_arity(shadow->universe, union_type);
                 if (count > SIZE_MAX / sizeof(T2Type)) return T2_TYPE_INVALID;
-                T2Type *arms = count == 0 ? NULL : malloc(count * sizeof *arms);
+                T2Type *arms = count == 0 ? NULL : ty_malloc(count * sizeof *arms);
                 if (count != 0 && arms == NULL) {
                         shadow->failed = true;
                         return T2_TYPE_INVALID;
@@ -12366,12 +12485,12 @@ overlay_record_types_x(
                                         depth + 1
                                   );
                         if (arms[i] == T2_TYPE_INVALID) {
-                                free(arms);
+                                ty_free(arms);
                                 return T2_TYPE_INVALID;
                         }
                 }
                 T2Type result = t2_union(shadow->universe, arms, count);
-                free(arms);
+                ty_free(arms);
                 return result;
         }
 
@@ -12463,7 +12582,7 @@ overlay_record_types_x(
                                 exactness
                         )
                       : T2_TYPE_INVALID;
-        free(fields);
+        ty_free(fields);
         return result;
 }
 
@@ -12560,13 +12679,13 @@ infer_mixed_tuple(Types2Shadow *shadow, Expr const *expression)
 {
         size_t count = (size_t)vN(expression->es);
         if (count > SIZE_MAX / sizeof(T2Type)) return T2_TYPE_INVALID;
-        T2Type *items = count == 0 ? NULL : malloc(count * sizeof *items);
+        T2Type *items = count == 0 ? NULL : ty_malloc(count * sizeof *items);
         T2FieldSpec *fields = count == 0
                             ? NULL
-                            : malloc(count * sizeof *fields);
+                            : ty_malloc(count * sizeof *fields);
         if (count != 0 && (items == NULL || fields == NULL)) {
-                free(items);
-                free(fields);
+                ty_free(items);
+                ty_free(fields);
                 shadow->failed = true;
                 return T2_TYPE_INVALID;
         }
@@ -12574,8 +12693,8 @@ infer_mixed_tuple(Types2Shadow *shadow, Expr const *expression)
         for (size_t i = 0; i < count; ++i) {
                 Expr const *item = v__(expression->es, (int)i);
                 if (item != NULL && item->type == EXPRESSION_SPREAD) {
-                        free(items);
-                        free(fields);
+                        ty_free(items);
+                        ty_free(fields);
                         defer_node(shadow, TYPES2_DEFER_TUPLE_SPREAD, expression, NULL);
                         return t2_primitive(shadow->universe, T2_TYPE_DYNAMIC);
                 }
@@ -12609,8 +12728,8 @@ infer_mixed_tuple(Types2Shadow *shadow, Expr const *expression)
                 T2_TYPE_INVALID,
                 T2_RECORD_OPEN
         );
-        free(items);
-        free(fields);
+        ty_free(items);
+        ty_free(fields);
         if (tuple == T2_TYPE_INVALID || record == T2_TYPE_INVALID) {
                 return T2_TYPE_INVALID;
         }
@@ -13106,7 +13225,7 @@ infer_tag_call(Types2Shadow *shadow, Expr const *expression)
         } else if (count == 1) {
                 payload = infer_expression(shadow, v__(expression->args, 0));
         } else {
-                T2Type *items = malloc(count * sizeof *items);
+                T2Type *items = ty_malloc(count * sizeof *items);
                 if (items == NULL) {
                         shadow->failed = true;
                         return T2_TYPE_INVALID;
@@ -13115,7 +13234,7 @@ infer_tag_call(Types2Shadow *shadow, Expr const *expression)
                         items[i] = infer_expression(shadow, v__(expression->args, (int)i));
                 }
                 payload = t2_tuple(shadow->universe, items, count);
-                free(items);
+                ty_free(items);
         }
         return infer_tag_value(shadow, unfurl(expression->function), payload);
 }
@@ -13439,7 +13558,7 @@ infer_expression(Types2Shadow *shadow, Expr const *source)
                         if (condition != NULL && (binding_mark == 0 || before != NULL)) {
                                 restore_refinements(shadow, before, binding_mark);
                         }
-                        free(before);
+                        ty_free(before);
                         element = t2_join(shadow->universe, element, item);
                 }
                 if (t2_type_kind(shadow->universe, element) == T2_TYPE_NEVER) {
@@ -13778,7 +13897,7 @@ infer_expression(Types2Shadow *shadow, Expr const *source)
                 } else if (expression->type == EXPRESSION_LIST) {
                         result = infer_value_list_items(shadow, &expression->es);
                 } else {
-                        T2Type *items = count == 0 ? NULL : malloc(count * sizeof *items);
+                        T2Type *items = count == 0 ? NULL : ty_malloc(count * sizeof *items);
                         if (count != 0 && items == NULL) {
                                 shadow->failed = true;
                                 break;
@@ -13790,7 +13909,7 @@ infer_expression(Types2Shadow *shadow, Expr const *source)
                                 );
                         }
                         result = t2_tuple(shadow->universe, items, count);
-                        free(items);
+                        ty_free(items);
                 }
                 break;
         }
@@ -13871,7 +13990,7 @@ infer_expression(Types2Shadow *shadow, Expr const *source)
                         if (binding_mark == 0 || before != NULL) {
                                 restore_refinements(shadow, before, binding_mark);
                         }
-                        free(before);
+                        ty_free(before);
                         if (reachable && !covered) {
                                 result = t2_join(
                                         shadow->universe,
@@ -13962,9 +14081,9 @@ infer_expression(Types2Shadow *shadow, Expr const *source)
                         true,
                         binding_mark
                 );
-                free(before);
-                free(then_bindings);
-                free(else_bindings);
+                ty_free(before);
+                ty_free(then_bindings);
+                ty_free(else_bindings);
                 result = t2_join(shadow->universe, then_type, else_type);
                 break;
         }
@@ -13982,16 +14101,16 @@ infer_expression(Types2Shadow *shadow, Expr const *source)
                 }
                 T2Type *arguments = positional_count == 0
                                   ? NULL
-                                  : malloc(positional_count * sizeof *arguments);
+                                  : ty_malloc(positional_count * sizeof *arguments);
                 T2Type *keyword_arguments = keyword_count == 0
                                           ? NULL
-                                          : malloc(keyword_count * sizeof *keyword_arguments);
+                                          : ty_malloc(keyword_count * sizeof *keyword_arguments);
                 if (
                         (positional_count != 0 && arguments == NULL)
                      || (keyword_count != 0 && keyword_arguments == NULL)
                 ) {
-                        free(arguments);
-                        free(keyword_arguments);
+                        ty_free(arguments);
+                        ty_free(keyword_arguments);
                         shadow->failed = true;
                         break;
                 }
@@ -14089,9 +14208,9 @@ infer_expression(Types2Shadow *shadow, Expr const *source)
                 }
                 t2_solver_commit(shadow->solver, argument_scope);
                 invalidate_unstable_refinements(shadow);
-                free(expanded_arguments);
-                free(arguments);
-                free(keyword_arguments);
+                ty_free(expanded_arguments);
+                ty_free(arguments);
+                ty_free(keyword_arguments);
                 break;
         }
         case EXPRESSION_OPERATOR:
@@ -14167,7 +14286,7 @@ infer_expression(Types2Shadow *shadow, Expr const *source)
                                         "unsupported-user-operator",
                                         left,
                                         right,
-                                        "operator `%s` has no unique applicable binary contract",
+                                        "operator `%s` is not defined for these operand types",
                                         expression->op_name == NULL
                                             ? "<operator>"
                                             : expression->op_name
@@ -14316,9 +14435,9 @@ infer_expression(Types2Shadow *shadow, Expr const *source)
                         true,
                         binding_mark
                 );
-                free(before);
-                free(right_bindings);
-                free(skipped_bindings);
+                ty_free(before);
+                ty_free(right_bindings);
+                ty_free(skipped_bindings);
                 result = t2_join(shadow->universe, left, right);
                 break;
         }
@@ -14450,11 +14569,11 @@ infer_expression(Types2Shadow *shadow, Expr const *source)
                 );
                 size_t count = (size_t)vN(expression->method_args);
                 size_t kwcount = (size_t)vN(expression->method_kwargs);
-                T2Type *arguments = count == 0 ? NULL : malloc(count * sizeof *arguments);
-                T2Type *kwargs = kwcount == 0 ? NULL : malloc(kwcount * sizeof *kwargs);
+                T2Type *arguments = count == 0 ? NULL : ty_malloc(count * sizeof *arguments);
+                T2Type *kwargs = kwcount == 0 ? NULL : ty_malloc(kwcount * sizeof *kwargs);
                 if ((count && arguments == NULL) || (kwcount && kwargs == NULL)) {
-                        free(arguments);
-                        free(kwargs);
+                        ty_free(arguments);
+                        ty_free(kwargs);
                         shadow->failed = true;
                         break;
                 }
@@ -14534,9 +14653,9 @@ infer_expression(Types2Shadow *shadow, Expr const *source)
                 }
                 t2_solver_commit(shadow->solver, argument_scope);
                 invalidate_unstable_refinements(shadow);
-                free(expanded_arguments);
-                free(arguments);
-                free(kwargs);
+                ty_free(expanded_arguments);
+                ty_free(arguments);
+                ty_free(kwargs);
                 break;
         }
         case EXPRESSION_DYN_METHOD_CALL:
@@ -14868,7 +14987,7 @@ infer_expression(Types2Shadow *shadow, Expr const *source)
                         }
                 } else if (vN(expression->es) > 1) {
                         size_t count = (size_t)vN(expression->es);
-                        T2Type *items = malloc(count * sizeof *items);
+                        T2Type *items = ty_malloc(count * sizeof *items);
                         if (items == NULL) {
                                 shadow->failed = true;
                                 break;
@@ -14880,7 +14999,7 @@ infer_expression(Types2Shadow *shadow, Expr const *source)
                                 );
                         }
                         yielded = t2_tuple(shadow->universe, items, count);
-                        free(items);
+                        ty_free(items);
                 }
                 if (shadow->function_count != 0) {
                         size_t frame_index = shadow->function_count - 1;
@@ -14961,7 +15080,7 @@ infer_expression(Types2Shadow *shadow, Expr const *source)
                 break;
         case EXPRESSION_TYPE_OF:
         {
-                T2Type instance = infer_expression(shadow, expression->operand);
+                T2Type instance = typeof_operand_type(shadow, expression->operand);
                 T2Type dynamic = t2_primitive(
                         shadow->universe,
                         T2_TYPE_DYNAMIC
@@ -15222,7 +15341,7 @@ environment_types(
 {
         *count = 0;
         if (shadow->binding_count == 0) return NULL;
-        T2Type *environment = malloc(shadow->binding_count * sizeof *environment);
+        T2Type *environment = ty_malloc(shadow->binding_count * sizeof *environment);
         if (environment == NULL) {
                 shadow->failed = true;
                 return NULL;
@@ -15238,6 +15357,80 @@ environment_types(
                 environment[(*count)++] = binding->type;
         }
         return environment;
+}
+
+static char const *
+type_variable_name(Types2Shadow *shadow, T2Quantifier quantifier)
+{
+        T2Type variable = t2_variable(shadow->universe, quantifier.kind, quantifier.id);
+        for (size_t i = shadow->type_variable_count; i != 0; --i) {
+                Types2TypeVariable const *entry = &shadow->type_variables[i - 1];
+                if (entry->type == variable && entry->symbol != NULL) {
+                        return entry->symbol->identifier;
+                }
+        }
+        return NULL;
+}
+
+static T2Type
+named_scheme_type(Types2Shadow *shadow, T2Scheme *scheme)
+{
+        size_t count = t2_scheme_quantifier_count(scheme);
+        for (size_t i = 0; i < count; ++i) {
+                T2Quantifier quantifier;
+                if (
+                        t2_scheme_quantifier_name(scheme, i) != NULL
+                     || !t2_scheme_quantifier(scheme, i, &quantifier)
+                ) continue;
+                char const *name = type_variable_name(shadow, quantifier);
+                if (name != NULL) (void)t2_scheme_name_quantifier(scheme, i, name);
+        }
+        return t2_scheme_type(shadow->universe, scheme);
+}
+
+static T2Type
+typeof_operand_type(Types2Shadow *shadow, Expr const *operand)
+{
+        Types2Binding *binding = operand != NULL && operand->type == EXPRESSION_IDENTIFIER
+                               ? find_binding(shadow, operand->symbol)
+                               : NULL;
+        if (binding != NULL && binding->scheme != NULL) {
+                T2Type instance = infer_expression(shadow, operand);
+                binding = find_binding(shadow, operand->symbol);
+                if (binding == NULL || binding->scheme == NULL) return instance;
+                T2Type scheme = named_scheme_type(shadow, binding->scheme);
+                T2Scheme *copy = t2_type_scheme(shadow->universe, scheme);
+                if (copy != NULL) {
+                        scheme = t2_scheme_type(shadow->universe, t2_scheme_simplify(copy));
+                        t2_scheme_free(copy);
+                }
+                return scheme == T2_TYPE_INVALID ? instance : scheme;
+        }
+
+        size_t environment_count = 0;
+        T2Type *environment = environment_types(shadow, NULL, &environment_count);
+        T2SolverMark scope = t2_solver_mark(shadow->solver);
+        T2Type instance = infer_expression(shadow, operand);
+        T2Scheme *scheme = instance == T2_TYPE_INVALID || shadow->failed
+                         ? NULL
+                         : t2_solver_generalize_scoped(
+                                 shadow->solver,
+                                 instance,
+                                 environment,
+                                 environment_count,
+                                 shadow->level,
+                                 expression_is_expansive(operand),
+                                 scope
+                           );
+        t2_solver_commit(shadow->solver, scope);
+        ty_free(environment);
+        if (scheme == NULL) return instance;
+        t2_scheme_simplify(scheme);
+        T2Type result = t2_scheme_quantifier_count(scheme) == 0
+                      ? instance
+                      : t2_scheme_type(shadow->universe, scheme);
+        t2_scheme_free(scheme);
+        return result == T2_TYPE_INVALID ? instance : result;
 }
 
 static bool
@@ -15380,7 +15573,7 @@ iterated_type_x(
                                         "union-iteration-coverage",
                                         source,
                                         T2_TYPE_INVALID,
-                                        "every reachable union arm must be iterable"
+                                        "not every arm of this union is iterable"
                                 );
                                 return item;
                         }
@@ -15812,7 +16005,7 @@ tuple_pattern_items(
                 T2SolverMark mark = t2_solver_mark(shadow->solver);
                 T2Type *shape_items = count == 0
                                          ? NULL
-                                         : malloc(count * sizeof *shape_items);
+                                         : ty_malloc(count * sizeof *shape_items);
                 if (count != 0 && shape_items == NULL) {
                         shadow->failed = true;
                         t2_solver_rollback(shadow->solver, mark);
@@ -15834,7 +16027,7 @@ tuple_pattern_items(
                         "tuple pattern shape"
                 );
                 if (relation == T2_RELATION_NO || t2_solver_failed(shadow->solver)) {
-                        free(shape_items);
+                        ty_free(shape_items);
                         t2_solver_rollback(shadow->solver, mark);
                         return false;
                 }
@@ -15845,7 +16038,7 @@ tuple_pattern_items(
                                 shape_items[i]
                         );
                 }
-                free(shape_items);
+                ty_free(shape_items);
                 t2_solver_commit(shadow->solver, mark);
                 return true;
         }
@@ -16278,7 +16471,7 @@ record_pattern_items(
                 if (count > SIZE_MAX / sizeof(T2Type)) return false;
                 T2Type *arm_items = count == 0
                                   ? NULL
-                                  : malloc(count * sizeof *arm_items);
+                                  : ty_malloc(count * sizeof *arm_items);
                 if (count != 0 && arm_items == NULL) {
                         shadow->failed = true;
                         return false;
@@ -16301,7 +16494,7 @@ record_pattern_items(
                                 );
                         }
                 }
-                free(arm_items);
+                ty_free(arm_items);
                 return reachable;
         }
 
@@ -16536,7 +16729,7 @@ infer_pattern(Types2Shadow *shadow, Expr const *pattern, T2Type subject)
                 if (pattern->type == EXPRESSION_LIST && count == 1) {
                         return infer_pattern(shadow, v__(pattern->es, 0), subject);
                 }
-                T2Type *items = count == 0 ? NULL : malloc(count * sizeof *items);
+                T2Type *items = count == 0 ? NULL : ty_malloc(count * sizeof *items);
                 if (count != 0 && items == NULL) {
                         shadow->failed = true;
                         return false;
@@ -16586,7 +16779,7 @@ infer_pattern(Types2Shadow *shadow, Expr const *pattern, T2Type subject)
                                 );
                         }
                 }
-                free(items);
+                ty_free(items);
                 return reachable;
         }
         case EXPRESSION_ARRAY:
@@ -16820,7 +17013,7 @@ infer_pattern(Types2Shadow *shadow, Expr const *pattern, T2Type subject)
                 if (expected == T2_TYPE_INVALID && nominal != NULL) {
                         T2Type *arguments = nominal->arity == 0
                                           ? NULL
-                                          : malloc(nominal->arity * sizeof *arguments);
+                                          : ty_malloc(nominal->arity * sizeof *arguments);
                         if (nominal->arity != 0 && arguments == NULL) {
                                 shadow->failed = true;
                                 return false;
@@ -16839,7 +17032,7 @@ infer_pattern(Types2Shadow *shadow, Expr const *pattern, T2Type subject)
                                 arguments,
                                 nominal->arity
                         );
-                        free(arguments);
+                        ty_free(arguments);
                 }
                 bool reachable = expected != T2_TYPE_INVALID
                               && pattern_types_overlap(shadow, subject, expected);
@@ -17780,7 +17973,7 @@ replace_callable_channels(
         size_t count = t2_callable_parameter_count(shadow->universe, callable);
         T2ParameterSpec *parameters = count == 0
                                     ? NULL
-                                    : malloc(count * sizeof *parameters);
+                                    : ty_malloc(count * sizeof *parameters);
         if (count != 0 && parameters == NULL) {
                 shadow->failed = true;
                 return T2_TYPE_INVALID;
@@ -17792,7 +17985,7 @@ replace_callable_channels(
                         i,
                         &parameters[i]
                 )) {
-                        free(parameters);
+                        ty_free(parameters);
                         return T2_TYPE_INVALID;
                 }
         }
@@ -17804,7 +17997,7 @@ replace_callable_channels(
                 yields,
                 sends
         );
-        free(parameters);
+        ty_free(parameters);
         return replacement;
 }
 
@@ -17833,7 +18026,7 @@ infer_single_function(Types2Shadow *shadow, Expr const *function)
         size_t type_argument_count = (size_t)vN(function->type_params);
         T2Type *type_arguments = type_argument_count == 0
                                ? NULL
-                               : malloc(type_argument_count * sizeof *type_arguments);
+                               : ty_malloc(type_argument_count * sizeof *type_arguments);
         if (type_argument_count != 0 && type_arguments == NULL) {
                 shadow->failed = true;
                 goto Failure;
@@ -17872,13 +18065,13 @@ infer_single_function(Types2Shadow *shadow, Expr const *function)
                 type_argument_count,
                 "class operator signature"
         );
-        free(type_arguments);
+        ty_free(type_arguments);
         type_arguments = NULL;
 
         size_t parameter_count = (size_t)vN(function->params);
         T2ParameterSpec *parameters = parameter_count == 0
                                     ? NULL
-                                    : calloc(parameter_count, sizeof *parameters);
+                                    : ty_calloc(parameter_count, sizeof *parameters);
         if (parameter_count != 0 && parameters == NULL) {
                 shadow->failed = true;
                 goto Failure;
@@ -18096,7 +18289,7 @@ infer_single_function(Types2Shadow *shadow, Expr const *function)
              || yields == T2_TYPE_INVALID
              || sends == T2_TYPE_INVALID
         ) {
-                free(parameters);
+                ty_free(parameters);
                 goto Failure;
         }
         T2Type callable = t2_callable(
@@ -18107,7 +18300,7 @@ infer_single_function(Types2Shadow *shadow, Expr const *function)
                 yields,
                 sends
         );
-        free(parameters);
+        ty_free(parameters);
         if (callable == T2_TYPE_INVALID) goto Failure;
 
         Types2Binding *self_binding = ensure_binding(shadow, function->self);
@@ -18127,7 +18320,7 @@ infer_single_function(Types2Shadow *shadow, Expr const *function)
                         );
                         T2Type *arguments = nominal == NULL || nominal->arity == 0
                                           ? NULL
-                                          : malloc(nominal->arity * sizeof *arguments);
+                                          : ty_malloc(nominal->arity * sizeof *arguments);
                         if (nominal != NULL && nominal->arity != 0 && arguments == NULL) {
                                 shadow->failed = true;
                                 goto Failure;
@@ -18164,7 +18357,7 @@ infer_single_function(Types2Shadow *shadow, Expr const *function)
                                            arguments,
                                            nominal->arity
                                    );
-                        free(arguments);
+                        ty_free(arguments);
                 }
 
                 T2Type self_type = receiver;
@@ -18251,7 +18444,7 @@ infer_single_function(Types2Shadow *shadow, Expr const *function)
                                 infer_expression(shadow, value),
                                 parameter.type,
                                 "default-argument",
-                                "default argument does not satisfy its parameter type"
+                                "the default value does not match the parameter type"
                         );
                 }
         }
@@ -18300,7 +18493,7 @@ infer_single_function(Types2Shadow *shadow, Expr const *function)
         for (size_t i = 0; i < outer_binding_count; ++i) {
                 shadow->bindings[i].refinement = outer_refinements[i];
         }
-        free(outer_refinements);
+        ty_free(outer_refinements);
         shadow->multi_value_site = outer_multi_value_site;
         shadow->hint_site = outer_hint_site;
         shadow->hint_type = outer_hint_type;
@@ -18321,7 +18514,7 @@ infer_single_function(Types2Shadow *shadow, Expr const *function)
                         body.value,
                         frame.result,
                         "function-fallthrough",
-                        "fallthrough value does not satisfy the function result type"
+                        "the function's final value does not match its declared result type"
                 );
         }
         if (frame.effectful && !generator) {
@@ -18350,7 +18543,7 @@ infer_single_function(Types2Shadow *shadow, Expr const *function)
         return callable;
 
 Failure:
-        free(type_arguments);
+        ty_free(type_arguments);
         for (size_t i = binding_mark; i < shadow->binding_count; ++i) {
                 if (!shadow->bindings[i].persistent) {
                         shadow->bindings[i].active = false;
@@ -18395,7 +18588,7 @@ infer_function_expression(Types2Shadow *shadow, Expr const *function)
                 if (t2_type_kind(shadow->universe, type) == T2_TYPE_OVERLOAD) {
                         size_t arms = t2_type_arity(shadow->universe, type);
                         if (used > SIZE_MAX - arms) {
-                                free(candidates);
+                                ty_free(candidates);
                                 shadow->failed = true;
                                 return T2_TYPE_INVALID;
                         }
@@ -18406,7 +18599,7 @@ infer_function_expression(Types2Shadow *shadow, Expr const *function)
                                 used + arms,
                                 sizeof *candidates
                         )) {
-                                free(candidates);
+                                ty_free(candidates);
                                 return T2_TYPE_INVALID;
                         }
                         for (size_t j = 0; j < arms; ++j) {
@@ -18420,14 +18613,14 @@ infer_function_expression(Types2Shadow *shadow, Expr const *function)
                                 used + 1,
                                 sizeof *candidates
                         )) {
-                                free(candidates);
+                                ty_free(candidates);
                                 return T2_TYPE_INVALID;
                         }
                         candidates[used++] = type;
                 }
         }
         T2Type result = t2_overload(shadow->universe, candidates, used);
-        free(candidates);
+        ty_free(candidates);
         Types2Binding *binding = ensure_binding(shadow, function->fn_symbol);
         if (binding != NULL) {
                 binding->type = result;
@@ -18478,9 +18671,9 @@ log_scheme_predicates(Types2Shadow *shadow, T2Scheme const *scheme)
                 );
                 if (i != 0) fputc(',', shadow->log);
                 json_string(shadow->log, text);
-                free(subtype);
-                free(supertype);
-                free(operand);
+                ty_free(subtype);
+                ty_free(supertype);
+                ty_free(operand);
         }
         fputc(']', shadow->log);
 }
@@ -18508,7 +18701,7 @@ generalize_member_scheme(
                         t2_solver_commit(shadow->solver, scope);
                         return NULL;
                 }
-                T2Type *roots = malloc((class_arity + 1) * sizeof *roots);
+                T2Type *roots = ty_malloc((class_arity + 1) * sizeof *roots);
                 if (roots == NULL) {
                         shadow->failed = true;
                         t2_solver_commit(shadow->solver, scope);
@@ -18527,7 +18720,7 @@ generalize_member_scheme(
                         roots,
                         class_arity + 1
                 );
-                free(roots);
+                ty_free(roots);
         }
         T2Scheme *inner = t2_solver_generalize_scoped(
                 shadow->solver,
@@ -18627,7 +18820,7 @@ infer_member_functions(
                         class_level,
                         scope
                 );
-                free(environment);
+                ty_free(environment);
                 if (shadow->log != NULL && !shadow->failed) {
                         log_prefix(shadow, "member_scheme");
                         fprintf(shadow->log, ",\"class_id\":%d,\"member\":", class_id);
@@ -18658,7 +18851,7 @@ infer_member_functions(
                                 if (scheme_type == NULL) fputs("null", shadow->log);
                                 else {
                                         json_string(shadow->log, scheme_type);
-                                        free(scheme_type);
+                                        ty_free(scheme_type);
                                 }
                         }
                         log_scheme_predicates(shadow, scheme);
@@ -18709,7 +18902,7 @@ infer_member_fields(
                                 infer_expression(shadow, field->value),
                                 type,
                                 "field-default",
-                                "field initializer does not satisfy its declared type"
+                                "the field initializer does not match the declared field type"
                         );
                 }
                 T2Scheme *scheme = prepend_scheme_quantifiers(
@@ -18796,7 +18989,7 @@ member_contract_compatible(
 {
         if (actual_member == NULL || expected_member == NULL) return false;
         /* Instantiating the first side may discover inherited interfaces and
-         * reallocate the member table before the second side is examined. */
+         * ty_reallocate the member table before the second side is examined. */
         Types2Member actual_snapshot = *actual_member;
         Types2Member expected_snapshot = *expected_member;
         actual_member = &actual_snapshot;
@@ -18844,30 +19037,30 @@ member_contract_compatible(
         bool compatible = relation != T2_RELATION_NO
                        && relation != T2_RELATION_COMPLEXITY
                        && !t2_solver_failed(shadow->solver);
-        char *explanation = compatible
-                          ? NULL
-                          : t2_solver_explain_since(shadow->solver, mark);
+        Types2Notes causes = compatible
+                           ? (Types2Notes) {0}
+                           : capture_causes(shadow, mark);
         /* Contract checking proves a relation between immutable schemes.  Its
          * fresh instantiation metas and obligations are never part of program
          * inference, even when the proof succeeds. */
         t2_solver_rollback(shadow->solver, mark);
         if (compatible) return true;
 
-        add_diagnostic(
-                shadow,
-                site,
-                strcmp(code, "invalid-override") == 0
-                        ? TYPES2_DIAGNOSTIC_WARNING
-                        : TYPES2_DIAGNOSTIC_ERROR,
-                code,
-                actual,
-                expected,
-                "%s%s%s",
-                description,
-                explanation == NULL || *explanation == '\0' ? "" : ": ",
-                explanation == NULL ? "" : explanation
+        attach_notes(
+                add_diagnostic(
+                        shadow,
+                        site,
+                        strcmp(code, "invalid-override") == 0
+                                ? TYPES2_DIAGNOSTIC_WARNING
+                                : TYPES2_DIAGNOSTIC_ERROR,
+                        code,
+                        actual,
+                        expected,
+                        "%s",
+                        description
+                ),
+                causes
         );
-        free(explanation);
         return false;
 }
 
@@ -18920,7 +19113,7 @@ validate_class_contracts(
                                         supertype,
                                         actual.declaration,
                                         "invalid-override",
-                                        "override does not satisfy the inherited member contract"
+                                        "the override does not match the inherited member's type"
                                 );
                         }
                 }
@@ -18981,7 +19174,7 @@ validate_class_contracts(
                                 trait,
                                 actual->declaration,
                                 "invalid-trait-member",
-                                "member does not satisfy the declared trait contract"
+                                "the member does not match the trait's declaration"
                         );
                 }
         }
@@ -19066,7 +19259,7 @@ callable_set_result(
                 );
                 T2ParameterSpec *parameters = count == 0
                                             ? NULL
-                                            : malloc(count * sizeof *parameters);
+                                            : ty_malloc(count * sizeof *parameters);
                 if (count != 0 && parameters == NULL) {
                         shadow->failed = true;
                         return T2_TYPE_INVALID;
@@ -19078,7 +19271,7 @@ callable_set_result(
                                 i,
                                 &parameters[i]
                         )) {
-                                free(parameters);
+                                ty_free(parameters);
                                 return T2_TYPE_INVALID;
                         }
                 }
@@ -19102,14 +19295,14 @@ callable_set_result(
                         t2_callable_yield(shadow->universe, callable),
                         t2_callable_send(shadow->universe, callable)
                                   );
-                free(parameters);
+                ty_free(parameters);
                 return replaced;
         }
         if (kind == T2_TYPE_OVERLOAD || kind == T2_TYPE_INTERSECTION) {
                 size_t count = t2_type_arity(shadow->universe, callable);
                 T2Type *candidates = count == 0
                                    ? NULL
-                                   : malloc(count * sizeof *candidates);
+                                   : ty_malloc(count * sizeof *candidates);
                 if (count != 0 && candidates == NULL) {
                         shadow->failed = true;
                         return T2_TYPE_INVALID;
@@ -19121,14 +19314,14 @@ callable_set_result(
                                 result
                         );
                         if (candidates[i] == T2_TYPE_INVALID) {
-                                free(candidates);
+                                ty_free(candidates);
                                 return T2_TYPE_INVALID;
                         }
                 }
                 T2Type replaced = kind == T2_TYPE_OVERLOAD
                                 ? t2_overload(shadow->universe, candidates, count)
                                 : t2_intersection(shadow->universe, candidates, count);
-                free(candidates);
+                ty_free(candidates);
                 return replaced;
         }
         return T2_TYPE_INVALID;
@@ -19145,30 +19338,30 @@ scheme_with_body(
         size_t predicate_count = t2_scheme_predicate_count(source);
         T2Quantifier *quantifiers = quantifier_count == 0
                                   ? NULL
-                                  : malloc(quantifier_count * sizeof *quantifiers);
+                                  : ty_malloc(quantifier_count * sizeof *quantifiers);
         T2Predicate *predicates = predicate_count == 0
                                 ? NULL
-                                : malloc(predicate_count * sizeof *predicates);
+                                : ty_malloc(predicate_count * sizeof *predicates);
         if (
                 (quantifier_count != 0 && quantifiers == NULL)
              || (predicate_count != 0 && predicates == NULL)
         ) {
-                free(quantifiers);
-                free(predicates);
+                ty_free(quantifiers);
+                ty_free(predicates);
                 shadow->failed = true;
                 return NULL;
         }
         for (size_t i = 0; i < quantifier_count; ++i) {
                 if (!t2_scheme_quantifier(source, i, &quantifiers[i])) {
-                        free(quantifiers);
-                        free(predicates);
+                        ty_free(quantifiers);
+                        ty_free(predicates);
                         return NULL;
                 }
         }
         for (size_t i = 0; i < predicate_count; ++i) {
                 if (!t2_scheme_predicate(source, i, &predicates[i])) {
-                        free(quantifiers);
-                        free(predicates);
+                        ty_free(quantifiers);
+                        ty_free(predicates);
                         return NULL;
                 }
         }
@@ -19180,8 +19373,8 @@ scheme_with_body(
                 predicates,
                 predicate_count
         );
-        free(quantifiers);
-        free(predicates);
+        ty_free(quantifiers);
+        ty_free(predicates);
         return scheme;
 }
 
@@ -19201,7 +19394,7 @@ constructor_receiver_for_scheme(
         }
         T2Type *arguments = class_arity == 0
                           ? NULL
-                          : malloc(class_arity * sizeof *arguments);
+                          : ty_malloc(class_arity * sizeof *arguments);
         if (class_arity != 0 && arguments == NULL) {
                 shadow->failed = true;
                 return T2_TYPE_INVALID;
@@ -19209,7 +19402,7 @@ constructor_receiver_for_scheme(
         for (size_t i = 0; i < class_arity; ++i) {
                 T2Quantifier quantifier;
                 if (!t2_scheme_quantifier(scheme, i, &quantifier)) {
-                        free(arguments);
+                        ty_free(arguments);
                         return T2_TYPE_INVALID;
                 }
                 arguments[i] = t2_variable(
@@ -19224,7 +19417,7 @@ constructor_receiver_for_scheme(
                 arguments,
                 class_arity
         );
-        free(arguments);
+        ty_free(arguments);
         return receiver;
 }
 
@@ -19378,11 +19571,11 @@ infer_class_definition(Types2Shadow *shadow, Stmt const *statement)
         size_t type_mark = push_type_variables(shadow);
         T2Quantifier *quantifiers = arity == 0
                                   ? NULL
-                                  : malloc(arity * sizeof *quantifiers);
-        T2Type *arguments = arity == 0 ? NULL : malloc(arity * sizeof *arguments);
+                                  : ty_malloc(arity * sizeof *quantifiers);
+        T2Type *arguments = arity == 0 ? NULL : ty_malloc(arity * sizeof *arguments);
         if (arity != 0 && (quantifiers == NULL || arguments == NULL)) {
-                free(quantifiers);
-                free(arguments);
+                ty_free(quantifiers);
+                ty_free(arguments);
                 shadow->failed = true;
                 goto Done;
         }
@@ -19540,8 +19733,8 @@ infer_class_definition(Types2Shadow *shadow, Stmt const *statement)
         if (class_nominal != NULL) class_nominal->complete = true;
         shadow->member_class_id = previous_member_class;
         shadow->member_receiver = previous_member_receiver;
-        free(quantifiers);
-        free(arguments);
+        ty_free(quantifiers);
+        ty_free(arguments);
         pop_type_variables(shadow, type_mark);
         shadow->level = outer_level;
         return receiver;
@@ -19735,7 +19928,7 @@ scan_loop_expression(Expr *expression, Scope *scope, void *user)
 static Types2Binding *
 snapshot_bindings(Types2Shadow *shadow, size_t count)
 {
-        Types2Binding *snapshot = count == 0 ? NULL : malloc(count * sizeof *snapshot);
+        Types2Binding *snapshot = count == 0 ? NULL : ty_malloc(count * sizeof *snapshot);
         if (count != 0 && snapshot == NULL) {
                 shadow->failed = true;
                 return NULL;
@@ -19784,7 +19977,7 @@ muted_prepass(Types2Shadow *shadow, Stmt const *const *statements, size_t count)
         t2_solver_commit(shadow->solver, mark);
         forget_touched_nodes(shadow, touched_mark);
         restore_bindings(shadow, before, binding_mark);
-        free(before);
+        ty_free(before);
 }
 
 typedef struct types2_closure_scan {
@@ -19923,7 +20116,7 @@ infer_loop_statement(Types2Shadow *shadow, Stmt const *statement)
         if (repass) muted_prepass(shadow, &statement, 1);
         Types2Flow flow = infer_statement_once(shadow, statement);
         restore_refinements(shadow, before, binding_mark);
-        free(before);
+        ty_free(before);
         return flow;
 }
 
@@ -20087,7 +20280,7 @@ infer_statement_once(Types2Shadow *shadow, Stmt const *statement)
                 result.value = valid
                              ? value
                              : t2_primitive(shadow->universe, T2_TYPE_ERROR);
-                free(environment);
+                ty_free(environment);
                 break;
         }
 
@@ -20246,7 +20439,7 @@ infer_statement_once(Types2Shadow *shadow, Stmt const *statement)
                         t2_solver_commit(shadow->solver, scope);
                 }
                 result.value = stored;
-                free(environment);
+                ty_free(environment);
                 break;
         }
 
@@ -20302,7 +20495,7 @@ infer_statement_once(Types2Shadow *shadow, Stmt const *statement)
                                         value,
                                         frame->result,
                                         "return-type",
-                                        "returned value does not satisfy the function result type"
+                                        "the returned value does not match the declared result type"
                                 );
                         }
                 }
@@ -20320,7 +20513,7 @@ infer_statement_once(Types2Shadow *shadow, Stmt const *statement)
                 size_t part_count = (size_t)vN(statement->_if.parts);
                 T2Type *conditions = part_count == 0
                                    ? NULL
-                                   : malloc(part_count * sizeof *conditions);
+                                   : ty_malloc(part_count * sizeof *conditions);
                 if (part_count != 0 && conditions == NULL) {
                         shadow->failed = true;
                         break;
@@ -20334,7 +20527,7 @@ infer_statement_once(Types2Shadow *shadow, Stmt const *statement)
                 size_t binding_mark = shadow->binding_count;
                 T2Type *before = snapshot_refinements(shadow, binding_mark);
                 if (binding_mark != 0 && before == NULL) {
-                        free(conditions);
+                        ty_free(conditions);
                         break;
                 }
                 bool negated = statement->_if.neg;
@@ -20416,10 +20609,10 @@ infer_statement_once(Types2Shadow *shadow, Stmt const *statement)
                                 );
                         }
                 }
-                free(conditions);
-                free(before);
-                free(then_bindings);
-                free(else_bindings);
+                ty_free(conditions);
+                ty_free(before);
+                ty_free(then_bindings);
+                ty_free(else_bindings);
                 result = flow_join(shadow, then_flow, else_flow);
                 break;
         }
@@ -20548,7 +20741,7 @@ infer_statement_once(Types2Shadow *shadow, Stmt const *statement)
                         if (binding_mark == 0 || before != NULL) {
                                 restore_refinements(shadow, before, binding_mark);
                         }
-                        free(before);
+                        ty_free(before);
                         if (reachable && !covered) {
                                 result = flow_join(shadow, result, arm);
                                 if (!guarded) {
@@ -20885,13 +21078,13 @@ install_declared_class_constructor(
         size_t declared_arity = (size_t)vN(definition->type_params);
         T2Quantifier *quantifiers = arity == 0
                                   ? NULL
-                                  : malloc(arity * sizeof *quantifiers);
+                                  : ty_malloc(arity * sizeof *quantifiers);
         T2Type *arguments = arity == 0
                           ? NULL
-                          : malloc(arity * sizeof *arguments);
+                          : ty_malloc(arity * sizeof *arguments);
         if (arity != 0 && (quantifiers == NULL || arguments == NULL)) {
-                free(quantifiers);
-                free(arguments);
+                ty_free(quantifiers);
+                ty_free(arguments);
                 shadow->failed = true;
                 return;
         }
@@ -20936,8 +21129,8 @@ install_declared_class_constructor(
                 arity
         );
         pop_type_variables(shadow, type_mark);
-        free(arguments);
-        free(quantifiers);
+        ty_free(arguments);
+        ty_free(quantifiers);
 }
 
 static void
@@ -21038,7 +21231,7 @@ log_native_type(Types2Shadow *shadow, T2Type type)
         if (text == NULL) fputs("null", shadow->log);
         else {
                 json_string(shadow->log, text);
-                free(text);
+                ty_free(text);
         }
 }
 
@@ -21874,34 +22067,34 @@ destroy_shadow(Types2Shadow *shadow)
                 t2_scheme_free(shadow->operators[i].scheme);
         }
         for (size_t i = 0; i < shadow->diagnostic_count; ++i) {
-                free(shadow->diagnostics[i].code);
-                free(shadow->diagnostics[i].message);
-                free(shadow->diagnostics[i].actual);
-                free(shadow->diagnostics[i].expected);
+                ty_free(shadow->diagnostics[i].code);
+                ty_free(shadow->diagnostics[i].message);
+                free_notes(&shadow->diagnostics[i].notes);
         }
+        ty_free(shadow->roots);
         for (size_t i = 0; i < shadow->provenance_count; ++i) {
-                free(shadow->provenances[i]);
+                ty_free(shadow->provenances[i]);
         }
-        free(shadow->functions);
-        free(shadow->assigned_symbols);
-        free(shadow->class_contracts);
-        free(shadow->operators);
-        free(shadow->provenances);
-        free(shadow->diagnostics);
-        free(shadow->type_variables);
-        free(shadow->upper_assumptions);
-        free(shadow->members);
-        free(shadow->nominals);
-        free(shadow->aliases);
-        free(shadow->bindings);
-        free(shadow->imported_operators);
-        free(shadow->touched);
-        free(shadow->nodes);
+        ty_free(shadow->functions);
+        ty_free(shadow->assigned_symbols);
+        ty_free(shadow->class_contracts);
+        ty_free(shadow->operators);
+        ty_free(shadow->provenances);
+        ty_free(shadow->diagnostics);
+        ty_free(shadow->type_variables);
+        ty_free(shadow->upper_assumptions);
+        ty_free(shadow->members);
+        ty_free(shadow->nominals);
+        ty_free(shadow->aliases);
+        ty_free(shadow->bindings);
+        ty_free(shadow->imported_operators);
+        ty_free(shadow->touched);
+        ty_free(shadow->nodes);
         t2_solver_free(shadow->solver);
         if (shadow->close_log && shadow->log != NULL) {
                 fclose(shadow->log);
         }
-        free(shadow);
+        ty_free(shadow);
 }
 
 
@@ -21929,96 +22122,213 @@ entry_unit(Types2Shadow const *shadow)
 }
 
 static void
+remember_root(Types2Shadow *shadow, void const *root)
+{
+        if (root == NULL || !shadow_reserve(
+                shadow,
+                (void **)&shadow->roots,
+                &shadow->root_capacity,
+                shadow->root_count + 1,
+                sizeof *shadow->roots
+        )) return;
+        shadow->roots[shadow->root_count++] = root;
+}
+
+static void
+annotate_roots(Types2Shadow *shadow)
+{
+        if (shadow->ty == NULL) return;
+        for (size_t i = 0; i < shadow->root_count; ++i) {
+                compiler_annotate_tokens(shadow->ty, shadow->roots[i]);
+        }
+}
+
+static char const *const TypeStyles[T2_TOKEN_KIND_COUNT] = {
+        [T2_TOKEN_PUNCTUATION] = NULL,
+        [T2_TOKEN_STRUCTURE]   = "38;2;240;158;58",
+        [T2_TOKEN_FUNCTION]    = "1;38;2;178;153;191",
+        [T2_TOKEN_BRACKET]     = "38;2;150;199;97",
+        [T2_TOKEN_OPERATOR]    = "1;94",
+        [T2_TOKEN_KEYWORD]     = "38;2;37;230;172",
+        [T2_TOKEN_PRIMITIVE]   = "92;1",
+        [T2_TOKEN_NOMINAL]     = "38;2;150;199;97",
+        [T2_TOKEN_VARIABLE]    = "38;2;255;153;187",
+        [T2_TOKEN_META]        = "38;2;211;134;155",
+        [T2_TOKEN_LITERAL]     = "38;2;142;192;124",
+        [T2_TOKEN_FIELD]       = "38;2;240;158;58",
+        [T2_TOKEN_PARAMETER]   = "38;2;178;153;191"
+};
+
+static void
 paint(FILE *out, char const *sgr)
 {
         if (ColorStderr) fprintf(out, "\x1b[%sm", sgr);
 }
 
-static bool
-primitive_type_word(char const *word, size_t length)
+static unsigned
+diagnostic_columns(void)
 {
-        static char const *const words[] = {
-                "Int", "Float", "String", "Bool", "Dynamic", "Never", "Any",
-                "Object", "Unknown", "Error", "nil", "true", "false"
+        int rows;
+        int columns;
+        if (!get_terminal_size(2, &rows, &columns) || columns < 40) return 100;
+        return (unsigned)columns;
+}
+
+static char const *
+working_directory(void)
+{
+        static char cwd[4096];
+        static bool resolved;
+        if (!resolved) {
+                resolved = true;
+                if (getcwd(cwd, sizeof cwd) == NULL) cwd[0] = '\0';
+        }
+        return cwd;
+}
+
+static void
+print_path_text(FILE *out, Types2Shadow const *shadow, char const *text)
+{
+        char const *cwd = working_directory();
+        size_t cwd_length = strlen(cwd);
+        char const *path = shadow == NULL ? NULL : shadow->path;
+        size_t path_length = path == NULL ? 0 : strlen(path);
+        while (*text != '\0') {
+                if (
+                        path_length != 0
+                     && strncmp(text, path, path_length) == 0
+                     && text[path_length] == ':'
+                ) {
+                        text += path_length + 1;
+                        continue;
+                }
+                if (
+                        cwd_length != 0
+                     && strncmp(text, cwd, cwd_length) == 0
+                     && text[cwd_length] == '/'
+                ) {
+                        text += cwd_length + 1;
+                        continue;
+                }
+                fputc(*text++, out);
+        }
+}
+
+static size_t
+painted_width(char const *text)
+{
+        size_t width = 0;
+        while (*text != '\0') {
+                if (text[0] == '\x1b' && text[1] == '[') {
+                        text += 2;
+                        while (*text != '\0' && *text != 'm') ++text;
+                        if (*text == 'm') ++text;
+                        continue;
+                }
+                width += ((unsigned char)*text & 0xC0) != 0x80;
+                ++text;
+        }
+        return width;
+}
+
+typedef struct types2_writer {
+        FILE *out;
+        Types2Shadow const *shadow;
+        T2Names *names;
+        unsigned width;
+        unsigned hang;
+        unsigned column;
+} Types2Writer;
+
+static void
+write_text(Types2Writer *writer, char const *text)
+{
+        fputs(text, writer->out);
+        writer->column += (unsigned)painted_width(text);
+}
+
+static void
+write_type(Types2Writer *writer, T2Type type)
+{
+        T2PrintOptions options = {
+                .width = writer->width,
+                .indent = 4,
+                .column = writer->column,
+                .hang = writer->hang,
+                .styles = ColorStderr ? TypeStyles : NULL,
+                .names = writer->names
         };
-        for (size_t i = 0; i < sizeof words / sizeof words[0]; ++i) {
-                if (strlen(words[i]) == length && memcmp(words[i], word, length) == 0) {
-                        return true;
-                }
+        char *text = type == T2_TYPE_INVALID
+                   ? NULL
+                   : t2_type_render(types2_universe(), type, &options);
+        if (text == NULL) {
+                write_text(writer, "?");
+                return;
         }
-        return false;
-}
-
-static bool
-structural_type_word(char const *word, size_t length)
-{
-        static char const *const words[] = { "var", "yields", "sends", "where" };
-        for (size_t i = 0; i < sizeof words / sizeof words[0]; ++i) {
-                if (strlen(words[i]) == length && memcmp(words[i], word, length) == 0) {
-                        return true;
-                }
-        }
-        return false;
-}
-
-static bool
-type_word_char(unsigned char c, unsigned char next)
-{
-        return isalnum(c)
-            || c == '_'
-            || c == '?'
-            || c == '!'
-            || (c == '-' && isalnum(next));
+        fputs(text, writer->out);
+        char const *last = strrchr(text, '\n');
+        writer->column = last == NULL
+                       ? writer->column + (unsigned)painted_width(text)
+                       : (unsigned)painted_width(last + 1);
+        ty_free(text);
 }
 
 static void
-paint_type(FILE *out, char const *text)
+begin_gutter_line(FILE *out, unsigned digits, char const *marker)
 {
-        size_t i = 0;
-        while (text[i] != '\0') {
-                unsigned char c = (unsigned char)text[i];
-                if (c == '$') {
-                        size_t start = i++;
-                        while (isalnum((unsigned char)text[i]) || text[i] == '_') ++i;
-                        paint(out, "35");
-                        fwrite(text + start, 1, i - start, out);
-                        paint(out, "0");
-                } else if (isalpha(c) || c == '_') {
-                        size_t start = i;
-                        while (
-                                text[i] != '\0'
-                             && type_word_char((unsigned char)text[i], (unsigned char)text[i + 1])
-                        ) ++i;
-                        size_t length = i - start;
-                        if (primitive_type_word(text + start, length)) paint(out, "36");
-                        else if (structural_type_word(text + start, length)) paint(out, "2");
-                        else if (isupper(c)) paint(out, "33");
-                        fwrite(text + start, 1, length, out);
-                        paint(out, "0");
-                } else if (isdigit(c)) {
-                        size_t start = i;
-                        while (isdigit((unsigned char)text[i]) || text[i] == '.') ++i;
-                        paint(out, "32");
-                        fwrite(text + start, 1, i - start, out);
-                        paint(out, "0");
-                } else if (c == '\'') {
-                        size_t start = i++;
-                        while (text[i] != '\0' && text[i] != '\'') ++i;
-                        if (text[i] == '\'') ++i;
-                        paint(out, "32");
-                        fwrite(text + start, 1, i - start, out);
-                        paint(out, "0");
-                } else {
-                        fputc(c, out);
-                        ++i;
-                }
-        }
+        paint(out, "2");
+        fprintf(out, "%*s %s ", digits, "", marker);
+        paint(out, "0");
+}
+
+static bool
+rich_context_available(Types2Diagnostic const *diagnostic)
+{
+        Expr const *syntax = diagnostic->syntax;
+        if (syntax != NULL && syntax->origin != NULL) syntax = syntax->origin;
+        return syntax != NULL
+            && syntax->mod != NULL
+            && syntax->mod->source != NULL
+            && syntax->mod->source[0] != '\0'
+            && syntax->start.s != NULL
+            && syntax->end.s != NULL
+            && syntax->start.s >= syntax->mod->source
+            && syntax->end.s >= syntax->start.s;
 }
 
 static void
-print_source_excerpt(FILE *out, Types2Shadow const *shadow, Location location)
+print_source_window(
+        FILE *out,
+        Types2Shadow const *shadow,
+        Types2Diagnostic const *diagnostic,
+        unsigned columns
+)
+{
+        enum { LINES_BEFORE = 3, LINES_AFTER = 2 };
+        byte_vector buffer = {0};
+        WriteExpressionSourceWindow(
+                shadow->ty,
+                &buffer,
+                (int)columns,
+                diagnostic->syntax,
+                NULL,
+                LINES_BEFORE,
+                LINES_AFTER
+        );
+        fwrite(vv(buffer), 1, vN(buffer), out);
+        ty_free(vv(buffer));
+}
+
+static void
+print_source_excerpt(
+        FILE *out,
+        Types2Shadow const *shadow,
+        Types2Diagnostic const *diagnostic,
+        unsigned digits
+)
 {
         if (shadow->source == NULL) return;
+        Location location = diagnostic->location;
         char const *line = shadow->source;
         for (uint32_t n = 0; n < location.line && line != NULL; ++n) {
                 line = strchr(line, '\n');
@@ -22027,20 +22337,37 @@ print_source_excerpt(FILE *out, Types2Shadow const *shadow, Location location)
         if (line == NULL) return;
         char const *end = strchr(line, '\n');
         size_t length = end == NULL ? strlen(line) : (size_t)(end - line);
+
         paint(out, "2");
-        fprintf(out, "    %5u | ", location.line + 1);
+        fprintf(out, "%*s |\n", digits, "");
+        paint(out, "0");
+
+        paint(out, "2");
+        fprintf(out, "%*u | ", digits, location.line + 1);
         paint(out, "0");
         fwrite(line, 1, length, out);
         fputc('\n', out);
-        paint(out, "2");
-        fputs("          | ", out);
-        paint(out, "0");
+
+        begin_gutter_line(out, digits, "|");
         for (uint32_t i = 0; i < location.col && i < length; ++i) {
                 fputc(line[i] == '\t' ? '\t' : ' ', out);
         }
-        paint(out, "1;31");
-        fputs("^\n", out);
+        size_t available = location.col < length ? length - location.col : 1;
+        size_t span = 1;
+        if (
+                diagnostic->end.line == location.line
+             && diagnostic->end.col > location.col
+        ) {
+                span = diagnostic->end.col - location.col;
+        } else if (diagnostic->end.line > location.line) {
+                span = available;
+        }
+        if (span > available) span = available;
+        if (span == 0) span = 1;
+        paint(out, diagnostic->severity == TYPES2_DIAGNOSTIC_ERROR ? "1;31" : "1;33");
+        for (size_t i = 0; i < span; ++i) fputc('^', out);
         paint(out, "0");
+        fputc('\n', out);
 }
 
 static int
@@ -22067,18 +22394,278 @@ same_diagnostic(Types2Diagnostic const *a, Types2Diagnostic const *b)
             && strcmp(a->message, b->message) == 0;
 }
 
+static char const *
+found_label(char const *code)
+{
+        static char const *const callee_codes[] = {
+                "bad-call", "no-overload", "not-callable", "union-call-coverage"
+        };
+        for (size_t i = 0; i < sizeof callee_codes / sizeof callee_codes[0]; ++i) {
+                if (strcmp(code, callee_codes[i]) == 0) return "callee";
+        }
+        return "found";
+}
+
+static Types2Writer
+begin_annotation(
+        FILE *out,
+        Types2Shadow const *shadow,
+        T2Names *names,
+        unsigned digits,
+        unsigned columns,
+        char const *label
+)
+{
+        Types2Writer writer = {
+                .out = out,
+                .shadow = shadow,
+                .names = names,
+                .width = columns
+        };
+        paint(out, "2");
+        fprintf(out, "%*s = %s:%*s", digits, "", label, (int)(9 - strlen(label)), "");
+        paint(out, "0");
+        writer.column = digits + 4 + 9;
+        writer.hang = writer.column;
+        return writer;
+}
+
+static void
+print_labeled_type(
+        FILE *out,
+        Types2Shadow const *shadow,
+        T2Names *names,
+        unsigned digits,
+        unsigned columns,
+        char const *label,
+        T2Type type
+)
+{
+        Types2Writer writer = begin_annotation(out, shadow, names, digits, columns, label);
+        write_type(&writer, type);
+        fputc('\n', out);
+}
+
+static bool
+generic_failure_message(char const *message)
+{
+        static char const *const generic[] = {
+                "constraint failed",
+                "external predicate failed",
+                "invalid type constraint"
+        };
+        if (message == NULL) return true;
+        for (size_t i = 0; i < sizeof generic / sizeof generic[0]; ++i) {
+                if (strcmp(message, generic[i]) == 0) return true;
+        }
+        return false;
+}
+
+static char const *
+cause_label(T2CauseKind kind)
+{
+        switch (kind) {
+        case T2_CAUSE_LOWER: return "lower bound";
+        case T2_CAUSE_UPPER: return "upper bound";
+        case T2_CAUSE_EDGE: return "subtype edge";
+        case T2_CAUSE_EQUALITY: return "equality";
+        case T2_CAUSE_PREDICATE: return "constraint";
+        case T2_CAUSE_FAILURE: break;
+        }
+        return "failure";
+}
+
+static void
+write_provenance(Types2Writer *writer, char const *provenance, char const *headline)
+{
+        if (provenance == NULL || *provenance == '\0') return;
+        size_t length = headline == NULL ? 0 : strlen(headline);
+        if (length != 0 && strncmp(provenance, headline, length) == 0) {
+                provenance += length;
+                while (*provenance == ' ') ++provenance;
+                if (strncmp(provenance, "at ", 3) == 0) provenance += 3;
+                if (*provenance == '\0') return;
+        }
+        paint(writer->out, "2");
+        write_text(writer, " (");
+        print_path_text(writer->out, writer->shadow, provenance);
+        write_text(writer, ")");
+        paint(writer->out, "0");
+}
+
+static void
+write_predicate(Types2Writer *writer, Types2Note const *note)
+{
+        T2Predicate predicate = {
+                .kind = note->predicate,
+                .subtype = note->left,
+                .supertype = note->right,
+                .operand = note->operand,
+                .name = note->text
+        };
+        T2PrintOptions options = {
+                .width = writer->width,
+                .indent = 4,
+                .column = writer->column,
+                .hang = writer->hang,
+                .styles = ColorStderr ? TypeStyles : NULL,
+                .names = writer->names
+        };
+        char *text = t2_predicate_render(types2_universe(), &predicate, &options);
+        if (text == NULL) {
+                write_text(writer, "?");
+                return;
+        }
+        fputs(text, writer->out);
+        char const *last = strrchr(text, '\n');
+        writer->column = last == NULL
+                       ? writer->column + (unsigned)painted_width(text)
+                       : (unsigned)painted_width(last + 1);
+        ty_free(text);
+}
+
+static void
+print_note(
+        FILE *out,
+        Types2Shadow const *shadow,
+        T2Names *names,
+        unsigned digits,
+        unsigned columns,
+        Types2Diagnostic const *diagnostic,
+        Types2Note const *note
+)
+{
+        Types2Writer writer = begin_annotation(
+                out,
+                shadow,
+                names,
+                digits,
+                columns,
+                note->kind == TYPES2_NOTE_PREDICATE ? "constraint" : "note"
+        );
+        switch (note->kind) {
+        case TYPES2_NOTE_TEXT:
+                write_text(&writer, note->text);
+                break;
+        case TYPES2_NOTE_PREDICATE:
+                write_predicate(&writer, note);
+                write_provenance(&writer, note->provenance, diagnostic->message);
+                break;
+        case TYPES2_NOTE_CAUSE:
+                if (note->cause == T2_CAUSE_FAILURE) {
+                        if (note->text != NULL && strcmp(note->text, "no union arm accepts the subtype") == 0) {
+                                write_text(&writer, "no arm of the expected union accepts ");
+                                write_type(&writer, note->left);
+                        } else {
+                                if (!generic_failure_message(note->text)) {
+                                        write_text(&writer, note->text);
+                                        write_text(&writer, ": ");
+                                }
+                                write_type(&writer, note->left);
+                                write_text(&writer, " is not a subtype of ");
+                                write_type(&writer, note->right);
+                        }
+                } else {
+                        write_type(&writer, note->left);
+                        write_text(&writer, " ");
+                        paint(out, "1;94");
+                        write_text(&writer, "<:");
+                        paint(out, "0");
+                        write_text(&writer, " ");
+                        write_type(&writer, note->right);
+                        paint(out, "2");
+                        write_text(&writer, " [");
+                        write_text(&writer, cause_label(note->cause));
+                        write_text(&writer, "]");
+                        paint(out, "0");
+                }
+                write_provenance(&writer, note->provenance, diagnostic->message);
+                break;
+        }
+        fputc('\n', out);
+}
+
+static bool
+note_restates_diagnostic(Types2Note const *note, Types2Diagnostic const *diagnostic)
+{
+        return note->kind == TYPES2_NOTE_CAUSE
+            && note->cause == T2_CAUSE_FAILURE
+            && generic_failure_message(note->text)
+            && note->left == diagnostic->actual
+            && note->right == diagnostic->expected;
+}
+
+static bool
+note_repeats_failure(Types2Note const *note, Types2Note const *failure)
+{
+        return failure != NULL
+            && note != failure
+            && note->kind == TYPES2_NOTE_CAUSE
+            && note->left == failure->left
+            && note->right == failure->right;
+}
+
+static void
+print_notes(
+        FILE *out,
+        Types2Shadow const *shadow,
+        T2Names *names,
+        unsigned digits,
+        unsigned columns,
+        Types2Diagnostic const *diagnostic
+)
+{
+        enum { NOTE_LIMIT = 6 };
+        Types2Note const *failure = NULL;
+        for (size_t i = 0; i < diagnostic->notes.count; ++i) {
+                Types2Note const *note = &diagnostic->notes.items[i];
+                if (note->kind == TYPES2_NOTE_CAUSE && note->cause == T2_CAUSE_FAILURE) {
+                        failure = note;
+                        break;
+                }
+        }
+        size_t printed = 0;
+        size_t skipped = 0;
+        for (size_t i = 0; i < diagnostic->notes.count; ++i) {
+                Types2Note const *note = &diagnostic->notes.items[i];
+                if (note_repeats_failure(note, failure)) continue;
+                if (note_restates_diagnostic(note, diagnostic)) continue;
+                if (printed == NOTE_LIMIT) {
+                        skipped += 1;
+                        continue;
+                }
+                print_note(out, shadow, names, digits, columns, diagnostic, note);
+                printed += 1;
+        }
+        if (skipped != 0) {
+                paint(out, "2");
+                fprintf(out, "%*s = ... and %zu more\n", digits, "", skipped);
+                paint(out, "0");
+        }
+}
+
 static void
 print_diagnostic(
         FILE *out,
         Types2Shadow const *shadow,
         Types2Diagnostic const *diagnostic,
-        bool labeled
+        bool labeled,
+        unsigned columns
 )
 {
         bool error = diagnostic->severity == TYPES2_DIAGNOSTIC_ERROR;
-        char const *message = diagnostic->message;
-        char const *newline = strchr(message, '\n');
-        size_t headline = newline == NULL ? strlen(message) : (size_t)(newline - message);
+        bool rich = rich_context_available(diagnostic);
+        char number[16];
+        unsigned digits = rich
+                        ? 6
+                        : (unsigned)snprintf(
+                                number,
+                                sizeof number,
+                                "%u",
+                                diagnostic->location.line + 1
+                          );
+        T2Names *names = t2_names_new();
+
         if (labeled) {
                 paint(out, error ? "1;31" : "1;33");
                 fputs(error ? "error" : "warning", out);
@@ -22086,54 +22673,55 @@ print_diagnostic(
                 fputs(": ", out);
         }
         paint(out, "1");
-        fwrite(message, 1, headline, out);
+        fputs(diagnostic->message, out);
         paint(out, "0");
         paint(out, "2");
         fprintf(out, "  [%s]\n", diagnostic->code);
         paint(out, "0");
-        for (char const *rest = newline; rest != NULL && rest[1] != '\0';) {
-                char const *next = strchr(rest + 1, '\n');
-                size_t length = next == NULL ? strlen(rest + 1) : (size_t)(next - rest - 1);
-                if (length != 0) {
-                        paint(out, "2");
-                        fputs("          note: ", out);
-                        fwrite(rest + 1, 1, length, out);
-                        fputc('\n', out);
-                        paint(out, "0");
-                }
-                rest = next;
-        }
+
         paint(out, "36");
-        fputs("      --> ", out);
+        fprintf(out, "%*s--> ", digits + 1, "");
         paint(out, "0");
+        print_path_text(out, NULL, shadow->path);
         fprintf(
                 out,
-                "%s:%u:%u\n",
-                shadow->path,
+                ":%u:%u\n",
                 diagnostic->location.line + 1,
                 diagnostic->location.col + 1
         );
-        print_source_excerpt(out, shadow, diagnostic->location);
-        if (diagnostic->actual != NULL) {
-                paint(out, "2");
-                fputs("          = actual:   ", out);
-                paint(out, "0");
-                paint_type(out, diagnostic->actual);
-                fputc('\n', out);
+        if (rich) print_source_window(out, shadow, diagnostic, columns);
+        else print_source_excerpt(out, shadow, diagnostic, digits);
+
+        if (diagnostic->actual != T2_TYPE_INVALID) {
+                print_labeled_type(
+                        out,
+                        shadow,
+                        names,
+                        digits,
+                        columns,
+                        found_label(diagnostic->code),
+                        diagnostic->actual
+                );
         }
-        if (diagnostic->expected != NULL) {
-                paint(out, "2");
-                fputs("          = expected: ", out);
-                paint(out, "0");
-                paint_type(out, diagnostic->expected);
-                fputc('\n', out);
+        if (diagnostic->expected != T2_TYPE_INVALID) {
+                print_labeled_type(
+                        out,
+                        shadow,
+                        names,
+                        digits,
+                        columns,
+                        "expected",
+                        diagnostic->expected
+                );
         }
+        print_notes(out, shadow, names, digits, columns, diagnostic);
+        t2_names_free(names);
 }
 
 static void
 print_diagnostics(FILE *out, Types2Shadow *shadow, bool labeled, bool warnings)
 {
-        Types2Diagnostic const **ordered = malloc(
+        Types2Diagnostic const **ordered = ty_malloc(
                 shadow->diagnostic_count * sizeof *ordered
         );
         if (ordered == NULL) return;
@@ -22141,14 +22729,16 @@ print_diagnostics(FILE *out, Types2Shadow *shadow, bool labeled, bool warnings)
                 ordered[i] = &shadow->diagnostics[i];
         }
         qsort(ordered, shadow->diagnostic_count, sizeof *ordered, compare_diagnostics);
+        unsigned columns = diagnostic_columns();
         size_t printed = 0;
         for (size_t i = 0; i < shadow->diagnostic_count; ++i) {
                 if (i != 0 && same_diagnostic(ordered[i], ordered[i - 1])) continue;
                 if (!warnings && ordered[i]->severity != TYPES2_DIAGNOSTIC_ERROR) continue;
-                print_diagnostic(out, shadow, ordered[i], labeled || printed != 0);
+                if (printed != 0) fputc('\n', out);
+                print_diagnostic(out, shadow, ordered[i], labeled || printed != 0, columns);
                 printed += 1;
         }
-        free(ordered);
+        ty_free(ordered);
 }
 
 static char *
@@ -22170,6 +22760,7 @@ report_diagnostics(Types2Shadow *shadow, size_t errors, size_t warnings)
         if (shadow->diagnostic_count == 0) return;
         FILE *out = stderr;
         print_diagnostics(out, shadow, true, true);
+        fputc('\n', out);
         paint(out, "1");
         fputs("types2", out);
         paint(out, "0");
@@ -22188,7 +22779,7 @@ report_diagnostics(Types2Shadow *shadow, size_t errors, size_t warnings)
 static Types2Shadow *
 new_shadow(char const *unit, char const *path, char const *source, bool logged)
 {
-        Types2Shadow *shadow = calloc(1, sizeof *shadow);
+        Types2Shadow *shadow = ty_calloc(1, sizeof *shadow);
         if (shadow == NULL) return NULL;
 
         shadow->unit = unit == NULL ? "<unknown>" : unit;
@@ -22270,6 +22861,10 @@ types2_shadow_observe_statement(
         (void)visit_statement(ty, (Stmt *)stmt, NULL, &visitor);
 
         shadow->ty = ty;
+        if (
+                checkpoint == TYPES2_SHADOW_STATEMENT
+             || checkpoint == TYPES2_SHADOW_CLASS_OPERATOR
+        ) remember_root(shadow, stmt);
         bind_primitive_classes(shadow);
         if (
                 checkpoint == TYPES2_SHADOW_DECLARATION
@@ -22425,7 +23020,7 @@ diagnose_unresolved_obligations(Types2Shadow *shadow)
                         &predicate
                 )) continue;
                 if (obligation_on_unknown(shadow, &predicate)) continue;
-                add_diagnostic(
+                Types2Diagnostic *diagnostic = add_diagnostic(
                         shadow,
                         obligation_provenance_site(
                                 shadow,
@@ -22433,15 +23028,22 @@ diagnose_unresolved_obligations(Types2Shadow *shadow)
                         ),
                         TYPES2_DIAGNOSTIC_ERROR,
                         "unresolved-constraint",
-                        predicate.subtype,
-                        predicate.supertype,
-                        "the `%s%s%s` constraint remained unsolved at the end of the compilation unit%s%s",
-                        predicate_kind_name(predicate.kind),
-                        predicate.name == NULL ? "" : ":",
-                        predicate.name == NULL ? "" : predicate.name,
-                        predicate.provenance == NULL ? "" : " from ",
-                        predicate.provenance == NULL ? "" : predicate.provenance
+                        T2_TYPE_INVALID,
+                        T2_TYPE_INVALID,
+                        "the type of this expression could not be determined"
                 );
+                if (diagnostic == NULL) continue;
+                push_note(&diagnostic->notes, (Types2Note) {
+                        .kind = TYPES2_NOTE_PREDICATE,
+                        .predicate = predicate.kind,
+                        .left = snapshot_type(shadow, predicate.subtype),
+                        .right = snapshot_type(shadow, predicate.supertype),
+                        .operand = snapshot_type(shadow, predicate.operand),
+                        .text = predicate.name == NULL ? NULL : S2(predicate.name),
+                        .provenance = predicate.provenance == NULL
+                                    ? NULL
+                                    : S2(predicate.provenance)
+                });
         }
 }
 
@@ -22503,7 +23105,7 @@ static void
 throw_failure(Ty *ty, char *failure)
 {
         static char *pending;
-        free(pending);
+        ty_free(pending);
         pending = failure;
         CompileError(ty, MOD_COMPILE_ERR, "%s", pending);
 }
@@ -22518,6 +23120,7 @@ types2_shadow_finish(Ty *ty, Types2Shadow *shadow)
                 return;
         }
 
+        shadow->ty = ty;
         validate_pending_class_contracts(shadow);
         diagnose_unresolved_obligations(shadow);
         report_internal_failure(shadow);
@@ -22532,6 +23135,7 @@ types2_shadow_finish(Ty *ty, Types2Shadow *shadow)
                   && types2_after_startup
                   && (entry_unit(shadow) || shadow->published_bindings);
         bool reported = !fatal && report_all_units();
+        if ((fatal || reported) && shadow->diagnostic_count != 0) annotate_roots(shadow);
         if (reported) report_diagnostics(shadow, errors, warnings);
 
         if (shadow->log != NULL) {
@@ -22558,16 +23162,24 @@ types2_shadow_finish(Ty *ty, Types2Shadow *shadow)
                         json_string(shadow->log, diagnostic->code);
                         fputs(",\"message\":", shadow->log);
                         json_string(shadow->log, diagnostic->message);
+                        char *actual = diagnostic->actual == T2_TYPE_INVALID
+                                     ? NULL
+                                     : t2_type_string(shadow->universe, diagnostic->actual);
+                        char *expected = diagnostic->expected == T2_TYPE_INVALID
+                                       ? NULL
+                                       : t2_type_string(shadow->universe, diagnostic->expected);
                         fputs(",\"actual\":", shadow->log);
-                        if (diagnostic->actual == NULL) fputs("null", shadow->log);
-                        else json_string(shadow->log, diagnostic->actual);
+                        if (actual == NULL) fputs("null", shadow->log);
+                        else json_string(shadow->log, actual);
                         fputs(",\"expected\":", shadow->log);
-                        if (diagnostic->expected == NULL) fputs("null", shadow->log);
-                        else json_string(shadow->log, diagnostic->expected);
+                        if (expected == NULL) fputs("null", shadow->log);
+                        else json_string(shadow->log, expected);
                         fputs(",\"actual_hash\":", shadow->log);
-                        log_type_hash(shadow, diagnostic->actual, diagnostic->actual_hash);
+                        log_type_hash(shadow, actual, diagnostic->actual_hash);
                         fputs(",\"expected_hash\":", shadow->log);
-                        log_type_hash(shadow, diagnostic->expected, diagnostic->expected_hash);
+                        log_type_hash(shadow, expected, diagnostic->expected_hash);
+                        ty_free(actual);
+                        ty_free(expected);
                         log_end(shadow);
                 }
 
@@ -22952,6 +23564,7 @@ types2_check_expression(Ty *ty, Expr *expression)
         shadow->ty = ty;
         shadow->published_bindings = true;
         bind_primitive_classes(shadow);
+        remember_root(shadow, expression);
         if (IsStmt(expression)) {
                 register_declaration(shadow, (Stmt const *)expression);
         }
@@ -22974,18 +23587,31 @@ types2_infer(Ty *ty, Expr *expression)
         if (expression == NULL) return T2_TYPE_INVALID;
         Types2Shadow *shadow = scratch_shadow(ty);
         if (shadow == NULL) return T2_TYPE_INVALID;
-        return finish_scratch(shadow, infer_expression(shadow, expression));
+        return finish_scratch(shadow, typeof_operand_type(shadow, expression));
+}
+
+char *
+types2_render(Ty *ty, T2Type type, Types2Render render)
+{
+        (void)ty;
+        T2PrintOptions options = {
+                .width = render.width,
+                .indent = 4,
+                .column = render.column,
+                .hang = render.hang,
+                .styles = render.color ? TypeStyles : NULL
+        };
+        char *text = type == T2_TYPE_INVALID
+                   ? NULL
+                   : t2_type_render(types2_universe(), type, &options);
+        if (text == NULL) text = S2("Unknown");
+        return text;
 }
 
 char *
 types2_show(Ty *ty, T2Type type)
 {
-        (void)ty;
-        char *text = type == T2_TYPE_INVALID
-                   ? NULL
-                   : t2_type_string(types2_universe(), type);
-        if (text == NULL) text = strdup("Unknown");
-        return text;
+        return types2_render(ty, type, (Types2Render) {0});
 }
 
 typedef struct types2_check_pair {
@@ -23015,7 +23641,7 @@ push_check_pair(Types2CheckStack *stack, T2Type type, Value const *value)
 {
         if (stack->count == stack->capacity) {
                 size_t capacity = stack->capacity == 0 ? 16 : stack->capacity * 2;
-                Types2CheckPair *pairs = realloc(stack->pairs, capacity * sizeof *pairs);
+                Types2CheckPair *pairs = ty_realloc(stack->pairs, capacity * sizeof *pairs);
                 if (pairs == NULL) return false;
                 stack->pairs = pairs;
                 stack->capacity = capacity;
@@ -23157,6 +23783,7 @@ static bool
 check_value_x(Ty *ty, Types2CheckStack *stack, T2Type type, Value const *value)
 {
         T2Universe *universe = types2_universe();
+        type = t2_type_scheme_body(universe, type);
         T2TypeKind kind = t2_type_kind(universe, type);
         size_t arity = t2_type_arity(universe, type);
 
@@ -23260,7 +23887,7 @@ types2_check(Ty *ty, T2Type type, Value const *value)
 {
         Types2CheckStack stack = {0};
         bool ok = check_value(ty, &stack, type, value);
-        free(stack.pairs);
+        ty_free(stack.pairs);
         return ok;
 }
 
@@ -23291,6 +23918,7 @@ class_of_type_x(Ty *ty, T2Type type, unsigned depth)
 {
         T2Universe *universe = types2_universe();
         if (depth > 64) return CLASS_TOP;
+        type = t2_type_scheme_body(universe, type);
         switch (t2_type_kind(universe, type)) {
         case T2_TYPE_NEVER:
                 return CLASS_BOTTOM;
@@ -23371,6 +23999,7 @@ types2_is_nil(T2Type type)
 bool
 types2_is_callable(T2Type type)
 {
+        type = t2_type_scheme_body(types2_universe(), type);
         T2TypeKind kind = t2_type_kind(types2_universe(), type);
         return type != T2_TYPE_INVALID
             && (kind == T2_TYPE_FUNCTION || kind == T2_TYPE_OVERLOAD);
@@ -23380,6 +24009,7 @@ T2Type
 types2_callable_result(T2Type type)
 {
         T2Universe *universe = types2_universe();
+        type = t2_type_scheme_body(universe, type);
         if (type == T2_TYPE_INVALID || t2_type_kind(universe, type) != T2_TYPE_FUNCTION) {
                 return T2_TYPE_INVALID;
         }
@@ -23411,11 +24041,11 @@ types2_member_type(Ty *ty, T2Type receiver, T2Type member)
         ) return member;
         size_t arity = t2_type_arity(universe, receiver);
         if (arity == 0) return member;
-        uint32_t *ids = malloc(arity * sizeof *ids);
-        T2Type *arguments = malloc(arity * sizeof *arguments);
+        uint32_t *ids = ty_malloc(arity * sizeof *ids);
+        T2Type *arguments = ty_malloc(arity * sizeof *arguments);
         if (ids == NULL || arguments == NULL) {
-                free(ids);
-                free(arguments);
+                ty_free(ids);
+                ty_free(arguments);
                 return member;
         }
         for (size_t i = 0; i < arity; ++i) {
@@ -23423,8 +24053,8 @@ types2_member_type(Ty *ty, T2Type receiver, T2Type member)
                 arguments[i] = t2_type_child(universe, receiver, i);
         }
         T2Type result = t2_type_substitute(universe, member, ids, arguments, arity);
-        free(ids);
-        free(arguments);
+        ty_free(ids);
+        ty_free(arguments);
         return result == T2_TYPE_INVALID ? member : result;
 }
 
@@ -23529,6 +24159,7 @@ static Value
 reflect_type(Ty *ty, T2Type type, unsigned depth)
 {
         T2Universe *universe = types2_universe();
+        type = t2_type_scheme_body(universe, type);
         if (type == T2_TYPE_INVALID) return TAG(TyUnknownT);
         if (depth > 64) return TAG(TyAnyT);
         switch (t2_type_kind(universe, type)) {
@@ -23638,7 +24269,7 @@ collect_types(Ty *ty, Value const *items, T2Type **out)
                 CompileError(ty, MOD_COMPILE_ERR, "invalid type list in type spec: %s", VSC(items));
                 UNREACHABLE("invalid type spec");
         }
-        T2Type *types = count == 0 ? NULL : malloc(count * sizeof *types);
+        T2Type *types = count == 0 ? NULL : ty_malloc(count * sizeof *types);
         if (count != 0 && types == NULL) {
                 CompileError(ty, MOD_COMPILE_ERR, "out of memory while building a type");
                 UNREACHABLE("invalid type spec");
@@ -23667,7 +24298,7 @@ type_from_object_spec(Ty *ty, Value const *inner)
                 class = class_from_value(ty, inner);
         }
         T2Type result = types2_class_instance(ty, class->i, arguments, count);
-        free(arguments);
+        ty_free(arguments);
         return result;
 }
 
@@ -23680,11 +24311,11 @@ type_from_record_spec(Ty *ty, Value const *inner)
         for (size_t i = 0; i < count; ++i) {
                 named |= inner->ids != NULL && inner->ids[i] != -1;
         }
-        T2Type *types = count == 0 ? NULL : malloc(count * sizeof *types);
-        T2FieldSpec *fields = !named || count == 0 ? NULL : calloc(count, sizeof *fields);
+        T2Type *types = count == 0 ? NULL : ty_malloc(count * sizeof *types);
+        T2FieldSpec *fields = !named || count == 0 ? NULL : ty_calloc(count, sizeof *fields);
         if ((count != 0 && types == NULL) || (named && count != 0 && fields == NULL)) {
-                free(types);
-                free(fields);
+                ty_free(types);
+                ty_free(fields);
                 CompileError(ty, MOD_COMPILE_ERR, "out of memory while building a type");
                 UNREACHABLE("invalid type spec");
         }
@@ -23708,8 +24339,8 @@ type_from_record_spec(Ty *ty, Value const *inner)
                                 T2_RECORD_OPEN
                         )
                       : t2_tuple(universe, types, count);
-        free(types);
-        free(fields);
+        ty_free(types);
+        ty_free(fields);
         return result;
 }
 
@@ -23732,7 +24363,7 @@ type_from_function_spec(Ty *ty, Value const *inner)
         }
         Array const *specs = inner->items[1].array;
         size_t count = vN(*specs);
-        T2ParameterSpec *parameters = count == 0 ? NULL : calloc(count, sizeof *parameters);
+        T2ParameterSpec *parameters = count == 0 ? NULL : ty_calloc(count, sizeof *parameters);
         if (count != 0 && parameters == NULL) {
                 CompileError(ty, MOD_COMPILE_ERR, "out of memory while building a type");
                 UNREACHABLE("invalid type spec");
@@ -23764,7 +24395,7 @@ type_from_function_spec(Ty *ty, Value const *inner)
                 t2_primitive(universe, T2_TYPE_NEVER),
                 t2_primitive(universe, T2_TYPE_NIL)
         );
-        free(parameters);
+        ty_free(parameters);
         return result;
 }
 
@@ -23850,7 +24481,7 @@ types2_from_ty(Ty *ty, Value const *value)
                 T2Type result = tag == TyUnionT
                               ? t2_union(universe, arms, count)
                               : t2_intersection(universe, arms, count);
-                free(arms);
+                ty_free(arms);
                 return result;
         }
         case TyAliasT:
@@ -23916,6 +24547,7 @@ Expr const *
 types2_find_member(Ty *ty, T2Type type, char const *name)
 {
         T2Universe *universe = types2_universe();
+        type = t2_type_scheme_body(universe, type);
         if (type == T2_TYPE_INVALID || name == NULL) return NULL;
         T2TypeKind kind = t2_type_kind(universe, type);
         if (kind == T2_TYPE_UNION || kind == T2_TYPE_INTERSECTION) {
@@ -23974,13 +24606,14 @@ push_completion(
                         "depth", INTEGER(depth)
                 )
         );
-        free(shown);
+        ty_free(shown);
 }
 
 void
 types2_completions(Ty *ty, T2Type type, char const *prefix, void *out)
 {
         T2Universe *universe = types2_universe();
+        type = t2_type_scheme_body(universe, type);
         ValueVector *completions = out;
         size_t prefix_length = prefix == NULL ? 0 : strlen(prefix);
         if (type == T2_TYPE_INVALID) return;

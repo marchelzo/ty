@@ -603,7 +603,13 @@ show_impl(
 
                 case VALUE_TYPE:
                 {
-                        char *s = types2_show(ty, as_type(&v));
+                        int rows;
+                        int columns;
+                        bool sized = color && get_terminal_size(1, &rows, &columns);
+                        char *s = types2_render(ty, as_type(&v), (Types2Render) {
+                                .color = color,
+                                .width = sized ? (unsigned)columns : 0
+                        });
                         svPn(buf, s, strlen(s));
                         free(s);
                         break;

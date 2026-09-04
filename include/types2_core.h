@@ -52,6 +52,9 @@ typedef enum t2_type_kind {
         T2_TYPE_INTERSECTION,
         T2_TYPE_VARIABLE,
         T2_TYPE_META,
+        T2_TYPE_SCHEME,
+        T2_TYPE_PREDICATE,
+        T2_TYPE_BINDER,
         T2_TYPE_KIND_COUNT
 } T2TypeKind;
 
@@ -134,6 +137,23 @@ typedef struct t2_predicate {
         char const *name;
         char const *provenance;
 } T2Predicate;
+
+typedef enum t2_cause_kind {
+        T2_CAUSE_LOWER,
+        T2_CAUSE_UPPER,
+        T2_CAUSE_EDGE,
+        T2_CAUSE_EQUALITY,
+        T2_CAUSE_PREDICATE,
+        T2_CAUSE_FAILURE
+} T2CauseKind;
+
+typedef struct t2_cause_info {
+        T2CauseKind kind;
+        T2Type left;
+        T2Type right;
+        char const *message;
+        char const *provenance;
+} T2CauseInfo;
 
 typedef enum t2_relation {
         T2_RELATION_NO,
@@ -544,6 +564,24 @@ t2_scheme_predicate(
         T2Predicate *predicate
 );
 
+bool
+t2_scheme_name_quantifier(T2Scheme *scheme, size_t index, char const *name);
+
+char const *
+t2_scheme_quantifier_name(T2Scheme const *scheme, size_t index);
+
+T2Type
+t2_scheme_type(T2Universe *universe, T2Scheme const *scheme);
+
+T2Scheme *
+t2_type_scheme(T2Universe *universe, T2Type type);
+
+T2Scheme *
+t2_scheme_simplify(T2Scheme *scheme);
+
+T2Type
+t2_type_scheme_body(T2Universe const *universe, T2Type type);
+
 T2Type
 t2_scheme_instantiate(
         T2Scheme const *scheme,
@@ -608,6 +646,70 @@ t2_type_same(T2Universe const *universe, T2Type left, T2Type right);
 
 char *
 t2_type_string(T2Universe const *universe, T2Type type);
+
+typedef enum t2_token_kind {
+        T2_TOKEN_PUNCTUATION,
+        T2_TOKEN_STRUCTURE,
+        T2_TOKEN_FUNCTION,
+        T2_TOKEN_BRACKET,
+        T2_TOKEN_OPERATOR,
+        T2_TOKEN_KEYWORD,
+        T2_TOKEN_PRIMITIVE,
+        T2_TOKEN_NOMINAL,
+        T2_TOKEN_VARIABLE,
+        T2_TOKEN_META,
+        T2_TOKEN_LITERAL,
+        T2_TOKEN_FIELD,
+        T2_TOKEN_PARAMETER,
+        T2_TOKEN_KIND_COUNT
+} T2TokenKind;
+
+typedef struct t2_names T2Names;
+
+typedef struct t2_print_options {
+        unsigned width;
+        unsigned indent;
+        unsigned column;
+        unsigned hang;
+        bool raw;
+        char const *const *styles;
+        T2Names *names;
+} T2PrintOptions;
+
+T2Names *
+t2_names_new(void);
+
+void
+t2_names_free(T2Names *names);
+
+bool
+t2_names_assign(
+        T2Universe const *universe,
+        T2Names *names,
+        T2Type variable,
+        char const *name
+);
+
+char *
+t2_type_render(
+        T2Universe const *universe,
+        T2Type type,
+        T2PrintOptions const *options
+);
+
+char *
+t2_scheme_render(
+        T2Universe const *universe,
+        T2Scheme const *scheme,
+        T2PrintOptions const *options
+);
+
+char *
+t2_predicate_render(
+        T2Universe const *universe,
+        T2Predicate const *predicate,
+        T2PrintOptions const *options
+);
 
 T2Type
 t2_type_substitute(
@@ -724,6 +826,15 @@ t2_solver_explain(T2Solver const *solver);
 
 char *
 t2_solver_explain_since(T2Solver const *solver, T2SolverMark mark);
+
+size_t
+t2_solver_cause_count(T2Solver const *solver);
+
+bool
+t2_solver_cause(T2Solver *solver, size_t index, T2CauseInfo *info);
+
+bool
+t2_solver_failure(T2Solver *solver, T2CauseInfo *info);
 
 size_t
 t2_solver_pending_obligations(T2Solver const *solver);

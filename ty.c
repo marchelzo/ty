@@ -205,7 +205,13 @@ execln(Ty *ty, char *line)
                 }
                 Expr expr = { .type = EXPRESSION_STATEMENT, .statement = prog[0] };
                 if (compiler_symbolize_expression(ty, &expr, NULL)) {
-                        char *shown = types2_show(ty, types2_infer(ty, &expr));
+                        int rows;
+                        int columns;
+                        bool sized = get_terminal_size(1, &rows, &columns);
+                        char *shown = types2_render(ty, types2_infer(ty, &expr), (Types2Render) {
+                                .color = ColorStdout,
+                                .width = sized ? (unsigned)columns : 0
+                        });
                         printf("%s\n", shown);
                         free(shown);
                         goto End;

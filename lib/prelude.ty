@@ -989,7 +989,7 @@ class Dict[K, V] : Iterable[K, V] {
     keep(f: (K, V) -> Any) -> Dict[K, V];
     keep!(f: (K, V) -> Any) -> Dict[K, V];
 
-    map(f) {
+    vmap(f) {
         return %{ k: f(v) for k, v in self }
     }
 
@@ -997,7 +997,7 @@ class Dict[K, V] : Iterable[K, V] {
         let new = %{}
         for k, v in self {
             let key = f(k)
-            if new.has?(key) {
+            if key in new {
                 new[key] = combine(new[key], v)
             } else {
                 new[key] = v

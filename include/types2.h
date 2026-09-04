@@ -127,6 +127,16 @@ types2_infer(Ty *ty, Expr *expression);
 bool
 types2_check(Ty *ty, T2Type type, Value const *value);
 
+typedef struct types2_render {
+        bool color;
+        unsigned width;
+        unsigned column;
+        unsigned hang;
+} Types2Render;
+
+char *
+types2_render(Ty *ty, T2Type type, Types2Render render);
+
 char *
 types2_show(Ty *ty, T2Type type);
 

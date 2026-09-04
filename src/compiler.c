@@ -2632,6 +2632,7 @@ static void
 resolve_type_choices(Ty *ty, T2Type t0, int_vector *cs)
 {
         T2Universe *universe = types2_universe();
+        t0 = t2_type_scheme_body(universe, t0);
 
         switch (t2_type_kind(universe, t0)) {
         case T2_TYPE_NOMINAL:
@@ -10179,9 +10180,12 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
 
         case EXPRESSION_TYPE_OF:
+        {
+                T2Type instance = t2_type_value_instance(types2_universe(), e->_type);
                 INSN(TYPE);
-                EP((uptr)e->operand->_type);
+                EP((uptr)(instance == T2_TYPE_INVALID ? e->operand->_type : instance));
                 break;
+        }
 
         case EXPRESSION_TYPE:
                 INSN(TYPE);
@@ -12133,6 +12137,12 @@ annotate_tokens(Ty *ty, void const *ast)
         return (((Expr *)ast)->type < EXPRESSION_MAX_TYPE)
              ? (void *)visit_expression(ty, (Expr *)ast, NULL, &visitor)
              : (void *)visit_statement(ty, (Stmt *)ast, NULL, &visitor);
+}
+
+void
+compiler_annotate_tokens(Ty *ty, void const *ast)
+{
+        (void)annotate_tokens(ty, ast);
 }
 
 static Expr *
@@ -17925,12 +17935,14 @@ WriteExpressionSourceHeading(Ty *ty, byte_vector *out, int cols, Expr const *e)
 }
 
 void
-WriteExpressionSourceContext(
+WriteExpressionSourceWindow(
         Ty *ty,
         byte_vector *out,
         int cols,
         Expr const *e,
-        StringVector const *notes
+        StringVector const *notes,
+        int before,
+        int after
 )
 {
         Expr const *expansion;
@@ -17948,7 +17960,7 @@ WriteExpressionSourceContext(
 
         int line0 = e->start.line;
 
-        for (int i = 0; i < 6; ++i) {
+        for (int i = 0; i < before; ++i) {
                 if (start[-1] == '\n') {
                         --start;
                         --line0;
@@ -17958,7 +17970,7 @@ WriteExpressionSourceContext(
                 }
         }
 
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < after; ++i) {
                 while (end[0] != '\0' && end[0] != '\n') {
                         ++end;
                 }
@@ -18020,6 +18032,16 @@ WriteExpressionSourceContext(
                                 line_end - e->mod->source,
                                 NULL
                         );
+                        if (!ColorStderr) {
+                                dump(out, "%s\n", vv(tmp));
+                                v0(tmp);
+                                sxdf(&tmp, "%*s", 9 + before, "");
+                                for (int i = 0; i < max(length, 1); ++i) {
+                                        svP(tmp, '^');
+                                }
+                                svP(tmp, '\0');
+                                vN(tmp) -= 1;
+                        }
                 } else {
                         sxdf(
                                 &tmp,
@@ -18081,6 +18103,18 @@ WriteExpressionSourceContext(
         }
 
         SCRATCH_RESTORE();
+}
+
+void
+WriteExpressionSourceContext(
+        Ty *ty,
+        byte_vector *out,
+        int cols,
+        Expr const *e,
+        StringVector const *notes
+)
+{
+        WriteExpressionSourceWindow(ty, out, cols, e, notes, 6, 4);
 }
 
 char const *

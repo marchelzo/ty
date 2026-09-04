@@ -907,6 +907,7 @@ static Value
 typed_value(Ty *ty, T2Type t0)
 {
         T2Universe *universe = types2_universe();
+        t0 = t2_type_scheme_body(universe, t0);
 
         space();
 

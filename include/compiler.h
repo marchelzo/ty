@@ -486,6 +486,20 @@ WriteExpressionSourceContext(
         StringVector const *notes
 );
 
+void
+WriteExpressionSourceWindow(
+        Ty *ty,
+        byte_vector *out,
+        int cols,
+        Expr const *e,
+        StringVector const *notes,
+        int before,
+        int after
+);
+
+void
+compiler_annotate_tokens(Ty *ty, void const *ast);
+
 int
 CompilationDepth(Ty *ty);
 

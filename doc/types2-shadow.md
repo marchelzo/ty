@@ -123,6 +123,116 @@ equivalence gate now has an explicit invalid set (`invalid`, `contracts`,
 `nil-guards-invalid`) that must be rejected with a CompileError; every other
 fixture must be accepted with output identical to `TY_TYPES2_SHADOW=0`.
 
+### Type display and diagnostics (2026-09-03, evening)
+
+The core owns a document-based pretty printer (`src/types2_core.c`, from
+`primitive_name` to `t2_type_string`): types are lowered to a Wadler-style
+document (text tokens, `line`/`softline`, `nest`, `group`) and laid out
+against a width with the Prettier "fits" rule, so long types break at the
+outermost group first (parameter lists, record fields, nominal arguments,
+union arms with a leading `|`, `where` clauses, generator `yields`/`sends`
+suffixes).  Public API in `include/types2_core.h`:
+
+- `t2_type_render(universe, type, &options)`, `t2_scheme_render`, and
+  `t2_predicate_render` return malloc'd text.  `T2PrintOptions` carries
+  `width` (0 = never break), `indent` (default 4), `column` (starting
+  column of the first line), `hang` (indentation added to every
+  continuation line), `raw` (print `$m123`/`$q7` instead of names),
+  `styles` (an SGR string per `T2TokenKind`, NULL = plain), and `names`
+  (a shared `T2Names` so several renders use consistent variable names).
+- `t2_type_string` is the raw form (used by logs and hashes).
+- Variable naming: quantified/rigid/row/pack variables are lettered `a`,
+  `b`, ... in order of first appearance; unsolved metas are `?a`, `?b`, ...
+  Scheme binders with a declared name (`fn f[T]`) print that name
+  (`t2_names_assign`, binder text).  `T2Names` entries are searched from
+  the most recent and can be shadowed/killed, so nested schemes scope
+  their binders.
+- Records print as `{name: T, name?: T}`; a readonly field is `const name`;
+  the open-row tail `...` is printed only for the empty open record and row
+  variables print as `..r`.  Optional parameters print as `name?: T`.
+  Function types inside unions or unnamed parameters are parenthesized.
+- Token kinds (`T2TokenKind`): punctuation, structure (`{}`/tuple parens),
+  function (`()`/`->`), bracket (`[]`), operator (`|`, `&`, `<:`, user
+  operators), keyword, primitive, nominal, variable, meta, literal, field,
+  parameter.  The shadow's palette is `TypeStyles` in `src/types2.c`.
+
+Schemes are first-class types now: `T2_TYPE_SCHEME` (payload = quantifier
+count; children = binders, body, predicates), `T2_TYPE_BINDER` (payload =
+variable id, variable kind, optional name text), `T2_TYPE_PREDICATE`
+(payload = `T2PredicateKind`, text = operator/member name, children =
+subtype, supertype, optional operand).  `t2_scheme_type` /
+`t2_type_scheme` convert; `t2_type_scheme_body` unwraps;
+`t2_type_resolve_computed` unwraps schemes too, so every relation, the
+solver, and `t2_type_runtime_facts` see the body.  `typeof` uses this:
+`typeof_operand_type` in `src/types2.c` takes the binding's scheme for an
+identifier bound to a generalized function (naming quantifiers from the
+declared type parameters), otherwise infers the operand under a solver mark
+and generalizes it (`t2_solver_generalize_scoped`, value restriction via
+`expression_is_expansive`), then `t2_scheme_simplify` removes noise:
+duplicate predicates, several lower/upper bounds on one variable are
+joined/met, and a variable bounded by a single subtype predicate is
+substituted away when the substitution only strengthens the other
+predicates in the sound direction.  Result: `typeof x -> x.a * x['abc']`
+prints `(x: a) -> b where a['abc'] <: c, a.a <: d, d * c <: b`.  Predicates
+render as `X <: Y`, `a.f <: T`, `a[i] <: T`, `V <: a.f` (writes), `a op b
+<: T`, `#a <: T`, `**a <: F`.  The compiler emits the typeof node's own
+instance (`t2_type_value_instance(e->_type)`) so the runtime value carries
+the scheme; `types2_check`, `types2_class_of`, `types2_is_callable`,
+`types2_callable_result`, `types2_to_ty`, `types2_find_member`,
+`types2_completions`, `json.parse`, and `resolve_type_choices` unwrap it.
+`types2_infer` (REPL `:t`, `ty.types.infer`) generalizes the same way.
+Mutable `let` bindings stay monomorphic, so `let f = x -> ...; typeof f`
+shows metas (`(x: ?a) -> ?b`).
+
+Runtime rendering goes through `types2_render(ty, type, (Types2Render)
+{ .color, .width, .column, .hang })` (`include/types2.h`); `types2_show`
+is the plain single-line form.  `value_show` colors and wraps a type value
+to the terminal width when printing in color; the REPL `:t` does the same.
+
+Diagnostics are structured until print time (`Types2Diagnostic` holds
+zonked `T2Type` handles for found/expected, the span end, and a list of
+`Types2Note`s: text lines, solver causes captured before rollback with
+`capture_causes`/`attach_notes` from the new `t2_solver_failure`/
+`t2_solver_cause` API, or an unresolved predicate).  `print_diagnostic`
+renders rustc-style:
+
+```
+error: the arguments do not match the callee's parameters  [bad-call]
+       --> tests/foo.ty:2:1
+     1 | fn greet(name: String) -> String { "hi {name}" }
+ >   2 | greet(20)
+         ^^^^^^^^^
+       = callee:   (name: String) -> String
+       = note:     20 is not a subtype of String (call argument at 2:1)
+```
+
+The source lines come from the compiler's own colorized context writer:
+`WriteExpressionSourceWindow` (a parameterized `WriteExpressionSourceContext`,
+three lines before and two after for type diagnostics) highlights the
+syntax through the module's token annotations and underlines the span, so
+`types2_shadow_finish` first calls `compiler_annotate_tokens` on every
+observed top-level statement (`shadow->roots`, recorded by
+`types2_shadow_observe_statement` and `types2_check_expression`) whenever
+it is about to render; annotation normally happens after `resolve_prog`, so
+the checker triggers it itself instead of returning the failure to the
+compiler.  A diagnostic keeps its `Expr` (`Types2Diagnostic.syntax`); when
+the expression has no module source (synthetic nodes) the plain excerpt
+printer is used instead.  In no-color mode the window writes a caret line
+under a single-line span (this also applies to runtime error contexts).
+Layout continues with one `T2Names` per diagnostic so `?a` means the same
+meta on every line, types wrapped at the terminal width (stderr, fallback 100 columns)
+and hung under their label, the span underlined from `start` to `end`,
+paths relative to the working directory, provenance locations in the same
+file reduced to `line:col`, notes that merely restate found/expected
+dropped, the solver failure printed before its causes, at most six notes,
+and `callee:` instead of `found:` for call diagnostics.  The
+`unresolved-constraint` diagnostic now reads "the type of this expression
+could not be determined" with a `= constraint:` line rendering the pending
+predicate.  Headlines were reworded ("not every arm of this union supports
+the subscript", "field `x` does not exist on this type", "the returned
+value does not match the declared result type", ...); the `[code]` suffix
+is unchanged.
+
 ## Historical overview
 
 The compiler-independent core in `src/types2_core.c` provides the first native
