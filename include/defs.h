@@ -16,7 +16,7 @@
 #define VA_SELECT_INNER(f, i) CAT(f##_, i)
 #define VA_SELECT(f, ...) VA_SELECT_INNER(f, VA_COUNT(__VA_ARGS__))(__VA_ARGS__)
 
-#if defined(TY_RELEASE) || 1
+#if defined(TY_RELEASE)
  #include <mimalloc.h>
  #define ty_malloc        mi_malloc
  #define ty_calloc        mi_calloc

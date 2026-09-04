@@ -38,7 +38,6 @@ LDFLAGS += -ldl
 LDFLAGS += -lffi
 LDFLAGS += $(shell pcre2-config --libs8)
 
-LDFLAGS += -lmimalloc
 ifndef DEBUG
 	LDFLAGS += -lmimalloc
 endif
@@ -136,7 +135,8 @@ BUILD_SIG_FILE := obj/.build_sig
 PREV_SIG := $(shell cat $(BUILD_SIG_FILE) 2>/dev/null)
 
 ifneq ($(BUILD_SIG),$(PREV_SIG))
-$(shell rm -f obj/*.o obj/tyls/*.o obj/typrof/*.o obj/ty-main.o obj/tyls-main.o obj/typrof-main.o obj/types2-core-test obj/*.d obj/tyls/*.d obj/typrof/*.d $(PROG) tyls typrof)
+$(shell rm -rf obj)
+$(shell find libco dtoa -type f -and -executable -or -name '*.[od]' -delete)
 $(shell mkdir -p obj obj/tyls obj/typrof)
 $(shell echo '$(BUILD_SIG)' > $(BUILD_SIG_FILE))
 endif
@@ -251,7 +251,7 @@ test-types2-core: obj/types2-core-test
 
 obj/types2-core-test: tests/types2_core.c src/types2_core.c include/types2_core.h
 	@echo cc $@
-	@$(CC) $(CFLAGS) -o $@ tests/types2_core.c src/types2_core.c -lmimalloc
+	@$(CC) $(CFLAGS) -o $@ tests/types2_core.c src/types2_core.c
 
 test-types2-shadow: ty
 	./tests/types2-shadow-equivalence.sh ./ty
