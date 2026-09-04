@@ -8,6 +8,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#if defined(__linux__)
+#include <link.h>
+#endif
+#include <xxhash.h>
 
 #include "ast.h"
 #include "operators.h"
@@ -88,7 +94,8 @@ typedef enum types2_member_kind {
         TYPES2_MEMBER_FIELD,
         TYPES2_MEMBER_METHOD,
         TYPES2_MEMBER_GETTER,
-        TYPES2_MEMBER_SETTER
+        TYPES2_MEMBER_SETTER,
+        TYPES2_MEMBER_KIND_COUNT
 } Types2MemberKind;
 
 typedef struct types2_member {
@@ -318,6 +325,17 @@ struct types2_shadow {
         bool primitives_bound;
         bool published_bindings;
         unsigned structural_depth;
+        Module const *module;
+        uint64_t shape;
+        bool hashing_shape;
+        struct types2_cache *cache;
+        char *cache_path;
+        uint64_t cache_key;
+        bool restored;
+        bool cache_loaded;
+        Stmt const **declared;
+        size_t declared_count;
+        size_t declared_capacity;
         int member_class_id;
         T2Type member_receiver;
         int default_dict_class;
@@ -425,9 +443,28 @@ struct types2_shadow {
         uint64_t materialized_computed_types;
 };
 
+static void
+declare_class_interface(Types2Shadow *shadow, Stmt const *statement, int class_id);
+
+static void
+dump_item(Types2Shadow *shadow, char const *label, size_t index, T2Type type, T2Scheme const *scheme);
+
+static void
+free_cache(struct types2_cache *cache);
+
 typedef struct types2_walk {
         Types2Shadow *shadow;
 } Types2Walk;
+
+static void
+fold_shape(Types2Shadow *shadow, Expr const *syntax)
+{
+        if (!shadow->hashing_shape || syntax == NULL) return;
+        uint64_t value = ((uint64_t)syntax->type << 56)
+                       ^ ((uint64_t)syntax->start.byte << 24)
+                       ^ (uint64_t)syntax->end.byte;
+        shadow->shape ^= value + UINT64_C(0x9E3779B97F4A7C15) + (shadow->shape << 6) + (shadow->shape >> 2);
+}
 
 #define X(name) [EXPRESSION_##name] = #name
 static char const *const construct_names[UINT8_MAX + 1] = {
@@ -1310,11 +1347,23 @@ attach_notes(Types2Diagnostic *diagnostic, Types2Notes notes)
 
 enum { TYPES2_CLASS_PARAMETER_BASE = 256 };
 
+enum { TYPES2_FRESH_QUANTIFIER_BASE = INT32_C(0x40000000) };
+
+static uint32_t NextQuantifiedId = TYPES2_FRESH_QUANTIFIER_BASE;
+
 static uint32_t
 fresh_quantified_id(void)
 {
-        static uint32_t next = UINT32_C(0x40000000);
-        return next++;
+        return NextQuantifiedId++;
+}
+
+static uint32_t
+reserve_quantified_ids(uint32_t count)
+{
+        if (count == 0 || count > UINT32_MAX - 1 - NextQuantifiedId) return 0;
+        uint32_t base = NextQuantifiedId;
+        NextQuantifiedId += count;
+        return base;
 }
 
 static uint64_t
@@ -21520,6 +21569,7 @@ observe_expression(Expr *expr, Scope *scope, void *user)
         (void)scope;
 
         shadow->role_visits[0] += 1;
+        fold_shape(shadow, expr);
         (void)remember_node(shadow, expr, expr->type, TYPES2_ROLE_EXPRESSION);
 
         return expr;
@@ -21532,6 +21582,7 @@ observe_type(Expr *expr, Scope *scope, void *user)
         (void)scope;
 
         shadow->role_visits[1] += 1;
+        fold_shape(shadow, expr);
         (void)remember_node(shadow, expr, expr->type, TYPES2_ROLE_TYPE);
 
         return expr;
@@ -21544,6 +21595,7 @@ observe_pattern(Expr *expr, Scope *scope, void *user)
         (void)scope;
 
         shadow->role_visits[2] += 1;
+        fold_shape(shadow, expr);
         (void)remember_node(shadow, expr, expr->type, TYPES2_ROLE_PATTERN);
 
         return expr;
@@ -21557,6 +21609,7 @@ observe_lvalue(Expr *expr, bool declaration, Scope *scope, void *user)
         (void)scope;
 
         shadow->role_visits[3] += 1;
+        fold_shape(shadow, expr);
         (void)remember_node(shadow, expr, expr->type, TYPES2_ROLE_LVALUE);
 
         return expr;
@@ -21569,6 +21622,7 @@ observe_statement(Stmt *stmt, Scope *scope, void *user)
         (void)scope;
 
         shadow->role_visits[4] += 1;
+        fold_shape(shadow, (Expr const *)stmt);
         (void)remember_node(shadow, stmt, stmt->type, TYPES2_ROLE_STATEMENT);
 
         return stmt;
@@ -21762,15 +21816,7 @@ register_declaration(Types2Shadow *shadow, Stmt const *statement)
                         (size_t)vN(statement->class.type_params)
                 );
                 register_nominal_hierarchy(shadow, &statement->class, nominal);
-                if (nominal != NULL) {
-                        (void)ensure_class_interface(shadow, class_id);
-                        nominal = find_class_nominal(shadow, class_id);
-                        install_declared_class_constructor(
-                                shadow,
-                                &statement->class,
-                                nominal
-                        );
-                }
+                if (!shadow->restored) declare_class_interface(shadow, statement, class_id);
                 register_forward_binding(shadow, statement->class.var, false);
                 break;
         }
@@ -22772,6 +22818,9 @@ destroy_shadow(Types2Shadow *shadow)
         ty_free(shadow->imported_operators);
         ty_free(shadow->touched);
         ty_free(shadow->nodes);
+        free_cache(shadow->cache);
+        ty_free(shadow->cache_path);
+        ty_free(shadow->declared);
         t2_solver_free(shadow->solver);
         if (shadow->close_log && shadow->log != NULL) {
                 fclose(shadow->log);
@@ -23460,6 +23509,1560 @@ report_diagnostics(Types2Shadow *shadow, size_t errors, size_t warnings)
         xvF(out);
 }
 
+enum {
+        TYPES2_CACHE_MAGIC = UINT32_C(0x32545954),
+        TYPES2_CACHE_VERSION = 1,
+        TYPES2_CACHE_NONE = UINT32_MAX
+};
+
+typedef struct types2_cache_symbol {
+        char *module;
+        char *name;
+        uint64_t symbol;
+        uint32_t arity;
+        bool is_tag;
+} Types2CacheSymbol;
+
+typedef struct types2_cache_binding {
+        char *identifier;
+        T2Type type;
+        T2Scheme *scheme;
+        uint32_t ordinal;
+} Types2CacheBinding;
+
+typedef struct types2_cache_alias {
+        char *identifier;
+        T2Type type;
+} Types2CacheAlias;
+
+typedef struct types2_cache_node {
+        uint32_t ordinal;
+        T2Type type;
+        bool annotated;
+} Types2CacheNode;
+
+typedef struct types2_cache_member {
+        char *name;
+        T2Scheme *scheme;
+        uint32_t declaration;
+        uint32_t class_arity;
+        uint8_t kind;
+        bool is_static;
+        bool required;
+        bool writable;
+} Types2CacheMember;
+
+typedef struct types2_cache_interface {
+        int class_id;
+        Types2CacheMember *members;
+        size_t count;
+        Types2Member *installed;
+} Types2CacheInterface;
+
+typedef struct types2_cache {
+        unsigned char *data;
+        size_t size;
+        size_t position;
+        uint64_t shape;
+        Types2CacheSymbol *symbols;
+        size_t symbol_count;
+        size_t symbol_capacity;
+        T2Index symbol_index;
+        T2TypeWriter *writer;
+        T2TypeReader *reader;
+        Types2CacheBinding *bindings;
+        size_t binding_count;
+        Types2CacheAlias *aliases;
+        size_t alias_count;
+        Types2CacheNode *nodes;
+        size_t node_count;
+        Types2CacheInterface *interfaces;
+        size_t interface_count;
+        bool failed;
+} Types2Cache;
+
+typedef struct types2_ordinals {
+        void const **syntax;
+        size_t count;
+        size_t capacity;
+        T2Index seen;
+        T2Index symbols;
+        bool failed;
+} Types2Ordinals;
+
+typedef struct types2_module_key {
+        uint64_t path;
+        uint64_t key;
+} Types2ModuleKey;
+
+static Types2ModuleKey *ModuleKeys;
+static size_t ModuleKeyCount;
+static size_t ModuleKeyCapacity;
+static T2Index ModuleKeyIndex;
+
+static char *
+copy_text(char const *text)
+{
+        if (text == NULL) return NULL;
+        size_t length = strlen(text);
+        char *copy = ty_malloc(length + 1);
+        if (copy != NULL) memcpy(copy, text, length + 1);
+        return copy;
+}
+
+static uint64_t
+hash_text(char const *text)
+{
+        return text == NULL ? 0 : XXH3_64bits(text, strlen(text));
+}
+
+static bool
+same_text(char const *a, char const *b)
+{
+        return a == NULL ? b == NULL : b != NULL && strcmp(a, b) == 0;
+}
+
+static bool
+cache_enabled(void)
+{
+        char const *value = getenv("TY_TYPES2_CACHE");
+        return value == NULL || *value == '\0' || shadow_option_enabled("TY_TYPES2_CACHE");
+}
+
+static bool
+cache_digest(void)
+{
+        return shadow_option_enabled("TY_TYPES2_CACHE_DIGEST");
+}
+
+static void
+trace_cache(Types2Shadow *shadow, char const *event, char const *detail)
+{
+        if (!shadow_option_enabled("TY_TYPES2_CACHE_TRACE")) return;
+        fprintf(
+                stderr,
+                "types2 cache %s %s%s%s\n",
+                event,
+                shadow->unit,
+                detail == NULL ? "" : " ",
+                detail == NULL ? "" : detail
+        );
+}
+
+#if defined(__linux__)
+static int
+build_id_note(struct dl_phdr_info *info, size_t size, void *user)
+{
+        uint64_t *identity = user;
+        (void)size;
+        for (int i = 0; i < info->dlpi_phnum; ++i) {
+                ElfW(Phdr) const *header = &info->dlpi_phdr[i];
+                if (header->p_type != PT_NOTE) continue;
+                unsigned char const *note = (unsigned char const *)(uintptr_t)(info->dlpi_addr + header->p_vaddr);
+                unsigned char const *end = note + header->p_memsz;
+                while (note + sizeof (ElfW(Nhdr)) <= end) {
+                        ElfW(Nhdr) const *nhdr = (ElfW(Nhdr) const *)note;
+                        unsigned char const *name = note + sizeof *nhdr;
+                        unsigned char const *desc = name + ((nhdr->n_namesz + 3) & ~UINT32_C(3));
+                        if (desc + nhdr->n_descsz > end) break;
+                        if (
+                                nhdr->n_type == NT_GNU_BUILD_ID
+                             && nhdr->n_namesz == 4
+                             && memcmp(name, "GNU", 4) == 0
+                        ) {
+                                *identity = XXH3_64bits(desc, nhdr->n_descsz);
+                                return 1;
+                        }
+                        note = desc + ((nhdr->n_descsz + 3) & ~UINT32_C(3));
+                }
+        }
+        return 1;
+}
+#endif
+
+static uint64_t
+build_identity(void)
+{
+        static uint64_t identity;
+        if (identity != 0) return identity;
+#if defined(__linux__)
+        dl_iterate_phdr(build_id_note, &identity);
+#endif
+        if (identity == 0) {
+                char const *stamp = __DATE__ " " __TIME__;
+                identity = XXH3_64bits(stamp, strlen(stamp));
+        }
+        if (identity == 0) identity = 1;
+        return identity;
+}
+
+static bool
+find_module_key(char const *path, uint64_t *key)
+{
+        uint32_t slot;
+        if (path == NULL || !t2_index_find(&ModuleKeyIndex, hash_text(path), &slot)) return false;
+        *key = ModuleKeys[slot].key;
+        return true;
+}
+
+static void
+remember_module_key(char const *path, uint64_t key)
+{
+        if (path == NULL) return;
+        uint64_t hash = hash_text(path);
+        uint32_t slot;
+        if (t2_index_find(&ModuleKeyIndex, hash, &slot)) {
+                ModuleKeys[slot].key = key;
+                return;
+        }
+        if (ModuleKeyCount == ModuleKeyCapacity) {
+                size_t capacity = ModuleKeyCapacity == 0 ? 16 : ModuleKeyCapacity * 2;
+                Types2ModuleKey *grown = ty_realloc(ModuleKeys, capacity * sizeof *grown);
+                if (grown == NULL) return;
+                ModuleKeys = grown;
+                ModuleKeyCapacity = capacity;
+        }
+        ModuleKeys[ModuleKeyCount] = (Types2ModuleKey) { .path = hash, .key = key };
+        if (t2_index_put(&ModuleKeyIndex, hash, (uint32_t)ModuleKeyCount)) ModuleKeyCount += 1;
+}
+
+static uint64_t
+mix_key(uint64_t key, uint64_t value)
+{
+        return key ^ (value + UINT64_C(0x9E3779B97F4A7C15) + (key << 6) + (key >> 2));
+}
+
+static uint64_t
+module_source_key(Module const *module)
+{
+        return module->source != NULL ? hash_text(module->source) : hash_text(module->name);
+}
+
+static uint64_t
+configuration_key(Ty *ty)
+{
+        uint64_t key = (uint64_t)!NoJIT
+                     | (uint64_t)RunningTests << 1
+                     | (uint64_t)ColorMode << 2
+                     | (uint64_t)TyCompilerState(ty)->flags << 8;
+        return key;
+}
+
+static uint64_t
+unit_key(Types2Shadow *shadow)
+{
+        uint64_t key = mix_key(build_identity(), hash_text(shadow->module->source));
+        key = mix_key(key, TYPES2_CACHE_VERSION);
+        key = mix_key(key, configuration_key(shadow->ty));
+        import_vector const *imports = compiler_current_imports(shadow->ty);
+        for (int i = 0; i < vN(*imports); ++i) {
+                Module const *dependency = v__(*imports, i).mod;
+                if (dependency == NULL || dependency == shadow->module) continue;
+                uint64_t dependency_key;
+                if (!find_module_key(dependency->path, &dependency_key)) {
+                        dependency_key = module_source_key(dependency);
+                }
+                key = mix_key(key, dependency_key);
+        }
+        return key == 0 ? 1 : key;
+}
+
+static bool
+cache_directory(char *buffer, size_t size)
+{
+        char const *override = getenv("TY_TYPES2_CACHE_DIR");
+        if (override != NULL && *override != '\0') {
+                return snprintf(buffer, size, "%s", override) < (int)size;
+        }
+        char const *xdg = getenv("XDG_CACHE_HOME");
+        char const *home = getenv("HOME");
+        uint64_t identity = build_identity();
+        if (xdg != NULL && *xdg != '\0') {
+                return snprintf(buffer, size, "%s/ty/types/%016" PRIx64, xdg, identity) < (int)size;
+        }
+        if (home == NULL || *home == '\0') return false;
+        return snprintf(buffer, size, "%s/.cache/ty/types/%016" PRIx64, home, identity) < (int)size;
+}
+
+static void
+ensure_directory(char const *path)
+{
+        char buffer[PATH_MAX];
+        size_t length = strlen(path);
+        if (length == 0 || length >= sizeof buffer) return;
+        memcpy(buffer, path, length + 1);
+        for (size_t i = 1; i < length; ++i) {
+                if (buffer[i] != '/') continue;
+                buffer[i] = '\0';
+                (void)mkdir(buffer, 0777);
+                buffer[i] = '/';
+        }
+        (void)mkdir(buffer, 0777);
+}
+
+static char *
+cache_file_path(Ty *ty, Module const *module)
+{
+        char directory[PATH_MAX];
+        if (!cache_directory(directory, sizeof directory)) return NULL;
+        char name[128];
+        size_t n = 0;
+        for (char const *c = module->name; *c != '\0' && n + 1 < sizeof name; ++c) {
+                name[n++] = (*c == '/' || *c == '\\') ? '.' : *c;
+        }
+        name[n] = '\0';
+        char path[PATH_MAX];
+        int written = snprintf(
+                path,
+                sizeof path,
+                "%s/%s-%016" PRIx64 "-%" PRIx64 ".t2c",
+                directory,
+                name,
+                hash_text(module->path),
+                configuration_key(ty)
+        );
+        if (written < 0 || (size_t)written >= sizeof path) return NULL;
+        return copy_text(path);
+}
+
+static unsigned char *
+read_file(char const *path, size_t *size)
+{
+        int fd = open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) return NULL;
+        struct stat st;
+        if (fstat(fd, &st) != 0 || st.st_size <= 0 || st.st_size > INT32_MAX) {
+                close(fd);
+                return NULL;
+        }
+        size_t length = (size_t)st.st_size;
+        unsigned char *data = ty_malloc(length);
+        size_t have = 0;
+        while (data != NULL && have < length) {
+                ssize_t n = read(fd, data + have, length - have);
+                if (n < 0 && errno == EINTR) continue;
+                if (n <= 0) break;
+                have += (size_t)n;
+        }
+        close(fd);
+        if (data == NULL || have != length) {
+                ty_free(data);
+                return NULL;
+        }
+        *size = length;
+        return data;
+}
+
+static bool
+write_file(char const *path, unsigned char const *data, size_t size)
+{
+        char temporary[PATH_MAX];
+        int written = snprintf(temporary, sizeof temporary, "%s.%ld.tmp", path, (long)getpid());
+        if (written < 0 || (size_t)written >= sizeof temporary) return false;
+        int fd = open(temporary, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+        if (fd < 0) return false;
+        size_t have = 0;
+        while (have < size) {
+                ssize_t n = write(fd, data + have, size - have);
+                if (n < 0 && errno == EINTR) continue;
+                if (n <= 0) break;
+                have += (size_t)n;
+        }
+        if (have != size) {
+                close(fd);
+                unlink(temporary);
+                return false;
+        }
+        if (close(fd) != 0 || rename(temporary, path) != 0) {
+                unlink(temporary);
+                return false;
+        }
+        return true;
+}
+
+static char const *
+class_module_path(Class const *class)
+{
+        if (class == NULL || class->def == NULL) return NULL;
+        Module const *module = class->def->mod;
+        return module == NULL || module->path == NULL ? "" : module->path;
+}
+
+static bool
+cache_symbol_append(Types2Cache *cache, Types2CacheSymbol entry, uint32_t *index)
+{
+        if (cache->symbol_count == cache->symbol_capacity) {
+                size_t capacity = cache->symbol_capacity == 0 ? 32 : cache->symbol_capacity * 2;
+                Types2CacheSymbol *grown = ty_realloc(cache->symbols, capacity * sizeof *grown);
+                if (grown == NULL) return false;
+                cache->symbols = grown;
+                cache->symbol_capacity = capacity;
+        }
+        *index = (uint32_t)cache->symbol_count;
+        cache->symbols[cache->symbol_count++] = entry;
+        return true;
+}
+
+static uint64_t
+cache_symbol_out(void *context, uint64_t symbol)
+{
+        Types2Shadow *shadow = context;
+        Types2Cache *cache = shadow->cache;
+        uint32_t index;
+        if (t2_index_find(&cache->symbol_index, symbol, &index)) return index;
+        Types2CacheSymbol entry = { .symbol = symbol };
+        size_t arity = 0;
+        (void)t2_nominal_declared(shadow->universe, symbol, &arity);
+        entry.arity = (uint32_t)arity;
+        int class_id = types2_symbol_class(symbol);
+        int tag_id = types2_symbol_tag(symbol);
+        if (class_id >= 0 && class_id < class_count(shadow->ty)) {
+                Class const *class = class_get(shadow->ty, class_id);
+                entry.name = copy_text(class == NULL ? NULL : class->name);
+                entry.module = copy_text(class_module_path(class));
+        } else if (tag_id > 0 && tag_id <= tags_count(shadow->ty)) {
+                entry.is_tag = true;
+                entry.name = copy_text(tags_name(shadow->ty, tag_id));
+                entry.module = copy_text(class_module_path(tags_get_class(shadow->ty, tag_id)));
+        }
+        if (
+                entry.name == NULL
+             || !cache_symbol_append(cache, entry, &index)
+             || !t2_index_put(&cache->symbol_index, symbol, index)
+        ) {
+                ty_free(entry.name);
+                ty_free(entry.module);
+                cache->failed = true;
+                return UINT64_MAX;
+        }
+        return index;
+}
+
+static uint64_t
+cache_symbol_in(void *context, uint64_t token)
+{
+        Types2Cache *cache = context;
+        return token < cache->symbol_count ? cache->symbols[token].symbol : 0;
+}
+
+static uint32_t
+reserve_quantified_block(void *context, uint32_t count)
+{
+        (void)context;
+        return reserve_quantified_ids(count);
+}
+
+static T2Type
+restored_meta(void *context, T2VariableKind kind)
+{
+        Types2Shadow *shadow = context;
+        return t2_solver_new_meta(shadow->solver, kind, 0, "restored");
+}
+
+static uint64_t
+resolve_class_symbol(Ty *ty, Types2CacheSymbol const *entry)
+{
+        int found = -1;
+        int count = class_count(ty);
+        for (int i = 0; i < count; ++i) {
+                Class const *class = class_get(ty, i);
+                if (class == NULL || class->name == NULL || strcmp(class->name, entry->name) != 0) continue;
+                if (!same_text(class_module_path(class), entry->module)) continue;
+                found = i;
+        }
+        return found < 0 ? 0 : types2_class_symbol(found);
+}
+
+static uint64_t
+resolve_tag_symbol(Ty *ty, Types2CacheSymbol const *entry)
+{
+        int found = -1;
+        int count = tags_count(ty);
+        for (int tag = 1; tag <= count; ++tag) {
+                if (strcmp(tags_name(ty, tag), entry->name) != 0) continue;
+                if (!same_text(class_module_path(tags_get_class(ty, tag)), entry->module)) continue;
+                found = tag;
+        }
+        return found < 0 ? 0 : types2_tag_symbol(found);
+}
+
+static bool
+resolve_symbols(Types2Shadow *shadow, Types2Cache *cache, bool own)
+{
+        for (size_t i = 0; i < cache->symbol_count; ++i) {
+                Types2CacheSymbol *entry = &cache->symbols[i];
+                bool mine = same_text(entry->module, shadow->module->path);
+                if (mine != own || entry->symbol != 0) continue;
+                entry->symbol = entry->is_tag
+                              ? resolve_tag_symbol(shadow->ty, entry)
+                              : resolve_class_symbol(shadow->ty, entry);
+                if (entry->symbol == 0) {
+                        trace_cache(shadow, "unresolved", entry->name);
+                        return false;
+                }
+        }
+        return true;
+}
+
+static bool
+declare_cached_nominals(Types2Shadow *shadow, Types2Cache *cache)
+{
+        for (size_t i = 0; i < cache->symbol_count; ++i) {
+                Types2CacheSymbol const *entry = &cache->symbols[i];
+                void const *nominal = entry->is_tag
+                                    ? (void const *)ensure_tag_nominal(shadow, types2_symbol_tag(entry->symbol), entry->name)
+                                    : (void const *)ensure_nominal(shadow, types2_symbol_class(entry->symbol), entry->name, entry->arity);
+                if (nominal == NULL) return false;
+        }
+        return true;
+}
+
+static bool
+read_u8(Types2Cache *cache, uint8_t *value)
+{
+        return t2_read_u8(cache->data, cache->size, &cache->position, value);
+}
+
+static bool
+read_u32(Types2Cache *cache, uint32_t *value)
+{
+        return t2_read_u32(cache->data, cache->size, &cache->position, value);
+}
+
+static bool
+read_u64(Types2Cache *cache, uint64_t *value)
+{
+        return t2_read_u64(cache->data, cache->size, &cache->position, value);
+}
+
+static bool
+read_text(Types2Cache *cache, char **text)
+{
+        return t2_read_string(cache->data, cache->size, &cache->position, text);
+}
+
+static bool
+read_type(Types2Cache *cache, T2Type *type)
+{
+        uint32_t index;
+        if (!read_u32(cache, &index)) return false;
+        if (index == TYPES2_CACHE_NONE) {
+                *type = T2_TYPE_INVALID;
+                return true;
+        }
+        *type = t2_type_reader_type(cache->reader, index);
+        return *type != T2_TYPE_INVALID;
+}
+
+static bool
+read_scheme(Types2Cache *cache, T2Scheme **scheme)
+{
+        uint8_t present;
+        *scheme = NULL;
+        if (!read_u8(cache, &present)) return false;
+        if (present == 0) return true;
+        *scheme = t2_scheme_decode(cache->reader, cache->data, cache->size, &cache->position);
+        return *scheme != NULL;
+}
+
+static bool
+read_flag(Types2Cache *cache, bool *flag)
+{
+        uint8_t value;
+        if (!read_u8(cache, &value)) return false;
+        *flag = value != 0;
+        return true;
+}
+
+static void
+free_cache(Types2Cache *cache)
+{
+        if (cache == NULL) return;
+        for (size_t i = 0; i < cache->symbol_count; ++i) {
+                ty_free(cache->symbols[i].module);
+                ty_free(cache->symbols[i].name);
+        }
+        ty_free(cache->symbols);
+        t2_index_free(&cache->symbol_index);
+        for (size_t i = 0; i < cache->binding_count; ++i) {
+                ty_free(cache->bindings[i].identifier);
+                if (cache->bindings[i].scheme != NULL) t2_scheme_free(cache->bindings[i].scheme);
+        }
+        ty_free(cache->bindings);
+        for (size_t i = 0; i < cache->alias_count; ++i) ty_free(cache->aliases[i].identifier);
+        ty_free(cache->aliases);
+        ty_free(cache->nodes);
+        for (size_t i = 0; i < cache->interface_count; ++i) {
+                Types2CacheInterface *interface = &cache->interfaces[i];
+                for (size_t j = 0; j < interface->count; ++j) {
+                        ty_free(interface->members[j].name);
+                        if (interface->members[j].scheme != NULL) {
+                                t2_scheme_free(interface->members[j].scheme);
+                        }
+                }
+                ty_free(interface->members);
+        }
+        ty_free(cache->interfaces);
+        t2_type_writer_free(cache->writer);
+        t2_type_reader_free(cache->reader);
+        ty_free(cache->data);
+        ty_free(cache);
+}
+
+static Types2Cache *
+read_cache_file(char const *path, uint64_t key)
+{
+        size_t size;
+        unsigned char *data = read_file(path, &size);
+        if (data == NULL) return NULL;
+        Types2Cache *cache = ty_calloc(1, sizeof *cache);
+        if (cache == NULL) {
+                ty_free(data);
+                return NULL;
+        }
+        cache->data = data;
+        cache->size = size;
+        uint32_t magic;
+        uint32_t version;
+        uint64_t stored;
+        uint32_t count;
+        bool ok = read_u32(cache, &magic)
+               && read_u32(cache, &version)
+               && read_u64(cache, &stored)
+               && magic == TYPES2_CACHE_MAGIC
+               && version == TYPES2_CACHE_VERSION
+               && stored == key
+               && read_u64(cache, &cache->shape)
+               && read_u32(cache, &count);
+        for (uint32_t i = 0; ok && i < count; ++i) {
+                Types2CacheSymbol entry = {0};
+                uint32_t index;
+                ok = read_flag(cache, &entry.is_tag)
+                  && read_text(cache, &entry.module)
+                  && read_text(cache, &entry.name)
+                  && read_u32(cache, &entry.arity)
+                  && entry.name != NULL
+                  && cache_symbol_append(cache, entry, &index);
+                if (!ok) {
+                        ty_free(entry.module);
+                        ty_free(entry.name);
+                }
+        }
+        if (!ok) {
+                free_cache(cache);
+                return NULL;
+        }
+        return cache;
+}
+
+static bool
+decode_bindings(Types2Cache *cache)
+{
+        uint32_t count;
+        if (!read_u32(cache, &count)) return false;
+        cache->bindings = count == 0 ? NULL : ty_calloc(count, sizeof *cache->bindings);
+        if (count != 0 && cache->bindings == NULL) return false;
+        for (uint32_t i = 0; i < count; ++i) {
+                Types2CacheBinding *binding = &cache->bindings[i];
+                cache->binding_count = i + 1;
+                if (!read_text(cache, &binding->identifier) || binding->identifier == NULL) return false;
+                if (!read_u32(cache, &binding->ordinal)) return false;
+                if (!read_scheme(cache, &binding->scheme)) return false;
+                if (!read_type(cache, &binding->type)) return false;
+                if (binding->type == T2_TYPE_INVALID && binding->scheme == NULL) return false;
+        }
+        return true;
+}
+
+static bool
+decode_aliases(Types2Cache *cache)
+{
+        uint32_t count;
+        if (!read_u32(cache, &count)) return false;
+        cache->aliases = count == 0 ? NULL : ty_calloc(count, sizeof *cache->aliases);
+        if (count != 0 && cache->aliases == NULL) return false;
+        for (uint32_t i = 0; i < count; ++i) {
+                Types2CacheAlias *alias = &cache->aliases[i];
+                cache->alias_count = i + 1;
+                if (!read_text(cache, &alias->identifier) || alias->identifier == NULL) return false;
+                if (!read_type(cache, &alias->type) || alias->type == T2_TYPE_INVALID) return false;
+        }
+        return true;
+}
+
+static bool
+decode_nodes(Types2Cache *cache)
+{
+        uint32_t count;
+        if (!read_u32(cache, &count)) return false;
+        cache->nodes = count == 0 ? NULL : ty_calloc(count, sizeof *cache->nodes);
+        if (count != 0 && cache->nodes == NULL) return false;
+        for (uint32_t i = 0; i < count; ++i) {
+                Types2CacheNode *node = &cache->nodes[i];
+                cache->node_count = i + 1;
+                if (!read_u32(cache, &node->ordinal)) return false;
+                if (!read_type(cache, &node->type) || node->type == T2_TYPE_INVALID) return false;
+                if (!read_flag(cache, &node->annotated)) return false;
+        }
+        return true;
+}
+
+static bool
+decode_member(Types2Cache *cache, Types2CacheMember *member)
+{
+        return read_text(cache, &member->name)
+            && member->name != NULL
+            && read_u8(cache, &member->kind)
+            && member->kind < TYPES2_MEMBER_KIND_COUNT
+            && read_flag(cache, &member->is_static)
+            && read_flag(cache, &member->required)
+            && read_flag(cache, &member->writable)
+            && read_u32(cache, &member->class_arity)
+            && read_scheme(cache, &member->scheme)
+            && read_u32(cache, &member->declaration);
+}
+
+static bool
+decode_interfaces(Types2Cache *cache)
+{
+        uint32_t count;
+        if (!read_u32(cache, &count)) return false;
+        cache->interfaces = count == 0 ? NULL : ty_calloc(count, sizeof *cache->interfaces);
+        if (count != 0 && cache->interfaces == NULL) return false;
+        for (uint32_t i = 0; i < count; ++i) {
+                Types2CacheInterface *interface = &cache->interfaces[i];
+                cache->interface_count = i + 1;
+                uint32_t token;
+                uint32_t members;
+                if (!read_u32(cache, &token) || token >= cache->symbol_count) return false;
+                interface->class_id = types2_symbol_class(cache->symbols[token].symbol);
+                if (interface->class_id < 0 || !read_u32(cache, &members)) return false;
+                interface->members = members == 0 ? NULL : ty_calloc(members, sizeof *interface->members);
+                if (members != 0 && interface->members == NULL) return false;
+                for (uint32_t j = 0; j < members; ++j) {
+                        interface->count = j + 1;
+                        if (!decode_member(cache, &interface->members[j])) return false;
+                }
+        }
+        return true;
+}
+
+static bool
+decode_cache(Types2Shadow *shadow, Types2Cache *cache)
+{
+        T2SymbolRemap remap = { .in = cache_symbol_in, .context = cache };
+        T2ReadHooks hooks = {
+                .floor = TYPES2_FRESH_QUANTIFIER_BASE,
+                .reserve = reserve_quantified_block,
+                .meta = restored_meta,
+                .context = shadow
+        };
+        cache->reader = t2_type_reader_new(
+                shadow->universe,
+                remap,
+                hooks,
+                cache->data,
+                cache->size,
+                &cache->position
+        );
+        return cache->reader != NULL
+            && decode_bindings(cache)
+            && decode_aliases(cache)
+            && decode_nodes(cache)
+            && decode_interfaces(cache)
+            && cache->position == cache->size;
+}
+
+static void
+install_interfaces(Types2Cache *cache)
+{
+        for (size_t i = 0; i < cache->interface_count; ++i) {
+                Types2CacheInterface *interface = &cache->interfaces[i];
+                Types2Interface *slot = interface_slot(interface->class_id);
+                if (slot == NULL || slot->members != NULL || interface->count == 0) continue;
+                Types2Member *members = ty_calloc(interface->count, sizeof *members);
+                if (members == NULL) continue;
+                for (size_t j = 0; j < interface->count; ++j) {
+                        Types2CacheMember *member = &interface->members[j];
+                        members[j] = (Types2Member) {
+                                .class_id = interface->class_id,
+                                .name = member->name,
+                                .kind = (Types2MemberKind)member->kind,
+                                .scheme = member->scheme,
+                                .class_arity = member->class_arity,
+                                .is_static = member->is_static,
+                                .required = member->required,
+                                .writable = member->writable
+                        };
+                        member->name = NULL;
+                        member->scheme = NULL;
+                }
+                slot->members = members;
+                slot->count = interface->count;
+                interface->installed = members;
+        }
+}
+
+static bool
+note_ordinal(Types2Ordinals *ordinals, void const *syntax, uint32_t *ordinal)
+{
+        if (syntax == NULL || ordinals->failed) return false;
+        uint64_t key = (uint64_t)(uintptr_t)syntax;
+        if (t2_index_find(&ordinals->seen, key, ordinal)) return true;
+        if (ordinals->count == ordinals->capacity) {
+                size_t capacity = ordinals->capacity == 0 ? 1024 : ordinals->capacity * 2;
+                void const **grown = ty_realloc(ordinals->syntax, capacity * sizeof *grown);
+                if (grown == NULL) {
+                        ordinals->failed = true;
+                        return false;
+                }
+                ordinals->syntax = grown;
+                ordinals->capacity = capacity;
+        }
+        if (
+                ordinals->count >= TYPES2_CACHE_NONE
+             || !t2_index_put(&ordinals->seen, key, (uint32_t)ordinals->count)
+        ) {
+                ordinals->failed = true;
+                return false;
+        }
+        *ordinal = (uint32_t)ordinals->count;
+        ordinals->syntax[ordinals->count++] = syntax;
+        return true;
+}
+
+static void
+note_identifier(Types2Ordinals *ordinals, Expr const *expr)
+{
+        uint32_t ordinal;
+        if (!note_ordinal(ordinals, expr, &ordinal)) return;
+        if (expr->type != EXPRESSION_IDENTIFIER || expr->symbol == NULL) return;
+        uint64_t key = (uint64_t)(uintptr_t)expr->symbol;
+        uint32_t existing;
+        if (t2_index_find(&ordinals->symbols, key, &existing)) return;
+        if (!t2_index_put(&ordinals->symbols, key, ordinal)) ordinals->failed = true;
+}
+
+static Expr *
+ordinal_expression(Expr *expr, Scope *scope, void *user)
+{
+        (void)scope;
+        note_identifier(user, expr);
+        return expr;
+}
+
+static Expr *
+ordinal_type(Expr *expr, Scope *scope, void *user)
+{
+        (void)scope;
+        note_identifier(user, expr);
+        return expr;
+}
+
+static Expr *
+ordinal_pattern(Expr *expr, Scope *scope, void *user)
+{
+        (void)scope;
+        note_identifier(user, expr);
+        return expr;
+}
+
+static Expr *
+ordinal_lvalue(Expr *expr, bool declaration, Scope *scope, void *user)
+{
+        (void)declaration;
+        (void)scope;
+        note_identifier(user, expr);
+        return expr;
+}
+
+static Stmt *
+ordinal_statement(Stmt *stmt, Scope *scope, void *user)
+{
+        (void)scope;
+        uint32_t ordinal;
+        (void)note_ordinal(user, stmt, &ordinal);
+        return stmt;
+}
+
+static bool
+collect_ordinals(Types2Shadow *shadow, Types2Ordinals *ordinals)
+{
+        VisitorCtx visitor = visit_identity(shadow->ty);
+        visitor.user = ordinals;
+        visitor.e_pre = ordinal_expression;
+        visitor.t_pre = ordinal_type;
+        visitor.p_pre = ordinal_pattern;
+        visitor.l_pre = ordinal_lvalue;
+        visitor.s_pre = ordinal_statement;
+        for (size_t i = 0; i < shadow->root_count && !ordinals->failed; ++i) {
+                uint32_t ordinal;
+                (void)note_ordinal(ordinals, shadow->roots[i], &ordinal);
+                (void)visit_statement(shadow->ty, (Stmt *)shadow->roots[i], NULL, &visitor);
+        }
+        return !ordinals->failed;
+}
+
+static bool
+ordinal_of(Types2Ordinals const *ordinals, void const *syntax, uint32_t *ordinal)
+{
+        return syntax != NULL
+            && t2_index_find(&ordinals->seen, (uint64_t)(uintptr_t)syntax, ordinal);
+}
+
+static void
+free_ordinals(Types2Ordinals *ordinals)
+{
+        ty_free(ordinals->syntax);
+        t2_index_free(&ordinals->seen);
+        t2_index_free(&ordinals->symbols);
+}
+
+static bool
+is_definition_statement(Stmt const *statement)
+{
+        switch (statement->type) {
+        case STATEMENT_DEFINITION:
+        case STATEMENT_FUNCTION_DEFINITION:
+        case STATEMENT_PATTERN_DEFINITION:
+        case STATEMENT_OPERATOR_DEFINITION:
+        case STATEMENT_CLASS_DEFINITION:
+        case STATEMENT_TAG_DEFINITION:
+        case STATEMENT_SET_TYPE:
+                return true;
+        default:
+                return false;
+        }
+}
+
+static Symbol const *
+definition_symbol(void const *syntax)
+{
+        Stmt const *statement = syntax;
+        if (statement == NULL || !IsStmt((Expr const *)statement)) return NULL;
+        return is_definition_statement(statement) ? statement_target_symbol(statement) : NULL;
+}
+
+static Symbol const *
+addressed_symbol(void const *syntax)
+{
+        Expr const *expr = syntax;
+        if (expr == NULL) return NULL;
+        if (IsStmt(expr)) return definition_symbol(syntax);
+        return expr->type == EXPRESSION_IDENTIFIER ? expr->symbol : NULL;
+}
+
+static void
+index_definition_roots(Types2Shadow *shadow, Types2Ordinals const *ordinals, T2Index *roots)
+{
+        for (size_t i = 0; i < shadow->root_count; ++i) {
+                Symbol const *symbol = definition_symbol(shadow->roots[i]);
+                uint32_t ordinal;
+                if (symbol == NULL || !ordinal_of(ordinals, shadow->roots[i], &ordinal)) continue;
+                (void)t2_index_put(roots, (uint64_t)(uintptr_t)symbol, ordinal);
+        }
+}
+
+static Symbol *
+module_symbol(Types2Shadow *shadow, char const *identifier)
+{
+        Symbol *symbol = scope_local_lookup(shadow->ty, shadow->module->scope, identifier);
+        return symbol != NULL && symbol->scope == shadow->module->scope ? symbol : NULL;
+}
+
+static bool
+own_symbol(Types2Shadow *shadow, Symbol const *symbol)
+{
+        return symbol != NULL
+            && symbol->identifier != NULL
+            && symbol->scope == shadow->module->scope;
+}
+
+static void
+restore_cache(Types2Shadow *shadow)
+{
+        Types2Cache *cache = shadow->cache;
+        Types2Ordinals ordinals = {0};
+        (void)collect_ordinals(shadow, &ordinals);
+        size_t restored_nodes = 0;
+        for (size_t i = 0; i < cache->node_count; ++i) {
+                Types2CacheNode const *node = &cache->nodes[i];
+                if (node->ordinal >= ordinals.count) continue;
+                Expr *syntax = (Expr *)ordinals.syntax[node->ordinal];
+                syntax->_type = node->type;
+                if (!IsStmt(syntax)) syntax->annotated = node->annotated;
+                restored_nodes += 1;
+        }
+        size_t restored_bindings = 0;
+        for (size_t i = 0; i < cache->binding_count; ++i) {
+                Types2CacheBinding *binding = &cache->bindings[i];
+                Symbol *symbol = binding->ordinal < ordinals.count
+                               ? (Symbol *)addressed_symbol(ordinals.syntax[binding->ordinal])
+                               : NULL;
+                if (symbol == NULL || !same_text(symbol->identifier, binding->identifier)) {
+                        symbol = binding->ordinal == TYPES2_CACHE_NONE
+                               ? module_symbol(shadow, binding->identifier)
+                               : NULL;
+                }
+                if (symbol == NULL) continue;
+                symbol->type = binding->type != T2_TYPE_INVALID
+                             ? binding->type
+                             : t2_scheme_body(binding->scheme);
+                if (binding->scheme != NULL) {
+                        symbol->scheme = binding->scheme;
+                        binding->scheme = NULL;
+                }
+                restored_bindings += 1;
+        }
+        for (size_t i = 0; i < cache->alias_count; ++i) {
+                Symbol *symbol = module_symbol(shadow, cache->aliases[i].identifier);
+                if (symbol != NULL) symbol->type = cache->aliases[i].type;
+        }
+        for (size_t i = 0; i < cache->interface_count; ++i) {
+                Types2CacheInterface const *interface = &cache->interfaces[i];
+                if (interface->installed == NULL) continue;
+                for (size_t j = 0; j < interface->count; ++j) {
+                        uint32_t ordinal = interface->members[j].declaration;
+                        interface->installed[j].declaration = ordinal < ordinals.count
+                                                            ? ordinals.syntax[ordinal]
+                                                            : NULL;
+                }
+        }
+        if (shadow_option_enabled("TY_TYPES2_CACHE_TRACE")) {
+                fprintf(
+                        stderr,
+                        "types2 cache restore %s nodes=%zu/%zu bindings=%zu/%zu aliases=%zu interfaces=%zu\n",
+                        shadow->unit,
+                        restored_nodes,
+                        cache->node_count,
+                        restored_bindings,
+                        cache->binding_count,
+                        cache->alias_count,
+                        cache->interface_count
+                );
+        }
+        free_ordinals(&ordinals);
+}
+
+static bool
+write_present_type(Types2Cache *cache, T2Bytes *out, T2Type type)
+{
+        uint32_t index;
+        if (type == T2_TYPE_INVALID || !t2_type_writer_add(cache->writer, type, &index)) return false;
+        return !cache->failed && t2_bytes_u32(out, index);
+}
+
+static bool
+write_optional_type(Types2Cache *cache, T2Bytes *out, T2Type type)
+{
+        uint32_t index = TYPES2_CACHE_NONE;
+        if (type != T2_TYPE_INVALID && !t2_type_writer_add(cache->writer, type, &index)) {
+                index = TYPES2_CACHE_NONE;
+        }
+        return !cache->failed && t2_bytes_u32(out, index);
+}
+
+static bool
+write_scheme(Types2Cache *cache, T2Bytes *out, T2Scheme const *scheme)
+{
+        if (scheme == NULL) return t2_bytes_u8(out, 0);
+        T2Bytes record = {0};
+        bool ok = t2_scheme_encode(scheme, cache->writer, &record) && !cache->failed;
+        ok = ok && t2_bytes_u8(out, 1) && t2_bytes_append(out, record.data, record.size);
+        t2_bytes_free(&record);
+        return ok;
+}
+
+static bool
+write_section(T2Bytes *out, uint32_t count, T2Bytes const *body)
+{
+        return t2_bytes_u32(out, count) && t2_bytes_append(out, body->data, body->size);
+}
+
+static bool
+write_bindings(Types2Shadow *shadow, Types2Cache *cache, Types2Ordinals const *ordinals, T2Bytes *out)
+{
+        T2Bytes body = {0};
+        T2Index seen = {0};
+        T2Index roots = {0};
+        index_definition_roots(shadow, ordinals, &roots);
+        uint32_t count = 0;
+        bool ok = true;
+        for (size_t i = shadow->binding_count; ok && i-- > 0;) {
+                Types2Binding const *binding = &shadow->bindings[i];
+                if (binding->path_base != NULL) continue;
+                Symbol const *symbol = binding->symbol;
+                if (symbol == NULL || symbol->identifier == NULL || symbol->mod != shadow->module) continue;
+                uint64_t key = (uint64_t)(uintptr_t)symbol;
+                uint32_t existing;
+                if (t2_index_find(&seen, key, &existing)) continue;
+                if (symbol->scheme == NULL && symbol->type == T2_TYPE_INVALID) continue;
+                uint32_t ordinal;
+                if (
+                        !t2_index_find(&roots, key, &ordinal)
+                     && !t2_index_find(&ordinals->symbols, key, &ordinal)
+                ) {
+                        if (symbol->scope != shadow->module->scope) continue;
+                        ordinal = TYPES2_CACHE_NONE;
+                }
+                T2Bytes record = {0};
+                bool wrote = t2_bytes_string(&record, symbol->identifier)
+                          && t2_bytes_u32(&record, ordinal)
+                          && write_scheme(cache, &record, symbol->scheme)
+                          && write_optional_type(cache, &record, symbol->type)
+                          && (symbol->scheme != NULL || symbol->type != T2_TYPE_INVALID);
+                if (cache->failed) {
+                        ok = false;
+                } else if (wrote) {
+                        ok = t2_index_put(&seen, key, 1)
+                          && t2_bytes_append(&body, record.data, record.size);
+                        count += 1;
+                }
+                t2_bytes_free(&record);
+        }
+        ok = ok && write_section(out, count, &body);
+        t2_bytes_free(&body);
+        t2_index_free(&seen);
+        t2_index_free(&roots);
+        return ok;
+}
+
+static bool
+write_aliases(Types2Shadow *shadow, Types2Cache *cache, T2Bytes *out)
+{
+        T2Bytes body = {0};
+        uint32_t count = 0;
+        bool ok = true;
+        for (size_t i = 0; ok && i < shadow->alias_count; ++i) {
+                Types2Alias const *alias = &shadow->aliases[i];
+                if (!own_symbol(shadow, alias->symbol) || alias->symbol->type == T2_TYPE_INVALID) continue;
+                T2Bytes record = {0};
+                bool wrote = t2_bytes_string(&record, alias->symbol->identifier)
+                          && write_present_type(cache, &record, alias->symbol->type);
+                if (cache->failed) {
+                        ok = false;
+                } else if (wrote) {
+                        ok = t2_bytes_append(&body, record.data, record.size);
+                        count += 1;
+                }
+                t2_bytes_free(&record);
+        }
+        ok = ok && write_section(out, count, &body);
+        t2_bytes_free(&body);
+        return ok;
+}
+
+static bool
+write_nodes(Types2Shadow *shadow, Types2Cache *cache, Types2Ordinals const *ordinals, T2Bytes *out)
+{
+        (void)shadow;
+        T2Bytes body = {0};
+        uint32_t count = 0;
+        bool ok = true;
+        for (size_t i = 0; ok && i < ordinals->count; ++i) {
+                Expr const *syntax = ordinals->syntax[i];
+                if (syntax->_type == T2_TYPE_INVALID) continue;
+                uint32_t index;
+                if (!t2_type_writer_add(cache->writer, syntax->_type, &index)) {
+                        ok = !cache->failed;
+                        continue;
+                }
+                ok = t2_bytes_u32(&body, (uint32_t)i)
+                  && t2_bytes_u32(&body, index)
+                  && t2_bytes_u8(&body, !IsStmt(syntax) && syntax->annotated);
+                count += 1;
+        }
+        ok = ok && write_section(out, count, &body);
+        t2_bytes_free(&body);
+        return ok;
+}
+
+static bool
+write_member(Types2Cache *cache, Types2Ordinals const *ordinals, Types2Member const *member, T2Bytes *out)
+{
+        uint32_t declaration;
+        if (!ordinal_of(ordinals, member->declaration, &declaration)) declaration = TYPES2_CACHE_NONE;
+        return t2_bytes_string(out, member->name)
+            && t2_bytes_u8(out, (uint8_t)member->kind)
+            && t2_bytes_u8(out, member->is_static)
+            && t2_bytes_u8(out, member->required)
+            && t2_bytes_u8(out, member->writable)
+            && t2_bytes_u32(out, (uint32_t)member->class_arity)
+            && write_scheme(cache, out, member->scheme)
+            && t2_bytes_u32(out, declaration);
+}
+
+static bool
+write_interfaces(Types2Shadow *shadow, Types2Cache *cache, Types2Ordinals const *ordinals, T2Bytes *out)
+{
+        T2Bytes body = {0};
+        uint32_t count = 0;
+        bool ok = true;
+        for (size_t i = 0; ok && i < shadow->defined_class_count; ++i) {
+                int class_id = shadow->defined_classes[i];
+                if (class_id < 0 || (size_t)class_id >= InterfaceCount) continue;
+                Types2Interface const *interface = &Interfaces[class_id];
+                if (interface->members == NULL || interface->count == 0) continue;
+                uint64_t token = cache_symbol_out(shadow, types2_class_symbol(class_id));
+                if (token == UINT64_MAX) {
+                        ok = false;
+                        break;
+                }
+                T2Bytes record = {0};
+                bool wrote = t2_bytes_u32(&record, (uint32_t)token)
+                          && t2_bytes_u32(&record, (uint32_t)interface->count);
+                for (size_t j = 0; wrote && j < interface->count; ++j) {
+                        wrote = write_member(cache, ordinals, &interface->members[j], &record);
+                }
+                if (cache->failed) {
+                        ok = false;
+                } else if (wrote) {
+                        ok = t2_bytes_append(&body, record.data, record.size);
+                        count += 1;
+                } else {
+                        trace_cache(shadow, "skip-interface", class_get(shadow->ty, class_id)->name);
+                }
+                t2_bytes_free(&record);
+        }
+        ok = ok && write_section(out, count, &body);
+        t2_bytes_free(&body);
+        return ok;
+}
+
+static bool
+write_symbols(Types2Cache const *cache, T2Bytes *out)
+{
+        if (!t2_bytes_u32(out, (uint32_t)cache->symbol_count)) return false;
+        for (size_t i = 0; i < cache->symbol_count; ++i) {
+                Types2CacheSymbol const *entry = &cache->symbols[i];
+                if (
+                        !t2_bytes_u8(out, entry->is_tag)
+                     || !t2_bytes_string(out, entry->module)
+                     || !t2_bytes_string(out, entry->name)
+                     || !t2_bytes_u32(out, entry->arity)
+                ) return false;
+        }
+        return true;
+}
+
+static void
+write_cache(Types2Shadow *shadow)
+{
+        Types2Cache *cache = ty_calloc(1, sizeof *cache);
+        if (cache == NULL) return;
+        shadow->cache = cache;
+        T2SymbolRemap remap = { .out = cache_symbol_out, .context = shadow };
+        cache->writer = t2_type_writer_new(shadow->universe, remap);
+        Types2Ordinals ordinals = {0};
+        T2Bytes body = {0};
+        T2Bytes file = {0};
+        bool ok = cache->writer != NULL
+               && collect_ordinals(shadow, &ordinals)
+               && write_bindings(shadow, cache, &ordinals, &body)
+               && write_aliases(shadow, cache, &body)
+               && write_nodes(shadow, cache, &ordinals, &body)
+               && write_interfaces(shadow, cache, &ordinals, &body)
+               && !cache->failed
+               && t2_bytes_u32(&file, TYPES2_CACHE_MAGIC)
+               && t2_bytes_u32(&file, TYPES2_CACHE_VERSION)
+               && t2_bytes_u64(&file, shadow->cache_key)
+               && t2_bytes_u64(&file, shadow->shape)
+               && write_symbols(cache, &file)
+               && t2_type_writer_encode(cache->writer, &file)
+               && t2_bytes_append(&file, body.data, body.size);
+        if (ok) {
+                char directory[PATH_MAX];
+                if (cache_directory(directory, sizeof directory)) ensure_directory(directory);
+                ok = write_file(shadow->cache_path, file.data, file.size);
+        }
+        trace_cache(shadow, ok ? "write" : "write-failed", shadow->cache_path);
+        t2_bytes_free(&file);
+        t2_bytes_free(&body);
+        free_ordinals(&ordinals);
+        free_cache(cache);
+        shadow->cache = NULL;
+}
+
+static bool
+cacheable_unit(Types2Shadow *shadow)
+{
+        return shadow->module != NULL
+            && !entry_unit(shadow)
+            && shadow->module->path != NULL
+            && shadow->module->source != NULL
+            && shadow->module->scope != NULL
+            && shadow->ty != NULL
+            && shadow->log == NULL
+            && cache_enabled()
+            && !report_all_units()
+            && compiler_path_in_search_path(shadow->ty, shadow->module->path);
+}
+
+static void
+open_cache(Types2Shadow *shadow)
+{
+        if (!cacheable_unit(shadow)) return;
+        shadow->cache_key = unit_key(shadow);
+        remember_module_key(shadow->module->path, shadow->cache_key);
+        shadow->cache_path = cache_file_path(shadow->ty, shadow->module);
+        if (shadow->cache_path == NULL) return;
+        Types2Cache *cache = read_cache_file(shadow->cache_path, shadow->cache_key);
+        if (cache == NULL) {
+                trace_cache(shadow, "miss", shadow->cache_path);
+                return;
+        }
+        if (!resolve_symbols(shadow, cache, false)) {
+                free_cache(cache);
+                return;
+        }
+        shadow->cache = cache;
+        shadow->restored = true;
+        trace_cache(shadow, "hit", shadow->cache_path);
+}
+
+static void
+declare_class_interface(Types2Shadow *shadow, Stmt const *statement, int class_id)
+{
+        if (find_class_nominal(shadow, class_id) == NULL) return;
+        (void)ensure_class_interface(shadow, class_id);
+        install_declared_class_constructor(
+                shadow,
+                &statement->class,
+                find_class_nominal(shadow, class_id)
+        );
+}
+
+static void
+declare_class_interfaces(Types2Shadow *shadow, Stmt const *statement)
+{
+        if (statement == NULL || shadow->failed) return;
+        switch (statement->type) {
+        case STATEMENT_BLOCK:
+        case STATEMENT_MULTI:
+                for (int i = 0; i < vN(statement->statements); ++i) {
+                        declare_class_interfaces(shadow, v__(statement->statements, i));
+                }
+                break;
+        case STATEMENT_CLASS_DEFINITION:
+        {
+                int class_id = statement->class.symbol;
+                if (class_id < 0 && statement->class.var != NULL) {
+                        class_id = statement->class.var->class;
+                }
+                declare_class_interface(shadow, statement, class_id);
+                break;
+        }
+        default:
+                break;
+        }
+}
+
+static void
+remember_declared(Types2Shadow *shadow, Stmt const *statement)
+{
+        if (!shadow_reserve(
+                shadow,
+                (void **)&shadow->declared,
+                &shadow->declared_capacity,
+                shadow->declared_count + 1,
+                sizeof *shadow->declared
+        )) return;
+        shadow->declared[shadow->declared_count++] = statement;
+}
+
+static void
+abandon_cache(Types2Shadow *shadow)
+{
+        trace_cache(shadow, "abandon", shadow->cache_path);
+        shadow->restored = false;
+        if (shadow->cache_path != NULL) unlink(shadow->cache_path);
+        free_cache(shadow->cache);
+        shadow->cache = NULL;
+        for (size_t i = 0; i < shadow->declared_count; ++i) {
+                declare_class_interfaces(shadow, shadow->declared[i]);
+        }
+}
+
+static void
+load_cache(Types2Shadow *shadow)
+{
+        Types2Cache *cache = shadow->cache;
+        shadow->cache_loaded = true;
+        if (cache->shape != shadow->shape) {
+                trace_cache(shadow, "shape-mismatch", NULL);
+                abandon_cache(shadow);
+                return;
+        }
+        if (
+                resolve_symbols(shadow, cache, true)
+             && declare_cached_nominals(shadow, cache)
+             && decode_cache(shadow, cache)
+        ) {
+                install_interfaces(cache);
+                trace_cache(shadow, "load", NULL);
+                return;
+        }
+        abandon_cache(shadow);
+}
+
+struct canonical_variable {
+        char prefix[8];
+        unsigned long long id;
+};
+
+static char *
+canonical_metas(char const *text)
+{
+        size_t length = strlen(text);
+        char *out = ty_malloc(length + 1);
+        if (out == NULL) return NULL;
+        struct canonical_variable seen[64];
+        size_t seen_count = 0;
+        size_t n = 0;
+        for (size_t i = 0; i < length;) {
+                size_t p = 0;
+                size_t skip = 1;
+                bool binder = (text[i] == '@' || (text[i] == 'm' && text[i + 1] == 'u' && (i == 0 || !isalnum((unsigned char)text[i - 1]))));
+                if (binder) {
+                        skip = text[i] == '@' ? 1 : 2;
+                } else {
+                        while (text[i] == '$' && p < sizeof seen->prefix - 1 && isalpha((unsigned char)text[i + 1 + p])) p += 1;
+                }
+                if ((!binder && p == 0) || !isdigit((unsigned char)text[i + skip + p])) {
+                        out[n++] = text[i++];
+                        continue;
+                }
+                struct canonical_variable variable = {0};
+                if (binder) memcpy(variable.prefix, text[i] == '@' ? "@" : "mu", skip);
+                else memcpy(variable.prefix, text + i + 1, p);
+                char *end;
+                variable.id = strtoull(text + i + skip + p, &end, 10);
+                size_t slot = seen_count;
+                for (size_t j = 0; j < seen_count; ++j) {
+                        if (seen[j].id == variable.id && strcmp(seen[j].prefix, variable.prefix) == 0) slot = j;
+                }
+                if (slot == seen_count && seen_count < sizeof seen / sizeof *seen) seen[seen_count++] = variable;
+                n += (size_t)snprintf(out + n, length + 1 - n, binder ? "%s%zu" : "$%s%zu", variable.prefix, slot);
+                i = (size_t)(end - text);
+        }
+        out[n] = '\0';
+        return out;
+}
+
+static uint64_t
+digest_text(uint64_t digest, char const *text)
+{
+        char *canonical = canonical_metas(text);
+        if (canonical == NULL) return digest;
+        digest = XXH3_64bits_withSeed(canonical, strlen(canonical), digest);
+        ty_free(canonical);
+        return digest;
+}
+
+static uint64_t
+digest_scheme(Types2Shadow *shadow, uint64_t digest, T2Scheme const *scheme)
+{
+        if (scheme == NULL) return digest_text(digest, "-");
+        T2PrintOptions options = { .raw = true, .width = 1u << 20 };
+        char *text = t2_scheme_render(shadow->universe, scheme, &options);
+        if (text == NULL) return digest_text(digest, "?");
+        digest = digest_text(digest, text);
+        t2_string_free(text);
+        return digest;
+}
+
+static uint64_t
+digest_type(Types2Shadow *shadow, uint64_t digest, T2Type type)
+{
+        if (type == T2_TYPE_INVALID) return digest_text(digest, "-");
+        char *text = t2_type_string(shadow->universe, type);
+        if (text == NULL) return digest_text(digest, "?");
+        digest = digest_text(digest, text);
+        t2_string_free(text);
+        return digest;
+}
+
+static void
+dump_item(Types2Shadow *shadow, char const *label, size_t index, T2Type type, T2Scheme const *scheme)
+{
+        char *text = type == T2_TYPE_INVALID ? NULL : t2_type_string(shadow->universe, type);
+        T2PrintOptions options = { .raw = true, .width = 1u << 20 };
+        char *rendered = scheme == NULL ? NULL : t2_scheme_render(shadow->universe, scheme, &options);
+        char *canonical_text = text == NULL ? NULL : canonical_metas(text);
+        char *canonical_scheme = rendered == NULL ? NULL : canonical_metas(rendered);
+        fprintf(
+                stderr,
+                "types2 dump %s %s %zu\t%s\t%s\n",
+                shadow->unit,
+                label,
+                index,
+                canonical_text == NULL ? "-" : canonical_text,
+                canonical_scheme == NULL ? "-" : canonical_scheme
+        );
+        ty_free(canonical_text);
+        ty_free(canonical_scheme);
+        t2_string_free(text);
+        t2_string_free(rendered);
+}
+
+static void
+print_digest(Types2Shadow *shadow, char const *mode)
+{
+        Types2Ordinals ordinals = {0};
+        (void)collect_ordinals(shadow, &ordinals);
+        bool dump = shadow_option_enabled("TY_TYPES2_CACHE_DUMP");
+        uint64_t digest = 0;
+        size_t typed = 0;
+        for (size_t i = 0; i < ordinals.count; ++i) {
+                Expr const *syntax = ordinals.syntax[i];
+                if (syntax->_type == T2_TYPE_INVALID) continue;
+                digest = digest_type(shadow, digest ^ i, syntax->_type);
+                digest = digest_text(digest, !IsStmt(syntax) && syntax->annotated ? "!" : ".");
+                if (dump) dump_item(shadow, "node", i, syntax->_type, NULL);
+                typed += 1;
+        }
+        size_t bound = 0;
+        for (size_t i = 0; i < shadow->root_count; ++i) {
+                Stmt const *root = shadow->roots[i];
+                if (!is_definition_statement(root)) continue;
+                Symbol const *symbol = statement_target_symbol(root);
+                if (!own_symbol(shadow, symbol)) continue;
+                digest = digest_text(digest, symbol->identifier);
+                digest = digest_type(shadow, digest, symbol->type);
+                digest = digest_scheme(shadow, digest, symbol->scheme);
+                if (dump) dump_item(shadow, symbol->identifier, i, symbol->type, symbol->scheme);
+                bound += 1;
+        }
+        size_t interfaces = 0;
+        int classes = class_count(shadow->ty);
+        for (int c = 0; c < classes; ++c) {
+                Class const *class = class_get(shadow->ty, c);
+                if (class == NULL || class->def == NULL || class->def->mod != shadow->module) continue;
+                if ((size_t)c >= InterfaceCount || Interfaces[c].members == NULL) continue;
+                digest = digest_text(digest, class->name);
+                for (size_t j = 0; j < Interfaces[c].count; ++j) {
+                        Types2Member const *member = &Interfaces[c].members[j];
+                        digest = digest_text(digest, member->name);
+                        digest = digest_text(digest, member->is_static ? "static" : "instance");
+                        digest = digest_scheme(shadow, digest, member->scheme);
+                        if (dump) dump_item(shadow, member->name, j, T2_TYPE_INVALID, member->scheme);
+                }
+                interfaces += 1;
+        }
+        fprintf(
+                stderr,
+                "types2 cache digest %s %s %016" PRIx64 " nodes=%zu typed=%zu bindings=%zu interfaces=%zu\n",
+                mode,
+                shadow->unit,
+                digest,
+                ordinals.count,
+                typed,
+                bound,
+                interfaces
+        );
+        free_ordinals(&ordinals);
+}
+
 static Types2Shadow *
 new_shadow(char const *unit, char const *path, char const *source, bool logged)
 {
@@ -23488,7 +25091,7 @@ new_shadow(char const *unit, char const *path, char const *source, bool logged)
 }
 
 Types2Shadow *
-types2_shadow_begin(char const *unit, char const *path, char const *source)
+types2_shadow_begin(Ty *ty, Module const *module)
 {
         int saved_errno = errno;
 
@@ -23497,10 +25100,18 @@ types2_shadow_begin(char const *unit, char const *path, char const *source)
                 return NULL;
         }
 
-        Types2Shadow *shadow = new_shadow(unit, path, source, true);
+        Types2Shadow *shadow = new_shadow(
+                module == NULL ? NULL : module->name,
+                module == NULL ? NULL : module->path,
+                module == NULL ? NULL : module->source,
+                true
+        );
 
         if (shadow != NULL) {
+                shadow->ty = ty;
+                shadow->module = module;
                 shadow->published_bindings = strcmp(shadow->unit, "(repl)") == 0;
+                open_cache(shadow);
         }
 
         if (shadow != NULL && shadow->log != NULL) {
@@ -23540,8 +25151,11 @@ types2_shadow_observe_statement(
         visitor.l_pre = observe_lvalue;
         visitor.s_pre = observe_statement;
 
+        shadow->hashing_shape = checkpoint == TYPES2_SHADOW_DECLARATION
+                             || checkpoint == TYPES2_SHADOW_CLASS_OPERATOR_DECLARATION;
         /* A NULL scope keeps the shared visitor from allocating shadow scopes. */
         (void)visit_statement(ty, (Stmt *)stmt, NULL, &visitor);
+        shadow->hashing_shape = false;
 
         shadow->ty = ty;
         if (
@@ -23553,9 +25167,11 @@ types2_shadow_observe_statement(
                 checkpoint == TYPES2_SHADOW_DECLARATION
              || checkpoint == TYPES2_SHADOW_CLASS_OPERATOR_DECLARATION
         ) {
+                if (shadow->restored) remember_declared(shadow, stmt);
                 register_declaration(shadow, stmt);
         } else {
-                (void)infer_statement(shadow, stmt);
+                if (shadow->restored && !shadow->cache_loaded) load_cache(shadow);
+                if (!shadow->restored) (void)infer_statement(shadow, stmt);
         }
 
         if ((unsigned)checkpoint < TYPES2_SHADOW_CHECKPOINT_COUNT) {
@@ -23804,6 +25420,14 @@ types2_shadow_finish(Ty *ty, Types2Shadow *shadow)
         }
 
         shadow->ty = ty;
+        if (shadow->restored && !shadow->cache_loaded) load_cache(shadow);
+        if (shadow->restored) {
+                restore_cache(shadow);
+                if (cache_digest()) print_digest(shadow, "restored");
+                destroy_shadow(shadow);
+                errno = saved_errno;
+                return;
+        }
         validate_pending_class_contracts(shadow);
         diagnose_unresolved_obligations(shadow);
         report_internal_failure(shadow);
@@ -24060,6 +25684,8 @@ types2_shadow_finish(Ty *ty, Types2Shadow *shadow)
 
         publish_types(shadow);
         publish_interfaces(shadow);
+        if (shadow->cache_path != NULL && !fatal && !shadow->failed) write_cache(shadow);
+        if (cache_digest() && shadow->cache_path != NULL) print_digest(shadow, "fresh");
         char *failure = fatal ? render_failure(shadow) : NULL;
         destroy_shadow(shadow);
         errno = saved_errno;
@@ -24273,7 +25899,8 @@ types2_tag_instance(Ty *ty, int tag_id, T2Type payload)
 void
 types2_check_expression(Ty *ty, Expr *expression)
 {
-        Types2Shadow *shadow = types2_shadow_begin("(eval)", "(eval)", NULL);
+        static Module const eval_module = { .name = "(eval)", .path = "(eval)" };
+        Types2Shadow *shadow = types2_shadow_begin(ty, &eval_module);
         if (shadow == NULL || expression == NULL) return;
         shadow->ty = ty;
         shadow->published_bindings = true;

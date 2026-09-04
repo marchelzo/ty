@@ -105,11 +105,129 @@ resolve_test_predicate(
         return T2_RELATION_NO;
 }
 
+static uint64_t
+remap_out(void *context, uint64_t symbol)
+{
+        (void)context;
+        return symbol + 1000;
+}
+
+static uint64_t
+remap_in(void *context, uint64_t token)
+{
+        (void)context;
+        return token - 1000;
+}
+
+static uint32_t
+reserve_block(void *context, uint32_t count)
+{
+        *(uint32_t *)context = count;
+        return 9000;
+}
+
+static void
+check_wire_round_trip(T2Universe *universe)
+{
+        T2Variance variance[] = { T2_COVARIANT };
+        CHECK(t2_declare_nominal(universe, 77, "Box", 1, variance));
+        T2Type integer = t2_primitive(universe, T2_TYPE_INT);
+        T2Type string = t2_primitive(universe, T2_TYPE_STRING);
+        T2Type box = t2_nominal(universe, 77, &integer, 1);
+        T2Type arms[] = { box, string };
+        T2Type either = t2_union(universe, arms, 2);
+        uint32_t binder = t2_universe_fresh_recursive_binder(universe);
+        T2Type self = t2_recursive_variable(universe, binder);
+        T2Type boxed_self = t2_nominal(universe, 77, &self, 1);
+        T2Type pair_items[] = { integer, boxed_self };
+        T2Type list = t2_recursive(universe, binder, t2_union(universe, pair_items, 2));
+        T2Type variable = t2_variable(universe, T2_VARIABLE_QUANTIFIED, 4096);
+        T2Quantifier quantifier = { .id = 4096, .kind = T2_VARIABLE_QUANTIFIED };
+        T2Predicate predicate = {
+                .kind = T2_PREDICATE_SUBTYPE,
+                .subtype = variable,
+                .supertype = either,
+                .operand = T2_TYPE_INVALID,
+                .provenance = "wire test"
+        };
+        CHECK(box != T2_TYPE_INVALID);
+        CHECK(either != T2_TYPE_INVALID);
+        CHECK(binder != 0);
+        CHECK(self != T2_TYPE_INVALID);
+        CHECK(list != T2_TYPE_INVALID);
+        CHECK(variable != T2_TYPE_INVALID);
+        T2Scheme *scheme = t2_scheme_new(universe, &quantifier, 1, list, &predicate, 1);
+        CHECK(scheme != NULL);
+        t2_scheme_name_quantifier(scheme, 0, "T");
+
+        T2SymbolRemap remap = { .out = remap_out, .in = remap_in };
+        T2TypeWriter *writer = t2_type_writer_new(universe, remap);
+        T2Bytes payload = {0};
+        uint32_t either_index;
+        CHECK(t2_type_writer_add(writer, either, &either_index));
+        CHECK(t2_scheme_encode(scheme, writer, &payload));
+        T2Bytes table = {0};
+        CHECK(t2_type_writer_encode(writer, &table));
+        t2_type_writer_free(writer);
+
+        size_t position = 0;
+        T2ReadHooks identity = {0};
+        T2TypeReader *reader = t2_type_reader_new(universe, remap, identity, table.data, table.size, &position);
+        CHECK(reader != NULL);
+        CHECK(position == table.size);
+        if (reader != NULL) {
+                CHECK(t2_type_reader_type(reader, either_index) == either);
+                CHECK(t2_type_reader_variable_limit(reader) == 4097);
+                position = 0;
+                T2Scheme *decoded = t2_scheme_decode(reader, payload.data, payload.size, &position);
+                CHECK(decoded != NULL);
+                CHECK(position == payload.size);
+                if (decoded != NULL) {
+                        CHECK(t2_scheme_quantifier_count(decoded) == 1);
+                        CHECK(t2_scheme_predicate_count(decoded) == 1);
+                        CHECK(t2_subtype(universe, t2_scheme_body(decoded), list) == T2_RELATION_YES);
+                        CHECK(t2_subtype(universe, list, t2_scheme_body(decoded)) == T2_RELATION_YES);
+                        T2Predicate copy;
+                        CHECK(t2_scheme_predicate(decoded, 0, &copy));
+                        CHECK(copy.supertype == either);
+                        CHECK(copy.provenance != NULL && strcmp(copy.provenance, "wire test") == 0);
+                        char const *name = t2_scheme_quantifier_name(decoded, 0);
+                        CHECK(name != NULL && strcmp(name, "T") == 0);
+                        t2_scheme_free(decoded);
+                }
+                t2_type_reader_free(reader);
+        }
+        uint32_t reserved = 0;
+        T2ReadHooks rebase = { .floor = 4000, .reserve = reserve_block, .context = &reserved };
+        position = 0;
+        T2TypeReader *rebased = t2_type_reader_new(universe, remap, rebase, table.data, table.size, &position);
+        CHECK(rebased != NULL);
+        CHECK(reserved == 97);
+        if (rebased != NULL) {
+                CHECK(t2_type_reader_variable_limit(rebased) == 9097);
+                position = 0;
+                T2Scheme *decoded = t2_scheme_decode(rebased, payload.data, payload.size, &position);
+                CHECK(decoded != NULL);
+                if (decoded != NULL) {
+                        T2Predicate copy;
+                        CHECK(t2_scheme_predicate(decoded, 0, &copy));
+                        CHECK(copy.subtype == t2_variable(universe, T2_VARIABLE_QUANTIFIED, 9096));
+                        CHECK(t2_subtype(universe, t2_scheme_body(decoded), list) == T2_RELATION_YES);
+                        t2_scheme_free(decoded);
+                }
+                t2_type_reader_free(rebased);
+        }
+        t2_bytes_free(&table);
+        t2_bytes_free(&payload);
+        t2_scheme_free(scheme);
+}
+
 int
 main(void)
 {
         T2Universe *universe = t2_universe_new();
         CHECK(universe != NULL);
+        check_wire_round_trip(universe);
 
         T2Type never = t2_primitive(universe, T2_TYPE_NEVER);
         T2Type unknown = t2_primitive(universe, T2_TYPE_UNKNOWN);

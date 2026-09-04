@@ -314,6 +314,12 @@ TyLoadModule(Ty *ty, char const *name, u32 flags);
 ModuleVector const *
 TyActiveModules(Ty *ty);
 
+bool
+compiler_path_in_search_path(Ty *ty, char const *path);
+
+import_vector const *
+compiler_current_imports(Ty *ty);
+
 Symbol *
 TyLookupSymbol(Ty *ty, Module const *mod, char const *name);
 

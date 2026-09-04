@@ -12376,14 +12376,30 @@ expand_prog(Ty *ty, Stmt **p)
         return vv(expanded);
 }
 
+bool
+compiler_path_in_search_path(Ty *ty, char const *path)
+{
+        if (path == NULL) return false;
+        Array *search = v_(Globals, NAMES.path)->array;
+        for (int i = 0; i < vN(*search); ++i) {
+                char const *root = ss(v__(*search, i));
+                size_t length = strlen(root);
+                if (strncmp(path, root, length) == 0 && path[length] == '/') return true;
+        }
+        return false;
+}
+
+import_vector const *
+compiler_current_imports(Ty *ty)
+{
+        (void)ty;
+        return &STATE.imports;
+}
+
 static Stmt **
 resolve_prog(Ty *ty, Stmt **p)
 {
-        Types2Shadow *shadow = types2_shadow_begin(
-                STATE.module->name,
-                STATE.module->path,
-                STATE.module->source
-        );
+        Types2Shadow *shadow = types2_shadow_begin(ty, STATE.module);
 
         if (TY_CATCH_ERROR()) {
                 types2_shadow_abort(shadow);
@@ -18688,7 +18704,7 @@ DumpProgram(
                         if (!DebugScan) {
                                 char *shown = types2_show(ty, (T2Type)s);
                                 dump(out, " %s", shown);
-                                free(shown);
+                                t2_string_free(shown);
                         }
                         break;
                 CASE(EVAL)

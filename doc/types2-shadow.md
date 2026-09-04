@@ -233,6 +233,74 @@ the subscript", "field `x` does not exist on this type", "the returned
 value does not match the declared result type", ...); the `[code]` suffix
 is unchanged.
 
+### Cross-run type cache for library modules (2026-09-04)
+
+Library modules (any unit whose `Module.path` lies under a `ty` search
+root, never the entry program, `(repl)` or `(eval)`) persist what
+`publish_types`/`publish_interfaces` would have produced, so the next
+process restores the published state instead of inferring the module
+again.  Code: the `types2_cache` section of `src/types2.c` (before
+`new_shadow`) and the wire format in `src/types2_core.c`
+(`T2TypeWriter`/`T2TypeReader`, `t2_scheme_encode`/`t2_scheme_decode`).
+
+- Location: `$XDG_CACHE_HOME/ty/types/<build-id>/` (default
+  `~/.cache/ty/types/<build-id>/`), one file per module named
+  `<module>-<path hash>-<configuration>.t2c`.  `<build-id>` is the
+  executable's GNU build-id note (`dl_iterate_phdr`), so different builds
+  never share files; `<configuration>` folds `ty.jit`, `ty.TEST`,
+  `ty.color` and the compiler flags, because `#|if` blocks in the prelude
+  expand differently under `--test` (`assert` is a function there and a
+  macro otherwise).
+- Key: build id, XXH3 of the module source, the configuration word, and
+  the keys of every import (transitively, since each dependency's key
+  already includes its own imports; the prelude is an implicit import of
+  every unit).  A second hash, the *shape*, folds the construct and byte
+  span of every node visited during the DECLARATION checkpoints; it is
+  compared when the file is decoded and catches any remaining
+  conditional-compilation difference.  On a mismatch the unit is abandoned
+  (`abandon_cache`): the skipped class-interface construction is replayed
+  for the recorded declarations and inference proceeds normally.
+- Contents, in file order: header (magic `TYT2`, version, key, shape); the
+  nominal symbol table (tag flag, defining module path or NULL for
+  builtins, name, arity); the hash-consed type table (post-order, metas
+  and unresolved computed terms included); bindings (identifier, node
+  ordinal, optional scheme, optional published type); aliases; node types
+  (ordinal, type, `annotated`); interfaces of the classes the unit
+  defined (members with kind, flags, class arity, scheme, declaration
+  ordinal).  Node ordinals are positions in a traversal of the unit's
+  statement roots with the same visitor the checker uses, so no source
+  positions are stored.
+- Restore: `types2_shadow_begin` reads the header and symbol table and
+  resolves the foreign nominals by (module path, name); DECLARATION
+  checkpoints still run (nominals, hierarchy, forward bindings) but skip
+  `ensure_class_interface`/`install_declared_class_constructor`; the first
+  STATEMENT checkpoint resolves the unit's own nominals, decodes the type
+  table into the global universe and installs the interfaces into the
+  registry; inference is skipped; `types2_shadow_finish` writes
+  `Expr._type`/`annotated`, `Symbol.type`/`Symbol.scheme` and alias types
+  back and patches the interfaces' declaration pointers.
+- Fidelity rules learned the hard way: every binding whose symbol belongs
+  to the module is written, including bindings flagged `imported` or
+  `member`, because `publish_types` overwrites `Symbol.type` for all of
+  them (ffi's `__set_type__ c::u8 …` is Dynamic to importers only because
+  ffi's own publish clobbers the parse-time type).  Symbols are addressed
+  by the ordinal of their definition statement or of the first identifier
+  node that references them, never by name alone (operators overload one
+  name several times).  The published type is stored next to the scheme
+  rather than derived from the scheme body (the body may hold a pack meta
+  that zonked to `...Dynamic`).  Metas are recreated as fresh metas of the
+  restoring shadow's solver, quantifier ids are rebased into a fresh block
+  of the process-wide counter (`reserve_quantified_ids`), recursive binders
+  are fresh; the only observable difference from a fresh run is the order
+  of union members whose ids differ.
+- Switches: `TY_TYPES2_CACHE=0` disables, `TY_TYPES2_CACHE_DIR` overrides
+  the directory, `TY_TYPES2_CACHE_TRACE=1` prints hit/miss/load/restore/
+  write events, `TY_TYPES2_CACHE_DIGEST=1` prints a per-unit digest of the
+  published state (canonicalized variable ids) for both fresh and restored
+  units, `TY_TYPES2_CACHE_DUMP=1` prints the digest's items.
+  `TY_TYPES2_REPORT=all` disables the cache so diagnostics of library units
+  are still produced.
+
 ## Historical overview
 
 The compiler-independent core in `src/types2_core.c` provides the first native

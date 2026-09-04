@@ -257,6 +257,12 @@ tags_close(Ty *ty, int tags, bool color)
 }
 
 int
+tags_count(Ty *ty)
+{
+        return names.count;
+}
+
+int
 tags_lookup(Ty *ty, char const *name)
 {
         for (int i = 0; i < names.count; ++i)

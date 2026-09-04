@@ -777,6 +777,116 @@ t2_type_snapshot_import(
         T2TypeSnapshot const *snapshot
 );
 
+/*
+ * Wire format for persisting types across runs.  A writer accumulates a
+ * table of type nodes in dependency order and hands out indices; a reader
+ * rebuilds the table in a universe, remapping nominal symbols and recursive
+ * binders through the caller.  Metas are recreated through the reader's
+ * meta hook; unresolved computed terms keep their identity.
+ */
+typedef struct t2_bytes {
+        unsigned char *data;
+        size_t size;
+        size_t capacity;
+} T2Bytes;
+
+bool
+t2_bytes_u8(T2Bytes *bytes, uint8_t value);
+
+bool
+t2_bytes_u32(T2Bytes *bytes, uint32_t value);
+
+bool
+t2_bytes_u64(T2Bytes *bytes, uint64_t value);
+
+bool
+t2_bytes_string(T2Bytes *bytes, char const *text);
+
+bool
+t2_bytes_append(T2Bytes *bytes, void const *data, size_t size);
+
+void
+t2_bytes_free(T2Bytes *bytes);
+
+bool
+t2_read_u8(unsigned char const *data, size_t size, size_t *position, uint8_t *value);
+
+bool
+t2_read_u32(unsigned char const *data, size_t size, size_t *position, uint32_t *value);
+
+bool
+t2_read_u64(unsigned char const *data, size_t size, size_t *position, uint64_t *value);
+
+bool
+t2_read_string(
+        unsigned char const *data,
+        size_t size,
+        size_t *position,
+        char **text
+);
+
+typedef struct t2_symbol_remap {
+        uint64_t (*out)(void *context, uint64_t symbol);
+        uint64_t (*in)(void *context, uint64_t token);
+        void *context;
+} T2SymbolRemap;
+
+typedef struct t2_type_writer T2TypeWriter;
+
+T2TypeWriter *
+t2_type_writer_new(T2Universe *universe, T2SymbolRemap remap);
+
+bool
+t2_type_writer_add(T2TypeWriter *writer, T2Type type, uint32_t *index);
+
+size_t
+t2_type_writer_count(T2TypeWriter const *writer);
+
+bool
+t2_type_writer_encode(T2TypeWriter const *writer, T2Bytes *out);
+
+void
+t2_type_writer_free(T2TypeWriter *writer);
+
+typedef struct t2_type_reader T2TypeReader;
+
+typedef struct t2_read_hooks {
+        uint32_t floor;
+        uint32_t (*reserve)(void *context, uint32_t count);
+        T2Type (*meta)(void *context, T2VariableKind kind);
+        void *context;
+} T2ReadHooks;
+
+T2TypeReader *
+t2_type_reader_new(
+        T2Universe *universe,
+        T2SymbolRemap remap,
+        T2ReadHooks hooks,
+        unsigned char const *data,
+        size_t size,
+        size_t *position
+);
+
+T2Type
+t2_type_reader_type(T2TypeReader const *reader, uint32_t index);
+
+uint32_t
+t2_type_reader_variable_limit(T2TypeReader const *reader);
+
+void
+t2_type_reader_free(T2TypeReader *reader);
+
+bool
+t2_scheme_encode(T2Scheme const *scheme, T2TypeWriter *writer, T2Bytes *out);
+
+T2Scheme *
+t2_scheme_decode(
+        T2TypeReader *reader,
+        unsigned char const *data,
+        size_t size,
+        size_t *position
+);
+
 /* Conservative runtime-shape facts for a future JIT adapter. */
 bool
 t2_type_runtime_facts(

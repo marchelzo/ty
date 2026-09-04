@@ -50,6 +50,9 @@ char const *
 tags_name(Ty *ty, int tag);
 
 int
+tags_count(Ty *ty);
+
+int
 tags_lookup(Ty *ty, char const *name);
 
 void

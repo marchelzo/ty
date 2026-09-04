@@ -12,6 +12,7 @@ typedef struct statement Stmt;
 typedef struct expression Expr;
 typedef struct value Value;
 typedef struct class Class;
+typedef struct module Module;
 typedef struct types2_shadow Types2Shadow;
 
 typedef enum types2_shadow_checkpoint {
@@ -65,7 +66,7 @@ void
 types2_startup_finished(void);
 
 Types2Shadow *
-types2_shadow_begin(char const *unit, char const *path, char const *source);
+types2_shadow_begin(Ty *ty, Module const *module);
 
 void
 types2_shadow_observe_statement(

@@ -10143,7 +10143,7 @@ BUILTIN_FUNCTION(ty_type_show)
         Value t = ARG(0);
         char *shown = types2_show(ty, types2_from_ty(ty, &t));
         Value result = vSsz(shown);
-        free(shown);
+        t2_string_free(shown);
 
         return result;
 }
