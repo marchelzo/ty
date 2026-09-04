@@ -611,7 +611,7 @@ show_impl(
                                 .width = sized ? (unsigned)columns : 0
                         });
                         svPn(buf, s, strlen(s));
-                        free(s);
+                        ty_free(s);
                         break;
                 }
 
