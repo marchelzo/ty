@@ -101,8 +101,14 @@ typedef struct types2_member {
         bool is_static;
         bool required;
         bool writable;
+        bool borrowed;
         size_t previous;
 } Types2Member;
+
+typedef struct types2_interface {
+        Types2Member *members;
+        size_t count;
+} Types2Interface;
 
 typedef struct types2_provenance {
         Expr const *site;
@@ -311,6 +317,7 @@ struct types2_shadow {
         bool building_interface;
         bool primitives_bound;
         bool published_bindings;
+        unsigned structural_depth;
         int member_class_id;
         T2Type member_receiver;
         int default_dict_class;
@@ -361,6 +368,9 @@ struct types2_shadow {
 
         Types2Member *members;
         T2Index member_index;
+        int *defined_classes;
+        size_t defined_class_count;
+        size_t defined_class_capacity;
         Types2ProgramIndex *programs;
         size_t program_count;
         size_t program_capacity;
@@ -404,7 +414,6 @@ struct types2_shadow {
         uint32_t refutable_pattern_depth;
 
         uint32_t level;
-        uint32_t next_quantified_id;
         uint64_t inferred_nodes;
         uint64_t unsupported_nodes;
         uint64_t deferred_nodes;
@@ -1299,6 +1308,15 @@ attach_notes(Types2Diagnostic *diagnostic, Types2Notes notes)
         ty_free(notes.items);
 }
 
+enum { TYPES2_CLASS_PARAMETER_BASE = 256 };
+
+static uint32_t
+fresh_quantified_id(void)
+{
+        static uint32_t next = UINT32_C(0x40000000);
+        return next++;
+}
+
 static uint64_t
 binding_key(Symbol const *symbol)
 {
@@ -1386,7 +1404,13 @@ instantiate_binding(
                         return instantiate_binding(shadow, target, site);
                 }
         }
-        if (binding->scheme != NULL) {
+        if (
+                binding->scheme != NULL
+             && (
+                        binding->refinement == T2_TYPE_INVALID
+                     || t2_scheme_quantifier_count(binding->scheme) != 0
+                )
+        ) {
                 T2Type type = t2_scheme_instantiate(
                         binding->scheme,
                         shadow->solver,
@@ -2283,7 +2307,7 @@ add_member(
                 is_static
         );
         if (old != NULL) {
-                t2_scheme_free(old->scheme);
+                if (!old->borrowed) t2_scheme_free(old->scheme);
                 *old = (Types2Member) {
                         .previous = old->previous,
                         .class_id = class_id,
@@ -2326,6 +2350,143 @@ add_member(
                 .previous = previous
         };
         return member;
+}
+
+static Types2Interface *Interfaces;
+static size_t InterfaceCount;
+
+static Types2Interface const *
+published_interface(int class_id)
+{
+        if (class_id < 0 || (size_t)class_id >= InterfaceCount) return NULL;
+        Types2Interface const *interface = &Interfaces[class_id];
+        return interface->members == NULL ? NULL : interface;
+}
+
+static Types2Interface *
+interface_slot(int class_id)
+{
+        if (class_id < 0) return NULL;
+        if ((size_t)class_id >= InterfaceCount) {
+                size_t count = (size_t)class_id + 1;
+                Types2Interface *grown = ty_realloc(Interfaces, count * sizeof *grown);
+                if (grown == NULL) return NULL;
+                memset(grown + InterfaceCount, 0, (count - InterfaceCount) * sizeof *grown);
+                Interfaces = grown;
+                InterfaceCount = count;
+        }
+        return &Interfaces[class_id];
+}
+
+static void
+note_defined_class(Types2Shadow *shadow, int class_id)
+{
+        if (class_id < 0) return;
+        if (!shadow_reserve(
+                shadow,
+                (void **)&shadow->defined_classes,
+                &shadow->defined_class_capacity,
+                shadow->defined_class_count + 1,
+                sizeof *shadow->defined_classes
+        )) return;
+        shadow->defined_classes[shadow->defined_class_count++] = class_id;
+}
+
+static T2Scheme *
+overload_scheme_without_predicates(Types2Shadow *shadow, T2Scheme const *scheme)
+{
+        if (
+                scheme == NULL
+             || t2_scheme_predicate_count(scheme) == 0
+             || t2_type_kind(shadow->universe, t2_scheme_body(scheme)) != T2_TYPE_OVERLOAD
+        ) return NULL;
+        size_t count = t2_scheme_quantifier_count(scheme);
+        T2Quantifier *quantifiers = count == 0 ? NULL : ty_malloc(count * sizeof *quantifiers);
+        if (count != 0 && quantifiers == NULL) return NULL;
+        for (size_t i = 0; i < count; ++i) {
+                if (!t2_scheme_quantifier(scheme, i, &quantifiers[i])) {
+                        ty_free(quantifiers);
+                        return NULL;
+                }
+        }
+        T2Scheme *stripped = t2_scheme_new(
+                shadow->universe,
+                quantifiers,
+                count,
+                t2_scheme_body(scheme),
+                NULL,
+                0
+        );
+        ty_free(quantifiers);
+        return stripped;
+}
+
+static void
+publish_interface(Types2Shadow *shadow, int class_id)
+{
+        Types2Interface *interface = interface_slot(class_id);
+        if (interface == NULL || interface->members != NULL) return;
+        size_t count = 0;
+        for (size_t i = 0; i < shadow->member_count; ++i) {
+                count += shadow->members[i].class_id == class_id;
+        }
+        if (count == 0) return;
+        Types2Member *members = ty_malloc(count * sizeof *members);
+        if (members == NULL) return;
+        size_t n = 0;
+        for (size_t i = 0; i < shadow->member_count; ++i) {
+                Types2Member *member = &shadow->members[i];
+                if (member->class_id != class_id) continue;
+                T2Scheme *stripped = overload_scheme_without_predicates(shadow, member->scheme);
+                members[n] = *member;
+                if (stripped != NULL) members[n].scheme = stripped;
+                else member->borrowed = true;
+                n += 1;
+        }
+        interface->members = members;
+        interface->count = count;
+}
+
+static void
+publish_interfaces(Types2Shadow *shadow)
+{
+        if (shadow->failed) return;
+        for (size_t i = 0; i < shadow->defined_class_count; ++i) {
+                publish_interface(shadow, shadow->defined_classes[i]);
+        }
+}
+
+static bool
+adopt_member(Types2Shadow *shadow, Types2Member const *member)
+{
+        if (!shadow_reserve(
+                shadow,
+                (void **)&shadow->members,
+                &shadow->member_capacity,
+                shadow->member_count + 1,
+                sizeof *shadow->members
+        )) return false;
+        uint64_t key = member_key(member->class_id, member->name);
+        uint32_t head;
+        size_t previous = t2_index_find(&shadow->member_index, key, &head) ? head : SIZE_MAX;
+        if (!t2_index_put(&shadow->member_index, key, (uint32_t)shadow->member_count)) {
+                shadow->failed = true;
+                return false;
+        }
+        Types2Member *adopted = &shadow->members[shadow->member_count++];
+        *adopted = *member;
+        adopted->borrowed = true;
+        adopted->previous = previous;
+        return true;
+}
+
+static bool
+adopt_interface(Types2Shadow *shadow, Types2Interface const *interface)
+{
+        for (size_t i = 0; i < interface->count; ++i) {
+                if (!adopt_member(shadow, &interface->members[i])) return false;
+        }
+        return true;
 }
 
 static T2Type
@@ -2415,7 +2576,7 @@ instantiate_member(
                         );
                 }
         }
-        T2Type result = t2_scheme_apply(
+        T2Type result = t2_scheme_apply_relaxed(
                 member->scheme,
                 shadow->solver,
                 arguments,
@@ -2424,6 +2585,7 @@ instantiate_member(
         );
         ty_free(arguments);
         if (result == T2_TYPE_INVALID) {
+                char const *reason = t2_solver_error(shadow->solver);
                 add_diagnostic(
                         shadow,
                         site,
@@ -2431,8 +2593,10 @@ instantiate_member(
                         "member-instantiation",
                         receiver,
                         T2_TYPE_INVALID,
-                        "could not instantiate member `%s` for this receiver",
-                        member->name
+                        "could not instantiate member `%s` for this receiver%s%s",
+                        member->name,
+                        reason == NULL || *reason == '\0' ? "" : ": ",
+                        reason == NULL ? "" : reason
                 );
                 return t2_primitive(shadow->universe, T2_TYPE_ERROR);
         }
@@ -4222,7 +4386,7 @@ interface_function_scheme(
                                    && SymbolIsParamPack(parameter->symbol)
                                     ? T2_VARIABLE_PACK
                                     : T2_VARIABLE_QUANTIFIED;
-                uint32_t id = shadow->next_quantified_id++;
+                uint32_t id = fresh_quantified_id();
                 quantifiers[class_arity + i] = (T2Quantifier) { .id = id, .kind = kind };
                 (void)add_type_variable(
                         shadow,
@@ -5478,6 +5642,20 @@ ensure_class_interface(Types2Shadow *shadow, int class_id)
                 shadow->building_interface = previous_interface_state;
                 return false;
         }
+        Types2Interface const *published = published_interface(class_id);
+        if (published != NULL) {
+                bool adopted = adopt_interface(shadow, published);
+                if (adopted && class->super != NULL && class->super->i != class_id) {
+                        (void)ensure_class_interface(shadow, class->super->i);
+                }
+                nominal = find_class_nominal(shadow, class_id);
+                if (nominal != NULL) {
+                        nominal->complete = adopted;
+                        nominal->populating = false;
+                }
+                shadow->building_interface = previous_interface_state;
+                return adopted;
+        }
         size_t declared_arity = (size_t)vN(definition->type_params);
         bool tag_interface = class->def->type == STATEMENT_TAG_DEFINITION;
         size_t arity = tag_interface ? 1 : declared_arity;
@@ -5501,7 +5679,7 @@ ensure_class_interface(Types2Shadow *shadow, int class_id)
                                    && SymbolIsParamPack(parameter->symbol)
                                     ? T2_VARIABLE_PACK
                                     : T2_VARIABLE_QUANTIFIED;
-                uint32_t id = shadow->next_quantified_id++;
+                uint32_t id = fresh_quantified_id();
                 quantifiers[i] = (T2Quantifier) { .id = id, .kind = kind };
                 if (parameter != NULL) {
                         (void)add_type_variable(
@@ -8690,6 +8868,7 @@ infer_member_type(
         if (kind == T2_TYPE_UNION) {
                 T2Type result = t2_primitive(shadow->universe, T2_TYPE_NEVER);
                 size_t count = t2_type_arity(shadow->universe, object);
+                size_t covered = 0;
                 for (size_t i = 0; i < count; ++i) {
                         T2Type arm_type = t2_type_child(shadow->universe, object, i);
                         if (safe && t2_type_kind(shadow->universe, arm_type) == T2_TYPE_NIL) {
@@ -8705,24 +8884,27 @@ infer_member_type(
                                 false
                         );
                         if (t2_type_kind(shadow->universe, arm) == T2_TYPE_ERROR) {
-                                if (safe) arm = nil;
-                                else {
-                                        if (diagnose) {
-                                                add_diagnostic(
-                                                        shadow,
-                                                        site,
-                                                        TYPES2_DIAGNOSTIC_ERROR,
-                                                        "union-member-coverage",
-                                                        object,
-                                                        T2_TYPE_INVALID,
-                                                        "field `%s` is missing from some arms of this union",
-                                                        name
-                                                );
-                                        }
-                                        return arm;
-                                }
+                                if (!safe) continue;
+                                arm = nil;
+                        } else {
+                                covered += 1;
                         }
                         result = t2_join(shadow->universe, result, arm);
+                }
+                if (!safe && covered == 0) {
+                        if (diagnose) {
+                                add_diagnostic(
+                                        shadow,
+                                        site,
+                                        TYPES2_DIAGNOSTIC_ERROR,
+                                        "union-member-coverage",
+                                        object,
+                                        T2_TYPE_INVALID,
+                                        "field `%s` does not exist on any arm of this union",
+                                        name
+                                );
+                        }
+                        return t2_primitive(shadow->universe, T2_TYPE_ERROR);
                 }
                 return safe ? t2_join(shadow->universe, result, nil) : result;
         }
@@ -11343,6 +11525,12 @@ callable_class_test(Types2Shadow *shadow, T2Type wanted)
 }
 
 static T2Type
+resolved_arm(Types2Shadow *shadow, T2Type arm)
+{
+        return resolved_type_head(shadow, arm, T2_PREFER_LOWER_BOUND);
+}
+
+static T2Type
 narrow_type_to(Types2Shadow *shadow, T2Type current, T2Type wanted)
 {
         T2TypeKind kind = t2_type_kind(shadow->universe, current);
@@ -11374,7 +11562,18 @@ narrow_type_to(Types2Shadow *shadow, T2Type current, T2Type wanted)
         if (kind == T2_TYPE_UNION) {
                 T2Type result = t2_primitive(shadow->universe, T2_TYPE_NEVER);
                 for (size_t i = 0; i < t2_type_arity(shadow->universe, current); ++i) {
-                        T2Type arm = t2_type_child(shadow->universe, current, i);
+                        T2Type arm = resolved_arm(
+                                shadow,
+                                t2_type_child(shadow->universe, current, i)
+                        );
+                        if (t2_type_kind(shadow->universe, arm) == T2_TYPE_UNION) {
+                                result = t2_join(
+                                        shadow->universe,
+                                        result,
+                                        narrow_type_to(shadow, arm, wanted)
+                                );
+                                continue;
+                        }
                         if (callable_test && callable_kind(shadow, arm)) {
                                 result = t2_join(shadow->universe, result, arm);
                                 continue;
@@ -11427,7 +11626,18 @@ exclude_type(Types2Shadow *shadow, T2Type current, T2Type excluded)
         if (t2_type_kind(shadow->universe, current) == T2_TYPE_UNION) {
                 T2Type result = t2_primitive(shadow->universe, T2_TYPE_NEVER);
                 for (size_t i = 0; i < t2_type_arity(shadow->universe, current); ++i) {
-                        T2Type arm = t2_type_child(shadow->universe, current, i);
+                        T2Type arm = resolved_arm(
+                                shadow,
+                                t2_type_child(shadow->universe, current, i)
+                        );
+                        if (t2_type_kind(shadow->universe, arm) == T2_TYPE_UNION) {
+                                result = t2_join(
+                                        shadow->universe,
+                                        result,
+                                        exclude_type(shadow, arm, excluded)
+                                );
+                                continue;
+                        }
                         if (callable_test && callable_kind(shadow, arm)) continue;
                         if (t2_subtype(
                                 shadow->universe,
@@ -11669,6 +11879,13 @@ touch_condition_bindings(Types2Shadow *shadow, Expr const *source)
         }
 }
 
+static bool
+monomorphic_binding(Types2Binding const *binding)
+{
+        return binding->scheme == NULL
+            || t2_scheme_quantifier_count(binding->scheme) == 0;
+}
+
 static void
 refine_binding(
         Types2Shadow *shadow,
@@ -11682,7 +11899,7 @@ refine_binding(
         if (binding == NULL || !binding->initialized) {
                 binding = member_refinement_binding(shadow, symbol, site);
         }
-        if (binding == NULL || !binding->initialized || binding->scheme != NULL) return;
+        if (binding == NULL || !binding->initialized || !monomorphic_binding(binding)) return;
         T2Type current = resolved_type_head(
                 shadow,
                 binding_effective_type(binding),
@@ -13370,6 +13587,41 @@ type_contains_meta(Types2Shadow *shadow, T2Type type, unsigned depth)
         return false;
 }
 
+static bool
+adopt_published_binding(
+        Types2Shadow *shadow,
+        Types2Binding *binding,
+        Symbol const *symbol
+)
+{
+        if (
+                SymbolIsClass(symbol)
+             || SymbolIsTag(symbol)
+             || symbol->mod == NULL
+             || module_is_current(shadow, symbol->mod)
+        ) return false;
+        if (
+                symbol->scheme != NULL
+             && !type_contains_meta(shadow, t2_scheme_body(symbol->scheme), 0)
+        ) {
+                binding->scheme = symbol->scheme;
+                binding->borrowed = true;
+                binding->type = t2_scheme_body(symbol->scheme);
+                binding->mutable = false;
+                binding->initialized = true;
+                return true;
+        }
+        if (
+                symbol->type != T2_TYPE_INVALID
+             && !type_contains_meta(shadow, symbol->type, 0)
+        ) {
+                binding->type = symbol->type;
+                binding->initialized = true;
+                return true;
+        }
+        return false;
+}
+
 static Types2Binding *
 ensure_resolved_binding(Types2Shadow *shadow, Symbol const *symbol)
 {
@@ -13379,6 +13631,7 @@ ensure_resolved_binding(Types2Shadow *shadow, Symbol const *symbol)
         }
         binding->imported = true;
         binding->persistent = true;
+        if (adopt_published_binding(shadow, binding, symbol)) return binding;
         Symbol const *definition = import_external_binding(shadow, symbol);
         binding = find_binding(shadow, symbol);
         if (binding == NULL || binding->initialized) return binding;
@@ -19147,6 +19400,8 @@ infer_member_fields(
                                 "the field initializer does not match the declared field type"
                         );
                 }
+                set_node_type(shadow, identifier, type);
+                if (field != identifier) set_node_type(shadow, field, type);
                 T2Scheme *scheme = prepend_scheme_quantifiers(
                         shadow,
                         class_quantifiers,
@@ -19225,6 +19480,7 @@ member_contract_compatible(
         Types2Member const *expected_member,
         T2Type expected_receiver,
         Expr const *site,
+        Types2DiagnosticSeverity severity,
         char const *code,
         char const *description
 )
@@ -19292,9 +19548,7 @@ member_contract_compatible(
                 add_diagnostic(
                         shadow,
                         site,
-                        strcmp(code, "invalid-override") == 0
-                                ? TYPES2_DIAGNOSTIC_WARNING
-                                : TYPES2_DIAGNOSTIC_ERROR,
+                        severity,
                         code,
                         actual,
                         expected,
@@ -19354,6 +19608,7 @@ validate_class_contracts(
                                         expected,
                                         supertype,
                                         actual.declaration,
+                                        TYPES2_DIAGNOSTIC_WARNING,
                                         "invalid-override",
                                         "the override does not match the inherited member's type"
                                 );
@@ -19415,6 +19670,9 @@ validate_class_contracts(
                                 &expected,
                                 trait,
                                 actual->declaration,
+                                expected.required
+                                        ? TYPES2_DIAGNOSTIC_ERROR
+                                        : TYPES2_DIAGNOSTIC_WARNING,
                                 "invalid-trait-member",
                                 "the member does not match the trait's declaration"
                         );
@@ -19689,6 +19947,83 @@ find_constructor_initializer(Types2Shadow *shadow, int class_id)
         return NULL;
 }
 
+static T2Scheme *
+scheme_with_class_bounds(
+        Types2Shadow *shadow,
+        T2Scheme *scheme,
+        ClassDefinition const *definition,
+        size_t class_arity
+)
+{
+        size_t declared = (size_t)vN(definition->type_params);
+        size_t bounded = 0;
+        for (size_t i = 0; i < class_arity && i < declared; ++i) {
+                bounded += v__(definition->type_params, (int)i)->constraint != NULL;
+        }
+        size_t quantifier_count = t2_scheme_quantifier_count(scheme);
+        if (bounded == 0 || quantifier_count < class_arity) return scheme;
+        size_t inherited = t2_scheme_predicate_count(scheme);
+        T2Quantifier *quantifiers = ty_malloc(quantifier_count * sizeof *quantifiers);
+        T2Predicate *predicates = ty_malloc((inherited + bounded) * sizeof *predicates);
+        if (quantifiers == NULL || predicates == NULL) {
+                ty_free(quantifiers);
+                ty_free(predicates);
+                return scheme;
+        }
+        for (size_t i = 0; i < quantifier_count; ++i) {
+                if (!t2_scheme_quantifier(scheme, i, &quantifiers[i])) goto Keep;
+        }
+        for (size_t i = 0; i < inherited; ++i) {
+                if (!t2_scheme_predicate(scheme, i, &predicates[i])) goto Keep;
+        }
+        size_t count = inherited;
+        size_t type_mark = push_type_variables(shadow);
+        for (size_t i = 0; i < class_arity && i < declared; ++i) {
+                Expr const *parameter = v__(definition->type_params, (int)i);
+                (void)add_type_variable(
+                        shadow,
+                        parameter->symbol,
+                        t2_variable(shadow->universe, quantifiers[i].kind, quantifiers[i].id)
+                );
+        }
+        for (size_t i = 0; i < class_arity && i < declared; ++i) {
+                Expr const *parameter = v__(definition->type_params, (int)i);
+                if (parameter->constraint == NULL) continue;
+                T2Type bound = lower_type(shadow, parameter->constraint);
+                if (bound == T2_TYPE_INVALID) continue;
+                predicates[count++] = (T2Predicate) {
+                        .kind = T2_PREDICATE_SUBTYPE,
+                        .subtype = t2_variable(
+                                shadow->universe,
+                                quantifiers[i].kind,
+                                quantifiers[i].id
+                        ),
+                        .supertype = bound,
+                        .operand = T2_TYPE_INVALID,
+                        .provenance = "class type parameter bound"
+                };
+        }
+        pop_type_variables(shadow, type_mark);
+        T2Scheme *bounded_scheme = t2_scheme_new(
+                shadow->universe,
+                quantifiers,
+                quantifier_count,
+                t2_scheme_body(scheme),
+                predicates,
+                count
+        );
+        ty_free(quantifiers);
+        ty_free(predicates);
+        if (bounded_scheme == NULL) return scheme;
+        t2_scheme_free(scheme);
+        return bounded_scheme;
+
+Keep:
+        ty_free(quantifiers);
+        ty_free(predicates);
+        return scheme;
+}
+
 static void
 install_class_constructor(
         Types2Shadow *shadow,
@@ -19764,6 +20099,7 @@ install_class_constructor(
         t2_scheme_free(constructor);
         constructor = class_value;
         if (constructor == NULL) return;
+        constructor = scheme_with_class_bounds(shadow, constructor, definition, class_arity);
 
         Types2Binding *binding = ensure_binding(shadow, definition->var);
         if (binding == NULL) {
@@ -19777,6 +20113,25 @@ install_class_constructor(
         binding->mutable = false;
         binding->initialized = true;
         binding->forward = false;
+}
+
+static void
+assume_parameter_bound(Types2Shadow *shadow, Expr const *parameter, T2Type variable)
+{
+        if (parameter == NULL || parameter->constraint == NULL) return;
+        T2Type bound = lower_type(shadow, parameter->constraint);
+        if (bound == T2_TYPE_INVALID) return;
+        if (!shadow_reserve(
+                shadow,
+                (void **)&shadow->upper_assumptions,
+                &shadow->upper_assumption_capacity,
+                shadow->upper_assumption_count + 1,
+                sizeof *shadow->upper_assumptions
+        )) return;
+        shadow->upper_assumptions[shadow->upper_assumption_count++] = (Types2UpperAssumption) {
+                .subtype = variable,
+                .supertype = bound
+        };
 }
 
 static T2Type
@@ -19807,10 +20162,12 @@ infer_class_definition(Types2Shadow *shadow, Stmt const *statement)
         }
         size_t arity = is_tag ? 1 : declared_arity;
         bool implicit_tag_payload = is_tag && declared_arity == 0;
+        if (!is_tag || runtime_class != NULL) note_defined_class(shadow, class_id);
         uint32_t outer_level = shadow->level;
         shadow->level = outer_level + 1;
         uint32_t class_level = shadow->level;
         size_t type_mark = push_type_variables(shadow);
+        size_t assumption_mark = shadow->upper_assumption_count;
         T2Quantifier *quantifiers = arity == 0
                                   ? NULL
                                   : ty_malloc(arity * sizeof *quantifiers);
@@ -19832,11 +20189,12 @@ infer_class_definition(Types2Shadow *shadow, Stmt const *statement)
                                    && SymbolIsParamPack(parameter->symbol)
                                     ? T2_VARIABLE_PACK
                                     : T2_VARIABLE_QUANTIFIED;
-                uint32_t id = shadow->next_quantified_id++;
+                uint32_t id = fresh_quantified_id();
                 arguments[i] = t2_variable(shadow->universe, kind, id);
                 quantifiers[i] = (T2Quantifier) { .id = id, .kind = kind };
                 if (parameter != NULL) {
                         (void)add_type_variable(shadow, parameter->symbol, arguments[i]);
+                        assume_parameter_bound(shadow, parameter, arguments[i]);
                 }
         }
         T2Type receiver;
@@ -19977,11 +20335,13 @@ infer_class_definition(Types2Shadow *shadow, Stmt const *statement)
         shadow->member_receiver = previous_member_receiver;
         ty_free(quantifiers);
         ty_free(arguments);
+        shadow->upper_assumption_count = assumption_mark;
         pop_type_variables(shadow, type_mark);
         shadow->level = outer_level;
         return receiver;
 
 Done:
+        shadow->upper_assumption_count = assumption_mark;
         pop_type_variables(shadow, type_mark);
         shadow->level = outer_level;
         return t2_primitive(shadow->universe, T2_TYPE_ERROR);
@@ -21341,7 +21701,7 @@ install_declared_class_constructor(
                                    && SymbolIsParamPack(parameter->symbol)
                                     ? T2_VARIABLE_PACK
                                     : T2_VARIABLE_QUANTIFIED;
-                uint32_t id = shadow->next_quantified_id++;
+                uint32_t id = fresh_quantified_id();
                 quantifiers[i] = (T2Quantifier) { .id = id, .kind = kind };
                 arguments[i] = t2_variable(shadow->universe, kind, id);
                 if (parameter != NULL) {
@@ -21965,6 +22325,55 @@ arms_supporting_operator(
 }
 
 static T2Relation
+structural_conformance(
+        Types2Shadow *shadow,
+        T2Solver *solver,
+        T2Type subject,
+        T2Type record,
+        char const *provenance
+)
+{
+        if (shadow->structural_depth >= 8) return T2_RELATION_DEFERRED;
+        shadow->structural_depth += 1;
+        T2Relation relation = T2_RELATION_YES;
+        size_t count = t2_record_field_count(shadow->universe, record);
+        for (size_t i = 0; i < count && relation != T2_RELATION_NO; ++i) {
+                T2FieldSpec field;
+                if (!t2_record_field(shadow->universe, record, i, &field)) {
+                        relation = T2_RELATION_NO;
+                        break;
+                }
+                T2Type member = infer_member_type(
+                        shadow,
+                        subject,
+                        field.name,
+                        false,
+                        NULL,
+                        false
+                );
+                bool missing = member == T2_TYPE_INVALID
+                            || t2_type_kind(shadow->universe, member) == T2_TYPE_ERROR;
+                if (missing) {
+                        if (field.presence == T2_PRESENCE_REQUIRED) relation = T2_RELATION_NO;
+                        continue;
+                }
+                T2Relation step = t2_solver_constrain_subtype(
+                        solver,
+                        member,
+                        field.type,
+                        provenance
+                );
+                if (step == T2_RELATION_NO || step == T2_RELATION_COMPLEXITY) {
+                        relation = T2_RELATION_NO;
+                } else if (step == T2_RELATION_DEFERRED) {
+                        relation = T2_RELATION_DEFERRED;
+                }
+        }
+        shadow->structural_depth -= 1;
+        return relation;
+}
+
+static T2Relation
 resolve_external_predicate_x(
         void *context,
         T2Solver *solver,
@@ -22065,9 +22474,10 @@ resolve_external_predicate_x(
                      || operator_type_is_open(shadow, operand, 0)
                 )
         ) return T2_RELATION_DEFERRED;
+        T2TypeKind subject_kind = t2_type_kind(shadow->universe, subject);
         if (
                 predicate->kind != T2_PREDICATE_OPERATOR
-             && t2_type_kind(shadow->universe, subject) == T2_TYPE_META
+             && (subject_kind == T2_TYPE_META || subject_kind == T2_TYPE_VARIABLE)
         ) return T2_RELATION_DEFERRED;
 
         T2Type result = T2_TYPE_INVALID;
@@ -22231,12 +22641,31 @@ resolve_external_predicate_x(
                         0
                 );
         case T2_PREDICATE_SUBTYPE:
+        {
+                T2Type expected = t2_solver_zonk(
+                        solver,
+                        predicate->supertype,
+                        T2_PREFER_UPPER_BOUND
+                );
+                if (
+                        t2_type_kind(shadow->universe, expected) == T2_TYPE_RECORD
+                     && t2_type_kind(shadow->universe, subject) != T2_TYPE_RECORD
+                ) {
+                        return structural_conformance(
+                                shadow,
+                                solver,
+                                subject,
+                                expected,
+                                predicate->provenance
+                        );
+                }
                 return t2_solver_constrain_subtype(
                         solver,
                         predicate->subtype,
                         predicate->supertype,
                         predicate->provenance
                 );
+        }
         }
 
         if (
@@ -22303,8 +22732,9 @@ destroy_shadow(Types2Shadow *shadow)
                 t2_scheme_free(shadow->aliases[i].scheme);
         }
         for (size_t i = 0; i < shadow->member_count; ++i) {
-                t2_scheme_free(shadow->members[i].scheme);
+                if (!shadow->members[i].borrowed) t2_scheme_free(shadow->members[i].scheme);
         }
+        ty_free(shadow->defined_classes);
         for (size_t i = 0; i < shadow->operator_count; ++i) {
                 t2_scheme_free(shadow->operators[i].scheme);
         }
@@ -23041,7 +23471,6 @@ new_shadow(char const *unit, char const *path, char const *source, bool logged)
         shadow->source = source;
         shadow->next_node_id = 1;
         shadow->default_dict_class = -1;
-        shadow->next_quantified_id = UINT32_C(0x40000000);
         shadow->member_class_id = -1;
         shadow->log = logged ? open_shadow_log(&shadow->close_log) : NULL;
         shadow->trace_nodes = logged && shadow_option_enabled("TY_TYPES2_TRACE_NODES");
@@ -23630,6 +24059,7 @@ types2_shadow_finish(Ty *ty, Types2Shadow *shadow)
         }
 
         publish_types(shadow);
+        publish_interfaces(shadow);
         char *failure = fatal ? render_failure(shadow) : NULL;
         destroy_shadow(shadow);
         errno = saved_errno;
@@ -23778,6 +24208,36 @@ types2_object_type(Ty *ty, Class *class)
         if (class->object_type != T2_TYPE_INVALID) return class->object_type;
         class->object_type = types2_class_instance(ty, class->i, NULL, 0);
         return class->object_type;
+}
+
+T2Type
+types2_class_parameter(Ty *ty, Class *class, size_t index)
+{
+        (void)ty;
+        if (class == NULL || index >= 256) return T2_TYPE_INVALID;
+        return t2_variable(
+                types2_universe(),
+                T2_VARIABLE_QUANTIFIED,
+                TYPES2_CLASS_PARAMETER_BASE + (uint32_t)class->i * 256 + (uint32_t)index
+        );
+}
+
+T2Type
+types2_class_template(Ty *ty, Class *class)
+{
+        if (class == NULL) return T2_TYPE_INVALID;
+        size_t arity = class->def == NULL
+                     ? 0
+                     : (size_t)vN(class->def->class.type_params);
+        if (arity == 0) return types2_object_type(ty, class);
+        T2Type *parameters = ty_malloc(arity * sizeof *parameters);
+        if (parameters == NULL) return types2_object_type(ty, class);
+        for (size_t i = 0; i < arity; ++i) {
+                parameters[i] = types2_class_parameter(ty, class, i);
+        }
+        T2Type type = types2_class_instance(ty, class->i, parameters, arity);
+        ty_free(parameters);
+        return type == T2_TYPE_INVALID ? types2_object_type(ty, class) : type;
 }
 
 T2Type
@@ -24283,6 +24743,45 @@ types2_substitute(T2Type type, uint32_t const *ids, T2Type const *replacements, 
         return t2_type_substitute(types2_universe(), type, ids, replacements, count);
 }
 
+static T2Type
+canonical_class_parameters(T2Type receiver, T2Type member, size_t arity)
+{
+        T2Universe *universe = types2_universe();
+        Types2Interface const *interface = published_interface(
+                types2_symbol_class(t2_type_payload(universe, receiver))
+        );
+        if (interface == NULL) return member;
+        T2Scheme const *scheme = NULL;
+        for (size_t i = 0; i < interface->count && scheme == NULL; ++i) {
+                Types2Member const *candidate = &interface->members[i];
+                if (candidate->class_arity == arity && candidate->scheme != NULL) {
+                        scheme = candidate->scheme;
+                }
+        }
+        if (scheme == NULL || t2_scheme_quantifier_count(scheme) < arity) return member;
+        uint32_t *ids = ty_malloc(arity * sizeof *ids);
+        T2Type *canonical = ty_malloc(arity * sizeof *canonical);
+        if (ids == NULL || canonical == NULL) {
+                ty_free(ids);
+                ty_free(canonical);
+                return member;
+        }
+        for (size_t i = 0; i < arity; ++i) {
+                T2Quantifier quantifier;
+                if (!t2_scheme_quantifier(scheme, i, &quantifier)) {
+                        ty_free(ids);
+                        ty_free(canonical);
+                        return member;
+                }
+                ids[i] = quantifier.id;
+                canonical[i] = t2_nominal_type_parameter(universe, (uint32_t)i);
+        }
+        T2Type result = t2_type_substitute(universe, member, ids, canonical, arity);
+        ty_free(ids);
+        ty_free(canonical);
+        return result == T2_TYPE_INVALID ? member : result;
+}
+
 T2Type
 types2_member_type(Ty *ty, T2Type receiver, T2Type member)
 {
@@ -24302,6 +24801,7 @@ types2_member_type(Ty *ty, T2Type receiver, T2Type member)
                 ty_free(arguments);
                 return member;
         }
+        member = canonical_class_parameters(receiver, member, arity);
         for (size_t i = 0; i < arity; ++i) {
                 ids[i] = (uint32_t)i + 1;
                 arguments[i] = t2_type_child(universe, receiver, i);

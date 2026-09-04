@@ -623,6 +623,15 @@ t2_scheme_apply(
         char const *provenance
 );
 
+T2Type
+t2_scheme_apply_relaxed(
+        T2Scheme const *scheme,
+        T2Solver *solver,
+        T2Type const *arguments,
+        size_t argument_count,
+        char const *provenance
+);
+
 T2Scheme *
 t2_solver_generalize(
         T2Solver *solver,

@@ -9503,7 +9503,7 @@ static Value
 ClassSummary(Ty *ty, T2Type t0, ClassDefinition *def)
 {
         if (t0 == T2_TYPE_INVALID) {
-                t0 = types2_object_type(ty, class_get(ty, def->symbol));
+                t0 = types2_class_template(ty, class_get(ty, def->symbol));
         }
 
         GC_STOP();
@@ -9563,7 +9563,11 @@ ClassSummary(Ty *ty, T2Type t0, ClassDefinition *def)
         }
 
         for (int i = 0; i < vN(def->type_params); ++i) {
-                T2Type parameter = t2_nominal_type_parameter(types2_universe(), i);
+                T2Type parameter = types2_class_parameter(
+                        ty,
+                        class_get(ty, def->symbol),
+                        (size_t)i
+                );
                 vAp(params, types2_to_ty(ty, parameter));
         }
 
@@ -10026,6 +10030,9 @@ BUILTIN_FUNCTION(ty_type_info)
 
         if (class == NULL || class->def == NULL) {
                 return NIL;
+        }
+        if (t0 == types2_object_type(ty, class)) {
+                t0 = types2_class_template(ty, class);
         }
 
         return ClassSummary(ty, t0, &class->def->class);

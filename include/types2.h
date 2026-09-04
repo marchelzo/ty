@@ -107,6 +107,12 @@ T2Type
 types2_object_type(Ty *ty, Class *class);
 
 T2Type
+types2_class_template(Ty *ty, Class *class);
+
+T2Type
+types2_class_parameter(Ty *ty, Class *class, size_t index);
+
+T2Type
 types2_class_type(Ty *ty, Class *class);
 
 T2Type

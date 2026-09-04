@@ -24,7 +24,8 @@ typedef struct t2_node {
 enum {
         T2_NODE_META = 1,
         T2_NODE_VARIABLE = 2,
-        T2_NODE_RECURSIVE_VARIABLE = 4
+        T2_NODE_RECURSIVE_VARIABLE = 4,
+        T2_NODE_GRADUAL = 8
 };
 
 static uint8_t
@@ -34,6 +35,9 @@ node_flags_for(T2TypeKind kind)
         case T2_TYPE_META: return T2_NODE_META;
         case T2_TYPE_VARIABLE: return T2_NODE_VARIABLE;
         case T2_TYPE_RECURSIVE_VARIABLE: return T2_NODE_RECURSIVE_VARIABLE;
+        case T2_TYPE_DYNAMIC:
+        case T2_TYPE_ANY:
+        case T2_TYPE_UNKNOWN: return T2_NODE_GRADUAL;
         default: return 0;
         }
 }
@@ -5114,6 +5118,17 @@ t2_overload(T2Universe *universe, T2Type const *candidates, size_t count)
         return result;
 }
 
+static bool
+interchangeable(T2Universe const *universe, T2Type left, T2Type right)
+{
+        T2Node const *a = get_node(universe, left);
+        T2Node const *b = get_node(universe, right);
+        return a != NULL
+            && b != NULL
+            && ((a->flags | b->flags) & T2_NODE_GRADUAL) == 0
+            && t2_subtype(universe, right, left) == T2_RELATION_YES;
+}
+
 T2Type
 t2_join(T2Universe *universe, T2Type left, T2Type right)
 {
@@ -5132,7 +5147,9 @@ t2_join(T2Universe *universe, T2Type left, T2Type right)
                 return t2_primitive(universe, T2_TYPE_UNKNOWN);
         }
         T2Relation lr = t2_subtype(universe, left, right);
-        if (lr == T2_RELATION_YES) return right;
+        if (lr == T2_RELATION_YES) {
+                return interchangeable(universe, left, right) ? left : right;
+        }
         T2Relation rl = t2_subtype(universe, right, left);
         if (rl == T2_RELATION_YES) return left;
         T2Type arms[] = { left, right };
@@ -8268,7 +8285,6 @@ constrain_record_types(
                 }
                 if (have == NULL) continue;
 
-                bool wanted_writable = (wanted->payload & T2_FIELD_WRITABLE_BIT) != 0;
                 result = combine_all(
                         result,
                         constrain_internal(
@@ -8279,18 +8295,6 @@ constrain_record_types(
                                 retain_deferred
                         )
                 );
-                if (wanted_writable && !solver->failed) {
-                        result = combine_all(
-                                result,
-                                constrain_internal(
-                                        solver,
-                                        wanted->children[0],
-                                        have->children[0],
-                                        provenance,
-                                        retain_deferred
-                                )
-                        );
-                }
                 if (solver->failed) return T2_RELATION_NO;
         }
 
@@ -8867,6 +8871,27 @@ constrain_either_way(
         );
 }
 
+static bool
+structural_actual(T2TypeKind kind)
+{
+        switch (kind) {
+        case T2_TYPE_NOMINAL:
+        case T2_TYPE_STRING:
+        case T2_TYPE_LITERAL_STRING:
+        case T2_TYPE_INT:
+        case T2_TYPE_LITERAL_INT:
+        case T2_TYPE_FLOAT:
+        case T2_TYPE_BOOL:
+        case T2_TYPE_LITERAL_BOOL:
+        case T2_TYPE_TUPLE:
+        case T2_TYPE_FUNCTION:
+        case T2_TYPE_OVERLOAD:
+                return true;
+        default:
+                return false;
+        }
+}
+
 static T2Relation
 constrain_internal(
         T2Solver *solver,
@@ -9194,6 +9219,39 @@ constrain_internal(
                         provenance,
                         retain_deferred
                 );
+        }
+        if (
+                b->kind == T2_TYPE_RECORD
+             && structural_actual(a->kind)
+             && solver->predicate_resolver != NULL
+        ) {
+                T2Predicate predicate = {
+                        .kind = T2_PREDICATE_SUBTYPE,
+                        .subtype = subtype,
+                        .supertype = supertype,
+                        .operand = t2_primitive(solver->universe, T2_TYPE_NEVER),
+                        .provenance = provenance
+                };
+                T2Relation relation = solver->predicate_resolver(
+                        solver->predicate_context,
+                        solver,
+                        &predicate
+                );
+                if (relation == T2_RELATION_DEFERRED) {
+                        return retain_deferred
+                             ? retain_obligation(solver, subtype, supertype, provenance)
+                             : T2_RELATION_DEFERRED;
+                }
+                if (relation == T2_RELATION_NO && !solver->failed) {
+                        set_solver_error(
+                                solver,
+                                "the value does not provide the required members",
+                                subtype,
+                                supertype,
+                                provenance
+                        );
+                }
+                return relation;
         }
 
         if (
@@ -11927,13 +11985,14 @@ Fail:
         return T2_TYPE_INVALID;
 }
 
-T2Type
-t2_scheme_apply(
+static T2Type
+scheme_apply_x(
         T2Scheme const *scheme,
         T2Solver *solver,
         T2Type const *arguments,
         size_t argument_count,
-        char const *provenance
+        char const *provenance,
+        bool relaxed
 )
 {
         if (
@@ -12001,11 +12060,14 @@ t2_scheme_apply(
                                 predicate.kind != T2_PREDICATE_SUBTYPE
                              && operand == T2_TYPE_INVALID
                         )
-                     || t2_solver_constrain_predicate(
-                            solver,
-                            &predicate
-                        ) == T2_RELATION_NO
                 ) goto Fail;
+                T2SolverMark step = t2_solver_mark(solver);
+                if (t2_solver_constrain_predicate(solver, &predicate) != T2_RELATION_NO) {
+                        t2_solver_commit(solver, step);
+                        continue;
+                }
+                if (!relaxed) goto Fail;
+                t2_solver_rollback(solver, step);
         }
         ty_free(instantiation.replacements);
         ty_free(instantiation.nodes);
@@ -12019,6 +12081,30 @@ Fail:
         ty_free(instantiation.binders);
         t2_solver_rollback(solver, mark);
         return T2_TYPE_INVALID;
+}
+
+T2Type
+t2_scheme_apply(
+        T2Scheme const *scheme,
+        T2Solver *solver,
+        T2Type const *arguments,
+        size_t argument_count,
+        char const *provenance
+)
+{
+        return scheme_apply_x(scheme, solver, arguments, argument_count, provenance, false);
+}
+
+T2Type
+t2_scheme_apply_relaxed(
+        T2Scheme const *scheme,
+        T2Solver *solver,
+        T2Type const *arguments,
+        size_t argument_count,
+        char const *provenance
+)
+{
+        return scheme_apply_x(scheme, solver, arguments, argument_count, provenance, true);
 }
 
 typedef struct t2_zonk_entry {
