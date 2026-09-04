@@ -9,6 +9,30 @@ typedef uint32_t T2Type;
 
 enum { T2_TYPE_INVALID = 0 };
 
+typedef struct t2_index_entry {
+        uint64_t key;
+        uint32_t value;
+        bool used;
+} T2IndexEntry;
+
+typedef struct t2_index {
+        T2IndexEntry *entries;
+        size_t count;
+        size_t capacity;
+} T2Index;
+
+bool
+t2_index_find(T2Index const *index, uint64_t key, uint32_t *value);
+
+bool
+t2_index_put(T2Index *index, uint64_t key, uint32_t value);
+
+void
+t2_index_clear(T2Index *index);
+
+void
+t2_index_free(T2Index *index);
+
 typedef enum t2_type_kind {
         T2_TYPE_NEVER,
         T2_TYPE_UNKNOWN,

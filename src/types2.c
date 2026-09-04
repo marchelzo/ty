@@ -53,6 +53,7 @@ typedef struct types2_binding {
         Symbol const *alias;
         Symbol const *path_base;
         char const *path_member;
+        size_t previous;
 } Types2Binding;
 
 typedef enum types2_alias_state {
@@ -100,7 +101,26 @@ typedef struct types2_member {
         bool is_static;
         bool required;
         bool writable;
+        size_t previous;
 } Types2Member;
+
+typedef struct types2_provenance {
+        Expr const *site;
+        char *text;
+        size_t previous;
+} Types2Provenance;
+
+typedef struct types2_definition {
+        Stmt const *statement;
+        size_t previous;
+} Types2Definition;
+
+typedef struct types2_program_index {
+        T2Index names;
+        Types2Definition *definitions;
+        size_t definition_count;
+        size_t definition_capacity;
+} Types2ProgramIndex;
 
 typedef struct types2_class_contract {
         Stmt const *statement;
@@ -322,6 +342,10 @@ struct types2_shadow {
         Types2Binding *bindings;
         size_t binding_count;
         size_t binding_capacity;
+        T2Index binding_index;
+        size_t *global_bindings;
+        size_t global_binding_count;
+        size_t global_binding_capacity;
 
         char const **imported_operators;
         size_t imported_operator_count;
@@ -336,6 +360,11 @@ struct types2_shadow {
         size_t nominal_capacity;
 
         Types2Member *members;
+        T2Index member_index;
+        Types2ProgramIndex *programs;
+        size_t program_count;
+        size_t program_capacity;
+        T2Index program_lookup;
         size_t member_count;
         size_t member_capacity;
 
@@ -360,7 +389,8 @@ struct types2_shadow {
         size_t diagnostic_count;
         size_t diagnostic_capacity;
 
-        char **provenances;
+        Types2Provenance *provenances;
+        T2Index provenance_index;
         size_t provenance_count;
         size_t provenance_capacity;
 
@@ -686,6 +716,17 @@ shadow_copy_string(Types2Shadow *shadow, char const *text)
         return copy;
 }
 
+static uint64_t
+hash_name(char const *name)
+{
+        uint64_t hash = UINT64_C(1469598103934665603);
+        for (unsigned char const *p = (unsigned char const *)name; *p != '\0'; ++p) {
+                hash ^= *p;
+                hash *= UINT64_C(1099511628211);
+        }
+        return hash;
+}
+
 static char const *
 source_provenance(
         Types2Shadow *shadow,
@@ -694,10 +735,25 @@ source_provenance(
 )
 {
         if (site == NULL || description == NULL) return description;
+        size_t described = strlen(description);
+        uint64_t key = (uint64_t)(uintptr_t)site ^ hash_name(description);
+        uint32_t head;
+        size_t previous = t2_index_find(&shadow->provenance_index, key, &head)
+                        ? head
+                        : SIZE_MAX;
+        for (size_t i = previous; i != SIZE_MAX; i = shadow->provenances[i].previous) {
+                Types2Provenance const *entry = &shadow->provenances[i];
+                if (
+                        entry->site == site
+                     && strncmp(entry->text, description, described) == 0
+                     && strncmp(entry->text + described, " at ", 4) == 0
+                ) return entry->text;
+        }
         char const *path = shadow->path == NULL ? "<unknown>" : shadow->path;
+        char buffer[512];
         int length = snprintf(
-                NULL,
-                0,
+                buffer,
+                sizeof buffer,
                 "%s at %s:%u:%u",
                 description,
                 path,
@@ -710,15 +766,19 @@ source_provenance(
                 shadow->failed = true;
                 return description;
         }
-        snprintf(
-                text,
-                (size_t)length + 1,
-                "%s at %s:%u:%u",
-                description,
-                path,
-                site->start.line + 1,
-                site->start.col + 1
-        );
+        if ((size_t)length < sizeof buffer) {
+                memcpy(text, buffer, (size_t)length + 1);
+        } else {
+                snprintf(
+                        text,
+                        (size_t)length + 1,
+                        "%s at %s:%u:%u",
+                        description,
+                        path,
+                        site->start.line + 1,
+                        site->start.col + 1
+                );
+        }
         if (!shadow_reserve(
                 shadow,
                 (void **)&shadow->provenances,
@@ -729,7 +789,16 @@ source_provenance(
                 ty_free(text);
                 return description;
         }
-        shadow->provenances[shadow->provenance_count++] = text;
+        if (!t2_index_put(&shadow->provenance_index, key, (uint32_t)shadow->provenance_count)) {
+                ty_free(text);
+                shadow->failed = true;
+                return description;
+        }
+        shadow->provenances[shadow->provenance_count++] = (Types2Provenance) {
+                .site = site,
+                .text = text,
+                .previous = previous
+        };
         return text;
 }
 
@@ -1230,15 +1299,62 @@ attach_notes(Types2Diagnostic *diagnostic, Types2Notes notes)
         ty_free(notes.items);
 }
 
+static uint64_t
+binding_key(Symbol const *symbol)
+{
+        return (uint64_t)(uintptr_t)symbol;
+}
+
+static size_t
+newest_binding(Types2Shadow const *shadow, Symbol const *key)
+{
+        uint32_t index;
+        return t2_index_find(&shadow->binding_index, binding_key(key), &index)
+             ? index
+             : SIZE_MAX;
+}
+
+static Types2Binding *
+append_binding(Types2Shadow *shadow, Symbol const *key, Types2Binding record)
+{
+        if (!shadow_reserve(
+                shadow,
+                (void **)&shadow->bindings,
+                &shadow->binding_capacity,
+                shadow->binding_count + 1,
+                sizeof *shadow->bindings
+        )) return NULL;
+        size_t index = shadow->binding_count;
+        record.previous = newest_binding(shadow, key);
+        if (!t2_index_put(&shadow->binding_index, binding_key(key), (uint32_t)index)) {
+                shadow->failed = true;
+                return NULL;
+        }
+        if (SymbolIsGlobal(record.symbol)) {
+                if (!shadow_reserve(
+                        shadow,
+                        (void **)&shadow->global_bindings,
+                        &shadow->global_binding_capacity,
+                        shadow->global_binding_count + 1,
+                        sizeof *shadow->global_bindings
+                )) return NULL;
+                shadow->global_bindings[shadow->global_binding_count++] = index;
+        }
+        shadow->bindings[shadow->binding_count++] = record;
+        return &shadow->bindings[index];
+}
+
 static Types2Binding *
 find_binding(Types2Shadow *shadow, Symbol const *symbol)
 {
         if (symbol == NULL) return NULL;
-        for (size_t i = shadow->binding_count; i != 0; --i) {
-                if (
-                        shadow->bindings[i - 1].active
-                     && shadow->bindings[i - 1].symbol == symbol
-                ) return &shadow->bindings[i - 1];
+        for (
+                size_t i = newest_binding(shadow, symbol);
+                i != SIZE_MAX;
+                i = shadow->bindings[i].previous
+        ) {
+                Types2Binding *binding = &shadow->bindings[i];
+                if (binding->active && binding->symbol == symbol) return binding;
         }
         return NULL;
 }
@@ -1248,21 +1364,12 @@ ensure_binding(Types2Shadow *shadow, Symbol const *symbol)
 {
         Types2Binding *binding = find_binding(shadow, symbol);
         if (binding != NULL || symbol == NULL) return binding;
-        if (!shadow_reserve(
-                shadow,
-                (void **)&shadow->bindings,
-                &shadow->binding_capacity,
-                shadow->binding_count + 1,
-                sizeof *shadow->bindings
-        )) return NULL;
-        binding = &shadow->bindings[shadow->binding_count++];
-        *binding = (Types2Binding) {
+        return append_binding(shadow, symbol, (Types2Binding) {
                 .symbol = symbol,
                 .refinement = T2_TYPE_INVALID,
                 .mutable = (symbol->flags & SYM_CONST) == 0,
                 .active = true
-        };
-        return binding;
+        });
 }
 
 static T2Type
@@ -1904,6 +2011,12 @@ default_dict_nominal(Types2Shadow *shadow, Types2Nominal const *nominal)
             && nominal->class_id == default_dict_class(shadow);
 }
 
+static uint64_t
+member_key(int class_id, char const *name)
+{
+        return hash_name(name) ^ ((uint64_t)(uint32_t)class_id * UINT64_C(0x9e3779b97f4a7c15));
+}
+
 static Types2Member *
 find_direct_member(
         Types2Shadow *shadow,
@@ -1914,8 +2027,12 @@ find_direct_member(
 )
 {
         if (name == NULL) return NULL;
-        for (size_t i = shadow->member_count; i != 0; --i) {
-                Types2Member *member = &shadow->members[i - 1];
+        uint32_t head;
+        if (!t2_index_find(&shadow->member_index, member_key(class_id, name), &head)) {
+                return NULL;
+        }
+        for (size_t i = head; i != SIZE_MAX; i = shadow->members[i].previous) {
+                Types2Member *member = &shadow->members[i];
                 if (
                         member->class_id == class_id
                      && member->kind == kind
@@ -2168,6 +2285,7 @@ add_member(
         if (old != NULL) {
                 t2_scheme_free(old->scheme);
                 *old = (Types2Member) {
+                        .previous = old->previous,
                         .class_id = class_id,
                         .name = name,
                         .kind = kind,
@@ -2187,6 +2305,13 @@ add_member(
                 shadow->member_count + 1,
                 sizeof *shadow->members
         )) return NULL;
+        uint64_t key = member_key(class_id, name);
+        uint32_t head;
+        size_t previous = t2_index_find(&shadow->member_index, key, &head) ? head : SIZE_MAX;
+        if (!t2_index_put(&shadow->member_index, key, (uint32_t)shadow->member_count)) {
+                shadow->failed = true;
+                return NULL;
+        }
         Types2Member *member = &shadow->members[shadow->member_count++];
         *member = (Types2Member) {
                 .class_id = class_id,
@@ -2197,7 +2322,8 @@ add_member(
                 .class_arity = class_arity,
                 .is_static = is_static,
                 .required = required,
-                .writable = writable
+                .writable = writable,
+                .previous = previous
         };
         return member;
 }
@@ -11139,11 +11265,14 @@ snapshot_effective_types(Types2Shadow *shadow, size_t count)
                 return NULL;
         }
         for (size_t i = 0; i < count; ++i) {
-                snapshot[i] = resolved_type_head(
-                        shadow,
-                        binding_effective_type(&shadow->bindings[i]),
-                        T2_PREFER_KNOWN_VALUE
-                );
+                Types2Binding const *binding = &shadow->bindings[i];
+                snapshot[i] = binding->active
+                            ? resolved_type_head(
+                                      shadow,
+                                      binding_effective_type(binding),
+                                      T2_PREFER_KNOWN_VALUE
+                              )
+                            : binding_effective_type(binding);
         }
         return snapshot;
 }
@@ -11375,8 +11504,12 @@ static Types2Binding *
 find_path_binding(Types2Shadow *shadow, Symbol const *base, char const *member)
 {
         if (base == NULL || member == NULL) return NULL;
-        for (size_t i = shadow->binding_count; i != 0; --i) {
-                Types2Binding *binding = &shadow->bindings[i - 1];
+        for (
+                size_t i = newest_binding(shadow, base);
+                i != SIZE_MAX;
+                i = shadow->bindings[i].previous
+        ) {
+                Types2Binding *binding = &shadow->bindings[i];
                 if (
                         binding->active
                      && binding->path_base == base
@@ -11391,7 +11524,11 @@ static void
 deactivate_path_bindings(Types2Shadow *shadow, Symbol const *base, char const *member)
 {
         if (base == NULL) return;
-        for (size_t i = 0; i < shadow->binding_count; ++i) {
+        for (
+                size_t i = newest_binding(shadow, base);
+                i != SIZE_MAX;
+                i = shadow->bindings[i].previous
+        ) {
                 Types2Binding *binding = &shadow->bindings[i];
                 if (
                         binding->active
@@ -11439,15 +11576,7 @@ path_refinement_binding(Types2Shadow *shadow, Expr const *path)
                 return NULL;
         }
         t2_solver_commit(shadow->solver, mark);
-        if (!shadow_reserve(
-                shadow,
-                (void **)&shadow->bindings,
-                &shadow->binding_capacity,
-                shadow->binding_count + 1,
-                sizeof *shadow->bindings
-        )) return NULL;
-        Types2Binding *binding = &shadow->bindings[shadow->binding_count++];
-        *binding = (Types2Binding) {
+        return append_binding(shadow, object->symbol, (Types2Binding) {
                 .type = type,
                 .refinement = T2_TYPE_INVALID,
                 .mutable = true,
@@ -11456,8 +11585,7 @@ path_refinement_binding(Types2Shadow *shadow, Expr const *path)
                 .member = true,
                 .path_base = object->symbol,
                 .path_member = member
-        };
-        return binding;
+        });
 }
 
 static T2Type
@@ -11728,39 +11856,47 @@ apply_condition_refinements(
 static void
 forget_captured_evolving_refinements(Types2Shadow *shadow)
 {
-        for (size_t i = 0; i < shadow->binding_count; ++i) {
-                Types2Binding *binding = &shadow->bindings[i];
-                if (
-                        binding->active
-                     && binding->mutable
-                     && binding->symbol != NULL
-                     && (
-                                SymbolIsGlobal(binding->symbol)
-                             || (
-                                        SymbolIsCaptured(binding->symbol)
-                                     && symbol_assigned_in_frames(shadow, binding->symbol)
-                                )
-                        )
-                ) binding->refinement = T2_TYPE_INVALID;
+        for (size_t n = 0; n < shadow->global_binding_count; ++n) {
+                Types2Binding *binding = &shadow->bindings[shadow->global_bindings[n]];
+                if (binding->active && binding->mutable) binding->refinement = T2_TYPE_INVALID;
+        }
+        for (size_t n = 0; n < shadow->assigned_count; ++n) {
+                Symbol const *symbol = shadow->assigned_symbols[n];
+                if (!SymbolIsCaptured(symbol)) continue;
+                for (
+                        size_t i = newest_binding(shadow, symbol);
+                        i != SIZE_MAX;
+                        i = shadow->bindings[i].previous
+                ) {
+                        Types2Binding *binding = &shadow->bindings[i];
+                        if (
+                                binding->active
+                             && binding->mutable
+                             && binding->symbol == symbol
+                        ) binding->refinement = T2_TYPE_INVALID;
+                }
         }
 }
 
 static void
 invalidate_unstable_refinements(Types2Shadow *shadow)
 {
-        for (size_t i = 0; i < shadow->binding_count; ++i) {
-                Types2Binding *binding = &shadow->bindings[i];
-                if (
-                        binding->active
-                     && binding->mutable
-                     && !binding->member
-                     && binding->symbol != NULL
-                     && (
-                                SymbolIsCaptured(binding->symbol)
-                             || SymbolIsGlobal(binding->symbol)
-                        )
-                     && symbol_assigned_in_frames(shadow, binding->symbol)
-                ) binding->refinement = T2_TYPE_INVALID;
+        for (size_t n = 0; n < shadow->assigned_count; ++n) {
+                Symbol const *symbol = shadow->assigned_symbols[n];
+                if (!SymbolIsCaptured(symbol) && !SymbolIsGlobal(symbol)) continue;
+                for (
+                        size_t i = newest_binding(shadow, symbol);
+                        i != SIZE_MAX;
+                        i = shadow->bindings[i].previous
+                ) {
+                        Types2Binding *binding = &shadow->bindings[i];
+                        if (
+                                binding->active
+                             && binding->mutable
+                             && !binding->member
+                             && binding->symbol == symbol
+                        ) binding->refinement = T2_TYPE_INVALID;
+                }
         }
 }
 
@@ -12954,6 +13090,96 @@ module_is_current(Types2Shadow const *shadow, Module const *module)
                );
 }
 
+static uint64_t
+definition_key(Symbol const *symbol)
+{
+        return symbol == NULL || symbol->identifier == NULL
+             ? 0
+             : hash_name(symbol->identifier);
+}
+
+static bool
+defining_statement(Stmt const *statement)
+{
+        switch (statement->type) {
+        case STATEMENT_FUNCTION_DEFINITION:
+        case STATEMENT_PATTERN_DEFINITION:
+        case STATEMENT_OPERATOR_DEFINITION:
+        case STATEMENT_CLASS_DEFINITION:
+        case STATEMENT_TAG_DEFINITION:
+                return true;
+        case STATEMENT_DEFINITION:
+                return is_named_binding_target(statement->target);
+        default:
+                return false;
+        }
+}
+
+static void
+index_definitions_in(
+        Types2Shadow *shadow,
+        Types2ProgramIndex *index,
+        Stmt const *statement
+)
+{
+        if (statement == NULL || shadow->failed) return;
+        if (
+                statement->type == STATEMENT_BLOCK
+             || statement->type == STATEMENT_MULTI
+        ) {
+                for (int i = 0; i < vN(statement->statements); ++i) {
+                        index_definitions_in(shadow, index, v__(statement->statements, i));
+                }
+                return;
+        }
+        if (!defining_statement(statement)) return;
+        uint64_t key = definition_key(statement_target_symbol(statement));
+        uint32_t head;
+        size_t previous = t2_index_find(&index->names, key, &head) ? head : SIZE_MAX;
+        if (!shadow_reserve(
+                shadow,
+                (void **)&index->definitions,
+                &index->definition_capacity,
+                index->definition_count + 1,
+                sizeof *index->definitions
+        )) return;
+        if (!t2_index_put(&index->names, key, (uint32_t)index->definition_count)) {
+                shadow->failed = true;
+                return;
+        }
+        index->definitions[index->definition_count++] = (Types2Definition) {
+                .statement = statement,
+                .previous = previous
+        };
+}
+
+static Types2ProgramIndex *
+program_index(Types2Shadow *shadow, Stmt **program)
+{
+        uint64_t key = (uint64_t)(uintptr_t)program;
+        uint32_t found;
+        if (t2_index_find(&shadow->program_lookup, key, &found)) {
+                return &shadow->programs[found];
+        }
+        if (!shadow_reserve(
+                shadow,
+                (void **)&shadow->programs,
+                &shadow->program_capacity,
+                shadow->program_count + 1,
+                sizeof *shadow->programs
+        )) return NULL;
+        if (!t2_index_put(&shadow->program_lookup, key, (uint32_t)shadow->program_count)) {
+                shadow->failed = true;
+                return NULL;
+        }
+        Types2ProgramIndex *index = &shadow->programs[shadow->program_count++];
+        *index = (Types2ProgramIndex) {0};
+        for (size_t i = 0; program[i] != NULL; ++i) {
+                index_definitions_in(shadow, index, program[i]);
+        }
+        return index;
+}
+
 static void
 import_program(
         Types2Shadow *shadow,
@@ -12964,9 +13190,25 @@ import_program(
 )
 {
         if (program == NULL) return;
-        for (size_t i = 0; program[i] != NULL; ++i) {
-                import_definitions_in(shadow, program[i], symbol, home, definition);
+        Types2ProgramIndex *index = program_index(shadow, program);
+        if (index == NULL) return;
+        uint32_t head;
+        if (!t2_index_find(&index->names, definition_key(symbol), &head)) return;
+        size_t count = 0;
+        for (size_t i = head; i != SIZE_MAX; i = index->definitions[i].previous) count += 1;
+        Stmt const **matches = ty_malloc(count * sizeof *matches);
+        if (matches == NULL) {
+                shadow->failed = true;
+                return;
         }
+        size_t slot = count;
+        for (size_t i = head; i != SIZE_MAX; i = index->definitions[i].previous) {
+                matches[--slot] = index->definitions[i].statement;
+        }
+        for (size_t i = 0; i < count; ++i) {
+                import_definitions_in(shadow, matches[i], symbol, home, definition);
+        }
+        ty_free(matches);
 }
 
 static Symbol const *
@@ -22073,8 +22315,9 @@ destroy_shadow(Types2Shadow *shadow)
         }
         ty_free(shadow->roots);
         for (size_t i = 0; i < shadow->provenance_count; ++i) {
-                ty_free(shadow->provenances[i]);
+                ty_free(shadow->provenances[i].text);
         }
+        t2_index_free(&shadow->provenance_index);
         ty_free(shadow->functions);
         ty_free(shadow->assigned_symbols);
         ty_free(shadow->class_contracts);
@@ -22084,9 +22327,18 @@ destroy_shadow(Types2Shadow *shadow)
         ty_free(shadow->type_variables);
         ty_free(shadow->upper_assumptions);
         ty_free(shadow->members);
+        t2_index_free(&shadow->member_index);
+        for (size_t i = 0; i < shadow->program_count; ++i) {
+                t2_index_free(&shadow->programs[i].names);
+                ty_free(shadow->programs[i].definitions);
+        }
+        ty_free(shadow->programs);
+        t2_index_free(&shadow->program_lookup);
         ty_free(shadow->nominals);
         ty_free(shadow->aliases);
         ty_free(shadow->bindings);
+        ty_free(shadow->global_bindings);
+        t2_index_free(&shadow->binding_index);
         ty_free(shadow->imported_operators);
         ty_free(shadow->touched);
         ty_free(shadow->nodes);

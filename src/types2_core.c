@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <xxhash.h>
+
 #include "defs.h"
 #include "types2_core.h"
 
@@ -15,8 +17,26 @@ typedef struct t2_node {
         uint32_t arity;
         T2TypeKind kind;
         T2VariableKind variable_kind;
+        uint8_t flags;
         T2Type children[];
 } T2Node;
+
+enum {
+        T2_NODE_META = 1,
+        T2_NODE_VARIABLE = 2,
+        T2_NODE_RECURSIVE_VARIABLE = 4
+};
+
+static uint8_t
+node_flags_for(T2TypeKind kind)
+{
+        switch (kind) {
+        case T2_TYPE_META: return T2_NODE_META;
+        case T2_TYPE_VARIABLE: return T2_NODE_VARIABLE;
+        case T2_TYPE_RECURSIVE_VARIABLE: return T2_NODE_RECURSIVE_VARIABLE;
+        default: return 0;
+        }
+}
 
 typedef struct t2_nominal_info {
         uint64_t symbol;
@@ -89,6 +109,9 @@ struct t2_universe {
         T2ComputedResult *computed_results;
         size_t computed_result_count;
         size_t computed_result_capacity;
+        T2Index nominal_index;
+        T2Index applied_index;
+        T2Index relation_memo;
 
         uint32_t next_solver_id;
         uint32_t next_recursive_id;
@@ -261,21 +284,14 @@ hash_combine(uint64_t seed, uint64_t value)
         return seed ^ (value + UINT64_C(0x9e3779b97f4a7c15) + (seed << 6) + (seed >> 2));
 }
 
-static uint64_t
+inline static uint64_t
 hash_string(char const *text)
 {
-        uint64_t hash = UINT64_C(1469598103934665603);
-
         if (text == NULL) {
-                return hash;
+                return 146959810393466560;
         }
 
-        for (unsigned char const *p = (unsigned char const *)text; *p != '\0'; ++p) {
-                hash ^= *p;
-                hash *= UINT64_C(1099511628211);
-        }
-
-        return hash;
+        return XXH3_64bits(text, strlen(text));
 }
 
 static char *
@@ -320,6 +336,78 @@ reserve_array(void **items, size_t *capacity, size_t needed, size_t item_size)
         *items = resized;
         *capacity = next;
         return true;
+}
+
+static size_t
+index_slot(T2Index const *index, uint64_t key)
+{
+        size_t slot = (size_t)mix64(key) & (index->capacity - 1);
+        while (index->entries[slot].used && index->entries[slot].key != key) {
+                slot = (slot + 1) & (index->capacity - 1);
+        }
+        return slot;
+}
+
+bool
+t2_index_find(T2Index const *index, uint64_t key, uint32_t *value)
+{
+        if (index->capacity == 0) return false;
+        size_t slot = index_slot(index, key);
+        if (!index->entries[slot].used) return false;
+        *value = index->entries[slot].value;
+        return true;
+}
+
+static bool
+index_grow(T2Index *index)
+{
+        size_t capacity = index->capacity == 0 ? 64 : index->capacity * 2;
+        T2IndexEntry *entries = ty_calloc(capacity, sizeof *entries);
+        if (entries == NULL) return false;
+        T2Index grown = { .entries = entries, .capacity = capacity };
+        for (size_t i = 0; i < index->capacity; ++i) {
+                T2IndexEntry const *entry = &index->entries[i];
+                if (!entry->used) continue;
+                grown.entries[index_slot(&grown, entry->key)] = *entry;
+                grown.count += 1;
+        }
+        ty_free(index->entries);
+        *index = grown;
+        return true;
+}
+
+bool
+t2_index_put(T2Index *index, uint64_t key, uint32_t value)
+{
+        if ((index->count + 1) * 4 > index->capacity * 3 && !index_grow(index)) {
+                return false;
+        }
+        size_t slot = index_slot(index, key);
+        index->count += !index->entries[slot].used;
+        index->entries[slot] = (T2IndexEntry) { .key = key, .value = value, .used = true };
+        return true;
+}
+
+void
+t2_index_clear(T2Index *index)
+{
+        if (index->capacity != 0) {
+                memset(index->entries, 0, index->capacity * sizeof *index->entries);
+        }
+        index->count = 0;
+}
+
+void
+t2_index_free(T2Index *index)
+{
+        ty_free(index->entries);
+        *index = (T2Index) {0};
+}
+
+static void
+forget_relations(T2Universe *universe)
+{
+        t2_index_clear(&universe->relation_memo);
 }
 
 static T2Node const *
@@ -415,12 +503,14 @@ intern_type(
         hash = hash_combine(hash, payload);
         hash = hash_combine(hash, hash_string(text));
         hash = hash_combine(hash, arity);
+        uint8_t flags = node_flags_for(kind);
         for (size_t i = 0; i < arity; ++i) {
                 T2Node const *child = get_node(universe, children[i]);
                 if (child == NULL) {
                         return T2_TYPE_INVALID;
                 }
                 hash = hash_combine(hash, child->hash);
+                flags |= child->flags;
         }
         hash = mix64(hash);
 
@@ -493,7 +583,8 @@ intern_type(
                 .text = owned_text,
                 .arity = (uint32_t)arity,
                 .kind = kind,
-                .variable_kind = variable_kind
+                .variable_kind = variable_kind,
+                .flags = flags
         };
         if (arity != 0) {
                 memcpy(node->children, children, arity * sizeof *children);
@@ -543,6 +634,9 @@ t2_universe_free(T2Universe *universe)
         ty_free(universe->applied_nominals);
         ty_free(universe->recursive);
         ty_free(universe->computed_results);
+        t2_index_free(&universe->nominal_index);
+        t2_index_free(&universe->applied_index);
+        t2_index_free(&universe->relation_memo);
         ty_free(universe);
 }
 
@@ -781,7 +875,9 @@ t2_computed_type_result(T2Universe const *universe, T2Type computed)
 T2Type
 t2_type_resolve_computed(T2Universe const *universe, T2Type type)
 {
-        if (get_node(universe, type) == NULL) return T2_TYPE_INVALID;
+        T2Node const *head = get_node(universe, type);
+        if (head == NULL) return T2_TYPE_INVALID;
+        if (head->kind != T2_TYPE_SCHEME && head->kind != T2_TYPE_COMPUTED) return type;
         size_t remaining = universe->computed_result_count + 1;
         while (remaining-- != 0) {
                 type = t2_type_scheme_body(universe, type);
@@ -875,6 +971,7 @@ t2_computed_type_set_result(
         }
         universe->computed_results[universe->computed_result_count++] =
                 (T2ComputedResult) { .computed = computed, .result = result };
+        forget_relations(universe);
         return true;
 }
 
@@ -895,15 +992,11 @@ t2_variable(T2Universe *universe, T2VariableKind kind, uint32_t id)
 static T2NominalInfo const *
 find_nominal(T2Universe const *universe, uint64_t symbol)
 {
-        if (universe == NULL) {
+        uint32_t index;
+        if (universe == NULL || !t2_index_find(&universe->nominal_index, symbol, &index)) {
                 return NULL;
         }
-        for (size_t i = 0; i < universe->nominal_count; ++i) {
-                if (universe->nominals[i].symbol == symbol) {
-                        return &universe->nominals[i];
-                }
-        }
-        return NULL;
+        return &universe->nominals[index];
 }
 
 static T2NominalInfo *
@@ -925,6 +1018,7 @@ t2_declare_nominal(
                 return false;
         }
 
+        forget_relations(universe);
         T2NominalInfo *existing = find_nominal_mutable(universe, symbol);
         if (existing != NULL) {
                 if (existing->arity != arity || strcmp(existing->name, name) != 0) {
@@ -969,6 +1063,14 @@ t2_declare_nominal(
                 .arity = arity,
                 .variance = owned_variance
         };
+        if (!t2_index_put(
+                &universe->nominal_index,
+                symbol,
+                (uint32_t)(universe->nominal_count - 1)
+        )) {
+                universe->failed = true;
+                return false;
+        }
         return true;
 }
 
@@ -1059,6 +1161,7 @@ t2_nominal_add_super(
                 return false;
         }
         info->supertypes[info->supertype_count++] = supertype_template;
+        forget_relations(universe);
         return backfill_nominal_super(universe, symbol, supertype_template);
 }
 
@@ -1070,6 +1173,7 @@ t2_nominal_mark_interface(T2Universe *universe, uint64_t symbol)
                             : find_nominal_mutable(universe, symbol);
         if (info == NULL) return false;
         info->interface = true;
+        forget_relations(universe);
         return true;
 }
 
@@ -1442,12 +1546,9 @@ backfill_nominal_super(
 static T2AppliedNominal const *
 find_applied_nominal(T2Universe const *universe, T2Type instance)
 {
-        for (size_t i = 0; i < universe->applied_nominal_count; ++i) {
-                if (universe->applied_nominals[i].instance == instance) {
-                        return &universe->applied_nominals[i];
-                }
-        }
-        return NULL;
+        uint32_t index;
+        if (!t2_index_find(&universe->applied_index, instance, &index)) return NULL;
+        return &universe->applied_nominals[index];
 }
 
 T2Type
@@ -1488,6 +1589,10 @@ t2_nominal(
         universe->applied_nominals[applied_index] = (T2AppliedNominal) {
                 .instance = instance
         };
+        if (!t2_index_put(&universe->applied_index, instance, (uint32_t)applied_index)) {
+                universe->failed = true;
+                return T2_TYPE_INVALID;
+        }
         info->instantiated = true;
 
         if (info->supertype_count != 0) {
@@ -2694,6 +2799,7 @@ t2_recursive(T2Universe *universe, uint32_t binder, T2Type body)
                 .binder = binder,
                 .type = type
         };
+        forget_relations(universe);
         return type;
 }
 
@@ -4208,16 +4314,35 @@ subtype_relation(
         return result;
 }
 
+static void
+remember_relation(T2Universe const *universe, uint64_t key, T2Relation relation)
+{
+        T2Index *memo = &((T2Universe *)universe)->relation_memo;
+        if (memo->count >= ((size_t)1 << 20)) t2_index_clear(memo);
+        (void)t2_index_put(memo, key, (uint32_t)relation);
+}
+
 T2Relation
 t2_subtype(T2Universe const *universe, T2Type subtype, T2Type supertype)
 {
+        uint64_t key = (uint64_t)subtype << 32 | supertype;
+        uint32_t remembered;
+        if (
+                universe != NULL
+             && t2_index_find(&universe->relation_memo, key, &remembered)
+        ) return (T2Relation)remembered;
         T2RelationContext context = {
                 .universe = universe,
                 .step_limit = 1000000
         };
         T2Relation relation = subtype_relation(&context, subtype, supertype, 0);
         ty_free(context.pairs);
-        return context.failed ? T2_RELATION_COMPLEXITY : relation;
+        if (context.failed) return T2_RELATION_COMPLEXITY;
+        if (
+                universe != NULL
+             && (relation == T2_RELATION_YES || relation == T2_RELATION_NO)
+        ) remember_relation(universe, key, relation);
+        return relation;
 }
 
 static T2Relation
@@ -6943,7 +7068,7 @@ type_contains_meta(T2Solver *solver, T2Type type, uint32_t wanted, unsigned dept
                     && type_contains_meta(solver, solution, wanted, depth + 1);
         }
         T2Node const *node = get_node(solver->universe, type);
-        if (node == NULL) return false;
+        if (node == NULL || (node->flags & T2_NODE_META) == 0) return false;
         for (size_t i = 0; i < node->arity; ++i) {
                 if (type_contains_meta(solver, node->children[i], wanted, depth + 1)) {
                         return true;
@@ -10507,6 +10632,7 @@ collect_generalization_polarity(
 
         T2Node const *node = get_node(solver->universe, type);
         if (node == NULL) return false;
+        if ((node->flags & T2_NODE_META) == 0) return true;
         if (node->kind == T2_TYPE_NOMINAL) {
                 T2NominalInfo const *nominal = find_nominal(
                         solver->universe,
@@ -10626,7 +10752,7 @@ type_touches_marked_meta(
                 return marks[meta - 1] != 0;
         }
         T2Node const *node = get_node(solver->universe, type);
-        if (node == NULL) return false;
+        if (node == NULL || (node->flags & T2_NODE_META) == 0) return false;
         for (size_t i = 0; i < node->arity; ++i) {
                 if (type_touches_marked_meta(
                         solver,
@@ -10831,8 +10957,8 @@ close_generalization_constraints(T2Solver *solver, unsigned *polarities)
                         solver->meta_count * sizeof *previous
                 );
                 for (size_t i = 0; i < solver->meta_count; ++i) {
-                        uint32_t root = find_root(solver, (uint32_t)i + 1);
-                        if (root != i + 1 || polarities[i] == 0) continue;
+                        if (polarities[i] == 0) continue;
+                        if (find_root(solver, (uint32_t)i + 1) != i + 1) continue;
                         T2Meta const *meta = &solver->metas[i];
                         unsigned polarity = polarities[i];
                         if (!collect_generalization_polarity(
@@ -11036,6 +11162,7 @@ generalize_type(T2Generalization *generalization, T2Type source)
 
         T2Node const *node = get_node(solver->universe, source);
         if (node == NULL) return T2_TYPE_INVALID;
+        if ((node->flags & (T2_NODE_META | T2_NODE_RECURSIVE_VARIABLE)) == 0) return source;
         if (node->kind == T2_TYPE_RECURSIVE_VARIABLE) {
                 for (size_t i = generalization->binder_count; i != 0; --i) {
                         T2BinderSubstitution const *binder = &generalization->binders[i - 1];
@@ -11184,6 +11311,24 @@ obligation_view(T2Solver *solver, T2Predicate const *predicate)
         return view;
 }
 
+static bool
+generalizable_meta(
+        T2Solver *solver,
+        size_t index,
+        unsigned polarity,
+        uint32_t binding_level,
+        bool expansive
+)
+{
+        if (polarity == 0) return false;
+        if (find_root(solver, (uint32_t)index + 1) != index + 1) return false;
+        T2Meta const *meta = &solver->metas[index];
+        return meta->level > binding_level
+            && meta->variable_kind != T2_VARIABLE_WEAK
+            && meta->solution == T2_TYPE_INVALID
+            && (!expansive || polarity == T2_POLARITY_POSITIVE);
+}
+
 static T2Scheme *
 solver_generalize(
         T2Solver *solver,
@@ -11262,45 +11407,47 @@ solver_generalize(
         }
         if (!close_generalization_constraints(solver, polarities)) goto Fail;
 
-        unsigned *environment_marks = ty_calloc(count, sizeof *environment_marks);
-        if (count != 0 && environment_marks == NULL) goto Fail;
-        for (size_t i = 0; i < environment_count; ++i) {
-                if (!collect_generalization_polarity(
+        bool candidates = false;
+        for (size_t i = 0; i < count && !candidates; ++i) {
+                candidates = generalizable_meta(
                         solver,
-                        environment[i],
-                        T2_POLARITY_POSITIVE | T2_POLARITY_NEGATIVE,
-                        environment_marks,
-                        0
-                )) {
+                        i,
+                        polarities[i],
+                        binding_level,
+                        expansive
+                );
+        }
+        if (candidates) {
+                unsigned *environment_marks = ty_calloc(count, sizeof *environment_marks);
+                if (count != 0 && environment_marks == NULL) goto Fail;
+                for (size_t i = 0; i < environment_count; ++i) {
+                        if (!collect_generalization_polarity(
+                                solver,
+                                environment[i],
+                                T2_POLARITY_POSITIVE | T2_POLARITY_NEGATIVE,
+                                environment_marks,
+                                0
+                        )) {
+                                ty_free(environment_marks);
+                                goto Fail;
+                        }
+                }
+                if (!close_generalization_constraints(solver, environment_marks)) {
                         ty_free(environment_marks);
                         goto Fail;
                 }
-        }
-        if (!close_generalization_constraints(solver, environment_marks)) {
+                for (size_t i = 0; i < count; ++i) {
+                        environment_free[i] = environment_marks[i] == 0;
+                }
                 ty_free(environment_marks);
-                goto Fail;
         }
-        for (size_t i = 0; i < count; ++i) {
-                environment_free[i] = environment_marks[i] == 0;
-        }
-        ty_free(environment_marks);
 
         size_t quantifier_count = 0;
         for (size_t i = 0; i < count; ++i) {
-                if (find_root(solver, (uint32_t)i + 1) != i + 1) continue;
-                T2Meta const *meta = &solver->metas[i];
                 if (
-                        polarities[i] == 0
-                     || !environment_free[i]
-                     || meta->level <= binding_level
-                     || meta->variable_kind == T2_VARIABLE_WEAK
-                     || meta->solution != T2_TYPE_INVALID
-                     || (
-                                expansive
-                             && polarities[i] != T2_POLARITY_POSITIVE
-                        )
-                ) continue;
-                quantifier_count += 1;
+                        environment_free[i]
+                     && generalizable_meta(solver, i, polarities[i], binding_level, expansive)
+                ) quantifier_count += 1;
         }
 
         T2Quantifier *quantifiers = quantifier_count == 0
@@ -11309,16 +11456,11 @@ solver_generalize(
         if (quantifier_count != 0 && quantifiers == NULL) goto Fail;
         size_t qi = 0;
         for (size_t i = 0; i < count; ++i) {
-                if (find_root(solver, (uint32_t)i + 1) != i + 1) continue;
-                T2Meta const *meta = &solver->metas[i];
                 if (
-                        polarities[i] == 0
-                     || !environment_free[i]
-                     || meta->level <= binding_level
-                     || meta->variable_kind == T2_VARIABLE_WEAK
-                     || meta->solution != T2_TYPE_INVALID
-                     || (expansive && polarities[i] != T2_POLARITY_POSITIVE)
+                        !environment_free[i]
+                     || !generalizable_meta(solver, i, polarities[i], binding_level, expansive)
                 ) continue;
+                T2Meta const *meta = &solver->metas[i];
                 T2VariableKind variable_kind = meta->variable_kind;
                 if (
                         variable_kind != T2_VARIABLE_ROW
@@ -11635,6 +11777,9 @@ instantiate_type(T2Instantiation *instantiation, T2Type source)
         T2Universe *universe = instantiation->solver->universe;
         T2Node const *node = get_node(universe, source);
         if (node == NULL) return T2_TYPE_INVALID;
+        if ((node->flags & (T2_NODE_VARIABLE | T2_NODE_RECURSIVE_VARIABLE)) == 0) {
+                return source;
+        }
 
         if (node->kind == T2_TYPE_VARIABLE) {
                 size_t quantifier = find_quantifier(instantiation->scheme, node);
@@ -11956,6 +12101,7 @@ zonk_type(T2ZonkContext *context, T2Type source)
 
         T2Node const *node = get_node(solver->universe, source);
         if (node == NULL) return T2_TYPE_INVALID;
+        if ((node->flags & (T2_NODE_META | T2_NODE_RECURSIVE_VARIABLE)) == 0) return source;
         if (node->kind == T2_TYPE_RECURSIVE_VARIABLE) {
                 for (size_t i = context->binder_count; i != 0; --i) {
                         T2BinderSubstitution const *binder = &context->binders[i - 1];
