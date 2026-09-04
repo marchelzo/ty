@@ -22,7 +22,7 @@ check_string(T2Universe *universe, T2Type type, char const *expected)
         if (actual != NULL) {
                 CHECK(strcmp(actual, expected) == 0);
         }
-        free(actual);
+        t2_string_free(actual);
 }
 
 static void
@@ -921,8 +921,8 @@ main(void)
         if (source_recursive != NULL && target_recursive != NULL) {
                 CHECK(strcmp(source_recursive, target_recursive) == 0);
         }
-        free(source_recursive);
-        free(target_recursive);
+        t2_string_free(source_recursive);
+        t2_string_free(target_recursive);
         t2_type_snapshot_free(recursive_snapshot);
         t2_universe_free(reflection_universe);
         CHECK(t2_recursive(universe, 1004, integer) == integer);
@@ -1796,7 +1796,7 @@ main(void)
                 CHECK(strstr(explanation, "argument 1") != NULL);
                 CHECK(strstr(explanation, "parameter use") != NULL);
         }
-        free(explanation);
+        t2_string_free(explanation);
         t2_solver_free(diagnostic_solver);
 
         T2Solver *generalization_solver = t2_solver_new(universe);

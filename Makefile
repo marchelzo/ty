@@ -38,6 +38,7 @@ LDFLAGS += -ldl
 LDFLAGS += -lffi
 LDFLAGS += $(shell pcre2-config --libs8)
 
+LDFLAGS += -lmimalloc
 ifndef DEBUG
 	LDFLAGS += -lmimalloc
 endif
@@ -250,7 +251,7 @@ test-types2-core: obj/types2-core-test
 
 obj/types2-core-test: tests/types2_core.c src/types2_core.c include/types2_core.h
 	@echo cc $@
-	@$(CC) $(CFLAGS) -o $@ tests/types2_core.c src/types2_core.c
+	@$(CC) $(CFLAGS) -o $@ tests/types2_core.c src/types2_core.c -lmimalloc
 
 test-types2-shadow: ty
 	./tests/types2-shadow-equivalence.sh ./ty

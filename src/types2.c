@@ -22160,9 +22160,15 @@ static char const *const TypeStyles[T2_TOKEN_KIND_COUNT] = {
 };
 
 static void
-paint(FILE *out, char const *sgr)
+emit(byte_vector *out, char const *text)
 {
-        if (ColorStderr) fprintf(out, "\x1b[%sm", sgr);
+        xvPn(*out, text, strlen(text));
+}
+
+static void
+paint(byte_vector *out, char const *sgr)
+{
+        if (ColorStderr) dump(out, "\x1b[%sm", sgr);
 }
 
 static unsigned
@@ -22187,7 +22193,7 @@ working_directory(void)
 }
 
 static void
-print_path_text(FILE *out, Types2Shadow const *shadow, char const *text)
+print_path_text(byte_vector *out, Types2Shadow const *shadow, char const *text)
 {
         char const *cwd = working_directory();
         size_t cwd_length = strlen(cwd);
@@ -22210,7 +22216,7 @@ print_path_text(FILE *out, Types2Shadow const *shadow, char const *text)
                         text += cwd_length + 1;
                         continue;
                 }
-                fputc(*text++, out);
+                xvP(*out, *text++);
         }
 }
 
@@ -22232,7 +22238,7 @@ painted_width(char const *text)
 }
 
 typedef struct types2_writer {
-        FILE *out;
+        byte_vector *out;
         Types2Shadow const *shadow;
         T2Names *names;
         unsigned width;
@@ -22240,17 +22246,10 @@ typedef struct types2_writer {
         unsigned column;
 } Types2Writer;
 
-static void
-write_text(Types2Writer *writer, char const *text)
+static T2PrintOptions
+print_options(Types2Writer const *writer)
 {
-        fputs(text, writer->out);
-        writer->column += (unsigned)painted_width(text);
-}
-
-static void
-write_type(Types2Writer *writer, T2Type type)
-{
-        T2PrintOptions options = {
+        return (T2PrintOptions){
                 .width = writer->width,
                 .indent = 4,
                 .column = writer->column,
@@ -22258,14 +22257,23 @@ write_type(Types2Writer *writer, T2Type type)
                 .styles = ColorStderr ? TypeStyles : NULL,
                 .names = writer->names
         };
-        char *text = type == T2_TYPE_INVALID
-                   ? NULL
-                   : t2_type_render(types2_universe(), type, &options);
+}
+
+static void
+write_text(Types2Writer *writer, char const *text)
+{
+        emit(writer->out, text);
+        writer->column += (unsigned)painted_width(text);
+}
+
+static void
+write_rendered(Types2Writer *writer, char *text)
+{
         if (text == NULL) {
                 write_text(writer, "?");
                 return;
         }
-        fputs(text, writer->out);
+        emit(writer->out, text);
         char const *last = strrchr(text, '\n');
         writer->column = last == NULL
                        ? writer->column + (unsigned)painted_width(text)
@@ -22274,10 +22282,22 @@ write_type(Types2Writer *writer, T2Type type)
 }
 
 static void
-begin_gutter_line(FILE *out, unsigned digits, char const *marker)
+write_type(Types2Writer *writer, T2Type type)
+{
+        T2PrintOptions options = print_options(writer);
+        write_rendered(
+                writer,
+                type == T2_TYPE_INVALID
+                        ? NULL
+                        : t2_type_render(types2_universe(), type, &options)
+        );
+}
+
+static void
+begin_gutter_line(byte_vector *out, unsigned digits, char const *marker)
 {
         paint(out, "2");
-        fprintf(out, "%*s %s ", digits, "", marker);
+        dump(out, "%*s %s ", digits, "", marker);
         paint(out, "0");
 }
 
@@ -22298,30 +22318,27 @@ rich_context_available(Types2Diagnostic const *diagnostic)
 
 static void
 print_source_window(
-        FILE *out,
+        byte_vector *out,
         Types2Shadow const *shadow,
         Types2Diagnostic const *diagnostic,
         unsigned columns
 )
 {
         enum { LINES_BEFORE = 3, LINES_AFTER = 2 };
-        byte_vector buffer = {0};
         WriteExpressionSourceWindow(
                 shadow->ty,
-                &buffer,
+                out,
                 (int)columns,
                 diagnostic->syntax,
                 NULL,
                 LINES_BEFORE,
                 LINES_AFTER
         );
-        fwrite(vv(buffer), 1, vN(buffer), out);
-        ty_free(vv(buffer));
 }
 
 static void
 print_source_excerpt(
-        FILE *out,
+        byte_vector *out,
         Types2Shadow const *shadow,
         Types2Diagnostic const *diagnostic,
         unsigned digits
@@ -22339,18 +22356,18 @@ print_source_excerpt(
         size_t length = end == NULL ? strlen(line) : (size_t)(end - line);
 
         paint(out, "2");
-        fprintf(out, "%*s |\n", digits, "");
+        dump(out, "%*s |\n", digits, "");
         paint(out, "0");
 
         paint(out, "2");
-        fprintf(out, "%*u | ", digits, location.line + 1);
+        dump(out, "%*u | ", digits, location.line + 1);
         paint(out, "0");
-        fwrite(line, 1, length, out);
-        fputc('\n', out);
+        xvPn(*out, line, length);
+        xvP(*out, '\n');
 
         begin_gutter_line(out, digits, "|");
         for (uint32_t i = 0; i < location.col && i < length; ++i) {
-                fputc(line[i] == '\t' ? '\t' : ' ', out);
+                xvP(*out, line[i] == '\t' ? '\t' : ' ');
         }
         size_t available = location.col < length ? length - location.col : 1;
         size_t span = 1;
@@ -22365,9 +22382,9 @@ print_source_excerpt(
         if (span > available) span = available;
         if (span == 0) span = 1;
         paint(out, diagnostic->severity == TYPES2_DIAGNOSTIC_ERROR ? "1;31" : "1;33");
-        for (size_t i = 0; i < span; ++i) fputc('^', out);
+        for (size_t i = 0; i < span; ++i) xvP(*out, '^');
         paint(out, "0");
-        fputc('\n', out);
+        xvP(*out, '\n');
 }
 
 static int
@@ -22408,7 +22425,7 @@ found_label(char const *code)
 
 static Types2Writer
 begin_annotation(
-        FILE *out,
+        byte_vector *out,
         Types2Shadow const *shadow,
         T2Names *names,
         unsigned digits,
@@ -22423,7 +22440,7 @@ begin_annotation(
                 .width = columns
         };
         paint(out, "2");
-        fprintf(out, "%*s = %s:%*s", digits, "", label, (int)(9 - strlen(label)), "");
+        dump(out, "%*s = %s:%*s", digits, "", label, (int)(9 - strlen(label)), "");
         paint(out, "0");
         writer.column = digits + 4 + 9;
         writer.hang = writer.column;
@@ -22432,7 +22449,7 @@ begin_annotation(
 
 static void
 print_labeled_type(
-        FILE *out,
+        byte_vector *out,
         Types2Shadow const *shadow,
         T2Names *names,
         unsigned digits,
@@ -22443,7 +22460,7 @@ print_labeled_type(
 {
         Types2Writer writer = begin_annotation(out, shadow, names, digits, columns, label);
         write_type(&writer, type);
-        fputc('\n', out);
+        xvP(*out, '\n');
 }
 
 static bool
@@ -22503,30 +22520,16 @@ write_predicate(Types2Writer *writer, Types2Note const *note)
                 .operand = note->operand,
                 .name = note->text
         };
-        T2PrintOptions options = {
-                .width = writer->width,
-                .indent = 4,
-                .column = writer->column,
-                .hang = writer->hang,
-                .styles = ColorStderr ? TypeStyles : NULL,
-                .names = writer->names
-        };
-        char *text = t2_predicate_render(types2_universe(), &predicate, &options);
-        if (text == NULL) {
-                write_text(writer, "?");
-                return;
-        }
-        fputs(text, writer->out);
-        char const *last = strrchr(text, '\n');
-        writer->column = last == NULL
-                       ? writer->column + (unsigned)painted_width(text)
-                       : (unsigned)painted_width(last + 1);
-        ty_free(text);
+        T2PrintOptions options = print_options(writer);
+        write_rendered(
+                writer,
+                t2_predicate_render(types2_universe(), &predicate, &options)
+        );
 }
 
 static void
 print_note(
-        FILE *out,
+        byte_vector *out,
         Types2Shadow const *shadow,
         T2Names *names,
         unsigned digits,
@@ -22582,7 +22585,7 @@ print_note(
                 write_provenance(&writer, note->provenance, diagnostic->message);
                 break;
         }
-        fputc('\n', out);
+        xvP(*out, '\n');
 }
 
 static bool
@@ -22607,7 +22610,7 @@ note_repeats_failure(Types2Note const *note, Types2Note const *failure)
 
 static void
 print_notes(
-        FILE *out,
+        byte_vector *out,
         Types2Shadow const *shadow,
         T2Names *names,
         unsigned digits,
@@ -22639,14 +22642,14 @@ print_notes(
         }
         if (skipped != 0) {
                 paint(out, "2");
-                fprintf(out, "%*s = ... and %zu more\n", digits, "", skipped);
+                dump(out, "%*s = ... and %zu more\n", digits, "", skipped);
                 paint(out, "0");
         }
 }
 
 static void
 print_diagnostic(
-        FILE *out,
+        byte_vector *out,
         Types2Shadow const *shadow,
         Types2Diagnostic const *diagnostic,
         bool labeled,
@@ -22668,22 +22671,22 @@ print_diagnostic(
 
         if (labeled) {
                 paint(out, error ? "1;31" : "1;33");
-                fputs(error ? "error" : "warning", out);
+                emit(out, error ? "error" : "warning");
                 paint(out, "0");
-                fputs(": ", out);
+                emit(out, ": ");
         }
         paint(out, "1");
-        fputs(diagnostic->message, out);
+        emit(out, diagnostic->message);
         paint(out, "0");
         paint(out, "2");
-        fprintf(out, "  [%s]\n", diagnostic->code);
+        dump(out, "  [%s]\n", diagnostic->code);
         paint(out, "0");
 
         paint(out, "36");
-        fprintf(out, "%*s--> ", digits + 1, "");
+        dump(out, "%*s--> ", digits + 1, "");
         paint(out, "0");
         print_path_text(out, NULL, shadow->path);
-        fprintf(
+        dump(
                 out,
                 ":%u:%u\n",
                 diagnostic->location.line + 1,
@@ -22719,7 +22722,7 @@ print_diagnostic(
 }
 
 static void
-print_diagnostics(FILE *out, Types2Shadow *shadow, bool labeled, bool warnings)
+print_diagnostics(byte_vector *out, Types2Shadow *shadow, bool labeled, bool warnings)
 {
         Types2Diagnostic const **ordered = ty_malloc(
                 shadow->diagnostic_count * sizeof *ordered
@@ -22734,7 +22737,7 @@ print_diagnostics(FILE *out, Types2Shadow *shadow, bool labeled, bool warnings)
         for (size_t i = 0; i < shadow->diagnostic_count; ++i) {
                 if (i != 0 && same_diagnostic(ordered[i], ordered[i - 1])) continue;
                 if (!warnings && ordered[i]->severity != TYPES2_DIAGNOSTIC_ERROR) continue;
-                if (printed != 0) fputc('\n', out);
+                if (printed != 0) xvP(*out, '\n');
                 print_diagnostic(out, shadow, ordered[i], labeled || printed != 0, columns);
                 printed += 1;
         }
@@ -22744,28 +22747,25 @@ print_diagnostics(FILE *out, Types2Shadow *shadow, bool labeled, bool warnings)
 static char *
 render_failure(Types2Shadow *shadow)
 {
-        char *text = NULL;
-        size_t length = 0;
-        FILE *out = open_memstream(&text, &length);
-        if (out == NULL) return NULL;
-        print_diagnostics(out, shadow, false, false);
-        fclose(out);
-        while (length != 0 && text[length - 1] == '\n') text[--length] = '\0';
-        return text;
+        byte_vector text = {0};
+        print_diagnostics(&text, shadow, false, false);
+        while (vN(text) != 0 && *vvL(text) == '\n') vvX(text);
+        xvP(text, '\0');
+        return vv(text);
 }
 
 static void
 report_diagnostics(Types2Shadow *shadow, size_t errors, size_t warnings)
 {
         if (shadow->diagnostic_count == 0) return;
-        FILE *out = stderr;
-        print_diagnostics(out, shadow, true, true);
-        fputc('\n', out);
-        paint(out, "1");
-        fputs("types2", out);
-        paint(out, "0");
-        fprintf(
-                out,
+        byte_vector out = {0};
+        print_diagnostics(&out, shadow, true, true);
+        xvP(out, '\n');
+        paint(&out, "1");
+        emit(&out, "types2");
+        paint(&out, "0");
+        dump(
+                &out,
                 ": %s: %zu error%s, %zu warning%s\n",
                 shadow->unit,
                 errors,
@@ -22773,7 +22773,9 @@ report_diagnostics(Types2Shadow *shadow, size_t errors, size_t warnings)
                 warnings,
                 warnings == 1 ? "" : "s"
         );
-        fflush(out);
+        fwrite(vv(out), 1, vN(out), stderr);
+        fflush(stderr);
+        xvF(out);
 }
 
 static Types2Shadow *

@@ -6341,6 +6341,12 @@ t2_type_string(T2Universe const *universe, T2Type type)
         return t2_type_render(universe, type, &options);
 }
 
+void
+t2_string_free(char *text)
+{
+        ty_free(text);
+}
+
 typedef struct t2_substitution {
         T2Universe *universe;
         uint32_t const *ids;

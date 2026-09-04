@@ -647,6 +647,9 @@ t2_type_same(T2Universe const *universe, T2Type left, T2Type right);
 char *
 t2_type_string(T2Universe const *universe, T2Type type);
 
+void
+t2_string_free(char *text);
+
 typedef enum t2_token_kind {
         T2_TOKEN_PUNCTUATION,
         T2_TOKEN_STRUCTURE,
