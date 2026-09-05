@@ -4,10 +4,6 @@ if not let $lib = c.open('sodium') {
    throw "failed to load libsodium"
 }
 
-function wrap(*args) {
-  c.wrap(lib, *args)
-}
-
 C! lib fn {
     c.int sodium_init()
     c.int crypto_pwhash_alg_default()
