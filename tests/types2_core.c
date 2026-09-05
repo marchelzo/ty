@@ -853,6 +853,43 @@ main(void)
         CHECK(t2_subtype(universe, callback_y, callback_x) == T2_RELATION_NO);
         CHECK(t2_subtype(universe, callback_x, callback_optional_x) == T2_RELATION_NO);
         CHECK(t2_subtype(universe, callback_optional_x, callback_x) == T2_RELATION_YES);
+        T2ParameterSpec named_nullable = named_optional;
+        named_nullable.type = t2_join(universe, integer, nil);
+        T2Type callback_nullable_x = t2_callable(
+                universe,
+                &named_nullable,
+                1,
+                integer,
+                never,
+                nil
+        );
+        CHECK(t2_subtype(
+                universe,
+                callback_optional_x,
+                callback_nullable_x
+        ) == T2_RELATION_NO);
+        CHECK(t2_subtype(
+                universe,
+                callback_nullable_x,
+                callback_optional_x
+        ) == T2_RELATION_YES);
+        T2Solver *parameter_solver = t2_solver_new(universe);
+        CHECK(parameter_solver != NULL);
+        T2SolverMark parameter_mark = t2_solver_mark(parameter_solver);
+        CHECK(t2_solver_constrain_subtype(
+                parameter_solver,
+                callback_optional_x,
+                callback_nullable_x,
+                "optional parameter does not accept nil"
+        ) == T2_RELATION_NO);
+        t2_solver_rollback(parameter_solver, parameter_mark);
+        CHECK(t2_solver_constrain_subtype(
+                parameter_solver,
+                callback_nullable_x,
+                callback_optional_x,
+                "nullable parameter accepts non-nil values"
+        ) == T2_RELATION_YES);
+        t2_solver_free(parameter_solver);
         CHECK(t2_subtype(universe, callback_x, callback_positional) == T2_RELATION_YES);
         CHECK(t2_subtype(universe, callback_positional, callback_x) == T2_RELATION_NO);
 

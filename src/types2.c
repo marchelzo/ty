@@ -6394,26 +6394,6 @@ spread_fills_positional_suffix(
 }
 
 static T2Type
-accepted_parameter_type(T2Checker *checker, T2ParameterSpec const *parameter)
-{
-        bool defaulted = !parameter->required
-                      && (
-                                parameter->kind == T2_PARAMETER_POSITIONAL_ONLY
-                             || parameter->kind == T2_PARAMETER_POSITIONAL_OR_KEYWORD
-                             || parameter->kind == T2_PARAMETER_KEYWORD_ONLY
-                         );
-        if (!defaulted) return parameter->type;
-        return t2_union(
-                checker->universe,
-                (T2Type[]){
-                        parameter->type,
-                        t2_primitive(checker->universe, T2_TYPE_NIL)
-                },
-                2
-        );
-}
-
-static T2Type
 apply_callable_candidate(
         T2Checker *checker,
         T2Type callable,
@@ -6610,7 +6590,7 @@ apply_callable_candidate(
                 if (!candidate_argument(
                         checker,
                         arguments[i],
-                        accepted_parameter_type(checker, &parameter),
+                        parameter.type,
                         literal,
                         site
                 )) {
@@ -6711,7 +6691,7 @@ apply_callable_candidate(
                      || !candidate_argument(
                             checker,
                             keyword_arguments[i],
-                            accepted_parameter_type(checker, &parameter),
+                            parameter.type,
                             keyword_argument_expression(site, i),
                             site
                         )
@@ -12069,21 +12049,43 @@ infer_slice_type(
                 site,
                 false
         );
-        T2Type result = infer_call_types(
-                checker,
-                method,
-                bounds,
+        if (is_dynamic_type(checker, method)) {
+                t2_solver_commit(checker->solver, mark);
+                return t2_primitive(checker->universe, T2_TYPE_DYNAMIC);
+        }
+        T2ParameterSpec parameters[3];
+        for (usize i = 0; i < 3; ++i) {
+                parameters[i] = (T2ParameterSpec) {
+                        .type = without_nil(checker, bounds[i]),
+                        .kind = T2_PARAMETER_POSITIONAL_ONLY,
+                        .required = !type_admits_nil(checker, bounds[i])
+                };
+        }
+        T2Type result = t2_solver_new_meta(
+                checker->solver,
+                T2_VARIABLE_FLEXIBLE,
+                checker->level,
+                "slice result"
+        );
+        T2Type expected = t2_callable(
+                checker->universe,
+                parameters,
                 3,
-                NULL,
-                NULL,
-                0,
-                site,
-                false
+                result,
+                t2_primitive(checker->universe, T2_TYPE_NEVER),
+                t2_primitive(checker->universe, T2_TYPE_NIL)
         );
         if (
-                result != T2_TYPE_INVALID
-             && t2_type_kind(checker->universe, result) != T2_TYPE_ERROR
-             && !t2_solver_failed(checker->solver)
+                t2_type_kind(checker->universe, method) != T2_TYPE_ERROR
+             && constrain_type_maybe_diagnose(
+                        checker,
+                        site,
+                        method,
+                        expected,
+                        false,
+                        "not-sliceable",
+                        "value must expose the three-bound slice contract"
+                )
         ) {
                 t2_solver_commit(checker->solver, mark);
                 return result;
@@ -18732,14 +18734,29 @@ infer_single_function(T2Checker *checker, Expr const *function)
                 ) continue;
                 T2ParameterSpec parameter;
                 if (t2_callable_parameter(checker->universe, callable, i, &parameter)) {
-                        (void)constrain_type(
-                                checker,
-                                value,
-                                infer_expression(checker, value),
-                                parameter.type,
-                                "default-argument",
-                                "the default value does not match the parameter type"
-                        );
+                        T2Type fallback = infer_expression(checker, value);
+                        if (declared_parameter_annotation(function, i) == NULL) {
+                                (void)constrain_type(
+                                        checker,
+                                        value,
+                                        fallback,
+                                        parameter.type,
+                                        "default-argument",
+                                        "the default value does not match the inferred parameter type"
+                                );
+                        } else if (i < (usize)vN(function->param_symbols)) {
+                                T2Binding *binding = find_binding(
+                                        checker,
+                                        v__(function->param_symbols, (int)i)
+                                );
+                                if (binding != NULL) {
+                                        binding->type = t2_join(
+                                                checker->universe,
+                                                parameter.type,
+                                                relax_literal(checker, fallback)
+                                        );
+                                }
+                        }
                 }
         }
 

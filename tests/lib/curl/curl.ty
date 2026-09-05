@@ -105,8 +105,8 @@ fn handle-client(fd: Int) {
         reply(fd, json.encode(%{'json': value}),
               headers=%{'Content-Type': 'application/json'})
     } else if request.method == 'GET' && path == '/gzip' {
-        let body = '1f8b0800000000000003ab564aafca2c28484d51b22a292a4dad05005392988b10000000'.unhex()!
-        reply(fd, body, headers=%{
+        let body = '1f8b0800000000000003ab564aafca2c28484d51b22a292a4dad05005392988b10000000'.unhex()
+        reply(fd, body as Blob, headers=%{
             'Content-Type': 'application/json',
             'Content-Encoding': 'gzip'
         })

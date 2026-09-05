@@ -3252,52 +3252,6 @@ function_keyword_parameter(
         return NULL;
 }
 
-static bool
-parameter_has_default(T2Node const *parameter)
-{
-        T2ParameterKind kind = (T2ParameterKind)(
-                parameter->payload & T2_PARAMETER_KIND_MASK
-        );
-        return (parameter->payload & T2_PARAMETER_REQUIRED) == 0
-            && (
-                        kind == T2_PARAMETER_POSITIONAL_ONLY
-                     || kind == T2_PARAMETER_POSITIONAL_OR_KEYWORD
-                     || kind == T2_PARAMETER_KEYWORD_ONLY
-               );
-}
-
-static T2Relation
-subtype_relation_ignoring_nil(
-        T2RelationContext *context,
-        T2Type subtype,
-        T2Type supertype,
-        unsigned progress
-)
-{
-        T2Node const *node = get_node(context->universe, subtype);
-        if (node == NULL) return T2_RELATION_NO;
-        if (node->kind == T2_TYPE_NIL) return T2_RELATION_YES;
-        if (node->kind != T2_TYPE_UNION) {
-                return subtype_relation(context, subtype, supertype, progress);
-        }
-        T2Relation relation = T2_RELATION_YES;
-        for (usize i = 0; i < node->arity; ++i) {
-                T2Node const *arm = get_node(context->universe, node->children[i]);
-                if (arm != NULL && arm->kind == T2_TYPE_NIL) continue;
-                relation = combine_all(
-                        relation,
-                        subtype_relation(
-                                context,
-                                node->children[i],
-                                supertype,
-                                progress
-                        )
-                );
-                if (relation == T2_RELATION_NO) break;
-        }
-        return relation;
-}
-
 static T2Relation
 contravariant_parameter(
         T2RelationContext *context,
@@ -3307,14 +3261,6 @@ contravariant_parameter(
 )
 {
         if (actual == NULL || expected == NULL) return T2_RELATION_NO;
-        if (parameter_has_default(actual)) {
-                return subtype_relation_ignoring_nil(
-                        context,
-                        expected->children[0],
-                        actual->children[0],
-                        progress + 1
-                );
-        }
         return subtype_relation(
                 context,
                 expected->children[0],
@@ -7586,28 +7532,6 @@ constrain_children(
 }
 
 static T2Type
-without_nil_arms(T2Universe *universe, T2Type type)
-{
-        T2Node const *node = get_node(universe, type);
-        if (node == NULL) return T2_TYPE_INVALID;
-        if (node->kind == T2_TYPE_NIL) return t2_primitive(universe, T2_TYPE_NEVER);
-        if (node->kind != T2_TYPE_UNION) return type;
-        T2TypeVector arms = {0};
-        for (usize i = 0; i < node->arity; ++i) {
-                T2Node const *arm = get_node(universe, node->children[i]);
-                if (arm != NULL && arm->kind == T2_TYPE_NIL) continue;
-                if (!push_type(&arms, node->children[i])) {
-                        xvF(arms);
-                        universe->failed = true;
-                        return T2_TYPE_INVALID;
-                }
-        }
-        T2Type result = t2_union(universe, vv(arms), vN(arms));
-        xvF(arms);
-        return result;
-}
-
-static T2Type
 erase_callable_types(T2Universe *universe, T2Type callable)
 {
         usize count = t2_callable_parameter_count(universe, callable);
@@ -7657,14 +7581,9 @@ constrain_parameter_types(
 )
 {
         if (actual == NULL || expected == NULL) return T2_RELATION_NO;
-        T2Type wanted = expected->children[0];
-        if (parameter_has_default(actual)) {
-                wanted = without_nil_arms(solver->universe, wanted);
-                if (wanted == T2_TYPE_INVALID) return T2_RELATION_COMPLEXITY;
-        }
         return constrain_internal(
                 solver,
-                wanted,
+                expected->children[0],
                 actual->children[0],
                 provenance,
                 retain_deferred

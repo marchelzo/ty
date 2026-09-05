@@ -7,3 +7,115 @@ pub fn defparam() {
     assert(f() == 5)
     assert(f(&.pred, 8) == 7)
 }
+
+pub fn parameter-constraints-and-defaults() {
+    fn foo(x: String = 'hello!') -> String {
+        assert(str(typeof x) == 'String')
+        x
+    }
+
+    fn bar(x: String = nil) -> String {
+        assert(str(typeof x) == 'nil | String')
+        x ?? 'hello!'
+    }
+
+    assert(str(typeof foo) == str(typeof bar))
+    assert(foo() == 'hello!')
+    assert(bar() == 'hello!')
+    assert(foo('supplied') == 'supplied')
+    assert(bar(x='supplied') == 'supplied')
+
+    for source in ['foo(nil)', 'bar(nil)', 'foo(x=nil)', 'bar(x=nil)',
+                   'foo(*(nil,))', 'bar(**{x: nil})'] {
+        try {
+            __eval__(source)
+            assert(false, source)
+        } catch ex :: '[bad-call]' in ex.what {
+            ;
+        }
+    }
+
+    try {
+        __eval__('let accepts-nil: (String | nil) -> String = foo')
+        assert(false, 'optional parameter bypassed callback input constraints')
+    } catch ex :: '[assignment-type]' in ex.what {
+        ;
+    }
+}
+
+pub fn default-types-inside-functions() {
+    fn different(x: String = 0) {
+        assert(str(typeof x) == 'Int | String')
+        x
+    }
+
+    assert(different() == 0)
+    assert(different('given') == 'given')
+
+    fn dependent(x: String = nil, count: Int = x == nil ? 0 : #x) {
+        count
+    }
+
+    assert(dependent() == 0)
+    assert(dependent('abc') == 3)
+
+    fn choose[T](first: T, second: T = nil) -> T {
+        second ?? first
+    }
+
+    assert(choose('first') == 'first')
+    assert(choose(1, 2) == 2)
+
+    try {
+        __eval__('fn bad(x: String = nil) -> String { x }')
+        assert(false, 'default nil was absent from the body parameter type')
+    } catch ex :: '[function-fallthrough]' in ex.what {
+        ;
+    }
+}
+
+class DefaultParameter {
+    value: String
+
+    init(value: String = nil) {
+        assert(str(typeof value) == 'nil | String')
+        self.value = value ?? 'default'
+    }
+
+    value-or(x: String = nil) -> String {
+        x ?? self.value
+    }
+}
+
+pub fn method-and-keyword-defaults() {
+    let instance = DefaultParameter()
+    assert(instance.value-or() == 'default')
+    assert(instance.value-or(x='given') == 'given')
+
+    fn keyword(*args, x: String = nil) -> String {
+        x ?? 'default'
+    }
+
+    assert(keyword() == 'default')
+    assert(keyword(x='given') == 'given')
+
+    for source in ['DefaultParameter(nil)', 'instance.value-or(nil)',
+                   'keyword(x=nil)'] {
+        try {
+            __eval__(source)
+            assert(false, source)
+        } catch ex :: '[bad-call]' in ex.what {
+            ;
+        }
+    }
+}
+
+pub fn slice-defaults() {
+    fn tail(x) { x[1;] }
+    fn head(x) { x[;2] }
+    fn reverse(x) { x[;;-1] }
+
+    assert(['abc'].map(tail) == ['bc'])
+    assert(['abc'].map(head) == ['ab'])
+    assert(['abc'].map(reverse) == ['cba'])
+}
