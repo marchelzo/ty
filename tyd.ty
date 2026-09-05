@@ -7,8 +7,15 @@ import os (..)
 import log (..)
 import path (Path)
 
+const TYD_LOGS_DIR     = Path.home() / '.local' / 'state' / 'tyd'
+const TYD_LOG_PATH     = TYD_LOGS_DIR / 'tyd.log'
+const TYLS_ERR_PATH    = TYD_LOGS_DIR / 'tyls.err'
+const FAILED_JSON_PATH = TYD_LOGS_DIR / 'failed.json'
+
+TYD_LOGS_DIR.mkdir(parents=true, exist-ok=true)
+
 logging({
-    path: './tyd.log',
+    path: str(TYD_LOGS_DIR),
     level: INFO
 })
 
@@ -50,9 +57,9 @@ let init = {
     }
 }
 
-let err-fd = open('tyls.err', O_WRONLY | O_TRUNC | O_CREAT, 0644)
+let err-fd = open("{TYLS_ERR_PATH}", O_WRONLY | O_TRUNC | O_CREAT, 0644)
 
-let TY_LS_CMD = getenv('TY_LS_CMD').words() ?? ['tyls']
+let TY_LS_CMD = getenv('TY_LS_CMD').?words() ?? ['tyls']
 
 let TYLS_TIMEOUT = 0.35
 
@@ -132,7 +139,7 @@ fn do-req(msg: Request) -> _ {
         }
 
         if it == 2 {
-            Path('./failed.json').append(json.encode(msg) + '\n')
+            FAILED_JSON_PATH.append(json.encode(msg) + '\n')
         }
     }
 }

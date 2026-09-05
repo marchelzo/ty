@@ -317,21 +317,18 @@ pub class Path {
         if parents {
             let current = Path(__drv, __root, [])
             
-            for part in __parts {
+            for part, i in __parts {
                 current.__parts.push(part)
-                let path-str = str(current)
-                
-                if !current.exists? {
-                    if os.mkdir(path-str, mode) == -1 {
-                        throw os.OSError('mkdir()')
-                    }
-                } else if !exist-ok {
-                    throw PathError({msg: 'directory exists', path: path-str})
+                if os.mkdir("{current}", mode) == 0 {
+                    continue
                 }
+                if errno.get() == errno.EEXIST {
+                    continue if i + 1 < #__parts || exist-ok
+                }
+                throw os.OSError('mkdir()')
             }
         } else {
-            let path-str = str(self)
-            if os.mkdir(path-str, mode) == -1 {
+            if os.mkdir("{self}", mode) == -1 {
                 if !exist-ok || errno.get() != errno.EEXIST {
                     throw os.OSError('mkdir()')
                 }
