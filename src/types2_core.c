@@ -542,31 +542,34 @@ t2_universe_free(T2Universe *universe)
 bool
 t2_universe_ok(T2Universe const *universe)
 {
-        return universe != NULL && !universe->failed;
+        return (universe != NULL) && !universe->failed;
 }
 
 usize
 t2_universe_type_count(T2Universe const *universe)
 {
-        return universe == NULL ? 0 : vN(universe->nodes);
+        return (universe == NULL) ? 0 : vN(universe->nodes);
 }
 
 u32
 t2_universe_fresh_recursive_binder(T2Universe *universe)
 {
-        if (universe == NULL || universe->next_recursive_id == 0) return 0;
+        if (universe == NULL || universe->next_recursive_id == 0) {
+                return 0;
+        }
+
         return universe->next_recursive_id++;
 }
 
 T2Type
 t2_primitive(T2Universe *universe, T2TypeKind kind)
 {
-        bool primitive = kind >= T2_TYPE_NEVER && kind <= T2_TYPE_STRING;
-        primitive = primitive
-                 || kind == T2_TYPE_ROW_EMPTY
-                 || kind == T2_TYPE_ROW_ANY
-                 || kind == T2_TYPE_PACK_EMPTY
-                 || kind == T2_TYPE_PACK_ANY;
+        bool primitive = (kind >= T2_TYPE_NEVER && kind <= T2_TYPE_STRING)
+                      || (kind == T2_TYPE_ROW_EMPTY)
+                      || (kind == T2_TYPE_ROW_ANY)
+                      || (kind == T2_TYPE_PACK_EMPTY)
+                      || (kind == T2_TYPE_PACK_ANY);
+
         if (universe == NULL || !primitive) {
                 return T2_TYPE_INVALID;
         }

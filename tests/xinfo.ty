@@ -1,11 +1,5 @@
 import ffi as c (C!)
-import ty
-
-fn gc() {
-    for _ in ..16 {
-        let _ = [[*..5].reverse() for ..1000]
-    }
-}
+import ty (gc)
 
 ns test
 

@@ -213,6 +213,7 @@ typedef enum t2_flow_bit {
 typedef struct t2_flow {
         unsigned outcomes;
         unsigned break_depths;
+        T2Type break_values[32];
         T2Type value;
         T2Type returns;
 } T2Flow;
@@ -424,10 +425,14 @@ typedef struct t2_walk {
 static void
 fold_shape(T2Checker *checker, Expr const *syntax)
 {
-        if (!checker->hashing_shape || syntax == NULL) return;
+        if (!checker->hashing_shape || syntax == NULL) {
+                return;
+        }
+
         u64 value = ((u64)syntax->type << 56)
                        ^ ((u64)syntax->start.byte << 24)
                        ^ (u64)syntax->end.byte;
+
         checker->shape ^= value + UINT64_C(0x9E3779B97F4A7C15) + (checker->shape << 6) + (checker->shape >> 2);
 }
 
@@ -1517,12 +1522,12 @@ primitive_class_type(T2Checker *checker, int class_id)
 {
         T2TypeKind kind;
         switch (class_id) {
-        case CLASS_NIL: kind = T2_TYPE_NIL; break;
+        case CLASS_NIL:    kind = T2_TYPE_NIL;    break;
         case CLASS_OBJECT: kind = T2_TYPE_OBJECT; break;
         case CLASS_STRING: kind = T2_TYPE_STRING; break;
-        case CLASS_INT: kind = T2_TYPE_INT; break;
-        case CLASS_FLOAT: kind = T2_TYPE_FLOAT; break;
-        case CLASS_BOOL: kind = T2_TYPE_BOOL; break;
+        case CLASS_INT:    kind = T2_TYPE_INT;    break;
+        case CLASS_FLOAT:  kind = T2_TYPE_FLOAT;  break;
+        case CLASS_BOOL:   kind = T2_TYPE_BOOL;   break;
         default: return T2_TYPE_INVALID;
         }
         return t2_primitive(checker->universe, kind);
@@ -1578,11 +1583,15 @@ ensure_nominal(
                 arity = builtin_nominal_arity(class_id);
         }
         usize declared_arity;
-        if (t2_nominal_declared(
-                checker->universe,
-                t2_class_symbol(class_id),
-                &declared_arity
-        )) arity = declared_arity;
+        if (
+                t2_nominal_declared(
+                        checker->universe,
+                        t2_class_symbol(class_id),
+                        &declared_arity
+                )
+        ) {
+                arity = declared_arity;
+        }
         usize index = vN(checker->nominals);
         xvP(checker->nominals, ((T2Nominal) {
                 .class_id = class_id,
@@ -1593,21 +1602,27 @@ ensure_nominal(
         }));
         nominal = v_(checker->nominals, index);
 
-        T2Variance *variance = arity == 0 ? NULL : ty_calloc(arity, sizeof *variance);
+        T2Variance *variance = (arity == 0) ? NULL : ty_calloc(arity, sizeof *variance);
         if (arity != 0 && variance == NULL) {
                 checker->failed = true;
                 return NULL;
         }
         if (
-                class_id == CLASS_ITERABLE
-             || class_id == CLASS_ITER
-             || (class != NULL
-              && class->def != NULL
-              && class->def->type == STATEMENT_TAG_DEFINITION)
+                (class_id == CLASS_ITERABLE)
+             || (class_id == CLASS_ITER)
+             || (
+                     (class != NULL)
+                  && (class->def != NULL)
+                  && (class->def->type == STATEMENT_TAG_DEFINITION)
+                )
         ) {
-                for (usize i = 0; i < arity; ++i) variance[i] = T2_COVARIANT;
+                for (usize i = 0; i < arity; ++i) {
+                        variance[i] = T2_COVARIANT;
+                }
         } else if (class_id == CLASS_ARRAY || class_id == CLASS_DICT) {
-                for (usize i = 0; i < arity; ++i) variance[i] = T2_BIVARIANT;
+                for (usize i = 0; i < arity; ++i) {
+                        variance[i] = T2_BIVARIANT;
+                }
         }
         bool declared = t2_declare_nominal(
                 checker->universe,
@@ -1618,7 +1633,9 @@ ensure_nominal(
         );
         ty_free(variance);
         nominal->declared = declared;
-        if (!declared) return NULL;
+        if (!declared) {
+                return NULL;
+        }
 
         if (class != NULL && class->def != NULL) {
                 bool previous_interface_state = checker->building_interface;
@@ -15377,20 +15394,44 @@ flow_fallthrough(T2Checker *checker, T2Type value)
 {
         return (T2Flow) {
                 .outcomes = T2_FLOW_FALLS_THROUGH,
-                .value = value == T2_TYPE_INVALID
+                .value = (value == T2_TYPE_INVALID)
                        ? t2_primitive(checker->universe, T2_TYPE_NIL)
                        : value,
                 .returns = t2_primitive(checker->universe, T2_TYPE_NEVER)
         };
 }
 
+static void
+flow_merge_breaks(T2Checker *checker, T2Flow *target, T2Flow const *source)
+{
+        if (source->break_depths == 0) {
+                return;
+        }
+
+        for (unsigned i = 0; i < 32; ++i) {
+                if ((source->break_depths & (1u << i)) == 0) {
+                        continue;
+                }
+                if ((target->break_depths & (1u << i)) != 0) {
+                        target->break_values[i] = t2_join(
+                                checker->universe,
+                                target->break_values[i],
+                                source->break_values[i]
+                        );
+                } else {
+                        target->break_values[i] = source->break_values[i];
+                }
+        }
+
+        target->break_depths |= source->break_depths;
+}
+
 static T2Flow
 flow_join(T2Checker *checker, T2Flow left, T2Flow right)
 {
         T2Type never = t2_primitive(checker->universe, T2_TYPE_NEVER);
-        return (T2Flow) {
+        T2Flow result = {
                 .outcomes = left.outcomes | right.outcomes,
-                .break_depths = left.break_depths | right.break_depths,
                 .value = t2_join(
                         checker->universe,
                         left.value == T2_TYPE_INVALID ? never : left.value,
@@ -15402,6 +15443,9 @@ flow_join(T2Checker *checker, T2Flow left, T2Flow right)
                         right.returns == T2_TYPE_INVALID ? never : right.returns
                 )
         };
+        flow_merge_breaks(checker, &result, &left);
+        flow_merge_breaks(checker, &result, &right);
+        return result;
 }
 
 static T2Flow
@@ -15409,17 +15453,24 @@ loop_flow(T2Checker *checker, T2Flow body, bool infinite)
 {
         bool exits = !infinite || (body.break_depths & 1u) != 0;
         unsigned outer = body.break_depths >> 1;
-        return (T2Flow) {
+        T2Flow result = {
                 .outcomes = (exits ? T2_FLOW_FALLS_THROUGH : 0)
                           | (body.outcomes & (T2_FLOW_RETURNS | T2_FLOW_THROWS))
                           | (outer != 0 ? T2_FLOW_BREAKS : 0),
                 .break_depths = outer,
                 .value = t2_primitive(
                         checker->universe,
-                        exits ? T2_TYPE_NIL : T2_TYPE_NEVER
+                        infinite ? T2_TYPE_NEVER : T2_TYPE_NIL
                 ),
                 .returns = body.returns
         };
+        if ((body.break_depths & 1u) != 0) {
+                result.value = t2_join(checker->universe, result.value, body.break_values[0]);
+        }
+        for (unsigned i = 0; i < 31; ++i) {
+                result.break_values[i] = body.break_values[i + 1];
+        }
+        return result;
 }
 
 static bool
@@ -20329,9 +20380,13 @@ infer_statement(T2Checker *checker, Stmt const *statement)
 static T2Flow
 infer_statement_once(T2Checker *checker, Stmt const *statement)
 {
-        T2Type nil = t2_primitive(checker->universe, T2_TYPE_NIL);
+        T2Type nil   = t2_primitive(checker->universe, T2_TYPE_NIL);
         T2Type never = t2_primitive(checker->universe, T2_TYPE_NEVER);
-        if (statement == NULL) return flow_fallthrough(checker, nil);
+
+        if (statement == NULL) {
+                return flow_fallthrough(checker, nil);
+        }
+
         T2Type hint = take_hint(checker, statement);
 
         T2Flow result = flow_fallthrough(checker, nil);
@@ -20371,11 +20426,10 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
                         );
                         unsigned prior_terminal = result.outcomes
                                                 & ~T2_FLOW_FALLS_THROUGH;
-                        unsigned prior_break_depths = result.break_depths;
                         T2Type prior_returns = result.returns;
+                        flow_merge_breaks(checker, &next, &result);
                         result = next;
                         result.outcomes |= prior_terminal;
-                        result.break_depths |= prior_break_depths;
                         result.returns = t2_join(
                                 checker->universe,
                                 prior_returns,
@@ -21021,7 +21075,7 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
                                 final.returns
                         );
                         result.outcomes |= final.outcomes & ~T2_FLOW_FALLS_THROUGH;
-                        result.break_depths |= final.break_depths;
+                        flow_merge_breaks(checker, &result, &final);
                         if ((final.outcomes & T2_FLOW_FALLS_THROUGH) == 0) {
                                 result.outcomes = final.outcomes;
                                 result.value = final.value;
@@ -21031,17 +21085,19 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
         }
 
         case STATEMENT_BREAK:
-                if (statement->expression != NULL) {
-                        result.value = infer_expression(checker, statement->expression);
-                } else result.value = nil;
+        {
+                unsigned depth = statement->depth > 32 ? 31
+                               : statement->depth > 1  ? statement->depth - 1
+                               :                         0;
+                result.break_values[depth] = (statement->expression != NULL)
+                                           ? infer_expression(checker, statement->expression)
+                                           : nil;
+                result.value = never;
                 result.outcomes = T2_FLOW_BREAKS;
-                result.break_depths = 1u << (
-                        statement->depth > 32 ? 31
-                      : statement->depth > 1  ? statement->depth - 1
-                      :                         0
-                );
+                result.break_depths = (1u << depth);
                 result.returns = never;
                 break;
+        }
         case STATEMENT_CONTINUE:
         case STATEMENT_NEXT:
                 result = (T2Flow) {
