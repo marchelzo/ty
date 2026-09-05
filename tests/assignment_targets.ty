@@ -1,0 +1,97 @@
+import json
+import path
+import sh (sh)
+import ty
+
+ns test
+
+pub fn view-declarations() {
+    fn content-length(line: String) -> Int {
+        let &words $~> &[-1] ~> int ~> $n = line
+        n
+    }
+
+    assert(content-length('Content-Length: 42') == 42)
+
+    fn maybe-number(value: String | nil) -> Int | nil {
+        value == nil ? 7 : nil
+    }
+
+    let maybe-number ~> missing = 'absent'
+    assert(str(typeof missing) == 'nil | Int')
+    assert(missing == nil)
+
+    let maybe-number $~> present = nil
+    assert(str(typeof present) == 'Int')
+    assert(present == 7)
+}
+
+pub fn dictionary-declarations() {
+    let values: Dict[String, Int] = %{'answer': 42}
+    let %{'answer': $answer, 'missing': missing} = values
+
+    assert(str(typeof answer) == 'Int')
+    assert(str(typeof missing) == 'nil | Int')
+    assert(answer == 42)
+    assert(missing == nil)
+
+    let msg: _ = json.parse('{
+        "textDocument": {"uri": "file:///tmp/example.ty"},
+        "position": {"line": 12, "character": 3}
+    }')
+
+    let %{
+        'textDocument': %{'uri': &slice(7) ~> $path},
+        'position': %{'line': int ~> line, 'character': int ~> col}
+    } = msg
+
+    assert(path == '/tmp/example.ty')
+    assert(line == 12)
+    assert(col == 3)
+}
+
+pub fn destructuring-reassignment() {
+    let n: Int = 0
+    (int ~> n) = '42'
+    assert(n == 42)
+
+    let text: String | nil = nil
+    (%{'value': text}) = %{'value': 'updated'}
+    assert(text == 'updated')
+
+    (%{'value': int ~> n}) = %{'value': '7'}
+    assert(n == 7)
+
+    let xs: Array[Int] = [0]
+    (int ~> xs[0]) = '19'
+    assert(xs == [19])
+
+    let box = {value: 0}
+    (%{'value': int ~> box.value}) = %{'value': '23'}
+    assert(box.value == 23)
+}
+
+fn rejects(source: String, code: String) {
+    with tmp = path.tempdir() {
+        let file = path.Path("{tmp}/assignment.ty")
+        file.write(source)
+        let $output, $result = sh("{ty.executable} -c {file}", combineOutput=true)
+        assert(result.status != 0, source)
+        assert(output.contains?(code), output)
+    }
+}
+
+pub fn invalid-destructuring() {
+    rejects('let %{"wrong": n} = %{1: 42}', '[not-subscriptable]')
+    rejects(
+        'let n: Int = 0\n(%{"value": $n}) = %{"value": "wrong"}',
+        '[assignment-type]'
+    )
+    rejects('let n: Int = 0\n(str ~> n) = 42', '[assignment-type]')
+    rejects('fn view(x: Int) { x }\nlet view ~> n = "wrong"', '[bad-call]')
+    rejects('fn view(x: Int) { x }\nlet view $~> n = nil', '[bad-call]')
+    rejects(
+        'fn bad(x: Dict[String, Int] | Int) { let %{"value": n} = x }',
+        '[union-subscript-coverage]'
+    )
+}

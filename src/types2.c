@@ -5974,6 +5974,7 @@ static T2Type assign_iteration_target(
         Expr const *site
 );
 static T2Type without_nil(T2Checker *checker, T2Type type);
+static void invalidate_unstable_refinements(T2Checker *checker);
 static bool infer_pattern(T2Checker *checker, Expr const *pattern, T2Type subject);
 static bool infer_refutable_pattern(
         T2Checker *checker,
@@ -8949,14 +8950,20 @@ infer_member_type(
                         defer_node(checker, T2_DEFER_INCOMPLETE_INTERFACE, site, name);
                         return t2_primitive(checker->universe, T2_TYPE_DYNAMIC);
                 }
-                if (safe) {
+                if (
+                        safe
+                     && (
+                                class_id == CLASS_OBJECT
+                             || class_id == CLASS_FUNCTION
+                             || class_id > CLASS_PRIMITIVE
+                        )
+                ) {
                         defer_node(checker, T2_DEFER_RUNTIME_VALUE, site, name);
-                        return t2_join(
-                                checker->universe,
-                                nil,
-                                t2_primitive(checker->universe, T2_TYPE_DYNAMIC)
-                        );
+                        return t2_primitive(checker->universe, T2_TYPE_DYNAMIC);
                 }
+        }
+        if (safe) {
+                return nil;
         }
         if (diagnose) {
                 add_diagnostic(
@@ -10876,6 +10883,7 @@ assign_lvalue_x(
                               : t2_primitive(checker->universe, T2_TYPE_ERROR);
                 binding->refinement = valid
                                    && is_mutable
+                                   && (!declaration || annotation == T2_TYPE_INVALID)
                                    && !is_dynamic_type(checker, expected)
                                    && !is_dynamic_type(checker, value)
                                     ? resolved_type_head(
@@ -11079,6 +11087,92 @@ assign_lvalue_x(
                         valid
                             ? value
                             : t2_primitive(checker->universe, T2_TYPE_ERROR)
+                );
+                return valid;
+        }
+        case EXPRESSION_DICT:
+        {
+                bool valid = true;
+                for (int i = 0; i < vN(target->keys); ++i) {
+                        Expr const *key = v__(target->keys, i);
+                        T2Type item = infer_subscript_type(
+                                checker,
+                                value,
+                                infer_expression(checker, key),
+                                key,
+                                target,
+                                true
+                        );
+                        if (
+                                item == T2_TYPE_INVALID
+                             || t2_type_kind(checker->universe, item) == T2_TYPE_ERROR
+                        ) {
+                                valid = false;
+                        }
+                        valid &= assign_lvalue_x(
+                                checker,
+                                v__(target->values, i),
+                                item,
+                                declaration,
+                                honor_annotation
+                        );
+                }
+                set_node_type(
+                        checker,
+                        target,
+                        valid ? value : t2_primitive(checker->universe, T2_TYPE_ERROR)
+                );
+                return valid;
+        }
+        case EXPRESSION_VIEW_PATTERN:
+        case EXPRESSION_NOT_NIL_VIEW_PATTERN:
+        {
+                T2SolverMark scope = t2_solver_mark(checker->solver);
+                T2Type function = infer_expression(checker, target->left);
+                T2Type viewed = infer_runtime_call_types(
+                        checker,
+                        function,
+                        &value,
+                        1,
+                        NULL,
+                        NULL,
+                        0,
+                        target,
+                        true
+                );
+                invalidate_unstable_refinements(checker);
+                bool valid = viewed != T2_TYPE_INVALID
+                          && t2_type_kind(checker->universe, viewed) != T2_TYPE_ERROR
+                          && !t2_solver_failed(checker->solver);
+                if (valid) {
+                        if (target->type == EXPRESSION_NOT_NIL_VIEW_PATTERN) {
+                                viewed = without_nil(
+                                        checker,
+                                        resolved_type_head(
+                                                checker,
+                                                viewed,
+                                                T2_PREFER_LOWER_BOUND
+                                        )
+                                );
+                        }
+                        valid = assign_lvalue_x(
+                                checker,
+                                target->right,
+                                viewed,
+                                declaration,
+                                honor_annotation
+                        );
+                }
+                if (!valid) {
+                        if (!t2_solver_cancel_obligations_since(checker->solver, scope)) {
+                                checker->failed = true;
+                        }
+                }
+                t2_solver_commit(checker->solver, scope);
+                set_node_type(
+                        checker,
+                        target,
+                        valid ? value : t2_primitive(checker->universe, T2_TYPE_ERROR)
                 );
                 return valid;
         }
@@ -14723,14 +14817,37 @@ infer_expression(T2Checker *checker, Expr const *source)
         }
         case EXPRESSION_METHOD_CALL:
         {
+                T2Type object = infer_receiver(checker, expression->object);
                 T2Type method = infer_method_type(
                         checker,
-                        infer_receiver(checker, expression->object),
+                        object,
                         expression->method->identifier,
                         expression->maybe,
                         expression,
                         true
                 );
+                bool optional = false;
+                if (expression->maybe) {
+                        T2Type present = without_nil(checker, method);
+                        optional = present != method;
+                        method = present;
+                        object = resolved_type_head(
+                                checker,
+                                object,
+                                T2_PREFER_LOWER_BOUND
+                        );
+                        if (t2_type_kind(checker->universe, object) == T2_TYPE_NIL) {
+                                add_diagnostic(
+                                        checker,
+                                        expression,
+                                        T2_DIAGNOSTIC_WARNING,
+                                        "nil-method-call",
+                                        object,
+                                        T2_TYPE_INVALID,
+                                        "optional method call on nil always evaluates to nil"
+                                );
+                        }
+                }
                 usize count = (usize)vN(expression->method_args);
                 usize kwcount = (usize)vN(expression->method_kwargs);
                 T2Type *arguments = count == 0 ? NULL : ty_malloc(count * sizeof *arguments);
@@ -14782,14 +14899,18 @@ infer_expression(T2Checker *checker, Expr const *source)
                         );
                 }
                 T2TypeList expanded_arguments = {0};
-                if (!expand_fixed_tuple_call_splats(
-                        checker,
-                        &expression->method_args,
-                        arguments,
-                        count,
-                        &expanded_arguments
-                )) {
+                if (
+                        !expand_fixed_tuple_call_splats(
+                                checker,
+                                &expression->method_args,
+                                arguments,
+                                count,
+                                &expanded_arguments
+                        )
+                ) {
                         result = T2_TYPE_INVALID;
+                } else if (optional && method_kind == T2_TYPE_NEVER) {
+                        result = t2_primitive(checker->universe, T2_TYPE_NIL);
                 } else {
                         result = infer_runtime_call_types(
                                 checker,
@@ -14802,16 +14923,23 @@ infer_expression(T2Checker *checker, Expr const *source)
                                 expression,
                                 true
                         );
+                        if (optional) {
+                                result = t2_join(
+                                        checker->universe,
+                                        result,
+                                        t2_primitive(checker->universe, T2_TYPE_NIL)
+                                );
+                        }
                 }
                 if (
-                        result == T2_TYPE_INVALID
-                     || t2_type_kind(checker->universe, result) == T2_TYPE_ERROR
+                        (result == T2_TYPE_INVALID)
+                     || (t2_type_kind(checker->universe, result) == T2_TYPE_ERROR)
                      || t2_solver_failed(checker->solver)
                 ) {
-                        if (!t2_solver_cancel_obligations_since(
+                        checker->failed |= !t2_solver_cancel_obligations_since(
                                 checker->solver,
                                 argument_scope
-                        )) checker->failed = true;
+                        );
                 }
                 t2_solver_commit(checker->solver, argument_scope);
                 invalidate_unstable_refinements(checker);

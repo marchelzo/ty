@@ -1,0 +1,110 @@
+fn header-end(data: Blob) -> Int {
+    let offset = for (;;) {
+        if let $i = data.search('\r\n\r\n') {
+            break i
+        }
+        return -1
+    }
+    offset + 4
+}
+
+fn branch-value(first: Bool) -> Int {
+    let value = for (;;) {
+        if first {
+            break 3
+        }
+        break 7
+    }
+    value + 1
+}
+
+fn mixed-value(number: Bool) -> Int | String {
+    while true {
+        if number {
+            break 42
+        } else {
+            break 'answer'
+        }
+    }
+}
+
+fn finite-value(xs: [Int]) -> Int {
+    let value = for x in xs {
+        if x > 0 {
+            break x
+        }
+        'ignored body value'
+    }
+    (value ?? 0) + 1
+}
+
+fn conditional-value(run: Bool) -> ?Int {
+    while run {
+        break 5
+    }
+}
+
+fn bare-break(value: Bool) -> ?Int {
+    for (;;) {
+        if value {
+            break 6
+        }
+        break
+    }
+}
+
+fn nested-value(outer: Bool) -> Int {
+    let value = for (;;) {
+        let inner = for (;;) {
+            if outer {
+                break break 8
+            }
+            break 'inner'
+        }
+        break #inner
+    }
+    value + 1
+}
+
+fn match-value(choice: Bool) -> Int {
+    let value = for (;;) {
+        match choice {
+            true => { break 2 },
+            false => { break 4 }
+        }
+    }
+    value + 1
+}
+
+fn finally-value() -> Int {
+    let value = for (;;) {
+        try {
+            break 9
+        } finally {
+            'cleanup'
+        }
+    }
+    value + 1
+}
+
+ns test
+
+pub fn loop-values() {
+    assert(header-end(Blob('GET / HTTP/1.1\r\n\r\n')) == 18)
+    assert(header-end(Blob('incomplete')) == -1)
+    assert(branch-value(true) == 4)
+    assert(branch-value(false) == 8)
+    assert(mixed-value(true) == 42)
+    assert(mixed-value(false) == 'answer')
+    assert(finite-value([-1, 2]) == 3)
+    assert(finite-value([]) == 1)
+    assert(conditional-value(true) == 5)
+    assert(conditional-value(false) == nil)
+    assert(bare-break(true) == 6)
+    assert(bare-break(false) == nil)
+    assert(nested-value(true) == 9)
+    assert(nested-value(false) == 6)
+    assert(match-value(true) == 3)
+    assert(match-value(false) == 5)
+    assert(finally-value() == 10)
+}

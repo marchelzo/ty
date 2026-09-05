@@ -1,0 +1,103 @@
+ns test
+
+pub fn optional-union-members() {
+    let x: Int | String = 12
+
+    assert(str(typeof x) == 'Int | String')
+    assert(str(typeof x.?words) == 'nil | (() -> Array[String])')
+    assert(str(typeof x.?words()) == 'nil | Array[String]')
+    assert(x.?words == nil)
+    assert(x.?words() == nil)
+
+    x = 'two words'
+    assert(x.?words() == ['two', 'words'])
+
+    fn guarded(x: Int | String) {
+        if x :: String {
+            assert(str(typeof x.?words()) == 'Array[String]')
+            return x.?words()
+        }
+        nil
+    }
+
+    assert(guarded(12) == nil)
+    assert(guarded('two words') == ['two', 'words'])
+}
+
+pub fn optional-nullable-methods() {
+    fn upper(x: String | nil) {
+        assert(str(typeof x.?upper()) == 'nil | String')
+        x.?upper()
+    }
+
+    assert(upper(nil) == nil)
+    assert(upper('abc') == 'ABC')
+    assert(str(typeof getenv('ABCD').?upper()) == 'nil | String')
+    assert(str(typeof 'abc'.?upper()) == 'String')
+
+    fn transform(xs: Array[String] | nil) {
+        xs.?map(x -> x.upper())
+    }
+
+    assert(transform(nil) == nil)
+    assert(transform(['a', 'b']) == ['A', 'B'])
+}
+
+pub fn optional-missing-methods() {
+    let x: Int = 12
+
+    assert(str(typeof x.?words) == 'nil')
+    assert(str(typeof x.?words()) == 'nil')
+    assert(str(typeof nil.?anything()) == 'nil')
+    assert(nil.?anything(1, key='value') == nil)
+    assert(x.?words() == nil)
+
+    fn words(x: Int | String | Bool | nil) {
+        assert(str(typeof x.?words()) == 'nil | Array[String]')
+        x.?words()
+    }
+
+    assert(words(12) == nil)
+    assert(words(true) == nil)
+    assert(words(nil) == nil)
+    assert(words('two words') == ['two', 'words'])
+}
+
+pub fn optional-call-checks() {
+    try {
+        __eval__('let x: Int | String = 12; (x.?words)()')
+        assert(false, 'ordinary call accepted a nil union arm')
+    } catch ex :: '[union-call-coverage]' in ex.what {
+        ;
+    }
+
+    try {
+        __eval__('fn bad(x: Int | String) { x.?words(1) }')
+        assert(false, 'optional call accepted an invalid argument')
+    } catch ex :: '[bad-call]' in ex.what {
+        ;
+    }
+
+    try {
+        __eval__('fn bad(x: String | nil) { x.?repeat(false) }')
+        assert(false, 'optional call accepted an invalid argument type')
+    } catch ex :: '[bad-call]' in ex.what {
+        ;
+    }
+
+    try {
+        __eval__('fn bad(x: {run: Int} | nil) { x.?run() }')
+        assert(false, 'optional call accepted a present non-callable member')
+    } catch ex :: '[not-callable]' in ex.what {
+        ;
+    }
+}
+
+pub fn optional-function-metadata() {
+    fn f() { 42 }
+
+    f.payload = {answer: 42}
+    let g = set-doc(f, name='with-metadata')
+
+    assert(g.?payload.answer == 42)
+}
