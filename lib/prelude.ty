@@ -386,9 +386,14 @@ class Class[T] {
     __id__:             Int
     __name__:           String
     __fqn__:            String
+    __super__:          ?Class
     __fields__:         Array[_]
     __methods__:        Dict[String, _]
-    __static_methods__: Dict[String, _];
+    __getters__:        Dict[String, _]
+    __setters__:        Dict[String, _]
+    __static_fields__:  Dict[String, _]
+    __static_methods__: Dict[String, _]
+    __static_getters__: Dict[String, _];
 
     |(other) {
         c -> (c :: self) || (c :: other)
@@ -416,8 +421,9 @@ class Class[T] {
 }
 
 class Function : Iter {
-    __name__: String;
-    __fqn__:  String;
+    __name__:  String;
+    __fqn__:   String;
+    __class__: ?Class;
 
     init() {
         id
@@ -1597,6 +1603,7 @@ class Blob : Iterable[Int], IntoPtr[Int] {
     str!(i: ?Int = 0, n: ?Int = #self) -> String;
 
     splice(i: ?Int = 0, n: Int = #self) -> Blob;
+    slice(i: ?Int = 0, n: Int = #self) -> Blob;
 
     set(i: Int, byte: Int) -> nil;
 

@@ -27,14 +27,15 @@ fn reply(fd: Int, body: String | Blob = '', status: Int = 200, headers = %{}) {
 
 fn read-request(fd: Int) {
     let data = Blob()
-    let chunk = Blob()
     let header-end = -1
 
-    while header-end < 0 {
-        if os.read(fd, chunk, 16 * 1024) <= 0 { return nil }
-        data.push(chunk)
-        chunk.clear()
-        header-end = data.str!().search('\r\n\r\n')
+    let header-end = for (;;) {
+        if os.read(fd, data, 16 * 1024) <= 0 {
+            return nil
+        }
+        if let $i = data.search('\r\n\r\n') {
+            break i
+        }
     }
 
     let text = data.str!()
@@ -50,9 +51,9 @@ fn read-request(fd: Int) {
     let payload-start = header-end + 4
     let payload-size = int(headers['content-length'] ?? '0')
     while #data < payload-start + payload-size {
-        if os.read(fd, chunk, 16 * 1024) <= 0 { return nil }
-        data.push(chunk)
-        chunk.clear()
+        if os.read(fd, data, 16 * 1024) <= 0 {
+            return nil
+        }
     }
 
     let body = data.slice(payload-start, payload-size).str!()

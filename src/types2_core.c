@@ -9392,6 +9392,14 @@ WorkDone:
         }
 }
 
+char const *
+t2_solver_meta_provenance(T2Solver const *solver, T2Type type)
+{
+        if (solver == NULL) return NULL;
+        u32 meta = meta_from_type(solver, type);
+        return meta == 0 ? NULL : v__(solver->metas, meta - 1).provenance;
+}
+
 T2Relation
 t2_solver_constrain_subtype(
         T2Solver *solver,

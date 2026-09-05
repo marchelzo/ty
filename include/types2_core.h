@@ -891,6 +891,9 @@ t2_solver_new_meta(
         char const *provenance
 );
 
+char const *
+t2_solver_meta_provenance(T2Solver const *solver, T2Type type);
+
 T2Relation
 t2_solver_constrain_subtype(
         T2Solver *solver,

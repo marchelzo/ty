@@ -1,23 +1,17 @@
 {
   "schema": "ty.types2.classification.v1",
   "diagnostics": {
-    "prelude:549:5:invalid-trait-member": {
+    "prelude:555:5:invalid-trait-member": {
       "classification": "library-defect",
       "note": "Array.zip is a native builtin that rejects non-Array iterables and takes f as a keyword, so it cannot satisfy Iterable.zip(*its: ...Iterable[U], longest)",
       "severity": "error",
       "message": "member does not satisfy the declared trait contract: no overload arm satisfies the expected callable: overload{(...ys: ...Array[$pack2240] = ?, f: Error = ?) -> Array[$m2241]; (...ys: ...Array[$pack2242] = ?) -> Array[($q1073742030, $pack2242)]} is not a subtype of (...its: ...Iterable[$pack2243] = ?, longest: Bool = ?) -> Generator[($q1073742030, $pack2243), nil] yields ($q1073742030, $pack2243) sends nil at member does not satisfy the declared trait contract at /home/brad/ty/lib/prelude.ty:549:5\npredicate: overload{(...ys: ...Array[$pack2240] = ?, f: Error = ?) -> Array[$m2241]; (...ys: ...Array[$pack2242] = ?) -> Array[($q1073742030, $pack2242)]} <: (...its: ...Iterable[$pack2243] = ?, longest: Bool = ?) -> Generator[($q1073742030, $pack2243), nil] yields ($q1073742030, $pack2243) sends nil from member does not satisfy the declared trait contract at /home/brad/ty/lib/prelude.ty:549:5\n"
     },
-    "prelude:1039:5:invalid-trait-member": {
+    "prelude:1045:5:invalid-trait-member": {
       "classification": "library-defect",
       "note": "Dict.[] is keyed lookup while the Iterable default [](i: Int) is positional; the two contracts conflict",
       "severity": "error",
       "message": "member does not satisfy the declared trait contract: incompatible callable protocol: (key: $q1073742031) -> nil | $q1073742032 is not a subtype of (i: Int) -> nil | ($q1073742031, $q1073742032) at member does not satisfy the declared trait contract at /home/brad/ty/lib/prelude.ty:1039:5\npredicate: (key: $q1073742031) -> nil | $q1073742032 <: (i: Int) -> nil | ($q1073742031, $q1073742032) from member does not satisfy the declared trait contract at /home/brad/ty/lib/prelude.ty:1039:5\n"
-    },
-    "term:918:21:unreachable-pattern": {
-      "classification": "library-defect",
-      "note": "the demo main in term.ty matches `[5] => nil` against ?event.Event; the array pattern can never match, so the arm is dead",
-      "severity": "warning",
-      "message": "array pattern cannot match the subject type"
     }
   }
 }

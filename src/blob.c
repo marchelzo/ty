@@ -601,7 +601,7 @@ blob_slice(Ty *ty, Value *blob, int argc, Value *kwargs)
         n = min(n, vN(*blob->blob) - start);
 
         Blob *b = value_blob_new(ty);
-        uvPn(*b, blob->blob->items + start, n);
+        uvPn(*b, v_(*blob->blob, start), n);
 
         return BLOB(b);
 }

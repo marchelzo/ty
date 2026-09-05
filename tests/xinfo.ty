@@ -55,7 +55,7 @@ pub fn set-doc-is-attached-to-function-value() {
 
     // Attaching xinfo to one function value must not rewrite another copy.
     assert(documented.__name__ == 'documented')
-    assert(doc(documented).2 == 'Original user-function documentation.')
+    assert(cast(doc(documented)).2 == 'Original user-function documentation.')
 }
 
 pub fn partial-and-nil-set-doc-updates-preserve-fields() {
@@ -96,8 +96,8 @@ pub fn function-object-metadata-coexists-with-xinfo() {
     gc()
 
     assert(renamed(5) == 15)
-    assert(renamed.label == 'attached metadata')
-    assert(renamed.payload.answer == 42)
+    assert(renamed.?label == 'attached metadata')
+    assert(renamed.?payload.answer == 42)
     assert(doc(renamed) == (
         'with-metadata',
         '(x: Int) -> Int',
@@ -112,8 +112,8 @@ pub fn attaching-object-metadata-after-xinfo-preserves-both() {
     f.details = {factor: 3}
 
     assert(f(6) == 18)
-    assert(f.category == 'arithmetic')
-    assert(f.details.factor == 3)
+    assert(f.?category == 'arithmetic')
+    assert(f.?details.factor == 3)
     assert(f.__name__ == 'tripler')
     assert(doc(f) == ('tripler', '(x: Int) -> Int', 'Triples.'))
 }

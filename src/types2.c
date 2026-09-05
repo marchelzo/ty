@@ -52,6 +52,7 @@ typedef struct t2_binding {
         bool initialized;
         bool active;
         bool forward;
+        bool defining;
         bool imported;
         bool persistent;
         bool member;
@@ -61,6 +62,13 @@ typedef struct t2_binding {
         char const *path_member;
         usize previous;
 } T2Binding;
+
+typedef struct t2_forward_use {
+        Symbol const *symbol;
+        T2Type type;
+        Expr const *site;
+        char *provenance;
+} T2ForwardUse;
 
 typedef enum t2_alias_state {
         T2_ALIAS_UNRESOLVED,
@@ -352,6 +360,8 @@ struct t2_checker {
         u64 role_visits[5];
 
         vec(T2Binding) bindings;
+        vec(T2ForwardUse) forward_uses;
+        usize forward_serial;
         T2Index binding_index;
         vec(usize) global_bindings;
 
@@ -1252,6 +1262,57 @@ ensure_binding(T2Checker *checker, Symbol const *symbol)
 }
 
 static T2Type
+forward_use_type(T2Checker *checker, T2Binding *binding, Expr const *site)
+{
+        char text[128];
+        ty_snprintf(
+                text,
+                sizeof text,
+                "forward use %zu of %s",
+                ++checker->forward_serial,
+                binding->symbol->identifier == NULL ? "<binding>" : binding->symbol->identifier
+        );
+        char *provenance = S2(text);
+        T2Type type = t2_solver_new_meta(
+                checker->solver,
+                T2_VARIABLE_FLEXIBLE,
+                checker->level,
+                provenance
+        );
+        if (type == T2_TYPE_INVALID) {
+                ty_free(provenance);
+                return binding->type;
+        }
+        xvP(checker->forward_uses, ((T2ForwardUse) {
+                .symbol = binding->symbol,
+                .type = type,
+                .site = site,
+                .provenance = provenance
+        }));
+        return type;
+}
+
+static bool
+deferred_forward_use(T2Binding const *binding)
+{
+        return binding->forward
+            && !binding->defining
+            && !binding->mutable
+            && binding->scheme == NULL
+            && binding->symbol != NULL
+            && SymbolIsFunction(binding->symbol);
+}
+
+static void
+truncate_forward_uses(T2Checker *checker, usize mark)
+{
+        for (usize i = mark; i < vN(checker->forward_uses); ++i) {
+                ty_free(v__(checker->forward_uses, i).provenance);
+        }
+        if (mark < vN(checker->forward_uses)) vN(checker->forward_uses) = mark;
+}
+
+static T2Type
 instantiate_binding(
         T2Checker *checker,
         T2Binding *binding,
@@ -1265,6 +1326,7 @@ instantiate_binding(
                         return instantiate_binding(checker, target, site);
                 }
         }
+        if (deferred_forward_use(binding)) return forward_use_type(checker, binding, site);
         if (
                 binding->scheme != NULL
              && (
@@ -4692,52 +4754,6 @@ add_builtin_method(
         return true;
 }
 
-static bool
-add_builtin_field(
-        T2Checker *checker,
-        int class_id,
-        char const *name,
-        T2Type body,
-        T2Quantifier const *class_quantifiers,
-        usize class_arity
-)
-{
-        if (
-                body == T2_TYPE_INVALID
-             || find_direct_member(
-                        checker,
-                        class_id,
-                        name,
-                        T2_MEMBER_FIELD,
-                        false
-                ) != NULL
-        ) return body != T2_TYPE_INVALID;
-        T2Scheme *scheme = prepend_scheme_quantifiers(
-                checker,
-                class_quantifiers,
-                class_arity,
-                NULL,
-                body
-        );
-        if (scheme == NULL) return false;
-        if (add_member(
-                checker,
-                class_id,
-                name,
-                T2_MEMBER_FIELD,
-                false,
-                false,
-                false,
-                class_arity,
-                scheme,
-                NULL
-        ) == NULL) {
-                t2_scheme_free(scheme);
-                return false;
-        }
-        return true;
-}
-
 static void
 interface_builtin_methods(
         T2Checker *checker,
@@ -4751,22 +4767,6 @@ interface_builtin_methods(
         T2Type string = t2_primitive(checker->universe, T2_TYPE_STRING);
         T2Type dynamic = t2_primitive(checker->universe, T2_TYPE_DYNAMIC);
         T2Type boolean = t2_primitive(checker->universe, T2_TYPE_BOOL);
-
-        if (class_id == CLASS_FUNCTION) {
-                T2Type class_or_nil = t2_join(
-                        checker->universe,
-                        t2_primitive(checker->universe, T2_TYPE_OBJECT),
-                        nil
-                );
-                (void)add_builtin_field(
-                        checker,
-                        class_id,
-                        "__class__",
-                        class_or_nil,
-                        class_quantifiers,
-                        class_arity
-                );
-        }
 
         if (class_id == CLASS_ARRAY && class_arity == 1) {
                 T2Type element = t2_variable(
@@ -8747,6 +8747,29 @@ infer_member_type(
                                      : value;
                         }
                 }
+                T2Type class_value = class_id >= 0
+                                   ? nominal_application(
+                                             checker,
+                                             CLASS_CLASS,
+                                             "Class",
+                                             &instance,
+                                             1,
+                                             site
+                                     )
+                                   : T2_TYPE_INVALID;
+                if (t2_type_kind(checker->universe, class_value) == T2_TYPE_NOMINAL) {
+                        T2Type inherited = infer_member_type(
+                                checker,
+                                class_value,
+                                name,
+                                safe,
+                                site,
+                                false
+                        );
+                        if (t2_type_kind(checker->universe, inherited) != T2_TYPE_ERROR) {
+                                return inherited;
+                        }
+                }
                 if (safe) return nil;
                 if (diagnose) add_diagnostic(
                         checker,
@@ -9668,6 +9691,7 @@ check_member_write(
                 }
                 return true;
         }
+        if (receiver_class_id(checker, object) == CLASS_FUNCTION) return true;
         if (kind == T2_TYPE_TYPE_VALUE) {
                 T2Type instance = t2_type_value_instance(
                         checker->universe,
@@ -15455,8 +15479,9 @@ environment_types(
 )
 {
         *count = 0;
-        if (vN(checker->bindings) == 0) return NULL;
-        T2Type *environment = ty_malloc(vN(checker->bindings) * sizeof *environment);
+        usize capacity = vN(checker->bindings) + vN(checker->forward_uses);
+        if (capacity == 0) return NULL;
+        T2Type *environment = ty_malloc(capacity * sizeof *environment);
         if (environment == NULL) {
                 checker->failed = true;
                 return NULL;
@@ -15470,6 +15495,9 @@ environment_types(
                      || binding->type == T2_TYPE_INVALID
                 ) continue;
                 environment[(*count)++] = binding->type;
+        }
+        for (usize i = 0; i < vN(checker->forward_uses); ++i) {
+                environment[(*count)++] = v__(checker->forward_uses, i).type;
         }
         return environment;
 }
@@ -20087,12 +20115,47 @@ restore_bindings(
 }
 
 static void
+discharge_forward_uses(T2Checker *checker, Symbol const *symbol)
+{
+        if (checker->muted != 0) return;
+        usize kept = 0;
+        for (usize i = 0; i < vN(checker->forward_uses); ++i) {
+                T2ForwardUse use = v__(checker->forward_uses, i);
+                if (symbol != NULL && use.symbol != symbol) {
+                        v__(checker->forward_uses, kept++) = use;
+                        continue;
+                }
+                T2Binding *binding = find_binding(checker, use.symbol);
+                char const *provenance = t2_solver_meta_provenance(checker->solver, use.type);
+                bool live = provenance != NULL && s_eq(provenance, use.provenance);
+                if (binding != NULL && live) {
+                        T2Type provided = binding->forward
+                                        ? binding->type
+                                        : instantiate_binding(checker, binding, use.site);
+                        if (provided != T2_TYPE_INVALID) {
+                                (void)constrain_type(
+                                        checker,
+                                        use.site,
+                                        provided,
+                                        use.type,
+                                        "forward-use",
+                                        "the definition does not match its earlier use"
+                                );
+                        }
+                }
+                ty_free(use.provenance);
+        }
+        vN(checker->forward_uses) = kept;
+}
+
+static void
 muted_prepass(T2Checker *checker, Stmt const *const *statements, usize count)
 {
         usize binding_mark = vN(checker->bindings);
         T2Binding *before = snapshot_bindings(checker, binding_mark);
         if (binding_mark != 0 && before == NULL) return;
         usize touched_mark = vN(checker->touched);
+        usize forward_mark = vN(checker->forward_uses);
         T2SolverMark mark = t2_solver_mark(checker->solver);
         checker->muted += 1;
         checker->recording += 1;
@@ -20111,6 +20174,7 @@ muted_prepass(T2Checker *checker, Stmt const *const *statements, usize count)
         t2_solver_commit(checker->solver, mark);
         forget_touched_nodes(checker, touched_mark);
         restore_bindings(checker, before, binding_mark);
+        truncate_forward_uses(checker, forward_mark);
         ty_free(before);
 }
 
@@ -20453,7 +20517,10 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
                         );
                         append_overload = is_callable_set(checker, previous);
                 }
+                if (binding != NULL) binding->defining = true;
                 T2Type value = infer_function_expression(checker, statement->value);
+                binding = target_symbol == NULL ? NULL : find_binding(checker, target_symbol);
+                if (binding != NULL) binding->defining = false;
                 usize pending_inferred = t2_solver_pending_obligations(
                         checker->solver
                 );
@@ -20569,6 +20636,7 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
                         }
                         t2_solver_commit(checker->solver, scope);
                 }
+                discharge_forward_uses(checker, target_symbol);
                 result.value = stored;
                 ty_free(environment);
                 break;
@@ -22248,6 +22316,10 @@ destroy_checker(T2Checker *checker)
         }
         t2_index_free(&checker->provenance_index);
         xvF(checker->functions);
+        for (usize i = 0; i < vN(checker->forward_uses); ++i) {
+                ty_free(v__(checker->forward_uses, i).provenance);
+        }
+        xvF(checker->forward_uses);
         xvF(checker->assigned_symbols);
         xvF(checker->class_contracts);
         xvF(checker->operators);
@@ -24837,6 +24909,7 @@ t2_checker_finish(Ty *ty, T2Checker *checker)
                 errno = saved_errno;
                 return;
         }
+        discharge_forward_uses(checker, NULL);
         validate_pending_class_contracts(checker);
         diagnose_unresolved_obligations(checker);
         report_internal_failure(checker);
