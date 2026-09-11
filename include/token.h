@@ -5,9 +5,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "vec.h"
 #include "lex.h"
-#include "ast.h"
 #include "ty.h"
 
 enum {
@@ -182,10 +180,10 @@ typedef struct token {
 } Token;
 
 char const *
-token_show(Ty *ty, struct token const *t);
+token_show(Ty *ty, Token const *t);
 
 char const *
-token_showx(Ty *ty, struct token const *t, char const *c);
+token_showx(Ty *ty, Token const *t, char const *c);
 
 char const *
 token_show_type(Ty *ty, int type);

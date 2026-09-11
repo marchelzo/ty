@@ -134,7 +134,7 @@ static Ty *ty = &vvv;
                 (expr ? expr->start.col : 0) + 1         \
         );
 #else
-#define XCASE(i)                                            \
+#define ZCASE(i)                                            \
         case INSTR_##i:                                     \
                 fprintf(                                    \
                         stderr,                             \
@@ -4550,7 +4550,6 @@ DoBinaryOp(Ty *ty, int op, bool exec)
         int i = op_dispatch(ty, op, ClassOf(top() - 1), ClassOf(top()));
 
         if (i == -1) {
-                op_dump(op);
                 zP(
                         "no matching implementation of %s%s%s\n"
                         FMT_MORE "%s left%s: %s"

@@ -29499,43 +29499,21 @@ typedef struct t2_check_pair {
         Value const *value;
 } T2CheckPair;
 
-typedef struct t2_check_stack {
-        T2CheckPair *pairs;
-        usize        count;
-        usize        capacity;
-} T2CheckStack;
+typedef vec(T2CheckPair) T2CheckStack;
 
 static bool
 check_pair_active(T2CheckStack const *stack, T2Type type, Value const *value)
 {
-        for (usize i = 0; i < stack->count; ++i) {
+        for (usize i = 0; i < vN(*stack); ++i) {
                 if (
-                        (stack->pairs[i].type == type)
-                     && (stack->pairs[i].value == value)
+                        (v_(*stack, i)->type  == type)
+                     && (v_(*stack, i)->value == value)
                 ) {
                         return true;
                 }
         }
 
         return false;
-}
-
-static bool
-push_check_pair(T2CheckStack *stack, T2Type type, Value const *value)
-{
-        if (stack->count == stack->capacity) {
-                usize capacity = (stack->capacity == 0) ? 16 : stack->capacity * 2;
-                T2CheckPair *pairs = ty_realloc(stack->pairs, capacity * sizeof *pairs);
-                if (pairs == NULL) {
-                        return false;
-                }
-                stack->pairs    = pairs;
-                stack->capacity = capacity;
-        }
-
-        stack->pairs[stack->count++] = (T2CheckPair) { .type = type, .value = value };
-
-        return true;
 }
 
 static bool
@@ -29596,24 +29574,21 @@ check_nominal_value(
                         }
                 }
                 return true;
+
         case CLASS_DICT:
                 if (value->type != VALUE_DICT) {
                         return true;
                 }
-                dfor(
-                        value->dict,
-                        (
-                                {
+                dfor(value->dict, {
                         if (!check_value(ty, stack, t2_type_child(universe, type, 0), key)) {
                                 return false;
                         }
                         if (!check_value(ty, stack, t2_type_child(universe, type, 1), val)) {
                                 return false;
                         }
-                }
-                        )
-                );
+                });
                 return true;
+
         default:
                 return true;
         }
@@ -29624,6 +29599,7 @@ check_record_value(Ty *ty, T2CheckStack *stack, T2Type type, Value const *value)
 {
         T2Universe *universe = t2_global_universe();
         usize count = t2_record_field_count(universe, type);
+
         for (usize i = 0; i < count; ++i) {
                 T2FieldSpec field;
                 if (!t2_record_field(universe, type, i, &field)) {
@@ -29666,6 +29642,7 @@ check_tuple_value(
 )
 {
         T2Universe *universe = t2_global_universe();
+
         if (value->type != VALUE_TUPLE || (usize)value->count < count) {
                 return false;
         }
@@ -29693,6 +29670,7 @@ check_range_value(T2Type type, Value const *value)
         T2Type lower;
         T2Type upper;
         bool inclusive;
+
         if (value->type != VALUE_INTEGER) {
                 return false;
         }
@@ -29714,7 +29692,7 @@ check_range_value(T2Type type, Value const *value)
              && (t2_type_kind(universe, upper) == T2_TYPE_LITERAL_INT)
         ) {
                 i64 bound = (i64)t2_type_payload(universe, upper);
-                if (inclusive ? value->z > bound : value->z >= bound) {
+                if (inclusive ? (value->z > bound) : (value->z >= bound)) {
                         return false;
                 }
         }
@@ -29726,19 +29704,22 @@ static bool
 check_type_value(Ty *ty, T2Type type, Value const *value)
 {
         T2Universe *universe = t2_global_universe();
-        T2Type instance = t2_type_child(universe, type, 0);
+        T2Type      instance = t2_type_child(universe, type, 0);
+
         switch (value->type) {
         case VALUE_TYPE:
                 return t2_subtype(universe, as_type(value), instance);
+
         case VALUE_CLASS:
                 return t2_subtype(
                         universe,
                         t2_object_type(ty, class_get(ty, value->class)),
                         instance
-                )
-                ;
+                );
+
         case VALUE_TAG:
                 return true;
+
         default:
                 return false;
         }
@@ -29748,29 +29729,28 @@ static bool
 check_value_x(Ty *ty, T2CheckStack *stack, T2Type type, Value const *value)
 {
         T2Universe *universe = t2_global_universe();
+
         type = t2_type_scheme_body(universe, type);
+
         T2TypeKind kind = t2_type_kind(universe, type);
         usize arity     = t2_type_arity(universe, type);
 
         switch (kind) {
-        case T2_TYPE_NEVER:
-                return false;
-        case T2_TYPE_NIL:
-                return value->type == VALUE_NIL;
-        case T2_TYPE_BOOL:
-                return value->type == VALUE_BOOLEAN;
-        case T2_TYPE_INT:
-                return value->type == VALUE_INTEGER;
-        case T2_TYPE_FLOAT:
-                return value->type == VALUE_REAL;
-        case T2_TYPE_STRING:
-                return value->type == VALUE_STRING;
+        case T2_TYPE_NEVER:  return false;
+        case T2_TYPE_NIL:    return (value->type == VALUE_NIL);
+        case T2_TYPE_BOOL:   return (value->type == VALUE_BOOLEAN);
+        case T2_TYPE_INT:    return (value->type == VALUE_INTEGER);
+        case T2_TYPE_FLOAT:  return (value->type == VALUE_REAL);
+        case T2_TYPE_STRING: return (value->type == VALUE_STRING);
+
         case T2_TYPE_LITERAL_BOOL:
                 return (value->type == VALUE_BOOLEAN)
                     && (value->boolean == (t2_type_payload(universe, type) != 0));
+
         case T2_TYPE_LITERAL_INT:
                 return (value->type == VALUE_INTEGER)
                     && (value->z == (i64)t2_type_payload(universe, type));
+
         case T2_TYPE_LITERAL_STRING:
         {
                 char const *text = t2_type_name(universe, type);
@@ -29779,10 +29759,13 @@ check_value_x(Ty *ty, T2CheckStack *stack, T2Type type, Value const *value)
                     && (strlen(text) == sN(*value))
                     && (memcmp(text, ss(*value), sN(*value)) == 0);
         }
+
         case T2_TYPE_INT_RANGE:
                 return check_range_value(type, value);
+
         case T2_TYPE_REFINEMENT:
                 return check_value(ty, stack, t2_type_child(universe, type, 0), value);
+
         case T2_TYPE_COMPUTED:
         {
                 T2Type resolved = t2_type_resolve_computed(universe, type);
@@ -29790,16 +29773,21 @@ check_value_x(Ty *ty, T2CheckStack *stack, T2Type type, Value const *value)
                      ? true
                      : check_value(ty, stack, resolved, value);
         }
+
         case T2_TYPE_NOMINAL:
                 return check_nominal_value(ty, stack, type, value);
+
         case T2_TYPE_TYPE_VALUE:
                 return check_type_value(ty, type, value);
+
         case T2_TYPE_FUNCTION:
         case T2_TYPE_OVERLOAD:
                 return CALLABLE(*value)
                     || (class_lookup_method_i(ty, ClassOf(value), NAMES.call) != NULL);
+
         case T2_TYPE_TUPLE:
                 return check_tuple_value(ty, stack, type, value, arity);
+
         case T2_TYPE_VARIADIC_TUPLE:
                 return check_tuple_value(
                         ty,
@@ -29807,10 +29795,11 @@ check_value_x(Ty *ty, T2CheckStack *stack, T2Type type, Value const *value)
                         type,
                         value,
                         (usize)t2_type_payload(universe, type)
-                )
-                ;
+                );
+
         case T2_TYPE_RECORD:
                 return check_record_value(ty, stack, type, value);
+
         case T2_TYPE_RECURSIVE:
         {
                 T2Type unfolded = t2_recursive_unfold(universe, type);
@@ -29818,6 +29807,7 @@ check_value_x(Ty *ty, T2CheckStack *stack, T2Type type, Value const *value)
                      ? true
                      : check_value(ty, stack, unfolded, value);
         }
+
         case T2_TYPE_UNION:
                 for (usize i = 0; i < arity; ++i) {
                         if (check_value(ty, stack, t2_type_child(universe, type, i), value)) {
@@ -29825,6 +29815,7 @@ check_value_x(Ty *ty, T2CheckStack *stack, T2Type type, Value const *value)
                         }
                 }
                 return false;
+
         case T2_TYPE_INTERSECTION:
                 for (usize i = 0; i < arity; ++i) {
                         if (!check_value(ty, stack, t2_type_child(universe, type, i), value)) {
@@ -29832,6 +29823,7 @@ check_value_x(Ty *ty, T2CheckStack *stack, T2Type type, Value const *value)
                         }
                 }
                 return true;
+
         default:
                 return true;
         }
@@ -29848,12 +29840,9 @@ check_value(Ty *ty, T2CheckStack *stack, T2Type type, Value const *value)
                 return true;
         }
 
-        if (!push_check_pair(stack, type, value)) {
-                return true;
-        }
-
+        svP(*stack, ((T2CheckPair) { .type = type, .value = value }));
         bool ok = check_value_x(ty, stack, type, value);
-        stack->count -= 1;
+        vXx(*stack);
 
         return ok;
 }
@@ -29862,8 +29851,11 @@ bool
 t2_check(Ty *ty, T2Type type, Value const *value)
 {
         T2CheckStack stack = { 0 };
-        bool ok            = check_value(ty, &stack, type, value);
-        ty_free(stack.pairs);
+
+        SCRATCH_SAVE();
+        bool ok = check_value(ty, &stack, type, value);
+        SCRATCH_RESTORE();
+
         return ok;
 }
 
@@ -29907,24 +29899,33 @@ class_of_type_x(Ty *ty, T2Type type, unsigned depth)
 
         type = t2_type_scheme_body(universe, type);
         switch (t2_type_kind(universe, type)) {
-        case T2_TYPE_NEVER:
-                return CLASS_BOTTOM;
-        case T2_TYPE_NIL:
-                return CLASS_NIL;
+        default:                     return CLASS_TOP;
+        case T2_TYPE_NEVER:          return CLASS_BOTTOM;
+        case T2_TYPE_NIL:            return CLASS_NIL;
+        case T2_TYPE_OBJECT:         return CLASS_OBJECT;
+        case T2_TYPE_FLOAT:          return CLASS_FLOAT;
+        case T2_TYPE_TYPE_VALUE:     return CLASS_CLASS;
+
         case T2_TYPE_BOOL:
-        case T2_TYPE_LITERAL_BOOL:
-                return CLASS_BOOL;
+        case T2_TYPE_LITERAL_BOOL:   return CLASS_BOOL;
+
         case T2_TYPE_INT:
         case T2_TYPE_LITERAL_INT:
-        case T2_TYPE_INT_RANGE:
-                return CLASS_INT;
-        case T2_TYPE_FLOAT:
-                return CLASS_FLOAT;
+        case T2_TYPE_INT_RANGE:      return CLASS_INT;
+
         case T2_TYPE_STRING:
-        case T2_TYPE_LITERAL_STRING:
-                return CLASS_STRING;
-        case T2_TYPE_OBJECT:
-                return CLASS_OBJECT;
+        case T2_TYPE_LITERAL_STRING: return CLASS_STRING;
+
+        case T2_TYPE_TUPLE:
+        case T2_TYPE_VARIADIC_TUPLE:
+        case T2_TYPE_RECORD:         return CLASS_TUPLE;
+
+        case T2_TYPE_UNION:
+                return class_of_union(ty, type, depth);
+
+        case T2_TYPE_REFINEMENT:
+                return class_of_type_x(ty, t2_type_child(universe, type, 0), depth + 1);
+
         case T2_TYPE_NOMINAL:
         {
                 u64 symbol = t2_type_payload(universe, type);
@@ -29935,14 +29936,7 @@ class_of_type_x(Ty *ty, T2Type type, unsigned depth)
                 }
                 return t2_symbol_class(symbol);
         }
-        case T2_TYPE_TUPLE:
-        case T2_TYPE_VARIADIC_TUPLE:
-        case T2_TYPE_RECORD:
-                return CLASS_TUPLE;
-        case T2_TYPE_TYPE_VALUE:
-                return CLASS_CLASS;
-        case T2_TYPE_REFINEMENT:
-                return class_of_type_x(ty, t2_type_child(universe, type, 0), depth + 1);
+
         case T2_TYPE_RECURSIVE:
         {
                 T2Type unfolded = t2_recursive_unfold(universe, type);
@@ -29950,6 +29944,7 @@ class_of_type_x(Ty *ty, T2Type type, unsigned depth)
                      ? CLASS_TOP
                      : class_of_type_x(ty, unfolded, depth + 1);
         }
+
         case T2_TYPE_COMPUTED:
         {
                 T2Type resolved = t2_type_resolve_computed(universe, type);
@@ -29957,10 +29952,7 @@ class_of_type_x(Ty *ty, T2Type type, unsigned depth)
                      ? CLASS_TOP
                      : class_of_type_x(ty, resolved, depth + 1);
         }
-        case T2_TYPE_UNION:
-                return class_of_union(ty, type, depth);
-        default:
-                return CLASS_TOP;
+
         }
 }
 
@@ -30497,8 +30489,7 @@ reflect_type(Ty *ty, T2Type type, unsigned depth)
                         TyIntT,
                         INTEGER((i64)t2_type_payload(universe, type)),
                         NONE
-                )
-                ;
+                );
         case T2_TYPE_LITERAL_STRING:
                 return tagged(ty, TyStringT, vSsz(t2_type_name(universe, type)), NONE);
         case T2_TYPE_REFINEMENT:
@@ -30537,8 +30528,7 @@ reflect_type(Ty *ty, T2Type type, unsigned depth)
                         type,
                         (usize)t2_type_payload(universe, type),
                         depth
-                )
-                ;
+                );
         case T2_TYPE_RECORD:
                 return reflect_record(ty, type, depth);
         case T2_TYPE_MULTI:
@@ -30561,8 +30551,7 @@ reflect_type(Ty *ty, T2Type type, unsigned depth)
                         TyVarT,
                         INTEGER((i64)t2_type_payload(universe, type)),
                         NONE
-                )
-                ;
+                );
         case T2_TYPE_META:
                 return tagged(ty, TyHoleT, TYPE(type), NONE);
         default:
@@ -30590,9 +30579,7 @@ class_from_value(Ty *ty, Value const *value)
                         MOD_COMPILE_ERR,
                         "invalid class in type spec: %s",
                         VSC(value)
-                )
-                ;
-                UNREACHABLE("invalid type spec");
+                );
         }
 }
 
@@ -30616,15 +30603,12 @@ collect_types(Ty *ty, Value const *items, T2Type **out)
                         MOD_COMPILE_ERR,
                         "invalid type list in type spec: %s",
                         VSC(items)
-                )
-                ;
-                UNREACHABLE("invalid type spec");
+                );
         }
 
         T2Type *types = (count == 0) ? NULL : ty_malloc(count * sizeof *types);
         if (count != 0 && types == NULL) {
                 CompileError(ty, MOD_COMPILE_ERR, "out of memory while building a type");
-                UNREACHABLE("invalid type spec");
         }
 
         for (usize i = 0; i < count; ++i) {
@@ -30685,7 +30669,6 @@ type_from_record_spec(Ty *ty, Value const *inner)
                 ty_free(types);
                 ty_free(fields);
                 CompileError(ty, MOD_COMPILE_ERR, "out of memory while building a type");
-                UNREACHABLE("invalid type spec");
         }
 
         usize field_count = 0;
@@ -30732,19 +30715,12 @@ type_from_function_spec(Ty *ty, Value const *inner)
                         "expected (TVars, Params, ReturnType) tuple but got: %s",
                         VSC(inner)
                 );
-                UNREACHABLE("invalid type spec");
         }
 
         Array const *specs = inner->items[1].array;
         usize count        = vN(*specs);
-        T2ParameterSpec *parameters = (count == 0) ? NULL : ty_calloc(
-                count,
-                sizeof *parameters
-        );
-        if (count != 0 && parameters == NULL) {
-                CompileError(ty, MOD_COMPILE_ERR, "out of memory while building a type");
-                UNREACHABLE("invalid type spec");
-        }
+
+        T2ParameterSpec *parameters = (count == 0) ? NULL : xtA(T2ParameterSpec, count);
 
         for (usize i = 0; i < count; ++i) {
                 Value const *spec    = v_(*specs, i);
@@ -30916,7 +30892,6 @@ t2_from_ty(Ty *ty, Value const *value)
         }
 
         CompileError(ty, MOD_COMPILE_ERR, "invalid type spec: %s", VSC(value));
-        UNREACHABLE("invalid type spec");
 }
 
 static Expr const *

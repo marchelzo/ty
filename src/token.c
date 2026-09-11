@@ -1,10 +1,8 @@
 #include <string.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <inttypes.h>
 
 #include "token.h"
-#include "alloc.h"
 #include "xd.h"
 #include "ty.h"
 
@@ -183,7 +181,7 @@ token_show_type(Ty *ty, int type)
 }
 
 char const *
-token_showx(Ty *ty, struct token const *t, char const *c)
+token_showx(Ty *ty, Token const *t, char const *c)
 {
         switch (t->type) {
         case TOKEN_IDENTIFIER: snprintf(token_show_buffer, 512, "identifier '%s'", t->identifier);         break;
@@ -210,7 +208,8 @@ token_showx(Ty *ty, struct token const *t, char const *c)
                 [LEX_TYX]    = 'x',
                 [LEX_FAKE]   = '_',
                 [LEX_PREFIX] = 'p',
-                [LEX_INFIX]  = 'i'
+                [LEX_INFIX]  = 'i',
+                [LEX_MEMBER] = 'm'
         })[t->ctx];
 
         char const *ctxc = ((char const *[]) {
@@ -221,7 +220,8 @@ token_showx(Ty *ty, struct token const *t, char const *c)
                 [LEX_TYX]    = TERM(94),
                 [LEX_FAKE]   = TERM(92;1),
                 [LEX_PREFIX] = TERM(95;1),
-                [LEX_INFIX]  = TERM(93;1)
+                [LEX_INFIX]  = TERM(93;1),
+                [LEX_MEMBER] = TERM(32)
         })[t->ctx];
 
         if (!*c) c = TERM(36);
@@ -238,7 +238,7 @@ token_showx(Ty *ty, struct token const *t, char const *c)
 }
 
 char const *
-token_show(Ty *ty, struct token const *t)
+token_show(Ty *ty, Token const *t)
 {
         return token_showx(ty, t, "");
 }
