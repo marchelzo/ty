@@ -165,7 +165,7 @@ ifndef NO_NSYNC
 endif
 ASSEMBLY := $(patsubst %.c,%.s,$(SOURCES))
 .DEFAULT_GOAL := all
-.PHONY: all clean test test-types2-core test-types2-equivalence test-types2-corpus
+.PHONY: all clean test test-types2-core test-types2-equivalence test-types2-cache test-types2-corpus
 DEPFILES := $(OBJECTS:.o=.d) $(TYLS_OBJECTS:.o=.d) $(TYPROF_OBJECTS:.o=.d) \
             obj/ty-main.d obj/tyls-main.d obj/typrof-main.d
 
@@ -243,7 +243,7 @@ obj/typrof/%.o: src/%.c
 clean:
 	rm -rf $(PROG) *.gcda $(OBJECTS) $(TYLS_OBJECTS) $(TYPROF_OBJECTS) libco/libco.o dtoa/dtoa.o include/keywords.h $(BUILD_SIG_FILE) $(DEPFILES) obj/ty-main.o obj/tyls-main.o obj/typrof-main.o obj/types2-core-test
 
-test: test-types2-core test-types2-equivalence
+test: test-types2-core test-types2-equivalence test-types2-cache
 	./ty test.ty
 
 test-types2-core: obj/types2-core-test
@@ -255,6 +255,9 @@ obj/types2-core-test: tests/types2_core.c src/types2_core.c src/panic.c include/
 
 test-types2-equivalence: ty
 	./tests/types2-equivalence.sh ./ty
+
+test-types2-cache: ty
+	sh ./tests/types2-cache.sh ./ty
 
 test-types2-corpus: ty
 	./tests/types2-corpus.sh ./ty

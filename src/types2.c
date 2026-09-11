@@ -26389,7 +26389,7 @@ report_diagnostics(T2Checker *checker, usize errors, usize warnings)
 
 enum {
         T2_CACHE_MAGIC   = UINT32_C(0x32545954),
-        T2_CACHE_VERSION = 1,
+        T2_CACHE_VERSION = 2,
         T2_CACHE_NONE    = UINT32_MAX
 };
 

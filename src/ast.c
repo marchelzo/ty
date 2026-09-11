@@ -326,6 +326,7 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorCtx *ctxt)
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
+                VT(e->constraint);
                 break;
 
         case EXPRESSION_COMPILE_TIME:
@@ -453,6 +454,11 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorCtx *ctxt)
 
         case EXPRESSION_TYPE:
                 VT(e->constraint);
+                break;
+
+        case EXPRESSION_CAST:
+                V(e->left);
+                VT(e->right);
                 break;
 
         case EXPRESSION_CONDITIONAL:

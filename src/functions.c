@@ -10234,7 +10234,10 @@ BUILTIN_FUNCTION(ty_type_show)
         ASSERT_ARGC("ty.types.show()", 1);
 
         Value t = ARG(0);
-        char *shown = t2_show(ty, t2_from_ty(ty, &t));
+        Value *color = NAMED("color");
+        char *shown = t2_render(ty, t2_from_ty(ty, &t), (T2Render) {
+                .color = (color != NULL) && value_truthy(ty, color)
+        });
         Value result = vSsz(shown);
         t2_string_free(shown);
 

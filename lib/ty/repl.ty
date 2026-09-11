@@ -153,7 +153,7 @@ pub fn pretty-code(
 
 fn type-completions(type: _, prefix: String) -> Array[_] {
     fn label(method) {
-        [chalk"[bright blue]{method.name}[/][grey]:[/] ", types::show(method.type)]
+        [chalk"[bright blue]{method.name}[/][grey]:[/] ", types::show(method.type, color=true)]
     }
 
     match type {
@@ -207,7 +207,7 @@ fn mod-completions(mod: Dict[String, _], prefix: String) -> Array[CompletionItem
     for name, item in mod if name.starts?(prefix) {
         let label: CompletionLabel | nil = match item {
             _ns: Dict => [chalk"[bright blue]{name}[/][grey]:[/] ", chalk"[b yellow]namespace[/]"],
-            {type, *} => [chalk"[bright blue]{name}[/][grey]:[/] ", types::show(type)],
+            {type, *} => [chalk"[bright blue]{name}[/][grey]:[/] ", types::show(type, color=true)],
             _         => nil
         }
 
