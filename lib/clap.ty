@@ -92,7 +92,6 @@ fn _doParse(cls: _, argv, config) -> _ {
 
     let description = if let (_, $ds, _) = doc(cls) { _cleanDoc(ds) }
 
-    // Build lookup tables
     let byShort:     _ = %{}
     let byLong:      _ = %{}
     let byName:      _ = %{}
@@ -112,12 +111,10 @@ fn _doParse(cls: _, argv, config) -> _ {
         }
     }
 
-    // Result storage
     let result:   _ = %{}
     let explicit: _ = %{}
     let posArgs:  _ = []
 
-    // Initialize defaults
     for spec in specs {
         if spec.default != nil {
             result[spec.name] = ty.eval(spec.default.val)
@@ -132,7 +129,6 @@ fn _doParse(cls: _, argv, config) -> _ {
         }
     }
 
-    // Apply YAML config files (overrides defaults, lower precedence than CLI/env)
     if config != nil {
         let paths = config :: Array ? config : [config]
         for p in paths {
@@ -160,7 +156,6 @@ fn _doParse(cls: _, argv, config) -> _ {
         }
     }
 
-    // Helpers
     fn die(msg) {
         eprint(chalk"[b red]error[/]: {msg}")
         eprint("Try '{argv[0]} --help' for more information.")
@@ -267,7 +262,6 @@ fn _doParse(cls: _, argv, config) -> _ {
             print()
         }
 
-        // Usage line
         let usage = prog
 
         if specs.any?(\!_.pos) {
@@ -290,12 +284,10 @@ fn _doParse(cls: _, argv, config) -> _ {
         print(chalk"[b bright green]Usage:[/] {usage}")
         print()
 
-        // Options
         let optSpecs = specs.filter(\!_.pos)
         let visibleOpts = optSpecs.filter(\!_.hidden)
 
         if #visibleOpts > 0 || version != nil {
-            // Build left-column strings for all visible options
             let flagMap = %{}
             let typeMap = %{}
             for spec in visibleOpts {
@@ -315,8 +307,7 @@ fn _doParse(cls: _, argv, config) -> _ {
                 }
             }
 
-            // Global column width includes -h/--help and --version
-            let allLefts = ['-h, --help']
+            let allLefts = ['-h, --help', '    --completions <SHELL>']
             if version != nil {
                 allLefts.push('    --version')
             }
@@ -327,7 +318,6 @@ fn _doParse(cls: _, argv, config) -> _ {
             }
             let w = allLefts.map(&len).max() ?? 0
 
-            // Collect group names in definition order
             let groups = []
             for spec in visibleOpts {
                 if let {$group, *} = spec and group not in groups {
@@ -338,7 +328,6 @@ fn _doParse(cls: _, argv, config) -> _ {
             let compactIndent = ' '.repeat(w + 4)
             let expandedIndent = ' '.repeat(12)
 
-            // Helper to print a set of option specs
             fn printOpts(opts: Array[OptionSpec]) {
                 for spec in opts {
                     let flag = flagMap[spec.name]
@@ -349,7 +338,6 @@ fn _doParse(cls: _, argv, config) -> _ {
                         chalk"[b blue]{flag}[/]"
                     }
 
-                    // Build metadata tags
                     let metaParts = []
                     if spec.default != nil {
                         metaParts.push(chalk"[dim](default: [bright green]{ty.eval(spec.default.show)}[/bright green])[/]")
@@ -375,11 +363,9 @@ fn _doParse(cls: _, argv, config) -> _ {
 
                     let pad = ' '.repeat(w - left.width())
                     if #helpLines <= 1 {
-                        // Compact: flag + help + meta on same line
                         let suffix = metaStr ? " {metaStr}" : ''
                         print(chalk"  {left}{pad}  {firstLine}{suffix}")
                     } else {
-                        // Summary on flag line, details indented below
                         print(chalk"  {left}{pad}  {firstLine}")
                         print('')
                         for hl in helpLines.slice(1) {
@@ -393,7 +379,6 @@ fn _doParse(cls: _, argv, config) -> _ {
                 }
             }
 
-            // Print ungrouped options under "Options:"
             print(chalk"[b bright green]Options:[/]")
             printOpts(visible-opts.filter(\_.group == nil))
             print(chalk"  [b blue]{'-h, --help'.rpad(w)}[/]  Show this help message")
@@ -407,7 +392,6 @@ fn _doParse(cls: _, argv, config) -> _ {
             }
             print()
 
-            // Print each group
             for g in groups {
                 let groupOpts = visibleOpts.filter(\_.group == g)
                 print(chalk"[b bright green]{g}:[/]")
@@ -416,7 +400,6 @@ fn _doParse(cls: _, argv, config) -> _ {
             }
         }
 
-        // Positionals
         if #positionals > 0 {
             print(chalk"[b bright green]Arguments:[/]")
 
@@ -449,7 +432,6 @@ fn _doParse(cls: _, argv, config) -> _ {
             print()
         }
 
-        // Commands
         if #cmds > 0 {
             print(chalk"[b bright green]Commands:[/]")
 
@@ -481,7 +463,6 @@ fn _doParse(cls: _, argv, config) -> _ {
         }
     }
 
-    // Main parse loop
     let i = 1
     let subcmdName = nil
     let subcmdResult = nil
@@ -615,7 +596,6 @@ fn _doParse(cls: _, argv, config) -> _ {
                             setFlag(spec)
                             j += 1
                         } else {
-                            // Option: rest of chars or next arg is the value
                             if j + 1 < #chars {
                                 setValue(spec, chars.slice(j + 1))
                             } else if i < #argv {
@@ -650,7 +630,6 @@ fn _doParse(cls: _, argv, config) -> _ {
         }
     }
 
-    // Assign positional args
     let posIdx = 0
     for spec in positionals {
         if spec.repeat {
@@ -669,7 +648,6 @@ fn _doParse(cls: _, argv, config) -> _ {
         }
     }
 
-    // Apply environment variable defaults
     for spec in specs if spec.env != nil && !(spec.name in explicit) {
         if let $envVal = getenv(spec.env !) {
             if spec.constraint == Bool {
@@ -680,7 +658,6 @@ fn _doParse(cls: _, argv, config) -> _ {
         }
     }
 
-    // Validate required fields
     for spec in specs if spec.required && result[spec.name] == nil {
         if spec.pos {
             die("Missing required argument: {opt((spec.long ?? lisp(spec.name)).upper())}")
@@ -689,7 +666,6 @@ fn _doParse(cls: _, argv, config) -> _ {
         }
     }
 
-    // Validate min counts
     for spec in specs if spec.?min != nil {
         let arr = result[spec.name] ?? []
         if #arr < spec.min {
@@ -697,7 +673,6 @@ fn _doParse(cls: _, argv, config) -> _ {
         }
     }
 
-    // Validate conflicts
     for spec in specs if spec.conflicts != nil && spec.name in explicit {
         let optName = opt(spec.long ? "--{spec.long}" : "-{spec.short}")
         for other in spec.conflicts {
@@ -713,7 +688,6 @@ fn _doParse(cls: _, argv, config) -> _ {
         }
     }
 
-    // Validate requires
     for spec in specs if spec.requires != nil && spec.name in explicit {
         let optName = opt(spec.long ? "--{spec.long}" : "-{spec.short}")
         for other in spec.requires {
@@ -729,7 +703,6 @@ fn _doParse(cls: _, argv, config) -> _ {
         }
     }
 
-    // Build result instance
     let fields = %{}
     for spec in specs {
         fields[spec.name] = result[spec.name]
@@ -748,7 +721,6 @@ fn _doParse(cls: _, argv, config) -> _ {
     (cls(**fields), restArgs)
 }
 
-// ── Shell completion generators ──────────────────────────────────────
 
 fn _optWords(specs: _, version: _) -> _ {
     let words = []
@@ -1092,7 +1064,6 @@ pub macro clap! {
     let group = nil
 
     while peek(0).type != '}' || group != nil {
-        // Close group block
         if peek(0).type == '}' {
             next()
             group = nil
@@ -1127,7 +1098,6 @@ pub macro clap! {
         let name = peek(0).id
         next()
 
-        // Handle group blocks: group 'Name' { ... }
         if name == 'group' {
             group = ty.eval(expr(1))
             next()  // consume '{'
@@ -1138,7 +1108,6 @@ pub macro clap! {
             let sub = peek(0).id
             next()
 
-            // :
             next()
 
             let parser = expr(999, resolve: true)
@@ -1149,7 +1118,6 @@ pub macro clap! {
             continue
         }
 
-        // :
         next()
 
         let constraintExpr = expr(2)
@@ -1276,7 +1244,6 @@ pub macro clap! {
         })
     }
 
-    // Build class fields from parsed args
     let classFields = []
     for arg in args {
         let fieldType = nil

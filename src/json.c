@@ -473,7 +473,7 @@ encode(Ty *ty, Value const *v, str *out)
                                         }
                                         i += n - 1;
                                 } else if (iscntrl(ss(*v)[i])) {
-                                        dump(out, "\\x%02hhx", ss(*v)[i]);
+                                        dump(out, "\\u%04x", (u8)ss(*v)[i]);
                                 } else {
                                         xvP(*out, ss(*v)[i]);
                                 }
