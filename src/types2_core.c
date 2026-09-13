@@ -337,6 +337,16 @@ get_node(T2Universe const *universe, T2Type type)
         return v__(universe->nodes, type - 1);
 }
 
+static usize
+text_len(T2TypeKind kind, u64 payload, char const *text)
+{
+        if (text == NULL) {
+                return 0;
+        }
+
+        return (kind == T2_TYPE_LITERAL_STRING) ? payload : strlen(text);
+}
+
 static bool
 same_candidate(
         T2Node const  *node,
@@ -361,7 +371,14 @@ same_candidate(
                 return false;
         }
 
-        if (node->text != NULL && !s_eq(node->text, text)) {
+        if (
+                (node->text != NULL)
+             && (
+                        (kind == T2_TYPE_LITERAL_STRING)
+                      ? (memcmp(node->text, text, payload) != 0)
+                      : !s_eq(node->text, text)
+                )
+        ) {
                 return false;
         }
 
@@ -418,12 +435,17 @@ intern_type(
                 return T2_TYPE_INVALID;
         }
 
+        usize length = text_len(kind, payload, text);
+        if (length == SIZE_MAX) {
+                return T2_TYPE_INVALID;
+        }
+
         u64 hash = hash64((u64)kind + 1);
         hash = HashCombine(hash, variable_kind);
         hash = HashCombine(hash, payload);
         hash = HashCombine(
                 hash,
-                (text == NULL) ? UINT64_C(146959810393466560) : hash64z(text)
+                (text == NULL) ? UINT64_C(146959810393466560) : XXH3_64bits(text, length)
         );
         hash = HashCombine(hash, arity);
         uint8_t flags = node_flags_for(kind);
@@ -481,11 +503,16 @@ intern_type(
                 return T2_TYPE_INVALID;
         }
 
-        char *owned_text = S2N(text);
+        char *owned_text = (text == NULL) ? NULL : ty_malloc(length + 1);
         if (text != NULL && owned_text == NULL) {
                 ty_free(node);
                 universe->failed = true;
                 return T2_TYPE_INVALID;
+        }
+
+        if (owned_text != NULL) {
+                memcpy(owned_text, text, length);
+                owned_text[length] = '\0';
         }
 
         *node = (T2Node) {
@@ -670,7 +697,15 @@ t2_literal_int(T2Universe *universe, i64 value)
 T2Type
 t2_literal_string(T2Universe *universe, char const *value)
 {
-        if (value == NULL) {
+        return (value == NULL)
+             ? T2_TYPE_INVALID
+             : t2_literal_string_n(universe, value, strlen(value));
+}
+
+T2Type
+t2_literal_string_n(T2Universe *universe, char const *value, usize length)
+{
+        if (value == NULL && length != 0) {
                 return T2_TYPE_INVALID;
         }
 
@@ -678,8 +713,8 @@ t2_literal_string(T2Universe *universe, char const *value)
                 universe,
                 T2_TYPE_LITERAL_STRING,
                 T2_VARIABLE_FLEXIBLE,
-                0,
-                value,
+                length,
+                (value == NULL) ? "" : value,
                 NULL,
                 0
         );
@@ -3220,6 +3255,14 @@ compare_types(
                 return (a->variable_kind < b->variable_kind) ? -1 : 1;
         }
 
+        if (a->kind == T2_TYPE_LITERAL_STRING) {
+                int comparison = memcmp(a->text, b->text, min(a->payload, b->payload));
+                if (comparison != 0) {
+                        return comparison;
+                }
+                return (a->payload > b->payload) - (a->payload < b->payload);
+        }
+
         if (a->payload != b->payload) {
                 return (a->payload < b->payload) ? -1 : 1;
         }
@@ -5115,7 +5158,8 @@ definitely_disjoint(T2Universe const *universe, T2Type left, T2Type right)
                 (a->kind == T2_TYPE_LITERAL_STRING)
              && (b->kind == T2_TYPE_LITERAL_STRING)
         ) {
-                return !s_eq(a->text, b->text);
+                return (a->payload != b->payload)
+                    || (memcmp(a->text, b->text, a->payload) != 0);
         }
 
         if (a->kind == T2_TYPE_LITERAL_INT && b->kind == T2_TYPE_INT_RANGE) {
@@ -6635,7 +6679,16 @@ doc_type(T2Printer *printer, T2Type type, unsigned depth)
         {
                 T2StringBuffer quoted = { 0 };
                 buffer_text(&quoted, "'");
-                buffer_text(&quoted, node->text);
+                for (usize i = 0; i < node->payload; ++i) {
+                        u8 c = node->text[i];
+                        if (c < ' ' || c == '\x7f') {
+                                buffer_format(&quoted, "\\x%02x", c);
+                        } else if (c == '\\' || c == '\'') {
+                                buffer_format(&quoted, "\\%c", c);
+                        } else {
+                                buffer_format(&quoted, "%c", c);
+                        }
+                }
                 buffer_text(&quoted, "'");
                 text(printer, T2_TOKEN_LITERAL, vv(quoted));
                 xvF(quoted);
@@ -7387,14 +7440,13 @@ t2_bytes_u64(byte_vector *bytes, u64 value)
         return t2_bytes_append(bytes, raw, sizeof raw);
 }
 
-bool
-t2_bytes_string(byte_vector *bytes, char const *text)
+static bool
+write_text(byte_vector *bytes, char const *text, usize length)
 {
         if (text == NULL) {
                 return t2_bytes_u32(bytes, T2_WIRE_NO_TEXT);
         }
 
-        usize length = strlen(text);
         if (length >= T2_WIRE_NO_TEXT) {
                 return false;
         }
@@ -7406,6 +7458,12 @@ t2_bytes_string(byte_vector *bytes, char const *text)
                     length
                )
         ;
+}
+
+bool
+t2_bytes_string(byte_vector *bytes, char const *text)
+{
+        return write_text(bytes, text, (text == NULL) ? 0 : strlen(text));
 }
 
 bool
@@ -7462,6 +7520,41 @@ t2_read_u64(unsigned char const *data, usize size, usize *position, u64 *value)
         return true;
 }
 
+static bool
+read_text(
+        unsigned char const *data,
+        usize                size,
+        usize               *position,
+        char               **text,
+        u32                 *length
+)
+{
+        if (!t2_read_u32(data, size, position, length)) {
+                return false;
+        }
+
+        if (*length == T2_WIRE_NO_TEXT) {
+                *text = NULL;
+                return true;
+        }
+
+        if (*position > size || *length > size - *position) {
+                return false;
+        }
+
+        char *copy = ty_malloc((usize)*length + 1);
+        if (copy == NULL) {
+                return false;
+        }
+
+        memcpy(copy, data + *position, *length);
+        copy[*length] = '\0';
+        *position += *length;
+        *text = copy;
+
+        return true;
+}
+
 bool
 t2_read_string(
         unsigned char const *data,
@@ -7471,30 +7564,7 @@ t2_read_string(
 )
 {
         u32 length;
-        if (!t2_read_u32(data, size, position, &length)) {
-                return false;
-        }
-
-        if (length == T2_WIRE_NO_TEXT) {
-                *text = NULL;
-                return true;
-        }
-
-        if (*position + length > size) {
-                return false;
-        }
-
-        char *copy = ty_malloc((usize)length + 1);
-        if (copy == NULL) {
-                return false;
-        }
-
-        memcpy(copy, data + *position, length);
-        copy[length] = '\0';
-        *position += length;
-        *text = copy;
-
-        return true;
+        return read_text(data, size, position, text, &length);
 }
 
 struct t2_type_writer {
@@ -7554,13 +7624,7 @@ writer_visit(T2TypeWriter *writer, T2Type type, u32 *index)
                 }
         }
 
-        u32 *children = (node->arity == 0)
-                      ? NULL
-                      : ty_malloc(node->arity * sizeof *children);
-        if (node->arity != 0 && children == NULL) {
-                return false;
-        }
-
+        u32 *children = (node->arity == 0) ? NULL : xtA(u32, node->arity);
         for (usize i = 0; i < node->arity; ++i) {
                 if (!writer_visit(writer, node->children[i], &children[i])) {
                         ty_free(children);
@@ -7571,18 +7635,25 @@ writer_visit(T2TypeWriter *writer, T2Type type, u32 *index)
         bool ok = t2_bytes_u8(&writer->table, (uint8_t)node->kind)
                && t2_bytes_u8(&writer->table, (uint8_t)node->variable_kind)
                && t2_bytes_u64(&writer->table, payload)
-               && t2_bytes_string(&writer->table, node->text)
+               && write_text(
+                       &writer->table,
+                       node->text,
+                       text_len(node->kind, node->payload, node->text)
+                  )
                && t2_bytes_u32(&writer->table, node->arity);
+
         for (usize i = 0; ok && i < node->arity; ++i) {
                 ok = t2_bytes_u32(&writer->table, children[i]);
         }
 
         ty_free(children);
+
         if (!ok) {
                 return false;
         }
 
         *index = writer->count;
+
         if (!t2_index_put(&writer->memo, type, writer->count)) {
                 return false;
         }
@@ -7759,11 +7830,12 @@ t2_type_reader_new(
         }
 
         T2TypeReader *reader = ty_calloc(1, sizeof *reader);
-        T2Type *types        = (count == 0) ? NULL : ty_calloc(count, sizeof *types);
-        struct wire_record *records = (count == 0) ? NULL : ty_calloc(
-                count,
-                sizeof *records
-        );
+        T2Type       *types  = (count == 0) ? NULL : ty_calloc(count, sizeof *types);
+
+        struct wire_record *records = (count == 0)
+                                    ? NULL
+                                    : ty_calloc(count, sizeof *records);
+
         if (
                 (reader == NULL)
              || ((count != 0) && ((types == NULL) || (records == NULL)))
@@ -7774,30 +7846,34 @@ t2_type_reader_new(
                 return NULL;
         }
 
-        reader->universe = universe;
-        reader->types    = types;
-        reader->count    = count;
+        reader->universe       = universe;
+        reader->types          = types;
+        reader->count          = count;
         reader->variable_floor = hooks.floor;
-        u32 *children = NULL;
-        usize child_capacity = 0;
-        u32 child_count      = 0;
-        u32 widest    = 0;
-        u32 highest   = 0;
-        bool floating = false;
-        bool ok       = true;
+
+        u32   *children       = NULL;
+        usize  child_capacity = 0;
+        u32    child_count    = 0;
+        u32    widest         = 0;
+        u32    highest        = 0;
+        bool   floating       = false;
+
+        bool ok = true;
         for (u32 i = 0; ok && i < count; ++i) {
                 struct wire_record *record = &records[i];
+                u32 length;
                 ok = t2_read_u8(data, size, position, &record->kind)
                   && t2_read_u8(data, size, position, &record->variable_kind)
                   && t2_read_u64(data, size, position, &record->payload)
-                  && t2_read_string(data, size, position, &record->text)
+                  && read_text(data, size, position, &record->text, &length)
                   && t2_read_u32(data, size, position, &record->arity)
                   && (record->kind < T2_TYPE_KIND_COUNT)
                   && (record->arity <= UINT32_MAX - child_count);
-                if (
-                        ok
-                     && (child_count + record->arity > child_capacity)
-                ) {
+                if (ok && record->kind == T2_TYPE_LITERAL_STRING) {
+                        ok = (record->text != NULL);
+                        record->payload = length;
+                }
+                if (ok && (child_count + record->arity > child_capacity)) {
                         usize capacity = (child_capacity == 0) ? 64 : child_capacity;
                         while (capacity < child_count + record->arity) {
                                 capacity *= 2;
@@ -7810,7 +7886,6 @@ t2_type_reader_new(
                                 child_capacity = capacity;
                         }
                 }
-
                 record->first_child = child_count;
                 for (u32 j = 0; ok && j < record->arity; ++j) {
                         u32 child;
@@ -7819,7 +7894,6 @@ t2_type_reader_new(
                                 children[child_count++] = child;
                         }
                 }
-
                 if (ok && record->arity > widest) {
                         widest = record->arity;
                 }
@@ -7846,17 +7920,17 @@ t2_type_reader_new(
                 ok = reader->rebased;
         }
 
-        T2Type *arguments = (widest == 0) ? NULL : ty_malloc(
-                widest * sizeof *arguments
-        );
+        T2Type *arguments = (widest == 0) ? NULL : xtA(T2Type, widest);
+        T2Index binders   = {0};
+
         ok = ok && ((widest == 0) || (arguments != NULL));
-        T2Index binders = { 0 };
+
         for (u32 i = 0; ok && i < count; ++i) {
                 struct wire_record const *record = &records[i];
                 for (u32 j = 0; j < record->arity; ++j) {
                         arguments[j] = types[children[record->first_child + j]];
                 }
-                u64 payload = record->payload;
+                u64  payload  = record->payload;
                 bool variable = (record->kind == T2_TYPE_VARIABLE)
                              || (record->kind == T2_TYPE_BINDER);
                 if (variable && payload < UINT32_MAX) {
@@ -7865,7 +7939,6 @@ t2_type_reader_new(
                                 reader->variable_limit = (u32)payload + 1;
                         }
                 }
-
                 types[i] = reader_build(
                         universe,
                         remap,
@@ -7884,11 +7957,11 @@ t2_type_reader_new(
         for (u32 i = 0; i < count; ++i) {
                 ty_free(records[i].text);
         }
-
         ty_free(records);
         ty_free(children);
         ty_free(arguments);
         t2_index_free(&binders);
+
         if (!ok) {
                 t2_type_reader_free(reader);
                 return NULL;
@@ -8015,14 +8088,15 @@ t2_scheme_decode(
         char **names = (quantifier_count == 0)
                      ? NULL
                      : ty_calloc(quantifier_count, sizeof *names);
-        T2Predicate *predicates = NULL;
-        u32 predicate_count = 0;
+
+        T2Predicate *predicates      = NULL;
+        u32          predicate_count = 0;
+
         T2Scheme *scheme = NULL;
+
         bool ok = (quantifier_count == 0)
-               || (
-                          (quantifiers != NULL) && (names != NULL)
-                  )
-        ;
+               || (quantifiers != NULL && names != NULL);
+
         for (u32 i = 0; ok && i < quantifier_count; ++i) {
                 uint8_t kind;
                 ok = t2_read_u32(data, size, position, &quantifiers[i].id)
@@ -8035,9 +8109,11 @@ t2_scheme_decode(
         }
 
         u32 body_index = 0;
+
         ok = ok
           && t2_read_u32(data, size, position, &body_index)
           && t2_read_u32(data, size, position, &predicate_count);
+
         if (ok && predicate_count != 0) {
                 predicates = ty_calloc(predicate_count, sizeof *predicates);
                 ok         = (predicates != NULL);
@@ -8067,13 +8143,9 @@ t2_scheme_decode(
                                 .name       = name,
                                 .provenance = provenance
                         };
-                        ok = (predicates[i].subtype != T2_TYPE_INVALID)
+                        ok = (predicates[i].subtype   != T2_TYPE_INVALID)
                           && (predicates[i].supertype != T2_TYPE_INVALID)
-                          && (
-                                     (operand == UINT32_MAX)
-                                  || (predicates[i].operand != T2_TYPE_INVALID)
-                             )
-                        ;
+                          && (operand == UINT32_MAX || predicates[i].operand != T2_TYPE_INVALID);
                 } else {
                         ty_free(name);
                         ty_free(provenance);
@@ -8081,6 +8153,7 @@ t2_scheme_decode(
         }
 
         T2Type body = t2_type_reader_type(reader, body_index);
+
         if (ok && body != T2_TYPE_INVALID) {
                 scheme = t2_scheme_new(
                         reader->universe,
@@ -8101,11 +8174,9 @@ t2_scheme_decode(
                 ty_free((char *)predicates[i].name);
                 ty_free((char *)predicates[i].provenance);
         }
-
         for (u32 i = 0; i < quantifier_count; ++i) {
                 ty_free(names[i]);
         }
-
         ty_free(predicates);
         ty_free(quantifiers);
         ty_free(names);
@@ -10570,7 +10641,11 @@ solver_types_identical(
              || ((a->text == NULL) != (b->text == NULL))
              || (
                         (a->text != NULL)
-                     && !s_eq(a->text, b->text)
+                     && (
+                                (a->kind == T2_TYPE_LITERAL_STRING)
+                              ? (memcmp(a->text, b->text, a->payload) != 0)
+                              : !s_eq(a->text, b->text)
+                        )
                 )
         ) {
                 return false;

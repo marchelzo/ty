@@ -165,7 +165,7 @@ typedef struct token {
                         union {
                                 char *identifier;
                                 char *operator;
-                                char *string;
+                                StringLiteral string;
                                 char *comment;
                                 char const *error;
                         };

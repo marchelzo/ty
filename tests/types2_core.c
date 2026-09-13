@@ -476,12 +476,77 @@ checkgradualrecords(T2Universe *universe)
         }
 }
 
+static void
+check_binary_strings(T2Universe *universe)
+{
+        char const data[] = { 'a', '\0', 'b' };
+        T2Type binary = t2_literal_string_n(universe, data, sizeof data);
+        T2Type prefix = t2_literal_string(universe, "a");
+        T2Type other = t2_literal_string_n(universe, "a\0c", 3);
+        T2Type shorter = t2_literal_string_n(universe, data, 2);
+        T2Type empty = t2_literal_string(universe, "");
+        T2Type nul = t2_literal_string_n(universe, "\0", 1);
+        T2Type strings[] = { binary, prefix, other, shorter, empty, nul };
+        usize count = sizeof strings / sizeof *strings;
+        T2Type either = t2_union(universe, strings, count);
+        T2TypeWriter *writer = t2_type_writer_new(universe, (T2SymbolRemap) { 0 });
+        byte_vector table = { 0 };
+        u32 index;
+        usize position = 0;
+
+        CHECK(binary != T2_TYPE_INVALID);
+        CHECK(binary == t2_literal_string_n(universe, "a\0b", 3));
+        CHECK(t2_literal_string_n(universe, data, 0) == empty);
+        CHECK(t2_literal_string_n(universe, NULL, 0) == empty);
+        CHECK(t2_literal_string_n(universe, NULL, 1) == T2_TYPE_INVALID);
+        CHECK(t2_literal_string_n(universe, data, SIZE_MAX) == T2_TYPE_INVALID);
+        CHECK(t2_type_payload(universe, binary) == sizeof data);
+        CHECK(memcmp(t2_type_name(universe, binary), data, sizeof data) == 0);
+        CHECK(t2_type_arity(universe, either) == count);
+        check_string(universe, binary, "'a\\x00b'");
+        check_string(universe, nul, "'\\x00'");
+        check_string(universe, either, "'' | '\\x00' | 'a' | 'a\\x00' | 'a\\x00b' | 'a\\x00c'");
+
+        for (usize i = 0; i < count; ++i) {
+                for (usize j = 0; j < count; ++j) {
+                        T2Relation expected = (i == j) ? T2_RELATION_YES : T2_RELATION_NO;
+                        CHECK(t2_subtype(universe, strings[i], strings[j]) == expected);
+                        CHECK(t2_meet(universe, strings[i], strings[j]) == (
+                                (i == j) ? strings[i] : t2_primitive(universe, T2_TYPE_NEVER)
+                        ));
+                }
+        }
+
+        CHECK(writer != NULL);
+        CHECK(t2_type_writer_add(writer, either, &index));
+        CHECK(t2_type_writer_encode(writer, &table));
+        t2_type_writer_free(writer);
+
+        T2TypeReader *reader = t2_type_reader_new(
+                universe,
+                (T2SymbolRemap) { 0 },
+                (T2ReadHooks) { 0 },
+                (u8 const *)vv(table),
+                vN(table),
+                &position
+        );
+        CHECK(reader != NULL);
+        CHECK(position == vN(table));
+        if (reader != NULL) {
+                CHECK(t2_type_reader_type(reader, index) == either);
+                t2_type_reader_free(reader);
+        }
+
+        xvF(table);
+}
+
 int
 main(void)
 {
         T2Universe *universe = t2_universe_new();
         CHECK(universe != NULL);
         check_wire_round_trip(universe);
+        check_binary_strings(universe);
 
         T2Type never = t2_primitive(universe, T2_TYPE_NEVER);
         T2Type unknown = t2_primitive(universe, T2_TYPE_UNKNOWN);

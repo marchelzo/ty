@@ -1721,19 +1721,18 @@ prefix_real(Ty *ty)
         return e;
 }
 
-static char *
-astrcat(Ty *ty, char const *s1, char const *s2)
+static StringLiteral
+astrcat(Ty *ty, StringLiteral s1, StringLiteral s2)
 {
-        usize n1 = strlen(s1);
-        usize n2 = strlen(s2);
-
+        usize n1 = s1.length;
+        usize n2 = s2.length;
         char *s = amA(n1 + n2 + 1);
 
-        memcpy(s, s1, n1);
-        memcpy(s + n1, s2, n2);
+        memcpy(s, s1.data, n1);
+        memcpy(s + n1, s2.data, n2);
         s[n1 + n2] = '\0';
 
-        return s;
+        return (StringLiteral) { s, n1 + n2 };
 }
 
 static void
@@ -1745,13 +1744,13 @@ merge_strings(Ty *ty, Expr *s1, Expr *s2)
         }
 
         if (s2->type == EXPRESSION_STRING) {
-                char **last = &s1->strings.items[s1->strings.count - 1];
+                StringLiteral *last = vvL(s1->strings);
                 *last = astrcat(ty, *last, s2->string);
                 return;
         }
 
         if (s1->type == EXPRESSION_STRING) {
-                char **first = &s2->strings.items[0];
+                StringLiteral *first = v_(s2->strings, 0);
                 *first = astrcat(ty, s1->string, *first);
                 *s1 = *s2;
                 return;
@@ -1766,7 +1765,7 @@ merge_strings(Ty *ty, Expr *s1, Expr *s2)
          *
          *      As1 Ae1 As2 Ae2 As3_Bs1 Be1 Bs2 Be2 Bs3 Be3 Bs4
          */
-        char **last = vvL(s1->strings);
+        StringLiteral *last = vvL(s1->strings);
         *last = astrcat(ty, *last, s2->strings.items[0]);
         avPv(s1->expressions, s2->expressions);
         avPv(s1->fmts, s2->fmts);
@@ -1816,10 +1815,10 @@ prefix_string(Ty *ty)
         return extend_string(ty, e);
 }
 
-static char *
+static StringLiteral
 ss_next_str(Ty *ty, bool top)
 {
-        char *str;
+        StringLiteral str;
 
         setctx(top ? LEX_FMT : LEX_XFMT);
 
@@ -1827,7 +1826,7 @@ ss_next_str(Ty *ty, bool top)
                 // TODO: this shouldn't be necessary. we threw away a SS string
                 // and were unable to rewind back through preprocessor-generated
                 // tokens in order to produce it again
-                return "";
+                return (StringLiteral) { "", 0 };
         }
 
         str = tok()->string;
@@ -1885,7 +1884,7 @@ ss_inner(Ty *ty, bool top)
 
                 if (try_consume(':')) {
                         Expr *fmt = ss_inner(ty, false);
-                        char *last = *vvL(fmt->strings);
+                        StringLiteral *last = vvL(fmt->strings);
 
                         /*
                          * Strip trailing spaces from the format specifier so
@@ -1893,12 +1892,15 @@ ss_inner(Ty *ty, bool top)
                          * are used purely to control the width which gets passed
                          * to __fmt__
                          */
-                        for (int i = (int)strlen(last) - 1; i >= 0 && isspace(last[i]); --i) {
-                                last[i] = '\0';
+                        while (
+                                (last->length > 0)
+                             && isspace((u8)last->data[last->length - 1])
+                        ) {
+                                last->length -= 1;
                         }
 
                         bool empty = (vN(fmt->strings) == 1)
-                                  && (*v_L(fmt->strings) == '\0');
+                                  && (last->length == 0);
 
                         avP(e->fmts, !empty ? fmt : NULL);
                 } else {
@@ -1951,15 +1953,15 @@ prefix_ss(Ty *ty)
         return extend_string(ty, e);
 }
 
-static char *
+static StringLiteral
 re_next_part(Ty *ty)
 {
-        char *str;
+        StringLiteral str;
 
         setctx(LEX_REGEX);
 
         if (T0 != TOKEN_STRING) {
-                return "";
+                return (StringLiteral) { "", 0 };
         }
 
         str = tok()->string;
@@ -2010,7 +2012,7 @@ prefix_dyn_regex(Ty *ty)
         e = re_inner(ty);
 
         expect(TOKEN_DYN_REGEX);
-        e->re_flags = tok()->string;
+        e->re_flags = tok()->string.data;
         next();
 
         e->start = start;
@@ -2122,7 +2124,7 @@ prefix_identifier(Ty *ty)
                         expanded = mkxpr(ERROR);
                         expanded->start = e->start;
                         expanded->end = TEnd;
-                        expanded->string = afmt(
+                        expanded->message = afmt(
                                 "error during expansion of %s%s%s: %s\n%s\n",
                                 TERM(95;1), QualifiedName(e), TERM(0),
                                 VSC(&exc),
@@ -5278,7 +5280,8 @@ definition_lvalue(Ty *ty, Expr *e)
                                         die("shorthand target in dict lvalue must be an identifier");
                                 }
                                 key->type = EXPRESSION_STRING;
-                                key->string = e->keys.items[i]->identifier;
+                                key->string.data = e->keys.items[i]->identifier;
+                                key->string.length = strlen(key->string.data);
                                 e->values.items[i] = e->keys.items[i];
                                 e->keys.items[i] = key;
                         }
@@ -5332,7 +5335,8 @@ patternize(Ty *ty, Expr *e)
                                         die("short-hand target in dict lvalue must be an identifier");
                                 }
                                 key->type = EXPRESSION_STRING;
-                                key->string = k->identifier;
+                                key->string.data = k->identifier;
+                                key->string.length = strlen(key->string.data);
                                 *v_(e->values, i) = k;
                                 *v_(e->keys, i) = key;
                         }
@@ -5423,7 +5427,8 @@ assignment_lvalue(Ty *ty, Expr *e)
                                         die("short-hand target in dict lvalue must be an identifier");
                                 }
                                 key->type = EXPRESSION_STRING;
-                                key->string = k->identifier;
+                                key->string.data = k->identifier;
+                                key->string.length = strlen(key->string.data);
                                 *v_(e->values, i) = k;
                                 *v_(e->keys, i) = key;
                         }

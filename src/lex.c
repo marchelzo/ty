@@ -171,11 +171,11 @@ mkid(Ty *ty, char *id, char *module, bool raw)
 }
 
 inline static Token
-mkstring(Ty *ty, char *string)
+mkstring(Ty *ty, char const *string, usize length)
 {
         return (Token) {
                 .type   = TOKEN_STRING,
-                .string = string,
+                .string = { .data = string, .length = length },
                 .start  = Start,
                 .end    = state.loc,
                 .nl     = state.need_nl,
@@ -632,7 +632,7 @@ lexdocstring(Ty *ty)
 
         avP(s, '\0');
 
-        return mkstring(ty, s.items);
+        return mkstring(ty, vv(s), vN(s) - 1);
 }
 
 static Token
@@ -677,7 +677,7 @@ lexrawstr(Ty *ty)
 
         avP(str, '\0');
 
-        return mkstring(ty, vv(str));
+        return mkstring(ty, vv(str), vN(str) - 1);
 }
 
 inline static bool
@@ -722,7 +722,7 @@ lex_ss_string(Ty *ty)
                 case '{':
                 case '}':
                         avP(str, '\0');
-                        return mkstring(ty, vv(str));
+                        return mkstring(ty, vv(str), vN(str) - 1);
 
                 case '\\':
                         nextchar(ty);
@@ -923,7 +923,7 @@ BadEntity:
                 case '{':
                 case '}':
                         avP(text, '\0');
-                        return mkstring(ty, vv(text));
+                        return mkstring(ty, vv(text), vN(text) - 1);
 
                 default:
                         if (isspace(C(0))) {
@@ -1034,7 +1034,7 @@ lex_re(Ty *ty)
                 }
                 avP(flags, '\0');
                 Token t = mktoken(ty, TOKEN_DYN_REGEX);
-                t.string = vv(flags);
+                t.string = (StringLiteral) { vv(flags), vN(flags) - 1 };
                 return t;
         }
 
@@ -1076,7 +1076,7 @@ Stop:
 
         avP(pat, '\0');
 
-        return mkstring(ty, vv(pat));
+        return mkstring(ty, vv(pat), vN(pat) - 1);
 
 Unterminated:
         error(ty, "unterminated regex literal");

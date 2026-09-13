@@ -9225,7 +9225,7 @@ make_token(Ty *ty, Token const *t)
                         "type",   T(string),
                         "start",  start,
                         "end",    end,
-                        "str",    vSsz(t->string)
+                        "str",    vSs(t->string.data, t->string.length)
                 );
 
         case TOKEN_COMMENT:

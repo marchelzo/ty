@@ -105,6 +105,11 @@ typedef int64_t  isize;
 typedef intmax_t imax;
 typedef intptr_t iptr;
 
+typedef struct stringliteral {
+        char const *data;
+        usize       length;
+} StringLiteral;
+
 typedef struct ty0              TY;
 typedef struct ty               Ty;
 typedef struct ty_save          TySavePoint;

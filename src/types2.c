@@ -1646,21 +1646,11 @@ literal_symbol_type(T2Checker *checker, Symbol const *symbol)
         case COMPILER_LITERAL_BOOLEAN:
                 return t2_literal_bool(checker->universe, literal.boolean);
         case COMPILER_LITERAL_STRING:
-        {
-                if (literal.string_length == SIZE_MAX) {
-                        return T2_TYPE_INVALID;
-                }
-                char *text = ty_malloc(literal.string_length + 1);
-                if (text == NULL) {
-                        checker->failed = true;
-                        return T2_TYPE_INVALID;
-                }
-                memcpy(text, literal.string, literal.string_length);
-                text[literal.string_length] = '\0';
-                T2Type result = t2_literal_string(checker->universe, text);
-                ty_free(text);
-                return result;
-        }
+                return t2_literal_string_n(
+                        checker->universe,
+                        (char const *)literal.string,
+                        literal.string_length
+                );
         case COMPILER_LITERAL_NONE:
                 break;
         }
@@ -3552,7 +3542,11 @@ lower_type(T2Checker *checker, Expr const *source)
                 result = t2_literal_int(checker->universe, expression->integer);
                 break;
         case EXPRESSION_STRING:
-                result = t2_literal_string(checker->universe, expression->string);
+                result = t2_literal_string_n(
+                        checker->universe,
+                        expression->string.data,
+                        expression->string.length
+                );
                 break;
         case EXPRESSION_BOOLEAN:
                 result = t2_literal_bool(checker->universe, expression->boolean);
@@ -15713,7 +15707,11 @@ infer_expression(T2Checker *checker, Expr const *source)
                 result = t2_literal_bool(checker->universe, expression->boolean);
                 break;
         case EXPRESSION_STRING:
-                result = t2_literal_string(checker->universe, expression->string);
+                result = t2_literal_string_n(
+                        checker->universe,
+                        expression->string.data,
+                        expression->string.length
+                );
                 break;
         case EXPRESSION_SPECIAL_STRING:
         {
@@ -17648,7 +17646,7 @@ infer_expression(T2Checker *checker, Expr const *source)
                         T2_TYPE_INVALID,
                         T2_TYPE_INVALID,
                         "%s",
-                        (expression->string == NULL) ? "invalid source expression" : expression->string
+                        (expression->message == NULL) ? "invalid source expression" : expression->message
                 )
                 ;
                 result = t2_primitive(checker->universe, T2_TYPE_ERROR);
@@ -30051,7 +30049,7 @@ check_value_x(Ty *ty, T2CheckStack *stack, T2Type type, Value const *value)
                 char const *text = t2_type_name(universe, type);
                 return (value->type == VALUE_STRING)
                     && (text != NULL)
-                    && (strlen(text) == sN(*value))
+                    && (t2_type_payload(universe, type) == sN(*value))
                     && (memcmp(text, ss(*value), sN(*value)) == 0);
         }
 
@@ -30848,7 +30846,12 @@ reflect_type(Ty *ty, T2Type type, unsigned depth)
                         NONE
                 );
         case T2_TYPE_LITERAL_STRING:
-                return tagged(ty, TyStringT, vSsz(t2_type_name(universe, type)), NONE);
+                return tagged(
+                        ty,
+                        TyStringT,
+                        vSs(t2_type_name(universe, type), t2_type_payload(universe, type)),
+                        NONE
+                );
         case T2_TYPE_REFINEMENT:
                 return reflect_type(ty, t2_type_child(universe, type, 0), depth + 1);
         case T2_TYPE_PACK_EXPANSION:
@@ -31350,7 +31353,7 @@ type_from_spec(Ty *ty, Value const *value)
                 break;
         case TyStringT:
                 if (inner.type == VALUE_STRING) {
-                        return t2_literal_string(universe, TY_TMP_C_STR(inner));
+                        return t2_literal_string_n(universe, (char const *)ss(inner), sN(inner));
                 }
                 break;
         case TyBoolT:

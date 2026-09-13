@@ -3,6 +3,7 @@
 #include <inttypes.h>
 
 #include "token.h"
+#include "value.h"
 #include "xd.h"
 #include "ty.h"
 
@@ -184,8 +185,15 @@ char const *
 token_showx(Ty *ty, Token const *t, char const *c)
 {
         switch (t->type) {
+        case TOKEN_STRING:
+        {
+                Value str = xSs(t->string.data, t->string.length);
+                char *shown = value_show(ty, &str, 0);
+                snprintf(token_show_buffer, sizeof token_show_buffer, "string %s", shown);
+                ty_free(shown);
+                break;
+        }
         case TOKEN_IDENTIFIER: snprintf(token_show_buffer, 512, "identifier '%s'", t->identifier);         break;
-        case TOKEN_STRING:     snprintf(token_show_buffer, 512, "string '%s'", t->string);                 break;
         case TOKEN_REGEX:      snprintf(token_show_buffer, 512, "regex /%s/", t->regex->pattern);          break;
         case TOKEN_INTEGER:    snprintf(token_show_buffer, 512, "integer '%"PRIiMAX"'", t->integer);       break;
         case TOKEN_REAL:       snprintf(token_show_buffer, 512, "real '%f'", t->real);                     break;

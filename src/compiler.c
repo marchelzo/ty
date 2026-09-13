@@ -4559,13 +4559,15 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
                 if (UNLIKELY(e->module == NULL && s_eq(e->identifier, "__module__"))) {
                         e->type = EXPRESSION_STRING;
-                        e->string = CurrentModuleName(ty);
+                        e->string.data = CurrentModuleName(ty);
+                        e->string.length = strlen(e->string.data);
                         break;
                 }
 
                 if (UNLIKELY(e->module == NULL && s_eq(e->identifier, "__file__"))) {
                         e->type = EXPRESSION_STRING;
-                        e->string = CurrentModulePath(ty);
+                        e->string.data = CurrentModulePath(ty);
+                        e->string.length = strlen(e->string.data);
                         break;
                 }
 
@@ -4587,7 +4589,8 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 if (UNLIKELY(e->module == NULL && s_eq(e->identifier, "__func__"))) {
                         if (STATE.func != NULL && STATE.func->name != NULL) {
                                 e->type = EXPRESSION_STRING;
-                                e->string = STATE.func->name;
+                                e->string.data = STATE.func->name;
+                                e->string.length = strlen(e->string.data);
                         } else {
                                 e->type = EXPRESSION_NIL;
                         }
@@ -5151,7 +5154,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 fail("*<identifier> 'match-rest' pattern used outside of pattern context");
 
         case EXPRESSION_ERROR:
-                fail("%s", e->string);
+                fail("%s", e->message);
         }
 
         if (debug) {
@@ -5892,12 +5895,12 @@ emit_string(Ty *ty, char const *s)
 }
 
 inline static void
-emit_string_literal(Ty *ty, char const *s)
+emit_string_literal(Ty *ty, StringLiteral s)
 {
-        InternEntry *interned = intern_get(&xD.strings, s);
+        InternEntry *interned = intern_get_n(&xD.strings, s.data, s.length);
 
         if (interned->id < 0) {
-                interned = intern_put(interned, (void *)(uptr)strlen(s));
+                interned = intern_put(interned, (void *)(uptr)s.length);
         }
 
         Ei32(interned->id);
@@ -6991,7 +6994,7 @@ emit_lang_string(Ty *ty, Expr const *e)
 {
         INSN(SAVE_STACK_POS);
 
-        if (v__(e->strings, 0)[0] != '\0') {
+        if (v__(e->strings, 0).length != 0) {
                 INSN(STRING);
                 ESL(v__(e->strings, 0));
         }
@@ -7012,7 +7015,7 @@ emit_lang_string(Ty *ty, Expr const *e)
                 Ei32(3);
                 EP(NULL);
                 STK(-3);
-                if (v__(e->strings, i + 1)[0] != '\0') {
+                if (v__(e->strings, i + 1).length != 0) {
                         INSN(STRING);
                         ESL(v__(e->strings, i + 1));
                 }
@@ -7029,14 +7032,14 @@ emit_dynamic_regex(Ty *ty, Expr const *e)
 {
         int n = vN(e->expressions);
 
-        if (v__(e->strings, 0)[0] != '\0') {
+        if (v__(e->strings, 0).length != 0) {
                 INSN(STRING);
                 ESL(v__(e->strings, 0));
                 n += 1;
         }
 
         for (int i = 1; i < vN(e->strings); ++i) {
-                if (v__(e->strings, i)[0] != '\0') {
+                if (v__(e->strings, i).length != 0) {
                         n += 1;
                 }
         }
@@ -7047,7 +7050,7 @@ emit_dynamic_regex(Ty *ty, Expr const *e)
                 EE(interp);
                 INSN(TO_REGEX);
 
-                if (v__(e->strings, i + 1)[0] != '\0') {
+                if (v__(e->strings, i + 1).length != 0) {
                         INSN(STRING);
                         ESL(v__(e->strings, i + 1));
                 }
@@ -7066,14 +7069,14 @@ emit_special_string(Ty *ty, Expr const *e)
 {
         int n = vN(e->expressions);
 
-        if (v__(e->strings, 0)[0] != '\0') {
+        if (v__(e->strings, 0).length != 0) {
                 INSN(STRING);
                 ESL(v__(e->strings, 0));
                 n += 1;
         }
 
         for (int i = 1; i < vN(e->strings); ++i) {
-                if (v__(e->strings, i)[0] != '\0') {
+                if (v__(e->strings, i).length != 0) {
                         n += 1;
                 }
         }
@@ -7103,7 +7106,7 @@ emit_special_string(Ty *ty, Expr const *e)
                         ECALL(1, 0);
                 }
 
-                if (v__(e->strings, i + 1)[0] != '\0') {
+                if (v__(e->strings, i + 1).length != 0) {
                         INSN(STRING);
                         ESL(v__(e->strings, i + 1));
                 }
@@ -8432,8 +8435,8 @@ str_table_insert(Ty *ty, StrMatchSlot *table, int tsize, Expr const *p, int arm)
                 return;
         }
 
-        char const *s = p->string;
-        usize len = strlen(s);
+        char const *s = p->string.data;
+        usize len = p->string.length;
         u64 h = XXH3_64bits(s, len);
         u32 bucket = (u32)(h & (u32)(tsize - 1));
 
@@ -8441,8 +8444,10 @@ str_table_insert(Ty *ty, StrMatchSlot *table, int tsize, Expr const *p, int arm)
                 bucket = (bucket + 1) & (u32)(tsize - 1);
         }
 
-        InternEntry *ie = intern_get(&xD.strings, s);
-        if (ie->id < 0) ie = intern_put(ie, (void *)(uptr)len);
+        InternEntry *ie = intern_get_n(&xD.strings, s, len);
+        if (ie->id < 0) {
+                ie = intern_put(ie, (void *)(uptr)len);
+        }
 
         table[bucket].intern_id = ie->id;
         table[bucket].arm_index = arm;
@@ -10825,7 +10830,10 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                                 INSN(NIL);
                         } else {
                                 INSN(STRING);
-                                ESL(v__(e->names, i));
+                                ESL(((StringLiteral) {
+                                        v__(e->names, i),
+                                        strlen(v__(e->names, i))
+                                }));
                         }
                         EE(v__(e->es, i));
                         if (v__(e->required, i)) {
@@ -10881,7 +10889,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
 
         case EXPRESSION_ERROR:
-                fail("%s", e->string);
+                fail("%s", e->message);
 
         default:
                 fail(
@@ -14151,14 +14159,14 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 break;
 
         case EXPRESSION_STRING:
-                v = TAGGED(TyString, vSsz(e->string));
+                v = TAGGED(TyString, vSs(e->string.data, e->string.length));
                 break;
 
         case EXPRESSION_SPECIAL_STRING:
                 v = ARRAY(vA());
                 gP(&v);
 
-                vAp(v.array, vSsz(v__(e->strings, 0)));
+                vAp(v.array, vSs(v__(e->strings, 0).data, v__(e->strings, 0).length));
 
                 for (int i = 0; i < vN(e->expressions); ++i) {
                         Value expr = go(v__(e->expressions, i));
@@ -14173,7 +14181,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                                 width = INTEGER(v__(e->widths, i));
                         }
                         vAp(v.array, QUADRUPLE(expr, fmt, width, arg));
-                        vAp(v.array, vSsz(v__(e->strings, i + 1)));
+                        vAp(v.array, vSs(v__(e->strings, i + 1).data, v__(e->strings, i + 1).length));
                 }
 
                 gX();
@@ -14459,7 +14467,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 break;
 
         case EXPRESSION_ERROR:
-                 fail("%s", e->string);
+                 fail("%s", e->message);
                  break;
 
         case STATEMENT_DEFINITION:
@@ -15398,7 +15406,7 @@ cexpr(Ty *ty, Value *v)
 
         case TyString:
                 e->type = EXPRESSION_STRING;
-                e->string = mkcstr(v);
+                e->string = (StringLiteral) { mkcstr(v), sN(*v) };
                 break;
 
         case TyLangString:
@@ -15411,7 +15419,7 @@ cexpr(Ty *ty, Value *v)
                 for (int i = 0; i < v->array->count; ++i) {
                         Value *x = &v->array->items[i];
                         if (x->type == VALUE_STRING) {
-                                avP(e->strings, mkcstr(x));
+                                avP(e->strings, ((StringLiteral) { mkcstr(x), sN(*x) }));
                         } else if (x->type == VALUE_TUPLE) {
                                 avP(e->expressions, cexpr(ty, &x->items[0]));
                                 avP(e->fmts, cexpr(ty, &x->items[1]));
@@ -15426,7 +15434,7 @@ cexpr(Ty *ty, Value *v)
                 }
 
                 if (vN(*v->array) == 0 || vvL(*v->array)->type != VALUE_STRING) {
-                        avP(e->strings, "");
+                        avP(e->strings, ((StringLiteral) { "", 0 }));
                 }
                 break;
         }
@@ -17346,7 +17354,7 @@ WriteExpressionOrigin(Ty *ty, byte_vector *out, Expr const *e)
                         out,
                         "%43s%s\n",
                         "",
-                        e->string
+                        e->message
                 );
         }
 
@@ -17566,7 +17574,7 @@ WriteExpressionTrace(Ty *ty, byte_vector *out, Expr const *e, int etw, bool firs
                         out,
                         "%43s%s\n",
                         "",
-                        e->string
+                        e->message
                 );
         }
 

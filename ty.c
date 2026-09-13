@@ -315,8 +315,10 @@ readln(Ty *ty)
                 if (TY_CATCH_ERROR()) {
                         char *trace = FormatTrace(ty, NULL, NULL);
                         Value exc = TY_CATCH();
-                        fprintf(stderr, "\n%s\n%s\n", trace, VSC(&exc));
+                        char *msg = VSC(&exc);
+                        fprintf(stderr, "\n%s\n%s\n", trace, msg);
                         xmF(trace);
+                        xmF(msg);
                         return S2("");
                 }
 

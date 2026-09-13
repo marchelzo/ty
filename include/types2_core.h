@@ -270,6 +270,9 @@ T2Type
 t2_literal_string(T2Universe *universe, char const *value);
 
 T2Type
+t2_literal_string_n(T2Universe *universe, char const *value, usize length);
+
+T2Type
 t2_integer_range(
         T2Universe *universe,
         T2Type lower,

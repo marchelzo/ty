@@ -916,7 +916,11 @@ add_builtins(Ty *ty, int ac, char **av)
                         break;
 
                 case CLASS_STRING:
-                        sym->type = t2_literal_string(t2_global_universe(), TY_C_STR(*v));
+                        sym->type = t2_literal_string_n(
+                                t2_global_universe(),
+                                (char const *)ss(*v),
+                                sN(*v)
+                        );
                         sym->flags |= SYM_CONST;
                         break;
 
