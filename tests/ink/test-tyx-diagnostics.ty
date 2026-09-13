@@ -18,7 +18,10 @@ class Repro < Component {
 }
 ''')
         let output, result = sh("{ty.executable} -c {source}", combineOutput=true)
-        assert(result != nil && result.status != 0)
+        if output == nil || result == nil {
+            throw AssertionError('command did not complete')
+        }
+        assert(result.status != 0)
         assert(output.contains?('expected expression'))
         assert(!output.contains?('invalid regex flags'))
     }

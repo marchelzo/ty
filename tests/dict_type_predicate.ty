@@ -35,3 +35,30 @@ pub fn test-dict-type-predicate-in-match() {
     assert(describe(%{1.5: 'a'}) == 'dict')
     assert(describe([1]) == 'other')
 }
+
+pub fn default-factory-inference() {
+    fn nested(outer: String, inner: String, value: String) {
+        let dict = %{*: %{}}
+        dict[outer][inner] = value
+        dict
+    }
+
+    fn arrays(key: String) {
+        let dict = %{*: []}
+        dict[key].push(chr(97))
+        dict
+    }
+
+    fn dependent(key: String) {
+        let dict = %{*: it.upper()}
+        dict[key]
+        dict
+    }
+
+    assert(str(typeof nested('', '', '')) == 'DefaultDict[String, Dict[String, String]]')
+    assert(str(typeof arrays('')) == 'DefaultDict[String, Array[String]]')
+    assert(str(typeof dependent('')) == 'DefaultDict[String, String]')
+    assert(nested('outer', 'inner', 'value')['outer']['inner'] == 'value')
+    assert(arrays('letters')['letters'] == ['a'])
+    assert(dependent('key')['key'] == 'KEY')
+}

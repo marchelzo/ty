@@ -1385,31 +1385,31 @@ C! struct CXMLAttr {
 }
 
 class XMLAttr < CXMLAttr {
-    children() {
+    children {
         if let $p = super() {
             XMLNode(p)
         }
     }
 
-    parent() {
+    parent {
         if let $p = super() {
             XMLNode(p)
         }
     }
 
-    next() {
+    next {
         if let $p = super() {
             XMLNode(p)
         }
     }
 
-    prev() {
+    prev {
         if let $p = super() {
             XMLNode(p)
         }
     }
 
-    last() {
+    last {
         if let $p = super() {
             XMLNode(p)
         }
@@ -2206,8 +2206,7 @@ pub class Schema {
         defer c.freeClosure(onWarn)
         defer c.freeClosure(onError)
 
-        xmlSchemaSetValidErrors(ctx, onError, onWarn)
-        xmlSchemaSetParserErrors(ctx, onError, onWarn)
+        xmlSchemaSetValidErrors(ctx, onError, onWarn, nil)
 
         xmlSchemaValidateDoc(ctx, doc)
 

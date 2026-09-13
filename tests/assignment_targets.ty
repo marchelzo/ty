@@ -28,9 +28,9 @@ pub fn view-declarations() {
 
 pub fn dictionary-declarations() {
     let values: Dict[String, Int] = %{'answer': 42}
-    let %{'answer': $answer, 'missing': missing} = values
+    let %{'answer': answer, 'missing': missing} = values
 
-    assert(str(typeof answer) == 'Int')
+    assert(str(typeof answer) == 'nil | Int')
     assert(str(typeof missing) == 'nil | Int')
     assert(answer == 42)
     assert(missing == nil)
@@ -75,7 +75,10 @@ fn rejects(source: String, code: String) {
     with tmp = path.tempdir() {
         let file = path.Path("{tmp}/assignment.ty")
         file.write(source)
-        let $output, $result = sh("{ty.executable} -c {file}", combineOutput=true)
+        let output, result = sh("{ty.executable} -c {file}", combineOutput=true)
+        if output == nil || result == nil {
+            throw AssertionError('command did not complete')
+        }
         assert(result.status != 0, source)
         assert(output.contains?(code), output)
     }

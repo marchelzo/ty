@@ -158,14 +158,13 @@ fn type-completions(type: _, prefix: String) -> Array[_] {
 
     match type {
         types::Object(_) or types::Class(_) => do {
-            let info = types.info(type)
-
-            let members: _ = (
-                info.methods
-              + info.fields
-              + info.getters
-              + info.setters
-            )
+            let $info = types.info(type) or return []
+            let members: _ = [
+                *info.methods,
+                *info.fields,
+                *info.getters,
+                *info.setters
+            ]
 
             fn fix-name(name: _) -> String {
                 let name = name.match?(/\p{L}/) ? name : "`{name}`"

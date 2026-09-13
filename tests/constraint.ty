@@ -1,6 +1,183 @@
 import ty
+import ini (INIFile)
 
 ns test
+
+class ArgumentCollector {
+    collect(prefix: String, *values: Int) -> Array[Int] {
+        values
+    }
+}
+
+pub fn imported-constructor-types() {
+    let file = INIFile()
+    assert(str(typeof file) == 'INIFile')
+}
+
+pub fn non-nil-call-results() {
+    fn size(bytes: Blob) -> Int {
+        #bytes
+    }
+
+    let bytes = '000102'.unhex()!
+    assert(size(bytes) == 3)
+    assert(size('0001'.unhex()!) == 2)
+}
+
+pub fn incompatible-binding-patterns() {
+    for (source, diagnostic) in [
+        ('fn bad() { let $x = nil }', 'binding-pattern'),
+        ('fn bad(x: Int | nil) { let $y = x }', 'binding-pattern'),
+        ('fn bad() { let first, $second = 1, nil }', 'binding-pattern'),
+        ('fn bad(x) { let $y = x }\nbad(nil)', 'bad-call'),
+        ('fn bad() { let Some(x) = None }', 'binding-pattern'),
+        ('fn bad(x: Some[Int] | None) { let Some(y) = x }', 'binding-pattern'),
+        ('fn bad(x: Some[_] | Int) { let Some(y) = x }', 'binding-pattern'),
+        ('fn bad(x: Some[Int | nil]) { let Some($y) = x }', 'binding-pattern'),
+        ('fn bad(x) { let Some(y) = x }\nbad(None)', 'bad-call'),
+        ('fn bad() { let [x, y] = 123 }', 'binding-pattern'),
+        ('fn bad(x: Array[Int] | Int) { let [y, z] = x }', 'binding-pattern'),
+        ('fn bad(x: Array[Int | nil]) { let [$y] = x }', 'binding-pattern'),
+        ('fn bad(x) { let [y] = x }\nbad(123)', 'bad-call'),
+        ('fn bad(x: Array[Int | String]) { let [y: Int] = x }', 'assignment-type'),
+        ('fn bad() { let (x, y) = 123 }', 'tuple-arity'),
+        ('fn bad(x: (Int, Int) | Int) { let (y, z) = x }', 'tuple-arity'),
+        ('fn bad() { let {x, *} = 123 }', 'binding-pattern'),
+        ('''
+fn bad() {
+    match 1 {
+        (fn (n) {
+            let $x = nil
+            n
+        }) ~> _ => 1
+    }
+}
+''', 'binding-pattern')
+    ] {
+        try {
+            __eval__(source)
+            assert(false, "accepted incompatible binding: {source}")
+        } catch ex :: "[{diagnostic}]" in ex.what {
+            ;
+        }
+    }
+}
+
+pub fn compatible-binding-patterns() {
+    let Some([x, y]) = Some([1, 2])
+    let $n = x + y
+    assert(n == 3)
+
+    fn guarded(x: Int | nil) -> Int | nil {
+        let $y = x or return nil
+        y
+    }
+
+    fn tagged(x: Some[Int] | None) -> Int {
+        if let Some(y) = x {
+            return y
+        }
+        0
+    }
+
+    fn array(x: Array[Int] | Int) -> Int {
+        match x {
+            [y, z] => y + z,
+            _ => 0
+        }
+    }
+
+    fn nested(x: Some[Int | nil]) -> Int {
+        match x {
+            Some($y) => y,
+            _ => 0
+        }
+    }
+
+    fn payload(x) {
+        let Some(y) = x
+        y
+    }
+
+    assert(guarded(nil) == nil)
+    assert(guarded(3) == 3)
+    assert(tagged(None) == 0)
+    assert(tagged(Some(4)) == 4)
+    assert(array(123) == 0)
+    assert(array([1, 2]) == 3)
+    assert(nested(Some(nil)) == 0)
+    assert(nested(Some(5)) == 5)
+    let number: Int = payload(Some(6))
+    assert(number == 6)
+}
+
+pub fn recursive-tuple-indices() {
+    fn unpack(n: Int) {
+        match n {
+            0 => (false, 'TEXT'),
+            _ => (true, unpack(n - 1).1)
+        }
+    }
+
+    fn text(s: String) -> String { s }
+
+    let (flag, name) = unpack(3)
+    assert(flag)
+    assert(text(name) == 'TEXT')
+
+    try {
+        __eval__('fn bad(xs) { xs[2] }\nbad((1, 2))')
+        assert(false, 'deferred tuple index accepted an out-of-range position')
+    } catch ex :: '[bad-call]' in ex.what {
+        ;
+    }
+}
+
+fn collect-forward(*values: Int) -> Array[Int] {
+    resolve-collector(nil).collect('values', *values)
+}
+
+fn accept-collector(value: ArgumentCollector | nil) { }
+
+fn collect-one-forward(value: ArgumentCollector | nil = nil) -> Array[Int] {
+    let value = resolve-collector(value)
+    accept-collector(value)
+    value.collect('one', 1)
+}
+
+fn resolve-collector(value: ArgumentCollector | nil) -> ArgumentCollector {
+    value ?? ArgumentCollector()
+}
+
+pub fn forward-variadic-methods() {
+    assert(collect-forward(1, 2, 3) == [1, 2, 3])
+    assert(collect-forward() == [])
+    assert(collect-one-forward() == [1])
+}
+
+pub fn non-nil-payload-members() {
+    fn item(e) {
+        let Some($payload) = e
+        payload.item
+    }
+
+    let value: Int = item(Some({item: 7}))
+    assert(value == 7)
+
+    let input: _ = [Some({item: 3})]
+    let values = input.map(fn (e) {
+        let Some($payload) = e
+        payload.item
+    })
+    assert(values == [3])
+
+    try {
+        __eval__('item(Some(123))')
+        assert(false, 'non-nil payload accepted a missing member')
+    } catch ex :: '[bad-call]' in ex.what {
+        ;
+    }
+}
 
 pub fn constraint() {
     fn f(x: Int, s: String) -> Float { return 0.4 }

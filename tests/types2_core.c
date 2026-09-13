@@ -211,6 +211,271 @@ check_wire_round_trip(T2Universe *universe)
         t2_scheme_free(scheme);
 }
 
+static void
+checklocalweakconstraints(T2Universe *universe)
+{
+        T2Solver *source = t2_solver_new(universe);
+        T2Type parameter = t2_solver_new_meta(
+                source,
+                T2_VARIABLE_FLEXIBLE,
+                1,
+                "callback parameter"
+        );
+        T2Type local = t2_solver_new_meta(
+                source,
+                T2_VARIABLE_WEAK,
+                1,
+                "pattern binding"
+        );
+        T2Type identity = t2_function(universe, &parameter, 1, parameter);
+        CHECK(t2_solver_constrain_subtype(
+                source,
+                parameter,
+                local,
+                "pattern binding initializer"
+        ) == T2_RELATION_YES);
+
+        T2Scheme *scheme = t2_solver_generalize(
+                source,
+                identity,
+                NULL,
+                0,
+                0,
+                false
+        );
+        CHECK(scheme != NULL);
+        CHECK(t2_scheme_quantifier_count(scheme) == 1);
+        CHECK(t2_scheme_predicate_count(scheme) == 0);
+
+        T2Solver *target = t2_solver_new(universe);
+        T2Type use = t2_scheme_instantiate(scheme, target, 0, "imported callback");
+        T2Type string = t2_primitive(universe, T2_TYPE_STRING);
+        T2Type strings = t2_function(universe, &string, 1, string);
+        CHECK(t2_solver_constrain_subtype(
+                target,
+                use,
+                strings,
+                "string callback"
+        ) == T2_RELATION_YES);
+        CHECK(t2_solver_pending_obligations(target) == 0);
+        t2_solver_free(target);
+        t2_scheme_free(scheme);
+
+        T2Type integer = t2_primitive(universe, T2_TYPE_INT);
+        CHECK(t2_solver_constrain_subtype(
+                source,
+                local,
+                integer,
+                "pattern binding must be an integer"
+        ) == T2_RELATION_YES);
+        scheme = t2_solver_generalize(source, identity, NULL, 0, 0, false);
+        CHECK(scheme != NULL);
+        CHECK(t2_scheme_predicate_count(scheme) == 1);
+        t2_solver_free(source);
+
+        target = t2_solver_new(universe);
+        use = t2_scheme_instantiate(scheme, target, 0, "constrained callback");
+        CHECK(t2_solver_constrain_subtype(
+                target,
+                use,
+                strings,
+                "incompatible string callback"
+        ) == T2_RELATION_NO);
+        t2_solver_free(target);
+        t2_scheme_free(scheme);
+}
+
+static void
+checkschemeexports(T2Universe *universe)
+{
+        T2Solver *solver = t2_solver_new(universe);
+        T2Type local = t2_solver_new_meta(solver, T2_VARIABLE_WEAK, 1, "local");
+        T2Type variable = t2_variable(universe, T2_VARIABLE_QUANTIFIED, 1);
+        T2Quantifier quantifier = { .id = 1, .kind = T2_VARIABLE_QUANTIFIED };
+        T2Predicate predicate = {
+                .subtype    = variable,
+                .supertype  = local,
+                .provenance = "escaping pattern binding"
+        };
+        T2Type body = t2_function(universe, &variable, 1, variable);
+        T2Scheme *scheme = t2_scheme_new(universe, &quantifier, 1, body, &predicate, 1);
+        CHECK(scheme != NULL);
+        CHECK(!t2_type_has_metas(universe, body));
+        CHECK(t2_scheme_has_metas(scheme));
+        CHECK(t2_solver_zonk_scheme(solver, scheme));
+        CHECK(t2_scheme_has_metas(scheme));
+
+        T2Type integer = t2_primitive(universe, T2_TYPE_INT);
+        CHECK(t2_solver_unify(solver, local, integer, "solved local") == T2_RELATION_YES);
+        CHECK(t2_solver_zonk_scheme(solver, scheme));
+        CHECK(!t2_scheme_has_metas(scheme));
+        CHECK(t2_scheme_quantifier_count(scheme) == 1);
+        CHECK(t2_scheme_predicate(scheme, 0, &predicate));
+        CHECK(predicate.subtype == variable);
+        CHECK(predicate.supertype == integer);
+        CHECK(strcmp(predicate.provenance, "escaping pattern binding") == 0);
+        t2_scheme_free(scheme);
+
+        local = t2_solver_new_meta(solver, T2_VARIABLE_FLEXIBLE, 1, "hidden local");
+        u32 binder = t2_universe_fresh_recursive_binder(universe);
+        T2Type recursive = t2_recursive(
+                universe,
+                binder,
+                t2_tuple(universe, (T2Type[]) {
+                        local,
+                        t2_recursive_variable(universe, binder)
+                }, 2)
+        );
+        predicate = (T2Predicate) {
+                .kind      = T2_PREDICATE_OPERATOR,
+                .name      = "+",
+                .subtype   = integer,
+                .supertype = integer,
+                .operand   = recursive
+        };
+        scheme = t2_scheme_new(universe, NULL, 0, integer, &predicate, 1);
+        CHECK(scheme != NULL);
+        CHECK(t2_type_has_metas(universe, recursive));
+        CHECK(t2_scheme_has_metas(scheme));
+        t2_scheme_free(scheme);
+        t2_solver_free(solver);
+}
+
+static void
+check_deferred_bound_callbacks(T2Universe *universe)
+{
+        T2Type integer = t2_primitive(universe, T2_TYPE_INT);
+        T2Type string  = t2_primitive(universe, T2_TYPE_STRING);
+        T2Type any     = t2_primitive(universe, T2_TYPE_ANY);
+        T2Type never   = t2_primitive(universe, T2_TYPE_NEVER);
+        T2Type callbacks[] = {
+                t2_function(universe, &string, 1, any),
+                t2_function(universe, &integer, 1, any)
+        };
+        T2Type candidates[] = {
+                t2_function(universe, (T2Type[]) { integer, callbacks[0] }, 2, string),
+                t2_function(universe, (T2Type[]) { string, callbacks[1] }, 2, integer)
+        };
+        T2Type overload = t2_overload(universe, candidates, 2);
+
+        for (unsigned delayed = 0; delayed != 2; ++delayed) {
+                T2Solver *solver = t2_solver_new(universe);
+                T2Type input = delayed
+                             ? t2_solver_new_meta(solver, T2_VARIABLE_FLEXIBLE, 0, "argument")
+                             : integer;
+                T2Type callee = t2_solver_new_meta(solver, T2_VARIABLE_FLEXIBLE, 0, "method");
+                T2Type result = t2_solver_new_meta(solver, T2_VARIABLE_FLEXIBLE, 0, "result");
+                T2Type parameter = t2_solver_new_meta(solver, T2_VARIABLE_FLEXIBLE, 0, "callback parameter");
+                T2Type returned = t2_solver_new_meta(solver, T2_VARIABLE_FLEXIBLE, 0, "callback result");
+                T2Type callback = t2_function(universe, &parameter, 1, returned);
+                T2Type expected = t2_function(universe, (T2Type[]) { input, callback }, 2, result);
+                CHECK(t2_solver_constrain_subtype(solver, callee, expected, "deferred call") != T2_RELATION_NO);
+                CHECK(t2_solver_constrain_subtype(solver, overload, callee, "resolved method") != T2_RELATION_NO);
+
+                if (delayed) {
+                        CHECK(t2_solver_lower_bound(solver, result) == never);
+                        CHECK(t2_solver_lower_bound(solver, parameter) == never);
+                        CHECK(t2_solver_pending_obligations(solver) != 0);
+                        CHECK(t2_solver_constrain_subtype(solver, string, input, "known argument") != T2_RELATION_NO);
+                }
+
+                CHECK(t2_solver_lower_bound(solver, result) == (delayed ? integer : string));
+                CHECK(t2_solver_lower_bound(solver, parameter) == (delayed ? integer : string));
+                CHECK(t2_solver_pending_obligations(solver) == 0);
+                CHECK(t2_solver_constrain_subtype(solver, result, delayed ? string : integer, "incorrect result") == T2_RELATION_NO);
+                t2_solver_free(solver);
+        }
+}
+
+static T2Type
+recursive_pair(T2Universe *universe, T2Type value)
+{
+        u32 binder = t2_universe_fresh_recursive_binder(universe);
+        T2Type items[] = { t2_recursive_variable(universe, binder), value };
+        return t2_recursive(universe, binder, t2_tuple(universe, items, 2));
+}
+
+static void
+check_recursive_constraints(T2Universe *universe)
+{
+        T2Variance invariant = T2_INVARIANT;
+        CHECK(t2_declare_nominal(universe, 9010, "RecursiveCell", 1, &invariant));
+        T2Type integer = t2_primitive(universe, T2_TYPE_INT);
+        T2Type string = t2_primitive(universe, T2_TYPE_STRING);
+        u32 binder = t2_universe_fresh_recursive_binder(universe);
+        T2Type self = t2_recursive_variable(universe, binder);
+        T2Type arms[] = { integer, t2_nominal(universe, 9010, &self, 1) };
+        T2Type tree = t2_recursive(universe, binder, t2_union(universe, arms, 2));
+        T2Solver *solver = t2_solver_new(universe);
+        T2Type item = t2_solver_new_meta(solver, T2_VARIABLE_FLEXIBLE, 1, "recursive item");
+        T2Type cell = t2_nominal(universe, 9010, &item, 1);
+        CHECK(t2_solver_constrain_subtype(solver, tree, item, "stored tree") == T2_RELATION_YES);
+        CHECK(t2_solver_constrain_subtype(solver, cell, tree, "nested tree") == T2_RELATION_YES);
+        CHECK(t2_solver_pending_obligations(solver) == 0);
+        CHECK(!t2_solver_failed(solver));
+        CHECK(t2_solver_constrain_subtype(solver, string, item, "invalid tree") == T2_RELATION_NO);
+        t2_solver_free(solver);
+
+        solver = t2_solver_new(universe);
+        T2Type value = t2_solver_new_meta(solver, T2_VARIABLE_FLEXIBLE, 1, "recursive leaf");
+        T2Type actual = recursive_pair(universe, value);
+        T2Type expected = recursive_pair(universe, string);
+        CHECK(t2_solver_constrain_subtype(solver, actual, expected, "recursive leaf bound") == T2_RELATION_YES);
+        CHECK(t2_solver_upper_bound(solver, value) == string);
+        CHECK(t2_solver_pending_obligations(solver) == 0);
+        T2SolverMark mark = t2_solver_mark(solver);
+        CHECK(t2_solver_constrain_subtype(solver, integer, value, "invalid recursive leaf") == T2_RELATION_NO);
+        t2_solver_rollback(solver, mark);
+        CHECK(!t2_solver_failed(solver));
+        CHECK(t2_solver_constrain_subtype(solver, string, value, "valid recursive leaf") == T2_RELATION_YES);
+        CHECK(t2_solver_zonk(solver, value, T2_PREFER_LOWER_BOUND) == string);
+        CHECK(t2_solver_constrain_subtype(solver, recursive_pair(universe, integer), expected, "incompatible recursion") == T2_RELATION_NO);
+        t2_solver_free(solver);
+}
+
+static void
+checkgradualrecords(T2Universe *universe)
+{
+        T2Type integer = t2_primitive(universe, T2_TYPE_INT);
+        T2Type string  = t2_primitive(universe, T2_TYPE_STRING);
+        T2Type dynamic = t2_primitive(universe, T2_TYPE_DYNAMIC);
+        T2Type nil     = t2_primitive(universe, T2_TYPE_NIL);
+        T2FieldSpec wanted = {
+                .name       = "value",
+                .type       = integer,
+                .presence   = T2_PRESENCE_REQUIRED,
+                .capability = T2_FIELD_READONLY
+        };
+        T2FieldSpec fields[] = {
+                { "value", dynamic, T2_PRESENCE_REQUIRED, T2_FIELD_READONLY },
+                { "other", dynamic, T2_PRESENCE_REQUIRED, T2_FIELD_READONLY },
+                { "value", dynamic, T2_PRESENCE_OPTIONAL, T2_FIELD_READONLY },
+                { "value", string,  T2_PRESENCE_REQUIRED, T2_FIELD_READONLY }
+        };
+        T2Type record = t2_record(universe, &wanted, 1, T2_TYPE_INVALID, T2_RECORD_OPEN);
+        T2Type expected = t2_union(universe, (T2Type[]) { nil, record }, 2);
+
+        for (usize i = 0; i < sizeof fields / sizeof *fields; ++i) {
+                T2Type actual = t2_record(
+                        universe,
+                        fields + i,
+                        1,
+                        T2_TYPE_INVALID,
+                        T2_RECORD_EXACT
+                );
+                T2Solver *solver = t2_solver_new(universe);
+                T2Relation result = t2_solver_constrain_subtype(
+                        solver,
+                        actual,
+                        expected,
+                        "gradual record field"
+                );
+                CHECK(result == ((i == 0) ? T2_RELATION_YES : T2_RELATION_NO));
+                CHECK(t2_solver_pending_obligations(solver) == 0);
+                t2_solver_free(solver);
+        }
+}
+
 int
 main(void)
 {
@@ -2427,6 +2692,11 @@ main(void)
         t2_scheme_free(weak_scheme);
         t2_solver_free(generalization_solver);
 
+        checklocalweakconstraints(universe);
+        checkschemeexports(universe);
+        check_deferred_bound_callbacks(universe);
+        check_recursive_constraints(universe);
+        checkgradualrecords(universe);
         t2_universe_free(universe);
 
         if (failures != 0) {

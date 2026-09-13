@@ -131,3 +131,74 @@ pub fn non-string-no-match() {
     }
     assert(result == 'nope')
 }
+
+pub fn capture-types() {
+    assert(str(typeof /x/) == 'Regex[0]')
+    assert(str(typeof /(x)/) == 'Regex[1]')
+    assert(str(typeof /x/v) == 'RegexV[0]')
+    assert(str(typeof /(x)/v) == 'RegexV[1]')
+
+    assert(str(typeof 'x'.match(/x/)) == 'nil | String')
+    assert(str(typeof 'x'.match(/(x)/)) == 'nil | Array[String]')
+    assert(str(typeof 'x'.match(/x/v)) == 'RegexMatch')
+    assert(str(typeof 'x'.match(/(x)/v)) == 'RegexMatch')
+    assert(str(typeof 'x'.split(/x/)) == 'Array[String]')
+    assert(str(typeof 'x'.split(/x/v)) == 'Array[String | RegexMatch]')
+    assert(str(typeof 'x'.scan(/x/)) == 'Array[String]')
+    assert(str(typeof 'x'.scan(/(x)/)) == 'Array[Array[String]]')
+    assert(str(typeof 'x'.scan(/x/v)) == 'Array[RegexMatch]')
+
+    assert('x'.match(/x/) == 'x')
+    assert('x'.match(/(x)/) == ['x', 'x'])
+    assert('x'.match(/(x)/v).captures == ['x'])
+}
+
+pub fn interpolated-capture-types() {
+    fn plain(pattern: String) { /${pattern}/ }
+    fn detailed(pattern: String) { /(${pattern})/v }
+
+    assert(str(typeof 'x'.match(plain('x'))) == 'nil | String | Array[String]')
+    assert(str(typeof 'x'.match(detailed('x'))) == 'RegexMatch')
+    assert('x'.match(plain('x')) == 'x')
+    assert('(x)'.match(plain('(x)')) == '(x)')
+    assert('x'.match(detailed('x')).captures == ['x'])
+}
+
+pub fn capture-type-patterns() {
+    fn classify(value: _) {
+        match value {
+            re: RegexV[0] => 'detailed plain',
+            re: RegexV[(1..)] => 'detailed captures',
+            re: Regex[0] => 'plain',
+            re: Regex[(1..)] => 'captures',
+            _ => 'other'
+        }
+    }
+
+    assert(classify(/x/) == 'plain')
+    assert(classify(/(x)/) == 'captures')
+    assert(classify(/(x)(y)/) == 'captures')
+    assert(classify(/x/v) == 'detailed plain')
+    assert(classify(/(x)/v) == 'detailed captures')
+    assert(classify(/(x)(y)/v) == 'detailed captures')
+    assert(classify('x') == 'other')
+}
+
+pub fn incompatible-capture-types() {
+    for source in [
+        'do { let re: Regex[0] = /(x)/ }',
+        'do { let re: Regex[(1..)] = /x/ }',
+        'do { let re: RegexV[0] = /x/ }',
+        'do { let re: RegexV[0] = /(x)/v }',
+        'do { let re: RegexV = /x/ }',
+        'do { let re: RegexV | nil = /x/ }',
+        'do { let re: RegexV = true ? /x/v : /x/ }'
+    ] {
+        try {
+            __eval__(source)
+            assert(false, source)
+        } catch ex :: '[assignment-type]' in ex.what {
+            ;
+        }
+    }
+}

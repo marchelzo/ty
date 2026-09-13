@@ -156,7 +156,7 @@ pub class INIFile {
 }
 
 pub fn parse(s: String) {
-    let dict: Dict[String | nil, Dict[String, String]] = %{*: %{}}
+    let dict = %{*: %{}}
 
     let section = nil
 

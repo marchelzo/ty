@@ -986,12 +986,14 @@ lexregex(Ty *ty, bool strict)
 
         while (isalpha(C(0))) {
                 switch (C(0)) {
-                case 'i': flags |= PCRE2_CASELESS;        break;
-                case 'u': flags |= PCRE2_UTF | PCRE2_UCP; break;
-                case 'm': flags |= PCRE2_MULTILINE;       break;
-                case 'x': flags |= PCRE2_EXTENDED;        break;
-                case 's': flags |= PCRE2_DOTALL;          break;
-                case 'v': detailed = true;                break;
+                case 'v': detailed = true;                  break;
+                case 'i': flags |= PCRE2_CASELESS;          break;
+                case 'm': flags |= PCRE2_MULTILINE;         break;
+                case 'x': flags |= PCRE2_EXTENDED;          break;
+                case 's': flags |= PCRE2_DOTALL;            break;
+                case 'u': flags |= PCRE2_UTF
+                                 | PCRE2_UCP
+                                 | PCRE2_MATCH_INVALID_UTF; break;
                 default:  goto BadFlags;
                 }
                 nextchar(ty);

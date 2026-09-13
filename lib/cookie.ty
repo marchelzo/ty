@@ -216,17 +216,18 @@ pub fn windows-path-to-wsl(path: String) -> Path | nil {
     if #path < 3 || path.slice(1, 1) != ':' { return nil }
     let drive = path.slice(0, 1).lower()
     let rest = path.slice(2).replace('\\', '/')
-    Path("/mnt/{drive}/{rest.trim('/')}")
+    Path("/mnt/{drive}/{rest.comb(/^\/+|\/+$/)}")
 }
 
 fn windows-local-app-data() -> Path | nil {
     if !wsl?() { return nil }
-    if not let $answer = sh.sh(
+    let out, result = sh.sh(
         "[Environment]::GetFolderPath('LocalApplicationData')",
         shell=['powershell.exe', '-NoProfile', '-NonInteractive', '-Command']
-    ) { return nil }
-    let out, result = answer
-    if result.status != 0 { return nil }
+    )
+    if out == nil || result == nil || result.status != 0 {
+        return nil
+    }
     windows-path-to-wsl(out.trim())
 }
 
@@ -357,13 +358,14 @@ fn windows-chrome-key(local-state: Path) -> Blob | nil {
         '$p=[Security.Cryptography.ProtectedData]::Unprotect($d,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)',
         '[Convert]::ToBase64String($p)'
     ].join(';')
-    if not let $answer = sh.sh(
+    let out, result = sh.sh(
         script,
         input=base64.encode(wrapped.slice(5)),
         shell=['powershell.exe', '-NoProfile', '-NonInteractive', '-Command']
-    ) { return nil }
-    let out, result = answer
-    if result.status != 0 { return nil }
+    )
+    if out == nil || result == nil || result.status != 0 {
+        return nil
+    }
     try { base64.decode(out.trim()) }
 }
 
@@ -391,7 +393,7 @@ pub class ChromeCookieDecryptor {
     meta-version: Int
     __key: Blob | nil
     __windows-key: Blob | nil
-    cookie-counts: Dict[String, Int]
+    cookie-counts: DefaultDict[String, Int]
     decryption-failures: Int
 
     init(
@@ -401,7 +403,7 @@ pub class ChromeCookieDecryptor {
     ) {
         self.meta-version = meta-version
         __windows-key = windows-key
-        cookie-counts = %{'v10': 0, 'v11': 0, 'v20': 0, 'other': 0}
+        cookie-counts = %{'v10': 0, 'v11': 0, 'v20': 0, 'other': 0, *: 0}
         decryption-failures = 0
         if windows-key != nil {
             __key = nil
@@ -444,13 +446,12 @@ pub class ChromeCookieDecryptor {
             __key = mac-safe-storage-key()
         }
 #|]
-        if __key == nil && __windows-key == nil {
-            decryption-failures += 1
-            return nil
+        let payload = encrypted-value.slice(3)
+        let plain = match (__windows-key, __key) {
+            (key: Blob, _) => aes-gcm-decrypt(payload, key),
+            (_, key: Blob) => aes-cbc-decrypt(payload, key),
+            _ => nil
         }
-        let plain = (__windows-key != nil)
-            ? aes-gcm-decrypt(encrypted-value.slice(3), __windows-key)
-            : aes-cbc-decrypt(encrypted-value.slice(3), __key)
         if plain == nil {
             decryption-failures += 1
             return nil

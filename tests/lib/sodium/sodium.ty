@@ -7,6 +7,6 @@ pub fn sodium-hash() {
     let pass = with f = io::open('/dev/random', 'r') {
         f.next(64)
     }
-    let $h = sodium::hash(pass)
+    let $h = sodium::hash(pass) or throw AssertionError('hash failed')
     assert(sodium::verify(h, pass))
 }

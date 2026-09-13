@@ -979,6 +979,8 @@ use AST = __define_ast!(fn (t0) { t0 })
 class Dict[K, V] : Iterable[K, V] {
     init();
 
+    clone() -> Dict[K, V];
+
     keys()   -> Array[K];
     values() -> Array[V];
     items()  -> Array[(K, V)];
@@ -1107,7 +1109,13 @@ class String : Iterable[String], IntoPtr[Int] {
     sub(pattern: Regex[(1..)], replacement: String | (Array[String] -> Any)) -> String;
     sub(pattern: Regex[Any], replacement: String | ((String | Array[String]) -> Any)) -> String;
 
-    match(pattern: RegexV) -> RegexMatch;
+    replace(pattern: String | Regex, replacement: String) -> String;
+    replace(pattern: RegexV, replacement: String | (RegexMatch -> Any)) -> String;
+    replace(pattern: Regex[0], replacement: String | (String -> Any)) -> String;
+    replace(pattern: Regex[(1..)], replacement: String | (Array[String] -> Any)) -> String;
+    replace(pattern: Regex[Any], replacement: String | ((String | Array[String]) -> Any)) -> String;
+
+    match(pattern: RegexV[(0..)]) -> RegexMatch;
     match(pattern: Regex[0]) -> String | nil;
     match(pattern: Regex[(1..)]) -> Array[String] | nil;
     match(pattern: Regex) -> String | Array[String] | nil;
@@ -1616,7 +1624,7 @@ class Bool {
     __not__() { return !self }
 }
 
-class Regex < Function {
+class Regex[N] < Function {
     source -> String;
     init(x) { regex(x) }
     __call__(s: String) -> String | Array[String | nil] | nil;
@@ -1628,7 +1636,7 @@ class Regex < Function {
     }
 }
 
-class RegexV < Regex {
+class RegexV[N] < Regex[N] {
 }
 
 trait IntoPtr[T] {

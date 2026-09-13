@@ -157,6 +157,8 @@ struct t2_solver {
 
         vec(T2Obligation) obligations;
 
+        vec(u64) recursive_constraints;
+
         T2PredicateResolver *predicate_resolver;
         void                *predicate_context;
 
@@ -3587,7 +3589,8 @@ compare_field_types(
         T2RelationContext *context,
         T2Node const      *actual,
         T2Node const      *expected,
-        unsigned           progress
+        unsigned           progress,
+        bool               shape_only
 )
 {
         T2Presence actual_presence = (actual == NULL)
@@ -3626,6 +3629,10 @@ compare_field_types(
                 return T2_RELATION_NO;
         }
 
+        if (shape_only) {
+                return T2_RELATION_YES;
+        }
+
         return subtype_relation(
                 context,
                 actual->children[0],
@@ -3639,7 +3646,8 @@ record_subtype(
         T2RelationContext *context,
         T2Node const      *actual,
         T2Node const      *expected,
-        unsigned           progress
+        unsigned           progress,
+        bool               shape_only
 )
 {
         T2Node const *actual_tail = get_node(
@@ -3696,7 +3704,7 @@ record_subtype(
 
                 relation = combine_all(
                         relation,
-                        compare_field_types(context, have, wanted, progress)
+                        compare_field_types(context, have, wanted, progress, shape_only)
                 );
                 if (relation == T2_RELATION_NO) {
                         return relation;
@@ -3802,7 +3810,7 @@ row_subtype(
 
                 relation = combine_all(
                         relation,
-                        compare_field_types(context, have, wanted, progress)
+                        compare_field_types(context, have, wanted, progress, false)
                 );
                 if (relation == T2_RELATION_NO) {
                         return relation;
@@ -4823,7 +4831,7 @@ subtype_compute(
         }
 
         if (a->kind == T2_TYPE_RECORD && b->kind == T2_TYPE_RECORD) {
-                return record_subtype(context, a, b, progress);
+                return record_subtype(context, a, b, progress, false);
         }
 
         if (a->kind == T2_TYPE_ROW && b->kind == T2_TYPE_ROW) {
@@ -5870,6 +5878,13 @@ t2_type_kind(T2Universe const *universe, T2Type type)
 {
         T2Node const *node = get_node(universe, type);
         return (node == NULL) ? T2_TYPE_KIND_COUNT : (T2TypeKind)node->kind;
+}
+
+bool
+t2_type_has_metas(T2Universe const *universe, T2Type type)
+{
+        T2Node const *node = get_node(universe, type);
+        return (node != NULL) && ((node->flags & T2_NODE_META) != 0);
 }
 
 T2VariableKind
@@ -8684,6 +8699,7 @@ t2_solver_free(T2Solver *solver)
         xvF(solver->edges);
         xvF(solver->obligations);
         xvF(solver->work);
+        xvF(solver->recursive_constraints);
         xvF(solver->undo);
         xvF(solver->causes);
         ty_free(solver->failure_provenance);
@@ -8765,7 +8781,8 @@ check_bounds(T2Solver *solver, u32 meta, char const *provenance)
                 lower,
                 upper,
                 provenance,
-                false
+                t2_type_has_metas(solver->universe, lower)
+             || t2_type_has_metas(solver->universe, upper)
         );
         v__(solver->metas, meta - 1).checking_bounds = false;
         if (relation == T2_RELATION_NO) {
@@ -9969,7 +9986,8 @@ constrain_record_types(
         bool          retain_deferred
 )
 {
-        T2Relation shape = t2_subtype(solver->universe, actual_type, expected_type);
+        T2RelationContext context = { .universe = solver->universe };
+        T2Relation shape = record_subtype(&context, actual, expected, 0, true);
         if (shape == T2_RELATION_NO || shape == T2_RELATION_COMPLEXITY) {
                 set_solver_error(
                         solver,
@@ -10575,10 +10593,10 @@ solver_types_identical(
 }
 
 static bool
-type_has_open_meta(T2Solver *solver, T2Type type, unsigned depth)
+argument_type_is_open(T2Solver *solver, T2Type type, unsigned depth)
 {
         if (depth > T2_RELATION_DEPTH_LIMIT || type == T2_TYPE_INVALID) {
-                return false;
+                return true;
         }
 
         u32 meta = meta_from_type(solver, type);
@@ -10586,18 +10604,21 @@ type_has_open_meta(T2Solver *solver, T2Type type, unsigned depth)
                 meta = find_root(solver, meta);
                 T2Type solution = v__(solver->metas, meta - 1).solution;
                 if (solution == T2_TYPE_INVALID) {
-                        return true;
+                        solution = v__(solver->metas, meta - 1).lower;
+                        if (t2_type_kind(solver->universe, solution) == T2_TYPE_NEVER) {
+                                return true;
+                        }
                 }
-                return type_has_open_meta(solver, solution, depth + 1);
+                return argument_type_is_open(solver, solution, depth + 1);
         }
 
         T2Node const *node = get_node(solver->universe, type);
-        if (node == NULL) {
+        if (node == NULL || node->kind == T2_TYPE_FUNCTION) {
                 return false;
         }
 
         for (usize i = 0; i < node->arity; ++i) {
-                if (type_has_open_meta(solver, node->children[i], depth + 1)) {
+                if (argument_type_is_open(solver, node->children[i], depth + 1)) {
                         return true;
                 }
         }
@@ -10610,7 +10631,7 @@ callable_parameters_open(T2Solver *solver, T2Node const *callable)
 {
         usize count = (usize)callable->payload;
         for (usize i = 0; i < count && i < callable->arity; ++i) {
-                if (type_has_open_meta(solver, callable->children[i], 0)) {
+                if (argument_type_is_open(solver, callable->children[i], 0)) {
                         return true;
                 }
         }
@@ -10850,6 +10871,40 @@ constrain_internal(
 
         if (a->kind == T2_TYPE_ANY) {
                 return T2_RELATION_YES;
+        }
+
+        T2Type unfolded_subtype   = t2_recursive_unfold(solver->universe, subtype);
+        T2Type unfolded_supertype = t2_recursive_unfold(solver->universe, supertype);
+        if (unfolded_subtype != subtype || unfolded_supertype != supertype) {
+                if (t2_subtype(solver->universe, subtype, supertype) == T2_RELATION_YES) {
+                        return T2_RELATION_YES;
+                }
+                u64 pair = (u64)subtype << 32 | supertype;
+                for (usize i = 0; i < vN(solver->recursive_constraints); ++i) {
+                        if (v__(solver->recursive_constraints, i) == pair) {
+                                return T2_RELATION_YES;
+                        }
+                }
+                if (vN(solver->recursive_constraints) >= T2_RELATION_DEPTH_LIMIT) {
+                        set_solver_error(
+                                solver,
+                                "recursive constraint exceeded its complexity limit",
+                                subtype,
+                                supertype,
+                                provenance
+                        );
+                        return T2_RELATION_COMPLEXITY;
+                }
+                xvP(solver->recursive_constraints, pair);
+                T2Relation result = constrain_internal(
+                        solver,
+                        unfolded_subtype,
+                        unfolded_supertype,
+                        provenance,
+                        retain_deferred
+                );
+                vN(solver->recursive_constraints) -= 1;
+                return result;
         }
 
         if (a->kind == T2_TYPE_UNION) {
@@ -13041,6 +13096,70 @@ t2_scheme_body(T2Scheme const *scheme)
         return (scheme == NULL) ? T2_TYPE_INVALID : scheme->body;
 }
 
+bool
+t2_scheme_has_metas(T2Scheme const *scheme)
+{
+        if (scheme == NULL) {
+                return false;
+        }
+        if (t2_type_has_metas(scheme->universe, scheme->body)) {
+                return true;
+        }
+        for (usize i = 0; i < scheme->predicate_count; ++i) {
+                T2Predicate const *predicate = &scheme->predicates[i];
+                if (
+                        t2_type_has_metas(scheme->universe, predicate->subtype)
+                     || t2_type_has_metas(scheme->universe, predicate->supertype)
+                     || t2_type_has_metas(scheme->universe, predicate->operand)
+                ) {
+                        return true;
+                }
+        }
+        return false;
+}
+
+bool
+t2_solver_zonk_scheme(T2Solver *solver, T2Scheme *scheme)
+{
+        if (scheme == NULL) {
+                return true;
+        }
+        scheme->body = t2_solver_zonk(solver, scheme->body, T2_PREFER_LOWER_BOUND);
+        if (scheme->body == T2_TYPE_INVALID) {
+                return false;
+        }
+        for (usize i = 0; i < scheme->predicate_count; ++i) {
+                T2Predicate *predicate = &scheme->predicates[i];
+                predicate->subtype = t2_solver_zonk(
+                        solver,
+                        predicate->subtype,
+                        T2_PREFER_LOWER_BOUND
+                );
+                predicate->supertype = t2_solver_zonk(
+                        solver,
+                        predicate->supertype,
+                        T2_PREFER_LOWER_BOUND
+                );
+                if (
+                        (predicate->subtype == T2_TYPE_INVALID)
+                     || (predicate->supertype == T2_TYPE_INVALID)
+                ) {
+                        return false;
+                }
+                if (predicate->operand != T2_TYPE_INVALID) {
+                        predicate->operand = t2_solver_zonk(
+                                solver,
+                                predicate->operand,
+                                T2_PREFER_LOWER_BOUND
+                        );
+                        if (predicate->operand == T2_TYPE_INVALID) {
+                                return false;
+                        }
+                }
+        }
+        return true;
+}
+
 usize
 t2_scheme_predicate_count(T2Scheme const *scheme)
 {
@@ -14268,7 +14387,10 @@ solver_generalize(
                 T2Meta const *meta = v_(solver->metas, i);
                 if (meta->lower != never) {
                         predicates[predicate_count++] = (T2Predicate) {
-                                .subtype    = generalize_type(&generalization, meta->lower),
+                                .subtype    = generalize_type(
+                                        &generalization,
+                                        weak_lower_view(solver, meta->lower, NULL, 0)
+                                ),
                                 .supertype  = replacements[i],
                                 .provenance = meta->provenance
                         };
@@ -14277,7 +14399,10 @@ solver_generalize(
                 if (meta->upper != any) {
                         predicates[predicate_count++] = (T2Predicate) {
                                 .subtype    = replacements[i],
-                                .supertype  = generalize_type(&generalization, meta->upper),
+                                .supertype  = generalize_type(
+                                        &generalization,
+                                        weak_lower_view(solver, meta->upper, NULL, 0)
+                                ),
                                 .provenance = meta->provenance
                         };
                 }
@@ -14293,16 +14418,26 @@ solver_generalize(
                         continue;
                 }
 
+                T2Predicate edge = {
+                        .subtype    = meta_type(solver, sub),
+                        .supertype  = meta_type(solver, sup),
+                        .provenance = v__(solver->edges, i).provenance
+                };
+                T2Predicate viewed = obligation_view(solver, &edge);
+                if (viewed.subtype == viewed.supertype) {
+                        continue;
+                }
+
                 predicates[predicate_count++] = (T2Predicate) {
                         .subtype = generalize_type(
                                 &generalization,
-                                meta_type(solver, sub)
+                                viewed.subtype
                         ),
                         .supertype = generalize_type(
                                 &generalization,
-                                meta_type(solver, sup)
+                                viewed.supertype
                         ),
-                        .provenance = v__(solver->edges, i).provenance
+                        .provenance = viewed.provenance
                 };
         }
 

@@ -16,11 +16,10 @@ pub class Hash {
 
     init(name: String, data: String | Blob | nil = nil) {
         __name = name.lower()
-        if __name not in ALGORITHMS {
+        if not let (algorithm, digest-size, block-size) = ALGORITHMS[__name] {
             throw ValueError("unsupported hash algorithm: {name}")
         }
 
-        let (algorithm, digest-size, block-size) = ALGORITHMS[__name]
         __digest-size = digest-size
         __block-size = block-size
         __state = _hash::new(algorithm)

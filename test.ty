@@ -21,6 +21,8 @@ let system-cpu-us = Atomic(0)
 const TY_CMD  = getenv('TY_PATH') ?? ty.executable
 const TY_OPTS = ['-q' if ty.q, '-j' if !ty.jit].unwords()
 
+setenv('NO_COLOR', '')
+
 const ALL_TESTS = argv.pluck(\_ == '-a') :: Some
 
 const FILTER = match argv {

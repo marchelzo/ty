@@ -906,10 +906,10 @@ pub fn parse(input: String) -> Calendar {
     }
 
     if #stack > 0 { throw ICalError("unclosed component: {stack[-1].name}") }
-    if #roots != 1 || !(roots[0] :: Calendar) {
+    if not let [calendar: Calendar] = roots {
         throw ICalError('input must contain exactly one VCALENDAR object')
     }
-    roots[0]
+    calendar
 }
 
 pub fn read(path: String) -> Calendar {

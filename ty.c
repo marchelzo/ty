@@ -313,9 +313,11 @@ readln(Ty *ty)
              && CALLABLE(*_readln)
         ) {
                 if (TY_CATCH_ERROR()) {
+                        char *trace = FormatTrace(ty, NULL, NULL);
                         Value exc = TY_CATCH();
-                        fprintf(stderr, "\n%s\n", VSC(&exc));
-                        return NULL;
+                        fprintf(stderr, "\n%s\n%s\n", trace, VSC(&exc));
+                        xmF(trace);
+                        return S2("");
                 }
 
                 Value line = vm_call(ty, _readln, 0);

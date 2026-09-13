@@ -4,10 +4,10 @@ ns test
 
 pub fn sh-basic() {
     if __windows__ {
-        let $out = sh('echo hello')
+        let $out = sh('echo hello') or throw AssertionError('command did not complete')
         assert(out.strip() == 'hello')
     } else {
-        let $out = sh('printf based')
+        let $out = sh('printf based') or throw AssertionError('command did not complete')
         assert(out == 'based')
     }
 }
@@ -15,13 +15,17 @@ pub fn sh-basic() {
 pub fn sh-combine-output() {
     if not __windows__ {
         let $out = sh('printf based 1>&2', combineOutput=true)
+            or throw AssertionError('command did not complete')
         assert(out == 'based')
     }
 }
 
 pub fn sh-cpu-time() {
     if not __windows__ {
-        let _, $result = sh('printf based')
+        let _, result = sh('printf based')
+        if result == nil {
+            throw AssertionError('command did not complete')
+        }
         assert(#result.rusage == 16)
         assert(result.rusage.utime >= 0.0)
         assert(result.rusage.stime >= 0.0)

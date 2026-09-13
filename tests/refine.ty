@@ -244,7 +244,10 @@ fn bad(box: Box) {
     take-string(box.value)
 }
 ''')
-        let $output, $result = sh("{ty.executable} {source}", combineOutput=true)
+        let output, result = sh("{ty.executable} {source}", combineOutput=true)
+        if output == nil || result == nil {
+            throw AssertionError('command did not complete')
+        }
         assert(result.status != 0)
         assert(output.contains?('[bad-call]'))
         assert(output.contains?('Int | String <: String'))

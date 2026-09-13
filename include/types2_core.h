@@ -582,6 +582,12 @@ t2_scheme_quantifier(
 T2Type
 t2_scheme_body(T2Scheme const *scheme);
 
+bool
+t2_scheme_has_metas(T2Scheme const *scheme);
+
+bool
+t2_solver_zonk_scheme(T2Solver *solver, T2Scheme *scheme);
+
 size_t
 t2_scheme_predicate_count(T2Scheme const *scheme);
 
@@ -659,6 +665,9 @@ t2_solver_generalize_scoped(
 
 T2TypeKind
 t2_type_kind(T2Universe const *universe, T2Type type);
+
+bool
+t2_type_has_metas(T2Universe const *universe, T2Type type);
 
 T2VariableKind
 t2_type_variable_kind(T2Universe const *universe, T2Type type);

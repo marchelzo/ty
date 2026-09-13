@@ -1,7 +1,10 @@
 import io
 import json
 import os (..)
+import path (Path)
 import ty
+
+setenv('TY_LS_CMD', getenv('TY_LS_CMD') ?? "{Path(ty.executable).parent / 'tyls'}")
 
 // ── LSP Client ──────────────────────────────────────────────────────
 

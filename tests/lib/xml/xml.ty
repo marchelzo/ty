@@ -24,3 +24,18 @@ pub fn xml-xpath() {
     }
     assert(msgs == ['PASS'])
 }
+
+pub fn schema-validation() {
+    let schema = Schema.parse('''
+        <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:element name="count" type="xs:integer"/>
+        </xs:schema>
+    ''')
+
+    let (errors, warnings) = schema.validate(parse('<count>7</count>'))
+    assert(#errors == 0)
+    assert(#warnings == 0)
+
+    let (errors, _) = schema.validate(parse('<count>invalid</count>'))
+    assert(#errors > 0)
+}

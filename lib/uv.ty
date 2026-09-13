@@ -435,11 +435,11 @@ pub class UVStream < UVHandle {
         }
     }
 
-    on-eof=(cb: () -> nil) {
+    on-eof=(cb: (() -> nil) | nil) {
         __eof_cb = cb
     }
 
-    on-close=(cb: () -> nil) {
+    on-close=(cb: (() -> nil) | nil) {
         __close_cb = cb
     }
 
@@ -583,7 +583,7 @@ pub class UV {
     __listening:     Dict[Ptr, UVSocket]
     __ticking:       Dict[Ptr, UVTimer]
     __watching:      Dict[Ptr, UVFSEvent]
-    __pending:       Dict[Ptr, Generator[_]]
+    __pending:       Dict[Ptr, Generator[_, _]]
     __on_close:      Ptr
     __on_connect:    Ptr
     __on_connection: Ptr
@@ -595,8 +595,8 @@ pub class UV {
     __on_timer:      Ptr
     __on_write:      Ptr
     __alloc_cb:      Ptr
-    __free_reqs:     Dict[Int, Array[Ptr]]
-    __free_hnds:     Dict[Int, Array[Ptr]]
+    __free_reqs:     DefaultDict[Int, Array[Ptr]]
+    __free_hnds:     DefaultDict[Int, Array[Ptr]]
 
     init(loop: Ptr | nil = nil) {
         C! closure alloc_cb(
@@ -635,7 +635,7 @@ pub class UV {
         }
 
         C! closure on_timer(handle: c.ptr) {
-            let timer = __ticking[handle]
+            let $timer = __ticking[handle] or return
             timer.on-fire()
         }
 
@@ -1040,7 +1040,7 @@ pub class UV {
         family: Int = 0,
         socktype: Int = 0,
         protocol: Int = 0
-    ) {
+    ) -> Ok[Array[SockAddr]] | Err[Int] {
         let req = _req(UV_GETADDRINFO)
         let hints = addrinfo(
             ai_family=family,
@@ -1193,7 +1193,7 @@ pub fn getaddrinfo(
     family: Int = 0,
     socktype: Int = 0,
     protocol: Int = 0
-) {
+) -> Ok[Array[SockAddr]] | Err[Int] {
     loop().getaddrinfo(host, service, family, socktype, protocol)
 }
 
@@ -1220,9 +1220,7 @@ pub fn race(fns: _, stagger: Int = 0) {
         }
     }
 
-    let launch-next = nil
-
-    launch-next = fn () {
+    fn launch-next() {
         if next-idx < #fns && winner == nil {
             let f = fns[next-idx++]
             let my-idx = #coros

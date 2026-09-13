@@ -15175,6 +15175,7 @@ cexpr(Ty *ty, Value *v)
                 e->start = src->start;
                 e->end = src->end;
                 e->mod = src->mod;
+                e->bang = (src->type < EXPRESSION_MAX_TYPE) && src->bang;
         } else {
                 e->start = STATE.mstart;
                 e->end = STATE.mend;

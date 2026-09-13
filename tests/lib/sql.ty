@@ -1,9 +1,26 @@
-import sql (table, connect, disconnect, transaction, rows, ValidationError, diff, migrate!, generate, up, down, redo, migration-status, pending)
+import sql (
+    table,
+    connect,
+    disconnect,
+    transaction,
+    rows,
+    ValidationError,
+    diff,
+    migrate!,
+    generate,
+    up,
+    down,
+    redo,
+    migration-status,
+    pending
+)
 import sqlite (SQLite)
 import path (Path)
 import date (PlainDate, PlainDateTime)
 import json
 import io
+import sh (sh)
+import ty
 
 @table
 class User {
@@ -283,7 +300,11 @@ pub fn test-connect-loads-schema-before-sync() {
         """
     )
     assert(User.get(1).name == 'from schema')
-    assert(db.fetch-one('PRAGMA user_version')['user_version'] == 17)
+    let row: Dict[String, Int] | nil = db.fetch-one('PRAGMA user_version')
+    if row == nil {
+        throw AssertionError('PRAGMA user_version returned no row')
+    }
+    assert(row['user_version'] == 17)
 }
 
 pub fn test-connect-can-skip-model-sync() {
@@ -312,7 +333,7 @@ pub fn test-composite-primary-key() {
     assert(enrollment.student_id == 7)
     assert(enrollment.course_id == 11)
 
-    let found = Enrollment.get([7, 11])
+    let $found = Enrollment.get([7, 11]) or throw AssertionError('enrollment not found')
     assert(found.value == 'first')
     found.value = 'updated'
     found.save()
@@ -736,9 +757,10 @@ pub fn test-includes-with-first() {
     let u = User(name='Alice').insert()
     Post(title='Hello', author=u.id).insert()
 
-    let p = Post.query()
+    let $p = Post.query()
         .includes('user')
         .first()
+        or throw AssertionError('post not found')
     assert(p.user().name == 'Alice')
     assert(p.preloaded != nil)
 }

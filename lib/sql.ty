@@ -8,7 +8,7 @@ import date
 import os
 import io
 
-pub __tls::_db: _ = SQLite(':memory:')
+pub __tls::_db: SQLite = SQLite(':memory:')
 let _tables = []
 let _tables-mu = Mutex()
 
@@ -232,7 +232,7 @@ pub fn migrate!(db: SQLite | nil = nil) {
     ops
 }
 
-fn _resolve-db(db: _) {
+fn _resolve-db(db: nil | SQLite) -> SQLite {
     db ?? _db
 }
 
@@ -455,7 +455,7 @@ fn _snake(s: String) -> String {
 
 fn _quote(name: String) -> String {
     name.match?(/[^a-zA-Z0-9_]/)
-        ? "\"{name.replace('"', '""')}\""
+        ? "\"{name.sub('"', '""')}\""
         : name
 }
 
@@ -492,7 +492,7 @@ fn _sql-default(val: Int | Float | String | Bool | nil) -> String {
     match val {
         v: Int    => "{v}",
         v: Float  => "{v}",
-        v: String => "'{v.replace("'", "''")}'",
+        v: String => "'{v.sub("'", "''")}'",
         true      => '1',
         false     => '0',
         nil       => 'NULL',
@@ -728,10 +728,10 @@ pub class Query[T] : Iterable[T] {
     }
 
     pluck(col: String, db = nil) {
-        let db = _resolve-db(db)
-        db.fetch-all(
+        rows(
             _select-sql(_quote(col)),
-            *__params
+            *__params,
+            db = db
         ).map(\_.values()[0])
     }
 
@@ -883,15 +883,9 @@ fn _date?(name: String) -> Bool {
     name in _date-types
 }
 
-fn _deserialize(val: String | nil, tname: String) {
-    if val == nil { return nil }
-    match tname {
-        'PlainDate'     => date.PlainDate.from(val),
-        'PlainDateTime' => date.PlainDateTime.from(val),
-        'PlainTime'     => date.PlainTime.from(val),
-        'Instant'       => date.Instant.from(val),
-        _               => val
-    }
+fn _deserialize[T](val: String | nil, parse: String -> T) -> T | nil {
+    return nil if val == nil
+    parse(val)
 }
 
 fn _now() -> String {
@@ -1481,12 +1475,20 @@ pub macro table(def: _) {
 
     fn row-val(c: _) {
         let $k = ty.String(c.name)
-        if c.date != nil {
-            let $tn = ty.String(c.date)
-            $$[ $$::(_deserialize)(r[$$k], $$tn) $$]
-        } else {
-            $$[ r[$$k] $$]
+        if c.date == nil {
+            return $$[ r[$$k] $$]
         }
+
+        let $parse = match c.date {
+            'PlainDate'     => $$[ $$::(date.PlainDate).from $$],
+            'PlainDateTime' => $$[ $$::(date.PlainDateTime).from $$],
+            'PlainTime'     => $$[ $$::(date.PlainTime).from $$],
+            'Instant'       => $$[ $$::(date.Instant).from $$]
+        }
+
+        c.nullable
+            ? $$[ $$::(_deserialize)(r[$$k], $$parse) $$]
+            : $$[ $$parse(r[$$k]) $$]
     }
 
     let from-row = ty.Func(

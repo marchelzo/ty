@@ -210,7 +210,19 @@ pub fn poll[T](
 ) -> Ok[[(Int, Int) | (Int, Int, T)]] | Err[Int];
 
 pub fn poll[T](
-    pollfds-in: Iterable[Int | (Int, Int, T)],
+    pollfds-in: Iterable[(Int, Int, T)],
+    pollfds-out: [(Int, Int, T)],
+    timeout: Float | Int | nil
+) -> Int;
+
+pub fn poll(
+    pollfds-in: Iterable[Int | (Int, Int)],
+    pollfds-out: [(Int, Int)],
+    timeout: Float | Int | nil
+) -> Int;
+
+pub fn poll[T](
+    pollfds-in: Iterable[Int | (Int, Int) | (Int, Int, T)],
     pollfds-out: [(Int, Int) | (Int, Int, T)],
     timeout: Float | Int | nil
 ) -> Int;

@@ -12,7 +12,7 @@
 #include "value.h"
 #include "vm.h"
 
-#define ty_re_match(...) pcre2_match(__VA_ARGS__, ty->pcre2.match, ty->pcre2.ctx)
+#define ty_re_match(...) pcre2_match(__VA_ARGS__, PCRE2_NO_UTF_CHECK, ty->pcre2.match, ty->pcre2.ctx)
 #define ty_re_ovec()     pcre2_get_ovector_pointer(ty->pcre2.match)
 
 #define ty_re_panic(e) do {                     \
@@ -355,7 +355,10 @@ string_search_all(Ty *ty, Value *string, int argc, Value *kwargs)
                 usize *ovec = ty_re_ovec();
                 isize rc;
                 for (;;) {
-                        if ((rc = ty_re_match(re, s, bytes, off, 0)) <= 0) {
+                        if ((rc = ty_re_match(re, s, bytes, off)) <= 0) {
+                                if (UNLIKELY(rc < -2)) {
+                                        ty_re_panic(rc);
+                                }
                                 break;
                         }
 
@@ -416,23 +419,19 @@ string_bsearch(Ty *ty, Value *string, int argc, Value *kwargs)
 
         if (pattern.type == VALUE_STRING) {
                 u8 const *match = mmmm(s, bytes, ss(pattern), sN(pattern));
-
-                if (match == NULL)
+                if (match == NULL) {
                         return NIL;
-
+                }
                 n = match - s;
         } else if (pattern.type == VALUE_REGEX) {
                 usize *ovec = ty_re_ovec();
-                isize rc = ty_re_match(pattern.regex->pcre2, s, bytes, 0, 0);
-
+                isize rc = ty_re_match(pattern.regex->pcre2, s, bytes, 0);
                 if (rc == PCRE2_ERROR_NOMATCH) {
                         return NIL;
                 }
-
                 if (rc < 0) {
                         ty_re_panic(rc);
                 }
-
                 n = ovec[0];
         } else {
                 ARGx(0, VALUE_STRING, VALUE_REGEX);
@@ -448,8 +447,7 @@ string_search(Ty *ty, Value *string, int argc, Value *kwargs)
         ASSERT_ARGC("String.search()", 1, 2);
 
         Value pattern = ARGx(0, VALUE_STRING, VALUE_REGEX);
-
-        isize offset = (argc == 1) ? 0 : INT_ARG(1);
+        isize offset  = (argc == 1) ? 0 : INT_ARG(1);
 
         if (offset < 0) {
                 offset += TyStrLen(string);
@@ -460,8 +458,7 @@ string_search(Ty *ty, Value *string, int argc, Value *kwargs)
         }
 
         isize off = x_x_x(ss(*string), sN(*string), offset);
-
-        if (off >= sN(*string)) {
+        if (off > sN(*string)) {
                 return NIL;
         }
 
@@ -477,8 +474,7 @@ string_search(Ty *ty, Value *string, int argc, Value *kwargs)
                 pcre2_code *re = pattern.regex->pcre2;
                 usize *ovec = ty_re_ovec();
 
-                isize rc = ty_re_match(re, (PCRE2_SPTR)s, bytes, 0, 0);
-
+                isize rc = ty_re_match(re, (PCRE2_SPTR)s, bytes, 0);
                 if (rc < -1) {
                         ty_re_panic(rc);
                 }
@@ -522,7 +518,7 @@ string_searchr(Ty *ty, Value *string, int argc, Value *kwargs)
                 isize pos = 0;
 
                 while (pos <= bytes) {
-                        isize rc = ty_re_match(re, (PCRE2_SPTR)(s + pos), bytes - pos, 0, 0);
+                        isize rc = ty_re_match(re, (PCRE2_SPTR)(s + pos), bytes - pos, 0);
                         if (rc == PCRE2_ERROR_NOMATCH) {
                                 break;
                         }
@@ -572,7 +568,7 @@ string_bsearchr(Ty *ty, Value *string, int argc, Value *kwargs)
                 isize pos = 0;
 
                 while (pos <= bytes) {
-                        isize rc = ty_re_match(re, (PCRE2_SPTR)(s + pos), bytes - pos, 0, 0);
+                        isize rc = ty_re_match(re, (PCRE2_SPTR)(s + pos), bytes - pos, 0);
                         if (rc == PCRE2_ERROR_NOMATCH) {
                                 break;
                         }
@@ -786,7 +782,7 @@ string_split(Ty *ty, Value *string, int argc, Value *kwargs)
                         isize n = 0;
                         if (
                                 (vN(*result.array) == limit)
-                             || ((n = ty_re_match(re, s, len, pstart, 0)) <= 0)
+                             || ((n = ty_re_match(re, s, len, pstart)) <= 0)
                         ) {
                                 ovec[0] = len;
                                 ovec[1] = len + 1;
@@ -850,7 +846,10 @@ string_count(Ty *ty, Value *string, int argc, Value *kwargs)
                 isize rc;
 
                 for (;;) {
-                        if ((rc = ty_re_match(re, s, len, off, 0)) <= 0) {
+                        if ((rc = ty_re_match(re, s, len, off)) <= 0) {
+                                if (UNLIKELY(rc < -2)) {
+                                        ty_re_panic(rc);
+                                }
                                 break;
                         }
 
@@ -926,7 +925,7 @@ string_comb(Ty *ty, Value *string, int argc, Value *kwargs)
                 i32 sz;
                 i32 rc;
 
-                while ((rc = ty_re_match(re, str, len, start, 0)) > 0) {
+                while ((rc = ty_re_match(re, str, len, start)) > 0) {
                         svPn(scratch, str + start, ovec[0] - start);
                         if (ovec[0] == ovec[1]) {
                                 if (ovec[0] >= len) {
@@ -1053,16 +1052,11 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                 isize sz;
 
                 for (;;) {
-                        isize n = pcre2_match(
-                                re,
-                                (PCRE2_SPTR)s,
-                                len,
-                                start,
-                                0,
-                                ty->pcre2.match,
-                                ty->pcre2.ctx
-                        );
+                        isize n = ty_re_match(re, (PCRE2_SPTR)s, len, start);
                         if (n <= 0) {
+                                if (n < -2) {
+                                        ty_re_panic(n);
+                                }
                                 break;
                         }
                         vvPn(chars, s + start, ovec[0] - start);
@@ -1094,7 +1088,7 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
 
                 while (
                         (start < len)
-                     && (rc = ty_re_match(re, s, len, start, 0)) > 0
+                     && ((rc = ty_re_match(re, s, len, start)) > 0)
                 ) {
                         // Need to grab these now in case the callback clobbers ovec
                         isize i = ovec[0];
@@ -1139,17 +1133,8 @@ string_is_match(Ty *ty, Value *string, int argc, Value *kwargs)
 
         Value pattern = ARGx(0, VALUE_REGEX);
 
-        isize rc = pcre2_match(
-                pattern.regex->pcre2,
-                (PCRE2_SPTR)ss(*string),
-                sN(*string),
-                0,
-                0,
-                ty->pcre2.match,
-                ty->pcre2.ctx
-        );
-
-        if (rc < -2) {
+        isize rc = ty_re_match(pattern.regex->pcre2, (PCRE2_SPTR)ss(*string), sN(*string), 0);
+        if (UNLIKELY(rc < -2)) {
                 ty_re_panic(rc);
         }
 
@@ -1164,17 +1149,8 @@ string_match(Ty *ty, Value *string, int argc, Value *kwargs)
         Value pattern = ARGx(0, VALUE_REGEX);
         usize *ovec = ty_re_ovec();
 
-        isize rc = pcre2_match(
-                pattern.regex->pcre2,
-                (PCRE2_SPTR)ss(*string),
-                sN(*string),
-                0,
-                0,
-                ty->pcre2.match,
-                ty->pcre2.ctx
-        );
-
-        if (rc < -2) {
+        isize rc = ty_re_match(pattern.regex->pcre2, (PCRE2_SPTR)ss(*string), sN(*string), 0);
+        if (UNLIKELY(rc < -2)) {
                 ty_re_panic(rc);
         }
 
@@ -1200,17 +1176,13 @@ string_matches(Ty *ty, Value *string, int argc, Value *kwargs)
         isize rc;
 
         for (;;) {
-                rc = pcre2_match(
-                        pattern.regex->pcre2,
-                        (PCRE2_SPTR)ss(*string),
-                        sN(*string),
-                        offset,
-                        0,
-                        ty->pcre2.match,
-                        ty->pcre2.ctx
-                );
-
-                if (rc <= 0) { break; }
+                rc = ty_re_match(pattern.regex->pcre2, (PCRE2_SPTR)ss(*string), sN(*string), offset);
+                if (rc <= 0) {
+                        if (UNLIKELY(rc < -2)) {
+                                ty_re_panic(rc);
+                        }
+                        break;
+                }
 
                 vAp(result.array, NIL);
                 v_L(*result.array) = mkmatch(ty, string, ovec, rc, pattern.regex->detailed);

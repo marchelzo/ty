@@ -469,13 +469,13 @@ static Expr const *
 declared_parameter_annotation(Expr const *function, usize index)
 {
         if (
-                (index < (usize)vN(function->constraints))
+                (index < vN(function->constraints))
              && (v__(function->constraints, (int)index) != NULL)
         ) {
                 return v__(function->constraints, (int)index);
         }
 
-        if (index < (usize)vN(function->retained_constraints)) {
+        if (index < vN(function->retained_constraints)) {
                 return v__(function->retained_constraints, (int)index);
         }
 
@@ -1705,6 +1705,8 @@ builtin_nominal_arity(int class_id)
         case CLASS_SHARED_QUEUE:
         case CLASS_ITERABLE:
         case CLASS_ITER:
+        case CLASS_REGEX:
+        case CLASS_REGEXV:
                 return 1;
         case CLASS_CLASS:
         case CLASS_TUPLE:
@@ -1791,7 +1793,7 @@ ensure_nominal(
                          : fallback_name;
         usize arity = fallback_arity;
         if (class != NULL && class->def != NULL) {
-                arity = (usize)vN(class->def->class.type_params);
+                arity = vN(class->def->class.type_params);
                 if (class->def->type == STATEMENT_TAG_DEFINITION) {
                         arity = 1;
                 }
@@ -1832,6 +1834,8 @@ ensure_nominal(
         if (
                 (class_id == CLASS_ITERABLE)
              || (class_id == CLASS_ITER)
+             || (class_id == CLASS_REGEX)
+             || (class_id == CLASS_REGEXV)
              || (
                         (class != NULL)
                      && (class->def != NULL)
@@ -3000,7 +3004,7 @@ resolve_alias(T2Checker *checker, T2Alias *alias, Expr const *site)
         u32 binder = alias->binder;
         alias->state = T2_ALIAS_RESOLVING;
         usize mark  = push_type_variables(checker);
-        usize arity = (usize)vN(definition->type_params);
+        usize arity = vN(definition->type_params);
         T2Quantifier *quantifiers = (arity == 0)
                                   ? NULL
                                   : ty_malloc(arity * sizeof *quantifiers);
@@ -3246,7 +3250,10 @@ lower_named_type(
                 return result;
         }
 
-        if (allow_primitive) {
+        if (
+                allow_primitive
+             && (type_symbol_class_id(checker, name->symbol) < CLASS_BUILTIN_END)
+        ) {
                 result = primitive_named(checker, name->identifier);
                 if (result != T2_TYPE_INVALID) {
                         return result;
@@ -3260,6 +3267,9 @@ lower_named_type(
 
         T2Alias *alias = find_or_import_alias(checker, name->symbol);
         if (alias != NULL) {
+                if (alias->state == T2_ALIAS_RESOLVING && alias->arity == 0) {
+                        return t2_recursive_variable(checker->universe, alias->binder);
+                }
                 Symbol const *alias_symbol = alias->symbol;
                 (void)resolve_alias(checker, alias, site);
                 alias = find_alias(checker, alias_symbol);
@@ -3393,7 +3403,7 @@ lower_function_type(T2Checker *checker, Expr const *expression)
                         )
         ;
         if (sequence) {
-                count = (usize)vN(input->es);
+                count = vN(input->es);
         }
 
         T2ParameterSpec *parameters = (count == 0)
@@ -3435,7 +3445,7 @@ lower_function_type(T2Checker *checker, Expr const *expression)
                 }
                 char const *name = sequence
                                 && (parameter->type != EXPRESSION_SPREAD)
-                                && (i < (usize)vN(input->names))
+                                && (i < vN(input->names))
                                  ? v__(input->names, (int)i)
                                  : NULL;
                 if (kind != T2_PARAMETER_POSITIONAL_ONLY && name == NULL) {
@@ -3446,7 +3456,7 @@ lower_function_type(T2Checker *checker, Expr const *expression)
                              : T2_PARAMETER_POSITIONAL_ONLY;
                 }
                 bool required = sequence
-                             && (i < (usize)vN(input->required))
+                             && (i < vN(input->required))
                               ? v__(input->required, (int)i)
                               : true;
                 if (
@@ -3603,7 +3613,7 @@ lower_type(T2Checker *checker, Expr const *source)
         case EXPRESSION_TYPE_UNION:
         case EXPRESSION_LIST:
         {
-                usize count = (usize)vN(expression->es);
+                usize count = vN(expression->es);
                 T2Type *types = (count == 0) ? NULL : ty_malloc(count * sizeof *types);
                 if (count != 0 && types == NULL) {
                         checker->failed = true;
@@ -3649,7 +3659,7 @@ lower_type(T2Checker *checker, Expr const *source)
         case EXPRESSION_TUPLE:
         case EXPRESSION_TUPLE_SPEC:
         {
-                usize count = (usize)vN(expression->es);
+                usize count = vN(expression->es);
                 if (tuple_is_record(expression)) {
                         T2FieldSpec *fields = (count == 0)
                                             ? NULL
@@ -3660,14 +3670,14 @@ lower_type(T2Checker *checker, Expr const *source)
                         }
                         for (usize i = 0; i < count; ++i) {
                                 fields[i] = (T2FieldSpec) {
-                                        .name = (i < (usize)vN(expression->names))
+                                        .name = (i < vN(expression->names))
                                               ? v__(expression->names, (int)i)
                                               : NULL,
                                         .type = lower_type(
                                                 checker,
                                                 v__(expression->es, (int)i)
                                         ),
-                                        .presence = (i < (usize)vN(expression->required))
+                                        .presence = (i < vN(expression->required))
                                                  && !v__(expression->required, (int)i)
                                                   ? T2_PRESENCE_OPTIONAL
                                                   : T2_PRESENCE_REQUIRED,
@@ -3779,7 +3789,7 @@ lower_type(T2Checker *checker, Expr const *source)
                 if (tag_application) {
                         count = 1;
                 } else if (expression->subscript->type == EXPRESSION_LIST) {
-                        count = (usize)vN(expression->subscript->es);
+                        count = vN(expression->subscript->es);
                 } else {
                         count = 1;
                 }
@@ -3803,6 +3813,7 @@ lower_type(T2Checker *checker, Expr const *source)
                         (name != NULL)
                      && (name->identifier != NULL)
                      && s_eq(name->identifier, "Type")
+                     && (type_symbol_class_id(checker, name->symbol) < CLASS_BUILTIN_END)
                 ) {
                         if (count == 1) {
                                 T2Type dynamic = t2_primitive(
@@ -3947,31 +3958,13 @@ lower_type(T2Checker *checker, Expr const *source)
                                 name->identifier
                         );
                         if (nominal != NULL) {
-                                if (
-                                        (nominal->class_id == CLASS_REGEX)
-                                     && (nominal->arity == 0)
-                                     && (count == 1)
-                                ) {
-                                        T2Type base = t2_nominal(
-                                                checker->universe,
-                                                nominal->symbol,
-                                                NULL,
-                                                0
-                                        );
-                                        result = t2_refinement(
-                                                checker->universe,
-                                                base,
-                                                arguments[0]
-                                        );
-                                } else {
-                                        result = apply_nominal(
-                                                checker,
-                                                nominal,
-                                                arguments,
-                                                count,
-                                                expression
-                                        );
-                                }
+                                result = apply_nominal(
+                                        checker,
+                                        nominal,
+                                        arguments,
+                                        count,
+                                        expression
+                                );
                         } else {
                                 if (checker->building_interface) {
                                         result = t2_primitive(
@@ -4044,7 +4037,7 @@ lower_type(T2Checker *checker, Expr const *source)
                 break;
         case EXPRESSION_FUNCTION_CALL:
         {
-                usize count = (usize)vN(expression->args);
+                usize count = vN(expression->args);
                 T2Type *arguments = (count == 0)
                                   ? NULL
                                   : ty_malloc(count * sizeof *arguments);
@@ -4408,21 +4401,58 @@ constrain_gradually(
                 return false;
         }
 
-        T2Type head = resolved_type_head(checker, actual, T2_PREFER_LOWER_BOUND);
-        if (t2_type_kind(checker->universe, head) != T2_TYPE_UNION) {
-                return t2_consistent(checker->universe, actual, expected)
-                    != T2_RELATION_NO;
+        mark = t2_solver_mark(checker->solver);
+        relation = t2_solver_constrain_subtype(
+                checker->solver,
+                actual,
+                expected,
+                source_provenance(checker, site, description)
+        );
+        bool valid = (relation == T2_RELATION_YES)
+                  && !t2_solver_failed(checker->solver);
+        if (valid) {
+                t2_solver_commit(checker->solver, mark);
+                return true;
         }
 
-        usize count = t2_type_arity(checker->universe, head);
-        for (usize i = 0; i < count; ++i) {
-                T2Type arm = t2_type_child(checker->universe, head, i);
-                if (t2_consistent(checker->universe, arm, expected) == T2_RELATION_NO) {
-                        return false;
+        t2_solver_rollback(checker->solver, mark);
+
+        T2Type head   = resolved_type_head(checker, actual, T2_PREFER_LOWER_BOUND);
+        T2Type target = resolved_type_head(checker, expected, T2_PREFER_UPPER_BOUND);
+        if (t2_type_kind(checker->universe, head) == T2_TYPE_UNION) {
+                usize count = t2_type_arity(checker->universe, head);
+                for (usize i = 0; i < count; ++i) {
+                        T2Type arm = t2_type_child(checker->universe, head, i);
+                        if (!constrain_gradually(checker, site, arm, expected, description)) {
+                                return false;
+                        }
                 }
+                return true;
         }
 
-        return true;
+        if (t2_type_kind(checker->universe, target) == T2_TYPE_UNION) {
+                usize count = t2_type_arity(checker->universe, target);
+                for (usize i = 0; i < count; ++i) {
+                        T2Type arm = t2_type_child(checker->universe, target, i);
+                        mark = t2_solver_mark(checker->solver);
+                        if (constrain_gradually(checker, site, actual, arm, description)) {
+                                t2_solver_commit(checker->solver, mark);
+                                return true;
+                        }
+                        t2_solver_rollback(checker->solver, mark);
+                }
+                return false;
+        }
+
+        if (
+                (relation == T2_RELATION_NO)
+             && (t2_type_kind(checker->universe, head) == T2_TYPE_NOMINAL)
+             && (t2_type_kind(checker->universe, target) == T2_TYPE_NOMINAL)
+        ) {
+                return false;
+        }
+
+        return t2_consistent(checker->universe, actual, expected) != T2_RELATION_NO;
 }
 
 static T2Member *
@@ -4536,16 +4566,13 @@ constrain_type(
 
         actual = callable_object_view(checker, actual, expected, site);
         if (
-                type_contains_dynamic(checker, actual)
-             || type_contains_dynamic(checker, expected)
+                (
+                        type_contains_dynamic(checker, actual)
+                     || type_contains_dynamic(checker, expected)
+                )
+             && constrain_gradually(checker, site, actual, expected, description)
         ) {
-                return constrain_gradually(
-                        checker,
-                        site,
-                        actual,
-                        expected,
-                        description
-                );
+                return true;
         }
 
         T2SolverMark mark      = t2_solver_mark(checker->solver);
@@ -4787,7 +4814,7 @@ declared_function_receiver(T2Checker *checker, Expr const *function)
                                           : &function->class->def->class;
         usize arity = (definition == NULL)
                     ? 0
-                    : (usize)vN(definition->type_params);
+                    : vN(definition->type_params);
         T2Type *arguments = (arity == 0) ? NULL : ty_malloc(
                 arity * sizeof *arguments
         );
@@ -4860,7 +4887,7 @@ interface_function_scheme(
         usize               class_arity
 )
 {
-        usize method_arity     = (usize)vN(function->type_params);
+        usize method_arity     = vN(function->type_params);
         usize quantifier_count = class_arity + method_arity;
         T2Quantifier *quantifiers = (quantifier_count == 0)
                                   ? NULL
@@ -4894,7 +4921,7 @@ interface_function_scheme(
                 );
         }
 
-        usize parameter_count = (usize)vN(function->params);
+        usize parameter_count = vN(function->params);
         T2ParameterSpec *parameters = (parameter_count == 0)
                                     ? NULL
                                     : ty_calloc(parameter_count, sizeof *parameters);
@@ -4946,7 +4973,7 @@ interface_function_scheme(
                         .required = (kind != T2_PARAMETER_POSITIONAL_REST)
                                  && (kind != T2_PARAMETER_KEYWORD_REST)
                                  && (
-                                            (i >= (usize)vN(function->dflts))
+                                            (i >= vN(function->dflts))
                                          || (v__(function->dflts, (int)i) == NULL)
                                     )
                                  && !type_admits_nil(checker, parameter_type)
@@ -5031,7 +5058,7 @@ interface_callable_scheme(
                 );
         }
 
-        usize entry_count = (usize)vN(function->functions);
+        usize entry_count = vN(function->functions);
         T2Scheme **schemes = (entry_count == 0)
                            ? NULL
                            : ty_calloc(entry_count, sizeof *schemes);
@@ -6204,7 +6231,7 @@ ensure_class_interface(T2Checker *checker, int class_id)
                 return adopted;
         }
 
-        usize declared_arity = (usize)vN(definition->type_params);
+        usize declared_arity = vN(definition->type_params);
         bool tag_interface   = (class->def->type == STATEMENT_TAG_DEFINITION);
         usize arity          = tag_interface ? 1 : declared_arity;
         usize type_mark      = push_type_variables(checker);
@@ -6469,7 +6496,7 @@ infer_value_list(T2Checker *checker, Expr const *source)
 static T2Type
 infer_value_list_items(T2Checker *checker, ExprVec const *items)
 {
-        usize count = (usize)vN(*items);
+        usize count = vN(*items);
         T2Type *values = (count == 0) ? NULL : ty_malloc(count * sizeof *values);
         if (count != 0 && values == NULL) {
                 checker->failed = true;
@@ -7048,7 +7075,7 @@ positional_argument_expression(Expr const *site, usize index)
                                  : (site->type == EXPRESSION_METHOD_CALL)
                                  ? &site->method_args
                                  : NULL;
-        if (arguments == NULL || index >= (usize)vN(*arguments)) {
+        if (arguments == NULL || index >= vN(*arguments)) {
                 return NULL;
         }
 
@@ -7155,7 +7182,7 @@ keyword_argument_expression(Expr const *site, usize index)
                                  : (site->type == EXPRESSION_METHOD_CALL)
                                  ? &site->method_kwargs
                                  : NULL;
-        if (arguments == NULL || index >= (usize)vN(*arguments)) {
+        if (arguments == NULL || index >= vN(*arguments)) {
                 return NULL;
         }
 
@@ -7746,7 +7773,7 @@ infer_call_types(
         bool               diagnose
 )
 {
-        callee = resolved_type_head(
+        callee = resolved_operation_type(
                 checker,
                 callee,
                 T2_PREFER_KNOWN_VALUE
@@ -7874,18 +7901,25 @@ infer_call_types(
                         return T2_TYPE_INVALID;
                 }
                 for (usize i = 0; i < argument_count; ++i) {
-                        T2Type parameter = is_dynamic_type(checker, arguments[i])
+                        bool spread = t2_type_kind(checker->universe, arguments[i])
+                                   == T2_TYPE_PACK_EXPANSION;
+                        T2Type argument = spread
+                                        ? t2_type_child(checker->universe, arguments[i], 0)
+                                        : arguments[i];
+                        T2Type parameter = is_dynamic_type(checker, argument)
                                          ? t2_solver_new_meta(
                                                  checker->solver,
                                                  T2_VARIABLE_FLEXIBLE,
                                                  checker->level,
                                                  "dynamic call argument"
                                            )
-                                         : assumed_supertype(checker, arguments[i]);
+                                         : assumed_supertype(checker, argument);
                         parameters[i] = (T2ParameterSpec) {
                                 .type     = parameter,
-                                .kind     = T2_PARAMETER_POSITIONAL_ONLY,
-                                .required = true
+                                .kind     = spread
+                                          ? T2_PARAMETER_POSITIONAL_REST
+                                          : T2_PARAMETER_POSITIONAL_ONLY,
+                                .required = !spread
                         };
                 }
                 for (usize i = 0; i < keyword_count; ++i) {
@@ -8236,11 +8270,20 @@ infer_call_types(
                                && (site->function != NULL)
                                && (site->function->type == EXPRESSION_SUPER);
                 char const *super_method = "init";
+                T2MemberKind super_kind = T2_MEMBER_METHOD;
                 if (super_call && vN(checker->functions) != 0) {
                         Expr const *function = v__(checker->functions,
                                                    vN(checker->functions) - 1).function;
                         if (function != NULL && function->name != NULL) {
                                 super_method = function->name;
+                        }
+                        if (function != NULL && function->overload != NULL) {
+                                super_method = function->overload->name;
+                        }
+                        if (function != NULL && function->mtype == MT_GET) {
+                                super_kind = T2_MEMBER_GETTER;
+                        } else if (function != NULL && function->mtype == MT_SET) {
+                                super_kind = T2_MEMBER_SETTER;
                         }
                         Class *owner = (function == NULL) ? NULL : function->class;
                         if (owner != NULL && owner->super != NULL) {
@@ -8272,7 +8315,7 @@ infer_call_types(
                         checker,
                         callable_class,
                         super_call ? super_method : "__call__",
-                        T2_MEMBER_METHOD,
+                        super_kind,
                         false
                 );
                 if (protocol != NULL) {
@@ -9654,11 +9697,9 @@ infer_subscript_type(
         }
 
         if (kind == T2_TYPE_TUPLE) {
-                if (
-                        (index_expression != NULL)
-                     && (index_expression->type == EXPRESSION_INTEGER)
-                ) {
-                        imax position = index_expression->integer;
+                T2Type resolved = resolved_type_head(checker, index, T2_PREFER_KNOWN_VALUE);
+                if (t2_type_kind(checker->universe, resolved) == T2_TYPE_LITERAL_INT) {
+                        imax position = (i64)t2_type_payload(checker->universe, resolved);
                         usize count   = t2_type_arity(checker->universe, container);
                         if (position < 0) {
                                 position += (imax)count;
@@ -9794,7 +9835,7 @@ infer_member_type(
         object = resolved_operation_type(
                 checker,
                 object,
-                T2_PREFER_LOWER_BOUND
+                T2_PREFER_KNOWN_VALUE
         );
         T2TypeKind kind = t2_type_kind(checker->universe, object);
         T2Type nil      = t2_primitive(checker->universe, T2_TYPE_NIL);
@@ -10005,6 +10046,7 @@ infer_member_type(
                 return t2_primitive(checker->universe, T2_TYPE_DYNAMIC);
         }
 
+        bool openrow = false;
         if (kind == T2_TYPE_RECORD) {
                 T2Presence presence;
                 T2Type field = t2_record_field_type(
@@ -10023,9 +10065,11 @@ infer_member_type(
                 if (safe) {
                         return nil;
                 }
+                T2Type tail = t2_record_row_tail(checker->universe, object);
+                openrow = t2_type_kind(checker->universe, tail) == T2_TYPE_META;
         }
 
-        if (kind == T2_TYPE_META) {
+        if (kind == T2_TYPE_META || openrow) {
                 T2Type field = t2_solver_new_meta(
                         checker->solver,
                         T2_VARIABLE_FLEXIBLE,
@@ -10249,10 +10293,10 @@ infer_method_type(
         bool        diagnose
 )
 {
-        object = resolved_type_head(
+        object = resolved_operation_type(
                 checker,
                 object,
-                T2_PREFER_LOWER_BOUND
+                T2_PREFER_KNOWN_VALUE
         );
         T2TypeKind kind = t2_type_kind(checker->universe, object);
         T2Type nil      = t2_primitive(checker->universe, T2_TYPE_NIL);
@@ -10540,7 +10584,7 @@ string_needle_type(T2Checker *checker)
                 needle = t2_join(
                         checker->universe,
                         needle,
-                        t2_nominal(checker->universe, nominal->symbol, NULL, 0)
+                        apply_nominal(checker, nominal, NULL, 0, NULL)
                 );
         }
 
@@ -10938,6 +10982,62 @@ check_subscript_write(
 }
 
 static T2Type
+infer_index_access(T2Checker *checker, Expr const *site, T2Type value)
+{
+        T2Type container    = infer_expression(checker, site->container);
+        Expr const *indices = site->subscript;
+        bool writing        = value != T2_TYPE_INVALID;
+        if (indices->type != EXPRESSION_LIST || vN(indices->es) == 1) {
+                Expr const *index = (indices->type == EXPRESSION_LIST)
+                                  ? v__(indices->es, 0)
+                                  : indices;
+                T2Type type = infer_expression(checker, index);
+                if (!writing) {
+                        return infer_subscript_type(checker, container, type, index, site, true);
+                }
+                return check_subscript_write(checker, container, type, value, site, true)
+                     ? value
+                     : t2_primitive(checker->universe, T2_TYPE_ERROR);
+        }
+
+        usize count = vN(indices->es) + writing;
+        T2Type *arguments = ty_malloc(count * sizeof *arguments);
+        if (arguments == NULL) {
+                checker->failed = true;
+                return T2_TYPE_INVALID;
+        }
+        T2Type method = infer_method_type(
+                checker,
+                container,
+                writing ? "[]=" : "[]",
+                false,
+                site,
+                true
+        );
+        for (usize i = 0; i < vN(indices->es); ++i) {
+                arguments[i] = infer_argument(checker, v__(indices->es, i), method, i);
+        }
+        if (writing) {
+                arguments[count - 1] = value;
+        }
+        T2Type result = infer_call_types(
+                checker,
+                method,
+                arguments,
+                count,
+                NULL,
+                NULL,
+                0,
+                site,
+                true
+        );
+        ty_free(arguments);
+        invalidate_unstable_refinements(checker);
+
+        return result;
+}
+
+static T2Type
 member_write_expected_type(
         T2Checker  *checker,
         T2Type      object,
@@ -11078,8 +11178,7 @@ check_member_write(
                                         site,
                                         diagnose
                                 );
-                                return t2_type_kind(checker->universe, result)
-                                    != T2_TYPE_ERROR;
+                                return (t2_type_kind(checker->universe, result) != T2_TYPE_ERROR);
                         }
                         T2Member *field = find_member(
                                 checker,
@@ -11567,7 +11666,7 @@ contextual_fresh_literal_x(
              && tuple_is_record(expression)
              && (t2_type_kind(checker->universe, expected) == T2_TYPE_RECORD)
         ) {
-                usize count = (usize)vN(expression->es);
+                usize count = vN(expression->es);
                 T2FieldSpec *fields = (count == 0)
                                     ? NULL
                                     : ty_calloc(count, sizeof *fields);
@@ -11577,7 +11676,7 @@ contextual_fresh_literal_x(
                 }
                 bool valid = true;
                 for (usize i = 0; i < count; ++i) {
-                        char const *name = (i < (usize)vN(expression->names))
+                        char const *name = (i < vN(expression->names))
                                          ? v__(expression->names, (int)i)
                                          : NULL;
                         Expr const *item = v__(expression->es, (int)i);
@@ -11915,7 +12014,7 @@ assign_list_items(
 )
 {
         bool valid = true;
-        for (usize i = 0; i < (usize)vN(target->es); ++i) {
+        for (usize i = 0; i < vN(target->es); ++i) {
                 Expr const *item = v__(target->es, (int)i);
                 valid &= declaration
                        ? infer_pattern(checker, item, items[i])
@@ -11935,7 +12034,7 @@ assign_value_list(
         bool        declaration
 )
 {
-        usize count = (usize)vN(target->es);
+        usize count = vN(target->es);
         T2Type *items = ty_malloc(count * sizeof *items);
         if (items == NULL) {
                 checker->failed = true;
@@ -12235,8 +12334,20 @@ assign_lvalue_x(
         case EXPRESSION_TAG_PATTERN:
         case EXPRESSION_TAG_PATTERN_CALL:
         {
+                bool valid = true;
                 if (target->type == EXPRESSION_MATCH_NOT_NIL) {
-                        value = without_nil(checker, value);
+                        T2Type narrowed = without_nil(checker, value);
+                        if (checker->refutable_pattern_depth == 0) {
+                                valid = constrain_type(
+                                        checker,
+                                        target,
+                                        value,
+                                        t2_primitive(checker->universe, T2_TYPE_OBJECT),
+                                        "binding-pattern",
+                                        "a not-nil binding cannot accept a possibly nil value"
+                                );
+                        }
+                        value = narrowed;
                 }
                 T2Type member_receiver = (target->type == EXPRESSION_IDENTIFIER)
                                        ? implicit_member_receiver(
@@ -12332,7 +12443,7 @@ assign_lvalue_x(
                                 : was_initialized
                                 ? binding->type
                                 : value;
-                bool valid = constrain_type(
+                valid &= constrain_type(
                         checker,
                         target,
                         value,
@@ -12393,7 +12504,7 @@ assign_lvalue_x(
         case EXPRESSION_TUPLE:
         case EXPRESSION_LIST:
         {
-                usize count = (usize)vN(target->es);
+                usize count = vN(target->es);
                 if (
                         declaration
                      && (target->type == EXPRESSION_TUPLE)
@@ -12676,16 +12787,9 @@ assign_lvalue_x(
         }
         case EXPRESSION_SUBSCRIPT:
         {
-                T2Type container = infer_expression(checker, target->container);
-                T2Type index     = infer_expression(checker, target->subscript);
-                return check_subscript_write(
-                        checker,
-                        container,
-                        index,
-                        value,
-                        target,
-                        true
-                );
+                T2Type result = infer_index_access(checker, target, value);
+                return (result != T2_TYPE_INVALID)
+                    && (t2_type_kind(checker->universe, result) != T2_TYPE_ERROR);
         }
         case EXPRESSION_MEMBER_ACCESS:
         case EXPRESSION_SELF_ACCESS:
@@ -12765,6 +12869,8 @@ assign_lvalue_x(
 static T2Type
 without_nil(T2Checker *checker, T2Type type)
 {
+        type = resolved_type_head(checker, type, T2_PREFER_KNOWN_VALUE);
+
         if (t2_type_kind(checker->universe, type) == T2_TYPE_NIL) {
                 return t2_primitive(checker->universe, T2_TYPE_NEVER);
         }
@@ -13059,6 +13165,7 @@ condition_test_type(T2Checker *checker, Expr const *source)
         }
 
         T2Type primitive = (name == NULL)
+                         || (type_symbol_class_id(checker, name->symbol) >= CLASS_BUILTIN_END)
                          ? T2_TYPE_INVALID
                          : primitive_named(checker, name->identifier);
         if (primitive != T2_TYPE_INVALID) {
@@ -14587,16 +14694,16 @@ infer_record_literal(T2Checker *checker, Expr const *expression)
                 T2_TYPE_INVALID,
                 T2_RECORD_EXACT
         );
-        usize count = (usize)vN(expression->es);
+        usize count = vN(expression->es);
         for (usize i = 0; i < count; ++i) {
                 Expr const *item = v__(expression->es, (int)i);
-                Expr const *condition = (i < (usize)vN(expression->tconds))
+                Expr const *condition = (i < vN(expression->tconds))
                                       ? v__(expression->tconds, (int)i)
                                       : NULL;
                 if (condition != NULL) {
                         (void)infer_expression(checker, condition);
                 }
-                bool optional = (i < (usize)vN(expression->required))
+                bool optional = (i < vN(expression->required))
                              && !v__(expression->required, (int)i);
                 bool spread     = (item != NULL) && (item->type == EXPRESSION_SPREAD);
                 T2Type previous = result;
@@ -14616,7 +14723,7 @@ infer_record_literal(T2Checker *checker, Expr const *expression)
                                 0
                         );
                 } else {
-                        char const *name = (i < (usize)vN(expression->names))
+                        char const *name = (i < vN(expression->names))
                                          ? v__(expression->names, (int)i)
                                          : NULL;
                         T2FieldSpec field = {
@@ -14675,7 +14782,7 @@ infer_record_literal(T2Checker *checker, Expr const *expression)
 static T2Type
 infer_mixed_tuple(T2Checker *checker, Expr const *expression)
 {
-        usize count = (usize)vN(expression->es);
+        usize count = vN(expression->es);
         if (count > SIZE_MAX / sizeof (T2Type)) {
                 return T2_TYPE_INVALID;
         }
@@ -14701,21 +14808,21 @@ infer_mixed_tuple(T2Checker *checker, Expr const *expression)
                         return t2_primitive(checker->universe, T2_TYPE_DYNAMIC);
                 }
                 items[i] = infer_expression(checker, item);
-                char const *name = (i < (usize)vN(expression->names))
+                char const *name = (i < vN(expression->names))
                                  ? v__(expression->names, (int)i)
                                  : NULL;
                 if (name != NULL) {
                         fields[field_count++] = (T2FieldSpec) {
                                 .name = name,
                                 .type = relax_literal(checker, items[i]),
-                                .presence = (i < (usize)vN(expression->required))
+                                .presence = (i < vN(expression->required))
                                          && !v__(expression->required, (int)i)
                                           ? T2_PRESENCE_OPTIONAL
                                           : T2_PRESENCE_REQUIRED,
                                 .capability = T2_FIELD_WRITABLE
                         };
                 }
-                if (i < (usize)vN(expression->tconds)) {
+                if (i < vN(expression->tconds)) {
                         (void)infer_expression(
                                 checker,
                                 v__(expression->tconds, (int)i)
@@ -15372,8 +15479,7 @@ adopt_published_binding(
 )
 {
         if (
-                SymbolIsClass(symbol)
-             || SymbolIsTag(symbol)
+                SymbolIsTag(symbol)
              || (symbol->mod == NULL)
              || module_is_current(checker, symbol->mod)
         ) {
@@ -15514,7 +15620,7 @@ infer_tag_value(T2Checker *checker, Expr const *expression, T2Type payload)
 static T2Type
 infer_tag_call(T2Checker *checker, Expr const *expression)
 {
-        usize count = (usize)vN(expression->args);
+        usize count = vN(expression->args);
         T2Type payload;
         if (count == 0) {
                 payload = t2_primitive(checker->universe, T2_TYPE_NIL);
@@ -15713,40 +15819,27 @@ infer_expression(T2Checker *checker, Expr const *source)
                               : (expression->re_flags != NULL)
                              && (strchr(expression->re_flags, 'v') != NULL);
                 int class_id = detailed ? CLASS_REGEXV : CLASS_REGEX;
-                T2Nominal *nominal = ensure_nominal(
-                        checker,
-                        class_id,
-                        detailed ? "RegexV" : "Regex",
-                        0
-                );
-                if (nominal == NULL) {
-                        defer_node(
-                                checker,
-                                T2_DEFER_UNRESOLVED_NOMINAL,
-                                expression,
-                                detailed ? "RegexV" : "Regex"
-                        );
-                        result = t2_primitive(checker->universe, T2_TYPE_DYNAMIC);
-                        break;
-                }
-                T2Type base = t2_nominal(
-                        checker->universe,
-                        nominal->symbol,
-                        NULL,
-                        0
-                );
                 T2Type captures = (expression->type == EXPRESSION_REGEX)
                                && (expression->regex != NULL)
                                 ? t2_literal_int(
                                         checker->universe,
                                         expression->regex->ncap
                                   )
-                                : t2_primitive(
+                                : t2_integer_range(
                                         checker->universe,
-                                        T2_TYPE_UNKNOWN
+                                        t2_literal_int(checker->universe, 0),
+                                        T2_TYPE_INVALID,
+                                        false
                                   )
                 ;
-                result = t2_refinement(checker->universe, base, captures);
+                result = nominal_application(
+                        checker,
+                        class_id,
+                        detailed ? "RegexV" : "Regex",
+                        &captures,
+                        1,
+                        expression
+                );
                 break;
         }
         case EXPRESSION_REAL:
@@ -15871,7 +15964,7 @@ infer_expression(T2Checker *checker, Expr const *source)
                 if (t2_type_kind(checker->universe, element) == T2_TYPE_NEVER) {
                         element = t2_solver_new_meta(
                                 checker->solver,
-                                T2_VARIABLE_WEAK,
+                                T2_VARIABLE_FLEXIBLE,
                                 checker->level,
                                 "empty array element"
                         );
@@ -15919,7 +16012,7 @@ infer_expression(T2Checker *checker, Expr const *source)
                 if (t2_type_kind(checker->universe, element) == T2_TYPE_NEVER) {
                         element = t2_solver_new_meta(
                                 checker->solver,
-                                T2_VARIABLE_WEAK,
+                                T2_VARIABLE_FLEXIBLE,
                                 checker->level,
                                 "empty array comprehension element"
                         );
@@ -16018,7 +16111,6 @@ infer_expression(T2Checker *checker, Expr const *source)
                 }
                 if (expression->dflt != NULL) {
                         T2Type fallback = infer_expression(checker, expression->dflt);
-                        default_dynamic_callable_metas(checker, fallback, 0);
                         T2ParameterSpec parameter;
                         bool callable = (
                                 (t2_callable_parameter_count(
@@ -16062,13 +16154,13 @@ infer_expression(T2Checker *checker, Expr const *source)
                 if (t2_type_kind(checker->universe, key) == T2_TYPE_NEVER) {
                         key = t2_solver_new_meta(
                                 checker->solver,
-                                T2_VARIABLE_WEAK,
+                                T2_VARIABLE_FLEXIBLE,
                                 checker->level,
                                 "empty dictionary key"
                         );
                         value = t2_solver_new_meta(
                                 checker->solver,
-                                T2_VARIABLE_WEAK,
+                                T2_VARIABLE_FLEXIBLE,
                                 checker->level,
                                 "empty dictionary value"
                         );
@@ -16122,13 +16214,13 @@ infer_expression(T2Checker *checker, Expr const *source)
                 if (t2_type_kind(checker->universe, key) == T2_TYPE_NEVER) {
                         key = t2_solver_new_meta(
                                 checker->solver,
-                                T2_VARIABLE_WEAK,
+                                T2_VARIABLE_FLEXIBLE,
                                 checker->level,
                                 "empty dictionary comprehension key"
                         );
                         value = t2_solver_new_meta(
                                 checker->solver,
-                                T2_VARIABLE_WEAK,
+                                T2_VARIABLE_FLEXIBLE,
                                 checker->level,
                                 "empty dictionary comprehension value"
                         );
@@ -16193,7 +16285,7 @@ infer_expression(T2Checker *checker, Expr const *source)
         case EXPRESSION_TUPLE:
         case EXPRESSION_LIST:
         {
-                usize count = (usize)vN(expression->es);
+                usize count = vN(expression->es);
                 if (
                         (hint != T2_TYPE_INVALID)
                      && (expression->type == EXPRESSION_TUPLE)
@@ -16417,8 +16509,8 @@ infer_expression(T2Checker *checker, Expr const *source)
         }
         case EXPRESSION_FUNCTION_CALL:
         {
-                usize positional_count = (usize)vN(expression->args);
-                usize keyword_count    = (usize)vN(expression->kwargs);
+                usize positional_count = vN(expression->args);
+                usize keyword_count    = vN(expression->kwargs);
                 if (
                         (keyword_count == 0)
                      && tag_symbol_expression(expression->function)
@@ -16457,7 +16549,7 @@ infer_expression(T2Checker *checker, Expr const *source)
                                 checker,
                                 v__(expression->kwargs, (int)i),
                                 hint_callee,
-                                (i < (usize)vN(expression->kws))
+                                (i < vN(expression->kws))
                                 ? v__(expression->kws, (int)i)
                                 : NULL
                         );
@@ -16816,15 +16908,7 @@ infer_expression(T2Checker *checker, Expr const *source)
                 break;
         }
         case EXPRESSION_SUBSCRIPT:
-                result = infer_subscript_type(
-                        checker,
-                        infer_expression(checker, expression->container),
-                        infer_expression(checker, expression->subscript),
-                        expression->subscript,
-                        expression,
-                        true
-                )
-                ;
+                result = infer_index_access(checker, expression, T2_TYPE_INVALID);
                 break;
         case EXPRESSION_SLICE:
         {
@@ -16925,8 +17009,8 @@ infer_expression(T2Checker *checker, Expr const *source)
                                 );
                         }
                 }
-                usize count   = (usize)vN(expression->method_args);
-                usize kwcount = (usize)vN(expression->method_kwargs);
+                usize count   = vN(expression->method_args);
+                usize kwcount = vN(expression->method_kwargs);
                 T2Type *arguments = (count == 0) ? NULL : ty_malloc(
                         count * sizeof *arguments
                 );
@@ -16953,7 +17037,7 @@ infer_expression(T2Checker *checker, Expr const *source)
                                 checker,
                                 v__(expression->method_kwargs, (int)i),
                                 method,
-                                (i < (usize)vN(expression->method_kws))
+                                (i < vN(expression->method_kws))
                                 ? v__(expression->method_kws, (int)i)
                                 : NULL
                         );
@@ -17366,7 +17450,7 @@ infer_expression(T2Checker *checker, Expr const *source)
                                 yielded = infer_expression(checker, item);
                         }
                 } else if (vN(expression->es) > 1) {
-                        usize count = (usize)vN(expression->es);
+                        usize count = vN(expression->es);
                         T2Type *items = ty_malloc(count * sizeof *items);
                         if (items == NULL) {
                                 checker->failed = true;
@@ -17992,7 +18076,7 @@ push_function_frame(T2Checker *checker, T2FunctionFrame frame)
 static T2Type
 function_return_values(T2Checker *checker, ExprVec const *returns)
 {
-        usize count = (usize)vN(*returns);
+        usize count = vN(*returns);
         if (count == 0) {
                 return t2_primitive(checker->universe, T2_TYPE_NIL);
         }
@@ -18424,6 +18508,7 @@ tag_pattern_payload(
         T2Type     subject,
         int        wanted_tag,
         bool       any_tag,
+        bool       refutable,
         bool      *reachable
 )
 {
@@ -18437,7 +18522,10 @@ tag_pattern_payload(
              || (kind == T2_TYPE_META)
         ) {
                 *reachable = true;
-                if (kind == T2_TYPE_DYNAMIC || kind == T2_TYPE_META) {
+                if (
+                        (kind == T2_TYPE_DYNAMIC)
+                     || (kind == T2_TYPE_META && refutable)
+                ) {
                         return t2_primitive(
                                 checker->universe,
                                 T2_TYPE_DYNAMIC
@@ -18453,6 +18541,7 @@ tag_pattern_payload(
 
         if (kind == T2_TYPE_UNION) {
                 T2Type result = t2_primitive(checker->universe, T2_TYPE_NEVER);
+                bool complete = true;
                 for (usize i = 0; i < t2_type_arity(checker->universe, subject); ++i) {
                         bool arm_reachable = false;
                         T2Type payload = tag_pattern_payload(
@@ -18460,13 +18549,16 @@ tag_pattern_payload(
                                 t2_type_child(checker->universe, subject, i),
                                 wanted_tag,
                                 any_tag,
+                                refutable,
                                 &arm_reachable
                         );
+                        complete &= arm_reachable;
                         if (arm_reachable) {
                                 *reachable = true;
                                 result = t2_join(checker->universe, result, payload);
                         }
                 }
+                *reachable &= complete || refutable;
                 return result;
         }
 
@@ -18515,15 +18607,18 @@ tuple_pattern_items(
         T2TypeKind kind = t2_type_kind(checker->universe, subject);
         if (kind == T2_TYPE_UNION) {
                 bool reachable = false;
+                bool complete  = true;
                 for (usize i = 0; i < t2_type_arity(checker->universe, subject); ++i) {
-                        reachable |= tuple_pattern_items(
+                        bool matches = tuple_pattern_items(
                                 checker,
                                 t2_type_child(checker->universe, subject, i),
                                 items,
                                 count
                         );
+                        reachable |= matches;
+                        complete &= matches;
                 }
-                return reachable;
+                return reachable && (complete || checker->refutable_pattern_depth != 0);
         }
 
         if (kind == T2_TYPE_TUPLE) {
@@ -18649,8 +18744,9 @@ nominal_pattern_arguments_x(
         T2TypeKind kind = t2_type_kind(checker->universe, subject);
         if (kind == T2_TYPE_UNION || kind == T2_TYPE_INTERSECTION) {
                 bool reachable = false;
+                bool complete  = true;
                 for (usize i = 0; i < t2_type_arity(checker->universe, subject); ++i) {
-                        reachable |= nominal_pattern_arguments_x(
+                        bool matches = nominal_pattern_arguments_x(
                                 checker,
                                 t2_type_child(checker->universe, subject, i),
                                 wanted,
@@ -18659,8 +18755,15 @@ nominal_pattern_arguments_x(
                                 description,
                                 depth + 1
                         );
+                        reachable |= matches;
+                        complete &= matches;
                 }
-                return reachable;
+                return reachable
+                    && (
+                               complete
+                            || (kind == T2_TYPE_INTERSECTION)
+                            || (checker->refutable_pattern_depth != 0)
+                       );
         }
 
         if (
@@ -19076,9 +19179,10 @@ record_pattern_items(
 )
 {
         T2TypeKind kind = t2_type_kind(checker->universe, subject);
-        usize count     = (usize)vN(pattern->es);
+        usize count     = vN(pattern->es);
         if (kind == T2_TYPE_UNION) {
                 bool reachable = false;
+                bool complete  = true;
                 if (count > SIZE_MAX / sizeof (T2Type)) {
                         return false;
                 }
@@ -19102,6 +19206,7 @@ record_pattern_items(
                                         arm_items
                                 )
                         ) {
+                                complete = false;
                                 continue;
                         }
                         reachable = true;
@@ -19114,12 +19219,12 @@ record_pattern_items(
                         }
                 }
                 ty_free(arm_items);
-                return reachable;
+                return reachable && (complete || checker->refutable_pattern_depth != 0);
         }
 
         for (usize i = 0; i < count; ++i) {
                 Expr const *item = v__(pattern->es, (int)i);
-                char const *name = (i < (usize)vN(pattern->names))
+                char const *name = (i < vN(pattern->names))
                                  ? v__(pattern->names, (int)i)
                                  : NULL;
                 if (
@@ -19135,7 +19240,7 @@ record_pattern_items(
                 if (name == NULL || s_eq(name, "*")) {
                         return false;
                 }
-                bool optional = (i < (usize)vN(pattern->required))
+                bool optional = (i < vN(pattern->required))
                              && !v__(pattern->required, (int)i);
                 bool field_reachable = false;
                 T2Type field = record_pattern_field_type(
@@ -19250,6 +19355,28 @@ literal_pattern_type(T2Checker *checker, Expr const *pattern)
         return T2_TYPE_INVALID;
 }
 
+static void
+pattern_mismatch(
+        T2Checker  *checker,
+        Expr const *pattern,
+        T2Type      subject,
+        T2Type      expected,
+        char const *message
+)
+{
+        bool refutable = checker->refutable_pattern_depth != 0;
+        add_diagnostic(
+                checker,
+                pattern,
+                refutable ? T2_DIAGNOSTIC_WARNING : T2_DIAGNOSTIC_ERROR,
+                refutable ? "unreachable-pattern" : "binding-pattern",
+                subject,
+                expected,
+                "%s",
+                message
+        );
+}
+
 static bool
 infer_pattern(T2Checker *checker, Expr const *pattern, T2Type subject)
 {
@@ -19289,13 +19416,14 @@ infer_pattern(T2Checker *checker, Expr const *pattern, T2Type subject)
                         return valid;
                 }
                 T2Type annotation = lower_type(checker, constraint);
+                if (checker->refutable_pattern_depth == 0) {
+                        return assign_lvalue(checker, pattern, subject, true);
+                }
                 T2Type narrowed   = narrow_type_to(checker, subject, annotation);
                 if (t2_type_kind(checker->universe, narrowed) == T2_TYPE_NEVER) {
-                        add_diagnostic(
+                        pattern_mismatch(
                                 checker,
                                 pattern,
-                                T2_DIAGNOSTIC_WARNING,
-                                "unreachable-pattern",
                                 subject,
                                 annotation,
                                 "annotated pattern cannot match the subject type"
@@ -19306,13 +19434,14 @@ infer_pattern(T2Checker *checker, Expr const *pattern, T2Type subject)
         }
         case EXPRESSION_MATCH_NOT_NIL:
         {
+                if (checker->refutable_pattern_depth == 0) {
+                        return assign_lvalue(checker, pattern, subject, true);
+                }
                 T2Type narrowed = without_nil(checker, subject);
                 if (t2_type_kind(checker->universe, narrowed) == T2_TYPE_NEVER) {
-                        add_diagnostic(
+                        pattern_mismatch(
                                 checker,
                                 pattern,
-                                T2_DIAGNOSTIC_WARNING,
-                                "unreachable-pattern",
                                 subject,
                                 T2_TYPE_INVALID,
                                 "not-nil pattern cannot match this subject"
@@ -19347,14 +19476,22 @@ infer_pattern(T2Checker *checker, Expr const *pattern, T2Type subject)
                         defer_node(checker, T2_DEFER_UNSUPPORTED_PATTERN, pattern, NULL);
                         return true;
                 }
+                if (checker->refutable_pattern_depth == 0) {
+                        return constrain_type(
+                                checker,
+                                pattern,
+                                subject,
+                                pattern_type,
+                                "binding-pattern",
+                                "the assigned value does not match the literal pattern"
+                        );
+                }
                 if (pattern_types_overlap(checker, pattern_type, subject)) {
                         return true;
                 }
-                add_diagnostic(
+                pattern_mismatch(
                         checker,
                         pattern,
-                        T2_DIAGNOSTIC_WARNING,
-                        "unreachable-pattern",
                         pattern_type,
                         subject,
                         "literal pattern cannot match the subject type"
@@ -19364,7 +19501,7 @@ infer_pattern(T2Checker *checker, Expr const *pattern, T2Type subject)
         case EXPRESSION_TUPLE:
         case EXPRESSION_LIST:
         {
-                usize count = (usize)vN(pattern->es);
+                usize count = vN(pattern->es);
                 if (pattern->type == EXPRESSION_LIST && count == 1) {
                         return infer_pattern(checker, v__(pattern->es, 0), subject);
                 }
@@ -19395,11 +19532,9 @@ infer_pattern(T2Checker *checker, Expr const *pattern, T2Type subject)
                                  )
                 ;
                 if (!reachable) {
-                        add_diagnostic(
+                        pattern_mismatch(
                                 checker,
                                 pattern,
-                                T2_DIAGNOSTIC_WARNING,
-                                "unreachable-pattern",
                                 subject,
                                 T2_TYPE_INVALID,
                                 record
@@ -19440,11 +19575,9 @@ infer_pattern(T2Checker *checker, Expr const *pattern, T2Type subject)
                                 "array pattern element"
                         )
                 ) {
-                        add_diagnostic(
+                        pattern_mismatch(
                                 checker,
                                 pattern,
-                                T2_DIAGNOSTIC_WARNING,
-                                "unreachable-pattern",
                                 subject,
                                 T2_TYPE_INVALID,
                                 "array pattern cannot match the subject type"
@@ -19493,11 +19626,9 @@ infer_pattern(T2Checker *checker, Expr const *pattern, T2Type subject)
                                 "dictionary pattern argument"
                         )
                 ) {
-                        add_diagnostic(
+                        pattern_mismatch(
                                 checker,
                                 pattern,
-                                T2_DIAGNOSTIC_WARNING,
-                                "unreachable-pattern",
                                 subject,
                                 T2_TYPE_INVALID,
                                 "dictionary pattern cannot match the subject type"
@@ -19536,14 +19667,13 @@ infer_pattern(T2Checker *checker, Expr const *pattern, T2Type subject)
                         subject,
                         tag_id,
                         false,
+                        checker->refutable_pattern_depth != 0,
                         &reachable
                 );
                 if (!reachable) {
-                        add_diagnostic(
+                        pattern_mismatch(
                                 checker,
                                 pattern,
-                                T2_DIAGNOSTIC_WARNING,
-                                "unreachable-pattern",
                                 subject,
                                 T2_TYPE_INVALID,
                                 "tag pattern cannot match the subject type"
@@ -19554,6 +19684,33 @@ infer_pattern(T2Checker *checker, Expr const *pattern, T2Type subject)
                                 t2_primitive(checker->universe, T2_TYPE_DYNAMIC)
                         );
                         return false;
+                }
+                if (checker->refutable_pattern_depth == 0) {
+                        T2Nominal *nominal = ensure_tag_nominal(
+                                checker,
+                                tag_id,
+                                pattern->identifier
+                        );
+                        if (nominal != NULL) {
+                                bool valid = constrain_type(
+                                        checker,
+                                        pattern,
+                                        subject,
+                                        t2_nominal(
+                                                checker->universe,
+                                                nominal->symbol,
+                                                &payload,
+                                                1
+                                        ),
+                                        "binding-pattern",
+                                        "the assigned value does not match the tag pattern"
+                                );
+                                if (!valid) {
+                                        payload = t2_primitive(checker->universe, T2_TYPE_ERROR);
+                                        (void)infer_pattern(checker, pattern->tagged, payload);
+                                        return false;
+                                }
+                        }
                 }
                 return infer_pattern(checker, pattern->tagged, payload);
         }
@@ -19566,6 +19723,7 @@ infer_pattern(T2Checker *checker, Expr const *pattern, T2Type subject)
                         subject,
                         -1,
                         true,
+                        checker->refutable_pattern_depth != 0,
                         &reachable
                 );
                 T2Type tag = nominal_application(
@@ -19578,11 +19736,9 @@ infer_pattern(T2Checker *checker, Expr const *pattern, T2Type subject)
                 );
                 bool valid = assign_lvalue(checker, pattern, tag, true);
                 if (!reachable) {
-                        add_diagnostic(
+                        pattern_mismatch(
                                 checker,
                                 pattern,
-                                T2_DIAGNOSTIC_WARNING,
-                                "unreachable-pattern",
                                 subject,
                                 T2_TYPE_INVALID,
                                 "tag-binding pattern cannot match the subject type"
@@ -19593,6 +19749,16 @@ infer_pattern(T2Checker *checker, Expr const *pattern, T2Type subject)
                                 t2_primitive(checker->universe, T2_TYPE_DYNAMIC)
                         );
                         return false;
+                }
+                if (checker->refutable_pattern_depth == 0) {
+                        valid &= constrain_type(
+                                checker,
+                                pattern,
+                                subject,
+                                tag,
+                                "binding-pattern",
+                                "the assigned value must be tagged"
+                        );
                 }
                 return infer_pattern(checker, pattern->tagged, payload) && valid;
         }
@@ -19639,11 +19805,9 @@ infer_pattern(T2Checker *checker, Expr const *pattern, T2Type subject)
                              || (t2_type_kind(checker->universe, payload) == T2_TYPE_NEVER)
                         ) {
                                 t2_solver_rollback(checker->solver, trial);
-                                add_diagnostic(
+                                pattern_mismatch(
                                         checker,
                                         pattern,
-                                        T2_DIAGNOSTIC_WARNING,
-                                        "unreachable-pattern",
                                         subject,
                                         matcher,
                                         "pattern matcher cannot accept the subject type"
@@ -19687,16 +19851,27 @@ infer_pattern(T2Checker *checker, Expr const *pattern, T2Type subject)
                 bool reachable = (expected != T2_TYPE_INVALID)
                               && pattern_types_overlap(checker, subject, expected);
                 if (!reachable) {
-                        add_diagnostic(
+                        pattern_mismatch(
                                 checker,
                                 pattern,
-                                T2_DIAGNOSTIC_WARNING,
-                                "unreachable-pattern",
                                 subject,
                                 T2_TYPE_INVALID,
                                 "object pattern cannot match the subject type"
                         );
                         return false;
+                }
+                if (checker->refutable_pattern_depth == 0) {
+                        bool valid = constrain_type(
+                                checker,
+                                pattern,
+                                subject,
+                                expected,
+                                "binding-pattern",
+                                "the assigned value does not match the object pattern"
+                        );
+                        if (!valid) {
+                                return false;
+                        }
                 }
                 T2Type matched_subject = narrow_type_to(
                         checker,
@@ -19857,11 +20032,9 @@ infer_pattern(T2Checker *checker, Expr const *pattern, T2Type subject)
                 ) {
                         return true;
                 }
-                add_diagnostic(
+                pattern_mismatch(
                         checker,
                         pattern,
-                        T2_DIAGNOSTIC_WARNING,
-                        "unreachable-pattern",
                         existing,
                         subject,
                         "existing value pattern cannot match the subject type"
@@ -19873,11 +20046,10 @@ infer_pattern(T2Checker *checker, Expr const *pattern, T2Type subject)
                     && pattern_types_overlap(
                             checker,
                             type_expression_syntax(pattern->right)
-                            ? lower_type(checker, pattern->right)
-                            : infer_expression(checker, pattern->right),
+                                ? lower_type(checker, pattern->right)
+                                : infer_expression(checker, pattern->right),
                             subject
-                       )
-                ;
+                       );
         case EXPRESSION_DOT_DOT:
         case EXPRESSION_DOT_DOT_DOT:
                 (void)infer_expression(checker, pattern->left);
@@ -20016,22 +20188,20 @@ tuple_pattern_coverage_x(
 
         if (kind == T2_TYPE_INTERSECTION) {
                 for (usize i = 0; i < t2_type_arity(checker->universe, subject); ++i) {
-                        if (
-                                t2_type_kind(
-                                        checker->universe,
-                                        tuple_pattern_coverage_x(
-                                                checker,
-                                                pattern,
-                                                t2_type_child(
-                                                        checker->universe,
-                                                        subject,
-                                                        i
-                                                ),
-                                                depth + 1
-                                        )
+                        T2TypeKind kind_i = t2_type_kind(
+                                checker->universe,
+                                tuple_pattern_coverage_x(
+                                        checker,
+                                        pattern,
+                                        t2_type_child(
+                                                checker->universe,
+                                                subject,
+                                                i
+                                        ),
+                                        depth + 1
                                 )
-                             != T2_TYPE_NEVER
-                        ) {
+                        );
+                        if (kind_i != T2_TYPE_NEVER) {
                                 return subject;
                         }
                 }
@@ -20042,8 +20212,7 @@ tuple_pattern_coverage_x(
                 return never;
         }
 
-        return (t2_type_arity(checker->universe, subject)
-             == (usize)vN(pattern->es))
+        return (t2_type_arity(checker->universe, subject) == vN(pattern->es))
              ? subject
              : never;
 }
@@ -20409,6 +20578,7 @@ tag_payload_covered(
                 subject,
                 tag,
                 any_tag,
+                true,
                 &reachable
         );
         if (!reachable || payload == T2_TYPE_INVALID) {
@@ -20814,7 +20984,7 @@ infer_single_function(T2Checker *checker, Expr const *function)
         usize assumption_mark = vN(checker->upper_assumptions);
         checker->level = outer_level + 1;
         usize type_mark           = push_type_variables(checker);
-        usize type_argument_count = (usize)vN(function->type_params);
+        usize type_argument_count = vN(function->type_params);
         T2Type *type_arguments = (type_argument_count == 0)
                                ? NULL
                                : ty_malloc(type_argument_count * sizeof *type_arguments);
@@ -20864,7 +21034,7 @@ infer_single_function(T2Checker *checker, Expr const *function)
         ty_free(type_arguments);
         type_arguments = NULL;
 
-        usize parameter_count = (usize)vN(function->params);
+        usize parameter_count = vN(function->params);
         T2ParameterSpec *parameters = (parameter_count == 0)
                                     ? NULL
                                     : ty_calloc(parameter_count, sizeof *parameters);
@@ -20947,7 +21117,7 @@ infer_single_function(T2Checker *checker, Expr const *function)
                              && (kind != T2_PARAMETER_KEYWORD_REST)
                              && (kind != T2_PARAMETER_PACK)
                              && (
-                                        (i >= (usize)vN(function->dflts))
+                                        (i >= vN(function->dflts))
                                      || (v__(function->dflts, (int)i) == NULL)
                                 )
                              && !type_admits_nil(checker, parameter_type);
@@ -20962,7 +21132,7 @@ infer_single_function(T2Checker *checker, Expr const *function)
                         .required = required
                 };
 
-                if (i < (usize)vN(function->param_symbols)) {
+                if (i < vN(function->param_symbols)) {
                         T2Binding *binding = ensure_binding(
                                 checker,
                                 v__(function->param_symbols, (int)i)
@@ -21141,7 +21311,7 @@ infer_single_function(T2Checker *checker, Expr const *function)
                                 T2Type argument = T2_TYPE_INVALID;
                                 if (
                                         (function->class->def != NULL)
-                                     && (i < (usize)vN(function->class->def->class.type_params))
+                                     && (i < vN(function->class->def->class.type_params))
                                 ) {
                                         Expr const *parameter = v__(
                                                 function->class->def->class.type_params,
@@ -21240,7 +21410,7 @@ infer_single_function(T2Checker *checker, Expr const *function)
         apply_function_bounds(checker, function);
 
         for (usize i = 0; i < parameter_count; ++i) {
-                if (i >= (usize)vN(function->dflts)) {
+                if (i >= vN(function->dflts)) {
                         break;
                 }
                 Expr const *value = v__(function->dflts, (int)i);
@@ -21256,7 +21426,11 @@ infer_single_function(T2Checker *checker, Expr const *function)
                 }
                 T2ParameterSpec parameter;
                 if (t2_callable_parameter(checker->universe, callable, i, &parameter)) {
-                        T2Type fallback = infer_expression(checker, value);
+                        T2Type fallback = infer_expression_with_hint(
+                                checker,
+                                value,
+                                parameter.type
+                        );
                         if (declared_parameter_annotation(function, i) == NULL) {
                                 (void)constrain_type(
                                         checker,
@@ -21266,7 +21440,7 @@ infer_single_function(T2Checker *checker, Expr const *function)
                                         "default-argument",
                                         "the default value does not match the inferred parameter type"
                                 );
-                        } else if (i < (usize)vN(function->param_symbols)) {
+                        } else if (i < vN(function->param_symbols)) {
                                 T2Binding *binding = find_binding(
                                         checker,
                                         v__(function->param_symbols, (int)i)
@@ -21433,7 +21607,7 @@ infer_function_expression(T2Checker *checker, Expr const *function)
                 return result;
         }
 
-        usize count = (usize)vN(function->functions);
+        usize count = vN(function->functions);
         vec(T2Type) candidates = { 0 };
         for (usize i = 0; i < count; ++i) {
                 Expr const *entry     = v__(function->functions, (int)i);
@@ -22126,7 +22300,7 @@ validate_pending_class_contracts(T2Checker *checker)
                               )
                             ? t2_type_arity(checker->universe, contract.receiver)
                             : 0;
-                usize declared_arity = (usize)vN(definition->type_params);
+                usize declared_arity = vN(definition->type_params);
                 for (usize j = 0; j < arity && j < declared_arity; ++j) {
                         Expr const *parameter = v__(definition->type_params, (int)j);
                         (void)add_type_variable(
@@ -22379,7 +22553,7 @@ scheme_with_class_bounds(
         usize class_arity
 )
 {
-        usize declared = (usize)vN(definition->type_params);
+        usize declared = vN(definition->type_params);
         usize bounded  = 0;
         for (usize i = 0; i < class_arity && i < declared; ++i) {
                 bounded += v__(definition->type_params, (int)i)->constraint != NULL;
@@ -22609,7 +22783,7 @@ infer_class_definition(T2Checker *checker, Stmt const *statement)
         int class_id = is_tag
                      ? ((runtime_class == NULL) ? CLASS_TAG : runtime_class->i)
                      : definition->symbol;
-        usize declared_arity = (usize)vN(definition->type_params);
+        usize declared_arity = vN(definition->type_params);
         if (is_tag && declared_arity > 1) {
                 add_diagnostic(
                         checker,
@@ -23333,9 +23507,13 @@ infer_loop_statement(T2Checker *checker, Stmt const *statement)
 static T2Flow
 infer_statement(T2Checker *checker, Stmt const *statement)
 {
-        return is_loop_statement(statement)
-             ? infer_loop_statement(checker, statement)
-             : infer_statement_once(checker, statement);
+        u32 depth = checker->refutable_pattern_depth;
+        checker->refutable_pattern_depth = 0;
+        T2Flow flow = is_loop_statement(statement)
+                    ? infer_loop_statement(checker, statement)
+                    : infer_statement_once(checker, statement);
+        checker->refutable_pattern_depth = depth;
+        return flow;
 }
 
 static T2Flow
@@ -23742,7 +23920,7 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
         case STATEMENT_IF:
         case STATEMENT_IF_LET:
         {
-                usize part_count = (usize)vN(statement->_if.parts);
+                usize part_count = vN(statement->_if.parts);
                 T2Type *conditions = (part_count == 0)
                                    ? NULL
                                    : ty_malloc(part_count * sizeof *conditions);
@@ -23859,6 +24037,7 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
                 (void)infer_statement(checker, statement->for_loop.init);
                 if (statement->for_loop.cond != NULL) {
                         (void)infer_expression(checker, statement->for_loop.cond);
+                        apply_condition_refinements(checker, statement->for_loop.cond, true);
                 }
                 T2Flow body = infer_statement(checker, statement->for_loop.body);
                 if (statement->for_loop.next != NULL) {
@@ -23882,11 +24061,13 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
                         collection,
                         statement->each.array
                 );
-                if (statement->each._if != NULL) {
-                        (void)infer_expression(checker, statement->each._if);
-                }
                 if (statement->each._while != NULL) {
                         (void)infer_expression(checker, statement->each._while);
+                        apply_condition_refinements(checker, statement->each._while, true);
+                }
+                if (statement->each._if != NULL) {
+                        (void)infer_expression(checker, statement->each._if);
+                        apply_condition_refinements(checker, statement->each._if, true);
                 }
                 T2Flow body = infer_statement(checker, statement->each.body);
                 result = loop_flow(checker, body, false);
@@ -24268,7 +24449,7 @@ register_type_alias(T2Checker *checker, ClassDefinition const *definition)
                 .symbol     = definition->var,
                 .definition = definition,
                 .binder     = t2_universe_fresh_recursive_binder(checker->universe),
-                .arity      = (usize)vN(definition->type_params),
+                .arity      = vN(definition->type_params),
                 .state      = T2_ALIAS_UNRESOLVED
         }));
 }
@@ -24286,7 +24467,7 @@ register_nominal_hierarchy(
 
         u64 nominal_symbol   = nominal->symbol;
         usize arity          = nominal->arity;
-        usize declared_arity = (usize)vN(definition->type_params);
+        usize declared_arity = vN(definition->type_params);
         usize type_mark      = push_type_variables(checker);
         for (usize i = 0; i < arity && i < declared_arity; ++i) {
                 Expr const *parameter = v__(definition->type_params, (int)i);
@@ -24298,7 +24479,7 @@ register_nominal_hierarchy(
         }
 
         usize count = ((definition->super == NULL) ? 0 : 1)
-                    + (usize)vN(definition->traits);
+                    + vN(definition->traits);
         for (usize i = 0; i < count; ++i) {
                 Expr const *declaration = (i == 0) && (definition->super != NULL)
                                         ? definition->super
@@ -24344,7 +24525,7 @@ install_declared_class_constructor(
         }
 
         usize arity          = nominal->arity;
-        usize declared_arity = (usize)vN(definition->type_params);
+        usize declared_arity = vN(definition->type_params);
         T2Quantifier *quantifiers = (arity == 0)
                                   ? NULL
                                   : ty_malloc(arity * sizeof *quantifiers);
@@ -24430,7 +24611,7 @@ register_declaration(T2Checker *checker, Stmt const *statement)
                         checker,
                         class_id,
                         statement->class.name,
-                        (usize)vN(statement->class.type_params)
+                        vN(statement->class.type_params)
                 );
                 register_nominal_hierarchy(checker, &statement->class, nominal);
                 if (!checker->restored) {
@@ -25343,7 +25524,11 @@ resolve_external_predicate_x(
                                 subject = narrowed;
                         }
                 }
-                if (t2_type_kind(checker->universe, subject) == T2_TYPE_RECORD) {
+                subject_kind = t2_type_kind(checker->universe, subject);
+                if (
+                        (subject_kind == T2_TYPE_RECORD)
+                     || (upper_only && subject_kind == T2_TYPE_OBJECT)
+                ) {
                         T2FieldSpec requirement = {
                                 .name     = predicate->name,
                                 .type     = predicate->supertype,
@@ -25369,21 +25554,24 @@ resolve_external_predicate_x(
                                 solver,
                                 t2_solver_constrain_subtype(
                                         solver,
-                                        subject,
+                                        (subject_kind == T2_TYPE_OBJECT)
+                                                ? predicate->subtype
+                                                : subject,
                                         record,
                                         predicate->provenance
                                 )
                         );
                 }
                 if (write) {
-                        return check_member_write(
+                        bool write_ok = check_member_write(
                                 checker,
                                 subject,
                                 predicate->name,
                                 predicate->supertype,
                                 NULL,
                                 false
-                        ) ? T2_RELATION_YES : T2_RELATION_NO;
+                        );
+                        return write_ok ? T2_RELATION_YES : T2_RELATION_NO;
                 }
                 result = infer_member_type(
                         checker,
@@ -28769,6 +28957,97 @@ published_type(T2Checker *checker, T2Type type)
 }
 
 static void
+diagnose_export_scheme(
+        T2Checker      *checker,
+        T2Scheme       *scheme,
+        Expr const     *site,
+        char const     *name
+)
+{
+        if (!t2_solver_zonk_scheme(checker->solver, scheme)) {
+                add_diagnostic(
+                        checker,
+                        site,
+                        T2_DIAGNOSTIC_ERROR,
+                        "invalid-export",
+                        T2_TYPE_INVALID,
+                        T2_TYPE_INVALID,
+                        "the exported type of `%s` could not be resolved",
+                        name
+                );
+                checker->failed = true;
+                return;
+        }
+        if (
+                (scheme == NULL)
+             || t2_type_has_metas(checker->universe, t2_scheme_body(scheme))
+             || !t2_scheme_has_metas(scheme)
+        ) {
+                return;
+        }
+
+        for (usize i = 0; i < t2_scheme_predicate_count(scheme); ++i) {
+                T2Predicate predicate;
+                if (!t2_scheme_predicate(scheme, i, &predicate)) {
+                        continue;
+                }
+                if (
+                        !t2_type_has_metas(checker->universe, predicate.subtype)
+                     && !t2_type_has_metas(checker->universe, predicate.supertype)
+                     && !t2_type_has_metas(checker->universe, predicate.operand)
+                ) {
+                        continue;
+                }
+                add_diagnostic(
+                        checker,
+                        site,
+                        T2_DIAGNOSTIC_ERROR,
+                        "invalid-export",
+                        t2_scheme_type(checker->universe, scheme),
+                        T2_TYPE_INVALID,
+                        "the exported type of `%s` contains a solver-local variable",
+                        name
+                );
+                return;
+        }
+}
+
+static void
+diagnose_exports(T2Checker *checker)
+{
+        for (usize i = 0; i < vN(checker->bindings); ++i) {
+                T2Binding const *binding = v_(checker->bindings, i);
+                if (
+                        (binding->symbol == NULL)
+                     || binding->imported
+                     || binding->borrowed
+                     || (binding->path_base != NULL)
+                     || !SymbolIsGlobal(binding->symbol)
+                ) {
+                        continue;
+                }
+                diagnose_export_scheme(
+                        checker,
+                        binding->scheme,
+                        binding->symbol->expr,
+                        binding->symbol->identifier
+                );
+        }
+        for (usize i = 0; i < vN(checker->members); ++i) {
+                T2Member const *member = v_(checker->members, i);
+                if (member->borrowed) {
+                        continue;
+                }
+                diagnose_export_scheme(
+                        checker,
+                        member->scheme,
+                        member->declaration,
+                        member->name
+                );
+        }
+}
+
+static void
 publish_types(T2Checker *checker)
 {
         for (usize i = 0; i < checker->node_capacity; ++i) {
@@ -28867,6 +29146,7 @@ t2_checker_finish(Ty *ty, T2Checker *checker)
         discharge_forward_uses(checker, NULL);
         validate_pending_class_contracts(checker);
         diagnose_unresolved_obligations(checker);
+        diagnose_exports(checker);
         report_internal_failure(checker);
 
         usize errors   = 0;
@@ -28876,9 +29156,7 @@ t2_checker_finish(Ty *ty, T2Checker *checker)
                 warnings += v__(checker->diagnostics, i).severity == T2_DIAGNOSTIC_WARNING;
         }
 
-        bool fatal = (errors != 0)
-                  && AfterStartup
-                  && (entry_unit(checker) || checker->published_bindings);
+        bool fatal = (errors != 0) && AfterStartup;
         bool reported = !fatal && report_all_units();
         if (
                 (fatal || reported)
@@ -29121,10 +29399,16 @@ t2_checker_finish(Ty *ty, T2Checker *checker)
                 log_end(checker);
         }
 
-        publish_types(checker);
-        publish_interfaces(checker);
-        if (checker->cache_path != NULL && !fatal && !checker->failed) {
-                write_cache(checker);
+        if (!fatal) {
+                publish_types(checker);
+                publish_interfaces(checker);
+                if (
+                        (checker->cache_path != NULL)
+                     && (errors == 0)
+                     && !checker->failed
+                ) {
+                        write_cache(checker);
+                }
         }
 
         if (cache_digest() && checker->cache_path != NULL) {
@@ -29315,7 +29599,7 @@ t2_class_template(Ty *ty, Class *class)
 
         usize arity = (class->def == NULL)
                     ? 0
-                    : (usize)vN(class->def->class.type_params);
+                    : vN(class->def->class.type_params);
         if (arity == 0) {
                 return t2_object_type(ty, class);
         }
@@ -29434,12 +29718,13 @@ t2_resolve_in_class(Ty *ty, Class *class, Expr *type_expression)
                 return T2_TYPE_INVALID;
         }
 
-        ClassDefinition const *definition = (class == NULL) || (class->def == NULL)
+        ClassDefinition const *definition = (class == NULL || class->def == NULL)
                                           ? NULL
                                           : &class->def->class;
         usize arity = (definition == NULL)
                     ? 0
-                    : (usize)vN(definition->type_params);
+                    : vN(definition->type_params);
+
         for (usize i = 0; i < arity; ++i) {
                 Expr const *parameter = v__(definition->type_params, (int)i);
                 (void)add_type_variable(
@@ -29557,6 +29842,16 @@ check_nominal_value(
         }
 
         switch (class) {
+        case CLASS_REGEX:
+        case CLASS_REGEXV:
+        {
+                if (value->type != VALUE_REGEX) {
+                        return false;
+                }
+                Value captures = INTEGER(value->regex->ncap);
+                return check_value(ty, stack, t2_type_child(universe, type, 0), &captures);
+        }
+
         case CLASS_ARRAY:
                 if (value->type != VALUE_ARRAY) {
                         return true;
