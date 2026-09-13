@@ -1721,8 +1721,8 @@ prefix_real(Ty *ty)
         return e;
 }
 
-static StringLiteral
-astrcat(Ty *ty, StringLiteral s1, StringLiteral s2)
+static Bytes
+astrcat(Ty *ty, Bytes s1, Bytes s2)
 {
         usize n1 = s1.length;
         usize n2 = s2.length;
@@ -1732,7 +1732,7 @@ astrcat(Ty *ty, StringLiteral s1, StringLiteral s2)
         memcpy(s + n1, s2.data, n2);
         s[n1 + n2] = '\0';
 
-        return (StringLiteral) { s, n1 + n2 };
+        return (Bytes) { s, n1 + n2 };
 }
 
 static void
@@ -1744,13 +1744,13 @@ merge_strings(Ty *ty, Expr *s1, Expr *s2)
         }
 
         if (s2->type == EXPRESSION_STRING) {
-                StringLiteral *last = vvL(s1->strings);
+                Bytes *last = vvL(s1->strings);
                 *last = astrcat(ty, *last, s2->string);
                 return;
         }
 
         if (s1->type == EXPRESSION_STRING) {
-                StringLiteral *first = v_(s2->strings, 0);
+                Bytes *first = v_(s2->strings, 0);
                 *first = astrcat(ty, s1->string, *first);
                 *s1 = *s2;
                 return;
@@ -1765,7 +1765,7 @@ merge_strings(Ty *ty, Expr *s1, Expr *s2)
          *
          *      As1 Ae1 As2 Ae2 As3_Bs1 Be1 Bs2 Be2 Bs3 Be3 Bs4
          */
-        StringLiteral *last = vvL(s1->strings);
+        Bytes *last = vvL(s1->strings);
         *last = astrcat(ty, *last, s2->strings.items[0]);
         avPv(s1->expressions, s2->expressions);
         avPv(s1->fmts, s2->fmts);
@@ -1815,10 +1815,10 @@ prefix_string(Ty *ty)
         return extend_string(ty, e);
 }
 
-static StringLiteral
+static Bytes
 ss_next_str(Ty *ty, bool top)
 {
-        StringLiteral str;
+        Bytes str;
 
         setctx(top ? LEX_FMT : LEX_XFMT);
 
@@ -1826,7 +1826,7 @@ ss_next_str(Ty *ty, bool top)
                 // TODO: this shouldn't be necessary. we threw away a SS string
                 // and were unable to rewind back through preprocessor-generated
                 // tokens in order to produce it again
-                return (StringLiteral) { "", 0 };
+                return (Bytes) { "", 0 };
         }
 
         str = tok()->string;
@@ -1884,7 +1884,7 @@ ss_inner(Ty *ty, bool top)
 
                 if (try_consume(':')) {
                         Expr *fmt = ss_inner(ty, false);
-                        StringLiteral *last = vvL(fmt->strings);
+                        Bytes *last = vvL(fmt->strings);
 
                         /*
                          * Strip trailing spaces from the format specifier so
@@ -1953,15 +1953,15 @@ prefix_ss(Ty *ty)
         return extend_string(ty, e);
 }
 
-static StringLiteral
+static Bytes
 re_next_part(Ty *ty)
 {
-        StringLiteral str;
+        Bytes str;
 
         setctx(LEX_REGEX);
 
         if (T0 != TOKEN_STRING) {
-                return (StringLiteral) { "", 0 };
+                return (Bytes) { "", 0 };
         }
 
         str = tok()->string;

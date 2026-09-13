@@ -175,7 +175,7 @@ mkstring(Ty *ty, char const *string, usize length)
 {
         return (Token) {
                 .type   = TOKEN_STRING,
-                .string = { .data = string, .length = length },
+                .string = {.data = string, .length = length},
                 .start  = Start,
                 .end    = state.loc,
                 .nl     = state.need_nl,
@@ -1029,7 +1029,7 @@ lex_re(Ty *ty)
                 }
                 avP(flags, '\0');
                 Token t = mktoken(ty, TOKEN_DYN_REGEX);
-                t.string = (StringLiteral) { vv(flags), vN(flags) - 1 };
+                t.string = (Bytes){vv(flags), vN(flags) - 1};
                 return t;
         }
 
@@ -1143,12 +1143,10 @@ lexnum(Ty *ty, bool float_ok)
                 errno = 0;
                 double real = strtod(SRC, &end);
                 n = end - SRC;
-
                 if (errno != 0) {
                         char const *err = strerror(errno);
                         error(ty, "invalid numeric literal: %c%s", tolower(err[0]), err + 1);
                 }
-
                 if (isalnum(C(n))) {
                         error(
                                 ty,
@@ -1158,14 +1156,16 @@ lexnum(Ty *ty, bool float_ok)
                                 TERM(39)
                         );
                 }
-
-                while (SRC != end) nextchar(ty);
-
+                while (SRC != end) {
+                        nextchar(ty);
+                }
                 num = mkreal(ty, real);
         } else if (C(n) == 'r') {
-                if (integer < INT_MIN ||
-                    integer > INT_MAX ||
-                    ((integer = strtoull(end + 1, &end, (base = integer)), errno != 0))) {
+                if (
+                        (integer < INT_MIN)
+                     || (integer > INT_MAX)
+                     || ((integer = strtoull(end + 1, &end, (base = integer))), errno != 0)
+                ) {
                         error(
                                 ty,
                                 "invalid base %s%.*s%s used in integer literal",
@@ -1175,7 +1175,9 @@ lexnum(Ty *ty, bool float_ok)
                                 TERM(39)
                         );
                 }
-                while (SRC != end) nextchar(ty);
+                while (SRC != end) {
+                        nextchar(ty);
+                }
                 num = mkinteger(ty, integer);
         } else {
                 if (isalnum(C(n))) {
@@ -1187,9 +1189,9 @@ lexnum(Ty *ty, bool float_ok)
                                 TERM(39)
                         );
                 }
-
-                while (SRC != end) nextchar(ty);
-
+                while (SRC != end) {
+                        nextchar(ty);
+                }
                 num = mkinteger(ty, integer);
         }
 
@@ -1203,34 +1205,34 @@ lexop(Ty *ty)
         size_t i = 0;
 
         bool touching_id = idchar(C(-1))
-                        || C(-1) == '?'
-                        || C(-1) == '!';
+                        || (C(-1) == '?')
+                        || (C(-1) == '!');
 
         while (
-                contains(OperatorCharset, C(0)) ||
-                (
-                        C(0) == ':' &&
-                        (
-                                C(-1) != '*' ||
-                                i > 1 ||
-                                (
-                                        contains(OperatorCharset, C(1)) &&
-                                        C(1) != '-'
-                                )
+                contains(OperatorCharset, C(0))
+             || (
+                        (C(0) == ':')
+                     && (
+                                (C(-1) != '*')
+                             || (i > 1)
+                             || (contains(OperatorCharset, C(1)) && (C(1) != '-'))
                         )
                 )
         ) {
                 /* Special case to make dict literals less annoying (e.g. apply(f, kwargs=%{}) */
-                if (C(0) == '%' && C(1) == '{' && i != 0)
+                if (C(0) == '%' && C(1) == '{' && i != 0) {
                         break;
+                }
 
                 /* Another one: --@i should decrement @i, not apply --@ to i */
-                if (i > 0 && C(0) == '@' && idchar(C(1)))
+                if (i > 0 && C(0) == '@' && idchar(C(1))) {
                         break;
+                }
 
                 /* Don't consume $$ (template hole marker) as part of an operator */
-                if (C(0) == '$' && C(1) == '$' && i > 0)
+                if (C(0) == '$' && C(1) == '$' && i > 0) {
                         break;
+                }
 
                 /* Another one :^) We want a=#self to mean a = #self, not a #= self...
                  * This comes up primarily with default function arguments.
@@ -1511,16 +1513,16 @@ Begin:
         } else if (
                 contains(OperatorCharset, C(0))
              || (
-                        C(0) == ':'
+                        (C(0) == ':')
                      && (
                                 isspace(C(-1))
                              || (
                                         contains(OperatorCharset, C(1))
-                                     && C(1) != '-'
-                                     && C(1) != '*'
-                                     && C(1) != '+'
-                                     && C(1) != '.'
-                                     && C(1) != '%'
+                                     && (C(1) != '-')
+                                     && (C(1) != '*')
+                                     && (C(1) != '+')
+                                     && (C(1) != '.')
+                                     && (C(1) != '%')
                                 )
                         )
                 )

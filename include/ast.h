@@ -319,7 +319,7 @@ struct expression {
         union {
                 intmax_t integer;
                 bool boolean;
-                StringLiteral string;
+                Bytes string;
                 char const *message;
                 double real;
                 Stmt *statement;
@@ -374,7 +374,7 @@ struct expression {
                                 Expr *lang;
                                 char const *re_flags;
                         };
-                        vec(StringLiteral) strings;
+                        vec(Bytes) strings;
                         ExprVec fmts;
                         ExprVec fmtfs;
                         int_vector widths;
