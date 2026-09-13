@@ -10830,10 +10830,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                                 INSN(NIL);
                         } else {
                                 INSN(STRING);
-                                ESL(((Bytes) {
-                                        v__(e->names, i),
-                                        strlen(v__(e->names, i))
-                                }));
+                                ESL(((Bytes) {v__(e->names, i), strlen(v__(e->names, i))}));
                         }
                         EE(v__(e->es, i));
                         if (v__(e->required, i)) {
@@ -15406,7 +15403,7 @@ cexpr(Ty *ty, Value *v)
 
         case TyString:
                 e->type = EXPRESSION_STRING;
-                e->string = (Bytes) { mkcstr(v), sN(*v) };
+                e->string = (Bytes) {mkcstr(v), sN(*v)};
                 break;
 
         case TyLangString:
@@ -15419,7 +15416,7 @@ cexpr(Ty *ty, Value *v)
                 for (int i = 0; i < v->array->count; ++i) {
                         Value *x = &v->array->items[i];
                         if (x->type == VALUE_STRING) {
-                                avP(e->strings, ((Bytes) { mkcstr(x), sN(*x) }));
+                                avP(e->strings, ((Bytes) {mkcstr(x), sN(*x)}));
                         } else if (x->type == VALUE_TUPLE) {
                                 avP(e->expressions, cexpr(ty, &x->items[0]));
                                 avP(e->fmts, cexpr(ty, &x->items[1]));
@@ -15434,7 +15431,7 @@ cexpr(Ty *ty, Value *v)
                 }
 
                 if (vN(*v->array) == 0 || vvL(*v->array)->type != VALUE_STRING) {
-                        avP(e->strings, ((Bytes) { "", 0 }));
+                        avP(e->strings, ((Bytes) {"", 0}));
                 }
                 break;
         }
