@@ -30420,12 +30420,16 @@ scheme_member_type(
                 arguments,
                 arity
         );
-        if (body == T2_TYPE_INVALID || count == arity) {
+        if (body == T2_TYPE_INVALID) {
                 result = body;
                 goto Done;
         }
 
         usize predicate_count = t2_scheme_predicate_count(scheme);
+        if (count == arity && predicate_count == 0) {
+                result = body;
+                goto Done;
+        }
         predicates = ty_malloc((predicate_count + 1) * sizeof *predicates);
         if (predicates == NULL) {
                 goto Done;
@@ -30466,7 +30470,14 @@ scheme_member_type(
                 predicate_count
         );
         if (remaining != NULL) {
-                result = t2_scheme_type(universe, remaining);
+                for (usize i = arity; i < count; ++i) {
+                        t2_scheme_name_quantifier(
+                                remaining,
+                                i - arity,
+                                t2_scheme_quantifier_name(scheme, i)
+                        );
+                }
+                result = t2_scheme_type(universe, t2_scheme_simplify(remaining));
                 t2_scheme_free(remaining);
         }
 
@@ -30573,8 +30584,17 @@ reflect_nominal(Ty *ty, T2Type type, unsigned depth)
         return reflect_object(ty, class, reflect_arms(ty, type, depth));
 }
 
+static char const *const ParameterKinds[] = {
+        [T2_PARAMETER_POSITIONAL_ONLY]       = "positional-only",
+        [T2_PARAMETER_POSITIONAL_OR_KEYWORD] = "positional-or-keyword",
+        [T2_PARAMETER_KEYWORD_ONLY]          = "keyword-only",
+        [T2_PARAMETER_POSITIONAL_REST]       = "positional-rest",
+        [T2_PARAMETER_KEYWORD_REST]          = "keyword-rest",
+        [T2_PARAMETER_PACK]                  = "pack"
+};
+
 static Value
-reflect_function(Ty *ty, T2Type type, Array *quantifiers, unsigned depth)
+reflect_function(Ty *ty, T2Type type, unsigned depth)
 {
         T2Universe *universe = t2_global_universe();
         usize count       = t2_callable_parameter_count(universe, type);
@@ -30591,13 +30611,8 @@ reflect_function(Ty *ty, T2Type type, Array *quantifiers, unsigned depth)
                                 (parameter.name == NULL) ? NIL : vSsz(parameter.name),
                                 "type",
                                 reflect_type(ty, parameter.type, depth + 1),
-                                "gather",
-                                BOOLEAN(
-                                        (parameter.kind == T2_PARAMETER_POSITIONAL_REST)
-                                     || (parameter.kind == T2_PARAMETER_PACK)
-                                ),
-                                "kwargs",
-                                BOOLEAN(parameter.kind == T2_PARAMETER_KEYWORD_REST),
+                                "kind",
+                                vSsz(ParameterKinds[parameter.kind]),
                                 "required",
                                 BOOLEAN(parameter.required)
                         )
@@ -30607,49 +30622,64 @@ reflect_function(Ty *ty, T2Type type, Array *quantifiers, unsigned depth)
         return tagged(
                 ty,
                 TyFuncT,
-                ARRAY(quantifiers),
-                ARRAY(parameters),
-                reflect_type(ty, t2_callable_result(universe, type), depth + 1),
+                vTn(
+                        "parameters", ARRAY(parameters),
+                        "result", reflect_type(ty, t2_callable_result(universe, type), depth + 1)
+                ),
                 NONE
         );
 }
 
-static bool
-lower_bounded_quantifier(
-        T2Universe     *universe,
-        T2Scheme const *scheme,
-        T2Quantifier    quantifier,
-        T2Type         *bound
-)
-{
-        usize count = t2_scheme_predicate_count(scheme);
-        *bound      = T2_TYPE_INVALID;
-        for (usize i = 0; i < count; ++i) {
-                T2Predicate predicate;
-                if (!t2_scheme_predicate(scheme, i, &predicate)) {
-                        return false;
-                }
-                if (predicate.kind != T2_PREDICATE_SUBTYPE) {
-                        return false;
-                }
-                bool above = (
-                                     t2_type_kind(universe, predicate.supertype) == T2_TYPE_VARIABLE
-                             )
-                          && (t2_type_payload(universe, predicate.supertype) == quantifier.id);
-                bool below = (t2_type_kind(universe, predicate.subtype) == T2_TYPE_VARIABLE)
-                          && (t2_type_payload(universe, predicate.subtype) == quantifier.id);
-                if (below) {
-                        return false;
-                }
-                if (!above) {
-                        continue;
-                }
-                *bound = (*bound == T2_TYPE_INVALID)
-                       ? predicate.subtype
-                       : t2_join(universe, *bound, predicate.subtype);
-        }
+static char const *const VariableKinds[] = {
+        [T2_VARIABLE_FLEXIBLE]   = "flexible",
+        [T2_VARIABLE_RIGID]      = "rigid",
+        [T2_VARIABLE_QUANTIFIED] = "quantified",
+        [T2_VARIABLE_WEAK]       = "weak",
+        [T2_VARIABLE_ROW]        = "row",
+        [T2_VARIABLE_PACK]       = "pack"
+};
 
-        return *bound != T2_TYPE_INVALID;
+static int const PredicateTags[] = {
+        [T2_PREDICATE_SUBTYPE]         = TySubtypeT,
+        [T2_PREDICATE_OPERATOR]        = TyOperatorT,
+        [T2_PREDICATE_SUBSCRIPT_READ]  = TySubscriptReadT,
+        [T2_PREDICATE_SUBSCRIPT_WRITE] = TySubscriptWriteT,
+        [T2_PREDICATE_MEMBER_READ]     = TyMemberReadT,
+        [T2_PREDICATE_MEMBER_WRITE]    = TyMemberWriteT,
+        [T2_PREDICATE_KEYWORD_SPREAD]  = TyKeywordSpreadT
+};
+
+static Value
+reflect_variable(Ty *ty, u32 id, T2VariableKind kind, char const *name)
+{
+        return tagged(
+                ty,
+                TyVarT,
+                vTn(
+                        "id",   INTEGER(id),
+                        "kind", vSsz(VariableKinds[kind]),
+                        "name", (name == NULL) ? NIL : vSsz(name)
+                ),
+                NONE
+        );
+}
+
+static Value
+reflect_predicate(Ty *ty, T2Predicate const *predicate, unsigned depth)
+{
+        return tagged(
+                ty,
+                PredicateTags[predicate->kind],
+                vTn(
+                        "subtype",   reflect_type(ty, predicate->subtype, depth + 1),
+                        "supertype", reflect_type(ty, predicate->supertype, depth + 1),
+                        "operand", (predicate->operand == T2_TYPE_INVALID)
+                                   ? NIL
+                                   : reflect_type(ty, predicate->operand, depth + 1),
+                        "name", (predicate->name == NULL) ? NIL : vSsz(predicate->name)
+                ),
+                NONE
+        );
 }
 
 static Value
@@ -30663,46 +30693,44 @@ reflect_scheme(Ty *ty, T2Type type, unsigned depth)
 
         usize count        = t2_scheme_quantifier_count(scheme);
         Array *quantifiers = vAn(count);
-        u32 *ids       = ty_malloc((count + 1) * sizeof *ids);
-        T2Type *bounds = ty_malloc((count + 1) * sizeof *bounds);
-        usize bounded = 0;
         for (usize i = 0; i < count; ++i) {
                 T2Quantifier quantifier;
                 if (!t2_scheme_quantifier(scheme, i, &quantifier)) {
                         continue;
                 }
-                T2Type bound;
-                if (
-                        (ids != NULL)
-                     && (bounds != NULL)
-                     && lower_bounded_quantifier(universe, scheme, quantifier, &bound)
-                ) {
-                        ids[bounded]    = quantifier.id;
-                        bounds[bounded] = bound;
-                        bounded += 1;
-                        continue;
-                }
                 vPx(
                         *quantifiers,
-                        tagged(ty, TyVarT, INTEGER((i64)quantifier.id), NONE)
+                        reflect_variable(
+                                ty,
+                                quantifier.id,
+                                quantifier.kind,
+                                t2_scheme_quantifier_name(scheme, i)
+                        )
                 );
         }
 
-        T2Type body = t2_scheme_body(scheme);
-        if (bounded != 0) {
-                T2Type narrowed = t2_type_substitute(universe, body, ids, bounds, bounded);
-                if (narrowed != T2_TYPE_INVALID) {
-                        body = narrowed;
+        count = t2_scheme_predicate_count(scheme);
+        Array *bounds = vAn(count);
+        for (usize i = 0; i < count; ++i) {
+                T2Predicate predicate;
+                if (t2_scheme_predicate(scheme, i, &predicate)) {
+                        vPx(*bounds, reflect_predicate(ty, &predicate, depth));
                 }
         }
 
-        ty_free(ids);
-        ty_free(bounds);
+        Value result = tagged(
+                ty,
+                TySchemeT,
+                vTn(
+                        "parameters", ARRAY(quantifiers),
+                        "body",       reflect_type(ty, t2_scheme_body(scheme), depth + 1),
+                        "bounds",     ARRAY(bounds)
+                ),
+                NONE
+        );
         t2_scheme_free(scheme);
 
-        return (t2_type_kind(universe, body) == T2_TYPE_FUNCTION)
-             ? reflect_function(ty, body, quantifiers, depth)
-             : reflect_type(ty, body, depth + 1);
+        return result;
 }
 
 static Value
@@ -30740,6 +30768,25 @@ reflect_tuple(Ty *ty, T2Type type, usize count, unsigned depth)
 }
 
 static Value
+reflect_sequence(Ty *ty, T2Type type, int tag, unsigned depth)
+{
+        T2Universe *universe = t2_global_universe();
+        usize count = t2_type_payload(universe, type);
+        Array *prefix = vAn(count);
+        for (usize i = 0; i < count; ++i) {
+                vPx(*prefix, reflect_type(ty, t2_type_child(universe, type, i), depth + 1));
+        }
+
+        return tagged(
+                ty,
+                tag,
+                ARRAY(prefix),
+                reflect_type(ty, t2_type_child(universe, type, count), depth + 1),
+                NONE
+        );
+}
+
+static Value
 reflect_type(Ty *ty, T2Type type, unsigned depth)
 {
         T2Universe *universe = t2_global_universe();
@@ -30754,10 +30801,12 @@ reflect_type(Ty *ty, T2Type type, unsigned depth)
         switch (t2_type_kind(universe, type)) {
         case T2_TYPE_NEVER:          return TAG(TyBottomT);
         case T2_TYPE_UNKNOWN:        return TAG(TyUnknownT);
-        case T2_TYPE_DYNAMIC:        return TAG(TyAnyT);
+        case T2_TYPE_DYNAMIC:        return TAG(TyDynamicT);
         case T2_TYPE_ANY:            return TAG(TyAnyT);
         case T2_TYPE_ERROR:          return TAG(TyErrorT);
         case T2_TYPE_NIL:            return TAG(TyNilT);
+        case T2_TYPE_PACK_EMPTY:     return TAG(TyEmptyPackT);
+        case T2_TYPE_PACK_ANY:       return TAG(TyAnyPackT);
         case T2_TYPE_OBJECT:
                 return reflect_object(ty, CLASS_OBJECT, ARRAY(vA()));
         case T2_TYPE_BOOL:
@@ -30765,7 +30814,20 @@ reflect_type(Ty *ty, T2Type type, unsigned depth)
         case T2_TYPE_INT:
                 return reflect_object(ty, CLASS_INT, ARRAY(vA()));
         case T2_TYPE_INT_RANGE:
-                return reflect_object(ty, CLASS_INT, ARRAY(vA()));
+        {
+                T2Type lower;
+                T2Type upper;
+                bool inclusive;
+                t2_integer_range_bounds(universe, type, &lower, &upper, &inclusive);
+                return tagged(
+                        ty,
+                        TyRangeT,
+                        (lower == T2_TYPE_INVALID) ? NIL : reflect_type(ty, lower, depth + 1),
+                        (upper == T2_TYPE_INVALID) ? NIL : reflect_type(ty, upper, depth + 1),
+                        BOOLEAN(inclusive),
+                        NONE
+                );
+        }
         case T2_TYPE_FLOAT:
                 return reflect_object(ty, CLASS_FLOAT, ARRAY(vA()));
         case T2_TYPE_STRING:
@@ -30788,8 +30850,24 @@ reflect_type(Ty *ty, T2Type type, unsigned depth)
         case T2_TYPE_LITERAL_STRING:
                 return tagged(ty, TyStringT, vSsz(t2_type_name(universe, type)), NONE);
         case T2_TYPE_REFINEMENT:
-        case T2_TYPE_PACK_EXPANSION:
                 return reflect_type(ty, t2_type_child(universe, type, 0), depth + 1);
+        case T2_TYPE_PACK_EXPANSION:
+                return tagged(
+                        ty,
+                        TyPackExpansionT,
+                        reflect_type(ty, t2_type_child(universe, type, 0), depth + 1),
+                        NONE
+                );
+        case T2_TYPE_PACK_FOLD_UNION:
+        case T2_TYPE_PACK_FOLD_INTERSECTION:
+                return tagged(
+                        ty,
+                        (t2_type_kind(universe, type) == T2_TYPE_PACK_FOLD_UNION)
+                        ? TyPackUnionT
+                        : TyPackIntersectT,
+                        reflect_type(ty, t2_type_child(universe, type, 0), depth + 1),
+                        NONE
+                );
         case T2_TYPE_COMPUTED:
         {
                 T2Type resolved = t2_type_resolve_computed(universe, type);
@@ -30814,16 +30892,13 @@ reflect_type(Ty *ty, T2Type type, unsigned depth)
         case T2_TYPE_SCHEME:
                 return reflect_scheme(ty, type, depth);
         case T2_TYPE_FUNCTION:
-                return reflect_function(ty, type, vA(), depth);
+                return reflect_function(ty, type, depth);
         case T2_TYPE_TUPLE:
                 return reflect_tuple(ty, type, t2_type_arity(universe, type), depth);
         case T2_TYPE_VARIADIC_TUPLE:
-                return reflect_tuple(
-                        ty,
-                        type,
-                        (usize)t2_type_payload(universe, type),
-                        depth
-                );
+                return reflect_sequence(ty, type, TyVariadicTupleT, depth);
+        case T2_TYPE_PACK:
+                return reflect_sequence(ty, type, TyPackT, depth);
         case T2_TYPE_RECORD:
                 return reflect_record(ty, type, depth);
         case T2_TYPE_MULTI:
@@ -30836,16 +30911,17 @@ reflect_type(Ty *ty, T2Type type, unsigned depth)
                      : reflect_type(ty, unfolded, depth + 1);
         }
         case T2_TYPE_OVERLOAD:
+                return tagged(ty, TyOverloadT, reflect_arms(ty, type, depth), NONE);
         case T2_TYPE_INTERSECTION:
                 return tagged(ty, TyIntersectT, reflect_arms(ty, type, depth), NONE);
         case T2_TYPE_UNION:
                 return tagged(ty, TyUnionT, reflect_arms(ty, type, depth), NONE);
         case T2_TYPE_VARIABLE:
-                return tagged(
+                return reflect_variable(
                         ty,
-                        TyVarT,
-                        INTEGER((i64)t2_type_payload(universe, type)),
-                        NONE
+                        (u32)t2_type_payload(universe, type),
+                        t2_type_variable_kind(universe, type),
+                        NULL
                 );
         case T2_TYPE_META:
                 return tagged(ty, TyHoleT, TYPE(type), NONE);
@@ -30857,7 +30933,12 @@ reflect_type(Ty *ty, T2Type type, unsigned depth)
 Value
 t2_to_ty(Ty *ty, T2Type type)
 {
-        return reflect_type(ty, type, 0);
+        SCRATCH_SAVE();
+        GC_STOP();
+        Value result = reflect_type(ty, type, 0);
+        GC_RESUME();
+        SCRATCH_RESTORE();
+        return result;
 }
 
 static Class *
@@ -30995,63 +31076,203 @@ type_from_record_spec(Ty *ty, Value const *inner)
         return result;
 }
 
+static usize
+spec_kind(Ty *ty, Value const *spec, char const *const *names, usize count, char const *label)
+{
+        if (spec->type == VALUE_STRING) {
+                for (usize i = 0; i < count; ++i) {
+                        if (
+                                (sN(*spec) == strlen(names[i]))
+                             && (memcmp(ss(*spec), names[i], sN(*spec)) == 0)
+                        ) {
+                                return i;
+                        }
+                }
+        }
+
+        CompileError(ty, MOD_COMPILE_ERR, "invalid %s kind: %s", label, VSC(spec));
+}
+
+static char const *
+spec_name(Ty *ty, Value const *spec)
+{
+        if (spec->type == VALUE_NIL) {
+                return NULL;
+        }
+
+        usize n = sN(*spec);
+        char *name = smA(n + 1);
+        memcpy(name, ss(*spec), n);
+        name[n] = '\0';
+
+        return name;
+}
+
+static T2Quantifier
+variable_from_spec(Ty *ty, Value const *spec, char const **name)
+{
+        Value id    = tget_or(spec, "id", NIL);
+        Value kind  = tget_or(spec, "kind", NIL);
+        Value label = tget_or(spec, "name", NIL);
+        if (
+                (id.type != VALUE_INTEGER)
+             || (id.z < 0)
+             || ((u64)id.z > UINT32_MAX)
+             || ((label.type != VALUE_NIL) && (label.type != VALUE_STRING))
+        ) {
+                CompileError(ty, MOD_COMPILE_ERR, "invalid type parameter: %s", VSC(spec));
+        }
+
+        T2VariableKind sort = (T2VariableKind)spec_kind(
+                ty,
+                &kind,
+                VariableKinds,
+                sizeof VariableKinds / sizeof *VariableKinds,
+                "type parameter"
+        );
+
+        *name = spec_name(ty, &label);
+        return (T2Quantifier) { .id = (u32)id.z, .kind = sort };
+}
+
+static T2Predicate
+predicate_from_spec(Ty *ty, Value const *spec)
+{
+        int tag = tags_first(ty, spec->tags);
+        usize kind = 0;
+        for (; kind < sizeof PredicateTags / sizeof *PredicateTags; ++kind) {
+                if (PredicateTags[kind] == tag) {
+                        break;
+                }
+        }
+        Value inner = unwrap(ty, spec);
+        Value const *sub = tget_or_null(&inner, (uptr)"subtype");
+        Value const *super = tget_or_null(&inner, (uptr)"supertype");
+        Value operand = tget_or(&inner, "operand", NIL);
+        Value name = tget_or(&inner, "name", NIL);
+        if (
+                (kind == sizeof PredicateTags / sizeof *PredicateTags)
+             || (sub == NULL)
+             || (super == NULL)
+             || ((name.type != VALUE_NIL) && (name.type != VALUE_STRING))
+        ) {
+                CompileError(ty, MOD_COMPILE_ERR, "invalid type bound: %s", VSC(spec));
+        }
+
+        T2Type arg = T2_TYPE_INVALID;
+        if (operand.type != VALUE_NIL) {
+                arg = t2_from_ty(ty, &operand);
+        } else if (kind != T2_PREDICATE_SUBTYPE) {
+                arg = t2_primitive(t2_global_universe(), T2_TYPE_NEVER);
+        }
+
+        return (T2Predicate) {
+                .kind      = (T2PredicateKind)kind,
+                .subtype   = t2_from_ty(ty, sub),
+                .supertype = t2_from_ty(ty, super),
+                .operand   = arg,
+                .name      = spec_name(ty, &name)
+        };
+}
+
+static T2Type
+scheme_from_spec(Ty *ty, T2Type body, Value const *params, Value const *bounds)
+{
+        if (
+                (params == NULL)
+             || (params->type != VALUE_ARRAY)
+             || ((bounds != NULL) && (bounds->type != VALUE_ARRAY))
+        ) {
+                CompileError(ty, MOD_COMPILE_ERR, "expected arrays of type parameters and bounds");
+        }
+
+        T2Universe *universe = t2_global_universe();
+        usize n = vN(*params->array);
+        usize m = (bounds == NULL) ? 0 : vN(*bounds->array);
+        T2Quantifier *quantifiers = (n == 0) ? NULL : smA(n * sizeof *quantifiers);
+        char const **names = (n == 0) ? NULL : smA(n * sizeof *names);
+        T2Predicate *predicates = (m == 0) ? NULL : smA(m * sizeof *predicates);
+        for (usize i = 0; i < n; ++i) {
+                Value const *parameter = v_(*params->array, i);
+                if (tags_first(ty, parameter->tags) != TyVarT) {
+                        CompileError(ty, MOD_COMPILE_ERR, "invalid type parameter: %s", VSC(parameter));
+                }
+                Value inner = unwrap(ty, parameter);
+                quantifiers[i] = variable_from_spec(ty, &inner, &names[i]);
+        }
+        for (usize i = 0; i < m; ++i) {
+                predicates[i] = predicate_from_spec(ty, v_(*bounds->array, i));
+        }
+
+        T2Scheme *scheme = t2_scheme_new(universe, quantifiers, n, body, predicates, m);
+        if (scheme == NULL) {
+                CompileError(ty, MOD_COMPILE_ERR, "invalid type scheme");
+        }
+        for (usize i = 0; i < n; ++i) {
+                if (!t2_scheme_name_quantifier(scheme, i, names[i])) {
+                        t2_scheme_free(scheme);
+                        CompileError(ty, MOD_COMPILE_ERR, "unable to name type parameter");
+                }
+        }
+        T2Type result = t2_scheme_type(universe, scheme);
+        t2_scheme_free(scheme);
+
+        return result;
+}
+
 static T2Type
 type_from_function_spec(Ty *ty, Value const *inner)
 {
         T2Universe *universe = t2_global_universe();
-        if (
-                (inner->type != VALUE_TUPLE)
-             || (inner->count != 3)
-             || (inner->items[1].type != VALUE_ARRAY)
-        ) {
+        Value const *params = tget_t(inner, "parameters", VALUE_ARRAY);
+        Value const *result = tget_or_null(inner, (uptr)"result");
+        if (params == NULL || result == NULL) {
                 CompileError(
                         ty,
                         MOD_COMPILE_ERR,
-                        "expected (TVars, Params, ReturnType) tuple but got: %s",
+                        "expected function type record with parameters and result: %s",
                         VSC(inner)
                 );
         }
 
-        Array const *specs = inner->items[1].array;
+        Array const *specs = params->array;
         usize count        = vN(*specs);
-
-        T2ParameterSpec *parameters = (count == 0) ? NULL : xtA(T2ParameterSpec, count);
-
+        T2ParameterSpec *parameters = (count == 0) ? NULL : smA(count * sizeof *parameters);
         for (usize i = 0; i < count; ++i) {
-                Value const *spec    = v_(*specs, i);
-                Value const *name    = tget_or_null(spec, (uptr)"name");
-                Value type           = tget_or(spec, (uptr)"type", TAG(TyUnknownT));
-                Value required       = tget_or(spec, (uptr)"required", BOOLEAN(false));
-                Value gather         = tget_or(spec, (uptr)"gather", BOOLEAN(false));
-                Value kwargs         = tget_or(spec, (uptr)"kwargs", BOOLEAN(false));
-                T2ParameterKind kind = T2_PARAMETER_POSITIONAL_OR_KEYWORD;
-                if (value_truthy(ty, &gather)) {
-                        kind = T2_PARAMETER_POSITIONAL_REST;
-                }
-                if (value_truthy(ty, &kwargs)) {
-                        kind = T2_PARAMETER_KEYWORD_REST;
+                Value const *spec = v_(*specs, i);
+                Value const *type = tget_or_null(spec, (uptr)"type");
+                Value name       = tget_or(spec, "name", NIL);
+                Value required   = tget_or(spec, "required", NIL);
+                Value kind       = tget_or(spec, "kind", NIL);
+                if (
+                        (type == NULL)
+                     || (required.type != VALUE_BOOLEAN)
+                     || ((name.type != VALUE_NIL) && (name.type != VALUE_STRING))
+                ) {
+                        CompileError(ty, MOD_COMPILE_ERR, "invalid function parameter: %s", VSC(spec));
                 }
                 parameters[i] = (T2ParameterSpec) {
-                        .name = (name != NULL) && (name->type == VALUE_STRING)
-                              ? TY_C_STR(*name)
-                              : NULL,
-                        .type     = t2_from_ty(ty, &type),
-                        .kind     = kind,
-                        .required = value_truthy(ty, &required)
+                        .name     = spec_name(ty, &name),
+                        .type     = t2_from_ty(ty, type),
+                        .required = required.boolean,
+                        .kind     = (T2ParameterKind)spec_kind(
+                                ty,
+                                &kind,
+                                ParameterKinds,
+                                sizeof ParameterKinds / sizeof *ParameterKinds,
+                                "function parameter"
+                        )
                 };
         }
 
-        T2Type result = t2_callable(
+        return t2_callable(
                 universe,
                 parameters,
                 count,
-                t2_from_ty(ty, &inner->items[2]),
+                t2_from_ty(ty, result),
                 t2_primitive(universe, T2_TYPE_NEVER),
                 t2_primitive(universe, T2_TYPE_NIL)
         );
-        ty_free(parameters);
-
-        return result;
 }
 
 static T2Type
@@ -31059,36 +31280,33 @@ type_from_bare_tag(Ty *ty, int tag)
 {
         T2Universe *universe = t2_global_universe();
         T2Type dynamic = t2_primitive(universe, T2_TYPE_DYNAMIC);
+
         switch (tag) {
-        case TyNilT:     return t2_primitive(universe, T2_TYPE_NIL);
-        case TyBottomT:  return t2_primitive(universe, T2_TYPE_NEVER);
-        case TyUnknownT: return t2_primitive(universe, T2_TYPE_UNKNOWN);
-        case TyAnyT:     return t2_primitive(universe, T2_TYPE_ANY);
-        case TyErrorT:   return t2_primitive(universe, T2_TYPE_ERROR);
-        case TyObjectT:  return t2_primitive(universe, T2_TYPE_OBJECT);
-        case TyIntT:     return t2_primitive(universe, T2_TYPE_INT);
-        case TyFloatT:   return t2_primitive(universe, T2_TYPE_FLOAT);
-        case TyStringT:  return t2_primitive(universe, T2_TYPE_STRING);
-        case TyBoolT:    return t2_primitive(universe, T2_TYPE_BOOL);
-        case TyRegexT:   return t2_class_instance(ty, CLASS_REGEX, NULL, 0);
-        case TyRegexVT:  return t2_class_instance(ty, CLASS_REGEXV, NULL, 0);
-        case TyArrayT:   return t2_class_instance(ty, CLASS_ARRAY, &dynamic, 1);
-        case TyDictT:
-                return t2_class_instance(
-                        ty,
-                        CLASS_DICT,
-                        (T2Type[]) { dynamic, dynamic },
-                        2
-                )
-                ;
-        case TyPtrT:     return t2_class_instance(ty, CLASS_PTR, &dynamic, 1);
-        case TyIterT:    return t2_class_instance(ty, CLASS_ITER, &dynamic, 1);
-        default:         return T2_TYPE_INVALID;
+        case TyNilT:       return t2_primitive(universe, T2_TYPE_NIL);
+        case TyBottomT:    return t2_primitive(universe, T2_TYPE_NEVER);
+        case TyUnknownT:   return t2_primitive(universe, T2_TYPE_UNKNOWN);
+        case TyDynamicT:   return t2_primitive(universe, T2_TYPE_DYNAMIC);
+        case TyEmptyPackT: return t2_primitive(universe, T2_TYPE_PACK_EMPTY);
+        case TyAnyPackT:   return t2_primitive(universe, T2_TYPE_PACK_ANY);
+        case TyAnyT:       return t2_primitive(universe, T2_TYPE_ANY);
+        case TyErrorT:     return t2_primitive(universe, T2_TYPE_ERROR);
+        case TyObjectT:    return t2_primitive(universe, T2_TYPE_OBJECT);
+        case TyIntT:       return t2_primitive(universe, T2_TYPE_INT);
+        case TyFloatT:     return t2_primitive(universe, T2_TYPE_FLOAT);
+        case TyStringT:    return t2_primitive(universe, T2_TYPE_STRING);
+        case TyBoolT:      return t2_primitive(universe, T2_TYPE_BOOL);
+        case TyRegexT:     return t2_class_instance(ty, CLASS_REGEX, NULL, 0);
+        case TyRegexVT:    return t2_class_instance(ty, CLASS_REGEXV, NULL, 0);
+        case TyArrayT:     return t2_class_instance(ty, CLASS_ARRAY, &dynamic, 1);
+        case TyDictT:      return t2_class_instance(ty, CLASS_DICT, (T2Type[]) {dynamic, dynamic}, 2);
+        case TyPtrT:       return t2_class_instance(ty, CLASS_PTR, &dynamic, 1);
+        case TyIterT:      return t2_class_instance(ty, CLASS_ITER, &dynamic, 1);
+        default:           return T2_TYPE_INVALID;
         }
 }
 
-T2Type
-t2_from_ty(Ty *ty, Value const *value)
+static T2Type
+type_from_spec(Ty *ty, Value const *value)
 {
         T2Universe *universe = t2_global_universe();
 
@@ -31143,15 +31361,61 @@ t2_from_ty(Ty *ty, Value const *value)
         case TyUnionT:
         case TyIntersectT:
         case TyListT:
+        case TyOverloadT:
         {
                 T2Type *arms = NULL;
                 usize count = collect_types(ty, &inner, &arms);
-                T2Type result = (tag == TyUnionT)
-                              ? t2_union(universe, arms, count)
-                              : t2_intersection(universe, arms, count);
+                T2Type result;
+                switch (tag) {
+                case TyUnionT:     result = t2_union(universe, arms, count);        break;
+                case TyIntersectT: result = t2_intersection(universe, arms, count); break;
+                case TyListT:      result = t2_multi(universe, arms, count);        break;
+                case TyOverloadT:  result = t2_overload(universe, arms, count);     break;
+                }
                 ty_free(arms);
                 return result;
         }
+        case TyRangeT:
+                if (
+                        (inner.type == VALUE_TUPLE)
+                     && (inner.count == 3)
+                     && (inner.items[2].type == VALUE_BOOLEAN)
+                ) {
+                        return t2_integer_range(
+                                universe,
+                                (inner.items[0].type == VALUE_NIL)
+                                        ? T2_TYPE_INVALID
+                                        : t2_from_ty(ty, &inner.items[0]),
+                                (inner.items[1].type == VALUE_NIL)
+                                        ? T2_TYPE_INVALID
+                                        : t2_from_ty(ty, &inner.items[1]),
+                                inner.items[2].boolean
+                        );
+                }
+                break;
+        case TyPackExpansionT:
+                return t2_pack_expansion(universe, t2_from_ty(ty, &inner));
+        case TyPackUnionT:
+                return t2_pack_fold_union(universe, t2_from_ty(ty, &inner));
+        case TyPackIntersectT:
+                return t2_pack_fold_intersection(universe, t2_from_ty(ty, &inner));
+        case TyPackT:
+        case TyVariadicTupleT:
+                if (
+                        (inner.type == VALUE_TUPLE)
+                     && (inner.count == 2)
+                     && (inner.items[0].type == VALUE_ARRAY)
+                ) {
+                        T2Type *prefix = NULL;
+                        usize count = collect_types(ty, &inner.items[0], &prefix);
+                        T2Type tail = t2_from_ty(ty, &inner.items[1]);
+                        T2Type result = (tag == TyPackT)
+                                      ? t2_pack(universe, prefix, count, tail)
+                                      : t2_variadic_tuple(universe, prefix, count, tail);
+                        ty_free(prefix);
+                        return result;
+                }
+                break;
         case TyAliasT:
                 return t2_from_ty(ty, tget_t(&inner, (uptr)"type", VALUE_TYPE));
         case TyObjectT:
@@ -31173,10 +31437,24 @@ t2_from_ty(Ty *ty, Value const *value)
                 }
                 break;
         case TyVarT:
-                if (inner.type == VALUE_INTEGER) {
-                        return t2_variable(universe, T2_VARIABLE_QUANTIFIED, (u32)inner.z);
+        {
+                char const *name;
+                T2Quantifier variable = variable_from_spec(ty, &inner, &name);
+                return t2_variable(universe, variable.kind, variable.id);
+        }
+        case TySchemeT:
+        {
+                Value const *body = tget_or_null(&inner, (uptr)"body");
+                if (body == NULL) {
+                        CompileError(ty, MOD_COMPILE_ERR, "missing type scheme body");
                 }
-                break;
+                return scheme_from_spec(
+                        ty,
+                        t2_from_ty(ty, body),
+                        tget_or_null(&inner, (uptr)"parameters"),
+                        tget_or_null(&inner, (uptr)"bounds")
+                );
+        }
         case TyRecordT:
                 if (inner.type == VALUE_TUPLE) {
                         return type_from_record_spec(ty, &inner);
@@ -31187,6 +31465,15 @@ t2_from_ty(Ty *ty, Value const *value)
         }
 
         CompileError(ty, MOD_COMPILE_ERR, "invalid type spec: %s", VSC(value));
+}
+
+T2Type
+t2_from_ty(Ty *ty, Value const *value)
+{
+        SCRATCH_SAVE();
+        T2Type result = type_from_spec(ty, value);
+        SCRATCH_RESTORE();
+        return result;
 }
 
 static Expr const *
@@ -31305,7 +31592,7 @@ t2_completions(Ty *ty, T2Type type, char const *prefix, void *out)
         T2Universe *universe = t2_global_universe();
         type = t2_type_scheme_body(universe, type);
         ValueVector *completions = out;
-        usize prefix_length      = (prefix == NULL) ? 0 : strlen(prefix);
+        usize prefix_length = (prefix == NULL) ? 0 : strlen(prefix);
         if (type == T2_TYPE_INVALID) {
                 return;
         }
@@ -31328,9 +31615,7 @@ t2_completions(Ty *ty, T2Type type, char const *prefix, void *out)
                         if (!t2_record_field(universe, type, i, &field)) {
                                 continue;
                         }
-                        if (
-                                strncmp(field.name, (prefix == NULL) ? "" : prefix, prefix_length) != 0
-                        ) {
+                        if (strncmp(field.name, (prefix == NULL) ? "" : prefix, prefix_length) != 0) {
                                 continue;
                         }
                         push_completion(ty, completions, field.name, NULL, field.type, 5, 0);
@@ -31346,8 +31631,8 @@ t2_completions(Ty *ty, T2Type type, char const *prefix, void *out)
                 return;
         }
 
-        ExprVec members   = { 0 };
-        int_vector depths = { 0 };
+        ExprVec    members = { 0 };
+        int_vector depths  = { 0 };
         class_completions(ty, class->i, prefix, &members, &depths);
         for (int i = 0; i < vN(members); ++i) {
                 Expr const *member = v__(members, i);
@@ -31363,8 +31648,7 @@ t2_completions(Ty *ty, T2Type type, char const *prefix, void *out)
                                 t2_member_type(ty, type, member->_type),
                                 (member->mtype == MT_GET) ? 10 : 2,
                                 depth
-                        )
-                        ;
+                        );
                         break;
                 case EXPRESSION_IDENTIFIER:
                         push_completion(
@@ -31375,8 +31659,7 @@ t2_completions(Ty *ty, T2Type type, char const *prefix, void *out)
                                 t2_member_type(ty, type, member->_type),
                                 5,
                                 depth
-                        )
-                        ;
+                        );
                         break;
                 case EXPRESSION_EQ:
                         push_completion(
@@ -31387,8 +31670,7 @@ t2_completions(Ty *ty, T2Type type, char const *prefix, void *out)
                                 t2_member_type(ty, type, member->target->_type),
                                 5,
                                 depth
-                        )
-                        ;
+                        );
                         break;
                 }
         }

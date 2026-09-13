@@ -230,7 +230,25 @@ enum {
         X(Ptr)         \
         X(Regex)       \
         X(RegexV)      \
-        X(Iter)
+        X(Iter)        \
+        X(Scheme)         \
+        X(Subtype)        \
+        X(Operator)       \
+        X(SubscriptRead)  \
+        X(SubscriptWrite) \
+        X(MemberRead)     \
+        X(MemberWrite)    \
+        X(KeywordSpread)  \
+        X(Dynamic)        \
+        X(Range)          \
+        X(Overload)       \
+        X(PackExpansion)  \
+        X(Pack)           \
+        X(EmptyPack)      \
+        X(AnyPack)        \
+        X(PackUnion)      \
+        X(PackIntersect)  \
+        X(VariadicTuple)
 
 
 enum {

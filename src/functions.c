@@ -10151,11 +10151,8 @@ TypeParameterId(Ty *ty, char const *_name__, Value const *sub)
                 return (u32)t2_type_payload(universe, as_type(sub));
 
         default:
-                if (
-                        (tags_first(ty, sub->tags) == TyVarT)
-                     && (unwrap(ty, sub).type == VALUE_INTEGER)
-                ) {
-                        return (u32)unwrap(ty, sub).z;
+                if (tags_first(ty, sub->tags) == TyVarT) {
+                        return (u32)t2_type_payload(universe, t2_from_ty(ty, sub));
                 }
                 zP(
                         "%s: invalid value used as parameter "
@@ -10180,6 +10177,7 @@ BUILTIN_FUNCTION(ty_type_inst)
         }
 
         Value subs = ARGx(1, VALUE_ARRAY);
+        SCRATCH_SAVE();
         usize count = vN(*subs.array);
         u32 *ids = count == 0 ? NULL : smA(count * sizeof *ids);
         T2Type *args = count == 0 ? NULL : smA(count * sizeof *args);
@@ -10195,7 +10193,10 @@ BUILTIN_FUNCTION(ty_type_inst)
                 ids[i] = TypeParameterId(ty, _name__, sub);
         }
 
-        return t2_to_ty(ty, t2_substitute(t0, ids, args, count));
+        T2Type result = t2_substitute(t0, ids, args, count);
+        SCRATCH_RESTORE();
+
+        return t2_to_ty(ty, result);
 }
 
 BUILTIN_FUNCTION(ty_type_infer)
