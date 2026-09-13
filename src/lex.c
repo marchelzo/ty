@@ -573,11 +573,8 @@ eat_line_ending(Ty *ty)
 static Token
 lexdocstring(Ty *ty)
 {
-        vec(char *) lines;
-        vec(char) line;
-
-        vec_init(lines);
-        vec_init(line);
+        vec(char *) lines = {0};
+        vec(char) line    = {0};
 
         int ndelim = 0;
         while (C(0) == '\'') {
@@ -590,8 +587,8 @@ lexdocstring(Ty *ty)
         while (!end_of_docstring(ty, '\'', ndelim) && C(0) != '\0') {
                 if (eat_line_ending(ty)) {
                         avP(line, '\0');
-                        avP(lines, line.items);
-                        vec_init(line);
+                        avP(lines, vv(line));
+                        v00(line);
                 } else {
                         avP(line, nextchar(ty));
                 }
@@ -602,8 +599,8 @@ lexdocstring(Ty *ty)
         }
 
         // The only characters on this line before the docstring terminator should be whitespace
-        for (int i = 0; i < line.count; ++i) {
-                if (!isspace(line.items[i])) {
+        for (usize i = 0; i < vN(line); ++i) {
+                if (!isspace(v__(line, i))) {
                         error(ty, "illegal docstring terminator on line %d", state.loc.line + 1);
                 }
         }
@@ -612,20 +609,18 @@ lexdocstring(Ty *ty)
                 nextchar(ty);
         }
 
-        int nstrip = line.count;
+        int nstrip = vN(line);
+        byte_vector s = {0};
 
-        vec(char) s;
-        vec_init(s);
-
-        for (int i = 0; i < lines.count; ++i) {
+        for (usize i = 0; i < vN(lines); ++i) {
                 int off = 0;
-                while (off < nstrip && isspace(lines.items[i][off])) {
+                while (off < nstrip && isspace(v__(lines, i)[off])) {
                         off += 1;
                 }
-                while (lines.items[i][off] != '\0') {
-                        avP(s, lines.items[i][off++]);
+                while (v__(lines, i)[off] != '\0') {
+                        avP(s, v__(lines, i)[off++]);
                 }
-                if (i + 1 != lines.count) {
+                if (i + 1 != vN(lines)) {
                         avP(s, '\n');
                 }
         }
