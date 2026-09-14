@@ -471,6 +471,7 @@ checkgradualrecords(T2Universe *universe)
                         "gradual record field"
                 );
                 CHECK(result == ((i == 0) ? T2_RELATION_YES : T2_RELATION_NO));
+                CHECK(t2_gradual_subtype(universe, actual, expected) == result);
                 CHECK(t2_solver_pending_obligations(solver) == 0);
                 t2_solver_free(solver);
         }
@@ -582,6 +583,13 @@ main(void)
         CHECK(t2_subtype(universe, integer, any) == T2_RELATION_YES);
         CHECK(t2_subtype(universe, any, integer) == T2_RELATION_NO);
         CHECK(t2_consistent(universe, dynamic, integer) == T2_RELATION_YES);
+        CHECK(t2_subtype(universe, integer, dynamic) == T2_RELATION_NO);
+        CHECK(t2_gradual_subtype(universe, integer, dynamic) == T2_RELATION_YES);
+        CHECK(t2_gradual_subtype(universe, dynamic, integer) == T2_RELATION_YES);
+        CHECK(t2_gradual_subtype(universe, unknown, dynamic) == T2_RELATION_YES);
+        CHECK(t2_gradual_subtype(universe, any, integer) == T2_RELATION_NO);
+        CHECK(t2_gradual_subtype(universe, string, integer) == T2_RELATION_NO);
+        CHECK(t2_subtype(universe, integer, dynamic) == T2_RELATION_NO);
         CHECK(t2_join(universe, any, unknown) == unknown);
         CHECK(t2_join(universe, unknown, any) == unknown);
         CHECK(t2_meet(universe, any, unknown) == unknown);
@@ -796,9 +804,14 @@ main(void)
         CHECK(!t2_nominal_validate_variance(universe, 3, invalid_covariant_input));
         T2Type array_int = t2_nominal(universe, 1, &integer, 1);
         T2Type array_wide = t2_nominal(universe, 1, &int_or_string_1, 1);
+        T2Type array_dynamic = t2_nominal(universe, 1, &dynamic, 1);
         T2Type iterable_int = t2_nominal(universe, 2, &integer, 1);
         T2Type iterable_wide = t2_nominal(universe, 2, &int_or_string_1, 1);
         CHECK(t2_subtype(universe, array_int, array_wide) == T2_RELATION_NO);
+        CHECK(t2_gradual_subtype(universe, array_int, array_dynamic) == T2_RELATION_YES);
+        CHECK(t2_gradual_subtype(universe, array_dynamic, array_int) == T2_RELATION_YES);
+        CHECK(t2_gradual_subtype(universe, array_wide, array_int) == T2_RELATION_NO);
+        CHECK(t2_subtype(universe, array_int, array_dynamic) == T2_RELATION_NO);
         CHECK(t2_subtype(universe, iterable_int, iterable_wide) == T2_RELATION_YES);
         CHECK(t2_consistent(universe, array_int, integer) == T2_RELATION_NO);
         CHECK(t2_consistent(universe, integer, array_int) == T2_RELATION_NO);
@@ -945,6 +958,24 @@ main(void)
                 t2_primitive(universe, T2_TYPE_OBJECT)
         ) == T2_RELATION_YES);
         check_string(universe, array_type_value, "type[Array[Int]]");
+
+        T2Solver *type_value_solver = t2_solver_new(universe);
+        T2Type type_value_meta = t2_solver_new_meta(
+                type_value_solver,
+                T2_VARIABLE_FLEXIBLE,
+                1,
+                "schema instance"
+        );
+        T2Type generic_type_value = t2_type_value(universe, type_value_meta, dynamic);
+        CHECK(t2_solver_constrain_subtype(
+                type_value_solver,
+                array_type_value,
+                generic_type_value,
+                "schema argument"
+        ) == T2_RELATION_YES);
+        CHECK(t2_solver_lower_bound(type_value_solver, type_value_meta) == array_int);
+        CHECK(t2_solver_pending_obligations(type_value_solver) == 0);
+        t2_solver_free(type_value_solver);
 
         T2Type wide_parameter = t2_function(
                 universe,

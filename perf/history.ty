@@ -384,7 +384,7 @@ fn status-label(row) {
     else { chalk"[dim]partial[/]" }
 }
 
-fn display-time(value) -> String {
+fn display-time(value: Float | nil) -> String {
     value == nil ? '—' : fmt-time(value)
 }
 
@@ -443,7 +443,7 @@ pub fn mode-label(mode, width: Int = 0) {
     else { chalk"[yellow]{text}[/]" }
 }
 
-pub fn duration-label(value, role: String = 'current', verdict: String | nil = nil, width: Int = 0) {
+pub fn duration-label(value: Float | nil, role: String = 'current', verdict: String | nil = nil, width: Int = 0) {
     let text = display-time(value)
     let padded = width > 0 ? "{text:>{width}}" : text
     let style = match verdict {

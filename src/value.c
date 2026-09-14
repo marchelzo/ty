@@ -722,28 +722,33 @@ show_impl(
 
                         pcre2_pattern_info(v.regex->pcre2, PCRE2_INFO_ALLOPTIONS, &bits);
 
-                        if (bits & PCRE2_MULTILINE) { flags[nf++] = 'm'; }
-                        if (bits & PCRE2_DOTALL)    { flags[nf++] = 's'; }
-                        if (bits & PCRE2_UTF)       { flags[nf++] = 'u'; }
-                        if (bits & PCRE2_CASELESS)  { flags[nf++] = 'i'; }
-                        if (bits & PCRE2_EXTENDED)  { flags[nf++] = 'x'; }
-                        if (bits & PCRE2_ANCHORED)  { flags[nf++] = 'a'; }
-                        if (bits & PCRE2_UNGREEDY)  { flags[nf++] = 'U'; }
-                        if (bits & PCRE2_NEVER_UTF) { flags[nf++] = '7'; }
+                        if (bits & PCRE2_MULTILINE)         { flags[nf++] = 'm'; }
+                        if (bits & PCRE2_DOTALL)            { flags[nf++] = 's'; }
+                        if (bits & PCRE2_UTF)               { flags[nf++] = 'u'; }
+                        if (bits & PCRE2_MATCH_INVALID_UTF) { flags[nf++] = 'u'; }
+                        if (bits & PCRE2_CASELESS)          { flags[nf++] = 'i'; }
+                        if (bits & PCRE2_EXTENDED)          { flags[nf++] = 'x'; }
+                        if (bits & PCRE2_ANCHORED)          { flags[nf++] = 'a'; }
+                        if (bits & PCRE2_UNGREEDY)          { flags[nf++] = 'U'; }
+                        if (bits & PCRE2_NEVER_UTF)         { flags[nf++] = '7'; }
                         flags[nf] = '\0';
+
+                        bool vv = v.regex->detailed;
 
                         if (color) {
                                 sxdf(
                                         &buf,
-                                        "%s/%s/%s%s%s",
+                                        "%s/%s/%s%s%s%s%s",
                                         TERM(38;2;127;197;78),
                                         v.regex->pattern,
+                                        vv ? TERM(93) : "",
+                                        &"v"[!vv],
                                         TERM(38;2;63;189;142),
                                         flags,
                                         TERM(0)
                                 );
                         } else {
-                                sxdf(&buf, "/%s/%s", v.regex->pattern, flags);
+                                sxdf(&buf, "/%s/%s%s", &"v"[!vv], v.regex->pattern, flags);
                         }
                         break;
                 }

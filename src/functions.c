@@ -1671,26 +1671,28 @@ doregex(Ty *ty, Value const *pattern, Value const *flags, bool v)
         if (!IsMissing(*flags)) {
                 for (int i = 0; i < sN(*flags); ++i) {
                         switch (ss(*flags)[i]) {
-                        case 'U': options |= PCRE2_MATCH_INVALID_UTF;
-                        case 'u': options |= PCRE2_UTF | PCRE2_UCP;   break;
                         case 'i': options |= PCRE2_CASELESS;          break;
                         case 'm': options |= PCRE2_MULTILINE;         break;
-                        case 'x': options |= PCRE2_EXTENDED;          break;
                         case 's': options |= PCRE2_DOTALL;            break;
+                        case 'U': options |= PCRE2_UNGREEDY;          break;
+                        case 'x': options |= PCRE2_EXTENDED;          break;
                         case 'v': v = true;                           break;
+
+                        case 'u':
+                                if (!(options & PCRE2_UTF))
+                                        options |= (PCRE2_UTF | PCRE2_UCP);
+                                else
+                                        options |= PCRE2_MATCH_INVALID_UTF;
+                                break;
+
+                        default:
+                                zP("regex(): unrecognized flag: '%c'", ss(*flags)[i]);
                         }
                 }
         }
 
-
         int err;
         usize off;
-
-#define ty_re_panic(e) do {                     \
-        void *msg = smA(4096);                  \
-        pcre2_get_error_message(e, msg, 4096);  \
-        bP("PCRE2: %s", msg);                   \
-} while (0)
 
         pcre2_code *pcre2 = pcre2_compile(
                 (PCRE2_SPTR)ss(*pattern),
@@ -1702,17 +1704,13 @@ doregex(Ty *ty, Value const *pattern, Value const *flags, bool v)
         );
 
         if (pcre2 == NULL) {
-                char const *_name__ = "regex()";
-                ty_re_panic(err);
                 return NIL;
         }
 
         err = pcre2_jit_compile(pcre2, PCRE2_JIT_COMPLETE);
         if (err < 0) {
-                char const *_name__ = "regex-jit()";
                 pcre2_code_free(pcre2);
-                ty_re_panic(err);
-                return NIL;
+                goto Error;
         }
 
         Regex *re = mAo(sizeof (Regex), GC_REGEX);
@@ -1722,6 +1720,11 @@ doregex(Ty *ty, Value const *pattern, Value const *flags, bool v)
         re->gc = true;
 
         return REGEX(re);
+
+Error:;
+        void *msg = smA(4096);
+        pcre2_get_error_message(err, msg, 4096);
+        zP("regex(): PCRE2: %s", msg);
 }
 
 BUILTIN_FUNCTION(regex)

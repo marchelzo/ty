@@ -16,8 +16,12 @@ fn make-packages(count: Int) -> Array[Package] {
 
     for i in ..count {
         let deps: Array[String] = []
-        if i > 0 { deps.push("pkg-{(i - 1) / 2}") }
-        if i > 6 && i % 5 == 0 { deps.push("pkg-{i - 7}") }
+        if i > 0 {
+            deps.push("pkg-{(i - 1) / 2}")
+        }
+        if i > 6 && i % 5 == 0 {
+            deps.push("pkg-{i - 7}")
+        }
 
         packages.push({
             name: "pkg-{i}",
@@ -34,48 +38,51 @@ let PACKAGES = make-packages(600)
 let TARGETS = PACKAGES.map(\_.name)
 
 fn make-plan(packages: Array[Package], targets: Array[String]) {
-    let by-name = %{}
-    for package in packages { by-name[package.name] = package }
+    let by-name = %{p.name: p for p in packages}
 
     // Find the transitive closure without recursion.
-    let required = %{}
+    let required: Dict[String, Bool] = %{}
     let stack = targets.clone()
     while #stack > 0 {
         let name = stack.pop()
-        if name in required { continue }
+        if name in required {
+            continue
+        }
 
         required[name] = true
-        for dep in by-name[name].deps { stack.push(dep) }
+        let package = by-name[name]!
+        stack += package.deps
     }
 
-    let indegree = %{}
-    let dependents = %{}
+    let indegree = %{*: 0}
+    let dependents: Dict[String, Array[String]] = %{}
     for name, _ in required {
         indegree[name] = 0
         dependents[name] = []
     }
 
     for name, _ in required {
-        for dep in by-name[name].deps if dep in required {
+        let package = by-name[name]!
+        for dep in package.deps if dep in required {
             indegree[name] += 1
-            dependents[dep].push(name)
+            let children = dependents[dep]!
+            children.push(name)
         }
     }
 
-    let ready = []
-    for name, degree in indegree if degree == 0 { ready.push(name) }
+    let ready = [name for name, degree in indegree if degree == 0]
 
     let order = []
-    let finish = %{}
+    let finish: Dict[String, Int] = %{}
     let work = 0
     let cache-hits = 0
 
     while #ready > 0 {
         let name = ready.pop()
-        let package = by-name[name]
+        let package = by-name[name]!
         let start = 0
         for dep in package.deps if dep in required {
-            start = max(start, finish[dep])
+            start = max(start, finish[dep]!)
         }
 
         let cost = package.cached ? 0 : package.cost
@@ -85,14 +92,18 @@ fn make-plan(packages: Array[Package], targets: Array[String]) {
         cache-hits += package.cached ? 1 : 0
         order.push({name, start, finish: done, cached: package.cached})
 
-        for child in dependents[name] {
+        for child in dependents[name]! {
             indegree[child] -= 1
-            if indegree[child] == 0 { ready.push(child) }
+            if indegree[child] == 0 {
+                ready.push(child)
+            }
         }
     }
 
     let critical = 0
-    for _, t in finish { critical = max(critical, t) }
+    for _, t in finish {
+        critical = max(critical, t)
+    }
 
     return {
         order: order,

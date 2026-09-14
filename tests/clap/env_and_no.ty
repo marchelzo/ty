@@ -7,6 +7,13 @@ clap! Args {
     color: Bool, long: 'color'
 }
 
+clap! LiteralNoOptions {
+    jit: Bool, short: 'j', default: true
+    no-jit: Bool, short: 'J'
+    no-save: Bool, short: 'S'
+    no-config: String, short: None
+}
+
 fn forked(f) {
     let (r, w) = os.pipe()
     let pid = os.fork()
@@ -39,4 +46,30 @@ pub fn clap-env-and-no() {
         assert(#rest == 0)
     })
     assert(code == 0, "exit {code}: {err}")
+}
+
+pub fn clap-explicit-no-options() {
+    let cases = [
+        ['--no-jit', '--no-save', '--no-config', 'local.conf'],
+        ['--no-jit=true', '--no-save=true', '--no-config=local.conf'],
+        ['-J', '-S', '--no-config', 'local.conf'],
+    ]
+    for args in cases {
+        let (opts, rest) = LiteralNoOptions.parse(['prog', *args])
+        assert(opts.jit)
+        assert(opts.no-jit)
+        assert(opts.no-save)
+        assert(opts.no-config == 'local.conf')
+        assert(#rest == 0)
+    }
+}
+
+pub fn clap-negated-explicit-no-options() {
+    let (opts, rest) = LiteralNoOptions.parse([
+        'prog', '--no-jit', '--no-no-jit', '--no-save=false'
+    ])
+    assert(opts.jit)
+    assert(!opts.no-jit)
+    assert(!opts.no-save)
+    assert(#rest == 0)
 }

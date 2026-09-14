@@ -97,7 +97,7 @@ fn _parse-val(raw: String, oid: Int) {
 }
 
 class PostgreSQLResult {
-    __res: Ptr
+    __res: Ptr | nil
     __conn: _
 
     init(res: Ptr, conn: _) {
@@ -168,7 +168,7 @@ class PostgreSQLResult {
 }
 
 pub class PostgreSQL {
-    __conn: Ptr
+    __conn: Ptr | nil
 
     init(conninfo: String = '') {
         __conn = PQconnectdb(conninfo.cstr())

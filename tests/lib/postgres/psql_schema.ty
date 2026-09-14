@@ -216,7 +216,7 @@ pub fn test-belongs-to() {
     let p = Person(name='Alice').insert()
     Article(title='Post', author=p.id).insert()
 
-    let a = Article.get(1)
+    let $a = Article.get(1)!
     let author = a.person()
     assert(author.name == 'Alice')
 }

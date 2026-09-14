@@ -3348,6 +3348,7 @@ typedef struct t2_relation_context {
         vec(T2RelationPair) pairs;
         usize               steps;
         usize               step_limit;
+        bool                gradual;
         bool                failed;
 } T2RelationContext;
 
@@ -4484,6 +4485,13 @@ subtype_compute(
                 return T2_RELATION_YES;
         }
 
+        if (
+                context->gradual
+             && ((a->kind == T2_TYPE_DYNAMIC) || (b->kind == T2_TYPE_DYNAMIC))
+        ) {
+                return T2_RELATION_YES;
+        }
+
         if (a->kind == T2_TYPE_UNKNOWN) {
                 return T2_RELATION_NO;
         }
@@ -5044,6 +5052,20 @@ t2_subtype(T2Universe const *universe, T2Type subtype, T2Type supertype)
         }
 
         return relation;
+}
+
+T2Relation
+t2_gradual_subtype(T2Universe const *universe, T2Type subtype, T2Type supertype)
+{
+        T2RelationContext context = {
+                .universe   = universe,
+                .step_limit = 1000000,
+                .gradual    = true
+        };
+        T2Relation relation = subtype_relation(&context, subtype, supertype, 0);
+        xvF(context.pairs);
+
+        return context.failed ? T2_RELATION_COMPLEXITY : relation;
 }
 
 static T2Relation
@@ -11165,6 +11187,10 @@ constrain_internal(
                         provenance,
                         retain_deferred
                 );
+        }
+
+        if (a->kind == T2_TYPE_TYPE_VALUE && b->kind == T2_TYPE_TYPE_VALUE) {
+                return constrain_children(solver, a, b, provenance, retain_deferred);
         }
 
         if (a->kind == T2_TYPE_OVERLOAD && b->kind == T2_TYPE_FUNCTION) {

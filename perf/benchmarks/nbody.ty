@@ -21,7 +21,7 @@ class Body {
     }
 }
 
-pub fn make-bodies() {
+pub fn make-bodies() -> [Body] {
     [
         // Sun
         Body(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, SOLAR_MASS),
@@ -68,19 +68,20 @@ pub fn make-bodies() {
     ]
 }
 
-pub fn offset-momentum(bodies) {
+pub fn offset-momentum(bodies: [Body]) {
     let px, py, pz = 0.0, 0.0, 0.0
     for b in bodies {
         px += b.vx * b.mass
         py += b.vy * b.mass
         pz += b.vz * b.mass
     }
-    bodies[0].vx = -px / SOLAR_MASS
-    bodies[0].vy = -py / SOLAR_MASS
-    bodies[0].vz = -pz / SOLAR_MASS
+    let sun = bodies[0]
+    sun.vx = -px / SOLAR_MASS
+    sun.vy = -py / SOLAR_MASS
+    sun.vz = -pz / SOLAR_MASS
 }
 
-pub fn energy(bodies) {
+pub fn energy(bodies: [Body]) -> Float {
     let e = 0.0
     let nn = #bodies
 
@@ -100,7 +101,7 @@ pub fn energy(bodies) {
     e
 }
 
-pub fn advance(bodies, dt: Float, steps: Int) {
+pub fn advance(bodies: [Body], dt: Float, steps: Int) {
     let nbodies = #bodies
 
     for ..steps {

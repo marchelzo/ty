@@ -52,8 +52,8 @@ fn median(xs: [Float]) {
 }
 
 fn stddev(xs: [Float]) {
-    let m = xs.mean()
-    let variance = xs.map(x -> (x - m) * (x - m)).mean()
+    let m = xs.mean() as Float
+    let variance = xs.map(x -> (x - m) * (x - m)).mean() as Float
     variance.sqrt
 }
 
@@ -84,10 +84,10 @@ pub class Result {
     // Per-iteration times (the meaningful metric)
     per-iter-times { times.map(t -> t / iters) }
 
-    mean   { times.mean() / iters  }
+    mean   { (times.mean() ?? 0.0) / iters  }
     med    { median(per-iter-times) }
-    best   { times.min() / iters   }
-    worst  { times.max() / iters   }
+    best   { (times.min() ?? 0.0) / iters   }
+    worst  { (times.max() ?? 0.0) / iters   }
     sd     { stddev(per-iter-times) }
     p95    { percentile(per-iter-times, 95.0) }
     n      { #times }
@@ -166,17 +166,11 @@ pub macro bench(def, categories = nil) {
 }
 
 pub fn matches-filter(entry: Benchmark, query: String) -> Bool {
-    query.words().all?(term -> (
-        entry.name.contains?(term) || entry.tags.contains?(term)
-    ))
+    query.words().all?(term -> term in entry.name || term in entry.tags)
 }
 
 fn benchmark-command(program: String, *args: String) -> [String] {
-    let command = [ty.executable]
-    if !ty.jit { command.push('-j') }
-    command.push(program)
-    command += args
-    command
+    [ty.executable, '-j' if !ty.jit, program, *args]
 }
 
 fn start-benchmark(program: String, *args: String) {

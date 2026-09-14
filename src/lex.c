@@ -1053,18 +1053,26 @@ lexregex(Ty *ty, bool strict)
         }
         nextchar(ty);
 
-        int flags = 0;
+        u32  flags    = 0;
         bool detailed = false;
 
         while (isalpha(C(0))) {
                 switch (C(0)) {
-                case 'U': flags |= PCRE2_MATCH_INVALID_UTF;
-                case 'u': flags |= PCRE2_UTF | PCRE2_UCP;   break;
+                case 'a': flags |= PCRE2_ANCHORED;          break;
                 case 'i': flags |= PCRE2_CASELESS;          break;
                 case 'm': flags |= PCRE2_MULTILINE;         break;
-                case 'x': flags |= PCRE2_EXTENDED;          break;
                 case 's': flags |= PCRE2_DOTALL;            break;
+                case 'U': flags |= PCRE2_UNGREEDY;          break;
+                case 'x': flags |= PCRE2_EXTENDED;          break;
                 case 'v': detailed = true;                  break;
+
+                case 'u':
+                        if (!(flags & PCRE2_UTF))
+                                flags |= (PCRE2_UTF | PCRE2_UCP);
+                        else
+                                flags |= PCRE2_MATCH_INVALID_UTF;
+                        break;
+
                 default:  goto BadFlags;
                 }
                 nextchar(ty);

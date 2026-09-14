@@ -548,6 +548,9 @@ T2Relation
 t2_subtype(T2Universe const *universe, T2Type subtype, T2Type supertype);
 
 T2Relation
+t2_gradual_subtype(T2Universe const *universe, T2Type subtype, T2Type supertype);
+
+T2Relation
 t2_consistent(T2Universe const *universe, T2Type left, T2Type right);
 
 bool

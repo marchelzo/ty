@@ -4390,10 +4390,7 @@ constrain_gradually(
 
         default_dynamic_callable_metas(checker, actual, 0);
         default_dynamic_callable_metas(checker, expected, 0);
-        if (
-                checker->failed
-             || t2_solver_failed(checker->solver)
-        ) {
+        if (checker->failed || t2_solver_failed(checker->solver)) {
                 return false;
         }
 
@@ -4404,9 +4401,7 @@ constrain_gradually(
                 expected,
                 source_provenance(checker, site, description)
         );
-        bool valid = (relation == T2_RELATION_YES)
-                  && !t2_solver_failed(checker->solver);
-        if (valid) {
+        if ((relation == T2_RELATION_YES) && !t2_solver_failed(checker->solver)) {
                 t2_solver_commit(checker->solver, mark);
                 return true;
         }
@@ -4440,10 +4435,15 @@ constrain_gradually(
                 return false;
         }
 
+        T2TypeKind source_kind = t2_type_kind(checker->universe, head);
+        T2TypeKind target_kind = t2_type_kind(checker->universe, target);
         if (
                 (relation == T2_RELATION_NO)
-             && (t2_type_kind(checker->universe, head) == T2_TYPE_NOMINAL)
-             && (t2_type_kind(checker->universe, target) == T2_TYPE_NOMINAL)
+             && (
+                        (source_kind == T2_TYPE_NOMINAL    && target_kind == T2_TYPE_NOMINAL)
+                     || (source_kind == T2_TYPE_TYPE_VALUE && target_kind == T2_TYPE_RECORD)
+                     || (source_kind == T2_TYPE_RECORD     && target_kind == T2_TYPE_TYPE_VALUE)
+                )
         ) {
                 return false;
         }
@@ -4467,6 +4467,7 @@ tag_instance_member(
         }
 
         (void)ensure_class_interface(checker, CLASS_TAG);
+
         T2Member *member = find_member(
                 checker,
                 CLASS_TAG,
@@ -4474,6 +4475,7 @@ tag_instance_member(
                 T2_MEMBER_METHOD,
                 false
         );
+
         if (member == NULL) {
                 member = find_member(
                         checker,
@@ -4579,10 +4581,7 @@ constrain_type(
                 expected,
                 provenance
         );
-        if (
-                (relation != T2_RELATION_NO)
-             && !t2_solver_failed(checker->solver)
-        ) {
+        if ((relation != T2_RELATION_NO) && !t2_solver_failed(checker->solver)) {
                 t2_solver_commit(checker->solver, mark);
                 return true;
         }
@@ -4811,12 +4810,10 @@ declared_function_receiver(T2Checker *checker, Expr const *function)
         ClassDefinition const *definition = (function->class->def == NULL)
                                           ? NULL
                                           : &function->class->def->class;
-        usize arity = (definition == NULL)
-                    ? 0
-                    : vN(definition->type_params);
-        T2Type *arguments = (arity == 0) ? NULL : ty_malloc(
-                arity * sizeof *arguments
-        );
+
+        usize arity = (definition != NULL) * vN(definition->type_params);
+        T2Type *arguments = (arity == 0) ? NULL : xtA(T2Type, arity);
+
         if (arity != 0 && arguments == NULL) {
                 checker->failed = true;
                 return T2_TYPE_INVALID;
@@ -4838,6 +4835,7 @@ declared_function_receiver(T2Checker *checker, Expr const *function)
                 arity,
                 function
         );
+
         ty_free(arguments);
 
         return receiver;
@@ -4891,6 +4889,7 @@ interface_function_scheme(
         T2Quantifier *quantifiers = (quantifier_count == 0)
                                   ? NULL
                                   : ty_malloc(quantifier_count * sizeof *quantifiers);
+
         if (quantifier_count != 0 && quantifiers == NULL) {
                 checker->failed = true;
                 return NULL;
@@ -4907,8 +4906,7 @@ interface_function_scheme(
         usize type_mark = push_type_variables(checker);
         for (usize i = 0; i < method_arity; ++i) {
                 Expr const *parameter = v__(function->type_params, (int)i);
-                T2VariableKind kind = (parameter->symbol != NULL)
-                                   && SymbolIsParamPack(parameter->symbol)
+                T2VariableKind kind = (parameter->symbol != NULL && SymbolIsParamPack(parameter->symbol))
                                     ? T2_VARIABLE_PACK
                                     : T2_VARIABLE_QUANTIFIED;
                 u32 id = fresh_quantified_id();
@@ -4924,6 +4922,7 @@ interface_function_scheme(
         T2ParameterSpec *parameters = (parameter_count == 0)
                                     ? NULL
                                     : ty_calloc(parameter_count, sizeof *parameters);
+
         if (parameter_count != 0 && parameters == NULL) {
                 ty_free(quantifiers);
                 pop_type_variables(checker, type_mark);
@@ -15793,6 +15792,17 @@ infer_expression(T2Checker *checker, Expr const *source)
         case EXPRESSION_SELF:
         case EXPRESSION_SUPER:
         {
+                if (
+                        (expression->type == EXPRESSION_IDENTIFIER)
+                     && SymbolIsTypeAlias(expression->symbol)
+                ) {
+                        result = t2_type_value(
+                                checker->universe,
+                                lower_type(checker, expression),
+                                t2_primitive(checker->universe, T2_TYPE_DYNAMIC)
+                        );
+                        break;
+                }
                 if (
                         (expression->type == EXPRESSION_IDENTIFIER)
                      && SymbolIsTag(expression->symbol)
@@ -29950,17 +29960,16 @@ check_type_value(Ty *ty, T2Type type, Value const *value)
 {
         T2Universe *universe = t2_global_universe();
         T2Type      instance = t2_type_child(universe, type, 0);
+        T2Type      actual;
 
         switch (value->type) {
         case VALUE_TYPE:
-                return t2_subtype(universe, as_type(value), instance);
+                actual = as_type(value);
+                break;
 
         case VALUE_CLASS:
-                return t2_subtype(
-                        universe,
-                        t2_object_type(ty, class_get(ty, value->class)),
-                        instance
-                );
+                actual = t2_object_type(ty, class_get(ty, value->class));
+                break;
 
         case VALUE_TAG:
                 return true;
@@ -29968,6 +29977,10 @@ check_type_value(Ty *ty, T2Type type, Value const *value)
         default:
                 return false;
         }
+
+        T2Relation relation = t2_gradual_subtype(universe, actual, instance);
+
+        return (relation == T2_RELATION_YES) || (relation == T2_RELATION_DEFERRED);
 }
 
 static bool

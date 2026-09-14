@@ -6,7 +6,7 @@ import clap (clap!)
 import math
 import ty
 
-import lib (fmt-time)
+import lib (BenchRecord, SuiteRecord, fmt-time)
 
 /** Head-to-head comparison: ty vs Python. */
 clap! Compare {
@@ -64,58 +64,54 @@ fn fmt-ratio(ratio: Float) -> String {
 
 fn run-suite(cmd: [String]) {
     let p = os.spawn(cmd)
-    os.wait(p.pid)
+    let (_, status) = os.wait(p.pid)!
+    if !os.WIFEXITED(status) || os.WEXITSTATUS(status) != 0 {
+        throw RuntimeError("benchmark command failed: {cmd}")
+    }
 }
 
-fn run-ty(filter, rounds: Int, warmup: Int, jit: Bool) {
-    let ty-bin = "{PERF_DIR.parent}/ty"
-    let cmd = [ty-bin]
-    if !jit { cmd.push('-j') }
-    cmd.push("{PERF_DIR}/run.ty")
-    cmd.push('run')
-    cmd.push('-n')
-    cmd.push("{rounds}")
-    cmd.push("--warmup={warmup}")
-    if filter { cmd.push(filter) }
+fn run-ty(filter: String | nil, rounds: Int, warmup: Int, jit: Bool) -> SuiteRecord {
+    let cmd = [
+        ty.executable, '-j' if !jit, "{PERF_DIR}/run.ty", 'run',
+        '-n', "{rounds}", "--warmup={warmup}", filter if filter
+    ]
     let mode = if jit { 'JIT' } else { 'no-JIT' }
     print(chalk"[dim]Running ty benchmarks"
               " ({mode})...[/]")
     run-suite(cmd)
-    json.parse(Path(ty-results-file(jit)).read-text())
+    json.parse(SuiteRecord, Path(ty-results-file(jit)).read-text())
 }
 
-fn run-python(filter, rounds: Int, warmup: Int) {
+fn run-python(filter: String | nil, rounds: Int, warmup: Int) -> SuiteRecord {
     let cmd = [
         'python3', "{PERF_DIR}/run_py.py",
-        '-n', "{rounds}", "--warmup={warmup}"
+        '-n', "{rounds}", "--warmup={warmup}", filter if filter
     ]
-    if filter { cmd.push(filter) }
     print(chalk"[dim]Running Python benchmarks...[/]")
     run-suite(cmd)
-    json.parse(Path(PY_RESULTS).read-text())
+    json.parse(SuiteRecord, Path(PY_RESULTS).read-text())
 }
 
-fn load-cached(path: String, label: String) {
-    try {
-        return json.parse(Path(path).read-text())
-    } catch _ {
+fn load-cached(path: String, label: String) -> SuiteRecord {
+    if !Path(path).file? {
         print(chalk"[red bold]No cached {label} results."
                     " Run without --cached first.[/]")
         os.exit(1)
     }
+    json.parse(SuiteRecord, Path(path).read-text())
 }
 
 fn print-table(
-    ty-results, py-results,
+    ty-results: SuiteRecord, py-results: SuiteRecord,
     jit: Bool
 ) {
-    let ty-map = %{}
+    let ty-map: Dict[String, BenchRecord] = %{}
     for r in ty-results {
-        let d = TY_TO_DISPLAY[r['name']] ?? r['name']
+        let d = TY_TO_DISPLAY[r.name] ?? r.name
         ty-map[d] = r
     }
 
-    let py-map = %{r['name']: r for r in py-results}
+    let py-map = %{r.name: r for r in py-results}
     let names = [*ty-map.keys(), *py-map.keys()]
         .uniq().sort()
 
@@ -124,7 +120,7 @@ fn print-table(
         return
     }
 
-    let nw = max(9, names.map(\#_).max()) + 2
+    let nw = max(9, names.map(\#_).max() ?? 9) + 2
     let rule = "{'':─<{nw + 46}}"
 
     let mode = if jit {
@@ -144,25 +140,26 @@ fn print-table(
 
     let ty-wins  = 0
     let py-wins  = 0
+    let ty-total = 0.0
+    let py-total = 0.0
     let ratios: [Float] = []
 
     for name in names {
-        if ty-map[name] == nil
-        || py-map[name] == nil {
-            let t = if let $r = ty-map[name] {
-                fmt-time(r['median'])
-            } else { '--' }
-            let p = if let $r = py-map[name] {
-                fmt-time(r['median'])
-            } else { '--' }
+        let t = ty-map[name]
+        let p = py-map[name]
+        if not let ($ty-result, $py-result) = (t, p) {
+            let t = t == nil ? '--' : fmt-time(t.median)
+            let p = p == nil ? '--' : fmt-time(p.median)
             print(chalk"  [bold]{name:{nw}}[/]"
                       "  [dim]{t:>10}  {p:>10}"
                       "  {'--':>10}  {'--':>8}[/]")
             continue
         }
 
-        let ty-med: Float = ty-map[name]['median']
-        let py-med: Float = py-map[name]['median']
+        let ty-med = ty-result.median
+        let py-med = py-result.median
+        ty-total += ty-med
+        py-total += py-med
         let ratio = py-med / ty-med
         ratios.push(ratio)
 
@@ -194,21 +191,14 @@ fn print-table(
 
     print(chalk"  [dim]{rule}[/]")
 
-    if #ratios == 0 { print(); return }
+    if #ratios == 0 {
+        print()
+        return
+    }
 
     let geo = math.exp(
-        ratios.map(\math.log(_)).sum() / #ratios
+        ratios.map(\math.log(_)).sum(0.0) / #ratios
     )
-
-    let ty-total = 0.0
-    let py-total = 0.0
-    for name in names {
-        if ty-map[name] != nil
-        && py-map[name] != nil {
-            ty-total += Float(ty-map[name]['median'])
-            py-total += Float(py-map[name]['median'])
-        }
-    }
 
     fn describe(r: Float) {
         if r >= 1.0 {
@@ -253,8 +243,8 @@ fn main() {
 
     let ty-res-file = ty-results-file(jit)
 
-    let ty-results: _ = nil
-    let py-results: _ = nil
+    let ty-results: SuiteRecord = []
+    let py-results: SuiteRecord = []
 
     if opts.cached {
         ty-results = load-cached(ty-res-file, 'ty')

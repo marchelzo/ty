@@ -214,7 +214,7 @@ fn print-comparison(
             let ratio = r.med / old.median
             let verdict = ratio < 0.95 ? 'improvement'
                         : ratio > 1.05 ? 'regression'
-                        : 'stable'
+                        :                'stable'
             print(chalk"  {label} {duration-label(old.median, role='baseline', width=10)} "
                         "[dim]→[/] {duration-label(r.med, verdict=verdict, width=10)}  "
                         "{delta-label(ratio)}")
@@ -267,7 +267,7 @@ fn run-suite(opts: RunOptions, database: String) {
     }
 
     print()
-    print(chalk"[bold]Total:[/] {duration-label(results.map(\_.med).sum())}")
+    print(chalk"[bold]Total:[/] {duration-label(results.map(\_.med).sum(0.0))}")
     if opts.noSave { return }
 
     let run-id = record-run(

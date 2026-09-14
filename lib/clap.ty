@@ -504,7 +504,7 @@ fn _doParse(cls: _, argv, config) -> _ {
                 os.exit(0)
             },
 
-            /^--no-(.+)/ => {
+            /^--no-([^=]+)$/ :: "no-{$1}" not in byLong => {
                 let name = $1
                 if let $spec = byLong[name] {
                     if spec.constraint == Bool {
