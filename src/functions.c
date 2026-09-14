@@ -1671,12 +1671,13 @@ doregex(Ty *ty, Value const *pattern, Value const *flags, bool v)
         if (!IsMissing(*flags)) {
                 for (int i = 0; i < sN(*flags); ++i) {
                         switch (ss(*flags)[i]) {
-                        case 'i': options |= PCRE2_CASELESS;        break;
-                        case 'u': options |= PCRE2_UTF | PCRE2_UCP; break;
-                        case 'm': options |= PCRE2_MULTILINE;       break;
-                        case 'x': options |= PCRE2_EXTENDED;        break;
-                        case 's': options |= PCRE2_DOTALL;          break;
-                        case 'v': v = true;                         break;
+                        case 'U': options |= PCRE2_MATCH_INVALID_UTF;
+                        case 'u': options |= PCRE2_UTF | PCRE2_UCP;   break;
+                        case 'i': options |= PCRE2_CASELESS;          break;
+                        case 'm': options |= PCRE2_MULTILINE;         break;
+                        case 'x': options |= PCRE2_EXTENDED;          break;
+                        case 's': options |= PCRE2_DOTALL;            break;
+                        case 'v': v = true;                           break;
                         }
                 }
         }

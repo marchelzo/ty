@@ -12,7 +12,7 @@
 #include "value.h"
 #include "vm.h"
 
-#define ty_re_match(...) pcre2_match(__VA_ARGS__, PCRE2_NO_UTF_CHECK, ty->pcre2.match, ty->pcre2.ctx)
+#define ty_re_match(...) pcre2_match(__VA_ARGS__, 0, ty->pcre2.match, ty->pcre2.ctx)
 #define ty_re_ovec()     pcre2_get_ovector_pointer(ty->pcre2.match)
 
 #define ty_re_panic(e) do {                     \

@@ -702,22 +702,62 @@ readhex(Ty *ty, int ndigits, u64 *k)
 }
 
 static Token
-lex_ss_string(Ty *ty)
+lex_ss_string(Ty *ty, usize indent, bool first, char const *limit)
 {
         byte_vector str = {0};
+        bool doc = (state.ctx == LEX_DOC);
+
+        if (first && SRC != limit) {
+                eat_line_ending(ty);
+        }
 
         for (;;) {
+                if (limit != NULL && SRC >= limit) {
+                        goto Done;
+                }
+
+                if (doc && (first || state.loc.col == 0)) {
+                        usize n = 0;
+                        while (
+                                (n < indent)
+                             && (SRC != limit)
+                             && (C(0) != '\n')
+                             && (C(0) != '\r' || C(1) != '\n')
+                             && isspace(C(0))
+                        ) {
+                                nextchar(ty);
+                                n += 1;
+                        }
+                        first = false;
+                }
+
+                if (limit != NULL && SRC >= limit) {
+                        goto Done;
+                }
+
+                if (doc && eat_line_ending(ty)) {
+                        avP(str, '\n');
+                        continue;
+                }
+
                 switch (C(0)) {
                 case '\0':
                         goto Unterminated;
 
-                case '[':
-                        if (state.ctx == LEX_FMT) break;
                 case '"':
+                        if (doc && !end_of_docstring(ty, '"', state.quotes)) {
+                                avP(str, nextchar(ty));
+                                continue;
+                        }
+                        goto Done;
+
+                case '[':
+                        if (state.ctx != LEX_XFMT) {
+                                break;
+                        }
                 case '{':
                 case '}':
-                        avP(str, '\0');
-                        return mkstring(ty, vv(str), vN(str) - 1);
+                        goto Done;
 
                 case '\\':
                         nextchar(ty);
@@ -801,10 +841,15 @@ lex_ss_string(Ty *ty)
                 avP(str, nextchar(ty));
         }
 
+Done:
+        avP(str, '\0');
+        return mkstring(ty, vv(str), vN(str) - 1);
+
 Unterminated:
         error(
                 ty,
-                "unterminated string literal starting on line %d",
+                "unterminated %s starting on line %d",
+                doc ? "docstring" : "string literal",
                 Start.line + 1
         );
 }
@@ -981,14 +1026,13 @@ lexregex(Ty *ty, bool strict)
 
         while (isalpha(C(0))) {
                 switch (C(0)) {
-                case 'v': detailed = true;                  break;
+                case 'U': flags |= PCRE2_MATCH_INVALID_UTF;
+                case 'u': flags |= PCRE2_UTF | PCRE2_UCP;   break;
                 case 'i': flags |= PCRE2_CASELESS;          break;
                 case 'm': flags |= PCRE2_MULTILINE;         break;
                 case 'x': flags |= PCRE2_EXTENDED;          break;
                 case 's': flags |= PCRE2_DOTALL;            break;
-                case 'u': flags |= PCRE2_UTF
-                                 | PCRE2_UCP
-                                 | PCRE2_MATCH_INVALID_UTF; break;
+                case 'v': detailed = true;                  break;
                 default:  goto BadFlags;
                 }
                 nextchar(ty);
@@ -1412,8 +1456,8 @@ Begin:
         state.ctx = ctx;
 
         if (UNLIKELY(ctx != LEX_PREFIX && ctx != LEX_INFIX)) {
-                if (ctx == LEX_FMT || ctx == LEX_XFMT) {
-                        return lex_ss_string(ty);
+                if (ctx == LEX_FMT || ctx == LEX_XFMT || ctx == LEX_DOC) {
+                        return lex_ss_string(ty, 0, false, NULL);
                 }
                 if (ctx == LEX_REGEX) {
                         return lex_re(ty);
@@ -1537,8 +1581,16 @@ Begin:
                         return lexrawstr(ty);
                 }
         } else if (C(0) == '"') {
+                int quotes = 1;
+                if (C(1) == '"' && C(2) == '"') {
+                        while (C(quotes) == '"') {
+                                quotes += 1;
+                        }
+                }
                 nextchar(ty);
-                return mktoken(ty, '"');
+                Token t = mktoken(ty, '"');
+                t.integer = quotes;
+                return t;
         } else if (C(0) == '.' && C(1) == '.') {
                 nextchar(ty);
                 nextchar(ty);
@@ -1566,6 +1618,28 @@ lex_token(Ty *ty, LexContext ctx)
         }
 
         return dotoken(ty, ctx);
+}
+
+Token
+lex_docstring_part(Ty *ty, Location start, char const *end, usize indent, bool first)
+{
+        LexState saved = state;
+        Location savedstart = Start;
+        Token t;
+
+        state.loc = Start = start;
+        state.ctx = LEX_DOC;
+
+        if (setjmp(jb) == 0) {
+                t = lex_ss_string(ty, indent, first, end);
+        } else {
+                t = mktoken(ty, TOKEN_ERROR);
+        }
+
+        state = saved;
+        Start = savedstart;
+
+        return t;
 }
 
 void

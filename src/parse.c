@@ -859,7 +859,7 @@ inline static void
 
         LCTX = ctx;
 
-        Location seek = (ctx == LEX_FMT || ctx == LEX_TYX)
+        Location seek = (ctx == LEX_FMT || ctx == LEX_DOC || ctx == LEX_TYX)
                       ? token(-1)->end
                       : tok()->start;
 
@@ -889,6 +889,7 @@ inline static void
         while (
                 (vN(tokens) > TokenIndex)
              && (v_(tokens, TokenIndex)->ctx != LEX_FMT)
+             && (v_(tokens, TokenIndex)->ctx != LEX_DOC)
              // && (v_(tokens, TokenIndex)->ctx != LEX_REGEX)
         ) {
                 PLOG("  Pop tokens[%zu]: %s", vN(tokens) - 1, token_show(ty, vvL(tokens)));
@@ -1815,21 +1816,35 @@ prefix_string(Ty *ty)
         return extend_string(ty, e);
 }
 
-static Bytes
-ss_next_str(Ty *ty, bool top)
+static Token
+ss_next_str(Ty *ty, int quotes)
 {
-        Bytes str;
+        Token str;
+        int ctx = (quotes == 0) ? LEX_XFMT : LEX_FMT;
 
-        setctx(top ? LEX_FMT : LEX_XFMT);
+        if (quotes >= 3) {
+                ctx = LEX_DOC;
+                lex_state(ty)->quotes = quotes;
+        }
+
+        setctx(ctx);
+
+        if (T0 == TOKEN_ERROR) {
+                die(NULL);
+        }
+
+        if (quotes >= 3) {
+                expect(TOKEN_STRING);
+        }
 
         if (T0 != TOKEN_STRING) {
                 // TODO: this shouldn't be necessary. we threw away a SS string
                 // and were unable to rewind back through preprocessor-generated
                 // tokens in order to produce it again
-                return (Bytes) { "", 0 };
+                return (Token) { .type = TOKEN_STRING, .string = { "", 0 } };
         }
 
-        str = tok()->string;
+        str = *tok();
 
         next();
 
@@ -1837,9 +1852,9 @@ ss_next_str(Ty *ty, bool top)
 }
 
 static void
-ss_skip_inner(Ty *ty, bool top)
+ss_skip_inner(Ty *ty, int quotes)
 {
-        ss_next_str(ty, top);
+        ss_next_str(ty, quotes);
 
         while (setctx(LEX_PREFIX), T0 == '{') {
                 next();
@@ -1848,7 +1863,7 @@ ss_skip_inner(Ty *ty, bool top)
 
                 if (T0 == ':') {
                         next();
-                        ss_skip_inner(ty, false);
+                        ss_skip_inner(ty, 0);
                 }
 
                 if (T0 == '[') {
@@ -1859,16 +1874,62 @@ ss_skip_inner(Ty *ty, bool top)
 
                 consume('}');
 
-                ss_next_str(ty, top);
+                ss_next_str(ty, quotes);
+        }
+}
+
+static void
+dedent_string(Ty *ty, Expr *e, TokenVector const *parts)
+{
+        Location close = tok()->start;
+        char const *begin = v__(*parts, 0).start.s;
+        char const *line = close.s;
+
+        if (T0 != '"') {
+                die("unterminated docstring starting on line %d", v__(*parts, 0).start.line + 1);
+        }
+
+        while (line > begin && line[-1] != '\n') {
+                line -= 1;
+        }
+
+        for (char const *p = line; p < close.s; ++p) {
+                if (!isspace((u8)*p)) {
+                        die("illegal docstring terminator on line %d", close.line + 1);
+                }
+        }
+
+        usize indent = close.s - line;
+        char const *end = line;
+        if (end > begin && end[-1] == '\n') {
+                end -= 1;
+                if (end > begin && end[-1] == '\r') {
+                        end -= 1;
+                }
+        }
+
+        for (usize i = 0; i < vN(*parts); ++i) {
+                Token const *part = v_(*parts, i);
+                char const *stop = (i + 1 == vN(*parts)) ? end : part->end.s;
+                Token str = lex_docstring_part(ty, part->start, stop, indent, i == 0);
+                if (str.type == TOKEN_ERROR) {
+                        die(NULL);
+                }
+                v__(e->strings, i) = str.string;
         }
 }
 
 static Expr *
-ss_inner(Ty *ty, bool top)
+ss_inner(Ty *ty, int quotes)
 {
         Expr *e = mkxpr(SPECIAL_STRING);
+        TokenVector parts = {0};
+        Token str = ss_next_str(ty, quotes);
 
-        avP(e->strings, ss_next_str(ty, top));
+        avP(e->strings, str.string);
+        if (quotes >= 3) {
+                avP(parts, str);
+        }
 
         while (setctx(LEX_PREFIX), (T0 == '{')) {
                 Location start = tok()->start;
@@ -1883,7 +1944,7 @@ ss_inner(Ty *ty, bool top)
                 LOAD_NE();
 
                 if (try_consume(':')) {
-                        Expr *fmt = ss_inner(ty, false);
+                        Expr *fmt = ss_inner(ty, 0);
                         Bytes *last = vvL(fmt->strings);
 
                         /*
@@ -1921,7 +1982,15 @@ ss_inner(Ty *ty, bool top)
 
                 consume('}');
 
-                avP(e->strings, ss_next_str(ty, top));
+                str = ss_next_str(ty, quotes);
+                avP(e->strings, str.string);
+                if (quotes >= 3) {
+                        avP(parts, str);
+                }
+        }
+
+        if (quotes >= 3) {
+                dedent_string(ty, e, &parts);
         }
 
         e->end = TEnd;
@@ -1932,9 +2001,15 @@ ss_inner(Ty *ty, bool top)
 static void
 skip_ss(Ty *ty)
 {
-        consume('"');
-        ss_skip_inner(ty, true);
-        consume('"');
+        int quotes = max(tok()->integer, 1);
+
+        for (int i = 0; i < quotes; ++i) {
+                consume('"');
+        }
+        ss_skip_inner(ty, quotes);
+        for (int i = 0; i < quotes; ++i) {
+                consume('"');
+        }
 }
 
 static Expr *
@@ -1942,10 +2017,15 @@ prefix_ss(Ty *ty)
 {
         Expr *e;
         Location start = tok()->start;
+        int quotes = max(tok()->integer, 1);
 
-        consume('"');
-        e = ss_inner(ty, true);
-        consume('"');
+        for (int i = 0; i < quotes; ++i) {
+                consume('"');
+        }
+        e = ss_inner(ty, quotes);
+        for (int i = 0; i < quotes; ++i) {
+                consume('"');
+        }
 
         e->start = start;
         e->end = TEnd;

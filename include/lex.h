@@ -14,6 +14,7 @@ typedef enum LexContext {
         LEX_MEMBER,
         LEX_FMT,
         LEX_XFMT,
+        LEX_DOC,
         LEX_REGEX,
         LEX_TYX,
         LEX_FAKE,
@@ -24,6 +25,7 @@ typedef struct LexState {
         Location loc;
 
         int ctx;
+        int quotes;
 
         char const *start;
         char const *end;
@@ -53,6 +55,9 @@ lex_end(Ty *ty);
 
 Token
 lex_token(Ty *ty, LexContext ctx);
+
+Token
+lex_docstring_part(Ty *ty, Location start, char const *end, usize indent, bool first);
 
 int
 lex_peek_byte(Ty *ty);
