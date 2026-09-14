@@ -94,7 +94,7 @@ else ifdef TDEBUG
 	CFLAGS += -fsanitize=thread
 	CFLAGS += -ggdb3
 else ifndef LOG
-	CFLAGS += -O0
+	CFLAGS += -Og
 	CFLAGS += -g
 	CFLAGS += -DTY_RELEASE
 else

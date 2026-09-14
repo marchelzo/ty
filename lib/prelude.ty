@@ -525,6 +525,8 @@ class Array[T] : Iterable[T] {
     rotate!(n: Int = 1) -> Array[T];
     search(x: T) -> Int | nil;
     search-by(predicate: T -> Any) -> Int | nil;
+    searchr(x: T) -> Int | nil;
+    searchr-by(predicate: T -> Any) -> Int | nil;
     find(pred: T -> Any) -> T | nil;
     shuffle!() -> Array[T];
     shuffle() -> Array[T];
@@ -1070,6 +1072,8 @@ class String : Iterable[String], IntoPtr[Int] {
     }
 
     comb(pattern: String | Regex) -> String;
+
+    escape(f: ?((String, String) -> String), quote: String = '"') -> String;
 
     split(offset: Int) -> (String, String);
     split(pattern: RegexV, n: ?Int) -> [RegexMatch | String];

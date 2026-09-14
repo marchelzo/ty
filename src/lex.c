@@ -175,7 +175,7 @@ mkstring(Ty *ty, char const *string, usize length)
 {
         return (Token) {
                 .type   = TOKEN_STRING,
-                .string = {.data = string, .length = length},
+                .string = BYTES(string, length),
                 .start  = Start,
                 .end    = state.loc,
                 .nl     = state.need_nl,
@@ -648,6 +648,22 @@ lexrawstr(Ty *ty)
                         switch (C(0)) {
                         case '\0':
                                 goto Unterminated;
+                        case 'a':
+                                nextchar(ty);
+                                avP(str, '\a');
+                                continue;
+                        case 'b':
+                                nextchar(ty);
+                                avP(str, '\b');
+                                continue;
+                        case 'f':
+                                nextchar(ty);
+                                avP(str, '\f');
+                                continue;
+                        case 'v':
+                                nextchar(ty);
+                                avP(str, '\v');
+                                continue;
                         case 'n':
                                 nextchar(ty);
                                 avP(str, '\n');
@@ -765,6 +781,22 @@ lex_ss_string(Ty *ty, usize indent, bool first, char const *limit)
                         case '\0':
                                 goto Unterminated;
 
+                        case 'a':
+                                nextchar(ty);
+                                avP(str, '\a');
+                                continue;
+                        case 'b':
+                                nextchar(ty);
+                                avP(str, '\b');
+                                continue;
+                        case 'f':
+                                nextchar(ty);
+                                avP(str, '\f');
+                                continue;
+                        case 'v':
+                                nextchar(ty);
+                                avP(str, '\v');
+                                continue;
                         case 'n':
                                 nextchar(ty);
                                 avP(str, '\n');
@@ -1073,7 +1105,7 @@ lex_re(Ty *ty)
                 }
                 avP(flags, '\0');
                 Token t = mktoken(ty, TOKEN_DYN_REGEX);
-                t.string = (Bytes){vv(flags), vN(flags) - 1};
+                t.string = BYTES(vv(flags), vN(flags) - 1);
                 return t;
         }
 

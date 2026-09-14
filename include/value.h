@@ -575,7 +575,7 @@ checked_arg_2(
         if (
                 (_t != t0)
              && (_t != t1)
-             && (t1 != VALUE_ANY)
+             && (t0 != VALUE_ANY)
         ) {
                 zP(
                         "%s: expected `%s` :: (%s | %s) but got: %s",
@@ -607,7 +607,7 @@ checked_arg_3(
                   : NONE;
         int const _t = arg.type;
 
-        if (_t != t0 && _t != t1 && _t != t2) {
+        if (_t != t0 && _t != t1 && _t != t2 && t0 != VALUE_ANY) {
                 zP(
                         "%s: expected `%s` :: (%s | %s | %s) but got: %s",
                         fun,

@@ -1733,7 +1733,7 @@ astrcat(Ty *ty, Bytes s1, Bytes s2)
         memcpy(s + n1, s2.data, n2);
         s[n1 + n2] = '\0';
 
-        return (Bytes) { s, n1 + n2 };
+        return BYTES(s, n1 + n2);
 }
 
 static void
@@ -1841,7 +1841,7 @@ ss_next_str(Ty *ty, int quotes)
                 // TODO: this shouldn't be necessary. we threw away a SS string
                 // and were unable to rewind back through preprocessor-generated
                 // tokens in order to produce it again
-                return (Token) { .type = TOKEN_STRING, .string = { "", 0 } };
+                return (Token) { .type = TOKEN_STRING, .string = z_bytes("") };
         }
 
         str = *tok();
@@ -2041,7 +2041,7 @@ re_next_part(Ty *ty)
         setctx(LEX_REGEX);
 
         if (T0 != TOKEN_STRING) {
-                return (Bytes) { "", 0 };
+                return z_bytes("");
         }
 
         str = tok()->string;
@@ -7287,6 +7287,9 @@ parse_ex(
         ParserState save = state;
         m0(state);
 
+        CompileState *cs = TyCompilerState(ty);
+        Scope *scope = cs->pscope;
+        ScopeVector scopes = cs->scopes;
         volatile StmtVec program = {0};
         volatile bool ok = true;
 
@@ -7474,7 +7477,8 @@ End:
         TY_CATCH_END();
 
 Finally:
-        CompilerScopePop(ty);
+        cs->pscope = scope;
+        cs->scopes = scopes;
 
         avP(program, NULL);
         *prog_out = vv(program);

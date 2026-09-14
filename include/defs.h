@@ -195,6 +195,12 @@ typedef vec(Module *)       ModuleVector;
 #define ss(v) ((v).str)
 #define sN(v) ((v).bytes)
 
+#define s_bytes(x) ((Bytes) {(char const *)ss((x)), sN((x))})
+#define v_bytes(v) ((Bytes) {vv((v)), vN((v))})
+#define z_bytes(s) ((Bytes) {(s), strlen((s))})
+
+#define BYTES(p, n) ((Bytes) {(p), (n)})
+
 #define vA()       value_array_new(ty)
 #define vAu()      uAo0(sizeof (Array), GC_ARRAY)
 #define vAn(n)     value_array_new_sized(ty, n)

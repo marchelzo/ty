@@ -11,6 +11,7 @@
 #include "ty.h"
 #include "dtoa.h"
 #include "value.h"
+#include "str.h"
 #include "xd.h"
 #include "dict.h"
 #include "blob.h"
@@ -378,82 +379,35 @@ value_hash(Ty *ty, Value const *val)
         return ((u64)val->tags) ^ hash(ty, val);
 }
 
-static char *
-show_string(Ty *ty, u8 const *s, size_t n, bool use_color)
+struct show_string_ctx {
+        byte_vector *out;
+        bool         color;
+};
+
+static void
+show_string_emit(Ty *ty, Bytes s, StringPart kind, void *ctx)
 {
-        byte_vector v = {0};
-        i32 color = 0;
+        char const *const colors[] = { TERM(92), TERM(95), TERM(91) };
+        struct show_string_ctx *out = ctx;
 
-#define COLOR(i) do {                               \
-        if (use_color && color != i) {              \
-                svPn(v, TERM(i), strlen(TERM(i)));  \
-                color = i;                          \
-        }                                           \
-} while (0)
-
-        COLOR(92);
-
-        svP(v, '\'');
-
-        if (s != NULL) for (u8 const *c = s; c < s + n; ++c) switch (*c) {
-        case '\t':
-                COLOR(95);
-                svP(v, '\\');
-                svP(v, 't');
-                break;
-
-        case '\r':
-                COLOR(95);
-                svP(v, '\\');
-                svP(v, 'r');
-                break;
-
-        case '\n':
-                COLOR(95);
-                svP(v, '\\');
-                svP(v, 'n');
-                break;
-
-        case '\\':
-                COLOR(95);
-                svP(v, '\\');
-                svP(v, '\\');
-                break;
-
-        case '\'':
-                COLOR(95);
-                svP(v, '\\');
-                svP(v, '\'');
-                break;
-
-        case '\0':
-                COLOR(91);
-                svP(v, '\\');
-                svP(v, '0');
-                break;
-
-        default:
-                if (iscntrl(*c)) {
-                        COLOR(93);
-                        sxdf(&v, "\\x%02x", (u32)*c);
-
-                } else {
-                        COLOR(92);
-                        svP(v, *c);
-                }
-                break;
+        if (out->color) {
+                svPn(*out->out, colors[kind], strlen(colors[kind]));
         }
+        svPn(*out->out, s.data, s.length);
+}
 
-        COLOR(92);
-        svP(v, '\'');
+static void
+show_string(Ty *ty, byte_vector *out, u8 const *s, usize n, bool color)
+{
+        struct show_string_ctx ctx = { out, color };
+        Bytes quote = z_bytes("'");
 
-        COLOR(0);
-
-#undef COLOR
-
-        svP(v, '\0');
-
-        return vv(v);
+        show_string_emit(ty, quote, STRING_TEXT, &ctx);
+        str_escape(ty, BYTES((char const *)s, n), '\'', show_string_emit, &ctx);
+        show_string_emit(ty, quote, STRING_TEXT, &ctx);
+        if (color) {
+                svPn(*out, TERM(0), strlen(TERM(0)));
+        }
 }
 
 static noreturn void
@@ -559,9 +513,7 @@ show_impl(
 
                 case VALUE_STRING:
                 {
-                        char *s = show_string(ty, ss(v), sN(v), color);
-                        u32 len = strlen(s);
-                        svPn(buf, s, len);
+                        show_string(ty, &buf, ss(v), sN(v), color);
                         break;
                 }
 

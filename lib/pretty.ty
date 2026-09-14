@@ -24,6 +24,8 @@ let defaultColors = _load-colors() ?? {
     array: '#e78a4e bold',
     str:   '#a9b665',
     quote: '#a9b665 bold',
+    escape: '#d8a657',
+    invalid: '#ea6962',
     int:   '#d3869b',
     float: '#d3869b',
     null:  '#89b482',
@@ -32,19 +34,6 @@ let defaultColors = _load-colors() ?? {
     field: '#7daea3',
     bool:  '#d3869b',
     more:  '#928374'
-}
-
-pub fn escapeString(s) {
-    s.sub(/[\x00-\x1F\x7F-\xFF"\\]/u, match {
-        '"'  => '\\"',
-        '\\' => '\\\\',
-        '\b' => '\\b',
-        '\f' => '\\f',
-        '\n' => '\\n',
-        '\r' => '\\r',
-        '\t' => '\\t',
-        c    => "\\x{c.byte(0):02x}"
-    })
 }
 
 fn trunc(str, n) { str[;n].comb(/\x1b[[^m]+$/) }
@@ -79,6 +68,26 @@ pub class Printer {
         __color     = color
         __visiting  = []
         __oneline   = oneline
+    }
+
+    write-string(s: String, force: Bool) {
+        fn put(part: String, kind: String) -> String {
+            let style = match kind {
+                'escape'  => __colors.?escape ?? '#d8a657',
+                'invalid' => __colors.?invalid ?? '#ea6962',
+                _         => __colors.str
+            }
+            write(part, style, force)
+            ''
+        }
+
+        write('"', __colors.quote, force)
+        if __color {
+            s.escape(put)
+        } else {
+            write(s.escape(), nil, force)
+        }
+        write('"', __colors.quote, force)
     }
 
     save() {
@@ -239,10 +248,7 @@ pub class Printer {
             },
 
             _ :: String => {
-                let s = escapeString(x)
-                write('"', __colors.quote, force)
-                write(s, __colors.str, force)
-                write('"', __colors.quote, force)
+                write-string(x, force)
             },
 
             _ :: Bool => {

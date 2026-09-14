@@ -10,6 +10,7 @@
 #include "ty.h"
 #include "xd.h"
 #include "value.h"
+#include "str.h"
 #include "vm.h"
 
 #define ty_re_match(...) pcre2_match(__VA_ARGS__, 0, ty->pcre2.match, ty->pcre2.ctx)
@@ -26,7 +27,6 @@ x_x_x(u8 const *s, isize sz, isize ncp)
 {
         isize off = 0;
         isize count = 0;
-
 
         while (off < sz && count < ncp) {
                 i32 rune;
@@ -95,6 +95,151 @@ string_width(Ty *ty, Value *string, int argc, Value *kwargs)
 {
         ASSERT_ARGC("String.width()", 0);
         return INTEGER(term_width(ss(*string), sN(*string)));
+}
+
+void
+str_escape(Ty *ty, Bytes s, char quote, StringEmit *emit, void *ctx)
+{
+        byte_vector buf = {0};
+        StringPart prev = STRING_TEXT;
+        u8 const *p = (u8 const *)s.data;
+        usize left = s.length;
+
+        while (left != 0) {
+                i32 cp;
+                isize n = utf8proc_iterate(p, min(left, 4), &cp);
+                StringPart kind = STRING_ESCAPE;
+                char esc[11];
+                char c = 0;
+                Bytes part = BYTES(esc, 0);
+
+                if (n < 0) {
+                        n = 1;
+                        kind = STRING_INVALID;
+                        part.length = ty_snprintf(esc, sizeof esc, "\\x%02x", (unsigned)*p);
+                        goto Emit;
+                }
+
+                switch (cp) {
+                case '\a': c = 'a';  break;
+                case '\b': c = 'b';  break;
+                case '\f': c = 'f';  break;
+                case '\n': c = 'n';  break;
+                case '\r': c = 'r';  break;
+                case '\t': c = 't';  break;
+                case '\v': c = 'v';  break;
+                case '\\': c = '\\'; break;
+                default:
+                        if (cp == quote || (quote == '"' && (cp == '{' || cp == '}'))) {
+                                c = cp;
+                        }
+                        break;
+                }
+
+                if (c != 0) {
+                        esc[0] = '\\';
+                        esc[1] = c;
+                        part.length = 2;
+                        goto Emit;
+                }
+
+                switch (utf8proc_category(cp)) {
+                case UTF8PROC_CATEGORY_CN:
+                case UTF8PROC_CATEGORY_CC:
+                case UTF8PROC_CATEGORY_CF:
+                case UTF8PROC_CATEGORY_ZL:
+                case UTF8PROC_CATEGORY_ZP:
+                        if (cp < 0x80) {
+                                part.length = ty_snprintf(esc, sizeof esc, "\\x%02x", (unsigned)cp);
+                        } else if (cp <= 0xFFFF) {
+                                part.length = ty_snprintf(esc, sizeof esc, "\\u%04x", (unsigned)cp);
+                        } else {
+                                part.length = ty_snprintf(esc, sizeof esc, "\\U%08x", (unsigned)cp);
+                        }
+                        break;
+
+                default:
+                        kind = STRING_TEXT;
+                        part = BYTES((char const *)p, n);
+                        break;
+                }
+
+Emit:
+                if (kind != prev && vN(buf) != 0) {
+                        emit(ty, v_bytes(buf), prev, ctx);
+                        vN(buf) = 0;
+                }
+                svPn(buf, part.data, part.length);
+                prev = kind;
+                p += n;
+                left -= n;
+        }
+
+        if (vN(buf) != 0) {
+                emit(ty, v_bytes(buf), prev, ctx);
+        }
+}
+
+struct escape_ctx {
+        byte_vector out;
+        Value       f;
+};
+
+static void
+escape_emit(Ty *ty, Bytes s, StringPart kind, void *ctx)
+{
+        static char const *const names[] = {"text", "escape", "invalid"};
+        struct escape_ctx *out = ctx;
+
+        if (!IsNone(out->f) && !IsNil(out->f)) {
+                Value part = vSs(s.data, s.length);
+                Value name = xSz(names[kind]);
+                gP(&part);
+                Value v = vm_eval_function(ty, &out->f, &part, &name, NULL);
+                gX();
+                if (v.type != VALUE_STRING) {
+                        zP("String.escape(): callback must return a String, got %s", VSC(&v));
+                }
+                s = s_bytes(v);
+        }
+
+        if (s.length != 0) {
+                svPn(out->out, s.data, s.length);
+        }
+}
+
+static Value
+string_escape(Ty *ty, Value *string, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("String.escape()", 0, 1, 2);
+
+        Value fun   = ARGxD(0, "f",     ANY,    _NONE);
+        Value quote = ARGxD(1, "quote", STRING, _NONE);
+
+        struct escape_ctx ctx = { .f = fun };
+        char q = '"';
+
+        if (!IsNone(ctx.f) && !IsNil(ctx.f) && !CALLABLE(ctx.f)) {
+                bP("expected a callable, got %s", VSC(&ctx.f));
+        }
+
+        if (!IsNone(quote)) {
+                if (sN(quote) != 1 || (ss(quote)[0] != '\'' && ss(quote)[0] != '"')) {
+                        bP("quote must be a single or double quote");
+                }
+                q = ss(quote)[0];
+        }
+
+        SCRATCH_SAVE();
+        gP(string);
+        gP(&ctx.f);
+        str_escape(ty, s_bytes(*string), q, escape_emit, &ctx);
+        Value result = (vN(ctx.out) == 0) ? STRING_EMPTY : vSs(vv(ctx.out), vN(ctx.out));
+        gX();
+        gX();
+        SCRATCH_RESTORE();
+
+        return result;
 }
 
 static Value
@@ -2814,8 +2959,9 @@ DEFINE_METHOD_TABLE(
         { .name = "contains?", .func = string_contains         },
         { .name = "count",     .func = string_count            },
         { .name = "cstr",      .func = string_cstr             },
-        { .name = "chalk",     .func = string_chalk             },
+        { .name = "chalk",     .func = string_chalk            },
         { .name = "charCount", .func = string_grapheme_count   },
+        { .name = "escape",    .func = string_escape           },
         { .name = "len",       .func = string_length           },
         { .name = "lines",     .func = string_lines            },
         { .name = "lower",     .func = string_lower            },

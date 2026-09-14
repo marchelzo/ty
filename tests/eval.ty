@@ -1,3 +1,14 @@
+import ty
+
+fn reject(source: String) {
+    try {
+        __eval__(source)
+        assert(false, "accepted invalid source: {source}")
+    } catch Err(message) {
+        assert(#message > 0)
+    }
+}
+
 ns test
 
 pub fn ev() {
@@ -10,4 +21,31 @@ pub fn ev() {
         ''') + n
     }
     assert(e() == 92)
+}
+
+pub fn parse-error-recovery() {
+    let n = 40
+    for source in [
+        '"""unterminated',
+        '"""text"""',
+        'if true {',
+        'fn f() { do {',
+        'fn f() { "unterminated',
+        'let x = (',
+    ] {
+        reject(source)
+        ty.gc()
+        assert(__eval__('n + 2') == 42)
+    }
+}
+
+pub fn nested-scope-recovery() {
+    let opens = 'do { '.repeat(40)
+    let closes = ' }'.repeat(40)
+    assert(__eval__("{opens}42{closes}") == 42)
+    ty.gc()
+    assert(__eval__('21 * 2') == 42)
+    reject("{opens}\"\"\"unterminated")
+    ty.gc()
+    assert(__eval__('21 * 2') == 42)
 }

@@ -3,6 +3,17 @@
 
 #include "value.h"
 
+typedef enum {
+        STRING_TEXT,
+        STRING_ESCAPE,
+        STRING_INVALID
+} StringPart;
+
+typedef void StringEmit(Ty *, Bytes, StringPart, void *);
+
+void
+str_escape(Ty *ty, Bytes s, char quote, StringEmit *emit, void *ctx);
+
 void
 build_string_method_table(void);
 

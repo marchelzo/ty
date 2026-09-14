@@ -633,6 +633,32 @@ unfurl(Expr const *e)
 }
 
 inline static bool
+HasBody(Expr const *fun)
+{
+        if (fun == NULL) {
+                return false;
+        }
+
+        switch (fun->type) {
+        case STATEMENT_FUNCTION_DEFINITION:
+                return HasBody(((Stmt *)fun)->value);
+
+        case EXPRESSION_FUNCTION:
+                return (fun->body != NULL);
+
+        case EXPRESSION_MULTI_FUNCTION:
+                for (int i = 0; i < vN(fun->functions); ++i) {
+                        if (HasBody(v__(fun->functions, i))) {
+                                return true;
+                        }
+                }
+                return false;
+        }
+
+        return false;
+}
+
+inline static bool
 is_method(Expr const *e) { return e->class != NULL; }
 
 char const *

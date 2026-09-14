@@ -722,29 +722,6 @@ InPatternFunc(Ty *ty)
             && (STATE.func->ftype == FT_PATTERN);
 }
 
-inline static bool
-HasBody(Expr const *fun)
-{
-        if (fun == NULL) {
-                return false;
-        }
-
-        switch (fun->type) {
-        case EXPRESSION_FUNCTION:
-                return fun->body != NULL;
-
-        case EXPRESSION_MULTI_FUNCTION:
-                for (int i = 0; i < vN(fun->functions); ++i) {
-                        if (HasBody(v__(fun->functions, i))) {
-                                return true;
-                        }
-                }
-                return false;
-        }
-
-        return false;
-}
-
 static Expr *
 FindUserConstructor(Class const *class)
 {
@@ -7217,25 +7194,46 @@ emit_return_check(Ty *ty, Expr const *f)
 static bool
 emit_implicit_tail_body(Ty *ty, Stmt const *body)
 {
-        if (body == NULL
-            || (body->type != STATEMENT_BLOCK && body->type != STATEMENT_MULTI)
-            || vN(body->statements) == 0
-            || (RUNTIME_CONSTRAINTS && STATE.func->return_type != NULL)
-            || STATE.function_resources != STATE.resources
-            || vN(STATE.tries) != 0) return false;
-        Stmt const *last = v__(body->statements, vN(body->statements) - 1);
-        if (last->type != STATEMENT_EXPRESSION) return false;
-        Expr const *call = last->expression;
-        if (!is_call(call) || is_variadic(call)
-            || call->function->type != EXPRESSION_IDENTIFIER
-            || call->function->symbol != STATE.func->fn_symbol
-            || vN(call->args) != vN(STATE.func->params)
-            || vN(call->kwargs) != 0) return false;
-        for (int i = 0; i + 1 < vN(body->statements); ++i) {
-                if (emit_statement(ty, v__(body->statements, i), false)) return true;
+        if (
+                (body == NULL)
+             || ((body->type != STATEMENT_BLOCK) && (body->type != STATEMENT_MULTI))
+             || (vN(body->statements) == 0)
+             || (RUNTIME_CONSTRAINTS && (STATE.func->return_type != NULL))
+             || (STATE.function_resources != STATE.resources)
+             || (vN(STATE.tries) != 0)
+        ) {
+                return false;
         }
-        for (int i = 0; i < vN(call->args); ++i) EE(v__(call->args, i));
+
+        Stmt const *last = v__(body->statements, vN(body->statements) - 1);
+        if (last->type != STATEMENT_EXPRESSION) {
+                return false;
+        }
+
+        Expr const *call = last->expression;
+        if (
+                !is_call(call)
+             || is_variadic(call)
+             || (call->function->type != EXPRESSION_IDENTIFIER)
+             || (call->function->symbol != STATE.func->fn_symbol)
+             || (vN(call->args) != vN(STATE.func->params))
+             || (vN(call->kwargs) != 0)
+        ) {
+                return false;
+        }
+
+        for (int i = 0; i + 1 < vN(body->statements); ++i) {
+                if (emit_statement(ty, v__(body->statements, i), false)) {
+                        return true;
+                }
+        }
+
+        for (int i = 0; i < vN(call->args); ++i) {
+                EE(v__(call->args, i));
+        }
+
         INSN(TAIL_CALL);
+
         return true;
 }
 
@@ -8073,8 +8071,6 @@ emit_expr_case(Ty *ty, Expr const *pattern, Expr const *e, bool no_unwind)
         return returns;
 }
 
-/* ---- Tag match group helpers ---- */
-
 typedef struct {
         i32Vector          tags;
         offset_vector      offs;
@@ -8401,8 +8397,6 @@ emit_tag_group_expr(Ty *ty, Expr const *e, int start, int count, int kind)
         return returns;
 }
 
-/* ---- String match group helpers ---- */
-
 typedef struct {
         i32   intern_id;
         int   arm_index;
@@ -8568,8 +8562,6 @@ emit_str_group_expr(Ty *ty, Expr const *e, int start, int count)
 
         return returns;
 }
-
-/* ---- Pattern group classification ---- */
 
 static int
 classify_pattern(Expr const *p)
@@ -10830,7 +10822,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                                 INSN(NIL);
                         } else {
                                 INSN(STRING);
-                                ESL(((Bytes) {v__(e->names, i), strlen(v__(e->names, i))}));
+                                ESL(z_bytes(v__(e->names, i)));
                         }
                         EE(v__(e->es, i));
                         if (v__(e->required, i)) {
@@ -15403,7 +15395,7 @@ cexpr(Ty *ty, Value *v)
 
         case TyString:
                 e->type = EXPRESSION_STRING;
-                e->string = (Bytes) {mkcstr(v), sN(*v)};
+                e->string = BYTES(mkcstr(v), sN(*v));
                 break;
 
         case TyLangString:
@@ -15416,7 +15408,7 @@ cexpr(Ty *ty, Value *v)
                 for (int i = 0; i < v->array->count; ++i) {
                         Value *x = &v->array->items[i];
                         if (x->type == VALUE_STRING) {
-                                avP(e->strings, ((Bytes) {mkcstr(x), sN(*x)}));
+                                avP(e->strings, BYTES(mkcstr(x), sN(*x)));
                         } else if (x->type == VALUE_TUPLE) {
                                 avP(e->expressions, cexpr(ty, &x->items[0]));
                                 avP(e->fmts, cexpr(ty, &x->items[1]));
@@ -15431,7 +15423,7 @@ cexpr(Ty *ty, Value *v)
                 }
 
                 if (vN(*v->array) == 0 || vvL(*v->array)->type != VALUE_STRING) {
-                        avP(e->strings, ((Bytes) {"", 0}));
+                        avP(e->strings, z_bytes(""));
                 }
                 break;
         }
