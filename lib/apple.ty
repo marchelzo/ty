@@ -237,6 +237,11 @@ C! pub iokit fn {
     long IOHIDValueGetIntegerValue(void *value);
 }
 
+fn cfstr(s: String) -> Ptr[Any] {
+    let ref = CFStringCreateWithCString(nil, s.cstr(), CF.kStringEncodingUTF8)
+    ref ?? throw RuntimeError("CFStringCreateWithCString failed for '{s}'")
+}
+
 pub ns iokit {
     pub const kIOHIDOptionsTypeNone = 0
     pub const kHIDPage_KeyboardOrKeypad = 0x07
@@ -245,6 +250,9 @@ pub ns iokit {
 
     pub const kHIDUsage_KeyA = 0x04
     pub const kHIDUsage_KeyK = 0x0E
+
+    pub const kIOHIDDeviceUsagePageKey = cfstr('DeviceUsagePage')
+    pub const kIOHIDDeviceUsageKey     = cfstr('DeviceUsage')
 }
 
 pub ns CF {
@@ -578,11 +586,6 @@ fn cfval(ref: Ptr[Any]) -> _ {
     } else if tid == tids.dict {
         ref
     }
-}
-
-fn cfstr(s: String) -> Ptr[Any] {
-    let ref = CFStringCreateWithCString(nil, s.cstr(), CF.kStringEncodingUTF8)
-    ref ?? throw RuntimeError("CFStringCreateWithCString failed for '{s}'")
 }
 
 fn cfstr-read(ref: Ptr[Any]) -> String {

@@ -12354,13 +12354,22 @@ expand_prog(Ty *ty, Stmt **p)
 bool
 compiler_path_in_search_path(Ty *ty, char const *path)
 {
-        if (path == NULL) return false;
+        if (path == NULL) {
+                return false;
+        }
+
         Array *search = v_(Globals, NAMES.path)->array;
         for (int i = 0; i < vN(*search); ++i) {
                 char const *root = ss(v__(*search, i));
-                size_t length = strlen(root);
-                if (strncmp(path, root, length) == 0 && path[length] == '/') return true;
+                usize length = strlen(root);
+                if (
+                        (strncmp(path, root, length) == 0)
+                     && (path[length] == '/')
+                ) {
+                        return true;
+                }
         }
+
         return false;
 }
 
@@ -12394,24 +12403,12 @@ resolve_prog(Ty *ty, Stmt **p)
                         );
                         t2_class_ops += 1;
                 }
-                t2_checker_observe(
-                        ty,
-                        checker,
-                        p[i],
-                        T2_CHECKPOINT_DECLARATION,
-                        i
-                );
+                t2_checker_observe(ty, checker, p[i], T2_CHECKPOINT_DECLARATION, i);
         }
 
         for (usize i = 0; p[i] != NULL; ++i) {
                 symbolize_statement(ty, STATE.global, p[i]);
-                t2_checker_observe(
-                        ty,
-                        checker,
-                        p[i],
-                        T2_CHECKPOINT_STATEMENT,
-                        i
-                );
+                t2_checker_observe(ty, checker, p[i], T2_CHECKPOINT_STATEMENT, i);
         }
 
         for (int i = 0; i < vN(STATE.class_ops); ++i) {
@@ -12422,13 +12419,7 @@ resolve_prog(Ty *ty, Stmt **p)
                 ) {
                         symbolize_statement(ty, STATE.global, def);
                 }
-                t2_checker_observe(
-                        ty,
-                        checker,
-                        def,
-                        T2_CHECKPOINT_CLASS_OPERATOR,
-                        i
-                );
+                t2_checker_observe(ty, checker, def, T2_CHECKPOINT_CLASS_OPERATOR, i);
         }
 
         TY_CATCH_END();

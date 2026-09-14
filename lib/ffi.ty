@@ -1057,7 +1057,7 @@ pub fn open(
 #|]
 
 #|if __apple__
-        if !lib.starts?('/') {
+        if '/' not in lib {
             let dirs = [
                 '/opt/homebrew/lib',
                 '/opt/local/lib'

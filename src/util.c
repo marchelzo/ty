@@ -65,7 +65,7 @@ fslurp(FILE *f)
         byte_vector s = {0};
 
         xvP(s, '\0');
-        for (int c; (c = fgetc_unlocked(f)) != EOF;) {
+        for (int c; (c = getc_unlocked(f)) != EOF;) {
                 xvP(s, c);
         }
         xvP(s, '\0');

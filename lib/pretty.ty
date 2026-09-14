@@ -70,7 +70,7 @@ pub class Printer {
         __oneline   = oneline
     }
 
-    write-string(s: String, force: Bool) {
+    write-string(s: String, force: ?Bool) {
         fn put(part: String, kind: String) -> String {
             let style = match kind {
                 'escape'  => __colors.?escape ?? '#d8a657',

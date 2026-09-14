@@ -133,7 +133,7 @@ S2(char const *s)
 static inline char *
 S2N(char const *s)
 {
-        return s == NULL ? NULL : S2(s);
+        return (s == NULL) ? NULL : S2(s);
 }
 
 char *

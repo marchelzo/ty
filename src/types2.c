@@ -6645,6 +6645,11 @@ callback_parameter_hint(
                 if (!selected) {
                         continue;
                 }
+                parameter.type = t2_solver_zonk(
+                        checker->solver,
+                        parameter.type,
+                        T2_PREFER_LOWER_BOUND
+                );
                 if (
                         (t2_type_kind(checker->universe, parameter.type) != T2_TYPE_FUNCTION)
                      || !callable_parameters_closed(checker, parameter.type)
@@ -26808,29 +26813,37 @@ cache_directory(char *buffer, usize size)
 {
         char const *override = getenv("TY_TYPES2_CACHE_DIR");
         if (override != NULL && *override != '\0') {
-                return ty_snprintf(buffer, size, "%s", override) < (int)size;
+                int n = ty_snprintf(buffer, size, "%s", override) < (int)size;
+                return n < (int)size;
         }
 
         char const *xdg  = getenv("XDG_CACHE_HOME");
         char const *home = getenv("HOME");
         u64 identity     = build_identity();
         if (xdg != NULL && *xdg != '\0') {
-                return ty_snprintf(buffer, size, "%s/ty/types/%016" PRIx64, xdg, identity)
-                     < (int)size;
+                int n = ty_snprintf(
+                        buffer,
+                        size,
+                        "%s/ty/types/%016" PRIx64,
+                        xdg,
+                        identity
+                );
+                return n < (int)size;
         }
 
         if (home == NULL || *home == '\0') {
                 return false;
         }
 
-        return ty_snprintf(
+        int n = ty_snprintf(
                 buffer,
                 size,
                 "%s/.cache/ty/types/%016" PRIx64,
                 home,
                 identity
-        )
-             < (int)size;
+        );
+
+        return n < (int)size;
 }
 
 static void
@@ -26865,16 +26878,11 @@ cache_file_path(Ty *ty, Module const *module)
 
         char name[128];
         usize n = 0;
-        for (
-                char const *c = module->name;
-                (*c != '\0')
-             && (n + 1 < sizeof name);
-                ++c
-        ) {
+        for (char const *c = module->name; (*c != '\0') && (n + 1 < sizeof name); ++c) {
                 name[n++] = ((*c == '/') || (*c == '\\')) ? '.' : *c;
         }
-
         name[n] = '\0';
+
         char path[PATH_MAX];
         int written = ty_snprintf(
                 path,
@@ -26914,7 +26922,7 @@ read_file(char const *path, usize *size)
         unsigned char *data = ty_malloc(length);
         usize have          = 0;
         while (data != NULL && have < length) {
-                ssize_t n = read(fd, data + have, length - have);
+                isize n = read(fd, data + have, length - have);
                 if (n < 0 && errno == EINTR) {
                         continue;
                 }
@@ -26957,7 +26965,7 @@ write_file(char const *path, unsigned char const *data, usize size)
 
         usize have = 0;
         while (have < size) {
-                ssize_t n = write(fd, data + have, size - have);
+                isize n = write(fd, data + have, size - have);
                 if (n < 0 && errno == EINTR) {
                         continue;
                 }
