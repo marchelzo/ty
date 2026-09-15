@@ -19,11 +19,13 @@ let user-cpu-us = Atomic(0)
 let system-cpu-us = Atomic(0)
 
 const TY_CMD  = getenv('TY_PATH') ?? ty.executable
-const TY_OPTS = ['-q' if ty.q, '-j' if !ty.jit].unwords()
+const TY_OPTS = ['-q' if ty.q, '-j' if !ty.jit]
 
 setenv('NO_COLOR', '')
 
-const ALL_TESTS = argv.pluck(\_ == '-a') :: Some
+const ALL_TESTS = argv.pluck(\_ == '-a').some?
+const FULL_TESTS = argv.pluck(\_ == '--full').some?
+const TIMEOUT_MS = int(getenv('TY_TEST_TIMEOUT_MS') ?? (FULL_TESTS ? '30000' : '5000'))
 
 const FILTER = match argv {
     [_,       filter] => regex(filter),
@@ -49,7 +51,7 @@ fn show-time(dt: Float) {
 fn run(p: Path) {
     let t0 = time.now()
 
-    let _, details = sh("{TY_CMD} --test {TY_OPTS} {p}", timeoutMs=5000)
+    let _, details = sh('', shell=[TY_CMD, '--test', *TY_OPTS, str(p)], timeoutMs=TIMEOUT_MS, signal=SIGKILL)
 
     let (color, result) = match details {
         nil => do {
@@ -93,7 +95,11 @@ fn tests-in(dir: Path) {
 }
 
 fn subdirs(dir: Path) {
-    dir.ls().filter(\_.dir?)
+    [
+        it for dir.ls()
+        if it.dir? && /^(?:fixtures|support)$/ not in it.name
+        && (FULL_TESTS || it.name != 'full')
+    ]
 }
 
 fn has-selected-tests(dir: Path) {
@@ -115,7 +121,7 @@ fn check-requirements(dir: Path) {
     let conf = dir / REQUIREMENTS_FILE
     if !conf.file? { return nil }
 
-    let _, details = sh("{TY_CMD} {TY_OPTS} {conf}", timeoutMs=5000)
+    let _, details = sh('', shell=[TY_CMD, *TY_OPTS, str(conf)], timeoutMs=TIMEOUT_MS, signal=SIGKILL)
 
     match details {
         nil => ({
@@ -208,6 +214,10 @@ fn run-dir(dir: Path, inherited-requirement: _ = nil) {
 }
 
 run-dir(TEST_DIR)
+
+if FULL_TESTS && !ALL_TESTS {
+    run-dir(TEST_DIR / 'full')
+}
 
 let t1 = time.now()
 let user-cpu = user-cpu-us.load() / 1.0e6

@@ -1,0 +1,88 @@
+import ty
+
+ns test
+
+fn check(s: String, escaped: String) {
+    assert(s.escape() == escaped)
+    assert(show(s, color=false) == "'{escaped}'")
+}
+
+pub fn utf8-and-controls() {
+    check('', '')
+    check('café Ελληνικά 終 😀 é', 'café Ελληνικά 終 😀 é')
+    check("\x00\x01\x1f\x7f", '\\x00\\x01\\x1f\\x7f')
+    check("\a\b\f\n\r\t\v", '\\a\\b\\f\\n\\r\\t\\v')
+    check("\u0085\u009f\u2028\u2029\u200b", '\\u0085\\u009f\\u2028\\u2029\\u200b')
+    check("\U000e0001", '\\U000e0001')
+}
+
+pub fn malformed-utf8() {
+    for match [
+        ("\x80\xbf\xff", '\\x80\\xbf\\xff'),
+        ("\xc0\xaf", '\\xc0\\xaf'),
+        ("\xe0\x80\xaf", '\\xe0\\x80\\xaf'),
+        ("\xed\xa0\x80", '\\xed\\xa0\\x80'),
+        ("\xf4\x90\x80\x80", '\\xf4\\x90\\x80\\x80'),
+        ("\xf5\x80\x80\x80", '\\xf5\\x80\\x80\\x80'),
+        ("\xc2", '\\xc2'),
+        ("\xe2\x82", '\\xe2\\x82'),
+        ("\xf0\x9f\x98", '\\xf0\\x9f\\x98'),
+        ("\xe2(\xa1", '\\xe2(\\xa1'),
+        ("\xf0\x9fé\xff終", '\\xf0\\x9fé\\xff終'),
+        ("\xe2\x00\xa1", '\\xe2\\x00\\xa1'),
+        ("\x80\u0080\xff", '\\x80\\u0080\\xff'),
+    ] {
+        (s, escaped) => check(s, escaped)
+    }
+}
+
+pub fn quote-and-interpolation() {
+    let s = "'\"\\\{x\}"
+    assert(s.escape() == "'\\\"\\\\\\\{x\\\}")
+    assert(s.escape(quote="'") == "\\'\"\\\\\{x\}")
+    assert(s.escape(nil, "'") == s.escape(quote="'"))
+    assert(show(s, color=false) == "'{s.escape(quote="'")}'")
+}
+
+pub fn round-trip-bytes() {
+    for b in 0..256 {
+        let s = blob(b).str!()
+        assert(s.bytes() == [b])
+        assert(__eval__("\"{s.escape()}\"") == s)
+    }
+    for s in ["é\xe2\x00\xa1終", "\u0085\u2028\U000e0001", "\a\b\f\v\{x\}"] {
+        assert(__eval__("\"{s.escape()}\"") == s)
+    }
+    assert('\a\b\f\v'.bytes() == [7, 8, 12, 11])
+}
+
+pub fn escape-callback() {
+    let parts: Array[(String, String)] = []
+    fn collect(s: String, kind: String) -> String {
+        parts.push((kind, s))
+        ty.gc()
+        assert(__eval__("\"{s.escape()}\"") == s)
+        s
+    }
+    let s = "abcé\n\t\xff\x80終\x00"
+    assert(s.escape(f=collect) == s.escape())
+    assert(parts == [
+        ('text', 'abcé'),
+        ('escape', '\\n\\t'),
+        ('invalid', '\\xff\\x80'),
+        ('text', '終'),
+        ('escape', '\\x00'),
+    ])
+}
+
+pub fn builtin-colors() {
+    if ty.color != 'always' {
+        return
+    }
+    let s = show("a\n\xffb", color=true)
+    assert("\x1b[92ma" in s)
+    assert("\x1b[95m\\n" in s)
+    assert("\x1b[91m\\xff" in s)
+    assert("\x1b[92mb" in s)
+    assert(s.ends?("\x1b[0m"))
+}

@@ -1,5 +1,6 @@
 #include "ast.h"
 #include "ty.h"
+#include "jit.h"
 #ifdef _WIN32
 #include <winsock2.h> // must be included before <windows.h>
 #include <ws2tcpip.h>
@@ -9080,6 +9081,8 @@ BUILTIN_FUNCTION(ty_bt)
 
                 char const *name = name_of(f);
                 char const *ip = frames->items[i].ip;
+                Frame const *caller = i > 0 ? v_(*frames, i - 1) : NULL;
+                ip = jit_frame_ip(caller, ip);
                 Expr const *e = compiler_find_expr(ty, ip - 1);
 
                 Value entry = vT(5);

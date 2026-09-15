@@ -347,6 +347,8 @@ static void jit_emit_prologue(dasm_State **Dst, int bound) {
         |  mov x20, x1       // resume_idx
         |  mov x21, x2       // args
         |  mov x22, x3       // env
+        |  sub x8, sp, #8
+        |  str x8, [x4]
         // x24 = byte offset of fp into stack.items (survives realloc)
         // x24 = args - stack.items
         |  ldr x9, [x19, #OFF_TY_STACK + OFF_VEC_DATA]
@@ -369,6 +371,12 @@ static void jit_emit_epilogue(dasm_State **Dst) {
         |  ldp x23, x24, [sp], #16
         |  ldp x21, x22, [sp], #16
         |  ldp x19, x20, [sp], #16
+        |  ldp x29, x30, [sp], #16
+        |  ret
+        |->runtime_call:
+        |  stp x29, x30, [sp, #-16]!
+        |  mov x29, sp
+        |  blr x16
         |  ldp x29, x30, [sp], #16
         |  ret
 }
@@ -506,6 +514,13 @@ static void jit_emit_add_imm(dasm_State **Dst, int dst, int src, int imm) {
 // --- Indirect call ---
 static void jit_emit_call_reg(dasm_State **Dst, int reg) {
         |  blr Rx(reg)
+}
+
+static void
+jit_emit_runtime_call_reg(dasm_State **Dst, int reg)
+{
+        jit_emit_mov(Dst, 16, reg);
+        |  bl ->runtime_call
 }
 
 // --- Compare register with register (sets flags for branch_eq/ne/lt/gt/le/ge) ---

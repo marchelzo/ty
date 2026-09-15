@@ -1623,7 +1623,8 @@ xjit(Ty *ty, isize depth, JitFn *func, i32 resume_idx, Value *args, Value **env)
         IP = &JIT;
 
         EXEC_DEPTH += 2;
-        i32 rc = (*func)(ty, resume_idx, args, env);
+        i32 rc = (*func)(ty, resume_idx, args, env, &v_(FRAMES, depth)->jit_pc);
+        v_(FRAMES, depth)->jit_pc = NULL;
         EXEC_DEPTH -= 2;
 
         int reason = JIT_REASON(rc);
@@ -3574,6 +3575,14 @@ GetMember(Ty *ty, int member, bool try_missing, bool exec)
         Value v = peek();
 
         if (v.type & VALUE_TAGGED) {
+                Class *class = tags_get_class(ty, tags_first(ty, v.tags));
+                if (class != NULL) {
+                        vp = class_lookup_getter_i(ty, class->i, member);
+                        if (vp != NULL) {
+                                v = unwrap(ty, &v);
+                                goto Getter;
+                        }
+                }
                 vp = tags_lookup_method_i(ty, tags_first(ty, v.tags), member);
                 if (vp != NULL)  {
                         Value *this = mAo(sizeof *this, GC_VALUE);
@@ -3849,16 +3858,7 @@ GetMember(Ty *ty, int member, bool try_missing, bool exec)
                         break;
                 }
                 if ((vp = class_lookup_s_getter_i(ty, v.class, member)) != NULL) {
-                        if (exec) {
-                                exec_fn(ty, vp, &v, 0, NULL);
-                                v = pop();
-                                pop();
-                                return v;
-                        } else {
-                                pop();
-                                call(ty, vp, &v, 0, NULL);
-                                return BREAK;
-                        }
+                        goto Getter;
                 }
                 if ((vp = class_lookup_field(ty, v.class, member)) != NULL) {
                         pop();
@@ -3943,16 +3943,7 @@ GetMember(Ty *ty, int member, bool try_missing, bool exec)
 ClassLookup:
                 vp = class_lookup_getter_i(ty, n, member);
                 if (vp != NULL) {
-                        if (exec) {
-                                exec_fn(ty, vp, &v, 0, NULL);
-                                v = pop();
-                                pop();
-                                return v;
-                        } else {
-                                pop();
-                                call(ty, vp, &v, 0, NULL);
-                                return BREAK;
-                        }
+                        goto Getter;
                 }
                 vp = class_lookup_method_i(ty, n, member);
                 if (vp != NULL) {
@@ -4011,6 +4002,14 @@ BoundMethod:
                 break;
 
         case VALUE_TAG:
+        {
+                Class *class = tags_get_class(ty, v.tag);
+                if (class != NULL) {
+                        vp = class_lookup_s_getter_i(ty, class->i, member);
+                        if (vp != NULL) {
+                                goto Getter;
+                        }
+                }
                 vp = tags_lookup_static(ty, v.tag, member);
                 if (vp == NULL) {
                         vp = tags_lookup_method_i(ty, v.tag, member);
@@ -4031,10 +4030,23 @@ BoundMethod:
                 }
                 break;
         }
+        }
 
         pop();
 
         return NONE;
+
+Getter:
+        if (exec) {
+                exec_fn(ty, vp, &v, 0, NULL);
+                v = pop();
+                pop();
+                return v;
+        }
+
+        pop();
+        call(ty, vp, &v, 0, NULL);
+        return BREAK;
 }
 
 static int
@@ -8405,11 +8417,13 @@ BinaryOp:
 
                 CASE(DEFINE_TAG)
                 {
-                        int tag, super, n, c;
+                        int tag, super, n, c, g, s_g;
                         READVALUE(tag);
                         READVALUE(super);
                         READVALUE(n);
                         READVALUE(c);
+                        READVALUE(g);
+                        READVALUE(s_g);
                         while (n --> 0) {
                                 v = pop();
                                 tags_add_method(ty, tag, IP, v);
@@ -8419,6 +8433,11 @@ BinaryOp:
                                 v = pop();
                                 tags_add_static(ty, tag, IP, v);
                                 SKIPSTR();
+                        }
+                        if (g != 0 || s_g != 0) {
+                                Class *class = tags_get_class(ty, tag);
+                                InstallMethods(ty, class->i, &class->getters, g);
+                                InstallMethods(ty, class->i, &class->s_getters, s_g);
                         }
                         if (super != -1) {
                                 tags_copy_methods(ty, tag, super);
@@ -9039,7 +9058,9 @@ xDcringe(Ty *ty)
                         goto Next;
                 }
 
-                Expr const *expr = compiler_find_expr(ty, IP - 1);
+                Frame const *frame = vN(FRAMES) > 0 ? vvL(FRAMES) : NULL;
+                char const *ip = jit_frame_ip(frame, IP);
+                Expr const *expr = compiler_find_expr(ty, ip - 1);
 
                 WriteExpressionTrace(ty, &ErrorBuffer, expr, 0, i == 0);
                 if (expr != NULL && expr->origin != NULL) {
@@ -9078,13 +9099,8 @@ CaptureContextEx(Ty *ty, ThrowCtx *ctx)
         char const *up;
 
         while (ip != NULL) {
-                if (ip == &JIT) {
-                        ip = (
-                                code_of(&vvL(st.frames)->f)
-                              + code_size_of(&vvL(st.frames)->f)
-                              - 1
-                        );
-                }
+                Frame const *frame = vN(st.frames) > 0 ? vvL(st.frames) : NULL;
+                ip = jit_frame_ip(frame, ip);
 
                 if (
                         (vN(st.frames) > 0)
@@ -9095,8 +9111,7 @@ CaptureContextEx(Ty *ty, ThrowCtx *ctx)
 
                 i32 fp;
                 i32 nvar;
-                if (vN(st.frames) > 0) {
-                        Frame *frame = vvL(st.frames);
+                if (frame != NULL) {
                         fp = frame->fp;
                         nvar = FrameFun(ty, frame)->info[FUN_INFO_BOUND];
                 } else {
@@ -9151,6 +9166,9 @@ CaptureContext(Ty *ty, ThrowCtx *ctx)
         char const *up;
 
         while (ip != NULL) {
+                Frame const *frame = vN(st.frames) > 0 ? vvL(st.frames) : NULL;
+                ip = jit_frame_ip(frame, ip);
+
                 if (
                         (vN(st.frames) > 0)
                      && is_hidden_fun(FrameFun(ty, vvL(st.frames)))
@@ -9301,6 +9319,9 @@ tdb_backtrace(Ty *ty)
         int nf = vN(frames);
 
         for (int i = 0; ip != NULL; ++i) {
+                Frame const *frame = nf > 0 ? v_(frames, nf - 1) : NULL;
+                ip = jit_frame_ip(frame, ip);
+
                 if (nf > 0 && is_hidden_fun(FrameFun(ty, v_(frames, nf - 1)))) {
                         goto Next;
                 }
@@ -10995,16 +11016,22 @@ StepInstruction(char const *ip)
                 break;
         CASE(DEFINE_TAG)
         {
-                int tag, super, t, n;
+                int tag, super, t, n, g, s_g;
                 READVALUE(tag);
                 READVALUE(super);
                 READVALUE(n);
                 READVALUE(t);
+                READVALUE(g);
+                READVALUE(s_g);
                 while (n --> 0) {
                         SKIPSTR();
                 }
                 while (t --> 0) {
                         SKIPSTR();
+                }
+                for (int i = 0; i < g + s_g; ++i) {
+                        i32 member;
+                        SKIPVALUE(member);
                 }
                 break;
         }

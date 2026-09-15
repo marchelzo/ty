@@ -1,0 +1,52 @@
+class Probe {
+    __id: Int
+    init(id: Int) { __id = id }
+    exe  -> String | nil { lookup(__id, 'exe') }
+    cwd  -> String | nil { lookup(__id, 'cwd') }
+    root -> String | nil { lookup(__id, 'root') }
+}
+
+fn lookup(id: Int, name: String) -> String | nil {
+    id > 0 ? "{name}-{id}" : nil
+}
+
+class Item {
+    rank: Int
+    init(rank: Int) { self.rank = rank }
+}
+
+fn ranks() -> Array[Int] { [3, 1, 2] }
+
+fn items*(least: Int | nil = nil, pred: _ = nil) {
+    for rank in ranks() {
+        let item = Item(rank)
+        try {
+            if least :: Int {
+                continue if item.rank < least
+            }
+            continue if pred != nil && !pred(item)
+            yield item
+        } catch _: OSError { }
+    }
+}
+
+fn first(least: Int) -> Item | nil {
+    for item in items(least=least) { return item }
+}
+
+fn all(least: Int) -> Array[Item] {
+    [*items(least=least)]
+}
+
+fn picked(pred: _) -> Array[Item] {
+    [Item(0), *items(pred=pred), *(4..6).map(Item)]
+}
+
+print(
+    Probe(7).exe,
+    Probe(7).cwd,
+    Probe(0).root,
+    first(2).?rank,
+    all(2).map(&.rank),
+    picked(\_.rank > 2).map(&.rank)
+)

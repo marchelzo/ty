@@ -1,0 +1,32 @@
+class ShadowIndex {
+    value: Int = 0;
+
+    static answer() -> Int {
+        42
+    }
+
+    [](key: String) -> Int {
+        value
+    }
+
+    []=(key: String, replacement: Int) -> Int {
+        value = replacement
+    }
+}
+
+let index = ShadowIndex()
+let staticAnswer: Int = ShadowIndex.answer()
+index['answer'] = 42
+let answer: Int = index['answer']
+assert(staticAnswer == answer)
+assert(answer == 42)
+
+let rangeSlice: Array[Int] = [1, 2, 3][0..2]
+assert(rangeSlice == [1, 2])
+
+fn inferredSubscriptProtocol(table) {
+    table.remove('unused')
+    let previous = table['answer']
+    table['answer'] = 42
+    previous
+}

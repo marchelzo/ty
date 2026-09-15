@@ -1,0 +1,25 @@
+class ShadowBox {
+    value: Int = 0;
+
+    current -> Int {
+        value
+    }
+
+    +(other: ShadowBox) -> Int {
+        current + other.current
+    }
+
+    -() -> ShadowBox {
+        self
+    }
+
+    <=>(other: ShadowBox) -> Int {
+        (current, value) <=> (other.current, other.value)
+    }
+}
+
+let left = ShadowBox(value=1)
+let right = ShadowBox(value=2)
+let sum: Int = left + right
+let negated: ShadowBox = -left
+let ordering: Int = left <=> right

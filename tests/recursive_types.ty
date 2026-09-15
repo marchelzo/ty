@@ -1,0 +1,103 @@
+use Decl = {
+    ?name: String,
+    ?pointee: Decl
+}
+
+fn pointer(decl: Decl) -> Decl {
+    return {*decl, name: '*', pointee: decl}
+}
+
+fn named-pointer(decl: Decl) -> Decl {
+    return {*pointer(decl), name: 'pointer'}
+}
+
+fn decl-name(decl: Decl) -> String {
+    match decl {
+        {name, *} => name,
+        _         => ''
+    }
+}
+
+tag RecordType, PointerType, StackType, ScalarType
+
+use Tree = RecordType[Array[Tree]]
+         | PointerType[Tree]
+         | StackType[(Tree, Int)]
+         | ScalarType
+         | nil
+
+macro AnyPointer(t) = PointerType($$t) or StackType($$t, _)
+
+fn first-child(tree: Tree) {
+    let children = match tree {
+        AnyPointer(RecordType(ts)) => ts,
+        RecordType(ts)             => ts,
+        _                         => throw RuntimeError('expected record')
+    }
+    children[0]
+}
+
+fn choice-value(value: PointerType[Int] | RecordType[String] | StackType[Bool]) {
+    match value {
+        PointerType(item) or RecordType(item) or StackType(item) => item
+    }
+}
+
+fn optional-choice(value: PointerType[Int] | RecordType[String]) {
+    match value {
+        PointerType(number) or RecordType(text) => number
+    }
+}
+
+fn one-choice(value: PointerType[Int]) {
+    match value {
+        RecordType(item) or PointerType(item) => item
+    }
+}
+
+ns test
+
+pub fn recursive-record-spread() {
+    let decl: Decl = {name: 'int'}
+    assert(pointer(decl) == {name: '*', pointee: decl})
+    assert(named-pointer(decl) == {name: 'pointer', pointee: decl})
+    assert(pointer({}) == {name: '*', pointee: {}})
+    assert(decl-name(decl) == 'int')
+    assert(decl-name({}) == '')
+}
+
+pub fn recursive-tag-payload() {
+    let record = RecordType([ScalarType, nil])
+    assert(first-child(record) == ScalarType)
+    assert(first-child(PointerType(record)) == ScalarType)
+    assert(first-child(StackType(record, 16)) == ScalarType)
+    assert(first-child(RecordType([nil])) == nil)
+    assert(first-child(RecordType([record])) == record)
+}
+
+pub fn choice-payloads() {
+    assert(choice-value(PointerType(7)) == 7)
+    assert(choice-value(RecordType('text')) == 'text')
+    assert(choice-value(StackType(true)) == true)
+    assert(optional-choice(PointerType(7)) == 7)
+    assert(optional-choice(RecordType('text')) == nil)
+    assert(one-choice(PointerType(7)) == 7)
+}
+
+pub fn recursive-type-rejections() {
+    for (source, code) in [
+        ('fn bad(decl: Decl) -> Decl { return {*decl, name: 1} }', '[return-type]'),
+        ('fn bad(decl: Decl | Int) { return {*decl, name: "int"} }', '[record-spread]'),
+        ('fn bad(tree: Tree) -> String { first-child(tree) }', '[function-fallthrough]'),
+        ('fn bad(value: PointerType[Int] | RecordType[String] | StackType[Bool]) -> Int { choice-value(value) }', '[function-fallthrough]'),
+        ('fn bad(value: PointerType[Int] | RecordType[String]) -> Int { optional-choice(value) }', '[function-fallthrough]'),
+        ('fn bad(value: {?name: String | nil}) -> String { match value { {name, *} => name, _ => "" } }', '[function-fallthrough]')
+    ] {
+        try {
+            __eval__(source)
+            assert(false, source)
+        } catch ex :: code in ex.what {
+            ;
+        }
+    }
+}

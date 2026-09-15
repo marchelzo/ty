@@ -25,11 +25,11 @@ let levels = %{
     DEBUG: 'debug'
 }
 
-fn log-open(path: String) {
-    open(path, O_RDWR | O_TRUNC | O_CREAT, 0644)
+fn log-open(path: ?String) {
+    path == nil ? 2 : open(path, O_RDWR | O_TRUNC | O_CREAT, 0644)
 }
 
-let global-log-fds  = %{nil: 2, *: log-open(it)}
+let global-log-fds  = %{*: log-open(it)}
 let global-log-conf = %{}
 let global-log-lock = Mutex()
 
@@ -212,4 +212,3 @@ pub macro logging(config) = do {
     $$::(global-log-conf)[__module__] = config
     $$::(global-log-lock).unlock()
 }
-

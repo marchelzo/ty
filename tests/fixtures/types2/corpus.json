@@ -1,0 +1,17 @@
+{
+  "schema": "ty.types2.classification.v1",
+  "diagnostics": {
+    "prelude:558:5:invalid-trait-member": {
+      "classification": "library-defect",
+      "note": "Array.zip is a native builtin that rejects non-Array iterables and takes f as a keyword, so it cannot satisfy Iterable.zip(*its: ...Iterable[U], longest)",
+      "severity": "warning",
+      "message": "the member does not match the trait's declaration"
+    },
+    "prelude:1050:5:invalid-trait-member": {
+      "classification": "library-defect",
+      "note": "Dict.[] is keyed lookup while the Iterable default [](i: Int) is positional; the two contracts conflict",
+      "severity": "warning",
+      "message": "the member does not match the trait's declaration"
+    }
+  }
+}

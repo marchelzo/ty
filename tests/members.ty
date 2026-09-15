@@ -1,5 +1,10 @@
 ns test
 
+tag Measured {
+    size -> Int { #str(self) }
+    static name -> String { 'Measured' }
+}
+
 pub fn test-members() {
     let x: _ = 10
     assert(members(x) == nil)
@@ -16,4 +21,24 @@ pub fn function-members() {
 
     assert(name :: String)
     assert(fqn :: String)
+}
+
+pub fn tag-getters() {
+    let none = None
+    let absent: Bool = none.some?
+    let present: Bool = Some(1).some?
+    assert(!absent && present)
+
+    let values = [1]
+    assert(values.pluck(\_ == 1).some?)
+    assert(!values.pluck(\_ == 1).some?)
+
+    let value = Measured('abc')
+    let size: Int = value.size
+    let name: String = Measured.name
+    assert(size == 3 && name == 'Measured')
+    let size-name = 'size'
+    let name-name = 'name'
+    assert(value.{size-name} == 3)
+    assert(Measured.{name-name} == 'Measured')
 }

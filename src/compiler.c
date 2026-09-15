@@ -5479,6 +5479,8 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 cd = &s->tag;
                 symbolize_methods(ty, cd->scope, CLASS_TAG, &s->tag.methods, MT_DFL);
                 symbolize_methods(ty, cd->scope, CLASS_TAG, &s->tag.s_methods, MT_DFL | MT_STATIC);
+                symbolize_methods(ty, cd->scope, CLASS_TAG, &s->tag.getters, MT_GET);
+                symbolize_methods(ty, cd->scope, CLASS_TAG, &s->tag.s_getters, MT_GET | MT_STATIC);
                 break;
 
         case STATEMENT_BLOCK:
@@ -11049,6 +11051,12 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 break;
 
         case STATEMENT_TAG_DEFINITION:
+                for (int i = 0; i < vN(s->tag.s_getters); ++i) {
+                        EE(v__(s->tag.s_getters, i));
+                }
+                for (int i = 0; i < vN(s->tag.getters); ++i) {
+                        EE(v__(s->tag.getters, i));
+                }
                 for (int i = 0; i < vN(s->tag.s_methods); ++i) {
                         EE(v__(s->tag.s_methods, i));
                 }
@@ -11060,13 +11068,26 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 Ei32(-1);
                 Ei32(vN(s->tag.methods));
                 Ei32(vN(s->tag.s_methods));
+                Ei32(vN(s->tag.getters));
+                Ei32(vN(s->tag.s_getters));
                 for (int i = vN(s->tag.methods); i > 0; --i) {
                         ESTR(v__(s->tag.methods, i - 1)->name);
                 }
                 for (int i = vN(s->tag.s_methods); i > 0; --i) {
                         ESTR(v__(s->tag.s_methods, i - 1)->name);
                 }
-                STK(-(vN(s->tag.methods) + vN(s->tag.s_methods)));
+                for (int i = vN(s->tag.getters); i > 0; --i) {
+                        EM(v__(s->tag.getters, i - 1)->name);
+                }
+                for (int i = vN(s->tag.s_getters); i > 0; --i) {
+                        EM(v__(s->tag.s_getters, i - 1)->name);
+                }
+                STK(-(
+                        vN(s->tag.methods)
+                      + vN(s->tag.s_methods)
+                      + vN(s->tag.getters)
+                      + vN(s->tag.s_getters)
+                ));
                 break;
 
         case STATEMENT_CLASS_DEFINITION:
@@ -11559,6 +11580,8 @@ InjectRedpill(Ty *ty, Stmt *s)
                         def->redpilled = true;
                 }
                 RedpillMethods(ty, def->scope, &def->methods);
+                RedpillMethods(ty, def->scope, &def->getters);
+                RedpillMethods(ty, def->scope, &def->s_getters);
                 break;
 
         case STATEMENT_TYPE_DEFINITION:
@@ -12408,6 +12431,9 @@ resolve_prog(Ty *ty, Stmt **p)
 
         for (usize i = 0; p[i] != NULL; ++i) {
                 symbolize_statement(ty, STATE.global, p[i]);
+        }
+
+        for (usize i = 0; p[i] != NULL; ++i) {
                 t2_checker_observe(ty, checker, p[i], T2_CHECKPOINT_STATEMENT, i);
         }
 
@@ -16641,14 +16667,17 @@ define_tag(Ty *ty, Stmt *s)
                 tags_set_class(ty, sym->tag, class);
         }
 
-        for (int i = 0; i < vN(s->tag.methods); ++i) {
-                // :^)
-                v__(s->tag.methods, i)->class = tags_get_class(ty, sym->tag);
-        }
-
-        for (int i = 0; i < vN(s->tag.s_methods); ++i) {
-                // :^)
-                v__(s->tag.s_methods, i)->class = tags_get_class(ty, sym->tag);
+        ExprVec *members[] = {
+                &s->tag.methods,
+                &s->tag.s_methods,
+                &s->tag.getters,
+                &s->tag.s_getters
+        };
+        Class *class = tags_get_class(ty, sym->tag);
+        for (int i = 0; i < countof(members); ++i) {
+                for (int j = 0; j < vN(*members[i]); ++j) {
+                        v__(*members[i], j)->class = class;
+                }
         }
 }
 
@@ -16665,11 +16694,8 @@ define_type(Ty *ty, Stmt *s, Scope *scope)
 
         if (s->class.var == NULL) {
                 s->class.scope = scope_new(ty, s->class.name, scope, false);
-
                 SymbolizeTypeParams(ty, s->class.scope, &s->class.type_params);
-
                 Symbol *sym = scope_local_lookup(ty, scope, s->class.name);
-
                 if (sym == NULL) {
                         sym = scope_add_type_alias(
                                 ty,
@@ -16686,7 +16712,6 @@ define_type(Ty *ty, Stmt *s, Scope *scope)
                                 TERM(0)
                         );
                 }
-
                 sym->doc = s->class.doc;
                 sym->loc = s->class.loc;
                 sym->flags |= SYM_CONST;
@@ -16709,21 +16734,15 @@ AddMethSymbol(Ty *ty, Expr *meth, u32 flags)
         Scope *scope = (flags & SYM_STATIC)
                      ? class->def->class.s_scope
                      : class->def->class.scope;
-
-        char *name = GetPrivateName(
-                meth->name,
-                class->i,
-                smA(512),
-                512
-        );
+        char *name = GetPrivateName(meth->name, class->i, smA(512), 512);
 
         Symbol *sym = addsymbol(ty, scope, meth->name);
         sym->flags |= SYM_MEMBER;
         sym->flags |= flags;
         sym->member = M_ID(name);
-        sym->expr = meth;
-        sym->class = class->i;
-        sym->loc = meth->start;
+        sym->expr   = meth;
+        sym->class  = class->i;
+        sym->loc    = meth->start;
 
         meth->fn_symbol = sym;
 
@@ -18836,16 +18855,22 @@ DumpProgram(
                         break;
                 CASE(DEFINE_TAG)
                 {
-                        int tag, super, t, n;
+                        int tag, super, t, n, g, s_g;
                         READVALUE(tag);
                         READVALUE(super);
                         READVALUE(n);
                         READVALUE(t);
+                        READVALUE(g);
+                        READVALUE(s_g);
                         while (n --> 0) {
                                 SKIPSTR();
                         }
                         while (t --> 0) {
                                 SKIPSTR();
+                        }
+                        for (int i = 0; i < g + s_g; ++i) {
+                                i32 member;
+                                READMEMBER(member);
                         }
                         break;
                 }

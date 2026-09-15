@@ -1,0 +1,77 @@
+import chalk (Chalk, Text)
+
+use Label = String | Text
+
+pub use Renderer = (String, Dict[Int, Renderer]) -> String
+pub use Tree = Int | Array[Tree]
+
+pub fn render(text: String, renderers: Dict[Int, Renderer] = %{}) -> String {
+    if let $custom = renderers[0] {
+        return custom(text, renderers)
+    }
+    text
+}
+
+pub fn nest(value: Tree) -> Tree {
+    let values = []
+    values.push(value)
+    values
+}
+
+pub fn callback-bytes(s) {
+    s.sub(/./, match {
+        'a' => 'a',
+        c => "{c.byte(0)}"
+    })
+}
+
+pub fn callback-items(xs) {
+    xs.map(match { item => item.value })
+}
+
+pub fn empty-array() { [] }
+
+pub fn empty-dict() { %{} }
+
+pub fn check-patterns() {
+    let chalk = Chalk()
+    let width = [['a', nil], [Text('b', chalk)]].map(match {
+        (parts: Array[Label | nil]) and (#parts > 0) => #parts,
+        _ => 0
+    }).max() as Int
+
+    assert(width == 2)
+
+    let classify = match {
+        (parts: Array[Label | nil]) and (#parts > 0) => 'parts',
+        text: Label => 'text',
+        _ => 'other'
+    }
+
+    assert(classify(['a', nil]) == 'parts')
+    assert(classify([Text('a', chalk), nil]) == 'parts')
+    assert(classify([1]) == 'other')
+    assert(classify('a') == 'text')
+    assert(classify(nil) == 'other')
+
+    fn describe(value) {
+        match value {
+            parts: Array[Label | nil] => return #parts,
+            _ => return -1
+        }
+    }
+
+    assert(describe(['a', nil]) == 2)
+    assert(describe([1]) == -1)
+
+    fn matches?(value) {
+        if let parts: Array[Label | nil] = value {
+            return true
+        }
+
+        false
+    }
+
+    assert(matches?(['a', nil]))
+    assert(!matches?([1]))
+}

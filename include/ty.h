@@ -440,6 +440,7 @@ struct frame {
         char const *ip;
         Value f;
         i32 jit_resume;
+        uptr const *jit_pc;
 };
 
 typedef struct cothread_state {

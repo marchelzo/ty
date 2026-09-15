@@ -1,0 +1,39 @@
+class Tally {
+    __n: Int
+    init() { __n = 0 }
+    load() -> Int { __n }
+    <=>[U](y: U) -> Int where (Int <=> U): Int { __n <=> y }
+    +=(y: Int) { __n += y }
+}
+
+class Note {}
+class Signal {}
+
+class Waiter {
+    static first(items: Array[Note | Signal], timeout: nil = nil) -> Int;
+    static first(items: Array[Note | Signal], timeout: Float | nil = nil) -> Int | nil {
+        timeout == nil ? #items : nil
+    }
+}
+
+fn widen(xs: Array[Int | nil]) -> Int { #xs }
+
+fn mentions(text: String, needle: String | Regex) -> Bool { needle in text }
+
+let tally = Tally()
+tally += 2
+tally += 3
+let notes = [Note(), Note()]
+let index: Int = Waiter.first(notes)
+let maybe: Int | nil = Waiter.first(notes, 0.5)
+
+print(
+    tally.load(),
+    tally > 4,
+    tally <= 5,
+    widen([1, 2]),
+    mentions('abc', 'b'),
+    mentions('abc', /c$/),
+    index,
+    maybe
+)

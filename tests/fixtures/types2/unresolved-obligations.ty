@@ -1,0 +1,6 @@
+fn unresolved() -> Int {
+    let d = %{*: it + it}
+    #d
+}
+
+print(unresolved())

@@ -23,18 +23,19 @@ check_string(T2Universe *universe, T2Type type, char const *expected)
         if (actual != NULL) {
                 CHECK(strcmp(actual, expected) == 0);
         }
+
         t2_string_free(actual);
 }
 
 typedef struct predicate_test_context {
         T2Universe *universe;
-        size_t calls;
+        size_t      calls;
 } PredicateTestContext;
 
 static T2Relation
 resolve_test_predicate(
-        void *context,
-        T2Solver *solver,
+        void              *context,
+        T2Solver          *solver,
         T2Predicate const *predicate
 )
 {
@@ -57,41 +58,115 @@ resolve_test_predicate(
                 T2_PREFER_LOWER_BOUND
         );
         if (
-                left == T2_TYPE_INVALID
-             || right == T2_TYPE_INVALID
-             || result == T2_TYPE_INVALID
-        ) return T2_RELATION_COMPLEXITY;
+                (left == T2_TYPE_INVALID)
+             || (right == T2_TYPE_INVALID)
+             || (result == T2_TYPE_INVALID)
+        ) {
+                return T2_RELATION_COMPLEXITY;
+        }
+
         if (
-                t2_type_kind(test->universe, left) == T2_TYPE_VARIABLE
-             || t2_type_kind(test->universe, left) == T2_TYPE_META
-             || t2_type_kind(test->universe, right) == T2_TYPE_VARIABLE
-             || t2_type_kind(test->universe, right) == T2_TYPE_META
-             || t2_type_kind(test->universe, result) == T2_TYPE_VARIABLE
-             || t2_type_kind(test->universe, result) == T2_TYPE_META
-        ) return T2_RELATION_DEFERRED;
+                (t2_type_kind(test->universe, left) == T2_TYPE_VARIABLE)
+             || (t2_type_kind(test->universe, left) == T2_TYPE_META)
+             || (t2_type_kind(test->universe, right) == T2_TYPE_VARIABLE)
+             || (t2_type_kind(test->universe, right) == T2_TYPE_META)
+             || (t2_type_kind(test->universe, result) == T2_TYPE_VARIABLE)
+             || (t2_type_kind(test->universe, result) == T2_TYPE_META)
+        ) {
+                return T2_RELATION_DEFERRED;
+        }
+
         if (
-                predicate->kind == T2_PREDICATE_OPERATOR
-             && predicate->name != NULL
-             && strcmp(predicate->name, "+") == 0
-             && left == t2_primitive(test->universe, T2_TYPE_INT)
-             && right == left
-             && result == left
-        ) return T2_RELATION_YES;
+                (predicate->kind == T2_PREDICATE_OPERATOR)
+             && (predicate->name != NULL)
+             && (strcmp(predicate->name, "+") == 0)
+             && (left == t2_primitive(test->universe, T2_TYPE_INT))
+             && (right == left)
+             && (result == left)
+        ) {
+                return T2_RELATION_YES;
+        }
+
         if (
-                predicate->kind == T2_PREDICATE_MEMBER_READ
-             && predicate->name != NULL
-             && strcmp(predicate->name, "length") == 0
-             && left == t2_primitive(test->universe, T2_TYPE_STRING)
-             && right == t2_primitive(test->universe, T2_TYPE_NEVER)
-             && result == t2_primitive(test->universe, T2_TYPE_INT)
-        ) return T2_RELATION_YES;
+                (
+                        (predicate->kind == T2_PREDICATE_MEMBER_READ)
+                     || (predicate->kind == T2_PREDICATE_MEMBER_WRITE)
+                )
+             && (predicate->name != NULL)
+             && (strcmp(predicate->name, "length") == 0)
+             && (left == t2_primitive(test->universe, T2_TYPE_STRING))
+             && (right == t2_primitive(test->universe, T2_TYPE_NEVER))
+             && (result == t2_primitive(test->universe, T2_TYPE_INT))
+        ) {
+                return T2_RELATION_YES;
+        }
+
         if (
-                predicate->kind == T2_PREDICATE_KEYWORD_SPREAD
-             && left == t2_primitive(test->universe, T2_TYPE_STRING)
-             && right == t2_primitive(test->universe, T2_TYPE_NEVER)
-             && t2_type_kind(test->universe, result) == T2_TYPE_FUNCTION
-        ) return T2_RELATION_YES;
+                (predicate->kind == T2_PREDICATE_KEYWORD_SPREAD)
+             && (left == t2_primitive(test->universe, T2_TYPE_STRING))
+             && (right == t2_primitive(test->universe, T2_TYPE_NEVER))
+             && (t2_type_kind(test->universe, result) == T2_TYPE_FUNCTION)
+        ) {
+                return T2_RELATION_YES;
+        }
+
         return T2_RELATION_NO;
+}
+
+static void
+check_predicate_wakeup(T2Universe *universe, bool write)
+{
+        T2Type integer = t2_primitive(universe, T2_TYPE_INT);
+        T2Type string  = t2_primitive(universe, T2_TYPE_STRING);
+        for (int ready = 0; ready < 2; ++ready) {
+                T2Solver *solver = t2_solver_new(universe);
+                PredicateTestContext context = { .universe = universe };
+                t2_solver_set_predicate_resolver(solver, resolve_test_predicate, &context);
+                T2Type subject = t2_solver_new_meta(
+                        solver,
+                        T2_VARIABLE_FLEXIBLE,
+                        1,
+                        "watched operand"
+                );
+                T2Predicate predicate = {
+                        .kind      = T2_PREDICATE_OPERATOR,
+                        .subtype   = subject,
+                        .supertype = integer,
+                        .operand   = integer,
+                        .name      = "+"
+                };
+                if (write) {
+                        predicate.kind      = T2_PREDICATE_MEMBER_WRITE;
+                        predicate.subtype   = string;
+                        predicate.supertype = subject;
+                        predicate.operand   = t2_primitive(universe, T2_TYPE_NEVER);
+                        predicate.name      = "length";
+                }
+                if (ready) {
+                        CHECK(t2_solver_constrain_subtype(solver, integer, subject, "initial operand") == T2_RELATION_YES);
+                }
+                T2SolverMark scope = t2_solver_mark(solver);
+                CHECK(t2_solver_constrain_predicate(solver, &predicate) == (ready ? T2_RELATION_YES : T2_RELATION_DEFERRED));
+                CHECK(t2_solver_constrain_subtype(solver, integer, subject, "integer operand") == T2_RELATION_YES);
+                CHECK(t2_solver_pending_obligations(solver) == 0);
+                for (int retry = 0; retry < 2; ++retry) {
+                        T2SolverMark trial = t2_solver_mark(solver);
+                        size_t calls       = context.calls;
+                        CHECK(t2_solver_constrain_subtype(solver, string, subject, "widened operand") == T2_RELATION_NO);
+                        CHECK(context.calls > calls);
+                        CHECK(t2_solver_failed(solver));
+                        t2_solver_rollback(solver, trial);
+                        CHECK(!t2_solver_failed(solver));
+                        CHECK(t2_solver_pending_obligations(solver) == 0);
+                }
+                CHECK(t2_solver_cancel_obligations_since(solver, scope));
+                t2_solver_commit(solver, scope);
+                size_t calls = context.calls;
+                CHECK(t2_solver_constrain_subtype(solver, string, subject, "cancelled operand") == T2_RELATION_YES);
+                CHECK(context.calls == calls);
+                CHECK(t2_solver_pending_obligations(solver) == 0);
+                t2_solver_free(solver);
+        }
 }
 
 static uint64_t
@@ -120,23 +195,27 @@ check_wire_round_trip(T2Universe *universe)
 {
         T2Variance variance[] = { T2_COVARIANT };
         CHECK(t2_declare_nominal(universe, 77, "Box", 1, variance));
-        T2Type integer = t2_primitive(universe, T2_TYPE_INT);
-        T2Type string = t2_primitive(universe, T2_TYPE_STRING);
-        T2Type box = t2_nominal(universe, 77, &integer, 1);
-        T2Type arms[] = { box, string };
-        T2Type either = t2_union(universe, arms, 2);
-        uint32_t binder = t2_universe_fresh_recursive_binder(universe);
-        T2Type self = t2_recursive_variable(universe, binder);
-        T2Type boxed_self = t2_nominal(universe, 77, &self, 1);
+        T2Type integer      = t2_primitive(universe, T2_TYPE_INT);
+        T2Type string       = t2_primitive(universe, T2_TYPE_STRING);
+        T2Type box          = t2_nominal(universe, 77, &integer, 1);
+        T2Type arms[]       = { box, string };
+        T2Type either       = t2_union(universe, arms, 2);
+        uint32_t binder     = t2_universe_fresh_recursive_binder(universe);
+        T2Type self         = t2_recursive_variable(universe, binder);
+        T2Type boxed_self   = t2_nominal(universe, 77, &self, 1);
         T2Type pair_items[] = { integer, boxed_self };
-        T2Type list = t2_recursive(universe, binder, t2_union(universe, pair_items, 2));
-        T2Type variable = t2_variable(universe, T2_VARIABLE_QUANTIFIED, 4096);
+        T2Type list = t2_recursive(
+                universe,
+                binder,
+                t2_union(universe, pair_items, 2)
+        );
+        T2Type variable         = t2_variable(universe, T2_VARIABLE_QUANTIFIED, 4096);
         T2Quantifier quantifier = { .id = 4096, .kind = T2_VARIABLE_QUANTIFIED };
         T2Predicate predicate = {
-                .kind = T2_PREDICATE_SUBTYPE,
-                .subtype = variable,
-                .supertype = either,
-                .operand = T2_TYPE_INVALID,
+                .kind       = T2_PREDICATE_SUBTYPE,
+                .subtype    = variable,
+                .supertype  = either,
+                .operand    = T2_TYPE_INVALID,
                 .provenance = "wire test"
         };
         CHECK(box != T2_TYPE_INVALID);
@@ -145,30 +224,49 @@ check_wire_round_trip(T2Universe *universe)
         CHECK(self != T2_TYPE_INVALID);
         CHECK(list != T2_TYPE_INVALID);
         CHECK(variable != T2_TYPE_INVALID);
-        T2Scheme *scheme = t2_scheme_new(universe, &quantifier, 1, list, &predicate, 1);
+        T2Scheme *scheme = t2_scheme_new(
+                universe,
+                &quantifier,
+                1,
+                list,
+                &predicate,
+                1
+        );
         CHECK(scheme != NULL);
         t2_scheme_name_quantifier(scheme, 0, "T");
 
         T2SymbolRemap remap = { .out = remap_out, .in = remap_in };
         T2TypeWriter *writer = t2_type_writer_new(universe, remap);
-        byte_vector payload = {0};
+        byte_vector payload = { 0 };
         uint32_t either_index;
         CHECK(t2_type_writer_add(writer, either, &either_index));
         CHECK(t2_scheme_encode(scheme, writer, &payload));
-        byte_vector table = {0};
+        byte_vector table = { 0 };
         CHECK(t2_type_writer_encode(writer, &table));
         t2_type_writer_free(writer);
 
-        size_t position = 0;
-        T2ReadHooks identity = {0};
-        T2TypeReader *reader = t2_type_reader_new(universe, remap, identity, vv(table), vN(table), &position);
+        size_t position      = 0;
+        T2ReadHooks identity = { 0 };
+        T2TypeReader *reader = t2_type_reader_new(
+                universe,
+                remap,
+                identity,
+                vv(table),
+                vN(table),
+                &position
+        );
         CHECK(reader != NULL);
         CHECK(position == vN(table));
         if (reader != NULL) {
                 CHECK(t2_type_reader_type(reader, either_index) == either);
                 CHECK(t2_type_reader_variable_limit(reader) == 4097);
                 position = 0;
-                T2Scheme *decoded = t2_scheme_decode(reader, vv(payload), vN(payload), &position);
+                T2Scheme *decoded = t2_scheme_decode(
+                        reader,
+                        vv(payload),
+                        vN(payload),
+                        &position
+                );
                 CHECK(decoded != NULL);
                 CHECK(position == vN(payload));
                 if (decoded != NULL) {
@@ -186,16 +284,33 @@ check_wire_round_trip(T2Universe *universe)
                 }
                 t2_type_reader_free(reader);
         }
+
         uint32_t reserved = 0;
-        T2ReadHooks rebase = { .floor = 4000, .reserve = reserve_block, .context = &reserved };
+        T2ReadHooks rebase = {
+                .floor   = 4000,
+                .reserve = reserve_block,
+                .context = &reserved
+        };
         position = 0;
-        T2TypeReader *rebased = t2_type_reader_new(universe, remap, rebase, vv(table), vN(table), &position);
+        T2TypeReader *rebased = t2_type_reader_new(
+                universe,
+                remap,
+                rebase,
+                vv(table),
+                vN(table),
+                &position
+        );
         CHECK(rebased != NULL);
         CHECK(reserved == 97);
         if (rebased != NULL) {
                 CHECK(t2_type_reader_variable_limit(rebased) == 9097);
                 position = 0;
-                T2Scheme *decoded = t2_scheme_decode(rebased, vv(payload), vN(payload), &position);
+                T2Scheme *decoded = t2_scheme_decode(
+                        rebased,
+                        vv(payload),
+                        vN(payload),
+                        &position
+                );
                 CHECK(decoded != NULL);
                 if (decoded != NULL) {
                         T2Predicate copy;
@@ -206,6 +321,7 @@ check_wire_round_trip(T2Universe *universe)
                 }
                 t2_type_reader_free(rebased);
         }
+
         xvF(table);
         xvF(payload);
         t2_scheme_free(scheme);
@@ -274,7 +390,7 @@ checklocalweakconstraints(T2Universe *universe)
         t2_solver_free(source);
 
         target = t2_solver_new(universe);
-        use = t2_scheme_instantiate(scheme, target, 0, "constrained callback");
+        use    = t2_scheme_instantiate(scheme, target, 0, "constrained callback");
         CHECK(t2_solver_constrain_subtype(
                 target,
                 use,
@@ -298,7 +414,14 @@ checkschemeexports(T2Universe *universe)
                 .provenance = "escaping pattern binding"
         };
         T2Type body = t2_function(universe, &variable, 1, variable);
-        T2Scheme *scheme = t2_scheme_new(universe, &quantifier, 1, body, &predicate, 1);
+        T2Scheme *scheme = t2_scheme_new(
+                universe,
+                &quantifier,
+                1,
+                body,
+                &predicate,
+                1
+        );
         CHECK(scheme != NULL);
         CHECK(!t2_type_has_metas(universe, body));
         CHECK(t2_scheme_has_metas(scheme));
@@ -321,10 +444,14 @@ checkschemeexports(T2Universe *universe)
         T2Type recursive = t2_recursive(
                 universe,
                 binder,
-                t2_tuple(universe, (T2Type[]) {
-                        local,
-                        t2_recursive_variable(universe, binder)
-                }, 2)
+                t2_tuple(
+                        universe,
+                        (T2Type[]) {
+                                local,
+                                t2_recursive_variable(universe, binder)
+                        },
+                        2
+                )
         );
         predicate = (T2Predicate) {
                 .kind      = T2_PREDICATE_OPERATOR,
@@ -363,12 +490,37 @@ check_deferred_bound_callbacks(T2Universe *universe)
                 T2Type input = delayed
                              ? t2_solver_new_meta(solver, T2_VARIABLE_FLEXIBLE, 0, "argument")
                              : integer;
-                T2Type callee = t2_solver_new_meta(solver, T2_VARIABLE_FLEXIBLE, 0, "method");
-                T2Type result = t2_solver_new_meta(solver, T2_VARIABLE_FLEXIBLE, 0, "result");
-                T2Type parameter = t2_solver_new_meta(solver, T2_VARIABLE_FLEXIBLE, 0, "callback parameter");
-                T2Type returned = t2_solver_new_meta(solver, T2_VARIABLE_FLEXIBLE, 0, "callback result");
+                T2Type callee = t2_solver_new_meta(
+                        solver,
+                        T2_VARIABLE_FLEXIBLE,
+                        0,
+                        "method"
+                );
+                T2Type result = t2_solver_new_meta(
+                        solver,
+                        T2_VARIABLE_FLEXIBLE,
+                        0,
+                        "result"
+                );
+                T2Type parameter = t2_solver_new_meta(
+                        solver,
+                        T2_VARIABLE_FLEXIBLE,
+                        0,
+                        "callback parameter"
+                );
+                T2Type returned = t2_solver_new_meta(
+                        solver,
+                        T2_VARIABLE_FLEXIBLE,
+                        0,
+                        "callback result"
+                );
                 T2Type callback = t2_function(universe, &parameter, 1, returned);
-                T2Type expected = t2_function(universe, (T2Type[]) { input, callback }, 2, result);
+                T2Type expected = t2_function(
+                        universe,
+                        (T2Type[]) { input, callback },
+                        2,
+                        result
+                );
                 CHECK(t2_solver_constrain_subtype(solver, callee, expected, "deferred call") != T2_RELATION_NO);
                 CHECK(t2_solver_constrain_subtype(solver, overload, callee, "resolved method") != T2_RELATION_NO);
 
@@ -390,7 +542,7 @@ check_deferred_bound_callbacks(T2Universe *universe)
 static T2Type
 recursive_pair(T2Universe *universe, T2Type value)
 {
-        u32 binder = t2_universe_fresh_recursive_binder(universe);
+        u32 binder     = t2_universe_fresh_recursive_binder(universe);
         T2Type items[] = { t2_recursive_variable(universe, binder), value };
         return t2_recursive(universe, binder, t2_tuple(universe, items, 2));
 }
@@ -401,13 +553,18 @@ check_recursive_constraints(T2Universe *universe)
         T2Variance invariant = T2_INVARIANT;
         CHECK(t2_declare_nominal(universe, 9010, "RecursiveCell", 1, &invariant));
         T2Type integer = t2_primitive(universe, T2_TYPE_INT);
-        T2Type string = t2_primitive(universe, T2_TYPE_STRING);
-        u32 binder = t2_universe_fresh_recursive_binder(universe);
-        T2Type self = t2_recursive_variable(universe, binder);
-        T2Type arms[] = { integer, t2_nominal(universe, 9010, &self, 1) };
-        T2Type tree = t2_recursive(universe, binder, t2_union(universe, arms, 2));
+        T2Type string  = t2_primitive(universe, T2_TYPE_STRING);
+        u32 binder     = t2_universe_fresh_recursive_binder(universe);
+        T2Type self    = t2_recursive_variable(universe, binder);
+        T2Type arms[]  = { integer, t2_nominal(universe, 9010, &self, 1) };
+        T2Type tree    = t2_recursive(universe, binder, t2_union(universe, arms, 2));
         T2Solver *solver = t2_solver_new(universe);
-        T2Type item = t2_solver_new_meta(solver, T2_VARIABLE_FLEXIBLE, 1, "recursive item");
+        T2Type item = t2_solver_new_meta(
+                solver,
+                T2_VARIABLE_FLEXIBLE,
+                1,
+                "recursive item"
+        );
         T2Type cell = t2_nominal(universe, 9010, &item, 1);
         CHECK(t2_solver_constrain_subtype(solver, tree, item, "stored tree") == T2_RELATION_YES);
         CHECK(t2_solver_constrain_subtype(solver, cell, tree, "nested tree") == T2_RELATION_YES);
@@ -417,8 +574,13 @@ check_recursive_constraints(T2Universe *universe)
         t2_solver_free(solver);
 
         solver = t2_solver_new(universe);
-        T2Type value = t2_solver_new_meta(solver, T2_VARIABLE_FLEXIBLE, 1, "recursive leaf");
-        T2Type actual = recursive_pair(universe, value);
+        T2Type value = t2_solver_new_meta(
+                solver,
+                T2_VARIABLE_FLEXIBLE,
+                1,
+                "recursive leaf"
+        );
+        T2Type actual   = recursive_pair(universe, value);
         T2Type expected = recursive_pair(universe, string);
         CHECK(t2_solver_constrain_subtype(solver, actual, expected, "recursive leaf bound") == T2_RELATION_YES);
         CHECK(t2_solver_upper_bound(solver, value) == string);
@@ -452,7 +614,13 @@ checkgradualrecords(T2Universe *universe)
                 { "value", dynamic, T2_PRESENCE_OPTIONAL, T2_FIELD_READONLY },
                 { "value", string,  T2_PRESENCE_REQUIRED, T2_FIELD_READONLY }
         };
-        T2Type record = t2_record(universe, &wanted, 1, T2_TYPE_INVALID, T2_RECORD_OPEN);
+        T2Type record = t2_record(
+                universe,
+                &wanted,
+                1,
+                T2_TYPE_INVALID,
+                T2_RECORD_OPEN
+        );
         T2Type expected = t2_union(universe, (T2Type[]) { nil, record }, 2);
 
         for (usize i = 0; i < sizeof fields / sizeof *fields; ++i) {
@@ -481,15 +649,15 @@ static void
 check_binary_strings(T2Universe *universe)
 {
         char const data[] = { 'a', '\0', 'b' };
-        T2Type binary = t2_literal_string_n(universe, data, sizeof data);
-        T2Type prefix = t2_literal_string(universe, "a");
-        T2Type other = t2_literal_string_n(universe, "a\0c", 3);
-        T2Type shorter = t2_literal_string_n(universe, data, 2);
-        T2Type empty = t2_literal_string(universe, "");
-        T2Type nul = t2_literal_string_n(universe, "\0", 1);
-        T2Type strings[] = { binary, prefix, other, shorter, empty, nul };
-        usize count = sizeof strings / sizeof *strings;
-        T2Type either = t2_union(universe, strings, count);
+        T2Type binary     = t2_literal_string_n(universe, data, sizeof data);
+        T2Type prefix     = t2_literal_string(universe, "a");
+        T2Type other      = t2_literal_string_n(universe, "a\0c", 3);
+        T2Type shorter    = t2_literal_string_n(universe, data, 2);
+        T2Type empty      = t2_literal_string(universe, "");
+        T2Type nul        = t2_literal_string_n(universe, "\0", 1);
+        T2Type strings[]  = { binary, prefix, other, shorter, empty, nul };
+        usize count       = sizeof strings / sizeof *strings;
+        T2Type either     = t2_union(universe, strings, count);
         T2TypeWriter *writer = t2_type_writer_new(universe, (T2SymbolRemap) { 0 });
         byte_vector table = { 0 };
         u32 index;
@@ -506,7 +674,11 @@ check_binary_strings(T2Universe *universe)
         CHECK(t2_type_arity(universe, either) == count);
         check_string(universe, binary, "'a\\x00b'");
         check_string(universe, nul, "'\\x00'");
-        check_string(universe, either, "'' | '\\x00' | 'a' | 'a\\x00' | 'a\\x00b' | 'a\\x00c'");
+        check_string(
+                universe,
+                either,
+                "'' | '\\x00' | 'a' | 'a\\x00' | 'a\\x00b' | 'a\\x00c'"
+        );
 
         for (usize i = 0; i < count; ++i) {
                 for (usize j = 0; j < count; ++j) {
@@ -546,17 +718,19 @@ main(void)
 {
         T2Universe *universe = t2_universe_new();
         CHECK(universe != NULL);
+        check_predicate_wakeup(universe, false);
+        check_predicate_wakeup(universe, true);
         check_wire_round_trip(universe);
         check_binary_strings(universe);
 
-        T2Type never = t2_primitive(universe, T2_TYPE_NEVER);
+        T2Type never   = t2_primitive(universe, T2_TYPE_NEVER);
         T2Type unknown = t2_primitive(universe, T2_TYPE_UNKNOWN);
         T2Type dynamic = t2_primitive(universe, T2_TYPE_DYNAMIC);
-        T2Type any = t2_primitive(universe, T2_TYPE_ANY);
-        T2Type error = t2_primitive(universe, T2_TYPE_ERROR);
-        T2Type nil = t2_primitive(universe, T2_TYPE_NIL);
+        T2Type any     = t2_primitive(universe, T2_TYPE_ANY);
+        T2Type error   = t2_primitive(universe, T2_TYPE_ERROR);
+        T2Type nil     = t2_primitive(universe, T2_TYPE_NIL);
         T2Type integer = t2_primitive(universe, T2_TYPE_INT);
-        T2Type string = t2_primitive(universe, T2_TYPE_STRING);
+        T2Type string  = t2_primitive(universe, T2_TYPE_STRING);
         T2Type boolean = t2_primitive(universe, T2_TYPE_BOOL);
 
         CHECK(t2_union(
@@ -601,22 +775,22 @@ main(void)
 
         T2Type int_or_string_1 = t2_union(
                 universe,
-                (T2Type[]){ integer, string },
+                (T2Type[]) { integer, string },
                 2
         );
         T2Type int_or_string_2 = t2_union(
                 universe,
-                (T2Type[]){ string, integer, never, integer },
+                (T2Type[]) { string, integer, never, integer },
                 4
         );
         CHECK(int_or_string_1 == int_or_string_2);
         check_string(universe, int_or_string_1, "Int | String");
 
-        T2Type one = t2_literal_int(universe, 1);
-        T2Type two = t2_literal_int(universe, 2);
-        T2Type three = t2_literal_int(universe, 3);
-        T2Type four = t2_literal_int(universe, 4);
-        T2Type five = t2_literal_int(universe, 5);
+        T2Type one         = t2_literal_int(universe, 1);
+        T2Type two         = t2_literal_int(universe, 2);
+        T2Type three       = t2_literal_int(universe, 3);
+        T2Type four        = t2_literal_int(universe, 4);
+        T2Type five        = t2_literal_int(universe, 5);
         T2Type one_to_four = t2_integer_range(universe, one, four, false);
         T2Type two_to_five = t2_integer_range(universe, two, five, false);
         CHECK(t2_type_kind(universe, one_to_four) == T2_TYPE_INT_RANGE);
@@ -711,7 +885,7 @@ main(void)
 
         T2Type string_or_bool = t2_union(
                 universe,
-                (T2Type[]){ string, boolean },
+                (T2Type[]) { string, boolean },
                 2
         );
         CHECK(t2_meet(universe, int_or_string_1, string_or_bool) == string);
@@ -802,10 +976,10 @@ main(void)
         );
         CHECK(t2_nominal_validate_variance(universe, 3, covariant_output));
         CHECK(!t2_nominal_validate_variance(universe, 3, invalid_covariant_input));
-        T2Type array_int = t2_nominal(universe, 1, &integer, 1);
-        T2Type array_wide = t2_nominal(universe, 1, &int_or_string_1, 1);
+        T2Type array_int     = t2_nominal(universe, 1, &integer, 1);
+        T2Type array_wide    = t2_nominal(universe, 1, &int_or_string_1, 1);
         T2Type array_dynamic = t2_nominal(universe, 1, &dynamic, 1);
-        T2Type iterable_int = t2_nominal(universe, 2, &integer, 1);
+        T2Type iterable_int  = t2_nominal(universe, 2, &integer, 1);
         T2Type iterable_wide = t2_nominal(universe, 2, &int_or_string_1, 1);
         CHECK(t2_subtype(universe, array_int, array_wide) == T2_RELATION_NO);
         CHECK(t2_gradual_subtype(universe, array_int, array_dynamic) == T2_RELATION_YES);
@@ -816,10 +990,10 @@ main(void)
         CHECK(t2_consistent(universe, array_int, integer) == T2_RELATION_NO);
         CHECK(t2_consistent(universe, integer, array_int) == T2_RELATION_NO);
         CHECK(t2_meet(universe, array_int, integer) == never);
-        T2Type child_int = t2_nominal(universe, 4, &integer, 1);
+        T2Type child_int      = t2_nominal(universe, 4, &integer, 1);
         T2Type late_child_int = t2_nominal(universe, 5, &integer, 1);
-        T2Type base_int = t2_nominal(universe, 3, &integer, 1);
-        T2Type base_wide = t2_nominal(universe, 3, &int_or_string_1, 1);
+        T2Type base_int       = t2_nominal(universe, 3, &integer, 1);
+        T2Type base_wide      = t2_nominal(universe, 3, &int_or_string_1, 1);
         CHECK(t2_subtype(universe, child_int, base_int) == T2_RELATION_YES);
         CHECK(t2_subtype(universe, child_int, base_wide) == T2_RELATION_YES);
         CHECK(t2_nominal_project(universe, child_int, 3) == base_int);
@@ -830,8 +1004,16 @@ main(void)
         CHECK(t2_nominal_project(universe, late_child_int, 3) == base_int);
 
         T2Type regex = t2_nominal(universe, 6, NULL, 0);
-        T2Type regex_zero = t2_refinement(universe, regex, t2_literal_int(universe, 0));
-        T2Type regex_one = t2_refinement(universe, regex, t2_literal_int(universe, 1));
+        T2Type regex_zero = t2_refinement(
+                universe,
+                regex,
+                t2_literal_int(universe, 0)
+        );
+        T2Type regex_one = t2_refinement(
+                universe,
+                regex,
+                t2_literal_int(universe, 1)
+        );
         CHECK(t2_type_kind(universe, regex_zero) == T2_TYPE_REFINEMENT);
         CHECK(t2_subtype(universe, regex_zero, regex) == T2_RELATION_YES);
         CHECK(t2_subtype(universe, regex, regex_zero) == T2_RELATION_NO);
@@ -987,18 +1169,20 @@ main(void)
         CHECK(t2_subtype(universe, wide_parameter, narrow_parameter) == T2_RELATION_YES);
         CHECK(t2_subtype(universe, narrow_parameter, wide_parameter) == T2_RELATION_NO);
 
-        T2FieldSpec a_readonly[] = {{
-                .name = "a",
-                .type = integer,
-                .presence = T2_PRESENCE_REQUIRED,
-                .capability = T2_FIELD_READONLY
-        }};
+        T2FieldSpec a_readonly[] = {
+                {
+                        .name       = "a",
+                        .type       = integer,
+                        .presence   = T2_PRESENCE_REQUIRED,
+                        .capability = T2_FIELD_READONLY
+                }
+        };
         T2FieldSpec ab_readonly[] = {
                 a_readonly[0],
                 {
-                        .name = "b",
-                        .type = string,
-                        .presence = T2_PRESENCE_REQUIRED,
+                        .name       = "b",
+                        .type       = string,
+                        .presence   = T2_PRESENCE_REQUIRED,
                         .capability = T2_FIELD_READONLY
                 }
         };
@@ -1051,9 +1235,9 @@ main(void)
         CHECK(t2_meet(universe, record_a, incompatible_record) == never);
 
         T2FieldSpec optional_b = {
-                .name = "b",
-                .type = string,
-                .presence = T2_PRESENCE_OPTIONAL,
+                .name       = "b",
+                .type       = string,
+                .presence   = T2_PRESENCE_OPTIONAL,
                 .capability = T2_FIELD_READONLY
         };
         T2Type record_optional_b = t2_record(
@@ -1064,7 +1248,7 @@ main(void)
                 T2_RECORD_OPEN
         );
         CHECK(t2_subtype(universe, record_ab, record_optional_b) == T2_RELATION_YES);
-        T2Presence presence = T2_PRESENCE_UNKNOWN;
+        T2Presence presence          = T2_PRESENCE_UNKNOWN;
         T2FieldCapability capability = T2_FIELD_WRITABLE;
         CHECK(t2_record_field_type(
                 universe,
@@ -1076,7 +1260,7 @@ main(void)
         CHECK(presence == T2_PRESENCE_OPTIONAL);
         CHECK(capability == T2_FIELD_READONLY);
         CHECK(t2_record_field_count(universe, record_optional_b) == 1);
-        T2FieldSpec reflected_field = {0};
+        T2FieldSpec reflected_field = { 0 };
         CHECK(t2_record_field(
                 universe,
                 record_optional_b,
@@ -1112,9 +1296,9 @@ main(void)
         CHECK(reflected_exactness == T2_RECORD_EXACT);
 
         T2FieldSpec writable_int = {
-                .name = "value",
-                .type = integer,
-                .presence = T2_PRESENCE_REQUIRED,
+                .name       = "value",
+                .type       = integer,
+                .presence   = T2_PRESENCE_REQUIRED,
                 .capability = T2_FIELD_WRITABLE
         };
         T2FieldSpec writable_wide = writable_int;
@@ -1140,9 +1324,9 @@ main(void)
         ) == T2_RELATION_YES);
 
         T2ParameterSpec named_required = {
-                .name = "x",
-                .type = integer,
-                .kind = T2_PARAMETER_POSITIONAL_OR_KEYWORD,
+                .name     = "x",
+                .type     = integer,
+                .kind     = T2_PARAMETER_POSITIONAL_OR_KEYWORD,
                 .required = true
         };
         T2ParameterSpec differently_named = named_required;
@@ -1188,15 +1372,15 @@ main(void)
                 universe,
                 (T2ParameterSpec[]) {
                         {
-                                .name = "optional",
-                                .type = integer,
-                                .kind = T2_PARAMETER_POSITIONAL_OR_KEYWORD,
+                                .name     = "optional",
+                                .type     = integer,
+                                .kind     = T2_PARAMETER_POSITIONAL_OR_KEYWORD,
                                 .required = false
                         },
                         {
-                                .name = "required",
-                                .type = boolean,
-                                .kind = T2_PARAMETER_POSITIONAL_OR_KEYWORD,
+                                .name     = "required",
+                                .type     = boolean,
+                                .kind     = T2_PARAMETER_POSITIONAL_OR_KEYWORD,
                                 .required = true
                         }
                 },
@@ -1256,15 +1440,15 @@ main(void)
 
         T2ParameterSpec pack_then_keyword[] = {
                 {
-                        .name = "values",
-                        .type = mixed_pack,
-                        .kind = T2_PARAMETER_PACK,
+                        .name     = "values",
+                        .type     = mixed_pack,
+                        .kind     = T2_PARAMETER_PACK,
                         .required = false
                 },
                 {
-                        .name = "longest",
-                        .type = boolean,
-                        .kind = T2_PARAMETER_KEYWORD_ONLY,
+                        .name     = "longest",
+                        .type     = boolean,
+                        .kind     = T2_PARAMETER_KEYWORD_ONLY,
                         .required = false
                 }
         };
@@ -1331,12 +1515,12 @@ main(void)
 
         T2Type first_overloads = t2_overload(
                 universe,
-                (T2Type[]){ callback_x, callback_y },
+                (T2Type[]) { callback_x, callback_y },
                 2
         );
         T2Type appended_overloads = t2_overload(
                 universe,
-                (T2Type[]){ first_overloads, callback_optional_x },
+                (T2Type[]) { first_overloads, callback_optional_x },
                 2
         );
         CHECK(t2_type_kind(universe, appended_overloads) == T2_TYPE_OVERLOAD);
@@ -1350,13 +1534,13 @@ main(void)
 
         T2Type exact_pack = t2_pack(
                 universe,
-                (T2Type[]){ integer, string },
+                (T2Type[]) { integer, string },
                 2,
                 T2_TYPE_INVALID
         );
         T2Type reversed_pack = t2_pack(
                 universe,
-                (T2Type[]){ string, integer },
+                (T2Type[]) { string, integer },
                 2,
                 T2_TYPE_INVALID
         );
@@ -1365,9 +1549,9 @@ main(void)
 
         T2Type recursive_variable_1 = t2_recursive_variable(universe, 1001);
         T2FieldSpec recursive_field_1 = {
-                .name = "next",
-                .type = recursive_variable_1,
-                .presence = T2_PRESENCE_OPTIONAL,
+                .name       = "next",
+                .type       = recursive_variable_1,
+                .presence   = T2_PRESENCE_OPTIONAL,
                 .capability = T2_FIELD_READONLY
         };
         T2Type recursive_body_1 = t2_record(
@@ -1380,7 +1564,7 @@ main(void)
         T2Type recursive_1 = t2_recursive(universe, 1001, recursive_body_1);
         T2Type recursive_variable_2 = t2_recursive_variable(universe, 1002);
         T2FieldSpec recursive_field_2 = recursive_field_1;
-        recursive_field_2.type = recursive_variable_2;
+        recursive_field_2 .type = recursive_variable_2;
         T2Type recursive_body_2 = t2_record(
                 universe,
                 &recursive_field_2,
@@ -1503,6 +1687,31 @@ main(void)
         CHECK(!t2_solver_failed(self_edge_solver));
         t2_solver_free(self_edge_solver);
 
+        T2Solver *self_meet_solver = t2_solver_new(universe);
+        T2Type meet_left = t2_solver_new_meta(
+                self_meet_solver,
+                T2_VARIABLE_FLEXIBLE,
+                0,
+                "meet left"
+        );
+        T2Type meet_right = t2_solver_new_meta(
+                self_meet_solver,
+                T2_VARIABLE_FLEXIBLE,
+                0,
+                "meet right"
+        );
+        CHECK(t2_solver_constrain_subtype(self_meet_solver, meet_left, meet_right, "meet edge") == T2_RELATION_YES);
+        T2Type self_meet = t2_intersection(
+                universe,
+                (T2Type[]) { meet_left, string },
+                2
+        );
+        CHECK(t2_solver_constrain_subtype(self_meet_solver, meet_right, self_meet, "propagated meet") == T2_RELATION_YES);
+        CHECK(t2_solver_upper_bound(self_meet_solver, meet_left) == string);
+        CHECK(t2_solver_zonk(self_meet_solver, meet_right, T2_PREFER_UPPER_BOUND) == string);
+        CHECK(t2_solver_pending_obligations(self_meet_solver) == 0);
+        t2_solver_free(self_meet_solver);
+
         T2Solver *merged_union_solver = t2_solver_new(universe);
         CHECK(merged_union_solver != NULL);
         T2Type merged_source = t2_solver_new_meta(
@@ -1568,10 +1777,15 @@ main(void)
         CHECK(t2_solver_pending_obligations(merged_union_solver) == 0);
         t2_solver_free(merged_union_solver);
 
-        T2Type generic_identity_type = t2_function(universe, &quantified, 1, quantified);
+        T2Type generic_identity_type = t2_function(
+                universe,
+                &quantified,
+                1,
+                quantified
+        );
         T2Scheme *identity_scheme = t2_scheme_new(
                 universe,
-                (T2Quantifier[]){{ .id = 1, .kind = T2_VARIABLE_QUANTIFIED }},
+                (T2Quantifier[]) { { .id = 1, .kind = T2_VARIABLE_QUANTIFIED } },
                 1,
                 generic_identity_type,
                 NULL,
@@ -1593,16 +1807,18 @@ main(void)
                 0,
                 "row meet tail b"
         );
+        CHECK(t2_row(universe, NULL, 0, row_tail_a) == row_tail_a);
+        CHECK(t2_solver_unify(row_lattice_solver, row_tail_a, t2_row(universe, NULL, 0, row_tail_a), "empty row extension") == T2_RELATION_YES);
         T2FieldSpec len_field = {
-                .name = "len",
-                .type = integer,
-                .presence = T2_PRESENCE_REQUIRED,
+                .name       = "len",
+                .type       = integer,
+                .presence   = T2_PRESENCE_REQUIRED,
                 .capability = T2_FIELD_READONLY
         };
         T2FieldSpec words_field = {
-                .name = "words",
-                .type = string,
-                .presence = T2_PRESENCE_REQUIRED,
+                .name       = "words",
+                .type       = string,
+                .presence   = T2_PRESENCE_REQUIRED,
                 .capability = T2_FIELD_READONLY
         };
         T2Type record_len = t2_record(
@@ -1893,12 +2109,12 @@ main(void)
                 0,
                 "unique union arm"
         );
-        T2Type tuple_int = t2_tuple(universe, &integer, 1);
+        T2Type tuple_int    = t2_tuple(universe, &integer, 1);
         T2Type tuple_string = t2_tuple(universe, &string, 1);
-        T2Type tuple_meta = t2_tuple(universe, &union_trial_meta, 1);
+        T2Type tuple_meta   = t2_tuple(universe, &union_trial_meta, 1);
         T2Type tuple_union = t2_union(
                 universe,
-                (T2Type[]){ tuple_string, tuple_meta },
+                (T2Type[]) { tuple_string, tuple_meta },
                 2
         );
         CHECK(t2_solver_constrain_subtype(
@@ -2266,6 +2482,7 @@ main(void)
                 CHECK(strstr(explanation, "argument 1") != NULL);
                 CHECK(strstr(explanation, "parameter use") != NULL);
         }
+
         t2_string_free(explanation);
         t2_solver_free(diagnostic_solver);
 
@@ -2508,11 +2725,11 @@ main(void)
                 "operator operand"
         );
         T2Predicate plus_predicate = {
-                .kind = T2_PREDICATE_OPERATOR,
-                .subtype = predicate_meta,
-                .supertype = integer,
-                .operand = predicate_meta,
-                .name = "+",
+                .kind       = T2_PREDICATE_OPERATOR,
+                .subtype    = predicate_meta,
+                .supertype  = integer,
+                .operand    = predicate_meta,
+                .name       = "+",
                 .provenance = "operator constraint"
         };
         CHECK(t2_solver_constrain_predicate(
@@ -2535,11 +2752,11 @@ main(void)
                 "member receiver"
         );
         T2Predicate member_predicate = {
-                .kind = T2_PREDICATE_MEMBER_READ,
-                .subtype = member_subject,
-                .supertype = integer,
-                .operand = never,
-                .name = "length",
+                .kind       = T2_PREDICATE_MEMBER_READ,
+                .subtype    = member_subject,
+                .supertype  = integer,
+                .operand    = never,
+                .name       = "length",
                 .provenance = "member constraint"
         };
         CHECK(t2_solver_constrain_predicate(
@@ -2568,11 +2785,11 @@ main(void)
                 integer
         );
         T2Predicate keyword_predicate = {
-                .kind = T2_PREDICATE_KEYWORD_SPREAD,
-                .subtype = keyword_subject,
-                .supertype = keyword_callable,
-                .operand = never,
-                .name = "*",
+                .kind       = T2_PREDICATE_KEYWORD_SPREAD,
+                .subtype    = keyword_subject,
+                .supertype  = keyword_callable,
+                .operand    = never,
+                .name       = "*",
                 .provenance = "keyword spread constraint"
         };
         CHECK(t2_solver_constrain_predicate(
@@ -2595,8 +2812,8 @@ main(void)
                 "rollback operand"
         );
         T2SolverMark predicate_mark = t2_solver_mark(predicate_solver);
-        plus_predicate.subtype = rollback_meta;
-        plus_predicate.operand = rollback_meta;
+        plus_predicate.subtype    = rollback_meta;
+        plus_predicate.operand    = rollback_meta;
         plus_predicate.provenance = "rolled-back operator constraint";
         CHECK(t2_solver_constrain_predicate(
                 predicate_solver,
@@ -2613,8 +2830,8 @@ main(void)
                 "cancelled operand"
         );
         T2SolverMark cancelled_mark = t2_solver_mark(predicate_solver);
-        plus_predicate.subtype = cancelled_meta;
-        plus_predicate.operand = cancelled_meta;
+        plus_predicate.subtype    = cancelled_meta;
+        plus_predicate.operand    = cancelled_meta;
         plus_predicate.provenance = "cancelled operator constraint";
         CHECK(t2_solver_constrain_predicate(
                 predicate_solver,
@@ -2642,8 +2859,8 @@ main(void)
                 "predicate-only scoped variable"
         );
         T2SolverMark predicate_scope = t2_solver_mark(predicate_solver);
-        plus_predicate.subtype = scoped_predicate_meta;
-        plus_predicate.operand = scoped_predicate_meta;
+        plus_predicate.subtype    = scoped_predicate_meta;
+        plus_predicate.operand    = scoped_predicate_meta;
         plus_predicate.provenance = "predicate-only scoped constraint";
         CHECK(t2_solver_constrain_predicate(
                 predicate_solver,
@@ -2688,9 +2905,9 @@ main(void)
                 class_parameter
         );
         T2SolverMark class_predicate_scope = t2_solver_mark(predicate_solver);
-        plus_predicate.subtype = class_parameter;
-        plus_predicate.supertype = class_parameter;
-        plus_predicate.operand = class_parameter;
+        plus_predicate.subtype    = class_parameter;
+        plus_predicate.supertype  = class_parameter;
+        plus_predicate.operand    = class_parameter;
         plus_predicate.provenance = "class-parameter scoped constraint";
         CHECK(t2_solver_constrain_predicate(
                 predicate_solver,
@@ -2723,15 +2940,15 @@ main(void)
                 predicate_quantified
         );
         T2Predicate scheme_predicate = {
-                .kind = T2_PREDICATE_OPERATOR,
-                .subtype = predicate_quantified,
-                .supertype = predicate_quantified,
-                .operand = predicate_quantified,
-                .name = "+",
+                .kind       = T2_PREDICATE_OPERATOR,
+                .subtype    = predicate_quantified,
+                .supertype  = predicate_quantified,
+                .operand    = predicate_quantified,
+                .name       = "+",
                 .provenance = "scheme operator constraint"
         };
         T2Quantifier predicate_quantifier = {
-                .id = 9100,
+                .id   = 9100,
                 .kind = T2_VARIABLE_QUANTIFIED
         };
         T2Scheme *predicate_scheme = t2_scheme_new(
@@ -2801,5 +3018,6 @@ main(void)
         }
 
         puts("types2 core: ok");
+
         return 0;
 }

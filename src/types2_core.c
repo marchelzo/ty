@@ -115,12 +115,21 @@ typedef struct t2_edge {
         u64         self_retry_epoch;
 } T2Edge;
 
+typedef enum t2_obligation_state {
+        T2_OBLIGATION_PENDING,
+        T2_OBLIGATION_SOLVED,
+        T2_OBLIGATION_RETIRED
+} T2ObligationState;
+
 typedef struct t2_obligation {
-        T2Predicate predicate;
-        char       *name;
-        char       *provenance;
-        u64         self_retry_epoch;
-        bool        active;
+        T2Predicate       predicate;
+        char             *name;
+        char             *provenance;
+        u64               self_retry_epoch;
+        T2ObligationState state;
+        T2Type            checked_subtype;
+        T2Type            checked_operand;
+        T2Type            checked_value;
 } T2Obligation;
 
 typedef struct t2_cause {
@@ -138,7 +147,9 @@ typedef enum t2_undo_kind {
         T2_UNDO_UPPER,
         T2_UNDO_SOLUTION,
         T2_UNDO_WATCH_COUNT,
-        T2_UNDO_OBLIGATION_ACTIVE
+        T2_UNDO_OBLIGATION_STATE,
+        T2_UNDO_OBLIGATION_INPUTS,
+        T2_UNDO_OBLIGATION_VALUE
 } T2UndoKind;
 
 typedef struct t2_undo {
@@ -2298,6 +2309,10 @@ t2_row(
         T2Node const *node = get_node(universe, record);
         if (node == NULL) {
                 return T2_TYPE_INVALID;
+        }
+
+        if (field_count == 0) {
+                return node->children[0];
         }
 
         return intern_type(
@@ -8852,15 +8867,16 @@ check_bounds(T2Solver *solver, u32 meta, char const *provenance)
 }
 
 static bool
-direct_union_without_meta(
-        T2Solver *solver,
-        T2Type    type,
-        u32       wanted,
-        T2Type   *remainder
+direct_set_without_meta(
+        T2Solver  *solver,
+        T2Type     type,
+        T2TypeKind kind,
+        u32        wanted,
+        T2Type    *remainder
 )
 {
         T2Node const *node = get_node(solver->universe, type);
-        if (node == NULL || node->kind != T2_TYPE_UNION) {
+        if (node == NULL || node->kind != kind) {
                 return false;
         }
 
@@ -8888,9 +8904,9 @@ direct_union_without_meta(
         }
 
         if (removed) {
-                *remainder = (count == 0)
-                           ? t2_primitive(solver->universe, T2_TYPE_NEVER)
-                           : t2_union(solver->universe, arms, count);
+                *remainder = kind == T2_TYPE_UNION
+                           ? t2_union(solver->universe, arms, count)
+                           : t2_intersection(solver->universe, arms, count);
         }
 
         ty_free(arms);
@@ -8904,11 +8920,17 @@ update_lower(T2Solver *solver, u32 meta, T2Type lower, char const *provenance)
         meta         = find_root(solver, meta);
         T2Meta *node = v_(solver->metas, meta - 1);
         T2Type remainder = T2_TYPE_INVALID;
-        if (direct_union_without_meta(solver, lower, meta, &remainder)) {
+        if (direct_set_without_meta(solver, lower, T2_TYPE_UNION, meta, &remainder)) {
                 if (remainder == T2_TYPE_INVALID || solver->failed) {
                         return T2_RELATION_COMPLEXITY;
                 }
                 return update_lower(solver, meta, remainder, provenance);
+        }
+
+        if (direct_set_without_meta(solver, lower, T2_TYPE_INTERSECTION, meta, &remainder)) {
+                return solver->failed
+                     ? T2_RELATION_COMPLEXITY
+                     : check_bounds(solver, meta, provenance);
         }
 
         if (type_contains_meta(solver, lower, meta, 0)) {
@@ -8959,10 +8981,17 @@ update_upper(T2Solver *solver, u32 meta, T2Type upper, char const *provenance)
         meta         = find_root(solver, meta);
         T2Meta *node = v_(solver->metas, meta - 1);
         T2Type remainder = T2_TYPE_INVALID;
-        if (direct_union_without_meta(solver, upper, meta, &remainder)) {
+        if (direct_set_without_meta(solver, upper, T2_TYPE_UNION, meta, &remainder)) {
                 return solver->failed
                      ? T2_RELATION_COMPLEXITY
                      : check_bounds(solver, meta, provenance);
+        }
+
+        if (direct_set_without_meta(solver, upper, T2_TYPE_INTERSECTION, meta, &remainder)) {
+                if (remainder == T2_TYPE_INVALID || solver->failed) {
+                        return T2_RELATION_COMPLEXITY;
+                }
+                return update_upper(solver, meta, remainder, provenance);
         }
 
         if (type_contains_meta(solver, upper, meta, 0)) {
@@ -9258,7 +9287,7 @@ retain_predicate(
                 .predicate  = *predicate,
                 .name       = name,
                 .provenance = provenance,
-                .active     = true
+                .state      = T2_OBLIGATION_PENDING
         }));
         v__(solver->obligations, index).predicate.name       = name;
         v__(solver->obligations, index).predicate.provenance = provenance;
@@ -11398,6 +11427,19 @@ constrain_internal(
         return relation;
 }
 
+static T2Type
+predicate_value(T2Solver *solver, T2Predicate const *predicate)
+{
+        switch (predicate->kind) {
+        case T2_PREDICATE_SUBSCRIPT_WRITE:
+        case T2_PREDICATE_MEMBER_WRITE:
+        case T2_PREDICATE_KEYWORD_SPREAD:
+                return t2_solver_zonk(solver, predicate->supertype, T2_PREFER_LOWER_BOUND);
+        default:
+                return T2_TYPE_INVALID;
+        }
+}
+
 static void
 drain_work(T2Solver *solver)
 {
@@ -11432,10 +11474,27 @@ drain_work(T2Solver *solver)
                                 goto WorkDone;
                         }
                         T2Obligation *obligation = v_(solver->obligations, index);
-                        if (!obligation->active) {
+                        if (obligation->state == T2_OBLIGATION_RETIRED) {
                                 goto WorkDone;
                         }
                         T2Predicate predicate = obligation->predicate;
+                        T2Type subtype = t2_solver_zonk(
+                                solver,
+                                predicate.subtype,
+                                T2_PREFER_LOWER_BOUND
+                        );
+                        T2Type operand = (predicate.operand == T2_TYPE_INVALID)
+                                       ? T2_TYPE_INVALID
+                                       : t2_solver_zonk(solver, predicate.operand, T2_PREFER_LOWER_BOUND);
+                        T2Type value = predicate_value(solver, &predicate);
+                        if (
+                                (obligation->state == T2_OBLIGATION_SOLVED)
+                             && (obligation->checked_subtype == subtype)
+                             && (obligation->checked_operand == operand)
+                             && (obligation->checked_value == value)
+                        ) {
+                                goto WorkDone;
+                        }
                         T2Relation relation;
                         if (predicate.kind == T2_PREDICATE_SUBTYPE) {
                                 relation = constrain_internal(
@@ -11461,20 +11520,66 @@ drain_work(T2Solver *solver)
                                         !push_undo(
                                                 solver,
                                                 (T2Undo) {
-                                                        .kind  = T2_UNDO_OBLIGATION_ACTIVE,
+                                                        .kind  = T2_UNDO_OBLIGATION_STATE,
                                                         .index = (u32)index,
-                                                        .old   = obligation->active
+                                                        .old   = obligation->state
                                                 }
                                         )
                                 ) {
                                         break;
                                 }
 
-                                obligation->active = false;
+                                obligation->state = T2_OBLIGATION_SOLVED;
+                                if (
+                                        !push_undo(
+                                                solver,
+                                                (T2Undo) {
+                                                        .kind  = T2_UNDO_OBLIGATION_INPUTS,
+                                                        .index = (u32)index,
+                                                        .old = ((u64)obligation->checked_subtype << 32)
+                                                             | obligation->checked_operand
+                                                }
+                                        )
+                                ) {
+                                        break;
+                                }
+                                obligation->checked_subtype = subtype;
+                                obligation->checked_operand = operand;
+                                if (
+                                        !push_undo(
+                                                solver,
+                                                (T2Undo) {
+                                                        .kind  = T2_UNDO_OBLIGATION_VALUE,
+                                                        .index = (u32)index,
+                                                        .old   = obligation->checked_value
+                                                }
+                                        )
+                                ) {
+                                        break;
+                                }
+                                obligation->checked_value = value;
+                                if (!watch_obligation(solver, index)) {
+                                        break;
+                                }
                         } else if (
                                 (relation == T2_RELATION_DEFERRED)
                              && !solver->failed
                         ) {
+                                if (obligation->state != T2_OBLIGATION_PENDING) {
+                                        if (
+                                                !push_undo(
+                                                        solver,
+                                                        (T2Undo) {
+                                                                .kind  = T2_UNDO_OBLIGATION_STATE,
+                                                                .index = (u32)index,
+                                                                .old   = obligation->state
+                                                        }
+                                                )
+                                        ) {
+                                                break;
+                                        }
+                                        obligation->state = T2_OBLIGATION_PENDING;
+                                }
                                 if (!watch_obligation(solver, index)) {
                                         break;
                                 }
@@ -11665,6 +11770,17 @@ t2_solver_constrain_predicate(
                 return T2_RELATION_NO;
         }
 
+        T2Type subtype = t2_solver_zonk(
+                solver,
+                predicate->subtype,
+                T2_PREFER_LOWER_BOUND
+        );
+        T2Type operand = t2_solver_zonk(
+                solver,
+                predicate->operand,
+                T2_PREFER_LOWER_BOUND
+        );
+        T2Type value = predicate_value(solver, predicate);
         T2Relation relation = (solver->predicate_resolver == NULL)
                             ? T2_RELATION_DEFERRED
                             : solver->predicate_resolver(
@@ -11676,6 +11792,26 @@ t2_solver_constrain_predicate(
 
         if (relation == T2_RELATION_DEFERRED) {
                 relation = retain_predicate(solver, predicate);
+        } else if (
+                (relation == T2_RELATION_YES)
+             && (
+                        t2_type_has_metas(solver->universe, predicate->subtype)
+                     || t2_type_has_metas(solver->universe, predicate->supertype)
+                     || t2_type_has_metas(solver->universe, predicate->operand)
+                )
+        ) {
+                if (retain_predicate(solver, predicate) == T2_RELATION_DEFERRED) {
+                        vvL(solver->obligations)->state = T2_OBLIGATION_SOLVED;
+                        vvL(solver->obligations)->checked_subtype = subtype;
+                        vvL(solver->obligations)->checked_operand = operand;
+                        vvL(solver->obligations)->checked_value   = value;
+                        (void)enqueue(
+                                solver,
+                                T2_WATCH_OBLIGATION | (vN(solver->obligations) - 1)
+                        );
+                } else {
+                        relation = T2_RELATION_COMPLEXITY;
+                }
         } else if (relation == T2_RELATION_NO && !solver->failed) {
                 set_solver_error(
                         solver,
@@ -12017,7 +12153,10 @@ t2_solver_solution(
                 if (lower != never) {
                         return lower;
                 }
-                if (upper != any) {
+                if (
+                        upper != any
+                     && upper != t2_primitive(solver->universe, T2_TYPE_OBJECT)
+                ) {
                         return upper;
                 }
         }
@@ -12106,7 +12245,7 @@ t2_solver_pending_obligations(T2Solver const *solver)
 
         usize count = 0;
         for (usize i = 0; i < vN(solver->obligations); ++i) {
-                count += v__(solver->obligations, i).active;
+                count += v__(solver->obligations, i).state == T2_OBLIGATION_PENDING;
         }
 
         return count;
@@ -12125,7 +12264,7 @@ t2_solver_pending_obligation(
 
         for (usize i = 0; i < vN(solver->obligations); ++i) {
                 T2Obligation const *obligation = v_(solver->obligations, i);
-                if (!obligation->active) {
+                if (obligation->state != T2_OBLIGATION_PENDING) {
                         continue;
                 }
                 if (index-- != 0) {
@@ -12210,22 +12349,22 @@ t2_solver_cancel_obligations_since(T2Solver *solver, T2SolverMark mark)
 
         for (usize i = mark.obligation_count; i < vN(solver->obligations); ++i) {
                 T2Obligation *obligation = v_(solver->obligations, i);
-                if (!obligation->active) {
+                if (obligation->state == T2_OBLIGATION_RETIRED) {
                         continue;
                 }
                 if (
                         !push_undo(
                                 solver,
                                 (T2Undo) {
-                                        .kind  = T2_UNDO_OBLIGATION_ACTIVE,
+                                        .kind  = T2_UNDO_OBLIGATION_STATE,
                                         .index = (u32)i,
-                                        .old   = obligation->active
+                                        .old   = obligation->state
                                 }
                         )
                 ) {
                         return false;
                 }
-                obligation->active = false;
+                obligation->state = T2_OBLIGATION_RETIRED;
         }
 
         return true;
@@ -12265,8 +12404,17 @@ t2_solver_rollback(T2Solver *solver, T2SolverMark mark)
                 case T2_UNDO_WATCH_COUNT:
                         v__(solver->metas, undo.index - 1).watchers.count = (usize)undo.old;
                         break;
-                case T2_UNDO_OBLIGATION_ACTIVE:
-                        v__(solver->obligations, undo.index).active = undo.old;
+                case T2_UNDO_OBLIGATION_STATE:
+                        v__(solver->obligations, undo.index).state = (T2ObligationState)undo.old;
+                        break;
+                case T2_UNDO_OBLIGATION_INPUTS:
+                        v__(solver->obligations, undo.index).checked_subtype = (T2Type)(
+                                undo.old >> 32
+                        );
+                        v__(solver->obligations, undo.index).checked_operand = (T2Type)undo.old;
+                        break;
+                case T2_UNDO_OBLIGATION_VALUE:
+                        v__(solver->obligations, undo.index).checked_value = (T2Type)undo.old;
                         break;
                 }
         }
@@ -12821,10 +12969,7 @@ static bool
 write_predicate(T2PredicateKind kind)
 {
         return (kind == T2_PREDICATE_SUBSCRIPT_WRITE)
-            || (
-                    kind == T2_PREDICATE_MEMBER_WRITE
-               )
-        ;
+            || (kind == T2_PREDICATE_MEMBER_WRITE);
 }
 
 static bool
@@ -13753,7 +13898,7 @@ close_generalization_constraints(T2Solver *solver, unsigned *polarities)
 
                 for (usize i = 0; i < vN(solver->obligations); ++i) {
                         T2Obligation const *obligation = v_(solver->obligations, i);
-                        if (!obligation->active) {
+                        if (obligation->state != T2_OBLIGATION_PENDING) {
                                 continue;
                         }
                         T2Predicate const *predicate = &obligation->predicate;
@@ -14202,17 +14347,15 @@ solver_generalize(
         }
 
         usize count = vN(solver->metas);
-        unsigned *polarities   = ty_calloc(count, sizeof *polarities);
-        bool *environment_free = ty_calloc(count, sizeof *environment_free);
-        T2Type *replacements = ty_calloc(count, sizeof *replacements);
+        unsigned *polarities       = ty_calloc(count, sizeof *polarities);
+        bool     *environment_free = ty_calloc(count, sizeof *environment_free);
+        T2Type   *replacements     = ty_calloc(count, sizeof *replacements);
         if (
                 (count != 0)
              && (
                         (polarities == NULL)
                      || (environment_free == NULL)
-                     || (
-                                replacements == NULL
-                        )
+                     || (replacements == NULL)
                 )
         ) {
                 goto Fail;
@@ -14231,28 +14374,16 @@ solver_generalize(
         }
 
         if (scoped_obligation_start != SIZE_MAX) {
-                for (
-                        usize i = scoped_obligation_start;
-                        i < vN(solver->obligations);
-                        ++i
-                ) {
+                for (usize i = scoped_obligation_start; i < vN(solver->obligations); ++i) {
                         T2Obligation const *obligation = v_(solver->obligations, i);
-                        if (!obligation->active) {
+                        if (obligation->state != T2_OBLIGATION_PENDING) {
                                 continue;
                         }
-                        T2Predicate viewed = obligation_view(
-                                solver,
-                                &obligation->predicate
-                        );
+                        T2Predicate viewed = obligation_view(solver, &obligation->predicate);
                         T2Predicate const *predicate = &viewed;
-                        if (!predicate_shares_exported_variable(
-                                solver,
-                                type,
-                                predicate
-                        )) {
+                        if (!predicate_shares_exported_variable(solver, type, predicate)) {
                                 continue;
                         }
-
                         if (
                                 !collect_generalization_polarity(
                                         solver,
@@ -14271,7 +14402,6 @@ solver_generalize(
                         ) {
                                 goto Fail;
                         }
-
                         if (
                                 (predicate->operand != T2_TYPE_INVALID)
                              && !collect_generalization_polarity(
@@ -14353,13 +14483,7 @@ solver_generalize(
         for (usize i = 0; i < count; ++i) {
                 if (
                         !environment_free[i]
-                     || !generalizable_meta(
-                             solver,
-                             i,
-                             polarities[i],
-                             binding_level,
-                             expansive
-                        )
+                     || !generalizable_meta(solver, i, polarities[i], binding_level, expansive)
                 ) {
                         continue;
                 }
@@ -14397,7 +14521,7 @@ solver_generalize(
                 goto Fail;
         }
 
-        usize predicate_capacity = quantifier_count * 2
+        usize predicate_capacity = 2*quantifier_count
                                  + vN(solver->edges)
                                  + vN(solver->obligations);
         T2Predicate *predicates = (predicate_capacity == 0)
@@ -14405,11 +14529,8 @@ solver_generalize(
                                 : ty_calloc(predicate_capacity, sizeof *predicates);
         usize *captured_obligations = (vN(solver->obligations) == 0)
                                     ? NULL
-                                    : ty_malloc(
-                                            vN(solver->obligations)
-                                          * sizeof *captured_obligations
-                                      )
-        ;
+                                    : xtA(usize, vN(solver->obligations));
+
         if (predicate_capacity != 0 && predicates == NULL) {
                 ty_free(quantifiers);
                 xvF(generalization.entries);
@@ -14496,7 +14617,7 @@ solver_generalize(
 
         for (usize i = 0; i < vN(solver->obligations); ++i) {
                 T2Obligation const *obligation = v_(solver->obligations, i);
-                if (!obligation->active) {
+                if (obligation->state != T2_OBLIGATION_PENDING) {
                         continue;
                 }
                 T2Predicate viewed = obligation_view(
@@ -14598,16 +14719,16 @@ solver_generalize(
                 for (usize i = 0; i < captured_count; ++i) {
                         usize index = captured_obligations[i];
                         T2Obligation *obligation = v_(solver->obligations, index);
-                        if (!obligation->active) {
+                        if (obligation->state != T2_OBLIGATION_PENDING) {
                                 continue;
                         }
                         if (
                                 !push_undo(
                                         solver,
                                         (T2Undo) {
-                                                .kind  = T2_UNDO_OBLIGATION_ACTIVE,
+                                                .kind  = T2_UNDO_OBLIGATION_STATE,
                                                 .index = (u32)index,
-                                                .old   = obligation->active
+                                                .old   = obligation->state
                                         }
                                 )
                         ) {
@@ -14615,7 +14736,7 @@ solver_generalize(
                                 scheme = NULL;
                                 break;
                         }
-                        obligation->active = false;
+                        obligation->state = T2_OBLIGATION_RETIRED;
                 }
         }
 

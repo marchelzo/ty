@@ -1,0 +1,6 @@
+fn keep(x: Int) -> Int { x }
+fn keep(x: String) -> String { x }
+
+let value: Int | String = true ? 1 : 's'
+let result = keep(value)
+

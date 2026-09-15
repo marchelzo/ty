@@ -5,6 +5,22 @@ import ty.parse as parse
 
 ns test
 
+pub fn rmtree-preserves-symlink-targets() {
+    with tmp = path.tempdir() {
+        let target = tmp / 'target'
+        let tree = tmp / 'tree'
+        target.mkdir()
+        tree.mkdir()
+        (target / 'keep.txt').write('keep')
+        assert(os.symlink(str(target), str(tree / 'directory')) == 0)
+        assert(os.symlink(str(target / 'keep.txt'), str(tree / 'file')) == 0)
+        assert(os.symlink(str(tmp / 'missing'), str(tree / 'dangling')) == 0)
+        tree.rmtree()
+        assert(!tree.exists?)
+        assert((target / 'keep.txt').read-text() == 'keep')
+    }
+}
+
 pub fn basic-construction() {
     let p = path.Path('foo/bar')
     assert(str(p) == 'foo/bar')

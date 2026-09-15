@@ -1,0 +1,17 @@
+import ini
+
+ns test
+
+pub fn inferred-dictionary-types() {
+    let expected = 'DefaultDict[nil | String, Dict[String, String]]'
+
+    assert(str(typeof ini.parse) == "(s: String) -> {expected}")
+    assert(str(typeof ini.parse('')) == expected)
+    assert(str(typeof ini.read('')) == expected)
+
+    let parsed = ini.parse('top = value\n[section]\nkey = setting')
+
+    assert(parsed[nil]['top'] == 'value')
+    assert(parsed['section']['key'] == 'setting')
+    assert(#parsed['missing'] == 0)
+}

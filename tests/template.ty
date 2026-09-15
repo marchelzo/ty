@@ -1,4 +1,5 @@
 import ty
+import ty.token as lex
 
 ns test
 
@@ -17,4 +18,38 @@ x
 
 pub fn template-macro() {
     assert(Test.test() == 'PASS')
+}
+
+macro float-token {
+    let token = lex.next()
+    $$[ let FLOAT_VALUE = $${token.float} $$]
+}
+
+float-token 1.25
+
+let callback = nil
+
+fn callback-template() {
+    $$[ $$::(callback) = fn () { 42 } $$]
+}
+
+pub fn quoted-assignment() {
+    assert(callback == nil)
+    let code = callback-template()
+    assert(callback == nil)
+    __eval__(code)
+    if callback != nil {
+        assert(callback() == 42)
+    }
+
+    try {
+        __eval__('callback(1)')
+        assert(false, 'accepted an argument to a zero-argument quoted function')
+    } catch ex :: '[bad-call]' in ex.what {
+        ;
+    }
+}
+
+pub fn float-token-interface() {
+    assert(FLOAT_VALUE == 1.25)
 }

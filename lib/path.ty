@@ -464,12 +464,14 @@ pub class Path {
     }
 
     rmtree(quiet: Bool = false) {
-        if self.dir? {
+        if self.symlink? {
+            unlink()
+        } else if self.dir? {
             for entry in self.ls() {
                 entry.rmtree()
             }
             rmdir()
-        } else if self.file? || self.symlink? {
+        } else if self.file? {
             unlink()
         } else if !quiet {
             throw PathError({msg: 'path does not exist', path: str(self)})

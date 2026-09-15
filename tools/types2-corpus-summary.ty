@@ -75,7 +75,7 @@ fn fail(message) {
     exit(2)
 }
 
-fn tally(counts, key, n = 1) {
+fn tally[K](counts: Dict[K, Int], key: K, n: Int = 1) {
     counts[key] = (counts[key] ?? 0) + n
 }
 

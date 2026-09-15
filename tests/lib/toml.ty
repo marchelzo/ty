@@ -1,0 +1,317 @@
+import toml
+import math (inf, nan)
+import path (Path)
+
+fn rejects(source) {
+    let error = try { toml.parse(source) } catch e: toml.ParseError { e }
+    assert(error :: toml.ParseError, "accepted invalid TOML: {source}")
+    assert(error.line >= 1 && error.column >= 1)
+}
+
+fn same?(a, b) {
+    match (a, b) {
+        (x: Dict, y: Dict)   => same?(x.items(), y.items()),
+        (x: Array, y: Array) => #x == #y && x.zip(y).all?(|(a, b)| -> same?(a, b)),
+        ((k, v), (k, w))     => same?(v, w),
+        _                    => a == b,
+    }
+}
+
+ns test
+
+pub fn sort-preserves-format() {
+    const BEFORE =
+        '''
+        [[widgets]]
+        model = "basic"
+        name = "example-widget"
+        count = [
+          { theme = 'dark', count = 4 },
+          { theme = '.*', count = 1 },
+        ]
+        # keep sorted
+        engines = [
+          'foo',
+          'bar',
+          'quux',
+          'baz',
+        ]
+        analysis = 'dark theme is excluded disabled in quux'
+        '''
+
+    const AFTER =
+        '''
+        [[widgets]]
+        model = "basic"
+        name = "example-widget"
+        count = [
+          { theme = 'dark', count = 4 },
+          { theme = '.*', count = 1 },
+        ]
+        # keep sorted
+        engines = [
+          'bar',
+          'baz',
+          'foo',
+          'quux',
+        ]
+        analysis = 'dark theme is excluded disabled in quux'
+        '''
+
+    let document = toml.parse(BEFORE)
+    document['widgets'][0]['engines'].sort!()
+    assert(toml.dump(document) == AFTER)
+    assert(same?(toml.parse(AFTER).data, document.data))
+}
+
+pub fn sort-preserves-literals-and-trivia() {
+    let before = "# café\r\n'名'\t= [ 'z',\t\"\\u0061\",  '''m''' ,]\t# fin\r\nflag=true"
+    let after  = "# café\r\n'名'\t= [ \"\\u0061\",\t'''m''',  'z' ,]\t# fin\r\nflag=true"
+    let document = toml.parse(before)
+    document['名'] = document['名'].sort()
+    assert(document.str() == after)
+    assert(document.str() == after)
+}
+
+pub fn sort-preserves-duplicate-spellings() {
+    let document = toml.parse('xs = [0x02, 1, 0b10, +1, 2_0]\n')
+    document['xs'].sort!()
+    assert(document.str() == 'xs = [1, +1, 0x02, 0b10, 2_0]\n')
+}
+
+pub fn comments-stay-in-their-slots() {
+    let before = 'xs = [\n  3, # first slot\n  1, # second slot\n  2  # last slot\n]\n'
+    let after  = 'xs = [\n  1, # first slot\n  2, # second slot\n  3  # last slot\n]\n'
+    let document = toml.parse(before)
+    document['xs'].sort!()
+    assert(document.str() == after)
+    assert(toml.parse(after)['xs'] == [1, 2, 3])
+}
+
+pub fn sort-inline-tables-and-edit-nested-values() {
+    let before = "items = [\{name='z', xs = [3, 1]\}, \{ name = \"a\", xs=[2, 0] \}] # keep\n"
+    let after  = "items = [\{ name = \"a\", xs=[0, 2] \}, \{name='z', xs = [3, 1]\}] # keep\n"
+    let document = toml.parse(before)
+    document['items'].sort!(by=&['name'])
+    document['items'][0]['xs'].sort!()
+    assert(document.str() == after)
+}
+
+pub fn roundtrip-untouched-documents() {
+    let sources = [
+        '',
+        ' # only a comment',
+        '\n\t# spaced\r\n\r\n',
+        'x=[]\ny = { }\n',
+        "'a.b' . '' = 'literal # [] = , text'\n",
+        '[a.b]\nx=1\n[a]\ny = 0xCA_FE\n',
+        '[[a]]\nx = 1\n[a.b]\ny = 2\n[[a]]\nx = 3\n[a.b]\ny = 4\n',
+        'x = [nan, +nan, -nan, inf, -inf, +0.0, -0.0]\n',
+        'x = """\r\ntext\r\n"""\r\n',
+    ]
+
+    for source in sources {
+        assert(toml.dump(toml.parse(source)) == source, source)
+    }
+}
+
+pub fn keys-and-table-order() {
+    let document = toml.parse("title='hi'\n[a.b]\nx = 1\n[a]\ny=2\n['a.b']\n''=3\n")
+    assert(document.data.keys() == ['title', 'a', 'a.b'])
+    assert(document['a'].keys() == ['b', 'y'])
+    assert(document['a']['b']['x'] == 1)
+    assert(document['a.b'][''] == 3)
+}
+
+pub fn arrays-of-tables() {
+    let source =
+        '''
+        [[fruit]]
+        name = "apple"
+        [fruit.physical]
+        color = "red"
+        [[fruit.variety]]
+        name = "red delicious"
+        [[fruit.variety]]
+        name = "granny smith"
+        [[fruit]]
+        name = "banana"
+        [[fruit.variety]]
+        name = "plantain"
+        '''
+    let document = toml.parse(source)
+    let [apple, banana] = document['fruit']
+    assert(apple['physical']['color'] == 'red')
+    assert(apple['variety'].map(&['name']) == ['red delicious', 'granny smith'])
+    assert(banana['variety'][0]['name'] == 'plantain')
+    assert(document.str() == source)
+}
+
+pub fn numbers-and-booleans() {
+    let document = toml.parse('xs = [0, +0, -0, 1_000, -42, 0xff, 0o755, 0b1010, 1.0, -2e-2, 1_2.3_4e+0_2, true, false]\n')
+    assert(document['xs'] == [0, 0, 0, 1000, -42, 255, 493, 10, 1.0, -0.02, 1234.0, true, false])
+    let limits = toml.parse('lo=-9223372036854775808\nhi=9223372036854775807\n')
+    assert(limits['lo'] == Int.MIN && limits['hi'] == Int.MAX)
+    let special = toml.parse('xs=[inf,+inf,-inf,nan,+nan,-nan]')['xs']
+    assert(special[;3] == [inf, inf, -inf])
+    assert(special[3;].all?(\_ != _))
+}
+
+pub fn strings-and-escapes() {
+    let source = 'a="\\b\\t\\n\\f\\r\\\"\\\\\\u00e9\\U0001f600"\nb=\'C:\\Users\\name\'\nc="""\nhello \\\n   world\n"""\nd=\'\'\'\nraw \\n\n\'\'\'\ne="""two \"\" quotes"""\nf="""\"end\""""\n'
+    let document = toml.parse(source)
+    assert(document['a'] == "{chr(8)}\t\n{chr(12)}\r\"\\é😀")
+    assert(document['b'] == 'C:\\Users\\name')
+    assert(document['c'] == 'hello world\n')
+    assert(document['d'] == 'raw \\n\n')
+    assert(document['e'] == 'two "" quotes')
+    assert(document['f'] == '"end"')
+    assert(document.str() == source)
+}
+
+pub fn temporal-values() {
+    let source =
+        '''
+        date   = 2000-02-29
+        time   = 07:32:00.123456789012
+        local  = 1979-05-27t07:32:00
+        offset = 1979-05-27 00:32:00.999999-07:00
+        zulu   = 1979-05-27T07:32:00z
+        '''
+    let document = toml.parse(source)
+    assert(document['date'] == toml.LocalDate('2000-02-29'))
+    assert(document['time'] == toml.LocalTime('07:32:00.123456789012'))
+    assert(document['local'] == toml.LocalDateTime('1979-05-27t07:32:00'))
+    assert(document['offset'] == toml.OffsetDateTime('1979-05-27 00:32:00.999999-07:00'))
+    assert(document.str() == source)
+    assert(same?(toml.parse(toml.dump(document.data)).data, document.data))
+}
+
+pub fn edits-are-local() {
+    let before = "# lead\nname = 'old' # tail\nxs=[3, 1]\n[section]\nflag = true\n"
+    let after  = '# lead\nname = "new" # tail\nxs=[1, 2, 3]\n[section]\nflag = false\n'
+    let document = toml.parse(before)
+    document['name'] = 'new'
+    document['xs'] = [1, 2, 3]
+    document['section']['flag'] = false
+    assert(document.str() == after)
+}
+
+pub fn serialize-new-data-in-insertion-order() {
+    let data = %{'z': 1, 'a.b': %{'': 'value'}, 'xs': [true, 1.0, '\n"\\']}
+    let source = toml.dump(data)
+    assert(source.starts?('z = 1\n"a.b" = '))
+    assert(same?(toml.parse(source).data, data))
+    assert(toml.parse(source)['xs'][1] :: Float)
+}
+
+pub fn serialize-special-floats-and-control-characters() {
+    let data = %{'floats': [inf, -inf, nan, -0.0, 1.0], 'key\n': "{chr(8)}{chr(12)}{chr(0)}"}
+    let source = toml.dump(data)
+    let document = toml.parse(source)
+    assert(source.starts?('floats = [inf, -inf, nan, -0.0, 1.0]\n'))
+    assert(document['floats'][2] != document['floats'][2])
+    assert(document['key\n'] == data['key\n'])
+
+    let zeros = toml.parse('x = -0.0\nxs = [+0.0, -0.0]\n')
+    zeros['x'] = 0.0
+    zeros['xs'].reverse!()
+    assert(zeros.str() == 'x = 0.0\nxs = [-0.0, +0.0]\n')
+}
+
+pub fn preserves-empty-files-and-byte-order-marks() {
+    with directory = Path.tempdir('ty-toml-empty') {
+        let file = directory / 'empty.toml'
+        file.write('')
+        let document = toml.load(file)
+        assert(#document == 0 && document.str() == '')
+    }
+
+    let source = "{chr(0xfeff)}xs = [2, 1]\n"
+    let document = toml.parse(source)
+    assert(document.str() == source)
+    document['xs'].sort!()
+    assert(document.str() == "{chr(0xfeff)}xs = [1, 2]\n")
+}
+
+pub fn rejects-invalid-utf8() {
+    let bytes = [[0xff], [0xc0, 0xaf], [0xed, 0xa0, 0x80], [0xf4, 0x90, 0x80, 0x80], [0xc2]]
+
+    for sequence in bytes {
+        let bad = Blob(*sequence).str!()
+        rejects("# {bad}")
+        rejects("x = '{bad}'")
+        let error = try { toml.dump(%{'x': bad}) } catch e: ValueError { e }
+        assert(error :: ValueError)
+    }
+}
+
+pub fn rejects-invalid-temporal-tags() {
+    let values = [toml.LocalDate('2023-02-29'), toml.LocalTime('2000-01-01'), toml.LocalDate('2000-01-01\n')]
+
+    for value in values {
+        let error = try { toml.dump(%{'x': value}) } catch e: ValueError { e }
+        assert(error :: ValueError)
+    }
+}
+
+pub fn structural-edits-serialize() {
+    let document = toml.parse('[a]\nx=1\n')
+    document['new'] = 2
+    document['a']['y'] = [3, 2, 1]
+    assert(same?(toml.parse(document.str()).data, document.data))
+}
+
+pub fn load-sort-write() {
+    with directory = Path.tempdir('ty-toml') {
+        let file = directory / 'config.toml'
+        file.write("# keep\nxs = ['z', 'a']\n")
+        let document = toml.load(file)
+        document['xs'].sort!()
+        toml.write(document, file)
+        assert(file.read-text() == "# keep\nxs = ['a', 'z']\n")
+        assert(same?(toml.read("{file}").data, document.data))
+    }
+}
+
+pub fn rejects-invalid-values() {
+    let values = [
+        '', '01', '-01', '+01', '1_', '_1', '1__0', '0x_1', '0x', '-0xff',
+        '0o8', '0b2', '1.', '.1', '1.e2', '1e', '1e_2', '1.0_', 'True', 'null',
+        '9223372036854775808', '-9223372036854775809', '0xffffffffffffffff',
+        '2023-02-29', '2000-13-01', '2000-01-00', '24:00:00', '00:60:00',
+        '1979-05-27T07:32:00+24:00', '1979-05-27T07:32:00+00:60',
+        '"\\q"', '"\\uD800"', '"\\U00110000"', '"\\u12"', '"unterminated',
+        "'unterminated", '"line\nbreak"', '[1 2]', '[,]', '[1,,2]', '[1',
+        '{a=1,}', '{a=1\nb=2}', '{a=1 # comment\n}', '{a=1,a=2}',
+    ]
+    values.each(v -> rejects("x = {v}"))
+}
+
+pub fn rejects-invalid-tables-and-keys() {
+    let sources = [
+        'x=1\nx=2', 'x.y=1\nx=2', '[a]\n[a]', 'a.b=1\n[a]',
+        '[a.b]\n[a]\nb.c=1', 'a={b=1}\na.c=2', 'a={b=1}\n[a.c]',
+        'a=[]\n[[a]]', '[a]\n[[a]]', '[[a]]\n[a]',
+        'a=1\n[a.b]', '=1', 'a..b=1', '.a=1', 'a.=1',
+        'a b=1', '"""a"""=1', '[a] junk', 'a=1 b=2', 'a=1\rb=2',
+        "# bad{chr(0)}", "a=\"bad{chr(127)}\"",
+    ]
+    sources.each(rejects)
+}
+
+pub fn errors-have-line-and-column() {
+    let error = try { toml.parse('# title\nx = [1 2]\n') } catch e: toml.ParseError { e }
+    assert(error :: toml.ParseError)
+    assert(error.line == 2)
+    assert(error.column == 8)
+
+    let unicode = try { toml.parse("# café\nx='{chr(0)}'") } catch e: toml.ParseError { e }
+    assert(unicode :: toml.ParseError)
+    assert(unicode.line == 2 && unicode.column == 4)
+}
+
+pub fn rejects-unsupported-output-values() {
+    let error = try { toml.dump(%{'x': nil}) } catch e: ValueError { e }
+    assert(error :: ValueError)
+}

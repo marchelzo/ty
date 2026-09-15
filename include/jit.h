@@ -14,6 +14,9 @@
 
 extern char JIT;
 
+char const *
+jit_frame_ip(Frame const *frame, char const *ip);
+
 enum {
         JIT_RETURN,
         JIT_CALL,
@@ -27,7 +30,7 @@ enum {
 #define JIT_REASON(packed)     ((packed) & 0xF)
 #define JIT_RESUME(packed)     ((packed) >> 4)
 
-typedef i32 (JitFn)(Ty *, i32 resume_idx, Value *args, Value **env);
+typedef i32 (JitFn)(Ty *, i32 resume_idx, Value *args, Value **env, uptr const **pc);
 
 // Initialize the JIT subsystem
 void

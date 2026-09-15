@@ -159,7 +159,7 @@ fn check[T](msg: T, file: String) -> T {
         %{
             'error': json.parse $~> %{
                 message,
-                'trace': &0 ~> %{ start, end, 'file': >file }
+                'trace': [%{ start, end, 'file': >file }, *]
             }
         } => do {
             let diagnostics = [{

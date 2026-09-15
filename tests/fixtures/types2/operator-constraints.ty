@@ -1,0 +1,5 @@
+fn constrained-add[T](x: T, y: T) -> T where (T + T): T {
+    x + y
+}
+
+let good: Int = constrained-add(1, 2)

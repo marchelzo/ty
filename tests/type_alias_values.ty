@@ -1,0 +1,83 @@
+import json
+
+use Point = {x: Int, y: Int}
+use Points = Array[Point]
+use Box[T] = {value: T}
+use PointBox = Box[Point]
+use WrongPoint = {x: String, y: Int}
+use Number = Int | Float
+use Integer = Int
+
+class Response {
+    __data: String
+
+    init(data: String) {
+        __data = data
+    }
+
+    json[T](schema: Type[T]) -> T {
+        json::parse(schema, __data)
+    }
+
+    json() -> _ {
+        json::parse(__data)
+    }
+}
+
+fn schema-kind[T](schema: Type[Array[T]]) { 'array' }
+fn schema-kind(schema: Type[Point]) { 'point' }
+fn schema-kind(schema: Type[Int]) { 'int' }
+fn schema-kind(schema: Type) { 'type' }
+fn schema-kind(value: Any) { 'value' }
+
+ns test
+
+pub fn alias-expression-types() {
+    let schema = Point
+    assert(str(typeof Point) == 'type[{x: Int, y: Int}]')
+    assert(str(typeof schema) == str(typeof Point))
+    assert(str(typeof Points) == 'type[Array[{x: Int, y: Int}]]')
+    assert(str(typeof PointBox) == 'type[{value: {x: Int, y: Int}}]')
+    assert(str(typeof Number) == 'type[Int | Float]')
+}
+
+pub fn typed-json-overload() {
+    let response = Response('{"x": 1, "y": 2}')
+    assert(str(typeof response.json(Point)) == '{x: Int, y: Int}')
+    let point: Point = response.json(Point)
+    assert(point == {x: 1, y: 2})
+    let data = response.json()
+    assert(data['x'] == 1)
+    assert(data['y'] == 2)
+    assert(Response('3').json(Integer) == 3)
+    let box: PointBox = Response('{"value": {"x": 3, "y": 4}}').json(PointBox)
+    assert(box.value == {x: 3, y: 4})
+}
+
+pub fn type-value-dispatch() {
+    assert(schema-kind(Points) == 'array')
+    assert(schema-kind(Point) == 'point')
+    assert(schema-kind(Int) == 'int')
+    assert(schema-kind(Float) == 'type')
+    assert(schema-kind(Number) == 'type')
+    assert(schema-kind(WrongPoint) == 'type')
+    assert(schema-kind('Point') == 'value')
+    assert(schema-kind({x: 1, y: 2}) == 'value')
+    assert(schema-kind(nil) == 'value')
+}
+
+pub fn alias-type-errors() {
+    let sources = [
+        'let bad: Point = Point',
+        'let bad: Type[Point] = {x: 1, y: 2}',
+        'let bad: String = Response(\'{"x": 1, "y": 2}\').json(Point).x',
+    ]
+    for source in sources {
+        try {
+            __eval__(source)
+            throw AssertionError("accepted an incompatible alias type: {source}")
+        } catch ex :: '[assignment-type]' in ex.what {
+            ;
+        }
+    }
+}

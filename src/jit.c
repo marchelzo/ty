@@ -1,5 +1,3 @@
-// jit.c - JIT compiler for ty
-
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -33,6 +31,57 @@
 
 char JIT;
 
+typedef struct {
+        u32 pc;
+        u32 bc;
+} JitSite;
+
+typedef struct {
+        u32 size;
+        u32 table;
+        u32 nsites;
+        u32 nresume;
+} JitCode;
+
+char const *
+jit_frame_ip(Frame const *frame, char const *ip)
+{
+        if (ip != &JIT || frame == NULL) {
+                return ip;
+        }
+
+        char const *entry = jit_of(&frame->f);
+        char const *bc = code_of(&frame->f);
+        if (entry == NULL || entry == (void *)0xFA57) {
+                return bc + 1;
+        }
+
+        JitCode const *code  = (void const *)(entry - sizeof *code);
+        JitSite const *sites = (void const *)(entry + code->table);
+
+        if (frame->jit_pc != NULL) {
+                uptr pc = *frame->jit_pc - (uptr)entry;
+                u32 lo = 0;
+                u32 hi = code->nsites;
+                while (lo < hi) {
+                        u32 mid = lo + (hi - lo) / 2;
+                        if (sites[mid].pc < pc) {
+                                lo = mid + 1;
+                        } else {
+                                hi = mid;
+                        }
+                }
+                if (lo < code->nsites && sites[lo].pc == pc) {
+                        return bc + sites[lo].bc;
+                }
+        } else if (frame->jit_resume > 0 && frame->jit_resume <= code->nresume) {
+                u32 const *resumes = (void const *)(sites + code->nsites);
+                return bc + resumes[frame->jit_resume - 1];
+        }
+
+        return bc + 1;
+}
+
 #define VALUE_SIZE (sizeof (Value))
 
 // ============================================================================
@@ -58,6 +107,7 @@ char JIT;
 
 #define OFF_TY_STACK  offsetof(Ty, stack)
 #define OFF_TY_ST     offsetof(Ty, st)
+#define OFF_TY_IP     offsetof(Ty, ip)
 #define OFF_TY_TLS    offsetof(Ty, tls)
 #define OFF_ST_STACK  offsetof(co_state, stack)
 #define OFF_ST_FRAMES offsetof(co_state, frames)
@@ -67,7 +117,7 @@ char JIT;
 #define OFF_VEC_LEN   offsetof(ValueVector, count)
 #define OFF_DICT_COUNT offsetof(Dict, count)
 
-// TyObject layout:
+// TyObject
 #define OBJ_OFF_INIT    0    // bool init
 #define OBJ_OFF_NSLOT   4    // u32 nslot
 #define OBJ_OFF_CLASS   8    // Class *class
@@ -91,7 +141,7 @@ char JIT;
 #  include "../dynasm/dasm_x86.h"
 #  include "jit_x64.h"
 #  define JIT_ARCH_X64 1
-static int const x64_param_regs[] = { 7, 6, 2, 1 };
+static int const x64_param_regs[] = {7, 6, 2, 1};
 #  define PARAM_REG(i) x64_param_regs[i]
 #  define SCRATCH_REG_BASE 8
 #  define MAX_SCRATCH_REGS 4
@@ -237,9 +287,7 @@ static char const *jit_opt_names[JIT_OPT_COUNT] = {
 static _Atomic u64 jit_opt_sites[JIT_OPT_COUNT];
 static _Atomic u64 jit_opt_units[JIT_OPT_COUNT];
 
-// ============================================================================
-// Per-site slow path tracking
-// ============================================================================
+/* ============= Per-site slow path tracking =========================== */
 enum {
         SLOW_MEMBER_ACCESS,
         SLOW_MEMBER_SET,
@@ -279,9 +327,7 @@ typedef struct {
 
 static SlowPathSite slow_table[SLOW_TABLE_SIZE];
 
-// ============================================================================
-// JIT compilation tracking
-// ============================================================================
+/* =========== JIT compilation tracking ================================== */
 
 typedef struct {
         char const *name;
@@ -749,7 +795,7 @@ static void jit_rt_stat_arith_float(void)            { STAT(arith_float); }
 
 #define EMIT_STAT(fn_ptr) do {                                         \
         jit_emit_load_imm(asm, BC_CALL, (iptr)(fn_ptr));               \
-        bc_emit_runtime_call(ctx, BC_CALL);                               \
+        bc_emit_call(ctx, BC_CALL);                               \
 } while (0)
 
 /* Emit a slow-path record call with 1 operand: jit_rt_slow1(ty, ip, kind, v) */
@@ -759,7 +805,7 @@ static void jit_rt_stat_arith_float(void)            { STAT(arith_float); }
         jit_emit_load_imm(asm, BC_A2, (kind));                                   \
         jit_emit_add_imm(asm, BC_A3, (val_reg), (val_off));                      \
         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_slow1);                     \
-        bc_emit_runtime_call(ctx, BC_CALL);                                         \
+        bc_emit_call(ctx, BC_CALL);                                         \
 } while (0)
 
 /* Emit a slow-path record call with 2 operands: jit_rt_slow2(ty, ip, kind, a, b) */
@@ -770,14 +816,14 @@ static void jit_rt_stat_arith_float(void)            { STAT(arith_float); }
         jit_emit_add_imm(asm, BC_A3, (a_reg), (a_off));                              \
         jit_emit_add_imm(asm, BC_A4, (b_reg), (b_off));                              \
         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_slow2);                         \
-        bc_emit_runtime_call(ctx, BC_CALL);                                             \
+        bc_emit_call(ctx, BC_CALL);                                             \
 } while (0)
 
 /* Store bytecode IP in TLS before calling a runtime helper that has no room for an IP arg */
 #define EMIT_SET_CALL_IP(bc_ip) do {                                   \
         jit_emit_load_imm(asm, BC_A0, (iptr)(bc_ip));                  \
         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_set_call_ip);     \
-        bc_emit_runtime_call(ctx, BC_CALL);                               \
+        bc_emit_call(ctx, BC_CALL);                               \
 } while (0)
 
 /* Record slow path in C runtime helpers (call_method paths) */
@@ -787,7 +833,10 @@ static void jit_rt_stat_arith_float(void)            { STAT(arith_float); }
         ++jit_opt_sites[(opt)];             \
         jit_opt_units[(opt)] += (n);        \
 } while (0)
-#define EMIT_FUSED_TICK(ip) bc_emit_profiler_tick_at(ctx, (ip))
+#define EMIT_FUSED_TICK(bc_ip) do { \
+        ctx->ip = StepInstruction(bc_ip); \
+        bc_emit_profiler_tick_at(ctx, (bc_ip)); \
+} while (0)
 
 #else
 #define STAT(name) ((void)0)
@@ -798,7 +847,7 @@ static void jit_rt_stat_arith_float(void)            { STAT(arith_float); }
 #define SLOW_RECORD(...) ((void)0)
 #define JIT_OPT_APPLIED(ctx, opt) ((void)0)
 #define JIT_OPT_APPLIED_N(ctx, opt, n) ((void)0)
-#define EMIT_FUSED_TICK(ip) ((void)0)
+#define EMIT_FUSED_TICK(bc_ip) (ctx->ip = StepInstruction(bc_ip))
 #endif
 
 #if JIT_RT_DEBUG
@@ -1001,7 +1050,7 @@ jit_rt_eq(Ty *ty, Value *result, Value *a, Value *b)
         ptrdiff_t idx = result - vv(STACK);
         vN(STACK) = idx + 2;
 
-        Value val = BOOLEAN(value_test_equality(ty, a, b));
+        Value val = BOOLEAN(v_eq(a, b));
         *v_(STACK, idx) = val;
 }
 
@@ -1016,7 +1065,7 @@ jit_rt_ne(Ty *ty, Value *result, Value *a, Value *b)
         ptrdiff_t idx = result - vv(STACK);
         vN(STACK) = idx + 2;
 
-        Value val = BOOLEAN(!value_test_equality(ty, a, b));
+        Value val = BOOLEAN(!v_eq(a, b));
         *v_(STACK, idx) = val;
 }
 
@@ -1426,7 +1475,7 @@ jit_rt_bind_instance(Ty *ty, Value *result, int n, int z)
 static int
 jit_rt_ensure_equals_var(Ty *ty, Value *a, Value *b)
 {
-        return value_test_equality(ty, a, b);
+        return v_eq(a, b);
 }
 
 static int
@@ -1475,34 +1524,6 @@ jit_rt_subscript(Ty *ty, Value *top)
         ptrdiff_t idx = (top - vv(STACK));
         vN(STACK) = idx + 2;
         DoSubscript(ty, true);
-}
-
-static void
-jit_rt_swap_subscripts(Ty *ty, Value *array, Value *ia, Value *ib)
-{
-        Value a = *array;
-        Value i = *ia;
-        Value j = *ib;
-        isize base = vN(STACK);
-
-        xvP(STACK, a);
-        xvP(STACK, i);
-        DoSubscript(ty, true);
-        xvP(STACK, a);
-        xvP(STACK, j);
-        DoSubscript(ty, true);
-
-        Value vi = v_(STACK, base)[0];
-        Value vj = v_(STACK, base)[1];
-        xvP(STACK, vj);
-        xvP(STACK, a);
-        xvP(STACK, i);
-        DoAssignSubscript(ty, 1, true);
-        xvP(STACK, vi);
-        xvP(STACK, a);
-        xvP(STACK, j);
-        DoAssignSubscript(ty, 1, true);
-        vN(STACK) = base;
 }
 
 static int
@@ -2302,6 +2323,8 @@ typedef struct {
         int param_count;
         int bound;
         char const *name;
+        char const *ip;
+        vec(JitSite) sites;
 
         // Type information (from expr_of(func)->_type)
         T2Type func_type;
@@ -2364,6 +2387,7 @@ typedef struct {
         int raw_count;
         u8 raw_dirty;
         int resume_labels[MAX_BC_OPS]; // DynASM labels for resume points
+        u32 resume_offsets[MAX_BC_OPS];
 
         // Try/catch/finally tracking
         JitTryInfo try_info[MAX_JIT_TRY];
@@ -2482,10 +2506,24 @@ bc_raw_reset(JitCtx *ctx)
 }
 
 static void
-bc_emit_runtime_call(JitCtx *ctx, int reg)
+bc_emit_call(JitCtx *ctx, int reg)
 {
         bc_raw_reset(ctx);
         jit_emit_call_reg(&ctx->asm, reg);
+}
+
+static void
+bc_emit_runtime_call(JitCtx *ctx, int reg)
+{
+        int label = bc_next_label(ctx);
+
+        bc_raw_reset(ctx);
+        jit_emit_runtime_call_reg(&ctx->asm, reg);
+        jit_emit_label(&ctx->asm, label);
+        xvP(ctx->sites, ((JitSite) {
+                .pc = label,
+                .bc = ctx->ip - code_of(ctx->func)
+        }));
 }
 
 /* Runtime calls that can re-enter Ty may grow STACK and invalidate BC_OPS. */
@@ -4087,6 +4125,56 @@ bc_match_assign_subscript(char const **ip, char const *end)
         return true;
 }
 
+static void
+bc_emit_swap_fallback(JitCtx *ctx, char const *ip, char const *end)
+{
+        dasm_State **asm = &ctx->asm;
+
+        while (ip < end) {
+                int n;
+                ctx->ip = StepInstruction(ip);
+
+                switch ((u8)*ip) {
+                case INSTR_LOAD_LOCAL:
+                        memcpy(&n, ip + 1, sizeof n);
+                        bc_push_from(ctx, BC_LOC, n * VALUE_SIZE);
+                        break;
+
+                case INSTR_ASSIGN_LOCAL:
+                        memcpy(&n, ip + 1, sizeof n);
+                        bc_pop_to(ctx, BC_LOC, n * VALUE_SIZE);
+                        bc_raw_kill(ctx, n);
+                        break;
+
+                case INSTR_SUBSCRIPT:
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp - 2));
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_subscript);
+                        bc_emit_reentrant_call(ctx, BC_CALL);
+                        ctx->sp--;
+                        break;
+
+                case INSTR_ASSIGN_SUBSCRIPT:
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
+                        jit_emit_load_imm(asm, BC_A2, 1);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_assign_subscript);
+                        bc_emit_reentrant_call(ctx, BC_CALL);
+                        ctx->sp -= 2;
+                        break;
+
+                case INSTR_POP:
+                        ctx->sp--;
+                        break;
+
+                default:
+                        UNREACHABLE();
+                }
+
+                ip = ctx->ip;
+        }
+}
+
 static bool
 bc_try_local_array_swap(JitCtx *ctx, char const *code, char const *end,
                         char const **ip, int load_off, int array_local)
@@ -4202,13 +4290,18 @@ bc_try_local_array_swap(JitCtx *ctx, char const *code, char const *end,
         jit_emit_jump(asm, lbl_done);
 
         jit_emit_label(asm, lbl_slow);
-        jit_emit_mov(asm, BC_A0, BC_TY);
-        jit_emit_add_imm(asm, BC_A1, BC_LOC, array_off);
-        jit_emit_add_imm(asm, BC_A2, BC_LOC, i_off);
-        jit_emit_add_imm(asm, BC_A3, BC_LOC, j_off);
-        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_swap_subscripts);
-        bc_emit_reentrant_call(ctx, BC_CALL);
+        bc_emit_swap_fallback(ctx, code + load_off, after_swap);
         if (fold_cursors) {
+                char const *mut_i = NULL;
+                char const *mut_j = NULL;
+                for (char const *q = after_swap; q < p; q = StepInstruction(q)) {
+                        if ((u8)*q == INSTR_MUT_ADD) {
+                                mut_i = StepInstruction(q);
+                        } else if ((u8)*q == INSTR_MUT_SUB) {
+                                mut_j = StepInstruction(q);
+                        }
+                }
+                ctx->ip = mut_i;
                 jit_emit_load_imm(asm, BC_S0, 0);
                 jit_emit_stp64(asm, BC_S0, BC_S0, BC_OPS, temporary_off);
                 jit_emit_stp64(
@@ -4228,6 +4321,7 @@ bc_try_local_array_swap(JitCtx *ctx, char const *code, char const *end,
                 jit_emit_mov(asm, BC_A3, BC_A2);
                 jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_mut_add);
                 bc_emit_reentrant_call(ctx, BC_CALL);
+                ctx->ip = mut_j;
                 jit_emit_mov(asm, BC_A0, BC_TY);
                 jit_emit_add_imm(asm, BC_A1, BC_LOC, j_off);
                 jit_emit_add_imm(asm, BC_A2, BC_OPS, temporary_off);
@@ -4333,6 +4427,7 @@ bc_try_local_array_get_assign(JitCtx *ctx, char const *code, char const *end,
         bc_emit_profiler_tick_at(ctx, code + subscript_off);
         bc_emit_profiler_tick_at(ctx, code + assign_off);
 #endif
+        ctx->ip = StepInstruction(code + subscript_off);
         dasm_State **asm = &ctx->asm;
         int array_off = array_local * VALUE_SIZE;
         int destination_off = destination * VALUE_SIZE;
@@ -4475,6 +4570,7 @@ bc_try_local_array_store_pop(JitCtx *ctx, char const *code, char const *end,
         bc_emit_profiler_tick_at(ctx, code + assign_off);
         bc_emit_profiler_tick_at(ctx, code + pop_off);
 #endif
+        ctx->ip = StepInstruction(code + assign_off);
         dasm_State **asm = &ctx->asm;
         int value_off = OP_OFF(ctx->sp - 1);
         int array_off = array_local * VALUE_SIZE;
@@ -4607,6 +4703,7 @@ bc_try_local_array_get(JitCtx *ctx, char const *code, char const *end,
         bc_emit_profiler_tick_at(ctx, code + index_off_bc);
         bc_emit_profiler_tick_at(ctx, code + subscript_off);
 #endif
+        ctx->ip = StepInstruction(code + subscript_off);
         dasm_State **asm = &ctx->asm;
         int array_off = array_local * VALUE_SIZE;
         int result_off = OP_OFF(ctx->sp);
@@ -4812,6 +4909,7 @@ bc_try_local_condition(JitCtx *ctx, char const *code, char const *end,
 #ifdef TY_PROFILER
         bc_emit_profiler_tick_at(ctx, code + branch_off);
 #endif
+        ctx->ip = StepInstruction(code + branch_off);
         dasm_State **asm = &ctx->asm;
         int lbl_slow = bc_next_label(ctx);
         int lbl_test = bc_next_label(ctx);
@@ -4869,6 +4967,7 @@ bc_try_local_subscript(JitCtx *ctx, char const *code, char const *end,
 #ifdef TY_PROFILER
         bc_emit_profiler_tick_at(ctx, code + subscript_off);
 #endif
+        ctx->ip = StepInstruction(code + subscript_off);
         dasm_State **asm = &ctx->asm;
         int result_off = OP_OFF(ctx->sp - 1);
         int index_off = local * VALUE_SIZE;
@@ -4998,6 +5097,7 @@ bc_try_local_int_jcmp(JitCtx *ctx, char const *code, char const *end,
         bc_emit_profiler_tick_at(ctx, code + operand_off);
         bc_emit_profiler_tick_at(ctx, code + cmp_off);
 #endif
+        ctx->ip = StepInstruction(code + cmp_off);
         bc_emit_int_local_jcmp(
                 ctx, left, right, immediate, op, lbl_target
         );
@@ -5219,6 +5319,7 @@ bc_try_local_int_imm_mut_pop(JitCtx *ctx, char const *code, char const *end,
         bc_emit_profiler_tick_at(ctx, code + mut_offset);
         bc_emit_profiler_tick_at(ctx, code + pop_offset);
 #endif
+        ctx->ip = StepInstruction(code + mut_offset);
         bc_emit_local_int_imm_mut_pop(ctx, target, op, value);
         JIT_OPT_APPLIED(ctx, JIT_OPT_FUSE_LOCAL_IMM_MUT);
         *ip = q + 1;
@@ -5275,7 +5376,7 @@ bc_emit_builtin_count(JitCtx *ctx)
 }
 
 static void
-bc_emit_arith(JitCtx *ctx, void *helper)
+bc_emit_arith_ex(JitCtx *ctx, void *helper, int fallback)
 {
         dasm_State **asm = &ctx->asm;
         int a_off = OP_OFF(ctx->sp - 2);
@@ -5300,12 +5401,14 @@ bc_emit_arith(JitCtx *ctx, void *helper)
         bool mixed_float = mixed_a_int || mixed_b_int;
 
         bool float_arith = (try_float || mixed_float)
-                        && (helper == (void *)jit_rt_add
-                         || helper == (void *)jit_rt_sub
-                         || helper == (void *)jit_rt_mul
-                         || helper == (void *)jit_rt_div);
+                        && (
+                                (helper == (void *)jit_rt_add)
+                             || (helper == (void *)jit_rt_sub)
+                             || (helper == (void *)jit_rt_mul)
+                             || (helper == (void *)jit_rt_div)
+                           );
 
-        int lbl_slow = bc_next_label(ctx);
+        int lbl_slow = (fallback >= 0) ? fallback : bc_next_label(ctx);
         int lbl_done = bc_next_label(ctx);
         int lbl_float = (try_int && float_arith) ? bc_next_label(ctx) : lbl_slow;
         bool reuse_types = try_int && float_arith;
@@ -5418,10 +5521,20 @@ bc_emit_arith(JitCtx *ctx, void *helper)
                 jit_emit_jump(asm, lbl_done);
         }
 
-        // Slow path
-        jit_emit_label(asm, lbl_slow);
-        bc_emit_binop_helper(ctx, helper); // sp--
+        if (fallback >= 0) {
+                jit_emit_jump(asm, lbl_slow);
+                ctx->sp--;
+        } else {
+                jit_emit_label(asm, lbl_slow);
+                bc_emit_binop_helper(ctx, helper);
+        }
         jit_emit_label(asm, lbl_done);
+}
+
+static void
+bc_emit_arith(JitCtx *ctx, void *helper)
+{
+        bc_emit_arith_ex(ctx, helper, -1);
 }
 
 static void
@@ -5775,6 +5888,8 @@ static void
 bc_emit_trampoline_signal(JitCtx *ctx, int status, int idx)
 {
         dasm_State **asm = &ctx->asm;
+
+        ctx->resume_offsets[idx - 1] = ctx->ip - code_of(ctx->func);
 
         // Load packed return value: (idx << 4) | reason
         i32 packed = JIT_PACK(status, idx);
@@ -6414,7 +6529,7 @@ bc_emit_inline_plan(JitCtx *ctx, TyInlinePlan const *plan, TyInlineKind kind,
                 {
                         int saved_sp = ctx->sp;
                         ctx->sp = scratch + depth;
-                        bc_emit_arith(ctx, (void *)jit_rt_div);
+                        bc_emit_arith_ex(ctx, (void *)jit_rt_div, lbl_slow);
                         ctx->sp = saved_sp;
                         depth--;
                         break;
@@ -7005,6 +7120,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 
         while (ip < end) {
                 int off = (int)(ip - code);
+                ctx->ip = StepInstruction(ip);
                 if (off >= 0 && off <= code_size) {
                         ctx->raw_dirty = ctx->cfg_dirty[off];
                 }
@@ -7157,6 +7273,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                                 ctx,
                                                 JIT_OPT_FUSE_LOCAL_SOURCE_MUT
                                         );
+                                        ctx->ip = StepInstruction(code + mut_offset);
                                         bc_emit_numeric_mut(
                                                 ctx, BC_LOC, n * VALUE_SIZE,
                                                 true, false, target, mut, source_class->i
@@ -7219,6 +7336,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                                 ctx,
                                                 JIT_OPT_FUSE_LOCAL_SOURCE_MUT
                                         );
+                                        ctx->ip = StepInstruction(ip);
                                         bc_emit_numeric_mut(
                                                 ctx, BC_OPS, OP_OFF(ctx->sp - 1),
                                                 false, false, n, (u8)ip[0], target_class->i
@@ -7424,9 +7542,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                                 ctx,
                                                 JIT_OPT_FUSE_CONST_SUBSCRIPT
                                         );
-#ifdef TY_PROFILER
-                                        bc_emit_profiler_tick_at(ctx, ip);
-#endif
+                                        EMIT_FUSED_TICK(ip);
                                         ip++; // consume SUBSCRIPT
 
                                         int con_off = OP_OFF(ctx->sp - 1);
@@ -7481,9 +7597,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                                 ctx,
                                                 JIT_OPT_FUSE_CONST_SUBSCRIPT
                                         );
-#ifdef TY_PROFILER
-                                        bc_emit_profiler_tick_at(ctx, ip);
-#endif
+                                        EMIT_FUSED_TICK(ip);
                                         ip++;
 
                                         int con_off = OP_OFF(ctx->sp - 1);
@@ -9716,7 +9830,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         // BC_RET has the jmp_buf pointer from jit_rt_push_try
                         jit_emit_mov(asm, BC_A0, BC_RET);
                         jit_emit_load_imm(asm, BC_CALL, (iptr)_setjmp);
-                        bc_emit_runtime_call(ctx, BC_CALL);
+                        bc_emit_call(ctx, BC_CALL);
 
                         // If _setjmp returned non-zero: exception was caught
                         // DoThrow has restored VM state and pushed [SENTINEL, exception]
@@ -9731,6 +9845,8 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 
                         // Exception path: reload stack and jump to catch label
                         jit_emit_label(asm, lbl_exc);
+                        jit_emit_load_imm(asm, BC_S0, (iptr)&JIT);
+                        jit_emit_str64(asm, BC_S0, BC_TY, OFF_TY_IP);
                         jit_emit_reload_stack(asm, ctx->bound);
 
                         // Set catch label sp: at catch, stack = try_sp + 2 (SENTINEL + exception)
@@ -12085,6 +12201,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 static void
 bc_free_cfg(JitCtx *ctx)
 {
+        xvF(ctx->sites);
         free(ctx->cfg_nodes);
         free(ctx->cfg_index);
         free(ctx->cfg_dirty);
@@ -12471,8 +12588,19 @@ jit_compile(Ty *ty, Value const *func)
                 return NULL;
         }
 
-        void *code = mmap(
-                NULL, final_size,
+        usize table_offset = (final_size + alignof (JitSite) - 1)
+                           & ~(alignof (JitSite) - 1);
+        usize mapping_size = sizeof (JitCode) + table_offset
+                           + vN(ctx.sites) * sizeof (JitSite)
+                           + ctx.call_site_count * sizeof (u32);
+        if (table_offset > UINT32_MAX) {
+                dasm_free(&asm);
+                bc_free_cfg(&ctx);
+                return NULL;
+        }
+
+        JitCode *meta = mmap(
+                NULL, mapping_size,
                 PROT_READ | PROT_WRITE,
 #ifdef MAP_JIT
                 MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT,
@@ -12482,14 +12610,33 @@ jit_compile(Ty *ty, Value const *func)
                 -1, 0
         );
 
-        if (code == MAP_FAILED) {
+        if (meta == MAP_FAILED) {
                 dasm_free(&asm);
                 bc_free_cfg(&ctx);
                 return NULL;
         }
 
-        dasm_encode(&asm, code);
+        void *code = meta + 1;
+        meta->size    = final_size;
+        meta->table   = table_offset;
+        meta->nsites  = vN(ctx.sites);
+        meta->nresume = ctx.call_site_count;
+
+        JitSite *sites = (void *)((char *)code + table_offset);
+        for (usize i = 0; i < vN(ctx.sites); ++i) {
+                sites[i] = v__(ctx.sites, i);
+                sites[i].pc = dasm_getpclabel(&asm, sites[i].pc);
+        }
+        memcpy(sites + vN(ctx.sites), ctx.resume_offsets,
+               ctx.call_site_count * sizeof *ctx.resume_offsets);
+
+        status = dasm_encode(&asm, code);
         dasm_free(&asm);
+        if (status != DASM_S_OK) {
+                munmap(meta, mapping_size);
+                bc_free_cfg(&ctx);
+                return NULL;
+        }
 
 #ifdef __APPLE__
         sys_icache_invalidate(code, final_size);
@@ -12497,7 +12644,11 @@ jit_compile(Ty *ty, Value const *func)
         __builtin___clear_cache(code, (char *)code + final_size);
 #endif
 
-        mprotect(code, final_size, PROT_READ | PROT_EXEC);
+        if (mprotect(meta, mapping_size, PROT_READ | PROT_EXEC) != 0) {
+                munmap(meta, mapping_size);
+                bc_free_cfg(&ctx);
+                return NULL;
+        }
 
 #if JIT_SCAN_LOG
         LOGX("JIT: compiled %s (%d params, %d bound, %zu bytes native)",

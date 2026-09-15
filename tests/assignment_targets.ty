@@ -1,7 +1,5 @@
 import json
-import path
-import sh (sh)
-import ty
+import support.process (FIXTURES, run)
 
 ns test
 
@@ -71,30 +69,18 @@ pub fn destructuring-reassignment() {
     assert(box.value == 23)
 }
 
-fn rejects(source: String, code: String) {
-    with tmp = path.tempdir() {
-        let file = path.Path("{tmp}/assignment.ty")
-        file.write(source)
-        let output, result = sh("{ty.executable} -c {file}", combineOutput=true)
-        if output == nil || result == nil {
-            throw AssertionError('command did not complete')
-        }
-        assert(result.status != 0, source)
-        assert(output.contains?(code), output)
-    }
+fn rejects(name: String, code: String) {
+    let source = FIXTURES / 'assignment' / "{name}.ty"
+    let result = run(['-c', str(source)])
+    assert(result.status != 0, "accepted invalid program: {name}")
+    assert(code in result.stderr, result.stderr)
 }
 
 pub fn invalid-destructuring() {
-    rejects('let %{"wrong": n} = %{1: 42}', '[not-subscriptable]')
-    rejects(
-        'let n: Int = 0\n(%{"value": $n}) = %{"value": "wrong"}',
-        '[assignment-type]'
-    )
-    rejects('let n: Int = 0\n(str ~> n) = 42', '[assignment-type]')
-    rejects('fn view(x: Int) { x }\nlet view ~> n = "wrong"', '[bad-call]')
-    rejects('fn view(x: Int) { x }\nlet view $~> n = nil', '[bad-call]')
-    rejects(
-        'fn bad(x: Dict[String, Int] | Int) { let %{"value": n} = x }',
-        '[union-subscript-coverage]'
-    )
+    rejects('key-type', '[not-subscriptable]')
+    rejects('value-type', '[assignment-type]')
+    rejects('view-result', '[assignment-type]')
+    rejects('view-argument', '[bad-call]')
+    rejects('nil-view-argument', '[bad-call]')
+    rejects('union-subscript', '[union-subscript-coverage]')
 }

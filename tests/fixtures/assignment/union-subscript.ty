@@ -1,0 +1,3 @@
+fn bad(x: Dict[String, Int] | Int) {
+    let %{'value': n} = x
+}

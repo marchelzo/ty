@@ -1,0 +1,87 @@
+fn pad(x: Int, width: Int = 4) -> String { "{x:{width}}" }
+
+fn tail(s: String) -> String { s[1;] }
+
+fn tails(words: Array[String]) -> Array[String] { words.map(&[1;]) }
+
+fn tally(words: Array[String]) -> Dict[String, Int] {
+    let counts = %{*: 0}
+    for w in words {
+        counts[w] += 1
+    }
+    counts
+}
+
+fn merged(base: Dict[String, Int]) -> Int {
+    let d = %{**base, *: #it}
+    let total = 0
+    for key, value in d {
+        total += value + #key
+    }
+    total + d['xyz'] + #d
+}
+
+fn literal-keys() -> Int {
+    let d = %{'q': 1, *: #it}
+    let total = 0
+    for key, value in d {
+        total += value + #key
+    }
+    total + d['xyz']
+}
+
+fn different-keys() -> Int {
+    let d = %{0: 1, false: 2, *: #str(it)}
+    let total = d['xyz'] + d[0] + d[false]
+    d.clear()
+    assert(d[0] == 1 && d[false] == 5)
+    total
+}
+
+fn variable-keys(key: String) -> Int {
+    let d = %{key: 1, *: #it}
+    d['xyz']
+}
+
+fn identity-default() -> Int | String {
+    let d = %{'q': 1, *: it}
+    d['xyz']
+}
+
+fn removed-key() -> Int {
+    let d = %{'q': 1, *: #it}
+    let n: Int = d['abc']
+    d.clear()
+    n + d['q'] + d['xyz']
+}
+
+fn descriptor(key: ?String) -> Int {
+    key == nil ? 2 : #key
+}
+
+assert(literal-keys() == 5)
+assert(different-keys() == 6)
+assert(variable-keys('q') == 3)
+assert(identity-default() == 'xyz')
+assert(removed-key() == 7)
+
+let fds = %{nil: 2, *: descriptor(it)}
+let key: String | nil = 'abc'
+let fd: Int = fds[key] ?? 0
+let none: Int = fds[nil] ?? 0
+fds.clear()
+assert(fds[nil] == 2)
+
+let contextual: Dict[String, Any] = %{*: descriptor(it)}
+assert(contextual['abc'] == 3)
+
+print(
+    pad(7),
+    pad(7, 2),
+    tail('abc'),
+    tails(['ab', 'c']),
+    tally(['a', 'b', 'a']),
+    merged(%{'q': 1}),
+    fd,
+    none
+)

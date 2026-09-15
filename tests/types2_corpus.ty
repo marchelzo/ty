@@ -1,0 +1,23 @@
+import path (tempdir)
+import support.process (ROOT, FIXTURES, run, type-env)
+
+ns test
+
+pub fn startup-corpus() {
+    with tmp = tempdir() {
+        let log = tmp / 'corpus.jsonl'
+        let source = (FIXTURES / 'types2' / 'startup.ty').read-text()
+        let result = run(['-c', '-e', source], type-env(%{
+            'TY_TYPES2_LOG': str(log),
+            'TY_TYPES2_TRACE_DEFERRED': '1',
+        }))
+        assert(result.status == 0, result.stderr)
+        let report = run([
+            str(ROOT / 'tools' / 'types2-corpus-summary.ty'),
+            '--strict',
+            '--classification', str(FIXTURES / 'types2' / 'corpus.json'),
+            str(log),
+        ], type-env())
+        assert(report.status == 0, "{report.stdout}\n{report.stderr}")
+    }
+}

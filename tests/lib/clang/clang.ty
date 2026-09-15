@@ -1,0 +1,262 @@
+import clang
+import ty
+import path (Path)
+
+ns test
+
+pub fn streaming-traversal-and-source-slices() {
+    let unit = clang.parse('visitor.c', source='int first(void) { return 1; } int second(void) { return first(); }')
+    defer unit.close()
+    let pairs = unit.cursor.descendants(main-file?=true)
+    assert(pairs.any?(p -> p.cursor.kind == clang.cursor-kind.RETURN_STMT && p.parent.kind == clang.cursor-kind.COMPOUND_STMT))
+    let names = []
+    unit.cursor.visit((node, parent) -> collect-declaration(node, names), main-file?=true)
+    assert(names == ['first', 'second'])
+    assert(unit.main-file.slice(4, 9) == 'first')
+    assert(unit.main-file.slice(9, 9) == '')
+    expect-source-error(() -> unit.main-file.slice(-1, 3))
+    expect-source-error(() -> unit.main-file.slice(4, 3))
+    expect-source-error(() -> unit.main-file.slice(0, unit.main-file.size + 1))
+}
+
+fn collect-declaration(node: _, names: Array) {
+    names.push(node.spelling)
+    false
+}
+
+pub fn macro-classification() {
+    let unit = clang.parse('macros.c', source='#define OBJECT 1\n#define CALL(x) (x)\nint value = CALL(OBJECT);\nint line = __LINE__;\n')
+    defer unit.close()
+    let definitions = unit.cursor.children().filter(c -> c.kind == clang.cursor-kind.MACRO_DEFINITION)
+    assert(definitions.find(c -> c.spelling == 'CALL').function-macro?)
+    assert(!definitions.find(c -> c.spelling == 'OBJECT').function-macro?)
+    assert(unit.cursor.children().find(c -> c.spelling == '__LINE__').builtin-macro?)
+}
+
+const SOURCE = 'typedef const unsigned long Count;
+struct Pair { int left; int right; };
+enum State { READY = 7, DONE };
+int values[3];
+int add(int a, int b) { return a + b; }
+int call(void) { return add(values[0], READY); }
+'
+
+fn find(unit, name) {
+    unit.cursor.children().find(c -> c.spelling == name)
+}
+
+pub fn ast-and-types() {
+    let unit = clang.parse('ast.c', source=SOURCE, args=['-std=c11'])
+    defer unit.close()
+    assert(unit.diagnostics == [])
+    assert(unit.spelling == 'ast.c')
+    assert(unit.cursor.kind-name == 'TranslationUnit')
+    let add = find(unit, 'add')
+    assert(add.kind-name == 'FunctionDecl')
+    assert(add.declaration? && add.definition?)
+    assert(add.display-name == 'add(int, int)')
+    assert(add.arguments().map(&.spelling) == ['a', 'b'])
+    assert(add.type.arguments().map(&.spelling) == ['int', 'int'])
+    assert(add.result-type.spelling == 'int')
+    assert(add.type.result == add.result-type)
+    assert(add.canonical == add)
+    assert(add.definition == add)
+    assert(add.semantic-parent == unit.cursor)
+    assert(add.lexical-parent == unit.cursor)
+    assert(add.usr != '')
+    let count = find(unit, 'Count').underlying-type
+    assert(count.const?)
+    assert(count.kind-name == 'ULong')
+    let pair = find(unit, 'Pair')
+    assert(pair.type.size == 8)
+    assert(pair.type.alignment == 4)
+    assert(pair.type.offset-of('right') == 32)
+    assert(pair.type.declaration == pair)
+    let values = find(unit, 'values').type
+    assert(values.array-size == 3)
+    assert(values.element.spelling == 'int')
+    assert(values.pointee == nil)
+    let state = find(unit, 'State')
+    assert(state.children().map(&.enum-value) == [7, 8])
+    assert(state.enum-type.size == 4)
+    let refs = [node for node in unit.cursor.walk(main-file?=true) if node.kind-name == 'DeclRefExpr']
+    assert(refs.find(c -> c.spelling == 'add').referenced == add)
+    assert(refs.all?(c -> c.location.main-file?))
+    assert([*add.walk(include-self?=false)].all?(c -> c != add))
+}
+
+pub fn files-locations-and-tokens() {
+    let source = '/* café λ */\nint answer = 42;\n'
+    let unit = clang.parse('utf8.c', source=source)
+    defer unit.close()
+    let file = unit.main-file
+    assert(file.contents == source)
+    assert(file.extent.text == source)
+    assert(file == unit.file('utf8.c'))
+    assert(unit.file('missing.h') == nil)
+    let answer = find(unit, 'answer')
+    let offset = '/* café λ */\nint '.size()
+    let loc = file.location(offset)
+    assert(loc == file.position(2, 5))
+    assert(loc == answer.location)
+    assert(loc.valid? && loc.main-file? && !loc.system-header?)
+    assert(loc.offset == offset)
+    assert(loc.spelling.offset == offset)
+    assert(loc.physical.offset == offset)
+    assert(loc.presumed == {filename: 'utf8.c', line: 2, column: 5})
+    assert(unit.cursor-at(loc) == answer)
+    let range = file.range(offset, offset + 6)
+    assert(range.text == 'answer')
+    assert(range == clang.SourceRange.between(loc, file.location(offset + 6)))
+    assert(range.tokens().map(&.spelling) == ['answer'])
+    let tokens = unit.tokens()
+    assert(tokens.map(&.spelling) == ['/* café λ */', 'int', 'answer', '=', '42', ';'])
+    assert(tokens[0].kind == clang.token-kind.COMMENT)
+    assert(tokens[0].text == '/* café λ */')
+    assert(tokens[2].cursor == answer)
+    assert(tokens[4].kind-name == 'literal')
+    assert(file.tokens(annotate?=false).all?(t -> t.cursor == nil))
+    ty.gc()
+    assert(tokens[2].text == 'answer')
+    assert(answer.extent.text == 'int answer = 42')
+}
+
+pub fn unsaved-includes-and-preprocessing() {
+    let source = '#include "fixture.h"\n#define TWICE(x) ((x) + (x))\n#if 0\nbroken C here\n#endif\nint f(void) { return TWICE(VALUE); }\n'
+    let directory = Path(__file__).parent.absolute
+    let header-name = str(directory / 'fixture.h')
+    let unit = clang.parse(
+        str(directory / 'virtual.c'),
+        source=source,
+        unsaved=%{header-name: '#define VALUE 9\nint header_value;\n'}
+    )
+    defer unit.close()
+    assert(unit.diagnostics == [])
+    let header = unit.file(header-name)
+    assert(header.contents == '#define VALUE 9\nint header_value;\n')
+    let nodes = unit.cursor.children()
+    let include = nodes.find(c -> c.kind-name == 'inclusion directive')
+    assert(include.included-file == header)
+    assert(nodes.any?(c -> c.kind-name == 'macro definition' && c.spelling == 'TWICE'))
+    assert(nodes.any?(c -> c.kind-name == 'macro expansion' && c.spelling == 'TWICE'))
+    assert(unit.main-file.skipped-ranges().any?(r -> 'broken C here' in r.text))
+    assert([*unit.cursor.walk(main-file?=true)].all?(c -> c.spelling != 'header_value'))
+}
+
+pub fn diagnostics-and-fix-its() {
+    let unit = clang.parse('broken.c', source='int f(void) { return 1 }\n')
+    defer unit.close()
+    let diagnostic = unit.diagnostics.find(&.error?)
+    assert(diagnostic.severity == clang.diagnostic-severity.ERROR)
+    assert('expected' in diagnostic.spelling)
+    assert('broken.c:1:' in diagnostic.formatted)
+    assert(diagnostic.location.file == unit.main-file)
+    let fix = diagnostic.fix-its.find(f -> f.text == ';')
+    assert(fix.range.valid?)
+    assert(fix.range.start.offset == fix.range.end.offset)
+    let at = fix.range.start.offset
+    let source = unit.main-file.contents
+    let corrected = Blob(source.bsplice(0, at))
+    corrected.push(fix.text)
+    corrected.push(source.bslice(at))
+    let fixed = clang.parse('fixed.c', source=corrected.str!())
+    defer fixed.close()
+    assert(fixed.diagnostics == [])
+}
+
+fn expect-closed(f) {
+    let caught? = false
+    try {
+        f()
+    } catch error: clang.ClosedError {
+        assert(error :: RuntimeError)
+        assert('closed' in error.what)
+        caught? = true
+    }
+    assert(caught?)
+}
+
+fn expect-source-error(f) {
+    let caught? = false
+    try {
+        f()
+    } catch error: clang.SourceError {
+        assert(error :: RuntimeError)
+        assert(error.what != '')
+        caught? = true
+    }
+    assert(caught?)
+}
+
+pub fn ownership-and-invalid-input() {
+    let index = clang.Index()
+    let a = index.parse('a.c', source='int a;')
+    let b = index.parse('b.c', source='int b;')
+    let cursor = find(a, 'a')
+    let token = a.tokens()[1]
+    let type = cursor.type
+    let location = cursor.location
+    index.close()
+    index.close()
+    assert(cursor.spelling == 'a')
+    assert(find(b, 'b').spelling == 'b')
+    expect-closed(() -> index.parse('c.c', source=''))
+    expect-source-error(() -> a.cursor-at(b.main-file.location(0)))
+    expect-source-error(() -> a.tokens(b.main-file.extent))
+    expect-source-error(() -> a.main-file.location(-1))
+    expect-source-error(() -> a.main-file.range(5, 1))
+    a.close()
+    a.close()
+    assert(a.closed?)
+    expect-closed(() -> cursor.spelling)
+    expect-closed(() -> type.spelling)
+    expect-closed(() -> location.offset)
+    expect-closed(() -> token.text)
+    assert(token.spelling == 'a')
+    b.close()
+    let caught? = false
+    try {
+        clang.parse('/no/such/directory/clang-test.c')
+    } catch error: clang.ParseError {
+        assert(error :: RuntimeError)
+        assert(error.filename == '/no/such/directory/clang-test.c')
+        assert('/no/such/directory/clang-test.c' in error.what)
+        caught? = error.code > 0
+    }
+    assert(caught?)
+}
+
+fn detached-cursor() {
+    find(clang.parse('retained.c', source='int retained;'), 'retained')
+}
+
+pub fn borrowed-objects-retain-owner() {
+    let cursor = detached-cursor()
+    defer cursor.unit.close()
+    ty.gc()
+    assert(cursor.spelling == 'retained')
+    assert(cursor.extent.text == 'int retained')
+    assert(cursor.type.spelling == 'int')
+}
+
+pub fn empty-source() {
+    let unit = clang.parse('empty.c', source='')
+    defer unit.close()
+    assert(unit.tokens() == [])
+    assert(unit.main-file.extent.text == '')
+    assert(unit.main-file.skipped-ranges() == [])
+}
+
+pub fn sliced-c-strings-and-presumed-locations() {
+    let filename = 'sliced.c-extra'.bslice(0, 8)
+    let argument = '-DVALUE=7-extra'.bslice(0, 9)
+    let source = '#line 90 "reported.c"\nint value = VALUE;'
+    let unit = clang.parse(filename, source=source, args=[argument])
+    defer unit.close()
+    assert(unit.diagnostics == [])
+    assert(unit.spelling == filename)
+    assert(unit.file(filename).contents == source)
+    let value = find(unit, 'value')
+    assert(value.location.line == 2)
+    assert(value.location.presumed == {filename: 'reported.c', line: 90, column: 5})
+}

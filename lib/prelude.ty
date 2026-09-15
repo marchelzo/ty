@@ -16,6 +16,7 @@ import ty.types as types
 
 use TokenData = { id: String, module: String }
               | { int: Int }
+              | { float: Float }
               | { str: String }
               | { comment: String }
 

@@ -1,0 +1,75 @@
+import pretty (Printer)
+import chalk (strip)
+import ty
+
+const escape-string = &escape
+
+ns test
+
+pub fn inferred-return-type() {
+    assert(str(typeof escape-string('x')) == 'String')
+
+    try {
+        __eval__('let result: Int = escape-string("x")')
+        assert(false, 'accepted a string result as Int')
+    } catch ex :: '[assignment-type]' in ex.what {
+        ;
+    }
+}
+
+pub fn deferred-overloaded-callbacks() {
+    fn replace(s, f) { s.sub(/./, f) }
+    fn replace-pattern(s, p) { s.sub(p, c -> c) }
+    fn replace-capture(s) { s.sub(/(.)/, c -> c[1]) }
+
+    assert(str(typeof replace('x', c -> c.byte(0))) == 'String')
+    assert(str(typeof replace-pattern('x', /./)) == 'String')
+    assert(str(typeof replace-capture('x')) == 'String')
+}
+
+pub fn escape-control-characters() {
+    let escape: String -> String = escape-string
+
+    assert(escape('plain') == 'plain')
+    assert(escape('\n\r\t"\\') == '\\n\\r\\t\\"\\\\')
+    assert(escape(chr(0)) == '\\x00')
+    assert(escape("\x01\x1f\x7f") == '\\x01\\x1f\\x7f')
+}
+
+
+pub fn invalid-utf8() {
+    let s = "é\x80\n\x00終\xff"
+    let escaped = 'é\\x80\\n\\x00終\\xff'
+    assert(escape-string(s) == escaped)
+    assert(Printer(color=false).print(s) == "\"{escaped}\"")
+}
+
+pub fn string-colors() {
+    if ty.color != 'always' || getenv('NO_COLOR') {
+        return
+    }
+    let colors = {str: 'green', quote: 'blue', escape: 'yellow', invalid: 'red'}
+    let s = "a\n\xffb"
+    let shown = Printer(colors=colors, color=true).print(s)
+    assert(strip(shown) == Printer(color=false).print(s))
+    assert("\x1b[32ma" in shown)
+    assert("\x1b[33m\\n" in shown)
+    assert("\x1b[31m\\xff" in shown)
+    assert("\x1b[32mb" in shown)
+    assert(shown.ends?("\x1b[0m"))
+
+    let legacy = Printer(colors={str: 'green', quote: 'blue'}, color=true).print(s)
+    assert(strip(legacy) == strip(shown))
+    assert("\x1b[38;2;216;166;87m\\n" in legacy)
+    assert("\x1b[38;2;234;105;98m\\xff" in legacy)
+}
+
+pub fn colored-layout() {
+    let xs = ["a\n\xffb", 'café', "\x00x"]
+    for width in 4..25 {
+        let plain = Printer(width=width, color=false).print(xs)
+        assert(strip(Printer(width=width, color=true).print(xs)) == plain)
+        let short = Printer(width=width, color=false, oneline=true).print(xs)
+        assert(strip(Printer(width=width, color=true, oneline=true).print(xs)) == short)
+    }
+}

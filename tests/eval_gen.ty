@@ -1,3 +1,5 @@
+import support.process (FIXTURES)
+
 ns test
 
 class Foo {
@@ -7,7 +9,7 @@ class Foo {
 }
 
 pub fn evgen() {
-    for f in Foo().foo('&upper') {
+    for f in Foo().foo((FIXTURES / 'eval-upper.ty').read-text()) {
         assert(f('pass') == 'PASS')
     }
 }

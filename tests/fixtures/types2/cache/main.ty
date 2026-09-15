@@ -1,0 +1,38 @@
+import cached_patterns
+import ini
+import path (Path)
+import ty.types as types
+
+cached_patterns.check-patterns()
+assert(cached_patterns.render('plain') == 'plain')
+assert(cached_patterns.render('upper', %{0: (s, rs) -> s.upper()}) == 'UPPER')
+assert(cached_patterns.nest(3) == [3])
+assert(cached_patterns.nest([3]) == [[3]])
+assert(cached_patterns.callback-bytes('ab') == 'a98')
+assert(str(typeof cached_patterns.callback-bytes('ab')) == 'String')
+assert(cached_patterns.callback-items([{value: 3}]) == [3])
+assert(cached_patterns.callback-items([{value: 'three'}]) == ['three'])
+let numbers: Array[Int] = cached_patterns.empty-array()
+let strings: Array[String] = cached_patterns.empty-array()
+numbers.push(3)
+strings.push('three')
+assert(numbers == [3])
+assert(strings == ['three'])
+let by-name: Dict[String, Int] = cached_patterns.empty-dict()
+let by-number: Dict[Int, String] = cached_patterns.empty-dict()
+by-name['three'] = 3
+by-number[3] = 'three'
+assert(by-name['three'] == 3)
+assert(by-number[3] == 'three')
+assert(str(typeof ini.parse) == '(s: String) -> DefaultDict[nil | String, Dict[String, String]]')
+assert(str(typeof ini.parse('')) == 'DefaultDict[nil | String, Dict[String, String]]')
+assert(Path('file.txt').suffix == '.txt')
+assert(str(typeof 'file.txt'.match(/(?<!^)\.[^.]+$/)) == 'nil | String')
+assert(str(typeof 'file.txt'.match(/(?<!^)\.[^.]+$/v)) == 'RegexMatch')
+assert(str(typeof 'a b'.split(/\s+/)) == 'Array[String]')
+assert(str(typeof 'a b'.scan(/\w+/)) == 'Array[String]')
+let method = types.info(typeof /abc/).methods.find(\_.name == 'test').type
+assert(types.show(method) == '(s: a) -> b where a.match? <: (Regex[0]) -> b')
+assert(types.show(types.type(method)) == types.show(typeof /abc/.test))
+assert(types.show(types.type(typeof cached_patterns.callback-items)) == types.show(typeof cached_patterns.callback-items))
+print('cached patterns: ok')

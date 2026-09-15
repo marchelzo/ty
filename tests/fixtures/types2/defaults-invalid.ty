@@ -1,0 +1,67 @@
+fn literal-key() {
+    let d = %{'q': 1, *: it}
+    let n: Int = d['xyz']
+    n
+}
+
+fn variable-key(key: String) {
+    let d = %{'q': 1, *: it}
+    let n: Int = d[key]
+    n
+}
+
+fn spread(base: Dict[String, Int]) {
+    let d = %{**base, *: it}
+    let n: Int = d['xyz']
+    n
+}
+
+fn bad-length() {
+    let d = %{1: 2, *: #it}
+    let n: Int = d[3]
+    n
+}
+
+fn removed-key() {
+    let d = %{0: 1, *: #it}
+    let length: Int = d['xyz']
+    d.clear()
+    length + d[0]
+}
+
+fn removed-alias() {
+    let d = %{'q': 1, *: it}
+    let alias = d
+    alias.clear()
+    let n: Int = d['q']
+    n
+}
+
+fn clear(d) {
+    d.clear()
+}
+
+fn passed-dictionary() {
+    let d = %{'q': 1, *: it}
+    clear(d)
+    let n: Int = d['q']
+    n
+}
+
+fn upper(key: String) -> String {
+    key.upper()
+}
+
+fn contextual-key() {
+    let d: Dict[Int, Any] = %{*: upper(it)}
+    d[0]
+}
+
+literal-key()
+variable-key('xyz')
+spread(%{'q': 1})
+bad-length()
+removed-key()
+removed-alias()
+passed-dictionary()
+contextual-key()

@@ -1,6 +1,12 @@
 import math (nan)
+import date (Instant)
 
 ns test
+
+pub fn integer-division-in-getter() {
+    let instant = Instant.from-epoch-milliseconds(1000)
+    assert(instant.epoch-seconds == 1)
+}
 
 class InlineNumeric {
     value: Float

@@ -1,0 +1,42 @@
+import path (Path)
+import sh (sh)
+import ty
+
+pub const ROOT = Path(__file__).parent.parent.parent
+pub const FIXTURES = ROOT / 'tests' / 'fixtures'
+
+pub use Result = {status: Int, stdout: String, stderr: String}
+
+pub fn run(args: [String], env: Dict[String, String] = %{}) -> Result {
+    let _, result = sh(
+        '',
+        shell=[ty.executable, '--color=never', *args],
+        env=%{**__env, 'NO_COLOR': '', **env},
+        chdir=str(ROOT),
+        timeoutMs=30000
+    )
+    if result == nil {
+        throw AssertionError("command did not complete: {args}")
+    }
+    assert(result.signal == nil, "command terminated by signal {result.signal}: {args}\n{result.stderr}")
+    return {
+        status: result.status,
+        stdout: result.stdout.split('======= profile by function =======')[0],
+        stderr: result.stderr,
+    }
+}
+
+pub fn type-env(overrides: Dict[String, String] = %{}) -> Dict[String, String] {
+    let asan = [__env['ASAN_OPTIONS'], 'intercept_strndup=0'].filter(\_ != nil).join(':')
+    return %{
+        'ASAN_OPTIONS': asan,
+        'TY_TYPES2': '1',
+        'TY_TYPES2_CACHE': '0',
+        'TY_TYPES2_CACHE_TRACE': '0',
+        'TY_TYPES2_LOG': '',
+        'TY_TYPES2_REPORT': '0',
+        'TY_TYPES2_TRACE_NODES': '0',
+        'TY_TYPES2_TRACE_DEFERRED': '0',
+        **overrides,
+    }
+}

@@ -429,6 +429,8 @@ static void jit_emit_prologue(dasm_State **Dst, int bound) {
         |  mov r13, rsi   // resume_idx (i32, zero-extended)
         |  mov r14, rdx   // args
         |  mov r15, rcx   // env
+        |  lea rax, [rsp-8]
+        |  mov [r8], rax
         // rbp = byte offset of fp into stack.items (survives realloc)
         // rbp = args - stack.items
         |  mov rax, [r12+OFF_TY_STACK+OFF_VEC_DATA]
@@ -577,6 +579,12 @@ static void jit_emit_add_imm(dasm_State **Dst, int dst, int src, int imm) {
 // --- Indirect call ---
 static void jit_emit_call_reg(dasm_State **Dst, int reg) {
         |  call Rq(reg)
+}
+
+static void
+jit_emit_runtime_call_reg(dasm_State **Dst, int reg)
+{
+        jit_emit_call_reg(Dst, reg);
 }
 
 // --- Compare register with register (sets flags for branch_eq/ne/lt/gt/le/ge) ---

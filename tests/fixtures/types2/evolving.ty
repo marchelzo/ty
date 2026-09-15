@@ -1,0 +1,111 @@
+class Cycler {
+    __n: Int
+
+    init(n: Int) {
+        __n = n
+    }
+
+    render() -> String { "cycler {__n}" }
+}
+
+tag Key[T] {
+    nice-name() -> String { "key" }
+}
+
+tag Text[T];
+
+use Label = String | Array[String | nil]
+
+fn plain-label(label: Label) -> String {
+    match label {
+        parts: Array[String | nil] => parts.remove(nil).join(),
+        part => part
+    }
+}
+
+fn label-width(label: Label, j: Int) -> Int {
+    match label {
+        (parts: Array[String | nil]) and (#parts > j) => #(parts[j] ?? ''),
+        (part: String) and (j == 0) => #part,
+        _ => 0
+    }
+}
+
+fn describe(ev: Key[{event: Int}] | Text[String]) -> String {
+    match ev {
+        Key({event: 1 or 2, *}) as key => "<{key.nice-name()}>",
+        Text(s) => s,
+        _ => ''
+    }
+}
+
+fn lookup(key: String | Int, table: Dict[String, Int]) -> Int {
+    if (key :: String) and let $found = table[key] {
+        return found
+    }
+    0
+}
+
+fn seconds(timeout: Int | nil) -> Float | nil {
+    match timeout {
+        -1 or nil => nil,
+        n         => n / 1.0e3
+    }
+}
+
+fn drive(keys: Array[String]) -> Array[String] {
+    let cycler = nil
+    let history: Array[Array[String]] = [['a']]
+    let out = []
+
+    for key, i in keys {
+        if key != 'tab' && cycler != nil {
+            out.push(cycler.render())
+            cycler = nil
+        }
+
+        match key {
+            'tab' => {
+                if cycler != nil {
+                    out.push(cycler.render())
+                } else {
+                    cycler = Cycler(i)
+                    out.push(cycler.render())
+                }
+            },
+
+            'join' => {
+                history[0] += [key]
+            },
+
+            _ => {}
+        }
+    }
+
+    out += history[0]
+    out
+}
+
+fn first-open(xs: Array[Int]) -> Int {
+    let found: ?Int = nil
+    for x in xs {
+        if found != nil {
+            return found
+        }
+        found = x
+    }
+    found ?? -1
+}
+
+print(
+    plain-label(['a', nil, 'b']),
+    label-width(['ab'], 0),
+    label-width('abc', 0),
+    describe(Key({event: 2})),
+    describe(Text('t')),
+    lookup('a', %{'a': 1}),
+    seconds(-1),
+    seconds(2000),
+    drive(['tab', 'tab', 'x', 'join']),
+    first-open([1, 2])
+)

@@ -1,0 +1,2 @@
+let present: Int = Some(1).some?
+let absent: Int = None.some?

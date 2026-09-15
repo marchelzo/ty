@@ -1,0 +1,9 @@
+fn shadowMin[...Ts](*xs: ...Ts) -> ...(Ts |)
+where (...(Ts |) <=> ...(Ts |)): Int {
+    return xs[0] as ...(Ts |)
+}
+
+let shadowPackGood: Int = shadowMin(1, 2)
+
+let shadowPackDynamic: _ = 1
+shadowMin(shadowPackDynamic, shadowPackDynamic)

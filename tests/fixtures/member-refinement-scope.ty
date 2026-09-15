@@ -1,0 +1,18 @@
+class Box {
+    value: Int | String
+}
+
+fn take-string(value: String) {}
+
+fn update(box: Box | nil) {
+    if box == nil {
+        return
+    }
+    box.value = 'scoped'
+    take-string(box.value)
+}
+
+fn bad(box: Box) {
+    update(box)
+    take-string(box.value)
+}

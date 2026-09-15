@@ -1,0 +1,43 @@
+import super.support.process (FIXTURES, run)
+
+ns test
+
+fn run-trace(mode: String, options: [String]) {
+    run([*options, str(FIXTURES / 'jit-backtrace.ty'), mode])
+}
+
+pub fn jit-backtraces-match-interpreter() {
+    for mode in [
+        'direct', 'fold', 'inline', 'resume', 'rethrow', 'generator',
+        'closure', 'recursive', 'subscript', 'swap', 'keyword', 'inline-float',
+        'recovered', 'mixed', 'nested-generator',
+    ] {
+        let interpreted = run-trace(mode, ['-j'])
+        let compiled = run-trace(mode, [])
+        assert(interpreted.status == 67)
+        assert('RuntimeError: uncaught exception:' in interpreted.stderr)
+        assert(compiled == interpreted, mode)
+    }
+}
+
+fn check-detailed-trace(mode: String, local: String) {
+    let interpreted = run-trace(mode, ['-jx'])
+    let compiled = run-trace(mode, ['-x'])
+    assert(interpreted.status == 67)
+    assert(local in compiled.stderr)
+    assert(compiled == interpreted, mode)
+}
+
+pub fn jit-detailed-backtraces-match-interpreter() {
+    check-detailed-trace('direct', 'x = 3')
+    check-detailed-trace('swap', 'tmp = 1')
+}
+
+pub fn jit-captured-and-live-backtraces-match-interpreter() {
+    for mode in ['caught', 'bt'] {
+        let interpreted = run-trace(mode, ['-j'])
+        let compiled = run-trace(mode, [])
+        assert(interpreted.status == 0)
+        assert(compiled == interpreted)
+    }
+}

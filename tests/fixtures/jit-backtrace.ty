@@ -1,0 +1,170 @@
+import ty
+
+fn leaf(x: Int) -> Int {
+    match x {
+        3 => throw 'trace',
+        _ => x,
+    }
+}
+
+fn middle(x: Int) -> Int {
+    x + leaf(x)
+}
+
+fn fold-step(x: Int, y: Int) -> Int {
+    middle(x) + middle(y)
+}
+
+fn direct() {
+    middle(3)
+}
+
+fn folded() {
+    (..5).fold(fold-step)
+}
+
+fn divide(x: Int, y: Int) -> Int {
+    x / y
+}
+
+fn inlined() {
+    divide(7, 0)
+}
+
+fn divide-float(x: Float, y: Float) -> Float {
+    x / y
+}
+
+fn inlined-float() {
+    divide-float(7.0, -0.0)
+}
+
+fn resumed() {
+    try {
+        leaf(3)
+    } catch 'trace' {
+        middle(3)
+    }
+}
+
+fn recovered() {
+    for ..4 {
+        try {
+            middle(3)
+        } catch 'trace' {
+            leaf(1)
+        }
+    }
+    middle(3)
+}
+
+fn interpreted() {
+    try {
+        middle(3)
+    } catch 'other' {
+        print(__trace__)
+    }
+}
+
+fn rethrown() {
+    try {
+        middle(3)
+    } catch 'other' {
+        leaf(2)
+    } finally {
+        leaf(1)
+    }
+}
+
+fn sequence*() {
+    yield 1
+    middle(3)
+}
+
+fn generated() {
+    for x in sequence() {
+        leaf(x)
+    }
+}
+
+fn nested-sequence*() {
+    for x in sequence() {
+        yield x
+    }
+}
+
+fn nested-generated() {
+    for x in nested-sequence() {
+        leaf(x)
+    }
+}
+
+fn closure() {
+    let x = 3
+    let call = fn () { middle(x) }
+    call()
+}
+
+fn recursive(n: Int) -> Int {
+    match n {
+        0 => leaf(3),
+        _ => recursive(n - 1) + n,
+    }
+}
+
+fn subscript(xs: [Int], i: Int) -> Int {
+    let x = xs[i]
+    x + 1
+}
+
+fn swap(xs: [Int], i: Int, j: Int) {
+    let tmp = xs[i]
+    xs[i] = xs[j]
+    xs[j] = tmp
+}
+
+class Caller {
+    call(x: Int = 3) -> Int {
+        middle(x)
+    }
+}
+
+fn keyword() {
+    Caller().call(x=3)
+}
+
+fn caught() {
+    try {
+        middle(3)
+    } catch 'trace' {
+        print(__trace__.map(&0))
+    }
+}
+
+fn inspect() {
+    ty.bt().map(|(_, name, file, line, col)| -> (name, file, line, col))
+}
+
+fn backtrace() {
+    print(inspect())
+}
+
+match argv[1] {
+    'direct'    => direct(),
+    'fold'      => folded(),
+    'inline'    => inlined(),
+    'inline-float' => inlined-float(),
+    'resume'    => resumed(),
+    'recovered' => recovered(),
+    'mixed'     => interpreted(),
+    'rethrow'   => rethrown(),
+    'generator' => generated(),
+    'nested-generator' => nested-generated(),
+    'closure'   => closure(),
+    'recursive' => recursive(40),
+    'subscript' => subscript([], 3),
+    'swap'      => swap([1], 0, 3),
+    'keyword'   => keyword(),
+    'caught'    => caught(),
+    'bt'        => backtrace(),
+}

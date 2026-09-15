@@ -1,0 +1,17 @@
+class Box {
+    value: Int
+
+    init(value: Int) {
+        self.value = value
+    }
+}
+
+let evaluated = __eval__('20 + 22')
+let spread = (1, *[2, 3])
+let box = Box(7)
+let dynamic-field = box.{'value'}
+let convert = __eval__('str')
+let converted = convert(evaluated)
+let same = evaluated == 42
+
+print(evaluated, spread, dynamic-field, converted, same)

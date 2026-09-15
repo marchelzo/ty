@@ -1,0 +1,186 @@
+import json
+import path (tempdir)
+import super.support.process (FIXTURES, run, type-env)
+
+ns test
+
+const VALID = [
+    'alias-basic', 'valid', 'overload-union', 'flow', 'class-operator',
+    'operator-constraints', 'pack-constraints', 'scoped-obligations',
+    'subscript-protocol', 'member-protocol', 'keyword-spread', 'match-coverage',
+    'recovery', 'deferred', 'nil-guards', 'loops', 'multi-values', 'evolving',
+    'contextual', 'defaults', 'repl', 'hierarchy', 'http', 'clap',
+    'open-operands', 'forward-calls', 'relations', 'gradual',
+]
+
+const INVALID = %{
+    'invalid': [],
+    'contracts': ['missing-trait-member', 'invalid-trait-member', 'invalid-override'],
+    'flow-invalidation': ['union-member-coverage', 'union-method-coverage'],
+    'loops-invalid': ['function-fallthrough', 'non-exhaustive-match'],
+    'multi-values-invalid': ['return-type'],
+    'nil-guards-invalid': ['union-method-coverage'],
+    'defaults-invalid': ['assignment-type', 'dictionary-default-key'],
+    'tag-getters-invalid': ['assignment-type'],
+}
+
+fn source(name: String) -> String {
+    str(FIXTURES / 'types2' / "{name}.ty")
+}
+
+fn matches(event, fields) -> Bool {
+    fields.items().all?(|(key, value)| -> event[key] == value)
+}
+
+fn has-event(events, fields) -> Bool {
+    events.any?(event -> matches(event, fields))
+}
+
+fn check-fields(event, fields) {
+    for (key, value) in fields.items() {
+        assert(event[key] == value, "{event['path'] ?? 'summary'}: {key}: expected {value}, got {event[key]}")
+    }
+}
+
+fn logged(name: String, options: Dict[String, String] = %{}) {
+    with tmp = tempdir() {
+        let log = tmp / 'events.jsonl'
+        let env = type-env(%{'TY_TYPES2_LOG': str(log), **options})
+        let result = run([source(name)], env)
+        let events = log.read-text().lines().filter(\#_ > 0).map(json.parse)
+        assert(events.all?(event -> event :: Dict && event['schema'] == 'ty.types2.log.v1'))
+        assert(has-event(events, %{'event': 'begin'}))
+        assert(has-event(events, %{'event': 'checkpoint'}))
+        assert(has-event(events, %{'event': 'finish', 'unit': 'prelude', 'pending_obligations': 0}))
+        assert(!has-event(events, %{'event': 'pending_obligation', 'unit': 'prelude'}))
+        assert(!has-event(events, %{'event': 'internal_error'}))
+        assert(!has-event(events, %{'event': 'abort'}))
+        return result, events
+    }
+}
+
+fn summary(events, name: String) {
+    let $finish = events.find(event -> matches(event, %{'event': 'finish', 'path': source(name)}))
+        or throw AssertionError("no finish event for {name}")
+    finish
+}
+
+fn check-counters(name: String, finish: Dict) {
+    match name {
+        'overload-union' => assert(finish['union_call_splits'] > 0),
+        'class-operator' => assert(finish['class_operator_declarations'] > 0),
+        'loops' => assert(finish['deferred_reasons']['spread-length'] > 0),
+        'deferred' => check-deferred-counters(finish),
+        _ => (),
+    }
+}
+
+fn check-deferred-counters(finish) {
+    assert(finish['deferred_nodes'] == 6)
+    assert(#finish['deferred_reasons'] == 5)
+    check-fields(finish['deferred_reasons'], %{
+        'dynamic-callee': 1,
+        'dynamic-operand': 1,
+        'dynamic-member-name': 1,
+        'unsafe-eval': 2,
+        'tuple-spread': 1,
+    })
+    check-fields(finish['deferred_classes'], %{
+        'runtime': 5, 'incomplete': 1, 'external': 0, 'recovery': 0,
+    })
+}
+
+fn check-valid(name: String) {
+    let disabled = run([source(name)], type-env(%{'TY_TYPES2': '0'}))
+    let result, events = logged(name)
+    assert(result.status == 0, "{name}: {result.stderr}")
+    assert(result == disabled, "checker changed program output: {name}")
+    assert(!has-event(events, %{'event': 'deferred'}))
+    let finish = summary(events, name)
+    check-fields(finish, %{
+        't2_errors': 0,
+        't2_warnings': name == 'match-coverage' ? 2 : 0,
+        'pending_obligations': 0,
+    })
+    check-counters(name, finish)
+}
+
+pub fn valid-programs() {
+    for name in VALID {
+        check-valid(name)
+    }
+}
+
+fn check-invalid(name: String, expected: [String]) {
+    let result, events = logged(name)
+    assert(result.status != 0, "accepted invalid program: {name}")
+    assert('CompileError' in result.stderr, result.stderr)
+    let codes = events.filter(\_['path'] == source(name)).map(\_['code'])
+    let found = name == 'flow-invalidation' ? expected.any?(\_ in codes)
+                                          : expected.all?(\_ in codes)
+    assert(found, "{name}: expected {expected}, got {codes}")
+    match name {
+        'flow-invalidation' => check-fields(summary(events, name), %{'t2_errors': 4}),
+        'defaults-invalid' => check-fields(summary(events, name), %{'t2_errors': 8}),
+        'tag-getters-invalid' => check-fields(summary(events, name), %{'t2_errors': 2}),
+        'nil-guards-invalid' => check-fields(summary(events, name), %{'t2_errors': 1}),
+        'multi-values-invalid' => check-fields(summary(events, name), %{'t2_errors': 2}),
+        'loops-invalid' => check-fields(summary(events, name), %{'t2_errors': 1, 't2_warnings': 1}),
+        _ => (),
+    }
+}
+
+pub fn invalid-programs() {
+    for (name, codes) in INVALID.items() {
+        check-invalid(name, codes)
+    }
+}
+
+pub fn unresolved-obligations() {
+    let result, events = logged('unresolved-obligations')
+    assert(result.status != 0, result.stderr)
+    let finish = summary(events, 'unresolved-obligations')
+    assert(finish['pending_obligations'] > 0)
+    let errors = events.filter(event -> matches(event, %{
+        'event': 'diagnostic',
+        'path': source('unresolved-obligations'),
+        'severity': 'error',
+        'code': 'unresolved-constraint',
+    }))
+    assert(#errors > 0)
+}
+
+pub fn match-diagnostics() {
+    let _, events = logged('match-coverage')
+    for code in ['unreachable-pattern', 'non-exhaustive-match'] {
+        assert(has-event(events, %{'path': source('match-coverage'), 'code': code}))
+    }
+}
+
+pub fn runtime-type-traces() {
+    let disabled = run([source('recovery')], type-env(%{'TY_TYPES2': '0'}))
+    let result, events = logged('recovery', %{'TY_TYPES2_TRACE_NODES': '1'})
+    assert(result == disabled)
+    let nodes = events.filter(\_['event'] == 'node_type')
+    let kinds = ['int', 'string', 'function', 'nominal']
+    assert(nodes.any?(event -> event['runtime_exact'] && event['runtime_kind'] in kinds))
+    assert(has-event(nodes, %{'construct': 'TYPE_OF', 'runtime_kind': 'type_value', 'runtime_exact': true}))
+}
+
+pub fn deferred-traces() {
+    let disabled = run([source('deferred')], type-env(%{'TY_TYPES2': '0'}))
+    let result, events = logged('deferred', %{'TY_TYPES2_TRACE_DEFERRED': '1'})
+    assert(result == disabled)
+    let deferred = events.filter(event -> event['event'] == 'deferred' && event['path'] == source('deferred'))
+    assert(has-event(deferred, %{'reason': 'unsafe-eval', 'class': 'runtime', 'line': 9, 'construct': 'EVAL'}))
+    let locations = [
+        ('tuple-spread', 10),
+        ('dynamic-member-name', 12),
+        ('dynamic-callee', 14),
+        ('dynamic-operand', 15),
+    ]
+    for (reason, line) in locations {
+        assert(has-event(deferred, %{'reason': reason, 'line': line}))
+    }
+    assert(has-event(deferred, %{'reason': 'tuple-spread', 'class': 'incomplete'}))
+}

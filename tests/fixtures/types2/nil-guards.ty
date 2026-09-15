@@ -1,0 +1,29 @@
+class Slot {
+    __value: String | nil
+
+    init() {
+        __value = nil
+    }
+
+    fill(text: String) {
+        __value = text
+    }
+
+    length() -> Int {
+        if __value != nil && __value.len() > 0 {
+            return __value.len()
+        }
+        0
+    }
+
+    upper() -> String {
+        if __value == nil {
+            return ''
+        }
+        __value.upper()
+    }
+}
+
+let slot = Slot()
+slot.fill('abc')
+print(slot.length(), slot.upper())

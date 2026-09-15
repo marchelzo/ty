@@ -1,0 +1,67 @@
+import os
+import path (Path, tempdir)
+import super.support.process (ROOT, FIXTURES, run, type-env)
+
+ns test
+
+const SOURCES = FIXTURES / 'types2' / 'cache'
+
+fn modules(tmp: Path) -> Path {
+    let modules = tmp / 'modules'
+    modules.mkdir()
+    for source in (ROOT / 'lib').ls() {
+        assert(os.symlink(str(source), str(modules / source.name)) == 0)
+    }
+    for source in (SOURCES / 'modules').ls() {
+        source.copy-into(modules)
+    }
+    modules
+}
+
+fn rejects(source: Path, flags: [String], env: Dict[String, String]) {
+    let result = run([*flags, str(source)], env)
+    assert(result.status != 0, "accepted invalid module: {source}")
+    assert('function-fallthrough' in result.stderr, result.stderr)
+    assert('rejected.ty:1' in result.stderr, result.stderr)
+    assert(result.stdout == '', result.stdout)
+    assert(!('types2 cache write rejected ' in result.stderr), result.stderr)
+}
+
+fn check-cache(flags: [String]) {
+    with tmp = tempdir() {
+        let library = modules(tmp)
+        let env = type-env(%{
+            'TY_LIBRARY_PATH': str(library),
+            'TY_TYPES2_CACHE': '1',
+            'TY_TYPES2_CACHE_TRACE': '1',
+            'TY_TYPES2_CACHE_DIR': str(tmp / 'cache'),
+        })
+        let args = [*flags, str(SOURCES / 'main.ty')]
+        let fresh = run(args, env)
+        let cached = run(args, env)
+        assert(fresh.status == 0, fresh.stderr)
+        assert(cached.status == 0, cached.stderr)
+        assert('types2 cache write cached_patterns ' in fresh.stderr, fresh.stderr)
+        assert('types2 cache restore cached_patterns ' in cached.stderr, cached.stderr)
+        assert(cached.stdout == "cached patterns: ok\n", cached.stdout)
+        assert(fresh.stdout == cached.stdout)
+        let path = run([*flags, '-c', str(library / 'path.ty')], env)
+        assert(path.status == 0, path.stderr)
+        check-rejections(library, flags, env)
+    }
+}
+
+fn check-rejections(library: Path, flags: [String], env: Dict[String, String]) {
+    for source in [library / 'rejected.ty', SOURCES / 'reject-direct.ty', SOURCES / 'reject-transitive.ty'] {
+        rejects(source, flags, env)
+        rejects(source, flags, env)
+    }
+}
+
+pub fn jit-cache() {
+    check-cache([])
+}
+
+pub fn interpreter-cache() {
+    check-cache(['-j'])
+}

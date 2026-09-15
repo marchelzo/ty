@@ -1,0 +1,2 @@
+import rejected
+print('transitive module executed')

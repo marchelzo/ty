@@ -1,0 +1,118 @@
+import ty
+import ty.types as types
+
+macro nul {
+    ty.String("\x00")
+}
+
+macro literal(expr) {
+    expr
+}
+
+macro string(expr) {
+    ty.String(ty.eval(expr))
+}
+
+let NulString = typeof string("a\x00b")
+
+class FormatEcho {
+    __fmt__(spec, width) {
+        spec
+    }
+}
+
+ns test
+
+pub fn embedded-nuls() {
+    assert("abc\x00def".size() == 7)
+    assert("abc\x00def".bytes() == [97, 98, 99, 0, 100, 101, 102])
+    assert("\x00abc".bytes() == [0, 97, 98, 99])
+    assert("abc\x00".bytes() == [97, 98, 99, 0])
+    assert("\x00\x00".bytes() == [0, 0])
+    assert("\u0000\U00000000".bytes() == [0, 0])
+    assert("é\x00λ".bytes() == [195, 169, 0, 206, 187])
+    assert("".size() == 0)
+}
+
+pub fn distinct-literals() {
+    assert("a\x00b" != "a\x00c")
+    assert("a\x00b" != 'a')
+    assert("\x00" != '')
+    assert("a\x00b" == "a\u0000b")
+}
+
+pub fn interpolation() {
+    let n = 42
+    assert("\x00{n}\x00end".bytes() == [0, 52, 50, 0, 101, 110, 100])
+    assert("abc\x00{n}def".bytes() == [97, 98, 99, 0, 52, 50, 100, 101, 102])
+    assert("{n}\x00".bytes() == [52, 50, 0])
+}
+
+pub fn adjacent-literals() {
+    assert(('a' nul nul 'b').bytes() == [97, 0, 0, 98])
+    assert(('a' "\x00b").bytes() == [97, 0, 98])
+    assert(("a\x00" 'b').bytes() == [97, 0, 98])
+    assert(("a\x00" "\x00b").bytes() == [97, 0, 0, 98])
+    assert(("\x00{1}\x00" "\x00{2}\x00").bytes() == [0, 49, 0, 0, 50, 0])
+}
+
+pub fn macro-round-trip() {
+    assert(literal("abc\x00def").bytes() == [97, 98, 99, 0, 100, 101, 102])
+    assert(literal(nul).bytes() == [0])
+    assert(literal("\x00{42}\x00").bytes() == [0, 52, 50, 0])
+    assert(ty.eval(ty.String("abc\x00def")).size() == 7)
+    assert(ty.eval(ty.SpecialString(["\x00", (ty.Int(42), nil), "\x00"])).bytes() == [0, 52, 50, 0])
+}
+
+pub fn language-string() {
+    fn parts(xs) {
+        xs
+    }
+
+    let xs = parts"\x00{42}\x00end"
+    assert(xs == ["\x00", (42, nil, 4), "\x00end"])
+}
+
+pub fn format-specifier() {
+    let echo = FormatEcho()
+    assert("{echo:\x00}".bytes() == [0])
+    assert("{echo:a\x00b   }".bytes() == [97, 0, 98])
+    assert("{echo:\x00{42}\x00   }".bytes() == [0, 52, 50, 0])
+}
+
+pub fn string-patterns() {
+    fn classify(s) {
+        match s {
+            string("a\x00b") => 1,
+            string("a\x00c") => 2,
+            string("\x00")   => 3,
+            'a'               => 4,
+            ''                => 5,
+            _                 => 0,
+        }
+    }
+
+    assert(classify("a\x00b") == 1)
+    assert(classify("a\x00c") == 2)
+    assert(classify("\x00") == 3)
+    assert(classify('a') == 4)
+    assert(classify('') == 5)
+    assert(classify("a\x00d") == 0)
+}
+
+pub fn token-values() {
+    let tokens = ty.tokens(__module__)
+    let strings = tokens.filter(\_.?type == 'string')
+    assert(strings.any?(\_.str.bytes() == [97, 98, 99, 0, 100, 101, 102]))
+}
+
+pub fn literal-types() {
+    let expected = types.String("a\x00b")
+    assert(types.type(expected) == expected)
+    assert(types.check(expected, types.String("a\x00b")))
+    assert(!types.check(expected, types.String("a\x00c")))
+    assert(!types.check(expected, types.String('a')))
+    assert("a\x00b" :: NulString)
+    assert(!("a\x00c" :: NulString))
+    assert(!('a' :: NulString))
+}

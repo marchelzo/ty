@@ -1,0 +1,5 @@
+fn view(x: Int) {
+    x
+}
+
+let view ~> n = 'wrong'

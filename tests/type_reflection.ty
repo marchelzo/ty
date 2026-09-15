@@ -1,0 +1,139 @@
+import ty
+import ty.types as types
+
+fn round-trip(type) {
+    let shown = types.show(type)
+    let reflected = types.type(type)
+    assert(types.show(reflected) == shown)
+    assert(types.show(reflected, color=true) == types.show(type, color=true))
+    assert(types.type(reflected) == reflected)
+}
+
+fn add-one(x) { x + 1 }
+fn length(x) { #x }
+fn read-index(x) { x[0] }
+fn write-index(x, value) { x[0] = value }
+fn read-field(x) { x.field }
+fn write-field(x, value) { x.field = value }
+fn keyword-call(f, kwargs) { f(**kwargs) }
+
+fn bounded[T](x: T) -> T where T: Int { x }
+fn ranged[N](x: Regex[N]) -> Regex[N] where N: (0..) { x }
+fn collected[...Ts](*xs: ...Ts) { xs }
+
+fn type-parameter(id, kind = 'quantified', name = nil) {
+    types.Var({id, kind, name})
+}
+
+ns test
+
+pub fn method-bounds() {
+    let method = types.info(typeof /abc/).methods.find(\_.name == 'test').type
+    let expected = '(s: a) -> b where a.match? <: (Regex[0]) -> b'
+    assert(types.show(method) == expected)
+    assert(types.show(typeof /abc/.test) == expected)
+    round-trip(typeof /abc/.test)
+    round-trip(method)
+
+    let types.Scheme({parameters, bounds, *}) = method
+    assert(#parameters == 2)
+    assert(#bounds == 1)
+    let types.MemberRead({name, subtype, supertype, *}) = bounds[0]
+    assert(name == 'match?')
+    assert(types.show(subtype) == 'a')
+    assert(types.show(supertype) == '(Regex[0]) -> a')
+}
+
+pub fn inferred-bounds() {
+    for type in [
+        typeof add-one,
+        typeof length,
+        typeof read-index,
+        typeof write-index,
+        typeof read-field,
+        typeof write-field,
+        typeof keyword-call
+    ] {
+        round-trip(type)
+    }
+}
+
+pub fn declared-bounds() {
+    round-trip(typeof bounded)
+    round-trip(typeof ranged)
+    assert('where a <: Int' in types.show(types.type(typeof bounded)))
+    assert('where a <: 0..' in types.show(types.type(typeof ranged)))
+}
+
+pub fn parameter-names-and-lower-bounds() {
+    let variable = type-parameter(42)
+    let named = type-parameter(42, name='T')
+    let spec = types.Scheme({
+        parameters: [named],
+        body: variable,
+        bounds: [types.Subtype({subtype: Int, supertype: variable})]
+    })
+    assert(types.show(spec) == 'T where Int <: T')
+    round-trip(spec)
+}
+
+pub fn parameter-kinds() {
+    round-trip(typeof collected)
+
+    for kind in ['row', 'pack'] {
+        let variable = type-parameter(42, kind)
+        let spec = types.Scheme({parameters: [variable], body: variable, bounds: []})
+        assert(types.type(spec) == spec)
+    }
+}
+
+pub fn substituted-bounds() {
+    let spec = types.type(typeof /abc/.test)
+    let types.Scheme({parameters, *}) = spec
+    let instantiated = types.inst(spec, [(parameters[0], String)])
+    let shown = types.show(instantiated)
+    assert('(s: String)' in shown)
+    assert('String.match? <: (Regex[0])' in shown)
+    round-trip(instantiated)
+}
+
+pub fn nested-bounds() {
+    let parameter = {
+        name: 'test',
+        type: types.type(typeof /abc/.test),
+        kind: 'positional-or-keyword',
+        required: true
+    }
+    let spec = types.Func({
+        parameters: [parameter],
+        result: types.type(typeof add-one)
+    })
+    let shown = types.show(spec)
+    assert('match?' in shown)
+    assert('+ 1' in shown)
+    round-trip(spec)
+}
+
+pub fn bounds-survive-gc() {
+    let spec = types.type(typeof /abc/.test)
+    ty.gc()
+    assert(types.show(spec) == '(s: a) -> b where a.match? <: (Regex[0]) -> b')
+    round-trip(spec)
+}
+
+pub fn invalid-type-specs() {
+    for (spec, message) in [
+        (types.Var(1), 'invalid type parameter'),
+        (types.Func([], [], Int), 'expected function type record'),
+        (types.Scheme({parameters: [], body: Int, bounds: [Int]}), 'invalid type bound'),
+        (types.Scheme({parameters: [type-parameter(1), type-parameter(1)], body: Int}), 'invalid type scheme'),
+        (types.Scheme({parameters: [type-parameter(1, 'wrong')], body: Int}), 'invalid type parameter kind')
+    ] {
+        try {
+            types.show(spec)
+            assert(false, message)
+        } catch ex :: message in ex.what {
+            ;
+        }
+    }
+}

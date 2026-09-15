@@ -1,0 +1,5 @@
+pub fn broken() -> Int {
+    'wrong'
+}
+
+print('rejected module executed')

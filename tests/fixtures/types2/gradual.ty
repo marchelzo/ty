@@ -1,0 +1,88 @@
+class Note { rank: Int; init(rank: Int) { self.rank = rank } }
+
+class Widget {
+    label: String | nil
+    on-change: Function | nil
+    hooks: Dict[String, _]
+    init() { label = nil; on-change = nil; hooks = %{} }
+
+    describe(prefix: String) -> String {
+        if label != nil {
+            print(prefix)
+            return prefix + label
+        }
+        prefix
+    }
+
+    fire(v: Int) -> Int {
+        if on-change { on-change(v) }
+        v
+    }
+
+    merge(k: 'width' | 'height', v: Int) -> Dict[String, _] {
+        hooks + %{k: v}
+    }
+
+    tag(ev: Int) -> String {
+        match ev {
+            n and n > 0 and label != nil => do {
+                let out = "{n}".trim()
+                print(out)
+                label + out
+            },
+            _ => ''
+        }
+    }
+}
+
+fn touch(x: Any) -> String {
+    "{x.rank}!"
+}
+
+fn accept(n: Note) -> Int { n.rank }
+
+fn clamp-both(a: Int, b: Int, h: Int) -> Int {
+    min(a, b).clamp(0, h) + max(a, b).clamp(0, h)
+}
+
+fn keep(focused: Note | nil) -> Array[Note] {
+    let path = [focused if focused != nil]
+    path
+}
+
+fn hold(cb: Function | nil) -> Int { cb != nil ? 1 : 0 }
+
+fn peek(w: Widget) -> Int {
+    if let $depth = w.?depth { 1 } else { 0 }
+}
+
+fn size(buf: Blob) -> Int {
+    buf.reserve(8)
+    buf.fill()
+    #buf
+}
+
+fn count() -> Int { registry.push(1); #registry }
+let __tls::registry: Array[Int] = []
+
+let anything: Array[Any] = [Note(4)]
+let handler = ev -> ev.rank
+let w = Widget()
+w.label = 'x'
+w.on-change = v -> v * 2
+
+print(
+    touch(anything[0]),
+    accept(anything[0]),
+    clamp-both(3, 9, 5),
+    keep(Note(1)).map(&.rank),
+    keep(nil),
+    hold(handler),
+    w.describe('a'),
+    w.fire(3),
+    w.merge('width', 7).len(),
+    w.tag(2),
+    peek(w),
+    size(Blob()),
+    count()
+)

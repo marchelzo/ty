@@ -1,0 +1,202 @@
+import ty
+
+macro identity(expr) {
+    expr
+}
+
+macro answer {
+    ty.Int(42)
+}
+
+fn reject(source, message) {
+    try {
+        __eval__(source)
+        assert(false, "accepted invalid docstring: {source}")
+    } catch Err(text) {
+        assert(message in text, text)
+    }
+}
+
+ns test
+
+pub fn dedent() {
+    let actual = """
+        first
+          second
+      third
+
+        last
+        """
+    let expected = '''
+        first
+          second
+      third
+
+        last
+        '''
+    assert(actual == expected)
+    assert(actual == 'first\n  second\nthird\n\nlast')
+}
+
+pub fn delimiters() {
+    assert("""
+        one " two "" quotes
+        """ == 'one " two "" quotes')
+    assert(""""
+        one " two "" three """ quotes
+        """" == 'one " two "" three """ quotes')
+    assert("""""
+        four """" quotes
+        """"" == 'four """" quotes')
+    assert(""""""
+        five """"" quotes
+        """""" == 'five """"" quotes')
+}
+
+pub fn empty-and-edge-lines() {
+    assert("""
+        """ == '')
+    assert("""   """ == '')
+    assert("""first
+        """ == 'first')
+    assert("""    first
+        """ == 'first')
+    assert("""
+
+        first
+
+        """ == '\nfirst\n')
+    assert("""
+first
+  second
+""" == 'first\n  second')
+}
+
+pub fn escapes() {
+    assert("""
+        abc\x00def
+        """.bytes() == [97, 98, 99, 0, 100, 101, 102])
+    assert("""
+        \u0000\U00000000
+        """.bytes() == [0, 0])
+    assert("""
+        first\n    escaped
+        \x20\x20next\n
+        """ == 'first\n    escaped\n  next\n')
+    assert("""
+        \{literal\} \"\"\"
+        """ == '{literal} """')
+    assert("""
+        first\<
+        last\<
+        """ == 'firstlast')
+}
+
+pub fn interpolation() {
+    let name = 'Ada'
+    let value = '\n  inner'
+    assert("""
+        Hello, {name}!
+          {42:04}
+        last
+        """ == 'Hello, Ada!\n  0042\nlast')
+    assert("""
+        head{value}
+          tail
+        """ == 'head\n  inner\n  tail')
+    assert("""
+        {name}{42}
+        """ == 'Ada42')
+}
+
+pub fn nested-strings() {
+    assert("""
+        {"quoted {42}"}
+        {"""
+            inner
+              line
+            """}
+        outer
+        """ == 'quoted 42\ninner\n  line\nouter')
+    assert("normal {"""
+        nested {42}
+        """}" == 'normal nested 42')
+    assert(""""
+        {"""
+            {""""
+                nested
+                """"}
+            """}
+        """" == 'nested')
+}
+
+pub fn multiline-expression() {
+    let actual = """
+        before {[
+            40,
+            2
+        ].sum()} after
+        end
+        """
+    assert(actual == 'before 42 after\nend')
+}
+
+pub fn adjacent-literals() {
+    assert(('a' """
+        b{42}
+        """ 'c') == 'ab42c')
+    assert(("""
+        a
+        """ """"
+        b
+        """") == 'ab')
+}
+
+pub fn macros() {
+    assert(identity("""
+        abc\x00{42}def
+        """).bytes() == [97, 98, 99, 0, 52, 50, 100, 101, 102])
+    assert("""
+        {answer} {answer}
+        """ == '42 42')
+}
+
+pub fn language-string() {
+    fn parts(xs) {
+        xs
+    }
+
+    let xs = parts"""
+        \x00{42}\x00end
+        """
+    assert(xs == ["\x00", (42, nil, 4), "\x00end"])
+}
+
+pub fn tabs-and-crlf() {
+    let actual = __eval__("\"\"\"\r\n\tfirst\r\n\t\tsecond\r\n\t\"\"\"")
+    let expected = __eval__("'''\r\n\tfirst\r\n\t\tsecond\r\n\t'''")
+    assert(actual == expected)
+    assert(actual == 'first\n\tsecond')
+    assert(__eval__("\"\"\"\n\r first\n  \"\"\"") == 'first')
+}
+
+pub fn malformed() {
+    reject('"""unterminated', 'unterminated docstring')
+    reject('"""text"""', 'illegal docstring terminator')
+    reject('"""\n  text\n  other """', 'illegal docstring terminator')
+    reject('""""\n  text\n  """', 'unterminated docstring')
+}
+
+pub fn preprocessor() {
+    #|if true
+    let s = """
+        selected {42}
+        """
+    #|else
+    let s = """"
+        skipped """ text
+        #|if false
+        """"
+    #|]
+    assert(s == 'selected 42')
+}

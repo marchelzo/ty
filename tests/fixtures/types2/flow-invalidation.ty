@@ -1,0 +1,48 @@
+fn captured-mutation() {
+    let value: String | nil = 'present'
+
+    fn clear() {
+        value = nil
+    }
+
+    if value != nil {
+        clear()
+        value.len()
+    }
+}
+
+fn later-assignment() {
+    let value = nil
+    value = 'present'
+    let read = fn () { value.len() }
+    value = nil
+    read()
+}
+
+fn repeated-assignment() {
+    let value = nil
+    let readers = []
+    for i in 0..2 {
+        value = 'present' if i == 0
+        readers.push(fn () { value.len() })
+    }
+    readers[0]()
+}
+
+fn recursive-mutation() {
+    let value = nil
+    value = 'present'
+
+    fn recurse(clear) {
+        if clear {
+            value = nil
+            return
+        }
+        if value != nil {
+            recurse(true)
+            value.len()
+        }
+    }
+
+    recurse(false)
+}
