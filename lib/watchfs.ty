@@ -151,8 +151,7 @@ pub class Watcher {
         for ev in __kq.events(timeout) {
             let fd = ev.ident
 
-            if fd in __dir-fds {
-                let dir = __dir-fds[fd]
+            if let $dir = __dir-fds[fd] {
                 for name in os.listdir("{dir}") {
                     let p = dir / name
                     if "{p}" not in __paths {
@@ -167,8 +166,7 @@ pub class Watcher {
                 continue
             }
 
-            if fd in __file-fds {
-                let p = __file-fds[fd]
+            if let $p = __file-fds[fd] {
                 let ff = ev.fflags
 
                 if ff & (kqueue.NOTE_DELETE | kqueue.NOTE_RENAME) {

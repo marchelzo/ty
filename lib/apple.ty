@@ -698,7 +698,7 @@ pub const kPasteboardClipboard = cfstr('com.apple.pasteboard.clipboard')
 
 
 pub class CFRef {
-    __ptr: Ptr[Any]
+    __ptr: ?Ptr[Any]
 
     init(ptr: Ptr[Any]) {
         __ptr = ptr
@@ -724,7 +724,7 @@ pub class CFRef {
 }
 
 pub class CGEvent : IntoPtr[Any] {
-    __ref: Ptr[Any]
+    __ref: ?Ptr[Any]
     __owned: Bool
 
     init(ref: ?Ptr[Any] = nil, owned: Bool = true) {
@@ -778,7 +778,7 @@ pub class CGEvent : IntoPtr[Any] {
         CGEventPostToPid(pid, __ref)
     }
 
-    __ptr__() { __ref }
+    __ptr__() { __ref ?? throw RuntimeError('CGEvent has been released') }
 
     __free__() {
         if __owned && __ref != nil {
@@ -816,7 +816,7 @@ pub fn scroll-event(dy: Int, dx: Int = 0, source: ?Ptr[Any] = nil) -> CGEvent {
 }
 
 pub class EventTap {
-    __tap: Ptr[Any]
+    __tap: ?Ptr[Any]
     __src: Ptr[Any]
     __closure: Ptr[Any]
 
@@ -1349,7 +1349,7 @@ pub ns audio {
     }
 
     pub class DeviceListener {
-        __callback: Ptr[Any]
+        __callback: ?Ptr[Any]
         __addr: AudioObjectPropertyAddress
         __queue: SharedQueue
 
@@ -1403,7 +1403,7 @@ pub ns audio {
 }
 
 pub class AudioQueue {
-    __queue: Ptr[Any]
+    __queue: ?Ptr[Any]
     __buffers: Array[Ptr[Any]]
     __callback: Ptr[Any]
     __format: AudioStreamBasicDescription
@@ -1548,7 +1548,7 @@ pub class AudioQueue {
 }
 
 pub class AudioOutput {
-    __unit: Ptr[Any]
+    __unit: ?Ptr[Any]
     __callback: Ptr[Any]
     __format: AudioStreamBasicDescription
     __running: Bool
@@ -1669,7 +1669,7 @@ pub class AudioOutput {
 }
 
 pub class ClipboardImage {
-    __data: Ptr[Any]
+    __data: ?Ptr[Any]
     __type: String
     __extension: String
 
@@ -1801,59 +1801,93 @@ C! libsystem fn {
                         unsigned long bufferSize, unsigned long long options);
 }
 
+pub use DirectoryEntryStat = {
+    dev: Int, ino: Int, mode: Int, nlink: Int, uid: Int,
+    size: Int, mtime: Float, blocks: Int
+}
+
+pub use DirectoryEntry = {
+    name: String, type: Int, allocated: Int, stat: ?DirectoryEntryStat
+}
+
 /**
- * List a directory using getattrlistbulk.
- *
- * Returns `(name, vnode-type, allocated-bytes)` records. Names `.` and `..`
- * are never returned. The allocation is the filesystem estimate and may
- * overstate bytes freed for APFS clones. An empty result also represents an
- * unreadable/unsupported directory, so callers should retain a portable
- * readdir/lstat fallback.
+ * List children with metadata for filesystem scans, without following symlinks.
+ * Missing metadata and mount/firmlink entries have stat=nil; use lstat for those.
+ * On an unsupported directory or a malformed/incomplete listing, returns [].
+ * Callers should retain a readdir fallback. APFS allocation is an estimate.
  */
 pub fn bulk-directory-entries(path: String, buffer-size: Int = 262144)
-        -> [{name: String, type: Int, allocated: Int}] {
+        -> Array[DirectoryEntry] {
     let fd = os.open(path, os.O_RDONLY)
     if fd == -1 { return [] }
     defer os.close(fd)
 
-    // ATTR_CMN_{NAME,OBJTYPE,RETURNED_ATTRS}, ATTR_{DIR,FILE}_ALLOCSIZE.
+    // Common: name, device, vnode type, mtime, owner, mode, flags, file ID.
+    let common = 0x0206840b
     let attrs = BulkAttrList(
         bitmapcount: 5,
         reserved: 0,
-        commonattr: 0x80000009,
+        commonattr: common | 0x80000000, // RETURNED_ATTRS
         volattr: 0,
-        dirattr: 0x00000008,
-        fileattr: 0x00000004,
+        dirattr: 0x0000000c, // MOUNTSTATUS, ALLOCSIZE
+        fileattr: 0x00000205, // LINKCOUNT, ALLOCSIZE, DATALENGTH
         forkattr: 0
     )
 
     let cap = max(4096, buffer-size)
     let buf = c.new(c.u8, cap)
     defer c.free(buf)
-    let out: [{name: String, type: Int, allocated: Int}] = []
+    let out: Array[DirectoryEntry] = []
+    let modes = [0, os.S_IFREG, os.S_IFDIR, os.S_IFBLK, os.S_IFCHR,
+                 os.S_IFLNK, os.S_IFSOCK, os.S_IFIFO]
 
     while true {
-        let count = getattrlistbulk(fd, attrs.get(), buf, cap, 0)
-        if count <= 0 { break }
+        // PACK_INVAL_ATTRS reserves all requested fields at fixed offsets.
+        // The returned masks still determine which values may be used.
+        let count = getattrlistbulk(fd, attrs.get(), buf, cap, 0x8)
+        if count < 0 { return [] }
+        if count == 0 { break }
         let off = 0
         for _ in ..count {
+            if off + 4 > cap { return [] }
             let record = buf + off
             let length = c.load(c.u32, record)
-            if length < 36 || off + length > cap { return out }
-            // Returned attributes occupy 20 bytes after the record length.
-            // The name attrreference is at +24 and is relative to itself.
+            if length < 76 || off + length > cap { return [] }
+            let returned-common = c.load(c.u32, record + 4)
+            let returned-dir = c.load(c.u32, record + 12)
+            let returned-file = c.load(c.u32, record + 16)
+            if (returned-common & 1) == 0 { return [] }
             let name-off = c.load(c.i32, record + 24)
             let name-len = c.load(c.u32, record + 28)
-            let vnode-type = c.load(c.u32, record + 32)
-            let alloc-off = 36 // getattrlistbulk records use 4-byte packing
-            let allocation = if length >= alloc-off + 8 {
-                c.load(c.i64, record + alloc-off)
-            } else { 0 }
-            if name-len > 0 && name-off >= 0 && 24 + name-off + name-len <= length {
-                let name = c.str(record + 24 + name-off, name-len - 1)
-                if name != '.' && name != '..' {
-                    out.push({name, type: vnode-type, allocated: max(0, allocation)})
+            let vnode-type = c.load(c.u32, record + 36)
+            let dir? = vnode-type == 2
+            // Directory and file groups are mutually exclusive, even with PACK_INVAL_ATTRS.
+            let fixed-size = dir? ? 88 : 96
+            if length < fixed-size || name-len < 1 || name-off < fixed-size - 24
+               || 24 + name-off + name-len > length { return [] }
+            let name = c.str(record + 24 + name-off, name-len - 1)
+            let allocation = c.load(c.i64, record + 80)
+            let metadata: ?DirectoryEntryStat = nil
+            if (returned-common & common) == common
+               && vnode-type > 0 && vnode-type < #modes
+               && ((dir? && (returned-dir & 0xc) == 0xc)
+                   || (!dir? && (returned-file & 0x205) == 0x205))
+               && (c.load(c.u32, record + 64) & 0x00800000) == 0
+               && (!dir? || c.load(c.u32, record + 76) == 0) {
+                metadata = {
+                    dev: c.load(c.i32, record + 32),
+                    ino: c.load(c.u64, record + 68),
+                    mode: modes[vnode-type] | c.load(c.u32, record + 60),
+                    nlink: dir? ? 1 : c.load(c.u32, record + 76),
+                    uid: c.load(c.u32, record + 56),
+                    size: dir? ? 0 : c.load(c.i64, record + 88),
+                    mtime: float(c.load(c.i64, record + 40))
+                         + float(c.load(c.i64, record + 48)) / 1.0e9,
+                    blocks: max(0, allocation) / 512
                 }
+            }
+            if name != '.' && name != '..' {
+                out.push({name, type: vnode-type, allocated: max(0, allocation), stat: metadata})
             }
             off += length
         }

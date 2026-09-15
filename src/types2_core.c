@@ -2365,7 +2365,6 @@ t2_record(
                         ty_free(parts);
                         return T2_TYPE_INVALID;
                 }
-
                 u64 payload = fields[i].presence;
                 if (fields[i].capability == T2_FIELD_WRITABLE) {
                         payload |= T2_FIELD_WRITABLE_BIT;
@@ -5338,73 +5337,56 @@ record_meet(T2Universe *universe, T2Type left, T2Type right)
         T2Type never = t2_primitive(universe, T2_TYPE_NEVER);
 
         while (ai < a_count || bi < b_count) {
-                T2Node const *af = (ai < a_count)
-                                 ? get_node(universe, a->children[ai])
-                                 : NULL;
-                T2Node const *bf = (bi < b_count)
-                                 ? get_node(universe, b->children[bi])
-                                 : NULL;
-                int comparison = (af == NULL) ? 1 : (bf == NULL) ? -1 : strcmp(
-                        af->text,
-                        bf->text
-                );
-                T2Node const *primary = (comparison <= 0) ? af : bf;
-                T2Node const *other   = (comparison == 0) ? bf : NULL;
-                bool other_exact = (comparison < 0) ? b_exact : (comparison > 0) ? a_exact : false;
+                T2Node const *af = (ai < a_count) ? get_node(universe, a->children[ai]) : NULL;
+                T2Node const *bf = (bi < b_count) ? get_node(universe, b->children[bi]) : NULL;
 
-                T2Presence primary_presence = (T2Presence)(
-                        primary->payload & T2_FIELD_PRESENCE_MASK
-                );
+                int comparison = (af == NULL) ?  1
+                               : (bf == NULL) ? -1
+                               :                 strcmp(af->text, bf->text);
+
+                T2Node const *primary = (comparison <= 0) ? af: bf;
+                T2Node const *other   = (comparison == 0) ? bf : NULL;
+
+                bool other_exact = (comparison < 0) ? b_exact
+                                 : (comparison > 0) ? a_exact
+                                 :                    false;
+
+                T2Presence primary_presence = (primary->payload & T2_FIELD_PRESENCE_MASK);
+
                 T2Presence other_presence = (other == NULL)
-                                          ? (other_exact
-                                             ? T2_PRESENCE_ABSENT
-                                             : T2_PRESENCE_UNKNOWN)
-                                          : (T2Presence)(
-                                                  other->payload & T2_FIELD_PRESENCE_MASK
-                                            )
-                ;
+                                          ? (other_exact ? T2_PRESENCE_ABSENT : T2_PRESENCE_UNKNOWN)
+                                          : (other->payload & T2_FIELD_PRESENCE_MASK);
                 T2Presence presence;
                 if (!meet_presence(primary_presence, other_presence, &presence)) {
                         ty_free(fields);
                         return never;
                 }
+
                 bool primary_writable = ((primary->payload & T2_FIELD_WRITABLE_BIT) != 0);
                 bool other_writable = (other != NULL)
                                    && ((other->payload & T2_FIELD_WRITABLE_BIT) != 0);
+
                 T2Type field_type = primary->children[0];
+
                 if (other != NULL && presence != T2_PRESENCE_ABSENT) {
                         if (primary_writable && other_writable) {
                                 if (
-                                        (
-                                                t2_subtype(universe, field_type, other->children[0])
-                                             != T2_RELATION_YES
-                                        )
-                                     || (
-                                             t2_subtype(universe, other->children[0], field_type)
-                                          != T2_RELATION_YES
-                                        )
+                                        (t2_subtype(universe, field_type, other->children[0]) != T2_RELATION_YES)
+                                     || (t2_subtype(universe, other->children[0], field_type) != T2_RELATION_YES)
                                 ) {
                                         ty_free(fields);
                                         return never;
                                 }
                         } else if (primary_writable || other_writable) {
-                                T2Type writable = primary_writable
-                                                ? field_type
-                                                : other->children[0];
-                                T2Type readonly = primary_writable
-                                                ? other->children[0]
-                                                : field_type;
+                                T2Type writable = primary_writable ? field_type : other->children[0];
+                                T2Type readonly = primary_writable ? other->children[0] : field_type;
                                 if (t2_subtype(universe, writable, readonly) != T2_RELATION_YES) {
                                         ty_free(fields);
                                         return never;
                                 }
                                 field_type = writable;
                         } else {
-                                field_type = t2_meet(
-                                        universe,
-                                        field_type,
-                                        other->children[0]
-                                );
+                                field_type = t2_meet(universe, field_type, other->children[0]);
                                 if (field_type == never) {
                                         if (presence == T2_PRESENCE_REQUIRED) {
                                                 ty_free(fields);
@@ -5414,14 +5396,13 @@ record_meet(T2Universe *universe, T2Type left, T2Type right)
                                 }
                         }
                 }
-
                 fields[count++] = (T2FieldSpec) {
-                        .name     = primary->text,
-                        .type     = field_type,
-                        .presence = presence,
-                        .capability = primary_writable || other_writable
-                                    ? T2_FIELD_WRITABLE
-                                    : T2_FIELD_READONLY
+                        .name       = primary->text,
+                        .type       = field_type,
+                        .presence   = presence,
+                        .capability = (primary_writable || other_writable)
+                                        ? T2_FIELD_WRITABLE
+                                        : T2_FIELD_READONLY
                 };
                 if (comparison <= 0) {
                         ai += 1;
@@ -5431,10 +5412,9 @@ record_meet(T2Universe *universe, T2Type left, T2Type right)
                 }
         }
 
-        T2RecordExactness exactness = a_exact || b_exact
-                                    ? T2_RECORD_EXACT
-                                    : T2_RECORD_OPEN;
         T2Type tail = T2_TYPE_INVALID;
+        T2RecordExactness exactness = (a_exact || b_exact) ? T2_RECORD_EXACT : T2_RECORD_OPEN;
+
         if (exactness == T2_RECORD_OPEN) {
                 T2Type a_tail = a->children[a_count];
                 T2Type b_tail = b->children[b_count];
@@ -5447,11 +5427,7 @@ record_meet(T2Universe *universe, T2Type left, T2Type right)
                 } else if (bn->kind == T2_TYPE_ROW_ANY) {
                         tail = a_tail;
                 } else {
-                        tail = t2_intersection(
-                                universe,
-                                (T2Type[]) { a_tail, b_tail },
-                                2
-                        );
+                        tail = t2_intersection(universe, (T2Type[]) {a_tail, b_tail}, 2);
                 }
         }
 
@@ -6416,26 +6392,19 @@ doc_fields(
         for (usize i = 0; i + 1 < node->arity; ++i) {
                 T2Node const *field = get_node(printer->universe, node->children[i]);
                 list_separator(printer, i);
-                if (
-                        decorated
-                     && ((field->payload & T2_FIELD_WRITABLE_BIT) == 0)
-                ) {
+                if (decorated && (field->payload & T2_FIELD_WRITABLE_BIT) == 0) {
                         text(printer, T2_TOKEN_KEYWORD, "const");
                         text(printer, T2_TOKEN_PUNCTUATION, " ");
                 }
-
-                text(printer, T2_TOKEN_FIELD, field->text);
                 if (decorated) {
                         switch ((T2Presence)(field->payload & T2_FIELD_PRESENCE_MASK)) {
-                        case T2_PRESENCE_OPTIONAL:
-                                text(printer, T2_TOKEN_PUNCTUATION, "?");
-                                break;
-                        case T2_PRESENCE_ABSENT: text(printer, T2_TOKEN_PUNCTUATION, "!"); break;
-                        case T2_PRESENCE_UNKNOWN: text(printer, T2_TOKEN_PUNCTUATION, "~"); break;
-                        case T2_PRESENCE_REQUIRED: break;
+                        case T2_PRESENCE_OPTIONAL:  text(printer, T2_TOKEN_PUNCTUATION, "?"); break;
+                        case T2_PRESENCE_ABSENT:    text(printer, T2_TOKEN_PUNCTUATION, "!"); break;
+                        case T2_PRESENCE_UNKNOWN:   text(printer, T2_TOKEN_PUNCTUATION, "~"); break;
+                        case T2_PRESENCE_REQUIRED:                                            break;
                         }
                 }
-
+                text(printer, T2_TOKEN_FIELD, field->text);
                 text(printer, T2_TOKEN_PUNCTUATION, ": ");
                 doc_type(printer, field->children[0], depth);
         }
@@ -6462,7 +6431,6 @@ doc_arguments(T2Printer *printer, T2Node const *node, unsigned depth)
                 list_separator(printer, i);
                 doc_type(printer, node->children[i], depth);
         }
-
         end_list(printer, T2_TOKEN_BRACKET, "]");
 }
 
@@ -6477,14 +6445,9 @@ static void
 doc_operand(T2Printer *printer, T2Type type, unsigned depth)
 {
         bool wrap = needs_parentheses(printer->universe, type);
-        if (wrap) {
-                text(printer, T2_TOKEN_PUNCTUATION, "(");
-        }
-
+        if (wrap) { text(printer, T2_TOKEN_PUNCTUATION, "("); }
         doc_type(printer, type, depth);
-        if (wrap) {
-                text(printer, T2_TOKEN_PUNCTUATION, ")");
-        }
+        if (wrap) { text(printer, T2_TOKEN_PUNCTUATION, ")"); }
 }
 
 static void
@@ -6504,7 +6467,6 @@ doc_arms(
                 text(printer, T2_TOKEN_PUNCTUATION, " ");
                 doc_operand(printer, node->children[i], depth);
         }
-
         close_container(printer);
         close_container(printer);
 }
@@ -6518,17 +6480,11 @@ doc_function(T2Printer *printer, T2Node const *node, unsigned depth)
         for (usize i = 0; i < parameter_count; ++i) {
                 T2Node const *parameter = get_node(printer->universe, node->children[i]);
                 list_separator(printer, i);
-                T2ParameterKind kind = (T2ParameterKind)(
-                        parameter->payload & T2_PARAMETER_KIND_MASK
-                );
+                T2ParameterKind kind = (parameter->payload & T2_PARAMETER_KIND_MASK);
                 bool variadic = (kind == T2_PARAMETER_POSITIONAL_REST)
                              || (kind == T2_PARAMETER_KEYWORD_REST)
                              || (kind == T2_PARAMETER_PACK);
-                bool optional = !variadic
-                             && (
-                                     (parameter->payload & T2_PARAMETER_REQUIRED) == 0
-                                )
-                ;
+                bool optional = !variadic && ((parameter->payload & T2_PARAMETER_REQUIRED) == 0);
                 if (kind == T2_PARAMETER_POSITIONAL_REST) {
                         text(printer, T2_TOKEN_PUNCTUATION, "*");
                 }
@@ -6539,10 +6495,10 @@ doc_function(T2Printer *printer, T2Node const *node, unsigned depth)
                         text(printer, T2_TOKEN_PUNCTUATION, "...");
                 }
                 if (parameter->text != NULL) {
-                        text(printer, T2_TOKEN_PARAMETER, parameter->text);
                         if (optional) {
                                 text(printer, T2_TOKEN_PUNCTUATION, "?");
                         }
+                        text(printer, T2_TOKEN_PARAMETER, parameter->text);
                         text(printer, T2_TOKEN_PUNCTUATION, ": ");
                         doc_type(printer, parameter->children[0], depth);
                 } else {
@@ -6558,14 +6514,10 @@ doc_function(T2Printer *printer, T2Node const *node, unsigned depth)
         text(printer, T2_TOKEN_FUNCTION, "->");
         text(printer, T2_TOKEN_PUNCTUATION, " ");
         doc_type(printer, node->children[parameter_count], depth);
-        T2Node const *yield = get_node(
-                printer->universe,
-                node->children[parameter_count + 1]
-        );
-        T2Node const *send = get_node(
-                printer->universe,
-                node->children[parameter_count + 2]
-        );
+
+        T2Node const *yield = get_node(printer->universe, node->children[parameter_count + 1]);
+        T2Node const *send = get_node(printer->universe, node->children[parameter_count + 2]);
+
         if (yield->kind != T2_TYPE_NEVER || send->kind != T2_TYPE_NIL) {
                 open_nest(printer);
                 line(printer);
