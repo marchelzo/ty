@@ -1677,6 +1677,7 @@ builtin_nominal_arity(int class_id)
         case CLASS_PTR:
         case CLASS_QUEUE:
         case CLASS_SHARED_QUEUE:
+        case CLASS_WORK_QUEUE:
         case CLASS_ITERABLE:
         case CLASS_ITER:
         case CLASS_REGEX:

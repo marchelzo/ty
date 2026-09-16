@@ -1099,12 +1099,14 @@ show_impl(
                 case VALUE_SHARED_QUEUE:
                 {
                         SharedQueue *q = v.shared_queue;
-                        usize n = _queue_count(q->head, q->tail, q->cap);
+                        usize n = shared_queue_count(q);
+                        char const *name = q->work ? "WorkQueue" : "SharedQueue";
                         if (color) {
                                 sxdf(
                                         &buf,
-                                        "%s<SharedQueue at %s%p%s (%zu items)>%s",
+                                        "%s<%s at %s%p%s (%zu items)>%s",
                                         TERM(96),
+                                        name,
                                         TERM(92),
                                         (void *)q,
                                         TERM(96),
@@ -1112,7 +1114,7 @@ show_impl(
                                         TERM(0)
                                 );
                         } else {
-                                sxdf(&buf, "<SharedQueue at %p (%zu items)>", (void *)q, n);
+                                sxdf(&buf, "<%s at %p (%zu items)>", name, (void *)q, n);
                         }
                         break;
                 }
@@ -2068,6 +2070,9 @@ ConstructPrimitive(Ty *ty, int class_id, int argc, Value *kwargs)
 
         case CLASS_SHARED_QUEUE:
                 return builtin_shared_queue(ty, argc, kwargs);
+
+        case CLASS_WORK_QUEUE:
+                return builtin_work_queue(ty, argc, kwargs);
 
         case CLASS_REGEX:
                 return builtin_regex(ty, argc, kwargs);

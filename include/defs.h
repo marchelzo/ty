@@ -30,6 +30,8 @@
 
 #define CAT(a, b) a ## b
 
+#define countof(x) (sizeof (x) / sizeof ((x)[0]))
+
 #define VA_COUNT_INNER(_1, _2, _3, _4, _5, _6, _7, _8, COUNT, ...) COUNT
 #define VA_COUNT(...) VA_COUNT_INNER(__VA_ARGS__, 8, 7, 6, 5, 4, 3, 2, 1, 0)
 

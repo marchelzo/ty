@@ -1082,8 +1082,22 @@ BUILTIN_FUNCTION(queue)
 
 BUILTIN_FUNCTION(shared_queue)
 {
-        ASSERT_ARGC("share-queue()", 0);
-        return SHARED_QUEUE(shared_queue_new(ty));
+        ASSERT_ARGC("SharedQueue()", 0);
+        return SHARED_QUEUE(shared_queue_new(ty, 1, false));
+}
+
+BUILTIN_FUNCTION(work_queue)
+{
+        ASSERT_ARGC("WorkQueue()", 0, 1);
+        i64 n = (argc == 0) ? 0 : INT_ARG(0);
+        if (n == 0) {
+                Value cpus = builtin_os_cpu_count(ty, 0, NULL);
+                n = (cpus.type == VALUE_INTEGER) ? min(cpus.z, 64) : 4;
+        }
+        if (n < 1 || n > 1024) {
+                bP("shard count must be between 1 and 1024");
+        }
+        return SHARED_QUEUE(shared_queue_new(ty, n, true));
 }
 
 BUILTIN_FUNCTION(int)

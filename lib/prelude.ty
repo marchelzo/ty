@@ -3854,6 +3854,8 @@ class SharedQueue[T] {
     init();
     #() -> Int;
     put(x: T) -> SharedQueue[T];
+    put-all(xs: Array[T]) -> SharedQueue[T];
+    take-up-to(n: Int) -> Array[T];
     try-take(timeout: Int | Float = 0) -> Some[T] | None;
     take() -> T;
     peek() -> T;
@@ -3861,6 +3863,24 @@ class SharedQueue[T] {
     len() -> Int;
     empty? -> Bool;
     clear() -> SharedQueue[T];
+    close() -> nil;
+    open? -> Bool;
+    to-array() -> Array[T];
+}
+
+class WorkQueue[T] {
+    init(shards: Int = 0);
+    #() -> Int;
+    put(x: T) -> WorkQueue[T];
+    put-all(xs: Array[T]) -> WorkQueue[T];
+    take-up-to(n: Int) -> Array[T];
+    try-take(timeout: Int | Float = 0) -> Some[T] | None;
+    take() -> T;
+    peek() -> T;
+    try-peek() -> Some[T] | None;
+    len() -> Int;
+    empty? -> Bool;
+    clear() -> WorkQueue[T];
     close() -> nil;
     open? -> Bool;
     to-array() -> Array[T];

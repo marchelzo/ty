@@ -65,6 +65,7 @@ static char const *BuiltinClassNames[] = {
         [CLASS_REGEXV]          = "RegexV",
         [CLASS_RE_MATCH]        = "RegexMatch",
         [CLASS_SHARED_QUEUE]    = "SharedQueue",
+        [CLASS_WORK_QUEUE]      = "WorkQueue",
         [CLASS_STRING]          = "String",
         [CLASS_TAG]             = "Tag",
         [CLASS_TUPLE]           = "Tuple",

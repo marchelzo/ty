@@ -27,8 +27,6 @@
 #define SAVE_(t, x) t x##_; memcpy(&(x##_), &(x), sizeof (x))
 #define RESTORE_(x) memcpy(&(x), &(x##_), sizeof (x))
 
-#define countof(x) (sizeof (x) / sizeof ((x)[0]))
-
 inline static usize
 P_ALIGN(void const *p)
 {

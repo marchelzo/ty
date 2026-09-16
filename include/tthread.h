@@ -306,6 +306,7 @@ typedef nsync_cv             TyCondVar;
 typedef nsync_note           TyNote;
 typedef nsync_counter        TyCounter;
 
+#define TY_MUTEX_INIT NSYNC_MU_INIT
 #define TY_RWLOCK_INIT NSYNC_MU_INIT
 
 #else /* !TY_USE_NSYNC */
@@ -316,6 +317,7 @@ typedef pthread_rwlock_t     TyRwLock;
 typedef void                *TyNote;
 typedef void                *TyCounter;
 
+#define TY_MUTEX_INIT PTHREAD_MUTEX_INITIALIZER
 #define TY_RWLOCK_INIT PTHREAD_RWLOCK_INITIALIZER
 
 #endif /* TY_USE_NSYNC */

@@ -554,13 +554,13 @@ struct queue {
 };
 
 struct shared_queue {
-        Value *items;
-        usize  head;
-        usize  tail;
-        usize  cap;
-        bool      open;
-        TyMutex   mutex;
-        TyCondVar cond;
+        struct queue_lane *lanes;
+        usize              nlanes;
+        bool               work;
+        atomic_bool        open;
+        _Atomic u64        event;
+        TyMutex            park;
+        TyCondVar          ready;
 };
 
 typedef struct target {
@@ -720,6 +720,8 @@ typedef struct ty {
         i32 eval_depth;
         u32 flags;
         u64 id;
+
+        usize queue_cursor;
 
         u64 prng[4];
 

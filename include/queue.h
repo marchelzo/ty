@@ -25,6 +25,7 @@ _queue_grow(Ty *ty, Value **items, usize *head, usize *tail, usize *cap)
                 new_items[i] = (*items)[(*head + i) % *cap];
         }
 
+        mF(*items);
         *items = new_items;
         *head = 0;
         *tail = n;
@@ -59,15 +60,8 @@ queue_new(Ty *ty)
         return mAo0(sizeof (Queue), GC_QUEUE);
 }
 
-inline static SharedQueue *
-shared_queue_new(Ty *ty)
-{
-        SharedQueue *q = mAo0(sizeof (SharedQueue), GC_SHARED_QUEUE);
-        TyMutexInit(&q->mutex);
-        TyCondVarInit(&q->cond);
-        q->open = true;
-        return q;
-}
+SharedQueue *shared_queue_new(Ty *ty, usize nlanes, bool work);
+void shared_queue_free(Ty *ty, SharedQueue *q);
 
 void queue_mark(Ty *ty, Queue *q);
 void shared_queue_mark(Ty *ty, SharedQueue *q);
@@ -90,13 +84,6 @@ queue_count(Queue *q)
         return _queue_count(q->head, q->tail, q->cap);
 }
 
-inline static usize
-shared_queue_count(SharedQueue *q)
-{
-        TyMutexLock(&q->mutex);
-        usize n = _queue_count(q->head, q->tail, q->cap);
-        TyMutexUnlock(&q->mutex);
-        return n;
-}
+usize shared_queue_count(SharedQueue *q);
 
 #endif

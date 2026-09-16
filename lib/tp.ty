@@ -1,13 +1,13 @@
 pub class ThreadPool[F: Function] {
     __f:       F
     __setup:   _
-    __queue:   SharedQueue[_]
+    __queue:   WorkQueue[_]
     __threads: Array[Thread[_]]
 
     init(n: Int, f: F, setup: _ = nil) {
         __f       = f
         __setup   = setup
-        __queue   = SharedQueue()
+        __queue   = WorkQueue(n)
         __threads = [Thread(cast(runThread), __f, __setup) for _ in ..n]
     }
 

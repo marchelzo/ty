@@ -1,0 +1,701 @@
+import math (inf, nan)
+import path (Path)
+
+pub tag OffsetDateTime, LocalDateTime, LocalDate, LocalTime;
+
+tag Scalar, Items, Fields, Tables;
+tag Implicit, Explicit, Dotted;
+
+ns syntax {
+    const INTEGER = /^[+-]?(?:0|[1-9](?:_?[0-9])*)\z/
+    const HEX     = /^0x[0-9A-Fa-f](?:_?[0-9A-Fa-f])*\z/
+    const OCTAL   = /^0o[0-7](?:_?[0-7])*\z/
+    const BINARY  = /^0b[01](?:_?[01])*\z/
+    const FLOAT   = /^[+-]?(?:0|[1-9](?:_?[0-9])*)
+        (?:
+            \.[0-9](?:_?[0-9])*(?:[eE][+-]?[0-9](?:_?[0-9])*)?
+          | [eE][+-]?[0-9](?:_?[0-9])*
+        )\z
+    /x
+
+    const DATE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}\z/
+    const TIME = /^[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?\z/
+    const LOCAL = /^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt\x20]
+        [0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?\z
+    /x
+    const OFFSET = /^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt\x20]
+        [0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?
+        (?:[Zz]|[+-][0-9]{2}:[0-9]{2})\z
+    /x
+
+    const UTF8 = /\A(?:
+          [\x00-\x7f]
+        | [\xc2-\xdf] [\x80-\xbf]
+        | \xe0 [\xa0-\xbf] [\x80-\xbf]
+        | [\xe1-\xec\xee\xef] [\x80-\xbf]{2}
+        | \xed [\x80-\x9f] [\x80-\xbf]
+        | \xf0 [\x90-\xbf] [\x80-\xbf]{2}
+        | [\xf1-\xf3] [\x80-\xbf]{3}
+        | \xf4 [\x80-\x8f] [\x80-\xbf]{2}
+    )*+/x
+}
+
+pub class ParseError < RuntimeError {
+    line: Int
+    column: Int
+
+    init(message: String, source: String, offset: Int) {
+        let before = source.bslice(0, offset)
+        line = before.count('\n') + 1
+        column = #before.split('\n')[-1] + 1
+        super("TOML: {message} at {line}:{column}")
+    }
+}
+
+class Table {
+    value: Dict
+    entries: Dict
+    kind: Any
+
+    init(kind = Implicit) {
+        value     = %{}
+        entries   = %{}
+        self.kind = kind
+    }
+
+    put(key, entry) {
+        entries[key] = entry
+        value[key] = match entry {
+            Tables(ts) => ts.map(&.value),
+            _          => entry.value,
+        }
+        entry
+    }
+}
+
+class Node {
+    start: Int
+    end: Int
+    value: Any
+    layout: Any
+}
+
+class Parser {
+    __source: String
+    __pos: Int
+    __depth: Int
+
+    init(source: String) {
+        __source = source
+        __pos    = 0
+        __depth  = 0
+    }
+
+    fail(message) {
+        throw ParseError(message, __source, __pos)
+    }
+
+    rest -> String { __source.bslice(__pos) }
+    peek -> String { __source.bslice(__pos, 1) }
+    done? -> Bool { __pos == __source.size() }
+
+    take(pattern: Regex[0]) -> ?String {
+        let $s = rest.match(pattern) or return nil
+        __pos += s.size()
+        s
+    }
+
+    eat(s: String) -> Bool {
+        if __source.bslice(__pos, s.size()) != s {
+            return false
+        }
+
+        __pos += s.size()
+        true
+    }
+
+    expect(s: String) {
+        eat(s) || fail("expected {s}")
+    }
+
+    space() { take(/^[ \t]+/) }
+
+    trivia() {
+        take(/^(?:[ \t\n]|\r\n|#[^\r\n]*)+/)
+    }
+
+    end-line() {
+        space()
+        take(/^#[^\r\n]*/)
+        done? || take(/^\r?\n/) || fail('expected a newline')
+    }
+
+    document() {
+        let prefix = __source.match(syntax.UTF8) ?? ''
+
+        if prefix.size() != __source.size() {
+            throw ParseError('invalid UTF-8', __source, prefix.size())
+        }
+
+        if let $bad = __source.match(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]|\r(?!\n)/v) {
+            throw ParseError('invalid control character', __source, bad.pre.size())
+        }
+
+        let root = Table(Explicit)
+        let current = root
+        eat(chr(0xfeff))
+        trivia()
+
+        while !done? {
+            current = statement(root, current)
+            end-line()
+            trivia()
+        }
+
+        Document(__source, root)
+    }
+
+    statement(root, current) {
+        match peek {
+            '[' => header(root),
+            _   => do {
+                binding(current)
+                current
+            },
+        }
+    }
+
+    key() {
+        let parts = [key-part()]
+        space()
+
+        while eat('.') {
+            space()
+            parts.push(key-part())
+            space()
+        }
+
+        parts
+    }
+
+    key-part() {
+        match peek {
+            '"', "'" => quoted(key?: true),
+            _        => take(/^[A-Za-z0-9_-]+/) ?? fail('expected a key'),
+        }
+    }
+
+    descend(table, key, header?) {
+        match table.entries[key] {
+            nil        => table.put(key, Table(header? ? Implicit : Dotted)),
+            t: Table   => open-table(t, header?),
+            Tables(ts) => header? ? ts[-1] : fail('cannot extend an array with a dotted key'),
+            _          => fail("cannot extend {key}"),
+        }
+    }
+
+    open-table(table, header?) {
+        if !header? && table.kind == Explicit {
+            fail('cannot redefine a table with a dotted key')
+        }
+
+        table
+    }
+
+    parent(table, parts, header?: Bool = false) {
+        parts[;-1].fold(table, (t, k) -> descend(t, k, header?))
+    }
+
+    binding(table) {
+        let parts = key()
+        expect('=')
+        space()
+        let target = parent(table, parts)
+        let name = parts[-1]
+
+        if name in target.entries {
+            fail("duplicate key {name}")
+        }
+
+        target.put(name, value())
+    }
+
+    header(root) {
+        expect('[')
+        let many? = eat('[')
+        space()
+        let parts = key()
+        expect(many? ? ']]' : ']')
+        let target = parent(root, parts, true)
+        let name = parts[-1]
+
+        match (many?, target.entries[name]) {
+            (true, nil)        => tables-last(target.put(name, Tables([Table(Explicit)]))),
+            (true, Tables(ts)) => append-table(target, name, ts),
+            (false, nil)       => target.put(name, Table(Explicit)),
+            (false, t: Table)  => declare-table(t),
+            _                 => fail("table {name} is already defined"),
+        }
+    }
+
+    append-table(target, name, tables) {
+        let table = Table(Explicit)
+        tables.push(table)
+        target.value[name].push(table.value)
+        table
+    }
+
+    declare-table(table) {
+        if table.kind != Implicit {
+            fail('table is already defined')
+        }
+
+        table.kind = Explicit
+        table
+    }
+
+    value() {
+        let start = __pos
+        __depth += 1
+
+        if __depth > 256 {
+            fail('values are nested too deeply')
+        }
+
+        let (value, layout) = match peek {
+            '"', "'" => (quoted(), Scalar),
+            '['      => array(),
+            '{'      => inline-table(),
+            _        => (atom(), Scalar),
+        }
+
+        __depth -= 1
+        Node(start, __pos, value, layout)
+    }
+
+    array() {
+        expect('[')
+        trivia()
+        let nodes = []
+
+        while !eat(']') {
+            nodes.push(value())
+            trivia()
+
+            if eat(']') {
+                break
+            }
+
+            expect(',')
+            trivia()
+        }
+
+        (nodes.map(&.value), Items(nodes))
+    }
+
+    inline-table() {
+        expect('{')
+        space()
+        let table = Table()
+
+        if eat('}') {
+            return (table.value, Fields(table))
+        }
+
+        while true {
+            binding(table)
+            space()
+
+            if eat('}') {
+                break
+            }
+
+            expect(',')
+            space()
+        }
+
+        (table.value, Fields(table))
+    }
+
+    quoted(key?: Bool = false) {
+        let quote = peek
+        expect(quote)
+        let multi? = !key? && eat(quote * 2)
+        let out = Blob()
+
+        if multi? {
+            take(/^\r?\n/)
+        }
+
+        while !done? {
+            let chunk = take(/^[^'"\\\r\n]+/) ?? ''
+            out.push(chunk)
+
+            if close-quote(quote, multi?, out) {
+                return out.str!()
+            }
+
+            quoted-char(quote, multi?, out)
+        }
+
+        fail('unterminated string')
+    }
+
+    close-quote(quote, multi?, out) {
+        if peek != quote {
+            return false
+        }
+
+        if !multi? {
+            return eat(quote)
+        }
+
+        let $run = take(quote == '"' ? (/^"+/) : /^'+/) or return false
+
+        if #run > 5 {
+            fail('too many closing quotes')
+        }
+
+        out.push(quote * (#run < 3 ? #run : #run - 3))
+        #run >= 3
+    }
+
+    quoted-char(quote, multi?, out) {
+        if done? {
+            fail('unterminated string')
+        }
+
+        match peek {
+            '\r', '\n' => newline(multi?, out),
+            '\\'       => out.push(quote == '"' ? escape(multi?) : consume()),
+            _          => out.push(consume()),
+        }
+    }
+
+    consume() {
+        let c = peek
+        __pos += 1
+        c
+    }
+
+    newline(multi?, out) {
+        if !multi? {
+            fail('newline in a single-line string')
+        }
+
+        take(/^\r?\n/)
+        out.push('\n')
+    }
+
+    escape(multi?) {
+        expect('\\')
+
+        if multi? && take(/^[ \t]*\r?\n[ \t\r\n]*/) != nil {
+            return ''
+        }
+
+        match consume() {
+            'b'  => chr(8),
+            't'  => '\t',
+            'n'  => '\n',
+            'f'  => chr(12),
+            'r'  => '\r',
+            '"'  => '"',
+            '\\' => '\\',
+            'u'  => unicode(4),
+            'U'  => unicode(8),
+            _    => fail('invalid escape sequence'),
+        }
+    }
+
+    unicode(width: Int) {
+        let digits = rest.bslice(0, width)
+
+        if #digits != width || !digits.match?(/^[0-9A-Fa-f]+$/) {
+            fail('invalid Unicode escape')
+        }
+
+        let n = int(digits, 16)
+
+        if n > 0x10ffff || (0xd800 <= n && n <= 0xdfff) {
+            fail('invalid Unicode scalar value')
+        }
+
+        __pos += width
+        chr(n)
+    }
+
+    atom() {
+        let raw = take(/^[^\s,\]\}#]+/) ?? fail('expected a value')
+
+        if raw.match?(syntax.DATE)
+        and let $time = take(/^ [0-9]{2}:[^\s,\]\}#]+/) {
+            raw = "{raw}{time}"
+        }
+
+        match raw {
+            'true'               => true,
+            'false'              => false,
+            'inf', '+inf'        => inf,
+            '-inf'               => -inf,
+            'nan', '+nan', '-nan' => nan,
+            _ :: syntax.INTEGER  => integer(raw, 10),
+            _ :: syntax.HEX      => integer(raw[2;], 16),
+            _ :: syntax.OCTAL    => integer(raw[2;], 8),
+            _ :: syntax.BINARY   => integer(raw[2;], 2),
+            _ :: syntax.FLOAT    => Float(raw.comb('_')),
+            _                    => temporal(raw),
+        }
+    }
+
+    integer(raw, base) {
+        int(raw.comb('_'), base) ?? fail('integer is outside the signed 64-bit range')
+    }
+
+    temporal(raw) {
+        let kind = match raw {
+            _ :: syntax.DATE   => LocalDate,
+            _ :: syntax.TIME   => LocalTime,
+            _ :: syntax.LOCAL  => LocalDateTime,
+            _ :: syntax.OFFSET => OffsetDateTime,
+            _                  => fail("invalid value {raw}"),
+        }
+
+        if kind != LocalTime {
+            valid-date?(raw) || fail('invalid date')
+        }
+
+        if kind != LocalDate {
+            valid-time?(kind == LocalTime ? raw : raw[11;]) || fail('invalid time')
+        }
+
+        kind(raw)
+    }
+}
+
+fn tables-last(tables) {
+    let Tables(ts) = tables
+    ts[-1]
+}
+
+fn valid-date?(s) {
+    let [year, month, day] = s[;10].split('-').map(int@(_, 10))
+    let leap? = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+    let days = [31, leap? ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    1 <= month && month <= 12 && 1 <= day && day <= days[month - 1]
+}
+
+fn valid-time?(s) {
+    let [hour, minute, second] = s[;8].split(':').map(int@(_, 10))
+    let offset? = match s.match(/[+-]([0-9]{2}):([0-9]{2})$/) {
+        [_, h, m] => int(h, 10) <= 23 && int(m, 10) <= 59,
+        _         => true,
+    }
+    hour <= 23 && minute <= 59 && second <= 59 && offset?
+}
+
+fn fits?(table, value) {
+    value :: Dict
+        && table.entries.keys() == value.keys()
+        && table.entries.items().all?(|(k, entry)| -> entry-fits?(entry, value[k]))
+}
+
+fn entry-fits?(entry, value) {
+    match (entry, value) {
+        (t: Table, _)          => fits?(t, value),
+        (Tables(ts), vs: Array) => #ts == #vs && ts.zip(vs).all?(|(t, v)| -> fits?(t, v)),
+        (Tables(_), _)         => false,
+        _                      => true,
+    }
+}
+
+fn bindings(table, value) {
+    table.entries.items().flatMap(|(k, entry)| -> entry-bindings(entry, value[k]))
+}
+
+fn entry-bindings(entry, value) {
+    match entry {
+        t: Table   => bindings(t, value),
+        Tables(ts) => ts.zip(value).flatMap(|(t, v)| -> bindings(t, v)),
+        n: Node    => [(n, value)],
+    }
+}
+
+fn stitch(source: String, start: Int, end: Int, edits: Array) -> String {
+    let out = Blob()
+    let pos = start
+
+    for (node, replacement) in edits {
+        out.push(source.bsplice(pos, node.start))
+        out.push(replacement)
+        pos = node.end
+    }
+
+    out.push(source.bsplice(pos, end))
+    out.str!()
+}
+
+fn same?(a, b) {
+    match (a, b) {
+        (x: Float, y: Float) and (x == 0.0 && y == 0.0)
+            => float-string(x) == float-string(y),
+        (x: Float, y: Float) => x == y || (x != x && y != y),
+        (x: Array, y: Array) => #x == #y && x.zip(y).all?(|(a, b)| -> same?(a, b)),
+        (x: Dict, y: Dict)   => x.keys() == y.keys() && x.items().all?(|(k, v)| -> same?(v, y[k])),
+        _                    => a == b,
+    }
+}
+
+fn render(source, node, value) {
+    match (node.layout, value) {
+        (Items(nodes), values: Array) => render-array(source, node, nodes, values),
+        (Fields(table), values: Dict) => render-table(source, node, table, values),
+        (Scalar, _) and same?(node.value, value) => source.bsplice(node.start, node.end),
+        _ => encode(value),
+    }
+}
+
+fn render-array(source, node, nodes, values) {
+    if #nodes != #values {
+        return encode(values)
+    }
+
+    let unused = [*nodes]
+    let edits = []
+
+    for value, i in values {
+        let old = unused.pluck(n -> same?(n.value, value))
+        let text = match old {
+            Some(n) => render(source, n, value),
+            _       => encode(value),
+        }
+        edits.push((nodes[i], text))
+    }
+
+    stitch(source, node.start, node.end, edits)
+}
+
+fn render-table(source, node, table, values) {
+    if !fits?(table, values) {
+        return encode(values)
+    }
+
+    let edits = bindings(table, values).map(|(n, v)| -> (n, render(source, n, v)))
+    stitch(source, node.start, node.end, edits.sort!(by=\_[0].start))
+}
+
+fn quote(s: String) {
+    let prefix = s.match(syntax.UTF8) ?? ''
+
+    if prefix.size() != s.size() {
+        throw ValueError('TOML strings must be valid UTF-8')
+    }
+
+    let body = s.sub(/[\x00-\x1f\x7f"\\]/, match {
+        '\t' => '\\t',
+        '\n' => '\\n',
+        '\r' => '\\r',
+        '"'  => '\\"',
+        '\\' => '\\\\',
+        c    => "\\u{ord(c):04x}",
+    })
+    "\"{body}\""
+}
+
+fn key-string(k) {
+    if !(k :: String) {
+        throw ValueError('TOML keys must be strings')
+    }
+
+    k.match?(/\A[A-Za-z0-9_-]+\z/) ? k : quote(k)
+}
+
+fn float-string(x) {
+    let s = "{x:.17g}".lower()
+    s.match?(/[.eE]|inf|nan/) ? s : "{s}.0"
+}
+
+fn temporal-string(kind, s: String) {
+    let value = try { Parser(s).temporal(s) } catch e: ParseError { throw ValueError("{e}") }
+
+    if value != kind(s) {
+        throw ValueError('TOML date/time does not match its tag')
+    }
+
+    s
+}
+
+fn encode(value) {
+    match value {
+        OffsetDateTime(s) => temporal-string(OffsetDateTime, s),
+        LocalDateTime(s)  => temporal-string(LocalDateTime, s),
+        LocalDate(s)      => temporal-string(LocalDate, s),
+        LocalTime(s)      => temporal-string(LocalTime, s),
+        s: String => quote(s),
+        true      => 'true',
+        false     => 'false',
+        x: Int    => "{x}",
+        x: Float  => float-string(x),
+        xs: Array => "[{xs.map(encode).join(', ')}]",
+        d: Dict   => "\{{d.items().map(|(k, v)| -> "{key-string(k)} = {encode(v)}").join(', ')}\}",
+        _         => throw ValueError("cannot encode {value} as TOML"),
+    }
+}
+
+pub class Document {
+    __source: String
+    __root: Table
+
+    init(source: String, root: Table) {
+        __source = source
+        __root = root
+    }
+
+    data -> Dict { __root.value }
+    [](key) { data[key] }
+    []=(key, value) { data[key] = value }
+    #() -> Int { #data }
+    __iter__() { data.__iter__() }
+    __str__() -> String { str() }
+
+    str() -> String {
+        if !fits?(__root, data) {
+            return dump(data)
+        }
+
+        let edits = bindings(__root, data).map(|(n, v)| -> (n, render(__source, n, v)))
+        stitch(__source, 0, __source.size(), edits.sort!(by=\_[0].start))
+    }
+
+    write(path: String | Path) {
+        Path(path).write(str())
+    }
+}
+
+pub fn parse(source: String) -> Document {
+    Parser(source).document()
+}
+
+pub fn load(path: String | Path) -> Document {
+    parse(Path(path).read-text() ?? '')
+}
+
+pub fn read(path: String | Path) -> Document { load(path) }
+
+pub fn dump(document: Document) -> String { document.str() }
+
+pub fn dump(data: Dict) -> String {
+    let out = Blob()
+
+    for k, v in data {
+        out.push("{key-string(k)} = {encode(v)}\n")
+    }
+
+    out.str!()
+}
+
+pub fn string(value: Document | Dict) -> String { dump(value) }
+
+pub fn write(value: Document | Dict, path: String | Path) {
+    Path(path).write(dump(value))
+}

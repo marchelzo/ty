@@ -1,4 +1,6 @@
 import os (sleep)
+import ty
+import support.queues as queues
 
 ns test
 
@@ -100,4 +102,60 @@ pub fn threaded_producer_consumer() {
 
     for threads { it.join() }
     assert(out.sort() == [*(i for ..6) for i in ..N].sort())
+}
+
+pub fn concurrent-gc() {
+    let q = SharedQueue()
+    let running = Atomic(1)
+
+    fn collect() {
+        while running.load() {
+            ty.gc()
+        }
+    }
+
+    fn produce() {
+        for i in ..128 {
+            q.put([i])
+        }
+    }
+
+    fn consume() {
+        for i in ..128 {
+            assert(q.peek() == [i])
+            assert(q.try-peek() == Some([i]))
+            assert(#q > 0)
+            assert(!q.empty?())
+            assert(q.to-array()[0] == [i])
+            assert(q.take() == [i])
+        }
+    }
+
+    let collector = Thread(collect)
+    defer {
+        running.store(0)
+        collector.join()
+    }
+
+    let consumer = Thread(consume)
+    let producer = Thread(produce)
+    assert(producer.join() == nil)
+    assert(consumer.join() == nil)
+    assert(q.empty?())
+}
+
+pub fn blocks-and-batches() {
+    queues.batches(SharedQueue())
+}
+
+pub fn close-waiters() {
+    queues.close-waiters(SharedQueue())
+}
+
+pub fn bulk-transfer-during-gc() {
+    queues.transfer(SharedQueue(), 3, 4, 128, 17)
+}
+
+pub fn ownership() {
+    queues.handoff(SharedQueue)
 }

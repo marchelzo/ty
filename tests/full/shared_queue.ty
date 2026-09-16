@@ -1,0 +1,20 @@
+import super.support.queues as queues
+
+ns test
+
+pub fn shared-queue-stress() {
+    for (writers, readers) in [(1, 1), (6, 1), (1, 6), (6, 6)] {
+        queues.transfer(SharedQueue(), writers, readers, 1024, 65)
+    }
+}
+
+pub fn work-queue-stress() {
+    for (writers, readers) in [(1, 1), (6, 1), (1, 6), (6, 6)] {
+        queues.transfer(WorkQueue(8), writers, readers, 1024, 65)
+    }
+}
+
+pub fn snapshots-and-clear() {
+    queues.snapshots-and-clear(SharedQueue())
+    queues.snapshots-and-clear(WorkQueue(8))
+}

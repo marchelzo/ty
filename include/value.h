@@ -48,6 +48,7 @@ enum {
         CLASS_TUPLE,
         CLASS_QUEUE,
         CLASS_SHARED_QUEUE,
+        CLASS_WORK_QUEUE,
         CLASS_MODULE,
         CLASS_PRIMITIVE = CLASS_MODULE,
         CLASS_ERROR,
@@ -1503,7 +1504,7 @@ ClassOf(Value const *v)
         case VALUE_BOOLEAN:           return CLASS_BOOL;
         case VALUE_BLOB:              return CLASS_BLOB;
         case VALUE_QUEUE:             return CLASS_QUEUE;
-        case VALUE_SHARED_QUEUE:      return CLASS_SHARED_QUEUE;
+        case VALUE_SHARED_QUEUE:      return v->shared_queue->work ? CLASS_WORK_QUEUE : CLASS_SHARED_QUEUE;
         case VALUE_ARRAY:             return CLASS_ARRAY;
         case VALUE_DICT:              return CLASS_DICT;
         case VALUE_TUPLE:             return CLASS_TUPLE;

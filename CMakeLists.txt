@@ -270,7 +270,9 @@ set(_src_files
   src/operators.c
   src/panic.c
   src/parse.c
+  src/qcache.c
   src/scope.c
+  src/shared_queue.c
   src/sqlite.c
   src/str.c
   src/table.c

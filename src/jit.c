@@ -6007,6 +6007,7 @@ bc_resolve_builtin_method(Class *cls, int member_id, int *value_type)
                 break;
 
         case CLASS_SHARED_QUEUE:
+        case CLASS_WORK_QUEUE:
                 func = get_shared_queue_method_i(member_id);
                 vtype = VALUE_SHARED_QUEUE;
                 break;

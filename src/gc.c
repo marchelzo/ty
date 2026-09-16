@@ -12,6 +12,7 @@
 #include "compiler.h"
 #include "itable.h"
 #include "chan.h"
+#include "queue.h"
 
 static GCRootSet ImmortalSet;
 
@@ -47,9 +48,7 @@ collect(Ty *ty, struct alloc *a)
                 break;
 
         case GC_SHARED_QUEUE:
-                mF(((Queue *)p)->items);
-                TyMutexDestroy(&((SharedQueue *)p)->mutex);
-                TyCondVarDestroy(&((SharedQueue *)p)->cond);
+                shared_queue_free(ty, p);
                 break;
 
         case GC_GENERATOR:

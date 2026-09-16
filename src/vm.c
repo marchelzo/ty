@@ -696,8 +696,11 @@ DoGC(Ty *ty)
         GCLOG("Trying to do GC. Used = %zu, DeadUsed = %zu", MemoryUsed, ty->group->DeadUsed);
 
         if (!TySpinLockTryLock(&ty->group->GCLock)) {
-                GCLOG("Couldn't take GC lock: calling WaitGC() on thread %llu", TID);
-                WaitGC(ty);
+                GCLOG("Waiting for GC lock on thread %llu", TID);
+                UnlockTy();
+                TySpinLockLock(&ty->group->GCLock);
+                TySpinLockUnlock(&ty->group->GCLock);
+                LockTy();
                 return;
         }
 
@@ -2149,11 +2152,10 @@ HoldingLock(Ty *ty)
 void
 NewThread(Ty *ty, Thread *t, Value *call, Value *name, bool isolated)
 {
-        UnlockTy();
-
         atomic_bool created = false;
-
+        Value thread = THREAD(t);
         NewThreadCtx *ctx = mrealloc(NULL, sizeof *ctx);
+
         *ctx = (NewThreadCtx) {
                 .ty = ty,
                 .ctx = call,
@@ -2169,6 +2171,9 @@ NewThread(Ty *ty, Thread *t, Value *call, Value *name, bool isolated)
         TyCondVarInit(&t->cond);
         t->alive = true;
 
+        gP(&thread);
+        UnlockTy();
+
         int r = TyThreadCreate(&t->t, vm_run_thread, ctx);
         if (r != 0) {
                 zP("TyThreadCreate(): %s", strerror(r));
@@ -2179,6 +2184,7 @@ NewThread(Ty *ty, Thread *t, Value *call, Value *name, bool isolated)
         }
 
         LockTy();
+        gX();
 }
 
 static void
@@ -2436,15 +2442,15 @@ vm_run_thread(void *p)
                 TY_CATCH_END();
         }
 
+        xmF(ctx);
+        t->ctx = NULL;
+        mF(call);
+
 #ifndef _WIN32
         pthread_cleanup_pop(1);
 #else
         CleanupThread(ty);
 #endif
-
-        xmF(ctx);
-        t->ctx = NULL;
-        mF(call);
 
         TyMutexLock(&t->mutex);
         t->alive = false;
@@ -3672,7 +3678,7 @@ GetMember(Ty *ty, int member, bool try_missing, bool exec)
         case VALUE_SHARED_QUEUE:
                 func = get_shared_queue_method_i(member);
                 if (func == NULL) {
-                        n = CLASS_SHARED_QUEUE;
+                        n = ClassOf(&v);
                         goto ClassLookup;
                 }
                 v.type = VALUE_SHARED_QUEUE;
@@ -4181,7 +4187,7 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool maybe, bool exec)
         case VALUE_SHARED_QUEUE:
                 func = get_shared_queue_method_i(i);
                 if (func == NULL) {
-                        class = CLASS_SHARED_QUEUE;
+                        class = ClassOf(&v);
                         goto ClassLookup;
                 }
                 break;

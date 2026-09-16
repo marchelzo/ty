@@ -1,0 +1,147 @@
+import ty
+
+pub fn transfer(q, producers, consumers, n, batch = 1) {
+    let running = Atomic(1)
+
+    fn collect() {
+        while running.load() {
+            ty.gc()
+        }
+    }
+
+    fn produce(p) {
+        for (let start = 0; start < n; start += batch) {
+            q.put-all([[p, i, "{p}:{i}"] for i in start..min(start + batch, n)])
+        }
+    }
+
+    fn consume() {
+        let out = []
+        catch _: CanceledError {
+            return out
+        }
+        for (;;) {
+            out.push(q.take())
+            out.push(*q.take-up-to(batch - 1))
+        }
+    }
+
+    let collector = Thread(collect)
+    defer {
+        running.store(0)
+        collector.join()
+    }
+
+    let readers = [Thread(consume) for ..consumers]
+    let writers = [Thread(produce, p) for p in ..producers]
+    writers.each(&join)
+    q.close()
+
+    let actual = [*it.join() for readers]
+    running.store(0)
+    if readers == 1 and type(q) == SharedQueue {
+        for p in ..producers {
+            assert(actual.filter(\_[0] == p).map(&1) == [i for i in ..n])
+        }
+    }
+    let expected = [[p, i, "{p}:{i}"] for p in ..producers for i in ..n].sort()
+    assert(actual.sort() == expected)
+    assert(q.empty?)
+}
+
+pub fn close-waiters(q) {
+    let ready = SharedQueue()
+
+    fn take() {
+        ready.put(nil)
+        catch _: CanceledError {
+            return true
+        }
+        q.take()
+        false
+    }
+
+    fn peek() {
+        ready.put(nil)
+        catch _: CanceledError {
+            return true
+        }
+        q.peek()
+        false
+    }
+
+    let readers = [Thread(f) for f in [take, peek, take, peek]]
+    for readers {
+        ready.take()
+    }
+    q.close()
+    assert(readers.map(&join) == [true, true, true, true])
+}
+
+pub fn batches(q) {
+    for ..3 {
+        let xs = [[i] for i in ..257]
+        q.put-all(xs)
+        assert(#q == #xs)
+        assert(q.take-up-to(0) == [])
+        assert(q.take-up-to(65) == xs[;65])
+        assert(q.to-array() == xs[65;])
+        assert(q.peek() == xs[65])
+        assert(q.take-up-to(1000) == xs[65;])
+        assert(q.try-take() == None)
+    }
+    q.put-all([[i] for i in ..257])
+    q.clear()
+    ty.gc()
+    assert(q.empty?)
+    q.put([42])
+    assert(q.take() == [42])
+    q.close()
+    q.put([43])
+    assert(q.take() == [43])
+    assert(q.try-take(1.0) == None)
+}
+
+pub fn handoff(make) {
+    fn create() {
+        let q = make()
+        q.put-all([[i] for i in ..257])
+        q
+    }
+
+    for ..8 {
+        let q = Thread(create).join()
+        ty.gc()
+        assert(q.take-up-to(300) == [[i] for i in ..257])
+    }
+    ty.gc()
+}
+
+pub fn snapshots-and-clear(q) {
+    fn produce() {
+        for i in ..2048 {
+            q.put([i])
+        }
+        q.close()
+    }
+
+    fn consume() {
+        catch _: CanceledError {
+            return
+        }
+        for (;;) {
+            assert(#q.take() == 1)
+        }
+    }
+
+    let reader = Thread(consume)
+    let writer = Thread(produce)
+    for ..64 {
+        assert(q.to-array().all?(\#_ == 1))
+        q.clear()
+        ty.gc()
+    }
+    writer.join()
+    reader.join()
+    assert(q.empty?)
+}

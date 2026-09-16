@@ -12891,6 +12891,7 @@ compiler_init(Ty *ty)
         class_implement_trait(ty, CLASS_DICT,         CLASS_ITERABLE);
         class_implement_trait(ty, CLASS_QUEUE,        CLASS_ITERABLE);
         class_implement_trait(ty, CLASS_SHARED_QUEUE, CLASS_ITERABLE);
+        class_implement_trait(ty, CLASS_WORK_QUEUE,   CLASS_ITERABLE);
         class_implement_trait(ty, CLASS_GENERATOR,    CLASS_ITER);
         class_implement_trait(ty, CLASS_PTR,          CLASS_INTO_PTR);
         class_implement_trait(ty, CLASS_STRING,       CLASS_ITERABLE);

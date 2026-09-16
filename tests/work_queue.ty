@@ -1,0 +1,43 @@
+import support.queues as queues
+
+ns test
+
+pub fn batches() {
+    queues.batches(WorkQueue(4))
+}
+
+pub fn concurrent-gc() {
+    queues.transfer(WorkQueue(4), 3, 4, 128, 17)
+}
+
+pub fn close-waiters() {
+    queues.close-waiters(WorkQueue(4))
+}
+
+pub fn class-and-methods() {
+    let q = WorkQueue(1)
+    assert(type(q) == WorkQueue)
+    let put = q.put
+    let take = q.take
+    put(42)
+    assert(take() == 42)
+    assert('WorkQueue' in str(q))
+}
+
+pub fn ownership() {
+    queues.handoff(WorkQueue)
+}
+
+fn rejects-shards(n) {
+    catch _: RuntimeError {
+        return true
+    }
+    WorkQueue(n)
+    false
+}
+
+pub fn shard-count() {
+    assert(rejects-shards(-1))
+    assert(rejects-shards(1025))
+    assert(type(WorkQueue(1)) == WorkQueue)
+}
