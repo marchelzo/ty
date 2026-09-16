@@ -1,0 +1,88 @@
+import ffi as c (C!)
+import git
+import os
+import path (Path)
+
+let lib = c.open('git2', [nil, '1.9', '1.8', '1.7'])!
+C! lib fn {
+    int git_libgit2_opts(int option, ...);
+}
+
+const ROOT = Path(os.getenv('TY_GIT_OWNERSHIP_ROOT')!)
+const USER = 65533
+
+let (major, minor, patch) = git.version()
+print("libgit2 {major}.{minor}.{patch}")
+
+for level in [2, 3, 4] {
+    assert(git_libgit2_opts(5, (c.int, level), (c.ptr, str(ROOT).cstr())) == 0)
+}
+
+fn validation() -> Int {
+    let enabled = c.box(c.int)
+    defer c.free(enabled)
+    assert(git_libgit2_opts(35, (c.ptr, enabled)) == 0)
+    enabled[0]
+}
+
+fn validate(enabled: Int) -> nil {
+    assert(git_libgit2_opts(36, (c.int, enabled)) == 0)
+}
+
+fn as-user[T](uid: Int, f: () -> T) -> T {
+    let previous = os.geteuid()
+    assert(os.seteuid(uid) == 0)
+    defer assert(os.seteuid(previous) == 0)
+    f()
+}
+
+fn can-open() -> nil {
+    assert(os.geteuid() == 0)
+    let previous = validation()
+    defer validate(previous)
+
+    for enabled in [1, 0] {
+        validate(enabled)
+        for name in ['repo', 'repo/sub', 'bare.git', 'worktree', 'worktree/sub'] {
+            let path = ROOT / name
+            let ^repo = git.open(path)
+            assert(validation() == enabled)
+            let ^constructed = git.Repository(path)
+            assert(validation() == enabled && constructed.path == repo.path)
+            let $found = git.discover(path) or throw AssertionError('discovery failed')
+            let ^discovered = found
+            assert(validation() == enabled && discovered.path == repo.path)
+            assert(repo['HEAD'].summary == 'Initial')
+        }
+
+        let missing = ROOT / 'missing'
+        let error = try git.open(missing) catch e: git.NotFoundError { e }
+        assert(error :: git.NotFoundError)
+        assert('missing' in str(error) && validation() == enabled)
+        assert(git.discover(missing) == nil && validation() == enabled)
+    }
+}
+
+fn rejects-foreign-owner() -> nil {
+    assert(os.geteuid() == USER && validation() == 1)
+    for open in [git.open, git.Repository, git.discover] {
+        let error = try open(ROOT / 'repo') catch e: git.GitError { e }
+        assert(error :: git.GitError && error.code == -36, str(error))
+        assert(validation() == 1)
+    }
+}
+
+ns test
+
+pub fn effective-root-can-open-foreign-repositories() {
+    as-user(0, can-open)
+}
+
+pub fn ownership-checks-follow-effective-uid() {
+    let previous = validation()
+    defer validate(previous)
+    validate(1)
+    as-user(USER, rejects-foreign-owner)
+    as-user(0, can-open)
+    as-user(USER, rejects-foreign-owner)
+}

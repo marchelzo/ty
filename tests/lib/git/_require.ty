@@ -1,0 +1,7 @@
+import ffi as c
+import os
+
+if c.open('git2', [nil, '1.9', '1.8', '1.7']) == nil {
+    print('libgit2 1.7–1.9 is not installed')
+    os.exit(77)
+}

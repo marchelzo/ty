@@ -1,0 +1,325 @@
+import abbrev (abbrev)
+import path
+
+fn rejects(operation: () -> Any) -> nil {
+    try {
+        operation()
+        throw AssertionError('expected ValueError')
+    } catch error: ValueError {
+        nil
+    }
+}
+
+fn reference-part(rows: [[String]], row: [String], i: Int,
+                  keep-leaf?: Bool, adaptive?: Bool, global?: Bool) -> String {
+    let word = row[i]
+    let context = row[;i]
+    let terminal? = global?
+        ? rows.any?(other -> other[-1] == word)
+        : rows.any?(other -> other == row[;i + 1])
+    if keep-leaf? && terminal? {
+        return word
+    }
+
+    let peers = global? ? rows.flat() : [
+        other[i] for other in rows if #other > i && other[;i] == context
+    ]
+    for length in 1..#word {
+        let prefix = word[;length]
+        if peers.all?(other -> other == word || !other.starts?(prefix)) {
+            return adaptive? ? word[;2 * length - 1] : prefix
+        }
+    }
+    word
+}
+
+fn reference(strings: [String], keep-leaf?: Bool, adaptive?: Bool,
+             global?: Bool = false) -> [String] {
+    let rows = strings.map(&split('/'))
+    fn render(row: [String]) -> String {
+        let part = reference-part@(rows, row, _, keep-leaf?, adaptive?, global?)
+        [part(i) for i in ..#row].join('/')
+    }
+    rows.map(render)
+}
+
+ns test
+
+pub fn contextual-prefixes() {
+    let strings = [
+        'src/components/button/index.ts',
+        'src/components/banner/index.ts',
+        'src/controllers/button/index.ts'
+    ]
+    assert(abbrev(strings, boundary: /\//) == [
+        's/compo/but/index.ts', 's/compo/ban/index.ts', 's/contr/b/index.ts'
+    ])
+    assert(abbrev(strings, boundary: /\//, prefix-length: (_, n) -> n) == [
+        's/com/bu/index.ts', 's/com/ba/index.ts', 's/con/b/index.ts'
+    ])
+    let readable = (s, n) -> s.starts?('co') ? 4 : n
+    assert(abbrev(strings, boundary: /\//, prefix-length: readable) == [
+        's/comp/bu/index.ts', 's/comp/ba/index.ts', 's/cont/b/index.ts'
+    ])
+    let stable = (s, n) -> match s { /^co/ => 4, 'button' => 2, _ => n }
+    assert(abbrev(strings, boundary: /\//, prefix-length: stable) == [
+        's/comp/bu/index.ts', 's/comp/ba/index.ts', 's/cont/bu/index.ts'
+    ])
+}
+
+pub fn global-prefixes() {
+    let input = ['foo/bar/one', 'baz/two']
+    let expected = ['f/bar/one', 'baz/two']
+    assert(abbrev(input, boundary: /\//) == ['f/b/one', 'b/two'])
+    assert(abbrev(input, boundary: /\//, global: false) == ['f/b/one', 'b/two'])
+    assert(abbrev(input, boundary: /\//, global: true) == expected)
+    assert(abbrev(input.reverse(), boundary: /\//, global: true) == expected.reverse())
+    assert(abbrev([*input, input[0]], boundary: /\//, global: true)
+           == [*expected, expected[0]])
+    assert(abbrev(['foo/foo/one'], boundary: /\//, global: true) == ['f/f/one'])
+    assert(abbrev([], global: true) == [])
+    assert(abbrev(['', '/', '//'], boundary: /\//, global: true) == ['', '/', '//'])
+}
+
+pub fn global-policy-and-boundaries() {
+    let seen: [(String, Int)] = []
+    fn length(component: String, unique: Int) -> Int {
+        seen.push((component, unique))
+        unique
+    }
+
+    let input = ['foo/alpha/file', 'alpine::foo::other']
+    let actual = abbrev(input, boundary: /\/|::/, global: true, prefix-length: length)
+    assert(actual == ['fo/alph/file', 'alpi::fo::other'])
+    assert(seen.sort() == [('alpha', 4), ('alpine', 4), ('foo', 2)])
+    assert(abbrev(input, boundary: /\/|::/, global: true,
+                  prefix-length: (_, _) -> 1) == actual)
+}
+
+pub fn global-preservation() {
+    let input = ['root/shared/file', 'other/shared', 'shared/child']
+    let expected = ['r/shared/file', 'o/shared', 'shared/child']
+    assert(abbrev(input, boundary: /\//, global: true) == expected)
+    assert(abbrev(input.reverse(), boundary: /\//, global: true) == expected.reverse())
+    assert(abbrev(input, boundary: /\//, global: true, preserve-leaf: false)
+           == ['r/s/f', 'o/s', 's/c'])
+    assert(abbrev(input, boundary: /\//, global: true, preserve-leaf: false,
+                  preserve: \_ == 'shared') == ['r/shared/f', 'o/shared', 'shared/c'])
+    assert(abbrev(['root/bar', 'baz/two'], boundary: /\//, global: true)
+           == ['r/bar', 'baz/two'])
+}
+
+pub fn adaptive-growth() {
+    for (input, expected) in [
+        (['alpha', 'beta'], ['a', 'b']),
+        (['axxxx', 'ayyyy'], ['axx', 'ayy']),
+        (['abxxxxxx', 'abyyyyyy'], ['abxxx', 'abyyy']),
+        (['abcxxxxxx', 'abcyyyyyy'], ['abcxxxx', 'abcyyyy']),
+        (['abcatxx', 'abdatyy'], ['abcat', 'abdat']),
+        (['a', 'ab'], ['a', 'ab'])
+    ] {
+        assert(abbrev(input, preserve-leaf: false) == expected)
+    }
+}
+
+pub fn empty-single-and-repeated-inputs() {
+    assert(abbrev([]) == [])
+    assert(abbrev(['']) == [''])
+    assert(abbrev(['', '']) == ['', ''])
+    assert(abbrev(['hello']) == ['hello'])
+    assert(abbrev(['hello'], preserve-leaf: false) == ['h'])
+    let input = ['root/alpha/file', 'root/alpha/file', 'root/beta/file']
+    let saved = input.clone()
+    assert(abbrev(input, boundary: /\//) == ['r/a/file', 'r/a/file', 'r/b/file'])
+    assert(input == saved)
+}
+
+pub fn platform-default() {
+    let input = [['source', 'alpha', 'file'], ['source', 'beta', 'file']]
+    let expected = [['s', 'a', 'file'], ['s', 'b', 'file']]
+    assert(abbrev(input.map(&join(path.sep))) == expected.map(&join(path.sep)))
+}
+
+pub fn prefixes-of-siblings() {
+    let input = ['root/a/file', 'root/ab/file', 'root/abc/file', 'root/abd/file']
+    assert(abbrev(input, boundary: /\//) == [
+        'r/a/file', 'r/ab/file', 'r/abc/file', 'r/abd/file'
+    ])
+    assert(abbrev(['car', 'cat', 'cats'], preserve-leaf: false) == ['car', 'cat', 'cats'])
+}
+
+pub fn prefix-length-policy() {
+    let input = ['source/components/file', 'source/controllers/file']
+    assert(abbrev(input, boundary: /\//, prefix-length: (_, _) -> 2)
+           == ['so/com/file', 'so/con/file'])
+    assert(abbrev(input, boundary: /\//, prefix-length: (_, _) -> 4)
+           == ['sour/comp/file', 'sour/cont/file'])
+    assert(abbrev(input, boundary: /\//, prefix-length: (_, _) -> 100) == input)
+    assert(abbrev(['alpha', 'alpine'], preserve-leaf: false, prefix-length: (_, _) -> 1)
+           == ['alph', 'alpi'])
+}
+
+pub fn prefix-policy-arguments() {
+    let seen: [(String, Int)] = []
+    fn length(component: String, unique: Int) -> Int {
+        seen.push((component, unique))
+        unique
+    }
+
+    let input = ['root/alpha/file', 'root/alpine/file', 'root/alpha/other']
+    abbrev(input, boundary: /\//, prefix-length: length)
+    assert(seen.sort() == [('alpha', 4), ('alpine', 4), ('root', 1)])
+}
+
+pub fn preservation() {
+    let input = ['root/components/button/file', 'root/controllers/button/file']
+    let keep = s -> s in ['root', 'button']
+    assert(abbrev(input, boundary: /\//, preserve: keep) == [
+        'root/compo/button/file', 'root/contr/button/file'
+    ])
+    assert(abbrev(input, boundary: /\//, preserve: _ -> true) == input)
+    assert(abbrev(input, boundary: /\//, preserve-leaf: false) == [
+        'r/compo/b/f', 'r/contr/b/f'
+    ])
+    let competing = ['foobar/item', 'foobaz/item']
+    assert(abbrev(competing, boundary: /\//, preserve: \_ == 'foobar')
+           == ['foobar/item', 'foobaz/item'])
+}
+
+pub fn shared-leaf-and-parent() {
+    let input = ['source', 'source/components/file', 'source/controllers/file']
+    let expected = ['source', 'source/compo/file', 'source/contr/file']
+    assert(abbrev(input, boundary: /\//) == expected)
+    assert(abbrev(input.reverse(), boundary: /\//) == expected.reverse())
+    assert(abbrev(input, boundary: /\//, preserve-leaf: false)
+           == ['s', 's/compo/f', 's/contr/f'])
+}
+
+pub fn separators-and-empty-components() {
+    let input = ['/root//alpha/file/', '/root//beta/file/', '///', '', '/']
+    assert(abbrev(input, boundary: /\//) == ['/r//a/file/', '/r//b/file/', '///', '', '/'])
+    assert(abbrev(['root/components/', 'root/controllers/'], boundary: /\//)
+           == ['r/components/', 'r/controllers/'])
+    assert(abbrev(['root/components/', 'root/controllers/'],
+                  boundary: /\//, preserve-leaf: false) == ['r/compo/', 'r/contr/'])
+}
+
+pub fn generic-boundaries() {
+    let input = ['company::widgets::button', 'company::windows::button']
+    assert(abbrev(input, boundary: /::/) == ['c::widge::button', 'c::windo::button'])
+    let mixed = ['root.components/item', 'root/controllers/item', 'root/components/item']
+    assert(abbrev(mixed, boundary: /[.\/]/)
+           == ['r.c/item', 'r/contr/item', 'r/compo/item'])
+    assert(abbrev(['first :: second :: leaf'], boundary: /\s*::\s*/)
+           == ['f :: s :: leaf'])
+    assert(abbrev(['C:\\Users\\Brad\\file'], boundary: /\\/,
+                  preserve: \_.ends?(':')) == ['C:\\U\\B\\file'])
+}
+
+pub fn regex-captures-and-flags() {
+    let input = ['root/alpha/file', 'root/beta/file']
+    let expected = ['r/a/file', 'r/b/file']
+    for pattern in [/\//, /(\/)/, /((\/))/, /(\/)/v, /(?<separator>\/)/v] {
+        assert(abbrev(input, boundary: pattern) == expected)
+    }
+    assert(abbrev(['rootSEPalphaSEPfile', 'rootsepbetasepfile'], boundary: /sep/i)
+           == ['rSEPaSEPfile', 'rsepbsepfile'])
+    assert(abbrev(['root/alpha/file'], boundary: /(?<=[a-z])\//)
+           == ['r/a/file'])
+}
+
+pub fn zero-width-boundaries() {
+    let input = ['alphaBeta', 'alphaBravo']
+    assert(abbrev(input, boundary: /(?=[A-Z])/) == ['aBeta', 'aBravo'])
+    assert(abbrev(input, boundary: /(?=[A-Z])/, preserve-leaf: false) == ['aBet', 'aBra'])
+    assert(abbrev(input, boundary: /(?:)/, preserve-leaf: false) == input)
+    assert(abbrev(['alpha'], boundary: /^|$/, preserve-leaf: false) == ['a'])
+    assert(abbrev([''], boundary: /(?:)/, preserve-leaf: false) == [''])
+}
+
+pub fn unicode-graphemes() {
+    let input = ['éclair/file', 'école/file', 'éclair/file', '👩🏽‍💻tools/file']
+    assert(abbrev(input, boundary: /\//)
+           == ['éclai/file', 'école/file', 'é/file', '👩🏽‍💻/file'])
+    assert(abbrev(['👩🏽‍💻tool/file', '👩🏽‍💻team/file'], boundary: /\//)
+           == ['👩🏽‍💻tool/file', '👩🏽‍💻team/file'])
+    assert(abbrev(['éclair/file'], boundary: /\//, prefix-length: (_, _) -> 2)
+           == ['éc/file'])
+    assert(abbrev(['a👩/file', 'ábee/file', 'ab/file', 'ácat/file'], boundary: /\//)
+           == ['a👩/file', 'ábe/file', 'ab/file', 'áca/file'])
+    assert(abbrev(['alpha→beta→leaf'], boundary: /→/u) == ['a→b→leaf'])
+}
+
+pub fn arbitrary-bytes() {
+    let invalid = Blob(255, 254, 97).str!()
+    let nul = Blob(0).str!()
+    let input = ["root/{invalid}/leaf"]
+    assert(abbrev(input, boundary: /\//) == ["r/{invalid}/leaf"])
+    assert(abbrev(["root{nul}alpha{nul}leaf"], boundary: /\x00/) == ["r{nul}a{nul}leaf"])
+}
+
+pub fn ambiguous-renderings() {
+    let input = ['cabdog', 'zebra', 'cabdragon']
+    let result = abbrev(input, boundary: /ab(?=dog)|b(?=dragon)/, preserve-leaf: false)
+    assert(result == ['cabdog', 'z', 'cabdragon'])
+    assert(abbrev(input.reverse(), boundary: /ab(?=dog)|b(?=dragon)/,
+                  preserve-leaf: false) == result.reverse())
+    assert(abbrev([*input, input[0]], boundary: /ab(?=dog)|b(?=dragon)/,
+                  preserve-leaf: false) == [*result, result[0]])
+}
+
+pub fn structural-uniqueness() {
+    let words = ['', 'a', 'ab', 'ba', 'cabdog', 'cabdragon', 'alphaBeta', 'alphaBravo']
+    let input = ["{a}{b}" for a in words for b in words].uniq()
+    for boundary in [/ab|b/, /(?=a)/, /a*/, /(?=[A-Z])/, /ab(?=dog)|b(?=dragon)/] {
+        let actual = abbrev(input, boundary: boundary, preserve-leaf: false)
+        assert(#actual.uniq() == #input)
+        assert(abbrev(input.reverse(), boundary: boundary, preserve-leaf: false)
+               == actual.reverse())
+        let global = abbrev(input, boundary: boundary, preserve-leaf: false, global: true)
+        assert(#global.uniq() == #input)
+        assert(abbrev(input.reverse(), boundary: boundary, preserve-leaf: false,
+                      global: true) == global.reverse())
+    }
+}
+
+pub fn validation() {
+    rejects(abbrev@(['alpha'], preserve-leaf: false, prefix-length: (_, _) -> 0))
+    rejects(abbrev@(['alpha'], preserve-leaf: false, prefix-length: (_, _) -> -1))
+    let fail = _ -> throw ValueError('predicate failure')
+    rejects(abbrev@(['root/file'], boundary: /\//, preserve: fail))
+    let bad-length = (_, _) -> throw ValueError('length failure')
+    rejects(abbrev@(['root/file'], boundary: /\//, prefix-length: bad-length))
+    assert(abbrev([], prefix-length: bad-length) == [])
+    assert(abbrev(['leaf'], prefix-length: bad-length) == ['leaf'])
+}
+
+pub fn exhaustive-small-trees() {
+    let universe = [
+        'a/file', 'ab/file', 'abc/file', 'a/folder/item',
+        'a/fork/item', 'root/x', 'root', 'other/y'
+    ]
+    let modes = [(leaf?, adaptive?, global?)
+                 for leaf? in [false, true]
+                 for adaptive? in [false, true]
+                 for global? in [false, true]]
+    for mask in ..256 {
+        let input = [s for s, i in universe if (mask & (1 << i)) != 0]
+        for (keep-leaf?, adaptive?, global?) in modes {
+            let policy = (_, n) -> adaptive? ? 2 * n - 1 : n
+            let expected = reference(input, keep-leaf?, adaptive?, global?)
+            let actual = abbrev(input, boundary: /\//, preserve-leaf: keep-leaf?,
+                                prefix-length: policy, global: global?)
+            assert(actual == expected, "{input}: {actual} != {expected}")
+            assert(#actual.uniq() == #input)
+        }
+    }
+}
+
+pub fn deep-structures() {
+    let input = [[*['component' for _ in ..1000], leaf].join('/')
+                 for leaf in ['first', 'second']]
+    let expected = [[*['c' for _ in ..1000], leaf].join('/')
+                    for leaf in ['first', 'second']]
+    assert(abbrev(input, boundary: /\//) == expected)
+}

@@ -292,7 +292,7 @@ fn __parse-time-part(s: String) -> (Int, Int, Int, Int) {
     if is-pm && hour < 12 { hour += 12 }
     if is-am && hour == 12 { hour = 0 }
 
-    (hour, minute, second, frac-ns)
+    (hour, minute, second == 60 ? 59 : second, frac-ns)
 }
 
 fn __try-parse-month(s: String) -> ?Int {
@@ -841,6 +841,11 @@ pub class PlainDate {
     next-week -> PlainDate { add(Duration(weeks=1)) }
     last-week -> PlainDate { add(Duration(weeks=-1)) }
 
+    relative(to: ?PlainDate = nil, parts: Int = 1,
+             largest-unit: String = 'year') -> String {
+        ::relative(self, to, parts, largest-unit)
+    }
+
     __str__() -> String {
         "{__pad4(year)}-{__pad2(month)}-{__pad2(day)}"
     }
@@ -920,7 +925,7 @@ pub class PlainTime {
         let us = (frac-ns % 1000000) / 1000
         let nano = frac-ns % 1000
 
-        PlainTime(h, m, sec, ms, us, nano)
+        PlainTime(h, m, sec == 60 ? 59 : sec, ms, us, nano)
     }
 
     total-nanos() -> Int {
@@ -1222,6 +1227,11 @@ pub class PlainDateTime {
     next-week -> PlainDateTime { add(Duration(weeks=1)) }
     last-week -> PlainDateTime { add(Duration(weeks=-1)) }
 
+    relative(to: ?PlainDateTime = nil, parts: Int = 1,
+             largest-unit: String = 'year') -> String {
+        ::relative(self, to, parts, largest-unit)
+    }
+
     __str__() -> String {
         "{to-plain-date()}T{to-plain-time()}"
     }
@@ -1389,6 +1399,11 @@ pub class Instant {
         ZonedDateTime(__epoch-nanos, time-zone)
     }
 
+    relative(to: Instant | ZonedDateTime | nil = nil, parts: Int = 1,
+             largest-unit: String = 'year', time-zone: ?String = nil) -> String {
+        ::relative(self, to, parts, largest-unit, time-zone)
+    }
+
     __str__() -> String {
         let dt = to-plain-date-time-utc()
         "{dt}Z"
@@ -1447,54 +1462,78 @@ fn __offset-seconds-at(epoch-seconds: Int, zone: String) -> Int {
     tm.gmtoff ?? throw ValueError("time zone has no UTC offset: '{zone}'")
 }
 
-fn __zoned-plain-date-time(epoch-nanoseconds: Int, zone: String) -> PlainDateTime {
-    let seconds = epoch-nanoseconds / 1000000000
-    let fraction = epoch-nanoseconds % 1000000000
-    if fraction < 0 { seconds -= 1; fraction += 1000000000 }
-    let offset = __offset-seconds-at(seconds, zone)
-    let local = Instant(seconds * 1000000000 + fraction + offset * 1000000000)
-                    .to-plain-date-time-utc()
-    local
+fn __divmod(n: Int, divisor: Int) -> (Int, Int) {
+    let q = n / divisor
+    let r = n % divisor
+    r < 0 ? (q - 1, r + divisor) : (q, r)
 }
 
-fn __resolve-zoned-date-time(dt: PlainDateTime, zone: String, disambiguation: String = 'compatible') -> ZonedDateTime {
-    if disambiguation != 'compatible' && disambiguation != 'earlier'
-    && disambiguation != 'later' && disambiguation != 'reject' {
+fn __wall-seconds(dt: PlainDateTime) -> Int {
+    __date-to-epoch-days(dt.year, dt.month, dt.day) * 86400
+        + dt.hour * 3600 + dt.minute * 60 + dt.second
+}
+
+fn __fraction(dt: PlainDateTime) -> Int {
+    dt.millisecond * 1000000 + dt.microsecond * 1000 + dt.nanosecond
+}
+
+fn __plain-from-seconds(seconds: Int, fraction: Int) -> PlainDateTime {
+    let (days, clock) = __divmod(seconds, 86400)
+    let (year, month, day) = __epoch-days-to-date(days)
+    PlainDateTime(
+        year, month, day, clock / 3600, clock % 3600 / 60, clock % 60,
+        fraction / 1000000, fraction % 1000000 / 1000, fraction % 1000
+    )
+}
+
+fn __zoned-plain-date-time(epoch-nanoseconds: Int, zone: String) -> PlainDateTime {
+    let (seconds, fraction) = __divmod(epoch-nanoseconds, 1000000000)
+    __plain-from-seconds(seconds + __offset-seconds-at(seconds, zone), fraction)
+}
+
+fn __resolve-zoned-seconds(dt: PlainDateTime, zone: String,
+                          disambiguation: String = 'compatible') -> Int {
+    if !(disambiguation in ['compatible', 'earlier', 'later', 'reject']) {
         throw ValueError("invalid disambiguation: '{disambiguation}'")
     }
 
-    let wall-seconds = __date-to-epoch-days(dt.year, dt.month, dt.day) * 86400
-                     + dt.hour * 3600 + dt.minute * 60 + dt.second
-    let fraction = dt.millisecond * 1000000 + dt.microsecond * 1000 + dt.nanosecond
-    let offsets: Array[Int] = []
-    for probe in [wall-seconds - 172800, wall-seconds, wall-seconds + 172800] {
-        let off = __offset-seconds-at(probe, zone)
-        if !(off in offsets) { offsets.push(off) }
+    let wall = __wall-seconds(dt)
+    if let $fixed = __fixed-offset-seconds(zone) {
+        return wall - fixed
     }
 
-    let possible: Array[Int] = []
-    let guesses: Array[Int] = []
+    let offsets = [__offset-seconds-at(wall + shift, zone)
+                   for shift in [-172800, 0, 172800]].uniq()
+    let possible: [Int] = []
+    let guesses: [Int] = []
     for off in offsets {
-        let candidate = (wall-seconds - off) * 1000000000 + fraction
+        let candidate = wall - off
         guesses.push(candidate)
-        if __zoned-plain-date-time(candidate, zone) == dt { possible.push(candidate) }
+        if candidate + __offset-seconds-at(candidate, zone) == wall {
+            possible.push(candidate)
+        }
     }
 
     let values = possible ? possible : guesses
-    let earlier = values[0]
-    let later = values[0]
-    for value in values[1;] {
-        if value < earlier { earlier = value }
-        if value > later { later = value }
+    if #possible == 1 {
+        return possible[0]
     }
-    if #possible == 1 { return ZonedDateTime(possible[0], zone) }
     if #possible == 0 && disambiguation == 'reject' {
         throw ValueError("local time {dt} does not exist in {zone}")
     }
     if #possible > 1 && disambiguation == 'reject' {
         throw ValueError("local time {dt} is ambiguous in {zone}")
     }
-    ZonedDateTime(disambiguation == 'earlier' ? earlier : later, zone)
+    let earlier? = disambiguation == 'earlier'
+                || (disambiguation == 'compatible' && #possible > 0)
+    let result = earlier? ? values.min() : values.max()
+    result ?? throw ValueError("no UTC offset found for '{zone}'")
+}
+
+fn __resolve-zoned-date-time(dt: PlainDateTime, zone: String,
+                            disambiguation: String = 'compatible') -> ZonedDateTime {
+    let seconds = __resolve-zoned-seconds(dt, zone, disambiguation)
+    ZonedDateTime(seconds * 1000000000 + __fraction(dt), zone)
 }
 
 fn __format-offset(seconds: Int) -> String {
@@ -1723,6 +1762,11 @@ pub class ZonedDateTime {
     to-plain-date() -> PlainDate { __plain.to-plain-date() }
     to-plain-time() -> PlainTime { __plain.to-plain-time() }
     to-plain-date-time() -> PlainDateTime { __plain }
+
+    relative(to: Instant | ZonedDateTime | nil = nil, parts: Int = 1,
+             largest-unit: String = 'year', time-zone: ?String = nil) -> String {
+        ::relative(self, to, parts, largest-unit, time-zone)
+    }
 
     __str__() -> String { "{__plain}{offset}[{time-zone-id}]" }
 }
@@ -1966,4 +2010,174 @@ pub class Now {
     static plain-date-time-local() -> PlainDateTime { __local-dt() }
     static plain-date-local() -> PlainDate { today() }
     static plain-time-local() -> PlainTime { let dt = __local-dt(); PlainTime(dt.hour, dt.minute, dt.second) }
+}
+
+pub use RelativeDate = PlainDate | PlainDateTime | Instant | ZonedDateTime
+
+use ExactDate = Instant | ZonedDateTime
+
+class RelativePoint {
+    plain:    PlainDateTime
+    seconds:  Int
+    fraction: Int
+    zone:     ?String
+
+    static civil(value: PlainDateTime) -> RelativePoint {
+        RelativePoint(value, __wall-seconds(value), __fraction(value), nil)
+    }
+
+    static exact(value: ExactDate, zone: String) -> RelativePoint {
+        let (seconds, fraction) = __divmod(value.epoch-nanoseconds, 1000000000)
+        let local = seconds + __offset-seconds-at(seconds, zone)
+        RelativePoint(__plain-from-seconds(local, fraction), seconds, fraction, zone)
+    }
+
+    compare(other: RelativePoint) -> Int {
+        seconds == other.seconds
+            ? fraction <=> other.fraction
+            : seconds <=> other.seconds
+    }
+
+    advance(months: Int = 0, days: Int = 0) -> RelativePoint {
+        if months == 0 && days == 0 {
+            return self
+        }
+
+        let date = plain.to-plain-date().add(Duration(months: months, days: days))
+        let local = date.to-plain-date-time(plain.to-plain-time())
+        let seconds = zone ? __resolve-zoned-seconds(local, zone) : __wall-seconds(local)
+        let adjusted = zone ? seconds + __offset-seconds-at(seconds, zone) : seconds
+        RelativePoint(__plain-from-seconds(adjusted, fraction), seconds, fraction, zone)
+    }
+
+    seconds-until(other: RelativePoint) -> Int {
+        other.seconds - seconds - int(other.fraction < fraction)
+    }
+}
+
+fn __relative-unit(unit: String) -> Int {
+    match unit {
+        'year'   => 0,
+        'month'  => 1,
+        'week'   => 2,
+        'day'    => 3,
+        'hour'   => 4,
+        'minute' => 5,
+        'second' => 6,
+        _        => throw ValueError("invalid relative-date unit: '{unit}'"),
+    }
+}
+
+fn __relative-reference(value: RelativeDate) -> RelativeDate {
+    match value {
+        date: PlainDate     => today(),
+        date: PlainDateTime => now(),
+        date: ExactDate     => instant-now(),
+    }
+}
+
+fn __relative-zone(value: ExactDate) -> ?String {
+    if let z: ZonedDateTime = value {
+        z.time-zone-id
+    }
+}
+
+fn __relative-civil(a: PlainDateTime, b: PlainDateTime, zone: ?String)
+    -> (RelativePoint, RelativePoint) {
+    if zone != nil {
+        throw ValueError('a time zone requires Instant or ZonedDateTime values')
+    }
+    (RelativePoint.civil(a), RelativePoint.civil(b))
+}
+
+fn __relative-exact(a: ExactDate, b: ExactDate, zone: ?String)
+    -> (RelativePoint, RelativePoint) {
+    let zone = zone ?? __relative-zone(b) ?? __relative-zone(a) ?? 'UTC'
+    (RelativePoint.exact(a, zone), RelativePoint.exact(b, zone))
+}
+
+fn __relative-points(value: RelativeDate, reference: RelativeDate, zone: ?String)
+    -> (RelativePoint, RelativePoint) {
+    match (value, reference) {
+        (a: PlainDate, b: PlainDate) => __relative-civil(
+            a.to-plain-date-time(), b.to-plain-date-time(), zone
+        ),
+        (a: PlainDateTime, b: PlainDateTime) => __relative-civil(a, b, zone),
+        (a: ExactDate, b: ExactDate)         => __relative-exact(a, b, zone),
+        _ => throw ValueError('relative dates require matching civil or exact types'),
+    }
+}
+
+fn __relative-months(a: PlainDate, b: PlainDate) -> Int {
+    let months = (b.year - a.year) * 12 + b.month - a.month
+    max(0, months - int(b.day < a.day))
+}
+
+fn __relative-days(start: RelativePoint, end: RelativePoint) -> Int {
+    let a = start.plain
+    let b = end.plain
+    let correction = int(PlainTime.compare(a.to-plain-time(), b.to-plain-time()) > 0)
+    let days = max(0, a.to-plain-date().until(b.to-plain-date()).days - correction)
+    while days > 0 && start.advance(days: days).compare(end) > 0 {
+        days -= 1
+    }
+    days
+}
+
+fn __relative-parts*(start: RelativePoint, end: RelativePoint, largest: Int)
+    -> Generator[(Int, String)] {
+    let a = start.plain.to-plain-date()
+    let total-days = largest <= 3 ? __relative-days(start, end) : 0
+    let b = a.add(Duration(days: total-days))
+    let months = largest <= 1 ? __relative-months(a, b) : 0
+    let years = largest == 0 ? months / 12 : 0
+    yield (years, 'year')
+    yield (months - years * 12, 'month')
+
+    let days = a.add(Duration(months: months)).until(b).days
+    let weeks = largest <= 2 ? days / 7 : 0
+    yield (weeks, 'week')
+    yield (days - weeks * 7, 'day')
+
+    let cursor = start.advance(months: months, days: days)
+    let seconds = cursor.seconds-until(end)
+    for (unit, divisor), i in [('hour', 3600), ('minute', 60), ('second', 1)] {
+        if largest > i + 4 {
+            continue
+        }
+        yield (seconds / divisor, unit)
+        seconds %= divisor
+    }
+}
+
+fn __relative-phrase(n: Int, unit: String) -> String {
+    let plural = n == 1 ? '' : 's'
+    return "{n} {unit}{plural}"
+}
+
+pub fn relative(value: RelativeDate, to: ?RelativeDate = nil, parts: Int = 1,
+                largest-unit: String = 'year', time-zone: ?String = nil) -> String {
+    if parts < 1 || parts > 7 {
+        throw ValueError('relative-date parts must be between 1 and 7')
+    }
+
+    let largest = __relative-unit(largest-unit)
+    let date-only? = value :: PlainDate
+    if date-only? && largest > 3 {
+        throw ValueError('a plain date requires day or larger units')
+    }
+
+    let reference = to ?? __relative-reference(value)
+    let (target, origin) = __relative-points(value, reference, time-zone)
+    let past? = target.compare(origin) < 0
+    let (start, end) = past? ? (target, origin) : (origin, target)
+    let words = [__relative-phrase(n, unit)
+                 for (n, unit) in __relative-parts(start, end, largest)
+                 if n > 0]
+    if !words {
+        return date-only? ? 'today' : 'now'
+    }
+
+    let text = words[;parts].join(', ')
+    past? ? "{text} ago" : "in {text}"
 }

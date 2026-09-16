@@ -98,7 +98,7 @@ fn type-str-inner(t) {
         T.Object(cls, targs) => do {
             let name = Class.name(cls)
             let fqn = cls.?__fqn__ ?? name
-            let css = prims.contains?(name) ? 't-prim' : 't-cls'
+            let css = name in prims ? 't-prim' : 't-cls'
             (#targs == 0) ? type-link(fqn, name, css)
                           : "{type-link(fqn, name, css)}[{targs.map(type-str).join(', ')}]"
         },
@@ -251,7 +251,7 @@ fn slug(name) {
     let s = str(name)
     op-names.has?(s)
         ? "op-{op-names[s]}"
-        : s.replace(/[^a-zA-Z0-9_-]/, m -> "-{m[0].ord()}-")
+        : s.replace(/[^a-zA-Z0-9_-]/, c -> "-{ord(c)}-")
 }
 
 fn clean-doc(doc) {

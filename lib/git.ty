@@ -1,0 +1,2225 @@
+import date (Instant, Now, ZonedDateTime)
+import ffi as c (C!)
+import os
+import path (Path)
+import ty
+
+pub class GitError < RuntimeError {
+    code:      Int
+    category:  Int
+    operation: String
+
+    init(message: String, code: Int = -1, category: Int = 0, operation: String = '') {
+        self.code      = code
+        self.category  = category
+        self.operation = operation
+        super(operation ? "{operation}: {message}" : message)
+    }
+}
+
+pub class NotFoundError < GitError {}
+pub class ExistsError < GitError {}
+pub class AmbiguousError < GitError {}
+pub class ConflictError < GitError {}
+pub class AuthenticationError < GitError {}
+pub class PushRejectedError < GitError {}
+pub class ClosedError < GitError {}
+
+pub class ObjectTypeError < GitError {
+    actual:   ObjectKind
+    expected: [ObjectKind]
+
+    init(operation: String, actual: ObjectKind, expected: [ObjectKind]) {
+        self.actual   = actual
+        self.expected = expected
+        let kinds = expected.map(kind-name).join(' or ')
+        super("requires {kinds}, got {kind-name(actual)}", operation: operation)
+    }
+}
+
+let lib = c.open('git2', [nil, '1.9', '1.8', '1.7'])
+       ?? throw GitError('libgit2 1.7–1.9 is required; install its shared library')
+
+ns raw {
+    const GIT_OPT_GET_OWNER_VALIDATION = 35
+    const GIT_OPT_SET_OWNER_VALIDATION = 36
+
+    C! lib fn {
+        int git_libgit2_init(void);
+        int git_libgit2_opts(int option, ...);
+        int git_libgit2_version(int *major, int *minor, int *patch);
+        int git_libgit2_features(void);
+        void *git_error_last(void);
+        void git_buf_dispose(void *buf);
+        void git_strarray_dispose(void *array);
+        char *git_oid_tostr(char *out, size_t size, const void *oid);
+        int git_oid_fromstr(void *out, const char *text);
+
+        int git_repository_open_ext(void **out, const char *path, unsigned flags,
+                                    const char *ceiling);
+        int git_repository_init(void **out, const char *path, unsigned bare);
+        int git_clone(void **out, const char *url, const char *path, const void *opts);
+        int git_clone_options_init(void *opts, unsigned version);
+        void git_repository_free(void *repo);
+        const char *git_repository_path(void *repo);
+        const char *git_repository_workdir(void *repo);
+        int git_repository_is_bare(void *repo);
+        int git_repository_head_detached(void *repo);
+        int git_repository_head_unborn(void *repo);
+        int git_repository_state(void *repo);
+        int git_repository_head(void **out, void *repo);
+        int git_repository_set_head(void *repo, const char *name);
+        int git_repository_set_head_detached(void *repo, const void *oid);
+        int git_repository_index(void **out, void *repo);
+        int git_repository_config(void **out, void *repo);
+
+        int git_revparse_single(void **out, void *repo, const char *spec);
+        int git_object_lookup(void **out, void *repo, const void *oid, int type);
+        int git_object_peel(void **out, void *object, int type);
+        const void *git_object_id(void *object);
+        int git_object_type(void *object);
+        void git_object_free(void *object);
+        int git_object_short_id(void *out, void *object);
+        const char *git_commit_message(void *commit);
+        const char *git_commit_summary(void *commit);
+        const char *git_commit_body(void *commit);
+        const void *git_commit_author(void *commit);
+        const void *git_commit_committer(void *commit);
+        int64_t git_commit_time(void *commit);
+        int git_commit_time_offset(void *commit);
+        unsigned git_commit_parentcount(void *commit);
+        int git_commit_parent(void **out, void *commit, unsigned n);
+        int git_commit_create(void *out, void *repo, const char *ref, const void *author,
+                              const void *committer, const char *encoding,
+                              const char *message, void *tree, size_t n, void *parents);
+        int git_signature_new(void **out, const char *name, const char *email,
+                              int64_t when, int offset);
+        int git_signature_default(void **out, void *repo);
+        void git_signature_free(void *signature);
+
+        size_t git_tree_entrycount(void *tree);
+        const void *git_tree_entry_byindex(void *tree, size_t n);
+        int git_tree_entry_bypath(void **out, void *tree, const char *path);
+        const char *git_tree_entry_name(const void *entry);
+        const void *git_tree_entry_id(const void *entry);
+        int git_tree_entry_type(const void *entry);
+        int git_tree_entry_filemode(const void *entry);
+        void git_tree_entry_free(void *entry);
+        int git_treebuilder_new(void **out, void *repo, void *tree);
+        int git_treebuilder_insert(void **out, void *builder, const char *name,
+                                    const void *id, int mode);
+        int git_treebuilder_remove(void *builder, const char *name);
+        int git_treebuilder_write(void *out, void *builder);
+        void git_treebuilder_free(void *builder);
+        const void *git_blob_rawcontent(void *blob);
+        uint64_t git_blob_rawsize(void *blob);
+        int git_blob_is_binary(void *blob);
+        int git_blob_create_from_buffer(void *out, void *repo, const void *data,
+                                        size_t size);
+        const char *git_tag_name(void *object);
+        const char *git_tag_message(void *object);
+        const void *git_tag_tagger(void *object);
+        int git_tag_target(void **out, void *object);
+        int git_tag_create(void *out, void *repo, const char *name, void *target,
+                           const void *tagger, const char *message, int force);
+        int git_tag_create_lightweight(void *out, void *repo, const char *name,
+                                       void *target, int force);
+
+        int git_revwalk_new(void **out, void *repo);
+        int git_revwalk_sorting(void *walk, unsigned mode);
+        int git_revwalk_push(void *walk, const void *oid);
+        int git_revwalk_push_range(void *walk, const char *range);
+        int git_revwalk_hide(void *walk, const void *oid);
+        int git_revwalk_simplify_first_parent(void *walk);
+        int git_revwalk_next(void *out, void *walk);
+        void git_revwalk_free(void *walk);
+        int git_graph_ahead_behind(size_t *ahead, size_t *behind, void *repo,
+                                   const void *local, const void *upstream);
+        int git_graph_descendant_of(void *repo, const void *commit, const void *ancestor);
+        int git_merge_base(void *out, void *repo, const void *a, const void *b);
+
+        int git_reference_dwim(void **out, void *repo, const char *name);
+        int git_reference_lookup(void **out, void *repo, const char *name);
+        int git_reference_resolve(void **out, void *ref);
+        const char *git_reference_name(void *ref);
+        const char *git_reference_shorthand(void *ref);
+        const void *git_reference_target(void *ref);
+        const char *git_reference_symbolic_target(void *ref);
+        int git_reference_type(void *ref);
+        int git_reference_is_branch(void *ref);
+        int git_reference_is_remote(void *ref);
+        int git_reference_is_tag(void *ref);
+        int git_reference_list(void *out, void *repo);
+        int git_reference_delete(void *ref);
+        void git_reference_free(void *ref);
+        int git_branch_create(void **out, void *repo, const char *name,
+                              void *commit, int force);
+        int git_branch_move(void **out, void *branch, const char *name, int force);
+        int git_branch_delete(void *branch);
+        int git_branch_is_head(void *branch);
+        int git_branch_upstream(void **out, void *branch);
+        int git_branch_set_upstream(void *branch, const char *name);
+
+        size_t git_index_entrycount(void *index);
+        const void *git_index_get_byindex(void *index, size_t n);
+        const void *git_index_get_bypath(void *index, const char *path, int stage);
+        int git_index_add_bypath(void *index, const char *path);
+        int git_index_remove_bypath(void *index, const char *path);
+        int git_index_add_all(void *index, const void *paths, unsigned flags,
+                              void *callback, void *payload);
+        int git_index_update_all(void *index, const void *paths, void *cb, void *payload);
+        int git_index_write(void *index);
+        int git_index_read(void *index, int force);
+        int git_index_read_tree(void *index, void *tree);
+        int git_index_write_tree(void *out, void *index);
+        int git_index_has_conflicts(void *index);
+        void git_index_free(void *index);
+
+        int git_status_list_new(void **out, void *repo, const void *options);
+        int git_status_options_init(void *options, unsigned version);
+        size_t git_status_list_entrycount(void *list);
+        const void *git_status_byindex(void *list, size_t n);
+        void git_status_list_free(void *list);
+        int git_status_file(unsigned *out, void *repo, const char *path);
+        int git_ignore_path_is_ignored(int *out, void *repo, const char *path);
+        int git_ignore_add_rule(void *repo, const char *rules);
+
+        int git_diff_tree_to_tree(void **out, void *repo, void *old, void *new,
+                                  const void *opts);
+        int git_diff_tree_to_index(void **out, void *repo, void *tree, void *index,
+                                   const void *opts);
+        int git_diff_index_to_workdir(void **out, void *repo, void *index,
+                                      const void *opts);
+        int git_diff_tree_to_workdir_with_index(void **out, void *repo, void *tree,
+                                               const void *opts);
+        int git_diff_find_similar(void *diff, const void *opts);
+        int git_diff_to_buf(void *out, void *diff, int format);
+        size_t git_diff_num_deltas(void *diff);
+        const void *git_diff_get_delta(void *diff, size_t n);
+        int git_diff_get_stats(void **out, void *diff);
+        size_t git_diff_stats_files_changed(void *stats);
+        size_t git_diff_stats_insertions(void *stats);
+        size_t git_diff_stats_deletions(void *stats);
+        void git_diff_stats_free(void *stats);
+        void git_diff_free(void *diff);
+        int git_patch_from_diff(void **out, void *diff, size_t n);
+        int git_patch_to_buf(void *out, void *patch);
+        void git_patch_free(void *patch);
+        int git_apply(void *repo, void *diff, int location, const void *opts);
+        int git_checkout_tree(void *repo, void *treeish, const void *opts);
+        int git_checkout_options_init(void *opts, unsigned version);
+        int git_reset(void *repo, void *target, int mode, const void *opts);
+        int git_reset_default(void *repo, void *target, const void *paths);
+
+        int git_config_get_string_buf(void *out, void *config, const char *name);
+        int git_config_get_bool(int *out, void *config, const char *name);
+        int git_config_get_int64(int64_t *out, void *config, const char *name);
+        int git_config_set_string(void *config, const char *name, const char *value);
+        int git_config_set_bool(void *config, const char *name, int value);
+        int git_config_set_int64(void *config, const char *name, int64_t value);
+        int git_config_delete_entry(void *config, const char *name);
+        int git_config_iterator_new(void **out, void *config);
+        int git_config_next(void **out, void *iter);
+        void git_config_iterator_free(void *iter);
+        void git_config_free(void *config);
+
+        int git_remote_list(void *out, void *repo);
+        int git_remote_lookup(void **out, void *repo, const char *name);
+        int git_remote_create(void **out, void *repo, const char *name, const char *url);
+        const char *git_remote_name(void *remote);
+        const char *git_remote_url(void *remote);
+        const char *git_remote_pushurl(void *remote);
+        int git_remote_set_url(void *repo, const char *name, const char *url);
+        int git_remote_set_pushurl(void *repo, const char *name, const char *url);
+        int git_remote_get_fetch_refspecs(void *out, void *remote);
+        int git_remote_get_push_refspecs(void *out, void *remote);
+        int git_remote_fetch(void *remote, const void *specs, const void *opts,
+                             const char *message);
+        int git_remote_push(void *remote, const void *specs, const void *opts);
+        int git_remote_delete(void *repo, const char *name);
+        void git_remote_free(void *remote);
+        int git_fetch_options_init(void *opts, unsigned version);
+        int git_push_options_init(void *opts, unsigned version);
+        int git_credential_userpass_plaintext_new(void **out, const char *user,
+                                                  const char *password);
+        int git_credential_ssh_key_from_agent(void **out, const char *user);
+        int git_credential_ssh_key_new(void **out, const char *user, const char *public,
+                                       const char *private, const char *passphrase);
+        int git_credential_username_new(void **out, const char *user);
+
+        int git_stash_save(void *out, void *repo, const void *who, const char *message,
+                           unsigned flags);
+        int git_stash_apply(void *repo, size_t n, const void *opts);
+        int git_stash_pop(void *repo, size_t n, const void *opts);
+        int git_stash_drop(void *repo, size_t n);
+        int git_stash_foreach(void *repo, void *callback, void *payload);
+
+        int git_blame_options_init(void *opts, unsigned version);
+        int git_blame_file(void **out, void *repo, const char *path, const void *opts);
+        unsigned git_blame_get_hunk_count(void *blame);
+        const void *git_blame_get_hunk_byindex(void *blame, unsigned n);
+        void git_blame_free(void *blame);
+        int git_reflog_read(void **out, void *repo, const char *name);
+        size_t git_reflog_entrycount(void *log);
+        const void *git_reflog_entry_byindex(void *log, size_t n);
+        const void *git_reflog_entry_id_old(const void *entry);
+        const void *git_reflog_entry_id_new(const void *entry);
+        const void *git_reflog_entry_committer(const void *entry);
+        const char *git_reflog_entry_message(const void *entry);
+        void git_reflog_free(void *log);
+        int git_describe_options_init(void *opts, unsigned version);
+        int git_describe_commit(void **out, void *commit, const void *opts);
+        int git_describe_format(void *out, void *result, const void *opts);
+        void git_describe_result_free(void *result);
+    }
+
+    C! struct GitError {
+        const char *message;
+        int category;
+    }
+
+    C! struct GitBuf {
+        char *ptr;
+        size_t reserved;
+        size_t size;
+    }
+
+    C! struct GitStrings {
+        char **strings;
+        size_t count;
+    }
+
+    C! struct GitOid {
+        unsigned char bytes[20];
+    }
+
+    C! struct GitSignature {
+        char *name;
+        char *email;
+        int64_t seconds;
+        int offset;
+        char sign;
+    }
+
+    C! struct GitFile {
+        GitOid id;
+        const char *path;
+        uint64_t size;
+        uint32_t flags;
+        uint16_t mode;
+        uint16_t abbreviation;
+    }
+
+    C! struct GitDelta {
+        int status;
+        uint32_t flags;
+        uint16_t similarity;
+        uint16_t files;
+        GitFile old;
+        GitFile new;
+    }
+
+    C! struct GitStatus {
+        unsigned flags;
+        void *staged;
+        void *unstaged;
+    }
+
+    C! struct GitStatusOptions {
+        unsigned version;
+        int show;
+        unsigned flags;
+        GitStrings paths;
+        void *baseline;
+        uint16_t rename-threshold;
+    }
+
+    C! struct GitIndexEntry {
+        int32_t ctime;
+        uint32_t ctime-ns;
+        int32_t mtime;
+        uint32_t mtime-ns;
+        uint32_t dev;
+        uint32_t ino;
+        uint32_t mode;
+        uint32_t uid;
+        uint32_t gid;
+        uint32_t size;
+        GitOid id;
+        uint16_t flags;
+        uint16_t extended;
+        const char *path;
+    }
+
+    C! struct GitConfigEntry {
+        const char *name;
+        const char *value;
+    }
+
+    C! struct GitCheckoutOptions {
+        unsigned version;
+        unsigned strategy;
+        int disable-filters;
+        unsigned dir-mode;
+        unsigned file-mode;
+        int file-open-flags;
+        unsigned notify-flags;
+        void *notify;
+        void *notify-payload;
+        void *progress;
+        void *progress-payload;
+        void *paths;
+        size_t path-count;
+        void *baseline;
+        void *baseline-index;
+        const char *target-directory;
+        const char *ancestor-label;
+        const char *our-label;
+        const char *their-label;
+        void *performance;
+        void *performance-payload;
+    }
+
+    C! struct GitCallbacks17 {
+        unsigned version;
+        void *sideband;
+        void *completion;
+        void *credentials;
+        void *certificate;
+        void *transfer;
+        void *update-tips;
+        void *pack;
+        void *push-transfer;
+        void *push-update;
+        void *push-negotiation;
+        void *transport;
+        void *ready;
+        void *payload;
+        void *resolve-url;
+    }
+
+    C! struct GitCallbacks19 {
+        GitCallbacks17 base;
+        void *update-refs;
+    }
+
+    C! struct GitProxyOptions {
+        unsigned version;
+        int type;
+        const char *url;
+        void *credentials;
+        void *certificate;
+        void *payload;
+    }
+
+    C! struct GitBlameOptions {
+        unsigned version;
+        unsigned flags;
+        uint16_t min-match;
+        GitOid newest;
+        GitOid oldest;
+        size_t min-line;
+        size_t max-line;
+    }
+
+    C! struct GitBlameHunk {
+        size_t lines;
+        GitOid id;
+        size_t start;
+        void *author;
+    }
+
+    C! struct GitDescribeOptions {
+        unsigned version;
+        unsigned candidates;
+        unsigned strategy;
+        const char *pattern;
+        int first-parent;
+        int fallback;
+    }
+}
+
+fn check(code: Int, operation: String = '') -> Int {
+    if code >= 0 {
+        return code
+    }
+
+    let p = raw.git_error_last()
+    let e = p ? raw.GitError(p) : nil
+    let message = match code {
+        -16 => 'authentication failed',
+        _   => e ? c.str(e.message) : "libgit2 error {code}",
+    }
+    let category = e.?category ?? 0
+    let error = match code {
+        -3      => NotFoundError,
+        -4      => ExistsError,
+        -5      => AmbiguousError,
+        -13     => ConflictError,
+        -24     => ConflictError,
+        -23     => ConflictError,
+        -16     => AuthenticationError,
+        _       => GitError,
+    }
+    throw error(message, code, category, operation)
+}
+
+check(raw.git_libgit2_init(), 'initialize libgit2')
+
+pub fn version() -> (Int, Int, Int) {
+    let v = c.new(c.int, 3)
+    defer c.free(v)
+    raw.git_libgit2_version(v, v + 1, v + 2)
+    (v[0], v[1], v[2])
+}
+
+let (major, minor, _) = version()
+if major != 1 || minor < 7 || minor > 9 {
+    throw GitError("unsupported libgit2 ABI {major}.{minor}; expected 1.7–1.9")
+}
+if (raw.git_libgit2_features() & 0x800) != 0 {
+    throw GitError('the experimental SHA-256 libgit2 ABI is not supported')
+}
+
+let Callbacks = minor >= 9 ? raw.GitCallbacks19 : raw.GitCallbacks17
+
+ns raw {
+    C! struct GitFetchOptions {
+        unsigned version;
+        Callbacks callbacks;
+        int prune;
+        unsigned update-fetchhead;
+        int download-tags;
+        GitProxyOptions proxy;
+        int depth;
+        int redirects;
+        GitStrings headers;
+    }
+
+    C! struct GitPushOptions {
+        unsigned version;
+        unsigned parallelism;
+        Callbacks callbacks;
+        GitProxyOptions proxy;
+        int redirects;
+        GitStrings headers;
+        GitStrings push-options;
+    }
+
+    C! struct GitCloneOptions {
+        unsigned version;
+        GitCheckoutOptions checkout;
+        GitFetchOptions fetch;
+        int bare;
+        int local;
+        const char *branch;
+        void *repository;
+        void *repository-payload;
+        void *remote;
+        void *remote-payload;
+    }
+}
+
+fn z(s: String | Path | nil) -> ?String {
+    let $s = s or return nil
+    let text = str(s)
+    if /\x00/ in text {
+        throw ValueError('NUL is not allowed in git names, paths, or metadata')
+    }
+    text.cstr()
+}
+
+fn text-at(p: ?Ptr[Any]) -> ?String {
+    p ? c.str(p) : nil
+}
+
+fn buffer-text(f: raw.GitBuf -> Int) -> String {
+    let out = raw.GitBuf()
+    defer raw.git_buf_dispose(out)
+    defer c.free(out.get())
+    check(f(out))
+    out.size ? c.str(out.ptr, out.size) : ''
+}
+
+fn pointer(f: Ptr[Any] -> Int) -> Ptr[Any] {
+    optional-pointer(f) ?? throw GitError('libgit2 returned an empty handle')
+}
+
+fn optional-pointer(f: Ptr[Any] -> Int) -> ?Ptr[Any] {
+    let out = c.box(c.ptr)
+    defer c.free(out)
+    check(f(out))
+    out[0]
+}
+
+let repository-open-lock = Mutex()
+
+fn open-repository(path: String | Path) -> Ptr[Any] {
+    let open = raw.git_repository_open_ext@(_, z(path), 0, nil)
+    with repository-open-lock {
+        open-as-current-user(open)
+    }
+}
+
+fn open-as-current-user(open: Ptr[Any] -> Int) -> Ptr[Any] {
+#|if !__windows__
+    if os.geteuid() != 0 {
+        return pointer(open)
+    }
+
+    let enabled = c.box(c.int)
+    defer c.free(enabled)
+    check(raw.git_libgit2_opts(raw.GIT_OPT_GET_OWNER_VALIDATION, (c.ptr, enabled)))
+    let previous = enabled[0]
+    check(raw.git_libgit2_opts(raw.GIT_OPT_SET_OWNER_VALIDATION, (c.int, 0)))
+    defer check(raw.git_libgit2_opts(raw.GIT_OPT_SET_OWNER_VALIDATION, (c.int, previous)))
+#|]
+    pointer(open)
+}
+
+fn strings(f: raw.GitStrings -> Int) -> [String] {
+    let out = raw.GitStrings()
+    defer raw.git_strarray_dispose(out)
+    defer c.free(out.get())
+    check(f(out))
+    [c.str(c.load(c.ptr, out.strings + i * c.size(c.ptr))) for i in ..out.count]
+}
+
+fn with-strings[T](xs: [String], f: raw.GitStrings -> T) -> T {
+    let xs = xs.map(z)
+    let data = c.new(c.ptr, max(1, #xs))
+    defer c.free(data)
+    for x, i in xs {
+        data[i] = x
+    }
+
+    let array = raw.GitStrings(strings: data, count: #xs)
+    defer c.free(array.get())
+    f(array)
+}
+
+fn oid-text(p: IntoPtr[Any]) -> String {
+    let out = c.new(c.char, 41)
+    defer c.free(out)
+    raw.git_oid_tostr(out, 41, p)
+    c.str(out, 40)
+}
+
+fn oid-result(f: raw.GitOid -> Int) -> Oid {
+    let out = raw.GitOid()
+    defer c.free(out.get())
+    check(f(out))
+    Oid(oid-text(out))
+}
+
+class Handle {
+    __p:       ?Ptr[Any]
+    __release: Ptr[Any] -> nil
+    __owner:   ?Handle
+
+    init(p: Ptr[Any], release: Ptr[Any] -> nil, owner: ?Handle = nil) {
+        __p       = p
+        __release = release
+        __owner   = owner
+    }
+
+    handle -> Ptr[Any] {
+        if let $owner = __owner {
+            owner.handle
+        }
+        __p ?? throw ClosedError('git handle is closed')
+    }
+
+    closed? -> Bool { __p == nil }
+
+    close() -> nil {
+        let $p = __p or return
+        __p = nil
+        __release(p)
+    }
+
+    __enter__() -> Self { self.handle; self }
+    __drop__() -> nil { close() }
+    __free__() -> nil { close() }
+}
+
+pub class Oid {
+    __hex: String
+
+    init(hex: String) {
+        if #hex != 40 || !hex.match?(/^[0-9a-fA-F]{40}$/) {
+            throw ValueError('an object ID must contain exactly 40 hexadecimal digits')
+        }
+        __hex = hex.lower()
+    }
+
+    hex -> String { __hex }
+    short -> String { __hex[;7] }
+    __str__() -> String { __hex }
+    __hash__() -> Int { ty.hash(__hex) }
+    ==(other: Oid) -> Bool { __hex == other.__hex }
+
+    with-native[T](f: raw.GitOid -> T) -> T {
+        let out = raw.GitOid()
+        defer c.free(out.get())
+        check(raw.git_oid_fromstr(out, z(__hex)))
+        f(out)
+    }
+}
+
+pub class Signature {
+    name:    String
+    email:   String
+    seconds: Int
+    offset:  Int
+
+    init(name: String, email: String,
+         date: ZonedDateTime | Instant = Now.zoned-date-time-iso()) {
+        let (instant, offset-nanos) = match date {
+            d: ZonedDateTime => (d.to-instant(), d.offset-nanoseconds),
+            i: Instant       => (i, 0),
+        }
+        if offset-nanos % 60000000000 != 0 {
+            throw ValueError('git signatures require a whole-minute UTC offset')
+        }
+
+        let offset = offset-nanos / 60000000000
+        self.init(name, email, instant.round('second', 'floor').epoch-seconds, offset)
+    }
+
+    init(name: String, email: String, seconds: Int, offset: Int = 0) {
+        self.name    = name
+        self.email   = email
+        self.seconds = seconds
+        self.offset  = offset
+    }
+
+    date -> ZonedDateTime {
+        let sign = offset < 0 ? '-' : '+'
+        let minutes = offset.abs
+        let zone = "{sign}{minutes / 60:02}:{minutes % 60:02}"
+        Instant.from-epoch-seconds(seconds).to-zoned-date-time-iso(zone)
+    }
+
+    __str__() -> String { "{name} <{email}>" }
+
+    with-native[T](f: Ptr[Any] -> T) -> T {
+        let p = pointer(raw.git_signature_new@(_, z(name), z(email), seconds, offset))
+        defer raw.git_signature_free(p)
+        f(p)
+    }
+}
+
+fn signature(p: Ptr[Any]) -> Signature {
+    let s = raw.GitSignature(p)
+    Signature(c.str(s.name), c.str(s.email), s.seconds, s.offset)
+}
+
+pub use Revision = String | Oid | GitObject | Reference
+
+pub ns Kind {
+    pub tag Commit, Tree, Blob, Tag;
+}
+
+pub use ObjectKind = Kind.Commit | Kind.Tree | Kind.Blob | Kind.Tag
+
+fn object-kind(n: Int) -> ObjectKind {
+    match n {
+        1 => Kind.Commit,
+        2 => Kind.Tree,
+        3 => Kind.Blob,
+        4 => Kind.Tag,
+    }
+}
+
+fn kind-name(kind: ObjectKind) -> String {
+    match kind {
+        Kind.Commit => 'commit',
+        Kind.Tree   => 'tree',
+        Kind.Blob   => 'blob',
+        Kind.Tag    => 'tag',
+    }
+}
+
+fn peel(object: GitObject, kind: ObjectKind, operation: String) -> GitObject {
+    let type = match kind {
+        Kind.Commit => 1,
+        Kind.Tree   => 2,
+        Kind.Blob   => 3,
+        Kind.Tag    => 4,
+    }
+    try {
+        let p = pointer(raw.git_object_peel@(_, object.handle, type))
+        wrap-object(object.repo, p)
+    } catch e: GitError :: e.code in [-12, -19] {
+        throw ObjectTypeError(operation, object.kind, [kind])
+    }
+}
+
+pub class GitObject < Handle : Iterable[TreeEntry] {
+    __repo: Repository
+
+    init(repo: Repository, p: Ptr[Any]) {
+        super(p, raw.git_object_free, repo)
+        __repo = repo
+    }
+
+    repo -> Repository { __repo }
+    id -> Oid { Oid(oid-text(raw.git_object_id(self.handle))) }
+    hex -> String { id.hex }
+    short -> String { buffer-text(raw.git_object_short_id@(_, self.handle)) }
+    kind -> ObjectKind { object-kind(raw.git_object_type(self.handle)) }
+    commit? -> Bool { kind == Kind.Commit }
+    tree? -> Bool { kind == Kind.Tree }
+    blob? -> Bool { kind == Kind.Blob }
+    tag? -> Bool { kind == Kind.Tag }
+
+    __str__() -> String { "{kind}({short})" }
+    __hash__() -> Int { ty.hash(id) }
+    ==(other: GitObject) -> Bool { id == other.id }
+
+    __require(operation: String, *expected: ObjectKind) -> Ptr[Any] {
+        let actual = kind
+        if !(actual in expected) {
+            throw ObjectTypeError(operation, actual, expected)
+        }
+        self.handle
+    }
+
+    __tree(operation: String) -> Tree {
+        __require(operation, Kind.Commit, Kind.Tree, Kind.Tag)
+        cast(peel(self, Kind.Tree, operation))
+    }
+
+    message -> String {
+        let p = __require('message', Kind.Commit, Kind.Tag)
+        match kind {
+            Kind.Commit => c.str(raw.git_commit_message(p)),
+            _           => c.str(raw.git_tag_message(p)),
+        }
+    }
+
+    summary -> String { c.str(raw.git_commit_summary(__require('summary', Kind.Commit))) }
+    body -> ?String { text-at(raw.git_commit_body(__require('body', Kind.Commit))) }
+    date -> ZonedDateTime { committed-at }
+    authored-at -> ZonedDateTime { author.date }
+    committed-at -> ZonedDateTime { committer.date }
+    seconds -> Int { raw.git_commit_time(__require('seconds', Kind.Commit)) }
+    offset -> Int { raw.git_commit_time_offset(__require('offset', Kind.Commit)) }
+
+    author -> Signature {
+        signature(raw.git_commit_author(__require('author', Kind.Commit)))
+    }
+
+    committer -> Signature {
+        signature(raw.git_commit_committer(__require('committer', Kind.Commit)))
+    }
+
+    parent-count -> Int {
+        raw.git_commit_parentcount(__require('parent-count', Kind.Commit))
+    }
+
+    root? -> Bool { parent-count == 0 }
+    merge? -> Bool { parent-count > 1 }
+    parents -> [Commit] { [parent(it) for ..parent-count] }
+    tree -> Tree { __tree('tree') }
+
+    parent(n: Int = 0) -> Commit {
+        let p = __require('parent', Kind.Commit)
+        Commit(repo, pointer(raw.git_commit_parent@(_, p, n)))
+    }
+
+    log(limit: ?Int = nil) -> History {
+        __require('log', Kind.Commit)
+        repo.log(self, limit: limit)
+    }
+
+    diff() -> Diff {
+        __require('diff', Kind.Commit)
+        repo.diff(root? ? nil : parent(), self)
+    }
+
+    diff(other: Revision) -> Diff {
+        __require('diff', Kind.Commit, Kind.Tree, Kind.Tag)
+        repo.diff(self, other)
+    }
+
+    ancestor-of?(other: Revision) -> Bool {
+        __require('ancestor-of?', Kind.Commit)
+        repo.ancestor?(self, other)
+    }
+
+    descendant-of?(other: Revision) -> Bool {
+        __require('descendant-of?', Kind.Commit)
+        repo.ancestor?(other, self)
+    }
+
+    size -> Int {
+        let p = __require('size', Kind.Blob, Kind.Tree)
+        match kind {
+            Kind.Blob => raw.git_blob_rawsize(p),
+            _         => raw.git_tree_entrycount(p),
+        }
+    }
+
+    #() -> Int { size }
+
+    binary? -> Bool {
+        raw.git_blob_is_binary(__require('binary?', Kind.Blob)) != 0
+    }
+
+    text -> String {
+        let p = __require('text', Kind.Blob)
+        let n = raw.git_blob_rawsize(p)
+        n ? c.str(raw.git_blob_rawcontent(p), n) : ''
+    }
+
+    bytes -> prelude::Blob {
+        let p = __require('bytes', Kind.Blob)
+        let n = raw.git_blob_rawsize(p)
+        let out = prelude::Blob()
+        if n > 0 {
+            out.push(raw.git_blob_rawcontent(p), n)
+        }
+        out
+    }
+
+    lines -> [String] { text.lines() }
+    write(path: String | Path) -> Int { Path(path).write(bytes) }
+    entries -> [TreeEntry] { [*self] }
+    names -> [String] { [it.name for self] }
+    files -> [TreeEntry] { [*walk()] }
+
+    entry(path: String | Path) -> TreeEntry {
+        let ^tree = __tree('entry')
+        let path = str(path)
+        let p = pointer(raw.git_tree_entry_bypath@(_, tree.handle, z(path)))
+        defer raw.git_tree_entry_free(p)
+        let entry = tree-entry(repo, p)
+        entry.path = path
+        entry
+    }
+
+    [](path: String | Path) -> GitObject { entry(path).object }
+    read(path: String | Path) -> String { self[path].text }
+
+    has?(path: String | Path) -> Bool {
+        try {
+            entry(path)
+            true
+        } catch _: NotFoundError {
+            false
+        }
+    }
+
+    __iter__*() -> Generator[TreeEntry] {
+        let ^tree = __tree('iterate')
+        for i in ..tree.size {
+            yield tree-entry(repo, raw.git_tree_entry_byindex(tree.handle, i))
+        }
+    }
+
+    walk*(prefix: String = '') -> Generator[TreeEntry] {
+        for entry in self {
+            entry.path = "{prefix}{entry.path}"
+            walk-entry(entry)
+        }
+    }
+
+    edit() -> TreeBuilder {
+        let ^tree = __tree('edit')
+        TreeBuilder(repo, tree)
+    }
+
+    name -> String { c.str(raw.git_tag_name(__require('name', Kind.Tag))) }
+
+    target -> GitObject {
+        let p = __require('target', Kind.Tag)
+        wrap-object(repo, pointer(raw.git_tag_target@(_, p)))
+    }
+
+    tagger -> ?Signature {
+        let p = raw.git_tag_tagger(__require('tagger', Kind.Tag))
+        p ? signature(p) : nil
+    }
+}
+
+pub class Commit < GitObject {
+    __str__() -> String { "{self.short} {self.summary}" }
+}
+
+pub class Tree < GitObject {}
+
+pub class Blob < GitObject {
+    __str__() -> String { "Blob({self.short}, {self.size} bytes)" }
+}
+
+pub class Tag < GitObject {
+    __str__() -> String { "{self.name} -> {self.target.short}" }
+}
+
+pub class TreeEntry {
+    repo: Repository
+    id:   Oid
+    path: String
+    mode: Int
+    kind: ObjectKind
+
+    name -> String { Path(path).name }
+    object -> GitObject { repo[id] }
+    tree? -> Bool { kind == Kind.Tree }
+    blob? -> Bool { kind == Kind.Blob }
+    submodule? -> Bool { mode == 0o160000 }
+    executable? -> Bool { mode == 0o100755 }
+    symlink? -> Bool { mode == 0o120000 }
+    text -> String { object.text }
+    bytes -> prelude::Blob { object.bytes }
+    __str__() -> String { "{mode:06o} {kind} {id.short} {path}" }
+}
+
+fn tree-entry(repo: Repository, p: Ptr[Any], prefix: String = '') -> TreeEntry {
+    let name = c.str(raw.git_tree_entry_name(p))
+    TreeEntry(
+        repo,
+        Oid(oid-text(raw.git_tree_entry_id(p))),
+        "{prefix}{name}",
+        raw.git_tree_entry_filemode(p),
+        object-kind(raw.git_tree_entry_type(p))
+    )
+}
+
+pub class TreeBuilder < Handle {
+    __repo: Repository
+
+    init(repo: Repository, tree: ?Tree = nil) {
+        let p = pointer(raw.git_treebuilder_new@(_, repo.handle, tree.?handle))
+        super(p, raw.git_treebuilder_free, repo)
+        __repo = repo
+    }
+
+    put(name: String, revision: Revision, mode: ?Int = nil) -> TreeBuilder {
+        let object = __repo[revision]
+        let mode = mode ?? match object.kind {
+            Kind.Tree   => 0o040000,
+            Kind.Blob   => 0o100644,
+            Kind.Commit => 0o160000,
+            Kind.Tag    => throw ValueError('annotated tags cannot be tree entries'),
+        }
+        let insert = raw.git_treebuilder_insert@(nil, self.handle, z(name), _, mode)
+        check(object.id.with-native(insert), 'insert tree entry')
+        self
+    }
+
+    write(name: String, data: String | prelude::Blob, mode: Int = 0o100644) -> TreeBuilder {
+        put(name, __repo.write-blob(data), mode)
+    }
+
+    remove(name: String) -> TreeBuilder {
+        check(raw.git_treebuilder_remove(self.handle, z(name)), 'remove tree entry')
+        self
+    }
+
+    build() -> Tree {
+        __repo.tree-at(oid-result(raw.git_treebuilder_write@(_, self.handle)))
+    }
+}
+
+fn walk-entry(entry: TreeEntry) -> nil {
+    if !entry.tree? {
+        yield entry
+        return
+    }
+
+    for leaf in entry.object.walk("{entry.path}/") {
+        yield leaf
+    }
+}
+
+fn wrap-object(repo: Repository, p: Ptr[Any]) -> GitObject {
+    match raw.git_object_type(p) {
+        1 => Commit(repo, p),
+        2 => Tree(repo, p),
+        3 => Blob(repo, p),
+        4 => Tag(repo, p),
+    }
+}
+
+pub class Reference < Handle {
+    __repo: Repository
+
+    init(repo: Repository, p: Ptr[Any]) {
+        super(p, raw.git_reference_free, repo)
+        __repo = repo
+    }
+
+    repo -> Repository { __repo }
+    name -> String { c.str(raw.git_reference_name(self.handle)) }
+    shorthand -> String { c.str(raw.git_reference_shorthand(self.handle)) }
+    symbolic? -> Bool { raw.git_reference_type(self.handle) == 2 }
+    branch? -> Bool { raw.git_reference_is_branch(self.handle) != 0 }
+    remote? -> Bool { raw.git_reference_is_remote(self.handle) != 0 }
+    tag? -> Bool { raw.git_reference_is_tag(self.handle) != 0 }
+    head? -> Bool { check(raw.git_branch_is_head(self.handle)) != 0 }
+    symbolic-target -> ?String { text-at(raw.git_reference_symbolic_target(self.handle)) }
+    commit -> Commit { repo.commit-at(self) }
+    tree -> Tree { repo.tree-at(self) }
+    id -> Oid {
+        let ^ref = resolved
+        Oid(oid-text(raw.git_reference_target(ref.handle)))
+    }
+
+    object -> GitObject { repo[id] }
+
+    resolved -> Reference {
+        Reference(repo, pointer(raw.git_reference_resolve@(_, self.handle)))
+    }
+
+    upstream -> ?Reference {
+        try {
+            Reference(repo, pointer(raw.git_branch_upstream@(_, self.handle)))
+        } catch _: NotFoundError {
+            nil
+        }
+    }
+
+    track(name: ?String) -> Reference {
+        check(raw.git_branch_set_upstream(self.handle, z(name)), 'set upstream')
+        self
+    }
+
+    rename(name: String, force: Bool = false) -> Reference {
+        let p = pointer(raw.git_branch_move@(_, self.handle, z(name), int(force)))
+        self.close()
+        Reference(repo, p)
+    }
+
+    delete!() -> nil {
+        let remove = branch? ? raw.git_branch_delete : raw.git_reference_delete
+        check(remove(self.handle), 'delete reference')
+        self.close()
+    }
+
+    checkout() -> Repository { repo.checkout(name) }
+    log(limit: ?Int = nil) -> History { repo.log(self, limit: limit) }
+    __str__() -> String { "{shorthand} -> {id.short}" }
+}
+
+pub class References : Iterable[Reference] {
+    __repo:   Repository
+    __prefix: String
+
+    init(repo: Repository, prefix: String = '') {
+        __repo   = repo
+        __prefix = prefix
+    }
+
+    names -> [String] {
+        strings(raw.git_reference_list@(_, __repo.handle))
+            .filter(\_.starts?(__prefix))
+            .map(\_[#__prefix;])
+    }
+
+    [](name: String) -> Reference { __repo.ref("{__prefix}{name}") }
+    #() -> Int { #names }
+
+    has?(name: String) -> Bool { name in names }
+
+    __iter__*() -> Generator[Reference] {
+        for name in names {
+            yield self[name]
+        }
+    }
+
+    __str__() -> String { str(names) }
+}
+
+pub class History : Iterable[Commit] {
+    __repo:         Repository
+    __start:        Revision
+    __hide:         [Revision]
+    __limit:        ?Int
+    __reverse:      Bool
+    __first-parent: Bool
+
+    init(repo: Repository, start: Revision, hide: [Revision], limit: ?Int,
+         reverse: Bool, first-parent: Bool) {
+        __repo         = repo
+        __start        = start
+        __hide         = hide
+        __limit        = limit
+        __reverse      = reverse
+        __first-parent = first-parent
+    }
+
+    __iter__() -> Iter[Commit] {
+        let empty? = __limit == 0 || (__start == 'HEAD' && __repo.unborn?)
+        empty? ? [].__iter__() : __walk().__iter__()
+    }
+
+    __walk*() -> Generator[Commit] {
+        let p = pointer(raw.git_revwalk_new@(_, __repo.handle))
+        let ^walk = Handle(p, raw.git_revwalk_free, __repo)
+        check(raw.git_revwalk_sorting(p, 3 | (__reverse ? 4 : 0)))
+
+        if __first-parent {
+            check(raw.git_revwalk_simplify_first_parent(p))
+        }
+
+        if let s: String = __start and '..' in s {
+            check(raw.git_revwalk_push_range(p, z(s)))
+        } else {
+            check(__repo[__start].id.with-native(raw.git_revwalk_push@(p, _)))
+        }
+
+        for revision in __hide {
+            check(__repo[revision].id.with-native(raw.git_revwalk_hide@(p, _)))
+        }
+
+        let oid = raw.GitOid(c.auto(c.new(raw.GitOid.ctype())))
+        let n = 0
+        while __limit == nil || n < __limit {
+            __repo.handle
+            let rc = raw.git_revwalk_next(oid, p)
+            break if rc == -31
+            check(rc)
+            yield __repo.commit-at(Oid(oid-text(oid)))
+            n += 1
+        }
+    }
+}
+
+pub class IndexEntry {
+    path:  String
+    id:    Oid
+    mode:  Int
+    size:  Int
+    stage: Int
+
+    conflict? -> Bool { stage != 0 }
+    executable? -> Bool { mode == 0o100755 }
+    __str__() -> String { "{mode:06o} {id.short} {stage} {path}" }
+}
+
+fn index-entry(p: Ptr[Any]) -> IndexEntry {
+    let e = raw.GitIndexEntry(p)
+    IndexEntry(c.str(e.path), Oid(oid-text(e.id)), e.mode, e.size, (e.flags >> 12) & 3)
+}
+
+pub class Index < Handle : Iterable[IndexEntry] {
+    __repo: Repository
+
+    init(repo: Repository) {
+        super(pointer(raw.git_repository_index@(_, repo.handle)), raw.git_index_free, repo)
+        __repo = repo
+    }
+
+    size -> Int { raw.git_index_entrycount(self.handle) }
+    #() -> Int { size }
+    conflicts? -> Bool { raw.git_index_has_conflicts(self.handle) != 0 }
+    entries -> [IndexEntry] { [*self] }
+    paths -> [String] { [it.path for self] }
+
+    [](path: String | Path, stage: Int = 0) -> ?IndexEntry {
+        let p = raw.git_index_get_bypath(self.handle, z(str(path)), stage)
+        p ? index-entry(p) : nil
+    }
+
+    __iter__*() -> Generator[IndexEntry] {
+        for i in ..size {
+            yield index-entry(raw.git_index_get_byindex(self.handle, i))
+        }
+    }
+
+    add(*paths: String | Path) -> Index {
+        for path in paths {
+            check(raw.git_index_add_bypath(self.handle, z(str(path))), "stage {path}")
+        }
+        self
+    }
+
+    remove(*paths: String | Path) -> Index {
+        for path in paths {
+            check(raw.git_index_remove_bypath(self.handle, z(str(path))), "unstage {path}")
+        }
+        self
+    }
+
+    add-all(*patterns: String, force: Bool = false) -> Index {
+        let add = raw.git_index_add_all@(self.handle, _, int(force), nil, nil)
+        check(with-strings(patterns, add), 'stage matching files')
+        self
+    }
+
+    update-all(*patterns: String) -> Index {
+        let update = raw.git_index_update_all@(self.handle, _, nil, nil)
+        check(with-strings(patterns, update), 'stage tracked changes')
+        self
+    }
+
+    write() -> Index {
+        check(raw.git_index_write(self.handle), 'write index')
+        self
+    }
+
+    reload() -> Index {
+        check(raw.git_index_read(self.handle, 1), 'reload index')
+        self
+    }
+
+    read-tree(revision: Revision) -> Index {
+        let tree = __repo.tree-at(revision)
+        check(raw.git_index_read_tree(self.handle, tree.handle))
+        self
+    }
+
+    write-tree() -> Tree {
+        __repo.tree-at(oid-result(raw.git_index_write_tree@(_, self.handle)))
+    }
+
+    __str__() -> String { "Index({size} entries)" }
+}
+
+pub ns Change {
+    pub tag Unmodified, Added, Deleted, Modified, Renamed, Copied;
+    pub tag Ignored, Untracked, TypeChanged, Unreadable, Conflicted;
+}
+
+pub use ChangeKind = Change.Unmodified | Change.Added | Change.Deleted | Change.Modified
+                  | Change.Renamed | Change.Copied | Change.Ignored | Change.Untracked
+                  | Change.TypeChanged | Change.Unreadable | Change.Conflicted
+
+fn change-kind(n: Int) -> ChangeKind {
+    match n {
+         0 => Change.Unmodified,
+         1 => Change.Added,
+         2 => Change.Deleted,
+         3 => Change.Modified,
+         4 => Change.Renamed,
+         5 => Change.Copied,
+         6 => Change.Ignored,
+         7 => Change.Untracked,
+         8 => Change.TypeChanged,
+         9 => Change.Unreadable,
+        10 => Change.Conflicted,
+    }
+}
+
+pub class DiffFile {
+    path: String
+    id:   Oid
+    size: Int
+    mode: Int
+
+    exists? -> Bool { mode != 0 }
+    __str__() -> String { path }
+}
+
+fn diff-file(file: raw.GitFile) -> DiffFile {
+    DiffFile(c.str(file.path), Oid(oid-text(file.id)), file.size, file.mode)
+}
+
+pub class Delta {
+    kind:       ChangeKind
+    old:        DiffFile
+    new:        DiffFile
+    similarity: Int
+    binary?:    ?Bool
+
+    path -> String { new.path }
+    renamed? -> Bool { kind == Change.Renamed }
+    added? -> Bool { kind == Change.Added }
+    deleted? -> Bool { kind == Change.Deleted }
+
+    __str__() -> String {
+        renamed? ? "{kind} {old.path} -> {new.path}" : "{kind} {path}"
+    }
+}
+
+fn delta(p: Ptr[Any]) -> Delta {
+    let d = raw.GitDelta(p)
+    let binary = match d.flags & 3 {
+        1 => true,
+        2 => false,
+        _ => nil,
+    }
+    Delta(change-kind(d.status), diff-file(d.old), diff-file(d.new),
+          d.similarity, binary)
+}
+
+pub class StatusEntry {
+    path:     String
+    flags:    Int
+    staged:   ?Delta
+    unstaged: ?Delta
+
+    staged? -> Bool { (flags & 0x1f) != 0 }
+    unstaged? -> Bool { (flags & 0x1f80) != 0 }
+    untracked? -> Bool { (flags & 0x80) != 0 }
+    ignored? -> Bool { (flags & 0x4000) != 0 }
+    conflict? -> Bool { (flags & 0x8000) != 0 }
+    deleted? -> Bool { (flags & 0x204) != 0 }
+    renamed? -> Bool { (flags & 0x808) != 0 }
+    clean? -> Bool { flags == 0 }
+
+    __str__() -> String {
+        let index = staged ? str(staged.kind) : '-'
+        let work = unstaged ? str(unstaged.kind) : '-'
+        return "{index}/{work} {path}"
+    }
+}
+
+pub class Status : Iterable[StatusEntry] {
+    entries: [StatusEntry]
+
+    clean? -> Bool { entries.all?(e -> e.clean? || e.ignored?) }
+    dirty? -> Bool { !clean? }
+    staged -> [StatusEntry] { entries.filter(&.staged?) }
+    unstaged -> [StatusEntry] { entries.filter(&.unstaged?) }
+    untracked -> [StatusEntry] { entries.filter(&.untracked?) }
+    conflicts -> [StatusEntry] { entries.filter(&.conflict?) }
+    paths -> [String] { entries.map(&.path) }
+    #() -> Int { #entries }
+    __iter__() -> Iter[StatusEntry] { entries.__iter__() }
+    [](path: String | Path) -> ?StatusEntry { entries.find(\_.path == str(path)) }
+    __str__() -> String { clean? ? 'clean' : entries.map(str).join('\n') }
+}
+
+fn status-entry(p: Ptr[Any]) -> StatusEntry {
+    let entry = raw.GitStatus(p)
+    let staged = entry.staged ? delta(entry.staged) : nil
+    let unstaged = entry.unstaged ? delta(entry.unstaged) : nil
+    let path = (unstaged ?? staged).path
+    StatusEntry(path, entry.flags, staged, unstaged)
+}
+
+pub class DiffStats {
+    files:      Int
+    insertions: Int
+    deletions:  Int
+
+    __str__() -> String { "{files} files changed, +{insertions} -{deletions}" }
+}
+
+pub class Diff < Handle : Iterable[Delta] {
+    init(repo: Repository, p: Ptr[Any]) {
+        super(p, raw.git_diff_free, repo)
+    }
+
+    size -> Int { raw.git_diff_num_deltas(self.handle) }
+    empty? -> Bool { size == 0 }
+    #() -> Int { size }
+    deltas -> [Delta] { [*self] }
+    paths -> [String] { [it.path for self] }
+    patch -> String { buffer-text(raw.git_diff_to_buf@(_, self.handle, 1)) }
+    __str__() -> String { patch }
+
+    stats -> DiffStats {
+        let p = pointer(raw.git_diff_get_stats@(_, self.handle))
+        defer raw.git_diff_stats_free(p)
+        DiffStats(raw.git_diff_stats_files_changed(p), raw.git_diff_stats_insertions(p),
+                  raw.git_diff_stats_deletions(p))
+    }
+
+    __offset(n: Int) -> Int {
+        let n = n < 0 ? size + n : n
+        if n < 0 || n >= size {
+            throw IndexError("diff index {n} out of range")
+        }
+        n
+    }
+
+    [](n: Int) -> Delta {
+        let n = __offset(n)
+        let p = optional-pointer(raw.git_patch_from_diff@(_, self.handle, n))
+        defer raw.git_patch_free(p)
+        delta(raw.git_diff_get_delta(self.handle, n))
+    }
+
+    __iter__*() -> Generator[Delta] {
+        for i in ..size {
+            yield self[i]
+        }
+    }
+
+    patch-for(n: Int) -> ?String {
+        let n = __offset(n)
+        let $p = optional-pointer(raw.git_patch_from_diff@(_, self.handle, n)) or return nil
+        defer raw.git_patch_free(p)
+        if (raw.GitDelta(raw.git_diff_get_delta(self.handle, n)).flags & 1) != 0 {
+            return nil
+        }
+        buffer-text(raw.git_patch_to_buf@(_, p))
+    }
+
+    find-renames() -> Diff {
+        check(raw.git_diff_find_similar(self.handle, nil), 'detect renames')
+        self
+    }
+}
+
+pub class Config < Handle : Iterable[(String, String)] {
+    init(repo: Repository) {
+        let p = pointer(raw.git_repository_config@(_, repo.handle))
+        super(p, raw.git_config_free, repo)
+    }
+
+    [](key: String) -> ?String {
+        try {
+            buffer-text(raw.git_config_get_string_buf@(_, self.handle, z(key)))
+        } catch _: NotFoundError {
+            nil
+        }
+    }
+
+    []=(key: String, value: String | Int | Bool) -> nil {
+        let key = z(key)
+        match value {
+            v: String => check(raw.git_config_set_string(self.handle, key, z(v))),
+            v: Bool   => check(raw.git_config_set_bool(self.handle, key, prelude::int(v))),
+            v: Int    => check(raw.git_config_set_int64(self.handle, key, v)),
+        }
+        return
+    }
+
+    bool(key: String, default: Bool = false) -> Bool {
+        let out = c.box(c.int)
+        defer c.free(out)
+        let rc = raw.git_config_get_bool(out, self.handle, z(key))
+        rc == -3 ? default : (check(rc) == 0 && out[0] != 0)
+    }
+
+    int(key: String, default: Int = 0) -> Int {
+        let out = c.box(c.i64)
+        defer c.free(out)
+        let rc = raw.git_config_get_int64(out, self.handle, z(key))
+        if rc == -3 {
+            return default
+        }
+        check(rc)
+        out[0]
+    }
+
+    delete(key: String) -> Bool {
+        let rc = raw.git_config_delete_entry(self.handle, z(key))
+        rc == -3 ? false : check(rc) == 0
+    }
+
+    __iter__*() -> Generator[(String, String)] {
+        let p = pointer(raw.git_config_iterator_new@(_, self.handle))
+        let ^iter = Handle(p, raw.git_config_iterator_free, self)
+        let out = c.auto(c.box(c.ptr))
+
+        while true {
+            self.handle
+            let rc = raw.git_config_next(out, p)
+            break if rc == -31
+            check(rc)
+            let entry = raw.GitConfigEntry(out[0])
+            yield (c.str(entry.name), text-at(entry.value) ?? '')
+        }
+    }
+
+    dict -> Dict[String, String] { %{k: v for (k, v) in self} }
+    __str__() -> String { str(dict) }
+}
+
+pub class Credentials {
+    __kind:     Int
+    __username: String
+    __secret:   ?String
+    __private:  ?String
+    __public:   ?String
+
+    init(kind: Int, username: String, secret: ?String = nil,
+         private: ?String = nil, public: ?String = nil) {
+        __kind     = kind
+        __username = username
+        __secret   = secret
+        __private  = private
+        __public   = public
+    }
+
+    static password(username: String, password: String) -> Credentials {
+        Credentials(1, username, password)
+    }
+
+    static ssh-agent(username: String = 'git') -> Credentials {
+        Credentials(2, username)
+    }
+
+    static ssh-key(username: String, private: String | Path,
+                   public: ?String = nil, passphrase: ?String = nil) -> Credentials {
+        Credentials(2, username, passphrase, str(private), public)
+    }
+
+    provide(out: Ptr[Any], allowed: Int) -> Int {
+        if (allowed & 32) != 0 {
+            return raw.git_credential_username_new(out, z(__username))
+        }
+        if (allowed & __kind) == 0 {
+            return -30
+        }
+
+        match (__kind, __private) {
+            (1, _) => raw.git_credential_userpass_plaintext_new(
+                out, z(__username), z(__secret)
+            ),
+            (2, nil) => raw.git_credential_ssh_key_from_agent(out, z(__username)),
+            (2, $key) => raw.git_credential_ssh_key_new(
+                out, z(__username), z(__public), z(key), z(__secret)
+            ),
+            _ => -30,
+        }
+    }
+
+    __str__() -> String { "Credentials({__username})" }
+}
+
+pub use Authentication = Credentials | ((String, String | nil, Int) -> (Credentials | nil))
+
+fn transport[T](callbacks: raw.GitCallbacks17, auth: ?Authentication, f: () -> T) -> T {
+    let failure: Any = nil
+    let rejected: [String] = []
+    let attempts = 0
+
+    fn acquire(out: Ptr[Any], url: Ptr[Any], user: ?Ptr[Any], allowed: Int) -> Int {
+        let $auth = auth or return -30
+        if attempts >= 8 {
+            return -16
+        }
+
+        attempts += 1
+        let credential = match auth {
+            c: Credentials => c,
+            f              => f(c.str(url), text-at(user), allowed),
+        }
+        credential ? credential.provide(out, allowed) : -30
+    }
+
+    C! closure credentials(out: c.ptr, url: c.ptr, user: c.ptr,
+                           allowed: c.uint, payload: c.ptr) -> c.int {
+        try {
+            acquire(out, url, user, allowed)
+        } catch error {
+            failure = error
+            return -7
+        }
+    }
+
+    C! closure pushed(name: c.ptr, status: c.ptr, payload: c.ptr) -> c.int {
+        if status {
+            rejected.push("{c.str(name)}: {c.str(status)}")
+        }
+        0
+    }
+
+    defer c.freeClosure(credentials)
+    defer c.freeClosure(pushed)
+    callbacks.credentials = credentials
+    callbacks.push-update = pushed
+
+    try {
+        let result = f()
+        if failure != nil {
+            throw failure
+        }
+        if #rejected > 0 {
+            throw PushRejectedError(rejected.join('\n'), operation: 'push')
+        }
+        return result
+    } catch error: GitError {
+        throw failure ?? error
+    }
+}
+
+pub class Remote < Handle {
+    __repo: Repository
+
+    init(repo: Repository, p: Ptr[Any]) {
+        super(p, raw.git_remote_free, repo)
+        __repo = repo
+    }
+
+    name -> String { c.str(raw.git_remote_name(self.handle)) }
+    url -> String { c.str(raw.git_remote_url(self.handle)) }
+    push-url -> String { text-at(raw.git_remote_pushurl(self.handle)) ?? url }
+    fetch-specs -> [String] { strings(raw.git_remote_get_fetch_refspecs@(_, self.handle)) }
+    push-specs -> [String] { strings(raw.git_remote_get_push_refspecs@(_, self.handle)) }
+
+    set-url(url: String, push: Bool = false) -> Remote {
+        let set = push ? raw.git_remote_set_pushurl : raw.git_remote_set_url
+        check(set(__repo.handle, z(name), z(url)), 'set remote URL')
+        __repo.remotes[name]
+    }
+
+    fetch(*refspecs: String, auth: ?Authentication = nil, prune: Bool = false,
+          depth: Int = 0) -> Remote {
+        if depth < 0 {
+            throw ValueError('fetch depth must be nonnegative')
+        }
+
+        let opts = raw.GitFetchOptions(c.new(raw.GitFetchOptions.ctype()))
+        defer c.free(opts.get())
+        check(raw.git_fetch_options_init(opts, 1))
+        opts.prune = prune ? 1 : 0
+        opts.depth = depth
+        let callbacks = raw.GitCallbacks17(opts.callbacks.get())
+        let fetch = raw.git_remote_fetch@(self.handle, _, opts, nil)
+        transport(callbacks, auth, () -> check(with-strings(refspecs, fetch), 'fetch'))
+        self
+    }
+
+    push(*refspecs: String, auth: ?Authentication = nil) -> Remote {
+        let opts = raw.GitPushOptions(c.new(raw.GitPushOptions.ctype()))
+        defer c.free(opts.get())
+        check(raw.git_push_options_init(opts, 1))
+        let callbacks = raw.GitCallbacks17(opts.callbacks.get())
+        let push = raw.git_remote_push@(self.handle, _, opts)
+        transport(callbacks, auth, () -> check(with-strings(refspecs, push), 'push'))
+        self
+    }
+
+    delete!() -> nil {
+        check(raw.git_remote_delete(__repo.handle, z(name)), 'delete remote')
+        self.close()
+    }
+
+    __str__() -> String { "{name} {url}" }
+}
+
+pub class Remotes : Iterable[Remote] {
+    __repo: Repository
+
+    init(repo: Repository) { __repo = repo }
+
+    names -> [String] { strings(raw.git_remote_list@(_, __repo.handle)) }
+    #() -> Int { #names }
+    has?(name: String) -> Bool { name in names }
+
+    [](name: String) -> Remote {
+        Remote(__repo, pointer(raw.git_remote_lookup@(_, __repo.handle, z(name))))
+    }
+
+    add(name: String, url: String) -> Remote {
+        Remote(__repo, pointer(raw.git_remote_create@(_, __repo.handle, z(name), z(url))))
+    }
+
+    __iter__*() -> Generator[Remote] {
+        for name in names {
+            yield self[name]
+        }
+    }
+
+    __str__() -> String { str(names) }
+}
+
+pub class Stash {
+    index:   Int
+    id:      Oid
+    message: String
+
+    __str__() -> String { "{index}: {message}" }
+}
+
+pub class BlameHunk {
+    repo:   Repository
+    id:     Oid
+    author: Signature
+    start:  Int
+    count:  Int
+
+    commit -> Commit { repo.commit-at(id) }
+    end -> Int { start + count }
+    contains?(line: Int) -> Bool { start <= line && line < end }
+    __str__() -> String { "{id.short} {author.name} {start}..{end}" }
+}
+
+pub class Blame : Iterable[BlameHunk] {
+    hunks: [BlameHunk]
+
+    [](line: Int) -> ?BlameHunk { hunks.find(\_.contains?(line)) }
+    __iter__() -> Iter[BlameHunk] { hunks.__iter__() }
+    #() -> Int { #hunks }
+}
+
+fn blame-hunk(repo: Repository, p: Ptr[Any]) -> BlameHunk {
+    let h = raw.GitBlameHunk(p)
+    BlameHunk(repo, Oid(oid-text(h.id)), signature(h.author), h.start, h.lines)
+}
+
+pub class ReflogEntry {
+    old:       Oid
+    new:       Oid
+    committer: Signature
+    message:   ?String
+
+    __str__() -> String { "{new.short} {message ?? ''}" }
+}
+
+fn reflog-entry(p: Ptr[Any]) -> ReflogEntry {
+    ReflogEntry(
+        Oid(oid-text(raw.git_reflog_entry_id_old(p))),
+        Oid(oid-text(raw.git_reflog_entry_id_new(p))),
+        signature(raw.git_reflog_entry_committer(p)),
+        text-at(raw.git_reflog_entry_message(p))
+    )
+}
+
+pub class Repository < Handle {
+    init(path: String | Path = '.') {
+        super(open-repository(path), raw.git_repository_free)
+    }
+
+    init(p: Ptr[Any]) {
+        super(p, raw.git_repository_free)
+    }
+
+    path -> Path { Path(c.str(raw.git_repository_path(self.handle))) }
+
+    workdir -> ?Path {
+        let p = raw.git_repository_workdir(self.handle)
+        p ? Path(c.str(p)) : nil
+    }
+
+    bare? -> Bool { raw.git_repository_is_bare(self.handle) != 0 }
+    empty? -> Bool { unborn? && #refs == 0 }
+    detached? -> Bool { check(raw.git_repository_head_detached(self.handle)) != 0 }
+    unborn? -> Bool { check(raw.git_repository_head_unborn(self.handle)) != 0 }
+    state -> Int { raw.git_repository_state(self.handle) }
+    index -> Index { Index(self) }
+    config -> Config { Config(self) }
+    refs -> References { References(self) }
+    branches -> References { References(self, 'refs/heads/') }
+    remote-branches -> References { References(self, 'refs/remotes/') }
+    tags -> References { References(self, 'refs/tags/') }
+    remotes -> Remotes { Remotes(self) }
+    clean? -> Bool { status.clean? }
+    dirty? -> Bool { !clean? }
+
+    head -> ?Reference {
+        if !unborn? {
+            Reference(self, pointer(raw.git_repository_head@(_, self.handle)))
+        }
+    }
+
+    branch-name -> ?String {
+        let head = Reference(self, pointer(raw.git_reference_lookup@(_, self.handle,
+                                                                    z('HEAD'))))
+        head.symbolic-target.?comb(/^refs\/heads\//)
+    }
+
+    tip -> ?Commit { head.?commit }
+    tree -> ?Tree { tip.?tree }
+    tree-builder -> TreeBuilder { TreeBuilder(self) }
+
+    signature -> Signature {
+        let p = pointer(raw.git_signature_default@(_, self.handle))
+        defer raw.git_signature_free(p)
+        ::signature(p)
+    }
+
+    [](revision: Revision) -> GitObject {
+        match revision {
+            s: String    => revparse(s),
+            oid: Oid     => lookup(oid),
+            o: GitObject => lookup(o.id),
+            r: Reference => lookup(r.id),
+        }
+    }
+
+    lookup(oid: Oid) -> GitObject {
+        let find = raw.git_object_lookup@(_, self.handle, _, -2)
+        let p = oid.with-native(id -> pointer(find@(_, id)))
+        wrap-object(self, p)
+    }
+
+    revparse(spec: String) -> GitObject {
+        wrap-object(self, pointer(raw.git_revparse_single@(_, self.handle, z(spec))))
+    }
+
+    commit-at(revision: Revision = 'HEAD') -> Commit {
+        cast(peel(self[revision], Kind.Commit, 'commit-at'))
+    }
+
+    tree-at(revision: Revision = 'HEAD') -> Tree {
+        cast(peel(self[revision], Kind.Tree, 'tree-at'))
+    }
+
+    blob-at(revision: Revision) -> Blob {
+        cast(peel(self[revision], Kind.Blob, 'blob-at'))
+    }
+
+    has?(revision: Revision) -> Bool {
+        try {
+            self[revision]
+            true
+        } catch _: NotFoundError {
+            false
+        }
+    }
+
+    ref(name: String = 'HEAD') -> Reference {
+        Reference(self, pointer(raw.git_reference_dwim@(_, self.handle, z(name))))
+    }
+
+    read(path: String | Path, revision: Revision = 'HEAD') -> String {
+        self[revision].read(path)
+    }
+
+    files(revision: Revision = 'HEAD') -> [TreeEntry] { self[revision].files }
+
+    blame(path: String | Path, revision: Revision = 'HEAD') -> Blame {
+        let opts = raw.GitBlameOptions(c.new(raw.GitBlameOptions.ctype()))
+        defer c.free(opts.get())
+        check(raw.git_blame_options_init(opts, 1))
+        check(raw.git_oid_fromstr(opts.newest, z(commit-at(revision).hex)))
+        let p = pointer(raw.git_blame_file@(_, self.handle, z(path), opts))
+        defer raw.git_blame_free(p)
+        let n = raw.git_blame_get_hunk_count(p)
+        Blame([blame-hunk(self, raw.git_blame_get_hunk_byindex(p, i)) for i in ..n])
+    }
+
+    reflog(name: String = 'HEAD') -> [ReflogEntry] {
+        let p = pointer(raw.git_reflog_read@(_, self.handle, z(name)))
+        defer raw.git_reflog_free(p)
+        let n = raw.git_reflog_entrycount(p)
+        [reflog-entry(raw.git_reflog_entry_byindex(p, i)) for i in ..n]
+    }
+
+    describe(revision: Revision = 'HEAD', tags: Bool = true) -> String {
+        let opts = raw.GitDescribeOptions()
+        defer c.free(opts.get())
+        check(raw.git_describe_options_init(opts, 1))
+        opts.strategy = int(tags)
+        opts.fallback = 1
+        let commit = commit-at(revision)
+        let p = pointer(raw.git_describe_commit@(_, commit.handle, opts))
+        defer raw.git_describe_result_free(p)
+        buffer-text(raw.git_describe_format@(_, p, nil))
+    }
+
+    log(start: Revision = 'HEAD', limit: ?Int = nil, hide: [Revision] = [],
+        reverse: Bool = false, first-parent: Bool = false) -> History {
+        if let n: Int = limit and n < 0 {
+            throw ValueError('history limit must be nonnegative')
+        }
+        History(self, start, hide, limit, reverse, first-parent)
+    }
+
+    status -> Status {
+        status-with()
+    }
+
+    status-with(ignored: Bool = false, untracked: Bool = true) -> Status {
+        let storage = c.new(raw.GitStatusOptions.ctype())
+        let opts = raw.GitStatusOptions(storage)
+        defer c.free(opts.get())
+        check(raw.git_status_options_init(opts, 1))
+        opts.flags = 0x190 | int(untracked) | (ignored ? 2 : 0)
+        let p = pointer(raw.git_status_list_new@(_, self.handle, opts))
+        defer raw.git_status_list_free(p)
+        let n = raw.git_status_list_entrycount(p)
+        Status([status-entry(raw.git_status_byindex(p, i)) for i in ..n])
+    }
+
+    status-of(path: String | Path) -> Int {
+        let out = c.box(c.uint)
+        defer c.free(out)
+        check(raw.git_status_file(out, self.handle, z(str(path))), "status of {path}")
+        out[0]
+    }
+
+    ignored?(path: String | Path) -> Bool {
+        let out = c.box(c.int)
+        defer c.free(out)
+        check(raw.git_ignore_path_is_ignored(out, self.handle, z(str(path))))
+        out[0] != 0
+    }
+
+    ignore(*rules: String) -> Repository {
+        check(raw.git_ignore_add_rule(self.handle, z(rules.join('\n'))))
+        self
+    }
+
+    add(*paths: String | Path) -> Repository {
+        let ^index = self.index
+        index.add(*paths).write()
+        self
+    }
+
+    add-all(*patterns: String, force: Bool = false) -> Repository {
+        let ^index = self.index
+        index.add-all(*patterns, force: force).write()
+        self
+    }
+
+    remove(*paths: String | Path) -> Repository {
+        let ^index = self.index
+        index.remove(*paths).write()
+        self
+    }
+
+    unstage(*paths: String) -> Repository {
+        let target = tip
+        let reset = raw.git_reset_default@(self.handle, target.?handle, _)
+        check(with-strings(paths, reset), 'unstage paths')
+        self
+    }
+
+    write-blob(data: String | prelude::Blob) -> Blob {
+        let create = raw.git_blob_create_from_buffer@(_, self.handle, data, data.size())
+        let id = oid-result(create)
+        blob-at(id)
+    }
+
+    commit(message: String, author: ?Signature = nil, committer: ?Signature = nil,
+           parents: ?[Revision] = nil, tree: ?Revision = nil,
+           update-ref: String | None = 'HEAD') -> Commit {
+        let author = author ?? signature
+        let committer = committer ?? author
+        let ref = match update-ref {
+            name: String => z(name),
+            None         => nil,
+        }
+        let parents = parents ?? (tip ? [tip] : [])
+        let commits = parents.map(commit-at)
+        let ^index = self.index
+        let tree = tree ? tree-at(tree) : index.write-tree()
+        let ps = c.new(c.ptr, max(1, #commits))
+        defer c.free(ps)
+        for commit, i in commits {
+            ps[i] = commit.handle
+        }
+
+        fn create(a: Ptr[Any], c: Ptr[Any]) -> Oid {
+            oid-result(raw.git_commit_create@(_, self.handle, ref, a, c, nil,
+                                               z(message), tree.handle, #commits, ps))
+        }
+
+        let id = author.with-native(a -> committer.with-native(create@(a, _)))
+        commit-at(id)
+    }
+
+    branch(name: String, target: Revision = 'HEAD', force: Bool = false) -> Reference {
+        let commit = commit-at(target)
+        let create = raw.git_branch_create@(_, self.handle, z(name), _, int(force))
+        let p = pointer(create@(_, commit.handle))
+        Reference(self, p)
+    }
+
+    tag(name: String, target: Revision = 'HEAD', message: ?String = nil,
+        tagger: ?Signature = nil, force: Bool = false) -> Reference {
+        let object = self[target]
+        if message == nil {
+            let create = raw.git_tag_create_lightweight@(_, self.handle, z(name), _, _)
+            oid-result(create@(_, object.handle, int(force)))
+        } else {
+            __create-tag(name, object, tagger ?? signature, message, force)
+        }
+        tags[name]
+    }
+
+    __create-tag(name: String, object: GitObject, tagger: Signature,
+                 message: String, force: Bool) -> Oid {
+        let create = raw.git_tag_create@(_, self.handle, z(name), object.handle,
+                                         _, z(message), int(force))
+        tagger.with-native(p -> oid-result(create@(_, p)))
+    }
+
+    checkout(revision: Revision) -> Repository {
+        let target = commit-at(revision)
+        let reference = __checkout-ref(revision)
+        let opts = raw.GitCheckoutOptions()
+        defer c.free(opts.get())
+        check(raw.git_checkout_options_init(opts, 1))
+        opts.strategy = 1
+        check(raw.git_checkout_tree(self.handle, target.handle, opts), 'checkout')
+        let detach = raw.git_repository_set_head_detached@(self.handle, _)
+        let rc = reference
+               ? raw.git_repository_set_head(self.handle, z(reference.name))
+               : target.id.with-native(detach)
+        check(rc, 'update HEAD')
+        self
+    }
+
+    __checkout-ref(revision: Revision) -> ?Reference {
+        if let r: Reference = revision and r.branch? {
+            return r
+        }
+        if not let name: String = revision {
+            return nil
+        }
+
+        try {
+            let r = ref(name)
+            r.branch? ? r : nil
+        } catch _: NotFoundError {
+            nil
+        }
+    }
+
+    diff() -> Diff {
+        Diff(self, pointer(raw.git_diff_index_to_workdir@(_, self.handle, nil, nil)))
+    }
+
+    diff(old: ?Revision, new: Revision) -> Diff {
+        let before = old ? tree-at(old) : nil
+        let after = tree-at(new)
+        let diff = raw.git_diff_tree_to_tree@(_, self.handle, _, _, nil)
+        Diff(self, pointer(diff@(_, before.?handle, after.handle)))
+    }
+
+    staged -> Diff {
+        let before = tree
+        let diff = raw.git_diff_tree_to_index@(_, self.handle, _, nil, nil)
+        Diff(self, pointer(diff@(_, before.?handle)))
+    }
+
+    changes -> Diff {
+        let before = tree
+        let diff = raw.git_diff_tree_to_workdir_with_index@(_, self.handle, _, nil)
+        Diff(self, pointer(diff@(_, before.?handle)))
+    }
+
+    apply(diff: Diff, index: Bool = false, workdir: Bool = true) -> Repository {
+        let location = match (index, workdir) {
+            (false, true) => 0,
+            (true, false) => 1,
+            (true, true)  => 2,
+            _             => throw ValueError('apply requires index or workdir'),
+        }
+        check(raw.git_apply(self.handle, diff.handle, location, nil), 'apply patch')
+        self
+    }
+
+    reset!(target: Revision = 'HEAD', mode: String = 'mixed') -> Repository {
+        let kind = match mode {
+            'soft'  => 1,
+            'mixed' => 2,
+            'hard'  => 3,
+            _      => throw ValueError("unknown reset mode: {mode}"),
+        }
+        let object = self[target]
+        check(raw.git_reset(self.handle, object.handle, kind, nil), 'reset')
+        self
+    }
+
+    ahead-behind(local: Revision, upstream: Revision) -> (Int, Int) {
+        let a = self[local].id
+        let b = self[upstream].id
+        let counts = c.new(c.u64, 2)
+        defer c.free(counts)
+        let compare = raw.git_graph_ahead_behind@(counts, counts + 1, self.handle, _, _)
+        check(a.with-native(x -> b.with-native(compare@(x, _))))
+        (counts[0], counts[1])
+    }
+
+    ancestor?(ancestor: Revision, descendant: Revision) -> Bool {
+        let a = self[ancestor].id
+        let b = self[descendant].id
+        let compare = raw.git_graph_descendant_of@(self.handle, _, _)
+        a == b || check(b.with-native(x -> a.with-native(compare@(x, _)))) != 0
+    }
+
+    merge-base(a: Revision, b: Revision) -> ?Commit {
+        let a = self[a].id
+        let b = self[b].id
+        let base = (x, y) -> oid-result(raw.git_merge_base@(_, self.handle, x, y))
+        try {
+            commit-at(a.with-native(x -> b.with-native(base@(x, _))))
+        } catch _: NotFoundError {
+            nil
+        }
+    }
+
+    fetch(remote: String = 'origin', *refspecs: String,
+          auth: ?Authentication = nil, prune: Bool = false, depth: Int = 0) -> Repository {
+        let ^r = remotes[remote]
+        r.fetch(*refspecs, auth: auth, prune: prune, depth: depth)
+        self
+    }
+
+    push(remote: String = 'origin', *refspecs: String,
+         auth: ?Authentication = nil) -> Repository {
+        let ^r = remotes[remote]
+        r.push(*refspecs, auth: auth)
+        self
+    }
+
+    stash(message: ?String = nil, untracked: Bool = false,
+          keep-index: Bool = false, author: ?Signature = nil) -> Oid {
+        let flags = int(keep-index) | (untracked ? 2 : 0)
+        let save = raw.git_stash_save@(_, self.handle, _, z(message), flags)
+        (author ?? signature).with-native(p -> oid-result(save@(_, p)))
+    }
+
+    stashes -> [Stash] {
+        let entries: [Stash] = []
+        C! closure visit(n: c.u64, message: c.ptr, oid: c.ptr, payload: c.ptr) -> c.int {
+            entries.push(Stash(n, Oid(oid-text(oid)), c.str(message)))
+            0
+        }
+        defer c.freeClosure(visit)
+        check(raw.git_stash_foreach(self.handle, visit, nil))
+        entries
+    }
+
+    apply-stash(n: Int = 0) -> Repository {
+        check(raw.git_stash_apply(self.handle, n, nil), 'apply stash')
+        self
+    }
+
+    pop-stash(n: Int = 0) -> Repository {
+        check(raw.git_stash_pop(self.handle, n, nil), 'pop stash')
+        self
+    }
+
+    drop-stash!(n: Int = 0) -> Repository {
+        check(raw.git_stash_drop(self.handle, n), 'drop stash')
+        self
+    }
+
+    __str__() -> String {
+        self.closed? ? 'Repository(closed)' : "Repository({workdir ?? path})"
+    }
+}
+
+pub fn open(path: String | Path = '.') -> Repository { Repository(path) }
+
+pub fn init(path: String | Path, bare: Bool = false,
+            branch: String = 'main') -> Repository {
+    let p = pointer(raw.git_repository_init@(_, z(str(path)), int(bare)))
+    let repo = Repository(p)
+    if repo.unborn? {
+        let head = z("refs/heads/{branch}")
+        check(raw.git_repository_set_head(p, head), 'set initial branch')
+    }
+    repo
+}
+
+pub fn clone(url: String | Path, path: String | Path, bare: Bool = false,
+             branch: ?String = nil, auth: ?Authentication = nil,
+             depth: Int = 0) -> Repository {
+    if depth < 0 {
+        throw ValueError('clone depth must be nonnegative')
+    }
+
+    let opts = raw.GitCloneOptions(c.new(raw.GitCloneOptions.ctype()))
+    defer c.free(opts.get())
+    check(raw.git_clone_options_init(opts, 1))
+    let branch = z(branch)
+    opts.bare = int(bare)
+    opts.branch = branch
+    opts.fetch.depth = depth
+    let callbacks = raw.GitCallbacks17(opts.fetch.callbacks.get())
+    let clone = () -> Repository(pointer(raw.git_clone@(_, z(url), z(path), opts)))
+    transport(callbacks, auth, clone)
+}
+
+pub fn discover(path: String | Path = '.') -> ?Repository {
+    try {
+        open(path)
+    } catch error: NotFoundError {
+        nil
+    }
+}

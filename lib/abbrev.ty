@@ -1,0 +1,187 @@
+import path
+
+use Components = Dict[String, Part]
+
+class Part {
+    text:     String
+    letters:  [String]
+    length:   Int
+    kept?:    Bool
+    children: Dict[String, Components]
+
+    init(text: String, kept?: Bool) {
+        self.text = text
+        letters = text.chars()
+        length = 1
+        self.kept? = kept? || letters.join('') != text
+        children = %{}
+    }
+
+    short -> String { kept? ? text : letters[;length].join('') }
+
+    extend(policy: (String, Int) -> Int) -> Part {
+        if kept? {
+            return self
+        }
+
+        let unique = min(length, #letters)
+        let requested = policy(text, unique)
+        if requested < 1 {
+            throw ValueError('abbreviation prefix length must be positive')
+        }
+        length = max(unique, requested)
+        self
+    }
+}
+
+class Entry {
+    text:  String
+    parts: [Part | String]
+
+    short -> String {
+        parts.map(match { part: Part => part.short, text: String => text }).join('')
+    }
+
+    keep() -> nil {
+        for match parts {
+            part: Part   => part.kept? = true,
+            text: String => {},
+        }
+    }
+}
+
+fn detailed(found: String | [String] | RegexMatch, text: String) -> RegexMatch {
+    match found {
+        result: RegexMatch => result,
+        groups: [String]   => RegexMatch(groups, text),
+        word: String       => RegexMatch([word], text),
+    }
+}
+
+fn split(text: String, boundary: Regex) -> [String] {
+    let parts: [String] = []
+    let offset = 0
+    for found in text.matches(boundary) {
+        let result = detailed(found, text)
+        let start = result.pre.size()
+        parts.push(text.bslice(offset, start - offset))
+        parts.push(result[0])
+        offset = start + result[0].size()
+    }
+    parts.push(text.bslice(offset))
+    parts
+}
+
+class Builder {
+    groups:        [Components]
+    preserve:      ?(String -> Bool)
+    preserve-leaf: Bool
+    global:        Bool
+
+    init(preserve: ?(String -> Bool), preserve-leaf: Bool, global: Bool) {
+        self.preserve = preserve
+        self.preserve-leaf = preserve-leaf
+        self.global = global
+        groups = [%{}]
+    }
+
+    part(group: Components, text: String, leaf?: Bool) -> Part {
+        if let $part = group[text] {
+            part.kept? = part.kept? || leaf?
+            return part
+        }
+
+        let kept? = leaf? || !text || (preserve != nil && preserve(text))
+        let part = Part(text, kept?)
+        group[text] = part
+        part
+    }
+
+    children(part: Part, separator: String) -> Components {
+        if global {
+            return groups[0]
+        }
+        if let $group = part.children[separator] {
+            return group
+        }
+
+        let group: Components = %{}
+        part.children[separator] = group
+        groups.push(group)
+        group
+    }
+
+    entry(text: String, boundary: Regex) -> Entry {
+        let chunks = split(text, boundary)
+        let leaf = #chunks - 1
+        while leaf > 0 && !chunks[leaf] {
+            leaf -= 2
+        }
+
+        let group = groups[0]
+        let parts: [Part | String] = []
+        for word, i in chunks[;;2] {
+            let component = part(group, word, preserve-leaf && i * 2 == leaf)
+            parts.push(component)
+            if i * 2 + 1 == #chunks {
+                break
+            }
+
+            let separator = chunks[i * 2 + 1]
+            parts.push(separator)
+            group = children(component, separator)
+        }
+        Entry(text, parts)
+    }
+}
+
+fn common(a: [String], b: [String]) -> Int {
+    let i = 0
+    let limit = min(#a, #b)
+    while i < limit && a[i] == b[i] {
+        i += 1
+    }
+    i
+}
+
+fn distinguish(group: Components, policy: (String, Int) -> Int) -> nil {
+    let parts = group.values().sort(by: &.letters)
+    for (a, b) in parts.zip(parts[1;]) {
+        let length = common(a.letters, b.letters) + 1
+        a.length = max(a.length, length)
+        b.length = max(b.length, length)
+    }
+    for part in parts {
+        part.extend(policy)
+    }
+}
+
+fn finish(entries: [Entry]) -> [String] {
+    while true {
+        let groups: DefaultDict[String, [Entry]] = %{*: []}
+        for entry in entries {
+            groups[entry.short].push(entry)
+        }
+        let collisions = groups.values()
+            .filter(group -> #group.map(&.text).uniq() > 1)
+        if !collisions {
+            return entries.map(&.short)
+        }
+
+        for group in collisions {
+            group.each(&keep)
+        }
+    }
+}
+
+pub fn abbrev(
+    strings: [String], boundary: Regex = /${path.sep}/,
+    preserve: ?(String -> Bool) = nil, preserve-leaf: Bool = true,
+    prefix-length: (String, Int) -> Int = (_, n) -> 2 * n - 1,
+    global: Bool = false
+) -> [String] {
+    let builder = Builder(preserve, preserve-leaf, global)
+    let entries = strings.map(builder.entry@(_, boundary))
+    builder.groups.each(distinguish@(_, prefix-length))
+    finish(entries)
+}

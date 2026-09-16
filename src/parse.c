@@ -6461,7 +6461,9 @@ parse_class_definition(Ty *ty)
                 }
         }
 
+        SAVE_NC(true);
         def->tag.super = try_consume('<') ? parse_type(ty, 0) : NULL;
+        LOAD_NC();
 
         if (try_consume(':')) {
                 do {

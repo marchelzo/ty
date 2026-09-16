@@ -1,0 +1,54 @@
+import git
+import os
+import path (Path)
+
+const URL = os.getenv('TY_GIT_AUTH_URL')!
+const AUTH = git.Credentials.password('ty', 'secret')
+
+ns test
+
+pub fn authenticated-push-clone-and-fetch() {
+    with path = Path.tempdir('ty-git-auth') {
+        let ^source = git.init(path / 'source')
+        let author = git.Signature('Ty', 'ty@example.invalid')
+        (path / 'source' / 'file').write('one\n')
+        let first = source.add('file').commit('one', author: author)
+        source.remotes.add('origin', URL)
+        source.push(auth: AUTH, 'origin', 'refs/heads/main:refs/heads/main')
+        let ^copy = git.clone(URL, path / 'copy', auth: AUTH)
+        assert(copy.read('file') == 'one\n')
+        let called = 0
+
+        fn credentials(url: String, username: ?String, allowed: Int) -> git.Credentials {
+            assert(url == URL && allowed != 0)
+            called += 1
+            AUTH
+        }
+
+        copy.fetch(auth: credentials)
+        assert(called > 0)
+        let bad = git.Credentials.password('ty', 'wrong')
+        let error = try copy.fetch(auth: bad) catch e: git.AuthenticationError { e }
+        assert(error :: git.AuthenticationError)
+        assert('secret' not in str(AUTH))
+        (path / 'source' / 'file').write('two\n')
+        source.add('file').commit('two', author: author)
+        source.push('origin', 'refs/heads/main:refs/heads/main', auth: AUTH)
+        let spec = "+{first.hex}:refs/heads/main"
+        let error = try source.push('origin', spec, auth: AUTH)
+                    catch e: git.PushRejectedError { e }
+        assert(error :: git.PushRejectedError)
+    }
+}
+
+pub fn credential-exceptions-propagate() {
+    with path = Path.tempdir('ty-git-auth') {
+        fn fail(url: String, username: ?String, allowed: Int) -> git.Credentials {
+            throw ValueError('credential failure')
+        }
+
+        let error = try git.clone(URL, path / 'copy', auth: fail) catch e: ValueError { e }
+        assert(error :: ValueError)
+        assert('credential failure' in str(error))
+    }
+}

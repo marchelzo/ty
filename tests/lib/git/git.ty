@@ -1,0 +1,543 @@
+import date (Instant, Now, ZonedDateTime)
+import git
+import os
+import path (Path)
+import sh (sh)
+import ty
+
+const AUTHOR = git.Signature('Ty Git', 'ty@example.invalid', 1700000000, -240)
+
+fn cli(path: Path, *args: String) -> String {
+    let out, result = sh('', shell: ['git', '-C', str(path), *args])
+    assert(result.status == 0, result.stderr)
+    (out ?? '').trim()
+}
+
+fn repository(path: Path) -> git.Repository {
+    let repo = git.init(path)
+    let ^config = repo.config
+    config['user.name'] = AUTHOR.name
+    config['user.email'] = AUTHOR.email
+    config['core.autocrlf'] = false
+    repo
+}
+
+fn save(repo: git.Repository, path: String, text: String, message: String) -> git.Commit {
+    let $root = repo.workdir or throw ValueError('bare repository')
+    (root / path).write(text)
+    repo.add(path).commit(message, author: AUTHOR)
+}
+
+fn rejects(object: git.GitObject, access: git.GitObject -> Any,
+           expected: git.ObjectKind) -> nil {
+    let error = try {
+        access(object)
+        throw AssertionError('expected ObjectTypeError')
+    } catch e: git.ObjectTypeError {
+        e
+    }
+    assert(error.actual == object.kind && expected in error.expected)
+    assert(error.operation != '')
+}
+
+ns test
+
+pub fn creation-and-discovery() {
+    with path = Path.tempdir('ty-git') {
+        let ^repo = repository(path)
+        assert(repo.empty? && repo.unborn? && !repo.bare?)
+        assert(repo.head == nil && repo.tip == nil && repo.tree == nil)
+        assert(repo.branch-name == 'main')
+        assert(repo.clean?)
+        (path / 'sub').mkdir()
+        let ^found = git.open(path / 'sub')
+        assert(found.path == repo.path)
+        assert(git.discover(path / 'missing') == nil)
+        assert(repo.branches.names == [])
+        assert([*repo.log()] == [])
+    }
+}
+
+pub fn commits-trees-and-blobs() {
+    with path = Path.tempdir('ty-git') {
+        let ^repo = repository(path)
+        (path / 'dir').mkdir()
+        let first = save(repo, 'dir/hello.txt', 'hello\n', 'First\n\nBody\n')
+        assert(first.id.hex == cli(path, 'rev-parse', 'HEAD'))
+        assert(first.summary == 'First' && first.body == 'Body')
+        assert(first.root? && !first.merge? && first.parents == [])
+        assert(first.author.name == AUTHOR.name && first.author.offset == -240)
+        assert(first.seconds == AUTHOR.seconds)
+        assert(repo.tip.id == first.id)
+        assert(repo.read('dir/hello.txt') == 'hello\n')
+        assert(first.tree.names == ['dir'])
+        assert(first.files.map(&.path) == ['dir/hello.txt'])
+        assert(first.tree.entry('dir/hello.txt').mode == 0o100644)
+        assert(first.tree.has?('dir/hello.txt') && !first.tree.has?('absent'))
+        assert(repo[first.id] == first)
+        assert(repo[first.hex[;9]] == first)
+        let blob = first['dir/hello.txt']
+        assert(blob.text == 'hello\n' && blob.size == 6 && !blob.binary?)
+        assert(blob.bytes.str() == blob.text)
+        let binary = repo.write-blob(Blob(0, 1, 255, 0))
+        assert(binary.binary? && [*binary.bytes] == [0, 1, 255, 0])
+        assert(repo.write-blob('').text == '')
+        assert(repo.clean?)
+    }
+}
+
+pub fn rewriting-commits() {
+    with path = Path.tempdir('ty-git-rewrite') {
+        let ^repo = repository(path)
+        for n in ..12 {
+            save(repo, 'a', str(n), "Commit {n}")
+        }
+
+        let tip = repo['HEAD']
+        let side = repo.commit('Side', author: AUTHOR, tree: tip.tree,
+                               parents: [repo['HEAD~2']], update-ref: None)
+        assert(repo['HEAD'].id == tip.id)
+        repo.commit('Merge', author: AUTHOR, tree: tip.tree, parents: [tip, side])
+        let before = [*repo.log(limit: 10)]
+        let older = repo['HEAD~10']
+        (path / 'a').write('staged')
+        repo.add('a')
+        (path / 'a').write('unstaged')
+        let staged = repo.staged.patch
+        let changes = repo.changes.patch
+        let sig = git.Signature('New', 'new@example.invalid', 1700001000, 60)
+        let rewritten: Dict[git.Oid, git.Commit] = %{}
+
+        for commit in before.reverse() {
+            let parents = commit.parents.map(p -> rewritten[p.id] ?? p)
+            rewritten[commit.id] = repo.commit(
+                commit.message, author: sig, tree: commit.tree,
+                parents: parents, update-ref: None
+            )
+        }
+
+        assert(repo['HEAD'].id == before[0].id)
+        repo.reset!(rewritten[before[0].id]!, mode: 'soft')
+        assert(repo['HEAD~10'].id == older.id)
+        assert(repo.staged.patch == staged && repo.changes.patch == changes)
+        assert((path / 'a').read-text() == 'unstaged')
+
+        for commit in before {
+            let next = rewritten[commit.id]!
+            let parents = commit.parents.map(p -> (rewritten[p.id] ?? p).id)
+            assert(next.id != commit.id && next.parents.map(&.id) == parents)
+            assert(next.tree.id == commit.tree.id && next.message == commit.message)
+            assert(next.author.name == sig.name && next.committer.name == sig.name)
+            assert(next.author.email == sig.email && next.committer.email == sig.email)
+            assert(next.authored-at == sig.date && next.committed-at == sig.date)
+        }
+    }
+}
+
+pub fn object-accessors() {
+    with path = Path.tempdir('ty-git') {
+        let ^repo = repository(path)
+        (path / 'dir').mkdir()
+        let first = save(repo, 'dir/a', 'first\n', 'First')
+        save(repo, 'dir/a', 'second\n', 'Second\n\nBody\n')
+        let commit: git.GitObject = repo['HEAD']
+        let tree: git.GitObject = repo['HEAD^{tree}']
+        let blob: git.GitObject = repo['HEAD:dir/a']
+
+        assert(commit.commit? && !commit.tree? && !commit.blob? && !commit.tag?)
+        assert(commit.summary == 'Second' && commit.body == 'Body')
+        assert(commit.message == 'Second\n\nBody\n')
+        assert(commit.author.email == AUTHOR.email && commit.committer.name == AUTHOR.name)
+        assert(commit.seconds == AUTHOR.seconds && commit.offset == AUTHOR.offset)
+        assert(commit.parent().id == first.id && commit.parents.map(&.id) == [first.id])
+        assert(commit.parent-count == 1 && !commit.root? && !commit.merge?)
+        assert([*commit.log(limit: 1).map(&.id)] == [commit.id])
+        assert(commit.diff().stats.insertions == 1)
+        assert(first.diff(commit).patch == commit.diff().patch)
+        assert(repo['HEAD~1'].ancestor-of?(commit) && commit.descendant-of?(first))
+        assert(commit.tree.id == tree.id && commit['dir']['a'].text == 'second\n')
+
+        assert(tree.tree? && tree.size == 1 && #tree == 1)
+        assert(tree.names == ['dir'] && [*tree.map(&.name)] == ['dir'])
+        assert(tree.entries[0].object.names == ['a'])
+        assert(tree.files.map(&.path) == ['dir/a'])
+        assert([*tree.walk('prefix/').map(&.path)] == ['prefix/dir/a'])
+        assert(tree.entry('dir/a').object.text == blob.text)
+        assert(tree.read('dir/a') == blob.text && tree.has?('dir/a'))
+        assert(!tree.has?('missing') && tree.diff(first).stats.deletions == 1)
+        assert([*commit.map(&.name)] == tree.names)
+        let ^edit = tree.edit()
+        let edited = edit.write('b', 'new\n').build()
+        assert(edited.names == ['b', 'dir'] && tree.names == ['dir'])
+
+        assert(blob.blob? && blob.text == 'second\n' && blob.size == 7 && #blob == 7)
+        assert(blob.bytes.str() == blob.text && blob.lines == ['second'])
+        assert(!blob.binary? && blob.write(path / 'copy') == 7)
+        assert((path / 'copy').read-text() == blob.text)
+
+        repo.tag('v1', message: 'release', tagger: AUTHOR)
+        let annotation: git.GitObject = repo['v1']
+        assert(annotation.tag? && annotation.name == 'v1')
+        assert(annotation.message == 'release')
+        assert(annotation.tagger.email == AUTHOR.email)
+        assert(annotation.target.summary == 'Second' && annotation.tree.id == tree.id)
+        assert(annotation['dir/a'].text == blob.text && annotation.names == tree.names)
+        assert(annotation.files.map(&.path) == ['dir/a'])
+        assert(repo.commit-at('v1').id == commit.id && repo.tree-at('v1').id == tree.id)
+    }
+}
+
+pub fn commit-dates() {
+    with path = Path.tempdir('ty-git') {
+        let ^repo = repository(path)
+        let written = ZonedDateTime.from('2024-01-01T00:15:00+05:45[+05:45]')
+        let committed = ZonedDateTime.from('2024-01-01T02:30:00-03:30[-03:30]')
+        let author = git.Signature('Writer', 'writer@example.invalid', date: written)
+        let committer = git.Signature('Editor', 'editor@example.invalid', committed)
+        (path / 'a').write('dates\n')
+        repo.add('a').commit('Dates', author: author, committer: committer)
+        let commit = repo['HEAD']
+        let date: ZonedDateTime = commit.date
+
+        assert(date == committed && commit.committed-at == committed)
+        assert(commit.authored-at == written && commit.author.date == written)
+        assert(commit.committer.date == committed && date.hour == 2 && date.minute == 30)
+        assert(date.offset == '-03:30' && commit.authored-at.offset == '+05:45')
+        assert((date - commit.authored-at).total-seconds == 41400.0)
+        assert(date.relative(commit.authored-at, parts: 2) == 'in 11 hours, 30 minutes')
+        assert(str(written.with-time-zone('UTC')) == '2023-12-31T18:30:00+00:00[UTC]')
+        let committed-iso = "{date.to-plain-date-time()}{date.offset}"
+        let authored-iso = "{written.to-plain-date-time()}{written.offset}"
+        assert(committed-iso == cli(path, 'show', '-s', '--format=%cI'))
+        assert(authored-iso == cli(path, 'show', '-s', '--format=%aI'))
+        assert([*repo.log().map(&.date)] == [committed])
+
+        repo.tag('dated', message: 'release', tagger: author)
+        assert(repo['dated'].tagger.date == written)
+        assert(repo.blame('a')[1].author.date == written)
+        let reflog = repo.reflog()[0].committer
+        assert(reflog.date.to-instant().epoch-seconds == reflog.seconds)
+        repo.close()
+        assert(date == committed && author.date == written)
+    }
+}
+
+pub fn signature-dates() {
+    let now = git.Signature('Ty', 'ty@example.invalid')
+    assert(now.date.offset == Now.zoned-date-time-iso().offset)
+    let instant = Instant.from('1969-12-31T23:59:59.999999999Z')
+    let signature = git.Signature('Ty', 'ty@example.invalid', instant)
+    assert(signature.seconds == -1 && signature.offset == 0)
+    assert(str(signature.date) == '1969-12-31T23:59:59+00:00[+00:00]')
+    let west = git.Signature('Ty', 'ty@example.invalid', 0, -30)
+    assert(str(west.date) == '1969-12-31T23:30:00-00:30[-00:30]')
+    let unrepresentable = instant.to-zoned-date-time-iso('+00:00:30')
+    let error = try git.Signature('Ty', 'ty@example.invalid', unrepresentable)
+               catch e: ValueError { e }
+    assert(error :: ValueError)
+}
+
+pub fn inappropriate-object-operations() {
+    with path = Path.tempdir('ty-git') {
+        let ^repo = repository(path)
+        save(repo, 'a', 'hello\n', 'First')
+        let commit = repo['HEAD']
+        let tree = repo['HEAD^{tree}']
+        let blob = repo['HEAD:a']
+        let commit-only: [git.GitObject -> Any] = [
+            &.summary, &.body, &.author, &.committer, &.seconds, &.offset,
+            &.date, &.authored-at, &.committed-at,
+            &.parent-count, &.parents, &.root?, &.merge?, &parent, &log, &diff
+        ]
+        let blob-only: [git.GitObject -> Any] = [&.text, &.bytes, &.lines, &.binary?]
+        let tag-only: [git.GitObject -> Any] = [&.name, &.target, &.tagger]
+        let tree-only: [git.GitObject -> Any] = [
+            &.tree, &.entries, &.names, &.files, &edit, &[Path('a')],
+            o -> o.read('a'), o -> o.entry('a'), o -> o.has?('a'),
+            o -> [*o.walk()], o -> [*o]
+        ]
+
+        for access in commit-only {
+            rejects(blob, access, git.Kind.Commit)
+        }
+        for access in blob-only {
+            rejects(tree, access, git.Kind.Blob)
+        }
+        for access in tag-only {
+            rejects(commit, access, git.Kind.Tag)
+        }
+        for access in tree-only {
+            rejects(blob, access, git.Kind.Tree)
+        }
+        rejects(tree, &.message, git.Kind.Commit)
+        rejects(commit, &.size, git.Kind.Blob)
+        rejects(commit, o -> #o, git.Kind.Tree)
+        rejects(blob, o -> o.diff(commit), git.Kind.Tree)
+        rejects(blob, o -> o.ancestor-of?(commit), git.Kind.Commit)
+        rejects(blob, o -> o.descendant-of?(commit), git.Kind.Commit)
+        rejects(tree, o -> o.write(path / 'absent'), git.Kind.Blob)
+        assert(!(path / 'absent').exists?)
+        let error = try tree.author catch e: git.ObjectTypeError { e }
+        assert('author: requires commit, got tree' in str(error))
+        repo.tag('blob-tag', blob, message: 'blob', tagger: AUTHOR)
+        rejects(repo['blob-tag'], &.tree, git.Kind.Tree)
+        rejects(repo['blob-tag'], &.text, git.Kind.Blob)
+        assert(repo['blob-tag'].target.text == blob.text)
+        assert(repo.blob-at('blob-tag').id == blob.id)
+        rejects(blob, repo.commit-at, git.Kind.Commit)
+        rejects(commit, repo.blob-at, git.Kind.Blob)
+    }
+}
+
+pub fn history-and-graph() {
+    with path = Path.tempdir('ty-git') {
+        let ^repo = repository(path)
+        let a = save(repo, 'a', 'one\n', 'one')
+        let b = save(repo, 'a', 'two\n', 'two')
+        let c = save(repo, 'a', 'three\n', 'three')
+        assert([*repo.log().map(&.summary)] == ['three', 'two', 'one'])
+        assert([*repo.log(reverse: true).map(&.id)] == [a.id, b.id, c.id])
+        assert([*repo.log(limit: 1).map(&.id)] == [c.id])
+        assert([*repo.log(limit: 0)] == [])
+        assert([*repo.log('HEAD~2..HEAD').map(&.id)] == [c.id, b.id])
+        assert([*repo.log(hide: [b]).map(&.id)] == [c.id])
+        assert(c.parent().id == b.id)
+        assert(a.ancestor-of?(c) && c.descendant-of?(a))
+        assert(repo.ancestor?(b, b) && !repo.ancestor?(c, a))
+        assert(repo.ahead-behind(c, a) == (2, 0))
+        assert(repo.merge-base(a, c).id == a.id)
+    }
+}
+
+pub fn staging-status-and-diffs() {
+    with path = Path.tempdir('ty-git') {
+        let ^repo = repository(path)
+        let a = save(repo, 'a', 'one\n', 'one')
+        (path / 'a').write('two\n')
+        (path / 'new file').write('new\n')
+        assert(repo.status['a'].unstaged?)
+        assert(repo.status.untracked.map(&.path) == ['new file'])
+        assert(repo.diff().stats.deletions == 1)
+        assert('-one\n+two\n' in repo.diff().patch)
+        repo.add-all()
+        assert(repo.status.staged.map(&.path) == ['a', 'new file'])
+        assert(repo.staged.stats.files == 2 && repo.diff().empty?)
+        repo.unstage('new file')
+        assert(repo.status['new file'].untracked?)
+        repo.add('new file')
+        let b = repo.commit('two', author: AUTHOR)
+        assert(repo.clean?)
+        assert(repo.diff(a, b).stats.insertions == 2)
+        let $patch = repo.diff(a, b).patch-for(0) or throw AssertionError('missing patch')
+        assert(patch in repo.diff(a, b).patch)
+        assert(a.diff().stats.insertions == 1)
+        let ^index = repo.index
+        assert(index.paths == ['a', 'new file'])
+        assert(index['a'].id == b['a'].id)
+        assert(index['a'].stage == 0 && !index.conflicts?)
+        assert(index['absent'] == nil)
+        assert(index.write-tree().id == b.tree.id)
+        (path / 'ignored').write('ignored')
+        repo.ignore('ignored')
+        assert(repo.ignored?('ignored') && repo.clean?)
+        assert(repo.status-with(ignored: true)['ignored'].ignored?)
+    }
+}
+
+pub fn branches-tags-and-checkout() {
+    with path = Path.tempdir('ty-git') {
+        let ^repo = repository(path)
+        let first = save(repo, 'a', 'first\n', 'first')
+        let branch = repo.branch('topic')
+        assert(branch.id == first.id && branch.branch?)
+        branch.checkout()
+        assert(repo.branch-name == 'topic')
+        let second = save(repo, 'a', 'second\n', 'second')
+        repo.checkout('main')
+        assert((path / 'a').read-text() == 'first\n')
+        assert(repo.branch-name == 'main' && !repo.detached?)
+        repo.checkout(second.id)
+        assert(repo.detached? && repo.branch-name == nil)
+        let light = repo.tag('light', first)
+        let annotated = repo.tag('v1', second, message: 'release', tagger: AUTHOR)
+        assert(light.object :: git.Commit)
+        assert(annotated.object :: git.Tag)
+        assert(annotated.commit.id == second.id)
+        assert(repo.tags.names.sort() == ['light', 'v1'])
+        let renamed = branch.rename('renamed')
+        assert(renamed.shorthand == 'renamed' && branch.closed?)
+        renamed.delete!()
+        assert(!repo.branches.has?('renamed'))
+        assert(cli(path, 'rev-parse', 'v1^{}') == second.hex)
+    }
+}
+
+pub fn config-and-errors() {
+    with path = Path.tempdir('ty-git') {
+        let ^repo = repository(path)
+        let ^config = repo.config
+        config['ty.answer'] = 42
+        config['ty.enabled'] = true
+        config['ty.message'] = 'a value with spaces'
+        assert(config.int('ty.answer') == 42)
+        assert(config.bool('ty.enabled'))
+        assert(config['ty.message'] == 'a value with spaces')
+        assert(config['ty.missing'] == nil)
+        assert(config.dict['ty.answer'] == '42')
+        assert(config.delete('ty.answer') && !config.delete('ty.answer'))
+        assert(config.int('ty.answer', 7) == 7)
+        assert(!repo.has?('missing'))
+        let error = try repo['missing'] catch e: git.NotFoundError { e }
+        assert(error :: git.NotFoundError && error.code == -3)
+    }
+}
+
+pub fn stash-and-reset() {
+    with path = Path.tempdir('ty-git') {
+        let ^repo = repository(path)
+        let first = save(repo, 'a', 'first\n', 'first')
+        (path / 'a').write('changed\n')
+        let oid = repo.stash('in progress', author: AUTHOR)
+        assert(repo.clean? && #repo.stashes == 1)
+        assert(repo.stashes[0].id == oid)
+        repo.pop-stash()
+        assert((path / 'a').read-text() == 'changed\n')
+        assert(#repo.stashes == 0 && repo.dirty?)
+        repo.reset!(first, mode: 'hard')
+        assert(repo.clean? && repo.read('a') == 'first\n')
+    }
+}
+
+pub fn clone-fetch-and-push() {
+    with path = Path.tempdir('ty-git') {
+        let ^source = repository(path / 'source')
+        let first = save(source, 'a', 'first\n', 'first')
+        let ^remote = git.init(path / 'remote', bare: true)
+        assert(remote.bare? && remote.workdir == nil)
+        source.remotes.add('origin', str(remote.path))
+        source.push('origin', 'refs/heads/main:refs/heads/main')
+        assert(remote.tip.id == first.id)
+        let ^copy = git.clone(remote.path, path / 'copy')
+        assert(copy.tip.id == first.id && copy.read('a') == 'first\n')
+        assert(copy.remotes.names == ['origin'])
+        let second = save(source, 'a', 'second\n', 'second')
+        source.push('origin', 'refs/heads/main:refs/heads/main')
+        copy.fetch()
+        assert(copy.remote-branches['origin/main'].id == second.id)
+        assert(copy.branches['main'].upstream.id == second.id)
+        let specs = copy.remotes['origin'].fetch-specs
+        assert(specs == ['+refs/heads/*:refs/remotes/origin/*'])
+        assert(cli(remote.path, 'rev-parse', 'main') == second.hex)
+    }
+}
+
+pub fn lifetimes() {
+    with path = Path.tempdir('ty-git') {
+        let repo = repository(path)
+        let commit = save(repo, 'a', 'a\n', 'a')
+        let entry = commit.tree.entry('a')
+        let status = repo.status
+        for ..100 {
+            assert(repo.tip.id == commit.id)
+        }
+        ty.gc()
+        assert(entry.text == 'a\n' && status.clean?)
+        repo.close()
+        repo.close()
+        assert(repo.closed?)
+        let error = try commit.message catch e: git.ClosedError { e }
+        assert(error :: git.ClosedError)
+        commit.close()
+        commit.close()
+    }
+}
+
+pub fn snapshots-without-a-workdir() {
+    with path = Path.tempdir('ty-git') {
+        let ^repo = git.init(path, bare: true)
+        let ^builder = repo.tree-builder
+        let subtree = builder.write('hello', 'hello\n').build()
+        let ^root = repo.tree-builder
+        let tree = root.put('dir', subtree).write('run', 'exit 0\n', 0o100755).build()
+        let commit = repo.commit('snapshot', tree: tree, author: AUTHOR)
+        assert(commit.tree.id == tree.id)
+        assert(commit.read('dir/hello') == 'hello\n')
+        assert(commit.tree.entry('run').executable?)
+        let ^edit = tree.edit()
+        let next = edit.remove('run').write('file', 'new\n').build()
+        assert(!next.has?('run') && tree.has?('run'))
+        assert(repo.diff(tree, next).stats.files == 2)
+        assert(cli(path, 'show', 'HEAD:dir/hello') == 'hello')
+    }
+}
+
+pub fn blame-reflog-and-describe() {
+    with path = Path.tempdir('ty-git') {
+        let ^repo = repository(path)
+        let first = save(repo, 'a', 'first\nsecond\n', 'first')
+        repo.tag('v1', message: 'release', tagger: AUTHOR)
+        let second = save(repo, 'a', 'first\nchanged\n', 'second')
+        let blame = repo.blame('a')
+        assert(blame[1].id == first.id && blame[2].id == second.id)
+        assert(blame[2].author.name == AUTHOR.name)
+        assert(blame[0] == nil && blame[3] == nil)
+        assert(repo.blame('a', first)[2].id == first.id)
+        assert(repo.reflog()[0].new == second.id)
+        assert(repo.reflog()[0].old == first.id)
+        assert(repo.describe(first) == 'v1')
+        assert(repo.describe() == cli(path, 'describe', '--tags'))
+    }
+}
+
+pub fn conflicts-and-string-boundaries() {
+    with path = Path.tempdir('ty-git') {
+        let ^repo = repository(path)
+        let first = save(repo, 'a', 'first\n', 'first')
+        repo.branch('old', first)
+        let second = save(repo, 'a', 'second\n', 'second')
+        (path / 'a').write('dirty\n')
+        let error = try repo.checkout('old') catch e: git.ConflictError { e }
+        assert(error :: git.ConflictError)
+        assert(repo.tip.id == second.id)
+        assert((path / 'a').read-text() == 'dirty\n')
+        let name = 'prefix-topicsuffix'[7;12]
+        assert(repo.branch(name).shorthand == 'topic')
+        assert(repo.ref('xxHEADyy'[2;6]).id == second.id)
+        let nul = Blob(0).str()
+        let error = try repo.ref("HEAD{nul}junk") catch e: ValueError { e }
+        assert(error :: ValueError)
+        let error = try repo.branch('topic') catch e: git.ExistsError { e }
+        assert(error :: git.ExistsError)
+    }
+}
+
+pub fn linked-worktrees() {
+    with path = Path.tempdir('ty-git') {
+        let main = path / 'main'
+        let linked = path / 'linked'
+        let ^repo = repository(main)
+        let first = save(repo, 'a', 'first\n', 'first')
+        cli(main, 'worktree', 'add', '-b', 'linked', str(linked), 'HEAD')
+        let ^worktree = git.open(linked)
+        assert(worktree.workdir == linked && worktree.branch-name == 'linked')
+        let second = save(worktree, 'a', 'second\n', 'second')
+        assert(repo.tip.id == first.id && worktree.tip.id == second.id)
+        assert(repo.branches['linked'].id == second.id)
+        assert(repo.read('a') == 'first\n' && worktree.read('a') == 'second\n')
+    }
+}
+
+pub fn binary-diffs-and-object-ids() {
+    with path = Path.tempdir('ty-git') {
+        let ^repo = repository(path)
+        (path / 'binary').write(Blob(0, 1, 2, 3))
+        let first = repo.add('binary').commit('binary', author: AUTHOR)
+        (path / 'binary').write(Blob(0, 1, 2, 4))
+        let second = repo.add('binary').commit('changed', author: AUTHOR)
+        let ^diff = repo.diff(first, second)
+        assert(diff[0].binary? && diff.patch-for(0) == nil)
+        assert('Binary files' in diff.patch)
+        let error = try git.Oid("{first.hex}\n") catch e: ValueError { e }
+        assert(error :: ValueError)
+    }
+}
