@@ -2264,17 +2264,17 @@ static HashState *
 hash_state(Ty *ty, Value state)
 {
         if (
-                state.type != VALUE_BLOB
-             || vN(*state.blob) != sizeof (HashState)
+                (state.type != VALUE_BLOB)
+             || (vN(*state.blob) != sizeof (HashState))
         ) {
                 zP("invalid hash state");
         }
 
         HashState *hash = (HashState *)vv(*state.blob);
         if (
-                hash->magic != HASH_STATE_MAGIC
-             || hash->algorithm < 0
-             || hash->algorithm >= HASH_ALGORITHM_COUNT
+                (hash->magic != HASH_STATE_MAGIC)
+             || (hash->algorithm < 0)
+             || (hash->algorithm >= HASH_ALGORITHM_COUNT)
         ) {
                 zP("invalid hash state");
         }
