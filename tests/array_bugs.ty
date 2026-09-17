@@ -67,3 +67,26 @@ pub fn test-take-negative() {
     let d = a.take(3)
     assert(#d == 3 && d[0] == 1 && d[2] == 3)
 }
+
+pub fn test-min-max-by() {
+    let xs = [
+        {key: 3, value: 'c'},
+        {key: 1, value: 'a'},
+        {key: 2, value: 'b'},
+    ]
+
+    assert(xs.min(&.key).value == 'a')
+    assert(xs.max(&.key).value == 'c')
+}
+
+pub fn test-shuffle-uses-ty-prng() {
+    let xs = [1, 2, 3, 4, 5, 6, 7, 8]
+    let ys = xs.clone()
+
+    srand(123)
+    xs.shuffle!()
+    srand(123)
+    ys.shuffle!()
+
+    assert(xs == ys)
+}

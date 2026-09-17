@@ -1477,7 +1477,7 @@ value_apply_predicate(Ty *ty, Value *p, Value *v)
         case VALUE_REGEX:
         {
                 if (UNLIKELY(v->type != VALUE_STRING)) {
-                        zP("regex applied as predicate to non-string");
+                        zP("regex applied as predicate to non-string: %s", VSC(v));
                 }
 
                 int rc = pcre2_match(
@@ -1491,8 +1491,8 @@ value_apply_predicate(Ty *ty, Value *p, Value *v)
                 );
 
                 if (UNLIKELY(rc < PCRE2_ERROR_NOMATCH)) {
-                        pcre2_get_error_message(rc, (uint8_t *)err, sizeof err);
-                        zP("apply_predicate(): PCRE2 error: %s", err);
+                        pcre2_get_error_message(rc, (u8 *)err, sizeof err);
+                        zP("predicate(): PCRE2 error: %s", err);
                 }
 
                 return (rc != PCRE2_ERROR_NOMATCH);
@@ -1517,12 +1517,12 @@ value_test_equality(Ty *ty, Value const *v1, Value const *v2)
                 return false;
         }
 
-        int t0 = v1->type & ~VALUE_TAGGED;
-        int t1 = v2->type & ~VALUE_TAGGED;
+        int t0 = (v1->type & ~VALUE_TAGGED);
+        int t1 = (v2->type & ~VALUE_TAGGED);
 
         switch (PACK_TYPES(t0, t1)) {
         case PAIR_OF(VALUE_INTEGER):
-                return v1->z == v2->z;
+                return (v1->z == v2->z);
 
         case PAIR_OF(VALUE_STRING):
                 return (sN(*v1) == sN(*v2))
@@ -1554,7 +1554,8 @@ value_test_equality(Ty *ty, Value const *v1, Value const *v2)
 
         case PAIR_OF(VALUE_QUEUE):
         {
-                Queue *q1 = v1->queue, *q2 = v2->queue;
+                Queue *q1 = v1->queue;
+                Queue *q2 = v2->queue;
                 if (q1 == q2) return true;
                 usize n1 = _queue_count(q1->head, q1->tail, q1->cap);
                 usize n2 = _queue_count(q2->head, q2->tail, q2->cap);
@@ -1562,7 +1563,7 @@ value_test_equality(Ty *ty, Value const *v1, Value const *v2)
                 for (usize i = 0; i < n1; ++i) {
                         Value a = q1->items[(q1->head + i) % q1->cap];
                         Value b = q2->items[(q2->head + i) % q2->cap];
-                        if (!value_test_equality(ty, &a, &b)) return false;
+                        if (!v_eq(&a, &b)) return false;
                 }
                 return true;
         }
@@ -1603,7 +1604,7 @@ value_test_equality(Ty *ty, Value const *v1, Value const *v2)
         Value v = vm_try_2op(ty, OP_EQL, v1, v2);
 
         if (v.type != VALUE_NONE) {
-                return value_truthy(ty, &v);
+                return v_truthy(&v);
         }
 
         v = vm_try_2op(ty, OP_CMP, v1, v1);
@@ -1653,8 +1654,10 @@ inline static void
 mark_thread(Ty *ty, Value const *v)
 {
         if (MARKED(v->thread)) return;
+
         MARK(v->thread);
         MarkNext(ty, &v->thread->v);
+
         if (v->thread->ctx != NULL) {
                 for (Value *p = v->thread->ctx; p->type != VALUE_NONE; ++p) {
                         MarkNext(ty, p);
@@ -1676,7 +1679,6 @@ mark_generator(Ty *ty, Value const *v)
         if (MARKED(v->gen)) return;
 
         MARK(v->gen);
-
         MarkNext(ty, &v->gen->f);
 
         co_state *st = v->gen->st;
@@ -1872,10 +1874,7 @@ Value
 value_record(Ty *ty, int n)
 {
         Value *items = mAo(n * sizeof (Value), GC_TUPLE);
-
-        NOGC(items);
-        int *ids = mAo(n * sizeof (int), GC_TUPLE);
-        OKGC(items);
+        i32   *ids   = uAo(n * sizeof (i32),   GC_TUPLE);
 
         for (int i = 0; i < n; ++i) {
                 items[i] = NIL;
@@ -1901,7 +1900,7 @@ value_named_tuple(Ty *ty, char const *first, ...)
         va_end(ap);
 
         Value *items = mAo(n * sizeof (Value), GC_TUPLE);
-        int   *ids   = uAo(n * sizeof (int),   GC_TUPLE);
+        i32   *ids   = uAo(n * sizeof (i32),   GC_TUPLE);
 
         va_start(ap, first);
 
@@ -1944,17 +1943,13 @@ tuple_get(Value const *tuple, char const *name)
 void
 value_array_extend(Ty *ty, Array *a, Array const *other)
 {
-        isize n = vN(*a) + vN(*other);
+        usize n = vN(*a) + vN(*other);
 
         if (n != 0) {
                 vvR(*a, n);
         }
 
-        if (other->count != 0) {
-                memcpy(a->items + a->count, other->items, other->count * sizeof (Value));
-        }
-
-        a->count = n;
+        vvPv(*a, *other);
 }
 
 int
@@ -2148,7 +2143,7 @@ PrettySource(Ty *ty, Value const *v)
                 end = stmt->end.byte;
                 break;
 
-        defaut:
+        default:
                 return NIL;
         }
 

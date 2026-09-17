@@ -1,4 +1,3 @@
-#include <stdlib.h>
 #include <string.h>
 #include <limits.h>
 
@@ -39,7 +38,7 @@ compare_default(void const *v1, void const *v2, void *ty)
 compare_default(void *ty, void const *v1, void const *v2)
 #endif
 {
-        return value_compare(ty, v1, v2);
+        return v_cmp(v1, v2);
 }
 
 static int
@@ -58,7 +57,7 @@ compare_by(void *ctx_, void const *v1, void const *v2)
         Value k2 = vm_call1(ty, &ctx->f, (Value *)v2);
         gP(&k2);
 
-        int result = value_compare(ty, &k1, &k2);
+        int result = v_cmp(&k1, &k2);
 
         gX();
         gX();
@@ -81,10 +80,11 @@ compare_by2(void *ctx_, void const *v1, void const *v2)
 
         int result;
 
-        if (v.type == VALUE_INTEGER)
+        if (v.type == VALUE_INTEGER) {
                 result = v.z;
-        else
-                result = value_truthy(ty, &v) ? 1 : -1;
+        } else {
+                result = v_truthy(&v) ? 1 : -1;
+        }
 
         gX();
 
@@ -149,7 +149,7 @@ array_pop(Ty *ty, Value *array, int argc, Value *kwargs)
                 if (vN(*array->array) == 0) {
                         bP("empty array");
                 }
-                v = array->array->items[--array->array->count];
+                v = vXx(*array->array);
         } else {
                 imax i = INT_ARG(0);
                 if (i < 0) {
@@ -186,7 +186,7 @@ array_swap(Ty *ty, Value *array, int argc, Value *kwargs)
                 (i < 0) || (i >= vN(*array->array))
              || (j < 0) || (j >= vN(*array->array))
         ) {
-                bP("out of range: (%"PRIiMAX"), %"PRIiMAX")", i, j);
+                bP("out of range: (%"PRIiMAX", %"PRIiMAX")", i, j);
         }
 
         Value tmp = v__(*array->array, i);
@@ -209,7 +209,6 @@ array_splice(Ty *ty, Value *array, int argc, Value *kwargs)
         } else {
                 n = vN(*array->array);
         }
-
 
         if (i < 0) {
                 i += vN(*array->array);
@@ -266,12 +265,10 @@ array_zip(Ty *ty, Value *array, int argc, Value *kwargs)
         bool longest = HAVE_FLAG("longest");
 
         for (int i = 0; i < argc; ++i) {
-                if (ARG_T(i) != VALUE_ARRAY) {
-                        bP("arg%d is non-Array: %s", i, VSC(&ARG(i)));
-                }
+                Array *arg = ARRAY_ARG(i);
                 n = longest
-                  ? max(n, vN(*ARG(i).array))
-                  : min(n, vN(*ARG(i).array));
+                  ? max(n, vN(*arg))
+                  : min(n, vN(*arg));
         }
 
         while (vN(*array->array) < n) {
@@ -283,7 +280,7 @@ array_zip(Ty *ty, Value *array, int argc, Value *kwargs)
                         Value tuple = vT(argc + 1);
                         tuple.items[0] = index_safe(array->array, i);
                         for (int j = 0; j < argc; ++j) {
-                                tuple.items[j + 1] = index_safe(ARG(j).array, i);
+                                tuple.items[j + 1] = index_safe(ARRAY_ARG(j), i);
                         }
                         *v_(*array->array, i) = tuple;
                 } else {
@@ -292,7 +289,6 @@ array_zip(Ty *ty, Value *array, int argc, Value *kwargs)
                         for (int j = 0; j < argc; ++j) {
                                 v = index_safe(ARG(-1).array, i);
                                 vmP(&v);
-
                         }
                         *v_(*array->array, i) = vmC(&f, argc + 1);
                 }
@@ -314,24 +310,24 @@ array_window(Ty *ty, Value *array, int argc, Value *kwargs)
                 bP("bad window size: %"PRIiMAX, k);
         }
 
-        int n = max((imax)vN(*array->array) - k + 1, 0);
+        isize n = max((imax)vN(*array->array) - k + 1, 0);
 
         if (argc == 2) {
                 Value f = ARG(1);
-                for (int i = 0; i < n; ++i) {
-                        for (int j = i; j < i + k; ++j) {
+                for (isize i = 0; i < n; ++i) {
+                        for (isize j = i; j < i + k; ++j) {
                                 vmP(v_(*array->array, j));
                         }
                         *v_(*array->array, i) = vmC(&f, k);
                 }
 
         } else {
-                for (int i = 0; i < n; ++i) {
+                for (isize i = 0; i < n; ++i) {
                         Array *win = vAn(k);
-                        for (int j = i; j < i + k; ++j) {
+                        for (isize j = i; j < i + k; ++j) {
                                 vPx(*win, v__(*array->array, j));
                         }
-                        *v_(*array->array, i) =  ARRAY(win);
+                        *v_(*array->array, i) = ARRAY(win);
                 }
         }
 
@@ -440,23 +436,17 @@ array_slice(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_sort(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        char const *_name__ = "Array.sort()";
-
-        int i;
-        int n;
+        ASSERT_ARGC("Array.sort()", 0, 1, 2);
 
         Array const *xs = array->array;
-
-        CHECK_ARGC(0, 1, 2);
+        isize i = 0;
+        isize n = vN(*xs);
 
         switch (argc) {
         case 0:
-                i = 0;
-                n = vN(*xs);
                 break;
         case 1:
                 i = INT_ARG(0);
-                n = vN(*xs);
                 break;
         case 2:
                 i = INT_ARG(0);
@@ -465,18 +455,21 @@ array_sort(Ty *ty, Value *array, int argc, Value *kwargs)
         }
 
         if (i < 0) {
-                i += array->array->count;
+                i += vN(*xs);
         }
 
         if (n < 0 || i < 0 || i + n > vN(*xs)) {
-                zP("Array.sort(): index out of range: i=%d, n=%d, #xs%d", i, n, (int)vN(*xs));
+                bP(
+                        "index out of range: i=%zd, n=%zd, #xs=%zu",
+                        i, n, vN(*xs)
+                );
         }
 
         Value *by = NAMED("by");
         Value *cmp = NAMED("cmp");
 
         if (by != NULL && cmp != NULL) {
-                zP("Array.sort(): kwargs `by` and `cmp` both specified");
+                bP("kwargs `by` and `cmp` both specified");
         }
 
         SortContext ctx = {
@@ -485,23 +478,23 @@ array_sort(Ty *ty, Value *array, int argc, Value *kwargs)
 
         if (by != NULL) {
                 if (!CALLABLE(*by)) {
-                        zP("Array.sort(): `by` not callable: %s", VSC(by));
+                        bP("`by` not callable: %s", VSC(by));
                 }
                 ctx.f = *by;
-                rqsort(array->array->items + i, n, sizeof (Value), compare_by, &ctx);
+                rqsort(vv(*array->array) + i, n, sizeof (Value), compare_by, &ctx);
         } else if (cmp != NULL) {
                 if (!CALLABLE(*cmp)) {
-                        zP("Array.sort(): `cmp` not callable: %s", VSC(cmp));
+                        bP("`cmp` not callable: %s", VSC(cmp));
                 }
                 ctx.f = *cmp;
-                rqsort(array->array->items + i, n, sizeof (Value), compare_by2, &ctx);
+                rqsort(vv(*array->array) + i, n, sizeof (Value), compare_by2, &ctx);
         } else {
-                rqsort(array->array->items + i, n, sizeof (Value), compare_default, ty);
+                rqsort(vv(*array->array) + i, n, sizeof (Value), compare_default, ty);
         }
 
         Value *desc = NAMED("desc");
 
-        if (desc != NULL && value_truthy(ty, desc)) {
+        if (desc != NULL && v_truthy(desc)) {
                 array_reverse(ty, array, argc, NULL);
         }
 
@@ -511,20 +504,23 @@ array_sort(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_next_permutation(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-#define CMP(i, j) value_compare(ty, &array->array->items[i], &array->array->items[j])
-        if (argc != 0)
-                zP("array.nextPermutation() expects no arguments but got %d", argc);
+        ASSERT_ARGC("Array.nextPermutation()", 0);
 
-        for (int i = array->array->count - 1; i > 0; --i) {
-                if (CMP(i - 1, i) < 0) {
-                        int j = i;
-                        for (int k = i + 1; k < array->array->count; ++k)
-                                if (CMP(k, j) < 0 && CMP(k, i - 1) > 0)
+        Array *xs = array->array;
+
+        for (isize i = (isize)vN(*xs) - 1; i > 0; --i) {
+                if (v_cmp(v_(*xs, i - 1), v_(*xs, i)) < 0) {
+                        isize j = i;
+                        for (isize k = i + 1; k < vN(*xs); ++k) {
+                                if (
+                                        (v_cmp(v_(*xs, k), v_(*xs, j)) < 0)
+                                     && (v_cmp(v_(*xs, k), v_(*xs, i - 1)) > 0)
+                                ) {
                                         j = k;
+                                }
+                        }
 
-                        Value t = array->array->items[i - 1];
-                        array->array->items[i - 1] = array->array->items[j];
-                        array->array->items[j] = t;
+                        SWAP(Value, *v_(*xs, i - 1), *v_(*xs, j));
 
                         vmP(&INTEGER(i));
                         array_sort(ty, array, 1, kwargs);
@@ -535,30 +531,29 @@ array_next_permutation(Ty *ty, Value *array, int argc, Value *kwargs)
         }
 
         return NIL;
-#undef CMP
 }
 
 static Value
 array_take_while_mut(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("array.takeWhile!() expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.takeWhile!()", 1);
 
         Value f = ARG(0);
 
-        if (!CALLABLE(f))
-                zP("non-callable predicate passed to array.takeWhile!()");
+        if (!CALLABLE(f)) {
+                bP("not callable: %s", VSC(&f));
+        }
 
-        int keep = 0;
-        for (int i = 0; i < array->array->count; ++i) {
-                if (value_apply_predicate(ty, &f, &array->array->items[i])) {
-                        ++keep;
+        usize keep = 0;
+        for (usize i = 0; i < vN(*array->array); ++i) {
+                if (value_apply_predicate(ty, &f, v_(*array->array, i))) {
+                        keep += 1;
                 } else {
                         break;
                 }
         }
 
-        array->array->count = keep;
+        vN(*array->array) = keep;
         shrink(ty, array);
 
         return *array;
@@ -567,16 +562,16 @@ array_take_while_mut(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_take_while(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        ASSERT_ARGC("Array.takeWhile!()", 1);
+        ASSERT_ARGC("Array.takeWhile()", 1);
 
         Value f = ARG(0);
 
         if (!CALLABLE(f)) {
-                zP("non-callable predicate passed to array.takeWhile!()");
+                bP("not callable: %s", VSC(&f));
         }
 
-        int keep = 0;
-        for (int i = 0; i < vN(*array->array); ++i) {
+        usize keep = 0;
+        for (usize i = 0; i < vN(*array->array); ++i) {
                 if (value_apply_predicate(ty, &f, v_(*array->array, i))) {
                         keep += 1;
                 } else {
@@ -588,8 +583,8 @@ array_take_while(Ty *ty, Value *array, int argc, Value *kwargs)
         NOGC(result.array);
         value_array_reserve(ty, result.array, keep);
         OKGC(result.array);
-        memmove(result.array->items, array->array->items, keep * sizeof (Value));
-        result.array->count = keep;
+        memmove(vv(*result.array), vv(*array->array), keep * sizeof (Value));
+        vN(*result.array) = keep;
 
         return result;
 }
@@ -597,23 +592,29 @@ array_take_while(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_drop_while_mut(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("array.dropWhile!() expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.dropWhile!()", 1);
 
         Value f = ARG(0);
 
-        if (!CALLABLE(f))
-                zP("non-callable predicate passed to array.dropWhile!()");
+        if (!CALLABLE(f)) {
+                bP("not callable: %s", VSC(&f));
+        }
 
-        int drop = 0;
-        for (int i = 0; i < array->array->count; ++i)
-                if (value_apply_predicate(ty, &f, &array->array->items[i]))
-                        ++drop;
-                else
+        usize drop = 0;
+        for (usize i = 0; i < vN(*array->array); ++i) {
+                if (value_apply_predicate(ty, &f, v_(*array->array, i))) {
+                        drop += 1;
+                } else {
                         break;
+                }
+        }
 
-        memmove(array->array->items, array->array->items + drop, (array->array->count - drop) * sizeof (Value));
-        array->array->count -= drop;
+        memmove(
+                vv(*array->array),
+                vv(*array->array) + drop,
+                (vN(*array->array) - drop) * sizeof (Value)
+        );
+        vN(*array->array) -= drop;
         shrink(ty, array);
 
         return *array;
@@ -622,28 +623,30 @@ array_drop_while_mut(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_drop_while(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("array.dropWhile() expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.dropWhile()", 1);
 
         Value f = ARG(0);
 
-        if (!CALLABLE(f))
-                zP("non-callable predicate passed to array.dropWhile()");
+        if (!CALLABLE(f)) {
+                bP("not callable: %s", VSC(&f));
+        }
 
-        int drop = 0;
-        for (int i = 0; i < array->array->count; ++i)
-                if (value_apply_predicate(ty, &f, &array->array->items[i]))
-                        ++drop;
-                else
+        usize drop = 0;
+        for (usize i = 0; i < vN(*array->array); ++i) {
+                if (value_apply_predicate(ty, &f, v_(*array->array, i))) {
+                        drop += 1;
+                } else {
                         break;
+                }
+        }
 
-        int n = array->array->count - drop;
+        usize n = vN(*array->array) - drop;
         Value result = ARRAY(vA());
         NOGC(result.array);
         value_array_reserve(ty, result.array, n);
         OKGC(result.array);
-        memmove(result.array->items, array->array->items + drop, n * sizeof (Value));
-        result.array->count = n;
+        memmove(vv(*result.array), vv(*array->array) + drop, n * sizeof (Value));
+        vN(*result.array) = n;
 
         return result;
 }
@@ -678,15 +681,10 @@ array_uniq(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_take_mut(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("array.take!() expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.take!()", 1);
 
-        Value n = ARG(0);
-
-        if (n.type != VALUE_INTEGER)
-                zP("non-integer passed to array.take!()");
-
-        array->array->count = (n.z < 0) ? 0 : min(array->array->count, n.z);
+        imax n = INT_ARG(0);
+        vN(*array->array) = (n < 0) ? 0 : min(vN(*array->array), (usize)n);
         shrink(ty, array);
 
         return *array;
@@ -695,24 +693,18 @@ array_take_mut(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_take(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("array.take() expects 1 argument but got %d", argc);
-
-        Value n = ARG(0);
-
-        if (n.type != VALUE_INTEGER)
-                zP("non-integer passed to array.take!()");
+        ASSERT_ARGC("Array.take()", 1);
 
         Value result = ARRAY(vA());
-
-        int count = (n.z < 0) ? 0 : min(n.z, array->array->count);
+        imax n = INT_ARG(0);
+        usize count = (n < 0) ? 0 : min((usize)n, vN(*array->array));
 
         NOGC(result.array);
         value_array_reserve(ty, result.array, count);
         OKGC(result.array);
 
-        memmove(result.array->items, array->array->items, count * sizeof (Value));
-        result.array->count = count;
+        memmove(vv(*result.array), vv(*array->array), count * sizeof (Value));
+        vN(*result.array) = count;
 
         return result;
 }
@@ -720,18 +712,17 @@ array_take(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_drop_mut(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("array.drop!() expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.drop!()", 1);
 
-        Value n = ARG(0);
+        imax n = INT_ARG(0);
+        usize d = (n < 0) ? 0 : min(vN(*array->array), (usize)n);
 
-        if (n.type != VALUE_INTEGER)
-                zP("non-integer passed to array.drop!()");
-
-        int d = min(array->array->count, max(n.z, 0));
-
-        memmove(array->array->items, array->array->items + d, (array->array->count - d) * sizeof (Value));
-        array->array->count -= d;
+        memmove(
+                vv(*array->array),
+                vv(*array->array) + d,
+                (vN(*array->array) - d) * sizeof (Value)
+        );
+        vN(*array->array) -= d;
         shrink(ty, array);
 
         return *array;
@@ -744,8 +735,8 @@ array_drop(Ty *ty, Value *array, int argc, Value *kwargs)
 
         imax n = INT_ARG(0);
 
-        int d = min(max(n, 0), array->array->count);
-        int count = array->array->count - d;
+        usize d = (n < 0) ? 0 : min((usize)n, vN(*array->array));
+        usize count = vN(*array->array) - d;
 
         Array *result = vAn(count);
         memcpy(vv(*result), vv(*array->array) + d, count * sizeof (Value));
@@ -791,9 +782,7 @@ array_sum(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_join(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        char const *_name__ = "Array.join()";
-
-        CHECK_ARGC(0, 1);
+        ASSERT_ARGC("Array.join()", 0, 1);
 
         if (vN(*array->array) == 0) {
                 return STRING_EMPTY;
@@ -811,7 +800,7 @@ array_join(Ty *ty, Value *array, int argc, Value *kwargs)
         vmX();
         Value v = NIL;
 
-        for (int i = 1; i < array->array->count; ++i) {
+        for (usize i = 1; i < vN(*array->array); ++i) {
                 gP(&sum);
                 gP(&v);
                 vmP(v_(*array->array, i));
@@ -835,18 +824,17 @@ array_join(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_consume_while(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 2)
-                zP("array.consumeWhile() expects 2 arguments but got %d", argc);
+        ASSERT_ARGC("Array.consumeWhile()", 2);
 
         Value f = ARG(0);
         Value p = ARG(1);
 
         if (!CALLABLE(f)) {
-                zP("Array.consumeWhile(): source is not callable: %s", VSC(&f));
+                bP("source is not callable: %s", VSC(&f));
         }
 
         if (!CALLABLE(p)) {
-                zP("Array.consumeWhile(): non-callable passed as predicate: %s", VSC(&p));
+                bP("predicate is not callable: %s", VSC(&p));
         }
 
         Value v = NIL;
@@ -872,42 +860,39 @@ array_groups_of(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Array.groups-of()", 1, 2);
 
-        Value size = ARG(0);
-        if (size.type != VALUE_INTEGER)
-                zP("the argument to array.groupsOf() must be an integer");
+        imax nsize = INT_ARG(0);
 
-        if (size.z <= 0)
-                zP("the argument to array.groupsOf() must be positive");
+        if (nsize <= 0) {
+                bP("group size must be positive");
+        }
 
+        usize size = nsize;
         bool keep_short = true;
 
         if (argc == 2) {
-                if (ARG(1).type != VALUE_BOOLEAN) {
-                        zP("the second argument to array.groupsOf() must be a boolean");
-                }
-                keep_short = ARG(1).boolean;
+                keep_short = BOOL_ARG(1);
         }
 
-        int n = 0;
-        int i = 0;
-        while (i + size.z <= array->array->count) {
+        usize n = 0;
+        usize i = 0;
+        while (i + size <= vN(*array->array)) {
                 Array *group = vA();
                 NOGC(group);
-                vvPn(*group, array->array->items + i, size.z);
+                vvPn(*group, vv(*array->array) + i, size);
                 OKGC(group);
                 *v_(*array->array, n++) = ARRAY(group);
-                i += size.z;
+                i += size;
         }
 
-        if (keep_short && i != array->array->count) {
+        if (keep_short && i != vN(*array->array)) {
                 Array *last = vA();
                 NOGC(last);
-                vvPn(*last, array->array->items + i, array->array->count - i);
+                vvPn(*last, vv(*array->array) + i, vN(*array->array) - i);
                 OKGC(last);
-                array->array->items[n++] = ARRAY(last);
+                *v_(*array->array, n++) = ARRAY(last);
         }
 
-        array->array->count = n;
+        vN(*array->array) = n;
         shrink(ty, array);
 
         return *array;
@@ -927,19 +912,19 @@ array_group_by(Ty *ty, Value *array, int argc, Value *kwargs)
         Value v1, v2;
         v1 = v2 = NIL;
 
-        int len = 0;
-        for (int i = 0; i < array->array->count; ++i) {
+        usize len = 0;
+        for (usize i = 0; i < vN(*array->array); ++i) {
                 Value group = ARRAY(vA());
                 NOGC(group.array);
-                Value e = array->array->items[i];
+                Value e = v__(*array->array, i);
                 v1 = vm_call1(ty, &f, &e);
                 gP(&v1);
                 vAp(group.array, e);
-                while (i + 1 < array->array->count) {
-                        v2 = vm_call1(ty, &f, &array->array->items[i + 1]);
+                while (i + 1 < vN(*array->array)) {
+                        v2 = vm_call1(ty, &f, v_(*array->array, i + 1));
                         gP(&v2);
-                        if (value_test_equality(ty, &v1, &v2)) {
-                                vAp(group.array, array->array->items[++i]);
+                        if (v_eq(&v1, &v2)) {
+                                vAp(group.array, v__(*array->array, ++i));
                                 gX();
                         } else {
                                 gX();
@@ -948,10 +933,10 @@ array_group_by(Ty *ty, Value *array, int argc, Value *kwargs)
                 }
                 gX();
                 OKGC(group.array);
-                array->array->items[len++] = group;
+                *v_(*array->array, len++) = group;
         }
 
-        array->array->count = len;
+        vN(*array->array) = len;
         shrink(ty, array);
 
         return *array;
@@ -966,22 +951,22 @@ array_group(Ty *ty, Value *array, int argc, Value *kwargs)
                 return array_group_by(ty, array, argc, kwargs);
         }
 
-        int len = 0;
-        for (int i = 0; i < array->array->count; ++i) {
+        usize len = 0;
+        for (usize i = 0; i < vN(*array->array); ++i) {
                 Value group = ARRAY(vA());
                 NOGC(group.array);
-                vAp(group.array, array->array->items[i]);
+                vAp(group.array, v__(*array->array, i));
                 while (
-                        (i + 1 < array->array->count)
-                     && v_eq(&array->array->items[i], &array->array->items[i + 1])
+                        (i + 1 < vN(*array->array))
+                     && v_eq(v_(*array->array, i), v_(*array->array, i + 1))
                 ) {
-                        vAp(group.array, array->array->items[++i]);
+                        vAp(group.array, v__(*array->array, ++i));
                 }
                 OKGC(group.array);
-                array->array->items[len++] = group;
+                *v_(*array->array, len++) = group;
         }
 
-        array->array->count = len;
+        vN(*array->array) = len;
         shrink(ty, array);
 
         return *array;
@@ -990,49 +975,55 @@ array_group(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_intersperse(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("the intersperse method on arrays expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.intersperse()", 1);
 
         Value v = ARG(0);
 
-        int n = array->array->count - 1;
-        if (n < 1)
+        usize count = vN(*array->array);
+        if (count < 2) {
                 return *array;
-
-        int newcount = 2 * n + 1;
-        value_array_reserve(ty, array->array, newcount);
-        memcpy(array->array->items + n + 1, array->array->items + 1, n * sizeof (Value));
-
-        int lo = 1;
-        int hi = n + 1;
-        for (int i = 0; i < n; ++i) {
-                array->array->items[lo++] = v;
-                array->array->items[lo++] = array->array->items[hi++];
         }
 
-        array->array->count = newcount;
+        usize n = count - 1;
+        usize newcount = 2 * n + 1;
+        value_array_reserve(ty, array->array, newcount);
+        memcpy(
+                vv(*array->array) + n + 1,
+                vv(*array->array) + 1,
+                n * sizeof (Value)
+        );
+
+        usize lo = 1;
+        usize hi = n + 1;
+        for (usize i = 0; i < n; ++i) {
+                *v_(*array->array, lo++) = v;
+                *v_(*array->array, lo++) = v__(*array->array, hi++);
+        }
+
+        vN(*array->array) = newcount;
         return *array;
 }
 
 static Value
 array_min(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc == 1)
+        ASSERT_ARGC("Array.min()", 0, 1);
+
+        if (argc == 1) {
                 return array_min_by(ty, array, argc, kwargs);
+        }
 
-        if (argc != 0)
-                zP("the min method on arrays expects no arguments but got %d", argc);
-
-        if (array->array->count == 0)
+        if (vN(*array->array) == 0) {
                 return NIL;
+        }
 
-        Value min, v;
-        min = array->array->items[0];
+        Value min = v_0(*array->array);
 
-        for (int i = 1; i < array->array->count; ++i) {
-                v = array->array->items[i];
-                if (value_compare(ty, &v, &min) < 0)
+        for (usize i = 1; i < vN(*array->array); ++i) {
+                Value v = v__(*array->array, i);
+                if (v_cmp(&v, &min) < 0) {
                         min = v;
+                }
         }
 
         return min;
@@ -1041,42 +1032,40 @@ array_min(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_min_by(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("the minBy method on arrays expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.minBy()", 1);
 
-        if (array->array->count == 0)
+        if (vN(*array->array) == 0) {
                 return NIL;
+        }
 
         Value f = ARG(0);
-        if (!CALLABLE(f))
-                zP("non-function passed to the minBy method on array");
+        if (!CALLABLE(f)) {
+                bP("not callable: %s", VSC(&f));
+        }
 
-        Value min, v, k, r;
-        min = array->array->items[0];
+        Value min = v_0(*array->array);
 
-        r = k = NIL;
-
-        if (f.type == VALUE_FUNCTION && f.info[2] > 1) {
-                for (int i = 1; i < array->array->count; ++i) {
-                        v = array->array->items[i];
-                        r = vm_eval_function(ty, &f, &v, &min, NULL);
+        if (ARITY(f) > 1) {
+                for (usize i = 1; i < vN(*array->array); ++i) {
+                        Value v = v__(*array->array, i);
+                        Value r = vm_eval_function(ty, &f, &v, &min, NULL);
                         gP(&r);
-                        if (
-                                (r.type != VALUE_INTEGER && !value_truthy(ty, &r))
-                             || (r.z < 0)
-                        ) {
+                        bool less = (r.type == VALUE_INTEGER)
+                                  ? (r.z < 0)
+                                  : v_truthy(&r);
+                        if (less) {
                                 min = v;
                         }
                         gX();
                 }
         } else {
-                k = vm_eval_function(ty, &f, &min, NULL);
+                Value k = vm_eval_function(ty, &f, &min, NULL);
                 gP(&k);
-                for (int i = 1; i < array->array->count; ++i) {
-                        v = array->array->items[i];
-                        r = vm_eval_function(ty, &f, &v, NULL);
+                for (usize i = 1; i < vN(*array->array); ++i) {
+                        Value v = v__(*array->array, i);
+                        Value r = vm_eval_function(ty, &f, &v, NULL);
                         gP(&r);
-                        if (value_compare(ty, &r, &k) < 0) {
+                        if (v_cmp(&r, &k) < 0) {
                                 min = v;
                                 k = r;
                         }
@@ -1093,24 +1082,21 @@ array_min_by(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_max(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        char const *_name__ = "Array.max()";
+        ASSERT_ARGC("Array.max()", 0, 1);
 
         if (argc == 1) {
                 return array_max_by(ty, array, argc, kwargs);
         }
 
-        CHECK_ARGC(0);
-
         if (vN(*array->array) == 0) {
                 return NIL;
         }
 
-        Value max, v;
-        max = v__(*array->array, 0);
+        Value max = v_0(*array->array);
 
-        for (int i = 1; i < vN(*array->array); ++i) {
-                v = v__(*array->array, i);
-                if (value_compare(ty, &v, &max) > 0) {
+        for (usize i = 1; i < vN(*array->array); ++i) {
+                Value v = v__(*array->array, i);
+                if (v_cmp(&v, &max) > 0) {
                         max = v;
                 }
         }
@@ -1121,7 +1107,7 @@ array_max(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_max_by(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        ASSERT_ARGC("Array.max-by()", 1);
+        ASSERT_ARGC("Array.maxBy()", 1);
 
         if (vN(*array->array) == 0) {
                 return NIL;
@@ -1132,33 +1118,29 @@ array_max_by(Ty *ty, Value *array, int argc, Value *kwargs)
                 bP("not callable: %s", VSC(&f));
         }
 
-        Value max, v, k, r;
-        max = array->array->items[0];
+        Value max = v_0(*array->array);
 
-        k = r = NIL;
-
-        if (f.type == VALUE_FUNCTION && f.info[2] > 1) {
-                for (int i = 1; i < array->array->count; ++i) {
-                        v = array->array->items[i];
-                        r = vm_eval_function(ty, &f, &v, &max, NULL);
+        if (ARITY(f) > 1) {
+                for (usize i = 1; i < vN(*array->array); ++i) {
+                        Value v = v__(*array->array, i);
+                        Value r = vm_eval_function(ty, &f, &v, &max, NULL);
                         gP(&r);
-                        if (
-                                (r.type != VALUE_INTEGER && value_truthy(ty, &r))
-                             || (r.z > 0)
-                        ) {
+                        bool greater = (r.type == VALUE_INTEGER)
+                                     ? r.z > 0
+                                     : v_truthy(&r);
+                        if (greater) {
                                 max = v;
                         }
                         gX();
-
                 }
         } else {
-                k = vm_eval_function(ty, &f, &max, NULL);
-                        gP(&k);
-                for (int i = 1; i < array->array->count; ++i) {
-                        v = array->array->items[i];
-                        r = vm_eval_function(ty, &f, &v, NULL);
+                Value k = vm_eval_function(ty, &f, &max, NULL);
+                gP(&k);
+                for (usize i = 1; i < vN(*array->array); ++i) {
+                        Value v = v__(*array->array, i);
+                        Value r = vm_eval_function(ty, &f, &v, NULL);
                         gP(&r);
-                        if (value_compare(ty, &r, &k) > 0) {
+                        if (v_cmp(&r, &k) > 0) {
                                 max = v;
                                 k = r;
                         }
@@ -1182,16 +1164,11 @@ array_length(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_shuffle(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 0)
-                zP("the shuffle! method on arrays expects no arguments but got %d", argc);
+        ASSERT_ARGC("Array.shuffle!()", 0);
 
-        Value t;
-        int n = array->array->count;
-        for (int i = n - 1; i > 0; --i) {
-                int j = rand() % (i + 1);
-                t = array->array->items[i];
-                array->array->items[i] = array->array->items[j];
-                array->array->items[j] = t;
+        for (usize i = vN(*array->array); i > 1; --i) {
+                usize j = xoshiro256ss(ty) % i;
+                SWAP(Value, *v_(*array->array, i - 1), *v_(*array->array, j));
         }
 
         return *array;
@@ -1221,7 +1198,7 @@ array_enumerate(Ty *ty, Value *array, int argc, Value *kwargs)
 
         usize n = vN(*array->array);
 
-        for (int i = 0; i < n; ++i) {
+        for (usize i = 0; i < n; ++i) {
                 Value entry = PAIR(
                         INTEGER(i),
                         v__(*array->array, i)
@@ -1239,10 +1216,10 @@ array_remove(Ty *ty, Value *array, int argc, Value *kwargs)
 
         Value v = ARG(0);
 
-        isize n = vN(*array->array);
-        isize j = 0;
-        for (int i = 0; i < n; ++i) {
-                if (!v_eq(&v, &array->array->items[i])) {
+        usize n = vN(*array->array);
+        usize j = 0;
+        for (usize i = 0; i < n; ++i) {
+                if (!v_eq(&v, v_(*array->array, i))) {
                         *v_(*array->array, j++) = v__(*array->array, i);
                 }
         }
@@ -1285,10 +1262,10 @@ array_find(Ty *ty, Value *array, int argc, Value *kwargs)
                 bP("not callable: %s", VSC(&pred));
         }
 
-        isize n = vN(*array->array);
-        for (int i = 0; i < n; ++i) {
-                if (value_apply_predicate(ty, &pred, &array->array->items[i])) {
-                        return array->array->items[i];
+        usize n = vN(*array->array);
+        for (usize i = 0; i < n; ++i) {
+                if (value_apply_predicate(ty, &pred, v_(*array->array, i))) {
+                        return v__(*array->array, i);
                 }
         }
 
@@ -1306,9 +1283,9 @@ array_findr(Ty *ty, Value *array, int argc, Value *kwargs)
         }
 
         isize n = vN(*array->array);
-        for (int i = n - 1; i >= 0; --i) {
-                if (value_apply_predicate(ty, &pred, &array->array->items[i])) {
-                        return array->array->items[i];
+        for (isize i = n - 1; i >= 0; --i) {
+                if (value_apply_predicate(ty, &pred, v_(*array->array, i))) {
+                        return v__(*array->array, i);
                 }
         }
 
@@ -1328,10 +1305,16 @@ array_bsearch(Ty *ty, Value *array, int argc, Value *kwargs)
 
         while (lo <= hi) {
                 isize m = (lo + hi) / 2;
-                int c = value_compare(ty, &v, &array->array->items[m]);
-                if      (c < 0) { hi = m - 1; i = m;  }
-                else if (c > 0) { lo = m + 1; i = lo; }
-                else            { return INTEGER(m);  }
+                int c = v_cmp(&v, v_(*array->array, m));
+                if (c < 0) {
+                        hi = m - 1;
+                        i = m;
+                } else if (c > 0) {
+                        lo = m + 1;
+                        i = lo;
+                } else {
+                        return INTEGER(m);
+                }
         }
 
         return INTEGER(i);
@@ -1349,10 +1332,14 @@ array_bsearch_strict(Ty *ty, Value *array, int argc, Value *kwargs)
 
         while (lo <= hi) {
                 isize m = (lo + hi) / 2;
-                int c = value_compare(ty, &v, &array->array->items[m]);
-                if      (c < 0) hi = m - 1;
-                else if (c > 0) lo = m + 1;
-                else            return INTEGER(m);
+                int c = v_cmp(&v, v_(*array->array, m));
+                if (c < 0) {
+                        hi = m - 1;
+                } else if (c > 0) {
+                        lo = m + 1;
+                } else {
+                        return INTEGER(m);
+                }
         }
 
         return NIL;
@@ -1361,18 +1348,20 @@ array_bsearch_strict(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_search_by(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("the searchBy method on arrays expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.searchBy()", 1);
 
         Value pred = ARG(0);
 
-        if (!CALLABLE(pred))
-                zP("non-predicate passed to the searchBy method on array");
+        if (!CALLABLE(pred)) {
+                bP("not callable: %s", VSC(&pred));
+        }
 
-        int n = array->array->count;
-        for (int i = 0; i < n; ++i)
-                if (value_apply_predicate(ty, &pred, &array->array->items[i]))
+        usize n = vN(*array->array);
+        for (usize i = 0; i < n; ++i) {
+                if (value_apply_predicate(ty, &pred, v_(*array->array, i))) {
                         return INTEGER(i);
+                }
+        }
 
         return NIL;
 }
@@ -1380,18 +1369,20 @@ array_search_by(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_searchr_by(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("the searchrBy method on arrays expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.searchrBy()", 1);
 
         Value pred = ARG(0);
 
-        if (!CALLABLE(pred))
-                zP("non-predicate passed to the searchBy method on array");
+        if (!CALLABLE(pred)) {
+                bP("not callable: %s", VSC(&pred));
+        }
 
-        int n = array->array->count;
-        for (int i = n - 1; i >= 0; --i)
-                if (value_apply_predicate(ty, &pred, &array->array->items[i]))
+        isize n = vN(*array->array);
+        for (isize i = n - 1; i >= 0; --i) {
+                if (value_apply_predicate(ty, &pred, v_(*array->array, i))) {
                         return INTEGER(i);
+                }
+        }
 
         return NIL;
 }
@@ -1399,14 +1390,13 @@ array_searchr_by(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_set(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 0)
-                zP("array.set() expects 0 arguments but got %d", argc);
+        ASSERT_ARGC("Array.set()", 0);
 
         Dict *d = dict_new(ty);
         NOGC(d);
 
-        for (int i = 0; i < array->array->count; ++i) {
-                dict_put_key_if_not_exists(ty, d, array->array->items[i]);
+        for (usize i = 0; i < vN(*array->array); ++i) {
+                dict_put_key_if_not_exists(ty, d, v__(*array->array, i));
         }
 
         OKGC(d);
@@ -1417,14 +1407,12 @@ array_set(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_partition(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1) {
-                zP("Array.partition!(): expected 1 argument but got %d", argc);
-        }
+        ASSERT_ARGC("Array.partition!()", 1);
 
         Value pred = ARG(0);
 
         if (!CALLABLE(pred)) {
-                zP("Array.partition!(): expected callable arg0 but got: %s", VSC(&pred));
+                bP("not callable: %s", VSC(&pred));
         }
 
         Array const *xs = array->array;
@@ -1433,8 +1421,8 @@ array_partition(Ty *ty, Value *array, int argc, Value *kwargs)
                 return *array;
         }
 
-        int y = 0;
-        int n = vN(*xs);
+        usize y = 0;
+        usize n = vN(*xs);
 
         while (y < n) {
                 Value *v = v_(*xs, y);
@@ -1451,27 +1439,16 @@ array_partition(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_split_at(Ty *ty, Value *array, int argc, Value *kargs)
 {
-        if (argc != 1) {
-                zP("array.split()  expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.split()", 1);
+
+        imax i = INT_ARG(0);
+
+        if (i < 0) {
+                i += vN(*array->array);
         }
 
-        if (ARG(0).type != VALUE_INTEGER) {
-                zP(
-                        "array.split() expected integer but got %s%s%s%s",
-                        TERM(96),
-                        TERM(1),
-                        SHOW(&ARG(0)),
-                        TERM(0)
-                );
-        }
-
-        int i = ARG(0).z;
-
-        if (i < 0)
-                i += array->array->count;
-
-        if (i < 0 || i > array->array->count) {
-                zP("array.split(): index %s%d%s out of range", TERM(96), i, TERM(0));
+        if (i < 0 || i > vN(*array->array)) {
+                bP("index out of range: %"PRIiMAX, i);
         }
 
         Array *front = vA();
@@ -1494,16 +1471,15 @@ array_split_at(Ty *ty, Value *array, int argc, Value *kargs)
 static Value
 array_partition_no_mut(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("Array.partition(): expected 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.partition()", 1);
 
         Value pred = ARG(0);
 
         if (!CALLABLE(pred)) {
-                zP("Array.partition(): expected callable but got: %s", VSC(&pred));
+                bP("not callable: %s", VSC(&pred));
         }
 
-        int n = array->array->count;
+        usize n = vN(*array->array);
 
         Array *yes = vA();
         NOGC(yes);
@@ -1511,7 +1487,7 @@ array_partition_no_mut(Ty *ty, Value *array, int argc, Value *kwargs)
         Array *no = vA();
         NOGC(no);
 
-        for (int i = 0; i < n; ++i) {
+        for (usize i = 0; i < n; ++i) {
                 Value *v = v_(*array->array, i);
                 if (value_apply_predicate(ty, &pred, v)) {
                         vAp(yes, *v);
@@ -1531,15 +1507,16 @@ array_partition_no_mut(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_contains(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("array.contains?() expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.contains?()", 1);
 
         Value v = ARG(0);
 
-        int n = array->array->count;
-        for (int i = 0; i < n; ++i)
-                if (value_test_equality(ty, &v, &array->array->items[i]))
+        usize n = vN(*array->array);
+        for (usize i = 0; i < n; ++i) {
+                if (v_eq(&v, v_(*array->array, i))) {
                         return BOOLEAN(true);
+                }
+        }
 
         return BOOLEAN(false);
 }
@@ -1547,14 +1524,12 @@ array_contains(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_tuple(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 0) {
-                zP("array.tuple() expects 0 arguments but got %d", argc);
-        }
+        ASSERT_ARGC("Array.tuple()", 0);
 
-        int n = array->array->count;
+        usize n = vN(*array->array);
 
         Value v = vT(n);
-        memcpy(v.items, array->array->items, n * sizeof (Value));
+        memcpy(v.items, vv(*array->array), n * sizeof (Value));
 
         return v;
 }
@@ -1562,28 +1537,28 @@ array_tuple(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_tally(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 0 && argc != 1)
-                zP("array.tally() expects 0 or 1 argument(s) but got %d", argc);
+        ASSERT_ARGC("Array.tally()", 0, 1);
 
         Value d = DICT(dict_new(ty));
         gP(&d);
 
         if (argc == 0) {
-                for (int i = 0; i < array->array->count; ++i) {
-                        Value *c = dict_get_value(ty, d.dict, &array->array->items[i]);
+                for (usize i = 0; i < vN(*array->array); ++i) {
+                        Value *c = dict_get_value(ty, d.dict, v_(*array->array, i));
                         if (c == NULL) {
-                                dict_put_value(ty, d.dict, array->array->items[i], INTEGER(1));
+                                dict_put_value(ty, d.dict, v__(*array->array, i), INTEGER(1));
                         } else {
                                 c->z += 1;
                         }
                 }
         } else {
                 Value f = ARG(0);
-                if (!CALLABLE(f))
-                        zP("non-callable passed to array.tally()");
+                if (!CALLABLE(f)) {
+                        bP("not callable: %s", VSC(&f));
+                }
 
-                for (int i = 0; i < array->array->count; ++i) {
-                        Value v = vm_call1(ty, &f, &array->array->items[i]);
+                for (usize i = 0; i < vN(*array->array); ++i) {
+                        Value v = vm_call1(ty, &f, v_(*array->array, i));
                         Value *c = dict_get_value(ty, d.dict, &v);
                         if (c == NULL) {
                                 dict_put_value(ty, d.dict, v, INTEGER(1));
@@ -1622,8 +1597,8 @@ array_searchr(Ty *ty, Value *array, int argc, Value *kwargs)
 
         Value v = ARG(0);
 
-        usize n = vN(*array->array);
-        for (usize i = n - 1; i >= 0; --i) {
+        isize n = vN(*array->array);
+        for (isize i = n - 1; i >= 0; --i) {
                 if (v_eq(&v, v_(*array->array, i))) {
                         return INTEGER(i);
                 }
@@ -1637,10 +1612,10 @@ array_flat(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Array.flat()", 0, 1);
 
-        vec(Value *) stack = {0};
-        vec(usize)  dstack = {0};
+        vec(Value *) stack  = {0};
+        vec(imax)    dstack = {0};
 
-        usize maxdepth;
+        imax maxdepth;
 
         if (argc == 1) {
                 maxdepth = INT_ARG(0);
@@ -1659,12 +1634,12 @@ array_flat(Ty *ty, Value *array, int argc, Value *kwargs)
                 svP(dstack, 1);
                 while (vN(stack) > 0) {
                         Value *v = vXx(stack);
-                        usize d = vXx(dstack);
+                        imax d = vXx(dstack);
                         if (v->type != VALUE_ARRAY || d > maxdepth) {
                                 vAp(r, *v);
                         } else {
-                                for (isize i = vN(*v->array) - 1; i >= 0; --i) {
-                                        svP(stack, &v->array->items[i]);
+                                for (isize i = (isize)vN(*v->array) - 1; i >= 0; --i) {
+                                        svP(stack, v_(*v->array, i));
                                         svP(dstack, d + 1);
                                 }
                         }
@@ -1676,7 +1651,6 @@ array_flat(Ty *ty, Value *array, int argc, Value *kwargs)
         SCRATCH_RESTORE();
 
         return ARRAY(r);
-
 }
 
 static Value
@@ -1687,31 +1661,46 @@ array_each(Ty *ty, Value *array, int argc, Value *kwargs)
         if (argc == 1) {
                 Value f = ARG(0);
 
-                if (f.type != VALUE_FUNCTION && f.type != VALUE_BUILTIN_FUNCTION && f.type != VALUE_METHOD && f.type != VALUE_BUILTIN_METHOD)
-                        zP("non-function passed to the each method on array");
+                if (!CALLABLE(f)) {
+                        bP("not callable: %s", VSC(&f));
+                }
 
-                int n = array->array->count;
+                usize n = vN(*array->array);
 
-                for (int i = 0; i < n; ++i)
-                        vm_eval_function(ty, &f, &array->array->items[i], &INTEGER(i), NULL);
+                for (usize i = 0; i < n; ++i) {
+                        vm_eval_function(
+                                ty,
+                                &f,
+                                v_(*array->array, i),
+                                &INTEGER(i),
+                                NULL
+                        );
+                }
 
                 return *array;
         } else {
                 Value v = ARG(0);
                 Value f = ARG(1);
 
-                if (f.type != VALUE_FUNCTION && f.type != VALUE_BUILTIN_FUNCTION && f.type != VALUE_METHOD && f.type != VALUE_BUILTIN_METHOD)
-                        zP("non-function passed to the each method on array");
+                if (!CALLABLE(f)) {
+                        bP("not callable: %s", VSC(&f));
+                }
 
-                int n = array->array->count;
+                usize n = vN(*array->array);
 
-                for (int i = 0; i < n; ++i) {
-                        vm_eval_function(ty, &f, &v, &array->array->items[i], &INTEGER(i), NULL);
+                for (usize i = 0; i < n; ++i) {
+                        vm_eval_function(
+                                ty,
+                                &f,
+                                &v,
+                                v_(*array->array, i),
+                                &INTEGER(i),
+                                NULL
+                        );
                 }
 
                 return v;
         }
-
 }
 
 static Value
@@ -1722,19 +1711,22 @@ array_all(Ty *ty, Value *array, int argc, Value *kwargs)
         usize n = vN(*array->array);
 
         if (argc == 0) {
-                for (int i = 0; i < n; ++i) {
-                        if (!value_truthy(ty, &array->array->items[i]))
+                for (usize i = 0; i < n; ++i) {
+                        if (!v_truthy(v_(*array->array, i))) {
                                 return BOOLEAN(false);
+                        }
                 }
         } else {
                 Value pred = ARG(0);
 
-                if (!CALLABLE(pred))
-                        zP("non-predicate passed to the all? method on array");
+                if (!CALLABLE(pred)) {
+                        bP("not callable: %s", VSC(&pred));
+                }
 
-                for (int i = 0; i < n; ++i) {
-                        if (!value_apply_predicate(ty, &pred, &array->array->items[i]))
+                for (usize i = 0; i < n; ++i) {
+                        if (!value_apply_predicate(ty, &pred, v_(*array->array, i))) {
                                 return BOOLEAN(false);
+                        }
                 }
         }
 
@@ -1744,23 +1736,28 @@ array_all(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_any(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        int n = array->array->count;
+        ASSERT_ARGC("Array.any?()", 0, 1);
+
+        usize n = vN(*array->array);
 
         if (argc == 0) {
-                for (int i = 0; i < n; ++i)
-                        if (value_truthy(ty, &array->array->items[i]))
+                for (usize i = 0; i < n; ++i) {
+                        if (v_truthy(v_(*array->array, i))) {
                                 return BOOLEAN(true);
+                        }
+                }
         } else if (argc == 1) {
                 Value pred = ARG(0);
 
-                if (!CALLABLE(pred))
-                        zP("non-predicate passed to the any? method on array");
+                if (!CALLABLE(pred)) {
+                        bP("not callable: %s", VSC(&pred));
+                }
 
-                for (int i = 0; i < n; ++i)
-                        if (value_apply_predicate(ty, &pred, &array->array->items[i]))
+                for (usize i = 0; i < n; ++i) {
+                        if (value_apply_predicate(ty, &pred, v_(*array->array, i))) {
                                 return BOOLEAN(true);
-        } else {
-                zP("the any? method on arrays expects 0 or 1 argument(s) but got %d", argc);
+                        }
+                }
         }
 
         return BOOLEAN(false);
@@ -1769,16 +1766,17 @@ array_any(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_count(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("the count method on arrays expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.count()", 1);
 
         Value v = ARG(0);
 
-        int n = array->array->count;
-        int k = 0;
-        for (int i = 0; i < n; ++i)
-                if (value_test_equality(ty, &v, &array->array->items[i]))
+        usize n = vN(*array->array);
+        usize k = 0;
+        for (usize i = 0; i < n; ++i) {
+                if (v_eq(&v, v_(*array->array, i))) {
                         k += 1;
+                }
+        }
 
         return INTEGER(k);
 }
@@ -1786,18 +1784,18 @@ array_count(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_count_by(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("the count method on arrays expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.countBy()", 1);
 
         Value pred = ARG(0);
 
-        if (!CALLABLE(pred))
-                zP("non-predicate passed to the count method on array");
+        if (!CALLABLE(pred)) {
+                bP("not callable: %s", VSC(&pred));
+        }
 
-        int n = array->array->count;
-        int k = 0;
-        for (int i = 0; i < n; ++i) {
-                if (value_apply_predicate(ty, &pred, &array->array->items[i])) {
+        usize n = vN(*array->array);
+        usize k = 0;
+        for (usize i = 0; i < n; ++i) {
+                if (value_apply_predicate(ty, &pred, v_(*array->array, i))) {
                         k += 1;
                 }
         }
@@ -1808,72 +1806,69 @@ array_count_by(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_fold_left(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1 && argc != 2)
-                zP("the foldLeft method on arrays expects 1 or 2 arguments but got %d", argc);
+        ASSERT_ARGC("Array.fold()", 1, 2);
 
-        int start;
+        usize start;
         Value f, v;
 
         if (argc == 1) {
                 start = 1;
                 f = ARG(0);
-                if (array->array->count == 0) {
-                        zP("foldLeft called on empty array with 1 argument");
+                if (vN(*array->array) == 0) {
+                        bP("empty array and no start value");
                 }
-                v = array->array->items[0];
+                v = v_0(*array->array);
         } else {
                 start = 0;
                 f = ARG(1);
                 v = ARG(0);
         }
 
-        if (!CALLABLE(f))
-                zP("non-function passed to the foldLeft method on array");
+        if (!CALLABLE(f)) {
+                bP("not callable: %s", VSC(&f));
+        }
 
-        int n = array->array->count;
-        for (int i = start; i < n; ++i) {
+        usize n = vN(*array->array);
+        for (usize i = start; i < n; ++i) {
                 gP(&v);
-                v = vm_eval_function(ty, &f, &v, &array->array->items[i], NULL);
+                v = vm_eval_function(ty, &f, &v, v_(*array->array, i), NULL);
                 gX();
         }
 
         return v;
 }
 
-/* TODO: fix this */
 static Value
 array_fold_right(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1 && argc != 2) {
-                zP("Array.foldRight(): expected 1 or 2 arguments but got %d", argc);
-        }
+        ASSERT_ARGC("Array.foldr()", 1, 2);
 
-        int start;
+        isize start;
         Value f, v;
 
         if (argc == 1) {
-                start = array->array->count - 2;
+                start = (isize)vN(*array->array) - 2;
                 f = ARG(0);
-                if (array->array->count == 0) {
-                        zP("Array.foldRight(): empty array and no start value");
+                if (vN(*array->array) == 0) {
+                        bP("empty array and no start value");
                 }
-                v = array->array->items[start + 1];
+                v = v__(*array->array, start + 1);
         } else {
-                start = array->array->count - 1;
+                start = (isize)vN(*array->array) - 1;
                 f = ARG(1);
                 v = ARG(0);
         }
 
         if (!CALLABLE(f)) {
-                zP("Array.foldRight(): expected callable but got: %s", VSC(&f));
+                bP("not callable: %s", VSC(&f));
         }
 
-        for (int i = start; i >= 0; --i) {
+        for (isize i = start; i >= 0; --i) {
                 gP(&v);
                 v = vm_eval_function(
                         ty,
                         &f,
-                        &array->array->items[i],
+                        v_(*array->array, i),
                         &v,
                         NULL
                 );
@@ -1902,7 +1897,7 @@ array_scan_left(Ty *ty, Value *array, int argc, Value *kwargs)
         }
 
         if (!CALLABLE(f)) {
-                zP("Array.scan(): expected callable but got: %s", VSC(&f));
+                bP("not callable: %s", VSC(&f));
         }
 
         usize n = vN(*array->array);
@@ -1937,12 +1932,12 @@ array_scan_right(Ty *ty, Value *array, int argc, Value *kwargs)
         }
 
         if (!CALLABLE(f)) {
-                zP("Array.scanr(): expected callable but got: %s", VSC(&f));
+                bP("not callable: %s", VSC(&f));
         }
 
         Value v = v_L(*array->array);
 
-        for (isize i = vN(*array->array) - 2; i >= 0; --i) {
+        for (isize i = (isize)vN(*array->array) - 2; i >= 0; --i) {
                 gP(&v);
                 v = vm_eval_function(ty, &f, v_(*array->array, i), &v, NULL);
                 *v_(*array->array, i) = v;
@@ -1988,7 +1983,7 @@ array_reverse(Ty *ty, Value *array, int argc, Value *kwargs)
         if (hi >= vN(*array->array)) {
                 bP(
                         "invalid count %jd for start index %jd and array of size %zu",
-                        n, lo, vN(*array->array)
+                        (imax)n, (imax)lo, vN(*array->array)
                 );
         }
 
@@ -2008,41 +2003,36 @@ array_reverse(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_rotate(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        int d = 1;
-        int n = array->array->count;
+        ASSERT_ARGC("Array.rotate()", 0, 1);
 
-        if (argc == 1) {
-                Value amount = ARG(0);
-                if (amount.type != VALUE_INTEGER)
-                        zP("the argument to array.rotate() must be an integer");
-                d = amount.z;
-        } else if (argc != 0) {
-                zP("the rotate method on arrays expects 0 or 1 arguments but got %d", argc);
+        isize d = (argc == 1) ? INT_ARG(0) : 1;
+        isize n = vN(*array->array);
+
+        if (n == 0) {
+                return *array;
         }
 
-        if (n == 0)
-                return *array;
-
         d %= n;
-        if (d < 0)
+        if (d < 0) {
                 d += n;
+        }
 
-        int N = gcd(n, d);
-        int i, j, k;
-        for (i = 0; i < N; ++i) {
-                Value t = array->array->items[i];
-                j = i;
+        isize cycles = gcd(n, d);
+        for (isize i = 0; i < cycles; ++i) {
+                Value t = v__(*array->array, i);
+                isize j = i;
                 for (;;) {
-                        k = j + d;
-                        if (k >= n)
-                                k = k - n;
-                        if (k == i)
+                        isize k = j + d;
+                        if (k >= n) {
+                                k -= n;
+                        }
+                        if (k == i) {
                                 break;
-                        array->array->items[j] = array->array->items[k];
+                        }
+                        *v_(*array->array, j) = v__(*array->array, k);
                         j = k;
-
                 }
-                array->array->items[j] = t;
+                *v_(*array->array, j) = t;
         }
 
         return *array;
@@ -2051,22 +2041,23 @@ array_rotate(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_sort_on(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("Array.sortOn() expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.sortOn()", 1);
 
         Value f = ARG(0);
-        if (!CALLABLE(f))
-                zP("non-function passed to the Array.sortOn()");
+        if (!CALLABLE(f)) {
+                bP("not callable: %s", VSC(&f));
+        }
 
-        if (array->array->count == 0)
+        if (vN(*array->array) == 0) {
                 return *array;
+        }
 
         SortContext ctx = {
                 .f = f,
                 .ty = ty
         };
 
-        rqsort(array->array->items, array->array->count, sizeof (Value), compare_by, &ctx);
+        rqsort(vv(*array->array), vN(*array->array), sizeof (Value), compare_by, &ctx);
 
         return *array;
 }
@@ -2074,22 +2065,23 @@ array_sort_on(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_sort_by(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("Array.sortBy() expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.sortBy()", 1);
 
         Value f = ARG(0);
-        if (!CALLABLE(f))
-                zP("non-function passed to the Array.sortBy()");
+        if (!CALLABLE(f)) {
+                bP("not callable: %s", VSC(&f));
+        }
 
-        if (array->array->count == 0)
+        if (vN(*array->array) == 0) {
                 return *array;
+        }
 
         SortContext ctx = {
                 .f = f,
                 .ty = ty
         };
 
-        rqsort(array->array->items, array->array->count, sizeof (Value), compare_by2, &ctx);
+        rqsort(vv(*array->array), vN(*array->array), sizeof (Value), compare_by2, &ctx);
 
         return *array;
 }
