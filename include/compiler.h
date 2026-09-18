@@ -124,6 +124,9 @@ typedef struct module {
         char const *source;
         Stmt **prog;
         TokenVector tokens;
+        Expr *last;
+        Arena arena;
+        Location error;
         u64 flags;
 } Module;
 

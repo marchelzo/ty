@@ -11,7 +11,6 @@
 #include "ty.h"
 #include "dtoa.h"
 #include "value.h"
-#include "str.h"
 #include "xd.h"
 #include "dict.h"
 #include "blob.h"
@@ -379,37 +378,6 @@ value_hash(Ty *ty, Value const *val)
         return ((u64)val->tags) ^ hash(ty, val);
 }
 
-struct show_string_ctx {
-        byte_vector *out;
-        bool         color;
-};
-
-static void
-show_string_emit(Ty *ty, Bytes s, StringPart kind, void *ctx)
-{
-        char const *const colors[] = { TERM(92), TERM(95), TERM(91) };
-        struct show_string_ctx *out = ctx;
-
-        if (out->color) {
-                svPn(*out->out, colors[kind], strlen(colors[kind]));
-        }
-        svPn(*out->out, s.data, s.length);
-}
-
-static void
-show_string(Ty *ty, byte_vector *out, u8 const *s, usize n, bool color)
-{
-        struct show_string_ctx ctx = { out, color };
-        Bytes quote = z_bytes("'");
-
-        show_string_emit(ty, quote, STRING_TEXT, &ctx);
-        str_escape(ty, BYTES((char const *)s, n), '\'', show_string_emit, &ctx);
-        show_string_emit(ty, quote, STRING_TEXT, &ctx);
-        if (color) {
-                svPn(*out, TERM(0), strlen(TERM(0)));
-        }
-}
-
 static noreturn void
 uninit(Ty *ty, Symbol const *s)
 {
@@ -513,7 +481,19 @@ show_impl(
 
                 case VALUE_STRING:
                 {
-                        show_string(ty, &buf, ss(v), sN(v), color);
+                        highlight_string(
+                                ty,
+                                &buf,
+                                BYTES((char const *)ss(v), sN(v)),
+                                (LiteralStyle) {
+                                        color ? TERM(92) : "",
+                                        color ? TERM(95) : "",
+                                        color ? TERM(91) : ""
+                                }
+                        );
+                        if (color) {
+                                svPn(buf, TERM(0), strlen(TERM(0)));
+                        }
                         break;
                 }
 
@@ -716,7 +696,7 @@ show_impl(
 
                 case VALUE_REGEX:
                 {
-                        long bits = 0;
+                        u32 bits = 0;
                         int  nf   = 0;
                         char flags[16] = {0};
 
@@ -724,8 +704,9 @@ show_impl(
 
                         if (bits & PCRE2_MULTILINE)         { flags[nf++] = 'm'; }
                         if (bits & PCRE2_DOTALL)            { flags[nf++] = 's'; }
-                        if (bits & PCRE2_UTF)               { flags[nf++] = 'u'; }
-                        if (bits & PCRE2_MATCH_INVALID_UTF) { flags[nf++] = 'u'; }
+                        if (bits & (PCRE2_UTF | PCRE2_MATCH_INVALID_UTF)) {
+                                flags[nf++] = 'u';
+                        }
                         if (bits & PCRE2_CASELESS)          { flags[nf++] = 'i'; }
                         if (bits & PCRE2_EXTENDED)          { flags[nf++] = 'x'; }
                         if (bits & PCRE2_ANCHORED)          { flags[nf++] = 'a'; }
@@ -734,22 +715,24 @@ show_impl(
                         flags[nf] = '\0';
 
                         bool vv = v.regex->detailed;
+                        LiteralStyle style = {
+                                .text    = color ? TERM(38;2;127;197;78) : "",
+                                .escape  = color ? TERM(94) : "",
+                                .invalid = color ? TERM(91) : ""
+                        };
 
-                        if (color) {
-                                sxdf(
-                                        &buf,
-                                        "%s/%s/%s%s%s%s%s",
-                                        TERM(38;2;127;197;78),
-                                        v.regex->pattern,
-                                        vv ? TERM(93) : "",
-                                        &"v"[!vv],
-                                        TERM(38;2;63;189;142),
-                                        flags,
-                                        TERM(0)
-                                );
-                        } else {
-                                sxdf(&buf, "/%s/%s%s", &"v"[!vv], v.regex->pattern, flags);
-                        }
+                        sxdf(&buf, "%s/", style.text);
+                        highlight_regex(ty, &buf, v.regex, style);
+                        sxdf(
+                                &buf,
+                                "%s/%s%s%s%s%s",
+                                style.text,
+                                color && vv ? TERM(93) : "",
+                                &"v"[!vv],
+                                color ? TERM(38;2;63;189;142) : "",
+                                flags,
+                                color ? TERM(0) : ""
+                        );
                         break;
                 }
 
@@ -1794,9 +1777,12 @@ mark_trace(Ty *ty, ThrowCtx *ctx)
 static inline void
 _value_mark_xd(Ty *ty, Value const *v)
 {
-        void **src = source_lookup(ty, v->src);
-        if (src != NULL && *src != NULL) {
-                MARK(*src);
+        Expr const *src = source_lookup(ty, v->src);
+        if (src != NULL && src->arena != NULL) {
+                MARK(src->arena);
+                if (src->mod != NULL) {
+                        MarkArena(&src->mod->arena);
+                }
         }
 
 #ifndef TY_RELEASE
@@ -1829,6 +1815,7 @@ _value_mark_xd(Ty *ty, Value const *v)
         case VALUE_QUEUE:            queue_mark(ty, v->queue);                                         break;
         case VALUE_SHARED_QUEUE:     shared_queue_mark(ty, v->shared_queue);                           break;
         case VALUE_PTR:              mark_pointer(ty, v);                                              break;
+        case VALUE_MODULE:           MarkArena(&v->mod->arena);                                        break;
         case VALUE_TRACE:            mark_trace(ty, v->ptr);                                           break;
         case VALUE_REGEX:            if (v->regex->gc) MARK(v->regex);                                 break;
         default:                                                                                       break;

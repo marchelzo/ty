@@ -5,6 +5,8 @@
 
 #include "token.h"
 #include "compiler.h"
+#include "highlight.h"
+#include "str.h"
 #include "xd.h"
 #include "ty.h"
 
@@ -26,6 +28,248 @@ enum {
         SC_PREPROC,
         SC_COUNT
 };
+
+struct highlight {
+        byte_vector *out;
+        LiteralStyle style;
+        usize pos;
+        usize start;
+        usize end;
+};
+
+typedef struct regex_token_ctx {
+        char const *pattern;
+        usize length;
+        usize scan;
+        bool seen;
+        bool quoted;
+        u8 *literal;
+} RegexTokenContext;
+
+static void
+highlight_emit(Ty *ty, Bytes s, StringPart kind, void *data)
+{
+        struct highlight *h = data;
+        char const *styles[] = { h->style.text, h->style.escape, h->style.invalid };
+        usize start = max(h->pos, h->start);
+        usize end = zminu(h->pos + s.length, h->end);
+
+        if (start < end) {
+                char const *style = styles[kind];
+                svPn(*h->out, style, strlen(style));
+                svPn(*h->out, s.data + start - h->pos, end - start);
+        }
+
+        h->pos += s.length;
+}
+
+void
+highlight_string(Ty *ty, byte_vector *out, Bytes string, LiteralStyle style)
+{
+        struct highlight h = { .out = out, .style = style, .end = SIZE_MAX };
+
+        highlight_emit(ty, z_bytes("'"), STRING_TEXT, &h);
+        str_escape(ty, string, '\'', highlight_emit, &h);
+        highlight_emit(ty, z_bytes("'"), STRING_TEXT, &h);
+}
+
+static usize
+source_escape_length(Bytes source, usize i, bool rich)
+{
+        usize left = source.length - i;
+        i32 cp;
+        int n;
+
+        if (left == 1) {
+                return 1;
+        }
+
+        if (rich) {
+                switch (source.data[i + 1]) {
+                case 'x': return min(4, left);
+                case 'u': return min(6, left);
+                case 'U': return min(10, left);
+                case '<': return min(3, left);
+                }
+        }
+
+        n = utf8proc_iterate((u8 const *)source.data + i + 1, left - 1, &cp);
+        return 1 + max(n, 1);
+}
+
+static void
+string_parts(Ty *ty, Token const *token, Bytes source, struct highlight *h)
+{
+        bool rich = token->ctx == LEX_FMT
+                 || token->ctx == LEX_XFMT
+                 || token->ctx == LEX_DOC;
+        bool doc = source.length >= 3 && memcmp(source.data, "'''", 3) == 0;
+        usize start = 0;
+        usize i = 0;
+
+        while (!doc && i < source.length) {
+                if (source.data[i] != '\\') {
+                        i += 1;
+                        continue;
+                }
+
+                highlight_emit(ty, BYTES(source.data + start, i - start), STRING_TEXT, h);
+                usize n = source_escape_length(source, i, rich);
+                highlight_emit(ty, BYTES(source.data + i, n), STRING_ESCAPE, h);
+                i += n;
+                start = i;
+        }
+
+        highlight_emit(ty, BYTES(source.data + start, source.length - start), STRING_TEXT, h);
+}
+
+static int
+regex_token(pcre2_callout_enumerate_block *token, void *data)
+{
+        RegexTokenContext *ctx = data;
+        usize i = min((usize)token->pattern_position, ctx->length);
+
+        if (ctx->seen && i <= ctx->scan) {
+                return 0;
+        }
+
+        while (ctx->quoted && ctx->scan + 1 < i) {
+                if (
+                        ctx->pattern[ctx->scan] == '\\'
+                     && ctx->pattern[ctx->scan + 1] == 'E'
+                ) {
+                        ctx->quoted = false;
+                }
+                ctx->scan += 1;
+        }
+
+        if (
+                !ctx->quoted
+             && i >= 2
+             && ctx->pattern[i - 2] == '\\'
+             && ctx->pattern[i - 1] == 'Q'
+        ) {
+                ctx->quoted = true;
+        }
+
+        ctx->scan = i;
+        ctx->seen = true;
+
+        if (
+                i == ctx->length
+             || (!ctx->quoted && contains("\\.^$|([)", ctx->pattern[i]))
+        ) {
+                return 0;
+        }
+
+        i32 cp;
+        int n = utf8proc_iterate((u8 const *)ctx->pattern + i, ctx->length - i, &cp);
+        memset(ctx->literal + i, 1, max(n, 1));
+
+        return 0;
+}
+
+static u8 *
+regex_literal_map(Ty *ty, Regex const *regex, usize n)
+{
+        u8 *literal = smA0(max(n, 1));
+        u32 options = 0;
+        int error;
+        usize offset;
+        pcre2_code *tokens;
+
+        pcre2_pattern_info(regex->pcre2, PCRE2_INFO_ARGOPTIONS, &options);
+        tokens = pcre2_compile(
+                (u8 const *)regex->pattern,
+                n,
+                options | PCRE2_AUTO_CALLOUT,
+                &error,
+                &offset,
+                NULL
+        );
+
+        if (tokens != NULL) {
+                RegexTokenContext ctx = {
+                        .pattern = regex->pattern,
+                        .length  = n,
+                        .literal = literal
+                };
+                pcre2_callout_enumerate(tokens, regex_token, &ctx);
+                pcre2_code_free(tokens);
+        }
+
+        return literal;
+}
+
+static void
+regex_parts(Ty *ty, Regex const *regex, struct highlight *h)
+{
+        usize n = strlen(regex->pattern);
+        u8 *literal = s_eq(h->style.text, h->style.escape)
+                    ? NULL
+                    : regex_literal_map(ty, regex, n);
+        usize i = 0;
+
+        while (i < n) {
+                if (regex->pattern[i] == '/') {
+                        highlight_emit(ty, z_bytes("\\/"), STRING_ESCAPE, h);
+                        i += 1;
+                        continue;
+                }
+
+                bool ordinary = literal == NULL || literal[i];
+                usize start = i++;
+                while (
+                        i < n
+                     && regex->pattern[i] != '/'
+                     && (literal == NULL || literal[i] == ordinary)
+                ) {
+                        i += 1;
+                }
+
+                highlight_emit(
+                        ty,
+                        BYTES(regex->pattern + start, i - start),
+                        ordinary ? STRING_TEXT : STRING_ESCAPE,
+                        h
+                );
+        }
+}
+
+void
+highlight_regex(Ty *ty, byte_vector *out, Regex const *regex, LiteralStyle style)
+{
+        struct highlight h = { .out = out, .style = style, .end = SIZE_MAX };
+
+        regex_parts(ty, regex, &h);
+}
+
+static void
+highlight_token(Ty *ty, Token const *token, Bytes source, struct highlight *h)
+{
+        switch (token->type) {
+        case TOKEN_STRING:
+        case TOKEN_SPECIAL_STRING:
+        case TOKEN_FUN_SPECIAL_STRING:
+                string_parts(ty, token, source, h);
+                break;
+
+        case TOKEN_REGEX:
+                highlight_emit(ty, BYTES(source.data, 1), STRING_TEXT, h);
+                regex_parts(ty, token->regex, h);
+                highlight_emit(
+                        ty,
+                        BYTES(source.data + h->pos, source.length - h->pos),
+                        STRING_TEXT,
+                        h
+                );
+                break;
+
+        default:
+                highlight_emit(ty, source, STRING_TEXT, h);
+                break;
+        }
+}
 
 inline static void
 hex_to_rgb(char const *hex, int *r, int *g, int *b)
@@ -649,92 +893,68 @@ syntax_highlight(
         char const *theme
 )
 {
-        char const *source = mod->source;
-
-        if (source == NULL) {
+        if (mod == NULL || mod->source == NULL) {
                 return false;
         }
 
+        char const *source = mod->source;
+        usize length = strlen(source);
         TokenVector const *tokens = &mod->tokens;
         char const **pal = build_palette(find_palette(theme));
-
         char const *attr_on = attr ? attr : "";
         char const *attr_off = attr ? "\x1b[0m" : "";
-
         usize pos = start;
+
+        if (start > end || end > length) {
+                return false;
+        }
 
         for (isize i = find_first(tokens, pos); i < vN(*tokens); ++i) {
                 Token const *t = v_(*tokens, i);
 
-                if (t->ctx == LEX_FAKE)
+                if (t->ctx == LEX_FAKE) {
                         continue;
-
-                if (t->type == TOKEN_END)
-                        break;
-
-                u32 tstart = t->start.byte;
-                u32 tend   = t->end.byte;
-
-
-                if (tend <= start)
-                        continue;
-                if (tstart >= end)
-                        break;
-
-
-                if (tstart < start) tstart = start;
-                if (tend > end)     tend = end;
-
-
-                if (tstart > pos) {
-                        sxdf(
-                                out,
-                                "%s%.*s%s",
-                                attr_on,
-                                tstart - pos,
-                                source + pos,
-                                attr_off
-                        );
                 }
+                if (t->type == TOKEN_END || t->start.byte >= end) {
+                        break;
+                }
+
+                usize tstart = max(pos, t->start.byte);
+                usize tend = min(end, t->end.byte);
+
+                if (tstart >= tend) {
+                        continue;
+                }
+
+                sxdf(out, "%s%.*s%s", attr_on, (int)(tstart - pos), source + pos, attr_off);
 
                 int sc = token_color(t, source);
+                int special = (t->type == TOKEN_REGEX) ? SC_BUILTIN : SC_LITERAL;
+                struct highlight h = {
+                        .out = out,
+                        .style = {
+                                .text = sfmt("%s%s", pal[sc], attr_on),
+                                .escape = sfmt("%s%s", pal[special], attr_on),
+                                .invalid = sfmt("%s%s", pal[special], attr_on)
+                        },
+                        .start = tstart - t->start.byte,
+                        .end = tend - t->start.byte
+                };
 
-                if (sc != SC_NONE && pal[sc][0] != '\0') {
-                        sxdf(
-                                out,
-                                "%s%s%.*s%s",
-                                pal[sc],
-                                attr_on,
-                                tend - tstart,
-                                source + tstart,
-                                "\x1b[0m"
-                        );
-                } else {
-                        sxdf(
-                                out,
-                                "%s%.*s%s",
-                                attr_on,
-                                tend - tstart,
-                                source + tstart,
-                                attr_off
-                        );
+                highlight_token(
+                        ty,
+                        t,
+                        BYTES(source + t->start.byte, min(length, t->end.byte) - t->start.byte),
+                        &h
+                );
+
+                if (pal[sc][0] != '\0' || attr != NULL) {
+                        svPn(*out, "\x1b[0m", 4);
                 }
-
                 pos = tend;
         }
 
-
-        if (pos < end) {
-                sxdf(
-                        out,
-                        "%s%.*s%s",
-                        attr_on,
-                        end - pos,
-                        source + pos,
-                        attr_off
-                );
-        }
-
+        sxdf(out, "%s%.*s%s", attr_on, (int)(end - pos), source + pos, attr_off);
         svP(*out, '\0');
         vXx(*out);
 

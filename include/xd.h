@@ -107,6 +107,13 @@ s_eq(char const *a, char const *b)
         return strcmp(a, b) == 0;
 }
 
+inline static int
+bytes_eq(Bytes const a, Bytes const b)
+{
+        return (a.length == b.length)
+            && (memcmp(a.data, b.data, a.length) == 0);
+}
+
 char *
 sclone(Ty *ty, char const *s);
 

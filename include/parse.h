@@ -5,20 +5,11 @@
 #include "table.h"
 #include "ast.h"
 
-extern Expr *LastParsedExpr;
-
 struct statement **
 parse(Ty *ty, char const *source, char const *file);
 
 bool
-parse_ex(
-        Ty *,
-        char const *source,
-        char const *file,
-        struct statement ***prog_out,
-        Location *err_loc,
-        TokenVector *tokens_out
-);
+parse_module(Ty *ty, Module *mod);
 
 Token
 parse_get_token(Ty *ty, int i);

@@ -17,9 +17,9 @@ fn token-ends(ts: Array[Token]) -> Array[Int] {
 }
 
 fn parsed-tokens(source: String) -> Array[Token] {
-    match ty.parse(source, tokens=true, deep=false, resolve=false) {
-        (Ok((_, {tokens, *})) or Err({tokens, *}))
-            => tokens.remove!(nil),
+    match ty.parse(source) {
+        Ok(mod) or Err({module: mod, *})
+            => mod.tokens,
         err
             => []
     }

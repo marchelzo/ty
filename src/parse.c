@@ -281,6 +281,7 @@ typedef struct ParserState {
         int ns_test;
 
         Expr *CurrentTemplate;
+        Expr *last;
 
         JmpBufVector SavePoints;
 
@@ -298,8 +299,6 @@ typedef struct ParserState {
         bool NoLG;
         bool TypeContext;
 } ParserState;
-
-Expr *LastParsedExpr;
 
 static ParserState state;
 
@@ -345,7 +344,7 @@ static Expr NullExpr = {
 #define TokenIndex        (state.TokenIndex)
 #define TypeContext       (state.TypeContext)
 #define LValueContext     (state.LValueContext)
-#define tokens            (state.tokens)
+#define TOKENS            (state.tokens)
 #define uopcs             (uopcs)
 #define uops              (uops)
 
@@ -613,7 +612,7 @@ inline static Stmt *
 inline static Token *
 update(Ty *ty, Token *tok)
 {
-        tok->start.tok = (tok - vv(tokens)) + 1;
+        tok->start.tok = (tok - vv(TOKENS)) + 1;
         return tok;
 }
 
@@ -622,7 +621,7 @@ inline static Token *
 {
         Token t;
 
-        while (vN(tokens) <= i + TokenIndex) {
+        while (vN(TOKENS) <= i + TokenIndex) {
                 t = lex_token(ty, LCTX);
 
                 if (UNLIKELY(t.type == TOKEN_END) && vN(state.stack) > 0) {
@@ -630,31 +629,31 @@ inline static Token *
                         continue;
                 }
 
-                if (vN(tokens) == TokenIndex) {
+                if (vN(TOKENS) == TokenIndex) {
                         lex_save(ty, &CtxCheckpoint);
                 }
 
-                if (vN(tokens) > 0 && vvL(tokens)->start.s == t.start.s) {
-                        *vvL(tokens) = t;
-                        return vvL(tokens);
+                if (vN(TOKENS) > 0 && vvL(TOKENS)->start.s == t.start.s) {
+                        *vvL(TOKENS) = t;
+                        return vvL(TOKENS);
                 }
 
                 PLOG(
                         "%sAdd tokens%s[%d]: %s",
                         TERM(92;),
                         TERM(0),
-                        (int)vN(tokens),
+                        (int)vN(TOKENS),
                         token_show(ty, &t)
                 );
 
-                avP(tokens, t);
+                avP(TOKENS, t);
         }
 
 #if 0
         static int64_t last_index = -1;
         static int64_t last_count = -1;
 
-        if (TokenIndex + i != last_index || vN(tokens) != last_count) {
+        if (TokenIndex + i != last_index || vN(TOKENS) != last_count) {
                 PLOG(
                         "%s[%d]%stokenxx%s(% -2d)%s = %s",
                         TERM(95),
@@ -663,14 +662,14 @@ inline static Token *
                         TERM(93),
                         i,
                         TERM(0),
-                        token_show(ty, v_(tokens, TokenIndex + i))
+                        token_show(ty, v_(TOKENS, TokenIndex + i))
                 );
                 last_index = TokenIndex + i;
-                last_count = vN(tokens);
+                last_count = vN(TOKENS);
         }
 #endif
 
-        return update(ty, v_(tokens, TokenIndex + i));
+        return update(ty, v_(TOKENS, TokenIndex + i));
 }
 
 inline static bool
@@ -727,7 +726,7 @@ inline static void
 (skip)(Ty *ty, int n)
 {
         Token *t = token(n);
-        TokenIndex = t - vv(tokens);
+        TokenIndex = t - vv(TOKENS);
         TEnd = tokenx(-1)->end;
 }
 
@@ -779,7 +778,7 @@ End:
                 TERM(34;4),
                 TERM(93;1),
                 i,
-                t - v_(tokens, 0),
+                t - v_(TOKENS, 0),
                 TERM(34;4),
                 TERM(0),
                 token_show(ty, t)
@@ -802,8 +801,8 @@ inline static Token *
 inline static void
 TagTokenOf(Ty *ty, Expr *e, int tag)
 {
-        if (e->start.tok > 0 && e->start.tok <= vN(tokens)) {
-                v_(tokens, e->start.tok - 1)->tag = tag;
+        if (e->start.tok > 0 && e->start.tok <= vN(TOKENS)) {
+                v_(TOKENS, e->start.tok - 1)->tag = tag;
         }
 }
 
@@ -814,9 +813,9 @@ parse_sync_lex(Ty *ty)
 
         if (
                 (TokenIndex == 0)
-             || (TokenIndex >= vN(tokens))
+             || (TokenIndex >= vN(TOKENS))
              || (t = *token(-1)).pp
-             || v_(tokens, TokenIndex - 1)->pp
+             || v_(TOKENS, TokenIndex - 1)->pp
         ) {
                 return;
         }
@@ -827,11 +826,11 @@ parse_sync_lex(Ty *ty)
                 TERM(0),
                 TERM(92;1),
                 TERM(0),
-                token_show(ty, v_(tokens, TokenIndex - 1)),
-                token_showx(ty, v_(tokens, TokenIndex), TERM(93;1))
+                token_show(ty, v_(TOKENS, TokenIndex - 1)),
+                token_showx(ty, v_(TOKENS, TokenIndex), TERM(93;1))
         );
 
-        vN(tokens) = TokenIndex;
+        vN(TOKENS) = TokenIndex;
         lex_need_nl(ty, t.nl);
         lex_rewind(ty, &t.end);
 
@@ -841,8 +840,8 @@ parse_sync_lex(Ty *ty)
                 TERM(0),
                 TERM(91;1),
                 TERM(0),
-                token_show(ty, v_(tokens, TokenIndex - 1)),
-                token_showx(ty, v_(tokens, TokenIndex), TERM(93;1))
+                token_show(ty, v_(TOKENS, TokenIndex - 1)),
+                token_showx(ty, v_(TOKENS, TokenIndex), TERM(93;1))
         );
 }
 
@@ -887,25 +886,25 @@ inline static void
         // TODO: Should we be discarding LEX_FAKE tokens? (i.e. tokens that were unconsume()d)
 
         while (
-                (vN(tokens) > TokenIndex)
-             && (v_(tokens, TokenIndex)->ctx != LEX_FMT)
-             && (v_(tokens, TokenIndex)->ctx != LEX_DOC)
+                (vN(TOKENS) > TokenIndex)
+             && (v_(TOKENS, TokenIndex)->ctx != LEX_FMT)
+             && (v_(TOKENS, TokenIndex)->ctx != LEX_DOC)
              // && (v_(tokens, TokenIndex)->ctx != LEX_REGEX)
         ) {
-                PLOG("  Pop tokens[%zu]: %s", vN(tokens) - 1, token_show(ty, vvL(tokens)));
-                vN(tokens) -= 1;
+                PLOG("  Pop tokens[%zu]: %s", vN(TOKENS) - 1, token_show(ty, vvL(TOKENS)));
+                vN(TOKENS) -= 1;
         }
 
-        while (vN(tokens) > 0 && vvL(tokens)->start.s == seek.s) {
-                PLOG("  Pop tokens[%zu]: %s", vN(tokens) - 1, token_show(ty, vvL(tokens)));
-                vN(tokens) -= 1;
+        while (vN(TOKENS) > 0 && vvL(TOKENS)->start.s == seek.s) {
+                PLOG("  Pop tokens[%zu]: %s", vN(TOKENS) - 1, token_show(ty, vvL(TOKENS)));
+                vN(TOKENS) -= 1;
         }
 
         PLOGC('\n');
 
         // TODO: ???
-        if (TokenIndex > vN(tokens)) {
-                TokenIndex = vN(tokens);
+        if (TokenIndex > vN(TOKENS)) {
+                TokenIndex = vN(TOKENS);
         }
 
         logctx(ty);
@@ -918,7 +917,7 @@ logctx(Ty *ty)
         tok();
 
         int lo = max(0, TokenIndex - 3);
-        int hi = vN(tokens) - 1;
+        int hi = vN(TOKENS) - 1;
 
         PLOG(
                 "%sContext:%s",
@@ -934,7 +933,7 @@ logctx(Ty *ty)
                         i - TokenIndex,
                         TERM(0),
                         c,
-                        token_showx(ty, &tokens.items[i], c),
+                        token_showx(ty, &TOKENS.items[i], c),
                         c,
                         TERM(0)
                 );
@@ -992,7 +991,7 @@ inline static void
 
         logctx(ty);
 
-        avI(tokens, t, TokenIndex);
+        avI(TOKENS, t, TokenIndex);
 }
 
 #define putback(t) ((putback)(ty, (t)))
@@ -2197,7 +2196,7 @@ prefix_identifier(Ty *ty)
 
         if (IsMacro(ty, e)) {
                 Expr *expanded;
-                v_(tokens, i_id)->tag = TT_MACRO;
+                v_(TOKENS, i_id)->tag = TT_MACRO;
                 if (TY_CATCH_ERROR()) {
                         char *trace = FormatTrace(ty, NULL, NULL);
                         Value exc = TY_CATCH();
@@ -6234,7 +6233,7 @@ parse_expr(Ty *ty, int prec)
                 );
         }
 
-        Expr *e = (LastParsedExpr = f(ty));
+        Expr *e = (state.last = f(ty));
 
         while (!should_split(ty) && prec < get_infix_prec(ty)) {
                 infix_parse_fn *f = get_infix_parser(ty);
@@ -6251,7 +6250,7 @@ parse_expr(Ty *ty, int prec)
                         // Special case for operator slices. Very based!
                         goto End;
                 }
-                e = (LastParsedExpr = f(ty, e));
+                e = (state.last = f(ty, e));
         }
 
         if (have_without_nl(ty, '"')) {
@@ -6278,7 +6277,7 @@ End:
 
         --ParseDepth;
 
-        return (LastParsedExpr = e);
+        return (state.last = e);
 }
 
 static Stmt *
@@ -7235,7 +7234,7 @@ tokenize(Ty *ty, char const *source, TokenVector *tokens_out)
 
         lex_init(ty, "(tokenize)", source);
 
-        v00(tokens);
+        v00(TOKENS);
 
         while (T0 != TOKEN_END && T0 != TOKEN_ERROR) {
                 while (get_prefix_parser(ty) != NULL) {
@@ -7245,11 +7244,11 @@ tokenize(Ty *ty, char const *source, TokenVector *tokens_out)
                 next();
         }
 
-        while (vN(tokens) > 0 && vvL(tokens)->type == TOKEN_END) {
-                vvX(tokens);
+        while (vN(TOKENS) > 0 && vvL(TOKENS)->type == TOKEN_END) {
+                vvX(TOKENS);
         }
 
-        *tokens_out = tokens;
+        *tokens_out = TOKENS;
 
         state = save;
         lex_restore(ty, &CtxCheckpoint);
@@ -7275,14 +7274,7 @@ ImportModule(Ty *ty, Stmt *import)
 }
 
 bool
-parse_ex(
-        Ty *ty,
-        char const *source,
-        char const *file,
-        Stmt ***prog_out,
-        Location *err_loc,
-        TokenVector *tokens_out
-)
+parse_module(Ty *ty, Module *mod)
 {
         lex_save(ty, &CtxCheckpoint);
 
@@ -7295,15 +7287,13 @@ parse_ex(
         volatile StmtVec program = {0};
         volatile bool ok = true;
 
-        lex_init(ty, file, source);
-
-        LastParsedExpr = NULL;
+        lex_init(ty, mod->path, mod->source);
 
         CompilerScopePush(ty);
 
         if (TY_CATCH_ERROR()) {
                 (void)TY_CATCH();
-                *err_loc = tokenx(0)->start;
+                mod->error = tokenx(0)->start;
                 ok = false;
                 goto Finally;
         }
@@ -7329,7 +7319,7 @@ parse_ex(
                         !HAVE_COMPILER_FLAG(SHALLOW)
                      && !ImportModule(ty, import)
                 ) {
-                        *err_loc = import->end;
+                        mod->error = import->end;
                         ok = false;
                         goto End;
                 }
@@ -7483,11 +7473,9 @@ Finally:
         cs->scopes = scopes;
 
         avP(program, NULL);
-        *prog_out = vv(program);
-
-        if (tokens_out != NULL) {
-                *tokens_out = tokens;
-        }
+        mod->prog = vv(program);
+        mod->tokens = TOKENS;
+        mod->last = state.last;
 
         state = save;
         lex_restore(ty, &CtxCheckpoint);
@@ -7498,14 +7486,13 @@ Finally:
 Stmt **
 parse(Ty *ty, char const *source, char const *file)
 {
-        Stmt **prog;
-        Location loc;
+        Module mod = { .source = source, .path = file };
 
-        if (!parse_ex(ty, source, file, &prog, &loc, NULL)) {
+        if (!parse_module(ty, &mod)) {
                 return NULL;
         }
 
-        return prog;
+        return mod.prog;
 }
 
 Token
@@ -7756,14 +7743,14 @@ pp_if(Ty *ty)
 
         PLOG("%sPP_IF()%s: END", TERM(96;1), TERM(0));
         for (int i = very_start; i < very_end; ++i) {
-                v_(tokens, i)->ctx = LEX_HIDDEN;
-                v_(tokens, i)->pp = true;
+                v_(TOKENS, i)->ctx = LEX_HIDDEN;
+                v_(TOKENS, i)->pp = true;
                 PLOG(
                         "    %s[%5d]%s  (%s)",
                         TERM(95;1),
                         i,
                         TERM(0),
-                        token_show(ty, v_(tokens, i))
+                        token_show(ty, v_(TOKENS, i))
                 );
         }
 
@@ -7781,8 +7768,8 @@ pp_if(Ty *ty)
 
         lex_in_pp(ty, false);
 
-        vN(tokens) = TokenIndex;
-        lex_rewind(ty, &vvL(tokens)->end);
+        vN(TOKENS) = TokenIndex;
+        lex_rewind(ty, &vvL(TOKENS)->end);
 
         if (take != NULL) {
                 avP(state.stack, *lex_state(ty));
@@ -7799,7 +7786,7 @@ parse_reset(Ty *ty)
         table_init(ty, &uops);
         table_init(ty, &uopcs);
 
-        LastParsedExpr = NULL;
+        state.last = NULL;
 
         BlankID = (Expr) {
                 .type = EXPRESSION_IDENTIFIER,

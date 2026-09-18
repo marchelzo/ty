@@ -3,9 +3,9 @@ import ty
 ns test
 
 pub fn evthrow() {
-    let Ok((e, _)) = ty.parse('throw 0') or assert(false)
+    let Ok(mod) = ty.parse('throw 0') or assert(false)
     try {
-        ty.eval(e)
+        ty.eval(ty.Multi(mod.ast))
         assert(false)
     } catch ex {
         assert(ex == 0)

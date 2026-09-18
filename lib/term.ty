@@ -629,6 +629,7 @@ pub class TermIO {
         copy.lflag &= ~ECHO
         copy.lflag &= ~ECHONL
         copy.iflag |= IGNBRK
+        copy.iflag &= ~ICRNL
         tcsetattr(__fd, TCSAFLUSH, copy)
         write(__fd, __enter)
         with __state.lock {

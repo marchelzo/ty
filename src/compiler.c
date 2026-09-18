@@ -11867,6 +11867,10 @@ clone_expr(Expr *e, Scope *scope, void *ctx)
                 CloneVec(e->expressions);
                 break;
 
+        case EXPRESSION_WITH:
+                CloneVec(e->with.defs);
+                break;
+
         case EXPRESSION_FUNCTION:
                 CloneVec(e->params);
                 CloneVec(e->type_params);
@@ -12460,22 +12464,15 @@ resolve_prog(Ty *ty, Stmt **p)
 static Stmt **
 compile(Ty *ty, char const *source)
 {
-        Stmt **p;
-        Location parse_error_location;
-
         PushScope(STATE.global);
+        STATE.module->source = source;
 
-        if (!parse_ex(
-                ty,
-                source,
-                CurrentModulePath(ty),
-                &p,
-                &parse_error_location,
-                &STATE.module->tokens
-        )) {
+        if (!parse_module(ty, STATE.module)) {
                 STATE.module->flags |= MOD_PARSE_ERR;
                 TY_THROW_ERROR();
         }
+
+        Stmt **p = STATE.module->prog;
 
         // XXX: If we throw while trying to process a type definition during parsing,
         //      `ctx` can be left in the CTX_TYPE state... we should fix that.
@@ -19107,6 +19104,7 @@ TyCompileSource(Ty *ty, char const *source, Scope *global, u32 flags)
 
         if (TY_CATCH_ERROR()) {
                 (void)TY_CATCH(); // FIXME
+                mod->flags |= MOD_COMPILE_ERR;
                 scope_set_symbol(ty, symbol);
                 TYPES_OFF = types;
                 ContextList = ctx;
@@ -19692,40 +19690,30 @@ CompilerExprFor(Ty *ty, char const *mod, char const *name)
 
 typedef struct {
         Ty *ty;
-        Scope *scope;
         ExprVec free;
-        Symbol sentinel;
 } FreeVarsCtx;
 
 static Expr *
-e_free(Expr *expr, Scope *_, void *_ctx)
+e_free(Expr *expr, Scope *scope, void *_ctx)
 {
         FreeVarsCtx *ctx = _ctx;
         Ty *ty = ctx->ty;
 
-        if (expr->type == EXPRESSION_IDENTIFIER) {
-                Symbol *sym = scope_lookup(ty, ctx->scope, expr->identifier);
-                if (sym == NULL) {
-                        svP(ctx->free, expr);
+        switch (expr->type) {
+        case EXPRESSION_IDENTIFIER:
+        case EXPRESSION_MUST_EQUAL:
+        case EXPRESSION_MATCH_NOT_NIL:
+        case EXPRESSION_MATCH_REST:
+        case EXPRESSION_RESOURCE_BINDING:
+                if (expr->module != NULL || s_eq(expr->identifier, "_")) {
+                        break;
                 }
-        }
-
-        return expr;
-}
-
-static Expr *
-l_free(Expr *expr, bool _1, Scope *_2, void *_ctx)
-{
-        FreeVarsCtx *ctx = _ctx;
-        Ty *ty = ctx->ty;
-
-        switch (expr->type) {
-        case EXPRESSION_IDENTIFIER:
-        case EXPRESSION_MATCH_NOT_NIL:
-        case EXPRESSION_RESOURCE_BINDING:
-        case EXPRESSION_SPREAD:
-        case EXPRESSION_MATCH_REST:
-                scope_insert_as(ty, ctx->scope, &ctx->sentinel, expr->identifier);
+                for (Scope *s = scope; s != NULL; s = s->parent) {
+                        if (scope_local_lookup(ty, s, expr->identifier) != NULL) {
+                                return expr;
+                        }
+                }
+                svP(ctx->free, expr);
                 break;
         }
 
@@ -19733,22 +19721,9 @@ l_free(Expr *expr, bool _1, Scope *_2, void *_ctx)
 }
 
 static Expr *
-p_free(Expr *expr, Scope *_, void *_ctx)
+l_free(Expr *expr, bool decl, Scope *scope, void *ctx)
 {
-        FreeVarsCtx *ctx = _ctx;
-        Ty *ty = ctx->ty;
-
-        switch (expr->type) {
-        case EXPRESSION_IDENTIFIER:
-        case EXPRESSION_MATCH_NOT_NIL:
-        case EXPRESSION_RESOURCE_BINDING:
-        case EXPRESSION_SPREAD:
-        case EXPRESSION_MATCH_REST:
-                scope_insert_as(ty, ctx->scope, &ctx->sentinel, expr->identifier);
-                break;
-        }
-
-        return expr;
+        return decl ? expr : e_free(expr, scope, ctx);
 }
 
 ExprVec
@@ -19759,24 +19734,22 @@ CompilerFreeVars(Ty *ty, Expr const *expr, Scope *scope)
         }
 
         FreeVarsCtx ctx = {
-                .ty       = ty,
-                .scope    = scope_new(ty, "(bound)", scope, true),
-                .free     = {0},
-                .sentinel = (Symbol) { .i = -1 }
+                .ty   = ty,
+                .free = {0}
         };
 
         VisitorCtx visitor = visit_identity(ty);
 
         visitor.e_pre = e_free;
+        visitor.t_pre = e_free;
         visitor.l_pre = l_free;
-        visitor.p_pre = p_free;
         visitor.user  = &ctx;
-
-        if (expr != NULL && expr->type >= EXPRESSION_MAX_TYPE) {
-                (void)visit_statement(ty, (Stmt *)expr, NULL, &visitor);
-        } else {
-                (void)visit_expression(ty, expr, NULL, &visitor);
+        scope = scope_new(ty, "(bound)", scope, false);
+        if (ScopeIsTop(scope)) {
+                scope->flags |= SCOPE_MODULE;
         }
+
+        (void)visit_expression(ty, (Expr *)expr, scope, &visitor);
 
         return ctx.free;
 }

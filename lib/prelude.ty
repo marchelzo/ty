@@ -66,29 +66,22 @@ fn lex::peek(i: Int = 0) -> Token;
 fn ty::gensym() -> String;
 
 macro ParseError = {
+    module: Module,
     msg: String,
     location: {
         line: Int,
         col: Int,
         byte: Int
     },
-    last: AST
+    last: Ptr[_] | nil
 }
 
 fn ty::parse(
-    source: String,
-    tokens: Bool = false,
-    free: Bool = false,
+    source: String | Blob,
     deep: Bool = false,
     resolve: Bool = false,
     scope: Ptr[_] = nil
-) -> Err[ParseError] | Ok[(
-    AST,
-    {
-        ?tokens: Array[Token],
-        ?free: Array[String]
-    }
-)];
+) -> Err[ParseError] | Ok[Module];
 
 fn |>[a, b, c](f: a -> b, g: b -> c) -> (a -> c) { g@(f(*, **)) }
 
@@ -1711,11 +1704,12 @@ class Module {
         ty.mod.list()
     }
 
-    name   -> String       { ty.mod.name(self)   }
-    path   -> String       { ty.mod.path(self)   }
-    ast    -> Array[AST]   { ty.mod.ast(self)    }
-    tokens -> Array[Token] { ty.mod.tokens(self) }
-    source -> String       { ty.mod.source(self) }
+    name   -> String        { ty.mod.name(self)   }
+    path   -> String        { ty.mod.path(self)   }
+    ast    -> Array[AST]    { ty.mod.ast(self)    }
+    free   -> Array[String] { ty.mod.free(self)   }
+    tokens -> Array[Token]  { ty.mod.tokens(self) }
+    source -> String        { ty.mod.source(self) }
 
     dict -> Dict[String, _] {
         ty.mod.dict(self)

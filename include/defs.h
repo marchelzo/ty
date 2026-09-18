@@ -198,8 +198,8 @@ typedef vec(Module *)       ModuleVector;
 #define sN(v) ((v).bytes)
 
 #define s_bytes(x) ((Bytes) {(char const *)ss((x)), sN((x))})
-#define v_bytes(v) ((Bytes) {vv((v)), vN((v))})
-#define z_bytes(s) ((Bytes) {(s), strlen((s))})
+#define v_bytes(v) ((Bytes) {(char const *)vv((v)), vN((v))})
+#define z_bytes(s) ((Bytes) {(char const *)(s), strlen((s))})
 
 #define BYTES(p, n) ((Bytes) {(p), (n)})
 

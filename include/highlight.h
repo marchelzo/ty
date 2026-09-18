@@ -3,6 +3,18 @@
 
 #include "ty.h"
 
+typedef struct literal_style {
+        char const *text;
+        char const *escape;
+        char const *invalid;
+} LiteralStyle;
+
+void
+highlight_string(Ty *ty, byte_vector *out, Bytes string, LiteralStyle style);
+
+void
+highlight_regex(Ty *ty, byte_vector *out, Regex const *regex, LiteralStyle style);
+
 bool
 syntax_highlight(
         Ty *ty,

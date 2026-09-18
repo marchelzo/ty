@@ -90,13 +90,14 @@ fn generate-code(tokens: Array[TemplateToken]) -> String {
 pub fn compile(source) -> _ {
     let body = generate-code(tokenize(source))
 
-    let (ast, free) = match ty.parse(body, free=true) {
-        Ok((ast, {free, *})) => (ast, free),
-        Err(err)             => throw err
+    let mod = match ty.parse(body) {
+        Ok(mod)  => mod,
+        Err(err) => throw err
     }
+    let ast = ty.Multi(mod.ast)
 
     let prog = ty.Func(
-         params: [ty.Param({name: it, constraint: ty.Any}) for free ?? [] if it != '_ety_push'],
+         params: [ty.Param({name: it, constraint: ty.Any}) for mod.free if it != '_ety_push'],
          body: $$[
             let _ety_blob = ::blob();
             let _ety_push = _ety_blob.push;

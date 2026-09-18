@@ -1275,6 +1275,11 @@ enum {
 #define v_eq(a, b)   value_test_equality(ty, (a), (b))
 #define v_truthy(v)  value_truthy(ty, (v))
 
+#define vs_eq_z(v, s) (                       \
+        (sN((v)) == strlen((s)))              \
+     && (memcmp(ss((v)), (s), sN((v))) == 0)  \
+)
+
 #define TY_UNARY_OPERATORS   \
         X(COMPL,      "~"),  \
         X(COUNT,      "#"),  \

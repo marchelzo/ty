@@ -1,4 +1,68 @@
+import ty
+import ty.parse as parse
+
 ns test
+
+pub fn value-display() {
+    assert(show(/\//, color=false) == "/\\//")
+    assert(show(regex('a/b'), color=false) == '/a\\/b/')
+    assert(show(/a[bc](\w+)\.\/z/, color=false) == '/a[bc](\\w+)\\.\\/z/')
+}
+
+pub fn source-highlight() {
+    let source = "let s = \"a\\\\nb\"; let r = /a+\\\\d{2}/; if true \{"
+    let Err({module: mod, *}) = ty.parse(source) or assert(false)
+    let styled = parse.highlight(mod, theme='gruvbox')
+
+    assert("\x1b" in styled)
+    assert(styled.sub(/\x1b\[[0-9;:]*m/, '') == source)
+}
+
+fn color-parts(re) {
+    show(re, color=true)
+        .scan(/\x1b\[([0-9;]+)m([^\x1b]*)/)
+        .map(m -> (m[1], m[2]))
+}
+
+pub fn value-display-colors() {
+    if ty.color != 'always' {
+        return
+    }
+
+    let green = '38;2;127;197;78'
+    let blue  = '94'
+    let flags = '38;2;63;189;142'
+    let end   = [(green, '/'), (flags, ''), ('0', '')]
+
+    assert(color-parts(/\Q.*\E+a+\d{2,4}?(?<name>[a-z]+)/) == [
+        (green, '/'),
+        (blue, '\\Q'),
+        (green, '.*'),
+        (blue, '\\E+'),
+        (green, 'a'),
+        (blue, '+\\d\{2,4\}?(?<name>[a-z]+)'),
+        *end,
+    ])
+
+    assert(color-parts(regex("a # \\Q ignored\n.b", 'x')) == [
+        (green, '/'),
+        (green, 'a'),
+        (blue, " # \\Q ignored\n."),
+        (green, 'b'),
+        (green, '/'),
+        (flags, 'x'),
+        ('0', ''),
+    ])
+
+    assert(color-parts(/]a\{foo\}\./) == [
+        (green, '/'),
+        (green, ']a'),
+        (blue, '\\{'),
+        (green, 'foo'),
+        (blue, '\\}\\.'),
+        *end,
+    ])
+}
 
 pub fn basic-regex-pattern() {
     match 'hello world' {

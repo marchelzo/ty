@@ -9367,7 +9367,7 @@ make_tokens(Ty *ty, TokenVector const *ts)
         GC_STOP();
 
         for (isize i = 0; i < vN(*ts); ++i) {
-                if (v_(*ts, i)->ctx != LEX_FAKE) {
+                if (v_(*ts, i)->ctx != LEX_FAKE && v_(*ts, i)->type != TOKEN_END) {
                         vAp(a, make_token(ty, v_(*ts, i)));
                 }
         }
@@ -9899,11 +9899,44 @@ BUILTIN_FUNCTION(ty_mod_ast)
 
         Array *stmts = vA();
 
-        for (int i = 0; mod->prog[i] != NULL; ++i) {
+        gP(&ARRAY(stmts));
+        for (int i = 0; mod->prog != NULL && mod->prog[i] != NULL; ++i) {
                 uvP(*stmts, CToTyStmt(ty, mod->prog[i]));
         }
+        gX();
 
         return ARRAY(stmts);
+}
+
+BUILTIN_FUNCTION(ty_mod_free)
+{
+        ASSERT_ARGC("ty.mod.free()", 0, 1);
+
+        Module *mod = (argc == 0) ? CompilerCurrentModule(ty)
+                                 : ARGx(0, VALUE_MODULE).mod;
+        Stmt block = { .type = STATEMENT_MULTI };
+        Array *names = vA();
+        StringVector seen = {0};
+
+        gP(&ARRAY(names));
+        Arena old = NewArena(1 << 16);
+        SCRATCH_SAVE();
+        for (usize i = 0; mod->prog != NULL && mod->prog[i] != NULL; ++i) {
+                svP(block.statements, mod->prog[i]);
+        }
+        ExprVec free = CompilerFreeVars(ty, (Expr *)&block, mod->scope);
+        for (usize i = 0; i < vN(free); ++i) {
+                char const *name = v__(free, i)->identifier;
+                if (!search_str(&seen, name)) {
+                        svP(seen, (char *)name);
+                        uvP(*names, vSsz(name));
+                }
+        }
+        SCRATCH_RESTORE();
+        ReleaseArena(old);
+        gX();
+
+        return ARRAY(names);
 }
 
 BUILTIN_FUNCTION(ty_mod_tokens)
@@ -9934,158 +9967,62 @@ BUILTIN_FUNCTION(ty_parse)
 {
         ASSERT_ARGC("ty.parse()", 1);
 
-        Location stop;
-        Value extra = NIL;
-
-        bool resolve = HAVE_FLAG("resolve");
-
-        char const *tokens_key = HAVE_FLAG("tokens")
-                               ? "tokens"
-                               : NULL;
-
-        char const *free_key = HAVE_FLAG("free")
-                               ? "free"
-                               : NULL;
-
+        Value input = ARGx(0, VALUE_STRING, VALUE_BLOB);
         Value scope = KWARG("scope", PTR);
+
+        Bytes bytes = (input.type == VALUE_STRING)
+                    ? s_bytes(input)
+                    : v_bytes(*input.blob);
 
         u32 flags = (
                 TYC_PARSE
               | TYC_IMPORT_ALL
               | TYC_FORGIVING
               | TYC_NO_TYPES
+              | TYC_TOKENS
               | (TYC_SHALLOW * !HAVE_FLAG("deep"))
-              | (TYC_RESOLVE * resolve)
-              | (TYC_TOKENS  * (tokens_key != NULL))
+              | (TYC_RESOLVE * HAVE_FLAG("resolve"))
         );
 
-        Value vTokens = NIL;
-        Value vFree   = NIL;
         Value result;
 
 /* = */ GC_STOP(); /* ====================================================== */
+        Arena old = NewArena(1 << 18);
+
+        char *source = amA(bytes.length + 2);
+        source[0] = '\0';
+        memcpy(source + 1, bytes.data, bytes.length);
+        source[bytes.length + 1] = '\0';
+
+        GC_STOP();
         TYPES_OFF += 1;
-
-        Arena volatile old = NewArena(1 << 22);
-        char *source = TY_0_C_STR(ARGx(0, VALUE_STRING, VALUE_BLOB));
-
-        if (TY_CATCH_ERROR()) {
-                Value exc = TY_CATCH();
-                ReleaseArena(old);
-                TYPES_OFF -= 1;
-                ty_free(source - 1);
-                return Err(ty, exc);
-        }
 
         Module *mod = TyCompileSource(
                 ty,
-                sclonea(ty, source),
-                !IsMissing(scope) ? scope.ptr : NULL,
+                source + 1,
+                IsMissing(scope) ? NULL : scope.ptr,
                 flags
         );
+        mod->arena = ty->arena;
 
-        Stmt **prog = mod->prog;
-        TokenVector tokens = mod->tokens;
-
-        if (prog == NULL) {
-                Value last;
-                char const *msg = TyError(ty);
-
-                if (tokens_key) {
-                        vTokens = make_tokens(ty, &tokens);
+        if (mod->flags & (MOD_PARSE_ERR | MOD_COMPILE_ERR | MOD_TYPE_ERR)) {
+                Value last = NIL;
+                if (mod->last != NULL) {
+                        last = PTR(mod->last);
+                        last.src = source_register(ty, mod->last);
                 }
-
-                if (LastParsedExpr != NULL) {
-                        last = CToTyExpr(ty, LastParsedExpr);
-                        last = !IsNone(last) ? last : NIL;
-                } else {
-                        last = NIL;
-                }
-
-                extra = vTn(
-                        "location", make_location(ty, &stop),
-                        "msg",      vSsz(msg),
-                        "last",     last,
-                        tokens_key, vTokens
-                );
-        } else if (tokens_key || free_key) {
-                if (tokens_key) {
-                        vTokens = make_tokens(ty, &tokens);
-                }
-                if (free_key) {
-                        SCRATCH_SAVE();
-                        StringVector names = {0};
-                        vFree = ARRAY(vA());
-                        for (int i = 0; prog[i] != NULL; ++i) {
-                                ExprVec free = CompilerFreeVars(ty, (Expr *)prog[i], NULL);
-                                for (int i = 0; i < vN(free); ++i) {
-                                        char const *name = v__(free, i)->identifier;
-                                        if (!search_str(&names, name)) {
-                                                svP(names, (char *)name);
-                                                vAp(vFree.array, vSsz(name));
-                                        }
-                                }
-                        }
-                        SCRATCH_RESTORE();
-                }
-                if (tokens_key) {
-                        extra = vTn(
-                                tokens_key, vTokens,
-                                free_key,   vFree
-                        );
-                } else {
-                        extra = vTn(free_key, vFree);
-                }
-        }
-
-        if (prog == NULL || prog[0] == NULL) {
-                result = Err(ty, extra);
-                goto End;
-        }
-
-        if (
-                (prog[1] == NULL)
-             && (prog[0]->type == STATEMENT_EXPRESSION)
-        ) {
-                Value v = CToTyExpr(ty, prog[0]->expression);
-                if (v.type == VALUE_NONE) {
-                        result = Err(ty, extra);
-                } else {
-                        result = Ok(ty, PAIR(v, extra));
-                }
-                goto End;
-        }
-
-        if (prog[1] == NULL) {
-                Value v = CToTyStmt(ty, prog[0]);
-                if (v.type == VALUE_NONE) {
-                        result = Err(ty, extra);
-                } else {
-                        result = Ok(ty, PAIR(v, extra));
-                }
-                goto End;
-        }
-
-        Stmt *multi = amA0(sizeof *multi);
-        multi->type = STATEMENT_MULTI;
-        multi->arena = GetArenaAlloc(ty);
-
-        for (int i = 0; prog[i] != NULL; ++i) {
-                avP(multi->statements, prog[i]);
-        }
-
-        Value v = CToTyStmt(ty, multi);
-        if (v.type == VALUE_NONE) {
-                result = Err(ty, extra);
+                result = Err(ty, vTn(
+                        "module",   MODULE(mod),
+                        "location", make_location(ty, &mod->error),
+                        "msg",      vSsz(TyError(ty)),
+                        "last",     last
+                ));
         } else {
-                result = Ok(ty, PAIR(v, extra));
+                result = Ok(ty, MODULE(mod));
         }
 
-End:
-        ty_free(source - 1);
-        ReleaseArena(old);
-        TY_CATCH_END();
         TYPES_OFF -= 1;
+        ReleaseArena(old);
 /* = */ GC_RESUME(); /* ==================================================== */
 
         return result;
@@ -10186,11 +10123,9 @@ TypeParameterId(Ty *ty, char const *_name__, Value const *sub)
 
 BUILTIN_FUNCTION(ty_type_inst)
 {
-        char const *_name__ = "ty.types.inst()";
+        ASSERT_ARGC("ty.types.inst()", 1, 2);
 
-        CHECK_ARGC(1, 2);
-
-        Value v0 = ARG(0);
+        Value  v0 = ARG(0);
         T2Type t0 = t2_from_ty(ty, &v0);
 
         if (argc == 1) {
@@ -10198,10 +10133,12 @@ BUILTIN_FUNCTION(ty_type_inst)
         }
 
         Value subs = ARGx(1, VALUE_ARRAY);
+
         SCRATCH_SAVE();
-        usize count = vN(*subs.array);
-        u32 *ids = count == 0 ? NULL : smA(count * sizeof *ids);
-        T2Type *args = count == 0 ? NULL : smA(count * sizeof *args);
+
+        usize   count = vN(*subs.array);
+        u32    *ids   = (count == 0) ? NULL : smA(count * sizeof *ids);
+        T2Type *args  = (count == 0) ? NULL : smA(count * sizeof *args);
 
         for (usize i = 0; i < count; ++i) {
                 Value *sub = v_(*subs.array, i);
@@ -10215,6 +10152,7 @@ BUILTIN_FUNCTION(ty_type_inst)
         }
 
         T2Type result = t2_substitute(t0, ids, args, count);
+
         SCRATCH_RESTORE();
 
         return t2_to_ty(ty, result);
@@ -10268,14 +10206,8 @@ BUILTIN_FUNCTION(ty_type_show)
 
 BUILTIN_FUNCTION(ty_definition)
 {
-        char const *_name__ = "ty.definition()";
-
-        CHECK_ARGC(1);
-
-        return CToTyStmt(
-                ty,
-                class_get(ty, ARGx(0, VALUE_CLASS).class)->def
-        );
+        ASSERT_ARGC("ty.definition()", 1);
+        return CToTyStmt(ty, class_get(ty, ARGx(0, VALUE_CLASS).class)->def);
 }
 
 BUILTIN_FUNCTION(ty_copy_source)
@@ -10418,24 +10350,6 @@ BUILTIN_FUNCTION(token_next)
         return v;
 }
 
-BUILTIN_FUNCTION(parse_source)
-{
-        ASSERT_ARGC("ty.parse.source()", 0, 1);
-
-        Value vSrc = ARGx(0, VALUE_STRING, VALUE_BLOB);
-        char *src = TY_0_C_STR(vSrc);
-        Stmt **p = parse(ty, src, NULL);
-
-        if (p == NULL) {
-                char const *msg = TyError(ty);
-                Value err = Err(ty, vSsz(msg));
-                vmE(&err);
-        }
-
-        return (p[0] == NULL) ? NIL : tyexpr(ty, (Expr *)p[0], 0);
-}
-
-
 BUILTIN_FUNCTION(parse_expr)
 {
         ASSERT_ARGC("ty.parse.expr()", 0, 1, 2);
@@ -10573,66 +10487,62 @@ BUILTIN_FUNCTION(parse_stmt)
         return expr;
 }
 
+static Expr const *
+SourceExpr(Ty *ty, Value v)
+{
+        switch (v.type) {
+        case VALUE_PTR:
+        case VALUE_PTR | VALUE_TAGGED:
+                return v.ptr;
+        case VALUE_INTEGER: return source_lookup(ty, v.z);
+        default:            return source_lookup(ty, v.src);
+        }
+}
+
 BUILTIN_FUNCTION(parse_show)
 {
         ASSERT_ARGC("ty.parse.show()", 1);
 
-        Value expr = ARG(0);
+        Expr const *src = SourceExpr(ty, ARG(0));
 
-        Expr const *src = (expr.type == VALUE_PTR)
-                        ? expr.ptr
-                        : source_lookup(ty, expr.src);
-
-        if (src == NULL) {
-                return NIL;
-        }
-
-        int n = src->end.s - src->start.s;
-
-        return vSs(src->start.s, n);
+        return (src == NULL) ? NIL : vSs(src->start.s, src->end.s - src->start.s);
 }
 
 BUILTIN_FUNCTION(parse_highlight)
 {
         ASSERT_ARGC("ty.parse.highlight()", 1, 3);
 
+        Value input = ARG(0);
         Value theme = KWARG("theme", STRING);
-
-        char const *palette = !IsMissing(theme) ? TY_TMP_C_STR(theme) : NULL;
-        bool ok = false;
+        Module const *mod;
+        usize start;
+        usize end;
         byte_vector text = {0};
-
         Value result = NIL;
 
-        SCRATCH_SAVE();
-
-        if (argc == 1) {
-                Value expr = ARG(0);
-                Expr const *src = (expr.type == VALUE_PTR)     ? expr.ptr
-                                : (expr.type == VALUE_INTEGER) ? source_lookup(ty, expr.z)
-                                :                                source_lookup(ty, expr.src);
-                if (src != NULL) {
-                        ok = syntax_highlight(
-                                ty,
-                                &text,
-                                src->mod,
-                                src->start.byte,
-                                src->end.byte,
-                                NULL,
-                                palette
-                        );
+        if (input.type == VALUE_MODULE) {
+                mod = input.mod;
+                if (mod->source == NULL) {
+                        return NIL;
                 }
+                start = (argc == 3) ? INT_ARG(1) : 0;
+                end   = (argc == 3) ? INT_ARG(2) : strlen(mod->source);
         } else {
-                Module *mod = ARGx(0, VALUE_MODULE).mod;
-                usize start = INT_ARG(1);
-                usize end   = INT_ARG(2);
-                ok = syntax_highlight(ty, &text, mod, start, end, NULL, palette);
+                CHECK_ARGC(1);
+                Expr const *src = SourceExpr(ty, input);
+                if (src == NULL) {
+                        return NIL;
+                }
+                mod = src->mod;
+                start = src->start.byte;
+                end = src->end.byte;
         }
 
-        if (ok) {
+        SCRATCH_SAVE();
+        char const *palette = IsMissing(theme) ? NULL : TY_TMP_C_STR(theme);
+        if (syntax_highlight(ty, &text, mod, start, end, NULL, palette)) {
                 result = vSs(vv(text), vN(text));
         }
-
         SCRATCH_RESTORE();
 
         return result;
@@ -10642,70 +10552,56 @@ BUILTIN_FUNCTION(parse_raw)
 {
         ASSERT_ARGC("ty.parse.raw()", 1);
 
-        Value expr = ARG(0);
-
-        Expr const *src = (expr.type == VALUE_PTR)
-                        ? expr.ptr
-                        : source_lookup(ty, expr.src);
-
+        Expr const *src = SourceExpr(ty, ARG(0));
         if (src == NULL) {
                 return NIL;
         }
 
-        if (src->type < EXPRESSION_MAX_TYPE) {
-                return TAGGED(TyExpr, PTR(src));
-        } else {
-                return TAGGED(TyStmt, PTR(src));
-        }
+        Value raw = PTR((void *)src);
+        raw.src = source_register(ty, src);
+
+        return (src->type < EXPRESSION_MAX_TYPE)
+             ? TAGGED(TyExpr, raw)
+             : TAGGED(TyStmt, raw);
 }
 
 BUILTIN_FUNCTION(parse_ast)
 {
         ASSERT_ARGC("ty.parse.ast()", 1);
-        return CToTyExpr(ty, PTR_ARG(0));
+        Expr const *src = SourceExpr(ty, ARG(0));
+        return (src == NULL) ? NIL : CToTyExpr(ty, (Expr *)src);
 }
 
 BUILTIN_FUNCTION(parse_fail)
 {
         ASSERT_ARGC("ty.parse.fail()", 1);
         ParseError(ty, "%s", TY_TMP_C_STR(ARGx(0, VALUE_STRING)));
-        UNREACHABLE();
 }
 
 BUILTIN_FUNCTION(ptr_typed)
 {
         ASSERT_ARGC("ptr.typed()", 2);
 
-        if (ARG(0).type == VALUE_NIL) {
+        Value ptr = ARGx(0, VALUE_NIL, VALUE_PTR);
+
+        if (IsNil(ptr)) {
                 return NIL;
         }
 
-        if (ARG(0).type != VALUE_PTR) {
-                zP("ptr.typed(): expected pointer as first argument but got: %s", VSC(&ARG(0)));
-        }
-
-        if (ARG(1).type != VALUE_PTR) {
-                zP("ptr.typed(): expected pointer as second argument but got: %s", VSC(&ARG(1)));
-        }
-
-        return TGCPTR(ARG(0).ptr, ARG(1).ptr, ARG(0).gcptr);
+        return TGCPTR(ptr.ptr, PTR_ARG(1), ptr.gcptr);
 }
 
 BUILTIN_FUNCTION(ptr_untyped)
 {
         ASSERT_ARGC("ptr.untyped()", 1);
 
-        Value p = ARG(0);
+        Value ptr = ARGx(0, VALUE_NIL, VALUE_PTR);
 
-        if (p.type == VALUE_NIL) {
+        if (ptr.type == VALUE_NIL) {
                 return NIL;
         }
 
-        if (p.type != VALUE_PTR) {
-                zP("ptr.untyped(): expected pointer as first argument but got: %s", VSC(&p));
-        }
-
-        return GCPTR(p.ptr, p.gcptr);
+        return GCPTR(ptr.ptr, ptr.gcptr);
 }
 
 BUILTIN_FUNCTION(ptr_from_int)

@@ -918,6 +918,7 @@ static struct {
   { .module = "ty/mod",     .name = "list",                      .value = BUILTIN(builtin_ty_mod_list)            },
   { .module = "ty/mod",     .name = "name",                      .value = BUILTIN(builtin_ty_mod_name)            },
   { .module = "ty/mod",     .name = "ast",                       .value = BUILTIN(builtin_ty_mod_ast)             },
+  { .module = "ty/mod",     .name = "free",                      .value = BUILTIN(builtin_ty_mod_free)            },
   { .module = "ty/mod",     .name = "source",                    .value = BUILTIN(builtin_ty_mod_source)          },
   { .module = "ty/mod",     .name = "tokens",                    .value = BUILTIN(builtin_ty_mod_tokens)          },
   { .module = "ty/mod",     .name = "path",                      .value = BUILTIN(builtin_ty_mod_path)            },
@@ -936,7 +937,7 @@ static struct {
   { .module = "ty/token",   .name = "next",                     .value = BUILTIN(builtin_token_next)              },
   { .module = "ty/token",   .name = "peek",                     .value = BUILTIN(builtin_token_peek)              },
 
-  { .module = "ty/parse",   .name = "source",                   .value = BUILTIN(builtin_parse_source)            },
+  { .module = "ty/parse",   .name = "source",                   .value = BUILTIN(builtin_ty_parse)                },
   { .module = "ty/parse",   .name = "expr",                     .value = BUILTIN(builtin_parse_expr)              },
   { .module = "ty/parse",   .name = "type",                     .value = BUILTIN(builtin_parse_type)              },
   { .module = "ty/parse",   .name = "stmt",                     .value = BUILTIN(builtin_parse_stmt)              },
