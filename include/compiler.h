@@ -68,6 +68,7 @@ enum {
         TYC_FORGIVING       = (1 << 9),
         TYC_NO_TYPES        = (1 << 10),
         TYC_MUT_CONST       = (1 << 11),
+        TYC_EXPRESSION      = (1 << 12),
 
 #if defined(TY_LS)
         TYC_DEFAULT_FLAGS = (

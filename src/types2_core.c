@@ -11399,6 +11399,13 @@ constrain_internal(
         }
 
         T2Relation relation = t2_subtype(solver->universe, subtype, supertype);
+        if (
+                (relation == T2_RELATION_DEFERRED)
+             && (a->kind == T2_TYPE_NOMINAL)
+             && (b->kind == T2_TYPE_NOMINAL)
+        ) {
+                relation = T2_RELATION_NO;
+        }
         if (relation == T2_RELATION_NO) {
                 set_solver_error(
                         solver,

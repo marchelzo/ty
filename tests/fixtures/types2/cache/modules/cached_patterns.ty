@@ -33,6 +33,16 @@ pub fn empty-array() { [] }
 
 pub fn empty-dict() { %{} }
 
+pub fn counter() {
+    let x: ?Int = 0
+
+    fn set(value: Int) {
+        x = value
+    }
+
+    set
+}
+
 pub fn check-patterns() {
     let chalk = Chalk()
     let width = [['a', nil], [Text('b', chalk)]].map(match {

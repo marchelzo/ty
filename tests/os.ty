@@ -13,6 +13,25 @@ pub fn os-basics() {
     chdir(cwd)
 }
 
+pub fn poll-inferred-arrays() {
+    let (rd, wr) = pipe()
+    defer close(rd)
+    defer close(wr)
+    assert(write(wr, 'x') == 1)
+
+    let bare = []
+    assert(poll([rd], bare, 0) == 1)
+    assert(bare == [(rd, POLLIN)])
+
+    let pairs = []
+    assert(poll([(rd, POLLIN)], pairs, 0) == 1)
+    assert(pairs == [(rd, POLLIN)])
+
+    let tagged = []
+    assert(poll([(rd, POLLIN, 'ready')], tagged, 0) == 1)
+    assert(tagged == [(rd, POLLIN, 'ready')])
+}
+
 pub fn wait4-result() {
     if not __windows__ {
         let process = spawn(['/bin/sh', '-c', 'exit 7'])

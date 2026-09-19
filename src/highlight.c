@@ -135,8 +135,8 @@ regex_token(pcre2_callout_enumerate_block *token, void *data)
 
         while (ctx->quoted && ctx->scan + 1 < i) {
                 if (
-                        ctx->pattern[ctx->scan] == '\\'
-                     && ctx->pattern[ctx->scan + 1] == 'E'
+                        (ctx->pattern[ctx->scan] == '\\')
+                     && (ctx->pattern[ctx->scan + 1] == 'E')
                 ) {
                         ctx->quoted = false;
                 }
@@ -145,9 +145,9 @@ regex_token(pcre2_callout_enumerate_block *token, void *data)
 
         if (
                 !ctx->quoted
-             && i >= 2
-             && ctx->pattern[i - 2] == '\\'
-             && ctx->pattern[i - 1] == 'Q'
+             && (i >= 2)
+             && (ctx->pattern[i - 2] == '\\')
+             && (ctx->pattern[i - 1] == 'Q')
         ) {
                 ctx->quoted = true;
         }
@@ -156,7 +156,7 @@ regex_token(pcre2_callout_enumerate_block *token, void *data)
         ctx->seen = true;
 
         if (
-                i == ctx->length
+                (i == ctx->length)
              || (!ctx->quoted && contains("\\.^$|([)", ctx->pattern[i]))
         ) {
                 return 0;
@@ -217,11 +217,11 @@ regex_parts(Ty *ty, Regex const *regex, struct highlight *h)
                         continue;
                 }
 
-                bool ordinary = literal == NULL || literal[i];
+                bool ordinary = (literal == NULL) || literal[i];
                 usize start = i++;
                 while (
-                        i < n
-                     && regex->pattern[i] != '/'
+                        (i < n)
+                     && (regex->pattern[i] != '/')
                      && (literal == NULL || literal[i] == ordinary)
                 ) {
                         i += 1;
@@ -239,7 +239,11 @@ regex_parts(Ty *ty, Regex const *regex, struct highlight *h)
 void
 highlight_regex(Ty *ty, byte_vector *out, Regex const *regex, LiteralStyle style)
 {
-        struct highlight h = { .out = out, .style = style, .end = SIZE_MAX };
+        struct highlight h = {
+                .out   = out,
+                .style = style,
+                .end   = SIZE_MAX
+        };
 
         regex_parts(ty, regex, &h);
 }
@@ -283,11 +287,6 @@ hex_to_rgb(char const *hex, int *r, int *g, int *b)
 
 static char palette_buf[SC_COUNT][32];
 
-/*
- * If hexes is NULL, return a palette using the native 16-color
- * terminal palette (works everywhere, respects the user's theme).
- * Otherwise, build 24-bit true-color escape sequences from hex codes.
- */
 static char const **
 build_palette(char const *hexes[SC_COUNT])
 {
@@ -665,17 +664,19 @@ find_palette(char const *name)
 
 
 static bool
-is_type_name(char const *id)
+probably_a_type(char const *id)
 {
-        if (id == NULL || !isupper((unsigned char)id[0]))
+        if (!isupper((u8)id[0])) {
                 return false;
-
-        for (char const *p = id + 1; *p != '\0'; ++p) {
-                if (*p == '_')
-                        return false;
         }
 
-        return true;
+        for (usize i = 1; id[i] != '\0'; ++i) {
+                if (islower((u8)id[i])) {
+                        return true;
+                }
+        }
+        
+        return false;
 }
 
 static int
@@ -720,15 +721,18 @@ identifier_color(Token const *t, char const *source)
         default:          break;
         }
 
-        if (is_type_name(t->identifier))
+        if (probably_a_type(t->identifier)) {
                 return SC_TYPE;
-
+        }
 
         if (t->end.s != NULL && source != NULL) {
                 char const *p = t->end.s;
-                while (*p == ' ' || *p == '\t') ++p;
-                if (*p == '(')
+                while (*p == ' ' || *p == '\t') {
+                        ++p;
+                }
+                if (*p == '(') {
                         return SC_FUNCTION;
+                }
         }
 
         switch (t->tag) {
@@ -775,11 +779,12 @@ token_color(Token const *t, char const *source)
         case '$$':
                 return SC_PREPROC;
 
-
         case '(':
                 return (t->tag == TT_CALL) ? SC_FUNCTION : SC_PUNCT;
+
         case ')':
                 return (t->tag == TT_CALL) ? SC_FUNCTION : SC_PUNCT;
+
         case '[':
         case ']':
         case '{':
@@ -787,6 +792,7 @@ token_color(Token const *t, char const *source)
         case '.':
         case ',':
                 return SC_PUNCT;
+
         case TOKEN_DOT_MAYBE:
         case TOKEN_ARROW:
                 return SC_PUNCT;
@@ -798,7 +804,6 @@ token_color(Token const *t, char const *source)
 
         case '"':
                 return SC_STRING;
-
 
         case TOKEN_EQ:
         case TOKEN_DBL_EQ:
@@ -880,8 +885,6 @@ find_first(TokenVector const *tokens, usize pos)
         return lo;
 }
 
-
-
 bool
 syntax_highlight(
         Ty *ty,
@@ -911,16 +914,14 @@ syntax_highlight(
 
         for (isize i = find_first(tokens, pos); i < vN(*tokens); ++i) {
                 Token const *t = v_(*tokens, i);
-
-                if (t->ctx == LEX_FAKE) {
-                        continue;
-                }
-                if (t->type == TOKEN_END || t->start.byte >= end) {
+                if (
+                        (t->ctx == LEX_FAKE)
+                     || (t->type == TOKEN_END || t->start.byte >= end)
+                ) {
                         break;
                 }
-
                 usize tstart = max(pos, t->start.byte);
-                usize tend = min(end, t->end.byte);
+                usize tend   = min(end, t->end.byte);
 
                 if (tstart >= tend) {
                         continue;
@@ -933,12 +934,12 @@ syntax_highlight(
                 struct highlight h = {
                         .out = out,
                         .style = {
-                                .text = sfmt("%s%s", pal[sc], attr_on),
-                                .escape = sfmt("%s%s", pal[special], attr_on),
+                                .text    = sfmt("%s%s", pal[sc],      attr_on),
+                                .escape  = sfmt("%s%s", pal[special], attr_on),
                                 .invalid = sfmt("%s%s", pal[special], attr_on)
                         },
                         .start = tstart - t->start.byte,
-                        .end = tend - t->start.byte
+                        .end   = tend   - t->start.byte
                 };
 
                 highlight_token(
@@ -951,6 +952,7 @@ syntax_highlight(
                 if (pal[sc][0] != '\0' || attr != NULL) {
                         svPn(*out, "\x1b[0m", 4);
                 }
+
                 pos = tend;
         }
 

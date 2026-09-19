@@ -56,6 +56,8 @@ $$]
 
 fn parse::expr(prec: ?Int, raw: true, resolve: ?Bool = false) -> (AST, _);
 fn parse::expr(prec: ?Int, raw: ?Bool, resolve: ?Bool = false) -> AST;
+fn parse::expr(source: String | Blob, scope: ?Ptr[_], raw: true, resolve: ?Bool = false) -> (Ptr[_], AST);
+fn parse::expr(source: String | Blob, scope: ?Ptr[_], raw: ?Bool, resolve: ?Bool = false) -> AST;
 
 fn parse::stmt(prec: ?Int, raw: Bool) -> (AST, _);
 fn parse::stmt(prec: ?Int) -> AST;

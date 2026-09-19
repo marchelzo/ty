@@ -35,4 +35,6 @@ let method = types.info(typeof /abc/).methods.find(\_.name == 'test').type
 assert(types.show(method) == '(s: a) -> b where a.match? <: (Regex[0]) -> b')
 assert(types.show(types.type(method)) == types.show(typeof /abc/.test))
 assert(types.show(types.type(typeof cached_patterns.callback-items)) == types.show(typeof cached_patterns.callback-items))
+assert(str(typeof cached_patterns.counter()) == '(value: Int) -> Int')
+assert(types.show(types.type(typeof cached_patterns.counter())) == '(value: Int) -> Int')
 print('cached patterns: ok')

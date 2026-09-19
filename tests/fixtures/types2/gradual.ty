@@ -65,6 +65,21 @@ fn size(buf: Blob) -> Int {
 fn count() -> Int { registry.push(1); #registry }
 let __tls::registry: Array[Int] = []
 
+trait Boxed[T] {
+    get() -> T;
+}
+
+class Number: Boxed[Int] {
+    get() -> Int { 7 }
+}
+
+fn fetch[T](hint: Array[T], value: Boxed[T]) -> T {
+    value.get()
+}
+
+let hint: _ = []
+assert(fetch(hint, Number()) == 7)
+
 let anything: Array[Any] = [Note(4)]
 let handler = ev -> ev.rank
 let w = Widget()

@@ -9963,30 +9963,15 @@ BUILTIN_FUNCTION(ty_mod_source)
         return vSsz(mod->source);
 }
 
-BUILTIN_FUNCTION(ty_parse)
+static Value
+ParseSource(Ty *ty, Value input, Scope *scope, u32 flags)
 {
-        ASSERT_ARGC("ty.parse()", 1);
-
-        Value input = ARGx(0, VALUE_STRING, VALUE_BLOB);
-        Value scope = KWARG("scope", PTR);
-
         Bytes bytes = (input.type == VALUE_STRING)
                     ? s_bytes(input)
                     : v_bytes(*input.blob);
-
-        u32 flags = (
-                TYC_PARSE
-              | TYC_IMPORT_ALL
-              | TYC_FORGIVING
-              | TYC_NO_TYPES
-              | TYC_TOKENS
-              | (TYC_SHALLOW * !HAVE_FLAG("deep"))
-              | (TYC_RESOLVE * HAVE_FLAG("resolve"))
-        );
-
         Value result;
 
-/* = */ GC_STOP(); /* ====================================================== */
+        GC_STOP();
         Arena old = NewArena(1 << 18);
 
         char *source = amA(bytes.length + 2);
@@ -9994,13 +9979,12 @@ BUILTIN_FUNCTION(ty_parse)
         memcpy(source + 1, bytes.data, bytes.length);
         source[bytes.length + 1] = '\0';
 
-        GC_STOP();
         TYPES_OFF += 1;
 
         Module *mod = TyCompileSource(
                 ty,
                 source + 1,
-                IsMissing(scope) ? NULL : scope.ptr,
+                scope,
                 flags
         );
         mod->arena = ty->arena;
@@ -10023,9 +10007,28 @@ BUILTIN_FUNCTION(ty_parse)
 
         TYPES_OFF -= 1;
         ReleaseArena(old);
-/* = */ GC_RESUME(); /* ==================================================== */
+        GC_RESUME();
 
         return result;
+}
+
+BUILTIN_FUNCTION(ty_parse)
+{
+        ASSERT_ARGC("ty.parse()", 1);
+
+        Value input = ARGx(0, VALUE_STRING, VALUE_BLOB);
+        Value scope = KWARG("scope", PTR);
+        u32 flags = (
+                TYC_PARSE
+              | TYC_IMPORT_ALL
+              | TYC_FORGIVING
+              | TYC_NO_TYPES
+              | TYC_TOKENS
+              | (TYC_SHALLOW * !HAVE_FLAG("deep"))
+              | (TYC_RESOLVE * HAVE_FLAG("resolve"))
+        );
+
+        return ParseSource(ty, input, IsMissing(scope) ? NULL : scope.ptr, flags);
 }
 
 BUILTIN_FUNCTION(ty_id)
@@ -10353,6 +10356,43 @@ BUILTIN_FUNCTION(token_next)
 BUILTIN_FUNCTION(parse_expr)
 {
         ASSERT_ARGC("ty.parse.expr()", 0, 1, 2);
+
+        if (
+                (argc > 0)
+             && (ARG(0).type == VALUE_STRING || ARG(0).type == VALUE_BLOB)
+        ) {
+                Value scope = KWARG("scope", PTR);
+                Scope *parent = IsMissing(scope) ? NULL : scope.ptr;
+                if (argc == 2) {
+                        parent = PTR_ARG(1);
+                }
+                u32 flags = (
+                        TYC_PARSE
+                      | TYC_EXPRESSION
+                      | TYC_IMPORT_ALL
+                      | TYC_SHALLOW
+                      | TYC_NO_TYPES
+                      | TYC_TOKENS
+                      | (TYC_RESOLVE * HAVE_FLAG("resolve"))
+                );
+                Value parsed = ParseSource(ty, ARG(0), parent, flags);
+                if (tags_first(ty, parsed.tags) == TAG_ERR) {
+                        vmE(&parsed);
+                }
+
+                GC_STOP();
+                Expr *e = parsed.mod->prog[0]->expression;
+                Value raw = PTR(e);
+                raw.src = source_register(ty, e);
+                Value expr = HAVE_FLAG("resolve") ? TAGGED(TyExpr, raw)
+                                                  : CToTyExpr(ty, e);
+                if (HAVE_FLAG("raw")) {
+                        expr = PAIR(raw, expr);
+                }
+                GC_RESUME();
+
+                return expr;
+        }
 
         int prec;
         Scope *scope;

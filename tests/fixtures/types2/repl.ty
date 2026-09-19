@@ -4,8 +4,7 @@ import readln (CompletionItem, CompletionLabel)
 
 fn token-end(t: Token) -> Int {
     match t {
-        {end, *} => end.byte,
-        _        => 0
+        {end, *} => end.byte
     }
 }
 
@@ -19,9 +18,7 @@ fn token-ends(ts: Array[Token]) -> Array[Int] {
 fn parsed-tokens(source: String) -> Array[Token] {
     match ty.parse(source) {
         Ok(mod) or Err({module: mod, *})
-            => mod.tokens,
-        err
-            => []
+            => mod.tokens
     }
 }
 

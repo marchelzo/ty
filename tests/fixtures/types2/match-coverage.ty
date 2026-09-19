@@ -33,6 +33,37 @@ fn tuple-domain(value: Float | (Float, Float)) -> Float {
     }
 }
 
+fn optional-field(value: Err[{?module: Int}]) -> Int {
+    match value {
+        Err({module, *}) => module
+    }
+}
+
+fn nullable-field(value: Err[{module: ?Int}]) -> Int {
+    match value {
+        Err({$module, *}) => module
+    }
+}
+
+fn literal-field(value: Err[{module: Int}]) -> Int {
+    match value {
+        Err({module: 0, *}) => 0
+    }
+}
+
+fn extra-fields(value: Err[{module: Int}]) -> Int {
+    match value {
+        Err({module}) => module
+    }
+}
+
+fn covered-record(value: Err[{module: Int}]) -> Int {
+    match value {
+        Err({module, *}) => module,
+        _ => 0
+    }
+}
+
 print(
     complete-domain('covered'),
     duplicate-boolean(false),

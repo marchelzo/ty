@@ -27,6 +27,15 @@ fn type-parameter(id, kind = 'quantified', name = nil) {
 
 ns test
 
+pub fn captured-assignment() {
+    let x: ?Int = 5
+    let change = fn () { x = 0 }
+
+    assert(str(typeof change) == '() -> 0')
+    assert(types.type(typeof change) == types.type(typeof fn () { 0 }))
+    round-trip(typeof change)
+}
+
 pub fn method-bounds() {
     let method = types.info(typeof /abc/).methods.find(\_.name == 'test').type
     let expected = '(s: a) -> b where a.match? <: (Regex[0]) -> b'

@@ -5,12 +5,12 @@ import super.support.process (FIXTURES, run, type-env)
 ns test
 
 const VALID = [
-    'alias-basic', 'valid', 'overload-union', 'flow', 'class-operator',
+    'alias-basic', 'valid', 'overload-union', 'flow', 'flow-defer', 'flow-calls', 'class-operator',
     'operator-constraints', 'pack-constraints', 'scoped-obligations',
-    'subscript-protocol', 'member-protocol', 'keyword-spread', 'match-coverage',
+    'subscript-protocol', 'member-protocol', 'keyword-spread', 'match-coverage', 'record-coverage',
     'recovery', 'deferred', 'nil-guards', 'loops', 'multi-values', 'evolving',
     'contextual', 'defaults', 'repl', 'hierarchy', 'http', 'clap',
-    'open-operands', 'forward-calls', 'relations', 'gradual',
+    'open-operands', 'forward-calls', 'relations', 'gradual', 'array-inference',
 ]
 
 const INVALID = %{
@@ -22,6 +22,7 @@ const INVALID = %{
     'nil-guards-invalid': ['union-method-coverage'],
     'defaults-invalid': ['assignment-type', 'dictionary-default-key'],
     'tag-getters-invalid': ['assignment-type'],
+    'array-inference-invalid': ['subscript-write-value', 'function-fallthrough'],
 }
 
 fn source(name: String) -> String {
@@ -99,7 +100,7 @@ fn check-valid(name: String) {
     let finish = summary(events, name)
     check-fields(finish, %{
         't2_errors': 0,
-        't2_warnings': name == 'match-coverage' ? 2 : 0,
+        't2_warnings': name == 'match-coverage' ? 7 : 0,
         'pending_obligations': 0,
     })
     check-counters(name, finish)
@@ -120,11 +121,12 @@ fn check-invalid(name: String, expected: [String]) {
                                           : expected.all?(\_ in codes)
     assert(found, "{name}: expected {expected}, got {codes}")
     match name {
-        'flow-invalidation' => check-fields(summary(events, name), %{'t2_errors': 4}),
+        'flow-invalidation' => check-fields(summary(events, name), %{'t2_errors': 2}),
         'defaults-invalid' => check-fields(summary(events, name), %{'t2_errors': 8}),
         'tag-getters-invalid' => check-fields(summary(events, name), %{'t2_errors': 2}),
         'nil-guards-invalid' => check-fields(summary(events, name), %{'t2_errors': 1}),
         'multi-values-invalid' => check-fields(summary(events, name), %{'t2_errors': 2}),
+        'array-inference-invalid' => check-fields(summary(events, name), %{'t2_errors': 8}),
         'loops-invalid' => check-fields(summary(events, name), %{'t2_errors': 1, 't2_warnings': 1}),
         _ => (),
     }

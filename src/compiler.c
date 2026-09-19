@@ -19592,10 +19592,10 @@ CompilerSuggestCompletions(
         STATE.module = mod;
 
         QueryResult = NULL;
-        QueryExpr = NULL;
-        QueryLine = line;
-        QueryCol = col;
-        QueryFile = mod->path;
+        QueryExpr   = NULL;
+        QueryLine   = line;
+        QueryCol    = col;
+        QueryFile   = mod->path;
 
         Stmt **prog = mod->prog;
         for (int i = 0; prog != NULL && prog[i] != NULL; ++i) {
@@ -19618,7 +19618,7 @@ CompilerSuggestCompletions(
                         QueryExpr->identifier,
                         QueryExpr->namespace ? EDBG(QueryExpr->namespace) : "<>"
                 );
-                scope = (QueryExpr->module != NULL) && (*QueryExpr->module != '\0')
+                scope = (QueryExpr->module != NULL && *QueryExpr->module != '\0')
                                                        ? search_import_scope(ty, QueryExpr->module)
                       : (QueryExpr->namespace != NULL) ? QueryExpr->namespace->scope
                       : (QueryExpr->xscope    != NULL) ? QueryExpr->xscope

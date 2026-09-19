@@ -7304,6 +7304,12 @@ parse_module(Ty *ty, Module *mod)
                 next();
         }
 
+        if (HAVE_COMPILER_FLAG(EXPRESSION)) {
+                avP(program, to_stmt(parse_expr(ty, 0)));
+                expect(TOKEN_END);
+                goto End;
+        }
+
         while (
                 (T0 == TOKEN_COMMENT)
              || (K0 == KEYWORD_IMPORT)

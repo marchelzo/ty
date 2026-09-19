@@ -1003,6 +1003,45 @@ main(void)
         CHECK(t2_subtype(universe, late_child_int, base_int) == T2_RELATION_YES);
         CHECK(t2_nominal_project(universe, late_child_int, 3) == base_int);
 
+        T2Solver *inherited_solver = t2_solver_new(universe);
+        CHECK(inherited_solver != NULL);
+        T2Type bounded_element = t2_solver_new_meta(
+                inherited_solver,
+                T2_VARIABLE_FLEXIBLE,
+                0,
+                "array initializer"
+        );
+        CHECK(t2_solver_constrain_subtype(
+                inherited_solver,
+                integer,
+                bounded_element,
+                "integer element"
+        ) == T2_RELATION_YES);
+        T2Type bounded_array = t2_nominal(universe, 1, &bounded_element, 1);
+        T2Type iterable_string = t2_nominal(universe, 2, &string, 1);
+        T2SolverMark inherited_mark = t2_solver_mark(inherited_solver);
+        CHECK(t2_solver_constrain_subtype(
+                inherited_solver,
+                bounded_array,
+                iterable_string,
+                "incompatible inherited element"
+        ) == T2_RELATION_NO);
+        CHECK(t2_solver_failed(inherited_solver));
+        t2_solver_rollback(inherited_solver, inherited_mark);
+        CHECK(!t2_solver_failed(inherited_solver));
+        CHECK(t2_solver_pending_obligations(inherited_solver) == 0);
+        CHECK(t2_solver_lower_bound(inherited_solver, bounded_element) == integer);
+        CHECK(t2_solver_upper_bound(inherited_solver, bounded_element) == any);
+        CHECK(t2_solver_constrain_subtype(
+                inherited_solver,
+                bounded_array,
+                iterable_int,
+                "compatible inherited element"
+        ) == T2_RELATION_YES);
+        CHECK(t2_solver_upper_bound(inherited_solver, bounded_element) == integer);
+        CHECK(t2_solver_pending_obligations(inherited_solver) == 0);
+        t2_solver_free(inherited_solver);
+
         T2Type regex = t2_nominal(universe, 6, NULL, 0);
         T2Type regex_zero = t2_refinement(
                 universe,
