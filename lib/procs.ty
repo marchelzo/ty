@@ -585,7 +585,14 @@ fn __proc-fds(p: Process) {
 
 fn __proc-maps(p: Process) {
     let maps = []
-    const line-re = /^([0-9a-f]+)-([0-9a-f]+)\s+([rwxps-]{4})\s+([0-9a-f]+)\s+([0-9a-f]+:[0-9a-f]+)\s+(\d+)\s*(.*)$/
+    const line-re = /
+        ([0-9a-f]+)-([0-9a-f]+) \s+
+        ([rwxps-]{4})           \s+
+        ([0-9a-f]+)             \s+
+        ([0-9a-f]+:[0-9a-f]+)   \s+
+        (\d+)                   \s*
+        (.*)
+    /ax
 
     for line in __proc-file(p.pid, 'maps').read-text().lines() {
         if let [_, lo, hi, perms, offset, dev, inode, path] = line.match(line-re) {
