@@ -2531,11 +2531,11 @@ ck_resolve(Ty *ty, char const *nm, isize len, CkSty *out, Dict *custom)
                                         ck_merge(out, &part);
                                 }
                         }
-                        return out->bold || out->italic
-                            || out->dim  || out->reverse
+                        return out->bold   || out->italic
+                            || out->dim    || out->reverse
                             || out->bright || out->bg_bright
-                            || out->fg_n || out->bg_n
-                            || out->uc_n || out->ul_n
+                            || out->fg_n   || out->bg_n
+                            || out->uc_n   || out->ul_n
                             || out->link;
                 }
 
@@ -2587,8 +2587,14 @@ ck_resolve(Ty *ty, char const *nm, isize len, CkSty *out, Dict *custom)
                 }
         }
 
-        return ck_try_builtin(nm, len, out)
-            || ck_try_parse(ty, nm, len, out, custom);
+        if (
+                !ck_try_builtin(nm, len, out)
+             && !ck_try_parse(ty, nm, len, out, custom)
+        ) {
+                zP("String.chalk(): unknown style: %.*s", (int)len, nm);
+        }
+
+        return true;
 }
 
 static bool
@@ -2730,7 +2736,7 @@ string_chalk(Ty *ty, Value *string, int argc, Value *kwargs)
         GC_STOP();
 
         u8 const *s = ss(*string);
-        isize     len = sN(*string);
+        isize len = sN(*string);
 
         SCRATCH_SAVE();
 
@@ -2751,14 +2757,14 @@ string_chalk(Ty *ty, Value *string, int argc, Value *kwargs)
 
                 while (pos < len) {
                         if (
-                                   s[pos] == '\\'
-                                && pos + 1 < len
+                                   (s[pos] == '\\')
+                                && (pos + 1 < len)
                                 && (s[pos + 1] == '\\' || s[pos + 1] == '[')
                         ) {
                                 break;
                         }
                         if (
-                                   s[pos] == '['
+                                   (s[pos] == '[')
                                 && !(pos > 0 && s[pos - 1] == '\x1b')
                         ) {
                                 break;
@@ -2824,7 +2830,7 @@ string_chalk(Ty *ty, Value *string, int argc, Value *kwargs)
                                 }
                                 CkSty st = {0};
                                 if (
-                                           f->n < CK_MAX_PER
+                                           (f->n < CK_MAX_PER)
                                         && ck_resolve(ty, (char const *)ws, wn, &st, custom)
                                 ) {
                                         f->s[f->n++] = st;

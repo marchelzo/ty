@@ -208,31 +208,72 @@ regex_parts(Ty *ty, Regex const *regex, struct highlight *h)
         u8 *literal = s_eq(h->style.text, h->style.escape)
                     ? NULL
                     : regex_literal_map(ty, regex, n);
+        byte_vector buf = {0};
+        StringPart prev = STRING_TEXT;
         usize i = 0;
 
         while (i < n) {
-                if (regex->pattern[i] == '/') {
-                        highlight_emit(ty, z_bytes("\\/"), STRING_ESCAPE, h);
-                        i += 1;
-                        continue;
+                i32 cp;
+                isize w = utf8proc_iterate((u8 const *)regex->pattern + i, n - i, &cp);
+                StringPart kind = STRING_ESCAPE;
+                char esc[12];
+                char c = 0;
+                Bytes part = BYTES(esc, 0);
+
+                if (w < 0) {
+                        w = 1;
+                        kind = STRING_INVALID;
+                        part.length = ty_snprintf(esc, sizeof esc, "\\x%02x", (unsigned)(u8)regex->pattern[i]);
+                        goto Emit;
                 }
 
-                bool ordinary = (literal == NULL) || literal[i];
-                usize start = i++;
-                while (
-                        (i < n)
-                     && (regex->pattern[i] != '/')
-                     && (literal == NULL || literal[i] == ordinary)
-                ) {
-                        i += 1;
+                switch (cp) {
+                case '\a': c = 'a'; break;
+                case '\f': c = 'f'; break;
+                case '\n': c = 'n'; break;
+                case '\r': c = 'r'; break;
+                case '\t': c = 't'; break;
+                case '/':  c = '/'; break;
                 }
 
-                highlight_emit(
-                        ty,
-                        BYTES(regex->pattern + start, i - start),
-                        ordinary ? STRING_TEXT : STRING_ESCAPE,
-                        h
-                );
+                if (c != 0) {
+                        esc[0] = '\\';
+                        esc[1] = c;
+                        part.length = 2;
+                        goto Emit;
+                }
+
+                switch (utf8proc_category(cp)) {
+                case UTF8PROC_CATEGORY_CN:
+                case UTF8PROC_CATEGORY_CC:
+                case UTF8PROC_CATEGORY_CF:
+                case UTF8PROC_CATEGORY_ZL:
+                case UTF8PROC_CATEGORY_ZP:
+                        if (cp < 0x80) {
+                                part.length = ty_snprintf(esc, sizeof esc, "\\x%02x", (unsigned)cp);
+                        } else {
+                                part.length = ty_snprintf(esc, sizeof esc, "\\x{%x}", (unsigned)cp);
+                        }
+                        break;
+
+                default:
+                        kind = (literal == NULL || literal[i]) ? STRING_TEXT : STRING_ESCAPE;
+                        part = BYTES(regex->pattern + i, w);
+                        break;
+                }
+
+Emit:
+                if (kind != prev && vN(buf) != 0) {
+                        highlight_emit(ty, v_bytes(buf), prev, h);
+                        vN(buf) = 0;
+                }
+                svPn(buf, part.data, part.length);
+                prev = kind;
+                i += w;
+        }
+
+        if (vN(buf) != 0) {
+                highlight_emit(ty, v_bytes(buf), prev, h);
         }
 }
 
