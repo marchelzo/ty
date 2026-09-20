@@ -1594,19 +1594,19 @@ co_yield_value(Ty *ty)
 
         put(v);
 
+        cothread_t co = gen->co;
+
         if (gen->st->exec_depth > 1 || vN(gen->st->try_stack) > 0) {
                 CO_LOG("co_yield()", TERM(91;1), "switch to [%p] (RECURSED): %s", gen->co, VSC(top()));
-                cothread_t co = gen->co;
                 gen->co = co_active();
-                co_switch(co);
         } else {
                 CO_LOG("co_yield()", TERM(91;1), "switch to [%p]: %s", gen->co, VSC(top()));
-                cothread_t co = gen->co;
                 gen->co = NULL;
                 gen->st->exec_depth = 0;
                 xvP(CO_THREADS, co_active());
-                co_switch(co);
         }
+
+        co_switch(co);
 
         CO_LOG("co_yield()", TERM(92;1), "resume with: %s", VSC(top()));
 
@@ -1623,29 +1623,29 @@ xjit(Ty *ty, isize depth, JitFn *func, i32 resume_idx, Value *args, Value **env)
                 args = v_(STACK, ai);
         }
 
+        ++EXEC_DEPTH;
         IP = &JIT;
 
-        EXEC_DEPTH += 2;
+        ++EXEC_DEPTH;
         i32 rc = (*func)(ty, resume_idx, args, env, &v_(FRAMES, depth)->jit_pc);
+        --EXEC_DEPTH;
+
         v_(FRAMES, depth)->jit_pc = NULL;
-        EXEC_DEPTH -= 2;
-
-        int reason = JIT_REASON(rc);
-
-        if (LIKELY(reason == JIT_RETURN)) {
-                CO_LOG("jit_return", TERM(93;1), "ret = %s", SHOW(vvL(STACK), BASIC));
-                Value v = v_L(STACK);
-                IP = vXx(CALLS);
-                vN(STACK) = vXx(FRAMES).fp + 1;
-                v_L(STACK) = v;
-                CO_LOG("jit_return", TERM(92;1), "ret = %s", SHOW(vvL(STACK), BASIC));
-                return 0;
-        }
 
         i32 next_resume = JIT_RESUME(rc);
         Frame *top = v_(FRAMES, depth);
+        Value v;
 
-        switch (reason) {
+        switch (JIT_REASON(rc)) {
+        case JIT_RETURN:
+                CO_LOG("jit_return", TERM(93;1), "ret = %s", SHOW(vvL(STACK), BASIC));
+                IP = vXx(CALLS);
+                v = v_L(STACK);
+                vN(STACK) = vXx(FRAMES).fp + 1;
+                v_L(STACK) = v;
+                CO_LOG("jit_return", TERM(92;1), "ret = %s", SHOW(vvL(STACK), BASIC));
+                break;
+
         case JIT_CALL:
                 CO_LOG("jit_trampoline_call", TERM(94;1), "suspend with resume_idx = %d", next_resume);
                 top->jit_resume = next_resume;
@@ -1671,6 +1671,8 @@ xjit(Ty *ty, isize depth, JitFn *func, i32 resume_idx, Value *args, Value **env)
                 DoYield(ty);
                 break;
         }
+
+        --EXEC_DEPTH;
 
         return rc;
 }
@@ -1953,14 +1955,7 @@ vm_trampoline_linked(Ty *ty, JitFn *func, Value **env)
         while (vN(FRAMES) > depth0) {
                 isize depth = vN(FRAMES) - 1;
                 Frame *top = vvL(FRAMES);
-                xjit(
-                        ty,
-                        depth,
-                        jit_of(&top->f),
-                        top->jit_resume,
-                        v_(STACK, top->fp),
-                        top->f.env
-                );
+                xjit(ty, depth, jit_of(&top->f), top->jit_resume, v_(STACK, top->fp), top->f.env);
         }
 }
 

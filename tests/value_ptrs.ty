@@ -72,5 +72,5 @@ pub fn closure-retains-callback-across-gc() {
     for _ in 0..3 { ty.gc() }
     assert(c.call(cif, closure, 25) == 42)
 
-    c.freeClosure(closure)
+    c.free-closure(closure)
 }

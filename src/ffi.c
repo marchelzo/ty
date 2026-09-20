@@ -12,11 +12,6 @@
 #include "cffi.h"
 #include "class.h"
 
-/*
- * Ty-created struct types keep their member offsets immediately after the
- * NULL-terminated elements array.  cffi_struct() computes the layout once,
- * before publishing the type handle; runtime FFI operations only read it.
- */
 static usize
 struct_count(ffi_type const *t)
 {
@@ -368,51 +363,52 @@ closure_func(ffi_cif *cif, void *ret, void **args, void *data)
         }
 }
 
+static void
+free_cif(ffi_cif *cif)
+{
+        xmF(cif->arg_types);
+        xmF(cif);
+}
+
 Value
 cffi_cif(Ty *ty, int argc, Value *kwargs)
 {
-        ffi_type *rt;
-        vec(ffi_type *) ats = {0};
+        ASSERT_ARGC_RANGE("ffi.cif()", 0, INT_MAX);
 
-        if (argc == 0) {
-                rt = &ffi_type_void;
-        } else if (ARG(0).type == VALUE_PTR) {
-                rt = ARG(0).ptr;
-        } else {
-Bad:
-                xvF(ats);
-                zP("invalid type passed to ffi.cif()");
+        ffi_type *rt = (argc > 0) ? PTR_ARG(0) : &ffi_type_void;
+        Value nFixed = KWARG("nFixed", INTEGER, _NIL);
+
+        // Check args before allocating
+        for (int i = 1; i < argc; ++i) {
+                (void)PTR_ARG(i);
         }
+
+        int n_args = max(0, argc - 1);
+        ffi_type **ats = xmA(sizeof *ats * n_args);
 
         for (int i = 1; i < argc; ++i) {
-                if (ARG(i).type != VALUE_PTR) {
-                        goto Bad;
-                }
-                xvP(ats, ARG(i).ptr);
+                ats[i - 1] = PTR_ARG(i);
         }
 
-        ffi_cif *cif = mA(sizeof *cif);
+        ffi_cif *cif = xmA(sizeof *cif);
 
-        Value *nFixed = NAMED("nFixed");
-
-        if (nFixed != NULL && nFixed->type != VALUE_NIL) {
-                if (nFixed->type != VALUE_INTEGER) {
-                        xvF(ats);
-                        mF(cif);
-                        zP("ffi.cif(): expected nFixed to be an integer but got: %s", VSC(nFixed));
-                }
-                if (ffi_prep_cif_var(cif, FFI_DEFAULT_ABI, nFixed->z, max(0, argc - 1), rt, ats.items) != FFI_OK) {
-                        xvF(ats);
-                        mF(cif);
+        if (!IsMissing(nFixed)) {
+                if (ffi_prep_cif_var(cif, FFI_DEFAULT_ABI, nFixed.z, n_args, rt, ats) != FFI_OK) {
+                        xmF(ats);
+                        xmF(cif);
                         return NIL;
                 }
-        } else if (ffi_prep_cif(cif, FFI_DEFAULT_ABI, max(0, argc - 1), rt, vv(ats)) != FFI_OK) {
-                xvF(ats);
-                mF(cif);
+        } else if (ffi_prep_cif(cif, FFI_DEFAULT_ABI, n_args, rt, ats) != FFI_OK) {
+                xmF(ats);
+                xmF(cif);
                 return NIL;
         }
 
-        return PTR(cif);
+        Value *dtor = mAo(sizeof (Value [2]), GC_FFI_AUTO);
+        dtor[0] = PTR(free_cif);
+        dtor[1] = PTR(cif);
+
+        return GCPTR(cif, dtor);
 }
 
 Value
@@ -1158,6 +1154,14 @@ cffi_struct(Ty *ty, int argc, Value *kwargs)
         return PTR(t);
 }
 
+static void
+free_closure(void *ptr)
+{
+        Value *clos = ptr;
+        ffi_closure_free(clos->items[3].ptr);
+}
+
+
 Value
 cffi_closure(Ty *ty, int argc, Value *kwargs)
 {
@@ -1184,41 +1188,30 @@ cffi_closure(Ty *ty, int argc, Value *kwargs)
         GC_STOP();
 
         Value *data = mAo(sizeof *data, GC_VALUE);
-        *data = vT(2);
+        *data = vT(4);
         data->items[0] = f;
         data->items[1] = PTR(ty);
+        data->items[2] = cif;
+        data->items[3] = PTR(closure);
 
-        void **pointers = mA(sizeof (void *[2]));
-        pointers[0] = closure;
-        pointers[1] = cif.ptr;
+        Value *dtor = mAo(sizeof (Value [2]), GC_FFI_AUTO);
+        dtor[0] = PTR(free_closure);
+        dtor[1] = GCPTR(data, data);
 
         GC_RESUME();
 
-        if (ffi_prep_closure_loc(closure, cif.ptr, closure_func, data, code) == FFI_OK) {
-                return EPTR(code, data, pointers);
-        } else {
-                mF(data);
-                ffi_closure_free(closure);
+        if (ffi_prep_closure_loc(closure, cif.ptr, closure_func, data, code) != FFI_OK) {
                 return NIL;
         }
+
+        return GCPTR(code, dtor);
 }
 
 Value
 cffi_closure_free(Ty *ty, int argc, Value *kwargs)
 {
-        ASSERT_ARGC("ffi.freeClosure()", 1);
-
-        Value p = ARGx(0, VALUE_PTR);
-        void **pointers = p.extra;
-
-        ffi_closure_free(pointers[0]);
-
-        ffi_cif *cif = pointers[1];
-        ty_free(cif->arg_types);
-        mF(cif);
-
-        mF(pointers);
-
+        ASSERT_ARGC("ffi.free-closure()", 1);
+        (void)PTR_ARG(0);
         return NIL;
 }
 

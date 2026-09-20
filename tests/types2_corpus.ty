@@ -3,7 +3,7 @@ import support.process (ROOT, FIXTURES, run, type-env)
 
 ns test
 
-pub fn startup-corpus() {
+fn startup-corpus() {
     with tmp = tempdir() {
         let log = tmp / 'corpus.jsonl'
         let source = (FIXTURES / 'types2' / 'startup.ty').read-text()

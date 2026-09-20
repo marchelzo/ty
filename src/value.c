@@ -1751,7 +1751,8 @@ mark_pointer(Ty *ty, Value const *v)
                         break;
 
                 case GC_FFI_AUTO:
-                        MarkNext(ty, ((Value *)v->gcptr));
+                        MarkNext(ty, &((Value *)v->gcptr)[0]);
+                        MarkNext(ty, &((Value *)v->gcptr)[1]);
                         break;
                 }
         }
