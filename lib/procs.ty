@@ -449,7 +449,6 @@ pub fn children(parent: Int | Process, recursive: Bool = false) -> Array[Process
 }
 
 #|if __linux__
-
 const __PROC = Path('/proc')
 
 fn __proc-file(pid: Int, name: String) -> Path { __PROC / "{pid}" / name }
@@ -584,18 +583,17 @@ fn __proc-fds(p: Process) {
 }
 
 fn __proc-maps(p: Process) {
-    let maps = []
-    const line-re = /
+    const pattern = /^
         ([0-9a-f]+)-([0-9a-f]+) \s+
         ([rwxps-]{4})           \s+
         ([0-9a-f]+)             \s+
         ([0-9a-f]+:[0-9a-f]+)   \s+
         (\d+)                   \s*
         (.*)
-    /ax
-
+    $/x
+    let maps = []
     for line in __proc-file(p.pid, 'maps').read-text().lines() {
-        if let [_, lo, hi, perms, offset, dev, inode, path] = line.match(line-re) {
+        if let [_, lo, hi, perms, offset, dev, inode, path] = line.match(pattern) {
             let $lo = int(lo, 16) or continue
             let $hi = int(hi, 16) or continue
             let $offset = int(offset, 16) or continue
@@ -655,9 +653,7 @@ fn __proc-write(pid: Int, addr: Int, data: String | Blob) -> Int {
     if n == -1 { throw os.OSError("pwrite(/proc/{pid}/mem)") }
     n
 }
-
 #|else if __apple__
-
 const PROC_PIDLISTFDS        = 1
 const PROC_PIDTBSDINFO       = 3
 const PROC_PIDTASKINFO       = 4
@@ -1110,5 +1106,4 @@ fn __proc-write(pid: Int, addr: Int, data: String | Blob) -> Int {
     if kr != 0 { throw ProcessError('mach_vm_write', pid, kr) }
     #data
 }
-
 #|]
