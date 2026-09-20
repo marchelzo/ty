@@ -3,7 +3,7 @@ import os
 
 ns test
 
-fn current-process() {
+pub fn current-process() {
     let p = this()
 
     assert(p.pid == os.getpid())
@@ -25,7 +25,7 @@ fn current-process() {
     assert(p.cwd != nil)
 }
 
-fn enumerate-and-filter() {
+pub fn enumerate-and-filter() {
     let p = this()
 
     assert(p.pid in pids())
@@ -37,7 +37,7 @@ fn enumerate-and-filter() {
     assert(p in children(p.ppid, true))
 }
 
-fn process-objects() {
+pub fn process-objects() {
     let p = this()
     let maps = p.maps
     let tasks = p.tasks
@@ -52,7 +52,7 @@ fn process-objects() {
     assert(p.fds.all?(fd -> fd.process == p))
 }
 
-fn access-own-memory() {
+pub fn access-own-memory() {
     let p = this()
     let data = Blob('Ty process memory')
     let addr = int(data.ptr())
@@ -65,7 +65,7 @@ fn access-own-memory() {
     assert(data[0] == ord('t'))
 }
 
-fn control-child() {
+pub fn control-child() {
     let desc = os.spawn(['/bin/sleep', '30'])
     let p = Process(desc.pid)
     defer {
@@ -77,12 +77,4 @@ fn control-child() {
     assert(p.signal(0) == p)
     p.terminate()
     assert(p.wait() != nil)
-}
-
-pub fn process-api() {
-    current-process()
-    enumerate-and-filter()
-    process-objects()
-    //access-own-memory()
-    //control-child()
 }

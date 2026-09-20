@@ -45,6 +45,7 @@ typedef struct t2_node_info {
 
 typedef struct t2_binding {
         Symbol const *symbol;
+        Expr const   *declaration;
         T2Type        type;
         T2Type        refinement;
         T2Scheme     *scheme;
@@ -1436,6 +1437,9 @@ truncate_forward_uses(T2Checker *checker, usize mark)
 static T2Type
 infer_forward_function(T2Checker *checker, T2Binding *binding, Expr const *site);
 
+static T2Binding *
+prepare_forward_binding(T2Checker *checker, T2Binding *binding);
+
 static T2Type
 instantiate_binding(
         T2Checker  *checker,
@@ -1443,6 +1447,11 @@ instantiate_binding(
         Expr const *site
 )
 {
+        if (binding == NULL) {
+                return T2_TYPE_INVALID;
+        }
+
+        binding = prepare_forward_binding(checker, binding);
         if (binding == NULL) {
                 return T2_TYPE_INVALID;
         }
@@ -11376,6 +11385,29 @@ lvalue_annotation_expression(Expr const *target)
         }
 
         return annotation;
+}
+
+static T2Binding *
+prepare_forward_binding(T2Checker *checker, T2Binding *binding)
+{
+        if (!binding->forward || binding->declaration == NULL) {
+                return binding;
+        }
+
+        Expr const *annotation = lvalue_annotation_expression(binding->declaration);
+        binding->declaration = NULL;
+        if (annotation == NULL) {
+                return binding;
+        }
+
+        Symbol const *symbol = binding->symbol;
+        T2Type type = lower_type(checker, annotation);
+        binding = find_binding(checker, symbol);
+        if (binding != NULL) {
+                binding->type = type;
+        }
+
+        return binding;
 }
 
 static bool
@@ -24861,6 +24893,10 @@ register_declaration(T2Checker *checker, Stmt const *statement)
                                 !statement->cnst
                              && !SymbolIsConst(statement->target->symbol)
                         );
+                        T2Binding *binding = find_binding(checker, statement->target->symbol);
+                        if (binding != NULL && binding->forward) {
+                                binding->declaration = statement->target;
+                        }
                 }
                 break;
         default:
@@ -26796,7 +26832,7 @@ report_diagnostics(T2Checker *checker, usize errors, usize warnings)
 
 enum {
         T2_CACHE_MAGIC   = UINT32_C(0x32545954),
-        T2_CACHE_VERSION = 10,
+        T2_CACHE_VERSION = 11,
         T2_CACHE_NONE    = UINT32_MAX
 };
 

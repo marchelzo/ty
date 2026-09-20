@@ -304,7 +304,9 @@ pub class Fd {
     fd:      Int
 
     init(process: Process, fd: Int) {
-        if fd < 0 { throw ValueError("invalid file descriptor: {fd}") }
+        if fd < 0 {
+            throw ValueError("invalid file descriptor: {fd}")
+        }
         self.process = process
         self.fd = fd
     }
