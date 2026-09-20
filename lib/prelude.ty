@@ -742,6 +742,25 @@ class Array[T] : Iterable[T] {
         return i
     }
 
+    argmin() -> ?Int where (T < T): Bool {
+        argmin(id)
+    }
+
+    argmin[U](f: T -> U) -> ?Int where (U < U): Bool {
+        if #self == 0 { return nil }
+
+        let i, min = 0, f(self[0])
+
+        for j in 1..#self {
+            let y = f(self[j])
+            if y < min {
+                i, min = j, y
+            }
+        }
+
+        return i
+    }
+
     str() -> String {
         join()
     }
