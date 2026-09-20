@@ -297,38 +297,32 @@ typedef void                *TyThreadReturnValue;
 typedef pthread_barrier_t    TyBarrier;
 
 #ifdef TY_USE_NSYNC
-
 #include <nsync.h>
-
-typedef nsync_mu             TyMutex;
-typedef nsync_mu             TyRwLock;
-typedef nsync_cv             TyCondVar;
-typedef nsync_note           TyNote;
-typedef nsync_counter        TyCounter;
-
-#define TY_MUTEX_INIT NSYNC_MU_INIT
-#define TY_RWLOCK_INIT NSYNC_MU_INIT
-
+  typedef nsync_mu             TyMutex;
+  typedef nsync_mu             TyRwLock;
+  typedef nsync_cv             TyCondVar;
+  typedef nsync_note           TyNote;
+  typedef nsync_counter        TyCounter;
+  #define TY_MUTEX_INIT NSYNC_MU_INIT
+  #define TY_RWLOCK_INIT NSYNC_MU_INIT
 #else /* !TY_USE_NSYNC */
-
-typedef pthread_mutex_t      TyMutex;
-typedef pthread_cond_t       TyCondVar;
-typedef pthread_rwlock_t     TyRwLock;
-typedef void                *TyNote;
-typedef void                *TyCounter;
-
-#define TY_MUTEX_INIT PTHREAD_MUTEX_INITIALIZER
-#define TY_RWLOCK_INIT PTHREAD_RWLOCK_INITIALIZER
-
+  typedef pthread_mutex_t      TyMutex;
+  typedef pthread_cond_t       TyCondVar;
+  typedef pthread_rwlock_t     TyRwLock;
+  typedef void                *TyNote;
+  typedef void                *TyCounter;
+  #define TY_MUTEX_INIT PTHREAD_MUTEX_INITIALIZER
+  #define TY_RWLOCK_INIT PTHREAD_RWLOCK_INITIALIZER
 #endif /* TY_USE_NSYNC */
 
 #define TY_THREAD_OK   NULL
 
-#if defined(__APPLE__)
+#if defined(TY_USE_NSYNC)
+  /* Repeated GC must not starve threads waiting to join or leave the group. */
+  typedef TyMutex TySpinLock;
+#elif defined(__APPLE__)
   #include <os/lock.h>
   typedef os_unfair_lock TySpinLock;
-#elif defined(TY_USE_NSYNC)
-  typedef TyMutex TySpinLock;
 #elif defined(__linux__)
   typedef pthread_spinlock_t TySpinLock;
 #else
@@ -921,7 +915,13 @@ TyWaitAny(TyWaitable *items, int count, u64 timeout_ms, void *scratch,
 }
 #endif /* TY_USE_NSYNC */
 
-#if defined(__APPLE__)
+#if defined(TY_USE_NSYNC)
+  #define TySpinLockInit    TyMutexInit
+  #define TySpinLockTryLock TyMutexTryLock
+  #define TySpinLockLock    TyMutexLock
+  #define TySpinLockUnlock  TyMutexUnlock
+  #define TySpinLockDestroy TyMutexDestroy
+#elif defined(__APPLE__)
 inline static bool
 TySpinLockInit(TySpinLock *spin)
 {
@@ -954,12 +954,6 @@ TySpinLockDestroy(TySpinLock *spin)
 {
         return true;
 }
-#elif defined(TY_USE_NSYNC)
-  #define TySpinLockInit    TyMutexInit
-  #define TySpinLockTryLock TyMutexTryLock
-  #define TySpinLockLock    TyMutexLock
-  #define TySpinLockUnlock  TyMutexUnlock
-  #define TySpinLockDestroy TyMutexDestroy
 #else
 inline static bool
 TySpinLockInit(TySpinLock *spin)

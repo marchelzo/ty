@@ -843,7 +843,7 @@ fn __pidinfo[T](pid: Int, flavor: Int, info: T, arg: Int = 0) -> T where T: Proc
     info
 }
 
-fn __bsd(pid: Int) {
+fn __bsd(pid: Int) -> ProcBsdInfo {
     __pidinfo(pid, PROC_PIDTBSDINFO, ProcBsdInfo())
 }
 
