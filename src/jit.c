@@ -11026,9 +11026,9 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                 }
 
                 CASE(CLEAR_RC) {
-                        // ty->st->rc = 0;
+                        jit_emit_ldr64(asm, BC_S1, BC_TY, OFF_TY_ST);
                         jit_emit_load_imm(asm, BC_S0, 0);
-                        jit_emit_str32(asm, BC_S0, BC_TY, (int)offsetof(co_state, rc));
+                        jit_emit_str32(asm, BC_S0, BC_S1, OFF_ST_RC);
                         break;
                 }
 

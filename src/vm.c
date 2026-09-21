@@ -1623,9 +1623,9 @@ xjit(Ty *ty, isize depth, JitFn *func, i32 resume_idx, Value *args, Value **env)
                 args = v_(STACK, ai);
         }
 
-        ++EXEC_DEPTH;
         IP = &JIT;
 
+        ++EXEC_DEPTH;
         ++EXEC_DEPTH;
         i32 rc = (*func)(ty, resume_idx, args, env, &v_(FRAMES, depth)->jit_pc);
         --EXEC_DEPTH;
@@ -2901,6 +2901,13 @@ RaiseException(Ty *ty)
         }
         ctx->exc = exc;
         DoThrow(ty);
+}
+
+inline static void
+TakeExtra(Ty *ty)
+{
+        vN(STACK) += RC;
+        RC = 0;
 }
 
 static void
@@ -6045,7 +6052,7 @@ LoopCheck(Ty *ty, i32 z, char *jump)
                 return true;
         }
 
-        STACK.count += RC;
+        TakeExtra(ty);
         push(INTEGER(k));
 
         i32 i;
@@ -6077,8 +6084,8 @@ LoopCheck(Ty *ty, i32 z, char *jump)
 void
 vm_jit_loop_iter(Ty *ty)
 {
-        push(SENTINEL);
         RC = 0;
+        push(SENTINEL);
         IterGetNext(ty, true);
 }
 
@@ -6095,7 +6102,7 @@ vm_jit_loop_check(Ty *ty, int z)
                 return true;
         }
 
-        STACK.count += RC;
+        TakeExtra(ty);
         push(INTEGER(k));
 
         i32 i, j;
@@ -7780,8 +7787,8 @@ TargetMember:
                         break;
 
                 CASE(LOOP_ITER)
-                        push(SENTINEL);
                         RC = 0;
+                        push(SENTINEL);
                         IterGetNext(ty, false);
                         break;
 
@@ -7826,7 +7833,7 @@ TargetMember:
 
                 CASE(READ_INDEX)
                         k = top()[-3].z - 1;
-                        STACK.count += RC;
+                        TakeExtra(ty);
                         push(INTEGER(k));
                         break;
 
@@ -7857,8 +7864,7 @@ TargetMember:
                         break;
 
                 CASE(GET_EXTRA)
-                        STACK.count += RC;
-                        RC = 0;
+                        TakeExtra(ty);
                         break;
 
                 CASE(FIX_EXTRA)
@@ -8792,7 +8798,7 @@ BinaryOp:
                         for (int i = 0; i <= RC; ++i) {
                                 STACK.items[n + i] = top()[i];
                         }
-                        STACK.count = n + 1;
+                        vN(STACK) = n + 1;
                         vXx(FRAMES);
                         IP = vXx(CALLS);
                         break;
@@ -10194,8 +10200,7 @@ Collect:
                 return pop();
         }
 
-        STACK.count += RC;
-        RC = 0;
+        TakeExtra(ty);
 
         Value xs = ARRAY(vA());
         NOGC(xs.array);

@@ -1949,7 +1949,7 @@ fn ==(a: PlainMonthDay, b: PlainMonthDay) -> Bool { a.equals(b) }
  * Convenience functions + unit constants
  * ============================================================================ */
 
-fn __instant-now() -> Instant {
+pub fn instant-now() -> Instant {
     let secs = time.utc()
     let whole = Int(secs)
     let frac = secs - whole
@@ -1957,7 +1957,7 @@ fn __instant-now() -> Instant {
 }
 
 fn __local-dt() -> PlainDateTime {
-    __instant-now().to-zoned-date-time-iso(__system-time-zone-id()).to-plain-date-time()
+    instant-now().to-zoned-date-time-iso(__system-time-zone-id()).to-plain-date-time()
 }
 
 /* now() returns the current local date-time */
@@ -1974,10 +1974,7 @@ pub fn yesterday() -> PlainDate { today().yesterday }
 pub fn tomorrow() -> PlainDate { today().tomorrow }
 
 /* utc-now() returns the current UTC date-time */
-pub fn utc-now() -> PlainDateTime { __instant-now().to-plain-date-time-utc() }
-
-/* instant-now() returns the current Instant */
-pub fn instant-now() -> Instant { __instant-now() }
+pub fn utc-now() -> PlainDateTime { instant-now().to-plain-date-time-utc() }
 
 /* Unit constants — use with arithmetic: now() + 3*HOUR, today() - 2*WEEK */
 pub NSEC   = Duration(nanoseconds=1)
@@ -1990,10 +1987,10 @@ pub DAY    = Duration(days=1)
 pub WEEK   = Duration(weeks=1)
 
 pub class Now {
-    static instant() -> Instant { __instant-now() }
+    static instant() -> Instant { instant-now() }
     static time-zone-id() -> String { __system-time-zone-id() }
     static zoned-date-time-iso(time-zone: String = __system-time-zone-id()) -> ZonedDateTime {
-        __instant-now().to-zoned-date-time-iso(time-zone)
+        instant-now().to-zoned-date-time-iso(time-zone)
     }
     static plain-date-time-iso(time-zone: String = __system-time-zone-id()) -> PlainDateTime {
         zoned-date-time-iso(time-zone).to-plain-date-time()
@@ -2004,7 +2001,7 @@ pub class Now {
     static plain-time-iso(time-zone: String = __system-time-zone-id()) -> PlainTime {
         zoned-date-time-iso(time-zone).to-plain-time()
     }
-    static plain-date-time-utc() -> PlainDateTime { __instant-now().to-plain-date-time-utc() }
+    static plain-date-time-utc() -> PlainDateTime { instant-now().to-plain-date-time-utc() }
     static plain-date-utc() -> PlainDate { let dt = utc-now(); PlainDate(dt.year, dt.month, dt.day) }
     static plain-time-utc() -> PlainTime { let dt = utc-now(); PlainTime(dt.hour, dt.minute, dt.second, dt.millisecond, dt.microsecond, dt.nanosecond) }
     static plain-date-time-local() -> PlainDateTime { __local-dt() }

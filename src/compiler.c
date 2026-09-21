@@ -12731,8 +12731,8 @@ load_module(Ty *ty, char const *name, Scope *scope)
         PatchModule(ty, module, prog);
         STATE = save;
 
-        vm_exec(ty, module->code);
         class_finalize_all(ty);
+        vm_exec(ty, module->code);
 
         TY_CATCH_END();
 
