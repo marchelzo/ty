@@ -311,9 +311,12 @@ static char const *slow_kind_names[] = {
         [SLOW_ARITH]             = "arith",
 };
 
-#define SLOW_TABLE_SIZE  4906   /* must be power of 2 */
+#define SLOW_TABLE_SIZE  4096   /* must be power of 2 */
 #define SLOW_MAX_TYPES   16     /* top operand types tracked per site */
 #define SLOW_PROBE_LIMIT 16
+
+_Static_assert(SLOW_TABLE_SIZE > 0 && (SLOW_TABLE_SIZE & (SLOW_TABLE_SIZE - 1)) == 0,
+               "SLOW_TABLE_SIZE must be a power of two");
 
 typedef struct {
         char const *ip;        /* bytecode IP (NULL = empty slot) */

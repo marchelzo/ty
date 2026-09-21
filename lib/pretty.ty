@@ -20,23 +20,25 @@ fn _load-colors() {
 }
 
 let defaultColors = _load-colors() ?? {
-    dict:  '#e78a4e bold',
-    array: '#e78a4e bold',
-    str:   '#a9b665',
-    quote: '#a9b665 bold',
-    escape: '#d8a657',
+    dict:    '#e78a4e bold',
+    array:   '#e78a4e bold',
+    str:     '#a9b665',
+    quote:   '#a9b665 bold',
+    escape:  '#d8a657',
     invalid: '#ea6962',
-    int:   '#d3869b',
-    float: '#d3869b',
-    null:  '#89b482',
-    t:     '#d8a657',
-    c:     '#d8a657',
-    field: '#7daea3',
-    bool:  '#d3869b',
-    more:  '#928374'
+    int:     '#d3869b',
+    float:   '#d3869b',
+    null:    '#89b482',
+    t:       '#d8a657',
+    c:       '#d8a657',
+    field:   '#7daea3',
+    bool:    '#d3869b',
+    more:    '#928374'
 }
 
-fn trunc(str, n) { str[;n].comb(/\x1b[[^m]+$/) }
+fn trunc(str: String, n: Int) {
+    str[;n].comb(/\x1b[[^m]+$/)
+}
 
 pub class Printer {
     __width:     Int
@@ -45,6 +47,7 @@ pub class Printer {
     __col:       Int
     __depth:     Int
     __max-depth: Int
+    __max-str:   Int
     __colors:    _
     __color:     Bool
     __visiting:  Array[Any]
@@ -56,7 +59,8 @@ pub class Printer {
         colors:   Any  = defaultColors,
         color:    Bool = true,
         oneline:  Bool = false,
-        depth:    Int  = Int.MAX
+        depth:    Int  = Int.MAX,
+        max-str:  Int  = Int.MAX
     ) {
         __width     = width
         __indent    = indent
@@ -64,6 +68,7 @@ pub class Printer {
         __col       = 0
         __depth     = 0
         __max-depth = depth
+        __max-str   = max-str
         __colors    = colors
         __color     = color
         __visiting  = []
@@ -81,11 +86,19 @@ pub class Printer {
             ''
         }
 
+        let abbrev = if s.width() > __max-str {
+            s = trunc(s, __max-str)
+            true
+        }
+
         write('"', __colors.quote, force)
         if __color {
             s.escape(put)
         } else {
             write(s.escape(), nil, force)
+        }
+        if abbrev {
+            write('…', __colors.more, force)
         }
         write('"', __colors.quote, force)
     }
