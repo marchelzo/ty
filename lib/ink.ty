@@ -6,6 +6,7 @@ import base64
 import path (Path)
 import date
 import log (..)
+import ink.themes as themes
 
 logging({level: ERROR})
 
@@ -201,6 +202,10 @@ pub default-theme = %{
 
 let __tls::_bg-global-sgr: String = ''
 let __tls::__theme-colors: Dict[String, String] = %{}
+
+pub fn set-theme(name: String) {
+    set-theme(themes.get(name))
+}
 
 pub fn set-theme(overrides: Dict[String, String] = %{}) {
     let base = (#overrides > 0) ? default-theme : native-theme
@@ -783,6 +788,7 @@ pub class TextInput < Component {
     history-file:  String | nil
     width:         Int | nil
     color:         String | Function | nil
+    border-style:  String | Array[String] | Function | false | nil
     border-color:  String | Function | nil
     value:         String | nil
 
@@ -1103,7 +1109,8 @@ pub class TextInput < Component {
         let w: Int = int(width ?? 20)
         let ph = placeholder ?? ''
         let clr = resolve(color, focused? ? 'selection' : 'text')
-        let bc = resolve(border-color, focused? ? 'border-focus' : 'border')
+        let bstyle = resolve(border-style, 'round')
+        let bcolor = resolve(border-color, focused? ? 'border-focus' : 'border')
         let inner-w = max(w - 4, 1)
 
         let display = (#__chars > 0) ? __chars.join() : ''
@@ -1145,7 +1152,7 @@ pub class TextInput < Component {
                     )}
                 </Box>
             }
-            <Box border-style="round" border-color=bc>
+            <Box border-style=bstyle border-color=bcolor>
                 <Text>{content}</Text>
             </Box>
             {show-comp? && !_inline? &&

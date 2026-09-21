@@ -277,11 +277,11 @@ pub class Path {
         }
     }
 
-    stat -> _ {
+    stat -> os.Stat {
         os.stat("{self}") ?? throw os.OSError('stat()')
     }
 
-    lstat -> _ {
+    lstat -> os.Stat {
         os.lstat("{self}") ?? throw os.OSError('lstat()')
     }
 

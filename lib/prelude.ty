@@ -1122,17 +1122,17 @@ class String : Iterable[String], IntoPtr[Int] {
     scan(pattern: Regex[(1..)]) -> Array[Array[String]];
     scan(pattern: Regex) -> Array[Array[String] | String];
 
-    sub(pattern: String | Regex, replacement: String) -> String;
-    sub(pattern: RegexV, replacement: String | (RegexMatch -> Any)) -> String;
-    sub(pattern: Regex[0], replacement: String | (String -> Any)) -> String;
-    sub(pattern: Regex[(1..)], replacement: String | (Array[String] -> Any)) -> String;
-    sub(pattern: Regex[Any], replacement: String | ((String | Array[String]) -> Any)) -> String;
+    sub(pattern: String | Regex, replacement: String, limit: Int = nil);
+    sub(pattern: RegexV, replacement: String | (RegexMatch -> Any), limit: Int = nil);
+    sub(pattern: Regex[0], replacement: String | (String -> Any), limit: Int = nil);
+    sub(pattern: Regex[(1..)], replacement: String | (Array[String] -> Any), limit: Int = nil);
+    sub(pattern: Regex[Any], replacement: String | ((String | Array[String]) -> Any), limit: Int = nil);
 
-    replace(pattern: String | Regex, replacement: String) -> String;
-    replace(pattern: RegexV, replacement: String | (RegexMatch -> Any)) -> String;
-    replace(pattern: Regex[0], replacement: String | (String -> Any)) -> String;
-    replace(pattern: Regex[(1..)], replacement: String | (Array[String] -> Any)) -> String;
-    replace(pattern: Regex[Any], replacement: String | ((String | Array[String]) -> Any)) -> String;
+    replace(pattern: String | Regex, replacement: String, limit: Int = nil);
+    replace(pattern: RegexV, replacement: String | (RegexMatch -> Any), limit: Int = nil);
+    replace(pattern: Regex[0], replacement: String | (String -> Any), limit: Int = nil);
+    replace(pattern: Regex[(1..)], replacement: String | (Array[String] -> Any), limit: Int = nil);
+    replace(pattern: Regex[Any], replacement: String | ((String | Array[String]) -> Any), limit: Int = nil);
 
     match(pattern: RegexV[(0..)]) -> RegexMatch;
     match(pattern: Regex[0]) -> String | nil;
@@ -2916,7 +2916,7 @@ class Range : Iterable[Int] {
     }
 
     |(r: Range) -> Range {
-        if overlap?(r) {
+        if overlap?(r) || touch?(r) {
             Range(
                 min(self.low, r.low),
                 max(self.high, r.high) + 1
@@ -2929,6 +2929,10 @@ class Range : Iterable[Int] {
     overlap?(r: Range) -> Bool {
         (high   in r)    || (low   in r)
      || (r.high in self) || (r.low in self)
+    }
+
+    touch?(r: Range) -> Bool {
+        (high + 1 == r.low) || (low - 1 == r.high)
     }
 
     clamp(lo, hi) {

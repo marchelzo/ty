@@ -1147,13 +1147,19 @@ string_repeat(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        ASSERT_ARGC("String.replace()", 2);
+        ASSERT_ARGC("String.replace()", 2, 3);
 
-        vec(u8) chars = {0};
         Value pattern = ARGx(0, VALUE_REGEX, VALUE_STRING);
         Value replacement = ARG(1);
+        Value limit = TRY_ARG(2, NULL, INTEGER);
 
         u8 const *s = ss(*string);
+        vec(u8) chars = {0};
+
+        usize count = 0;
+        usize max = !IsMissing(limit) ? limit.z : SIZE_MAX;
+
+        SCRATCH_SAVE();
 
         if (pattern.type == VALUE_STRING) {
                 vmP(&replacement);
@@ -1176,19 +1182,21 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                 u8 const *m;
 
                 if (plen == 0) {
+                        SCRATCH_RESTORE();
                         return *string;
                 }
 
-                while ((m = mmmm(s, len, p, plen)) != NULL) {
-                        vvPn(chars, s, m - s);
-
-                        vvPn(chars, r, sN(replacement));
-
+                while (
+                        ((m = mmmm(s, len, p, plen)) != NULL)
+                     && (count++ < max)
+                ) {
+                        svPn(chars, s, m - s);
+                        svPn(chars, r, sN(replacement));
                         len -= (m - s + plen);
                         s = m + plen;
                 }
 
-                vvPn(chars, s, len);
+                svPn(chars, s, len);
         } else if (replacement.type == VALUE_STRING) {
                 pcre2_code *re = pattern.regex->pcre2;
                 isize len = sN(*string);
@@ -1198,20 +1206,20 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
 
                 for (;;) {
                         isize n = ty_re_match(re, (PCRE2_SPTR)s, len, start);
-                        if (n <= 0) {
+                        if (n <= 0 || ++count > max) {
                                 if (n < -2) {
                                         ty_re_panic(n);
                                 }
                                 break;
                         }
-                        vvPn(chars, s + start, ovec[0] - start);
-                        vvPn(chars, ss(replacement), sN(replacement));
+                        svPn(chars, s + start, ovec[0] - start);
+                        svPn(chars, ss(replacement), sN(replacement));
                         if (ovec[0] >= len) {
                                 start = len;
                                 break;
                         } else if (ovec[0] == ovec[1]) {
                                 sz = u8_rune_sz(s + ovec[1]);
-                                uvPn(chars, s + ovec[1], sz);
+                                svPn(chars, s + ovec[1], sz);
                                 start = ovec[1] + sz;
                         } else {
                                 start = ovec[1];
@@ -1219,7 +1227,7 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                 }
 
                 if (start < len) {
-                        vvPn(chars, s + start, len - start);
+                        svPn(chars, s + start, len - start);
                 }
         } else if (CALLABLE(replacement)) {
                 pcre2_code *re = pattern.regex->pcre2;
@@ -1239,7 +1247,7 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                         isize i = ovec[0];
                         isize j = ovec[1];
 
-                        vvPn(chars, s + start, i - start);
+                        svPn(chars, s + start, i - start);
 
                         match = mkmatch(ty, string, ovec, rc, pattern.regex->detailed);
                         gP(&match);
@@ -1249,24 +1257,24 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                         vmX();
                         gX();
 
-                        uvPn(chars, ss(subst), sN(subst));
+                        svPn(chars, ss(subst), sN(subst));
 
                         if (i == j && i < len) {
                                 j += u8_rune_sz(s + i);
-                                uvPn(chars, s + i, j - i);
+                                svPn(chars, s + i, j - i);
                         }
 
                         start = j;
                 }
 
-                vvPn(chars, s + start, len - start);
+                svPn(chars, s + start, len - start);
         } else {
-                zP("String.replace(): invalid replacement: %s", VSC(&replacement));
+                zP("String.sub(): invalid replacement: %s", VSC(&replacement));
         }
 
         Value r = vSs(vv(chars), vN(chars));
 
-        mF(chars.items);
+        SCRATCH_RESTORE();
 
         return r;
 }
@@ -1278,7 +1286,12 @@ string_is_match(Ty *ty, Value *string, int argc, Value *kwargs)
 
         Value pattern = ARGx(0, VALUE_REGEX);
 
-        isize rc = ty_re_match(pattern.regex->pcre2, (PCRE2_SPTR)ss(*string), sN(*string), 0);
+        isize rc = ty_re_match(
+                pattern.regex->pcre2,
+                (PCRE2_SPTR)ss(*string),
+                sN(*string),
+                0
+        );
         if (UNLIKELY(rc < -2)) {
                 ty_re_panic(rc);
         }

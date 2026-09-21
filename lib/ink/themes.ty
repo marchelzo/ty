@@ -272,3 +272,29 @@ pub const github-light = %{
     'text-dim':      '#6e7781',
     'text-bright':   '#000000'
 }
+
+const THEMES = %{
+    'monokai':                monokai,
+    'gruvbox-dark':           gruvbox-dark,
+    'gruvbox-light':          gruvbox-light,
+    'gruvbox-material-dark':  gruvbox-material-dark,
+    'gruvbox-material-light': gruvbox-material-light,
+    'onedark':                onedark,
+    'ayu-dark':               ayu-dark,
+    'ayu-light':              ayu-light,
+    'solarized-dark':         solarized-dark,
+    'solarized-light':        solarized-light,
+    'github-light':           github-light
+}
+
+pub class UnknownThemeError {
+    name: String
+
+    what -> String {
+        "unknown Ink theme: {name}"
+    }
+}
+
+pub fn get(name: String) -> Dict[String, String] {
+    THEMES[name] ?? throw UnknownThemeError(name)
+}
