@@ -1974,6 +1974,10 @@ class RegexMatch {
         start + #self[0]
     }
 
+    range -> Range {
+        start..end
+    }
+
     pre -> String {
         str.bslice(0, self[0].ptr() - str.ptr())
     }
