@@ -38,6 +38,8 @@ if not let $cmark = c.open('cmark') {
   throw RuntimeError('failed to load cmark')
 }
 
+let free-node = c.dlsym('cmark_node_free', cmark)
+
 C! cmark fn {
     cmark_node *cmark_parse_document(c.ptr, c.u64, c.int)
     int cmark_node_get_type(c.ptr)
@@ -48,6 +50,7 @@ C! cmark fn {
     char *cmark_node_get_literal(c.ptr)
     int cmark_node_get_heading_level(c.ptr)
     int cmark_node_get_list_type(c.ptr)
+    int cmark_node_get_list_start(c.ptr)
     int cmark_node_get_list_tight(c.ptr)
     char *cmark_node_get_fence_info(c.ptr)
     char *cmark_node_get_url(c.ptr)
@@ -94,9 +97,11 @@ pub use RenderFunction = (MarkdownNode, Dict[Int, RenderFunction]) -> String
 
 pub class MarkdownNode {
   __node: _
+  __owner: Ptr[Any] | nil
 
-  init(node) {
+  init(node: Ptr[Any], owner: Ptr[Any] | nil = nil) {
     __node = node
+    __owner = owner
   }
 
   type -> Int {
@@ -107,7 +112,7 @@ pub class MarkdownNode {
     if let $p = cmark_node_get_literal(__node) {
       c.str(p)
     } else if let $c = cmark_node_first_child(__node) and c == cmark_node_last_child(__node) {
-      MarkdownNode(c).text
+      MarkdownNode(c, __owner).text
     }
   }
 
@@ -121,6 +126,11 @@ pub class MarkdownNode {
     if let $t = cmark_node_get_list_type(__node) and t > 0 {
       t
     }
+  }
+
+  list-start -> Int | nil {
+    let start = cmark_node_get_list_start(__node)
+    start > 0 ? start : nil
   }
 
   info-string -> String | nil {
@@ -147,7 +157,7 @@ pub class MarkdownNode {
 
   children* -> Generator[MarkdownNode] {
     for let c = cmark_node_first_child(__node); c != nil; c = cmark_node_next(c) {
-      yield MarkdownNode(c)
+      yield MarkdownNode(c, __owner)
     }
   }
 
@@ -203,6 +213,6 @@ pub class MarkdownNode {
 
 pub fn parse(s: String | Blob) -> MarkdownNode | nil {
   if let $doc = cmark_parse_document(s, s.size(), 0) {
-    MarkdownNode(doc)
+    MarkdownNode(doc, c.auto(doc, free-node))
   }
 }

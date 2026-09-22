@@ -52,7 +52,8 @@ enum {
         MOD_RELOADING   = (1 << 0),
         MOD_PARSE_ERR   = (1 << 1),
         MOD_TYPE_ERR    = (1 << 2),
-        MOD_COMPILE_ERR = (1 << 3)
+        MOD_COMPILE_ERR = (1 << 3),
+        MOD_RESULT      = (1 << 4)
 };
 
 enum {
@@ -69,6 +70,7 @@ enum {
         TYC_NO_TYPES        = (1 << 10),
         TYC_MUT_CONST       = (1 << 11),
         TYC_EXPRESSION      = (1 << 12),
+        TYC_RESULT          = (1 << 13),
 
 #if defined(TY_LS)
         TYC_DEFAULT_FLAGS = (
@@ -311,6 +313,15 @@ compiler_compile_source(
 
 Module *
 TyCompileSource(Ty *ty, char const *source, Scope *scope, u32 flags);
+
+Module *
+TyCompileModule(
+        Ty *ty,
+        char const *source,
+        char const *path,
+        Module const *parent,
+        u32 flags
+);
 
 Module *
 TyLoadModule(Ty *ty, char const *name, u32 flags);

@@ -9800,6 +9800,44 @@ BUILTIN_FUNCTION(ty_mod_load)
         return MODULE(mod);
 }
 
+BUILTIN_FUNCTION(ty_mod_compile)
+{
+        ASSERT_ARGC("ty.mod.compile()", 1, 2, 3);
+        Value source = ARGx(0, VALUE_STRING);
+        Value parent = (argc > 1) ? ARGx(1, VALUE_MODULE, VALUE_NIL) : NIL;
+        Value path   = (argc > 2) ? ARGx(2, VALUE_STRING) : vSsz("(repl)");
+
+        TY_BEGIN_LOADING();
+        GC_STOP();
+        Module *mod = TyCompileModule(
+                ty, TY_0_C_STR(source), TY_C_STR(path),
+                (parent.type == VALUE_NIL) ? NULL : parent.mod,
+                TYC_DEFAULT_FLAGS | TYC_RESULT
+        );
+        GC_RESUME();
+        TY_FINISH_LOADING();
+
+        if (mod == NULL) {
+                bP("%s", TyError(ty));
+        }
+        return MODULE(mod);
+}
+
+BUILTIN_FUNCTION(ty_mod_eval)
+{
+        ASSERT_ARGC("ty.mod.eval()", 1);
+        Module *mod = ARGx(0, VALUE_MODULE).mod;
+        Value result;
+
+        if (mod->code == NULL || !(mod->flags & MOD_RESULT)) {
+                bP("expected a module from ty.mod.compile()");
+        }
+        if (!vm_try_exec(ty, mod->code, &result)) {
+                vmE(&result);
+        }
+        return result;
+}
+
 BUILTIN_FUNCTION(ty_mod_list)
 {
         ASSERT_ARGC("ty.mod.list()", 0);

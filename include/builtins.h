@@ -423,6 +423,10 @@ static struct {
   { .module = "os",         .name = "WCONTINUED",               .value = INT(WCONTINUED)                          },
 #endif
 #ifndef _WIN32
+  { .module = "os",         .name = "FD_CLOEXEC",               .value = INT(FD_CLOEXEC)                          },
+#ifdef FD_CLOFORK
+  { .module = "os",         .name = "FD_CLOFORK",               .value = INT(FD_CLOFORK)                          },
+#endif
   { .module = "os",         .name = "F_SETFD",                  .value = INT(F_SETFD)                             },
   { .module = "os",         .name = "F_GETFD",                  .value = INT(F_GETFD)                             },
   { .module = "os",         .name = "F_GETFL",                  .value = INT(F_GETFL)                             },
@@ -915,6 +919,8 @@ static struct {
 
   { .module = "ty/mod",     .name = "get",                       .value = BUILTIN(builtin_ty_mod_get)             },
   { .module = "ty/mod",     .name = "load",                      .value = BUILTIN(builtin_ty_mod_load)            },
+  { .module = "ty/mod",     .name = "compile",                   .value = BUILTIN(builtin_ty_mod_compile)         },
+  { .module = "ty/mod",     .name = "eval",                      .value = BUILTIN(builtin_ty_mod_eval)            },
   { .module = "ty/mod",     .name = "list",                      .value = BUILTIN(builtin_ty_mod_list)            },
   { .module = "ty/mod",     .name = "name",                      .value = BUILTIN(builtin_ty_mod_name)            },
   { .module = "ty/mod",     .name = "ast",                       .value = BUILTIN(builtin_ty_mod_ast)             },

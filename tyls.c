@@ -301,7 +301,10 @@ main(int argc, char *argv[])
 
                         NewArenaNoGC(ty, 1 << 22);
 
-                        mod = compiler_compile_source(ty, source, file);
+                        mod = TyCompileModule(
+                                ty, source, file, CompilerCurrentModule(ty),
+                                TYC_DEFAULT_FLAGS
+                        );
 
                         if (mod == NULL) {
                                 LOGX("compilation failed: %s\n", TyError(ty));

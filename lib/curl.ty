@@ -3,7 +3,17 @@ import time
 import path (Path)
 import json
 
-if not let $libcurl = c.open('curl') {
+#|if __apple__
+const LIBRARIES = [
+    '/opt/homebrew/opt/curl/lib/libcurl',
+    '/usr/local/opt/curl/lib/libcurl',
+    'curl'
+]
+#|else
+const LIBRARIES = ['curl']
+#|]
+
+if not let $libcurl = c.open(LIBRARIES) {
     throw RuntimeError('failed to load libcurl')
 }
 

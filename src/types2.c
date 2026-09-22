@@ -8486,6 +8486,44 @@ operator_scheme_specificity(T2Checker *checker, T2Scheme const *scheme)
 }
 
 static bool
+operator_scheme_narrower(
+        T2Checker      *checker,
+        T2Scheme const *left,
+        T2Scheme const *right
+)
+{
+        T2Type a = t2_scheme_body(left);
+        T2Type b = t2_scheme_body(right);
+        if (
+                (t2_type_kind(checker->universe, a) != T2_TYPE_FUNCTION)
+             || (t2_type_kind(checker->universe, b) != T2_TYPE_FUNCTION)
+        ) {
+                return false;
+        }
+
+        usize count = t2_callable_parameter_count(checker->universe, a);
+        if (count != t2_callable_parameter_count(checker->universe, b)) {
+                return false;
+        }
+
+        bool strict = false;
+        for (usize i = 0; i < count; ++i) {
+                T2ParameterSpec x;
+                T2ParameterSpec y;
+                if (
+                        !t2_callable_parameter(checker->universe, a, i, &x)
+                     || !t2_callable_parameter(checker->universe, b, i, &y)
+                     || (t2_subtype(checker->universe, x.type, y.type) != T2_RELATION_YES)
+                ) {
+                        return false;
+                }
+                strict |= t2_subtype(checker->universe, y.type, x.type) == T2_RELATION_NO;
+        }
+
+        return strict;
+}
+
+static bool
 operator_type_is_open(T2Checker *checker, T2Type type, unsigned depth)
 {
         if (depth > 64) {
@@ -8727,6 +8765,7 @@ infer_registered_operator_call(
 )
 {
         (void)import_operator_definitions(checker, name);
+        (void)import_operator_table(checker, name, arguments, argument_count);
         bool found             = false;
         usize best             = SIZE_MAX;
         usize applicable_count = 0;
@@ -8773,7 +8812,17 @@ infer_registered_operator_call(
                         checker,
                         candidate.scheme
                 );
-                if (best == SIZE_MAX || score > best_score) {
+                T2Scheme const *previous = (best == SIZE_MAX)
+                                         ? NULL
+                                         : v__(checker->operators, best).scheme;
+                if (
+                        (previous == NULL)
+                     || operator_scheme_narrower(checker, candidate.scheme, previous)
+                     || (
+                                (score > best_score)
+                             && !operator_scheme_narrower(checker, previous, candidate.scheme)
+                        )
+                ) {
                         best       = i;
                         best_score = score;
                 }
@@ -8795,20 +8844,6 @@ infer_registered_operator_call(
                         defer_node(checker, T2_DEFER_OPERATOR_OPEN_OPERAND, site, name);
                         return t2_primitive(checker->universe, T2_TYPE_DYNAMIC);
                 }
-        }
-
-        if (
-                (best == SIZE_MAX)
-             && import_operator_table(checker, name, arguments, argument_count)
-        ) {
-                return infer_registered_operator_call(
-                        checker,
-                        name,
-                        arguments,
-                        argument_count,
-                        site,
-                        diagnose
-                );
         }
 
         if (!found) {

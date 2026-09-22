@@ -538,11 +538,14 @@ pub class TermIO {
     ) {
         __fd = fd
 
-        let $terminfo = unibi.Term()
-        for (i, str) in terminfo.strs {
-            if unibi.name(i).match?(/^key_/) {
-                __ti-keys[str] = i
+        try {
+            for (i, str) in unibi.Term().strs {
+                if unibi.name(i).match?(/^key_/) {
+                    __ti-keys[str] = i
+                }
             }
+        } catch _ {
+            ;
         }
 
         __mouse = mouse
@@ -594,6 +597,13 @@ pub class TermIO {
         __exit  = exit.str!()
 
         (__notif-r, __notif-w) = pipe()
+        if fcntl(__notif-r, F_SETFD, FD_CLOEXEC) < 0
+        || fcntl(__notif-w, F_SETFD, FD_CLOEXEC) < 0 {
+            let error = OSError('fcntl')
+            os.close(__notif-r)
+            os.close(__notif-w)
+            throw error
+        }
         __reader = Thread(__run-reader)
     }
 

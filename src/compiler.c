@@ -12523,6 +12523,16 @@ compile(Ty *ty, char const *source)
 
         emit_new_globals(ty);
 
+        Stmt *result = NULL;
+        if (HAVE_COMPILER_FLAG(RESULT)) {
+                for (int i = 0; p[i] != NULL; ++i) {
+                        result = p[i];
+                }
+                if (result != NULL && is_proc_def(result)) {
+                        result = NULL;
+                }
+        }
+
         /*
          * Move all function definitions to the beginning so that top-level functions have file scope.
          * This allows us to write programs such as
@@ -12571,7 +12581,11 @@ compile(Ty *ty, char const *source)
         }
 
         for (int i = end_of_defs; p[i] != NULL; ++i) {
-                emit_statement(ty, p[i], false);
+                emit_statement(ty, p[i], p[i] == result);
+        }
+
+        if (HAVE_COMPILER_FLAG(RESULT) && result == NULL) {
+                INSN(NIL);
         }
 
         while (STATE.resources > 0) {
@@ -19064,8 +19078,16 @@ IsTopLevel(Symbol const *sym)
             || (GlobalScope == s->parent);
 }
 
-Module *
-TyCompileSource(Ty *ty, char const *source, Scope *global, u32 flags)
+static Module *
+CompileSource(
+        Ty *ty,
+        char const *source,
+        char const *name,
+        char const *path,
+        Scope *global,
+        import_vector const *imports,
+        u32 flags
+)
 {
         CompileState state = STATE;
 
@@ -19076,13 +19098,18 @@ TyCompileSource(Ty *ty, char const *source, Scope *global, u32 flags)
         }
 
         Module *mod = amA0(sizeof (Module));
-        mod->name = "(tmp)";
-        mod->path = "(tmp)";
+        mod->name = name;
+        mod->path = path;
         mod->source = source;
         mod->scope = scope_new(ty, mod->name, global, false);
 
         STATE = freshstate(ty, mod);
         STATE.flags = flags;
+
+        if (imports != NULL) {
+                v0(STATE.imports);
+                vfor(*imports, avP(STATE.imports, *it));
+        }
 
         if (HAVE_COMPILER_FLAG(IMPORT_ALL)) {
                 for (isize i = 0; i < vN(modules); ++i){
@@ -19124,6 +19151,53 @@ TyCompileSource(Ty *ty, char const *source, Scope *global, u32 flags)
 
         TY_CATCH_END();
 
+        return mod;
+}
+
+Module *
+TyCompileSource(Ty *ty, char const *source, Scope *global, u32 flags)
+{
+        return CompileSource(ty, source, "(tmp)", "(tmp)", global, NULL, flags);
+}
+
+Module *
+TyCompileModule(
+        Ty *ty,
+        char const *source,
+        char const *path,
+        Module const *parent,
+        u32 flags
+)
+{
+        usize n = strlen(source);
+        char *text = amA(n + 2);
+        text[0] = '\0';
+        memcpy(text + 1, source, n + 1);
+
+        path = sclonea(ty, path);
+        char const *name = strrchr(path, '/');
+        name = (name == NULL) ? path : name + 1;
+        if (flags & TYC_RESULT) {
+                name = "(repl)";
+        }
+
+        Module *mod = CompileSource(
+                ty, text + 1, name, path,
+                (parent == NULL) ? NULL : parent->scope,
+                (parent == NULL) ? NULL : &parent->imports,
+                flags
+        );
+
+        if (mod->flags & (MOD_PARSE_ERR | MOD_COMPILE_ERR | MOD_TYPE_ERR)) {
+                return NULL;
+        }
+
+        mod->arena = ty->arena;
+        if (flags & TYC_RESULT) {
+                mod->flags |= MOD_RESULT;
+        }
+        xvP(modules, mod);
+        TyImmortalizeArena(ty);
         return mod;
 }
 

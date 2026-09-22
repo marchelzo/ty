@@ -35,11 +35,16 @@ let __tls::_inline?        = false
 
 pub tag Exit;
 pub tag Wake;
+tag Suspend;
 
-use InkEventInternal = Exit | Wake | event.Event
+use InkEventInternal = Exit | Wake | Suspend | event.Event
 
 let _event-queue: SharedQueue[InkEventInternal] = SharedQueue()
 let _tio: term.TermIO | nil = nil
+
+pub fn suspend() {
+    _event-queue.put(Suspend)
+}
 
 pub tag CycleCompletions, ListCompletions, Insert, ReplaceLine;
 
@@ -4430,6 +4435,34 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
     let last-paint = 0.0
 
     signal(SIGWINCH, fn () { dirty = true })
+    let on-interrupt = signal(os.SIGINT)
+    signal(os.SIGINT, -> _event-queue.put(event.EOF))
+    defer signal(os.SIGINT, on-interrupt)
+    let on-suspend = signal(os.SIGTSTP)
+    signal(os.SIGTSTP, suspend)
+    defer signal(os.SIGTSTP, on-suspend)
+
+    fn suspend-terminal() {
+        tio.stop()
+        if fullscreen {
+            write(1, "\x1b[0m\x1b[?25h\x1b[?1049l")
+        } else {
+            ink-write("\x1b[0m\x1b[?25h")
+        }
+
+        signal(os.SIGTSTP, os.SIG_DFL)
+        os.kill(0, os.SIGTSTP)
+        signal(os.SIGTSTP, suspend)
+
+        tio.start()
+        if fullscreen {
+            write(1, "\x1b[?1049h\x1b[?25l")
+        } else {
+            write(1, "\x1b[?25l")
+        }
+        dragging = false
+        dirty = true
+    }
 
     fn cleanup() {
         tio.stop()
@@ -4465,6 +4498,11 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
     }
 
     fn handle(ev) -> Bool {
+        if ev == Suspend {
+            suspend-terminal()
+            return false
+        }
+
         if ev == event.EOF || is-ctrl-c(ev) {
             debug!("handle: quit ({(ev == event.EOF) ? 'EOF' : 'Ctrl-C'})")
             return true

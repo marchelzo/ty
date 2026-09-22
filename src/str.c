@@ -1240,7 +1240,8 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                 Value subst;
 
                 while (
-                        (start < len)
+                        (start <= len)
+                     && (count++ < max)
                      && ((rc = ty_re_match(re, s, len, start)) > 0)
                 ) {
                         // Need to grab these now in case the callback clobbers ovec
@@ -1259,7 +1260,10 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
 
                         svPn(chars, ss(subst), sN(subst));
 
-                        if (i == j && i < len) {
+                        if (i == len) {
+                                start = len;
+                                break;
+                        } else if (i == j) {
                                 j += u8_rune_sz(s + i);
                                 svPn(chars, s + i, j - i);
                         }

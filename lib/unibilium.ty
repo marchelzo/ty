@@ -624,7 +624,12 @@ pub fn from-mem(mem: Blob | String) -> Ptr[_] {
     from_mem(mem, mem.size())
 }
 
-tag InitError;
+pub class InitError < RuntimeError {
+    what -> String {
+        "failed to initialize terminfo"
+    }
+    init() {}
+}
 
 pub class Term {
     __term: _
