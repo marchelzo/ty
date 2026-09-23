@@ -74,6 +74,10 @@ pub fn commits-trees-and-blobs() {
         assert(first.files.map(&.path) == ['dir/hello.txt'])
         assert(first.tree.entry('dir/hello.txt').mode == 0o100644)
         assert(first.tree.has?('dir/hello.txt') && !first.tree.has?('absent'))
+        assert('dir' in first.tree && 'dir/hello.txt' in first.tree)
+        assert(Path('dir/hello.txt') in first.tree)
+        assert('absent' not in first.tree && Path('dir/absent') not in first.tree)
+        assert('dir/hello.txt' in first && 'absent' not in first)
         assert(repo[first.id] == first)
         assert(repo[first.hex[;9]] == first)
         let blob = first['dir/hello.txt']
@@ -253,7 +257,7 @@ pub fn inappropriate-object-operations() {
         let tag-only: [git.GitObject -> Any] = [&.name, &.target, &.tagger]
         let tree-only: [git.GitObject -> Any] = [
             &.tree, &.entries, &.names, &.files, &edit, &[Path('a')],
-            o -> o.read('a'), o -> o.entry('a'), o -> o.has?('a'),
+            o -> o.read('a'), o -> o.entry('a'), o -> o.has?('a'), o -> 'a' in o,
             o -> [*o.walk()], o -> [*o]
         ]
 
@@ -539,5 +543,29 @@ pub fn binary-diffs-and-object-ids() {
         assert('Binary files' in diff.patch)
         let error = try git.Oid("{first.hex}\n") catch e: ValueError { e }
         assert(error :: ValueError)
+    }
+}
+
+pub fn tree-merge-and-reference-comparison() {
+    with path = Path.tempdir('ty-git') {
+        let ^repo = repository(path)
+        let base = save(repo, 'a', 'a\n', 'base')
+        let left = save(repo, 'b', 'b\n', 'left')
+        let right = repo.commit('right', parents: [base], tree: base.tree.edit().write('c', 'c\n').build(), update-ref: None)
+        let tree = repo.merge-trees(base, left, right)
+        assert(tree.names == ['a', 'b', 'c'])
+        let branch = repo.head.name
+        try {
+            repo.update-ref(branch, right, base)
+            throw AssertionError('stale reference update succeeded')
+        } catch _: git.GitError {
+            assert(repo.tip.id == left.id)
+        }
+        repo.update-ref(branch, right, left)
+        assert(repo.tip.id == right.id)
+        let ^index = git.Index(repo, path / 'private-index')
+        index.read-tree(tree).write()
+        assert(index.write-tree().id == tree.id)
+        assert(cli(path, 'write-tree') == left.tree.hex)
     }
 }

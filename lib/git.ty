@@ -137,9 +137,14 @@ ns raw {
                                    const void *local, const void *upstream);
         int git_graph_descendant_of(void *repo, const void *commit, const void *ancestor);
         int git_merge_base(void *out, void *repo, const void *a, const void *b);
+        int git_merge_trees(void **out, void *repo, void *ancestor, void *ours,
+                            void *theirs, const void *opts);
 
         int git_reference_dwim(void **out, void *repo, const char *name);
         int git_reference_lookup(void **out, void *repo, const char *name);
+        int git_reference_create_matching(void **out, void *repo, const char *name,
+                                           const void *id, int force,
+                                           const void *expected, const char *message);
         int git_reference_resolve(void **out, void *ref);
         const char *git_reference_name(void *ref);
         const char *git_reference_shorthand(void *ref);
@@ -169,9 +174,11 @@ ns raw {
                               void *callback, void *payload);
         int git_index_update_all(void *index, const void *paths, void *cb, void *payload);
         int git_index_write(void *index);
+        int git_index_open(void **out, const char *path);
         int git_index_read(void *index, int force);
         int git_index_read_tree(void *index, void *tree);
         int git_index_write_tree(void *out, void *index);
+        int git_index_write_tree_to(void *out, void *index, void *repo);
         int git_index_has_conflicts(void *index);
         void git_index_free(void *index);
 
@@ -912,6 +919,8 @@ pub class GitObject < Handle : Iterable[TreeEntry] {
         }
     }
 
+    contains?(path: String | Path) -> Bool { has?(path) }
+
     __iter__*() -> Generator[TreeEntry] {
         let ^tree = __tree('iterate')
         for i in ..tree.size {
@@ -1213,6 +1222,11 @@ pub class Index < Handle : Iterable[IndexEntry] {
         __repo = repo
     }
 
+    init(repo: Repository, path: String | Path) {
+        super(pointer(raw.git_index_open@(_, z(path))), raw.git_index_free, repo)
+        __repo = repo
+    }
+
     size -> Int { raw.git_index_entrycount(self.handle) }
     #() -> Int { size }
     conflicts? -> Bool { raw.git_index_has_conflicts(self.handle) != 0 }
@@ -1273,7 +1287,8 @@ pub class Index < Handle : Iterable[IndexEntry] {
     }
 
     write-tree() -> Tree {
-        __repo.tree-at(oid-result(raw.git_index_write_tree@(_, self.handle)))
+        let write = raw.git_index_write_tree_to@(_, self.handle, __repo.handle)
+        __repo.tree-at(oid-result(write))
     }
 
     __str__() -> String { "Index({size} entries)" }
@@ -1862,6 +1877,16 @@ pub class Repository < Handle {
         Reference(self, pointer(raw.git_reference_dwim@(_, self.handle, z(name))))
     }
 
+    update-ref(name: String, target: Revision, expected: Revision,
+               message: String = 'update reference') -> Reference {
+        let next = self[target].id
+        let prev = self[expected].id
+        let create = raw.git_reference_create_matching@(_, self.handle, z(name),
+                                                        _, 1, _, z(message))
+        let p = next.with-native(a -> prev.with-native(b -> pointer(create@(_, a, b))))
+        Reference(self, p)
+    }
+
     read(path: String | Path, revision: Revision = 'HEAD') -> String {
         self[revision].read(path)
     }
@@ -2130,6 +2155,20 @@ pub class Repository < Handle {
         } catch _: NotFoundError {
             nil
         }
+    }
+
+    merge-trees(ancestor: Revision, ours: Revision, theirs: Revision) -> Tree {
+        let base  = tree-at(ancestor)
+        let left  = tree-at(ours)
+        let right = tree-at(theirs)
+        let merge = raw.git_merge_trees@(_, self.handle, base.handle,
+                                        left.handle, right.handle, nil)
+        let p = pointer(merge)
+        let ^index = Handle(p, raw.git_index_free, self)
+        if raw.git_index_has_conflicts(p) != 0 {
+            throw ConflictError('tree changes overlap', operation: 'merge trees')
+        }
+        tree-at(oid-result(raw.git_index_write_tree_to@(_, p, self.handle)))
     }
 
     fetch(remote: String = 'origin', *refspecs: String,
