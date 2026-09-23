@@ -9841,7 +9841,6 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES.b                = M_ID("b");
         NAMES.call             = M_ID("__call__");
         NAMES._class_          = M_ID("__class__");
-        NAMES.contains         = M_ID("contains?");
         NAMES.count            = M_ID("__count__");
         NAMES._def_            = M_ID("__def__");
         NAMES._drop_           = M_ID("__drop__");

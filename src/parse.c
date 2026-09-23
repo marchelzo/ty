@@ -2164,22 +2164,6 @@ prefix_dollar(Ty *ty)
         return e;
 }
 
-inline static bool
-is_operator(char const *id)
-{
-        if (strcmp(id, "#") == 0) {
-                return true;
-        }
-
-        for (int i = 0; id[i] != '\0'; ++i) {
-                if (!contains(OperatorCharset, id[i])) {
-                        return false;
-                }
-        }
-
-        return true;
-}
-
 static Expr *
 prefix_identifier(Ty *ty)
 {
@@ -2230,7 +2214,7 @@ prefix_identifier(Ty *ty)
                 return e;
         }
 
-        if (!TypeContext && (e->module == NULL) && is_operator(e->identifier)) {
+        if (!TypeContext && (e->module == NULL) && lex_is_operator(e->identifier)) {
                 e->type = EXPRESSION_OPERATOR;
                 e->op.id = e->identifier;
                 e->end = TEnd;
@@ -2328,6 +2312,9 @@ parse_function(Ty *ty, Expr **name, bool *is_operator)
 
         if (T0 == TOKEN_IDENTIFIER) {
                 e->name = tok()->identifier;
+                if (is_operator != NULL && s_eq(e->name, "in")) {
+                        *is_operator = true;
+                }
                 if (name != NULL) {
                         *name = mkid(tok()->identifier);
                         (*name)->module = tok()->module;

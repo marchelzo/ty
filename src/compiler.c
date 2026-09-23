@@ -3232,7 +3232,7 @@ aggregate_overloads(
 
                 if (
                         !s_eq(meth0->name, v__(*ms, i + 1)->name)
-                     || contains(OperatorCharset, meth0->name[0])
+                     || lex_is_operator(meth0->name)
                 ) {
                         continue;
                 }
@@ -10509,7 +10509,8 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
         case EXPRESSION_NOT_IN:
                 EE(e->left);
                 EE(e->right);
-                EMCALL(NAMES.contains, 1);
+                INSN(BINARY_OP);
+                Ei32(OP_IN);
                 if (e->type == EXPRESSION_NOT_IN) {
                         INSN(NOT);
                 }
@@ -11425,7 +11426,7 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, bool method)
         if (
                 method
              && (
-                        !contains(OperatorCharset, *f->name)
+                        !lex_is_operator(f->name)
                      || (vN(f->params) == 0)
                 )
         ) {
@@ -11475,6 +11476,7 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, bool method)
                                 case EXPRESSION_STAR:
                                 case EXPRESSION_DIV:
                                 case EXPRESSION_PERCENT:
+                                case EXPRESSION_IN:
                                 case EXPRESSION_CMP:
                                 case EXPRESSION_XOR:
                                 case EXPRESSION_SHL:
@@ -16881,7 +16883,7 @@ define_class(Ty *ty, Stmt *s)
         int keep = 0;
         for (int i = 0; i < vN(cd->methods); ++i) {
                 Expr *m = v__(cd->methods, i);
-                if (contains(OperatorCharset, *m->name) && vN(m->params) > 0) {
+                if (lex_is_operator(m->name) && vN(m->params) > 0) {
                         Expr *this;
                         if (CheckTypes) {
                                 this = NewExpr(ty, EXPRESSION_TYPE);

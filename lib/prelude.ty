@@ -91,6 +91,12 @@ fn !::(a: Any, b: Any) -> Bool { !(a :: b) }
 
 fn ==(a: Any, b: Any) -> Bool;
 
+fn in[T](item: T, items: Array[T]) -> Bool { items.contains?(item) }
+fn in[K, V](key: K, items: Dict[K, V]) -> Bool { items.contains?(key) }
+fn in(needle: String | Regex | RegexV, text: String) -> Bool { text.contains?(needle) }
+fn in(item: Int, range: Range) -> Bool { item :: range }
+fn in(inner: Range, outer: Range) -> Bool { (inner.low :: outer) && (inner.high :: outer) }
+
 fn -(a: Int, b: Int) -> Int;
 fn +(a: Int, b: Int) -> Int;
 fn *(a: Int, b: Int) -> Int;
@@ -349,10 +355,6 @@ class Object {
         f(self)
     }
 
-    `in`(other) -> Bool {
-        self in other
-    }
-
     __match__(other) {
         self == other
     }
@@ -478,6 +480,8 @@ class Function : Iter {
 }
 
 class Array[T] : Iterable[T] {
+    contains?(item: T) -> Bool;
+
     init(*xs: T);
 
     static of(*shape, fill=nil) -> _ {
@@ -674,7 +678,7 @@ class Array[T] : Iterable[T] {
         split-when(\_ == p)
     }
 
-    split-any(on: {contains?: T -> Bool}) -> Array[Array[T]] {
+    split-any[U](on: U) -> Array[Array[T]] where (T in U): Bool {
         split-when(\_ in on)
     }
 
@@ -1102,9 +1106,9 @@ class String : Iterable[String], IntoPtr[Int] {
     words() -> [String];
     lines() -> [String];
 
-    #() -> Int;
-    len() -> Int;
-    size() -> Int;
+    #()     -> Int;
+    len()   -> Int;
+    size()  -> Int;
     width() -> Int;
 
     slice(i: Int, j: ?Int, k: ?Int) -> String;
@@ -1122,17 +1126,17 @@ class String : Iterable[String], IntoPtr[Int] {
     scan(pattern: Regex[(1..)]) -> Array[Array[String]];
     scan(pattern: Regex) -> Array[Array[String] | String];
 
-    sub(pattern: String | Regex, replacement: String, limit: Int = nil);
-    sub(pattern: RegexV, replacement: String | (RegexMatch -> Any), limit: Int = nil);
-    sub(pattern: Regex[0], replacement: String | (String -> Any), limit: Int = nil);
-    sub(pattern: Regex[(1..)], replacement: String | (Array[String] -> Any), limit: Int = nil);
-    sub(pattern: Regex[Any], replacement: String | ((String | Array[String]) -> Any), limit: Int = nil);
+    sub(pattern: String | Regex, replacement: String, limit: Int = nil) -> String;
+    sub(pattern: RegexV, replacement: String | (RegexMatch -> Any), limit: Int = nil) -> String;
+    sub(pattern: Regex[0], replacement: String | (String -> Any), limit: Int = nil) -> String;
+    sub(pattern: Regex[(1..)], replacement: String | (Array[String] -> Any), limit: Int = nil) -> String;
+    sub(pattern: Regex[Any], replacement: String | ((String | Array[String]) -> Any), limit: Int = nil) -> String;
 
-    replace(pattern: String | Regex, replacement: String, limit: Int = nil);
-    replace(pattern: RegexV, replacement: String | (RegexMatch -> Any), limit: Int = nil);
-    replace(pattern: Regex[0], replacement: String | (String -> Any), limit: Int = nil);
-    replace(pattern: Regex[(1..)], replacement: String | (Array[String] -> Any), limit: Int = nil);
-    replace(pattern: Regex[Any], replacement: String | ((String | Array[String]) -> Any), limit: Int = nil);
+    replace(pattern: String | Regex, replacement: String, limit: Int = nil) -> String;
+    replace(pattern: RegexV, replacement: String | (RegexMatch -> Any), limit: Int = nil) -> String;
+    replace(pattern: Regex[0], replacement: String | (String -> Any), limit: Int = nil) -> String;
+    replace(pattern: Regex[(1..)], replacement: String | (Array[String] -> Any), limit: Int = nil) -> String;
+    replace(pattern: Regex[Any], replacement: String | ((String | Array[String]) -> Any), limit: Int = nil) -> String;
 
     match(pattern: RegexV[(0..)]) -> RegexMatch;
     match(pattern: Regex[0]) -> String | nil;
@@ -2898,14 +2902,6 @@ class Range : Iterable[Int] {
 
     __str__() {
         "({a} .. {b})"
-    }
-
-    contains?(r: Range) -> Bool {
-        (r.low :: self) && (r.high :: self)
-    }
-
-    contains?(k) -> Bool {
-        k :: self
     }
 
     &(r: Range) -> Range {

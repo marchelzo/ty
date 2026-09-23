@@ -41,6 +41,9 @@ extern LexState *lxst;
 #define OperatorCharset "/=<~|!@%^&*-+>?.$"
 #define MethodNameChars (OperatorCharset ":#[]")
 
+bool
+lex_is_operator(char const *id);
+
 void
 lex_init(Ty *ty, char const *file, char const *src);
 

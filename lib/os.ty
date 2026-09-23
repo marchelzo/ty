@@ -362,10 +362,6 @@ pub class Signals : Iterable[Int] {
         inverse
     }
 
-    contains?(sig: _) -> Bool {
-        sigismember(__set, sig)
-    }
-
     __str__() -> String {
         let names: Array[String] = []
 
@@ -430,6 +426,8 @@ pub class Signals : Iterable[Int] {
         }
     }
 }
+
+pub fn in(sig: Int, signals: Signals) -> Bool { sigismember(signals.__ptr__(), sig) }
 
 #|if __defined__(DT_DIR)
 pub fn walk*(path: String, skip: _ = nil, top: Bool = true) -> Generator[(String, [String], [String])] {

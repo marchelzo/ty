@@ -37,7 +37,7 @@ typedef struct t2_node_info {
         void const *syntax;
         u64         id;
         u32         roles;
-        uint8_t     construct;
+        u8          construct;
         T2Type      type;
         T2Type      annotation;
         bool        inferred;
@@ -473,7 +473,7 @@ static char const *const construct_names[UINT8_MAX + 1] = {
 #undef X
 
 static char const *
-construct_name(uint8_t construct)
+construct_name(u8 construct)
 {
         char const *name = construct_names[construct];
         return (name == NULL) ? "UNKNOWN" : name;
@@ -781,7 +781,7 @@ static T2NodeInfo *
 remember_node(
         T2Checker  *checker,
         void const *syntax,
-        uint8_t     construct,
+        u8          construct,
         u32         role
 )
 {
@@ -8924,7 +8924,7 @@ usable_type(T2Checker *checker, T2Type type)
 }
 
 static bool
-ordering_operation(uint8_t operation)
+ordering_operation(u8 operation)
 {
         switch (operation) {
         case EXPRESSION_LT:
@@ -8968,7 +8968,7 @@ ordered_through_cmp(
 }
 
 static char const *
-compound_operator_name(uint8_t type)
+compound_operator_name(u8 type)
 {
         switch (type) {
         case EXPRESSION_PLUS_EQ:  return "+=";
@@ -9026,26 +9026,27 @@ mutating_operator_result(
 }
 
 static char const *
-binary_operation_name(uint8_t operation)
+binary_operation_name(u8 operation)
 {
         switch (operation) {
-        case EXPRESSION_PLUS:    return "+";
-        case EXPRESSION_MINUS:   return "-";
-        case EXPRESSION_STAR:    return "*";
-        case EXPRESSION_DIV:     return "/";
-        case EXPRESSION_PERCENT: return "%";
-        case EXPRESSION_BIT_AND: return "&";
-        case EXPRESSION_BIT_OR:  return "|";
-        case EXPRESSION_XOR:     return "^";
-        case EXPRESSION_SHL:     return "<<";
-        case EXPRESSION_SHR:     return ">>";
-        case EXPRESSION_LT:      return "<";
-        case EXPRESSION_LEQ:     return "<=";
-        case EXPRESSION_GT:      return ">";
-        case EXPRESSION_GEQ:     return ">=";
-        case EXPRESSION_CMP:     return "<=>";
-        case EXPRESSION_DBL_EQ:  return "==";
-        case EXPRESSION_NOT_EQ:  return "!=";
+        case EXPRESSION_IN:          return "in";
+        case EXPRESSION_PLUS:        return "+";
+        case EXPRESSION_MINUS:       return "-";
+        case EXPRESSION_STAR:        return "*";
+        case EXPRESSION_DIV:         return "/";
+        case EXPRESSION_PERCENT:     return "%";
+        case EXPRESSION_BIT_AND:     return "&";
+        case EXPRESSION_BIT_OR:      return "|";
+        case EXPRESSION_XOR:         return "^";
+        case EXPRESSION_SHL:         return "<<";
+        case EXPRESSION_SHR:         return ">>";
+        case EXPRESSION_LT:          return "<";
+        case EXPRESSION_LEQ:         return "<=";
+        case EXPRESSION_GT:          return ">";
+        case EXPRESSION_GEQ:         return ">=";
+        case EXPRESSION_CMP:         return "<=>";
+        case EXPRESSION_DBL_EQ:      return "==";
+        case EXPRESSION_NOT_EQ:      return "!=";
         case EXPRESSION_CHECK_MATCH: return "::";
         default: return NULL;
         }
@@ -10591,232 +10592,6 @@ resolved_match_subject(T2Checker *checker, T2Type type)
         }
 
         return result;
-}
-
-static T2Type
-string_needle_type(T2Checker *checker)
-{
-        T2Type needle             = t2_primitive(checker->universe, T2_TYPE_STRING);
-        int const classes[]       = { CLASS_REGEX, CLASS_REGEXV };
-        char const *const names[] = { "Regex", "RegexV" };
-        for (usize i = 0; i < 2; ++i) {
-                T2Nominal *nominal = ensure_nominal(checker, classes[i], names[i], 0);
-                if (nominal == NULL) {
-                        continue;
-                }
-                needle = t2_join(
-                        checker->universe,
-                        needle,
-                        apply_nominal(checker, nominal, NULL, 0, NULL)
-                );
-        }
-
-        return needle;
-}
-
-static bool
-membership_compatible(
-        T2Checker  *checker,
-        Expr const *site,
-        T2Type      item,
-        T2Type      accepted,
-        bool        diagnose,
-        char const *code,
-        char const *message
-)
-{
-        T2Type tested = resolved_operation_type(
-                checker,
-                item,
-                T2_PREFER_LOWER_BOUND
-        );
-        T2Type domain = resolved_operation_type(
-                checker,
-                accepted,
-                T2_PREFER_LOWER_BOUND
-        );
-        T2TypeKind tested_kind = t2_type_kind(checker->universe, tested);
-        if (
-                (tested_kind == T2_TYPE_META)
-             || (t2_type_kind(checker->universe, domain) == T2_TYPE_META)
-        ) {
-                return constrain_type_maybe_diagnose(
-                        checker,
-                        site,
-                        item,
-                        accepted,
-                        diagnose,
-                        code,
-                        message
-                );
-        }
-
-        usize count = (tested_kind == T2_TYPE_UNION)
-                    ? t2_type_arity(checker->universe, tested)
-                    : 1;
-        for (usize i = 0; i < count; ++i) {
-                T2Type arm = (tested_kind == T2_TYPE_UNION)
-                           ? t2_type_child(checker->universe, tested, i)
-                           : tested;
-                if (!t2_definitely_disjoint(checker->universe, arm, domain)) {
-                        return true;
-                }
-        }
-
-        if (diagnose) {
-                add_diagnostic(
-                        checker,
-                        site,
-                        T2_DIAGNOSTIC_ERROR,
-                        code,
-                        item,
-                        accepted,
-                        "%s",
-                        message
-                );
-        }
-
-        return false;
-}
-
-static bool
-check_membership(
-        T2Checker  *checker,
-        T2Type      item,
-        T2Type      container,
-        Expr const *site,
-        bool        diagnose
-)
-{
-        container = resolved_operation_type(
-                checker,
-                container,
-                T2_PREFER_LOWER_BOUND
-        );
-        T2TypeKind kind = t2_type_kind(checker->universe, container);
-        if (kind == T2_TYPE_DYNAMIC || kind == T2_TYPE_ERROR || kind == T2_TYPE_ANY) {
-                return true;
-        }
-
-        if (kind == T2_TYPE_UNION) {
-                T2SolverMark coverage = t2_solver_mark(checker->solver);
-                for (usize i = 0; i < t2_type_arity(checker->universe, container); ++i) {
-                        if (
-                                !check_membership(
-                                        checker,
-                                        item,
-                                        t2_type_child(checker->universe, container, i),
-                                        site,
-                                        false
-                                )
-                        ) {
-                                t2_solver_rollback(checker->solver, coverage);
-                                if (diagnose) {
-                                        add_diagnostic(
-                                                checker,
-                                                site,
-                                                T2_DIAGNOSTIC_ERROR,
-                                                "union-membership-coverage",
-                                                item,
-                                                container,
-                                                "not every arm of this union supports the `in` test"
-                                        );
-                                }
-                                return false;
-                        }
-                }
-                t2_solver_commit(checker->solver, coverage);
-                return true;
-        }
-
-        T2Nominal *nominal = nominal_from_type(checker, container);
-        if (nominal != NULL && nominal->class_id == CLASS_ARRAY) {
-                return membership_compatible(
-                        checker,
-                        site,
-                        item,
-                        t2_type_child(checker->universe, container, 0),
-                        diagnose,
-                        "membership-type",
-                        "array membership item has the wrong element type"
-                );
-        }
-
-        if (dict_nominal(checker, nominal)) {
-                return membership_compatible(
-                        checker,
-                        site,
-                        item,
-                        t2_type_child(checker->universe, container, 0),
-                        diagnose,
-                        "membership-type",
-                        "dictionary membership uses the key type"
-                );
-        }
-
-        if (kind == T2_TYPE_STRING || kind == T2_TYPE_LITERAL_STRING) {
-                return constrain_type_maybe_diagnose(
-                        checker,
-                        site,
-                        item,
-                        string_needle_type(checker),
-                        diagnose,
-                        "membership-type",
-                        "string membership requires a String, Regex, or RegexV"
-                );
-        }
-
-        T2SolverMark protocol = t2_solver_mark(checker->solver);
-        T2Type method = infer_method_type(
-                checker,
-                container,
-                "contains?",
-                false,
-                site,
-                false
-        );
-        T2Type result = infer_call_types(
-                checker,
-                method,
-                &item,
-                1,
-                NULL,
-                NULL,
-                0,
-                site,
-                false
-        );
-        bool valid = (result != T2_TYPE_INVALID)
-                  && (t2_type_kind(checker->universe, result) != T2_TYPE_ERROR)
-                  && constrain_type_maybe_diagnose(
-                          checker,
-                          site,
-                          result,
-                          t2_primitive(checker->universe, T2_TYPE_BOOL),
-                          false,
-                          "membership-result",
-                          "membership protocol must return Bool"
-                     )
-                  && !t2_solver_failed(checker->solver);
-        if (valid) {
-                t2_solver_commit(checker->solver, protocol);
-                return true;
-        }
-
-        t2_solver_rollback(checker->solver, protocol);
-        if (diagnose) {
-                add_diagnostic(
-                        checker,
-                        site,
-                        T2_DIAGNOSTIC_ERROR,
-                        "membership-contract",
-                        item,
-                        container,
-                        "container does not expose contains?(item) -> Bool"
-                );
-        }
-
-        return false;
 }
 
 static bool
@@ -14235,6 +14010,10 @@ named_binary_operation(char const *name)
                 return EXPRESSION_MAX_TYPE;
         }
 
+        if (s_eq(name, "in")) {
+                return EXPRESSION_IN;
+        }
+
         if (s_eq(name, "+")) {
                 return EXPRESSION_PLUS;
         }
@@ -15353,15 +15132,15 @@ statement_defines_operator(Stmt const *statement, char const *name)
                 return false;
         }
 
-        char const *target = (statement->target == NULL)
-                           ? NULL
-                           : statement->target->identifier;
-        char const *function = (statement->value == NULL)
-                             ? NULL
-                             : statement->value->name;
+        Expr *target = statement->target;
+        Expr *func   = statement->value;
 
-        return ((target != NULL) && s_eq(target, name))
-            || ((function != NULL) && s_eq(function, name));
+        return LIKELY(target             != NULL)
+            && LIKELY(target->identifier != NULL)
+            && LIKELY(func               != NULL)
+            && LIKELY(func->name         != NULL)
+            && s_eq(target->identifier, name)
+            && s_eq(func->name,         name);
 }
 
 static bool
@@ -17461,16 +17240,20 @@ infer_expression(T2Checker *checker, Expr const *source)
         {
                 T2Type item      = infer_expression(checker, expression->left);
                 T2Type container = infer_expression(checker, expression->right);
-                bool valid = check_membership(
+                result = infer_binary_pair(
                         checker,
+                        EXPRESSION_IN,
                         item,
                         container,
                         expression,
                         true
                 );
-                result = valid
-                       ? t2_primitive(checker->universe, T2_TYPE_BOOL)
-                       : t2_primitive(checker->universe, T2_TYPE_ERROR);
+                if (
+                        (expression->type == EXPRESSION_NOT_IN)
+                     && (t2_type_kind(checker->universe, result) != T2_TYPE_ERROR)
+                ) {
+                        result = t2_primitive(checker->universe, T2_TYPE_BOOL);
+                }
                 break;
         }
         case EXPRESSION_CAST:
@@ -21124,6 +20907,7 @@ apply_function_bounds(T2Checker *checker, Expr const *function)
                 case EXPRESSION_STAR:
                 case EXPRESSION_DIV:
                 case EXPRESSION_PERCENT:
+                case EXPRESSION_IN:
                 case EXPRESSION_CMP:
                 case EXPRESSION_XOR:
                 case EXPRESSION_SHL:

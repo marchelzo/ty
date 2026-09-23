@@ -919,8 +919,6 @@ pub class GitObject < Handle : Iterable[TreeEntry] {
         }
     }
 
-    contains?(path: String | Path) -> Bool { has?(path) }
-
     __iter__*() -> Generator[TreeEntry] {
         let ^tree = __tree('iterate')
         for i in ..tree.size {
@@ -952,6 +950,8 @@ pub class GitObject < Handle : Iterable[TreeEntry] {
         p ? signature(p) : nil
     }
 }
+
+pub fn in(path: String | Path, obj: GitObject) -> Bool { obj.has?(path) }
 
 pub class Commit < GitObject {
     __str__() -> String { "{self.short} {self.summary}" }
@@ -1745,14 +1745,15 @@ pub class BlameHunk {
 
     commit -> Commit { repo.commit-at(id) }
     end -> Int { start + count }
-    contains?(line: Int) -> Bool { start <= line && line < end }
     __str__() -> String { "{id.short} {author.name} {start}..{end}" }
 }
+
+pub fn in(line: Int, hunk: BlameHunk) -> Bool { hunk.start <= line && line < hunk.end }
 
 pub class Blame : Iterable[BlameHunk] {
     hunks: [BlameHunk]
 
-    [](line: Int) -> ?BlameHunk { hunks.find(\_.contains?(line)) }
+    [](line: Int) -> ?BlameHunk { hunks.find(\line in _) }
     __iter__() -> Iter[BlameHunk] { hunks.__iter__() }
     #() -> Int { #hunks }
 }

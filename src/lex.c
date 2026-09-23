@@ -18,6 +18,22 @@
 #include "json.h"
 #include "compiler.h"
 
+bool
+lex_is_operator(char const *id)
+{
+        if ((strcmp(id, "#") == 0) || (strcmp(id, "in") == 0)) {
+                return true;
+        }
+
+        for (int i = 0; id[i] != '\0'; ++i) {
+                if (!contains(OperatorCharset, id[i])) {
+                        return false;
+                }
+        }
+
+        return true;
+}
+
 static Token
 dotoken(Ty *ty, int ctx);
 

@@ -1933,11 +1933,9 @@ pub class XMLAttrSet {
             return %{}
         }
     }
-
-    contains?(key: String) -> Bool {
-        self[key] != nil
-    }
 }
+
+pub fn in(key: String, attrs: XMLAttrSet) -> Bool { attrs[key] != nil }
 
 pub class XMLNode : Iterable[XMLNode] {
     __node: CXMLNode

@@ -18,7 +18,7 @@ typedef struct t2_node {
         u32            arity;
         T2TypeKind     kind;
         T2VariableKind variable_kind;
-        uint8_t        flags;
+        u8             flags;
         T2Type         children[];
 } T2Node;
 
@@ -29,7 +29,7 @@ enum {
         T2_NODE_GRADUAL            = 8
 };
 
-static uint8_t
+static u8
 node_flags_for(T2TypeKind kind)
 {
         switch (kind) {
@@ -97,7 +97,7 @@ typedef vec(u64) T2WatchVector;
 typedef struct t2_meta {
         u32            parent;
         u32            level;
-        uint8_t        rank;
+        u8             rank;
         T2VariableKind variable_kind;
         T2Type         lower;
         T2Type         upper;
@@ -459,7 +459,7 @@ intern_type(
                 (text == NULL) ? UINT64_C(146959810393466560) : XXH3_64bits(text, length)
         );
         hash = HashCombine(hash, arity);
-        uint8_t flags = node_flags_for(kind);
+        u8 flags = node_flags_for(kind);
         for (usize i = 0; i < arity; ++i) {
                 T2Node const *child = get_node(universe, children[i]);
                 if (child == NULL) {
@@ -7401,7 +7401,7 @@ t2_bytes_append(byte_vector *bytes, void const *data, usize size)
 }
 
 bool
-t2_bytes_u8(byte_vector *bytes, uint8_t value)
+t2_bytes_u8(byte_vector *bytes, u8 value)
 {
         xvP(*bytes, (char)value);
         return true;
@@ -7460,7 +7460,7 @@ t2_read_u8(
         unsigned char const *data,
         usize                size,
         usize               *position,
-        uint8_t             *value
+        u8                  *value
 )
 {
         if (*position + 1 > size) {
@@ -7621,8 +7621,8 @@ writer_visit(T2TypeWriter *writer, T2Type type, u32 *index)
                 }
         }
 
-        bool ok = t2_bytes_u8(&writer->table, (uint8_t)node->kind)
-               && t2_bytes_u8(&writer->table, (uint8_t)node->variable_kind)
+        bool ok = t2_bytes_u8(&writer->table, (u8)node->kind)
+               && t2_bytes_u8(&writer->table, (u8)node->variable_kind)
                && t2_bytes_u64(&writer->table, payload)
                && write_text(
                        &writer->table,
@@ -7706,8 +7706,8 @@ struct wire_record {
         char   *text;
         u32     arity;
         u32     first_child;
-        uint8_t kind;
-        uint8_t variable_kind;
+        u8      kind;
+        u8      variable_kind;
 };
 
 static u32
@@ -8005,7 +8005,7 @@ t2_scheme_encode(T2Scheme const *scheme, T2TypeWriter *writer, byte_vector *out)
         for (usize i = 0; i < scheme->quantifier_count; ++i) {
                 if (
                         !t2_bytes_u32(out, scheme->quantifiers[i].id)
-                     || !t2_bytes_u8(out, (uint8_t)scheme->quantifiers[i].kind)
+                     || !t2_bytes_u8(out, (u8)scheme->quantifiers[i].kind)
                      || !t2_bytes_string(out, t2_scheme_quantifier_name(scheme, i))
                 ) {
                         return false;
@@ -8040,7 +8040,7 @@ t2_scheme_encode(T2Scheme const *scheme, T2TypeWriter *writer, byte_vector *out)
                 }
 
                 if (
-                        !t2_bytes_u8(out, (uint8_t)predicate->kind)
+                        !t2_bytes_u8(out, (u8)predicate->kind)
                      || !t2_bytes_u32(out, subtype)
                      || !t2_bytes_u32(out, supertype)
                      || !t2_bytes_u32(out, operand)
@@ -8087,7 +8087,7 @@ t2_scheme_decode(
                || (quantifiers != NULL && names != NULL);
 
         for (u32 i = 0; ok && i < quantifier_count; ++i) {
-                uint8_t kind;
+                u8 kind;
                 ok = t2_read_u32(data, size, position, &quantifiers[i].id)
                   && t2_read_u8(data, size, position, &kind)
                   && t2_read_string(data, size, position, &names[i]);
@@ -8109,7 +8109,7 @@ t2_scheme_decode(
         }
 
         for (u32 i = 0; ok && i < predicate_count; ++i) {
-                uint8_t kind;
+                u8 kind;
                 u32 subtype;
                 u32 supertype;
                 u32 operand;
@@ -12394,7 +12394,7 @@ t2_solver_rollback(T2Solver *solver, T2SolverMark mark)
                         v__(solver->metas, undo.index - 1).parent = (u32)undo.old;
                         break;
                 case T2_UNDO_RANK:
-                        v__(solver->metas, undo.index - 1).rank = (uint8_t)undo.old;
+                        v__(solver->metas, undo.index - 1).rank = (u8)undo.old;
                         break;
                 case T2_UNDO_VARIABLE_KIND:
                         v__(solver->metas, undo.index - 1).variable_kind = (T2VariableKind)undo.old;

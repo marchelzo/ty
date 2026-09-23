@@ -447,7 +447,7 @@ class Element : Iterable[Element] {
     []=(key: String, val: String) -> String { __node.props[key] = val }
 
     has-attr(key: String) -> Bool {
-        __node.props.contains?(key)
+        key in __node.props
     }
 
     remove-attr(key: String) -> String | nil {

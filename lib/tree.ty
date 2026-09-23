@@ -295,10 +295,6 @@ pub class Tree[K, V] : Iterable[(K, V)] {
         findNode(k) != __null
     }
 
-    contains?(k) {
-        findNode(k) != __null
-    }
-
     __iter__*() -> Generator[(K, V)] {
         let s = [__root]
         let nodes = []
@@ -427,3 +423,5 @@ pub function set(xs) {
     for x in xs ?? [] { t.put(x) }
     return t
 }
+
+pub fn in[K, V](key: K, tree: Tree[K, V]) -> Bool { tree.has?(key) }

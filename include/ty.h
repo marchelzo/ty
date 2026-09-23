@@ -757,7 +757,6 @@ typedef struct {
         int call;
         int _cause;
         int _class_;
-        int contains;
         int count;
         int _ctx;
         int _def_;
