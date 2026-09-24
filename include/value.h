@@ -1535,6 +1535,10 @@ ClassOf(Value const *v)
                                           : CLASS_REGEX;
         }
 
+        if (v->type & VALUE_TAGGED) {
+                return tags_get_class(&vvv, tags_first(&vvv, v->tags))->i;
+        }
+
         return CLASS_TOP;
 }
 

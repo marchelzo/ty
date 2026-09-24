@@ -342,7 +342,7 @@ pub class RecurrenceRule {
             }
             rule.parts[pair[0].upper()] = split-unquoted(pair[1], ',')
         }
-        if !rule.parts.has?('FREQ') {
+        if 'FREQ' not in rule.parts {
             throw ICalError('RECUR value is missing FREQ')
         }
         rule

@@ -36,7 +36,7 @@ pub fn test-plain-text() {
     let doc: _ = parse('hello world')
     assert(doc != nil)
     let html = doc.html
-    assert(html.contains?('hello world'), "expected 'hello world' in: {html}")
+    assert('hello world' in html, "expected 'hello world' in: {html}")
 }
 
 pub fn test-heading-levels() {
@@ -45,9 +45,9 @@ pub fn test-heading-levels() {
         let doc: _ = parse("{prefix} Heading {level}")
         assert(doc != nil)
         let html = doc.html
-        assert(html.contains?("<h{level}>"), "expected <h{level}> in: {html}")
-        assert(html.contains?("Heading {level}"), "expected 'Heading {level}' in: {html}")
-        assert(html.contains?("</h{level}>"), "expected </h{level}> in: {html}")
+        assert("<h{level}>" in html, "expected <h{level}> in: {html}")
+        assert("Heading {level}" in html, "expected 'Heading {level}' in: {html}")
+        assert("</h{level}>" in html, "expected </h{level}> in: {html}")
     }
 }
 
@@ -63,21 +63,21 @@ pub fn test-emphasis() {
     let doc: _ = parse('this is *emphatic*')
     assert(doc != nil)
     let html = doc.html
-    assert(html.contains?('<em>emphatic</em>'), "expected <em> in: {html}")
+    assert('<em>emphatic</em>' in html, "expected <em> in: {html}")
 }
 
 pub fn test-strong() {
     let doc: _ = parse('this is **bold**')
     assert(doc != nil)
     let html = doc.html
-    assert(html.contains?('<strong>bold</strong>'), "expected <strong> in: {html}")
+    assert('<strong>bold</strong>' in html, "expected <strong> in: {html}")
 }
 
 pub fn test-inline-code() {
     let doc: _ = parse('use `foo()` here')
     assert(doc != nil)
     let html = doc.html
-    assert(html.contains?('<code>foo()</code>'), "expected <code> in: {html}")
+    assert('<code>foo()</code>' in html, "expected <code> in: {html}")
 }
 
 pub fn test-code-block() {
@@ -88,8 +88,8 @@ print("hello")
     let doc: _ = parse(md)
     assert(doc != nil)
     let html = doc.html
-    assert(html.contains?('<pre>'), "expected <pre> in: {html}")
-    assert(html.contains?('print("hello")'), "expected code content in: {html}")
+    assert('<pre>' in html, "expected <pre> in: {html}")
+    assert('print("hello")' in html, "expected code content in: {html}")
 }
 
 pub fn test-code-block-with-language() {
@@ -101,7 +101,7 @@ def foo():
     let doc: _ = parse(md)
     assert(doc != nil)
     let html = doc.html
-    assert(html.contains?('language-python'), "expected language-python in: {html}")
+    assert('language-python' in html, "expected language-python in: {html}")
 }
 
 pub fn test-code-block-info-string() {
@@ -120,8 +120,8 @@ pub fn test-link() {
     let doc: _ = parse('[click here](https://example.com)')
     assert(doc != nil)
     let html = doc.html
-    assert(html.contains?('<a href="https://example.com">'), "expected link href in: {html}")
-    assert(html.contains?('click here'), "expected link text in: {html}")
+    assert('<a href="https://example.com">' in html, "expected link href in: {html}")
+    assert('click here' in html, "expected link text in: {html}")
 }
 
 pub fn test-link-node-properties() {
@@ -138,7 +138,7 @@ pub fn test-image() {
     let doc: _ = parse('![alt text](image.png)')
     assert(doc != nil)
     let html = doc.html
-    assert(html.contains?('<img src="image.png">'), "expected img tag in: {html}")
+    assert('<img src="image.png">' in html, "expected img tag in: {html}")
 }
 
 pub fn test-unordered-list() {
@@ -148,11 +148,11 @@ pub fn test-unordered-list() {
     let doc: _ = parse(md)
     assert(doc != nil)
     let html = doc.html
-    assert(html.contains?('<ul>'), "expected <ul> in: {html}")
-    assert(html.contains?('<li>'), "expected <li> in: {html}")
-    assert(html.contains?('one'), "expected 'one' in: {html}")
-    assert(html.contains?('two'), "expected 'two' in: {html}")
-    assert(html.contains?('three'), "expected 'three' in: {html}")
+    assert('<ul>' in html, "expected <ul> in: {html}")
+    assert('<li>' in html, "expected <li> in: {html}")
+    assert('one' in html, "expected 'one' in: {html}")
+    assert('two' in html, "expected 'two' in: {html}")
+    assert('three' in html, "expected 'three' in: {html}")
 }
 
 pub fn test-ordered-list() {
@@ -164,9 +164,9 @@ pub fn test-ordered-list() {
     let doc: _ = parse(md)
     assert(doc != nil)
     let html = doc.html
-    assert(html.contains?('<ol>'), "expected <ol> in: {html}")
-    assert(html.contains?('<li>'), "expected <li> in: {html}")
-    assert(html.contains?('first'), "expected 'first' in: {html}")
+    assert('<ol>' in html, "expected <ol> in: {html}")
+    assert('<li>' in html, "expected <li> in: {html}")
+    assert('first' in html, "expected 'first' in: {html}")
 }
 
 pub fn test-list-type-bullet() {
@@ -194,7 +194,7 @@ pub fn test-paragraph() {
     let doc: _ = parse('A simple paragraph.')
     assert(doc != nil)
     let html = doc.html
-    assert(html.contains?('<p>A simple paragraph.</p>'), "expected paragraph in: {html}")
+    assert('<p>A simple paragraph.</p>' in html, "expected paragraph in: {html}")
 }
 
 pub fn test-multiple-paragraphs() {
@@ -204,8 +204,8 @@ Second paragraph.'
     let doc: _ = parse(md)
     assert(doc != nil)
     let html = doc.html
-    assert(html.contains?('First paragraph'), "expected first paragraph in: {html}")
-    assert(html.contains?('Second paragraph'), "expected second paragraph in: {html}")
+    assert('First paragraph' in html, "expected first paragraph in: {html}")
+    assert('Second paragraph' in html, "expected second paragraph in: {html}")
     let paras = children-of-type(doc, NodeType.Paragraph)
     assert(paras.len() == 2, "expected 2 paragraphs, got {paras.len()}")
 }
@@ -232,8 +232,8 @@ pub fn test-nested-formatting() {
     let doc: _ = parse('this is ***bold and italic***')
     assert(doc != nil)
     let html = doc.html
-    assert(html.contains?('<strong>'), "expected <strong> in: {html}")
-    assert(html.contains?('<em>'), "expected <em> in: {html}")
+    assert('<strong>' in html, "expected <strong> in: {html}")
+    assert('<em>' in html, "expected <em> in: {html}")
 }
 
 pub fn test-empty-input() {
@@ -270,18 +270,18 @@ Check out [this link](https://example.com) for more.
     let doc: _ = parse(md)
     assert(doc != nil)
     let html = doc.html
-    assert(html.contains?('<h1>'), "expected h1")
-    assert(html.contains?('My Document'), "expected 'My Document'")
-    assert(html.contains?('<strong>bold</strong>'), "expected bold")
-    assert(html.contains?('<em>italic</em>'), "expected italic")
-    assert(html.contains?('<code>code</code>'), "expected inline code")
-    assert(html.contains?('<h2>'), "expected h2")
-    assert(html.contains?('<ul>'), "expected unordered list")
-    assert(html.contains?('<h3>'), "expected h3")
-    assert(html.contains?('language-ty'), "expected language-ty")
-    assert(html.contains?('let x = 42'), "expected code content")
-    assert(html.contains?('<a href="https://example.com">'), "expected link")
-    assert(html.contains?('<ol>'), "expected ordered list")
+    assert('<h1>' in html, "expected h1")
+    assert('My Document' in html, "expected 'My Document'")
+    assert('<strong>bold</strong>' in html, "expected bold")
+    assert('<em>italic</em>' in html, "expected italic")
+    assert('<code>code</code>' in html, "expected inline code")
+    assert('<h2>' in html, "expected h2")
+    assert('<ul>' in html, "expected unordered list")
+    assert('<h3>' in html, "expected h3")
+    assert('language-ty' in html, "expected language-ty")
+    assert('let x = 42' in html, "expected code content")
+    assert('<a href="https://example.com">' in html, "expected link")
+    assert('<ol>' in html, "expected ordered list")
 }
 
 pub fn test-text-node-type() {
@@ -298,8 +298,8 @@ pub fn test-document-html-wrapper() {
     let doc: _ = parse('hi')
     assert(doc != nil)
     let html = doc.html
-    assert(html.contains?('<html>'), "expected <html> wrapper")
-    assert(html.contains?('<body>'), "expected <body> wrapper")
-    assert(html.contains?('</body>'), "expected </body>")
-    assert(html.contains?('</html>'), "expected </html>")
+    assert('<html>' in html, "expected <html> wrapper")
+    assert('<body>' in html, "expected <body> wrapper")
+    assert('</body>' in html, "expected </body>")
+    assert('</html>' in html, "expected </html>")
 }

@@ -73,7 +73,7 @@ pub fn commits-trees-and-blobs() {
         assert(first.tree.names == ['dir'])
         assert(first.files.map(&.path) == ['dir/hello.txt'])
         assert(first.tree.entry('dir/hello.txt').mode == 0o100644)
-        assert(first.tree.has?('dir/hello.txt') && !first.tree.has?('absent'))
+        assert('dir/hello.txt' in first.tree && 'absent' not in first.tree)
         assert('dir' in first.tree && 'dir/hello.txt' in first.tree)
         assert(Path('dir/hello.txt') in first.tree)
         assert('absent' not in first.tree && Path('dir/absent') not in first.tree)
@@ -167,8 +167,8 @@ pub fn object-accessors() {
         assert(tree.files.map(&.path) == ['dir/a'])
         assert([*tree.walk('prefix/').map(&.path)] == ['prefix/dir/a'])
         assert(tree.entry('dir/a').object.text == blob.text)
-        assert(tree.read('dir/a') == blob.text && tree.has?('dir/a'))
-        assert(!tree.has?('missing') && tree.diff(first).stats.deletions == 1)
+        assert(tree.read('dir/a') == blob.text && 'dir/a' in tree)
+        assert('missing' not in tree && tree.diff(first).stats.deletions == 1)
         assert([*commit.map(&.name)] == tree.names)
         let ^edit = tree.edit()
         let edited = edit.write('b', 'new\n').build()
@@ -257,7 +257,7 @@ pub fn inappropriate-object-operations() {
         let tag-only: [git.GitObject -> Any] = [&.name, &.target, &.tagger]
         let tree-only: [git.GitObject -> Any] = [
             &.tree, &.entries, &.names, &.files, &edit, &[Path('a')],
-            o -> o.read('a'), o -> o.entry('a'), o -> o.has?('a'), o -> 'a' in o,
+            o -> o.read('a'), o -> o.entry('a'), o -> o.contains?('a'), o -> 'a' in o,
             o -> [*o.walk()], o -> [*o]
         ]
 
@@ -371,7 +371,7 @@ pub fn branches-tags-and-checkout() {
         let renamed = branch.rename('renamed')
         assert(renamed.shorthand == 'renamed' && branch.closed?)
         renamed.delete!()
-        assert(!repo.branches.has?('renamed'))
+        assert('renamed' not in repo.branches)
         assert(cli(path, 'rev-parse', 'v1^{}') == second.hex)
     }
 }
@@ -390,7 +390,7 @@ pub fn config-and-errors() {
         assert(config.dict['ty.answer'] == '42')
         assert(config.delete('ty.answer') && !config.delete('ty.answer'))
         assert(config.int('ty.answer', 7) == 7)
-        assert(!repo.has?('missing'))
+        assert('missing' not in repo)
         let error = try repo['missing'] catch e: git.NotFoundError { e }
         assert(error :: git.NotFoundError && error.code == -3)
     }
@@ -469,7 +469,7 @@ pub fn snapshots-without-a-workdir() {
         assert(commit.tree.entry('run').executable?)
         let ^edit = tree.edit()
         let next = edit.remove('run').write('file', 'new\n').build()
-        assert(!next.has?('run') && tree.has?('run'))
+        assert('run' not in next && 'run' in tree)
         assert(repo.diff(tree, next).stats.files == 2)
         assert(cli(path, 'show', 'HEAD:dir/hello') == 'hello')
     }

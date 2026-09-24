@@ -5732,25 +5732,6 @@ interface_builtins(
                         2,
                         NULL
                 );
-                T2Type contains = builtin_method_callable(
-                        checker,
-                        &(T2ParameterSpec) {
-                                .name     = "key",
-                                .type     = key,
-                                .kind     = T2_PARAMETER_POSITIONAL_OR_KEYWORD,
-                                .required = true
-                        },
-                        1,
-                        boolean
-                );
-                (void)add_builtin_method(
-                        checker,
-                        class_id,
-                        "has?",
-                        contains,
-                        class_quantifiers,
-                        class_arity
-                );
                 T2Type key_read = builtin_method_callable(
                         checker,
                         &(T2ParameterSpec) {
@@ -5774,7 +5755,17 @@ interface_builtins(
                         checker,
                         class_id,
                         "contains?",
-                        contains,
+                        builtin_method_callable(
+                                checker,
+                                &(T2ParameterSpec) {
+                                        .name     = "key",
+                                        .type     = t2_primitive(checker->universe, T2_TYPE_ANY),
+                                        .kind     = T2_PARAMETER_POSITIONAL_OR_KEYWORD,
+                                        .required = true
+                                },
+                                1,
+                                boolean
+                        ),
                         class_quantifiers,
                         class_arity
                 );
@@ -9114,6 +9105,15 @@ in_place_array_append(
 }
 
 static T2Type
+infer_membership_type(
+        T2Checker  *checker,
+        T2Type      item,
+        T2Type      container,
+        Expr const *site,
+        bool        diagnose
+);
+
+static T2Type
 infer_binary_pair(
         T2Checker  *checker,
         uint8_t     operation,
@@ -9137,6 +9137,10 @@ infer_binary_pair(
         T2TypeKind right_kind = t2_type_kind(checker->universe, right);
         if (left_kind == T2_TYPE_ERROR || right_kind == T2_TYPE_ERROR) {
                 return t2_primitive(checker->universe, T2_TYPE_ERROR);
+        }
+
+        if (operation == EXPRESSION_IN) {
+                return infer_membership_type(checker, left, right, site, diagnose);
         }
 
         if (
@@ -10472,6 +10476,48 @@ infer_method_type(
                 object,
                 name,
                 safe,
+                site,
+                diagnose
+        );
+}
+
+static T2Type
+infer_membership_type(
+        T2Checker  *checker,
+        T2Type      item,
+        T2Type      container,
+        Expr const *site,
+        bool        diagnose
+)
+{
+        if (meta_headed(checker, container)) {
+                return retain_operator_predicate(
+                        checker,
+                        "in",
+                        (T2Type[]) { item, container },
+                        2,
+                        site,
+                        diagnose
+                );
+        }
+
+        T2Type method = infer_method_type(
+                checker,
+                container,
+                "contains?",
+                false,
+                site,
+                diagnose
+        );
+
+        return infer_runtime_call_types(
+                checker,
+                method,
+                &item,
+                1,
+                NULL,
+                NULL,
+                0,
                 site,
                 diagnose
         );
@@ -28951,6 +28997,7 @@ infer_open_operator(T2Checker *checker, T2Predicate const *predicate)
         if (
                 predicate->kind != T2_PREDICATE_OPERATOR
              || predicate->name == NULL
+             || s_eq(predicate->name, "in")
              || t2_type_kind(checker->universe, predicate->operand) == T2_TYPE_NEVER
         ) {
                 return false;

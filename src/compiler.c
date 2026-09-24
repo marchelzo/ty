@@ -1627,6 +1627,15 @@ WillReturn(void const *_e)
         return false;
 }
 
+inline static i32
+SymbolClassID(Ty *ty, Symbol const *sym)
+{
+        return SymbolIsTag(sym)
+             ? tags_get_class(ty, sym->tag)->i
+             : sym->class
+             ;
+}
+
 static i32
 ResolveClassSpec(Ty *ty, Expr const *spec)
 {
@@ -1656,7 +1665,7 @@ Restart:
                         goto Sorry;
                 }
                 if (
-                        (c = spec->symbol->class) < 0
+                        ((c = SymbolClassID(ty, spec->symbol)) < 0)
                      && (spec->symbol != AnyTypeSymbol)
                      && !SymbolIsTypeVar(spec->symbol)
                 ) {
@@ -10509,8 +10518,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
         case EXPRESSION_NOT_IN:
                 EE(e->left);
                 EE(e->right);
-                INSN(BINARY_OP);
-                Ei32(OP_IN);
+                EMCALL(M_ID("contains?"), 1);
                 if (e->type == EXPRESSION_NOT_IN) {
                         INSN(NOT);
                 }
@@ -12887,7 +12895,7 @@ compiler_init(Ty *ty)
                 Class *c = class_new_empty(ty);
                 Symbol *sym = addsymbol(ty, GlobalScope, c->name);
                 sym->class = c->i;
-                sym->flags |= (SYM_PUBLIC | SYM_CONST | SYM_BUILTIN);
+                sym->flags |= (SYM_PUBLIC | SYM_CONST | SYM_BUILTIN | SYM_CLASS);
         }
 
         class_set_super(ty, CLASS_COMPILE_ERROR,  CLASS_ERROR);

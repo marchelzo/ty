@@ -910,7 +910,7 @@ pub class GitObject < Handle : Iterable[TreeEntry] {
     [](path: String | Path) -> GitObject { entry(path).object }
     read(path: String | Path) -> String { self[path].text }
 
-    has?(path: String | Path) -> Bool {
+    contains?(path: String | Path) -> Bool {
         try {
             entry(path)
             true
@@ -950,8 +950,6 @@ pub class GitObject < Handle : Iterable[TreeEntry] {
         p ? signature(p) : nil
     }
 }
-
-pub fn in(path: String | Path, obj: GitObject) -> Bool { obj.has?(path) }
 
 pub class Commit < GitObject {
     __str__() -> String { "{self.short} {self.summary}" }
@@ -1131,7 +1129,7 @@ pub class References : Iterable[Reference] {
     [](name: String) -> Reference { __repo.ref("{__prefix}{name}") }
     #() -> Int { #names }
 
-    has?(name: String) -> Bool { name in names }
+    contains?(name: String) -> Bool { name in names }
 
     __iter__*() -> Generator[Reference] {
         for name in names {
@@ -1709,7 +1707,7 @@ pub class Remotes : Iterable[Remote] {
 
     names -> [String] { strings(raw.git_remote_list@(_, __repo.handle)) }
     #() -> Int { #names }
-    has?(name: String) -> Bool { name in names }
+    contains?(name: String) -> Bool { name in names }
 
     [](name: String) -> Remote {
         Remote(__repo, pointer(raw.git_remote_lookup@(_, __repo.handle, z(name))))
@@ -1745,10 +1743,9 @@ pub class BlameHunk {
 
     commit -> Commit { repo.commit-at(id) }
     end -> Int { start + count }
+    contains?(line: Int) -> Bool { start <= line && line < end }
     __str__() -> String { "{id.short} {author.name} {start}..{end}" }
 }
-
-pub fn in(line: Int, hunk: BlameHunk) -> Bool { hunk.start <= line && line < hunk.end }
 
 pub class Blame : Iterable[BlameHunk] {
     hunks: [BlameHunk]
@@ -1865,7 +1862,7 @@ pub class Repository < Handle {
         cast(peel(self[revision], Kind.Blob, 'blob-at'))
     }
 
-    has?(revision: Revision) -> Bool {
+    contains?(revision: Revision) -> Bool {
         try {
             self[revision]
             true

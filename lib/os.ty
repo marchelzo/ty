@@ -315,6 +315,8 @@ pub class Signals : Iterable[Int] {
         __set
     }
 
+    contains?(sig: Int) -> Bool { sigismember(__set, sig) }
+
     add(*sigs) {
         for sig in sigs {
             sigaddset(__set, sig)
@@ -426,8 +428,6 @@ pub class Signals : Iterable[Int] {
         }
     }
 }
-
-pub fn in(sig: Int, signals: Signals) -> Bool { sigismember(signals.__ptr__(), sig) }
 
 #|if __defined__(DT_DIR)
 pub fn walk*(path: String, skip: _ = nil, top: Bool = true) -> Generator[(String, [String], [String])] {

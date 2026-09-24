@@ -16,21 +16,21 @@ pub fn test-dict-intersect-copy() {
     let d1 = %{'a': 1, 'b': 2, 'c': 3}
     let d2 = %{'b': 20, 'c': 30, 'd': 40}
     let r = d1 & d2
-    assert(r.has?('b'))
-    assert(r.has?('c'))
-    assert(!r.has?('a'))
-    assert(!r.has?('d'))
-    assert(d1.has?('a'))
+    assert('b' in r)
+    assert('c' in r)
+    assert('a' not in r)
+    assert('d' not in r)
+    assert('a' in d1)
 }
 
 pub fn test-dict-keep-mut() {
     let d = %{'a': 1, 'b': 2, 'c': 3, 'd': 4}
     d.keep!((k, v) -> v > 2)
     assert(#d == 2)
-    assert(d.has?('c'))
-    assert(d.has?('d'))
-    assert(!d.has?('a'))
-    assert(!d.has?('b'))
+    assert('c' in d)
+    assert('d' in d)
+    assert('a' not in d)
+    assert('b' not in d)
 }
 
 pub fn test-dict-update-with() {
@@ -47,9 +47,9 @@ pub fn test-dict-subtract-callback() {
     let u = %{'a': 1, 'b': 2}
     let xs = []
     d.subtract(u, (sv, ov) -> xs.push("{sv},{ov}"))
-    assert(!d.has?('a'))
-    assert(!d.has?('b'))
-    assert(d.has?('c') && d['c'] == 300)
+    assert('a' not in d)
+    assert('b' not in d)
+    assert('c' in d && d['c'] == 300)
     let fa = false
     let fb = false
     for x in xs {

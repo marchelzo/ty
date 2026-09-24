@@ -4549,6 +4549,10 @@ void
 DoBinaryOp(Ty *ty, int op, bool exec)
 {
         switch (op) {
+        case OP_IN:
+                CallMethod(ty, M_ID("contains?"), 1, 0, false, exec);
+                return;
+
         case OP_CMP: DoCmp(ty); return;
         case OP_EQL: DoEq(ty);  return;
         case OP_NEQ: DoNeq(ty); return;

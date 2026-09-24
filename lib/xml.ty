@@ -1900,6 +1900,8 @@ pub class XMLAttrSet {
         }
     }
 
+    contains?(key: String) -> Bool { self[key] != nil }
+
     delete(key: String) {
         if let $val = self[key] {
             xmlUnsetProp(__node, key.cstr())
@@ -1934,8 +1936,6 @@ pub class XMLAttrSet {
         }
     }
 }
-
-pub fn in(key: String, attrs: XMLAttrSet) -> Bool { attrs[key] != nil }
 
 pub class XMLNode : Iterable[XMLNode] {
     __node: CXMLNode

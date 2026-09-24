@@ -18,6 +18,9 @@ pub fn xml-xpath() {
     })
     let msgs = []
     for node in doc['//keyed[lowkey(.)]'] {
+        assert('id' in node.props)
+        assert('absent' not in node.props)
+        assert('id' in node.props)
         if let $msg = node.props.?msg {
             msgs.push(msg)
         }

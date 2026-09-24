@@ -934,7 +934,6 @@ DEFINE_METHOD_TABLE(
         { .name = "default",      .func = dict_default         },
         { .name = "diff",         .func = dict_diff            },
         { .name = "getOrPutWith", .func = dict_get_or_put_with },
-        { .name = "has?",         .func = dict_contains        },
         { .name = "intersect",    .func = dict_intersect       },
         { .name = "items",        .func = dict_items           },
         { .name = "keep",         .func = dict_keep            },

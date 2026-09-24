@@ -66,7 +66,7 @@ fn handle-client(fd: Int) {
     let path = request.url.split('?', 1)[0]
 
     if request.method == 'GET' && path == '/get' {
-        let ok = request.url.contains?('foo=bar')
+        let ok = 'foo=bar' in request.url
         reply(fd, json.encode(%{'ok': ok}), status=ok ? 200 : 400,
               headers=%{'Content-Type': 'application/json'})
     } else if request.method == 'POST' && path == '/json' {
@@ -76,12 +76,12 @@ fn handle-client(fd: Int) {
         reply(fd, json.encode(%{'ok': ok}), status=ok ? 200 : 400,
               headers=%{'Content-Type': 'application/json'})
     } else if request.method == 'POST' && path == '/multipart' {
-        let ok = request.body.contains?('name="field1"')
-              && request.body.contains?('value1')
-              && request.body.contains?('name="field2"')
-              && request.body.contains?('value2')
-              && request.body.contains?('filename="test.txt"')
-              && request.body.contains?('Hello from file!')
+        let ok = 'name="field1"' in request.body
+              && 'value1' in request.body
+              && 'name="field2"' in request.body
+              && 'value2' in request.body
+              && 'filename="test.txt"' in request.body
+              && 'Hello from file!' in request.body
         reply(fd, json.encode(%{'ok': ok}), status=ok ? 200 : 400,
               headers=%{'Content-Type': 'application/json'})
     } else if request.method == 'GET' && path == '/basic-auth/user/passwd' {

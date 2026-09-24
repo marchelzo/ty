@@ -91,12 +91,6 @@ fn !::(a: Any, b: Any) -> Bool { !(a :: b) }
 
 fn ==(a: Any, b: Any) -> Bool;
 
-fn in[T](item: T, items: Array[T]) -> Bool { items.contains?(item) }
-fn in[K, V](key: K, items: Dict[K, V]) -> Bool { items.contains?(key) }
-fn in(needle: String | Regex | RegexV, text: String) -> Bool { text.contains?(needle) }
-fn in(item: Int, range: Range) -> Bool { item :: range }
-fn in(inner: Range, outer: Range) -> Bool { (inner.low :: outer) && (inner.high :: outer) }
-
 fn -(a: Int, b: Int) -> Int;
 fn +(a: Int, b: Int) -> Int;
 fn *(a: Int, b: Int) -> Int;
@@ -480,7 +474,7 @@ class Function : Iter {
 }
 
 class Array[T] : Iterable[T] {
-    contains?(item: T) -> Bool;
+    contains?(item: Any) -> Bool;
 
     init(*xs: T);
 
@@ -1000,6 +994,8 @@ use AST = __define_ast!(fn (t0) { t0 })
 class Dict[K, V] : Iterable[K, V] {
     init();
 
+    contains?(key: Any) -> Bool;
+
     clone() -> Dict[K, V];
 
     keys()   -> Array[K];
@@ -1085,6 +1081,8 @@ class String : Iterable[String], IntoPtr[Int] {
 
     upper() -> String;
     lower() -> String;
+
+    contains?(pattern: String | Regex | RegexV, offset: ?Int) -> Bool;
 
     title() -> String {
         sub(/(?<=[\s\-_]|^)./, &upper)
@@ -2946,9 +2944,8 @@ class Range : Iterable[Int] {
         (x :: (Int | Float)) && (x >= low && x <= high)
     }
 
-    has?(k) {
-        k :: self
-    }
+    contains?(item: Int) -> Bool { item :: self }
+    contains?(inner: Range) -> Bool { (inner.low :: self) && (inner.high :: self) }
 
     has-all?(*ks) {
         ks.all?(k -> k :: self)

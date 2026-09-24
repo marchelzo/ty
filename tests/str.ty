@@ -184,12 +184,12 @@ pub fn search-all() {
 }
 
 pub fn contains() {
-    assert('hello world'.contains?('hello') == true)
-    assert('hello world'.contains?('xyz') == false)
-    assert('hello world'.contains?('') == true)
-    assert(''.contains?('') == false)
-    assert('hello'.contains?(/^h/) == true)
-    assert('hello'.contains?(/^x/) == false)
+    assert('hello' in 'hello world')
+    assert('xyz' not in 'hello world')
+    assert('' in 'hello world')
+    assert('' not in '')
+    assert(/^h/ in 'hello')
+    assert(/^x/ not in 'hello')
 }
 
 pub fn count() {
@@ -539,7 +539,7 @@ pub fn empty-string-ops() {
     assert(''.chars() == [])
     assert(''.bytes() == [])
     assert(''.count('a') == 0)
-    assert(''.contains?('') == false)
+    assert('' not in '')
     assert(''.search('a') == nil)
     assert(''.scan(/\w/) == [])
     assert(''.match(/\w/) == nil)
@@ -575,7 +575,7 @@ pub fn unicode() {
     assert('HELLO'.lower() == 'hello')
     assert('hello'.upper() == 'HELLO')
     assert('café'.search('é') == 3)
-    assert('café'.contains?('fé') == true)
+    assert('fé' in 'café')
     assert('café'.match?(/café/) == true)
     assert('café'.scan(/\w+/) == ['caf'])
     assert('café'.scan(/[a-zé]+/) == ['café'])

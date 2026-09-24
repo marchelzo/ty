@@ -19,7 +19,7 @@ let pkg-skip = %{
 let pkg-mods-set: Dict[String, Bool] = %{}
 
 for m in Module.list {
-    if !pkg-skip.has?(m.name) {
+    if m.name not in pkg-skip {
         pkg-mods-set[m.name] = true
     }
 }
@@ -27,14 +27,14 @@ for m in Module.list {
 let lib-dir = doc-root.parent / 'lib'
 
 for f in lib-dir.glob('*.ty') {
-    if !pkg-skip.has?(f.stem) {
+    if f.stem not in pkg-skip {
         pkg-mods-set[f.stem] = true
     }
 }
 
 for f in lib-dir.glob('*/*.ty') {
     let name = "{f.parent.name}/{f.stem}"
-    if !pkg-skip.has?(name) {
+    if name not in pkg-skip {
         pkg-mods-set[name] = true
     }
 }
@@ -475,7 +475,7 @@ if #pages == 0 {
             if (skind == 'class'
                 || skind == 'type'
                 || skind == 'tag')
-                && !full-index.has?(sfqn)
+                && sfqn not in full-index
             {
                 full-index[sfqn] =
                     "pkg-{mod-slug(mod)}.html#{sg}"

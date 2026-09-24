@@ -271,6 +271,8 @@ pub class Map {
     private?    -> Bool { perms[3] == 'p' }
     shared?     -> Bool { perms[3] == 's' }
 
+    contains?(addr: Int) -> Bool { lo <= addr && addr < hi }
+
     read(offset: Int = 0, size: Int | nil = nil) -> Blob {
         size = size ?? (hi - lo - offset)
         if offset < 0 || size < 0 || offset + size > hi - lo {
@@ -296,8 +298,6 @@ pub class Map {
 }
 
 /** One file descriptor, bound to its owning process. */
-pub fn in(addr: Int, map: Map) -> Bool { map.lo <= addr && addr < map.hi }
-
 pub class Fd {
     process: Process
     fd:      Int

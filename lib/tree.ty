@@ -291,8 +291,8 @@ pub class Tree[K, V] : Iterable[(K, V)] {
         return x.k, x.v
     }
 
-    has?(k) {
-        findNode(k) != __null
+    contains?(key: K) -> Bool {
+        findNode(key) != __null
     }
 
     __iter__*() -> Generator[(K, V)] {
@@ -373,7 +373,7 @@ pub class Tree[K, V] : Iterable[(K, V)] {
     -(b: Tree) -> Tree {
         let t = Tree()
         for (k, v) in self {
-            if !b.has?(k) {
+            if k not in b {
                 t.put(k, v)
             }
         }
@@ -383,7 +383,7 @@ pub class Tree[K, V] : Iterable[(K, V)] {
     &(b: Tree[K, V]) -> Tree[K, V] {
         let t = Tree()
         for (k, v) in self {
-            if b.has?(k) {
+            if k in b {
                 t.put(k, v)
             }
         }
@@ -409,7 +409,7 @@ pub class Tree[K, V] : Iterable[(K, V)] {
         let t = Tree()
         if let [z, *zs] = ts {
             for (k, v) in z {
-                if zs.all?(&has?(k)) {
+                if zs.all?(\k in _) {
                     t.put(k, v)
                 }
             }
@@ -423,5 +423,3 @@ pub function set(xs) {
     for x in xs ?? [] { t.put(x) }
     return t
 }
-
-pub fn in[K, V](key: K, tree: Tree[K, V]) -> Bool { tree.has?(key) }

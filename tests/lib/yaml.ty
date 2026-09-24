@@ -268,9 +268,9 @@ pub fn test-parse-multiline-string() {
   line two
   line three'
     let result: _ = parse(yaml)
-    assert(result['text'].contains?('line one'))
-    assert(result['text'].contains?('line two'))
-    assert(result['text'].contains?('line three'))
+    assert('line one' in result['text'])
+    assert('line two' in result['text'])
+    assert('line three' in result['text'])
 }
 
 pub fn test-indent-option() {

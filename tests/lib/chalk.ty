@@ -91,67 +91,67 @@ pub fn test-trans-link-same() {
 
 pub fn test-trans-bold-and-link() {
     let result = trans({}, {bold: true, link: 'https://x.com'})
-    assert(result.contains?("{ESC}[1m"))
-    assert(result.contains?("{ESC}]8;;https://x.com{ESC}\\"))
+    assert("{ESC}[1m" in result)
+    assert("{ESC}]8;;https://x.com{ESC}\\" in result)
 }
 
 pub fn test-render-plain-text() {
     let result = chalk.render('hello')
-    assert(result.contains?('hello'))
+    assert('hello' in result)
 }
 
 pub fn test-render-bold() {
     let result = chalk.render('[bold]hello[/]')
-    assert(result.contains?("{ESC}[1m"))
-    assert(result.contains?('hello'))
+    assert("{ESC}[1m" in result)
+    assert('hello' in result)
 }
 
 pub fn test-render-italic() {
     let result = chalk.render('[italic]hello[/]')
-    assert(result.contains?("{ESC}[3m"))
+    assert("{ESC}[3m" in result)
 }
 
 pub fn test-render-named-color() {
     let result = chalk.render('[red]hello[/]')
-    assert(result.contains?("{ESC}[31m"))
+    assert("{ESC}[31m" in result)
 }
 
 pub fn test-render-hex-color() {
     let result = chalk.render('[#ff0000]hello[/]')
-    assert(result.contains?("{ESC}[38;2;255;0;0m"))
+    assert("{ESC}[38;2;255;0;0m" in result)
 }
 
 pub fn test-render-bg-color() {
     let result = chalk.render('[bg-red]hello[/]')
-    assert(result.contains?("{ESC}[41m"))
+    assert("{ESC}[41m" in result)
 }
 
 pub fn test-render-underline() {
     let result = chalk.render('[u]hello[/]')
-    assert(result.contains?('hello'))
+    assert('hello' in result)
 }
 
 pub fn test-render-combined-styles() {
     let result = chalk.render('[bold red]hello[/]')
-    let has-style = result.contains?("{ESC}[1m") || result.contains?("{ESC}[31m")
+    let has-style = "{ESC}[1m" in result || "{ESC}[31m" in result
     assert(has-style)
-    assert(result.contains?('hello'))
+    assert('hello' in result)
 }
 
 pub fn test-render-nested-styles() {
     let result = chalk.render('[bold][red]hello[/][/]')
-    assert(result.contains?('hello'))
+    assert('hello' in result)
 }
 
 pub fn test-render-close-all() {
     let result = chalk.render('[bold][red]hello[//]')
-    assert(result.contains?('hello'))
+    assert('hello' in result)
 }
 
 pub fn test-render-close-named() {
     let result = chalk.render('[bold red]hello[/bold]world[/]')
-    assert(result.contains?('hello'))
-    assert(result.contains?('world'))
+    assert('hello' in result)
+    assert('world' in result)
 }
 
 pub fn test-render-plain-mode() {
@@ -161,54 +161,54 @@ pub fn test-render-plain-mode() {
 
 pub fn test-render-plain-mode-no-escapes() {
     let result = chalk.render('[bold][link=https://x.com]hello[/][/]', plain=true)
-    assert(!result.contains?(ESC))
+    assert(ESC not in result)
     assert(result == 'hello')
 }
 
 pub fn test-render-escaped-bracket() {
     let result = chalk.render('hello \\[world]')
-    assert(strip(result).contains?('[world]'))
+    assert('[world]' in strip(result))
 }
 
 pub fn test-render-link-basic() {
     let result = chalk.render('[link=https://example.com]click here[/link]')
-    assert(result.contains?("{ESC}]8;;https://example.com{ESC}\\"))
-    assert(result.contains?('click here'))
-    assert(result.contains?("{ESC}]8;;{ESC}\\"))
+    assert("{ESC}]8;;https://example.com{ESC}\\" in result)
+    assert('click here' in result)
+    assert("{ESC}]8;;{ESC}\\" in result)
 }
 
 pub fn test-render-link-with-styles() {
     let result = chalk.render('[bold link=https://example.com]click[/]')
-    assert(result.contains?("{ESC}[1m"))
-    assert(result.contains?("{ESC}]8;;https://example.com{ESC}\\"))
-    assert(result.contains?('click'))
+    assert("{ESC}[1m" in result)
+    assert("{ESC}]8;;https://example.com{ESC}\\" in result)
+    assert('click' in result)
 }
 
 pub fn test-render-link-close-all() {
     let result = chalk.render('[link=https://x.com]hello[/]')
     // After [/], the link should be closed
-    assert(result.contains?("{ESC}]8;;{ESC}\\"))
+    assert("{ESC}]8;;{ESC}\\" in result)
 }
 
 pub fn test-render-link-close-named() {
     let result = chalk.render('[bold][link=https://x.com]hello[/link] world[/]')
     let parts = result.split("{ESC}]8;;{ESC}\\")
     // Link should close after "hello", bold should continue for "world"
-    assert(result.contains?('hello'))
-    assert(result.contains?('world'))
+    assert('hello' in result)
+    assert('world' in result)
 }
 
 pub fn test-render-link-nested-in-style() {
     let result = chalk.render('[red][link=https://x.com]click[/link] more[/]')
-    assert(result.contains?("{ESC}]8;;https://x.com{ESC}\\"))
-    assert(result.contains?('click'))
-    assert(result.contains?('more'))
+    assert("{ESC}]8;;https://x.com{ESC}\\" in result)
+    assert('click' in result)
+    assert('more' in result)
 }
 
 pub fn test-render-link-plain-mode() {
     let result = chalk.render('[link=https://example.com]click[/link]', plain=true)
     assert(result == 'click')
-    assert(!result.contains?(ESC))
+    assert(ESC not in result)
 }
 
 pub fn test-render-link-stripped() {
@@ -218,24 +218,24 @@ pub fn test-render-link-stripped() {
 
 pub fn test-render-multiple-links() {
     let result = chalk.render('[link=https://a.com]A[/link] [link=https://b.com]B[/link]')
-    assert(result.contains?("{ESC}]8;;https://a.com{ESC}\\"))
-    assert(result.contains?("{ESC}]8;;https://b.com{ESC}\\"))
-    assert(result.contains?('A'))
-    assert(result.contains?('B'))
+    assert("{ESC}]8;;https://a.com{ESC}\\" in result)
+    assert("{ESC}]8;;https://b.com{ESC}\\" in result)
+    assert('A' in result)
+    assert('B' in result)
 }
 
 pub fn test-render-link-with-path() {
     let url = 'https://example.com/path/to/page?q=1&r=2#section'
     let result = chalk.render("[link={url}]page[/link]")
-    assert(result.contains?("{ESC}]8;;{url}{ESC}\\"))
+    assert("{ESC}]8;;{url}{ESC}\\" in result)
 }
 
 pub fn test-parse-bold-ansi() {
     let ansi = "{ESC}[1mhello{ESC}[0m"
     let result = parse(ansi)
-    let has-bold = result.contains?('[b]') || result.contains?('[bold]')
+    let has-bold = '[b]' in result || '[bold]' in result
     assert(has-bold)
-    assert(result.contains?('hello'))
+    assert('hello' in result)
 }
 
 pub fn test-parse-roundtrip-plain() {
@@ -253,8 +253,8 @@ pub fn test-parse-osc8-roundtrip() {
     let chalked = parse(rendered)
     let re-rendered = chalk.render(chalked)
     assert(strip(rendered) == strip(re-rendered))
-    assert(re-rendered.contains?("{ESC}]8;;https://example.com{ESC}\\"))
-    assert(re-rendered.contains?("{ESC}]8;;{ESC}\\"))
+    assert("{ESC}]8;;https://example.com{ESC}\\" in re-rendered)
+    assert("{ESC}]8;;{ESC}\\" in re-rendered)
 }
 
 pub fn test-parse-osc8-with-styles-roundtrip() {
@@ -263,35 +263,35 @@ pub fn test-parse-osc8-with-styles-roundtrip() {
     let chalked = parse(rendered)
     let re-rendered = chalk.render(chalked)
     assert(strip(rendered) == strip(re-rendered))
-    assert(re-rendered.contains?("{ESC}]8;;https://x.com{ESC}\\"))
+    assert("{ESC}]8;;https://x.com{ESC}\\" in re-rendered)
 }
 
 pub fn test-render-dynamic-style-name() {
     let color = 'red'
     let result = "[{color}]hello[/]".chalk()
-    assert(result.contains?("{ESC}[31m"))
+    assert("{ESC}[31m" in result)
     assert(strip(result) == 'hello')
 }
 
 pub fn test-render-dynamic-hex-style() {
     let color = '#ff8000'
     let result = "[{color}]hello[/]".chalk()
-    assert(result.contains?("{ESC}[38;2;255;128;0m"))
+    assert("{ESC}[38;2;255;128;0m" in result)
     assert(strip(result) == 'hello')
 }
 
 pub fn test-render-multi-word-close() {
     let result = "[bright green]hello[/bright green] world".chalk()
     assert(strip(result) == 'hello world')
-    assert(!result.contains?("{ESC}[32m") || result.count("{ESC}[") >= 2)
+    assert("{ESC}[32m" not in result || result.count("{ESC}[") >= 2)
 }
 
 pub fn test-render-nested-color-override() {
     let result = "[red]a [blue]b[/fg] c[/]".chalk()
     let plain = strip(result)
     assert(plain == 'a b c')
-    assert(result.contains?("{ESC}[31m"))
-    assert(result.contains?("{ESC}[34m"))
+    assert("{ESC}[31m" in result)
+    assert("{ESC}[34m" in result)
 }
 
 pub fn test-render-nested-color-restore() {
@@ -304,14 +304,14 @@ pub fn test-render-bold-inside-color() {
     let result = "[red][b]bold red[/b] just red[/]".chalk()
     let plain = strip(result)
     assert(plain == 'bold red just red')
-    assert(result.contains?("{ESC}[1m"))
-    assert(result.contains?("{ESC}[22m"))
+    assert("{ESC}[1m" in result)
+    assert("{ESC}[22m" in result)
 }
 
 pub fn test-render-reverse() {
     let result = "[reverse]hello[/]".chalk()
-    assert(result.contains?("{ESC}[7m"))
-    assert(result.contains?("{ESC}[27m"))
+    assert("{ESC}[7m" in result)
+    assert("{ESC}[27m" in result)
 }
 
 pub fn test-render-dim() {
@@ -322,85 +322,85 @@ pub fn test-render-dim() {
 pub fn test-render-combined-dynamic() {
     let clr = '#aabbcc'
     let result = "[{clr} bold]styled[/]".chalk()
-    assert(result.contains?("{ESC}[38;2;170;187;204m"))
-    assert(result.contains?("{ESC}[1m"))
+    assert("{ESC}[38;2;170;187;204m" in result)
+    assert("{ESC}[1m" in result)
     assert(strip(result) == 'styled')
 }
 
 pub fn test-render-combined-reverse-bold() {
     let cclr = 'cyan'
     let result = "[{cclr} reverse bold]hello[/]".chalk()
-    assert(result.contains?("{ESC}[36m"))
-    assert(result.contains?("{ESC}[7m"))
-    assert(result.contains?("{ESC}[1m"))
+    assert("{ESC}[36m" in result)
+    assert("{ESC}[7m" in result)
+    assert("{ESC}[1m" in result)
     assert(strip(result) == 'hello')
 }
 
 pub fn test-render-bright-color() {
     let result = "[bright red]hello[/]".chalk()
-    assert(result.contains?("{ESC}[91m"))
+    assert("{ESC}[91m" in result)
     assert(strip(result) == 'hello')
 }
 
 pub fn test-render-bright-bg-color() {
     let result = "[bg-bright bg-red]hello[/]".chalk()
-    assert(result.contains?("{ESC}[101m"))
+    assert("{ESC}[101m" in result)
     assert(strip(result) == 'hello')
 }
 
 pub fn test-render-underline-variants() {
-    assert("[u]a[/]".chalk().contains?("{ESC}[4m"))
-    assert("[uu]a[/]".chalk().contains?("{ESC}[4:2m"))
-    assert("[u~]a[/]".chalk().contains?("{ESC}[4:3m"))
-    assert("[u.]a[/]".chalk().contains?("{ESC}[4:4m"))
-    assert("[u-]a[/]".chalk().contains?("{ESC}[4:5m"))
+    assert("{ESC}[4m" in "[u]a[/]".chalk())
+    assert("{ESC}[4:2m" in "[uu]a[/]".chalk())
+    assert("{ESC}[4:3m" in "[u~]a[/]".chalk())
+    assert("{ESC}[4:4m" in "[u.]a[/]".chalk())
+    assert("{ESC}[4:5m" in "[u-]a[/]".chalk())
 }
 
 pub fn test-render-bg-hex-color() {
     let result = "[bg-#00ff00]hello[/]".chalk()
-    assert(result.contains?("{ESC}[48;2;0;255;0m"))
+    assert("{ESC}[48;2;0;255;0m" in result)
 }
 
 pub fn test-render-bg-named-colors() {
-    assert("[bg-red]a[/]".chalk().contains?("{ESC}[41m"))
-    assert("[bg-blue]a[/]".chalk().contains?("{ESC}[44m"))
-    assert("[bg-green]a[/]".chalk().contains?("{ESC}[42m"))
-    assert("[bg-cyan]a[/]".chalk().contains?("{ESC}[46m"))
+    assert("{ESC}[41m" in "[bg-red]a[/]".chalk())
+    assert("{ESC}[44m" in "[bg-blue]a[/]".chalk())
+    assert("{ESC}[42m" in "[bg-green]a[/]".chalk())
+    assert("{ESC}[46m" in "[bg-cyan]a[/]".chalk())
 }
 
 pub fn test-render-short-hex() {
     let result = "[#f80]hello[/]".chalk()
-    assert(result.contains?("{ESC}[38;2;255;136;0m"))
+    assert("{ESC}[38;2;255;136;0m" in result)
 }
 
 pub fn test-render-triple-close() {
     let result = "[b][i][u]hello[///]".chalk()
     let plain = strip(result)
     assert(plain == 'hello')
-    assert(result.contains?("{ESC}[1m"))
-    assert(result.contains?("{ESC}[3m"))
-    assert(result.contains?("{ESC}[4m"))
+    assert("{ESC}[1m" in result)
+    assert("{ESC}[3m" in result)
+    assert("{ESC}[4m" in result)
 }
 
 pub fn test-render-selective-close-fg() {
     let result = "[b][red]hello[/fg] still bold[/]".chalk()
     let plain = strip(result)
     assert(plain == 'hello still bold')
-    assert(result.contains?("{ESC}[39m"))
+    assert("{ESC}[39m" in result)
 }
 
 pub fn test-render-selective-close-bold() {
     let result = "[red][b]hello[/bold] still red[/]".chalk()
     let plain = strip(result)
     assert(plain == 'hello still red')
-    assert(result.contains?("{ESC}[22m"))
+    assert("{ESC}[22m" in result)
 }
 
 pub fn test-render-selective-close-bg() {
     let result = "[bg-red][b]hello[/bg] no bg[/]".chalk()
     let plain = strip(result)
     assert(plain == 'hello no bg')
-    assert(result.contains?("{ESC}[49m"))
+    assert("{ESC}[49m" in result)
 }
 
 pub fn test-render-format-spec-right-align() {
@@ -427,15 +427,15 @@ pub fn test-render-format-spec-with-styles() {
     let result = "[%20][red b]hi[/][/]".chalk()
     let plain = strip(result)
     assert(#plain == 20)
-    assert(result.contains?("{ESC}[31m"))
-    assert(result.contains?("{ESC}[1m"))
+    assert("{ESC}[31m" in result)
+    assert("{ESC}[1m" in result)
 }
 
 pub fn test-render-format-spec-fill-char() {
     let result = "[%.>20]hi[/]".chalk()
     let plain = strip(result)
     assert(#plain == 20)
-    assert(plain.contains?('..'))
+    assert('..' in plain)
 }
 
 pub fn test-render-format-spec-dynamic-width() {
@@ -485,8 +485,8 @@ pub fn test-render-no-markup() {
 pub fn test-render-adjacent-styles() {
     let result = "[red]a[/][blue]b[/]".chalk()
     assert(strip(result) == 'ab')
-    assert(result.contains?("{ESC}[31m"))
-    assert(result.contains?("{ESC}[34m"))
+    assert("{ESC}[31m" in result)
+    assert("{ESC}[34m" in result)
 }
 
 pub fn test-render-deeply-nested() {
@@ -512,8 +512,8 @@ pub fn test-render-text-between-styles() {
 pub fn test-render-unclosed-style() {
     let result = "[red]hello".chalk()
     assert(strip(result) == 'hello')
-    assert(result.contains?("{ESC}[31m"))
-    assert(result.contains?("{ESC}[0m"))
+    assert("{ESC}[31m" in result)
+    assert("{ESC}[0m" in result)
 }
 
 pub fn test-render-multiple-unclosed() {
@@ -528,22 +528,22 @@ pub fn test-render-close-more-than-open() {
 
 pub fn test-render-link-with-styles-inside() {
     let result = "[link=https://x.com][b red]click[/][/link]".chalk()
-    assert(result.contains?("{ESC}]8;;https://x.com{ESC}\\"))
-    assert(result.contains?("{ESC}]8;;{ESC}\\"))
-    assert(result.contains?("{ESC}[1m"))
+    assert("{ESC}]8;;https://x.com{ESC}\\" in result)
+    assert("{ESC}]8;;{ESC}\\" in result)
+    assert("{ESC}[1m" in result)
     assert(strip(result) == 'click')
 }
 
 pub fn test-render-selective-close-underline() {
     let result = "[b][u]text[/u] still bold[/]".chalk()
     assert(strip(result) == 'text still bold')
-    assert(result.contains?("{ESC}[24m"))
+    assert("{ESC}[24m" in result)
 }
 
 pub fn test-render-selective-close-underline-alias() {
     let result = "[b][u]text[/underline] still bold[/]".chalk()
     assert(strip(result) == 'text still bold')
-    assert(result.contains?("{ESC}[24m"))
+    assert("{ESC}[24m" in result)
 }
 
 pub fn test-plain-strips-all-markup() {
@@ -631,9 +631,9 @@ pub fn test-render-clap-help-pattern() {
     let result = str(chalk"  [%-{w}][b blue]    --completions[/] [green]<SHELL>[/][/]"
          "  Output shell completions")
     let plain = strip(result)
-    assert(plain.contains?('--completions'))
-    assert(plain.contains?('<SHELL>'))
-    assert(plain.contains?('Output shell completions'))
+    assert('--completions' in plain)
+    assert('<SHELL>' in plain)
+    assert('Output shell completions' in plain)
 }
 
 pub fn test-render-clap-nested-dim() {
@@ -656,7 +656,7 @@ pub fn test-render-preserves-ansi-in-interpolated-text() {
     let styled = str(chalk"[red]inner[/]")
     let result = "[b]{styled}[/]".chalk()
     assert(strip(result) == 'inner')
-    assert(result.contains?("{ESC}[31m"))
+    assert("{ESC}[31m" in result)
 }
 
 pub fn test-render-whitespace-only-content() {
@@ -715,7 +715,7 @@ pub fn test-text-concatenation() {
 pub fn test-text-str-contains-escapes() {
     let t = chalk"[bold]hello[/]"
     let s = "{t}"
-    assert(s.contains?(ESC))
+    assert(ESC in s)
     assert(strip(s) == 'hello')
 }
 
@@ -723,5 +723,5 @@ pub fn test-text-link() {
     let t = chalk"[link=https://x.com]click[/link]"
     assert(t.plain == 'click')
     let s = "{t}"
-    assert(s.contains?("{ESC}]8;;https://x.com{ESC}\\"))
+    assert("{ESC}]8;;https://x.com{ESC}\\" in s)
 }

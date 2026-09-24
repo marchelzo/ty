@@ -217,8 +217,8 @@ pub fn nil-revision-retains-live-callback-behavior() {
 pub fn cursor-background-fills-focused-row() {
     let h=ink.TestHarness(CursorBackgroundApp(),cols=18,rows=4)
     let bg="[48;2;17;34;51m"
-    assert(h.painted-lines[0].contains?(bg))
-    assert(!h.painted-lines[1].contains?(bg))
+    assert(bg in h.painted-lines[0])
+    assert(bg not in h.painted-lines[1])
     assert(#h.line(0) == 18)
 }
 

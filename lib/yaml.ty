@@ -478,15 +478,15 @@ fn emit-value(emitter, event, value: _, flow: Bool) {
         return
     }
     if value :: String {
-        let needs-quote = value.contains?('\n')
+        let needs-quote = '\n' in value
                        || value.lower() in YAML_LITERALS
                        || value.match?(/^-?[0-9]/)
                        || value.match?(/^[&*!|>{%@`]/)
-                       || value.contains?(': ')
-                       || value.contains?(' #')
+                       || ': ' in value
+                       || ' #' in value
                        || value.match?(/^- /)
 
-        let style = if value.contains?('\n') && value.size() > 40 {
+        let style = if '\n' in value && value.size() > 40 {
             YAML_LITERAL_SCALAR_STYLE
         } else if needs-quote {
             YAML_DOUBLE_QUOTED_SCALAR_STYLE

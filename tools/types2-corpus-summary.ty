@@ -207,7 +207,7 @@ class Summary {
 
     add(event: _) {
         events += 1
-        if !unit-order.has?(event['unit']) {
+        if event['unit'] not in unit-order {
             unit-order[event['unit']] = #unit-order
         }
         match event['event'] {
@@ -251,7 +251,7 @@ class Summary {
     }
 
     check-reason(reason) {
-        if !REASON_CLASSES.has?(reason) {
+        if reason not in REASON_CLASSES {
             fail("unknown deferred reason `{reason}`; update REASON_CLASSES")
         }
     }
@@ -356,7 +356,7 @@ fn print-diagnostics(summary: Summary, classification: ?Dict[String, _]) {
     for kind in CLASSIFICATIONS {
         print("{totals[kind] ?? 0:>6}  {kind}")
     }
-    let stale = entries.keys().sort().filter(key -> !summary.diagnostics.has?(key))
+    let stale = entries.keys().sort().filter(key -> key not in summary.diagnostics)
     print("{#unclassified:>6}  unclassified")
     print("{#stale:>6}  stale")
     for entry in unclassified {

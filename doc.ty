@@ -65,7 +65,9 @@ fn next-var-name() {
 }
 
 fn var-name(id) {
-    if !var-names.has?(id) { var-names[id] = next-var-name() }
+    if id not in var-names {
+        var-names[id] = next-var-name()
+    }
     var-names[id]
 }
 
@@ -76,7 +78,7 @@ fn reset-vars() {
 
 fn type-link(fqn, display, css) {
     let span = "<span class=\"{css}\">{display}</span>"
-    type-index.has?(fqn) ? "<a href=\"{type-index[fqn]}\">{span}</a>" : span
+    fqn in type-index ? "<a href=\"{type-index[fqn]}\">{span}</a>" : span
 }
 
 let prims = ['Int', 'String', 'Float', 'Bool', 'Blob', 'Nil', 'Any']
@@ -249,7 +251,7 @@ let op-names = %{
 
 fn slug(name) {
     let s = str(name)
-    op-names.has?(s)
+    s in op-names
         ? "op-{op-names[s]}"
         : s.replace(/[^a-zA-Z0-9_-]/, c -> "-{ord(c)}-")
 }
@@ -298,9 +300,9 @@ for k, v in d {
         continue
     }
     let m = v.members()
-    if m.has?('methods') {
+    if 'methods' in m {
         classes.push(v)
-    } else if m.has?('kind') {
+    } else if 'kind' in m {
         match str(v.kind) {
             'fn'    => functions.push(v),
             'macro' => macros.push(v),
@@ -308,7 +310,7 @@ for k, v in d {
             'tag'   => tags.push(v),
             k       => constants.push(v)
         }
-    } else if m.has?('value') {
+    } else if 'value' in m {
         str(type(v.value)).match?(/Function/) ? functions.push(v) : constants.push(v)
     }
 }
@@ -330,7 +332,9 @@ if opts.emitIndex {
         index[fqn-of(cls, "{mod-name}.{cname}")] = 'class'
         for m in [*cls.methods, *cls.staticMethods] {
             let mn = str(m.name)
-            if !mn.contains?('#') { index["{mod-name}.{cname}.{mn}"] = 'method' }
+            if '#' not in mn {
+                index["{mod-name}.{cname}.{mn}"] = 'method'
+            }
         }
         for g in cls.getters { index["{mod-name}.{cname}.{g.name}"] = 'getter' }
     }
@@ -346,9 +350,9 @@ if opts.emitIndex {
         index["{mod-name}.{nsname}"] = 'namespace'
         for k, v in nsp.entries {
             let m = v.members()
-            if m.has?('kind') {
+            if 'kind' in m {
                 index["{mod-name}.{nsname}.{v.name}"] = str(v.kind)
-            } else if m.has?('methods') {
+            } else if 'methods' in m {
                 index["{mod-name}.{nsname}.{v.name}"] = 'class'
             }
         }
@@ -524,7 +528,7 @@ fn render-class(cls: _) {
     }
 
     for m in cls.staticMethods { render-method(cls.name, m, static?=true) }
-    for m in cls.methods if str(m.name) != 'init' && !str(m.name).contains?('#') {
+    for m in cls.methods if str(m.name) != 'init' && '#' not in str(m.name) {
         render-method(cls.name, m)
     }
 }
@@ -600,7 +604,7 @@ fn render-ns(nsp: _) {
 
     for k, v in nsp.entries {
         let m = v.members()
-        if m.has?('methods') {
+        if 'methods' in m {
             ns-classes.push(v)
         } else if let $kind = v.?kind {
             match kind {
