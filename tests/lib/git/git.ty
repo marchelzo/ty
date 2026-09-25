@@ -523,7 +523,7 @@ pub fn linked-worktrees() {
         let first = save(repo, 'a', 'first\n', 'first')
         cli(main, 'worktree', 'add', '-b', 'linked', str(linked), 'HEAD')
         let ^worktree = git.open(linked)
-        assert(worktree.workdir == linked && worktree.branch-name == 'linked')
+        assert(worktree.workdir.?resolve == linked.resolve && worktree.branch-name == 'linked')
         let second = save(worktree, 'a', 'second\n', 'second')
         assert(repo.tip.id == first.id && worktree.tip.id == second.id)
         assert(repo.branches['linked'].id == second.id)
