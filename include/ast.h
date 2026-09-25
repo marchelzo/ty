@@ -595,6 +595,7 @@ struct statement {
                         char const *doc;
                         bool pub;
                         bool cnst;
+                        bool retry;
                 };
         };
 };

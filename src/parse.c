@@ -7432,6 +7432,7 @@ parse_module(Ty *ty, Module *mod)
                                 TY_CATCH();
                                 TyClearError(ty);
                                 UnresolveExpr(ty, (Expr *)s);
+                                s->retry = (s->type == STATEMENT_OPERATOR_DEFINITION);
                         } else {
                                 define_top(ty, s, doc);
                                 TY_CATCH_END();

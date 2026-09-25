@@ -304,7 +304,7 @@ const `,` = tuple
 
 class Object {
     is?(c) {
-        subclass?(type(self), c)
+        subclass?(class-of(self), c)
     }
 
     drill(path) {
@@ -4352,19 +4352,24 @@ fn ??[a, b](x: a | nil, y: b) -> a | b {
 fn >>[a, b](x: a, f: a -> b) -> b { f(x) }
 fn <<[a, b](f: a -> b, x: a) -> b { f(x) }
 
-fn ?>[a, b](x: a, f: a -> b) -> b;
-fn ?>[a, b](x: nil | a, f: a -> b) -> nil | b;
+fn ?>[a, b](x: a, f: (a & Object) -> b) -> (a & nil) | b {
+    //(x == nil) ? nil : f(x)
+    (x != nil) ?: f(x)
+}
 
-fn ?>(x, f) { (x == nil) ? nil : f(x) }
+// fn ?>[a, b](x: (a & nil) | (a & Object), f: (a & Object) -> b) -> (a & nil) | b {
+//     (x == nil) ? nil : f(x)
+//     // (x == nil) ?: f(x)
+// }
 
 macro =~(a, b) = do let [$0, ?$1, ?$2, ?$3, ?$4, ?$5, ?$6, ?$7, ?$8, ?$9] or ($0: String) = $$a.match($$b)
 
-fn .[a, b, c](f: b -> c, g: a -> b) -> (a -> c) {
+fn .[...Args, b, c](f: b -> c, g: Args -> b) -> (Args -> c) {
     f@(g(*, **))
 }
 
-fn .?[a, b, c](f: b -> c, g: a -> nil | b) -> (a -> nil | c) {
-    (match $x => f(x) else nil) . g
+fn .?[...Args, b, c](f: b -> c, g: Args -> nil | b) -> (Args -> nil | c) {
+    (\_ ?> f) . g
 }
 
 fn <*-[T, ...Args](f: (Args -> T), args: Iterable[_]) -> T {

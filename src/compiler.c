@@ -2649,6 +2649,9 @@ resolve_type_choices(Ty *ty, T2Type t0, int_vector *cs)
 }
 
 static void
+SymbolizeTypeParams(Ty *ty, Scope *scope, ExprVec const *params);
+
+static void
 resolve_class_choices(Ty *ty, Expr *e, int_vector *cs)
 {
         switch (e->type) {
@@ -2665,6 +2668,20 @@ resolve_class_choices(Ty *ty, Expr *e, int_vector *cs)
                 resolve_class_choices(ty, e->right, cs);
                 break;
 
+        case EXPRESSION_BIT_AND:
+        {
+                int_vector left  = {0};
+                int_vector right = {0};
+                resolve_class_choices(ty, e->left, &left);
+                resolve_class_choices(ty, e->right, &right);
+                bool open = false;
+                for (int i = 0; i < vN(left); ++i) {
+                        open |= (v__(left, i) == CLASS_TOP);
+                }
+                avPv(*cs, open ? right : left);
+                break;
+        }
+
         case EXPRESSION_TYPE_UNION:
                 for (int i = 0; i < vN(e->es); ++i) {
                         resolve_class_choices(ty, v__(e->es, i), cs);
@@ -2676,22 +2693,31 @@ resolve_class_choices(Ty *ty, Expr *e, int_vector *cs)
         }
 }
 
+static void
+unsymbolize(Ty *ty, Expr *expr);
+
+static void
+op_operand_classes(Ty *ty, Scope *scope, Expr *e, int i, int_vector *out)
+{
+        Expr *constraint = (vN(e->constraints) > i) ? v__(e->constraints, i) : NULL;
+        if (constraint == NULL) {
+                avP(*out, CLASS_TOP);
+                return;
+        }
+
+        symbolize_expression(ty, scope, constraint);
+        resolve_class_choices(ty, constraint, out);
+
+        if (vN(e->type_params) != 0) {
+                unsymbolize(ty, constraint);
+        }
+}
+
 inline static int
 op_signature(Ty *ty, Scope *scope, Expr *e, int_vector *t1, int_vector *t2)
 {
-        if (vN(e->constraints) > 0 && v__(e->constraints, 0) != NULL) {
-                symbolize_expression(ty, scope, v__(e->constraints, 0));
-                resolve_class_choices(ty, v__(e->constraints, 0), t1);
-        } else {
-                avP(*t1, CLASS_TOP);
-        }
-
-        if (vN(e->constraints) > 1 && v__(e->constraints, 1) != NULL) {
-                symbolize_expression(ty, scope, v__(e->constraints, 1));
-                resolve_class_choices(ty, v__(e->constraints, 1), t2);
-        } else {
-                avP(*t2, CLASS_TOP);
-        }
+        op_operand_classes(ty, scope, e, 0, t1);
+        op_operand_classes(ty, scope, e, 1, t2);
 
         if (
                 (vN(e->params) == 0)
@@ -5653,6 +5679,10 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 break;
 
         case STATEMENT_OPERATOR_DEFINITION:
+                if (s->retry) {
+                        s->retry = false;
+                        define_operator(ty, NULL, s);
+                }
                 symbolize_expression(ty, scope, s->value);
                 /*
                  * We can strip away the constraints now. The checks will only ever be
@@ -11928,6 +11958,25 @@ clone_stmt(Stmt *s, Scope *scope, void *ctx)
 }
 
 static Expr *
+unsymbolize_expr(Expr *e, Scope *scope, void *ctx)
+{
+        e->xscope = NULL;
+        return e;
+}
+
+static void
+unsymbolize(Ty *ty, Expr *expr)
+{
+        VisitorCtx visitor = visit_identity(ty);
+
+        visitor.e_pre = unsymbolize_expr;
+        visitor.t_pre = unsymbolize_expr;
+        visitor.p_pre = unsymbolize_expr;
+
+        (void)visit_expression(ty, expr, NULL, &visitor);
+}
+
+static Expr *
 xclone(Ty *ty, Expr *expr)
 {
         VisitorCtx visitor = visit_identity(ty);
@@ -15706,14 +15755,14 @@ cexpr(Ty *ty, Value *v)
 
                                 case TyGather:
                                         avP(e->params, mkcstr(p));
-                                        avP(e->constraints, NewExpr(ty, EXPRESSION_MATCH_ANY));
+                                        avP(e->constraints, NULL);
                                         avP(e->dflts, NULL);
                                         e->rest = i;
                                         break;
 
                                 case TyKwargs:
                                         avP(e->params, mkcstr(p));
-                                        avP(e->constraints, NewExpr(ty, EXPRESSION_MATCH_ANY));
+                                        avP(e->constraints, NULL);
                                         avP(e->dflts, NULL);
                                         e->ikwargs = i;
                                         break;

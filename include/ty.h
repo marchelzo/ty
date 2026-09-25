@@ -1366,7 +1366,7 @@ alloc0(usize n)
 {
         void *p = ty_calloc(1, n);
 
-        if (UNLIKELY(p == NULL)) {
+        if (UNLIKELY((p == NULL) & (n > 0))) {
                 panic("Out of memory!");
         }
 

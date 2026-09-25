@@ -4,30 +4,31 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #include "defs.h"
 
-typedef uint32_t T2Type;
+typedef u32 T2Type;
 
 enum { T2_TYPE_INVALID = 0 };
 
 typedef struct t2_index_entry {
-        uint64_t key;
-        uint32_t value;
+        u64 key;
+        u32 value;
         bool used;
 } T2IndexEntry;
 
 typedef struct t2_index {
         T2IndexEntry *entries;
-        size_t count;
-        size_t capacity;
+        usize count;
+        usize capacity;
 } T2Index;
 
 bool
-t2_index_find(T2Index const *index, uint64_t key, uint32_t *value);
+t2_index_find(T2Index const *index, u64 key, u32 *value);
 
 bool
-t2_index_put(T2Index *index, uint64_t key, uint32_t value);
+t2_index_put(T2Index *index, u64 key, u32 value);
 
 void
 t2_index_clear(T2Index *index);
@@ -141,7 +142,7 @@ typedef struct t2_parameter_spec {
 } T2ParameterSpec;
 
 typedef struct t2_quantifier {
-        uint32_t id;
+        u32 id;
         T2VariableKind kind;
 } T2Quantifier;
 
@@ -212,7 +213,7 @@ typedef enum t2_runtime_kind {
 
 typedef struct t2_runtime_facts {
         T2RuntimeKind kind;
-        uint64_t nominal_symbol;
+        u64 nominal_symbol;
         bool exact;
         bool nullable;
 } T2RuntimeFacts;
@@ -228,13 +229,13 @@ typedef T2Relation T2PredicateResolver(
 );
 
 typedef struct t2_solver_mark {
-        size_t undo_count;
-        size_t meta_count;
-        size_t edge_count;
-        size_t obligation_count;
-        size_t work_count;
-        size_t work_index;
-        size_t cause_count;
+        usize undo_count;
+        usize meta_count;
+        usize edge_count;
+        usize obligation_count;
+        usize work_count;
+        usize work_index;
+        usize cause_count;
         unsigned transaction_depth;
         bool failed;
 } T2SolverMark;
@@ -251,10 +252,10 @@ t2_universe_free(T2Universe *universe);
 bool
 t2_universe_ok(T2Universe const *universe);
 
-size_t
+usize
 t2_universe_type_count(T2Universe const *universe);
 
-uint32_t
+u32
 t2_universe_fresh_recursive_binder(T2Universe *universe);
 
 T2Type
@@ -264,7 +265,7 @@ T2Type
 t2_literal_bool(T2Universe *universe, bool value);
 
 T2Type
-t2_literal_int(T2Universe *universe, int64_t value);
+t2_literal_int(T2Universe *universe, i64 value);
 
 T2Type
 t2_literal_string(T2Universe *universe, char const *value);
@@ -295,10 +296,10 @@ t2_refinement(T2Universe *universe, T2Type base, T2Type argument);
 T2Type
 t2_computed_type(
         T2Universe *universe,
-        uint64_t identity,
+        u64 identity,
         char const *name,
         T2Type const *arguments,
-        size_t argument_count
+        usize argument_count
 );
 
 /*
@@ -320,27 +321,27 @@ T2Type
 t2_type_resolve_computed(T2Universe const *universe, T2Type type);
 
 T2Type
-t2_variable(T2Universe *universe, T2VariableKind kind, uint32_t id);
+t2_variable(T2Universe *universe, T2VariableKind kind, u32 id);
 
 bool
 t2_declare_nominal(
         T2Universe *universe,
-        uint64_t symbol,
+        u64 symbol,
         char const *name,
-        size_t arity,
+        usize arity,
         T2Variance const *variance
 );
 
 T2Type
-t2_nominal_type_parameter(T2Universe *universe, uint32_t index);
+t2_nominal_type_parameter(T2Universe *universe, u32 index);
 
 bool
-t2_nominal_declared(T2Universe const *universe, uint64_t symbol, size_t *arity);
+t2_nominal_declared(T2Universe const *universe, u64 symbol, usize *arity);
 
 bool
 t2_nominal_add_super(
         T2Universe *universe,
-        uint64_t symbol,
+        u64 symbol,
         T2Type supertype_template
 );
 
@@ -348,28 +349,28 @@ bool
 t2_primitive_bind_nominal(T2Universe *universe, T2TypeKind kind, T2Type nominal);
 
 bool
-t2_nominal_mark_interface(T2Universe *universe, uint64_t symbol);
+t2_nominal_mark_interface(T2Universe *universe, u64 symbol);
 
 T2Type
 t2_nominal_project(
         T2Universe const *universe,
         T2Type subtype,
-        uint64_t target_symbol
+        u64 target_symbol
 );
 
 bool
 t2_nominal_validate_variance(
         T2Universe const *universe,
-        uint64_t symbol,
+        u64 symbol,
         T2Type public_contract
 );
 
 T2Type
 t2_nominal(
         T2Universe *universe,
-        uint64_t symbol,
+        u64 symbol,
         T2Type const *arguments,
-        size_t arity
+        usize arity
 );
 
 T2Type
@@ -389,18 +390,18 @@ T2Type
 t2_function(
         T2Universe *universe,
         T2Type const *parameters,
-        size_t parameter_count,
+        usize parameter_count,
         T2Type result
 );
 
-size_t
+usize
 t2_callable_parameter_count(T2Universe const *universe, T2Type callable);
 
 bool
 t2_callable_parameter(
         T2Universe const *universe,
         T2Type callable,
-        size_t index,
+        usize index,
         T2ParameterSpec *parameter
 );
 
@@ -420,7 +421,7 @@ T2Type
 t2_callable(
         T2Universe *universe,
         T2ParameterSpec const *parameters,
-        size_t parameter_count,
+        usize parameter_count,
         T2Type result,
         T2Type yield,
         T2Type send
@@ -430,26 +431,26 @@ T2Type
 t2_effectful_callable(
         T2Universe *universe,
         T2ParameterSpec const *parameters,
-        size_t parameter_count,
+        usize parameter_count,
         T2Type result,
         T2Type yield,
         T2Type send
 );
 
 T2Type
-t2_tuple(T2Universe *universe, T2Type const *items, size_t count);
+t2_tuple(T2Universe *universe, T2Type const *items, usize count);
 
 T2Type
-t2_multi(T2Universe *universe, T2Type const *items, size_t count);
+t2_multi(T2Universe *universe, T2Type const *items, usize count);
 
 T2Type
-t2_multi_item(T2Universe const *universe, T2Type type, size_t index);
+t2_multi_item(T2Universe const *universe, T2Type type, usize index);
 
 T2Type
 t2_record(
         T2Universe *universe,
         T2FieldSpec const *fields,
-        size_t field_count,
+        usize field_count,
         T2Type row_tail,
         T2RecordExactness exactness
 );
@@ -458,7 +459,7 @@ T2Type
 t2_row(
         T2Universe *universe,
         T2FieldSpec const *fields,
-        size_t field_count,
+        usize field_count,
         T2Type tail
 );
 
@@ -471,14 +472,14 @@ t2_record_field_type(
         T2FieldCapability *capability
 );
 
-size_t
+usize
 t2_record_field_count(T2Universe const *universe, T2Type record);
 
 bool
 t2_record_field(
         T2Universe const *universe,
         T2Type record,
-        size_t index,
+        usize index,
         T2FieldSpec *field
 );
 
@@ -496,12 +497,15 @@ T2Type
 t2_pack(
         T2Universe *universe,
         T2Type const *prefix,
-        size_t prefix_count,
+        usize prefix_count,
         T2Type tail
 );
 
 T2Type
 t2_pack_expansion(T2Universe *universe, T2Type element);
+
+T2Type
+t2_pack_element(T2Universe *universe, T2ParameterSpec const *spec);
 
 T2Type
 t2_pack_fold_union(T2Universe *universe, T2Type pack);
@@ -513,15 +517,15 @@ T2Type
 t2_variadic_tuple(
         T2Universe *universe,
         T2Type const *prefix,
-        size_t prefix_count,
+        usize prefix_count,
         T2Type tail
 );
 
 T2Type
-t2_recursive_variable(T2Universe *universe, uint32_t binder);
+t2_recursive_variable(T2Universe *universe, u32 binder);
 
 T2Type
-t2_recursive(T2Universe *universe, uint32_t binder, T2Type body);
+t2_recursive(T2Universe *universe, u32 binder, T2Type body);
 
 bool
 t2_recursive_is_guarded(T2Universe const *universe, T2Type type);
@@ -530,13 +534,13 @@ T2Type
 t2_recursive_unfold(T2Universe const *universe, T2Type type);
 
 T2Type
-t2_union(T2Universe *universe, T2Type const *arms, size_t count);
+t2_union(T2Universe *universe, T2Type const *arms, usize count);
 
 T2Type
-t2_intersection(T2Universe *universe, T2Type const *arms, size_t count);
+t2_intersection(T2Universe *universe, T2Type const *arms, usize count);
 
 T2Type
-t2_overload(T2Universe *universe, T2Type const *candidates, size_t count);
+t2_overload(T2Universe *universe, T2Type const *candidates, usize count);
 
 T2Type
 t2_join(T2Universe *universe, T2Type left, T2Type right);
@@ -566,22 +570,22 @@ T2Scheme *
 t2_scheme_new(
         T2Universe *universe,
         T2Quantifier const *quantifiers,
-        size_t quantifier_count,
+        usize quantifier_count,
         T2Type body,
         T2Predicate const *predicates,
-        size_t predicate_count
+        usize predicate_count
 );
 
 void
 t2_scheme_free(T2Scheme *scheme);
 
-size_t
+usize
 t2_scheme_quantifier_count(T2Scheme const *scheme);
 
 bool
 t2_scheme_quantifier(
         T2Scheme const *scheme,
-        size_t index,
+        usize index,
         T2Quantifier *quantifier
 );
 
@@ -594,27 +598,36 @@ t2_scheme_has_metas(T2Scheme const *scheme);
 bool
 t2_solver_zonk_scheme(T2Solver *solver, T2Scheme *scheme);
 
-size_t
+usize
 t2_scheme_predicate_count(T2Scheme const *scheme);
 
 bool
 t2_scheme_predicate(
         T2Scheme const *scheme,
-        size_t index,
+        usize index,
         T2Predicate *predicate
 );
 
 bool
-t2_scheme_name_quantifier(T2Scheme *scheme, size_t index, char const *name);
+t2_scheme_name_quantifier(T2Scheme *scheme, usize index, char const *name);
 
 char const *
-t2_scheme_quantifier_name(T2Scheme const *scheme, size_t index);
+t2_scheme_quantifier_name(T2Scheme const *scheme, usize index);
 
 T2Type
 t2_scheme_type(T2Universe *universe, T2Scheme const *scheme);
 
 T2Scheme *
 t2_type_scheme(T2Universe *universe, T2Type type);
+
+T2Scheme *
+t2_scheme_prune(T2Scheme *scheme);
+
+T2Scheme *
+t2_scheme_restrict_to_body(T2Scheme *scheme);
+
+bool
+t2_scheme_remove_predicate(T2Scheme *scheme, usize index);
 
 T2Scheme *
 t2_scheme_simplify(T2Scheme *scheme);
@@ -626,7 +639,7 @@ T2Type
 t2_scheme_instantiate(
         T2Scheme const *scheme,
         T2Solver *solver,
-        uint32_t level,
+        u32 level,
         char const *provenance
 );
 
@@ -635,7 +648,7 @@ t2_scheme_apply(
         T2Scheme const *scheme,
         T2Solver *solver,
         T2Type const *arguments,
-        size_t argument_count,
+        usize argument_count,
         char const *provenance
 );
 
@@ -644,7 +657,7 @@ t2_scheme_apply_relaxed(
         T2Scheme const *scheme,
         T2Solver *solver,
         T2Type const *arguments,
-        size_t argument_count,
+        usize argument_count,
         char const *provenance
 );
 
@@ -653,8 +666,8 @@ t2_solver_generalize(
         T2Solver *solver,
         T2Type type,
         T2Type const *environment,
-        size_t environment_count,
-        uint32_t binding_level,
+        usize environment_count,
+        u32 binding_level,
         bool expansive
 );
 
@@ -663,8 +676,8 @@ t2_solver_generalize_scoped(
         T2Solver *solver,
         T2Type type,
         T2Type const *environment,
-        size_t environment_count,
-        uint32_t binding_level,
+        usize environment_count,
+        u32 binding_level,
         bool expansive,
         T2SolverMark scope
 );
@@ -678,19 +691,19 @@ t2_type_has_metas(T2Universe const *universe, T2Type type);
 T2VariableKind
 t2_type_variable_kind(T2Universe const *universe, T2Type type);
 
-size_t
+usize
 t2_type_arity(T2Universe const *universe, T2Type type);
 
 T2Type
-t2_type_child(T2Universe const *universe, T2Type type, size_t index);
+t2_type_child(T2Universe const *universe, T2Type type, usize index);
 
-uint64_t
+u64
 t2_type_payload(T2Universe const *universe, T2Type type);
 
 char const *
 t2_type_name(T2Universe const *universe, T2Type type);
 
-uint64_t
+u64
 t2_type_hash(T2Universe const *universe, T2Type type);
 
 bool
@@ -770,9 +783,9 @@ T2Type
 t2_type_substitute(
         T2Universe *universe,
         T2Type type,
-        uint32_t const *ids,
+        u32 const *ids,
         T2Type const *replacements,
-        size_t count
+        usize count
 );
 
 /*
@@ -783,41 +796,41 @@ t2_type_substitute(
  * meta hook; unresolved computed terms keep their identity.
  */
 bool
-t2_bytes_u8(byte_vector *bytes, uint8_t value);
+t2_bytes_u8(byte_vector *bytes, u8 value);
 
 bool
-t2_bytes_u32(byte_vector *bytes, uint32_t value);
+t2_bytes_u32(byte_vector *bytes, u32 value);
 
 bool
-t2_bytes_u64(byte_vector *bytes, uint64_t value);
+t2_bytes_u64(byte_vector *bytes, u64 value);
 
 bool
 t2_bytes_string(byte_vector *bytes, char const *text);
 
 bool
-t2_bytes_append(byte_vector *bytes, void const *data, size_t size);
+t2_bytes_append(byte_vector *bytes, void const *data, usize size);
 
 
 bool
-t2_read_u8(unsigned char const *data, size_t size, size_t *position, uint8_t *value);
+t2_read_u8(unsigned char const *data, usize size, usize *position, u8 *value);
 
 bool
-t2_read_u32(unsigned char const *data, size_t size, size_t *position, uint32_t *value);
+t2_read_u32(unsigned char const *data, usize size, usize *position, u32 *value);
 
 bool
-t2_read_u64(unsigned char const *data, size_t size, size_t *position, uint64_t *value);
+t2_read_u64(unsigned char const *data, usize size, usize *position, u64 *value);
 
 bool
 t2_read_string(
         unsigned char const *data,
-        size_t size,
-        size_t *position,
+        usize size,
+        usize *position,
         char **text
 );
 
 typedef struct t2_symbol_remap {
-        uint64_t (*out)(void *context, uint64_t symbol);
-        uint64_t (*in)(void *context, uint64_t token);
+        u64 (*out)(void *context, u64 symbol);
+        u64 (*in)(void *context, u64 token);
         void *context;
 } T2SymbolRemap;
 
@@ -827,9 +840,9 @@ T2TypeWriter *
 t2_type_writer_new(T2Universe *universe, T2SymbolRemap remap);
 
 bool
-t2_type_writer_add(T2TypeWriter *writer, T2Type type, uint32_t *index);
+t2_type_writer_add(T2TypeWriter *writer, T2Type type, u32 *index);
 
-size_t
+usize
 t2_type_writer_count(T2TypeWriter const *writer);
 
 bool
@@ -841,8 +854,8 @@ t2_type_writer_free(T2TypeWriter *writer);
 typedef struct t2_type_reader T2TypeReader;
 
 typedef struct t2_read_hooks {
-        uint32_t floor;
-        uint32_t (*reserve)(void *context, uint32_t count);
+        u32 floor;
+        u32 (*reserve)(void *context, u32 count);
         T2Type (*meta)(void *context, T2VariableKind kind);
         void *context;
 } T2ReadHooks;
@@ -853,14 +866,14 @@ t2_type_reader_new(
         T2SymbolRemap remap,
         T2ReadHooks hooks,
         unsigned char const *data,
-        size_t size,
-        size_t *position
+        usize size,
+        usize *position
 );
 
 T2Type
-t2_type_reader_type(T2TypeReader const *reader, uint32_t index);
+t2_type_reader_type(T2TypeReader const *reader, u32 index);
 
-uint32_t
+u32
 t2_type_reader_variable_limit(T2TypeReader const *reader);
 
 void
@@ -873,8 +886,8 @@ T2Scheme *
 t2_scheme_decode(
         T2TypeReader *reader,
         unsigned char const *data,
-        size_t size,
-        size_t *position
+        usize size,
+        usize *position
 );
 
 /* Conservative runtime-shape facts for a future JIT adapter. */
@@ -896,13 +909,16 @@ t2_solver_set_predicate_resolver(
 );
 
 void
+t2_solver_set_level_source(T2Solver *solver, u32 const *level);
+
+void
 t2_solver_free(T2Solver *solver);
 
 T2Type
 t2_solver_new_meta(
         T2Solver *solver,
         T2VariableKind kind,
-        uint32_t level,
+        u32 level,
         char const *provenance
 );
 
@@ -948,6 +964,18 @@ T2Type
 t2_solver_resolve_packs(T2Solver *solver, T2Type type);
 
 T2Type
+t2_solver_expand_pack_parameter(T2Solver *solver, T2Type callable);
+
+T2Type
+t2_solver_skolemize(
+        T2Solver *solver,
+        T2Type type,
+        T2Type const *metas,
+        T2Type const *skolems,
+        usize count
+);
+
+T2Type
 t2_solver_zonk(
         T2Solver *solver,
         T2Type type,
@@ -966,32 +994,32 @@ t2_solver_explain(T2Solver const *solver);
 char *
 t2_solver_explain_since(T2Solver const *solver, T2SolverMark mark);
 
-size_t
+usize
 t2_solver_cause_count(T2Solver const *solver);
 
 bool
-t2_solver_cause(T2Solver *solver, size_t index, T2CauseInfo *info);
+t2_solver_cause(T2Solver *solver, usize index, T2CauseInfo *info);
 
 bool
 t2_solver_failure(T2Solver *solver, T2CauseInfo *info);
 
-size_t
+usize
 t2_solver_pending_obligations(T2Solver const *solver);
 
 bool
 t2_solver_pending_obligation(
         T2Solver const *solver,
-        size_t index,
+        usize index,
         T2Predicate *predicate
 );
 
-size_t
+usize
 t2_solver_meta_count(T2Solver const *solver);
 
-size_t
+usize
 t2_solver_edge_count(T2Solver const *solver);
 
-uint64_t
+u64
 t2_solver_work_steps(T2Solver const *solver);
 
 T2SolverMark

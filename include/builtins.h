@@ -58,6 +58,7 @@ static struct {
   { .module = NULL,         .name = "blob",                     .value = BUILTIN(builtin_blob)                    },
   { .module = NULL,         .name = "type",                     .value = BUILTIN(builtin_type)                    },
   { .module = NULL,         .name = "subclass?",                .value = BUILTIN(builtin_subclass)                },
+  { .module = NULL,         .name = "classOf",                  .value = BUILTIN(builtin_class_of)                },
   { .module = NULL,         .name = "members",                  .value = BUILTIN(builtin_members)                 },
   { .module = NULL,         .name = "member",                   .value = BUILTIN(builtin_member)                  },
   { .module = NULL,         .name = "object",                   .value = BUILTIN(builtin_object)                  },

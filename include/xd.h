@@ -184,7 +184,7 @@ mrealloc(void *p, usize n)
 {
         p = ty_realloc(p, n);
 
-        if (p == NULL) {
+        if (UNLIKELY((p == NULL) & (n > 0))) {
                 panic("Out of memory!");
         }
 

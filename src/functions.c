@@ -8813,7 +8813,7 @@ BUILTIN_FUNCTION(type)
 
                 OKGC(types);
 
-                return TUPLE(types, NULL, n);
+                return TUPLE(types, v.ids, n);
         }
 
         if (v.tags != 0) {
@@ -8821,6 +8821,15 @@ BUILTIN_FUNCTION(type)
         }
 
         i32 c = ClassOf(&v);
+
+        return (c > CLASS_TOP) ? CLASS(c) : NIL;
+}
+
+BUILTIN_FUNCTION(class_of)
+{
+        ASSERT_ARGC("class-of()", 1);
+
+        i32 c = ClassOf(&ARG(0));
 
         return (c > CLASS_TOP) ? CLASS(c) : NIL;
 }

@@ -660,10 +660,12 @@ pub class Oid {
         __hex = hex.lower()
     }
 
-    hex -> String { __hex }
+    hex   -> String { __hex     }
     short -> String { __hex[;7] }
-    __str__() -> String { __hex }
+
+    __str__()  -> String { __hex }
     __hash__() -> Int { ty.hash(__hex) }
+
     ==(other: Oid) -> Bool { __hex == other.__hex }
 
     with-native[T](f: raw.GitOid -> T) -> T {
@@ -680,8 +682,11 @@ pub class Signature {
     seconds: Int
     offset:  Int
 
-    init(name: String, email: String,
-         date: ZonedDateTime | Instant = Now.zoned-date-time-iso()) {
+    init(
+        name: String,
+        email: String,
+        date: ZonedDateTime | Instant = Now.zoned-date-time-iso()
+    ) {
         let (instant, offset-nanos) = match date {
             d: ZonedDateTime => (d.to-instant(), d.offset-nanoseconds),
             i: Instant       => (i, 0),
@@ -771,18 +776,20 @@ pub class GitObject < Handle : Iterable[TreeEntry] {
         __repo = repo
     }
 
-    repo -> Repository { __repo }
-    id -> Oid { Oid(oid-text(raw.git_object_id(self.handle))) }
-    hex -> String { id.hex }
-    short -> String { buffer-text(raw.git_object_short_id@(_, self.handle)) }
-    kind -> ObjectKind { object-kind(raw.git_object_type(self.handle)) }
+    repo  -> Repository { __repo }
+    id    -> Oid        { Oid(oid-text(raw.git_object_id(self.handle))) }
+    hex   -> String     { id.hex }
+    short -> String     { buffer-text(raw.git_object_short_id@(_, self.handle)) }
+    kind  -> ObjectKind { object-kind(raw.git_object_type(self.handle)) }
+
     commit? -> Bool { kind == Kind.Commit }
-    tree? -> Bool { kind == Kind.Tree }
-    blob? -> Bool { kind == Kind.Blob }
-    tag? -> Bool { kind == Kind.Tag }
+    tree?   -> Bool { kind == Kind.Tree }
+    blob?   -> Bool { kind == Kind.Blob }
+    tag?    -> Bool { kind == Kind.Tag }
 
     __str__() -> String { "{kind}({short})" }
     __hash__() -> Int { ty.hash(id) }
+
     ==(other: GitObject) -> Bool { id == other.id }
 
     __require(operation: String, *expected: ObjectKind) -> Ptr[Any] {
@@ -908,6 +915,7 @@ pub class GitObject < Handle : Iterable[TreeEntry] {
     }
 
     [](path: String | Path) -> GitObject { entry(path).object }
+
     read(path: String | Path) -> String { self[path].text }
 
     contains?(path: String | Path) -> Bool {

@@ -164,7 +164,7 @@ typedef vec(Module *)       ModuleVector;
 #define mF(p)      gc_free(ty, p)
 
 #define uA(...)    gc_alloc_unchecked(ty, __VA_ARGS__)
-#define uA0(...)    gc_alloc0_unchecked(ty, __VA_ARGS__)
+#define uA0(...)   gc_alloc0_unchecked(ty, __VA_ARGS__)
 #define uAo(...)   gc_alloc_object_unchecked(ty, __VA_ARGS__)
 #define uAo0(...)  gc_alloc_object0_unchecked(ty, __VA_ARGS__)
 
@@ -178,9 +178,10 @@ typedef vec(Module *)       ModuleVector;
 #define smA(n) AllocateScratch(ty, (n))
 #define smA0(n) AllocateScratch0(ty, (n))
 
-#define xmA(n)    mrealloc(NULL, (n))
-#define xtA(t, n) mrealloc(NULL, (n) * sizeof (t))
-#define xmF(p)    ty_free((p))
+#define xmA(n)     mrealloc(NULL, (n))
+#define xtA(t, n)  mrealloc(NULL, (n) * sizeof (t))
+#define xtA0(t, n) alloc0((n) * sizeof (t))
+#define xmF(p)     ty_free((p))
 
 #define mresize(ptr, n) ((ptr) = mrealloc((ptr), (n)))
 #define Resize(p, n, m) ((p) = __builtin_memcpy(amA(n), (p), (m)))

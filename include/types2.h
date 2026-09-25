@@ -23,31 +23,31 @@ typedef enum t2_checkpoint {
         T2_CHECKPOINT_COUNT
 } T2Checkpoint;
 
-extern uint32_t TYPES_OFF;
+extern u32 TYPES_OFF;
 
 #define WITH_TYPES_OFF                                  \
         for (                                           \
-                uint32_t _ctx_cond = (++TYPES_OFF, 1);  \
+                u32 _ctx_cond = (++TYPES_OFF, 1);       \
                 _ctx_cond;                              \
                 --_ctx_cond, --TYPES_OFF                \
         )
 
 enum { T2_TAG_SYMBOL_BASE = UINT64_C(1) << 32 };
 
-inline static uint64_t
+inline static u64
 t2_class_symbol(int class_id)
 {
-        return (uint64_t)class_id + 1;
+        return (u64)class_id + 1;
 }
 
-inline static uint64_t
+inline static u64
 t2_tag_symbol(int tag_id)
 {
-        return T2_TAG_SYMBOL_BASE + (uint64_t)tag_id;
+        return T2_TAG_SYMBOL_BASE + (u64)tag_id;
 }
 
 inline static int
-t2_symbol_class(uint64_t symbol)
+t2_symbol_class(u64 symbol)
 {
         return (symbol == 0 || symbol >= T2_TAG_SYMBOL_BASE)
              ? -1
@@ -55,7 +55,7 @@ t2_symbol_class(uint64_t symbol)
 }
 
 inline static int
-t2_symbol_tag(uint64_t symbol)
+t2_symbol_tag(u64 symbol)
 {
         return (symbol < T2_TAG_SYMBOL_BASE)
              ? -1
@@ -74,7 +74,7 @@ t2_checker_observe(
         T2Checker *checker,
         Stmt const *stmt,
         T2Checkpoint checkpoint,
-        size_t index
+        usize index
 );
 
 void
@@ -86,12 +86,6 @@ t2_checker_abort(T2Checker *checker);
 T2Universe *
 t2_global_universe(void);
 
-
-
-
-
-
-
 T2Type
 t2_object_type(Ty *ty, Class *class);
 
@@ -99,13 +93,13 @@ T2Type
 t2_class_template(Ty *ty, Class *class);
 
 T2Type
-t2_class_parameter(Ty *ty, Class *class, size_t index);
+t2_class_parameter(Ty *ty, Class *class, usize index);
 
 T2Type
 t2_class_type(Ty *ty, Class *class);
 
 T2Type
-t2_class_instance(Ty *ty, int class_id, T2Type const *arguments, size_t count);
+t2_class_instance(Ty *ty, int class_id, T2Type const *arguments, usize count);
 
 T2Type
 t2_tag_instance(Ty *ty, int tag_id, T2Type payload);
@@ -156,9 +150,8 @@ t2_is_callable(T2Type type);
 T2Type
 t2_callable_result_type(T2Type type);
 
-
 T2Type
-t2_substitute(T2Type type, uint32_t const *ids, T2Type const *replacements, size_t count);
+t2_substitute(T2Type type, u32 const *ids, T2Type const *replacements, usize count);
 
 T2Type
 t2_member_type(Ty *ty, T2Type receiver, T2Type member);

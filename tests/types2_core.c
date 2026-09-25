@@ -2140,7 +2140,7 @@ main(void)
                 pack_remainder,
                 T2_PREFER_LOWER_BOUND
         );
-        check_string(universe, pack_solution, "pack[String]");
+        check_string(universe, pack_solution, "(String)");
 
         T2Type union_trial_meta = t2_solver_new_meta(
                 solver,
