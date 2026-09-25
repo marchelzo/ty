@@ -300,19 +300,14 @@ main(int argc, char *argv[])
 
                         NewArenaNoGC(ty, 1 << 22);
 
-                        mod = TyCompileModule(
-                                ty, source, file, CompilerCurrentModule(ty),
-                                TYC_DEFAULT_FLAGS
-                        );
+                        mod = TyCompileModule(ty, source, file, NULL, TYC_DEFAULT_FLAGS);
 
                         if (mod == NULL) {
-                                LOGX("compilation failed: %s\n", TyError(ty));
-                                result = vTn(
-                                        "error", xSz(TyError(ty))
-                                );
+                                LSLOG("compilation failed: %s\n", TyError(ty));
+                                result = vTn("error", xSz(TyError(ty)));
                                 goto EndRequest;
                         } else {
-                                LOGX("loaded module %s\n", mod->path);
+                                LSLOG("loaded module %s\n", mod->path);
                         }
 
                         if (!HaveDeps && (mod != NULL)) {
