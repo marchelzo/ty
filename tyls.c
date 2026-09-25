@@ -14,7 +14,15 @@
 #include "types2.h"
 #include "vm.h"
 
-#define LSLOG(fmt, ...)
+#if 0
+  #define LSLOG(fmt, ...) fprintf(        \
+        stderr,                           \
+        "[tyls] " fmt "\n" __VA_OPT__(,)  \
+        __VA_ARGS__                       \
+  )
+#else
+  #define LSLOG(fmt, ...)
+#endif
 
 char *FreedArenaLo;
 char *FreedArenaHi;
