@@ -14,7 +14,6 @@
 #include "types2.h"
 #include "vm.h"
 
-//#define LSLOG(fmt, ...) fprintf(stderr, fmt __VA_OPT__(,) __VA_ARGS__)
 #define LSLOG(fmt, ...)
 
 char *FreedArenaLo;
@@ -211,7 +210,7 @@ main(int argc, char *argv[])
                 req = builtin_json_parse_xD(ty, 1, NULL);
                 vmX();
 
-                LOGX("%s", SHOW(&req, ABBREV));
+                LSLOG("%s", SHOW(&req, ABBREV));
 
                 i32 what = tget_nn(&req, "what")->z;
 

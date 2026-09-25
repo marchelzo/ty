@@ -16518,7 +16518,6 @@ infer_expression(T2Checker *checker, Expr const *source)
                 result = t2_primitive(checker->universe, T2_TYPE_FLOAT);
                 break;
         case EXPRESSION_NIL:
-        case EXPRESSION_NONE:
                 result = known_nil_type(checker);
                 break;
         case EXPRESSION_MATCH_ANY:
@@ -18463,7 +18462,6 @@ expression_is_expansive(Expr const *source)
         case EXPRESSION_STRING:
         case EXPRESSION_REAL:
         case EXPRESSION_NIL:
-        case EXPRESSION_NONE:
         case EXPRESSION_IDENTIFIER:
                 return false;
         case EXPRESSION_TUPLE:
@@ -18482,14 +18480,13 @@ expression_is_expansive(Expr const *source)
 static bool
 callable_value(T2Checker *checker, T2Type type)
 {
-        switch (t2_type_kind(checker->universe, resolved_type_head(checker, type, T2_PREFER_LOWER_BOUND))) {
-        case T2_TYPE_FUNCTION:
-        case T2_TYPE_OVERLOAD:
-        case T2_TYPE_SCHEME:
-                return true;
-        default:
-                return false;
-        }
+        T2TypeKind kind = t2_type_kind(
+                checker->universe,
+                resolved_type_head(checker, type, T2_PREFER_LOWER_BOUND)
+        );
+        return (kind == T2_TYPE_FUNCTION)
+             | (kind == T2_TYPE_OVERLOAD)
+             | (kind == T2_TYPE_SCHEME);
 }
 
 static bool
@@ -18501,7 +18498,7 @@ is_named_binding_target(Expr const *target)
                        (target->type == EXPRESSION_IDENTIFIER)
                     || (target->type == EXPRESSION_RESOURCE_BINDING)
                )
-        ;
+            ;
 }
 
 static T2Type *
@@ -18512,7 +18509,10 @@ environment_types(
 )
 {
         *count         = 0;
-        usize capacity = vN(checker->bindings) + vN(checker->forward_uses);
+
+        usize capacity = vN(checker->bindings)
+                       + vN(checker->forward_uses);
+
         if (capacity == 0) {
                 return NULL;
         }
@@ -18551,6 +18551,7 @@ type_variable_name(T2Checker *checker, T2Quantifier quantifier)
                 quantifier.kind,
                 quantifier.id
         );
+
         for (usize i = vN(checker->type_variables); i != 0; --i) {
                 T2TypeVariable const *entry = v_(checker->type_variables, i - 1);
                 if (entry->type == variable && entry->symbol != NULL) {
@@ -18565,6 +18566,7 @@ static T2Type
 named_scheme_type(T2Checker *checker, T2Scheme *scheme)
 {
         usize count = t2_scheme_quantifier_count(scheme);
+
         for (usize i = 0; i < count; ++i) {
                 T2Quantifier quantifier;
                 if (
@@ -18585,10 +18587,10 @@ named_scheme_type(T2Checker *checker, T2Scheme *scheme)
 static T2Type
 typeof_operand_type(T2Checker *checker, Expr const *operand)
 {
-        T2Binding *binding = (operand != NULL)
-                          && (operand->type == EXPRESSION_IDENTIFIER)
+        T2Binding *binding = (operand->type == EXPRESSION_IDENTIFIER)
                            ? find_binding(checker, operand->symbol)
                            : NULL;
+
         if (binding != NULL && binding->scheme != NULL) {
                 T2SolverMark scope = t2_solver_mark(checker->solver);
                 T2Type instance    = infer_expression(checker, operand);
@@ -18621,7 +18623,7 @@ typeof_operand_type(T2Checker *checker, Expr const *operand)
                 instance = zonked;
         }
 
-        T2Scheme *scheme = (instance == T2_TYPE_INVALID) || checker->failed
+        T2Scheme *scheme = (instance == T2_TYPE_INVALID || checker->failed)
                          ? NULL
                          : t2_solver_generalize_scoped(
                                  checker->solver,
@@ -18632,7 +18634,7 @@ typeof_operand_type(T2Checker *checker, Expr const *operand)
                                  false,
                                  scope
                            )
-        ;
+                         ;
         t2_solver_commit(checker->solver, scope);
         ty_free(environment);
         if (scheme == NULL) {
@@ -18711,21 +18713,27 @@ infer_forward_function(T2Checker *checker, T2Binding *binding, Expr const *site)
         usize count = 0;
         T2Type *environment = environment_types(checker, symbol, &count);
         T2SolverMark scope = t2_solver_mark(checker->solver);
+
         binding->defining = true;
+
         if (symbol->expr->fn_symbol != symbol) {
                 binding->alias = symbol->expr->fn_symbol;
         }
+
         T2Type type = infer_function_expression(checker, symbol->expr);
+
         binding = find_binding(checker, symbol);
         if (binding == NULL) {
                 ty_free(environment);
                 t2_solver_commit(checker->solver, scope);
                 return T2_TYPE_INVALID;
         }
+
         binding->defining = false;
         binding->alias    = NULL;
         binding->forward  = false;
         binding->eager    = true;
+
         (void)generalize_binding(
                 checker,
                 binding,
@@ -18737,14 +18745,20 @@ infer_forward_function(T2Checker *checker, T2Binding *binding, Expr const *site)
                 scope
         );
         ty_free(environment);
-        return instantiate_binding(checker, find_binding(checker, symbol), site);
+
+        return instantiate_binding(
+                checker,
+                find_binding(checker, symbol),
+                site
+        );
 }
 
 static bool
 is_callable_set(T2Checker *checker, T2Type type)
 {
         T2TypeKind kind = t2_type_kind(checker->universe, type);
-        return (kind == T2_TYPE_FUNCTION) || (kind == T2_TYPE_OVERLOAD);
+        return (kind == T2_TYPE_FUNCTION)
+            || (kind == T2_TYPE_OVERLOAD);
 }
 
 static bool

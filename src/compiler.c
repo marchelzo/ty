@@ -4791,15 +4791,11 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_IFDEF:
                 if (e->module != NULL) {
                         Module *mod = GetModule(ty, e->module);
-                        if (
-                                (mod == NULL)
-                             || (mod->scope == NULL)
-                             || ((e->symbol = scope_lookup(ty, mod->scope, e->identifier)) == NULL)
-                        ) {
-                                e->type = EXPRESSION_NONE;
+                        if (mod != NULL && mod->scope != NULL) {
+                                e->symbol = scope_lookup(ty, mod->scope, e->identifier);
                         }
-                } else if ((e->symbol = scope_lookup(ty, scope, e->identifier)) == NULL) {
-                        e->type = EXPRESSION_NONE;
+                } else {
+                        e->symbol = scope_lookup(ty, scope, e->identifier);
                 }
                 break;
 
@@ -10190,9 +10186,14 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
 
         case EXPRESSION_IFDEF:
-                emit_load(ty, e->symbol, STATE.fscope);
-                INSN(TAG_PUSH);
-                Ei32(TAG_SOME);
+                if (e->symbol != NULL) {
+                        emit_load(ty, e->symbol, STATE.fscope);
+                        INSN(TAG_PUSH);
+                        Ei32(TAG_SOME);
+                } else {
+                        INSN(TAG);
+                        Ei32(TAG_NONE);
+                }
                 break;
 
         case EXPRESSION_TYPE_OF:
@@ -10206,11 +10207,6 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
         case EXPRESSION_TYPE:
                 INSN(TYPE);
                 EP((uptr)e->_type);
-                break;
-
-        case EXPRESSION_NONE:
-                INSN(TAG);
-                Ei32(TAG_NONE);
                 break;
 
         case EXPRESSION_VALUE:
