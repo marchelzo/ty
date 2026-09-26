@@ -5,6 +5,9 @@
 
 #include "value.h"
 
+bool
+ptr_from_ty(Ty *ty, Value const *v, void **out);
+
 Value
 cffi_cif(Ty *ty, int argc, Value *kwargs);
 

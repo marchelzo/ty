@@ -113,6 +113,7 @@ extern char **environ;
 #include "compiler.h"
 #include "types2.h"
 #include "title.h"
+#include "cffi.h"
 
 #ifdef __APPLE__
 #define fputc_unlocked putc_unlocked
@@ -7323,6 +7324,29 @@ BUILTIN_FUNCTION(os_fcntl)
         }
 
         bP("operation not implemented");
+#endif
+}
+
+BUILTIN_FUNCTION(os_ioctl)
+{
+        ASSERT_ARGC("os.ioctl()", 2, 3);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.ioctl()")
+#else
+        int fd = INT_ARG(0);
+        unsigned long req = INT_ARG(1);
+        void *p = NULL;
+        int r;
+
+        if (argc == 3 && !ptr_from_ty(ty, &ARG(2), &p)) {
+                bP("invalid argument: %s", VSC(&ARG(2)));
+        }
+
+        UnlockTy();
+        r = ioctl(fd, req, p);
+        LockTy();
+
+        return INTEGER(r);
 #endif
 }
 

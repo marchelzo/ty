@@ -51,39 +51,58 @@ int_from(Value const *v)
              : v->real;
 }
 
-inline static void *
-ptr_from(Ty *ty, Value const *v)
+bool
+ptr_from_ty(Ty *ty, Value const *v, void **out)
 {
         Value *f;
 
         switch (v->type) {
         case VALUE_PTR:
-                return v->ptr;
+                *out = v->ptr;
+                return true;
 
         case VALUE_INTEGER:
-                return (void *)v->z;
+                *out = (void *)(iptr)v->z;
+                return true;
 
         case VALUE_STRING:
-                return (void *)ss(*v);
+                *out = (void *)ss(*v);
+                return true;
 
         case VALUE_NIL:
-                return NULL;
+                *out = NULL;
+                return true;
 
         case VALUE_BLOB:
-                return (void *)v->blob->items;
+                *out = (void *)vv(*v->blob);
+                return true;
 
         case VALUE_FOREIGN_FUNCTION:
-                return (void *)v->ff;
+                *out = (void *)v->ff;
+                return true;
 
         case VALUE_OBJECT:
                 f = class_lookup_method_i(ty, v->class, NAMES.ptr);
                 if (f != NULL) {
-                        return vm_call_method(ty, v, f, 0).ptr;
+                        *out = vm_call_method(ty, v, f, 0).ptr;
+                        return true;
                 }
                 // fallthrough
         }
 
-        zP("FFI: attempt to use non-addressable value as pointer: %s", VSC(v));
+        return false;
+}
+
+inline static void *
+ptr_from(Ty *ty, Value const *v)
+{
+        void *p;
+
+        if (!ptr_from_ty(ty, v, &p)) {
+                zP("ffi: non-addressable value passed as pointer: %s", VSC(v));
+        }
+
+        return p;
 }
 
 static void
@@ -198,7 +217,12 @@ store(Ty *ty, ffi_type *t, void *p, Value const *v)
                         }
                         offsets = struct_offsets(t);
                         for (int i = 0; i < v->count; ++i) {
-                                store(ty, t->elements[i], (char *)p + offsets[i], &v->items[i]);
+                                store(
+                                        ty,
+                                        t->elements[i],
+                                        (char *)p + offsets[i],
+                                        &v->items[i]
+                                );
                         }
                         break;
 
@@ -605,48 +629,26 @@ cffi_box_auto(Ty *ty, int argc, Value *kwargs)
 Value
 cffi_pmember(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 3) {
-                zP("ffi.pmember(): expected 3 arguments but got %d", argc);
-        }
+        ASSERT_ARGC("ffi.pmember()", 3);
 
-        Value t = ARG(0);
-        if (t.type != VALUE_PTR) {
-                zP("the first argument to ffi.member() must be a pointer");
-        }
-
-        ffi_type *type = t.ptr;
+        ffi_type *type   = PTR_ARG(0);
+        Value     record = ARGx(1, VALUE_PTR, VALUE_BLOB);
+        imax      i      = INT_ARG(2);
 
         int n = 0;
         while (type->elements[n] != NULL) {
                 n += 1;
         }
 
-        unsigned char *p;
-        switch (ARG(1).type) {
-        case VALUE_PTR:
-                p = ARG(1).ptr;
-                break;
+        unsigned char *ptr = ptr_from(ty, &record);
 
-        case VALUE_BLOB:
-                p = ARG(1).blob->items;
-                break;
-
-        default:
-                zP("ffi.pmember(): invalid second argument: %s", VSC(&ARG(1)));
-        }
-
-        Value i = ARG(2);
-        if (
-                (i.type != VALUE_INTEGER)
-             || (i.z < 0)
-             || (i.z >= n)
-        ) {
-                zP("invalid third argument to ffi.pmember(): %s", VSC(&i));
+        if (i < 0 || i >= n) {
+                bP("bad index: %s (type has %d members)", VSC(&ARG(2)), n);
         }
 
         usize const *offsets = struct_offsets(type);
 
-        return PTR(p + offsets[i.z]);
+        return PTR(ptr + offsets[i]);
 }
 
 Value

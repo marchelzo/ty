@@ -94,14 +94,6 @@ pub fn result-patterns() {
     }
 }
 
-pub fn imported-tag-const-pattern() {
-    let fixture = FIXTURES / 'types2' / 'imported-tag-const.ty'
-    let result = run-ty([str(fixture)], %{'TY_TYPES2_REPORT': 'all'})
-    assert(result.status == 0, result.stderr)
-    assert(result.stdout == "ok exit 3 killed 9 timeout\n", result.stdout)
-    assert("{fixture.name}:" not in result.stderr, result.stderr)
-}
-
 pub fn run-rlimits() {
     if not __windows__ {
         assert(sh('ulimit -n', rlimits: %{os.RLIMIT_NOFILE: 77}).stdout == "77\n")

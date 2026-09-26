@@ -157,6 +157,7 @@ static struct {
   { .module = "os",         .name = "umask",                    .value = BUILTIN(builtin_os_umask)                },
   { .module = "os",         .name = "listdir",                  .value = BUILTIN(builtin_os_listdir)              },
   { .module = "os",         .name = "fcntl",                    .value = BUILTIN(builtin_os_fcntl)                },
+  { .module = "os",         .name = "ioctl",                    .value = BUILTIN(builtin_os_ioctl)                },
   { .module = "os",         .name = "flock",                    .value = BUILTIN(builtin_os_flock)                },
   { .module = "os",         .name = "spawn",                    .value = BUILTIN(builtin_os_spawn)                },
   { .module = "os",         .name = "SPAWN_PIPE",               .value = INT(TY_SPAWN_PIPE)                       },

@@ -461,7 +461,7 @@ ns _size {
     fn query(fd: Int) -> WinSize {
         let ws = size ?? WinSize()
         size = ws
-        ioctl(fd, TIOCGWINSZ, (c.ptr, ws.get()))
+        ioctl(fd, TIOCGWINSZ, ws)
         ws
     }
 
