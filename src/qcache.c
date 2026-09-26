@@ -4,7 +4,7 @@
 #include "qcache.h"
 
 #ifndef _WIN32
-#include "tthread.h"
+#include "ty/thread.h"
 
 static TyMutex CacheLock = TY_MUTEX_INIT;
 static void *Cache[8];

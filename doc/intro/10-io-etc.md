@@ -7,7 +7,7 @@ In addition to the low-level syscall wrappers, Ty does include some higher-level
  - The `path` module is heavily inspired by Python's `pathlib` and provides an object-oriented interface for working with file paths.
  - The `io` module provides a basic interface for working with streams.
  - The `net` module provides two very basic helper functions, `dial` and `listen`, which wrap `socket()`/`getaddrinfo()`/`bind()`/`listen()`/`connect()`, etc. for convenience.
- - The `sh` module provides a wrapper around `os.spawn` for spawning subprocesses with an optional timeout and capturing their output.
+ - The `sh` module wraps `os.spawn`: `run(argv)` spawns a subprocess with an optional timeout and captures its output in a `CmdResult`, and `sh(cmd)` does the same through `/bin/sh -c`. Its `fate` is `Exit(code)`, `Killed(signal)`, or `Timeout`, and `Success` is shorthand for `Exit(0)`.
 
 
 ## Some examples
@@ -79,14 +79,22 @@ fn write-file(path: Path | String, contents: String) {
 ### Spawning subprocesses
 
 ```ty
-import sh (sh)
+import sh (sh, run, Exit, Killed, Timeout, Success)
 import os
 
-let _, result = sh('date')
-dbg(result)
+dbg(sh('date').stdout)
+dbg(run(['ls', '-l', '/tmp']).ok?)
+dbg(run('/bin/sh', ['not-sh', '-c', 'echo $0']).stdout)
 
-dbg(sh('sleep 5', timeoutMs=500))
-
+for cmd in ['echo hi', 'exit 3', 'sleep 5'] {
+    let result = sh(cmd, timeout=0.5)
+    print(match result.fate {
+        Success     => "ok: {result.stdout.trim()}",
+        Exit(code)  => "failed with status {code}",
+        Killed(sig) => "killed by signal {sig}",
+        Timeout     => 'timed out',
+    })
+}
 
 let proc = os.spawn(['date'], stdout=os.SPAWN_PIPE, stderr=os.SPAWN_NULL)
 dbg(os.read(proc.stdout, 512).str())

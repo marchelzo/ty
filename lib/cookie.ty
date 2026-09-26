@@ -219,16 +219,20 @@ pub fn windows-path-to-wsl(path: String) -> Path | nil {
     Path("/mnt/{drive}/{rest.comb(/^\/+|\/+$/)}")
 }
 
-fn windows-local-app-data() -> Path | nil {
-    if !wsl?() { return nil }
-    let out, result = sh.sh(
-        "[Environment]::GetFolderPath('LocalApplicationData')",
-        shell=['powershell.exe', '-NoProfile', '-NonInteractive', '-Command']
-    )
-    if out == nil || result == nil || result.status != 0 {
+fn powershell(script: String, input: ?String = nil) -> String | nil {
+    let result = try {
+        sh.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script], input:)
+    } catch _: OSError {
         return nil
     }
-    windows-path-to-wsl(out.trim())
+
+    result.ok? ? result.stdout.trim() : nil
+}
+
+fn windows-local-app-data() -> Path | nil {
+    if !wsl?() { return nil }
+    let $dir = powershell("[Environment]::GetFolderPath('LocalApplicationData')") or return nil
+    windows-path-to-wsl(dir)
 }
 
 fn profile-path(profile: String | Path | nil) -> Path {
@@ -358,15 +362,8 @@ fn windows-chrome-key(local-state: Path) -> Blob | nil {
         '$p=[Security.Cryptography.ProtectedData]::Unprotect($d,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)',
         '[Convert]::ToBase64String($p)'
     ].join(';')
-    let out, result = sh.sh(
-        script,
-        input=base64.encode(wrapped.slice(5)),
-        shell=['powershell.exe', '-NoProfile', '-NonInteractive', '-Command']
-    )
-    if out == nil || result == nil || result.status != 0 {
-        return nil
-    }
-    try { base64.decode(out.trim()) }
+    let $out = powershell(script, input=base64.encode(wrapped.slice(5))) or return nil
+    try { base64.decode(out) }
 }
 
 #|if __apple__

@@ -8,7 +8,7 @@
 #include "vm.h"
 #include "log.h"
 #include "class.h"
-#include "tthread.h"
+#include "ty/thread.h"
 #include "compiler.h"
 #include "itable.h"
 #include "chan.h"

@@ -31,7 +31,7 @@
 #include <sha512.h>
 #include <md5.h>
 
-#include "tthread.h"
+#include "ty/thread.h"
 #include "polyfill_time.h"
 #include "polyfill_unistd.h"
 #include "polyfill_stdatomic.h"
@@ -79,7 +79,6 @@ typedef struct stat StatStruct;
 #include <netinet/ip.h>
 #include <poll.h>
 #include <pthread.h>
-#include <spawn.h>
 #include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -91,6 +90,7 @@ typedef struct stat StatStruct;
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <termios.h>
+#include "ty/spawn.h"
 extern char **environ;
 #endif
 
@@ -328,6 +328,66 @@ static noreturn void
 
         vmE(&exc);
 }
+
+#ifndef _WIN32
+static void
+IntoRLimit(Ty *ty, char const *ctx, Value const *v, struct rlimit *out)
+{
+        if (v->type == VALUE_INTEGER) {
+                out->rlim_cur = (rlim_t)v->z;
+                out->rlim_max = (rlim_t)v->z;
+                return;
+        }
+
+        if (
+                (v->type != VALUE_TUPLE)
+             || (v->count != 2)
+             || (v->items[0].type != VALUE_INTEGER)
+             || (v->items[1].type != VALUE_INTEGER)
+        ) {
+                zP("%s: bad rlimit: %s", ctx, VSC(v));
+        }
+
+        out->rlim_cur = (rlim_t)v->items[0].z;
+        out->rlim_max = (rlim_t)v->items[1].z;
+}
+
+static bool
+CloexecPipe(int fds[2])
+{
+        if (pipe(fds) == -1) {
+                return false;
+        }
+
+        if (
+                (fcntl(fds[0], F_SETFD, FD_CLOEXEC) == -1)
+             || (fcntl(fds[1], F_SETFD, FD_CLOEXEC) == -1)
+        ) {
+                close(fds[0]);
+                close(fds[1]);
+                return false;
+        }
+
+        return true;
+}
+
+static bool
+SpawnFdOk(int fd, bool err)
+{
+        switch (fd) {
+        case TY_SPAWN_NULL:
+        case TY_SPAWN_PIPE:
+        case TY_SPAWN_INHERIT:
+                return true;
+
+        case TY_SPAWN_MERGE_ERR:
+                return err;
+
+        default:
+                return fd >= 0;
+        }
+}
+#endif
 
 inline static void
 IntoSigSet(Ty *ty, char const *ctx, Value const *v, sigset_t *set)
@@ -580,7 +640,7 @@ BUILTIN_FUNCTION(slurp)
 #ifdef _WIN32
                 fd = _open(p, _O_RDONLY);
 #else
-                fd = open(p, O_RDONLY);
+                fd = open(p, O_RDONLY | O_CLOEXEC);
 #endif
                 if (fd < 0)
                         return NIL;
@@ -809,7 +869,7 @@ BUILTIN_FUNCTION(random)
         }
 
         if (n <= 0) {
-                bP("count must be positive");
+                bP("negative count: %zd", n);
         }
 
         usize off = vN(*blob);
@@ -823,7 +883,7 @@ BUILTIN_FUNCTION(random)
                 isize r = getrandom(p, rem, 0);
                 if (r < 0) {
                         if (errno == EINTR) continue;
-                        bP("getrandom() failed: %s", strerror(errno));
+                        OSError(errno, "getrandom()");
                 }
                 p   += (usize)r;
                 rem -= (usize)r;
@@ -3861,11 +3921,10 @@ make_cmdline(Array *args)
 
 BUILTIN_FUNCTION(os_spawn)
 {
-        ASSERT_ARGC("os.spawn()", 1);
+        ASSERT_ARGC("os.spawn()", 1, 2);
 
-        Value cmd = ARG(0);
-        if (cmd.type != VALUE_ARRAY)
-                zP("the argument to os.spawn() must be an array");
+        Value cmd  = ARGx(argc - 1, VALUE_ARRAY);
+        Value comm = (argc == 2) ? ARGx(0, VALUE_STRING) : NIL;
 
         if (cmd.array->count == 0)
                 zP("empty array passed to os.spawn()");
@@ -3954,7 +4013,7 @@ BUILTIN_FUNCTION(os_spawn)
         char *cmdline = make_cmdline(cmd.array);
 
         bool bSuccess = CreateProcessA(
-                NULL,
+                (comm.type == VALUE_STRING) ? TY_TMP_C_STR_A(comm) : NULL,
                 cmdline,
                 NULL,
                 NULL,
@@ -3983,9 +4042,9 @@ BUILTIN_FUNCTION(os_spawn)
                                 0,
                                 NULL
                              );
-                printf("CreateProcess failed with error %d: %s\n", error, errorMessage);
+                Value msg = vSsz(errorMessage);
                 LocalFree(errorMessage);
-                return NIL;
+                bP("CreateProcess(): %d: %s", (int)error, TY_TMP_C_STR_A(msg));
         }
 
         // Close handles to the child process and its primary thread
@@ -4044,9 +4103,10 @@ BUILTIN_FUNCTION(os_spawn)
         static TyMutex SpawnLock = {0};
 /* ========================================================================= */
 
-        ASSERT_ARGC("os.spawn()", 1);
+        ASSERT_ARGC("os.spawn()", 1, 2);
 
-        Value cmd = ARGx(0, VALUE_ARRAY);
+        Value cmd  = ARGx(argc - 1, VALUE_ARRAY);
+        Value comm = (argc == 2) ? ARGx(0, VALUE_STRING) : NIL;
 
         if (vN(*cmd.array) == 0) {
                 bP("empty argv");
@@ -4058,6 +4118,10 @@ BUILTIN_FUNCTION(os_spawn)
                 }
         }
 
+        if (argc == 1) {
+                comm = v__(*cmd.array, 0);
+        }
+
         Value _detach   = KWARG("detach", BOOLEAN);
         Value _chdir    = KWARG("chdir",  INTEGER, STRING, BLOB, PTR, _NIL);
         Value _v_stdin  = KWARG("stdin",  INTEGER);
@@ -4065,6 +4129,14 @@ BUILTIN_FUNCTION(os_spawn)
         Value _v_stderr = KWARG("stderr", INTEGER);
         Value _ctty     = KWARG("ctty",   TUPLE, _NIL);
         Value _env      = KWARG("env",    DICT, _NIL);
+        Value _rlimits  = KWARG("rlimits", DICT, _NIL);
+        Value _sigdef   = KWARG("sigdefault", ARRAY, _NIL);
+        Value _inherit  = KWARG("inherit", ARRAY, BOOLEAN, _NIL);
+        Value _umask    = KWARG("umask", INTEGER, _NIL);
+        Value _pdeath   = KWARG("pdeathsig", INTEGER, _NIL);
+
+        TySpawn sp;
+        TySpawnInit(&sp);
 
         int ret;
 
@@ -4106,12 +4178,79 @@ BUILTIN_FUNCTION(os_spawn)
                 ctty   = NULL;
         }
 
+        if (_env.type == VALUE_DICT) {
+                dfor(k, v, _env.dict, {
+                        if (k->type != VALUE_STRING) {
+                                bP("non-string key in env: %s", SHOW(k, BASIC));
+                        }
+                        if (v->type != VALUE_STRING) {
+                                bP("non-string value in env: %s => %s", SHOW(k, BASIC), SHOW(v, BASIC));
+                        }
+                });
+        }
+
+        if (_rlimits.type == VALUE_DICT) {
+                dfor(k, v, _rlimits.dict, {
+                        struct rlimit rlim;
+                        if (k->type != VALUE_INTEGER) {
+                                bP("non-integer resource in rlimits: %s", SHOW(k, BASIC));
+                        }
+                        IntoRLimit(ty, "os.spawn()", v, &rlim);
+                        spawn_rlimit(&sp, k->z, &rlim);
+                });
+        }
+
+        if (_sigdef.type == VALUE_ARRAY) {
+                vfor(*_sigdef.array, {
+                        if (it->type != VALUE_INTEGER) {
+                                bP("non-integer signal in sigdefault: %s", VSC(&_sigdef));
+                        }
+                        spawn_sigdefault(&sp, it->z);
+                });
+        } else {
+#ifdef SIGPIPE
+                spawn_sigdefault(&sp, SIGPIPE);
+#endif
+#ifdef SIGXFSZ
+                spawn_sigdefault(&sp, SIGXFSZ);
+#endif
+        }
+
+        bool closefds = (_inherit.type != VALUE_BOOLEAN) || !_inherit.boolean;
+
+        if (_inherit.type == VALUE_ARRAY) {
+                vfor(*_inherit.array, {
+                        if (it->type != VALUE_INTEGER || it->z < 0) {
+                                bP("bad fd in inherit: %s", VSC(&_inherit));
+                        }
+                        spawn_keep(&sp, it->z);
+                });
+        }
+
+        if (_umask.type == VALUE_INTEGER) {
+                spawn_umask(&sp, (mode_t)_umask.z);
+        }
+
+        if (_pdeath.type == VALUE_INTEGER) {
+                spawn_pdeathsig(&sp, (int)_pdeath.z);
+        }
+
         bool detach = !IsMissing(_detach) && _detach.boolean;
         bool setsid = !IsNone(_ctty);
 
         int _stdin  = IsMissing(_v_stdin)  ? TY_SPAWN_INHERIT : _v_stdin.z;
         int _stdout = IsMissing(_v_stdout) ? TY_SPAWN_INHERIT : _v_stdout.z;
         int _stderr = IsMissing(_v_stderr) ? TY_SPAWN_INHERIT : _v_stderr.z;
+
+        if (!SpawnFdOk(_stdin, false)) {
+                bP("bad stdin: %d", _stdin);
+        }
+        if (!SpawnFdOk(_stdout, false)) {
+                bP("bad stdout: %d", _stdout);
+        }
+        if (!SpawnFdOk(_stderr, true)) {
+                bP("bad stderr: %d", _stderr);
+        }
 
         if (_stdin  == TY_SPAWN_INHERIT) { _stdin  = 0; }
         if (_stdout == TY_SPAWN_INHERIT) { _stdout = 1; }
@@ -4123,9 +4262,9 @@ BUILTIN_FUNCTION(os_spawn)
               | (_stdout == TY_SPAWN_NULL)
               | (_stderr == TY_SPAWN_NULL)
         ) {
-                null = open("/dev/null", O_RDWR);
+                null = open("/dev/null", O_RDWR | O_CLOEXEC);
                 if (null < 0) {
-                        bP("open(\"/dev/null\"): %s", strerror(errno));
+                        OSError(errno, "open(\"/dev/null\")");
                 }
                 if (_stdin  == TY_SPAWN_NULL) { _stdin  = null; }
                 if (_stdout == TY_SPAWN_NULL) { _stdout = null; }
@@ -4170,12 +4309,6 @@ BUILTIN_FUNCTION(os_spawn)
 
         if (_env.type == VALUE_DICT) {
                 dfor(k, v, _env.dict, {
-                        if (k->type != VALUE_STRING) {
-                                bP("non-string key in env: %s", SHOW(k, BASIC));
-                        }
-                        if (v->type != VALUE_STRING) {
-                                bP("non-string value in env: %s => %s", SHOW(k, BASIC), SHOW(v, BASIC));
-                        }
                         char *entry = sfmt(
                                 "%.*s=%.*s",
                                 (int)sN(*k), ss(*k),
@@ -4194,7 +4327,7 @@ BUILTIN_FUNCTION(os_spawn)
 #define X1(x) svP(x1, x)
 
 #define P(x, u) do {                                  \
-        if (pipe(x) == 0) { X0(x[u 0]); X1(x[u 1]); } \
+        if (CloexecPipe(x)) { X0(x[u 0]); X1(x[u 1]); } \
         else              { goto Fail;              } \
 } while (0)
 /* ------------------------------------------------------------------------- */
@@ -4222,52 +4355,36 @@ BUILTIN_FUNCTION(os_spawn)
 #undef X1
 #undef X0
 /* ------------------------------------------------------------------------- */
-        posix_spawn_file_actions_t actions;
-        posix_spawn_file_actions_init(&actions);
 /* ========================================================================= */
-#define xD(op, ...) (posix_spawn_file_actions_add##op)(&actions, __VA_ARGS__)
+#define xD(op, ...) (spawn_##op)(&sp __VA_OPT__(,) __VA_ARGS__)
 /* ------------------------------------------------------------------------- */
         if (!same0) { xD(dup2, _stdin,  0); }
         if (!same1) { xD(dup2, _stdout, 1); }
         if (!same2) { xD(dup2, _stderr, 2); }
 
+        if (fchdir !=   -1) { xD(fchdir, fchdir); }
+        if (chdir  != NULL) { xD( chdir,  chdir); }
+
+        if (closefds) { xD(closefds); }
+
         vfor(x0, xD(close, *it));
         vfor(x1, xD(close, *it));
 
-        if (fchdir !=   -1) { xD(fchdir_np, fchdir); }
-        if (chdir  != NULL) { xD( chdir_np,  chdir); }
-
-        if (octty) { xD(open, 3, ctty, O_RDWR, O_CLOEXEC); }
+        if (octty) { xD(open, 3, ctty, O_RDWR); }
 /* ------------------------------------------------------------------------- */
 #undef xD
 /* ========================================================================= */
 
-        posix_spawnattr_t attr;
-        posix_spawnattr_init(&attr);
+        if (detach) { spawn_setpgroup(&sp, 0); }
+        if (setsid) { spawn_setsid(&sp);       }
 
-        if (detach | setsid) {
-                i32 flags = 0;
-                if (detach) {
-                        posix_spawnattr_setpgroup(&attr, 0);
-                        flags |= POSIX_SPAWN_SETPGROUP;
-                }
-                if (setsid) {
-#if defined(POSIX_SPAWN_SETSID)
-                        flags |= POSIX_SPAWN_SETSID;
-#endif
-                }
-                posix_spawnattr_setflags(&attr, flags);
-        }
-
-        vec(char *) argv = {0};
+        StringVector argv = {0};
         vfor(*cmd.array, svP(argv, TY_C_STR(*it)));
         svP(argv, NULL);
 
         pid_t pid;
-        ret = posix_spawnp(&pid, v_0(argv), &actions, &attr, vv(argv), envp);
+        ret = TySpawnRun(&sp, &pid, TY_TMP_C_STR_A(comm), vv(argv), envp);
 
-        posix_spawn_file_actions_destroy(&actions);
-        posix_spawnattr_destroy(&attr);
         vfor(argv, ty_free(*it));
 
         if (ret == 0) {
@@ -4283,12 +4400,17 @@ BUILTIN_FUNCTION(os_spawn)
         }
 /* ------------------------------------------------------------------------- */
 Fail:
+        ret = errno;
         vfor(x1, close(*it));
 Cleanup:
         vfor(x0, close(*it));
         TyMutexUnlock(&SpawnLock);
         GC_RESUME();
         SCRATCH_RESTORE();
+
+        if (proc.type == VALUE_NIL) {
+                OSError(ret, "spawn(%s)", VSC(&comm));
+        }
 
         return proc;
 }
@@ -6026,10 +6148,8 @@ static Value
 os_rusage_value(Ty *ty, struct rusage const *usage)
 {
         return vTn(
-                "utime",    REAL(usage->ru_utime.tv_sec
-                                  + usage->ru_utime.tv_usec / 1.0e6),
-                "stime",    REAL(usage->ru_stime.tv_sec
-                                  + usage->ru_stime.tv_usec / 1.0e6),
+                "utime",    REAL(usage->ru_utime.tv_sec + usage->ru_utime.tv_usec / 1.0e6),
+                "stime",    REAL(usage->ru_stime.tv_sec + usage->ru_stime.tv_usec / 1.0e6),
                 "maxrss",   INTEGER(usage->ru_maxrss),
                 "ixrss",    INTEGER(usage->ru_ixrss),
                 "idrss",    INTEGER(usage->ru_idrss),
@@ -6054,22 +6174,26 @@ BUILTIN_FUNCTION(os_wait4)
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.wait4()");
 #else
-        imax pid = argc > 0 ? INT_ARG(0) : -1;
-        imax flags = argc > 1 ? INT_ARG(1) : 0;
+        imax pid   = (argc > 0) ? INT_ARG(0) : -1;
+        imax flags = (argc > 1) ? INT_ARG(1) :  0;
+
         int status;
         int ret;
         int err;
         struct rusage usage;
 
         UnlockTy();
-        do {
+        for (;;) {
                 ret = wait4(pid, &status, flags, &usage);
-        } while (ret == -1 && errno == EINTR);
+                if (ret >= 0 || errno != EINTR) {
+                        break;
+                }
+        }
         err = errno;
         LockTy();
 
         if (ret < 0 && err != ECHILD) {
-                bP("%s", strerror(err));
+                OSError(err, "wait4()");
         }
         if (ret <= 0) {
                 return NIL;
@@ -6084,6 +6208,44 @@ BUILTIN_FUNCTION(os_wait4)
         );
         gX();
         return result;
+#endif
+}
+
+BUILTIN_FUNCTION(os_getrlimit)
+{
+        ASSERT_ARGC("os.getrlimit()", 1);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.getrlimit()");
+#else
+        struct rlimit rlim;
+
+        if (getrlimit(INT_ARG(0), &rlim) == -1) {
+                OSError(errno, "getrlimit()");
+        }
+
+        return PAIR(
+                INTEGER((imax)rlim.rlim_cur),
+                INTEGER((imax)rlim.rlim_max)
+        );
+#endif
+}
+
+BUILTIN_FUNCTION(os_setrlimit)
+{
+        ASSERT_ARGC("os.setrlimit()", 2);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.setrlimit()");
+#else
+        struct rlimit rlim;
+        Value limit = ARG(1);
+
+        IntoRLimit(ty, "os.setrlimit()", &limit, &rlim);
+
+        if (setrlimit(INT_ARG(0), &rlim) == -1) {
+                OSError(errno, "setrlimit()");
+        }
+
+        return NIL;
 #endif
 }
 

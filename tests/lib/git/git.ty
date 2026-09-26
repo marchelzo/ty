@@ -2,15 +2,15 @@ import date (Instant, Now, ZonedDateTime)
 import git
 import os
 import path (Path)
-import sh (sh)
+import sh (run)
 import ty
 
 const AUTHOR = git.Signature('Ty Git', 'ty@example.invalid', 1700000000, -240)
 
 fn cli(path: Path, *args: String) -> String {
-    let out, result = sh('', shell: ['git', '-C', str(path), *args])
-    assert(result.status == 0, result.stderr)
-    (out ?? '').trim()
+    let result = run(['git', '-C', str(path), *args])
+    assert(result.ok?, result.stderr)
+    result.stdout.trim()
 }
 
 fn repository(path: Path) -> git.Repository {

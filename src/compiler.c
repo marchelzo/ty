@@ -13637,7 +13637,7 @@ compiler_symbol_literal(Symbol const *symbol, CompilerLiteral *literal)
         ) return false;
 
         Value const *value = v_(Globals, symbol->i);
-        switch (value->type & ~VALUE_TAGGED) {
+        switch (value->type) {
         case VALUE_INTEGER:
                 literal->kind = COMPILER_LITERAL_INTEGER;
                 literal->integer = value->z;

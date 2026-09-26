@@ -5,7 +5,7 @@ import hash (sha256)
 import json
 import os
 import chalk (chalk)
-import sh (sh)
+import sh (sh, Success)
 
 import lib (Result, fmt-time, fmt-delta)
 
@@ -116,13 +116,12 @@ class Sample {
 }
 
 fn command(cmd: String) -> String {
-    let out, info = sh(cmd, chdir="{ROOT_DIR}")
+    let result = sh(cmd, chdir="{ROOT_DIR}")
 
-    if out == nil || info.?status != 0 {
-        throw RuntimeError("command `{cmd}` failed: {info}")
+    match result.fate {
+        Success => result.stdout,
+        fate    => throw RuntimeError("command `{cmd}` failed: {fate}\n{result.stderr}")
     }
-
-    out
 }
 
 fn median(xs: [Float]) -> Float {

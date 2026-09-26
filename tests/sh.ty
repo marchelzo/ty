@@ -1,31 +1,30 @@
-import sh (sh)
+import errno (ENOENT)
+import os
+import sh (sh, run, Exit, Killed, Timeout, Success)
+import support.process (FIXTURES, run as run-ty)
 
 ns test
 
 pub fn sh-basic() {
     if __windows__ {
-        let $out = sh('echo hello') or throw AssertionError('command did not complete')
-        assert(out.strip() == 'hello')
+        assert(sh('echo hello').stdout.strip() == 'hello')
     } else {
-        let $out = sh('printf based') or throw AssertionError('command did not complete')
-        assert(out == 'based')
+        let out = sh('printf based')
+        assert(out.stdout == 'based')
+        assert(out.fate == Success)
+        assert(out.ok?)
     }
 }
 
 pub fn sh-combine-output() {
     if not __windows__ {
-        let $out = sh('printf based 1>&2', combineOutput=true)
-            or throw AssertionError('command did not complete')
-        assert(out == 'based')
+        assert(sh('printf based 1>&2', combineOutput=true).stdout == 'based')
     }
 }
 
 pub fn sh-cpu-time() {
     if not __windows__ {
-        let _, result = sh('printf based')
-        if result == nil {
-            throw AssertionError('command did not complete')
-        }
+        let result = sh('printf based')
         assert(#result.rusage == 16)
         assert(result.rusage.utime >= 0.0)
         assert(result.rusage.stime >= 0.0)
@@ -36,9 +35,90 @@ pub fn sh-cpu-time() {
 }
 
 pub fn sh-timeout() {
-    if __windows__ {
-        assert(sh('Sleep 1; echo Hello', shell: ['powershell', '-Command'], timeoutMs: 100) == nil)
-    } else {
-        assert(sh('sleep 0.25', timeoutMs=100) == nil)
+    let result = __windows__
+               ? sh('Sleep 1; echo Hello', shell: ['powershell', '-Command'], timeout: 0.1)
+               : sh('printf early; sleep 5', timeout=0.1)
+
+    assert(result.fate == Timeout)
+    assert(!result.ok?)
+
+    if not __windows__ {
+        assert(result.stdout == 'early')
+    }
+}
+
+pub fn run-argv() {
+    if not __windows__ {
+        assert(run(['printf', '%s|%s', 'a b', '$HOME']).stdout == 'a b|$HOME')
+    }
+}
+
+pub fn run-comm() {
+    if not __windows__ {
+        assert(run('/bin/sh', ['whoami?', '-c', 'printf %s "$0"']).stdout == 'whoami?')
+    }
+}
+
+pub fn run-input-and-status() {
+    if not __windows__ {
+        let result = run(['sh', '-c', 'cat; exit 3'], input='piped')
+        assert(result.stdout == 'piped')
+        assert(result.fate == Exit(3))
+        assert(!result.ok?)
+    }
+}
+
+pub fn run-missing-command() {
+    try {
+        run(['/nonexistent/ty-test-command'])
+    } catch e: OSError {
+        assert(e.code == ENOENT)
+        return
+    }
+    throw AssertionError('spawning a missing command did not throw')
+}
+
+pub fn result-patterns() {
+    if not __windows__ {
+        let classify = match {
+            Success     => 'ok',
+            Timeout     => 'timeout',
+            Killed(sig) => "sig:{sig}",
+            Exit(code)  => "exit:{code}",
+        }
+
+        assert(classify(sh('printf yes').fate) == 'ok')
+        assert(classify(sh('exit 4').fate) == 'exit:4')
+        assert(classify(sh('kill -9 $$').fate) == 'sig:9')
+        assert(classify(sh('sleep 5', timeout=0.05).fate) == 'timeout')
+    }
+}
+
+pub fn imported-tag-const-pattern() {
+    let fixture = FIXTURES / 'types2' / 'imported-tag-const.ty'
+    let result = run-ty([str(fixture)], %{'TY_TYPES2_REPORT': 'all'})
+    assert(result.status == 0, result.stderr)
+    assert(result.stdout == "ok exit 3 killed 9 timeout\n", result.stdout)
+    assert("{fixture.name}:" not in result.stderr, result.stderr)
+}
+
+pub fn run-rlimits() {
+    if not __windows__ {
+        assert(sh('ulimit -n', rlimits: %{os.RLIMIT_NOFILE: 77}).stdout == "77\n")
+        assert(run(['sh', '-c', 'ulimit -Sn; ulimit -Hn'], rlimits: %{os.RLIMIT_NOFILE: (64, 128)}).stdout == "64\n128\n")
+    }
+}
+
+pub fn run-cpu-limit() {
+    if not __windows__ {
+        let result = sh('while :; do :; done', rlimits: %{os.RLIMIT_CPU: (1, 2)}, timeout: 10)
+        assert(result.fate == Killed(os.SIGXCPU), "{result.fate}")
+    }
+}
+
+pub fn run-spawn-options() {
+    if !__windows__ {
+        assert(sh('umask', umask: 0o077).stdout == "0077\n")
+        assert(run(['sh', '-c', 'umask'], umask: 0o022, inherit: true, sigdefault: []).stdout == "0022\n")
     }
 }

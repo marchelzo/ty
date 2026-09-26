@@ -47,3 +47,31 @@ pub fn try-assign() {
     try [x] = [g()] else return
     assert(false)
 }
+
+pub fn not-plain-condition() {
+    let ran = []
+    let no = false
+    let yes = true
+
+    if not no {
+        ran.push(1)
+    }
+
+    if not yes {
+        assert(false)
+    } else {
+        ran.push(2)
+    }
+
+    if not no and yes {
+        ran.push(3)
+    }
+
+    if not no and not yes {
+        assert(false)
+    }
+
+    ran.push(4) if not no
+
+    assert(ran == [1, 2, 3, 4])
+}

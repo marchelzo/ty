@@ -196,11 +196,12 @@ fn complete-file(before: String, after: String) -> CompletionAction {
         [*parts, prefix] => (parts.join('/'), prefix)
     }
 
-    if not let $output = sh("find -s '{dir}' -maxdepth 1 -name '{prefix}*'") {
+    let found = sh("find -s '{dir}' -maxdepth 1 -name '{prefix}*'")
+    if !found.ok? {
         return None
     }
 
-    let names: Array[String] = output
+    let names: Array[String] = found.stdout
         .lines()
         .filter(${#it > 0})
         .map!(&comb(/^\.\//))

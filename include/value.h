@@ -14,7 +14,7 @@ typedef struct value Value;
 #include "object.h"
 #include "gc.h"
 #include "tags.h"
-#include "tthread.h"
+#include "ty/thread.h"
 #include "scope.h"
 #include "compiler.h"
 #include "xd.h"

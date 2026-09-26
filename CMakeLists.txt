@@ -274,6 +274,7 @@ set(_src_files
   src/qcache.c
   src/scope.c
   src/shared_queue.c
+  src/spawn.c
   src/sqlite.c
   src/str.c
   src/table.c

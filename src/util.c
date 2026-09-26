@@ -94,7 +94,7 @@ xslurp(char const *path, byte_vector *out)
 char *
 slurp(char const *path)
 {
-        int fd = open(path, O_RDONLY);
+        int fd = open(path, O_RDONLY | O_CLOEXEC);
         if (fd == -1) {
                 return NULL;
         }
@@ -256,7 +256,7 @@ get_terminal_size(int fd, int *rows, int *cols)
         bool open_dev_tty = (fd == -1);
 
         if (open_dev_tty) {
-                fd = open("/dev/tty", O_RDONLY);
+                fd = open("/dev/tty", O_RDONLY | O_CLOEXEC);
                 if (fd == -1) {
                         return false;
                 }

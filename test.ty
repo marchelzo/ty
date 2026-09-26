@@ -1,8 +1,8 @@
-import chalk (chalk, escape, hsl-gradient)
+import chalk (chalk, escape, hsl-gradient, Text)
 import math (log)
 import os (..)
 import path (Path)
-import sh (sh)
+import sh (Fate, Exit, Killed, Timeout, Success)
 import time
 import tp (ThreadPool, Future)
 import ty
@@ -22,10 +22,12 @@ const TY_CMD  = getenv('TY_PATH') ?? ty.executable
 const TY_OPTS = ['-q' if ty.q, '-j' if !ty.jit]
 
 setenv('NO_COLOR', '')
+setenv('MIMALLOC_ALLOW_LARGE_OS_PAGES', '0')
 
-const ALL_TESTS = argv.pluck(\_ == '-a').some?
+const ALL_TESTS  = argv.pluck(\_ == '-a').some?
 const FULL_TESTS = argv.pluck(\_ == '--full').some?
-const TIMEOUT_MS = int(getenv('TY_TEST_TIMEOUT_MS') ?? (FULL_TESTS ? '30000' : '5000'))
+
+const TIMEOUT = float(getenv('TY_TEST_TIMEOUT') ?? (FULL_TESTS ? 30 : 5))
 
 const FILTER = match argv {
     [_,       filter] => regex(filter),
@@ -51,31 +53,30 @@ fn show-time(dt: Float) {
 fn run(p: Path) {
     let t0 = time.now()
 
-    let _, details = sh('', shell=[TY_CMD, '--test', *TY_OPTS, str(p)], timeoutMs=TIMEOUT_MS, signal=SIGKILL)
+    let info = sh.run([TY_CMD, '--test', *TY_OPTS, str(p)], timeout=TIMEOUT, signal=SIGKILL)
 
-    let (color, result) = match details {
-        nil => do {
+    let (color, result) = match info.fate {
+        Timeout => do {
             slow += 1
             ('', chalk"[b bright magenta]TIMEOUT[/]")
         },
 
-        {status: 0, signal: nil, rusage, *} => do {
+        Success => do {
             pass += 1
-            user-cpu-us += int(rusage.utime * 1.0e6)
-            system-cpu-us += int(rusage.stime * 1.0e6)
+            user-cpu-us += int(info.rusage.utime * 1.0e6)
+            system-cpu-us += int(info.rusage.stime * 1.0e6)
             ('#635d56', chalk"[bright green bold]PASS[/] {show-time(time.now() - t0)}")
         },
 
-        {status, signal, stdout, stderr, *} => do {
+        fate => do {
             fail += 1
             let parts = [
                 chalk"[b bright red]FAIL[/]",
-                chalk"  [bright magenta](exit status: {status})[/]" if status != 0,
-                chalk"  [blue](SIG{signame(signal).upper()})[/]" if signal != nil,
+                "  {badge(fate)}",
                 chalk"\n[magenta]──────────────── [yellow]STDOUT[/] ────────────────────────────────────[/]\n",
-                stdout,
+                info.stdout,
                 chalk"\n[magenta]──────────────── [yellow]STDERR[/] ────────────────────────────────────[/]\n",
-                stderr,
+                info.stderr,
                 chalk"\n[magenta]────────────────────────────────────────────────────────────[/]\n",
             ]
             ('#c53535', parts.join())
@@ -114,41 +115,59 @@ fn output-reason(stdout: String, stderr: String, fallback: String) {
 
 fn skip-reason(stdout: String, stderr: String) {
     let reason = stdout.trim() || stderr.trim() || 'requirements not met'
-    reason.split('\n')[0].trim()
+    reason.lines()[0].trim()
+}
+
+fn cause(fate: Fate) -> String {
+    match fate {
+        Exit(code)  => "exit status: {code}",
+        Killed(sig) => "SIG{signame(sig).upper()}",
+        Timeout     => 'timed out'
+    }
+}
+
+fn badge(fate: Fate) -> Text {
+    const style = match fate {
+        Exit(_)   => 'bright magenta',
+        Killed(_) => 'blue',
+        Timeout   => 'bright yellow'
+    }
+    chalk"[{style}]({cause(fate)})[/]"
 }
 
 fn check-requirements(dir: Path) {
     let conf = dir / REQUIREMENTS_FILE
-    if !conf.file? { return nil }
 
-    let _, details = sh('', shell=[TY_CMD, *TY_OPTS, str(conf)], timeoutMs=TIMEOUT_MS, signal=SIGKILL)
+    return if !conf.file?
 
-    match details {
-        nil => ({
+    let info = sh.run(
+        [TY_CMD, *TY_OPTS, str(conf)],
+        timeout=TIMEOUT,
+        signal=SIGKILL
+    )
+
+    match info.fate {
+        Timeout => ({
             kind: 'error',
             reason: 'requirements check timed out'
         }),
 
-        {status: 0, signal: nil, *} => nil,
+        Success => nil,
 
-        {status: 77, signal: nil, stdout, stderr, *} => ({
+        Exit(77) => ({
             kind: 'skip',
-            reason: skip-reason(stdout, stderr)
+            reason: skip-reason(info.stdout, info.stderr)
         }),
 
-        {status, signal, stdout, stderr, *} => do {
+        fate => do {
             let reason = output-reason(
-                stdout,
-                stderr,
+                info.stdout,
+                info.stderr,
                 'requirements check failed without output'
             )
             ({
                 kind: 'error',
-                reason: [
-                    "exit status: {status}" if status != 0,
-                    "SIG{signame(signal).upper()}" if signal != nil,
-                    reason
-                ].join('\n')
+                reason: "{cause(fate)}\n{reason}"
             })
         }
     }

@@ -26,7 +26,7 @@
 #include "polyfill_unistd.h"
 #include "polyfill_stdatomic.h"
 #include "barrier.h"
-#include "tthread.h"
+#include "ty/thread.h"
 
 #ifdef __linux__
 #include <sys/epoll.h>
@@ -57,6 +57,7 @@
 #include <pthread.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -8676,7 +8677,6 @@ BinaryOp:
                                         }
                                 }
                                 break;
-
 
                         default:
                                 DOJUMP(jump);

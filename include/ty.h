@@ -16,7 +16,7 @@
 
 #include "panic.h"
 #include "polyfill_stdatomic.h"
-#include "tthread.h"
+#include "ty/thread.h"
 #include "vec.h"
 #include "log.h"
 #include "xd.h"

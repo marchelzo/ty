@@ -1,5 +1,5 @@
 import path (Path)
-import sh (sh)
+import sh (Exit, Killed, Timeout)
 import ty
 
 pub const ROOT = Path(__file__).parent.parent.parent
@@ -8,19 +8,19 @@ pub const FIXTURES = ROOT / 'tests' / 'fixtures'
 pub use Result = {status: Int, stdout: String, stderr: String}
 
 pub fn run(args: [String], env: Dict[String, String] = %{}) -> Result {
-    let _, result = sh(
-        '',
-        shell=[ty.executable, '--color=never', *args],
+    let result = sh.run(
+        [ty.executable, '--color=never', *args],
         env=%{**__env, 'NO_COLOR': '', **env},
         chdir=str(ROOT),
-        timeoutMs=30000
+        timeout=30
     )
-    if result == nil {
-        throw AssertionError("command did not complete: {args}")
+    let status = match result.fate {
+        Exit(code)  => code,
+        Killed(sig) => throw AssertionError("command terminated by signal {sig}: {args}\n{result.stderr}"),
+        Timeout     => throw AssertionError("command did not complete: {args}"),
     }
-    assert(result.signal == nil, "command terminated by signal {result.signal}: {args}\n{result.stderr}")
     return {
-        status: result.status,
+        status,
         stdout: result.stdout.split('======= profile by function =======')[0],
         stderr: result.stderr,
     }

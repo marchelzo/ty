@@ -2,7 +2,7 @@ import markdown (NodeType)
 import path (Path)
 import json
 import chalk
-import sh (sh)
+import sh (sh, Timeout)
 import ty
 
 let doc-root  = Path(__file__).parent
@@ -124,25 +124,13 @@ fn sgr-to-html(sgr: String) -> String {
 }
 
 fn highlight-ty(code: String) -> String {
-    let sgr, result = sh(
-        'ty --highlight=gruvbox-material-light -',
-        input: code
-    )
-    if not let $out = sgr or result.status != 0 {
-        return esc(code)
-    }
-    sgr-to-html(out)
+    let result = sh('ty --highlight=gruvbox-material-light -', input: code)
+    result.ok? ? sgr-to-html(result.stdout) : esc(code)
 }
 
 fn run-ty(code: String) -> String | nil {
-    let out, result = sh(
-        'ty -j --color=always -',
-        input: code,
-        combineOutput: true,
-        timeoutMs: 2500
-    )
-    if not let $raw = out or #raw == 0 { return nil }
-    sgr-to-html(raw.comb(/\n$/))
+    let result = sh('ty -j --color=always -', input: code, combineOutput: true, timeout: 2.5)
+    (result.fate != Timeout && result.stdout) ? sgr-to-html(result.stdout.comb(/\n$/)) : nil
 }
 
 fn render-code-block(node, renderers) {
@@ -462,7 +450,7 @@ if #pages == 0 {
         let idx-json = sh(
             "{ty-bin} {doc-ty} --emit-index {mod}"
             " 2>/dev/null"
-        )
+        ).stdout
         if idx-json == nil || #str(idx-json) <= 2 {
             continue
         }
@@ -501,7 +489,7 @@ if #pages == 0 {
             " --search-index {search-file}"
             " --modules {mods-arg}"
             " {mod} 2>&1"
-        let result = sh(cmd)
+        let result = sh(cmd).stdout
         if result == nil || str(result) == '' {
             print("  pkg-{mod-slug(mod)}.html SKIPPED")
             continue

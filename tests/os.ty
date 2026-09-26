@@ -1,3 +1,4 @@
+import errno (ENOENT, EACCES, EINVAL)
 import os (..)
 
 ns test
@@ -61,5 +62,143 @@ pub fn wait4-result() {
             rusage.nvcsw,
             rusage.nivcsw
         ].all?(\_ >= 0))
+    }
+}
+
+pub fn spawn-comm() {
+    if not __windows__ {
+        let p = spawn('/bin/sh', ['argv-zero', '-c', 'printf %s "$0"'], stdout=SPAWN_PIPE)
+        assert(read(p.stdout, 64).str() == 'argv-zero')
+        close(p.stdout)
+        let result = wait4(p.pid)!
+        assert(WEXITSTATUS(result.status) == 0)
+    }
+}
+
+pub fn spawn-failure() {
+    try {
+        spawn(['/nonexistent/ty-test-command'])
+    } catch e: OSError {
+        assert(e.code == ENOENT)
+        return
+    }
+    throw AssertionError('spawning a missing command did not throw')
+}
+
+fn errno-of(f: () -> _) -> Int | nil {
+    try {
+        f()
+        nil
+    } catch e: OSError {
+        e.code
+    }
+}
+
+fn output(p: ProcessDescriptor) -> String {
+    let out = Blob()
+    while read(p.stdout, out, 4096) > 0 {
+        continue
+    }
+    close(p.stdout)
+    wait4(p.pid)
+    out.str!()
+}
+
+pub fn spawn-errors() {
+    if not __windows__ {
+        let (fd, script) = mktemp('ty-spawn-XXXXXX')
+        write(fd, "#!/bin/sh\nprintf ran\n")
+        close(fd)
+        defer unlink(script)
+
+        assert(errno-of(-> spawn(["./{script}"])) == EACCES)
+        assert(errno-of(-> spawn(['ty-no-such-command-anywhere'])) == ENOENT)
+        assert(errno-of(-> spawn(['true'], rlimits: %{999: 1})) == EINVAL)
+        assert(errno-of(-> spawn(['true'], chdir: '/nonexistent/ty-dir')) == ENOENT)
+
+        chmod(script, 0o755)
+        assert(output(spawn(["./{script}"], stdout: SPAWN_PIPE)) == 'ran')
+        assert(errno-of(-> spawn(["./{script}"], chdir: '/')) == ENOENT)
+        assert(output(spawn(["{getcwd()}/{script}"], chdir: '/', stdout: SPAWN_PIPE)) == 'ran')
+    }
+}
+
+pub fn spawn-rlimits() {
+    if not __windows__ {
+        let limits = %{RLIMIT_NOFILE: (64, 128), RLIMIT_CORE: 0}
+        let p = spawn(['sh', '-c', 'ulimit -Sn; ulimit -Hn; ulimit -c'], rlimits: limits, stdout: SPAWN_PIPE)
+        assert(output(p) == "64\n128\n0\n")
+    }
+}
+
+pub fn rlimit-roundtrip() {
+    if not __windows__ {
+        let (soft, hard) = getrlimit(RLIMIT_NOFILE)
+        setrlimit(RLIMIT_NOFILE, (soft - 1, hard))
+        assert(getrlimit(RLIMIT_NOFILE) == (soft - 1, hard))
+        setrlimit(RLIMIT_NOFILE, (soft, hard))
+        assert(getrlimit(RLIMIT_NOFILE) == (soft, hard))
+        assert(errno-of(-> setrlimit(RLIMIT_NOFILE, (hard + 1, hard))) == EINVAL)
+    }
+}
+
+fn sh-output(script: String, %opts) -> String {
+    output(spawn(['sh', '-c', script], stdout: SPAWN_PIPE, **opts))
+}
+
+pub fn spawn-sigdefault() {
+    if __linux__ {
+        let pipe-ignored = "grep -q '^SigIgn:.*[1-9a-f]...$' /proc/self/status && echo ignored || echo default"
+        signal(SIGPIPE, 1)
+        defer signal(SIGPIPE, 0)
+        assert(sh-output(pipe-ignored) == "default\n")
+        assert(sh-output(pipe-ignored, sigdefault: []) == "ignored\n")
+        assert(sh-output(pipe-ignored, sigdefault: [SIGPIPE]) == "default\n")
+    }
+}
+
+pub fn spawn-inherit() {
+    if !__windows__ {
+        let fd = open('/dev/null', O_RDONLY)
+        defer close(fd)
+        let probe = "test -e /dev/fd/{fd} && echo open || echo closed"
+        assert(sh-output(probe) == "closed\n")
+        assert(sh-output(probe, inherit: true) == "open\n")
+        assert(sh-output(probe, inherit: [fd]) == "open\n")
+        assert(sh-output(probe, inherit: [fd + 1]) == "closed\n")
+
+        let (r, w) = pipe()
+        defer close(r)
+        fcntl(w, F_SETFD, FD_CLOEXEC)
+        let writer = spawn(['sh', '-c', "printf through > /dev/fd/{w}"], inherit: [w])
+        close(w)
+        wait4(writer.pid)
+        assert(read(r, 64).str() == 'through')
+    }
+}
+
+pub fn spawn-umask() {
+    if !__windows__ {
+        assert(sh-output('umask', umask: 0o027) == "0027\n")
+        assert(sh-output('umask', umask: 0) == "0000\n")
+    }
+}
+
+pub fn spawn-pdeathsig() {
+    if __linux__ {
+        let pid = Thread(-> spawn(['sleep', '30'], pdeathsig: SIGKILL).pid).join()
+        let result = wait4(pid)!
+        assert(WIFSIGNALED(result.status) && WTERMSIG(result.status) == SIGKILL)
+    }
+}
+
+pub fn spawn-pipes-do-not-leak() {
+    if !__windows__ {
+        let first = spawn(['cat'], stdin: SPAWN_PIPE, stdout: SPAWN_PIPE)
+        let probe = "test -e /dev/fd/{first.stdin} || test -e /dev/fd/{first.stdout} && echo leaked || echo clean"
+        assert(sh-output(probe) == "clean\n")
+        close(first.stdin)
+        close(first.stdout)
+        wait4(first.pid)
     }
 }

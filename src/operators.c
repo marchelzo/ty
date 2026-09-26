@@ -10,7 +10,7 @@
 #include "dict.h"
 #include "gc.h"
 #include "operators.h"
-#include "tthread.h"
+#include "ty/thread.h"
 #include "value.h"
 #include "vec.h"
 #include "vm.h"

@@ -298,6 +298,8 @@ static struct {
   { .module = "os",         .name = "setsid",                   .value = BUILTIN(builtin_os_setsid)               },
   { .module = "os",         .name = "wait",                     .value = BUILTIN(builtin_os_wait)                 },
   { .module = "os",         .name = "wait4",                    .value = BUILTIN(builtin_os_wait4)                },
+  { .module = "os",         .name = "getrlimit",                .value = BUILTIN(builtin_os_getrlimit)            },
+  { .module = "os",         .name = "setrlimit",                .value = BUILTIN(builtin_os_setrlimit)            },
   { .module = "os",         .name = "WIFSTOPPED",               .value = BUILTIN(builtin_os_WIFSTOPPED)           },
   { .module = "os",         .name = "WIFEXITED",                .value = BUILTIN(builtin_os_WIFEXITED)            },
   { .module = "os",         .name = "WEXITSTATUS",              .value = BUILTIN(builtin_os_WEXITSTATUS)          },
@@ -710,6 +712,57 @@ static struct {
 #endif
 #ifdef SIGIO
   { .module = "os",         .name = "SIGIO",                    .value = INT(SIGIO)                               },
+#endif
+#ifdef RLIMIT_CPU
+  { .module = "os",         .name = "RLIMIT_CPU",               .value = INT(RLIMIT_CPU)                          },
+#endif
+#ifdef RLIMIT_FSIZE
+  { .module = "os",         .name = "RLIMIT_FSIZE",             .value = INT(RLIMIT_FSIZE)                        },
+#endif
+#ifdef RLIMIT_DATA
+  { .module = "os",         .name = "RLIMIT_DATA",              .value = INT(RLIMIT_DATA)                         },
+#endif
+#ifdef RLIMIT_STACK
+  { .module = "os",         .name = "RLIMIT_STACK",             .value = INT(RLIMIT_STACK)                        },
+#endif
+#ifdef RLIMIT_CORE
+  { .module = "os",         .name = "RLIMIT_CORE",              .value = INT(RLIMIT_CORE)                         },
+#endif
+#ifdef RLIMIT_RSS
+  { .module = "os",         .name = "RLIMIT_RSS",               .value = INT(RLIMIT_RSS)                          },
+#endif
+#ifdef RLIMIT_NPROC
+  { .module = "os",         .name = "RLIMIT_NPROC",             .value = INT(RLIMIT_NPROC)                        },
+#endif
+#ifdef RLIMIT_NOFILE
+  { .module = "os",         .name = "RLIMIT_NOFILE",            .value = INT(RLIMIT_NOFILE)                       },
+#endif
+#ifdef RLIMIT_MEMLOCK
+  { .module = "os",         .name = "RLIMIT_MEMLOCK",           .value = INT(RLIMIT_MEMLOCK)                      },
+#endif
+#ifdef RLIMIT_AS
+  { .module = "os",         .name = "RLIMIT_AS",                .value = INT(RLIMIT_AS)                           },
+#endif
+#ifdef RLIMIT_LOCKS
+  { .module = "os",         .name = "RLIMIT_LOCKS",             .value = INT(RLIMIT_LOCKS)                        },
+#endif
+#ifdef RLIMIT_SIGPENDING
+  { .module = "os",         .name = "RLIMIT_SIGPENDING",        .value = INT(RLIMIT_SIGPENDING)                   },
+#endif
+#ifdef RLIMIT_MSGQUEUE
+  { .module = "os",         .name = "RLIMIT_MSGQUEUE",          .value = INT(RLIMIT_MSGQUEUE)                     },
+#endif
+#ifdef RLIMIT_NICE
+  { .module = "os",         .name = "RLIMIT_NICE",              .value = INT(RLIMIT_NICE)                         },
+#endif
+#ifdef RLIMIT_RTPRIO
+  { .module = "os",         .name = "RLIMIT_RTPRIO",            .value = INT(RLIMIT_RTPRIO)                       },
+#endif
+#ifdef RLIMIT_RTTIME
+  { .module = "os",         .name = "RLIMIT_RTTIME",            .value = INT(RLIMIT_RTTIME)                       },
+#endif
+#ifdef RLIM_INFINITY
+  { .module = "os",         .name = "RLIM_INFINITY",            .value = INT((imax)RLIM_INFINITY)                 },
 #endif
 #ifdef SIGXCPU
   { .module = "os",         .name = "SIGXCPU",                  .value = INT(SIGXCPU)                             },

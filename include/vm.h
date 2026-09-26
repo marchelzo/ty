@@ -10,7 +10,7 @@
 
 #include "ty.h"
 #include "value.h"
-#include "tthread.h"
+#include "ty/thread.h"
 #include "log.h"
 #include "jit.h"
 

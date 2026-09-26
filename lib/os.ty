@@ -43,6 +43,8 @@ pub use Wait4Result = {
 }
 
 pub fn wait4(pid: Int = -1, options: Int = 0) -> Wait4Result | nil;
+pub fn getrlimit(resource: Int) -> (Int, Int);
+pub fn setrlimit(resource: Int, limit: Int | (Int, Int)) -> nil;
 
 pub fn socket(domain: Int, type: Int, protocol: Int) -> Int;
 pub fn bind(sock: Int, addr: _) -> Int;
@@ -247,14 +249,36 @@ pub use ProcessDescriptor = {
 }
 
 pub fn spawn(
-    cmd: Array[String],
-    stdin:  ?Int = nil,
-    stdout: ?Int = nil,
-    stderr: ?Int = nil,
-    chdir:  Int | Blob | String | nil = nil,
-    env:    Dict[String, String] | nil = nil,
-    detach: Bool = false,
-    ctty:   ?{master: Int, slave: Int} = nil,
+    argv:       Array[String],
+    stdin:      ?Int = nil,
+    stdout:     ?Int = nil,
+    stderr:     ?Int = nil,
+    chdir:      Int | Blob | String | nil = nil,
+    env:        Dict[String, String] | nil = nil,
+    detach:     Bool = false,
+    ctty:       ?{master: Int, slave: Int} = nil,
+    rlimits:    Dict[Int, Int | (Int, Int)] | nil = nil,
+    sigdefault: ?Array[Int] = nil,
+    inherit:    Array[Int] | Bool | nil = nil,
+    umask:      ?Int = nil,
+    pdeathsig:  ?Int = nil,
+) -> ProcessDescriptor;
+
+pub fn spawn(
+    cmd:        String,
+    argv:       Array[String],
+    stdin:      ?Int = nil,
+    stdout:     ?Int = nil,
+    stderr:     ?Int = nil,
+    chdir:      Int | Blob | String | nil = nil,
+    env:        Dict[String, String] | nil = nil,
+    detach:     Bool = false,
+    ctty:       ?{master: Int, slave: Int} = nil,
+    rlimits:    Dict[Int, Int | (Int, Int)] | nil = nil,
+    sigdefault: ?Array[Int] = nil,
+    inherit:    Array[Int] | Bool | nil = nil,
+    umask:      ?Int = nil,
+    pdeathsig:  ?Int = nil,
 ) -> ProcessDescriptor;
 
 pub fn mprotect(addr: _, length: Int, prot: Int) -> Int;

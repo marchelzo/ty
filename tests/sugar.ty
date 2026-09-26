@@ -9,3 +9,20 @@ pub fn sugar() {
     assert(f([5, 5, 5], 4) == 1)
     assert((..100).map(x -> x + 1).fold((a, b) -> a + b) == 5050)
 }
+
+fn punned(x: Int, a: ?Int = nil, b: ?String = nil) -> String {
+    "{x}:{a}:{b}"
+}
+
+class Punned {
+    m(a: Int = 0, b: String = '') { "{a}/{b}" }
+}
+
+pub fn kwarg-punning() {
+    let a = 5
+    let b = 'hi'
+    assert(punned(1, a:, b:) == '1:5:hi')
+    assert(punned(1, b:) == '1:nil:hi')
+    assert(punned(a:, x: 2) == '2:5:nil')
+    assert(Punned().m(b:, a:) == '5/hi')
+}

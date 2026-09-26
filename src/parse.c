@@ -421,7 +421,7 @@ static Stmt *
 parse_block(Ty *ty);
 
 static condpart_vector
-parse_condparts(Ty *ty, bool neg);
+parse_condparts(Ty *ty, bool *neg);
 
 static Expr *
 assignment_lvalue(Ty *ty, Expr *e);
@@ -3154,11 +3154,23 @@ next_arg(
                       || (T1 == TOKEN_EQ)
                  )
         ) {
+                bool pun = (T1 == ':') && ((T2 == ',') || (T2 == ')'));
                 tok()->tag = TT_PARAM;
                 avP(*kws, tok()->identifier);
-                next();
-                next();
-                avP(*kwargs, parse_expr(ty, 0));
+                if (pun) {
+                        Expr *arg = mkexpr(ty);
+                        arg->type       = EXPRESSION_IDENTIFIER;
+                        arg->identifier = tok()->identifier;
+                        arg->module     = NULL;
+                        next();
+                        arg->end = TEnd;
+                        next();
+                        avP(*kwargs, arg);
+                } else {
+                        next();
+                        next();
+                        avP(*kwargs, parse_expr(ty, 0));
+                }
                 if (kwconds != NULL) {
                         avP(*kwconds, try_cond(ty));
                 }
@@ -4828,7 +4840,7 @@ infix_kw_and(Ty *ty, Expr *left)
 
         consume_kw(AND);
 
-        e->p_cond = parse_condparts(ty, false);
+        e->p_cond = parse_condparts(ty, &(bool){false});
 
         e->end = TEnd;
 
@@ -5782,13 +5794,24 @@ parse_condpart(Ty *ty)
 }
 
 static condpart_vector
-parse_condparts(Ty *ty, bool neg)
+parse_condparts(Ty *ty, bool *negp)
 {
         condpart_vector parts = {0};
 
         SAVE_NA(true);
 
-        avP(parts, parse_condpart(ty));
+        struct condpart *first = parse_condpart(ty);
+
+        if (*negp && first->target == NULL) {
+                Expr *not = mkxpr(PREFIX_BANG);
+                not->operand = first->e;
+                first->e = not;
+                *negp = false;
+        }
+
+        bool neg = *negp;
+
+        avP(parts, first);
 
         while ((!neg && have_kw(AND)) ||
                (neg && have_kw(OR))) {
@@ -5871,7 +5894,8 @@ parse_if(Ty *ty)
         consume_kw(IF);
 
         s->_if.neg   = try_consume(KEYWORD_NOT);
-        s->_if.parts = parse_condparts(ty, s->_if.neg);
+        s->_if.parts = parse_condparts(ty, &s->_if.neg);
+
         s->_if.then  = parse_statement(ty, -1);
 
         if (have_kw(ELSE)) {
@@ -6021,7 +6045,7 @@ try_conditional_from(Ty *ty, Stmt *s)
 
                 Stmt *_if = mkstmtx(IF);
                 _if->_if.neg = try_consume(KEYWORD_NOT);
-                _if->_if.parts = parse_condparts(ty, _if->_if.neg);
+                _if->_if.parts = parse_condparts(ty, &_if->_if.neg);
                 _if->_if.then = s;
                 _if->_if._else = NULL;
                 _if->start = s->start;
@@ -6819,7 +6843,7 @@ parse_try(Ty *ty)
         if (T0 != '{') {
                 s->try.s = mkstmtx(IF);
                 s->try.s->_if.neg = true;
-                s->try.s->_if.parts = parse_condparts(ty, false);
+                s->try.s->_if.parts = parse_condparts(ty, &(bool){false});
 
                 while (have_kw(CATCH)) {
                         next();

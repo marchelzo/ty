@@ -1,6 +1,6 @@
 import os
 import time (now)
-import errno (ETIMEDOUT, EINTR)
+import errno (EINTR)
 
 #|if __windows__
 const SHELL = ['cmd.exe', '/c']
@@ -8,41 +8,58 @@ const SHELL = ['cmd.exe', '/c']
 const SHELL = ['/bin/sh', '-c']
 #|]
 
-pub use CmdResult = {
-    status: Int,
-    signal: Int | nil,
-    stdout: String,
-    stderr: String,
+pub tag Exit, Killed, Timeout;
+
+pub use Fate = Exit[Int] | Killed[Int] | Timeout
+
+pub const Success = Exit(0)
+
+pub class CmdResult {
+    fate:   Fate
+    stdout: String
+    stderr: String
     rusage: os.RUsage
+
+    ok? -> Bool {
+        fate == Success
+    }
 }
 
-pub fn sh(
+pub fn run(
     cmd: String,
+    argv: Array[String],
     input: Blob | String | nil = nil,
-    timeoutMs: Int | nil = nil,
+    timeout: Float | Int | nil = nil,
     signal: Int = os.SIGTERM,
     combineOutput: Bool = false,
     shareStderr: Bool = false,
     chdir: Int | String | Blob | nil = nil,
-    shell: Array[String] = SHELL,
-    env: Dict[String, String] | nil = nil
-) -> nil | |String, CmdResult| {
+    env: Dict[String, String] | nil = nil,
+    rlimits: Dict[Int, Int | (Int, Int)] | nil = nil,
+    sigdefault: ?Array[Int] = nil,
+    inherit: Array[Int] | Bool | nil = nil,
+    umask: ?Int = nil,
+    pdeathsig: ?Int = nil
+) -> CmdResult {
     let stderr = combineOutput ? os.SPAWN_MERGED_STDERR
                : shareStderr   ? os.SPAWN_INHERIT
                :                 os.SPAWN_PIPE
-    let stdin = (input != nil) ? os.SPAWN_PIPE : os.SPAWN_NULL
 
-    if not let $p = os.spawn(
-        [*shell, cmd if cmd],
-        stdin=stdin,
+    let p = os.spawn(
+        cmd,
+        argv,
+        stdin=(input != nil) ? os.SPAWN_PIPE : os.SPAWN_NULL,
         stdout=os.SPAWN_PIPE,
         stderr=stderr,
         chdir=chdir,
         env=env,
-        detach=timeoutMs != nil
-    ) {
-          return nil
-    }
+        rlimits=rlimits,
+        sigdefault=sigdefault,
+        inherit=inherit,
+        umask=umask,
+        pdeathsig=pdeathsig,
+        detach=timeout != nil
+    )
 
     let out = Blob()
     let err = Blob()
@@ -52,12 +69,9 @@ pub fn sh(
         os.close(p.stdin)
     }
 
-    let deadline = match timeoutMs {
-        -1 or nil => nil,
-        n         => now() + (n / 1.0e3)
-    }
+    let deadline = (timeout == nil) ? nil : now() + timeout
 
-    let timedOut = false
+    let timed-out? = false
 
     let pfds-in = [
         (p.stdout, os::POLLIN, out),
@@ -67,15 +81,15 @@ pub fn sh(
 
 #|if __apple__ || __linux__ || __bsd__
     for (;;) {
-        let timeout = deadline ?: (deadline - now())
+        let left = deadline ?: (deadline - now())
 
-        if timeout && timeout <= 1.0e-3 {
+        if left && left <= 1.0e-3 {
             os.kill(-p.pid, signal)
-            timedOut = true
+            timed-out? = true
             break
         }
 
-        let n = os.poll(pfds-in, pfds-out, timeout)
+        let n = os.poll(pfds-in, pfds-out, left)
 
         continue if (n == 0) || (n == EINTR)
 
@@ -100,19 +114,11 @@ pub fn sh(
 
     let {status, rusage, *} = os.wait4(p.pid)!
 
-    if timedOut {
-        return nil
-    }
+    let fate = timed-out?             ? Timeout
+             : os.WIFSIGNALED(status) ? Killed(os.WTERMSIG(status))
+             :                          Exit(os.WEXITSTATUS(status))
 
-    let out = out.str!()
-
-    return out, {
-        signal: os.WIFSIGNALED(status) ? os.WTERMSIG(status) : nil,
-        stdout: out,
-        status: os.WEXITSTATUS(status),
-        stderr: err.str!(),
-        rusage
-    }
+    CmdResult(fate:, stdout: out.str!(), stderr: err.str!(), rusage:)
 #|else
     let stdoutThread = Thread(-> do {
         while let $data = os.read(p.stdout, 4096) {
@@ -126,11 +132,12 @@ pub fn sh(
         }
     })
 
-    if timeoutMs == nil {
+    if timeout == nil {
         stdoutThread.join()
         stderrThread.join()
     } else {
         let start = utime()
+        let remainingMs = int(timeout * 1.0e3)
 
         if not let Some(_) = stdoutThread.join(remainingMs) {
             return nil
@@ -148,11 +155,55 @@ pub fn sh(
 #|]
 }
 
-pub function ls(d, flags) {
-    let $out = sh("ls '{d}' {flags || ''}") or return nil
-    out.split("\n")
+pub fn run(
+    argv: Array[String],
+    input: Blob | String | nil = nil,
+    timeout: Float | Int | nil = nil,
+    signal: Int = os.SIGTERM,
+    combineOutput: Bool = false,
+    shareStderr: Bool = false,
+    chdir: Int | String | Blob | nil = nil,
+    env: Dict[String, String] | nil = nil,
+    rlimits: Dict[Int, Int | (Int, Int)] | nil = nil,
+    sigdefault: ?Array[Int] = nil,
+    inherit: Array[Int] | Bool | nil = nil,
+    umask: ?Int = nil,
+    pdeathsig: ?Int = nil
+) -> CmdResult {
+    run(
+        argv[0], argv,
+        input:, timeout:, signal:, combineOutput:, shareStderr:, chdir:, env:,
+        rlimits:, sigdefault:, inherit:, umask:, pdeathsig:
+    )
 }
 
-pub function expand(s) {
-    return sh("echo -n {s}")
+pub fn sh(
+    cmd: String,
+    input: Blob | String | nil = nil,
+    timeout: Float | Int | nil = nil,
+    signal: Int = os.SIGTERM,
+    combineOutput: Bool = false,
+    shareStderr: Bool = false,
+    chdir: Int | String | Blob | nil = nil,
+    shell: Array[String] = SHELL,
+    env: Dict[String, String] | nil = nil,
+    rlimits: Dict[Int, Int | (Int, Int)] | nil = nil,
+    sigdefault: ?Array[Int] = nil,
+    inherit: Array[Int] | Bool | nil = nil,
+    umask: ?Int = nil,
+    pdeathsig: ?Int = nil
+) -> CmdResult {
+    run(
+        [*shell, cmd],
+        input:, timeout:, signal:, combineOutput:, shareStderr:, chdir:, env:,
+        rlimits:, sigdefault:, inherit:, umask:, pdeathsig:
+    )
+}
+
+pub fn ls(d: String, flags: String = '') -> Array[String] {
+    sh("ls '{d}' {flags}").stdout.split("\n")
+}
+
+pub fn expand(s: String) -> String {
+    sh("echo -n {s}").stdout
 }
