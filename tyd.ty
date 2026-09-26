@@ -1,5 +1,6 @@
 #!/usr/bin/env ty
 
+import errno
 import io (stdin)
 import json
 import sh (sh)
@@ -57,7 +58,14 @@ let init = {
     }
 }
 
-let err-fd = open("{TYLS_ERR_PATH}", O_WRONLY | O_TRUNC | O_CREAT, 0644)
+let err-fd = match open("{TYLS_ERR_PATH}", O_WRONLY | O_TRUNC | O_CREAT, 0644) {
+    -1 => do {
+        warn!("can't open {TYLS_ERR_PATH}: {errno.str()}; discarding tyls stderr")
+        SPAWN_NULL
+    },
+
+    fd => fd
+}
 
 let TY_LS_CMD = getenv('TY_LS_CMD').?words() ?? ['tyls']
 

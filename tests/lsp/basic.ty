@@ -30,20 +30,38 @@ fn send(msg) {
     server-in.flush()
 }
 
+let RECV_TIMEOUT = 10.0
+
+tag Closed, BadHeader;
+
+fn messages*() {
+    while let $line = server-out.next-line() {
+        if not let [_, $n] = line.match(/Content-Length:\s*(\d+)/) {
+            yield BadHeader(line)
+            break
+        }
+
+        server-out.next-line()
+        yield json.parse(server-out.next(int(n)).str())
+    }
+}
+
+let inbox = SharedQueue()
+
+Thread(fn () {
+    for msg in messages() {
+        inbox.put(msg)
+    }
+    inbox.put(Closed)
+}).detach()
+
 fn recv() {
-    if not let $line = server-out.nextLine() {
-        throw 'server closed connection'
+    match inbox.try-take(RECV_TIMEOUT) {
+        Some(Closed)            => throw 'server closed connection',
+        Some(BadHeader(header)) => throw "bad header: {header}",
+        Some(msg)               => msg,
+        None                    => throw "no message from server after {RECV_TIMEOUT}s"
     }
-
-    if not let [_, $n] = line.match(/Content-Length:\s*(\d+)/) {
-        throw "bad header: {line}"
-    }
-
-    server-out.nextLine()
-
-    let body = server-out.next(int(n)).str()
-    let result: _ = json.parse(body)
-    result
 }
 
 let pending-notifications = []
