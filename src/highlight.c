@@ -46,11 +46,18 @@ typedef struct regex_token_ctx {
         u8 *literal;
 } RegexTokenContext;
 
+#define emit(s, k, d) ((emit)(ty, (s), (k), (d)))
 static void
-highlight_emit(Ty *ty, Bytes s, StringPart kind, void *data)
+(emit)(Ty *ty, Bytes s, StringPart kind, void *data)
 {
         struct highlight *h = data;
-        char const *styles[] = { h->style.text, h->style.escape, h->style.invalid };
+
+        char const *styles[] = {
+                h->style.text,
+                h->style.escape,
+                h->style.invalid
+        };
+
         usize start = max(h->pos, h->start);
         usize end = zminu(h->pos + s.length, h->end);
 
@@ -68,9 +75,9 @@ highlight_string(Ty *ty, byte_vector *out, Bytes string, LiteralStyle style)
 {
         struct highlight h = { .out = out, .style = style, .end = SIZE_MAX };
 
-        highlight_emit(ty, z_bytes("'"), STRING_TEXT, &h);
-        str_escape(ty, string, '\'', highlight_emit, &h);
-        highlight_emit(ty, z_bytes("'"), STRING_TEXT, &h);
+        emit(z_bytes("'"), STRING_TEXT, &h);
+        str_escape(ty, string, '\'', (emit), &h);
+        emit(z_bytes("'"), STRING_TEXT, &h);
 }
 
 static usize
@@ -93,17 +100,21 @@ source_escape_length(Bytes source, usize i, bool rich)
                 }
         }
 
-        n = utf8proc_iterate((u8 const *)source.data + i + 1, left - 1, &cp);
+        n = utf8proc_iterate(b_(source, i + 1), left - 1, &cp);
+
         return 1 + max(n, 1);
 }
 
 static void
 string_parts(Ty *ty, Token const *token, Bytes source, struct highlight *h)
 {
-        bool rich = token->ctx == LEX_FMT
-                 || token->ctx == LEX_XFMT
-                 || token->ctx == LEX_DOC;
-        bool doc = source.length >= 3 && memcmp(source.data, "'''", 3) == 0;
+        bool rich = (token->ctx == LEX_FMT)
+                  | (token->ctx == LEX_XFMT)
+                  | (token->ctx == LEX_DOC)
+                  ;
+        bool doc = (source.length >= 3)
+                && (memcmp(source.data, "'''", 3) == 0);
+
         usize start = 0;
         usize i = 0;
 
@@ -113,14 +124,14 @@ string_parts(Ty *ty, Token const *token, Bytes source, struct highlight *h)
                         continue;
                 }
 
-                highlight_emit(ty, BYTES(source.data + start, i - start), STRING_TEXT, h);
+                emit(b_sub(source, start, i - start), STRING_TEXT, h);
                 usize n = source_escape_length(source, i, rich);
-                highlight_emit(ty, BYTES(source.data + i, n), STRING_ESCAPE, h);
+                emit(b_sub(source, i, n), STRING_ESCAPE, h);
                 i += n;
                 start = i;
         }
 
-        highlight_emit(ty, BYTES(source.data + start, source.length - start), STRING_TEXT, h);
+        emit(b_drop(source, start), STRING_TEXT, h);
 }
 
 static int
@@ -163,7 +174,11 @@ regex_token(pcre2_callout_enumerate_block *token, void *data)
         }
 
         i32 cp;
-        int n = utf8proc_iterate((u8 const *)ctx->pattern + i, ctx->length - i, &cp);
+        int n = utf8proc_iterate(
+                (u8 const *)ctx->pattern + i,
+                ctx->length - i,
+                &cp
+        );
         memset(ctx->literal + i, 1, max(n, 1));
 
         return 0;
@@ -223,7 +238,12 @@ regex_parts(Ty *ty, Regex const *regex, struct highlight *h)
                 if (w < 0) {
                         w = 1;
                         kind = STRING_INVALID;
-                        part.length = ty_snprintf(esc, sizeof esc, "\\x%02x", (unsigned)(u8)regex->pattern[i]);
+                        part.length = ty_snprintf(
+                                esc,
+                                sizeof esc,
+                                "\\x%02x",
+                                (unsigned)(u8)regex->pattern[i]
+                        );
                         goto Emit;
                 }
 
@@ -264,7 +284,7 @@ regex_parts(Ty *ty, Regex const *regex, struct highlight *h)
 
 Emit:
                 if (kind != prev && vN(buf) != 0) {
-                        highlight_emit(ty, v_bytes(buf), prev, h);
+                        emit(v_bytes(buf), prev, h);
                         vN(buf) = 0;
                 }
                 svPn(buf, part.data, part.length);
@@ -273,7 +293,7 @@ Emit:
         }
 
         if (vN(buf) != 0) {
-                highlight_emit(ty, v_bytes(buf), prev, h);
+                emit(v_bytes(buf), prev, h);
         }
 }
 
@@ -300,18 +320,13 @@ highlight_token(Ty *ty, Token const *token, Bytes source, struct highlight *h)
                 break;
 
         case TOKEN_REGEX:
-                highlight_emit(ty, BYTES(source.data, 1), STRING_TEXT, h);
+                emit(b_take(source, 1), STRING_TEXT, h);
                 regex_parts(ty, token->regex, h);
-                highlight_emit(
-                        ty,
-                        BYTES(source.data + h->pos, source.length - h->pos),
-                        STRING_TEXT,
-                        h
-                );
+                emit(b_drop(source, h->pos), STRING_TEXT, h);
                 break;
 
         default:
-                highlight_emit(ty, source, STRING_TEXT, h);
+                emit(source, STRING_TEXT, h);
                 break;
         }
 }
@@ -656,8 +671,6 @@ static char const *muted[SC_COUNT] = {
         [SC_PREPROC]  = "#9a8a9a",
 };
 
-
-
 static struct {
         char const *name;
         char const **palette;
@@ -930,26 +943,22 @@ bool
 syntax_highlight(
         Ty *ty,
         byte_vector *out,
-        Module const *mod,
+        char const *source,
+        TokenVector const *tokens,
         usize start,
         usize end,
         char const *attr,
         char const *theme
 )
 {
-        if (mod == NULL || mod->source == NULL) {
-                return false;
-        }
+        Bytes src = z_bytes(source);
 
-        char const *source = mod->source;
-        usize length = strlen(source);
-        TokenVector const *tokens = &mod->tokens;
         char const **pal = build_palette(find_palette(theme));
         char const *attr_on = attr ? attr : "";
         char const *attr_off = attr ? "\x1b[0m" : "";
         usize pos = start;
 
-        if (start > end || end > length) {
+        if (start > end || end > bN(src)) {
                 return false;
         }
 
@@ -983,12 +992,9 @@ syntax_highlight(
                         .end   = tend   - t->start.byte
                 };
 
-                highlight_token(
-                        ty,
-                        t,
-                        BYTES(source + t->start.byte, min(length, t->end.byte) - t->start.byte),
-                        &h
-                );
+
+                Bytes span = b_sub(src, t->start.byte, t->end.byte - t->start.byte);
+                highlight_token(ty, t, span, &h);
 
                 if (pal[sc][0] != '\0' || attr != NULL) {
                         svPn(*out, "\x1b[0m", 4);

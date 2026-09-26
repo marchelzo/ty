@@ -24,6 +24,7 @@
 #include "vm.h"
 #include "types2_core.h"
 #include "value.h"
+#include "diag.h"
 
 enum {
         T2_ROLE_EXPRESSION = 1 << 0,
@@ -27080,29 +27081,6 @@ rich_context_available(T2Diagnostic const *diagnostic)
 }
 
 static void
-print_source_window(
-        byte_vector        *out,
-        T2Checker const    *checker,
-        T2Diagnostic const *diagnostic,
-        unsigned            columns
-)
-{
-        enum {
-                LINES_BEFORE = 3,
-                LINES_AFTER  = 2
-        };
-        WriteExpressionSourceWindow(
-                checker->ty,
-                out,
-                (int)columns,
-                diagnostic->syntax,
-                NULL,
-                LINES_BEFORE,
-                LINES_AFTER
-        );
-}
-
-static void
 print_source_excerpt(
         byte_vector        *out,
         T2Checker const    *checker,
@@ -27518,19 +27496,19 @@ print_diagnostic(
         dump(out, "  [%s]\n", diagnostic->code);
         paint(out, "0");
 
-        paint(out, "36");
-        dump(out, "%*s--> ", digits + 1, "");
-        paint(out, "0");
-        print_path_text(out, NULL, checker->path);
-        dump(
-                out,
-                ":%u:%u\n",
-                diagnostic->location.line + 1,
-                diagnostic->location.col + 1
-        );
         if (rich) {
-                print_source_window(out, checker, diagnostic, columns);
+                WriteDiagnosticLocus(checker->ty, out, diagnostic->syntax, NULL, 3, 2);
         } else {
+                paint(out, "36");
+                dump(out, "%*s--> ", digits + 1, "");
+                paint(out, "0");
+                print_path_text(out, NULL, checker->path);
+                dump(
+                        out,
+                        ":%u:%u\n",
+                        diagnostic->location.line + 1,
+                        diagnostic->location.col + 1
+                );
                 print_source_excerpt(out, checker, diagnostic, digits);
         }
 
@@ -30392,13 +30370,138 @@ publish_types(T2Checker *checker)
         }
 }
 
-static void
-throw_failure(Ty *ty, char *failure)
+static Value
+diagnostic_value(T2Checker *checker, T2Diagnostic const *diagnostic, char const *text)
 {
-        static char *pending;
-        ty_free(pending);
-        pending = failure;
-        CompileError(ty, MOD_COMPILE_ERR, "%s", pending);
+        Ty *ty = checker->ty;
+        Module const *mod = (diagnostic->syntax != NULL && diagnostic->syntax->mod != NULL)
+                          ? diagnostic->syntax->mod
+                          : checker->module;
+        byte_vector own = {0};
+
+        if (text == NULL) {
+                print_diagnostic(&own, checker, diagnostic, false, diagnostic_columns());
+                while (vN(own) != 0 && *vvL(own) == '\n') {
+                        vvX(own);
+                }
+                xvP(own, '\0');
+                text = vv(own);
+        }
+
+        char const *msg = (diagnostic->code != NULL)
+                        ? afmt("%s  [%s]", diagnostic->message, diagnostic->code)
+                        : diagnostic->message;
+
+        text = afmt("%s%sCompileError%s%s: %s", TERM(1), TERM(31), TERM(22), TERM(39), text);
+
+        GC_STOP();
+
+        Value locs = ARRAY(vA());
+        vAp(
+                locs.array,
+                vTn(
+                        "file",   (mod == NULL || mod->path == NULL) ? NIL : xSz(mod->path),
+                        "module", (mod == NULL || mod->name == NULL) ? NIL : vSsz(mod->name),
+                        "start",  vTn(
+                                "line", INTEGER(diagnostic->location.line + 1),
+                                "col",  INTEGER(diagnostic->location.col + 1)
+                        ),
+                        "end",    vTn(
+                                "line", INTEGER(diagnostic->end.line + 1),
+                                "col",  INTEGER(diagnostic->end.col + 1)
+                        )
+                )
+        );
+
+        Value err = TyNewCompileError(ty, "CompileError", msg, locs, text, NIL, NIL);
+
+        GC_RESUME();
+
+        xvF(own);
+
+        return err;
+}
+
+static usize
+ordered_errors(T2Checker *checker, T2Diagnostic const ***out)
+{
+        usize n = vN(checker->diagnostics);
+        T2Diagnostic const **ordered = ty_malloc((n + 1) * sizeof *ordered);
+        usize count = 0;
+
+        for (usize i = 0; i < n; ++i) {
+                ordered[i] = v_(checker->diagnostics, i);
+        }
+
+        qsort(ordered, n, sizeof *ordered, compare_diagnostics);
+
+        for (usize i = 0; i < n; ++i) {
+                if (ordered[i]->severity != T2_DIAGNOSTIC_ERROR) {
+                        continue;
+                }
+                if (count != 0 && same_diagnostic(ordered[i], ordered[count - 1])) {
+                        continue;
+                }
+                ordered[count++] = ordered[i];
+        }
+
+        *out = ordered;
+
+        return count;
+}
+
+static Value
+failure_value(T2Checker *checker)
+{
+        Ty *ty = checker->ty;
+        T2Diagnostic const **errors;
+        usize n = ordered_errors(checker, &errors);
+
+        if (n == 0) {
+                ty_free(errors);
+                return NIL;
+        }
+
+        char *text = render_failure(checker);
+
+        GC_STOP();
+
+        Value err = diagnostic_value(checker, errors[0], text);
+
+        if (n > 1) {
+                Value related = ARRAY(vA());
+                for (usize i = 1; i < n; ++i) {
+                        vAp(
+                                related.array,
+                                PAIR(
+                                        vSsz("additional error"),
+                                        diagnostic_value(checker, errors[i], NULL)
+                                )
+                        );
+                }
+                PutMember(err, NAMES._related, related);
+        }
+
+        GC_RESUME();
+
+        ty_free(text);
+        ty_free(errors);
+
+        return err;
+}
+
+static void
+record_errors(T2Checker *checker)
+{
+        Ty *ty = checker->ty;
+        T2Diagnostic const **errors;
+        usize n = ordered_errors(checker, &errors);
+
+        for (usize i = 0; i < n; ++i) {
+                TyDiagRecord(ty, diagnostic_value(checker, errors[i], NULL), errors[i]->syntax);
+        }
+
+        ty_free(errors);
 }
 
 void
@@ -30700,11 +30803,16 @@ t2_checker_finish(Ty *ty, T2Checker *checker)
                 print_digest(checker, "fresh");
         }
 
-        char *failure = fatal ? render_failure(checker) : NULL;
+        Value failure = fatal ? failure_value(checker) : NIL;
+
+        if (!fatal && errors != 0 && TyDiagRecovering(ty)) {
+                record_errors(checker);
+        }
+
         destroy_checker(checker);
         errno = saved_errno;
-        if (failure != NULL) {
-                throw_failure(ty, failure);
+        if (failure.type != VALUE_NIL) {
+                CompileThrow(ty, MOD_COMPILE_ERR, failure);
         }
 }
 

@@ -2146,7 +2146,16 @@ PrettySource(Ty *ty, Value const *v)
         }
 
         if (ColorOutput) {
-                syntax_highlight(ty, &buf, mod, start, end, NULL, NULL);
+                syntax_highlight(
+                        ty,
+                        &buf,
+                        mod->source,
+                        &mod->tokens,
+                        start,
+                        end,
+                        NULL,
+                        NULL
+                );
         } else {
                 sxdf(&buf, "%.*s", (int)(end - start), mod->source + start);
         }

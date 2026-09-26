@@ -1863,8 +1863,6 @@ class BaseException {
     }
 }
 
-class CompileError < BaseException {}
-
 class RuntimeError < BaseException {
     __what:  String
     __ctx:   _
@@ -1879,6 +1877,19 @@ class RuntimeError < BaseException {
     bt    { __ctx   }
 
     trace() { (__ctx = ty.trace()) }
+}
+
+class CompileError < RuntimeError {
+    __kind:    String
+    __msg:     String
+    __locs:    Array[_]
+    __detail:  String | nil
+    __related: Array[(String, _)] | nil
+
+    kind      { __kind    }
+    message   { __msg     }
+    locations { __locs    }
+    related   { __related ?? [] }
 }
 
 class ValueError     < RuntimeError {}

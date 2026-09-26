@@ -29,6 +29,7 @@
 #include "types2.h"
 #include "highlight.h"
 #include "jit.h"
+#include "diag.h"
 
 #define TY_DEBUG_STACK_BOOKKEEPING 0
 
@@ -398,6 +399,9 @@ struct context_entry {
 };
 
 static ContextEntry *ContextList;
+
+static Expr const *
+ContextSite(Ty *ty, StringVector *notes);
 
 static Module *
 GetModule(Ty *ty, char const *name);
@@ -1408,46 +1412,101 @@ PushInfo(Ty *ty, void const *ctx, char const *fmt, ...)
 #define fail_or(...)                                            \
         if (!HAVE_COMPILER_FLAG(FORGIVING) || EVAL_DEPTH > 0) { \
                 CompileError(ty, MOD_COMPILE_ERR, __VA_ARGS__); \
-        } else
+        } else if (ForgiveError(ty, __VA_ARGS__), true)
 #define sometimes_fail(...) fail_or(__VA_ARGS__) {}
 #define fail(...) CompileError(ty, MOD_COMPILE_ERR, __VA_ARGS__)
+
+static Value
+VMakeCompileError(Ty *ty, char const *fmt, va_list ap)
+{
+        byte_vector msg  = {0};
+        byte_vector text = {0};
+        StringVector notes = {0};
+
+        vdump(&msg, fmt, ap);
+
+        Expr const *site = ContextSite(ty, &notes);
+
+        Expr here = {
+                .type  = EXPRESSION_NIL,
+                .start = STATE.start,
+                .end   = (STATE.end.s != NULL) ? STATE.end : STATE.start,
+                .mod   = STATE.module
+        };
+
+        if (site == NULL && STATE.start.s != NULL && STATE.module != NULL) {
+                site = &here;
+        }
+
+        WriteDiagnostic(ty, &text, "CompileError", vv(msg), site, NULL, &notes, 3, 2);
+
+        GC_STOP();
+
+        Value locs = (CompilationDepth(ty) > 0) ? CompilationTraceArray(ty) : ARRAY(vA());
+
+        if (vN(*locs.array) == 0 && site != NULL) {
+                vAp(locs.array, TyTraceEntryFor(ty, site));
+        }
+
+        Value err = TyNewCompileError(ty, "CompileError", vv(msg), locs, vv(text), NIL, NIL);
+
+        GC_RESUME();
+
+        xvF(msg);
+        xvF(text);
+        xvF(notes);
+
+        return err;
+}
+
+static void
+ForgiveError(Ty *ty, char const *fmt, ...)
+{
+        va_list ap;
+
+        va_start(ap, fmt);
+        Value err = VMakeCompileError(ty, fmt, ap);
+        va_end(ap);
+
+        if (TyDiagRecovering(ty)) {
+                TyDiagRecord(ty, err, NULL);
+        } else {
+                TySuppress(ty, err, "forgiven");
+        }
+}
+
+noreturn static void
+Poisoned(Ty *ty, Expr const *e)
+{
+        Value err = TyDiagFindPoison(ty, e);
+
+        if (err.type == VALUE_NIL) {
+                CompileError(ty, MOD_COMPILE_ERR, "%s", e->message);
+        }
+
+        CompileThrow(ty, MOD_COMPILE_ERR, err);
+}
+
+noreturn void
+CompileThrow(Ty *ty, u32 type, Value err)
+{
+        ContextList = NULL;
+
+        STATE.module->flags |= type;
+
+        vm_throw(ty, &err);
+}
 
 noreturn void
 CompileError(Ty *ty, u32 type, char const *fmt, ...)
 {
         va_list ap;
+
         va_start(ap, fmt);
-
-        v0(ErrorBuffer);
-
-        dump(&ErrorBuffer, "%s%sCompileError%s%s: ", TERM(1), TERM(31), TERM(22), TERM(39));
-        vdump(&ErrorBuffer, fmt, ap);
-
+        Value err = VMakeCompileError(ty, fmt, ap);
         va_end(ap);
 
-#if defined(TY_LS)
-        GC_STOP();
-
-        Value msg = vSsz(vv(ErrorBuffer));
-        Value trace = (CompilationDepth(ty) > 0) ? CompilationTraceArray(ty) : ARRAY(vA());
-        Value record = vTn("message", msg, "trace", trace);
-        v0(ErrorBuffer);
-        json_dump(ty, &record, &ErrorBuffer);
-        xvP(ErrorBuffer, '\0');
-
-        GC_RESUME();
-#else
-        if (CompilationDepth(ty) > 0) {
-                dump(&ErrorBuffer, "\n");
-                CompilationTrace(ty, &ErrorBuffer);
-        }
-#endif
-
-        ContextList = NULL;
-
-        STATE.module->flags |= type;
-
-        TY_THROW_ERROR();
+        CompileThrow(ty, type, err);
 }
 
 void *
@@ -4137,7 +4196,14 @@ comptime(Ty *ty, Scope *scope, Expr *e)
 
         Value v;
         if (!tyeval(ty, e->operand, &v, NULL)) {
-                fail("error evaluating compile-time expression: %s", VSC(&v));
+                Value err = TyWrapError(
+                        ty,
+                        v,
+                        NIL,
+                        e,
+                        "evaluating compile-time expression"
+                );
+                vm_throw(ty, &err);
         }
 
         Location mstart = STATE.mstart;
@@ -4209,6 +4275,23 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
                 QualifiedName(e->function)
         );
 
+        u32 types = TYPES_OFF;
+        Expr site = *e;
+
+        if (TY_CATCH_ERROR()) {
+                TYPES_OFF = types;
+                STATE.macro_scope = mscope;
+                RestoreContext(ty, ctx);
+                Value err = TyCatchWrap(
+                        ty,
+                        &site,
+                        "expanding macro %s",
+                        QualifiedName(site.function)
+                );
+                GC_RESUME();
+                vm_throw(ty, &err);
+        }
+
         for (usize i = 0;  i < vN(e->args); ++i) {
                 Value v = texprx(v__(e->args, i));
                 vmP(&v);
@@ -4218,6 +4301,8 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
         WITH_TYPES_OFF {
                 v = vmC(&m, vN(e->args));
         }
+
+        TY_CATCH_END();
 
         Location const mstart = STATE.mstart;
         Location const mend = STATE.mend;
@@ -5162,7 +5247,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 fail("*<identifier> 'match-rest' pattern used outside of pattern context");
 
         case EXPRESSION_ERROR:
-                fail("%s", e->message);
+                Poisoned(ty, e);
         }
 
         if (debug) {
@@ -10915,7 +11000,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
 
         case EXPRESSION_ERROR:
-                fail("%s", e->message);
+                Poisoned(ty, e);
 
         default:
                 fail(
@@ -12517,14 +12602,15 @@ resolve_prog(Ty *ty, Stmt **p)
 }
 
 static Stmt **
-compile(Ty *ty, char const *source)
+compile_unit(Ty *ty, char const *source)
 {
         PushScope(STATE.global);
         STATE.module->source = source;
 
         if (!parse_module(ty, STATE.module)) {
                 STATE.module->flags |= MOD_PARSE_ERR;
-                TY_THROW_ERROR();
+                Value err = ty->error;
+                vm_throw(ty, &err);
         }
 
         Stmt **p = STATE.module->prog;
@@ -12671,6 +12757,41 @@ NoResolve:
         return p;
 }
 
+static Stmt **
+compile(Ty *ty, char const *source)
+{
+        TyDiagPush(ty, AllowErrors ? DIAG_RECOVER : 0);
+
+        if (TY_CATCH_ERROR()) {
+                bool replaced;
+                Value err = TyDiagFail(ty, *vm_get(ty, 0), &replaced);
+                if (!replaced) {
+                        TY_RETHROW();
+                }
+                TY_CATCH();
+                vm_throw(ty, &err);
+        }
+
+        Stmt **p = compile_unit(ty, source);
+
+        TY_CATCH_END();
+
+        Value rep = TyDiagFinish(ty);
+
+        if (STATE.module->flags & (MOD_PARSE_ERR | MOD_COMPILE_ERR | MOD_TYPE_ERR)) {
+                if (rep.type == VALUE_NIL) {
+                        GC_STOP();
+                        rep = TyErrorMessage(ty, afmt("%s: compilation failed", STATE.module->path));
+                        TySetError(ty, rep, NIL);
+                        GC_RESUME();
+                } else {
+                        TySetError(ty, rep, NIL);
+                }
+        }
+
+        return p;
+}
+
 static Module *
 GetModule(Ty *ty, char const *name)
 {
@@ -12812,7 +12933,19 @@ bool
 compiler_import_module(Ty *ty, Stmt const *s)
 {
         if (TY_CATCH_ERROR()) {
-                TY_CATCH();
+                if (TyErrorIsFrom(ty, vm_get(ty, 0), STATE.module)) {
+                        TY_CATCH_FAIL();
+                        return false;
+                }
+                GC_STOP();
+                Value err = TyCatchWrap(
+                        ty,
+                        (Expr const *)s,
+                        "importing module %s",
+                        s->import.module
+                );
+                TySetError(ty, err, NIL);
+                GC_RESUME();
                 return false;
         }
 
@@ -12943,7 +13076,7 @@ compiler_init(Ty *ty)
                 sym->flags |= (SYM_PUBLIC | SYM_CONST | SYM_BUILTIN | SYM_CLASS);
         }
 
-        class_set_super(ty, CLASS_COMPILE_ERROR,  CLASS_ERROR);
+        class_set_super(ty, CLASS_COMPILE_ERROR,  CLASS_RUNTIME_ERROR);
         class_set_super(ty, CLASS_RUNTIME_ERROR,  CLASS_ERROR);
         class_set_super(ty, CLASS_ASSERT_ERROR,   CLASS_RUNTIME_ERROR);
         class_set_super(ty, CLASS_VALUE_ERROR,    CLASS_RUNTIME_ERROR);
@@ -12973,6 +13106,7 @@ void
 compiler_load_builtin_modules(Ty *ty)
 {
         if (TY_CATCH_ERROR()) {
+                TY_CATCH_FAIL();
                 fprintf(
                         stderr,
                         "Aborting, failed to load builtin modules: %s\n",
@@ -12997,6 +13131,7 @@ compiler_load_prelude(Ty *ty)
 {
         if (TY_CATCH_ERROR()) {
 #if !defined(TY_LS)
+                TY_CATCH_FAIL();
                 fprintf(
                         stderr,
                         "Aborting, failed to load prelude: %s\n",
@@ -14540,7 +14675,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 break;
 
         case EXPRESSION_ERROR:
-                 fail("%s", e->message);
+                 Poisoned(ty, e);
                  break;
 
         case STATEMENT_DEFINITION:
@@ -16371,7 +16506,7 @@ CToTyExpr(Ty *ty, Expr *e)
         GC_STOP();
 
         if (TY_CATCH_ERROR()) {
-                TY_CATCH();
+                TY_SUPPRESS("AST conversion");
                 GC_RESUME();
                 return NONE;
         }
@@ -16390,7 +16525,7 @@ CToTyStmt(Ty *ty, Stmt *s)
         GC_STOP();
 
         if (TY_CATCH_ERROR()) {
-                TY_CATCH();
+                TY_SUPPRESS("AST conversion");
                 GC_RESUME();
                 return NONE;
         }
@@ -16409,7 +16544,7 @@ TyToCExpr(Ty *ty, Value *v)
         GC_STOP();
 
         if (TY_CATCH_ERROR()) {
-                TY_CATCH();
+                TY_CATCH_FAIL();
                 GC_RESUME();
                 return NULL;
         }
@@ -16513,8 +16648,8 @@ compiler_eval(Ty *ty, Expr *e)
         return v;
 }
 
-Expr *
-typarse(
+static Expr *
+xtyparse(
         Ty *ty,
         Expr *e,
         Expr *self,
@@ -16598,6 +16733,47 @@ typarse(
         RestoreContext(ty, ctx);
 
         return _e;
+}
+
+Expr *
+typarse(
+        Ty *ty,
+        Expr *e,
+        Expr *self,
+        Location const *start,
+        Location const *end
+)
+{
+        u32 types = TYPES_OFF;
+        Location mstart = STATE.mstart;
+        Location mend = STATE.mend;
+        Scope *macro_scope = STATE.macro_scope;
+        void *ctx = ContextList;
+
+        Expr site = *e;
+        site.start = *start;
+        site.end = *end;
+
+        if (TY_CATCH_ERROR()) {
+                TYPES_OFF = types;
+                STATE.mstart = mstart;
+                STATE.mend = mend;
+                STATE.macro_scope = macro_scope;
+                ContextList = ctx;
+                Value err = TyCatchWrap(
+                        ty,
+                        &site,
+                        "expanding macro %s",
+                        QualifiedName(e)
+                );
+                vm_throw(ty, &err);
+        }
+
+        Expr *expanded = xtyparse(ty, e, self, start, end);
+
+        TY_CATCH_END();
+
+        return expanded;
 }
 
 static void
@@ -17299,7 +17475,7 @@ compiler_symbolize_expression(Ty *ty, Expr *e, Scope *scope)
         EVAL_DEPTH += 1;
 
         if (TY_CATCH_ERROR()) {
-                TY_CATCH();
+                TY_CATCH_FAIL();
                 EVAL_DEPTH -= 1;
                 STATE = state;
                 return false;
@@ -17343,7 +17519,7 @@ compiler_render_template(Ty *ty, Expr *e)
         }
 
         if (TY_CATCH_ERROR()) {
-                TY_CATCH();
+                TY_CATCH_FAIL();
                 v = Err(ty, vSsz(TyError(ty)));
                 vmE(&v);
         }
@@ -17582,24 +17758,16 @@ CompilationTraceArray(Ty *ty)
 void
 CompilationTrace(Ty *ty, byte_vector *out)
 {
-        int etw = 0;
-        //for (ContextEntry *ctx = ContextList; ctx != NULL; ctx = ctx->next) {
-        //        etw = max(etw, ExpressionTypeWidth(ctx->e));
-        //}
+        StringVector notes = {0};
+        Expr const *site = ContextSite(ty, &notes);
 
-        for (ContextEntry *ctx = ContextList; ctx != NULL; ctx = ctx->next) {
-                while (ctx == ctx->next) {
-                        ctx = ctx->next;
-                }
+        WriteDiagnosticLocus(ty, out, site, NULL, 1, 1);
 
-                if (WriteExpressionTrace(ty, out, ctx->e, etw, ctx == ContextList) == 0) {
-                        continue;
-                }
-
-                WriteExpressionOrigin(ty, out, ctx->e->origin);
-
-                break;
+        for (usize i = 0; i < vN(notes); ++i) {
+                dump(out, "%7s%s= note:%s %s\n", "", TERM(36), TERM(0), v__(notes, i));
         }
+
+        xvF(notes);
 }
 
 int
@@ -17776,44 +17944,132 @@ WriteExpressionTrace(Ty *ty, byte_vector *out, Expr const *e, int etw, bool firs
         return n;
 }
 
-static void
-qhighlight(
-        Ty *ty,
-        byte_vector *out,
-        Module *mod,
-        isize start,
-        isize end,
-        char const *attr
-)
+typedef struct {
+        char const *base;
+        TokenVector const *tokens;
+} SourceView;
+
+static TokenVector const NoTokens;
+
+static bool
+SourceViewFor(Expr const *e, TokenVector const *tokens, SourceView *view)
 {
-        if (ColorStderr) {
-                syntax_highlight(ty, out, mod, start, end, attr, "muted");
-        } else {
-                sxdf(out, "%.*s", (int)(end - start), mod->source + start);
+        if (e == NULL || e->start.s == NULL) {
+                return false;
         }
+
+        char const *base = e->start.s;
+        while (base[-1] != '\0') {
+                --base;
+        }
+
+        view->base = base;
+
+        if (tokens == NULL && e->mod != NULL && e->mod->source == base) {
+                tokens = &e->mod->tokens;
+        }
+
+        if (
+                (tokens == NULL)
+             || (
+                        (vN(*tokens) > 0)
+                     && (v_(*tokens, 0)->start.s != base + v_(*tokens, 0)->start.byte)
+                )
+        ) {
+                tokens = &NoTokens;
+        }
+
+        view->tokens = tokens;
+
+        return true;
 }
 
 static void
-xhighlight(
+Highlight(
         Ty *ty,
         byte_vector *out,
-        Module *mod,
-        isize start,
-        isize end,
-        char const *attr
+        SourceView const *view,
+        char const *start,
+        char const *end,
+        char const *attr,
+        char const *theme
 )
 {
         if (ColorStderr) {
-                syntax_highlight(ty, out, mod, start, end, attr, NULL);
+                syntax_highlight(
+                        ty,
+                        out,
+                        view->base,
+                        view->tokens,
+                        start - view->base,
+                        end - view->base,
+                        attr,
+                        theme
+                );
         } else {
-                sxdf(out, "%.*s", (int)(end - start), mod->source + start);
+                sxdf(out, "%.*s", (int)(end - start), start);
         }
+}
+
+inline static Location
+SpanEnd(Expr const *e)
+{
+        return (e->end.s == NULL || e->end.s < e->start.s) ? e->start : e->end;
+}
+
+static Expr const *
+DisplaySite(Expr const *e)
+{
+        Expr const *origin = e->origin;
+
+        if (origin == NULL || origin->start.s == NULL) {
+                return e;
+        }
+
+        if (
+                (e->start.s != NULL)
+             && (e->start.s >= origin->start.s)
+             && (SpanEnd(e).s <= SpanEnd(origin).s)
+        ) {
+                return e;
+        }
+
+        return origin;
+}
+
+static char const *
+RelativePath(char const *path)
+{
+        static char cwd[PATH_MAX + 1];
+        static bool resolved;
+
+        if (!resolved) {
+                if (getcwd(cwd, sizeof cwd) == NULL) {
+                        cwd[0] = '\0';
+                }
+                resolved = true;
+        }
+
+        usize n = strlen(cwd);
+
+        if (n > 0 && strncmp(path, cwd, n) == 0 && path[n] == '/') {
+                return path + n + 1;
+        }
+
+        return path;
 }
 
 static void
 WriteExpansionNote(Ty *ty, byte_vector *out, int cols, Expr const *e)
 {
-        char const *path = e->mod->path;
+        SourceView view;
+
+        if (!SourceViewFor(e, NULL, &view)) {
+                return;
+        }
+
+        char const *path = (e->mod != NULL && e->mod->path != NULL) ? RelativePath(e->mod->path) : "?";
+        Location const stop = SpanEnd(e);
 
         int label_len = 22 + term_width(path, -1);
         int pad = max(0, cols - label_len - 2);
@@ -17843,7 +18099,7 @@ WriteExpansionNote(Ty *ty, byte_vector *out, int cols, Expr const *e)
         dump(out, "%s\n", TERM(0));
 
         char const *start = e->start.s;
-        char const *end   = e->end.s;
+        char const *end   = stop.s;
 
         int line0 = e->start.line;
 
@@ -17875,7 +18131,7 @@ WriteExpansionNote(Ty *ty, byte_vector *out, int cols, Expr const *e)
                         line_end = end;
 
                 bool in_range = (line >= e->start.line)
-                             && (line <= e->end.line);
+                             && (line <= stop.line);
 
                 char const *arrow = in_range ? ">" : " ";
                 char const *dim   = in_range ? "" : TERM(38;2;90;90;90);
@@ -17891,41 +18147,12 @@ WriteExpansionNote(Ty *ty, byte_vector *out, int cols, Expr const *e)
                         dim
                 );
 
-                if (in_range && line == e->start.line && line == e->end.line) {
-                        int before = e->start.s - line_start;
-                        qhighlight(
-                                ty,
-                                &tmp,
-                                e->mod,
-                                line_start - e->mod->source,
-                                line_start - e->mod->source + before,
-                                NULL
-                        );
-                        qhighlight(
-                                ty,
-                                &tmp,
-                                e->mod,
-                                e->start.s - e->mod->source,
-                                e->end.s   - e->mod->source,
-                                TERM(58:2:114:105:89;4:3)
-                        );
-                        qhighlight(
-                                ty,
-                                &tmp,
-                                e->mod,
-                                e->end.s - e->mod->source,
-                                line_end - e->mod->source,
-                                NULL
-                        );
+                if (in_range && line == e->start.line && line == stop.line) {
+                        Highlight(ty, &tmp, &view, line_start, e->start.s, NULL, "muted");
+                        Highlight(ty, &tmp, &view, e->start.s, stop.s, TERM(58:2:114:105:89;4:3), "muted");
+                        Highlight(ty, &tmp, &view, stop.s, line_end, NULL, "muted");
                 } else {
-                        qhighlight(
-                                ty,
-                                &tmp,
-                                e->mod,
-                                line_start - e->mod->source,
-                                line_end   - e->mod->source,
-                                NULL
-                        );
+                        Highlight(ty, &tmp, &view, line_start, line_end, NULL, "muted");
                 }
 
                 vN(tmp) = term_fit_cols(vv(tmp), vN(tmp), cols);
@@ -17945,7 +18172,8 @@ WriteExpressionSourceHeading(Ty *ty, byte_vector *out, int cols, Expr const *e)
                 e = e->origin;
         }
 
-        int ctx_len = term_width(e->mod->path, -1);
+        char const *path = RelativePath(e->mod->path);
+        int ctx_len = term_width(path, -1);
         if (e->xfunc != NULL && e->xfunc->name != NULL) {
                 ctx_len += 6; // "  ——  "
                 if (e->xfunc->class != NULL) {
@@ -17970,7 +18198,7 @@ WriteExpressionSourceHeading(Ty *ty, byte_vector *out, int cols, Expr const *e)
                         out,
                         "┫%s %s%s%s  %s——%s  %s%s%s.%s%s%s %s┣",
                         TERM(0),
-                        TERM(93;1), e->mod->path,          TERM(0),
+                        TERM(93;1), path,                  TERM(0),
                         TERM(38;2;136;136;136),            TERM(0),
                         TERM(92;1), e->xfunc->class->name, TERM(0),
                         TERM(34),   e->xfunc->name,        TERM(0),
@@ -17981,7 +18209,7 @@ WriteExpressionSourceHeading(Ty *ty, byte_vector *out, int cols, Expr const *e)
                         out,
                         "┫%s %s%s%s  %s——%s  %s%s%s %s┣",
                         TERM(0),
-                        TERM(93;1), e->mod->path,   TERM(0),
+                        TERM(93;1), path,           TERM(0),
                         TERM(38;2;136;136;136),     TERM(0),
                         TERM(34),   e->xfunc->name, TERM(0),
                         TERM(38;2;96;96;96)
@@ -17991,7 +18219,7 @@ WriteExpressionSourceHeading(Ty *ty, byte_vector *out, int cols, Expr const *e)
                         out,
                         "┫%s %s%s%s %s┣",
                         TERM(0),
-                        TERM(93;1), e->mod->path, TERM(0),
+                        TERM(93;1), path,         TERM(0),
                         TERM(38;2;96;96;96)
                 );
         }
@@ -18003,29 +18231,41 @@ WriteExpressionSourceHeading(Ty *ty, byte_vector *out, int cols, Expr const *e)
         dump(out, "%s\n", TERM(0));
 }
 
-void
-WriteExpressionSourceWindow(
+static void
+WriteSourceWindow(
         Ty *ty,
         byte_vector *out,
         int cols,
         Expr const *e,
+        TokenVector const *tokens,
         StringVector const *notes,
         int before,
         int after
 )
 {
         Expr const *expansion;
+        SourceView view;
 
-        if (e->origin != NULL) {
+        if (e == NULL) {
+                return;
+        }
+
+        if (DisplaySite(e) != e) {
                 expansion = e;
                 e = e->origin;
+                tokens = NULL;
         } else {
                 expansion = NULL;
         }
 
+        if (!SourceViewFor(e, tokens, &view)) {
+                return;
+        }
+
+        Location const stop = SpanEnd(e);
 
         char const *start = e->start.s;
-        char const *end   = e->end.s;
+        char const *end   = stop.s;
 
         int line0 = e->start.line;
 
@@ -18061,14 +18301,13 @@ WriteExpressionSourceWindow(
                 }
 
                 bool in_range = (line >= e->start.line)
-                             && (line <= e->end.line);
+                             && (line <= stop.line);
 
                 char const *arrow = in_range ? ">" : " ";
 
-                if (line == e->start.line && line == e->end.line) {
+                if (line == e->start.line && line == stop.line) {
                         int before = e->start.s - line_start;
-                        int length = e->end.s   - e->start.s;
-                        int after  = line_end   - e->end.s;
+                        int length = stop.s     - e->start.s;
                         sxdf(
                                 &tmp,
                                 "%s %s%4d%s | ",
@@ -18077,30 +18316,9 @@ WriteExpressionSourceWindow(
                                 line + 1,
                                 TERM(0)
                         );
-                        xhighlight(
-                                ty,
-                                &tmp,
-                                e->mod,
-                                line_start - e->mod->source,
-                                line_start - e->mod->source + before,
-                                NULL
-                        );
-                        xhighlight(
-                                ty,
-                                &tmp,
-                                e->mod,
-                                e->start.s - e->mod->source,
-                                e->end.s   - e->mod->source,
-                                TERM(58:2:255:0:0;4:3)
-                        );
-                        xhighlight(
-                                ty,
-                                &tmp,
-                                e->mod,
-                                e->end.s - e->mod->source,
-                                line_end - e->mod->source,
-                                NULL
-                        );
+                        Highlight(ty, &tmp, &view, line_start, e->start.s, NULL, NULL);
+                        Highlight(ty, &tmp, &view, e->start.s, stop.s, TERM(58:2:255:0:0;4:3), NULL);
+                        Highlight(ty, &tmp, &view, stop.s, line_end, NULL, NULL);
                         if (!ColorStderr) {
                                 dump(out, "%s\n", vv(tmp));
                                 v0(tmp);
@@ -18120,14 +18338,7 @@ WriteExpressionSourceWindow(
                                 line + 1,
                                 TERM(0)
                         );
-                        xhighlight(
-                                ty,
-                                &tmp,
-                                e->mod,
-                                line_start - e->mod->source,
-                                line_end   - e->mod->source,
-                                NULL
-                        );
+                        Highlight(ty, &tmp, &view, line_start, line_end, NULL, NULL);
                 }
 
                 vN(tmp) = term_fit_cols(vv(tmp), vN(tmp), cols);
@@ -18172,6 +18383,150 @@ WriteExpressionSourceWindow(
         }
 
         SCRATCH_RESTORE();
+}
+
+void
+WriteExpressionSourceWindow(
+        Ty *ty,
+        byte_vector *out,
+        int cols,
+        Expr const *e,
+        StringVector const *notes,
+        int before,
+        int after
+)
+{
+        WriteSourceWindow(ty, out, cols, e, NULL, notes, before, after);
+}
+
+unsigned
+DiagnosticColumns(void)
+{
+        int rows;
+        int cols;
+
+        if (!get_terminal_size(2, &rows, &cols) || cols < 40) {
+                return 100;
+        }
+
+        return (unsigned)cols;
+}
+
+void
+WriteDiagnosticPath(byte_vector *out, char const *path)
+{
+        dump(out, "%s", RelativePath(path));
+}
+
+void
+WriteDiagnosticLocus(
+        Ty *ty,
+        byte_vector *out,
+        Expr const *where,
+        TokenVector const *tokens,
+        int before,
+        int after
+)
+{
+        if (where == NULL) {
+                return;
+        }
+
+        Expr const *site = DisplaySite(where);
+
+        if (site->start.s == NULL) {
+                return;
+        }
+
+        char const *path = (site->mod == NULL)       ? "?"
+                         : (site->mod->path != NULL) ? site->mod->path
+                         : (site->mod->name != NULL) ? site->mod->name
+                         : "?";
+
+        dump(out, "%s%7s-->%s ", TERM(36), "", TERM(0));
+        WriteDiagnosticPath(out, path);
+        dump(out, ":%d:%d\n", site->start.line + 1, site->start.col + 1);
+
+        WriteSourceWindow(ty, out, DiagnosticColumns(), where, tokens, NULL, before, after);
+}
+
+void
+WriteDiagnostic(
+        Ty *ty,
+        byte_vector *out,
+        char const *kind,
+        char const *msg,
+        Expr const *where,
+        TokenVector const *tokens,
+        StringVector const *notes,
+        int before,
+        int after
+)
+{
+        bool note = (strcmp(kind, "note") == 0);
+
+        dump(
+                out,
+                "%s%s%s%s%s: %s%s%s\n",
+                TERM(1),
+                note ? TERM(34) : TERM(31),
+                kind,
+                TERM(22),
+                TERM(39),
+                note ? "" : TERM(1),
+                msg,
+                note ? "" : TERM(22)
+        );
+
+        WriteDiagnosticLocus(ty, out, where, tokens, before, after);
+
+        if (notes != NULL) {
+                for (usize i = 0; i < vN(*notes); ++i) {
+                        dump(out, "%7s%s= note:%s %s\n", "", TERM(36), TERM(0), v__(*notes, i));
+                }
+        }
+
+        while (vN(*out) > 0 && vvL(*out)[0] == '\n') {
+                vN(*out) -= 1;
+        }
+
+        xvP(*out, '\0');
+        vN(*out) -= 1;
+}
+
+static Expr const *
+ContextSite(Ty *ty, StringVector *notes)
+{
+        Expr const *site = NULL;
+
+        for (ContextEntry *ctx = ContextList; ctx != NULL; ctx = ctx->next) {
+                Expr const *e = ctx->e;
+
+                while (e != NULL && e->type == STATEMENT_EXPRESSION) {
+                        e = ((Stmt const *)e)->expression;
+                }
+
+                while (e != NULL && e->type == EXPRESSION_STATEMENT) {
+                        e = (Expr const *)e->statement;
+                }
+
+                if (e == NULL) {
+                        continue;
+                }
+
+                if (e->type == EXPRESSION_CTX_INFO) {
+                        if (notes != NULL && e->message != NULL) {
+                                xvP(*notes, (char *)e->message);
+                        }
+                        continue;
+                }
+
+                if (site == NULL && e->start.s != NULL) {
+                        site = e;
+                }
+        }
+
+        return site;
 }
 
 void
@@ -19185,7 +19540,7 @@ CompileSource(
         i64 symbol = scope_get_symbol(ty);
 
         if (TY_CATCH_ERROR()) {
-                (void)TY_CATCH(); // FIXME
+                TY_CATCH_FAIL();
                 mod->flags |= MOD_COMPILE_ERR;
                 scope_set_symbol(ty, symbol);
                 TYPES_OFF = types;
@@ -19361,7 +19716,7 @@ CompilerResolveExpr(Ty *ty, Expr *e)
         }
 
         if (TY_CATCH_ERROR()) {
-                TY_CATCH();
+                TY_CATCH_FAIL();
                 return false;
         }
 
@@ -19468,7 +19823,7 @@ CompilerReloadModule(
         mod->scope->flags |= SCOPE_RELOADING;
 
         if (TY_CATCH_ERROR()) {
-                TY_CATCH();
+                TY_CATCH_FAIL();
                 mod->flags &= ~MOD_RELOADING;
                 mod->scope->flags &= ~SCOPE_RELOADING;
                 scope_set_symbol(ty, symbol);

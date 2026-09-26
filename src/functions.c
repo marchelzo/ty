@@ -9584,9 +9584,7 @@ BUILTIN_FUNCTION(ty_tokenize)
 BUILTIN_FUNCTION(ty_scope)
 {
         ASSERT_ARGC("ty.scope()", 0);
-
         Scope *scope = TyCompilerState(ty)->macro_scope;
-
         return (scope == NULL) ? NIL : PTR(scope);
 }
 
@@ -9620,7 +9618,6 @@ MethodSummary(Ty *ty, T2Type t0, Expr const *fun)
                 "type", t2_to_ty(ty, u0)
         );
 }
-
 
 static Value
 ClassSummary(Ty *ty, T2Type t0, ClassDefinition *def)
@@ -10626,8 +10623,10 @@ BUILTIN_FUNCTION(parse_highlight)
         }
 
         SCRATCH_SAVE();
-        char const *palette = IsMissing(theme) ? NULL : TY_TMP_C_STR(theme);
-        if (syntax_highlight(ty, &text, mod, start, end, NULL, palette)) {
+        char const *theme_z = IsMissing(theme) ? NULL : TY_TMP_C_STR(theme);
+        char const *src = mod->source;
+        TokenVector tok = mod->tokens;
+        if (syntax_highlight(ty, &text, src, &tok, start, end, NULL, theme_z)) {
                 result = vSs(vv(text), vN(text));
         }
         SCRATCH_RESTORE();

@@ -498,6 +498,35 @@ WriteExpressionOrigin(Ty *ty, byte_vector *out, Expr const *e);
 void
 WriteExpressionSourceHeading(Ty *ty, byte_vector *out, int cols, Expr const *e);
 
+unsigned
+DiagnosticColumns(void);
+
+void
+WriteDiagnosticPath(byte_vector *out, char const *path);
+
+void
+WriteDiagnosticLocus(
+        Ty *ty,
+        byte_vector *out,
+        Expr const *where,
+        TokenVector const *tokens,
+        int before,
+        int after
+);
+
+void
+WriteDiagnostic(
+        Ty *ty,
+        byte_vector *out,
+        char const *kind,
+        char const *msg,
+        Expr const *where,
+        TokenVector const *tokens,
+        StringVector const *notes,
+        int before,
+        int after
+);
+
 void
 WriteExpressionSourceContext(
         Ty *ty,

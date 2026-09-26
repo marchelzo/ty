@@ -114,6 +114,33 @@ bytes_eq(Bytes const a, Bytes const b)
             && (memcmp(a.data, b.data, a.length) == 0);
 }
 
+inline static Bytes
+b_take(Bytes s, usize i)
+{
+        s.length = zminu(i, s.length);
+        return s;
+}
+
+inline static Bytes
+b_drop(Bytes s, usize i)
+{
+        if (i > s.length) {
+                s.length = 0;
+        } else {
+                s.data += i;
+                s.length -= i;
+        }
+        return s;
+}
+
+inline static Bytes
+b_sub(Bytes s, usize start, usize len)
+{
+        s = b_drop(s, start);
+        s.length = zminu(len, s.length);
+        return s;
+}
+
 char *
 sclone(Ty *ty, char const *s);
 

@@ -17,6 +17,7 @@
 #include "xd.h"
 #include "itable.h"
 #include "compiler.h"
+#include "diag.h"
 #include "types2.h"
 #include "class.h"
 #include "blob.h"
@@ -286,7 +287,7 @@ execln(Ty *ty, char *line)
         buffer.count = 1;
 
         dump(&buffer, "%s\n", line);
-        if (strstr(TyError(ty), "ParseError") != NULL && repl_exec(ty, v_(buffer, 1))) {
+        if (TyErrorIsKind(ty, &ty->error, "ParseError") && repl_exec(ty, v_(buffer, 1))) {
                 goto End;
         }
 
@@ -713,6 +714,7 @@ main(int argc, char **argv)
 #endif
 
         if (!vm_init(ty, argc - nopt, argv + nopt)) {
+                DyingOfError = true;
                 fprintf(stderr, "%s\n", TyError(ty));
                 return -1;
         }
@@ -733,8 +735,9 @@ main(int argc, char **argv)
 
         char *source = fslurp(file);
 
-        if (HighlightOnly) {
+        if (UNLIKELY(HighlightOnly)) {
                 if (!vm_load_program(ty, source, SourceFileName)) {
+                        DyingOfError = true;
                         fprintf(stderr, "%s\n", TyError(ty));
                         return 1;
                 }
@@ -742,13 +745,23 @@ main(int argc, char **argv)
                 Module *mod = CompilerCurrentModule(ty);
                 byte_vector out = {0};
 
-                syntax_highlight(ty, &out, mod, 0, strlen(source), NULL, HighlightTheme);
+                syntax_highlight(
+                        ty,
+                        &out,
+                        mod->source,
+                        &mod->tokens,
+                        0,
+                        strlen(source),
+                        NULL,
+                        HighlightTheme
+                );
                 fputs(vv(out), stdout);
 
                 return 0;
         }
 
         if (!vm_execute(ty, source, SourceFileName)) {
+                DyingOfError = true;
                 fprintf(stderr, "%s\n", TyError(ty));
                 exit(67);
         }

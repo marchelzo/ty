@@ -76,6 +76,7 @@
 #include "cffi.h"
 #include "class.h"
 #include "compiler.h"
+#include "diag.h"
 #include "dict.h"
 #include "functions.h"
 #include "gc.h"
@@ -426,6 +427,8 @@ static _Thread_local Ty *co_ty;
 
 static _Thread_local Ty *MyTy;
 static _Thread_local u64 MyId;
+
+bool DyingOfError;
 
 // ==========/ Signal Handling /========================================
 ValueVector                  SignalGCRoots;
@@ -2074,6 +2077,7 @@ PushThrowCtx(Ty *ty)
 
         //== (in case it's recycled) ==============
         vN(*ctx) = 0;
+        ctx->traced = false;
 
         for (int i = 0; i < vN(ctx->locals); ++i) {
                 vN(v__(ctx->locals, i)) = 0;
@@ -2542,7 +2546,7 @@ vm_run_tdb(void *ctx)
         AddThread(ty, t->t);
 
         if (TY_CATCH_ERROR()) {
-                TY_CATCH();
+                TY_CATCH_FAIL();
                 fprintf(stderr, "TDB thread unrecoverable error: %s\n", TyError(ty));
                 goto TDB_HAS_BEEN_STOPPED;
         }
@@ -2800,32 +2804,56 @@ PushTry(Ty *ty)
         return t;
 }
 
+static void
+TraceThrow(Ty *ty)
+{
+        ThrowCtx *ctx = CurrentThrowCtx(ty);
+
+        if (ctx->traced) {
+                return;
+        }
+
+        ctx->traced = true;
+
+        byte_vector trace = {0};
+        byte_vector brief = {0};
+
+        FormatTrace(ty, ctx, &trace);
+        TyErrorBrief(ty, &ty->exc, &brief);
+
+        fprintf(
+                stderr,
+                "%s[throw]%s (try depth %zu, throw depth %zu) %s\n%s",
+                TERM(95;1),
+                TERM(0),
+                (usize)vN(TRY_STACK),
+                (usize)vN(THROW_STACK),
+                vv(brief),
+                (vN(trace) > 0) ? vv(trace) : ""
+        );
+
+        xvF(brief);
+
+        if (CompilationDepth(ty) > 0) {
+                byte_vector where = {0};
+                CompilationTrace(ty, &where);
+                if (vN(where) > 0) {
+                        fprintf(stderr, "%s[compiling]%s%s\n", TERM(95), TERM(0), vv(where));
+                }
+                xvF(where);
+        }
+
+        xvF(trace);
+}
+
 TY_INSTR_INLINE static void
 DoThrow(Ty *ty)
 {
         ty->exc = CurrentThrowCtx(ty)->exc;
 
-#if 0
-        XXX("%s\n", FormatTrace(ty, NULL, NULL));
-        if (
-                (ty->exc.type == VALUE_OBJECT)
-             && (ty->exc.class == CLASS_RUNTIME_ERROR)
-        ) {
-                Value *what = ObjectMember(ty->exc, NAMES._what);
-                XXX(
-                        "(%zu) Throw: (%zu) RuntimeError: %s",
-                        vN(TRY_STACK),
-                        vN(STACK),
-                        (what != NULL) ? TY_TMP_C_STR(*what) : "<no message>"
-                );
-        } else {
-                TY_START(DYING);
-                XXX("(%zu) Throw: (%zu) %s", vN(TRY_STACK), vN(STACK), VSC(&ty->exc));
-                TY_STOP(DYING);
+        if (UNLIKELY(TraceThrows)) {
+                TraceThrow(ty);
         }
-
-        //xprint_stack(ty, 8);
-#endif
 
         for (;;) {
                 while (
@@ -8850,7 +8878,7 @@ RunExitHooks(void)
 
         StringVector msgs = {0};
         Array      *hooks = v_(Globals, id)->array;
-        char       *first = !TyHasError(ty) ? NULL : S2(TyError(ty));
+        char       *first = !DyingOfError ? NULL : S2(TyError(ty));
 
         bool bReprintFirst = false;
 
@@ -9029,36 +9057,6 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
         return vv(*out);
 }
 
-char const *
-TyError(Ty *ty)
-{
-        if (vN(ty->err) > 0) {
-                return vv(ty->err);
-        }
-
-        Value exc;
-        ThrowCtx const *ctx;
-
-        if (vN(ty->throw_stack) > 0) {
-                ctx = CurrentThrowCtx(ty);
-                exc = ctx->exc;
-        } else if (ty->exc.type != VALUE_ZERO) {
-                ctx = NULL;
-                exc = ty->exc;
-        } else {
-                return "no error";
-        }
-
-        dump(&ty->err, "%sError%s: uncaught exception: %s", TERM(91;1), TERM(0), VSC(&exc));
-
-        if (ctx != NULL) {
-                dump(&ty->err, "\n");
-                FormatTrace(ty, ctx, &ty->err);
-        }
-
-        return vv(ty->err);
-}
-
 static void
 xDcringe(Ty *ty)
 {
@@ -9228,34 +9226,41 @@ FormatPanicEntryFor(Ty *ty, byte_vector *buf, char const *ip)
 static noreturn void
 vm_vpanic_ex(Ty *ty, char const *fmt, va_list _ap)
 {
-        v0(ErrorBuffer);
-
+        byte_vector msg = {0};
         va_list ap;
 
         va_copy(ap, _ap);
-        dump(&ErrorBuffer, "%s%sRuntimeError%s%s: ", TERM(1), TERM(31), TERM(22), TERM(39));
-        vdump(&ErrorBuffer, fmt, ap);
-        dump(&ErrorBuffer, "%c", '\n');
+        sxdf(&msg, "%s%sRuntimeError%s%s: ", TERM(1), TERM(31), TERM(22), TERM(39));
+        vsxdf(&msg, fmt, ap);
+        sxdf(&msg, "%c", '\n');
         va_end(ap);
 
         ThrowCtx *ctx = CurrentThrowCtx(ty);
 
-        FormatTrace(ty, ctx, &ErrorBuffer);
+        FormatTrace(ty, ctx, &msg);
 
         if (CompilationDepth(ty) > 1) {
                 dump(
-                        &ErrorBuffer,
+                        &msg,
                         "\n%s%sCompilation context:%s\n",
                         TERM(1),
                         TERM(34),
                         TERM(0)
                 );
-                CompilationTrace(ty, &ErrorBuffer);
+                CompilationTrace(ty, &msg);
         }
 
         PopThrowCtx(ty);
 
-        TY_THROW_ERROR();
+        GC_STOP();
+        Value what = vSs(vv(msg), vN(msg));
+        Value error = RawObject(CLASS_RUNTIME_ERROR);
+        PutMember(error, NAMES._what,  what);
+        PutMember(error, NAMES._ctx,   NIL);
+        PutMember(error, NAMES._cause, NIL);
+        GC_RESUME();
+
+        vm_throw(ty, &error);
 }
 
 noreturn void
@@ -9374,12 +9379,17 @@ vm_execute_file(Ty *ty, char const *path)
 {
         char *source = slurp(path);
         if (source == NULL) {
-                dump(
-                        &ErrorBuffer,
-                        "%s%s%s: failed to read source file: %s%s%s",
-                        TERM(91;1), "Error", TERM(0),
-                        TERM(95), path, TERM(0)
+                GC_STOP();
+                Value msg = TyErrorMessage(
+                        ty,
+                        afmt(
+                                "%s%s%s: failed to read source file: %s%s%s",
+                                TERM(91;1), "Error", TERM(0),
+                                TERM(95), path, TERM(0)
+                        )
                 );
+                TySetError(ty, msg, NIL);
+                GC_RESUME();
                 return false;
         }
 
@@ -9734,7 +9744,7 @@ cringe(int _)
                                 "%s\n"
                                 "==============================================\n",
                                 i,
-                                TyError(_ty)
+                                vv(_ty->err)
                         );
                 }
         }
@@ -9828,6 +9838,7 @@ vm_init(Ty *ty, int ac, char **av)
 
         InitThreadGroup(&MainGroup);
         InitializeTY(&xD, ty);
+        TyDiagInit();
 
         TY_BEGIN_LOADING();
 
@@ -9881,6 +9892,11 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES._what            = M_ID(sfmt("_what$%d",  CLASS_RUNTIME_ERROR));
         NAMES._ctx             = M_ID(sfmt("_ctx$%d",   CLASS_RUNTIME_ERROR));
         NAMES._cause           = M_ID(sfmt("_cause$%d", CLASS_RUNTIME_ERROR));
+        NAMES._kind            = M_ID(sfmt("_kind$%d",    CLASS_COMPILE_ERROR));
+        NAMES._msg             = M_ID(sfmt("_msg$%d",     CLASS_COMPILE_ERROR));
+        NAMES._locs            = M_ID(sfmt("_locs$%d",    CLASS_COMPILE_ERROR));
+        NAMES._detail          = M_ID(sfmt("_detail$%d",  CLASS_COMPILE_ERROR));
+        NAMES._related         = M_ID(sfmt("_related$%d", CLASS_COMPILE_ERROR));
 
         NAMES._fields_         = M_ID("__fields__");
         NAMES._methods_        = M_ID("__methods__");
@@ -9903,7 +9919,7 @@ vm_init(Ty *ty, int ac, char **av)
         AddThread(ty, TyThreadSelf());
 
         if (TY_CATCH_ERROR()) {
-                TY_CATCH();
+                TY_CATCH_FAIL();
                 GC_RESUME();
                 return false;
         }
@@ -9960,7 +9976,7 @@ vm_reset(Ty *ty)
         add_builtins(ty, 0, NULL);
 
         if (TY_CATCH_ERROR()) {
-                (void)TY_CATCH();
+                TY_CATCH_FAIL();
                 GC_RESUME();
                 return false;
         }
@@ -9985,7 +10001,7 @@ vm_load_program(Ty *ty, char const *source, char const *file)
         Module * volatile mod = NULL;
 
         if (TY_CATCH_ERROR()) {
-                TY_CATCH();
+                TY_CATCH_FAIL();
                 TY_FINISH_LOADING();
                 return false;
         }
@@ -10028,19 +10044,12 @@ vm_execute(Ty *ty, char const *source, char const *file)
         }
 
         if (TY_CATCH_ERROR()) {
-                char *trace = FormatTrace(ty, NULL, NULL);
-                Value   exc = ty->exc;
                 GetCurrentTry(ty)->state = TRY_TRY;
-                dump(
-                        &ErrorBuffer,
-                        "%s\n%sRuntimeError%s: uncaught exception: %s",
-                        trace,
-                        TERM(91;1),
-                        TERM(0),
-                        VSC(&exc)
-                );
-                (void)TY_CATCH();
-                xmF(trace);
+                GC_STOP();
+                Value detail;
+                Value exc = TyCatchDetail(ty, &detail);
+                TySetError(ty, exc, detail);
+                GC_RESUME();
                 return false;
         }
 
@@ -10100,12 +10109,6 @@ vm_throw(Ty *ty, Value const *v)
         DoThrow(ty);
         vm_exec(ty, IP);
         UNREACHABLE();
-}
-
-noreturn void
-vm_throw_ty(Ty *ty)
-{
-        vm_error(ty, "%s", TyError(ty));
 }
 
 FrameStack *
@@ -10537,6 +10540,7 @@ MarkStorage(Ty *ty)
                 value_mark(ty, &ctx->exc);
         }
         value_mark(ty, &ty->exc);
+        TyDiagMark(ty);
         LOG_REACHED(" => throw_stack reached %llu", TotalReached);
 
         GCLOG("Marking drop stack");
@@ -11702,6 +11706,27 @@ vm_catch(Ty *ty)
         vXx(THROW_STACK);
 
         return exc;
+}
+
+Value
+TyCatchDetail(Ty *ty, Value *detail)
+{
+        ThrowCtx *ctx = CurrentThrowCtx(ty);
+        Value exc = ctx->exc;
+
+        if (detail != NULL) {
+                byte_vector trace = {0};
+                *detail = NIL;
+                FormatTrace(ty, ctx, &trace);
+                if (vN(trace) > 0) {
+                        GC_STOP();
+                        *detail = vSs(vv(trace), vN(trace));
+                        GC_RESUME();
+                }
+                xvF(trace);
+        }
+
+        return vm_catch(ty);
 }
 
 noreturn void

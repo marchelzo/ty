@@ -253,6 +253,7 @@ set(_src_files
   src/chan.c
   src/class.c
   src/compiler.c
+  src/diag.c
   src/queue.c
   src/dict.c
   src/ffi.c

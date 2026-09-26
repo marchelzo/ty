@@ -523,14 +523,14 @@ pub namespace string {
     }
 }
 
-let term = c.ptr
+const term = c.ptr
 
 C! struct UnibiVar {
     c.int i_;
     c.ptr p_;
 }
 
-let var_t = UnibiVar_C
+const var_t = UnibiVar_C
 
 C! pub unibi 'unibi_' fn {
     void destroy(term *);

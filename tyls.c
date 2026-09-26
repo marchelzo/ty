@@ -13,6 +13,7 @@
 #include "itable.h"
 #include "types2.h"
 #include "vm.h"
+#include "diag.h"
 
 #if 0
   #define LSLOG(fmt, ...) fprintf(        \
@@ -183,6 +184,50 @@ EncodeTokens(Ty *ty, ValueVector *out, TokenVector const *tokens, char const *so
         }
 }
 
+static void
+AppendDiagnostics(Ty *ty, Array *out)
+{
+        for (usize i = 0; i < vN(ty->diags); ++i) {
+                Value records = TyErrorRecords(ty, v_(ty->diags, i));
+                for (usize j = 0; j < vN(*records.array); ++j) {
+                        vAp(out, v__(*records.array, j));
+                }
+        }
+}
+
+static Value
+ErrorResult(Ty *ty, Value const *exc)
+{
+        byte_vector buf = {0};
+
+        Value records = TyErrorRecords(ty, exc);
+        AppendDiagnostics(ty, records.array);
+
+        json_dump(ty, v_(*records.array, 0), &buf);
+
+        Value result = vTn(
+                "error",       vSs(vv(buf), vN(buf)),
+                "diagnostics", records
+        );
+
+        xvF(buf);
+
+        return result;
+}
+
+static Value
+DiagnosticsResult(Ty *ty)
+{
+        if (vN(ty->diags) == 0) {
+                return NIL;
+        }
+
+        Array *records = vA();
+        AppendDiagnostics(ty, records);
+
+        return vTn("diagnostics", ARRAY(records));
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -235,11 +280,9 @@ main(int argc, char *argv[])
                 Value result = NIL;
 
                 if (TY_CATCH_ERROR()) {
-                        result = vTn("error", vSsz(TyError(ty)));
-                        char *trace = FormatTrace(ty, NULL, NULL);
-                        Value   exc = TY_CATCH();
-                        dump(&ErrorBuffer, "%s\n\n%s", VSC(&exc), trace);
-                        fputs(vv(ErrorBuffer), stderr);
+                        Value exc = TY_CATCH_FAIL();
+                        result = ErrorResult(ty, &exc);
+                        fprintf(stderr, "%s\n", TyError(ty));
                         goto NextRequest;
                 }
 
@@ -265,6 +308,7 @@ main(int argc, char *argv[])
                                 && s_eq(source, LastSource)
                                 && (GetModuleByPath(ty, file) != NULL)
                         ) {
+                                result = DiagnosticsResult(ty);
                                 goto EndRequest;
                         }
 
@@ -312,10 +356,11 @@ main(int argc, char *argv[])
 
                         if (mod == NULL) {
                                 LSLOG("compilation failed: %s\n", TyError(ty));
-                                result = vTn("error", xSz(TyError(ty)));
+                                result = ErrorResult(ty, &ty->error);
                                 goto EndRequest;
                         } else {
                                 LSLOG("loaded module %s\n", mod->path);
+                                result = DiagnosticsResult(ty);
                         }
 
                         if (!HaveDeps && (mod != NULL)) {

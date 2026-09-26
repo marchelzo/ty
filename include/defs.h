@@ -129,6 +129,7 @@ typedef struct frame            Frame;
 typedef struct table            ValueTable;
 typedef struct class            Class;
 typedef struct class_definition ClassDefinition;
+typedef struct diag_sink        DiagSink;
 
 typedef vec(char)           byte_vector;
 typedef vec(bool)           BoolVector;
@@ -140,7 +141,6 @@ typedef vec(u32)            U32Vector;
 typedef vec(u64)            u64Vector;
 typedef vec(char *)         StringVector;
 typedef vec(char const *)   ConstStringVector;
-typedef vec(jmp_buf *)      JmpBufVector;
 typedef vec(Expr *)         ExprVec;
 typedef vec(Stmt *)         StmtVec;
 typedef vec(TypeBound)      TypeBoundVector;
@@ -203,6 +203,8 @@ typedef vec(Module *)       ModuleVector;
 #define z_bytes(s) ((Bytes) {(char const *)(s), strlen((s))})
 
 #define BYTES(p, n) ((Bytes) {(p), (n)})
+#define b_(b, i) ((void *)&(b).data[(i)])
+#define bN(b) ((b).length)
 
 #define vA()       value_array_new(ty)
 #define vAu()      uAo0(sizeof (Array), GC_ARRAY)

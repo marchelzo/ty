@@ -115,8 +115,6 @@ vm_get(Ty *ty, int i);
 noreturn void
 vm_throw(Ty *ty, Value const *);
 
-noreturn void
-vm_throw_ty(Ty *ty);
 
 Value
 ArraySubscript(Ty *ty, Value container, Value subscript, bool strict);
@@ -395,6 +393,8 @@ char *
 co_colored(Ty *ty);
 
 #define VM_TRY() (setjmp(vm_push_try(ty)->jb) == 0)
+
+extern bool DyingOfError;
 
 #ifdef TY_PROFILER
 void

@@ -144,6 +144,20 @@ fn do-req(msg: Request) -> _ {
     }
 }
 
+fn to-diagnostic(record: _, file: String) -> _ {
+    let $loc = record['trace'].find(\_['file'] == file) or return nil
+    let start = loc['start']
+    let end = loc['end']
+    return {
+        range: {
+            start: { line: start['line'] - 1, character: start['col'] - 1 },
+            end: { line: end['line'] - 1, character: end['col'] - 1 }
+        },
+        message: record['message'],
+        severity: 1
+    }
+}
+
 fn check[T](msg: T, file: String) -> T {
     fn send-dx(diagnostics) {
         send({
@@ -156,6 +170,10 @@ fn check[T](msg: T, file: String) -> T {
     }
 
     match msg {
+        %{'diagnostics': $records} => do {
+            send-dx(records.map(to-diagnostic@(_, file)).filter(\_ != nil))
+        },
+
         %{
             'error': json.parse $~> %{
                 message,

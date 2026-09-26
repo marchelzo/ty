@@ -19,7 +19,8 @@ bool
 syntax_highlight(
         Ty *ty,
         byte_vector *out,
-        Module const *mod,
+        char const *source,
+        TokenVector const *tokens,
         usize start,
         usize end,
         char const *attr,

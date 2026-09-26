@@ -20,7 +20,7 @@
 #include "value.h"
 #include "vec.h"
 #include "vm.h"
-#include "json.h"
+#include "diag.h"
 
 #define BINARY_OPERATOR(name, t, prec, right_assoc)                        \
         static Expr *                                                      \
@@ -283,11 +283,11 @@ typedef struct ParserState {
         Expr *CurrentTemplate;
         Expr *last;
 
-        JmpBufVector SavePoints;
-
         Location EEnd;
         Location EStart;
         Location TEnd;
+
+        Module *module;
 
         char const *filename;
 
@@ -340,7 +340,6 @@ static Expr NullExpr = {
 #define NoPipe            (state.NoPipe)
 #define NoLG              (state.NoLG)
 #define ParseDepth        (state.depth)
-#define SavePoints        (state.SavePoints)
 #define TokenIndex        (state.TokenIndex)
 #define TypeContext       (state.TypeContext)
 #define LValueContext     (state.LValueContext)
@@ -952,26 +951,42 @@ logctx(Ty *ty)
 #endif
 }
 
-inline static jmp_buf *
-NewSavePoint(void)
+static bool
+RecoverError(Ty *ty)
 {
-        usize n = vN(SavePoints);
+        Value exc = vm_catch(ty);
 
-        if (n == vC(SavePoints)) {
-                do xvP(SavePoints, mrealloc(NULL, sizeof (jmp_buf)));
-                while (vN(SavePoints) < vC(SavePoints));
+        if (vN(ty->sinks) == 0) {
+                TySuppress(ty, exc, "parser recovery");
+        } else {
+                TyDiagRecord(ty, exc, NULL);
         }
 
-        vN(SavePoints) = n + 1;
-
-        return *vvL(SavePoints);
+        return true;
 }
 
-#define ReallyCatchError() (setjmp(*NewSavePoint()) != 0)
-#define ReallyEndCatch()   (vvX(SavePoints))
+static bool
+ProbeFailed(Ty *ty)
+{
+        Value const *exc = vm_get(ty, 0);
 
-#define CatchError()       (AllowErrors && ReallyCatchError())
-#define EndCatch()         (AllowErrors ? ReallyEndCatch() : NULL)
+        if (
+                !TyErrorIsKind(ty, exc, "ParseError")
+             && !TyErrorIsKind(ty, exc, "SyntaxError")
+        ) {
+                vm_rethrow(ty);
+        }
+
+        (void)vm_catch(ty);
+
+        return true;
+}
+
+#define TryParse()    (!VM_TRY() && ProbeFailed(ty))
+#define EndTryParse() (vm_finally(ty))
+
+#define CatchError()   (AllowErrors && !VM_TRY() && RecoverError(ty))
+#define EndCatch()     (AllowErrors ? vm_finally(ty) : (void)0)
 
 /*
  * Push a token into the token stream, so that it will be returned by the next call
@@ -1003,156 +1018,191 @@ inline static void
         tok()->ctx = LEX_FAKE;
 }
 
-noreturn void
-ParseError(Ty *ty, char const *fmt, ...)
+inline static Module *
+ParsedModule(Ty *ty)
 {
-        if (fmt == NULL) {
-                goto End;
-        }
+        return (state.module != NULL) ? state.module : CompilerCurrentModule(ty);
+}
 
-        if (TyHasError(ty)) {
-                goto End;
-        }
+static Value
+ErrorLocation(Ty *ty, Location start, Location end)
+{
+        Module const *mod = ParsedModule(ty);
+        char const *name = (mod->name != NULL) ? mod->name : mod->path;
 
-        va_list ap;
-        va_start(ap, fmt);
-
-        v0(ErrorBuffer);
-
-        dump(&ErrorBuffer, "%s%sParseError%s%s: ", TERM(1), TERM(31), TERM(22), TERM(39));
-        vdump(&ErrorBuffer, fmt, ap);
-
-        va_end(ap);
-
-        Location start = EStart;
-        Location end = EEnd;
-
-#if defined(TY_LS)
         GC_STOP();
 
-        Value msg = vSsz(vv(ErrorBuffer));
-        Value trace = ARRAY(vA());
+        Value locs = ARRAY(vA());
         vAp(
-                trace.array,
+                locs.array,
                 vTn(
-                        "file", xSz(CompilerCurrentModule(ty)->path),
-                        "module", vSsz(CompilerCurrentModule(ty)->name),
-                        "start", vTn(
+                        "file",   (mod->path == NULL) ? NIL : xSz(mod->path),
+                        "module", (name == NULL) ? NIL : vSsz(name),
+                        "start",  vTn(
                                 "line", INTEGER(start.line + 1),
-                                "col", INTEGER(start.col + 1)
+                                "col",  INTEGER(start.col + 1)
                         ),
-                        "end", vTn(
+                        "end",    vTn(
                                 "line", INTEGER(end.line + 1),
-                                "col", INTEGER(end.col + 1)
+                                "col",  INTEGER(end.col + 1)
                         )
                 )
         );
-        Value record = vTn("message", msg, "trace", trace);
-        v0(ErrorBuffer);
-        json_dump(ty, &record, &ErrorBuffer);
-        xvP(ErrorBuffer, '\0');
 
         GC_RESUME();
-#else
-        char buffer[1024];
 
-        snprintf(
-                buffer,
-                sizeof buffer - 1,
-                "%36s %s%s%s:%s%d%s:%s%d%s",
-                "at",
-                TERM(34),
-                CompilerCurrentModule(ty)->name,
-                TERM(39),
-                TERM(33),
-                start.line + 1,
-                TERM(39),
-                TERM(33),
-                start.col + 1,
-                TERM(39)
-        );
+        return locs;
+}
 
-        char const *where = buffer;
-        int m = strlen(buffer) - 6*strlen(TERM(00));
+static TokenVector
+TokenSnapshot(Ty *ty, Location limit)
+{
+        TokenVector tokens = {0};
+        char const *base = limit.s;
+        usize last = 0;
 
-        while (m > 36) {
-                m -= 1;
-                where += 1;
+        while (base[-1] != '\0') {
+                --base;
         }
 
-        dump(
-                &ErrorBuffer,
-                "\n\n%s near: ",
-                where
-        );
-
-        if (start.s == NULL) {
-                goto End;
-        }
-
-        if (tokenx(0)->type == TOKEN_END) {
-                while ((start.s[0] == '\0' || isspace(start.s[0])) && start.s[-1] != '\0') {
-                        start.s -= 1;
+        for (int i = 0; i < vN(TOKENS); ++i) {
+                Token const *t = v_(TOKENS, i);
+                if (
+                        (t->ctx == LEX_FAKE)
+                     || (t->type == TOKEN_ERROR)
+                     || (t->type == TOKEN_END)
+                     || (t->start.s != base + t->start.byte)
+                     || (t->start.byte < last)
+                     || (t->end.byte > limit.byte)
+                ) {
+                        continue;
                 }
-                end.s = start.s;
+                xvP(tokens, *t);
+                last = t->end.byte;
         }
 
-        char const *prefix = start.s;
+        return tokens;
+}
 
-        while (prefix[-1] != '\0' && prefix[-1] != '\n')
-                --prefix;
-
-        while (isspace(prefix[0]))
-                ++prefix;
-
-        int before = start.s - prefix;
-        int length = end.s - start.s;
-        int after = strcspn(end.s, "\n");
-
-        dump(
-                &ErrorBuffer,
-                "%s%.*s%s%s%.*s%s%s%.*s%s",
-                TERM(32),
-                before,
-                prefix,
-                TERM(1),
-                TERM(91),
-                length,
-                start.s,
-                TERM(32),
-                TERM(22),
-                after,
-                end.s,
-                TERM(39)
-        );
-
-        dump(
-                &ErrorBuffer,
-                "\n\t%*s%s%s",
-                before + 35,
-                "",
-                TERM(1),
-                TERM(91)
-        );
-
-        for (int i = 0; i < length; ++i) {
-                dump(&ErrorBuffer, "^");
+static Location
+ClampToLine(Location start, Location end)
+{
+        if (end.s == NULL || end.s < start.s) {
+                return start;
         }
 
-        dump(
-                &ErrorBuffer,
-                "%s%s",
-                TERM(39),
-                TERM(22)
-        );
-#endif
+        if (end.line == start.line) {
+                return end;
+        }
 
-End:
-        if (vN(SavePoints) > 0) {
-                longjmp(**ReallyEndCatch(), 1);
+        Location stop = start;
+
+        while (stop.s[0] != '\0' && stop.s[0] != '\n') {
+                stop.s    += 1;
+                stop.byte += 1;
+                stop.col  += 1;
+        }
+
+        return stop;
+}
+
+static Location
+BackOverSpace(Location loc)
+{
+        while ((loc.s[0] == '\0' || isspace((u8)loc.s[0])) && loc.s[-1] != '\0') {
+                loc.s    -= 1;
+                loc.byte -= 1;
+                if (loc.s[0] == '\n') {
+                        loc.line -= 1;
+                }
+        }
+
+        loc.col = 0;
+        for (char const *p = loc.s; p[-1] != '\0' && p[-1] != '\n'; --p) {
+                loc.col += 1;
+        }
+
+        return loc;
+}
+
+noreturn static void
+SyntaxFailure(Ty *ty, char const *kind, char const *msg, Location start, Location end, Location limit)
+{
+        byte_vector text = {0};
+        Expr where = {
+                .type  = EXPRESSION_NIL,
+                .start = start,
+                .end   = ClampToLine(start, end),
+                .mod   = ParsedModule(ty)
+        };
+
+        if (start.s != NULL) {
+                TokenVector tokens = TokenSnapshot(ty, limit);
+                WriteDiagnostic(ty, &text, kind, msg, &where, &tokens, NULL, 3, 2);
+                xvF(tokens);
         } else {
-                TY_THROW_ERROR();
+                WriteDiagnostic(ty, &text, kind, msg, NULL, NULL, NULL, 3, 2);
         }
+
+        GC_STOP();
+        Value locs = ErrorLocation(ty, start, (end.s == NULL) ? start : end);
+        Value err = TyNewCompileError(ty, kind, msg, locs, vv(text), NIL, NIL);
+        GC_RESUME();
+
+        xvF(text);
+
+        vm_throw(ty, &err);
+}
+
+noreturn static void
+LexError(Ty *ty, Token const *t)
+{
+        char const *msg = (t->error != NULL) ? t->error : "invalid token";
+
+        SyntaxFailure(ty, "SyntaxError", msg, t->start, t->end, t->start);
+}
+
+static Token const *
+PendingLexError(Ty *ty)
+{
+        for (int i = TokenIndex; i < vN(TOKENS) && i <= TokenIndex + 1; ++i) {
+                Token const *t = v_(TOKENS, i);
+                if (t->type == TOKEN_ERROR && t->error != NULL) {
+                        return t;
+                }
+        }
+
+        return NULL;
+}
+
+noreturn void
+ParseError(Ty *ty, char const *fmt, ...)
+{
+        Token const *bad = PendingLexError(ty);
+
+        if (bad != NULL || fmt == NULL) {
+                LexError(ty, (bad != NULL) ? bad : tokenx(0));
+        }
+
+        va_list ap;
+        byte_vector msg = {0};
+
+        va_start(ap, fmt);
+        vdump(&msg, fmt, ap);
+        va_end(ap);
+
+        Location start = EStart;
+        Location end   = EEnd;
+
+        if (start.s != NULL && tokenx(0)->type == TOKEN_END) {
+                start = BackOverSpace(start);
+                end   = start;
+        }
+
+        char *text = sclonea(ty, vv(msg));
+        xvF(msg);
+
+        SyntaxFailure(ty, "ParseError", text, start, end, (end.s != NULL) ? end : start);
 }
 
 #define die(...) ParseError(ty, __VA_ARGS__)
@@ -1912,7 +1962,7 @@ dedent_string(Ty *ty, Expr *e, TokenVector const *parts)
                 char const *stop = (i + 1 == vN(*parts)) ? end : part->end.s;
                 Token str = lex_docstring_part(ty, part->start, stop, indent, i == 0);
                 if (str.type == TOKEN_ERROR) {
-                        die(NULL);
+                        LexError(ty, &str);
                 }
                 v__(e->strings, i) = str.string;
         }
@@ -2182,18 +2232,15 @@ prefix_identifier(Ty *ty)
                 Expr *expanded;
                 v_(TOKENS, i_id)->tag = TT_MACRO;
                 if (TY_CATCH_ERROR()) {
-                        char *trace = FormatTrace(ty, NULL, NULL);
-                        Value exc = TY_CATCH();
                         expanded = mkxpr(ERROR);
                         expanded->start = e->start;
                         expanded->end = TEnd;
                         expanded->message = afmt(
-                                "error during expansion of %s%s%s: %s\n%s\n",
-                                TERM(95;1), QualifiedName(e), TERM(0),
-                                VSC(&exc),
-                                trace
+                                "error during expansion of macro %s",
+                                QualifiedName(e)
                         );
-                        TyClearError(ty);
+                        Value err = TY_CATCH();
+                        TyDiagRecord(ty, err, expanded);
                 } else {
                         expanded = typarse(
                                 ty,
@@ -5639,14 +5686,13 @@ parse_for_loop(Ty *ty)
                 int save = TokenIndex;
                 SAVE_NI(true);
                 SAVE_NE(NoEquals);
-                if (ReallyCatchError()) {
-                        TyClearError(ty);
+                if (TryParse()) {
                         LOAD_NE();
                         c_style = true;
                 } else {
                         (void)parse_expr(ty, 0);
                         c_style = (T0 == ';');
-                        ReallyEndCatch();
+                        EndTryParse();
                 }
                 LOAD_NI();
                 seek(ty, save);
@@ -6283,7 +6329,6 @@ parse_block(Ty *ty)
         CompilerScopePush(ty);
 
         if (CatchError()) {
-                TyClearError(ty);
                 goto End;
         }
         while (!try_consume('}')) {
@@ -7268,6 +7313,8 @@ parse_module(Ty *ty, Module *mod)
         ParserState save = state;
         m0(state);
 
+        state.module = mod;
+
         CompileState *cs = TyCompilerState(ty);
         Scope *scope = cs->pscope;
         ScopeVector scopes = cs->scopes;
@@ -7279,7 +7326,7 @@ parse_module(Ty *ty, Module *mod)
         CompilerScopePush(ty);
 
         if (TY_CATCH_ERROR()) {
-                (void)TY_CATCH();
+                TY_CATCH_FAIL();
                 mod->error = tokenx(0)->start;
                 ok = false;
                 goto Finally;
@@ -7429,8 +7476,7 @@ parse_module(Ty *ty, Module *mod)
                 bool skip = TestNamespace && !RunningTests;
                 if (!skip) {
                         if (TY_CATCH_ERROR()) {
-                                TY_CATCH();
-                                TyClearError(ty);
+                                TY_SUPPRESS("top-level definition");
                                 UnresolveExpr(ty, (Expr *)s);
                                 s->retry = (s->type == STATEMENT_OPERATOR_DEFINITION);
                         } else {
@@ -7512,8 +7558,7 @@ parse_get_type(Ty *ty, int prec, bool resolve, bool want_raw)
         Value v;
         Expr *e;
 
-        if (TY_CATCH_ERROR()) {
-                TY_CATCH();
+        if (TryParse()) {
                 v = NIL;
                 seek(ty, save);
         } else {

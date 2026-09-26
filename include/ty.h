@@ -616,6 +616,7 @@ typedef struct {
         intrusive_vec(void *);
         vec(ValueVector) locals;
         Value exc;
+        bool traced;
 } ThrowCtx;
 
 typedef struct {
@@ -745,6 +746,11 @@ typedef struct ty {
         Value exc;
         byte_vector err;
 
+        Value error;
+        Value error_detail;
+        vec(DiagSink) sinks;
+        ValueVector diags;
+
         char *code;
 
         TyTDB *tdb;
@@ -793,6 +799,11 @@ typedef struct {
         int subscript_eq;
         int unapply;
         int _what;
+        int _kind;
+        int _msg;
+        int _locs;
+        int _detail;
+        int _related;
 
         int _fields_;
         int _methods_;
@@ -928,16 +939,16 @@ extern usize TotalBytesAllocated;
 #define ErrorBuffer (ty->err)
 
 #if 1
-#define TY_THROW_ERROR() (vm_throw_ty(ty))
-#define TY_CATCH_ERROR() (TyClearError(ty), !VM_TRY())
+#define TY_CATCH_ERROR() (!VM_TRY())
 #define TY_CATCH()       (vm_catch(ty))
 #define TY_CATCH_END()   (vm_finally(ty))
 #else
-#define TY_THROW_ERROR() (XXX("%30s:%-7d: THROW",   __FILE__, __LINE__ + 1), vm_throw_ty(ty))
-#define TY_CATCH_ERROR() (XXX("%30s:%-7d: TRY",     __FILE__, __LINE__ + 1), TyClearError(ty), !VM_TRY())
+#define TY_CATCH_ERROR() (XXX("%30s:%-7d: TRY",     __FILE__, __LINE__ + 1), !VM_TRY())
 #define TY_CATCH()       (XXX("%30s:%-7d: CATCH",   __FILE__, __LINE__ + 1), vm_catch(ty))
 #define TY_CATCH_END()   (XXX("%30s:%-7d: END_TRY", __FILE__, __LINE__ + 1), vm_finally(ty))
 #endif
+#define TY_CATCH_FAIL()  (TyCatchFail(ty))
+#define TY_SUPPRESS(w)   (TySuppress(ty, vm_catch(ty), (w)))
 #define TY_RETHROW()     (vm_rethrow(ty))
 
 
@@ -1624,6 +1635,9 @@ noreturn void
 CompileError(Ty *ty, u32 type, char const *fmt, ...);
 
 noreturn void
+CompileThrow(Ty *ty, u32 type, Value err);
+
+noreturn void
 vm_panic(Ty *ty, char const *fmt, ...);
 
 noreturn void
@@ -1713,13 +1727,14 @@ tdb_backtrace(Ty *ty);
 inline static bool
 TyHasError(Ty *ty)
 {
-        return vN(ty->err) > 0;
+        return (ty->error.type != VALUE_ZERO);
 }
 
 inline static void
 TyClearError(Ty *ty)
 {
-        v0(ty->err);
+        m0(ty->error);
+        m0(ty->error_detail);
 }
 
 char const *
@@ -1821,6 +1836,7 @@ TyStrLen(Value const *str)
 #define afmt(...) ((afmt)(ty, __VA_ARGS__))
 #define adump(...) ((adump)(ty, __VA_ARGS__))
 #define sxdf(...) ((sxdf)(ty, __VA_ARGS__))
+#define vsxdf(...) ((scvdump)(ty, __VA_ARGS__))
 #define sfmt(...) ((sfmt)(ty, __VA_ARGS__))
 
 #define XPRINT_CTX(fmt, ...) do { \

@@ -15,7 +15,6 @@
 #include "token.h"
 #include "value.h"
 #include "lex.h"
-#include "json.h"
 #include "compiler.h"
 
 bool
@@ -44,6 +43,7 @@ enum {
 static Location Start;
 
 static jmp_buf jb;
+static char const *LexErrorMessage;
 
 LexState *lxst;
 static LexState state;
@@ -61,100 +61,15 @@ noreturn static void
 error(Ty *ty, char const *fmt, ...)
 {
         va_list ap;
-
-        v0(ErrorBuffer);
-
-#if defined(TY_LS)
-        dump(
-                &ErrorBuffer,
-                "%s%sSyntaxError%s%s: ",
-                TERM(1),
-                TERM(31),
-                TERM(22),
-                TERM(39)
-        );
+        byte_vector msg = {0};
 
         va_start(ap, fmt);
-        vdump(&ErrorBuffer, fmt, ap);
-        va_end(ap);
-        GC_STOP();
-
-        Value msg = vSsz(vv(ErrorBuffer));
-        Value trace = ARRAY(vA());
-        vAp(
-                trace.array,
-                vTn(
-                        "file", xSz(CompilerCurrentModule(ty)->path),
-                        "module", vSsz(CompilerCurrentModule(ty)->name),
-                        "start", vTn(
-                                "line", INTEGER(Start.line + 1),
-                                "col", INTEGER(Start.col + 1)
-                        ),
-                        "end", vTn(
-                                "line", INTEGER(state.loc.line + 1),
-                                "col", INTEGER(state.loc.col + 1)
-                        )
-                )
-        );
-        Value record = vTn("message", msg, "trace", trace);
-        v0(ErrorBuffer);
-        json_dump(ty, &record, &ErrorBuffer);
-        xvP(ErrorBuffer, '\0');
-
-        GC_RESUME();
-#else
-        dump(
-                &ErrorBuffer,
-                "%s%sSyntaxError%s%s %s%s%s:%s%d%s:%s%d%s: ",
-                TERM(1),
-                TERM(31),
-                TERM(22),
-                TERM(39),
-                TERM(34),
-                TyCompilerState(ty)->module->path,
-                TERM(39),
-                TERM(33),
-                state.loc.line + 1,
-                TERM(39),
-                TERM(33),
-                state.loc.col + 1,
-                TERM(39)
-        );
-
-        va_start(ap, fmt);
-        vdump(&ErrorBuffer, fmt, ap);
+        vdump(&msg, fmt, ap);
         va_end(ap);
 
-        char const *prefix = state.loc.s;
-        while (prefix[-1] != '\n' && prefix[-1] != '\0')
-                --prefix;
+        LexErrorMessage = sclonea(ty, vv(msg));
 
-        int before = state.loc.s - prefix;
-        int after = (state.loc.s[0] == '\0') ? 0 : strcspn(state.loc.s + 1, "\n");
-
-        dump(
-                &ErrorBuffer,
-                "\n\n\tnear: %.*s%s%s%.1s%s%s%.*s\n",
-                before,
-                prefix,
-                TERM(1),
-                TERM(31),
-                state.loc.s,
-                TERM(22),
-                TERM(39),
-                after,
-                state.loc.s + 1
-        );
-
-        dump(
-                &ErrorBuffer,
-                "\t%*s%s^%s",
-                6 + before,
-                " ",
-                TERM(31),
-                TERM(39)
-        );
-#endif
+        xvF(msg);
 
         longjmp(jb, 1);
 }
@@ -1669,7 +1584,8 @@ lex_token(Ty *ty, LexContext ctx)
                         .start = Start,
                         .end   = state.loc,
                         .nl    = state.need_nl,
-                        .ctx   = state.ctx
+                        .ctx   = state.ctx,
+                        .error = LexErrorMessage
                 };
         }
 
@@ -1690,6 +1606,8 @@ lex_docstring_part(Ty *ty, Location start, char const *end, usize indent, bool f
                 t = lex_ss_string(ty, indent, first, end);
         } else {
                 t = mktoken(ty, TOKEN_ERROR);
+                t.end = state.loc;
+                t.error = LexErrorMessage;
         }
 
         state = saved;
