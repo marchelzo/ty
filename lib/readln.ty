@@ -319,14 +319,17 @@ pub class InteractiveLineReader {
     __kill-ring: Array[Array[String]]
 
     init(
-        term: Int | TermIO | os.PTY = 0,
+        tty: Int | TermIO | os.PTY | nil = nil,
         prompt=nil,
         complete=nil,
         ctrl-c: ?Bool = false,
         history-file: Path | String | nil = nil,
         render: RenderFunction | nil = nil,
     ) {
-        match term {
+        match tty {
+            nil => {
+                __tio = term.get(mouse=false)
+            },
             tio: TermIO => {
                 __tio = tio
                 __borrowed-tio? = true
@@ -973,7 +976,7 @@ pub fn progress(work, prefix, width, effects=id, cleanup=false) {
 }
 
 pub fn readln(
-    prompt: ?Text = nil,
+    prompt: Text = nil,
     complete: _ = nil,
     erase: Bool = false,
     keybinds: Dict[String, _] = %{},
@@ -985,6 +988,30 @@ pub fn readln(
         complete=complete,
         erase=erase,
         keybinds=keybinds,
+        render=render
+    )
+}
+
+pub fn getpass(
+    prompt: ?Text = nil,
+    erase: Bool = false,
+    mask: ?Text = '*'
+) -> String | nil {
+    const render: _ = match mask {
+        nil or '' => fn (prompt, lines, y, x) {
+            ([''], 0, 0)
+        },
+
+        str ~> mask => fn (prompt, lines, y, x) {
+            const length = #lines.map(&join).join('\n')
+            const masked = str(mask) * length
+            ([masked], 0, length)
+        }
+    }
+    InteractiveLineReader().readln(
+        prompt=prompt,
+        complete=(_, _) -> None,
+        erase=erase,
         render=render
     )
 }

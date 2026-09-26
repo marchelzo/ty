@@ -530,13 +530,16 @@ pub class TermIO {
     }
 
     init(
-        fd: Int = 0,
+        fd: Int = nil,
         mouse: Bool = true,
         kitty: Bool = true,
         paste: Bool = true,
         events: SharedQueue[event.Event] = SharedQueue()
     ) {
-        __fd = fd
+        __fd = fd ?? open('/dev/tty', O_RDWR)
+        if !isatty(__fd) {
+            throw OSError('TermIO()', errno.ENOTTY)
+        }
 
         try {
             for (i, str) in unibi.Term().strs {
@@ -919,6 +922,15 @@ pub class TermIO {
             os::close(__notif-r)
             critical!("TermIO closed.")
         }
+    }
+}
+
+let _global_tio: TermIO | nil = nil
+let _global_mtx: Mutex = Mutex()
+
+pub fn get(%kwargs: Any) -> TermIO {
+    with _global_mtx {
+        return _global_tio ?? (_global_tio = TermIO(**kwargs))
     }
 }
 
