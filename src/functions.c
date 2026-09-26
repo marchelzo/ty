@@ -9553,34 +9553,6 @@ BUILTIN_FUNCTION(ty_tokens)
         return make_tokens(ty, &tokens);
 }
 
-BUILTIN_FUNCTION(ty_tokenize)
-{
-        ASSERT_ARGC("ty.tokenize()", 1);
-
-        if (ARG(0).type != VALUE_STRING) {
-                zP("ty.tokenize(): expected string but got: %s", VSC(&ARG(0)));
-        }
-
-        B.count = 0;
-        xvP(B, '\0');
-        xvPn(B, ss(ARG(0)), sN(ARG(0)));
-        xvP(B, '\0');
-
-        Arena old = NewArena(1 << 18);
-
-        TokenVector tokens;
-        if (!tokenize(ty, B.items + 1, &tokens)) {
-                ReleaseArena(old);
-                return NIL;
-        }
-
-        Value vTokens = make_tokens(ty, &tokens);
-
-        ReleaseArena(old);
-
-        return vTokens;
-}
-
 BUILTIN_FUNCTION(ty_scope)
 {
         ASSERT_ARGC("ty.scope()", 0);

@@ -360,7 +360,6 @@ BUILTIN_FUNCTION(ty_mod_tokens);
 BUILTIN_FUNCTION(ty_mod_dict);
 BUILTIN_FUNCTION(ty_mod_imports);
 BUILTIN_FUNCTION(ty_mod_lookup);
-BUILTIN_FUNCTION(ty_tokenize);
 BUILTIN_FUNCTION(ty_tokens);
 BUILTIN_FUNCTION(ty_text);
 BUILTIN_FUNCTION(ty_disassemble);

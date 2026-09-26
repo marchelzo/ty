@@ -240,7 +240,7 @@ typedef struct compiler_state {
         StmtVec loop_stmts;
 
         Expr *func;
-        Expr *meth;
+        Expr const *meth;
         Class *class;
         Symbol *self;
 

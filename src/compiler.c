@@ -7957,7 +7957,7 @@ emit_try_match(Ty *ty, Expr const *pattern, bool skip_tag)
         {
                 emit_tgt(ty, pattern->tmp, STATE.fscope, true);
                 INSN(ASSIGN);
-                avP(STATE.match_assignments, pattern);
+                avP(STATE.match_assignments, (Expr *)pattern);
                 break;
         }
 
@@ -8070,9 +8070,11 @@ emit_xcase(
         v00(STATE.match_assignments);
 
         emit_try_match(ty, pattern, skip_tag);
+
         if (cond != NULL) {
                 fail_match_if_not(ty, cond);
         }
+
         INSN(POP_STACK_POS_POP);
 
         for (int i = 0; i < vN(STATE.match_assignments); ++i) {
@@ -17773,7 +17775,8 @@ CompilationTrace(Ty *ty, byte_vector *out)
 int
 WriteExpressionTrace(Ty *ty, byte_vector *out, Expr const *e, int etw, bool first)
 {
-        char buffer[1024], fun_buffer[256];
+        char buffer[1024];
+        char fun_buffer[256];
 
         if (e == NULL) {
                 return 0;
@@ -17893,14 +17896,17 @@ WriteExpressionTrace(Ty *ty, byte_vector *out, Expr const *e, int etw, bool firs
 
         char const *eol = strchr(prefix, '\n');
 
-        if (eol != NULL && suffix > eol)
+        if (eol != NULL && suffix > eol) {
                 suffix = eol;
+        }
 
-        while (prefix[-1] != '\0' && prefix[-1] != '\n')
+        while (prefix[-1] != '\0' && prefix[-1] != '\n') {
                 --prefix;
+        }
 
-        while (isspace(prefix[0]))
+        while (isspace(prefix[0])) {
                 ++prefix;
+        }
 
         int before = source - prefix;
         int length = suffix - source;
@@ -17931,8 +17937,9 @@ WriteExpressionTrace(Ty *ty, byte_vector *out, Expr const *e, int etw, bool firs
                 first ? TERM(91) : TERM(31)
         );
 
-        for (int i = 0; i < length; ++i)
+        for (int i = 0; i < length; ++i) {
                 xvP(*out, '^');
+        }
 
         n += dump(
                 out,
@@ -17949,11 +17956,24 @@ typedef struct {
         TokenVector const *tokens;
 } SourceView;
 
-static TokenVector const NoTokens;
+static TokenVector const *
+LiveTokensFor(Ty *ty, char const *base)
+{
+        Module *active = TyParserModule(ty);
+        TokenVector const *tokens = TyParserTokens(ty);
+
+        bool valid = (active != NULL)
+                  && (active->source == base)
+                  && (vN(*tokens) > 0);
+
+        return valid ? tokens : NULL;
+}
 
 static bool
-SourceViewFor(Expr const *e, TokenVector const *tokens, SourceView *view)
+SourceViewFor(Ty *ty, Expr const *e, TokenVector const *tokens, SourceView *view)
 {
+        static TokenVector NoTokens = {0};
+
         if (e == NULL || e->start.s == NULL) {
                 return false;
         }
@@ -17964,6 +17984,10 @@ SourceViewFor(Expr const *e, TokenVector const *tokens, SourceView *view)
         }
 
         view->base = base;
+
+        if (tokens == NULL) {
+                tokens = LiveTokensFor(ty, base);
+        }
 
         if (tokens == NULL && e->mod != NULL && e->mod->source == base) {
                 tokens = &e->mod->tokens;
@@ -17984,8 +18008,16 @@ SourceViewFor(Expr const *e, TokenVector const *tokens, SourceView *view)
         return true;
 }
 
+#define hl(o, v, s, e, a, ...) (         \
+        (hl)(                            \
+                ty,                      \
+                (o), (v), (s), (e),      \
+                (a),                     \
+                (char *)__VA_ARGS__ + 0  \
+        )                                \
+)
 static void
-Highlight(
+(hl)(
         Ty *ty,
         byte_vector *out,
         SourceView const *view,
@@ -18064,11 +18096,16 @@ WriteExpansionNote(Ty *ty, byte_vector *out, int cols, Expr const *e)
 {
         SourceView view;
 
-        if (!SourceViewFor(e, NULL, &view)) {
+        if (!SourceViewFor(ty, e, NULL, &view)) {
                 return;
         }
 
-        char const *path = (e->mod != NULL && e->mod->path != NULL) ? RelativePath(e->mod->path) : "?";
+        char const *const under = TERM(58:2:114:105:89;4:3);
+
+        char const *path = (e->mod != NULL && e->mod->path != NULL)
+                         ? RelativePath(e->mod->path)
+                         : "?"
+                         ;
         Location const stop = SpanEnd(e);
 
         int label_len = 22 + term_width(path, -1);
@@ -18078,8 +18115,9 @@ WriteExpansionNote(Ty *ty, byte_vector *out, int cols, Expr const *e)
 
         dump(out, "%s", TERM(38;2;80;80;80));
 
-        for (int i = 0; i < pad_l; ++i)
+        for (int i = 0; i < pad_l; ++i) {
                 dump(out, "─");
+        }
 
         dump(
                 out,
@@ -18093,8 +18131,9 @@ WriteExpansionNote(Ty *ty, byte_vector *out, int cols, Expr const *e)
                 TERM(38;2;80;80;80)
         );
 
-        for (int i = 0; i < pad_r; ++i)
+        for (int i = 0; i < pad_r; ++i) {
                 dump(out, "─");
+        }
 
         dump(out, "%s\n", TERM(0));
 
@@ -18127,8 +18166,10 @@ WriteExpansionNote(Ty *ty, byte_vector *out, int cols, Expr const *e)
         for (int line = line0; start < end; ++line) {
                 char const *line_start = start;
                 char const *line_end = strchr(line_start, '\n');
-                if (line_end == NULL || line_end > end)
+
+                if (line_end == NULL || line_end > end) {
                         line_end = end;
+                }
 
                 bool in_range = (line >= e->start.line)
                              && (line <= stop.line);
@@ -18148,11 +18189,11 @@ WriteExpansionNote(Ty *ty, byte_vector *out, int cols, Expr const *e)
                 );
 
                 if (in_range && line == e->start.line && line == stop.line) {
-                        Highlight(ty, &tmp, &view, line_start, e->start.s, NULL, "muted");
-                        Highlight(ty, &tmp, &view, e->start.s, stop.s, TERM(58:2:114:105:89;4:3), "muted");
-                        Highlight(ty, &tmp, &view, stop.s, line_end, NULL, "muted");
+                        hl(&tmp, &view, line_start, e->start.s, NULL,  "muted");
+                        hl(&tmp, &view, e->start.s, stop.s,     under, "muted");
+                        hl(&tmp, &view, stop.s,     line_end,   NULL,  "muted");
                 } else {
-                        Highlight(ty, &tmp, &view, line_start, line_end, NULL, "muted");
+                        hl(&tmp, &view, line_start, line_end,   NULL,  "muted");
                 }
 
                 vN(tmp) = term_fit_cols(vv(tmp), vN(tmp), cols);
@@ -18160,8 +18201,9 @@ WriteExpansionNote(Ty *ty, byte_vector *out, int cols, Expr const *e)
                 v0(tmp);
 
                 start = line_end;
-                if (start[0] == '\n')
+                if (start[0] == '\n') {
                         ++start;
+                }
         }
 }
 
@@ -18258,9 +18300,11 @@ WriteSourceWindow(
                 expansion = NULL;
         }
 
-        if (!SourceViewFor(e, tokens, &view)) {
+        if (!SourceViewFor(ty, e, tokens, &view)) {
                 return;
         }
+
+        char const *const under = TERM(58:2:175:0:0;4:3);
 
         Location const stop = SpanEnd(e);
 
@@ -18316,9 +18360,11 @@ WriteSourceWindow(
                                 line + 1,
                                 TERM(0)
                         );
-                        Highlight(ty, &tmp, &view, line_start, e->start.s, NULL, NULL);
-                        Highlight(ty, &tmp, &view, e->start.s, stop.s, TERM(58:2:255:0:0;4:3), NULL);
-                        Highlight(ty, &tmp, &view, stop.s, line_end, NULL, NULL);
+
+                        hl(&tmp, &view, line_start, e->start.s, NULL);
+                        hl(&tmp, &view, e->start.s, stop.s,     under);
+                        hl(&tmp, &view, stop.s,     line_end,   NULL);
+
                         if (!ColorStderr) {
                                 dump(out, "%s\n", vv(tmp));
                                 v0(tmp);
@@ -18338,7 +18384,7 @@ WriteSourceWindow(
                                 line + 1,
                                 TERM(0)
                         );
-                        Highlight(ty, &tmp, &view, line_start, line_end, NULL, NULL);
+                        hl(&tmp, &view, line_start, line_end, NULL);
                 }
 
                 vN(tmp) = term_fit_cols(vv(tmp), vN(tmp), cols);

@@ -911,10 +911,6 @@ token_color(Token const *t, char const *source)
         case '/>':
                 return SC_OPERATOR;
 
-        case TOKEN_NEWLINE:
-        case TOKEN_END:
-                return SC_NONE;
-
         default:
                 return SC_NONE;
         }
@@ -964,11 +960,11 @@ syntax_highlight(
 
         for (isize i = find_first(tokens, pos); i < vN(*tokens); ++i) {
                 Token const *t = v_(*tokens, i);
-                if (
-                        (t->ctx == LEX_FAKE)
-                     || (t->type == TOKEN_END || t->start.byte >= end)
-                ) {
+                if (t->type == TOKEN_END || t->start.byte >= end) {
                         break;
+                }
+                if (t->ctx == LEX_FAKE) {
+                        continue;
                 }
                 usize tstart = max(pos, t->start.byte);
                 usize tend   = min(end, t->end.byte);

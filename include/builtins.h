@@ -899,7 +899,6 @@ static struct {
   { .module = "ty",         .name = "scope",                    .value = BUILTIN(builtin_ty_scope)                },
   { .module = "ty",         .name = "ctx",                      .value = BUILTIN(builtin_ty_ctx)                  },
   { .module = "ty",         .name = "parse",                    .value = BUILTIN(builtin_ty_parse)                },
-  { .module = "ty",         .name = "tokenize",                 .value = BUILTIN(builtin_ty_tokenize)             },
   { .module = "ty",         .name = "tokens",                   .value = BUILTIN(builtin_ty_tokens)               },
   { .module = "ty",         .name = "text",                     .value = BUILTIN(builtin_ty_text)                 },
   { .module = "ty",         .name = "disassemble",              .value = BUILTIN(builtin_ty_disassemble)          },

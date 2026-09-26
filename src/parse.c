@@ -1054,36 +1054,6 @@ ErrorLocation(Ty *ty, Location start, Location end)
         return locs;
 }
 
-static TokenVector
-TokenSnapshot(Ty *ty, Location limit)
-{
-        TokenVector tokens = {0};
-        char const *base = limit.s;
-        usize last = 0;
-
-        while (base[-1] != '\0') {
-                --base;
-        }
-
-        for (int i = 0; i < vN(TOKENS); ++i) {
-                Token const *t = v_(TOKENS, i);
-                if (
-                        (t->ctx == LEX_FAKE)
-                     || (t->type == TOKEN_ERROR)
-                     || (t->type == TOKEN_END)
-                     || (t->start.s != base + t->start.byte)
-                     || (t->start.byte < last)
-                     || (t->end.byte > limit.byte)
-                ) {
-                        continue;
-                }
-                xvP(tokens, *t);
-                last = t->end.byte;
-        }
-
-        return tokens;
-}
-
 static Location
 ClampToLine(Location start, Location end)
 {
@@ -1126,7 +1096,7 @@ BackOverSpace(Location loc)
 }
 
 noreturn static void
-SyntaxFailure(Ty *ty, char const *kind, char const *msg, Location start, Location end, Location limit)
+SyntaxFailure(Ty *ty, char const *kind, char const *msg, Location start, Location end)
 {
         byte_vector text = {0};
         Expr where = {
@@ -1136,13 +1106,17 @@ SyntaxFailure(Ty *ty, char const *kind, char const *msg, Location start, Locatio
                 .mod   = ParsedModule(ty)
         };
 
-        if (start.s != NULL) {
-                TokenVector tokens = TokenSnapshot(ty, limit);
-                WriteDiagnostic(ty, &text, kind, msg, &where, &tokens, NULL, 3, 2);
-                xvF(tokens);
-        } else {
-                WriteDiagnostic(ty, &text, kind, msg, NULL, NULL, NULL, 3, 2);
-        }
+        WriteDiagnostic(
+                ty,
+                &text,
+                kind,
+                msg,
+                (start.s != NULL) ? &where : NULL,
+                NULL,
+                NULL,
+                3,
+                2
+        );
 
         GC_STOP();
         Value locs = ErrorLocation(ty, start, (end.s == NULL) ? start : end);
@@ -1159,7 +1133,7 @@ LexError(Ty *ty, Token const *t)
 {
         char const *msg = (t->error != NULL) ? t->error : "invalid token";
 
-        SyntaxFailure(ty, "SyntaxError", msg, t->start, t->end, t->start);
+        SyntaxFailure(ty, "SyntaxError", msg, t->start, t->end);
 }
 
 static Token const *
@@ -1202,7 +1176,7 @@ ParseError(Ty *ty, char const *fmt, ...)
         char *text = sclonea(ty, vv(msg));
         xvF(msg);
 
-        SyntaxFailure(ty, "ParseError", text, start, end, (end.s != NULL) ? end : start);
+        SyntaxFailure(ty, "ParseError", text, start, end);
 }
 
 #define die(...) ParseError(ty, __VA_ARGS__)
@@ -7257,37 +7231,6 @@ pns(Namespace const *ns, bool end)
 }
 #endif
 
-bool
-tokenize(Ty *ty, char const *source, TokenVector *tokens_out)
-{
-        lex_save(ty, &CtxCheckpoint);
-        ParserState save = state;
-        v00(state.stack);
-
-        lex_init(ty, "(tokenize)", source);
-
-        v00(TOKENS);
-
-        while (T0 != TOKEN_END && T0 != TOKEN_ERROR) {
-                while (get_prefix_parser(ty) != NULL) {
-                        next();
-                }
-                setctx(LEX_INFIX);
-                next();
-        }
-
-        while (vN(TOKENS) > 0 && vvL(TOKENS)->type == TOKEN_END) {
-                vvX(TOKENS);
-        }
-
-        *tokens_out = TOKENS;
-
-        state = save;
-        lex_restore(ty, &CtxCheckpoint);
-
-        return true;
-}
-
 static bool
 ImportModule(Ty *ty, Stmt *import)
 {
@@ -7845,6 +7788,18 @@ parse_reset(Ty *ty)
                 .type = EXPRESSION_STATEMENT,
                 .statement = &NullStatement
         };
+}
+
+Module *
+TyParserModule(Ty *ty)
+{
+        return state.module;
+}
+
+TokenVector const *
+TyParserTokens(Ty *ty)
+{
+        return &TOKENS;
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

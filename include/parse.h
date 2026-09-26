@@ -26,6 +26,12 @@ parse_get_stmt(Ty *ty, int prec, bool want_raw);
 void
 parse_next(Ty *ty);
 
+Module *
+TyParserModule(Ty *ty);
+
+TokenVector const *
+TyParserTokens(Ty *ty);
+
 noreturn void
 ParseError(Ty *ty, char const *fmt, ...);
 
@@ -37,9 +43,6 @@ make_with(Ty *ty, struct expression *e, StmtVec defs, struct statement *body);
 
 char *
 gensym(Ty *ty);
-
-bool
-tokenize(Ty *ty, char const *source, TokenVector *tokens_out);
 
 void
 parse_reset(Ty *ty);
