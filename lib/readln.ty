@@ -32,12 +32,12 @@ pub use CompletionFunction = {before: String, after: String} -> CompletionAction
 
 pub use Prompt = Text | (() -> Text)
 
-pub use RenderFunction = {
-    prompt: Text,
-    lines: Array[Array[String]],
-    line: Int,
-    col: Int
-} -> (Array[String], Int, Int);
+pub use RenderFunction = (
+    Text,
+    Array[Array[String]],
+    Int,
+    Int
+) -> (Array[String], Int, Int);
 
 use HistoryEntry = {
     lines: Array[Array[String]],
@@ -998,7 +998,7 @@ pub fn getpass(
     erase: Bool = false,
     mask: ?Text = '*'
 ) -> String | nil {
-    const render: _ = match mask {
+    const render = match mask {
         nil or '' => fn (prompt, lines, y, x) {
             ([''], 0, 0)
         },
