@@ -976,21 +976,11 @@ pub fn progress(work, prefix, width, effects=id, cleanup=false) {
     reader.progress(work, prefix, width, effects=effects, cleanup=cleanup)
 }
 
-pub fn readln(
-    prompt: Text = nil,
-    complete: _ = nil,
-    erase: Bool = false,
-    keybinds: Dict[String, _] = %{},
-    render: RenderFunction | nil = nil
-) -> String | nil {
+use ReadlnParams = Params[typeof InteractiveLineReader.readln]
+
+pub fn readln(*args: ...ReadlnParams, %kw: ...ReadlnParams) -> String | nil {
     reader = reader ?? InteractiveLineReader()
-    reader.readln(
-        prompt=prompt,
-        complete=complete,
-        erase=erase,
-        keybinds=keybinds,
-        render=render
-    )
+    reader.readln(*args, **kw)
 }
 
 pub fn getpass(

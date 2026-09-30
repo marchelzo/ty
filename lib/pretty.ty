@@ -313,18 +313,20 @@ fn term-cols() -> Int {
     terminal-size().?cols ?? 500
 }
 
+use PrinterOptions = Keywords[typeof Printer]
+
 @memoized
-fn _printer(kwargs) {
-    Printer(**kwargs)
+fn _printer(opts: Dict[String, _]) -> Printer {
+    Printer(**opts)
 }
 
-pretty = fn pretty(x, %kwargs: Any) {
-    if 'width' not in kwargs {
-        kwargs['width'] = min(term-cols(), 60)
+pretty = fn pretty(x: Any, %opts: ...PrinterOptions) -> String {
+    if 'width' not in opts {
+        opts['width'] = min(term-cols(), 60)
     }
-    _printer(kwargs).print(x)
+    _printer(opts).print(x)
 }
 
-pp = fn pretty-print(x, %kwargs: Any) {
-    print(pretty(x, **kwargs))
+pp = fn pretty-print(x: Any, %opts: ...PrinterOptions) {
+    print(pretty(x, **opts))
 }

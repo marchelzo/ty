@@ -660,6 +660,9 @@ CurrentModulePath(Ty *ty)
         return (STATE.module != NULL) ? STATE.module->path : NULL;
 }
 
+static vec(Stmt *) TypeFunctionDefs;
+static Stmt *TypeFunctionPending;
+
 inline static Expr *
 NewExpr(Ty *ty, int t)
 {
@@ -4985,6 +4988,44 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
         case EXPRESSION_SUBSCRIPT:
                 symbolize_expression(ty, scope, e->container);
+                if (
+                        (STATE.ctx != CTX_TYPE)
+                     && (e->container->type == EXPRESSION_IDENTIFIER)
+                     && (e->container->symbol != NULL)
+                     && (
+                                (
+                                        SymbolIsTypeFunction(e->container->symbol)
+                                     && !SymbolIsTypeConstant(e->container->symbol)
+                                )
+                             || (
+                                        (TypeFunctionPending != NULL)
+                                     && SymbolIsFunction(e->container->symbol)
+                                     && s_eq(
+                                                e->container->identifier,
+                                                TypeFunctionPending->target->identifier
+                                        )
+                                )
+                        )
+                ) {
+                        Expr *call = NewExpr(ty, EXPRESSION_FUNCTION_CALL);
+                        call->start = e->start;
+                        call->end = e->end;
+                        call->function = e->container;
+                        if (e->subscript->type == EXPRESSION_LIST) {
+                                for (usize i = 0; i < vN(e->subscript->es); ++i) {
+                                        avP(call->args, v__(e->subscript->es, i));
+                                        avP(call->fconds, NULL);
+                                }
+                        } else {
+                                avP(call->args, e->subscript);
+                                avP(call->fconds, NULL);
+                        }
+                        *e = *call;
+                        for (usize i = 0; i < vN(e->args); ++i) {
+                                symbolize_expression(ty, scope, v__(e->args, i));
+                        }
+                        break;
+                }
                 symbolize_expression(ty, scope, e->subscript);
                 break;
 
@@ -6048,7 +6089,13 @@ emit_load(Ty *ty, Symbol const *s, Scope const *scope)
                 return;
         }
 
-        if (SymbolIsTypeAlias(s)) {
+        if (SymbolIsTypeConstant(s)) {
+                INSN(TYPE);
+                EP((uptr)t2_type_constant(ty, s));
+                return;
+        }
+
+        if (SymbolIsTypeAlias(s) && !SymbolIsTypeFunction(s)) {
                 INSN(TYPE);
                 EP((uptr)s->type);
                 return;
@@ -6124,7 +6171,10 @@ emit_tgt(Ty *ty, Symbol *s, Scope const *scope, bool def)
                 return;
         }
 
-        if (SymbolIsTypeVar(s) || SymbolIsTypeAlias(s)) {
+        if (
+                SymbolIsTypeVar(s)
+             || (SymbolIsTypeAlias(s) && !SymbolIsTypeFunction(s))
+        ) {
                 fail("cannot assign to type %s", s->identifier);
         }
 
@@ -10280,8 +10330,17 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
         case EXPRESSION_TYPE_OF:
         {
                 T2Type instance = t2_type_value_instance(t2_global_universe(), e->_type);
+                if (instance == T2_TYPE_INVALID) {
+                        instance = e->operand->_type;
+                }
+                if (instance == T2_TYPE_INVALID) {
+                        instance = t2_infer(ty, e->operand);
+                }
+                if (instance != T2_TYPE_INVALID) {
+                        instance = t2_type_resolve_computed_deep(t2_global_universe(), instance);
+                }
                 INSN(TYPE);
-                EP((uptr)(instance == T2_TYPE_INVALID ? e->operand->_type : instance));
+                EP((uptr)instance);
                 break;
         }
 
@@ -11204,6 +11263,14 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                       + vN(s->tag.getters)
                       + vN(s->tag.s_getters)
                 ));
+                break;
+
+        case STATEMENT_TYPE_DEFINITION:
+                if (s->class.tfn != NULL) {
+                        WITH_TYPES_OFF {
+                                returns |= emit_statement(ty, s->class.tfn, want_result);
+                        }
+                }
                 break;
 
         case STATEMENT_CLASS_DEFINITION:
@@ -13785,6 +13852,78 @@ tyaitem(Ty *ty, Expr const *e, int i, u32 flags)
         );
 }
 
+static Value
+function_type_params(Ty *ty, Expr const *left, u32 flags)
+{
+        Value params = ARRAY(vA());
+
+        NOGC(params.array);
+
+        bool sequence = (left != NULL)
+                     && (
+                                (left->type == EXPRESSION_LIST)
+                             || (left->type == EXPRESSION_TUPLE)
+                             || (left->type == EXPRESSION_TUPLE_SPEC)
+                        );
+
+        if (!sequence) {
+                if (left != NULL) {
+                        vAp(params.array, tyexpr(ty, left, flags));
+                }
+                OKGC(params.array);
+                return params;
+        }
+
+        for (int i = 0; i < vN(left->es); ++i) {
+                Expr const *item = v__(left->es, i);
+                char const *name = (left->type != EXPRESSION_LIST) && (i < vN(left->names))
+                                 ? v__(left->names, i)
+                                 : NULL;
+                bool required = (left->type == EXPRESSION_LIST) || (i >= vN(left->required))
+                             || v__(left->required, i);
+
+                if (item->type == EXPRESSION_SPREAD) {
+                        vAp(
+                                params.array,
+                                tagged(
+                                        ty,
+                                        TySpread,
+                                        (item->value == NULL) ? NIL : tyexpr(ty, item->value, flags),
+                                        NONE
+                                )
+                        );
+                        continue;
+                }
+
+                if (name == NULL && required) {
+                        vAp(params.array, tyexpr(ty, item, flags));
+                        continue;
+                }
+
+                vAp(
+                        params.array,
+                        tagged(
+                                ty,
+                                TyRecordEntry,
+                                vTn(
+                                        "item", tyexpr(ty, item, flags),
+                                        "name", (name == NULL) ? NIL : vSsz(name),
+                                        "cond", NIL,
+                                        "optional", BOOLEAN(!required)
+                                ),
+                                NONE
+                        )
+                );
+        }
+
+        OKGC(params.array);
+
+        return params;
+}
+
+static Expr *
+function_type_input(Ty *ty, Value const *params);
+
 Value
 tyexpr(Ty *ty, Expr const *e, u32 flags)
 {
@@ -14100,7 +14239,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
         case EXPRESSION_FUNCTION_TYPE:
                 v = TAGGED(
                         TyFuncType,
-                        go(e->left),
+                        function_type_params(ty, e->left, flags),
                         go(e->right)
                 );
                 break;
@@ -14594,6 +14733,14 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 v = TAGGED(TyQuestion, go(e->operand));
                 break;
 
+        case EXPRESSION_PACK_UNION:
+                v = TAGGED(TyPackUnion, go(e->operand));
+                break;
+
+        case EXPRESSION_PACK_INTERSECT:
+                v = TAGGED(TyPackIntersect, go(e->operand));
+                break;
+
         case EXPRESSION_PREFIX_INC:
                 v = TAGGED(TyPreInc, go(e->operand));
                 break;
@@ -14658,7 +14805,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 if (vN(STACK) > e->hole.i) {
                         v = TAGGED(TyType, *vm_get(ty, e->hole.i));
                 } else {
-                        v = TAG(TyUnknownT);
+                        v = TAG(TyAny);
                 }
                 break;
 
@@ -15362,6 +15509,86 @@ cstmt(Ty *ty, Value *v)
         return s;
 }
 
+static void
+flatten_function_params(Ty *ty, Value const *params, ValueVector *out)
+{
+        for (int i = 0; i < vN(*params->array); ++i) {
+                Value const *entry = v_(*params->array, i);
+                int tag = (entry->tags == 0) ? 0 : tags_first(ty, entry->tags);
+                if (tag == TySpread) {
+                        Value inner = unwrap(ty, entry);
+                        if (inner.type == VALUE_ARRAY && inner.tags == 0) {
+                                flatten_function_params(ty, &inner, out);
+                                continue;
+                        }
+                }
+                if (entry->type == VALUE_ARRAY && entry->tags == 0) {
+                        flatten_function_params(ty, entry, out);
+                        continue;
+                }
+                xvP(*out, *entry);
+        }
+}
+
+static Expr *
+function_type_input(Ty *ty, Value const *source)
+{
+        Expr *input = NewExpr(ty, EXPRESSION_LIST);
+        bool named = false;
+
+        ValueVector flat = {0};
+        flatten_function_params(ty, source, &flat);
+        Array array = { .items = flat.items, .count = flat.count, .capacity = flat.capacity };
+        Value const holder = ARRAY(&array);
+        Value const *params = &holder;
+
+        for (int i = 0; i < vN(*params->array); ++i) {
+                Value const *entry = v_(*params->array, i);
+                named |= (entry->tags != 0) && (tags_first(ty, entry->tags) == TyRecordEntry);
+        }
+
+        if (named) {
+                input->type = EXPRESSION_TUPLE;
+        }
+
+        for (int i = 0; i < vN(*params->array); ++i) {
+                Value const *entry = v_(*params->array, i);
+                int tag = (entry->tags == 0) ? 0 : tags_first(ty, entry->tags);
+
+                if (tag == TyRecordEntry) {
+                        Value inner     = unwrap(ty, entry);
+                        Value *item     = tuple_get(&inner, "item");
+                        Value *name     = tget_t(&inner, "name", VALUE_STRING);
+                        Value *optional = tget_t(&inner, "optional", VALUE_BOOLEAN);
+                        avP(input->es, cexpr(ty, item));
+                        avP(input->names, (name != NULL) ? mkcstr(name) : NULL);
+                        avP(input->required, (optional != NULL) ? !optional->boolean : true);
+                        avP(input->tconds, NULL);
+                        continue;
+                }
+
+                if (tag == TySpread) {
+                        Value inner = unwrap(ty, entry);
+                        Expr *spread = NewExpr(ty, EXPRESSION_SPREAD);
+                        spread->value = (inner.type == VALUE_NIL) ? NULL : cexpr(ty, &inner);
+                        avP(input->es, spread);
+                        avP(input->names, NULL);
+                        avP(input->required, true);
+                        avP(input->tconds, NULL);
+                        continue;
+                }
+
+                avP(input->es, cexpr(ty, entry));
+                avP(input->names, NULL);
+                avP(input->required, true);
+                avP(input->tconds, NULL);
+        }
+
+        xvF(flat);
+
+        return input;
+}
+
 Expr *
 cexpr(Ty *ty, Value *v)
 {
@@ -15912,7 +16139,9 @@ cexpr(Ty *ty, Value *v)
 
         case TyFuncType:
                 e->type  = EXPRESSION_FUNCTION_TYPE;
-                e->left  = cexpr(ty, t_(v, 0));
+                e->left  = (t_(v, 0)->type == VALUE_ARRAY)
+                         ? function_type_input(ty, t_(v, 0))
+                         : cexpr(ty, t_(v, 0));
                 e->right = cexpr(ty, t_(v, 1));
                 break;
 
@@ -16415,6 +16644,21 @@ cexpr(Ty *ty, Value *v)
                 e->operand = cexpr(ty, &_v);
                 break;
         }
+        case TyTypeVar:
+        case TyScheme:
+        case TyTypeValue:
+        case TyOverload:
+                e->type = EXPRESSION_TYPE;
+                e->_type = t2_from_ty(ty, v);
+                break;
+
+        case TyPackUnion:
+        case TyPackIntersect:
+                e->type = (tag == TyPackUnion)
+                        ? EXPRESSION_PACK_UNION
+                        : EXPRESSION_PACK_INTERSECT;
+                e->operand = cexpr(ty, &_v);
+                break;
         case TyTagPattern:
         {
                 e->type = EXPRESSION_TAG_PATTERN;
@@ -17006,6 +17250,100 @@ define_tag(Ty *ty, Stmt *s)
         }
 }
 
+
+static void
+define_type_function(Ty *ty, Stmt *s, Scope *scope)
+{
+        if (s->class.var != NULL) {
+                return;
+        }
+
+        Stmt *def = s->class.tfn;
+        def->pub = s->class.pub;
+        def->ns = s->ns;
+        def->doc = s->class.doc;
+
+        void *ctx = PushContext(ty, s);
+
+        Stmt *pending = TypeFunctionPending;
+        TypeFunctionPending = def;
+        symbolize_statement(ty, scope, def);
+        TypeFunctionPending = pending;
+
+        Symbol *sym = def->target->symbol;
+        sym->flags &= ~SYM_TRANSIENT;
+        sym->flags |= SYM_TYPE_ALIAS | SYM_TYPE_FUNCTION | SYM_CONST;
+        sym->flags |= SYM_PUBLIC * s->class.pub;
+        sym->doc = s->class.doc;
+        sym->loc = s->class.loc;
+
+        if (vN(s->class.type_params) == 0) {
+                sym->flags |= SYM_TYPE_CONSTANT;
+        }
+
+        s->class.var = sym;
+        s->class.symbol = sym->class;
+
+        xvP(TypeFunctionDefs, def);
+        t2_register_type_function(ty, sym);
+
+        RestoreContext(ty, ctx);
+}
+
+Value
+compiler_type_function(Ty *ty, Symbol const *sym)
+{
+        Value *slot = vm_global(ty, sym->i);
+        if (slot->type == VALUE_FUNCTION) {
+                return *slot;
+        }
+
+        Stmt *def = NULL;
+        for (usize i = 0; i < vN(TypeFunctionDefs); ++i) {
+                if (v__(TypeFunctionDefs, i)->target->symbol == sym) {
+                        def = v__(TypeFunctionDefs, i);
+                        break;
+                }
+        }
+
+        if (def == NULL) {
+                return NIL;
+        }
+
+        add_location_info(ty);
+        v00(STATE.expression_locations);
+
+        byte_vector code_save = STATE.code;
+        v00(STATE.code);
+
+        StackState stack = STATE.stack;
+        m0(STATE.stack);
+
+        LoopStates loops = STATE.loops;
+        v00(STATE.loops);
+
+        ProgramAnnotation an = STATE.annotation;
+        STATE.annotation = (ProgramAnnotation){0};
+
+        WITH_TYPES_OFF {
+                emit_statement(ty, def, false);
+        }
+        INSN(HALT);
+
+        STATE.annotation = an;
+
+        add_location_info(ty);
+        v00(STATE.expression_locations);
+
+        vm_exec(ty, vv(STATE.code));
+
+        STATE.loops = loops;
+        STATE.stack = stack;
+        STATE.code = code_save;
+
+        return *vm_global(ty, sym->i);
+}
+
 void
 define_type(Ty *ty, Stmt *s, Scope *scope)
 {
@@ -17013,6 +17351,11 @@ define_type(Ty *ty, Stmt *s, Scope *scope)
 
         if (scope == NULL) {
                 scope = GetNamespace(ty, s->ns);
+        }
+
+        if (s->class.tfn != NULL) {
+                define_type_function(ty, s, scope);
+                return;
         }
 
         void *ctx = PushContext(ty, s);
@@ -17572,6 +17915,18 @@ compiler_symbolize_expression(Ty *ty, Expr *e, Scope *scope)
         return true;
 }
 
+bool
+compiler_symbolize_type(Ty *ty, Expr *e, Scope *scope)
+{
+        bool ok;
+
+        WITH_CTX(TYPE) {
+                ok = compiler_symbolize_expression(ty, e, scope);
+        }
+
+        return ok;
+}
+
 void
 compiler_set_type_of(Ty *ty, Stmt *stmt)
 {
@@ -17628,6 +17983,39 @@ End:
         TY_CATCH_END();
 
         return v;
+}
+
+typedef struct {
+        Expr const *template;
+        Value       value;
+} TemplatePattern;
+
+static vec(TemplatePattern) TemplatePatterns;
+
+Value
+compiler_template_pattern(Ty *ty, Expr *e)
+{
+        for (usize i = 0; i < vN(TemplatePatterns); ++i) {
+                if (v_(TemplatePatterns, i)->template == e) {
+                        return v_(TemplatePatterns, i)->value;
+                }
+        }
+
+        GC_STOP();
+
+        for (usize i = vN(e->template.holes); i > 0; --i) {
+                Value hole = tagged(ty, TyHole, INTEGER((imax)(i - 1)), NONE);
+                vmP(&hole);
+        }
+
+        Value value = compiler_render_template(ty, e);
+
+        gc_immortalize(ty, &value);
+        xvP(TemplatePatterns, ((TemplatePattern) { .template = e, .value = value }));
+
+        GC_RESUME();
+
+        return value;
 }
 
 int

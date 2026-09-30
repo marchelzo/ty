@@ -59,13 +59,13 @@ fn type-completions(type: _, prefix: String) -> Array[_] {
     }
 
     match type {
-        types::Scheme({body, *})
+        ty.Scheme({body, *})
             => type-completions(body, prefix),
 
-        types::Func(_)
-            => type-completions(types::Object(Function, []), prefix),
+        ty.FuncType(_)
+            => type-completions(ty.Value(Function), prefix),
 
-        types::Object(_) or types::Class(_) => do {
+        ty.Value(_) or ty.Subscript(ty.Value(_), _) or ty.TypeValue(_) => do {
             let $info = types.info(type) or return []
             let members: _ = [
                 *info.methods,
@@ -82,7 +82,8 @@ fn type-completions(type: _, prefix: String) -> Array[_] {
 
             let completions = members
                 .filter(\_.name.starts?(prefix.comb('`')))
-                .filter(\_.type !:: types::Intersect)
+                .filter(\_.type !:: ty.Overload)
+                .filter(\_.type !:: ty.BitAnd)
                 .sort(by=\key(_.name))
                 .map(${(label(it), fix-name(it.name))})
 
@@ -97,8 +98,8 @@ fn type-completions(type: _, prefix: String) -> Array[_] {
             completions.uniq()
         }
 
-        types::Record(members ~> $fields)
-            => fields.keys()
+        ty.Record(entries)
+            => [it.name for ty.RecordEntry(it) in entries if it.name != nil]
                 .filter(\_.starts?(prefix))
                 .map(\_[#prefix;])
                 .sort(by=key),

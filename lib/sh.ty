@@ -25,7 +25,7 @@ pub class CmdResult {
     }
 }
 
-pub fn run(
+fn __run(
     cmd: String,
     argv: Array[String],
     input: Blob | String | nil = nil,
@@ -155,49 +155,22 @@ pub fn run(
 #|]
 }
 
-pub fn run(
-    argv: Array[String],
-    input: Blob | String | nil = nil,
-    timeout: Float | Int | nil = nil,
-    signal: Int = os.SIGTERM,
-    combineOutput: Bool = false,
-    shareStderr: Bool = false,
-    chdir: Int | String | Blob | nil = nil,
-    env: Dict[String, String] | nil = nil,
-    rlimits: Dict[Int, Int | (Int, Int)] | nil = nil,
-    sigdefault: ?Array[Int] = nil,
-    inherit: Array[Int] | Bool | nil = nil,
-    umask: ?Int = nil,
-    pdeathsig: ?Int = nil
-) -> CmdResult {
-    run(
-        argv[0], argv,
-        input:, timeout:, signal:, combineOutput:, shareStderr:, chdir:, env:,
-        rlimits:, sigdefault:, inherit:, umask:, pdeathsig:
-    )
+pub use RunOptions = Keywords[Omit[typeof __run, 'cmd', 'argv']]
+
+pub fn run(cmd: String, argv: Array[String], %opts: ...RunOptions) -> CmdResult {
+    __run(cmd, argv, **opts)
+}
+
+pub fn run(argv: Array[String], %opts: ...RunOptions) -> CmdResult {
+    __run(argv[0], argv, **opts)
 }
 
 pub fn sh(
     cmd: String,
-    input: Blob | String | nil = nil,
-    timeout: Float | Int | nil = nil,
-    signal: Int = os.SIGTERM,
-    combineOutput: Bool = false,
-    shareStderr: Bool = false,
-    chdir: Int | String | Blob | nil = nil,
     shell: Array[String] = SHELL,
-    env: Dict[String, String] | nil = nil,
-    rlimits: Dict[Int, Int | (Int, Int)] | nil = nil,
-    sigdefault: ?Array[Int] = nil,
-    inherit: Array[Int] | Bool | nil = nil,
-    umask: ?Int = nil,
-    pdeathsig: ?Int = nil
+    %opts: ...RunOptions
 ) -> CmdResult {
-    run(
-        [*shell, cmd],
-        input:, timeout:, signal:, combineOutput:, shareStderr:, chdir:, env:,
-        rlimits:, sigdefault:, inherit:, umask:, pdeathsig:
-    )
+    run([*shell, cmd], **opts)
 }
 
 pub fn ls(d: String, flags: String = '') -> Array[String] {

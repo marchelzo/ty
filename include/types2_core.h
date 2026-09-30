@@ -219,6 +219,8 @@ typedef struct t2_runtime_facts {
 } T2RuntimeFacts;
 
 typedef struct t2_universe T2Universe;
+
+typedef T2Type T2ComputedHook(void *context, T2Universe *universe, T2Type computed);
 typedef struct t2_solver T2Solver;
 typedef struct t2_scheme T2Scheme;
 
@@ -1033,6 +1035,34 @@ t2_solver_cancel_obligations_since(T2Solver *solver, T2SolverMark mark);
 
 void
 t2_solver_rollback(T2Solver *solver, T2SolverMark mark);
+
+bool
+t2_parameter_spec(T2Universe const *universe, T2Type element, T2ParameterSpec *spec);
+
+void
+t2_universe_set_computed_hook(
+        T2Universe *universe,
+        T2ComputedHook *hook,
+        void *context
+);
+
+bool
+t2_type_is_ground(T2Universe const *universe, T2Type type);
+
+T2Type
+t2_callable_normalize_packs(T2Universe *universe, T2Type callable);
+
+bool
+t2_type_has_computed(T2Universe const *universe, T2Type type);
+
+T2Type
+t2_type_resolve_computed_deep(T2Universe *universe, T2Type type);
+
+T2Type
+t2_pack_fold_union_opaque(T2Universe *universe, T2Type pack);
+
+T2Type
+t2_type_normalize_deep(T2Universe *universe, T2Type type);
 
 #endif
 

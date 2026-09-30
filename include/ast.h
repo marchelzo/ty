@@ -61,6 +61,7 @@ struct class_definition {
         Scope *scope;
         Scope *s_scope;
         Symbol *var;
+        Stmt *tfn;
 };
 
 struct condpart {

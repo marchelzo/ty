@@ -1,10 +1,11 @@
 #ifndef DEFS_H_INCLUDED
 #define DEFS_H_INCLUDED
 
-#include <stddef.h>
-#include <stdint.h>
 #include <setjmp.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
 
 #ifdef _WIN32
 #  define UNLIKELY(x)  (x)

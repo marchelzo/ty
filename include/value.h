@@ -203,53 +203,15 @@ enum {
         X(FuncType)             \
         X(Cast)                 \
         X(Resolved)             \
-        X(Stop)
-
-#define TY_TYPE_TAGS   \
-        X(Error)       \
-        X(Object)      \
-        X(Tag)         \
-        X(Class)       \
-        X(Func)        \
-        X(Var)         \
-        X(Alias)       \
-        X(Union)       \
-        X(Intersect)   \
-        X(List)        \
-        X(Bottom)      \
-        X(Unknown)     \
-        X(Hole)        \
-        X(Any)         \
-        X(Nil)         \
-        X(Record)      \
-        X(String)      \
-        X(Int)         \
-        X(Float)       \
-        X(Bool)        \
-        X(Array)       \
-        X(Dict)        \
-        X(Ptr)         \
-        X(Regex)       \
-        X(RegexV)      \
-        X(Iter)        \
-        X(Scheme)         \
-        X(Subtype)        \
-        X(Operator)       \
-        X(SubscriptRead)  \
-        X(SubscriptWrite) \
-        X(MemberRead)     \
-        X(MemberWrite)    \
-        X(KeywordSpread)  \
-        X(Dynamic)        \
-        X(Range)          \
-        X(Overload)       \
-        X(PackExpansion)  \
-        X(Pack)           \
-        X(EmptyPack)      \
-        X(AnyPack)        \
-        X(PackUnion)      \
-        X(PackIntersect)  \
-        X(VariadicTuple)
+        X(Stop)                 \
+        X(Hole)                 \
+        X(PackUnion)            \
+        X(PackIntersect)        \
+        X(TypeVar)              \
+        X(Scheme)               \
+        X(Bound)                \
+        X(TypeValue)            \
+        X(Overload)
 
 
 enum {
@@ -259,9 +221,6 @@ enum {
         TY_AST_NODES
 #undef X
 
-#define X(x) Ty ## x ## T,
-        TY_TYPE_TAGS
-#undef X
 
         TAG_MATCH_ERR,
         TAG_INDEX_ERR,
@@ -272,6 +231,8 @@ enum {
         TAG_OK,
         TAG_ERR
 };
+
+#define TyAstEnd TAG_MATCH_ERR
 
 enum {
         TY_SPAWN_NULL       = -12,

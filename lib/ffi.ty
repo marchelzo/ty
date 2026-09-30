@@ -3,7 +3,6 @@ import ty
 import ty.token (next, peek)
 import ty.parse (expr, stmt)
 import ty.lex as lex
-import ty.types as types
 import ptr (typed)
 
 __set_type__ c::i8      CType[Int];
@@ -37,54 +36,53 @@ fn c::box[T](type: CType[T], val: ?T) -> Ptr[T];
 fn c::alloc[T](size: Int) -> Ptr[T];
 fn ptr::typed[T](ptr: Ptr[Any], type: CType[T]) -> Ptr[T];
 
-macro __unpack-types! $$[
-    $${
-        fn unpacked(t0) {
-            match t0 {
-                types::String(fmt) => do {
-                    let ts = []
-                    let i = 0
+fn __unpacked(fmt: String) -> _ {
+    let ts = []
+    let i = 0
 
-                    if i < #fmt and fmt[i] in ['>', '<', '!', '=', '@'] {
-                        i += 1
-                    }
+    if i < #fmt and fmt[i] in ['>', '<', '!', '=', '@'] {
+        i += 1
+    }
 
-                    while i < #fmt {
-                        let count = 0
-                        while i < #fmt and fmt[i] >= '0' and fmt[i] <= '9' {
-                            count = count * 10 + int(fmt[i])
-                            i += 1
-                        }
-                        if count == 0 { count = 1 }
-                        if i >= #fmt { break }
+    while i < #fmt {
+        let count = 0
+        while i < #fmt and fmt[i] >= '0' and fmt[i] <= '9' {
+            count = count * 10 + int(fmt[i])
+            i += 1
+        }
+        if count == 0 {
+            count = 1
+        }
+        if i >= #fmt {
+            break
+        }
 
-                        let ch = fmt[i]
-                        i += 1
+        let ch = fmt[i]
+        i += 1
 
-                        match ch {
-                            'x' => (),
-                            's' => ts.push(types.Object(Blob, [])),
-                            'f' or 'd' => for ..count { ts.push(types.Object(Float, [])) },
-                            '?' => for ..count { ts.push(types.Object(Bool, [])) },
-                            _ => for ..count { ts.push(types.Object(Int, [])) }
-                        }
-                    }
-
-                    match ts {
-                        [t] => t,
-                        _   => types.Record(*ts)
-                    }
-                },
-
-                _ => types.Unknown
-            }
+        match ch {
+            'x'        => (),
+            's'        => ts.push($$[: Blob $$]),
+            'f' or 'd' => for ..count { ts.push($$[: Float $$]) },
+            '?'        => for ..count { ts.push($$[: Bool $$]) },
+            _          => for ..count { ts.push($$[: Int $$]) },
         }
     }
-$$]
+
+    match ts {
+        [t] => t,
+        _   => ty.Record([ty.RecordEntry({item: it, name: nil, cond: nil, optional: false}) for ts]),
+    }
+}
+
+use UnpackTypes[T] = match T {
+    fmt: String => __unpacked(fmt),
+    _           => $$[: _ $$],
+}
 
 fn c::pack(fmt: String, *args: Any) -> Ptr[Any];
 fn c::pack[T](buf: T, fmt: String, *args: Any) -> T;
-fn c::unpack[T](fmt: T, buf: IntoPtr[_], off: Int = 0) -> __unpack-types!(T);
+fn c::unpack[T](fmt: T, buf: IntoPtr[_], off: Int = 0) -> UnpackTypes[T];
 
 pub __tls::_cif_cache: _ = nil
 

@@ -22,7 +22,11 @@ fn ranged[N](x: Regex[N]) -> Regex[N] where N: (0..) { x }
 fn collected[...Ts](*xs: ...Ts) { xs }
 
 fn type-parameter(id, kind = 'quantified', name = nil) {
-    types.Var({id, kind, name})
+    ty.TypeVar({id, kind, name})
+}
+
+fn bound(kind, subtype, supertype, operand = nil, name = nil) {
+    ty.Bound({kind, subtype, supertype, operand, name})
 }
 
 ns test
@@ -44,10 +48,11 @@ pub fn method-bounds() {
     round-trip(typeof /abc/.test)
     round-trip(method)
 
-    let types.Scheme({parameters, bounds, *}) = method
-    assert(#parameters == 2)
+    let ty.Scheme({params, bounds, *}) = method
+    assert(#params == 2)
     assert(#bounds == 1)
-    let types.MemberRead({name, subtype, supertype, *}) = bounds[0]
+    let ty.Bound({kind, name, subtype, supertype, *}) = bounds[0]
+    assert(kind == 'member-read')
     assert(name == 'match?')
     assert(types.show(subtype) == 'a')
     assert(types.show(supertype) == '(Regex[0]) -> a')
@@ -77,10 +82,10 @@ pub fn declared-bounds() {
 pub fn parameter-names-and-lower-bounds() {
     let variable = type-parameter(42)
     let named = type-parameter(42, name='T')
-    let spec = types.Scheme({
-        parameters: [named],
+    let spec = ty.Scheme({
+        params: [named],
         body: variable,
-        bounds: [types.Subtype({subtype: Int, supertype: variable})]
+        bounds: [bound('subtype', Int, variable)]
     })
     assert(types.show(spec) == 'T where Int <: T')
     round-trip(spec)
@@ -91,15 +96,15 @@ pub fn parameter-kinds() {
 
     for kind in ['row', 'pack'] {
         let variable = type-parameter(42, kind)
-        let spec = types.Scheme({parameters: [variable], body: variable, bounds: []})
+        let spec = ty.Scheme({params: [variable], body: variable, bounds: []})
         assert(types.type(spec) == spec)
     }
 }
 
 pub fn substituted-bounds() {
     let spec = types.type(typeof /abc/.test)
-    let types.Scheme({parameters, *}) = spec
-    let instantiated = types.inst(spec, [(parameters[0], String)])
+    let ty.Scheme({params, *}) = spec
+    let instantiated = types.inst(spec, [(params[0], String)])
     let shown = types.show(instantiated)
     assert('(s: String)' in shown)
     assert('String.match? <: (Regex[0])' in shown)
@@ -107,16 +112,13 @@ pub fn substituted-bounds() {
 }
 
 pub fn nested-bounds() {
-    let parameter = {
+    let parameter = ty.RecordEntry({
+        item: types.type(typeof /abc/.test),
         name: 'test',
-        type: types.type(typeof /abc/.test),
-        kind: 'positional-or-keyword',
-        required: true
-    }
-    let spec = types.Func({
-        parameters: [parameter],
-        result: types.type(typeof add-one)
+        cond: nil,
+        optional: false
     })
+    let spec = ty.FuncType([parameter], types.type(typeof add-one))
     let shown = types.show(spec)
     assert('match?' in shown)
     assert('+ 1' in shown)
@@ -132,11 +134,10 @@ pub fn bounds-survive-gc() {
 
 pub fn invalid-type-specs() {
     for (spec, message) in [
-        (types.Var(1), 'invalid type parameter'),
-        (types.Func([], [], Int), 'expected function type record'),
-        (types.Scheme({parameters: [], body: Int, bounds: [Int]}), 'invalid type bound'),
-        (types.Scheme({parameters: [type-parameter(1), type-parameter(1)], body: Int}), 'invalid type scheme'),
-        (types.Scheme({parameters: [type-parameter(1, 'wrong')], body: Int}), 'invalid type parameter kind')
+        (ty.TypeVar(1), 'invalid type parameter'),
+        (ty.Scheme({params: [], body: Int, bounds: [Int]}), 'invalid type bound'),
+        (ty.Scheme({params: [type-parameter(1), type-parameter(1)], body: Int, bounds: []}), 'invalid type scheme'),
+        (ty.Scheme({params: [type-parameter(1, 'wrong')], body: Int, bounds: []}), 'invalid type parameter kind')
     ] {
         try {
             types.show(spec)

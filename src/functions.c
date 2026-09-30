@@ -10323,7 +10323,7 @@ TypeParameterId(Ty *ty, char const *_name__, Value const *sub)
                 return (u32)t2_type_payload(universe, as_type(sub));
 
         default:
-                if (tags_first(ty, sub->tags) == TyVarT) {
+                if (sub->tags != 0 && tags_first(ty, sub->tags) == TyTypeVar) {
                         return (u32)t2_type_payload(universe, t2_from_ty(ty, sub));
                 }
                 zP(
@@ -10370,6 +10370,293 @@ BUILTIN_FUNCTION(ty_type_inst)
         SCRATCH_RESTORE();
 
         return t2_to_ty(ty, result);
+}
+
+static bool
+ast_hole(Ty *ty, Value const *v, imax *index)
+{
+        if (v->tags == 0 || tags_first(ty, v->tags) != TyHole) {
+                return false;
+        }
+
+        Value inner = unwrap(ty, v);
+        if (inner.type != VALUE_INTEGER) {
+                return false;
+        }
+
+        *index = inner.z;
+
+        return true;
+}
+
+static bool
+ast_blank(Value const *v)
+{
+        return (v->type == VALUE_NIL)
+            || ((v->type == VALUE_BOOLEAN) && !v->boolean);
+}
+
+static bool
+ast_rest(Ty *ty, Value const *v, imax *index)
+{
+        if (v->tags != 0 && tags_first(ty, v->tags) == TySpread) {
+                Value inner = unwrap(ty, v);
+                if (inner.type == VALUE_TAG && inner.tag == TyAny) {
+                        *index = -1;
+                        return true;
+                }
+                return ast_hole(ty, &inner, index);
+        }
+
+        Value inner = unwrap(ty, v);
+        if (inner.type != VALUE_TUPLE) {
+                return false;
+        }
+
+        bool found = false;
+        for (int i = 0; i < inner.count; ++i) {
+                if (ast_rest(ty, &inner.items[i], index)) {
+                        if (found) {
+                                return false;
+                        }
+                        found = true;
+                } else if (!ast_blank(&inner.items[i])) {
+                        return false;
+                }
+        }
+
+        return found;
+}
+
+static bool
+ast_match(Ty *ty, Value const *t, Value const *s, Value *bindings, imax count, int depth);
+
+static int
+ast_tag(Ty *ty, Value const *v)
+{
+        return (v->tags == 0) ? 0 : tags_first(ty, v->tags);
+}
+
+static bool
+ast_leaf_named(Ty *ty, Value const *leaf, Value const *id)
+{
+        Value inner = unwrap(ty, id);
+        Value const *name = tget_or_null(&inner, (uptr)"name");
+        if (name == NULL || name->type != VALUE_STRING) {
+                return false;
+        }
+
+        Value payload = unwrap(ty, leaf);
+        char const *shown = NULL;
+        char *owned = NULL;
+
+        if (ast_tag(ty, leaf) == TyValue && payload.type == VALUE_CLASS) {
+                shown = class_name(ty, payload.class);
+        } else if (ast_tag(ty, leaf) == TyType && payload.type == VALUE_TYPE) {
+                owned = t2_render(ty, as_type(&payload), (T2Render) { .color = false });
+                shown = owned;
+        }
+
+        bool same = (shown != NULL)
+                 && (strlen(shown) == (usize)sN(*name))
+                 && (memcmp(shown, ss(*name), sN(*name)) == 0);
+
+        if (owned != NULL) {
+                t2_string_free(owned);
+        }
+
+        return same;
+}
+
+static bool
+ast_match_union(Ty *ty, Value const *t, Value const *s, Value *bindings, imax count, int depth)
+{
+        Value a = unwrap(ty, t);
+        if (a.type != VALUE_ARRAY) {
+                return false;
+        }
+
+        Value b = (ast_tag(ty, s) == TyUnion) ? unwrap(ty, s) : NIL;
+        Value const *arms = (b.type == VALUE_ARRAY) ? vv(*b.array) : s;
+        usize n = (b.type == VALUE_ARRAY) ? vN(*b.array) : 1;
+
+        bool *used = smA((n + 1) * sizeof *used);
+        memset(used, 0, (n + 1) * sizeof *used);
+
+        imax rest = -1;
+
+        for (usize i = 0; i < vN(*a.array); ++i) {
+                Value const *arm = v_(*a.array, i);
+                imax hole;
+                if (ast_hole(ty, arm, &hole)) {
+                        if (rest != -1) {
+                                return false;
+                        }
+                        rest = hole;
+                        continue;
+                }
+                usize j;
+                for (j = 0; j < n; ++j) {
+                        if (!used[j] && ast_match(ty, arm, &arms[j], bindings, count, depth + 1)) {
+                                used[j] = true;
+                                break;
+                        }
+                }
+                if (j == n) {
+                        return false;
+                }
+        }
+
+        Array *left = vA();
+        for (usize j = 0; j < n; ++j) {
+                if (!used[j]) {
+                        vAp(left, arms[j]);
+                }
+        }
+
+        if (rest == -1) {
+                return vN(*left) == 0;
+        }
+
+        if (vN(*left) == 0 || rest < 0 || rest >= count) {
+                return false;
+        }
+
+        bindings[rest] = (vN(*left) == 1)
+                       ? *v_(*left, 0)
+                       : tagged(ty, TyUnion, ARRAY(left), NONE);
+
+        return true;
+}
+
+static bool
+ast_match(Ty *ty, Value const *t, Value const *s, Value *bindings, imax count, int depth)
+{
+        imax hole;
+
+        if (depth > 512) {
+                return false;
+        }
+
+        if (ast_hole(ty, t, &hole)) {
+                if (hole < 0 || hole >= count) {
+                        return false;
+                }
+                bindings[hole] = *s;
+                return true;
+        }
+
+        if (t->type == VALUE_TAG && t->tag == TyAny) {
+                return true;
+        }
+
+        if (ast_tag(ty, t) == TyId && (ast_tag(ty, s) == TyType || ast_tag(ty, s) == TyValue)) {
+                return ast_leaf_named(ty, s, t);
+        }
+
+        if (ast_tag(ty, t) == TyUnion) {
+                return ast_match_union(ty, t, s, bindings, count, depth);
+        }
+
+        if (t->tags != s->tags) {
+                return false;
+        }
+
+        Value a = unwrap(ty, t);
+        Value b = unwrap(ty, s);
+
+        if (a.type != b.type) {
+                return false;
+        }
+
+        switch (a.type) {
+        case VALUE_TUPLE:
+                if (a.count != b.count) {
+                        return false;
+                }
+                for (int i = 0; i < a.count; ++i) {
+                        i32 ai = (a.ids == NULL) ? -1 : a.ids[i];
+                        i32 bi = (b.ids == NULL) ? -1 : b.ids[i];
+                        if (ai != bi) {
+                                return false;
+                        }
+                        if (!ast_match(ty, &a.items[i], &b.items[i], bindings, count, depth + 1)) {
+                                return false;
+                        }
+                }
+                return true;
+
+        case VALUE_ARRAY:
+        {
+                usize an = vN(*a.array);
+                usize bn = vN(*b.array);
+                for (usize i = 0; i < an; ++i) {
+                        Value const *item = v_(*a.array, i);
+                        if (ast_rest(ty, item, &hole) && (i + 1 == an)) {
+                                if (hole == -1) {
+                                        return bn >= i;
+                                }
+                                if (hole < 0 || hole >= count || bn < i) {
+                                        return false;
+                                }
+                                Array *rest = vAn(bn - i);
+                                for (usize j = i; j < bn; ++j) {
+                                        vPx(*rest, *v_(*b.array, j));
+                                }
+                                bindings[hole] = ARRAY(rest);
+                                return true;
+                        }
+                        if (i >= bn || !ast_match(ty, item, v_(*b.array, i), bindings, count, depth + 1)) {
+                                return false;
+                        }
+                }
+                return an == bn;
+        }
+
+        case VALUE_PTR:
+                return a.ptr == b.ptr;
+
+        default:
+                return value_test_equality(ty, &a, &b);
+        }
+}
+
+BUILTIN_FUNCTION(ast_template_match)
+{
+        ASSERT_ARGC("__ast_match__()", 3);
+
+        Value template = compiler_template_pattern(ty, ARGx(0, VALUE_PTR).ptr);
+        imax  count    = INT_ARG(1);
+        Value subject  = ARG(2);
+
+        GC_STOP();
+
+        if (subject.type == VALUE_TYPE && subject.tags == 0) {
+                subject = t2_to_ast(ty, as_type(&subject));
+        }
+
+        SCRATCH_SAVE();
+
+        Value *bindings = mA((count + 1) * sizeof *bindings);
+        for (imax i = 0; i < count; ++i) {
+                bindings[i] = NIL;
+        }
+
+        Value result = NIL;
+
+        if (ast_match(ty, &template, &subject, bindings, count, 0)) {
+                Array *xs = vAn(count);
+                for (imax i = 0; i < count; ++i) {
+                        vPx(*xs, bindings[i]);
+                }
+                result = ARRAY(xs);
+        }
+
+        SCRATCH_RESTORE();
+
+        GC_RESUME();
+
+        return result;
 }
 
 BUILTIN_FUNCTION(ty_type_infer)

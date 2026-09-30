@@ -993,6 +993,7 @@ static struct {
   { .module = "ty/types",   .name = "check",                    .value = BUILTIN(builtin_ty_type_check)           },
   { .module = "ty/types",   .name = "infer",                    .value = BUILTIN(builtin_ty_type_infer)           },
   { .module = "ty/types",   .name = "show",                     .value = BUILTIN(builtin_ty_type_show)            },
+  { .module = NULL,         .name = "__ast_match__",            .value = BUILTIN(builtin_ast_template_match)      },
 
   { .module = "ty/token",   .name = "next",                     .value = BUILTIN(builtin_token_next)              },
   { .module = "ty/token",   .name = "peek",                     .value = BUILTIN(builtin_token_peek)              },

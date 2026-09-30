@@ -1,3 +1,4 @@
+import ty
 import ty.types as T
 import json
 import os
@@ -84,10 +85,37 @@ fn type-link(fqn, display, css) {
 let prims = ['Int', 'String', 'Float', 'Bool', 'Blob', 'Nil', 'Any']
 let depth = [0]
 
-fn type-str(t) {
-    if let T.Alias(name, mod, x) = t {
-        return type-link("{mod}.{name}", str(name), 't-cls')
+fn fn-parts(t) {
+    match t {
+        ty.Scheme({params: tparams, body: ty.FuncType(params, ret), *}) => (tparams, params, ret),
+        ty.FuncType(params, ret)                                         => ([], params, ret),
+        _                                                                => nil,
     }
+}
+
+fn class-of-type(t) {
+    match t {
+        ty.Value(c) and c :: Class                => c,
+        ty.Subscript(ty.Value(c), _) and c :: Class => c,
+        _                                        => nil,
+    }
+}
+
+fn value-str(v, args) {
+    if !(v :: Class) {
+        let fqn = str(v)
+        try { fqn = v.__fqn__ } catch _ { }
+        let link = type-link(fqn, ":{v}", 't-tag')
+        return (#args == 0) ? link : "{link}[{args.map(type-str).join(', ')}]"
+    }
+    let name = Class.name(v)
+    let fqn = v.?__fqn__ ?? name
+    let css = name in prims ? 't-prim' : 't-cls'
+    (#args == 0) ? type-link(fqn, name, css)
+                 : "{type-link(fqn, name, css)}[{args.map(type-str).join(', ')}]"
+}
+
+fn type-str(t) {
     depth[0] += 1
     if depth[0] > 12 { depth[0] -= 1; return '...' }
     let r = type-str-inner(t)
@@ -97,17 +125,15 @@ fn type-str(t) {
 
 fn type-str-inner(t) {
     match t {
-        T.Object(cls, targs) => do {
-            let name = Class.name(cls)
-            let fqn = cls.?__fqn__ ?? name
-            let css = name in prims ? 't-prim' : 't-cls'
-            (#targs == 0) ? type-link(fqn, name, css)
-                          : "{type-link(fqn, name, css)}[{targs.map(type-str).join(', ')}]"
-        },
+        ty.Value(v) => value-str(v, []),
 
-        T.Func(tparams, params, ret) => fn-sig-str(tparams, params, ret),
+        ty.Subscript(ty.Value(v), args) => value-str(v, (args :: Array) ? args : [args]),
 
-        T.Union(members) => do {
+        fn-parts ~> (tparams, params, ret) => fn-sig-str(tparams, params, ret),
+
+        ty.TypeValue({type, *}) => "<span class=\"t-kw\">type</span>[{type-str(type)}]",
+
+        ty.Union(members) => do {
             let unk = '<span class="t-kw">?</span>'
             let seen: _ = %{}
             let parts = []
@@ -119,59 +145,48 @@ fn type-str-inner(t) {
             (#parts == 1) ? parts[0] : parts.join(' <span class="t-kw">|</span> ')
         },
 
-        T.Intersect(overloads) =>
+        ty.Overload(overloads) =>
             overloads.map(type-str).join(' <span class="t-kw">&amp;</span> '),
 
-        T.Var(id) => "<span class=\"t-var\">{var-name(id)}</span>",
+        ty.BitAnd(a, b) =>
+            "{type-str(a)} <span class=\"t-kw\">&amp;</span> {type-str(b)}",
 
-        T.Record(elems) => do {
-            let members: _ = elems.members()
-            let named? = false
-            let parts = []
-            for name, typ in members {
-                if !str(name).match?(/^\d+$/) { named? = true }
-                parts.push(named? ? "{name}: {type-str(typ)}" : type-str(typ))
-            }
-            if #parts == 0 {
-                return "({[*elems].map(type-str).join(', ')})"
-            }
+        ty.TypeVar({id, *}) => "<span class=\"t-var\">{var-name(id)}</span>",
+
+        ty.Record(entries) => do {
+            let fields = [it for ty.RecordEntry(it) in entries]
+            let named? = fields.any?(\_.name != nil)
+            let parts = [
+                (it.name != nil) ? "{it.optional ? '?' : ''}{it.name}: {type-str(it.item)}" : type-str(it.item)
+                for fields
+            ]
             named? ? "\x7b{parts.join(', ')}\x7d" : "({parts.join(', ')})"
         },
 
-        T.List(elems) => elems.map(type-str).join(', '),
-
-        T.Tag(name) => do {
-            let fqn = str(name)
-            try { fqn = name.__fqn__ } catch _ { }
-            type-link(fqn, ":{name}", 't-tag')
-        },
-
-        T.Bottom => '<span class="t-kw">Bottom</span>',
-        T.Any    => '<span class="t-prim">Any</span>',
-        T.Nil    => '<span class="t-prim">nil</span>',
-        nil      => '<span class="t-kw">?</span>',
-        t        => str(t)
+        ty.Nil    => '<span class="t-prim">nil</span>',
+        ty.Any    => '<span class="t-prim">Any</span>',
+        ty.String(s) => "<span class=\"t-prim\">'{html-escape(s)}'</span>",
+        ty.Int(n)    => "<span class=\"t-prim\">{n}</span>",
+        nil          => '<span class="t-kw">?</span>',
+        t            => html-escape(T.show(t)),
     }
 }
 
 fn fn-sig-str(tparams, params, ret) {
     let tp-str = (#tparams > 0) ? "[{tparams.map(type-str).join(', ')}]" : ''
-    return "{tp-str}({params.map(param-sig).join(', ')}) &rarr; {type-str(ret)}"
+    return "{tp-str}({params.map(param-sig).filter(\_ != nil).join(', ')}) &rarr; {type-str(ret)}"
 }
 
 fn param-sig(p) {
-    let s = str(p.name)
-    let anonymous? = s == '' or s == 'nil'
-    if anonymous? { s = '_' }
-
-    if !p.required and !p.gather and !p.kwargs and !anonymous? { s = "?{s}" }
-    if p.gather { s = "*{s}" }
-    if p.kwargs { s = "**{s}" }
-
-    let ts = type-str(p.type)
-    if ts == '?' || ts == '<span class="t-kw">?</span>' { return s }
-    if anonymous? and !p.gather and !p.kwargs { return ts }
-    "{s}: {ts}"
+    match p {
+        ty.Spread(nil)          => '*',
+        ty.Spread(ty.Spread(t)) => "**{type-str(t)}",
+        ty.Spread(t)            => "*{type-str(t)}",
+        ty.RecordEntry({name: nil, item, *}) => type-str(item),
+        ty.RecordEntry({name, item, optional, *}) =>
+            "{optional ? '?' : ''}{name}: {type-str(item)}",
+        t => type-str(t),
+    }
 }
 
 let ck = chalk.Chalk()
@@ -427,15 +442,14 @@ fn render-fn-sig(name, t, anchor = nil) {
     }
 
     match t {
-        T.Func(tparams, params, ret) =>
+        fn-parts ~> (tparams, params, ret) =>
             emit-one-sig(tparams, params, ret),
-        T.Intersect(overloads) => for o in overloads {
-            if let T.Func(tparams, params, ret) = o {
+        ty.Overload(overloads) => for o in overloads {
+            if let (tparams, params, ret) = fn-parts(o) {
                 emit-one-sig(tparams, params, ret, wrap=true)
             }
         },
-        T.Bottom => print("<span class=\"sig\">{name-html}(...)</span>"),
-        t        => print("<span class=\"sig\">{name-html}</span>")
+        t => print("<span class=\"sig\">{name-html}</span>")
     }
 }
 
@@ -467,7 +481,7 @@ fn render-class(cls: _) {
     )
 
     let lineage = []
-    if let T.Object(sup-cls, targs) = cls.super {
+    if let $sup-cls = class-of-type(cls.super) {
         if Class.name(sup-cls) != 'Object' {
             lineage.push("extends {type-str(cls.super)}")
         }
@@ -485,7 +499,7 @@ fn render-class(cls: _) {
     if doc != nil { print("<div class=\"entry-doc class-doc\">{doc-to-html(doc)}</div>") }
 
     for m in cls.methods if str(m.name) == 'init' {
-        if let T.Func(tp, params, rt) = m.type {
+        if let (tp, params, rt) = fn-parts(m.type) {
             let ps = params.map(param-sig).join(', ')
             print(
                 "<div class=\"method\" id=\"{cid}.init\">"
@@ -510,7 +524,7 @@ fn render-class(cls: _) {
         let gid = "{cid}.{slug(g.name)}"
         print("<div class=\"method\" id=\"{gid}\">")
         match g.type {
-            T.Func(tp, ps, ret) => print(
+            fn-parts ~> (tp, ps, ret) => print(
                 "<span class=\"sig\">"
                 "<a class=\"fn-name\" href=\"#{gid}\">"
                 "{esc(g.name)}</a> "

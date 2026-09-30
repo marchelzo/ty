@@ -38,21 +38,103 @@ use SubscriptWrite[T, U] = { `[]=`: (T, U) -> U };
 use Countable = { `#`: () -> Int };
 use Formattable = { __fmt__: (*_) -> String };
 
-macro __flat-array! $$[
-    $${
-        fn flat(t0) {
-            match t0 {
-                types::Object(::Array, [u0])
-                    => flat(u0),
+fn __param-kind(p: _) -> String {
+    match p {
+        ty.Spread(ty.Spread(_))        => 'keyword-rest',
+        ty.Spread(nil)                 => 'separator',
+        ty.Spread(_)                   => 'rest',
+        ty.RecordEntry({name: nil, *}) => 'positional',
+        ty.RecordEntry(_)              => 'named',
+        _                              => 'positional',
+    }
+}
 
-                types::Union(us)
-                    => types.Union([flat(it) for us]),
-                _
-                    => types.Object(Array, [t0])
-            }
+fn __param-name(p: _) -> String | nil {
+    match p {
+        ty.RecordEntry({name, *}) => name,
+        _                         => nil,
+    }
+}
+
+fn __unshiftable(p: _) -> nil {
+    match p {
+        ty.RecordEntry(_) => nil,
+        _                 => throw "a required positional-only parameter cannot follow an omitted parameter",
+    }
+}
+
+fn __omit-params(ps: Array[_], names: Array[String]) -> Array[_] {
+    for names {
+        if !ps.any?(\__param-name(_) == it) {
+            throw "no parameter named `{it}`"
         }
     }
-$$]
+
+    let out = []
+    let closed? = false
+    let shifted? = false
+
+    for ps {
+        let kind = __param-kind(it)
+
+        if __param-name(it) in names {
+            shifted? = shifted? || !closed?
+            continue
+        }
+
+        if kind != 'named' && kind != 'positional' {
+            if !(shifted? && kind == 'rest') {
+                out.push(it)
+            }
+            closed? = true
+            continue
+        }
+
+        if !shifted? || closed? {
+            out.push(it)
+            continue
+        }
+
+        if kind == 'positional' {
+            __unshiftable(it)
+            continue
+        }
+
+        out.push(ty.Spread(nil))
+        out.push(it)
+        closed? = true
+    }
+
+    out
+}
+
+pub use Params[F] = match types.type(F) {
+    ty.Scheme({body, *})               => Params[body],
+    ty.TypeValue({constructor: $c, *}) => Params[c],
+    $$[: (*$$p) -> _ $$]               => p,
+    [*ps]                              => ps,
+}
+
+pub use Returns[F] = match types.type(F) {
+    ty.Scheme({body, *})               => Returns[body],
+    ty.TypeValue({constructor: $c, *}) => Returns[c],
+    $$[: (*_) -> $$r $$]               => r,
+}
+
+pub use Keywords[F] = do {
+    let named = [it for Params[F] if __param-kind(it) in ['named', 'keyword-rest']]
+    [ty.Spread(nil), *named]
+}
+
+pub use Omit[F, *names] = do {
+    __omit-params(Params[F], names)
+}
+
+pub use Flat[T] = match types.type(T) {
+    $$[: Array[$$u] $$] => Flat[u],
+    ty.Union(us)        => ty.Union([Flat[it] for us]),
+    _                   => $$[: Array[$$T] $$],
+}
 
 fn parse::expr(prec: ?Int, raw: true, resolve: ?Bool = false) -> (AST, _);
 fn parse::expr(prec: ?Int, raw: ?Bool, resolve: ?Bool = false) -> AST;
@@ -630,7 +712,7 @@ class Array[T] : Iterable[T] {
         }
     }
 
-    flat(n: ?Int) -> __flat-array!(T);
+    flat(n: ?Int) -> Flat[T];
 
     flatMap[U](f: T -> Array[U]) -> Array[U] {
         map(f).flat(1)

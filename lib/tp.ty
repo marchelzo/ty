@@ -11,7 +11,7 @@ pub class ThreadPool[F: Function] {
         __threads = [Thread(cast(runThread), __f, __setup) for _ in ..n]
     }
 
-    submit[...Args, T](*args: ...Args, %kwargs: _) -> Future[T] where (Args -> T): F {
+    submit[...Args, T](*args: ...Args, %kwargs: ...Args) -> Future[T] where (Args -> T): F {
         let future = Future()
         __queue.put((args, kwargs, future))
         future

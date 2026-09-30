@@ -90,6 +90,10 @@ struct t2_universe {
         u32  next_solver_id;
         u32  next_recursive_id;
         bool failed;
+
+        T2ComputedHook *computed_hook;
+        void           *computed_context;
+        u32             computed_depth;
 };
 
 typedef vec(u64) T2WatchVector;
@@ -907,6 +911,96 @@ t2_computed_type_result(T2Universe const *universe, T2Type computed)
         return (entry == NULL) ? T2_TYPE_INVALID : entry->result;
 }
 
+void
+t2_universe_set_computed_hook(
+        T2Universe     *universe,
+        T2ComputedHook *hook,
+        void           *context
+)
+{
+        if (universe != NULL) {
+                universe->computed_hook    = hook;
+                universe->computed_context = context;
+        }
+}
+
+static bool
+type_is_ground(T2Universe const *universe, T2Type type, unsigned depth)
+{
+        T2Node const *node = get_node(universe, type);
+        if (node == NULL || depth > T2_RELATION_DEPTH_LIMIT) {
+                return false;
+        }
+
+        switch (node->kind) {
+        case T2_TYPE_META:
+        case T2_TYPE_VARIABLE:
+        case T2_TYPE_BINDER:
+                return false;
+
+        case T2_TYPE_COMPUTED:
+                if (find_computed_result(universe, type) == NULL) {
+                        return false;
+                }
+                break;
+
+        default:
+                break;
+        }
+
+        for (usize i = 0; i < node->arity; ++i) {
+                if (!type_is_ground(universe, node->children[i], depth + 1)) {
+                        return false;
+                }
+        }
+
+        return true;
+}
+
+bool
+t2_type_is_ground(T2Universe const *universe, T2Type type)
+{
+        return type_is_ground(universe, type, 0);
+}
+
+static T2Type
+evaluate_computed(T2Universe *universe, T2Type computed)
+{
+        T2Node const *node = get_node(universe, computed);
+        if (
+                (universe->computed_hook == NULL)
+             || (node == NULL)
+             || (universe->computed_depth > 64)
+        ) {
+                return T2_TYPE_INVALID;
+        }
+
+        for (usize i = 0; i < node->arity; ++i) {
+                if (!type_is_ground(universe, node->children[i], 0)) {
+                        return T2_TYPE_INVALID;
+                }
+        }
+
+        universe->computed_depth += 1;
+        T2Type result = universe->computed_hook(
+                universe->computed_context,
+                universe,
+                computed
+        );
+        universe->computed_depth -= 1;
+
+        if (
+                (result == T2_TYPE_INVALID)
+             || (find_computed_result(universe, computed) != NULL)
+             || !t2_computed_type_set_result(universe, computed, result)
+        ) {
+                T2ComputedResult const *entry = find_computed_result(universe, computed);
+                return (entry == NULL) ? T2_TYPE_INVALID : entry->result;
+        }
+
+        return result;
+}
+
 T2Type
 t2_type_resolve_computed(T2Universe const *universe, T2Type type)
 {
@@ -928,7 +1022,13 @@ t2_type_resolve_computed(T2Universe const *universe, T2Type type)
                 }
                 T2ComputedResult const *entry = find_computed_result(universe, type);
                 if (entry == NULL) {
-                        return type;
+                        T2Type evaluated = evaluate_computed((T2Universe *)universe, type);
+                        if (evaluated == T2_TYPE_INVALID) {
+                                return type;
+                        }
+                        type = evaluated;
+                        remaining += 1;
+                        continue;
                 }
                 type = entry->result;
         }
@@ -3574,6 +3674,24 @@ subtype_relation(
 
 static T2Relation
 combine_all(T2Relation aggregate, T2Relation next);
+
+static bool
+keyword_refinement_packs(
+        T2Universe const *universe,
+        T2Node const     *a,
+        T2Node const     *b,
+        T2Type           *a_pack,
+        T2Type           *b_pack
+);
+
+static bool
+keyword_pack_pairs(
+        T2Universe const *universe,
+        T2Type            a_pack,
+        T2Type            b_pack,
+        T2Type          **pairs,
+        usize            *count
+);
 static T2Relation
 combine_any(T2Relation aggregate, T2Relation next);
 
@@ -4837,6 +4955,26 @@ subtype_compute(
                 return T2_RELATION_DEFERRED;
         }
 
+        T2Type a_keys;
+        T2Type b_keys;
+        if (keyword_refinement_packs(universe, a, b, &a_keys, &b_keys)) {
+                T2Type *pairs = NULL;
+                usize   count = 0;
+                if (!keyword_pack_pairs(universe, a_keys, b_keys, &pairs, &count)) {
+                        ty_free(pairs);
+                        return T2_RELATION_NO;
+                }
+                T2Relation relation = T2_RELATION_YES;
+                for (usize i = 0; i < count; ++i) {
+                        relation = combine_all(
+                                relation,
+                                subtype_relation(context, pairs[2 * i], pairs[2 * i + 1], progress + 1)
+                        );
+                }
+                ty_free(pairs);
+                return relation;
+        }
+
         if (a->kind == T2_TYPE_REFINEMENT) {
                 if (a->arity != 2) {
                         return T2_RELATION_NO;
@@ -5157,6 +5295,162 @@ subtype_compute(
         return T2_RELATION_NO;
 }
 
+static T2Type
+open_opaque_fold(T2Universe *universe, T2Type type)
+{
+        T2Node const *node = get_node(universe, type);
+        if (
+                (node == NULL)
+             || (node->kind != T2_TYPE_PACK_FOLD_UNION)
+             || (t2_type_kind(universe, node->children[0]) != T2_TYPE_PACK)
+             || ((node->flags & T2_NODE_META) != 0)
+        ) {
+                return type;
+        }
+
+        T2Type folded = t2_pack_fold_union(universe, node->children[0]);
+
+        return (folded == T2_TYPE_INVALID) ? type : folded;
+}
+
+static bool
+keyword_refinement_packs(
+        T2Universe const *universe,
+        T2Node const     *a,
+        T2Node const     *b,
+        T2Type           *a_pack,
+        T2Type           *b_pack
+)
+{
+        if (
+                (a == NULL)
+             || (b == NULL)
+             || (a->kind != T2_TYPE_REFINEMENT)
+             || (b->kind != T2_TYPE_REFINEMENT)
+             || (a->arity != 2)
+             || (b->arity != 2)
+        ) {
+                return false;
+        }
+
+        T2Node const *ap = get_node(universe, a->children[1]);
+        T2Node const *bp = get_node(universe, b->children[1]);
+        if (ap == NULL || bp == NULL || ap->kind != T2_TYPE_PACK || bp->kind != T2_TYPE_PACK) {
+                return false;
+        }
+
+        *a_pack = a->children[1];
+        *b_pack = b->children[1];
+
+        return true;
+}
+
+static bool
+keyword_pack_pairs(
+        T2Universe const *universe,
+        T2Type            a_pack,
+        T2Type            b_pack,
+        T2Type          **pairs,
+        usize            *count
+)
+{
+        T2Node const *a = get_node(universe, a_pack);
+        T2Node const *b = get_node(universe, b_pack);
+        usize an = (usize)a->payload;
+        usize bn = (usize)b->payload;
+
+        *count = 0;
+        *pairs = ty_malloc((2 * (an + bn) + 2) * sizeof **pairs);
+        if (*pairs == NULL) {
+                return false;
+        }
+
+        T2Type b_rest = T2_TYPE_INVALID;
+        for (usize j = 0; j < bn; ++j) {
+                T2ParameterSpec want;
+                if (
+                        pack_element_spec(universe, b->children[j], &want)
+                     && (want.kind == T2_PARAMETER_KEYWORD_REST)
+                ) {
+                        b_rest = want.type;
+                }
+        }
+
+        for (usize j = 0; j < bn; ++j) {
+                T2ParameterSpec want;
+                if (!pack_element_spec(universe, b->children[j], &want) || want.name == NULL) {
+                        continue;
+                }
+                if (want.kind == T2_PARAMETER_KEYWORD_REST) {
+                        continue;
+                }
+                bool found = false;
+                for (usize i = 0; i < an; ++i) {
+                        T2ParameterSpec have;
+                        if (
+                                pack_element_spec(universe, a->children[i], &have)
+                             && (have.kind != T2_PARAMETER_KEYWORD_REST)
+                             && (have.name != NULL)
+                             && s_eq(have.name, want.name)
+                        ) {
+                                if (want.required && !have.required) {
+                                        return false;
+                                }
+                                (*pairs)[2 * *count]     = have.type;
+                                (*pairs)[2 * *count + 1] = want.type;
+                                *count += 1;
+                                found = true;
+                                break;
+                        }
+                }
+                if (!found && want.required) {
+                        return false;
+                }
+        }
+
+        for (usize i = 0; i < an; ++i) {
+                T2ParameterSpec have;
+                if (!pack_element_spec(universe, a->children[i], &have)) {
+                        continue;
+                }
+                if (have.kind == T2_PARAMETER_KEYWORD_REST) {
+                        if (b_rest == T2_TYPE_INVALID) {
+                                return false;
+                        }
+                        (*pairs)[2 * *count]     = have.type;
+                        (*pairs)[2 * *count + 1] = b_rest;
+                        *count += 1;
+                        continue;
+                }
+                if (have.name == NULL) {
+                        continue;
+                }
+                bool known = false;
+                for (usize j = 0; j < bn; ++j) {
+                        T2ParameterSpec want;
+                        if (
+                                pack_element_spec(universe, b->children[j], &want)
+                             && (want.kind != T2_PARAMETER_KEYWORD_REST)
+                             && (want.name != NULL)
+                             && s_eq(want.name, have.name)
+                        ) {
+                                known = true;
+                        }
+                }
+                if (known) {
+                        continue;
+                }
+                if (b_rest == T2_TYPE_INVALID) {
+                        return false;
+                }
+                (*pairs)[2 * *count]     = have.type;
+                (*pairs)[2 * *count + 1] = b_rest;
+                *count += 1;
+        }
+
+        return true;
+}
+
 static T2Relation
 subtype_relation(
         T2RelationContext *context,
@@ -5174,6 +5468,9 @@ subtype_relation(
         if (subtype == supertype && subtype != T2_TYPE_INVALID) {
                 return T2_RELATION_YES;
         }
+
+        subtype   = open_opaque_fold((T2Universe *)context->universe, subtype);
+        supertype = open_opaque_fold((T2Universe *)context->universe, supertype);
 
         if (++context->steps > context->step_limit) {
                 return T2_RELATION_COMPLEXITY;
@@ -7065,11 +7362,42 @@ doc_type(T2Printer *printer, T2Type type, unsigned depth)
                 break;
         }
         case T2_TYPE_REFINEMENT:
+        {
+                T2Node const *pack = get_node(printer->universe, node->children[1]);
+                if (pack != NULL && pack->kind == T2_TYPE_PACK) {
+                        begin_list(printer, T2_TOKEN_STRUCTURE, "%{");
+                        for (usize i = 0; i < (usize)pack->payload; ++i) {
+                                list_separator(printer, i);
+                                T2Node const *element = get_node(printer->universe, pack->children[i]);
+                                if (element->kind == T2_TYPE_PARAMETER) {
+                                        doc_parameter(printer, element, depth);
+                                } else {
+                                        doc_type(printer, pack->children[i], depth);
+                                }
+                        }
+                        end_list(printer, T2_TOKEN_STRUCTURE, "}");
+                        break;
+                }
+                if (
+                        (pack != NULL)
+                     && (
+                                (pack->kind == T2_TYPE_META)
+                             || (pack->kind == T2_TYPE_VARIABLE)
+                        )
+                     && (pack->variable_kind == T2_VARIABLE_PACK)
+                ) {
+                        text(printer, T2_TOKEN_STRUCTURE, "%{");
+                        text(printer, T2_TOKEN_PUNCTUATION, "*");
+                        doc_type(printer, node->children[1], depth);
+                        text(printer, T2_TOKEN_STRUCTURE, "}");
+                        break;
+                }
                 doc_operand(printer, node->children[0], depth);
                 begin_list(printer, T2_TOKEN_BRACKET, "[");
                 doc_type(printer, node->children[1], depth);
                 end_list(printer, T2_TOKEN_BRACKET, "]");
                 break;
+        }
         case T2_TYPE_COMPUTED:
                 text(printer, T2_TOKEN_KEYWORD, "computed");
                 text(printer, T2_TOKEN_PUNCTUATION, " ");
@@ -10164,6 +10492,79 @@ constrain_positional_suffix_pack(
 }
 
 static T2Relation
+constrain_positional_prefix_pack(
+        T2Solver     *solver,
+        T2Node const *actual,
+        T2Node const *expected,
+        T2Type        actual_pack,
+        char const   *provenance,
+        bool          retain_deferred
+)
+{
+        T2Universe *universe = solver->universe;
+        usize count = (usize)expected->payload;
+        T2Type *elements = (count == 0) ? NULL : ty_malloc(count * sizeof *elements);
+        if (count != 0 && elements == NULL) {
+                solver->failed = true;
+                return T2_RELATION_COMPLEXITY;
+        }
+
+        usize skip = 0;
+        for (usize i = 0; i < (usize)actual->payload; ++i) {
+                T2ParameterSpec spec;
+                if (
+                        pack_element_spec(universe, actual->children[i], &spec)
+                     && parameter_kind_positional(spec.kind)
+                     && (spec.kind != T2_PARAMETER_POSITIONAL_REST)
+                ) {
+                        skip += 1;
+                }
+        }
+
+        usize n          = 0;
+        usize positional = 0;
+        for (usize i = 0; i < count; ++i) {
+                T2ParameterSpec spec;
+                if (!pack_element_spec(universe, expected->children[i], &spec)) {
+                        continue;
+                }
+                if (
+                        (spec.kind == T2_PARAMETER_POSITIONAL_ONLY)
+                     || (spec.kind == T2_PARAMETER_POSITIONAL_OR_KEYWORD)
+                ) {
+                        if (positional++ < skip) {
+                                continue;
+                        }
+                }
+                if (
+                        (spec.kind == T2_PARAMETER_KEYWORD_ONLY)
+                     && (spec.name != NULL)
+                     && (function_keyword_parameter(universe, actual, spec.name) != NULL)
+                ) {
+                        continue;
+                }
+                if (spec.kind == T2_PARAMETER_KEYWORD_REST) {
+                        continue;
+                }
+                elements[n++] = t2_pack_element(universe, &spec);
+        }
+
+        T2Type pack = t2_pack(universe, elements, n, T2_TYPE_INVALID);
+        ty_free(elements);
+        if (pack == T2_TYPE_INVALID) {
+                return T2_RELATION_COMPLEXITY;
+        }
+
+        return constrain_internal(
+                solver,
+                actual_pack,
+                pack,
+                provenance,
+                retain_deferred
+        );
+}
+
+static T2Relation
 constrain_function_types(
         T2Solver     *solver,
         T2Type        actual_type,
@@ -10212,7 +10613,11 @@ constrain_function_types(
         );
         bool suffix_pack = (expected_pack != NULL)
                         && (actual_pack == NULL);
-        T2Relation shape = suffix_pack
+        bool prefix_pack = (actual_pack != NULL)
+                        && (expected_pack == NULL)
+                        && (expected_rest == NULL)
+                        && (actual_rest == NULL);
+        T2Relation shape = (suffix_pack || prefix_pack)
                          ? T2_RELATION_YES
                          : callable_shape_relation(
                                  solver->universe,
@@ -10262,6 +10667,9 @@ constrain_function_types(
                         actual,
                         i
                 );
+                if (have == NULL && prefix_pack) {
+                        continue;
+                }
                 if (have == NULL) {
                         have = (actual_rest == NULL) ? actual_pack : actual_rest;
                 }
@@ -10280,7 +10688,22 @@ constrain_function_types(
                 }
         }
 
-        if (suffix_pack) {
+        if (prefix_pack) {
+                result = combine_all(
+                        result,
+                        constrain_positional_prefix_pack(
+                                solver,
+                                actual,
+                                expected,
+                                actual_pack->children[0],
+                                provenance,
+                                retain_deferred
+                        )
+                );
+                if (solver->failed) {
+                        return T2_RELATION_NO;
+                }
+        } else if (suffix_pack) {
                 result = combine_all(
                         result,
                         constrain_positional_suffix_pack(
@@ -10322,6 +10745,9 @@ constrain_function_types(
                         actual,
                         wanted->text
                 );
+                if (have == NULL && prefix_pack && actual_kwrest == NULL) {
+                        continue;
+                }
                 if (have == NULL) {
                         have = actual_kwrest;
                 }
@@ -11352,6 +11778,60 @@ constrain_internal(
              || solver_types_identical(solver, subtype, supertype, 0)
         ) {
                 return T2_RELATION_YES;
+        }
+
+        subtype   = open_opaque_fold(solver->universe, subtype);
+        supertype = open_opaque_fold(solver->universe, supertype);
+
+        T2Node const *refined = get_node(solver->universe, subtype);
+        T2Node const *target  = get_node(solver->universe, supertype);
+        T2Type a_keys;
+        T2Type b_keys;
+        if (keyword_refinement_packs(solver->universe, refined, target, &a_keys, &b_keys)) {
+                T2Type *pairs = NULL;
+                usize   count = 0;
+                if (!keyword_pack_pairs(solver->universe, a_keys, b_keys, &pairs, &count)) {
+                        ty_free(pairs);
+                        set_solver_error(
+                                solver,
+                                "incompatible dictionary keys",
+                                subtype,
+                                supertype,
+                                provenance
+                        );
+                        return T2_RELATION_NO;
+                }
+                T2Relation relation = T2_RELATION_YES;
+                for (usize i = 0; i < count; ++i) {
+                        relation = combine_all(
+                                relation,
+                                constrain_internal(
+                                        solver,
+                                        pairs[2 * i],
+                                        pairs[2 * i + 1],
+                                        provenance,
+                                        retain_deferred
+                                )
+                        );
+                }
+                ty_free(pairs);
+                return relation;
+        }
+        if (
+                (refined != NULL)
+             && (target != NULL)
+             && (refined->kind == T2_TYPE_REFINEMENT)
+             && (refined->arity == 2)
+             && (target->kind != T2_TYPE_REFINEMENT)
+             && (meta_from_type(solver, supertype) == 0)
+        ) {
+                return constrain_internal(
+                        solver,
+                        refined->children[0],
+                        supertype,
+                        provenance,
+                        retain_deferred
+                );
         }
 
         u32 a_meta = meta_from_type(solver, subtype);
@@ -16076,8 +16556,19 @@ zonk_type(T2ZonkContext *context, T2Type source)
                 return result;
         }
 
-        if (node->kind == T2_TYPE_FUNCTION) {
+        if (node->kind == T2_TYPE_COMPUTED) {
+                T2Type resolved = t2_type_resolve_computed(solver->universe, result);
+                if (resolved != T2_TYPE_INVALID) {
+                        result = resolved;
+                }
+        }
+
+        if (t2_type_kind(solver->universe, result) == T2_TYPE_FUNCTION) {
                 result = expand_pack_parameter(solver, result);
+                T2Type normalized = t2_callable_normalize_packs(solver->universe, result);
+                if (normalized != T2_TYPE_INVALID) {
+                        result = normalized;
+                }
         }
 
         xvP(context->entries, ((T2ZonkEntry) {
@@ -16226,3 +16717,229 @@ t2_solver_retire_metas_since(T2Solver *solver, T2SolverMark mark)
 }
 
 /* vim: set sts=8 sw=8 expandtab: */
+
+static bool
+callable_pack_parameter(T2Universe const *universe, T2ParameterSpec const *spec)
+{
+        T2TypeKind kind = t2_type_kind(universe, spec->type);
+
+        return (spec->kind == T2_PARAMETER_PACK)
+            || (
+                       (spec->kind == T2_PARAMETER_POSITIONAL_REST)
+                    && ((kind == T2_TYPE_PACK) || (kind == T2_TYPE_PACK_EMPTY))
+               );
+}
+
+static T2Type
+callable_expand_packs(T2Universe *universe, T2Type callable)
+{
+        T2Node const *node = get_node(universe, callable);
+        usize count = (usize)node->payload;
+        usize total = 0;
+
+        for (usize i = 0; i < count; ++i) {
+                T2ParameterSpec spec;
+                if (!t2_callable_parameter(universe, callable, i, &spec)) {
+                        return T2_TYPE_INVALID;
+                }
+                T2Node const *pack = get_node(universe, spec.type);
+                total += callable_pack_parameter(universe, &spec) && (pack != NULL) && (pack->kind == T2_TYPE_PACK)
+                       ? (usize)pack->payload + 1
+                       : 1;
+        }
+
+        if (total == count) {
+                bool closed = true;
+                for (usize i = 0; i < count; ++i) {
+                        T2ParameterSpec spec;
+                        (void)t2_callable_parameter(universe, callable, i, &spec);
+                        closed &= !callable_pack_parameter(universe, &spec)
+                               || (
+                                          (spec.kind == T2_PARAMETER_PACK)
+                                       && (t2_type_kind(universe, spec.type) != T2_TYPE_PACK_EMPTY)
+                                  );
+                }
+                if (closed) {
+                        return callable;
+                }
+        }
+
+        T2ParameterSpec *specs = ty_malloc((total + 1) * sizeof *specs);
+        if (specs == NULL) {
+                return T2_TYPE_INVALID;
+        }
+
+        usize n = 0;
+        for (usize i = 0; i < count; ++i) {
+                T2ParameterSpec spec;
+                (void)t2_callable_parameter(universe, callable, i, &spec);
+
+                T2Node const *pack = get_node(universe, spec.type);
+                if (!callable_pack_parameter(universe, &spec) || pack == NULL) {
+                        specs[n++] = spec;
+                        continue;
+                }
+
+                if (pack->kind == T2_TYPE_PACK_EMPTY) {
+                        continue;
+                }
+
+                if (pack->kind != T2_TYPE_PACK) {
+                        specs[n++] = spec;
+                        continue;
+                }
+
+                for (usize j = 0; j < (usize)pack->payload; ++j) {
+                        if (!pack_element_spec(universe, pack->children[j], &specs[n++])) {
+                                ty_free(specs);
+                                return T2_TYPE_INVALID;
+                        }
+                }
+
+                T2Type tail = pack->children[pack->payload];
+                if (t2_type_kind(universe, tail) != T2_TYPE_PACK_EMPTY) {
+                        specs[n++] = (T2ParameterSpec) {
+                                .type = tail,
+                                .kind = T2_PARAMETER_PACK
+                        };
+                }
+        }
+
+        T2Type result = callable_type(
+                universe,
+                specs,
+                n,
+                t2_callable_result(universe, callable),
+                t2_callable_yield(universe, callable),
+                t2_callable_send(universe, callable),
+                t2_callable_is_effectful(universe, callable)
+        );
+
+        ty_free(specs);
+
+        return result;
+}
+
+bool
+t2_parameter_spec(T2Universe const *universe, T2Type element, T2ParameterSpec *spec)
+{
+        return (spec != NULL) && pack_element_spec(universe, element, spec);
+}
+
+T2Type
+t2_callable_normalize_packs(T2Universe *universe, T2Type callable)
+{
+        return (t2_type_kind(universe, callable) == T2_TYPE_FUNCTION)
+             ? callable_expand_packs(universe, callable)
+             : callable;
+}
+
+static bool
+type_has_computed(T2Universe const *universe, T2Type type, unsigned depth)
+{
+        T2Node const *node = get_node(universe, type);
+        if (node == NULL || depth > T2_RELATION_DEPTH_LIMIT) {
+                return false;
+        }
+
+        if (node->kind == T2_TYPE_COMPUTED) {
+                return true;
+        }
+
+        if (node->kind == T2_TYPE_RECURSIVE) {
+                return false;
+        }
+
+        for (usize i = 0; i < node->arity; ++i) {
+                if (type_has_computed(universe, node->children[i], depth + 1)) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+bool
+t2_type_has_computed(T2Universe const *universe, T2Type type)
+{
+        return type_has_computed(universe, type, 0);
+}
+
+static T2Type
+resolve_computed_deep(T2Universe *universe, T2Type type, unsigned depth)
+{
+        T2Node const *node = get_node(universe, type);
+        if (node == NULL || depth > T2_RELATION_DEPTH_LIMIT) {
+                return type;
+        }
+
+        if (node->kind == T2_TYPE_RECURSIVE || node->arity == 0) {
+                return type;
+        }
+
+        T2Type *children = ty_malloc(node->arity * sizeof *children);
+        if (children == NULL) {
+                return type;
+        }
+
+        bool changed = false;
+        for (usize i = 0; i < node->arity; ++i) {
+                children[i] = resolve_computed_deep(universe, node->children[i], depth + 1);
+                changed |= (children[i] != node->children[i]);
+        }
+
+        T2Type result = changed ? rebuild_type(universe, node, children) : type;
+        ty_free(children);
+
+        if (result == T2_TYPE_INVALID) {
+                return type;
+        }
+
+        if (t2_type_kind(universe, result) == T2_TYPE_COMPUTED) {
+                T2Type resolved = t2_type_resolve_computed(universe, result);
+                if (resolved != T2_TYPE_INVALID) {
+                        result = resolved;
+                }
+        }
+
+        if (t2_type_kind(universe, result) == T2_TYPE_FUNCTION) {
+                T2Type normalized = callable_expand_packs(universe, result);
+                if (normalized != T2_TYPE_INVALID) {
+                        result = normalized;
+                }
+        }
+
+        return result;
+}
+
+T2Type
+t2_type_resolve_computed_deep(T2Universe *universe, T2Type type)
+{
+        return type_has_computed(universe, type, 0)
+             ? resolve_computed_deep(universe, type, 0)
+             : type;
+}
+
+T2Type
+t2_pack_fold_union_opaque(T2Universe *universe, T2Type pack)
+{
+        if (t2_type_kind(universe, pack) != T2_TYPE_PACK) {
+                return t2_pack_fold_union(universe, pack);
+        }
+
+        return intern_type(
+                universe,
+                T2_TYPE_PACK_FOLD_UNION,
+                T2_VARIABLE_FLEXIBLE,
+                0,
+                NULL,
+                &pack,
+                1
+        );
+}
+
+T2Type
+t2_type_normalize_deep(T2Universe *universe, T2Type type)
+{
+        return resolve_computed_deep(universe, type, 0);
+}

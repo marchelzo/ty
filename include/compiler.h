@@ -298,6 +298,9 @@ compiler_introduce_tag(Ty *ty, char const *module, char const *name, int super);
 bool
 compiler_symbolize_expression(Ty *ty, Expr *e, Scope *scope);
 
+bool
+compiler_symbolize_type(Ty *ty, Expr *e, Scope *scope);
+
 void
 CompilerDoUse(Ty *ty, Stmt *s, Scope *scope);
 
@@ -741,6 +744,12 @@ void
 CompilerRestoreArena(ArenaSnapshotVector const *snaps);
 
 #endif
+
+Value
+compiler_type_function(Ty *ty, Symbol const *sym);
+
+Value
+compiler_template_pattern(Ty *ty, Expr *e);
 
 #endif
 

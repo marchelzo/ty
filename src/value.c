@@ -1529,6 +1529,9 @@ value_test_equality(Ty *ty, Value const *v1, Value const *v2)
         case PAIR_OF(VALUE_TAG):
                 return (v1->tag == v2->tag);
 
+        case PAIR_OF(VALUE_TYPE):
+                return (v1->z == v2->z);
+
         case PAIR_OF(VALUE_PTR):
                 return (v1->ptr == v2->ptr);
 

@@ -2189,6 +2189,88 @@ prefix_dollar(Ty *ty)
 }
 
 static Expr *
+patternize(Ty *ty, Expr *e);
+
+static Expr *
+template_pattern(Ty *ty, Expr *template)
+{
+        usize count = vN(template->template.holes);
+
+        Expr *bindings = mkxpr(ARRAY);
+        bindings->start = template->start;
+        bindings->end = template->end;
+
+        for (usize i = 0; i < count; ++i) {
+                Expr *hole = v__(template->template.holes, i);
+                if (hole->type != EXPRESSION_IDENTIFIER || hole->module != NULL) {
+                        EStart = hole->start;
+                        EEnd = hole->end;
+                        die("holes in a quasiquote pattern must be plain names");
+                }
+                Expr *binding = mkxpr(IDENTIFIER);
+                binding->identifier = hole->identifier;
+                binding->module = NULL;
+                binding->start = hole->start;
+                binding->end = hole->end;
+                avP(bindings->elements, binding);
+                avP(bindings->aconds, NULL);
+                avP(bindings->optional, false);
+        }
+
+        Expr *fun = mkxpr(IDENTIFIER);
+        fun->identifier = "__ast_match__";
+        fun->module = NULL;
+        fun->start = template->start;
+        fun->end = template->end;
+
+        Value *pointer = amA(sizeof *pointer);
+        *pointer = PTR(template);
+
+        Expr *source = mkxpr(VALUE);
+        source->v = pointer;
+        source->start = template->start;
+        source->end = template->end;
+
+        Expr *n = mkxpr(INTEGER);
+        n->integer = (intmax_t)count;
+        n->start = template->start;
+        n->end = template->end;
+
+        char *param = gensym();
+
+        Expr *subject = mkxpr(IDENTIFIER);
+        subject->identifier = param;
+        subject->module = NULL;
+        subject->start = template->start;
+        subject->end = template->end;
+
+        Expr *call = mkcall(ty, fun);
+        avP(call->args, source);
+        avP(call->fconds, NULL);
+        avP(call->args, n);
+        avP(call->fconds, NULL);
+        avP(call->args, subject);
+        avP(call->fconds, NULL);
+        call->end = template->end;
+
+        Expr *matcher = mkfunc(ty);
+        matcher->start = template->start;
+        matcher->end = template->end;
+        avP(matcher->params, param);
+        avP(matcher->constraints, NULL);
+        avP(matcher->dflts, NULL);
+        matcher->body = to_stmt(call);
+
+        Expr *view = mkxpr(VIEW_PATTERN);
+        view->left = matcher;
+        view->right = patternize(ty, bindings);
+        view->start = template->start;
+        view->end = template->end;
+
+        return view;
+}
+
+static Expr *
 prefix_identifier(Ty *ty)
 {
         expect(TOKEN_IDENTIFIER);
@@ -2675,6 +2757,10 @@ prefix_record(Ty *ty)
                                 item->type = EXPRESSION_MATCH_REST;
                                 item->identifier = "_";
                                 item->module = NULL;
+                        } else if (TypeContext && T0 == ',') {
+                                item->type = EXPRESSION_SPREAD;
+                                item->value = NULL;
+                                item->end = TEnd;
                         } else {
                                 item->type = EXPRESSION_SPREAD;
                                 item->value = parse_expr(ty, 0);
@@ -3784,6 +3870,10 @@ prefix_template(Ty *ty)
         next();
 
         CurrentTemplate = template;
+        if (T0 == ':' && try_consume(':')) {
+                Expr *type = parse_type(ty, 0);
+                avP(template->template.stmts, to_stmt(type));
+        }
         while (T0 != TOKEN_TEMPLATE_END) {
                 avP(template->template.stmts, parse_statement(ty, 0));
         }
@@ -5332,6 +5422,8 @@ definition_lvalue(Ty *ty, Expr *e)
         case EXPRESSION_TEMPLATE_XHOLE:
         case EXPRESSION_KW_AND:
                 return e;
+        case EXPRESSION_TEMPLATE:
+                return template_pattern(ty, e);
         case EXPRESSION_REF_PATTERN:
                 e->target = assignment_lvalue(ty, e->target);
                 return e;
@@ -5470,6 +5562,9 @@ patternize(Ty *ty, Expr *e)
         case EXPRESSION_KW_AND:
                 e->left = patternize(ty, e->left);
                 return e;
+
+        case EXPRESSION_TEMPLATE:
+                return template_pattern(ty, e);
 
         default:
                 return e;
@@ -6717,6 +6812,38 @@ have_typedef(Ty *ty)
 }
 
 static Stmt *
+type_function(Ty *ty, Stmt *use)
+{
+        Expr *f = mkfunc(ty);
+        f->name = use->class.name;
+        f->start = use->start;
+
+        for (usize i = 0; i < vN(use->class.type_params); ++i) {
+                Expr const *param = v__(use->class.type_params, i);
+                if (param->type == EXPRESSION_MATCH_REST) {
+                        f->rest = (int)i;
+                }
+                avP(f->params, param->identifier);
+                avP(f->constraints, NULL);
+                avP(f->dflts, NULL);
+        }
+
+        Expr *body = parse_expr(ty, 0);
+        f->body = to_stmt(body);
+        f->end = TEnd;
+
+        Stmt *def = mkstmt(ty);
+        def->type = STATEMENT_FUNCTION_DEFINITION;
+        def->target = mkid(use->class.name);
+        def->target->start = use->start;
+        def->value = f;
+        def->start = use->start;
+        def->end = TEnd;
+
+        return def;
+}
+
+static Stmt *
 parse_use(Ty *ty)
 {
         Stmt *stmt = mkstmt(ty);
@@ -6751,7 +6878,12 @@ parse_use(Ty *ty)
                         parse_type_params(ty, &stmt->class.type_params);
                 }
                 consume('=');
-                stmt->class.type = parse_type(ty, -1);
+                if (K0 == KEYWORD_MATCH || K0 == KEYWORD_DO) {
+                        stmt->class.type = NULL;
+                        stmt->class.tfn = type_function(ty, stmt);
+                } else {
+                        stmt->class.type = parse_type(ty, -1);
+                }
                 stmt->end = TEnd;
                 return stmt;
         }

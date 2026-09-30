@@ -383,6 +383,7 @@ BUILTIN_FUNCTION(ty_type_check);
 BUILTIN_FUNCTION(ty_type_inst);
 BUILTIN_FUNCTION(ty_type_infer);
 BUILTIN_FUNCTION(ty_type_show);
+BUILTIN_FUNCTION(ast_template_match);
 BUILTIN_FUNCTION(ty_definition);
 BUILTIN_FUNCTION(token_next);
 BUILTIN_FUNCTION(token_peek);

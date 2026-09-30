@@ -111,6 +111,12 @@ T2Type
 t2_resolve(Ty *ty, Expr *type_expression);
 
 T2Type
+t2_type_constant(Ty *ty, Symbol const *symbol);
+
+void
+t2_register_type_function(Ty *ty, Symbol const *symbol);
+
+T2Type
 t2_infer(Ty *ty, Expr *expression);
 
 T2Type
@@ -134,6 +140,9 @@ t2_show(Ty *ty, T2Type type);
 
 Value
 t2_to_ty(Ty *ty, T2Type type);
+
+Value
+t2_to_ast(Ty *ty, T2Type type);
 
 T2Type
 t2_from_ty(Ty *ty, Value const *value);

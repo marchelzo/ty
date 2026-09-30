@@ -5,7 +5,7 @@ import chalk (chalk)
 import path (Path)
 import readln (readln)
 
-const HELP = '
+const HELP = '''
   c, continue            resume all threads
   n, next                step over
   s, step                step into
@@ -28,7 +28,7 @@ const HELP = '
   EXPR                   anything else is evaluated as well
   q, detach              detach and let the program keep running
   kill                   detach and terminate the program
-'
+'''
 
 fn split-message(buf: Blob) -> String | nil {
     let $end = buf.search('\r\n\r\n') or return nil
@@ -283,11 +283,14 @@ class Session {
     }
 
     load-frames() {
-        frames = (body('stackTrace', %{'threadId': thread}) ?? %{})['stackFrames'] ?? []
+        frames = match body('stackTrace', %{'threadId': thread}) {
+            $trace => trace['stackFrames'] ?? [],
+            _      => []
+        }
     }
 
     current() -> Dict[String, Any] | nil {
-        (frame < #frames) ? frames[frame] : nil
+        frames(frame).or-else(nil)
     }
 
     source-lines(frame: Dict[String, Any]) -> Array[String] {

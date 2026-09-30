@@ -107,11 +107,11 @@ pub fn token-values() {
 }
 
 pub fn literal-types() {
-    let expected = types.String("a\x00b")
+    let expected = ty.String("a\x00b")
     assert(types.type(expected) == expected)
-    assert(types.check(expected, types.String("a\x00b")))
-    assert(!types.check(expected, types.String("a\x00c")))
-    assert(!types.check(expected, types.String('a')))
+    assert(types.check(expected, ty.String("a\x00b")))
+    assert(!types.check(expected, ty.String("a\x00c")))
+    assert(!types.check(expected, ty.String('a')))
     assert("a\x00b" :: NulString)
     assert(!("a\x00c" :: NulString))
     assert(!('a' :: NulString))
