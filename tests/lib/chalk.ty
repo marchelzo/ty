@@ -1,4 +1,4 @@
-import chalk (chalk, strip, escape, trans, parse, hslToRgb, hsl-hex)
+import chalk (Chalk, chalk, strip, escape, trans, parse, hslToRgb, hsl-hex, hash-hsl)
 
 ns test
 
@@ -724,4 +724,25 @@ pub fn test-text-link() {
     assert(t.plain == 'click')
     let s = "{t}"
     assert("{ESC}]8;;https://x.com{ESC}\\" in s)
+}
+
+pub fn test-hash-hsl-is-deterministic() {
+    assert(hash-hsl('git-1303616?') == hash-hsl('git-1303616?'))
+    assert(hash-hsl('git-1303616?') != hash-hsl('git-1303617?'))
+}
+
+pub fn test-hash-hsl-respects-ranges() {
+    let (h, s, l) = hash-hsl('thread7?', s: 0.5, l: (0.6, 0.75))
+    assert(0.0 <= h && h <= 1.0)
+    assert(s == 0.5)
+    assert(0.6 <= l && l <= 0.75)
+}
+
+pub fn test-hashed-style-is-stable-across-chalks() {
+    rand()
+    let a = Chalk().render('[git-abc1234?]x[/]', plain: false)
+    rand()
+    let b = Chalk().render('[git-abc1234?]x[/]', plain: false)
+    assert(a == b)
+    assert(a != Chalk().render('[git-abc1235?]x[/]', plain: false))
 }

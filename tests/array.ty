@@ -20,3 +20,10 @@ pub fn arr() {
     }
     assert(false)
 }
+
+pub fn classify-groups-without-leaking-a-default() {
+    let groups = ['a1', 'b1', 'a2'].classify(\_[0])
+    assert(#groups == 2 && groups['a'] == ['a1', 'a2'] && groups['b'] == ['b1'])
+    assert(groups['c'] == nil)
+    assert('c' not in groups)
+}

@@ -2,6 +2,7 @@ import date (Instant, Now, ZonedDateTime)
 import ffi as c (C!)
 import os
 import path (Path)
+import sh
 import ty
 
 pub class GitError < RuntimeError {
@@ -472,6 +473,25 @@ fn check(code: Int, operation: String = '') -> Int {
 }
 
 check(raw.git_libgit2_init(), 'initialize libgit2')
+
+let cli-available? = (getenv('PATH') ?? '').split(':').any?(\(Path(_ || '.') / 'git').executable?)
+
+fn cli(repo: Repository, operation: String, args: [String], input: ?String = nil) -> String {
+    let git-dir = str(repo.path)
+    let trust   = (os.geteuid() == 0) ? ['-c', 'safe.directory=*'] : []
+    let result  = sh.run(['git', '--no-optional-locks', *trust, "--git-dir={git-dir}", *args],
+                         input:, chdir: git-dir)
+    if result.ok? {
+        return result.stdout
+    }
+
+    let message = result.stderr.trim() || "git {args[0]} failed"
+    let error = match message {
+        /unknown revision|bad revision|bad object|no such path/ => NotFoundError,
+        _                                                       => GitError,
+    }
+    throw error(message, operation: operation)
+}
 
 pub fn version() -> (Int, Int, Int) {
     let v = c.new(c.int, 3)
@@ -1155,26 +1175,56 @@ pub class History : Iterable[Commit] {
     __limit:        ?Int
     __reverse:      Bool
     __first-parent: Bool
+    __sorted:       Bool
 
     init(repo: Repository, start: Revision, hide: [Revision], limit: ?Int,
-         reverse: Bool, first-parent: Bool) {
+         reverse: Bool, first-parent: Bool, sorted: Bool) {
         __repo         = repo
         __start        = start
         __hide         = hide
         __limit        = limit
         __reverse      = reverse
         __first-parent = first-parent
+        __sorted       = sorted
     }
 
     __iter__() -> Iter[Commit] {
         let empty? = __limit == 0 || (__start == 'HEAD' && __repo.unborn?)
-        empty? ? [].__iter__() : __walk().__iter__()
+        let narrow? = __limit != nil || #__hide > 0
+        match (empty?, cli-available? && narrow?) {
+            (true, _) => [].__iter__(),
+            (_, true) => __listed().__iter__(),
+            _         => __walk().__iter__(),
+        }
+    }
+
+    __tip() -> String {
+        if let s: String = __start and '..' in s {
+            return s
+        }
+        __repo[__start].id.hex
+    }
+
+    __listed*() -> Generator[Commit] {
+        let options = [
+            ('--date-order',          __sorted && !__first-parent),
+            ('--first-parent',        __first-parent),
+            ('--reverse',             __reverse),
+            ("--max-count={__limit}", __limit != nil && !__reverse),
+        ]
+        let flags = [flag for (flag, on?) in options if on?]
+        let revisions = [__tip(), *__hide.map(r -> "^{__repo[r].id.hex}")]
+        let listed = cli(__repo, 'log', ['rev-list', *flags, '--stdin'], input: revisions.join('\n'))
+        let ids = listed.scan(/[0-9a-f]{40}/)
+        for hex in (__reverse && __limit != nil) ? ids[;__limit] : ids {
+            yield __repo.commit-at(Oid(hex))
+        }
     }
 
     __walk*() -> Generator[Commit] {
         let p = pointer(raw.git_revwalk_new@(_, __repo.handle))
         let ^walk = Handle(p, raw.git_revwalk_free, __repo)
-        check(raw.git_revwalk_sorting(p, 3 | (__reverse ? 4 : 0)))
+        check(raw.git_revwalk_sorting(p, (__sorted ? 3 : 0) | (__reverse ? 4 : 0)))
 
         if __first-parent {
             check(raw.git_revwalk_simplify_first_parent(p))
@@ -1763,6 +1813,39 @@ pub class Blame : Iterable[BlameHunk] {
     #() -> Int { #hunks }
 }
 
+fn tz-minutes(sign: String, hours: String, minutes: String) -> Int {
+    (sign == '-' ? -1 : 1) * (int(hours) * 60 + int(minutes))
+}
+
+fn blank-author() {
+    ({name: '', email: '', seconds: 0, offset: 0})
+}
+
+fn blame-hunks(repo: Repository, incremental: String) -> [BlameHunk] {
+    let authors = %{}
+    let spans   = []
+    let author  = blank-author()
+
+    for line in incremental.lines() {
+        match line {
+            /^([0-9a-f]{40}) \d+ (\d+) (\d+)$/ => {
+                author = authors[$1] ?? (authors[$1] = blank-author())
+                spans.push({id: Oid($1), author, start: int($2), count: int($3)})
+            },
+            /^author (.*)$/                  => { author.name    = $1 },
+            /^author-mail <(.*)>$/           => { author.email   = $1 },
+            /^author-time (\d+)$/            => { author.seconds = int($1) },
+            /^author-tz ([+-])(\d\d)(\d\d)$/ => { author.offset  = tz-minutes($1, $2, $3) },
+            _                                => (),
+        }
+    }
+
+    [
+        BlameHunk(repo, id, Signature(a.name, a.email, a.seconds, a.offset), start, count)
+        for {id, author: a, start, count} in spans.sort(by: &.start)
+    ]
+}
+
 fn blame-hunk(repo: Repository, p: Ptr[Any]) -> BlameHunk {
     let h = raw.GitBlameHunk(p)
     BlameHunk(repo, Oid(oid-text(h.id)), signature(h.author), h.start, h.lines)
@@ -1899,11 +1982,27 @@ pub class Repository < Handle {
 
     files(revision: Revision = 'HEAD') -> [TreeEntry] { self[revision].files }
 
-    blame(path: String | Path, revision: Revision = 'HEAD') -> Blame {
+    blame(path: String | Path, revision: Revision = 'HEAD', oldest: ?Revision = nil) -> Blame {
+        cli-available? ? __blame-cli(str(path), revision, oldest) : __blame-native(path, revision, oldest)
+    }
+
+    __blame-cli(path: String, revision: Revision, oldest: ?Revision) -> Blame {
+        let boundary = match oldest {
+            nil       => [],
+            $boundary => ["^{commit-at(boundary).hex}"],
+        }
+        let range = [commit-at(revision).hex, *boundary]
+        Blame(blame-hunks(self, cli(self, 'blame', ['blame', '--incremental', *range, '--', path])))
+    }
+
+    __blame-native(path: String | Path, revision: Revision, oldest: ?Revision) -> Blame {
         let opts = raw.GitBlameOptions(c.new(raw.GitBlameOptions.ctype()))
         defer c.free(opts.get())
         check(raw.git_blame_options_init(opts, 1))
         check(raw.git_oid_fromstr(opts.newest, z(commit-at(revision).hex)))
+        if let $boundary = oldest {
+            check(raw.git_oid_fromstr(opts.oldest, z(commit-at(boundary).hex)))
+        }
         let p = pointer(raw.git_blame_file@(_, self.handle, z(path), opts))
         defer raw.git_blame_free(p)
         let n = raw.git_blame_get_hunk_count(p)
@@ -1930,11 +2029,12 @@ pub class Repository < Handle {
     }
 
     log(start: Revision = 'HEAD', limit: ?Int = nil, hide: [Revision] = [],
-        reverse: Bool = false, first-parent: Bool = false) -> History {
+        reverse: Bool = false, first-parent: Bool = false,
+        sorted: Bool = true) -> History {
         if let n: Int = limit and n < 0 {
             throw ValueError('history limit must be nonnegative')
         }
-        History(self, start, hide, limit, reverse, first-parent)
+        History(self, start, hide, limit, reverse, first-parent, sorted)
     }
 
     status -> Status {

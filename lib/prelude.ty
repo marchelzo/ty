@@ -996,6 +996,9 @@ class Dict[K, V] : Iterable[K, V] {
 
     contains?(key: Any) -> Bool;
 
+    default() -> nil | (K -> V);
+    default(f: nil | (K -> V)) -> Dict[K, V];
+
     clone() -> Dict[K, V];
 
     keys()   -> Array[K];
@@ -1072,6 +1075,9 @@ class Dict[K, V] : Iterable[K, V] {
 
 class DefaultDict[K, V] < Dict[K, V] {
     [](key: K) -> V;
+    default() -> (K -> V);
+    default(f: nil) -> Dict[K, V];
+    default(f: K -> V) -> DefaultDict[K, V];
 }
 
 class String : Iterable[String], IntoPtr[Int] {
@@ -2488,7 +2494,7 @@ trait Iter[T] < Iterable[T] {
             d[key(x)].push(x)
         }
 
-        return d
+        d.default(nil)
     }
 
     window*(n: Int) -> Generator[Array[T]] {

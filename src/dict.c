@@ -408,7 +408,8 @@ dict_default(Ty *ty, Value *d, int argc, Value *kwargs)
                 }
         }
 
-        d->dict->dflt = ARG(0);
+        Value dflt = ARG(0);
+        d->dict->dflt = !IsNil(dflt) ? dflt : ZERO;
 
         return *d;
 }

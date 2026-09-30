@@ -421,10 +421,24 @@ pub fn rand-hsl(
     (sample(h), sample(s), sample(l))
 }
 
+pub fn hash-hsl(
+    key: String,
+    h: FloatRange = (0.0, 1.0),
+    s: FloatRange = (0.4, 1.0),
+    l: FloatRange = (0.6, 0.75)
+) -> (Float, Float, Float) {
+    let bits = ty.hash(key)
+    fn sample(x: FloatRange, shift: Int) match x {
+        (lo, hi) => lo + (hi - lo) * (((bits >> shift) & 0xffff) / 65535.0),
+        x        => x
+    }
+    (sample(h, 0), sample(s, 16), sample(l, 32))
+}
+
 fn parse-style(style: String, chalk: Chalk) -> TermStyle | nil {
     match style {
         /.*\?$/ => do {
-            let (h, s, l) = rand-hsl()
+            let (h, s, l) = hash-hsl(style)
             let (r, g, b) = hsl-to-rgb(h, s, l)
             ({fg: [38, 2, r, g, b]})
         },

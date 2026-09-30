@@ -2278,8 +2278,20 @@ ck_trans(Ty *ty, byte_vector *out,
         if (cb.ul_n && !ck_arr_eq(ca.ul, ca.ul_n, cb.ul, cb.ul_n)) {
                 ck_emit_sgr(ty, out, cb.ul, cb.ul_n, ':');
         }
-        if (cb.bold && ca.bold != cb.bold) {
+        bool was_bold = (ca.bold == 1);
+        bool was_dim  = (ca.dim  == 1);
+        bool is_bold  = (cb.bold == 1);
+        bool is_dim   = (cb.dim  == 1);
+        bool normal   = (was_bold && !is_bold) || (was_dim && !is_dim);
+
+        if (normal) {
+                ck_emit_code(ty, out, 22);
+        }
+        if (is_bold && (normal || !was_bold)) {
                 ck_emit_code(ty, out, 1);
+        }
+        if (is_dim && (normal || !was_dim)) {
+                ck_emit_code(ty, out, 2);
         }
         if (cb.italic && ca.italic != cb.italic) {
                 ck_emit_code(ty, out, 3);
@@ -2294,7 +2306,6 @@ ck_trans(Ty *ty, byte_vector *out,
         if (ca.reverse && !cb.reverse) { ck_emit_code(ty, out, 27); }
         if (ca.ul_n    && !cb.ul_n)    { ck_emit_code(ty, out, 24); }
         if (ca.italic  && !cb.italic)  { ck_emit_code(ty, out, 23); }
-        if (ca.bold    && !cb.bold)    { ck_emit_code(ty, out, 22); }
 
         bool al   = (ca.link != NULL);
         bool bl   = (cb.link != NULL);
