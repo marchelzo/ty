@@ -2081,8 +2081,8 @@ trait Iterable[T] {
         __iter__().unwords()
     }
 
-    tally(f) {
-        __iter__().tally(f)
+    tally(f: T -> Any = nil) {
+        __iter__().tally(f if f != nil)
     }
 
     each(f) {

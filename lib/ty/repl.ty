@@ -3,6 +3,7 @@ import ty.mod
 import ty.lex as lex
 import ty.parse as parse
 import ty.types as types
+import base64
 import os
 import chalk (chalk)
 import json

@@ -827,6 +827,7 @@ typedef struct {
         int TEST;
         int tests;
         int tdb_hook;
+        int version;
 } InternedNames;
 
 enum {

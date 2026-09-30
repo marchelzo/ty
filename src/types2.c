@@ -31473,8 +31473,14 @@ check_value_x(Ty *ty, T2CheckStack *stack, T2Type type, Value const *value)
 
         case T2_TYPE_FUNCTION:
         case T2_TYPE_OVERLOAD:
+        {
+                i32 class = ClassOf(value);
                 return CALLABLE(*value)
-                    || (class_lookup_method_i(ty, ClassOf(value), NAMES.call) != NULL);
+                    && (
+                                (class != CLASS_CLASS && class != CLASS_OBJECT)
+                             || (class_lookup_method_i(ty, ClassOf(value), NAMES.call) != NULL)
+                       );
+        }
 
         case T2_TYPE_TUPLE:
                 return check_tuple_value(ty, stack, type, value, arity);
@@ -31494,9 +31500,9 @@ check_value_x(Ty *ty, T2CheckStack *stack, T2Type type, Value const *value)
         case T2_TYPE_RECURSIVE:
         {
                 T2Type unfolded = t2_recursive_unfold(universe, type);
-                return (unfolded == T2_TYPE_INVALID) || (unfolded == type)
-                     ? true
-                     : check_value(ty, stack, unfolded, value);
+                return (unfolded == T2_TYPE_INVALID)
+                    || (unfolded == type)
+                    || check_value(ty, stack, unfolded, value);
         }
 
         case T2_TYPE_UNION:

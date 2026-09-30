@@ -80,6 +80,24 @@
   #define TY_PLATFORM_NAME "freebsd"
 #endif
 
+#if defined(TY_HAVE_VERSION_INFO)
+  #include "VersionInfo.h"
+  #define TY_VERSION_STRING VersionInfo_ProjectVersion
+  #if defined(TY_BUILD_DATE)
+    #define TY_VERSION_DATE TY_BUILD_DATE
+  #elif defined(TY_HAVE_GIT_STATUS)
+    #define TY_VERSION_DATE VersionInfo_GitCommitDate
+  #endif
+#endif
+
+#if !defined(TY_VERSION_DATE)
+  #define TY_VERSION_DATE "unknown"
+#endif
+
+#if !defined(TY_VERSION_STRING)
+  #define TY_VERSION_STRING "unknown"
+#endif
+
 enum {
         TY_THREAD_NONE,
         TY_THREAD_MUTEX,

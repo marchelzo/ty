@@ -30,10 +30,6 @@
 #include "polyfill_time.h"
 #include "title.h"
 
-#ifdef TY_HAVE_VERSION_INFO
-#include "VersionInfo.h"
-#endif
-
 Ty vvv;
 TY xD;
 
@@ -385,11 +381,20 @@ noreturn static void
 repl(Ty *ty)
 {
         InteractiveSession = true;
-
         signal(SIGINT, sigint);
 
         if (!basic) {
                 pollute_with_bloat();
+#if defined(TY_HAVE_VERSION_INFO)
+                printf(
+                        "%sTy %s %s(%s)%s\n",
+                        TERM(38;2;120;120;120),
+                        TY_VERSION_STRING,
+                        TERM(38;2;90;90;90),
+                        TY_VERSION_DATE,
+                        TERM(0)
+                );
+#endif
         }
 
         for (;;) {

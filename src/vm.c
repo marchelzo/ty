@@ -970,6 +970,11 @@ add_builtins(Ty *ty, int ac, char **av)
                 }
         }
 
+        Value version = vTn(
+                "string", xSz(TY_VERSION_STRING),
+                "date",   xSz(TY_VERSION_DATE)
+        );
+
 //===========================================================================
 #define BUILTIN_VAR(m, t)                    \
         compiler_introduce_symbol(ty, m, t); \
@@ -991,6 +996,7 @@ add_builtins(Ty *ty, int ac, char **av)
         BUILTIN_NAMED_VAR("ty",  "jit",            jit       ) = BOOLEAN(!NoJIT);
         BUILTIN_NAMED_VAR("ty",  "TEST",           TEST      ) = BOOLEAN(RunningTests);
         BUILTIN_NAMED_VAR("ty",  "tests",          tests     ) = ARRAY(vA());
+        BUILTIN_NAMED_VAR("ty",  "version",        version   ) = version;
 
         BUILTIN_VAR("ty",  "executable") = this_executable(ty);
         BUILTIN_VAR("ty",  "platform")   = xSz(TY_PLATFORM_NAME);
