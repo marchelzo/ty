@@ -1469,11 +1469,7 @@ static inline void *
 jit_of(Value const *f)
 {
         uptr jit;
-#if !defined(TY_NO_JIT)
         memcpy(&jit, (char *)f->info + FUN_JIT, sizeof jit);
-#else
-        jit = 0;
-#endif
         return (void *)jit;
 }
 
@@ -1481,9 +1477,7 @@ static inline void
 set_jit_of(Value const *f, void *code)
 {
         uptr jit = (uptr)code;
-#if !defined(TY_NO_JIT)
         memcpy((char *)f->info + FUN_JIT, &jit, sizeof jit);
-#endif
 }
 
 static inline bool

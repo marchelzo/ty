@@ -265,12 +265,8 @@ enum {
         FUN_META        = FUN_DOC         + sizeof (uptr),
         FUN_NAME        = FUN_META        + sizeof (uptr),
         FUN_EXPR        = FUN_NAME        + sizeof (uptr),
-#if !defined(TY_NO_JIT)
         FUN_JIT         = FUN_EXPR        + sizeof (uptr),
         FUN_PARAM_NAMES = FUN_JIT         + sizeof (uptr)
-#else
-        FUN_PARAM_NAMES = FUN_EXPR        + sizeof (uptr)
-#endif
 };
 
 #define TY_ERROR_TYPES           \

@@ -153,7 +153,7 @@ static int const x64_param_regs[] = {7, 6, 2, 1};
 #else
 #  define JIT_ARCH_NONE 1
 #endif
-#if defined(TY_NO_JIT) || defined(JIT_ARCH_NONE)
+#if defined(JIT_ARCH_NONE)
 void jit_init(Ty *ty) { (void)ty; }
 void jit_free(Ty *ty) { (void)ty; }
 JitFn *jit_compile(Ty *ty, Value const *func) { (void)ty; (void)func; return NULL; }
@@ -3733,7 +3733,9 @@ jit_rt_concat_strings(Ty *ty, Value *result, Value *base, int n)
         usize total = 0;
         for (int i = 0; i < n; ++i) {
                 Value *v = v_(STACK, base_idx + i);
-                if (v->type != VALUE_STRING) {
+                if (v->type == VALUE_NIL) {
+                        *v = STRING_EMPTY;
+                } else if (v->type != VALUE_STRING) {
                         *v = value_vshow(ty, v, 0);
                 }
                 total += sN(*v);
@@ -12740,6 +12742,6 @@ jit_free(Ty *ty)
         // TODO: munmap all cached JIT code
 }
 
-#endif // TY_NO_JIT || JIT_ARCH_NONE
+#endif // JIT_ARCH_NONE
 
 /* vim: set sts=8 sw=8 expandtab: */

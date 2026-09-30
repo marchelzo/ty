@@ -1624,7 +1624,6 @@ co_yield_value(Ty *ty)
         return true;
 }
 
-#if !defined(TY_NO_JIT)
 static _Thread_local isize DeoptTryBase = -1;
 
 static void
@@ -1778,7 +1777,6 @@ call_jit(Ty *ty, Value const *f)
 
         return true;
 }
-#endif /* TY_NO_JIT */
 
 noreturn static void
 do_co(void)
@@ -1942,11 +1940,9 @@ call(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs)
 
         xcall(ty, f, pSelf, argc, pKwargs, IP);
 
-#if !defined(TY_NO_JIT)
         if (call_jit(ty, f)) {
                 return false;
         }
-#endif
 
         IP = code_of(f);
 
@@ -2004,11 +2000,9 @@ exec_fn(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwar
 
         xcall(ty, f, pSelf, argc, pKwargs, IP);
 
-#if !defined(TY_NO_JIT)
         if (LIKELY(call_jit(ty, f))) {
                 return;
         }
-#endif
 
         v_L(CALLS) = &halt;
         vm_exec(ty, code_of(f));
@@ -6396,13 +6390,11 @@ DoFunction(Ty *ty, char const *ip)
                 }
         }
 
-#if !defined(TY_NO_JIT)
         if (!NoJIT && !DebugJitOff && !from_eval(&v) && expr_of(&v)->must_jit) {
                 if (UNLIKELY(try_jit(ty, &v) == NULL)) {
                         zP("failed to JIT compile function %s", SHOW(&v));
                 }
         }
-#endif
 
         if (from_eval(&v)) {
                 OKGC(v.info);
@@ -6613,7 +6605,6 @@ vm_exec(Ty *ty, char *code)
 
         RC = 0;
 
-#if !defined(TY_NO_JIT)
         if (UNLIKELY(DeoptTryBase >= 0)) {
                 isize k = DeoptTryBase;
                 DeoptTryBase = -1;
@@ -6626,7 +6617,6 @@ vm_exec(Ty *ty, char *code)
                         }
                 }
         }
-#endif
 
         for (;;) {
 NextInstruction:
@@ -9561,9 +9551,7 @@ ProfileReport(Ty *ty)
 
 #endif
 
-#if !defined(TY_NO_JIT)
         jit_stats_report(ty, ProfileOut);
-#endif
 
         fputc('\n', ProfileOut);
 }

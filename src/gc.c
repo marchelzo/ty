@@ -56,12 +56,6 @@ collect(Ty *ty, struct alloc *a)
                 if (UNLIKELY((gen->co != ty->co_top) & (gen->co != NULL))) {
                         xvP(ty->cothreads, gen->co);
                 }
-#if !defined(TY_NO_JIT) && 0
-                if (gen->st.jit.cont != NULL) {
-                        xvP(ty->jit_stacks, gen->st.jit.cont);
-                }
-                m0(gen->st.jit);
-#endif
                 if (LIKELY(gen->st != NULL)) {
                         xvP(ty->co_states, gen->st);
                 }

@@ -893,7 +893,6 @@ eliminate_refs(struct itable *t)
         }
 }
 
-#if !defined(TY_NO_JIT)
 inline static void
 jit_methods(Ty *ty, struct itable *t)
 {
@@ -906,7 +905,6 @@ jit_methods(Ty *ty, struct itable *t)
                 }
         }
 }
-#endif
 
 static void
 really_finalize(Ty *ty, Class *c)
@@ -919,14 +917,12 @@ really_finalize(Ty *ty, Class *c)
         eliminate_refs(&c->getters);
         eliminate_refs(&c->setters);
 
-#if !defined(TY_NO_JIT)
         jit_methods(ty, &c->s_methods);
         jit_methods(ty, &c->s_getters);
         jit_methods(ty, &c->s_setters);
         jit_methods(ty, &c->methods);
         jit_methods(ty, &c->getters);
         jit_methods(ty, &c->setters);
-#endif
 
         if (vN(c->offsets_r) > NAMES.init) {
                 u16 off = v__(c->offsets_r, NAMES.init);

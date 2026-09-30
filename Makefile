@@ -56,10 +56,6 @@ ifdef PROFILE_TYPES
 	CFLAGS += -DTY_PROFILE_TYPES
 endif
 
-ifdef NO_JIT
-	CFLAGS += -DTY_NO_JIT
-endif
-
 TEST_ARGS ?=
 
 PROG := ty
@@ -119,17 +115,14 @@ ifdef WITHOUT_OS
 	CFLAGS += -DTY_WITHOUT_OS
 endif
 
-ifndef NO_NSYNC
-	CFLAGS += -DTY_USE_NSYNC
-	CFLAGS += -Insync/public
-endif
+CFLAGS += -Insync/public
 
 # --- Default to ncpu parallel jobs ---
 NPROC := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 MAKEFLAGS += -j$(NPROC)
 
 # --- Auto-rebuild on config change ---
-BUILD_SIG := DEBUG=$(DEBUG)|LOG=$(LOG)|NO_JIT=$(NO_JIT)|RELEASE=$(RELEASE)|TDEBUG=$(TDEBUG)|UNSAFE=$(UNSAFE)|LTO=$(LTO)|JEMALLOC=$(JEMALLOC)|TY_PROFILER=$(TY_PROFILER)|DEBUG_NAMES=$(DEBUG_NAMES)|PROFILE_TYPES=$(PROFILE_TYPES)|WITHOUT_OS=$(WITHOUT_OS)|GENPROF=$(GENPROF)|USEPROF=$(USEPROF)|NO_NSYNC=$(NO_NSYNC)
+BUILD_SIG := DEBUG=$(DEBUG)|LOG=$(LOG)|RELEASE=$(RELEASE)|TDEBUG=$(TDEBUG)|UNSAFE=$(UNSAFE)|LTO=$(LTO)|JEMALLOC=$(JEMALLOC)|TY_PROFILER=$(TY_PROFILER)|DEBUG_NAMES=$(DEBUG_NAMES)|PROFILE_TYPES=$(PROFILE_TYPES)|WITHOUT_OS=$(WITHOUT_OS)|GENPROF=$(GENPROF)|USEPROF=$(USEPROF)
 BUILD_SIG_FILE := obj/.build_sig
 
 PREV_SIG := $(shell cat $(BUILD_SIG_FILE) 2>/dev/null)
@@ -159,10 +152,7 @@ SOURCES := $(wildcard src/*.c)
 OBJECTS := $(patsubst src/%.c,obj/%.o,$(SOURCES))
 TYLS_OBJECTS := $(patsubst src/%.c,obj/tyls/%.o,$(SOURCES))
 TYPROF_OBJECTS := $(patsubst src/%.c,obj/typrof/%.o,$(SOURCES))
-EXTERNAL := libco/libco.o dtoa/dtoa.o libmd/libmd.a
-ifndef NO_NSYNC
-	EXTERNAL += nsync/out/libnsync.a
-endif
+EXTERNAL := libco/libco.o dtoa/dtoa.o libmd/libmd.a nsync/out/libnsync.a
 ASSEMBLY := $(patsubst %.c,%.s,$(SOURCES))
 .DEFAULT_GOAL := all
 .PHONY: all clean test test-types2

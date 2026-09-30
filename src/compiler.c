@@ -325,7 +325,6 @@ enum {
         vvX(STATE.loop_stmts);    \
 } while (0);
 
-#if !defined(TY_NO_JIT)
 #define HINT_TYPE(t0) do {                                 \
         if (STATE.func != NULL) {                          \
                 avP(STATE.func->type_hints, ((TypeHint) {  \
@@ -334,9 +333,6 @@ enum {
                 }));                                       \
         }                                                  \
 } while (0)
-#else
-#define HINT_TYPE(...)
-#endif
 
 #define CloneVec(v) (                                  \
         (v).items = memcpy(                            \
@@ -6772,13 +6768,11 @@ emit_function(Ty *ty, Expr const *e)
 
         EP(fun_name);
         EP(e);
-#if !defined(TY_NO_JIT)
         if (!NoJIT && !from_eval && (e->type == EXPRESSION_FUNCTION)) {
                 EP((void *)0xFA57);
         } else {
                 EP(NULL);
         }
-#endif
 
         LOG("COMPILING FUNCTION: %s", scope_name(ty, e->scope));
 
@@ -7006,12 +7000,10 @@ emit_function(Ty *ty, Expr const *e)
                 Ei32(i);
         }
 
-#if !defined(TY_NO_JIT)
         for (usize i = 0; i < vN(e->type_hints); ++i) {
                 TypeHint *hint = v_(e->type_hints, i);
                 hint->pc -= body_off;
         }
-#endif
 
         //STATE.annotation = annotation;
         STATE.label          = label_save;

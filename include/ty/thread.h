@@ -33,12 +33,6 @@ typedef struct {
         int   tag;
 } TyWaitable;
 
-#ifdef TY_USE_NSYNC
-#define TY_WAIT_SCRATCH(n) ((n) * (sizeof (struct nsync_waitable_s) + sizeof (struct nsync_waitable_s *)))
-#else
-#define TY_WAIT_SCRATCH(n) (0)
-#endif
-
 #ifdef _WIN32
 
 #include <windows.h>
@@ -46,6 +40,7 @@ typedef struct {
 
 #define TY_THREAD_OK 0
 #define TY_RWLOCK_INIT SRWLOCK_INIT
+#define TY_WAIT_SCRATCH(n) (0)
 
 typedef HANDLE                  TyThread;
 typedef CRITICAL_SECTION        TyMutex;
@@ -290,44 +285,27 @@ TyWaitAny(TyWaitable *items, int count, u64 timeout_ms, void *scratch,
 #include <pthread.h>
 #include <signal.h>
 #include "barrier.h"
+#include <nsync.h>
 
 typedef pthread_t            TyThread;
 typedef void                *TyThreadFunc(void *);
 typedef void                *TyThreadReturnValue;
 typedef pthread_barrier_t    TyBarrier;
 
-#ifdef TY_USE_NSYNC
-#include <nsync.h>
-  typedef nsync_mu             TyMutex;
-  typedef nsync_mu             TyRwLock;
-  typedef nsync_cv             TyCondVar;
-  typedef nsync_note           TyNote;
-  typedef nsync_counter        TyCounter;
-  #define TY_MUTEX_INIT NSYNC_MU_INIT
-  #define TY_RWLOCK_INIT NSYNC_MU_INIT
-#else /* !TY_USE_NSYNC */
-  typedef pthread_mutex_t      TyMutex;
-  typedef pthread_cond_t       TyCondVar;
-  typedef pthread_rwlock_t     TyRwLock;
-  typedef void                *TyNote;
-  typedef void                *TyCounter;
-  #define TY_MUTEX_INIT PTHREAD_MUTEX_INITIALIZER
-  #define TY_RWLOCK_INIT PTHREAD_RWLOCK_INITIALIZER
-#endif /* TY_USE_NSYNC */
+typedef nsync_mu             TyMutex;
+typedef nsync_mu             TyRwLock;
+typedef nsync_cv             TyCondVar;
+typedef nsync_note           TyNote;
+typedef nsync_counter        TyCounter;
 
+#define TY_MUTEX_INIT  NSYNC_MU_INIT
+#define TY_RWLOCK_INIT NSYNC_MU_INIT
 #define TY_THREAD_OK   NULL
 
-#if defined(TY_USE_NSYNC)
-  /* Repeated GC must not starve threads waiting to join or leave the group. */
-  typedef TyMutex TySpinLock;
-#elif defined(__APPLE__)
-  #include <os/lock.h>
-  typedef os_unfair_lock TySpinLock;
-#elif defined(__linux__)
-  typedef pthread_spinlock_t TySpinLock;
-#else
-  #error "TODO"
-#endif
+#define TY_WAIT_SCRATCH(n) ((n) * (sizeof (struct nsync_waitable_s) + sizeof (struct nsync_waitable_s *)))
+
+/* Repeated GC must not starve threads waiting to join or leave the group. */
+typedef TyMutex TySpinLock;
 
 /*
  * Thread functions (always pthreads)
@@ -394,7 +372,6 @@ TyThreadEqual(TyThread t1, TyThread t2)
         return pthread_equal(t1, t2);
 }
 
-#ifdef TY_USE_NSYNC
 /*
  * Mutex functions (nsync)
  */
@@ -713,278 +690,11 @@ TyWaitAny(TyWaitable *items, int count, u64 timeout_ms, void *scratch,
         return (idx < count) ? idx : -1;
 }
 
-#else /* !TY_USE_NSYNC */
-/*
- * Mutex functions (pthreads)
- */
-
-inline static bool
-TyMutexInit(TyMutex *m)
-{
-        return pthread_mutex_init(m, NULL) == 0;
-}
-
-inline static bool
-TyMutexInitRecursive(TyMutex *m)
-{
-        pthread_mutexattr_t attr;
-        int err;
-
-        pthread_mutexattr_init(&attr);
-        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-
-        err = pthread_mutex_init(m, &attr);
-        pthread_mutexattr_destroy(&attr);
-
-        return (err == 0);
-}
-
-inline static bool
-TyMutexDestroy(TyMutex* m)
-{
-        return pthread_mutex_destroy(m) == 0;
-}
-
-inline static bool
-TyMutexLock(TyMutex *m)
-{
-        return pthread_mutex_lock(m) == 0;
-}
-
-inline static bool
-TyMutexTryLock(TyMutex *m)
-{
-        return pthread_mutex_trylock(m) == 0;
-}
-
-inline static bool
-TyMutexUnlock(TyMutex *m)
-{
-        return pthread_mutex_unlock(m) == 0;
-}
-
-/*
- * Condition variable functions (pthreads)
- */
-
-inline static void
-TyCondVarInit(TyCondVar *cv)
-{
-        pthread_cond_init(cv, NULL);
-}
-
-inline static bool
-TyCondVarWait(TyCondVar *cv, TyMutex *m)
-{
-        return pthread_cond_wait(cv, m) == 0;
-}
-
-inline static bool
-TyCondVarTimedWaitRelative(TyCondVar *cv, TyMutex *m, u64 nMs)
-{
-        u64 t0 = TyThreadGetTime();
-        u64 end = t0 + (TY_1e6 * nMs);
-
-        struct timespec deadline = {
-                .tv_sec = end / TY_1e9,
-                .tv_nsec = end % TY_1e9
-        };
-
-        return pthread_cond_timedwait(cv, m, &deadline) == 0;
-}
-
-inline static bool
-TyCondVarSignal(TyCondVar *cv)
-{
-        return pthread_cond_signal(cv) == 0;
-}
-
-inline static bool
-TyCondVarBroadcast(TyCondVar *cv)
-{
-        return pthread_cond_broadcast(cv) == 0;
-}
-
-inline static bool
-TyCondVarDestroy(TyCondVar *cv)
-{
-        return pthread_cond_destroy(cv) == 0;
-}
-
-/*
- * Read-write lock functions (pthreads)
- */
-
-inline static void
-TyRwLockInit(TyRwLock *m)
-{
-        pthread_rwlock_init(m, NULL);
-}
-
-inline static bool
-TyRwLockDestroy(TyRwLock* m)
-{
-        return pthread_rwlock_destroy(m) == 0;
-}
-
-inline static bool
-TyRwLockRdLock(TyRwLock *m)
-{
-        return pthread_rwlock_rdlock(m) == 0;
-}
-
-inline static bool
-TyRwLockTryRdLock(TyRwLock *m)
-{
-        return pthread_rwlock_tryrdlock(m) == 0;
-}
-
-inline static bool
-TyRwLockWrLock(TyRwLock *m)
-{
-        return pthread_rwlock_wrlock(m) == 0;
-}
-
-inline static bool
-TyRwLockTryWrLock(TyRwLock *m)
-{
-        return pthread_rwlock_trywrlock(m) == 0;
-}
-
-inline static bool
-TyRwLockRdUnlock(TyRwLock *m)
-{
-        return pthread_rwlock_unlock(m) == 0;
-}
-
-inline static bool
-TyRwLockWrUnlock(TyRwLock *m)
-{
-        return pthread_rwlock_unlock(m) == 0;
-}
-
-/*
- * Note functions (pthreads stub)
- */
-
-inline static TyNote
-TyNoteNew(void) { return NULL; }
-
-inline static void
-TyNoteFree(TyNote n) { (void)n; }
-
-inline static void
-TyNoteNotify(TyNote n) { (void)n; }
-
-inline static bool
-TyNoteIsNotified(TyNote n) { (void)n; return false; }
-
-inline static bool
-TyNoteWait(TyNote n, u64 ms) { (void)n; (void)ms; return false; }
-
-/*
- * Counter functions (pthreads stub)
- */
-
-inline static TyCounter
-TyCounterNew(u32 v) { (void)v; return NULL; }
-
-inline static void
-TyCounterFree(TyCounter c) { (void)c; }
-
-inline static u32
-TyCounterAdd(TyCounter c, i32 d) { (void)c; (void)d; return 0; }
-
-inline static u32
-TyCounterValue(TyCounter c) { (void)c; return 0; }
-
-inline static u32
-TyCounterWait(TyCounter c, u64 ms) { (void)c; (void)ms; return 0; }
-
-/*
- * Wait for any (pthreads stub)
- */
-
-inline static int
-TyWaitAny(TyWaitable *items, int count, u64 timeout_ms, void *scratch,
-          TyMutex **locks, int nlocks)
-{
-        (void)items; (void)count; (void)timeout_ms; (void)scratch;
-        (void)locks; (void)nlocks;
-        return count;
-}
-#endif /* TY_USE_NSYNC */
-
-#if defined(TY_USE_NSYNC)
-  #define TySpinLockInit    TyMutexInit
-  #define TySpinLockTryLock TyMutexTryLock
-  #define TySpinLockLock    TyMutexLock
-  #define TySpinLockUnlock  TyMutexUnlock
-  #define TySpinLockDestroy TyMutexDestroy
-#elif defined(__APPLE__)
-inline static bool
-TySpinLockInit(TySpinLock *spin)
-{
-        *spin = OS_UNFAIR_LOCK_INIT;
-        return true;
-}
-
-inline static bool
-TySpinLockTryLock(TySpinLock *spin)
-{
-        return os_unfair_lock_trylock(spin);
-}
-
-inline static bool
-TySpinLockLock(TySpinLock *spin)
-{
-        os_unfair_lock_lock(spin);
-        return true;
-}
-
-inline static bool
-TySpinLockUnlock(TySpinLock *spin)
-{
-        os_unfair_lock_unlock(spin);
-        return true;
-}
-
-inline static bool
-TySpinLockDestroy(TySpinLock *spin)
-{
-        return true;
-}
-#else
-inline static bool
-TySpinLockInit(TySpinLock *spin)
-{
-        return pthread_spin_init(spin, PTHREAD_PROCESS_PRIVATE) == 0;
-}
-
-inline static bool
-TySpinLockTryLock(TySpinLock *spin)
-{
-        return pthread_spin_trylock(spin) == 0;
-}
-
-inline static bool
-TySpinLockLock(TySpinLock *spin)
-{
-        return pthread_spin_lock(spin) == 0;
-}
-
-inline static bool
-TySpinLockUnlock(TySpinLock *spin)
-{
-        return pthread_spin_unlock(spin) == 0;
-}
-
-inline static bool
-TySpinLockDestroy(TySpinLock *spin)
-{
-        return pthread_spin_destroy(spin) == 0;
-}
-#endif
+#define TySpinLockInit    TyMutexInit
+#define TySpinLockTryLock TyMutexTryLock
+#define TySpinLockLock    TyMutexLock
+#define TySpinLockUnlock  TyMutexUnlock
+#define TySpinLockDestroy TyMutexDestroy
 
 /*
  * Barrier functions (pthreads)

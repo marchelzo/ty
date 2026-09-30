@@ -64,7 +64,6 @@ jit_stats_report(Ty *ty, FILE *out);
 inline static JitFn *
 try_jit(Ty *ty, Value const *f)
 {
-#if !defined(TY_NO_JIT)
         if (UNLIKELY(DebugJitOff)) {
                 return NULL;
         }
@@ -105,9 +104,6 @@ try_jit(Ty *ty, Value const *f)
         set_jit_of(f, jit);
 
         return jit;
-#else
-        return NULL;
-#endif
 }
 
 #endif

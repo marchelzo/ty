@@ -22,7 +22,7 @@ pub fn kwarg-punning() {
     let a = 5
     let b = 'hi'
     assert(punned(1, a:, b:) == '1:5:hi')
-    assert(punned(1, b:) == '1:nil:hi')
-    assert(punned(a:, x: 2) == '2:5:nil')
+    assert(punned(1, b:) == '1::hi')
+    assert(punned(a:, x: 2) == '2:5:')
     assert(Punned().m(b:, a:) == '5/hi')
 }

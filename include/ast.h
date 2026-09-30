@@ -447,9 +447,7 @@ struct expression {
                         Stmt *body;
                         Class *class;
                         Expr *overload;
-#if !defined(TY_NO_JIT)
                         TypeHintVector type_hints;
-#endif
                         bool has_defer;
                         bool must_jit;
                         bool emit;
