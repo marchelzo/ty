@@ -1,0 +1,44 @@
+import os (sleep)
+
+class Box {
+    value: Int
+}
+
+fn hot(n: Int) -> Int {
+    let acc = 0
+    for i in ..n {
+        acc = (acc + i) % 1000003
+    }
+    acc
+}
+
+fn helper(box: Box, k: Int) -> Int {
+    let doubled = box.value * 2
+    doubled + k
+}
+
+fn worker() {
+    let n = 0
+    while true {
+        try {
+            n += 1
+            if n % 20 == 0 {
+                throw "worker-{n}"
+            }
+        } catch _ {
+            n += 0
+        }
+        sleep(0.002)
+    }
+}
+
+let thread = Thread(worker)
+let total = 0
+let calls = 0
+
+while true {
+    total = hot(200000)
+    calls += 1
+    total += helper(Box(value: 21), calls % 4)
+    sleep(0.001)
+}
