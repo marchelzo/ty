@@ -385,14 +385,14 @@ repl(Ty *ty)
 
         if (!basic) {
                 pollute_with_bloat();
-#if defined(TY_HAVE_VERSION_INFO)
+#if defined(TY_HAVE_VERSION_INFO) && defined(TY_HAVE_GIT_STATUS)
                 printf(
-                        "%sTy %s %s(%s)%s\n",
-                        TERM(38;2;120;120;120),
+                        "ty %s (%s%.8s%s), built %s\n",
                         TY_VERSION_STRING,
-                        TERM(38;2;90;90;90),
-                        TY_VERSION_DATE,
-                        TERM(0)
+                        VersionInfo_GitUncommittedChanges ? TERM(31) : "",
+                        VersionInfo_GitCommitHash,
+                        TERM(0),
+                        TY_VERSION_DATE
                 );
 #endif
         }
