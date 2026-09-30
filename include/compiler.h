@@ -452,6 +452,12 @@ typarse(
 Value
 compiler_eval(Ty *ty, Expr *e);
 
+location_vector const *
+compiler_location_lists(isize *n);
+
+char *
+compiler_compile_debug_expr(Ty *ty, char const *source, Scope *scope, Value *error);
+
 Stmt *
 cstmt(Ty *ty, Value *);
 

@@ -27,6 +27,7 @@ static bool
 basic(Value const *v)
 {
         switch (v->type & ~VALUE_TAGGED) {
+        case VALUE_ZERO:
         case VALUE_BOOLEAN:
         case VALUE_INTEGER:
         case VALUE_REAL:

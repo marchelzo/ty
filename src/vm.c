@@ -96,6 +96,7 @@
 #include "value.h"
 #include "jit.h"
 #include "vm.h"
+#include "ty/debug.h"
 
 #define TY_LOG_VERBOSE 1
 
@@ -656,6 +657,9 @@ MarkPendingFFIAutoValues(Ty *marker, Ty *owner)
         }
 }
 
+inline static void
+TakeLockRaw(Ty *ty);
+
 static void
 WaitGC(Ty *ty)
 {
@@ -667,7 +671,7 @@ WaitGC(Ty *ty)
 
         ReleaseLock(ty, false);
         int phase = WaitForGCPhase(ty, GC_PHASE_MARK | GC_PHASE_DONE);
-        TakeLock(ty);
+        TakeLockRaw(ty);
 
         if (phase == GC_PHASE_DONE) {
                 GCLOG("Finished waiting: %llu", TID);
@@ -719,13 +723,6 @@ DoGC(Ty *ty)
         TySpinLockLock(&ty->group->Lock);
 
         GCLOG("Took threads lock on thread %llu to do GC", TID);
-        GCLOG(
-                "[%.4f] [%s:%d] DoGC(): TDB_IS_%s",
-                TyThreadCPUTime() / 1.0e9,
-                I_AM_TDB ? "TDB" : "Ty",
-                (int)(TDB && TyThreadEqual(TyThreadSelf(), TDB->thread.thread->t)),
-                TDB_STATE_NAME
-        );
         GCLOG("Storing true in WantGC on thread %llu", TID);
 
         ty->group->WantGC = true;
@@ -805,6 +802,8 @@ DoGC(Ty *ty)
                 for (int i = 0; i < vN(SignalGCRoots); ++i) {
                         value_mark(ty, v_(SignalGCRoots, i));
                 }
+
+                DebugMarkRoots(ty);
         }
 
         NextGCPhase(ty, GC_PHASE_SWEEP, nRunning);
@@ -987,7 +986,6 @@ add_builtins(Ty *ty, int ac, char **av)
 //---------------------------------------------------------------------------
         BUILTIN_NAMED_VAR(NULL,  "__env",          env       ) = DICT(env);
         BUILTIN_NAMED_VAR(NULL,  "__EXIT_HOOKS__", exit_hooks) = ARRAY(vA());
-        BUILTIN_NAMED_VAR("tdb", "hook",           tdb_hook  ) = NIL;
         BUILTIN_NAMED_VAR(NULL,  "_readln",        _readln   ) = NIL;
         BUILTIN_NAMED_VAR(NULL,  "pretty",         pretty    ) = NIL;
         BUILTIN_NAMED_VAR(NULL,  "pp",             pp        ) = NIL;
@@ -1327,12 +1325,15 @@ CheckFlags(Ty *ty)
 {
         bool signaled = TakePendingSignals();
 
-        if (UNLIKELY(GC_IS_WAITING | signaled)) {
+        if (UNLIKELY(GC_IS_WAITING | signaled | (DebugInterrupt != 0))) {
                 if (GC_IS_WAITING & (ty->GC_OFF_COUNT == 0)) {
                         WaitGC(ty);
                 }
                 if (UNLIKELY(signaled)) {
                         HandlePendingSignals(ty);
+                }
+                if (UNLIKELY(DebugInterrupt)) {
+                        DebugSafepoint(ty);
                 }
         }
 }
@@ -1624,6 +1625,25 @@ co_yield_value(Ty *ty)
 }
 
 #if !defined(TY_NO_JIT)
+static _Thread_local isize DeoptTryBase = -1;
+
+static void
+DeoptFrame(Ty *ty, char *ip)
+{
+        char *ret = v_L(CALLS);
+        isize k = vN(TRY_STACK);
+
+        while (k > 0 && v__(TRY_STACK, k - 1)->fs >= vN(FRAMES)) {
+                k -= 1;
+        }
+
+        DeoptTryBase = (k < vN(TRY_STACK)) ? k : -1;
+
+        v_L(CALLS) = &halt;
+        vm_exec(ty, ip);
+        IP = ret;
+}
+
 inline static i32
 xjit(Ty *ty, isize depth, JitFn *func, i32 resume_idx, Value *args, Value **env)
 {
@@ -1679,6 +1699,11 @@ xjit(Ty *ty, isize depth, JitFn *func, i32 resume_idx, Value *args, Value **env)
                 push(None);
                 CO_LOG("jit_yield_none", TERM(91;1), "yielding: %s", VSC(vvL(STACK)));
                 DoYield(ty);
+                break;
+
+        case JIT_DEOPT:
+                top->jit_resume = 0;
+                DeoptFrame(ty, (char *)code_of(&top->f) + next_resume);
                 break;
         }
 
@@ -2128,11 +2153,27 @@ RealThreadId(void)
         return MyId;
 }
 
-void
-TakeLock(Ty *ty)
+inline static void
+TakeLockRaw(Ty *ty)
 {
         TySpinLockLock(ty->lock);
         ty->locked = true;
+        if (ty->dbg != NULL) {
+                ty->dbg->state = DBG_RUNNING;
+        }
+}
+
+void
+TakeLock(Ty *ty)
+{
+        TakeLockRaw(ty);
+        DebugOnLock(ty);
+}
+
+void
+vm_take_lock_raw(Ty *ty)
+{
+        TakeLockRaw(ty);
 }
 
 bool
@@ -2146,6 +2187,9 @@ ReleaseLock(Ty *ty, bool blocked)
 {
         *ty->blocked = blocked;
         ty->locked = false;
+        if (ty->dbg != NULL) {
+                DebugOnRelease(ty, blocked);
+        }
         TySpinLockUnlock(ty->lock);
 }
 
@@ -2207,6 +2251,8 @@ AddThread(Ty *ty, TyThread self)
         TySpinLockUnlock(&ty->group->Lock);
         GCLOG("AddThread(): %llu: finished", TID);
         GC_RESUME();
+
+        DebugThreadStart(ty, self);
 }
 
 static void
@@ -2215,6 +2261,8 @@ CleanupThread(void *ctx)
         Ty *ty = ctx;
 
         GCLOG("Cleaning up thread: %zu bytes in use. DeadUsed = %zu", MemoryUsed, ty->group->DeadUsed);
+
+        DebugThreadExit(ty);
 
         TySpinLockLock(&ty->group->DLock);
         if (ty->group->DeadUsed + MemoryUsed > MemoryLimit) {
@@ -2469,173 +2517,6 @@ vm_run_thread(void *p)
 }
 
 inline static void
-tdb_set_trap(DebugBreakpoint *breakpoint, char *ip)
-{
-        breakpoint->ip = ip;
-        breakpoint->op = *ip;
-}
-
-inline static void
-tdb_clear_next(Ty *ty)
-{
-        if (TDB->next.ip != NULL) {
-                *TDB->next.ip = TDB->next.op;
-                TDB->next.ip = NULL;
-        }
-
-        if (TDB->alt.ip != NULL) {
-                *TDB->alt.ip = TDB->alt.op;
-                TDB->alt.ip = NULL;
-        }
-}
-
-inline static void
-tdb_disarm_next(Ty *ty)
-{
-        if (TDB->next.ip != NULL) {
-                *TDB->next.ip = TDB->next.op;
-        }
-
-        if (TDB->alt.ip != NULL) {
-                *TDB->next.ip = TDB->next.op;
-                *TDB->alt.ip = TDB->alt.op;
-        }
-}
-
-inline static void
-tdb_disarm_traps(Ty *ty)
-{
-        tdb_disarm_next(ty);
-
-        for (int i = 0; i < vN(TDB->breaks); ++i) {
-                DebugBreakpoint *_break = v_(TDB->breaks, i);
-                if (_break->ip != NULL) {
-                        *_break->ip = _break->op;
-                }
-        }
-}
-
-inline static void
-tdb_arm_traps(Ty *ty)
-{
-        if (TDB->next.ip != NULL) {
-                *TDB->next.ip = (char)INSTR_TRAP_TY;
-        }
-
-        if (TDB->alt.ip != NULL) {
-                tdb_set_trap(&TDB->alt, TDB->alt.ip);
-                *TDB->alt.ip = (char)INSTR_TRAP_TY;
-        }
-
-        for (int i = 0; i < vN(TDB->breaks); ++i) {
-                DebugBreakpoint *_break = v_(TDB->breaks, i);
-                if (_break->ip != NULL) {
-                        *_break->ip = (char)INSTR_TRAP_TY;
-                }
-        }
-}
-
-static TyThreadReturnValue
-vm_run_tdb(void *ctx)
-{
-        TyTDB *tdb = ctx;
-
-        Ty *ty = mrealloc(NULL, sizeof *ty);
-
-        InitializeTy(ty, tdb->host->group);
-        TDB = tdb;
-
-        Thread *t = TDB->thread.thread;
-
-        MyTy = TDB->ty = ty;
-        MyId = t->i;
-
-        AddThread(ty, t->t);
-
-        if (TY_CATCH_ERROR()) {
-                TY_CATCH_FAIL();
-                fprintf(stderr, "TDB thread unrecoverable error: %s\n", TyError(ty));
-                goto TDB_HAS_BEEN_STOPPED;
-        }
-
-#ifndef _WIN32
-        pthread_cleanup_push(CleanupThread, ty);
-#endif
-
-        *((atomic_bool *)t->v.ptr) = true;
-
-        for (;;) {
-                u8 next = TDB_STATE_STOPPED;
-
-                if (TY_CATCH_ERROR()) {
-                        char *trace = FormatTrace(ty, NULL, NULL);
-                        Value error = TY_CATCH();
-                        fprintf(
-                                stderr,
-                                "%sRuntimeError%s: uncaught exception: %s\n\n%s",
-                                TERM(91;1),
-                                TERM(0),
-                                VSC(&error),
-                                trace
-                        );
-                        xmF(trace);
-                        goto KeepRunning;
-                }
-
-                UnlockTy();
-                TyMutexLock(&TDB_MUTEX);
-                while (TDB_IS(STOPPED)) {
-                        TyCondVarWait(&TDB_CONDVAR, &TDB_MUTEX);
-                }
-                LockTy();
-
-                tdb_clear_next(ty);
-
-                Value *hook;
-                if (
-                        (vN(Globals) > NAMES.tdb_hook)
-                     && (hook = v_(Globals, NAMES.tdb_hook))->type != VALUE_NIL
-                ) {
-                        TDB_IS_NOW(ACTIVE);
-                        Value state = vm_call(ty, hook, 0);
-                        if (
-                                (state.type == VALUE_INTEGER)
-                             && (state.z >= 0)
-                             && (state.z < TDB_MAX_STATE)
-                        ) {
-                                next = state.z;
-                        }
-                }
-
-                TY_CATCH_END();
-
-KeepRunning:
-                tdb_arm_traps(ty);
-                TDB_SET_STATE(next);
-                TyMutexUnlock(&TDB_MUTEX);
-                TyCondVarSignal(&TDB_CONDVAR);
-        }
-
-TDB_HAS_BEEN_STOPPED:
-
-        TDB_IS_NOW(DEAD);
-        TyMutexUnlock(&TDB_MUTEX);
-        TyCondVarSignal(&TDB_CONDVAR);
-
-#ifndef _WIN32
-        pthread_cleanup_pop(1);
-#else
-        CleanupThread(ty);
-#endif
-        TyMutexLock(&t->mutex);
-        t->alive = false;
-        TyMutexUnlock(&t->mutex);
-        TyCondVarSignal(&t->cond);
-
-        return TY_THREAD_OK;
-}
-
-inline static void
 FixSignalGCRoots(Ty *ty)
 {
         v0(SignalGCRoots);
@@ -2679,8 +2560,8 @@ vm_get_sigfn(Ty *ty, int sig)
         return IsZero(f) ? NIL : f;
 }
 
-void
-vm_jit_handle_interrupt(Ty *ty, Value *top)
+int
+vm_jit_handle_interrupt(Ty *ty, Value *top, JitDeopt const *info)
 {
         vN(STACK) = (top - vv(STACK));
 
@@ -2688,11 +2569,27 @@ vm_jit_handle_interrupt(Ty *ty, Value *top)
                 WaitGC(ty);
         }
 
-        JitInterruptFlag = 0;
+        JitInterruptFlag = DebugJitOff;
 
         if (TakePendingSignals()) {
                 HandlePendingSignals(ty);
         }
+
+        if (
+                !DebugJitOff
+             || (info == NULL)
+             || !DebugCanDeopt(ty)
+        ) {
+                return 0;
+        }
+
+        isize base = vN(STACK) - info->sp;
+
+        for (int i = 0; i < info->nsave; ++i) {
+                xvP(SP_STACK, base + info->save[i]);
+        }
+
+        return 1;
 }
 
 void
@@ -2794,18 +2691,19 @@ PushTry(Ty *ty)
         t = *vZ(TRY_STACK);
         vN(TRY_STACK) += 1;
 
-        t->flags = ty->flags;
-        t->sp    = vN(STACK);
-        t->gc    = vN(RootSet);
-        t->cs    = vN(CALLS);
-        t->ts    = vN(TARGETS);
-        t->ds    = vN(DROP_STACK);
-        t->fs    = vN(FRAMES);
-        t->nsp   = vN(SP_STACK);
-        t->vs    = vN(VISITING);
-        t->ed    = EXEC_DEPTH;
-        t->ss    = SaveScratch(ty);
-        t->state = TRY_TRY;
+        t->flags  = ty->flags;
+        t->sp     = vN(STACK);
+        t->gc     = vN(RootSet);
+        t->cs     = vN(CALLS);
+        t->ts     = vN(TARGETS);
+        t->ds     = vN(DROP_STACK);
+        t->fs     = vN(FRAMES);
+        t->nsp    = vN(SP_STACK);
+        t->vs     = vN(VISITING);
+        t->ed     = EXEC_DEPTH;
+        t->ss     = SaveScratch(ty);
+        t->state  = TRY_TRY;
+        t->native = false;
         v0(t->defer);
 
         return t;
@@ -2935,6 +2833,9 @@ RaiseException(Ty *ty)
                 PutMember(exc, NAMES._cause, prev->exc);
         }
         ctx->exc = exc;
+        if (UNLIKELY(DebugInterrupt | DebugJitOff)) {
+                DebugOnThrow(ty);
+        }
         DoThrow(ty);
 }
 
@@ -6496,7 +6397,7 @@ DoFunction(Ty *ty, char const *ip)
         }
 
 #if !defined(TY_NO_JIT)
-        if (!NoJIT && !from_eval(&v) && expr_of(&v)->must_jit) {
+        if (!NoJIT && !DebugJitOff && !from_eval(&v) && expr_of(&v)->must_jit) {
                 if (UNLIKELY(try_jit(ty, &v) == NULL)) {
                         zP("failed to JIT compile function %s", SHOW(&v));
                 }
@@ -6565,6 +6466,7 @@ IntoMethod(Ty *ty, Value const *fun, i32 c)
                       ? uAo(size, GC_ANY)
                       : mrealloc(NULL, size);
         method.info = memcpy(storage, fun->info, size);
+        DebugSanitizeCode(code_of(fun), code_of(&method), code_size_of(fun));
         method.info[FUN_INFO_CLASS] = c;
 
         if (c0 != -1) {
@@ -6710,6 +6612,21 @@ vm_exec(Ty *ty, char *code)
         CO_LOG("============== vm_exec() ==============", TERM(91;1), "%d", EXEC_DEPTH);
 
         RC = 0;
+
+#if !defined(TY_NO_JIT)
+        if (UNLIKELY(DeoptTryBase >= 0)) {
+                isize k = DeoptTryBase;
+                DeoptTryBase = -1;
+                for (; k < vN(TRY_STACK); ++k) {
+                        _try = v__(TRY_STACK, k);
+                        _try->ed = EXEC_DEPTH;
+                        if (setjmp(_try->jb) != 0) {
+                                ty = _ty;
+                                goto NextInstruction;
+                        }
+                }
+        }
+#endif
 
         for (;;) {
 NextInstruction:
@@ -7809,16 +7726,7 @@ TargetMember:
 
                 CASE(TRAP_TY)
                         IP -= 1;
-                        if (DEBUGGING && !I_AM_TDB) {
-                                tdb_go(ty);
-                        } else if (DEBUGGING) {
-                                TDB_IS(STEPPING);
-                                DebugBreakpoint *breakpoint = tdb_get_break(ty, IP);
-                                *IP = breakpoint->op;
-                                goto NextInstruction;
-                        } else {
-                                UNREACHABLE("hopefully");
-                        }
+                        DebugTrap(ty, IP);
                         break;
 
                 CASE(GET_NEXT)
@@ -9329,57 +9237,6 @@ vm_xerror(Ty *ty, int kind, char const *fmt, ...)
         UNREACHABLE();
 }
 
-void
-tdb_backtrace(Ty *ty)
-{
-        FrameStack frames = FRAMES;
-        char const *ip = IP;
-
-        byte_vector buf = {0};
-        Generator *gen = NULL;
-
-        int nf = vN(frames);
-
-        for (int i = 0; ip != NULL; ++i) {
-                Frame const *frame = nf > 0 ? v_(frames, nf - 1) : NULL;
-                ip = jit_frame_ip(frame, ip);
-
-                if (nf > 0 && is_hidden_fun(FrameFun(ty, v_(frames, nf - 1)))) {
-                        goto Next;
-                }
-
-                Expr const *expr = compiler_find_expr(ty, ip - 1);
-
-                WriteExpressionTrace(ty, &buf, expr, 0, i == 0);
-                if (expr != NULL && expr->origin != NULL) {
-                        WriteExpressionOrigin(ty, &buf, expr->origin);
-                }
-
-                if (nf == 0) {
-                        if (gen != NULL) {
-                                frames = gen->st->frames;
-                                nf = vN(frames);
-                                gen = NULL;
-                        } else {
-                                break;
-                        }
-                } else {
-                        gen = (nf == 0) ? NULL
-                            : (v_(frames, nf - 1)->fp == 0) ? NULL
-                            : (v_(STACK, v_(frames, nf - 1)->fp - 1)->type != VALUE_GENERATOR) ? NULL
-                            :  v_(STACK, v_(frames, nf - 1)->fp - 1)->gen;
-                }
-
-Next:
-                ip = (nf == 0) ? NULL : v_(frames, --nf)->ip;
-        }
-
-        xvP(buf, '\n');
-        xvP(buf, '\0');
-
-        fputs(buf.items, stdout);
-}
-
 bool
 vm_execute_file(Ty *ty, char const *path)
 {
@@ -9731,10 +9588,11 @@ cringe(int _)
 {
         static u32 n;
 
-        if (++n > 1) { return; }
+        if (++n > 1) {
+                return;
+        }
 
-        Ty *ty0 = ty;
-        Ty *ty = (ty0->tdb == NULL || ty0->tdb->state == TDB_STATE_STOPPED) ? ty0 : ty0->tdb->ty;
+        Ty *ty = MyTy;
 
 #ifdef UNW_LOCAL_ONLY
         print_stack_trace();
@@ -9754,13 +9612,7 @@ cringe(int _)
                         );
                 }
         }
-        zP(
-                "xdDDDDDD[%"PRIu64"]: TDB state: %s  Am I TDB? %d  Am I on the TDB thread? %d",
-                MyId,
-                TDB_STATE_NAME,
-                (int)I_AM_TDB,
-                TDB && TyThreadEqual(TyThreadSelf(), TDB->thread.thread->t)
-        );
+        zP("xdDDDDDD[%"PRIu64"]", MyId);
 }
 #endif
 
@@ -9924,6 +9776,8 @@ vm_init(Ty *ty, int ac, char **av)
 
         AddThread(ty, TyThreadSelf());
 
+        DebugInit(ty);
+
         if (TY_CATCH_ERROR()) {
                 TY_CATCH_FAIL();
                 GC_RESUME();
@@ -10059,11 +9913,6 @@ vm_execute(Ty *ty, char const *source, char const *file)
                 return false;
         }
 
-        if (DEBUGGING && !I_AM_TDB) {
-                ty->ip = ty->code;
-                tdb_go(ty);
-        }
-
         vm_exec(ty, ty->code);
 
         if (PrintResult && vC(STACK) > 0) {
@@ -10112,6 +9961,9 @@ vm_throw(Ty *ty, Value const *v)
 {
         ThrowCtx *ctx = PushThrowCtx(ty);
         ctx->exc = *v;
+        if (UNLIKELY(DebugInterrupt | DebugJitOff)) {
+                DebugOnThrow(ty);
+        }
         DoThrow(ty);
         vm_exec(ty, IP);
         UNREACHABLE();
@@ -10599,7 +10451,13 @@ StepInstruction(char const *ip)
         double x;
         int n, nkw, i, j, tag;
 
-        switch ((u8)*ip++) {
+        u8 op = (u8)*ip++;
+
+        if (UNLIKELY(op == INSTR_TRAP_TY)) {
+                op = DebugOriginalOp(ip - 1);
+        }
+
+        switch (op) {
         CASE(NOP)
                 break;
         CASE(LOAD_LOCAL)
@@ -11161,429 +11019,25 @@ StepInstruction(char const *ip)
         return (char *)ip;
 }
 
-void
-tdb_start(Ty *ty)
+Ty *
+vm_new_debug_ty(void)
 {
-        if (TDB != NULL) {
-                return;
-        }
+        Ty *ty = mrealloc(NULL, sizeof *ty);
 
-        atomic_bool created = false;
+        InitializeTy(ty, &MainGroup);
 
-        Thread *t = alloc0(sizeof *t);
-        t->i = NextThreadId();
-        t->v = PTR(&created);
+        MyTy = ty;
+        MyId = ty->id = NextThreadId();
 
-        TDB = alloc0(sizeof *TDB);
-        TDB->hook = NONE;
-        TDB->thread = THREAD(t);
-        TDB->host = ty;
+        AddThread(ty, TyThreadSelf());
 
-        UnlockTy();
-
-        TyMutexInit(&TDB_MUTEX);
-        TyCondVarInit(&TDB_CONDVAR);
-        t->alive = true;
-
-        TyMutexLock(&TDB_MUTEX);
-        TDB_IS_NOW(STOPPED);
-
-        int err = TyThreadCreate(&t->t, vm_run_tdb, TDB);
-        if (err != 0) {
-                zP("TyThreadCreate(): %s", strerror(err));
-        }
-
-        while (!created) {
-                continue;
-        }
-
-        LockTy();
+        return ty;
 }
 
 void
-tdb_eval_hook(Ty *ty)
+vm_free_debug_ty(Ty *ty)
 {
-}
-
-static Value
-LocalsDict(Ty *ty)
-{
-        if (vN(FRAMES) == 0) {
-                return NIL;
-        }
-
-        Expr const *fexp = compiler_find_func(ty, IP);
-
-        if (fexp == NULL) {
-                return NIL;
-        }
-
-        Scope *scope = fexp->scope;
-        Dict *locals = dict_new(ty);
-
-        for (int i = 0; i < vN(scope->owned); ++i) {
-                dict_put_member(
-                        ty,
-                        locals,
-                        v_(scope->owned, i)[0]->identifier,
-                        *local(ty, i)
-                );
-        }
-
-        return DICT(locals);
-}
-
-Value
-tdb_locals(Ty *ty)
-{
-        UnlockTy();
-        Value locals = LocalsDict(TDB->host);
-        LockTy();
-
-        return locals;
-}
-
-void
-tdb_list(Ty *ty)
-{
-        char const *start = (FRAMES.count != 0)
-                          ? code_of(ActiveFun(ty))
-                          : ty->code;
-
-        byte_vector *context = &TDB->context_buffer;
-
-        vN(*context) = 0;
-        DumpProgram(ty, context, "<debugger>", start, NULL, true);
-
-        xprint_stack(ty, 10);
-
-        fwrite(v_(*context, 0), 1, vN(*context), stdout);
-}
-
-void
-tdb_set_break(Ty *ty, char *ip)
-{
-        xvP(TDB->breaks, ((DebugBreakpoint) {
-                .ip = ip,
-                .op = *ip
-        }));
-
-        *ip = (char)INSTR_TRAP_TY;
-}
-
-DebugBreakpoint *
-tdb_get_break(Ty *ty, char const *ip)
-{
-        if (TDB->next.ip == ip) {
-                return &TDB->next;
-        }
-
-        if (TDB->alt.ip == ip) {
-                return &TDB->alt;
-        }
-
-        for (int i = 0; i < vN(TDB->breaks); ++i) {
-                if (v_(TDB->breaks, i)->ip == ip) {
-                        return v_(TDB->breaks, i);
-                }
-        }
-
-        return NULL;
-}
-
-bool
-tdb_step_expr(Ty *ty)
-{
-        ExprLocation *eloc = compiler_find_expr_x(ty, TDB->host->ip, false);
-
-        if (eloc == NULL) {
-                return false;
-        }
-
-        //tdb_set_trap(&TDB->next, ip);
-
-        return true;
-}
-
-bool
-tdb_step_line(Ty *ty)
-{
-        char *ip = compiler_find_next_line(ty, IP);
-
-        if (ip == NULL) {
-                return false;
-        }
-
-        tdb_set_trap(&TDB->next, ip);
-
-        return true;
-}
-
-static bool
-tdb_step_over_x(Ty *ty, char *ip, i32 i)
-{
-        if (
-                (ip == &halt)
-             || (ip == iter_fix)
-             || (ip == next_fix)
-        ) {
-                return true;
-        }
-
-        i32 off;
-
-        switch ((u8)*ip) {
-        CASE(HALT)
-                return true;
-
-        CASE(RETURN)
-                return (i < vN(TDB->host->st->calls))
-                    && tdb_step_over_x(ty, vvL(TDB->host->st->calls)[-i], i + 1);
-
-        CASE(MATCH_TAG)
-                off = load_int(ip + 1);
-                tdb_set_trap(&TDB->alt, ip + 1 + sizeof (i32) + off);
-                break;
-
-        CASE(MATCH_STRING)
-                off = load_int(ip + 1 + sizeof (i32));
-                tdb_set_trap(&TDB->alt, ip + 1 + sizeof (i32) + sizeof (i32) + off);
-                break;
-
-        CASE(ARRAY_REST)
-        CASE(ENSURE_CONTAINS)
-        CASE(ENSURE_DICT)
-        CASE(ENSURE_EQUALS_VAR)
-        CASE(ENSURE_LEN)
-        CASE(ENSURE_LEN_TUPLE)
-        CASE(ENSURE_SAME_KEYS)
-        CASE(JEQ)
-        CASE(JGE)
-        CASE(JGT)
-        CASE(JLE)
-        CASE(JLT)
-        CASE(JNE)
-        CASE(JNI)
-        CASE(JII)
-        CASE(JUMP)
-        CASE(JUMP_AND)
-        CASE(JUMP_IF)
-        CASE(JUMP_IF_NIL)
-        CASE(JUMP_IF_NONE)
-        CASE(JUMP_IF_INIT)
-        CASE(JUMP_IF_NOT)
-        CASE(JUMP_IF_SENTINEL)
-        CASE(JUMP_IF_TYPE)
-        CASE(JUMP_OR)
-        CASE(JUMP_WTF)
-        CASE(SKIP_CHECK)
-        CASE(LOOP_CHECK)
-        CASE(NONE_IF_NOT)
-        CASE(RECORD_REST)
-        CASE(TRY_ASSIGN_NON_NIL)
-        CASE(TRY_INDEX)
-        CASE(INDEX_TUPLE)
-        CASE(TRY_INDEX_TUPLE)
-        CASE(TRY_REGEX)
-        CASE(TRY_RANGE)
-        CASE(TRY_INCRANGE)
-        CASE(TRY_STEAL_TAG)
-        CASE(TRY_TAG_POP)
-        CASE(TRY_TUPLE_MEMBER)
-        CASE(TRY_MEMBER)
-        CASE(TRY_UNAPPLY)
-        CASE(TUPLE_REST)
-                off = load_int(ip + 1);
-                if (off != 0) {
-                        tdb_set_trap(
-                                &TDB->alt,
-                                ip + 1 + sizeof (i32) + off
-                        );
-                }
-                break;
-        }
-
-        tdb_set_trap(&TDB->next, StepInstruction(ip));
-
-        return true;
-}
-
-bool
-tdb_step_over(Ty *ty)
-{
-        bool ok = tdb_step_over_x(ty, TDB->host->ip, 0);
-
-        if (!ok) {
-                puts("no..");
-        }
-
-        return ok;
-}
-
-bool
-tdb_step_into(Ty *ty)
-{
-        Value *vp;
-        int i;
-        int c;
-
-        Value v = NONE;
-        char *ip = TDB->host->ip;
-        usize sp = vN(STACK);
-
-        switch ((u8)*ip++) {
-        CASE(CALL_GLOBAL)
-                READVALUE(i);
-                v = v__(Globals, i);
-                break;
-
-        CASE(CALL)
-                v = v_L(TDB->host->st->stack);
-                break;
-
-        CASE(TRY_CALL_METHOD)
-                READVALUE(i);
-                READVALUE(i);
-                push(v_L(TDB->host->st->stack));
-                v = GetMember(ty, i, false, true);
-                break;
-
-        CASE(CALL_METHOD)
-                READVALUE(i);
-                READVALUE(i);
-                push(v_L(TDB->host->st->stack));
-                v = GetMember(ty, i, true, true);
-                break;
-
-        CASE(CALL_SELF_METHOD)
-                READVALUE(i);
-                READVALUE(i);
-                push(GetSelf(TDB->host));
-                v = GetMember(ty, i, false, true);
-                break;
-
-        CASE(CALL_SELF_STATIC)
-                READVALUE(i);
-                READVALUE(i);
-                v = GetSelf(TDB->host);
-                push(CLASS(ClassOf(&v)));
-                v = GetMember(ty, i, false, true);
-                break;
-
-        CASE(CALL_STATIC_METHOD)
-                READVALUE(c);
-                READVALUE(i);
-                READVALUE(i);
-                push(CLASS(c));
-                v = GetMember(ty, i, false, true);
-                break;
-        }
-
-        vN(STACK) = sp;
-
-        switch (v.type) {
-        case VALUE_FUNCTION:
-        case VALUE_BOUND_FUNCTION:
-                ip = code_of(&v);
-                break;
-
-        case VALUE_METHOD:
-                ip = code_of(v.method);
-                break;
-
-        case VALUE_CLASS:
-                vp = class_ctor(ty, v.class);
-                ip = (vp != NULL) ? code_of(vp) : NULL;
-                break;
-
-        case VALUE_GENERATOR:
-                ip = v.gen->ip;
-                break;
-
-        default:
-                ip = NULL;
-                break;
-        }
-
-        return (ip != NULL) && (tdb_set_trap(&TDB->next, ip), true);
-}
-
-void
-tdb_go(Ty *ty)
-{
-        TDB_IS_NOW(STARTING);
-
-        TyMutexUnlock(&TDB_MUTEX);
-        TyCondVarSignal(&TDB_CONDVAR);
-
-        UnlockTy();
-
-        TyMutexLock(&TDB_MUTEX);
-        while (!TDB_IS(STEPPING) && !TDB_IS(STOPPED)) {
-                TyCondVarWait(&TDB_CONDVAR, &TDB_MUTEX);
-        }
-
-        LockTy();
-}
-
-void
-tdb_go2(Ty *ty)
-{
-        DebugBreakpoint *breakpoint = tdb_get_break(ty, IP);
-
-        if (breakpoint   != NULL) *breakpoint->ip = breakpoint->op;
-        if (TDB->next.ip != NULL) *TDB->next.ip   = TDB->next.op;
-        if (TDB->alt.ip  != NULL) *TDB->alt.ip    = TDB->alt.op;
-
-        tdb_eval_hook(ty);
-        //tdb_list(ty);
-
-        //tdb_step_over(ty);
-        TDB_IS_NOW(STEPPING);
-
-        return;
-
-        xprint_stack(ty, 16);
-        tdb_list(ty);
-
-        int ch;
-        for (;;) switch ((ch = getchar()), (ch == '\n' || getchar()), ch) {
-        case EOF:
-        case 'c':
-                TDB_IS_NOW(ACTIVE);
-                return;
-
-        case 'e':
-                tdb_eval_hook(ty);
-                return;
-
-        case '\n':
-        case 'n':
-                tdb_step_over(ty);
-                TDB_IS_NOW(STEPPING);
-                return;
-
-        case 'f':
-                return;
-
-        case 's':
-                tdb_step_into(ty) ||
-                tdb_step_over(ty);
-                TDB_IS_NOW(STEPPING);
-                return;
-
-        case 'B':
-                tdb_backtrace(ty);
-                break;
-
-        case 'b':
-                tdb_set_break(ty, IP);
-                break;
-
-        case 'l':
-                tdb_list(ty);
-                break;
-        }
+        CleanupThread(ty);
 }
 
 Value *
@@ -11614,7 +11068,7 @@ TyReloadModule(Ty *ty, char const *module)
 {
         UnlockTy();
         TySpinLockLock(&ty->group->GCLock);
-        LockTy();
+        TakeLockRaw(ty);
 
         TySpinLockLock(&ty->group->Lock);
 
@@ -11694,8 +11148,9 @@ struct try *
 vm_push_try(Ty *ty)
 {
         struct try *t = PushTry(ty);
-        t->catch = IP;
-        t->end   = IP;
+        t->catch  = IP;
+        t->end    = IP;
+        t->native = true;
         return t;
 }
 

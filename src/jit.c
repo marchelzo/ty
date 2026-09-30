@@ -3844,19 +3844,55 @@ bc_emit_deref(JitCtx *ctx, int dst, int src, int src_off)
         jit_emit_label(asm, lbl_skip);
 }
 
+static JitDeopt *
+bc_deopt_info(JitCtx const *ctx)
+{
+        if (ctx->tgt_kind != TGT_NONE) {
+                return NULL;
+        }
+
+        for (int i = 0; i <= ctx->save_sp_top; ++i) {
+                if (ctx->save_sp_divergent[i]) {
+                        return NULL;
+                }
+        }
+
+        JitDeopt *info = mrealloc(NULL, sizeof *info);
+
+        info->sp    = ctx->sp;
+        info->nsave = ctx->save_sp_top + 1;
+
+        for (int i = 0; i < info->nsave; ++i) {
+                info->save[i] = ctx->save_sp_stack[i];
+        }
+
+        return info;
+}
+
 static void
-bc_emit_interrupt_check(JitCtx *ctx)
+bc_emit_interrupt_check(JitCtx *ctx, int target)
 {
         dasm_State **asm = &ctx->asm;
 
         int lbl_no_irq = bc_next_label(ctx);
+        int lbl_resume = bc_next_label(ctx);
+        JitDeopt *info = (target >= 0) ? bc_deopt_info(ctx) : NULL;
+
         jit_emit_load_imm(asm, BC_S0, (iptr)&JitInterruptFlag);
         jit_emit_ldr32(asm, BC_S0, BC_S0, 0);
         jit_emit_cbz(asm, BC_S0, lbl_no_irq);
         jit_emit_mov(asm, BC_A0, BC_TY);
         jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
+        jit_emit_load_imm(asm, BC_A2, (iptr)info);
         jit_emit_load_imm(asm, BC_CALL, (iptr)vm_jit_handle_interrupt);
         bc_emit_runtime_call(ctx, BC_CALL);
+        if (info != NULL) {
+                jit_emit_cbz(asm, BC_RET, lbl_resume);
+                jit_emit_load_imm(asm, BC_RET, JIT_PACK(JIT_DEOPT, target));
+                jit_emit_jump_epilogue_restore(asm);
+                jit_emit_label(asm, lbl_resume);
+        }
+        jit_emit_reload_stack(asm, ctx->bound);
         jit_emit_label(asm, lbl_no_irq);
 }
 
@@ -6830,10 +6866,10 @@ bc_emit_inline_operator(JitCtx *ctx, int op, void *fallback)
 #define EMIT_SP_SYNC()
 #endif
 
-#define IRQ_CHECK(n) do {                      \
-        if ((n) < 0) {                         \
-                bc_emit_interrupt_check(ctx);  \
-        }                                      \
+#define IRQ_CHECK(n) do {                           \
+        if ((n) < 0) {                              \
+                bc_emit_interrupt_check(ctx, off);  \
+        }                                           \
 } while (0)
 
 static Class *
@@ -12546,6 +12582,9 @@ jit_compile(Ty *ty, Value const *func)
         jit_emit_label(&asm, lbl_normal_start);
         ctx.asm = asm;
         bc_raw_reset(&ctx);
+        jit_emit_reload_stack(&ctx.asm, ctx.bound);
+        ctx.ip = bc;
+        bc_emit_interrupt_check(&ctx, 0);
         asm = ctx.asm;
 
         // Emit bytecode

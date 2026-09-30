@@ -114,6 +114,7 @@ extern char **environ;
 #include "types2.h"
 #include "title.h"
 #include "cffi.h"
+#include "ty/debug.h"
 
 #ifdef __APPLE__
 #define fputc_unlocked putc_unlocked
@@ -279,23 +280,6 @@ TyFunctionsCleanup(void)
 {
         xvF(B);
 }
-
-#define TDB_MUST_BE(x) if (1) {         \
-        if (!TDB_IS(x)) zP(             \
-                "%s(): tdb must be %s", \
-                __func__,               \
-                #x                      \
-        );                              \
-} else ((void)0)
-
-#define TDB_MUST_NOT_BE(x) if (1) {         \
-        if (TDB_IS(x)) zP(                  \
-                "%s(): error: "             \
-                "tdb is %s",                \
-                __func__,                   \
-                #x                          \
-        );                                  \
-} else ((void)0)
 
 
 #define ASSERT_ARGC_2(func, ac1, ac2) \
@@ -6390,6 +6374,31 @@ BUILTIN_FUNCTION(os_signal)
 
         Value f = ARG(1);
 
+        if (DebugHandlesSignal(sig)) {
+                switch (f.type) {
+                case VALUE_INTEGER:
+                        if (f.z != 0 && f.z != 1) {
+                                bP("bad signal handler: %s", VSC(&f));
+                        }
+                        vm_del_sigfn(ty, sig);
+                        DebugSetSignalDisposition(sig, (int)f.z);
+                        return INTEGER(0);
+
+                case VALUE_NIL:
+                        vm_del_sigfn(ty, sig);
+                        DebugSetSignalDisposition(sig, 0);
+                        return INTEGER(0);
+
+                default:
+                        if (!CALLABLE(f)) {
+                                zP("the second argument to os.signal() must be callable");
+                        }
+                        vm_set_sigfn(ty, sig, &f);
+                        DebugSetSignalDisposition(sig, 2);
+                        return INTEGER(0);
+                }
+        }
+
         struct sigaction act = {0};
 
         switch (f.type) {
@@ -10852,250 +10861,6 @@ BUILTIN_FUNCTION(ptr_from_int)
 {
         ASSERT_ARGC("ptr.fromInt()", 1);
         return PTR((void *)(uptr)INT_ARG(0));
-}
-
-BUILTIN_FUNCTION(tdb_eval)
-{
-        ASSERT_ARGC("tdb.eval()", 1);
-
-        if (!DEBUGGING) return NIL;
-
-        ty = TDB->ty;
-
-        v0(B);
-        xvP(B, '\0');
-        xvPn(B, ss(ARG(0)), sN(ARG(0)));
-        xvP(B, '\0');
-
-        Arena old = NewArena(1 << 20);
-
-        Stmt **prog = parse(ty, vv(B) + 1, "(eval)");
-        if (prog == NULL) {
-                char const *msg = TyError(ty);
-                Value error = Err(ty, vSsz(msg));
-                ReleaseArena(old);
-                return error;
-        }
-
-        Expr *e = (Expr *)prog[0];
-
-        Expr const *context = compiler_find_expr(ty, TDB->host->ip);
-        Scope *scope = (context == NULL) ? NULL : context->xscope;
-
-// =====================================================================
-        Ty save = *TDB->host;
-
-        Value v;
-        if (tyeval(TDB->host, e, &v, scope)) {
-                ReleaseArena(old);
-                return Ok(ty, v);
-        }
-
-        *TDB->host = save;
-// =====================================================================
-
-        Value error = Err(ty, v);
-
-        ReleaseArena(old);
-
-        return error;
-}
-
-BUILTIN_FUNCTION(tdb_list)
-{
-        ASSERT_ARGC("tdb.list()", 0);
-        TDB_MUST_NOT_BE(STOPPED);
-
-        tdb_list(TDB->host);
-
-        return NIL;
-}
-
-BUILTIN_FUNCTION(tdb_stack)
-{
-        ASSERT_ARGC("tdb.stack()", 1);
-        isize i = INT_ARG(0);
-        return (i >= 0 && i < vN(TDB->host->st->stack))
-             ? Some(vvL(TDB->host->st->stack)[-i])
-             : None;
-}
-
-BUILTIN_FUNCTION(tdb_span)
-{
-        ASSERT_ARGC_2("tdb.list()", 0, 1);
-
-        // TODO
-        if (argc == 1) {
-                Expr const *expr = ARG(0).ptr;
-                return NIL;
-        }
-
-        ExprLocation *eloc = compiler_find_expr_x(ty, TDB->host->ip, false);
-        if (eloc == NULL) {
-                return NIL;
-        }
-
-        return PAIR(
-                PTR((void *)eloc->p_start),
-                PTR((void *)eloc->p_end)
-        );
-}
-
-BUILTIN_FUNCTION(tdb_over)
-{
-        ASSERT_ARGC("tdb.over()", 0);
-        TDB_MUST_NOT_BE(STOPPED);
-        return BOOLEAN(tdb_step_over(ty));
-}
-
-BUILTIN_FUNCTION(tdb_into)
-{
-        ASSERT_ARGC("tdb.into()", 0);
-        TDB_MUST_NOT_BE(STOPPED);
-        return BOOLEAN(tdb_step_into(ty));
-}
-
-BUILTIN_FUNCTION(tdb_step)
-{
-        ASSERT_ARGC("tdb.step()", 0);
-        TDB_MUST_NOT_BE(STOPPED);
-        return BOOLEAN(tdb_step_line(ty));
-}
-
-BUILTIN_FUNCTION(tdb_backtrace)
-{
-        ASSERT_ARGC("tdb.backtrace()", 0);
-        TDB_MUST_NOT_BE(STOPPED);
-
-        tdb_backtrace(TDB->host);
-
-        return NIL;
-}
-
-BUILTIN_FUNCTION(tdb_ip)
-{
-        ASSERT_ARGC_2("tdb.ip()", 0, 1);
-        TDB_MUST_NOT_BE(OFF);
-
-        return (argc == 0)
-             ? PTR(TDB->host->ip)
-             : PTR(code_of(&ARG(0)));
-}
-
-BUILTIN_FUNCTION(tdb_breakpoint)
-{
-        ASSERT_ARGC_2("tdb.breakpoint()", 0, 1);
-
-        char *ip;
-        Value arg;
-
-        if (argc == 0) {
-                ip = TDB->host->ip;
-        } else switch ((arg = ARG(0)).type) {
-        case VALUE_PTR:       ip = arg.ptr;             break;
-        case VALUE_FUNCTION:  ip = code_of(&arg);       break;
-        case VALUE_METHOD:    ip = code_of(arg.method); break;
-
-        default:
-                zP(
-                        "tdb.breakpoint(): attempt to set breakpoint "
-                        "on invalid type: %s",
-                        VSC(&arg)
-                );
-        }
-
-        tdb_set_break(ty, ip);
-
-        return BOOLEAN(true);
-}
-
-BUILTIN_FUNCTION(tdb_locals)
-{
-        ASSERT_ARGC("tdb.locals()", 0);
-        TDB_MUST_NOT_BE(OFF);
-        return tdb_locals(ty);
-}
-
-BUILTIN_FUNCTION(tdb_context)
-{
-        ASSERT_ARGC_2("tdb.context()", 0, 1);
-        TDB_MUST_NOT_BE(OFF);
-
-        char *ip = (argc == 0) ? TDB->host->ip : ARG(0).ptr;
-        Expr *context = (Expr *)compiler_find_expr(ty, ip);
-
-        Value expr = (context == NULL) ? NIL : PTR(context);
-
-        Value prog = (context == NULL)          ? NIL
-                   : (context->start.s == NULL) ? NIL
-                   : xSz(context->start.s - context->start.byte);
-
-        Value file = (context == NULL)       ? NIL
-                   : (context->mod == NULL)  ? NIL
-                   : xSz(context->mod->path);
-
-        return (context == NULL) ? NIL : vTn(
-                "prog",  prog,
-                "file",  file,
-                "expr",  expr
-        );
-}
-
-BUILTIN_FUNCTION(tdb_insn)
-{
-        char const *_name__ = "tdb.insn()";
-        CHECK_ARGC(1);
-        TDB_MUST_NOT_BE(OFF);
-
-        Value ip = ARGx(0, VALUE_PTR);
-        u8 insn = *(u8 *)ip.ptr;
-
-        return vTn(
-                "name", xSz(GetInstructionName(insn))
-        );
-}
-
-BUILTIN_FUNCTION(tdb_state)
-{
-        ASSERT_ARGC("tdb.state()", 0);
-        TDB_MUST_NOT_BE(OFF);
-
-        Expr *context = (Expr *)compiler_find_expr(ty, TDB->host->ip);
-
-        Value ip = PTR(TDB->host->ip);
-
-        Value expr = (context == NULL) ? NIL : PTR(context);
-
-        Value prog = (context == NULL)          ? NIL
-                   : (context->start.s == NULL) ? NIL
-                   : xSz(context->start.s - context->start.byte);
-
-        Value file = (context == NULL)       ? NIL
-                   : (context->mod == NULL)  ? NIL
-                   : xSz(context->mod->path);
-
-        Value mod = (context == NULL) ? NIL : xSz(GetExpressionModule(context));
-
-        Value f = (TDB->host->st->frames.count > 0)
-                ? *FrameFun(TDB->host, vvL(TDB->host->st->frames))
-                : NIL;
-
-        Value fp = (TDB->host->st->frames.count > 0)
-                 ? INTEGER(vvL(TDB->host->st->frames)->fp)
-                 : NIL;
-
-        return vTn(
-                "ip",    ip,
-                "insn",  xSz(GetInstructionName(*(u8 *)ip.ptr)),
-                "prog",  prog,
-                "file",  file,
-                "mod",   mod,
-                "expr",  expr,
-                "func",  f,
-                "fp",    fp,
-                "depth", INTEGER(vN(TDB->host->st->frames)),
-                "sp",    INTEGER(vN(TDB->host->st->stack))
-        );
 }
 
 /* vim: set sw=8 sts=8 expandtab: */

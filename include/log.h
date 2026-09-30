@@ -78,7 +78,7 @@ extern _Atomic(uint64_t) LogCounter;
 #if 0
 #define GCLOG(...) if (EnableLogging > 0) do {                           \
                         flockfile(stderr),                               \
-                        fprintf(stderr, "[%d](%4lld) ", I_AM_TDB, TID),  \
+                        fprintf(stderr, "(%4lld) ", TID),                \
                         fprintf(stderr, __VA_ARGS__),                    \
                         fprintf(stderr, "\n"),                           \
                         funlockfile(stderr);                             \

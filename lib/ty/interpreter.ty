@@ -1,0 +1,245 @@
+import errno
+import json
+import os
+import time (now, CLOCK_MONOTONIC)
+import ty
+
+const OUTPUT_LIMIT = 65536
+const FRAME_LIMIT = 1024 * 1024
+
+#|if __apple__
+const SEND_FLAGS = 0
+#|else
+const SEND_FLAGS = os.MSG_NOSIGNAL
+#|]
+
+use Completion = {
+    type: 'result', id: Int, value: String | nil, error: String | nil,
+    truncated: Bool
+}
+use Call = {type: 'call', id: Int, method: String, args: Any}
+use Reply = {type: 'ready', version: 1} | Completion | Call
+
+pub use Result = {
+    output: String, value: String | nil, error: String | nil,
+    truncated: Bool, reset: Bool
+}
+
+fn check(result: Int, operation: String) {
+    if result < 0 {
+        throw os.OSError(operation)
+    }
+}
+
+fn nonblocking(fd: Int) {
+    check(os.fcntl(fd, os.F_SETFD, os.FD_CLOEXEC), 'fcntl')
+    check(os.fcntl(fd, os.F_SETFL, os.O_NONBLOCK), 'fcntl')
+}
+
+fn retry?(error: Int) -> Bool {
+    error == errno.EAGAIN || error == errno.EWOULDBLOCK || error == errno.EINTR
+}
+
+class Kernel {
+    __fd: Int
+    __process: os.ProcessDescriptor
+    __pending: Blob = Blob()
+    __buffer:  Blob = Blob()
+    __closed?: Bool = false
+
+    init() {
+        let (parent, child) = os.socketpair(os.AF_UNIX, os.SOCK_STREAM, 0)
+        defer os.close(child)
+        __fd = parent
+        try {
+            check(os.fcntl(child, os.F_SETFD, os.FD_CLOEXEC), 'fcntl')
+            nonblocking(parent)
+#|if __apple__
+            check(os.fcntl(parent, os.F_SETNOSIGPIPE, 1), 'fcntl')
+#|]
+            __process = os.spawn(
+                [
+                    ty.executable,
+                    '-b',
+                    '--color=never',
+                    '-M', 'ty.interpreter.worker',
+                    '-e', 'run()'
+                ],
+                stdin=child,
+                stdout=child,
+                stderr=os.SPAWN_PIPE,
+                detach=true
+            )
+        } catch error {
+            os.close(parent)
+            throw error
+        }
+        try {
+            nonblocking(__process.stderr)
+        } catch error {
+            close()
+            throw error
+        }
+    }
+
+    write(data: Blob) {
+        let count = os.sendto(__fd, data, SEND_FLAGS)
+        if count < 0 && !retry?(errno.get()) {
+            throw os.OSError('write Ty REPL')
+        }
+        data.clear(0, max(0, count))
+    }
+
+    read(fd: Int) -> Int {
+        __buffer.clear()
+        let count = os.read(fd, __buffer, 8192)
+        if count < 0 && !retry?(errno.get()) {
+            throw os.OSError('read Ty REPL')
+        }
+        count
+    }
+
+    output(target: Blob) -> Bool {
+        let truncated? = false
+        for ..32 {
+            break if read(__process.stderr) <= 0
+            let remaining = max(0, OUTPUT_LIMIT - #target)
+            truncated? = truncated? || #__buffer > remaining
+            __buffer.clear(min(remaining, #__buffer))
+            target.push(__buffer)
+        }
+        truncated?
+    }
+
+    reply(id: Int) -> Completion | Call | nil {
+        let count = read(__fd)
+        if count == 0 {
+            throw RuntimeError('Ty REPL exited')
+        }
+        __pending.push(__buffer)
+        if #__pending > FRAME_LIMIT {
+            throw RuntimeError('Ty REPL reply exceeds 1 MiB')
+        }
+        while let $end = __pending.search(10) {
+            let line = __pending.str(0, end)
+            __pending.clear(0, end + 1)
+            let message = json.parse(Reply, line)
+            match message {
+                {type: 'ready', *} => (),
+                {type: 'result', id: >id, *} => return message,
+                {type: 'call', *} => return message,
+                _ => throw RuntimeError('unexpected Ty REPL reply')
+            }
+        }
+    }
+
+    poll(writing?: Bool) {
+        let events = os.POLLIN | (writing? ? os.POLLOUT : 0)
+        match os.poll([(__fd, events), __process.stderr], 0.05) {
+            Ok(_) or Err(errno.EINTR) => (),
+            Err(error) => throw os.OSError('poll Ty REPL', error)
+        }
+    }
+
+    close() {
+        if __closed? {
+            return
+        }
+        __closed? = true
+        os.close(__fd)
+        os.close(__process.stderr)
+        let result = os.kill(-__process.pid, os.SIGKILL)
+        let error = result < 0 ? errno.get() : 0
+        let reaped? = os.wait(__process.pid, os.WNOHANG) != nil
+        if error != 0 && error != errno.ESRCH
+        && !(error == errno.EPERM && reaped?) {
+            throw os.OSError('stop Ty REPL', error)
+        }
+        if !reaped? {
+            os.wait(__process.pid)
+        }
+    }
+}
+
+pub class Repl {
+    __kernel: Kernel | nil = nil
+    __next = 0
+    __canceled?: () -> Bool
+    __host: ((String, Any) -> Any) | nil
+
+    init(
+        canceled?: () -> Bool = -> false,
+        host: ((String, Any) -> Any) | nil = nil
+    ) {
+        __canceled? = canceled?
+        __host = host
+    }
+
+    respond(call: Call) -> Blob {
+        let value: Any = nil
+        let error: String | nil = nil
+        try {
+            let $host = __host or throw RuntimeError('no interpreter host')
+            value = host(call.method, call.args)
+        } catch exception {
+            error = str(exception)
+        }
+        Blob(json.encode({type: 'reply', id: call.id, value, error}), 10)
+    }
+
+    close() {
+        let $kernel = __kernel or return
+        __kernel = nil
+        kernel.close()
+    }
+
+    eval(code: String, timeout-ms: Int = 30000) -> Result {
+        if timeout-ms <= 0 {
+            throw ValueError('timeout-ms must be positive')
+        }
+        if __canceled?() {
+            throw RuntimeError('Canceled')
+        }
+        let output = Blob()
+        try {
+            __kernel = __kernel ?? Kernel()
+            __next += 1
+            return exchange(code, timeout-ms, output)
+        } catch error {
+            close()
+            return {
+                output: output.str(), value: nil, error: str(error),
+                truncated: #output == OUTPUT_LIMIT, reset: true
+            }
+        }
+    }
+
+    exchange(code: String, timeout-ms: Int, output: Blob) -> Result {
+        let $kernel = __kernel or throw RuntimeError('Ty REPL is not running')
+        let request = Blob(json.encode({id: __next, code}), 10)
+        let deadline = now(CLOCK_MONOTONIC) + timeout-ms / 1000.0
+        let truncated? = false
+        while true {
+            if __canceled?() {
+                throw RuntimeError('Canceled; Ty REPL state discarded')
+            }
+            if now(CLOCK_MONOTONIC) >= deadline {
+                throw RuntimeError('Timed out; Ty REPL state discarded')
+            }
+            if #request {
+                kernel.write(request)
+            }
+            truncated? = kernel.output(output) || truncated?
+            match kernel.reply(__next) {
+                {type: 'call', *} as call => request = respond(call),
+                {type: 'result', value, error, truncated, *} => do {
+                    truncated? = kernel.output(output) || truncated?
+                    return {output: output.str(), value, error,
+                            truncated: truncated? || truncated, reset: false}
+                },
+                nil => ()
+            }
+            kernel.poll(bool(#request))
+        }
+    }
+}

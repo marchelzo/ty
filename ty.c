@@ -29,6 +29,7 @@
 #include "highlight.h"
 #include "polyfill_time.h"
 #include "title.h"
+#include "ty/debug.h"
 
 Ty vvv;
 TY xD;
@@ -74,6 +75,8 @@ bool ColorStderr;
 bool ColorOutput;
 
 bool RunningTests       = false;
+static long AttachPid   = 0;
+static bool AttachDap   = false;
 bool CompileOnly        = false;
 bool HighlightOnly      = false;
 bool AllowErrors        = false;
@@ -105,7 +108,6 @@ usage(void)
                 "    -b            Basic mode: no batteries included. Only has an effect when ty is       \0"
                 "                  running as a REPL or when the program was specified using -e           \0"
                 "    -c            Exit after compilation without executing the program                   \0"
-                "    -d            Run the program under the interactive TDB debugger                     \0"
                 "    -e EXPR       Evaluate and print EXPR                                                \0"
                 "    -f FILE       Interpret FILE before continuing. This differs from -M in that *all*   \0"
                 "                  top-level symbols from FILE will be visible, not just public ones      \0"
@@ -125,6 +127,8 @@ usage(void)
                 "                    (- is interpreted as stdout, and @ is interpreted as stderr)         \0"
                 "    --wall        Profile based on wall time instead of CPU time                         \0"
 #endif
+                "    --attach PID  Attach an interactive debugger to the running ty process PID           \0"
+                "    --dap         With --attach, speak the Debug Adapter Protocol on stdin/stdout        \0"
                 "    --color=WHEN  Explicitly control when to use colored output. WHEN can be set         \0"
                 "                  to 'always', 'never', or 'auto' (default: 'auto')                      \0"
                 "    --highlight[=THEME]                                                                  \0"
@@ -178,21 +182,6 @@ execln(Ty *ty, char *line)
                         goto End;
                 else
                         goto Bad;
-        } else if (strncmp(line, "tdb ", 4) == 0) {
-                dump(&buffer, "%s", line + 4);
-
-                if (!vm_load_program(ty, v_(buffer, 1), "(repl)")) {
-                        goto Bad;
-                }
-
-                if (!DEBUGGING) tdb_start(ty);
-                tdb_set_break(ty, ty->code);
-
-                if (!vm_execute(ty, NULL, NULL)) {
-                        goto Bad;
-                }
-
-                goto End;
         } else if (strncmp(line, ":t ", 3) == 0) {
                 dump(&buffer, "%s", line + 3);
                 Stmt **prog = parse(ty, v_(buffer, 1), "(repl)");
@@ -243,29 +232,6 @@ execln(Ty *ty, char *line)
 
                 goto End;
 #endif
-        } else if (strncmp(line, "b ", 2) == 0) {
-                dump(&buffer, "%s", line + 2);
-
-                if (!repl_exec(ty, v_(buffer, 1))) {
-                        goto Bad;
-                }
-
-                Value *v = vm_get(ty, -1);
-
-                if (v->type != VALUE_FUNCTION) {
-                        printf(
-                                "Can't break on %s!",
-                                VSC(v)
-                        );
-                        goto End;
-                }
-
-                if (!DEBUGGING) tdb_start(ty);
-                tdb_set_break(ty, code_of(v));
-
-                puts("Breakpoint set.");
-
-                goto End;
         } else if (strncmp(line, "dis ", 4) == 0) {
                 dump(&buffer, "print(ty.disassemble(%s));", line + 4);
                 if (repl_exec(ty, v_(buffer, 1))) {
@@ -484,6 +450,24 @@ ProcessArgs(char *argv[], bool first)
                         exit(0);
                 }
 
+                if (s_eq(argv[argi], "--attach")) {
+                        if (argv[argi + 1] == NULL) {
+                                fprintf(stderr, "Missing argument for --attach\n");
+                                exit(1);
+                        }
+                        AttachPid = strtol(argv[++argi], NULL, 10);
+                        if (AttachPid <= 0) {
+                                fprintf(stderr, "ty: invalid pid for --attach: %s\n", argv[argi]);
+                                exit(1);
+                        }
+                        goto NextOption;
+                }
+
+                if (s_eq(argv[argi], "--dap")) {
+                        AttachDap = true;
+                        goto NextOption;
+                }
+
                 if (s_eq(argv[argi], "--test")) {
                         RunningTests = true;
                         goto NextOption;
@@ -533,10 +517,6 @@ ProcessArgs(char *argv[], bool first)
 
                                 case 'c':
                                         CompileOnly = true;
-                                        break;
-
-                                case 'd':
-                                        if (!first) tdb_start(ty);
                                         break;
 
                                 case 'L':
@@ -718,6 +698,17 @@ main(int argc, char **argv)
         ColorOutput = ColorStderr;
 #endif
 
+        char attach_sock[256];
+
+        if (AttachPid != 0) {
+                if (DebugAttachClient(AttachPid, attach_sock, sizeof attach_sock) != 0) {
+                        return 1;
+                }
+                if (AttachDap) {
+                        return DebugProxy(attach_sock);
+                }
+        }
+
         if (!vm_init(ty, argc - nopt, argv + nopt)) {
                 DyingOfError = true;
                 fprintf(stderr, "%s\n", TyError(ty));
@@ -727,6 +718,22 @@ main(int argc, char **argv)
         t2_startup_finished();
 
         argv += ProcessArgs(argv, false);
+
+        if (AttachPid != 0) {
+                char attach_src[512];
+                snprintf(
+                        attach_src,
+                        sizeof attach_src,
+                        "import ty.attach\nty.attach.run('%s', %ld)\n",
+                        attach_sock,
+                        AttachPid
+                );
+                if (!vm_execute(ty, attach_src, "(attach)")) {
+                        fprintf(stderr, "%s\n", TyError(ty));
+                        return 1;
+                }
+                return 0;
+        }
 
         FILE *file = fopen(SourceFile, "r");
         if (file == NULL) {

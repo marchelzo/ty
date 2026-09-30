@@ -2,10 +2,13 @@
 #define JIT_H_INCLUDED
 
 #include <stdio.h>
+#include <signal.h>
 #include <stdatomic.h>
 
 #include "ty.h"
 #include "value.h"
+
+extern volatile sig_atomic_t DebugJitOff;
 
 #define JIT_RT_DEBUG 0
 #define JIT_RT_TRACE 0
@@ -22,8 +25,15 @@ enum {
         JIT_CALL,
         JIT_YIELD,
         JIT_YIELD_SOME,
-        JIT_YIELD_NONE
+        JIT_YIELD_NONE,
+        JIT_DEOPT
 };
+
+typedef struct {
+        i32 sp;
+        i32 nsave;
+        i32 save[16];
+} JitDeopt;
 
 // Pack/unpack JIT return values: low 4 bits = reason, upper bits = resume index
 #define JIT_PACK(reason, idx)  (((i32)(idx) << 4) | (reason))
@@ -55,6 +65,10 @@ inline static JitFn *
 try_jit(Ty *ty, Value const *f)
 {
 #if !defined(TY_NO_JIT)
+        if (UNLIKELY(DebugJitOff)) {
+                return NULL;
+        }
+
         void *jit = jit_of(f);
 
         if (LIKELY(jit != (void *)0xFA57)) {

@@ -20,6 +20,15 @@ extern volatile sig_atomic_t JitInterruptFlag;
 bool
 vm_init(Ty *ty, int ac, char **av);
 
+Ty *
+vm_new_debug_ty(void);
+
+void
+vm_free_debug_ty(Ty *ty);
+
+void
+vm_take_lock_raw(Ty *ty);
+
 bool
 vm_reset(Ty *ty);
 
@@ -266,8 +275,8 @@ vm_rethrow(Ty *ty);
 void
 xprint_stack(Ty *ty, int n);
 
-void
-vm_jit_handle_interrupt(Ty *ty, Value *top);
+int
+vm_jit_handle_interrupt(Ty *ty, Value *top, JitDeopt const *info);
 
 void
 vm_check_flags(Ty *ty);

@@ -255,6 +255,7 @@ set(_src_files
   src/compiler.c
   src/diag.c
   src/queue.c
+  src/debug.c
   src/dict.c
   src/ffi.c
   src/functions.c

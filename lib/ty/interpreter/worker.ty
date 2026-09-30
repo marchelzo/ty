@@ -1,0 +1,71 @@
+import io
+import json
+import os
+import ptr
+import stdio
+import ty.mod
+import ty.interpreter.host as host
+
+use Request = {id: Int, code: String}
+use Result = {
+    type: 'result', id: Int, value: String | nil, error: String | nil,
+    truncated: Bool
+}
+
+class Evaluator {
+    __module: Module | nil = nil
+    __cell:   Int = 0
+
+    eval(source: String) -> Any {
+        __cell += 1
+        __module = ty.mod.compile(source, __module, "(cell {__cell})")
+        ty.mod.eval(__module)
+    }
+}
+
+fn evaluate(repl: Evaluator, request: Request) -> Result {
+    let value: String | nil = nil
+    let error: String | nil = nil
+    let truncated = false
+    host.active(true)
+    try {
+        let result = repl.eval(request.code)
+        value = result == nil ? nil : str(result)
+    } catch exception {
+        error = str(exception)
+    } finally {
+        host.active(false)
+    }
+    stdio.fflush(ptr.null)
+    truncated = #(value ?? '') > 65536 || #(error ?? '') > 65536
+    return {
+        type: 'result', id: request.id,
+        value: value == nil ? nil : value[;65536],
+        error: error == nil ? nil : error[;65536], truncated
+    }
+}
+
+fn send(stream: io.Stream, message: Any) {
+    stream.write("{json.encode(message)}\n")
+    stream.flush()
+}
+
+pub fn run() {
+    let input = io.Stream(0, 'r', dup=true)
+    let output = io.Stream(1, 'w', dup=true)
+    os.fcntl(input.fd, os.F_SETFD, os.FD_CLOEXEC)
+    os.fcntl(output.fd, os.F_SETFD, os.FD_CLOEXEC)
+    let fd = os.open('/dev/null', os.O_RDONLY)
+    if fd < 0 || os.dup2(fd, 0) < 0 || os.dup2(2, 1) < 0 {
+        throw os.OSError('redirect REPL streams')
+    }
+    os.close(fd)
+    let repl = Evaluator()
+    host.connect(input, output)
+    send(output, {type: 'ready', version: 1})
+    while let $line = input.nextLine() {
+        send(output, evaluate(repl, json.parse(Request, line)))
+    }
+}
+
+run()

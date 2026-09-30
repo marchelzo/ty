@@ -30,6 +30,7 @@
 #include "highlight.h"
 #include "jit.h"
 #include "diag.h"
+#include "ty/debug.h"
 
 #define TY_DEBUG_STACK_BOOKKEEPING 0
 
@@ -2229,7 +2230,11 @@ add_location_info(Ty *ty)
                 eloc_cmp
         );
 
+        DebugLockLocations();
         xvP(location_lists, STATE.expression_locations);
+        DebugUnlockLocations();
+
+        DebugCodeLoaded(ty);
 }
 
 inline static TryState *
@@ -3152,13 +3157,10 @@ get_import_scope(Ty *ty, char const *name)
                 return STATE.global;
         }
 
-        if (DEBUGGING) {
-                void const *ip = TDB->host->ip;
-                Expr const *ctx = (ip != NULL)
-                                ? compiler_find_expr(ty, ip)
-                                : NULL;
+        Expr const *dbg_ctx = DebugEvalContext(ty);
 
-                Module const *this_mod = ExpressionModule(ctx);
+        if (dbg_ctx != NULL) {
+                Module const *this_mod = ExpressionModule(dbg_ctx);
 
                 if (this_mod != NULL) {
                         if (strcmp(this_mod->name, name) == 0) {
@@ -16612,6 +16614,92 @@ tyeval(Ty *ty, Expr *e, Value *ret, Scope *scope)
         return ok;
 }
 
+location_vector const *
+compiler_location_lists(isize *n)
+{
+        *n = vN(location_lists);
+        return vv(location_lists);
+}
+
+char *
+compiler_compile_debug_expr(
+        Ty *ty,
+        char const *source,
+        Scope *scope,
+        Value *error
+)
+{
+        if (scope == NULL) {
+                scope = STATE.global;
+        }
+
+        Scope *global = scope;
+        while (!ScopeIsTop(global)) {
+                global = global->parent;
+        }
+
+        byte_vector buf = {0};
+        xvP(buf, '\0');
+        xvPn(buf, source, strlen(source));
+        xvP(buf, '\0');
+        xvP(buf, '\0');
+
+        Arena old = NewArenaNoGC(ty, 1 << 16);
+        CompileState state = STATE;
+
+        Module *mod = amA0(sizeof (Module));
+        mod->name = "(debug)";
+        mod->path = "(debug)";
+        mod->source = vv(buf) + 1;
+        mod->scope = scope_new(ty, mod->name, global, false);
+
+        STATE = freshstate(ty, mod);
+        STATE.fscope = scope->function;
+
+        EVAL_DEPTH += 1;
+
+        if (TY_CATCH_ERROR()) {
+                *error = TY_CATCH();
+                EVAL_DEPTH -= 1;
+                STATE = state;
+                ty->arena = old;
+                return NULL;
+        }
+
+        Stmt **prog = parse(ty, vv(buf) + 1, "(debug)");
+
+        if (prog == NULL) {
+                fail("%s", TyError(ty));
+        }
+
+        if (
+                (prog[0] == NULL)
+             || (prog[1] != NULL)
+             || (prog[0]->type != STATEMENT_EXPRESSION)
+        ) {
+                fail("expected a single expression");
+        }
+
+        Expr *e = (Expr *)prog[0];
+
+        symbolize_expression(ty, scope, e);
+        t2_check_expression(ty, e);
+
+        EE(e);
+        INSN(HALT);
+        add_location_info(ty);
+
+        TY_CATCH_END();
+
+        char *code = vv(STATE.code);
+
+        EVAL_DEPTH -= 1;
+        STATE = state;
+        ty->arena = old;
+
+        return code;
+}
+
 Value
 compiler_eval(Ty *ty, Expr *e)
 {
@@ -18678,7 +18766,7 @@ DumpProgram(
         int n, nkw = 0, i, j, tag;
         Value f;
 
-        bool DebugScan = DEBUGGING;
+        bool DebugScan = false;
         u32 limit = UINT32_MAX;
         uptr DebugHistory[8] = {0};
 
@@ -18701,7 +18789,7 @@ DumpProgram(
         for (char const *c = code; end == NULL || c < end; DebugScan || xvP(*out, '\n')) {
                 uptr pc = (uptr)c;
 
-                if (DEBUGGING) {
+                if (DebugScan) {
                         if (--limit == 0) break;
                         memmove(
                                 DebugHistory,
@@ -18768,7 +18856,7 @@ DumpProgram(
                         continue;
                 }
 
-                if (DEBUGGING && c == ty->ip) {
+                if (DebugScan && c == ty->ip) {
                         dump(
                                 out,
                                 "                    %s%7td%s       %s-->  %s%s%s",
@@ -19392,7 +19480,7 @@ DumpProgram(
 
                         if (
                                 !incl_sub_fns
-                             || (DEBUGGING && (ty->ip > c + hs + size))
+                             || (DebugScan && (ty->ip > c + hs + size))
                         ) {
                                 c += (hs + size);
                         } else {
@@ -19510,7 +19598,7 @@ DumpProgram(
                 }
         }
 End:
-        if (!DEBUGGING && vN(after) > 0) {
+        if (vN(after) > 0) {
                 xvP(*out, '\n');
                 xvPn(*out, vv(after), vN(after));
                 xvF(after);

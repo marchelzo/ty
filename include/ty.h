@@ -593,6 +593,7 @@ struct try {
 
         bool executing;
         bool need_trace;
+        bool native;
 
         u8 state;
 
@@ -645,48 +646,6 @@ typedef struct ty0 {
 
 typedef struct thread_group ThreadGroup;
 
-typedef struct {
-        char *ip;
-        char op;
-        Expr *cond;
-} DebugBreakpoint;
-
-#define TY_TDB_STATES   \
-        X(OFF)          \
-        X(STARTING)     \
-        X(ACTIVE)       \
-        X(STOPPED)      \
-        X(STEPPING)     \
-        X(DEAD)
-
-#define X(s) TDB_STATE_ ## s ,
-enum {
-        TY_TDB_STATES
-        TDB_MAX_STATE
-};
-#undef X
-
-#define X(s) #s ,
-static char const *TDB_STATE_NAMES[] = {
-        TY_TDB_STATES
-};
-#undef X
-
-typedef struct {
-        atomic_uint_least8_t state;
-
-        Ty *ty;
-        Ty *host;
-
-        Value thread;
-        Value hook;
-
-        DebugBreakpoint next;
-        DebugBreakpoint alt;
-        vec(DebugBreakpoint) breaks;
-
-        byte_vector context_buffer;
-} TyTDB;
 
 typedef struct ty {
         char *ip;
@@ -753,7 +712,7 @@ typedef struct ty {
 
         char *code;
 
-        TyTDB *tdb;
+        struct ty_debug_thread *dbg;
         TY *ty;
 } Ty;
 
@@ -826,7 +785,6 @@ typedef struct {
         int jit;
         int TEST;
         int tests;
-        int tdb_hook;
         int version;
 } InternedNames;
 
@@ -1647,83 +1605,6 @@ vm_error(Ty *ty, char const *fmt, ...);
 noreturn void
 vm_xerror(Ty *ty, int kind, char const *fmt, ...);
 
-#define I_AM_TDB       (ty == TDB_TY)
-#define TDB            (ty->tdb)
-#define TDB_TY         ((TDB == NULL) ? NULL : (Ty *)(TDB->ty))
-#define TDB_STATE      ((TDB == NULL) ? TDB_STATE_OFF : TDB->state)
-#define TDB_STATE_NAME (TDB_STATE_NAMES[TDB_STATE])
-#define TDB_MUTEX      (TDB->thread.thread->mutex)
-#define TDB_CONDVAR    (TDB->thread.thread->cond)
-#define DEBUGGING      (!TDB_IS(OFF))
-
-#if 0
-#define TDB_IS(x) (                                                  \
-        fprintf(                                                     \
-                stderr,                                              \
-                "[%s] %16s:%-6d TDB_IS(%s) --> %d (state: %s)\n",    \
-                I_AM_TDB ? "TDB" : "Ty",                             \
-                __FILE__,                                            \
-                __LINE__,                                            \
-                #x,                                                  \
-                TDB_STATE == (TDB_STATE_ ## x),                      \
-                TDB_STATE_NAME                                       \
-        ),                                                           \
-        (TDB_STATE == (TDB_STATE_ ## x))                             \
-)
-
-#define TDB_IS_NOW(x) (                                              \
-        fprintf(                                                     \
-                stderr,                                              \
-                "[%s] %16s:%-6d TDB_WAS(%s) --> TDB_IS_NOW(%s)\n",   \
-                I_AM_TDB ? "TDB" : "Ty",                             \
-                __FILE__,                                            \
-                __LINE__,                                            \
-                TDB_STATE_NAME,                                      \
-                #x                                                   \
-        ),                                                           \
-        (TDB->state = TDB_STATE_ ## x)                               \
-)
-#else
-#define TDB_IS(x)     (TDB_STATE == (TDB_STATE_ ## x))
-#define TDB_IS_NOW(x) (TDB->state = TDB_STATE_ ## x)
-#endif
-
-#define TDB_SET_STATE(x) (TDB->state = (x))
-
-void
-tdb_start(Ty *ty);
-
-char const *GetInstructionName(unsigned char inst);
-
-void
-tdb_set_break(Ty *ty, char *ip);
-
-DebugBreakpoint *
-tdb_get_break(Ty *ty, char const *ip);
-
-void
-tdb_list(Ty *ty);
-
-void
-tdb_go(Ty *ty);
-
-bool
-tdb_step_over(Ty *ty);
-
-bool
-tdb_step_expr(Ty *ty);
-
-bool
-tdb_step_into(Ty *ty);
-
-bool
-tdb_step_line(Ty *ty);
-
-Value
-tdb_locals(Ty *ty);
-
-void
-tdb_backtrace(Ty *ty);
 
 inline static bool
 TyHasError(Ty *ty)

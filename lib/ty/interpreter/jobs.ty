@@ -1,0 +1,20 @@
+import os
+import ty.interpreter.host as host
+
+pub use Info = {
+    id: Int, pid: Int, argv: Array[String], cwd: String,
+    running: Bool, status: String
+}
+pub use Output = {job: Info, output: String, preview: String, truncated: Bool}
+
+pub fn start(
+    argv: Array[String],
+    cwd: String = os.getcwd(),
+    env: Dict[String, String] | nil = nil
+) -> Info {
+    host.call('jobs.start', {argv, cwd, env})
+}
+
+pub fn list() -> Array[Info] { host.call('jobs.list') }
+pub fn read(id: Int) -> Output { host.call('jobs.read', {id}) }
+pub fn stop(id: Int) -> Info { host.call('jobs.stop', {id}) }

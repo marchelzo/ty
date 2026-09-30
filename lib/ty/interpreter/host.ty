@@ -1,0 +1,43 @@
+import io
+import json
+
+use Reply = {type: 'reply', id: Int, value: Any, error: String | nil}
+
+let input: io.Stream | nil = nil
+let output: io.Stream | nil = nil
+let next-id = 0
+let lock = Mutex()
+let active? = false
+
+pub fn connect(reader: io.Stream, writer: io.Stream) {
+    input = reader
+    output = writer
+}
+
+pub fn call(method: String, args: Any = nil) -> Any {
+    with lock { exchange(method, args) }
+}
+
+pub fn active(value: Bool) {
+    with lock { active? = value }
+}
+
+fn exchange(method: String, args: Any) -> Any {
+    if !active? {
+        throw RuntimeError('host calls require an active evaluation')
+    }
+    let $reader = input or throw RuntimeError('no interpreter host')
+    let $writer = output or throw RuntimeError('no interpreter host')
+    next-id += 1
+    writer.write("{json.encode({type: 'call', id: next-id, method, args})}\n")
+    writer.flush()
+    let $line = reader.nextLine() or throw RuntimeError('interpreter host exited')
+    let reply = json.parse(Reply, line)
+    if reply.id != next-id {
+        throw RuntimeError('unexpected interpreter host reply')
+    }
+    if let $error = reply.error {
+        throw RuntimeError(error)
+    }
+    reply.value
+}
