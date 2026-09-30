@@ -1,0 +1,291 @@
+import os
+import json
+import ty
+import support.process (FIXTURES)
+
+ns test
+
+const DEBUGGEE = str(FIXTURES / 'debuggee.ty')
+
+fn line-of(needle: String) -> Int {
+    for line, i in slurp(DEBUGGEE).lines() {
+        if line.contains?(needle) {
+            return i + 1
+        }
+    }
+
+    throw AssertionError("no line containing {needle}")
+}
+
+fn split-message(buf: Blob) -> String | nil {
+    let $end = buf.search('\r\n\r\n') or return nil
+
+    if not let [_, n] = buf.str(0, end).match(/Content-Length:\s*(\d+)/) {
+        return nil
+    }
+
+    let size = int(n)
+
+    if #buf < end + 4 + size {
+        return nil
+    }
+
+    let body = buf.str(end + 4, size)
+    buf.splice(0, end + 4 + size)
+    body
+}
+
+class Dap {
+    __proc: Any
+    __seq: Int
+    __inbox: Channel
+    __events: Array[Dict[String, Any]]
+
+    init(pid: Int) {
+        __proc = os.spawn(
+            [ty.executable, '--attach', str(pid), '--dap'],
+            stdin=os.SPAWN_PIPE,
+            stdout=os.SPAWN_PIPE,
+            stderr=os.SPAWN_NULL
+        )
+        __seq = 0
+        __inbox = Channel()
+        __events = []
+
+        let fd = __proc.stdout
+        let inbox = __inbox
+
+        Thread(fn () {
+            let buf = Blob()
+            while let $chunk = os.read(fd, 65536) {
+                if #chunk == 0 {
+                    break
+                }
+                buf.push(chunk)
+                while let $text = split-message(buf) {
+                    inbox.send(json.parse(text))
+                }
+            }
+            inbox.send(nil)
+        })
+    }
+
+    __next(ms: Int) -> Dict[String, Any] {
+        match __inbox.recv(ms) {
+            Some($msg) => msg,
+            _          => throw AssertionError('debug adapter went quiet')
+        }
+    }
+
+    request(command: String, args: Dict[String, Any] = %{}) -> Dict[String, Any] {
+        __seq += 1
+
+        let body = json.encode(%{
+            'seq': __seq,
+            'type': 'request',
+            'command': command,
+            'arguments': args
+        })
+
+        os.write(__proc.stdin, "Content-Length: {#body}\r\n\r\n{body}", all=true)
+
+        while true {
+            let msg = __next(10000)
+            if msg['type'] == 'response' && msg['request_seq'] == __seq {
+                return msg
+            }
+            __events.push(msg)
+        }
+    }
+
+    ok(command: String, args: Dict[String, Any] = %{}) -> Dict[String, Any] {
+        let reply = request(command, args)
+        assert(reply['success'], "{command} failed: {reply['message']}")
+        reply['body'] ?? %{}
+    }
+
+    event(name: String) -> Dict[String, Any] {
+        for msg, i in __events {
+            if msg['event'] == name {
+                __events.pop(i)
+                return msg['body'] ?? %{}
+            }
+        }
+
+        while true {
+            let msg = __next(10000)
+            if msg['event'] == name {
+                return msg['body'] ?? %{}
+            }
+        }
+    }
+
+    frames(thread: Int) -> Array[Dict[String, Any]] {
+        ok('stackTrace', %{'threadId': thread})['stackFrames']
+    }
+
+    variables(frame: Dict[String, Any], scope: String) -> Dict[String, String] {
+        let scopes = ok('scopes', %{'frameId': frame['id']})['scopes']
+        let vars = %{}
+
+        for scopes {
+            if it['name'] == scope {
+                let ref = it['variablesReference']
+                for ok('variables', %{'variablesReference': ref})['variables'] {
+                    vars[it['name']] = it['value']
+                }
+            }
+        }
+
+        vars
+    }
+
+    close() {
+        request('disconnect')
+        os.close(__proc.stdin)
+        os.wait4(__proc.pid)
+    }
+}
+
+fn launch() -> (Any, Dap) {
+    let proc = os.spawn(
+        [ty.executable, DEBUGGEE],
+        stdin=os.SPAWN_NULL,
+        stdout=os.SPAWN_NULL,
+        stderr=os.SPAWN_NULL
+    )
+
+    os.sleep(0.3)
+
+    let dap = Dap(proc.pid)
+
+    dap.ok('initialize', %{'adapterID': 'ty', 'linesStartAt1': true})
+    dap.event('initialized')
+    dap.ok('attach')
+
+    (proc, dap)
+}
+
+fn finish(proc: Any, dap: Dap) {
+    dap.close()
+    os.sleep(0.1)
+    assert(os.kill(proc.pid, 0) == 0, 'debuggee died after detach')
+    os.kill(proc.pid, os.SIGKILL)
+    os.wait4(proc.pid)
+}
+
+pub fn debugger-pause-and-inspect() {
+    let (proc, dap) = launch()
+
+    dap.ok('pause', %{'threadId': 1})
+    assert(dap.event('stopped')['reason'] == 'pause')
+
+    let names = dap.ok('threads')['threads'].map(&['name'])
+    assert(names.contains?('main'))
+    assert(#names == 2)
+
+    let frames = dap.frames(1)
+    let globals = dap.variables(frames[-1], 'Globals')
+    assert(int(globals['calls']) > 0)
+
+    let result = dap.ok('evaluate', %{'expression': 'calls * 0 + 42', 'frameId': frames[0]['id']})
+    assert(result['result'] == '42')
+
+    dap.ok('continue', %{'threadId': 1})
+    finish(proc, dap)
+}
+
+pub fn debugger-breakpoint-in-hot-jit-loop() {
+    let (proc, dap) = launch()
+    let line = line-of('acc = (acc + i)')
+
+    let bps = dap.ok('setBreakpoints', %{
+        'source': %{'path': DEBUGGEE},
+        'breakpoints': [%{'line': line, 'condition': 'i == 150000'}]
+    })['breakpoints']
+
+    assert(bps[0]['verified'])
+    assert(bps[0]['line'] == line)
+
+    let stop = dap.event('stopped')
+    assert(stop['reason'] == 'breakpoint')
+
+    let frame = dap.frames(stop['threadId'])[0]
+    assert(frame['name'] == 'main.hot')
+    assert(frame['line'] == line)
+    assert(dap.variables(frame, 'Locals')['i'] == '150000')
+
+    dap.ok('setVariable', %{
+        'variablesReference': dap.ok('scopes', %{'frameId': frame['id']})['scopes'][0]['variablesReference'],
+        'name': 'acc',
+        'value': '7'
+    })
+
+    let squares = dap.ok('evaluate', %{
+        'expression': '[j * j for j in ..20000].map(\\_ + 1).len()',
+        'frameId': frame['id']
+    })
+    assert(squares['result'] == '20000')
+
+    let sum = dap.ok('evaluate', %{'expression': 'acc + i', 'frameId': frame['id']})
+    assert(sum['result'] == '150007')
+
+    dap.ok('setBreakpoints', %{'source': %{'path': DEBUGGEE}, 'breakpoints': []})
+    dap.ok('continue', %{'threadId': stop['threadId']})
+    finish(proc, dap)
+}
+
+pub fn debugger-stepping() {
+    let (proc, dap) = launch()
+    let entry = line-of('let doubled')
+
+    dap.ok('setFunctionBreakpoints', %{'breakpoints': [%{'name': 'helper'}]})
+
+    let stop = dap.event('stopped')
+    assert(stop['reason'] == 'function breakpoint')
+
+    let thread = stop['threadId']
+    let frames = dap.frames(thread)
+    assert(frames[0]['name'] == 'main.helper')
+    assert(frames[0]['line'] == entry)
+    assert(dap.variables(frames[0], 'Locals')['box'] == 'Box{value: 21}')
+
+    dap.ok('setFunctionBreakpoints', %{'breakpoints': []})
+
+    dap.ok('next', %{'threadId': thread})
+    dap.event('stopped')
+    assert(dap.frames(thread)[0]['line'] == entry + 1)
+    assert(dap.variables(dap.frames(thread)[0], 'Locals')['doubled'] == '42')
+
+    dap.ok('stepOut', %{'threadId': thread})
+    dap.event('stopped')
+    assert(dap.frames(thread)[0]['line'] == line-of('total += helper'))
+
+    dap.ok('next', %{'threadId': thread})
+    dap.event('stopped')
+    assert(dap.frames(thread)[0]['line'] == line-of('sleep(0.001)'))
+
+    dap.ok('continue', %{'threadId': thread})
+    finish(proc, dap)
+}
+
+pub fn debugger-exception-in-thread() {
+    let (proc, dap) = launch()
+
+    dap.ok('setExceptionBreakpoints', %{'filters': ['raised']})
+
+    let stop = dap.event('stopped')
+    assert(stop['reason'] == 'exception')
+    assert(stop['threadId'] != 1)
+    assert(stop['text'].match?(/worker-\d+/))
+
+    let info = dap.ok('exceptionInfo', %{'threadId': stop['threadId']})
+    assert(info['breakMode'] == 'always')
+
+    assert(dap.frames(stop['threadId'])[0]['name'] == 'main.worker')
+    assert(dap.frames(1)[-1]['name'] == '<module main>')
+
+    dap.ok('setExceptionBreakpoints', %{'filters': []})
+    dap.ok('continue', %{'threadId': stop['threadId']})
+    finish(proc, dap)
+}
