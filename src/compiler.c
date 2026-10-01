@@ -12389,6 +12389,9 @@ lowkey(Expr *e, Scope *scope, void *ctx)
                                 e->object,
                                 e->method->identifier
                         );
+                        if (QueryResult != NULL && e->method->_type != T2_TYPE_INVALID) {
+                                ((Symbol *)QueryResult)->type = t2_relaxed(ty, e->method->_type);
+                        }
                         break;
 
                 case EXPRESSION_MEMBER_ACCESS:
@@ -12400,6 +12403,9 @@ lowkey(Expr *e, Scope *scope, void *ctx)
                                 e->object,
                                 e->member->identifier
                         );
+                        if (QueryResult != NULL && e->_type != T2_TYPE_INVALID) {
+                                ((Symbol *)QueryResult)->type = t2_relaxed(ty, e->_type);
+                        }
                         break;
 
                 case EXPRESSION_FUNCTION:
@@ -20139,9 +20145,15 @@ TyLoadModule(Ty *ty, char const *name, u32 flags)
                 return mod;
         }
 
+        Module *current = STATE.module;
+        u64 flags_before = (current != NULL) ? current->flags : 0;
+
         TY_BEGIN_LOADING();
 
         if (TY_CATCH_ERROR()) {
+                if (current != NULL) {
+                        current->flags = flags_before;
+                }
                 TY_FINISH_LOADING();
                 TY_RETHROW();
         } else {

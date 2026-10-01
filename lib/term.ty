@@ -32,6 +32,10 @@ pub ns mod {
 
 pub use CursorAddress = (Int, Int)
 
+fn terminal-path() -> String {
+    (..3).map(ttyname).coalesce('/dev/tty')
+}
+
 pub ns event {
     pub tag EOF;
     pub tag Text;
@@ -536,7 +540,7 @@ pub class TermIO {
         paste: Bool = true,
         events: SharedQueue[event.Event] = SharedQueue()
     ) {
-        __fd = fd ?? open('/dev/tty', O_RDWR)
+        __fd = fd ?? open(terminal-path(), O_RDWR)
         if !isatty(__fd) {
             throw OSError('TermIO()', errno.ENOTTY)
         }

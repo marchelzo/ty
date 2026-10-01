@@ -138,6 +138,9 @@ t2_render(Ty *ty, T2Type type, T2Render render);
 char *
 t2_show(Ty *ty, T2Type type);
 
+T2Type
+t2_relaxed(Ty *ty, T2Type type);
+
 Value
 t2_to_ty(Ty *ty, T2Type type);
 

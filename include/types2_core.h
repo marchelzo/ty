@@ -153,7 +153,8 @@ typedef enum t2_predicate_kind {
         T2_PREDICATE_SUBSCRIPT_WRITE,
         T2_PREDICATE_MEMBER_READ,
         T2_PREDICATE_MEMBER_WRITE,
-        T2_PREDICATE_KEYWORD_SPREAD
+        T2_PREDICATE_KEYWORD_SPREAD,
+        T2_PREDICATE_DEFAULT
 } T2PredicateKind;
 
 typedef struct t2_predicate {
@@ -1032,6 +1033,17 @@ t2_solver_commit(T2Solver *solver, T2SolverMark mark);
 
 bool
 t2_solver_cancel_obligations_since(T2Solver *solver, T2SolverMark mark);
+
+bool
+t2_predicate_has_operand(T2PredicateKind kind);
+
+bool
+t2_solver_parameter_default(
+        T2Solver   *solver,
+        T2Type      parameter,
+        char const *name,
+        T2Type     *fallback
+);
 
 void
 t2_solver_rollback(T2Solver *solver, T2SolverMark mark);

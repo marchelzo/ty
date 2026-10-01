@@ -37,7 +37,8 @@ enum {
         REASON_FUNCTION,
         REASON_STEP,
         REASON_PAUSE,
-        REASON_EXCEPTION
+        REASON_EXCEPTION,
+        REASON_ENTRY
 };
 
 enum {
@@ -184,6 +185,8 @@ static struct {
         bool session;
         bool agent;
         bool stopped;
+        bool configured;
+        bool entry;
         u64 gen;
         TyDebugThread *stopper;
         int reason;
@@ -242,7 +245,8 @@ static char const *ReasonNames[] = {
         [REASON_FUNCTION]   = "function breakpoint",
         [REASON_STEP]       = "step",
         [REASON_PAUSE]      = "pause",
-        [REASON_EXCEPTION]  = "exception"
+        [REASON_EXCEPTION]  = "exception",
+        [REASON_ENTRY]      = "entry"
 };
 
 static char *
@@ -638,7 +642,7 @@ jw_escape(JsonWriter *w, char const *s)
                 default:
                         if (c < 0x20) {
                                 char buf[8];
-                                snprintf(buf, sizeof buf, "\\u%04x", c);
+                                ty_snprintf(buf, sizeof buf, "\\u%04x", c);
                                 xvPn(w->b, buf, 6);
                         } else {
                                 xvP(w->b, (char)c);
@@ -687,7 +691,7 @@ static void
 jw_int(JsonWriter *w, i64 n)
 {
         char buf[32];
-        int len = snprintf(buf, sizeof buf, "%lld", (long long)n);
+        int len = ty_snprintf(buf, sizeof buf, "%lld", (long long)n);
         jw_sep(w);
         xvPn(w->b, buf, len);
 }
@@ -749,7 +753,7 @@ static void
 SendMessage(JsonWriter *w)
 {
         char header[64];
-        int n = snprintf(header, sizeof header, "Content-Length: %zu\r\n\r\n", vN(w->b));
+        int n = ty_snprintf(header, sizeof header, "Content-Length: %zu\r\n\r\n", vN(w->b));
 
         pthread_mutex_lock(&SendLock);
 
@@ -1757,6 +1761,10 @@ StepShouldStop(Ty *ty, TyDebugThread *d)
                 return false;
         }
 
+        if (D.entry && (e->mod == NULL || strcmp(e->mod->name, "main") != 0)) {
+                return false;
+        }
+
         if (vN(ty->st->frames) > 0 && is_hidden_fun(&vvL(ty->st->frames)->f)) {
                 return false;
         }
@@ -1806,9 +1814,11 @@ DebugSafepoint(Ty *ty)
         }
 
         if (d->step != STEP_NONE && StepShouldStop(ty, d)) {
+                int reason = D.entry ? REASON_ENTRY : REASON_STEP;
+                D.entry = false;
                 d->step = STEP_NONE;
                 d->skip_trap = ty->ip;
-                StopWorld(ty, d, REASON_STEP, SafeIp(ty), NULL, 0, NULL, NULL);
+                StopWorld(ty, d, reason, SafeIp(ty), NULL, 0, NULL, NULL);
         }
 }
 
@@ -2342,7 +2352,7 @@ PathMatches(Expr const *e, char const *path)
 }
 
 static int
-CollectLine(char const *path, int line, vec(char *) *out)
+CollectLine(char const *path, int line, Expr const *only, vec(char *) *out)
 {
         isize nl;
         location_vector const *lists = compiler_location_lists(&nl);
@@ -2379,6 +2389,10 @@ CollectLine(char const *path, int line, vec(char *) *out)
                                         fn = f->e;
                                         width = f->p_end - f->p_start;
                                 }
+                        }
+
+                        if (only != NULL && fn != only) {
+                                continue;
                         }
 
                         bool merged = false;
@@ -2422,7 +2436,7 @@ ResolveLine(Breakpoint *bp)
         pthread_mutex_lock(&LocLock);
 
         for (int delta = 0; delta < 64; ++delta) {
-                if (CollectLine(bp->path, bp->line + delta, (void *)&bp->ips) > 0) {
+                if (CollectLine(bp->path, bp->line + delta, NULL, (void *)&bp->ips) > 0) {
                         bp->actual = bp->line + delta;
                         break;
                 }
@@ -2466,6 +2480,59 @@ CodeOfCallable(Ty *ty, Value const *v)
         }
 }
 
+static Expr const *
+FindFunctionExpr(char const *name)
+{
+        isize nl;
+        location_vector const *lists = compiler_location_lists(&nl);
+        Expr const *found = NULL;
+
+        for (isize l = 0; l < nl; ++l) {
+                for (isize i = 0; i < vN(lists[l]); ++i) {
+                        Expr const *e = v_(lists[l], i)->e;
+
+                        if (
+                                (e == NULL)
+                             || !IsFunctionExpr(e)
+                             || (e->name == NULL)
+                             || (strcmp(e->name, name) != 0)
+                             || (e->mod == NULL)
+                             || (e->mod->path == NULL)
+                        ) {
+                                continue;
+                        }
+
+                        if (strcmp(e->mod->name, "main") == 0) {
+                                return e;
+                        }
+
+                        if (found == NULL) {
+                                found = e;
+                        }
+                }
+        }
+
+        return found;
+}
+
+static void
+ResolveFunctionCode(Breakpoint *bp)
+{
+        pthread_mutex_lock(&LocLock);
+
+        Expr const *fn = FindFunctionExpr(bp->name);
+
+        for (int delta = 1; fn != NULL && delta <= 64; ++delta) {
+                int line = fn->start.line + (delta % 64);
+                if (CollectLine(fn->mod->path, line, fn, (void *)&bp->ips) > 0) {
+                        bp->actual = line;
+                        break;
+                }
+        }
+
+        pthread_mutex_unlock(&LocLock);
+}
+
 static void
 ResolveFunction(Ty *ty, Breakpoint *bp)
 {
@@ -2493,6 +2560,8 @@ ResolveFunction(Ty *ty, Breakpoint *bp)
                 xvP(bp->ips, ip);
                 Expr const *e = ExprAt(ty, ip);
                 bp->actual = (e != NULL) ? e->start.line : -1;
+        } else if (dot == NULL) {
+                ResolveFunctionCode(bp);
         }
 }
 
@@ -2702,6 +2771,7 @@ Detach(Ty *ty)
         }
 
         D.exc_filters = 0;
+        D.entry = false;
         D.session = false;
 
         if (D.stopped) {
@@ -2727,9 +2797,9 @@ Canonical(char const *path, char *out, usize n)
         char buf[PATH_MAX];
 
         if (realpath(path, buf) != NULL) {
-                snprintf(out, n, "%s", buf);
+                ty_snprintf(out, n, "%s", buf);
         } else {
-                snprintf(out, n, "%s", path);
+                ty_snprintf(out, n, "%s", path);
         }
 }
 
@@ -2968,7 +3038,7 @@ ReqBreakpointLocations(Ty *ty, Json const *req, Json const *args)
 
         for (int line = lo; line <= hi && line - lo < 10000; ++line) {
                 vec(char *) ips = {0};
-                if (CollectLine(path, line, (void *)&ips) > 0) {
+                if (CollectLine(path, line, NULL, (void *)&ips) > 0) {
                         jw_open(&body, '{');
                         jw_kint(&body, "line", OutLine(line));
                         jw_close(&body, '}');
@@ -2992,11 +3062,11 @@ ThreadName(TyDebugThread const *d, char *buf, usize n)
         pthread_getname_np(d->thread, name, sizeof name);
 
         if (name[0] != '\0') {
-                snprintf(buf, n, "%s", name);
+                ty_snprintf(buf, n, "%s", name);
         } else if (d->id == 1) {
-                snprintf(buf, n, "main");
+                ty_snprintf(buf, n, "main");
         } else {
-                snprintf(buf, n, "Thread %llu", (unsigned long long)d->id);
+                ty_snprintf(buf, n, "Thread %llu", (unsigned long long)d->id);
         }
 }
 
@@ -3041,10 +3111,10 @@ FrameName(Ty *ty, DebugFrame const *f, char *buf, usize n)
                 if (name == NULL) {
                         name = name_of(&f->fun);
                 }
-                snprintf(buf, n, "%s", (name != NULL) ? name : "<anonymous>");
+                ty_snprintf(buf, n, "%s", (name != NULL) ? name : "<anonymous>");
         } else {
                 Expr const *e = ExprAt(ty, f->ip - 1);
-                snprintf(buf, n, "<module %s>", (e != NULL && e->mod != NULL) ? e->mod->name : "?");
+                ty_snprintf(buf, n, "<module %s>", (e != NULL && e->mod != NULL) ? e->mod->name : "?");
         }
 
         return buf;
@@ -3375,7 +3445,7 @@ WriteChildren(Ty *ty, JsonWriter *w, Handle const *h, isize start, isize count)
         {
                 isize end = (count > 0) ? min(start + count, vN(*x.array)) : vN(*x.array);
                 for (isize i = start; i < end; ++i) {
-                        snprintf(name, sizeof name, "[%lld]", (long long)i);
+                        ty_snprintf(name, sizeof name, "[%lld]", (long long)i);
                         WriteVariable(ty, w, name, v_(*x.array, i), h->frame, h->mark, NULL);
                 }
                 break;
@@ -3384,9 +3454,9 @@ WriteChildren(Ty *ty, JsonWriter *w, Handle const *h, isize start, isize count)
         case VALUE_TUPLE:
                 for (isize i = 0; i < x.count; ++i) {
                         if (x.ids != NULL && x.ids[i] >= 0) {
-                                snprintf(name, sizeof name, "%s", M_NAME(x.ids[i]));
+                                ty_snprintf(name, sizeof name, "%s", M_NAME(x.ids[i]));
                         } else {
-                                snprintf(name, sizeof name, "[%lld]", (long long)i);
+                                ty_snprintf(name, sizeof name, "[%lld]", (long long)i);
                         }
                         WriteVariable(ty, w, name, &x.items[i], h->frame, h->mark, NULL);
                 }
@@ -3827,6 +3897,8 @@ ReqResume(Ty *ty, Json const *req, Json const *args, int step)
                 v__(D.threads, i)->step = STEP_NONE;
         }
 
+        D.entry = false;
+
         if (!D.stopped) {
                 pthread_mutex_unlock(&D.lock);
                 Respond(req, "the program is not stopped", NULL);
@@ -3949,6 +4021,9 @@ ReqConfigurationDone(Ty *ty, Json const *req, Json const *args)
                 }
         }
 
+        D.configured = true;
+        pthread_cond_broadcast(&D.cond);
+
         pthread_mutex_unlock(&D.lock);
 
         Respond(req, NULL, NULL);
@@ -4009,11 +4084,11 @@ HandleRequest(Ty *ty, Json const *req)
         } else if (strcmp(command, "pause") == 0) {
                 ReqPause(ty, req, args);
         } else if (strcmp(command, "disconnect") == 0 || strcmp(command, "terminate") == 0) {
-                bool kill = JBool(args, "terminateDebuggee", strcmp(command, "terminate") == 0);
+                bool term = JBool(args, "terminateDebuggee", strcmp(command, "terminate") == 0);
                 Detach(ty);
                 Respond(req, NULL, NULL);
-                if (kill) {
-                        raise(SIGTERM);
+                if (term) {
+                        kill(getpid(), SIGTERM);
                 }
                 return false;
         } else {
@@ -4237,13 +4312,13 @@ Session(Ty *ty, int fd)
 static void
 SocketPath(long pid, char *out, usize n)
 {
-        snprintf(out, n, "/tmp/.ty_dbg_%ld.sock", pid);
+        ty_snprintf(out, n, "/tmp/.ty_dbg_%ld.sock", pid);
 }
 
 static void
 AttachPath(long pid, char *out, usize n)
 {
-        snprintf(out, n, "/tmp/.ty_attach_%ld", pid);
+        ty_snprintf(out, n, "/tmp/.ty_attach_%ld", pid);
 }
 
 static bool
@@ -4278,7 +4353,7 @@ Listen(char const *path)
                 return -1;
         }
 
-        snprintf(addr.sun_path, sizeof addr.sun_path, "%s", path);
+        ty_snprintf(addr.sun_path, sizeof addr.sun_path, "%s", path);
         unlink(path);
 
         if (
@@ -4347,6 +4422,7 @@ AgentMain(void *ctx)
         if (fd < 0) {
                 pthread_mutex_lock(&D.lock);
                 D.agent = false;
+                pthread_cond_broadcast(&D.cond);
                 pthread_mutex_unlock(&D.lock);
                 return NULL;
         }
@@ -4379,6 +4455,7 @@ AgentMain(void *ctx)
 
         pthread_mutex_lock(&D.lock);
         D.agent = false;
+        pthread_cond_broadcast(&D.cond);
         pthread_mutex_unlock(&D.lock);
 
         vm_free_debug_ty(ty);
@@ -4427,6 +4504,7 @@ StartAgent(void)
         if (pthread_create(&t, &attr, AgentMain, NULL) != 0) {
                 pthread_mutex_lock(&D.lock);
                 D.agent = false;
+                pthread_cond_broadcast(&D.cond);
                 pthread_mutex_unlock(&D.lock);
         }
 
@@ -4541,6 +4619,8 @@ AfterFork(void)
         D.session = false;
         D.agent = false;
         D.stopped = false;
+        D.configured = false;
+        D.entry = false;
         D.client = -1;
         D.exc_filters = 0;
         D.rearms = 0;
@@ -4622,112 +4702,50 @@ DebugSetSignalDisposition(int sig, int disposition)
         D.urg = disposition;
 }
 
-int
-DebugAttachClient(long pid, char *sock, usize n)
+void
+DebugWaitForClient(Ty *ty)
 {
-        char attach[128];
-        struct stat st;
+        char const *wait = getenv("TY_DEBUG_WAIT");
 
-        if (kill((pid_t)pid, 0) != 0) {
-                fprintf(stderr, "ty: cannot attach to process %ld: %s\n", pid, strerror(errno));
-                return -1;
+        if (wait == NULL || wait[0] == '\0' || strcmp(wait, "0") == 0) {
+                return;
         }
 
-        AttachPath(pid, attach, sizeof attach);
-        SocketPath(pid, sock, n);
+        unsetenv("TY_DEBUG_WAIT");
 
-        int fd = open(attach, O_CREAT | O_WRONLY | O_NOFOLLOW, 0600);
-
-        if (fd < 0) {
-                fprintf(stderr, "ty: cannot create %s: %s\n", attach, strerror(errno));
-                return -1;
+        if (WatchPipe[1] < 0 || ty->dbg == NULL) {
+                return;
         }
 
-        close(fd);
+        StartAgent();
 
-        if (kill((pid_t)pid, SIGURG) != 0) {
-                fprintf(stderr, "ty: cannot signal process %ld: %s\n", pid, strerror(errno));
-                unlink(attach);
-                return -1;
+        bool held = HoldingLock(ty);
+
+        if (held) {
+                ReleaseLock(ty, true);
         }
 
-        for (int i = 0; i < 200; ++i) {
-                if (stat(sock, &st) == 0 && S_ISSOCK(st.st_mode)) {
-                        unlink(attach);
-                        return 0;
-                }
-                usleep(25000);
+        pthread_mutex_lock(&D.lock);
+
+        while (D.agent && !D.configured) {
+                pthread_cond_wait(&D.cond, &D.lock);
         }
 
-        unlink(attach);
-
-        fprintf(
-                stderr,
-                "ty: process %ld did not respond (is it a ty program? was it started with TY_NO_ATTACH?)\n",
-                pid
-        );
-
-        return -1;
-}
-
-static int
-Connect(char const *path)
-{
-        struct sockaddr_un addr = { .sun_family = AF_UNIX };
-        int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-
-        snprintf(addr.sun_path, sizeof addr.sun_path, "%s", path);
-
-        if (fd < 0 || connect(fd, (struct sockaddr *)&addr, sizeof addr) != 0) {
-                if (fd >= 0) {
-                        close(fd);
-                }
-                return -1;
+        if (D.session && D.configured) {
+                TyDebugThread *d = ty->dbg;
+                d->step       = STEP_IN;
+                d->step_st    = ty->st;
+                d->step_depth = LogicalDepth(ty);
+                d->step_expr  = NULL;
+                D.entry       = true;
+                RecomputeInterrupt();
         }
 
-        return fd;
-}
+        pthread_mutex_unlock(&D.lock);
 
-int
-DebugProxy(char const *path)
-{
-        int fd = Connect(path);
-
-        if (fd < 0) {
-                fprintf(stderr, "ty: cannot connect to %s: %s\n", path, strerror(errno));
-                return 1;
+        if (held) {
+                vm_take_lock_raw(ty);
         }
-
-        char buf[65536];
-
-        for (;;) {
-                struct pollfd fds[2] = {
-                        { .fd = 0,  .events = POLLIN },
-                        { .fd = fd, .events = POLLIN }
-                };
-
-                if (poll(fds, 2, -1) < 0) {
-                        if (errno == EINTR) {
-                                continue;
-                        }
-                        break;
-                }
-
-                for (int i = 0; i < 2; ++i) {
-                        if (!(fds[i].revents & (POLLIN | POLLHUP | POLLERR))) {
-                                continue;
-                        }
-                        ssize_t k = read(fds[i].fd, buf, sizeof buf);
-                        if (k <= 0 || !WriteAll((i == 0) ? fd : 1, buf, k)) {
-                                close(fd);
-                                return 0;
-                        }
-                }
-        }
-
-        close(fd);
-
-        return 0;
 }
 
 #else
@@ -4754,8 +4772,7 @@ bool DebugCanDeopt(Ty *ty) { return false; }
 Expr const *DebugEvalContext(Ty *ty) { return NULL; }
 bool DebugHandlesSignal(int sig) { return false; }
 void DebugSetSignalDisposition(int sig, int disposition) {}
-int DebugAttachClient(long pid, char *sock, usize n) { return -1; }
-int DebugProxy(char const *sock) { return 1; }
+void DebugWaitForClient(Ty *ty) {}
 
 #endif
 

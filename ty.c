@@ -75,8 +75,6 @@ bool ColorStderr;
 bool ColorOutput;
 
 bool RunningTests       = false;
-static long AttachPid   = 0;
-static bool AttachDap   = false;
 bool CompileOnly        = false;
 bool HighlightOnly      = false;
 bool AllowErrors        = false;
@@ -127,8 +125,6 @@ usage(void)
                 "                    (- is interpreted as stdout, and @ is interpreted as stderr)         \0"
                 "    --wall        Profile based on wall time instead of CPU time                         \0"
 #endif
-                "    --attach PID  Attach an interactive debugger to the running ty process PID           \0"
-                "    --dap         With --attach, speak the Debug Adapter Protocol on stdin/stdout        \0"
                 "    --color=WHEN  Explicitly control when to use colored output. WHEN can be set         \0"
                 "                  to 'always', 'never', or 'auto' (default: 'auto')                      \0"
                 "    --highlight[=THEME]                                                                  \0"
@@ -450,24 +446,6 @@ ProcessArgs(char *argv[], bool first)
                         exit(0);
                 }
 
-                if (s_eq(argv[argi], "--attach")) {
-                        if (argv[argi + 1] == NULL) {
-                                fprintf(stderr, "Missing argument for --attach\n");
-                                exit(1);
-                        }
-                        AttachPid = strtol(argv[++argi], NULL, 10);
-                        if (AttachPid <= 0) {
-                                fprintf(stderr, "ty: invalid pid for --attach: %s\n", argv[argi]);
-                                exit(1);
-                        }
-                        goto NextOption;
-                }
-
-                if (s_eq(argv[argi], "--dap")) {
-                        AttachDap = true;
-                        goto NextOption;
-                }
-
                 if (s_eq(argv[argi], "--test")) {
                         RunningTests = true;
                         goto NextOption;
@@ -569,7 +547,7 @@ ProcessArgs(char *argv[], bool first)
                                                 exit(1);
                                         }
 
-                                        snprintf(buffer, sizeof buffer, fmt, module);
+                                        ty_snprintf(buffer, sizeof buffer, fmt, module);
 
                                         if (!first && !execln(ty, buffer)) {
                                                 exit(1);
@@ -698,17 +676,6 @@ main(int argc, char **argv)
         ColorOutput = ColorStderr;
 #endif
 
-        char attach_sock[256];
-
-        if (AttachPid != 0) {
-                if (DebugAttachClient(AttachPid, attach_sock, sizeof attach_sock) != 0) {
-                        return 1;
-                }
-                if (AttachDap) {
-                        return DebugProxy(attach_sock);
-                }
-        }
-
         if (!vm_init(ty, argc - nopt, argv + nopt)) {
                 DyingOfError = true;
                 fprintf(stderr, "%s\n", TyError(ty));
@@ -718,22 +685,6 @@ main(int argc, char **argv)
         t2_startup_finished();
 
         argv += ProcessArgs(argv, false);
-
-        if (AttachPid != 0) {
-                char attach_src[512];
-                snprintf(
-                        attach_src,
-                        sizeof attach_src,
-                        "import ty.attach\nty.attach.run('%s', %ld)\n",
-                        attach_sock,
-                        AttachPid
-                );
-                if (!vm_execute(ty, attach_src, "(attach)")) {
-                        fprintf(stderr, "%s\n", TyError(ty));
-                        return 1;
-                }
-                return 0;
-        }
 
         FILE *file = fopen(SourceFile, "r");
         if (file == NULL) {
@@ -771,6 +722,8 @@ main(int argc, char **argv)
 
                 return 0;
         }
+
+        DebugWaitForClient(ty);
 
         if (!vm_execute(ty, source, SourceFileName)) {
                 DyingOfError = true;

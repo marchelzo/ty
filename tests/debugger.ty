@@ -1,5 +1,6 @@
 import os
 import json
+import net
 import ty
 import support.process (FIXTURES)
 
@@ -35,30 +36,58 @@ fn split-message(buf: Blob) -> String | nil {
     body
 }
 
+fn socket-path(pid: Int) -> String {
+    "/tmp/.ty_dbg_{pid}.sock"
+}
+
+fn socket?(path: String) -> Bool {
+    let $st = os.stat(path) or return false
+    (st.mode & os.S_IFMT) == os.S_IFSOCK
+}
+
+fn wait-for-socket(pid: Int) -> String {
+    let sock = socket-path(pid)
+
+    for ..400 {
+        if socket?(sock) {
+            return sock
+        }
+
+        os.usleep(25000)
+    }
+
+    throw AssertionError("process {pid} never opened {sock}")
+}
+
+fn request-attach(pid: Int) -> String {
+    let marker = "/tmp/.ty_attach_{pid}"
+
+    os.close(os.open(marker, os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600))
+    os.kill(pid, os.SIGURG)
+
+    let sock = wait-for-socket(pid)
+    os.unlink(marker)
+    sock
+}
+
 class Dap {
-    __proc: Any
+    __fd: Int
     __seq: Int
     __inbox: Channel
     __events: Array[Dict[String, Any]]
 
-    init(pid: Int) {
-        __proc = os.spawn(
-            [ty.executable, '--attach', str(pid), '--dap'],
-            stdin=os.SPAWN_PIPE,
-            stdout=os.SPAWN_PIPE,
-            stderr=os.SPAWN_PIPE
-        )
+    init(sock: String) {
+        __fd = net.dial('unix', sock)
         __seq = 0
         __inbox = Channel()
         __events = []
 
-        let fd1 = __proc.stdout
-        let fd2 = __proc.stderr
+        let fd = __fd
         let inbox = __inbox
 
         Thread(fn () {
             let buf = Blob()
-            while let $chunk = os.read(fd1, 65536) {
+            while let $chunk = os.read(fd, 65536) {
                 if #chunk == 0 {
                     break
                 }
@@ -66,9 +95,6 @@ class Dap {
                 while let $text = split-message(buf) {
                     inbox.send(json.parse(text))
                 }
-            }
-            while let $chunk = os.read(fd2, 65536) {
-                eprint(chunk.str!(), end='', flush=true)
             }
             inbox.send(nil)
         }).detach()
@@ -91,7 +117,7 @@ class Dap {
             'arguments': args
         })
 
-        os.write(__proc.stdin, "Content-Length: {#body}\r\n\r\n{body}", all=true)
+        os.write(__fd, "Content-Length: {#body}\r\n\r\n{body}", all=true)
 
         while true {
             let msg = __next(10000)
@@ -146,8 +172,7 @@ class Dap {
 
     close() {
         request('disconnect')
-        os.close(__proc.stdin)
-        os.wait4(__proc.pid)
+        os.close(__fd)
     }
 }
 
@@ -161,7 +186,7 @@ fn launch() -> (Any, Dap) {
 
     os.sleep(0.3)
 
-    let dap = Dap(proc.pid)
+    let dap = Dap(request-attach(proc.pid))
 
     dap.ok('initialize', %{'adapterID': 'ty', 'linesStartAt1': true})
     dap.event('initialized')
@@ -291,5 +316,37 @@ pub fn debugger-exception-in-thread() {
 
     dap.ok('setExceptionBreakpoints', %{'filters': []})
     dap.ok('continue', %{'threadId': stop['threadId']})
+    finish(proc, dap)
+}
+
+pub fn debugger-stop-on-entry() {
+    setenv('TY_DEBUG_WAIT', '1')
+
+    let proc = os.spawn(
+        [ty.executable, DEBUGGEE],
+        stdin=os.SPAWN_NULL,
+        stdout=os.SPAWN_NULL,
+        stderr=os.SPAWN_NULL
+    )
+
+    setenv('TY_DEBUG_WAIT', '0')
+
+    let dap = Dap(wait-for-socket(proc.pid))
+
+    dap.ok('initialize', %{'adapterID': 'ty', 'linesStartAt1': true})
+    dap.event('initialized')
+    dap.ok('attach')
+    dap.ok('configurationDone')
+
+    let stop = dap.event('stopped')
+    assert(stop['reason'] == 'entry')
+    assert(stop['threadId'] == 1)
+
+    let frame = dap.frames(1)[0]
+    assert(frame['name'] == '<module main>')
+    assert(frame['source']['path'] == DEBUGGEE)
+    assert(frame['line'] < line-of('let thread'))
+
+    dap.ok('continue', %{'threadId': 1})
     finish(proc, dap)
 }

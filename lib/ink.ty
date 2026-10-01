@@ -535,6 +535,7 @@ pub class Component {
     unmount()      {}
     tick()         {}
     handles-tab? -> Bool { false }
+    handles-interrupt? -> Bool { false }
 
     invalidate!() { dirty? = true }
 
@@ -4334,6 +4335,8 @@ fn paint-debug-borders(tree: Element, rows: Int) {
     write(1, _out)
 }
 
+const CTRL_C = event.Key({key: 'c', _key: nil, base: nil, mods: CTRL, event: 1, text: [3]})
+
 fn is-ctrl-c(ev) {
     match ev {
         event.Key({key: 'c' or 99, mods: m, *}) => (m & CTRL) != 0,
@@ -4348,33 +4351,38 @@ fn is-ctrl-l(ev) {
     }
 }
 
-fn dispatch-mouse(tree: Element, raw-ev, handler-name: String) {
+fn dispatch-mouse(tree: Element, raw-ev, handler-name: String) -> Bool {
     let (mx, my) = match raw-ev {
         event.MouseDown( {x, y, *})  => (x, y),
         event.MouseUp(   {x, y, *})  => (x, y),
         event.MouseMove( {x, y, *})  => (x, y),
         event.ScrollUp(  {x, y, *})  => (x, y),
         event.ScrollDown({x, y, *})  => (x, y),
-        _                            => return
+        _                            => return false
     }
 
-    let $path = tree.hit(int(mx) - 1, int(my) - 1) or return
+    let $path = tree.hit(int(mx) - 1, int(my) - 1) or return false
 
     let ev = InkEvent(raw-ev, target=path[0])
+    let handled? = false
 
     for el in path while !ev.stopped? {
         if let $handler = el.props[handler-name] {
             debug!("dispatch-mouse: {handler-name} -> prop handler")
             handler(ev)
+            handled? = true
         }
         if let $comp = el.?component {
             if let $handler = comp.?on-event {
                 debug!("dispatch-mouse: {handler-name} -> {type(comp)}.on-event")
                 handler(raw-ev)
                 comp.invalidate!()
+                handled? = true
             }
         }
     }
+
+    handled?
 }
 
 fn dispatch-key(tree: Element, focused: Element | nil, raw-ev) -> Bool {
@@ -4409,10 +4417,24 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
         return
     }
 
+    while let Some(_) = _event-queue.try-take(0) {
+        ;
+    }
+
     let tio = (_tio = term.TermIO(mouse=fullscreen, events=cast(_event-queue)))
     _inline? = !fullscreen
+    let interrupt? = app.handles-interrupt?
 
     let on-ev = app.?on-event
+
+    fn dispatch-scroll(t: Element, ev) {
+        if dispatch-mouse(t, ev, 'onScroll') || !on-ev {
+            return
+        }
+
+        app.invalidate!()
+        on-ev(ev)
+    }
 
     if fullscreen {
         _out.clear()
@@ -4436,7 +4458,7 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
 
     signal(SIGWINCH, fn () { dirty = true })
     let on-interrupt = signal(os.SIGINT)
-    signal(os.SIGINT, -> _event-queue.put(event.EOF))
+    signal(os.SIGINT, -> _event-queue.put(interrupt? ? CTRL_C : event.EOF))
     defer signal(os.SIGINT, on-interrupt)
     let on-suspend = signal(os.SIGTSTP)
     signal(os.SIGTSTP, suspend)
@@ -4503,7 +4525,7 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
             return false
         }
 
-        if ev == event.EOF || is-ctrl-c(ev) {
+        if ev == event.EOF || (is-ctrl-c(ev) && !interrupt?) {
             debug!("handle: quit ({(ev == event.EOF) ? 'EOF' : 'Ctrl-C'})")
             return true
         }
@@ -4569,7 +4591,7 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
                 },
 
                 (event.ScrollUp(_) or event.ScrollDown(_)) =>
-                    dispatch-mouse(t, ev, 'onScroll'),
+                    dispatch-scroll(t, ev),
 
                 _ => match ev {
                     event.Key({key: 'TAB', event: (1 or 2), *})
@@ -4729,6 +4751,15 @@ pub class TestHarness {
         __tree = t
     }
 
+    __dispatch-scroll(t: Element, ev) {
+        if dispatch-mouse(t, ev, 'onScroll') || !__on-ev {
+            return
+        }
+
+        __app.invalidate!()
+        __on-ev(ev)
+    }
+
     __dispatch(ev) {
         if ev == event.EOF || is-ctrl-c(ev) { return Exit }
         if is-ctrl-l(ev) { return }
@@ -4766,7 +4797,7 @@ pub class TestHarness {
             },
 
             (event.ScrollUp(_) or event.ScrollDown(_)) =>
-                dispatch-mouse(t, ev, 'onScroll'),
+                __dispatch-scroll(t, ev),
 
             _ => match ev {
                 event.Key({key: 'TAB', event: (1 or 2), *})

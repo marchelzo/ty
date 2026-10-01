@@ -797,10 +797,11 @@ class Array[T] : Iterable[T] {
         }
     }
 
-    coalesce() -> T | nil {
+    coalesce[U](default: U = nil) -> (T & Object) | U {
         for x in self if x != nil {
             return x
         }
+        default
     }
 
     argmax() -> ?Int where (T > T): Bool {
@@ -2269,6 +2270,10 @@ trait Iterable[T] {
         __iter__().unzipWith4(*args, **kwargs)
     }
 
+    coalesce[U](default: U = nil) -> (T & Object) | U {
+        __iter__().coalesce(default)
+    }
+
     mean(f: T -> Int | Float = id) -> ?Float {
         __iter__().mean(f)
     }
@@ -2874,6 +2879,13 @@ trait Iter[T] < Iterable[T] {
         for _ in ..n {
             yield x
         }
+    }
+
+    coalesce[U](default: U = nil) -> (T & Object) | U {
+        for x in self if x != nil {
+            return x
+        }
+        default
     }
 
     sum() -> T | nil {
@@ -4452,14 +4464,8 @@ fn >>[a, b](x: a, f: a -> b) -> b { f(x) }
 fn <<[a, b](f: a -> b, x: a) -> b { f(x) }
 
 fn ?>[a, b](x: a, f: (a & Object) -> b) -> (a & nil) | b {
-    //(x == nil) ? nil : f(x)
     (x != nil) ?: f(x)
 }
-
-// fn ?>[a, b](x: (a & nil) | (a & Object), f: (a & Object) -> b) -> (a & nil) | b {
-//     (x == nil) ? nil : f(x)
-//     // (x == nil) ?: f(x)
-// }
 
 macro =~(a, b) = do let [$0, ?$1, ?$2, ?$3, ?$4, ?$5, ?$6, ?$7, ?$8, ?$9] or ($0: String) = $$a.match($$b)
 

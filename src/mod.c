@@ -17,7 +17,12 @@ mod_root(Ty *ty, char const *path)
 
         char buf0[PATH_MAX + 1];
         char buf1[PATH_MAX + 1];
+        char real[PATH_MAX + 1];
         char *dir = directory_of(path, buf0);
+
+        if (realpath(dir, real) != NULL) {
+                dir = real;
+        }
 
         Value const *_root = table_look(ty, &ty->ty->pkg, dir);
 
@@ -39,7 +44,11 @@ mod_root(Ty *ty, char const *path)
                         root = dir;
                         break;
                 }
-                dir = directory_of(dir, buf1);
+                char *up = directory_of(dir, buf1);
+                if (s_eq(up, dir)) {
+                        break;
+                }
+                dir = up;
         }
         SCRATCH_RESTORE();
 

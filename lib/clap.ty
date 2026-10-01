@@ -463,6 +463,13 @@ fn _doParse(cls: _, argv, config) -> _ {
         }
     }
 
+    let fixed = 0
+
+    for spec in positionals {
+        break if spec.repeat
+        fixed += 1
+    }
+
     let i = 1
     let subcmdName = nil
     let subcmdResult = nil
@@ -625,6 +632,10 @@ fn _doParse(cls: _, argv, config) -> _ {
                     subcmdRest = sub[1]
                 } else {
                     posArgs.push(arg)
+                    if #posArgs > fixed {
+                        posArgs.push(*argv[i;])
+                        i = #argv
+                    }
                 }
             }
         }

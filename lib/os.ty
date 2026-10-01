@@ -242,6 +242,8 @@ pub use PTY = {
 }
 
 pub fn openpty(size: ?(Int, Int) = nil) -> PTY | nil;
+pub fn ttyname(fd: Int) -> String | nil;
+pub fn isatty(fd: Int) -> Bool;
 
 pub use ProcessDescriptor = {
     stdin: Int,

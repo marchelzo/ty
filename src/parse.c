@@ -7574,8 +7574,10 @@ parse_module(Ty *ty, Module *mod)
 
                 bool skip = TestNamespace && !RunningTests;
                 if (!skip) {
+                        u32 flags = mod->flags;
                         if (TY_CATCH_ERROR()) {
                                 TY_SUPPRESS("top-level definition");
+                                mod->flags = flags;
                                 UnresolveExpr(ty, (Expr *)s);
                                 s->retry = (s->type == STATEMENT_OPERATOR_DEFINITION);
                         } else {

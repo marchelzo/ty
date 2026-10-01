@@ -118,11 +118,8 @@ DebugHandlesSignal(int sig);
 void
 DebugSetSignalDisposition(int sig, int disposition);
 
-int
-DebugAttachClient(long pid, char *sock, usize n);
-
-int
-DebugProxy(char const *sock);
+void
+DebugWaitForClient(Ty *ty);
 
 inline static void
 DebugOnRelease(Ty *ty, bool blocked)

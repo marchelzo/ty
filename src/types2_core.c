@@ -7501,6 +7501,21 @@ doc_predicate(T2Printer *printer, T2Predicate const *predicate, unsigned depth)
                 doc_subtype_operator(printer);
                 doc_type(printer, predicate->supertype, depth);
                 break;
+        case T2_PREDICATE_DEFAULT:
+                doc_type(printer, predicate->subtype, depth);
+                doc_subtype_operator(printer);
+                doc_type(printer, predicate->supertype, depth);
+                text(printer, T2_TOKEN_PUNCTUATION, " ");
+                text(printer, T2_TOKEN_KEYWORD, "if");
+                text(printer, T2_TOKEN_PUNCTUATION, " ");
+                text(
+                        printer,
+                        T2_TOKEN_PARAMETER,
+                        (predicate->name == NULL) ? "?" : predicate->name
+                );
+                text(printer, T2_TOKEN_PUNCTUATION, " ");
+                text(printer, T2_TOKEN_KEYWORD, "omitted");
+                break;
         case T2_PREDICATE_OPERATOR:
                 if (unary_predicate(printer->universe, predicate)) {
                         text(
@@ -12305,7 +12320,10 @@ drain_work(T2Solver *solver)
                                 goto WorkDone;
                         }
                         T2Obligation *obligation = v_(solver->obligations, index);
-                        if (obligation->state == T2_OBLIGATION_RETIRED) {
+                        if (
+                                (obligation->state == T2_OBLIGATION_RETIRED)
+                             || (obligation->predicate.kind == T2_PREDICATE_DEFAULT)
+                        ) {
                                 goto WorkDone;
                         }
                         T2Predicate predicate = obligation->predicate;
@@ -12579,6 +12597,26 @@ t2_solver_constrain_predicate(
                         predicate->supertype,
                         predicate->provenance
                 );
+        }
+
+        if (predicate->kind == T2_PREDICATE_DEFAULT) {
+                if (
+                        (get_node(solver->universe, predicate->subtype) == NULL)
+                     || (get_node(solver->universe, predicate->supertype) == NULL)
+                ) {
+                        return T2_RELATION_NO;
+                }
+                char *name       = S2N(predicate->name);
+                char *provenance = S2N(predicate->provenance);
+                xvP(solver->obligations, ((T2Obligation) {
+                        .predicate  = *predicate,
+                        .name       = name,
+                        .provenance = provenance,
+                        .state      = T2_OBLIGATION_PENDING
+                }));
+                vvL(solver->obligations)->predicate.name       = name;
+                vvL(solver->obligations)->predicate.provenance = provenance;
+                return T2_RELATION_YES;
         }
 
         if (
@@ -13076,7 +13114,9 @@ t2_solver_pending_obligations(T2Solver const *solver)
 
         usize count = 0;
         for (usize i = 0; i < vN(solver->obligations); ++i) {
-                count += v__(solver->obligations, i).state == T2_OBLIGATION_PENDING;
+                T2Obligation const *obligation = v_(solver->obligations, i);
+                count += (obligation->state == T2_OBLIGATION_PENDING)
+                      && (obligation->predicate.kind != T2_PREDICATE_DEFAULT);
         }
 
         return count;
@@ -13095,7 +13135,10 @@ t2_solver_pending_obligation(
 
         for (usize i = 0; i < vN(solver->obligations); ++i) {
                 T2Obligation const *obligation = v_(solver->obligations, i);
-                if (obligation->state != T2_OBLIGATION_PENDING) {
+                if (
+                        (obligation->state != T2_OBLIGATION_PENDING)
+                     || (obligation->predicate.kind == T2_PREDICATE_DEFAULT)
+                ) {
                         continue;
                 }
                 if (index-- != 0) {
@@ -13323,7 +13366,7 @@ t2_scheme_new(
                         (get_node(universe, predicates[i].subtype) == NULL)
                      || (get_node(universe, predicates[i].supertype) == NULL)
                      || (
-                                (predicates[i].kind != T2_PREDICATE_SUBTYPE)
+                                t2_predicate_has_operand(predicates[i].kind)
                              && (get_node(universe, predicates[i].operand) == NULL)
                         )
                 ) {
@@ -13950,11 +13993,31 @@ without_arm(T2Universe *universe, T2Type type, T2TypeKind kind, T2Type arm)
 }
 
 static bool
+settled_default(T2Scheme const *scheme, T2Predicate const *predicate)
+{
+        if (predicate->kind != T2_PREDICATE_DEFAULT) {
+                return false;
+        }
+
+        for (usize q = 0; q < scheme->quantifier_count; ++q) {
+                if (mentions_variable(scheme->universe, predicate->supertype, scheme->quantifiers[q].id)) {
+                        return false;
+                }
+        }
+
+        return t2_subtype(scheme->universe, predicate->subtype, predicate->supertype) == T2_RELATION_YES;
+}
+
+static bool
 drop_reflexive_predicate(T2Scheme *scheme)
 {
         T2Universe *universe = scheme->universe;
         for (usize i = 0; i < scheme->predicate_count; ++i) {
                 T2Predicate *predicate = &scheme->predicates[i];
+                if (settled_default(scheme, predicate)) {
+                        remove_predicate(scheme, i);
+                        return true;
+                }
                 if (predicate->kind != T2_PREDICATE_SUBTYPE) {
                         continue;
                 }
@@ -15898,7 +15961,7 @@ t2_scheme_instantiate(
                         &instantiation,
                         scheme->predicates[i].supertype
                 );
-                T2Type operand = (scheme->predicates[i].kind == T2_PREDICATE_SUBTYPE)
+                T2Type operand = !t2_predicate_has_operand(scheme->predicates[i].kind)
                                ? T2_TYPE_INVALID
                                : instantiate_type(
                                        &instantiation,
@@ -15916,7 +15979,7 @@ t2_scheme_instantiate(
                         (subtype == T2_TYPE_INVALID)
                      || (supertype == T2_TYPE_INVALID)
                      || (
-                                (predicate.kind != T2_PREDICATE_SUBTYPE)
+                                t2_predicate_has_operand(predicate.kind)
                              && (operand == T2_TYPE_INVALID)
                         )
                      || (t2_solver_constrain_predicate(
@@ -16005,7 +16068,7 @@ scheme_apply_x(
                         &instantiation,
                         scheme->predicates[i].supertype
                 );
-                T2Type operand = (scheme->predicates[i].kind == T2_PREDICATE_SUBTYPE)
+                T2Type operand = !t2_predicate_has_operand(scheme->predicates[i].kind)
                                ? T2_TYPE_INVALID
                                : instantiate_type(
                                        &instantiation,
@@ -16023,7 +16086,7 @@ scheme_apply_x(
                         (subtype == T2_TYPE_INVALID)
                      || (supertype == T2_TYPE_INVALID)
                      || (
-                                (predicate.kind != T2_PREDICATE_SUBTYPE)
+                                t2_predicate_has_operand(predicate.kind)
                              && (operand == T2_TYPE_INVALID)
                         )
                 ) {
@@ -16598,4 +16661,50 @@ T2Type
 t2_type_normalize_deep(T2Universe *universe, T2Type type)
 {
         return resolve_computed_deep(universe, type, 0);
+}
+
+bool
+t2_predicate_has_operand(T2PredicateKind kind)
+{
+        return (kind != T2_PREDICATE_SUBTYPE) && (kind != T2_PREDICATE_DEFAULT);
+}
+
+bool
+t2_solver_parameter_default(
+        T2Solver   *solver,
+        T2Type      parameter,
+        char const *name,
+        T2Type     *fallback
+)
+{
+        if (solver == NULL || name == NULL) {
+                return false;
+        }
+
+        u32 meta = meta_from_type(solver, parameter);
+        if (meta == 0) {
+                return false;
+        }
+
+        meta = find_root(solver, meta);
+
+        for (usize i = vN(solver->obligations); i > 0; --i) {
+                T2Obligation const *obligation = v_(solver->obligations, i - 1);
+                T2Predicate const *predicate = &obligation->predicate;
+                if (
+                        (predicate->kind != T2_PREDICATE_DEFAULT)
+                     || (obligation->state != T2_OBLIGATION_PENDING)
+                     || (predicate->name == NULL)
+                     || !s_eq(predicate->name, name)
+                ) {
+                        continue;
+                }
+                u32 target = meta_from_type(solver, predicate->supertype);
+                if (target != 0 && find_root(solver, target) == meta) {
+                        *fallback = predicate->subtype;
+                        return true;
+                }
+        }
+
+        return false;
 }

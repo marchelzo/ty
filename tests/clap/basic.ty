@@ -43,3 +43,15 @@ pub fn clap-basic() {
     })
     assert(code == 0, "exit {code}: {err}")
 }
+
+pub fn clap-options-stop-at-trailing-positionals() {
+    let (code, err) = forked(fn () {
+        let argv = ['prog', '-o', 'out.txt', 'a', '-v', '--output', 'x', 'b']
+        let (opts, rest) = Args.parse(argv)
+        assert(!opts.verbose)
+        assert(opts.output == 'out.txt')
+        assert(opts.files == ['a', '-v', '--output', 'x', 'b'])
+        assert(#rest == 0)
+    })
+    assert(code == 0, "exit {code}: {err}")
+}

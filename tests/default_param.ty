@@ -119,3 +119,52 @@ pub fn slice-defaults() {
     assert(['abc'].map(head) == ['ab'])
     assert(['abc'].map(reverse) == ['cba'])
 }
+
+fn early-length() -> Int {
+    Lengths().take([1, 2, 3])
+}
+
+class Lengths {
+    take[U](xs: Array[Int], n: U = #xs) -> U {
+        n
+    }
+}
+
+pub fn type-variable-defaults-apply-only-when-omitted() {
+    fn pick[U](d: U = nil) -> U {
+        d
+    }
+
+    fn given() -> Int {
+        pick(3)
+    }
+
+    fn omitted() -> nil {
+        pick()
+    }
+
+    fn explicit() -> String {
+        Lengths().take([1], 'x')
+    }
+
+    fn implicit() -> Int {
+        Lengths().take([1, 2])
+    }
+
+    assert(given() == 3)
+    assert(omitted() == nil)
+    assert(explicit() == 'x')
+    assert(implicit() == 2)
+    assert(early-length() == 3)
+    assert(str(typeof [nil, 'x'].coalesce('d')) == 'String')
+    assert(str(typeof [nil, 1].coalesce()) == 'nil | Int')
+
+    for source in ['let n: Int = pick()', 'let n: Int = [nil, 1].coalesce()'] {
+        try {
+            __eval__(source)
+            assert(false, source)
+        } catch ex :: '[assignment-type]' in ex.what {
+            ;
+        }
+    }
+}

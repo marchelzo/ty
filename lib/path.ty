@@ -208,6 +208,13 @@ pub class Path {
         }
     }
 
+    socket? -> Bool {
+        match os.stat(str(self)) {
+            {mode, *} => (mode & os.S_IFMT) == os.S_IFSOCK,
+            _         => false
+        }
+    }
+
     absolute -> Path {
         if self.absolute? {
             self
