@@ -12,7 +12,7 @@ dbopen(Ty *ty, int argc, Value *kwargs)
 {
         ASSERT_ARGC("sqlite3.open()", 1, 2);
 
-        char const *path = TY_TMP_C_STR(ARGx(0, VALUE_STRING));
+        char const *path = PATH_ARG(0);
 
         int flags = (argc == 2)
                   ? INT_ARG(1)

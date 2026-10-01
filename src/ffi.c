@@ -987,11 +987,10 @@ cffi_dlopen(Ty *ty, int argc, Value *kwargs)
 {
         ASSERT_ARGC("ffi.dlopen()", 1, 2);
 
-        Value lib = ARGx(0, VALUE_STRING);
 #ifdef _WIN32
-        void *p = LoadLibraryA(b);
+        void *p = LoadLibraryA(PATH_ARG(0));
 #else
-        void *p = dlopen(TY_TMP_C_STR(lib), RTLD_NOW);
+        void *p = dlopen(PATH_ARG(0), RTLD_NOW);
 #endif
         return (p == NULL) ? NIL : PTR(p);
 }

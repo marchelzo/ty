@@ -12,7 +12,7 @@ pub const sep = '\\'
 pub const sep = '/'
 #|]
 
-pub class Path {
+pub class Path : PathLike {
     __drv: String
     __root: String
     __parts: Array[String]
@@ -71,6 +71,10 @@ pub class Path {
         } else {
             '.'
         }
+    }
+
+    __path__() -> String {
+        "{self}"
     }
 
     ==(other: Any) -> Bool {

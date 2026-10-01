@@ -605,23 +605,18 @@ BUILTIN_FUNCTION(eprint)
 
 BUILTIN_FUNCTION(slurp)
 {
-        ASSERT_ARGC_2("slurp()", 0, 1);
+        ASSERT_ARGC("slurp()", 0, 1);
 
-        char p[PATH_MAX + 1];
+        char const *p;
         int fd;
         bool need_close = false;
 
         if (argc == 0) {
                 fd = 0;
-        } else if (ARG(0).type == VALUE_STRING) {
-                Value v = ARG(0);
-
-                if (sN(v) >= sizeof p)
-                        return NIL;
-
-                memcpy(p, ss(v), sN(v));
-                p[sN(v)] = '\0';
-
+        } else if (ARG(0).type == VALUE_INTEGER) {
+                fd = ARG(0).z;
+        } else {
+                p = PATH_ARG(0);
 #ifdef _WIN32
                 fd = _open(p, _O_RDONLY);
 #else
@@ -631,10 +626,6 @@ BUILTIN_FUNCTION(slurp)
                         return NIL;
 
                 need_close = true;
-        } else if (ARG(0).type == VALUE_INTEGER) {
-                fd = ARG(0).z;
-        } else {
-                zP("the argument to slurp() must be a path or a file descriptor");
         }
 
         StatStruct st;
@@ -2635,7 +2626,7 @@ BUILTIN_FUNCTION(os_open)
 {
         ASSERT_ARGC("os.open()", 2, 3);
 
-        char const *path = TY_TMP_C_STR(ARGx(0, VALUE_STRING));
+        char const *path = PATH_ARG(0);
 
         int flags = INT_ARG(1);
         int fd;
@@ -2705,25 +2696,39 @@ make_temp_dir(char *template)
 #endif
 }
 
+static char *
+mktemplate(Ty *ty, char const *prefix, usize n)
+{
+        char *template = TY_BUF_A(max(n + sizeof ".XXXXXX", PATH_MAX + 1));
+
+        memcpy(template, prefix, n);
+        memcpy(template + n, ".XXXXXX", sizeof ".XXXXXX");
+
+        return template;
+}
+
+static char *
+xmktemplate(Ty *ty, char const *_name__, int argc)
+{
+        Value prefix;
+        char const *p;
+        usize n;
+
+        if (argc == 0 || ARG(0).type == VALUE_NIL) {
+                return mktemplate(ty, "tmp", 3);
+        }
+
+        prefix = PATH_ARGx(0);
+        p      = TyPathBytes(&prefix, &n);
+
+        return mktemplate(ty, p, n);
+}
+
 BUILTIN_FUNCTION(os_mkdtemp)
 {
-        char template[PATH_MAX + 1] = {0};
+        ASSERT_ARGC("os.mkdtemp()", 0, 1);
 
-        if (argc > 1) {
-                zP("os.mkdtemp() expects 0 or 1 arguments but got %d", argc);
-        }
-
-        if (argc == 1 && ARG(0).type != VALUE_NIL) {
-                Value s = ARG(0);
-                if (s.type != VALUE_STRING)
-                        zP("the first argument to os.mkdtemp() must be a string");
-                /* -8 to make room for the .XXXXXX suffix and NUL byte */
-                memcpy(template, ss(s), min(sN(s), sizeof template - 8));
-        } else {
-                strcpy(template, "tmp");
-        }
-
-        strcat(template, ".XXXXXX");
+        char *template = xmktemplate(ty, _name__, argc);
 
         if (make_temp_dir(template) == NULL) {
                 return NIL;
@@ -2766,18 +2771,7 @@ BUILTIN_FUNCTION(os_mktemp)
 {
         ASSERT_ARGC("os.mktemp()", 0, 1, 2);
 
-        char template[PATH_MAX + 1] = {0};
-
-        if (argc >= 1 && ARG(0).type != VALUE_NIL) {
-                Value s = ARGx(0, VALUE_STRING);
-                /* -8 to make room for the .XXXXXX suffix and NUL byte */
-                memcpy(template, ss(s), min(sN(s), sizeof template - 8));
-        } else {
-                strcpy(template, "tmp");
-        }
-
-        strcat(template, ".XXXXXX");
-
+        char *template = xmktemplate(ty, _name__, argc);
         int fd;
 
         if (argc == 2)
@@ -2813,25 +2807,18 @@ BUILTIN_FUNCTION(os_opendir)
 #else
         ASSERT_ARGC("os.opendir()", 1);
 
-        Value path = ARG(0);
+        char const *path;
         DIR *dir;
 
-        if (path.type == VALUE_STRING) {
-                if (sN(path) >= TY_TMP_N) {
-                        errno = ENOENT;
-                        return NIL;
-                }
-                char *_path = TY_TMP_C_STR(path);
+        if (ARG(0).type == VALUE_INTEGER) {
                 UnlockTy();
-                dir = opendir(_path);
-                LockTy();
-        } else if (path.type == VALUE_INTEGER) {
-                UnlockTy();
-                dir = fdopendir(path.z);
+                dir = fdopendir(ARG(0).z);
                 LockTy();
         } else {
-                ARGx(0, VALUE_INTEGER, VALUE_STRING);
-                UNREACHABLE();
+                path = PATH_ARG(0);
+                UnlockTy();
+                dir = opendir(path);
+                LockTy();
         }
 
         if (dir == NULL) {
@@ -2991,21 +2978,23 @@ BUILTIN_FUNCTION(os_setpgid)
 BUILTIN_FUNCTION(os_unlink)
 {
         ASSERT_ARGC("os.unlink()", 1);
-        Value path = ARGx(0, VALUE_STRING);
-        return INTEGER(unlink(TY_TMP_C_STR(path)));
+        return INTEGER(unlink(PATH_ARG(0)));
 }
 
 BUILTIN_FUNCTION(os_link)
 {
         ASSERT_ARGC("os.link()", 2);
 
-        char const *old = TY_TMP_C_STR_A(ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR));
-        char const *new = TY_TMP_C_STR_B(ARGx(1, VALUE_STRING, VALUE_BLOB, VALUE_PTR));
+        Value old = PATH_ARGx(0);
+        Value new = PATH_ARGx(1);
+
+        char const *c_old = TY_PATH_C_STR_A(old);
+        char const *c_new = TY_PATH_C_STR_B(new);
 
 #ifdef _WIN32
-        return INTEGER(!CreateHardLinkA(new, old, NULL));
+        return INTEGER(!CreateHardLinkA(c_new, c_old, NULL));
 #else
-        return INTEGER(link(old, new));
+        return INTEGER(link(c_old, c_new));
 #endif
 }
 
@@ -3017,10 +3006,10 @@ BUILTIN_FUNCTION(os_linkat)
         ASSERT_ARGC("os.linkat()", 4, 5);
 
         int dirfd0 = INT_ARG(0);
-        Value path0 = ARGx(1, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
+        Value path0 = PATH_ARGx(1);
 
         int dirfd1 = INT_ARG(2);
-        Value path1 = ARGx(3, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
+        Value path1 = PATH_ARGx(3);
 
         int flags = 0;
         if (argc == 5) {
@@ -3030,9 +3019,9 @@ BUILTIN_FUNCTION(os_linkat)
         return INTEGER(
                 linkat(
                         dirfd0,
-                        TY_TMP_C_STR_A(path0),
+                        TY_PATH_C_STR_A(path0),
                         dirfd1,
-                        TY_TMP_C_STR_B(path1),
+                        TY_PATH_C_STR_B(path1),
                         flags
                 )
         );
@@ -3043,11 +3032,11 @@ BUILTIN_FUNCTION(os_symlink)
 {
         ASSERT_ARGC("os.symlink()", 2);
 
-        Value old = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
-        Value new = ARGx(1, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
+        Value old = PATH_ARGx(0);
+        Value new = PATH_ARGx(1);
 
-        char *c_old = TY_TMP_C_STR_A(old);
-        char *c_new = TY_TMP_C_STR_B(new);
+        char const *c_old = TY_PATH_C_STR_A(old);
+        char const *c_new = TY_PATH_C_STR_B(new);
 
 #ifdef _WIN32
         return INTEGER(!CreateSymbolicLinkA(c_old, c_new, 0));
@@ -3060,11 +3049,11 @@ BUILTIN_FUNCTION(os_rename)
 {
         ASSERT_ARGC("os.rename()", 2);
 
-        Value old = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
-        Value new = ARGx(1, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
+        Value old = PATH_ARGx(0);
+        Value new = PATH_ARGx(1);
 
-        char *c_old = TY_TMP_C_STR_A(old);
-        char *c_new = TY_TMP_C_STR_B(new);
+        char const *c_old = TY_PATH_C_STR_A(old);
+        char const *c_new = TY_PATH_C_STR_B(new);
 
         return INTEGER(rename(c_old, c_new));
 }
@@ -3073,7 +3062,6 @@ BUILTIN_FUNCTION(os_mkdir)
 {
         ASSERT_ARGC("os.mkdir()", 1, 2);
 
-        Value path = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
         mode_t mode = 0777;
 
         if (argc == 2 && ARG(1).type != VALUE_NIL) {
@@ -3081,9 +3069,9 @@ BUILTIN_FUNCTION(os_mkdir)
         }
 
 #ifdef _WIN32
-        return INTEGER(mkdir(B.items));
+        return INTEGER(mkdir(PATH_ARG(0)));
 #else
-        return INTEGER(mkdir(TY_TMP_C_STR(path), mode));
+        return INTEGER(mkdir(PATH_ARG(0), mode));
 #endif
 }
 
@@ -3093,22 +3081,20 @@ BUILTIN_FUNCTION(os_mkfifo)
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.mkfifo()");
 #else
-        Value path = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
         mode_t mode = 0666;
 
         if (argc == 2 && ARG(1).type != VALUE_NIL) {
                 mode = INT_ARG(1);
         }
 
-        return INTEGER(mkfifo(TY_TMP_C_STR(path), mode));
+        return INTEGER(mkfifo(PATH_ARG(0), mode));
 #endif
 }
 
 BUILTIN_FUNCTION(os_rmdir)
 {
         ASSERT_ARGC("os.rmdir()", 1);
-        Value path = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
-        return INTEGER(rmdir(TY_TMP_C_STR(path)));
+        return INTEGER(rmdir(PATH_ARG(0)));
 }
 
 BUILTIN_FUNCTION(os_chown)
@@ -3119,11 +3105,10 @@ BUILTIN_FUNCTION(os_chown)
         NOT_ON_WINDOWS("os.chown()");
 #else
 
-        Value path = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
         u64 owner = INT_ARG(1);
         u64 group = INT_ARG(2);
 
-        return INTEGER(chown(TY_TMP_C_STR(path), owner, group));
+        return INTEGER(chown(PATH_ARG(0), owner, group));
 #endif
 }
 
@@ -3134,10 +3119,9 @@ BUILTIN_FUNCTION(os_chmod)
         NOT_ON_WINDOWS("os.chmod()");
 #else
 
-        Value path = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
         u64 mode = INT_ARG(1);
 
-        return INTEGER(chmod(TY_TMP_C_STR(path), mode));
+        return INTEGER(chmod(PATH_ARG(0), mode));
 #endif
 }
 
@@ -3172,10 +3156,9 @@ BUILTIN_FUNCTION(os_access)
 {
         ASSERT_ARGC("os.access()", 2);
 
-        Value path = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
         int mode = INT_ARG(1);
 
-        return INTEGER(access(TY_TMP_C_STR(path), mode));
+        return INTEGER(access(PATH_ARG(0), mode));
 }
 
 BUILTIN_FUNCTION(os_eaccess)
@@ -3185,10 +3168,9 @@ BUILTIN_FUNCTION(os_eaccess)
 #if !defined(__linux__)
         bP("only available on Linux");
 #else
-        Value path = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
         int mode = INT_ARG(1);
 
-        return INTEGER(eaccess(TY_TMP_C_STR(path), mode));
+        return INTEGER(eaccess(PATH_ARG(0), mode));
 #endif
 }
 
@@ -3196,10 +3178,8 @@ BUILTIN_FUNCTION(os_readlink)
 {
         ASSERT_ARGC("os.readlink()", 1);
 
-        Value path = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
-
         char buf[PATH_MAX + 1];
-        isize n = readlink(TY_TMP_C_STR(path), buf, sizeof buf - 1);
+        isize n = readlink(PATH_ARG(0), buf, sizeof buf - 1);
 
         if (n < 0)
                 return NIL;
@@ -3212,12 +3192,6 @@ BUILTIN_FUNCTION(os_readlink)
 BUILTIN_FUNCTION(os_utimes)
 {
         ASSERT_ARGC("os.utimes()", 1, 3);
-
-#ifndef _WIN32
-        Value file = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR, VALUE_INTEGER);
-#else
-        Value file = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
-#endif
 
         struct timeval times[2];
         struct timeval *ptimes = NULL;
@@ -3244,20 +3218,13 @@ BUILTIN_FUNCTION(os_utimes)
                 ptimes = times;
         }
 
-        switch (file.type) {
-        case VALUE_STRING:
-        case VALUE_BLOB:
-        case VALUE_PTR:
-                return INTEGER(utimes(TY_TMP_C_STR(file), ptimes));
-
 #ifndef _WIN32
-        case VALUE_INTEGER:
-                return INTEGER(futimes(file.z, ptimes));
+        if (ARG(0).type == VALUE_INTEGER) {
+                return INTEGER(futimes(ARG(0).z, ptimes));
+        }
 #endif
 
-        default:
-                UNREACHABLE();
-        }
+        return INTEGER(utimes(PATH_ARG(0), ptimes));
 }
 
 BUILTIN_FUNCTION(os_futimes)
@@ -3297,31 +3264,18 @@ BUILTIN_FUNCTION(os_chdir)
         ASSERT_ARGC("os.chdir()", 1);
 
 #ifndef _WIN32
-        Value dir = ARGx(0, VALUE_STRING, VALUE_INTEGER, VALUE_BLOB, VALUE_PTR);
-#else
-        Value dir = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
-#endif
-
-        switch (dir.type) {
-        case VALUE_STRING:
-        case VALUE_BLOB:
-        case VALUE_PTR:
-                return INTEGER(chdir(TY_TMP_C_STR(dir)));
-
-#ifndef _WIN32
-        case VALUE_INTEGER:
-                return INTEGER(fchdir(dir.z));
-#endif
+        if (ARG(0).type == VALUE_INTEGER) {
+                return INTEGER(fchdir(ARG(0).z));
         }
+#endif
 
-        UNREACHABLE();
+        return INTEGER(chdir(PATH_ARG(0)));
 }
 
 BUILTIN_FUNCTION(os_chroot)
 {
         ASSERT_ARGC("os.chroot()", 1);
-        Value dir = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
-        return INTEGER(chroot(TY_TMP_C_STR(dir)));
+        return INTEGER(chroot(PATH_ARG(0)));
 }
 
 BUILTIN_FUNCTION(os_read)
@@ -4091,7 +4045,7 @@ BUILTIN_FUNCTION(os_spawn)
         ASSERT_ARGC("os.spawn()", 1, 2);
 
         Value cmd  = ARGx(argc - 1, VALUE_ARRAY);
-        Value comm = (argc == 2) ? ARGx(0, VALUE_STRING) : NIL;
+        Value comm = (argc == 2) ? PATH_ARGx(0) : NIL;
 
         if (vN(*cmd.array) == 0) {
                 bP("empty argv");
@@ -4108,7 +4062,7 @@ BUILTIN_FUNCTION(os_spawn)
         }
 
         Value _detach   = KWARG("detach", BOOLEAN);
-        Value _chdir    = KWARG("chdir",  INTEGER, STRING, BLOB, PTR, _NIL);
+        Value _chdir    = KWARG("chdir",  _ANY);
         Value _v_stdin  = KWARG("stdin",  INTEGER);
         Value _v_stdout = KWARG("stdout", INTEGER);
         Value _v_stderr = KWARG("stderr", INTEGER);
@@ -4129,6 +4083,7 @@ BUILTIN_FUNCTION(os_spawn)
         int        fchdir = -1;
 
         switch (_chdir.type) {
+        case VALUE_NONE:
         case VALUE_NIL:
                 break;
 
@@ -4136,10 +4091,9 @@ BUILTIN_FUNCTION(os_spawn)
                 fchdir = _chdir.z;
                 break;
 
-        case VALUE_STRING:
-        case VALUE_BLOB:
-        case VALUE_PTR:
-                chdir = TY_TMP_C_STR_B(_chdir);
+        default:
+                _chdir = TyPathValue(ty, _name__, "chdir", _chdir);
+                chdir  = TY_PATH_C_STR_B(_chdir);
                 break;
         }
 
@@ -4368,7 +4322,7 @@ BUILTIN_FUNCTION(os_spawn)
         svP(argv, NULL);
 
         pid_t pid;
-        ret = TySpawnRun(&sp, &pid, TY_TMP_C_STR_A(comm), vv(argv), envp);
+        ret = TySpawnRun(&sp, &pid, TY_PATH_C_STR_A(comm), vv(argv), envp);
 
         vfor(argv, ty_free(*it));
 
@@ -5975,10 +5929,9 @@ BUILTIN_FUNCTION(os_inotify_add_watch)
         ASSERT_ARGC("os.inotify_add_watch()", 3);
 
         int fd = INT_ARG(0);
-        Value path = ARGx(1, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
         u32 mask = INT_ARG(2);
 
-        return INTEGER(inotify_add_watch(fd, TY_TMP_C_STR(path), mask));
+        return INTEGER(inotify_add_watch(fd, PATH_ARG(1), mask));
 }
 
 BUILTIN_FUNCTION(os_inotify_rm_watch)
@@ -6880,13 +6833,13 @@ BUILTIN_FUNCTION(os_usleep)
 BUILTIN_FUNCTION(os_listdir)
 {
         ASSERT_ARGC("os.listdir()", 1);
-        Value dir = ARG(0);
-        if (dir.type != VALUE_STRING)
-                zP("the argument to os.listdir() must be a string");
+        Value dir = PATH_ARGx(0);
+        usize n;
+        char const *path = TyPathBytes(&dir, &n);
 
         // Prepare the search path
         B.count = 0;
-        xvPn(B, ss(dir), sN(dir));
+        xvPn(B, path, n);
         xvPn(B, "\\*", 2); // Add wildcard for all files
         xvP(B, '\0');
 
@@ -6921,10 +6874,10 @@ BUILTIN_FUNCTION(os_listdir)
 {
         ASSERT_ARGC("os.listdir()", 1);
 
-        Value dir = ARGx(0, VALUE_STRING);
+        char const *path = PATH_ARG(0);
 
         UnlockTy();
-        DIR *d = opendir(TY_TMP_C_STR(dir));
+        DIR *d = opendir(path);
         LockTy();
         if (d == NULL) {
                 OSError(errno, "opendir()");
@@ -6977,19 +6930,8 @@ BUILTIN_FUNCTION(os_realpath)
 {
         ASSERT_ARGC("os.realpath()", 1);
 
-        Value path = ARGx(0, VALUE_STRING);
-
-        if (sN(path) >= PATH_MAX) {
-                return NIL;
-        }
-
-        char in[PATH_MAX + 1];
         char out[PATH_MAX + 1];
-
-        memcpy(in, ss(path), sN(path));
-        in[sN(path)] = '\0';
-
-        char *resolved = resolve_path(in, out);
+        char *resolved = resolve_path(PATH_ARG(0), out);
 
         return (resolved != NULL) ? vSsz(out) : NIL;
 }
@@ -7037,7 +6979,7 @@ BUILTIN_FUNCTION(os_truncate)
 {
         ASSERT_ARGC("os.truncate()", 2);
 
-        char const *path = TY_TMP_C_STR(ARGx(0, VALUE_STRING));
+        char const *path = PATH_ARG(0);
         i64 size = INT_ARG(1);
 
         return INTEGER(truncate_file(path, size));
@@ -7109,7 +7051,7 @@ BUILTIN_FUNCTION(os_lstat)
 #else
         ASSERT_ARGC("os.lstat()", 1);
         StatStruct s;
-        char const *path = TY_TMP_C_STR(ARGx(0, VALUE_STRING));
+        char const *path = PATH_ARG(0);
         UnlockTy();
         int ret = lstat(path, &s);
         LockTy();
@@ -7121,7 +7063,7 @@ BUILTIN_FUNCTION(os_stat)
 {
         ASSERT_ARGC("os.stat()", 1);
         StatStruct s;
-        char const *path = TY_TMP_C_STR(ARGx(0, VALUE_STRING));
+        char const *path = PATH_ARG(0);
 #ifdef _WIN32
         return xstatv(ty, _stat64(path, &s), &s);
 #else
@@ -7190,14 +7132,14 @@ BUILTIN_FUNCTION(os_statfs)
 {
         ASSERT_ARGC("os.statfs()", 1);
 
-        Value file = ARGx(0, VALUE_INTEGER, VALUE_STRING);
+        bool fd = (ARG(0).type == VALUE_INTEGER);
+        char const *path = fd ? NULL : PATH_ARG(0);
         struct statfs s;
-        char const *path = file.type == VALUE_STRING ? TY_TMP_C_STR(file) : NULL;
         int ret;
 
         UnlockTy();
-        if (file.type == VALUE_INTEGER) {
-                ret = fstatfs(file.z, &s);
+        if (fd) {
+                ret = fstatfs(ARG(0).z, &s);
         } else {
                 ret = statfs(path, &s);
         }
@@ -7205,7 +7147,7 @@ BUILTIN_FUNCTION(os_statfs)
         LockTy();
 
         if (ret != 0) {
-                OSError(err, &"fstatfs()"[file.type != VALUE_INTEGER]);
+                OSError(err, &"fstatfs()"[!fd]);
         }
         return statfsv(ty, &s);
 }
@@ -7234,14 +7176,14 @@ BUILTIN_FUNCTION(os_statvfs)
 {
         ASSERT_ARGC("os.statvfs()", 1);
 
-        Value file = ARGx(0, VALUE_INTEGER, VALUE_STRING);
+        bool fd = (ARG(0).type == VALUE_INTEGER);
+        char const *path = fd ? NULL : PATH_ARG(0);
         struct statvfs s;
-        char const *path = file.type == VALUE_STRING ? TY_TMP_C_STR(file) : NULL;
         int ret;
 
         UnlockTy();
-        if (file.type == VALUE_INTEGER) {
-                ret = fstatvfs(file.z, &s);
+        if (fd) {
+                ret = fstatvfs(ARG(0).z, &s);
         } else {
                 ret = statvfs(path, &s);
         }
@@ -7249,7 +7191,7 @@ BUILTIN_FUNCTION(os_statvfs)
         LockTy();
 
         if (ret != 0) {
-                OSError(err, &"fstatvfs()"[file.type != VALUE_INTEGER]);
+                OSError(err, &"fstatvfs()"[!fd]);
         }
         return statvfsv(ty, &s);
 }

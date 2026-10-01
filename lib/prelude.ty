@@ -295,7 +295,7 @@ fn doc(f:  Function) -> (String, String | nil, String | nil) | nil;
 
 fn set-doc[T](x: T, name: ?String, proto: ?String, doc: ?String) -> T;
 
-fn slurp(file: ?String | Int) -> String;
+fn slurp(file: ?PathLike | Int) -> String;
 fn rand[a](items: Array[a]) -> a;
 fn rand() -> Float;
 fn rand(n: Int, m: ?Int) -> Int;
@@ -1163,7 +1163,7 @@ class DefaultDict[K, V] < Dict[K, V] {
     default(f: K -> V) -> DefaultDict[K, V];
 }
 
-class String : Iterable[String], IntoPtr[Int] {
+class String : Iterable[String], IntoPtr[Int], PathLike {
     init(x) {
         return ::str(x)
     }
@@ -1250,6 +1250,10 @@ class String : Iterable[String], IntoPtr[Int] {
 
     __ptr__() -> Ptr[Int] {
         self.ptr()
+    }
+
+    __path__() -> String {
+        self
     }
 
     cstr() -> String;
@@ -1675,13 +1679,17 @@ class Float {
     %(x: Float) -> Float { self % x }
 }
 
-class Blob : Iterable[Int], IntoPtr[Int] {
+class Blob : Iterable[Int], IntoPtr[Int], PathLike {
     reserve(n: Int) -> nil;
     fill() -> Blob | nil;
     init(*args: Any);
 
     __ptr__() -> Ptr[Int] {
         self.ptr()
+    }
+
+    __path__() -> Blob {
+        self
     }
 
     ptr() -> Ptr[Int];
@@ -1749,6 +1757,10 @@ class Regex[N] < Function {
 class RegexV[N] < Regex[N] {
 }
 
+trait PathLike {
+    __path__() -> String | Blob | Ptr[Any];
+}
+
 trait IntoPtr[T] {
     __ptr__() -> Ptr[T];
 
@@ -1757,7 +1769,7 @@ trait IntoPtr[T] {
     }
 }
 
-class Ptr[T] : IntoPtr[T] {
+class Ptr[T] : IntoPtr[T], PathLike {
     init(x: IntoPtr[T]) -> Ptr[T] {
         x.__ptr__()
     }
@@ -1773,6 +1785,10 @@ class Ptr[T] : IntoPtr[T] {
     #() -> Int;
 
     __ptr__() -> Ptr[T] {
+        self
+    }
+
+    __path__() -> Ptr[T] {
         self
     }
 

@@ -9716,6 +9716,7 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES.method_missing   = M_ID("__method_missing__");
         NAMES._name_           = M_ID("__name__");
         NAMES._next_           = M_ID("__next__");
+        NAMES._path_           = M_ID("__path__");
         NAMES.ptr              = M_ID("__ptr__");
         NAMES._repr_           = M_ID("__repr__");
         NAMES.slice            = M_ID("[;;]");

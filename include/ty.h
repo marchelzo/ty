@@ -742,6 +742,7 @@ typedef struct {
         int _name_;
         int negate;
         int _next_;
+        int _path_;
         int ptr;
         int question;
         int _repr_;
@@ -1500,6 +1501,47 @@ TyTmpCString(Ty *ty, u32 i, Value val)
         return c_str;
 }
 
+inline static char const *
+TyPathBytes(Value const *v, usize *n)
+{
+        switch (v->type) {
+        case VALUE_STRING:
+                *n = sN(*v);
+                return (char const *)ss(*v);
+
+        case VALUE_BLOB:
+                *n = vN(*v->blob);
+                return (char const *)vv(*v->blob);
+
+        case VALUE_PTR:
+                *n = strlen(v->ptr);
+                return v->ptr;
+
+        default:
+                UNREACHABLE();
+        }
+}
+
+inline static char const *
+TyPathCString(Ty *ty, u32 i, Value v)
+{
+        usize n;
+        char const *path;
+        char *c_str;
+
+        if (v.type == VALUE_PTR) {
+                return v.ptr;
+        }
+
+        path  = TyPathBytes(&v, &n);
+        c_str = TyEnsureTmpBuffer(ty, i, n + 1);
+
+        memcpy(c_str, path, n);
+        c_str[n] = '\0';
+
+        return c_str;
+}
+
 inline static char *
 TyNewCString(Ty *ty, Value val, bool nul_before)
 {
@@ -1570,6 +1612,22 @@ TyNewCString(Ty *ty, Value val, bool nul_before)
 #define TY_TMP_C_STR_B(s) TY_TMP_C_STR_i(1, (s))
 #define TY_TMP_C_STR_C(s) TY_TMP_C_STR_i(2, (s))
 #define TY_TMP_C_STR TY_TMP_C_STR_A
+
+#define TY_PATH_C_STR_i(i, v) (                                                   \
+        sizeof (                                                                  \
+                struct {                                                          \
+                        _Static_assert(                                           \
+                                (i) < TY_TMP_BUF_COUNT,                           \
+                                "we don't maintain that many temporary buffers!"  \
+                        );                                                        \
+                }                                                                 \
+        ),                                                                        \
+        TyPathCString(ty, (i), (v))                                               \
+)
+#define TY_PATH_C_STR_A(v) TY_PATH_C_STR_i(0, (v))
+#define TY_PATH_C_STR_B(v) TY_PATH_C_STR_i(1, (v))
+#define TY_PATH_C_STR_C(v) TY_PATH_C_STR_i(2, (v))
+#define TY_PATH_C_STR TY_PATH_C_STR_A
 
 #define TY_C_STR(s) TyNewCString(ty, (s), false)
 #define TY_0_C_STR(s) TyNewCString(ty, (s), true)

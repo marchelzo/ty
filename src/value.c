@@ -2030,6 +2030,44 @@ tuple_timespec(Ty *ty, char const *func, Value const *v)
 }
 
 Value
+TyPathValue(Ty *ty, char const *ctx, char const *name, Value v)
+{
+        Value const *f;
+        Value path;
+
+        switch (v.type) {
+        case VALUE_STRING:
+        case VALUE_BLOB:
+        case VALUE_PTR:
+                return v;
+
+        case VALUE_OBJECT:
+                f = class_lookup_method_i(ty, v.class, NAMES._path_);
+                if (f == NULL) {
+                        break;
+                }
+
+                path = vm_call_method(ty, &v, f, 0);
+
+                switch (path.type) {
+                case VALUE_STRING:
+                case VALUE_BLOB:
+                case VALUE_PTR:
+                        return path;
+                }
+
+                zP(
+                        "%s: %s.__path__() returned %s, expected (String | Blob | Ptr)",
+                        ctx,
+                        class_name(ty, v.class),
+                        VSC(&path)
+                );
+        }
+
+        zP("%s: expected `%s` :: PathLike but got: %s", ctx, name, VSC(&v));
+}
+
+Value
 ConstructPrimitive(Ty *ty, int class_id, int argc, Value *kwargs)
 {
         switch (class_id) {

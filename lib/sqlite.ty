@@ -1,7 +1,7 @@
 pub import sqlite3c (..)
 import pretty
 
-fn sqlite3c::open(path: String, flags: ?Int) -> _;
+fn sqlite3c::open(path: PathLike, flags: ?Int) -> _;
 
 pub class SQLiteError < RuntimeError {
     code: Int

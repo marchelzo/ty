@@ -3,7 +3,7 @@ import thread
 
 __set_type__ argv Array[String];
 
-pub fn open(path: String, flags: Int, mode: ?Int) -> Int;
+pub fn open(path: PathLike, flags: Int, mode: ?Int) -> Int;
 pub fn close(fd: Int) -> Int;
 pub fn read(fd: Int, n: Int, all: Bool = false) -> Blob;
 pub fn read(fd: Int, buf: Blob, n: Int, all: Bool = false) -> Int;
@@ -107,12 +107,12 @@ pub fn splice(
 ) -> Int;
 
 pub fn umask(mask: Int) -> Int;
-pub fn chmod(path: String, mode: Int) -> Int;
-pub fn chown(path: String, owner: Int, group: Int) -> Int;
+pub fn chmod(path: PathLike, mode: Int) -> Int;
+pub fn chown(path: PathLike, owner: Int, group: Int) -> Int;
 pub fn fchmod(fd: Int, mode: Int) -> Int;
 pub fn fchown(fd: Int, owner: Int, group: Int) -> Int;
-pub fn ftruncate(path: String, size: Int) -> Int;
-pub fn truncate(path: String, size: Int) -> Int;
+pub fn ftruncate(fd: Int, size: Int) -> Int;
+pub fn truncate(path: PathLike, size: Int) -> Int;
 
 pub use Stat = {
     dev:     Int,
@@ -130,9 +130,9 @@ pub use Stat = {
     blocks:  Int
 }
 
-pub fn stat(path: String) -> Stat | nil;
+pub fn stat(path: PathLike) -> Stat | nil;
 pub fn fstat(fd: Int) -> Stat | nil;
-pub fn lstat(path: String) -> Stat | nil;
+pub fn lstat(path: PathLike) -> Stat | nil;
 
 #|if __apple__
 pub use Statfs = {
@@ -183,22 +183,22 @@ pub use Statvfs = {
     namemax: Int
 }
 
-pub fn statvfs(file: Int | String) -> Statvfs;
+pub fn statvfs(file: Int | PathLike) -> Statvfs;
 #|]
 
 #|if __apple__ || __linux__
-pub fn statfs(file: Int | String) -> Statfs;
+pub fn statfs(file: Int | PathLike) -> Statfs;
 #|]
 
-pub fn opendir(path: String) -> Int | nil;
+pub fn opendir(path: PathLike) -> Int | nil;
 pub fn readdir(dirp: Int) -> {ino: Int, off: Int, reclen: Int, type: Int, name: String} | nil;
 pub fn closedir(dirp: Int) -> Int;
 pub fn telldir(dirp: Int) -> Int;
 pub fn seekdir(dirp: Int, loc: Int);
 
 
-pub fn mktemp(pattern: String = 'tmp.XXXXXX') -> (Int, String);
-pub fn mkfifo(path: String, mode: ?Int) -> Int;
+pub fn mktemp(pattern: PathLike = 'tmp.XXXXXX') -> (Int, String);
+pub fn mkfifo(path: PathLike, mode: ?Int) -> Int;
 
 pub fn accept(sock: Int) -> (Int, Blob);
 pub fn listen(sock: Int, n: Int) -> Int;
@@ -231,7 +231,7 @@ pub fn poll[T](
     timeout: Float | Int | nil
 ) -> Int;
 
-pub fn listdir(path: String) -> Array[String];
+pub fn listdir(path: PathLike) -> Array[String];
 pub fn ncpu() -> Int;
 pub fn terminal-size(fd: ?Int) -> {rows: Int, cols: Int} | nil;
 
@@ -257,7 +257,7 @@ pub fn spawn(
     stdin:      ?Int = nil,
     stdout:     ?Int = nil,
     stderr:     ?Int = nil,
-    chdir:      Int | Blob | String | nil = nil,
+    chdir:      Int | PathLike | nil = nil,
     env:        Dict[String, String] | nil = nil,
     detach:     Bool = false,
     ctty:       ?{master: Int, slave: Int} = nil,
@@ -269,12 +269,12 @@ pub fn spawn(
 ) -> ProcessDescriptor;
 
 pub fn spawn(
-    cmd:        String,
+    cmd:        PathLike,
     argv:       Array[String],
     stdin:      ?Int = nil,
     stdout:     ?Int = nil,
     stderr:     ?Int = nil,
-    chdir:      Int | Blob | String | nil = nil,
+    chdir:      Int | PathLike | nil = nil,
     env:        Dict[String, String] | nil = nil,
     detach:     Bool = false,
     ctty:       ?{master: Int, slave: Int} = nil,
@@ -293,7 +293,7 @@ pub fn setprocname(name: String) -> Int;
 #|if __linux__
 pub fn eventfd(initval: Int, flags: ?Int) -> Int;
 pub fn inotify_init(flags: ?Int) -> Int;
-pub fn inotify_add_watch(fd: Int, path: String, mask: Int) -> Int;
+pub fn inotify_add_watch(fd: Int, path: PathLike, mask: Int) -> Int;
 pub fn inotify_rm_watch(fd: Int, wd: Int) -> Int;
 pub fn signalfd(fd: Int, mask: _, flags: ?Int) -> Int;
 pub fn timerfd_create(clockid: Int, flags: ?Int) -> Int;

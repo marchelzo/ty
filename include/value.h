@@ -1732,6 +1732,20 @@ TryIntoTime(Ty *ty, char const *ctx, Value const *t, i64 factor)
 )
 
 Value
+TyPathValue(Ty *ty, char const *ctx, char const *name, Value v);
+
+#define PATH_ARGx(i) ({                                                \
+        Value _path = TyPathValue(ty, _name__, "arg[" #i "]", ARG(i)); \
+        ARG(i) = _path;                                                \
+})
+
+#define PATH_ARG_i(j, i) TY_PATH_C_STR_i(j, PATH_ARGx(i))
+#define PATH_ARG_A(i)    PATH_ARG_i(0, i)
+#define PATH_ARG_B(i)    PATH_ARG_i(1, i)
+#define PATH_ARG_C(i)    PATH_ARG_i(2, i)
+#define PATH_ARG(i)      PATH_ARG_A(i)
+
+Value
 ConstructPrimitive(Ty *ty, int class_id, int argc, Value *kwargs);
 
 inline static bool
