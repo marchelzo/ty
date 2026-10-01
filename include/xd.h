@@ -207,6 +207,18 @@ ptr_hash(void const *p)
 }
 
 inline static void *
+alloc0(usize n)
+{
+        void *p = ty_calloc(1, n);
+
+        if (UNLIKELY((p == NULL) & (n > 0))) {
+                panic("Out of memory!");
+        }
+
+        return p;
+}
+
+inline static void *
 mrealloc(void *p, usize n)
 {
         p = ty_realloc(p, n);

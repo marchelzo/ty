@@ -712,11 +712,7 @@ source_provenance(
                 return description;
         }
 
-        char *text = ty_malloc((usize)length + 1);
-        if (text == NULL) {
-                checker->failed = true;
-                return description;
-        }
+        char *text = xmA((usize)length + 1);
 
         if ((usize)length < sizeof buffer) {
                 memcpy(text, buffer, (usize)length + 1);
@@ -732,11 +728,7 @@ source_provenance(
                 );
         }
 
-        if (!t2_index_put(&checker->provenance_index, key, (u32)vN(checker->provenances))) {
-                ty_free(text);
-                checker->failed = true;
-                return description;
-        }
+        t2_index_put(&checker->provenance_index, key, (u32)vN(checker->provenances));
 
         xvP(checker->provenances, ((T2Provenance) {
                 .site     = site,
@@ -747,15 +739,10 @@ source_provenance(
         return text;
 }
 
-static bool
+static void
 resize_nodes(T2Checker *checker, usize capacity)
 {
-        T2NodeInfo *nodes = ty_calloc(capacity, sizeof *nodes);
-
-        if (nodes == NULL) {
-                checker->failed = true;
-                return false;
-        }
+        T2NodeInfo *nodes = xtA0(*nodes, capacity);
 
         for (usize i = 0; i < checker->node_capacity; ++i) {
                 T2NodeInfo node = checker->nodes[i];
@@ -772,8 +759,6 @@ resize_nodes(T2Checker *checker, usize capacity)
         ty_free(checker->nodes);
         checker->nodes         = nodes;
         checker->node_capacity = capacity;
-
-        return true;
 }
 
 static T2Type
@@ -819,9 +804,7 @@ remember_node(
                         checker->failed = true;
                         return NULL;
                 }
-                if (!resize_nodes(checker, zmaxu(2*checker->node_capacity, 256u))) {
-                        return NULL;
-                }
+                resize_nodes(checker, zmaxu(2*checker->node_capacity, 256u));
         }
 
         usize slot = ptr_hash(syntax) & (checker->node_capacity - 1);
@@ -1136,10 +1119,7 @@ split_message_notes(T2Diagnostic *diagnostic)
                 char *next   = strchr(rest, '\n');
                 usize length = (next == NULL) ? strlen(rest) : (usize)(next - rest);
                 if (length != 0) {
-                        char *text = ty_malloc(length + 1);
-                        if (text == NULL) {
-                                return;
-                        }
+                        char *text = xmA(length + 1);
                         memcpy(text, rest, length);
                         text[length] = '\0';
                         push_note(
@@ -1191,12 +1171,7 @@ add_diagnostic(
                 return NULL;
         }
 
-        char *message = ty_malloc((usize)length + 1);
-        if (message == NULL) {
-                va_end(arguments);
-                checker->failed = true;
-                return NULL;
-        }
+        char *message = xmA((usize)length + 1);
 
         vsnprintf(message, (usize)length + 1, format, arguments);
         va_end(arguments);
@@ -1348,10 +1323,7 @@ append_binding(T2Checker *checker, Symbol const *key, T2Binding record)
 {
         usize index = vN(checker->bindings);
         record.previous = newest_binding(checker, key);
-        if (!t2_index_put(&checker->binding_index, binding_key(key), (u32)index)) {
-                checker->failed = true;
-                return NULL;
-        }
+        t2_index_put(&checker->binding_index, binding_key(key), (u32)index);
 
         if (SymbolIsGlobal(record.symbol)) {
                 xvP(checker->global_bindings, index);
@@ -2385,21 +2357,8 @@ prepend_scheme_quantifiers(
         usize inner_quantifiers = t2_scheme_quantifier_count(inner);
         usize inner_predicates  = t2_scheme_predicate_count(inner);
         usize count             = prefix_count + inner_quantifiers;
-        T2Quantifier *quantifiers = (count == 0)
-                                  ? NULL
-                                  : ty_malloc(count * sizeof *quantifiers);
-        T2Predicate *predicates = (inner_predicates == 0)
-                                ? NULL
-                                : ty_malloc(inner_predicates * sizeof *predicates);
-        if (
-                (count            != 0 && quantifiers == NULL)
-             || (inner_predicates != 0 && predicates  == NULL)
-        ) {
-                ty_free(quantifiers);
-                ty_free(predicates);
-                checker->failed = true;
-                return NULL;
-        }
+        T2Quantifier *quantifiers = xtA(*quantifiers, count);
+        T2Predicate *predicates = xtA(*predicates, inner_predicates);
 
         if (prefix_count != 0) {
                 memcpy(quantifiers, prefix, prefix_count * sizeof *quantifiers);
@@ -2541,10 +2500,7 @@ add_member(
         u64 key = member_key(class_id, name);
         u32 head;
         usize previous = t2_index_find(&checker->member_index, key, &head) ? head : SIZE_MAX;
-        if (!t2_index_put(&checker->member_index, key, (u32)vN(checker->members))) {
-                checker->failed = true;
-                return NULL;
-        }
+        t2_index_put(&checker->member_index, key, (u32)vN(checker->members));
 
         xvP(checker->members, ((T2Member) {
                 .class_id    = class_id,
@@ -2586,10 +2542,7 @@ interface_slot(int class_id)
 
         if ((usize)class_id >= InterfaceCount) {
                 usize count = (usize)class_id + 1;
-                T2Interface *grown = ty_realloc(Interfaces, count * sizeof *grown);
-                if (grown == NULL) {
-                        return NULL;
-                }
+                T2Interface *grown = mrealloc(Interfaces, count * sizeof *grown);
                 memset(grown + InterfaceCount, 0, (count - InterfaceCount) * sizeof *grown);
                 Interfaces     = grown;
                 InterfaceCount = count;
@@ -2690,37 +2643,28 @@ publish_interfaces(T2Checker *checker)
         }
 }
 
-static bool
+static void
 adopt_member(T2Checker *checker, T2Member const *member)
 {
         u64 key = member_key(member->class_id, member->name);
         u32 head;
         usize previous = t2_index_find(&checker->member_index, key, &head) ? head : SIZE_MAX;
 
-        if (!t2_index_put(&checker->member_index, key, (u32)vN(checker->members))) {
-                checker->failed = true;
-                return false;
-        }
+        t2_index_put(&checker->member_index, key, (u32)vN(checker->members));
 
         xvP(checker->members, *member);
 
         T2Member *adopted = v_(checker->members, vN(checker->members) - 1);
         adopted->borrowed = true;
         adopted->previous = previous;
-
-        return true;
 }
 
-static bool
+static void
 adopt_interface(T2Checker *checker, T2Interface const *interface)
 {
         for (usize i = 0; i < vN(interface->members); ++i) {
-                if (!adopt_member(checker, v_(interface->members, i))) {
-                        return false;
-                }
+                adopt_member(checker, v_(interface->members, i));
         }
-
-        return true;
 }
 
 static T2Type
@@ -2770,13 +2714,7 @@ instantiate_member(
         }
 
         usize count = t2_scheme_quantifier_count(member->scheme);
-        T2Type *arguments = (count == 0) ? NULL : ty_malloc(
-                count * sizeof *arguments
-        );
-        if (count != 0 && arguments == NULL) {
-                checker->failed = true;
-                return T2_TYPE_INVALID;
-        }
+        T2Type *arguments = xtA(*arguments, count);
 
         bool receiver_nominal = (t2_type_kind(checker->universe, receiver) == T2_TYPE_NOMINAL);
         usize receiver_arity = receiver_nominal
@@ -2978,14 +2916,7 @@ resolve_alias(T2Checker *checker, T2Alias *alias, Expr const *site)
         alias->state = T2_ALIAS_RESOLVING;
         usize mark  = push_type_variables(checker);
         usize arity = vN(definition->type_params);
-        T2Quantifier *quantifiers = (arity == 0)
-                                  ? NULL
-                                  : ty_malloc(arity * sizeof *quantifiers);
-        if (arity != 0 && quantifiers == NULL) {
-                checker->failed = true;
-                alias->state    = T2_ALIAS_FAILED;
-                return T2_TYPE_INVALID;
-        }
+        T2Quantifier *quantifiers = xtA(*quantifiers, arity);
 
         for (usize i = 0; i < arity; ++i) {
                 Expr const *parameter = v__(definition->type_params, (int)i);
@@ -3247,7 +3178,7 @@ apply_type_function(
                         symbol->identifier,
                         TypeFunctionError
                 );
-                free(TypeFunctionError);
+                ty_free(TypeFunctionError);
                 TypeFunctionError = NULL;
                 return t2_primitive(checker->universe, T2_TYPE_ERROR);
         }
@@ -3683,11 +3614,7 @@ static T2Type
 keyword_dict_type(T2Checker *checker, T2KeyedEntries const *entries, T2Type rest, Expr const *site)
 {
         usize count = vN(*entries);
-        T2Type *elements = ty_malloc((count + 2) * sizeof *elements);
-        if (elements == NULL) {
-                checker->failed = true;
-                return T2_TYPE_INVALID;
-        }
+        T2Type *elements = xtA(*elements, count + 2);
 
         for (usize i = 0; i < count; ++i) {
                 T2KeyedEntry const *entry = v_(*entries, i);
@@ -3988,11 +3915,7 @@ lower_type(T2Checker *checker, Expr const *source)
         case EXPRESSION_LIST:
         {
                 usize count = vN(expression->es);
-                T2Type *types = (count == 0) ? NULL : ty_malloc(count * sizeof *types);
-                if (count != 0 && types == NULL) {
-                        checker->failed = true;
-                        break;
-                }
+                T2Type *types = xtA(*types, count);
                 for (usize i = 0; i < count; ++i) {
                         types[i] = lower_type(checker, v__(expression->es, (int)i));
                 }
@@ -4035,12 +3958,8 @@ lower_type(T2Checker *checker, Expr const *source)
         {
                 usize count = vN(expression->es);
                 if (tuple_is_record(expression)) {
-                        T2FieldSpec *fields = ty_calloc(count + 1, sizeof *fields);
+                        T2FieldSpec *fields = xtA0(*fields, count + 1);
                         usize n_fields = 0;
-                        if (fields == NULL) {
-                                checker->failed = true;
-                                break;
-                        }
                         T2KeyedEntries spread = {0};
                         bool spread_invalid = false;
                         for (usize i = 0; i < count; ++i) {
@@ -4065,7 +3984,7 @@ lower_type(T2Checker *checker, Expr const *source)
                                                 spread_invalid = true;
                                                 continue;
                                         }
-                                        fields = ty_realloc(fields, (n_fields + vN(spread) + count + 1) * sizeof *fields);
+                                        mresize(fields, (n_fields + vN(spread) + count + 1) * sizeof *fields);
                                         for (usize j = 0; j < vN(spread); ++j) {
                                                 T2KeyedEntry const *entry = v_(spread, j);
                                                 usize at = n_fields;
@@ -4142,11 +4061,7 @@ lower_type(T2Checker *checker, Expr const *source)
                         }
                         ty_free(fields);
                 } else {
-                        T2Type *items = (count == 0) ? NULL : ty_malloc(count * sizeof *items);
-                        if (count != 0 && items == NULL) {
-                                checker->failed = true;
-                                break;
-                        }
+                        T2Type *items = xtA(*items, count);
                         for (usize i = 0; i < count; ++i) {
                                 items[i] = lower_type(checker, v__(expression->es, (int)i));
                         }
@@ -5292,12 +5207,7 @@ declared_function_receiver(T2Checker *checker, Expr const *function)
                                           : &function->class->def->class;
 
         usize arity = (definition != NULL) * vN(definition->type_params);
-        T2Type *arguments = (arity == 0) ? NULL : xtA(T2Type, arity);
-
-        if (arity != 0 && arguments == NULL) {
-                checker->failed = true;
-                return T2_TYPE_INVALID;
-        }
+        T2Type *arguments = xtA(T2Type, arity);
 
         for (usize i = 0; i < arity; ++i) {
                 Expr const *parameter = v__(definition->type_params, (int)i);
@@ -5366,10 +5276,7 @@ static bool
 lower_declared_bounds(T2Checker *checker, Expr const *function, T2Predicate **out, usize *count)
 {
         usize n = (usize)vN(function->type_bounds);
-        T2Predicate *predicates = (n == 0) ? NULL : ty_calloc(n, sizeof *predicates);
-        if (n != 0 && predicates == NULL) {
-                return false;
-        }
+        T2Predicate *predicates = xtA0(*predicates, n);
 
         for (usize i = 0; i < n; ++i) {
                 TypeBound const *bound = v_(function->type_bounds, (int)i);
@@ -5483,14 +5390,7 @@ interface_function_scheme_x(
 {
         usize method_arity     = vN(function->type_params);
         usize quantifier_count = class_arity + method_arity;
-        T2Quantifier *quantifiers = (quantifier_count == 0)
-                                  ? NULL
-                                  : ty_malloc(quantifier_count * sizeof *quantifiers);
-
-        if (quantifier_count != 0 && quantifiers == NULL) {
-                checker->failed = true;
-                return NULL;
-        }
+        T2Quantifier *quantifiers = xtA(*quantifiers, quantifier_count);
 
         if (class_arity != 0) {
                 memcpy(
@@ -5523,16 +5423,7 @@ interface_function_scheme_x(
         }
 
         usize parameter_count = vN(function->params);
-        T2ParameterSpec *parameters = (parameter_count == 0)
-                                    ? NULL
-                                    : ty_calloc(parameter_count, sizeof *parameters);
-
-        if (parameter_count != 0 && parameters == NULL) {
-                ty_free(quantifiers);
-                pop_type_variables(checker, type_mark);
-                checker->failed = true;
-                return NULL;
-        }
+        T2ParameterSpec *parameters = xtA0(*parameters, parameter_count);
 
         for (usize i = 0; i < parameter_count; ++i) {
                 Expr const *annotation = declared_parameter_annotation(function, i);
@@ -5686,13 +5577,7 @@ interface_callable_scheme(
         }
 
         usize entry_count = vN(function->functions);
-        T2Scheme **schemes = (entry_count == 0)
-                           ? NULL
-                           : ty_calloc(entry_count, sizeof *schemes);
-        if (entry_count != 0 && schemes == NULL) {
-                checker->failed = true;
-                return NULL;
-        }
+        T2Scheme **schemes = xtA0(*schemes, entry_count);
 
         usize scheme_count        = 0;
         usize quantifier_capacity = 0;
@@ -5730,25 +5615,9 @@ interface_callable_scheme(
                 return NULL;
         }
 
-        T2Quantifier *quantifiers = (quantifier_capacity == 0)
-                                  ? NULL
-                                  : ty_malloc(quantifier_capacity * sizeof *quantifiers);
-        T2Predicate *predicates = (predicate_count == 0)
-                                ? NULL
-                                : ty_malloc(predicate_count * sizeof *predicates);
-        T2Type *arms = (arm_count == 0) ? NULL : ty_malloc(arm_count * sizeof *arms);
-        if (
-                ((quantifier_capacity != 0) && (quantifiers == NULL))
-             || ((predicate_count != 0) && (predicates == NULL))
-             || ((arm_count != 0) && (arms == NULL))
-        ) {
-                ty_free(quantifiers);
-                ty_free(predicates);
-                ty_free(arms);
-                free_scheme_array(schemes, scheme_count);
-                checker->failed = true;
-                return NULL;
-        }
+        T2Quantifier *quantifiers = xtA(*quantifiers, quantifier_capacity);
+        T2Predicate *predicates = xtA(*predicates, predicate_count);
+        T2Type *arms = xtA(*arms, arm_count);
 
         usize quantifier_count = 0;
         usize predicates_used  = 0;
@@ -6834,35 +6703,24 @@ ensure_class_interface(T2Checker *checker, int class_id)
 
         T2Interface const *published = published_interface(class_id);
         if (published != NULL) {
-                bool adopted = adopt_interface(checker, published);
-                if (adopted && class->super != NULL && class->super->i != class_id) {
+                adopt_interface(checker, published);
+                if (class->super != NULL && class->super->i != class_id) {
                         (void)ensure_class_interface(checker, class->super->i);
                 }
                 nominal = find_class_nominal(checker, class_id);
                 if (nominal != NULL) {
-                        nominal->complete   = adopted;
+                        nominal->complete   = true;
                         nominal->populating = false;
                 }
                 checker->building_interface = previous_interface_state;
-                return adopted;
+                return true;
         }
 
         usize declared_arity = vN(definition->type_params);
         bool tag_interface   = (class->def->type == STATEMENT_TAG_DEFINITION);
         usize arity          = tag_interface ? 1 : declared_arity;
         usize type_mark      = push_type_variables(checker);
-        T2Quantifier *quantifiers = (arity == 0)
-                                  ? NULL
-                                  : ty_malloc(arity * sizeof *quantifiers);
-        if (arity != 0 && quantifiers == NULL) {
-                checker->failed = true;
-                nominal         = find_class_nominal(checker, class_id);
-                if (nominal != NULL) {
-                        nominal->populating = false;
-                }
-                checker->building_interface = previous_interface_state;
-                return false;
-        }
+        T2Quantifier *quantifiers = xtA(*quantifiers, arity);
 
         for (usize i = 0; i < arity; ++i) {
                 Expr const *parameter = (i < declared_arity)
@@ -6988,11 +6846,7 @@ relax_literal(T2Checker *checker, T2Type type)
         {
                 T2TypeKind kind = t2_type_kind(checker->universe, type);
                 usize count     = t2_type_arity(checker->universe, type);
-                T2Type *items = (count == 0) ? NULL : ty_malloc(count * sizeof *items);
-                if (count != 0 && items == NULL) {
-                        checker->failed = true;
-                        return T2_TYPE_INVALID;
-                }
+                T2Type *items = xtA(*items, count);
                 bool changed = false;
                 for (usize i = 0; i < count; ++i) {
                         T2Type item = t2_type_child(checker->universe, type, i);
@@ -7093,11 +6947,7 @@ static T2Type
 infer_value_list_items(T2Checker *checker, ExprVec const *items)
 {
         usize count = vN(*items);
-        T2Type *values = (count == 0) ? NULL : ty_malloc(count * sizeof *values);
-        if (count != 0 && values == NULL) {
-                checker->failed = true;
-                return T2_TYPE_INVALID;
-        }
+        T2Type *values = xtA(*values, count);
 
         usize total = 0;
         for (usize i = 0; i < count; ++i) {
@@ -7107,12 +6957,7 @@ infer_value_list_items(T2Checker *checker, ExprVec const *items)
                        : 1;
         }
 
-        T2Type *spliced = (total == 0) ? NULL : ty_malloc(total * sizeof *spliced);
-        if (total != 0 && spliced == NULL) {
-                checker->failed = true;
-                ty_free(values);
-                return T2_TYPE_INVALID;
-        }
+        T2Type *spliced = xtA(*spliced, total);
 
         usize n = 0;
         for (usize i = 0; i < count; ++i) {
@@ -8198,11 +8043,7 @@ argument_pack(
         bool open_tail = (argument_count != 0)
                       && is_pack_type(checker, arguments[argument_count - 1]);
         usize positional = argument_count - open_tail;
-        T2Type *elements = ty_malloc((positional + packed->count + 1) * sizeof *elements);
-        if (elements == NULL) {
-                checker->failed = true;
-                return T2_TYPE_INVALID;
-        }
+        T2Type *elements = xtA(*elements, positional + packed->count + 1);
 
         usize n = 0;
         for (usize i = 0; i < positional; ++i) {
@@ -8362,7 +8203,7 @@ push_pack_specs(T2Checker *checker, T2Type pack, T2ParameterSpec **specs, usize 
         for (usize i = 0; i < count; ++i) {
                 if (*n == *capacity) {
                         *capacity = 2 * *capacity + 8;
-                        *specs = ty_realloc(*specs, *capacity * sizeof **specs);
+                        mresize(*specs, *capacity * sizeof **specs);
                 }
                 if (!t2_parameter_spec(checker->universe, t2_type_child(checker->universe, pack, i), &(*specs)[*n])) {
                         return false;
@@ -8421,11 +8262,11 @@ forward_concrete_packs(
 
         usize capacity = argument_count + keyword_count + 8;
         usize n = 0;
-        T2ParameterSpec *specs = ty_malloc(capacity * sizeof *specs);
-        bool ok = (specs != NULL);
+        T2ParameterSpec *specs = xtA(*specs, capacity);
+        bool ok = true;
 
         usize positional = argument_count - (tail != T2_TYPE_INVALID);
-        for (usize i = 0; ok && i < positional; ++i) {
+        for (usize i = 0; i < positional; ++i) {
                 specs[n++] = (T2ParameterSpec) {
                         .type     = arguments[i],
                         .kind     = T2_PARAMETER_POSITIONAL_ONLY,
@@ -8433,7 +8274,7 @@ forward_concrete_packs(
                 };
         }
 
-        if (ok && tail != T2_TYPE_INVALID) {
+        if (tail != T2_TYPE_INVALID) {
                 ok = push_pack_specs(checker, tail, &specs, &n, &capacity);
         }
 
@@ -8450,7 +8291,7 @@ forward_concrete_packs(
                 }
                 if (n == capacity) {
                         capacity = 2 * capacity + 8;
-                        specs = ty_realloc(specs, capacity * sizeof *specs);
+                        mresize(specs, capacity * sizeof *specs);
                 }
                 specs[n++] = (T2ParameterSpec) {
                         .name     = keywords[i],
@@ -8553,13 +8394,7 @@ apply_callable_candidate(
                 return T2_TYPE_INVALID;
         }
 
-        bool *assigned = (parameter_count == 0)
-                       ? NULL
-                       : ty_calloc(parameter_count, sizeof *assigned);
-        if (parameter_count != 0 && assigned == NULL) {
-                checker->failed = true;
-                return T2_TYPE_INVALID;
-        }
+        bool *assigned = xtA0(*assigned, parameter_count);
 
         usize positional_parameter     = 0;
         bool gradual_positional_spread = false;
@@ -9043,13 +8878,7 @@ infer_call_types(
                         return T2_TYPE_INVALID;
                 }
                 usize count = argument_count + keyword_count;
-                T2ParameterSpec *parameters = (count == 0)
-                                            ? NULL
-                                            : ty_calloc(count, sizeof *parameters);
-                if (count != 0 && parameters == NULL) {
-                        checker->failed = true;
-                        return T2_TYPE_INVALID;
-                }
+                T2ParameterSpec *parameters = xtA0(*parameters, count);
                 for (usize i = 0; i < argument_count; ++i) {
                         bool spread = t2_type_kind(checker->universe, arguments[i])
                                    == T2_TYPE_PACK_EXPANSION;
@@ -9230,21 +9059,8 @@ infer_call_types(
                         }
                 }
                 if (split != T2_TYPE_INVALID) {
-                        T2Type *positional = (argument_count == 0)
-                                           ? NULL
-                                           : ty_malloc(argument_count * sizeof *positional);
-                        T2Type *named = (keyword_count == 0)
-                                      ? NULL
-                                      : ty_malloc(keyword_count * sizeof *named);
-                        if (
-                                ((argument_count != 0) && (positional == NULL))
-                             || ((keyword_count != 0) && (named == NULL))
-                        ) {
-                                ty_free(positional);
-                                ty_free(named);
-                                checker->failed = true;
-                                return T2_TYPE_INVALID;
-                        }
+                        T2Type *positional = xtA(*positional, argument_count);
+                        T2Type *named = xtA(*named, keyword_count);
                         if (argument_count != 0) {
                                 memcpy(
                                         positional,
@@ -9968,12 +9784,9 @@ rigid_predicate_holds(
 )
 {
         usize count = t2_scheme_quantifier_count(scheme);
-        u32 *ids          = (count == 0) ? NULL : ty_malloc(count * sizeof *ids);
-        T2Type *skolems   = (count == 0) ? NULL : ty_malloc(count * sizeof *skolems);
+        u32 *ids          = xtA(*ids, count);
+        T2Type *skolems   = xtA(*skolems, count);
         bool holds        = false;
-        if (count != 0 && (ids == NULL || skolems == NULL)) {
-                goto Done;
-        }
 
         usize n = 0;
         for (usize i = 0; i < count; ++i) {
@@ -10964,14 +10777,7 @@ infer_subscript_protocol(
                 }
 
                 T2SolverMark protocol = t2_solver_mark(checker->solver);
-                T2Type *parameters = (argument_count == 0)
-                                   ? NULL
-                                   : ty_malloc(argument_count * sizeof *parameters);
-                if (argument_count != 0 && parameters == NULL) {
-                        checker->failed = true;
-                        t2_solver_rollback(checker->solver, protocol);
-                        return T2_TYPE_INVALID;
-                }
+                T2Type *parameters = xtA(*parameters, argument_count);
                 bool valid = true;
                 for (usize i = 0; i < argument_count; ++i) {
                         parameters[i] = t2_solver_new_meta(
@@ -11094,13 +10900,7 @@ infer_subscript_protocol(
                 return T2_TYPE_INVALID;
         }
 
-        T2Type *operator_arguments = ty_malloc(
-                (argument_count + 1) * sizeof *operator_arguments
-        );
-        if (operator_arguments == NULL) {
-                checker->failed = true;
-                return T2_TYPE_INVALID;
-        }
+        T2Type *operator_arguments = xtA(*operator_arguments, argument_count + 1);
 
         operator_arguments[0] = container;
         if (argument_count != 0) {
@@ -12467,11 +12267,7 @@ infer_index_access(T2Checker *checker, Expr const *site, T2Type value)
         }
 
         usize count = vN(indices->es) + writing;
-        T2Type *arguments = ty_malloc(count * sizeof *arguments);
-        if (arguments == NULL) {
-                checker->failed = true;
-                return T2_TYPE_INVALID;
-        }
+        T2Type *arguments = xtA(*arguments, count);
         T2Type method = infer_method_type(
                 checker,
                 container,
@@ -13185,8 +12981,8 @@ keyword_dict_literal(T2Checker *checker, Expr const *expression, T2Type expected
 {
         T2Type pack = keyword_dict_pack(checker, expected);
         usize count = t2_type_payload(checker->universe, pack);
-        bool *seen  = ty_calloc(count + 1, sizeof *seen);
-        bool valid  = (seen != NULL);
+        bool *seen  = xtA0(*seen, count + 1);
+        bool valid  = true;
 
         for (usize i = 0; valid && i < vN(expression->keys); ++i) {
                 Expr const *key   = v__(expression->keys, i);
@@ -13372,13 +13168,7 @@ contextual_fresh_literal_x(
              && (t2_type_kind(checker->universe, expected) == T2_TYPE_RECORD)
         ) {
                 usize count = vN(expression->es);
-                T2FieldSpec *fields = (count == 0)
-                                    ? NULL
-                                    : ty_calloc(count, sizeof *fields);
-                if (count != 0 && fields == NULL) {
-                        checker->failed = true;
-                        return false;
-                }
+                T2FieldSpec *fields = xtA0(*fields, count);
                 bool valid = true;
                 for (usize i = 0; i < count; ++i) {
                         char const *name = (i < vN(expression->names))
@@ -13706,11 +13496,7 @@ assign_value_list(
 )
 {
         usize count = vN(target->es);
-        T2Type *items = ty_malloc(count * sizeof *items);
-        if (items == NULL) {
-                checker->failed = true;
-                return false;
-        }
+        T2Type *items = xtA(*items, count);
 
         for (usize i = 0; i < count; ++i) {
                 items[i] = multi_value_item(checker, value, i);
@@ -14240,11 +14026,7 @@ assign_lvalue_x(
                         set_node_type(checker, target, dynamic);
                         return valid;
                 }
-                T2Type *items = (count == 0) ? NULL : ty_malloc(count * sizeof *items);
-                if (count != 0 && items == NULL) {
-                        checker->failed = true;
-                        return false;
-                }
+                T2Type *items = xtA(*items, count);
                 for (usize i = 0; i < count; ++i) {
                         items[i] = t2_solver_new_meta(
                                 checker->solver,
@@ -14576,11 +14358,7 @@ binding_effective_type(T2Binding const *binding)
 static T2Type *
 snapshot_refinements(T2Checker *checker, usize count)
 {
-        T2Type *snapshot = (count == 0) ? NULL : ty_malloc(count * sizeof *snapshot);
-        if (count != 0 && snapshot == NULL) {
-                checker->failed = true;
-                return NULL;
-        }
+        T2Type *snapshot = xtA(*snapshot, count);
 
         for (usize i = 0; i < count; ++i) {
                 snapshot[i] = v__(checker->bindings, i).refinement;
@@ -14592,11 +14370,7 @@ snapshot_refinements(T2Checker *checker, usize count)
 static T2Type *
 snapshot_effective_types(T2Checker *checker, usize count)
 {
-        T2Type *snapshot = (count == 0) ? NULL : ty_malloc(count * sizeof *snapshot);
-        if (count != 0 && snapshot == NULL) {
-                checker->failed = true;
-                return NULL;
-        }
+        T2Type *snapshot = xtA(*snapshot, count);
 
         for (usize i = 0; i < count; ++i) {
                 T2Binding const *binding = v_(checker->bindings, i);
@@ -14657,10 +14431,7 @@ join_keyword_dicts(T2Checker *checker, T2Type left, T2Type right)
         }
 
         usize count = t2_type_payload(checker->universe, a);
-        T2Type *elements = ty_malloc((count + 1) * sizeof *elements);
-        if (elements == NULL) {
-                return T2_TYPE_INVALID;
-        }
+        T2Type *elements = xtA(*elements, count + 1);
 
         for (usize i = 0; i < count; ++i) {
                 T2ParameterSpec x;
@@ -14946,11 +14717,7 @@ condition_test_type(T2Checker *checker, Expr const *source)
                 return T2_TYPE_INVALID;
         }
 
-        T2Type *arguments = (nominal->arity == 0) ? NULL : xtA(T2Type, nominal->arity);
-        if (nominal->arity != 0 && arguments == NULL) {
-                checker->failed = true;
-                return T2_TYPE_INVALID;
-        }
+        T2Type *arguments = xtA(T2Type, nominal->arity);
 
         for (usize i = 0; i < nominal->arity; ++i) {
                 arguments[i] = t2_primitive(checker->universe, T2_TYPE_DYNAMIC);
@@ -15310,10 +15077,7 @@ refine_keyword_presence(T2Checker *checker, Expr const *identifier, Expr const *
         );
 
         usize count = t2_type_payload(checker->universe, pack);
-        T2Type *elements = ty_malloc((count + 1) * sizeof *elements);
-        if (elements == NULL) {
-                return;
-        }
+        T2Type *elements = xtA(*elements, count + 1);
 
         bool changed = false;
         bool named   = false;
@@ -16393,11 +16157,7 @@ overlay_record_types_x(
                 if (count > SIZE_MAX / sizeof (T2Type)) {
                         return T2_TYPE_INVALID;
                 }
-                T2Type *arms = (count == 0) ? NULL : ty_malloc(count * sizeof *arms);
-                if (count != 0 && arms == NULL) {
-                        checker->failed = true;
-                        return T2_TYPE_INVALID;
-                }
+                T2Type *arms = xtA(*arms, count);
                 for (usize i = 0; i < count; ++i) {
                         T2Type arm = t2_type_child(checker->universe, union_type, i);
                         arms[i] = (base_kind == T2_TYPE_UNION)
@@ -16610,16 +16370,8 @@ infer_mixed_tuple(T2Checker *checker, Expr const *expression)
                 return T2_TYPE_INVALID;
         }
 
-        T2Type *items = (count == 0) ? NULL : ty_malloc(count * sizeof *items);
-        T2FieldSpec *fields = (count == 0)
-                            ? NULL
-                            : ty_malloc(count * sizeof *fields);
-        if (count != 0 && ((items == NULL) || (fields == NULL))) {
-                ty_free(items);
-                ty_free(fields);
-                checker->failed = true;
-                return T2_TYPE_INVALID;
-        }
+        T2Type *items = xtA(*items, count);
+        T2FieldSpec *fields = xtA(*fields, count);
 
         usize field_count = 0;
         for (usize i = 0; i < count; ++i) {
@@ -17004,10 +16756,7 @@ index_definitions_in(
         u64 key = definition_key(statement_target_symbol(statement));
         u32 head;
         usize previous = t2_index_find(&index->names, key, &head) ? head : SIZE_MAX;
-        if (!t2_index_put(&index->names, key, (u32)vN(index->definitions))) {
-                checker->failed = true;
-                return;
-        }
+        t2_index_put(&index->names, key, (u32)vN(index->definitions));
 
         xvP(index->definitions, ((T2Definition) {
                 .statement = statement,
@@ -17024,10 +16773,7 @@ program_index(T2Checker *checker, Stmt **program)
                 return v_(checker->programs, found);
         }
 
-        if (!t2_index_put(&checker->program_lookup, key, (u32)vN(checker->programs))) {
-                checker->failed = true;
-                return NULL;
-        }
+        t2_index_put(&checker->program_lookup, key, (u32)vN(checker->programs));
 
         xvP(checker->programs, ((T2ProgramIndex) {0}));
         T2ProgramIndex *index = v_(checker->programs, vN(checker->programs) - 1);
@@ -17052,9 +16798,6 @@ import_program(
         }
 
         T2ProgramIndex *index = program_index(checker, program);
-        if (index == NULL) {
-                return;
-        }
 
         u32 head;
         if (!t2_index_find(&index->names, definition_key(symbol), &head)) {
@@ -17066,11 +16809,7 @@ import_program(
                 count += 1;
         }
 
-        Stmt const **matches = ty_malloc(count * sizeof *matches);
-        if (matches == NULL) {
-                checker->failed = true;
-                return;
-        }
+        Stmt const **matches = xtA(*matches, count);
 
         usize slot = count;
         for (usize i = head; i != SIZE_MAX; i = v__(index->definitions, i).previous) {
@@ -17450,11 +17189,7 @@ infer_tag_call(T2Checker *checker, Expr const *expression)
         } else if (count == 1) {
                 payload = infer_expression(checker, v__(expression->args, 0));
         } else {
-                T2Type *items = ty_malloc(count * sizeof *items);
-                if (items == NULL) {
-                        checker->failed = true;
-                        return T2_TYPE_INVALID;
-                }
+                T2Type *items = xtA(*items, count);
                 for (usize i = 0; i < count; ++i) {
                         items[i] = infer_expression(checker, v__(expression->args, (int)i));
                 }
@@ -18258,11 +17993,7 @@ infer_expression(T2Checker *checker, Expr const *source)
                 } else if (expression->type == EXPRESSION_LIST) {
                         result = infer_value_list_items(checker, &expression->es);
                 } else {
-                        T2Type *items = (count == 0) ? NULL : ty_malloc(count * sizeof *items);
-                        if (count != 0 && items == NULL) {
-                                checker->failed = true;
-                                break;
-                        }
+                        T2Type *items = xtA(*items, count);
                         for (usize i = 0; i < count; ++i) {
                                 items[i] = infer_expression(
                                         checker,
@@ -18414,9 +18145,6 @@ infer_expression(T2Checker *checker, Expr const *source)
                 (void)infer_expression(checker, expression->cond);
                 usize binding_mark = vN(checker->bindings);
                 T2Type *before = snapshot_refinements(checker, binding_mark);
-                if (binding_mark != 0 && before == NULL) {
-                        break;
-                }
                 apply_condition_refinements(checker, expression->cond, true);
                 T2Type then_type = infer_expression_with_hint(
                         checker,
@@ -18442,19 +18170,14 @@ infer_expression(T2Checker *checker, Expr const *source)
                         binding_mark
                 );
                 restore_refinements(checker, before, binding_mark);
-                if (
-                        ((binding_mark == 0) || (then_bindings != NULL))
-                     && ((binding_mark == 0) || (else_bindings != NULL))
-                ) {
-                        merge_branch_refinements(
-                                checker,
-                                then_bindings,
-                                true,
-                                else_bindings,
-                                true,
-                                binding_mark
-                        );
-                }
+                merge_branch_refinements(
+                        checker,
+                        then_bindings,
+                        true,
+                        else_bindings,
+                        true,
+                        binding_mark
+                );
                 ty_free(before);
                 ty_free(then_bindings);
                 ty_free(else_bindings);
@@ -18473,21 +18196,8 @@ infer_expression(T2Checker *checker, Expr const *source)
                         result = infer_tag_call(checker, expression);
                         break;
                 }
-                T2Type *arguments = (positional_count == 0)
-                                  ? NULL
-                                  : ty_malloc(positional_count * sizeof *arguments);
-                T2Type *keyword_arguments = (keyword_count == 0)
-                                          ? NULL
-                                          : ty_malloc(keyword_count * sizeof *keyword_arguments);
-                if (
-                        (positional_count != 0 && arguments         == NULL)
-                     || (keyword_count    != 0 && keyword_arguments == NULL)
-                ) {
-                        ty_free(arguments);
-                        ty_free(keyword_arguments);
-                        checker->failed = true;
-                        break;
-                }
+                T2Type *arguments = xtA(*arguments, positional_count);
+                T2Type *keyword_arguments = xtA(*keyword_arguments, keyword_count);
                 T2SolverMark argument_scope = t2_solver_mark(checker->solver);
                 T2Type       hint_callee    = peek_callee_type(checker, expression->function);
                 for (usize i = 0; i < positional_count; ++i) {
@@ -18758,9 +18468,6 @@ infer_expression(T2Checker *checker, Expr const *source)
                 T2Type left        = infer_expression(checker, expression->left);
                 usize binding_mark = vN(checker->bindings);
                 T2Type *before = snapshot_refinements(checker, binding_mark);
-                if (binding_mark != 0 && before == NULL) {
-                        break;
-                }
                 bool right_condition = (expression->type == EXPRESSION_AND)
                                     || (expression->type == EXPRESSION_KW_AND);
                 apply_condition_refinements(
@@ -18780,19 +18487,14 @@ infer_expression(T2Checker *checker, Expr const *source)
                         checker,
                         binding_mark
                 );
-                if (
-                        ((binding_mark == 0) || (right_bindings != NULL))
-                     && ((binding_mark == 0) || (skipped_bindings != NULL))
-                ) {
-                        merge_branch_refinements(
-                                checker,
-                                right_bindings,
-                                true,
-                                skipped_bindings,
-                                true,
-                                binding_mark
-                        );
-                }
+                merge_branch_refinements(
+                        checker,
+                        right_bindings,
+                        true,
+                        skipped_bindings,
+                        true,
+                        binding_mark
+                );
                 ty_free(before);
                 ty_free(right_bindings);
                 ty_free(skipped_bindings);
@@ -18945,18 +18647,8 @@ infer_expression(T2Checker *checker, Expr const *source)
                 }
                 usize count   = vN(expression->method_args);
                 usize kwcount = vN(expression->method_kwargs);
-                T2Type *arguments = (count == 0) ? NULL : ty_malloc(
-                        count * sizeof *arguments
-                );
-                T2Type *kwargs = (kwcount == 0) ? NULL : ty_malloc(
-                        kwcount * sizeof *kwargs
-                );
-                if ((count && (arguments == NULL)) || (kwcount && (kwargs == NULL))) {
-                        ty_free(arguments);
-                        ty_free(kwargs);
-                        checker->failed = true;
-                        break;
-                }
+                T2Type *arguments = xtA(*arguments, count);
+                T2Type *kwargs = xtA(*kwargs, kwcount);
                 T2SolverMark argument_scope = t2_solver_mark(checker->solver);
                 for (usize i = 0; i < count; ++i) {
                         arguments[i] = infer_argument(
@@ -19390,11 +19082,7 @@ infer_expression(T2Checker *checker, Expr const *source)
                         }
                 } else if (vN(expression->es) > 1) {
                         usize count = vN(expression->es);
-                        T2Type *items = ty_malloc(count * sizeof *items);
-                        if (items == NULL) {
-                                checker->failed = true;
-                                break;
-                        }
+                        T2Type *items = xtA(*items, count);
                         for (usize i = 0; i < count; ++i) {
                                 items[i] = infer_expression(
                                         checker,
@@ -19820,11 +19508,7 @@ environment_types(
                 return NULL;
         }
 
-        T2Type *environment = ty_malloc(capacity * sizeof *environment);
-        if (environment == NULL) {
-                checker->failed = true;
-                return NULL;
-        }
+        T2Type *environment = xtA(*environment, capacity);
 
         for (usize i = 0; i < vN(checker->bindings); ++i) {
                 T2Binding const *binding = v_(checker->bindings, i);
@@ -20651,14 +20335,7 @@ tuple_pattern_items(
                         return true;
                 }
                 T2SolverMark mark = t2_solver_mark(checker->solver);
-                T2Type *shape_items = (count == 0)
-                                    ? NULL
-                                    : ty_malloc(count * sizeof *shape_items);
-                if (count != 0 && shape_items == NULL) {
-                        checker->failed = true;
-                        t2_solver_rollback(checker->solver, mark);
-                        return false;
-                }
+                T2Type *shape_items = xtA(*shape_items, count);
                 for (usize i = 0; i < count; ++i) {
                         shape_items[i] = t2_solver_new_meta(
                                 checker->solver,
@@ -21179,13 +20856,7 @@ record_pattern_items(
                 if (count > SIZE_MAX / sizeof (T2Type)) {
                         return false;
                 }
-                T2Type *arm_items = (count == 0)
-                                  ? NULL
-                                  : ty_malloc(count * sizeof *arm_items);
-                if (count != 0 && arm_items == NULL) {
-                        checker->failed = true;
-                        return false;
-                }
+                T2Type *arm_items = xtA(*arm_items, count);
                 T2Type never = t2_primitive(checker->universe, T2_TYPE_NEVER);
                 for (usize i = 0; i < t2_type_arity(checker->universe, subject); ++i) {
                         for (usize j = 0; j < count; ++j) {
@@ -21588,11 +21259,7 @@ infer_pattern(T2Checker *checker, Expr const *pattern, T2Type subject)
                 if (pattern->type == EXPRESSION_LIST && count == 1) {
                         return infer_pattern(checker, v__(pattern->es, 0), subject);
                 }
-                T2Type *items = (count == 0) ? NULL : ty_malloc(count * sizeof *items);
-                if (count != 0 && items == NULL) {
-                        checker->failed = true;
-                        return false;
-                }
+                T2Type *items = xtA(*items, count);
                 T2Type never = t2_primitive(checker->universe, T2_TYPE_NEVER);
                 for (usize i = 0; i < count; ++i) {
                         items[i] = never;
@@ -21908,13 +21575,7 @@ infer_pattern(T2Checker *checker, Expr const *pattern, T2Type subject)
                 );
                 T2Type expected = primitive_class_type(checker, class_id);
                 if (expected == T2_TYPE_INVALID && nominal != NULL) {
-                        T2Type *arguments = (nominal->arity == 0)
-                                          ? NULL
-                                          : ty_malloc(nominal->arity * sizeof *arguments);
-                        if (nominal->arity != 0 && arguments == NULL) {
-                                checker->failed = true;
-                                return false;
-                        }
+                        T2Type *arguments = xtA(*arguments, nominal->arity);
                         for (usize i = 0; i < nominal->arity; ++i) {
                                 arguments[i] = t2_solver_new_meta(
                                         checker->solver,
@@ -23077,13 +22738,7 @@ replace_callable_channels(
         }
 
         usize count = t2_callable_parameter_count(checker->universe, callable);
-        T2ParameterSpec *parameters = (count == 0)
-                                    ? NULL
-                                    : ty_malloc(count * sizeof *parameters);
-        if (count != 0 && parameters == NULL) {
-                checker->failed = true;
-                return T2_TYPE_INVALID;
-        }
+        T2ParameterSpec *parameters = xtA(*parameters, count);
 
         for (usize i = 0; i < count; ++i) {
                 if (!t2_callable_parameter(
@@ -23137,13 +22792,7 @@ infer_single_function(T2Checker *checker, Expr const *function)
         checker->level = outer_level + 1;
         usize type_mark           = push_type_variables(checker);
         usize type_argument_count = vN(function->type_params);
-        T2Type *type_arguments = (type_argument_count == 0)
-                               ? NULL
-                               : ty_malloc(type_argument_count * sizeof *type_arguments);
-        if (type_argument_count != 0 && type_arguments == NULL) {
-                checker->failed = true;
-                goto Failure;
-        }
+        T2Type *type_arguments = xtA(*type_arguments, type_argument_count);
 
         for (usize i = 0; i < type_argument_count; ++i) {
                 Expr const *parameter = v__(function->type_params, i);
@@ -23187,13 +22836,7 @@ infer_single_function(T2Checker *checker, Expr const *function)
         type_arguments = NULL;
 
         usize parameter_count = vN(function->params);
-        T2ParameterSpec *parameters = (parameter_count == 0)
-                                    ? NULL
-                                    : ty_calloc(parameter_count, sizeof *parameters);
-        if (parameter_count != 0 && parameters == NULL) {
-                checker->failed = true;
-                goto Failure;
-        }
+        T2ParameterSpec *parameters = xtA0(*parameters, parameter_count);
 
         T2Type rest_pack = T2_TYPE_INVALID;
         for (usize i = 0; i < parameter_count; ++i) {
@@ -23484,7 +23127,7 @@ infer_single_function(T2Checker *checker, Expr const *function)
                         );
                         T2Type *arguments = (nominal == NULL) || (nominal->arity == 0)
                                           ? NULL
-                                          : ty_malloc(nominal->arity * sizeof *arguments);
+                                          : xtA(*arguments, nominal->arity);
                         if (nominal != NULL && nominal->arity != 0 && arguments == NULL) {
                                 checker->failed = true;
                                 goto Failure;
@@ -23683,9 +23326,6 @@ infer_single_function(T2Checker *checker, Expr const *function)
                 checker,
                 outer_binding_count
         );
-        if (outer_binding_count != 0 && outer_refinements == NULL) {
-                goto Failure;
-        }
 
         forget_captured_evolving_refinements(checker);
         T2Flow body = (function->body == NULL)
@@ -23895,12 +23535,7 @@ generalize_member_scheme(
                         t2_solver_commit(checker->solver, scope);
                         return NULL;
                 }
-                T2Type *roots = ty_malloc((class_arity + 1) * sizeof *roots);
-                if (roots == NULL) {
-                        checker->failed = true;
-                        t2_solver_commit(checker->solver, scope);
-                        return NULL;
-                }
+                T2Type *roots = xtA(*roots, class_arity + 1);
                 roots[0] = type;
                 for (usize i = 0; i < class_arity; ++i) {
                         roots[i + 1] = t2_variable(
@@ -24495,13 +24130,7 @@ callable_set_result(
                         checker->universe,
                         callable
                 );
-                T2ParameterSpec *parameters = (count == 0)
-                                            ? NULL
-                                            : ty_malloc(count * sizeof *parameters);
-                if (count != 0 && parameters == NULL) {
-                        checker->failed = true;
-                        return T2_TYPE_INVALID;
-                }
+                T2ParameterSpec *parameters = xtA(*parameters, count);
                 for (usize i = 0; i < count; ++i) {
                         if (
                                 !t2_callable_parameter(
@@ -24542,13 +24171,7 @@ callable_set_result(
 
         if (kind == T2_TYPE_OVERLOAD || kind == T2_TYPE_INTERSECTION) {
                 usize count = t2_type_arity(checker->universe, callable);
-                T2Type *candidates = (count == 0)
-                                   ? NULL
-                                   : ty_malloc(count * sizeof *candidates);
-                if (count != 0 && candidates == NULL) {
-                        checker->failed = true;
-                        return T2_TYPE_INVALID;
-                }
+                T2Type *candidates = xtA(*candidates, count);
                 for (usize i = 0; i < count; ++i) {
                         candidates[i] = callable_set_result(
                                 checker,
@@ -24579,21 +24202,8 @@ scheme_with_body(
 {
         usize quantifier_count = t2_scheme_quantifier_count(source);
         usize predicate_count  = t2_scheme_predicate_count(source);
-        T2Quantifier *quantifiers = (quantifier_count == 0)
-                                  ? NULL
-                                  : ty_malloc(quantifier_count * sizeof *quantifiers);
-        T2Predicate *predicates = (predicate_count == 0)
-                                ? NULL
-                                : ty_malloc(predicate_count * sizeof *predicates);
-        if (
-                ((quantifier_count != 0) && (quantifiers == NULL))
-             || ((predicate_count != 0) && (predicates == NULL))
-        ) {
-                ty_free(quantifiers);
-                ty_free(predicates);
-                checker->failed = true;
-                return NULL;
-        }
+        T2Quantifier *quantifiers = xtA(*quantifiers, quantifier_count);
+        T2Predicate *predicates = xtA(*predicates, predicate_count);
 
         for (usize i = 0; i < quantifier_count; ++i) {
                 if (!t2_scheme_quantifier(source, i, &quantifiers[i])) {
@@ -24643,13 +24253,7 @@ constructor_receiver_for_scheme(
                 return T2_TYPE_INVALID;
         }
 
-        T2Type *arguments = (class_arity == 0)
-                          ? NULL
-                          : ty_malloc(class_arity * sizeof *arguments);
-        if (class_arity != 0 && arguments == NULL) {
-                checker->failed = true;
-                return T2_TYPE_INVALID;
-        }
+        T2Type *arguments = xtA(*arguments, class_arity);
 
         for (usize i = 0; i < class_arity; ++i) {
                 T2Quantifier quantifier;
@@ -24728,15 +24332,8 @@ scheme_with_class_bounds(
         }
 
         usize inherited = t2_scheme_predicate_count(scheme);
-        T2Quantifier *quantifiers = ty_malloc(quantifier_count * sizeof *quantifiers);
-        T2Predicate *predicates = ty_malloc(
-                (inherited + bounded) * sizeof *predicates
-        );
-        if (quantifiers == NULL || predicates == NULL) {
-                ty_free(quantifiers);
-                ty_free(predicates);
-                return scheme;
-        }
+        T2Quantifier *quantifiers = xtA(*quantifiers, quantifier_count);
+        T2Predicate *predicates = xtA(*predicates, inherited + bounded);
 
         for (usize i = 0; i < quantifier_count; ++i) {
                 if (!t2_scheme_quantifier(scheme, i, &quantifiers[i])) {
@@ -24978,18 +24575,8 @@ infer_class_definition(T2Checker *checker, Stmt const *statement)
         u32 class_level       = checker->level;
         usize type_mark       = push_type_variables(checker);
         usize assumption_mark = vN(checker->upper_assumptions);
-        T2Quantifier *quantifiers = (arity == 0)
-                                  ? NULL
-                                  : ty_malloc(arity * sizeof *quantifiers);
-        T2Type *arguments = (arity == 0) ? NULL : ty_malloc(
-                arity * sizeof *arguments
-        );
-        if (arity != 0 && ((quantifiers == NULL) || (arguments == NULL))) {
-                ty_free(quantifiers);
-                ty_free(arguments);
-                checker->failed = true;
-                goto Done;
-        }
+        T2Quantifier *quantifiers = xtA(*quantifiers, arity);
+        T2Type *arguments = xtA(*arguments, arity);
 
         for (usize i = 0; i < arity; ++i) {
                 Expr const *parameter = implicit_tag_payload
@@ -25165,13 +24752,6 @@ infer_class_definition(T2Checker *checker, Stmt const *statement)
         pop_type_variables(checker, type_mark);
         checker->level = outer_level;
         return receiver;
-
-Done:
-        vN(checker->upper_assumptions) = assumption_mark;
-        pop_type_variables(checker, type_mark);
-        checker->level = outer_level;
-
-        return t2_primitive(checker->universe, T2_TYPE_ERROR);
 }
 
 static bool
@@ -25447,13 +25027,7 @@ scan_loop_expression(Expr *expression, Scope *scope, void *user)
 static T2Binding *
 snapshot_bindings(T2Checker *checker, usize count)
 {
-        T2Binding *snapshot = (count == 0) ? NULL : ty_malloc(
-                count * sizeof *snapshot
-        );
-        if (count != 0 && snapshot == NULL) {
-                checker->failed = true;
-                return NULL;
-        }
+        T2Binding *snapshot = xtA(*snapshot, count);
 
         if (count != 0) {
                 memcpy(snapshot, vv(checker->bindings), count * sizeof *snapshot);
@@ -25526,9 +25100,6 @@ muted_prepass(T2Checker *checker, Stmt const *const *statements, usize count)
 {
         usize binding_mark = vN(checker->bindings);
         T2Binding *before = snapshot_bindings(checker, binding_mark);
-        if (binding_mark != 0 && before == NULL) {
-                return;
-        }
 
         usize touched_mark = vN(checker->touched);
         usize forward_mark = vN(checker->forward_uses);
@@ -25707,9 +25278,6 @@ infer_loop_statement(T2Checker *checker, Stmt const *statement)
                    && (checker->muted == 0);
         usize binding_mark = vN(checker->bindings);
         T2Type *before = snapshot_refinements(checker, binding_mark);
-        if (binding_mark != 0 && before == NULL) {
-                return infer_statement_once(checker, statement);
-        }
 
         if (repass) {
                 muted_prepass(checker, &statement, 1);
@@ -26156,13 +25724,7 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
         case STATEMENT_IF_LET:
         {
                 usize part_count = vN(statement->_if.parts);
-                T2Type *conditions = (part_count == 0)
-                                   ? NULL
-                                   : ty_malloc(part_count * sizeof *conditions);
-                if (part_count != 0 && conditions == NULL) {
-                        checker->failed = true;
-                        break;
-                }
+                T2Type *conditions = xtA(*conditions, part_count);
                 for (usize i = 0; i < part_count; ++i) {
                         touch_condition_bindings(
                                 checker,
@@ -26171,10 +25733,6 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
                 }
                 usize binding_mark = vN(checker->bindings);
                 T2Type *before = snapshot_refinements(checker, binding_mark);
-                if (binding_mark != 0 && before == NULL) {
-                        ty_free(conditions);
-                        break;
-                }
                 bool negated = statement->_if.neg;
                 for (usize i = 0; i < part_count; ++i) {
                         struct condpart const *part = v__(
@@ -26233,19 +25791,14 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
                         binding_mark
                 );
                 restore_refinements(checker, before, binding_mark);
-                if (
-                        ((binding_mark == 0) || (then_bindings != NULL))
-                     && ((binding_mark == 0) || (else_bindings != NULL))
-                ) {
-                        merge_branch_refinements(
-                                checker,
-                                then_bindings,
-                                (then_flow.outcomes & T2_FLOW_FALLS_THROUGH) != 0,
-                                else_bindings,
-                                (else_flow.outcomes & T2_FLOW_FALLS_THROUGH) != 0,
-                                binding_mark
-                        );
-                }
+                merge_branch_refinements(
+                        checker,
+                        then_bindings,
+                        (then_flow.outcomes & T2_FLOW_FALLS_THROUGH) != 0,
+                        else_bindings,
+                        (else_flow.outcomes & T2_FLOW_FALLS_THROUGH) != 0,
+                        binding_mark
+                );
                 for (usize i = 0; negated && i < part_count; ++i) {
                         struct condpart const *part = v__(
                                 statement->_if.parts,
@@ -26750,19 +26303,8 @@ install_declared_class_constructor(
 
         usize arity          = nominal->arity;
         usize declared_arity = vN(definition->type_params);
-        T2Quantifier *quantifiers = (arity == 0)
-                                  ? NULL
-                                  : ty_malloc(arity * sizeof *quantifiers);
-        T2Type *arguments = (arity == 0)
-                          ? NULL
-                          : ty_malloc(arity * sizeof *arguments);
-
-        if (arity != 0 && (quantifiers == NULL || arguments == NULL)) {
-                ty_free(quantifiers);
-                ty_free(arguments);
-                checker->failed = true;
-                return;
-        }
+        T2Quantifier *quantifiers = xtA(*quantifiers, arity);
+        T2Type *arguments = xtA(*arguments, arity);
 
         usize type_mark = push_type_variables(checker);
         for (usize i = 0; i < arity; ++i) {
@@ -28887,12 +28429,7 @@ print_diagnostics(
         bool         warnings
 )
 {
-        T2Diagnostic const **ordered = ty_malloc(
-                vN(checker->diagnostics) * sizeof *ordered
-        );
-        if (ordered == NULL) {
-                return;
-        }
+        T2Diagnostic const **ordered = xtA(*ordered, vN(checker->diagnostics));
 
         for (usize i = 0; i < vN(checker->diagnostics); ++i) {
                 ordered[i] = v_(checker->diagnostics, i);
@@ -29190,18 +28727,14 @@ remember_module_key(char const *path, u64 key)
 
         if (ModuleKeyCount == ModuleKeyCapacity) {
                 usize capacity = (ModuleKeyCapacity == 0) ? 16 : ModuleKeyCapacity *2;
-                T2ModuleKey *grown = ty_realloc(ModuleKeys, capacity * sizeof *grown);
-                if (grown == NULL) {
-                        return;
-                }
+                T2ModuleKey *grown = mrealloc(ModuleKeys, capacity * sizeof *grown);
                 ModuleKeys        = grown;
                 ModuleKeyCapacity = capacity;
         }
 
         ModuleKeys[ModuleKeyCount] = (T2ModuleKey) { .path = hash, .key = key };
-        if (t2_index_put(&ModuleKeyIndex, hash, (u32)ModuleKeyCount)) {
-                ModuleKeyCount += 1;
-        }
+        t2_index_put(&ModuleKeyIndex, hash, (u32)ModuleKeyCount);
+        ModuleKeyCount += 1;
 }
 
 static u64
@@ -29355,9 +28888,9 @@ read_file(char const *path, usize *size)
         }
 
         usize length        = (usize)st.st_size;
-        unsigned char *data = ty_malloc(length);
+        unsigned char *data = xmA(length);
         usize have          = 0;
-        while (data != NULL && have < length) {
+        while (have < length) {
                 isize n = read(fd, data + have, length - have);
                 if (n < 0 && errno == EINTR) {
                         continue;
@@ -29369,7 +28902,7 @@ read_file(char const *path, usize *size)
         }
 
         close(fd);
-        if (data == NULL || have != length) {
+        if (have != length) {
                 ty_free(data);
                 return NULL;
         }
@@ -29480,13 +29013,14 @@ cache_symbol_out(void *context, u64 symbol)
         if (
                 (entry.name == NULL)
              || !cache_symbol_append(cache, entry, &index)
-             || !t2_index_put(&cache->symbol_index, symbol, index)
         ) {
                 ty_free(entry.name);
                 ty_free(entry.module);
                 cache->failed = true;
                 return UINT64_MAX;
         }
+
+        t2_index_put(&cache->symbol_index, symbol, index);
 
         return index;
 }
@@ -29733,11 +29267,7 @@ read_cache_file(char const *path, u64 key)
                 return NULL;
         }
 
-        T2Cache *cache = ty_calloc(1, sizeof *cache);
-        if (cache == NULL) {
-                ty_free(data);
-                return NULL;
-        }
+        T2Cache *cache = alloc0(sizeof *cache);
 
         cache->data = data;
         cache->size = size;
@@ -29977,22 +29507,17 @@ note_ordinal(T2Ordinals *ordinals, void const *syntax, u32 *ordinal)
 
         if (ordinals->count == ordinals->capacity) {
                 usize capacity = (ordinals->capacity == 0) ? 1024 : ordinals->capacity * 2;
-                void const **grown = ty_realloc(ordinals->syntax, capacity * sizeof *grown);
-                if (grown == NULL) {
-                        ordinals->failed = true;
-                        return false;
-                }
+                void const **grown = mrealloc(ordinals->syntax, capacity * sizeof *grown);
                 ordinals->syntax   = grown;
                 ordinals->capacity = capacity;
         }
 
-        if (
-                (ordinals->count >= T2_CACHE_NONE)
-             || !t2_index_put(&ordinals->seen, key, (u32)ordinals->count)
-        ) {
+        if (ordinals->count >= T2_CACHE_NONE) {
                 ordinals->failed = true;
                 return false;
         }
+
+        t2_index_put(&ordinals->seen, key, (u32)ordinals->count);
 
         *ordinal = (u32)ordinals->count;
         ordinals->syntax[ordinals->count++] = syntax;
@@ -30018,9 +29543,7 @@ note_identifier(T2Ordinals *ordinals, Expr const *expr)
                 return;
         }
 
-        if (!t2_index_put(&ordinals->symbol_index, key, ordinal)) {
-                ordinals->failed = true;
-        }
+        t2_index_put(&ordinals->symbol_index, key, ordinal);
 }
 
 static Expr *
@@ -30171,7 +29694,7 @@ index_definition_roots(
                 ) {
                         continue;
                 }
-                (void)t2_index_put(roots, (u64)(uptr)symbol, ordinal);
+                t2_index_put(roots, (u64)(uptr)symbol, ordinal);
         }
 }
 
@@ -30386,8 +29909,8 @@ write_bindings(
                 if (cache->failed) {
                         ok = false;
                 } else if (wrote) {
-                        ok = t2_index_put(&seen, key, 1)
-                          && t2_bytes_append(&body, vv(record), vN(record));
+                        t2_index_put(&seen, key, 1);
+                        ok = t2_bytes_append(&body, vv(record), vN(record));
                         count += 1;
                 }
                 xvF(record);
@@ -30577,10 +30100,7 @@ write_symbols(T2Cache const *cache, byte_vector *out)
 static void
 write_cache(T2Checker *checker)
 {
-        T2Cache *cache = ty_calloc(1, sizeof *cache);
-        if (cache == NULL) {
-                return;
-        }
+        T2Cache *cache = alloc0(sizeof *cache);
 
         checker->cache = cache;
         T2SymbolRemap remap = { .out = cache_symbol_out, .context = checker };
@@ -30761,10 +30281,7 @@ static char *
 canonical_metas(char const *text)
 {
         usize length = strlen(text);
-        char *out    = ty_malloc(length + 1);
-        if (out == NULL) {
-                return NULL;
-        }
+        char *out    = xmA(length + 1);
 
         struct canonical_variable seen[64];
         usize seen_count = 0;
@@ -30840,9 +30357,6 @@ static u64
 digest_text(u64 digest, char const *text)
 {
         char *canonical = canonical_metas(text);
-        if (canonical == NULL) {
-                return digest;
-        }
 
         digest = XXH3_64bits_withSeed(canonical, strlen(canonical), digest);
         ty_free(canonical);
@@ -31015,10 +30529,7 @@ print_digest(T2Checker *checker, char const *mode)
 static T2Checker *
 new_checker(char const *unit, char const *path, char const *source, bool logged)
 {
-        T2Checker *checker = ty_calloc(1, sizeof *checker);
-        if (checker == NULL) {
-                return NULL;
-        }
+        T2Checker *checker = alloc0(sizeof *checker);
 
         checker->unit         = (unit == NULL) ? "<unknown>" : unit;
         checker->path         = (path == NULL) ? "<unknown>" : path;
@@ -31060,14 +30571,12 @@ t2_checker_begin(Ty *ty, Module const *module)
                 true
         );
 
-        if (checker != NULL) {
-                checker->ty     = ty;
-                checker->module = module;
-                checker->published_bindings = s_eq(checker->unit, "(repl)");
-                open_cache(checker);
-        }
+        checker->ty     = ty;
+        checker->module = module;
+        checker->published_bindings = s_eq(checker->unit, "(repl)");
+        open_cache(checker);
 
-        if (checker != NULL && checker->log != NULL) {
+        if (checker->log != NULL) {
                 log_prefix(checker, "begin");
                 log_end(checker);
         }
@@ -31439,11 +30948,7 @@ infer_open_requirements(T2Checker *checker)
         if (pending == 0 || checker->failed) {
                 return false;
         }
-        T2Predicate *predicates = ty_malloc(pending * sizeof *predicates);
-        if (predicates == NULL) {
-                checker->failed = true;
-                return false;
-        }
+        T2Predicate *predicates = xtA(*predicates, pending);
         for (usize i = 0; i < pending; ++i) {
                 (void)t2_solver_pending_obligation(checker->solver, i, &predicates[i]);
         }
@@ -31765,7 +31270,7 @@ static usize
 ordered_errors(T2Checker *checker, T2Diagnostic const ***out)
 {
         usize n = vN(checker->diagnostics);
-        T2Diagnostic const **ordered = ty_malloc((n + 1) * sizeof *ordered);
+        T2Diagnostic const **ordered = xtA(*ordered, n + 1);
         usize count = 0;
 
         for (usize i = 0; i < n; ++i) {
@@ -32213,9 +31718,6 @@ static T2Checker *
 scratch_checker(Ty *ty)
 {
         T2Checker *checker = new_checker("(runtime)", "(runtime)", NULL, false);
-        if (checker == NULL) {
-                return NULL;
-        }
 
         checker->ty    = ty;
         checker->muted = 1;
@@ -32272,9 +31774,6 @@ t2_class_instance(Ty *ty, int class_id, T2Type const *arguments, usize count)
         }
 
         T2Checker *checker = scratch_checker(ty);
-        if (checker == NULL) {
-                return T2_TYPE_INVALID;
-        }
 
         Class *class = class_get(ty, class_id);
 
@@ -32336,10 +31835,7 @@ t2_class_template(Ty *ty, Class *class)
                 return t2_object_type(ty, class);
         }
 
-        T2Type *parameters = ty_malloc(arity * sizeof *parameters);
-        if (parameters == NULL) {
-                return t2_object_type(ty, class);
-        }
+        T2Type *parameters = xtA(*parameters, arity);
 
         for (usize i = 0; i < arity; ++i) {
                 parameters[i] = t2_class_parameter(ty, class, i);
@@ -32390,9 +31886,6 @@ t2_tag_instance(Ty *ty, int tag_id, T2Type payload)
         }
 
         T2Checker *checker = scratch_checker(ty);
-        if (checker == NULL) {
-                return T2_TYPE_INVALID;
-        }
 
         T2Nominal *nominal = ensure_tag_nominal(checker, tag_id, NULL);
         T2Type type = (nominal == NULL)
@@ -32452,11 +31945,11 @@ static T2Type
 pack_of_callable(T2Universe *universe, T2Type callable)
 {
         usize count = t2_callable_parameter_count(universe, callable);
-        T2Type *elements = ty_malloc((count + 1) * sizeof *elements);
+        T2Type *elements = xtA(*elements, count + 1);
         T2Type tail = T2_TYPE_INVALID;
         usize n = 0;
 
-        for (usize i = 0; elements != NULL && i < count; ++i) {
+        for (usize i = 0; i < count; ++i) {
                 T2ParameterSpec spec;
                 if (!t2_callable_parameter(universe, callable, i, &spec)) {
                         continue;
@@ -32468,7 +31961,7 @@ pack_of_callable(T2Universe *universe, T2Type callable)
                 }
         }
 
-        T2Type pack = (elements == NULL) ? T2_TYPE_INVALID : t2_pack(universe, elements, n, tail);
+        T2Type pack = t2_pack(universe, elements, n, tail);
         ty_free(elements);
 
         return pack;
@@ -32527,7 +32020,7 @@ call_type_function(
 
         if (TY_CATCH_ERROR()) {
                 Value error = TY_CATCH();
-                free(TypeFunctionError);
+                ty_free(TypeFunctionError);
                 TypeFunctionError = (error.type == VALUE_STRING)
                                   ? xfmt("%.*s", (int)sN(error), ss(error))
                                   : xfmt("%s", VSC(&error));
@@ -32577,10 +32070,7 @@ type_function_hook(void *context, T2Universe *universe, T2Type computed)
         }
 
         usize count = t2_type_arity(universe, computed);
-        T2Type *arguments = ty_malloc((count + 1) * sizeof *arguments);
-        if (arguments == NULL) {
-                return T2_TYPE_INVALID;
-        }
+        T2Type *arguments = xtA(*arguments, count + 1);
 
         for (usize i = 0; i < count; ++i) {
                 arguments[i] = t2_type_child(universe, computed, i);
@@ -32668,9 +32158,6 @@ t2_resolve(Ty *ty, Expr *type_expression)
         }
 
         T2Checker *checker = scratch_checker(ty);
-        if (checker == NULL) {
-                return T2_TYPE_INVALID;
-        }
 
         return finish_scratch(checker, lower_type(checker, type_expression));
 }
@@ -32683,9 +32170,6 @@ t2_resolve_in_class(Ty *ty, Class *class, Expr *type_expression)
         }
 
         T2Checker *checker = scratch_checker(ty);
-        if (checker == NULL) {
-                return T2_TYPE_INVALID;
-        }
 
         ClassDefinition const *definition = (class == NULL || class->def == NULL)
                                           ? NULL
@@ -32714,9 +32198,6 @@ t2_infer(Ty *ty, Expr *expression)
         }
 
         T2Checker *checker = scratch_checker(ty);
-        if (checker == NULL) {
-                return T2_TYPE_INVALID;
-        }
 
         return finish_scratch(checker, typeof_operand_type(checker, expression));
 }
@@ -33333,13 +32814,8 @@ canonical_class_parameters(T2Type receiver, T2Type member, usize arity)
                 return member;
         }
 
-        u32 *ids = ty_malloc(arity * sizeof *ids);
-        T2Type *canonical = ty_malloc(arity * sizeof *canonical);
-        if (ids == NULL || canonical == NULL) {
-                ty_free(ids);
-                ty_free(canonical);
-                return member;
-        }
+        u32 *ids = xtA(*ids, arity);
+        T2Type *canonical = xtA(*canonical, arity);
 
         for (usize i = 0; i < arity; ++i) {
                 T2Quantifier quantifier;
@@ -33372,14 +32848,11 @@ scheme_member_type(
                 return T2_TYPE_INVALID;
         }
 
-        u32 *ids = ty_malloc(arity * sizeof *ids);
-        T2Type *arguments       = ty_malloc(arity * sizeof *arguments);
-        T2Quantifier *rest      = ty_malloc((count - arity + 1) * sizeof *rest);
+        u32 *ids                = xtA(*ids, arity);
+        T2Type *arguments       = xtA(*arguments, arity);
+        T2Quantifier *rest      = xtA(*rest, count - arity + 1);
         T2Predicate *predicates = NULL;
         T2Type result = T2_TYPE_INVALID;
-        if (ids == NULL || arguments == NULL || rest == NULL) {
-                goto Done;
-        }
 
         for (usize i = 0; i < count; ++i) {
                 T2Quantifier quantifier;
@@ -33411,10 +32884,7 @@ scheme_member_type(
                 result = body;
                 goto Done;
         }
-        predicates = ty_malloc((predicate_count + 1) * sizeof *predicates);
-        if (predicates == NULL) {
-                goto Done;
-        }
+        predicates = xtA(*predicates, predicate_count + 1);
 
         for (usize i = 0; i < predicate_count; ++i) {
                 if (!t2_scheme_predicate(scheme, i, &predicates[i])) {
@@ -33496,13 +32966,8 @@ t2_member_type(Ty *ty, T2Type receiver, T2Type member)
                 return (result == T2_TYPE_INVALID) ? member : result;
         }
 
-        u32 *ids = ty_malloc(arity * sizeof *ids);
-        T2Type *arguments = ty_malloc(arity * sizeof *arguments);
-        if (ids == NULL || arguments == NULL) {
-                ty_free(ids);
-                ty_free(arguments);
-                return member;
-        }
+        u32 *ids = xtA(*ids, arity);
+        T2Type *arguments = xtA(*arguments, arity);
 
         member = canonical_class_parameters(receiver, member, arity);
         for (usize i = 0; i < arity; ++i) {

@@ -270,14 +270,11 @@ t2_index_find(T2Index const *index, u64 key, u32 *value)
         return true;
 }
 
-static bool
+static void
 index_grow(T2Index *index)
 {
         usize capacity = (index->capacity == 0) ? 64 : index->capacity * 2;
-        T2IndexEntry *entries = ty_calloc(capacity, sizeof *entries);
-        if (entries == NULL) {
-                return false;
-        }
+        T2IndexEntry *entries = xtA0(*entries, capacity);
 
         T2Index grown = { .entries = entries, .capacity = capacity };
         for (usize i = 0; i < index->capacity; ++i) {
@@ -291,18 +288,13 @@ index_grow(T2Index *index)
 
         ty_free(index->entries);
         *index = grown;
-
-        return true;
 }
 
-bool
+void
 t2_index_put(T2Index *index, u64 key, u32 value)
 {
-        if (
-                ((index->count + 1) * 4 > index->capacity * 3)
-             && !index_grow(index)
-        ) {
-                return false;
+        if ((index->count + 1) * 4 > index->capacity * 3) {
+                index_grow(index);
         }
 
         usize slot = index_slot(index, key);
@@ -312,8 +304,6 @@ t2_index_put(T2Index *index, u64 key, u32 value)
                 .value = value,
                 .used  = true
         };
-
-        return true;
 }
 
 void
@@ -402,14 +392,10 @@ same_candidate(
             || (memcmp(node->children, children, arity * sizeof *children) == 0);
 }
 
-static bool
+static void
 resize_intern_table(T2Universe *universe, usize capacity)
 {
-        T2Type *table = ty_calloc(capacity, sizeof *table);
-        if (table == NULL) {
-                universe->failed = true;
-                return false;
-        }
+        T2Type *table = xtA0(*table, capacity);
 
         for (usize i = 0; i < vN(universe->nodes); ++i) {
                 T2Type type = (T2Type)(i + 1);
@@ -425,8 +411,6 @@ resize_intern_table(T2Universe *universe, usize capacity)
         universe->table = table;
         universe->table_capacity = capacity;
         universe->table_count    = vN(universe->nodes);
-
-        return true;
 }
 
 static T2Type
@@ -482,9 +466,7 @@ intern_type(
                 usize capacity = (universe->table_capacity == 0)
                                ? 64
                                : universe->table_capacity * 2;
-                if (!resize_intern_table(universe, capacity)) {
-                        return T2_TYPE_INVALID;
-                }
+                resize_intern_table(universe, capacity);
         }
 
         usize slot = (usize)hash & (universe->table_capacity - 1);
@@ -513,13 +495,9 @@ intern_type(
                 return T2_TYPE_INVALID;
         }
 
-        T2Node *node = ty_malloc(sizeof *node + arity * sizeof *children);
-        if (node == NULL) {
-                universe->failed = true;
-                return T2_TYPE_INVALID;
-        }
+        T2Node *node = xmA(sizeof *node + arity * sizeof *children);
 
-        char *owned_text = (text == NULL) ? NULL : ty_malloc(length + 1);
+        char *owned_text = (text == NULL) ? NULL : xmA(length + 1);
         if (text != NULL && owned_text == NULL) {
                 ty_free(node);
                 universe->failed = true;
@@ -589,11 +567,9 @@ t2_universe_report(T2Universe const *universe, FILE *out)
 T2Universe *
 t2_universe_new(void)
 {
-        T2Universe *universe = ty_calloc(1, sizeof *universe);
-        if (universe != NULL) {
-                universe->next_solver_id    = 1;
-                universe->next_recursive_id = 1;
-        }
+        T2Universe *universe = alloc0(sizeof *universe);
+        universe->next_solver_id    = 1;
+        universe->next_recursive_id = 1;
 
         return universe;
 }
@@ -1114,11 +1090,7 @@ t2_computed_type_set_result(
                 return existing->result == result;
         }
 
-        bool *visiting = ty_calloc(vN(universe->nodes), sizeof *visiting);
-        if (visiting == NULL) {
-                universe->failed = true;
-                return false;
-        }
+        bool *visiting = xtA0(*visiting, vN(universe->nodes));
 
         bool cyclic_or_solver_local = computed_result_reaches(
                 universe,
@@ -1203,16 +1175,13 @@ t2_declare_nominal(
                 return true;
         }
 
-        char *owned_name = S2N(name);
-        T2Variance *owned_variance = (arity == 0)
-                                   ? NULL
-                                   : ty_malloc(arity * sizeof *owned_variance);
-        if (owned_name == NULL || ((arity != 0) && (owned_variance == NULL))) {
-                ty_free(owned_name);
-                ty_free(owned_variance);
+        if (name == NULL) {
                 universe->failed = true;
                 return false;
         }
+
+        char *owned_name = S2(name);
+        T2Variance *owned_variance = xtA(*owned_variance, arity);
 
         for (usize i = 0; i < arity; ++i) {
                 owned_variance[i] = (variance == NULL) ? T2_INVARIANT : variance[i];
@@ -1224,16 +1193,11 @@ t2_declare_nominal(
                 .arity    = arity,
                 .variance = owned_variance
         }));
-        if (
-                !t2_index_put(
-                        &universe->nominal_index,
-                        symbol,
-                        (u32)(vN(universe->nominals) - 1)
-                )
-        ) {
-                universe->failed = true;
-                return false;
-        }
+        t2_index_put(
+                &universe->nominal_index,
+                symbol,
+                (u32)(vN(universe->nominals) - 1)
+        );
 
         return true;
 }
@@ -1737,11 +1701,7 @@ substitute_nominal_template(T2NominalSubstitution *substitution, T2Type source)
                 return source;
         }
 
-        T2Type *children = ty_malloc(node->arity * sizeof *children);
-        if (children == NULL) {
-                substitution->universe->failed = true;
-                return T2_TYPE_INVALID;
-        }
+        T2Type *children = xtA(*children, node->arity);
 
         bool changed = false;
         for (usize i = 0; i < node->arity; ++i) {
@@ -1805,14 +1765,10 @@ backfill_nominal_super(
                         return false;
                 }
                 applied = v_(universe->applied_nominals, i);
-                T2Type *supertypes = ty_realloc(
+                T2Type *supertypes = mrealloc(
                         vv(applied->supertypes),
                         (vN(applied->supertypes) + 1) * sizeof *supertypes
                 );
-                if (supertypes == NULL) {
-                        universe->failed = true;
-                        return false;
-                }
                 vv(applied->supertypes) = supertypes;
                 xvP(applied->supertypes, supertype);
         }
@@ -1865,10 +1821,7 @@ t2_nominal(
         usize applied_index = vN(universe->applied_nominals);
         xvP(universe->applied_nominals, ((T2AppliedNominal) {.instance = instance}));
 
-        if (!t2_index_put(&universe->applied_index, instance, (u32)applied_index)) {
-                universe->failed = true;
-                return T2_TYPE_INVALID;
-        }
+        t2_index_put(&universe->applied_index, instance, (u32)applied_index);
 
         info->instantiated = true;
 
@@ -1959,14 +1912,7 @@ t2_function(
                 return T2_TYPE_INVALID;
         }
 
-        T2ParameterSpec *specs = (parameter_count == 0)
-                               ? NULL
-                               : ty_malloc(parameter_count * sizeof *specs);
-
-        if (parameter_count != 0 && specs == NULL) {
-                universe->failed = true;
-                return T2_TYPE_INVALID;
-        }
+        T2ParameterSpec *specs = xtA(*specs, parameter_count);
 
         for (usize i = 0; i < parameter_count; ++i) {
                 specs[i] = (T2ParameterSpec) {
@@ -2099,11 +2045,7 @@ callable_type(
                 return T2_TYPE_INVALID;
         }
 
-        T2Type *parts = ty_malloc((parameter_count + 3) * sizeof *parts);
-        if (parts == NULL) {
-                universe->failed = true;
-                return T2_TYPE_INVALID;
-        }
+        T2Type *parts = xtA(*parts, parameter_count + 3);
 
         for (usize i = 0; i < parameter_count; ++i) {
                 u64 payload = (u64)parameters[i].kind;
@@ -2465,11 +2407,7 @@ t2_record(
                 return T2_TYPE_INVALID;
         }
 
-        T2Type *parts = ty_malloc((field_count + 1) * sizeof *parts);
-        if (parts == NULL) {
-                universe->failed = true;
-                return T2_TYPE_INVALID;
-        }
+        T2Type *parts = xtA(*parts, field_count + 1);
 
         for (usize i = 0; i < field_count; ++i) {
                 if (
@@ -2842,11 +2780,7 @@ t2_pack(
                 return T2_TYPE_INVALID;
         }
 
-        T2Type *parts = ty_malloc((prefix_count + 1) * sizeof *parts);
-        if (parts == NULL) {
-                universe->failed = true;
-                return T2_TYPE_INVALID;
-        }
+        T2Type *parts = xtA(*parts, prefix_count + 1);
 
         if (prefix_count != 0) {
                 memcpy(parts, prefix, prefix_count * sizeof *parts);
@@ -2963,10 +2897,7 @@ pack_callable(T2Universe *universe, T2Type pack)
 
         usize count = (node->kind == T2_TYPE_PACK) ? (usize)node->payload : 0;
         T2Type tail = (node->kind == T2_TYPE_PACK) ? node->children[count] : pack;
-        T2ParameterSpec *specs = ty_malloc((count + 1) * sizeof *specs);
-        if (specs == NULL) {
-                return T2_TYPE_INVALID;
-        }
+        T2ParameterSpec *specs = xtA(*specs, count + 1);
 
         usize n      = 0;
         usize insert = 0;
@@ -3230,13 +3161,7 @@ t2_variadic_tuple(
                 if (prefix_count > SIZE_MAX - extra) {
                         return T2_TYPE_INVALID;
                 }
-                T2Type *combined = ty_malloc(
-                        (prefix_count + extra) * sizeof *combined
-                );
-                if (prefix_count + extra != 0 && combined == NULL) {
-                        universe->failed = true;
-                        return T2_TYPE_INVALID;
-                }
+                T2Type *combined = xtA(*combined, prefix_count + extra);
                 if (prefix_count != 0) {
                         memcpy(combined, prefix, prefix_count * sizeof *combined);
                 }
@@ -3257,11 +3182,7 @@ t2_variadic_tuple(
                 return result;
         }
 
-        T2Type *parts = ty_malloc((prefix_count + 1) * sizeof *parts);
-        if (parts == NULL) {
-                universe->failed = true;
-                return T2_TYPE_INVALID;
-        }
+        T2Type *parts = xtA(*parts, prefix_count + 1);
 
         if (prefix_count != 0) {
                 memcpy(parts, prefix, prefix_count * sizeof *parts);
@@ -5360,10 +5281,7 @@ keyword_pack_pairs(
         usize bn = (usize)b->payload;
 
         *count = 0;
-        *pairs = ty_malloc((2 * (an + bn) + 2) * sizeof **pairs);
-        if (*pairs == NULL) {
-                return false;
-        }
+        *pairs = xtA(**pairs, (2 * (an + bn) + 2));
 
         T2Type b_rest = T2_TYPE_INVALID;
         for (usize j = 0; j < bn; ++j) {
@@ -5554,7 +5472,7 @@ remember_relation(T2Universe const *universe, u64 key, T2Relation relation)
                 t2_index_clear(memo);
         }
 
-        (void)t2_index_put(memo, key, (u32)relation);
+        t2_index_put(memo, key, (u32)relation);
 }
 
 T2Relation
@@ -5866,11 +5784,7 @@ record_meet(T2Universe *universe, T2Type left, T2Type right)
 
         usize a_count = a->arity - 1;
         usize b_count = b->arity - 1;
-        T2FieldSpec *fields = ty_calloc(a_count + b_count, sizeof *fields);
-        if (a_count + b_count != 0 && fields == NULL) {
-                universe->failed = true;
-                return T2_TYPE_INVALID;
-        }
+        T2FieldSpec *fields = xtA0(*fields, a_count + b_count);
 
         usize ai     = 0;
         usize bi     = 0;
@@ -6083,11 +5997,7 @@ make_set(
 
         vN(arms) = unique;
 
-        bool *removed = (vN(arms) == 0) ? NULL : ty_calloc(vN(arms), sizeof *removed);
-        if (vN(arms) != 0 && removed == NULL) {
-                universe->failed = true;
-                goto Fail;
-        }
+        bool *removed = xtA0(*removed, vN(arms));
 
         for (usize i = 0; i < vN(arms); ++i) {
                 if (removed[i]) {
@@ -6207,13 +6117,8 @@ ground_intersection(T2Universe *universe, T2Type const *arms, usize count)
                 if (node->kind != T2_TYPE_UNION) {
                         continue;
                 }
-                T2Type *parts = ty_malloc(count * sizeof *parts);
-                T2Type *cases = ty_malloc(node->arity * sizeof *cases);
-                if (parts == NULL || cases == NULL) {
-                        ty_free(parts);
-                        ty_free(cases);
-                        return T2_TYPE_INVALID;
-                }
+                T2Type *parts = xtA(*parts, count);
+                T2Type *cases = xtA(*cases, node->arity);
                 memcpy(parts, arms, count * sizeof *parts);
                 for (usize j = 0; j < node->arity; ++j) {
                         parts[i] = node->children[j];
@@ -6237,10 +6142,7 @@ ground_intersection(T2Universe *universe, T2Type const *arms, usize count)
                 return T2_TYPE_INVALID;
         }
 
-        T2Type *kept = ty_malloc(count * sizeof *kept);
-        if (kept == NULL) {
-                return T2_TYPE_INVALID;
-        }
+        T2Type *kept = xtA(*kept, count);
 
         usize n = 0;
         for (usize i = 0; i < count; ++i) {
@@ -6706,7 +6608,7 @@ struct t2_names {
 T2Names *
 t2_names_new(void)
 {
-        return ty_calloc(1, sizeof (T2Names));
+        return alloc0(sizeof (T2Names));
 }
 
 void
@@ -7267,13 +7169,7 @@ doc_scheme_node(T2Printer *printer, T2Node const *node, unsigned depth)
                 bound += 1;
         }
 
-        T2Predicate *predicates = (predicate_count == 0)
-                                ? NULL
-                                : ty_malloc(predicate_count * sizeof *predicates);
-        if (predicate_count != 0 && predicates == NULL) {
-                printer->failed = true;
-                return;
-        }
+        T2Predicate *predicates = xtA(*predicates, predicate_count);
 
         for (usize i = 0; i < predicate_count; ++i) {
                 predicates[i] = predicate_from_node(
@@ -7908,10 +7804,6 @@ printer_init(
         printer->names = (printer->options.names != NULL)
                        ? printer->options.names
                        : t2_names_new();
-        if (printer->names == NULL) {
-                printer->failed = true;
-                return;
-        }
 
         u32 root = new_doc(printer, T2_DOC_NEST);
         if (printer->failed) {
@@ -8031,10 +7923,7 @@ substitute_type(
                 return source;
         }
 
-        T2Type *children = ty_malloc(node->arity * sizeof *children);
-        if (children == NULL) {
-                return T2_TYPE_INVALID;
-        }
+        T2Type *children = xtA(*children, node->arity);
 
         bool changed = false;
         for (usize i = 0; i < node->arity; ++i) {
@@ -8222,10 +8111,7 @@ read_text(
                 return false;
         }
 
-        char *copy = ty_malloc((usize)*length + 1);
-        if (copy == NULL) {
-                return false;
-        }
+        char *copy = xmA((usize)*length + 1);
 
         memcpy(copy, data + *position, *length);
         copy[*length] = '\0';
@@ -8262,10 +8148,7 @@ t2_type_writer_new(T2Universe *universe, T2SymbolRemap remap)
                 return NULL;
         }
 
-        T2TypeWriter *writer = ty_calloc(1, sizeof *writer);
-        if (writer == NULL) {
-                return NULL;
-        }
+        T2TypeWriter *writer = alloc0(sizeof *writer);
 
         writer->universe = universe;
         writer->remap    = remap;
@@ -8334,9 +8217,7 @@ writer_visit(T2TypeWriter *writer, T2Type type, u32 *index)
 
         *index = writer->count;
 
-        if (!t2_index_put(&writer->memo, type, writer->count)) {
-                return false;
-        }
+        t2_index_put(&writer->memo, type, writer->count);
 
         writer->count += 1;
 
@@ -8447,12 +8328,10 @@ reader_build(
                 u32 binder;
                 if (!t2_index_find(binders, payload, &binder)) {
                         binder = t2_universe_fresh_recursive_binder(universe);
-                        if (
-                                (binder == 0)
-                             || !t2_index_put(binders, payload, binder)
-                        ) {
+                        if (binder == 0) {
                                 return T2_TYPE_INVALID;
                         }
+                        t2_index_put(binders, payload, binder);
                 }
 
                 if (kind == T2_TYPE_RECURSIVE_VARIABLE) {
@@ -8466,12 +8345,7 @@ reader_build(
                 break;
         }
 
-        T2Node *node = ty_malloc(
-                sizeof *node + (usize)arity * sizeof *node->children
-        );
-        if (node == NULL) {
-                return T2_TYPE_INVALID;
-        }
+        T2Node *node = xmA(sizeof *node + (usize)arity * sizeof *node->children);
 
         *node = (T2Node) {
                 .payload = payload,
@@ -8600,10 +8474,8 @@ t2_type_reader_new(
                 ok = reader->rebased;
         }
 
-        T2Type *arguments = (widest == 0) ? NULL : xtA(T2Type, widest);
+        T2Type *arguments = xtA(T2Type, widest);
         T2Index binders   = {0};
-
-        ok = ok && ((widest == 0) || (arguments != NULL));
 
         for (u32 i = 0; ok && i < count; ++i) {
                 struct wire_record const *record = &records[i];
@@ -9166,16 +9038,7 @@ resolve_pack_solutions(T2Solver *solver, T2Type type, unsigned depth)
                 return type;
         }
 
-        T2Type *children = ty_malloc(node->arity * sizeof *children);
-        if (children == NULL) {
-                solver->failed = true;
-                ty_snprintf(
-                        solver->error,
-                        sizeof solver->error,
-                        "types2 solver ran out of memory"
-                );
-                return T2_TYPE_INVALID;
-        }
+        T2Type *children = xtA(*children, node->arity);
 
         bool changed = false;
         for (usize i = 0; i < node->arity; ++i) {
@@ -9372,15 +9235,6 @@ record_cause(
 )
 {
         char *owned = S2N(provenance);
-        if (provenance != NULL && owned == NULL) {
-                solver->failed = true;
-                ty_snprintf(
-                        solver->error,
-                        sizeof solver->error,
-                        "types2 solver ran out of memory"
-                );
-                return NULL;
-        }
 
         xvP(solver->causes, ((T2Cause) {
                 .kind       = kind,
@@ -9399,10 +9253,7 @@ t2_solver_new(T2Universe *universe)
                 return NULL;
         }
 
-        T2Solver *solver = ty_calloc(1, sizeof *solver);
-        if (solver == NULL) {
-                return NULL;
-        }
+        T2Solver *solver = alloc0(sizeof *solver);
 
         solver->universe = universe;
         solver->id       = universe->next_solver_id++;
@@ -9483,15 +9334,6 @@ t2_solver_new_meta(
 
         u32 id = (u32)(vN(solver->metas) + 1);
         char *owned_provenance = S2N(provenance);
-        if (provenance != NULL && owned_provenance == NULL) {
-                solver->failed = true;
-                ty_snprintf(
-                        solver->error,
-                        sizeof solver->error,
-                        "types2 solver ran out of memory"
-                );
-                return T2_TYPE_INVALID;
-        }
 
         xvP(solver->metas, ((T2Meta) {
                 .parent        = id,
@@ -9579,16 +9421,7 @@ direct_set_without_meta(
                 return false;
         }
 
-        T2Type *arms = ty_malloc(node->arity * sizeof *arms);
-        if (arms == NULL) {
-                solver->failed = true;
-                ty_snprintf(
-                        solver->error,
-                        sizeof solver->error,
-                        "types2 solver ran out of memory"
-                );
-                return false;
-        }
+        T2Type *arms = xtA(*arms, node->arity);
 
         usize count  = 0;
         bool removed = false;
@@ -9966,20 +9799,6 @@ retain_predicate(
 {
         char *name       = S2N(predicate->name);
         char *provenance = S2N(predicate->provenance);
-        if (
-                ((predicate->name != NULL) && (name == NULL))
-             || ((predicate->provenance != NULL) && (provenance == NULL))
-        ) {
-                ty_free(name);
-                ty_free(provenance);
-                solver->failed = true;
-                ty_snprintf(
-                        solver->error,
-                        sizeof solver->error,
-                        "types2 solver ran out of memory"
-                );
-                return T2_RELATION_COMPLEXITY;
-        }
 
         usize index = vN(solver->obligations);
         xvP(solver->obligations, ((T2Obligation) {
@@ -10112,12 +9931,7 @@ static T2Type
 erase_callable_types(T2Universe *universe, T2Type callable)
 {
         usize count = t2_callable_parameter_count(universe, callable);
-        T2ParameterSpec *parameters = (count == 0)
-                                    ? NULL
-                                    : ty_malloc(count * sizeof *parameters);
-        if (count != 0 && parameters == NULL) {
-                return T2_TYPE_INVALID;
-        }
+        T2ParameterSpec *parameters = xtA(*parameters, count);
 
         T2Type dynamic = t2_primitive(universe, T2_TYPE_DYNAMIC);
         for (usize i = 0; i < count; ++i) {
@@ -10201,10 +10015,7 @@ replace_type(
                 return type;
         }
 
-        T2Type *children = ty_malloc(node->arity * sizeof *children);
-        if (children == NULL) {
-                return T2_TYPE_INVALID;
-        }
+        T2Type *children = xtA(*children, node->arity);
 
         bool changed = false;
         for (usize i = 0; i < node->arity; ++i) {
@@ -10293,10 +10104,7 @@ expand_pack_parameter(T2Solver *solver, T2Type callable)
         }
 
         usize elements = (usize)pack_node->payload;
-        T2ParameterSpec *specs = ty_malloc((count + elements) * sizeof *specs);
-        if (specs == NULL) {
-                return callable;
-        }
+        T2ParameterSpec *specs = xtA(*specs, count + elements);
 
         usize expanded = 0;
         for (usize i = 0; i < count; ++i) {
@@ -10373,10 +10181,7 @@ skolemize_type(
                 return type;
         }
 
-        T2Type *children = ty_malloc(node->arity * sizeof *children);
-        if (children == NULL) {
-                return type;
-        }
+        T2Type *children = xtA(*children, node->arity);
 
         bool changed = false;
         for (usize i = 0; i < node->arity; ++i) {
@@ -10403,10 +10208,7 @@ t2_solver_skolemize(
                 return type;
         }
 
-        u32 *roots = ty_malloc(count * sizeof *roots);
-        if (roots == NULL) {
-                return type;
-        }
+        u32 *roots = xtA(*roots, count);
 
         for (usize i = 0; i < count; ++i) {
                 u32 meta = meta_from_type(solver, metas[i]);
@@ -10438,11 +10240,7 @@ constrain_positional_suffix_pack(
 {
         T2Universe *universe = solver->universe;
         usize count = (usize)actual->payload;
-        T2Type *elements = (count == 0) ? NULL : ty_malloc(count * sizeof *elements);
-        if (count != 0 && elements == NULL) {
-                solver->failed = true;
-                return T2_RELATION_COMPLEXITY;
-        }
+        T2Type *elements = xtA(*elements, count);
 
         usize n          = 0;
         usize positional = 0;
@@ -10503,11 +10301,7 @@ constrain_positional_prefix_pack(
 {
         T2Universe *universe = solver->universe;
         usize count = (usize)expected->payload;
-        T2Type *elements = (count == 0) ? NULL : ty_malloc(count * sizeof *elements);
-        if (count != 0 && elements == NULL) {
-                solver->failed = true;
-                return T2_RELATION_COMPLEXITY;
-        }
+        T2Type *elements = xtA(*elements, count);
 
         usize skip = 0;
         for (usize i = 0; i < (usize)actual->payload; ++i) {
@@ -11029,16 +10823,7 @@ constrain_record_types(
         T2Node const *expected_tail_node = get_node(solver->universe, expected_tail);
         if (expected_tail_node->kind != T2_TYPE_ROW_ANY) {
                 usize extra_count = 0;
-                T2FieldSpec *extras = ty_calloc(actual->arity - 1, sizeof *extras);
-                if (actual->arity > 1 && extras == NULL) {
-                        solver->failed = true;
-                        ty_snprintf(
-                                solver->error,
-                                sizeof solver->error,
-                                "types2 solver ran out of memory"
-                        );
-                        return T2_RELATION_COMPLEXITY;
-                }
+                T2FieldSpec *extras = xtA0(*extras, actual->arity - 1);
 
                 for (usize i = 0; i + 1 < actual->arity; ++i) {
                         T2Node const *field = get_node(solver->universe, actual->children[i]);
@@ -11141,16 +10926,7 @@ constrain_mapped_pack_expansion(
         }
 
         *handled = true;
-        T2Type *elements = (count == 0) ? NULL : ty_malloc(count * sizeof *elements);
-        if (count != 0 && elements == NULL) {
-                solver->failed = true;
-                ty_snprintf(
-                        solver->error,
-                        sizeof solver->error,
-                        "types2 solver ran out of memory"
-                );
-                return T2_RELATION_COMPLEXITY;
-        }
+        T2Type *elements = xtA(*elements, count);
 
         T2NominalInfo const *info = find_nominal(
                 solver->universe,
@@ -13555,21 +13331,13 @@ t2_scheme_new(
                 }
         }
 
-        T2Scheme *scheme = ty_calloc(1, sizeof *scheme);
-        if (scheme == NULL) {
-                return NULL;
-        }
+        T2Scheme *scheme = alloc0(sizeof *scheme);
 
         scheme->universe = universe;
         scheme->body     = body;
 
         if (quantifier_count != 0) {
-                scheme->quantifiers = ty_malloc(
-                        quantifier_count * sizeof *scheme->quantifiers
-                );
-                if (scheme->quantifiers == NULL) {
-                        goto Fail;
-                }
+                scheme->quantifiers = xtA(*scheme->quantifiers, quantifier_count);
                 memcpy(
                         scheme->quantifiers,
                         quantifiers,
@@ -13579,10 +13347,7 @@ t2_scheme_new(
         }
 
         if (predicate_count != 0) {
-                scheme->predicates = ty_calloc(predicate_count, sizeof *scheme->predicates);
-                if (scheme->predicates == NULL) {
-                        goto Fail;
-                }
+                scheme->predicates = xtA0(*scheme->predicates, predicate_count);
                 scheme->predicate_count = predicate_count;
                 for (usize i = 0; i < predicate_count; ++i) {
                         scheme->predicates[i] = predicates[i];
@@ -13592,27 +13357,10 @@ t2_scheme_new(
                         scheme->predicates[i].provenance = S2N(
                                 predicates[i].provenance
                         );
-                        if (
-                                (
-                                        (predicates[i].name != NULL)
-                                     && (scheme->predicates[i].name == NULL)
-                                )
-                             || (
-                                        (predicates[i].provenance != NULL)
-                                     && (scheme->predicates[i].provenance == NULL)
-                                )
-                        ) {
-                                goto Fail;
-                        }
                 }
         }
 
         return scheme;
-
-Fail:
-        t2_scheme_free(scheme);
-
-        return NULL;
 }
 
 void
@@ -13650,16 +13398,10 @@ t2_scheme_name_quantifier(T2Scheme *scheme, usize index, char const *name)
         }
 
         if (scheme->names == NULL) {
-                scheme->names = ty_calloc(scheme->quantifier_count, sizeof *scheme->names);
-                if (scheme->names == NULL) {
-                        return false;
-                }
+                scheme->names = xtA0(*scheme->names, scheme->quantifier_count);
         }
 
         char *owned = S2N(name);
-        if (name != NULL && owned == NULL) {
-                return false;
-        }
 
         ty_free(scheme->names[index]);
         scheme->names[index] = owned;
@@ -13689,10 +13431,7 @@ t2_scheme_type(T2Universe *universe, T2Scheme const *scheme)
         }
 
         usize arity = scheme->quantifier_count + 1 + scheme->predicate_count;
-        T2Type *children = ty_malloc(arity * sizeof *children);
-        if (children == NULL) {
-                return T2_TYPE_INVALID;
-        }
+        T2Type *children = xtA(*children, arity);
 
         usize count = 0;
         for (usize i = 0; i < scheme->quantifier_count; ++i) {
@@ -13763,16 +13502,8 @@ t2_type_scheme(T2Universe *universe, T2Type type)
 
         usize quantifier_count = (usize)node->payload;
         usize predicate_count  = node->arity - quantifier_count - 1;
-        T2Quantifier *quantifiers = ty_calloc(
-                quantifier_count + 1,
-                sizeof *quantifiers
-        );
-        T2Predicate *predicates = ty_calloc(predicate_count + 1, sizeof *predicates);
-        if (quantifiers == NULL || predicates == NULL) {
-                ty_free(quantifiers);
-                ty_free(predicates);
-                return NULL;
-        }
+        T2Quantifier *quantifiers = xtA0(*quantifiers, quantifier_count + 1);
+        T2Predicate *predicates = xtA0(*predicates, predicate_count + 1);
 
         for (usize i = 0; i < quantifier_count; ++i) {
                 T2Node const *binder = get_node(universe, node->children[i]);
@@ -14201,10 +13932,7 @@ without_arm(T2Universe *universe, T2Type type, T2TypeKind kind, T2Type arm)
                 return type;
         }
 
-        T2Type *arms = ty_malloc(node->arity * sizeof *arms);
-        if (arms == NULL) {
-                return type;
-        }
+        T2Type *arms = xtA(*arms, node->arity);
 
         usize n = 0;
         for (usize i = 0; i < node->arity; ++i) {
@@ -14410,10 +14138,7 @@ merge_bounds(T2Scheme *scheme, bool lower)
                 if (count < 2) {
                         continue;
                 }
-                T2Type *arms = ty_malloc(count * sizeof *arms);
-                if (arms == NULL) {
-                        return false;
-                }
+                T2Type *arms = xtA(*arms, count);
                 usize filled = 0;
                 for (usize j = scheme->predicate_count; j != 0; --j) {
                         T2Predicate const *other = &scheme->predicates[j - 1];
@@ -15066,10 +14791,7 @@ close_generalization_constraints(T2Solver *solver, unsigned *polarities)
                 return true;
         }
 
-        unsigned *previous = ty_malloc(vN(solver->metas) * sizeof *previous);
-        if (previous == NULL) {
-                return false;
-        }
+        unsigned *previous = xtA(*previous, vN(solver->metas));
 
         usize remaining = vN(solver->metas) * 2 + 1;
         bool changed;
@@ -15374,10 +15096,7 @@ generalize_type(T2Generalization *generalization, T2Type source)
                 return source;
         }
 
-        T2Type *children = ty_malloc(node->arity * sizeof *children);
-        if (children == NULL) {
-                return T2_TYPE_INVALID;
-        }
+        T2Type *children = xtA(*children, node->arity);
 
         bool changed = false;
         for (usize i = 0; i < node->arity; ++i) {
@@ -15479,10 +15198,7 @@ weak_lower_view(
                 return type;
         }
 
-        T2Type *children = ty_malloc(node->arity * sizeof *children);
-        if (children == NULL) {
-                return T2_TYPE_INVALID;
-        }
+        T2Type *children = xtA(*children, node->arity);
 
         bool changed = false;
         for (usize i = 0; i < node->arity; ++i) {
@@ -15571,19 +15287,9 @@ solver_generalize(
         }
 
         usize count = vN(solver->metas);
-        unsigned *polarities       = ty_calloc(count, sizeof *polarities);
-        bool     *environment_free = ty_calloc(count, sizeof *environment_free);
-        T2Type   *replacements     = ty_calloc(count, sizeof *replacements);
-        if (
-                (count != 0)
-             && (
-                        (polarities == NULL)
-                     || (environment_free == NULL)
-                     || (replacements == NULL)
-                )
-        ) {
-                goto Fail;
-        }
+        unsigned *polarities       = xtA0(*polarities, count);
+        bool     *environment_free = xtA0(*environment_free, count);
+        T2Type   *replacements     = xtA0(*replacements, count);
 
         if (
                 !collect_generalization_polarity(
@@ -15657,10 +15363,7 @@ solver_generalize(
         }
 
         if (candidates) {
-                unsigned *environment_marks = ty_calloc(count, sizeof *environment_marks);
-                if (count != 0 && environment_marks == NULL) {
-                        goto Fail;
-                }
+                unsigned *environment_marks = xtA0(*environment_marks, count);
                 for (usize i = 0; i < environment_count; ++i) {
                         if (
                                 !collect_generalization_polarity(
@@ -15696,12 +15399,7 @@ solver_generalize(
                 }
         }
 
-        T2Quantifier *quantifiers = (quantifier_count == 0)
-                                  ? NULL
-                                  : ty_malloc(quantifier_count * sizeof *quantifiers);
-        if (quantifier_count != 0 && quantifiers == NULL) {
-                goto Fail;
-        }
+        T2Quantifier *quantifiers = xtA(*quantifiers, quantifier_count);
 
         usize qi = 0;
         for (usize i = 0; i < count; ++i) {
@@ -15748,31 +15446,8 @@ solver_generalize(
         usize predicate_capacity = 2*quantifier_count
                                  + vN(solver->edges)
                                  + vN(solver->obligations);
-        T2Predicate *predicates = (predicate_capacity == 0)
-                                ? NULL
-                                : ty_calloc(predicate_capacity, sizeof *predicates);
-        usize *captured_obligations = (vN(solver->obligations) == 0)
-                                    ? NULL
-                                    : xtA(usize, vN(solver->obligations));
-
-        if (predicate_capacity != 0 && predicates == NULL) {
-                ty_free(quantifiers);
-                xvF(generalization.entries);
-                xvF(generalization.binders);
-                ty_free(captured_obligations);
-                goto Fail;
-        }
-
-        if (
-                (vN(solver->obligations) != 0)
-             && (captured_obligations == NULL)
-        ) {
-                ty_free(predicates);
-                ty_free(quantifiers);
-                xvF(generalization.entries);
-                xvF(generalization.binders);
-                goto Fail;
-        }
+        T2Predicate *predicates = xtA0(*predicates, predicate_capacity);
+        usize *captured_obligations = xtA(usize, vN(solver->obligations));
 
         usize predicate_count = 0;
         usize captured_count  = 0;
@@ -16131,10 +15806,7 @@ instantiate_type(T2Instantiation *instantiation, T2Type source)
                 return source;
         }
 
-        T2Type *children = ty_malloc(node->arity * sizeof *children);
-        if (children == NULL) {
-                return T2_TYPE_INVALID;
-        }
+        T2Type *children = xtA(*children, node->arity);
 
         bool changed = false;
         for (usize i = 0; i < node->arity; ++i) {
@@ -16185,12 +15857,10 @@ t2_scheme_instantiate(
                 .solver = solver
         };
         if (scheme->quantifier_count != 0) {
-                instantiation.replacements = ty_malloc(
-                        scheme->quantifier_count * sizeof *instantiation.replacements
+                instantiation.replacements = xtA(
+                        *instantiation.replacements,
+                        scheme->quantifier_count
                 );
-                if (instantiation.replacements == NULL) {
-                        goto Fail;
-                }
         }
 
         for (usize i = 0; i < scheme->quantifier_count; ++i) {
@@ -16313,12 +15983,7 @@ scheme_apply_x(
                 .solver = solver
         };
         if (argument_count != 0) {
-                instantiation.replacements = ty_malloc(
-                        argument_count * sizeof *instantiation.replacements
-                );
-                if (instantiation.replacements == NULL) {
-                        goto Fail;
-                }
+                instantiation.replacements = xtA(*instantiation.replacements, argument_count);
                 memcpy(
                         instantiation.replacements,
                         arguments,
@@ -16533,10 +16198,7 @@ zonk_type(T2ZonkContext *context, T2Type source)
                 return source;
         }
 
-        T2Type *children = ty_malloc(node->arity * sizeof *children);
-        if (children == NULL) {
-                return T2_TYPE_INVALID;
-        }
+        T2Type *children = xtA(*children, node->arity);
 
         bool changed = false;
         for (usize i = 0; i < node->arity; ++i) {
@@ -16764,10 +16426,7 @@ callable_expand_packs(T2Universe *universe, T2Type callable)
                 }
         }
 
-        T2ParameterSpec *specs = ty_malloc((total + 1) * sizeof *specs);
-        if (specs == NULL) {
-                return T2_TYPE_INVALID;
-        }
+        T2ParameterSpec *specs = xtA(*specs, total + 1);
 
         usize n = 0;
         for (usize i = 0; i < count; ++i) {
@@ -16877,10 +16536,7 @@ resolve_computed_deep(T2Universe *universe, T2Type type, unsigned depth)
                 return type;
         }
 
-        T2Type *children = ty_malloc(node->arity * sizeof *children);
-        if (children == NULL) {
-                return type;
-        }
+        T2Type *children = xtA(*children, node->arity);
 
         bool changed = false;
         for (usize i = 0; i < node->arity; ++i) {

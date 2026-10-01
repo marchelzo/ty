@@ -27,7 +27,7 @@ typedef struct t2_index {
 bool
 t2_index_find(T2Index const *index, u64 key, u32 *value);
 
-bool
+void
 t2_index_put(T2Index *index, u64 key, u32 value);
 
 void

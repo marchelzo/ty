@@ -248,13 +248,13 @@ static char const *ReasonNames[] = {
 static char *
 xstrdup(char const *s)
 {
-        return (s == NULL) ? NULL : strdup(s);
+        return (s == NULL) ? NULL : S2(s);
 }
 
 static char *
 xstrndup(char const *s, usize n)
 {
-        char *out = malloc(n + 1);
+        char *out = xmA(n + 1);
         memcpy(out, s, n);
         out[n] = '\0';
         return out;
@@ -266,9 +266,9 @@ JsonFree(Json *j)
         while (j != NULL) {
                 Json *next = j->next;
                 JsonFree(j->child);
-                free(j->s);
-                free(j->key);
-                free(j);
+                ty_free(j->s);
+                ty_free(j->key);
+                ty_free(j);
                 j = next;
         }
 }
@@ -401,7 +401,7 @@ JsonValue(JsonCursor *c, int depth);
 static Json *
 JsonAggregate(JsonCursor *c, int depth, bool object)
 {
-        Json *j = calloc(1, sizeof *j);
+        Json *j = alloc0(sizeof *j);
         Json **tail = &j->child;
         char close = object ? '}' : ']';
 
@@ -428,7 +428,7 @@ JsonAggregate(JsonCursor *c, int depth, bool object)
                         key = JsonString(c);
                         JsonSkip(c);
                         if (c->p >= c->end || *c->p != ':') {
-                                free(key);
+                                ty_free(key);
                                 c->bad = true;
                                 break;
                         }
@@ -438,7 +438,7 @@ JsonAggregate(JsonCursor *c, int depth, bool object)
                 Json *item = JsonValue(c, depth + 1);
 
                 if (item == NULL) {
-                        free(key);
+                        ty_free(key);
                         c->bad = true;
                         break;
                 }
@@ -485,7 +485,7 @@ JsonValue(JsonCursor *c, int depth)
                 return JsonAggregate(c, depth, false);
 
         case '"':
-                j = calloc(1, sizeof *j);
+                j = alloc0(sizeof *j);
                 j->kind = J_STR;
                 j->s = JsonString(c);
                 return j;
@@ -493,7 +493,7 @@ JsonValue(JsonCursor *c, int depth)
         case 't':
         case 'f':
         case 'n':
-                j = calloc(1, sizeof *j);
+                j = alloc0(sizeof *j);
                 if (c->end - c->p >= 4 && memcmp(c->p, "true", 4) == 0) {
                         j->kind = J_BOOL;
                         j->b = true;
@@ -510,7 +510,7 @@ JsonValue(JsonCursor *c, int depth)
                 return j;
 
         default:
-                j = calloc(1, sizeof *j);
+                j = alloc0(sizeof *j);
                 j->kind = J_NUM;
                 char buf[64];
                 usize n = 0;
@@ -919,7 +919,7 @@ static void
 LineCacheGrow(void)
 {
         usize cap = (LineCap == 0) ? 4096 : 2 * LineCap;
-        LineSlot *slots = calloc(cap, sizeof *slots);
+        LineSlot *slots = alloc0(cap * sizeof *slots);
 
         for (usize i = 0; i < LineCap; ++i) {
                 if (LineCache[i].ip == 0) {
@@ -932,7 +932,7 @@ LineCacheGrow(void)
                 slots[h & (cap - 1)] = LineCache[i];
         }
 
-        free(LineCache);
+        ty_free(LineCache);
         LineCache = slots;
         LineCap = cap;
 }
@@ -1357,7 +1357,7 @@ SafeShow(Ty *ty, Value const *v, u32 flags, usize max)
         usize n = strlen(s);
 
         if (n > max) {
-                out = malloc(max + 4);
+                out = xmA(max + 4);
                 memcpy(out, s, max);
                 memcpy(out + max, "...", 4);
         } else {
@@ -1581,7 +1581,7 @@ Preview(Ty *ty, byte_vector *out, Value const *v, int depth)
         default:
                 s = SafeShow(ty, &x, TY_SHOW_BASIC | TY_SHOW_REPR, 120);
                 xvPn(*out, s, strlen(s));
-                free(s);
+                ty_free(s);
                 break;
         }
 
@@ -1709,8 +1709,8 @@ StopWorld(
 
         if (!D.session) {
                 pthread_mutex_unlock(&D.lock);
-                free(text);
-                free(type);
+                ty_free(text);
+                ty_free(type);
                 return;
         }
 
@@ -2000,7 +2000,7 @@ RunJob(Ty *ty, DebugJob *job)
         Frame *saved = NULL;
 
         if (nsave > 0) {
-                saved = malloc(nsave * sizeof *saved);
+                saved = xmA(nsave * sizeof *saved);
                 memcpy(saved, v_(ty->st->frames, keep), nsave * sizeof *saved);
         }
 
@@ -2030,7 +2030,7 @@ RunJob(Ty *ty, DebugJob *job)
 
         if (nsave > 0) {
                 xvPn(ty->st->frames, saved, nsave);
-                free(saved);
+                ty_free(saved);
         }
 
         ty->ip = ip;
@@ -2118,19 +2118,19 @@ FormatLogMessage(Ty *ty, char const *msg, Expr const *ctx)
                 if (ok) {
                         char *s = Describe(ty, &v, 0);
                         xvPn(out, s, strlen(s));
-                        free(s);
+                        ty_free(s);
                 } else {
                         char *s = ErrorText(ty, &v);
                         xvPn(out, "<", 1);
                         xvPn(out, s, strlen(s));
                         xvPn(out, ">", 1);
-                        free(s);
+                        ty_free(s);
                 }
 
                 ty->dbg->suppress -= 1;
                 vN(ty->stack) -= 1;
 
-                free(src);
+                ty_free(src);
                 msg = end + 1;
         }
 
@@ -2144,12 +2144,12 @@ static void
 FreeHits(BreakpointHit *hits, int n)
 {
         for (int i = 0; i < n; ++i) {
-                free(hits[i].cond);
-                free(hits[i].hit);
-                free(hits[i].log);
+                ty_free(hits[i].cond);
+                ty_free(hits[i].hit);
+                ty_free(hits[i].log);
         }
 
-        free(hits);
+        ty_free(hits);
 }
 
 void
@@ -2194,7 +2194,7 @@ DebugTrap(Ty *ty, char *ip)
                         if (v__(bp->ips, j) != ip) {
                                 continue;
                         }
-                        hits = realloc(hits, (nhit + 1) * sizeof *hits);
+                        mresize(hits, (nhit + 1) * sizeof *hits);
                         hits[nhit++] = (BreakpointHit) {
                                 .id   = bp->id,
                                 .cond = xstrdup(bp->cond),
@@ -2209,7 +2209,7 @@ DebugTrap(Ty *ty, char *ip)
         pthread_mutex_unlock(&D.lock);
 
         Expr const *ctx = ExprAt(ty, ip);
-        i64 *ids = calloc(nhit + 1, sizeof *ids);
+        i64 *ids = alloc0((nhit + 1) * sizeof *ids);
         int nstop = 0;
         int reason = REASON_BREAKPOINT;
 
@@ -2263,7 +2263,7 @@ DebugTrap(Ty *ty, char *ip)
                 StopWorld(ty, d, reason, ip + 1, ids, nstop, NULL, NULL);
         }
 
-        free(ids);
+        ty_free(ids);
 
         pthread_mutex_lock(&D.lock);
         DisarmLocked(d, ip);
@@ -2317,12 +2317,12 @@ FreeBreakpoint(Breakpoint *bp)
 {
         ClearBreakpoint(bp);
         xvF(bp->ips);
-        free(bp->path);
-        free(bp->name);
-        free(bp->cond);
-        free(bp->hit);
-        free(bp->log);
-        free(bp);
+        ty_free(bp->path);
+        ty_free(bp->name);
+        ty_free(bp->cond);
+        ty_free(bp->hit);
+        ty_free(bp->log);
+        ty_free(bp);
 }
 
 static bool
@@ -2555,7 +2555,7 @@ DebugMarkRoots(Ty *ty)
 void
 DebugThreadStart(Ty *ty, TyThread self)
 {
-        TyDebugThread *d = calloc(1, sizeof *d);
+        TyDebugThread *d = alloc0(sizeof *d);
 
         d->ty     = ty;
         d->id     = ty->id + 1;
@@ -2607,7 +2607,7 @@ DebugThreadExit(Ty *ty)
         pthread_cond_broadcast(&D.cond);
         pthread_mutex_unlock(&D.lock);
 
-        free(d);
+        ty_free(d);
 }
 
 static bool
@@ -2629,8 +2629,8 @@ ResumeWorld(void)
         D.stopper = NULL;
         D.gen += 1;
 
-        free(D.text);
-        free(D.exc_type);
+        ty_free(D.text);
+        ty_free(D.exc_type);
         D.text = NULL;
         D.exc_type = NULL;
 
@@ -2712,7 +2712,7 @@ Detach(Ty *ty)
         DebugJitOff = 0;
 
         for (isize i = 0; i < vN(D.events); ++i) {
-                free(v_(D.events, i)->text);
+                ty_free(v_(D.events, i)->text);
         }
 
         v0(D.events);
@@ -2805,7 +2805,7 @@ WriteBreakpoint(JsonWriter *w, Breakpoint const *bp)
 static Breakpoint *
 NewBreakpoint(Json const *spec, int kind)
 {
-        Breakpoint *bp = calloc(1, sizeof *bp);
+        Breakpoint *bp = alloc0(sizeof *bp);
 
         bp->id     = ++D.next_bp;
         bp->kind   = kind;
@@ -2815,12 +2815,12 @@ NewBreakpoint(Json const *spec, int kind)
         bp->log    = xstrdup(JStr(spec, "logMessage"));
 
         if (bp->cond != NULL && bp->cond[0] == '\0') {
-                free(bp->cond);
+                ty_free(bp->cond);
                 bp->cond = NULL;
         }
 
         if (bp->hit != NULL && bp->hit[0] == '\0') {
-                free(bp->hit);
+                ty_free(bp->hit);
                 bp->hit = NULL;
         }
 
@@ -3242,7 +3242,7 @@ WriteVariable(Ty *ty, JsonWriter *w, char const *name, Value const *v, isize fra
 
         jw_close(w, '}');
 
-        free(preview);
+        ty_free(preview);
 }
 
 static bool
@@ -3398,7 +3398,7 @@ WriteChildren(Ty *ty, JsonWriter *w, Handle const *h, isize start, isize count)
                 for (DictItem *it = DictFirst(x.dict); it != NULL && i < 10000; it = it->next, ++i) {
                         char *key = PreviewString(ty, &it->k);
                         WriteVariable(ty, w, key, &it->v, h->frame, h->mark, NULL);
-                        free(key);
+                        ty_free(key);
                 }
                 break;
         }
@@ -3585,8 +3585,8 @@ ReqEvaluate(Ty *ty, Json const *req, Json const *args)
 
         if (!ok) {
                 Respond(req, text, NULL);
-                free(text);
-                free(type);
+                ty_free(text);
+                ty_free(type);
                 return;
         }
 
@@ -3615,8 +3615,8 @@ ReqEvaluate(Ty *ty, Json const *req, Json const *args)
 
         pthread_mutex_unlock(&D.lock);
 
-        free(text);
-        free(type);
+        ty_free(text);
+        ty_free(type);
 
         Respond(req, NULL, &body);
 }
@@ -3683,8 +3683,8 @@ ReqSetVariable(Ty *ty, Json const *req, Json const *args)
 
         if (!ok) {
                 Respond(req, (text != NULL) ? text : "cannot assign to this variable", NULL);
-                free(text);
-                free(type);
+                ty_free(text);
+                ty_free(type);
                 return;
         }
 
@@ -3694,8 +3694,8 @@ ReqSetVariable(Ty *ty, Json const *req, Json const *args)
         jw_kstr(&body, "value", text);
         jw_close(&body, '}');
 
-        free(text);
-        free(type);
+        ty_free(text);
+        ty_free(type);
 
         Respond(req, NULL, &body);
 }
@@ -4139,10 +4139,10 @@ DrainEvents(Ty *ty)
                         break;
                 }
 
-                free(ev->text);
+                ty_free(ev->text);
         }
 
-        free(events);
+        ty_free(events);
 }
 
 static bool

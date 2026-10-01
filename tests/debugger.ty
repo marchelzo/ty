@@ -46,18 +46,19 @@ class Dap {
             [ty.executable, '--attach', str(pid), '--dap'],
             stdin=os.SPAWN_PIPE,
             stdout=os.SPAWN_PIPE,
-            stderr=os.SPAWN_NULL
+            stderr=os.SPAWN_PIPE
         )
         __seq = 0
         __inbox = Channel()
         __events = []
 
-        let fd = __proc.stdout
+        let fd1 = __proc.stdout
+        let fd2 = __proc.stderr
         let inbox = __inbox
 
         Thread(fn () {
             let buf = Blob()
-            while let $chunk = os.read(fd, 65536) {
+            while let $chunk = os.read(fd1, 65536) {
                 if #chunk == 0 {
                     break
                 }
@@ -66,8 +67,11 @@ class Dap {
                     inbox.send(json.parse(text))
                 }
             }
+            while let $chunk = os.read(fd2, 65536) {
+                eprint(chunk.str!(), end='', flush=true)
+            }
             inbox.send(nil)
-        })
+        }).detach()
     }
 
     __next(ms: Int) -> Dict[String, Any] {

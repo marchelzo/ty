@@ -198,7 +198,7 @@ execln(Ty *ty, char *line)
                                 .width = sized ? (unsigned)columns : 0
                         });
                         printf("%s\n", shown);
-                        free(shown);
+                        ty_free(shown);
                         goto End;
                 } else {
                         goto Bad;
