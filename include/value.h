@@ -1734,6 +1734,101 @@ TryIntoTime(Ty *ty, char const *ctx, Value const *t, i64 factor)
 Value
 TyPathValue(Ty *ty, char const *ctx, char const *name, Value v);
 
+inline static void
+TyBuiltinArity(Ty *ty, char const *ctx, int argc, int n)
+{
+        if (argc > n) {
+                zP("%s: expected at most %d arguments but got %d", ctx, n, argc);
+        }
+}
+
+inline static Value
+TyBuiltinNamed(Value const *v)
+{
+        return (v != NULL) ? *v : NONE;
+}
+
+#define TyBuiltinArg(ty, argc, kwargs, i, name) (    \
+        ((i) < (argc)) ? ARG(i)                      \
+                       : TyBuiltinNamed(NAMED(name)) \
+)
+
+inline static bool
+TyBuiltinAbsent(Value v)
+{
+        return IsNone(v);
+}
+
+inline static Value
+TyBuiltinNeed(Ty *ty, char const *ctx, char const *name, Value v)
+{
+        if (IsNone(v)) {
+                zP("%s: missing required argument `%s`", ctx, name);
+        }
+
+        return v;
+}
+
+inline static noreturn void
+TyBuiltinBadArg(Ty *ty, char const *ctx, char const *name, char const *type, Value const *v)
+{
+        zP("%s: expected `%s` :: %s but got: %s", ctx, name, type, VSC(v));
+}
+
+inline static i64
+TyBuiltinInt(Ty *ty, char const *ctx, char const *name, Value v)
+{
+        if (v.type != VALUE_INTEGER) {
+                TyBuiltinBadArg(ty, ctx, name, "Int", &v);
+        }
+
+        return v.z;
+}
+
+inline static double
+TyBuiltinFloat(Ty *ty, char const *ctx, char const *name, Value v)
+{
+        switch (v.type) {
+        case VALUE_REAL:    return v.real;
+        case VALUE_INTEGER: return (double)v.z;
+        }
+
+        TyBuiltinBadArg(ty, ctx, name, "Float", &v);
+}
+
+inline static bool
+TyBuiltinBool(Ty *ty, char const *ctx, char const *name, Value v)
+{
+        if (v.type != VALUE_BOOLEAN) {
+                TyBuiltinBadArg(ty, ctx, name, "Bool", &v);
+        }
+
+        return v.boolean;
+}
+
+inline static Value
+TyBuiltinString(Ty *ty, char const *ctx, char const *name, Value v)
+{
+        if (v.type != VALUE_STRING) {
+                TyBuiltinBadArg(ty, ctx, name, "String", &v);
+        }
+
+        return v;
+}
+
+inline static Blob *
+TyBuiltinBlob(Ty *ty, char const *ctx, char const *name, Value v)
+{
+        if (v.type != VALUE_BLOB) {
+                TyBuiltinBadArg(ty, ctx, name, "Blob", &v);
+        }
+
+        return v.blob;
+}
+
+#define TY_BUILTIN(c, ...)     TY_BUILTIN__##c
+#define TY_BUILTIN_RAW(c, ...) Value builtin_##c(Ty *ty, int argc, Value *kwargs)
+
 #define PATH_ARGx(i) ({                                                \
         Value _path = TyPathValue(ty, _name__, "arg[" #i "]", ARG(i)); \
         ARG(i) = _path;                                                \

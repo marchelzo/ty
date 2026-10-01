@@ -26,16 +26,6 @@ __set_type__ c::double  CType[Float];
 __set_type__ c::ptr     CType[Ptr[Any]];
 __set_type__ c::void    CType[nil];
 
-fn c::str(ptr: IntoPtr[_], len: ?Int) -> String;
-fn c::as_str(ptr: IntoPtr[_], len: ?Int) -> String;
-fn c::load[T](type: CType[T], address: IntoPtr[T]) -> T;
-fn c::size[T](type: CType[T]) -> Int;
-fn c::free(ptr: IntoPtr[_]) -> nil;
-fn c::new[T](type: CType[T], count: ?Int, init: ?IntoPtr[_]) -> Ptr[T];
-fn c::box[T](type: CType[T], val: ?T) -> Ptr[T];
-fn c::alloc[T](size: Int) -> Ptr[T];
-fn ptr::typed[T](ptr: Ptr[Any], type: CType[T]) -> Ptr[T];
-
 fn __unpacked(fmt: String) -> _ {
     let ts = []
     let i = 0
@@ -79,10 +69,6 @@ use UnpackTypes[T] = match T {
     fmt: String => __unpacked(fmt),
     _           => $$[: _ $$],
 }
-
-fn c::pack(fmt: String, *args: Any) -> Ptr[Any];
-fn c::pack[T](buf: T, fmt: String, *args: Any) -> T;
-fn c::unpack[T](fmt: T, buf: IntoPtr[_], off: Int = 0) -> UnpackTypes[T];
 
 pub __tls::_cif_cache: _ = nil
 

@@ -859,7 +859,7 @@ DoGC(Ty *ty)
 }
 
 //====/ Builtin Values /======================================================================
-#define BUILTIN(f)    { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = (f), .tags = 0 }
+#define TY_GENERATED_BUILTIN(f) { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = (f), .tags = 0 }
 #define FLOAT(x)      { .type = VALUE_REAL,             .real             = (x), .tags = 0 }
 #define INT(k)        { .type = VALUE_INTEGER,          .z                = (k), .tags = 0 }
 #define BOOL_(b)      { .type = VALUE_BOOLEAN,          .boolean          = (b), .tags = 0 }
@@ -873,7 +873,7 @@ DoGC(Ty *ty)
 #include "builtins.h"
 #undef INT
 #undef FLOAT
-#undef BUILTIN
+#undef TY_GENERATED_BUILTIN
 #undef BOOL_
 #undef POINTER
 //============================================================================================
@@ -913,6 +913,9 @@ add_builtins(Ty *ty, int ac, char **av)
                         v->module = builtins[i].module;
                         sym->flags |= SYM_FUNCTION;
                         sym->flags |= SYM_CONST;
+                }
+                if (builtins[i].sig != NULL) {
+                        compiler_introduce_signature(ty, sym, builtins[i].sig);
                 }
                 xvP(Globals, builtins[i].value);
                 switch (ClassOf(v)) {
@@ -4536,13 +4539,13 @@ DoPtrMutOp(Ty *ty, int op)
         v = poptarget();
         c_type = (ffi_type *)poptarget();
         push(TPTR(c_type, v));
-        val = cffi_load(ty, 1, NULL);
+        val = builtin_ffi_load(ty, 1, NULL);
         put(val);
         val = vm_2op(ty, op, top(), top() - 1);
         pop();
         put(TPTR(c_type, v));
         xpush(val);
-        val = cffi_store(ty, 2, NULL);
+        val = builtin_ffi_store(ty, 2, NULL);
         pop();
         put(val);
 }
@@ -5460,7 +5463,7 @@ DoTargetSubscript(Ty *ty)
                         v = pop();
                         xpush(p);
                         xpush(v);
-                        v = cffi_store(ty, 2, NULL);
+                        v = builtin_ffi_store(ty, 2, NULL);
                         pop();
                         put(v);
                         IP += 1;
@@ -5547,7 +5550,7 @@ DoAssignSubscript(Ty *ty, int n, bool exec)
                 pop();
                 put(p);
                 xpush(value);
-                v = cffi_store(ty, 2, NULL);
+                v = builtin_ffi_store(ty, 2, NULL);
                 pop();
                 put(v);
                 return;
@@ -6306,7 +6309,7 @@ DoSubscript(Ty *ty, bool exec)
                 v = GCPTR((container.extra == NULL) ? &ffi_type_uint8 : container.extra, container.gcptr);
                 push(v);
                 push(PTR(((char *)container.ptr) + ((ffi_type *)v.ptr)->size * subscript.z));
-                v = cffi_load(ty, 2, NULL);
+                v = builtin_ffi_load(ty, 2, NULL);
                 pop();
                 pop();
                 pop();

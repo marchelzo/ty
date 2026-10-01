@@ -585,7 +585,9 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
         return written;
 }
 
-BUILTIN_FUNCTION(print)
+TY_BUILTIN_RAW(print,
+        "print(*args: Any, sep: String = ', ', end: String = '\\n', file: _, flush: Bool = false) -> Int"
+)
 {
         Value *file = NAMED("file");
 
@@ -598,12 +600,14 @@ BUILTIN_FUNCTION(print)
         }
 }
 
-BUILTIN_FUNCTION(eprint)
+TY_BUILTIN_RAW(eprint,
+        "eprint(*args: Any, sep: ?String = ', ', end: ?String = '\\n', flush: Any = false) -> Int"
+)
 {
         return INTEGER(doprint(ty, argc, kwargs, stderr));
 }
 
-BUILTIN_FUNCTION(slurp)
+TY_BUILTIN_RAW(slurp, "slurp(file: ?PathLike | Int) -> String")
 {
         ASSERT_ARGC("slurp()", 0, 1);
 
@@ -699,7 +703,7 @@ BUILTIN_FUNCTION(slurp)
         return NIL;
 }
 
-BUILTIN_FUNCTION(ident)
+TY_BUILTIN_RAW(ident, "ident[T](x: T) -> Ptr[Any] | (Ptr[Any], Int) | T")
 {
         ASSERT_ARGC("ident()", 1);
 
@@ -716,7 +720,7 @@ BUILTIN_FUNCTION(ident)
         }
 }
 
-BUILTIN_FUNCTION(die)
+TY_BUILTIN_RAW(die, "die(message: String) -> _")
 {
         char *_name__ = "die()";
 
@@ -726,14 +730,14 @@ BUILTIN_FUNCTION(die)
         zP("%.*s", (int)sN(message), ss(message));
 }
 
-BUILTIN_FUNCTION(__debug)
+TY_BUILTIN_RAW(__debug, "__debug(n: Int) -> Int")
 {
         char *_name__ = "__debug()";
         CHECK_ARGC(1);
         return INTEGER(EnableLogging += INT_ARG(0));
 }
 
-BUILTIN_FUNCTION(read)
+TY_BUILTIN_RAW(read, "readLine() -> String | nil")
 {
         ASSERT_ARGC("readLine()", 0);
 
@@ -765,7 +769,11 @@ xpick(Array const *xs, u64 z)
         }
 }
 
-BUILTIN_FUNCTION(rand)
+TY_BUILTIN_RAW(rand,
+        "rand[a](items: Array[a]) -> a",
+        "rand() -> Float",
+        "rand(n: Int, m: ?Int) -> Int"
+)
 {
         ASSERT_ARGC("rand()", 0, 1, 2);
 
@@ -795,7 +803,10 @@ BUILTIN_FUNCTION(rand)
         return INTEGER((z % (high - low)) + low);
 }
 
-BUILTIN_FUNCTION(srand)
+TY_BUILTIN_RAW(srand,
+        "srand() -> nil",
+        "srand(seed: Int) -> nil"
+)
 {
         ASSERT_ARGC("srand()", 0, 1);
 
@@ -809,7 +820,11 @@ BUILTIN_FUNCTION(srand)
         return NIL;
 }
 
-BUILTIN_FUNCTION(random)
+TY_BUILTIN_RAW(random,
+        "random(n: Int) -> Blob",
+        "random(buf: Blob, n: Int) -> Blob",
+        "random() -> Int"
+)
 {
         ASSERT_ARGC("random()", 0, 1, 2);
 
@@ -892,7 +907,10 @@ BUILTIN_FUNCTION(random)
         return BLOB(blob);
 }
 
-BUILTIN_FUNCTION(abs)
+TY_BUILTIN_RAW(abs,
+        "abs(k: Int) -> Int",
+        "abs(x: Float) -> Float"
+)
 {
         ASSERT_ARGC("abs()", 1);
 
@@ -905,7 +923,7 @@ BUILTIN_FUNCTION(abs)
         }
 }
 
-BUILTIN_FUNCTION(gcd)
+TY_BUILTIN_RAW(gcd, "gcd(a: Int | Float, b: Int | Float) -> Int")
 {
         ASSERT_ARGC("gcd()", 2);
 
@@ -927,7 +945,7 @@ BUILTIN_FUNCTION(gcd)
         return INTEGER(a);
 }
 
-BUILTIN_FUNCTION(lcm)
+TY_BUILTIN_RAW(lcm, "lcm(a: Int | Float, b: Int | Float) -> Int")
 {
         ASSERT_ARGC("lcm()", 2);
 
@@ -949,20 +967,12 @@ BUILTIN_FUNCTION(lcm)
         return INTEGER(llabs(a0 * b0) / a);
 }
 
-BUILTIN_FUNCTION(round)
+TY_BUILTIN(round, "round(x: Int | Float) -> Float")
 {
-        ASSERT_ARGC("round()", 1);
-
-        Value x = ARGx(0, VALUE_INTEGER, VALUE_REAL);
-
-        switch (x.type) {
-        case VALUE_INTEGER: return REAL(x.z);
-        case VALUE_REAL:    return REAL(round(x.real));
-        default:            UNREACHABLE();
-        }
+        return REAL(round(x));
 }
 
-BUILTIN_FUNCTION(iround)
+TY_BUILTIN_RAW(iround, "iround(x: Int | Float) -> Int")
 {
         ASSERT_ARGC("iround()", 1);
 
@@ -975,51 +985,28 @@ BUILTIN_FUNCTION(iround)
         }
 }
 
-BUILTIN_FUNCTION(ceil)
+TY_BUILTIN(ceil, "ceil(x: Int | Float) -> Float")
 {
-        ASSERT_ARGC("ceil()", 1);
-
-        Value x = ARGx(0, VALUE_INTEGER, VALUE_REAL);
-
-        switch (x.type) {
-        case VALUE_INTEGER: return REAL(x.z);
-        case VALUE_REAL:    return REAL(ceil(x.real));
-        default:            UNREACHABLE();
-        }
-
+        return REAL(ceil(x));
 }
 
-BUILTIN_FUNCTION(floor)
+TY_BUILTIN(floor, "floor(x: Int | Float) -> Float")
 {
-        ASSERT_ARGC("floor()", 1);
-
-        Value x = ARGx(0, VALUE_INTEGER, VALUE_REAL);
-
-        switch (x.type) {
-        case VALUE_INTEGER: return REAL(x.z);
-        case VALUE_REAL:    return REAL(floor(x.real));
-        default:            UNREACHABLE();
-        }
-
+        return REAL(floor(x));
 }
 
-BUILTIN_FUNCTION(chr)
+TY_BUILTIN(chr, "chr(codepoint: Int) -> String")
 {
-        ASSERT_ARGC("chr()", 1);
+        u8 b[4];
 
-        i32 rune = INT_ARG(0);
-
-        if (!utf8proc_codepoint_valid(rune)) {
+        if (!utf8proc_codepoint_valid(codepoint)) {
                 return NIL;
         }
 
-        u8 b[4];
-        int n = utf8proc_encode_char(rune, b);
-
-        return vSs(b, n);
+        return vSs(b, utf8proc_encode_char(codepoint, b));
 }
 
-BUILTIN_FUNCTION(ord)
+TY_BUILTIN_RAW(ord, "ord(character: String) -> Int")
 {
         ASSERT_ARGC("ord()", 1);
 
@@ -1038,13 +1025,13 @@ BUILTIN_FUNCTION(ord)
         return INTEGER(rune);
 }
 
-BUILTIN_FUNCTION(hash)
+TY_BUILTIN_RAW(hash, "ty.hash(x: Any) -> Int")
 {
         ASSERT_ARGC("hash()", 1);
         return INTEGER(value_hash(ty, &ARG(0)));
 }
 
-BUILTIN_FUNCTION(float)
+TY_BUILTIN_RAW(float, "float[a](x: a) -> Float")
 {
         ASSERT_ARGC("float()", 1);
 
@@ -1069,7 +1056,7 @@ BUILTIN_FUNCTION(float)
         return REAL(x);
 }
 
-BUILTIN_FUNCTION(isnan)
+TY_BUILTIN_RAW(isnan, "math.nan?(x: Float) -> Bool")
 {
         ASSERT_ARGC("nan?()", 1);
 
@@ -1080,7 +1067,7 @@ BUILTIN_FUNCTION(isnan)
         return BOOLEAN(isnan(ARG(0).real));
 }
 
-BUILTIN_FUNCTION(blob)
+TY_BUILTIN_RAW(blob, "blob(*parts: Int | Blob | String) -> Blob")
 {
         ASSERT_ARGC_RANGE("blob()", 0, INT_MAX);
 
@@ -1110,19 +1097,22 @@ BUILTIN_FUNCTION(blob)
         return BLOB(blob);
 }
 
-BUILTIN_FUNCTION(queue)
+Value
+builtin_queue(Ty *ty, int argc, Value *kwargs)
 {
         ASSERT_ARGC("queue()", 0);
         return QUEUE(queue_new(ty));
 }
 
-BUILTIN_FUNCTION(shared_queue)
+Value
+builtin_shared_queue(Ty *ty, int argc, Value *kwargs)
 {
         ASSERT_ARGC("SharedQueue()", 0);
         return SHARED_QUEUE(shared_queue_new(ty, 1, false));
 }
 
-BUILTIN_FUNCTION(work_queue)
+Value
+builtin_work_queue(Ty *ty, int argc, Value *kwargs)
 {
         ASSERT_ARGC("WorkQueue()", 0, 1);
         i64 n = (argc == 0) ? 0 : INT_ARG(0);
@@ -1136,7 +1126,7 @@ BUILTIN_FUNCTION(work_queue)
         return SHARED_QUEUE(shared_queue_new(ty, n, true));
 }
 
-BUILTIN_FUNCTION(int)
+TY_BUILTIN_RAW(int, "int[a](x: a, base: ?Int) -> Int")
 {
         ASSERT_ARGC("int()", 0, 1, 2);
 
@@ -1222,7 +1212,7 @@ TooBig:
         return NIL;
 }
 
-BUILTIN_FUNCTION(show)
+TY_BUILTIN_RAW(show, "show(x: Any, color: Any = nil) -> String")
 {
         ASSERT_ARGC("show()", 1);
 
@@ -1235,7 +1225,7 @@ BUILTIN_FUNCTION(show)
                          : value_vshow(ty, &arg, TY_SHOW_REPR);
 }
 
-BUILTIN_FUNCTION(str)
+TY_BUILTIN_RAW(str, "str(x: Any) -> String")
 {
         ASSERT_ARGC("str()", 0, 1);
 
@@ -1339,7 +1329,7 @@ AddThousandsSep(char *s, int c)
         ((char *)memcpy(s, b, i))[i] = '\0';
 }
 
-BUILTIN_FUNCTION(fmt)
+TY_BUILTIN_RAW(fmt, "fmt(str: String, *args: _)")
 {
         if (argc == 0) {
                 return STRING_EMPTY;
@@ -1657,25 +1647,30 @@ MissingArgument:
         return s;
 }
 
-BUILTIN_FUNCTION(bool)
+TY_BUILTIN_RAW(bool, "bool(x: Any) -> Bool")
 {
         ASSERT_ARGC("bool()", 1);
         return BOOLEAN(value_truthy(ty, &ARG(0)));
 }
 
-BUILTIN_FUNCTION(dict)
+Value
+builtin_dict(Ty *ty, int argc, Value *kwargs)
 {
         ASSERT_ARGC("dict()", 0);
         return DICT(dict_new(ty));
 }
 
-BUILTIN_FUNCTION(array)
+Value
+builtin_array(Ty *ty, int argc, Value *kwargs)
 {
         ASSERT_ARGC("array()", 0);
         return ARRAY(vA());
 }
 
-BUILTIN_FUNCTION(tuple)
+TY_BUILTIN_RAW(tuple,
+        "tuple[...Ts](xs: ...Ts) -> (Ts,)",
+        "tuple(*xs: _, %kws: _) -> (*_)"
+)
 {
         int named = 0;
         Dict *d = (kwargs != NULL && !IsNil(*kwargs)) ? kwargs->dict : NULL;
@@ -1778,7 +1773,7 @@ Error:;
         zP("regex(): PCRE2: %s", msg);
 }
 
-BUILTIN_FUNCTION(regex)
+TY_BUILTIN_RAW(regex, "regex(pattern: String, flags: String = '') -> Regex & RegexV")
 {
         ASSERT_ARGC("regex()", 1, 2);
 
@@ -1788,7 +1783,8 @@ BUILTIN_FUNCTION(regex)
         return doregex(ty, &pattern, &flags, false);
 }
 
-BUILTIN_FUNCTION(regexv)
+Value
+builtin_regexv(Ty *ty, int argc, Value *kwargs)
 {
         ASSERT_ARGC("regexv()", 1, 2);
 
@@ -1798,7 +1794,8 @@ BUILTIN_FUNCTION(regexv)
         return doregex(ty, &pattern, &flags, true);
 }
 
-BUILTIN_FUNCTION(regex_escape)
+Value
+builtin_regex_escape(Ty *ty, int argc, Value *kwargs)
 {
         ASSERT_ARGC("regex-escape()", 1);
 
@@ -1822,7 +1819,7 @@ BUILTIN_FUNCTION(regex_escape)
         return result;
 }
 
-BUILTIN_FUNCTION(min)
+TY_BUILTIN_RAW(min, "min[...Ts](*xs: ...Ts) -> ...(Ts |) where (...(Ts |) <=> ...(Ts |)): Int")
 {
         if (argc < 2)
                 zP("min() expects 2 or more arguments, but got %d", argc);
@@ -1839,7 +1836,7 @@ BUILTIN_FUNCTION(min)
         return min;
 }
 
-BUILTIN_FUNCTION(max)
+TY_BUILTIN_RAW(max, "max[...Ts](*xs: ...Ts) -> ...(Ts |) where (...(Ts |) <=> ...(Ts |)): Int")
 {
         if (argc < 2)
                 zP("max() expects 2 or more arguments, but got %d", argc);
@@ -1856,99 +1853,37 @@ BUILTIN_FUNCTION(max)
         return max;
 }
 
-BUILTIN_FUNCTION(exp)
+TY_BUILTIN(exp, "math.exp(x: Int | Float) -> Float")
 {
-        ASSERT_ARGC("math.exp()", 1);
-
-        Value x = ARG(0);
-        if (x.type == VALUE_INTEGER)
-                x = REAL(x.z);
-        if (x.type != VALUE_REAL)
-                zP("the argument to math.exp() must be a float");
-
-        return REAL(exp(x.real));
+        return REAL(exp(x));
 }
 
-BUILTIN_FUNCTION(log)
+TY_BUILTIN(log, "math.log(x: Int | Float) -> Float")
 {
-        ASSERT_ARGC("math.log()", 1);
-
-        Value x = ARG(0);
-        if (x.type == VALUE_INTEGER)
-                x = REAL(x.z);
-        if (x.type != VALUE_REAL)
-                zP("the argument to math.log() must be a float");
-
-        return REAL(log(x.real));
+        return REAL(log(x));
 }
 
-BUILTIN_FUNCTION(log2)
+TY_BUILTIN(log2, "math.log2(x: Int | Float) -> Float")
 {
-        ASSERT_ARGC("math.log2()", 1);
-
-        Value x = ARG(0);
-        if (x.type == VALUE_INTEGER)
-                x = REAL(x.z);
-        if (x.type != VALUE_REAL)
-                zP("the argument to math.log2() must be a float");
-
-        return REAL(log2(x.real));
+        return REAL(log2(x));
 }
 
-BUILTIN_FUNCTION(log10)
+TY_BUILTIN(log10, "math.log10(x: Int | Float) -> Float")
 {
-        ASSERT_ARGC("math.log10()", 1);
-
-        Value x = ARG(0);
-        if (x.type == VALUE_INTEGER)
-                x = REAL(x.z);
-        if (x.type != VALUE_REAL)
-                zP("the argument to math.log10() must be a float");
-
-        return REAL(log10(x.real));
+        return REAL(log10(x));
 }
 
-BUILTIN_FUNCTION(pow)
+TY_BUILTIN(pow, "math.pow(x: Int | Float, y: Int | Float) -> Float")
 {
-        ASSERT_ARGC("math.pow()", 2);
-
-        Value x = ARG(0);
-        if (x.type == VALUE_INTEGER)
-                x = REAL(x.z);
-        if (x.type != VALUE_REAL)
-                zP("the first argument to math.pow() must be a float");
-
-        Value y = ARG(1);
-        if (y.type == VALUE_INTEGER)
-                y = REAL(y.z);
-        if (y.type != VALUE_REAL)
-                zP("the second argument to math.pow() must be a float");
-
-        return REAL(pow(x.real, y.real));
+        return REAL(pow(x, y));
 }
 
-BUILTIN_FUNCTION(atan2)
+TY_BUILTIN(atan2, "math.atan2(x: Int | Float, y: Int | Float) -> Float")
 {
-        ASSERT_ARGC("math.atan2()", 2);
-
-        Value x = ARG(0);
-        if (x.type == VALUE_INTEGER)
-                x = REAL(x.z);
-        if (x.type != VALUE_REAL)
-                zP("the first argument to math.atan2() must be a float");
-
-        Value y = ARG(1);
-        if (y.type == VALUE_INTEGER)
-                y = REAL(y.z);
-        if (y.type != VALUE_REAL)
-                zP("the second argument to math.atan2() must be a float");
-
-        return REAL(atan2(x.real, y.real));
+        return REAL(atan2(x, y));
 }
 
 #define MATH_WRAP(func)                                 \
-        Value                                    \
-        builtin_ ## func (Ty *ty, int argc, Value *kwargs)           \
         {                                               \
                 ASSERT_ARGC("math." #func "()", 1);    \
                                                         \
@@ -1961,129 +1896,66 @@ BUILTIN_FUNCTION(atan2)
                 return REAL(func ## f (x.real));        \
         }
 
+TY_BUILTIN_RAW(cos, "math.cos(x: Int | Float) -> Float")
 MATH_WRAP(cos)
+TY_BUILTIN_RAW(sin, "math.sin(x: Int | Float) -> Float")
 MATH_WRAP(sin)
+TY_BUILTIN_RAW(tan, "math.tan(x: Int | Float) -> Float")
 MATH_WRAP(tan)
+TY_BUILTIN_RAW(acos, "math.acos(x: Int | Float) -> Float")
 MATH_WRAP(acos)
+TY_BUILTIN_RAW(asin, "math.asin(x: Int | Float) -> Float")
 MATH_WRAP(asin)
+TY_BUILTIN_RAW(atan, "math.atan(x: Int | Float) -> Float")
 MATH_WRAP(atan)
+TY_BUILTIN_RAW(tanh, "math.tanh(x: Int | Float) -> Float")
 MATH_WRAP(tanh)
+TY_BUILTIN_RAW(sinh, "math.sinh(x: Int | Float) -> Float")
 MATH_WRAP(sinh)
+TY_BUILTIN_RAW(cosh, "math.cosh(x: Int | Float) -> Float")
 MATH_WRAP(cosh)
 
-BUILTIN_FUNCTION(sqrt)
+TY_BUILTIN(sqrt, "math.sqrt(x: Int | Float) -> Float")
 {
-        ASSERT_ARGC("math.sqrt()", 1);
-
-        Value x = ARG(0);
-        if (x.type == VALUE_INTEGER)
-                x = REAL(x.z);
-        if (x.type != VALUE_REAL)
-                zP("the argument to math.sqrt() must be a float");
-
-        return REAL(sqrt(x.real));
+        return REAL(sqrt(x));
 }
 
-BUILTIN_FUNCTION(cbrt)
+TY_BUILTIN(cbrt, "math.cbrt(x: Int | Float) -> Float")
 {
-        ASSERT_ARGC("math.cbrt()", 1);
-
-        Value x = ARG(0);
-        if (x.type == VALUE_INTEGER)
-                x = REAL(x.z);
-        if (x.type != VALUE_REAL)
-                zP("the argument to math.cbrt() must be a float");
-
-        return REAL(cbrt(x.real));
+        return REAL(cbrt(x));
 }
 
-BUILTIN_FUNCTION(bit_and)
+TY_BUILTIN(bit_and, "bit.and(a: Int, b: Int) -> Int")
 {
-        ASSERT_ARGC("bit.and()", 2);
-
-        Value a = ARG(0);
-        if (a.type != VALUE_INTEGER)
-                zP("the first argument to bit.and() must be an integer");
-
-        Value b = ARG(1);
-        if (b.type != VALUE_INTEGER)
-                zP("the second argument to bit.and() must be an integer");
-
-        return INTEGER((umax)a.z & (umax)b.z);
+        return INTEGER((umax)a & (umax)b);
 }
 
-BUILTIN_FUNCTION(bit_or)
+TY_BUILTIN(bit_or, "bit.or(a: Int, b: Int) -> Int")
 {
-        ASSERT_ARGC("bit.or()", 2);
-
-        Value a = ARG(0);
-        if (a.type != VALUE_INTEGER)
-                zP("the first argument to bit.or() must be an integer");
-
-        Value b = ARG(1);
-        if (b.type != VALUE_INTEGER)
-                zP("the second argument to bit.or() must be an integer");
-
-        return INTEGER((umax)a.z | (umax)b.z);
+        return INTEGER((umax)a | (umax)b);
 }
 
-BUILTIN_FUNCTION(bit_xor)
+TY_BUILTIN(bit_xor, "bit.xor(a: Int, b: Int) -> Int")
 {
-        ASSERT_ARGC("bit.xor()", 2);
-
-        Value a = ARG(0);
-        if (a.type != VALUE_INTEGER)
-                zP("the first argument to bit.xor() must be an integer");
-
-        Value b = ARG(1);
-        if (b.type != VALUE_INTEGER)
-                zP("the second argument to bit.xor() must be an integer");
-
-        return INTEGER((umax)a.z ^ (umax)b.z);
+        return INTEGER((umax)a ^ (umax)b);
 }
 
-BUILTIN_FUNCTION(bit_shift_left)
+TY_BUILTIN(bit_shift_left, "bit.shl(a: Int, b: Int) -> Int")
 {
-        ASSERT_ARGC("bit.shiftLeft()", 2);
-
-        Value a = ARG(0);
-        if (a.type != VALUE_INTEGER)
-                zP("the first argument to bit.shiftLeft() must be an integer");
-
-        Value b = ARG(1);
-        if (b.type != VALUE_INTEGER)
-                zP("the second argument to bit.shiftLeft() must be an integer");
-
-        return INTEGER((umax)a.z << (umax)b.z);
+        return INTEGER((umax)a << (umax)b);
 }
 
-BUILTIN_FUNCTION(bit_shift_right)
+TY_BUILTIN(bit_shift_right, "bit.shr(a: Int, b: Int) -> Int")
 {
-        ASSERT_ARGC("bit.shiftRight()", 2);
-
-        Value a = ARG(0);
-        if (a.type != VALUE_INTEGER)
-                zP("the first argument to bit.shiftRight() must be an integer");
-
-        Value b = ARG(1);
-        if (b.type != VALUE_INTEGER)
-                zP("the second argument to bit.shiftRight() must be an integer");
-
-        return INTEGER((umax)a.z >> (umax)b.z);
+        return INTEGER((umax)a >> (umax)b);
 }
 
-BUILTIN_FUNCTION(bit_complement)
+TY_BUILTIN(bit_complement, "bit.complement(a: Int) -> Int")
 {
-        ASSERT_ARGC("bit.complement()", 1);
-
-        Value a = ARG(0);
-        if (a.type != VALUE_INTEGER)
-                zP("the first argument to bit.complement() must be an integer");
-
-        return INTEGER(~(umax)a.z);
+        return INTEGER(~(umax)a);
 }
 
-BUILTIN_FUNCTION(setenv)
+TY_BUILTIN_RAW(setenv, "setenv(var: String, val: String) -> nil")
 {
         ASSERT_ARGC("setenv()", 2);
 
@@ -2098,7 +1970,7 @@ BUILTIN_FUNCTION(setenv)
         return NIL;
 }
 
-BUILTIN_FUNCTION(getenv)
+TY_BUILTIN_RAW(getenv, "getenv(var: String) -> String | nil")
 {
         ASSERT_ARGC("getenv()", 1);
 
@@ -2108,7 +1980,7 @@ BUILTIN_FUNCTION(getenv)
         return (val != NULL) ? vSsz(val) : NIL;
 }
 
-BUILTIN_FUNCTION(locale_setlocale)
+TY_BUILTIN_RAW(locale_setlocale, "locale.setlocale(category: Int, locale: String) -> String | nil")
 {
         ASSERT_ARGC("locale.setlocale()", 2);
 
@@ -2120,7 +1992,10 @@ BUILTIN_FUNCTION(locale_setlocale)
         return (locale != NULL) ? vSsz(locale) : NIL;
 }
 
-BUILTIN_FUNCTION(json_parse)
+TY_BUILTIN_RAW(json_parse,
+        "json.parse(json: String) -> _",
+        "json.parse[T](schema: Type[T], json: String) -> T"
+)
 {
         ASSERT_ARGC_RANGE("json.parse()", 1, 2);
 
@@ -2163,7 +2038,10 @@ BUILTIN_FUNCTION(json_parse)
         return json_parse(ty, (char const *)data, len);
 }
 
-BUILTIN_FUNCTION(json_parse_xD)
+TY_BUILTIN_RAW(json_parse_xD,
+        "json.parse!(json: String | Blob) -> _",
+        "json.parse![T](schema: Type[T], json: String | Blob) -> T"
+)
 {
         ASSERT_ARGC_RANGE("json.parse!()", 1, 2);
 
@@ -2206,13 +2084,13 @@ BUILTIN_FUNCTION(json_parse_xD)
         return json_parse_xD(ty, (char const *)data, len);
 }
 
-BUILTIN_FUNCTION(json_encode)
+TY_BUILTIN_RAW(json_encode, "json.encode(value: Any) -> String")
 {
         ASSERT_ARGC("json.parse()", 1);
         return json_encode(ty, &ARG(0));
 }
 
-BUILTIN_FUNCTION(sha512)
+TY_BUILTIN_RAW(sha512, "sha512(data: String | Blob) -> String")
 {
         ASSERT_ARGC("sha512", 1);
 
@@ -2228,7 +2106,7 @@ BUILTIN_FUNCTION(sha512)
         return vSsz(digest);
 }
 
-BUILTIN_FUNCTION(sha256)
+TY_BUILTIN_RAW(sha256, "sha256(data: String | Blob) -> String")
 {
         ASSERT_ARGC("sha256", 1);
 
@@ -2244,7 +2122,7 @@ BUILTIN_FUNCTION(sha256)
         return vSsz(digest);
 }
 
-BUILTIN_FUNCTION(sha1)
+TY_BUILTIN_RAW(sha1, "sha1(data: String | Blob) -> String")
 {
         ASSERT_ARGC("sha1", 1);
 
@@ -2260,7 +2138,7 @@ BUILTIN_FUNCTION(sha1)
         return vSsz(digest);
 }
 
-BUILTIN_FUNCTION(md5)
+TY_BUILTIN_RAW(md5, "md5(data: String | Blob) -> String")
 {
         ASSERT_ARGC("md5", 1);
 
@@ -2335,7 +2213,7 @@ hash_data(Ty *ty, Value data, u8 const **bytes, usize *size)
         }
 }
 
-BUILTIN_FUNCTION(hash_new)
+TY_BUILTIN_RAW(hash_new, "_hash.new(algorithm: Int) -> Blob")
 {
         ASSERT_ARGC("_hash.new()", 1);
 
@@ -2362,7 +2240,7 @@ BUILTIN_FUNCTION(hash_new)
         return BLOB(state);
 }
 
-BUILTIN_FUNCTION(hash_update)
+TY_BUILTIN_RAW(hash_update, "_hash.update(state: Blob, data: String | Blob) -> nil")
 {
         ASSERT_ARGC("_hash.update()", 2);
 
@@ -2383,7 +2261,7 @@ BUILTIN_FUNCTION(hash_update)
         return NIL;
 }
 
-BUILTIN_FUNCTION(hash_digest)
+TY_BUILTIN_RAW(hash_digest, "_hash.digest(state: Blob) -> Blob")
 {
         ASSERT_ARGC("_hash.digest()", 1);
 
@@ -2417,7 +2295,7 @@ BUILTIN_FUNCTION(hash_digest)
         return BLOB(result);
 }
 
-BUILTIN_FUNCTION(hash_copy)
+TY_BUILTIN_RAW(hash_copy, "_hash.copy(state: Blob) -> Blob")
 {
         ASSERT_ARGC("_hash.copy()", 1);
 
@@ -2543,7 +2421,7 @@ b64enc(Ty *ty, void const *data, usize n)
         }
 }
 
-BUILTIN_FUNCTION(base64_encode)
+TY_BUILTIN_RAW(base64_encode, "base64.encode(input: String | Blob) -> String")
 {
         ASSERT_ARGC("base64.encode()", 1, 2);
 
@@ -2583,7 +2461,7 @@ BUILTIN_FUNCTION(base64_encode)
         return vSs(vv(B), vN(B));
 }
 
-BUILTIN_FUNCTION(base64_decode)
+TY_BUILTIN_RAW(base64_decode, "base64.decode(input: String | Blob) -> Blob")
 {
         ASSERT_ARGC("base64.decode()", 1);
 
@@ -2610,19 +2488,12 @@ BUILTIN_FUNCTION(base64_decode)
         return BLOB(b);
 }
 
-BUILTIN_FUNCTION(os_umask)
+TY_BUILTIN(os_umask, "os.umask(mask: Int) -> Int")
 {
-        ASSERT_ARGC("os.umask()", 1);
-
-        Value mask = ARG(0);
-        if (mask.type != VALUE_INTEGER) {
-                zP("the argument to os.umask() must be an integer");
-        }
-
-        return INTEGER(umask(mask.z));
+        return INTEGER(umask(mask));
 }
 
-BUILTIN_FUNCTION(os_open)
+TY_BUILTIN_RAW(os_open, "os.open(path: PathLike, flags: Int, mode: ?Int) -> Int")
 {
         ASSERT_ARGC("os.open()", 2, 3);
 
@@ -2650,10 +2521,9 @@ BUILTIN_FUNCTION(os_open)
         return INTEGER(fd);
 }
 
-BUILTIN_FUNCTION(os_close)
+TY_BUILTIN(os_close, "os.close(fd: Int) -> Int")
 {
-        ASSERT_ARGC("os.close()", 1);
-        return INTEGER(close(INT_ARG(0)));
+        return INTEGER(close(fd));
 }
 
 static char *
@@ -2724,7 +2594,7 @@ xmktemplate(Ty *ty, char const *_name__, int argc)
         return mktemplate(ty, p, n);
 }
 
-BUILTIN_FUNCTION(os_mkdtemp)
+TY_BUILTIN_RAW(os_mkdtemp, "os.mkdtemp(prefix: ?PathLike = nil) -> String")
 {
         ASSERT_ARGC("os.mkdtemp()", 0, 1);
 
@@ -2767,7 +2637,7 @@ make_temp_file(char *template, int flags)
     return fd;
 }
 
-BUILTIN_FUNCTION(os_mktemp)
+TY_BUILTIN_RAW(os_mktemp, "os.mktemp(pattern: PathLike = 'tmp.XXXXXX') -> (Int, String)")
 {
         ASSERT_ARGC("os.mktemp()", 0, 1, 2);
 
@@ -2800,7 +2670,7 @@ BUILTIN_FUNCTION(os_mktemp)
         return pair;
 }
 
-BUILTIN_FUNCTION(os_opendir)
+TY_BUILTIN_RAW(os_opendir, "os.opendir(path: PathLike) -> Int | nil")
 {
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.opendir()");
@@ -2829,7 +2699,9 @@ BUILTIN_FUNCTION(os_opendir)
 #endif
 }
 
-BUILTIN_FUNCTION(os_readdir)
+TY_BUILTIN_RAW(os_readdir,
+        "os.readdir(dirp: Int) -> {ino: Int, off: Int, reclen: Int, type: Int, name: String} | nil"
+)
 {
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.readdir()");
@@ -2872,7 +2744,7 @@ BUILTIN_FUNCTION(os_readdir)
 #endif
 }
 
-BUILTIN_FUNCTION(os_rewinddir)
+TY_BUILTIN_RAW(os_rewinddir, "os.rewinddir(dirp: ?Ptr[Any]) -> nil")
 {
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.rewinddir()");
@@ -2883,7 +2755,7 @@ BUILTIN_FUNCTION(os_rewinddir)
 #endif
 }
 
-BUILTIN_FUNCTION(os_seekdir)
+TY_BUILTIN_RAW(os_seekdir, "os.seekdir(dirp: Int, loc: Int)")
 {
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.seekdir()");
@@ -2898,7 +2770,7 @@ BUILTIN_FUNCTION(os_seekdir)
 #endif
 }
 
-BUILTIN_FUNCTION(os_telldir)
+TY_BUILTIN_RAW(os_telldir, "os.telldir(dirp: Int) -> Int")
 {
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.telldir()");
@@ -2908,7 +2780,7 @@ BUILTIN_FUNCTION(os_telldir)
 #endif
 }
 
-BUILTIN_FUNCTION(os_closedir)
+TY_BUILTIN_RAW(os_closedir, "os.closedir(dirp: Int) -> Int")
 {
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.closedir()");
@@ -2918,7 +2790,7 @@ BUILTIN_FUNCTION(os_closedir)
 #endif
 }
 
-BUILTIN_FUNCTION(os_getcwd)
+TY_BUILTIN_RAW(os_getcwd, "os.getcwd() -> String")
 {
         ASSERT_ARGC("os.getcwd()", 0);
 
@@ -2931,7 +2803,7 @@ BUILTIN_FUNCTION(os_getcwd)
         return vSsz(tmp);
 }
 
-BUILTIN_FUNCTION(os_getsid)
+TY_BUILTIN_RAW(os_getsid, "os.getsid(pid: Int) -> Int")
 {
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.getsid()");
@@ -2942,7 +2814,7 @@ BUILTIN_FUNCTION(os_getsid)
 #endif
 }
 
-BUILTIN_FUNCTION(os_setsid)
+TY_BUILTIN_RAW(os_setsid, "os.setsid() -> Int")
 {
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.setsid()");
@@ -2952,7 +2824,7 @@ BUILTIN_FUNCTION(os_setsid)
 #endif
 }
 
-BUILTIN_FUNCTION(os_getpgid)
+TY_BUILTIN_RAW(os_getpgid, "os.getpgid(pid: Int) -> Int")
 {
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.getpgid()");
@@ -2963,7 +2835,7 @@ BUILTIN_FUNCTION(os_getpgid)
 #endif
 }
 
-BUILTIN_FUNCTION(os_setpgid)
+TY_BUILTIN_RAW(os_setpgid, "os.setpgid(pid: Int, pgid: Int) -> Int")
 {
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.setpgid()");
@@ -2975,13 +2847,12 @@ BUILTIN_FUNCTION(os_setpgid)
 #endif
 }
 
-BUILTIN_FUNCTION(os_unlink)
+TY_BUILTIN(os_unlink, "os.unlink(path: PathLike) -> Int")
 {
-        ASSERT_ARGC("os.unlink()", 1);
-        return INTEGER(unlink(PATH_ARG(0)));
+        return INTEGER(unlink(path));
 }
 
-BUILTIN_FUNCTION(os_link)
+TY_BUILTIN_RAW(os_link, "os.link(old: PathLike, new: PathLike) -> Int")
 {
         ASSERT_ARGC("os.link()", 2);
 
@@ -2998,7 +2869,9 @@ BUILTIN_FUNCTION(os_link)
 #endif
 }
 
-BUILTIN_FUNCTION(os_linkat)
+TY_BUILTIN_RAW(os_linkat,
+        "os.linkat(olddirfd: Int, oldpath: PathLike, newdirfd: Int, newpath: PathLike, flags: Int = 0) -> Int"
+)
 {
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.linkat()");
@@ -3028,7 +2901,7 @@ BUILTIN_FUNCTION(os_linkat)
 #endif
 }
 
-BUILTIN_FUNCTION(os_symlink)
+TY_BUILTIN_RAW(os_symlink, "os.symlink(target: PathLike, link: PathLike) -> Int")
 {
         ASSERT_ARGC("os.symlink()", 2);
 
@@ -3045,20 +2918,12 @@ BUILTIN_FUNCTION(os_symlink)
 #endif
 }
 
-BUILTIN_FUNCTION(os_rename)
+TY_BUILTIN(os_rename, "os.rename(old: PathLike, new: PathLike) -> Int")
 {
-        ASSERT_ARGC("os.rename()", 2);
-
-        Value old = PATH_ARGx(0);
-        Value new = PATH_ARGx(1);
-
-        char const *c_old = TY_PATH_C_STR_A(old);
-        char const *c_new = TY_PATH_C_STR_B(new);
-
-        return INTEGER(rename(c_old, c_new));
+        return INTEGER(rename(old, new_));
 }
 
-BUILTIN_FUNCTION(os_mkdir)
+TY_BUILTIN_RAW(os_mkdir, "os.mkdir(path: PathLike, mode: ?Int = nil) -> Int")
 {
         ASSERT_ARGC("os.mkdir()", 1, 2);
 
@@ -3075,7 +2940,7 @@ BUILTIN_FUNCTION(os_mkdir)
 #endif
 }
 
-BUILTIN_FUNCTION(os_mkfifo)
+TY_BUILTIN_RAW(os_mkfifo, "os.mkfifo(path: PathLike, mode: ?Int) -> Int")
 {
         ASSERT_ARGC("os.mkfifo()", 1, 2);
 #ifdef _WIN32
@@ -3091,13 +2956,12 @@ BUILTIN_FUNCTION(os_mkfifo)
 #endif
 }
 
-BUILTIN_FUNCTION(os_rmdir)
+TY_BUILTIN(os_rmdir, "os.rmdir(path: PathLike) -> Int")
 {
-        ASSERT_ARGC("os.rmdir()", 1);
-        return INTEGER(rmdir(PATH_ARG(0)));
+        return INTEGER(rmdir(path));
 }
 
-BUILTIN_FUNCTION(os_chown)
+TY_BUILTIN_RAW(os_chown, "os.chown(path: PathLike, owner: Int, group: Int) -> Int")
 {
         ASSERT_ARGC("os.chown()", 3);
 
@@ -3112,7 +2976,7 @@ BUILTIN_FUNCTION(os_chown)
 #endif
 }
 
-BUILTIN_FUNCTION(os_chmod)
+TY_BUILTIN_RAW(os_chmod, "os.chmod(path: PathLike, mode: Int) -> Int")
 {
         ASSERT_ARGC("os.chmod()", 2);
 #ifdef _WIN32
@@ -3125,7 +2989,7 @@ BUILTIN_FUNCTION(os_chmod)
 #endif
 }
 
-BUILTIN_FUNCTION(os_fchmod)
+TY_BUILTIN_RAW(os_fchmod, "os.fchmod(fd: Int, mode: Int) -> Int")
 {
         ASSERT_ARGC("os.fchmod()", 2);
 #ifdef _WIN32
@@ -3138,7 +3002,7 @@ BUILTIN_FUNCTION(os_fchmod)
 #endif
 }
 
-BUILTIN_FUNCTION(os_fchown)
+TY_BUILTIN_RAW(os_fchown, "os.fchown(fd: Int, owner: Int, group: Int) -> Int")
 {
         ASSERT_ARGC("os.fchown()", 3);
 #ifdef _WIN32
@@ -3152,16 +3016,12 @@ BUILTIN_FUNCTION(os_fchown)
 #endif
 }
 
-BUILTIN_FUNCTION(os_access)
+TY_BUILTIN(os_access, "os.access(path: PathLike, mode: Int) -> Int")
 {
-        ASSERT_ARGC("os.access()", 2);
-
-        int mode = INT_ARG(1);
-
-        return INTEGER(access(PATH_ARG(0), mode));
+        return INTEGER(access(path, mode));
 }
 
-BUILTIN_FUNCTION(os_eaccess)
+TY_BUILTIN_RAW(os_eaccess, "os.eaccess(path: PathLike, mode: Int) -> Int")
 {
         ASSERT_ARGC("os.eaccess()", 2);
 
@@ -3174,22 +3034,22 @@ BUILTIN_FUNCTION(os_eaccess)
 #endif
 }
 
-BUILTIN_FUNCTION(os_readlink)
+TY_BUILTIN(os_readlink, "os.readlink(path: PathLike) -> String | nil")
 {
-        ASSERT_ARGC("os.readlink()", 1);
-
         char buf[PATH_MAX + 1];
-        isize n = readlink(PATH_ARG(0), buf, sizeof buf - 1);
+        isize n = readlink(path, buf, sizeof buf - 1);
 
-        if (n < 0)
+        if (n < 0) {
                 return NIL;
-
-        buf[n] = '\0';
+        }
 
         return vSs(buf, n);
 }
 
-BUILTIN_FUNCTION(os_utimes)
+TY_BUILTIN_RAW(os_utimes,
+        "os.utimes(path: Int | PathLike) -> Int",
+        "os.utimes(path: Int | PathLike, atime: Int | Float, mtime: Int | Float) -> Int"
+)
 {
         ASSERT_ARGC("os.utimes()", 1, 3);
 
@@ -3227,7 +3087,10 @@ BUILTIN_FUNCTION(os_utimes)
         return INTEGER(utimes(PATH_ARG(0), ptimes));
 }
 
-BUILTIN_FUNCTION(os_futimes)
+TY_BUILTIN_RAW(os_futimes,
+        "os.futimes(fd: Int) -> Int",
+        "os.futimes(fd: Int, atime: Int | Float, mtime: Int | Float) -> Int"
+)
 {
         ASSERT_ARGC("os.futimes()", 1, 3);
 
@@ -3259,7 +3122,7 @@ BUILTIN_FUNCTION(os_futimes)
         return INTEGER(futimes(fd, times));
 }
 
-BUILTIN_FUNCTION(os_chdir)
+TY_BUILTIN_RAW(os_chdir, "os.chdir(dir: Int | PathLike) -> Int")
 {
         ASSERT_ARGC("os.chdir()", 1);
 
@@ -3272,13 +3135,15 @@ BUILTIN_FUNCTION(os_chdir)
         return INTEGER(chdir(PATH_ARG(0)));
 }
 
-BUILTIN_FUNCTION(os_chroot)
+TY_BUILTIN(os_chroot, "os.chroot(path: PathLike) -> Int")
 {
-        ASSERT_ARGC("os.chroot()", 1);
-        return INTEGER(chroot(PATH_ARG(0)));
+        return INTEGER(chroot(path));
 }
 
-BUILTIN_FUNCTION(os_read)
+TY_BUILTIN_RAW(os_read,
+        "os.read(fd: Int, n: Int, all: Bool = false) -> Blob",
+        "os.read(fd: Int, buf: Blob, n: Int, all: Bool = false) -> Int"
+)
 {
         ASSERT_ARGC("os.read()", 2, 3);
 
@@ -3338,7 +3203,7 @@ BUILTIN_FUNCTION(os_read)
         }
 }
 
-BUILTIN_FUNCTION(os_write)
+TY_BUILTIN_RAW(os_write, "os.write(fd: Int, data: Any, all: Bool = false) -> Int")
 {
         ASSERT_ARGC("os.write()", 2, 3);
 
@@ -3399,18 +3264,12 @@ BUILTIN_FUNCTION(os_write)
         return INTEGER(off);
 }
 
-BUILTIN_FUNCTION(os_lseek)
+TY_BUILTIN(os_lseek, "os.lseek(fd: Int, offset: Int, whence: Int) -> Int")
 {
-        ASSERT_ARGC("os.lseek()", 3);
-
-        int fd = INT_ARG(0);
-        isize offset = INT_ARG(1);
-        int whence = INT_ARG(2);
-
         return INTEGER(lseek(fd, (off_t)offset, whence));
 }
 
-BUILTIN_FUNCTION(os_pread)
+TY_BUILTIN_RAW(os_pread, "os.pread(fd: Int, n: Int, offset: Int) -> Blob")
 {
         ASSERT_ARGC("os.pread()", 3);
 
@@ -3440,7 +3299,7 @@ BUILTIN_FUNCTION(os_pread)
         return blob;
 }
 
-BUILTIN_FUNCTION(os_pwrite)
+TY_BUILTIN_RAW(os_pwrite, "os.pwrite(fd: Int, data: _, offset: Int) -> Int")
 {
         ASSERT_ARGC("os.pwrite()", 3);
 
@@ -3475,7 +3334,7 @@ BUILTIN_FUNCTION(os_pwrite)
         return INTEGER(r);
 }
 
-BUILTIN_FUNCTION(os_ftruncate)
+TY_BUILTIN_RAW(os_ftruncate, "os.ftruncate(fd: Int, size: Int) -> Int")
 {
         ASSERT_ARGC("os.ftruncate()", 2);
 
@@ -3489,7 +3348,9 @@ BUILTIN_FUNCTION(os_ftruncate)
 #endif
 }
 
-BUILTIN_FUNCTION(os_sendfile)
+TY_BUILTIN_RAW(os_sendfile,
+        "os.sendfile(outfd: Int, infd: Int, offset: ?Int = nil, count: ?Int = nil, headers: ?Blob = nil, trailers: ?Blob = nil, flags: Int = 0 ) -> Int"
+)
 {
 #if defined(__APPLE__) || defined(__FreeBSD__)
         ASSERT_ARGC_RANGE("os.sendfile()", 2, 7);
@@ -3610,7 +3471,9 @@ BUILTIN_FUNCTION(os_sendfile)
 #endif
 }
 
-BUILTIN_FUNCTION(os_splice)
+TY_BUILTIN_RAW(os_splice,
+        "os.splice(fin: Int, off_in: ?Int = nil, fout: Int, off_out: ?Int = nil, len: Int, flags: Int = 0 ) -> Int"
+)
 {
 #ifdef __linux__
         ASSERT_ARGC("os.splice()", 5, 6);
@@ -3646,7 +3509,9 @@ BUILTIN_FUNCTION(os_splice)
 #endif
 }
 
-BUILTIN_FUNCTION(os_copy_file_range)
+TY_BUILTIN_RAW(os_copy_file_range,
+        "os.copy_file_range(fd_in: Int, off_in: ?Int, fd_out: Int, off_out: ?Int, len: Int, flags: Int = 0) -> Int"
+)
 {
 #ifdef __linux__
         ASSERT_ARGC("os.copy_file_range()", 5, 6);
@@ -3689,7 +3554,7 @@ BUILTIN_FUNCTION(os_copy_file_range)
 #endif
 }
 
-BUILTIN_FUNCTION(os_fsync)
+TY_BUILTIN_RAW(os_fsync, "os.fsync(fd: Int) -> Int")
 {
         ASSERT_ARGC("os.fsync()", 1);
 
@@ -3701,7 +3566,7 @@ BUILTIN_FUNCTION(os_fsync)
 #endif
 }
 
-BUILTIN_FUNCTION(os_sync)
+TY_BUILTIN_RAW(os_sync, "os.sync() -> nil")
 {
         ASSERT_ARGC("os.sync()", 0);
 
@@ -3712,7 +3577,9 @@ BUILTIN_FUNCTION(os_sync)
         return NIL;
 }
 
-BUILTIN_FUNCTION(os_mmap)
+TY_BUILTIN_RAW(os_mmap,
+        "os.mmap(addr: Ptr[Any] | Int | nil, length: Int, prot: Int, flags: Int, fd: Int, offset: Int = 0) -> Ptr[Any]"
+)
 {
         ASSERT_ARGC("os.mmap()", 5, 6);
 
@@ -3742,7 +3609,7 @@ BUILTIN_FUNCTION(os_mmap)
         return (addr != MAP_FAILED) ? PTR(addr) : NIL;
 }
 
-BUILTIN_FUNCTION(os_munmap)
+TY_BUILTIN_RAW(os_munmap, "os.munmap(addr: ?Ptr[Any], length: Int) -> Int")
 {
         ASSERT_ARGC("os.munmap()", 2);
 
@@ -3752,7 +3619,7 @@ BUILTIN_FUNCTION(os_munmap)
         return INTEGER(munmap(addr, length));
 }
 
-BUILTIN_FUNCTION(os_mprotect)
+TY_BUILTIN_RAW(os_mprotect, "os.mprotect(addr: _, length: Int, prot: Int) -> Int")
 {
         ASSERT_ARGC("os.mprotect()", 3);
 
@@ -3763,7 +3630,7 @@ BUILTIN_FUNCTION(os_mprotect)
         return INTEGER(mprotect(addr, length, prot));
 }
 
-BUILTIN_FUNCTION(os_setproctitle)
+TY_BUILTIN_RAW(os_setproctitle, "os.setproctitle(*parts: String) -> nil")
 {
         ASSERT_ARGC_RANGE("os.setproctitle()", 1, INT_MAX);
 
@@ -3781,7 +3648,7 @@ BUILTIN_FUNCTION(os_setproctitle)
         return NIL;
 }
 
-BUILTIN_FUNCTION(os_setprocname)
+TY_BUILTIN_RAW(os_setprocname, "os.setprocname(name: String) -> Int")
 {
         ASSERT_ARGC("os.setprocname()", 1);
 
@@ -3858,7 +3725,10 @@ make_cmdline(Array *args)
         return result.items;
 }
 
-BUILTIN_FUNCTION(os_spawn)
+TY_BUILTIN_RAW(os_spawn,
+        "os.spawn(argv: Array[String], stdin: ?Int = nil, stdout: ?Int = nil, stderr: ?Int = nil, chdir: Int | PathLike | nil = nil, env: Dict[String, String] | nil = nil, detach: Bool = false, ctty: ?{master: Int, slave: Int} = nil, rlimits: Dict[Int, Int | (Int, Int)] | nil = nil, sigdefault: ?Array[Int] = nil, inherit: Array[Int] | Bool | nil = nil, umask: ?Int = nil, pdeathsig: ?Int = nil, ) -> ProcessDescriptor",
+        "os.spawn(cmd: PathLike, argv: Array[String], stdin: ?Int = nil, stdout: ?Int = nil, stderr: ?Int = nil, chdir: Int | PathLike | nil = nil, env: Dict[String, String] | nil = nil, detach: Bool = false, ctty: ?{master: Int, slave: Int} = nil, rlimits: Dict[Int, Int | (Int, Int)] | nil = nil, sigdefault: ?Array[Int] = nil, inherit: Array[Int] | Bool | nil = nil, umask: ?Int = nil, pdeathsig: ?Int = nil, ) -> ProcessDescriptor"
+)
 {
         ASSERT_ARGC("os.spawn()", 1, 2);
 
@@ -4036,7 +3906,10 @@ BUILTIN_FUNCTION(os_spawn)
         );
 }
 #else
-BUILTIN_FUNCTION(os_spawn)
+TY_BUILTIN_RAW(os_spawn,
+        "os.spawn(argv: Array[String], stdin: ?Int = nil, stdout: ?Int = nil, stderr: ?Int = nil, chdir: Int | PathLike | nil = nil, env: Dict[String, String] | nil = nil, detach: Bool = false, ctty: ?{master: Int, slave: Int} = nil, rlimits: Dict[Int, Int | (Int, Int)] | nil = nil, sigdefault: ?Array[Int] = nil, inherit: Array[Int] | Bool | nil = nil, umask: ?Int = nil, pdeathsig: ?Int = nil, ) -> ProcessDescriptor",
+        "os.spawn(cmd: PathLike, argv: Array[String], stdin: ?Int = nil, stdout: ?Int = nil, stderr: ?Int = nil, chdir: Int | PathLike | nil = nil, env: Dict[String, String] | nil = nil, detach: Bool = false, ctty: ?{master: Int, slave: Int} = nil, rlimits: Dict[Int, Int | (Int, Int)] | nil = nil, sigdefault: ?Array[Int] = nil, inherit: Array[Int] | Bool | nil = nil, umask: ?Int = nil, pdeathsig: ?Int = nil, ) -> ProcessDescriptor"
+)
 {
 /* ========================================================================= */
         static TyMutex SpawnLock = {0};
@@ -4355,7 +4228,10 @@ Cleanup:
 }
 #endif
 
-BUILTIN_FUNCTION(thread_join)
+TY_BUILTIN_RAW(thread_join,
+        "thread.join(t: Any, timeout: nil = nil) -> _",
+        "thread.join(t: Any, timeout: Int | Float | time::Timespec) -> Some[_] | None"
+)
 {
         ASSERT_ARGC("thread.join()", 1, 2);
 
@@ -4395,7 +4271,7 @@ BUILTIN_FUNCTION(thread_join)
         }
 }
 
-BUILTIN_FUNCTION(thread_detach)
+TY_BUILTIN_RAW(thread_detach, "thread.detach(t: Any) -> Bool")
 {
         ASSERT_ARGC("thread.detach()", 1);
 
@@ -4409,7 +4285,7 @@ BUILTIN_FUNCTION(thread_detach)
         }
 }
 
-BUILTIN_FUNCTION(thread_mutex)
+TY_BUILTIN_RAW(thread_mutex, "thread.mutex() -> Ptr[Any]")
 {
         ASSERT_ARGC("thread.mutex()", 0);
         TyMutex *mtx = mAo(sizeof *mtx, GC_MUTEX);
@@ -4417,7 +4293,7 @@ BUILTIN_FUNCTION(thread_mutex)
         return GCPTR(mtx, mtx);
 }
 
-BUILTIN_FUNCTION(thread_spinlock)
+TY_BUILTIN_RAW(thread_spinlock, "thread.spinLock() -> Ptr[Any]")
 {
         ASSERT_ARGC("thread.spinLock()", 0);
         TySpinLock *spin = mAo(sizeof *spin, GC_SPINLOCK);
@@ -4425,7 +4301,7 @@ BUILTIN_FUNCTION(thread_spinlock)
         return GCPTR(spin, spin);
 }
 
-BUILTIN_FUNCTION(thread_cond)
+TY_BUILTIN_RAW(thread_cond, "thread.cond() -> Ptr[Any]")
 {
         ASSERT_ARGC("thread.cond()", 0);
         TyCondVar *cond = mAo(sizeof *cond, GC_CONDVAR);
@@ -4433,7 +4309,9 @@ BUILTIN_FUNCTION(thread_cond)
         return GCPTR(cond, cond);
 }
 
-BUILTIN_FUNCTION(thread_cond_wait)
+TY_BUILTIN_RAW(thread_cond_wait,
+        "thread.waitCond(cond: Ptr[Any], mtx: Ptr[Any], timeout: Int | Float | time::Timespec | nil = nil) -> Bool"
+)
 {
         ASSERT_ARGC("thread.waitCond()", 2, 3);
 
@@ -4456,19 +4334,19 @@ BUILTIN_FUNCTION(thread_cond_wait)
         return BOOLEAN(ok);
 }
 
-BUILTIN_FUNCTION(thread_cond_signal)
+TY_BUILTIN_RAW(thread_cond_signal, "thread.signalCond(cond: Ptr[Any]) -> Bool")
 {
         ASSERT_ARGC("thread.signalCond()", 1);
         return BOOLEAN(TyCondVarSignal(PTR_ARG(0)));
 }
 
-BUILTIN_FUNCTION(thread_cond_broadcast)
+TY_BUILTIN_RAW(thread_cond_broadcast, "thread.broadcastCond(cond: Ptr[Any]) -> Bool")
 {
         ASSERT_ARGC("thread.broadcastCond()", 1);
         return BOOLEAN(TyCondVarBroadcast(PTR_ARG(0)));
 }
 
-BUILTIN_FUNCTION(thread_note)
+TY_BUILTIN_RAW(thread_note, "thread.note() -> Ptr[Any]")
 {
         ASSERT_ARGC("thread.note()", 0);
         TyNote *np = mAo(sizeof *np, GC_NOTE);
@@ -4476,7 +4354,7 @@ BUILTIN_FUNCTION(thread_note)
         return GCPTR(np, np);
 }
 
-BUILTIN_FUNCTION(thread_notify)
+TY_BUILTIN_RAW(thread_notify, "thread.notify(note: Ptr[Any]) -> nil")
 {
         ASSERT_ARGC("thread.notify()", 1);
         TyNote *np = PTR_ARG(0);
@@ -4484,14 +4362,16 @@ BUILTIN_FUNCTION(thread_notify)
         return NIL;
 }
 
-BUILTIN_FUNCTION(thread_is_notified)
+TY_BUILTIN_RAW(thread_is_notified, "thread.notified?(note: Ptr[Any]) -> Bool")
 {
         ASSERT_ARGC("thread.isNotified()", 1);
         TyNote *np = PTR_ARG(0);
         return BOOLEAN(TyNoteIsNotified(*np));
 }
 
-BUILTIN_FUNCTION(thread_wait_note)
+TY_BUILTIN_RAW(thread_wait_note,
+        "thread.waitNote(note: Ptr[Any], timeout: Int | Float | time::Timespec | nil = nil) -> Bool"
+)
 {
         ASSERT_ARGC("thread.waitNote()", 1, 2);
 
@@ -4505,7 +4385,7 @@ BUILTIN_FUNCTION(thread_wait_note)
         return BOOLEAN(ok);
 }
 
-BUILTIN_FUNCTION(thread_counter)
+TY_BUILTIN_RAW(thread_counter, "thread.counter(n: Int) -> Ptr[Any]")
 {
         ASSERT_ARGC("thread.counter()", 1);
         TyCounter *cp = mAo(sizeof *cp, GC_COUNTER);
@@ -4513,7 +4393,7 @@ BUILTIN_FUNCTION(thread_counter)
         return GCPTR(cp, cp);
 }
 
-BUILTIN_FUNCTION(thread_count_add)
+TY_BUILTIN_RAW(thread_count_add, "thread.countAdd(counter: Ptr[Any], delta: Int) -> Int")
 {
         ASSERT_ARGC("thread.countAdd()", 2);
         TyCounter *cp = PTR_ARG(0);
@@ -4521,14 +4401,16 @@ BUILTIN_FUNCTION(thread_count_add)
         return INTEGER(TyCounterAdd(*cp, delta));
 }
 
-BUILTIN_FUNCTION(thread_count_value)
+TY_BUILTIN_RAW(thread_count_value, "thread.countValue(counter: Ptr[Any]) -> Int")
 {
         ASSERT_ARGC("thread.count-value()", 1);
         TyCounter *cp = PTR_ARG(0);
         return INTEGER(TyCounterValue(*cp));
 }
 
-BUILTIN_FUNCTION(thread_count_wait)
+TY_BUILTIN_RAW(thread_count_wait,
+        "thread.countWait(counter: Ptr[Any], timeout: Int | Float | time::Timespec | nil = nil) -> Int"
+)
 {
         ASSERT_ARGC("thread.count-wait()", 1, 2);
 
@@ -4542,7 +4424,9 @@ BUILTIN_FUNCTION(thread_count_wait)
         return INTEGER(v);
 }
 
-BUILTIN_FUNCTION(thread_wait_any)
+TY_BUILTIN_RAW(thread_wait_any,
+        "thread.waitAny(objects: Array[Ptr[Any]], timeout: Int | Float | time::Timespec | nil = nil, lock: Any = nil) -> Int | nil"
+)
 {
         ASSERT_ARGC("thread.wait-any()", 1, 2, 3);
 
@@ -4603,7 +4487,7 @@ BUILTIN_FUNCTION(thread_wait_any)
         return (idx != -1) ? INTEGER(idx) : NIL;
 }
 
-BUILTIN_FUNCTION(thread_lock)
+TY_BUILTIN_RAW(thread_lock, "thread.lock(lock: Ptr[Any]) -> Bool")
 {
         ASSERT_ARGC("thread.lock()", 1);
 
@@ -4630,7 +4514,7 @@ BUILTIN_FUNCTION(thread_lock)
         return BOOLEAN(ok);
 }
 
-BUILTIN_FUNCTION(thread_trylock)
+TY_BUILTIN_RAW(thread_trylock, "thread.tryLock(lock: Ptr[Any]) -> Bool")
 {
         ASSERT_ARGC("thread.tryLock()", 1);
 
@@ -4657,7 +4541,7 @@ BUILTIN_FUNCTION(thread_trylock)
         return BOOLEAN(ok);
 }
 
-BUILTIN_FUNCTION(thread_unlock)
+TY_BUILTIN_RAW(thread_unlock, "thread.unlock(lock: Ptr[Any]) -> Bool")
 {
         ASSERT_ARGC("thread.unlock()", 1);
 
@@ -4680,7 +4564,9 @@ BUILTIN_FUNCTION(thread_unlock)
         return BOOLEAN(ok);
 }
 
-BUILTIN_FUNCTION(thread_create)
+TY_BUILTIN_RAW(thread_create,
+        "thread.create(f: Function, *args: Any, name: String | Blob | Ptr[Any] | nil = nil, isolated: Bool = false) -> _"
+)
 {
         ASSERT_ARGC_RANGE("thread.create()", 1, INT_MAX);
 
@@ -4705,7 +4591,7 @@ BUILTIN_FUNCTION(thread_create)
         return THREAD(t);
 }
 
-BUILTIN_FUNCTION(thread_channel)
+TY_BUILTIN_RAW(thread_channel, "thread.channel() -> Ptr[Any]")
 {
         ASSERT_ARGC("thread.channel()", 0);
 
@@ -4724,7 +4610,7 @@ BUILTIN_FUNCTION(thread_channel)
         return GCPTR(chan, chan);
 }
 
-BUILTIN_FUNCTION(thread_send)
+TY_BUILTIN_RAW(thread_send, "thread.send(chan: Ptr[Any], msg: Any) -> nil")
 {
         ASSERT_ARGC("thread.send()", 2);
 
@@ -4736,7 +4622,9 @@ BUILTIN_FUNCTION(thread_send)
         return NIL;
 }
 
-BUILTIN_FUNCTION(thread_recv)
+TY_BUILTIN_RAW(thread_recv,
+        "thread.recv(chan: Ptr[Any], timeout: Int | Float | time::Timespec | nil = nil) -> Some[_] | None"
+)
 {
         ASSERT_ARGC("thread.recv()", 1, 2);
 
@@ -4750,7 +4638,7 @@ BUILTIN_FUNCTION(thread_recv)
         return ok ? Some(v) : None;
 }
 
-BUILTIN_FUNCTION(thread_close)
+TY_BUILTIN_RAW(thread_close, "thread.close(chan: Ptr[Any]) -> nil")
 {
         ASSERT_ARGC("thread.close()", 1);
 
@@ -4766,7 +4654,10 @@ BUILTIN_FUNCTION(thread_close)
         return NIL;
 }
 
-BUILTIN_FUNCTION(thread_kill)
+TY_BUILTIN_RAW(thread_kill,
+        "thread.kill(sig: Int) -> Bool",
+        "thread.kill(t: Any, sig: Int) -> Bool"
+)
 {
         ASSERT_ARGC("thread.kill()", 1, 2);
 
@@ -4784,7 +4675,10 @@ BUILTIN_FUNCTION(thread_kill)
         return BOOLEAN(TyThreadKill(thread, how));
 }
 
-BUILTIN_FUNCTION(thread_setname)
+TY_BUILTIN_RAW(thread_setname,
+        "thread.setName(name: String | Blob | Ptr[Any]) -> nil",
+        "thread.setName(t: Any, name: String | Blob | Ptr[Any]) -> nil"
+)
 {
         char *_name__ = "thread.setName()";
 
@@ -4833,7 +4727,7 @@ BUILTIN_FUNCTION(thread_setname)
 #endif
 }
 
-BUILTIN_FUNCTION(thread_getname)
+TY_BUILTIN_RAW(thread_getname, "thread.getName(t: Any = nil) -> String | nil")
 {
         ASSERT_ARGC("thread.getName()", 0, 1);
 
@@ -4860,7 +4754,7 @@ BUILTIN_FUNCTION(thread_getname)
 #endif
 }
 
-BUILTIN_FUNCTION(thread_id)
+TY_BUILTIN_RAW(thread_id, "thread.id(t: Any = nil) -> Int")
 {
         ASSERT_ARGC_2("thread.id()", 0, 1);
 
@@ -4875,13 +4769,13 @@ BUILTIN_FUNCTION(thread_id)
         }
 }
 
-BUILTIN_FUNCTION(thread_self)
+TY_BUILTIN_RAW(thread_self, "thread.self() -> Ptr[Any]")
 {
         ASSERT_ARGC("thread.self()", 0);
         return PTR((void *)TyThreadSelf());
 }
 
-BUILTIN_FUNCTION(thread_group)
+TY_BUILTIN_RAW(thread_group, "thread.group() -> Array[Ptr[Any]]")
 {
         ASSERT_ARGC("thread.group()", 0);
 
@@ -4900,7 +4794,10 @@ BUILTIN_FUNCTION(thread_group)
         return ARRAY(threads);
 }
 
-BUILTIN_FUNCTION(thread_sigmask)
+TY_BUILTIN_RAW(thread_sigmask,
+        "thread.sigmask() -> Ptr[Any]",
+        "thread.sigmask(how: Int, set: Array[Int] | Dict[Int, Any] | IntoPtr[Any] | nil) -> Ptr[Any]"
+)
 {
         ASSERT_ARGC("thread.sigmask()", 0, 2);
 
@@ -4927,7 +4824,7 @@ BUILTIN_FUNCTION(thread_sigmask)
         return NewSigSetFrom(ty, &old);
 }
 
-BUILTIN_FUNCTION(thread_atomic)
+TY_BUILTIN_RAW(thread_atomic, "thread.atomic(x: Int = 0) -> Ptr[Any]")
 {
         ASSERT_ARGC("thread.atomic()", 0, 1);
 
@@ -4937,7 +4834,7 @@ BUILTIN_FUNCTION(thread_atomic)
         return GCPTR(atomic, atomic);
 }
 
-BUILTIN_FUNCTION(thread_atomic_load)
+TY_BUILTIN_RAW(thread_atomic_load, "thread.load(atomic: Ptr[Any]) -> Int")
 {
         ASSERT_ARGC("thread.load()", 1);
 
@@ -4951,7 +4848,7 @@ BUILTIN_FUNCTION(thread_atomic_load)
         );
 }
 
-BUILTIN_FUNCTION(thread_atomic_store)
+TY_BUILTIN_RAW(thread_atomic_store, "thread.store(atomic: Ptr[Any], x: Int) -> Int")
 {
         ASSERT_ARGC("thread.store()", 2);
 
@@ -4967,7 +4864,9 @@ BUILTIN_FUNCTION(thread_atomic_store)
         return INTEGER(val);
 }
 
-BUILTIN_FUNCTION(thread_atomic_cmpxchg)
+TY_BUILTIN_RAW(thread_atomic_cmpxchg,
+        "thread.trySwap(atomic: Ptr[Any], old: Int, new: Int) -> Ok[Int] | Err[Int]"
+)
 {
         ASSERT_ARGC("thread.try-swap()", 3);
 
@@ -4990,7 +4889,7 @@ BUILTIN_FUNCTION(thread_atomic_cmpxchg)
              : Err(ty, INTEGER(expected));
 }
 
-BUILTIN_FUNCTION(thread_atomic_swap)
+TY_BUILTIN_RAW(thread_atomic_swap, "thread.swap(atomic: Ptr[Any], x: Int) -> Int")
 {
         ASSERT_ARGC("thread.swap()", 2);
 
@@ -5006,7 +4905,7 @@ BUILTIN_FUNCTION(thread_atomic_swap)
         );
 }
 
-BUILTIN_FUNCTION(thread_atomic_fetch_add)
+TY_BUILTIN_RAW(thread_atomic_fetch_add, "thread.fetchAdd(atomic: Ptr[Any], x: Int) -> Int")
 {
         ASSERT_ARGC("thread.fetchAdd()", 2);
 
@@ -5022,7 +4921,7 @@ BUILTIN_FUNCTION(thread_atomic_fetch_add)
         );
 }
 
-BUILTIN_FUNCTION(thread_atomic_fetch_sub)
+TY_BUILTIN_RAW(thread_atomic_fetch_sub, "thread.fetchSub(atomic: Ptr[Any], x: Int) -> Int")
 {
         ASSERT_ARGC("thread.fetchSub()", 2);
 
@@ -5038,7 +4937,7 @@ BUILTIN_FUNCTION(thread_atomic_fetch_sub)
         );
 }
 
-BUILTIN_FUNCTION(os_fork)
+TY_BUILTIN_RAW(os_fork, "os.fork() -> Int")
 {
         ASSERT_ARGC("os.fork()", 0);
 #ifdef _WIN32
@@ -5058,7 +4957,7 @@ BUILTIN_FUNCTION(os_fork)
 #endif
 }
 
-BUILTIN_FUNCTION(os_openpty)
+TY_BUILTIN_RAW(os_openpty, "os.openpty(size: ?(Int, Int) = nil) -> PTY | nil")
 {
         ASSERT_ARGC("os.openpty()", 0, 1);
 #ifdef _WIN32
@@ -5100,7 +4999,7 @@ BUILTIN_FUNCTION(os_openpty)
 #endif
 }
 
-BUILTIN_FUNCTION(os_pipe)
+TY_BUILTIN_RAW(os_pipe, "os.pipe() -> (Int, Int)")
 {
         ASSERT_ARGC("os.pipe()", 0);
 #ifdef _WIN32
@@ -5122,7 +5021,7 @@ BUILTIN_FUNCTION(os_pipe)
 }
 
 #ifdef __linux__
-BUILTIN_FUNCTION(os_pipe2)
+TY_BUILTIN_RAW(os_pipe2, "os.pipe2(flags: Int) -> (Int, Int)")
 {
         ASSERT_ARGC("os.pipe2()", 1);
 
@@ -5141,46 +5040,22 @@ BUILTIN_FUNCTION(os_pipe2)
 }
 #endif
 
-BUILTIN_FUNCTION(os_dup)
+TY_BUILTIN(os_dup, "os.dup(fd: Int) -> Int")
 {
-        ASSERT_ARGC("os.dup()", 1);
-
-        Value old = ARG(0);
-
-        if (old.type != VALUE_INTEGER)
-                zP("os.dup(): argument must be an integer");
-
-        return INTEGER(dup(old.z));
+        return INTEGER(dup(fd));
 }
 
-BUILTIN_FUNCTION(os_dup2)
+TY_BUILTIN(os_dup2, "os.dup2(fd: Int, fd2: Int) -> Int")
 {
-        ASSERT_ARGC("os.dup2()", 2);
-
-        Value old = ARG(0);
-        Value new = ARG(1);
-
-        if (old.type != VALUE_INTEGER || new.type != VALUE_INTEGER)
-                zP("the arguments to os.dup2() must be integers");
-
-        return INTEGER(dup2(old.z, new.z));
+        return INTEGER(dup2(fd, fd2));
 }
 
-BUILTIN_FUNCTION(os_socket)
+TY_BUILTIN(os_socket, "os.socket(domain: Int, type: Int, protocol: Int) -> Int")
 {
-        ASSERT_ARGC("os.socket()", 3);
-
-        Value domain = ARG(0);
-        Value type = ARG(1);
-        Value protocol = ARG(2);
-
-        if (domain.type != VALUE_INTEGER || type.type != VALUE_INTEGER || protocol.type != VALUE_INTEGER)
-                zP("the arguments to os.socket() must be integers");
-
-        return INTEGER(socket(domain.z, type.z, protocol.z));
+        return INTEGER(socket(domain, type, protocol));
 }
 
-BUILTIN_FUNCTION(os_socketpair)
+TY_BUILTIN_RAW(os_socketpair, "os.socketpair(domain: Int, type: Int, protocol: Int) -> (Int, Int)")
 {
         ASSERT_ARGC("os.socketpair()", 3);
 #ifdef _WIN32
@@ -5204,7 +5079,7 @@ BUILTIN_FUNCTION(os_socketpair)
 #endif
 }
 
-BUILTIN_FUNCTION(os_setsockopt)
+TY_BUILTIN_RAW(os_setsockopt, "os.setsockopt(sock: Int, level: Int, opt: Int, val: Any) -> Int")
 {
         ASSERT_ARGC_2("os.setsockopt()", 3, 4);
 
@@ -5236,7 +5111,7 @@ BUILTIN_FUNCTION(os_setsockopt)
         return INTEGER(setsockopt(sock.z, level.z, option.z, &o, sizeof o));
 }
 
-BUILTIN_FUNCTION(os_getsockopt)
+TY_BUILTIN_RAW(os_getsockopt, "os.getsockopt(sock: Int, level: Int, opt: Int) -> _")
 {
         ASSERT_ARGC("os.getsockopt()", 3);
 
@@ -5262,7 +5137,9 @@ BUILTIN_FUNCTION(os_getsockopt)
         }
 }
 
-BUILTIN_FUNCTION(os_getnameinfo)
+TY_BUILTIN_RAW(os_getnameinfo,
+        "os.getnameinfo(addr: Ptr[Any] | Blob, flags: Int = 0) -> (String, String)"
+)
 {
         ASSERT_ARGC("os.getnameinfo()", 1, 2);
 
@@ -5302,7 +5179,7 @@ BUILTIN_FUNCTION(os_getnameinfo)
         return v;
 }
 
-BUILTIN_FUNCTION(os_getpeername)
+TY_BUILTIN_RAW(os_getpeername, "os.getpeername(sock: Int) -> Blob")
 {
         ASSERT_ARGC("os.getpeername()", 1);
 
@@ -5327,7 +5204,7 @@ BUILTIN_FUNCTION(os_getpeername)
         return BLOB(b);
 }
 
-BUILTIN_FUNCTION(os_getsockname)
+TY_BUILTIN_RAW(os_getsockname, "os.getsockname(sock: Int) -> Blob")
 {
         ASSERT_ARGC("os.getsockname()", 1);
 
@@ -5352,33 +5229,17 @@ BUILTIN_FUNCTION(os_getsockname)
         return BLOB(b);
 }
 
-BUILTIN_FUNCTION(os_shutdown)
+TY_BUILTIN(os_shutdown, "os.shutdown(sock: Int, how: Int) -> Int")
 {
-        ASSERT_ARGC("os.shutdown()", 2);
-
-        Value fd = ARG(0);
-        Value how = ARG(1);
-
-        if (fd.type != VALUE_INTEGER || how.type != VALUE_INTEGER)
-                zP("the arguments to os.shutdown() must be integers");
-
-        return INTEGER(shutdown(fd.z, how.z));
+        return INTEGER(shutdown(sock, how));
 }
 
-BUILTIN_FUNCTION(os_listen)
+TY_BUILTIN(os_listen, "os.listen(sock: Int, n: Int) -> Int")
 {
-        ASSERT_ARGC("os.listen()", 2);
-
-        Value sockfd = ARG(0);
-        Value backlog = ARG(1);
-
-        if (sockfd.type != VALUE_INTEGER || backlog.type != VALUE_INTEGER)
-                zP("the arguments to os.listen() must be integers");
-
-        return INTEGER(listen(sockfd.z, backlog.z));
+        return INTEGER(listen(sock, n));
 }
 
-BUILTIN_FUNCTION(os_connect)
+TY_BUILTIN_RAW(os_connect, "os.connect(sock: Int, addr: _) -> Int")
 {
         ASSERT_ARGC("os.connect()", 2);
 
@@ -5449,7 +5310,7 @@ BUILTIN_FUNCTION(os_connect)
         return INTEGER(ret);
 }
 
-BUILTIN_FUNCTION(os_bind)
+TY_BUILTIN_RAW(os_bind, "os.bind(sock: Int, addr: _) -> Int")
 {
         ASSERT_ARGC("os.bind()", 2);
 
@@ -5514,7 +5375,9 @@ BUILTIN_FUNCTION(os_bind)
         }
 }
 
-BUILTIN_FUNCTION(os_getaddrinfo)
+TY_BUILTIN_RAW(os_getaddrinfo,
+        "os.getaddrinfo(node: String | nil, service: String | Int | nil, domain: Int | nil, type: Int | nil, protocol: Int | nil, flags: ?Int = 0, ) -> Ok[Array[AddrInfo]] | Err[Int]"
+)
 {
         ASSERT_ARGC("os.getaddrinfo()", 5, 6);
 
@@ -5596,13 +5459,12 @@ BUILTIN_FUNCTION(os_getaddrinfo)
         return Ok(ty, results);
 }
 
-BUILTIN_FUNCTION(os_gai_strerror)
+TY_BUILTIN(os_gai_strerror, "os.gai_strerror(errcode: Int) -> String")
 {
-        ASSERT_ARGC("os.gai_strerror()", 1);
-        return xSz(gai_strerror(INT_ARG(0)));
+        return xSz(gai_strerror(errcode));
 }
 
-BUILTIN_FUNCTION(os_accept)
+TY_BUILTIN_RAW(os_accept, "os.accept(sock: Int) -> (Int, Blob)")
 {
         ASSERT_ARGC("os.accept()", 1);
 
@@ -5628,7 +5490,7 @@ BUILTIN_FUNCTION(os_accept)
         return conn;
 }
 
-BUILTIN_FUNCTION(os_recvfrom)
+TY_BUILTIN_RAW(os_recvfrom, "os.recvfrom(sock: Int, n: Int, flags: Int) -> (Blob, Blob)")
 {
         ASSERT_ARGC("os.recvfrom()", 3, 4);
 
@@ -5677,7 +5539,7 @@ BUILTIN_FUNCTION(os_recvfrom)
         return result;
 }
 
-BUILTIN_FUNCTION(os_sendto)
+TY_BUILTIN_RAW(os_sendto, "os.sendto(sock: Int, data: Any, flags: Int, addr: ?Blob) -> Int")
 {
         ASSERT_ARGC("os.sendto()", 3, 4);
 
@@ -5718,7 +5580,13 @@ BUILTIN_FUNCTION(os_sendto)
         return INTEGER(ret);
 }
 
-BUILTIN_FUNCTION(os_poll)
+TY_BUILTIN_RAW(os_poll,
+        "os.poll(pollfds: [Int | (Int, Int)], timeout: Float | Int | nil = nil ) -> Ok[[(Int, Int)]] | Err[Int]",
+        "os.poll[T](pollfds: [Int | (Int, Int) | (Int, Int, T)], timeout: Float | Int | nil = nil ) -> Ok[[(Int, Int) | (Int, Int, T)]] | Err[Int]",
+        "os.poll[T](pollfds-in: Iterable[(Int, Int, T)], pollfds-out: [(Int, Int, T)], timeout: Float | Int | nil ) -> Int",
+        "os.poll(pollfds-in: Iterable[Int | (Int, Int)], pollfds-out: [(Int, Int)], timeout: Float | Int | nil ) -> Int",
+        "os.poll[T](pollfds-in: Iterable[Int | (Int, Int) | (Int, Int, T)], pollfds-out: [(Int, Int) | (Int, Int, T)], timeout: Float | Int | nil ) -> Int"
+)
 {
         ASSERT_ARGC("os.poll()", 1, 2, 3);
 
@@ -5827,18 +5695,12 @@ BUILTIN_FUNCTION(os_poll)
 }
 
 #ifdef __linux__
-BUILTIN_FUNCTION(os_epoll_create)
+TY_BUILTIN(os_epoll_create, "os.epoll_create(flags: Int) -> Int")
 {
-        ASSERT_ARGC("os.epoll_create()", 1);
-
-        Value flags = ARG(0);
-        if (flags.type != VALUE_INTEGER)
-                zP("the argument to os.epoll_create() must be an integer");
-
-        return INTEGER(epoll_create1(flags.z));
+        return INTEGER(epoll_create1(flags));
 }
 
-BUILTIN_FUNCTION(os_epoll_ctl)
+TY_BUILTIN_RAW(os_epoll_ctl, "os.epoll_ctl(epfd: Int, op: Int, fd: Int, events: Int) -> Int")
 {
         ASSERT_ARGC("os.epoll_ctl()", 4);
 
@@ -5866,7 +5728,7 @@ BUILTIN_FUNCTION(os_epoll_ctl)
         return INTEGER(epoll_ctl(efd.z, op.z, fd.z, &ev));
 }
 
-BUILTIN_FUNCTION(os_epoll_wait)
+TY_BUILTIN_RAW(os_epoll_wait, "os.epoll_wait(epfd: Int, timeout: Int) -> Array[(Int, Int)] | nil")
 {
         ASSERT_ARGC("os.epoll_wait()", 2);
 
@@ -5905,7 +5767,7 @@ BUILTIN_FUNCTION(os_epoll_wait)
         return ARRAY(result);
 }
 
-BUILTIN_FUNCTION(os_eventfd)
+TY_BUILTIN_RAW(os_eventfd, "os.eventfd(initval: Int, flags: ?Int) -> Int")
 {
         ASSERT_ARGC("os.eventfd()", 1, 2);
 
@@ -5915,7 +5777,7 @@ BUILTIN_FUNCTION(os_eventfd)
         return INTEGER(eventfd(initval, flags));
 }
 
-BUILTIN_FUNCTION(os_inotify_init)
+TY_BUILTIN_RAW(os_inotify_init, "os.inotify_init(flags: ?Int) -> Int")
 {
         ASSERT_ARGC("os.inotify_init()", 0, 1);
 
@@ -5924,7 +5786,9 @@ BUILTIN_FUNCTION(os_inotify_init)
         return INTEGER(inotify_init1(flags));
 }
 
-BUILTIN_FUNCTION(os_inotify_add_watch)
+TY_BUILTIN_RAW(os_inotify_add_watch,
+        "os.inotify_add_watch(fd: Int, path: PathLike, mask: Int) -> Int"
+)
 {
         ASSERT_ARGC("os.inotify_add_watch()", 3);
 
@@ -5934,17 +5798,12 @@ BUILTIN_FUNCTION(os_inotify_add_watch)
         return INTEGER(inotify_add_watch(fd, PATH_ARG(1), mask));
 }
 
-BUILTIN_FUNCTION(os_inotify_rm_watch)
+TY_BUILTIN(os_inotify_rm_watch, "os.inotify_rm_watch(fd: Int, wd: Int) -> Int")
 {
-        ASSERT_ARGC("os.inotify_rm_watch()", 2);
-
-        int fd = INT_ARG(0);
-        int wd = INT_ARG(1);
-
         return INTEGER(inotify_rm_watch(fd, wd));
 }
 
-BUILTIN_FUNCTION(os_signalfd)
+TY_BUILTIN_RAW(os_signalfd, "os.signalfd(fd: Int, mask: _, flags: ?Int) -> Int")
 {
         ASSERT_ARGC("os.signalfd()", 2, 3);
 
@@ -5958,7 +5817,7 @@ BUILTIN_FUNCTION(os_signalfd)
         return INTEGER(signalfd(fd, set.ptr, flags));
 }
 
-BUILTIN_FUNCTION(os_timerfd_create)
+TY_BUILTIN_RAW(os_timerfd_create, "os.timerfd_create(clockid: Int, flags: ?Int) -> Int")
 {
         ASSERT_ARGC("os.timerfd_create()", 1, 2);
 
@@ -5968,7 +5827,9 @@ BUILTIN_FUNCTION(os_timerfd_create)
         return INTEGER(timerfd_create(clockid, flags));
 }
 
-BUILTIN_FUNCTION(os_timerfd_settime)
+TY_BUILTIN_RAW(os_timerfd_settime,
+        "os.timerfd_settime(fd: Int, flags: Int, initial: Float | Int, interval: ?Float | ?Int) -> Int"
+)
 {
         ASSERT_ARGC("os.timerfd_settime()", 3, 4);
 
@@ -6012,7 +5873,7 @@ BUILTIN_FUNCTION(os_timerfd_settime)
         return INTEGER(timerfd_settime(fd, flags, &its, NULL));
 }
 
-BUILTIN_FUNCTION(os_timerfd_gettime)
+TY_BUILTIN_RAW(os_timerfd_gettime, "os.timerfd_gettime(fd: Int) -> (Float, Float) | nil")
 {
         ASSERT_ARGC("os.timerfd_gettime()", 1);
 
@@ -6035,7 +5896,7 @@ BUILTIN_FUNCTION(os_timerfd_gettime)
 }
 #endif
 
-BUILTIN_FUNCTION(os_wait)
+TY_BUILTIN_RAW(os_wait, "os.wait(pid: Int = -1, options: Int = 0) -> (Int, Int) | nil")
 {
         ASSERT_ARGC("os.wait()", 0, 1, 2);
 #ifdef _WIN32
@@ -6106,7 +5967,7 @@ os_rusage_value(Ty *ty, struct rusage const *usage)
 }
 #endif
 
-BUILTIN_FUNCTION(os_wait4)
+TY_BUILTIN_RAW(os_wait4, "os.wait4(pid: Int = -1, options: Int = 0) -> Wait4Result | nil")
 {
         ASSERT_ARGC("os.wait4()", 0, 1, 2);
 #ifdef _WIN32
@@ -6149,7 +6010,7 @@ BUILTIN_FUNCTION(os_wait4)
 #endif
 }
 
-BUILTIN_FUNCTION(os_getrlimit)
+TY_BUILTIN_RAW(os_getrlimit, "os.getrlimit(resource: Int) -> (Int, Int)")
 {
         ASSERT_ARGC("os.getrlimit()", 1);
 #ifdef _WIN32
@@ -6168,7 +6029,7 @@ BUILTIN_FUNCTION(os_getrlimit)
 #endif
 }
 
-BUILTIN_FUNCTION(os_setrlimit)
+TY_BUILTIN_RAW(os_setrlimit, "os.setrlimit(resource: Int, limit: Int | (Int, Int)) -> nil")
 {
         ASSERT_ARGC("os.setrlimit()", 2);
 #ifdef _WIN32
@@ -6189,15 +6050,11 @@ BUILTIN_FUNCTION(os_setrlimit)
 
 #ifdef _WIN32
 #define WAITMACRO(name) \
-        Value \
-        builtin_os_ ## name(Ty *ty, int argc, Value *kwargs) \
         { \
                 NOT_ON_WINDOWS("os." #name); \
         }
 #else
 #define WAITMACRO(name)                                                           \
-        Value                                                                     \
-        builtin_os_ ## name(Ty *ty, int argc, Value *kwargs)                      \
         {                                                                         \
                 ASSERT_ARGC("os." #name, 1);                                      \
                                                                                   \
@@ -6211,44 +6068,44 @@ BUILTIN_FUNCTION(os_setrlimit)
         }
 #endif
 
+TY_BUILTIN_RAW(os_WIFEXITED, "os.WIFEXITED(status: Int) -> Int")
 WAITMACRO(WIFEXITED)
+TY_BUILTIN_RAW(os_WEXITSTATUS, "os.WEXITSTATUS(status: Int) -> Int")
 WAITMACRO(WEXITSTATUS)
+TY_BUILTIN_RAW(os_WIFSIGNALED, "os.WIFSIGNALED(status: Int) -> Int")
 WAITMACRO(WIFSIGNALED)
+TY_BUILTIN_RAW(os_WTERMSIG, "os.WTERMSIG(status: Int) -> Int")
 WAITMACRO(WTERMSIG)
+TY_BUILTIN_RAW(os_WIFSTOPPED, "os.WIFSTOPPED(status: Int) -> Int")
 WAITMACRO(WIFSTOPPED)
+TY_BUILTIN_RAW(os_WSTOPSIG, "os.WSTOPSIG(status: Int) -> Int")
 WAITMACRO(WSTOPSIG)
 #ifdef WIFCONTINUED
+TY_BUILTIN_RAW(os_WIFCONTINUED, "os.WIFCONTINUED(status: Int) -> Int")
 WAITMACRO(WIFCONTINUED)
 #endif
 #ifdef WCOREDUMP
+TY_BUILTIN_RAW(os_WCOREDUMP, "os.WCOREDUMP(status: Int) -> Int")
 WAITMACRO(WCOREDUMP)
 #endif
 
 #ifdef _WIN32
 #define GETID(name) \
-        Value \
-        builtin_os_ ## name (Ty *ty, int argc, Value *kwargs) \
         { \
                 NOT_ON_WINDOWS("os." #name); \
         }
 #define SETID(name) \
-        Value \
-        builtin_os_ ## name (Ty *ty, int argc, Value *kwargs) \
         { \
                 NOT_ON_WINDOWS("os." #name); \
         }
 #else
 #define GETID(name) \
-        Value \
-        builtin_os_ ## name (Ty *ty, int argc, Value *kwargs) \
         { \
                 ASSERT_ARGC("os." #name, 0); \
                 return INTEGER(name()); \
         }
 
 #define SETID(name) \
-        Value \
-        builtin_os_ ## name (Ty *ty, int argc, Value *kwargs) \
         { \
                 ASSERT_ARGC("os." #name, 1); \
                 Value id = ARG(0); \
@@ -6258,24 +6115,34 @@ WAITMACRO(WCOREDUMP)
         }
 #endif
 
+TY_BUILTIN_RAW(os_getpid, "os.getpid() -> Int")
 GETID(getpid)
+TY_BUILTIN_RAW(os_getppid, "os.getppid() -> Int")
 GETID(getppid)
+TY_BUILTIN_RAW(os_getuid, "os.getuid() -> Int")
 GETID(getuid)
+TY_BUILTIN_RAW(os_geteuid, "os.geteuid() -> Int")
 GETID(geteuid)
+TY_BUILTIN_RAW(os_getgid, "os.getgid() -> Int")
 GETID(getgid)
+TY_BUILTIN_RAW(os_getegid, "os.getegid() -> Int")
 GETID(getegid)
+TY_BUILTIN_RAW(os_setuid, "os.setuid(id: Int) -> Int")
 SETID(setuid)
+TY_BUILTIN_RAW(os_seteuid, "os.seteuid(id: Int) -> Int")
 SETID(seteuid)
+TY_BUILTIN_RAW(os_setgid, "os.setgid(id: Int) -> Int")
 SETID(setgid)
+TY_BUILTIN_RAW(os_setegid, "os.setegid(id: Int) -> Int")
 SETID(setegid)
 
-noreturn BUILTIN_FUNCTION(os_exit)
+noreturn TY_BUILTIN_RAW(os_exit, "os.exit(status: Int) -> _")
 {
         ASSERT_ARGC("os.exit()", 1);
         exit(INT_ARG(0));
 }
 
-BUILTIN_FUNCTION(os_pause)
+TY_BUILTIN_RAW(os_pause, "os.pause() -> Int")
 {
         ASSERT_ARGC("os.pause()", 0);
 #ifdef _WIN32
@@ -6285,7 +6152,7 @@ BUILTIN_FUNCTION(os_pause)
 #endif
 }
 
-BUILTIN_FUNCTION(os_exec)
+TY_BUILTIN_RAW(os_exec, "os.exec(argv: Array[String]) -> Int")
 {
         ASSERT_ARGC("os.exec()", 1);
 
@@ -6313,7 +6180,10 @@ BUILTIN_FUNCTION(os_exec)
         return INTEGER(execvp(v_0(argv), vv(argv)));
 }
 
-BUILTIN_FUNCTION(os_signal)
+TY_BUILTIN_RAW(os_signal,
+        "os.signal(sig: Int) -> Function | Int | nil",
+        "os.signal(sig: Int, handler: Function | Int | nil) -> Int"
+)
 {
         ASSERT_ARGC("os.signal()", 1, 2);
 #ifdef _WIN32
@@ -6394,7 +6264,10 @@ BUILTIN_FUNCTION(os_signal)
 #endif
 }
 
-BUILTIN_FUNCTION(os_sigprocmask)
+TY_BUILTIN_RAW(os_sigprocmask,
+        "os.sigprocmask() -> Ptr[Any]",
+        "os.sigprocmask(how: Int, set: [Int] | Dict[Int, Any] | IntoPtr[Any] | nil) -> Ptr[Any]"
+)
 {
         ASSERT_ARGC("os.sigprocmask()", 0, 2);
 #ifdef _WIN32
@@ -6421,7 +6294,7 @@ BUILTIN_FUNCTION(os_sigprocmask)
 #endif
 }
 
-BUILTIN_FUNCTION(os_sigpending)
+TY_BUILTIN_RAW(os_sigpending, "os.sigpending() -> Ptr[Any]")
 {
         ASSERT_ARGC("os.sigpending()", 0);
 #ifdef _WIN32
@@ -6439,7 +6312,9 @@ BUILTIN_FUNCTION(os_sigpending)
 #endif
 }
 
-BUILTIN_FUNCTION(os_sigsuspend)
+TY_BUILTIN_RAW(os_sigsuspend,
+        "os.sigsuspend(set: [Int] | Dict[Int, Any] | IntoPtr[Any] | nil) -> nil"
+)
 {
         ASSERT_ARGC("os.sigsuspend()", 1);
 #ifdef _WIN32
@@ -6460,7 +6335,9 @@ BUILTIN_FUNCTION(os_sigsuspend)
 #endif
 }
 
-BUILTIN_FUNCTION(os_sigwaitinfo)
+TY_BUILTIN_RAW(os_sigwaitinfo,
+        "os.sigwaitinfo(set: [Int] | Dict[Int, Any] | IntoPtr[Any] | nil, timeout: Int | Float | {sec: Int, nsec: Int} | nil = nil) -> {signo: Int, code: Int, errno: Int, pid: Int, uid: Int, status: Int, utime: Int, stime: Int, fd: Int, value: Int, addr: Int, band: Int} | nil"
+)
 {
         ASSERT_ARGC("os.sigwaitinfo()", 1, 2);
 #if !defined(__linux__)
@@ -6539,7 +6416,7 @@ BUILTIN_FUNCTION(os_sigwaitinfo)
 #endif
 }
 
-BUILTIN_FUNCTION(os_sigwait)
+TY_BUILTIN_RAW(os_sigwait, "os.sigwait(set: [Int] | Dict[Int, Any] | IntoPtr[Any] | nil) -> Int")
 {
         ASSERT_ARGC("os.sigwait()", 1);
 #ifdef _WIN32
@@ -6561,7 +6438,9 @@ BUILTIN_FUNCTION(os_sigwait)
 #endif
 }
 
-BUILTIN_FUNCTION(os_sigset)
+TY_BUILTIN_RAW(os_sigset,
+        "os.sigset(set: [Int] | Dict[Int, Any] | IntoPtr[Any] | nil = nil) -> Ptr[Any]"
+)
 {
         ASSERT_ARGC("os.sigset()", 0, 1);
 #ifdef _WIN32
@@ -6579,7 +6458,7 @@ BUILTIN_FUNCTION(os_sigset)
 #endif
 }
 
-BUILTIN_FUNCTION(os_sigemptyset)
+TY_BUILTIN_RAW(os_sigemptyset, "os.sigemptyset(set: Ptr[Any]) -> Ptr[Any]")
 {
         ASSERT_ARGC("os.sigemptyset()", 1);
 #ifdef _WIN32
@@ -6590,7 +6469,7 @@ BUILTIN_FUNCTION(os_sigemptyset)
 #endif
 }
 
-BUILTIN_FUNCTION(os_sigfillset)
+TY_BUILTIN_RAW(os_sigfillset, "os.sigfillset(set: Ptr[Any]) -> Ptr[Any]")
 {
         ASSERT_ARGC("os.sigfillset()", 1);
 #ifdef _WIN32
@@ -6601,7 +6480,7 @@ BUILTIN_FUNCTION(os_sigfillset)
 #endif
 }
 
-BUILTIN_FUNCTION(os_sigaddset)
+TY_BUILTIN_RAW(os_sigaddset, "os.sigaddset(set: Ptr[Any], sig: Int) -> Ptr[Any]")
 {
         ASSERT_ARGC("os.sigaddset()", 2);
 #ifdef _WIN32
@@ -6619,7 +6498,7 @@ BUILTIN_FUNCTION(os_sigaddset)
 #endif
 }
 
-BUILTIN_FUNCTION(os_sigdelset)
+TY_BUILTIN_RAW(os_sigdelset, "os.sigdelset(set: Ptr[Any], sig: Int) -> Ptr[Any]")
 {
         ASSERT_ARGC("os.sigdelset()", 2);
 #ifdef _WIN32
@@ -6637,7 +6516,7 @@ BUILTIN_FUNCTION(os_sigdelset)
 #endif
 }
 
-BUILTIN_FUNCTION(os_sigismember)
+TY_BUILTIN_RAW(os_sigismember, "os.sigismember(set: Ptr[Any], sig: Int) -> Bool")
 {
         ASSERT_ARGC("os.sigismember()", 2);
 #ifdef _WIN32
@@ -6650,7 +6529,7 @@ BUILTIN_FUNCTION(os_sigismember)
 #endif
 }
 
-BUILTIN_FUNCTION(os_signame)
+TY_BUILTIN_RAW(os_signame, "os.signame(sig: Int) -> String")
 {
         ASSERT_ARGC("os.signame()", 1);
 #ifdef _WIN32
@@ -6670,7 +6549,7 @@ BUILTIN_FUNCTION(os_signame)
 #endif
 }
 
-BUILTIN_FUNCTION(os_strsignal)
+TY_BUILTIN_RAW(os_strsignal, "os.strsignal(sig: Int) -> String | nil")
 {
         ASSERT_ARGC("os.strsignal()", 1);
 #ifdef _WIN32
@@ -6682,7 +6561,7 @@ BUILTIN_FUNCTION(os_strsignal)
 #endif
 }
 
-BUILTIN_FUNCTION(os_kill)
+TY_BUILTIN_RAW(os_kill, "os.kill(pid: Int, sig: Int) -> Int")
 {
         ASSERT_ARGC("os.kill()", 2);
 
@@ -6700,10 +6579,9 @@ BUILTIN_FUNCTION(os_kill)
 #endif
 }
 
-BUILTIN_FUNCTION(os_raise)
+TY_BUILTIN(os_raise, "os.raise(sig: Int) -> Int")
 {
-        ASSERT_ARGC("os.raise()", 1);
-        return INTEGER(raise(INT_ARG(0)));
+        return INTEGER(raise(sig));
 }
 
 static Value
@@ -6722,7 +6600,9 @@ timespec_seconds(struct timespec const *ts)
 }
 
 #if !defined(__APPLE__)
-BUILTIN_FUNCTION(os_sleep)
+TY_BUILTIN_RAW(os_sleep,
+        "os.sleep(duration: Int | Float | {sec: Int, nsec: Int} | nil = nil, abs: Bool = false, clock: ?Int = nil) -> {sec: Int, nsec: Int} | nil"
+)
 {
         ASSERT_ARGC("os.sleep()", 0, 1);
 
@@ -6772,7 +6652,9 @@ BUILTIN_FUNCTION(os_sleep)
         }
 }
 #else
-BUILTIN_FUNCTION(os_sleep)
+TY_BUILTIN_RAW(os_sleep,
+        "os.sleep(duration: Int | Float | {sec: Int, nsec: Int} | nil = nil, abs: Bool = false, clock: ?Int = nil) -> {sec: Int, nsec: Int} | nil"
+)
 {
         ASSERT_ARGC("os.sleep()", 1);
 
@@ -6823,14 +6705,14 @@ microsleep(i64 usec)
 }
 
 // https://stackoverflow.com/questions/5801813/c-usleep-is-obsolete-workarounds-for-windows-mingw
-BUILTIN_FUNCTION(os_usleep)
+TY_BUILTIN_RAW(os_usleep, "os.usleep(usec: Int | Float | {sec: Int, nsec: Int} | nil) -> Int")
 {
         ASSERT_ARGC("os.usleep()", 1);
         return INTEGER(microsleep(USEC_ARG(0)));
 }
 
 #ifdef _WIN32
-BUILTIN_FUNCTION(os_listdir)
+TY_BUILTIN_RAW(os_listdir, "os.listdir(path: PathLike) -> Array[String]")
 {
         ASSERT_ARGC("os.listdir()", 1);
         Value dir = PATH_ARGx(0);
@@ -6870,7 +6752,7 @@ BUILTIN_FUNCTION(os_listdir)
         return vFiles;
 }
 #else
-BUILTIN_FUNCTION(os_listdir)
+TY_BUILTIN_RAW(os_listdir, "os.listdir(path: PathLike) -> Array[String]")
 {
         ASSERT_ARGC("os.listdir()", 1);
 
@@ -6926,14 +6808,11 @@ resolve_path(char const *in, char *out)
 #endif
 }
 
-BUILTIN_FUNCTION(os_realpath)
+TY_BUILTIN(os_realpath, "os.realpath(path: PathLike) -> String | nil")
 {
-        ASSERT_ARGC("os.realpath()", 1);
-
         char out[PATH_MAX + 1];
-        char *resolved = resolve_path(PATH_ARG(0), out);
 
-        return (resolved != NULL) ? vSsz(out) : NIL;
+        return (resolve_path(path, out) != NULL) ? vSsz(out) : NIL;
 }
 
 static int
@@ -6975,13 +6854,8 @@ truncate_file(const char* filename, usize size)
 #endif
 }
 
-BUILTIN_FUNCTION(os_truncate)
+TY_BUILTIN(os_truncate, "os.truncate(path: PathLike, size: Int) -> Int")
 {
-        ASSERT_ARGC("os.truncate()", 2);
-
-        char const *path = PATH_ARG(0);
-        i64 size = INT_ARG(1);
-
         return INTEGER(truncate_file(path, size));
 }
 
@@ -7033,7 +6907,7 @@ xstatv(Ty *ty, int ret, StatStruct const *st)
 }
 
 
-BUILTIN_FUNCTION(os_fstat)
+TY_BUILTIN_RAW(os_fstat, "os.fstat(fd: Int) -> Stat | nil")
 {
         ASSERT_ARGC("os.fstat()", 1);
         StatStruct s;
@@ -7044,7 +6918,7 @@ BUILTIN_FUNCTION(os_fstat)
 #endif
 }
 
-BUILTIN_FUNCTION(os_lstat)
+TY_BUILTIN_RAW(os_lstat, "os.lstat(path: PathLike) -> Stat | nil")
 {
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.lstat()");
@@ -7059,7 +6933,7 @@ BUILTIN_FUNCTION(os_lstat)
 #endif
 }
 
-BUILTIN_FUNCTION(os_stat)
+TY_BUILTIN_RAW(os_stat, "os.stat(path: PathLike) -> Stat | nil")
 {
         ASSERT_ARGC("os.stat()", 1);
         StatStruct s;
@@ -7128,7 +7002,7 @@ statfsv(Ty *ty, struct statfs const *s)
         return result;
 }
 
-BUILTIN_FUNCTION(os_statfs)
+TY_BUILTIN_RAW(os_statfs, "os.statfs(file: Int | PathLike) -> Statfs")
 {
         ASSERT_ARGC("os.statfs()", 1);
 
@@ -7172,7 +7046,7 @@ statvfsv(Ty *ty, struct statvfs const *s)
         );
 }
 
-BUILTIN_FUNCTION(os_statvfs)
+TY_BUILTIN_RAW(os_statvfs, "os.statvfs(file: Int | PathLike) -> Statvfs")
 {
         ASSERT_ARGC("os.statvfs()", 1);
 
@@ -7237,15 +7111,15 @@ lock_file(int fd, int operation)
 }
 
 
-BUILTIN_FUNCTION(os_flock)
+TY_BUILTIN(os_flock, "os.flock(fd: Int, op: Int) -> Int")
 {
-        ASSERT_ARGC("os.flock()", 2);
-        int fd = INT_ARG(0);
-        int op = INT_ARG(1);
         return INTEGER(lock_file(fd, op));
 }
 
-BUILTIN_FUNCTION(os_fcntl)
+TY_BUILTIN_RAW(os_fcntl,
+        "/** file control. see fcntl(2) for details. */",
+        "os.fcntl(fd: Int, cmd: Int, arg: ?Int = nil) -> Int"
+)
 {
         ASSERT_ARGC("os.fcntl()", 2, 3);
 #ifdef _WIN32
@@ -7278,7 +7152,10 @@ BUILTIN_FUNCTION(os_fcntl)
 #endif
 }
 
-BUILTIN_FUNCTION(os_ioctl)
+TY_BUILTIN_RAW(os_ioctl,
+        "/** device control. see ioctl(2) for details. */",
+        "os.ioctl(fd: Int, req: Int, arg: ?IntoPtr[Any] = nil) -> Int"
+)
 {
         ASSERT_ARGC("os.ioctl()", 2, 3);
 #ifdef _WIN32
@@ -7301,7 +7178,7 @@ BUILTIN_FUNCTION(os_ioctl)
 #endif
 }
 
-BUILTIN_FUNCTION(os_cpu_count)
+TY_BUILTIN_RAW(os_cpu_count, "os.ncpu() -> Int")
 {
         int nCPU;
 #ifdef _WIN32
@@ -7326,13 +7203,12 @@ BUILTIN_FUNCTION(os_cpu_count)
         return (nCPU <= 0) ? NIL : INTEGER(nCPU);
 }
 
-BUILTIN_FUNCTION(os_isatty)
+TY_BUILTIN(os_isatty, "os.isatty(fd: Int) -> Bool")
 {
-        ASSERT_ARGC("os.isatty()", 1);
-        return INTEGER(isatty(INT_ARG(0)));
+        return BOOLEAN(isatty(fd));
 }
 
-BUILTIN_FUNCTION(os_ttyname)
+TY_BUILTIN_RAW(os_ttyname, "os.ttyname(fd: Int) -> String | nil")
 {
         ASSERT_ARGC("os.ttyname()", 1);
         int fd = INT_ARG(0);
@@ -7345,7 +7221,7 @@ BUILTIN_FUNCTION(os_ttyname)
         return vSsz(name);
 }
 
-BUILTIN_FUNCTION(os_terminal_size)
+TY_BUILTIN_RAW(os_terminal_size, "os.terminalSize(fd: ?Int) -> {rows: Int, cols: Int} | nil")
 {
         ASSERT_ARGC("os.terminal-size()", 0, 1);
 
@@ -7366,7 +7242,9 @@ BUILTIN_FUNCTION(os_terminal_size)
 }
 
 
-BUILTIN_FUNCTION(termios_tcgetattr)
+TY_BUILTIN_RAW(termios_tcgetattr,
+        "termios.tcgetattr(fd: Int) -> {iflag: Int, oflag: Int, cflag: Int, lflag: Int, ispeed: Int, ospeed: Int, cc: Blob} | nil"
+)
 {
         ASSERT_ARGC("termios.tcgetattr()", 1);
 #ifdef _WIN32
@@ -7401,7 +7279,9 @@ BUILTIN_FUNCTION(termios_tcgetattr)
 #endif
 }
 
-BUILTIN_FUNCTION(termios_tcsetattr)
+TY_BUILTIN_RAW(termios_tcsetattr,
+        "termios.tcsetattr(fd: Int, actions: Int, attrs: {iflag: Int, oflag: Int, cflag: Int, lflag: Int, ispeed: Int, ospeed: Int, cc: Blob}) -> Bool"
+)
 {
         ASSERT_ARGC("termios.tcsetattr()", 3);
 #ifdef _WIN32
@@ -7447,7 +7327,7 @@ BUILTIN_FUNCTION(termios_tcsetattr)
 #endif
 }
 
-BUILTIN_FUNCTION(termios_tcgetsid)
+TY_BUILTIN_RAW(termios_tcgetsid, "termios.tcgetsid(fd: Int) -> Int")
 {
         ASSERT_ARGC("termios.tcgetsid()", 1);
 #ifdef _WIN32
@@ -7457,7 +7337,7 @@ BUILTIN_FUNCTION(termios_tcgetsid)
 #endif
 }
 
-BUILTIN_FUNCTION(termios_tcgetpgrp)
+TY_BUILTIN_RAW(termios_tcgetpgrp, "termios.tcgetpgrp(fd: Int) -> Int")
 {
         ASSERT_ARGC("termios.tcgetpgrp()", 1);
 #ifdef _WIN32
@@ -7467,7 +7347,7 @@ BUILTIN_FUNCTION(termios_tcgetpgrp)
 #endif
 }
 
-BUILTIN_FUNCTION(termios_tcsetpgrp)
+TY_BUILTIN_RAW(termios_tcsetpgrp, "termios.tcsetpgrp(fd: Int, pgrp: Int) -> Int")
 {
         ASSERT_ARGC("termios.tcsetpgrp()", 2);
 #ifdef _WIN32
@@ -7479,7 +7359,7 @@ BUILTIN_FUNCTION(termios_tcsetpgrp)
 #endif
 }
 
-BUILTIN_FUNCTION(termios_tcsendbreak)
+TY_BUILTIN_RAW(termios_tcsendbreak, "termios.tcsendbreak(fd: Int, duration: Int) -> Int")
 {
         ASSERT_ARGC("termios.tcsendbreak()", 2);
 #ifdef _WIN32
@@ -7491,7 +7371,7 @@ BUILTIN_FUNCTION(termios_tcsendbreak)
 #endif
 }
 
-BUILTIN_FUNCTION(termios_tcdrain)
+TY_BUILTIN_RAW(termios_tcdrain, "termios.tcdrain(fd: Int) -> Int")
 {
         ASSERT_ARGC("termios.tcdrain()", 1);
 #ifdef _WIN32
@@ -7502,7 +7382,7 @@ BUILTIN_FUNCTION(termios_tcdrain)
 #endif
 }
 
-BUILTIN_FUNCTION(termios_tcflush)
+TY_BUILTIN_RAW(termios_tcflush, "termios.tcflush(fd: Int, queue: Int) -> Int")
 {
         ASSERT_ARGC("termios.tcflush()", 2);
 #ifdef _WIN32
@@ -7514,7 +7394,7 @@ BUILTIN_FUNCTION(termios_tcflush)
 #endif
 }
 
-BUILTIN_FUNCTION(termios_tcflow)
+TY_BUILTIN_RAW(termios_tcflow, "termios.tcflow(fd: Int, action: Int) -> Int")
 {
         ASSERT_ARGC("termios.tcflow()", 2);
 #ifdef _WIN32
@@ -7526,13 +7406,16 @@ BUILTIN_FUNCTION(termios_tcflow)
 #endif
 }
 
-BUILTIN_FUNCTION(errno_get)
+TY_BUILTIN_RAW(errno_get, "errno.get() -> Int")
 {
         ASSERT_ARGC("errno.get()", 0);
         return INTEGER(errno);
 }
 
-BUILTIN_FUNCTION(errno_str)
+TY_BUILTIN_RAW(errno_str,
+        "errno.str(err: Int) -> String",
+        "errno.str() -> String"
+)
 {
         ASSERT_ARGC_2("ss(errno)()", 0, 1);
 
@@ -7551,7 +7434,7 @@ BUILTIN_FUNCTION(errno_str)
         return vSs(s, strlen(s));
 }
 
-BUILTIN_FUNCTION(time_gettime)
+TY_BUILTIN_RAW(time_gettime, "time.gettime(clock: ?time::ClockID) -> time::Timespec")
 {
         ASSERT_ARGC_2("time.gettime()", 0, 1);
 
@@ -7571,7 +7454,7 @@ BUILTIN_FUNCTION(time_gettime)
         return timespec_tuple(ty, &t);
 }
 
-BUILTIN_FUNCTION(time_now)
+TY_BUILTIN_RAW(time_now, "time.now(clock: ?time::ClockID) -> Float")
 {
         struct timespec t;
 #ifdef _WIN32
@@ -7590,7 +7473,7 @@ BUILTIN_FUNCTION(time_now)
         return REAL(nsec / 1.0e9);
 }
 
-BUILTIN_FUNCTION(time_utc)
+TY_BUILTIN_RAW(time_utc, "time.utc() -> Float")
 {
         ASSERT_ARGC("time.utc()", 0);
 
@@ -7603,7 +7486,7 @@ BUILTIN_FUNCTION(time_utc)
         return REAL(nsec / 1.0e9);
 }
 
-BUILTIN_FUNCTION(time_utime)
+TY_BUILTIN_RAW(time_utime, "time.utime(clock: ?time::ClockID) -> Int")
 {
         struct timespec t;
 #ifdef _WIN32
@@ -7627,7 +7510,7 @@ BUILTIN_FUNCTION(time_utime)
         return INTEGER((u64)t.tv_sec * 1000 * 1000 + (u64)t.tv_nsec / 1000);
 }
 
-BUILTIN_FUNCTION(time_localtime)
+TY_BUILTIN_RAW(time_localtime, "time.localtime(time: ?Int) -> time::Tm")
 {
         ASSERT_ARGC_2("time.localtime()", 0, 1);
 
@@ -8044,7 +7927,7 @@ tz_offset_at(
 #endif
 }
 
-BUILTIN_FUNCTION(time_zonetime)
+TY_BUILTIN_RAW(time_zonetime, "time.zonetime(time: Int, zone: String) -> time::Tm | nil")
 {
         ASSERT_ARGC("time.zonetime()", 2);
 
@@ -8075,7 +7958,7 @@ BUILTIN_FUNCTION(time_zonetime)
         );
 }
 
-BUILTIN_FUNCTION(time_gmtime)
+TY_BUILTIN_RAW(time_gmtime, "time.gmtime(time: ?Int) -> time::Tm")
 {
         ASSERT_ARGC_2("time.gmtime()", 0, 1);
 
@@ -8107,7 +7990,7 @@ BUILTIN_FUNCTION(time_gmtime)
         );
 }
 
-BUILTIN_FUNCTION(time_strftime)
+TY_BUILTIN_RAW(time_strftime, "time.strftime(fmt: String, t: Int | {?sec: Int, ?min: Int, ?hour: Int, ?mday: Int, ?mon: Int, ?year: Int, ?wday: Int, ?yday: Int, ?isdst: Int | Bool, ?gmtoff: Int, ?zone: ?String} | nil = nil) -> String")
 {
         ASSERT_ARGC("time.strftime()", 1, 2);
 
@@ -8160,7 +8043,9 @@ BUILTIN_FUNCTION(time_strftime)
         }
 }
 
-BUILTIN_FUNCTION(time_strptime)
+TY_BUILTIN_RAW(time_strptime,
+        "time.strptime(s: String, fmt: String) -> {sec: Int, min: Int, hour: Int, mday: Int, mon: Int, year: Int, wday: Int, yday: Int, isdst: Bool}"
+)
 {
         ASSERT_ARGC("time.strptime()", 2);
 #ifdef _WIN32
@@ -8202,7 +8087,7 @@ BUILTIN_FUNCTION(time_strptime)
 #endif
 }
 
-BUILTIN_FUNCTION(time_time)
+TY_BUILTIN_RAW(time_time, "time.time(tm: ?time::Tm, utc: Bool = false) -> Int")
 {
         ASSERT_ARGC_2("time.time()", 0, 1);
 
@@ -8247,7 +8132,7 @@ BUILTIN_FUNCTION(time_time)
         );
 }
 
-BUILTIN_FUNCTION(stdio_fileno)
+TY_BUILTIN_RAW(stdio_fileno, "stdio.fileno(fp: ?Ptr[Any]) -> Int")
 {
         ASSERT_ARGC("stdio.fileno()", 1);
 
@@ -8258,7 +8143,7 @@ BUILTIN_FUNCTION(stdio_fileno)
         return INTEGER(fileno(ARG(0).ptr));
 }
 
-BUILTIN_FUNCTION(stdio_fdopen)
+TY_BUILTIN_RAW(stdio_fdopen, "stdio.fdopen(fd: Int, mode: ?String = 'a+') -> Ptr[Any] | nil")
 {
         ASSERT_ARGC_2("stdio.fdopen()", 1, 2);
 
@@ -8284,7 +8169,7 @@ BUILTIN_FUNCTION(stdio_fdopen)
         return PTR(f);
 }
 
-BUILTIN_FUNCTION(stdio_tmpfile)
+TY_BUILTIN_RAW(stdio_tmpfile, "stdio.tmpfile() -> Ptr[Any] | nil")
 {
         ASSERT_ARGC("stdio.tmpfile()", 0);
 
@@ -8293,7 +8178,7 @@ BUILTIN_FUNCTION(stdio_tmpfile)
         return (f == NULL) ? NIL : PTR(f);
 }
 
-BUILTIN_FUNCTION(stdio_fgets)
+TY_BUILTIN_RAW(stdio_fgets, "stdio.fgets(fp: ?Ptr[Any]) -> String | nil")
 {
         ASSERT_ARGC("stdio.fgets()", 1);
 
@@ -8350,7 +8235,7 @@ BUILTIN_FUNCTION(stdio_fgets)
         return s;
 }
 
-BUILTIN_FUNCTION(stdio_read_signed)
+TY_BUILTIN_RAW(stdio_read_signed, "stdio.readSigned(fp: ?Ptr[Any], size: Int = 4) -> Int")
 {
         ASSERT_ARGC_2("stdio.readSigned()", 1, 2);
 
@@ -8389,7 +8274,10 @@ BUILTIN_FUNCTION(stdio_read_signed)
         }
 }
 
-BUILTIN_FUNCTION(stdio_write_signed)
+TY_BUILTIN_RAW(stdio_write_signed,
+        "stdio.writeSigned(fp: ?Ptr[Any], x: Int) -> Bool",
+        "stdio.writeSigned(fp: ?Ptr[Any], size: Int, x: Int) -> Bool"
+)
 {
         ASSERT_ARGC_2("stdio.writeSigned()", 2, 3);
 
@@ -8434,7 +8322,7 @@ BUILTIN_FUNCTION(stdio_write_signed)
         return BOOLEAN(n == 1);
 }
 
-BUILTIN_FUNCTION(stdio_read_unsigned)
+TY_BUILTIN_RAW(stdio_read_unsigned, "stdio.readUnsigned(fp: ?Ptr[Any], size: Int = 4) -> Int")
 {
         ASSERT_ARGC_2("stdio.readUnsigned()", 1, 2);
 
@@ -8463,7 +8351,10 @@ BUILTIN_FUNCTION(stdio_read_unsigned)
         }
 }
 
-BUILTIN_FUNCTION(stdio_write_unsigned)
+TY_BUILTIN_RAW(stdio_write_unsigned,
+        "stdio.writeUnsigned(fp: ?Ptr[Any], x: Int) -> Bool",
+        "stdio.writeUnsigned(fp: ?Ptr[Any], size: Int, x: Int) -> Bool"
+)
 {
         ASSERT_ARGC_2("stdio.writeUnsigned()", 2, 3);
 
@@ -8508,7 +8399,7 @@ BUILTIN_FUNCTION(stdio_write_unsigned)
         return BOOLEAN(n == 1);
 }
 
-BUILTIN_FUNCTION(stdio_read_double)
+TY_BUILTIN_RAW(stdio_read_double, "stdio.readDouble(fp: ?Ptr[Any]) -> Float")
 {
         ASSERT_ARGC("stdio.readDouble()", 1);
 
@@ -8530,7 +8421,7 @@ BUILTIN_FUNCTION(stdio_read_double)
         }
 }
 
-BUILTIN_FUNCTION(stdio_read_float)
+TY_BUILTIN_RAW(stdio_read_float, "stdio.readFloat(fp: ?Ptr[Any]) -> Float")
 {
         ASSERT_ARGC("stdio.readFloat()", 1);
 
@@ -8552,7 +8443,7 @@ BUILTIN_FUNCTION(stdio_read_float)
         }
 }
 
-BUILTIN_FUNCTION(stdio_write_float)
+TY_BUILTIN_RAW(stdio_write_float, "stdio.writeFloat(fp: ?Ptr[Any], x: Float) -> Bool")
 {
         ASSERT_ARGC("stdio.writeFloat()", 2);
 
@@ -8566,7 +8457,7 @@ BUILTIN_FUNCTION(stdio_write_float)
         return BOOLEAN(n > 0);
 }
 
-BUILTIN_FUNCTION(stdio_write_double)
+TY_BUILTIN_RAW(stdio_write_double, "stdio.writeDouble(fp: ?Ptr[Any], x: Float) -> Bool")
 {
         ASSERT_ARGC("stdio.writeDouble()", 2);
 
@@ -8580,7 +8471,9 @@ BUILTIN_FUNCTION(stdio_write_double)
         return BOOLEAN(n > 0);
 }
 
-BUILTIN_FUNCTION(stdio_fread)
+TY_BUILTIN_RAW(stdio_fread,
+        "stdio.fread(fp: ?Ptr[Any], n: Int, buffer: ?Blob = nil) -> _"
+)
 {
         ASSERT_ARGC("stdio.fread()", 2, 3);
 
@@ -8625,7 +8518,7 @@ BUILTIN_FUNCTION(stdio_fread)
         return BLOB(blob);
 }
 
-BUILTIN_FUNCTION(stdio_slurp)
+TY_BUILTIN_RAW(stdio_slurp, "stdio.slurp(fp: ?Ptr[Any]) -> String")
 {
         ASSERT_ARGC("stdio.slurp()", 1);
 
@@ -8649,7 +8542,7 @@ BUILTIN_FUNCTION(stdio_slurp)
         return s;
 }
 
-BUILTIN_FUNCTION(stdio_fgetc)
+TY_BUILTIN_RAW(stdio_fgetc, "stdio.fgetc(fp: ?Ptr[Any]) -> Int")
 {
         ASSERT_ARGC("stdio.fgetc()", 1);
 
@@ -8662,7 +8555,7 @@ BUILTIN_FUNCTION(stdio_fgetc)
         return (c == EOF) ? NIL : INTEGER(c);
 }
 
-BUILTIN_FUNCTION(stdio_fputc)
+TY_BUILTIN_RAW(stdio_fputc, "stdio.fputc(fp: ?Ptr[Any], c: Int) -> Int | nil")
 {
         ASSERT_ARGC("stdio.fputc()", 2);
 
@@ -8676,7 +8569,10 @@ BUILTIN_FUNCTION(stdio_fputc)
         return (c == EOF) ? NIL : INTEGER(c);
 }
 
-BUILTIN_FUNCTION(stdio_fwrite)
+TY_BUILTIN_RAW(stdio_fwrite,
+        "stdio.fwrite(fp: ?Ptr[Any], data: String | Blob | Ptr[Any] | Int) -> Int",
+        "stdio.fwrite(fp: ?Ptr[Any], data: String | Blob | Ptr[Any] | Int, len: Int) -> Int"
+)
 {
         ASSERT_ARGC("stdio.fwrite()", 2, 3);
 
@@ -8723,7 +8619,7 @@ BUILTIN_FUNCTION(stdio_fwrite)
         return INTEGER(ret);
 }
 
-BUILTIN_FUNCTION(stdio_puts)
+TY_BUILTIN_RAW(stdio_puts, "stdio.puts(fp: ?Ptr[Any], s: String | Blob) -> Int | nil")
 {
         ASSERT_ARGC("stdio.puts()", 2);
 
@@ -8759,13 +8655,13 @@ BUILTIN_FUNCTION(stdio_puts)
         return INTEGER(r + 1);
 }
 
-BUILTIN_FUNCTION(stdio_fflush)
+TY_BUILTIN_RAW(stdio_fflush, "stdio.fflush(fp: ?Ptr[Any]) -> Int | nil")
 {
         ASSERT_ARGC("stdio.fflush()", 1);
         return (fflush(PTR_ARG(0)) == EOF) ? NIL : INTEGER(0);
 }
 
-BUILTIN_FUNCTION(stdio_fclose)
+TY_BUILTIN_RAW(stdio_fclose, "stdio.fclose(fp: ?Ptr[Any]) -> Int")
 {
         ASSERT_ARGC("stdio.fclose()", 1);
 
@@ -8776,26 +8672,26 @@ BUILTIN_FUNCTION(stdio_fclose)
         }
 }
 
-BUILTIN_FUNCTION(stdio_clearerr)
+TY_BUILTIN_RAW(stdio_clearerr, "stdio.clearerr(fp: ?Ptr[Any]) -> nil")
 {
         ASSERT_ARGC("stdio.clearerr()", 1);
         clearerr((FILE *)PTR_ARG(0));
         return NIL;
 }
 
-BUILTIN_FUNCTION(stdio_setvbuf)
+TY_BUILTIN_RAW(stdio_setvbuf, "stdio.setvbuf(fp: ?Ptr[Any], mode: Int) -> Int")
 {
         ASSERT_ARGC("stdio.setvbuf()", 2);
         return INTEGER(setvbuf(PTR_ARG(0), NULL, INT_ARG(1), 0));
 }
 
-BUILTIN_FUNCTION(stdio_ftell)
+TY_BUILTIN_RAW(stdio_ftell, "stdio.ftell(fp: ?Ptr[Any]) -> Int")
 {
         ASSERT_ARGC("stdio.ftell()", 1);
         return INTEGER(ftell(PTR_ARG(0)));
 }
 
-BUILTIN_FUNCTION(stdio_fseek)
+TY_BUILTIN_RAW(stdio_fseek, "stdio.fseek(fp: ?Ptr[Any], offset: Int, whence: Int) -> Int")
 {
         ASSERT_ARGC("stdio.fseek()", 3);
 
@@ -8806,7 +8702,7 @@ BUILTIN_FUNCTION(stdio_fseek)
         return INTEGER(fseek(fp, off, whence));
 }
 
-BUILTIN_FUNCTION(object)
+TY_BUILTIN_RAW(object, "object[T](cls: Class[T]) -> T")
 {
         ASSERT_ARGC("object()", 1, 2);
 
@@ -8824,7 +8720,7 @@ BUILTIN_FUNCTION(object)
         return obj;
 }
 
-BUILTIN_FUNCTION(bind)
+TY_BUILTIN_RAW(bind, "bindMethod(f: Any, x: Any) -> _")
 {
         ASSERT_ARGC("bindMethod()", 2);
 
@@ -8852,7 +8748,7 @@ BUILTIN_FUNCTION(bind)
         return f;
 }
 
-BUILTIN_FUNCTION(doc_ref)
+TY_BUILTIN_RAW(doc_ref, "docRef(f: Any) -> _")
 {
         ASSERT_ARGC("docRef()", 1);
 
@@ -8867,7 +8763,7 @@ BUILTIN_FUNCTION(doc_ref)
         }
 }
 
-BUILTIN_FUNCTION(unbind)
+TY_BUILTIN_RAW(unbind, "unbindMethod[T](f: T) -> T | Function")
 {
         ASSERT_ARGC("unbindMethod()", 1);
 
@@ -8880,7 +8776,7 @@ BUILTIN_FUNCTION(unbind)
         }
 }
 
-BUILTIN_FUNCTION(define_method)
+TY_BUILTIN_RAW(define_method, "defineMethod(cls: Class, name: String, f: Function) -> nil")
 {
         ASSERT_ARGC("defineMethod()", 3);
 
@@ -8893,7 +8789,9 @@ BUILTIN_FUNCTION(define_method)
         return NIL;
 }
 
-BUILTIN_FUNCTION(apply)
+TY_BUILTIN_RAW(apply,
+        "apply(f: Any, *args: Any, self: Any = nil, kwargs: Any = nil, collect: Bool = false) -> _"
+)
 {
         char const *_name__ = "apply()";
 
@@ -8925,7 +8823,7 @@ BUILTIN_FUNCTION(apply)
         );
 }
 
-BUILTIN_FUNCTION(type)
+TY_BUILTIN_RAW(type, "type(x: Any) -> _")
 {
         ASSERT_ARGC("type()", 1);
 
@@ -8962,7 +8860,7 @@ BUILTIN_FUNCTION(type)
         return (c > CLASS_TOP) ? CLASS(c) : NIL;
 }
 
-BUILTIN_FUNCTION(class_of)
+TY_BUILTIN_RAW(class_of, "classOf(x: Any) -> Class | nil")
 {
         ASSERT_ARGC("class-of()", 1);
 
@@ -8971,7 +8869,7 @@ BUILTIN_FUNCTION(class_of)
         return (c > CLASS_TOP) ? CLASS(c) : NIL;
 }
 
-BUILTIN_FUNCTION(subclass)
+TY_BUILTIN_RAW(subclass, "subclass?(sub: ?Class, sup: Class) -> Bool")
 {
         ASSERT_ARGC("subclass?()", 2);
 
@@ -8981,7 +8879,7 @@ BUILTIN_FUNCTION(subclass)
         return BOOLEAN(class_is_subclass(ty, sub.class, super.class));
 }
 
-BUILTIN_FUNCTION(members)
+TY_BUILTIN_RAW(members, "members(x: Any) -> _")
 {
         ASSERT_ARGC("members()", 1);
 
@@ -9027,7 +8925,10 @@ BUILTIN_FUNCTION(members)
         return members;
 }
 
-BUILTIN_FUNCTION(member)
+TY_BUILTIN_RAW(member,
+        "member(o: Any, name: String) -> _",
+        "member[T](o: Any, name: String, value: T) -> T"
+)
 {
         ASSERT_ARGC("member()", 2, 3);
 
@@ -9048,7 +8949,7 @@ BUILTIN_FUNCTION(member)
         }
 }
 
-BUILTIN_FUNCTION(finalizer)
+TY_BUILTIN_RAW(finalizer, "setFinalizer(*args: Any) -> nil")
 {
         return NIL;
 }
@@ -9122,7 +9023,7 @@ mdocs(Ty *ty, struct itable const *t, struct array *a)
         }
 }
 
-BUILTIN_FUNCTION(set_doc)
+TY_BUILTIN_RAW(set_doc, "setDoc[T](x: T, name: ?String, proto: ?String, doc: ?String) -> T")
 {
         ASSERT_ARGC("set-doc()", 1);
 
@@ -9160,7 +9061,10 @@ BUILTIN_FUNCTION(set_doc)
         return f;
 }
 
-BUILTIN_FUNCTION(doc)
+TY_BUILTIN_RAW(doc,
+        "doc(c: Class) -> (String, String | nil, [(String, String | nil, String | nil)])",
+        "doc(f: Function) -> (String, String | nil, String | nil) | nil"
+)
 {
         ASSERT_ARGC("doc()", 1, 2);
 
@@ -9212,14 +9116,14 @@ BUILTIN_FUNCTION(doc)
         return vSsz(sym->doc);
 }
 
-BUILTIN_FUNCTION(ty_gc)
+TY_BUILTIN_RAW(ty_gc, "ty.gc() -> nil")
 {
         ASSERT_ARGC("ty.gc()", 0);
         DoGC(ty);
         return NIL;
 }
 
-BUILTIN_FUNCTION(ty_bt)
+TY_BUILTIN_RAW(ty_bt, "ty.bt() -> Array[(Function, String, String | nil, Int | nil, Int | nil)]")
 {
         ASSERT_ARGC("ty.bt()", 0);
 
@@ -9261,7 +9165,7 @@ BUILTIN_FUNCTION(ty_bt)
         return ARRAY(avFrames);
 }
 
-BUILTIN_FUNCTION(ty_trace)
+TY_BUILTIN_RAW(ty_trace, "ty.trace() -> _")
 {
         ASSERT_ARGC("ty.trace()", 0);
 
@@ -9285,7 +9189,7 @@ BUILTIN_FUNCTION(ty_trace)
         return TRACE(clone);
 }
 
-BUILTIN_FUNCTION(ty_stack_ctx)
+TY_BUILTIN_RAW(ty_stack_ctx, "ty.stack-ctx() -> {stack: Int, fp: Int, frames: Int}")
 {
         ASSERT_ARGC("ty.stack-ctx()", 0);
 
@@ -9296,19 +9200,19 @@ BUILTIN_FUNCTION(ty_stack_ctx)
         );
 }
 
-BUILTIN_FUNCTION(ty_unlock)
+TY_BUILTIN_RAW(ty_unlock, "ty.unlock() -> nil")
 {
         UnlockTy();
         return NIL;
 }
 
-BUILTIN_FUNCTION(ty_lock)
+TY_BUILTIN_RAW(ty_lock, "ty.lock() -> nil")
 {
         LockTy();
         return NIL;
 }
 
-BUILTIN_FUNCTION(ty_gensym)
+TY_BUILTIN_RAW(ty_gensym, "ty.gensym() -> String")
 {
         ASSERT_ARGC("ty.gensym()", 0);
         return xSz(gensym(ty));
@@ -9523,7 +9427,7 @@ make_tokens(Ty *ty, TokenVector const *ts)
         return ARRAY(a);
 }
 
-BUILTIN_FUNCTION(ty_disassemble)
+TY_BUILTIN_RAW(ty_disassemble, "ty.disassemble(what: Any) -> String")
 {
         ASSERT_ARGC("ty.disassemble()", 1);
 
@@ -9602,12 +9506,12 @@ BUILTIN_FUNCTION(ty_disassemble)
         return result;
 }
 
-BUILTIN_FUNCTION(ty_coro)
+TY_BUILTIN_RAW(ty_coro, "ty.coro() -> _")
 {
         return TyActiveGenerator(ty);
 }
 
-BUILTIN_FUNCTION(eval)
+TY_BUILTIN_RAW(eval, "ty.eval(expr: Any, scope: ?Ptr[Any] = nil) -> _")
 {
         ASSERT_ARGC("ty.eval()", 1, 2);
 
@@ -9664,7 +9568,7 @@ BUILTIN_FUNCTION(eval)
         return v;
 }
 
-BUILTIN_FUNCTION(ty_text)
+TY_BUILTIN_RAW(ty_text, "ty.text(mod: String) -> String | nil")
 {
         char const *_name__ = "ty.text()";
         CHECK_ARGC(1);
@@ -9675,7 +9579,7 @@ BUILTIN_FUNCTION(ty_text)
         return (source != NULL) ? xSz(source) : NIL;
 }
 
-BUILTIN_FUNCTION(ty_tokens)
+TY_BUILTIN_RAW(ty_tokens, "ty.tokens(mod: String) -> _")
 {
         char const *_name__ = "ty.tokens()";
         CHECK_ARGC(1);
@@ -9690,14 +9594,14 @@ BUILTIN_FUNCTION(ty_tokens)
         return make_tokens(ty, &tokens);
 }
 
-BUILTIN_FUNCTION(ty_scope)
+TY_BUILTIN_RAW(ty_scope, "ty.scope() -> Ptr[Any] | nil")
 {
         ASSERT_ARGC("ty.scope()", 0);
         Scope *scope = TyCompilerState(ty)->macro_scope;
         return (scope == NULL) ? NIL : PTR(scope);
 }
 
-BUILTIN_FUNCTION(ty_ctx)
+TY_BUILTIN_RAW(ty_ctx, "ty.ctx() -> {scope: Ptr[Any] | nil, mod: String, path: String}")
 {
         ASSERT_ARGC("ty.ctx()", 0);
 
@@ -9888,7 +9792,10 @@ ScopeDict(Ty *ty, Scope *scope, bool public_only)
         return DICT(vars);
 }
 
-BUILTIN_FUNCTION(ty_mod_get)
+TY_BUILTIN_RAW(ty_mod_get,
+        "ty/mod.get() -> Module",
+        "ty/mod.get(name: String) -> Module | nil"
+)
 {
         ASSERT_ARGC("ty.mod.get()", 0, 1);
 
@@ -9905,7 +9812,7 @@ BUILTIN_FUNCTION(ty_mod_get)
         return MODULE(mod);
 }
 
-BUILTIN_FUNCTION(ty_mod_load)
+TY_BUILTIN_RAW(ty_mod_load, "ty/mod.load(name: String) -> Module")
 {
         ASSERT_ARGC("ty.mod.load()", 1);
 
@@ -9915,7 +9822,9 @@ BUILTIN_FUNCTION(ty_mod_load)
         return MODULE(mod);
 }
 
-BUILTIN_FUNCTION(ty_mod_compile)
+TY_BUILTIN_RAW(ty_mod_compile,
+        "ty/mod.compile(source: String, parent: ?Module = nil, path: String = '(repl)') -> Module"
+)
 {
         ASSERT_ARGC("ty.mod.compile()", 1, 2, 3);
         Value source = ARGx(0, VALUE_STRING);
@@ -9938,7 +9847,7 @@ BUILTIN_FUNCTION(ty_mod_compile)
         return MODULE(mod);
 }
 
-BUILTIN_FUNCTION(ty_mod_eval)
+TY_BUILTIN_RAW(ty_mod_eval, "ty/mod.eval(mod: Module) -> _")
 {
         ASSERT_ARGC("ty.mod.eval()", 1);
         Module *mod = ARGx(0, VALUE_MODULE).mod;
@@ -9953,7 +9862,7 @@ BUILTIN_FUNCTION(ty_mod_eval)
         return result;
 }
 
-BUILTIN_FUNCTION(ty_mod_list)
+TY_BUILTIN_RAW(ty_mod_list, "ty/mod.list() -> Array[Module]")
 {
         ASSERT_ARGC("ty.mod.list()", 0);
 
@@ -9967,7 +9876,7 @@ BUILTIN_FUNCTION(ty_mod_list)
         return ARRAY(mods);
 }
 
-BUILTIN_FUNCTION(ty_mod_dict)
+TY_BUILTIN_RAW(ty_mod_dict, "ty/mod.dict(mod: ?Module = nil) -> Dict[String, _]")
 {
         ASSERT_ARGC("ty.mod.dict()", 0, 1);
 
@@ -9978,7 +9887,7 @@ BUILTIN_FUNCTION(ty_mod_dict)
         return ScopeDict(ty, mod->scope, false);
 }
 
-BUILTIN_FUNCTION(ty_mod_name)
+TY_BUILTIN_RAW(ty_mod_name, "ty/mod.name(mod: ?Module = nil) -> String")
 {
         ASSERT_ARGC("ty.mod.name()", 0, 1);
 
@@ -9989,7 +9898,7 @@ BUILTIN_FUNCTION(ty_mod_name)
         return vSsz(mod->name);
 }
 
-BUILTIN_FUNCTION(ty_mod_path)
+TY_BUILTIN_RAW(ty_mod_path, "ty/mod.path(mod: ?Module = nil) -> String")
 {
         ASSERT_ARGC("ty.mod.path()", 0, 1);
 
@@ -10000,7 +9909,7 @@ BUILTIN_FUNCTION(ty_mod_path)
         return vSsz(mod->path);
 }
 
-BUILTIN_FUNCTION(ty_mod_imports)
+TY_BUILTIN_RAW(ty_mod_imports, "ty/mod.imports(mod: ?Module = nil) -> Dict[String, Module]")
 {
         ASSERT_ARGC("ty.mod.imports()", 0, 1);
 
@@ -10024,7 +9933,10 @@ BUILTIN_FUNCTION(ty_mod_imports)
         return DICT(imports);
 }
 
-BUILTIN_FUNCTION(ty_mod_lookup)
+TY_BUILTIN_RAW(ty_mod_lookup,
+        "ty/mod.lookup(name: String) -> _",
+        "ty/mod.lookup(mod: Module, name: String) -> _"
+)
 {
         ASSERT_ARGC("ty.mod.lookup()", 1, 2);
 
@@ -10042,7 +9954,7 @@ BUILTIN_FUNCTION(ty_mod_lookup)
         return *vm_global(ty, sym->i);
 }
 
-BUILTIN_FUNCTION(ty_mod_ast)
+TY_BUILTIN_RAW(ty_mod_ast, "ty/mod.ast(mod: ?Module = nil) -> Array[AST]")
 {
         ASSERT_ARGC("ty.mod.ast()", 0, 1);
 
@@ -10061,7 +9973,7 @@ BUILTIN_FUNCTION(ty_mod_ast)
         return ARRAY(stmts);
 }
 
-BUILTIN_FUNCTION(ty_mod_free)
+TY_BUILTIN_RAW(ty_mod_free, "ty/mod.free(mod: ?Module = nil) -> Array[String]")
 {
         ASSERT_ARGC("ty.mod.free()", 0, 1);
 
@@ -10092,7 +10004,7 @@ BUILTIN_FUNCTION(ty_mod_free)
         return ARRAY(names);
 }
 
-BUILTIN_FUNCTION(ty_mod_tokens)
+TY_BUILTIN_RAW(ty_mod_tokens, "ty/mod.tokens(mod: ?Module = nil) -> Array[Token]")
 {
         ASSERT_ARGC("ty.mod.tokens()", 0, 1);
 
@@ -10105,7 +10017,7 @@ BUILTIN_FUNCTION(ty_mod_tokens)
         return make_tokens(ty, &tokens);
 }
 
-BUILTIN_FUNCTION(ty_mod_source)
+TY_BUILTIN_RAW(ty_mod_source, "ty/mod.source(mod: ?Module = nil) -> String")
 {
         ASSERT_ARGC("ty.mod.source()", 0, 1);
 
@@ -10165,7 +10077,10 @@ ParseSource(Ty *ty, Value input, Scope *scope, u32 flags)
         return result;
 }
 
-BUILTIN_FUNCTION(ty_parse)
+TY_BUILTIN_RAW(ty_parse,
+        "ty.parse(source: String | Blob, deep: Bool = false, resolve: Bool = false, scope: Ptr[_] = nil ) -> Err[ParseError] | Ok[Module]",
+        "ty/parse.source(source: String | Blob, deep: Bool = false, resolve: Bool = false, scope: Ptr[_] = nil) -> Err[ParseError] | Ok[Module]"
+)
 {
         ASSERT_ARGC("ty.parse()", 1);
 
@@ -10184,13 +10099,13 @@ BUILTIN_FUNCTION(ty_parse)
         return ParseSource(ty, input, IsMissing(scope) ? NULL : scope.ptr, flags);
 }
 
-BUILTIN_FUNCTION(ty_id)
+TY_BUILTIN_RAW(ty_id, "ty.id(x: Any) -> Int")
 {
         ASSERT_ARGC("ty.id()", 1);
         return INTEGER(ARG(0).src);
 }
 
-BUILTIN_FUNCTION(ty_type_type)
+TY_BUILTIN_RAW(ty_type_type, "ty/types.type(x: Any) -> _")
 {
         ASSERT_ARGC("ty.types.type()", 1);
 
@@ -10199,7 +10114,7 @@ BUILTIN_FUNCTION(ty_type_type)
         return t2_to_ty(ty, t2_from_ty(ty, &arg0));
 }
 
-BUILTIN_FUNCTION(ty_type_resolve)
+TY_BUILTIN_RAW(ty_type_resolve, "ty/types.resolve(ast: Any) -> _")
 {
         ASSERT_ARGC("ty.types.resolve()", 1);
 
@@ -10219,7 +10134,7 @@ BUILTIN_FUNCTION(ty_type_resolve)
         return t2_to_ty(ty, t0);
 }
 
-BUILTIN_FUNCTION(ty_type_info)
+TY_BUILTIN_RAW(ty_type_info, "ty/types.info(t: Any) -> _")
 {
         ASSERT_ARGC("ty.types.info()", 1);
 
@@ -10277,7 +10192,7 @@ TypeParameterId(Ty *ty, char const *_name__, Value const *sub)
         }
 }
 
-BUILTIN_FUNCTION(ty_type_inst)
+TY_BUILTIN_RAW(ty_type_inst, "ty/types.inst(t: Any, subs: ?Array[_] = nil) -> _")
 {
         ASSERT_ARGC("ty.types.inst()", 1, 2);
 
@@ -10563,7 +10478,9 @@ ast_match(Ty *ty, Value const *t, Value const *s, Value *bindings, imax count, i
         }
 }
 
-BUILTIN_FUNCTION(ast_template_match)
+TY_BUILTIN_RAW(ast_template_match,
+        "__ast_match__(template: Ptr[Any], count: Int, subject: Any) -> Array[_] | nil"
+)
 {
         ASSERT_ARGC("__ast_match__()", 3);
 
@@ -10601,7 +10518,7 @@ BUILTIN_FUNCTION(ast_template_match)
         return result;
 }
 
-BUILTIN_FUNCTION(ty_type_infer)
+TY_BUILTIN_RAW(ty_type_infer, "ty/types.infer(ast: Any) -> _")
 {
         ASSERT_ARGC("ty.types.infer()", 1);
 
@@ -10615,7 +10532,7 @@ BUILTIN_FUNCTION(ty_type_infer)
         return t2_to_ty(ty, t2_infer(ty, expr));
 }
 
-BUILTIN_FUNCTION(ty_type_check)
+TY_BUILTIN_RAW(ty_type_check, "ty/types.check(sub: Any, sup: Any) -> Bool")
 {
         ASSERT_ARGC("ty.types.check()", 2);
 
@@ -10632,7 +10549,7 @@ BUILTIN_FUNCTION(ty_type_check)
         );
 }
 
-BUILTIN_FUNCTION(ty_type_show)
+TY_BUILTIN_RAW(ty_type_show, "ty/types.show(t: Any, color: Bool = false) -> String")
 {
         ASSERT_ARGC("ty.types.show()", 1);
 
@@ -10647,13 +10564,13 @@ BUILTIN_FUNCTION(ty_type_show)
         return result;
 }
 
-BUILTIN_FUNCTION(ty_definition)
+TY_BUILTIN_RAW(ty_definition, "ty.definition(cls: Class) -> AST")
 {
         ASSERT_ARGC("ty.definition()", 1);
         return CToTyStmt(ty, class_get(ty, ARGx(0, VALUE_CLASS).class)->def);
 }
 
-BUILTIN_FUNCTION(ty_copy_source)
+TY_BUILTIN_RAW(ty_copy_source, "ty.copySource[T](from: Any, to: T) -> T")
 {
         ASSERT_ARGC("ty.copySource()", 2);
 
@@ -10665,7 +10582,10 @@ BUILTIN_FUNCTION(ty_copy_source)
         return to;
 }
 
-BUILTIN_FUNCTION(ty_get_source)
+TY_BUILTIN_RAW(ty_get_source,
+        "ty.getSource(x: Any) -> {start: {line: Int, col: Int, byte: Int}, end: {line: Int, col: Int, byte: Int}, file: String | nil, mod: Module | nil, prog: String, src: String}",
+        "ty.src(x: Any) -> {start: {line: Int, col: Int, byte: Int}, end: {line: Int, col: Int, byte: Int}, file: String | nil, mod: Module | nil, prog: String, src: String}"
+)
 {
         ASSERT_ARGC("ty.getSource()", 1);
 
@@ -10700,7 +10620,7 @@ BUILTIN_FUNCTION(ty_get_source)
         return result;
 }
 
-BUILTIN_FUNCTION(ty_strip_source)
+TY_BUILTIN_RAW(ty_strip_source, "ty.stripSource[T](x: T) -> T")
 {
         ASSERT_ARGC("ty.stripSource()", 1);
 
@@ -10710,7 +10630,9 @@ BUILTIN_FUNCTION(ty_strip_source)
         return e;
 }
 
-BUILTIN_FUNCTION(lex_state)
+TY_BUILTIN_RAW(lex_state,
+        "ty/lex.state(noSync: Bool = false) -> {source: String, position: {line: Int, col: Int, byte: Int}, context: Int, keepComments: Bool, keepNewline: Bool, blankLine: Bool}"
+)
 {
         ASSERT_ARGC("ty.lex.state()", 0);
 
@@ -10733,7 +10655,7 @@ BUILTIN_FUNCTION(lex_state)
         );
 }
 
-BUILTIN_FUNCTION(lex_peek_char)
+TY_BUILTIN_RAW(lex_peek_char, "ty/lex.peekc() -> _")
 {
         ASSERT_ARGC("ty.lex.peekc()", 0);
 
@@ -10749,7 +10671,7 @@ BUILTIN_FUNCTION(lex_peek_char)
         return vSs(b, n);
 }
 
-BUILTIN_FUNCTION(lex_next_char)
+TY_BUILTIN_RAW(lex_next_char, "ty/lex.getc() -> _")
 {
         ASSERT_ARGC("ty.lex.getc()", 0);
 
@@ -10764,7 +10686,7 @@ BUILTIN_FUNCTION(lex_next_char)
         return vSsz(b);
 }
 
-BUILTIN_FUNCTION(token_peek)
+TY_BUILTIN_RAW(token_peek, "ty/token.peek(i: Int = 0) -> Token")
 {
         ASSERT_ARGC_2("ty.token.peek()", 0, 1);
 
@@ -10782,7 +10704,7 @@ BUILTIN_FUNCTION(token_peek)
         return v;
 }
 
-BUILTIN_FUNCTION(token_next)
+TY_BUILTIN_RAW(token_next, "ty/token.next() -> Token")
 {
         ASSERT_ARGC("ty.token.next()", 0);
 
@@ -10793,7 +10715,12 @@ BUILTIN_FUNCTION(token_next)
         return v;
 }
 
-BUILTIN_FUNCTION(parse_expr)
+TY_BUILTIN_RAW(parse_expr,
+        "ty/parse.expr(prec: ?Int, raw: true, resolve: ?Bool = false) -> (AST, _)",
+        "ty/parse.expr(prec: ?Int, raw: ?Bool, resolve: ?Bool = false) -> AST",
+        "ty/parse.expr(source: String | Blob, scope: ?Ptr[_], raw: true, resolve: ?Bool = false) -> (Ptr[_], AST)",
+        "ty/parse.expr(source: String | Blob, scope: ?Ptr[_], raw: ?Bool, resolve: ?Bool = false) -> AST"
+)
 {
         ASSERT_ARGC("ty.parse.expr()", 0, 1, 2);
 
@@ -10888,7 +10815,10 @@ BUILTIN_FUNCTION(parse_expr)
         return expr;
 }
 
-BUILTIN_FUNCTION(parse_type)
+TY_BUILTIN_RAW(parse_type,
+        "ty/parse.type(prec: ?Int, raw: true, resolve: ?Bool = false) -> (Ptr[Any], AST)",
+        "ty/parse.type(prec: ?Int, raw: ?Bool, resolve: ?Bool = false) -> AST"
+)
 {
         ASSERT_ARGC_2("ty.parse.type()", 0, 1);
 
@@ -10914,7 +10844,10 @@ BUILTIN_FUNCTION(parse_type)
         );
 }
 
-BUILTIN_FUNCTION(parse_stmt)
+TY_BUILTIN_RAW(parse_stmt,
+        "ty/parse.stmt(prec: ?Int, raw: Bool) -> (AST, _)",
+        "ty/parse.stmt(prec: ?Int) -> AST"
+)
 {
         ASSERT_ARGC("ty.parse.stmt()", 0, 1, 2);
 
@@ -10979,7 +10912,7 @@ SourceExpr(Ty *ty, Value v)
         }
 }
 
-BUILTIN_FUNCTION(parse_show)
+TY_BUILTIN_RAW(parse_show, "ty/parse.show(x: Any) -> _")
 {
         ASSERT_ARGC("ty.parse.show()", 1);
 
@@ -10988,7 +10921,10 @@ BUILTIN_FUNCTION(parse_show)
         return (src == NULL) ? NIL : vSs(src->start.s, src->end.s - src->start.s);
 }
 
-BUILTIN_FUNCTION(parse_highlight)
+TY_BUILTIN_RAW(parse_highlight,
+        "ty/parse.highlight(mod: Module, start: Int, end: Int, theme: ?String = nil) -> _",
+        "ty/parse.highlight(x: Any, theme: ?String = nil) -> _"
+)
 {
         ASSERT_ARGC("ty.parse.highlight()", 1, 3);
 
@@ -11030,7 +10966,7 @@ BUILTIN_FUNCTION(parse_highlight)
         return result;
 }
 
-BUILTIN_FUNCTION(parse_raw)
+TY_BUILTIN_RAW(parse_raw, "ty/parse.raw(x: Any) -> AST")
 {
         ASSERT_ARGC("ty.parse.raw()", 1);
 
@@ -11047,20 +10983,20 @@ BUILTIN_FUNCTION(parse_raw)
              : TAGGED(TyStmt, raw);
 }
 
-BUILTIN_FUNCTION(parse_ast)
+TY_BUILTIN_RAW(parse_ast, "ty/parse.ast(x: Any) -> AST")
 {
         ASSERT_ARGC("ty.parse.ast()", 1);
         Expr const *src = SourceExpr(ty, ARG(0));
         return (src == NULL) ? NIL : CToTyExpr(ty, (Expr *)src);
 }
 
-BUILTIN_FUNCTION(parse_fail)
+TY_BUILTIN_RAW(parse_fail, "ty/parse.fail(msg: String)")
 {
         ASSERT_ARGC("ty.parse.fail()", 1);
         ParseError(ty, "%s", TY_TMP_C_STR(ARGx(0, VALUE_STRING)));
 }
 
-BUILTIN_FUNCTION(ptr_typed)
+TY_BUILTIN_RAW(ptr_typed, "ptr.typed[T](ptr: Ptr[Any], type: CType[T]) -> Ptr[T]")
 {
         ASSERT_ARGC("ptr.typed()", 2);
 
@@ -11073,7 +11009,10 @@ BUILTIN_FUNCTION(ptr_typed)
         return TGCPTR(ptr.ptr, PTR_ARG(1), ptr.gcptr);
 }
 
-BUILTIN_FUNCTION(ptr_untyped)
+TY_BUILTIN_RAW(ptr_untyped,
+        "ptr.untyped(ptr: Ptr[_]) -> Ptr[Any]",
+        "ptr.untyped(ptr: nil) -> nil"
+)
 {
         ASSERT_ARGC("ptr.untyped()", 1);
 
@@ -11086,7 +11025,7 @@ BUILTIN_FUNCTION(ptr_untyped)
         return GCPTR(ptr.ptr, ptr.gcptr);
 }
 
-BUILTIN_FUNCTION(ptr_from_int)
+TY_BUILTIN_RAW(ptr_from_int, "ptr.fromInt(addr: Int) -> Ptr[Any]")
 {
         ASSERT_ARGC("ptr.fromInt()", 1);
         return PTR((void *)(uptr)INT_ARG(0));

@@ -136,19 +136,6 @@ pub use Flat[T] = match types.type(T) {
     _                   => $$[: Array[$$T] $$],
 }
 
-fn parse::expr(prec: ?Int, raw: true, resolve: ?Bool = false) -> (AST, _);
-fn parse::expr(prec: ?Int, raw: ?Bool, resolve: ?Bool = false) -> AST;
-fn parse::expr(source: String | Blob, scope: ?Ptr[_], raw: true, resolve: ?Bool = false) -> (Ptr[_], AST);
-fn parse::expr(source: String | Blob, scope: ?Ptr[_], raw: ?Bool, resolve: ?Bool = false) -> AST;
-
-fn parse::stmt(prec: ?Int, raw: Bool) -> (AST, _);
-fn parse::stmt(prec: ?Int) -> AST;
-
-fn lex::next() -> Token;
-fn lex::peek(i: Int = 0) -> Token;
-
-fn ty::gensym() -> String;
-
 macro ParseError = {
     module: Module,
     msg: String,
@@ -159,13 +146,6 @@ macro ParseError = {
     },
     last: Ptr[_] | nil
 }
-
-fn ty::parse(
-    source: String | Blob,
-    deep: Bool = false,
-    resolve: Bool = false,
-    scope: Ptr[_] = nil
-) -> Err[ParseError] | Ok[Module];
 
 fn |>[a, b, c](f: a -> b, g: b -> c) -> (a -> c) { g@(f(*, **)) }
 
@@ -290,58 +270,7 @@ fn %.*[T, U, *Ts](tpl: (T, Ts), f: T -> U) -> (U, Ts);
 fn .%.*[T, U, V, *Ts](tpl: (T, U, Ts), f: U -> V) -> (T, V, Ts);
 fn ..%.*[T, U, V, W, *Ts](tpl: (T, U, V, Ts), f: V -> W) -> (T, U, W, Ts);
 
-fn doc(c:  Class)    -> (String, String | nil, [(String, String | nil, String | nil)]);
-fn doc(f:  Function) -> (String, String | nil, String | nil) | nil;
-
-fn set-doc[T](x: T, name: ?String, proto: ?String, doc: ?String) -> T;
-
-fn slurp(file: ?PathLike | Int) -> String;
-fn rand[a](items: Array[a]) -> a;
-fn rand() -> Float;
-fn rand(n: Int, m: ?Int) -> Int;
-fn random(n: Int) -> Blob;
-fn random(buf: Blob, n: Int) -> Blob;
-fn random() -> Int;
-fn object[T](cls: Class[T]) -> T;
-fn print(*args: Any, sep: String = ', ', end: String = '\n', file: _, flush: Bool = false) -> Int;
-fn str(x: Any) -> String;
-fn int[a](x: a, base: ?Int) -> Int;
-fn float[a](x: a) -> Float;
-fn regex(pattern: String, flags: String = '') -> Regex & RegexV;
-fn min[...Ts](*xs: ...Ts) -> ...(Ts |) where (...(Ts |) <=> ...(Ts |)): Int;
-fn max[...Ts](*xs: ...Ts) -> ...(Ts |) where (...(Ts |) <=> ...(Ts |)): Int;
-fn fmt(str: String, *args: _);
 fn cast[a](x: _) -> a { x }
-fn tuple[...Ts](xs: ...Ts) -> (Ts,);
-fn tuple(*xs: _, %kws: _) -> (*_);
-fn abs(k: Int) -> Int;
-fn abs(x: Float) -> Float;
-fn floor(x: Int | Float) -> Float;
-fn ceil(x: Int | Float) -> Float;
-fn round(x: Int | Float) -> Float;
-fn iround(x: Int | Float) -> Int;
-fn ord(character: String) -> Int;
-fn chr(codepoint: Int) -> String;
-fn getenv(var: String) -> String | nil;
-fn setenv(var: String, val: String) -> nil;
-
-fn math::sqrt(x: Int | Float) -> Float;
-fn math::cos(x: Int | Float) -> Float;
-fn math::sin(x: Int | Float) -> Float;
-fn math::tan(x: Int | Float) -> Float;
-fn math::atan(x: Int | Float) -> Float;
-fn math::atan2(x: Int | Float, y: Int | Float) -> Float;
-fn math::asin(x: Int | Float) -> Float;
-fn math::acos(x: Int | Float) -> Float;
-fn math::cbrt(x: Int | Float) -> Float;
-fn math::pow(x: Int | Float, y: Int | Float) -> Float;
-fn math::exp(x: Int | Float) -> Float;
-fn math::log(x: Int | Float) -> Float;
-fn math::log2(x: Int | Float) -> Float;
-fn math::log10(x: Int | Float) -> Float;
-
-fn base64::encode(input: String | Blob) -> String;
-fn base64::decode(input: String | Blob) -> Blob;
 
 pub use time::Tm = {
     ?sec:    Int,
@@ -367,18 +296,6 @@ pub use time::ClockID =
   | time::CLOCK_MONOTONIC
   | time::CLOCK_PROCESS_CPUTIME_ID
   | time::CLOCK_THREAD_CPUTIME_ID
-
-fn time::time(tm: ?time::Tm, utc: Bool = false) -> Int;
-fn time::gettime(clock: ?time::ClockID) -> time::Timespec;
-fn time::localtime(time: ?Int) -> time::Tm;
-fn time::zonetime(time: Int, zone: String) -> time::Tm | nil;
-fn time::gmtime(time: ?Int) -> time::Tm;
-fn time::utime(clock: ?time::ClockID) -> Int;
-fn time::now(clock: ?time::ClockID) -> Float;
-
-fn errno::get() -> Int;
-fn errno::str(err: Int) -> String;
-fn errno::str() -> String;
 
 __set_type__ ty::executable String
 
@@ -925,7 +842,6 @@ macro _Func = {
     ?decorators: [AST] | nil,
     body: AST
 }
-
 
 macro __define_ast! {
     let f = parse.expr(999)
@@ -3158,10 +3074,6 @@ fn -(range: Range, n: Int) {
     )
 }
 
-fn json::parse(json: String) -> _;
-fn json::parse[T](schema: Type[T], json: String) -> T;
-fn json::encode(value: Any) -> String;
-
 fn id[T](x: T) -> T { x }
 
 fn len(xs) {
@@ -3459,7 +3371,6 @@ class Sync[T] {
         }
     }
 
-
     --() {
         with __mtx {
             --(__x)
@@ -3710,7 +3621,6 @@ macro dbg(*args) {
     let results = ty.gensym()
     let decl    = ty.Id(name: results, constraint: $$[ Array[_] $$])
 
-
     let pp? = ty.IfDef(name: 'Printer', module: 'pretty')
     let pp  = $$[ $$pp?.map(\__().print(_)).or-else($${::show}) $$]
 
@@ -3815,7 +3725,6 @@ macro modify! {
 
         ty.Record(entries)
     }
-
 
     let record: _ = %{}
 

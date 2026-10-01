@@ -20,6 +20,8 @@ typedef enum t2_checkpoint {
         T2_CHECKPOINT_CLASS_OPERATOR_DECLARATION,
         T2_CHECKPOINT_STATEMENT,
         T2_CHECKPOINT_CLASS_OPERATOR,
+        T2_CHECKPOINT_BUILTIN_DECLARATION,
+        T2_CHECKPOINT_BUILTIN,
         T2_CHECKPOINT_COUNT
 } T2Checkpoint;
 
@@ -76,6 +78,9 @@ t2_checker_observe(
         T2Checkpoint checkpoint,
         usize index
 );
+
+bool
+t2_checker_will_restore(T2Checker const *checker);
 
 void
 t2_checker_finish(Ty *ty, T2Checker *checker);

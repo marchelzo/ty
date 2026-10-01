@@ -512,14 +512,15 @@ pub class UVSocket < UVStream {
         loop.accept(self)
     }
 
-    address -> Blob | nil {
+    address -> Blob {
         if __address == nil {
             let addr = c.auto(c.alloc(128))
             let len = c.auto(c.box(c.int, 128))
             let err = uv_tcp_getsockname(handle, addr, len)
-            if err == 0 {
-                __address = Blob(c.as_str(addr, len[0]))
+            if err != 0 {
+                throw UVError('uv_tcp_getsockname()', err)
             }
+            __address = Blob(c.as_str(addr, len[0]))
         }
         __address
     }

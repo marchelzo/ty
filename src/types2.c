@@ -633,6 +633,8 @@ checkpoint_name(T2Checkpoint checkpoint)
         case T2_CHECKPOINT_CLASS_OPERATOR_DECLARATION: return "class_operator_declaration";
         case T2_CHECKPOINT_STATEMENT:                  return "statement";
         case T2_CHECKPOINT_CLASS_OPERATOR:             return "class_operator";
+        case T2_CHECKPOINT_BUILTIN_DECLARATION:        return "builtin_declaration";
+        case T2_CHECKPOINT_BUILTIN:                    return "builtin";
         }
 
         return "invalid";
@@ -28707,7 +28709,7 @@ report_diagnostics(T2Checker *checker, usize errors, usize warnings)
 
 enum {
         T2_CACHE_MAGIC   = UINT32_C(0x32545954),
-        T2_CACHE_VERSION = 12,
+        T2_CACHE_VERSION = 13,
         T2_CACHE_NONE    = UINT32_MAX
 };
 
@@ -28932,9 +28934,10 @@ remember_module_key(char const *path, u64 key)
 static u64
 module_source_key(Module const *module)
 {
-        return (module->source != NULL) ? hash64z(module->source) : hash64z(
+        u64 key = (module->source != NULL) ? hash64z(module->source) : hash64z(
                 module->name
         );
+        return HashCombine(key, module->sig_hash);
 }
 
 static u64
@@ -28951,6 +28954,7 @@ static u64
 unit_key(T2Checker *checker)
 {
         u64 key = HashCombine(build_identity(), hash64z(checker->module->source));
+        key = HashCombine(key, checker->module->sig_hash);
         key = HashCombine(key, T2_CACHE_VERSION);
         key = HashCombine(key, configuration_key(checker->ty));
         import_vector const *imports = compiler_current_imports(checker->ty);
@@ -29890,9 +29894,51 @@ index_definition_roots(
         }
 }
 
+static char *
+signed_symbol_key(Symbol const *symbol)
+{
+        usize nm = strlen(symbol->mod->name);
+        usize ni = strlen(symbol->identifier);
+        char *key = xmA(nm + ni + 2);
+
+        memcpy(key, symbol->mod->name, nm);
+        key[nm] = '\x1f';
+        memcpy(key + nm + 1, symbol->identifier, ni + 1);
+
+        return key;
+}
+
+static Symbol *
+signed_symbol(T2Checker *checker, char const *key)
+{
+        char const *sep = strchr(key, '\x1f');
+        char name[256];
+        usize n = sep - key;
+
+        if (n >= sizeof name) {
+                return NULL;
+        }
+
+        memcpy(name, key, n);
+        name[n] = '\0';
+
+        Module *mod = CompilerGetModule(checker->ty, name);
+        if (mod == NULL || mod->scope == NULL) {
+                return NULL;
+        }
+
+        Symbol *symbol = scope_local_lookup(checker->ty, mod->scope, sep + 1);
+
+        return (symbol != NULL) && SymbolIsSigned(symbol) ? symbol : NULL;
+}
+
 static Symbol *
 module_symbol(T2Checker *checker, char const *identifier)
 {
+        if (strchr(identifier, '\x1f') != NULL) {
+                return signed_symbol(checker, identifier);
+        }
+
         Symbol *symbol = scope_local_lookup(
                 checker->ty,
                 checker->module->scope,
@@ -30070,8 +30116,11 @@ write_bindings(
                 if (
                         (symbol == NULL)
                      || (symbol->identifier == NULL)
-                     || (symbol->mod != checker->module)
                 ) {
+                        continue;
+                }
+                bool foreign = (symbol->mod != checker->module);
+                if (foreign && !SymbolIsSigned(symbol)) {
                         continue;
                 }
                 u64 key = (u64)(uptr)symbol;
@@ -30083,7 +30132,9 @@ write_bindings(
                         continue;
                 }
                 u32 ordinal;
-                if (
+                if (foreign) {
+                        ordinal = T2_CACHE_NONE;
+                } else if (
                         !t2_index_find(&roots, key, &ordinal)
                      && !t2_index_find(&ordinals->symbol_index, key, &ordinal)
                 ) {
@@ -30092,8 +30143,12 @@ write_bindings(
                         }
                         ordinal = T2_CACHE_NONE;
                 }
+                char *identifier = foreign ? signed_symbol_key(symbol) : NULL;
                 byte_vector record = {0};
-                bool wrote = t2_bytes_string(&record, symbol->identifier)
+                bool wrote = t2_bytes_string(
+                                     &record,
+                                     foreign ? identifier : symbol->identifier
+                             )
                           && t2_bytes_u32(&record, ordinal)
                           && write_scheme(cache, &record, symbol->scheme)
                           && write_optional_type(cache, &record, symbol->type)
@@ -30106,6 +30161,7 @@ write_bindings(
                         count += 1;
                 }
                 xvF(record);
+                ty_free(identifier);
         }
 
         ok = ok && write_section(out, count, &body);
@@ -30824,6 +30880,7 @@ t2_checker_observe(
         if (
                 (checkpoint == T2_CHECKPOINT_DECLARATION)
              || (checkpoint == T2_CHECKPOINT_CLASS_OPERATOR_DECLARATION)
+             || (checkpoint == T2_CHECKPOINT_BUILTIN_DECLARATION)
         ) {
                 if (checker->restored) {
                         remember_declared(checker, stmt);
@@ -31538,6 +31595,15 @@ record_errors(T2Checker *checker)
         }
 
         ty_free(errors);
+}
+
+bool
+t2_checker_will_restore(T2Checker const *checker)
+{
+        return (checker != NULL)
+            && checker->restored
+            && !checker->cache_loaded
+            && (checker->cache->shape == checker->shape);
 }
 
 void

@@ -172,6 +172,26 @@ include/keywords.h: src/keywords.gperf
 	@echo gperf $<
 	@gperf $< > $@
 
+GEN_DIR     := include/gen
+GEN_SOURCES := src/functions.c src/accelerate.c src/ffi.c src/sqlite.c
+GEN_HEADERS := $(GEN_DIR)/builtin_decls.h $(GEN_DIR)/builtin_table.h
+
+tools/tybi: tools/tybi.c
+	@echo cc $@
+	@$(CC) -std=c11 -O1 -o $@ $<
+
+$(GEN_DIR)/.stamp: tools/tybi $(GEN_SOURCES)
+	@echo tybi $(GEN_SOURCES)
+	@mkdir -p $(GEN_DIR)
+	@tools/tybi $(GEN_DIR) $(GEN_SOURCES)
+	@touch $@
+
+$(GEN_HEADERS): $(GEN_DIR)/.stamp
+	@test -f $@
+
+$(OBJECTS) $(TYLS_OBJECTS) $(TYPROF_OBJECTS): | $(GEN_HEADERS)
+obj/ty-main.o obj/tyls-main.o obj/typrof-main.o: | $(GEN_HEADERS)
+
 obj/token.o: include/keywords.h
 obj/tyls/token.o: include/keywords.h
 obj/typrof/token.o: include/keywords.h
@@ -231,7 +251,7 @@ obj/typrof/%.o: src/%.c
 
 
 clean:
-	rm -rf $(PROG) *.gcda $(OBJECTS) $(TYLS_OBJECTS) $(TYPROF_OBJECTS) libco/libco.o dtoa/dtoa.o include/keywords.h $(BUILD_SIG_FILE) $(DEPFILES) obj/ty-main.o obj/tyls-main.o obj/typrof-main.o obj/types2-core-test
+	rm -rf $(PROG) *.gcda $(OBJECTS) $(TYLS_OBJECTS) $(TYPROF_OBJECTS) libco/libco.o dtoa/dtoa.o include/keywords.h $(GEN_DIR) tools/tybi $(BUILD_SIG_FILE) $(DEPFILES) obj/ty-main.o obj/tyls-main.o obj/typrof-main.o obj/types2-core-test
 
 test: ty tyls test-types2
 	./ty test.ty $(TEST_ARGS)

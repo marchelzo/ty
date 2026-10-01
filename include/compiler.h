@@ -118,6 +118,13 @@ struct import {
 
 typedef vec(struct import) import_vector;
 
+typedef struct {
+        Symbol *sym;
+        char const *sig;
+} BuiltinSig;
+
+typedef vec(BuiltinSig) BuiltinSigVector;
+
 typedef struct module {
         char *code;
         Scope *scope;
@@ -131,6 +138,8 @@ typedef struct module {
         Arena arena;
         Location error;
         u64 flags;
+        BuiltinSigVector sigs;
+        u64 sig_hash;
 } Module;
 
 typedef vec(struct eloc) location_vector;
@@ -291,6 +300,9 @@ compiler_load_builtin_modules(Ty *ty);
 
 Symbol *
 compiler_introduce_symbol(Ty *ty, char const *, char const *);
+
+void
+compiler_introduce_signature(Ty *ty, Symbol *sym, char const *sig);
 
 int
 compiler_introduce_tag(Ty *ty, char const *module, char const *name, int super);

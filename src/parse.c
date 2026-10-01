@@ -4245,28 +4245,34 @@ prefix_percent(Ty *ty)
         Expr *e = mkexpr(ty);
 
         consume(TOKEN_PERCENT);
+        expect(TOKEN_IDENTIFIER);
 
-        if (T0 == TOKEN_IDENTIFIER) {
-                if (tok()->module != NULL && *tok()->module != '\0') {
-                        next();
-                        EStart = e->start;
-                        EEnd= TEnd;
-                        die("unexpected module qualifier in tag binding pattern");
-                }
-                if (T1 != '(') {
-                        next();
-                        consume('(');
-                }
-                Expr *call = parse_expr(ty, 10);
-                call->type = EXPRESSION_TAG_PATTERN_CALL;
-                call->start = e->start;
-                call->end = TEnd;
-                return call;
+        if (tok()->module != NULL && *tok()->module != '\0') {
+                next();
+                EStart = e->start;
+                EEnd = TEnd;
+                die("unexpected module qualifier in tag binding pattern");
         }
 
-        e->type = EXPRESSION_DICT;
+        if (T1 != '(') {
+                next();
+                consume('(');
+        }
 
-        consume('{');
+        Expr *call = parse_expr(ty, 10);
+        call->type = EXPRESSION_TAG_PATTERN_CALL;
+        call->start = e->start;
+        call->end = TEnd;
+
+        return call;
+}
+
+static Expr *
+prefix_dict(Ty *ty)
+{
+        Expr *e = mkxpr(DICT);
+
+        consume(TOKEN_DICT_OPEN);
 
         while (T0 != '}') {
                 setctx(LEX_PREFIX);
@@ -5117,6 +5123,7 @@ get_prefix_parser(Ty *ty)
         case TOKEN_PERCENT:             return prefix_percent;
         case '#':                       return prefix_hash;
 
+        case TOKEN_DICT_OPEN:           return prefix_dict;
         case '(':                       return prefix_parenthesis;
         case '[':                       return prefix_array;
         case '{':                       return prefix_record;

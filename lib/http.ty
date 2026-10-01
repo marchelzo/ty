@@ -224,7 +224,7 @@ pub class HttpServer {
                 (self.__sock, POLLIN) => {
                     if let (conn, addr) = accept(__sock) {
                         let (addr, port) = getnameinfo(addr, NI_NUMERICHOST | NI_NUMERICSERV)
-                        __conns.push(__new-conn(conn, addr, port))
+                        __conns.push(__new-conn(conn, addr, int(port)))
                         log::debug!("New connection from {addr}:{port} on fd={conn} ({#__conns} active)")
                     } else {
                         log::warn!("accept(): {errno.str()}")

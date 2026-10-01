@@ -27,3 +27,5 @@ typrof
 
 .*
 !.gitignore
+include/gen/
+tools/tybi

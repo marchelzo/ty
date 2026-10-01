@@ -297,7 +297,7 @@ ns test {
     pub fn test-simple() {
         let png = ReadPNG('example.png', fmt: SPNG_FMT_RGB8)
 
-        let src = c.blob(png.buffer, png.size)
+        let src = png.buffer
         let out = blob()
 
         for c, i in src {

@@ -7,8 +7,7 @@
 
 static _Thread_local int error;
 
-static Value
-dbopen(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(sqlite_dbopen, "sqlite3c.open(path: PathLike, flags: ?Int = nil) -> Ptr[Any] | nil")
 {
         ASSERT_ARGC("sqlite3.open()", 1, 2);
 
@@ -30,15 +29,13 @@ dbopen(Ty *ty, int argc, Value *kwargs)
         }
 }
 
-static Value
-dbclose(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(sqlite_dbclose, "sqlite3c.close(db: ?Ptr[_]) -> Int")
 {
         ASSERT_ARGC("sqlite3.close()", 1);
         return INTEGER(sqlite3_close(PTR_ARG(0)));
 }
 
-static Value
-prepare(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(sqlite_prepare, "sqlite3c.prepare(db: ?Ptr[_], sql: String) -> Ptr[Any] | nil")
 {
         ASSERT_ARGC("sqlite3.perpare()", 2);
 
@@ -57,43 +54,39 @@ prepare(Ty *ty, int argc, Value *kwargs)
         }
 }
 
-static Value
-step(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(sqlite_step, "sqlite3c.step(stmt: ?Ptr[_]) -> Int")
 {
         ASSERT_ARGC("sqlite3.step()", 1);
         return INTEGER(sqlite3_step(PTR_ARG(0)));
 }
 
-static Value
-changes(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(sqlite_changes, "sqlite3c.changes(db: ?Ptr[_]) -> Int")
 {
         ASSERT_ARGC("sqlite3.changes()", 1);
         return INTEGER(sqlite3_changes(PTR_ARG(0)));
 }
 
-static Value
-total_changes(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(sqlite_total_changes, "sqlite3c.totalChanges(db: ?Ptr[_]) -> Int")
 {
         ASSERT_ARGC("sqlite3.totalChanges()", 1);
         return INTEGER(sqlite3_total_changes(PTR_ARG(0)));
 }
 
-static Value
-last_insert_rowid(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(sqlite_last_insert_rowid, "sqlite3c.lastInsertRowid(db: ?Ptr[_]) -> Int")
 {
         ASSERT_ARGC("sqlite3.lastInsertRowid()", 1);
         return INTEGER(sqlite3_last_insert_rowid(PTR_ARG(0)));
 }
 
-static Value
-column_count(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(sqlite_column_count, "sqlite3c.columnCount(stmt: ?Ptr[_]) -> Int")
 {
         ASSERT_ARGC("sqlite3.columnCount()", 1);
         return INTEGER(sqlite3_column_count(PTR_ARG(0)));
 }
 
-static Value
-get_column(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(sqlite_get_column,
+        "sqlite3c.column(stmt: ?Ptr[_], index: Int) -> Int | Float | String | Blob | nil"
+)
 {
         ASSERT_ARGC("sqlite3.column()", 2);
 
@@ -125,8 +118,7 @@ get_column(Ty *ty, int argc, Value *kwargs)
         }
 }
 
-static Value
-fetch(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(sqlite_fetch, "sqlite3c.fetch(stmt: ?Ptr[_]) -> [_]")
 {
         ASSERT_ARGC("sqlite3.fetch()", 1);
 
@@ -170,8 +162,7 @@ fetch(Ty *ty, int argc, Value *kwargs)
         return a;
 }
 
-static Value
-fetch_dict(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(sqlite_fetch_dict, "sqlite3c.fetchAssoc(stmt: ?Ptr[_]) -> Dict[String, _]")
 {
         ASSERT_ARGC("sqlite3.fetch()", 1);
 
@@ -220,23 +211,20 @@ fetch_dict(Ty *ty, int argc, Value *kwargs)
         return d;
 }
 
-static Value
-finalize(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(sqlite_finalize, "sqlite3c.finalize(stmt: ?Ptr[_]) -> Int")
 {
         ASSERT_ARGC("sqlite3.finalize()", 1);
         return INTEGER(sqlite3_finalize(PTR_ARG(0)));
 
 }
 
-static Value
-reset(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(sqlite_reset, "sqlite3c.reset(stmt: ?Ptr[_]) -> Int")
 {
         ASSERT_ARGC("sqlite3.reset()", 1);
         return INTEGER(sqlite3_reset(PTR_ARG(0)));
 }
 
-static Value
-mbind(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(sqlite_mbind, "sqlite3c.bind(stmt: ?Ptr[_], index: String | Int, val: Any) -> Int")
 {
         ASSERT_ARGC("sqlite3.bind()", 3);
 
@@ -290,8 +278,7 @@ mbind(Ty *ty, int argc, Value *kwargs)
         return INTEGER(err);
 }
 
-static Value
-column_name(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(sqlite_column_name, "sqlite3c.columnName(stmt: ?Ptr[_], index: Int) -> String | nil")
 {
         ASSERT_ARGC("sqlite3.columnName()", 2);
         sqlite3_stmt *stmt = PTR_ARG(0);
@@ -300,8 +287,7 @@ column_name(Ty *ty, int argc, Value *kwargs)
         return (name != NULL) ? vSsz(name) : NIL;
 }
 
-static Value
-error_code(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(sqlite_error_code, "sqlite3c.error(db: ?Ptr[_] = nil) -> Int")
 {
         ASSERT_ARGC("sqlite3.error()", 0, 1);
 
@@ -313,8 +299,7 @@ error_code(Ty *ty, int argc, Value *kwargs)
 
 }
 
-static Value
-error_msg(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(sqlite_error_msg, "sqlite3c.errorMessage(x: ?Ptr[_] | Int) -> String")
 {
         ASSERT_ARGC("sqlite3.errorMessage()", 1);
 
@@ -332,30 +317,12 @@ error_msg(Ty *ty, int argc, Value *kwargs)
         return (msg != NULL) ? vSsz(msg) : NIL;
 }
 
-#define BUILTIN(f)    { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = (f), .tags = 0 }
 #define INT(k)        { .type = VALUE_INTEGER,          .z                = (k), .tags = 0 }
 
 static struct {
         char const *name;
         Value value;
 } builtins[] = {
-        { .name = "open",                           .value = BUILTIN(dbopen)             },
-        { .name = "close",                          .value = BUILTIN(dbclose)            },
-        { .name = "fetch",                          .value = BUILTIN(fetch)              },
-        { .name = "fetchAssoc",                     .value = BUILTIN(fetch_dict)         },
-        { .name = "prepare",                        .value = BUILTIN(prepare)            },
-        { .name = "step",                           .value = BUILTIN(step)               },
-        { .name = "finalize",                       .value = BUILTIN(finalize)           },
-        { .name = "reset",                          .value = BUILTIN(reset)              },
-        { .name = "bind",                           .value = BUILTIN(mbind)              },
-        { .name = "column",                         .value = BUILTIN(get_column)         },
-        { .name = "columnCount",                    .value = BUILTIN(column_count)       },
-        { .name = "columnName",                     .value = BUILTIN(column_name)        },
-        { .name = "error",                          .value = BUILTIN(error_code)         },
-        { .name = "errorMessage",                   .value = BUILTIN(error_msg)          },
-        { .name = "changes",                        .value = BUILTIN(changes)            },
-        { .name = "totalChanges",                   .value = BUILTIN(total_changes)      },
-        { .name = "lastInsertRowid",                .value = BUILTIN(last_insert_rowid)  },
         { .name = "SQLITE_ABORT",                   .value = INT(4)                      },
         { .name = "SQLITE_AUTH",                    .value = INT(23)                     },
         { .name = "SQLITE_BUSY",                    .value = INT(5)                      },

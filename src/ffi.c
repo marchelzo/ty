@@ -394,8 +394,10 @@ free_cif(ffi_cif *cif)
         xmF(cif);
 }
 
-Value
-cffi_cif(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_cif,
+        "ffi.cif() -> Ptr[Any] | nil",
+        "ffi.cif(rt: CType[_] | Ptr[Any], *args: CType[_] | Ptr[Any], nFixed: ?Int = nil) -> Ptr[Any] | nil"
+)
 {
         ASSERT_ARGC_RANGE("ffi.cif()", 0, INT_MAX);
 
@@ -435,8 +437,7 @@ cffi_cif(Ty *ty, int argc, Value *kwargs)
         return GCPTR(cif, dtor);
 }
 
-Value
-cffi_addr(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_addr, "ffi.addr(ptr: ?Ptr[_]) -> Ptr[Any]")
 {
         ASSERT_ARGC("ffi.addr()", 1);
         void *v = PTR_ARG(0);
@@ -445,8 +446,7 @@ cffi_addr(Ty *ty, int argc, Value *kwargs)
         return PTR(p);
 }
 
-Value
-cffi_free(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_free, "ffi.free(ptr: IntoPtr[_]) -> nil")
 {
         ASSERT_ARGC("ffi.free()", 1);
         Value object = ARG(0);
@@ -455,16 +455,14 @@ cffi_free(Ty *ty, int argc, Value *kwargs)
         return NIL;
 }
 
-Value
-cffi_alloc(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_alloc, "ffi.alloc[T](size: Int) -> Ptr[T]")
 {
         ASSERT_ARGC("ffi.alloc()", 1);
         void *p = malloc(max(0, INT_ARG(0)));
         return (p == NULL) ? NIL : PTR(p);
 }
 
-Value
-cffi_realloc(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_realloc, "ffi.realloc(ptr: ?IntoPtr[_], size: Int) -> Ptr[Any] | nil")
 {
         ASSERT_ARGC("ffi.realloc()", 2);
 
@@ -477,8 +475,7 @@ cffi_realloc(Ty *ty, int argc, Value *kwargs)
         return (new == NULL) ? NIL : PTR(new);
 }
 
-Value
-cffi_size(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_size, "ffi.size[T](type: CType[T]) -> Int")
 {
         if (argc != 1) {
                 zP("ffi.size() expects 1 or 2 arguments but got %d", argc);
@@ -491,8 +488,7 @@ cffi_size(Ty *ty, int argc, Value *kwargs)
         return INTEGER(((ffi_type *)ARG(0).ptr)->size);
 }
 
-Value
-cffi_auto(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_auto, "ffi.auto[T](ptr: Ptr[T], dtor: Any = nil) -> Ptr[T]")
 {
         ASSERT_ARGC("ffi.auto()", 1, 2);
 
@@ -510,8 +506,7 @@ cffi_auto(Ty *ty, int argc, Value *kwargs)
         return TGCPTR(ptr.ptr, ptr.extra, dtor);
 }
 
-Value
-cffi_new(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_new, "ffi.new[T](type: CType[T], count: ?Int, init: ?IntoPtr[_]) -> Ptr[T]")
 {
         ASSERT_ARGC("ffi.new()", 1, 2, 3);
 
@@ -554,8 +549,7 @@ cffi_new(Ty *ty, int argc, Value *kwargs)
         return p;
 }
 
-Value
-cffi_box(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_box, "ffi.box[T](type: CType[T], val: ?T) -> Ptr[T]")
 {
         ASSERT_ARGC("ffi.box()", 1, 2);
 
@@ -585,8 +579,9 @@ cffi_box(Ty *ty, int argc, Value *kwargs)
         return p;
 }
 
-Value
-cffi_new_auto(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_new_auto,
+        "ffi.newAuto[T](type: CType[T], count: Int = 1, init: ?IntoPtr[_] = nil) -> Ptr[T]"
+)
 {
         ASSERT_ARGC("ffi.new-auto()", 1, 2, 3);
 
@@ -605,8 +600,7 @@ cffi_new_auto(Ty *ty, int argc, Value *kwargs)
         return TGCPTR(mem, t, mem);
 }
 
-Value
-cffi_box_auto(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_box_auto, "ffi.boxAuto[T](type: CType[T], val: ?T = nil) -> Ptr[T]")
 {
         ASSERT_ARGC("ffi.box-auto()", 1, 2);
 
@@ -626,8 +620,9 @@ cffi_box_auto(Ty *ty, int argc, Value *kwargs)
         return TGCPTR(mem, t, mem);
 }
 
-Value
-cffi_pmember(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_pmember,
+        "ffi.pmember(type: CType[_], record: Ptr[_] | Blob, index: Int) -> Ptr[Any]"
+)
 {
         ASSERT_ARGC("ffi.pmember()", 3);
 
@@ -651,8 +646,10 @@ cffi_pmember(Ty *ty, int argc, Value *kwargs)
         return PTR(ptr + offsets[i]);
 }
 
-Value
-cffi_member(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_member,
+        "ffi.member(type: CType[_], record: Ptr[_] | Blob, index: Int) -> _",
+        "ffi.member[T](type: CType[_], record: Ptr[_] | Blob, index: Int, val: T) -> T"
+)
 {
         if (argc != 3 && argc != 4) {
                 zP("ffi.member() expects 3 or 4 arguments but got %d", argc);
@@ -704,8 +701,7 @@ cffi_member(Ty *ty, int argc, Value *kwargs)
         }
 }
 
-Value
-cffi_fields(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_fields, "ffi.fields(type: CType[_]) -> [(Int, CType[_])]")
 {
         ASSERT_ARGC("ffi.fields()", 1);
 
@@ -737,8 +733,7 @@ cffi_fields(Ty *ty, int argc, Value *kwargs)
         return ARRAY(fields);
 }
 
-Value
-cffi_load(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_load, "ffi.load[T](type: CType[T], address: IntoPtr[T]) -> T")
 {
         ASSERT_ARGC("ffi.load()", 1, 2, 3);
 
@@ -760,8 +755,10 @@ cffi_load(Ty *ty, int argc, Value *kwargs)
         return load(ty, arg0.ptr, ptr_from(ty, &addr));
 }
 
-Value
-cffi_load_atomic(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_load_atomic,
+        "atomic.load[T](ptr: Ptr[T]) -> T",
+        "atomic.load[T](type: CType[T], ptr: Ptr[Any]) -> T"
+)
 {
         ffi_type *t;
 
@@ -801,8 +798,10 @@ cffi_load_n(Ty *ty, int argc, Value *kwargs)
         return result;
 }
 
-Value
-cffi_store(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_store,
+        "ffi.store[T](type: CType[T], ptr: Ptr[_], val: Any) -> T",
+        "ffi.store[T](ptr: Ptr[T], val: Any) -> T"
+)
 {
         Value vType;
         Value vPtr;
@@ -844,8 +843,10 @@ cffi_store(Ty *ty, int argc, Value *kwargs)
         return load(ty, vType.ptr, vPtr.ptr);
 }
 
-Value
-cffi_store_atomic(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_store_atomic,
+        "atomic.store[T](ptr: Ptr[T], val: T) -> nil",
+        "atomic.store[T](type: CType[T], ptr: Ptr[Any], val: T) -> nil"
+)
 {
         Value vType;
         Value vPtr;
@@ -887,8 +888,9 @@ cffi_store_atomic(Ty *ty, int argc, Value *kwargs)
         return NIL;
 }
 
-Value
-cffi_call(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_call,
+        "ffi.call(cif: ?Ptr[_], fun: ?Ptr[_], *args: Any, out: ?IntoPtr[_] = nil) -> _"
+)
 {
         ASSERT_ARGC_RANGE("ffi.call()", 2, INT_MAX);
 
@@ -926,8 +928,7 @@ cffi_call(Ty *ty, int argc, Value *kwargs)
         return ret;
 }
 
-Value
-cffi_fun(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_fun, "ffi.fun(fptr: ?Ptr[_], cif: ?Ptr[_], name: ?String = nil) -> Function")
 {
         ASSERT_ARGC("ffi.fun()", 2, 3);
 
@@ -982,8 +983,7 @@ cffi_fast_call(Ty *ty, Value const *fun, int argc, Value *kwargs)
         return ret;
 }
 
-Value
-cffi_dlopen(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_dlopen, "ffi.dlopen(path: PathLike, flags: ?Int = nil) -> Ptr[Any] | nil")
 {
         ASSERT_ARGC("ffi.dlopen()", 1, 2);
 
@@ -995,8 +995,7 @@ cffi_dlopen(Ty *ty, int argc, Value *kwargs)
         return (p == NULL) ? NIL : PTR(p);
 }
 
-Value
-cffi_blob(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_blob, "ffi.blob(ptr: Ptr[_], size: Int) -> Blob")
 {
         ASSERT_ARGC("ffi.blob()", 2);
 
@@ -1014,8 +1013,7 @@ cffi_blob(Ty *ty, int argc, Value *kwargs)
         return BLOB(b);
 }
 
-Value
-cffi_clone(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_clone, "ffi.clone(src: IntoPtr[_], size: Int) -> Ptr[Any]")
 {
         ASSERT_ARGC("ffi.clone()", 2);
 
@@ -1030,16 +1028,14 @@ cffi_clone(Ty *ty, int argc, Value *kwargs)
         return PTR(clone);
 }
 
-Value
-cffi_c_str(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_c_str, "ffi.c_str(s: String | Blob) -> Ptr[Any]")
 {
         ASSERT_ARGC("ffi.c_str()", 1);
         Value str = ARGx(0, VALUE_STRING, VALUE_BLOB);
         return PTR(TY_C_STR(str));
 }
 
-Value
-cffi_str(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_str, "ffi.str(ptr: IntoPtr[_], len: ?Int) -> String")
 {
         ASSERT_ARGC("ffi.str()", 1, 2);
 
@@ -1056,8 +1052,7 @@ cffi_str(Ty *ty, int argc, Value *kwargs)
         return vSs(str, n);
 }
 
-Value
-cffi_as_str(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_as_str, "ffi.as_str(ptr: IntoPtr[_], len: ?Int) -> String")
 {
         ASSERT_ARGC("ffi.as_str()", 1, 2);
 
@@ -1074,8 +1069,7 @@ cffi_as_str(Ty *ty, int argc, Value *kwargs)
         return xSs(str, n);
 }
 
-Value
-cffi_dlerror(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_dlerror, "ffi.dlerror() -> String | nil")
 {
         if (argc != 0) {
                 zP("ffi.dlerror(): expected 0 arguments but got %d", argc);
@@ -1093,8 +1087,7 @@ cffi_dlerror(Ty *ty, int argc, Value *kwargs)
 #endif
 }
 
-Value
-cffi_dlsym(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_dlsym, "ffi.dlsym(symbol: String, handle: ?Ptr[_] = nil) -> Ptr[Any] | nil")
 {
         ASSERT_ARGC("ffi.dlsym()", 1, 2);
 
@@ -1120,8 +1113,7 @@ cffi_dlsym(Ty *ty, int argc, Value *kwargs)
         return (p == NULL) ? NIL : PTR(p);
 }
 
-Value
-cffi_struct(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_struct, "ffi.struct(*members: CType[_]) -> CType[_]")
 {
         if (argc == 0) {
                 zP("ffi.struct() expects at least 1 argument");
@@ -1163,8 +1155,7 @@ free_closure(void *ptr)
 }
 
 
-Value
-cffi_closure(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_closure, "ffi.closure(*args: Any) -> Ptr[Any] | nil")
 {
         ASSERT_ARGC_RANGE("ffi.closure()", 1, INT_MAX);
 
@@ -1175,7 +1166,7 @@ cffi_closure(Ty *ty, int argc, Value *kwargs)
                 bP("argument is not callable: %s", VSC(&f));
         }
 
-        Value cif = cffi_cif(ty, argc - 1, NULL);
+        Value cif = builtin_ffi_cif(ty, argc - 1, NULL);
         if (cif.type == VALUE_NIL) {
                 bP("failed to construct ffi_cif");
         }
@@ -1208,8 +1199,7 @@ cffi_closure(Ty *ty, int argc, Value *kwargs)
         return GCPTR(code, dtor);
 }
 
-Value
-cffi_closure_free(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_closure_free, "ffi.freeClosure(closure: ?Ptr[_]) -> nil")
 {
         ASSERT_ARGC("ffi.free-closure()", 1);
         (void)PTR_ARG(0);
@@ -1228,8 +1218,7 @@ struct_field_size(int c)
         }
 }
 
-Value
-cffi_calcsize(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_calcsize, "ffi.calcsize(fmt: String) -> Int")
 {
         ASSERT_ARGC("ffi.calcsize()", 1);
 
@@ -1355,8 +1344,10 @@ countfields(u8 const *fmt, int n, int start)
         return nf;
 }
 
-Value
-cffi_pack(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_pack,
+        "ffi.pack(fmt: String, *args: Any) -> Ptr[Any]",
+        "ffi.pack[T](buf: T, fmt: String, *args: Any) -> T"
+)
 {
         ASSERT_ARGC_RANGE("ffi.pack()", 1, 64);
 
@@ -1537,8 +1528,7 @@ NotEnoughArgs:
         zP("ffi.pack(): not enough arguments");
 }
 
-Value
-cffi_unpack(Ty *ty, int argc, Value *kwargs)
+TY_BUILTIN_RAW(ffi_unpack, "ffi.unpack[T](fmt: T, buf: IntoPtr[_], off: Int = 0) -> UnpackTypes[T]")
 {
         ASSERT_ARGC("ffi.unpack()", 2, 3);
 

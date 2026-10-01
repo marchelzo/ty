@@ -1217,7 +1217,7 @@ static Token
 lexop(Ty *ty)
 {
         char op[MAX_OP_LEN + 1] = {0};
-        size_t i = 0;
+        usize i = 0;
 
         bool touching_id = idchar(C(-1))
                         || (C(-1) == '?')
@@ -1525,6 +1525,10 @@ Begin:
         } else if (C(0) == '$' && ctx == LEX_PREFIX) {
                 nextchar(ty);
                 return mktoken(ty, '$');
+        } else if (C(0) == '%' && C(1) == '{') {
+                nextchar(ty);
+                nextchar(ty);
+                return mktoken(ty, TOKEN_DICT_OPEN);
         } else if (
                 contains(OperatorCharset, C(0))
              || (

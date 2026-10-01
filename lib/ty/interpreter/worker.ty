@@ -18,8 +18,9 @@ class Evaluator {
 
     eval(source: String) -> Any {
         __cell += 1
-        __module = ty.mod.compile(source, __module, "(cell {__cell})")
-        ty.mod.eval(__module)
+        let mod = ty.mod.compile(source, __module, "(cell {__cell})")
+        __module = mod
+        ty.mod.eval(mod)
     }
 }
 
