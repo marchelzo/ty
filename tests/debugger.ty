@@ -210,7 +210,7 @@ pub fn debugger-pause-and-inspect() {
     assert(dap.event('stopped')['reason'] == 'pause')
 
     let names = dap.ok('threads')['threads'].map(&['name'])
-    assert(names.contains?('main'))
+    assert('main' in names)
     assert(#names == 2)
 
     let frames = dap.frames(1)

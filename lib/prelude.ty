@@ -4531,13 +4531,6 @@ fn memoized[F](fun: F, max: ?Int = nil) -> F {
     __eval__(ty.Func({name: fun.__name__, params, body}))
 }
 
-#|if ty.jit && ty.TEST
-fn assert(cond: Any, msg: String = 'assertion failed') -> _ {
-    if !cond {
-        throw AssertionError(msg)
-    }
-}
-#|else
 macro assert(condition, message) {
     let color? = (getenv('NO_COLOR') == nil) && (ty.color != 'never')
 
@@ -4592,7 +4585,7 @@ macro assert(condition, message) {
                                  "    [%20]{$$pretty-rhs}[/]: {$$show($$rhs-var)}"
                         },
                         None => do {
-                            "assertion failed: {$$pretty-cond}{$$msg}\n"
+                            "failed assertion: {$$pretty-cond}{$$msg}\n"
                             "    lhs: {$$show($$lhs-var)}\n"
                             "    rhs: {$$show($$rhs-var)}"
                         }
@@ -4603,11 +4596,10 @@ macro assert(condition, message) {
         ])
     } else $$[
         if !$$condition {
-            throw AssertionError("assertion failed: {$$pretty-cond}{$$msg}")
+            throw AssertionError("failed assertion: {$$pretty-cond}{$$msg}")
         }
     $$]
 }
-#|]
 
 macro unreachable! = throw AssertionError('unreachable')
 
