@@ -394,12 +394,15 @@ free_cif(ffi_cif *cif)
         xmF(cif);
 }
 
-TY_BUILTIN_RAW(ffi_cif,
-        "ffi.cif() -> Ptr[Any] | nil",
-        "ffi.cif(rt: CType[_] | Ptr[Any], *args: CType[_] | Ptr[Any], nFixed: ?Int = nil) -> Ptr[Any] | nil"
-)
+// ffi.cif() -> Ptr[Any] | nil
+// ffi.cif(
+//     rt: CType[_] | Ptr[Any],
+//     *args: CType[_] | Ptr[Any],
+//     nFixed: ?Int = nil
+// ) -> Ptr[Any] | nil
+TY_BUILTIN_RAW(ffi_cif)
 {
-        ASSERT_ARGC_RANGE("ffi.cif()", 0, INT_MAX);
+        ASSERT_ARGC_MIN("ffi.cif()", 0);
 
         ffi_type *rt = (argc > 0) ? PTR_ARG(0) : &ffi_type_void;
         Value nFixed = KWARG("nFixed", INTEGER, _NIL);
@@ -437,7 +440,8 @@ TY_BUILTIN_RAW(ffi_cif,
         return GCPTR(cif, dtor);
 }
 
-TY_BUILTIN_RAW(ffi_addr, "ffi.addr(ptr: ?Ptr[_]) -> Ptr[Any]")
+// ffi.addr(ptr: ?Ptr[_]) -> Ptr[Any]
+TY_BUILTIN_RAW(ffi_addr)
 {
         ASSERT_ARGC("ffi.addr()", 1);
         void *v = PTR_ARG(0);
@@ -446,7 +450,8 @@ TY_BUILTIN_RAW(ffi_addr, "ffi.addr(ptr: ?Ptr[_]) -> Ptr[Any]")
         return PTR(p);
 }
 
-TY_BUILTIN_RAW(ffi_free, "ffi.free(ptr: IntoPtr[_]) -> nil")
+// ffi.free(ptr: IntoPtr[_]) -> nil
+TY_BUILTIN_RAW(ffi_free)
 {
         ASSERT_ARGC("ffi.free()", 1);
         Value object = ARG(0);
@@ -455,14 +460,16 @@ TY_BUILTIN_RAW(ffi_free, "ffi.free(ptr: IntoPtr[_]) -> nil")
         return NIL;
 }
 
-TY_BUILTIN_RAW(ffi_alloc, "ffi.alloc[T](size: Int) -> Ptr[T]")
+// ffi.alloc[T](size: Int) -> Ptr[T]
+TY_BUILTIN_RAW(ffi_alloc)
 {
         ASSERT_ARGC("ffi.alloc()", 1);
         void *p = malloc(max(0, INT_ARG(0)));
         return (p == NULL) ? NIL : PTR(p);
 }
 
-TY_BUILTIN_RAW(ffi_realloc, "ffi.realloc(ptr: ?IntoPtr[_], size: Int) -> Ptr[Any] | nil")
+// ffi.realloc(ptr: ?IntoPtr[_], size: Int) -> Ptr[Any] | nil
+TY_BUILTIN_RAW(ffi_realloc)
 {
         ASSERT_ARGC("ffi.realloc()", 2);
 
@@ -475,20 +482,18 @@ TY_BUILTIN_RAW(ffi_realloc, "ffi.realloc(ptr: ?IntoPtr[_], size: Int) -> Ptr[Any
         return (new == NULL) ? NIL : PTR(new);
 }
 
-TY_BUILTIN_RAW(ffi_size, "ffi.size[T](type: CType[T]) -> Int")
+// ffi.size[T](type: CType[T]) -> Int
+TY_BUILTIN_RAW(ffi_size)
 {
-        if (argc != 1) {
-                zP("ffi.size() expects 1 or 2 arguments but got %d", argc);
-        }
+        ASSERT_ARGC("ffi.size()", 1);
 
-        if (ARG(0).type != VALUE_PTR) {
-                zP("the argument to ffi.size() must be a pointer");
-        }
+        ffi_type const *type = ARGx(0, VALUE_PTR).ptr;
 
-        return INTEGER(((ffi_type *)ARG(0).ptr)->size);
+        return INTEGER(type->size);
 }
 
-TY_BUILTIN_RAW(ffi_auto, "ffi.auto[T](ptr: Ptr[T], dtor: Any = nil) -> Ptr[T]")
+// ffi.auto[T](ptr: Ptr[T], dtor: Any = nil) -> Ptr[T]
+TY_BUILTIN_RAW(ffi_auto)
 {
         ASSERT_ARGC("ffi.auto()", 1, 2);
 
@@ -506,7 +511,8 @@ TY_BUILTIN_RAW(ffi_auto, "ffi.auto[T](ptr: Ptr[T], dtor: Any = nil) -> Ptr[T]")
         return TGCPTR(ptr.ptr, ptr.extra, dtor);
 }
 
-TY_BUILTIN_RAW(ffi_new, "ffi.new[T](type: CType[T], count: ?Int, init: ?IntoPtr[_]) -> Ptr[T]")
+// ffi.new[T](type: CType[T], count: ?Int, init: ?IntoPtr[_]) -> Ptr[T]
+TY_BUILTIN_RAW(ffi_new)
 {
         ASSERT_ARGC("ffi.new()", 1, 2, 3);
 
@@ -549,7 +555,8 @@ TY_BUILTIN_RAW(ffi_new, "ffi.new[T](type: CType[T], count: ?Int, init: ?IntoPtr[
         return p;
 }
 
-TY_BUILTIN_RAW(ffi_box, "ffi.box[T](type: CType[T], val: ?T) -> Ptr[T]")
+// ffi.box[T](type: CType[T], val: ?T) -> Ptr[T]
+TY_BUILTIN_RAW(ffi_box)
 {
         ASSERT_ARGC("ffi.box()", 1, 2);
 
@@ -579,9 +586,8 @@ TY_BUILTIN_RAW(ffi_box, "ffi.box[T](type: CType[T], val: ?T) -> Ptr[T]")
         return p;
 }
 
-TY_BUILTIN_RAW(ffi_new_auto,
-        "ffi.newAuto[T](type: CType[T], count: Int = 1, init: ?IntoPtr[_] = nil) -> Ptr[T]"
-)
+// ffi.newAuto[T](type: CType[T], count: Int = 1, init: ?IntoPtr[_] = nil) -> Ptr[T]
+TY_BUILTIN_RAW(ffi_new_auto)
 {
         ASSERT_ARGC("ffi.new-auto()", 1, 2, 3);
 
@@ -600,7 +606,8 @@ TY_BUILTIN_RAW(ffi_new_auto,
         return TGCPTR(mem, t, mem);
 }
 
-TY_BUILTIN_RAW(ffi_box_auto, "ffi.boxAuto[T](type: CType[T], val: ?T = nil) -> Ptr[T]")
+// ffi.boxAuto[T](type: CType[T], val: ?T = nil) -> Ptr[T]
+TY_BUILTIN_RAW(ffi_box_auto)
 {
         ASSERT_ARGC("ffi.box-auto()", 1, 2);
 
@@ -620,9 +627,8 @@ TY_BUILTIN_RAW(ffi_box_auto, "ffi.boxAuto[T](type: CType[T], val: ?T = nil) -> P
         return TGCPTR(mem, t, mem);
 }
 
-TY_BUILTIN_RAW(ffi_pmember,
-        "ffi.pmember(type: CType[_], record: Ptr[_] | Blob, index: Int) -> Ptr[Any]"
-)
+// ffi.pmember(type: CType[_], record: Ptr[_] | Blob, index: Int) -> Ptr[Any]
+TY_BUILTIN_RAW(ffi_pmember)
 {
         ASSERT_ARGC("ffi.pmember()", 3);
 
@@ -646,62 +652,43 @@ TY_BUILTIN_RAW(ffi_pmember,
         return PTR(ptr + offsets[i]);
 }
 
-TY_BUILTIN_RAW(ffi_member,
-        "ffi.member(type: CType[_], record: Ptr[_] | Blob, index: Int) -> _",
-        "ffi.member[T](type: CType[_], record: Ptr[_] | Blob, index: Int, val: T) -> T"
-)
+// ffi.member(type: CType[_], record: Ptr[_] | Blob, index: Int) -> _
+// ffi.member[T](type: CType[_], record: Ptr[_] | Blob, index: Int, val: T) -> T
+TY_BUILTIN_RAW(ffi_member)
 {
-        if (argc != 3 && argc != 4) {
-                zP("ffi.member() expects 3 or 4 arguments but got %d", argc);
-        }
+        ASSERT_ARGC("ffi.member()", 3, 4);
 
-        Value t = ARG(0);
-        if (t.type != VALUE_PTR) {
-                zP("the first argument to ffi.member() must be a pointer");
-        }
-
-        ffi_type *type = t.ptr;
+        ffi_type *type = ARGx(0, VALUE_PTR).ptr;
+        Value record   = ARGx(1, VALUE_PTR, VALUE_BLOB);
+        i64 i          = INT_ARG(2);
 
         int n = 0;
         while (type->elements[n] != NULL) {
                 n += 1;
         }
 
-        unsigned char *p;
-        switch (ARG(1).type) {
-        case VALUE_PTR:
-                p = ARG(1).ptr;
-                break;
-
-        case VALUE_BLOB:
-                p = ARG(1).blob->items;
-                break;
-
-        default:
-                zP("ffi.member(): invalid second argument: %s", VSC(&ARG(1)));
+        if (i < 0 || i >= n) {
+                bP("member index out of range: %"PRIi64, i);
         }
 
-        Value i = ARG(2);
-        if (
-                (i.type != VALUE_INTEGER)
-             || (i.z < 0)
-             || (i.z >= n)
-        ) {
-                zP("invalid third argument to ffi.member(): %s", VSC(&i));
-        }
+        unsigned char *p = (record.type == VALUE_PTR)
+                         ? record.ptr
+                         : vv(*record.blob);
 
         usize const *offsets = struct_offsets(type);
 
         if (argc == 3) {
-                return load(ty, type->elements[i.z], p + offsets[i.z]);
-        } else {
-                Value val = ARG(3);
-                store(ty, type->elements[i.z], p + offsets[i.z], &val);
-                return val;
+                return load(ty, type->elements[i], p + offsets[i]);
         }
+
+        Value val = ARG(3);
+        store(ty, type->elements[i], p + offsets[i], &val);
+
+        return val;
 }
 
-TY_BUILTIN_RAW(ffi_fields, "ffi.fields(type: CType[_]) -> [(Int, CType[_])]")
+// ffi.fields(type: CType[_]) -> [(Int, CType[_])]
+TY_BUILTIN_RAW(ffi_fields)
 {
         ASSERT_ARGC("ffi.fields()", 1);
 
@@ -733,7 +720,8 @@ TY_BUILTIN_RAW(ffi_fields, "ffi.fields(type: CType[_]) -> [(Int, CType[_])]")
         return ARRAY(fields);
 }
 
-TY_BUILTIN_RAW(ffi_load, "ffi.load[T](type: CType[T], address: IntoPtr[T]) -> T")
+// ffi.load[T](type: CType[T], address: IntoPtr[T]) -> T
+TY_BUILTIN_RAW(ffi_load)
 {
         ASSERT_ARGC("ffi.load()", 1, 2, 3);
 
@@ -755,26 +743,19 @@ TY_BUILTIN_RAW(ffi_load, "ffi.load[T](type: CType[T], address: IntoPtr[T]) -> T"
         return load(ty, arg0.ptr, ptr_from(ty, &addr));
 }
 
-TY_BUILTIN_RAW(ffi_load_atomic,
-        "atomic.load[T](ptr: Ptr[T]) -> T",
-        "atomic.load[T](type: CType[T], ptr: Ptr[Any]) -> T"
-)
+// atomic.load[T](ptr: Ptr[T]) -> T
+// atomic.load[T](type: CType[T], ptr: Ptr[Any]) -> T
+TY_BUILTIN_RAW(ffi_load_atomic)
 {
-        ffi_type *t;
+        ASSERT_ARGC("atomic.load()", 1, 2);
 
-        switch (argc) {
-        case 1:
-                t = (ARG(0).extra == NULL)
-                  ? &ffi_type_uint8
-                  : ARG(0).extra;
-                return xload(ty, t, ARG(0).ptr);
-
-        case 2:
-                return xload(ty, ARG(0).ptr, ARG(1).ptr);
-
-        default:
-                zP("atomic.load(): expected 1 or 2 arguments but got %d", argc);
+        if (argc == 2) {
+                return xload(ty, ARGx(0, VALUE_PTR).ptr, ARGx(1, VALUE_PTR).ptr);
         }
+
+        Value p = ARGx(0, VALUE_PTR);
+
+        return xload(ty, (p.extra == NULL) ? &ffi_type_uint8 : p.extra, p.ptr);
 }
 
 Value
@@ -798,101 +779,46 @@ cffi_load_n(Ty *ty, int argc, Value *kwargs)
         return result;
 }
 
-TY_BUILTIN_RAW(ffi_store,
-        "ffi.store[T](type: CType[T], ptr: Ptr[_], val: Any) -> T",
-        "ffi.store[T](ptr: Ptr[T], val: Any) -> T"
-)
+// ffi.store[T](type: CType[T], ptr: Ptr[_], val: Any) -> T
+// ffi.store[T](ptr: Ptr[T], val: Any) -> T
+TY_BUILTIN_RAW(ffi_store)
 {
-        Value vType;
-        Value vPtr;
-        Value vVal;
+        ASSERT_ARGC("ffi.store()", 2, 3);
 
-        switch (argc) {
-        case 3:
-                vType = ARG(0);
-                vPtr = ARG(1);
-                vVal = ARG(2);
-                break;
+        Value ptr = ARG__(argc - 2, "ptr", VALUE_PTR);
+        Value val = ARG(argc - 1);
 
-        case 2:
-                vType = NONE;
-                vPtr = ARG(0);
-                vVal = ARG(1);
-                break;
+        ffi_type *type = (argc == 3)        ? ARG__(0, "type", VALUE_PTR).ptr
+                       : (ptr.extra == NULL) ? &ffi_type_uint8
+                       : ptr.extra;
 
-        default:
-                zP("ffi.store(): expected 2 or 3 arguments but got %d", argc);
-        }
+        store(ty, type, ptr.ptr, &val);
 
-        if (vPtr.type != VALUE_PTR) {
-                zP("ffi.store(): expected pointer but got: %s", VSC(&vPtr));
-        }
-
-        if (vType.type == VALUE_NONE) {
-                vType = PTR(
-                        (vPtr.extra == NULL)
-                      ? &ffi_type_uint8
-                      : (ffi_type *)vPtr.extra
-                );
-        } else if (vType.type != VALUE_PTR) {
-                zP("ffi.store(): expected pointer but got: %s", VSC(&vType));
-        }
-
-        store(ty, vType.ptr, vPtr.ptr, &vVal);
-
-        return load(ty, vType.ptr, vPtr.ptr);
+        return load(ty, type, ptr.ptr);
 }
 
-TY_BUILTIN_RAW(ffi_store_atomic,
-        "atomic.store[T](ptr: Ptr[T], val: T) -> nil",
-        "atomic.store[T](type: CType[T], ptr: Ptr[Any], val: T) -> nil"
-)
+// atomic.store[T](ptr: Ptr[T], val: T) -> nil
+// atomic.store[T](type: CType[T], ptr: Ptr[Any], val: T) -> nil
+TY_BUILTIN_RAW(ffi_store_atomic)
 {
-        Value vType;
-        Value vPtr;
-        Value vVal;
+        ASSERT_ARGC("atomic.store()", 2, 3);
 
-        switch (argc) {
-        case 3:
-                vType = ARG(0);
-                vPtr = ARG(1);
-                vVal = ARG(2);
-                break;
+        Value ptr = ARG__(argc - 2, "ptr", VALUE_PTR);
+        Value val = ARG(argc - 1);
 
-        case 2:
-                vType = NONE;
-                vPtr = ARG(0);
-                vVal = ARG(1);
-                break;
+        ffi_type *type = (argc == 3)        ? ARG__(0, "type", VALUE_PTR).ptr
+                       : (ptr.extra == NULL) ? &ffi_type_uint8
+                       : ptr.extra;
 
-        default:
-                zP("atomic.store(): expected 2 or 3 arguments but got %d", argc);
-        }
-
-        if (vPtr.type != VALUE_PTR) {
-                zP("atomic.store(): expected pointer but got: %s", VSC(&vPtr));
-        }
-
-        if (vType.type == VALUE_NONE) {
-                vType = PTR(
-                        (vPtr.extra == NULL)
-                      ? &ffi_type_uint8
-                      : (ffi_type *)vPtr.extra
-                );
-        } else if (vType.type != VALUE_PTR) {
-                zP("atomic.store(): expected pointer but got: %s", VSC(&vType));
-        }
-
-        xstore(ty, vType.ptr, vPtr.ptr, &vVal);
+        xstore(ty, type, ptr.ptr, &val);
 
         return NIL;
 }
 
-TY_BUILTIN_RAW(ffi_call,
-        "ffi.call(cif: ?Ptr[_], fun: ?Ptr[_], *args: Any, out: ?IntoPtr[_] = nil) -> _"
-)
+// ffi.call(cif: ?Ptr[_], fun: ?Ptr[_], *args: Any, out: ?IntoPtr[_] = nil) -> _
+TY_BUILTIN_RAW(ffi_call)
 {
-        ASSERT_ARGC_RANGE("ffi.call()", 2, INT_MAX);
+        ASSERT_ARGC_MIN("ffi.call()", 2);
 
         ffi_cif *cif = PTR_ARG(0);
         void (*func)(void) = (void (*)(void))PTR_ARG(1);
@@ -928,7 +854,8 @@ TY_BUILTIN_RAW(ffi_call,
         return ret;
 }
 
-TY_BUILTIN_RAW(ffi_fun, "ffi.fun(fptr: ?Ptr[_], cif: ?Ptr[_], name: ?String = nil) -> Function")
+// ffi.fun(fptr: ?Ptr[_], cif: ?Ptr[_], name: ?String = nil) -> Function
+TY_BUILTIN_RAW(ffi_fun)
 {
         ASSERT_ARGC("ffi.fun()", 2, 3);
 
@@ -947,7 +874,7 @@ TY_BUILTIN_RAW(ffi_fun, "ffi.fun(fptr: ?Ptr[_], cif: ?Ptr[_], name: ?String = ni
 Value
 cffi_fast_call(Ty *ty, Value const *fun, int argc, Value *kwargs)
 {
-        ASSERT_ARGC_RANGE("ffi.call()", 0, INT_MAX);
+        ASSERT_ARGC_MIN("ffi.call()", 0);
 
         ffi_cif *cif = fun->ffi;
         void (*func)(void) = (void (*)(void))fun->ff;
@@ -983,7 +910,8 @@ cffi_fast_call(Ty *ty, Value const *fun, int argc, Value *kwargs)
         return ret;
 }
 
-TY_BUILTIN_RAW(ffi_dlopen, "ffi.dlopen(path: PathLike, flags: ?Int = nil) -> Ptr[Any] | nil")
+// ffi.dlopen(path: PathLike, flags: ?Int = nil) -> Ptr[Any] | nil
+TY_BUILTIN_RAW(ffi_dlopen)
 {
         ASSERT_ARGC("ffi.dlopen()", 1, 2);
 
@@ -995,7 +923,8 @@ TY_BUILTIN_RAW(ffi_dlopen, "ffi.dlopen(path: PathLike, flags: ?Int = nil) -> Ptr
         return (p == NULL) ? NIL : PTR(p);
 }
 
-TY_BUILTIN_RAW(ffi_blob, "ffi.blob(ptr: Ptr[_], size: Int) -> Blob")
+// ffi.blob(ptr: Ptr[_], size: Int) -> Blob
+TY_BUILTIN_RAW(ffi_blob)
 {
         ASSERT_ARGC("ffi.blob()", 2);
 
@@ -1013,7 +942,8 @@ TY_BUILTIN_RAW(ffi_blob, "ffi.blob(ptr: Ptr[_], size: Int) -> Blob")
         return BLOB(b);
 }
 
-TY_BUILTIN_RAW(ffi_clone, "ffi.clone(src: IntoPtr[_], size: Int) -> Ptr[Any]")
+// ffi.clone(src: IntoPtr[_], size: Int) -> Ptr[Any]
+TY_BUILTIN_RAW(ffi_clone)
 {
         ASSERT_ARGC("ffi.clone()", 2);
 
@@ -1028,14 +958,16 @@ TY_BUILTIN_RAW(ffi_clone, "ffi.clone(src: IntoPtr[_], size: Int) -> Ptr[Any]")
         return PTR(clone);
 }
 
-TY_BUILTIN_RAW(ffi_c_str, "ffi.c_str(s: String | Blob) -> Ptr[Any]")
+// ffi.c_str(s: String | Blob) -> Ptr[Any]
+TY_BUILTIN_RAW(ffi_c_str)
 {
         ASSERT_ARGC("ffi.c_str()", 1);
         Value str = ARGx(0, VALUE_STRING, VALUE_BLOB);
         return PTR(TY_C_STR(str));
 }
 
-TY_BUILTIN_RAW(ffi_str, "ffi.str(ptr: IntoPtr[_], len: ?Int) -> String")
+// ffi.str(ptr: IntoPtr[_], len: ?Int) -> String
+TY_BUILTIN_RAW(ffi_str)
 {
         ASSERT_ARGC("ffi.str()", 1, 2);
 
@@ -1052,7 +984,8 @@ TY_BUILTIN_RAW(ffi_str, "ffi.str(ptr: IntoPtr[_], len: ?Int) -> String")
         return vSs(str, n);
 }
 
-TY_BUILTIN_RAW(ffi_as_str, "ffi.as_str(ptr: IntoPtr[_], len: ?Int) -> String")
+// ffi.as_str(ptr: IntoPtr[_], len: ?Int) -> String
+TY_BUILTIN_RAW(ffi_as_str)
 {
         ASSERT_ARGC("ffi.as_str()", 1, 2);
 
@@ -1069,11 +1002,10 @@ TY_BUILTIN_RAW(ffi_as_str, "ffi.as_str(ptr: IntoPtr[_], len: ?Int) -> String")
         return xSs(str, n);
 }
 
-TY_BUILTIN_RAW(ffi_dlerror, "ffi.dlerror() -> String | nil")
+// ffi.dlerror() -> String | nil
+TY_BUILTIN_RAW(ffi_dlerror)
 {
-        if (argc != 0) {
-                zP("ffi.dlerror(): expected 0 arguments but got %d", argc);
-        }
+        ASSERT_ARGC("ffi.dlerror()", 0);
 
 #ifdef _WIN32
         return NIL;
@@ -1087,7 +1019,8 @@ TY_BUILTIN_RAW(ffi_dlerror, "ffi.dlerror() -> String | nil")
 #endif
 }
 
-TY_BUILTIN_RAW(ffi_dlsym, "ffi.dlsym(symbol: String, handle: ?Ptr[_] = nil) -> Ptr[Any] | nil")
+// ffi.dlsym(symbol: String, handle: ?Ptr[_] = nil) -> Ptr[Any] | nil
+TY_BUILTIN_RAW(ffi_dlsym)
 {
         ASSERT_ARGC("ffi.dlsym()", 1, 2);
 
@@ -1113,11 +1046,10 @@ TY_BUILTIN_RAW(ffi_dlsym, "ffi.dlsym(symbol: String, handle: ?Ptr[_] = nil) -> P
         return (p == NULL) ? NIL : PTR(p);
 }
 
-TY_BUILTIN_RAW(ffi_struct, "ffi.struct(*members: CType[_]) -> CType[_]")
+// ffi.struct(*members: CType[_]) -> CType[_]
+TY_BUILTIN_RAW(ffi_struct)
 {
-        if (argc == 0) {
-                zP("ffi.struct() expects at least 1 argument");
-        }
+        ASSERT_ARGC_MIN("ffi.struct()", 1);
 
         ffi_type *t = mA(sizeof *t);
 
@@ -1128,13 +1060,7 @@ TY_BUILTIN_RAW(ffi_struct, "ffi.struct(*members: CType[_]) -> CType[_]")
         t->elements = mA(offsets_offset + argc * sizeof (usize));
 
         for (int i = 0; i < argc; ++i) {
-                Value member = ARG(i);
-
-                if (member.type != VALUE_PTR) {
-                        zP("non-pointer passed to ffi.struct(): %s", VSC(&member));
-                }
-
-                t->elements[i] = member.ptr;
+                t->elements[i] = ARGx(i, VALUE_PTR).ptr;
         }
 
         t->elements[argc] = NULL;
@@ -1155,9 +1081,10 @@ free_closure(void *ptr)
 }
 
 
-TY_BUILTIN_RAW(ffi_closure, "ffi.closure(*args: Any) -> Ptr[Any] | nil")
+// ffi.closure(*args: Any) -> Ptr[Any] | nil
+TY_BUILTIN_RAW(ffi_closure)
 {
-        ASSERT_ARGC_RANGE("ffi.closure()", 1, INT_MAX);
+        ASSERT_ARGC_MIN("ffi.closure()", 1);
 
         Value f = ARG(argc - 1);
         vmX();
@@ -1199,7 +1126,8 @@ TY_BUILTIN_RAW(ffi_closure, "ffi.closure(*args: Any) -> Ptr[Any] | nil")
         return GCPTR(code, dtor);
 }
 
-TY_BUILTIN_RAW(ffi_closure_free, "ffi.freeClosure(closure: ?Ptr[_]) -> nil")
+// ffi.freeClosure(closure: ?Ptr[_]) -> nil
+TY_BUILTIN_RAW(ffi_closure_free)
 {
         ASSERT_ARGC("ffi.free-closure()", 1);
         (void)PTR_ARG(0);
@@ -1218,7 +1146,8 @@ struct_field_size(int c)
         }
 }
 
-TY_BUILTIN_RAW(ffi_calcsize, "ffi.calcsize(fmt: String) -> Int")
+// ffi.calcsize(fmt: String) -> Int
+TY_BUILTIN_RAW(ffi_calcsize)
 {
         ASSERT_ARGC("ffi.calcsize()", 1);
 
@@ -1344,10 +1273,9 @@ countfields(u8 const *fmt, int n, int start)
         return nf;
 }
 
-TY_BUILTIN_RAW(ffi_pack,
-        "ffi.pack(fmt: String, *args: Any) -> Ptr[Any]",
-        "ffi.pack[T](buf: T, fmt: String, *args: Any) -> T"
-)
+// ffi.pack(fmt: String, *args: Any) -> Ptr[Any]
+// ffi.pack[T](buf: T, fmt: String, *args: Any) -> T
+TY_BUILTIN_RAW(ffi_pack)
 {
         ASSERT_ARGC_RANGE("ffi.pack()", 1, 64);
 
@@ -1528,7 +1456,8 @@ NotEnoughArgs:
         zP("ffi.pack(): not enough arguments");
 }
 
-TY_BUILTIN_RAW(ffi_unpack, "ffi.unpack[T](fmt: T, buf: IntoPtr[_], off: Int = 0) -> UnpackTypes[T]")
+// ffi.unpack[T](fmt: T, buf: IntoPtr[_], off: Int = 0) -> UnpackTypes[T]
+TY_BUILTIN_RAW(ffi_unpack)
 {
         ASSERT_ARGC("ffi.unpack()", 2, 3);
 

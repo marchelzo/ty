@@ -143,9 +143,8 @@ static ffi_type *C_TYPE[] = {
         default: r = (LHS) != (RHS); break; \
         }
 
-TY_BUILTIN_RAW(accel_vadd,
-        "accelerate.vadd(a: Ptr[Any], b: Ptr[Any], out: Ptr[Any], n: Int, dt: Int) -> nil"
-)
+// accelerate.vadd(a: Ptr[Any], b: Ptr[Any], out: Ptr[Any], n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_vadd)
 {
         ASSERT_ARGC("vadd()", 5);
 
@@ -171,9 +170,8 @@ TY_BUILTIN_RAW(accel_vadd,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vsub,
-        "accelerate.vsub(a: Ptr[Any], b: Ptr[Any], out: Ptr[Any], n: Int, dt: Int) -> nil"
-)
+// accelerate.vsub(a: Ptr[Any], b: Ptr[Any], out: Ptr[Any], n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_vsub)
 {
         ASSERT_ARGC("vsub()", 5);
 
@@ -199,9 +197,8 @@ TY_BUILTIN_RAW(accel_vsub,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vmul,
-        "accelerate.vmul(a: Ptr[Any], b: Ptr[Any], out: Ptr[Any], n: Int, dt: Int) -> nil"
-)
+// accelerate.vmul(a: Ptr[Any], b: Ptr[Any], out: Ptr[Any], n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_vmul)
 {
         ASSERT_ARGC("vmul()", 5);
 
@@ -227,9 +224,8 @@ TY_BUILTIN_RAW(accel_vmul,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vdiv,
-        "accelerate.vdiv(a: Ptr[Any], b: Ptr[Any], out: Ptr[Any], n: Int, dt: Int) -> nil"
-)
+// accelerate.vdiv(a: Ptr[Any], b: Ptr[Any], out: Ptr[Any], n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_vdiv)
 {
         ASSERT_ARGC("vdiv()", 5);
 
@@ -266,9 +262,8 @@ TY_BUILTIN_RAW(accel_vdiv,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vsadd,
-        "accelerate.vsadd(a: Ptr[Any], s: Float, out: Ptr[Any], n: Int, dt: Int) -> nil"
-)
+// accelerate.vsadd(a: Ptr[Any], s: Float, out: Ptr[Any], n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_vsadd)
 {
         ASSERT_ARGC("vsadd()", 5);
 
@@ -292,9 +287,8 @@ TY_BUILTIN_RAW(accel_vsadd,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vsmul,
-        "accelerate.vsmul(a: Ptr[Any], s: Float, out: Ptr[Any], n: Int, dt: Int) -> nil"
-)
+// accelerate.vsmul(a: Ptr[Any], s: Float, out: Ptr[Any], n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_vsmul)
 {
         ASSERT_ARGC("vsmul()", 5);
 
@@ -318,9 +312,8 @@ TY_BUILTIN_RAW(accel_vsmul,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vsdiv,
-        "accelerate.vsdiv(a: Ptr[Any], s: Float, out: Ptr[Any], n: Int, dt: Int) -> nil"
-)
+// accelerate.vsdiv(a: Ptr[Any], s: Float, out: Ptr[Any], n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_vsdiv)
 {
         ASSERT_ARGC("vsdiv()", 5);
 
@@ -349,9 +342,8 @@ TY_BUILTIN_RAW(accel_vsdiv,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_svdiv,
-        "accelerate.svdiv(s: Float, a: Ptr[Any], out: Ptr[Any], n: Int, dt: Int) -> nil"
-)
+// accelerate.svdiv(s: Float, a: Ptr[Any], out: Ptr[Any], n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_svdiv)
 {
         ASSERT_ARGC("svdiv()", 5);
 
@@ -383,7 +375,8 @@ TY_BUILTIN_RAW(accel_svdiv,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vneg, "accelerate.vneg(a: Ptr[Any], out: Ptr[Any], n: Int, dt: Int) -> nil")
+// accelerate.vneg(a: Ptr[Any], out: Ptr[Any], n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_vneg)
 {
         ASSERT_ARGC("vneg()", 4);
 
@@ -410,7 +403,8 @@ TY_BUILTIN_RAW(accel_vneg, "accelerate.vneg(a: Ptr[Any], out: Ptr[Any], n: Int, 
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vabs, "accelerate.vabs(a: Ptr[Any], out: Ptr[Any], n: Int, dt: Int) -> nil")
+// accelerate.vabs(a: Ptr[Any], out: Ptr[Any], n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_vabs)
 {
         ASSERT_ARGC("vabs()", 4);
 
@@ -438,9 +432,8 @@ TY_BUILTIN_RAW(accel_vabs, "accelerate.vabs(a: Ptr[Any], out: Ptr[Any], n: Int, 
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vclip,
-        "accelerate.vclip(a: Ptr[Any], lo: Float, hi: Float, out: Ptr[Any], n: Int, dt: Int) -> nil"
-)
+// accelerate.vclip(a: Ptr[Any], lo: Float, hi: Float, out: Ptr[Any], n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_vclip)
 {
         ASSERT_ARGC("vclip()", 6);
 
@@ -467,7 +460,8 @@ TY_BUILTIN_RAW(accel_vclip,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vfill, "accelerate.vfill(val: Float, out: Ptr[Any], n: Int, dt: Int) -> nil")
+// accelerate.vfill(val: Float, out: Ptr[Any], n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_vfill)
 {
         ASSERT_ARGC("vfill()", 4);
 
@@ -490,7 +484,8 @@ TY_BUILTIN_RAW(accel_vfill, "accelerate.vfill(val: Float, out: Ptr[Any], n: Int,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vclr, "accelerate.vclr(out: Ptr[Any], n: Int, dt: Int) -> nil")
+// accelerate.vclr(out: Ptr[Any], n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_vclr)
 {
         ASSERT_ARGC("vclr()", 3);
 
@@ -503,9 +498,8 @@ TY_BUILTIN_RAW(accel_vclr, "accelerate.vclr(out: Ptr[Any], n: Int, dt: Int) -> n
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vramp,
-        "accelerate.vramp(start: Float, step: Float, out: Ptr[Any], n: Int, dt: Int) -> nil"
-)
+// accelerate.vramp(start: Float, step: Float, out: Ptr[Any], n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_vramp)
 {
         ASSERT_ARGC("vramp()", 5);
 
@@ -529,9 +523,8 @@ TY_BUILTIN_RAW(accel_vramp,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vcopy,
-        "accelerate.vcopy(src: Ptr[Any], dst: Ptr[Any], n: Int, dt: Int) -> nil"
-)
+// accelerate.vcopy(src: Ptr[Any], dst: Ptr[Any], n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_vcopy)
 {
         ASSERT_ARGC("vcopy()", 4);
 
@@ -545,9 +538,8 @@ TY_BUILTIN_RAW(accel_vcopy,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vcast,
-        "accelerate.vcast(src: Ptr[Any], dst: Ptr[Any], n: Int, sdt: Int, ddt: Int) -> nil"
-)
+// accelerate.vcast(src: Ptr[Any], dst: Ptr[Any], n: Int, sdt: Int, ddt: Int) -> nil
+TY_BUILTIN_RAW(accel_vcast)
 {
         ASSERT_ARGC("vcast()", 5);
 
@@ -569,9 +561,8 @@ TY_BUILTIN_RAW(accel_vcast,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vmath,
-        "accelerate.vmath(a: Ptr[Any], out: Ptr[Any], n: Int, dt: Int, op: Int) -> nil"
-)
+// accelerate.vmath(a: Ptr[Any], out: Ptr[Any], n: Int, dt: Int, op: Int) -> nil
+TY_BUILTIN_RAW(accel_vmath)
 {
         ASSERT_ARGC("vmath()", 5);
 
@@ -621,9 +612,8 @@ TY_BUILTIN_RAW(accel_vmath,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vpow,
-        "accelerate.vpow(bases: Ptr[Any], exps: Ptr[Any], out: Ptr[Any], n: Int, dt: Int) -> nil"
-)
+// accelerate.vpow(bases: Ptr[Any], exps: Ptr[Any], out: Ptr[Any], n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_vpow)
 {
         ASSERT_ARGC("vpow()", 5);
 
@@ -649,9 +639,8 @@ TY_BUILTIN_RAW(accel_vpow,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vspow,
-        "accelerate.vspow(a: Ptr[Any], p: Float, out: Ptr[Any], n: Int, dt: Int) -> nil"
-)
+// accelerate.vspow(a: Ptr[Any], p: Float, out: Ptr[Any], n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_vspow)
 {
         ASSERT_ARGC("vspow()", 5);
 
@@ -702,9 +691,8 @@ signfn(double x)
         return x > 0 ? 1.0 : x < 0 ? -1.0 : 0.0;
 }
 
-TY_BUILTIN_RAW(accel_vroundfn,
-        "accelerate.vroundfn(a: Ptr[Any], out: Ptr[Any], n: Int, dt: Int, op: Int) -> nil"
-)
+// accelerate.vroundfn(a: Ptr[Any], out: Ptr[Any], n: Int, dt: Int, op: Int) -> nil
+TY_BUILTIN_RAW(accel_vroundfn)
 {
         ASSERT_ARGC("vroundfn()", 5);
 
@@ -732,7 +720,8 @@ TY_BUILTIN_RAW(accel_vroundfn,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_sve, "accelerate.sve(a: Ptr[Any], n: Int, dt: Int) -> Float")
+// accelerate.sve(a: Ptr[Any], n: Int, dt: Int) -> Float
+TY_BUILTIN_RAW(accel_sve)
 {
         ASSERT_ARGC("sve()", 3);
 
@@ -755,7 +744,8 @@ TY_BUILTIN_RAW(accel_sve, "accelerate.sve(a: Ptr[Any], n: Int, dt: Int) -> Float
         return REAL(s);
 }
 
-TY_BUILTIN_RAW(accel_maxv, "accelerate.maxv(a: Ptr[Any], n: Int, dt: Int) -> Float")
+// accelerate.maxv(a: Ptr[Any], n: Int, dt: Int) -> Float
+TY_BUILTIN_RAW(accel_maxv)
 {
         ASSERT_ARGC("maxv()", 3);
 
@@ -782,7 +772,8 @@ TY_BUILTIN_RAW(accel_maxv, "accelerate.maxv(a: Ptr[Any], n: Int, dt: Int) -> Flo
         return REAL(m);
 }
 
-TY_BUILTIN_RAW(accel_minv, "accelerate.minv(a: Ptr[Any], n: Int, dt: Int) -> Float")
+// accelerate.minv(a: Ptr[Any], n: Int, dt: Int) -> Float
+TY_BUILTIN_RAW(accel_minv)
 {
         ASSERT_ARGC("minv()", 3);
 
@@ -809,7 +800,8 @@ TY_BUILTIN_RAW(accel_minv, "accelerate.minv(a: Ptr[Any], n: Int, dt: Int) -> Flo
         return REAL(m);
 }
 
-TY_BUILTIN_RAW(accel_count_nz, "accelerate.countNz(a: Ptr[Any], n: Int, dt: Int) -> Int")
+// accelerate.countNz(a: Ptr[Any], n: Int, dt: Int) -> Int
+TY_BUILTIN_RAW(accel_count_nz)
 {
         ASSERT_ARGC("countNz()", 3);
 
@@ -828,9 +820,8 @@ TY_BUILTIN_RAW(accel_count_nz, "accelerate.countNz(a: Ptr[Any], n: Int, dt: Int)
         return INTEGER(count);
 }
 
-TY_BUILTIN_RAW(accel_vcmp_scalar,
-        "accelerate.vcmpScalar(a: Ptr[Any], s: Float, out: Ptr[Any], n: Int, op: Int, dt: Int) -> nil"
-)
+// accelerate.vcmpScalar(a: Ptr[Any], s: Float, out: Ptr[Any], n: Int, op: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_vcmp_scalar)
 {
         ASSERT_ARGC("vcmpScalar()", 6);
 
@@ -852,9 +843,8 @@ TY_BUILTIN_RAW(accel_vcmp_scalar,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vcmp_array,
-        "accelerate.vcmpArray(a: Ptr[Any], b: Ptr[Any], out: Ptr[Any], n: Int, op: Int, dt: Int) -> nil"
-)
+// accelerate.vcmpArray(a: Ptr[Any], b: Ptr[Any], out: Ptr[Any], n: Int, op: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_vcmp_array)
 {
         ASSERT_ARGC("vcmpArray()", 6);
 
@@ -876,9 +866,8 @@ TY_BUILTIN_RAW(accel_vcmp_array,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_bool_index,
-        "accelerate.boolIndex(src: Ptr[Any], mask: Ptr[Any], out: Ptr[Any], n: Int, dt: Int) -> Int"
-)
+// accelerate.boolIndex(src: Ptr[Any], mask: Ptr[Any], out: Ptr[Any], n: Int, dt: Int) -> Int
+TY_BUILTIN_RAW(accel_bool_index)
 {
         ASSERT_ARGC("boolIndex()", 5);
 
@@ -901,9 +890,8 @@ TY_BUILTIN_RAW(accel_bool_index,
         return INTEGER(j);
 }
 
-TY_BUILTIN_RAW(accel_bool_assign,
-        "accelerate.boolAssign(dst: Ptr[Any], mask: Ptr[Any], val: Float, n: Int, dt: Int) -> nil"
-)
+// accelerate.boolAssign(dst: Ptr[Any], mask: Ptr[Any], val: Float, n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_bool_assign)
 {
         ASSERT_ARGC("boolAssign()", 5);
 
@@ -925,9 +913,8 @@ TY_BUILTIN_RAW(accel_bool_assign,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vmul_mask,
-        "accelerate.vmulMask(a: Ptr[Any], mask: Ptr[Any], out: Ptr[Any], n: Int, dt: Int) -> nil"
-)
+// accelerate.vmulMask(a: Ptr[Any], mask: Ptr[Any], out: Ptr[Any], n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_vmul_mask)
 {
         ASSERT_ARGC("vmulMask()", 5);
 
@@ -947,9 +934,15 @@ TY_BUILTIN_RAW(accel_vmul_mask,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vselect,
-        "accelerate.vselect(cond: Ptr[Any], x: Ptr[Any], y: Ptr[Any], out: Ptr[Any], n: Int, dt: Int) -> nil"
-)
+// accelerate.vselect(
+//     cond: Ptr[Any],
+//     x: Ptr[Any],
+//     y: Ptr[Any],
+//     out: Ptr[Any],
+//     n: Int,
+//     dt: Int
+// ) -> nil
+TY_BUILTIN_RAW(accel_vselect)
 {
         ASSERT_ARGC("vselect()", 6);
 
@@ -970,9 +963,8 @@ TY_BUILTIN_RAW(accel_vselect,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vcumsum,
-        "accelerate.vcumsum(a: Ptr[Any], out: Ptr[Any], n: Int, dt: Int) -> nil"
-)
+// accelerate.vcumsum(a: Ptr[Any], out: Ptr[Any], n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_vcumsum)
 {
         ASSERT_ARGC("vcumsum()", 4);
 
@@ -993,9 +985,8 @@ TY_BUILTIN_RAW(accel_vcumsum,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vrandn,
-        "accelerate.vrandn(out: Ptr[Any], n: Int, scale: Float, dt: Int) -> nil"
-)
+// accelerate.vrandn(out: Ptr[Any], n: Int, scale: Float, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_vrandn)
 {
         ASSERT_ARGC("vrandn()", 4);
 
@@ -1025,7 +1016,8 @@ TY_BUILTIN_RAW(accel_vrandn,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vrand, "accelerate.vrand(out: Ptr[Any], n: Int, dt: Int) -> nil")
+// accelerate.vrand(out: Ptr[Any], n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_vrand)
 {
         ASSERT_ARGC("vrand()", 3);
 
@@ -1043,9 +1035,8 @@ TY_BUILTIN_RAW(accel_vrand, "accelerate.vrand(out: Ptr[Any], n: Int, dt: Int) ->
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_mtrans,
-        "accelerate.mtrans(src: Ptr[Any], dst: Ptr[Any], m: Int, n: Int, dt: Int) -> nil"
-)
+// accelerate.mtrans(src: Ptr[Any], dst: Ptr[Any], m: Int, n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_mtrans)
 {
         ASSERT_ARGC("mtrans()", 5);
 
@@ -1071,9 +1062,14 @@ TY_BUILTIN_RAW(accel_mtrans,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_transpose_nd,
-        "accelerate.transposeNd(src: Ptr[Any], dst: Ptr[Any], shape: Ptr[Any], ndim: Int, esize: Int) -> nil"
-)
+// accelerate.transposeNd(
+//     src: Ptr[Any],
+//     dst: Ptr[Any],
+//     shape: Ptr[Any],
+//     ndim: Int,
+//     esize: Int
+// ) -> nil
+TY_BUILTIN_RAW(accel_transpose_nd)
 {
         ASSERT_ARGC("transposeNd()", 5);
 
@@ -1114,9 +1110,19 @@ TY_BUILTIN_RAW(accel_transpose_nd,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_broadcast_binop,
-        "accelerate.broadcastBinop(a: Ptr[Any], b: Ptr[Any], out: Ptr[Any], a-str: Ptr[Any], b-str: Ptr[Any], o-shp: Ptr[Any], ndim: Int, total: Int, op: Int, dt: Int) -> nil"
-)
+// accelerate.broadcastBinop(
+//     a: Ptr[Any],
+//     b: Ptr[Any],
+//     out: Ptr[Any],
+//     a-str: Ptr[Any],
+//     b-str: Ptr[Any],
+//     o-shp: Ptr[Any],
+//     ndim: Int,
+//     total: Int,
+//     op: Int,
+//     dt: Int
+// ) -> nil
+TY_BUILTIN_RAW(accel_broadcast_binop)
 {
         ASSERT_ARGC("broadcastBinop()", 10);
 
@@ -1235,9 +1241,8 @@ TY_BUILTIN_RAW(accel_broadcast_binop,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_sum_axis0,
-        "accelerate.sumAxis0(src: Ptr[Any], dst: Ptr[Any], rows: Int, cols: Int, dt: Int) -> nil"
-)
+// accelerate.sumAxis0(src: Ptr[Any], dst: Ptr[Any], rows: Int, cols: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_sum_axis0)
 {
         ASSERT_ARGC("sumAxis0()", 5);
 
@@ -1279,9 +1284,8 @@ TY_BUILTIN_RAW(accel_sum_axis0,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_add_row,
-        "accelerate.addRow(data: Ptr[Any], row: Ptr[Any], rows: Int, cols: Int, dt: Int) -> nil"
-)
+// accelerate.addRow(data: Ptr[Any], row: Ptr[Any], rows: Int, cols: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_add_row)
 {
         ASSERT_ARGC("addRow()", 5);
 
@@ -1321,7 +1325,8 @@ TY_BUILTIN_RAW(accel_add_row,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_vget, "accelerate.vget(p: Ptr[Any], i: Int, dt: Int) -> Float | Int")
+// accelerate.vget(p: Ptr[Any], i: Int, dt: Int) -> Float | Int
+TY_BUILTIN_RAW(accel_vget)
 {
         ASSERT_ARGC("vget()", 3);
 
@@ -1342,13 +1347,14 @@ TY_BUILTIN_RAW(accel_vget, "accelerate.vget(p: Ptr[Any], i: Int, dt: Int) -> Flo
         }
 }
 
-TY_BUILTIN_RAW(accel_vset, "accelerate.vset(p: Ptr[Any], i: Int, v: Int | Float, dt: Int) -> nil")
+// accelerate.vset(p: Ptr[Any], i: Int, v: Int | Float, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_vset)
 {
         ASSERT_ARGC("vset()", 4);
 
         void *p  = PTR_ARG(0);
         i64   i  = INT_ARG(1);
-        Value v  = ARG(2);
+        Value v  = ARGx(2, VALUE_INTEGER, VALUE_REAL);
         i64   dt = INT_ARG(3);
 
         setd(p, i, valtod(v), dt);
@@ -1356,9 +1362,8 @@ TY_BUILTIN_RAW(accel_vset, "accelerate.vset(p: Ptr[Any], i: Int, v: Int | Float,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_from_list,
-        "accelerate.fromList(xs: Array[Int | Float], dst: Ptr[Any], dt: Int) -> Int"
-)
+// accelerate.fromList(xs: Array[Int | Float], dst: Ptr[Any], dt: Int) -> Int
+TY_BUILTIN_RAW(accel_from_list)
 {
         ASSERT_ARGC("fromList()", 3);
 
@@ -1373,9 +1378,8 @@ TY_BUILTIN_RAW(accel_from_list,
         return INTEGER(arr->count);
 }
 
-TY_BUILTIN_RAW(accel_from_list2d,
-        "accelerate.fromList2d(xs: Array[Array[Int | Float]], dst: Ptr[Any], dt: Int) -> Int"
-)
+// accelerate.fromList2d(xs: Array[Array[Int | Float]], dst: Ptr[Any], dt: Int) -> Int
+TY_BUILTIN_RAW(accel_from_list2d)
 {
         ASSERT_ARGC("fromList2d()", 3);
 
@@ -1410,9 +1414,8 @@ TY_BUILTIN_RAW(accel_from_list2d,
         return INTEGER(cols);
 }
 
-TY_BUILTIN_RAW(accel_to_list,
-        "accelerate.toList(src: Ptr[Any], n: Int, dt: Int) -> Array[Float | Int]"
-)
+// accelerate.toList(src: Ptr[Any], n: Int, dt: Int) -> Array[Float | Int]
+TY_BUILTIN_RAW(accel_to_list)
 {
         ASSERT_ARGC("toList()", 3);
 
@@ -1435,21 +1438,13 @@ TY_BUILTIN_RAW(accel_to_list,
         return ARRAY(arr);
 }
 
-TY_BUILTIN_RAW(accel_from_bytes,
-        "accelerate.fromBytes(src: Blob | Ptr[Any], off: Int, dst: Ptr[Any], n: Int, dt: Int) -> nil"
-)
+// accelerate.fromBytes(src: Blob | Ptr[Any], off: Int, dst: Ptr[Any], n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_from_bytes)
 {
         ASSERT_ARGC("fromBytes()", 5);
 
-        Value v = ARG(0);
-        unsigned char *src;
-        if (v.type == VALUE_PTR) {
-                src = v.ptr;
-        } else if (v.type == VALUE_BLOB) {
-                src = v.blob->items;
-        } else {
-                bP("arg[0] must be Blob or Ptr");
-        }
+        Value v = ARGx(0, VALUE_PTR, VALUE_BLOB);
+        unsigned char *src = (v.type == VALUE_PTR) ? v.ptr : (unsigned char *)vv(*v.blob);
 
         i64   off = INT_ARG(1);
         void *dst = PTR_ARG(2);
@@ -1469,9 +1464,8 @@ TY_BUILTIN_RAW(accel_from_bytes,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_one_hot,
-        "accelerate.oneHot(labels: Ptr[Any], out: Ptr[Any], n: Int, k: Int, dt: Int) -> nil"
-)
+// accelerate.oneHot(labels: Ptr[Any], out: Ptr[Any], n: Int, k: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_one_hot)
 {
         ASSERT_ARGC("oneHot()", 5);
 
@@ -1494,9 +1488,8 @@ TY_BUILTIN_RAW(accel_one_hot,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_argmax_axis1,
-        "accelerate.argmaxAxis1(data: Ptr[Any], out: Ptr[Any], m: Int, n: Int, dt: Int) -> nil"
-)
+// accelerate.argmaxAxis1(data: Ptr[Any], out: Ptr[Any], m: Int, n: Int, dt: Int) -> nil
+TY_BUILTIN_RAW(accel_argmax_axis1)
 {
         ASSERT_ARGC("argmaxAxis1()", 5);
 
@@ -1524,9 +1517,8 @@ TY_BUILTIN_RAW(accel_argmax_axis1,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_softmax,
-        "accelerate.softmax(src: Ptr[Any], dst: Ptr[Any], n: Int, k: Int) -> nil"
-)
+// accelerate.softmax(src: Ptr[Any], dst: Ptr[Any], n: Int, k: Int) -> nil
+TY_BUILTIN_RAW(accel_softmax)
 {
         ASSERT_ARGC("softmax()", 4);
 
@@ -1564,9 +1556,8 @@ TY_BUILTIN_RAW(accel_softmax,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_causal_softmax,
-        "accelerate.causalSoftmax(src: Ptr[Any], dst: Ptr[Any], n: Int, m: Int) -> nil"
-)
+// accelerate.causalSoftmax(src: Ptr[Any], dst: Ptr[Any], n: Int, m: Int) -> nil
+TY_BUILTIN_RAW(accel_causal_softmax)
 {
         ASSERT_ARGC("causalSoftmax()", 4);
 
@@ -1611,9 +1602,8 @@ TY_BUILTIN_RAW(accel_causal_softmax,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_cross_entropy,
-        "accelerate.crossEntropy(probs: Ptr[Any], targets: Ptr[Any], total: Int) -> Float"
-)
+// accelerate.crossEntropy(probs: Ptr[Any], targets: Ptr[Any], total: Int) -> Float
+TY_BUILTIN_RAW(accel_cross_entropy)
 {
         ASSERT_ARGC("crossEntropy()", 3);
 
@@ -1632,9 +1622,14 @@ TY_BUILTIN_RAW(accel_cross_entropy,
         return REAL(loss);
 }
 
-TY_BUILTIN_RAW(accel_causal_softmax_backward,
-        "accelerate.causalSoftmaxBackward(probs: Ptr[Any], grad: Ptr[Any], dst: Ptr[Any], n: Int, m: Int) -> nil"
-)
+// accelerate.causalSoftmaxBackward(
+//     probs: Ptr[Any],
+//     grad: Ptr[Any],
+//     dst: Ptr[Any],
+//     n: Int,
+//     m: Int
+// ) -> nil
+TY_BUILTIN_RAW(accel_causal_softmax_backward)
 {
         ASSERT_ARGC("causalSoftmaxBackward()", 5);
 
@@ -1673,9 +1668,8 @@ TY_BUILTIN_RAW(accel_causal_softmax_backward,
         return NIL;
 }
 
-TY_BUILTIN_RAW(accel_accuracy,
-        "accelerate.accuracy(preds: Ptr[Any], labels: Ptr[Any], n: Int, ldt: Int, k: Int) -> Float"
-)
+// accelerate.accuracy(preds: Ptr[Any], labels: Ptr[Any], n: Int, ldt: Int, k: Int) -> Float
+TY_BUILTIN_RAW(accel_accuracy)
 {
         ASSERT_ARGC("accuracy()", 5);
 
@@ -1704,7 +1698,8 @@ TY_BUILTIN_RAW(accel_accuracy,
         return REAL((double)correct / n);
 }
 
-TY_BUILTIN_RAW(accel_vtrace, "accelerate.vtrace(data: Ptr[Any], m: Int, n: Int, dt: Int) -> Float")
+// accelerate.vtrace(data: Ptr[Any], m: Int, n: Int, dt: Int) -> Float
+TY_BUILTIN_RAW(accel_vtrace)
 {
         ASSERT_ARGC("vtrace()", 4);
 
@@ -1722,9 +1717,8 @@ TY_BUILTIN_RAW(accel_vtrace, "accelerate.vtrace(data: Ptr[Any], m: Int, n: Int, 
         return REAL(s);
 }
 
-TY_BUILTIN_RAW(accel_array_eq,
-        "accelerate.arrayEq(a: Ptr[Any], b: Ptr[Any], n: Int, dt: Int) -> Int"
-)
+// accelerate.arrayEq(a: Ptr[Any], b: Ptr[Any], n: Int, dt: Int) -> Int
+TY_BUILTIN_RAW(accel_array_eq)
 {
         ASSERT_ARGC("arrayEq()", 4);
 
@@ -1753,7 +1747,8 @@ TY_BUILTIN_RAW(accel_array_eq,
         return INTEGER(0);
 }
 
-TY_BUILTIN_RAW(accel_promote, "accelerate.promote(a: Int, b: Int) -> Int")
+// accelerate.promote(a: Int, b: Int) -> Int
+TY_BUILTIN_RAW(accel_promote)
 {
         ASSERT_ARGC("promote()", 2);
 
@@ -1763,9 +1758,15 @@ TY_BUILTIN_RAW(accel_promote, "accelerate.promote(a: Int, b: Int) -> Int")
         return INTEGER(PROMOTE[a & 7][b & 7]);
 }
 
-TY_BUILTIN_RAW(accel_slice_cols,
-        "accelerate.sliceCols(src: Ptr[Any], rows: Int, cols: Int, start: Int, width: Int, dt: Int) -> Ptr[Any]"
-)
+// accelerate.sliceCols(
+//     src: Ptr[Any],
+//     rows: Int,
+//     cols: Int,
+//     start: Int,
+//     width: Int,
+//     dt: Int
+// ) -> Ptr[Any]
+TY_BUILTIN_RAW(accel_slice_cols)
 {
         ASSERT_ARGC("sliceCols()", 6);
 
@@ -1797,9 +1798,14 @@ TY_BUILTIN_RAW(accel_slice_cols,
         return TGCPTR(out, C_TYPE[dt], out);
 }
 
-TY_BUILTIN_RAW(accel_hstack_2d,
-        "accelerate.hstack2d(ptrs: Array[Ptr[Any]], widths: Array[Int], n: Int, rows: Int, dt: Int) -> Ptr[Any]"
-)
+// accelerate.hstack2d(
+//     ptrs: Array[Ptr[Any]],
+//     widths: Array[Int],
+//     n: Int,
+//     rows: Int,
+//     dt: Int
+// ) -> Ptr[Any]
+TY_BUILTIN_RAW(accel_hstack_2d)
 {
         ASSERT_ARGC("hstack2d()", 5);
 
@@ -1838,21 +1844,13 @@ TY_BUILTIN_RAW(accel_hstack_2d,
         return TGCPTR(out, C_TYPE[dt], out);
 }
 
-TY_BUILTIN_RAW(accel_from_raw,
-        "accelerate.fromRaw(src: Blob | Ptr[Any], n: Int, dt: Int) -> Ptr[Any]"
-)
+// accelerate.fromRaw(src: Blob | Ptr[Any], n: Int, dt: Int) -> Ptr[Any]
+TY_BUILTIN_RAW(accel_from_raw)
 {
         ASSERT_ARGC("fromRaw()", 3);
 
-        Value v = ARG(0);
-        const void *src;
-        if (v.type == VALUE_BLOB) {
-                src = v.blob->items;
-        } else if (v.type == VALUE_PTR) {
-                src = v.ptr;
-        } else {
-                bP("fromRaw(): arg[0] must be Blob or Ptr");
-        }
+        Value v = ARGx(0, VALUE_PTR, VALUE_BLOB);
+        void const *src = (v.type == VALUE_PTR) ? v.ptr : (void const *)vv(*v.blob);
 
         i64 n  = INT_ARG(1);
         i64 dt = INT_ARG(2);
@@ -1865,9 +1863,20 @@ TY_BUILTIN_RAW(accel_from_raw,
 }
 
 #if defined(__APPLE__)
-TY_BUILTIN_RAW(accel_mha_forward,
-        "accelerate.mhaForward(x: Ptr[Any], wq: Ptr[Any], wk: Ptr[Any], wv: Ptr[Any], wo: Ptr[Any], n: Int, n-embd: Int, n-head: Int, head-dim: Int, scale: Float, dt: Int) -> (Ptr[Any], Ptr[Any], Ptr[Any], Ptr[Any], Ptr[Any], Ptr[Any])"
-)
+// accelerate.mhaForward(
+//     x: Ptr[Any],
+//     wq: Ptr[Any],
+//     wk: Ptr[Any],
+//     wv: Ptr[Any],
+//     wo: Ptr[Any],
+//     n: Int,
+//     n-embd: Int,
+//     n-head: Int,
+//     head-dim: Int,
+//     scale: Float,
+//     dt: Int
+// ) -> (Ptr[Any], Ptr[Any], Ptr[Any], Ptr[Any], Ptr[Any], Ptr[Any])
+TY_BUILTIN_RAW(accel_mha_forward)
 {
         ASSERT_ARGC("mhaForward()", 11);
 
@@ -1965,9 +1974,26 @@ TY_BUILTIN_RAW(accel_mha_forward,
         return TUPLE(items, NULL, 6);
 }
 
-TY_BUILTIN_RAW(accel_mha_backward,
-        "accelerate.mhaBackward(d-attn-out: Ptr[Any], x-norm: Ptr[Any], q: Ptr[Any], k: Ptr[Any], v: Ptr[Any], all-probs: Ptr[Any], ctx-merged: Ptr[Any], wq: Ptr[Any], wk: Ptr[Any], wv: Ptr[Any], wo: Ptr[Any], n: Int, n-embd: Int, n-head: Int, head-dim: Int, scale: Float, dt: Int) -> (Ptr[Any], Ptr[Any], Ptr[Any], Ptr[Any], Ptr[Any])"
-)
+// accelerate.mhaBackward(
+//     d-attn-out: Ptr[Any],
+//     x-norm: Ptr[Any],
+//     q: Ptr[Any],
+//     k: Ptr[Any],
+//     v: Ptr[Any],
+//     all-probs: Ptr[Any],
+//     ctx-merged: Ptr[Any],
+//     wq: Ptr[Any],
+//     wk: Ptr[Any],
+//     wv: Ptr[Any],
+//     wo: Ptr[Any],
+//     n: Int,
+//     n-embd: Int,
+//     n-head: Int,
+//     head-dim: Int,
+//     scale: Float,
+//     dt: Int
+// ) -> (Ptr[Any], Ptr[Any], Ptr[Any], Ptr[Any], Ptr[Any])
+TY_BUILTIN_RAW(accel_mha_backward)
 {
         ASSERT_ARGC("mhaBackward()", 17);
 
@@ -2097,9 +2123,13 @@ TY_BUILTIN_RAW(accel_mha_backward,
         return TUPLE(items, NULL, 5);
 }
 
-TY_BUILTIN_RAW(accel_kv_cache_alloc,
-        "accelerate.kvCacheAlloc(n-layer: Int, n-head: Int, max-seq: Int, head-dim: Int) -> (Ptr[Any], Ptr[Any])"
-)
+// accelerate.kvCacheAlloc(
+//     n-layer: Int,
+//     n-head: Int,
+//     max-seq: Int,
+//     head-dim: Int
+// ) -> (Ptr[Any], Ptr[Any])
+TY_BUILTIN_RAW(accel_kv_cache_alloc)
 {
         ASSERT_ARGC("kvCacheAlloc()", 4);
 
@@ -2121,9 +2151,24 @@ TY_BUILTIN_RAW(accel_kv_cache_alloc,
         return TUPLE(items, NULL, 2);
 }
 
-TY_BUILTIN_RAW(accel_mha_forward_one,
-        "accelerate.mhaForwardOne(x: Ptr[Any], wq: Ptr[Any], wk: Ptr[Any], wv: Ptr[Any], wo: Ptr[Any], k-cache: Ptr[Any], v-cache: Ptr[Any], pos: Int, layer: Int, n-embd: Int, n-head: Int, head-dim: Int, scale: Float, max-seq: Int, n-layer: Int) -> Ptr[Any]"
-)
+// accelerate.mhaForwardOne(
+//     x: Ptr[Any],
+//     wq: Ptr[Any],
+//     wk: Ptr[Any],
+//     wv: Ptr[Any],
+//     wo: Ptr[Any],
+//     k-cache: Ptr[Any],
+//     v-cache: Ptr[Any],
+//     pos: Int,
+//     layer: Int,
+//     n-embd: Int,
+//     n-head: Int,
+//     head-dim: Int,
+//     scale: Float,
+//     max-seq: Int,
+//     n-layer: Int
+// ) -> Ptr[Any]
+TY_BUILTIN_RAW(accel_mha_forward_one)
 {
         ASSERT_ARGC("mhaForwardOne()", 15);
 
@@ -2211,16 +2256,63 @@ TY_BUILTIN_RAW(accel_mha_forward_one,
         return TGCPTR(out, &ffi_type_double, out);
 }
 #else
-TY_BUILTIN_RAW(accel_mha_forward,
-        "accelerate.mhaForward(x: Ptr[Any], wq: Ptr[Any], wk: Ptr[Any], wv: Ptr[Any], wo: Ptr[Any], n: Int, n-embd: Int, n-head: Int, head-dim: Int, scale: Float, dt: Int) -> (Ptr[Any], Ptr[Any], Ptr[Any], Ptr[Any], Ptr[Any], Ptr[Any])"
-)     { zP("xxx"); }
-TY_BUILTIN_RAW(accel_mha_backward,
-        "accelerate.mhaBackward(d-attn-out: Ptr[Any], x-norm: Ptr[Any], q: Ptr[Any], k: Ptr[Any], v: Ptr[Any], all-probs: Ptr[Any], ctx-merged: Ptr[Any], wq: Ptr[Any], wk: Ptr[Any], wv: Ptr[Any], wo: Ptr[Any], n: Int, n-embd: Int, n-head: Int, head-dim: Int, scale: Float, dt: Int) -> (Ptr[Any], Ptr[Any], Ptr[Any], Ptr[Any], Ptr[Any])"
-)    { zP("xxx"); }
-TY_BUILTIN_RAW(accel_kv_cache_alloc,
-        "accelerate.kvCacheAlloc(n-layer: Int, n-head: Int, max-seq: Int, head-dim: Int) -> (Ptr[Any], Ptr[Any])"
-)  { zP("xxx"); }
-TY_BUILTIN_RAW(accel_mha_forward_one,
-        "accelerate.mhaForwardOne(x: Ptr[Any], wq: Ptr[Any], wk: Ptr[Any], wv: Ptr[Any], wo: Ptr[Any], k-cache: Ptr[Any], v-cache: Ptr[Any], pos: Int, layer: Int, n-embd: Int, n-head: Int, head-dim: Int, scale: Float, max-seq: Int, n-layer: Int) -> Ptr[Any]"
-) { zP("xxx"); }
+// accelerate.mhaForward(
+//     x: Ptr[Any],
+//     wq: Ptr[Any],
+//     wk: Ptr[Any],
+//     wv: Ptr[Any],
+//     wo: Ptr[Any],
+//     n: Int,
+//     n-embd: Int,
+//     n-head: Int,
+//     head-dim: Int,
+//     scale: Float,
+//     dt: Int
+// ) -> (Ptr[Any], Ptr[Any], Ptr[Any], Ptr[Any], Ptr[Any], Ptr[Any])
+TY_BUILTIN_RAW(accel_mha_forward)     { zP("xxx"); }
+// accelerate.mhaBackward(
+//     d-attn-out: Ptr[Any],
+//     x-norm: Ptr[Any],
+//     q: Ptr[Any],
+//     k: Ptr[Any],
+//     v: Ptr[Any],
+//     all-probs: Ptr[Any],
+//     ctx-merged: Ptr[Any],
+//     wq: Ptr[Any],
+//     wk: Ptr[Any],
+//     wv: Ptr[Any],
+//     wo: Ptr[Any],
+//     n: Int,
+//     n-embd: Int,
+//     n-head: Int,
+//     head-dim: Int,
+//     scale: Float,
+//     dt: Int
+// ) -> (Ptr[Any], Ptr[Any], Ptr[Any], Ptr[Any], Ptr[Any])
+TY_BUILTIN_RAW(accel_mha_backward)    { zP("xxx"); }
+// accelerate.kvCacheAlloc(
+//     n-layer: Int,
+//     n-head: Int,
+//     max-seq: Int,
+//     head-dim: Int
+// ) -> (Ptr[Any], Ptr[Any])
+TY_BUILTIN_RAW(accel_kv_cache_alloc)  { zP("xxx"); }
+// accelerate.mhaForwardOne(
+//     x: Ptr[Any],
+//     wq: Ptr[Any],
+//     wk: Ptr[Any],
+//     wv: Ptr[Any],
+//     wo: Ptr[Any],
+//     k-cache: Ptr[Any],
+//     v-cache: Ptr[Any],
+//     pos: Int,
+//     layer: Int,
+//     n-embd: Int,
+//     n-head: Int,
+//     head-dim: Int,
+//     scale: Float,
+//     max-seq: Int,
+//     n-layer: Int
+// ) -> Ptr[Any]
+TY_BUILTIN_RAW(accel_mha_forward_one) { zP("xxx"); }
 #endif

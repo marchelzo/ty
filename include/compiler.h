@@ -121,6 +121,7 @@ typedef vec(struct import) import_vector;
 typedef struct {
         Symbol *sym;
         char const *sig;
+        char const *doc;
 } BuiltinSig;
 
 typedef vec(BuiltinSig) BuiltinSigVector;
@@ -302,7 +303,7 @@ Symbol *
 compiler_introduce_symbol(Ty *ty, char const *, char const *);
 
 void
-compiler_introduce_signature(Ty *ty, Symbol *sym, char const *sig);
+compiler_introduce_signature(Ty *ty, Symbol *sym, char const *sig, char const *doc);
 
 int
 compiler_introduce_tag(Ty *ty, char const *module, char const *name, int super);

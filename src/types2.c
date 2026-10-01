@@ -13992,9 +13992,21 @@ assign_lvalue_x(
                                 target,
                                 true
                         );
-                        T2Binding *refined = find_binding(checker, target->symbol);
+                        T2Binding *refined = valid
+                                           ? member_refinement_binding(
+                                                   checker,
+                                                   target->symbol,
+                                                   target
+                                             )
+                                           : find_binding(checker, target->symbol);
                         if (refined != NULL && refined->member) {
-                                refined->refinement = T2_TYPE_INVALID;
+                                refined->refinement = (valid && !is_dynamic_type(checker, value))
+                                                    ? resolved_type_head(
+                                                            checker,
+                                                            value,
+                                                            T2_PREFER_KNOWN_VALUE
+                                                      )
+                                                    : T2_TYPE_INVALID;
                         }
                         set_node_type(
                                 checker,
@@ -14399,13 +14411,6 @@ assign_lvalue_x(
         case EXPRESSION_MEMBER_ACCESS:
         case EXPRESSION_SELF_ACCESS:
         {
-                if (member_path_expression(target)) {
-                        deactivate_path_bindings(
-                                checker,
-                                unfurl(target->object)->symbol,
-                                target->member->identifier
-                        );
-                }
                 T2Type object = infer_expression(checker, target->object);
                 bool valid = check_member_write(
                         checker,
@@ -14418,6 +14423,12 @@ assign_lvalue_x(
                 T2Binding *path = valid ? path_refinement_binding(checker, target) : NULL;
                 if (path != NULL) {
                         path->refinement = value;
+                } else if (member_path_expression(target)) {
+                        deactivate_path_bindings(
+                                checker,
+                                unfurl(target->object)->symbol,
+                                target->member->identifier
+                        );
                 }
                 return valid;
         }

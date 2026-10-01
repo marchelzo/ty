@@ -734,7 +734,7 @@ dict_subtract(Ty *ty, Value *d, int argc, Value *kwargs)
 static Value
 dict_put(Ty *ty, Value *d, int argc, Value *kwargs)
 {
-        ASSERT_ARGC_RANGE("Dict.put()", 1, INT_MAX);
+        ASSERT_ARGC_MIN("Dict.put()", 1);
 
         for (int i = 0; i < argc; ++i) {
                 dict_put_value(ty, d->dict, ARG(i), NIL);

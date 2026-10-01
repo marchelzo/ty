@@ -413,8 +413,9 @@ pub class Tqdm[T] : Iterable[T] {
             }
 
             parts.push(_progress-bar.render(display-p))
-            let display-current = int(display-p * _task.total)
-            let progress = "{display-current}/{_task.total}"
+            let total = _task.total !
+            let display-current = int(display-p * total)
+            let progress = "{display-current}/{total}"
             if _stopping {
                 parts.push(chalk" [bright green]{progress: <10}[/]")
             } else {

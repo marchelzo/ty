@@ -30,6 +30,7 @@ typedef struct {
         char *file;
         int line;
         char *cond;
+        char *doc;
         StrVec lines;
         Entry *entries;
         size_t nentries;
@@ -354,36 +355,6 @@ skip_space(char const *p)
         }
 }
 
-static char const *
-c_string(char const *p, Buf *out)
-{
-        p += 1;
-
-        while (*p != '\0' && *p != '"') {
-                if (*p != '\\') {
-                        bputc(out, *p++);
-                        continue;
-                }
-
-                p += 1;
-
-                switch (*p) {
-                case 'n':  bputc(out, '\n'); break;
-                case 't':  bputc(out, '\t'); break;
-                case 'r':  bputc(out, '\r'); break;
-                case '0':  bputc(out, '\0'); break;
-                case '\\': bputc(out, '\\'); break;
-                case '"':  bputc(out, '"');  break;
-                case '\'': bputc(out, '\''); break;
-                default:   bputc(out, '\\'); bputc(out, *p); break;
-                }
-
-                p += (*p != '\0');
-        }
-
-        return p + (*p == '"');
-}
-
 static int
 line_of(char const *base, char const *p)
 {
@@ -407,11 +378,240 @@ add_builtin(Builtin b)
         Builtins[NBuiltins++] = b;
 }
 
+static int
+bracket_depth(char const *s)
+{
+        int depth = 0;
+
+        for (char const *p = s; *p != '\0'; ++p) {
+                switch (*p) {
+                case '(': case '[': case '{':
+                        depth += 1;
+                        break;
+
+                case ')': case ']': case '}':
+                        depth -= 1;
+                        break;
+
+                case '\'': case '"':
+                {
+                        char q = *p;
+                        while (p[1] != '\0' && p[1] != q) {
+                                p += (p[1] == '\\' && p[2] != '\0') + 1;
+                        }
+                        p += (p[1] != '\0');
+                        break;
+                }
+                }
+        }
+
+        return depth;
+}
+
+static void
+comment_lines(char const *raw, StrVec *out)
+{
+        bool block = (strncmp(raw, "/*", 2) == 0);
+        char const *p = raw;
+
+        while (*p != '\0') {
+                char const *eol = strchr(p, '\n');
+                if (eol == NULL) {
+                        eol = p + strlen(p);
+                }
+
+                char const *s = p;
+                char const *e = eol;
+
+                while (s < e && (*s == ' ' || *s == '\t')) {
+                        s += 1;
+                }
+
+                if (block) {
+                        if (p == raw) {
+                                s += 2;
+                                while (s < e && *s == '*') {
+                                        s += 1;
+                                }
+                        } else if (s < e && *s == '*' && !(s + 1 < e && s[1] == '/')) {
+                                s += 1;
+                        }
+                        if (e - s >= 2 && e[-2] == '*' && e[-1] == '/') {
+                                e -= 2;
+                        }
+                } else if (e - s >= 2 && s[0] == '/' && s[1] == '/') {
+                        s += 2;
+                }
+
+                if (s < e && *s == ' ') {
+                        s += 1;
+                }
+
+                while (e > s && isspace((unsigned char)e[-1])) {
+                        e -= 1;
+                }
+
+                spush(out, xstrndup(s, e - s));
+
+                p = (*eol == '\0') ? eol : eol + 1;
+        }
+
+        while (out->count > 0 && out->items[0][0] == '\0') {
+                free(out->items[0]);
+                memmove(out->items, out->items + 1, --out->count * sizeof *out->items);
+        }
+
+        while (out->count > 0 && out->items[out->count - 1][0] == '\0') {
+                free(out->items[--out->count]);
+        }
+}
+
+static bool
+sig_head(char const *s)
+{
+        if (!(isalpha((unsigned char)*s) || *s == '_')) {
+                return false;
+        }
+
+        while (isalnum((unsigned char)*s) || strchr("_./?!-", *s) != NULL) {
+                s += 1;
+        }
+
+        return (*s == '(' || *s == '[');
+}
+
+static char const *match_close(char const *p, char open, char close);
+
+static bool
+is_signature(char const *sig)
+{
+        char const *p = sig;
+
+        while (*p != '(' && *p != '[') {
+                p += 1;
+        }
+
+        if (*p == '[') {
+                p = match_close(p, '[', ']');
+                if (p == NULL || p[1] != '(') {
+                        return false;
+                }
+                p += 1;
+        }
+
+        char const *close = match_close(p, '(', ')');
+        if (close == NULL) {
+                return false;
+        }
+
+        char const *rest = close + 1;
+        while (*rest == ' ') {
+                rest += 1;
+        }
+
+        if (strncmp(rest, "->", 2) == 0) {
+                return true;
+        }
+
+        return (*rest == '\0') && (memchr(p, ':', close - p) != NULL);
+}
+
+static char *
+normalize(char const *s)
+{
+        Buf b = {0};
+
+        bputs(&b, "");
+
+        for (char const *p = s; *p != '\0'; ++p) {
+                if (isspace((unsigned char)*p)) {
+                        while (isspace((unsigned char)p[1])) {
+                                p += 1;
+                        }
+                        if (b.n > 0 && b.s[b.n - 1] != '(' && b.s[b.n - 1] != '[' && p[1] != ')' && p[1] != ']' && p[1] != '\0') {
+                                bputc(&b, ' ');
+                        }
+                } else {
+                        bputc(&b, *p);
+                }
+        }
+
+        return b.s;
+}
+
+static void
+parse_comment(Builtin *b, char const *raw)
+{
+        StrVec lines = {0};
+        bool prose = false;
+
+        comment_lines(raw, &lines);
+
+        for (size_t i = 0; i < lines.count; ++i) {
+                char const *line = lines.items[i];
+
+                if (!sig_head(line)) {
+                        prose |= (*line != '\0');
+                        continue;
+                }
+
+                Buf sig = {0};
+                size_t j = i;
+
+                bputs(&sig, line);
+
+                for (;;) {
+                        while (bracket_depth(sig.s) > 0 && j + 1 < lines.count) {
+                                bputc(&sig, ' ');
+                                bputs(&sig, lines.items[++j]);
+                        }
+
+                        char *next = (j + 1 < lines.count) ? trim(lines.items[j + 1], lines.items[j + 1] + strlen(lines.items[j + 1])) : NULL;
+                        bool arrow = (next != NULL) && (strncmp(next, "->", 2) == 0);
+                        free(next);
+
+                        if (!arrow) {
+                                break;
+                        }
+
+                        bputc(&sig, ' ');
+                        bputs(&sig, lines.items[++j]);
+                }
+
+                char *norm = normalize(sig.s);
+                free(sig.s);
+
+                if (bracket_depth(norm) == 0 && is_signature(norm)) {
+                        spush(&b->lines, norm);
+                        i = j;
+                } else {
+                        free(norm);
+                        prose = true;
+                }
+        }
+
+        if (prose) {
+                Buf doc = {0};
+                for (size_t i = 0; i < lines.count; ++i) {
+                        if (i > 0) {
+                                bputc(&doc, '\n');
+                        }
+                        bputs(&doc, lines.items[i]);
+                }
+                b->doc = doc.s;
+        }
+
+        for (size_t i = 0; i < lines.count; ++i) {
+                free(lines.items[i]);
+        }
+
+        free(lines.items);
+}
+
 static char const *
-invocation(char const *base, char const *p, char const *file, bool typed, char *cond)
+invocation(char const *base, char const *p, char const *file, bool typed, char *cond, char const *comment)
 {
         Builtin b = {0};
-        Buf cur = {0};
 
         b.typed = typed;
         b.file  = xstrdup(file);
@@ -426,56 +626,50 @@ invocation(char const *base, char const *p, char const *file, bool typed, char *
         }
 
         b.cname = xstrndup(id, p - id);
+        p = skip_space(p);
 
-        if (p == id) {
+        if (*b.cname == '\0') {
                 fail(&b, "expected a C function name in %s()", typed ? "TY_BUILTIN" : "TY_BUILTIN_RAW");
         }
 
-        for (;;) {
-                p = skip_space(p);
-
-                if (*p == ')') {
+        if (*p != ')') {
+                fail(&b, "%s: signatures belong in the comment above the definition", b.cname);
+                while (*p != '\0' && *p != ')') {
                         p += 1;
-                        break;
-                }
-
-                if (*p != ',') {
-                        fail(&b, "malformed builtin definition for %s", b.cname);
-                        return p;
-                }
-
-                p = skip_space(p + 1);
-
-                cur.n = 0;
-                bputs(&cur, "");
-
-                while (*p == '"') {
-                        p = skip_space(c_string(p, &cur));
-                }
-
-                if (cur.n == 0) {
-                        fail(&b, "expected a signature string for %s", b.cname);
-                        return p;
-                }
-
-                char *s = cur.s;
-                for (char *nl; (nl = strchr(s, '\n')) != NULL; s = nl + 1) {
-                        char *line = trim(s, nl);
-                        if (*line != '\0') {
-                                spush(&b.lines, line);
-                        }
-                }
-
-                char *line = trim(s, s + strlen(s));
-                if (*line != '\0') {
-                        spush(&b.lines, line);
                 }
         }
 
-        free(cur.s);
+        if (comment != NULL) {
+                parse_comment(&b, comment);
+        }
+
         add_builtin(b);
 
-        return p;
+        return p + (*p == ')');
+}
+
+static bool
+adjacent(char const *s, char const *e)
+{
+        int newlines = 0;
+
+        while (s < e) {
+                if (*s == '\n') {
+                        newlines += 1;
+                        s += 1;
+                } else if (isspace((unsigned char)*s)) {
+                        s += 1;
+                } else if (
+                        (strncmp(s, "noreturn", 8) == 0)
+                     && !(isalnum((unsigned char)s[8]) || s[8] == '_')
+                ) {
+                        s += 8;
+                } else {
+                        return false;
+                }
+        }
+
+        return newlines <= 1;
 }
 
 static void
@@ -487,6 +681,9 @@ scan(char const *file)
         size_t n = 0;
         size_t cap = 0;
         bool bol = true;
+        Buf comment = {0};
+        char const *comment_end = NULL;
+        bool comment_line = false;
 
         while (*p != '\0') {
                 if (bol) {
@@ -520,11 +717,25 @@ scan(char const *file)
 
                 if (p[0] == '/' && p[1] == '*') {
                         char const *end = strstr(p + 2, "*/");
-                        p = (end == NULL) ? p + strlen(p) : end + 2;
+                        char const *stop = (end == NULL) ? p + strlen(p) : end + 2;
+                        comment.n = 0;
+                        bputn(&comment, p, stop - p);
+                        comment_end  = stop;
+                        comment_line = false;
+                        p = stop;
                 } else if (p[0] == '/' && p[1] == '/') {
+                        char const *start = p;
                         while (*p != '\0' && *p != '\n') {
                                 p += 1;
                         }
+                        if (comment_line && comment_end != NULL && adjacent(comment_end, start)) {
+                                bputc(&comment, '\n');
+                        } else {
+                                comment.n = 0;
+                        }
+                        bputn(&comment, start, p - start);
+                        comment_end  = p;
+                        comment_line = true;
                 } else if (*p == '"' || *p == '\'') {
                         char q = *p++;
                         while (*p != '\0' && *p != q) {
@@ -541,13 +752,23 @@ scan(char const *file)
                         bool typed = (len == 10 && strncmp(id, "TY_BUILTIN", 10) == 0);
                         bool head  = (id == src) || !(isalnum((unsigned char)id[-1]) || id[-1] == '_');
                         if ((raw || typed) && head && *skip_space(p) == '(') {
-                                p = invocation(src, skip_space(p), file, typed, current_cond(stack, n));
+                                bool attached = (comment_end != NULL) && adjacent(comment_end, id);
+                                p = invocation(
+                                        src,
+                                        skip_space(p),
+                                        file,
+                                        typed,
+                                        current_cond(stack, n),
+                                        attached ? comment.s : NULL
+                                );
+                                comment_end = NULL;
                         }
                 } else {
                         p += 1;
                 }
         }
 
+        free(comment.s);
         free(stack);
         free(src);
 }
@@ -613,10 +834,8 @@ same(char const *a, char const *b)
 static void
 group(Builtin *b)
 {
-        Buf doc = {0};
-
         if (b->lines.count == 0) {
-                fail(b, "%s has no signature", b->cname);
+                fail(b, "%s has no signature (put one in a comment directly above it)", b->cname);
                 return;
         }
 
@@ -625,12 +844,6 @@ group(Builtin *b)
                 char *module;
                 char *name;
                 char const *rest;
-
-                if (strncmp(line, "/**", 3) == 0) {
-                        bputs(&doc, line);
-                        bputc(&doc, '\n');
-                        continue;
-                }
 
                 if (!head_split(line, &module, &name, &rest)) {
                         fail(b, "%s: malformed signature: %s", b->cname, line);
@@ -656,19 +869,8 @@ group(Builtin *b)
                         bputc(&e->sig, '\n');
                 }
 
-                if (doc.n > 0) {
-                        bputn(&e->sig, doc.s, doc.n);
-                        doc.n = 0;
-                }
-
                 bputs(&e->sig, rest);
         }
-
-        if (b->entries == NULL && Errors == 0) {
-                fail(b, "%s has no signature", b->cname);
-        }
-
-        free(doc.s);
 }
 
 static void
@@ -1039,14 +1241,8 @@ typed_params(Builtin *b, size_t *count)
                 return NULL;
         }
 
-        size_t sigs = 0;
-        char const *line = NULL;
-        for (size_t i = 0; i < b->lines.count; ++i) {
-                if (strncmp(b->lines.items[i], "/**", 3) != 0) {
-                        sigs += 1;
-                        line = b->lines.items[i];
-                }
-        }
+        size_t sigs = b->lines.count;
+        char const *line = (sigs > 0) ? b->lines.items[0] : NULL;
 
         if (sigs != 1) {
                 fail(b, "%s: TY_BUILTIN needs exactly one signature (use TY_BUILTIN_RAW for overloads)", b->cname);
@@ -1381,6 +1577,12 @@ main(int argc, char **argv)
                         c_quote(&table, e->name);
                         bprintf(&table, ", .value = TY_GENERATED_BUILTIN(builtin_%s), .sig = ", b->cname);
                         c_quote(&table, e->sig.s);
+                        bputs(&table, ", .doc = ");
+                        if (b->doc == NULL) {
+                                bputs(&table, "NULL");
+                        } else {
+                                c_quote(&table, b->doc);
+                        }
                         bputs(&table, " },\n");
                 }
                 emit_cond_close(&table, b->cond);

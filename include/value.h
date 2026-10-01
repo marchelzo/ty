@@ -461,6 +461,18 @@ value_vshow_color(Ty *ty, Value const *v, u32 flags);
                 );                                                      \
         }
 
+#define ASSERT_ARGC_MIN(func, n0)                                       \
+        char const *_name__ = func;                                     \
+        if (argc < n0) {                                                \
+                zP(                                                     \
+                        "%s: expected at least " #n0 " "                \
+                        "argument%s but got %d",                        \
+                        _name__,                                        \
+                        ((n0) == 1) ? "" : "s",                         \
+                        argc                                            \
+                );                                                      \
+        }
+
 noreturn void vm_panic(Ty *, char const *, ...);
 
 static inline bool
@@ -1826,8 +1838,8 @@ TyBuiltinBlob(Ty *ty, char const *ctx, char const *name, Value v)
         return v.blob;
 }
 
-#define TY_BUILTIN(c, ...)     TY_BUILTIN__##c
-#define TY_BUILTIN_RAW(c, ...) Value builtin_##c(Ty *ty, int argc, Value *kwargs)
+#define TY_BUILTIN(c)     TY_BUILTIN__##c
+#define TY_BUILTIN_RAW(c) Value builtin_##c(Ty *ty, int argc, Value *kwargs)
 
 #define PATH_ARGx(i) ({                                                \
         Value _path = TyPathValue(ty, _name__, "arg[" #i "]", ARG(i)); \

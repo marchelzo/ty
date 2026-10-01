@@ -915,7 +915,12 @@ add_builtins(Ty *ty, int ac, char **av)
                         sym->flags |= SYM_CONST;
                 }
                 if (builtins[i].sig != NULL) {
-                        compiler_introduce_signature(ty, sym, builtins[i].sig);
+                        compiler_introduce_signature(
+                                ty,
+                                sym,
+                                builtins[i].sig,
+                                builtins[i].doc
+                        );
                 }
                 xvP(Globals, builtins[i].value);
                 switch (ClassOf(v)) {

@@ -31,7 +31,7 @@ queue_mark(Ty *ty, Queue *q)
 static Value
 queue_push(Ty *ty, Value *self, int argc, Value *kwargs)
 {
-        ASSERT_ARGC_RANGE("Queue.push()", 1, INT_MAX);
+        ASSERT_ARGC_MIN("Queue.push()", 1);
 
         Queue *q = self->queue;
 
@@ -47,7 +47,7 @@ queue_push(Ty *ty, Value *self, int argc, Value *kwargs)
 static Value
 queue_push_front(Ty *ty, Value *self, int argc, Value *kwargs)
 {
-        ASSERT_ARGC_RANGE("Queue.push-front()", 1, INT_MAX);
+        ASSERT_ARGC_MIN("Queue.push-front()", 1);
 
         Queue *q = self->queue;
 

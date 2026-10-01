@@ -113,7 +113,7 @@ shrink(Ty *ty, Value *v)
 static Value
 array_push(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        ASSERT_ARGC_RANGE("Array.push()", 0, INT_MAX);
+        ASSERT_ARGC_MIN("Array.push()", 0);
         vvPn(*array->array, &ARG(0), argc);
         return NIL;
 }
@@ -121,7 +121,7 @@ array_push(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_insert(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        ASSERT_ARGC_RANGE("Array.insert()", 2, INT_MAX);
+        ASSERT_ARGC_MIN("Array.insert()", 2);
 
         imax i = INT_ARG(0);
 
@@ -258,7 +258,7 @@ index_safe(Array const *array, isize i)
 static Value
 array_zip(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        ASSERT_ARGC_RANGE("Array.zip()", 1, INT_MAX);
+        ASSERT_ARGC_MIN("Array.zip()", 1);
 
         usize n = vN(*array->array);
         Value f = KWARG("f", _ANY);

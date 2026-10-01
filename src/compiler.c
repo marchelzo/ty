@@ -12727,9 +12727,7 @@ signature_source(Ty *ty, byte_vector *out)
                                 end = s + strlen(s);
                         }
 
-                        if (strncmp(s, "/**", 3) == 0) {
-                                dump(&decls, "%.*s\n", (int)(end - s), s);
-                        } else if (end != s) {
+                        if (end != s) {
                                 dump(
                                         &decls,
                                         "%sfn %s%s`%s`%.*s;\n",
@@ -12826,6 +12824,9 @@ resolve_prog(Ty *ty, Stmt **p)
                 }
                 for (usize i = 0; sigs[i] != NULL; ++i) {
                         symbolize_statement(ty, STATE.global, sigs[i]);
+                }
+                for (int i = 0; i < vN(STATE.module->sigs); ++i) {
+                        v_(STATE.module->sigs, i)->sym->doc = v_(STATE.module->sigs, i)->doc;
                 }
         }
 
@@ -13505,20 +13506,14 @@ signature_unit(Module *mod)
 }
 
 void
-compiler_introduce_signature(Ty *ty, Symbol *sym, char const *sig)
+compiler_introduce_signature(Ty *ty, Symbol *sym, char const *sig, char const *doc)
 {
         Module *unit = signature_unit(sym->mod);
 
         sym->flags |= SYM_SIGNED;
+        sym->doc    = doc;
 
-        if (strncmp(sig, "/**", 3) == 0) {
-                char const *end = strstr(sig, "*/");
-                if (end != NULL) {
-                        sym->doc = afmt("%.*s", (int)(end - sig - 3), sig + 3);
-                }
-        }
-
-        xvP(unit->sigs, ((BuiltinSig) { .sym = sym, .sig = sig }));
+        xvP(unit->sigs, ((BuiltinSig) { .sym = sym, .sig = sig, .doc = doc }));
 
         unit->sig_hash = HashCombine(unit->sig_hash, hash64z(sym->mod->name));
         unit->sig_hash = HashCombine(unit->sig_hash, hash64z(sym->identifier));

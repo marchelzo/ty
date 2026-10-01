@@ -7,7 +7,8 @@
 
 static _Thread_local int error;
 
-TY_BUILTIN_RAW(sqlite_dbopen, "sqlite3c.open(path: PathLike, flags: ?Int = nil) -> Ptr[Any] | nil")
+// sqlite3c.open(path: PathLike, flags: ?Int = nil) -> Ptr[Any] | nil
+TY_BUILTIN_RAW(sqlite_dbopen)
 {
         ASSERT_ARGC("sqlite3.open()", 1, 2);
 
@@ -29,13 +30,15 @@ TY_BUILTIN_RAW(sqlite_dbopen, "sqlite3c.open(path: PathLike, flags: ?Int = nil) 
         }
 }
 
-TY_BUILTIN_RAW(sqlite_dbclose, "sqlite3c.close(db: ?Ptr[_]) -> Int")
+// sqlite3c.close(db: ?Ptr[_]) -> Int
+TY_BUILTIN_RAW(sqlite_dbclose)
 {
         ASSERT_ARGC("sqlite3.close()", 1);
         return INTEGER(sqlite3_close(PTR_ARG(0)));
 }
 
-TY_BUILTIN_RAW(sqlite_prepare, "sqlite3c.prepare(db: ?Ptr[_], sql: String) -> Ptr[Any] | nil")
+// sqlite3c.prepare(db: ?Ptr[_], sql: String) -> Ptr[Any] | nil
+TY_BUILTIN_RAW(sqlite_prepare)
 {
         ASSERT_ARGC("sqlite3.perpare()", 2);
 
@@ -54,39 +57,43 @@ TY_BUILTIN_RAW(sqlite_prepare, "sqlite3c.prepare(db: ?Ptr[_], sql: String) -> Pt
         }
 }
 
-TY_BUILTIN_RAW(sqlite_step, "sqlite3c.step(stmt: ?Ptr[_]) -> Int")
+// sqlite3c.step(stmt: ?Ptr[_]) -> Int
+TY_BUILTIN_RAW(sqlite_step)
 {
         ASSERT_ARGC("sqlite3.step()", 1);
         return INTEGER(sqlite3_step(PTR_ARG(0)));
 }
 
-TY_BUILTIN_RAW(sqlite_changes, "sqlite3c.changes(db: ?Ptr[_]) -> Int")
+// sqlite3c.changes(db: ?Ptr[_]) -> Int
+TY_BUILTIN_RAW(sqlite_changes)
 {
         ASSERT_ARGC("sqlite3.changes()", 1);
         return INTEGER(sqlite3_changes(PTR_ARG(0)));
 }
 
-TY_BUILTIN_RAW(sqlite_total_changes, "sqlite3c.totalChanges(db: ?Ptr[_]) -> Int")
+// sqlite3c.totalChanges(db: ?Ptr[_]) -> Int
+TY_BUILTIN_RAW(sqlite_total_changes)
 {
         ASSERT_ARGC("sqlite3.totalChanges()", 1);
         return INTEGER(sqlite3_total_changes(PTR_ARG(0)));
 }
 
-TY_BUILTIN_RAW(sqlite_last_insert_rowid, "sqlite3c.lastInsertRowid(db: ?Ptr[_]) -> Int")
+// sqlite3c.lastInsertRowid(db: ?Ptr[_]) -> Int
+TY_BUILTIN_RAW(sqlite_last_insert_rowid)
 {
         ASSERT_ARGC("sqlite3.lastInsertRowid()", 1);
         return INTEGER(sqlite3_last_insert_rowid(PTR_ARG(0)));
 }
 
-TY_BUILTIN_RAW(sqlite_column_count, "sqlite3c.columnCount(stmt: ?Ptr[_]) -> Int")
+// sqlite3c.columnCount(stmt: ?Ptr[_]) -> Int
+TY_BUILTIN_RAW(sqlite_column_count)
 {
         ASSERT_ARGC("sqlite3.columnCount()", 1);
         return INTEGER(sqlite3_column_count(PTR_ARG(0)));
 }
 
-TY_BUILTIN_RAW(sqlite_get_column,
-        "sqlite3c.column(stmt: ?Ptr[_], index: Int) -> Int | Float | String | Blob | nil"
-)
+// sqlite3c.column(stmt: ?Ptr[_], index: Int) -> Int | Float | String | Blob | nil
+TY_BUILTIN_RAW(sqlite_get_column)
 {
         ASSERT_ARGC("sqlite3.column()", 2);
 
@@ -118,7 +125,8 @@ TY_BUILTIN_RAW(sqlite_get_column,
         }
 }
 
-TY_BUILTIN_RAW(sqlite_fetch, "sqlite3c.fetch(stmt: ?Ptr[_]) -> [_]")
+// sqlite3c.fetch(stmt: ?Ptr[_]) -> [_]
+TY_BUILTIN_RAW(sqlite_fetch)
 {
         ASSERT_ARGC("sqlite3.fetch()", 1);
 
@@ -162,7 +170,8 @@ TY_BUILTIN_RAW(sqlite_fetch, "sqlite3c.fetch(stmt: ?Ptr[_]) -> [_]")
         return a;
 }
 
-TY_BUILTIN_RAW(sqlite_fetch_dict, "sqlite3c.fetchAssoc(stmt: ?Ptr[_]) -> Dict[String, _]")
+// sqlite3c.fetchAssoc(stmt: ?Ptr[_]) -> Dict[String, _]
+TY_BUILTIN_RAW(sqlite_fetch_dict)
 {
         ASSERT_ARGC("sqlite3.fetch()", 1);
 
@@ -211,20 +220,23 @@ TY_BUILTIN_RAW(sqlite_fetch_dict, "sqlite3c.fetchAssoc(stmt: ?Ptr[_]) -> Dict[St
         return d;
 }
 
-TY_BUILTIN_RAW(sqlite_finalize, "sqlite3c.finalize(stmt: ?Ptr[_]) -> Int")
+// sqlite3c.finalize(stmt: ?Ptr[_]) -> Int
+TY_BUILTIN_RAW(sqlite_finalize)
 {
         ASSERT_ARGC("sqlite3.finalize()", 1);
         return INTEGER(sqlite3_finalize(PTR_ARG(0)));
 
 }
 
-TY_BUILTIN_RAW(sqlite_reset, "sqlite3c.reset(stmt: ?Ptr[_]) -> Int")
+// sqlite3c.reset(stmt: ?Ptr[_]) -> Int
+TY_BUILTIN_RAW(sqlite_reset)
 {
         ASSERT_ARGC("sqlite3.reset()", 1);
         return INTEGER(sqlite3_reset(PTR_ARG(0)));
 }
 
-TY_BUILTIN_RAW(sqlite_mbind, "sqlite3c.bind(stmt: ?Ptr[_], index: String | Int, val: Any) -> Int")
+// sqlite3c.bind(stmt: ?Ptr[_], index: String | Int, val: Any) -> Int
+TY_BUILTIN_RAW(sqlite_mbind)
 {
         ASSERT_ARGC("sqlite3.bind()", 3);
 
@@ -278,7 +290,8 @@ TY_BUILTIN_RAW(sqlite_mbind, "sqlite3c.bind(stmt: ?Ptr[_], index: String | Int, 
         return INTEGER(err);
 }
 
-TY_BUILTIN_RAW(sqlite_column_name, "sqlite3c.columnName(stmt: ?Ptr[_], index: Int) -> String | nil")
+// sqlite3c.columnName(stmt: ?Ptr[_], index: Int) -> String | nil
+TY_BUILTIN_RAW(sqlite_column_name)
 {
         ASSERT_ARGC("sqlite3.columnName()", 2);
         sqlite3_stmt *stmt = PTR_ARG(0);
@@ -287,7 +300,8 @@ TY_BUILTIN_RAW(sqlite_column_name, "sqlite3c.columnName(stmt: ?Ptr[_], index: In
         return (name != NULL) ? vSsz(name) : NIL;
 }
 
-TY_BUILTIN_RAW(sqlite_error_code, "sqlite3c.error(db: ?Ptr[_] = nil) -> Int")
+// sqlite3c.error(db: ?Ptr[_] = nil) -> Int
+TY_BUILTIN_RAW(sqlite_error_code)
 {
         ASSERT_ARGC("sqlite3.error()", 0, 1);
 
@@ -299,7 +313,8 @@ TY_BUILTIN_RAW(sqlite_error_code, "sqlite3c.error(db: ?Ptr[_] = nil) -> Int")
 
 }
 
-TY_BUILTIN_RAW(sqlite_error_msg, "sqlite3c.errorMessage(x: ?Ptr[_] | Int) -> String")
+// sqlite3c.errorMessage(x: ?Ptr[_] | Int) -> String
+TY_BUILTIN_RAW(sqlite_error_msg)
 {
         ASSERT_ARGC("sqlite3.errorMessage()", 1);
 

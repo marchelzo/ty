@@ -3,6 +3,7 @@ static struct {
         char const *name;
         struct value value;
         char const *sig;
+        char const *doc;
 } builtins[] = {
 #include "gen/builtin_table.h"
 #if defined(__APPLE__)
