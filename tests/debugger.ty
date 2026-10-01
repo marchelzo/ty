@@ -176,9 +176,9 @@ class Dap {
     }
 }
 
-fn launch() -> (Any, Dap) {
+fn launch(*args: String) -> (Any, Dap) {
     let proc = os.spawn(
-        [ty.executable, DEBUGGEE],
+        [ty.executable, DEBUGGEE, *args],
         stdin=os.SPAWN_NULL,
         stdout=os.SPAWN_NULL,
         stderr=os.SPAWN_NULL
@@ -219,6 +219,24 @@ pub fn debugger-pause-and-inspect() {
 
     let result = dap.ok('evaluate', %{'expression': 'calls * 0 + 42', 'frameId': frames[0]['id']})
     assert(result['result'] == '42')
+
+    dap.ok('continue', %{'threadId': 1})
+    finish(proc, dap)
+}
+
+pub fn debugger-thread-names-survive-setproctitle() {
+    let title = 'a-process-title-long-enough-to-bury-argv0'
+    let (proc, dap) = launch(title)
+
+    if let $cmdline = slurp("/proc/{proc.pid}/cmdline") {
+        assert(cmdline.starts?(title))
+    }
+
+    dap.ok('pause', %{'threadId': 1})
+    assert(dap.event('stopped')['reason'] == 'pause')
+
+    let names = dap.ok('threads')['threads'].map(&['name'])
+    assert(names == ['main', 'Thread 2'])
 
     dap.ok('continue', %{'threadId': 1})
     finish(proc, dap)

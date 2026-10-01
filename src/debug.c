@@ -3054,6 +3054,14 @@ ReqBreakpointLocations(Ty *ty, Json const *req, Json const *args)
         Respond(req, NULL, &body);
 }
 
+static char ExecName[64];
+
+static bool
+InheritedName(char const *name)
+{
+        return strcmp(name, ExecName) == 0;
+}
+
 static void
 ThreadName(TyDebugThread const *d, char *buf, usize n)
 {
@@ -3061,7 +3069,7 @@ ThreadName(TyDebugThread const *d, char *buf, usize n)
 
         pthread_getname_np(d->thread, name, sizeof name);
 
-        if (name[0] != '\0') {
+        if (name[0] != '\0' && !InheritedName(name)) {
                 ty_snprintf(buf, n, "%s", name);
         } else if (d->id == 1) {
                 ty_snprintf(buf, n, "main");
@@ -4649,6 +4657,8 @@ DebugInit(Ty *ty)
         if (off != NULL && off[0] != '\0' && strcmp(off, "0") != 0) {
                 return;
         }
+
+        pthread_getname_np(pthread_self(), ExecName, sizeof ExecName);
 
         if (!MakePipe(D.wake)) {
                 return;

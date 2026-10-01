@@ -1,4 +1,4 @@
-import os (sleep)
+import os (sleep, setproctitle)
 
 class Box {
     value: Int
@@ -30,6 +30,10 @@ fn worker() {
         }
         sleep(0.002)
     }
+}
+
+if let [_, $title] = argv {
+    setproctitle(title)
 }
 
 let thread = Thread(worker)
