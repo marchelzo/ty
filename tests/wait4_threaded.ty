@@ -1,0 +1,24 @@
+import os (..)
+
+ns test
+
+pub fn concurrent-wait4-results() {
+    if !__windows__ {
+        let gate = Note()
+        let ready = Atomic(0)
+        let threads = [Thread(fn () {
+            let process = spawn(['/bin/sh', '-c', 'exit 7'])
+            ready += 1
+            gate.wait()
+            wait4(process.pid)!
+        }) for _ in ..16]
+
+        while ready.load() < #threads {
+            sleep(0.001)
+        }
+        gate.notify()
+
+        let results = threads.map(&join)
+        assert(#results == #threads)
+    }
+}

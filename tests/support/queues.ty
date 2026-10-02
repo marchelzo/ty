@@ -11,7 +11,7 @@ pub fn transfer(q, producers, consumers, n, batch = 1) {
 
     fn produce(p) {
         for (let start = 0; start < n; start += batch) {
-            q.put-all([[p, i, "{p}:{i}"] for i in start..min(start + batch, n)])
+            q.put-all([(p, i, "{p}:{i}") for i in start..min(start + batch, n)])
         }
     }
 
@@ -44,7 +44,7 @@ pub fn transfer(q, producers, consumers, n, batch = 1) {
             assert(actual.filter(\_[0] == p).map(&1) == [i for i in ..n])
         }
     }
-    let expected = [[p, i, "{p}:{i}"] for p in ..producers for i in ..n].sort()
+    let expected = [(p, i, "{p}:{i}") for p in ..producers for i in ..n].sort()
     assert(actual.sort() == expected)
     assert(q.empty?)
 }

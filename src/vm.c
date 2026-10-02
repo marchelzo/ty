@@ -9744,6 +9744,8 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES._locs            = M_ID(sfmt("_locs$%d",    CLASS_COMPILE_ERROR));
         NAMES._detail          = M_ID(sfmt("_detail$%d",  CLASS_COMPILE_ERROR));
         NAMES._related         = M_ID(sfmt("_related$%d", CLASS_COMPILE_ERROR));
+        NAMES._code            = M_ID(sfmt("_code$%d",    CLASS_COMPILE_ERROR));
+        NAMES._notes           = M_ID(sfmt("_notes$%d",   CLASS_COMPILE_ERROR));
 
         NAMES._fields_         = M_ID("__fields__");
         NAMES._methods_        = M_ID("__methods__");
@@ -10196,14 +10198,13 @@ vm_call1(Ty *ty, Value const *f, Value const *x)
                 return pop();
 
         case VALUE_REGEX:
-                v = peek();
-                if (UNLIKELY(v.type != VALUE_STRING)) {
-                        zP("Regex.__call__(): expected String but got: %s", VSC(&v));
+                if (UNLIKELY(x->type != VALUE_STRING)) {
+                        zP("Regex.__call__(): expected String but got: %s", VSC(x));
                 }
-                push(v);
+                v = *x;
+                push(*f);
                 v = string_match(ty, &v, 1, NULL);
-                pop();
-                gX();
+                STACK.count = n;
                 return v;
 
         default:

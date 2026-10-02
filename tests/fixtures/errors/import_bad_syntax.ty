@@ -1,0 +1,2 @@
+import bad_syntax
+print(bad_syntax.q)

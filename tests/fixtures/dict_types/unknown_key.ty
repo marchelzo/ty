@@ -1,0 +1,5 @@
+fn take(o: %{'cwd': String, ?'quiet': Bool}) -> String {
+    o['cwd']
+}
+
+take(%{'cwd': 'x', 'bogus': 1})

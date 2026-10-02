@@ -1,0 +1,5 @@
+macro boom(e) {
+    throw "macro exploded"
+}
+
+let v = boom(1)

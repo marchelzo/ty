@@ -1,0 +1,295 @@
+ns test
+
+fn fused-int-source-mutation(n: Int) {
+    let total = 0
+    for i in ..n {
+        total += i
+    }
+    total
+}
+
+fn fused-int-immediate-mutation(n: Int) {
+    let value = 7
+    for ..n {
+        value += 127
+        value -= -128
+        value += 100000
+        value *= 1
+    }
+    value
+}
+
+fn fused-int-computed-mutation(n: Int) {
+    let value = 1
+    let step = 3
+    for ..n {
+        value += step * 2
+        value -= step - 1
+    }
+    value
+}
+
+fn fused-float-source-mutation(n: Int) {
+    let value = 1.0
+    let step = 0.5
+    for ..n {
+        value += step
+        value -= step
+        value += step
+        value *= step
+    }
+    value
+}
+
+fn fused-float-computed-mutation(n: Int) {
+    let value = 1.0
+    let step = 0.25
+    for ..n {
+        value += step * 2.0
+        value -= step + 0.25
+    }
+    value
+}
+
+pub fn fused-numeric-local-mutations() {
+    assert(fused-int-source-mutation(1000) == 499500)
+    assert(fused-int-immediate-mutation(1000) == 100255007)
+    assert(fused-int-computed-mutation(1000) == 4001)
+    assert(fused-float-source-mutation(1000) == 0.5)
+    assert(fused-float-computed-mutation(1000) == 1.0)
+}
+
+pub fn mutation-result-remains-live() {
+    let value = 4
+    let step = 3
+    let result = (value += step)
+    assert(result == 7)
+    assert(value == 7)
+
+    let real = 1.5
+    let factor = 2.0
+    let product = (real *= factor)
+    assert(product == 3.0)
+    assert(real == 3.0)
+}
+
+fn wide-immediate-mutation() {
+    let value: Int = 1
+    value += 4294967296
+    value
+}
+
+fn fused-unary-int(value: Int) { -value }
+fn fused-unary-float(value: Float) { -value }
+fn fused-bitwise(left: Int, right: Int) {
+    [left & right, left | right, left ^ right]
+}
+
+pub fn fused-numeric-edge-cases() {
+    // The immediate fusion uses 32-bit ALU operations and must reject values
+    // outside that range instead of silently truncating them.
+    assert(wide-immediate-mutation() == 4294967297)
+    assert(fused-unary-int(-2147483648) == 2147483648)
+    assert(fused-unary-float(-1.25) == 1.25)
+    assert(fused-bitwise(0b1100, 0b1010) == [0b1000, 0b1110, 0b0110])
+}
+
+fn fused-mutation-slow-guards() {
+    let int-target: Int = cast(1.5)
+    let int-source: Int = cast(0.5)
+    int-target += int-source
+    int-target += 1
+
+    let float-target: Float = cast(2)
+    let float-source: Float = cast(3)
+    float-target *= float-source
+    [int-target, float-target]
+}
+
+pub fn fused-mutation-guard-fallbacks() {
+    assert(fused-mutation-slow-guards() == [3.0, 6])
+}
+
+fn observe-fused-value(value: Int) {
+    value
+}
+
+fn fused-cfg-branches(n: Int) {
+    let total = 0
+    for i in ..n {
+        if i % 2 == 0 {
+            total += 3
+        } else {
+            total -= 1
+        }
+        if i % 17 == 0 {
+            assert(observe-fused-value(total) == total)
+        }
+    }
+    total
+}
+
+fn fused-cfg-capacity(n: Int) {
+    let a = 0
+    let b = 0
+    let c = 0
+    let d = 0
+    for ..n {
+        a += 1
+        b += 2
+        c += 3
+        d += 4
+    }
+    [a, b, c, d]
+}
+
+fn fused-cfg-throw(n: Int) {
+    let total = 0
+    try {
+        for i in ..n {
+            total += i
+        }
+        throw 'numeric-fusion'
+    } catch 'numeric-fusion' {
+        total
+    }
+}
+
+fn fused-cfg-captured(n: Int) {
+    let total = 0
+    let read = fn () { total }
+    for ..n {
+        total += 1
+    }
+    read()
+}
+
+fn fused-fast-after-miss() {
+    let value: Int = cast(1.5)
+    value += 1
+    value = 4
+    value += 3
+    value
+}
+
+pub fn fused-cfg-state() {
+    assert(fused-cfg-branches(1000) == 1000)
+    assert(fused-cfg-capacity(1000) == [1000, 2000, 3000, 4000])
+    assert(fused-cfg-throw(1000) == 499500)
+    assert(fused-cfg-captured(1000) == 1000)
+    assert(fused-fast-after-miss() == 7)
+}
+
+fn fused-local-comparisons(a: Int, b: Int) {
+    let score = 0
+    if a < b { score += 1 }
+    if a <= b { score += 2 }
+    if a > b { score += 4 }
+    if a >= b { score += 8 }
+    if a < 10 { score += 16 }
+    if a >= -10 { score += 32 }
+    score
+}
+
+fn fused-comparison-guard-miss() {
+    let a: Int = cast(1.5)
+    let b: Int = cast(2.5)
+    [a < b, a >= 1]
+}
+
+pub fn fused-local-comparison-branches() {
+    assert(fused-local-comparisons(3, 5) == 51)
+    assert(fused-local-comparisons(7, 2) == 60)
+    assert(fused-comparison-guard-miss() == [true, true])
+}
+
+fn fused-count-array(value: Array) { #value }
+fn fused-count-dict(value: Dict) { #value }
+fn fused-count-blob(value: Blob) { #value }
+fn fused-count-tuple() { #(1, 2, 3, 4) }
+
+fn fused-count-guard-miss() {
+    let value: Array = cast((1, 2, 3))
+    #value
+}
+
+pub fn fused-builtin-counts() {
+    assert(fused-count-array([1, 2, 3]) == 3)
+    assert(fused-count-dict(%{'a': 1, 'b': 2}) == 2)
+    assert(fused-count-blob(Blob('abcd')) == 4)
+    assert(fused-count-tuple() == 4)
+    assert(fused-count-guard-miss() == 3)
+}
+
+fn fused-local-array-index(value: Array, index: Int) { value[index] }
+fn fused-local-tuple-index(index: Int) { (10, 20, 30)[index] }
+
+fn fused-local-index-guard-miss(index: Int) {
+    let value: Array = cast((40, 50, 60))
+    value[index]
+}
+
+pub fn fused-local-subscripts() {
+    assert(fused-local-array-index([2, 4, 6], 1) == 4)
+    assert(fused-local-tuple-index(2) == 30)
+    assert(fused-local-index-guard-miss(1) == 50)
+}
+
+fn fused-local-condition(value: Int) {
+    if value { 1 } else { 0 }
+}
+
+fn fused-local-bool-condition(value: Bool) {
+    if value { 1 } else { 0 }
+}
+
+fn fused-local-condition-guard-miss() {
+    let value: Int = cast(0.5)
+    if value { 1 } else { 0 }
+}
+
+pub fn fused-local-conditions() {
+    assert(fused-local-condition(0) == 0)
+    assert(fused-local-condition(-2) == 1)
+    assert(fused-local-bool-condition(false) == 0)
+    assert(fused-local-bool-condition(true) == 1)
+    assert(fused-local-condition-guard-miss() == 1)
+}
+
+fn fused-array-store-pop(array: Array, index: Int, value) {
+    array[index] = value
+    array[index]
+}
+
+fn fused-array-get-assign(array: Array, index: Int) {
+    let value = array[index]
+    value
+}
+
+fn fused-array-get-assign-guard-miss(index: Int) {
+    let array: Array = cast((7, 8, 9))
+    let value = array[index]
+    value
+}
+
+pub fn fused-array-consumers() {
+    let array = [1, 2, 3]
+    assert(fused-array-store-pop(array, 1, 'changed') == 'changed')
+    assert(array == [1, 'changed', 3])
+    assert(fused-array-get-assign([4, 5, 6], 2) == 6)
+    assert(fused-array-get-assign-guard-miss(1) == 8)
+}
+
+fn fused-array-immediate-get(array: Array) { array[0] }
+
+fn fused-range-loop-guard-miss() {
+    let bound: Int = cast(4.0)
+    let values = []
+    for index in ..bound { values.push(index) }
+    values
+}
+
+pub fn fused-range-and-array-loads() {
+    assert(fused-array-immediate-get([11, 12]) == 11)
+    assert(fused-range-loop-guard-miss() == [0, 1, 2, 3])
+}

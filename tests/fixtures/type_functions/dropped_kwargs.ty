@@ -1,0 +1,3 @@
+fn call[...P, R](g: P -> R, *args: ...P, %kw: ...P) -> R {
+    g(*args)
+}

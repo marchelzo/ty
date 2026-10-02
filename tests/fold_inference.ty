@@ -1,0 +1,62 @@
+import chalk (TermStyle)
+
+use Style = {?bold: ?Bool, ?fg: ?String}
+
+fn merge(styles: Dict[String, ?Style], names: String) -> ?Style {
+    names.words().map(name -> styles[name]!).fold(\{*_, *_})
+}
+
+ns test
+
+pub fn fold-after-map() {
+    let styles: Dict[String, ?Style] = %{
+        'bold': {bold: true},
+        'red':  {fg: 'red'},
+        'blue': {fg: 'blue'}
+    }
+    assert(merge(styles, 'bold') == {bold: true})
+    assert(merge(styles, 'bold red') == {bold: true, fg: 'red'})
+    assert(merge(styles, 'red bold blue') == {bold: true, fg: 'blue'})
+}
+
+pub fn seeded-fold-record-extension() {
+    let xs: Array[TermStyle] = [{bold: true}, {italic: true}]
+    let seed = {abc: 0} as TermStyle & {abc: Int}
+    let result = xs.fold(seed, \{*_, *_, abc: 123})
+    assert(result.abc == 123)
+    assert(result.bold == true)
+    assert(result.italic == true)
+    assert(([] as Array[TermStyle]).fold(seed, \{*_, *_, abc: 123}).abc == 0)
+
+    let reflected = typeof ([] as Array[TermStyle]).fold(
+        nil as TermStyle & {abc: Int},
+        \{*_, *_, abc: 123}
+    )
+    assert(str(reflected).contains?('abc: Int'))
+}
+
+pub fn seeded-fold-preserves-incompatible-result() {
+    try {
+        __eval__('let result: TermStyle & {abc: Int} = ([] as Array[TermStyle]).fold(nil as TermStyle & {abc: Int}, \\{*_, *_, abc: "wrong"})')
+        assert(false, 'fold lost the incompatible accumulator field')
+    } catch ex :: '[assignment-type]' in ex.what {
+        ;
+    }
+}
+
+class Picker {
+    static apply[U](seed: U, mode: Int, f: (U, Int) -> U) -> U {
+        f(seed, mode)
+    }
+
+    static apply[U](seed: U, mode: String, f: (U, String) -> U) -> U {
+        f(seed, mode)
+    }
+}
+
+pub fn callback-hint-overload-rollback() {
+    let result = Picker.apply({abc: 0}, 'abc', \{*_, abc: #_})
+    assert(result.abc == 3)
+    let named = Picker.apply({xyz: 0}, 'abcd', f=\{*_, xyz: #_})
+    assert(named.xyz == 4)
+}

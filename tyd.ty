@@ -16,7 +16,7 @@ const FAILED_JSON_PATH = TYD_LOGS_DIR / 'failed.json'
 TYD_LOGS_DIR.mkdir(parents=true, exist-ok=true)
 
 logging({
-    path: str(TYD_LOGS_DIR),
+    path: str(TYD_LOG_PATH),
     level: INFO
 })
 
@@ -152,18 +152,69 @@ fn do-req(msg: Request) -> _ {
     }
 }
 
-fn to-diagnostic(record: _, file: String) -> _ {
-    let $loc = record['trace'].find(\_['file'] == file) or return nil
+fn lsp-range(loc: _) -> _ {
     let start = loc['start']
     let end = loc['end']
     return {
-        range: {
-            start: { line: start['line'] - 1, character: start['col'] - 1 },
-            end: { line: end['line'] - 1, character: end['col'] - 1 }
-        },
-        message: record['message'],
-        severity: 1
+        start: { line: start['line'] - 1, character: start['col'] - 1 },
+        end: { line: end['line'] - 1, character: end['col'] - 1 }
     }
+}
+
+fn diagnostic-message(record: _) -> String {
+    let message = record['message'].comb(/\bCompileError: |\s+\[[\w-]+\]$/)
+    [message, *(record['notes'] ?? [])].join('\n')
+}
+
+fn related-locations(record: _, file: String) -> _ {
+    [
+        {
+            location: { uri: "file://{loc['file']}", range: lsp-range(loc) },
+            message: "in {loc['module'] ?? loc['file']}"
+        }
+        for loc in record['trace'] if loc['file'] not in [nil, file]
+    ]
+}
+
+fn to-diagnostic(record: _, file: String) -> _ {
+    let $loc = record['trace'].find(\_['file'] == file) or return nil
+    let code = record['code']
+    return {
+        range: lsp-range(loc),
+        message: diagnostic-message(record),
+        source: 'ty',
+        severity: 1,
+        relatedInformation: related-locations(record, file),
+        *(code == nil ? {} : {code})
+    }
+}
+
+fn dedent(doc: String) -> String {
+    let lines = doc.comb(/^\n+|\n+$/).lines()
+    let pre = lines.map(/^\s*(?=\S)/).map(\_ ?> `#`).min() ?? 0
+    lines.map(&[pre;]).join('\n').strip()
+}
+
+fn hover-signature(info: _) -> String {
+    let name = info['name']
+    match info['sig'] {
+        sig: String => sig.lines().map(\"{name}{_}").join('\n'),
+        _           => "{name}: {info['type']}"
+    }
+}
+
+fn hover-text(info: _) -> String {
+    let origin = info['builtin']
+               ? 'builtin'
+               : "defined at {relpath(info['file'])}:{info['line'] + 1}"
+
+    let parts = ["```ty\n{hover-signature(info)}\n```", "_{origin}_"]
+
+    if let $doc = info['doc'] {
+        parts.push(dedent(doc))
+    }
+
+    parts.join('\n\n')
 }
 
 fn check[T](msg: T, file: String) -> T {
@@ -229,16 +280,9 @@ info!(pretty(init, width=72))
 
 let store: Dict[String, String] = %{}
 
-fn relpath(path: String) {
-    let cwd = getcwd().split(/\\|\//)
-    let path = path.split(/\\|\//)
-
-    while cwd && path && cwd[0] == path[0] {
-        path.pop(0)
-        cwd.pop(0)
-    }
-
-    path.join('/')
+fn relpath(path: String) -> String {
+    let cwd = "{getcwd()}/"
+    path[;#cwd] == cwd ? path[#cwd;] : path
 }
 
 fn send(msg) {
@@ -332,6 +376,8 @@ fn go() {
             } = msg['params']
 
             let result = match run({file: path, what: 1, line, col}) {
+                %{'builtin': true} => nil,
+
                 %{file, line, col} => {
                     uri: file.match?(/^\/dev\//) ? "file://{path}" : "file://{realpath(file)}",
                     range: {
@@ -359,24 +405,11 @@ fn go() {
                 }
             } = msg['params']
 
-            fn nice(doc) {
-                if doc == nil { return '' }
-                let lines: _ = doc.comb(/^\n+|\n+$/).lines()
-                let pre = lines.map(/^\s*/).map(`#`).min() ?? 0
-                lines.map(&[pre;]).unlines().strip()
-            }
-
             let result = match run({file: path, what: 1, line, col}) {
                 $info => {
                     contents: {
-                        kind: 'plaintext',
-                        value: "
-                          \>{info['name']} : {info['type']}
-                          \>
-                          \>Defined at {relpath(info['file'])}:{info['line']}.
-                          \>
-                          \>{nice(info['doc'])}
-                          \>"
+                        kind: 'markdown',
+                        value: hover-text(info)
                     }
                 },
 

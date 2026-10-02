@@ -198,6 +198,9 @@ struct t2_solver {
         T2Type      failure_left;
         T2Type      failure_right;
         char       *failure_provenance;
+        T2PredicateKind failure_predicate;
+        T2Type      failure_operand;
+        char       *failure_name;
 };
 
 struct t2_scheme {
@@ -9203,6 +9206,10 @@ clear_solver_failure(T2Solver *solver)
         solver->failure_right   = T2_TYPE_INVALID;
         ty_free(solver->failure_provenance);
         solver->failure_provenance = NULL;
+        solver->failure_predicate = T2_PREDICATE_SUBTYPE;
+        solver->failure_operand   = T2_TYPE_INVALID;
+        ty_free(solver->failure_name);
+        solver->failure_name = NULL;
 }
 
 static void
@@ -9238,6 +9245,26 @@ set_solver_error(
         );
         ty_free(left_string);
         ty_free(right_string);
+}
+
+static void
+set_predicate_error(T2Solver *solver, T2Predicate const *predicate)
+{
+        if (solver->failed) {
+                return;
+        }
+
+        set_solver_error(
+                solver,
+                "external predicate failed",
+                predicate->subtype,
+                predicate->supertype,
+                predicate->provenance
+        );
+        solver->failure_predicate = predicate->kind;
+        solver->failure_operand   = predicate->operand;
+        ty_free(solver->failure_name);
+        solver->failure_name = S2N(predicate->name);
 }
 
 static char const *
@@ -9328,6 +9355,7 @@ t2_solver_free(T2Solver *solver)
         xvF(solver->undo);
         xvF(solver->causes);
         ty_free(solver->failure_provenance);
+        ty_free(solver->failure_name);
         ty_free(solver);
 }
 
@@ -12436,13 +12464,7 @@ drain_work(T2Solver *solver)
                                 (relation == T2_RELATION_NO)
                              && !solver->failed
                         ) {
-                                set_solver_error(
-                                        solver,
-                                        "external predicate failed",
-                                        predicate.subtype,
-                                        predicate.supertype,
-                                        predicate.provenance
-                                );
+                                set_predicate_error(solver, &predicate);
                         }
                 } else {
                         usize index = (usize)work;
@@ -12682,13 +12704,7 @@ t2_solver_constrain_predicate(
                         relation = T2_RELATION_COMPLEXITY;
                 }
         } else if (relation == T2_RELATION_NO && !solver->failed) {
-                set_solver_error(
-                        solver,
-                        "external predicate failed",
-                        predicate->subtype,
-                        predicate->supertype,
-                        predicate->provenance
-                );
+                set_predicate_error(solver, predicate);
         }
 
         drain_work(solver);
@@ -16013,9 +16029,15 @@ scheme_apply_x(
         T2Type const   *arguments,
         usize           argument_count,
         char const     *provenance,
-        bool            relaxed
+        bool            relaxed,
+        T2Predicate    *dropped
 )
 {
+        if (dropped != NULL) {
+                dropped->kind = T2_PREDICATE_DEFAULT;
+                dropped->subtype = T2_TYPE_INVALID;
+        }
+
         if (
                 (scheme == NULL)
              || (solver == NULL)
@@ -16102,6 +16124,9 @@ scheme_apply_x(
                         goto Fail;
                 }
                 t2_solver_rollback(solver, step);
+                if (dropped != NULL && dropped->subtype == T2_TYPE_INVALID) {
+                        *dropped = predicate;
+                }
         }
 
         ty_free(instantiation.replacements);
@@ -16134,7 +16159,8 @@ t2_scheme_apply(
                 arguments,
                 argument_count,
                 provenance,
-                false
+                false,
+                NULL
         );
 }
 
@@ -16153,7 +16179,29 @@ t2_scheme_apply_relaxed(
                 arguments,
                 argument_count,
                 provenance,
-                true
+                true,
+                NULL
+        );
+}
+
+T2Type
+t2_scheme_apply_relaxed_x(
+        T2Scheme const *scheme,
+        T2Solver       *solver,
+        T2Type const   *arguments,
+        usize           argument_count,
+        char const     *provenance,
+        T2Predicate    *dropped
+)
+{
+        return scheme_apply_x(
+                scheme,
+                solver,
+                arguments,
+                argument_count,
+                provenance,
+                true,
+                dropped
         );
 }
 
@@ -16358,6 +16406,29 @@ zonk_for_display(T2Solver *solver, T2Type type)
         return (result == T2_TYPE_INVALID) ? type : result;
 }
 
+T2Type
+t2_solver_zonk_display(
+        T2Solver            *solver,
+        T2Type               type,
+        T2SolutionPreference preference
+)
+{
+        if (solver == NULL || type == T2_TYPE_INVALID) {
+                return type;
+        }
+
+        T2ZonkContext context = {
+                .solver     = solver,
+                .preference = preference
+        };
+        T2Type result = zonk_type(&context, type);
+        xvF(context.entries);
+        xvF(context.active_metas);
+        xvF(context.binders);
+
+        return (result == T2_TYPE_INVALID) ? type : result;
+}
+
 usize
 t2_solver_cause_count(T2Solver const *solver)
 {
@@ -16400,7 +16471,12 @@ t2_solver_failure(T2Solver *solver, T2CauseInfo *info)
                 .message = (solver->failure_message != NULL)
                          ? solver->failure_message
                          : solver->error,
-                .provenance = solver->failure_provenance
+                .provenance = solver->failure_provenance,
+                .predicate  = solver->failure_predicate,
+                .operand    = (solver->failure_operand == T2_TYPE_INVALID)
+                            ? T2_TYPE_INVALID
+                            : zonk_for_display(solver, solver->failure_operand),
+                .name       = solver->failure_name
         };
 
         return true;

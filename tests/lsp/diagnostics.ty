@@ -1,0 +1,92 @@
+import io
+import json
+import os (..)
+import path (Path)
+import ty
+
+let tyls-cmd = getenv('TY_LS_CMD') ?? str(Path(ty.executable).parent / 'tyls')
+
+let dir = Path('/tmp') / "tyls-diagnostics-{getpid()}"
+dir.mkdir(parents=true, exist-ok=true)
+
+onExit(fn () { dir.rmtree(quiet=true) })
+
+let files = %{
+    'type.ty':         'fn f(x: Int) -> Int { x + 1 }\nlet z = f("s")\n',
+    'parse.ty':        'let x = 1\nlet y = (1 + ;\nprint(y)\n',
+    'bparse.ty':       'let q = 10\nlet r = (q + \n',
+    'import_parse.ty': 'import bparse\nprint(bparse.q)\n',
+    'macro_throw.ty':  'macro boom(e) {\n    throw "macro exploded"\n}\n\nlet v = boom(1)\n',
+}
+
+for name, source in files {
+    (dir / name).write(source)
+}
+
+let tyls = spawn([tyls-cmd], stdin=SPAWN_PIPE, stdout=SPAWN_PIPE, stderr=SPAWN_NULL, chdir=str(dir))
+
+let tyls-in  = io.open(tyls.stdin, 'w')
+let tyls-out = io.open(tyls.stdout, 'r')
+
+onExit(fn () { kill(tyls.pid, SIGTERM) })
+
+fn compile(name: String, check: Bool) -> _ {
+    let request = {
+        what: 0,
+        file: str(dir / name),
+        source: files[name],
+        check: check ? true : nil
+    }
+    tyls-in.write("{json.encode(request)}\n")
+    tyls-in.flush()
+    let $line = tyls-out.nextLine() or throw 'tyls closed its output'
+    let response: _ = json.parse(line)
+    response
+}
+
+fn located(record: _, name: String) -> _ {
+    record['trace'].find(\Path(_['file'] ?? '').name == name)
+}
+
+ns test
+
+pub fn type-error-has-location() {
+    let rsp = compile('type.ty', true)
+    let record: _ = json.parse(rsp['error'])
+    assert('[bad-call]' in record['message'], record['message'])
+    let loc = located(record, 'type.ty')
+    assert(loc != nil)
+    assert(loc['start']['line'] == 2)
+    assert(loc['start']['col'] == 9)
+}
+
+pub fn type-error-reported-while-recovering() {
+    let rsp = compile('type.ty', false)
+    assert(rsp['error'] == nil)
+    assert(#rsp['diagnostics'] == 1)
+    assert('[bad-call]' in rsp['diagnostics'][0]['message'])
+}
+
+pub fn parse-error-reported-while-recovering() {
+    let rsp = compile('parse.ty', false)
+    assert(rsp['error'] == nil)
+    assert(#rsp['diagnostics'] >= 1)
+    let loc = located(rsp['diagnostics'][0], 'parse.ty')
+    assert(loc['start']['line'] == 2)
+}
+
+pub fn import-error-points-at-import() {
+    let rsp = compile('import_parse.ty', true)
+    let record: _ = json.parse(rsp['error'])
+    assert(record['message'].match?(/^while importing module bparse: ParseError/), record['message'])
+    assert(located(record, 'import_parse.ty')['start']['line'] == 1)
+    assert(located(record, 'bparse.ty')['start']['line'] == 2)
+}
+
+pub fn macro-error-points-at-call-site() {
+    let rsp = compile('macro_throw.ty', true)
+    let record: _ = json.parse(rsp['error'])
+    assert('while expanding macro boom' in record['message'], record['message'])
+    assert('macro exploded' in record['message'], record['message'])
+    assert(located(record, 'macro_throw.ty')['start']['line'] == 5)
+}

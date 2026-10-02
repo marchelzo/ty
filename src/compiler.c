@@ -13520,6 +13520,25 @@ compiler_introduce_signature(Ty *ty, Symbol *sym, char const *sig, char const *d
         unit->sig_hash = HashCombine(unit->sig_hash, hash64z(sig));
 }
 
+char const *
+compiler_symbol_sig(Ty *ty, Symbol const *sym)
+{
+        if (sym == NULL || sym->mod == NULL) {
+                return NULL;
+        }
+
+        Module *unit = signature_unit(sym->mod);
+
+        for (int i = 0; i < vN(unit->sigs); ++i) {
+                BuiltinSig const *bs = v_(unit->sigs, i);
+                if (bs->sym == sym) {
+                        return bs->sig;
+                }
+        }
+
+        return NULL;
+}
+
 int
 compiler_introduce_tag(Ty *ty, char const *module, char const *name, int super)
 {

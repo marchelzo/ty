@@ -176,7 +176,8 @@ typedef enum t2_diagnostic_severity {
 typedef enum t2_note_kind {
         T2_NOTE_TEXT,
         T2_NOTE_CAUSE,
-        T2_NOTE_PREDICATE
+        T2_NOTE_PREDICATE,
+        T2_NOTE_TYPE
 } T2NoteKind;
 
 typedef struct t2_note {
@@ -368,6 +369,12 @@ struct t2_checker {
         T2Type            lambda_hint;
         Expr const       *call_shape_site;
         char              call_shape[160];
+        Expr const       *argument_failure_site;
+        Expr const       *argument_failure;
+        T2Type            argument_failure_actual;
+        T2Type            argument_failure_expected;
+        char const       *argument_failure_parameter;
+        char const       *argument_parameter;
         unsigned          muted;
         unsigned          recording;
         vec(T2DefaultType) default_types;
@@ -1227,28 +1234,77 @@ add_diagnostic(
         return diagnostic;
 }
 
+static bool
+vacuous_cause(T2Checker *checker, T2CauseInfo const *info)
+{
+        if (info->kind == T2_CAUSE_FAILURE) {
+                return false;
+        }
+
+        if (info->left == info->right) {
+                return true;
+        }
+
+        char *left  = t2_type_string(checker->universe, info->left);
+        char *right = t2_type_string(checker->universe, info->right);
+        bool same   = (left != NULL) && (right != NULL) && s_eq(left, right);
+
+        ty_free(left);
+        ty_free(right);
+
+        return same;
+}
+
 static T2Notes
 capture_causes(T2Checker *checker, T2SolverMark mark)
 {
         T2Notes notes = {0};
         T2CauseInfo info;
+        bool predicate_failure = false;
+        T2Type failed_left  = T2_TYPE_INVALID;
+        T2Type failed_right = T2_TYPE_INVALID;
         if (t2_solver_failure(checker->solver, &info)) {
+                predicate_failure = (info.predicate != T2_PREDICATE_SUBTYPE)
+                                 && (info.predicate != T2_PREDICATE_DEFAULT);
+                failed_left  = info.left;
+                failed_right = info.right;
                 push_note(
                         &notes,
-                        (T2Note) {
+                        predicate_failure
+                        ? (T2Note) {
+                                .kind       = T2_NOTE_PREDICATE,
+                                .predicate  = info.predicate,
+                                .left       = info.left,
+                                .right      = info.right,
+                                .operand    = info.operand,
+                                .text       = (info.name == NULL) ? NULL : S2(info.name),
+                                .provenance = (info.provenance == NULL) ? NULL : S2(info.provenance)
+                          }
+                        : (T2Note) {
                                 .kind       = T2_NOTE_CAUSE,
                                 .cause      = T2_CAUSE_FAILURE,
                                 .left       = info.left,
                                 .right      = info.right,
                                 .text       = (info.message == NULL) ? NULL : S2(info.message),
                                 .provenance = (info.provenance == NULL) ? NULL : S2(info.provenance)
-                        }
+                          }
                 );
         }
 
         usize count = t2_solver_cause_count(checker->solver);
         for (usize i = mark.cause_count; i < count; ++i) {
                 if (!t2_solver_cause(checker->solver, i, &info)) {
+                        continue;
+                }
+                if (
+                        predicate_failure
+                     && (info.kind == T2_CAUSE_PREDICATE)
+                     && (info.left == failed_left)
+                     && (info.right == failed_right)
+                ) {
+                        continue;
+                }
+                if (vacuous_cause(checker, &info)) {
                         continue;
                 }
                 push_note(
@@ -1443,6 +1499,24 @@ truncate_forward_uses(T2Checker *checker, usize mark)
 
 static T2Type
 infer_forward_function(T2Checker *checker, T2Binding *binding, Expr const *site);
+
+static T2Scheme *
+multi_function_scheme(
+        T2Checker    *checker,
+        Expr const   *function,
+        Expr const   *site,
+        T2Type const *environment,
+        usize         environment_count,
+        T2Type       *value
+);
+
+static void
+publish_function_scheme(
+        T2Checker    *checker,
+        Symbol const *symbol,
+        T2Scheme     *scheme,
+        T2Type        value
+);
 
 static T2Binding *
 prepare_forward_binding(T2Checker *checker, T2Binding *binding);
@@ -2678,13 +2752,18 @@ adopt_interface(T2Checker *checker, T2Interface const *interface)
 }
 
 static T2Type
-instantiate_member(
+instantiate_member_x(
         T2Checker      *checker,
         T2Member const *member,
         T2Type          receiver,
-        Expr const     *site
+        Expr const     *site,
+        T2Predicate    *dropped
 )
 {
+        if (dropped != NULL) {
+                dropped->subtype = T2_TYPE_INVALID;
+        }
+
         if (member == NULL || member->scheme == NULL) {
                 return T2_TYPE_INVALID;
         }
@@ -2757,12 +2836,13 @@ instantiate_member(
                 }
         }
 
-        T2Type result = t2_scheme_apply_relaxed(
+        T2Type result = t2_scheme_apply_relaxed_x(
                 member->scheme,
                 checker->solver,
                 arguments,
                 count,
-                member->name
+                member->name,
+                dropped
         );
         ty_free(arguments);
 
@@ -2784,6 +2864,17 @@ instantiate_member(
         }
 
         return result;
+}
+
+static T2Type
+instantiate_member(
+        T2Checker      *checker,
+        T2Member const *member,
+        T2Type          receiver,
+        Expr const     *site
+)
+{
+        return instantiate_member_x(checker, member, receiver, site, NULL);
 }
 
 static T2Alias *
@@ -5696,97 +5787,143 @@ free_scheme_array(T2Scheme **schemes, usize count)
         ty_free(schemes);
 }
 
-static T2Scheme *
-interface_callable_scheme(
+static void
+add_quantifier(T2Quantifier *quantifiers, usize *count, T2Quantifier quantifier)
+{
+        for (usize i = 0; i < *count; ++i) {
+                if (
+                        (quantifiers[i].id == quantifier.id)
+                     && (quantifiers[i].kind == quantifier.kind)
+                ) {
+                        return;
+                }
+        }
+
+        quantifiers[(*count)++] = quantifier;
+}
+
+static bool
+is_class_quantifier(
+        T2Quantifier const *class_quantifiers,
+        usize               class_arity,
+        T2Quantifier        quantifier
+)
+{
+        for (usize i = 0; i < class_arity; ++i) {
+                if (
+                        (class_quantifiers[i].id == quantifier.id)
+                     && (class_quantifiers[i].kind == quantifier.kind)
+                ) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static T2Type
+qualified_arm(
         T2Checker          *checker,
-        Expr const         *function,
+        T2Scheme const     *scheme,
+        T2Quantifier const *class_quantifiers,
+        usize               class_arity,
+        T2Quantifier       *outer,
+        usize              *outer_count
+)
+{
+        usize count = t2_scheme_quantifier_count(scheme);
+        T2Quantifier *local = xtA(*local, count + 1);
+        usize local_count = 0;
+
+        for (usize i = 0; i < count; ++i) {
+                T2Quantifier quantifier;
+                if (!t2_scheme_quantifier(scheme, i, &quantifier)) {
+                        continue;
+                }
+                if (is_class_quantifier(class_quantifiers, class_arity, quantifier)) {
+                        add_quantifier(outer, outer_count, quantifier);
+                } else {
+                        local[local_count++] = quantifier;
+                }
+        }
+
+        usize predicate_count = t2_scheme_predicate_count(scheme);
+        T2Predicate *predicates = xtA(*predicates, predicate_count + 1);
+        usize predicates_used = 0;
+
+        for (usize i = 0; i < predicate_count; ++i) {
+                if (t2_scheme_predicate(scheme, i, &predicates[predicates_used])) {
+                        predicates_used += 1;
+                }
+        }
+
+        T2Scheme *arm = t2_scheme_new(
+                checker->universe,
+                local,
+                local_count,
+                t2_scheme_body(scheme),
+                predicates,
+                predicates_used
+        );
+        T2Type type = (arm == NULL)
+                    ? T2_TYPE_INVALID
+                    : t2_scheme_type(checker->universe, arm);
+
+        t2_scheme_free(arm);
+        ty_free(predicates);
+        ty_free(local);
+
+        return type;
+}
+
+static T2Scheme *
+overload_scheme_of(
+        T2Checker          *checker,
+        T2Scheme    *const *schemes,
+        usize               scheme_count,
         T2Quantifier const *class_quantifiers,
         usize               class_arity
 )
 {
-        if (function == NULL) {
-                return NULL;
-        }
-
-        if (function->type != EXPRESSION_MULTI_FUNCTION) {
-                return interface_function_scheme(
-                        checker,
-                        function,
-                        class_quantifiers,
-                        class_arity
-                );
-        }
-
-        usize entry_count = vN(function->functions);
-        T2Scheme **schemes = xtA0(*schemes, entry_count);
-
-        usize scheme_count        = 0;
         usize quantifier_capacity = 0;
-        usize predicate_count     = 0;
         usize arm_count           = 0;
-        for (usize i = 0; i < entry_count; ++i) {
-                Expr const *candidate = v__(function->functions, (int)i);
-                if (candidate != NULL && IsStmt(candidate)) {
-                        candidate = ((Stmt const *)candidate)->value;
-                }
-                if (candidate == NULL) {
-                        continue;
-                }
-                T2Scheme *scheme = interface_callable_scheme(
-                        checker,
-                        candidate,
-                        class_quantifiers,
-                        class_arity
-                );
-                if (scheme == NULL) {
-                        free_scheme_array(schemes, scheme_count);
-                        return NULL;
-                }
-                schemes[scheme_count++] = scheme;
-                quantifier_capacity += t2_scheme_quantifier_count(scheme);
-                predicate_count += t2_scheme_predicate_count(scheme);
-                T2Type body = t2_scheme_body(scheme);
+        for (usize i = 0; i < scheme_count; ++i) {
+                quantifier_capacity += t2_scheme_quantifier_count(schemes[i]);
+                T2Type body = t2_scheme_body(schemes[i]);
                 arm_count += (t2_type_kind(checker->universe, body) == T2_TYPE_OVERLOAD)
                            ? t2_type_arity(checker->universe, body)
                            : 1;
         }
 
-        if (scheme_count == 0) {
-                ty_free(schemes);
-                return NULL;
-        }
-
-        T2Quantifier *quantifiers = xtA(*quantifiers, quantifier_capacity);
-        T2Predicate *predicates = xtA(*predicates, predicate_count);
-        T2Type *arms = xtA(*arms, arm_count);
+        T2Quantifier *quantifiers = xtA(*quantifiers, quantifier_capacity + 1);
+        T2Type *arms = xtA(*arms, arm_count + 1);
 
         usize quantifier_count = 0;
-        usize predicates_used  = 0;
         usize arms_used        = 0;
         for (usize i = 0; i < scheme_count; ++i) {
+                (void)t2_scheme_simplify(schemes[i]);
+                if (t2_scheme_predicate_count(schemes[i]) != 0) {
+                        T2Type arm = qualified_arm(
+                                checker,
+                                schemes[i],
+                                class_quantifiers,
+                                class_arity,
+                                quantifiers,
+                                &quantifier_count
+                        );
+                        if (arm == T2_TYPE_INVALID) {
+                                ty_free(quantifiers);
+                                ty_free(arms);
+                                return NULL;
+                        }
+                        arms[arms_used++] = arm;
+                        continue;
+                }
                 usize count = t2_scheme_quantifier_count(schemes[i]);
                 for (usize j = 0; j < count; ++j) {
                         T2Quantifier quantifier;
-                        if (!t2_scheme_quantifier(schemes[i], j, &quantifier)) {
-                                continue;
-                        }
-                        bool duplicate = false;
-                        for (usize k = 0; k < quantifier_count; ++k) {
-                                duplicate |= (quantifiers[k].id == quantifier.id)
-                                          && (quantifiers[k].kind == quantifier.kind);
-                        }
-                        if (!duplicate) {
-                                quantifiers[quantifier_count++] = quantifier;
-                        }
-                }
-                count = t2_scheme_predicate_count(schemes[i]);
-                for (usize j = 0; j < count; ++j) {
-                        if (t2_scheme_predicate(
-                                schemes[i],
-                                j,
-                                &predicates[predicates_used]
-                        )) {
-                                predicates_used += 1;
+                        if (t2_scheme_quantifier(schemes[i], j, &quantifier)) {
+                                add_quantifier(quantifiers, &quantifier_count, quantifier);
                         }
                 }
                 T2Type body = t2_scheme_body(schemes[i]);
@@ -5812,13 +5949,72 @@ interface_callable_scheme(
                                  quantifiers,
                                  quantifier_count,
                                  body,
-                                 predicates,
-                                 predicates_used
+                                 NULL,
+                                 0
                            )
         ;
         ty_free(quantifiers);
-        ty_free(predicates);
         ty_free(arms);
+
+        return result;
+}
+
+static T2Scheme *
+interface_callable_scheme(
+        T2Checker          *checker,
+        Expr const         *function,
+        T2Quantifier const *class_quantifiers,
+        usize               class_arity
+)
+{
+        if (function == NULL) {
+                return NULL;
+        }
+
+        if (function->type != EXPRESSION_MULTI_FUNCTION) {
+                return interface_function_scheme(
+                        checker,
+                        function,
+                        class_quantifiers,
+                        class_arity
+                );
+        }
+
+        usize entry_count = vN(function->functions);
+        T2Scheme **schemes = xtA0(*schemes, entry_count + 1);
+        usize scheme_count = 0;
+
+        for (usize i = 0; i < entry_count; ++i) {
+                Expr const *candidate = v__(function->functions, (int)i);
+                if (candidate != NULL && IsStmt(candidate)) {
+                        candidate = ((Stmt const *)candidate)->value;
+                }
+                if (candidate == NULL) {
+                        continue;
+                }
+                T2Scheme *scheme = interface_callable_scheme(
+                        checker,
+                        candidate,
+                        class_quantifiers,
+                        class_arity
+                );
+                if (scheme == NULL) {
+                        free_scheme_array(schemes, scheme_count);
+                        return NULL;
+                }
+                schemes[scheme_count++] = scheme;
+        }
+
+        T2Scheme *result = (scheme_count == 0)
+                         ? NULL
+                         : overload_scheme_of(
+                                 checker,
+                                 schemes,
+                                 scheme_count,
+                                 class_quantifiers,
+                                 class_arity
+                           )
+        ;
         free_scheme_array(schemes, scheme_count);
 
         return result;
@@ -7853,7 +8049,7 @@ keyword_argument_expression(Expr const *site, usize index)
 }
 
 static bool
-candidate_argument(
+candidate_argument_x(
         T2Checker  *checker,
         T2Type      argument,
         T2Type      parameter,
@@ -7965,6 +8161,49 @@ candidate_argument(
                     != T2_RELATION_NO
                )
             && !t2_solver_failed(checker->solver);
+}
+
+static bool
+candidate_argument(
+        T2Checker  *checker,
+        T2Type      argument,
+        T2Type      parameter,
+        Expr const *source,
+        Expr const *site
+)
+{
+        bool failed_before = t2_solver_failed(checker->solver);
+        bool accepted = candidate_argument_x(checker, argument, parameter, source, site);
+        T2CauseInfo failure;
+
+
+        if (
+                accepted
+             || failed_before
+             || (source == NULL)
+             || (source == site)
+             || (checker->argument_failure_site == site)
+             || !t2_solver_failure(checker->solver, &failure)
+             || (failure.predicate != T2_PREDICATE_SUBTYPE)
+        ) {
+                return accepted;
+        }
+
+        checker->argument_failure_site      = site;
+        checker->argument_failure           = source;
+        checker->argument_failure_parameter = checker->argument_parameter;
+        checker->argument_failure_actual    = t2_solver_zonk_display(
+                checker->solver,
+                argument,
+                T2_PREFER_LOWER_BOUND
+        );
+        checker->argument_failure_expected  = t2_solver_zonk_display(
+                checker->solver,
+                parameter,
+                T2_PREFER_UPPER_BOUND
+        );
+
+        return accepted;
 }
 
 static void
@@ -8726,6 +8965,7 @@ apply_callable_candidate(
                 ) {
                         continue;
                 }
+                checker->argument_parameter = parameter.name;
                 if (
                         !candidate_argument(
                                 checker,
@@ -8841,6 +9081,7 @@ apply_callable_candidate(
                 } else if (parameter.kind != T2_PARAMETER_KEYWORD_REST && assigned[selected]) {
                         call_shape_error(checker, site, "argument `%s` is given twice", keywords[i]);
                 }
+                checker->argument_parameter = keywords[i];
                 if (
                         (selected == SIZE_MAX)
                      || (
@@ -8923,6 +9164,138 @@ apply_callable_candidate(
         }
 
         return result;
+}
+
+static T2Type
+rejected_arms(T2Checker *checker, T2Type actual, T2Type expected)
+{
+        if (t2_type_kind(checker->universe, actual) != T2_TYPE_UNION) {
+                return T2_TYPE_INVALID;
+        }
+
+        T2Type rejected = t2_primitive(checker->universe, T2_TYPE_NEVER);
+        usize count = 0;
+
+        for (usize i = 0; i < t2_type_arity(checker->universe, actual); ++i) {
+                T2Type arm = t2_type_child(checker->universe, actual, i);
+                T2SolverMark mark = t2_solver_mark(checker->solver);
+                T2Relation relation = t2_solver_constrain_subtype(
+                        checker->solver,
+                        arm,
+                        expected,
+                        NULL
+                );
+                bool accepted = (relation != T2_RELATION_NO)
+                             && !t2_solver_failed(checker->solver);
+                t2_solver_rollback(checker->solver, mark);
+                if (!accepted) {
+                        rejected = t2_join(checker->universe, rejected, arm);
+                        count += 1;
+                }
+        }
+
+        return (count == 0 || count == t2_type_arity(checker->universe, actual))
+             ? T2_TYPE_INVALID
+             : rejected;
+}
+
+static void
+report_argument_failure(T2Checker *checker, T2Type callee)
+{
+        T2Type actual    = checker->argument_failure_actual;
+        T2Type expected  = checker->argument_failure_expected;
+        char const *name = checker->argument_failure_parameter;
+
+        T2Diagnostic *diagnostic = add_diagnostic(
+                checker,
+                checker->argument_failure,
+                T2_DIAGNOSTIC_ERROR,
+                "bad-call",
+                T2_TYPE_INVALID,
+                T2_TYPE_INVALID,
+                (name == NULL)
+                ? "this argument does not match its parameter%s%s%s"
+                : "this argument does not match parameter %s`%s`%s",
+                "",
+                (name == NULL) ? "" : name,
+                ""
+        );
+        if (diagnostic == NULL) {
+                return;
+        }
+
+        push_note(
+                &diagnostic->notes,
+                (T2Note) {
+                        .kind = T2_NOTE_TYPE,
+                        .left = snapshot_type(checker, actual),
+                        .text = S2("found")
+                }
+        );
+        push_note(
+                &diagnostic->notes,
+                (T2Note) {
+                        .kind = T2_NOTE_TYPE,
+                        .left = snapshot_type(checker, expected),
+                        .text = S2("expected")
+                }
+        );
+
+        T2Type rejected = rejected_arms(checker, actual, expected);
+        if (rejected != T2_TYPE_INVALID) {
+                push_note(
+                        &diagnostic->notes,
+                        (T2Note) {
+                                .kind = T2_NOTE_TYPE,
+                                .left = snapshot_type(checker, rejected),
+                                .text = S2("rejected")
+                        }
+                );
+        }
+
+        push_note(
+                &diagnostic->notes,
+                (T2Note) {
+                        .kind = T2_NOTE_TYPE,
+                        .left = snapshot_type(checker, callee),
+                        .text = S2("callee")
+                }
+        );
+}
+
+static T2Type
+declared_callee(T2Checker *checker, Expr const *site, T2Type callee)
+{
+        Expr const *function = (
+                (site != NULL)
+             && (site->type == EXPRESSION_FUNCTION_CALL)
+        ) ? site->function : NULL;
+
+        if (
+                (function == NULL)
+             || (function->type != EXPRESSION_IDENTIFIER)
+             || (function->symbol == NULL)
+        ) {
+                return callee;
+        }
+
+        T2Binding *binding = find_binding(checker, function->symbol);
+        if (binding == NULL || binding->scheme == NULL) {
+                return callee;
+        }
+
+        for (usize i = 0; i < t2_scheme_predicate_count(binding->scheme); ++i) {
+                T2Predicate predicate;
+                if (
+                        t2_scheme_predicate(binding->scheme, i, &predicate)
+                     && (predicate.kind != T2_PREDICATE_SUBTYPE)
+                     && (predicate.kind != T2_PREDICATE_DEFAULT)
+                ) {
+                        return t2_scheme_type(checker->universe, binding->scheme);
+                }
+        }
+
+        return callee;
 }
 
 static T2Type
@@ -9303,6 +9676,7 @@ infer_call_types(
 
         if (kind == T2_TYPE_FUNCTION) {
                 checker->candidate_trials += 1;
+                checker->argument_failure_site = NULL;
                 T2SolverMark mark = t2_solver_mark(checker->solver);
                 T2Type result = apply_callable_candidate(
                         checker,
@@ -9322,11 +9696,19 @@ infer_call_types(
                         record_call_effect(checker, callee);
                         return result;
                 }
-                T2Notes causes = diagnose
+                bool argument = diagnose
+                             && (checker->argument_failure_site == site)
+                             && (checker->call_shape_site != site);
+                T2Notes causes = (diagnose && !argument)
                                ? capture_causes(checker, mark)
                                : (T2Notes) {0};
                 t2_solver_rollback(checker->solver, mark);
-                if (diagnose) {
+                if (argument) {
+                        report_argument_failure(
+                                checker,
+                                declared_callee(checker, site, callee)
+                        );
+                } else if (diagnose) {
                         bool shaped = (checker->call_shape_site == site);
                         if (shaped) {
                                 free_notes(&causes);
@@ -9337,7 +9719,7 @@ infer_call_types(
                                         site,
                                         T2_DIAGNOSTIC_ERROR,
                                         "bad-call",
-                                        callee,
+                                        declared_callee(checker, site, callee),
                                         T2_TYPE_INVALID,
                                         "the arguments do not match the callee's parameters%s%s",
                                         shaped ? "\n" : "",
@@ -10064,22 +10446,27 @@ drop_default_predicates(T2Scheme *scheme)
         }
 }
 
-static void
-conform_to_signature(T2Checker *checker, Stmt const *statement, T2Binding *binding)
+static T2Scheme *
+conform_scheme(
+        T2Checker  *checker,
+        Expr const *function,
+        Expr const *target,
+        char const *name,
+        T2Scheme   *inferred
+)
 {
-        Expr const *function = statement->value;
         T2Scheme *declared = (vN(function->type_params) == 0)
                            ? NULL
                            : interface_function_scheme_x(checker, function, NULL, 0, true);
         if (declared == NULL) {
-                (void)t2_scheme_restrict_to_body(binding->scheme);
-                discharge_rigid_predicates(checker, binding->scheme);
-                return;
+                (void)t2_scheme_restrict_to_body(inferred);
+                discharge_rigid_predicates(checker, inferred);
+                return inferred;
         }
 
         discharge_rigid_predicates(checker, declared);
 
-        T2Scheme *probe = copy_scheme(checker, binding->scheme);
+        T2Scheme *probe = copy_scheme(checker, inferred);
         (void)t2_scheme_restrict_to_body(probe);
         drop_default_predicates(probe);
         discharge_rigid_predicates(checker, probe);
@@ -10108,13 +10495,13 @@ conform_to_signature(T2Checker *checker, Stmt const *statement, T2Binding *bindi
         if (!gradual && strcmp(got, want) != 0) {
                 add_diagnostic(
                         checker,
-                        statement->target,
+                        target,
                         T2_DIAGNOSTIC_ERROR,
                         "signature-mismatch",
                         t2_scheme_type(checker->universe, view),
                         t2_scheme_type(checker->universe, declared),
                         "the body of `%s` needs more than its signature guarantees",
-                        statement->target->identifier
+                        (name == NULL) ? "<function>" : name
                 );
         }
 
@@ -10123,8 +10510,21 @@ conform_to_signature(T2Checker *checker, Stmt const *statement, T2Binding *bindi
         t2_scheme_free(view);
         t2_scheme_free(probe);
         t2_scheme_free(declared);
-        t2_scheme_free(binding->scheme);
-        binding->scheme = published;
+        t2_scheme_free(inferred);
+
+        return published;
+}
+
+static void
+conform_to_signature(T2Checker *checker, Stmt const *statement, T2Binding *binding)
+{
+        binding->scheme = conform_scheme(
+                checker,
+                statement->value,
+                statement->target,
+                statement->target->identifier,
+                binding->scheme
+        );
 }
 
 static bool
@@ -10610,6 +11010,8 @@ infer_binary_pair(
                 T2Type other      = (left_kind == T2_TYPE_UNION) ? right : left;
                 usize count       = t2_type_arity(checker->universe, union_type);
                 T2Type result     = t2_primitive(checker->universe, T2_TYPE_NEVER);
+                T2Type missing    = t2_primitive(checker->universe, T2_TYPE_NEVER);
+                T2Type error      = T2_TYPE_INVALID;
                 for (usize i = 0; i < count; ++i) {
                         T2Type arm = t2_type_child(checker->universe, union_type, i);
                         T2Type arm_result = (left_kind == T2_TYPE_UNION)
@@ -10631,22 +11033,47 @@ infer_binary_pair(
                                             )
                         ;
                         if (t2_type_kind(checker->universe, arm_result) == T2_TYPE_ERROR) {
-                                if (diagnose) {
-                                        add_diagnostic(
-                                                checker,
-                                                site,
-                                                T2_DIAGNOSTIC_ERROR,
-                                                "union-operator-coverage",
-                                                left,
-                                                right,
-                                                "not every arm of this union supports the operator"
-                                        );
-                                }
-                                return arm_result;
+                                missing = t2_join(checker->universe, missing, arm);
+                                error   = arm_result;
+                                continue;
                         }
                         result = t2_join(checker->universe, result, arm_result);
                 }
-                return result;
+                if (error == T2_TYPE_INVALID) {
+                        return result;
+                }
+                if (diagnose) {
+                        char const *name = binary_operation_name(operation);
+                        T2Diagnostic *diagnostic = add_diagnostic(
+                                checker,
+                                site,
+                                T2_DIAGNOSTIC_ERROR,
+                                "union-operator-coverage",
+                                union_type,
+                                T2_TYPE_INVALID,
+                                "operator `%s` is not defined for some arms of this union",
+                                (name == NULL) ? "?" : name
+                        );
+                        if (diagnostic != NULL) {
+                                push_note(
+                                        &diagnostic->notes,
+                                        (T2Note) {
+                                                .kind = T2_NOTE_TYPE,
+                                                .left = snapshot_type(checker, other),
+                                                .text = S2("operand")
+                                        }
+                                );
+                                push_note(
+                                        &diagnostic->notes,
+                                        (T2Note) {
+                                                .kind = T2_NOTE_TYPE,
+                                                .left = snapshot_type(checker, missing),
+                                                .text = S2("missing")
+                                        }
+                                );
+                        }
+                }
+                return error;
         }
 
         left_kind  = t2_type_kind(checker->universe, relax_literal(checker, left));
@@ -11867,6 +12294,60 @@ receiver_class_id(T2Checker *checker, T2Type receiver)
 }
 
 static T2Type
+instantiate_method(
+        T2Checker      *checker,
+        T2Member const *member,
+        T2Type          receiver,
+        Expr const     *site,
+        bool            diagnose
+)
+{
+        T2Predicate dropped;
+        T2Type method = instantiate_member_x(checker, member, receiver, site, &dropped);
+
+        if (
+                (dropped.subtype == T2_TYPE_INVALID)
+             || (member->scheme == NULL)
+             || (
+                        t2_type_kind(checker->universe, t2_scheme_body(member->scheme))
+                     == T2_TYPE_OVERLOAD
+                )
+        ) {
+                return method;
+        }
+
+        if (!diagnose) {
+                return t2_primitive(checker->universe, T2_TYPE_ERROR);
+        }
+
+        T2Diagnostic *diagnostic = add_diagnostic(
+                checker,
+                site,
+                T2_DIAGNOSTIC_ERROR,
+                "unsatisfied-bound",
+                receiver,
+                T2_TYPE_INVALID,
+                "this receiver does not satisfy the `where` clause of `%s`",
+                member->name
+        );
+        if (diagnostic != NULL) {
+                push_note(
+                        &diagnostic->notes,
+                        (T2Note) {
+                                .kind      = T2_NOTE_PREDICATE,
+                                .predicate = dropped.kind,
+                                .left      = snapshot_type(checker, dropped.subtype),
+                                .right     = snapshot_type(checker, dropped.supertype),
+                                .operand   = snapshot_type(checker, dropped.operand),
+                                .text      = (dropped.name == NULL) ? NULL : S2(dropped.name)
+                        }
+                );
+        }
+
+        return method;
+}
+
+static T2Type
 infer_method_type(
         T2Checker  *checker,
         T2Type      object,
@@ -11886,6 +12367,8 @@ infer_method_type(
         if (kind == T2_TYPE_UNION) {
                 T2SolverMark coverage = t2_solver_mark(checker->solver);
                 T2Type result         = t2_primitive(checker->universe, T2_TYPE_NEVER);
+                T2Type missing        = t2_primitive(checker->universe, T2_TYPE_NEVER);
+                T2Type error          = T2_TYPE_INVALID;
                 for (usize i = 0; i < t2_type_arity(checker->universe, object); ++i) {
                         T2Type arm_type = t2_type_child(
                                 checker->universe,
@@ -11900,6 +12383,7 @@ infer_method_type(
                                 result = t2_join(checker->universe, result, nil);
                                 continue;
                         }
+                        T2SolverMark probe = t2_solver_mark(checker->solver);
                         T2Type arm = infer_method_type(
                                 checker,
                                 arm_type,
@@ -11909,28 +12393,46 @@ infer_method_type(
                                 false
                         );
                         if (t2_type_kind(checker->universe, arm) == T2_TYPE_ERROR) {
-                                t2_solver_rollback(checker->solver, coverage);
+                                t2_solver_rollback(checker->solver, probe);
                                 if (safe) {
+                                        t2_solver_rollback(checker->solver, coverage);
                                         return nil;
                                 }
-                                if (diagnose) {
-                                        add_diagnostic(
-                                                checker,
-                                                site,
-                                                T2_DIAGNOSTIC_ERROR,
-                                                "union-method-coverage",
-                                                object,
-                                                T2_TYPE_INVALID,
-                                                "method `%s` is missing from some arms of this union",
-                                                name
-                                        );
-                                }
-                                return arm;
+                                missing = t2_join(checker->universe, missing, arm_type);
+                                error   = arm;
+                                continue;
                         }
+                        t2_solver_commit(checker->solver, probe);
                         result = t2_join(checker->universe, result, arm);
                 }
-                t2_solver_commit(checker->solver, coverage);
-                return result;
+                if (error == T2_TYPE_INVALID) {
+                        t2_solver_commit(checker->solver, coverage);
+                        return result;
+                }
+                t2_solver_rollback(checker->solver, coverage);
+                if (diagnose) {
+                        T2Diagnostic *diagnostic = add_diagnostic(
+                                checker,
+                                site,
+                                T2_DIAGNOSTIC_ERROR,
+                                "union-method-coverage",
+                                object,
+                                T2_TYPE_INVALID,
+                                "method `%s` is missing from some arms of this union",
+                                name
+                        );
+                        if (diagnostic != NULL) {
+                                push_note(
+                                        &diagnostic->notes,
+                                        (T2Note) {
+                                                .kind = T2_NOTE_TYPE,
+                                                .left = snapshot_type(checker, missing),
+                                                .text = S2("missing")
+                                        }
+                                );
+                        }
+                }
+                return error;
         }
 
         if (kind == T2_TYPE_DYNAMIC || kind == T2_TYPE_ERROR) {
@@ -12008,11 +12510,12 @@ infer_method_type(
                         member = tag_instance_member(checker, nominal, name);
                 }
                 if (member != NULL) {
-                        return instantiate_member(
+                        return instantiate_method(
                                 checker,
                                 member,
                                 receiver,
-                                site
+                                site,
+                                diagnose
                         );
                 }
         } else if (nominal != NULL && nominal->tag_id > 0) {
@@ -17892,14 +18395,18 @@ infer_expression(T2Checker *checker, Expr const *source)
                 }
                 T2Type element = t2_primitive(checker->universe, T2_TYPE_NEVER);
                 for (int i = 0; i < vN(expression->elements); ++i) {
-                        element = t2_join(
-                                checker->universe,
-                                element,
-                                relax_literal(
-                                        checker,
-                                        infer_expression(checker, v__(expression->elements, i))
-                                )
+                        Expr const *element_expression = v__(expression->elements, i);
+                        T2Type item = relax_literal(
+                                checker,
+                                infer_expression(checker, element_expression)
                         );
+                        if (
+                                (element_expression != NULL)
+                             && (element_expression->type == EXPRESSION_SPREAD)
+                        ) {
+                                item = iterated_type(checker, item, element_expression);
+                        }
+                        element = t2_join(checker->universe, element, item);
                         if (i < vN(expression->aconds)) {
                                 (void)infer_expression(checker, v__(expression->aconds, i));
                         }
@@ -19886,6 +20393,34 @@ infer_forward_function(T2Checker *checker, T2Binding *binding, Expr const *site)
 
         binding->defining = true;
 
+        if (symbol->expr->type == EXPRESSION_MULTI_FUNCTION) {
+                T2Type value;
+                T2Scheme *scheme = multi_function_scheme(
+                        checker,
+                        symbol->expr,
+                        site,
+                        environment,
+                        count,
+                        &value
+                );
+                t2_solver_commit(checker->solver, scope);
+                ty_free(environment);
+                binding = find_binding(checker, symbol);
+                if (binding == NULL) {
+                        t2_scheme_free(scheme);
+                        return T2_TYPE_INVALID;
+                }
+                binding->defining = false;
+                binding->forward  = false;
+                binding->eager    = true;
+                if (scheme == NULL) {
+                        return t2_primitive(checker->universe, T2_TYPE_ERROR);
+                }
+                set_node_type(checker, symbol->expr, value);
+                publish_function_scheme(checker, symbol, scheme, value);
+                return instantiate_binding(checker, find_binding(checker, symbol), site);
+        }
+
         if (symbol->expr->fn_symbol != symbol) {
                 binding->alias = symbol->expr->fn_symbol;
         }
@@ -19904,7 +20439,7 @@ infer_forward_function(T2Checker *checker, T2Binding *binding, Expr const *site)
         binding->forward  = false;
         binding->eager    = true;
 
-        (void)generalize_binding(
+        bool generalized = generalize_binding(
                 checker,
                 binding,
                 type,
@@ -19915,6 +20450,17 @@ infer_forward_function(T2Checker *checker, T2Binding *binding, Expr const *site)
                 scope
         );
         ty_free(environment);
+
+        binding = find_binding(checker, symbol);
+        if (generalized && binding != NULL && fully_annotated(symbol->expr)) {
+                binding->scheme = conform_scheme(
+                        checker,
+                        symbol->expr,
+                        symbol->expr,
+                        symbol->identifier,
+                        binding->scheme
+                );
+        }
 
         return instantiate_binding(
                 checker,
@@ -23824,6 +24370,75 @@ overload_arm_elsewhere(ExprVec const *functions, Expr const *function)
 }
 
 static void
+deactivate_bindings(T2Checker *checker, usize mark)
+{
+        for (usize i = mark; i < vN(checker->bindings); ++i) {
+                if (!v__(checker->bindings, i).persistent) {
+                        v__(checker->bindings, i).active = false;
+                }
+        }
+}
+
+static T2Scheme *
+generalize_member_overload(
+        T2Checker          *checker,
+        Expr const         *function,
+        T2Type const       *environment,
+        usize               environment_count,
+        T2Quantifier const *class_quantifiers,
+        usize               class_arity,
+        u32                 class_level
+)
+{
+        usize count = vN(function->functions);
+        T2Scheme **schemes = xtA0(*schemes, count + 1);
+        usize scheme_count = 0;
+
+        for (usize i = 0; i < count; ++i) {
+                Expr const *candidate = v__(function->functions, (int)i);
+                if (candidate != NULL && IsStmt(candidate)) {
+                        candidate = ((Stmt const *)candidate)->value;
+                }
+                if (candidate == NULL) {
+                        continue;
+                }
+                usize binding_mark = vN(checker->bindings);
+                T2SolverMark scope = t2_solver_mark(checker->solver);
+                T2Type type = infer_function_expression(checker, candidate);
+                deactivate_bindings(checker, binding_mark);
+                T2Scheme *scheme = generalize_member_scheme(
+                        checker,
+                        type,
+                        environment,
+                        environment_count,
+                        class_quantifiers,
+                        class_arity,
+                        class_level,
+                        scope
+                );
+                if (scheme == NULL) {
+                        free_scheme_array(schemes, scheme_count);
+                        return NULL;
+                }
+                schemes[scheme_count++] = scheme;
+        }
+
+        T2Scheme *result = (scheme_count == 0)
+                         ? NULL
+                         : overload_scheme_of(
+                                 checker,
+                                 schemes,
+                                 scheme_count,
+                                 class_quantifiers,
+                                 class_arity
+                           )
+        ;
+        free_scheme_array(schemes, scheme_count);
+
+        return result;
+}
+
+static void
 infer_member_functions(
         T2Checker          *checker,
         int                 class_id,
@@ -23848,24 +24463,34 @@ infer_member_functions(
                         &environment_count
                 );
                 usize pending_before   = t2_solver_pending_obligations(checker->solver);
-                T2SolverMark scope     = t2_solver_mark(checker->solver);
-                T2Type type            = infer_function_expression(checker, function);
-                usize pending_inferred = t2_solver_pending_obligations(checker->solver);
-                for (usize j = binding_mark; j < vN(checker->bindings); ++j) {
-                        if (!v__(checker->bindings, j).persistent) {
-                                v__(checker->bindings, j).active = false;
-                        }
+                usize pending_inferred = pending_before;
+                T2Scheme *scheme;
+                if (function->type == EXPRESSION_MULTI_FUNCTION) {
+                        scheme = generalize_member_overload(
+                                checker,
+                                function,
+                                environment,
+                                environment_count,
+                                class_quantifiers,
+                                class_arity,
+                                class_level
+                        );
+                } else {
+                        T2SolverMark scope = t2_solver_mark(checker->solver);
+                        T2Type type = infer_function_expression(checker, function);
+                        pending_inferred = t2_solver_pending_obligations(checker->solver);
+                        deactivate_bindings(checker, binding_mark);
+                        scheme = generalize_member_scheme(
+                                checker,
+                                type,
+                                environment,
+                                environment_count,
+                                class_quantifiers,
+                                class_arity,
+                                class_level,
+                                scope
+                        );
                 }
-                T2Scheme *scheme = generalize_member_scheme(
-                        checker,
-                        type,
-                        environment,
-                        environment_count,
-                        class_quantifiers,
-                        class_arity,
-                        class_level,
-                        scope
-                );
                 ty_free(environment);
                 if (checker->log != NULL && !checker->failed) {
                         log_prefix(checker, "member_scheme");
@@ -25504,6 +26129,216 @@ infer_statement(T2Checker *checker, Stmt const *statement)
         return flow;
 }
 
+static T2Scheme *
+overload_candidate_scheme(
+        T2Checker    *checker,
+        Expr const   *entry,
+        Expr const   *site,
+        T2Type const *environment,
+        usize         environment_count,
+        T2Type       *type
+)
+{
+        Expr const   *candidate = entry;
+        Symbol const *own       = NULL;
+
+        if (IsStmt(entry)) {
+                Stmt const *definition = (Stmt const *)entry;
+                candidate = definition->value;
+                own = (definition->target == NULL) ? NULL : definition->target->symbol;
+        }
+
+        T2Binding *binding = (own == NULL) ? NULL : find_binding(checker, own);
+        if (
+                (binding != NULL)
+             && binding->forward
+             && !binding->defining
+             && (own->expr != NULL)
+        ) {
+                (void)infer_forward_function(checker, binding, site);
+                binding = find_binding(checker, own);
+        }
+
+        if (binding != NULL && binding->defining) {
+                T2Scheme *declared = interface_function_scheme_x(
+                        checker,
+                        candidate,
+                        NULL,
+                        0,
+                        true
+                );
+                *type = (declared == NULL)
+                      ? binding->type
+                      : t2_scheme_body(declared);
+                return (declared != NULL)
+                     ? declared
+                     : t2_scheme_new(checker->universe, NULL, 0, binding->type, NULL, 0);
+        }
+
+        if (
+                (binding != NULL)
+             && !binding->forward
+             && binding->initialized
+             && (binding->scheme != NULL)
+        ) {
+                *type = binding->type;
+                return copy_scheme(checker, binding->scheme);
+        }
+
+        T2SolverMark scope = t2_solver_mark(checker->solver);
+        *type = infer_function_expression(checker, candidate);
+        T2Scheme *scheme = t2_solver_generalize_scoped(
+                checker->solver,
+                *type,
+                environment,
+                environment_count,
+                checker->level,
+                false,
+                scope
+        );
+        t2_solver_commit(checker->solver, scope);
+
+        if (scheme != NULL && fully_annotated(candidate)) {
+                scheme = conform_scheme(
+                        checker,
+                        candidate,
+                        candidate,
+                        candidate->name,
+                        t2_scheme_prune(scheme)
+                );
+        }
+
+        binding = (own == NULL) ? NULL : find_binding(checker, own);
+        if (scheme != NULL && binding != NULL && binding->forward) {
+                t2_scheme_free(binding->scheme);
+                binding->scheme      = copy_scheme(checker, scheme);
+                binding->type        = *type;
+                binding->initialized = true;
+                binding->forward     = false;
+                binding->eager       = true;
+        }
+
+        return scheme;
+}
+
+static T2Scheme *
+multi_function_scheme(
+        T2Checker    *checker,
+        Expr const   *function,
+        Expr const   *site,
+        T2Type const *environment,
+        usize         environment_count,
+        T2Type       *value
+)
+{
+        usize count = vN(function->functions);
+        T2Scheme **schemes = xtA0(*schemes, count + 1);
+        T2Type *types = xtA0(*types, count + 1);
+        usize n = 0;
+
+        *value = T2_TYPE_INVALID;
+
+        for (usize i = 0; i < count; ++i) {
+                Expr const *entry = v__(function->functions, (int)i);
+                if (entry == NULL) {
+                        continue;
+                }
+                T2Scheme *scheme = overload_candidate_scheme(
+                        checker,
+                        entry,
+                        site,
+                        environment,
+                        environment_count,
+                        &types[n]
+                );
+                if (scheme == NULL) {
+                        free_scheme_array(schemes, n);
+                        ty_free(types);
+                        return NULL;
+                }
+                schemes[n++] = scheme;
+        }
+
+        T2Scheme *result = NULL;
+        if (n != 0) {
+                *value = t2_overload(checker->universe, types, n);
+                result = (*value == T2_TYPE_INVALID)
+                       ? NULL
+                       : overload_scheme_of(checker, schemes, n, NULL, 0);
+        }
+
+        free_scheme_array(schemes, n);
+        ty_free(types);
+
+        return result;
+}
+
+static void
+publish_function_scheme(
+        T2Checker    *checker,
+        Symbol const *symbol,
+        T2Scheme     *scheme,
+        T2Type        value
+)
+{
+        T2Binding *binding = find_binding(checker, symbol);
+        if (binding == NULL) {
+                t2_scheme_free(scheme);
+                return;
+        }
+
+        t2_scheme_free(binding->scheme);
+        binding->scheme      = scheme;
+        binding->type        = value;
+        binding->initialized = true;
+        binding->mutable     = false;
+}
+
+static T2Type
+define_multi_function(
+        T2Checker    *checker,
+        Stmt const   *statement,
+        T2Type const *environment,
+        usize         environment_count
+)
+{
+        Expr const *function = statement->value;
+        Symbol const *symbol = statement->target->symbol;
+
+        T2Binding *binding = find_binding(checker, symbol);
+        if (binding != NULL) {
+                binding->defining = true;
+        }
+
+        T2Type value;
+        T2Scheme *scheme = multi_function_scheme(
+                checker,
+                function,
+                statement->target,
+                environment,
+                environment_count,
+                &value
+        );
+
+        binding = find_binding(checker, symbol);
+        if (binding != NULL) {
+                binding->defining = false;
+        }
+
+        if (scheme == NULL) {
+                if (!t2_solver_failed(checker->solver)) {
+                        checker->failed = true;
+                }
+                return t2_primitive(checker->universe, T2_TYPE_ERROR);
+        }
+
+        set_node_type(checker, function, value);
+        (void)assign_lvalue(checker, statement->target, value, true);
+        publish_function_scheme(checker, symbol, scheme, value);
+
+        return value;
+}
+
 static T2Flow
 infer_statement_once(T2Checker *checker, Stmt const *statement)
 {
@@ -25712,6 +26547,22 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
                                 statement->target
                         );
                         append_overload = is_callable_set(checker, previous);
+                }
+                if (
+                        !append_overload
+                     && (statement->value->type == EXPRESSION_MULTI_FUNCTION)
+                     && is_named_binding_target(statement->target)
+                ) {
+                        result.value = define_multi_function(
+                                checker,
+                                statement,
+                                environment,
+                                environment_count
+                        );
+                        t2_solver_commit(checker->solver, scope);
+                        discharge_forward_uses(checker, target_symbol);
+                        ty_free(environment);
+                        break;
                 }
                 if (binding != NULL) {
                         binding->defining = true;
@@ -28297,10 +29148,11 @@ begin_annotation(
                 .names   = names,
                 .width   = columns
         };
+        int pad = (strlen(label) < 9) ? (int)(9 - strlen(label)) : 1;
         paint(out, "2");
-        dump(out, "%*s = %s:%*s", digits, "", label, (int)(9 - strlen(label)), "");
+        dump(out, "%*s = %s:%*s", digits, "", label, pad, "");
         paint(out, "0");
-        writer.column = digits + 4 + 9;
+        writer.column = digits + 4 + (unsigned)strlen(label) + (unsigned)pad;
         writer.hang   = writer.column;
 
         return writer;
@@ -28430,11 +29282,16 @@ print_note(
                 names,
                 digits,
                 columns,
-                (note->kind == T2_NOTE_PREDICATE) ? "constraint" : "note"
+                (note->kind == T2_NOTE_PREDICATE) ? "constraint"
+              : (note->kind == T2_NOTE_TYPE)      ? note->text
+              :                                     "note"
         );
         switch (note->kind) {
         case T2_NOTE_TEXT:
                 write_text(&writer, note->text);
+                break;
+        case T2_NOTE_TYPE:
+                write_type(&writer, note->left);
                 break;
         case T2_NOTE_PREDICATE:
                 write_predicate(&writer, note);
@@ -28720,7 +29577,7 @@ report_diagnostics(T2Checker *checker, usize errors, usize warnings)
 
 enum {
         T2_CACHE_MAGIC   = UINT32_C(0x32545954),
-        T2_CACHE_VERSION = 13,
+        T2_CACHE_VERSION = 14,
         T2_CACHE_NONE    = UINT32_MAX
 };
 
@@ -31475,6 +32332,75 @@ publish_types(T2Checker *checker)
 }
 
 static Value
+diagnostic_notes(T2Checker *checker, T2Diagnostic const *diagnostic)
+{
+        Ty *ty = checker->ty;
+        byte_vector text = {0};
+        bool color = ColorStderr;
+        T2Names *names = t2_names_new();
+
+        ColorStderr = false;
+
+        if (diagnostic->actual != T2_TYPE_INVALID) {
+                print_labeled_type(
+                        &text,
+                        checker,
+                        names,
+                        0,
+                        100,
+                        found_label(diagnostic->code),
+                        diagnostic->actual
+                );
+        }
+
+        if (diagnostic->expected != T2_TYPE_INVALID) {
+                print_labeled_type(
+                        &text,
+                        checker,
+                        names,
+                        0,
+                        100,
+                        "expected",
+                        diagnostic->expected
+                );
+        }
+
+        print_notes(&text, checker, names, 0, 100, diagnostic);
+
+        ColorStderr = color;
+        t2_names_free(names);
+
+        Array *notes = vA();
+        byte_vector note = {0};
+        char const *p = vv(text);
+        char const *end = p + vN(text);
+
+        while (p < end) {
+                char const *nl = memchr(p, '\n', end - p);
+                char const *eol = (nl == NULL) ? end : nl;
+                bool head = (eol - p >= 3) && (memcmp(p, " = ", 3) == 0);
+                if (head && vN(note) != 0) {
+                        vAp(notes, vSs(vv(note), vN(note)));
+                        v0(note);
+                } else if (vN(note) != 0) {
+                        xvP(note, '\n');
+                }
+                char const *s = (eol - p >= 3) ? p + 3 : eol;
+                xvPn(note, s, eol - s);
+                p = eol + 1;
+        }
+
+        if (vN(note) != 0) {
+                vAp(notes, vSs(vv(note), vN(note)));
+        }
+
+        xvF(note);
+        xvF(text);
+
+        return ARRAY(notes);
+}
+
+static Value
 diagnostic_value(T2Checker *checker, T2Diagnostic const *diagnostic, char const *text)
 {
         Ty *ty = checker->ty;
@@ -31518,6 +32444,8 @@ diagnostic_value(T2Checker *checker, T2Diagnostic const *diagnostic, char const 
         );
 
         Value err = TyNewCompileError(ty, "CompileError", msg, locs, text, NIL, NIL);
+        PutMember(err, NAMES._code,  (diagnostic->code == NULL) ? NIL : vSsz(diagnostic->code));
+        PutMember(err, NAMES._notes, diagnostic_notes(checker, diagnostic));
 
         GC_RESUME();
 

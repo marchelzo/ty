@@ -272,6 +272,7 @@ main(int argc, char *argv[])
 
                 char const *file;
                 char const *source;
+                char const *sig;
 
                 Symbol *sym;
                 Module *mod;
@@ -402,13 +403,17 @@ main(int argc, char *argv[])
                                 goto EndRequest;
                         }
 
+                        sig = compiler_symbol_sig(ty, sym);
+
                         result = vTn(
                                 "name",  xSz(sym->identifier),
                                 "line",  INTEGER(sym->loc.line),
                                 "col",   INTEGER(sym->loc.col),
                                 "file",  xSz(sym->mod ? sym->mod->path : "<unknown>"),
-                                "type",  xSz(t2_show(ty, sym->type)),
-                                "doc",   (sym->doc == NULL) ? NIL : xSz(sym->doc)
+                                "type",    xSz(t2_show(ty, sym->type)),
+                                "doc",     (sym->doc == NULL) ? NIL : xSz(sym->doc),
+                                "builtin", BOOLEAN(SymbolIsBuiltin(sym)),
+                                "sig",     (sig == NULL) ? NIL : xSz(sig)
                         );
                         break;
 

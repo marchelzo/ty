@@ -760,6 +760,8 @@ typedef struct {
         int _locs;
         int _detail;
         int _related;
+        int _code;
+        int _notes;
 
         int _fields_;
         int _methods_;

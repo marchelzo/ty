@@ -1,0 +1,11 @@
+fn f(a: Int, verbose: String = 'x') -> Float {
+    1.0
+}
+
+fn add-verbose[...P, R](h: P -> R) -> (({*P, ?verbose: Bool}) -> R) {
+    return fn (*args: ...P, verbose: Bool = false, %kw: ...P) {
+        h(*args, **kw)
+    }
+}
+
+let g = add-verbose(f)

@@ -230,5 +230,6 @@ pub fn member-assignment-refinement-is-scoped() {
     let result = run([str(FIXTURES / 'member-refinement-scope.ty')])
     assert(result.status != 0)
     assert('[bad-call]' in result.stderr, result.stderr)
-    assert('Int | String <: String' in result.stderr, result.stderr)
+    assert('found:    Int | String' in result.stderr, result.stderr)
+    assert('rejected: Int' in result.stderr, result.stderr)
 }

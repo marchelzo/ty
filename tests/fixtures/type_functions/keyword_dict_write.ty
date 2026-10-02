@@ -1,0 +1,9 @@
+fn f(a: Int, b: String = 'x', c: Bool = false) -> Float {
+    1.0
+}
+
+use Opts = Keywords[Omit[typeof f, 'a']]
+
+fn g(%opts: ...Opts) {
+    opts['b'] = true
+}

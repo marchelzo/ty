@@ -181,6 +181,9 @@ typedef struct t2_cause_info {
         T2Type right;
         char const *message;
         char const *provenance;
+        T2PredicateKind predicate;
+        T2Type operand;
+        char const *name;
 } T2CauseInfo;
 
 typedef enum t2_relation {
@@ -664,6 +667,16 @@ t2_scheme_apply_relaxed(
         char const *provenance
 );
 
+T2Type
+t2_scheme_apply_relaxed_x(
+        T2Scheme const *scheme,
+        T2Solver *solver,
+        T2Type const *arguments,
+        usize argument_count,
+        char const *provenance,
+        T2Predicate *dropped
+);
+
 T2Scheme *
 t2_solver_generalize(
         T2Solver *solver,
@@ -996,6 +1009,13 @@ t2_solver_explain(T2Solver const *solver);
 
 char *
 t2_solver_explain_since(T2Solver const *solver, T2SolverMark mark);
+
+T2Type
+t2_solver_zonk_display(
+        T2Solver *solver,
+        T2Type type,
+        T2SolutionPreference preference
+);
 
 usize
 t2_solver_cause_count(T2Solver const *solver);

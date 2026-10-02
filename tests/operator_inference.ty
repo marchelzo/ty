@@ -1,0 +1,52 @@
+class OperatorBase {
+    |(other: OperatorBase) -> String {
+        'base'
+    }
+}
+
+class OperatorChild < OperatorBase {
+    |(other: OperatorChild) -> Int {
+        7
+    }
+}
+
+ns test
+
+pub fn predicate-fallback() -> nil {
+    let (a, b) = (/a/, /b/)
+    assert(str(typeof a | b) == '(Any) -> Bool')
+    assert(str(typeof a & b) == '(Any) -> Bool')
+    assert((a | b)('a'))
+    assert(!(a & b)('a'))
+
+    let (x, y) = (int('4'), int('10'))
+    assert(str(typeof x | y) == 'Int')
+    assert(str(typeof x & y) == 'Int')
+}
+
+pub fn range-operators() -> nil {
+    let (a, b) = (..4, ..10)
+    assert(str(typeof a | b) == 'Range')
+    assert(str(typeof a & b) == 'Range')
+    assert((a | b).b == 10)
+    assert((a & b).b == 4)
+}
+
+pub fn inherited-range-operators() -> nil {
+    let (a, b) = (InclusiveRange(0, 4), InclusiveRange(0, 10))
+    assert(str(typeof a | b) == 'Range')
+    assert(str(typeof a & b) == 'Range')
+    assert((a | b).b == 11)
+    assert((a & b).b == 5)
+}
+
+pub fn class-operator-specificity() -> nil {
+    let base = OperatorBase()
+    let child = OperatorChild()
+    assert(str(typeof base | base) == 'String')
+    assert(str(typeof child | child) == 'Int')
+    assert(str(typeof child | base) == 'String')
+    assert(base | base == 'base')
+    assert(child | child == 7)
+    assert(child | base == 'base')
+}

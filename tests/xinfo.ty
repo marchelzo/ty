@@ -1,5 +1,6 @@
 import ffi as c (C!)
 import ty (gc)
+import os
 
 ns test
 
@@ -184,5 +185,8 @@ pub fn foreign-function-info-and-overrides() {
 pub fn builtin-function-inspection() {
     assert(print.__name__ == 'print')
     assert(print.__class__ == nil)
-    assert(doc(print) == nil)
+    assert(doc(print) :: ('print', String, nil))
+    assert(doc(random) :: ('random', String, /cryptographically secure/))
+    assert(doc('random') == doc(random)[2])
+    assert(doc(os.open) :: ('os.open', String, nil))
 }

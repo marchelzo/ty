@@ -15,7 +15,7 @@ pub fn matchtest() {
             assert(a == 1)
             assert(b == 2)
             assert(c == 3)
-            assert(rest.sum() == 27)
+            assert(rest == [9, 9, 9])
         },
         _ => assert(false)
     }

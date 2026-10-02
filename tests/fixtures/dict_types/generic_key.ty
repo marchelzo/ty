@@ -1,0 +1,9 @@
+fn f(a: Int, b: String = 'x') -> Float {
+    1.0
+}
+
+fn count-keys[...P, R](g: P -> R, kw: %{*P}) -> Int {
+    #kw
+}
+
+count-keys(f, %{'a': 1, 'zz': 2})

@@ -3985,10 +3985,18 @@ macro __walk! {
                 name: arg.?name
             ),
 
-            ty.MethodCall(call) => ty.MethodCall(
+            ty.MethodCall(   call),
+            ty.TryMethodCall(call) => type(tree)(
                 object: walk(call.object, f),
                 args: [walk(arg, f) for arg in call.args],
                 method: call.method
+            ),
+
+            ty.DynMethodCall(   call),
+            ty.TryDynMethodCall(call) => type(tree)(
+                object: walk(call.object, f),
+                args: [walk(arg, f) for arg in call.args],
+                method: walk(call.method, f)
             ),
 
             ty.Record(record) => ty.Record([walk(entry, f) for entry in record]),

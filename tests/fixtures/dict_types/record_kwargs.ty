@@ -1,0 +1,7 @@
+use Settings = {cwd: String, ?quiet: Bool}
+
+fn run(%opts: ...Settings) -> String {
+    opts['cwd']
+}
+
+run(quiet: true)

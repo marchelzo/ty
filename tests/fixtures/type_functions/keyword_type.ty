@@ -1,0 +1,9 @@
+fn f(a: Int, b: String = 'x', c: Bool = false) -> Float {
+    1.0
+}
+
+fn call[...P, R](g: P -> R, *args: ...P, %kw: ...P) -> R {
+    g(*args, **kw)
+}
+
+call(f, 1, c: 'bad')

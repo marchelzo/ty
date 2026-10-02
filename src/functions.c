@@ -9068,8 +9068,40 @@ TY_BUILTIN_RAW(set_doc)
         return f;
 }
 
+static Value
+bfdoc(Ty *ty, Value const *f)
+{
+        if (f->name == -1) {
+                return NIL;
+        }
+
+        char const *name = M_NAME(f->name);
+        Symbol *sym = compiler_lookup(ty, f->module, name);
+
+        if (sym == NULL) {
+                return NIL;
+        }
+
+        char const *proto = compiler_symbol_sig(ty, sym);
+
+        GC_STOP();
+
+        Value n = (f->module == NULL)
+                ? vSsz(name)
+                : vSsz(afmt("%s.%s", f->module, name));
+        Value p = (proto == NULL) ? NIL : vSsz(proto);
+        Value d = (sym->doc == NULL) ? NIL : vSsz(sym->doc);
+
+        Value v = TRIPLE(n, p, d);
+
+        GC_RESUME();
+
+        return v;
+}
+
 // doc(c: Class) -> (String, String | nil, [(String, String | nil, String | nil)])
 // doc(f: Function) -> (String, String | nil, String | nil) | nil
+// doc(name: String, module: ?String) -> String | nil
 TY_BUILTIN_RAW(doc)
 {
         ASSERT_ARGC("doc()", 1, 2);
@@ -9080,6 +9112,9 @@ TY_BUILTIN_RAW(doc)
 
         case VALUE_FOREIGN_FUNCTION:
                 return ffdoc(ty, &ARG(0));
+
+        case VALUE_BUILTIN_FUNCTION:
+                return bfdoc(ty, &ARG(0));
 
         case VALUE_CLASS:
         {

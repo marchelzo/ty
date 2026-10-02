@@ -1,0 +1,103 @@
+import ty.types as types
+import support.process (FIXTURES, run)
+
+fn f(a: Int, b: String = 'x', c: Bool = false) -> Float {
+    1.0
+}
+
+use Opts     = Keywords[Omit[typeof f, 'a']]
+use Settings = {cwd: String, ?quiet: Bool}
+use Extended = {verbose: Bool, *Settings}
+use Mixed    = %{'cwd': String, ?'quiet': Bool, String: Int}
+
+fn take(o: %{'cwd': String, ?'quiet': Bool}) -> String {
+    o['cwd']
+}
+
+fn take-opts(o: %{*Opts}) -> Bool {
+    o['c'] ?? false
+}
+
+fn quiet?(o: %{*Settings}) -> Bool {
+    o['quiet'] ?? false
+}
+
+fn run-settings(%opts: ...Settings) -> String {
+    opts['cwd']
+}
+
+fn run-mixed(%opts: ...Mixed) -> Int {
+    opts['other'] ?? 0
+}
+
+fn forward-opts(%opts: ...Opts) -> Bool {
+    take-opts(opts)
+}
+
+fn count-keys[...P, R](g: P -> R, kw: %{*P}) -> Int {
+    #kw
+}
+
+fn fixture(name: String) -> (Int, String) {
+    let result = run([str(FIXTURES / 'dict_types' / "{name}.ty")])
+    (result.status, result.stderr)
+}
+
+fn shown(t: _) -> String {
+    types.show(t)
+}
+
+ns test
+
+pub fn lowering() {
+    assert(shown(typeof take) == '(o: %{cwd: String, ?quiet: Bool}) -> String')
+    assert(shown(typeof take-opts) == '(o: %{?b: String, ?c: Bool}) -> Bool')
+    assert(shown(typeof quiet?) == '(o: %{cwd: String, ?quiet: Bool}) -> Bool')
+    assert(shown(Mixed) == '%{cwd: String, ?quiet: Bool, **Int}')
+    assert(shown($$[: %{String: Int} $$]) == 'Dict[String, Int]')
+    assert(shown(Extended) == '{cwd: String, ?quiet: Bool, verbose: Bool}')
+}
+
+pub fn literals() {
+    assert(take(%{'cwd': '/tmp'}) == '/tmp')
+    assert(take(%{'cwd': '/tmp', 'quiet': true}) == '/tmp')
+    assert(quiet?(%{'cwd': '.', 'quiet': true}))
+
+    let o: %{'cwd': String} = %{'cwd': '/var'}
+    assert(o['cwd'] == '/var')
+}
+
+pub fn literal-dicts-stay-dicts() {
+    let d = %{'a': 1}
+    d['b'] = 2
+    assert(shown(typeof d) == 'Dict[String, Int]')
+    assert(#d == 2)
+}
+
+pub fn keyword-rest-types() {
+    assert(run-settings(cwd: '/x') == '/x')
+    assert(run-settings(cwd: '/x', quiet: true) == '/x')
+    assert(run-mixed(cwd: 'y', other: 3) == 3)
+    assert(shown(typeof run-settings) == '(cwd: String, ?quiet: Bool) -> String')
+}
+
+pub fn keyword-dicts-as-values() {
+    assert(forward-opts(c: true))
+    assert(!forward-opts())
+    assert(count-keys(f, %{'a': 1, 'c': true}) == 2)
+}
+
+pub fn errors() {
+    for (name, message) in [
+        ('missing_key',   'missing the required key `cwd`'),
+        ('unknown_key',   '`bogus` is not one of the keys'),
+        ('wrong_value',   'dictionary value has the wrong type'),
+        ('record_kwargs', 'missing argument `cwd`'),
+        ('bad_splat',     'can be splatted into a dictionary type'),
+        ('generic_key',   '`zz` is not one of the keys'),
+    ] {
+        let (status, err) = fixture(name)
+        assert(status != 0, name)
+        assert(message in err, err)
+    }
+}

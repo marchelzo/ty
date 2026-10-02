@@ -1,0 +1,49 @@
+#|if __apple__
+import apple (bulk-directory-entries)
+import os
+import path
+
+ns test
+
+pub fn bulk-metadata-matches-lstat() {
+    with root = path.tempdir() {
+        for i in ..140 { (root / "file-{i}-é").write('abc'.repeat(i)) }
+        (root / 'dir').mkdir()
+        (root / 'file-3-é').link(root / 'hard')
+        os.symlink('dir', str(root / 'symdir'))
+        os.symlink('absent', str(root / 'broken'))
+        (root / 'sparse').touch()
+        os.truncate(str(root / 'sparse'), 10000000)
+
+        // A small buffer forces the listing to span several batches.
+        let entries = bulk-directory-entries(str(root), buffer-size=4096)
+        assert(#entries == 145)
+        assert(#entries.map(\_.name).uniq() == 145)
+        for entry in entries {
+            let st = os.lstat(str(root / entry.name))!
+            let got = entry.stat
+            assert(got != nil, entry.name)
+            assert(got.dev == st.dev, entry.name)
+            assert(got.ino == st.ino, entry.name)
+            assert(got.mode == st.mode, entry.name)
+            assert(got.uid == st.uid, entry.name)
+            assert(got.mtime == st.mtime, entry.name)
+            assert(got.blocks == st.blocks, entry.name)
+            if (st.mode & os.S_IFMT) != os.S_IFDIR {
+                assert(got.nlink == st.nlink, entry.name)
+                assert(got.size == st.size, entry.name)
+            }
+        }
+    }
+}
+
+pub fn bulk-empty-and-unreadable() {
+    with root = path.tempdir() {
+        assert(bulk-directory-entries(str(root)) == [])
+        assert(bulk-directory-entries(str(root / 'missing')) == [])
+        let file = root / 'file'
+        file.touch()
+        assert(bulk-directory-entries(str(file)) == [])
+    }
+}
+#|]

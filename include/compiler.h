@@ -305,6 +305,9 @@ compiler_introduce_symbol(Ty *ty, char const *, char const *);
 void
 compiler_introduce_signature(Ty *ty, Symbol *sym, char const *sig, char const *doc);
 
+char const *
+compiler_symbol_sig(Ty *ty, Symbol const *sym);
+
 int
 compiler_introduce_tag(Ty *ty, char const *module, char const *name, int super);
 

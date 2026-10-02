@@ -1,0 +1,97 @@
+import support.process (FIXTURES, run)
+
+fn fixture(name: String, env: Dict[String, String] = %{}) -> (Int, String) {
+    let result = run([str(FIXTURES / 'errors' / "{name}.ty")], env)
+    (result.status, result.stderr)
+}
+
+ns test
+
+pub fn import-parse-error-names-both-sites() {
+    let (status, err) = fixture('import_bad_syntax')
+    assert(status != 0)
+    assert(err.match?(/^ParseError: expected expression/), err)
+    assert('--> tests/fixtures/errors/bad_syntax.ty:2:12' in err, err)
+    assert('note: while importing module bad_syntax' in err, err)
+    assert('--> tests/fixtures/errors/import_bad_syntax.ty:1:1' in err, err)
+    assert('>   1 | import bad_syntax' in err, err)
+}
+
+pub fn lex-error-uses-diagnostic-format() {
+    let (status, err) = fixture('lex_error')
+    assert(status != 0)
+    assert(err.match?(/^SyntaxError: unterminated string literal/), err)
+    assert('--> tests/fixtures/errors/lex_error.ty:2:10' in err, err)
+    assert('>   2 | let y = "unterminated' in err, err)
+}
+
+pub fn import-runtime-error-keeps-trace() {
+    let (status, err) = fixture('import_bad_init')
+    assert(status != 0)
+    assert('throw "init failure"' in err, err)
+    assert("uncaught exception: 'init failure'" in err, err)
+    assert('note: while importing module bad_init' in err, err)
+}
+
+pub fn macro-error-names-call-site() {
+    let (status, err) = fixture('macro_throw')
+    assert(status != 0)
+    assert('throw "macro exploded"' in err, err)
+    assert('note: while expanding macro boom' in err, err)
+    assert('let v = boom(1)' in err, err)
+}
+
+pub fn comptime-error-names-call-site() {
+    let (status, err) = fixture('comptime_throw')
+    assert(status != 0)
+    assert('IndexError' in err, err)
+    assert('note: while evaluating compile-time expression' in err, err)
+    assert('print!([1][5])' in err, err)
+}
+
+pub fn trace-throws() {
+    let (_, err) = fixture('macro_throw', %{'TY_TRACE_THROWS': '1'})
+    assert('[throw]' in err, err)
+    assert("'macro exploded'" in err, err)
+}
+
+pub fn eval-compile-error-is-structured() {
+    try {
+        __eval__('nope_q')
+        assert(false)
+    } catch ex: CompileError {
+        assert(ex :: RuntimeError)
+        assert(ex.kind == 'CompileError')
+        assert('undefined variable: nope_q' in ex.message, ex.message)
+        assert('CompileError' in ex.what, ex.what)
+        assert(#ex.locations > 0)
+        assert(ex.cause == nil)
+    }
+}
+
+pub fn eval-parse-error-message() {
+    try {
+        __eval__('let q = (1 + ')
+        assert(false)
+    } catch Err(message) {
+        assert('ParseError' in message, message)
+        assert('--> (eval):' in message, message)
+        assert('let q = (1 + ' in message, message)
+    }
+}
+
+pub fn eval-errors-do-not-go-stale() {
+    try {
+        __eval__('let q = (1 + ')
+    } catch Err(_) {
+        ;
+    }
+
+    try {
+        __eval__('nope_w')
+        assert(false)
+    } catch ex: CompileError {
+        assert('nope_w' in ex.message, ex.message)
+        assert(!('ParseError' in ex.what), ex.what)
+    }
+}

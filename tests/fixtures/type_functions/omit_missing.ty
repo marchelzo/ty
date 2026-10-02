@@ -1,0 +1,6 @@
+fn f(a: Int, b: String = 'x') -> Float {
+    1.0
+}
+
+fn g(*xs: ...Omit[typeof f, 'zz']) {
+}

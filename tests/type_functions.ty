@@ -1,0 +1,229 @@
+import ty
+import ty.types as types
+import support.process (FIXTURES, run)
+
+fn f(a: Int, b: String = 'x', c: Bool = false) -> Float {
+    1.0
+}
+
+fn id[T](x: T, n: Int = 0) -> T {
+    x
+}
+
+use FParams  = Params[typeof f]
+use FResult  = Returns[typeof f]
+use FOptions = Keywords[Omit[typeof f, 'a']]
+
+use Tail = match typeof f {
+    $$[: ({a: _, *$$rest}) -> _ $$] => rest,
+}
+
+use Nested[T] = match T {
+    $$[: Array[$$u] $$] => Nested[u],
+    _                   => T,
+}
+
+fn forward(*args: ...FParams, %kw: ...FParams) -> FResult {
+    f(*args, **kw)
+}
+
+fn with-options(n: Int, %opts: ...FOptions) -> Float {
+    f(n, **opts)
+}
+
+fn option-c(%opts: ...FOptions) -> Bool {
+    if 'c' in opts {
+        let c: Bool = opts['c']
+        return c
+    }
+    false
+}
+
+fn with-default-b(%opts: ...FOptions) -> String {
+    if 'b' not in opts {
+        opts['b'] = 'default'
+    }
+    opts['b'] ?? ''
+}
+
+fn copied-option-types(%opts: ...FOptions) -> Array[String] {
+    let a = opts
+    const b = a
+    let c = nil
+    c = opts
+    let d = match opts {
+        $x => typeof x,
+    }
+    let e = (opts, 1)[0]
+    let get = () -> typeof opts
+    let shapes = [typeof a, typeof b, typeof c, d, typeof e, get()]
+
+    if let $x = opts {
+        shapes.push(typeof x)
+    }
+
+    [shown(it) for shapes]
+}
+
+fn call[...P, R](g: P -> R, *args: ...P, %kw: ...P) -> R {
+    g(*args, **kw)
+}
+
+fn with-ttl[...P, R](h: P -> R) -> (({ttl: Float, *P}) -> R) {
+    return fn (ttl: Float, *args: ...P, %kw: ...P) {
+        h(*args, **kw)
+    }
+}
+
+fn wrap[F](g: F) -> ((*Params[F]) -> Returns[F]) {
+    return g
+}
+
+fn fixture(name: String) -> (Int, String) {
+    let result = run([str(FIXTURES / 'type_functions' / "{name}.ty")])
+    (result.status, result.stderr)
+}
+
+fn shown(t: _) -> String {
+    types.show(t)
+}
+
+ns test
+
+pub fn quote-expressions() {
+    let u = $$[: String $$]
+    assert(shown($$[: Int | nil $$]) == 'nil | Int')
+    assert(shown($$[: Array[$$u] $$]) == 'Array[String]')
+}
+
+pub fn quote-patterns() {
+    let found = match typeof f {
+        $$[: (*$$p) -> $$r $$] => (shown(p), shown(r)),
+        _                      => nil,
+    }
+    assert(found == ('(a: Int, ?b: String, ?c: Bool)', 'Float'))
+
+    let rest = match typeof f {
+        $$[: ({a: Int, *$$rest}) -> _ $$] => shown(rest),
+        _                                 => nil,
+    }
+    assert(rest == '(?b: String, ?c: Bool)')
+
+    let element = match $$[: Array[Int] $$] {
+        $$[: Array[$$x] $$] => shown(x),
+        _                   => nil,
+    }
+    assert(element == 'Int')
+
+    let nonnil = match $$[: Int | String | nil $$] {
+        $$[: $$t | nil $$] => shown(t),
+        _                  => nil,
+    }
+    assert(nonnil == 'Int | String')
+
+    let other = match $$[: Int $$] {
+        $$[: Array[_] $$] => 'array',
+        _                 => 'other',
+    }
+    assert(other == 'other')
+}
+
+pub fn quote-splices-packs() {
+    let p = match typeof f {
+        $$[: (*$$p) -> _ $$] => p,
+    }
+    assert(shown($$[: ({ttl: Float, *$$p}) -> Int $$]) == '(ttl: Float, a: Int, ?b: String, ?c: Bool) -> Int')
+}
+
+pub fn keyword-views-are-keyword-only() {
+    let names = match Keywords[typeof f] {
+        [ty.Spread(nil), *entries] => [it.name for ty.RecordEntry(it) in entries],
+    }
+    assert(names == ['a', 'b', 'c'])
+}
+
+pub fn type-functions() {
+    assert(shown(typeof forward) == '(a: Int, ?b: String, ?c: Bool) -> Float')
+    assert(forward(1, c: true) == 1.0)
+    assert(with-options(1, b: 'y') == 1.0)
+    assert(shown(Tail) == '(?b: String, ?c: Bool)')
+    assert(shown(Nested[$$[: Array[Array[Int]] $$]]) == 'Int')
+    assert(shown(Params[typeof id]) == '(x: a, ?n: Int)')
+}
+
+pub fn flat() {
+    let xs: Array[Int] = [[1, 2], [3]].flat()
+    assert(xs == [1, 2, 3])
+    assert(shown(typeof [[1, 2], [3]].flat()) == 'Array[Int]')
+}
+
+pub fn keyword-dicts() {
+    assert(option-c(c: true))
+    assert(!option-c())
+    assert(with-default-b() == 'default')
+    assert(with-default-b(b: 'given') == 'given')
+    assert(shown(typeof option-c) == '(?b: String, ?c: Bool) -> Bool')
+}
+
+pub fn keyword-dict-copies() {
+    let shapes = copied-option-types()
+    assert(#shapes == 7)
+    for shapes {
+        assert(it == '%{?b: String, ?c: Bool}', it)
+    }
+}
+
+pub fn keyword-dict-errors() {
+    let (status, err) = fixture('keyword_dict_write')
+    assert(status != 0)
+    assert('keyword argument has the wrong type' in err, err)
+
+    let (status, err) = fixture('keyword_dict_key')
+    assert(status != 0)
+    assert('`nope` is not one of the keyword arguments' in err, err)
+
+    let (status, err) = fixture('keyword_dict_optional')
+    assert(status != 0)
+    assert('nil | Bool' in err, err)
+
+    let (status, err) = fixture('keyword_dict_copy')
+    assert(status != 0)
+    assert('keyword argument has the wrong type' in err, err)
+}
+
+pub fn generic-forwarding() {
+    assert(call(f, 1, c: true) == 1.0)
+    assert(with-ttl(f)(1.0, 2, c: true) == 1.0)
+    assert(wrap(f)(1, b: 'z') == 1.0)
+}
+
+pub fn keyword-types-are-checked() {
+    let (status, err) = fixture('keyword_type')
+    assert(status != 0)
+    assert("'bad' is not a subtype of Bool" in err, err)
+}
+
+pub fn dropped-kwargs-are-rejected() {
+    let (status, err) = fixture('dropped_kwargs')
+    assert(status != 0)
+    assert('without its `**kwargs`' in err, err)
+}
+
+pub fn parameter-collisions-are-rejected() {
+    let (status, err) = fixture('collision')
+    assert(status != 0)
+    assert('already has a parameter named `verbose`' in err, err)
+}
+
+pub fn type-function-errors-name-the-site() {
+    let (status, err) = fixture('omit_missing')
+    assert(status != 0)
+    assert('Omit: no parameter named `zz`' in err, err)
+    assert('omit_missing.ty:5:' in err, err)
+}
+
+pub fn sh-options-are-checked() {
+    let (status, err) = fixture('sh_option')
+    assert(status != 0)
+    assert('unexpected keyword argument `tmeout`' in err, err)
+}

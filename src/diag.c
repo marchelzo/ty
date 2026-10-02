@@ -136,6 +136,8 @@ TyNewCompileError(
         PutMember(err, NAMES._locs,    (locs.type == VALUE_ARRAY) ? locs : ARRAY(vA()));
         PutMember(err, NAMES._detail,  (detail.type == VALUE_STRING) ? detail : NIL);
         PutMember(err, NAMES._related, NIL);
+        PutMember(err, NAMES._code,    NIL);
+        PutMember(err, NAMES._notes,   NIL);
 
         GC_RESUME();
 
@@ -390,11 +392,36 @@ CollectLocs(Ty *ty, Array *out, Value const *exc)
         CollectLocs(ty, out, &cause);
 }
 
+static void
+CollectNotes(Ty *ty, Array *out, Value *code, Value const *exc)
+{
+        if (!TyIsCompileError(exc)) {
+                return;
+        }
+
+        Value c = Member(ty, exc, NAMES._code);
+        if (c.type == VALUE_STRING) {
+                *code = c;
+        }
+
+        Value notes = Member(ty, exc, NAMES._notes);
+        if (notes.type == VALUE_ARRAY) {
+                for (usize i = 0; i < vN(*notes.array); ++i) {
+                        vAp(out, v__(*notes.array, i));
+                }
+        }
+
+        Value cause = Member(ty, exc, NAMES._cause);
+        CollectNotes(ty, out, code, &cause);
+}
+
 static Value
 ErrorRecord(Ty *ty, Value const *exc)
 {
         byte_vector msg = {0};
         Array *trace = vA();
+        Array *notes = vA();
+        Value code = NIL;
 
         int color = ColorOutput;
         ColorOutput = false;
@@ -402,9 +429,12 @@ ErrorRecord(Ty *ty, Value const *exc)
         ColorOutput = color;
 
         CollectLocs(ty, trace, exc);
+        CollectNotes(ty, notes, &code, exc);
 
         Value record = vTn(
                 "message", vSs(vv(msg), vN(msg)),
+                "code",    code,
+                "notes",   ARRAY(notes),
                 "trace",   ARRAY(trace)
         );
 
