@@ -177,11 +177,21 @@ typedef enum t2_note_kind {
         T2_NOTE_TEXT,
         T2_NOTE_CAUSE,
         T2_NOTE_PREDICATE,
-        T2_NOTE_TYPE
+        T2_NOTE_TYPE,
+        T2_NOTE_UNDEFINED,
+        T2_NOTE_MISMATCH
 } T2NoteKind;
+
+typedef enum t2_undefined_form {
+        T2_UNDEFINED_METHOD,
+        T2_UNDEFINED_LEFT,
+        T2_UNDEFINED_RIGHT,
+        T2_UNDEFINED_PREFIX
+} T2UndefinedForm;
 
 typedef struct t2_note {
         T2NoteKind      kind;
+        T2UndefinedForm form;
         T2CauseKind     cause;
         T2PredicateKind predicate;
         T2Type          left;
@@ -9222,14 +9232,21 @@ report_argument_failure(T2Checker *checker, T2Type callee)
 
         T2Type rejected = rejected_arms(checker, actual, expected);
         if (rejected != T2_TYPE_INVALID) {
-                push_note(
-                        &diagnostic->notes,
-                        (T2Note) {
-                                .kind = T2_NOTE_TYPE,
-                                .left = snapshot_type(checker, rejected),
-                                .text = S2("rejected")
-                        }
-                );
+                bool many = (t2_type_kind(checker->universe, rejected) == T2_TYPE_UNION);
+                usize n   = many ? t2_type_arity(checker->universe, rejected) : 1;
+                for (usize i = 0; i < n; ++i) {
+                        T2Type arm = many
+                                   ? t2_type_child(checker->universe, rejected, i)
+                                   : rejected;
+                        push_note(
+                                &diagnostic->notes,
+                                (T2Note) {
+                                        .kind  = T2_NOTE_MISMATCH,
+                                        .left  = snapshot_type(checker, arm),
+                                        .right = snapshot_type(checker, expected)
+                                }
+                        );
+                }
         }
 
         push_note(
@@ -10991,9 +11008,11 @@ infer_binary_pair(
                 T2Type result     = t2_primitive(checker->universe, T2_TYPE_NEVER);
                 T2Type missing    = t2_primitive(checker->universe, T2_TYPE_NEVER);
                 T2Type error      = T2_TYPE_INVALID;
+                bool left_union   = (left_kind == T2_TYPE_UNION);
                 for (usize i = 0; i < count; ++i) {
                         T2Type arm = t2_type_child(checker->universe, union_type, i);
-                        T2Type arm_result = (left_kind == T2_TYPE_UNION)
+                        T2SolverMark probe = t2_solver_mark(checker->solver);
+                        T2Type arm_result = left_union
                                           ? infer_binary_pair(
                                                   checker,
                                                   operation,
@@ -11011,11 +11030,16 @@ infer_binary_pair(
                                                   false
                                             )
                         ;
-                        if (t2_type_kind(checker->universe, arm_result) == T2_TYPE_ERROR) {
+                        if (
+                                (t2_type_kind(checker->universe, arm_result) == T2_TYPE_ERROR)
+                             || t2_solver_failed(checker->solver)
+                        ) {
+                                t2_solver_rollback(checker->solver, probe);
                                 missing = t2_join(checker->universe, missing, arm);
-                                error   = arm_result;
+                                error   = t2_primitive(checker->universe, T2_TYPE_ERROR);
                                 continue;
                         }
+                        t2_solver_commit(checker->solver, probe);
                         result = t2_join(checker->universe, result, arm_result);
                 }
                 if (error == T2_TYPE_INVALID) {
@@ -11028,26 +11052,37 @@ infer_binary_pair(
                                 site,
                                 T2_DIAGNOSTIC_ERROR,
                                 "union-operator-coverage",
-                                union_type,
                                 T2_TYPE_INVALID,
-                                "operator `%s` is not defined for some arms of this union",
-                                (name == NULL) ? "?" : name
+                                T2_TYPE_INVALID,
+                                "operator `%s` is not defined for every type of the %s operand",
+                                (name == NULL) ? "?" : name,
+                                left_union ? "left" : "right"
                         );
                         if (diagnostic != NULL) {
                                 push_note(
                                         &diagnostic->notes,
                                         (T2Note) {
                                                 .kind = T2_NOTE_TYPE,
-                                                .left = snapshot_type(checker, other),
-                                                .text = S2("operand")
+                                                .left = snapshot_type(checker, left),
+                                                .text = S2("left")
                                         }
                                 );
                                 push_note(
                                         &diagnostic->notes,
                                         (T2Note) {
                                                 .kind = T2_NOTE_TYPE,
-                                                .left = snapshot_type(checker, missing),
-                                                .text = S2("missing")
+                                                .left = snapshot_type(checker, right),
+                                                .text = S2("right")
+                                        }
+                                );
+                                push_note(
+                                        &diagnostic->notes,
+                                        (T2Note) {
+                                                .kind  = T2_NOTE_UNDEFINED,
+                                                .form  = left_union ? T2_UNDEFINED_LEFT : T2_UNDEFINED_RIGHT,
+                                                .left  = snapshot_type(checker, missing),
+                                                .right = snapshot_type(checker, other),
+                                                .text  = S2((name == NULL) ? "?" : name)
                                         }
                                 );
                         }
@@ -12395,9 +12430,9 @@ infer_method_type(
                                 site,
                                 T2_DIAGNOSTIC_ERROR,
                                 "union-method-coverage",
-                                object,
                                 T2_TYPE_INVALID,
-                                "method `%s` is missing from some arms of this union",
+                                T2_TYPE_INVALID,
+                                "method `%s` is not defined for every type of the receiver",
                                 name
                         );
                         if (diagnostic != NULL) {
@@ -12405,8 +12440,17 @@ infer_method_type(
                                         &diagnostic->notes,
                                         (T2Note) {
                                                 .kind = T2_NOTE_TYPE,
+                                                .left = snapshot_type(checker, object),
+                                                .text = S2("receiver")
+                                        }
+                                );
+                                push_note(
+                                        &diagnostic->notes,
+                                        (T2Note) {
+                                                .kind = T2_NOTE_UNDEFINED,
+                                                .form = T2_UNDEFINED_METHOD,
                                                 .left = snapshot_type(checker, missing),
-                                                .text = S2("missing")
+                                                .text = S2(name)
                                         }
                                 );
                         }
@@ -16185,35 +16229,60 @@ infer_count_type(
         if (kind == T2_TYPE_UNION) {
                 T2SolverMark mark = t2_solver_mark(checker->solver);
                 T2Type result     = t2_primitive(checker->universe, T2_TYPE_NEVER);
+                T2Type missing    = t2_primitive(checker->universe, T2_TYPE_NEVER);
+                bool failed       = false;
                 for (usize i = 0; i < t2_type_arity(checker->universe, operand); ++i) {
-                        T2Type arm = infer_count_type(
-                                checker,
-                                t2_type_child(checker->universe, operand, i),
-                                site,
-                                false
-                        );
+                        T2Type arm_type    = t2_type_child(checker->universe, operand, i);
+                        T2SolverMark probe = t2_solver_mark(checker->solver);
+                        T2Type arm = infer_count_type(checker, arm_type, site, false);
                         if (
                                 (t2_type_kind(checker->universe, arm) == T2_TYPE_ERROR)
                              || t2_solver_failed(checker->solver)
                         ) {
-                                t2_solver_rollback(checker->solver, mark);
-                                if (diagnose) {
-                                        add_diagnostic(
-                                                checker,
-                                                site,
-                                                T2_DIAGNOSTIC_ERROR,
-                                                "union-count-coverage",
-                                                operand,
-                                                T2_TYPE_INVALID,
-                                                "not every arm of this union supports prefix #"
-                                        );
-                                }
-                                return t2_primitive(checker->universe, T2_TYPE_ERROR);
+                                t2_solver_rollback(checker->solver, probe);
+                                missing = t2_join(checker->universe, missing, arm_type);
+                                failed  = true;
+                                continue;
                         }
+                        t2_solver_commit(checker->solver, probe);
                         result = t2_join(checker->universe, result, arm);
                 }
-                t2_solver_commit(checker->solver, mark);
-                return result;
+                if (!failed) {
+                        t2_solver_commit(checker->solver, mark);
+                        return result;
+                }
+                t2_solver_rollback(checker->solver, mark);
+                if (diagnose) {
+                        T2Diagnostic *diagnostic = add_diagnostic(
+                                checker,
+                                site,
+                                T2_DIAGNOSTIC_ERROR,
+                                "union-count-coverage",
+                                T2_TYPE_INVALID,
+                                T2_TYPE_INVALID,
+                                "prefix `#` is not defined for every type of the operand"
+                        );
+                        if (diagnostic != NULL) {
+                                push_note(
+                                        &diagnostic->notes,
+                                        (T2Note) {
+                                                .kind = T2_NOTE_TYPE,
+                                                .left = snapshot_type(checker, operand),
+                                                .text = S2("operand")
+                                        }
+                                );
+                                push_note(
+                                        &diagnostic->notes,
+                                        (T2Note) {
+                                                .kind = T2_NOTE_UNDEFINED,
+                                                .form = T2_UNDEFINED_PREFIX,
+                                                .left = snapshot_type(checker, missing),
+                                                .text = S2("#")
+                                        }
+                                );
+                        }
+                }
+                return t2_primitive(checker->universe, T2_TYPE_ERROR);
         }
 
         if (
@@ -29118,6 +29187,7 @@ begin_annotation(
         T2Names         *names,
         unsigned         digits,
         unsigned         columns,
+        unsigned         label_width,
         char const      *label
 )
 {
@@ -29127,7 +29197,10 @@ begin_annotation(
                 .names   = names,
                 .width   = columns
         };
-        int pad = (strlen(label) < 9) ? (int)(9 - strlen(label)) : 1;
+        int pad = (int)(label_width + 1 - strlen(label));
+        if (pad < 1) {
+                pad = 1;
+        }
         paint(out, "2");
         dump(out, "%*s = %s:%*s", digits, "", label, pad, "");
         paint(out, "0");
@@ -29144,6 +29217,7 @@ print_labeled_type(
         T2Names         *names,
         unsigned         digits,
         unsigned         columns,
+        unsigned         label_width,
         char const      *label,
         T2Type           type
 )
@@ -29154,6 +29228,7 @@ print_labeled_type(
                 names,
                 digits,
                 columns,
+                label_width,
                 label
         );
         write_type(&writer, type);
@@ -29244,6 +29319,48 @@ write_predicate(T2Writer *writer, T2Note const *note)
         );
 }
 
+static char const *
+note_label(T2Note const *note)
+{
+        switch (note->kind) {
+        case T2_NOTE_PREDICATE: return "constraint";
+        case T2_NOTE_TYPE:      return note->text;
+        case T2_NOTE_UNDEFINED: return "undefined";
+        case T2_NOTE_MISMATCH:  return "mismatch";
+        default:                return "note";
+        }
+}
+
+static void
+write_undefined_arm(T2Writer *writer, T2Note const *note, T2Type arm)
+{
+        switch (note->form) {
+        case T2_UNDEFINED_METHOD:
+                write_type(writer, arm);
+                write_text(writer, ".");
+                write_text(writer, note->text);
+                break;
+        case T2_UNDEFINED_LEFT:
+                write_type(writer, arm);
+                write_text(writer, " ");
+                write_text(writer, note->text);
+                write_text(writer, " ");
+                write_type(writer, note->right);
+                break;
+        case T2_UNDEFINED_RIGHT:
+                write_type(writer, note->right);
+                write_text(writer, " ");
+                write_text(writer, note->text);
+                write_text(writer, " ");
+                write_type(writer, arm);
+                break;
+        case T2_UNDEFINED_PREFIX:
+                write_text(writer, note->text);
+                write_type(writer, arm);
+                break;
+        }
+}
+
 static void
 print_note(
         byte_vector        *out,
@@ -29251,6 +29368,7 @@ print_note(
         T2Names            *names,
         unsigned            digits,
         unsigned            columns,
+        unsigned            label_width,
         T2Diagnostic const *diagnostic,
         T2Note const       *note
 )
@@ -29261,13 +29379,34 @@ print_note(
                 names,
                 digits,
                 columns,
-                (note->kind == T2_NOTE_PREDICATE) ? "constraint"
-              : (note->kind == T2_NOTE_TYPE)      ? note->text
-              :                                     "note"
+                label_width,
+                note_label(note)
         );
+        T2Universe *universe = checker->universe;
         switch (note->kind) {
         case T2_NOTE_TEXT:
                 write_text(&writer, note->text);
+                break;
+        case T2_NOTE_MISMATCH:
+                write_type(&writer, note->left);
+                write_text(&writer, " is not a subtype of ");
+                write_type(&writer, note->right);
+                break;
+        case T2_NOTE_UNDEFINED:
+                if (t2_type_kind(universe, note->left) == T2_TYPE_UNION) {
+                        for (usize i = 0; i < t2_type_arity(universe, note->left); ++i) {
+                                if (i != 0) {
+                                        write_text(&writer, ", ");
+                                }
+                                write_undefined_arm(
+                                        &writer,
+                                        note,
+                                        t2_type_child(universe, note->left, i)
+                                );
+                        }
+                } else {
+                        write_undefined_arm(&writer, note, note->left);
+                }
                 break;
         case T2_NOTE_TYPE:
                 write_type(&writer, note->left);
@@ -29343,6 +29482,25 @@ note_repeats_failure(T2Note const *note, T2Note const *failure)
             && (note->right == failure->right);
 }
 
+static unsigned
+annotation_width(T2Diagnostic const *diagnostic)
+{
+        usize width = strlen("expected");
+
+        if (diagnostic->actual != T2_TYPE_INVALID) {
+                usize n = strlen(found_label(diagnostic->code));
+                width = (n > width) ? n : width;
+        }
+
+        for (usize i = 0; i < vN(diagnostic->notes); ++i) {
+                char const *label = note_label(v_(diagnostic->notes, i));
+                usize n = (label == NULL) ? 0 : strlen(label);
+                width = (n > width) ? n : width;
+        }
+
+        return (unsigned)width;
+}
+
 static void
 print_notes(
         byte_vector        *out,
@@ -29350,6 +29508,7 @@ print_notes(
         T2Names            *names,
         unsigned            digits,
         unsigned            columns,
+        unsigned            label_width,
         T2Diagnostic const *diagnostic
 )
 {
@@ -29379,7 +29538,7 @@ print_notes(
                         skipped += 1;
                         continue;
                 }
-                print_note(out, checker, names, digits, columns, diagnostic, note);
+                print_note(out, checker, names, digits, columns, label_width, diagnostic, note);
                 printed += 1;
         }
 
@@ -29450,6 +29609,7 @@ print_diagnostic(
                         names,
                         digits,
                         columns,
+                        annotation_width(diagnostic),
                         found_label(diagnostic->code),
                         diagnostic->actual
                 );
@@ -29462,12 +29622,13 @@ print_diagnostic(
                         names,
                         digits,
                         columns,
+                        annotation_width(diagnostic),
                         "expected",
                         diagnostic->expected
                 );
         }
 
-        print_notes(out, checker, names, digits, columns, diagnostic);
+        print_notes(out, checker, names, digits, columns, annotation_width(diagnostic), diagnostic);
         t2_names_free(names);
 }
 
@@ -32336,6 +32497,7 @@ diagnostic_notes(T2Checker *checker, T2Diagnostic const *diagnostic)
                         names,
                         0,
                         100,
+                        annotation_width(diagnostic),
                         found_label(diagnostic->code),
                         diagnostic->actual
                 );
@@ -32348,12 +32510,13 @@ diagnostic_notes(T2Checker *checker, T2Diagnostic const *diagnostic)
                         names,
                         0,
                         100,
+                        annotation_width(diagnostic),
                         "expected",
                         diagnostic->expected
                 );
         }
 
-        print_notes(&text, checker, names, 0, 100, diagnostic);
+        print_notes(&text, checker, names, 0, 100, annotation_width(diagnostic), diagnostic);
 
         ColorStderr = color;
         t2_names_free(names);
@@ -32494,7 +32657,7 @@ failure_value(T2Checker *checker)
                         vAp(
                                 related.array,
                                 PAIR(
-                                        vSsz("additional error"),
+                                        vSsz(TY_RELATED_INCLUDED),
                                         diagnostic_value(checker, errors[i], NULL)
                                 )
                         );

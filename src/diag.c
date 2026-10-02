@@ -341,6 +341,9 @@ TyFormatError(Ty *ty, Value const *exc, Value const *detail, byte_vector *out)
 
         for (usize i = 0; i < vN(*related.array); ++i) {
                 Value entry = v__(*related.array, i);
+                if (vs_eq_z(entry.items[0], TY_RELATED_INCLUDED)) {
+                        continue;
+                }
                 dump(
                         out,
                         "\n%s%snote%s: %.*s: ",

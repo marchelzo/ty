@@ -14,6 +14,8 @@ enum {
         DIAG_RECOVER = 1 << 0
 };
 
+#define TY_RELATED_INCLUDED "included error"
+
 extern bool TraceThrows;
 
 void

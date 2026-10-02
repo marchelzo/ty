@@ -231,5 +231,5 @@ pub fn member-assignment-refinement-is-scoped() {
     assert(result.status != 0)
     assert('[bad-call]' in result.stderr, result.stderr)
     assert('found:    Int | String' in result.stderr, result.stderr)
-    assert('rejected: Int' in result.stderr, result.stderr)
+    assert('mismatch: Int is not a subtype of String' in result.stderr, result.stderr)
 }
