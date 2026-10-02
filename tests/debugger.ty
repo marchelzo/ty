@@ -59,6 +59,24 @@ fn wait-for-socket(pid: Int) -> String {
     throw AssertionError("process {pid} never opened {sock}")
 }
 
+fn wait-for-ready(proc: Any) {
+    let line = Blob()
+
+    while !line.str().contains?('\n') && os.poll([(proc.stdout, os.POLLIN)], [], 10000) > 0 {
+        let $chunk = os.read(proc.stdout, 64) or break
+        if #chunk == 0 {
+            break
+        }
+        line.push(chunk)
+    }
+
+    os.close(proc.stdout)
+
+    if line.str() != "ready\n" {
+        throw AssertionError("debuggee {proc.pid} never became ready")
+    }
+}
+
 fn request-attach(pid: Int) -> String {
     let marker = "/tmp/.ty_attach_{pid}"
 
@@ -176,15 +194,8 @@ class Dap {
     }
 }
 
-fn launch(*args: String) -> (Any, Dap) {
-    let proc = os.spawn(
-        [ty.executable, DEBUGGEE, *args],
-        stdin=os.SPAWN_NULL,
-        stdout=os.SPAWN_NULL,
-        stderr=os.SPAWN_NULL
-    )
-
-    os.sleep(0.3)
+fn attach(proc: Any) -> Dap {
+    wait-for-ready(proc)
 
     let dap = Dap(request-attach(proc.pid))
 
@@ -192,19 +203,39 @@ fn launch(*args: String) -> (Any, Dap) {
     dap.event('initialized')
     dap.ok('attach')
 
-    (proc, dap)
+    dap
+}
+
+fn launch(*args: String) -> (Any, Dap) {
+    let proc = os.spawn(
+        [ty.executable, DEBUGGEE, *args],
+        stdin=os.SPAWN_NULL,
+        stdout=os.SPAWN_PIPE,
+        stderr=os.SPAWN_NULL
+    )
+
+    try {
+        (proc, attach(proc))
+    } catch e {
+        reap(proc)
+        throw e
+    }
+}
+
+fn reap(proc: Any) {
+    os.kill(proc.pid, os.SIGKILL)
+    os.wait4(proc.pid)
 }
 
 fn finish(proc: Any, dap: Dap) {
     dap.close()
     os.sleep(0.1)
     assert(os.kill(proc.pid, 0) == 0, 'debuggee died after detach')
-    os.kill(proc.pid, os.SIGKILL)
-    os.wait4(proc.pid)
 }
 
 pub fn debugger-pause-and-inspect() {
     let (proc, dap) = launch()
+    defer reap(proc)
 
     dap.ok('pause', %{'threadId': 1})
     assert(dap.event('stopped')['reason'] == 'pause')
@@ -227,6 +258,7 @@ pub fn debugger-pause-and-inspect() {
 pub fn debugger-thread-names-survive-setproctitle() {
     let title = 'a-process-title-long-enough-to-bury-argv0'
     let (proc, dap) = launch(title)
+    defer reap(proc)
 
     if let $cmdline = slurp("/proc/{proc.pid}/cmdline") {
         assert(cmdline.starts?(title))
@@ -244,6 +276,7 @@ pub fn debugger-thread-names-survive-setproctitle() {
 
 pub fn debugger-breakpoint-in-hot-jit-loop() {
     let (proc, dap) = launch()
+    defer reap(proc)
     let line = line-of('acc = (acc + i)')
 
     let bps = dap.ok('setBreakpoints', %{
@@ -284,6 +317,7 @@ pub fn debugger-breakpoint-in-hot-jit-loop() {
 
 pub fn debugger-stepping() {
     let (proc, dap) = launch()
+    defer reap(proc)
     let entry = line-of('let doubled')
 
     dap.ok('setFunctionBreakpoints', %{'breakpoints': [%{'name': 'helper'}]})
@@ -318,6 +352,7 @@ pub fn debugger-stepping() {
 
 pub fn debugger-exception-in-thread() {
     let (proc, dap) = launch()
+    defer reap(proc)
 
     dap.ok('setExceptionBreakpoints', %{'filters': ['raised']})
 
@@ -348,6 +383,8 @@ pub fn debugger-stop-on-entry() {
     )
 
     setenv('TY_DEBUG_WAIT', '0')
+
+    defer reap(proc)
 
     let dap = Dap(wait-for-socket(proc.pid))
 

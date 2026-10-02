@@ -2160,7 +2160,8 @@ TakeLockRaw(Ty *ty)
 void
 TakeLock(Ty *ty)
 {
-        TakeLockRaw(ty);
+        TySpinLockLock(ty->lock);
+        ty->locked = true;
         DebugOnLock(ty);
 }
 

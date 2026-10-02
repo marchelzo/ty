@@ -1,4 +1,4 @@
-import os (sleep, setproctitle)
+import os (sleep, setproctitle, write)
 
 class Box {
     value: Int
@@ -17,7 +17,9 @@ fn helper(box: Box, k: Int) -> Int {
     doubled + k
 }
 
-fn worker() {
+fn worker(started: Channel) {
+    started.send(true)
+
     let n = 0
     while true {
         try {
@@ -36,11 +38,16 @@ if let [_, $title] = argv {
     setproctitle(title)
 }
 
-let thread = Thread(worker)
+let started = Channel()
+let thread = Thread(worker, started)
 let total = 0
 let calls = 0
 
 while true {
+    if calls == 1 && started.recv().some? {
+        write(1, "ready\n")
+    }
+
     total = hot(200000)
     calls += 1
     total += helper(Box(value: 21), calls % 4)

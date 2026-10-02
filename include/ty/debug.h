@@ -134,8 +134,14 @@ DebugOnRelease(Ty *ty, bool blocked)
 inline static void
 DebugOnLock(Ty *ty)
 {
-        if (UNLIKELY(DebugInterrupt) && ty->dbg != NULL) {
+        if (ty->dbg == NULL) {
+                return;
+        }
+
+        if (UNLIKELY(DebugInterrupt | DebugJitOff)) {
                 DebugReacquire(ty);
+        } else {
+                ty->dbg->state = DBG_RUNNING;
         }
 }
 

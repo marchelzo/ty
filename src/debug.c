@@ -1686,6 +1686,7 @@ ParkLocked(Ty *ty, TyDebugThread *d, char const *ip)
         }
 
         d->rearm = rearm;
+        d->state = DBG_RUNNING;
 
         pthread_mutex_unlock(&D.lock);
 
@@ -1827,15 +1828,17 @@ DebugReacquire(Ty *ty)
 {
         TyDebugThread *d = ty->dbg;
 
-        if (d->agent || d->suppress > 0 || !D.stopped) {
+        if (d->agent) {
+                d->state = DBG_RUNNING;
                 return;
         }
 
         pthread_mutex_lock(&D.lock);
 
-        if (D.stopped) {
+        if (D.stopped && d->suppress == 0) {
                 ParkLocked(ty, d, ty->ip);
         } else {
+                d->state = DBG_RUNNING;
                 pthread_mutex_unlock(&D.lock);
         }
 }
