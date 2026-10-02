@@ -16435,6 +16435,16 @@ t2_solver_cause_count(T2Solver const *solver)
         return (solver == NULL) ? 0 : vN(solver->causes);
 }
 
+static T2Type
+cause_side(T2Solver *solver, T2Type type)
+{
+        u32 meta = meta_from_type(solver, type);
+
+        return (meta == 0)
+             ? zonk_for_display(solver, type)
+             : meta_type(solver, find_root(solver, meta));
+}
+
 bool
 t2_solver_cause(T2Solver *solver, usize index, T2CauseInfo *info)
 {
@@ -16449,8 +16459,8 @@ t2_solver_cause(T2Solver *solver, usize index, T2CauseInfo *info)
         T2Cause const *cause = v_(solver->causes, index);
         *info = (T2CauseInfo) {
                 .kind       = cause->kind,
-                .left       = zonk_for_display(solver, cause->left),
-                .right      = zonk_for_display(solver, cause->right),
+                .left       = cause_side(solver, cause->left),
+                .right      = cause_side(solver, cause->right),
                 .provenance = cause->provenance
         };
 

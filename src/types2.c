@@ -1234,27 +1234,6 @@ add_diagnostic(
         return diagnostic;
 }
 
-static bool
-vacuous_cause(T2Checker *checker, T2CauseInfo const *info)
-{
-        if (info->kind == T2_CAUSE_FAILURE) {
-                return false;
-        }
-
-        if (info->left == info->right) {
-                return true;
-        }
-
-        char *left  = t2_type_string(checker->universe, info->left);
-        char *right = t2_type_string(checker->universe, info->right);
-        bool same   = (left != NULL) && (right != NULL) && s_eq(left, right);
-
-        ty_free(left);
-        ty_free(right);
-
-        return same;
-}
-
 static T2Notes
 capture_causes(T2Checker *checker, T2SolverMark mark)
 {
@@ -1304,7 +1283,7 @@ capture_causes(T2Checker *checker, T2SolverMark mark)
                 ) {
                         continue;
                 }
-                if (vacuous_cause(checker, &info)) {
+                if (info.left == info.right) {
                         continue;
                 }
                 push_note(
@@ -8192,16 +8171,8 @@ candidate_argument(
         checker->argument_failure_site      = site;
         checker->argument_failure           = source;
         checker->argument_failure_parameter = checker->argument_parameter;
-        checker->argument_failure_actual    = t2_solver_zonk_display(
-                checker->solver,
-                argument,
-                T2_PREFER_LOWER_BOUND
-        );
-        checker->argument_failure_expected  = t2_solver_zonk_display(
-                checker->solver,
-                parameter,
-                T2_PREFER_UPPER_BOUND
-        );
+        checker->argument_failure_actual    = argument;
+        checker->argument_failure_expected  = parameter;
 
         return accepted;
 }
@@ -9202,8 +9173,16 @@ rejected_arms(T2Checker *checker, T2Type actual, T2Type expected)
 static void
 report_argument_failure(T2Checker *checker, T2Type callee)
 {
-        T2Type actual    = checker->argument_failure_actual;
-        T2Type expected  = checker->argument_failure_expected;
+        T2Type actual    = t2_solver_zonk_display(
+                checker->solver,
+                checker->argument_failure_actual,
+                T2_PREFER_LOWER_BOUND
+        );
+        T2Type expected  = t2_solver_zonk_display(
+                checker->solver,
+                checker->argument_failure_expected,
+                T2_PREFER_UPPER_BOUND
+        );
         char const *name = checker->argument_failure_parameter;
 
         T2Diagnostic *diagnostic = add_diagnostic(
@@ -29314,7 +29293,7 @@ print_note(
                                 write_text(&writer, " is not a subtype of ");
                                 write_type(&writer, note->right);
                         }
-                } else {
+                } else if (note->cause == T2_CAUSE_PREDICATE) {
                         write_type(&writer, note->left);
                         write_text(&writer, " ");
                         paint(out, "1;94");
@@ -29327,6 +29306,15 @@ print_note(
                         write_text(&writer, cause_label(note->cause));
                         write_text(&writer, "]");
                         paint(out, "0");
+                } else {
+                        write_type(&writer, note->left);
+                        paint(out, "2");
+                        write_text(
+                                &writer,
+                                (note->cause == T2_CAUSE_EQUALITY) ? " = " : " flows into "
+                        );
+                        paint(out, "0");
+                        write_type(&writer, note->right);
                 }
                 write_provenance(&writer, note->provenance, diagnostic->message);
                 break;
