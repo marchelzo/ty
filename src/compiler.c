@@ -363,15 +363,20 @@ usize GlobalCount = 0;
 
 static int builtin_modules;
 
-static struct {
-        char const *name;
-        bool own_sigs;
-} BuiltinSourceModules[] = {
-        { "ty",  false },
-        { "ffi", true  },
-        { "os",  true  }
+static char const *BuiltinSourceModules[] = {
+        "ty",
+        "ffi",
+        "os"
 };
 static int BuiltinCount;
+
+typedef struct {
+        Symbol *sym;
+        char const *type;
+        bool function;
+} Declaration;
+
+static vec(Declaration) Declarations;
 
 static CompileState STATE;
 
@@ -12625,164 +12630,10 @@ compiler_current_imports(Ty *ty)
         return &STATE.imports;
 }
 
-static void
-CheckSignatureConflict(Ty *ty, Stmt const *s)
-{
-        if (
-                (s->type != STATEMENT_FUNCTION_DEFINITION)
-             || HasBody(s->value)
-             || (s->target->symbol == NULL)
-             || !SymbolIsSigned(s->target->symbol)
-        ) {
-                return;
-        }
-
-        void *ctx = PushContext(ty, s);
-
-        fail(
-                "%s%s%s already has a signature in its C definition",
-                TERM(34),
-                s->target->symbol->identifier,
-                TERM(39)
-        );
-
-        RestoreContext(ty, ctx);
-}
-
-static char const *
-signature_path(Ty *ty, char const *name)
-{
-        if (strchr(name, '/') == NULL) {
-                return name;
-        }
-
-        byte_vector path = {0};
-
-        for (char const *c = name; *c != '\0'; ++c) {
-                if (*c == '/') {
-                        xvPn(path, "::", 2);
-                } else {
-                        xvP(path, *c);
-                }
-        }
-
-        xvP(path, '\0');
-
-        char const *q = afmt("%s", vv(path));
-
-        xvF(path);
-
-        return q;
-}
-
-static char const *
-signature_qualifier(Ty *ty, Module const *mod, import_vector *aliases, byte_vector *imports)
-{
-        if (mod == STATE.module) {
-                return NULL;
-        }
-
-        for (int i = 0; i < vN(STATE.imports); ++i) {
-                if (v_(STATE.imports, i)->mod == mod) {
-                        return signature_path(ty, v_(STATE.imports, i)->name);
-                }
-        }
-
-        for (int i = 0; i < vN(*aliases); ++i) {
-                if (v_(*aliases, i)->mod == mod) {
-                        return v_(*aliases, i)->name;
-                }
-        }
-
-        char const *alias = afmt("__sig%d", vN(*aliases));
-        char *path = afmt("%s", mod->name);
-
-        for (char *c = path; *c != '\0'; ++c) {
-                if (*c == '/') {
-                        *c = '.';
-                }
-        }
-
-        dump(imports, "import %s as %s\n", path, alias);
-
-        xvP(*aliases, ((struct import) { .mod = (Module *)mod, .name = alias }));
-
-        return alias;
-}
-
-static void
-signature_source(Ty *ty, byte_vector *out)
-{
-        import_vector aliases = {0};
-        byte_vector decls = {0};
-        char const *end;
-
-        for (int i = 0; i < vN(STATE.module->sigs); ++i) {
-                BuiltinSig const *bs = v_(STATE.module->sigs, i);
-                char const *q = signature_qualifier(ty, bs->sym->mod, &aliases, out);
-
-                for (char const *s = bs->sig; *s != '\0'; s = end + (*end != '\0')) {
-                        end = strchr(s, '\n');
-                        if (end == NULL) {
-                                end = s + strlen(s);
-                        }
-
-                        if (end != s) {
-                                dump(
-                                        &decls,
-                                        "%sfn %s%s`%s`%.*s;\n",
-                                        (STATE.module == GlobalModule) ? "" : "pub ",
-                                        (q == NULL) ? "" : q,
-                                        (q == NULL) ? "" : "::",
-                                        bs->sym->identifier,
-                                        (int)(end - s),
-                                        s
-                                );
-                        }
-                }
-        }
-
-        xvPn(*out, vv(decls), vN(decls));
-        xvP(*out, '\0');
-
-        xvF(decls);
-        xvF(aliases);
-}
-
-static Stmt **
-parse_signatures(Ty *ty)
-{
-        Module *mod = amA0(sizeof *mod);
-        byte_vector source = {0};
-
-        xvP(source, '\0');
-        signature_source(ty, &source);
-
-        mod->name   = STATE.module->name;
-        mod->path   = afmt("(builtin %s)", STATE.module->name);
-        mod->source = vv(source) + 1;
-        mod->scope  = STATE.module->scope;
-
-        Module *home = STATE.module;
-        STATE.module = mod;
-        bool ok = parse_module(ty, mod);
-        STATE.module = home;
-
-        if (!ok) {
-                Value err = ty->error;
-                vm_throw(ty, &err);
-        }
-
-        DefinePending(ty);
-
-        return mod->prog;
-}
-
 static Stmt **
 resolve_prog(Ty *ty, Stmt **p)
 {
         T2Checker *checker = t2_checker_begin(ty, STATE.module);
-        Stmt **sigs = NULL;
 
         if (TY_CATCH_ERROR()) {
                 t2_checker_abort(checker);
@@ -12791,7 +12642,6 @@ resolve_prog(Ty *ty, Stmt **p)
 
         int t2_class_ops = 0;
         for (usize i = 0; p[i] != NULL; ++i) {
-                CheckSignatureConflict(ty, p[i]);
                 InjectRedpill(ty, p[i]);
                 while (t2_class_ops < vN(STATE.class_ops)) {
                         t2_checker_observe(
@@ -12806,36 +12656,8 @@ resolve_prog(Ty *ty, Stmt **p)
                 t2_checker_observe(ty, checker, p[i], T2_CHECKPOINT_DECLARATION, i);
         }
 
-        if (
-                (checker != NULL)
-             && (vN(STATE.module->sigs) > 0)
-             && !t2_checker_will_restore(checker)
-        ) {
-                sigs = parse_signatures(ty);
-                for (usize i = 0; sigs[i] != NULL; ++i) {
-                        InjectRedpill(ty, sigs[i]);
-                        t2_checker_observe(
-                                ty,
-                                checker,
-                                sigs[i],
-                                T2_CHECKPOINT_BUILTIN_DECLARATION,
-                                i
-                        );
-                }
-                for (usize i = 0; sigs[i] != NULL; ++i) {
-                        symbolize_statement(ty, STATE.global, sigs[i]);
-                }
-                for (int i = 0; i < vN(STATE.module->sigs); ++i) {
-                        v_(STATE.module->sigs, i)->sym->doc = v_(STATE.module->sigs, i)->doc;
-                }
-        }
-
         for (usize i = 0; p[i] != NULL; ++i) {
                 symbolize_statement(ty, STATE.global, p[i]);
-        }
-
-        for (usize i = 0; sigs != NULL && sigs[i] != NULL; ++i) {
-                t2_checker_observe(ty, checker, sigs[i], T2_CHECKPOINT_BUILTIN, i);
         }
 
         for (usize i = 0; p[i] != NULL; ++i) {
@@ -13379,14 +13201,16 @@ compiler_load_builtin_modules(Ty *ty)
         for (int i = 0; i < countof(BuiltinSourceModules); ++i) {
                 load_module(
                         ty,
-                        BuiltinSourceModules[i].name,
-                        get_module_scope(BuiltinSourceModules[i].name)
+                        BuiltinSourceModules[i],
+                        get_module_scope(BuiltinSourceModules[i])
                 );
         }
         load_module(ty, "pretty", NULL);
         if (RunningTests) {
                 load_module(ty, "ty/test", NULL);
         }
+
+        t2_settle_declarations(ty);
 
         TY_CATCH_END();
 }
@@ -13465,8 +13289,41 @@ compiler_lookup(Ty *ty, char const *module, char const *name)
         return NULL;
 }
 
+static Expr *
+ParseDeclaration(Ty *ty, Module *mod, char const *name, char const *type, bool function)
+{
+        if (!function) {
+                Expr *decl = NewExpr(ty, EXPRESSION_IDENTIFIER);
+                decl->identifier = (char *)name;
+                decl->constraint = parse_type_source(ty, mod, type);
+                return decl;
+        }
+
+        if (strchr(type, '\n') == NULL) {
+                return parse_signature_source(ty, mod, type);
+        }
+
+        Expr *multi = NewExpr(ty, EXPRESSION_MULTI_FUNCTION);
+        multi->rest    = -1;
+        multi->ikwargs = -1;
+
+        for (char const *s = type; *s != '\0';) {
+                int n = (int)strcspn(s, "\n");
+                avP(multi->functions, parse_signature_source(ty, mod, afmt("%.*s", n, s)));
+                s += n + (s[n] == '\n');
+        }
+
+        return multi;
+}
+
 Symbol *
-compiler_introduce_symbol(Ty *ty, char const *module, char const *name)
+compiler_introduce_symbol(
+        Ty *ty,
+        char const *module,
+        char const *name,
+        char const *type,
+        bool function
+)
 {
         Module *mod;
 
@@ -13485,58 +13342,144 @@ compiler_introduce_symbol(Ty *ty, char const *module, char const *name)
         sym->mod    = mod;
         sym->flags |= (SYM_PUBLIC | SYM_BUILTIN);
 
+        if (type != NULL) {
+                xvP(Declarations, ((Declaration) {
+                        .sym      = sym,
+                        .type     = type,
+                        .function = function
+                }));
+        }
+
         BuiltinCount += 1;
 
         return sym;
 }
 
-static Module *
-signature_unit(Module *mod)
+inline static bool
+DeclarationResolved(Expr const *decl)
 {
-        for (int i = 0; i < countof(BuiltinSourceModules); ++i) {
-                if (
-                        BuiltinSourceModules[i].own_sigs
-                     && s_eq(mod->name, BuiltinSourceModules[i].name)
-                ) {
-                        return mod;
+        return (decl->type == EXPRESSION_IDENTIFIER)
+             ? (decl->symbol != NULL)
+             : (decl->scope != NULL);
+}
+
+static void
+UnresolveDeclaration(Ty *ty, Expr *decl)
+{
+        UnresolveExpr(ty, decl);
+
+        switch (decl->type) {
+        case EXPRESSION_IDENTIFIER:
+                UnresolveExpr(ty, decl->constraint);
+                decl->symbol = NULL;
+                break;
+
+        case EXPRESSION_MULTI_FUNCTION:
+                for (int i = 0; i < vN(decl->functions); ++i) {
+                        UnresolveDeclaration(ty, v__(decl->functions, i));
                 }
+        case EXPRESSION_FUNCTION:
+                decl->scope = NULL;
+                v0(decl->param_symbols);
+                break;
         }
-
-        return GlobalModule;
 }
 
-void
-compiler_introduce_signature(Ty *ty, Symbol *sym, char const *sig, char const *doc)
+static void
+ResolveDeclaration(Ty *ty, Symbol *sym, Expr *decl)
 {
-        Module *unit = signature_unit(sym->mod);
-
-        sym->flags |= SYM_SIGNED;
-        sym->doc    = doc;
-
-        xvP(unit->sigs, ((BuiltinSig) { .sym = sym, .sig = sig, .doc = doc }));
-
-        unit->sig_hash = HashCombine(unit->sig_hash, hash64z(sym->mod->name));
-        unit->sig_hash = HashCombine(unit->sig_hash, hash64z(sym->identifier));
-        unit->sig_hash = HashCombine(unit->sig_hash, hash64z(sig));
+        if (decl->type == EXPRESSION_IDENTIFIER) {
+                WITH_CTX(TYPE) {
+                        symbolize_expression(ty, sym->mod->scope, decl->constraint);
+                }
+                decl->symbol = sym;
+        } else {
+                RedpillFun(ty, sym->mod->scope, decl, false);
+        }
 }
 
-char const *
-compiler_symbol_sig(Ty *ty, Symbol const *sym)
+inline static Module *
+DeclarationHome(Module *mod)
 {
-        if (sym == NULL || sym->mod == NULL) {
+        return (mod->prog != NULL) ? mod : GlobalModule;
+}
+
+static Declaration const *
+PendingDeclaration(Symbol const *sym)
+{
+        if (!SymbolIsBuiltin(sym)) {
                 return NULL;
         }
 
-        Module *unit = signature_unit(sym->mod);
-
-        for (int i = 0; i < vN(unit->sigs); ++i) {
-                BuiltinSig const *bs = v_(unit->sigs, i);
-                if (bs->sym == sym) {
-                        return bs->sig;
+        for (usize i = 0; i < vN(Declarations); ++i) {
+                if (v_(Declarations, i)->sym == sym) {
+                        return v_(Declarations, i);
                 }
         }
 
         return NULL;
+}
+
+Expr *
+compiler_symbol_declaration(Ty *ty, Symbol *sym)
+{
+        if ((sym->expr != NULL) && DeclarationResolved(sym->expr)) {
+                return sym->expr;
+        }
+
+        Declaration const *pending = PendingDeclaration(sym);
+        if (pending == NULL) {
+                return NULL;
+        }
+
+        Module *home = DeclarationHome(sym->mod);
+        CompileState state = STATE;
+        Expr *volatile decl = NULL;
+
+        if (home != STATE.module) {
+                STATE = freshstate(ty, home);
+                if (vN(home->imports) > 0) {
+                        STATE.imports = home->imports;
+                }
+        }
+
+        if (TY_CATCH_ERROR()) {
+                TY_SUPPRESS("declaration");
+                if (sym->expr != NULL) {
+                        UnresolveDeclaration(ty, sym->expr);
+                }
+                decl = NULL;
+        } else {
+                if (sym->expr == NULL) {
+                        sym->expr = ParseDeclaration(
+                                ty,
+                                sym->mod,
+                                sym->identifier,
+                                pending->type,
+                                pending->function
+                        );
+                        TyImmortalizeArena(ty);
+                }
+                ResolveDeclaration(ty, sym, sym->expr);
+                decl = sym->expr;
+                TY_CATCH_END();
+        }
+
+        STATE = state;
+
+        return decl;
+}
+
+usize
+compiler_declaration_count(Ty *ty)
+{
+        return vN(Declarations);
+}
+
+Symbol *
+compiler_declared_symbol(Ty *ty, usize i)
+{
+        return v__(Declarations, i).sym;
 }
 
 int
@@ -18179,14 +18122,6 @@ compiler_symbolize_type(Ty *ty, Expr *e, Scope *scope)
 }
 
 void
-compiler_set_type_of(Ty *ty, Stmt *stmt)
-{
-        symbolize_lvalue(ty, GetNamespace(ty, stmt->ns), stmt->target, 0);
-        symbolize_expression(ty, GetNamespace(ty, stmt->ns), stmt->value);
-        stmt->target->symbol->type = t2_resolve(ty, stmt->value);
-}
-
-void
 compiler_clear_location(Ty *ty)
 {
         STATE.start = STATE.end = STATE.mstart = STATE.mend = Nowhere;
@@ -20650,6 +20585,8 @@ CompilerReset(Ty *ty)
         GlobalCount     = 0;
         builtin_modules = 0;
         BuiltinCount    = 0;
+
+        v0(Declarations);
 
         t = 0;
 

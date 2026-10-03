@@ -11,11 +11,11 @@
 #include "panic.h"
 
 #ifdef max
-#undef max
+  #undef max
 #endif
 
 #ifdef min
-#undef min
+  #undef min
 #endif
 
 #define PTERM(n) (ColorProfile ? ("\x1b[" #n "m") : "")
@@ -56,14 +56,6 @@ IS_ALIGNED_TO(void const *p, usize align)
 
 #define ALIGNED_FOR(T, p) (ALIGNED_TO((p), _Alignof (T)))
 #define IS_ALIGNED_FOR(T, p) (IS_ALIGNED_TO((p), _Alignof (T)))
-
-#ifdef TY_UNSAFE
-#define FALSE_OR(x) if (false)
-#define TRUE_OR(x) if (true)
-#else
-#define FALSE_OR(x) if (x)
-#define TRUE_OR(x) if (!(x))
-#endif
 
 static inline int
 load_int(void const *p)
@@ -323,7 +315,6 @@ term_fit_cols(void const *_s, isize n, int cols)
                 }
 
                 i += ret;
-
                 zwj = (cp == 0x200d);
         }
 

@@ -1,8 +1,6 @@
 import errno (ENOTDIR)
 import thread
 
-__set_type__ argv Array[String];
-
 /** Complete resource-usage data returned by wait4(2). */
 pub use RUsage = {
     utime: Float,

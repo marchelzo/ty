@@ -775,8 +775,8 @@ typedef struct {
 
         int _readln;
         int env;
-        int exe;
         int exit_hooks;
+        int interactive;
         int path;
         int pp;
         int pretty;

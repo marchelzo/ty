@@ -20,8 +20,6 @@ typedef enum t2_checkpoint {
         T2_CHECKPOINT_CLASS_OPERATOR_DECLARATION,
         T2_CHECKPOINT_STATEMENT,
         T2_CHECKPOINT_CLASS_OPERATOR,
-        T2_CHECKPOINT_BUILTIN_DECLARATION,
-        T2_CHECKPOINT_BUILTIN,
         T2_CHECKPOINT_COUNT
 } T2Checkpoint;
 
@@ -114,6 +112,9 @@ t2_check_expression(Ty *ty, Expr *expression);
 
 T2Type
 t2_resolve(Ty *ty, Expr *type_expression);
+
+void
+t2_settle_declarations(Ty *ty);
 
 T2Type
 t2_type_constant(Ty *ty, Symbol const *symbol);

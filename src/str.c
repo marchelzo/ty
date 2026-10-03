@@ -2332,8 +2332,7 @@ ck_hex_digit(u8 c)
 }
 
 static bool
-ck_resolve(Ty *ty, char const *name, isize len,
-           CkSty *out, Dict *custom);
+ck_resolve(Ty *ty, char const *name, isize len, CkSty *out, Dict *custom);
 
 static bool
 ck_try_builtin(char const *nm, isize n, CkSty *o)
@@ -2341,27 +2340,20 @@ ck_try_builtin(char const *nm, isize n, CkSty *o)
 #define IS(lit) \
         (n == (isize)(sizeof (lit) - 1) && memcmp(nm, lit, n) == 0)
 
-        if (IS("b") || IS("bold"))     { o->bold = 1;   return true; }
-        if (IS("no-b") || IS("no-bold"))
-                                       { o->bold = 2;   return true; }
+        if (IS("b")    || IS("bold"))      { o->bold = 1;   return true; }
+        if (IS("no-b") || IS("no-bold"))   { o->bold = 2;   return true; }
 
-        if (IS("i") || IS("italic"))   { o->italic = 1; return true; }
-        if (IS("no-i") || IS("no-italic"))
-                                       { o->italic = 2; return true; }
+        if (IS("i")    || IS("italic"))    { o->italic = 1; return true; }
+        if (IS("no-i") || IS("no-italic")) { o->italic = 2; return true; }
 
         if (IS("dim"))       { o->dim       = 1; return true; }
         if (IS("reverse"))   { o->reverse   = 1; return true; }
         if (IS("bright"))    { o->bright    = 1; return true; }
         if (IS("bg-bright")) { o->bg_bright = 1; return true; }
 
-        if (IS("u") || IS("underline")) {
-                o->ul_n = 1; o->ul[0] = 4;
-                return true;
-        }
-        if (IS("no-u") || IS("no-underline")) {
-                o->ul_n = 1; o->ul[0] = 24;
-                return true;
-        }
+        if (IS("u")    || IS("underline"))    { o->ul_n = 1; o->ul[0] =  4; return true; }
+        if (IS("no-u") || IS("no-underline")) { o->ul_n = 1; o->ul[0] = 24; return true; }
+
         if (IS("uu")) { o->ul_n = 2; o->ul[0] = 4; o->ul[1] = 2; return true; }
         if (IS("u~")) { o->ul_n = 2; o->ul[0] = 4; o->ul[1] = 3; return true; }
         if (IS("u.")) { o->ul_n = 2; o->ul[0] = 4; o->ul[1] = 4; return true; }
@@ -2394,8 +2386,7 @@ ck_try_builtin(char const *nm, isize n, CkSty *o)
 }
 
 inline static bool
-ck_try_ul_color(Ty *ty, char const *nm, isize n,
-                CkSty *o, Dict *custom, int ul_sub)
+ck_try_ul_color(Ty *ty, char const *nm, isize n, CkSty *o, Dict *custom, int ul_sub)
 {
         CkSty inner = {0};
 
@@ -2419,8 +2410,7 @@ ck_try_ul_color(Ty *ty, char const *nm, isize n,
 }
 
 static bool
-ck_try_parse(Ty *ty, char const *nm, isize n,
-             CkSty *o, Dict *custom)
+ck_try_parse(Ty *ty, char const *nm, isize n, CkSty *o, Dict *custom)
 {
         if (n > 1 && nm[0] == '#') {
                 int rv, gv, bv;
@@ -2654,9 +2644,12 @@ ck_stops(Ty *ty, char const *stop, isize slen,
                 return false;
         }
 
-        return sty->link == ref.link
-            || (sty->link && ref.link
-                && memcmp(sty->link, ref.link, ref.link_len) == 0);
+        return (sty->link == ref.link)
+            || (
+                        sty->link
+                     && ref.link
+                     && (memcmp(sty->link, ref.link, ref.link_len) == 0)
+               );
 }
 
 #define CK_MAX_DEPTH  64
@@ -2891,10 +2884,7 @@ string_chalk(Ty *ty, Value *string, int argc, Value *kwargs)
                                 for (int k = 0; k < npop && nf > 0; ++k) {
                                         nf -= 1;
                                         if (stack[nf].is_fmt) {
-                                                ck_finish_fmt(
-                                                        ty, &out, ostack,
-                                                        &nos, &stack[nf]
-                                                );
+                                                ck_finish_fmt(ty, &out, ostack, &nos, &stack[nf]);
                                         }
                                 }
                                 CK_UPDATE();
@@ -2915,8 +2905,7 @@ string_chalk(Ty *ty, Value *string, int argc, Value *kwargs)
                                                 }
                                                 bool found = false;
                                                 for (int j = f->n - 1; j >= 0; --j) {
-                                                        if (!ck_stops(ty, (char const *)ws, wn,
-                                                                      &f->s[j], custom)) {
+                                                        if (!ck_stops(ty, (char const *)ws, wn, &f->s[j], custom)) {
                                                                 continue;
                                                         }
                                                         f->n -= 1;

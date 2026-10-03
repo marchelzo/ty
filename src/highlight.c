@@ -750,7 +750,6 @@ keyword_color(int kw)
                 return SC_DECL;
 
         case KEYWORD_TYPEOF:
-        case KEYWORD_SET_TYPE:
                 return SC_BUILTIN;
 
         case KEYWORD_DEFINED:

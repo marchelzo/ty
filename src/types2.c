@@ -290,7 +290,6 @@ typedef struct t2_write_scan {
         X(TYPEOF_UNRESOLVED,      "typeof-unresolved",      INCOMPLETE)        \
         X(IFDEF,                  "ifdef",                  INCOMPLETE)        \
         X(MACRO_DEFINITION,       "macro-definition",       INCOMPLETE)        \
-        X(SET_TYPE,               "set-type",               INCOMPLETE)        \
         X(UNSUPPORTED_BOUND,      "unsupported-bound",      INCOMPLETE)        \
         X(UNSUPPORTED_HIERARCHY,  "unsupported-hierarchy",  INCOMPLETE)        \
         X(UNSUPPORTED_PATTERN,    "unsupported-pattern",    INCOMPLETE)        \
@@ -650,8 +649,6 @@ checkpoint_name(T2Checkpoint checkpoint)
         case T2_CHECKPOINT_CLASS_OPERATOR_DECLARATION: return "class_operator_declaration";
         case T2_CHECKPOINT_STATEMENT:                  return "statement";
         case T2_CHECKPOINT_CLASS_OPERATOR:             return "class_operator";
-        case T2_CHECKPOINT_BUILTIN_DECLARATION:        return "builtin_declaration";
-        case T2_CHECKPOINT_BUILTIN:                    return "builtin";
         }
 
         return "invalid";
@@ -793,6 +790,9 @@ snapshot_type(T2Checker *checker, T2Type type);
 
 static T2Type
 typeof_operand_type(T2Checker *checker, Expr const *operand);
+
+static T2Type
+instantiate_type(T2Checker *checker, T2Type type, Expr const *site, char const *what);
 
 static T2Type
 infer_operator_value(T2Checker *checker, Expr const *expression);
@@ -1249,36 +1249,35 @@ capture_causes(T2Checker *checker, T2SolverMark mark)
 {
         T2Notes notes = {0};
         T2CauseInfo info;
-        bool predicate_failure = false;
-        T2Type failed_left  = T2_TYPE_INVALID;
-        T2Type failed_right = T2_TYPE_INVALID;
-        if (t2_solver_failure(checker->solver, &info)) {
-                predicate_failure = (info.predicate != T2_PREDICATE_SUBTYPE)
-                                 && (info.predicate != T2_PREDICATE_DEFAULT);
-                failed_left  = info.left;
-                failed_right = info.right;
-                push_note(
-                        &notes,
-                        predicate_failure
-                        ? (T2Note) {
-                                .kind       = T2_NOTE_PREDICATE,
-                                .predicate  = info.predicate,
-                                .left       = info.left,
-                                .right      = info.right,
-                                .operand    = info.operand,
-                                .text       = (info.name == NULL) ? NULL : S2(info.name),
-                                .provenance = (info.provenance == NULL) ? NULL : S2(info.provenance)
-                          }
-                        : (T2Note) {
-                                .kind       = T2_NOTE_CAUSE,
-                                .cause      = T2_CAUSE_FAILURE,
-                                .left       = info.left,
-                                .right      = info.right,
-                                .text       = (info.message == NULL) ? NULL : S2(info.message),
-                                .provenance = (info.provenance == NULL) ? NULL : S2(info.provenance)
-                          }
-                );
+        if (!t2_solver_failure(checker->solver, &info)) {
+                return notes;
         }
+
+        bool predicate_failure = (info.predicate != T2_PREDICATE_SUBTYPE)
+                              && (info.predicate != T2_PREDICATE_DEFAULT);
+        T2Type failed_left     = info.left;
+        T2Type failed_right    = info.right;
+        push_note(
+                &notes,
+                predicate_failure
+                ? (T2Note) {
+                        .kind       = T2_NOTE_PREDICATE,
+                        .predicate  = info.predicate,
+                        .left       = info.left,
+                        .right      = info.right,
+                        .operand    = info.operand,
+                        .text       = (info.name == NULL) ? NULL : S2(info.name),
+                        .provenance = (info.provenance == NULL) ? NULL : S2(info.provenance)
+                  }
+                : (T2Note) {
+                        .kind       = T2_NOTE_CAUSE,
+                        .cause      = T2_CAUSE_FAILURE,
+                        .left       = info.left,
+                        .right      = info.right,
+                        .text       = (info.message == NULL) ? NULL : S2(info.message),
+                        .provenance = (info.provenance == NULL) ? NULL : S2(info.provenance)
+                  }
+        );
 
         usize count = t2_solver_cause_count(checker->solver);
         for (usize i = mark.cause_count; i < count; ++i) {
@@ -1488,6 +1487,12 @@ truncate_forward_uses(T2Checker *checker, usize mark)
 
 static T2Type
 infer_forward_function(T2Checker *checker, T2Binding *binding, Expr const *site);
+
+static void
+settle_forward_function(T2Checker *checker, T2Binding *binding, Expr const *site);
+
+static void
+register_forward_binding(T2Checker *checker, Symbol const *symbol, bool mutable);
 
 static T2Scheme *
 multi_function_scheme(
@@ -4491,7 +4496,12 @@ lower_type(T2Checker *checker, Expr const *source)
         case EXPRESSION_TYPE_OF:
                 result = node_type(checker, expression->operand);
                 if (result == T2_TYPE_INVALID && expression->operand != NULL) {
-                        result = typeof_operand_type(checker, expression->operand);
+                        result = instantiate_type(
+                                checker,
+                                typeof_operand_type(checker, expression->operand),
+                                expression,
+                                "typeof"
+                        );
                 }
                 if (result == T2_TYPE_INVALID) {
                         defer_node(checker, T2_DEFER_TYPEOF_UNRESOLVED, expression, NULL);
@@ -8165,15 +8175,16 @@ candidate_argument(
         bool accepted = candidate_argument_x(checker, argument, parameter, source, site);
         T2CauseInfo failure;
 
-
         if (
                 accepted
              || failed_before
              || (source == NULL)
              || (source == site)
              || (checker->argument_failure_site == site)
-             || !t2_solver_failure(checker->solver, &failure)
-             || (failure.predicate != T2_PREDICATE_SUBTYPE)
+             || (
+                        t2_solver_failure(checker->solver, &failure)
+                     && (failure.predicate != T2_PREDICATE_SUBTYPE)
+                )
         ) {
                 return accepted;
         }
@@ -9295,6 +9306,27 @@ declared_callee(T2Checker *checker, Expr const *site, T2Type callee)
 }
 
 static T2Type
+instantiate_type(T2Checker *checker, T2Type type, Expr const *site, char const *what)
+{
+        T2Scheme *scheme = t2_type_scheme(checker->universe, type);
+        if (scheme == NULL) {
+                return type;
+        }
+
+        T2Type instance = t2_scheme_instantiate(
+                scheme,
+                checker->solver,
+                checker->level,
+                source_provenance(checker, site, what)
+        );
+        t2_scheme_free(scheme);
+
+        return (instance == T2_TYPE_INVALID)
+             ? t2_primitive(checker->universe, T2_TYPE_ERROR)
+             : instance;
+}
+
+static T2Type
 infer_call_types(
         T2Checker         *checker,
         T2Type             callee,
@@ -9307,18 +9339,9 @@ infer_call_types(
         bool               diagnose
 )
 {
-        T2Scheme *scheme = t2_type_scheme(checker->universe, callee);
-        if (scheme != NULL) {
-                callee = t2_scheme_instantiate(
-                        scheme,
-                        checker->solver,
-                        checker->level,
-                        source_provenance(checker, site, "call")
-                );
-                t2_scheme_free(scheme);
-                if (callee == T2_TYPE_INVALID) {
-                        return t2_primitive(checker->universe, T2_TYPE_ERROR);
-                }
+        callee = instantiate_type(checker, callee, site, "call");
+        if (t2_type_kind(checker->universe, callee) == T2_TYPE_ERROR) {
+                return callee;
         }
 
         callee = resolved_operation_type(
@@ -17805,6 +17828,64 @@ adopt_published_binding(
         return false;
 }
 
+static bool
+is_declaration(Expr const *declaration)
+{
+        if (declaration == NULL) {
+                return false;
+        }
+
+        switch (declaration->type) {
+        case EXPRESSION_IDENTIFIER:
+                return declaration->constraint != NULL;
+        case EXPRESSION_FUNCTION:
+                return !HasBody(declaration);
+        case EXPRESSION_MULTI_FUNCTION:
+                for (int i = 0; i < vN(declaration->functions); ++i) {
+                        if (!is_declaration(v__(declaration->functions, i))) {
+                                return false;
+                        }
+                }
+                return vN(declaration->functions) > 0;
+        default:
+                return false;
+        }
+}
+
+static bool
+adopt_declaration(T2Checker *checker, T2Binding *binding, Symbol const *symbol)
+{
+        if (checker->ty == NULL) {
+                return false;
+        }
+
+        Expr const *declaration = compiler_symbol_declaration(
+                checker->ty,
+                (Symbol *)symbol
+        );
+
+        if (!is_declaration(declaration)) {
+                return false;
+        }
+
+        bool importing = checker->importing;
+        checker->importing = true;
+
+        if (declaration->type == EXPRESSION_IDENTIFIER) {
+                T2Type type = lower_type(checker, declaration->constraint);
+                binding = find_binding(checker, symbol);
+                binding->type        = type;
+                binding->initialized = true;
+        } else {
+                register_forward_binding(checker, symbol, false);
+                settle_forward_function(checker, find_binding(checker, symbol), NULL);
+        }
+
+        checker->importing = importing;
+
+        return true;
+}
+
 static T2Binding *
 ensure_resolved_binding(T2Checker *checker, Symbol const *symbol)
 {
@@ -17817,6 +17898,10 @@ ensure_resolved_binding(T2Checker *checker, Symbol const *symbol)
         binding->persistent = true;
         if (adopt_published_binding(checker, binding, symbol)) {
                 return binding;
+        }
+
+        if (adopt_declaration(checker, binding, symbol)) {
+                return find_binding(checker, symbol);
         }
 
         Symbol const *definition = import_external_binding(checker, symbol);
@@ -20431,8 +20516,8 @@ generalize_binding(
         return true;
 }
 
-static T2Type
-infer_forward_function(T2Checker *checker, T2Binding *binding, Expr const *site)
+static void
+settle_forward_function(T2Checker *checker, T2Binding *binding, Expr const *site)
 {
         Symbol const *symbol = binding->symbol;
         usize count = 0;
@@ -20456,17 +20541,18 @@ infer_forward_function(T2Checker *checker, T2Binding *binding, Expr const *site)
                 binding = find_binding(checker, symbol);
                 if (binding == NULL) {
                         t2_scheme_free(scheme);
-                        return T2_TYPE_INVALID;
+                        return;
                 }
                 binding->defining = false;
                 binding->forward  = false;
                 binding->eager    = true;
                 if (scheme == NULL) {
-                        return t2_primitive(checker->universe, T2_TYPE_ERROR);
+                        binding->type = t2_primitive(checker->universe, T2_TYPE_ERROR);
+                        return;
                 }
                 set_node_type(checker, symbol->expr, value);
                 publish_function_scheme(checker, symbol, scheme, value);
-                return instantiate_binding(checker, find_binding(checker, symbol), site);
+                return;
         }
 
         if (symbol->expr->fn_symbol != symbol) {
@@ -20479,7 +20565,7 @@ infer_forward_function(T2Checker *checker, T2Binding *binding, Expr const *site)
         if (binding == NULL) {
                 ty_free(environment);
                 t2_solver_commit(checker->solver, scope);
-                return T2_TYPE_INVALID;
+                return;
         }
 
         binding->defining = false;
@@ -20509,12 +20595,16 @@ infer_forward_function(T2Checker *checker, T2Binding *binding, Expr const *site)
                         binding->scheme
                 );
         }
+}
 
-        return instantiate_binding(
-                checker,
-                find_binding(checker, symbol),
-                site
-        );
+static T2Type
+infer_forward_function(T2Checker *checker, T2Binding *binding, Expr const *site)
+{
+        Symbol const *symbol = binding->symbol;
+
+        settle_forward_function(checker, binding, site);
+
+        return instantiate_binding(checker, find_binding(checker, symbol), site);
 }
 
 static bool
@@ -27205,15 +27295,6 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
                 )
                 ;
                 break;
-        case STATEMENT_SET_TYPE:
-                defer_node(
-                        checker,
-                        T2_DEFER_SET_TYPE,
-                        (Expr const *)statement,
-                        NULL
-                )
-                ;
-                break;
 
         default:
                 checker->unsupported_nodes += checker->muted == 0;
@@ -29726,7 +29807,7 @@ report_diagnostics(T2Checker *checker, usize errors, usize warnings)
 
 enum {
         T2_CACHE_MAGIC   = UINT32_C(0x32545954),
-        T2_CACHE_VERSION = 14,
+        T2_CACHE_VERSION = 15,
         T2_CACHE_NONE    = UINT32_MAX
 };
 
@@ -29951,10 +30032,9 @@ remember_module_key(char const *path, u64 key)
 static u64
 module_source_key(Module const *module)
 {
-        u64 key = (module->source != NULL) ? hash64z(module->source) : hash64z(
+        return (module->source != NULL) ? hash64z(module->source) : hash64z(
                 module->name
         );
-        return HashCombine(key, module->sig_hash);
 }
 
 static u64
@@ -29971,7 +30051,6 @@ static u64
 unit_key(T2Checker *checker)
 {
         u64 key = HashCombine(build_identity(), hash64z(checker->module->source));
-        key = HashCombine(key, checker->module->sig_hash);
         key = HashCombine(key, T2_CACHE_VERSION);
         key = HashCombine(key, configuration_key(checker->ty));
         import_vector const *imports = compiler_current_imports(checker->ty);
@@ -30855,7 +30934,6 @@ is_definition_statement(Stmt const *statement)
         case STATEMENT_OPERATOR_DEFINITION:
         case STATEMENT_CLASS_DEFINITION:
         case STATEMENT_TAG_DEFINITION:
-        case STATEMENT_SET_TYPE:
                 return true;
         default:
                 return false;
@@ -30868,12 +30946,12 @@ definition_symbol(void const *syntax)
         Stmt const *statement = syntax;
         if (
                 (statement == NULL)
-             || !IsStmt((Expr const *)statement)
+             || !is_definition_statement(statement)
         ) {
                 return NULL;
         }
 
-        return is_definition_statement(statement) ? statement_target_symbol(statement) : NULL;
+        return statement_target_symbol(statement);
 }
 
 static Symbol const *
@@ -30911,51 +30989,9 @@ index_definition_roots(
         }
 }
 
-static char *
-signed_symbol_key(Symbol const *symbol)
-{
-        usize nm = strlen(symbol->mod->name);
-        usize ni = strlen(symbol->identifier);
-        char *key = xmA(nm + ni + 2);
-
-        memcpy(key, symbol->mod->name, nm);
-        key[nm] = '\x1f';
-        memcpy(key + nm + 1, symbol->identifier, ni + 1);
-
-        return key;
-}
-
-static Symbol *
-signed_symbol(T2Checker *checker, char const *key)
-{
-        char const *sep = strchr(key, '\x1f');
-        char name[256];
-        usize n = sep - key;
-
-        if (n >= sizeof name) {
-                return NULL;
-        }
-
-        memcpy(name, key, n);
-        name[n] = '\0';
-
-        Module *mod = CompilerGetModule(checker->ty, name);
-        if (mod == NULL || mod->scope == NULL) {
-                return NULL;
-        }
-
-        Symbol *symbol = scope_local_lookup(checker->ty, mod->scope, sep + 1);
-
-        return (symbol != NULL) && SymbolIsSigned(symbol) ? symbol : NULL;
-}
-
 static Symbol *
 module_symbol(T2Checker *checker, char const *identifier)
 {
-        if (strchr(identifier, '\x1f') != NULL) {
-                return signed_symbol(checker, identifier);
-        }
-
         Symbol *symbol = scope_local_lookup(
                 checker->ty,
                 checker->module->scope,
@@ -31136,8 +31172,7 @@ write_bindings(
                 ) {
                         continue;
                 }
-                bool foreign = (symbol->mod != checker->module);
-                if (foreign && !SymbolIsSigned(symbol)) {
+                if (symbol->mod != checker->module) {
                         continue;
                 }
                 u64 key = (u64)(uptr)symbol;
@@ -31149,9 +31184,7 @@ write_bindings(
                         continue;
                 }
                 u32 ordinal;
-                if (foreign) {
-                        ordinal = T2_CACHE_NONE;
-                } else if (
+                if (
                         !t2_index_find(&roots, key, &ordinal)
                      && !t2_index_find(&ordinals->symbol_index, key, &ordinal)
                 ) {
@@ -31160,12 +31193,8 @@ write_bindings(
                         }
                         ordinal = T2_CACHE_NONE;
                 }
-                char *identifier = foreign ? signed_symbol_key(symbol) : NULL;
                 byte_vector record = {0};
-                bool wrote = t2_bytes_string(
-                                     &record,
-                                     foreign ? identifier : symbol->identifier
-                             )
+                bool wrote = t2_bytes_string(&record, symbol->identifier)
                           && t2_bytes_u32(&record, ordinal)
                           && write_scheme(cache, &record, symbol->scheme)
                           && write_optional_type(cache, &record, symbol->type)
@@ -31178,7 +31207,6 @@ write_bindings(
                         count += 1;
                 }
                 xvF(record);
-                ty_free(identifier);
         }
 
         ok = ok && write_section(out, count, &body);
@@ -31897,7 +31925,6 @@ t2_checker_observe(
         if (
                 (checkpoint == T2_CHECKPOINT_DECLARATION)
              || (checkpoint == T2_CHECKPOINT_CLASS_OPERATOR_DECLARATION)
-             || (checkpoint == T2_CHECKPOINT_BUILTIN_DECLARATION)
         ) {
                 if (checker->restored) {
                         remember_declared(checker, stmt);
@@ -31986,62 +32013,21 @@ obligation_provenance_site(
         char const *provenance
 )
 {
-        if (
-                (checker == NULL)
-             || (provenance == NULL)
-             || (checker->node_capacity == 0)
-        ) {
+        if (checker == NULL || provenance == NULL) {
                 return NULL;
         }
 
-        char const *column_separator = strrchr(provenance, ':');
-        if (column_separator == NULL) {
-                return NULL;
-        }
-
-        char *end            = NULL;
-        unsigned long column = strtoul(column_separator + 1, &end, 10);
-        if (
-                (end == column_separator + 1)
-             || (*end != '\0')
-             || (column == 0)
-        ) {
-                return NULL;
-        }
-
-        char const *line_separator = column_separator;
-        while (
-                (line_separator != provenance)
-             && (line_separator[-1] != ':')
-        ) {
-                --line_separator;
-        }
-
-        if (line_separator == provenance) {
-                return NULL;
-        }
-
-        --line_separator;
-        unsigned long line = strtoul(line_separator + 1, &end, 10);
-        if (end != column_separator || line == 0) {
-                return NULL;
-        }
-
-        for (usize i = 0; i < checker->node_capacity; ++i) {
-                T2NodeInfo const *node = &checker->nodes[i];
-                if (
-                        (node->syntax == NULL)
-                     || ((node->roles & T2_ROLE_STATEMENT)
-                      == node->roles)
-                ) {
-                        continue;
+        for (usize i = vN(checker->provenances); i != 0; --i) {
+                T2Provenance const *entry = v_(checker->provenances, i - 1);
+                if (entry->text == provenance) {
+                        return entry->site;
                 }
-                Expr const *expression = node->syntax;
-                if (
-                        (expression->start.line + 1 == line)
-                     && (expression->start.col + 1 == column)
-                ) {
-                        return expression;
+        }
+
+        for (usize i = vN(checker->provenances); i != 0; --i) {
+                T2Provenance const *entry = v_(checker->provenances, i - 1);
+                if (s_eq(entry->text, provenance)) {
+                        return entry->site;
                 }
         }
 
@@ -33496,6 +33482,284 @@ t2_type_constant(Ty *ty, Symbol const *symbol)
         }
 
         return (result == T2_TYPE_INVALID) ? computed : result;
+}
+
+typedef struct t2_cached_declaration {
+        char     *module;
+        char     *name;
+        T2Scheme *scheme;
+        T2Type    type;
+} T2CachedDeclaration;
+
+typedef vec(T2CachedDeclaration) T2CachedDeclarations;
+
+static u64
+declarations_key(Ty *ty)
+{
+        u64 key = HashCombine(build_identity(), T2_CACHE_VERSION);
+        key = HashCombine(key, configuration_key(ty));
+
+        vec(Module const *) homes = {0};
+        for (usize i = 0; i < compiler_declaration_count(ty); ++i) {
+                Module const *module = compiler_declared_symbol(ty, i)->mod;
+                bool seen = (module == NULL) || (module->source == NULL);
+                for (usize j = 0; !seen && j < vN(homes); ++j) {
+                        seen = (v__(homes, j) == module);
+                }
+                if (seen) {
+                        continue;
+                }
+                xvP(homes, module);
+                u64 home;
+                if (!find_module_key(module->path, &home)) {
+                        home = module_source_key(module);
+                }
+                key = HashCombine(key, home);
+        }
+        xvF(homes);
+
+        return (key == 0) ? 1 : key;
+}
+
+static char *
+declarations_cache_path(Ty *ty)
+{
+        char directory[PATH_MAX];
+        if (!cache_directory(directory, sizeof directory)) {
+                return NULL;
+        }
+
+        char path[PATH_MAX];
+        int written = ty_snprintf(
+                path,
+                sizeof path,
+                "%s/(declarations)-%" PRIx64 ".t2c",
+                directory,
+                configuration_key(ty)
+        );
+
+        return (written < 0 || (usize)written >= sizeof path) ? NULL : S2N(path);
+}
+
+static void
+settle_declaration(T2Checker *checker, Symbol *symbol)
+{
+        if (symbol->scheme != NULL || symbol->type != T2_TYPE_INVALID) {
+                return;
+        }
+
+        T2Binding *binding = ensure_resolved_binding(checker, symbol);
+        if (binding == NULL || !binding->initialized) {
+                return;
+        }
+
+        T2Type type = (binding->scheme != NULL)
+                    ? t2_scheme_body(binding->scheme)
+                    : binding->type;
+        if (type == T2_TYPE_INVALID) {
+                return;
+        }
+
+        symbol->type = published_type(checker, type);
+        if (binding->scheme != NULL && !binding->borrowed) {
+                symbol->scheme    = binding->scheme;
+                binding->borrowed = true;
+        }
+}
+
+static bool
+write_declarations(T2Checker *checker, char const *path, u64 key)
+{
+        T2Cache *cache = alloc0(sizeof *cache);
+
+        checker->cache = cache;
+        T2SymbolRemap remap = { .out = cache_symbol_out, .context = checker };
+        cache->writer = t2_type_writer_new(checker->universe, remap);
+
+        byte_vector body = {0};
+        byte_vector file = {0};
+        u32 count = 0;
+        bool ok = (cache->writer != NULL);
+        for (usize i = 0; ok && i < compiler_declaration_count(checker->ty); ++i) {
+                Symbol const *symbol = compiler_declared_symbol(checker->ty, i);
+                if (symbol->scheme == NULL && symbol->type == T2_TYPE_INVALID) {
+                        continue;
+                }
+                ok = t2_bytes_string(&body, symbol->mod->name)
+                  && t2_bytes_string(&body, symbol->identifier)
+                  && write_scheme(cache, &body, symbol->scheme)
+                  && write_optional_type(cache, &body, symbol->type);
+                count += 1;
+        }
+
+        ok = ok
+          && !cache->failed
+          && t2_bytes_u32(&file, T2_CACHE_MAGIC)
+          && t2_bytes_u32(&file, T2_CACHE_VERSION)
+          && t2_bytes_u64(&file, key)
+          && t2_bytes_u64(&file, 0)
+          && write_symbols(cache, &file)
+          && t2_type_writer_encode(cache->writer, &file)
+          && write_section(&file, count, &body);
+
+        if (ok) {
+                char directory[PATH_MAX];
+                if (cache_directory(directory, sizeof directory)) {
+                        ensure_directory(directory);
+                }
+                ok = write_file(path, vv(file), vN(file));
+        }
+
+        trace_cache(checker, ok ? "write" : "write-failed", path);
+        xvF(file);
+        xvF(body);
+        free_cache(cache);
+        checker->cache = NULL;
+
+        return ok;
+}
+
+static bool
+decode_declarations(T2Cache *cache, T2CachedDeclarations *out)
+{
+        u32 count;
+        if (!read_u32(cache, &count)) {
+                return false;
+        }
+
+        for (u32 i = 0; i < count; ++i) {
+                T2CachedDeclaration entry = {0};
+                bool ok = read_text(cache, &entry.module)
+                       && read_text(cache, &entry.name)
+                       && (entry.module != NULL)
+                       && (entry.name != NULL)
+                       && read_scheme(cache, &entry.scheme)
+                       && read_type(cache, &entry.type);
+                xvP(*out, entry);
+                if (!ok) {
+                        return false;
+                }
+        }
+
+        return cache->position == cache->size;
+}
+
+static void
+install_declaration(Ty *ty, T2CachedDeclaration *entry)
+{
+        Module *module = CompilerGetModule(ty, entry->module);
+        Symbol *symbol = (module == NULL) ? NULL : scope_local_lookup(
+                ty,
+                module->scope,
+                entry->name
+        );
+
+        if (
+                (symbol == NULL)
+             || !SymbolIsBuiltin(symbol)
+             || (symbol->scheme != NULL)
+             || (symbol->type != T2_TYPE_INVALID)
+        ) {
+                return;
+        }
+
+        symbol->type = (entry->type != T2_TYPE_INVALID)
+                     ? entry->type
+                     : t2_scheme_body(entry->scheme);
+        symbol->scheme = entry->scheme;
+        entry->scheme  = NULL;
+}
+
+static bool
+restore_declarations(T2Checker *checker, char const *path, u64 key)
+{
+        T2Cache *cache = read_cache_file(path, key);
+        if (cache == NULL) {
+                trace_cache(checker, "miss", path);
+                return false;
+        }
+
+        bool ok = true;
+        for (usize i = 0; ok && i < vN(cache->symbols); ++i) {
+                T2CacheSymbol *entry = v_(cache->symbols, i);
+                entry->symbol = entry->is_tag
+                              ? resolve_tag_symbol(checker->ty, entry)
+                              : resolve_class_symbol(checker->ty, entry);
+                ok = (entry->symbol != 0);
+        }
+
+        T2SymbolRemap remap = { .in = cache_symbol_in, .context = cache };
+        T2ReadHooks hooks = {
+                .floor   = T2_FRESH_QUANTIFIER_BASE,
+                .reserve = reserve_quantified_block,
+                .meta    = restored_meta,
+                .context = checker
+        };
+        T2CachedDeclarations entries = {0};
+        ok = ok
+          && declare_cached_nominals(checker, cache)
+          && (
+                (
+                        cache->reader = t2_type_reader_new(
+                                checker->universe,
+                                remap,
+                                hooks,
+                                cache->data,
+                                cache->size,
+                                &cache->position
+                        )
+                )
+             != NULL
+             )
+          && decode_declarations(cache, &entries);
+
+        for (usize i = 0; i < vN(entries); ++i) {
+                T2CachedDeclaration *entry = v_(entries, i);
+                if (ok) {
+                        install_declaration(checker->ty, entry);
+                }
+                ty_free(entry->module);
+                ty_free(entry->name);
+                t2_scheme_free(entry->scheme);
+        }
+
+        xvF(entries);
+        free_cache(cache);
+        trace_cache(checker, ok ? "load" : "unreadable", path);
+
+        return ok;
+}
+
+void
+t2_settle_declarations(Ty *ty)
+{
+        if (
+                checker_disabled()
+             || !CheckTypes
+             || (TYPES_OFF != 0)
+             || !cache_enabled()
+             || report_all_units()
+        ) {
+                return;
+        }
+
+        char *path = declarations_cache_path(ty);
+        if (path == NULL) {
+                return;
+        }
+
+        T2Checker *checker = scratch_checker(ty);
+        u64 key = declarations_key(ty);
+
+        if (!restore_declarations(checker, path, key)) {
+                for (usize i = 0; i < compiler_declaration_count(ty); ++i) {
+                        settle_declaration(checker, compiler_declared_symbol(ty, i));
+                }
+                (void)write_declarations(checker, path, key);
+        }
+
+        ty_free(path);
+        destroy_checker(checker);
 }
 
 T2Type

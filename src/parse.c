@@ -2386,60 +2386,9 @@ parse_expr_template(Ty *ty)
         return template;
 }
 
-static Expr *
-parse_function(Ty *ty, Expr **name, bool *is_operator)
+static void
+parse_function_header(Ty *ty, Expr *e)
 {
-        Expr *e = mkfunc(ty);
-
-        bool sugared_generator = false;
-
-        int type = K0;
-
-        if (type == KEYWORD_GENERATOR) {
-                e->type = EXPRESSION_GENERATOR;
-        } else {
-                e->type = EXPRESSION_FUNCTION;
-        }
-
-        next();
-
-        if (e->type == EXPRESSION_GENERATOR) {
-                goto Body;
-        }
-
-        if (is_operator != NULL) {
-                *is_operator = op_fixup(ty, 0);
-        } else {
-                (void)op_fixup(ty, 0);
-        }
-
-        if (T0 == TOKEN_IDENTIFIER) {
-                e->name = tok()->identifier;
-                if (is_operator != NULL && s_eq(e->name, "in")) {
-                        *is_operator = true;
-                }
-                if (name != NULL) {
-                        *name = mkid(tok()->identifier);
-                        (*name)->module = tok()->module;
-                }
-                tok()->tag = TT_FUNC;
-                next();
-        }
-
-        e->star = try_consume('*');
-
-        if (e->name != NULL && tok()->start.s[-1] == ' ') {
-                Expr *f = parse_expr(ty, 0);
-                if (
-                        (f->type != EXPRESSION_FUNCTION)
-                     && (f->type != EXPRESSION_IMPLICIT_FUNCTION)
-                ) {
-                        die_at(f, "expected function expression");
-                }
-                f->name = e->name;
-                return f;
-        }
-
         char const *volatile proto_start = tok()->start.s;
 
         SAVE_NE(true);
@@ -2539,6 +2488,63 @@ EndOfParams:
 
                 }
         }
+}
+
+static Expr *
+parse_function(Ty *ty, Expr **name, bool *is_operator)
+{
+        Expr *e = mkfunc(ty);
+
+        bool sugared_generator = false;
+
+        int type = K0;
+
+        if (type == KEYWORD_GENERATOR) {
+                e->type = EXPRESSION_GENERATOR;
+        } else {
+                e->type = EXPRESSION_FUNCTION;
+        }
+
+        next();
+
+        if (e->type == EXPRESSION_GENERATOR) {
+                goto Body;
+        }
+
+        if (is_operator != NULL) {
+                *is_operator = op_fixup(ty, 0);
+        } else {
+                (void)op_fixup(ty, 0);
+        }
+
+        if (T0 == TOKEN_IDENTIFIER) {
+                e->name = tok()->identifier;
+                if (is_operator != NULL && s_eq(e->name, "in")) {
+                        *is_operator = true;
+                }
+                if (name != NULL) {
+                        *name = mkid(tok()->identifier);
+                        (*name)->module = tok()->module;
+                }
+                tok()->tag = TT_FUNC;
+                next();
+        }
+
+        e->star = try_consume('*');
+
+        if (e->name != NULL && tok()->start.s[-1] == ' ') {
+                Expr *f = parse_expr(ty, 0);
+                if (
+                        (f->type != EXPRESSION_FUNCTION)
+                     && (f->type != EXPRESSION_IMPLICIT_FUNCTION)
+                ) {
+                        die_at(f, "expected function expression");
+                }
+                f->name = e->name;
+                return f;
+        }
+
+        parse_function_header(ty, e);
 
         if (sugared_generator) {
                 unconsume(TOKEN_KEYWORD);
@@ -6913,20 +6919,6 @@ parse_use(Ty *ty)
 }
 
 static Stmt *
-parse_set_type(Ty *ty)
-{
-        Stmt *s = mkstmt(ty);
-        s->type = STATEMENT_SET_TYPE;
-
-        consume_kw(SET_TYPE);
-
-        s->target = prefix_identifier(ty);
-        s->value = parse_type(ty, 0);
-
-        return s;
-}
-
-static Stmt *
 parse_catch(Ty *ty)
 {
         Stmt *try = mkstmt(ty);
@@ -7183,7 +7175,6 @@ Keyword:
         case KEYWORD_CONTINUE: return parse_continue_statement(ty);
         case KEYWORD_TRY:      return parse_try(ty);
         case KEYWORD_CATCH:    return parse_catch(ty);
-        case KEYWORD_SET_TYPE: return parse_set_type(ty);
 
 
         case KEYWORD_DBG:
@@ -7353,10 +7344,6 @@ define_top(Ty *ty, Stmt *s, char const *doc)
         case STATEMENT_TYPE_DEFINITION:
                 s->class.doc = doc;
                 define_type(ty, s, NULL);
-                break;
-
-        case STATEMENT_SET_TYPE:
-                compiler_set_type_of(ty, s);
                 break;
 
         case STATEMENT_MULTI:
@@ -7641,6 +7628,63 @@ parse(Ty *ty, char const *source, char const *file)
         }
 
         return mod.prog;
+}
+
+static Expr *
+parse_bare_type(Ty *ty)
+{
+        return parse_type(ty, 0);
+}
+
+static Expr *
+parse_bare_signature(Ty *ty)
+{
+        Expr *f = mkfunc(ty);
+        parse_function_header(ty, f);
+        return f;
+}
+
+static Expr *
+parse_fragment(Ty *ty, Module *mod, char const *source, Expr *(*parser)(Ty *))
+{
+        lex_save(ty, &CtxCheckpoint);
+
+        ParserState save = state;
+        m0(state);
+
+        state.module = mod;
+
+        lex_init(ty, mod->path, source);
+
+        if (TY_CATCH_ERROR()) {
+                state = save;
+                lex_restore(ty, &CtxCheckpoint);
+                TY_RETHROW();
+        }
+
+        setctx(LEX_PREFIX);
+
+        Expr *e = parser(ty);
+        expect(TOKEN_END);
+
+        TY_CATCH_END();
+
+        state = save;
+        lex_restore(ty, &CtxCheckpoint);
+
+        return e;
+}
+
+Expr *
+parse_type_source(Ty *ty, Module *mod, char const *source)
+{
+        return parse_fragment(ty, mod, source, parse_bare_type);
+}
+
+Expr *
+parse_signature_source(Ty *ty, Module *mod, char const *source)
+{
+        return parse_fragment(ty, mod, source, parse_bare_signature);
 }
 
 Token

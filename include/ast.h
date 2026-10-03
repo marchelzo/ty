@@ -117,8 +117,7 @@ typedef vec(struct condpart *) condpart_vector;
         X(EXPRESSION),            \
         X(USE),                   \
         X(IMPORT),                \
-        X(EXPORT),                \
-        X(SET_TYPE)
+        X(EXPORT)
 
 #define TY_EXPRESSION_TYPES                                                           \
         X(FUNCTION),                                                                  \

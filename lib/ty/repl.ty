@@ -142,10 +142,8 @@ pub fn tab-complete(before: String, after: String) -> CompletionAction {
 
     let expr = match ty.parse("{before} .? \{") {
         Err({last: $expr, *}) => parse.ast(expr),
-
-        Ok(mod) => mod.ast[-1],
-
-        _ => do return ListCompletions([])
+        Ok(mod)               => mod.ast[-1],
+        _                     => do return ListCompletions([])
     }
 
     let expr = match expr {
@@ -158,11 +156,9 @@ pub fn tab-complete(before: String, after: String) -> CompletionAction {
     }
 
 
-    let (subject, prefix) = match expr {
-        ty.MemberAccess(o, m) and (before[-1] != '.')
-            => (o, m),
-        _
-            => (expr, '')
+    let (subject, prefix) = match before[-1] == '.' ?: expr {
+        ty.MemberAccess(o, m) => (o, m),
+        _                     => (expr, '')
     }
 
     if let ty.Id({name, *}) = subject and let $mod = get-import(name) {
@@ -172,9 +168,11 @@ pub fn tab-complete(before: String, after: String) -> CompletionAction {
     return CycleCompletions(type-completions(types.infer(subject), prefix))
 }
 
-_readln = InteractiveLineReader(
-    prompt=() -> chalk"[#d3a2ff b]>>[/] ",
-    complete=tab-complete,
-    render=pretty-code,
-    history-file=Path.home() / '.ty' / '.history'
-).readln
+if ty.interactive {
+    _readln = InteractiveLineReader(
+        prompt=() -> chalk"[#d3a2ff b]>>[/] ",
+        complete=tab-complete,
+        render=pretty-code,
+        history-file=Path.home() / '.ty' / '.history'
+    ).readln
+}

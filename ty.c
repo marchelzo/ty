@@ -300,34 +300,31 @@ pollute_with_bloat(void)
 {
         execln(
                 ty,
-                "import pretty (..)                             \n"
-                "import json                                    \n"
-                "import base64                                  \n"
-                "import math (..)                               \n"
-                "import ty                                      \n"
-                "import ty.types as types                       \n"
-                "import os (..)                                 \n"
-                "import time (..)                               \n"
-                "import errno                                   \n"
-                "import locale                                  \n"
-                "import ioctls                                  \n"
-                "import termios (..)                            \n"
-                "import thread                                  \n"
-                "import ptr                                     \n"
-                "import io                                      \n"
-                "import path (Path)                             \n"
-                "import readln                                  \n"
-                "import sh (sh)                                 \n"
-                "import help (..)                               \n"
-                "import ty.repl (..)                            \n"
+                "import pretty (..)           \n"
+                "import json                  \n"
+                "import base64                \n"
+                "import math (..)             \n"
+                "import ty                    \n"
+                "import ty.types as types     \n"
+                "import os (..)               \n"
+                "import time (..)             \n"
+                "import errno                 \n"
+                "import locale                \n"
+                "import ioctls                \n"
+                "import termios (..)          \n"
+                "import thread                \n"
+                "import ptr                   \n"
+                "import io                    \n"
+                "import path (Path)           \n"
+                "import readln                \n"
+                "import sh (sh)               \n"
+                "import date                  \n"
+                "import chalk (chalk as C)   \n"
         );
 
         print_function = "pp";
 }
 
-
-noreturn static void
-repl(Ty *ty);
 
 static jmp_buf InterruptJB;
 
@@ -343,10 +340,13 @@ noreturn static void
 repl(Ty *ty)
 {
         InteractiveSession = true;
+        v_(Globals, NAMES.interactive)->boolean = true;
+
         signal(SIGINT, sigint);
 
         if (!basic) {
                 pollute_with_bloat();
+                execln(ty, "import ty.repl\n");
 #if defined(TY_HAVE_VERSION_INFO) && defined(TY_HAVE_GIT_STATUS)
                 printf(
                         "ty %s (%s%.8s%s), built %s\n",
@@ -688,7 +688,12 @@ main(int argc, char **argv)
 
         FILE *file = fopen(SourceFile, "r");
         if (file == NULL) {
-                fprintf(stderr, "Failed to open source file '%s': %s\n", SourceFile, strerror(errno));
+                fprintf(
+                        stderr,
+                        "Failed to open source file '%s': %s\n",
+                        SourceFile,
+                        strerror(errno)
+                );
                 return 1;
         }
 

@@ -297,8 +297,6 @@ pub use time::ClockID =
   | time::CLOCK_PROCESS_CPUTIME_ID
   | time::CLOCK_THREAD_CPUTIME_ID
 
-__set_type__ ty::executable String
-
 const `,` = tuple
 
 class Object {

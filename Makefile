@@ -67,10 +67,6 @@ ifndef LOG
 	CFLAGS += -DTY_NO_LOG
 endif
 
-ifdef UNSAFE
-	CFLAGS += -DTY_UNSAFE
-endif
-
 ifdef RELEASE
 	CFLAGS += -O3
 	CFLAGS += -DTY_RELEASE

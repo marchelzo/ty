@@ -9082,7 +9082,7 @@ bfdoc(Ty *ty, Value const *f)
                 return NIL;
         }
 
-        char const *proto = compiler_symbol_sig(ty, sym);
+        char const *proto = vm_builtin_type(f->module, name);
 
         GC_STOP();
 

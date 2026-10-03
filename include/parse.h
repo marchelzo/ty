@@ -11,6 +11,12 @@ parse(Ty *ty, char const *source, char const *file);
 bool
 parse_module(Ty *ty, Module *mod);
 
+Expr *
+parse_type_source(Ty *ty, Module *mod, char const *source);
+
+Expr *
+parse_signature_source(Ty *ty, Module *mod, char const *source);
+
 Token
 parse_get_token(Ty *ty, int i);
 

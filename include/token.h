@@ -154,7 +154,6 @@ typedef struct token {
                         KEYWORD_SUPER,
                         KEYWORD_EVAL,
                         KEYWORD_TYPEOF,
-                        KEYWORD_SET_TYPE,
                         KEYWORD_DEFINED,
                         KEYWORD_NAMESPACE,
                         KEYWORD_DBG,

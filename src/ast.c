@@ -489,10 +489,6 @@ visit_statement(Ty *ty, Stmt *s, Scope *scope, VisitorCtx *ctxt)
                         VT(s->class.type);
                 );
                 break;
-        case STATEMENT_SET_TYPE:
-                VL(false, s->target);
-                VT(s->value);
-                break;
         case STATEMENT_IMPORT:
                 bind_name(ty, scope, s->import.as, SYM_CONST);
                 if (!s->import.hiding) {

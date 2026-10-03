@@ -170,6 +170,9 @@ vm_eval_function(Ty *ty, Value const *f, ...);
 void
 vm_load_c_module(Ty *ty, char const *name, void *p);
 
+char const *
+vm_builtin_type(char const *module, char const *name);
+
 void
 vm_exec(Ty *ty, char *ip);
 

@@ -64,8 +64,7 @@ enum { TY_SCOPE_FLAGS };
         X(EXTERNAL,     External,    24)  \
         X(OPERATOR,     Operator,    25)  \
         X(TYPE_FUNCTION, TypeFunction, 26) \
-        X(TYPE_CONSTANT, TypeConstant, 27) \
-        X(SIGNED,       Signed,      28)
+        X(TYPE_CONSTANT, TypeConstant, 27)
 
 
 #define X(f, _, i) SYM_##f = (1 << i),

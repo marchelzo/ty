@@ -5,27 +5,6 @@ import ty.parse (expr, stmt)
 import ty.lex as lex
 import ptr (typed)
 
-__set_type__ c::i8      CType[Int];
-__set_type__ c::i16     CType[Int];
-__set_type__ c::i32     CType[Int];
-__set_type__ c::i64     CType[Int];
-__set_type__ c::u8      CType[Int];
-__set_type__ c::u16     CType[Int];
-__set_type__ c::u32     CType[Int];
-__set_type__ c::u64     CType[Int];
-__set_type__ c::char    CType[Int];
-__set_type__ c::uchar   CType[Int];
-__set_type__ c::int     CType[Int];
-__set_type__ c::uint    CType[Int];
-__set_type__ c::short   CType[Int];
-__set_type__ c::ushort  CType[Int];
-__set_type__ c::long    CType[Int];
-__set_type__ c::ulong   CType[Int];
-__set_type__ c::float   CType[Float];
-__set_type__ c::double  CType[Float];
-__set_type__ c::ptr     CType[Ptr[Any]];
-__set_type__ c::void    CType[nil];
-
 fn __unpacked(fmt: String) -> _ {
     let ts = []
     let i = 0

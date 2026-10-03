@@ -185,11 +185,11 @@ static Value NILS[2048];
 
 #define TY_INSTR_INLINE
 
-#define IP              (ty->ip)
-#define CO_THREADS      (ty->cothreads)
-#define JB              (ty->jb)
-#define THREAD_LOCALS   (ty->tls)
-#define THROW_STACK     (ty->throw_stack)
+#define IP             (ty->ip)
+#define CO_THREADS     (ty->cothreads)
+#define JB             (ty->jb)
+#define THREAD_LOCALS  (ty->tls)
+#define THROW_STACK    (ty->throw_stack)
 
 #define CALLS         (ty->st->calls)
 #define DROP_STACK    (ty->st->to_drop)
@@ -902,25 +902,21 @@ add_builtins(Ty *ty, int ac, char **av)
         }
 
         for (int i = 0; i < countof(builtins); ++i) {
+                Value *v = &builtins[i].value;
+                bool fn = (v->type == VALUE_BUILTIN_FUNCTION);
                 Symbol *sym = compiler_introduce_symbol(
                         ty,
                         builtins[i].module,
-                        builtins[i].name
+                        builtins[i].name,
+                        builtins[i].sig,
+                        fn
                 );
-                Value *v = &builtins[i].value;
-                if (v->type == VALUE_BUILTIN_FUNCTION) {
+                sym->doc = builtins[i].doc;
+                if (fn) {
                         v->name = M_ID(builtins[i].name);
                         v->module = builtins[i].module;
                         sym->flags |= SYM_FUNCTION;
                         sym->flags |= SYM_CONST;
-                }
-                if (builtins[i].sig != NULL) {
-                        compiler_introduce_signature(
-                                ty,
-                                sym,
-                                builtins[i].sig,
-                                builtins[i].doc
-                        );
                 }
                 xvP(Globals, builtins[i].value);
                 switch (ClassOf(v)) {
@@ -957,7 +953,7 @@ add_builtins(Ty *ty, int ac, char **av)
                 vAp(args, vSsz(av[i]));
         }
 
-        compiler_introduce_symbol(ty, NULL, "argv");
+        compiler_introduce_symbol(ty, NULL, "argv", "Array[String]", false);
         xvP(Globals, ARRAY(args));
 
         Dict *env = dict_new(ty);
@@ -983,38 +979,39 @@ add_builtins(Ty *ty, int ac, char **av)
         );
 
 //===========================================================================
-#define BUILTIN_VAR(m, t)                    \
-        compiler_introduce_symbol(ty, m, t); \
+#define BUILTIN_VAR(m, t, type)                           \
+        compiler_introduce_symbol(ty, m, t, type, false); \
         *xvP(Globals, NIL)
 
-#define BUILTIN_NAMED_VAR(m, t, c)           \
-        compiler_introduce_symbol(ty, m, t); \
-        NAMES.c = vN(Globals);               \
+#define BUILTIN_NAMED_VAR(m, t, c, type)                  \
+        compiler_introduce_symbol(ty, m, t, type, false); \
+        NAMES.c = vN(Globals);                            \
         *xvP(Globals, NIL)
 //---------------------------------------------------------------------------
-        BUILTIN_NAMED_VAR(NULL,  "__env",          env       ) = DICT(env);
-        BUILTIN_NAMED_VAR(NULL,  "__EXIT_HOOKS__", exit_hooks) = ARRAY(vA());
-        BUILTIN_NAMED_VAR(NULL,  "_readln",        _readln   ) = NIL;
-        BUILTIN_NAMED_VAR(NULL,  "pretty",         pretty    ) = NIL;
-        BUILTIN_NAMED_VAR(NULL,  "pp",             pp        ) = NIL;
-        BUILTIN_NAMED_VAR("ty",  "path",           path      ) = ARRAY(vA());
-        BUILTIN_NAMED_VAR("ty",  "q",              q         ) = BOOLEAN(!CheckTypes);
-        BUILTIN_NAMED_VAR("ty",  "jit",            jit       ) = BOOLEAN(!NoJIT);
-        BUILTIN_NAMED_VAR("ty",  "TEST",           TEST      ) = BOOLEAN(RunningTests);
-        BUILTIN_NAMED_VAR("ty",  "tests",          tests     ) = ARRAY(vA());
-        BUILTIN_NAMED_VAR("ty",  "version",        version   ) = version;
+        BUILTIN_NAMED_VAR(NULL, "__env",          env,         "Dict[String, String]"          ) = DICT(env);
+        BUILTIN_NAMED_VAR(NULL, "__EXIT_HOOKS__", exit_hooks,  NULL                            ) = ARRAY(vA());
+        BUILTIN_NAMED_VAR(NULL, "_readln",        _readln,     NULL                            ) = NIL;
+        BUILTIN_NAMED_VAR(NULL, "pretty",         pretty,      NULL                            ) = NIL;
+        BUILTIN_NAMED_VAR(NULL, "pp",             pp,          NULL                            ) = NIL;
+        BUILTIN_NAMED_VAR("ty", "path",           path,        "Array[String]"                 ) = ARRAY(vA());
+        BUILTIN_NAMED_VAR("ty", "q",              q,           "Bool"                          ) = BOOLEAN(!CheckTypes);
+        BUILTIN_NAMED_VAR("ty", "jit",            jit,         "Bool"                          ) = BOOLEAN(!NoJIT);
+        BUILTIN_NAMED_VAR("ty", "TEST",           TEST,        "Bool"                          ) = BOOLEAN(RunningTests);
+        BUILTIN_NAMED_VAR("ty", "tests",          tests,       NULL                            ) = ARRAY(vA());
+        BUILTIN_NAMED_VAR("ty", "version",        version,     "{string: String, date: String}") = version;
+        BUILTIN_NAMED_VAR("ty", "interactive",    interactive, "Bool"                          ) = BOOLEAN(false);
 
-        BUILTIN_VAR("ty",  "executable") = this_executable(ty);
-        BUILTIN_VAR("ty",  "platform")   = xSz(TY_PLATFORM_NAME);
-        BUILTIN_VAR("ty",  "color")      = xSz(COLOR_MODE_NAMES[ColorMode]);
+        BUILTIN_VAR("ty",  "executable", "String") = this_executable(ty);
+        BUILTIN_VAR("ty",  "platform",   "String") = xSz(TY_PLATFORM_NAME);
+        BUILTIN_VAR("ty",  "color",      "String") = xSz(COLOR_MODE_NAMES[ColorMode]);
 #if defined(_WIN32)
-        BUILTIN_VAR("os",  "PAGE_SIZE" ) = INTEGER(4096);
+        BUILTIN_VAR("os",  "PAGE_SIZE",  "Int") = INTEGER(4096);
 #else
-        BUILTIN_VAR("os",  "PAGE_SIZE" ) = INTEGER(sysconf(_SC_PAGESIZE));
+        BUILTIN_VAR("os",  "PAGE_SIZE",  "Int") = INTEGER(sysconf(_SC_PAGESIZE));
 #endif
 #if defined(__linux__)
-        BUILTIN_VAR("os",  "SIGRTMIN"  ) = INTEGER(SIGRTMIN);
-        BUILTIN_VAR("os",  "SIGRTMAX"  ) = INTEGER(SIGRTMAX);
+        BUILTIN_VAR("os",  "SIGRTMIN",   "Int") = INTEGER(SIGRTMIN);
+        BUILTIN_VAR("os",  "SIGRTMAX",   "Int") = INTEGER(SIGRTMAX);
 #endif
 //---------------------------------------------------------------------------
 #undef BUILTIN_VAR
@@ -1074,30 +1071,30 @@ add_builtins(Ty *ty, int ac, char **av)
 //===========================================================================
 /* Add FFI types here because they aren't constant expressions on Windows. */
 //---------------------------------------------------------------------------
-#define BUILTIN_FFI_TYPE(name, ffi_type_ptr)        \
-        compiler_introduce_symbol(ty, "ffi", name); \
+#define BUILTIN_FFI_TYPE(name, ffi_type_ptr, t)                         \
+        compiler_introduce_symbol(ty, "ffi", name, "CType[" t "]", false); \
         xvP(Globals, PTR(ffi_type_ptr))
 //---------------------------------------------------------------------------
-        BUILTIN_FFI_TYPE("char",    &ffi_type_schar   );
-        BUILTIN_FFI_TYPE("short",   &ffi_type_sshort  );
-        BUILTIN_FFI_TYPE("int",     &ffi_type_sint    );
-        BUILTIN_FFI_TYPE("long",    &ffi_type_slong   );
-        BUILTIN_FFI_TYPE("uchar",   &ffi_type_uchar   );
-        BUILTIN_FFI_TYPE("ushort",  &ffi_type_ushort  );
-        BUILTIN_FFI_TYPE("uint",    &ffi_type_uint    );
-        BUILTIN_FFI_TYPE("ulong",   &ffi_type_ulong   );
-        BUILTIN_FFI_TYPE("u8",      &ffi_type_uint8   );
-        BUILTIN_FFI_TYPE("u16",     &ffi_type_uint16  );
-        BUILTIN_FFI_TYPE("u32",     &ffi_type_uint32  );
-        BUILTIN_FFI_TYPE("u64",     &ffi_type_uint64  );
-        BUILTIN_FFI_TYPE("i8",      &ffi_type_sint8   );
-        BUILTIN_FFI_TYPE("i16",     &ffi_type_sint16  );
-        BUILTIN_FFI_TYPE("i32",     &ffi_type_sint32  );
-        BUILTIN_FFI_TYPE("i64",     &ffi_type_sint64  );
-        BUILTIN_FFI_TYPE("float",   &ffi_type_float   );
-        BUILTIN_FFI_TYPE("double",  &ffi_type_double  );
-        BUILTIN_FFI_TYPE("ptr",     &ffi_type_pointer );
-        BUILTIN_FFI_TYPE("void",    &ffi_type_void    );
+        BUILTIN_FFI_TYPE("char",   &ffi_type_schar,   "Int"     );
+        BUILTIN_FFI_TYPE("short",  &ffi_type_sshort,  "Int"     );
+        BUILTIN_FFI_TYPE("int",    &ffi_type_sint,    "Int"     );
+        BUILTIN_FFI_TYPE("long",   &ffi_type_slong,   "Int"     );
+        BUILTIN_FFI_TYPE("uchar",  &ffi_type_uchar,   "Int"     );
+        BUILTIN_FFI_TYPE("ushort", &ffi_type_ushort,  "Int"     );
+        BUILTIN_FFI_TYPE("uint",   &ffi_type_uint,    "Int"     );
+        BUILTIN_FFI_TYPE("ulong",  &ffi_type_ulong,   "Int"     );
+        BUILTIN_FFI_TYPE("u8",     &ffi_type_uint8,   "Int"     );
+        BUILTIN_FFI_TYPE("u16",    &ffi_type_uint16,  "Int"     );
+        BUILTIN_FFI_TYPE("u32",    &ffi_type_uint32,  "Int"     );
+        BUILTIN_FFI_TYPE("u64",    &ffi_type_uint64,  "Int"     );
+        BUILTIN_FFI_TYPE("i8",     &ffi_type_sint8,   "Int"     );
+        BUILTIN_FFI_TYPE("i16",    &ffi_type_sint16,  "Int"     );
+        BUILTIN_FFI_TYPE("i32",    &ffi_type_sint32,  "Int"     );
+        BUILTIN_FFI_TYPE("i64",    &ffi_type_sint64,  "Int"     );
+        BUILTIN_FFI_TYPE("float",  &ffi_type_float,   "Float"   );
+        BUILTIN_FFI_TYPE("double", &ffi_type_double,  "Float"   );
+        BUILTIN_FFI_TYPE("ptr",    &ffi_type_pointer, "Ptr[Any]");
+        BUILTIN_FFI_TYPE("void",   &ffi_type_void,    "nil"     );
 //---------------------------------------------------------------------------
 #undef BUILTIN_FFI_TYPE
 //===========================================================================
@@ -1118,6 +1115,28 @@ add_builtins(Ty *ty, int ac, char **av)
         GC_RESUME();
 }
 
+char const *
+vm_builtin_type(char const *module, char const *name)
+{
+        for (int i = 0; i < countof(builtins); ++i) {
+                if (
+                        s_eq(builtins[i].name, name)
+                     && (
+                                (builtins[i].module == module)
+                             || (
+                                        (builtins[i].module != NULL)
+                                     && (module != NULL)
+                                     && s_eq(builtins[i].module, module)
+                                )
+                        )
+                ) {
+                        return builtins[i].sig;
+                }
+        }
+
+        return NULL;
+}
+
 void
 vm_load_c_module(Ty *ty, char const *name, void *p)
 {
@@ -1127,7 +1146,7 @@ vm_load_c_module(Ty *ty, char const *name, void *p)
         } *mod = p;
 
         for (isize i = 0; mod[i].name != NULL; ++i) {
-                compiler_introduce_symbol(ty, name, mod[i].name);
+                compiler_introduce_symbol(ty, name, mod[i].name, NULL, false);
                 xvP(Globals, mod[i].value);
         }
 }

@@ -1078,7 +1078,7 @@ class StreamingSession {
 
     __drop__() { __cleanup() }
 
-    __setopt[T](opt: Int, val: (CType[T], IntoPtr[T]), ctx: String) {
+    __setopt(opt: Int, val: (CType[Any], Any), ctx: String) {
         let res = curl_easy_setopt(__easy, opt, val)
         if res != CURLE_OK { throw CURLError(res, ctx) }
     }
@@ -1524,7 +1524,7 @@ pub class Session {
         __abort = false
     }
 
-    __setopt[T](opt: Int, val: (CType[T], IntoPtr[T]), ctx: String) {
+    __setopt(opt: Int, val: (CType[Any], Any), ctx: String) {
         let res = curl_easy_setopt(__handle, opt, val)
         if res != CURLE_OK { throw CURLError(res, ctx) }
     }

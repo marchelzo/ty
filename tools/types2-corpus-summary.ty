@@ -43,7 +43,6 @@ const REASON_CLASSES = %{
     'typeof-unresolved':      'incomplete',
     'ifdef':                  'incomplete',
     'macro-definition':       'incomplete',
-    'set-type':               'incomplete',
     'unsupported-bound':      'incomplete',
     'unsupported-hierarchy':  'incomplete',
     'unsupported-pattern':    'incomplete',

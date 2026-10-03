@@ -64,7 +64,7 @@ let groups = %{
     'green': 'string " f-string',
     'green2': 'fun_member fun fun_func fun_call id_func (_call )_call',
     'blue': 'id_member id_field',
-    'blue2': 'typeof __set_type__',
+    'blue2': 'typeof',
     'aqua': 'regex',
     'grey': 'comment ; :_punct',
     'pink': 'pp id_macro fun_macro type_macro $$[ $$] $$ __defined__'
