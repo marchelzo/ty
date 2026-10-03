@@ -22,10 +22,6 @@ ifeq ($(shell uname -m),arm64)
 	LDFLAGS += -Wl,-rpath,/opt/homebrew/lib
 endif
 
-ifeq ($(shell uname -s),Darwin)
-	LDFLAGS += -framework Accelerate
-endif
-
 LDFLAGS += -lm
 LDFLAGS += -lcurses
 LDFLAGS += -L/usr/local/lib
@@ -173,7 +169,7 @@ include/optokens.h: src/optokens.gperf
 	@gperf $< > $@
 
 GEN_DIR     := include/gen
-GEN_SOURCES := src/functions.c src/accelerate.c src/ffi.c src/sqlite.c
+GEN_SOURCES := src/functions.c src/ffi.c src/sqlite.c
 GEN_HEADERS := $(GEN_DIR)/builtin_decls.h $(GEN_DIR)/builtin_table.h
 
 tools/tybi: tools/tybi.c
