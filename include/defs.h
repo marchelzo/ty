@@ -54,6 +54,12 @@
  #define ty_aligned_alloc aligned_alloc
 #endif
 
+#if defined(__APPLE__)
+ #define ty_setjmp _setjmp
+#else
+ #define ty_setjmp setjmp
+#endif
+
 #if 1
  #include "stb_sprintf.h"
  #define ty_snprintf  stbsp_snprintf

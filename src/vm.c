@@ -6631,7 +6631,7 @@ vm_exec(Ty *ty, char *code)
                 for (; k < vN(TRY_STACK); ++k) {
                         _try = v__(TRY_STACK, k);
                         _try->ed = EXEC_DEPTH;
-                        if (setjmp(_try->jb) != 0) {
+                        if (ty_setjmp(_try->jb) != 0) {
                                 ty = _ty;
                                 goto NextInstruction;
                         }
@@ -6645,12 +6645,15 @@ NextInstruction:
                 {
                         char *prev = LastIP;
 
-                        if (prev == StartIPLocal
-                            || (prev != NULL && (*prev == INSTR_HALT
-                                || prev == next_fix  || prev == iter_fix
-                                || prev == next_fix + 1 || prev == iter_fix + 1
-                                || prev == &throw)))
-                        {
+                        if (
+                                (prev == StartIPLocal)
+                             || (prev != NULL && *prev == INSTR_HALT)
+                             || (prev == next_fix)
+                             || (prev == iter_fix)
+                             || (prev == next_fix + 1)
+                             || (prev == iter_fix + 1)
+                             || (prev == &throw)
+                        ) {
                                 prev = NULL;
                         }
 
@@ -7281,7 +7284,7 @@ TargetMember:
                 {
                         _try = PushTry(ty);
 
-                        if (setjmp(_try->jb) != 0) {
+                        if (ty_setjmp(_try->jb) != 0) {
                                 ty = _ty;
                                 break;
                         }

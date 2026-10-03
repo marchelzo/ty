@@ -1582,7 +1582,7 @@ Begin:
 Token
 lex_token(Ty *ty, LexContext ctx)
 {
-        if (setjmp(jb) != 0) {
+        if (ty_setjmp(jb) != 0) {
                 return (Token) {
                         .type  = TOKEN_ERROR,
                         .start = Start,
@@ -1606,7 +1606,7 @@ lex_docstring_part(Ty *ty, Location start, char const *end, usize indent, bool f
         state.loc = Start = start;
         state.ctx = LEX_DOC;
 
-        if (setjmp(jb) == 0) {
+        if (ty_setjmp(jb) == 0) {
                 t = lex_ss_string(ty, indent, first, end);
         } else {
                 t = mktoken(ty, TOKEN_ERROR);
