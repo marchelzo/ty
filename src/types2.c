@@ -31587,7 +31587,7 @@ canonical_metas(char const *text)
                      || (
                                 (text[i] == 'm')
                              && (text[i + 1] == 'u')
-                             && ((i == 0) || !isalnum((unsigned char)text[i - 1]))
+                             && ((i == 0) || !xisalnum((unsigned char)text[i - 1]))
                         )
                 );
                 if (binder) {
@@ -31596,14 +31596,14 @@ canonical_metas(char const *text)
                         while (
                                 (text[i] == '$')
                              && (p < sizeof seen->prefix - 1)
-                             && isalpha((unsigned char)text[i + 1 + p])
+                             && xisalpha((unsigned char)text[i + 1 + p])
                         ) {
                                 p += 1;
                         }
                 }
                 if (
                         (!binder && (p == 0))
-                     || !isdigit((unsigned char)text[i + skip + p])
+                     || !xisdigit((unsigned char)text[i + skip + p])
                 ) {
                         out[n++] = text[i++];
                         continue;

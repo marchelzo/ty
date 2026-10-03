@@ -384,6 +384,7 @@ static ModuleVector modules;
 static vec(ProgramAnnotation) annotations;
 static vec(location_vector) location_lists;
 static vec(Expr const *) source_map;
+static u32 source_map_hole;
 static JumpGroup PreludeAssertionOffsets;
 static Module *MainModule;
 static Module *GlobalModule;
@@ -1238,7 +1239,7 @@ colorize_code(
         while (prefix[-1] != '\0' && prefix[-1] != '\n')
                 --prefix;
 
-        while (isspace(prefix[0]))
+        while (xisspace(prefix[0]))
                 ++prefix;
 
         int before = start->s - prefix;
@@ -1299,7 +1300,7 @@ colorize_code_multiline(
 
         for (p = ls; p < le;) {
                 if (p > ls && p[-1] == '\n') {
-                        for (indent = 0, q = p; q < le && isspace(*q) && *q != '\n';) {
+                        for (indent = 0, q = p; q < le && xisspace(*q) && *q != '\n';) {
                                 ++indent, ++q;
                         }
                         if (q < le && *q != '\n' && indent < min) {
@@ -1309,7 +1310,7 @@ colorize_code_multiline(
                 p += (*p == '\n') ? 1 : strcspn(p, "\n");
         }
 
-        for (indent = 0; ls[indent] && isspace(ls[indent]) && ls[indent] != '\n';) {
+        for (indent = 0; ls[indent] && xisspace(ls[indent]) && ls[indent] != '\n';) {
                 ++indent;
         }
         if (indent < min) {
@@ -1321,7 +1322,7 @@ colorize_code_multiline(
 
         for (p = ls; p < le;) {
                 if (p == ls || p[-1] == '\n') {
-                        for (skip = 0; skip < min && isspace(p[skip]) && p[skip] != '\n';) {
+                        for (skip = 0; skip < min && xisspace(p[skip]) && p[skip] != '\n';) {
                                 ++skip;
                         }
                         p += skip;
@@ -2500,7 +2501,7 @@ getsymbol(Ty *ty, Scope const *scope, char const *name, u32 flags)
          *
          * // f = const . (+ 4)
          */
-        if (name[0] == '_' && isdigit(name[1]) && name[2] == '\0' && STATE.implicit_fscope != NULL) {
+        if (name[0] == '_' && xisdigit(name[1]) && name[2] == '\0' && STATE.implicit_fscope != NULL) {
                 int n = name[1] - '0';
                 for (int i = vN(STATE.implicit_func->params) + 1; i <= n; ++i) {
                         char b[] = { '_', i + '0', '\0' };
@@ -3578,7 +3579,7 @@ try_symbolize_application(Ty *ty, Scope *scope, Expr *e)
                         tag_pattern
                      || (e->function->symbol->tag != -1)
                      || (e->function->symbol->class != -1)
-                     || isupper(e->function->identifier[0])
+                     || xisupper(e->function->identifier[0])
                      || SymbolIsPattern(e->function->symbol)
                 ) {
                         Expr             f = *e;
@@ -3994,7 +3995,7 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                 if (
                         !s_eq(e->identifier, "_")
                      && (
-                                (existing != NULL && SymbolIsConst(existing) && isupper(e->identifier[0]))
+                                (existing != NULL && SymbolIsConst(existing) && xisupper(e->identifier[0]))
                              || (existing != NULL && (existing->scope == scope) && !ScopeIsTop(scope))
                              || (e->module != NULL)
                         )
@@ -12069,6 +12070,12 @@ clone_expr(Expr *e, Scope *scope, void *ctx)
                 CloneVec(e->with.defs);
                 break;
 
+        case EXPRESSION_TEMPLATE:
+                CloneVec(e->template.stmts);
+                CloneVec(e->template.exprs);
+                CloneVec(e->template.holes);
+                break;
+
         case EXPRESSION_FUNCTION:
                 CloneVec(e->params);
                 CloneVec(e->type_params);
@@ -13937,14 +13944,16 @@ inline static char *
 u32
 source_register(Ty *ty, void const *src)
 {
-        for (u32 i = 0; i < vN(source_map); ++i) {
+        for (u32 i = source_map_hole; i < vN(source_map); ++i) {
                 if (v__(source_map, i) == NULL) {
                         *v_(source_map, i) = (Expr const *)src;
+                        source_map_hole = i + 1;
                         return i + 1;
                 }
         }
 
         xvP(source_map, (Expr const *)src);
+        source_map_hole = vN(source_map);
 
         return vN(source_map);
 }
@@ -13968,6 +13977,7 @@ ForgetSourceNodesFrom(void const *_base, usize len)
                 uptr expr = (uptr)v__(source_map, i);
                 if (expr >= base && expr < base + len) {
                         v__(source_map, i) = NULL;
+                        source_map_hole = min(source_map_hole, i);
                 }
         }
 }
@@ -18308,7 +18318,7 @@ WriteExpressionOrigin(Ty *ty, byte_vector *out, Expr const *e)
         while (prefix[-1] != '\0' && prefix[-1] != '\n')
                 --prefix;
 
-        while (isspace(prefix[0]))
+        while (xisspace(prefix[0]))
                 ++prefix;
 
         int before = source - prefix;
@@ -18558,7 +18568,7 @@ WriteExpressionTrace(Ty *ty, byte_vector *out, Expr const *e, int etw, bool firs
                 --prefix;
         }
 
-        while (isspace(prefix[0])) {
+        while (xisspace(prefix[0])) {
                 ++prefix;
         }
 
@@ -20574,6 +20584,7 @@ CompilerReset(Ty *ty)
         v0(annotations);
         v0(location_lists);
         v0(source_map);
+        source_map_hole = 0;
         v0(PreludeAssertionOffsets);
 
         MainModule      = NULL;

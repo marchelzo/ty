@@ -179,6 +179,33 @@ else()
   message(WARNING "gperf not found -- keywords.h will not be regenerated")
 endif()
 
+set(_file_optokens_h ${_autogen_dir}/include/optokens.h)
+set(_gperf_optokens  ${PROJECT_SOURCE_DIR}/src/optokens.gperf)
+
+if(GPERF)
+  add_custom_command(
+    OUTPUT
+      ${_file_optokens_h}
+    COMMAND
+      ${GPERF} "${_gperf_optokens}" > "${_file_optokens_h}.tmp"
+    COMMAND
+      ${CMAKE_COMMAND} -E copy_if_different
+        "${_file_optokens_h}.tmp"
+        "${_file_optokens_h}"
+    COMMAND
+      ${CMAKE_COMMAND} -E rm "${_file_optokens_h}.tmp"
+    DEPENDS
+      ${_gperf_optokens}
+    COMMENT
+      "Generating optokens.h from optokens.gperf"
+    VERBATIM
+  )
+  add_custom_target(GenerateOptokensH DEPENDS ${_file_optokens_h})
+  add_dependencies(${_tgt_ioctlconstants_h} GenerateOptokensH)
+else()
+  message(WARNING "gperf not found -- optokens.h will not be regenerated")
+endif()
+
 # ---
 #  target: libco
 # ---

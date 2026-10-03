@@ -1036,18 +1036,19 @@ TY_BUILTIN_RAW(float)
         ASSERT_ARGC("float()", 1);
 
         Value v = ARGx(0, VALUE_INTEGER, VALUE_REAL, VALUE_STRING);
-        char *end;
 
         double x;
+        char *end;
+        char const *s;
 
         switch (v.type) {
         case VALUE_INTEGER: x = (double)v.z; break;
         case VALUE_REAL:    x = v.real;      break;
 
         case VALUE_STRING:
-                errno = 0;
-                x = strtod(TY_TMP_C_STR(v), &end);
-                if (errno != 0 || *end != '\0') {
+                s = (char const *)ss(v);
+                x = ty_strtod(s, &end, sN(v));
+                if (errno != 0 || end != s + sN(v)) {
                         return NIL;
                 }
                 break;

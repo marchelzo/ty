@@ -168,6 +168,10 @@ include/keywords.h: src/keywords.gperf
 	@echo gperf $<
 	@gperf $< > $@
 
+include/optokens.h: src/optokens.gperf
+	@echo gperf $<
+	@gperf $< > $@
+
 GEN_DIR     := include/gen
 GEN_SOURCES := src/functions.c src/accelerate.c src/ffi.c src/sqlite.c
 GEN_HEADERS := $(GEN_DIR)/builtin_decls.h $(GEN_DIR)/builtin_table.h
@@ -188,9 +192,9 @@ $(GEN_HEADERS): $(GEN_DIR)/.stamp
 $(OBJECTS) $(TYLS_OBJECTS) $(TYPROF_OBJECTS): | $(GEN_HEADERS)
 obj/ty-main.o obj/tyls-main.o obj/typrof-main.o: | $(GEN_HEADERS)
 
-obj/token.o: include/keywords.h
-obj/tyls/token.o: include/keywords.h
-obj/typrof/token.o: include/keywords.h
+obj/token.o: include/keywords.h include/optokens.h
+obj/tyls/token.o: include/keywords.h include/optokens.h
+obj/typrof/token.o: include/keywords.h include/optokens.h
 
 # jit.c depends on the generated DynASM header
 obj/jit.o: $(JIT_HDR)
@@ -247,7 +251,7 @@ obj/typrof/%.o: src/%.c
 
 
 clean:
-	rm -rf $(PROG) *.gcda $(OBJECTS) $(TYLS_OBJECTS) $(TYPROF_OBJECTS) libco/libco.o dtoa/dtoa.o include/keywords.h $(GEN_DIR) tools/tybi $(BUILD_SIG_FILE) $(DEPFILES) obj/ty-main.o obj/tyls-main.o obj/typrof-main.o obj/types2-core-test
+	rm -rf $(PROG) *.gcda $(OBJECTS) $(TYLS_OBJECTS) $(TYPROF_OBJECTS) libco/libco.o dtoa/dtoa.o include/keywords.h include/optokens.h $(GEN_DIR) tools/tybi $(BUILD_SIG_FILE) $(DEPFILES) obj/ty-main.o obj/tyls-main.o obj/typrof-main.o obj/types2-core-test
 
 test: ty tyls test-types2
 	./ty test.ty $(TEST_ARGS)

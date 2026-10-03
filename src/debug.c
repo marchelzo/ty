@@ -516,20 +516,14 @@ JsonValue(JsonCursor *c, int depth)
         default:
                 j = alloc0(sizeof *j);
                 j->kind = J_NUM;
-                char buf[64];
-                usize n = 0;
-                while (
-                        (c->p < c->end)
-                     && (n + 1 < sizeof buf)
-                     && (strchr("+-0123456789.eE", *c->p) != NULL)
-                ) {
-                        buf[n++] = *c->p++;
-                }
-                buf[n] = '\0';
-                if (n == 0) {
+                JsonNumber num;
+                char const *end = ty_json_number(c->p, c->end, &num);
+                if (end == NULL) {
                         c->bad = true;
+                        return j;
                 }
-                j->n = strtod(buf, NULL);
+                c->p = end;
+                j->n = num.real ? num.x : (double)num.z;
                 return j;
         }
 }

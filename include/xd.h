@@ -1,6 +1,7 @@
 #ifndef XD_H_INCLUDED
 #define XD_H_INCLUDED
 
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -256,6 +257,60 @@ search_str(StringVector const *ss, char const *s)
 }
 
 inline static bool
+xisdigit(int c)
+{
+        return (unsigned)c - '0' < 10;
+}
+
+inline static bool
+xisupper(int c)
+{
+        return (unsigned)c - 'A' < 26;
+}
+
+inline static bool
+xislower(int c)
+{
+        return (unsigned)c - 'a' < 26;
+}
+
+inline static bool
+xisalpha(int c)
+{
+        return ((unsigned)c | 32) - 'a' < 26;
+}
+
+inline static bool
+xisalnum(int c)
+{
+        return xisalpha(c) || xisdigit(c);
+}
+
+inline static bool
+xisxdigit(int c)
+{
+        return xisdigit(c) || ((unsigned)c | 32) - 'a' < 6;
+}
+
+inline static bool
+xisspace(int c)
+{
+        return (c == ' ') || ((unsigned)c - '\t' < 5);
+}
+
+inline static int
+xtoupper(int c)
+{
+        return xislower(c) ? (c - 32) : c;
+}
+
+inline static int
+xtolower(int c)
+{
+        return xisupper(c) ? (c + 32) : c;
+}
+
+inline static bool
 contains(char const *s, int c)
 {
         return (c != '\0') && (strchr(s, c) != NULL);
@@ -470,6 +525,65 @@ xfmt(char const *fmt, ...);
 
 char *
 (afmt)(Ty *ty, char const *fmt, ...);
+
+inline static double
+(ty_strtod)(char const *nptr, char **endptr, usize len)
+{
+        static ffc_parse_options const opts = {
+                .format = FFC_PRESET_GENERAL
+                        | FFC_FORMAT_FLAG_ALLOW_LEADING_PLUS
+                        | FFC_FORMAT_FLAG_SKIP_WHITE_SPACE,
+                .decimal_point = '.'
+        };
+
+        double x;
+        ffc_result res = ffc_from_chars_double_options(nptr, nptr + len, &x, opts);
+
+        if (LIKELY(endptr != NULL)) {
+                *endptr = (char *)res.ptr;
+        }
+
+        if (LIKELY(res.outcome == FFC_OUTCOME_OK)) {
+                errno = 0;
+                return x;
+        }
+
+        errno = (res.outcome == FFC_OUTCOME_OUT_OF_RANGE) ? ERANGE : EINVAL;
+        return 0.0;
+}
+
+#define ty_strtod_2(nptr, endptr)      (ty_strtod)((nptr), (endptr), strlen(nptr))
+#define ty_strtod_3(nptr, endptr, len) (ty_strtod)((nptr), (endptr), (len))
+#define ty_strtod(...) VA_SELECT(ty_strtod, __VA_ARGS__)
+
+typedef struct {
+        bool real;
+        union {
+                i64    z;
+                double x;
+        };
+} JsonNumber;
+
+inline static char const *
+ty_json_number(char const *s, char const *end, JsonNumber *out)
+{
+        ffc_json_number num;
+        ffc_result res = ffc_parse_json_number(s, end, &num);
+
+        if (res.outcome != FFC_OUTCOME_OK) {
+                return NULL;
+        }
+
+        out->real = (num.kind == FFC_JSON_NUM_KIND_DOUBLE);
+
+        if (out->real) {
+                out->x = num.value.f64;
+        } else {
+                out->z = num.value.i64;
+        }
+
+        return res.ptr;
+}
 
 #endif
 

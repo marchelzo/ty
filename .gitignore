@@ -8,6 +8,7 @@ src/jit_*.h
 include/ioctl_constants.h
 include/errno_constants.h
 include/keywords.h
+include/optokens.h
 
 obj/
 dtoa/*.o

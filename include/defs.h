@@ -69,6 +69,8 @@
  #define ty_vsnprintf vsnprintf
 #endif
 
+#include "vendor/ffc.h"
+
 #if defined(__linux__)
   #define rqsort(base, nel, width, cmp, ctx) qsort_r(base, nel, width, cmp, ctx);
 #elif defined(_WIN32)

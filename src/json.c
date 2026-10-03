@@ -61,55 +61,17 @@ space(void)
 static Value
 number(void)
 {
-        char numbuf[512];
-        char const *num = json;
-        bool integral = true;
+        JsonNumber num;
+        char const *end = ty_json_number(json, json + len, &num);
 
-        if (peek() == '-')
-                next();
-
-        if (!isdigit(peek()))
+        if (end == NULL) {
                 FAIL;
-
-        while (isdigit(peek()))
-                next();
-
-        if (peek() == '.') {
-                integral = false;
-                next();
-                if (!isdigit(peek()))
-                        FAIL;
-                while (isdigit(peek()))
-                        next();
         }
 
-        if (peek() == 'e' || peek() == 'E') {
-                integral = false;
-                next();
-                if (peek() == '-' || peek() == '+')
-                        next();
-                if (!isdigit(peek()))
-                        FAIL;
-                while (isdigit(peek()))
-                        next();
-        }
+        len  -= end - json;
+        json  = end;
 
-        int n = min(json - num, sizeof numbuf - 1);
-        memcpy(numbuf, num, n);
-        numbuf[n] = '\0';
-
-        Value result;
-
-        errno = 0;
-        if (integral)
-                result = INTEGER(strtoimax(num, NULL, 10));
-        else
-                result = REAL(strtod(num, NULL));
-
-        if (errno != 0)
-                FAIL;
-
-        return result;
+        return num.real ? REAL(num.x) : INTEGER(num.z);
 }
 
 static Value

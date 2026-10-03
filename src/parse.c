@@ -608,6 +608,7 @@ inline static Stmt *
         return s;
 }
 
+__attribute__((always_inline))
 inline static Token *
 update(Ty *ty, Token *tok)
 {
@@ -615,8 +616,8 @@ update(Ty *ty, Token *tok)
         return tok;
 }
 
-inline static Token *
-(tokenxx)(Ty *ty, int i)
+static Token *
+tokenxx_slow(Ty *ty, int i)
 {
         Token t;
 
@@ -671,6 +672,20 @@ inline static Token *
         return update(ty, v_(TOKENS, TokenIndex + i));
 }
 
+__attribute__((always_inline))
+inline static Token *
+(tokenxx)(Ty *ty, int i)
+{
+        isize j = (isize)TokenIndex + i;
+
+        if (LIKELY(j >= 0 && j < (isize)vN(TOKENS))) {
+                return update(ty, v_(TOKENS, j));
+        }
+
+        return tokenxx_slow(ty, i);
+}
+
+__attribute__((always_inline))
 inline static bool
 invisible(Ty *ty, Token *tok)
 {
@@ -678,8 +693,8 @@ invisible(Ty *ty, Token *tok)
 }
 
 #define tokenx(i) ((tokenx)(ty, (i)))
-inline static Token *
-(tokenx)(Ty *ty, int i)
+static Token *
+tokenx_slow(Ty *ty, int i)
 {
         int n    = abs(i);
         int step = (n == 0) ? 1 : (i / n);
@@ -708,6 +723,23 @@ inline static Token *
 
                 n -= 1;
         }
+}
+
+__attribute__((always_inline))
+inline static Token *
+(tokenx)(Ty *ty, int i)
+{
+        isize j = (isize)TokenIndex + i;
+
+        if (
+                LIKELY(j >= 0 && j < (isize)vN(TOKENS))
+             && !invisible(ty, v_(TOKENS, j))
+             && ((i < 0) || !invisible(ty, v_(TOKENS, TokenIndex)))
+        ) {
+                return update(ty, v_(TOKENS, j));
+        }
+
+        return tokenx_slow(ty, i);
 }
 
 #define nextx() ((skipx)(ty, 1))
@@ -745,8 +777,8 @@ seek(Ty *ty, int i)
 static void pp_if(Ty *ty);
 static void pp_while(Ty *ty);
 
-inline static Token *
-(token)(Ty *ty, int i)
+static Token *
+token_slow(Ty *ty, int i)
 {
         Token *t;
 
@@ -786,6 +818,24 @@ End:
         if (i == 0) {
                 EStart = t->start;
                 EEnd = t->end;
+        }
+
+        return t;
+}
+
+__attribute__((always_inline))
+inline static Token *
+(token)(Ty *ty, int i)
+{
+        Token *t = tokenx(i);
+
+        if (UNLIKELY(t->type == TOKEN_DIRECTIVE)) {
+                return token_slow(ty, i);
+        }
+
+        if (i == 0) {
+                EStart = t->start;
+                EEnd   = t->end;
         }
 
         return t;
@@ -844,6 +894,25 @@ parse_sync_lex(Ty *ty)
         );
 }
 
+inline static bool
+ctx_insensitive(Token const *t, int ctx)
+{
+        if (
+                ((ctx != LEX_PREFIX) && (ctx != LEX_INFIX))
+             || ((t->ctx != LEX_PREFIX) && (t->ctx != LEX_INFIX))
+             || (t->type == TOKEN_END)
+             || (t->type == TOKEN_ERROR)
+             || (t->type == TOKEN_NEWLINE)
+             || (t->start.s == NULL)
+        ) {
+                return false;
+        }
+
+        unsigned char c = *t->start.s;
+
+        return !xisdigit(c) && !contains("/-#&*!?$'", c);
+}
+
 inline static void
 (setctx)(Ty *ty, int ctx)
 {
@@ -856,6 +925,18 @@ inline static void
         }
 
         LCTX = ctx;
+
+        if (vN(TOKENS) == TokenIndex + 1 && ctx_insensitive(tok(), ctx)) {
+                Token *t = tok();
+                LexState *ls = lex_state(ty);
+                t->ctx = ctx;
+                lex_rewind(ty, &t->end);
+                lex_need_nl(ty, t->nl);
+                ls->ctx        = ctx;
+                ls->blank_line = false;
+                lex_save(ty, &CtxCheckpoint);
+                return;
+        }
 
         Location seek = (ctx == LEX_FMT || ctx == LEX_DOC || ctx == LEX_TYX)
                       ? token(-1)->end
@@ -1079,7 +1160,7 @@ ClampToLine(Location start, Location end)
 static Location
 BackOverSpace(Location loc)
 {
-        while ((loc.s[0] == '\0' || isspace((u8)loc.s[0])) && loc.s[-1] != '\0') {
+        while ((loc.s[0] == '\0' || xisspace((u8)loc.s[0])) && loc.s[-1] != '\0') {
                 loc.s    -= 1;
                 loc.byte -= 1;
                 if (loc.s[0] == '\n') {
@@ -1917,7 +1998,7 @@ dedent_string(Ty *ty, Expr *e, TokenVector const *parts)
         }
 
         for (char const *p = line; p < close.s; ++p) {
-                if (!isspace((u8)*p)) {
+                if (!xisspace((u8)*p)) {
                         die("illegal docstring terminator on line %d", close.line + 1);
                 }
         }
@@ -1978,7 +2059,7 @@ ss_inner(Ty *ty, int quotes)
                          */
                         while (
                                 (last->length > 0)
-                             && isspace((u8)last->data[last->length - 1])
+                             && xisspace((u8)last->data[last->length - 1])
                         ) {
                                 last->length -= 1;
                         }
@@ -7654,7 +7735,12 @@ parse_fragment(Ty *ty, Module *mod, char const *source, Expr *(*parser)(Ty *))
 
         state.module = mod;
 
-        lex_init(ty, mod->path, source);
+        usize n = strlen(source);
+        char *src = amA(n + 2);
+        src[0] = '\0';
+        memcpy(src + 1, source, n + 1);
+
+        lex_init(ty, mod->path, src + 1);
 
         if (TY_CATCH_ERROR()) {
                 state = save;

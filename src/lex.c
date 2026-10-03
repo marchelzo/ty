@@ -256,9 +256,9 @@ nextchar(Ty *ty)
 inline static bool
 starts_id(int c)
 {
-        return isalpha(c)
+        return (c > 0xC0)
+            || xisalpha(c)
             || (c == '_')
-            || (c > 0xC0)
             || (c == '`');
 }
 
@@ -279,7 +279,7 @@ haveid(Ty *ty)
 {
         return starts_id(C(0))
             || (C(0) == ':' && C(1) == ':' && starts_id(C(2)))
-            || (C(0) == '$' && isdigit(C(1 + _count(ty, 1))));
+            || (C(0) == '$' && xisdigit(C(1 + _count(ty, 1))));
 }
 
 static bool
@@ -288,7 +288,7 @@ skipspace(Ty *ty)
         bool nl = false;
 
         int n = 0;
-        while (isspace(C(n))) {
+        while (xisspace(C(n))) {
                 nl |= (C(n) == '\n');
                 n += 1;
         }
@@ -312,13 +312,58 @@ skipspace(Ty *ty)
 inline static bool
 idchar(int c)
 {
-        return isalnum(c) || c == '_' || (c & 0x80);
+        return (c & 0x80) || xisalnum(c) || (c == '_');
+}
+
+static Token
+lexplainword(Ty *ty, isize n)
+{
+        bool kw_ok = (state.ctx != LEX_MEMBER);
+        char *w    = amA(n + 1);
+
+        memcpy(w, SRC, n);
+        w[n] = '\0';
+
+        SRC              += n;
+        state.loc.col    += n;
+        state.loc.byte   += n;
+        state.blank_line  = false;
+
+        int keyword;
+        if (kw_ok && (keyword = keyword_get_number(w)) != -1) {
+                state.need_nl |= (
+                        (keyword == KEYWORD_OPERATOR)
+                     || (keyword == KEYWORD_NAMESPACE)
+                );
+                return mkkw(ty, keyword);
+        }
+
+        return mkid(ty, w, NULL, false);
 }
 
 /* lexes an identifier or a keyword */
 static Token
 lexword(Ty *ty)
 {
+        isize n = 0;
+
+        while (idchar(C(n))) {
+                n += 1;
+        }
+
+        if (
+                (n > 0)
+             && (C(0) != '$')
+             && (C(0) != '`')
+             && !((C(n) == '-') && idchar(C(n + 1)))
+             && !((C(n) == ':') && (C(n + 1) == ':'))
+        ) {
+                if ((C(n) == '!') || (C(n) == '?')) {
+                        n += 1;
+                }
+                return lexplainword(ty, n);
+        }
+
         byte_vector module = {0};
         byte_vector word   = {0};
 
@@ -334,7 +379,7 @@ lexword(Ty *ty)
                                 avP(word, nextchar(ty));
                         }
 
-                        while (isdigit(C(0))) {
+                        while (xisdigit(C(0))) {
                                 avP(word, nextchar(ty));
                         }
 
@@ -362,7 +407,7 @@ lexword(Ty *ty)
                                 avP(word, nextchar(ty));
                         } else if (C(0) == '-' && idchar(C(1))) {
                                 nextchar(ty);
-                                avP(word, toupper(nextchar(ty)));
+                                avP(word, xtoupper(nextchar(ty)));
                         } else {
                                 break;
                         }
@@ -531,7 +576,7 @@ lexdocstring(Ty *ty)
 
         // The only characters on this line before the docstring terminator should be whitespace
         for (usize i = 0; i < vN(line); ++i) {
-                if (!isspace(v__(line, i))) {
+                if (!xisspace(v__(line, i))) {
                         error(ty, "illegal docstring terminator on line %d", state.loc.line + 1);
                 }
         }
@@ -545,7 +590,7 @@ lexdocstring(Ty *ty)
 
         for (usize i = 0; i < vN(lines); ++i) {
                 int off = 0;
-                while (off < nstrip && isspace(v__(lines, i)[off])) {
+                while (off < nstrip && xisspace(v__(lines, i)[off])) {
                         off += 1;
                 }
                 while (v__(lines, i)[off] != '\0') {
@@ -628,7 +673,7 @@ readhex(Ty *ty, int ndigits, u64 *k)
         char b[32];
 
         for (int i = 0; i < ndigits; ++i) {
-                if (!isxdigit(C(i))) {
+                if (!xisxdigit(C(i))) {
                         return false;
                 } else  {
                         b[i] = C(i);
@@ -670,7 +715,7 @@ lex_ss_string(Ty *ty, usize indent, bool first, char const *limit)
                              && (SRC != limit)
                              && (C(0) != '\n')
                              && (C(0) != '\r' || C(1) != '\n')
-                             && isspace(C(0))
+                             && xisspace(C(0))
                         ) {
                                 nextchar(ty);
                                 n += 1;
@@ -842,7 +887,7 @@ lex_tyx(Ty *ty)
         char const *s = SRC;
         bool have_nl  = false;
 
-        while (isspace(*s)) {
+        while (xisspace(*s)) {
                 have_nl |= (*s++ == '\n');
         }
 
@@ -929,8 +974,8 @@ BadEntity:
                         return mkstring(ty, vv(text), vN(text) - 1);
 
                 default:
-                        if (isspace(C(0))) {
-                                while (isspace(C(0))) {
+                        if (xisspace(C(0))) {
+                                while (xisspace(C(0))) {
                                         nextchar(ty);
                                 }
                                 avP(text, ' ');
@@ -987,7 +1032,7 @@ lexregex(Ty *ty, bool strict)
         u32  flags    = 0;
         bool detailed = false;
 
-        while (isalpha(C(0))) {
+        while (xisalpha(C(0))) {
                 switch (C(0)) {
                 case 'a': flags |= PCRE2_ANCHORED;          break;
                 case 'i': flags |= PCRE2_CASELESS;          break;
@@ -1032,7 +1077,7 @@ lex_re(Ty *ty)
         if (C(0) == '/') {
                 nextchar(ty);
                 byte_vector flags = {0};
-                while (isalpha(C(0))) {
+                while (xisalpha(C(0))) {
                         switch (C(0)) {
                         case 'i': case 'u': case 'm': case 'x': case 'v':
                                 avP(flags, C(0));
@@ -1104,8 +1149,8 @@ uatou(Ty *ty, char const *s, char const **end, int base)
                         error(ty, "invalid numeric literal: %.*s", n, num);
                 }
                 if (
-                        (isdigit(s[i]) && (s[i] - '0') < base)
-                     || (base == 16 && isxdigit(s[i]))
+                        (xisdigit(s[i]) && (s[i] - '0') < base)
+                     || (base == 16 && xisxdigit(s[i]))
                 ) {
                         num[n++] = s[i];
                 } else if (s[i] != '_') {
@@ -1137,7 +1182,7 @@ lexnum(Ty *ty, bool float_ok)
 
         if (errno != 0) {
                 char const *err = strerror(errno);
-                error(ty, "invalid numeric literal: %c%s", tolower(err[0]), err + 1);
+                error(ty, "invalid numeric literal: %c%s", xtolower(err[0]), err + 1);
         }
 
         int n = end - SRC;
@@ -1149,20 +1194,20 @@ lexnum(Ty *ty, bool float_ok)
                      || (C(n) == 'E')
                      || (
                                 C(n) == '.'
-                             && !isalpha(C(n + 1))
+                             && !xisalpha(C(n + 1))
                              && C(n + 1) != '_'
                              && C(n + 1) != '.'
                         )
                 )
         ) {
                 errno = 0;
-                double real = strtod(SRC, &end);
+                double real = ty_strtod(SRC, &end, END - SRC);
                 n = end - SRC;
                 if (errno != 0) {
                         char const *err = strerror(errno);
-                        error(ty, "invalid numeric literal: %c%s", tolower(err[0]), err + 1);
+                        error(ty, "invalid numeric literal: %c%s", xtolower(err[0]), err + 1);
                 }
-                if (isalnum(C(n))) {
+                if (xisalnum(C(n))) {
                         error(
                                 ty,
                                 "trailing character after numeric literal: %s'%c'%s",
@@ -1195,7 +1240,7 @@ lexnum(Ty *ty, bool float_ok)
                 }
                 num = mkinteger(ty, integer);
         } else {
-                if (isalnum(C(n))) {
+                if (xisalnum(C(n))) {
                         error(
                                 ty,
                                 "trailing character after numeric literal: %s'%c'%s",
@@ -1274,13 +1319,13 @@ lexop(Ty *ty)
                 }
         }
 
-        int type = operator_get_token_type(op);
+        struct optoken_entry const *ot = optoken_lookup(op, i);
 
         if (
-                (type == -1)
-             || (s_eq(op, ".")  && isspace(C(-2)) && isspace(C(0)))
-             || (s_eq(op, "@")  && isspace(C(-2)) && isspace(C(0)))
-             || (s_eq(op, ".?") && isspace(C(-3)) && isspace(C(0)))
+                (ot == NULL)
+             || (s_eq(op, ".")  && xisspace(C(-2)) && xisspace(C(0)))
+             || (s_eq(op, "@")  && xisspace(C(-2)) && xisspace(C(0)))
+             || (s_eq(op, ".?") && xisspace(C(-3)) && xisspace(C(0)))
         ) {
                 Token t = mktoken(ty, TOKEN_USER_OP);
                 t.identifier = sclonea(ty, op);
@@ -1288,7 +1333,7 @@ lexop(Ty *ty)
                 return t;
         }
 
-        return mktoken(ty, type);
+        return mktoken(ty, ot->toktype);
 }
 
 static Token
@@ -1299,7 +1344,7 @@ lexlinecomment(Ty *ty)
         nextchar(ty);
         nextchar(ty);
 
-        while (isspace(C(0)) && C(0) != '\n') {
+        while (xisspace(C(0)) && C(0) != '\n') {
                 nextchar(ty);
         }
 
@@ -1483,7 +1528,7 @@ Begin:
                 nextchar(ty);
                 nextchar(ty);
                 return mktoken(ty, TOKEN_CHECK_MATCH);
-        } else if (C(0) == ':' && !isspace(C(-1))) {
+        } else if (C(0) == ':' && !xisspace(C(-1))) {
                 nextchar(ty);
                 return mktoken(ty, ':');
         } else if (C(0) == '-' && C(1) == '>' && ctx == LEX_PREFIX) {
@@ -1534,7 +1579,7 @@ Begin:
              || (
                         (C(0) == ':')
                      && (
-                                isspace(C(-1))
+                                xisspace(C(-1))
                              || (
                                         contains(OperatorCharset, C(1))
                                      && (C(1) != '-')
@@ -1547,7 +1592,7 @@ Begin:
                 )
         ) {
                 return lexop(ty);
-        } else if (isdigit(C(0))) {
+        } else if (xisdigit(C(0))) {
                 return lexnum(ty, ctx == LEX_PREFIX || state.in_pp);
         } else if (C(0) == '\'') {
                 if (C(1) == '\'' && C(2) == '\'') {

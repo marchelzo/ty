@@ -319,7 +319,8 @@ pollute_with_bloat(void)
                 "import readln                \n"
                 "import sh (sh)               \n"
                 "import date                  \n"
-                "import chalk (chalk as C)   \n"
+                "import chalk (chalk as C)    \n"
+                "import help (..)             \n"
         );
 
         print_function = "pp";
