@@ -15,7 +15,7 @@ import time
 import apple
 #|]
 
-pub const SUPPORTED_BROWSERS = ['chrome'].set()
+pub const SUPPORTED_BROWSERS = %['chrome']
 pub const CHROMIUM_BASED_BROWSERS = SUPPORTED_BROWSERS
 
 /* Chrome timestamps count microseconds from the Windows epoch. */

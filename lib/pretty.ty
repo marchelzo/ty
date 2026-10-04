@@ -21,6 +21,7 @@ fn _load-colors() {
 
 let defaultColors = _load-colors() ?? {
     dict:    '#e78a4e bold',
+    set:     '#e78a4e bold',
     array:   '#e78a4e bold',
     str:     '#a9b665',
     quote:   '#a9b665 bold',
@@ -231,6 +232,18 @@ pub class Printer {
         match x {
             xs :: Array => {
                 printList(xs, '[', ']', __colors.array)
+            },
+
+            s :: Set => {
+                printList(s, '%[', ']', __colors.?set ?? __colors.dict)
+            },
+
+            h :: Heap => {
+                printList(h, 'Heap([', '])', __colors.array)
+            },
+
+            r :: Range => {
+                write(str(r), __colors.t, force)
             },
 
             d :: Dict => {

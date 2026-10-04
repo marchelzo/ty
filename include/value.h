@@ -35,6 +35,7 @@ enum {
         CLASS_FUNCTION,
         CLASS_ARRAY,
         CLASS_DICT,
+        CLASS_SET,
         CLASS_STRING,
         CLASS_INT,
         CLASS_FLOAT,
@@ -47,6 +48,7 @@ enum {
         CLASS_TAG,
         CLASS_TUPLE,
         CLASS_QUEUE,
+        CLASS_HEAP,
         CLASS_SHARED_QUEUE,
         CLASS_WORK_QUEUE,
         CLASS_MODULE,
@@ -166,6 +168,8 @@ enum {
         X(NotNil)               \
         X(ArrayCompr)           \
         X(DictCompr)            \
+        X(Set)                  \
+        X(SetCompr)             \
         X(Try)                  \
         X(Eval)                 \
         X(Cond)                 \
@@ -258,9 +262,11 @@ TypeName(Ty const *ty, int t0)
         case VALUE_STRING:              return "String";
         case VALUE_ARRAY:               return "Array";
         case VALUE_DICT:                return "Dict";
+        case VALUE_SET:                 return "Set";
         case VALUE_BLOB:                return "Blob";
         case VALUE_QUEUE:               return "Queue";
         case VALUE_SHARED_QUEUE:        return "SharedQueue";
+        case VALUE_HEAP:                return "Heap";
         case VALUE_OBJECT:              return "Object";
         case VALUE_BOOLEAN:             return "Bool";
         case VALUE_REGEX:               return "Regex";
@@ -765,6 +771,7 @@ checked_arg_6(
 #define   BOOL_ARG(i) ARGx(i, VALUE_BOOLEAN).boolean
 #define  ARRAY_ARG(i) ARGx(i, VALUE_ARRAY).array
 #define   DICT_ARG(i) ARGx(i, VALUE_DICT).dict
+#define    SET_ARG(i) ARGx(i, VALUE_SET).set
 #define    PTR_ARG(i) ((ARG_T(i) == VALUE_NIL) ? NULL : ARGx(i, VALUE_PTR).ptr)
 
 #define bP(fmt, ...) zP("%s: " fmt, _name__ __VA_OPT__(,) __VA_ARGS__)
@@ -1479,9 +1486,11 @@ ClassOf(Value const *v)
         case VALUE_BOOLEAN:           return CLASS_BOOL;
         case VALUE_BLOB:              return CLASS_BLOB;
         case VALUE_QUEUE:             return CLASS_QUEUE;
+        case VALUE_HEAP:              return CLASS_HEAP;
         case VALUE_SHARED_QUEUE:      return v->shared_queue->work ? CLASS_WORK_QUEUE : CLASS_SHARED_QUEUE;
         case VALUE_ARRAY:             return CLASS_ARRAY;
         case VALUE_DICT:              return CLASS_DICT;
+        case VALUE_SET:               return CLASS_SET;
         case VALUE_TUPLE:             return CLASS_TUPLE;
         case VALUE_GENERATOR:         return CLASS_GENERATOR;
         case VALUE_CLASS:             return CLASS_CLASS;
@@ -1548,13 +1557,7 @@ ArrayClone(Ty *ty, Array const *a)
 static inline DictItem *
 DictFirst(Dict const *d)
 {
-        DictItem *it = d->last;
-
-        while (it != NULL && it->prev != NULL) {
-                it = it->prev;
-        }
-
-        return it;
+        return d->first;
 }
 
 static inline Value
@@ -1867,6 +1870,8 @@ value_truthy(Ty *ty, Value const *v)
         case VALUE_TUPLE:            return (v->count != 0);
         case VALUE_BLOB:             return (vN(*v->blob) != 0);
         case VALUE_QUEUE:            return (queue_count(v->queue) != 0);
+        case VALUE_SET:              return (v->set->count != 0);
+        case VALUE_HEAP:             return (vN(v->heap->xs) != 0);
         case VALUE_SHARED_QUEUE:     return true;
         case VALUE_REGEX:            return true;
         case VALUE_FUNCTION:         return true;

@@ -18,7 +18,7 @@ pub fn bulk-metadata-matches-lstat() {
         // A small buffer forces the listing to span several batches.
         let entries = bulk-directory-entries(str(root), buffer-size=4096)
         assert(#entries == 145)
-        assert(#entries.map(\_.name).uniq() == 145)
+        assert(#entries.map(\_.name).nub() == 145)
         for entry in entries {
             let st = os.lstat(str(root / entry.name))!
             let got = entry.stat

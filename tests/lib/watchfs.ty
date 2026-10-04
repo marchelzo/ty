@@ -100,16 +100,15 @@ pub fn test-multiple-events() {
             (dir / 'b.txt').write('bbb')
         })
 
-        let names = %{}
+        let names = %[]
         for match watch(dir, timeout=TIMEOUT) {
             (Create(p) or Modify(p) or Delete(p)) => {
-                names[p.name] = true
-                break if 'a.txt' in names && 'b.txt' in names
+                names << p.name
+                break if %['a.txt', 'b.txt'] <= names
             }
         }
 
-        assert('a.txt' in names)
-        assert('b.txt' in names)
+        assert(%['a.txt', 'b.txt'] <= names)
 
         thrd.join()
     }

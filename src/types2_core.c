@@ -11477,6 +11477,88 @@ instantiate_scheme_type(T2Solver *solver, T2Type type, char const *provenance)
 }
 
 static T2Relation
+constrain_overload_split(
+        T2Solver   *solver,
+        T2Type      overload,
+        T2Type      callable,
+        char const *provenance,
+        bool        retain_deferred
+)
+{
+        T2Universe *universe = solver->universe;
+        usize       count    = t2_callable_parameter_count(universe, callable);
+
+        for (usize i = 0; i < count; ++i) {
+                T2ParameterSpec parameter;
+                if (
+                        !t2_callable_parameter(universe, callable, i, &parameter)
+                     || (t2_type_kind(universe, parameter.type) != T2_TYPE_UNION)
+                ) {
+                        continue;
+                }
+
+                T2ParameterSpec *specs = xtA(*specs, count);
+                for (usize j = 0; j < count; ++j) {
+                        (void)t2_callable_parameter(universe, callable, j, &specs[j]);
+                }
+
+                T2SolverMark mark   = t2_solver_mark(solver);
+                T2Relation   result = T2_RELATION_YES;
+                usize        arms   = t2_type_arity(universe, parameter.type);
+                bool         nilable = false;
+
+                for (usize k = 0; k < arms; ++k) {
+                        T2Type member = t2_type_child(universe, parameter.type, k);
+                        nilable |= (t2_type_kind(universe, member) == T2_TYPE_NIL);
+                }
+
+                for (usize k = 0; k < arms && result != T2_RELATION_NO; ++k) {
+                        specs[i].type     = t2_type_child(universe, parameter.type, k);
+                        specs[i].required = parameter.required
+                                         || (
+                                                    nilable
+                                                 && (t2_type_kind(universe, specs[i].type) != T2_TYPE_NIL)
+                                            );
+                        T2Type piece = t2_callable(
+                                universe,
+                                specs,
+                                count,
+                                t2_callable_result(universe, callable),
+                                t2_callable_yield(universe, callable),
+                                t2_callable_send(universe, callable)
+                        );
+                        result = (piece == T2_TYPE_INVALID)
+                               ? T2_RELATION_NO
+                               : combine_all(
+                                         result,
+                                         constrain_internal(
+                                                 solver,
+                                                 overload,
+                                                 piece,
+                                                 provenance,
+                                                 retain_deferred
+                                         )
+                                 );
+                        if (solver->failed) {
+                                result = T2_RELATION_NO;
+                        }
+                }
+
+                ty_free(specs);
+
+                if (result == T2_RELATION_NO) {
+                        t2_solver_rollback(solver, mark);
+                } else {
+                        t2_solver_commit(solver, mark);
+                }
+
+                return result;
+        }
+
+        return T2_RELATION_NO;
+}
+
+static T2Relation
 constrain_internal(
         T2Solver   *solver,
         T2Type      subtype,
@@ -11926,6 +12008,16 @@ constrain_internal(
                 }
 
                 if (applicable == 0) {
+                        T2Relation split = constrain_overload_split(
+                                solver,
+                                subtype,
+                                supertype,
+                                provenance,
+                                retain_deferred
+                        );
+                        if (split != T2_RELATION_NO) {
+                                return split;
+                        }
                         set_solver_error(
                                 solver,
                                 "no overload arm satisfies the expected callable",

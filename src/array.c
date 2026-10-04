@@ -4,6 +4,7 @@
 #include "value.h"
 #include "gc.h"
 #include "dict.h"
+#include "set.h"
 #include "log.h"
 #include "functions.h"
 #include "operators.h"
@@ -245,14 +246,28 @@ array_splice(Ty *ty, Value *array, int argc, Value *kwargs)
         return ARRAY(slice);
 }
 
-inline static Value
-index_safe(Array const *array, isize i)
+inline static Array *
+iterable_arg(Ty *ty, int argc, int i)
 {
-        if (i < 0 || i >= vN(*array)) {
-                return NIL;
-        } else {
-                return v__(*array, i);
+        Value xs = ARG(i);
+
+        if (xs.type == VALUE_ARRAY) {
+                return xs.array;
         }
+
+        Value out = ARRAY(vA());
+        Value x;
+
+        gP(&out);
+        vm_iter_begin(ty, xs);
+        while (vm_iter_next(ty, &x)) {
+                vAp(out.array, x);
+        }
+        gX();
+
+        ARG(i) = out;
+
+        return out.array;
 }
 
 static Value
@@ -260,34 +275,38 @@ array_zip(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         ASSERT_ARGC_MIN("Array.zip()", 1);
 
-        usize n = vN(*array->array);
-        Value f = KWARG("f", _ANY);
-        bool longest = HAVE_FLAG("longest");
+        usize  n       = vN(*array->array);
+        Value  f       = KWARG("f", _ANY);
+        bool   longest = HAVE_FLAG("longest");
+        Value *_fill   = NAMED("fill");
+        Value  fill    = (_fill == NULL) ? NIL : *_fill;
 
         for (int i = 0; i < argc; ++i) {
-                Array *arg = ARRAY_ARG(i);
+                Array *arg = iterable_arg(ty, argc, i);
                 n = longest
                   ? max(n, vN(*arg))
                   : min(n, vN(*arg));
         }
 
         while (vN(*array->array) < n) {
-                vAp(array->array, NIL);
+                vAp(array->array, fill);
         }
 
         for (usize i = 0; i < n; ++i) {
                 if (IsMissing(f)) {
                         Value tuple = vT(argc + 1);
-                        tuple.items[0] = index_safe(array->array, i);
+                        tuple.items[0] = v__(*array->array, i);
                         for (int j = 0; j < argc; ++j) {
-                                tuple.items[j + 1] = index_safe(ARRAY_ARG(j), i);
+                                Array *ys = ARRAY_ARG(j);
+                                tuple.items[j + 1] = (i < vN(*ys)) ? v__(*ys, i) : fill;
                         }
                         *v_(*array->array, i) = tuple;
                 } else {
-                        Value v = index_safe(array->array, i);
+                        Value v = v__(*array->array, i);
                         vmP(&v);
                         for (int j = 0; j < argc; ++j) {
-                                v = index_safe(ARG(-1).array, i);
+                                Array *ys = ARG(-1).array;
+                                v = (i < vN(*ys)) ? v__(*ys, i) : fill;
                                 vmP(&v);
                         }
                         *v_(*array->array, i) = vmC(&f, argc + 1);
@@ -433,6 +452,168 @@ array_slice(Ty *ty, Value *array, int argc, Value *kwargs)
         return ARRAY(slice);
 }
 
+SortOrder
+sort_order(Ty *ty, Value *kwargs, char const *who)
+{
+        SortOrder o = { .by = NONE, .cmp = NONE, .desc = false };
+
+        Value *by   = NAMED("by");
+        Value *cmp  = NAMED("cmp");
+        Value *desc = NAMED("desc");
+
+        if (by != NULL && !IsNil(*by)) {
+                if (!CALLABLE(*by)) {
+                        zP("%s: `by` not callable: %s", who, VSC(by));
+                }
+                o.by = *by;
+        }
+
+        if (cmp != NULL && !IsNil(*cmp)) {
+                if (!CALLABLE(*cmp)) {
+                        zP("%s: `cmp` not callable: %s", who, VSC(cmp));
+                }
+                o.cmp = *cmp;
+        }
+
+        if (!IsNone(o.by) && !IsNone(o.cmp)) {
+                zP("%s: kwargs `by` and `cmp` both specified", who);
+        }
+
+        o.desc = (desc != NULL) && v_truthy(desc);
+
+        return o;
+}
+
+int
+sort_order_cmp(Ty *ty, SortOrder const *o, Value const *a, Value const *b)
+{
+        Value x = *a;
+        Value y = *b;
+        int   c;
+
+        gP(&x);
+        gP(&y);
+
+        if (!IsNone(o->by)) {
+                Value kx = vm_call1(ty, &o->by, &x);
+                gP(&kx);
+                Value ky = vm_call1(ty, &o->by, &y);
+                gP(&ky);
+                c = v_cmp(&kx, &ky);
+                gX();
+                gX();
+        } else if (!IsNone(o->cmp)) {
+                Value r = vm_eval_function(ty, &o->cmp, &x, &y, NULL);
+                c = (r.type == VALUE_INTEGER)
+                  ? (r.z > 0) - (r.z < 0)
+                  : (v_truthy(&r) ? 1 : -1);
+        } else {
+                c = v_cmp(&x, &y);
+        }
+
+        gX();
+        gX();
+
+        return o->desc ? -c : c;
+}
+
+inline static usize
+bisect(Ty *ty, Array const *xs, Value const *x, SortOrder const *o, bool right)
+{
+        usize lo = 0;
+        usize hi = vN(*xs);
+
+        while (lo < hi) {
+                usize m = lo + (hi - lo) / 2;
+                int   c = sort_order_cmp(ty, o, x, v_(*xs, m));
+                if (c < 0 || (c == 0 && !right)) {
+                        hi = m;
+                } else {
+                        lo = m + 1;
+                }
+        }
+
+        return lo;
+}
+
+inline static Value
+insort(Ty *ty, Value *array, int argc, Value *kwargs, bool right, char const *who)
+{
+        if (argc != 1) {
+                zP("%s: expected 1 argument but got %d", who, argc);
+        }
+
+        SortOrder o = sort_order(ty, kwargs, who);
+        Value     x = ARG(0);
+
+        vvIn(*array->array, &x, 1, bisect(ty, array->array, &x, &o, right));
+
+        return *array;
+}
+
+static Value
+array_insort(Ty *ty, Value *array, int argc, Value *kwargs)
+{
+        return insort(ty, array, argc, kwargs, false, "Array.insort()");
+}
+
+static Value
+array_insortr(Ty *ty, Value *array, int argc, Value *kwargs)
+{
+        return insort(ty, array, argc, kwargs, true, "Array.insortr()");
+}
+
+static Value
+array_compact(Ty *ty, Value *array, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("Array.compact()", 0);
+
+        usize n = 0;
+        for (usize i = 0; i < vN(*array->array); ++i) {
+                if (!IsNil(v__(*array->array, i))) {
+                        *v_(*array->array, n++) = v__(*array->array, i);
+                }
+        }
+
+        vN(*array->array) = n;
+
+        return *array;
+}
+
+static Value
+array_choice(Ty *ty, Value *array, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("Array.choice()", 0);
+
+        usize n = vN(*array->array);
+
+        return (n == 0) ? NIL : v__(*array->array, xoshiro256ss(ty) % n);
+}
+
+static Value
+array_sample(Ty *ty, Value *array, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("Array.sample()", 1);
+
+        imax  k = INT_ARG(0);
+        usize n = vN(*array->array);
+
+        if (k < 0 || k > n) {
+                bP("sample size %"PRIiMAX" out of range [0, %zu]", k, n);
+        }
+
+        Array *xs = ArrayClone(ty, array->array);
+
+        for (usize i = 0; i < k; ++i) {
+                usize j = i + xoshiro256ss(ty) % (n - i);
+                SWAP(Value, *v_(*xs, i), *v_(*xs, j));
+        }
+
+        vN(*xs) = k;
+
+        return ARRAY(xs);
+}
+
 static Value
 array_sort(Ty *ty, Value *array, int argc, Value *kwargs)
 {
@@ -465,36 +646,20 @@ array_sort(Ty *ty, Value *array, int argc, Value *kwargs)
                 );
         }
 
-        Value *by = NAMED("by");
-        Value *cmp = NAMED("cmp");
+        SortOrder   o   = sort_order(ty, kwargs, "Array.sort()");
+        SortContext ctx = { .ty = ty };
 
-        if (by != NULL && cmp != NULL) {
-                bP("kwargs `by` and `cmp` both specified");
-        }
-
-        SortContext ctx = {
-                .ty = ty
-        };
-
-        if (by != NULL) {
-                if (!CALLABLE(*by)) {
-                        bP("`by` not callable: %s", VSC(by));
-                }
-                ctx.f = *by;
+        if (!IsNone(o.by)) {
+                ctx.f = o.by;
                 rqsort(vv(*array->array) + i, n, sizeof (Value), compare_by, &ctx);
-        } else if (cmp != NULL) {
-                if (!CALLABLE(*cmp)) {
-                        bP("`cmp` not callable: %s", VSC(cmp));
-                }
-                ctx.f = *cmp;
+        } else if (!IsNone(o.cmp)) {
+                ctx.f = o.cmp;
                 rqsort(vv(*array->array) + i, n, sizeof (Value), compare_by2, &ctx);
         } else {
                 rqsort(vv(*array->array) + i, n, sizeof (Value), compare_default, ty);
         }
 
-        Value *desc = NAMED("desc");
-
-        if (desc != NULL && v_truthy(desc)) {
+        if (o.desc) {
                 array_reverse(ty, array, argc, NULL);
         }
 
@@ -656,18 +821,42 @@ array_uniq(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Array.uniq()", 0, 1);
 
-        Value f = (argc > 0) ? ARG(0) : NONE;
+        Value f    = (argc > 0) ? ARG(0) : NONE;
+        Value last = NONE;
 
-        Value d = DICT(dict_new(ty));
-        gP(&d);
+        gP(&last);
 
         usize n = 0;
         for (usize i = 0; i < vN(*array->array); ++i) {
                 Value e = v__(*array->array, i);
-                Value k = !IsNone(f)  ? vm_eval_function(ty, &f, &e, NULL) : e;
-                Value *v = dict_put_key_if_not_exists(ty, d.dict, k);
-                if (v->type == VALUE_NIL) {
-                        *v = e;
+                Value k = !IsNone(f) ? vm_eval_function(ty, &f, &e, NULL) : e;
+                if (i == 0 || !v_eq(&k, &last)) {
+                        *v_(*array->array, n++) = e;
+                }
+                last = k;
+        }
+
+        gX();
+        vN(*array->array) = n;
+
+        return *array;
+}
+
+static Value
+array_nub(Ty *ty, Value *array, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("Array.nub()", 0, 1);
+
+        Value f = (argc > 0) ? ARG(0) : NONE;
+
+        Value seen = SET(set_new(ty));
+        gP(&seen);
+
+        usize n = 0;
+        for (usize i = 0; i < vN(*array->array); ++i) {
+                Value e = v__(*array->array, i);
+                Value k = !IsNone(f) ? vm_eval_function(ty, &f, &e, NULL) : e;
+                if (set_add(ty, seen.set, k)) {
                         *v_(*array->array, n++) = e;
                 }
         }
@@ -1392,16 +1581,13 @@ array_set(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Array.set()", 0);
 
-        Dict *d = dict_new(ty);
-        NOGC(d);
+        Value s = SET(set_new(ty));
 
-        for (usize i = 0; i < vN(*array->array); ++i) {
-                dict_put_key_if_not_exists(ty, d, v__(*array->array, i));
-        }
+        gP(&s);
+        set_add_all(ty, s.set, *array);
+        gX();
 
-        OKGC(d);
-
-        return DICT(d);
+        return s;
 }
 
 static Value
@@ -2129,6 +2315,8 @@ DEFINE_NO_MUT(sort);
 DEFINE_NO_MUT(sort_by);
 DEFINE_NO_MUT(sort_on);
 DEFINE_NO_MUT(uniq);
+DEFINE_NO_MUT(nub);
+DEFINE_NO_MUT(compact);
 DEFINE_NO_MUT(zip);
 DEFINE_NO_MUT(next_permutation);
 
@@ -2138,7 +2326,10 @@ DEFINE_METHOD_TABLE(
         { .name = "any?",              .func = array_any                     },
         { .name = "bsearch",           .func = array_bsearch_strict          },
         { .name = "bsearch?",          .func = array_bsearch                 },
+        { .name = "choice",            .func = array_choice                  },
         { .name = "clone",             .func = array_clone                   },
+        { .name = "compact",           .func = array_compact_no_mut          },
+        { .name = "compact!",          .func = array_compact                 },
         { .name = "consumeWhile",      .func = array_consume_while           },
         { .name = "contains?",         .func = array_contains                },
         { .name = "count",             .func = array_count                   },
@@ -2164,6 +2355,8 @@ DEFINE_METHOD_TABLE(
         { .name = "groupsOf",          .func = array_groups_of_no_mut        },
         { .name = "groupsOf!",         .func = array_groups_of               },
         { .name = "insert",            .func = array_insert                  },
+        { .name = "insort",            .func = array_insort                  },
+        { .name = "insortr",           .func = array_insortr                 },
         { .name = "intersperse",       .func = array_intersperse_no_mut      },
         { .name = "intersperse!",      .func = array_intersperse             },
         { .name = "join",              .func = array_join                    },
@@ -2176,6 +2369,8 @@ DEFINE_METHOD_TABLE(
         { .name = "minBy",             .func = array_min_by                  },
         { .name = "nextPermutation",   .func = array_next_permutation_no_mut },
         { .name = "nextPermutation!",  .func = array_next_permutation        },
+        { .name = "nub",               .func = array_nub_no_mut              },
+        { .name = "nub!",              .func = array_nub                     },
         { .name = "partition",         .func = array_partition_no_mut        },
         { .name = "partition!",        .func = array_partition               },
         { .name = "pop",               .func = array_pop                     },
@@ -2187,6 +2382,7 @@ DEFINE_METHOD_TABLE(
         { .name = "reverse!",          .func = array_reverse                 },
         { .name = "rotate",            .func = array_rotate_no_mut           },
         { .name = "rotate!",           .func = array_rotate                  },
+        { .name = "sample",            .func = array_sample                  },
         { .name = "scan",              .func = array_scan_left_no_mut        },
         { .name = "scan!",             .func = array_scan_left               },
         { .name = "scanr",             .func = array_scan_right_no_mut       },

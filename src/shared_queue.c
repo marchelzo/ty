@@ -467,17 +467,17 @@ shared_queue_try_peek(Ty *ty, Value *self, int argc, Value *kwargs)
 }
 
 static Value
-shared_queue_len(Ty *ty, Value *self, int argc, Value *kwargs)
-{
-        ASSERT_ARGC("SharedQueue.len()", 0);
-        return INTEGER(shared_queue_count(self->shared_queue));
-}
-
-static Value
 shared_queue_empty(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("SharedQueue.empty?()", 0);
         return BOOLEAN(shared_queue_count(self->shared_queue) == 0);
+}
+
+static Value
+shared_queue_len(Ty *ty, Value *self, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("SharedQueue.len()", 0);
+        return INTEGER(shared_queue_count(self->shared_queue));
 }
 
 static Value

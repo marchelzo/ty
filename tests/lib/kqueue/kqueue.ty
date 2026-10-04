@@ -259,9 +259,7 @@ pub fn test-read-and-write-same-fd() {
     let evs = kq.poll(sec: 0.0)
     assert(#evs == 2)
 
-    let filters = %{ev.filter: true for ev in evs}
-    assert(kqueue.EVFILT_READ in filters)
-    assert(kqueue.EVFILT_WRITE in filters)
+    assert(%[ev.filter for ev in evs] == %[kqueue.EVFILT_READ, kqueue.EVFILT_WRITE])
 
     os.close(r)
     os.close(w)

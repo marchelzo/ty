@@ -86,4 +86,6 @@ queue_count(Queue *q)
 
 usize shared_queue_count(SharedQueue *q);
 
+Value *queue_index(Queue const *q, imax i);
+
 #endif

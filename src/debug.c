@@ -1385,6 +1385,8 @@ DbgTypeName(Ty *ty, Value const *v)
         case VALUE_BLOB:             return "Blob";
         case VALUE_ARRAY:            return "Array";
         case VALUE_DICT:             return "Dict";
+        case VALUE_SET:              return "Set";
+        case VALUE_HEAP:             return "Heap";
         case VALUE_TUPLE:            return "Tuple";
         case VALUE_OBJECT:           return class_name(ty, x.class);
         case VALUE_CLASS:            return "Class";
@@ -1430,6 +1432,8 @@ IsStructured(Ty *ty, Value const *v)
         switch (x.type) {
         case VALUE_ARRAY:  return vN(*x.array) > 0;
         case VALUE_DICT:   return x.dict->count > 0;
+        case VALUE_SET:    return x.set->count > 0;
+        case VALUE_HEAP:   return vN(x.heap->xs) > 0;
         case VALUE_TUPLE:  return x.count > 0;
         case VALUE_OBJECT: return (x.object->nslot > 0) || (x.object->dynamic != NULL);
         default:           return false;
@@ -1520,6 +1524,8 @@ Preview(Ty *ty, byte_vector *out, Value const *v, int depth)
         char *s;
 
         switch (x.type) {
+        case VALUE_HEAP:
+                x = HEAP_VIEW(x.heap);
         case VALUE_ARRAY:
                 xvP(*out, '[');
                 if (depth > 1 && vN(*x.array) > 0) {
@@ -1572,6 +1578,23 @@ Preview(Ty *ty, byte_vector *out, Value const *v, int depth)
                 xvP(*out, '}');
                 break;
 
+        case VALUE_SET:
+                xvPn(*out, "%[", 2);
+                if (depth > 1 && x.set->count > 0) {
+                        xvPn(*out, "...", 3);
+                } else {
+                        isize i = 0;
+                        for (SetItem *it = x.set->first; it != NULL; it = it->next) {
+                                if (PreviewFull(out)) {
+                                        break;
+                                }
+                                PreviewSep(out, i++);
+                                Preview(ty, out, &it->k, depth + 1);
+                        }
+                }
+                xvP(*out, ']');
+                break;
+
         case VALUE_OBJECT:
                 PreviewObject(ty, out, &x, depth);
                 break;
@@ -1613,7 +1636,9 @@ Describe(Ty *ty, Value const *v, u32 flags)
                 return PreviewString(ty, v);
 
         case VALUE_ARRAY:
+        case VALUE_HEAP:
         case VALUE_DICT:
+        case VALUE_SET:
         case VALUE_TUPLE:
                 return PreviewString(ty, v);
 
@@ -3446,6 +3471,8 @@ WriteChildren(Ty *ty, JsonWriter *w, Handle const *h, isize start, isize count)
         char name[64];
 
         switch (x.type) {
+        case VALUE_HEAP:
+                x = HEAP_VIEW(x.heap);
         case VALUE_ARRAY:
         {
                 isize end = (count > 0) ? min(start + count, vN(*x.array)) : vN(*x.array);
@@ -3474,6 +3501,17 @@ WriteChildren(Ty *ty, JsonWriter *w, Handle const *h, isize start, isize count)
                         char *key = PreviewString(ty, &it->k);
                         WriteVariable(ty, w, key, &it->v, h->frame, h->mark, NULL);
                         ty_free(key);
+                }
+                break;
+        }
+
+        case VALUE_SET:
+        {
+                isize i = 0;
+                for (SetItem *it = x.set->first; it != NULL && i < 10000; it = it->next, ++i) {
+                        char name[32];
+                        ty_snprintf(name, sizeof name, "[%lld]", (long long)i);
+                        WriteVariable(ty, w, name, &it->k, h->frame, h->mark, NULL);
                 }
                 break;
         }

@@ -279,6 +279,8 @@ set(_src_files
   src/queue.c
   src/debug.c
   src/dict.c
+  src/set.c
+  src/heap.c
   src/ffi.c
   src/functions.c
   src/gc.c

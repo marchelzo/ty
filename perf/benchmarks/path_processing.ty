@@ -16,7 +16,7 @@ let PATH_NAMES = make-path-names(3000)
 
 fn plan-paths(names: Array[String]) {
     let suffix-counts = %{*: 0}
-    let directories = %{}
+    let directories = %[]
     let outputs = []
     let component-count = 0
 
@@ -24,7 +24,7 @@ fn plan-paths(names: Array[String]) {
         let source = SOURCE_ROOT / name
         let relative = source.relative-to(SOURCE_ROOT)
         suffix-counts[source.suffix] += 1
-        directories[source.parent] = true
+        directories << source.parent
         component-count += #relative.parts
 
         if source.suffix == '.ty' {

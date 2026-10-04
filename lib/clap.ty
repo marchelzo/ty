@@ -112,7 +112,7 @@ fn _doParse(cls: _, argv, config) -> _ {
     }
 
     let result:   _ = %{}
-    let explicit: _ = %{}
+    let explicit: _ = %[]
     let posArgs:  _ = []
 
     for spec in specs {
@@ -235,7 +235,7 @@ fn _doParse(cls: _, argv, config) -> _ {
         } else {
             result[spec.name] = convert(spec, vals[-1])
         }
-        explicit[spec.name] = true
+        explicit << spec.name
     }
 
     fn setFlag(spec) {
@@ -244,7 +244,7 @@ fn _doParse(cls: _, argv, config) -> _ {
         } else {
             result[spec.name] = true
         }
-        explicit[spec.name] = true
+        explicit << spec.name
     }
 
     fn showHelp() {
@@ -516,7 +516,7 @@ fn _doParse(cls: _, argv, config) -> _ {
                 if let $spec = byLong[name] {
                     if spec.constraint == Bool {
                         result[spec.name] = false
-                        explicit[spec.name] = true
+                        explicit << spec.name
                     } else {
                         die("Cannot negate non-boolean option {opt("--{name}")}")
                     }
@@ -536,11 +536,11 @@ fn _doParse(cls: _, argv, config) -> _ {
                 if let $spec = byLong[name] {
                     if spec.count {
                         result[spec.name] = int(val) ?? 0
-                        explicit[spec.name] = true
+                        explicit << spec.name
                     } else if spec.constraint == Bool {
                         if val in boolish {
                             result[spec.name] = boolish[val]
-                            explicit[spec.name] = true
+                            explicit << spec.name
                         } else {
                             die("Invalid boolean for {opt("--{name}")}: '{val}'")
                         }
@@ -549,7 +549,7 @@ fn _doParse(cls: _, argv, config) -> _ {
                         if !isArray { if let [_] = spec.constraint { isArray = true } }
                         if isArray {
                             result[spec.name] = []
-                            explicit[spec.name] = true
+                            explicit << spec.name
                         } else {
                             setValue(spec, val)
                         }
@@ -650,16 +650,16 @@ fn _doParse(cls: _, argv, config) -> _ {
                 posIdx += 1
             }
             if posIdx > 0 {
-                explicit[spec.name] = true
+                explicit << spec.name
             }
         } else if posIdx < #posArgs {
             result[spec.name] = convert(spec, posArgs[posIdx])
             posIdx += 1
-            explicit[spec.name] = true
+            explicit << spec.name
         }
     }
 
-    for spec in specs if spec.env != nil && !(spec.name in explicit) {
+    for spec in specs if spec.env != nil && spec.name not in explicit {
         if let $envVal = getenv(spec.env !) {
             if spec.constraint == Bool {
                 result[spec.name] = (envVal in boolish) ? boolish[envVal] : true

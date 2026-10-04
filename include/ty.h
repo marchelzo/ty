@@ -153,6 +153,9 @@ typedef struct queue Queue;
 typedef struct shared_queue SharedQueue;
 typedef struct dict Dict;
 typedef struct dict_item DictItem;
+typedef struct set Set;
+typedef struct set_item SetItem;
+typedef struct heap Heap;
 
 typedef struct generator Generator;
 typedef struct thread Thread;
@@ -188,6 +191,7 @@ enum {
         VALUE_TAG              ,
         VALUE_ARRAY            ,
         VALUE_DICT             ,
+        VALUE_SET              ,
         VALUE_OBJECT           ,
         VALUE_OPERATOR         ,
         VALUE_TYPE             ,
@@ -200,6 +204,7 @@ enum {
         VALUE_BLOB             ,
         VALUE_QUEUE            ,
         VALUE_SHARED_QUEUE     ,
+        VALUE_HEAP             ,
         VALUE_SENTINEL         ,
         VALUE_INDEX            ,
         VALUE_NONE             ,
@@ -311,6 +316,8 @@ struct value {
                 bool boolean;
                 Array *array;
                 Dict *dict;
+                Set *set;
+                Heap *heap;
                 Blob *blob;
                 Queue *queue;
                 SharedQueue *shared_queue;
@@ -537,8 +544,36 @@ struct dict {
         usize     size;
         usize     count;
         usize     tombs;
+        DictItem *first;
         DictItem *last;
         Value     dflt;
+};
+
+struct set_item {
+        Value    k;
+        u64      h;
+        SetItem *prev;
+        SetItem *next;
+};
+
+struct set {
+        SetItem *items;
+        usize    size;
+        usize    count;
+        usize    tombs;
+        SetItem *first;
+        SetItem *last;
+};
+
+typedef struct {
+        Value by;
+        Value cmp;
+        bool  desc;
+} SortOrder;
+
+struct heap {
+        Array     xs;
+        SortOrder order;
 };
 
 struct queue {
@@ -546,6 +581,7 @@ struct queue {
         usize  head;
         usize  tail;
         usize  cap;
+        usize  max;
 };
 
 struct shared_queue {
@@ -976,6 +1012,7 @@ extern usize TotalBytesAllocated;
         X(ARRAY0),                \
         X(DICT),                  \
         X(DEFAULT_DICT),          \
+        X(SET),                   \
         X(TUPLE),                 \
         X(XTUPLE),                \
         X(GATHER_TUPLE),          \
@@ -1026,6 +1063,7 @@ extern usize TotalBytesAllocated;
         X(DUP2_SWAP),             \
         X(ARRAY_COMPR),           \
         X(DICT_COMPR),            \
+        X(SET_COMPR),             \
         X(THROW_IF_NIL),          \
         X(PRE_INC),               \
         X(POST_INC),              \
@@ -1193,6 +1231,9 @@ enum {
 #define QUEUE(q)                 ((Value){ .type = VALUE_QUEUE,            .queue          = (q),                                  .tags = 0 })
 #define SHARED_QUEUE(q)          ((Value){ .type = VALUE_SHARED_QUEUE,     .shared_queue   = (q),                                  .tags = 0 })
 #define DICT(d)                  ((Value){ .type = VALUE_DICT,             .dict           = (d),                                  .tags = 0 })
+#define SET(s)                   ((Value){ .type = VALUE_SET,              .set            = (s),                                  .tags = 0 })
+#define HEAP(h)                  ((Value){ .type = VALUE_HEAP,             .heap           = (h),                                  .tags = 0 })
+#define HEAP_VIEW(h)             ((Value){ .type = VALUE_ARRAY,            .array          = &(h)->xs,                             .tags = 0 })
 #define REGEX(r)                 ((Value){ .type = VALUE_REGEX,            .regex          = (r),                                  .tags = 0 })
 #define FUNCTION()               ((Value){ .type = VALUE_FUNCTION,                                                                 .tags = 0 })
 #define PTR(p)                   ((Value){ .type = VALUE_PTR,              .ptr            = (p),  .gcptr = NULL,                  .tags = 0 })

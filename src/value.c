@@ -13,6 +13,8 @@
 #include "value.h"
 #include "xd.h"
 #include "dict.h"
+#include "set.h"
+#include "heap.h"
 #include "blob.h"
 #include "queue.h"
 #include "tags.h"
@@ -26,6 +28,7 @@
 #include "highlight.h"
 
 static _Thread_local vec(Dict *) show_dicts;
+static _Thread_local vec(Set *) show_sets;
 static _Thread_local vec(Value *) show_tuples;
 static _Thread_local vec(Array *) show_arrays;
 static _Thread_local vec(Queue *) show_queues;
@@ -55,6 +58,7 @@ void
 TyValueCleanup(void)
 {
         xvF(show_dicts);
+        xvF(show_sets);
         xvF(show_tuples);
         xvF(show_arrays);
         xvF(show_queues);
@@ -357,6 +361,8 @@ hash(Ty *ty, Value const *val)
         case VALUE_QUEUE:             return queue_hash(ty, val);
         case VALUE_TUPLE:             return tpl_hash(ty, val);
         case VALUE_DICT:              return ptr_hash(val->dict);
+        case VALUE_SET:               return set_hash(val->set);
+        case VALUE_HEAP:              return ptr_hash(val->heap);
         case VALUE_OBJECT:            return obj_hash(ty, val);
         case VALUE_METHOD:            return HashCombine(ptr_hash(val->method), ptr_hash(val->this));
         case VALUE_BUILTIN_METHOD:    return HashCombine(ptr_hash(val->builtin_method), ptr_hash(val->this));
@@ -404,6 +410,7 @@ enum {
         SW_POP_ARY,
         SW_POP_TPL,
         SW_POP_DCT,
+        SW_POP_SET,
         SW_POP_VIS,
         SW_POP_QUE,
 };
@@ -444,6 +451,7 @@ show_impl(
                 case SW_POP_ARY: { vvX(show_arrays);   continue; }
                 case SW_POP_TPL: { vvX(show_tuples);   continue; }
                 case SW_POP_DCT: { vvX(show_dicts);    continue; }
+                case SW_POP_SET: { vvX(show_sets);     continue; }
                 case SW_POP_VIS: { vvX(ty->visiting);  continue; }
                 case SW_POP_QUE: { vvX(show_queues);   continue; }
                 }
@@ -690,6 +698,32 @@ show_impl(
                         }
 
                         WLIT(color ? sfmt("%s%%{%s", TERM(94;1), TERM(0)) : "%{");
+
+                        break;
+                }
+
+                case VALUE_SET:
+                {
+                        for (int i = 0; i < vN(show_sets); ++i) {
+                                if (v__(show_sets, i) == v.set) {
+                                        sxdf(&buf, "%%[...]");
+                                        goto Next;
+                                }
+                        }
+
+                        xvP(show_sets, v.set);
+
+                        WPOP(SW_POP_SET);
+                        WLIT(color ? sfmt("%s]%s", TERM(94;1), TERM(0)) : "]");
+
+                        for (SetItem *it = v.set->last; it != NULL; it = it->prev) {
+                                svP(work, it->k);
+                                if (it->prev != NULL) {
+                                        WLIT(", ");
+                                }
+                        }
+
+                        WLIT(color ? sfmt("%s%%[%s", TERM(94;1), TERM(0)) : "%[");
 
                         break;
                 }
@@ -1048,6 +1082,12 @@ show_impl(
                         }
                         break;
                 }
+
+                case VALUE_HEAP:
+                        WLIT(")");
+                        svP(work, HEAP_VIEW(v.heap));
+                        WLIT("Heap(");
+                        break;
 
                 case VALUE_QUEUE:
                 {
@@ -1523,6 +1563,12 @@ value_test_equality(Ty *ty, Value const *v1, Value const *v2)
         case PAIR_OF(VALUE_DICT):
                 return (v1->dict == v2->dict);
 
+        case PAIR_OF(VALUE_SET):
+                return set_equal(ty, v1->set, v2->set);
+
+        case PAIR_OF(VALUE_HEAP):
+                return (v1->heap == v2->heap);
+
         case PAIR_OF(VALUE_CLASS):
                 return (v1->class == v2->class);
 
@@ -1593,7 +1639,7 @@ value_test_equality(Ty *ty, Value const *v1, Value const *v2)
                 return v_truthy(&v);
         }
 
-        v = vm_try_2op(ty, OP_CMP, v1, v1);
+        v = vm_try_2op(ty, OP_CMP, v1, v2);
 
         if (v.type == VALUE_NONE) {
                 return false;
@@ -1605,6 +1651,11 @@ value_test_equality(Ty *ty, Value const *v1, Value const *v2)
 inline static void
 value_array_mark(Ty *ty, struct array *a)
 {
+        if (UNLIKELY(ALLOC_OF(a)->type == GC_HEAP)) {
+                heap_mark(ty, (Heap *)a);
+                return;
+        }
+
         if (MARKED(a)) return;
 
         MARK(a);
@@ -1806,6 +1857,8 @@ _value_mark_xd(Ty *ty, Value const *v)
         case VALUE_ARRAY:            value_array_mark(ty, v->array);                                   break;
         case VALUE_TUPLE:            mark_tuple(ty, v);                                                break;
         case VALUE_DICT:             dict_mark(ty, v->dict);                                           break;
+        case VALUE_SET:              set_mark(ty, v->set);                                             break;
+        case VALUE_HEAP:             heap_mark(ty, v->heap);                                           break;
         case VALUE_NATIVE_FUNCTION:
         case VALUE_BOUND_FUNCTION:
         case VALUE_FUNCTION:         mark_function(ty, v);                                             break;
@@ -2088,6 +2141,12 @@ ConstructPrimitive(Ty *ty, int class_id, int argc, Value *kwargs)
 
         case CLASS_DICT:
                 return builtin_dict(ty, argc, kwargs);
+
+        case CLASS_SET:
+                return builtin_set(ty, argc, kwargs);
+
+        case CLASS_HEAP:
+                return builtin_heap(ty, argc, kwargs);
 
         case CLASS_QUEUE:
                 return builtin_queue(ty, argc, kwargs);

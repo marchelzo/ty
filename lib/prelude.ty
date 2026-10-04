@@ -261,6 +261,18 @@ fn *[T](a: Array[T], b: Int) -> Array[T];
 fn +[K, U, V](a: Dict[K, U], b: Dict[K, V]) -> Dict[K, U | V];
 fn -[K, V](a: Dict[K, V], b: Dict[K, Any]) -> Dict[K, V];
 fn &[K, V](a: Dict[K, V], b: Dict[K, Any]) -> Dict[K, V];
+fn -[K, V, U](a: Dict[K, V], b: Set[U]) -> Dict[K, V];
+fn &[K, V, U](a: Dict[K, V], b: Set[U]) -> Dict[K, V];
+
+fn |[T, U](a: Set[T], b: Set[U]) -> Set[T | U];
+fn &[T, U](a: Set[T], b: Set[U]) -> Set[T];
+fn -[T, U](a: Set[T], b: Set[U]) -> Set[T];
+fn ^[T, U](a: Set[T], b: Set[U]) -> Set[T | U];
+fn <<[T](a: Set[T], b: T) -> Set[T];
+fn <[T, U](a: Set[T], b: Set[U]) -> Bool;
+fn <=[T, U](a: Set[T], b: Set[U]) -> Bool;
+fn >[T, U](a: Set[T], b: Set[U]) -> Bool;
+fn >=[T, U](a: Set[T], b: Set[U]) -> Bool;
 
 fn %[A, B, R](tpl: (A, B), f: (A | B) -> R) -> (R, R);
 fn %[A, B, C, R](tpl: (A, B, C), f: (A | B | C) -> R) -> (R, R, R);
@@ -527,6 +539,7 @@ class Array[T] : Iterable[T] {
     sort(cmp: (T, T) -> Any, desc: Bool = false) -> Array[T];
     sort[U](by: T -> U, desc: Bool = false) -> Array[T] where (U <=> U): Int;
     sort(desc: Bool = false) -> Array[T] where (T <=> T): Int;
+    sort(by: ?(T -> Any), cmp: ?((T, T) -> Any), desc: Bool = false) -> Array[T];
     slice(i: Int | nil, j: Int | nil, k: Int | nil) -> Array[T];
     splice(i: Int = 0, n: Int = #self) -> Array[T];
     split(i: Int) -> (Array[T], Array[T]);
@@ -538,18 +551,84 @@ class Array[T] : Iterable[T] {
     take-while(predicate: T -> Any) -> Array[T];
     tally() -> Dict[T, Int];
     tally[U](key: T -> U) -> Dict[U, Int];
-    uniq!() -> Array[T];
-    uniq() -> Array[T];
+    uniq!(f: ?(T -> Any)) -> Array[T];
+    uniq(f: ?(T -> Any)) -> Array[T];
+    nub!(f: ?(T -> Any)) -> Array[T];
+    nub(f: ?(T -> Any)) -> Array[T];
+    set() -> Set[T];
     partition(p: T -> Any) -> (Array[T], Array[T]);
 
     window[U](n: Int, f: (*T) -> U) -> Array[U];
     window(n: Int) -> Array[Array[T]];
 
     zip[...U, R](
-        *ys: ...Array[U],
-        f: (T, U) -> R
+        *ys: ...Iterable[U],
+        f: (T, U) -> R,
+        longest: Bool = false,
+        fill: Any = nil
     ) -> Array[R];
-    zip[...U](*ys: ...Array[U]) -> Array[(T, U)];
+    zip[...U](*ys: ...Iterable[U], longest: Bool = false, fill: Any = nil) -> Array[(T, U)];
+
+    zip-with[...U, R](
+        f: (T, U) -> R,
+        *ys: ...Iterable[U],
+        longest: Bool = false,
+        fill: Any = nil
+    ) -> Array[R] {
+        cast(zip(*ys, f: f, longest: longest, fill: fill))
+    }
+
+    insort(x: T, by: ?(T -> Any), cmp: ?((T, T) -> Any), desc: Bool = false) -> Array[T];
+    insortr(x: T, by: ?(T -> Any), cmp: ?((T, T) -> Any), desc: Bool = false) -> Array[T];
+
+    compact() -> Array[T & Object];
+    compact!() -> Array[T & Object];
+
+    choice() -> T | nil;
+    sample(k: Int) -> Array[T];
+
+    first() -> T {
+        (#self == 0) ? nil : self[0]
+    }
+
+    last() -> T {
+        (#self == 0) ? nil : self[-1]
+    }
+
+    pairwise() -> Array[(T, T)] {
+        [(self[i - 1], self[i]) for i in 1..#self]
+    }
+
+    step-by(n: Int) -> Array[T] {
+        (n < 1) ? throw ValueError("step must be positive: {n}") : self[;;n]
+    }
+
+    argsort(by: ?(T -> Any), cmp: ?((T, T) -> Any), desc: Bool = false) -> Array[Int] {
+        let ix = [*..#self]
+        match (by, cmp) {
+            ($f, _) => ix.sort!(by: i -> f(self[i]), desc: desc),
+            (_, $f) => ix.sort!(cmp: (i, j) -> f(self[i], self[j]), desc: desc),
+            _       => ix.sort!(by: i -> self[i], desc: desc)
+        }
+    }
+
+    quantile(q: Float) -> Float | nil {
+        if q < 0 || q > 1 {
+            throw ValueError("quantile out of range [0, 1]: {q}")
+        }
+
+        if #self == 0 {
+            return nil
+        }
+
+        let xs = sort()
+        let at = q * (#xs - 1)
+        let i  = int(at)
+        let lo = float(xs[i])
+        let hi = float(xs[min(i + 1, #xs - 1)])
+
+        lo + (hi - lo) * (at - i)
+    }
 
     shape() {
         use NestedArray[U] = Array[U] | Array[NestedArray[U]]
@@ -823,6 +902,14 @@ macro _ArrayItem = ty.ArrayItem[{item: AST, ?cond: AST, ?optional: Bool | nil}]
 
 macro _DictItem = ty.DictItem[(AST, AST)]
 
+macro _ComprPart = {
+    pattern: [AST],
+    iter: AST,
+    ?`while`: AST,
+    ?`if`: AST,
+    ?`where`: AST
+}
+
 macro __type! {
     let t0: _ = parse::type(0)
     ty.Value(t0)
@@ -867,6 +954,7 @@ macro __define_ast! {
        | ty.Subscript[(AST, AST)]
        | ty.Slice[(AST, AST, AST, AST)]
        | ty.Array[Array[_ArrayItem]]
+       | ty.Set[Array[_ArrayItem]]
        | _ArrayItem
        | ty.Dict[{items: [_DictItem], ?default: AST}]
        | _DictItem
@@ -900,23 +988,9 @@ macro __define_ast! {
        | ty.Union[Array[AST]]
        | ty.Any[AST]
        | ty.Any
-       | ty.ArrayCompr[{
-            items: [_ArrayItem],
-            pattern: AST,
-            iter: AST,
-            ?`while`: AST,
-            ?`if`: AST,
-            ?`where`: AST
-         }]
-       | ty.DictCompr[{
-            items: [_DictItem],
-            pattern: AST,
-            iter: AST,
-            ?default: AST,
-            ?`while`: AST,
-            ?`if`: AST,
-            ?`where`: AST
-         }]
+       | ty.ArrayCompr[{items: [_ArrayItem], parts: [_ComprPart]}]
+       | ty.SetCompr[{items: [_ArrayItem], parts: [_ComprPart]}]
+       | ty.DictCompr[{items: [_DictItem], parts: [_ComprPart], ?default: AST}]
        | ty.Each[{iter: AST, pattern: AST, expr: AST, ?`if`: AST, ?`while`: AST}]
        | ty.SpecialString[Array[String | AST | (AST, String | nil, Int | nil, AST)]]
        | ty.LangString[(AST, Array[String | AST | (AST, String | nil, Int | nil, AST)])]
@@ -1004,6 +1078,8 @@ class Dict[K, V] : Iterable[(K, V)] {
 
     update(other: Dict[K, V], combine: ?((V, V) -> V)) -> Dict[K, V];
     subtract(other: Dict[K, V], callback: ?((V, V) -> Any)) -> Dict[K, V];
+    subtract[U](keys: Set[U]) -> Dict[K, V];
+    intersect[U](keys: Set[U]) -> Dict[K, V];
 
     pop(i: ?Int) -> (K, V);
 
@@ -1061,6 +1137,40 @@ class Dict[K, V] : Iterable[(K, V)] {
         keep!((k, v) -> !f(k, v))
     }
 
+    invert() -> Dict[V, K] {
+        %{v: k for k, v in self}
+    }
+
+    dig(*path: Any) -> Any {
+        let x: Any = self
+        for k in path {
+            x = _dig-step(x, k)
+        }
+        x
+    }
+
+    fetch(key: K) -> V {
+        contains?(key) ? self[key]! : throw IndexError(self, key)
+    }
+
+    filter-keys(f: K -> Any) -> Dict[K, V] {
+        keep((k, _) -> f(k))
+    }
+
+    min-by[U](f: V -> U) -> (K, V) | nil where (U < U): Bool {
+        items().min(\f(_.1))
+    }
+
+    max-by[U](f: V -> U) -> (K, V) | nil where (U > U): Bool {
+        items().max(\f(_.1))
+    }
+
+    drain*() -> Generator[(K, V)] {
+        while #self > 0 {
+            yield pop(0)
+        }
+    }
+
     [](key: K) -> nil | V {
         self[key]
     }
@@ -1070,11 +1180,94 @@ class Dict[K, V] : Iterable[(K, V)] {
     }
 }
 
+fn _dig-step(x: Any, k: Any) -> Any {
+    match (x, k) {
+        (d: Dict, _)        => d[k],
+        (xs: Array, i: Int) => (i in -#xs..#xs) ? xs[i] : nil,
+        _                   => nil
+    }
+}
+
 class DefaultDict[K, V] < Dict[K, V] {
     [](key: K) -> V;
     default() -> (K -> V);
     default(f: nil) -> Dict[K, V];
     default(f: K -> V) -> DefaultDict[K, V];
+}
+
+class Set[T] : Iterable[T] {
+    init(xs: ?Iterable[T]);
+
+    __iter__*() -> Generator[T] {
+        for x in self {
+            yield x
+        }
+    }
+
+    __call__(x: Any) -> Bool;
+    contains?(x: Any) -> Bool;
+
+    add(*xs: T) -> Set[T];
+    insert(x: T) -> Bool;
+    remove(x: Any) -> Bool;
+    pop(i: ?Int) -> T;
+    clear() -> Set[T];
+
+    update(*xs: Iterable[T]) -> Set[T];
+    intersect(xs: Iterable[Any]) -> Set[T];
+    subtract(xs: Iterable[Any]) -> Set[T];
+    diff(xs: Iterable[T]) -> Set[T];
+
+    subset?(xs: Iterable[Any]) -> Bool;
+    superset?(xs: Iterable[Any]) -> Bool;
+    disjoint?(xs: Iterable[Any]) -> Bool;
+
+    keep(f: T -> Any) -> Set[T];
+    keep!(f: T -> Any) -> Set[T];
+
+    reject(f: T -> Any) -> Set[T] {
+        keep(\!f(_))
+    }
+
+    reject!(f: T -> Any) -> Set[T] {
+        keep!(\!f(_))
+    }
+
+    union(*xs: Iterable[T]) -> Set[T] {
+        clone().update(*xs)
+    }
+
+    map[U](f: T -> U) -> Set[U] {
+        %[f(x) for x in self]
+    }
+
+    partition(pred: T -> Any) -> (Set[T], Set[T]) {
+        let yes = %[]
+        let no  = %[]
+        for x in self {
+            (pred(x) ? yes : no) << x
+        }
+        (yes, no)
+    }
+
+    drain*() -> Generator[T] {
+        while #self > 0 {
+            yield pop(0)
+        }
+    }
+
+    clone() -> Set[T];
+    to-array() -> Array[T];
+
+    len() -> Int;
+
+    empty? -> Bool {
+        #self == 0
+    }
+
+    static [](T) {
+        x -> (x :: Set) && x.all?(\_ :: T)
+    }
 }
 
 class String : Iterable[String], IntoPtr[Int], PathLike {
@@ -1643,7 +1836,6 @@ class Blob : Iterable[Int], IntoPtr[Int], PathLike {
     splice(i: ?Int = 0, n: Int = #self) -> Blob;
     slice(i: ?Int = 0, n: Int = #self) -> Blob;
 
-    set(i: Int, byte: Int) -> nil;
 
     clear(i: Int = 0, n: ?Int = nil) -> Blob;
 }
@@ -2064,6 +2256,10 @@ trait Iterable[T] {
         __iter__().uniq(f)
     }
 
+    nub(f) {
+        __iter__().nub(f)
+    }
+
     take(n: Int) {
         __iter__().take(n)
     }
@@ -2160,12 +2356,17 @@ trait Iterable[T] {
         __iter__().pad(n, x)
     }
 
-    zip[...U](*its: ...Iterable[U], longest: Bool = false) -> Generator[(T, U)] {
-        __iter__().zip(*its, longest=longest)
+    zip[...U](*its: ...Iterable[U], longest: Bool = false, fill: Any = nil) -> Iterable[(T, U)] {
+        __iter__().zip(*its, longest: longest, fill: fill)
     }
 
-    zipWith(f, *its, longest=false) {
-        __iter__().zipWith(f, *its, longest=longest)
+    zip-with[...U, R](
+        f: (T, U) -> R,
+        *its: ...Iterable[U],
+        longest: Bool = false,
+        fill: Any = nil
+    ) -> Iterable[R] {
+        __iter__().zip-with(f, *its, longest: longest, fill: fill)
     }
 
     unzip(*args, %kwargs) {
@@ -2284,11 +2485,113 @@ trait Iterable[T] {
         #__iter__()
     }
 
-    [](i: Int) -> T | nil {
-        __iter__()[i]
+    nth(i: Int) -> T | nil {
+        __iter__().nth(i)
     }
 
     __iter__() -> Iter[T];
+
+    sort(cmp: (T, T) -> Any, desc: Bool = false) -> Array[T];
+    sort[U](by: T -> U, desc: Bool = false) -> Array[T] where (U <=> U): Int;
+    sort(desc: Bool = false) -> Array[T] where (T <=> T): Int;
+    sort(by: ?(T -> Any), cmp: ?((T, T) -> Any), desc: Bool = false) -> Array[T] {
+        let xs = [*self]
+        match (by, cmp) {
+            ($f, _) => xs.sort!(by: f, desc: desc),
+            (_, $f) => xs.sort!(cmp: f, desc: desc),
+            _       => xs.sort!(desc: desc)
+        }
+    }
+
+    argsort(by: ?(T -> Any), cmp: ?((T, T) -> Any), desc: Bool = false) -> Array[Int] {
+        [*self].argsort(by: by, cmp: cmp, desc: desc)
+    }
+
+    last() -> T | nil {
+        let y = nil
+        for x in self {
+            y = x
+        }
+        y
+    }
+
+    none?(pred: T -> Any) -> Bool {
+        !any?(pred)
+    }
+
+    one?(pred: T -> Any) -> Bool {
+        let n = 0
+        for x in self if pred(x) {
+            n += 1
+            if n > 1 {
+                return false
+            }
+        }
+        n == 1
+    }
+
+    distinct?(f: T -> Any = id) -> Bool {
+        let seen = %[]
+        all?(x -> seen.insert(f(x)))
+    }
+
+    pairwise() -> Iterable[(T, T)] {
+        __iter__().pairwise()
+    }
+
+    step-by(n: Int) -> Iterable[T] {
+        __iter__().step-by(n)
+    }
+
+    runs(f: T -> Any = id) -> Iterable[(T, Int)] {
+        __iter__().runs(f)
+    }
+
+    compact() -> Iterable[T & Object] {
+        __iter__().compact()
+    }
+
+    combinations(k: Int) -> Generator[Array[T]] {
+        __iter__().combinations(k)
+    }
+
+    product[...U](*its: ...Iterable[U]) -> Generator[(T, U)] {
+        __iter__().product(*its)
+    }
+
+    powerset() -> Generator[Array[T]] {
+        __iter__().powerset()
+    }
+
+    bottom(n: Int, by: ?(T -> Any), cmp: ?((T, T) -> Any), desc: Bool = false) -> Array[T] {
+        let h = Heap(by: by, cmp: cmp, desc: !desc)
+        for x in self {
+            (#h < n) ? h.push(x) : h.push-pop(x)
+        }
+        h.sort().reverse!()
+    }
+
+    top(n: Int, by: ?(T -> Any), cmp: ?((T, T) -> Any), desc: Bool = false) -> Array[T] {
+        bottom(n, by: by, cmp: cmp, desc: !desc)
+    }
+
+    mode() -> T | nil {
+        let counts = %{*: 0}
+        for x in self {
+            counts[x] += 1
+        }
+        let best = nil
+        let most = 0
+        for x, n in counts if n > most {
+            best = x
+            most = n
+        }
+        best
+    }
+
+    quantile(q: Float) -> Float | nil {
+        [*self].quantile(q)
+    }
 }
 
 trait Iter[T] < Iterable[T] {
@@ -2369,11 +2672,20 @@ trait Iter[T] < Iterable[T] {
     }
 
     uniq*(f: _ = id) {
-        let seen = %{}
+        let last = None
         for x in self {
-            let y = f(x)
-            if y not in seen {
-                seen << y
+            let key = Some(f(x))
+            if key != last {
+                yield x
+            }
+            last = key
+        }
+    }
+
+    nub*(f: _ = id) {
+        let seen = %[]
+        for x in self {
+            if seen.insert(f(x)) {
                 yield x
             }
         }
@@ -2427,21 +2739,22 @@ trait Iter[T] < Iterable[T] {
         unzipWith(*args, **kwargs, f=id, n=4)
     }
 
-    zipWith*(f, *its, longest=false) {
-        its.map!(&__iter__)
-        its.insert(0, self)
+    zip-with*[...U, R](
+        f: (T, U) -> R,
+        *its: ...Iterable[U],
+        longest: Bool = false,
+        fill: Any = nil
+    ) -> Generator[R] {
+        let rest: Array[Iterable[Any]] = cast(its)
+        let its = [self, *rest.map(&__iter__)]
 
         while true {
-            let group = []
-
-            for it in its {
-                group.push(it.__next__())
-            }
+            let group = [it.__next__() for it in its]
 
             if group.all?(Some) || (group.any?(Some) && longest) {
-                yield f(*group.map!(x -> match x {
-                    None    => nil,
-                    Some(x) => x
+                yield f(*group.map!(match {
+                    Some(x) => x,
+                    _       => fill
                 }))
             } else {
                 break
@@ -2449,8 +2762,127 @@ trait Iter[T] < Iterable[T] {
         }
     }
 
-    zip[...U](*ys: ...Iterable[U], longest: Bool = false) -> Generator[(T, U)] {
-        zip-with(tuple, *ys, longest=longest)
+    zip[...U](*ys: ...Iterable[U], longest: Bool = false, fill: Any = nil) -> Generator[(T, U)] {
+        cast(zip-with(tuple, *ys, longest: longest, fill: fill))
+    }
+
+    pairwise*() -> Generator[(T, T)] {
+        if not let Some(a) = __next__() {
+            return None
+        }
+
+        for b in self {
+            yield (a, b)
+            a = b
+        }
+    }
+
+    step-by*(n: Int) -> Generator[T] {
+        if n < 1 {
+            throw ValueError("step must be positive: {n}")
+        }
+
+        let i = 0
+        for x in self {
+            if i % n == 0 {
+                yield x
+            }
+            i += 1
+        }
+    }
+
+    runs*(f: T -> Any = id) -> Generator[(T, Int)] {
+        if not let Some(x) = __next__() {
+            return None
+        }
+
+        let key = f(x)
+        let n   = 1
+
+        for y in self {
+            let k = f(y)
+            if k == key {
+                n += 1
+            } else {
+                yield (x, n)
+                x   = y
+                key = k
+                n   = 1
+            }
+        }
+
+        yield (x, n)
+    }
+
+    compact*() -> Generator[T & Object] {
+        for x in self if x != nil {
+            yield x
+        }
+    }
+
+    combinations*(k: Int) -> Generator[Array[T]] {
+        let pool = [*self]
+        let n    = #pool
+
+        if k < 0 || k > n {
+            return None
+        }
+
+        let ix = [*..k]
+
+        while true {
+            yield [pool[i] for i in ix]
+
+            let i = k - 1
+            while i >= 0 && ix[i] == i + n - k {
+                i -= 1
+            }
+
+            if i < 0 {
+                return None
+            }
+
+            ix[i] += 1
+            for j in (i + 1)..k {
+                ix[j] = ix[j - 1] + 1
+            }
+        }
+    }
+
+    product*[...U](*its: ...Iterable[U]) -> Generator[(T, U)] {
+        let rest: Array[Iterable[Any]] = cast(its)
+        let pools = [[*self], *[[*it] for it in rest]]
+
+        if pools.any?(\#_ == 0) {
+            return None
+        }
+
+        let ix = [0 for pools]
+
+        while true {
+            yield cast(tuple(*[pools[j][ix[j]] for j in ..#pools]))
+
+            let j = #pools - 1
+            while j >= 0 && ix[j] + 1 == #pools[j] {
+                ix[j] = 0
+                j -= 1
+            }
+
+            if j < 0 {
+                return None
+            }
+
+            ix[j] += 1
+        }
+    }
+
+    powerset*() -> Generator[Array[T]] {
+        let pool = [*self]
+        for k in 0...#pool {
+            for xs in pool.combinations(k) {
+                yield xs
+            }
+        }
     }
 
     pad*(n, x) {
@@ -2653,8 +3085,8 @@ trait Iter[T] < Iterable[T] {
         }
     }
 
-    set() {
-        return %{ x for x in self }
+    set() -> Set[T] {
+        Set(self)
     }
 
     str() -> String | nil {
@@ -2882,13 +3314,12 @@ trait Iter[T] < Iterable[T] {
         %{ k: v for (k, v) in self }
     }
 
-    [](i: Int) -> T {
-        for _ in 0.upto(i - 1) {
-            if __next__() == None { throw IndexError(self, i) }
-        }
-
-        if let Some(x) = __next__() {
-            return x
+    nth(i: Int) -> T | nil {
+        for x in self {
+            if i == 0 {
+                return x
+            }
+            i -= 1
         }
     }
 
@@ -2896,7 +3327,7 @@ trait Iter[T] < Iterable[T] {
 }
 
 class Queue[T] : Iterable[T] {
-    init();
+    init(max-len: ?Int);
     __iter__*() -> Generator[T] {
         for x in self {
             yield x
@@ -2912,10 +3343,91 @@ class Queue[T] : Iterable[T] {
     try-pop-back() -> Some[T] | None;
     try-peek() -> Some[T] | None;
     try-peek-back() -> Some[T] | None;
+    contains?(x: Any) -> Bool;
+    rotate(n: ?Int) -> Queue[T];
+    max-len -> Int | nil;
+    [](i: Int) -> T;
+    #() -> Int;
     len() -> Int;
     empty? -> Bool;
     clear() -> Queue[T];
     to-array() -> Array[T];
+
+    drain*() -> Generator[T] {
+        while let Some(x) = try-pop() {
+            yield x
+        }
+    }
+}
+
+class Heap[T] : Iterable[T] {
+    init(xs: ?Iterable[T], by: ?(T -> Any), cmp: ?((T, T) -> Any), desc: Bool = false);
+
+    __iter__*() -> Generator[T] {
+        for x in self {
+            yield x
+        }
+    }
+
+    push(*xs: T) -> Heap[T];
+    pop() -> T;
+    try-pop() -> Some[T] | None;
+    peek() -> T;
+    try-peek() -> Some[T] | None;
+    push-pop(x: T) -> T;
+    replace(x: T) -> T;
+    contains?(x: Any) -> Bool;
+    [](i: Int) -> T;
+    #() -> Int;
+    len() -> Int;
+    empty? -> Bool;
+    clear() -> Heap[T];
+    clone() -> Heap[T];
+    sort(cmp: (T, T) -> Any, desc: Bool = false) -> Array[T];
+    sort[U](by: T -> U, desc: Bool = false) -> Array[T] where (U <=> U): Int;
+    sort(desc: Bool = false) -> Array[T];
+    sort(by: ?(T -> Any), cmp: ?((T, T) -> Any), desc: Bool = false) -> Array[T];
+    to-array() -> Array[T];
+
+    drain*() -> Generator[T] {
+        while let Some(x) = try-pop() {
+            yield x
+        }
+    }
+
+    static [](T) {
+        x -> (x :: Heap) && x.all?(\_ :: T)
+    }
+}
+
+fn _mod(a: Int, m: Int) -> Int {
+    ((a % m) + m) % m
+}
+
+fn _fdiv(a: Int, m: Int) -> Int {
+    (a - _mod(a, m)) / m
+}
+
+fn _cdiv(a: Int, m: Int) -> Int {
+    -_fdiv(-a, m)
+}
+
+fn _egcd(a: Int, b: Int) -> (Int, Int, Int) {
+    if b == 0 {
+        return (a, 1, 0)
+    }
+    let (g, x, y) = _egcd(b, a % b)
+    (g, y, x - (a / b) * y)
+}
+
+fn _progression(f: Int, d: Int, n: Int) -> Range {
+    match (n, d) {
+        (0, _)            => Range(f, f),
+        (_, 1)            => Range(f, f + n),
+        (_, -1)           => Range(f + 1, f - n + 1),
+        (_, d) and d > 0  => StepRange(f, f + (n - 1) * d + 1, d),
+        _                 => StepRange(f + 1, f + (n - 1) * d, -d)
+    }
 }
 
 class Range : Iterable[Int] {
@@ -2927,81 +3439,199 @@ class Range : Iterable[Int] {
         self.b = b
     }
 
+    stride -> Int {
+        1
+    }
+
+    start -> Int {
+        (a <= b) ? a : a - 1
+    }
+
+    __delta -> Int {
+        (a <= b) ? stride : -stride
+    }
+
     low -> Int {
-        min(a, b)
+        (#self == 0) ? min(a, b) : min(start, start + (#self - 1) * __delta)
     }
 
     high -> Int {
-        max(a, b) - 1
+        (#self == 0) ? max(a, b) - 1 : max(start, start + (#self - 1) * __delta)
     }
 
-    #() {
-        high - low + 1
+    #() -> Int {
+        (abs(b - a) + stride - 1) / stride
+    }
+
+    first() -> Int | nil {
+        (#self == 0) ? nil : start
+    }
+
+    last() -> Int | nil {
+        (#self == 0) ? nil : start + (#self - 1) * __delta
     }
 
     __str__() {
         "({a} .. {b})"
     }
 
-    &(r: Range) -> Range {
-        if overlap?(r) {
-            Range(
-                max(self.low, r.low),
-                min(self.high, r.high) + 1
-            )
-        } else {
-            Range(0, 0)
+    [](i: Int) -> Int {
+        let n = #self
+        let j = (i < 0) ? i + n : i
+        (j < 0 || j >= n) ? throw IndexError(self, i) : start + j * __delta
+    }
+
+    [;;](i: ?Int, j: ?Int, k: ?Int) -> Range {
+        let n = #self
+        let k = k ?? 1
+
+        if k == 0 {
+            throw ValueError('slice step cannot be zero')
         }
+
+        let clip = (x, lo, hi) -> max(lo, min(hi, (x < 0) ? x + n : x))
+
+        let (i, j) = (k > 0)
+                   ? (clip(i ?? 0, 0, n), clip(j ?? n, 0, n))
+                   : (clip(i ?? n - 1, -1, n - 1), clip(j ?? -n - 1, -1, n - 1))
+
+        let m = (k > 0)
+              ? max(0, _cdiv(j - i, k))
+              : max(0, _cdiv(i - j, -k))
+
+        _progression(start + i * __delta, __delta * k, m)
+    }
+
+    step-by(n: Int) -> Range {
+        (n < 1) ? throw ValueError("step must be positive: {n}") : self[;;n]
+    }
+
+    reverse() -> Range {
+        self[;;-1]
+    }
+
+    &(r: Range) -> Range {
+        if #self == 0 || #r == 0 {
+            return Range(0, 0)
+        }
+
+        let (g, p, _) = _egcd(stride, r.stride)
+        let d = r.low - low
+
+        if d % g != 0 {
+            return Range(0, 0)
+        }
+
+        let l  = stride / g * r.stride
+        let x  = low + stride * _mod(d / g * p, r.stride / g)
+        let lo = max(low, r.low)
+        let hi = min(high, r.high)
+        let f  = lo + _mod(x - lo, l)
+
+        (f > hi) ? Range(0, 0) : _progression(f, l, (hi - f) / l + 1)
     }
 
     |(r: Range) -> Range {
-        if overlap?(r) || touch?(r) {
-            Range(
-                min(self.low, r.low),
-                max(self.high, r.high) + 1
-            )
-        } else {
-            throw ValueError('cannot union non-overlapping ranges')
+        let s = stride
+
+        if (s == r.stride) && (_mod(r.low - low, s) == 0) && (overlap?(r) || touch?(r)) {
+            let lo = min(low, r.low)
+            let hi = max(high, r.high)
+            return _progression(lo, s, (hi - lo) / s + 1)
         }
+
+        if contains?(r) {
+            return _progression(low, s, #self)
+        }
+
+        if r.contains?(self) {
+            return _progression(r.low, r.stride, #r)
+        }
+
+        throw ValueError('cannot union non-overlapping ranges')
     }
 
     overlap?(r: Range) -> Bool {
-        (high   in r)    || (low   in r)
-     || (r.high in self) || (r.low in self)
+        if stride == 1 && r.stride == 1 {
+            return (high   in r)    || (low   in r)
+                || (r.high in self) || (r.low in self)
+        }
+
+        #(self & r) > 0
     }
 
     touch?(r: Range) -> Bool {
-        (high + 1 == r.low) || (low - 1 == r.high)
+        (stride == r.stride)
+     && ((high + stride == r.low) || (low - stride == r.high))
     }
 
     clamp(lo, hi) {
-        return Range(
-            min(hi, max(a, lo)),
-            max(lo, min(b, hi))
-        )
+        if stride == 1 {
+            return Range(
+                min(hi, max(a, lo)),
+                max(lo, min(b, hi))
+            )
+        }
+
+        let n = #self
+        let f = start
+        let d = __delta
+
+        let (i, j) = (d > 0)
+                   ? (_cdiv(lo - f, d), _cdiv(hi - f, d))
+                   : (_fdiv(f - hi, -d) + 1, _fdiv(f - lo, -d) + 1)
+
+        self[max(0, i);max(0, min(n, j))]
     }
 
     __match__(x) {
-        (x :: (Int | Float)) && (x >= low && x <= high)
+        (x :: (Int | Float))
+     && (x >= low && x <= high)
+     && ((stride == 1) || ((x :: Int) && (_mod(x - low, stride) == 0)))
     }
 
     contains?(item: Int) -> Bool { item :: self }
-    contains?(inner: Range) -> Bool { (inner.low :: self) && (inner.high :: self) }
+    contains?(inner: Range) -> Bool {
+        (inner.low :: self)
+     && (inner.high :: self)
+     && ((#inner <= 1) || (inner.stride % stride == 0))
+    }
 
     has-all?(*ks) {
         ks.all?(k -> k :: self)
     }
 
     <=>(r: Range) -> Int {
-        (low, high) <=> (r.low, r.high)
+        (low, high, stride) <=> (r.low, r.high, r.stride)
     }
 
     __iter__() -> Generator[Int] {
-        if a < b {
-            a.upto(b - 1)
-        } else {
-            (a - 1).downto(b)
+        match (stride, a < b) {
+            (1, true) => a.upto(b - 1),
+            (1, _)    => (a - 1).downto(b),
+            _         => start.count(__delta).take(#self)
         }
+    }
+}
+
+class StepRange < Range {
+    __stride: Int
+
+    init(a: Int, b: Int, stride: Int) {
+        if stride < 1 {
+            throw ValueError("stride must be positive: {stride}")
+        }
+        self.a   = a
+        self.b   = b
+        __stride = stride
+    }
+
+    stride -> Int {
+        __stride
+    }
+
+    __str__() {
+        "({a} .. {b})[;;{__stride}]"
     }
 }
 
@@ -3096,8 +3726,8 @@ fn printf(*args, %kwargs) {
 fn uuid4() {
     let b = Blob(*[rand(256) for _ in ..16])
 
-    b.set(6, 0x40 | (b[6] & 0x0F))
-    b.set(8, 0xA0 | (b[8] & 0x3F))
+    b[6] = 0x40 | (b[6] & 0x0F)
+    b[8] = 0xA0 | (b[8] & 0x3F)
 
     let hex = b.hex()
 
@@ -3107,8 +3737,8 @@ fn uuid4() {
 fn uuid7() {
     let b = Blob(*[rand(256) for _ in ..16])
 
-    b.set(6, 0x70 | (b[6] & 0x0F))
-    b.set(8, 0x80 | (b[8] & 0x3F))
+    b[6] = 0x70 | (b[6] & 0x0F)
+    b[8] = 0x80 | (b[8] & 0x3F)
 
     let t = time.utime() / 1000
 
@@ -3953,6 +4583,18 @@ class AnyOf {
 
 macro __walk! {
     fn copySource(a: _, b: _) -> _ { ty.copySource(a, b) }
+
+    fn walk-part(part: _, walk: _, f: _) -> _ {
+        ({
+            pattern: [walk(p, f) for p in part.pattern],
+            iter: walk(part.iter, f),
+            `while`: walk(part.?`while`, f),
+            `if`: walk(part.?`if`, f),
+            `where`: walk(part.?`where`, f)
+        })
+    }
+
+
     fn walk(tree: _, f: _) -> _ {
         if tree == nil {
             return nil
@@ -3965,6 +4607,7 @@ macro __walk! {
                 => ty.Id({name, module, constraint: walk(constraint, f)}),
 
             ty.Array(xs) => ty.Array([walk(x, f) for x in xs]),
+            ty.Set(xs)   => ty.Set([walk(x, f) for x in xs]),
 
             ty.ArrayItem(x) => ty.ArrayItem(
                 item: walk(x.item, f),
@@ -4187,23 +4830,20 @@ macro __walk! {
 
             ty.Generator(gen) => ty.Generator(walk(gen, f)),
 
-            ty.ArrayCompr({items, pattern, iter, ?`if`, ?`while`, ?`where`}) => ty.ArrayCompr(
+            ty.ArrayCompr({items, parts}) => ty.ArrayCompr(
                 items: [walk(item, f) for item in items],
-                iter: walk(iter, f),
-                pattern: walk(pattern, f),
-                `while`: walk(`while`, f),
-                `if`: walk(`if`, f),
-                `where`: walk(`where`, f)
+                parts: [walk-part(part, walk, f) for part in parts]
             ),
 
-            ty.DictCompr({items, pattern, default, iter, ?`if`, ?`while`, ?`where`}) => ty.DictCompr(
+            ty.SetCompr({items, parts}) => ty.SetCompr(
                 items: [walk(item, f) for item in items],
-                iter: walk(iter, f),
-                default: walk(default, f),
-                pattern: walk(pattern, f),
-                `while`: walk(`while`, f),
-                `if`: walk(`if`, f),
-                `where`: walk(`where`, f)
+                parts: [walk-part(part, walk, f) for part in parts]
+            ),
+
+            ty.DictCompr({items, parts, ?default}) => ty.DictCompr(
+                items: [walk(item, f) for item in items],
+                parts: [walk-part(part, walk, f) for part in parts],
+                default: walk(default, f)
             ),
 
             ty.Spread(spread) => ty.Spread(walk(spread, f)),

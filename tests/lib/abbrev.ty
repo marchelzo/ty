@@ -270,14 +270,14 @@ pub fn ambiguous-renderings() {
 
 pub fn structural-uniqueness() {
     let words = ['', 'a', 'ab', 'ba', 'cabdog', 'cabdragon', 'alphaBeta', 'alphaBravo']
-    let input = ["{a}{b}" for a in words for b in words].uniq()
+    let input = ["{a}{b}" for a in words for b in words].nub()
     for boundary in [/ab|b/, /(?=a)/, /a*/, /(?=[A-Z])/, /ab(?=dog)|b(?=dragon)/] {
         let actual = abbrev(input, boundary: boundary, preserve-leaf: false)
-        assert(#actual.uniq() == #input)
+        assert(#actual.nub() == #input)
         assert(abbrev(input.reverse(), boundary: boundary, preserve-leaf: false)
                == actual.reverse())
         let global = abbrev(input, boundary: boundary, preserve-leaf: false, global: true)
-        assert(#global.uniq() == #input)
+        assert(#global.nub() == #input)
         assert(abbrev(input.reverse(), boundary: boundary, preserve-leaf: false,
                       global: true) == global.reverse())
     }
@@ -311,7 +311,7 @@ pub fn exhaustive-small-trees() {
             let actual = abbrev(input, boundary: /\//, preserve-leaf: keep-leaf?,
                                 prefix-length: policy, global: global?)
             assert(actual == expected, "{input}: {actual} != {expected}")
-            assert(#actual.uniq() == #input)
+            assert(#actual.nub() == #input)
         }
     }
 }

@@ -2996,7 +2996,7 @@ pub class TreeView < Component {
 
     __current-root: Any = nil
     __prev-root:    Any = nil
-    __expanded:     Dict[String, Bool] = %{}
+    __expanded:     Set[String] = %[]
     __cursor:       Int = 0
     __scroll:       Int = 0
     __root-stack:   Array[Any] = []
@@ -3017,27 +3017,22 @@ pub class TreeView < Component {
     }
 
     __is-expanded?(node) -> Bool {
-        __expanded[__key(node)] ?? false
+        __key(node) in __expanded
     }
 
     __toggle!(node) {
-        let k = __key(node)
-        __expanded[k] = !(__expanded[k] ?? false)
+        __expanded ^= %[__key(node)]
         __invalidate-flat!()
     }
 
     __expand!(node) {
-        let k = __key(node)
-        if !(__expanded[k] ?? false) {
-            __expanded[k] = true
+        if __expanded.insert(__key(node)) {
             __invalidate-flat!()
         }
     }
 
     __collapse!(node) {
-        let k = __key(node)
-        if __expanded[k] ?? false {
-            __expanded[k] = false
+        if __expanded.remove(__key(node)) {
             __invalidate-flat!()
         }
     }

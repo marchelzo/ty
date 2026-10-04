@@ -54,7 +54,7 @@ let ORDERS = make-orders(2000)
 fn process-orders(orders: Array[Order]) {
     let revenue = %{*: 0.0}
     let units = %{*: 0}
-    let accounts = %{}
+    let accounts = %[]
     let summaries = []
 
     for order in orders if order.status != 'cancelled' {
@@ -66,7 +66,7 @@ fn process-orders(orders: Array[Order]) {
 
         let total = subtotal * (order.priority ? 0.92 : 1.0)
         revenue[order.region] += total
-        accounts[order.account] = true
+        accounts << order.account
         summaries.push({id: order.id, account: order.account, total})
     }
 

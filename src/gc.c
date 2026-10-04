@@ -4,6 +4,8 @@
 
 #include "gc.h"
 #include "dict.h"
+#include "set.h"
+#include "heap.h"
 #include "object.h"
 #include "vm.h"
 #include "log.h"
@@ -41,6 +43,14 @@ collect(Ty *ty, struct alloc *a)
 
         case GC_DICT:
                 dict_free(ty, p);
+                break;
+
+        case GC_SET:
+                set_free(ty, p);
+                break;
+
+        case GC_HEAP:
+                heap_free(ty, p);
                 break;
 
         case GC_QUEUE:

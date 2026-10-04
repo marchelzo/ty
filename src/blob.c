@@ -260,29 +260,6 @@ blob_fill(Ty *ty, Value *blob, int argc, Value *kwargs)
 }
 
 static Value
-blob_set(Ty *ty, Value *blob, int argc, Value *kwargs)
-{
-        if (argc != 2)
-                zP("blob.set() expects 2 arguments but got %d", argc);
-
-        Value i = ARG(0);
-        if (i.type != VALUE_INTEGER)
-                zP("the argument to blob.get() must be an integer");
-        if (i.z < 0)
-                i.z += vN(*blob->blob);
-        if (i.z < 0 || i.z >= vN(*blob->blob))
-                zP("invalid index passed to blob.get()");
-
-        Value arg = ARG(1);
-        if (arg.type != VALUE_INTEGER || arg.z < 0 || arg.z > UCHAR_MAX)
-                zP("invalid integer passed to blob.set()");
-
-        blob->blob->items[i.z] = arg.z;
-
-        return arg;
-}
-
-static Value
 blob_xor(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Blob.xor()", 1, 2);
@@ -673,7 +650,6 @@ DEFINE_METHOD_TABLE(
         { .name = "reserve",  .func = blob_reserve      },
         { .name = "search",   .func = blob_search       },
         { .name = "searchr",  .func = blob_searchr      },
-        { .name = "set",      .func = blob_set          },
         { .name = "shrink",   .func = blob_shrink       },
         { .name = "size",     .func = blob_size         },
         { .name = "slice",    .func = blob_slice        },

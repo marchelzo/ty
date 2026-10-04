@@ -916,7 +916,7 @@ ctx_insensitive(Token const *t, int ctx)
 
         unsigned char c = *t->start.s;
 
-        return !xisdigit(c) && !contains("/-#&*!?$'", c);
+        return !xisdigit(c) && !contains("/-#&*!?$'%", c);
 }
 
 inline static void
@@ -4475,6 +4475,54 @@ prefix_dict(Ty *ty)
         return e;
 }
 
+static Expr *
+prefix_set(Ty *ty)
+{
+        Expr *e = mkxpr(SET);
+
+        consume(TOKEN_SET_OPEN);
+
+        while (T0 != ']') {
+                setctx(LEX_PREFIX);
+
+                if (T0 == TOKEN_STAR) {
+                        Expr *item = mkexpr(ty);
+                        next();
+                        item->type  = EXPRESSION_SPREAD;
+                        item->value = parse_expr(ty, 0);
+                        item->end   = TEnd;
+                        avP(e->elements, item);
+                } else {
+                        avP(e->elements, parse_expr(ty, 0));
+                }
+
+                avP(e->optional, false);
+
+                if (have_kw(IF)) {
+                        next();
+                        avP(e->aconds, parse_expr(ty, 0));
+                } else {
+                        avP(e->aconds, NULL);
+                }
+
+                if (have_kw(FOR)) {
+                        e->type = EXPRESSION_SET_COMPR;
+                        parse_comprehension(ty, &e->compr);
+                        expect(']');
+                } else if (T0 == ',') {
+                        next();
+                } else {
+                        expect(']');
+                }
+        }
+
+        next();
+
+        e->end = TEnd;
+
+        return e;
+}
+
 //PREFIX_OPERATOR(at,     AT,       9)
 PREFIX_OPERATOR(minus,  MINUS,    9)
 PREFIX_OPERATOR(bang,   BANG,     10)
@@ -5247,6 +5295,7 @@ get_prefix_parser(Ty *ty)
         case '#':                       return prefix_hash;
 
         case TOKEN_DICT_OPEN:           return prefix_dict;
+        case TOKEN_SET_OPEN:            return prefix_set;
         case '(':                       return prefix_parenthesis;
         case '[':                       return prefix_array;
         case '{':                       return prefix_record;

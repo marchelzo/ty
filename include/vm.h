@@ -317,6 +317,12 @@ Value
 vm_jit_bind_method(Ty *ty, Value *f, Value *v);
 
 void
+vm_iter_begin(Ty *ty, Value xs);
+
+bool
+vm_iter_next(Ty *ty, Value *x);
+
+void
 vm_jit_loop_iter(Ty *ty);
 
 bool
@@ -350,6 +356,12 @@ DoGenerator(Ty *ty, char const *ip);
 
 void
 DoDictLiteral(Ty *ty, i32 n, Value const *dflt);
+
+void
+DoSetLiteral(Ty *ty, i32 n);
+
+void
+DoSetCompr(Ty *ty, i32 skip, i32 n);
 
 void
 DoSubscript(Ty *ty, bool exec);

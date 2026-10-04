@@ -303,6 +303,14 @@ typedef vec(Module *)       ModuleVector;
 #define dfor_2(   d, go) dfor_4(key, val, (d), go)
 #define dfor(...) VA_SELECT(dfor, __VA_ARGS__)
 
+#define sfor_3(_x, _s, go) \
+        for (SetItem *_s_item = (_s)->first; _s_item != NULL; _s_item = _s_item->next) { \
+                Value *(_x) = &_s_item->k; (void)(_x); \
+                go; \
+        }
+#define sfor_2(    s, go) sfor_3(x, (s), go)
+#define sfor(...) VA_SELECT(sfor, __VA_ARGS__)
+
 #define avP(a, b)        VPush((a), (b))
 #define avPn(a, b, c)    VPushN(a, b, c)
 #define avI(v, x, i)     VInsert(v, x, i)

@@ -34,14 +34,14 @@ fn transform-json(payload: String) {
     let document: _ = json.parse(payload)
     let counts = %{*: 0}
     let totals = %{*: 0.0}
-    let accounts = %{}
+    let accounts = %[]
     let selected = []
 
     for event in document['events'] if event['active'] {
         let kind = event['kind']
         counts[kind] += 1
         totals[event['country']] += event['metrics']['value']
-        accounts[event['account']] = true
+        accounts << event['account']
 
         if kind == 'purchase' || event['metrics']['duration'] >= 900 {
             selected.push({

@@ -113,7 +113,7 @@ fn print-table(
 
     let py-map = %{r.name: r for r in py-results}
     let names = [*ty-map.keys(), *py-map.keys()]
-        .uniq().sort()
+        .nub().sort()
 
     if #names == 0 {
         print('No benchmark results to compare.')

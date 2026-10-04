@@ -133,6 +133,8 @@ typedef vec(struct condpart *) condpart_vector;
         X(STATEMENT),                                                                 \
         X(DICT),                                                                      \
         X(DICT_COMPR),                                                                \
+        X(SET),                                                                       \
+        X(SET_COMPR),                                                                 \
         X(TAG),                                                                       \
         X(CONDITIONAL),                                                               \
         X(COMPILE_TIME),                                                              \

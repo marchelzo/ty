@@ -55,6 +55,8 @@ enum {
         GC_TUPLE,
         GC_OBJECT,
         GC_DICT,
+        GC_SET,
+        GC_HEAP,
         GC_BLOB,
         GC_QUEUE,
         GC_SHARED_QUEUE,

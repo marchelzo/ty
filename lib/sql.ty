@@ -33,7 +33,7 @@ fn _sync-table(cls: _) {
     }
 
     let existing = _existing-cols(_db, table)
-    let ex-lower = %{k.lower(): true for k, _ in existing}
+    let ex-lower = %[k.lower() for k, _ in existing]
     let dialect = _dialect(_db)
     let desired = schema.cols
 
@@ -66,7 +66,7 @@ fn _diff-table(cls: _, db: SQLite) {
     }
 
     let existing = _existing-cols(db, table)
-    let ex-lower = %{k.lower(): true for k, _ in existing}
+    let ex-lower = %[k.lower() for k, _ in existing]
     let dialect = _dialect(db)
 
     for col in desired {
@@ -83,7 +83,7 @@ fn _diff-table(cls: _, db: SQLite) {
         }
     }
 
-    let desired-lower = %{c.name.lower(): true for c in desired}
+    let desired-lower = %[c.name.lower() for c in desired]
     for name, _ in existing {
         if name.lower() not in desired-lower {
             let col-info = existing[name]
@@ -313,7 +313,7 @@ pub fn up(dir: String = 'migrations', db: SQLite | nil = nil) -> Array[String] {
     let db = _resolve-db(db)
     _ensure-migrations-table(db)
     let applied = _applied-versions(db)
-    let applied-set = %{v: true for v in applied}
+    let applied-set = Set(applied)
     let pending = _migration-files(dir).filter(\_ ['version'] not in applied-set)
     let ran = []
 
@@ -371,7 +371,7 @@ pub fn redo(steps: Int = 1, dir: String = 'migrations', db: SQLite | nil = nil) 
 pub fn migration-status(dir: String = 'migrations', db: SQLite | nil = nil) -> Array[Dict[String, _]] {
     let db = _resolve-db(db)
     _ensure-migrations-table(db)
-    let applied-set = %{v: true for v in _applied-versions(db)}
+    let applied-set = Set(_applied-versions(db))
     let all-migs = _migration-files(dir)
 
     all-migs.map(fn (mig) {
@@ -669,7 +669,7 @@ pub class Query[T] : Iterable[T] {
             let ref-pk       = assoc.ref-pk
             let ref-from-row = assoc.from-row
 
-            let fk-vals = rows.map(\_ [fk-col]).filter(\_ != nil).uniq()
+            let fk-vals = rows.map(\_ [fk-col]).filter(\_ != nil).nub()
 
             continue if #fk-vals == 0
 
@@ -934,7 +934,7 @@ use match UniqueType {
     ) => inner
 }
 
-fn _find-field(expr: AST, col-names: Dict) {
+fn _find-field(expr: AST, col-names: Set[String]) {
     let found = nil
     ty.walk(expr, match {
         ty.Id({name: $n, *}) and n in col-names => do {
@@ -946,7 +946,7 @@ fn _find-field(expr: AST, col-names: Dict) {
     found ?? 'base'
 }
 
-fn _make-check(stmt: AST, col-names: Dict) {
+fn _make-check(stmt: AST, col-names: Set[String]) {
     let field = _find-field(stmt, col-names)
     let src = sourceOf(stmt)
     let $key = ty.String(field)
@@ -1206,10 +1206,10 @@ pub macro table(def: _) {
     $$]
 
     let user-methods = cls.methods
-    let has-method   = %{*: false}
+    let has-method   = %[]
     for m in user-methods {
         let ty.Func($f) = m
-        has-method[f.name] = true
+        has-method << f.name
     }
 
     let ca-col = cols.find(\_.name == 'createdAt')
@@ -1231,7 +1231,7 @@ pub macro table(def: _) {
     }
 
     let has-validations = #valid-checks > 0
-    let col-name-set = %{c.name: true for c in cols}
+    let col-name-set = %[c.name for c in cols]
 
     let valid-stmts = [$$[ errors = %{} $$]]
     for stmt in valid-checks {
@@ -1239,7 +1239,7 @@ pub macro table(def: _) {
             _make-check(stmt, col-name-set)
         )
     }
-    if has-method['validate'] {
+    if has-method('validate') {
         valid-stmts.push(cb('validate'))
     }
     valid-stmts.push($$[ #errors == 0 $$])
@@ -1251,12 +1251,12 @@ pub macro table(def: _) {
     $$]
 
     let ins-stmts = [db-resolve]
-    if has-method['beforeInsert'] {
+    if has-method('beforeInsert') {
         ins-stmts.push(cb('beforeInsert'))
     }
     if has-created-at { ins-stmts.push(ts-created) }
     if has-updated-at { ins-stmts.push(ts-updated) }
-    if has-validations || has-method['validate'] {
+    if has-validations || has-method('validate') {
         ins-stmts.push(validate-guard)
     }
     let $ins-sql-str    = ty.String(ins-sql)
@@ -1285,18 +1285,18 @@ pub macro table(def: _) {
             ]
         ))
     }
-    if has-method['afterInsert'] {
+    if has-method('afterInsert') {
         ins-stmts.push(cb('afterInsert'))
     }
     ins-stmts.push($$[ self $$])
     let ins-body = ty.Block(ins-stmts)
 
     let save-stmts = [db-resolve]
-    if has-method['beforeSave'] {
+    if has-method('beforeSave') {
         save-stmts.push(cb('beforeSave'))
     }
     if has-updated-at { save-stmts.push(ts-updated) }
-    if has-validations || has-method['validate'] {
+    if has-validations || has-method('validate') {
         save-stmts.push(validate-guard)
     }
     let $upd-sql-str    = ty.String(upd-sql)
@@ -1312,7 +1312,7 @@ pub macro table(def: _) {
             *flds(pk-cols).map(\ty.Arg(arg: _))
         ]
     ))
-    if has-method['afterSave'] {
+    if has-method('afterSave') {
         save-stmts.push(cb('afterSave'))
     }
     save-stmts.push($$[ self $$])
@@ -1335,7 +1335,7 @@ pub macro table(def: _) {
     let upsert-stmts = [db-resolve]
     if has-created-at { upsert-stmts.push(ts-created) }
     if has-updated-at { upsert-stmts.push(ts-updated) }
-    if has-validations || has-method['validate'] {
+    if has-validations || has-method('validate') {
         upsert-stmts.push(validate-guard)
     }
     if cols.any?(\_.auto) {
@@ -1358,7 +1358,7 @@ pub macro table(def: _) {
         ($$::(_dialect)(db) == 'postgres') ? $$pg-del-sql-str : $$del-sql-str
     $$]
     let del-stmts = [db-resolve]
-    if has-method['beforeDelete'] { del-stmts.push(cb('beforeDelete')) }
+    if has-method('beforeDelete') { del-stmts.push(cb('beforeDelete')) }
     del-stmts.push(ty.Call(
         func: $$[ db.exec $$],
         args: [
@@ -1366,7 +1366,7 @@ pub macro table(def: _) {
             *flds(pk-cols).map(\ty.Arg(arg: _))
         ]
     ))
-    if has-method['afterDelete'] { del-stmts.push(cb('afterDelete')) }
+    if has-method('afterDelete') { del-stmts.push(cb('afterDelete')) }
     let del-body = ty.Block(del-stmts)
 
     let db-p = ty.Param(

@@ -717,15 +717,12 @@ pub fn event-occurrences(events: Array[Event], start: PlainDate,
     }
 
     let result: Array[Occurrence] = []
-    let emitted: Dict[String, Bool] = %{}
+    let emitted: Set[String] = %[]
     for uid, master in masters {
         let $base = master.start or continue
         let $rule = master.rrule or continue
         let duration = event-duration(master)
-        let exceptions: Dict[String, Bool] = %{}
-        for value in master.exception-dates {
-            exceptions[recurrence-key(uid, value)] = true
-        }
+        let exceptions = %[recurrence-key(uid, value) for value in master.exception-dates]
         let cursor = base.date
         let seen = 0
         let until = rule.until
@@ -736,8 +733,8 @@ pub fn event-occurrences(events: Array[Event], start: PlainDate,
                 seen += 1
                 if rule.count && seen > rule.count { break }
                 let key = recurrence-key(uid, occurrence-start)
-                emitted[key] = true
-                if !exceptions[key] {
+                emitted << key
+                if key not in exceptions {
                     if let $override = overrides[key] {
                         if !cancelled-event(override) && override.start && in-date-range(override.start, start, end) {
                             result.push(Occurrence(override, override.start, override.end, override.recurrence-id))
@@ -754,8 +751,8 @@ pub fn event-occurrences(events: Array[Event], start: PlainDate,
 
         for rdate in master.recurrence-dates {
             let key = recurrence-key(uid, rdate)
-            if emitted[key] || exceptions[key] || !in-date-range(rdate, start, end) { continue }
-            emitted[key] = true
+            if key in emitted || key in exceptions || !in-date-range(rdate, start, end) { continue }
+            emitted << key
             if let $override = overrides[key] {
                 if !cancelled-event(override) && override.start && in-date-range(override.start, start, end) {
                     result.push(Occurrence(override, override.start, override.end, override.recurrence-id))
@@ -773,7 +770,7 @@ pub fn event-occurrences(events: Array[Event], start: PlainDate,
             result.push(Occurrence(event, event-start, event.end, event.recurrence-id))
         }
     }
-    for key, override in overrides if !emitted[key] {
+    for key, override in overrides if key not in emitted {
         let $override-start = override.start or continue
         if !cancelled-event(override) && in-date-range(override-start, start, end) {
             result.push(Occurrence(override, override-start, override.end, override.recurrence-id))

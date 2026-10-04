@@ -6,35 +6,16 @@
 #include "xd.h"
 #include "value.h"
 #include "dict.h"
+#include "set.h"
 #include "log.h"
 #include "vm.h"
 #include "gc.h"
 #include "vec.h"
 
-#define INITIAL_SIZE 8
-#define NO_SUCH_SPOT SIZE_MAX
-
-#define ENSURE_INIT(d) do {      \
-        if ((d)->size == 0) {    \
-                initxd(ty, (d)); \
-        }                        \
-} while (0)
-
-#define V_IS_EMPTY(v) ((v)->type == 0)
-#define V_IS_TOMB(v)  ((v)->type == VALUE_TOMBSTONE)
-
-#define IS_EMPTY(d, i) V_IS_EMPTY(&(d)->items[i].k)
-#define IS_TOMB(d, i)  V_IS_TOMB(&(d)->items[i].k)
-#define OCCUPIED(d, i) ((i != NO_SUCH_SPOT) && !IS_EMPTY(d, i) && !IS_TOMB(d, i))
-
-inline static void
-initxd(Ty *ty, Dict *d)
-{
-        NOGC(d);
-        d->items = mA0(sizeof (DictItem) * INITIAL_SIZE);
-        d->size  = INITIAL_SIZE;
-        OKGC(d);
-}
+#define HT                 Dict
+#define HT_ITEM            DictItem
+#define HT_PAYLOAD(it, src) ((it)->v = (src)->v)
+#include "htab.h"
 
 inline static Value *
 val(Dict *d, usize i)
@@ -42,226 +23,55 @@ val(Dict *d, usize i)
         return &d->items[i].v;
 }
 
-inline static bool
-should_rehash(Dict *d)
-{
-        return (4 * (d->count + d->tombs) >= 3 * d->size);
-}
-
-inline static usize
-find_spot(
-        Ty *ty,
-        usize size,
-        DictItem const *items,
-        u64 h,
-        Value const *k
-) {
-        if (size == 0) {
-                return NO_SUCH_SPOT;
-        }
-
-        usize mask = size - 1;
-        usize i = h & mask;
-
-        usize tomb = NO_SUCH_SPOT;
-
-        while (!V_IS_EMPTY(&items[i].k)) {
-                if (items[i].h == h && v_eq(&items[i].k, k)) {
-                        return i;
-                }
-                if (tomb == -1 && V_IS_TOMB(&items[i].k)) {
-                        tomb = i;
-                }
-                i = (i + 1) & mask;
-        }
-
-        return (tomb != NO_SUCH_SPOT) ? tomb : i;
-}
-
-inline static void
-linkxd(Dict *d, usize i)
-{
-        if (d->items[i].next != NULL) {
-                d->items[i].next->prev = &d->items[i];
-        } else {
-                d->last = &d->items[i];
-        }
-        if (d->items[i].prev != NULL) {
-                d->items[i].prev->next = &d->items[i];
-        }
-}
-
-inline static void
-swap(Dict *d, usize i, usize j)
-{
-        SWAP(DictItem, d->items[i], d->items[j]);
-
-        if (d->items[i].next == &d->items[i]) { d->items[i].next = &d->items[j]; }
-        if (d->items[i].prev == &d->items[i]) { d->items[i].prev = &d->items[j]; }
-        if (d->items[j].next == &d->items[j]) { d->items[j].next = &d->items[i]; }
-        if (d->items[j].prev == &d->items[j]) { d->items[j].prev = &d->items[i]; }
-
-        linkxd(d, i);
-        linkxd(d, j);
-}
-
-inline static Value *
-robinhood(Ty *ty, Dict *d, usize i)
-{
-        usize size = d->size;
-        usize mask = size - 1;
-        DictItem *items = d->items;
-
-        usize lo = items[i].h & mask;
-        usize hi = i;
-
-        while (lo != hi) {
-                u64 lo_h = items[lo].h;
-                u64 hi_h = items[hi].h;
-
-                usize lo_ideal = lo_h & mask;
-                usize hi_ideal = hi_h & mask;
-
-                usize lo_dist = (lo + size - lo_ideal) & mask;
-                usize hi_dist = (hi + size - hi_ideal) & mask;
-
-                if (hi_dist > lo_dist) {
-                        swap(d, lo, hi);
-                        if (hi == i) {
-                                i = lo;
-                        }
-                }
-
-                lo = (lo + 1) & mask;
-        }
-
-        return val(d, i);
-}
-
-inline static void
-rehash(Ty *ty, Dict *d, usize size)
-{
-        DictItem *items = mA0(size * sizeof (DictItem));
-        DictItem *last = NULL;
-
-        DictItem *it = d->last;
-
-        while (it != NULL && it->prev != NULL) {
-                it = it->prev;
-        }
-
-        while (it != NULL) {
-                usize i = find_spot(ty, size, items, it->h, &it->k);
-                if (last != NULL) {
-                        last->next = &items[i];
-                }
-                items[i].k = it->k;
-                items[i].v = it->v;
-                items[i].h = it->h;
-                items[i].prev = last;
-                last = &items[i];
-                it = it->next;
-        }
-
-        mF(d->items);
-
-        d->items = items;
-        d->last  = last;
-        d->tombs = 0;
-        d->size  = size;
-}
-
-inline static usize
-delete(Dict *d, usize i)
-{
-        if (d->items[i].next != NULL) {
-                d->items[i].next->prev = d->items[i].prev;
-        } else {
-                d->last = d->items[i].prev;
-        }
-        if (d->items[i].prev != NULL) {
-                d->items[i].prev->next = d->items[i].next;
-        }
-
-        m0(d->items[i]);
-        d->items[i].k.type = VALUE_TOMBSTONE;
-
-        d->count -= 1;
-        d->tombs += 1;
-
-        return i;
-}
-
 inline static Value *
 put(Ty *ty, Dict *d, usize i, u64 h, Value k, Value v)
 {
-        ENSURE_INIT(d);
-
-        if (should_rehash(d)) {
-                rehash(ty, d, d->size * 2);
-                i = find_spot(ty, d->size, d->items, h, &k);
-        }
-
-        if (IS_TOMB(d, i)) {
-                d->tombs -= 1;
-        }
-
-        if (d->last != NULL) {
-                d->last->next = &d->items[i];
-        }
-
-        d->items[i].k = k;
+        HT_ENSURE(d);
+        i = ht_claim(ty, d, i, h, &k);
         d->items[i].v = v;
-        d->items[i].h = h;
+        return val(d, ht_robinhood(d, i));
+}
 
-        d->items[i].prev = d->last;
-        d->items[i].next = NULL;
-        d->last = &d->items[i];
-
-        d->count += 1;
-
-        return robinhood(ty, d, i);
+inline static bool
+has_default(Dict const *d)
+{
+        return d->dflt.type != VALUE_ZERO;
 }
 
 Value *
 dict_get_value(Ty *ty, Dict *d, Value *key)
 {
         u64 h = value_hash(ty, key);
-        usize i = find_spot(ty, d->size, d->items, h, key);
+        usize i = ht_find(ty, d->size, d->items, h, key);
 
-        if (OCCUPIED(d, i)) {
+        if (HT_LIVE(d, i)) {
                 return val(d, i);
         }
 
-        if (d->dflt.type != VALUE_ZERO) {
-                GC_STOP();
-                ENSURE_INIT(d);
-                Value dflt = vm_call1(ty, &d->dflt, key);
-                i = find_spot(ty, d->size, d->items, h, key);
-                if (OCCUPIED(d, i)) {
-                        d->items[i].v = dflt;
-                        GC_RESUME();
-                        return val(d, i);
-                }
-                Value *v = put(ty, d, i, h, *key, dflt);
-                GC_RESUME();
-                return v;
+        if (!has_default(d)) {
+                return NULL;
         }
 
-        return NULL;
+        GC_STOP();
+        HT_ENSURE(d);
+        Value dflt = vm_call1(ty, &d->dflt, key);
+        i = ht_find(ty, d->size, d->items, h, key);
+        Value *v;
+        if (HT_LIVE(d, i)) {
+                v = val(d, i);
+                *v = dflt;
+        } else {
+                v = put(ty, d, i, h, *key, dflt);
+        }
+        GC_RESUME();
+
+        return v;
 }
 
 bool
 dict_has_value(Ty *ty, Dict *d, Value *key)
 {
-        if (d->size == 0) {
-                return false;
-        }
-
-        u64 h = value_hash(ty, key);
-        usize i = find_spot(ty, d->size, d->items, h, key);
-
-        return OCCUPIED(d, i);
+        return ht_lookup(ty, d, key) != HT_NONE;
 }
 
 void
@@ -270,13 +80,13 @@ dict_put_value(Ty *ty, Dict *d, Value key, Value value)
         gP(&key);
         gP(&value);
 
-        ENSURE_INIT(d);
+        HT_ENSURE(d);
 
         u64 h = value_hash(ty, &key);
-        usize i = find_spot(ty, d->size, d->items, h, &key);
+        usize i = ht_find(ty, d->size, d->items, h, &key);
 
-        if (OCCUPIED(d, i)) {
-                d->items[i].v = value;
+        if (HT_LIVE(d, i)) {
+                *val(d, i) = value;
         } else {
                 put(ty, d, i, h, key, value);
         }
@@ -285,27 +95,28 @@ dict_put_value(Ty *ty, Dict *d, Value key, Value value)
         gX();
 }
 
-Value *
+static Value *
 dict_put_value_with(Ty *ty, Dict *d, Value key, Value v, Value const *f)
 {
         gP(&key);
         gP(&v);
 
-        ENSURE_INIT(d);
+        HT_ENSURE(d);
 
         u64 h = value_hash(ty, &key);
-        usize i = find_spot(ty, d->size, d->items, h, &key);
+        usize i = ht_find(ty, d->size, d->items, h, &key);
 
         Value *result;
-        if (OCCUPIED(d, i)) {
-                d->items[i].v = vm_eval_function(ty, f, &d->items[i].v, &v, NULL);
+        if (HT_LIVE(d, i)) {
                 result = val(d, i);
+                *result = vm_eval_function(ty, f, result, &v, NULL);
         } else {
                 result = put(ty, d, i, h, key, v);
         }
 
         gX();
         gX();
+
         return result;
 }
 
@@ -314,35 +125,32 @@ dict_put_key_if_not_exists(Ty *ty, Dict *d, Value key)
 {
         gP(&key);
 
-        ENSURE_INIT(d);
+        HT_ENSURE(d);
 
         u64 h = value_hash(ty, &key);
-        usize i = find_spot(ty, d->size, d->items, h, &key);
+        usize i = ht_find(ty, d->size, d->items, h, &key);
 
-        if (OCCUPIED(d, i)) {
-                Value *result = val(d, i);
+        if (HT_LIVE(d, i)) {
                 gX();
-                return result;
+                return val(d, i);
         }
 
-        Value v;
+        Value v = NIL;
 
-        if (d->dflt.type != VALUE_ZERO) {
+        if (has_default(d)) {
                 v = vm_call1(ty, &d->dflt, &key);
-                i = find_spot(ty, d->size, d->items, h, &key);
-                if (OCCUPIED(d, i)) {
-                        Value *result = val(d, i);
+                i = ht_find(ty, d->size, d->items, h, &key);
+                if (HT_LIVE(d, i)) {
                         gX();
-                        return result;
+                        return val(d, i);
                 }
-        } else {
-                v = NIL;
         }
 
         gP(&v);
         Value *result = put(ty, d, i, h, key, v);
         gX();
         gX();
+
         return result;
 }
 
@@ -373,7 +181,7 @@ dict_mark(Ty *ty, Dict *d)
 
         MARK(d);
 
-        if (d->dflt.type != VALUE_ZERO) {
+        if (has_default(d)) {
                 xvP(ty->marking, &d->dflt);
         }
 
@@ -383,10 +191,10 @@ dict_mark(Ty *ty, Dict *d)
         }
 #endif
 
-        dfor(d, {
-                xvP(ty->marking, key);
-                xvP(ty->marking, val);
-        });
+        htfor(it, d) {
+                xvP(ty->marking, &it->k);
+                xvP(ty->marking, &it->v);
+        }
 }
 
 void
@@ -401,11 +209,7 @@ dict_default(Ty *ty, Value *d, int argc, Value *kwargs)
         ASSERT_ARGC("Dict.default()", 0, 1);
 
         if (argc == 0) {
-                if (d->dict->dflt.type == VALUE_ZERO) {
-                        return NIL;
-                } else {
-                        return d->dict->dflt;
-                }
+                return has_default(d->dict) ? d->dict->dflt : NIL;
         }
 
         Value dflt = ARG(0);
@@ -418,16 +222,7 @@ static Value
 dict_contains(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Dict.contains()", 1);
-
-        if (d->dict->size == 0) {
-                return BOOLEAN(false);
-        }
-
-        Value *key = &ARG(0);
-        u64 h = value_hash(ty, key);
-        usize i = find_spot(ty, d->dict->size, d->dict->items, h, key);
-
-        return BOOLEAN(OCCUPIED(d->dict, i));
+        return BOOLEAN(ht_lookup(ty, d->dict, &ARG(0)) != HT_NONE);
 }
 
 static Value
@@ -436,7 +231,9 @@ dict_keys(Ty *ty, Value *d, int argc, Value *kwargs)
         ASSERT_ARGC("Dict.keys()", 0);
 
         Array *keys = vAn(d->dict->count);
-        dfor(d->dict, vPx(*keys, *key));
+        htfor(it, d->dict) {
+                vPx(*keys, it->k);
+        }
 
         return ARRAY(keys);
 }
@@ -447,7 +244,9 @@ dict_values(Ty *ty, Value *d, int argc, Value *kwargs)
         ASSERT_ARGC("Dict.values()", 0);
 
         Array *values = vAn(d->dict->count);
-        dfor(d->dict, vPx(*values, *val));
+        htfor(it, d->dict) {
+                vPx(*values, it->v);
+        }
 
         return ARRAY(values);
 }
@@ -460,7 +259,9 @@ dict_items(Ty *ty, Value *d, int argc, Value *kwargs)
         Array *items = vAn(d->dict->count);
         Value result = ARRAY(items);
         gP(&result);
-        dfor(d->dict, vPx(*items, PAIR(*key, *val)));
+        htfor(it, d->dict) {
+                vPx(*items, PAIR(it->k, it->v));
+        }
         gX();
 
         return result;
@@ -470,10 +271,10 @@ Dict *
 DictClone(Ty *ty, Dict const *d)
 {
         Dict *new = dict_new(ty);
-        new->dflt = d->dflt;
 
         NOGC(new);
-        dfor(d, dict_put_value(ty, new, *key, *val));
+        new->dflt = d->dflt;
+        ht_copy(ty, new, d);
         OKGC(new);
 
         return new;
@@ -489,76 +290,20 @@ dict_clone(Ty *ty, Value *d, int argc, Value *kwargs)
 bool
 dict_same_keys(Ty *ty, Dict const *d, Dict const *u)
 {
-        if (d->count != u->count) {
-                return false;
-        }
-
-        for (usize i = 0; i < d->size;) {
-                if (!OCCUPIED(d, i)) {
-                        i += 1;
-                        continue;
-                }
-                usize j = find_spot(
-                        ty,
-                        u->size,
-                        u->items,
-                        d->items[i].h,
-                        &d->items[i].k
-                );
-                if (!OCCUPIED(u, j)) {
-                        return false;
-                }
-                i += 1;
-        }
-
-        return true;
+        return ht_same_keys(ty, d, u);
 }
 
-inline static void
-copy_unique(Ty *ty, Dict *diff, Dict const *d, Dict const *u)
-{
-        ENSURE_INIT(diff);
-
-        for (usize i = 0; i < d->size; ++i) {
-                if (!OCCUPIED(d, i)) {
-                        continue;
-                }
-                usize j = find_spot(
-                        ty,
-                        u->size,
-                        u->items,
-                        d->items[i].h,
-                        &d->items[i].k
-                );
-                if (!OCCUPIED(u, j)) {
-                        usize k = find_spot(
-                                ty,
-                                diff->size,
-                                diff->items,
-                                d->items[i].h,
-                                &d->items[i].k
-                        );
-                        put(ty, diff, k, d->items[i].h, d->items[i].k, d->items[i].v);
-                }
-        }
-}
-
-Value
+static Value
 dict_diff(Ty *ty, Value *d, int argc, Value *kwargs)
 {
-        if (argc != 1) {
-                zP("Dict.diff(): expected 1 argument but got %d", argc);
-        }
+        ASSERT_ARGC("Dict.diff()", 1);
 
-        Value u = ARG(0);
-        if (u.type != VALUE_DICT) {
-                zP("Dict.diff(): expected Dict but got %s", SHOW(&u));
-        }
-
+        Dict *u    = DICT_ARG(0);
         Dict *diff = dict_new(ty);
+
         NOGC(diff);
-        copy_unique(ty, diff, d->dict, u.dict);
-        copy_unique(ty, diff, u.dict, d->dict);
+        ht_unique(ty, diff, d->dict, u);
+        ht_unique(ty, diff, u, d->dict);
         OKGC(diff);
 
         return DICT(diff);
@@ -569,67 +314,39 @@ dict_intersect(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Dict.intersect()", 1, 2);
 
+        if (argc == 1 && ARG(0).type == VALUE_SET) {
+                DictKeepKeys(ty, d->dict, ARG(0).set);
+                return *d;
+        }
+
         Dict *u = DICT_ARG(0);
 
         if (argc == 1) {
-                for (usize i = 0; i < d->dict->size;) {
-                        if (!OCCUPIED(d->dict, i)) {
-                                i += 1;
-                                continue;
-                        }
-                        usize j = find_spot(
-                                ty,
-                                u->size,
-                                u->items,
-                                d->dict->items[i].h,
-                                &d->dict->items[i].k
-                        );
-                        if (!OCCUPIED(u, j)) {
-                                i = delete(d->dict, i);
-                        } else {
-                                i += 1;
-                        }
-                }
-        } else {
-                Value f = ARG(1);
-                if (!CALLABLE(f)) {
-                        zP("the second argument to dict.intersect() must be callable");
-                }
-                for (usize i = 0; i < d->dict->size;) {
-                        if (!OCCUPIED(d->dict, i)) {
-                                i += 1;
-                                continue;
-                        }
-                        usize j = find_spot(
-                                ty,
-                                u->size,
-                                u->items,
-                                d->dict->items[i].h,
-                                &d->dict->items[i].k
-                        );
-                        if (!OCCUPIED(u, j)) {
-                                i = delete(d->dict, i);
-                        } else {
-                                d->dict->items[i].v = vm_eval_function(
-                                        ty,
-                                        &f,
-                                        &d->dict->items[i].v,
-                                        &u->items[j].v,
-                                        NULL
-                                );
-                                i += 1;
-                        }
-                }
+                ht_retain(ty, d->dict, u);
+                return *d;
+        }
 
+        Value f = ARG(1);
+        if (!CALLABLE(f)) {
+                zP("the second argument to dict.intersect() must be callable");
+        }
+
+        htfor_del(it, d->dict) {
+                usize j = ht_seek(ty, u, it);
+                if (!HT_LIVE(u, j)) {
+                        ht_delete(d->dict, it - d->dict->items);
+                } else {
+                        it->v = vm_eval_function(ty, &f, &it->v, val(u, j), NULL);
+                }
         }
 
         return *d;
 }
 
-Value
+static Value
 dict_intersect_copy(Ty *ty, Value *d, int argc, Value *kwargs)
 {
-        Value copy = dict_clone(ty, d, 0, NULL);
+        Value copy = DICT(DictClone(ty, d->dict));
         gP(&copy);
         Value result = dict_intersect(ty, &copy, argc, kwargs);
         gX();
@@ -639,10 +356,8 @@ dict_intersect_copy(Ty *ty, Value *d, int argc, Value *kwargs)
 Dict *
 DictUpdate(Ty *ty, Dict *d, Dict const *u)
 {
-        for (usize i = 0; i < u->size; ++i) {
-                if (OCCUPIED(u, i)) {
-                        dict_put_value(ty, d, u->items[i].k, u->items[i].v);
-                }
+        htfor(it, u) {
+                dict_put_value(ty, d, it->k, it->v);
         }
 
         return d;
@@ -651,16 +366,8 @@ DictUpdate(Ty *ty, Dict *d, Dict const *u)
 Dict *
 DictUpdateWith(Ty *ty, Dict *d, Dict const *u, Value const *f)
 {
-        for (usize i = 0; i < u->size; ++i) {
-                if (OCCUPIED(u, i)) {
-                        dict_put_value_with(
-                                ty,
-                                d,
-                                u->items[i].k,
-                                u->items[i].v,
-                                f
-                        );
-                }
+        htfor(it, u) {
+                dict_put_value_with(ty, d, it->k, it->v, f);
         }
 
         return d;
@@ -685,50 +392,54 @@ dict_subtract(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Dict.subtract()", 1, 2);
 
+        if (argc == 1 && ARG(0).type == VALUE_SET) {
+                DictDropKeys(ty, d->dict, ARG(0).set);
+                return *d;
+        }
+
         Dict *u = DICT_ARG(0);
 
         if (argc == 1) {
-                for (usize i = 0; i < u->size; ++i) {
-                        if (OCCUPIED(u, i)) {
-                                usize j = find_spot(
-                                        ty,
-                                        d->dict->size,
-                                        d->dict->items,
-                                        u->items[i].h,
-                                        &u->items[i].k
-                                );
-                                if (OCCUPIED(d->dict, j)) {
-                                        delete(d->dict, j);
-                                }
-                        }
-                }
-        } else {
-                Value f = ARG(1);
-                for (usize i = 0; i < u->size; ++i) {
-                        if (OCCUPIED(u, i)) {
-                                usize j = find_spot(
-                                        ty,
-                                        d->dict->size,
-                                        d->dict->items,
-                                        u->items[i].h,
-                                        &u->items[i].k
-                                );
-                                if (OCCUPIED(d->dict, j)) {
-                                        vm_eval_function(
-                                                ty,
-                                                &f,
-                                                &d->dict->items[j].v,
-                                                &u->items[i].v,
-                                                NULL
-                                        );
-                                        delete(d->dict, j);
-                                }
-                        }
-                }
+                ht_discard(ty, d->dict, u);
+                return *d;
+        }
 
+        Value f = ARG(1);
+
+        htfor(it, u) {
+                usize j = ht_seek(ty, d->dict, it);
+                if (HT_LIVE(d->dict, j)) {
+                        vm_eval_function(ty, &f, val(d->dict, j), &it->v, NULL);
+                        ht_delete(d->dict, j);
+                }
         }
 
         return *d;
+}
+
+Dict *
+DictDropKeys(Ty *ty, Dict *d, Set const *keys)
+{
+        for (SetItem const *it = keys->first; it != NULL && d->count > 0; it = it->next) {
+                usize i = ht_find(ty, d->size, d->items, it->h, &it->k);
+                if (HT_LIVE(d, i)) {
+                        ht_delete(d, i);
+                }
+        }
+
+        return d;
+}
+
+Dict *
+DictKeepKeys(Ty *ty, Dict *d, Set const *keys)
+{
+        htfor_del(it, d) {
+                if (!set_has_hashed(ty, keys, it->h, &it->k)) {
+                        ht_delete(d, it - d->items);
+                }
+        }
+
+        return d;
 }
 
 static Value
@@ -753,12 +464,12 @@ dict_get_or_put_with(Ty *ty, Value *d, int argc, Value *kwargs)
 
         Dict *dict = d->dict;
 
-        ENSURE_INIT(dict);
+        HT_ENSURE(dict);
 
         u64   h = value_hash(ty, &key);
-        usize i = find_spot(ty, dict->size, dict->items, h, &key);
+        usize i = ht_find(ty, dict->size, dict->items, h, &key);
 
-        if (OCCUPIED(dict, i)) {
+        if (HT_LIVE(dict, i)) {
                 return *val(dict, i);
         }
 
@@ -766,36 +477,31 @@ dict_get_or_put_with(Ty *ty, Value *d, int argc, Value *kwargs)
         DictItem *items = dict->items;
 
         vmP(&key);
-        Value val = vmC(&fun, 1);
+        Value v = vmC(&fun, 1);
 
-        gP(&val);
+        gP(&v);
         if (
                 (dict->size != size)
              || (dict->items != items)
-             || OCCUPIED(dict, i)
+             || HT_LIVE(dict, i)
         ) {
-                i = find_spot(ty, dict->size, dict->items, h, &key);
+                i = ht_find(ty, dict->size, dict->items, h, &key);
         }
-        if (OCCUPIED(dict, i)) {
-                dict->items[i].v = val;
+        if (HT_LIVE(dict, i)) {
+                *val(dict, i) = v;
         } else {
-                put(ty, dict, i, h, key, val);
+                put(ty, dict, i, h, key, v);
         }
         gX();
 
-        return val;
+        return v;
 }
 
 static Value
 dict_clear(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Dict.clear()", 0);
-
-        memset(d->dict->items, 0, sizeof (DictItem) * d->dict->size);
-        d->dict->last = NULL;
-        d->dict->count = 0;
-        d->dict->tombs = 0;
-
+        ht_clear(d->dict);
         return *d;
 }
 
@@ -813,24 +519,10 @@ dict_pop(Ty *ty, Value *d, int argc, Value *kwargs)
                 bP("index %jd out of range [0, %zu)", i, d->dict->count);
         }
 
-        DictItem *it;
-
-        if (i < d->dict->count / 2) {
-                it = DictFirst(d->dict);
-                while (i --> 0) {
-                        it = it->next;
-                }
-        } else {
-                it = d->dict->last;
-                i = d->dict->count - i - 1;
-                while (i --> 0) {
-                        it = it->prev;
-                }
-        }
-
+        DictItem *it = ht_nth(d->dict, i);
         Value popped = PAIR(it->k, it->v);
 
-        delete(d->dict, it - d->dict->items);
+        ht_delete(d->dict, it - d->dict->items);
 
         return popped;
 }
@@ -840,24 +532,16 @@ dict_remove(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Dict.remove()", 1);
 
-        Value k = ARG(0);
-        u64 h = value_hash(ty, &k);
+        usize i = ht_lookup(ty, d->dict, &ARG(0));
 
-        usize i = find_spot(
-                ty,
-                d->dict->size,
-                d->dict->items,
-                h,
-                &k
-        );
-
-        if (!OCCUPIED(d->dict, i)) {
+        if (i == HT_NONE) {
                 return NIL;
-        } else {
-                Value v = d->dict->items[i].v;
-                delete(d->dict, i);
-                return v;
         }
+
+        Value v = *val(d->dict, i);
+        ht_delete(d->dict, i);
+
+        return v;
 }
 
 static Value
@@ -868,19 +552,10 @@ dict_keep_mut(Ty *ty, Value *d, int argc, Value *kwargs)
         Value f    = ARG(0);
         Dict *dict = d->dict;
 
-        for (usize i = 0; i < dict->size; ++i) {
-                if (!OCCUPIED(dict, i)) {
-                        continue;
-                }
-                Value keep = vm_eval_function(
-                        ty,
-                        &f,
-                        &dict->items[i].k,
-                        &dict->items[i].v,
-                        NULL
-                );
+        htfor_del(it, dict) {
+                Value keep = vm_eval_function(ty, &f, &it->k, &it->v, NULL);
                 if (!value_truthy(ty, &keep)) {
-                        delete(dict, i);
+                        ht_delete(dict, it - dict->items);
                 }
         }
 
@@ -897,12 +572,12 @@ dict_keep(Ty *ty, Value *d, int argc, Value *kwargs)
 
         NOGC(new);
 
-        dfor(d->dict, {
-                Value keep = vm_eval_function(ty, &f, key, val, NULL);
+        htfor(it, d->dict) {
+                Value keep = vm_eval_function(ty, &f, &it->k, &it->v, NULL);
                 if (value_truthy(ty, &keep)) {
-                        dict_put_value(ty, new, *key, *val);
+                        dict_put_value(ty, new, it->k, it->v);
                 }
-        });
+        }
 
         OKGC(new);
 

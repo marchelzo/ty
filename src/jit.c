@@ -22,6 +22,8 @@
 #include "str.h"
 #include "array.h"
 #include "dict.h"
+#include "set.h"
+#include "heap.h"
 #include "blob.h"
 #include "queue.h"
 #include "itable.h"
@@ -115,6 +117,7 @@ jit_frame_ip(Frame const *frame, char const *ip)
 #define OFF_VEC_DATA  offsetof(ValueVector, items)
 #define OFF_VEC_LEN   offsetof(ValueVector, count)
 #define OFF_DICT_COUNT offsetof(Dict, count)
+#define OFF_SET_COUNT  offsetof(Set, count)
 
 // TyObject
 #define OBJ_OFF_INIT    0    // bool init
@@ -2082,6 +2085,20 @@ jit_rt_dict(Ty *ty, Value *top, i32 n)
         DoDictLiteral(ty, n, NULL);
 }
 
+static void
+jit_rt_set(Ty *ty, Value *top, i32 n)
+{
+        vN(STACK) = top - vv(STACK);
+        DoSetLiteral(ty, n);
+}
+
+static void
+jit_rt_set_compr(Ty *ty, Value *top, i32 idx, i32 n)
+{
+        vN(STACK) = top - vv(STACK);
+        DoSetCompr(ty, idx, n);
+}
+
 // LOOP_ITER: push SENTINEL, IterGetNext
 static void
 jit_rt_loop_iter(Ty *ty, Value *top)
@@ -2955,6 +2972,7 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                         break;
 
                 case INSTR_ARRAY_COMPR:
+                case INSTR_SET_COMPR:
                         BC_SKIP(i32);
                         break;
 
@@ -3217,6 +3235,7 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                 case INSTR_LOOP_ITER:
                 case INSTR_DICT:
                 case INSTR_DEFAULT_DICT:
+                case INSTR_SET:
                         break;
 
                 case INSTR_LOOP_CHECK: {
@@ -5643,6 +5662,7 @@ bc_emit_builtin_count(JitCtx *ctx)
                      && (class->i != CLASS_TUPLE)
                      && (class->i != CLASS_BLOB)
                      && (class->i != CLASS_DICT)
+                     && (class->i != CLASS_SET)
                 )
         ) {
                 return false;
@@ -5655,6 +5675,7 @@ bc_emit_builtin_count(JitCtx *ctx)
         int type = (class->i == CLASS_ARRAY) ? VALUE_ARRAY
                  : (class->i == CLASS_TUPLE) ? VALUE_TUPLE
                  : (class->i == CLASS_BLOB)  ? VALUE_BLOB
+                 : (class->i == CLASS_SET)   ? VALUE_SET
                  :                             VALUE_DICT
                  ;
         jit_emit_ldrb(asm, BC_S0, BC_OPS, off + VAL_OFF_TYPE);
@@ -5664,9 +5685,9 @@ bc_emit_builtin_count(JitCtx *ctx)
                 jit_emit_ldr32(asm, BC_S2, BC_OPS, off + VAL_OFF_COUNT);
         } else {
                 jit_emit_ldr64(asm, BC_S1, BC_OPS, off + VAL_OFF_Z);
-                int count_off = (class->i == CLASS_DICT)
-                              ? OFF_DICT_COUNT
-                              : OFF_VEC_LEN;
+                int count_off = (class->i == CLASS_DICT) ? OFF_DICT_COUNT
+                              : (class->i == CLASS_SET)  ? OFF_SET_COUNT
+                              :                            OFF_VEC_LEN;
                 jit_emit_ldr64(asm, BC_S2, BC_S1, count_off);
         }
 
@@ -6237,10 +6258,20 @@ find_type_hint(TypeHintVector const *hints, iptr off)
         return T2_TYPE_INVALID;
 }
 
+static BuiltinMethod *
+bc_resolve_builtin_method(Class *cls, int member_id, int *value_type);
+
 static Value *
 bc_resolve_method(JitCtx *ctx, Class *cls, int member_id)
 {
         Ty *ty = ctx->ty;
+
+        if (
+                (bc_resolve_builtin_method(cls, member_id, NULL) != NULL)
+             || ((cls->i == CLASS_HEAP) && (get_heap_view_method_i(member_id) != NULL))
+        ) {
+                return NULL;
+        }
 
         if (member_id >= (int)vN(cls->offsets_r)) {
                 return NULL;
@@ -6307,6 +6338,11 @@ bc_resolve_builtin_method(Class *cls, int member_id, int *value_type)
                 vtype = VALUE_DICT;
                 break;
 
+        case CLASS_SET:
+                func = get_set_method_i(member_id);
+                vtype = VALUE_SET;
+                break;
+
         case CLASS_BLOB:
                 func = get_blob_method_i(member_id);
                 vtype = VALUE_BLOB;
@@ -6315,6 +6351,11 @@ bc_resolve_builtin_method(Class *cls, int member_id, int *value_type)
         case CLASS_QUEUE:
                 func = get_queue_method_i(member_id);
                 vtype = VALUE_QUEUE;
+                break;
+
+        case CLASS_HEAP:
+                func = get_heap_method_i(member_id);
+                vtype = VALUE_HEAP;
                 break;
 
         case CLASS_SHARED_QUEUE:
@@ -11679,6 +11720,50 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         if (ctx->sp > ctx->max_sp) {
                                 ctx->max_sp = ctx->sp;
                         }
+                        break;
+                }
+
+                CASE(SET) {
+                        if (ctx->save_sp_top < 0) {
+                                if (ctx->dead) {
+                                        break;
+                                }
+                                BAIL("SET stack underflow");
+                        }
+                        if (ctx->save_sp_divergent[ctx->save_sp_top]) {
+                                BAIL("SET with divergent stack (conditional elements)");
+                        }
+                        int saved = ctx->save_sp_stack[ctx->save_sp_top--];
+                        int count = ctx->sp - saved;
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
+                        jit_emit_load_imm(asm, BC_A2, count);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_set);
+                        bc_emit_runtime_call(ctx, BC_CALL);
+                        ctx->sp = saved + 1;
+                        if (ctx->sp > ctx->max_sp) {
+                                ctx->max_sp = ctx->sp;
+                        }
+                        break;
+                }
+
+                CASE(SET_COMPR) {
+                        i32 idx;
+                        BC_READ(idx);
+
+                        if (ctx->save_sp_divergent[ctx->save_sp_top]) {
+                                BAIL("SET_COMPR with divergent stack (conditional elements)");
+                        }
+                        int saved = ctx->save_sp_stack[ctx->save_sp_top--];
+                        int count = ctx->sp - saved;
+
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
+                        jit_emit_load_imm(asm, BC_A2, idx);
+                        jit_emit_load_imm(asm, BC_A3, count);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_set_compr);
+                        bc_emit_runtime_call(ctx, BC_CALL);
+                        ctx->sp = saved;
                         break;
                 }
 

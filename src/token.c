@@ -80,6 +80,8 @@ token_show_type(Ty *ty, int type)
         case TOKEN_AT:                 return "operator '@'";
         case TOKEN_INC:                return "operator '++'";
         case TOKEN_DEC:                return "operator '--'";
+        case TOKEN_DICT_OPEN:          return "token '%{'";
+        case TOKEN_SET_OPEN:           return "token '%['";
         case '</':                     return "token '</'";
         case '/>':                     return "token '/>'";
         case TOKEN_IDENTIFIER:         return "identifier";

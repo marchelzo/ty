@@ -168,11 +168,11 @@ fn _sig-read(sig: String, msg: _, i: Int = 0) {
     ($$[ nil $$], i + 1)
 }
 
-const SKIP_IFACES = %{
-    'org.freedesktop.DBus.Peer':           true,
-    'org.freedesktop.DBus.Introspectable': true,
-    'org.freedesktop.DBus.Properties':     true,
-}
+const SKIP_IFACES = %[
+    'org.freedesktop.DBus.Peer',
+    'org.freedesktop.DBus.Introspectable',
+    'org.freedesktop.DBus.Properties',
+]
 
 fn _xml-attr(line, name) -> String | nil {
     if let [_, v] = line.match(regex("{name}=\"([^\"]+)\"")) {

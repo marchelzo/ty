@@ -1,6 +1,6 @@
 # Collections
 
-The two primary collection types in Ty are `Array` and `Dict`. They both work more or less as you'd expect and support all of the usual operations. Sets can be mimicked with dicts that have `nil` values.
+The three primary collection types in Ty are `Array`, `Dict`, and `Set`. They all work more or less as you'd expect and support all of the usual operations.
 
 ## Arrays
 
@@ -72,11 +72,76 @@ pp(squares)
 
 ## Sets
 
+Set literals use `%[]`. Like dicts, sets remember insertion order, and like arrays they support conditional elements, spreads, and comprehensions:
+
 ```ty
-let a = %{1, 2, 3, 4}
-let b = %{3, 4, 5, 6}
+let a = %[1, 2, 3, 4]
+let b = %[3, 4, 5, 6]
 
 pp(a & b)   // intersection
-pp(a + b)   // union
+pp(a | b)   // union
 pp(a - b)   // difference
+pp(a ^ b)   // symmetric difference
+
+pp(%[x % 3 for x in ..10])
+pp(%[1, 2] <= a)
+```
+
+`<<` adds an element, `insert` reports whether it was new, and a set can be called (or passed) as a membership predicate:
+
+```ty
+let seen = %[]
+for word in ['to', 'be', 'or', 'not', 'to', 'be'] {
+  if seen.insert(word) {
+    print(word)
+  }
+}
+
+let vowels = %['a', 'e', 'i', 'o', 'u']
+pp('sequoia'.chars().filter(vowels))
+```
+
+## Heaps
+
+A `Heap` is a priority queue. Its ordering is fixed when it is built, using the same `by:`, `cmp:`, and `desc:` options as `sort`:
+
+```ty
+let tasks = Heap([(3, 'write'), (1, 'plan'), (2, 'build')], by: &0)
+pp(tasks.pop())
+pp(tasks.peek())
+
+let biggest = Heap([5, 1, 9], desc: true)
+pp([*biggest.drain()])
+```
+
+Read-only array methods work on heaps too (`map`, `filter`, `sum`, `in`, ...), and `top`/`bottom` pick the extreme elements of any iterable:
+
+```ty
+pp([5, 1, 9, 3].top(2))
+pp(['ccc', 'a', 'bb'].bottom(1, by: \#_))
+```
+
+## Queues
+
+`Queue` is a double-ended queue. Give it a `max-len` and it becomes a ring buffer that drops from the opposite end:
+
+```ty
+let recent = Queue(max-len: 3)
+for x in ..5 {
+  recent.push(x)
+}
+pp(recent)
+pp(recent[0])
+pp(recent.rotate(1))
+```
+
+## Ranges
+
+Ranges support the same slicing syntax as arrays, and slicing a range gives back a range:
+
+```ty
+let r = 0..20
+pp(r[;;5])
+pp([*r[;;-5]])
+pp(r.step-by(4) & r.step-by(6))
 ```

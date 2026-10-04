@@ -117,7 +117,7 @@ const BENCH_MODE = '--ty-perf-bench'
 fn benchmark-program(name: String, categories: String, f) {
     if #os.argv < 2 { return }
 
-    let tags = categories.words().uniq().sort()
+    let tags = categories.words().nub().sort()
     match os.argv[1] {
         INFO_MODE => {
             print(json.encode(%{'name': name, 'tags': tags}))

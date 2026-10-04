@@ -163,7 +163,7 @@ fn finish(entries: [Entry]) -> [String] {
             groups[entry.short].push(entry)
         }
         let collisions = groups.values()
-            .filter(group -> #group.map(&.text).uniq() > 1)
+            .filter(group -> #group.map(&.text).nub() > 1)
         if !collisions {
             return entries.map(&.short)
         }

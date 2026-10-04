@@ -555,7 +555,7 @@ fn render(source, node, value) {
     }
 }
 
-fn render-array(source, node, nodes, values) {
+fn render-array(source, node, nodes: Array, values: Array) {
     if #nodes != #values {
         return encode(values)
     }

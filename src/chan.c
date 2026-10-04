@@ -2,6 +2,8 @@
 #include "vm.h"
 #include "chan.h"
 #include "dict.h"
+#include "set.h"
+#include "heap.h"
 #include "class.h"
 
 typedef struct {
@@ -52,6 +54,8 @@ ident(Value const *v)
         switch (v->type & ~VALUE_TAGGED) {
         case VALUE_ARRAY:   return (iptr)v->array;
         case VALUE_DICT:    return (iptr)v->dict;
+        case VALUE_SET:     return (iptr)v->set;
+        case VALUE_HEAP:    return (iptr)v->heap;
         case VALUE_OBJECT:  return (iptr)v->object;
         case VALUE_BLOB:    return (iptr)v->blob;
         case VALUE_QUEUE:   return (iptr)v->queue;
@@ -174,6 +178,28 @@ prepare(Ty *ty, ValueVector *out, SeenVec *sv, Value const *v)
                 break;
         }
 
+        case VALUE_HEAP: {
+                Value header = { .type = v->type, .tags = v->tags, .z = v->heap->order.desc };
+                header.src = vN(v->heap->xs);
+                emit(ty, out, header);
+                for (usize i = 0; i < vN(v->heap->xs); ++i) {
+                        prepare(ty, out, sv, v_(v->heap->xs, i));
+                }
+                prepare(ty, out, sv, &v->heap->order.by);
+                prepare(ty, out, sv, &v->heap->order.cmp);
+                break;
+        }
+
+        case VALUE_SET: {
+                Value header = { .type = v->type, .tags = v->tags };
+                header.src = v->set->count;
+                emit(ty, out, header);
+                for (SetItem *it = v->set->first; it != NULL; it = it->next) {
+                        prepare(ty, out, sv, &it->k);
+                }
+                break;
+        }
+
         case VALUE_OBJECT: {
                 Value header = {
                         .type   = v->type,
@@ -196,7 +222,7 @@ prepare(Ty *ty, ValueVector *out, SeenVec *sv, Value const *v)
                           ? (q->tail - q->head)
                           : (q->cap - q->head + q->tail);
                 }
-                Value header = { .type = v->type, .tags = v->tags };
+                Value header = { .type = v->type, .tags = v->tags, .z = q->max };
                 header.src = n;
                 emit(ty, out, header);
                 for (usize i = 0; i < n; ++i) {
@@ -305,6 +331,35 @@ reconstruct(Ty *ty, Value *msg, usize *cursor)
                 return r;
         }
 
+        case VALUE_HEAP: {
+                usize n = e.src;
+                Heap *h = heap_new(ty);
+                Value r = HEAP(h);
+                r.type = e.type;
+                r.tags = e.tags;
+                msg[*cursor - 1] = r;
+                for (usize i = 0; i < n; ++i) {
+                        uvP(h->xs, reconstruct(ty, msg, cursor));
+                }
+                h->order.by   = reconstruct(ty, msg, cursor);
+                h->order.cmp  = reconstruct(ty, msg, cursor);
+                h->order.desc = e.z;
+                return r;
+        }
+
+        case VALUE_SET: {
+                usize n = e.src;
+                Set *s = set_new(ty);
+                Value r = SET(s);
+                r.type = e.type;
+                r.tags = e.tags;
+                msg[*cursor - 1] = r;
+                for (usize i = 0; i < n; ++i) {
+                        set_add(ty, s, reconstruct(ty, msg, cursor));
+                }
+                return r;
+        }
+
         case VALUE_OBJECT: {
                 u32 nslot = (uptr)e.object;
                 usize size = sizeof (TyObject) + nslot * sizeof (Value);
@@ -324,9 +379,10 @@ reconstruct(Ty *ty, Value *msg, usize *cursor)
         case VALUE_QUEUE: {
                 usize n = e.src;
                 Queue *q = mAo0(sizeof (Queue), GC_QUEUE);
+                q->max = e.z;
                 if (n > 0) {
-                        q->items = uA(n * sizeof (Value));
-                        q->cap = n;
+                        q->items = uA((n + 1) * sizeof (Value));
+                        q->cap = n + 1;
                 }
                 Value r = QUEUE(q);
                 r.type = e.type;
@@ -476,7 +532,14 @@ discard(Value *msg, usize *cursor)
 
         case VALUE_ARRAY:
         case VALUE_QUEUE:
+        case VALUE_SET:
                 for (usize i = 0; i < e.src; ++i) {
+                        discard(msg, cursor);
+                }
+                break;
+
+        case VALUE_HEAP:
+                for (usize i = 0; i < e.src + 2; ++i) {
                         discard(msg, cursor);
                 }
                 break;

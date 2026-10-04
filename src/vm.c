@@ -79,6 +79,8 @@
 #include "compiler.h"
 #include "diag.h"
 #include "dict.h"
+#include "set.h"
+#include "heap.h"
 #include "functions.h"
 #include "gc.h"
 #include "intern.h"
@@ -3292,6 +3294,17 @@ DoCallEx(Ty *ty, Value const *f, int n, Value const *_kwargs, bool exec)
                 }
                 return false;
 
+        case VALUE_SET:
+                if (UNLIKELY(n != 1)) {
+                        zP("Set.__call__(): expected 1 argument but got %d", n);
+                }
+                value = peek();
+                push(v);
+                value = BOOLEAN(set_has(ty, v.set, &value));
+                STACK.count -= (n + 1);
+                xpush(value);
+                return false;
+
         case VALUE_ARRAY:
                 subscript = peek();
                 push(v);
@@ -3560,12 +3573,15 @@ GetMember(Ty *ty, int member, bool try_missing, bool exec)
                         n = CLASS_DICT;
                         goto ClassLookup;
                 }
-                v.type = VALUE_DICT;
-                v.tags = 0;
-                this = mAo(sizeof *this, GC_VALUE);
-                *this = v;
-                pop();
-                return BUILTIN_METHOD(member, func, this);
+                goto BuiltinMember;
+
+        case VALUE_SET:
+                func = get_set_method_i(member);
+                if (func == NULL) {
+                        n = CLASS_SET;
+                        goto ClassLookup;
+                }
+                goto BuiltinMember;
 
         case VALUE_ARRAY:
                 func = get_array_method_i(member);
@@ -3573,12 +3589,21 @@ GetMember(Ty *ty, int member, bool try_missing, bool exec)
                         n = CLASS_ARRAY;
                         goto ClassLookup;
                 }
-                v.type = VALUE_ARRAY;
-                v.tags = 0;
-                this = mAo(sizeof *this, GC_VALUE);
-                *this = v;
-                pop();
-                return BUILTIN_METHOD(member, func, this);
+                goto BuiltinMember;
+
+        case VALUE_HEAP:
+                func = get_heap_method_i(member);
+                if (func == NULL && (func = get_heap_view_method_i(member)) != NULL) {
+                        this = mAo(sizeof *this, GC_VALUE);
+                        *this = HEAP_VIEW(v.heap);
+                        pop();
+                        return BUILTIN_METHOD(member, func, this);
+                }
+                if (func == NULL) {
+                        n = CLASS_HEAP;
+                        goto ClassLookup;
+                }
+                goto BuiltinMember;
 
         case VALUE_STRING:
                 func = get_string_method_i(member);
@@ -3586,12 +3611,7 @@ GetMember(Ty *ty, int member, bool try_missing, bool exec)
                         n = CLASS_STRING;
                         goto ClassLookup;
                 }
-                v.type = VALUE_STRING;
-                v.tags = 0;
-                this = mAo(sizeof *this, GC_VALUE);
-                *this = v;
-                pop();
-                return BUILTIN_METHOD(member, func, this);
+                goto BuiltinMember;
 
         case VALUE_BLOB:
                 func = get_blob_method_i(member);
@@ -3599,12 +3619,7 @@ GetMember(Ty *ty, int member, bool try_missing, bool exec)
                         n = CLASS_BLOB;
                         goto ClassLookup;
                 }
-                v.type = VALUE_BLOB;
-                v.tags = 0;
-                this = mAo(sizeof *this, GC_VALUE);
-                *this = v;
-                pop();
-                return BUILTIN_METHOD(member, func, this);
+                goto BuiltinMember;
 
         case VALUE_QUEUE:
                 func = get_queue_method_i(member);
@@ -3612,12 +3627,7 @@ GetMember(Ty *ty, int member, bool try_missing, bool exec)
                         n = CLASS_QUEUE;
                         goto ClassLookup;
                 }
-                v.type = VALUE_QUEUE;
-                v.tags = 0;
-                this = mAo(sizeof *this, GC_VALUE);
-                *this = v;
-                pop();
-                return BUILTIN_METHOD(member, func, this);
+                goto BuiltinMember;
 
         case VALUE_SHARED_QUEUE:
                 func = get_shared_queue_method_i(member);
@@ -3625,8 +3635,16 @@ GetMember(Ty *ty, int member, bool try_missing, bool exec)
                         n = ClassOf(&v);
                         goto ClassLookup;
                 }
-                v.type = VALUE_SHARED_QUEUE;
+                goto BuiltinMember;
+
+BuiltinMember:
+                v.type &= ~VALUE_TAGGED;
                 v.tags = 0;
+                if (class_lookup_getter_i(ty, ClassOf(&v), member) != NULL) {
+                        v = func(ty, &v, 0, NULL);
+                        pop();
+                        return v;
+                }
                 this = mAo(sizeof *this, GC_VALUE);
                 *this = v;
                 pop();
@@ -3795,6 +3813,13 @@ GetMember(Ty *ty, int member, bool try_missing, bool exec)
 
                 case CLASS_DICT:
                         if ((func = get_dict_method_i(member)) != NULL) {
+                                pop();
+                                return PTR((void *)func);
+                        }
+                        break;
+
+                case CLASS_SET:
+                        if ((func = get_set_method_i(member)) != NULL) {
                                 pop();
                                 return PTR((void *)func);
                         }
@@ -4104,10 +4129,29 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool maybe, bool exec)
                 }
                 break;
 
+        case VALUE_SET:
+                func = get_set_method_i(i);
+                if (func == NULL) {
+                        class = CLASS_SET;
+                        goto ClassLookup;
+                }
+                break;
+
         case VALUE_ARRAY:
                 func = get_array_method_i(i);
                 if (func == NULL) {
                         class = CLASS_ARRAY;
+                        goto ClassLookup;
+                }
+                break;
+
+        case VALUE_HEAP:
+                func = get_heap_method_i(i);
+                if (func == NULL && (func = get_heap_view_method_i(i)) != NULL) {
+                        value = HEAP_VIEW(value.heap);
+                }
+                if (func == NULL) {
+                        class = CLASS_HEAP;
                         goto ClassLookup;
                 }
                 break;
@@ -4131,7 +4175,7 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool maybe, bool exec)
         case VALUE_SHARED_QUEUE:
                 func = get_shared_queue_method_i(i);
                 if (func == NULL) {
-                        class = ClassOf(&v);
+                        class = ClassOf(&value);
                         goto ClassLookup;
                 }
                 break;
@@ -4301,6 +4345,7 @@ void                                                                            
 name(Ty *ty)                                                                    \
 {                                                                               \
         Value v;                                                                \
+        int z;                                                                  \
                                                                                 \
         switch (PACK_TYPES(top()[-1].type, top()[0].type)) {                    \
         case PAIR_OF(VALUE_INTEGER):                                            \
@@ -4314,6 +4359,10 @@ name(Ty *ty)                                                                    
                 break;                                                          \
         case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):                             \
                 v = BOOLEAN(top()[-1].real op top()[0].z);                      \
+                break;                                                          \
+        case PAIR_OF(VALUE_SET):                                                \
+                z = set_order(ty, top()[-1].set, top()[0].set);                 \
+                v = BOOLEAN((z != SET_UNRELATED) && (z op 0));                  \
                 break;                                                          \
         default:                                                                \
                 v = vm_try_2op(ty, _op, top() - 1, top());                      \
@@ -4431,9 +4480,11 @@ DoCount(Ty *ty, bool exec)
         switch (v.type) {
         case VALUE_BLOB:         xpush(INTEGER(vN(*v.blob)));                        break;
         case VALUE_ARRAY:        xpush(INTEGER(vN(*v.array)));                       break;
+        case VALUE_HEAP:         xpush(INTEGER(vN(v.heap->xs)));                     break;
         case VALUE_QUEUE:        xpush(INTEGER(queue_count(v.queue)));               break;
         case VALUE_SHARED_QUEUE: xpush(INTEGER(shared_queue_count(v.shared_queue))); break;
         case VALUE_DICT:         xpush(INTEGER(v.dict->count));                      break;
+        case VALUE_SET:          xpush(INTEGER(v.set->count));                       break;
         case VALUE_TUPLE:        xpush(INTEGER(v.count));                            break;
         case VALUE_STRING:       xpush(INTEGER(TyStrLen(&v)));                       break;
 
@@ -4797,6 +4848,14 @@ DoMutSub(Ty *ty, bool exec)
                         dict_subtract(ty, vp, 1, NULL);
                         pop();
                         break;
+                case PAIR_OF(VALUE_SET):
+                        SetDiscard(ty, vp->set, top()->set);
+                        pop();
+                        break;
+                case PACK_TYPES(VALUE_DICT, VALUE_SET):
+                        DictDropKeys(ty, vp->dict, top()->set);
+                        pop();
+                        break;
                 default:
                         x = pop();
                         if ((val = vm_try_2op(ty, OP_MUT_SUB, vp, &x)).type != VALUE_NONE) {
@@ -4942,6 +5001,14 @@ DoMutAnd(Ty *ty, bool exec)
                         vp->boolean &= top()->boolean;
                         top()->boolean = vp->boolean;
                         break;
+                case PAIR_OF(VALUE_SET):
+                        SetRetain(ty, vp->set, top()->set);
+                        *top() = *vp;
+                        break;
+                case PACK_TYPES(VALUE_DICT, VALUE_SET):
+                        DictKeepKeys(ty, vp->dict, top()->set);
+                        *top() = *vp;
+                        break;
                 default:
                         x = pop();
                         val = vm_try_2op(ty, OP_MUT_AND, vp, &x);
@@ -5006,6 +5073,10 @@ DoMutOr(Ty *ty, bool exec)
                         vp->boolean |= top()->boolean;
                         top()->boolean = vp->boolean;
                         break;
+                case PAIR_OF(VALUE_SET):
+                        SetAbsorb(ty, vp->set, top()->set);
+                        *top() = *vp;
+                        break;
                 default:
                         x = pop();
                         val = vm_try_2op(ty, OP_MUT_OR, vp, &x);
@@ -5069,6 +5140,10 @@ DoMutXor(Ty *ty, bool exec)
                 case PAIR_OF(VALUE_BOOLEAN):
                         vp->boolean ^= top()->boolean;
                         top()->boolean = vp->boolean;
+                        break;
+                case PAIR_OF(VALUE_SET):
+                        SetToggle(ty, vp->set, top()->set);
+                        *top() = *vp;
                         break;
                 default:
                         x = pop();
@@ -5704,6 +5779,32 @@ DoDictLiteral(Ty *ty, i32 n, Value const *dflt)
         xpush(val);
 }
 
+void
+DoSetCompr(Ty *ty, i32 skip, i32 n)
+{
+        Set *s = top()[-(n + skip)].set;
+
+        for (usize i = vN(STACK) - n; i < vN(STACK); ++i) {
+                set_add(ty, s, v__(STACK, i));
+        }
+
+        vN(STACK) -= n;
+}
+
+void
+DoSetLiteral(Ty *ty, i32 n)
+{
+        GC_STOP();
+        Value s = SET(set_new(ty));
+        for (usize i = vN(STACK) - n; i < vN(STACK); ++i) {
+                set_add(ty, s.set, v__(STACK, i));
+        }
+        GC_RESUME();
+
+        vN(STACK) -= n;
+        xpush(s);
+}
+
 static void
 DoTupleLiteral(Ty *ty)
 {
@@ -5852,6 +5953,7 @@ IterGetNext(Ty *ty, bool exec)
         Value *vp;
 
         DictItem *item;
+        SetItem *sitem;
 
         ptrdiff_t off;
 
@@ -5867,6 +5969,8 @@ Top:
         print_stack(ty, 10);
 
         switch (v.type) {
+        case VALUE_HEAP:
+                v = HEAP_VIEW(v.heap);
         case VALUE_ARRAY:
                 if (i < vN(*v.array)) {
                         push(v__(*v.array, i));
@@ -5878,7 +5982,9 @@ Top:
         case VALUE_DICT:
                 off = top()[-2].off;
                 if (off == 0) {
-                        off = (DictFirst(v.dict) - v.dict->items) + 1;
+                        off = (v.dict->first != NULL)
+                            ? (v.dict->first - v.dict->items) + 1
+                            : PTRDIFF_MAX;
                 }
                 if (off > v.dict->size) {
                         push(NONE);
@@ -5891,6 +5997,24 @@ Top:
                         top()[-2].off = PTRDIFF_MAX;
                 }
                 push(PAIR(item->k, item->v));
+                break;
+
+        case VALUE_SET:
+                off = top()[-2].off;
+                if (off == 0) {
+                        off = (v.set->first != NULL)
+                            ? (v.set->first - v.set->items) + 1
+                            : PTRDIFF_MAX;
+                }
+                if (off > v.set->size) {
+                        push(NONE);
+                        break;
+                }
+                sitem = &v.set->items[off - 1];
+                top()[-2].off = (sitem->next != NULL)
+                              ? (sitem->next - v.set->items) + 1
+                              : PTRDIFF_MAX;
+                push(sitem->k);
                 break;
 
         case VALUE_FUNCTION:
@@ -6027,6 +6151,36 @@ vm_jit_loop_iter(Ty *ty)
 {
         push(SENTINEL);
         IterGetNext(ty, true);
+}
+
+void
+vm_iter_begin(Ty *ty, Value xs)
+{
+        push(INDEX(0, 0, 1));
+        push(xs);
+}
+
+bool
+vm_iter_next(Ty *ty, Value *x)
+{
+        push(SENTINEL);
+        IterGetNext(ty, true);
+
+        if (top()->type == VALUE_NONE) {
+                STACK.count -= 4;
+                return false;
+        }
+
+        Value *sentinel = top();
+
+        while (sentinel->type != VALUE_SENTINEL) {
+                sentinel -= 1;
+        }
+
+        *x = sentinel[1];
+        STACK.count = sentinel - vv(STACK);
+
+        return true;
 }
 
 bool
@@ -6219,6 +6373,8 @@ DoSubscript(Ty *ty, bool exec)
         case VALUE_TYPE:
                 break;
 
+        case VALUE_HEAP:
+                container = HEAP_VIEW(container.heap);
         case VALUE_ARRAY:
                 v = ArraySubscript(ty, container, subscript, true);
                 pop();
@@ -6273,6 +6429,20 @@ DoSubscript(Ty *ty, bool exec)
                 vp = dict_get_value(ty, container.dict, &subscript);
                 pop();
                 put((vp == NULL) ? NIL : *vp);
+                break;
+
+        case VALUE_QUEUE:
+                if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
+                        zP("non-integer index used in subscript expression: %s", VSC(&subscript));
+                }
+                vp = queue_index(container.queue, subscript.z);
+                if (vp == NULL) {
+                        put(TAGGED(TAG_INDEX_ERR, container, pop()));
+                        RaiseException(ty);
+                        break;
+                }
+                pop();
+                put(*vp);
                 break;
 
         case VALUE_BOOLEAN:
@@ -7633,6 +7803,11 @@ TargetMember:
                         DoDictLiteral(ty, n, &value);
                         break;
 
+                CASE(SET)
+                        n = vN(STACK) - vXx(SP_STACK);
+                        DoSetLiteral(ty, n);
+                        break;
+
                 CASE(NIL)
                         push(NIL);
                         break;
@@ -7746,6 +7921,12 @@ TargetMember:
                                 dict_put_value(ty, v.dict, key, value);
                         }
                         STACK.count -= 2*n;
+                        break;
+
+                CASE(SET_COMPR)
+                        READVALUE(i);
+                        n = vN(STACK) - vXx(SP_STACK);
+                        DoSetCompr(ty, i, n);
                         break;
 
                 CASE(LOOP_CHECK)
@@ -9638,10 +9819,12 @@ vm_init(Ty *ty, int ac, char **av)
 
         build_string_method_table();
         build_array_method_table();
+        build_heap_method_table();
         build_blob_method_table();
         build_queue_method_table();
         build_shared_queue_method_table();
         build_dict_method_table();
+        build_set_method_table();
 
         NAMES.a                = M_ID("a");
         NAMES.b                = M_ID("b");
@@ -9974,6 +10157,12 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect)
                 STACK.count -= argc;
                 return (vp == NULL) ? None : Some(*vp);
 
+        case VALUE_SET:
+                v = (argc >= 1) ? top()[-(argc - 1)] : NONE;
+                v = BOOLEAN((argc >= 1) && set_has(ty, f->set, &v));
+                STACK.count -= argc;
+                return v;
+
         case VALUE_ARRAY:
                 v = (argc >= 1) ? ArraySubscript(ty, *f, top()[-(argc - 1)], false) : None;
                 STACK.count -= argc;
@@ -10083,6 +10272,12 @@ vm_call(Ty *ty, Value const *f, int argc)
                 vp = (argc >= 1) ? dict_get_value(ty, f->dict, top() - (argc - 1)) : NULL;
                 STACK.count -= argc;
                 return (vp == NULL) ? None : Some(*vp);
+
+        case VALUE_SET:
+                v = (argc >= 1) ? top()[-(argc - 1)] : NONE;
+                v = BOOLEAN((argc >= 1) && set_has(ty, f->set, &v));
+                STACK.count -= argc;
+                return v;
 
         case VALUE_ARRAY:
                 v = (argc >= 1) ? ArraySubscript(ty, *f, top()[-(argc - 1)], false) : None;
@@ -10670,6 +10865,7 @@ StepInstruction(char const *ip)
                 break;
         CASE(DICT)
         CASE(DEFAULT_DICT)
+        CASE(SET)
                 break;
         CASE(SELF)
                 break;
@@ -10711,8 +10907,11 @@ StepInstruction(char const *ip)
                 SKIPVALUE(b);
                 break;
         CASE(ARRAY_COMPR)
+        CASE(SET_COMPR)
+                SKIPVALUE(n);
                 break;
         CASE(DICT_COMPR)
+                SKIPVALUE(n);
                 SKIPVALUE(n);
                 break;
         CASE(PUSH_INDEX)

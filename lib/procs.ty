@@ -434,11 +434,10 @@ pub fn children(parent: Int | Process, recursive: Bool = false) -> Array[Process
     }
 
     let out = []
-    let seen = %{pid: true}
+    let seen = %[pid]
     fn collect(id: Int) {
         for p in by-parent[id] ?? [] {
-            continue if p.pid in seen
-            seen[p.pid] = true
+            continue if !seen.insert(p.pid)
             out.push(p)
             collect(p.pid)
         }

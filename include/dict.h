@@ -55,6 +55,12 @@ DictUpdateWith(Ty *ty, Dict *d, Dict const *u, Value const *f);
 Dict *
 DictUpdate(Ty *ty, Dict *d, Dict const *u);
 
+Dict *
+DictDropKeys(Ty *ty, Dict *d, Set const *keys);
+
+Dict *
+DictKeepKeys(Ty *ty, Dict *d, Set const *keys);
+
 void
 dict_mark(Ty *ty, Dict *obj);
 

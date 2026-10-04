@@ -95,7 +95,7 @@ fn type-completions(type: _, prefix: String) -> Array[_] {
                 completions += type-completions(info.`super`, prefix)
             }
 
-            completions.uniq()
+            completions.nub()
         }
 
         ty.Record(entries)

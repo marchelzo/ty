@@ -1014,6 +1014,7 @@ visit_children(Ty *ty, Expr *e, Scope *scope, VisitorCtx *ctxt, bool type)
                 break;
 
         case EXPRESSION_ARRAY:
+        case EXPRESSION_SET:
                 for (usize i = 0; i < e->elements.count; ++i) {
                         SUB(false, "(array item)",
                                 VX(e->aconds.items[i]);
@@ -1023,6 +1024,7 @@ visit_children(Ty *ty, Expr *e, Scope *scope, VisitorCtx *ctxt, bool type)
                 break;
 
         case EXPRESSION_ARRAY_COMPR:
+        case EXPRESSION_SET_COMPR:
         {
                 Scope *outer = scope;
                 scope = visit_comprehension(ty, &e->compr, scope, ctxt);

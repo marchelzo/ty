@@ -1,8 +1,8 @@
 import lib (bench)
 
 // Dependency planning is representative of package managers, build systems,
-// and job schedulers.  Package and plan entries are records; dictionaries are
-// used both as maps and sets.
+// and job schedulers.  Package and plan entries are records; dictionaries map
+// names to plan state and sets track membership.
 
 use Package = {
     name: String,
@@ -41,27 +41,26 @@ fn make-plan(packages: Array[Package], targets: Array[String]) {
     let by-name = %{p.name: p for p in packages}
 
     // Find the transitive closure without recursion.
-    let required: Dict[String, Bool] = %{}
+    let required: Set[String] = %[]
     let stack = targets.clone()
     while #stack > 0 {
         let name = stack.pop()
-        if name in required {
+        if !required.insert(name) {
             continue
         }
 
-        required[name] = true
         let package = by-name[name]!
         stack += package.deps
     }
 
     let indegree = %{*: 0}
     let dependents: Dict[String, Array[String]] = %{}
-    for name, _ in required {
+    for name in required {
         indegree[name] = 0
         dependents[name] = []
     }
 
-    for name, _ in required {
+    for name in required {
         let package = by-name[name]!
         for dep in package.deps if dep in required {
             indegree[name] += 1

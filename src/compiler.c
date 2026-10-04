@@ -1962,12 +1962,14 @@ AdjustStack(Ty *ty, int c)
         case INSTR_ARRAY:
         case INSTR_DICT:
         case INSTR_DEFAULT_DICT:
+        case INSTR_SET:
                 EndStack(ty);
                 IncrStack(ty);
                 break;
 
         case INSTR_POP_STACK_POS:
         case INSTR_ARRAY_COMPR:
+        case INSTR_SET_COMPR:
                 EndStack(ty);
                 break;
 
@@ -4546,6 +4548,7 @@ TryResolveExpr(Ty *ty, Scope *scope, Expr *e)
                 break;
 
         case EXPRESSION_ARRAY:
+        case EXPRESSION_SET:
                 for (usize i = 0; i < vN(e->elements); ++i) {
                         ok &= TryResolveExpr(ty, scope, e->elements.items[i]);
                         ok &= TryResolveExpr(ty, scope, e->aconds.items[i]);
@@ -4553,6 +4556,7 @@ TryResolveExpr(Ty *ty, Scope *scope, Expr *e)
                 break;
 
         case EXPRESSION_ARRAY_COMPR:
+        case EXPRESSION_SET_COMPR:
                 for (usize i = 0; i < vN(e->compr); ++i) {
                         ok &= TryResolveExpr(ty, scope, v_(e->compr, i)->iter);
                 }
@@ -5173,7 +5177,12 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 break;
 
         case EXPRESSION_ARRAY:
+        case EXPRESSION_SET:
                 if (IS_CTX(TYPE) && vN(e->elements) == 1) {
+                        Class *class = class_get(
+                                ty,
+                                (e->type == EXPRESSION_SET) ? CLASS_SET : CLASS_ARRAY
+                        );
                         Expr *elem0 = v__(e->elements, 0);
                         if (vN(e->optional) > 0 && v__(e->optional, 0)) {
                                 Expr *optional = NewExpr(ty, EXPRESSION_PREFIX_QUESTION);
@@ -5184,8 +5193,8 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         }
                         e->type = EXPRESSION_SUBSCRIPT;
                         e->container = NewExpr(ty, EXPRESSION_IDENTIFIER);
-                        e->container->identifier = "Array";
-                        e->container->symbol = class_get(ty, CLASS_ARRAY)->def->class.var;
+                        e->container->identifier = class->name;
+                        e->container->symbol = class->def->class.var;
                         e->subscript = elem0;
                         symbolize_expression(ty, scope, e);
                         break;
@@ -5202,6 +5211,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 break;
 
         case EXPRESSION_ARRAY_COMPR:
+        case EXPRESSION_SET_COMPR:
         {
                 subscope = scope;
 
@@ -9654,9 +9664,16 @@ emit_array_compr(Ty *ty, Expr const *e)
 {
         ComprStateStack states = {0};
 
+        bool set = (e->type == EXPRESSION_SET_COMPR);
+
         SCRATCH_SAVE();
 
-        INSN(ARRAY0);
+        if (set) {
+                INSN(SAVE_STACK_POS);
+                INSN(SET);
+        } else {
+                INSN(ARRAY0);
+        }
 
         for (usize i = 0; i < vN(e->compr); ++i) {
                 ComprPart const *part = v_(e->compr, i);
@@ -9675,7 +9692,11 @@ emit_array_compr(Ty *ty, Expr const *e)
                 }
         }
 
-        INSN(ARRAY_COMPR);
+        if (set) {
+                INSN(SET_COMPR);
+        } else {
+                INSN(ARRAY_COMPR);
+        }
         Ei32(2*vN(e->compr));
 
         for (isize i = vN(e->compr) - 1; i >= 0; --i) {
@@ -10526,7 +10547,22 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
 
         case EXPRESSION_ARRAY_COMPR:
+        case EXPRESSION_SET_COMPR:
                 emit_array_compr(ty, e);
+                break;
+
+        case EXPRESSION_SET:
+                INSN(SAVE_STACK_POS);
+                for (usize i = 0; i < vN(e->elements); ++i) {
+                        if (v__(e->aconds, i) != NULL) {
+                                PLACEHOLDER_JUMP_IF_NOT(v__(e->aconds, i), skip);
+                                EE(v__(e->elements, i));
+                                PATCH_JUMP(skip);
+                        } else {
+                                EE(v__(e->elements, i));
+                        }
+                }
+                INSN(SET);
                 break;
 
         case EXPRESSION_DICT:
@@ -12055,6 +12091,7 @@ clone_expr(Expr *e, Scope *scope, void *ctx)
 
         switch (e->type) {
         case EXPRESSION_ARRAY:
+        case EXPRESSION_SET:
                 CloneVec(e->elements);
                 CloneVec(e->aconds);
                 CloneVec(e->optional);
@@ -13200,6 +13237,7 @@ compiler_init(Ty *ty)
         class_set_super(ty, CLASS_TAG, CLASS_FUNCTION);
         class_implement_trait(ty, CLASS_ARRAY,        CLASS_ITERABLE);
         class_implement_trait(ty, CLASS_DICT,         CLASS_ITERABLE);
+        class_implement_trait(ty, CLASS_SET,          CLASS_ITERABLE);
         class_implement_trait(ty, CLASS_QUEUE,        CLASS_ITERABLE);
         class_implement_trait(ty, CLASS_SHARED_QUEUE, CLASS_ITERABLE);
         class_implement_trait(ty, CLASS_WORK_QUEUE,   CLASS_ITERABLE);
@@ -14289,13 +14327,14 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 break;
 
         case EXPRESSION_ARRAY:
+        case EXPRESSION_SET:
                 v = ARRAY(vA());
                 NOGC(v.array);
                 for (int i = 0; i < vN(e->elements); ++i) {
                         vAp(v.array, tyaitem(ty, e, i, flags));
                 }
                 OKGC(v.array);
-                v = TAGGED(TyArray, v);
+                v = (e->type == EXPRESSION_SET) ? TAGGED(TySet, v) : TAGGED(TyArray, v);
                 break;
 
         case EXPRESSION_SPREAD:
@@ -14307,6 +14346,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 break;
 
         case EXPRESSION_ARRAY_COMPR:
+        case EXPRESSION_SET_COMPR:
         {
                 Array *avElems = vA();
                 Array *avParts = vA();
@@ -14327,7 +14367,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 }
 
                 v = TAGGED_RECORD(
-                        TyArrayCompr,
+                        (e->type == EXPRESSION_SET_COMPR) ? TySetCompr : TyArrayCompr,
                         "items",   ARRAY(avElems),
                         "parts",   ARRAY(avParts)
                 );
@@ -16081,8 +16121,9 @@ cexpr(Ty *ty, Value *v)
         }
 
         case TyArray:
+        case TySet:
         {
-                e->type = EXPRESSION_ARRAY;
+                e->type = (tag == TySet) ? EXPRESSION_SET : EXPRESSION_ARRAY;
 
                 for (int i = 0; i < vN(*v->array); ++i) {
                         Value *entry    = v_(*v->array, i);
@@ -16356,8 +16397,9 @@ cexpr(Ty *ty, Value *v)
                 break;
 
         case TyArrayCompr:
+        case TySetCompr:
         {
-                e->type = EXPRESSION_ARRAY_COMPR;
+                e->type = (tag == TySetCompr) ? EXPRESSION_SET_COMPR : EXPRESSION_ARRAY_COMPR;
 
                 Value *items = tget_t(v, "items", VALUE_ARRAY);
                 Value *parts = tget_t(v, "parts", VALUE_ARRAY);
@@ -17633,6 +17675,8 @@ InstallMeth(Ty *ty, Expr *meth, char const *name, add_to_class_fn *add)
         if (HasBody(meth) || (meth->type == EXPRESSION_MULTI_FUNCTION)) {
                 (*add)(ty, meth->class->i, name, REF(NewZero()));
                 meth->emit = true;
+        } else if (add == class_add_getter && meth->class->i < CLASS_BUILTIN_END) {
+                (*add)(ty, meth->class->i, name, NIL);
         }
 }
 
@@ -19804,6 +19848,7 @@ DumpProgram(
                         break;
                 CASE(DICT)
                 CASE(DEFAULT_DICT)
+                CASE(SET)
                         break;
                 CASE(SELF)
                         break;
@@ -19861,6 +19906,7 @@ DumpProgram(
                         READVALUE(b);
                         break;
                 CASE(ARRAY_COMPR)
+                CASE(SET_COMPR)
                         READVALUE(n);
                         break;
                 CASE(DICT_COMPR)

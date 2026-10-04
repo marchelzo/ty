@@ -1503,7 +1503,7 @@ fn __resolve-zoned-seconds(dt: PlainDateTime, zone: String,
     }
 
     let offsets = [__offset-seconds-at(wall + shift, zone)
-                   for shift in [-172800, 0, 172800]].uniq()
+                   for shift in [-172800, 0, 172800]].nub()
     let possible: [Int] = []
     let guesses: [Int] = []
     for off in offsets {

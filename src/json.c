@@ -7,6 +7,7 @@
 #include "test.h"
 #include "value.h"
 #include "dict.h"
+#include "set.h"
 #include "xd.h"
 #include "dtoa.h"
 #include "itable.h"
@@ -476,6 +477,30 @@ encode(Ty *ty, Value const *v, str *out)
                 xvP(*out, ']');
                 break;
 
+        case VALUE_HEAP:
+        {
+                Value view = HEAP_VIEW(v->heap);
+                return encode(ty, &view, out);
+        }
+
+        case VALUE_SET:
+                xvP(*out, '[');
+                if (!try_visit(v->set)) {
+                        return false;
+                }
+                sfor(v->set, {
+                        if (!first) {
+                                xvP(*out, ',');
+                        }
+                        if (!encode(ty, x, out)) {
+                                return false;
+                        }
+                        first = false;
+                });
+                vvX(Visiting);
+                xvP(*out, ']');
+                break;
+
         case VALUE_DICT:
                 xvP(*out, '{');
                 if (!try_visit(v->dict)) {
@@ -522,6 +547,7 @@ encode(Ty *ty, Value const *v, str *out)
                         xvP(*out, '{');
                         for (int i = 0; i < v->object->nslot; ++i) {
                                 char const *name = M_NAME(v__(v->object->class->fields.ids, i));
+                                xvP(*out, '"');
                                 xvPn(*out, name, strlen(name));
                                 xvP(*out, '"');
                                 xvP(*out, ':');
@@ -533,10 +559,11 @@ encode(Ty *ty, Value const *v, str *out)
                         if (v->object->dynamic != NULL) {
                                 for (int i = 0; i < vN(v->object->dynamic->ids); ++i) {
                                         char const *name = M_NAME(v__(v->object->dynamic->ids, i));
+                                        xvP(*out, '"');
                                         xvPn(*out, name, strlen(name));
                                         xvP(*out, '"');
                                         xvP(*out, ':');
-                                        if (!encode(ty, &v->object->slots[i], out)) {
+                                        if (!encode(ty, v_(v->object->dynamic->values, i), out)) {
                                                 return false;
                                         }
                                         xvP(*out, ',');
@@ -686,6 +713,24 @@ typed_array(Ty *ty, T2Type element)
         if (next() != ']') FAIL;
 
         return ARRAY(a);
+}
+
+static Value
+typed_set(Ty *ty, T2Type element)
+{
+        if (next() != '[') FAIL;
+
+        Set *s = set_new(ty);
+
+        while (peek() != '\0' && peek() != ']') {
+                set_add(ty, s, element == T2_TYPE_INVALID ? value(ty) : typed_value(ty, element));
+                space();
+                if (peek() != ']' && next() != ',') FAIL;
+        }
+
+        if (next() != ']') FAIL;
+
+        return SET(s);
 }
 
 static Value
@@ -861,6 +906,7 @@ typed_nominal(Ty *ty, T2Type t0)
         case CLASS_BOOL:   return typed_value(ty, t2_primitive(universe, T2_TYPE_BOOL));
         case CLASS_ARRAY:  return typed_array(ty, t2_type_child(universe, t0, 0));
         case CLASS_DICT:   return typed_dict(ty, t2_type_child(universe, t0, 1));
+        case CLASS_SET:    return typed_set(ty, t2_type_child(universe, t0, 0));
         default:           return value(ty);
         }
 }

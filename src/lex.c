@@ -115,7 +115,7 @@ mkstring(Ty *ty, char const *string, usize length)
 }
 
 static Token
-mkregex(Ty *ty, char const *pat, int flags, bool detailed)
+mkregex(Ty *ty, char const *pat, int flags, bool detailed, bool speculative)
 {
         int err;
         usize offset;
@@ -131,6 +131,9 @@ mkregex(Ty *ty, char const *pat, int flags, bool detailed)
         );
 
         if (re == NULL) {
+                if (speculative) {
+                        return mktoken(ty, TOKEN_ERROR);
+                }
                 pcre2_get_error_message(err, (u8 *)err_buf, sizeof err_buf);
                 error(
                         ty,
@@ -994,7 +997,7 @@ Unterminated:
 }
 
 static Token
-lexregex(Ty *ty, bool strict)
+lexregex(Ty *ty, bool strict, bool speculative)
 {
         byte_vector pat = {0};
         char const *s = SRC;
@@ -1056,7 +1059,7 @@ lexregex(Ty *ty, bool strict)
 
         avP(pat, '\0');
 
-        return mkregex(ty, vv(pat), flags, detailed);
+        return mkregex(ty, vv(pat), flags, detailed, speculative);
 
 Unterminated:
         if (!strict) {
@@ -1446,7 +1449,7 @@ static Token
 saferegex(Ty *ty, bool defer_error)
 {
         LexState save = state;
-        Token t = lexregex(ty, false);
+        Token t = lexregex(ty, false, !defer_error);
         if (
                 (t.type != TOKEN_REGEX)
              || ((t.start.line != t.end.line) && (t.regex->pattern[0] == ' '))
@@ -1574,6 +1577,10 @@ Begin:
                 nextchar(ty);
                 nextchar(ty);
                 return mktoken(ty, TOKEN_DICT_OPEN);
+        } else if (C(0) == '%' && C(1) == '[' && ctx == LEX_PREFIX) {
+                nextchar(ty);
+                nextchar(ty);
+                return mktoken(ty, TOKEN_SET_OPEN);
         } else if (
                 contains(OperatorCharset, C(0))
              || (

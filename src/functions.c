@@ -108,6 +108,7 @@ extern char **environ;
 #include "json.h"
 #include "queue.h"
 #include "dict.h"
+#include "set.h"
 #include "object.h"
 #include "class.h"
 #include "compiler.h"
@@ -388,6 +389,15 @@ IntoSigSet(Ty *ty, char const *ctx, Value const *v, sigset_t *set)
                         if (value_truthy(ty, val)) {
                                 sigaddset(set, key->z);
                         }
+                });
+                break;
+
+        case VALUE_SET:
+                sfor(v->set, {
+                        if (x->type != VALUE_INTEGER) {
+                                zP("%s: bad signal set: %s", ctx, VSC(v));
+                        }
+                        sigaddset(set, x->z);
                 });
                 break;
 
@@ -702,6 +712,8 @@ TY_BUILTIN_RAW(ident)
         switch (v.type) {
         case VALUE_ARRAY:   return PTR(v.array);
         case VALUE_DICT:    return PTR(v.dict);
+        case VALUE_SET:     return PTR(v.set);
+        case VALUE_HEAP:    return PTR(v.heap);
         case VALUE_OBJECT:  return PTR(v.object);
         case VALUE_BLOB:    return PTR(v.blob);
         case VALUE_TUPLE:   return PTR(v.items);
@@ -1097,8 +1109,19 @@ TY_BUILTIN_RAW(blob)
 Value
 builtin_queue(Ty *ty, int argc, Value *kwargs)
 {
-        ASSERT_ARGC("queue()", 0);
-        return QUEUE(queue_new(ty));
+        ASSERT_ARGC("Queue()", 0);
+
+        Queue *q   = queue_new(ty);
+        Value *max = NAMED("maxLen");
+
+        if (max != NULL && !IsNil(*max)) {
+                if (max->type != VALUE_INTEGER || max->z < 1) {
+                        zP("Queue(): max-len must be a positive Int, got %s", VSC(max));
+                }
+                q->max = max->z;
+        }
+
+        return QUEUE(q);
 }
 
 Value
@@ -1152,6 +1175,8 @@ Coerce:
         case VALUE_BOOLEAN: v.z = a.boolean;                        return v;
         case VALUE_ARRAY:   v.z = a.array->count;                   return v;
         case VALUE_DICT:    v.z = a.dict->count;                    return v;
+        case VALUE_SET:     v.z = a.set->count;                     return v;
+        case VALUE_HEAP:    v.z = vN(a.heap->xs);                   return v;
         case VALUE_BLOB:    v.z = a.blob->count;                    return v;
         case VALUE_PTR:     return INTEGER((uptr)a.ptr);
 
@@ -1604,6 +1629,8 @@ MissingArgument:
                                 case VALUE_OBJECT:   p = arg.object; break;
                                 case VALUE_PTR:      p = arg.ptr;    break;
                                 case VALUE_DICT:     p = arg.dict;   break;
+                                case VALUE_SET:      p = arg.set;    break;
+                                case VALUE_HEAP:     p = arg.heap;   break;
                                 case VALUE_ARRAY:    p = arg.array;  break;
                                 case VALUE_FUNCTION: p = arg.info;   break;
                                 case VALUE_REGEX:    p = arg.regex;  break;
@@ -2118,7 +2145,7 @@ TY_BUILTIN_RAW(json_parse_xD)
 // json.encode(value: Any) -> String
 TY_BUILTIN_RAW(json_encode)
 {
-        ASSERT_ARGC("json.parse()", 1);
+        ASSERT_ARGC("json.encode()", 1);
         return json_encode(ty, &ARG(0));
 }
 

@@ -91,7 +91,7 @@ pub class Watcher {
     __recursive: Bool
     __dir-fds: Dict[Int, Path]
     __file-fds: Dict[Int, Path]
-    __paths: Dict[String, Int]
+    __paths: Set[String]
     __closed: Bool
 
     init(dir: String | Path, recursive: Bool = false) {
@@ -100,7 +100,7 @@ pub class Watcher {
         __kq = kqueue.Kqueue()
         __dir-fds = %{}
         __file-fds = %{}
-        __paths = %{}
+        __paths = %[]
         __closed = false
         __add-dir(__dir)
     }
@@ -114,7 +114,7 @@ pub class Watcher {
         if entries == nil { os.close(fd); return }
         __kq.clear(fd, kqueue.EVFILT_VNODE, fflags=kqueue.NOTE_WRITE)
         __dir-fds[fd] = dir
-        __paths[ds] = fd
+        __paths << ds
         for name in entries {
             let p = dir / name
             if __recursive && (p.dir?) {
@@ -132,7 +132,7 @@ pub class Watcher {
         if fd == -1 { return }
         __kq.clear(fd, kqueue.EVFILT_VNODE, fflags=VNODE_FFLAGS)
         __file-fds[fd] = p
-        __paths[ps] = fd
+        __paths << ps
     }
 
     __remove(fd: Int) {

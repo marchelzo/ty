@@ -7,6 +7,7 @@
 
 #include "ty.h"
 #include "dict.h"
+#include "set.h"
 #include "str.h"
 #include "value.h"
 #include "xd.h"
@@ -337,6 +338,18 @@ op_builtin_sub(Ty *ty)
 
                 COMPLETE(new);
         }
+
+        case PAIR_OF(VALUE_SET):
+                COMPLETE(SET(SetSubtract(ty, left->set, right->set)));
+
+        case PACK_TYPES(VALUE_DICT, VALUE_SET):
+        {
+                Dict *new = DictClone(ty, left->dict);
+                NOGC(new);
+                DictDropKeys(ty, new, right->set);
+                OKGC(new);
+                COMPLETE(DICT(new));
+        }
         }
 
         return false;
@@ -415,6 +428,18 @@ op_builtin_and(Ty *ty)
 
         case PACK_TYPES(VALUE_BOOLEAN, VALUE_INTEGER):
                 COMPLETE(INTEGER(left->boolean & right->z));
+
+        case PAIR_OF(VALUE_SET):
+                COMPLETE(SET(SetIntersect(ty, left->set, right->set)));
+
+        case PACK_TYPES(VALUE_DICT, VALUE_SET):
+        {
+                Dict *new = DictClone(ty, left->dict);
+                NOGC(new);
+                DictKeepKeys(ty, new, right->set);
+                OKGC(new);
+                COMPLETE(DICT(new));
+        }
         }
 
         return false;
@@ -438,6 +463,9 @@ op_builtin_or(Ty *ty)
 
         case PACK_TYPES(VALUE_BOOLEAN, VALUE_INTEGER):
                 COMPLETE(INTEGER(left->boolean | right->z));
+
+        case PAIR_OF(VALUE_SET):
+                COMPLETE(SET(SetUnion(ty, left->set, right->set)));
         }
 
         return false;
@@ -461,6 +489,9 @@ op_builtin_xor(Ty *ty)
 
         case PACK_TYPES(VALUE_BOOLEAN, VALUE_INTEGER):
                 COMPLETE(INTEGER(left->boolean ^ right->z));
+
+        case PAIR_OF(VALUE_SET):
+                COMPLETE(SET(SetSymDiff(ty, left->set, right->set)));
         }
 
         return false;
@@ -471,6 +502,11 @@ op_builtin_shl(Ty *ty)
 {
         Value const *left = look(-1);
         Value const *right = look(0);
+
+        if (left->type == VALUE_SET) {
+                set_add(ty, left->set, *right);
+                COMPLETE(*left);
+        }
 
         switch (PACK_TYPES(left->type, right->type)) {
         case PAIR_OF(VALUE_INTEGER):

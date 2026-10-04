@@ -1761,6 +1761,8 @@ builtin_nominal_arity(int class_id)
 {
         switch (class_id) {
         case CLASS_ARRAY:
+        case CLASS_SET:
+        case CLASS_HEAP:
         case CLASS_PTR:
         case CLASS_QUEUE:
         case CLASS_SHARED_QUEUE:
@@ -1900,7 +1902,12 @@ ensure_nominal(
                 for (usize i = 0; i < arity; ++i) {
                         variance[i] = T2_COVARIANT;
                 }
-        } else if (class_id == CLASS_ARRAY || class_id == CLASS_DICT) {
+        } else if (
+                (class_id == CLASS_ARRAY)
+             || (class_id == CLASS_DICT)
+             || (class_id == CLASS_SET)
+             || (class_id == CLASS_HEAP)
+        ) {
                 for (usize i = 0; i < arity; ++i) {
                         variance[i] = T2_BIVARIANT;
                 }
@@ -3407,6 +3414,24 @@ lower_named_type(
         return t2_primitive(checker->universe, T2_TYPE_ERROR);
 }
 
+static int
+sequence_literal_class(Expr const *expression)
+{
+        switch (expression->type) {
+        case EXPRESSION_ARRAY:
+        case EXPRESSION_ARRAY_COMPR: return CLASS_ARRAY;
+        case EXPRESSION_SET:
+        case EXPRESSION_SET_COMPR:   return CLASS_SET;
+        default:                     return -1;
+        }
+}
+
+static char const *
+sequence_class_name(int class_id)
+{
+        return (class_id == CLASS_SET) ? "Set" : "Array";
+}
+
 static T2Type
 lower_array_element_type(T2Checker *checker, Expr const *array, int index)
 {
@@ -4487,14 +4512,16 @@ lower_type(T2Checker *checker, Expr const *source)
                 break;
         }
         case EXPRESSION_ARRAY:
+        case EXPRESSION_SET:
         {
+                int class_id = sequence_literal_class(expression);
                 T2Type argument = (vN(expression->elements) == 0)
                                 ? t2_primitive(checker->universe, T2_TYPE_DYNAMIC)
                                 : lower_array_element_type(checker, expression, 0);
                 result = nominal_application(
                         checker,
-                        CLASS_ARRAY,
-                        "Array",
+                        class_id,
+                        sequence_class_name(class_id),
                         &argument,
                         1,
                         expression
@@ -7448,6 +7475,128 @@ callback_parameter_hint(
 }
 
 static T2Type
+infer_call_types(
+        T2Checker         *checker,
+        T2Type             callee,
+        T2Type const      *arguments,
+        usize              argument_count,
+        T2Type const      *keyword_arguments,
+        char const *const *keywords,
+        usize              keyword_count,
+        Expr const        *site,
+        bool               diagnose
+);
+
+static bool
+mapped_pack_expansion(T2Checker *checker, T2Type type)
+{
+        if (
+                (t2_type_kind(checker->universe, type) != T2_TYPE_PACK_EXPANSION)
+             || (t2_type_arity(checker->universe, type) == 0)
+        ) {
+                return false;
+        }
+
+        T2TypeKind pattern = t2_type_kind(
+                checker->universe,
+                t2_type_child(checker->universe, type, 0)
+        );
+
+        return (pattern != T2_TYPE_VARIABLE) && (pattern != T2_TYPE_META);
+}
+
+static bool
+callback_precedes_rest(
+        T2Checker    *checker,
+        T2Type        callee,
+        T2Type const *arguments,
+        usize         argument_count
+)
+{
+        bool mapped = false;
+        usize count = t2_callable_parameter_count(checker->universe, callee);
+
+        for (usize i = 0; !mapped && i < count; ++i) {
+                T2ParameterSpec parameter;
+                mapped = t2_callable_parameter(checker->universe, callee, i, &parameter)
+                      && (
+                                 (parameter.kind == T2_PARAMETER_POSITIONAL_REST)
+                              || (parameter.kind == T2_PARAMETER_PACK)
+                         )
+                      && mapped_pack_expansion(checker, parameter.type);
+        }
+
+        for (usize i = 0; mapped && i + 1 < argument_count; ++i) {
+                if (t2_type_kind(checker->universe, arguments[i]) == T2_TYPE_FUNCTION) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static T2Type
+callback_hint_from_call(
+        T2Checker    *checker,
+        T2Type        callee,
+        usize         index,
+        T2Type const *arguments,
+        usize         argument_count,
+        Expr const   *site
+)
+{
+        if (callee == T2_TYPE_INVALID || index >= argument_count) {
+                return T2_TYPE_INVALID;
+        }
+
+        T2SolverMark mark  = t2_solver_mark(checker->solver);
+        T2Type      *probe = xtA(*probe, argument_count);
+
+        for (usize i = 0; i < argument_count; ++i) {
+                probe[i] = (arguments[i] != T2_TYPE_INVALID)
+                         ? arguments[i]
+                         : t2_solver_new_meta(
+                                   checker->solver,
+                                   T2_VARIABLE_FLEXIBLE,
+                                   checker->level,
+                                   "callback hint"
+                           );
+        }
+
+        T2Type result = infer_call_types(
+                checker,
+                callee,
+                probe,
+                argument_count,
+                NULL,
+                NULL,
+                0,
+                site,
+                false
+        );
+
+        T2Type hint = (
+                (result != T2_TYPE_INVALID)
+             && (t2_type_kind(checker->universe, result) != T2_TYPE_ERROR)
+             && !t2_solver_failed(checker->solver)
+        ) ? t2_solver_zonk(checker->solver, probe[index], T2_PREFER_UPPER_BOUND)
+          : T2_TYPE_INVALID;
+
+        t2_solver_rollback(checker->solver, mark);
+        ty_free(probe);
+
+        if (
+                (hint == T2_TYPE_INVALID)
+             || (t2_type_kind(checker->universe, hint) != T2_TYPE_FUNCTION)
+             || !callable_parameters_closed(checker, hint)
+        ) {
+                return T2_TYPE_INVALID;
+        }
+
+        return hint;
+}
+
+static T2Type
 infer_argument_with_callback_hint(
         T2Checker  *checker,
         Expr const *argument,
@@ -7482,18 +7631,58 @@ infer_argument(
         Expr const   *argument,
         T2Type        callee,
         usize         index,
-        T2Type const *arguments
+        T2Type const *arguments,
+        usize         argument_count
 )
 {
         if (!lambda_expression((argument == NULL) ? NULL : unfurl(argument))) {
                 return infer_expression(checker, argument);
         }
 
-        return infer_argument_with_callback_hint(
-                checker,
-                argument,
-                callback_parameter_hint(checker, callee, index, NULL, arguments, index)
-        );
+        T2Type hint = callback_parameter_hint(checker, callee, index, NULL, arguments, index);
+
+        if (hint == T2_TYPE_INVALID) {
+                hint = callback_hint_from_call(
+                        checker,
+                        callee,
+                        index,
+                        arguments,
+                        argument_count,
+                        argument
+                );
+        }
+
+        return infer_argument_with_callback_hint(checker, argument, hint);
+}
+
+static void
+infer_arguments(
+        T2Checker     *checker,
+        ExprVec const *argv,
+        T2Type         callee,
+        T2Type        *arguments,
+        usize          argument_count
+)
+{
+        for (usize i = 0; i < argument_count; ++i) {
+                Expr const *argument = v__(*argv, i);
+                arguments[i] = lambda_expression((argument == NULL) ? NULL : unfurl(argument))
+                             ? T2_TYPE_INVALID
+                             : infer_expression(checker, argument);
+        }
+
+        for (usize i = 0; i < argument_count; ++i) {
+                if (arguments[i] == T2_TYPE_INVALID) {
+                        arguments[i] = infer_argument(
+                                checker,
+                                v__(*argv, i),
+                                callee,
+                                i,
+                                arguments,
+                                argument_count
+                        );
+                }
+        }
 }
 
 static T2Type
@@ -7803,6 +7992,7 @@ fresh_literal_expression(Expr const *expression)
         }
 
         return (unfurled->type == EXPRESSION_ARRAY)
+            || (unfurled->type == EXPRESSION_SET)
             || (unfurled->type == EXPRESSION_DICT)
             || ((unfurled->type == EXPRESSION_TUPLE) && tuple_is_record(unfurled));
 }
@@ -9262,6 +9452,49 @@ infer_call_types(
                 return callee;
         }
 
+        if (
+                (kind == T2_TYPE_FUNCTION)
+             && callback_precedes_rest(checker, callee, arguments, argument_count)
+        ) {
+                T2SolverMark mark  = t2_solver_mark(checker->solver);
+                T2Type      *probe = xtA(*probe, argument_count);
+
+                for (usize i = 0; i < argument_count; ++i) {
+                        probe[i] = (t2_type_kind(checker->universe, arguments[i]) == T2_TYPE_FUNCTION)
+                                 ? t2_solver_new_meta(
+                                           checker->solver,
+                                           T2_VARIABLE_FLEXIBLE,
+                                           checker->level,
+                                           "deferred callback"
+                                   )
+                                 : arguments[i];
+                }
+
+                T2Type shape = infer_call_types(
+                        checker,
+                        callee,
+                        probe,
+                        argument_count,
+                        keyword_arguments,
+                        keywords,
+                        keyword_count,
+                        site,
+                        false
+                );
+
+                if (
+                        (shape == T2_TYPE_INVALID)
+                     || (t2_type_kind(checker->universe, shape) == T2_TYPE_ERROR)
+                     || t2_solver_failed(checker->solver)
+                ) {
+                        t2_solver_rollback(checker->solver, mark);
+                } else {
+                        t2_solver_commit(checker->solver, mark);
+                }
+
+                ty_free(probe);
+        }
+
         if (kind == T2_TYPE_TYPE_VALUE) {
                 return infer_call_types(
                         checker,
@@ -9881,6 +10114,26 @@ operator_type_specificity(T2Checker *checker, T2Type type, unsigned depth)
                 }
                 return (score == UINT_MAX) ? 0 : score;
         }
+        case T2_TYPE_FUNCTION:
+        {
+                unsigned score = 2 + operator_type_specificity(
+                        checker,
+                        t2_callable_result(checker->universe, type),
+                        depth + 1
+                );
+                usize count = t2_callable_parameter_count(checker->universe, type);
+                for (usize i = 0; i < count; ++i) {
+                        T2ParameterSpec parameter;
+                        if (t2_callable_parameter(checker->universe, type, i, &parameter)) {
+                                score += operator_type_specificity(
+                                        checker,
+                                        parameter.type,
+                                        depth + 1
+                                );
+                        }
+                }
+                return score;
+        }
         default:
         {
                 unsigned score = 2;
@@ -9962,6 +10215,90 @@ operator_scheme_narrower(
         }
 
         return strict;
+}
+
+static bool
+operator_scheme_accepts(
+        T2Checker      *checker,
+        T2Scheme const *scheme,
+        T2Scheme const *probe,
+        Expr const     *site
+)
+{
+        T2Type callable = t2_scheme_body(probe);
+        if (t2_type_kind(checker->universe, callable) != T2_TYPE_FUNCTION) {
+                return false;
+        }
+
+        usize count = t2_callable_parameter_count(checker->universe, callable);
+        T2Type *arguments = xtA(*arguments, count);
+        for (usize i = 0; i < count; ++i) {
+                T2ParameterSpec parameter;
+                if (!t2_callable_parameter(checker->universe, callable, i, &parameter)) {
+                        ty_free(arguments);
+                        return false;
+                }
+                arguments[i] = parameter.type;
+        }
+
+        T2SolverMark mark = t2_solver_mark(checker->solver);
+        T2Type result = call_operator_scheme_args(checker, scheme, arguments, count, site);
+        bool accepted = (result != T2_TYPE_INVALID)
+                     && (t2_type_kind(checker->universe, result) != T2_TYPE_ERROR)
+                     && !t2_solver_failed(checker->solver);
+        t2_solver_rollback(checker->solver, mark);
+        ty_free(arguments);
+
+        return accepted;
+}
+
+static bool
+operator_scheme_more_specific(
+        T2Checker      *checker,
+        T2Scheme const *left,
+        T2Scheme const *right,
+        Expr const     *site
+)
+{
+        if (operator_scheme_narrower(checker, left, right)) {
+                return true;
+        }
+
+        return operator_scheme_accepts(checker, right, left, site)
+            && !operator_scheme_accepts(checker, left, right, site);
+}
+
+static usize
+most_specific_operator(
+        T2Checker        *checker,
+        usize const      *candidates,
+        usize             count,
+        usize             preferred,
+        Expr const       *site
+)
+{
+        for (usize k = 0; k <= count; ++k) {
+                usize i = (k == 0) ? preferred : candidates[k - 1];
+                if (i == SIZE_MAX || (k > 0 && i == preferred)) {
+                        continue;
+                }
+                T2Scheme const *scheme = v__(checker->operators, i).scheme;
+                bool dominant = true;
+                for (usize j = 0; dominant && j < count; ++j) {
+                        dominant = (candidates[j] == i)
+                                || operator_scheme_more_specific(
+                                           checker,
+                                           scheme,
+                                           v__(checker->operators, candidates[j]).scheme,
+                                           site
+                                   );
+                }
+                if (dominant) {
+                        return i;
+                }
+        }
+
+        return SIZE_MAX;
 }
 
 static bool
@@ -10534,6 +10871,7 @@ infer_registered_operator_call(
         T2TypeList rigid = skolemized_arguments(checker, arguments, argument_count);
         bool distinct    = (argument_count != 0)
                         && (memcmp(vv(rigid), arguments, argument_count * sizeof *arguments) != 0);
+        vec(usize) applicable_set = {0};
         for (usize pass = distinct ? 0 : 1; pass < 2 && applicable_count == 0; ++pass) {
         for (usize i = 0; i < vN(checker->operators); ++i) {
                 T2Operator candidate = v__(checker->operators, i);
@@ -10576,6 +10914,7 @@ infer_registered_operator_call(
                         continue;
                 }
                 applicable_count += 1;
+                xvP(applicable_set, i);
                 unsigned score = operator_scheme_specificity(
                         checker,
                         candidate.scheme
@@ -10598,7 +10937,20 @@ infer_registered_operator_call(
         }
         xvF(rigid);
 
-        if (applicable_count > 1) {
+        usize winner = (applicable_count > 1)
+                     ? most_specific_operator(
+                               checker,
+                               vv(applicable_set),
+                               vN(applicable_set),
+                               best,
+                               site
+                       )
+                     : SIZE_MAX;
+        xvF(applicable_set);
+
+        if (winner != SIZE_MAX) {
+                best = winner;
+        } else if (applicable_count > 1) {
                 T2Type retained = retain_operator_predicate(
                         checker,
                         name,
@@ -12904,9 +13256,7 @@ infer_index_access(T2Checker *checker, Expr const *site, T2Type value)
                 site,
                 true
         );
-        for (usize i = 0; i < vN(indices->es); ++i) {
-                arguments[i] = infer_argument(checker, v__(indices->es, i), method, i, arguments);
-        }
+        infer_arguments(checker, &indices->es, method, arguments, vN(indices->es));
         if (writing) {
                 arguments[count - 1] = value;
         }
@@ -13870,8 +14220,8 @@ contextual_fresh_literal_x(
         T2Nominal *nominal = nominal_from_type(checker, expected);
         int class_id = (nominal == NULL) ? -1 : nominal->class_id;
         if (
-                (expression->type == EXPRESSION_ARRAY)
-             && (class_id == CLASS_ARRAY)
+                ((expression->type == EXPRESSION_ARRAY) || (expression->type == EXPRESSION_SET))
+             && (sequence_literal_class(expression) == class_id)
              && (t2_type_arity(checker->universe, expected) == 1)
         ) {
                 T2Type wanted = t2_type_child(checker->universe, expected, 0);
@@ -13896,7 +14246,7 @@ contextual_fresh_literal_x(
                                              wanted,
                                              false,
                                              "contextual-array-spread",
-                                             "spread element must satisfy the contextual array type"
+                                             "spread element must satisfy the contextual element type"
                                         )
                                 ) {
                                         return false;
@@ -13913,7 +14263,7 @@ contextual_fresh_literal_x(
                                      wanted,
                                      false,
                                      "contextual-array-element",
-                                     "array element must satisfy its contextual type"
+                                     "element must satisfy its contextual type"
                                 )
                         ) {
                                 return false;
@@ -18421,6 +18771,7 @@ infer_expression(T2Checker *checker, Expr const *source)
                 result = infer_expression(checker, expression->value);
                 break;
         case EXPRESSION_ARRAY:
+        case EXPRESSION_SET:
         {
                 if (
                         (hint != T2_TYPE_INVALID)
@@ -18429,6 +18780,7 @@ infer_expression(T2Checker *checker, Expr const *source)
                         result = hint;
                         break;
                 }
+                int class_id   = sequence_literal_class(expression);
                 T2Type element = t2_primitive(checker->universe, T2_TYPE_NEVER);
                 for (int i = 0; i < vN(expression->elements); ++i) {
                         Expr const *element_expression = v__(expression->elements, i);
@@ -18465,8 +18817,8 @@ infer_expression(T2Checker *checker, Expr const *source)
                 element = array_element_slot(checker, element, expression);
                 result = nominal_application(
                         checker,
-                        CLASS_ARRAY,
-                        "Array",
+                        class_id,
+                        sequence_class_name(class_id),
                         &element,
                         1,
                         expression
@@ -18474,7 +18826,9 @@ infer_expression(T2Checker *checker, Expr const *source)
                 break;
         }
         case EXPRESSION_ARRAY_COMPR:
+        case EXPRESSION_SET_COMPR:
         {
+                int class_id       = sequence_literal_class(expression);
                 usize binding_mark = vN(checker->bindings);
                 for (int i = 0; i < vN(expression->compr); ++i) {
                         ComprPart const *part = v_(expression->compr, i);
@@ -18515,8 +18869,8 @@ infer_expression(T2Checker *checker, Expr const *source)
                 }
                 result = nominal_application(
                         checker,
-                        CLASS_ARRAY,
-                        "Array",
+                        class_id,
+                        sequence_class_name(class_id),
                         &element,
                         1,
                         expression
@@ -18985,15 +19339,7 @@ infer_expression(T2Checker *checker, Expr const *source)
                 T2Type *keyword_arguments = xtA(*keyword_arguments, keyword_count);
                 T2SolverMark argument_scope = t2_solver_mark(checker->solver);
                 T2Type       hint_callee    = peek_callee_type(checker, expression->function);
-                for (usize i = 0; i < positional_count; ++i) {
-                        arguments[i] = infer_argument(
-                                checker,
-                                v__(expression->args, i),
-                                hint_callee,
-                                i,
-                                arguments
-                        );
-                }
+                infer_arguments(checker, &expression->args, hint_callee, arguments, positional_count);
                 for (usize i = 0; i < keyword_count; ++i) {
                         keyword_arguments[i] = infer_keyword_argument(
                                 checker,
@@ -19436,15 +19782,7 @@ infer_expression(T2Checker *checker, Expr const *source)
                 T2Type *arguments = xtA(*arguments, count);
                 T2Type *kwargs = xtA(*kwargs, kwcount);
                 T2SolverMark argument_scope = t2_solver_mark(checker->solver);
-                for (usize i = 0; i < count; ++i) {
-                        arguments[i] = infer_argument(
-                                checker,
-                                v__(expression->method_args, (int)i),
-                                method,
-                                i,
-                                arguments
-                        );
-                }
+                infer_arguments(checker, &expression->method_args, method, arguments, count);
                 for (usize i = 0; i < kwcount; ++i) {
                         kwargs[i] = infer_keyword_argument(
                                 checker,
@@ -28872,6 +29210,12 @@ report_all_units(void)
 }
 
 static bool
+strict_unit(T2Checker const *checker)
+{
+        return s_eq(checker->unit, "prelude");
+}
+
+static bool
 entry_unit(T2Checker const *checker)
 {
         return s_eq(checker->unit, "main")
@@ -32663,6 +33007,15 @@ t2_checker_finish(Ty *ty, T2Checker *checker)
         diagnose_unresolved_obligations(checker);
         report_internal_failure(checker);
 
+        if (strict_unit(checker)) {
+                for (usize i = 0; i < vN(checker->diagnostics); ++i) {
+                        T2Diagnostic *diagnostic = v_(checker->diagnostics, i);
+                        if (diagnostic->severity == T2_DIAGNOSTIC_WARNING) {
+                                diagnostic->severity = T2_DIAGNOSTIC_ERROR;
+                        }
+                }
+        }
+
         usize errors   = 0;
         usize warnings = 0;
         for (usize i = 0; i < vN(checker->diagnostics); ++i) {
@@ -33966,6 +34319,28 @@ check_nominal_value(
                                 return false;
                         }
                         if (!check_value(ty, stack, t2_type_child(universe, type, 1), val)) {
+                                return false;
+                        }
+                });
+                return true;
+
+        case CLASS_HEAP:
+                if (value->type != VALUE_HEAP) {
+                        return true;
+                }
+                for (usize i = 0; i < vN(value->heap->xs); ++i) {
+                        if (!check_value(ty, stack, t2_type_child(universe, type, 0), v_(value->heap->xs, i))) {
+                                return false;
+                        }
+                }
+                return true;
+
+        case CLASS_SET:
+                if (value->type != VALUE_SET) {
+                        return true;
+                }
+                sfor(value->set, {
+                        if (!check_value(ty, stack, t2_type_child(universe, type, 0), x)) {
                                 return false;
                         }
                 });
