@@ -1,0 +1,215 @@
+import json
+import pretty (pretty)
+
+ns test
+
+pub fn queue_bounded() {
+    let q = Queue(max-len: 3).push(1, 2, 3, 4)
+    assert([*q] == [2, 3, 4] && q.max-len == 3 && Queue().max-len == nil)
+    q.push-front(0)
+    assert([*q] == [0, 2, 3])
+    assert(q[0] == 0 && q[-1] == 3 && #q == 3)
+    assert(try { q[3] } catch IndexError(_, i) { i } == 3)
+}
+
+pub fn queue_rotate_contains_drain() {
+    let q = Queue().push(1, 2, 3, 4)
+    assert([*q.rotate()] == [4, 1, 2, 3])
+    assert([*q.rotate(-2)] == [2, 3, 4, 1])
+    assert([*q.rotate(9)] == [1, 2, 3, 4])
+    assert(3 in q && 7 not in q && q.contains?(1))
+    assert([*q.drain()] == [1, 2, 3, 4] && #q == 0)
+}
+
+pub fn queue_getters_both_ways() {
+    let q = Queue()
+    assert(q.empty? == true && q.empty?() == true)
+    q.push(1)
+    assert(q.empty? == false && q.empty?() == false)
+    let s = SharedQueue()
+    assert(s.empty? == true && s.open? == true)
+    s.close()
+    assert(s.open? == false && s.open?() == false)
+}
+
+pub fn queue_channel_round_trip() {
+    let ch = Channel()
+    Thread(isolated=true, fn () { ch.send(Queue(max-len: 2).push(1, 2, 3)) }).join()
+    let q = match ch.recv() { Some(q) => q, _ => nil }!
+    assert([*q] == [2, 3] && #q == 2 && q.max-len == 2)
+    q.push(9)
+    assert([*q] == [3, 9])
+}
+
+pub fn heap_ordering() {
+    let h = Heap([5, 1, 4, 2, 3])
+    assert(h.peek() == 1 && #h == 5)
+    assert([h.pop(), h.pop()] == [1, 2])
+    assert(h.sort() == [3, 4, 5] && #h == 3)
+    assert([*h.drain()] == [3, 4, 5] && h.empty? && h.try-pop() == None)
+
+    let mx = Heap([3, 1, 2], desc: true)
+    assert(mx.pop() == 3)
+    assert(mx.push-pop(10) == 10 && mx.push-pop(0) == 2)
+    assert(mx.replace(7) == 1 && mx.sort() == [7, 0])
+
+    let words = Heap(['ccc', 'a', 'bb'], by: \#_)
+    assert(words.sort() == ['a', 'bb', 'ccc'] && words.peek() == 'a')
+
+    let h2 = Heap([3, 1, 2])
+    assert(h2.sort(desc: true) == [3, 2, 1] && h2.sort(by: \-_) == [3, 2, 1] && h2.sort() == [1, 2, 3])
+    assert(%[2, 1].sort(cmp: (a, b) -> b <=> a) == [2, 1])
+
+    let rev = Heap([4, 1, 9], cmp: (a, b) -> b <=> a)
+    assert(rev.pop() == 9)
+    assert(rev.clone().push(99).peek() == 99 && rev.peek() == 4)
+}
+
+pub fn heap_behaves_like_array() {
+    let h = Heap([3, 1, 2])
+    assert(1 in h && 7 not in h && h.contains?(2))
+    assert(h[0] == 1 && h.sum() == 6 && h.min() == 1 && h.max() == 3)
+    assert(h.map(\_ * 10).sort() == [10, 20, 30])
+    assert(h.filter(\_ > 1).sort() == [2, 3])
+    assert([*h].sort() == [1, 2, 3] && h.to-array().sort() == [1, 2, 3])
+    assert(json.encode(Heap([1])) == '[1]')
+    assert(str(Heap([1])) == 'Heap([1])' && pretty(Heap([1]), color: false) == 'Heap([1])')
+    assert(Heap([1]) :: Heap[Int] && !(Heap(['x']) :: Heap[Int]))
+    assert(str(typeof(Heap(['x']))) == 'Heap[String]')
+}
+
+pub fn heap_survives_gc() {
+    let h = Heap(by: x -> -x[0])
+    for i in ..5000 {
+        h.push([i]).push-pop([i % 7])
+        let garbage = ["{i}" for ..20]
+    }
+    let keys = h.sort().map(&0)
+    assert(#h == 5000 && keys == keys.sort(desc: true))
+}
+
+pub fn insort() {
+    let xs = [1, 3, 5]
+    xs.insort(4)
+    assert(xs == [1, 3, 4, 5])
+    let pairs = [(1, 'a'), (2, 'b')]
+    pairs.insort((1, 'z'), by: &0)
+    pairs.insortr((1, 'y'), by: &0)
+    assert(pairs == [(1, 'z'), (1, 'a'), (1, 'y'), (2, 'b')])
+    assert([5, 3, 1].insort(4, desc: true) == [5, 4, 3, 1])
+}
+
+pub fn array_extras() {
+    assert([nil, 1, nil, 2].compact() == [1, 2])
+    let xs = [nil, 3]
+    xs.compact!()
+    assert(xs == [3])
+    assert([1, 2, 3].choice() in [1, 2, 3] && [].choice() == nil)
+    assert([1, 2, 3, 4].sample(4).sort() == [1, 2, 3, 4] && #[1, 2, 3].sample(2) == 2)
+    assert([].first() == nil && [].last() == nil && [1, 2].last() == 2)
+    assert([1, 2, 3].pairwise() == [(1, 2), (2, 3)] && [].pairwise() == [])
+    assert([*..10].step-by(3) == [0, 3, 6, 9])
+    assert([3, 1, 2].argsort() == [1, 2, 0])
+    assert(['bb', 'a', 'ccc'].argsort(by: \#_, desc: true) == [2, 0, 1])
+    assert([1, 2, 3, 4].quantile(0.5) == 2.5 && [1, 2, 3, 4].quantile(0.25) == 1.75 && [].quantile(0.5) == nil)
+}
+
+pub fn zips() {
+    assert([1, 2, 3].zip([4], longest: true) == [(1, 4), (2, nil), (3, nil)])
+    assert([1, 2, 3].zip([4], longest: true, fill: 0) == [(1, 4), (2, 0), (3, 0)])
+    assert([1, 2].zip-with(\_ + _, [10, 20]) == [11, 22])
+    assert([1, 2].zip-with((a, b, c) -> a + b + c, [10, 20], [5, 5]) == [16, 27])
+    assert([1, 2].zip-with(\_ + _, [10, 20, 30], longest: true, fill: 0) == [11, 22, 30])
+    assert([*(1..3).zip-with(\_ * _, 10..13)] == [10, 22])
+    assert([*[1, 2].__iter__().zip([3], longest: true, fill: -1)] == [(1, 3), (2, -1)])
+    assert(str(typeof([1, 2].zip-with(\_ + _, [10, 20]))) == 'Array[Int]')
+    assert([1, 2].zip(5..7) == [(1, 5), (2, 6)] && [1].zip(%['x']) == [(1, 'x')])
+    assert([1, 2, 3].zip(Heap([9]), longest: true, fill: 0) == [(1, 9), (2, 0), (3, 0)])
+}
+
+pub fn iterable_predicates_and_order() {
+    assert(%[3, 1, 2].sort() == [1, 2, 3] && %[3, 1].sort(desc: true) == [3, 1])
+    assert(%['bb', 'a'].sort(by: \#_) == ['a', 'bb'])
+    assert(%[1, 2].last() == 2 && (1..4).last() == 3)
+    assert([1, 2].none?(\_ > 5) && ![1, 9].none?(\_ > 5))
+    assert([1, 2].one?(\_ > 1) && ![2, 3].one?(\_ > 1) && ![].one?(\_ > 1))
+    assert('abc'.distinct?() && ![1, 2, 1].distinct?() && ['a', 'A'].distinct?() && !['a', 'A'].distinct?(\_.upper()))
+}
+
+pub fn iterable_generators() {
+    assert([*'aaabccdd'.runs()] == [('a', 3), ('b', 1), ('c', 2), ('d', 2)])
+    assert([*'aAb'.runs(\_.lower())] == [('a', 2), ('b', 1)])
+    assert([*[1, 2, 3].combinations(2)] == [[1, 2], [1, 3], [2, 3]])
+    assert([*[1].combinations(0)] == [[]] && [*[1].combinations(2)] == [])
+    assert([*[1, 2].product('ab')] == [(1, 'a'), (1, 'b'), (2, 'a'), (2, 'b')])
+    assert([*[1, 2].product([])] == [])
+    assert([*[1, 2].powerset()] == [[], [1], [2], [1, 2]])
+    assert([*[1, nil, 2].__iter__().compact()] == [1, 2])
+    assert([*(0..10).__iter__().step-by(4)] == [0, 4, 8])
+    assert([*'abc'.__iter__().pairwise()] == [('a', 'b'), ('b', 'c')])
+}
+
+pub fn selection_and_stats() {
+    assert([5, 1, 9, 3].top(2) == [9, 5] && [5, 1, 9, 3].bottom(2) == [1, 3])
+    assert(['aaa', 'b', 'cc'].top(1, by: \#_) == ['aaa'])
+    assert([1, 2].top(0) == [] && [1, 2].top(5) == [2, 1])
+    assert([1, 2, 2, 3, 3].mode() == 2 && [].mode() == nil)
+    assert(%[1, 2, 3, 4].quantile(0.25) == 1.75)
+}
+
+pub fn dict_extras() {
+    let d = %{'a': 1, 'b': 2, 'c': %{'x': [10, 20]}}
+    assert(%{'a': 1, 'b': 2}.invert() == nil || %{'a': 1, 'b': 2}.invert()[2] == 'b')
+    assert(d.dig('c', 'x', 1) == 20 && d.dig('c', 'x', -1) == 20)
+    assert(d.dig('c', 'x', 5) == nil && d.dig('nope', 'x') == nil)
+    assert(d.fetch('a') == 1)
+    assert(try { d.fetch('q') } catch IndexError(_, k) { k } == 'q')
+    assert(%{'a': 3, 'b': 1}.min-by(id) == ('b', 1) && %{'a': 3, 'b': 1}.max-by(id) == ('a', 3))
+    assert(d.filter-keys(\_ != 'c').keys() == ['a', 'b'])
+    assert([*%{1: 2, 3: 4}.drain()] == [(1, 2), (3, 4)])
+    assert((d - %['a', 'c']).keys() == ['b'] && (d & %['b']).keys() == ['b'])
+    let e = %{1: 1, 2: 2, 3: 3}
+    e -= %[1]
+    e &= %[3, 9]
+    assert(e.keys() == [3])
+}
+
+pub fn set_extras() {
+    let s = %[1, 2, 3, 4]
+    assert(s.union([5], %[6]) == %[1, 2, 3, 4, 5, 6] && s == %[1, 2, 3, 4])
+    assert(s.map(\_ % 2) == %[1, 0])
+    assert(s.partition(\_ > 2) == (%[3, 4], %[1, 2]))
+    assert([*s.clone().drain()] == [1, 2, 3, 4])
+}
+
+pub fn range_slicing() {
+    let r = 0..10
+    assert([*r[;;2]] == [0, 2, 4, 6, 8] && [*r[;;-1]] == [*..10].reverse())
+    assert([*r[2;8;3]] == [2, 5] && [*r[-3;]] == [7, 8, 9] && [*r[;;-3]] == [9, 6, 3, 0])
+    assert([*r.step-by(3)] == [0, 3, 6, 9] && [*r.reverse()] == [9, 8, 7, 6, 5, 4, 3, 2, 1, 0])
+    assert(#r[;;3] == 4 && r[;;3].low == 0 && r[;;3].high == 9 && r[;;-3].first() == 9)
+    assert(4 in r[;;2] && 5 not in r[;;2] && [*r[;;2][;;2]] == [0, 4, 8])
+    assert(r[;;2].sum() == 20 && #(5..5)[;;2] == 0)
+    assert([*Range(10, 0)[;;2]] == [9, 7, 5, 3, 1])
+}
+
+pub fn range_algebra() {
+    let r = 0..10
+    assert([*((0..30)[;;4] & (0..30)[;;6])] == [0, 12, 24])
+    assert([*((0..10) & (5..20))] == [5, 6, 7, 8, 9] && #((0..3) & (5..6)) == 0)
+    assert([*(r[;;2] | (10..20)[;;2])] == [*(0..20)[;;2]])
+    assert((0..5) | (5..9) == (0..9))
+    assert(try { (0..2) | (5..6) } catch _: ValueError { 'no' } == 'no')
+    assert([*r[;;3].clamp(2, 8)] == [3, 6] && [*r[;;-3].clamp(2, 8)] == [6, 3])
+    assert(!r[;;2].overlap?(r[1;;2]) && r[;;2].touch?((10..20)[;;2]))
+    assert(r.contains?(r[;;3]) && !r[;;2].contains?(r[;;3]))
+}
+
+pub fn object_equality_uses_both_operands() {
+    assert((0..3) == (0..3) && (0..3) != (0..4))
+    assert(r_eq((0..10)[;;1], 0..10))
+}
+
+fn r_eq(a: Range, b: Range) -> Bool {
+    a == b
+}

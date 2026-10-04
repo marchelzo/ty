@@ -1,0 +1,241 @@
+import ty
+import json
+import pretty (pretty)
+
+ns test
+
+pub fn literals() {
+    let reserved = %['true', 'false', 'null']
+    assert(#reserved == 3)
+    assert('null' in reserved)
+    assert('nil' not in reserved)
+    assert(str(reserved) == "%['true', 'false', 'null']")
+    assert(str(%[]) == '%[]')
+    assert(%[1, 1, 1] == %[1])
+    assert(%[*[1, 2], *%[2, 3], 4] == %[1, 2, 3, 4])
+    assert(%[1, 2 if false, 3 if true] == %[1, 3])
+    assert(%[x % 3 for x in ..10] == %[0, 1, 2])
+    assert(%[(x, y) for x in ..2 for y in ..2 if x != y] == %[(0, 1), (1, 0)])
+}
+
+pub fn constructor() {
+    assert(Set() == %[])
+    assert(Set([3, 1, 3]) == %[1, 3])
+    assert(Set('abca') == %['a', 'b', 'c'])
+    assert(Set(%{'k': 1, 'v': 2}) == %['k', 'v'])
+    assert(Set(1..4) == %[1, 2, 3])
+    assert(Set(x * 2 for x in ..3) == %[0, 2, 4])
+    assert([1, 2, 2].set() == %[1, 2])
+    assert((1..4).set() == %[1, 2, 3])
+}
+
+pub fn insertion_order() {
+    let s = %[5, 3, 9, 1]
+    assert([*s] == [5, 3, 9, 1])
+    s.remove(3)
+    s << 3
+    assert(s.to-array() == [5, 9, 1, 3])
+    assert(s.pop() == 3)
+    assert(s.pop(0) == 5)
+    assert([x for x in s] == [9, 1])
+}
+
+pub fn mutation() {
+    let s = %[]
+    assert(s.insert(1))
+    assert(!s.insert(1))
+    s.add(2, 3) << 4
+    assert(s == %[1, 2, 3, 4])
+    assert(s.remove(4))
+    assert(!s.remove(4))
+    assert(s.update([7], %[8], 9..10) == %[1, 2, 3, 7, 8, 9])
+    assert(s.keep(\_ > 2) == %[3, 7, 8, 9])
+    assert(s.reject(\_ > 2) == %[1, 2])
+    s.keep!(\_ % 2 == 1)
+    assert(s == %[1, 3, 7, 9])
+    assert(s.clone() == s)
+    assert(s.clone().clear() == %[])
+    assert(#s == 4 && s.len() == 4)
+}
+
+pub fn algebra() {
+    let a = %[1, 2, 3, 4]
+    let b = %[3, 4, 5]
+    assert((a | b) == %[1, 2, 3, 4, 5])
+    assert((a & b) == %[3, 4])
+    assert((a - b) == %[1, 2])
+    assert((a ^ b) == %[1, 2, 5])
+    assert(a == %[1, 2, 3, 4])
+    assert(a.diff(b) == %[1, 2, 5])
+    assert(a.clone().intersect([4, 5, 1]) == %[1, 4])
+    assert(a.clone().subtract(1..3) == %[3, 4])
+    let c = a.clone()
+    c -= c
+    assert(c == %[])
+    c = a.clone()
+    c ^= c
+    assert(c == %[])
+}
+
+pub fn in_place_operators_alias() {
+    let a = %[1, 2]
+    let alias = a
+    a |= %[3]
+    a &= %[2, 3, 4]
+    a -= %[2]
+    a ^= %[5]
+    assert(alias == %[3, 5])
+    assert(alias == a)
+}
+
+pub fn relations() {
+    let a = %[1, 2, 3]
+    assert(%[1, 2] < a && %[1, 2] <= a && a <= a)
+    assert(!(a < a) && a >= a && a > %[3])
+    assert(!(%[4] <= a) && !(%[4] >= a) && !(%[4] < a) && !(%[4] > a))
+    assert(%[1, 2].subset?([1, 2, 3]))
+    assert(a.superset?(%[2]))
+    assert(a.disjoint?([7, 8]) && !a.disjoint?([3]))
+}
+
+pub fn equality_and_hashing() {
+    assert(%[1, 2] == %[2, 1])
+    assert(%[1, 2] != %[1, 2, 3])
+    assert(%[%[1, 2], %[2, 1]] == %[%[1, 2]])
+    let d = %{}
+    d[%[1, 2]] = 'x'
+    assert(d[%[2, 1]] == 'x')
+    assert(%[[1], [1], (1, 2), (1, 2)] == %[[1], (1, 2)])
+}
+
+pub fn predicates() {
+    let vowels = %['a', 'e', 'i', 'o', 'u']
+    assert('education'.chars().filter(vowels).str() == 'euaio')
+    assert(vowels('e') && !vowels('z'))
+    assert(!%[] && %[nil] && %[].empty? && !%[0].empty?)
+    match %[2, 1] {
+        %[1, 2] => { },
+        _ => { assert(false) }
+    }
+}
+
+pub fn cleared_tables_iterate_empty() {
+    let s = %[1, 2, 3]
+    s.clear()
+    assert([*s] == [] && #s == 0)
+    s << 4
+    assert([*s] == [4])
+    let d = %{1: 2}
+    d.clear()
+    assert([k for k, _ in d] == [])
+}
+
+class Hashed {
+    k: Int
+    init(k) { self.k = k }
+    __hash__() { #[*..64] * 0 + k % 3 }
+    ==(o) { o :: Hashed && o.k == k }
+}
+
+pub fn user_hashed_predicates() {
+    let s = %[Hashed(1), Hashed(4)]
+    assert(s(Hashed(4)) && !s(Hashed(7)))
+    assert([Hashed(i) for i in ..6].filter(s).map(&.k) == [1, 4])
+}
+
+pub fn nub_keeps_first_of_each() {
+    assert([nil, 1, nil, 1, 2].nub() == [nil, 1, 2])
+    assert([3, 1, 3, 2].nub(\_ % 2) == [3, 2])
+    assert([*[1, 2, 1].__iter__().nub()] == [1, 2])
+    let xs = [2, 1, 2]
+    assert(xs.nub!() == [2, 1] && xs == [2, 1])
+}
+
+pub fn uniq_collapses_runs() {
+    assert([1, 1, 2, 1, 1, nil, nil, 3].uniq() == [1, 2, 1, nil, 3])
+    assert([].uniq() == [] && [nil].uniq() == [nil])
+    assert([1, 3, 2, 4, 5].uniq(\_ % 2) == [1, 2, 5])
+    assert([*[1, 1, 2, 1].__iter__().uniq()] == [1, 2, 1])
+    assert([*[nil, nil, 1].__iter__().uniq()] == [nil, 1])
+    assert([*'aabbbca'.__iter__().uniq(\_.upper())].str() == 'abca')
+    let xs = [1, 1, 2, 2, 1]
+    assert(xs.uniq!() == [1, 2, 1] && xs == [1, 2, 1])
+    assert([3, 1, 3, 2].sort().uniq() == [3, 1, 3, 2].nub().sort())
+}
+
+pub fn churn_matches_reference() {
+    let s = %[]
+    let r = %{}
+    for i in ..20000 {
+        let k = (i * 7919) % 1543
+        if i % 3 == 0 {
+            s.remove(k)
+            r.remove(k)
+        } else {
+            s << k
+            r[k] = nil
+        }
+    }
+    assert(#s == #r)
+    assert([*s] == r.keys())
+    assert(s == Set(r))
+}
+
+pub fn types() {
+    let s = %[1, 2]
+    assert(str(typeof(s)) == 'Set[Int]')
+    assert(str(typeof(s | %['a'])) == 'Set[Int | String]')
+    assert(str(typeof(s - %['a'])) == 'Set[Int]')
+    assert(str(typeof(%[x for x in 'ab'])) == 'Set[String]')
+    let f = fn (xs: %[Int]) -> Int { #xs }
+    assert(str(typeof(f)) == '(xs: Set[Int]) -> Int')
+    assert(s :: Set[Int])
+    assert(!(%[1, 'a'] :: Set[Int]))
+    assert(type(s) == Set)
+}
+
+pub fn json_round_trip() {
+    use Doc = {tags: %[String], n: Int}
+    assert(json.encode(%[1, 'a', nil]) == '[1,"a",null]')
+    let d = json.parse(Doc, '{"tags": ["a", "b", "a"], "n": 3}')
+    assert(d.tags == %['a', 'b'])
+    assert(json.encode(d) == '{"tags":["a","b"],"n":3}')
+}
+
+pub fn pretty_printing() {
+    assert(pretty(%[1, 'two', %[3]], color: false) == '%[1, "two", %[3]]')
+    assert(pretty(%[], color: false) == '%[]')
+}
+
+pub fn self_reference() {
+    let s = %[]
+    s << s
+    assert(str(s) == '%[%[...]]')
+}
+
+macro set-of-twice!(e) {
+    ty.Set([ty.ArrayItem(item: e), ty.ArrayItem(item: ty.Add(e, e))])
+}
+
+macro bump!(e) {
+    ty.walk(e, match {
+        ty.Int(n) => ty.Int(n + 100),
+        n => n
+    })
+}
+
+pub fn macros() {
+    assert(set-of-twice!(2) == %[2, 4])
+    assert(bump!(%[x for x in [1, 2] if x > 1]) == %[102])
+    assert(bump!(%[x for x in [1, 2, 102] if x > 101]) == %[202])
+    assert(bump!([x + 1 for x in [1]]) == [202])
+}
+
+pub fn channels() {
+    let ch = Channel()
+    let sender = Thread(isolated=true, fn () {
+        ch.send(%[1, %[2], 'three', (4, 5)])
+    })
+    sender.join()
+    assert(ch.recv() == Some(%[1, %[2], 'three', (4, 5)]))
+}
