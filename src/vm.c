@@ -178,7 +178,7 @@ static char pop_ret[]  = { INSTR_POP, INSTR_RETURN_PRESERVE_CTX };
 InternedNames NAMES;
 ValueVector Globals;
 
-static Value NILS[2048];
+Value LOTS_OF_NILS[2048];
 /* ========================================================================== */
 
 #define FRAME(n, fn, from) ((Frame){ .fp = (n), .f = (fn), .ip = (from) })
@@ -514,8 +514,8 @@ InitializeTY(TY *ty0, Ty *ty)
 
         intern(&ty0->strings, "");
 
-        for (int i = 0; i < countof(NILS); ++i) {
-                NILS[i] = NIL;
+        for (int i = 0; i < countof(LOTS_OF_NILS); ++i) {
+                LOTS_OF_NILS[i] = NIL;
         }
 
         srandom(TyRealTime() & 0xFFFFFFFF);
@@ -1002,6 +1002,7 @@ add_builtins(Ty *ty, int ac, char **av)
 
         BUILTIN_VAR("ty",  "executable", "String") = this_executable(ty);
         BUILTIN_VAR("ty",  "platform",   "String") = xSz(TY_PLATFORM_NAME);
+        BUILTIN_VAR("ty",  "arch",       "String") = xSz(TY_PLATFORM_ARCH);
         BUILTIN_VAR("ty",  "color",      "String") = xSz(COLOR_MODE_NAMES[ColorMode]);
 #if defined(_WIN32)
         BUILTIN_VAR("os",  "PAGE_SIZE",  "Int") = INTEGER(4096);
@@ -1867,19 +1868,19 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs
                         argc = min(argc, irest + 1);
 
                         if (LIKELY(fp + argc < fz)) {
-                                memcpy(v_(STACK, fp + argc), NILS, (bound - argc) * sizeof (Value));
+                                NilStackRange(ty, fp + argc, bound - argc);
                         }
 
                         *v_(STACK, fp + irest) = ARRAY(extra);
                 } else if (LIKELY(fp + argc < fz)) {
-                        memcpy(v_(STACK, fp + argc), NILS, (bound - argc) * sizeof (Value));
+                        NilStackRange(ty, fp + argc, bound - argc);
                 }
                 if (ikwargs != -1) {
                         // FIXME: don't allocate a dict when there are no kwargs
                         *v_(STACK, fp + ikwargs) = !IsNil(kwargs) ? kwargs : DICT(dict_xnew(ty));
                 }
         } else if (LIKELY(fp + argc < fz)) {
-                memcpy(v_(STACK, fp + argc), NILS, (bound - argc) * sizeof (Value));
+                NilStackRange(ty, fp + argc, bound - argc);
         }
 
         vN(STACK) = fz;
@@ -6415,7 +6416,7 @@ DoGenerator(Ty *ty, char const *ip)
 {
         char *end = DoFunction(ty, ip);
         Generator *gen = NewGenerator(ty, peek());
-        xvPn(gen->st->stack, NILS, gen->f.info[FUN_INFO_BOUND]);
+        xvPn(gen->st->stack, LOTS_OF_NILS, gen->f.info[FUN_INFO_BOUND]);
         xvP(gen->st->frames, FRAME(1, gen->f, IP));
         put(GENERATOR(gen));
         return end;
@@ -6699,12 +6700,7 @@ NextInstruction:
                         LOG("Loading thread-local: %s (%d)", IP, n);
                         SKIPSTR();
 #endif
-                        while (vN(THREAD_LOCALS) <= n) {
-                                xvP(THREAD_LOCALS, NONE);
-                        }
-                        if (IsNone(v__(THREAD_LOCALS, n))) {
-                                vm_exec(ty, v__(xD.tls0, n));
-                        }
+                        EnsureThreadLocal(ty, n);
                         push(v__(THREAD_LOCALS, n));
                         break;
 
@@ -6936,9 +6932,7 @@ NextInstruction:
 
                 CASE(TARGET_THREAD_LOCAL)
                         READVALUE(n);
-                        while (vN(THREAD_LOCALS) <= n) {
-                                xvP(THREAD_LOCALS, NONE);
-                        }
+                        EnsureThreadLocal(ty, n);
                         pushtarget(v_(THREAD_LOCALS, n), NULL);
                         break;
 
@@ -7312,8 +7306,9 @@ TargetMember:
 
                 CASE(CLEANUP)
                         _try = *vvL(TRY_STACK);
-                        for (int i = 0; i < vN(_try->defer); ++i) {
-                                vmC(v_(_try->defer, i), 0);
+                        while (vN(_try->defer) > 0) {
+                                v = vXx(_try->defer);
+                                vmC(&v, 0);
                         }
                         break;
 

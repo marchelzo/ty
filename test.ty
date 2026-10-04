@@ -98,7 +98,7 @@ fn tests-in(dir: Path) {
 fn subdirs(dir: Path) {
     [
         it for dir.ls()
-        if it.dir? && /^(?:fixtures|support)$/ not in it.name
+        if it.dir? && /^(?:fixtures|support|examples)$/ not in it.name
         && (FULL_TESTS || it.name != 'full')
     ]
 }

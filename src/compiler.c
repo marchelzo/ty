@@ -6498,13 +6498,33 @@ fail_match_if_not(Ty *ty, Expr const *e)
         }
 }
 
+inline static bool
+is_pack_type(Expr const *e)
+{
+        return (e->type == EXPRESSION_DOT_DOT_DOT)
+            || (e->type == EXPRESSION_PACK_UNION)
+            || (e->type == EXPRESSION_PACK_INTERSECT);
+}
+
+inline static bool
+is_typed_constraint(Expr const *e)
+{
+        return e->annotated && (e->_type != T2_TYPE_INVALID);
+}
+
 static void
 _xemit_constraint(Ty *ty, Expr const *c)
 {
-        if (c->annotated && c->_type != T2_TYPE_INVALID) {
+        if (is_typed_constraint(c)) {
                 INSN(TYPE);
                 EP((uptr)c->_type);
                 INSN(CHECK_MATCH);
+                return;
+        }
+
+        if (is_pack_type(c)) {
+                INSN(POP);
+                INSN(TRUE);
                 return;
         }
 
@@ -6866,7 +6886,10 @@ emit_function(Ty *ty, Expr const *e)
                         defaulted = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF_NIL);
                 }
                 if (check) {
-                        if (i == e->rest) {
+                        if (
+                                (i == e->rest)
+                             && (is_typed_constraint(constraint) || !is_pack_type(constraint))
+                        ) {
                                 Expr *array_of = NewExpr(ty, EXPRESSION_SUBSCRIPT);
                                 array_of->start = constraint->start;
                                 array_of->end   = constraint->end;

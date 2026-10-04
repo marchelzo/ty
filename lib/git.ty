@@ -562,8 +562,8 @@ fn text-at(p: ?Ptr[Any]) -> ?String {
 
 fn buffer-text(f: raw.GitBuf -> Int) -> String {
     let out = raw.GitBuf()
-    defer raw.git_buf_dispose(out)
     defer c.free(out.get())
+    defer raw.git_buf_dispose(out)
     check(f(out))
     out.size ? c.str(out.ptr, out.size) : ''
 }
@@ -606,8 +606,8 @@ fn open-as-current-user(open: Ptr[Any] -> Int) -> Ptr[Any] {
 
 fn strings(f: raw.GitStrings -> Int) -> [String] {
     let out = raw.GitStrings()
-    defer raw.git_strarray_dispose(out)
     defer c.free(out.get())
+    defer raw.git_strarray_dispose(out)
     check(f(out))
     [c.str(c.load(c.ptr, out.strings + i * c.size(c.ptr))) for i in ..out.count]
 }

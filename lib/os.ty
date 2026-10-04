@@ -1,4 +1,4 @@
-import errno (ENOTDIR)
+import errno
 import thread
 
 /** Complete resource-usage data returned by wait4(2). */
@@ -307,19 +307,17 @@ pub fn walk*(path: String, skip: _ = nil, top: Bool = true) -> Generator[(String
 #|]
 
 pub fn rm(path, quiet=false) {
-    if not let $d = opendir(path) {
-        match errno.get() {
-            ::ENOTDIR => {
-                if unlink(path) == -1 && !quiet {
-                    throw Err(errno.get())
-                }
-            },
-
-            e => {
-                if !quiet throw Err(e)
-            }
+    if ((lstat(path).?mode ?? 0) & S_IFMT) != S_IFDIR {
+        if unlink(path) == -1 && !quiet {
+            throw Err(errno.get())
         }
+        return
+    }
 
+    if not let $d = opendir(path) {
+        if !quiet {
+            throw Err(errno.get())
+        }
         return
     }
 

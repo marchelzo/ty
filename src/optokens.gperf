@@ -7,7 +7,7 @@
 %enum
 %includes
 %null-strings
-struct optoken_entry;
+struct optoken_entry { char const *name; int toktype; };
 %%
 "+",   TOKEN_PLUS
 "-",   TOKEN_MINUS

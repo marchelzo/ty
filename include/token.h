@@ -194,13 +194,8 @@ keyword_show(int t);
 int
 keyword_get_number(char const *s);
 
-struct optoken_entry {
-        char const *name;
-        int toktype;
-};
-
-struct optoken_entry const *
-optoken_lookup(char const *str, unsigned len);
+int
+optoken_get_type(char const *s, usize n);
 
 #endif
 

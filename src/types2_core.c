@@ -58,11 +58,6 @@ typedef struct t2_applied_nominal {
         vec(T2Type) supertypes;
 } T2AppliedNominal;
 
-typedef struct t2_recursive_info {
-        u32    binder;
-        T2Type type;
-} T2RecursiveInfo;
-
 typedef struct t2_computed_result {
         T2Type computed;
         T2Type result;
@@ -80,16 +75,17 @@ struct t2_universe {
 
         vec(T2NominalInfo)    nominals;
         vec(T2AppliedNominal) applied_nominals;
-        vec(T2RecursiveInfo)  recursive;
         vec(T2ComputedResult) computed_results;
 
         T2Index nominal_index;
         T2Index applied_index;
+        T2Index recursive_index;
         T2Index relation_memo;
 
-        u32  next_solver_id;
-        u32  next_recursive_id;
-        bool failed;
+        u32   next_solver_id;
+        u32   next_recursive_id;
+        usize unbound_lookups;
+        bool  failed;
 
         T2ComputedHook *computed_hook;
         void           *computed_context;
@@ -416,6 +412,31 @@ resize_intern_table(T2Universe *universe, usize capacity)
         universe->table_count    = vN(universe->nodes);
 }
 
+static bool
+has_foreign_binder(T2Universe const *universe, T2Type type, u32 binder, unsigned depth)
+{
+        T2Node const *node = get_node(universe, type);
+        if (node == NULL || depth > T2_RELATION_DEPTH_LIMIT) {
+                return true;
+        }
+
+        if ((node->flags & T2_NODE_RECURSIVE_VARIABLE) == 0) {
+                return false;
+        }
+
+        if (node->kind == T2_TYPE_RECURSIVE_VARIABLE) {
+                return node->payload != binder;
+        }
+
+        for (u32 i = 0; i < node->arity; ++i) {
+                if (has_foreign_binder(universe, node->children[i], binder, depth + 1)) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
 static T2Type
 intern_type(
         T2Universe    *universe,
@@ -459,6 +480,13 @@ intern_type(
                 }
                 hash = HashCombine(hash, child->hash);
                 flags |= child->flags;
+        }
+
+        if (
+                (kind == T2_TYPE_RECURSIVE)
+             && !has_foreign_binder(universe, children[0], (u32)payload, 0)
+        ) {
+                flags &= ~T2_NODE_RECURSIVE_VARIABLE;
         }
 
         hash = hash64(hash);
@@ -556,7 +584,7 @@ t2_universe_report(T2Universe const *universe, FILE *out)
                 kinds[T2_TYPE_META],
                 vN(universe->nominals),
                 vN(universe->applied_nominals),
-                vN(universe->recursive),
+                universe->recursive_index.count,
                 vN(universe->computed_results),
                 universe->relation_memo.count
         );
@@ -603,10 +631,10 @@ t2_universe_free(T2Universe *universe)
         ty_free(universe->table);
         xvF(universe->nominals);
         xvF(universe->applied_nominals);
-        xvF(universe->recursive);
         xvF(universe->computed_results);
         t2_index_free(&universe->nominal_index);
         t2_index_free(&universe->applied_index);
+        t2_index_free(&universe->recursive_index);
         t2_index_free(&universe->relation_memo);
         ty_free(universe);
 }
@@ -3336,18 +3364,11 @@ t2_recursive(T2Universe *universe, u32 binder, T2Type body)
                 universe->next_recursive_id = (binder == UINT32_MAX) ? 0 : binder + 1;
         }
 
-        for (usize i = 0; i < vN(universe->recursive); ++i) {
-                if (v__(universe->recursive, i).binder != binder) {
-                        continue;
-                }
-                T2Node const *existing = get_node(
-                        universe,
-                        v__(universe->recursive, i).type
-                );
-                if (existing != NULL && existing->children[0] == body) {
-                        return v__(universe->recursive, i).type;
-                }
-                return T2_TYPE_INVALID;
+        T2Type existing;
+        if (t2_index_find(&universe->recursive_index, binder, &existing)) {
+                return (get_node(universe, existing)->children[0] == body)
+                     ? existing
+                     : T2_TYPE_INVALID;
         }
 
         T2Type type = intern_type(
@@ -3363,11 +3384,7 @@ t2_recursive(T2Universe *universe, u32 binder, T2Type body)
                 return type;
         }
 
-        xvP(universe->recursive, ((T2RecursiveInfo) {
-                .binder = binder,
-                .type   = type
-        }));
-        forget_relations(universe);
+        t2_index_put(&universe->recursive_index, binder, type);
 
         return type;
 }
@@ -3763,11 +3780,12 @@ object_value_kind(T2TypeKind kind)
 static T2Type
 recursive_definition(T2Universe const *universe, u32 binder)
 {
-        for (usize i = 0; i < vN(universe->recursive); ++i) {
-                if (v__(universe->recursive, i).binder == binder) {
-                        return v__(universe->recursive, i).type;
-                }
+        T2Type type;
+        if (t2_index_find(&universe->recursive_index, binder, &type)) {
+                return type;
         }
+
+        ((T2Universe *)universe)->unbound_lookups += 1;
 
         return T2_TYPE_INVALID;
 }
@@ -5387,12 +5405,15 @@ t2_subtype(T2Universe const *universe, T2Type subtype, T2Type supertype)
 {
         u64 key = (u64)subtype << 32 | supertype;
         u32 remembered;
-        if (
-                (universe != NULL)
-             && t2_index_find(&universe->relation_memo, key, &remembered)
-        ) {
+        if (universe == NULL) {
+                return T2_RELATION_COMPLEXITY;
+        }
+
+        if (t2_index_find(&universe->relation_memo, key, &remembered)) {
                 return (T2Relation)remembered;
         }
+
+        usize unbound = universe->unbound_lookups;
 
         T2RelationContext context = {
                 .universe   = universe,
@@ -5405,8 +5426,8 @@ t2_subtype(T2Universe const *universe, T2Type subtype, T2Type supertype)
         }
 
         if (
-                (universe != NULL)
-             && ((relation == T2_RELATION_YES) || (relation == T2_RELATION_NO))
+                ((relation == T2_RELATION_YES) || (relation == T2_RELATION_NO))
+             && (universe->unbound_lookups == unbound)
         ) {
                 remember_relation(universe, key, relation);
         }

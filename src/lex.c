@@ -1319,10 +1319,10 @@ lexop(Ty *ty)
                 }
         }
 
-        struct optoken_entry const *ot = optoken_lookup(op, i);
+        int type = optoken_get_type(op, i);
 
         if (
-                (ot == NULL)
+                (type < 0)
              || (s_eq(op, ".")  && xisspace(C(-2)) && xisspace(C(0)))
              || (s_eq(op, "@")  && xisspace(C(-2)) && xisspace(C(0)))
              || (s_eq(op, ".?") && xisspace(C(-3)) && xisspace(C(0)))
@@ -1333,7 +1333,7 @@ lexop(Ty *ty)
                 return t;
         }
 
-        return mktoken(ty, ot->toktype);
+        return mktoken(ty, type);
 }
 
 static Token

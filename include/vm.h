@@ -17,6 +17,14 @@
 extern bool PrintResult;
 extern volatile sig_atomic_t JitInterruptFlag;
 
+extern Value LOTS_OF_NILS[2048];
+
+inline static void
+NilStackRange(Ty *ty, usize i, usize n)
+{
+        memcpy(v_(STACK, i), LOTS_OF_NILS, n * sizeof (Value));
+}
+
 bool
 vm_init(Ty *ty, int ac, char **av);
 
@@ -238,6 +246,20 @@ CaptureContext(Ty *ty, ThrowCtx *ctx);
 
 void
 CaptureContextEx(Ty *ty, ThrowCtx *ctx);
+
+[[gnu::always_inline]]
+inline static void
+EnsureThreadLocal(Ty *ty, usize i)
+{
+        while (UNLIKELY(vN(ty->tls) <= i)) {
+                xvP(ty->tls, NONE);
+        }
+
+        if (UNLIKELY(IsNone(v__(ty->tls, i)))) {
+                v_(ty->tls, i)->type = VALUE_NIL;
+                vm_exec(ty, v__(xD.tls0, i));
+        }
+}
 
 inline static Value const *
 FrameFun(Ty *ty, Frame const *frame)

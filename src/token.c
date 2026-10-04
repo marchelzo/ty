@@ -23,6 +23,13 @@ keyword_get_number(char const *s)
         return e ? e->kw_num : -1;
 }
 
+int
+optoken_get_type(char const *s, size_t n)
+{
+        struct optoken_entry const *e = optoken_lookup(s, n);
+        return e ? e->toktype : -1;
+}
+
 char const *
 keyword_show(int kw)
 {

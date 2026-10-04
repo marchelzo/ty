@@ -89,6 +89,24 @@
   #define TY_PLATFORM_NAME "freebsd"
 #endif
 
+#if defined(__x86_64__) || defined(_M_X64)
+  #define TY_PLATFORM_ARCH "x86_64"
+#elif defined(__aarch64__) || defined(_M_ARM64)
+  #define TY_PLATFORM_ARCH "aarch64"
+#elif defined(__i386__) || defined(_M_IX86)
+  #define TY_PLATFORM_ARCH "i386"
+#elif defined(__arm__) || defined(_M_ARM)
+  #define TY_PLATFORM_ARCH "arm"
+#elif defined(__riscv) && __riscv_xlen == 64
+  #define TY_PLATFORM_ARCH "riscv64"
+#elif defined(__powerpc64__)
+  #define TY_PLATFORM_ARCH "ppc64"
+#elif defined(__loongarch64)
+  #define TY_PLATFORM_ARCH "loongarch64"
+#else
+  #define TY_PLATFORM_ARCH "unknown"
+#endif
+
 #if defined(TY_HAVE_VERSION_INFO)
   #include "VersionInfo.h"
   #define TY_VERSION_STRING VersionInfo_ProjectVersion
