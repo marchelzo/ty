@@ -7323,10 +7323,6 @@ emit_yield(Ty *ty, Expr const * const *es, int n, bool wrap)
                 fail("invalid yield expression (not inside of a function)");
         }
 
-        if (UNLIKELY(n > 1)) {
-                fail("yielding multiple values isn't implemented yet");
-        }
-
         if (n == 0) {
                 if (wrap) {
                         INSN(NIL);
@@ -7338,13 +7334,16 @@ emit_yield(Ty *ty, Expr const * const *es, int n, bool wrap)
                 return;
         }
 
-        Expr const *expr = es[0];
-
-        if (expr->type == EXPRESSION_SPREAD) {
-                emit_yield_from(ty, expr->value);
-        } else {
-                EE(expr);
-                (emit_instr)(ty, wrap ? INSTR_YIELD_SOME : INSTR_YIELD);
+        for (int i = 0; i < n; ++i) {
+                if (i > 0) {
+                        INSN(POP);
+                }
+                if (es[i]->type == EXPRESSION_SPREAD) {
+                        emit_yield_from(ty, es[i]->value);
+                } else {
+                        EE(es[i]);
+                        (emit_instr)(ty, wrap ? INSTR_YIELD_SOME : INSTR_YIELD);
+                }
         }
 }
 
@@ -9506,6 +9505,11 @@ BeginComprehensionLoop(
                 Ei32(vN(part->pattern->es));
                 STK(vN(part->pattern->es) - 1);
 
+                if (part->pattern->has_resources) {
+                        INSN(PUSH_DROP_GROUP);
+                        STATE.resources += 1;
+                }
+
                 for (int i = 0; i < vN(part->pattern->es); ++i) {
                         Expr *target = v__(part->pattern->es, i);
                         usize start = vN(STATE.code);
@@ -9534,6 +9538,9 @@ BeginComprehensionLoop(
 
                 if (part->_if != NULL) {
                         PATCH_JUMP(cond_fail);
+                        if (part->pattern->has_resources) {
+                                INSN(DROP);
+                        }
                         JUMP(state->start);
                 }
 
@@ -9553,9 +9560,18 @@ EndComprehensionLoop(
                 EndRangeLoop(ty, loop);
         } else {
                 ComprState *state = vvL(*stack);
+                if (part->pattern->has_resources) {
+                        INSN(DROP);
+                }
                 JUMP(state->start);
                 if (part->_while != NULL) {
                         PATCH_JUMP(state->stop);
+                        if (part->pattern->has_resources) {
+                                INSN(DROP);
+                        }
+                }
+                if (part->pattern->has_resources) {
+                        STATE.resources -= 1;
                 }
                 INSN(POP);
                 INSN(POP);
@@ -9882,7 +9898,12 @@ emit_for_each(Ty *ty, Stmt const *s, bool want_result)
                         should_stop = (PLACEHOLDER_JUMP_IF_NOT)(ty, s->each._while);
                 }
 
-                if (s->each._if != NULL) {
+                if (s->each._if != NULL && s->each.target->has_resources) {
+                        PLACEHOLDER_JUMP_IF(s->each._if, keep);
+                        INSN(DROP);
+                        JUMP(start);
+                        PATCH_JUMP(keep);
+                } else if (s->each._if != NULL) {
                         EE(s->each._if);
                         JUMP_IF_NOT(start);
                 }
@@ -9907,6 +9928,9 @@ emit_for_each(Ty *ty, Stmt const *s, bool want_result)
 
                 if (s->each._while != NULL) {
                         PATCH_JUMP(should_stop);
+                        if (s->each.target->has_resources) {
+                                INSN(DROP);
+                        }
                 }
 
                 WITHxSTACK(2) {

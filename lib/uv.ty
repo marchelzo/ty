@@ -1268,7 +1268,7 @@ pub fn race(fns: _, stagger: Int = 0) {
     timer.stop()
     timer.close()
 
-    for coro, i in coros {
+    for coro; i in coros {
         if i != winner-idx { coro(Cancel as nil) }
     }
 

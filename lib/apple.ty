@@ -985,7 +985,7 @@ pub fn window-list(
     for i in ..n {
         let dict = CFArrayGetValueAtIndex(arr, i)
         let entry = %{}
-        for name, j in key-names {
+        for name; j in key-names {
             if let $val = CFDictionaryGetValue(dict, cf-keys[j]) {
                 entry[name] = cfval(val)
             }

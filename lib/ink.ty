@@ -921,7 +921,7 @@ pub class TextInput < Component {
             let hi-col = ci / n-per-col
 
             __comp-lines = []
-            for row, ri in rows {
+            for row; ri in rows {
                 let parts = [*row]
                 if cy.ci > 0 && cy.ci <= #cy.items
                 && ri == hi-row && hi-col < #parts {
@@ -1427,7 +1427,7 @@ pub class Select < Component {
                     let c = sel? ? sel-clr : clr
                     <Text style=(sel? ? "{sel-clr} bold" : clr)>{icon} {item}</Text>
                 }
-                for item, i in itms
+                for item; i in itms
             ]}
         </Box>
     }
@@ -3051,7 +3051,7 @@ pub class TreeView < Component {
             rows.push({node: node, depth: depth, lasts: lasts, exp?: exp?, can?: can?})
             if exp? {
                 let kids = try { children(node) } catch _ { [] }
-                for kid, i in kids {
+                for kid; i in kids {
                     walk(kid, depth + 1, [*lasts, i == #kids - 1])
                 }
             }
@@ -3061,7 +3061,7 @@ pub class TreeView < Component {
             walk(__current-root, 0, [])
         } else {
             let kids = try { children(__current-root) } catch _ { [] }
-            for kid, i in kids {
+            for kid; i in kids {
                 walk(kid, 0, [i == #kids - 1])
             }
         }
@@ -3516,7 +3516,7 @@ fn stack-column(
 
     let do-align = align != 'start'
 
-    for block, i in blocks {
+    for block; i in blocks {
         let g = gaps
             ? ((i < #gaps) ? gaps[i] : 0)
             : ((i > 0) ? gap : 0)
@@ -3563,7 +3563,7 @@ fn stack-row(
 
     for row in ..h {
         _buf.clear()
-        for block, i in blocks {
+        for block; i in blocks {
             let g = gaps
                 ? ((i < #gaps) ? gaps[i] : 0)
                 : ((i > 0) ? gap : 0)
@@ -3711,7 +3711,7 @@ fn finish-box(
 
     if let $bg = bg {
         if !target-w && max-w < INF && max-w > w {
-            for line, i in lines {
+            for line; i in lines {
                 lines[i] = pad-line(line, line.width(), max-w)
             }
             w = max-w
@@ -3804,7 +3804,7 @@ fn layout-box(
         let snap-ov = #_overlays
         let snap-fc = #_focusables
         let snap-ki = #_kitty-images
-        for child, i in children if flexes[i] == nil {
+        for child; i in children if flexes[i] == nil {
             let (o, _) = layout-node(child, content-w, content-h, "{path}.{i}", 0, 0)
             fixed += row? ? o.width : o.height
         }
@@ -3832,7 +3832,7 @@ fn layout-box(
     let cy = content-oy
     let flex-prop = row? ? 'width' : 'height'
 
-    for child, i in children {
+    for child; i in children {
         let fw = child-widths[i]
         let fh = child-heights[i]
         let child-node = if flexes[i] {
@@ -3873,7 +3873,7 @@ fn layout-box(
                 ? compute-gaps(n-children, stacked-h, content-h, gap, justify)
                 : nil
             let dy = 0
-            for el, i in child-elements {
+            for el; i in child-elements {
                 let g = gaps ? ((i < #gaps) ? gaps[i] : 0) : ((i > 0) ? gap : 0)
                 let extra-y = dy + g - ((i > 0) ? gap : 0)
                 dy += g - ((i > 0) ? gap : 0)
@@ -3894,7 +3894,7 @@ fn layout-box(
                 ? compute-gaps(n-children, stacked-w, content-w, gap, justify)
                 : nil
             let dx = 0
-            for el, i in child-elements {
+            for el; i in child-elements {
                 let g = gaps ? ((i < #gaps) ? gaps[i] : 0) : ((i > 0) ? gap : 0)
                 let extra-x = dx + g - ((i > 0) ? gap : 0)
                 dx += g - ((i > 0) ? gap : 0)
@@ -3913,12 +3913,12 @@ fn layout-box(
 
     if target-w {
         if w > content-w {
-            for line, i in lines if line.width() > content-w {
+            for line; i in lines if line.width() > content-w {
                 lines[i] = clip-line(line, content-w)
             }
             w = content-w
         } else if w < content-w {
-            for line, i in lines {
+            for line; i in lines {
                 lines[i] = pad-line(line, line.width(), content-w)
             }
             w = content-w
@@ -4170,7 +4170,7 @@ fn paint-inline(output: Output) {
         }
     }
     for ov in _overlays {
-        for line, i in ov.output.lines {
+        for line; i in ov.output.lines {
             _out.push("\x1b[{ov.y + i + 1};{ov.x + 1}H")
             if #bg > 0 {
                 _out.push("{bg}{restore-global-bg(line, bg)}{bg-off}")
@@ -4229,7 +4229,7 @@ fn paint-fullscreen(output: Output, rows: Int = INF) {
     }
     let bg = _bg-global-sgr
     let bg-off = (#bg > 0) ? "\x1b[49m" : ''
-    for line, i in output.lines {
+    for line; i in output.lines {
         _out.push("\x1b[{i + 1};1H{bg}\x1b[2K")
         if #bg > 0 {
             _out.push("{bg}{restore-global-bg(line, bg)}{bg-off}")
@@ -4241,7 +4241,7 @@ fn paint-fullscreen(output: Output, rows: Int = INF) {
         _out.push("\x1b[{#output.lines + 1};1H{bg}\x1b[0J")
     }
     for ov in _overlays {
-        for line, i in ov.output.lines {
+        for line; i in ov.output.lines {
             _out.push("\x1b[{ov.y + i + 1};{ov.x + 1}H")
             if #bg > 0 {
                 _out.push("{bg}{restore-global-bg(line, bg)}{bg-off}")

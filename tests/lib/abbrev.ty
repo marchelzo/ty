@@ -304,7 +304,7 @@ pub fn exhaustive-small-trees() {
                  for adaptive? in [false, true]
                  for global? in [false, true]]
     for mask in ..256 {
-        let input = [s for s, i in universe if (mask & (1 << i)) != 0]
+        let input = [s for s; i in universe if (mask & (1 << i)) != 0]
         for (keep-leaf?, adaptive?, global?) in modes {
             let policy = (_, n) -> adaptive? ? 2 * n - 1 : n
             let expected = reference(input, keep-leaf?, adaptive?, global?)

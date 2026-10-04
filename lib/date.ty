@@ -2138,7 +2138,7 @@ fn __relative-parts*(start: RelativePoint, end: RelativePoint, largest: Int)
 
     let cursor = start.advance(months: months, days: days)
     let seconds = cursor.seconds-until(end)
-    for (unit, divisor), i in [('hour', 3600), ('minute', 60), ('second', 1)] {
+    for (unit, divisor); i in [('hour', 3600), ('minute', 60), ('second', 1)] {
         if largest > i + 4 {
             continue
         }

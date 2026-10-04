@@ -295,7 +295,7 @@ fn print-units(summary: Summary) {
             unit['pending_obligations'],
             *DEFERRED_CLASSES.map(kind -> classes[kind] ?? 0),
         ]
-        for value, i in row {
+        for value; i in row {
             tally(totals, i, value)
         }
         print("{unit['unit']:<14}{row[0]:>8}{row[1]:>10}{row[2]:>10}{row[3]:>9}{row[4]:>9}{row[5]:>12}{row[6]:>10}{row[7]:>10}")

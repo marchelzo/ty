@@ -563,7 +563,7 @@ fn render-array(source, node, nodes, values) {
     let unused = [*nodes]
     let edits = []
 
-    for value, i in values {
+    for value; i in values {
         let old = unused.pluck(n -> same?(n.value, value))
         let text = match old {
             Some(n) => render(source, n, value),

@@ -209,7 +209,7 @@ pub class PostgreSQL {
         let vals = c.auto(c.new(c.ptr, n))
         let strs = []
 
-        for p, i in ps {
+        for p; i in ps {
             let s = _coerce(p)
             if s != nil {
                 strs.push(s.cstr())

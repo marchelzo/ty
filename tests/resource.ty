@@ -30,3 +30,27 @@ pub fn resource-drops() {
     }
     assert(dropped == [1, 2, 2, 3, 4, 5, 6, 7])
 }
+
+pub fn resource-drops-filtered-loops() {
+    dropped = []
+    for ^a in [1, 2, 3, 4].map(A) if a.k % 2 == 0 {
+        ;
+    }
+    for ^a in [5, 6, 7].map(A) while a.k < 6 {
+        ;
+    }
+    assert(dropped == [1, 2, 3, 4, 5, 6])
+}
+
+pub fn resource-drops-comprehensions() {
+    dropped = []
+    let xs = [a.k for ^a in [1, 2, 3, 4].map(A) if a.k % 2 == 0]
+    let ys = [a.k for ^a in [5, 6, 7].map(A) while a.k < 6]
+    let d = %{a.k: true for ^a in [8, 9].map(A)}
+    let ps = [(x, i) for x; ^i in [10, 20]]
+    assert(xs == [2, 4])
+    assert(ys == [5])
+    assert(d.list() == [(8, true), (9, true)])
+    assert(ps == [(10, 0), (20, 1)])
+    assert(dropped == [1, 2, 3, 4, 5, 6, 8, 9])
+}

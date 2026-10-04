@@ -9,7 +9,7 @@ ns test
 const DEBUGGEE = str(FIXTURES / 'debuggee.ty')
 
 fn line-of(needle: String) -> Int {
-    for line, i in slurp(DEBUGGEE).lines() {
+    for line; i in slurp(DEBUGGEE).lines() {
         if line.contains?(needle) {
             return i + 1
         }
@@ -153,7 +153,7 @@ class Dap {
     }
 
     event(name: String) -> Dict[String, Any] {
-        for msg, i in __events {
+        for msg; i in __events {
             if msg['event'] == name {
                 __events.pop(i)
                 return msg['body'] ?? %{}

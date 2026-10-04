@@ -846,7 +846,7 @@ pub fn unfold(input: String) -> Array[String] {
 
 fn content-colon(line: String) -> Int {
     let quoted = false
-    for c, i in line {
+    for c; i in line {
         if c == '"' { quoted = !quoted }
         else if c == ':' && !quoted { return i }
     }
@@ -878,7 +878,7 @@ pub fn parse(input: String) -> Calendar {
     let roots: Array[Component] = []
     let stack: Array[Component] = []
 
-    for line, line-number in unfold(input) {
+    for line; line-number in unfold(input) {
         let p = try { parse-property(line) } catch e: ICalError {
             throw ICalError(e.message, line-number + 1)
         }

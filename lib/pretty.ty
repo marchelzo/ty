@@ -172,7 +172,7 @@ pub class Printer {
                 restore(state)
                 write(open, color, force)
                 nl(1)
-                for x, i in xs {
+                for x; i in xs {
                     if i > 0 { write(',', nil, force); nl() }
                     go(x, true, force)
                 }
@@ -217,7 +217,7 @@ pub class Printer {
                 restore(state)
                 write(open, delim-style, force)
                 nl(1)
-                for k, v, i in m {
+                for k, v; i in m {
                     if i > 0 { write(',', nil, force); nl() }
                     write-key(k, true, force)
                     write(eq, delim-style, force)

@@ -300,7 +300,7 @@ ns test {
         let src = png.buffer
         let out = blob()
 
-        for c, i in src {
+        for c; i in src {
             out.push(match i % 3 {
                 0 => min(c + 80, 255),
                 1 => c,

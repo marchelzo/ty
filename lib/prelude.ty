@@ -602,7 +602,7 @@ class Array[T] : Iterable[T] {
     }
 
     indices*() -> Generator[_] {
-        for x, i in self {
+        for x; i in self {
             if x :: Array {
                 for idx in x.indices() {
                     yield tuple(*((idx :: Array) ? ([i] + idx) : [i, idx]))
@@ -988,7 +988,7 @@ macro __define_ast! {
 
 use AST = __define_ast!(fn (t0) { t0 })
 
-class Dict[K, V] : Iterable[K, V] {
+class Dict[K, V] : Iterable[(K, V)] {
     init();
 
     contains?(key: Any) -> Bool;
@@ -1049,7 +1049,7 @@ class Dict[K, V] : Iterable[K, V] {
         }
     }
 
-    __iter__() -> Iter[K, V] {
+    __iter__() -> Iter[(K, V)] {
         return cast(self.keys().zip(self.values()).__iter__())
     }
 
@@ -2391,7 +2391,7 @@ trait Iter[T] < Iterable[T] {
         }
 
         for f ~> (t: _) in self {
-            for x, (i: _) in t {
+            for x; i in t {
                 lists[i].push(x)
             }
         }
@@ -3024,7 +3024,7 @@ class TupleSpec {
             return false
         }
 
-        for (name, pred, req?), i in __types {
+        for (name, pred, req?); i in __types {
             if name == nil {
                 if (#t <= i) || (t[i] !:: pred) {
                     return false
@@ -3626,7 +3626,7 @@ macro dbg(*args) {
         $$[ let $$decl = [] $$],
         *[
             $$[ $$results.push(($$e, $$(ty.String(parse.show(e))))) $$]
-            for e, i in args
+            for e; i in args
         ],
         $$[
             let maxw = $$results.map(\#_.1).max()

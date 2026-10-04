@@ -97,7 +97,7 @@ pub class Heap[K, T] {
     }
 
     __iter__*() {
-        for k, i in __key {
+        for k; i in __key {
             yield (k, __xs[i])
         }
     }

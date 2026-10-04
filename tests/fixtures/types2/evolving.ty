@@ -58,7 +58,7 @@ fn drive(keys: Array[String]) -> Array[String] {
     let history: Array[Array[String]] = [['a']]
     let out = []
 
-    for key, i in keys {
+    for key; i in keys {
         if key != 'tab' && cycler != nil {
             out.push(cycler.render())
             cycler = nil

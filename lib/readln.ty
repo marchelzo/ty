@@ -117,7 +117,7 @@ class CompletionCycler {
     __seek(ci: Int) -> (Int, Int) {
         let n = 0
 
-        for page, i in __pages {
+        for page; i in __pages {
             let count = page.map(`#`).sum(0)
             if ci < n + count {
                 return (i, n)
@@ -160,7 +160,7 @@ class CompletionCycler {
 
         let off = 0
 
-        for row, row-i in page {
+        for row; row-i in page {
             if (i == row-i) && (__ci < #__cs) {
                 row = [*row]
                 row[j] = str(chalk"[reverse]{row[j]}[/]")
@@ -450,7 +450,7 @@ pub class InteractiveLineReader {
                 out.push("\x1b[{count}A")
             }
 
-            for text, i in lines {
+            for text; i in lines {
                 if i > 0 {
                     out.push('\n')
                 }

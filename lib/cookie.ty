@@ -78,7 +78,7 @@ pub class CookieJar : Iterable[Cookie] {
     #() -> Int { #__cookies }
 
     set-cookie(cookie: Cookie) -> Cookie {
-        for old, i in __cookies {
+        for old; i in __cookies {
             if old.domain.lower() == cookie.domain.lower()
             && old.path == cookie.path
             && old.name == cookie.name {

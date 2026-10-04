@@ -30,7 +30,7 @@ fn total(items: Dict[String, Int]) -> Int {
 
 fn indexed(names: Array[String]) -> Array[(String, Int)] {
     let pairs: Array[(String, Int)] = []
-    for name, i in names {
+    for name; i in names {
         pairs.push((name, i))
     }
     pairs

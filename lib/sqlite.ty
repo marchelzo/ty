@@ -165,7 +165,7 @@ pub class SQLite {
             throw SQLiteError(error(__db), sql)
         }
 
-        for p, i in ps {
+        for p; i in ps {
             match ::bind(s, i + 1, p) {
                 ::SQLITE_OK => {},
                   e         => throw SQLiteError(e)

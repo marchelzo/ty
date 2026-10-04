@@ -120,7 +120,7 @@ class Builder {
 
         let group = groups[0]
         let parts: [Part | String] = []
-        for word, i in chunks[;;2] {
+        for word; i in chunks[;;2] {
             let component = part(group, word, preserve-leaf && i * 2 == leaf)
             parts.push(component)
             if i * 2 + 1 == #chunks {

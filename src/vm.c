@@ -5990,6 +5990,25 @@ NoIter:
         }
 }
 
+inline static void
+PackIterItem(Ty *ty)
+{
+        isize n;
+        Value *vp;
+
+        if (LIKELY(RC == 0)) {
+                return;
+        }
+
+        n = RC + 1;
+        TakeExtra(ty);
+
+        vp = mAo(n * sizeof (Value), GC_TUPLE);
+        memcpy(vp, topN(n), n * sizeof (Value));
+        STACK.count -= n;
+        push(TUPLE(vp, NULL, n));
+}
+
 static bool
 LoopCheck(Ty *ty, i32 z, char *jump)
 {
@@ -6006,7 +6025,7 @@ LoopCheck(Ty *ty, i32 z, char *jump)
                 return true;
         }
 
-        TakeExtra(ty);
+        PackIterItem(ty);
         push(INTEGER(k));
 
         i32 i;
@@ -6056,7 +6075,7 @@ vm_jit_loop_check(Ty *ty, int z)
                 return true;
         }
 
-        TakeExtra(ty);
+        PackIterItem(ty);
         push(INTEGER(k));
 
         i32 i, j;

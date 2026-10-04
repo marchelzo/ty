@@ -130,7 +130,7 @@ pub fn wrap(lib, name: String, rType: _ = nil, *aTypes: _, func-ptr?: Bool = fal
 pub fn array[T](type: CType[T], xs: Iterable[T]) {
     let buffer = typed(c.alloc(c.size(type) * #xs), type)
 
-    for x, i in xs {
+    for x; i in xs {
         buffer[i] = x
     }
 
@@ -588,7 +588,7 @@ fn strct() {
     }
 
     fn prefix-decl-names(decls: _, pre) {
-        for d, idx in decls {
+        for d; idx in decls {
             match d {
                 Struct((inner: _))      => prefix-decl-names(inner, pre),
                 Union((_, (inner: _)))  => prefix-decl-names(inner, pre),

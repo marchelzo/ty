@@ -151,16 +151,21 @@ for x in [1, 2, 3] {
     pp(x);
 }
 
-// Iterating over a collection with index (note: The index is produced as
-// part of the loop itself, not by the iterable. Thus, it is always
-// available, but when iterating over a dict, it will be the 3rd element in the
-// binding list instead of the 2nd.)
-for x, i in [1, 2, 3] {
+// Iterating over a collection with index (note: The index is produced by
+// the loop itself, not by the iterable, so it is always available. It is
+// bound after a `;`, separate from the item pattern.)
+for x; i in [1, 2, 3] {
     pp((i, x))
 }
 
-for key, value, i in %{'a': 1, 'b': 2} {
+// Multiple names before the `;` destructure each item as a tuple. Iterating
+// over a dict produces (key, value) tuples.
+for key, value; i in %{'a': 1, 'b': 2} {
     pp((i, key, value))
+}
+
+for a, b in [(1, 2), (3, 4)] {
+    pp(a + b)
 }
 
 // Skipping some elements

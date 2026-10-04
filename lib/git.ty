@@ -616,7 +616,7 @@ fn with-strings[T](xs: [String], f: raw.GitStrings -> T) -> T {
     let xs = xs.map(z)
     let data = c.new(c.ptr, max(1, #xs))
     defer c.free(data)
-    for x, i in xs {
+    for x; i in xs {
         data[i] = x
     }
 
@@ -2118,7 +2118,7 @@ pub class Repository < Handle {
         let tree = tree ? tree-at(tree) : index.write-tree()
         let ps = c.new(c.ptr, max(1, #commits))
         defer c.free(ps)
-        for commit, i in commits {
+        for commit; i in commits {
             ps[i] = commit.handle
         }
 

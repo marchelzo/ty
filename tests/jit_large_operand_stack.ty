@@ -11,7 +11,7 @@ fn build-large-array() {
 pub fn test-large-jit-operand-stack() {
     let values = build-large-array()
     assert(#values == 24)
-    for value, i in values {
+    for value; i in values {
         assert(value == i)
     }
 }

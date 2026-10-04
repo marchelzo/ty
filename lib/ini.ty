@@ -85,7 +85,7 @@ pub class INIFile {
             out.push("#UPDATE-FILE\n")
         }
 
-        for {name, settings}, i in __sections {
+        for {name, settings}; i in __sections {
             if i > 0 {
                 out.push('\n')
             }

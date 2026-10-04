@@ -298,6 +298,10 @@ typedef struct ParserState {
         bool NoPipe;
         bool NoLG;
         bool TypeContext;
+
+        int ForParen;
+        bool ForInit;
+        Expr *ForInitExpr;
 } ParserState;
 
 static ParserState state;
@@ -342,6 +346,9 @@ static Expr NullExpr = {
 #define ParseDepth        (state.depth)
 #define TokenIndex        (state.TokenIndex)
 #define TypeContext       (state.TypeContext)
+#define ForParen          (state.ForParen)
+#define ForInit           (state.ForInit)
+#define ForInitExpr       (state.ForInitExpr)
 #define LValueContext     (state.LValueContext)
 #define TOKENS            (state.tokens)
 #define uopcs             (uopcs)
@@ -3087,19 +3094,26 @@ prefix_yield(Ty *ty)
 
         consume_kw(YIELD);
 
-        if (T0 == TOKEN_STAR) {
-                Expr *spread = mkexpr(ty);
-                next();
-                spread->type = EXPRESSION_SPREAD;
-                spread->value = parse_expr(ty, 1);
-                spread->end = TEnd;
-                avP(e->es, spread);
-        } else {
-                avP(e->es, parse_expr(ty, 1));
-                while (T0 == ',') {
+        for (;;) {
+                Expr *item;
+
+                if (T0 == TOKEN_STAR) {
+                        item = mkexpr(ty);
                         next();
-                        avP(e->es, parse_expr(ty, 1));
+                        item->type = EXPRESSION_SPREAD;
+                        item->value = parse_expr(ty, 1);
+                        item->end = TEnd;
+                } else {
+                        item = parse_expr(ty, 1);
                 }
+
+                avP(e->es, item);
+
+                if (T0 != ',') {
+                        break;
+                }
+
+                next();
         }
 
         e->end = TEnd;
@@ -3471,7 +3485,21 @@ prefix_parenthesis(Ty *ty)
         Location start = tok()->start;
         Expr *e;
 
+        bool for_header = (ForParen == TokenIndex + 1);
+
         consume('(');
+
+        if (
+                for_header
+             && (
+                        (T0 == ';')
+                     || (T0 == TOKEN_KEYWORD && get_prefix_parser(ty) == NULL)
+                )
+        ) {
+                ForInit     = true;
+                ForInitExpr = NULL;
+                return mkxpr(NIL);
+        }
 
         /*
          * () is an empty identifier list.
@@ -3514,6 +3542,7 @@ prefix_parenthesis(Ty *ty)
                 tok()->module = NULL;
         }
 
+        SAVE_NI(for_header ? false : NoIn);
         SAVE_NE(true);
         SAVE_NA(false);
         SAVE_NC(false);
@@ -3539,6 +3568,14 @@ prefix_parenthesis(Ty *ty)
                 SAVE_NA(true);
                 e = infix_eq(ty, e);
                 LOAD_NA();
+        }
+
+        LOAD_NI();
+
+        if (for_header && T0 == ';') {
+                ForInit     = true;
+                ForInitExpr = e;
+                return e;
         }
 
         if (
@@ -5785,7 +5822,7 @@ parse_definition_lvalue(Ty *ty, int context, Expr *e)
         case LV_EACH:
                 if (K0 == KEYWORD_IN)
                         break;
-                if (T0 != ',')
+                if (T0 != ',' && T0 != ';')
                         goto Error;
                 break;
         default:
@@ -5801,7 +5838,7 @@ Error:
 }
 
 static Expr *
-parse_target_list(Ty *ty)
+parse_target(Ty *ty)
 {
         SAVE_NI(true);
         SAVE_NE(true);
@@ -5813,24 +5850,57 @@ parse_target_list(Ty *ty)
         LOAD_NE();
         LOAD_NI();
 
-        if (T0 != ',' && !have_kw(IN)) {
+        return target;
+}
+
+static Expr *
+parse_target_list_from(Ty *ty, Expr *target)
+{
+        if (T0 != ',' && T0 != ';' && !have_kw(IN)) {
                 return target;
         }
 
         Expr *e = mkxpr(LIST);
+        Expr *item = parse_definition_lvalue(ty, LV_EACH, target);
 
-        avP(e->es, parse_definition_lvalue(ty, LV_EACH, target));
-
-        if (e->es.items[0] == NULL) {
+        if (item == NULL) {
         Error:
                 die("expected lvalue in for-each loop");
         }
 
-        while (T0 == ',') {
+        if (T0 == ',') {
+                Expr *tuple = mkxpr(TUPLE);
+                tuple->start = item->start;
+
+                for (;;) {
+                        avP(tuple->es, item);
+                        avP(tuple->names, NULL);
+                        avP(tuple->required, true);
+                        avP(tuple->tconds, NULL);
+
+                        if (T0 != ',') {
+                                break;
+                        }
+
+                        next();
+
+                        item = parse_definition_lvalue(ty, LV_EACH, NULL);
+                        if (item == NULL) {
+                                goto Error;
+                        }
+                }
+
+                tuple->end = item->end;
+                item = tuple;
+        }
+
+        avP(e->es, item);
+
+        if (T0 == ';') {
                 next();
 
                 target = parse_definition_lvalue(ty, LV_EACH, NULL);
-                if (target == NULL) {
+                if (target == NULL || !have_kw(IN)) {
                         goto Error;
                 }
 
@@ -5840,6 +5910,21 @@ parse_target_list(Ty *ty)
         return e;
 }
 
+static Expr *
+parse_target_list(Ty *ty)
+{
+        return parse_target_list_from(ty, parse_target(ty));
+}
+
+inline static bool
+have_index_header(Ty *ty)
+{
+        return (T0 == ';')
+            && (T1 == TOKEN_IDENTIFIER)
+            && (token(2)->type == TOKEN_KEYWORD)
+            && (token(2)->keyword == KEYWORD_IN);
+}
+
 static Stmt *
 parse_for_loop(Ty *ty)
 {
@@ -5847,30 +5932,61 @@ parse_for_loop(Ty *ty)
 
         consume_kw(FOR);
 
-        bool c_style = (T0 == KEYWORD_LET)
-                    || (T0 == ';')
-                    || (
-                               (T0 == '(')
-                            && (T1 == KEYWORD_LET || T1 == ';')
-                       )
-                    ;
-
         bool match = try_consume(KEYWORD_MATCH);
 
-        if (!match && !c_style) {
-                int save = TokenIndex;
-                SAVE_NI(true);
-                SAVE_NE(NoEquals);
-                if (TryParse()) {
-                        LOAD_NE();
-                        c_style = true;
-                } else {
-                        (void)parse_expr(ty, 0);
-                        c_style = (T0 == ';');
-                        EndTryParse();
+        Expr *target = NULL;
+        Expr *array = NULL;
+        Stmt *init = NULL;
+        bool c_style = false;
+        bool parens = false;
+        bool have_init = false;
+
+        if (match) {
+                ;
+        } else if (T0 == ';' || (T0 == TOKEN_KEYWORD && get_prefix_parser(ty) == NULL)) {
+                c_style = true;
+        } else {
+                ForParen = TokenIndex + 1;
+                ForInit  = false;
+
+                target = parse_target(ty);
+
+                ForParen = 0;
+
+                if (ForInit) {
+                        ForInit   = false;
+                        c_style   = true;
+                        parens    = true;
+                        have_init = (ForInitExpr != NULL);
+                        init      = have_init ? to_stmt(ForInitExpr) : NULL;
+                } else if (T0 == TOKEN_EQ || T0 == TOKEN_MAYBE_EQ) {
+                        SAVE_NA(true);
+                        target = infix_eq(ty, target);
+                        LOAD_NA();
+                        c_style   = true;
+                        have_init = true;
+                        init      = to_stmt(target);
+                } else if (have_index_header(ty)) {
+                        int save = TokenIndex;
+                        skip(3);
+                        array = parse_expr(ty, 0);
+                        if (T0 == ';') {
+                                seek(ty, save);
+                                array     = NULL;
+                                c_style   = true;
+                                have_init = true;
+                                init      = to_stmt(target);
+                        } else {
+                                int end = TokenIndex;
+                                seek(ty, save);
+                                target = parse_target_list_from(ty, target);
+                                seek(ty, end);
+                        }
+                } else if (T0 == ';') {
+                        c_style   = true;
+                        have_init = true;
+                        init      = to_stmt(target);
                 }
-                LOAD_NI();
-                seek(ty, save);
         }
 
         if (!c_style) {
@@ -5883,11 +5999,17 @@ parse_for_loop(Ty *ty)
                         unconsume(TOKEN_IDENTIFIER);
                         tok()->identifier = gensym();
                         tok()->module = NULL;
+
+                        s->each.target = parse_target_list(ty);
+                } else if (array != NULL) {
+                        s->each.target = target;
+                } else {
+                        s->each.target = parse_target_list_from(ty, target);
                 }
 
-                s->each.target = parse_target_list(ty);
-
-                if (s->each.target->type != EXPRESSION_LIST) {
+                if (array != NULL) {
+                        s->each.array = array;
+                } else if (s->each.target->type != EXPRESSION_LIST) {
                         iter_sugar(ty, &s->each.target, &s->each.array);
                 } else {
                         consume_kw(IN);
@@ -5922,10 +6044,14 @@ parse_for_loop(Ty *ty)
                 return s;
         }
 
-        bool parens = try_consume('(');
-
-        if (!try_consume(';')) {
-                s->for_loop.init = parse_statement(ty, -1);
+        if (have_init) {
+                consume(';');
+                s->for_loop.init = init;
+        } else {
+                parens = parens || try_consume('(');
+                if (!try_consume(';')) {
+                        s->for_loop.init = parse_statement(ty, -1);
+                }
         }
 
         if (T0 != ';') {

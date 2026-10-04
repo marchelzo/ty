@@ -683,7 +683,7 @@ pub class Query[T] : Iterable[T] {
                 lookup[it[ref-pk]] = ref-from-row(it)
             }
 
-            for row, i in rows {
+            for row; i in rows {
                 let fk = row[fk-col]
                 if fk != nil && fk in lookup {
                     let p = instances[i].preloaded ?? %{}
@@ -1082,7 +1082,7 @@ pub macro table(def: _) {
     if #primary-keys > 0 {
         for name in primary-keys {
             let found? = false
-            for c, i in cols {
+            for c; i in cols {
                 if c.name == name {
                     cols[i] = {*c, pk: true, auto: false}
                     found? = true
@@ -1095,13 +1095,13 @@ pub macro table(def: _) {
         has-pk? = true
     }
 
-    for c, i in cols {
+    for c; i in cols {
         if !has-pk? && c.name == 'id' && (c.sql-type == 'INTEGER') && (c.refs == nil) {
             cols[i] = {*c, pk: true, auto: true, nullable: true}
             has-pk? = true
         }
     }
-    for c, i in cols {
+    for c; i in cols {
         if !has-pk? && (c.sql-type == 'INTEGER') && (c.refs == nil) {
             cols[i] = {*c, pk: true, auto: true, nullable: true}
             has-pk? = true
@@ -1132,21 +1132,21 @@ pub macro table(def: _) {
 
     fn placeholders(cs: _, offset: Int = 0, dialect: String = 'sqlite') {
         match dialect {
-            'postgres' => ["${i + offset + 1}" for _, i in cs].join(', '),
+            'postgres' => ["${i + offset + 1}" for _; i in cs].join(', '),
             _          => ['?' for cs].join(', ')
         }
     }
 
     fn set-clause-for(cs: _, offset: Int = 0, dialect: String = 'sqlite') {
         match dialect {
-            'postgres' => ["{_quote(c.name)} = ${i + offset + 1}" for c, i in cs].join(', '),
+            'postgres' => ["{_quote(c.name)} = ${i + offset + 1}" for c; i in cs].join(', '),
             _          => ["{_quote(it.name)} = ?" for cs].join(', ')
         }
     }
 
     fn where-clause-for(cs: _, offset: Int = 0, dialect: String = 'sqlite') {
         match dialect {
-            'postgres' => ["{_quote(c.name)} = ${i + offset + 1}" for c, i in cs].join(' AND '),
+            'postgres' => ["{_quote(c.name)} = ${i + offset + 1}" for c; i in cs].join(' AND '),
             _          => ["{_quote(it.name)} = ?" for cs].join(' AND ')
         }
     }
@@ -1684,7 +1684,7 @@ pub macro table(def: _) {
     }
 
     let new-fields = []
-    for field, i in fields {
+    for field; i in fields {
         let ci        = cols[i]
         let (f, dflt) = _parse-field(field)
         let ce     = f.constraint

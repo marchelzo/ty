@@ -328,7 +328,7 @@ pub class Path : PathLike {
         if parents {
             let current = Path(__drv, __root, [])
             
-            for part, i in __parts {
+            for part; i in __parts {
                 current.__parts.push(part)
                 if os.mkdir("{current}", mode) == 0 {
                     continue

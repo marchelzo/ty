@@ -121,7 +121,6 @@ PREV_SIG := $(shell cat $(BUILD_SIG_FILE) 2>/dev/null)
 
 ifneq ($(BUILD_SIG),$(PREV_SIG))
 $(shell rm -rf obj)
-$(shell find libco dtoa -type f -and -executable -or -name '*.[od]' -delete)
 $(shell mkdir -p obj obj/tyls obj/typrof)
 $(shell echo '$(BUILD_SIG)' > $(BUILD_SIG_FILE))
 endif
@@ -144,12 +143,13 @@ SOURCES := $(wildcard src/*.c)
 OBJECTS := $(patsubst src/%.c,obj/%.o,$(SOURCES))
 TYLS_OBJECTS := $(patsubst src/%.c,obj/tyls/%.o,$(SOURCES))
 TYPROF_OBJECTS := $(patsubst src/%.c,obj/typrof/%.o,$(SOURCES))
-EXTERNAL := libco/libco.o dtoa/dtoa.o libmd/libmd.a nsync/out/libnsync.a
+EXTERNAL := obj/libco.o obj/dtoa.o libmd/libmd.a nsync/out/libnsync.a
 ASSEMBLY := $(patsubst %.c,%.s,$(SOURCES))
 .DEFAULT_GOAL := all
 .PHONY: all clean test test-types2
 DEPFILES := $(OBJECTS:.o=.d) $(TYLS_OBJECTS:.o=.d) $(TYPROF_OBJECTS:.o=.d) \
-            obj/ty-main.d obj/tyls-main.d obj/typrof-main.d
+            obj/ty-main.d obj/tyls-main.d obj/typrof-main.d \
+            obj/libco.d obj/dtoa.d
 
 -include $(DEPFILES)
 
@@ -227,11 +227,11 @@ asm: $(ASSEMBLY)
 	@echo cc $<
 	$(CC) $(CFLAGS) -S -o asm/$@ -DFILENAME=$(patsubst %.c,%,$<) $<
 
-libco/libco.o: libco/libco.c
-	$(CC) $(CFLAGS) -c -o $@ -DLIBCO_MP $<
+obj/libco.o: libco/libco.c
+	$(CC) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c -o $@ -DLIBCO_MP $<
 
-dtoa/dtoa.o: dtoa/SwiftDtoa.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+obj/dtoa.o: dtoa/SwiftDtoa.c
+	$(CC) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c -o $@ $<
 
 obj/%.o: src/%.c
 	@echo cc $<
@@ -247,7 +247,7 @@ obj/typrof/%.o: src/%.c
 
 
 clean:
-	rm -rf $(PROG) *.gcda $(OBJECTS) $(TYLS_OBJECTS) $(TYPROF_OBJECTS) libco/libco.o dtoa/dtoa.o include/keywords.h include/optokens.h $(GEN_DIR) tools/tybi $(BUILD_SIG_FILE) $(DEPFILES) obj/ty-main.o obj/tyls-main.o obj/typrof-main.o obj/types2-core-test
+	rm -rf $(PROG) *.gcda $(OBJECTS) $(TYLS_OBJECTS) $(TYPROF_OBJECTS) obj/libco.o obj/dtoa.o include/keywords.h include/optokens.h $(GEN_DIR) tools/tybi $(BUILD_SIG_FILE) $(DEPFILES) obj/ty-main.o obj/tyls-main.o obj/typrof-main.o obj/types2-core-test
 
 test: ty tyls test-types2
 	./ty test.ty $(TEST_ARGS)

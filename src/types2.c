@@ -19891,29 +19891,22 @@ infer_expression(T2Checker *checker, Expr const *source)
                 break;
         case EXPRESSION_YIELD:
         {
-                T2Type yielded = t2_primitive(checker->universe, T2_TYPE_NIL);
+                T2Type yielded = (vN(expression->es) == 0)
+                               ? t2_primitive(checker->universe, T2_TYPE_NIL)
+                               : t2_primitive(checker->universe, T2_TYPE_NEVER);
                 bool delegated = false;
-                if (vN(expression->es) == 1) {
-                        Expr const *item = v__(expression->es, 0);
+                for (int i = 0; i < vN(expression->es); ++i) {
+                        Expr const *item = v__(expression->es, i);
+                        T2Type type;
                         delegated = (item != NULL)
                                  && (item->type == EXPRESSION_SPREAD);
                         if (delegated) {
                                 T2Type source = infer_expression(checker, item->value);
-                                yielded = iterated_type(checker, source, item);
+                                type = iterated_type(checker, source, item);
                         } else {
-                                yielded = infer_expression(checker, item);
+                                type = infer_expression(checker, item);
                         }
-                } else if (vN(expression->es) > 1) {
-                        usize count = vN(expression->es);
-                        T2Type *items = xtA(*items, count);
-                        for (usize i = 0; i < count; ++i) {
-                                items[i] = infer_expression(
-                                        checker,
-                                        v__(expression->es, (int)i)
-                                );
-                        }
-                        yielded = t2_tuple(checker->universe, items, count);
-                        ty_free(items);
+                        yielded = t2_join(checker->universe, yielded, type);
                 }
                 if (vN(checker->functions) != 0) {
                         usize frame_index = vN(checker->functions) - 1;
@@ -20733,14 +20726,16 @@ iterated_type_x(
                         );
                 }
                 if (dict_nominal(checker, nominal)) {
-                        return t2_multi(
-                                checker->universe,
-                                (T2Type[]) {
-                                        t2_type_child(checker->universe, source, 0),
-                                        t2_type_child(checker->universe, source, 1),
-                                        t2_primitive(checker->universe, T2_TYPE_INT)
-                                },
-                                3
+                        return indexed_iteration_values(
+                                checker,
+                                t2_tuple(
+                                        checker->universe,
+                                        (T2Type[]) {
+                                                t2_type_child(checker->universe, source, 0),
+                                                t2_type_child(checker->universe, source, 1)
+                                        },
+                                        2
+                                )
                         );
                 }
                 if (nominal->class_id == CLASS_GENERATOR) {
@@ -20789,7 +20784,7 @@ iterated_type_x(
                                 t2_type_child(checker->universe, source, i)
                         );
                 }
-                return result;
+                return indexed_iteration_values(checker, result);
         }
 
         if (kind == T2_TYPE_VARIADIC_TUPLE) {
@@ -20802,12 +20797,15 @@ iterated_type_x(
                                 t2_type_child(checker->universe, source, i)
                         );
                 }
-                return t2_join(
-                        checker->universe,
-                        result,
-                        t2_pack_fold_union(
+                return indexed_iteration_values(
+                        checker,
+                        t2_join(
                                 checker->universe,
-                                t2_type_child(checker->universe, source, prefix)
+                                result,
+                                t2_pack_fold_union(
+                                        checker->universe,
+                                        t2_type_child(checker->universe, source, prefix)
+                                )
                         )
                 );
         }

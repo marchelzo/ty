@@ -2035,7 +2035,7 @@ pub class MultiSession {
                 let msg = CURLMsg(raw)
                 if msg.msg != CURLMSG_DONE { continue }
                 let matched = false
-                for transfer, i in __active {
+                for transfer; i in __active {
                     if transfer.handle == msg.easy_handle {
                         matched = true
                         __active.pop(i)

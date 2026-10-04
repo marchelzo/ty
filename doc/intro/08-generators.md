@@ -91,7 +91,7 @@ fn make-record(id: Int, time: Int, data: Array[Float]) -> Blob {
     header[2] = #data
 
     let samples = (buf + 12).as(c.float)
-    for x, i in data {
+    for x; i in data {
         samples[i] = x
     }
 
