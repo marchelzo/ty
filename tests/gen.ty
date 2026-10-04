@@ -11,3 +11,52 @@ pub fn gen() {
     co(0)
     assert(co(8) == Some(32))
 }
+
+pub fn generator-return-some() {
+    fn g*() {
+        yield 1
+        return Some(2)
+        yield 3
+    }
+    assert([*g()] == [1, 2])
+}
+
+pub fn generator-return-none() {
+    fn g*() {
+        yield 1
+        return None
+        yield 3
+    }
+    assert([*g()] == [1])
+}
+
+pub fn generator-return-bare() {
+    fn g*() {
+        yield 1
+        return
+        yield 3
+    }
+    let co = g()
+    assert(co() == Some(1))
+    assert(co() == None)
+    assert(co() == None)
+}
+
+pub fn generator-return-finally() {
+    let log = []
+    fn g*() {
+        try {
+            yield 1
+            return Some(2)
+        } finally {
+            log.push('finally')
+        }
+        yield 3
+    }
+    let co = g()
+    assert(co() == Some(1))
+    assert(log == [])
+    assert(co() == Some(2))
+    assert(log == ['finally'])
+    assert(co() == None)
+}

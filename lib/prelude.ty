@@ -894,7 +894,7 @@ macro __define_ast! {
        | ty.Assign[(AST, AST)]
        | ty.Break[{?value: AST, ?depth: Int}]
        | ty.Break
-       | ty.Return[Array[AST]]
+       | ty.Return[AST | nil]
        | ty.Yield[Array[AST]]
        | ty.Generator[AST]
        | ty.Union[Array[AST]]
@@ -4111,7 +4111,7 @@ macro __walk! {
                 walk(member, f)
             ),
 
-            ty.Return(values) => ty.Return([walk(v, f) for v in values]),
+            ty.Return(value) => ty.Return(walk(value, f)),
 
             ty.Yield(values) => ty.Yield([walk(v, f) for v in values]),
 

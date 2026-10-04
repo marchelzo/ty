@@ -283,12 +283,12 @@ pub class Tree[K, V] : Iterable[(K, V)] {
 
     min() {
         let x = treeMin(__root)
-        return x.k, x.v
+        return (x.k, x.v)
     }
 
     max() {
         let x = treeMax(__root)
-        return x.k, x.v
+        return (x.k, x.v)
     }
 
     contains?(key: K) -> Bool {

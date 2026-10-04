@@ -296,7 +296,7 @@ fn nexttype(array-to-ptr?: Bool = true, has-name?: ?Bool = nil) {
             let e = expr(1)
 
             // Allow stuff like f(c.int error_code) by just ignoring the identifier
-            return e, allow-name? ?: try-id()
+            return (e, allow-name? ?: try-id())
         },
 
         ('const', _)   => { next()                  },
@@ -322,12 +322,12 @@ fn nexttype(array-to-ptr?: Bool = true, has-name?: ?Bool = nil) {
     let (base, extra) = parts.reject!(\_ :: ignore).partition(\_ :: types)
 
     if let $t = (ptr? ? c.ptr : map[base.sort!(desc=true).unwords()]) {
-        return ty.Value(t), extra(-1).or-else(nil)
+        return (ty.Value(t), extra(-1).or-else(nil))
     }
 
     match extra {
-        [t, *, name] => { return ty.Id({name: t}), name }
-        [t]          => { return ty.Id({name: t}), nil  },
+        [t, *, name] => { return (ty.Id({name: t}), name) }
+        [t]          => { return (ty.Id({name: t}), nil)  },
 
     }
 }
@@ -354,7 +354,7 @@ fn nextproto() -> (Array[AST], Bool) {
             'comment' => { next() },
 
             _ => {
-                params.push(nexttype())
+                params.push(nexttype().0)
                 if peek().type == ',' {
                     next()
                 }
@@ -461,7 +461,7 @@ fn cfun() {
             let source = lex.state().source
 
             let i = peek().start.byte
-            let rt: AST = nexttype(has-name?=false)
+            let rt: AST = nexttype(has-name?=false).0
             let j = peek(-1).end.byte
             let rt-string = source.bsplice(i, j)
 
@@ -552,7 +552,8 @@ fn strct() {
     }
 
     fn get-decl() -> Array[SimpleFieldDecl] {
-        let $t, $name = nexttype(array-to-ptr?=false, has-name?=true)
+        let (t, decl-name) = nexttype(array-to-ptr?=false, has-name?=true)
+        let $name = decl-name or throw RuntimeError("expected declarator name but found: {peek()}")
         let names = [(name, get-count())]
 
         while peek().type == ',' {

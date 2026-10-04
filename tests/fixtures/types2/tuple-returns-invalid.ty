@@ -1,0 +1,15 @@
+fn short() -> (Int, Int) {
+    return 1
+}
+
+fn long() -> (Int, Int) {
+    return (1, 2, 3)
+}
+
+fn piped() -> |Int, Int| {
+    (1, 2)
+}
+
+let (a, b) = short()
+let (c, d) = long()
+print(a, b, c, d, piped())

@@ -1,0 +1,19 @@
+fn pick(flag: Bool, extra: Array[String]) {
+    if flag {
+        return ("t", extra(-1).or-else(nil))
+    }
+    match extra {
+        [t, *, name] => { return (t, name) }
+        [t]          => { return (t, nil) },
+    }
+}
+
+fn names(extra: Array[String]) -> Array[String] {
+    let (t, raw) = pick(false, extra)
+    let $name = raw or throw RuntimeError("missing name")
+    let out = [name]
+    out.push(t)
+    out
+}
+
+print(names(['a', 'b']))

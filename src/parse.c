@@ -561,8 +561,7 @@ mkret(Ty *ty, Expr *value)
 {
         Stmt *s = mkstmt(ty);
         s->type = STATEMENT_RETURN;
-        vec_init(s->returns);
-        avP(s->returns, value);
+        s->ret = value;
         return s;
 }
 
@@ -6379,15 +6378,12 @@ parse_return_statement(Ty *ty)
 
         next();
 
-        while (
+        if (
                 (tok()->start.line == s->start.line)
              && (get_prefix_parser(ty) != NULL)
              && (!have_kw(IF) || (T0 == '('))
         ) {
-                avP(s->returns, parse_expr(ty, 0));
-                if (!try_consume(',')) {
-                        break;
-                }
+                s->ret = parse_expr(ty, 0);
         }
 
         s = try_conditional_from(ty, s);

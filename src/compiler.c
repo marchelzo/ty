@@ -5769,9 +5769,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         fail("invalid return statement (not inside of a function)");
                 }
 
-                for (int i = 0; i < vN(s->returns); ++i) {
-                        symbolize_expression(ty, scope, v__(s->returns, i));
-                }
+                symbolize_expression(ty, scope, s->ret);
 
                 if (STATE.func->star || STATE.func->type == EXPRESSION_GENERATOR) {
                         s->type = STATEMENT_GENERATOR_RETURN;
@@ -6243,22 +6241,13 @@ static void
 emit_list(Ty *ty, Expr const *e)
 {
         INSN(SENTINEL);
-        INSN(CLEAR_RC);
 
         if (e->type == EXPRESSION_LIST) {
                 for (int i = 0; i < vN(e->es); ++i) {
-                        if (is_call(v__(e->es, i))) {
-                                INSN(CLEAR_RC);
-                                EE(v__(e->es, i));
-                                INSN(GET_EXTRA);
-                        } else {
-                                EE(v__(e->es, i));
-                        }
+                        EE(v__(e->es, i));
                 }
         } else {
-                INSN(CLEAR_RC);
                 EE(e);
-                INSN(GET_EXTRA);
         }
 }
 
@@ -7317,20 +7306,15 @@ emit_yield_from(Ty *ty, Expr const *iter)
 }
 
 static void
-emit_yield(Ty *ty, Expr const * const *es, int n, bool wrap)
+emit_yield(Ty *ty, Expr const * const *es, int n)
 {
         if (UNLIKELY(STATE.func == NULL)) {
                 fail("invalid yield expression (not inside of a function)");
         }
 
         if (n == 0) {
-                if (wrap) {
-                        INSN(NIL);
-                        INSN(YIELD_SOME);
-                } else {
-                        INSN(NONE);
-                        INSN(YIELD);
-                }
+                INSN(NIL);
+                INSN(YIELD_SOME);
                 return;
         }
 
@@ -7342,7 +7326,7 @@ emit_yield(Ty *ty, Expr const * const *es, int n, bool wrap)
                         emit_yield_from(ty, es[i]->value);
                 } else {
                         EE(es[i]);
-                        (emit_instr)(ty, wrap ? INSTR_YIELD_SOME : INSTR_YIELD);
+                        INSN(YIELD_SOME);
                 }
         }
 }
@@ -7417,6 +7401,44 @@ emit_implicit_tail_body(Ty *ty, Stmt const *body)
         return true;
 }
 
+static void
+emit_return_unwind(Ty *ty)
+{
+        for (int i = 0; get_try(ty, i) != NULL; ++i) {
+                if (get_try(ty, i)->ctx == TRY_CATCH) {
+                        INSN(CATCH);
+                }
+                INSN(FINALLY);
+        }
+
+        for (int i = STATE.function_resources; i < STATE.resources; ++i) {
+                INSN(DROP);
+        }
+}
+
+static void
+emit_generator_return(Ty *ty, Stmt const *s)
+{
+        if (get_try_ctx(ty) == TRY_FINALLY) {
+                fail("invalid return statement (occurs in a finally block)");
+        }
+
+        if (s->ret != NULL) {
+                EE(s->ret);
+        }
+
+        emit_return_unwind(ty);
+
+        if (s->ret != NULL) {
+                INSN(YIELD);
+                INSN(POP);
+        }
+
+        INSN(JUMP);
+        avP(STATE.co_returns, vN(STATE.code));
+        Ei32(0);
+}
+
 static bool
 emit_return(Ty *ty, Stmt const *s)
 {
@@ -7436,24 +7458,23 @@ emit_return(Ty *ty, Stmt const *s)
         //        UnwindStack(ty, loop->stack);
         //}
 
-        Expr **rets = (s != NULL) ? vv(s->returns) : NULL;
-        int    nret = (s != NULL) ? vN(s->returns) : 0;
+        Expr const *ret = (s != NULL) ? s->ret : NULL;
 
         // Tail call optimization -- currently quite restricted :)
         if (
-                (nret == 1)
+                (ret != NULL)
              && (vN(STATE.tries) == 0)
              && (STATE.function_resources == STATE.resources)
              && (!RUNTIME_CONSTRAINTS || STATE.func->return_type == NULL)
-             && is_call(rets[0])
-             && !is_variadic(rets[0])
-             && (rets[0]->function->type == EXPRESSION_IDENTIFIER)
-             && (rets[0]->function->symbol == STATE.func->fn_symbol)
-             && (vN(rets[0]->args) == vN(STATE.func->params))
-             && (vN(rets[0]->kwargs) == 0)
+             && is_call(ret)
+             && !is_variadic(ret)
+             && (ret->function->type == EXPRESSION_IDENTIFIER)
+             && (ret->function->symbol == STATE.func->fn_symbol)
+             && (vN(ret->args) == vN(STATE.func->params))
+             && (vN(ret->kwargs) == 0)
         ) {
-                for (int i = 0; i < vN(rets[0]->args); ++i) {
-                        EE(v__(rets[0]->args, i));
+                for (int i = 0; i < vN(ret->args); ++i) {
+                        EE(v__(ret->args, i));
                 }
 
                 INSN(TAIL_CALL);
@@ -7463,36 +7484,19 @@ emit_return(Ty *ty, Stmt const *s)
 
         if (s == NULL) {
                 INSN(NONE);
-        } else if (nret == 0) {
+        } else if (ret == NULL) {
                 INSN(NIL);
         } else {
-                for (int i = 0; i < nret; ++i) {
-                        EE(rets[i]);
-                }
+                EE(ret);
         }
 
-        for (int i = 0; get_try(ty, i) != NULL; ++i) {
-                if (get_try(ty, i)->ctx == TRY_CATCH) {
-                        INSN(CATCH);
-                }
-                INSN(FINALLY);
-        }
-
-        for (int i = STATE.function_resources; i < STATE.resources; ++i) {
-                INSN(DROP);
-        }
+        emit_return_unwind(ty);
 
         if (RUNTIME_CONSTRAINTS && STATE.func->return_type != NULL) {
                 emit_return_check(ty, STATE.func);
         }
 
-        if (nret > 1) {
-                INSN(MULTI_RETURN);
-                Ei32(nret - 1);
-                STK(-nret);
-        } else {
-                INSN(RETURN);
-        }
+        INSN(RETURN);
 
         return true;
 }
@@ -9954,27 +9958,6 @@ emit_for_each(Ty *ty, Stmt const *s, bool want_result)
         STATE.match_fails     = fails_save;
 }
 
-static bool
-check_multi(Expr *target, Expr const *e, int *n)
-{
-        if (is_call(e))
-                return true;
-
-        if (e->type != EXPRESSION_LIST)
-                return (*n = 1), false;
-
-        for (*n = 0; *n < vN(e->es); ++*n) {
-                if (
-                        is_call(v__(e->es, *n))
-                     || (v__(e->es, *n)->type == EXPRESSION_SPREAD)
-                ) {
-                        return true;
-                }
-        }
-
-        return *n == vN(target->es);
-}
-
 static void
 emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
 {
@@ -10670,7 +10653,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
 
         case EXPRESSION_YIELD:
-                emit_yield(ty, (Expr const **)vv(e->es), vN(e->es), true);
+                emit_yield(ty, (Expr const **)vv(e->es), vN(e->es));
                 break;
 
         case EXPRESSION_THROW:
@@ -11449,11 +11432,7 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 break;
 
         case STATEMENT_GENERATOR_RETURN:
-                emit_yield(ty, (Expr const **)vv(s->returns), vN(s->returns), false);
-                INSN(JUMP);
-                avP(STATE.co_returns, vN(STATE.code));
-                Ei32(0);
-                STK(-1);
+                emit_generator_return(ty, s);
                 break;
 
         case STATEMENT_BREAK:
@@ -12136,10 +12115,6 @@ clone_stmt(Stmt *s, Scope *scope, void *ctx)
         case STATEMENT_BLOCK:
         case STATEMENT_MULTI:
                 CloneVec(s->statements);
-                break;
-
-        case STATEMENT_RETURN:
-                CloneVec(s->returns);
                 break;
         }
 
@@ -15155,11 +15130,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 break;
 
         case STATEMENT_RETURN:
-                v = vT(vN(s->returns));
-                for (int i = 0; i < vN(s->returns); ++i) {
-                        v__(v, i) = go(v__(s->returns, i));
-                }
-                v = TAGGED(TyReturn, v);
+                v = TAGGED(TyReturn, (s->ret != NULL) ? go(s->ret) : NIL);
                 break;
 
         case STATEMENT_BREAK:
@@ -15646,20 +15617,8 @@ cstmt(Ty *ty, Value *v)
         case TyReturn:
         {
                 s->type = STATEMENT_RETURN;
-                v00(s->returns);
-                if (wrapped_type(ty, v) == VALUE_TUPLE) {
-                        for (int i = 0; i < v->count; ++i) {
-                                avP(s->returns, cexpr(ty, &v->items[i]));
-                        }
-                } else {
-                        Value v_ = unwrap(ty, v);
-                        Expr *ret = cexpr(ty, &v_);
-                        if (ret->type == EXPRESSION_LIST) {
-                                avPn(s->returns, vv(ret->es), vN(ret->es));
-                        } else {
-                                avP(s->returns, ret);
-                        }
-                }
+                Value v_ = (v->type == VALUE_TAG) ? NIL : unwrap(ty, v);
+                s->ret = (v_.type == VALUE_NIL) ? NULL : cexpr(ty, &v_);
                 break;
         }
 
@@ -19896,10 +19855,6 @@ DumpProgram(
                         break;
                 CASE(NONE_IF_NIL)
                         break;
-                CASE(CLEAR_RC)
-                        break;
-                CASE(GET_EXTRA)
-                        break;
                 CASE(FIX_EXTRA)
                         break;
                 CASE(FIX_TO)
@@ -19908,12 +19863,6 @@ DumpProgram(
                 CASE(SWAP)
                         break;
                 CASE(REVERSE)
-                        READVALUE(n);
-                        break;
-                CASE(MULTI_ASSIGN)
-                        READVALUE(n);
-                        break;
-                CASE(MAYBE_MULTI)
                         READVALUE(n);
                         break;
                 CASE(JUMP_IF_SENTINEL)
@@ -20162,9 +20111,6 @@ DumpProgram(
                 CASE(POP_STACK_POS_POP)
                 CASE(POP_STACK_POS_POP2)
                 CASE(DROP_STACK_POS)
-                        break;
-                CASE(MULTI_RETURN)
-                        READVALUE(n);
                         break;
                 CASE(RETURN_IF_NOT_NONE)
                 CASE(RETURN)

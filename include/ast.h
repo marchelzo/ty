@@ -526,7 +526,7 @@ struct statement {
                         int depth;
                 };
                 StmtVec statements;
-                ExprVec returns;
+                Expr *ret;
                 vec(char *) exports;
                 vec(Symbol *) drop;
                 struct {

@@ -191,7 +191,7 @@ fn to-diagnostic(record: _, file: String) -> _ {
 
 fn dedent(doc: String) -> String {
     let lines = doc.comb(/^\n+|\n+$/).lines()
-    let pre = lines.map(/^\s*(?=\S)/).map(\_ ?> `#`).min() ?? 0
+    let pre = lines.filter(\_.match?(/\S/)).map(\_.search(/\S/) ?? 0).min() ?? 0
     lines.map(&[pre;]).join('\n').strip()
 }
 

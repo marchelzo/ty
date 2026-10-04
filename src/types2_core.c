@@ -2228,76 +2228,6 @@ t2_tuple(T2Universe *universe, T2Type const *items, usize count)
         );
 }
 
-T2Type
-t2_multi(T2Universe *universe, T2Type const *items, usize count)
-{
-        T2Type nil = t2_primitive(universe, T2_TYPE_NIL);
-        if (nil == T2_TYPE_INVALID) {
-                return T2_TYPE_INVALID;
-        }
-
-        for (usize i = 0; i < count; ++i) {
-                if (get_node(universe, items[i]) == NULL) {
-                        return T2_TYPE_INVALID;
-                }
-        }
-
-        while (count != 0 && items[count - 1] == nil) {
-                count -= 1;
-        }
-
-        if (count == 0) {
-                return nil;
-        }
-
-        if (count == 1) {
-                return items[0];
-        }
-
-        return intern_type(
-                universe,
-                T2_TYPE_MULTI,
-                T2_VARIABLE_FLEXIBLE,
-                0,
-                NULL,
-                items,
-                count
-        );
-}
-
-T2Type
-t2_multi_item(T2Universe const *universe, T2Type type, usize index)
-{
-        T2Node const *node = get_node(universe, type);
-        if (node == NULL) {
-                return T2_TYPE_INVALID;
-        }
-
-        if (node->kind != T2_TYPE_MULTI) {
-                return (index == 0) ? type : universe->primitives[T2_TYPE_NIL];
-        }
-
-        return (index < node->arity)
-             ? node->children[index]
-             : universe->primitives[T2_TYPE_NIL];
-}
-
-static usize
-multi_arity(T2Node const *node)
-{
-        return (node->kind == T2_TYPE_MULTI) ? node->arity : 1;
-}
-
-static bool
-sentinel_kind(T2TypeKind kind)
-{
-        return (kind == T2_TYPE_NEVER)
-            || (kind == T2_TYPE_UNKNOWN)
-            || (kind == T2_TYPE_DYNAMIC)
-            || (kind == T2_TYPE_ANY)
-            || (kind == T2_TYPE_ERROR);
-}
-
 static bool
 row_tail_valid(T2Universe const *universe, T2Type tail)
 {
@@ -3233,8 +3163,6 @@ rebuild_type(
                         (node->payload & T2_RANGE_UPPER_INCLUSIVE) != 0
                 );
         }
-        case T2_TYPE_MULTI:
-                return t2_multi(universe, children, node->arity);
         case T2_TYPE_PACK:
                 return t2_pack(
                         universe,
@@ -3320,7 +3248,6 @@ guarded_occurrences(
                         || (node->kind == T2_TYPE_FUNCTION)
                         || (node->kind == T2_TYPE_TUPLE)
                         || (node->kind == T2_TYPE_VARIADIC_TUPLE)
-                        || (node->kind == T2_TYPE_MULTI)
                         || (node->kind == T2_TYPE_RECORD)
                         || (node->kind == T2_TYPE_PACK)
                         || (node->kind == T2_TYPE_PACK_EXPANSION);
@@ -5084,29 +5011,6 @@ subtype_compute(
                                 progress + 1
                         )
                 );
-        }
-
-        if (a->kind == T2_TYPE_MULTI || b->kind == T2_TYPE_MULTI) {
-                usize count = (multi_arity(a) > multi_arity(b))
-                            ? multi_arity(a)
-                            : multi_arity(b);
-                T2Relation relation = T2_RELATION_YES;
-                for (usize i = 0; i < count; ++i) {
-                        relation = combine_all(
-                                relation,
-                                subtype_relation(
-                                        context,
-                                        t2_multi_item(universe, subtype, i),
-                                        t2_multi_item(universe, supertype, i),
-                                        progress + 1
-                                )
-                        );
-                        if (relation == T2_RELATION_NO) {
-                                break;
-                        }
-                }
-
-                return relation;
         }
 
         if (a->kind == T2_TYPE_TUPLE && b->kind == T2_TYPE_TUPLE) {
@@ -7341,14 +7245,6 @@ doc_type(T2Printer *printer, T2Type type, unsigned depth)
                 }
                 end_list(printer, T2_TOKEN_STRUCTURE, ")");
                 break;
-        case T2_TYPE_MULTI:
-                begin_list(printer, T2_TOKEN_STRUCTURE, "|");
-                for (usize i = 0; i < node->arity; ++i) {
-                        list_separator(printer, i);
-                        doc_type(printer, node->children[i], depth);
-                }
-                end_list(printer, T2_TOKEN_STRUCTURE, "|");
-                break;
         case T2_TYPE_VARIADIC_TUPLE:
         {
                 usize prefix = (usize)node->payload;
@@ -8890,8 +8786,6 @@ runtime_facts_x(T2Universe const *universe, T2Type type, unsigned depth)
         case T2_TYPE_VARIADIC_TUPLE:
                 exact.kind = T2_RUNTIME_TUPLE;
                 return exact;
-        case T2_TYPE_MULTI:
-                return runtime_facts_x(universe, node->children[0], depth + 1);
         case T2_TYPE_RECORD:
                 exact.kind = T2_RUNTIME_RECORD;
                 return exact;
@@ -11919,34 +11813,6 @@ constrain_internal(
                                 )
                         );
                         if (solver->failed) {
-                                return T2_RELATION_NO;
-                        }
-                }
-
-                return result;
-        }
-
-        if (
-                ((a->kind == T2_TYPE_MULTI) || (b->kind == T2_TYPE_MULTI))
-             && !sentinel_kind(a->kind)
-             && !sentinel_kind(b->kind)
-        ) {
-                usize count = (multi_arity(a) > multi_arity(b))
-                            ? multi_arity(a)
-                            : multi_arity(b);
-                T2Relation result = T2_RELATION_YES;
-                for (usize i = 0; i < count; ++i) {
-                        result = combine_all(
-                                result,
-                                constrain_internal(
-                                        solver,
-                                        t2_multi_item(solver->universe, subtype, i),
-                                        t2_multi_item(solver->universe, supertype, i),
-                                        provenance,
-                                        retain_deferred
-                                )
-                        );
-                        if (solver->failed || result == T2_RELATION_NO) {
                                 return T2_RELATION_NO;
                         }
                 }

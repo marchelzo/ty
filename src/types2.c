@@ -371,7 +371,6 @@ struct t2_checker {
         int               member_class_id;
         T2Type            member_receiver;
         int               default_dict_class;
-        Expr const       *multi_value_site;
         Expr const       *hint_site;
         T2Type            hint_type;
         Expr const       *lambda_hint_site;
@@ -4007,7 +4006,6 @@ lower_type(T2Checker *checker, Expr const *source)
                 );
                 break;
         case EXPRESSION_TYPE_UNION:
-        case EXPRESSION_LIST:
         {
                 usize count = vN(expression->es);
                 T2Type *types = xtA(*types, count);
@@ -4026,18 +4024,28 @@ lower_type(T2Checker *checker, Expr const *source)
                                 "pack-placement",
                                 T2_TYPE_INVALID,
                                 T2_TYPE_INVALID,
-                                "a type pack cannot be a union arm or a multiple-value item"
+                                "a type pack cannot be a union arm"
                         );
                         result = t2_primitive(checker->universe, T2_TYPE_ERROR);
                         ty_free(types);
                         break;
                 }
-                result = (expression->type == EXPRESSION_TYPE_UNION)
-                       ? t2_union(checker->universe, types, count)
-                       : t2_multi(checker->universe, types, count);
+                result = t2_union(checker->universe, types, count);
                 ty_free(types);
                 break;
         }
+        case EXPRESSION_LIST:
+                add_diagnostic(
+                        checker,
+                        expression,
+                        T2_DIAGNOSTIC_ERROR,
+                        "multi-value-type",
+                        T2_TYPE_INVALID,
+                        T2_TYPE_INVALID,
+                        "multiple-value types are not supported; use a tuple type"
+                );
+                result = t2_primitive(checker->universe, T2_TYPE_ERROR);
+                break;
         case EXPRESSION_BIT_OR:
         case EXPRESSION_BIT_AND:
         {
@@ -4633,69 +4641,6 @@ is_dynamic_type(T2Checker *checker, T2Type type)
                 resolved_type_head(checker, type, T2_PREFER_LOWER_BOUND)
         );
         return (kind == T2_TYPE_DYNAMIC) || (kind == T2_TYPE_ANY);
-}
-
-static T2Type
-multi_value_item(T2Checker *checker, T2Type value, usize index)
-{
-        T2Type head = resolved_type_head(checker, value, T2_PREFER_LOWER_BOUND);
-        switch (t2_type_kind(checker->universe, head)) {
-        case T2_TYPE_MULTI:
-                return t2_multi_item(checker->universe, head, index);
-        case T2_TYPE_UNION:
-        {
-                T2Type result = t2_primitive(checker->universe, T2_TYPE_NEVER);
-                for (usize i = 0; i < t2_type_arity(checker->universe, head); ++i) {
-                        result = t2_join(
-                                checker->universe,
-                                result,
-                                multi_value_item(
-                                        checker,
-                                        t2_type_child(checker->universe, head, i),
-                                        index
-                                )
-                        );
-                }
-                return result;
-        }
-        case T2_TYPE_DYNAMIC:
-        case T2_TYPE_UNKNOWN:
-        case T2_TYPE_ERROR:
-                return head;
-        default:
-                return (index == 0)
-                     ? value
-                     : t2_primitive(checker->universe, T2_TYPE_NIL);
-        }
-}
-
-static bool
-union_has_multi_arm(T2Checker *checker, T2Type type)
-{
-        for (usize i = 0; i < t2_type_arity(checker->universe, type); ++i) {
-                T2Type arm = t2_type_child(checker->universe, type, i);
-                if (t2_type_kind(checker->universe, arm) == T2_TYPE_MULTI) {
-                        return true;
-                }
-        }
-
-        return false;
-}
-
-static T2Type
-collapse_multi_values(T2Checker *checker, T2Type value)
-{
-        T2Type head = resolved_type_head(checker, value, T2_PREFER_LOWER_BOUND);
-        switch (t2_type_kind(checker->universe, head)) {
-        case T2_TYPE_MULTI:
-                return t2_multi_item(checker->universe, head, 0);
-        case T2_TYPE_UNION:
-                return union_has_multi_arm(checker, head)
-                     ? multi_value_item(checker, head, 0)
-                     : value;
-        default:
-                return value;
-        }
 }
 
 static T2Type
@@ -7177,13 +7122,11 @@ relax_literal(T2Checker *checker, T2Type type)
                 return t2_primitive(checker->universe, T2_TYPE_STRING);
         case T2_TYPE_LITERAL_BOOL:
                 return t2_primitive(checker->universe, T2_TYPE_BOOL);
-        case T2_TYPE_MULTI:
         case T2_TYPE_TUPLE:
         {
-                T2TypeKind kind = t2_type_kind(checker->universe, type);
-                usize count     = t2_type_arity(checker->universe, type);
+                usize count   = t2_type_arity(checker->universe, type);
                 T2Type *items = xtA(*items, count);
-                bool changed = false;
+                bool changed  = false;
                 for (usize i = 0; i < count; ++i) {
                         T2Type item = t2_type_child(checker->universe, type, i);
                         items[i] = relax_literal(checker, item);
@@ -7191,8 +7134,6 @@ relax_literal(T2Checker *checker, T2Type type)
                 }
                 T2Type result = !changed
                               ? type
-                              : (kind == T2_TYPE_MULTI)
-                              ? t2_multi(checker->universe, items, count)
                               : t2_tuple(checker->universe, items, count);
                 ty_free(items);
                 return result;
@@ -7242,14 +7183,6 @@ static T2Flow
 infer_statement_once(T2Checker *checker, Stmt const *statement);
 
 static bool
-is_call_expression(Expr const *expression)
-{
-        return (expression->type == EXPRESSION_FUNCTION_CALL)
-            || (expression->type == EXPRESSION_METHOD_CALL)
-            || (expression->type == EXPRESSION_DYN_METHOD_CALL);
-}
-
-static bool
 is_value_list_target(Expr const *target)
 {
         return (target != NULL)
@@ -7258,64 +7191,50 @@ is_value_list_target(Expr const *target)
 }
 
 static T2Type
-infer_value_list(T2Checker *checker, Expr const *source)
+infer_list_items(
+        T2Checker  *checker,
+        Expr const *list,
+        T2Type     *items,
+        usize       count
+)
 {
-        Expr const *expression = (source == NULL) ? NULL : unfurl(source);
-        if (
-                (expression == NULL)
-             || !(
-                         is_call_expression(expression)
-                      || (expression->type == EXPRESSION_LIST)
-                 )
-        ) {
-                return infer_expression(checker, source);
-        }
+        T2Type first = t2_primitive(checker->universe, T2_TYPE_NIL);
 
-        Expr const *previous = checker->multi_value_site;
-        checker->multi_value_site = expression;
-        T2Type result = infer_expression(checker, source);
-        checker->multi_value_site = previous;
-
-        return result;
-}
-
-static T2Type
-infer_value_list_items(T2Checker *checker, ExprVec const *items)
-{
-        usize count = vN(*items);
-        T2Type *values = xtA(*values, count);
-
-        usize total = 0;
-        for (usize i = 0; i < count; ++i) {
-                values[i] = infer_value_list(checker, v__(*items, (int)i));
-                total += (t2_type_kind(checker->universe, values[i]) == T2_TYPE_MULTI)
-                       ? t2_type_arity(checker->universe, values[i])
-                       : 1;
-        }
-
-        T2Type *spliced = xtA(*spliced, total);
-
-        usize n = 0;
-        for (usize i = 0; i < count; ++i) {
-                if (t2_type_kind(checker->universe, values[i]) == T2_TYPE_MULTI) {
-                        usize arity = t2_type_arity(checker->universe, values[i]);
-                        for (usize j = 0; j < arity; ++j) {
-                                spliced[n++] = t2_type_child(
-                                        checker->universe,
-                                        values[i],
-                                        j
-                                );
-                        }
-                } else {
-                        spliced[n++] = values[i];
+        for (usize i = 0; i < vN(list->es); ++i) {
+                T2Type item = infer_expression(checker, v__(list->es, (int)i));
+                if (i == 0) {
+                        first = item;
+                }
+                if (i < count) {
+                        items[i] = item;
                 }
         }
 
-        T2Type result = t2_multi(checker->universe, spliced, n);
-        ty_free(spliced);
-        ty_free(values);
+        return first;
+}
 
-        return result;
+static T2Type *
+infer_value_list(T2Checker *checker, Expr const *source, usize count)
+{
+        Expr const *expression = (source == NULL) ? NULL : unfurl(source);
+        T2Type nil             = t2_primitive(checker->universe, T2_TYPE_NIL);
+        T2Type *items          = xtA(*items, count);
+
+        for (usize i = 0; i < count; ++i) {
+                items[i] = nil;
+        }
+
+        if ((expression != NULL) && (expression->type == EXPRESSION_LIST)) {
+                set_node_type(
+                        checker,
+                        expression,
+                        infer_list_items(checker, expression, items, count)
+                );
+        } else if (count != 0) {
+                items[0] = infer_expression(checker, source);
+        }
+
+        return items;
 }
 
 static T2Type
@@ -7632,17 +7551,6 @@ tail_statement(Stmt const *body)
         }
 
         return body;
-}
-
-static Expr const *
-tail_value_expression(Stmt const *body)
-{
-        Stmt const *tail = tail_statement(body);
-        if (tail == NULL || tail->type != STATEMENT_EXPRESSION) {
-                return NULL;
-        }
-
-        return (tail->expression == NULL) ? NULL : unfurl(tail->expression);
 }
 
 static Expr const *
@@ -13970,15 +13878,12 @@ contextual_fresh_literal_x(
                 for (int i = 0; i < vN(expression->elements); ++i) {
                         Expr const *item = v__(expression->elements, i);
                         if (item != NULL && item->type == EXPRESSION_SPREAD) {
-                                T2Type element = collapse_multi_values(
+                                T2Type element = iterated_type_x(
                                         checker,
-                                        iterated_type_x(
-                                                checker,
-                                                infer_expression(checker, item),
-                                                item,
-                                                false,
-                                                0
-                                        )
+                                        infer_expression(checker, item),
+                                        item,
+                                        false,
+                                        0
                                 );
                                 if (
                                         (element == T2_TYPE_INVALID)
@@ -14209,26 +14114,40 @@ assign_list_items(
 
 static bool
 assign_value_list(
+        T2Checker    *checker,
+        Expr const   *target,
+        T2Type const *items,
+        bool          declaration
+)
+{
+        bool valid = assign_list_items(checker, target, items, declaration);
+        set_node_type(
+                checker,
+                target,
+                valid ? items[0] : t2_primitive(checker->universe, T2_TYPE_ERROR)
+        );
+
+        return valid;
+}
+
+static bool
+assign_single_value_list(
         T2Checker  *checker,
         Expr const *target,
         T2Type      value,
         bool        declaration
 )
 {
-        usize count = vN(target->es);
+        usize count   = vN(target->es);
+        T2Type nil    = t2_primitive(checker->universe, T2_TYPE_NIL);
         T2Type *items = xtA(*items, count);
 
         for (usize i = 0; i < count; ++i) {
-                items[i] = multi_value_item(checker, value, i);
+                items[i] = (i == 0) ? value : nil;
         }
 
-        bool valid = assign_list_items(checker, target, items, declaration);
+        bool valid = assign_value_list(checker, target, items, declaration);
         ty_free(items);
-        set_node_type(
-                checker,
-                target,
-                valid ? value : t2_primitive(checker->universe, T2_TYPE_ERROR)
-        );
 
         return valid;
 }
@@ -14489,6 +14408,9 @@ path_refinement_binding(T2Checker *checker, Expr const *path);
 static T2Type
 without_nil(T2Checker *checker, T2Type type);
 
+static T2Type
+binding_without_nil(T2Checker *checker, T2Type type);
+
 static bool
 assign_lvalue_x(
         T2Checker  *checker,
@@ -14513,7 +14435,7 @@ assign_lvalue_x(
         {
                 bool valid = true;
                 if (target->type == EXPRESSION_MATCH_NOT_NIL) {
-                        T2Type narrowed = without_nil(checker, value);
+                        T2Type narrowed = binding_without_nil(checker, value);
                         if (checker->refutable_pattern_depth == 0) {
                                 valid = constrain_type(
                                         checker,
@@ -14723,7 +14645,7 @@ assign_lvalue_x(
                         return valid;
                 }
                 if (target->type == EXPRESSION_LIST) {
-                        return assign_value_list(checker, target, value, declaration);
+                        return assign_single_value_list(checker, target, value, declaration);
                 }
                 T2Type recovered = resolved_type_head(
                         checker,
@@ -15072,6 +14994,30 @@ without_nil(T2Checker *checker, T2Type type)
                 T2Type arm = t2_type_child(checker->universe, type, i);
                 if (t2_type_kind(checker->universe, arm) != T2_TYPE_NIL) {
                         result = t2_join(checker->universe, result, arm);
+                }
+        }
+
+        return result;
+}
+
+static T2Type
+binding_without_nil(T2Checker *checker, T2Type type)
+{
+        T2Type head = resolved_type_head(checker, type, T2_PREFER_KNOWN_VALUE);
+
+        if (t2_type_kind(checker->universe, head) != T2_TYPE_UNION) {
+                return without_nil(checker, type);
+        }
+
+        T2Type result = t2_primitive(checker->universe, T2_TYPE_NEVER);
+        for (usize i = 0; i < t2_type_arity(checker->universe, head); ++i) {
+                T2Type arm = t2_type_child(checker->universe, head, i);
+                if (t2_type_kind(checker->universe, arm) != T2_TYPE_NIL) {
+                        result = t2_join(
+                                checker->universe,
+                                result,
+                                without_nil(checker, arm)
+                        );
                 }
         }
 
@@ -16646,6 +16592,23 @@ named_binary_operation(char const *name)
 
 static T2Type
 infer_function_expression(T2Checker *checker, Expr const *function);
+
+static T2Type
+generator_step_type(T2Checker *checker, T2Type element)
+{
+        return t2_union(
+                checker->universe,
+                (T2Type[]) {
+                        t2_tag_instance(checker->ty, TAG_SOME, element),
+                        t2_tag_instance(
+                                checker->ty,
+                                TAG_NONE,
+                                t2_primitive(checker->universe, T2_TYPE_NEVER)
+                        )
+                },
+                2
+        );
+}
 
 static void
 promote_generator_frame(
@@ -18813,7 +18776,7 @@ infer_expression(T2Checker *checker, Expr const *source)
                                ? infer_record_literal(checker, expression)
                                : infer_mixed_tuple(checker, expression);
                 } else if (expression->type == EXPRESSION_LIST) {
-                        result = infer_value_list_items(checker, &expression->es);
+                        result = infer_list_items(checker, expression, NULL, 0);
                 } else {
                         T2Type *items = xtA(*items, count);
                         for (usize i = 0; i < count; ++i) {
@@ -19603,9 +19566,10 @@ infer_expression(T2Checker *checker, Expr const *source)
         case EXPRESSION_MAYBE_EQ:
         {
                 T2SolverMark assignment = t2_solver_mark(checker->solver);
-                T2Type expected = fresh_literal_expression(expression->value)
-                                ? assignment_expected_type(checker, expression->target)
-                                : T2_TYPE_INVALID;
+                bool list_target = is_value_list_target(expression->target);
+                T2Type expected  = (!list_target && fresh_literal_expression(expression->value))
+                                 ? assignment_expected_type(checker, expression->target)
+                                 : T2_TYPE_INVALID;
                 T2Type value = T2_TYPE_INVALID;
                 if (expected != T2_TYPE_INVALID) {
                         T2SolverMark contextual = t2_solver_mark(checker->solver);
@@ -19620,12 +19584,22 @@ infer_expression(T2Checker *checker, Expr const *source)
                                 t2_solver_rollback(checker->solver, contextual);
                         }
                 }
-                if (value == T2_TYPE_INVALID) {
-                        value = is_value_list_target(expression->target)
-                              ? infer_value_list(checker, expression->value)
-                              : infer_expression(checker, expression->value);
+                bool valid;
+                if (list_target) {
+                        T2Type *items = infer_value_list(
+                                checker,
+                                expression->value,
+                                vN(expression->target->es)
+                        );
+                        value = items[0];
+                        valid = assign_value_list(checker, expression->target, items, false);
+                        ty_free(items);
+                } else {
+                        if (value == T2_TYPE_INVALID) {
+                                value = infer_expression(checker, expression->value);
+                        }
+                        valid = assign_lvalue(checker, expression->target, value, false);
                 }
-                bool valid = assign_lvalue(checker, expression->target, value, false);
                 if (
                         !valid
                      && !t2_solver_cancel_obligations_since(
@@ -20135,13 +20109,6 @@ infer_expression(T2Checker *checker, Expr const *source)
                 result = t2_primitive(checker->universe, T2_TYPE_ERROR);
         }
 
-        if (
-                (is_call_expression(expression) || (expression->type == EXPRESSION_LIST))
-             && (checker->multi_value_site != expression)
-        ) {
-                result = collapse_multi_values(checker, result);
-        }
-
         if (expression->bang) {
                 result = without_nil(checker, result);
         }
@@ -20616,34 +20583,6 @@ push_function_frame(T2Checker *checker, T2FunctionFrame frame)
 }
 
 static T2Type
-function_return_values(T2Checker *checker, ExprVec const *returns)
-{
-        usize count = vN(*returns);
-        if (count == 0) {
-                return t2_primitive(checker->universe, T2_TYPE_NIL);
-        }
-
-        if (count == 1) {
-                return infer_value_list(checker, v__(*returns, 0));
-        }
-
-        return infer_value_list_items(checker, returns);
-}
-
-static T2Type
-indexed_iteration_values(T2Checker *checker, T2Type element)
-{
-        return t2_multi(
-                checker->universe,
-                (T2Type[]) {
-                        element,
-                        t2_primitive(checker->universe, T2_TYPE_INT)
-                },
-                2
-        );
-}
-
-static T2Type
 iterated_type_x(
         T2Checker  *checker,
         T2Type      source,
@@ -20720,22 +20659,16 @@ iterated_type_x(
                      || (nominal->class_id == CLASS_ITERABLE)
                      || (nominal->class_id == CLASS_ITER)
                 ) {
-                        return indexed_iteration_values(
-                                checker,
-                                t2_type_child(checker->universe, source, 0)
-                        );
+                        return t2_type_child(checker->universe, source, 0);
                 }
                 if (dict_nominal(checker, nominal)) {
-                        return indexed_iteration_values(
-                                checker,
-                                t2_tuple(
-                                        checker->universe,
-                                        (T2Type[]) {
-                                                t2_type_child(checker->universe, source, 0),
-                                                t2_type_child(checker->universe, source, 1)
-                                        },
-                                        2
-                                )
+                        return t2_tuple(
+                                checker->universe,
+                                (T2Type[]) {
+                                        t2_type_child(checker->universe, source, 0),
+                                        t2_type_child(checker->universe, source, 1)
+                                },
+                                2
                         );
                 }
                 if (nominal->class_id == CLASS_GENERATOR) {
@@ -20761,18 +20694,12 @@ iterated_type_x(
                                 }
                                 return t2_primitive(checker->universe, T2_TYPE_ERROR);
                         }
-                        return indexed_iteration_values(
-                                checker,
-                                t2_type_child(checker->universe, source, 0)
-                        );
+                        return t2_type_child(checker->universe, source, 0);
                 }
         }
 
         if (kind == T2_TYPE_STRING || kind == T2_TYPE_LITERAL_STRING) {
-                return indexed_iteration_values(
-                        checker,
-                        t2_primitive(checker->universe, T2_TYPE_STRING)
-                );
+                return t2_primitive(checker->universe, T2_TYPE_STRING);
         }
 
         if (kind == T2_TYPE_TUPLE) {
@@ -20784,7 +20711,7 @@ iterated_type_x(
                                 t2_type_child(checker->universe, source, i)
                         );
                 }
-                return indexed_iteration_values(checker, result);
+                return result;
         }
 
         if (kind == T2_TYPE_VARIADIC_TUPLE) {
@@ -20797,15 +20724,12 @@ iterated_type_x(
                                 t2_type_child(checker->universe, source, i)
                         );
                 }
-                return indexed_iteration_values(
-                        checker,
-                        t2_join(
+                return t2_join(
+                        checker->universe,
+                        result,
+                        t2_pack_fold_union(
                                 checker->universe,
-                                result,
-                                t2_pack_fold_union(
-                                        checker->universe,
-                                        t2_type_child(checker->universe, source, prefix)
-                                )
+                                t2_type_child(checker->universe, source, prefix)
                         )
                 );
         }
@@ -20912,18 +20836,9 @@ iterated_type_x(
 }
 
 static T2Type
-iterated_values(T2Checker *checker, T2Type source, Expr const *site)
-{
-        return iterated_type_x(checker, source, site, true, 0);
-}
-
-static T2Type
 iterated_type(T2Checker *checker, T2Type source, Expr const *site)
 {
-        return collapse_multi_values(
-                checker,
-                iterated_values(checker, source, site)
-        );
+        return iterated_type_x(checker, source, site, true, 0);
 }
 
 static T2Type
@@ -20934,17 +20849,25 @@ assign_iteration_target(
         Expr const *site
 )
 {
-        T2Type values = iterated_values(checker, collection, site);
+        T2Type element = iterated_type(checker, collection, site);
         if (target == NULL) {
-                return collapse_multi_values(checker, values);
+                return element;
         }
 
         if (is_value_list_target(target)) {
-                (void)assign_value_list(checker, target, values, true);
-                return values;
+                usize count   = vN(target->es);
+                T2Type nil    = t2_primitive(checker->universe, T2_TYPE_NIL);
+                T2Type *items = xtA(*items, count);
+                for (usize i = 0; i < count; ++i) {
+                        items[i] = nil;
+                }
+                items[0] = element;
+                items[1] = t2_primitive(checker->universe, T2_TYPE_INT);
+                (void)assign_value_list(checker, target, items, true);
+                ty_free(items);
+                return element;
         }
 
-        T2Type element = collapse_multi_values(checker, values);
         (void)assign_lvalue(checker, target, element, true);
 
         return element;
@@ -24190,10 +24113,8 @@ infer_single_function(T2Checker *checker, Expr const *function)
 
         scan_function_assignments(checker, function);
 
-        Expr const *outer_multi_value_site = checker->multi_value_site;
-        Expr const *outer_hint_site        = checker->hint_site;
-        T2Type outer_hint_type             = checker->hint_type;
-        checker->multi_value_site = tail_value_expression(function->body);
+        Expr const *outer_hint_site = checker->hint_site;
+        T2Type outer_hint_type      = checker->hint_type;
         bool declared_result = !generator
                             && (
                                        (function->return_type != NULL)
@@ -24224,9 +24145,8 @@ infer_single_function(T2Checker *checker, Expr const *function)
         }
 
         ty_free(outer_refinements);
-        checker->multi_value_site = outer_multi_value_site;
-        checker->hint_site        = outer_hint_site;
-        checker->hint_type        = outer_hint_type;
+        checker->hint_site = outer_hint_site;
+        checker->hint_type = outer_hint_type;
         T2FunctionFrame frame = v__(checker->functions, --vN(checker->functions));
         vN(checker->writes) = frame.assigned_start;
         if (
@@ -26588,17 +26508,35 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
                 bool generalizes = !declared_mutable
                                 && is_named_binding_target(statement->target);
                 checker->level += generalizes;
-                T2Type value = is_value_list_target(statement->target)
-                             ? infer_value_list(checker, statement->value)
-                             : infer_expression_with_hint(
-                                     checker,
-                                     statement->value,
-                                     contextual
-                               )
-                ;
+                usize list_count = is_value_list_target(statement->target)
+                                 ? vN(statement->target->es)
+                                 : 0;
+                T2Type *items    = NULL;
+                T2Type value;
+                if (list_count != 0) {
+                        items = infer_value_list(checker, statement->value, list_count);
+                        value = items[0];
+                } else {
+                        value = infer_expression_with_hint(
+                                checker,
+                                statement->value,
+                                contextual
+                        );
+                }
                 checker->level -= generalizes;
-                T2Type stored = declared_mutable ? relax_literal(checker, value) : value;
-                bool valid    = assign_lvalue(checker, statement->target, stored, true);
+                bool valid;
+                if (items != NULL) {
+                        if (declared_mutable) {
+                                for (usize i = 0; i < list_count; ++i) {
+                                        items[i] = relax_literal(checker, items[i]);
+                                }
+                        }
+                        valid = assign_value_list(checker, statement->target, items, true);
+                        ty_free(items);
+                } else {
+                        T2Type stored = declared_mutable ? relax_literal(checker, value) : value;
+                        valid = assign_lvalue(checker, statement->target, stored, true);
+                }
                 if (
                         valid
                      && is_named_binding_target(statement->target)
@@ -26852,16 +26790,18 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
                 T2Type declared = (returning != NULL)
                                && !returning->inferred_result
                                && !generator_return
-                               && (vN(statement->returns) == 1)
+                               && (statement->ret != NULL)
                                 ? returning->result
                                 : T2_TYPE_INVALID;
                 Expr const *previous_hint_site = checker->hint_site;
                 T2Type previous_hint_type      = checker->hint_type;
                 if (declared != T2_TYPE_INVALID) {
-                        checker->hint_site = unfurl(v__(statement->returns, 0));
+                        checker->hint_site = unfurl(statement->ret);
                         checker->hint_type = declared;
                 }
-                T2Type value = function_return_values(checker, &statement->returns);
+                T2Type value = (statement->ret == NULL)
+                             ? t2_primitive(checker->universe, T2_TYPE_NIL)
+                             : infer_expression(checker, statement->ret);
                 checker->hint_site = previous_hint_site;
                 checker->hint_type = previous_hint_type;
                 if (vN(checker->functions) == 0) {
@@ -26898,6 +26838,16 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
                                         frame->result,
                                         "return-type",
                                         "the returned value does not match the declared result type"
+                                );
+                        } else if (statement->ret != NULL) {
+                                promote_generator_frame(checker, frame, statement->ret);
+                                (void)constrain_type(
+                                        checker,
+                                        (Expr const *)statement,
+                                        value,
+                                        generator_step_type(checker, frame->yields),
+                                        "generator-return-type",
+                                        "a generator can only return Some(value) or None"
                                 );
                         }
                 }
@@ -29805,7 +29755,7 @@ report_diagnostics(T2Checker *checker, usize errors, usize warnings)
 
 enum {
         T2_CACHE_MAGIC   = UINT32_C(0x32545954),
-        T2_CACHE_VERSION = 15,
+        T2_CACHE_VERSION = 16,
         T2_CACHE_NONE    = UINT32_MAX
 };
 
@@ -33867,16 +33817,13 @@ relaxed_type(T2Universe *universe, T2Type type, unsigned depth)
         }
 
         case T2_TYPE_TUPLE:
-        case T2_TYPE_MULTI:
         {
                 usize count = t2_type_arity(universe, type);
                 T2Type *items = xtA(*items, count);
                 for (usize i = 0; i < count; ++i) {
                         items[i] = relaxed_type(universe, t2_type_child(universe, type, i), depth + 1);
                 }
-                T2Type result = (t2_type_kind(universe, type) == T2_TYPE_MULTI)
-                              ? t2_multi(universe, items, count)
-                              : t2_tuple(universe, items, count);
+                T2Type result = t2_tuple(universe, items, count);
                 ty_free(items);
                 return (result == T2_TYPE_INVALID) ? type : result;
         }

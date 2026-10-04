@@ -1,0 +1,135 @@
+ns test
+
+pub fn c-style-headers() {
+    let out = []
+
+    for let i = 0; i < 2; i += 1 {
+        out.push(i)
+    }
+
+    for (let i = 2; i < 4; i += 1) {
+        out.push(i)
+    }
+
+    let j = 0
+    for j = 4; j < 6; j += 1 {
+        out.push(j)
+    }
+
+    for (j = 6; j < 8; j += 1) {
+        out.push(j)
+    }
+
+    let k = 8
+    for (; k < 10; k += 1) {
+        out.push(k)
+    }
+
+    let x = 0
+    let n = 0
+    for x; n in [0]; n += 1 {
+        out.push(10)
+    }
+
+    assert(out == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+}
+
+pub fn paren-each-headers() {
+    let xs = [1, 2]
+    let out = []
+
+    for (a, b) in [(1, 2)] {
+        out.push(a + b)
+    }
+
+    for (xs ?? []) {
+        out.push(it)
+    }
+
+    for (xs).map(\_ * 10) {
+        out.push(it)
+    }
+
+    assert(out == [3, 1, 2, 10, 20])
+}
+
+pub fn semicolon-index() {
+    let out = []
+
+    for x; i in ['a', 'b'] {
+        out.push((x, i))
+    }
+
+    for x; i in [10, 20, 30] if x > 10 {
+        out.push((x, i))
+    }
+
+    for k, v; i in %{'k': 'v'} {
+        out.push((k, v, i))
+    }
+
+    for (a, b); i in [(1, 2)] {
+        out.push((a, b, i))
+    }
+
+    assert(out == [('a', 0), ('b', 1), (20, 1), (30, 2), ('k', 'v', 0), (1, 2, 0)])
+}
+
+pub fn semicolon-index-comprehensions() {
+    assert([(x, i) for x; i in [10, 20]] == [(10, 0), (20, 1)])
+    assert([(k, v, i) for k, v; i in %{'a': 1}] == [('a', 1, 0)])
+    assert(%{x: i for x; i in ['a', 'b']}.list() == [('a', 0), ('b', 1)])
+    assert((x * i for x; i in [1, 2, 3]).list() == [0, 2, 6])
+}
+
+pub fn comma-targets-destructure() {
+    let d = %{'a': 1, 'b': 2, 'c': 3}
+    let out = []
+
+    for a, b in [(1, 2), (3, 4)] {
+        out.push(a + b)
+    }
+
+    for k, v in d.take(2) {
+        out.push((k, v))
+    }
+
+    for k, v; i in d.take(2) {
+        out.push((k, v, i))
+    }
+
+    for p in d.take(1) {
+        out.push(p)
+    }
+
+    assert(out == [3, 7, ('a', 1), ('b', 2), ('a', 1, 0), ('b', 2, 1), ('a', 1)])
+    assert([*d] == [('a', 1), ('b', 2), ('c', 3)])
+    assert([x for x in d] == d.list())
+    assert([k for k, _ in d] == ['a', 'b', 'c'])
+}
+
+fn multi*() {
+    yield 1, 2
+    yield 3, *[4, 5], 6
+}
+
+fn last-send*() {
+    let r = yield 'a', 'b'
+    yield r
+}
+
+pub fn multi-value-yield() {
+    let out = []
+
+    for x; i in multi() {
+        out.push((x, i))
+    }
+
+    assert(out == [(1, 0), (2, 1), (3, 2), (4, 3), (5, 4), (6, 5)])
+    assert(multi().take(3).list() == [1, 2, 3])
+
+    let g = last-send()
+    assert(g() == Some('a'))
+    assert(g('x') == Some('b'))
+    assert(g('y') == Some('y'))
+}

@@ -216,6 +216,22 @@ ErrorResult(Ty *ty, Value const *exc)
 }
 
 static Value
+BadRequest(Ty *ty, char const *why)
+{
+        return vTn("error", xSz(why));
+}
+
+static Value *
+ReqField(Value const *req, char const *name, u32 type)
+{
+        if (req->type != VALUE_TUPLE) {
+                return NULL;
+        }
+
+        return tget_t(req, (uptr)name, type);
+}
+
+static Value
 DiagnosticsResult(Ty *ty)
 {
         if (vN(ty->diags) == 0) {
@@ -265,7 +281,11 @@ main(int argc, char *argv[])
 
                 LSLOG("%s", SHOW(&req, ABBREV));
 
-                i32 what = tget_nn(&req, "what")->z;
+                Value *what_field = ReqField(&req, "what", VALUE_INTEGER);
+                Value *file_field = ReqField(&req, "file", VALUE_STRING);
+
+                Value *line_field;
+                Value *col_field;
 
                 i32 line;
                 i32 col;
@@ -279,6 +299,16 @@ main(int argc, char *argv[])
                 Value v;
                 Value result = NIL;
 
+                if (what_field == NULL || file_field == NULL) {
+                        result = BadRequest(
+                                ty,
+                                "request must be an object with an integer `what` and a string `file`"
+                        );
+                        goto NextRequest;
+                }
+
+                i32 what = what_field->z;
+
                 if (TY_CATCH_ERROR()) {
                         Value exc = TY_CATCH_FAIL();
                         result = ErrorResult(ty, &exc);
@@ -286,7 +316,7 @@ main(int argc, char *argv[])
                         goto NextRequest;
                 }
 
-                file = TY_C_STR(*tget_nn(&req, "file"));
+                file = TY_C_STR(*file_field);
                 mod  = GetModuleByPath(ty, file);
 
                 switch (what) {
@@ -390,8 +420,16 @@ main(int argc, char *argv[])
                         break;
 
                 case LS_DEFINITION:
-                        line = tget_nn(&req, "line")->z;
-                        col  = tget_nn(&req, "col")->z;
+                        line_field = ReqField(&req, "line", VALUE_INTEGER);
+                        col_field  = ReqField(&req, "col", VALUE_INTEGER);
+
+                        if (line_field == NULL || col_field == NULL) {
+                                result = BadRequest(ty, "request requires integer `line` and `col`");
+                                goto EndRequest;
+                        }
+
+                        line = line_field->z;
+                        col  = col_field->z;
 
                         if (mod == NULL) {
                                 goto EndRequest;
@@ -414,8 +452,16 @@ main(int argc, char *argv[])
                         break;
 
                 case LS_COMPLETION:
-                        line = tget_nn(&req, "line")->z;
-                        col  = tget_nn(&req, "col")->z;
+                        line_field = ReqField(&req, "line", VALUE_INTEGER);
+                        col_field  = ReqField(&req, "col", VALUE_INTEGER);
+
+                        if (line_field == NULL || col_field == NULL) {
+                                result = BadRequest(ty, "request requires integer `line` and `col`");
+                                goto EndRequest;
+                        }
+
+                        line = line_field->z;
+                        col  = col_field->z;
 
                         if (mod == NULL) {
                                 goto EndRequest;
@@ -459,7 +505,7 @@ NextRequest:
                         fputs(vv(OutBuffer), stdout);
                         fflush(stdout);
                 } else {
-                        puts("{\"error\": \"json\"");
+                        puts("{\"error\": \"json\"}");
                         fflush(stdout);
                         LSLOG("err=%s\n", VSC(&result));
                 }

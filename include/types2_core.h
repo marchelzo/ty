@@ -71,7 +71,6 @@ typedef enum t2_type_kind {
         T2_TYPE_PACK_FOLD_UNION,
         T2_TYPE_PACK_FOLD_INTERSECTION,
         T2_TYPE_VARIADIC_TUPLE,
-        T2_TYPE_MULTI,
         T2_TYPE_RECURSIVE,
         T2_TYPE_RECURSIVE_VARIABLE,
         T2_TYPE_OVERLOAD,
@@ -445,12 +444,6 @@ t2_effectful_callable(
 
 T2Type
 t2_tuple(T2Universe *universe, T2Type const *items, usize count);
-
-T2Type
-t2_multi(T2Universe *universe, T2Type const *items, usize count);
-
-T2Type
-t2_multi_item(T2Universe const *universe, T2Type type, usize index);
 
 T2Type
 t2_record(

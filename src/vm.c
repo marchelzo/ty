@@ -194,7 +194,6 @@ static Value NILS[2048];
 #define CALLS         (ty->st->calls)
 #define DROP_STACK    (ty->st->to_drop)
 #define EXEC_DEPTH    (ty->st->exec_depth)
-#define RC            (ty->st->rc)
 #define FRAMES        (ty->st->frames)
 #define SP_STACK      (ty->st->sps)
 #define TARGETS       (ty->st->targets)
@@ -1498,7 +1497,6 @@ GetFreeCoState(Ty *ty)
                 v0(st->to_drop);
                 v0(st->gc_roots);
                 v0(st->try_stack);
-                st->rc = 0;
                 st->exec_depth = 0;
         } else {
                 st = alloc0(sizeof *st);
@@ -2851,13 +2849,6 @@ RaiseException(Ty *ty)
                 DebugOnThrow(ty);
         }
         DoThrow(ty);
-}
-
-inline static void
-TakeExtra(Ty *ty)
-{
-        vN(STACK) += RC;
-        RC = 0;
 }
 
 static void
@@ -5898,10 +5889,7 @@ Top:
                 } else {
                         top()[-2].off = PTRDIFF_MAX;
                 }
-                push(item->k);
-                push(item->v);
-                RC = 1;
-                pop();
+                push(PAIR(item->k, item->v));
                 break;
 
         case VALUE_FUNCTION:
@@ -5929,7 +5917,6 @@ Top:
                         --top()->i;
                         if (exec) {
                                 exec_fn(ty, vp, &v, 0, NULL);
-                                RC = 0;
                                 push(SENTINEL);
                                 goto Top;
                         } else {
@@ -5990,25 +5977,6 @@ NoIter:
         }
 }
 
-inline static void
-PackIterItem(Ty *ty)
-{
-        isize n;
-        Value *vp;
-
-        if (LIKELY(RC == 0)) {
-                return;
-        }
-
-        n = RC + 1;
-        TakeExtra(ty);
-
-        vp = mAo(n * sizeof (Value), GC_TUPLE);
-        memcpy(vp, topN(n), n * sizeof (Value));
-        STACK.count -= n;
-        push(TUPLE(vp, NULL, n));
-}
-
 static bool
 LoopCheck(Ty *ty, i32 z, char *jump)
 {
@@ -6025,7 +5993,6 @@ LoopCheck(Ty *ty, i32 z, char *jump)
                 return true;
         }
 
-        PackIterItem(ty);
         push(INTEGER(k));
 
         i32 i;
@@ -6057,7 +6024,6 @@ LoopCheck(Ty *ty, i32 z, char *jump)
 void
 vm_jit_loop_iter(Ty *ty)
 {
-        RC = 0;
         push(SENTINEL);
         IterGetNext(ty, true);
 }
@@ -6075,7 +6041,6 @@ vm_jit_loop_check(Ty *ty, int z)
                 return true;
         }
 
-        PackIterItem(ty);
         push(INTEGER(k));
 
         i32 i, j;
@@ -6641,8 +6606,6 @@ vm_exec(Ty *ty, char *code)
         LOG("vm_exec(): ==> %d", EXEC_DEPTH);
 
         CO_LOG("============== vm_exec() ==============", TERM(91;1), "%d", EXEC_DEPTH);
-
-        RC = 0;
 
         if (UNLIKELY(DeoptTryBase >= 0)) {
                 isize k = DeoptTryBase;
@@ -7766,7 +7729,6 @@ TargetMember:
                         break;
 
                 CASE(LOOP_ITER)
-                        RC = 0;
                         push(SENTINEL);
                         IterGetNext(ty, false);
                         break;
@@ -7812,7 +7774,6 @@ TargetMember:
 
                 CASE(READ_INDEX)
                         k = top()[-3].z - 1;
-                        TakeExtra(ty);
                         push(INTEGER(k));
                         break;
 
@@ -7836,14 +7797,6 @@ TargetMember:
                         } else {
                                 pop();
                         }
-                        break;
-
-                CASE(CLEAR_RC)
-                        RC = 0;
-                        break;
-
-                CASE(GET_EXTRA)
-                        TakeExtra(ty);
                         break;
 
                 CASE(FIX_EXTRA)
@@ -7886,39 +7839,6 @@ TargetMember:
                                 top()[-i] = top()[-n];
                                 top()[-n] = v;
                         }
-                        break;
-
-                CASE(MULTI_ASSIGN)
-                        print_stack(ty, 5);
-                        READVALUE(n);
-                        for (i = 0, vp = top(); pop().type != VALUE_SENTINEL; ++i) {
-                                ;
-                        }
-                        for (int j = vN(TARGETS) - n; n > 0; --n, poptarget()) {
-                                if (i > 0) {
-                                        *v_(TARGETS, j++)->t = vp[-(--i)];
-                                } else {
-                                        *v_(TARGETS, j++)->t = NIL;
-                                }
-                        }
-                        xpush(top()[2]);
-                        break;
-
-                CASE(MAYBE_MULTI)
-                        READVALUE(n);
-                        for (i = 0, vp = top(); pop().type != VALUE_SENTINEL; ++i) {
-                                ;
-                        }
-                        for (int j = vN(TARGETS) - n; n > 0; --n, poptarget(), ++j) {
-                                if (i > 0) {
-                                        if (v_(TARGETS, j)->t->type == VALUE_NIL) {
-                                                *v_(TARGETS, j)->t = vp[-(--i)];
-                                        }
-                                } else {
-                                        *v_(TARGETS, j)->t = NIL;
-                                }
-                        }
-                        xpush(top()[2]);
                         break;
 
                 CASE(JUMP_IF_SENTINEL)
@@ -8767,18 +8687,6 @@ BinaryOp:
                         if (top()->type != VALUE_NONE) {
                                 goto RETURN;
                         }
-                        break;
-
-                CASE(MULTI_RETURN)
-                        n = vvL(FRAMES)->fp;
-                        READVALUE(RC);
-                        STACK.count -= RC;
-                        for (int i = 0; i <= RC; ++i) {
-                                STACK.items[n + i] = top()[i];
-                        }
-                        vN(STACK) = n + 1;
-                        vXx(FRAMES);
-                        IP = vXx(CALLS);
                         break;
 
 RETURN:
@@ -10097,8 +10005,6 @@ Collect:
                 return pop();
         }
 
-        TakeExtra(ty);
-
         Value xs = ARRAY(vA());
         NOGC(xs.array);
         for (usize i = n; i < STACK.count; ++i) {
@@ -10402,7 +10308,7 @@ MarkStorage(Ty *ty)
 
         GCLOG("Marking stack");
         RESET_TOTAL_REACHED();
-        for (int i = 0; i < vN(STACK) + RC && i < vC(STACK); ++i) {
+        for (int i = 0; i < vN(STACK); ++i) {
                 value_mark(ty, v_(STACK, i));
         }
         LOG_REACHED(" => stack reached %llu", TotalReached);
@@ -10825,10 +10731,6 @@ StepInstruction(char const *ip)
                 break;
         CASE(NONE_IF_NIL)
                 break;
-        CASE(CLEAR_RC)
-                break;
-        CASE(GET_EXTRA)
-                break;
         CASE(FIX_EXTRA)
                 break;
         CASE(FIX_TO)
@@ -10837,12 +10739,6 @@ StepInstruction(char const *ip)
         CASE(SWAP)
                 break;
         CASE(REVERSE)
-                SKIPVALUE(n);
-                break;
-        CASE(MULTI_ASSIGN)
-                SKIPVALUE(n);
-                break;
-        CASE(MAYBE_MULTI)
                 SKIPVALUE(n);
                 break;
         CASE(JUMP_IF_SENTINEL)
@@ -11037,9 +10933,6 @@ StepInstruction(char const *ip)
                 break;
         CASE(POP_STACK_POS)
         CASE(POP_STACK_POS_POP)
-                break;
-        CASE(MULTI_RETURN)
-                SKIPVALUE(n);
                 break;
         CASE(RETURN_IF_NOT_NONE)
         CASE(RETURN)

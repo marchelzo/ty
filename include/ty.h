@@ -449,7 +449,6 @@ typedef struct cothread_state {
         ValueVector to_drop;
         GCRootSet gc_roots;
         int exec_depth;
-        int rc;
 } co_state;
 
 struct generator {
@@ -1057,7 +1056,6 @@ extern usize TotalBytesAllocated;
         X(RETURN_PRESERVE_CTX),   \
         X(EXEC_CODE),             \
         X(HALT),                  \
-        X(MULTI_RETURN),          \
         X(RETURN_IF_NOT_NONE),    \
         X(SENTINEL),              \
         X(FIX_TO),                \
@@ -1067,14 +1065,10 @@ extern usize TotalBytesAllocated;
         X(NONE),                  \
         X(NONE_IF_NIL),           \
         X(NONE_IF_NOT),           \
-        X(CLEAR_RC),              \
-        X(GET_EXTRA),             \
         X(PUSH_NTH),              \
         X(PUSH_ARRAY_ELEM),       \
         X(PUSH_TUPLE_ELEM),       \
         X(PUSH_TUPLE_MEMBER),     \
-        X(MULTI_ASSIGN),          \
-        X(MAYBE_MULTI),           \
         X(JUMP_IF_SENTINEL),      \
         X(CLEAR_EXTRA),           \
         X(FIX_EXTRA),             \

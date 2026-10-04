@@ -57,7 +57,8 @@ pub fn type-error-has-location() {
     let loc = located(record, 'type.ty')
     assert(loc != nil)
     assert(loc['start']['line'] == 2)
-    assert(loc['start']['col'] == 9)
+    assert(loc['start']['col'] == 11)
+    assert(loc['end']['col'] == 14)
 }
 
 pub fn type-error-reported-while-recovering() {

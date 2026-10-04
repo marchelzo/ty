@@ -377,9 +377,7 @@ visit_statement(Ty *ty, Stmt *s, Scope *scope, VisitorCtx *ctxt)
         switch (s->type) {
         case STATEMENT_RETURN:
         case STATEMENT_GENERATOR_RETURN:
-                for (int i = 0; i < s->returns.count; ++i) {
-                        V(s->returns.items[i]);
-                }
+                V(s->ret);
                 break;
         case STATEMENT_MULTI:
                 visit_statements(ty, &s->statements, scope, ctxt);

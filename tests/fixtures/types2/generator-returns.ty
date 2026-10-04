@@ -1,0 +1,20 @@
+fn counted*(n: Int) {
+    for i in ..n {
+        if i == 2 {
+            return Some(i * 10)
+        }
+        yield i
+    }
+}
+
+fn stopped*() {
+    yield "a"
+    return None
+}
+
+fn bare*() {
+    yield 1.5
+    return
+}
+
+print([*counted(5)], [*stopped()], [*bare()])

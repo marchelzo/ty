@@ -1669,7 +1669,7 @@ mark_generator(Ty *ty, Value const *v)
 
         co_state *st = v->gen->st;
 
-        for (int i = 0; i < vN(st->stack) + st->rc && i < vC(st->stack); ++i) {
+        for (int i = 0; i < vN(st->stack); ++i) {
                 MarkNext(ty, v_(st->stack, i));
         }
 

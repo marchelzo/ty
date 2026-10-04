@@ -111,7 +111,6 @@ jit_frame_ip(Frame const *frame, char const *ip)
 #define OFF_TY_TLS    offsetof(Ty, tls)
 #define OFF_ST_STACK  offsetof(co_state, stack)
 #define OFF_ST_FRAMES offsetof(co_state, frames)
-#define OFF_ST_RC     offsetof(co_state, rc)
 #define OFF_FRAME_FP  offsetof(Frame, fp)
 #define OFF_VEC_DATA  offsetof(ValueVector, items)
 #define OFF_VEC_LEN   offsetof(ValueVector, count)
@@ -2085,7 +2084,7 @@ jit_rt_dict(Ty *ty, Value *top, i32 n)
         DoDictLiteral(ty, n, NULL);
 }
 
-// LOOP_ITER: push SENTINEL, RC=0, IterGetNext
+// LOOP_ITER: push SENTINEL, IterGetNext
 static void
 jit_rt_loop_iter(Ty *ty, Value *top)
 {
@@ -3219,7 +3218,6 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                 }
 
                 case INSTR_LOOP_ITER:
-                case INSTR_CLEAR_RC:
                 case INSTR_DICT:
                 case INSTR_DEFAULT_DICT:
                         break;
@@ -7077,7 +7075,6 @@ bc_preserves_stack_base(u8 op)
         case INSTR_SENTINEL:
         case INSTR_LOAD_GLOBAL:
         case INSTR_DUP2_SWAP:
-        case INSTR_CLEAR_RC:
         case INSTR_PUSH_INDEX:
 
         /* Operator slow paths restore BC_OPS before rejoining. */
@@ -11063,20 +11060,13 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         break;
                 }
 
-                CASE(CLEAR_RC) {
-                        jit_emit_ldr64(asm, BC_S1, BC_TY, OFF_TY_ST);
-                        jit_emit_load_imm(asm, BC_S0, 0);
-                        jit_emit_str32(asm, BC_S0, BC_S1, OFF_ST_RC);
-                        break;
-                }
-
                 CASE(GET_NEXT) {
                         BAIL("GET_NEXT not supported (use LOOP_ITER/LOOP_CHECK)");
                         return false;
                 }
 
                 CASE(LOOP_ITER) {
-                        // Call runtime helper: push SENTINEL, RC=0, IterGetNext
+                        // Call runtime helper: push SENTINEL, IterGetNext
                         jit_emit_mov(asm, BC_A0, BC_TY);
                         jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
                         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_loop_iter);
