@@ -1,0 +1,45 @@
+import ty
+import ty.mod
+import ty.parse as parse
+import ty.token as token
+import ty.lex as lex
+
+fn filter-text() -> String {
+    while lex.peekc() in [' ', '\t'] {
+        lex.getc()
+    }
+    assert(lex.getc() == '/')
+
+    let text = Blob()
+    while lex.peekc() not in ['/', nil] {
+        text.push(lex.getc())
+    }
+
+    assert(lex.getc() == '/')
+    text.str()
+}
+
+pub fn rejected(source: String) {
+    try {
+        parse.expr(source)
+    } catch Err(error) {
+        return error
+    }
+    throw AssertionError("accepted invalid expression: {source}")
+}
+
+pub macro filtered {
+    let text = filter-text()
+    let next = token.peek()
+    let condition = parse.expr(text)
+    assert(token.peek() == next)
+    ty.If([condition], parse.stmt(), nil)
+}
+
+pub macro recovered {
+    let next = token.peek()
+    let error = rejected('x +')
+    assert(error.module.source == 'x +')
+    assert(token.peek() == next)
+    parse.stmt()
+}

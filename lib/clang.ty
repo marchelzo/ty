@@ -417,11 +417,11 @@ pub class Index {
         let files     = c.new-auto(CXUnsavedFile, #names)
         let out       = c.box-auto(c.ptr, nil)
 
-        for argument, i in arguments {
+        for argument; i in arguments {
             av[i] = argument
         }
 
-        for (_, contents), i in entries {
+        for (_, contents); i in entries {
             files[i] = (names[i], contents, contents.size())
         }
 

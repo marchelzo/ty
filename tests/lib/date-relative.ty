@@ -1,0 +1,272 @@
+import date (..)
+
+fn rejects(operation: () -> Any) -> nil {
+    try {
+        operation()
+        throw AssertionError('expected ValueError')
+    } catch error: ValueError {
+        nil
+    }
+}
+
+fn between(a: RelativeDate, b: RelativeDate, text: String,
+           parts: Int = 1, largest-unit: String = 'year') -> nil {
+    assert(relative(a, b, parts, largest-unit) == "{text} ago")
+    assert(relative(b, a, parts, largest-unit) == "in {text}")
+}
+
+fn uses-clock(value: RelativeDate, clock: () -> RelativeDate,
+              render: () -> String) -> nil {
+    let before = relative(value, clock())
+    let actual = render()
+    let after = relative(value, clock())
+    assert(actual in [before, after])
+}
+
+ns test
+
+pub fn default-reference() {
+    let date = PlainDate(2000, 1, 1)
+    let plain = date.to-plain-date-time()
+    let instant = Instant.from('2000-01-01T00:00:00Z')
+    let zoned = instant.to-zoned-date-time-iso('+05:45')
+    uses-clock(date, today, date.relative@())
+    uses-clock(plain, now, plain.relative@())
+    uses-clock(instant, instant-now, instant.relative@())
+    uses-clock(zoned, instant-now, zoned.relative@())
+    uses-clock(zoned, instant-now, relative@(zoned))
+}
+
+pub fn precision-and-grouping() {
+    let first = PlainDate(2024, 1, 1)
+    let later = PlainDate(2024, 1, 16)
+    assert(first.relative(later) == '2 weeks ago')
+    assert(first.relative(to: later, parts: 2) == '2 weeks, 1 day ago')
+    assert(first.relative(later, largest-unit: 'day') == '15 days ago')
+    between(first, later, '2 weeks, 1 day', parts: 7)
+
+    let start = PlainDateTime(2020, 1, 1)
+    let end = PlainDateTime(2021, 3, 18, 4, 5, 6)
+    between(start, end, '1 year')
+    between(start, end, '1 year, 2 months', parts: 2)
+    between(start, end, '14 months', largest-unit: 'month')
+    let all = '1 year, 2 months, 2 weeks, 3 days, 4 hours, 5 minutes, 6 seconds'
+    between(start, end, all, parts: 7)
+}
+
+pub fn singular-and-plural() {
+    let start = PlainDateTime(2024, 1, 1)
+    for (unit, duration) in [
+        ('year', Duration(years: 1)), ('month', Duration(months: 1)),
+        ('week', WEEK), ('day', DAY), ('hour', HOUR), ('minute', MINUTE), ('second', SEC)
+    ] {
+        between(start, start + duration, "1 {unit}")
+        between(start, start + duration * 2, "2 {unit}s")
+    }
+}
+
+pub fn clock-boundaries() {
+    let start = Instant(0)
+    for (nanos, text) in [
+        (1000000000, '1 second'), (1999999999, '1 second'),
+        (59999999999, '59 seconds'), (60000000000, '1 minute'),
+        (119999999999, '1 minute, 59 seconds'), (120000000000, '2 minutes'),
+        (3599999999999, '59 minutes, 59 seconds'), (3600000000000, '1 hour'),
+        (86399999999999, '23 hours, 59 minutes, 59 seconds'),
+        (86400000000000, '1 day'), (604799999999999, '6 days, 23 hours, 59 minutes'),
+        (604800000000000, '1 week')
+    ] {
+        between(start, Instant(nanos), text, parts: 3)
+    }
+    between(Instant(-1000000001), Instant(-1), '1 second')
+    between(Instant(-1), Instant(999999999), '1 second')
+    assert(Instant(-1).relative(Instant(999999998)) == 'now')
+}
+
+pub fn zero-and-subseconds() {
+    let date = PlainDate(2024, 1, 1)
+    let plain = date.to-plain-date-time()
+    let instant = Instant(0)
+    let zoned = instant.to-zoned-date-time-iso('+05:45')
+    assert(date.relative(date) == 'today')
+    assert(plain.relative(plain) == 'now')
+    assert(instant.relative(instant) == 'now')
+    assert(zoned.relative(zoned) == 'now')
+    for nanos in [-999999999, -1, 0, 1, 999999999] {
+        assert(instant.relative(Instant(nanos)) == 'now')
+        assert(Instant(nanos).relative(instant) == 'now')
+    }
+}
+
+pub fn gregorian-leap-centuries() {
+    for (year, days) in [
+        (-400, 2), (-100, 1), (0, 2), (1600, 2), (1900, 1),
+        (2000, 2), (2024, 2), (2100, 1), (2400, 2)
+    ] {
+        let a = PlainDate(year, 2, 28)
+        let b = PlainDate(year, 3, 1)
+        let suffix = days == 1 ? '' : 's'
+        between(a, b, "{days} day{suffix}")
+    }
+    between(PlainDate(-1, 12, 31), PlainDate(0, 1, 1), '1 day')
+    between(PlainDate(-100000, 1, 1), PlainDate(100000, 1, 1), '200000 years')
+}
+
+pub fn month-ends() {
+    for (start, end, text) in [
+        ('2024-01-31', '2024-02-29', '4 weeks, 1 day'),
+        ('2023-01-31', '2023-02-28', '4 weeks'),
+        ('2024-01-31', '2024-03-30', '1 month, 4 weeks, 2 days'),
+        ('2020-02-29', '2021-02-28', '11 months, 4 weeks, 2 days'),
+        ('2020-02-29', '2021-03-28', '1 year, 4 weeks'),
+        ('2020-02-29', '2024-02-28', '3 years, 11 months, 4 weeks, 2 days')
+    ] {
+        between(PlainDate.from(start), PlainDate.from(end), text, parts: 7)
+    }
+    let start = PlainDateTime(2024, 1, 15, 12)
+    between(start, PlainDateTime(2024, 2, 15, 11, 59, 59),
+            '4 weeks, 2 days, 23 hours, 59 minutes, 59 seconds', parts: 7)
+    between(start, PlainDateTime(2024, 2, 15, 12), '1 month')
+}
+
+pub fn fixed-offsets-and-mixed-exact-types() {
+    let start = Instant.from('2024-01-01T00:00:00Z')
+    let end = Instant.from('2024-01-02T00:00:00Z')
+    let east = start.to-zoned-date-time-iso('+05:45')
+    let west = end.to-zoned-date-time-iso('-03:30')
+    assert(east.relative(start) == 'now')
+    assert(start.relative(east) == 'now')
+    between(east, west, '1 day')
+    between(start, west, '1 day')
+    assert(west.relative(east, largest-unit: 'hour') == 'in 24 hours')
+}
+
+pub fn full-instant-range() {
+    let first = Instant(-9223372036854775808)
+    let last = Instant(9223372036854775807)
+    between(first, last, '18446744073 seconds', largest-unit: 'second')
+    between(first, last, '584 years')
+    for zone in ['UTC', '+23:59', '-23:59'] {
+        assert(first.relative(last, largest-unit: 'second', time-zone: zone)
+               == '18446744073 seconds ago')
+    }
+    let local = last.to-zoned-date-time-iso('+23:59')
+    assert(local.to-plain-date() == PlainDate(2262, 4, 12))
+    assert(local.nanosecond == 807)
+    let early = first.to-zoned-date-time-iso('-23:59')
+    assert(early.to-plain-date() == PlainDate(1677, 9, 20))
+    assert(early.nanosecond == 192)
+}
+
+pub fn leap-second-strings() {
+    let before = Instant.from('2016-12-31T23:59:59Z')
+    let leap = Instant.from('2016-12-31T23:59:60Z')
+    let after = Instant.from('2017-01-01T00:00:00Z')
+    assert(leap == before)
+    between(leap, after, '1 second')
+    let fraction = PlainTime.from('23:59:60.123456789')
+    assert(fraction == PlainTime(23, 59, 59, 123, 456, 789))
+    assert(PlainDateTime.from('2016-12-31T23:59:60').second == 59)
+    assert(parse('2016-12-31T23:59:60').second == 59)
+    let zoned = ZonedDateTime.from('2017-01-01T05:44:60+05:45[+05:45]')
+    assert(zoned.to-instant() == before)
+    rejects(PlainTime.from@('23:59:61'))
+    rejects(Instant.from@('2016-12-31T23:59:61Z'))
+    rejects(PlainTime@(23, 59, 60))
+    rejects(PlainDateTime@(2016, 12, 31, 23, 59, 60))
+}
+
+pub fn validation() {
+    let date = PlainDate(2024, 1, 1)
+    let plain = date.to-plain-date-time()
+    let instant = Instant(0)
+    rejects(relative@(date, plain))
+    rejects(relative@(date, instant))
+    rejects(relative@(plain, instant))
+    rejects(relative@(date, date, time-zone: 'UTC'))
+    rejects(relative@(plain, plain, time-zone: 'UTC'))
+    rejects(date.relative@(date, largest-unit: 'hour'))
+    rejects(date.relative@(date, largest-unit: 'days'))
+    rejects(date.relative@(date, largest-unit: 'fortnight'))
+    rejects(date.relative@(date, parts: 0))
+    rejects(date.relative@(date, parts: 8))
+    rejects(instant.relative@(instant, time-zone: 'Mars/Olympus_Mons'))
+    rejects(PlainDate@(1900, 2, 29))
+    rejects(PlainDate@(2100, 2, 29))
+}
+
+#|if !__windows__
+
+pub fn variable-length-days() {
+    for (zone, first, last, hours) in [
+        ('America/New_York', '2024-03-09T12:00', '2024-03-10T12:00', '23 hours'),
+        ('America/New_York', '2024-11-02T12:00', '2024-11-03T12:00', '25 hours'),
+        ('Australia/Lord_Howe', '2024-10-05T12:00', '2024-10-06T12:00',
+         '23 hours, 30 minutes'),
+        ('Australia/Lord_Howe', '2024-04-06T12:00', '2024-04-07T12:00',
+         '24 hours, 30 minutes')
+    ] {
+        let a = ZonedDateTime.from("{first}[{zone}]")
+        let b = ZonedDateTime.from("{last}[{zone}]")
+        between(a, b, '1 day')
+        between(a, b, hours, parts: 2, largest-unit: 'hour')
+    }
+}
+
+pub fn skipped-dates() {
+    let a = ZonedDateTime.from('2011-12-29T12:00:00-10:00[Pacific/Apia]')
+    let b = ZonedDateTime.from('2011-12-31T12:00:00+14:00[Pacific/Apia]')
+    between(a, b, '2 days')
+    between(a, b, '24 hours', largest-unit: 'hour')
+    assert(a.to-instant().relative(b.to-instant()) == '1 day ago')
+}
+
+pub fn repeated-hours() {
+    let first = ZonedDateTime.from('2024-11-03T01:30:00-04:00[America/New_York]')
+    let second = ZonedDateTime.from('2024-11-03T01:15:00-05:00[America/New_York]')
+    between(first, second, '45 minutes')
+    let later = ZonedDateTime.from('2024-11-03T01:30:00-05:00[America/New_York]')
+    let tomorrow = ZonedDateTime.from('2024-11-04T01:15:00-05:00[America/New_York]')
+    between(later, tomorrow, '23 hours, 45 minutes', parts: 2)
+    assert(later.relative(later) == 'now')
+    assert(later.relative(first) == 'in 1 hour')
+}
+
+pub fn calendar-anchor-in-a-gap() {
+    let first = ZonedDateTime.from('2024-02-10T02:30:00[America/New_York]')
+    let last = ZonedDateTime.from('2024-03-11T02:30:00[America/New_York]')
+    between(first, last, '1 month, 1 day', parts: 7)
+    let short = ZonedDateTime.from('2024-03-11T02:15:00[America/New_York]')
+    between(first, short, '1 month, 22 hours, 45 minutes', parts: 7)
+}
+
+pub fn zone-selection() {
+    let start = Instant.from('2024-03-09T17:00:00Z')
+    let end = Instant.from('2024-03-10T16:00:00Z')
+    let local = end.to-zoned-date-time-iso('America/New_York')
+    let utc = start.to-zoned-date-time-iso('UTC')
+    assert(start.relative(end) == '23 hours ago')
+    assert(start.relative(local) == '1 day ago')
+    assert(utc.relative(local) == '1 day ago')
+    assert(local.relative(utc) == 'in 23 hours')
+    assert(local.relative(start) == 'in 1 day')
+    assert(utc.relative(local, time-zone: 'UTC') == '23 hours ago')
+    assert(start.relative(end, time-zone: 'America/New_York') == '1 day ago')
+}
+
+pub fn compatible-disambiguation() {
+    let gap = '2024-03-10T02:30:00[America/New_York]'
+    let fold = '2024-11-03T01:30:00[America/New_York]'
+    let early = ZonedDateTime.from(fold, disambiguation: 'earlier')
+    let late = ZonedDateTime.from(fold, disambiguation: 'later')
+    assert(ZonedDateTime.from(fold) == early)
+    between(early, late, '1 hour')
+    assert(ZonedDateTime.from(gap) == ZonedDateTime.from(gap, disambiguation: 'later'))
+    assert(ZonedDateTime.from(gap).hour == 3)
+    assert(ZonedDateTime.from(gap, disambiguation: 'earlier').hour == 1)
+    rejects(ZonedDateTime.from@(gap, disambiguation: 'reject'))
+    rejects(ZonedDateTime.from@(fold, disambiguation: 'reject'))
+    rejects(ZonedDateTime.from@(fold, disambiguation: 'surprise'))
+}
+
+#|]

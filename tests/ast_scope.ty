@@ -1,0 +1,90 @@
+import ty
+import ty.mod
+
+ns test
+
+fn free(source: String) -> Array[String] {
+    let Ok(mod) = ty.parse(source) or throw source
+    mod.free
+}
+
+pub fn functions() {
+    assert(free('fn f(x, y = x) { x + y + z }; x') == ['z', 'x'])
+    assert(free('fn f(x = x, y = x) { x + y }') == ['x'])
+    assert(free('fn f() { fn g() { f() + g() + x }; g() }; g()') == ['x', 'g'])
+    assert(free('fn f() { g() }; fn g() { f() }; f()') == [])
+    assert(free('fn f() { x + xs }; let [x, *xs] = values; f()') == ['values'])
+    assert(free('fn f() { fn g() { x }; let x = 1; g() }') == ['x'])
+    assert(free('let f = fn recur(x) { recur(x) + y }; recur') == ['y', 'recur'])
+    assert(free('fn f[T](x: T) -> T { x }; T') == ['T'])
+    assert(free('fn f[T: Bound](x: T) -> Result[T] { x }') == ['Bound', 'Result'])
+    assert(free('fn f(x) { x } fn f(y) { x + y }') == ['x'])
+    assert(free('fn f() { defer cleanup(x) }') == ['cleanup', 'x'])
+}
+
+pub fn classes() {
+    assert(free('class Box[T] { value: T = seed; get() -> T { value } }; Box; T; value') == ['seed', 'T', 'value'])
+    assert(free('class Box < Base: Trait { get(x) { Box(x) + other(x) } other(x) { x + outside } }; get') == ['Base', 'Trait', 'outside', 'get'])
+    assert(free('class Box { static value = seed; static get() { value + self } get() { value + self } }; value') == ['seed', 'value'])
+    assert(free('trait Named[T] { get(x: T) -> T { x + missing } }; Named; T') == ['missing', 'T'])
+    assert(free('tag Box[T] { get(x: T) -> T { x + missing } }; Box; T') == ['missing', 'T'])
+    assert(free('use Box[T] = Result[T]; Box; T') == ['Result', 'T'])
+    assert(free('class Box { value: Int; static get() { value } }') == ['value'])
+    assert(free('class Box { value: Int; current { value } current=(x) { value = x + missing } }; current') == ['missing', 'current'])
+    assert(free('fn f() { Box() } class Box { get() { f() } }; Box') == [])
+}
+
+pub fn patterns() {
+    assert(free('match value { Some(x) => x + y, _ => x }; x') == ['value', 'y', 'x'])
+    assert(free('let result = match value { Some(x) => x + y, _ => x }; x') == ['value', 'y', 'x'])
+    assert(free('match value { [x, *xs] => x + xs + z }; xs') == ['value', 'z', 'xs'])
+    assert(free('match value { [x, x] => x }; x') == ['value', 'x'])
+    assert(free('match value { parse ~> x => x + y }; x') == ['value', 'parse', 'y', 'x'])
+    assert(free('let Some(x) = value; x') == ['value'])
+    assert(free('let [x, *xs] = values; x + xs') == ['values'])
+    assert(free('let %Label(x) = value; Label; x') == ['value'])
+    assert(free('match value { %Label(x) => Label(x) }; Label') == ['value', 'Label'])
+    assert(free('match value { Left(x), convert(x) ~> y => x + y }') == ['value', 'Left', 'convert', 'x'])
+    assert(free('match value { /(?<word>[a-z]+)/ => word }; word') == ['value', 'word'])
+    assert(free('match value { /(a)/ => $0 + $1 }; $1') == ['value', '$1'])
+}
+
+pub fn conditions() {
+    assert(free('if let Some(x) = value { x + y } else { x }; x') == ['value', 'y', 'x'])
+    assert(free('fn f() { if not let Some(x) = value { return y }; x }') == ['y', 'value'])
+    assert(free('while let Some(x) = value { x + y }; x') == ['value', 'y', 'x'])
+    assert(free('if x = value { x }; x') == ['value', 'x'])
+    assert(free('[x if true and let x = value]; x') == ['value', 'x'])
+    assert(free('(true and let x = value) ? x : y; x') == ['value', 'y', 'x'])
+}
+
+pub fn loops() {
+    assert(free('for x in xs { x + y }; x') == ['xs', 'y', 'x'])
+    assert(free('for let i = start; i < end; i += step { i + body }; i') == ['start', 'end', 'step', 'body', 'i'])
+    assert(free('[x + y for x in xs]; x') == ['xs', 'y', 'x'])
+    assert(free('[y for x in xs for y in x]; x; y') == ['xs', 'x', 'y'])
+    assert(free('%{x: y for (x, y) in pairs}; x; y') == ['pairs', 'x', 'y'])
+}
+
+pub fn handlers() {
+    assert(free('try { action() } catch Some(x) { x + y } catch _ { x } finally { x }; x') == ['action', 'y', 'x'])
+    assert(free('with x = value { x + missing }; x') == ['value', 'missing', 'x'])
+    assert(free('with x = x { x }') == ['x'])
+}
+
+pub fn namespaces() {
+    assert(free('ns one { let x = seed; fn f() { x } }; x') == ['seed', 'x'])
+    assert(free('ns one.two { fn f() { g() + missing } fn g() { f() } }; f; two') == ['missing', 'f', 'two'])
+    assert(free('import math as m (sqrt as root)\nroot(value); m.sin(other)') == ['value', 'other'])
+    assert(free('import math\nmath::sqrt(value)') == ['value'])
+}
+
+pub fn repeatable() {
+    let Ok(mod) = ty.parse('class Box[T] { value: T = seed; get(x = value) { x + other } }; T') or assert(false)
+    let before = mod.ast
+    for _ in 0..3 {
+        assert(mod.free == ['seed', 'other', 'T'])
+        assert(mod.ast == before)
+        ty.gc()
+    }
+}

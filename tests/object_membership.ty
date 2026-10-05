@@ -1,0 +1,34 @@
+fn half(x: Int) -> Int { x / 2 }
+fn maybe(s: String) -> nil | Int { int(s) }
+
+ns test
+
+pub fn nil-is-the-only-classless-value() {
+    let values = [nil, 1, 'a', [1], %{1: 2}, (1, 2), {a: 1}, Some(1), Int, x -> x]
+
+    assert([x :: Object for x in values] == [false, true, true, true, true, true, true, true, true, true])
+    assert([class-of(x) != nil for x in values] == [x :: Object for x in values])
+    assert(class-of((1, 2)) == Tuple && class-of({a: 1}) == Tuple)
+    assert(class-of(3) == Int && class-of(nil) == nil)
+}
+
+pub fn records-are-objects() {
+    assert({a: 3}.is?(Object))
+    assert((3, 4).is?(Tuple))
+    assert(!3.is?(String))
+}
+
+pub fn type-keeps-record-fields() {
+    assert(str(type({a: 3, b: 'x'})) == '(a: <class Int>, b: <class String>)')
+    assert(str(type((3, 'x'))) == '(<class Int>, <class String>)')
+}
+
+pub fn nil-safe-application-has-one-signature() {
+    let n = maybe('12')
+
+    assert(str(typeof `?>`) == 'overload{(a) -> b where ?>a <: b; (a, (Object & a) -> b) -> nil & a | b}')
+    assert(str(typeof (4 ?> half)) == 'Int')
+    assert(str(typeof (n ?> half)) == 'nil | Int')
+    assert(str(typeof ('ab' ?> (s -> #s))) == 'Int')
+    assert((n ?> half, 4 ?> half, nil ?> half) == (6, 2, nil))
+}

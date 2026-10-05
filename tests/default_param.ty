@@ -168,3 +168,52 @@ pub fn type-variable-defaults-apply-only-when-omitted() {
         }
     }
 }
+
+class Label {
+    init(text: String) {
+        self.text = text
+    }
+
+    text: String
+}
+
+class Keyed[T] {
+    init(x: T) {
+        self.x = x
+    }
+
+    x: T
+
+    key[U](by: T -> U = id) -> U {
+        by(x)
+    }
+
+    rekey[U](by: T -> U) -> U {
+        key(by)
+    }
+}
+
+pub fn structured-defaults-apply-only-when-omitted() {
+    fn apply[U](x: Int, f: Int -> U = id) -> U {
+        f(x)
+    }
+
+    fn forward(x, f) {
+        apply(x, f)
+    }
+
+    assert(str(typeof apply(1)) == 'Int')
+    assert(str(typeof apply(1, str)) == 'String')
+    assert(str(typeof apply) == '(x: Int, ?f: (Int) -> a) -> a where (x: b) -> b <: (Int) -> a if f omitted')
+    assert(str(typeof forward) == '(x: Int, f: (Int) -> a) -> a')
+    assert(str(typeof Keyed.rekey) == '(by: (a) -> b) -> b')
+    assert(str(typeof Keyed(str(1)).key()) == 'String')
+    assert(str(typeof Keyed(str(1)).key(int)) == 'Int')
+
+    assert(str(typeof 'abc'.__iter__().tally(Label)) == 'Dict[Label, Int]')
+    assert(str(typeof 'abc'.__iter__().tally()) == 'Dict[String, Int]')
+    assert(str(typeof 'abc'.classify(Label)) == 'Dict[Label, Array[String]]')
+    assert(str(typeof 'abc'.classify()) == 'Dict[String, Array[String]]')
+    assert(str(typeof [1].classify(str)) == 'Dict[String, Array[Int]]')
+    assert('abc'.__iter__().tally(Label).keys().map(&.text).sort() == ['a', 'b', 'c'])
+}

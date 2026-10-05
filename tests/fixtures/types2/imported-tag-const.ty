@@ -1,0 +1,12 @@
+import sh (Fate, Exit, Killed, Timeout, Success)
+
+fn describe(fate: Fate) -> String {
+    match fate {
+        Success     => 'ok',
+        Exit(code)  => "exit {code}",
+        Killed(sig) => "killed {sig}",
+        Timeout     => 'timeout',
+    }
+}
+
+print([Exit(0), Exit(3), Killed(9), Timeout].map(describe).join(' '))

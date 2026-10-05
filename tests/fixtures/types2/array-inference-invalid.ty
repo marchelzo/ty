@@ -1,0 +1,43 @@
+fn annotated-literal() {
+    let xs: Array[nil] = [nil, nil]
+    xs[0] = 'abc'
+}
+
+fn annotated-comprehension() {
+    let xs: Array[nil] = [nil for 0..2]
+    xs[0] = 123
+}
+
+fn concrete-element() {
+    let xs: Array[Int] = [1, 2]
+    xs[0] = 'abc'
+}
+
+fn concrete-nullable-element() {
+    let xs: Array[Int | nil] = [nil, 1]
+    xs[0] = 'abc'
+}
+
+fn nullable-literal() -> Array[String] {
+    let xs = [nil, nil]
+    xs[0] = 'abc'
+    xs
+}
+
+fn nullable-comprehension() -> Array[Int] {
+    let xs = [nil for 0..2]
+    xs[0] = 123
+    xs
+}
+
+fn constrained-alias() {
+    let xs = [1, 2]
+    let ys: Array[Int] = xs
+    xs[0] = 'abc'
+}
+
+fn retained-initializer() -> Array[String] {
+    let xs = [1, 2]
+    xs[0] = 'abc'
+    xs
+}

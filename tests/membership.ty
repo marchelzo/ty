@@ -1,0 +1,146 @@
+import os (Signals, SIGINT, SIGTERM)
+import pretty (Printer)
+
+class Key {
+    value: Int;
+
+    contains?(item: _) -> Bool { true }
+}
+
+class Bag {
+    value: Int;
+
+    contains?(item: Int) -> Bool { item == value }
+    contains?(item: String) -> String { "{item}:{value}" }
+    contains?(item: Key) -> Bool { item.value == value }
+}
+
+class OddBag < Bag {
+    contains?(item: Int) -> Bool { item % 2 == 1 }
+}
+
+class MethodOnly {
+    contains?(item: Int) -> Bool { true }
+}
+
+class RawBag {}
+
+tag Weird;
+
+fn member[T, U](item: T, container: U) -> Bool where (T in U): Bool {
+    item in container
+}
+
+fn record[T](events: [String], name: String, value: T) -> T {
+    events.push(name)
+    value
+}
+
+ns test
+
+pub fn builtins() {
+    assert(2 in [1, 2, 3])
+    assert(4 not in [1, 2, 3])
+    assert('x' in %{'x': nil})
+    assert('y' not in %{'x': nil})
+    assert('bc' in 'abcd')
+    assert(/b./ in 'abcd')
+    assert(3 in 1..5)
+    assert(5 not in 1..5)
+    assert(5 in 1...5)
+    assert((2..4) in (1..5))
+    assert((0..4) not in (1..5))
+    assert(nil not in [1, 2])
+    assert('x' not in [1, 2])
+    assert(nil not in %{'x': 1})
+    assert(1 not in %{'x': 1})
+}
+
+pub fn dispatch() {
+    assert(7 in Bag(7))
+    assert(8 not in Bag(7))
+    assert(3 in OddBag(7))
+    assert(2 not in OddBag(2))
+    let text: String = 'key' in Bag(7)
+    assert(text == 'key:7')
+    assert(7 in MethodOnly())
+    assert(!('key' not in Bag(7)))
+}
+
+pub fn container-methods() {
+    assert(Key(7) in Bag(7))
+    assert(Key(8) not in Bag(7))
+    let items: Array[Any] = [7]
+    assert(Key(7) not in items)
+    assert(Weird(7) not in items)
+    assert(7 in Key(0))
+    assert((7 in Bag(7)) == Bag(7).contains?(7))
+    assert(Printer(color=false).print(Weird('reboot')) == 'Weird("reboot")')
+}
+
+pub fn signal-membership() {
+    let signals = Signals(SIGINT)
+    assert(SIGINT in signals)
+    assert(SIGTERM not in signals)
+}
+
+pub fn generic-constraints() {
+    assert(member(7, Bag(7)))
+    assert(member(2, [1, 2]))
+    assert(member('x', %{'x': 1}))
+    assert([1, 0, 2, 0, 3].split-any([0]) == [[1], [2], [3]])
+}
+
+pub fn inferred-membership() {
+    fn member(item, container) { item in container }
+
+    let boolean: Bool = member(7, Bag(7))
+    let text: String = member('key', Bag(7))
+    assert(boolean)
+    assert(text == 'key:7')
+}
+
+pub fn operator-values-and-sections() {
+    let contains = `in`
+    assert(contains(7, Bag(7)))
+    let text: String = contains('key', Bag(7))
+    assert(text == 'key:7')
+    assert([7, 8].filter([_ in Bag(7)]) == [7])
+    assert([7, 8].filter([_ not in Bag(7)]) == [8])
+}
+
+pub fn evaluation-order() {
+    let events: [String] = []
+    assert(record(events, 'item', 7) in record(events, 'bag', Bag(7)))
+    assert(events == ['item', 'bag'])
+    events = []
+    assert(record(events, 'item', 8) not in record(events, 'bag', Bag(7)))
+    assert(events == ['item', 'bag'])
+}
+
+pub fn missing-container-method() {
+    try {
+        __eval__('1 in RawBag()')
+        assert(false, 'accepted membership without contains?')
+    } catch ex :: 'missing-field' in ex.what || "non-existent method 'contains?'" in ex.what {
+        ;
+    }
+}
+
+pub fn invalid-item-type() {
+    try {
+        __eval__('true in Bag(7)')
+        assert(false, 'accepted an item outside the contains? contract')
+    } catch ex :: /bad-call|no-overload/ in ex.what {
+        ;
+    }
+}
+
+pub fn invalid-membership-result() {
+    try {
+        __eval__("let result: Int = 'key' in Bag(7)")
+        assert(false, 'accepted a String membership result as Int')
+    } catch ex :: 'assignment-type' in ex.what {
+        ;
+    }
+}

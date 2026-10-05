@@ -1,0 +1,20 @@
+#|if true
+const HALF = 8 / 2
+#|else
+const EMPTY = []
+const SET = %[]
+const HALF = 8 / 2
+#|]
+
+#|if false
+const CLASS = [a-z
+#|else
+const QUOTIENT = 9 / 3 / 3
+#|]
+
+ns test
+
+pub fn division_survives_skipped_brackets() {
+    assert(HALF == 4)
+    assert(QUOTIENT == 1)
+}

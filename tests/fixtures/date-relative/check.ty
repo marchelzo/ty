@@ -1,0 +1,35 @@
+import date (..)
+import json
+import path (Path)
+
+use Case = {
+    kind: String, zone: ?String, largest: String, parts: Int,
+    a: String, b: String, past: String, future: String
+}
+
+use Cases = [Case]
+
+fn read-date(kind: String, value: String) -> RelativeDate {
+    match kind {
+        'date'    => PlainDate.from(value),
+        'plain'   => PlainDateTime.from(value),
+        'zoned'   => ZonedDateTime.from(value),
+        'instant' => Instant(int(value)),
+    }
+}
+
+let cases = json.parse(Cases, Path(argv[1]).read-text())
+let failures = 0
+for test in cases {
+    let a = read-date(test.kind, test.a)
+    let b = read-date(test.kind, test.b)
+    let format = (x, y) -> relative(x, y, parts: test.parts,
+                                   largest-unit: test.largest, time-zone: test.zone)
+    let actual = (format(a, b), format(b, a))
+    if actual != (test.past, test.future) {
+        failures += 1
+        print((test, actual))
+    }
+}
+assert(failures == 0, "{failures} of {#cases} Temporal cases failed")
+print("{#cases} Temporal cases passed in both directions")

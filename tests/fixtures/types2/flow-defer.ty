@@ -1,0 +1,51 @@
+import os (pipe, read, write, close)
+
+fn write-and-close() {
+    let (rd, wr) = pipe()
+    defer close(rd)
+
+    let fd = nil
+    fd = wr
+
+    defer {
+        if fd != nil {
+            close(fd)
+            fd = nil
+        }
+    }
+
+    fn ready() {
+        if fd != nil {
+            assert(write(fd, 'x', all=true) == 1)
+            close(fd)
+            fd = nil
+        }
+    }
+
+    ready()
+    assert(fd == nil)
+    assert(read(rd, 1).str!() == 'x')
+}
+
+fn nested-cleanup() {
+    let value: String | nil = 'present'
+
+    defer {
+        defer {
+            value = nil
+        }
+    }
+
+    fn length() -> Int {
+        if value != nil {
+            assert(value.len() == 7)
+            return value.len()
+        }
+        0
+    }
+
+    assert(length() == 7)
+}
+
+write-and-close()
+nested-cleanup()

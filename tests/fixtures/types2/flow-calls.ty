@@ -1,0 +1,68 @@
+fn integer(value: Int) {}
+
+fn closure-factory() {
+    let x: ?Int = 5
+    let make-writer = () -> fn () { x = nil }
+
+    if x != nil {
+        (() -> 1)()
+        integer(x)
+        make-writer()
+        integer(x)
+    }
+}
+
+fn captured-mutation() {
+    let x: ?Int = 5
+    let clear = fn () { x = nil }
+
+    if x != nil {
+        clear()
+        integer(x)
+    }
+}
+
+fn callback-mutation() {
+    let x: ?Int = 5
+    let clear = fn () { x = nil }
+
+    if x != nil {
+        [1].each(_ -> clear())
+        integer(x)
+    }
+}
+
+fn deferred-mutation() {
+    let x: ?Int = 5
+
+    fn clear() {
+        defer {
+            x = nil
+        }
+    }
+
+    if x != nil {
+        clear()
+        integer(x)
+    }
+}
+
+fn recursive-mutation() {
+    let x: ?Int = 5
+
+    fn recurse(clear?: Bool) {
+        if clear? {
+            x = nil
+            return
+        }
+
+        if x != nil {
+            recurse(true)
+            integer(x)
+        }
+    }
+
+    recurse(false)
+}
+
+closure-factory()

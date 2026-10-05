@@ -1,0 +1,193 @@
+import ty
+import ty.mod
+import ty.parse as parse
+import ty.repl as repl
+import ety
+
+ns test
+
+fn parsed(source: String | Blob) -> Module {
+    match ty.parse(source) {
+        Ok(mod)               => mod,
+        Err({module: mod, *}) => mod,
+        Err(err)              => throw err
+    }
+}
+
+fn plain(s: String) -> String {
+    s.sub(/\x1b\[[0-9;:]*m/, '')
+}
+
+fn ast-of(source: String) -> Array[AST] {
+    parsed(source).ast
+}
+
+fn last-of(source: String) {
+    let Err({last, *}) = ty.parse(source) or assert(false)
+    last
+}
+
+fn check-ranges(mod: Module, i: Int) {
+    let bytes = mod.source.bytes()
+    for j in i..#bytes + 1 {
+        assert(plain(parse.highlight(mod, i, j)) == blob(*bytes[i;j]).str!())
+    }
+}
+
+fn color-of(mod: Module, i: Int) -> String {
+    let colored = parse.highlight(mod, i, i + 1, theme='gruvbox')
+    colored.match(/\x1b\[([0-9;]+)m/)[1]
+}
+
+pub fn module-result() {
+    let Ok(mod) = ty.parse('let x = 1; x + y') or assert(false)
+    assert(mod :: Module)
+    assert(mod.source == 'let x = 1; x + y')
+    assert(#mod.ast == 2)
+    assert(mod.free == ['y'])
+    assert(mod.tokens == ty.mod.tokens(mod))
+    assert(mod.ast == ty.mod.ast(mod))
+    assert(parsed(blob('1')).ast == [ty.Int(1)])
+    let Ok(alias) = parse.source('1') or assert(false)
+    assert(alias :: Module)
+}
+
+pub fn empty-module() {
+    let Ok(mod) = ty.parse('') or assert(false)
+    assert(mod.ast == [])
+    assert(mod.free == [])
+    assert(parse.highlight(mod) == '')
+}
+
+pub fn free-bindings() {
+    let mod = parsed('fn f() { let x = 1; x }; x + x')
+    assert(mod.free == ['x'])
+    assert(parsed('let x = y; x + y').free == ['y'])
+    assert(parsed('fn f(x) { x + y }; x').free == ['y', 'x'])
+    assert(parsed('fn f(x = x) { x }').free == ['x'])
+    assert(parsed('for x in xs { print(x) }; x').free == ['xs', 'x'])
+}
+
+pub fn partial-module() {
+    let source = "let x = /a+/;\nif true \{"
+    let Err({module: mod, location, msg, last}) = ty.parse(source) or assert(false)
+    assert(mod.source == source)
+    assert(location == {line: 1, col: 9, byte: source.size()})
+    assert(#msg > 0)
+    assert(#mod.ast == 1)
+    assert(last :: Ptr)
+    assert(parse.ast(last) != nil)
+    assert(plain(parse.highlight(mod)) == source)
+}
+
+pub fn module-lifetime() {
+    let mod = parsed('let x = /a+/; "café"; x')
+    for _ in 0..3 {
+        ty.gc()
+        assert(mod.source == 'let x = /a+/; "café"; x')
+        assert(#mod.ast == 3)
+        assert(#mod.tokens > 0)
+        assert(plain(parse.highlight(mod)) == mod.source)
+    }
+}
+
+pub fn ast-lifetime() {
+    let ast = ast-of('let x = 1; x + 2')
+    ty.gc()
+    assert(parse.show(ast[1]) == 'x + 2')
+    assert(plain(parse.highlight(ast[1])) == 'x + 2')
+    let raw = parse.raw(ast[1])
+    ty.gc()
+    assert(parse.ast(raw) == ast[1])
+    assert(parse.show(raw) == 'x + 2')
+    assert(parse.show(ast-of('42')[0]) == '42')
+}
+
+pub fn last-expression-lifetime() {
+    let last = last-of('subject .? {')
+    ty.gc()
+    assert(parse.ast(last) :: ty.Id)
+    assert(parse.show(last) == 'subject')
+}
+
+pub fn large-module-lifetime() {
+    let source = '1;'.repeat(5000)
+    let mod = parsed(source)
+    ty.gc()
+    assert(#mod.ast == 5000)
+    assert(plain(parse.highlight(mod)) == source)
+}
+
+pub fn exact-source() {
+    for source in [
+        '',
+        ' ',
+        'let x = 12 / 3; let r = /a+\/b\\d\{2\}/i',
+        'let s = "café\\n\\u03bb\{12 / 3\}終"',
+        "\"\"\"\n    café\\n\{12 / 3\}終\n    \"\"\"",
+        "'''\n    café\\n終\n    '''",
+        "let x = /a+/;\nif true \{",
+        '"unfinished',
+        "'unfinished",
+        '/unfinished',
+        "fn f(x) \{\n    x.member / 2\n\}",
+        'let x = <Box name="a">\{"hi"\}</Box>',
+    ] {
+        let mod = parsed(source)
+        assert(plain(parse.highlight(mod)) == source)
+    }
+}
+
+pub fn literal-ranges() {
+    for source in ['"a\\n\\u03bb"', '/a+\\d\{2\}\\/b/i', "'é\\n終'"] {
+        let mod = parsed(source)
+        for i in 0..source.size() {
+            check-ranges(mod, i)
+        }
+        assert(parse.highlight(mod, -1, 2) == nil)
+        assert(parse.highlight(mod, 2, 1) == nil)
+        assert(parse.highlight(mod, 0, source.size() + 1) == nil)
+    }
+}
+
+pub fn literal-colors() {
+    let str = parsed('"a\\n\\u03bb"')
+    assert(color-of(str, 1) == '38;2;184;187;38')
+    assert(color-of(str, 2) == '38;2;211;134;155')
+    assert(color-of(str, 6) == '38;2;211;134;155')
+
+    let re = parsed('/a+\\d\{2\}\\/b/i')
+    assert(color-of(re, 1) == '38;2;142;192;124')
+    assert(color-of(re, 2) == '38;2;131;165;152')
+    assert(color-of(re, 3) == color-of(re, 2))
+    assert(color-of(re, 8) == color-of(re, 2))
+
+    let rich = parsed("\"\"\"a\\u03bbb\"\"\"")
+    assert(color-of(rich, 4) != color-of(rich, 3))
+    assert(color-of(rich, 9) == color-of(rich, 4))
+
+    let raw = parsed("'''a\\u03bbb'''")
+    assert(color-of(raw, 4) == color-of(raw, 3))
+}
+
+pub fn parser-context() {
+    let mod = parsed('let r = /a+/; let x = 8 / 2; "a\{x / 2\}b"')
+    assert(#mod.tokens.filter(\_.type == 'regex') == 1)
+    assert(#mod.tokens.filter(\_.type == '/') == 2)
+    assert(plain(parse.highlight(mod)) == mod.source)
+}
+
+pub fn repl-render() {
+    for source in ['let r = /a+/; r / 2', '"a\{12 / 3\}b"', 'if true \{'] {
+        let (lines, row, col) = repl.pretty-code(nil, [[*source]], 0, #source)
+        assert(lines.map(plain) == [source])
+        assert(row == 0)
+        assert(col == #source)
+        assert("\x1b[" in lines[0])
+    }
+}
+
+pub fn template-free-variables() {
+    let render = ety.compile('<% let x = name %><%= x %> <%= name %>')
+    assert(render('Brad') == 'Brad Brad')
+}

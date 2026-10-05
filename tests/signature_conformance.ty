@@ -1,0 +1,50 @@
+fn reason(source: String) -> String {
+    try {
+        __eval__(source)
+    } catch ex {
+        return ex.what
+    }
+    ''
+}
+
+fn nil-safe[a, b](x: a, f: (a & Object) -> b) -> (a & nil) | b {
+    (x == nil) ? nil : f(x)
+}
+
+fn nil-safe-union[a, b](x: (a & nil) | (a & Object), f: (a & Object) -> b) -> (a & nil) | b {
+    (x != nil) ?: f(x)
+}
+
+fn first[T, U](xs: T) -> U where T: Array[U] { xs[0] }
+
+ns test
+
+pub fn bodies-may-not-strengthen-signatures() {
+    for source in [
+        'fn bad[T](x: T) -> T { 1 }',
+        'fn bad[T](x: T) -> Int { x.foo() }',
+        'fn bad[a, b](x: a) -> b { x }',
+        'fn bad[T](x: T) -> T { x + 1 }',
+        'fn bad[a, b](x: a, f: (a & Object) -> b) -> (a & nil) | b { (x == nil) ?: f(x) }',
+        'fn bad[T](x: T) -> T where T: Int | String { 1 }'
+    ] {
+        assert('[signature-mismatch]' in reason(source), source)
+    }
+}
+
+pub fn conforming-bodies-are-accepted() {
+    assert(reason('fn ok[a](x: a) -> a { x }') == '')
+    assert(reason('fn ok[T](x: T) -> Int where T: Array[Int] { x[0] }') == '')
+    assert(first([10, 20]) == 10)
+}
+
+pub fn nil-checks-narrow-type-variables() {
+    fn half(x: Int) -> Int { x / 2 }
+    fn maybe(s: String) -> nil | Int { int(s) }
+
+    assert(str(typeof (maybe('4') ?> half)) == 'nil | Int')
+    assert(str(typeof nil-safe(4, half)) == 'Int')
+    assert(str(typeof nil-safe(maybe('4'), half)) == 'nil | Int')
+    assert(str(typeof nil-safe-union(4, half)) == 'Int')
+    assert((nil-safe(4, half), nil-safe(nil, half), nil-safe-union(maybe('8'), half)) == (2, nil, 4))
+}

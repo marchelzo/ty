@@ -1,0 +1,50 @@
+class Meters {
+    n: Int
+
+    init(n: Int) { self.n = n }
+
+    +(other: Meters) -> Meters { Meters(n + other.n) }
+}
+
+fn inc(x: Int) -> Int { x + 1 }
+fn show(x: Int) -> String { str(x) }
+
+ns test
+
+pub fn composition-keeps-polymorphism() {
+    assert(
+        str(typeof (&sum . &map(str)))
+     == '(a) -> b where c.sum <: () -> b, a.map <: ((?x: Any) -> String) -> c'
+    )
+    assert(str(typeof (show . inc)) == '(x: Int) -> String')
+    assert((&sum . &map(str))([1, 2]) == '12')
+}
+
+pub fn operator-values-have-both-arities() {
+    assert(str(typeof `+`) == 'overload{(a) -> b where +a <: b; (a, b) -> c where a + b <: c}')
+    assert(str(typeof `.`(&sum, &map(str))) == str(typeof (&sum . &map(str))))
+    assert(str(typeof `+`(1, 2)) == 'Int')
+    assert(str(typeof `-`(3)) == 'Int')
+    assert(str(typeof `#`([1])) == 'Int')
+    assert((`-`(3), `-`(10, 4), `#`([1, 2, 3])) == (-3, 6, 3))
+}
+
+pub fn operator-values-as-arguments() {
+    let small? = `!` . (x -> x > 1)
+
+    assert(str(typeof [1, 2, 3].map(`-`)) == 'Array[Int]')
+    assert(str(typeof [[1], [2, 3]].map(`#`)) == 'Array[Int]')
+    assert(str(typeof small?(3)) == 'Bool')
+    assert(small?(0) && !small?(3))
+    assert(str(typeof [Meters(1), Meters(2)].fold(`+`)) == 'nil | Meters')
+    assert([Meters(1), Meters(2)].fold(`+`).n == 3)
+}
+
+pub fn operator-values-reject-bad-operands() {
+    try {
+        __eval__('`+`(1, "a")')
+        assert(false, 'an operator value accepted operands its operator rejects')
+    } catch ex :: '[no-overload]' in ex.what {
+        ;
+    }
+}

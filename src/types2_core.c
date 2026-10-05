@@ -6563,6 +6563,19 @@ find_name(T2Names const *names, bool meta, u64 id)
         return NULL;
 }
 
+static bool
+name_taken(T2Names const *names, char const *name)
+{
+        for (usize i = 0; i < vN(names->entries); ++i) {
+                T2NameEntry const *entry = v_(names->entries, i);
+                if (!entry->dead && s_eq(entry->name, name)) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
 static void
 spell_name(unsigned ordinal, bool meta, char *out, usize size)
 {
@@ -6576,26 +6589,32 @@ spell_name(unsigned ordinal, bool meta, char *out, usize size)
 }
 
 static T2NameEntry *
+push_name(T2Names *names, bool meta, u64 id, char const *chosen);
+
+static T2NameEntry *
 name_entry(T2Names *names, bool meta, u64 id, char const *chosen)
 {
         T2NameEntry *entry = (chosen == NULL) ? find_name(names, meta, id) : NULL;
-        if (entry != NULL) {
-                return entry;
-        }
 
-        xvP(names->entries, ((T2NameEntry) { 0 }));
-        entry       = v_(names->entries, vN(names->entries) - 1);
-        entry->meta = meta;
-        entry->id   = id;
+        return (entry != NULL) ? entry : push_name(names, meta, id, chosen);
+}
+
+static T2NameEntry *
+push_name(T2Names *names, bool meta, u64 id, char const *chosen)
+{
+        T2NameEntry fresh = { .meta = meta, .id = id };
         if (chosen != NULL) {
-                ty_snprintf(entry->name, sizeof entry->name, "%s", chosen);
-        } else if (meta) {
-                spell_name(names->metas++, true, entry->name, sizeof entry->name);
+                ty_snprintf(fresh.name, sizeof fresh.name, "%s", chosen);
         } else {
-                spell_name(names->variables++, false, entry->name, sizeof entry->name);
+                unsigned *ordinal = meta ? &names->metas : &names->variables;
+                do {
+                        spell_name((*ordinal)++, meta, fresh.name, sizeof fresh.name);
+                } while (name_taken(names, fresh.name));
         }
 
-        return entry;
+        xvP(names->entries, fresh);
+
+        return vvL(names->entries);
 }
 
 bool
@@ -6817,6 +6836,14 @@ doc_variable(T2Printer *printer, T2Node const *node)
                 return;
         }
 
+        for (unsigned ordinal = 0; entry->name[0] == '\0'; ++ordinal) {
+                char name[sizeof entry->name];
+                spell_name(ordinal, meta, name, sizeof name);
+                if (!name_taken(printer->names, name)) {
+                        memcpy(entry->name, name, sizeof name);
+                }
+        }
+
         text(printer, token, entry->name);
 }
 
@@ -6957,7 +6984,7 @@ doc_parameter(T2Printer *printer, T2Node const *parameter, unsigned depth)
         if (kind == T2_PARAMETER_PACK) {
                 text(printer, T2_TOKEN_PUNCTUATION, "...");
         }
-        if (parameter->text != NULL) {
+        if (parameter->text != NULL && parameter->text[0] != '#') {
                 if (optional) {
                         text(printer, T2_TOKEN_PUNCTUATION, "?");
                 }
@@ -7084,12 +7111,14 @@ doc_scheme_node(T2Printer *printer, T2Node const *node, unsigned depth)
         usize bound = 0;
         for (usize i = 0; i < quantifier_count; ++i) {
                 T2Node const *binder = get_node(printer->universe, node->children[i]);
-                if (binder->text == NULL || printer->options.raw) {
+                char const *chosen   = binder->text;
+                if (printer->options.raw) {
                         continue;
                 }
-                if (
-                        name_entry(printer->names, false, binder->payload, binder->text) == NULL
-                ) {
+                if (chosen == NULL || name_taken(printer->names, chosen)) {
+                        chosen = "";
+                }
+                if (push_name(printer->names, false, binder->payload, chosen) == NULL) {
                         printer->failed = true;
                         return;
                 }
@@ -11931,6 +11960,14 @@ constrain_internal(
                 return constrain_children(solver, a, b, provenance, retain_deferred);
         }
 
+        if (
+                (a->kind == T2_TYPE_VARIADIC_TUPLE)
+             && (b->kind == T2_TYPE_VARIADIC_TUPLE)
+             && (a->payload == b->payload)
+        ) {
+                return constrain_children(solver, a, b, provenance, retain_deferred);
+        }
+
         if (b->kind == T2_TYPE_OVERLOAD) {
                 T2Relation result = T2_RELATION_YES;
                 for (usize i = 0; i < b->arity; ++i) {
@@ -14403,6 +14440,7 @@ typedef struct t2_instantiation {
         T2Type                   *replacements;
         vec(T2InstantiatedNode)   nodes;
         vec(T2BinderSubstitution) binders;
+        vec(T2Node const *)       shadowed;
         bool failed;
 } T2Instantiation;
 
@@ -15795,6 +15833,63 @@ find_quantifier(T2Scheme const *scheme, T2Node const *variable)
 static T2Type
 instantiate_type(T2Instantiation *instantiation, T2Type source);
 
+static bool
+shadowed(T2Instantiation const *instantiation, T2Node const *variable)
+{
+        for (usize i = 0; i < vN(instantiation->shadowed); ++i) {
+                T2Node const *binder = v__(instantiation->shadowed, i);
+                if (
+                        (binder->payload == variable->payload)
+                     && (
+                                (binder->variable_kind == variable->variable_kind)
+                             || (
+                                        (binder->variable_kind != T2_VARIABLE_ROW)
+                                     && (binder->variable_kind != T2_VARIABLE_PACK)
+                                     && (variable->variable_kind != T2_VARIABLE_ROW)
+                                     && (variable->variable_kind != T2_VARIABLE_PACK)
+                                )
+                        )
+                ) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static T2Type
+instantiate_scheme_node(T2Instantiation *instantiation, T2Node const *node, T2Type source)
+{
+        T2Universe *universe = instantiation->solver->universe;
+        usize mark           = vN(instantiation->shadowed);
+        T2Type *children     = xtA(*children, node->arity);
+        bool changed         = false;
+
+        for (usize i = 0; i < (usize)node->payload && i < node->arity; ++i) {
+                xvP(instantiation->shadowed, get_node(universe, node->children[i]));
+        }
+
+        T2Type result = source;
+        for (usize i = 0; i < node->arity; ++i) {
+                children[i] = instantiate_type(instantiation, node->children[i]);
+                if (children[i] == T2_TYPE_INVALID) {
+                        result = T2_TYPE_INVALID;
+                        goto Done;
+                }
+                changed |= children[i] != node->children[i];
+        }
+
+        if (changed) {
+                result = rebuild_type(universe, node, children);
+        }
+
+Done:
+        vN(instantiation->shadowed) = mark;
+        ty_free(children);
+
+        return result;
+}
+
 static T2Type
 instantiate_recursive(T2Instantiation *instantiation, T2Node const *node)
 {
@@ -15832,7 +15927,7 @@ instantiate_type(T2Instantiation *instantiation, T2Type source)
                 return source;
         }
 
-        if (node->kind == T2_TYPE_VARIABLE) {
+        if (node->kind == T2_TYPE_VARIABLE && !shadowed(instantiation, node)) {
                 usize quantifier = find_quantifier(instantiation->scheme, node);
                 if (quantifier != SIZE_MAX) {
                         return instantiation->replacements[quantifier];
@@ -15854,7 +15949,11 @@ instantiate_type(T2Instantiation *instantiation, T2Type source)
                 return instantiate_recursive(instantiation, node);
         }
 
-        for (usize i = 0; i < vN(instantiation->nodes); ++i) {
+        if (node->kind == T2_TYPE_SCHEME) {
+                return instantiate_scheme_node(instantiation, node, source);
+        }
+
+        for (usize i = 0; i < vN(instantiation->nodes) && vN(instantiation->shadowed) == 0; ++i) {
                 if (v__(instantiation->nodes, i).source == source) {
                         return v__(instantiation->nodes, i).result;
                 }
@@ -15880,7 +15979,7 @@ instantiate_type(T2Instantiation *instantiation, T2Type source)
                       ? rebuild_type(universe, node, children)
                       : source;
         ty_free(children);
-        if (result == T2_TYPE_INVALID) {
+        if (result == T2_TYPE_INVALID || vN(instantiation->shadowed) != 0) {
                 return result;
         }
 
@@ -15989,6 +16088,7 @@ t2_scheme_instantiate(
         ty_free(instantiation.replacements);
         xvF(instantiation.nodes);
         xvF(instantiation.binders);
+        xvF(instantiation.shadowed);
         t2_solver_commit(solver, mark);
         return body;
 
@@ -15996,6 +16096,7 @@ Fail:
         ty_free(instantiation.replacements);
         xvF(instantiation.nodes);
         xvF(instantiation.binders);
+        xvF(instantiation.shadowed);
         t2_solver_rollback(solver, mark);
 
         return T2_TYPE_INVALID;
@@ -16111,6 +16212,7 @@ scheme_apply_x(
         ty_free(instantiation.replacements);
         xvF(instantiation.nodes);
         xvF(instantiation.binders);
+        xvF(instantiation.shadowed);
         t2_solver_commit(solver, mark);
         return body;
 
@@ -16118,6 +16220,7 @@ Fail:
         ty_free(instantiation.replacements);
         xvF(instantiation.nodes);
         xvF(instantiation.binders);
+        xvF(instantiation.shadowed);
         t2_solver_rollback(solver, mark);
 
         return T2_TYPE_INVALID;
@@ -16734,6 +16837,22 @@ t2_predicate_has_operand(T2PredicateKind kind)
         return (kind != T2_PREDICATE_SUBTYPE) && (kind != T2_PREDICATE_DEFAULT);
 }
 
+static bool
+defaults_parameter(T2Solver *solver, T2Type target, u32 meta, T2Type parameter)
+{
+        if (meta == 0) {
+                return t2_type_same(
+                        solver->universe,
+                        t2_solver_zonk(solver, target, T2_PREFER_SOLUTION_ONLY),
+                        parameter
+                );
+        }
+
+        u32 root = meta_from_type(solver, target);
+
+        return (root != 0) && (find_root(solver, root) == meta);
+}
+
 bool
 t2_solver_parameter_default(
         T2Solver   *solver,
@@ -16747,28 +16866,35 @@ t2_solver_parameter_default(
         }
 
         u32 meta = meta_from_type(solver, parameter);
-        if (meta == 0) {
-                return false;
+        if (meta != 0) {
+                meta = find_root(solver, meta);
+        } else {
+                parameter = t2_solver_zonk(solver, parameter, T2_PREFER_SOLUTION_ONLY);
         }
 
-        meta = find_root(solver, meta);
-
         for (usize i = vN(solver->obligations); i > 0; --i) {
-                T2Obligation const *obligation = v_(solver->obligations, i - 1);
+                T2Obligation *obligation = v_(solver->obligations, i - 1);
                 T2Predicate const *predicate = &obligation->predicate;
                 if (
                         (predicate->kind != T2_PREDICATE_DEFAULT)
                      || (obligation->state != T2_OBLIGATION_PENDING)
                      || (predicate->name == NULL)
                      || !s_eq(predicate->name, name)
+                     || !defaults_parameter(solver, predicate->supertype, meta, parameter)
                 ) {
                         continue;
                 }
-                u32 target = meta_from_type(solver, predicate->supertype);
-                if (target != 0 && find_root(solver, target) == meta) {
-                        *fallback = predicate->subtype;
-                        return true;
-                }
+                (void)push_undo(
+                        solver,
+                        (T2Undo) {
+                                .kind  = T2_UNDO_OBLIGATION_STATE,
+                                .index = (u32)(i - 1),
+                                .old   = obligation->state
+                        }
+                );
+                obligation->state = T2_OBLIGATION_RETIRED;
+                *fallback = predicate->subtype;
+                return true;
         }
 
         return false;

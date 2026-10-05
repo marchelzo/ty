@@ -1,0 +1,57 @@
+use Parsed = Ok[Int] | Err[{module: Int, msg: String}]
+
+fn module-of(result: Parsed) -> Int {
+    match result {
+        Ok(module) => module,
+        Err({module, *}) => module
+    }
+}
+
+fn nested(result: Err[{inner: {value: Int}}]) -> Int {
+    match result {
+        Err({inner: {value, *}, *}) => value
+    }
+}
+
+fn optional(result: Err[{?module: Int}]) -> ?Int {
+    match result {
+        Err({?module, *}) => module
+    }
+}
+
+fn non-nil(result: Err[{module: Int}]) -> Int {
+    match result {
+        Err({$module, *}) => module
+    }
+}
+
+fn exact() -> Int {
+    match Err({module: 7}) {
+        Err({module}) => module
+    }
+}
+
+fn record-union(value: {left: Int} | {right: String}) -> Int {
+    match value {
+        {left, *} => 1,
+        {right, *} => 2
+    }
+}
+
+fn payload-union(value: Err[{left: Int} | {right: Int}]) -> Int {
+    match value {
+        Err({left: result, *} or {right: result, *}) => 1
+    }
+}
+
+assert(module-of(Ok(3)) == 3)
+assert(module-of(Err({module: 5, msg: 'partial'})) == 5)
+assert(nested(Err({inner: {value: 9}})) == 9)
+assert(optional(Err({})) == nil)
+assert(optional(Err({module: 4})) == 4)
+assert(non-nil(Err({module: 6})) == 6)
+assert(exact() == 7)
+assert(record-union({left: 8}) == 1)
+assert(record-union({right: 'text'}) == 2)
+assert(payload-union(Err({left: 1})) == 1)
+assert(payload-union(Err({right: 2})) == 1)

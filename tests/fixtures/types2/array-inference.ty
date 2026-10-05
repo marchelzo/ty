@@ -1,0 +1,71 @@
+fn filled() -> (Array[String | nil], Array[Int | nil]) {
+    let x1 = [nil, nil, nil]
+    let x2 = [nil for x1]
+    x1[0] = 'abc'
+    x2[0] = 123
+    (x1, x2)
+}
+
+fn aliased() -> Array[Int | String | nil] {
+    let xs = [0, 1, 2]
+    let ys = xs
+    ys[0] = 7
+    xs[1] = 'seven'
+    ys[2] = nil
+    ys
+}
+
+fn appended() -> Array[Int | nil] {
+    let xs = [0 for 0..2]
+    xs.push(nil)
+    xs += [2]
+    xs
+}
+
+fn comprehension() -> Array[Int | String] {
+    let xs = [i for i in 0..3]
+    xs[0] = 'zero'
+    xs
+}
+
+fn empty() -> Array[Int | String] {
+    let xs = []
+    xs.push(1)
+    xs.push('two')
+    xs
+}
+
+fn spread() -> Array[String | nil] {
+    let xs: Array[nil] = [nil, nil]
+    let ys = [*xs]
+    ys[0] = 'ready'
+    ys
+}
+
+fn copied() -> Array[Int | String] {
+    let xs: Array[Int] = [1, 2]
+    let ys = [*xs]
+    ys[0] = 'one'
+    assert(xs == [1, 2])
+    ys
+}
+
+fn annotated() -> (Array[String | nil], Array[Int | nil]) {
+    let xs: Array[String | nil] = [nil, nil]
+    let ys: Array[Int | nil] = [nil for xs]
+    xs[0] = 'abc'
+    ys[0] = 123
+    (xs, ys)
+}
+
+let (xs, ys) = filled()
+assert(xs == ['abc', nil, nil])
+assert(ys == [123, nil, nil])
+assert(aliased() == [7, 'seven', nil])
+assert(appended() == [0, 0, nil, 2])
+assert(comprehension() == ['zero', 1, 2])
+assert(empty() == [1, 'two'])
+assert(spread() == ['ready', nil])
+assert(copied() == ['one', 2])
+assert(annotated() == (['abc', nil], [123, nil]))
+print(xs, ys)

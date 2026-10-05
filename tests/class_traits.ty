@@ -1,0 +1,55 @@
+class Base {
+    value: Int
+
+    init(value: Int) { self.value = value }
+    doubled -> Int { value * 2 }
+}
+
+trait Named {
+    name -> String;
+    greeting -> String { "hello {name}" }
+}
+
+class Numbers < Base : Iterable[Int], Named {
+    name -> String { 'numbers' }
+
+    __iter__*() -> Generator[Int] {
+        yield self.value
+        yield self.doubled
+    }
+}
+
+class MoreNumbers < Numbers {}
+
+class Box[T] {
+    value: T
+}
+
+class Values[T] < Box[T] : Iterable[T] {
+    __iter__*() -> Generator[T] { yield self.value }
+}
+
+fn collect(xs: Iterable[Int]) -> [Int] { [*xs] }
+
+ns test
+
+pub fn superclass-and-traits() {
+    let numbers = Numbers(3)
+    assert(numbers.value == 3 && numbers.doubled == 6)
+    assert(collect(numbers) == [3, 6])
+    assert([*numbers.map(\_ + 1)] == [4, 7])
+    assert(numbers.greeting == 'hello numbers')
+}
+
+pub fn inherited-traits() {
+    let numbers = MoreNumbers(4)
+    assert(collect(numbers) == [4, 8])
+    assert([*numbers.map(\_ * 2)] == [8, 16])
+    assert(numbers.greeting == 'hello numbers')
+}
+
+pub fn generic-superclass-and-trait() {
+    let values: Values[Int] = Values(9)
+    assert(collect(values) == [9])
+    assert([*values.map(\_ + 1)] == [10])
+}

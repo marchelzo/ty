@@ -1,0 +1,67 @@
+import ty
+import ty.mod
+import ty.parse as parse
+import support.parse_expr (filtered, recovered, rejected)
+
+const OFFSET = 7
+
+ns test
+
+pub fn source-expression() {
+    assert(parse.expr('42') == ty.Int(42))
+    assert(parse.expr(blob('12 / 3')) == ty.Div(ty.Int(12), ty.Int(3)))
+    assert(parse.show(parse.expr('pid == 123')) == 'pid == 123')
+    assert(ty.eval(parse.expr('12 / 3')) == 4)
+    assert(ty.eval(parse.expr('{value: 7}')) == {value: 7})
+    assert(ty.eval(parse.expr('do { let x = 3; x + 4 }')) == 7)
+    assert(ty.eval(parse.expr('match 2 { 1 => 3, _ => 4 }')) == 4)
+}
+
+pub fn exact-expression() {
+    for source in ['', ' ', '1 +', '1; 2', '1 2', 'let x = 1', '1;'] {
+        let error = rejected(source)
+        assert(error.module :: Module)
+        assert(error.module.source == source)
+        assert(#error.msg > 0)
+        assert(error.location.byte <= source.size())
+        assert(parse.expr('42') == ty.Int(42))
+    }
+}
+
+pub fn source-lifetime() {
+    let ast = parse.expr('name == "café"')
+    let (raw, value) = parse.expr('12 / 3', raw=true)
+    for _ in 0..3 {
+        ty.gc()
+        assert(parse.show(ast) == 'name == "café"')
+        assert(parse.ast(raw) == value)
+        assert(parse.show(raw) == '12 / 3')
+        assert(parse.highlight(raw).sub(/\x1b\[[0-9;:]*m/, '') == '12 / 3')
+    }
+}
+
+pub fn resolved-expression() {
+    let ast = parse.expr('OFFSET + 2', scope=__scope__, resolve=true)
+    assert(ty.eval(ast) == 9)
+    let (raw, resolved) = parse.expr('OFFSET + 3', __scope__, raw=true, resolve=true)
+    ty.gc()
+    assert(parse.show(raw) == 'OFFSET + 3')
+    assert(ty.eval(resolved) == 10)
+}
+
+pub fn nested-macro-parser() {
+    let pid = 123
+    let hits = []
+
+    filtered /pid == 123/ {
+        hits.push('matched')
+    }
+    filtered /pid == 456/ {
+        hits.push('missed')
+    }
+    recovered {
+        hits.push('recovered')
+    }
+
+    assert(hits == ['matched', 'recovered'])
+}

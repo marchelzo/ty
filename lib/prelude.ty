@@ -2750,7 +2750,7 @@ trait Iter[T] < Iterable[T] {
         longest: Bool = false,
         fill: Any = nil
     ) -> Generator[R] {
-        let rest: Array[Iterable[Any]] = cast(its)
+        let rest: Array[Iterable[_]] = cast(its)
         let its = [self, *rest.map(&__iter__)]
 
         while true {
@@ -2759,7 +2759,7 @@ trait Iter[T] < Iterable[T] {
             if group.all?(Some) || (group.any?(Some) && longest) {
                 yield f(*group.map!(match {
                     Some(x) => x,
-                    _       => fill
+                    _       => cast(fill)
                 }))
             } else {
                 break
