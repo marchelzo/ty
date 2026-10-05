@@ -24,7 +24,7 @@ TyDiagInit(void);
 Value
 TyNewCompileError(
         Ty *ty,
-        char const *kind,
+        int class,
         char const *msg,
         Value locs,
         char const *text,
@@ -43,10 +43,7 @@ TyWrapError(
 );
 
 bool
-TyIsCompileError(Value const *v);
-
-bool
-TyErrorIsKind(Ty *ty, Value const *v, char const *kind);
+TyIsCompileError(Ty *ty, Value const *v);
 
 bool
 TyErrorIsFrom(Ty *ty, Value const *v, Module const *mod);

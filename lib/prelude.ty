@@ -136,7 +136,7 @@ pub use Flat[T] = match types.type(T) {
     _                   => $$[: Array[$$T] $$],
 }
 
-macro ParseError = {
+macro ParseFailure = {
     module: Module,
     msg: String,
     location: {
@@ -2091,17 +2091,18 @@ class RuntimeError < BaseException {
 }
 
 class CompileError < RuntimeError {
-    __kind:    String
     __msg:     String
     __locs:    Array[_]
     __detail:  String | nil
     __related: Array[(String, _)] | nil
 
-    kind      { __kind    }
     message   { __msg     }
     locations { __locs    }
     related   { __related ?? [] }
 }
+
+class ParseError  < CompileError {}
+class SyntaxError < ParseError   {}
 
 class ValueError     < RuntimeError {}
 class AssertionError < RuntimeError {}

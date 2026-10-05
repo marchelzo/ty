@@ -236,12 +236,16 @@ execln(Ty *ty, char *line)
                 goto End;
         }
 
-        buffer.count = 1;
-
+        vN(buffer) = 1;
         dump(&buffer, "%s\n", line);
-        if (TyErrorIsKind(ty, &ty->error, "ParseError") && repl_exec(ty, v_(buffer, 1))) {
+
+        if (
+                (ClassOf(&ty->error) == CLASS_PARSE_ERROR)
+             && repl_exec(ty, v_(buffer, 1))
+        ) {
                 goto End;
         }
+
 
 Bad:
         good = false;

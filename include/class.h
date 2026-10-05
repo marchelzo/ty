@@ -166,6 +166,9 @@ class_ctor(Ty *ty, int class);
 TyObject *
 class_new_instance(Ty *ty, int class);
 
+bool
+class_fold_field(Ty *ty, Expr const *dflt, Value *out);
+
 char const *
 class_method_name(Ty *ty, int class, char const *name);
 

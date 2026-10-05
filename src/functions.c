@@ -9538,11 +9538,9 @@ TY_BUILTIN_RAW(eval)
                 Stmt **prog = parse(ty, vv(B) + 1, "(eval)");
 
                 if (prog == NULL) {
-                        char const *msg = TyError(ty);
-                        Value e = Err(ty, vSsz(msg));
                         ReleaseArena(old);
                         EVAL_DEPTH -= 1;
-                        vmE(&e);
+                        vmE(&ty->error);
                 }
 
                 Expr *e = (Expr *)prog[0];
@@ -9560,10 +9558,8 @@ TY_BUILTIN_RAW(eval)
                 Value prog = ARG(0);
                 Expr *expr = TyToCExpr(ty, &prog);
                 if (expr == NULL) {
-                        char const *msg = TyError(ty);
-                        Value e = Err(ty, vSsz(msg));
                         EVAL_DEPTH -= 1;
-                        vmE(&e);
+                        vmE(&ty->error);
                 }
                 if (!tyeval(ty, expr, &v, scope)) {
                         EVAL_DEPTH -= 1;
@@ -10102,14 +10098,14 @@ ParseSource(Ty *ty, Value input, Scope *scope, u32 flags)
 //     deep: Bool = false,
 //     resolve: Bool = false,
 //     scope: Ptr[_] = nil
-// ) -> Err[ParseError] | Ok[Module]
+// ) -> Err[ParseFailure] | Ok[Module]
 //
 // ty/parse.source(
 //     source: String | Blob,
 //     deep: Bool = false,
 //     resolve: Bool = false,
 //     scope: Ptr[_] = nil
-// ) -> Err[ParseError] | Ok[Module]
+// ) -> Err[ParseFailure] | Ok[Module]
 TY_BUILTIN_RAW(ty_parse)
 {
         ASSERT_ARGC("ty.parse()", 1);

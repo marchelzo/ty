@@ -649,7 +649,7 @@ tokenxx_slow(Ty *ty, int i)
                         TERM(92;),
                         TERM(0),
                         (int)vN(TOKENS),
-                        token_show(ty, &t)
+                        token_showx(ty, &t, "")
                 );
 
                 avP(TOKENS, t);
@@ -668,7 +668,7 @@ tokenxx_slow(Ty *ty, int i)
                         TERM(93),
                         i,
                         TERM(0),
-                        token_show(ty, v_(TOKENS, TokenIndex + i))
+                        token_showx(ty, v_(TOKENS, TokenIndex + i), "")
                 );
                 last_index = TokenIndex + i;
                 last_count = vN(TOKENS);
@@ -818,7 +818,7 @@ End:
                 t - v_(TOKENS, 0),
                 TERM(34;4),
                 TERM(0),
-                token_show(ty, t)
+                token_showx(ty, t, "")
         );
 
         if (i == 0) {
@@ -881,7 +881,7 @@ parse_sync_lex(Ty *ty)
                 TERM(0),
                 TERM(92;1),
                 TERM(0),
-                token_show(ty, v_(TOKENS, TokenIndex - 1)),
+                token_showx(ty, v_(TOKENS, TokenIndex - 1), ""),
                 token_showx(ty, v_(TOKENS, TokenIndex), TERM(93;1))
         );
 
@@ -895,7 +895,7 @@ parse_sync_lex(Ty *ty)
                 TERM(0),
                 TERM(91;1),
                 TERM(0),
-                token_show(ty, v_(TOKENS, TokenIndex - 1)),
+                token_showx(ty, v_(TOKENS, TokenIndex - 1), ""),
                 token_showx(ty, v_(TOKENS, TokenIndex), TERM(93;1))
         );
 }
@@ -977,12 +977,12 @@ inline static void
              && (v_(TOKENS, TokenIndex)->ctx != LEX_DOC)
              // && (v_(tokens, TokenIndex)->ctx != LEX_REGEX)
         ) {
-                PLOG("  Pop tokens[%zu]: %s", vN(TOKENS) - 1, token_show(ty, vvL(TOKENS)));
+                PLOG("  Pop tokens[%zu]: %s", vN(TOKENS) - 1, token_showx(ty, vvL(TOKENS), ""));
                 vN(TOKENS) -= 1;
         }
 
         while (vN(TOKENS) > 0 && vvL(TOKENS)->start.s == seek.s) {
-                PLOG("  Pop tokens[%zu]: %s", vN(TOKENS) - 1, token_show(ty, vvL(TOKENS)));
+                PLOG("  Pop tokens[%zu]: %s", vN(TOKENS) - 1, token_showx(ty, vvL(TOKENS), ""));
                 vN(TOKENS) -= 1;
         }
 
@@ -1055,12 +1055,7 @@ RecoverError(Ty *ty)
 static bool
 ProbeFailed(Ty *ty)
 {
-        Value const *exc = vm_get(ty, 0);
-
-        if (
-                !TyErrorIsKind(ty, exc, "ParseError")
-             && !TyErrorIsKind(ty, exc, "SyntaxError")
-        ) {
+        if (ClassOf(vm_get(ty, 0)) != CLASS_PARSE_ERROR) {
                 vm_rethrow(ty);
         }
 
@@ -1089,7 +1084,7 @@ inline static void
                 .ctx   = LEX_FAKE
         };
 
-        PLOG("Inserting tokens[%d] = %s", TokenIndex, token_show(ty, &t));
+        PLOG("Inserting tokens[%d] = %s", TokenIndex, token_showx(ty, &t, ""));
 
         logctx(ty);
 
@@ -1183,7 +1178,7 @@ BackOverSpace(Location loc)
 }
 
 noreturn static void
-SyntaxFailure(Ty *ty, char const *kind, char const *msg, Location start, Location end)
+SyntaxFailure(Ty *ty, int class, char const *msg, Location start, Location end)
 {
         byte_vector text = {0};
         Expr where = {
@@ -1196,7 +1191,7 @@ SyntaxFailure(Ty *ty, char const *kind, char const *msg, Location start, Locatio
         WriteDiagnostic(
                 ty,
                 &text,
-                kind,
+                class_name(ty, class),
                 msg,
                 (start.s != NULL) ? &where : NULL,
                 NULL,
@@ -1207,7 +1202,7 @@ SyntaxFailure(Ty *ty, char const *kind, char const *msg, Location start, Locatio
 
         GC_STOP();
         Value locs = ErrorLocation(ty, start, (end.s == NULL) ? start : end);
-        Value err = TyNewCompileError(ty, kind, msg, locs, vv(text), NIL, NIL);
+        Value err = TyNewCompileError(ty, class, msg, locs, vv(text), NIL, NIL);
         GC_RESUME();
 
         xvF(text);
@@ -1220,7 +1215,7 @@ LexError(Ty *ty, Token const *t)
 {
         char const *msg = (t->error != NULL) ? t->error : "invalid token";
 
-        SyntaxFailure(ty, "SyntaxError", msg, t->start, t->end);
+        SyntaxFailure(ty, CLASS_SYNTAX_ERROR, msg, t->start, t->end);
 }
 
 static Token const *
@@ -1263,7 +1258,7 @@ ParseError(Ty *ty, char const *fmt, ...)
         char *text = sclonea(ty, vv(msg));
         xvF(msg);
 
-        SyntaxFailure(ty, "ParseError", text, start, end);
+        SyntaxFailure(ty, CLASS_PARSE_ERROR, text, start, end);
 }
 
 #define die(...) ParseError(ty, __VA_ARGS__)
@@ -6595,7 +6590,7 @@ parse_expr(Ty *ty, int prec)
                 TERM(93),
                 TERM(0),
                 prec,
-                token_show(ty, token(-1)),
+                token_showx(ty, token(-1), ""),
                 token_showx(ty, tokenx(0), TERM(92;1)),
                 TERM(97;1;3),
                 (TEnd.s == NULL) ? 0 : (int)strcspn(TEnd.s, "\n"),
@@ -7407,7 +7402,6 @@ _parse_statement(Ty *ty, int prec)
 Keyword:
 
         switch (K0) {
-        case KEYWORD_IMPORT:   return parse_import(ty);
         case KEYWORD_CLASS:    return parse_class_definition(ty);
         case KEYWORD_TAG:      return parse_class_definition(ty);
         case KEYWORD_TRAIT:    return parse_class_definition(ty);
@@ -8116,7 +8110,7 @@ pp_if(Ty *ty)
                         TERM(0),
                         depth,
                         vN(arms),
-                        token_show(ty, t0)
+                        token_showx(ty, t0, "")
                 );
 
                 switch (kw) {
@@ -8198,7 +8192,7 @@ pp_if(Ty *ty)
                         TERM(95;1),
                         i,
                         TERM(0),
-                        token_show(ty, v_(TOKENS, i))
+                        token_showx(ty, v_(TOKENS, i), "")
                 );
         }
 

@@ -1463,7 +1463,7 @@ VMakeCompileError(Ty *ty, char const *fmt, va_list ap)
                 vAp(locs.array, TyTraceEntryFor(ty, site));
         }
 
-        Value err = TyNewCompileError(ty, "CompileError", vv(msg), locs, vv(text), NIL, NIL);
+        Value err = TyNewCompileError(ty, CLASS_COMPILE_ERROR, vv(msg), locs, vv(text), NIL, NIL);
 
         GC_RESUME();
 
@@ -6600,7 +6600,10 @@ EmitFieldInitializers(Ty *ty, ClassDefinition const *def)
         for (;;) {
                 for (usize i = vN(def->fields); i > 0; --i) {
                         Expr const *field = v__(def->fields, i - 1);
-                        if (field->type == EXPRESSION_EQ) {
+                        if (
+                                (field->type == EXPRESSION_EQ)
+                             && !class_fold_field(ty, field->value, &(Value){0})
+                        ) {
                                 svP(fields, field);
                         }
                 }
@@ -6874,10 +6877,7 @@ emit_function(Ty *ty, Expr const *e)
         StackState stack = STATE.stack;
         m0(STATE.stack);
 
-        /*
-         * Remember where in the code this function's code begins so that we can compute
-         * the relative offset of references to non-local variables.
-         */
+        // Bytecode address of the function's entrypoint
         usize body_off = vN(STATE.code);
 
         for (int i = 0; i < vN(e->param_symbols); ++i) {
@@ -6982,7 +6982,8 @@ emit_function(Ty *ty, Expr const *e)
                 EmitFieldInitializers(ty, &def->class);
 
                 // Default constructor
-                if ((e->body == NULL) && (e->type == EXPRESSION_FUNCTION)) {
+                if (e->body == NULL && e->type == EXPRESSION_FUNCTION) {
+                        ((Expr *)e)->inert = (vN(STATE.code) == body_off);
                         for (int i = 0; i < vN(e->param_symbols); ++i) {
                                 Symbol *sym = v__(e->param_symbols, i);
                                 emit_load_instr(ty, sym->identifier, INSTR_LOAD_LOCAL, sym->i);
@@ -13225,6 +13226,8 @@ compiler_init(Ty *ty)
                 sym->flags |= (SYM_PUBLIC | SYM_CONST | SYM_BUILTIN | SYM_CLASS);
         }
 
+        class_set_super(ty, CLASS_SYNTAX_ERROR,   CLASS_PARSE_ERROR);
+        class_set_super(ty, CLASS_PARSE_ERROR,    CLASS_COMPILE_ERROR);
         class_set_super(ty, CLASS_COMPILE_ERROR,  CLASS_RUNTIME_ERROR);
         class_set_super(ty, CLASS_RUNTIME_ERROR,  CLASS_ERROR);
         class_set_super(ty, CLASS_ASSERT_ERROR,   CLASS_RUNTIME_ERROR);

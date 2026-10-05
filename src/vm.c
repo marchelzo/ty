@@ -3107,6 +3107,15 @@ BuildKwargsDict(Ty *ty, char **ip, int nkw)
         return DICT(kwargs);
 }
 
+inline static bool
+InertInit(Value const *init, int argc, Value const *kwargs)
+{
+        return (argc == 0)
+            && ((kwargs == NULL) || IsNil(*kwargs))
+            && (init->type == VALUE_FUNCTION)
+            && expr_of(init)->inert;
+}
+
 bool
 DoCallEx(Ty *ty, Value const *f, int n, Value const *_kwargs, bool exec)
 {
@@ -3219,7 +3228,7 @@ DoCallEx(Ty *ty, Value const *f, int n, Value const *_kwargs, bool exec)
                 }
                 vp = class_ctor(ty, v.class);
                 value = RawObject(v.class);
-                if (UNLIKELY(IsZero(*vp))) {
+                if (UNLIKELY(IsZero(*vp)) || InertInit(vp, n, &kwargs)) {
                         vN(STACK) -= n;
                         push(value);
                         gX();
@@ -9867,7 +9876,6 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES._what            = M_ID(sfmt("_what$%d",  CLASS_RUNTIME_ERROR));
         NAMES._ctx             = M_ID(sfmt("_ctx$%d",   CLASS_RUNTIME_ERROR));
         NAMES._cause           = M_ID(sfmt("_cause$%d", CLASS_RUNTIME_ERROR));
-        NAMES._kind            = M_ID(sfmt("_kind$%d",    CLASS_COMPILE_ERROR));
         NAMES._msg             = M_ID(sfmt("_msg$%d",     CLASS_COMPILE_ERROR));
         NAMES._locs            = M_ID(sfmt("_locs$%d",    CLASS_COMPILE_ERROR));
         NAMES._detail          = M_ID(sfmt("_detail$%d",  CLASS_COMPILE_ERROR));
@@ -10145,7 +10153,7 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect)
                 } else {
                         init = class_ctor(ty, f->class);
                         v = RawObject(f->class);
-                        if (LIKELY(!IsZero(*init))) {
+                        if (LIKELY(!IsZero(*init)) && !InertInit(init, argc, NULL)) {
                                 exec_fn(ty, init, &v, argc, NULL);
                                 pop();
                         }
@@ -10261,7 +10269,7 @@ vm_call(Ty *ty, Value const *f, int argc)
                 } else {
                         vp = class_ctor(ty, f->class);
                         v = RawObject(f->class);
-                        if (LIKELY(!IsZero(*vp))) {
+                        if (LIKELY(!IsZero(*vp)) && !InertInit(vp, argc, NULL)) {
                                 exec_fn(ty, vp, &v, argc, NULL);
                                 pop();
                         }

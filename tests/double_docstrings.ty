@@ -12,8 +12,8 @@ fn reject(source, message) {
     try {
         __eval__(source)
         assert(false, "accepted invalid docstring: {source}")
-    } catch Err(text) {
-        assert(message in text, text)
+    } catch ex: CompileError {
+        assert(message in ex.message, ex.message)
     }
 }
 

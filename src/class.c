@@ -13,6 +13,9 @@
 #include "ty.h"
 #include "jit.h"
 #include "vm.h"
+#include "intern.h"
+#include "dict.h"
+#include "set.h"
 
 static vec(Class *) classes;
 static vec(Class *) traits;
@@ -45,6 +48,8 @@ static char const *BuiltinClassNames[] = {
         [CLASS_ERROR]           = "BaseException",
         [CLASS_RUNTIME_ERROR]   = "RuntimeError",
         [CLASS_COMPILE_ERROR]   = "CompileError",
+        [CLASS_PARSE_ERROR]     = "ParseError",
+        [CLASS_SYNTAX_ERROR]    = "SyntaxError",
         [CLASS_VALUE_ERROR]     = "ValueError",
         [CLASS_ASSERT_ERROR]    = "AssertionError",
         [CLASS_TIMEOUT_ERROR]   = "TimeoutError",
@@ -200,21 +205,135 @@ class_add_s_field(Ty *ty, Class *c, i32 id, Expr *type, Expr *dflt)
         itable_add(ty, &c->s_fields, id, REF(NewZero()));
 }
 
+inline static usize
+ObjectSize(Class const *c)
+{
+        return sizeof (TyObject) + vN(c->fields.ids) * sizeof (Value);
+}
+
+static TyObject *
+NewPristine(Class *c, void *mem)
+{
+        TyObject *obj = mem;
+
+        obj->init    = false;
+        obj->class   = c;
+        obj->dynamic = NULL;
+        obj->nslot   = vN(c->fields.ids);
+
+        memcpy(obj->slots, LOTS_OF_NILS, obj->nslot * sizeof (Value));
+
+        return obj;
+}
+
+static Value
+InternedString(Bytes s)
+{
+        InternEntry *e = intern_get_n(&xD.strings, s.data, s.length);
+
+        if (e->id < 0) {
+                e = intern_put(e, (void *)(uptr)s.length);
+        }
+
+        return STRING_NOGC(e->name, s.length);
+}
+
+inline static bool
+IsEmptyLiteral(Expr const *e)
+{
+        switch (e->type) {
+        case EXPRESSION_ARRAY:
+        case EXPRESSION_SET:   return vN(e->elements) == 0;
+        case EXPRESSION_DICT:  return vN(e->keys) == 0 && e->dflt == NULL;
+        }
+
+        return false;
+}
+
+bool
+class_fold_field(Ty *ty, Expr const *dflt, Value *out)
+{
+        if (dflt == NULL) {
+                return false;
+        }
+
+        if (IsEmptyLiteral(dflt)) {
+                switch (dflt->type) {
+                case EXPRESSION_ARRAY:  *out = ARRAY(NULL);  return true;
+                case EXPRESSION_DICT:   *out = DICT(NULL);   return true;
+                case EXPRESSION_SET:    *out = SET(NULL);    return true;
+                }
+        }
+
+        switch (dflt->type) {
+        case EXPRESSION_NIL:      *out = NIL;                           return true;
+        case EXPRESSION_BOOLEAN:  *out = BOOLEAN(dflt->boolean);        return true;
+        case EXPRESSION_INTEGER:  *out = INTEGER(dflt->integer);        return true;
+        case EXPRESSION_REAL:     *out = REAL(dflt->real);              return true;
+        case EXPRESSION_STRING:   *out = InternedString(dflt->string);  return true;
+        }
+
+        return false;
+}
+
+inline static bool
+IsPrefab(Value const *v)
+{
+        return (v->ptr == NULL)
+            && (
+                   (v->type == VALUE_ARRAY)
+                || (v->type == VALUE_DICT)
+                || (v->type == VALUE_SET)
+               );
+}
+
+static TyObject *
+NewProto(Ty *ty, Class *c)
+{
+        TyObject *proto = NewPristine(c, xmA(ObjectSize(c)));
+
+        for (u32 i = 0; i < proto->nslot; ++i) {
+                Value const *field = v_(c->fields.values, i);
+                if (
+                        (field->type == VALUE_PTR)
+                     && class_fold_field(ty, field->ptr, &proto->slots[i])
+                     && IsPrefab(&proto->slots[i])
+                ) {
+                        xvP(c->empty, i);
+                }
+        }
+
+        return proto;
+}
+
+inline static void
+Unpack(Ty *ty, Class const *c, TyObject *obj)
+{
+        for (u32 i = 0; i < vN(c->empty); ++i) {
+                Value *v = &obj->slots[v__(c->empty, i)];
+                switch (v->type) {
+                case VALUE_ARRAY:  v->array = value_array_new_sized_unchecked(ty, 0);  break;
+                case VALUE_DICT:   v->dict  = dict_xnew(ty);                           break;
+                case VALUE_SET:    v->set   = set_xnew(ty);                            break;
+                }
+        }
+}
+
 TyObject *
 class_new_instance(Ty *ty, int class)
 {
         Class *c = C(class);
 
-        usize const size = sizeof (TyObject)
-                         + vN(c->fields.ids) * sizeof (Value);
+        if (UNLIKELY(c->proto == NULL)) {
+                return NewPristine(c, mAo(ObjectSize(c), GC_OBJECT));
+        }
 
-        TyObject *obj = mAo(size, GC_OBJECT);
-        obj->init = false;
-        obj->class = c;
-        obj->dynamic = NULL;
-        obj->nslot = vN(c->fields.ids);
+        usize     size = ObjectSize(c);
+        TyObject *obj  = memcpy(mAo(size, GC_OBJECT), c->proto, size);
 
-        memcpy(obj->slots, LOTS_OF_NILS, obj->nslot * sizeof (Value));
+        if (vN(c->empty) > 0) {
+                Unpack(ty, c, obj);
+        }
 
         return obj;
 }
@@ -894,6 +1013,8 @@ really_finalize(Ty *ty, Class *c)
                 }
         }
 
+        c->proto = NewProto(ty, c);
+
         c->really_final = true;
 }
 
@@ -961,6 +1082,8 @@ class_reset(Ty *ty)
 {
 #ifndef TY_LS
         for (int i = 0; i < vN(classes); ++i) {
+                xvF(v__(classes, i)->empty);
+                xmF(v__(classes, i)->proto);
                 xmF(v__(classes, i));
         }
 #endif
@@ -986,6 +1109,8 @@ class_truncate(Ty *ty, int n_classes, int n_traits)
 {
 #ifndef TY_LS
         for (int i = n_classes; i < vN(classes); ++i) {
+                xvF(v__(classes, i)->empty);
+                xmF(v__(classes, i)->proto);
                 xmF(v__(classes, i));
         }
 #endif

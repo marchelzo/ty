@@ -32825,7 +32825,7 @@ diagnostic_value(T2Checker *checker, T2Diagnostic const *diagnostic, char const 
                 )
         );
 
-        Value err = TyNewCompileError(ty, "CompileError", msg, locs, text, NIL, NIL);
+        Value err = TyNewCompileError(ty, CLASS_COMPILE_ERROR, msg, locs, text, NIL, NIL);
         PutMember(err, NAMES._code,  (diagnostic->code == NULL) ? NIL : vSsz(diagnostic->code));
         PutMember(err, NAMES._notes, diagnostic_notes(checker, diagnostic));
 

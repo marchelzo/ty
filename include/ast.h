@@ -452,6 +452,7 @@ struct expression {
                         TypeHintVector type_hints;
                         bool has_defer;
                         bool must_jit;
+                        bool inert;
                         bool emit;
                         bool star;
                         bool clone;

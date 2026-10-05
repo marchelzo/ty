@@ -120,7 +120,7 @@ token_show_type(Ty *ty, int type)
 }
 
 char const *
-token_showx(Ty *ty, Token const *t, char const *c)
+token_show(Ty *ty, Token const *t)
 {
         switch (t->type) {
         case TOKEN_STRING:
@@ -140,6 +140,13 @@ token_showx(Ty *ty, Token const *t, char const *c)
         default:               snprintf(token_show_buffer, 512, "%s", token_show_type(ty, t->type));       break;
         }
 
+        return sclonea(ty, token_show_buffer);
+}
+
+char const *
+token_showx(Ty *ty, Token const *t, char const *c)
+{
+        char const *shown = token_show(ty, t);
         byte_vector out = {0};
 
         if (t->pp) {
@@ -174,7 +181,7 @@ token_showx(Ty *ty, Token const *t, char const *c)
 
         if (!*c) c = TERM(36);
 
-        dump(&out, "%s%c%s %s%s%s", ctxc, ctx, TERM(0), c, token_show_buffer, TERM(0));
+        dump(&out, "%s%c%s %s%s%s", ctxc, ctx, TERM(0), c, shown, TERM(0));
 
         if (t->nl) {
                 dump(&out, " %s\\n%s", TERM(94), TERM(0));
@@ -183,10 +190,4 @@ token_showx(Ty *ty, Token const *t, char const *c)
         xvP(out, '\0');
 
         return vv(out);
-}
-
-char const *
-token_show(Ty *ty, Token const *t)
-{
-        return token_showx(ty, t, "");
 }

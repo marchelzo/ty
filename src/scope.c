@@ -604,7 +604,7 @@ scope_copy_public_except(
 {
         for (int i = 0; i < src->size; ++i) {
                 for (Symbol *s = src->table[i]; s != NULL; s = s->next) {
-                        if (should_skip(s->identifier, skip, n)) {
+                        if (!SymbolIsPublic(s) || should_skip(s->identifier, skip, n)) {
                                 continue;
                         }
                         Symbol *conflict = scope_lookup(ty, dst, s->identifier);
@@ -621,17 +621,11 @@ scope_copy_public_except(
 
         for (int i = 0; i < src->size; ++i) {
                 for (Symbol *s = src->table[i]; s != NULL; s = s->next) {
-                        if (should_skip(s->identifier, skip, n)) {
+                        if (!SymbolIsPublic(s) || should_skip(s->identifier, skip, n)) {
                                 continue;
                         }
-                        if (SymbolIsPublic(s)) {
-                                Symbol *new = scope_insert(ty, dst, s);
-                                if (reexport) {
-                                        new->flags |= SYM_PUBLIC;
-                                } else {
-                                        new->flags |= SYM_EXTERNAL;
-                                }
-                        }
+                        Symbol *new = scope_insert(ty, dst, s);
+                        new->flags |= reexport ? SYM_PUBLIC : SYM_EXTERNAL;
                 }
         }
 
@@ -641,34 +635,7 @@ scope_copy_public_except(
 char const *
 scope_copy_public(Ty *ty, Scope *dst, Scope const *src, bool reexport)
 {
-        for (int i = 0; i < src->size; ++i) {
-                for (Symbol *s = src->table[i]; s != NULL; s = s->next) {
-                        Symbol *conflict = scope_lookup(ty, dst, s->identifier);
-                        if (
-                                (conflict != NULL)
-                             && (conflict->scope != src)
-                             && SymbolIsPublic(conflict)
-                             && !SymbolIsExternal(conflict)
-                        ) {
-                                return conflict->identifier;
-                        }
-                }
-        }
-
-        for (int i = 0; i < src->size; ++i) {
-                for (Symbol *s = src->table[i]; s != NULL; s = s->next) {
-                        if (SymbolIsPublic(s)) {
-                                Symbol *new = scope_insert(ty, dst, s);
-                                if (reexport) {
-                                        new->flags |= SYM_PUBLIC;
-                                } else {
-                                        new->flags |= SYM_EXTERNAL;
-                                }
-                        }
-                }
-        }
-
-        return NULL;
+        return scope_copy_public_except(ty, dst, src, NULL, 0, reexport);
 }
 
 bool

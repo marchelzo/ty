@@ -8,6 +8,7 @@
 #include "vm.h"
 #include "compiler.h"
 #include "diag.h"
+#include "class.h"
 #include "xd.h"
 
 bool TraceThrows;
@@ -33,17 +34,16 @@ MemberStr(Ty *ty, Value const *v, int id)
         return (m.type == VALUE_STRING) ? m : xSz("");
 }
 
-bool
-TyIsCompileError(Value const *v)
+inline static bool
+IsCompileError(Ty *ty, Value const *v)
 {
-        return (v->type == VALUE_OBJECT)
-            && (v->class == CLASS_COMPILE_ERROR);
+        return class_is_subclass(ty, ClassOf(v), CLASS_COMPILE_ERROR);
 }
 
 bool
 TyErrorIsFrom(Ty *ty, Value const *v, Module const *mod)
 {
-        if (!TyIsCompileError(v) || mod == NULL || mod->path == NULL) {
+        if (!IsCompileError(ty, v) || mod == NULL || mod->path == NULL) {
                 return false;
         }
 
@@ -59,20 +59,8 @@ TyErrorIsFrom(Ty *ty, Value const *v, Module const *mod)
             && (memcmp(ss(file), mod->path, sN(file)) == 0);
 }
 
-bool
-TyErrorIsKind(Ty *ty, Value const *v, char const *kind)
-{
-        if (!TyIsCompileError(v)) {
-                return false;
-        }
-
-        Value k = MemberStr(ty, v, NAMES._kind);
-
-        return vs_eq_z(k, kind);
-}
-
 static void
-RenderRuntime(Ty *ty, byte_vector *out, Value const *exc, Value const *detail)
+RenderDetail(byte_vector *out, Value const *detail)
 {
         if (
                 (detail != NULL)
@@ -81,6 +69,12 @@ RenderRuntime(Ty *ty, byte_vector *out, Value const *exc, Value const *detail)
         ) {
                 dump(out, "%.*s\n", (int)sN(*detail), ss(*detail));
         }
+}
+
+static void
+RenderRuntime(Ty *ty, byte_vector *out, Value const *exc, Value const *detail)
+{
+        RenderDetail(out, detail);
 
         dump(
                 out,
@@ -94,7 +88,7 @@ RenderRuntime(Ty *ty, byte_vector *out, Value const *exc, Value const *detail)
 static void
 RenderCause(Ty *ty, byte_vector *out, Value const *cause, Value const *detail)
 {
-        if (TyIsCompileError(cause)) {
+        if (IsCompileError(ty, cause)) {
                 Value what = Member(ty, cause, NAMES._what);
                 if (what.type == VALUE_STRING) {
                         dump(out, "%.*s", (int)sN(what), ss(what));
@@ -107,7 +101,7 @@ RenderCause(Ty *ty, byte_vector *out, Value const *cause, Value const *detail)
 Value
 TyNewCompileError(
         Ty *ty,
-        char const *kind,
+        int class,
         char const *msg,
         Value locs,
         char const *text,
@@ -127,11 +121,10 @@ TyNewCompileError(
 
         dump(&what, "%s", (text != NULL) ? text : msg);
 
-        Value err = RawObject(CLASS_COMPILE_ERROR);
+        Value err = RawObject(class);
         PutMember(err, NAMES._what,    vSs(vv(what), vN(what)));
         PutMember(err, NAMES._ctx,     NIL);
         PutMember(err, NAMES._cause,   wrapped ? cause : NIL);
-        PutMember(err, NAMES._kind,    vSsz(kind));
         PutMember(err, NAMES._msg,     vSsz(msg));
         PutMember(err, NAMES._locs,    (locs.type == VALUE_ARRAY) ? locs : ARRAY(vA()));
         PutMember(err, NAMES._detail,  (detail.type == VALUE_STRING) ? detail : NIL);
@@ -180,16 +173,9 @@ VWrapError(
                 vAp(locs.array, TyTraceEntryFor(ty, where));
         }
 
-        char kind[64] = "CompileError";
-
-        if (TyIsCompileError(&cause)) {
-                Value k = MemberStr(ty, &cause, NAMES._kind);
-                ty_snprintf(kind, sizeof kind, "%.*s", (int)sN(k), ss(k));
-        }
-
         Value err = TyNewCompileError(
                 ty,
-                kind,
+                IsCompileError(ty, &cause) ? cause.class : CLASS_COMPILE_ERROR,
                 vv(msg),
                 locs,
                 vv(text),
@@ -260,17 +246,16 @@ FirstLine(byte_vector *out, char const *s)
 static void
 RenderBrief(Ty *ty, byte_vector *out, Value const *exc)
 {
-        if (!TyIsCompileError(exc)) {
+        if (!IsCompileError(ty, exc)) {
                 FirstLine(out, VSC(exc));
                 return;
         }
 
-        Value kind  = MemberStr(ty, exc, NAMES._kind);
         Value msg   = MemberStr(ty, exc, NAMES._msg);
         Value cause = Member(ty, exc, NAMES._cause);
 
         if (cause.type == VALUE_NIL) {
-                dump(out, "%.*s: ", (int)sN(kind), ss(kind));
+                dump(out, "%s: ", class_name(ty, exc->class));
         } else {
                 dump(out, "while ");
         }
@@ -319,19 +304,12 @@ TyFormatError(Ty *ty, Value const *exc, Value const *detail, byte_vector *out)
                 return;
         }
 
-        if (!TyIsCompileError(exc)) {
+        if (!IsCompileError(ty, exc)) {
                 RenderRuntime(ty, out, exc, detail);
                 return;
         }
 
-        if (
-                (detail != NULL)
-             && (detail->type == VALUE_STRING)
-             && (sN(*detail) > 0)
-        ) {
-                dump(out, "%.*s\n", (int)sN(*detail), ss(*detail));
-        }
-
+        RenderDetail(out, detail);
         RenderCause(ty, out, exc, NULL);
 
         Value related = Member(ty, exc, NAMES._related);
@@ -360,17 +338,16 @@ TyFormatError(Ty *ty, Value const *exc, Value const *detail, byte_vector *out)
 static void
 PlainChain(Ty *ty, byte_vector *out, Value const *exc)
 {
-        if (!TyIsCompileError(exc)) {
+        if (!IsCompileError(ty, exc)) {
                 FirstLine(out, VSC(exc));
                 return;
         }
 
-        Value kind  = MemberStr(ty, exc, NAMES._kind);
         Value msg   = MemberStr(ty, exc, NAMES._msg);
         Value cause = Member(ty, exc, NAMES._cause);
 
         if (cause.type == VALUE_NIL) {
-                dump(out, "%.*s: %.*s", (int)sN(kind), ss(kind), (int)sN(msg), ss(msg));
+                dump(out, "%s: %.*s", class_name(ty, exc->class), (int)sN(msg), ss(msg));
         } else {
                 dump(out, "while %.*s: ", (int)sN(msg), ss(msg));
                 PlainChain(ty, out, &cause);
@@ -380,7 +357,7 @@ PlainChain(Ty *ty, byte_vector *out, Value const *exc)
 static void
 CollectLocs(Ty *ty, Array *out, Value const *exc)
 {
-        if (!TyIsCompileError(exc)) {
+        if (!IsCompileError(ty, exc)) {
                 return;
         }
 
@@ -398,7 +375,7 @@ CollectLocs(Ty *ty, Array *out, Value const *exc)
 static void
 CollectNotes(Ty *ty, Array *out, Value *code, Value const *exc)
 {
-        if (!TyIsCompileError(exc)) {
+        if (!IsCompileError(ty, exc)) {
                 return;
         }
 
@@ -455,14 +432,14 @@ TyErrorRecords(Ty *ty, Value const *exc)
 
         vAp(records, ErrorRecord(ty, exc));
 
-        Value related = TyIsCompileError(exc)
+        Value related = IsCompileError(ty, exc)
                       ? Member(ty, exc, NAMES._related)
                       : NIL;
 
         if (related.type == VALUE_ARRAY) {
                 for (usize i = 0; i < vN(*related.array); ++i) {
                         Value entry = v__(*related.array, i);
-                        if (TyIsCompileError(&entry.items[1])) {
+                        if (IsCompileError(ty, &entry.items[1])) {
                                 vAp(records, ErrorRecord(ty, &entry.items[1]));
                         }
                 }
@@ -476,7 +453,7 @@ TyErrorRecords(Ty *ty, Value const *exc)
 Value
 TyErrorMessage(Ty *ty, char const *text)
 {
-        return TyNewCompileError(ty, "Error", text, NIL, text, NIL, NIL);
+        return TyNewCompileError(ty, CLASS_COMPILE_ERROR, text, NIL, text, NIL, NIL);
 }
 
 void
@@ -503,7 +480,7 @@ TyCatchFail(Ty *ty)
 
         GC_STOP();
         Value exc = TyCatchDetail(ty, &detail);
-        TySetError(ty, exc, TyIsCompileError(&exc) ? NIL : detail);
+        TySetError(ty, exc, IsCompileError(ty, &exc) ? NIL : detail);
         GC_RESUME();
 
         return exc;
@@ -518,18 +495,15 @@ TopSink(Ty *ty)
 static bool
 SameMessage(Ty *ty, Value const *a, Value const *b)
 {
-        if (!TyIsCompileError(a) || !TyIsCompileError(b)) {
+        if (!IsCompileError(ty, a) || !IsCompileError(ty, b)) {
                 return false;
         }
 
-        Value ka = MemberStr(ty, a, NAMES._kind);
-        Value kb = MemberStr(ty, b, NAMES._kind);
         Value ma = MemberStr(ty, a, NAMES._msg);
         Value mb = MemberStr(ty, b, NAMES._msg);
 
-        return (sN(ka) == sN(kb))
+        return (a->class == b->class)
             && (sN(ma) == sN(mb))
-            && (memcmp(ss(ka), ss(kb), sN(ka)) == 0)
             && (memcmp(ss(ma), ss(mb), sN(ma)) == 0);
 }
 
@@ -540,7 +514,7 @@ SameError(Ty *ty, Value const *a, Value const *b)
                 return true;
         }
 
-        if (!TyIsCompileError(a) || !TyIsCompileError(b)) {
+        if (!IsCompileError(ty, a) || !IsCompileError(ty, b)) {
                 return false;
         }
 
@@ -647,7 +621,7 @@ Relate(Ty *ty, Value *related, char const *label, Value const *exc)
 static Value
 AttachRelated(Ty *ty, DiagSink const *sink, Value primary, Value const *thrown)
 {
-        if (!TyIsCompileError(&primary)) {
+        if (!IsCompileError(ty, &primary)) {
                 return primary;
         }
 

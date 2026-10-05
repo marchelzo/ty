@@ -4,8 +4,8 @@ fn reject(source: String) {
     try {
         __eval__(source)
         assert(false, "accepted invalid source: {source}")
-    } catch Err(message) {
-        assert(#message > 0)
+    } catch _: ParseError {
+        ;
     }
 }
 

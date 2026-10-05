@@ -61,7 +61,7 @@ pub fn eval-compile-error-is-structured() {
         assert(false)
     } catch ex: CompileError {
         assert(ex :: RuntimeError)
-        assert(ex.kind == 'CompileError')
+        assert(ex !:: ParseError)
         assert('undefined variable: nope_q' in ex.message, ex.message)
         assert('CompileError' in ex.what, ex.what)
         assert(#ex.locations > 0)
@@ -73,17 +73,17 @@ pub fn eval-parse-error-message() {
     try {
         __eval__('let q = (1 + ')
         assert(false)
-    } catch Err(message) {
-        assert('ParseError' in message, message)
-        assert('--> (eval):' in message, message)
-        assert('let q = (1 + ' in message, message)
+    } catch ex: ParseError {
+        assert(ex !:: SyntaxError)
+        assert('--> (eval):' in ex.what, ex.what)
+        assert('let q = (1 + ' in ex.what, ex.what)
     }
 }
 
 pub fn eval-errors-do-not-go-stale() {
     try {
         __eval__('let q = (1 + ')
-    } catch Err(_) {
+    } catch _: ParseError {
         ;
     }
 
@@ -91,7 +91,28 @@ pub fn eval-errors-do-not-go-stale() {
         __eval__('nope_w')
         assert(false)
     } catch ex: CompileError {
+        assert(ex !:: ParseError)
         assert('nope_w' in ex.message, ex.message)
         assert(!('ParseError' in ex.what), ex.what)
+    }
+}
+
+pub fn misplaced-import-is-rejected() {
+    try {
+        __eval__('import json\n1')
+        assert(false)
+    } catch ex: ParseError {
+        assert(ex.message == "expected expression but found keyword 'import'", ex.message)
+    }
+}
+
+pub fn lex-errors-are-syntax-errors() {
+    try {
+        __eval__('1e')
+        assert(false)
+    } catch ex: SyntaxError {
+        assert(ex :: ParseError)
+        assert(ex :: CompileError)
+        assert('numeric literal' in ex.message, ex.message)
     }
 }

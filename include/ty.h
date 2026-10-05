@@ -274,24 +274,6 @@ enum {
         FUN_PARAM_NAMES = FUN_JIT         + sizeof (uptr)
 };
 
-#define TY_ERROR_TYPES           \
-        X(NONE,     NotAn,    0) \
-        X(PARSE,    Parse,    1) \
-        X(COMPILE,  Compile,  2) \
-        X(TYPE,     Type,     3) \
-        X(RUNTIME,  Runtime,  4)
-
-
-#define X(f, n, i) TY_ERROR_##f = ((1 << i) >> 1),
-enum { TY_ERROR_TYPES };
-#undef X
-
-#define X(f, n, i) #n "Error" ,
-static char const *TY_ERROR_NAMES[] = {
-        TY_ERROR_TYPES
-};
-#undef X
-
 enum {
         TY_F_DYING          = (1 << 0),
         TY_F_IN_GC          = (1 << 1),
@@ -428,6 +410,9 @@ struct class {
 
         Value finalizer;
         Value init;
+
+        TyObject *proto;
+        u16Vector empty;
 
         char const *name;
         char const *doc;
@@ -790,7 +775,6 @@ typedef struct {
         int subscript_eq;
         int unapply;
         int _what;
-        int _kind;
         int _msg;
         int _locs;
         int _detail;
