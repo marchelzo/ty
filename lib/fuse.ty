@@ -1,0 +1,847 @@
+import ffi as c (C!)
+import errno (EACCES, EIO, ENODATA, ENOENT, ENOSYS, ERANGE)
+import os
+import time
+import ty
+
+if not let $libfuse = c.open('fuse3', [nil, 3]) {
+    throw RuntimeError('failed to open libfuse3')
+}
+
+const size_t = c.u64
+const off_t  = c.i64
+const mode_t = c.u32
+const dev_t  = c.u64
+const uid_t  = c.u32
+const gid_t  = c.u32
+const pid_t  = c.i32
+
+pub const ENOATTR = ENODATA
+
+pub class FUSEError < OSError {
+    init(code: Int, what: ?String = nil) {
+        super(what, code)
+    }
+}
+
+pub const XATTR_CREATE  = 1
+pub const XATTR_REPLACE = 2
+
+pub const RENAME_NOREPLACE = 1
+pub const RENAME_EXCHANGE  = 2
+
+const UTIME_NOW  = (1 << 30) - 1
+const UTIME_OMIT = (1 << 30) - 2
+
+const NO_ID = (1 << 32) - 1
+
+C! libfuse fn {
+    int fuse_version(void);
+    const char *fuse_pkgversion(void);
+    void *fuse_new(void *args, void *op, size_t op_size, void *private_data);
+    int fuse_mount(void *f, const char *mountpoint);
+    void fuse_unmount(void *f);
+    void fuse_destroy(void *f);
+    int fuse_loop(void *f);
+    int fuse_loop_mt(void *f, void *config);
+    void fuse_exit(void *f);
+    void *fuse_get_context(void);
+    void *fuse_get_session(void *f);
+    int fuse_set_signal_handlers(void *se);
+    void fuse_remove_signal_handlers(void *se);
+    int fuse_getgroups(int size, gid_t *list);
+    int fuse_interrupted(void);
+    void fuse_opt_free_args(void *args);
+}
+
+C! struct FuseArgs {
+    int argc;
+    void *argv;
+    int allocated;
+}
+
+C! struct RawContext {
+    void *fuse;
+    uid_t uid;
+    gid_t gid;
+    pid_t pid;
+    void *private_data;
+    mode_t umask;
+}
+
+C! struct RawFileInfo {
+    int flags;
+    uint32_t bits;
+    uint32_t padding;
+    uint64_t fh;
+    uint64_t lock_owner;
+    uint32_t poll_events;
+}
+
+C! struct Timespec {
+    int64_t sec;
+    int64_t nsec;
+}
+
+C! struct StatX64 {
+    dev_t dev;
+    uint64_t ino;
+    uint64_t nlink;
+    mode_t mode;
+    uid_t uid;
+    gid_t gid;
+    dev_t rdev;
+    off_t size;
+    int64_t blksize;
+    int64_t blocks;
+    int64_t atime;
+    int64_t atime_nsec;
+    int64_t mtime;
+    int64_t mtime_nsec;
+    int64_t ctime;
+    int64_t ctime_nsec;
+    int64_t reserved[3];
+}
+
+C! struct StatGeneric {
+    dev_t dev;
+    uint64_t ino;
+    mode_t mode;
+    uint32_t nlink;
+    uid_t uid;
+    gid_t gid;
+    dev_t rdev;
+    uint64_t pad;
+    off_t size;
+    int32_t blksize;
+    int32_t pad2;
+    int64_t blocks;
+    int64_t atime;
+    int64_t atime_nsec;
+    int64_t mtime;
+    int64_t mtime_nsec;
+    int64_t ctime;
+    int64_t ctime_nsec;
+    uint32_t unused[2];
+}
+
+C! struct Statvfs {
+    uint64_t bsize;
+    uint64_t frsize;
+    uint64_t blocks;
+    uint64_t bfree;
+    uint64_t bavail;
+    uint64_t files;
+    uint64_t ffree;
+    uint64_t favail;
+    uint64_t fsid;
+    uint64_t flag;
+    uint64_t namemax;
+    int spare[6];
+}
+
+C! pub struct ConnInfo {
+    unsigned proto_major;
+    unsigned proto_minor;
+    unsigned max_write;
+    unsigned max_read;
+    unsigned max_readahead;
+    unsigned capable;
+    unsigned want;
+    unsigned max_background;
+    unsigned congestion_threshold;
+    unsigned time_gran;
+    unsigned reserved[22];
+}
+
+C! pub struct Config {
+    int set_gid;
+    unsigned gid;
+    int set_uid;
+    unsigned uid;
+    int set_mode;
+    unsigned umask;
+    double entry_timeout;
+    double negative_timeout;
+    double attr_timeout;
+    int intr;
+    int intr_signal;
+    int remember;
+    int hard_remove;
+    int use_ino;
+    int readdir_ino;
+    int direct_io;
+    int kernel_cache;
+    int auto_cache;
+    int no_rofd_flush;
+    int ac_attr_timeout_set;
+    double ac_attr_timeout;
+    int nullpath_ok;
+    int show_help;
+    char *modules;
+    int debug;
+}
+
+let Stat: _ = (ty.arch == 'x86_64') ? StatX64 : StatGeneric
+
+let FILL_DIR = c.cif(c.int, c.ptr, c.ptr, c.ptr, off_t, c.int)
+
+pub fn version() -> (Int, Int) {
+    let v = fuse_version()
+    (v >= 100) ? (v / 100, v % 100) : (v / 10, v % 10)
+}
+
+pub fn pkgversion() -> String {
+    c.str(fuse_pkgversion())
+}
+
+let __tls::depth = 0
+
+fn raw-context() -> _ {
+    (depth > 0) ? RawContext(fuse_get_context()) : nil
+}
+
+pub fn context() -> {uid: Int, gid: Int, pid: Int, umask: Int} | nil {
+    let $ctx = raw-context() or return nil
+    return {uid: ctx.uid, gid: ctx.gid, pid: ctx.pid, umask: ctx.umask}
+}
+
+pub fn groups() -> Array[Int] {
+    let n = (depth > 0) ? fuse_getgroups(0, nil) : 0
+    if n <= 0 {
+        return []
+    }
+    let list = c.new-auto(gid_t, n)
+    [list[i] for i in ..fuse_getgroups(n, list)]
+}
+
+pub fn interrupted?() -> Bool {
+    depth > 0 && fuse_interrupted() != 0
+}
+
+pub fn exit() {
+    if let $ctx = raw-context() {
+        fuse_exit(ctx.fuse)
+    }
+}
+
+pub class FileInfo {
+    __raw: _
+
+    init(p) {
+        __raw = RawFileInfo(p)
+    }
+
+    __bit(i: Int) -> Bool {
+        (__raw.bits & (1 << i)) != 0
+    }
+
+    __set(i: Int, on: Bool) {
+        __raw.bits = on ? (__raw.bits | (1 << i)) : (__raw.bits & ~(1 << i))
+    }
+
+    flags      -> Int  { __raw.flags      }
+    lock-owner -> Int  { __raw.lock_owner }
+
+    writepage     -> Bool { __bit(0) }
+    direct-io     -> Bool { __bit(1) }
+    keep-cache    -> Bool { __bit(2) }
+    flush         -> Bool { __bit(3) }
+    nonseekable   -> Bool { __bit(4) }
+    flock-release -> Bool { __bit(5) }
+    cache-readdir -> Bool { __bit(6) }
+    noflush       -> Bool { __bit(7) }
+
+    direct-io=(on: Bool)     { __set(1, on) }
+    keep-cache=(on: Bool)    { __set(2, on) }
+    nonseekable=(on: Bool)   { __set(4, on) }
+    cache-readdir=(on: Bool) { __set(6, on) }
+    noflush=(on: Bool)       { __set(7, on) }
+}
+
+pub class Operations {
+    getattr(path: String, fh: _) -> _                                    { throw FUSEError(ENOSYS) }
+    readlink(path: String) -> String                                     { throw FUSEError(ENOSYS) }
+    mknod(path: String, mode: Int, dev: Int)                             { throw FUSEError(ENOSYS) }
+    mkdir(path: String, mode: Int)                                       { throw FUSEError(ENOSYS) }
+    unlink(path: String)                                                 { throw FUSEError(ENOSYS) }
+    rmdir(path: String)                                                  { throw FUSEError(ENOSYS) }
+    symlink(target: String, path: String)                                { throw FUSEError(ENOSYS) }
+    rename(old: String, new: String, flags: Int)                         { throw FUSEError(ENOSYS) }
+    link(old: String, new: String)                                       { throw FUSEError(ENOSYS) }
+    chmod(path: String, mode: Int, fh: _)                                { throw FUSEError(ENOSYS) }
+    chown(path: String, uid: ?Int, gid: ?Int, fh: _)                     { throw FUSEError(ENOSYS) }
+    truncate(path: String, length: Int, fh: _)                           { throw FUSEError(ENOSYS) }
+    open(path: String, flags: Int, info: FileInfo) -> _                  { throw FUSEError(ENOSYS) }
+    create(path: String, mode: Int, flags: Int, info: FileInfo) -> _     { throw FUSEError(ENOSYS) }
+    read(path: String, size: Int, offset: Int, fh: _) -> Blob | String | nil { throw FUSEError(ENOSYS) }
+    write(path: String, data: Blob, offset: Int, fh: _) -> Int | nil     { throw FUSEError(ENOSYS) }
+    statfs(path: String) -> _                                            { throw FUSEError(ENOSYS) }
+    flush(path: String, fh: _)                                           { throw FUSEError(ENOSYS) }
+    release(path: String, fh: _)                                         { throw FUSEError(ENOSYS) }
+    fsync(path: String, datasync: Bool, fh: _)                           { throw FUSEError(ENOSYS) }
+    setxattr(path: String, name: String, value: Blob, flags: Int)        { throw FUSEError(ENOSYS) }
+    getxattr(path: String, name: String) -> Blob | String | nil          { throw FUSEError(ENOSYS) }
+    listxattr(path: String) -> Iterable[String]                          { throw FUSEError(ENOSYS) }
+    removexattr(path: String, name: String)                              { throw FUSEError(ENOSYS) }
+    opendir(path: String, info: FileInfo) -> _                           { throw FUSEError(ENOSYS) }
+    readdir(path: String, fh: _) -> Iterable[_]                          { throw FUSEError(ENOSYS) }
+    releasedir(path: String, fh: _)                                      { throw FUSEError(ENOSYS) }
+    fsyncdir(path: String, datasync: Bool, fh: _)                        { throw FUSEError(ENOSYS) }
+    start(conn: ConnInfo, config: ?Config)                               { throw FUSEError(ENOSYS) }
+    stop()                                                               { throw FUSEError(ENOSYS) }
+    access(path: String, mode: Int) -> Bool                              { throw FUSEError(ENOSYS) }
+    utimens(path: String, atime: ?Float, mtime: ?Float, fh: _)           { throw FUSEError(ENOSYS) }
+    flock(path: String, fh: _, op: Int)                                  { throw FUSEError(ENOSYS) }
+    fallocate(path: String, mode: Int, offset: Int, length: Int, fh: _)  { throw FUSEError(ENOSYS) }
+    lseek(path: String, offset: Int, whence: Int, fh: _) -> Int          { throw FUSEError(ENOSYS) }
+
+    operation(name: String) -> _ {
+        let $op = self.?{name} or return nil
+        (op.__class__ != Operations) ? op : nil
+    }
+}
+
+fn timespec(t: _) -> (Int, Int) {
+    match t {
+        nil         => (0, 0),
+        t: Int      => (t, 0),
+        t: Float    => (int(t.floor), int((t - t.floor) * 1.0e9)),
+        {sec, nsec} => (sec, nsec),
+    }
+}
+
+fn seconds(ts: Ptr[_]) -> Float | nil {
+    let t = Timespec(ts)
+    match t.nsec {
+        ::UTIME_OMIT => nil,
+        ::UTIME_NOW  => time.utc(),
+        nsec         => float(t.sec) + float(nsec) / 1.0e9
+    }
+}
+
+fn fill-stat(p: Ptr[_], attrs: _) {
+    c.memset(p, 0, c.size(Stat.ctype()))
+
+    let st = Stat(p)
+
+    st.mode    = attrs.mode
+    st.ino     = attrs.?ino     ?? 0
+    st.dev     = attrs.?dev     ?? 0
+    st.rdev    = attrs.?rdev    ?? 0
+    st.nlink   = attrs.?nlink   ?? 1
+    st.uid     = attrs.?uid     ?? os.getuid()
+    st.gid     = attrs.?gid     ?? os.getgid()
+    st.size    = attrs.?size    ?? 0
+    st.blksize = attrs.?blksize ?? 0
+    st.blocks  = attrs.?blocks  ?? 0
+
+    let (atime, atime-nsec) = timespec(attrs.?atime)
+    let (mtime, mtime-nsec) = timespec(attrs.?mtime)
+    let (ctime, ctime-nsec) = timespec(attrs.?ctime)
+
+    st.atime      = atime
+    st.atime_nsec = atime-nsec
+    st.mtime      = mtime
+    st.mtime_nsec = mtime-nsec
+    st.ctime      = ctime
+    st.ctime_nsec = ctime-nsec
+}
+
+fn fill-statvfs(p: Ptr[_], attrs: _) {
+    c.memset(p, 0, c.size(Statvfs.ctype()))
+
+    let st = Statvfs(p)
+
+    st.bsize   = attrs.?bsize   ?? 0
+    st.frsize  = attrs.?frsize  ?? 0
+    st.blocks  = attrs.?blocks  ?? 0
+    st.bfree   = attrs.?bfree   ?? 0
+    st.bavail  = attrs.?bavail  ?? 0
+    st.files   = attrs.?files   ?? 0
+    st.ffree   = attrs.?ffree   ?? 0
+    st.favail  = attrs.?favail  ?? 0
+    st.fsid    = attrs.?fsid    ?? 0
+    st.flag    = attrs.?flag    ?? 0
+    st.namemax = attrs.?namemax ?? 255
+}
+
+fn bytes(p: Ptr[_], n: Int) -> Blob {
+    Blob().push(p, n)
+}
+
+fn copy-out(data: String | Blob, buf: ?Ptr[_], size: Int) -> Int {
+    let n = data.size()
+
+    if size == 0 {
+        return n
+    }
+
+    if n > size {
+        throw FUSEError(ERANGE)
+    }
+
+    c.memcpy(buf, data, n)
+    n
+}
+
+fn id(x: Int) -> Int | nil {
+    (x == NO_ID) ? nil : x
+}
+
+use CInt  = Int
+use CUInt = Int
+use Size  = Int
+use Off   = Int
+use Mode  = Int
+use Dev   = Int
+use Uid   = Int
+use Gid   = Int
+
+const C_TYPES = %{
+    'Ptr':   c.ptr,
+    'CInt':  c.int,
+    'CUInt': c.uint,
+    'Size':  size_t,
+    'Off':   off_t,
+    'Mode':  mode_t,
+    'Dev':   dev_t,
+    'Uid':   uid_t,
+    'Gid':   gid_t,
+}
+
+fn ctype(t: _) -> _ {
+    match t {
+        ty.Param({constraint, *}) => ctype(constraint),
+        ty.Question(t)            => ctype(t),
+        ty.Subscript(t, _)        => ctype(t),
+        ty.Id({name, *})          => C_TYPES[name] ?? throw RuntimeError("fuse: no C type for {name}"),
+        ty.Nil                    => c.void,
+    }
+}
+
+const SLOTS = [
+    'getattr',    'readlink',  'mknod',     'mkdir',     'unlink',      'rmdir',
+    'symlink',    'rename',    'link',      'chmod',     'chown',       'truncate',
+    'open',       'read',      'write',     'statfs',    'flush',       'release',
+    'fsync',      'setxattr',  'getxattr',  'listxattr', 'removexattr', 'opendir',
+    'readdir',    'releasedir', 'fsyncdir', 'start',     'stop',        'access',
+    'create',     'lock',      'utimens',   'bmap',      'ioctl',       'poll',
+    'write-buf',  'read-buf',  'flock',     'fallocate', 'copy-file-range', 'lseek',
+]
+
+const IMPLIED = %{
+    'release':    ['open', 'create'],
+    'releasedir': ['opendir'],
+}
+
+class Bridge {
+    __ops:     Dict[String, _]
+    __handles: Dict[Int, _]
+    __next:    Int
+    __lock:    Mutex
+
+    init(ops: Operations) {
+        __ops     = %{}
+        __handles = %{}
+        __next    = 0
+        __lock    = Mutex()
+
+        for name in SLOTS {
+            if let $op = ops.operation(name) {
+                __ops[name] = op
+            }
+        }
+    }
+
+    closure(name: String) -> _ {
+        if name not in __ops && (IMPLIED[name] ?? []).all?(\_ not in __ops) {
+            return nil
+        }
+
+        let $f    = self.?{name} or return nil
+        let proto = f.__def__
+        let rt    = ctype(proto.rt)
+
+        c.closure(rt, *proto.params.map(ctype), guard(name, rt, f))
+    }
+
+    __call(name: String, *args: _) -> _ {
+        let $op = __ops[name] or return nil
+        op(*args)
+    }
+
+    __keep(fi: Ptr[_], handle: _) -> CInt {
+        if handle == nil {
+            return 0
+        }
+
+        with __lock {
+            __next += 1
+            __handles[__next] = handle
+            RawFileInfo(fi).fh = __next
+        }
+
+        0
+    }
+
+    __handle(fi: ?Ptr[_]) -> _ {
+        let $p = fi or return nil
+        with __lock {
+            __handles[RawFileInfo(p).fh]
+        }
+    }
+
+    __take(fi: Ptr[_]) -> _ {
+        with __lock {
+            __handles.remove(RawFileInfo(fi).fh)
+        }
+    }
+
+    __done(name: String, *args: _) -> CInt {
+        __call(name, *args)
+        0
+    }
+
+    getattr(path: Ptr[_], st: Ptr[_], fi: ?Ptr[_]) -> CInt {
+        let attrs = __call('getattr', c.str(path), __handle(fi)) ?? throw FUSEError(ENOENT)
+        fill-stat(st, attrs)
+        0
+    }
+
+    readlink(path: Ptr[_], buf: Ptr[_], size: Size) -> CInt {
+        let target = __call('readlink', c.str(path)) ?? throw FUSEError(ENOENT)
+        let n = min(target.size(), size - 1)
+        c.memcpy(buf, target, n)
+        c.store(c.u8, buf + n, 0)
+        0
+    }
+
+    mknod(path: Ptr[_], mode: Mode, dev: Dev) -> CInt {
+        __done('mknod', c.str(path), mode, dev)
+    }
+
+    mkdir(path: Ptr[_], mode: Mode) -> CInt {
+        __done('mkdir', c.str(path), mode)
+    }
+
+    unlink(path: Ptr[_]) -> CInt {
+        __done('unlink', c.str(path))
+    }
+
+    rmdir(path: Ptr[_]) -> CInt {
+        __done('rmdir', c.str(path))
+    }
+
+    symlink(target: Ptr[_], path: Ptr[_]) -> CInt {
+        __done('symlink', c.str(target), c.str(path))
+    }
+
+    rename(old: Ptr[_], new: Ptr[_], flags: CUInt) -> CInt {
+        __done('rename', c.str(old), c.str(new), flags)
+    }
+
+    link(old: Ptr[_], new: Ptr[_]) -> CInt {
+        __done('link', c.str(old), c.str(new))
+    }
+
+    chmod(path: Ptr[_], mode: Mode, fi: ?Ptr[_]) -> CInt {
+        __done('chmod', c.str(path), mode, __handle(fi))
+    }
+
+    chown(path: Ptr[_], uid: Uid, gid: Gid, fi: ?Ptr[_]) -> CInt {
+        __done('chown', c.str(path), id(uid), id(gid), __handle(fi))
+    }
+
+    truncate(path: Ptr[_], size: Off, fi: ?Ptr[_]) -> CInt {
+        __done('truncate', c.str(path), size, __handle(fi))
+    }
+
+    open(path: Ptr[_], fi: Ptr[_]) -> CInt {
+        let info = FileInfo(fi)
+        __keep(fi, __call('open', c.str(path), info.flags, info))
+    }
+
+    create(path: Ptr[_], mode: Mode, fi: Ptr[_]) -> CInt {
+        let info = FileInfo(fi)
+        __keep(fi, __call('create', c.str(path), mode, info.flags, info))
+    }
+
+    read(path: Ptr[_], buf: Ptr[_], size: Size, off: Off, fi: ?Ptr[_]) -> CInt {
+        let data = __call('read', c.str(path), size, off, __handle(fi)) ?? ''
+        let n = min(data.size(), size)
+        c.memcpy(buf, data, n)
+        n
+    }
+
+    write(path: Ptr[_], buf: Ptr[_], size: Size, off: Off, fi: ?Ptr[_]) -> CInt {
+        __call('write', c.str(path), bytes(buf, size), off, __handle(fi)) ?? size
+    }
+
+    statfs(path: Ptr[_], buf: Ptr[_]) -> CInt {
+        fill-statvfs(buf, __call('statfs', c.str(path)) ?? {})
+        0
+    }
+
+    flush(path: Ptr[_], fi: ?Ptr[_]) -> CInt {
+        __done('flush', c.str(path), __handle(fi))
+    }
+
+    release(path: Ptr[_], fi: Ptr[_]) -> CInt {
+        __done('release', c.str(path), __take(fi))
+    }
+
+    fsync(path: Ptr[_], data: CInt, fi: ?Ptr[_]) -> CInt {
+        __done('fsync', c.str(path), data != 0, __handle(fi))
+    }
+
+    setxattr(path: Ptr[_], name: Ptr[_], value: Ptr[_], size: Size, flags: CInt) -> CInt {
+        __done('setxattr', c.str(path), c.str(name), bytes(value, size), flags)
+    }
+
+    getxattr(path: Ptr[_], name: Ptr[_], buf: ?Ptr[_], size: Size) -> CInt {
+        let value = __call('getxattr', c.str(path), c.str(name)) ?? throw FUSEError(ENODATA)
+        copy-out(value, buf, size)
+    }
+
+    listxattr(path: Ptr[_], buf: ?Ptr[_], size: Size) -> CInt {
+        let names = Blob()
+        for name in __call('listxattr', c.str(path)) ?? [] {
+            names.push(name)
+            names.push(0)
+        }
+        copy-out(names, buf, size)
+    }
+
+    removexattr(path: Ptr[_], name: Ptr[_]) -> CInt {
+        __done('removexattr', c.str(path), c.str(name))
+    }
+
+    opendir(path: Ptr[_], fi: Ptr[_]) -> CInt {
+        __keep(fi, __call('opendir', c.str(path), FileInfo(fi)))
+    }
+
+    readdir(path: Ptr[_], buf: Ptr[_], filler: Ptr[_], off: Off, fi: ?Ptr[_], flags: CInt) -> CInt {
+        let st = c.new-auto(Stat.ctype())
+
+        for name in ['.', '..'] {
+            c.call(FILL_DIR, filler, buf, name.cstr(), nil, 0, 0)
+        }
+
+        for entry in __call('readdir', c.str(path), __handle(fi)) ?? [] {
+            let (name, attrs) = match entry {
+                (name: String, attrs) => (name, attrs),
+                name: String          => (name, nil),
+            }
+
+            if name == '.' || name == '..' {
+                continue
+            }
+
+            if attrs != nil {
+                fill-stat(st, attrs)
+            }
+
+            c.call(FILL_DIR, filler, buf, name.cstr(), (attrs == nil) ? nil : st, 0, 0)
+        }
+
+        0
+    }
+
+    releasedir(path: Ptr[_], fi: Ptr[_]) -> CInt {
+        __done('releasedir', c.str(path), __take(fi))
+    }
+
+    fsyncdir(path: Ptr[_], data: CInt, fi: ?Ptr[_]) -> CInt {
+        __done('fsyncdir', c.str(path), data != 0, __handle(fi))
+    }
+
+    start(conn: Ptr[_], config: ?Ptr[_]) -> ?Ptr[_] {
+        let cfg = (fuse_version() >= 314) ? Config(config) : nil
+        __call('start', ConnInfo(conn), cfg)
+        nil
+    }
+
+    stop(data: ?Ptr[_]) -> nil {
+        __call('stop')
+        nil
+    }
+
+    access(path: Ptr[_], mode: CInt) -> CInt {
+        if __call('access', c.str(path), mode) == false {
+            throw FUSEError(EACCES)
+        }
+        0
+    }
+
+    utimens(path: Ptr[_], tv: Ptr[_], fi: ?Ptr[_]) -> CInt {
+        __done('utimens', c.str(path), seconds(tv), seconds(tv + 16), __handle(fi))
+    }
+
+    flock(path: Ptr[_], fi: ?Ptr[_], op: CInt) -> CInt {
+        __done('flock', c.str(path), __handle(fi), op)
+    }
+
+    fallocate(path: Ptr[_], mode: CInt, off: Off, size: Off, fi: ?Ptr[_]) -> CInt {
+        __done('fallocate', c.str(path), mode, off, size, __handle(fi))
+    }
+
+    lseek(path: Ptr[_], off: Off, whence: CInt, fi: ?Ptr[_]) -> Off {
+        __call('lseek', c.str(path), off, whence, __handle(fi))
+    }
+}
+
+fn shield(name: String, fail: _, f: _, args: Array[_]) -> _ {
+    try {
+        f(*args)
+    } catch e: OSError {
+        fail(e.code)
+    } catch e {
+        eprint("fuse: uncaught exception in {name}(): {e}")
+        if name == 'start' {
+            exit()
+        }
+        fail(EIO)
+    }
+}
+
+fn guard(name: String, rt: _, f: _) -> _ {
+    let fail = code -> (rt == c.int || rt == off_t) ? -code : nil
+
+    return fn (*args) {
+        depth += 1
+        let result = shield(name, fail, f, args)
+        depth -= 1
+        result
+    }
+}
+
+fn loop-config() -> Ptr[_] {
+    if fuse_version() < 312 {
+        let config = c.new-auto(c.u32, 2)
+        config[1] = 10
+        return config
+    }
+
+    let create = c.wrap(libfuse, 'fuse_loop_cfg_create', c.ptr)
+    c.auto(create(), c.dlsym('fuse_loop_cfg_destroy', libfuse))
+}
+
+fn option(key: String, value: _) -> String | nil {
+    let key = key.sub(/[A-Z]/, m -> "_{m.lower()}")
+    match value {
+        true        => key,
+        false, nil  => nil,
+        _           => "{key}={str(value).sub(/[\\,]/, m -> "\\{m}")}"
+    }
+}
+
+pub class Fuse {
+    __ops:        Operations
+    __mountpoint: String
+    __threads:    Bool
+    __debug:      Bool
+    __signals:    Bool
+    __options:    Dict[String, _]
+    __fuse:       _
+
+    init(
+        ops: Operations,
+        mountpoint: String,
+        threads: Bool = false,
+        debug: Bool = false,
+        signals: Bool = true,
+        %options
+    ) {
+        __ops        = ops
+        __mountpoint = mountpoint
+        __threads    = threads
+        __debug      = debug
+        __signals    = signals
+        __options    = %{'fsname': type(ops).__name__, **options}
+                     - %['threads', 'debug', 'signals']
+        __fuse       = nil
+    }
+
+    mountpoint -> String { __mountpoint }
+
+    running? -> Bool { __fuse != nil }
+
+    __argv() -> Array[String] {
+        let opts = [option(k, v) for k, v in __options].filter(\_ != nil)
+        ['ty-fuse', '-o' if opts, opts.join(',') if opts, '-d' if __debug]
+    }
+
+    __operations(bridge: Bridge) -> Array[_] {
+        [bridge.closure(name) for name in SLOTS]
+    }
+
+    __loop() -> Int {
+        __threads ? fuse_loop_mt(__fuse, loop-config()) : fuse_loop(__fuse)
+    }
+
+    __trapping-signals() -> Int {
+        let session = fuse_get_session(__fuse)
+        fuse_set_signal_handlers(session)
+        let rc = __loop()
+        fuse_remove_signal_handlers(session)
+        rc
+    }
+
+    run() {
+        let strings  = __argv().map(&cstr)
+        let closures = __operations(Bridge(__ops))
+        let argv     = c.new-auto(c.ptr, #strings + 1)
+        let table    = c.new-auto(c.ptr, #closures)
+        let args     = c.box-auto(FuseArgs.ctype(), (#strings, argv, 0))
+
+        for i in ..#strings {
+            argv[i] = strings[i]
+        }
+
+        for i in ..#closures {
+            table[i] = closures[i]
+        }
+
+        try {
+            __fuse = fuse_new(args, table, #closures * c.size(c.ptr), nil)
+                     ?? throw RuntimeError("fuse: invalid arguments: {strings}")
+            __session()
+        } finally {
+            fuse_opt_free_args(args)
+        }
+    }
+
+    __session() {
+        try {
+            __serve()
+        } finally {
+            fuse_destroy(__fuse)
+            __fuse = nil
+        }
+    }
+
+    __serve() {
+        if fuse_mount(__fuse, __mountpoint.cstr()) != 0 {
+            throw RuntimeError("fuse: failed to mount {__mountpoint}")
+        }
+
+        let rc = __signals ? __trapping-signals() : __loop()
+
+        fuse_unmount(__fuse)
+
+        if rc < 0 {
+            throw OSError("fuse: event loop", -rc)
+        }
+    }
+
+    exit() {
+        if let $f = __fuse {
+            fuse_exit(f)
+        }
+    }
+}
+
+pub fn mount(ops: Operations, mountpoint: String, %options) {
+    Fuse(ops, mountpoint, **options).run()
+}

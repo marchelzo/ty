@@ -1,0 +1,250 @@
+import fuse (ENOATTR, FUSEError, FileInfo, Operations, XATTR_CREATE, XATTR_REPLACE)
+import errno (EEXIST, ENOENT, ENOTEMPTY)
+import os (S_IFDIR, S_IFLNK, S_IFMT, S_IFREG)
+import time
+
+class Node {
+    mode:   Int
+    uid:    Int
+    gid:    Int
+    atime:  Float
+    mtime:  Float
+    ctime:  Float
+    data:   Blob
+    xattrs: Dict[String, Blob]
+
+    init(mode: Int) {
+        let now = time.utc()
+        let ctx = fuse.context()
+
+        self.mode = mode
+        uid       = ctx.?uid ?? os.getuid()
+        gid       = ctx.?gid ?? os.getgid()
+        atime     = now
+        mtime     = now
+        ctime     = now
+        data      = Blob()
+        xattrs    = %{}
+    }
+
+    dir? -> Bool { (mode & S_IFMT) == S_IFDIR }
+    size -> Int  { data.size() }
+    nlink -> Int { dir? ? 2 : 1 }
+
+    touch() {
+        mtime = time.utc()
+        ctime = mtime
+    }
+}
+
+let LOCK = Mutex()
+
+fn synchronized(f: Function) -> Function {
+    return fn (*args) {
+        with LOCK {
+            f(*args)
+        }
+    }
+}
+
+fn parent(path: String) -> String {
+    path.sub(/\/[^\/]*$/, '') || '/'
+}
+
+fn basename(path: String) -> String {
+    path.sub(/^.*\//, '')
+}
+
+class Memory < Operations {
+    __nodes: Dict[String, Node]
+
+    init() {
+        __nodes = %{'/': Node(S_IFDIR | 0o755)}
+    }
+
+    __node(path: String) -> Node {
+        __nodes[path] ?? throw FUSEError(ENOENT)
+    }
+
+    __add(path: String, node: Node) {
+        if path in __nodes {
+            throw FUSEError(EEXIST)
+        }
+        __node(parent(path)).touch()
+        __nodes[path] = node
+    }
+
+    __remove(path: String) {
+        __node(path)
+        __nodes.remove(path)
+        __node(parent(path)).touch()
+    }
+
+    __children(path: String) -> Array[String] {
+        [p for p in __nodes.keys() if p != '/' && parent(p) == path]
+    }
+
+    @synchronized
+    getattr(path: String, _) -> Node | nil {
+        __nodes[path]
+    }
+
+    @synchronized
+    readdir(path: String, _) -> Array[(String, Node)] {
+        [(basename(p), __node(p)) for p in __children(path)]
+    }
+
+    @synchronized
+    mkdir(path: String, mode: Int) {
+        __add(path, Node(S_IFDIR | mode))
+    }
+
+    @synchronized
+    mknod(path: String, mode: Int, _: Int) {
+        __add(path, Node(mode))
+    }
+
+    @synchronized
+    create(path: String, mode: Int, _: Int, _: FileInfo) {
+        __add(path, Node(S_IFREG | mode))
+    }
+
+    @synchronized
+    symlink(target: String, path: String) {
+        let node = Node(S_IFLNK | 0o777)
+        node.data.push(target)
+        __add(path, node)
+    }
+
+    @synchronized
+    readlink(path: String) -> String {
+        __node(path).data.str()
+    }
+
+    @synchronized
+    read(path: String, size: Int, offset: Int, _) -> Blob | nil {
+        let data = __node(path).data
+        (offset < data.size()) ? data.slice(offset, size) : nil
+    }
+
+    @synchronized
+    write(path: String, chunk: Blob, offset: Int, _) -> Int {
+        let node = __node(path)
+        node.data.pad(offset)
+        node.data.splice(offset, chunk.size())
+        node.data.push(offset, chunk)
+        node.touch()
+        chunk.size()
+    }
+
+    @synchronized
+    truncate(path: String, length: Int, _) {
+        let node = __node(path)
+        node.data.pad(length)
+        node.data.splice(length)
+        node.touch()
+    }
+
+    @synchronized
+    unlink(path: String) {
+        __remove(path)
+    }
+
+    @synchronized
+    rmdir(path: String) {
+        if __children(path) {
+            throw FUSEError(ENOTEMPTY)
+        }
+        __remove(path)
+    }
+
+    @synchronized
+    rename(old: String, new: String, _: Int) {
+        let node = __node(old)
+
+        if let $victim = __nodes[new] {
+            if victim.dir? && __children(new) {
+                throw FUSEError(ENOTEMPTY)
+            }
+            __nodes.remove(new)
+        }
+
+        for path in [old, *__descendants(old)] {
+            __nodes[new + path[#old;]] = __nodes.remove(path)!
+        }
+
+        node.ctime = time.utc()
+        __node(parent(old)).touch()
+        __node(parent(new)).touch()
+    }
+
+    __descendants*(path: String) {
+        for child in __children(path) {
+            yield child
+            yield *__descendants(child)
+        }
+    }
+
+    @synchronized
+    chmod(path: String, mode: Int, _) {
+        let node = __node(path)
+        node.mode = (node.mode & S_IFMT) | (mode & ~S_IFMT)
+        node.ctime = time.utc()
+    }
+
+    @synchronized
+    chown(path: String, uid: ?Int, gid: ?Int, _) {
+        let node = __node(path)
+        node.uid = uid ?? node.uid
+        node.gid = gid ?? node.gid
+        node.ctime = time.utc()
+    }
+
+    @synchronized
+    utimens(path: String, atime: ?Float, mtime: ?Float, _) {
+        let node = __node(path)
+        node.atime = atime ?? node.atime
+        node.mtime = mtime ?? node.mtime
+        node.ctime = time.utc()
+    }
+
+    @synchronized
+    setxattr(path: String, name: String, value: Blob, flags: Int) {
+        let xattrs = __node(path).xattrs
+
+        match (flags, name in xattrs) {
+            (::XATTR_CREATE, true)   => throw FUSEError(EEXIST),
+            (::XATTR_REPLACE, false) => throw FUSEError(ENOATTR),
+            _                        => xattrs[name] = value
+        }
+    }
+
+    @synchronized
+    getxattr(path: String, name: String) -> Blob | nil {
+        __node(path).xattrs[name]
+    }
+
+    @synchronized
+    listxattr(path: String) -> Array[String] {
+        __node(path).xattrs.keys()
+    }
+
+    @synchronized
+    removexattr(path: String, name: String) {
+        __node(path).xattrs.remove(name) ?? throw FUSEError(ENOATTR)
+    }
+
+    @synchronized
+    statfs(_: String) {
+        return {bsize: 512, frsize: 512, blocks: 4096, bfree: 2048, bavail: 2048}
+    }
+}
+
+match argv {
+    [_, mountpoint]              => fuse.mount(Memory(), mountpoint),
+    [_, '--threads', mountpoint] => fuse.mount(Memory(), mountpoint, threads: true),
+    _                            => {
+        eprint('usage: memory.ty [--threads] MOUNTPOINT')
+        os.exit(2)
+    }
+}

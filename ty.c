@@ -703,6 +703,7 @@ main(int argc, char **argv)
         }
 
         char *source = fslurp(file);
+        fclose(file);
 
         if (UNLIKELY(HighlightOnly)) {
                 if (!vm_load_program(ty, source, SourceFileName)) {

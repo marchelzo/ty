@@ -1,0 +1,118 @@
+import ffi as c (C!)
+import fuse (FUSEError, FileInfo, Operations)
+import errno (EINVAL)
+import os (AT_FDCWD, AT_SYMLINK_NOFOLLOW, O_CREAT)
+
+C! fn {
+    int utimensat(int dirfd, const char *path, const void *times, int flags);
+    int fdatasync(int fd);
+}
+
+const UTIME_OMIT = (1 << 30) - 2
+
+fn sys(rc: Int) -> Int {
+    (rc == -1) ? throw OSError() : rc
+}
+
+fn timespec(t: ?Float) -> (Int, Int) {
+    match t {
+        nil => (0, UTIME_OMIT),
+        t   => (int(t.floor), int((t - t.floor) * 1.0e9))
+    }
+}
+
+class Loopback < Operations {
+    __root: String
+
+    init(root: String) {
+        __root = os.realpath(root) ?? throw OSError(root)
+    }
+
+    __(path: String) -> String {
+        "{__root}{path}"
+    }
+
+    access(path: String, mode: Int) -> Bool {
+        os.access(__(path), mode) == 0
+    }
+
+    getattr(path: String, fd: ?Int) -> os.Stat {
+        let st = (fd == nil) ? os.lstat(__(path)) : os.fstat(fd)
+        st ?? throw OSError()
+    }
+
+    readdir(path: String, _) -> Array[String] {
+        os.listdir(__(path))
+    }
+
+    readlink(path: String) -> String {
+        os.readlink(__(path)) ?? throw OSError()
+    }
+
+    statfs(path: String) -> os.Statvfs {
+        os.statvfs(__(path))
+    }
+
+    open(path: String, flags: Int, _: FileInfo) -> Int {
+        sys(os.open(__(path), flags))
+    }
+
+    create(path: String, mode: Int, flags: Int, _: FileInfo) -> Int {
+        sys(os.open(__(path), flags | O_CREAT, mode))
+    }
+
+    read(path: String, size: Int, offset: Int, fd: Int) -> Blob {
+        os.pread(fd, size, offset)
+    }
+
+    write(path: String, data: Blob, offset: Int, fd: Int) -> Int {
+        sys(os.pwrite(fd, data, offset))
+    }
+
+    fsync(path: String, datasync: Bool, fd: Int) {
+        sys(datasync ? fdatasync(fd) : os.fsync(fd))
+    }
+
+    release(path: String, fd: Int) {
+        sys(os.close(fd))
+    }
+
+    truncate(path: String, length: Int, fd: ?Int) {
+        sys((fd == nil) ? os.truncate(__(path), length) : os.ftruncate(fd, length))
+    }
+
+    mkdir(path: String, mode: Int)        { sys(os.mkdir(__(path), mode))     }
+    rmdir(path: String)                   { sys(os.rmdir(__(path)))           }
+    unlink(path: String)                  { sys(os.unlink(__(path)))          }
+    chmod(path: String, mode: Int, _)     { sys(os.chmod(__(path), mode))     }
+    symlink(target: String, path: String) { sys(os.symlink(target, __(path))) }
+    link(old: String, new: String)        { sys(os.link(__(old), __(new)))    }
+
+    chown(path: String, uid: ?Int, gid: ?Int, _) {
+        sys(os.chown(__(path), uid ?? -1, gid ?? -1))
+    }
+
+    rename(old: String, new: String, flags: Int) {
+        if flags != 0 {
+            throw FUSEError(EINVAL)
+        }
+        sys(os.rename(__(old), __(new)))
+    }
+
+    utimens(path: String, atime: ?Float, mtime: ?Float, _) {
+        let times = c.new-auto(c.i64, 4)
+
+        (times[0], times[1]) = timespec(atime)
+        (times[2], times[3]) = timespec(mtime)
+
+        sys(utimensat(AT_FDCWD, __(path).cstr(), times, AT_SYMLINK_NOFOLLOW))
+    }
+}
+
+match argv {
+    [_, root, mountpoint] => fuse.mount(Loopback(root), mountpoint),
+    _                     => {
+        eprint('usage: loopback.ty ROOT MOUNTPOINT')
+        os.exit(2)
+    }
+}

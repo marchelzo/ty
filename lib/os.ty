@@ -334,3 +334,13 @@ pub fn rm(path, quiet=false) {
 
     rmdir(path)
 }
+
+pub fn system(cmd: String) {
+    const proc = spawn(
+        ['sh', '-c', cmd],
+        stdin=SPAWN_INHERIT,
+        stdout=SPAWN_INHERIT,
+        stderr=SPAWN_INHERIT
+    )
+    wait(proc.pid)
+}

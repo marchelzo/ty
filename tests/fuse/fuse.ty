@@ -1,0 +1,347 @@
+import ffi as c (C!)
+import fuse
+import errno (EEXIST, ENODATA, ENOENT, ENOTEMPTY)
+import os (O_CREAT, O_RDONLY, O_TRUNC, O_WRONLY, S_IFDIR, S_IFLNK, S_IFMT, S_IFREG)
+import path (Path)
+import time
+import ty
+
+C! fn {
+    int setxattr(const char *path, const char *name, const void *value, size_t size, int flags);
+    ssize_t getxattr(const char *path, const char *name, void *value, size_t size);
+    ssize_t listxattr(const char *path, char *list, size_t size);
+    int removexattr(const char *path, const char *name);
+    int utimensat(int dirfd, const char *path, const void *times, int flags);
+}
+
+const EXAMPLES = Path(__file__).parent / 'examples'
+
+fn errno-of(rc: Int) -> Int {
+    (rc == -1) ? errno.get() : 0
+}
+
+fn run(argv: Array[String]) -> Int {
+    let proc = os.spawn(argv)
+    let (_, status) = os.wait(proc.pid) ?? (0, -1)
+    os.WEXITSTATUS(status)
+}
+
+fn mounted?(dir: String) -> Bool {
+    slurp('/proc/self/mounts').lines().any?(\_.split(' ')[1] == dir)
+}
+
+fn await-mount(dir: String) {
+    let deadline = time.now() + 3.0
+
+    while !mounted?(dir) {
+        if time.now() > deadline {
+            throw AssertionError("{dir} was never mounted")
+        }
+        os.sleep(0.01)
+    }
+}
+
+fn unmount(dir: String, pid: Int) -> Int {
+    if run(['fusermount3', '-u', dir]) != 0 {
+        os.kill(pid, os.SIGKILL)
+        run(['fusermount3', '-u', '-z', dir])
+    }
+
+    let (_, status) = os.wait(pid) ?? (pid, -1)
+    status
+}
+
+fn with-mount(argv: Array[String], f: Function) {
+    let dir    = os.mkdtemp('/tmp/ty-fuse')
+    let proc   = os.spawn([ty.executable, *argv, dir], pdeathsig: os.SIGTERM)
+    let status = -1
+
+    try {
+        await-mount(dir)
+        f(dir)
+    } finally {
+        status = unmount(dir, proc.pid)
+        os.rmdir(dir)
+    }
+
+    assert(os.WIFEXITED(status) && os.WEXITSTATUS(status) == 0)
+}
+
+fn with-memory(f: Function, threads: Bool = false) {
+    with-mount([str(EXAMPLES / 'memory.ty'), '--threads' if threads], f)
+}
+
+fn with-loopback(f: Function) {
+    let root = os.mkdtemp('/tmp/ty-fuse-root')
+
+    try {
+        with-mount([str(EXAMPLES / 'loopback.ty'), root], dir -> f(root, dir))
+    } finally {
+        os.rm(root)
+    }
+}
+
+fn put(path: String, data: String | Blob, flags: Int = O_TRUNC) {
+    let fd = os.open(path, O_WRONLY | O_CREAT | flags, 0o644)
+    assert(fd >= 0)
+    os.write(fd, data)
+    os.close(fd)
+}
+
+fn put-at(path: String, data: String, offset: Int) {
+    let fd = os.open(path, O_WRONLY)
+    assert(fd >= 0)
+    os.pwrite(fd, data, offset)
+    os.close(fd)
+}
+
+fn stat(path: String) -> os.Stat {
+    os.stat(path) ?? throw AssertionError("stat({path}): {errno.str(errno.get())}")
+}
+
+fn kind(path: String) -> Int {
+    let st = os.lstat(path) ?? throw AssertionError("lstat({path}): {errno.str(errno.get())}")
+    st.mode & S_IFMT
+}
+
+fn set-times(path: String, atime: (Int, Int), mtime: (Int, Int)) {
+    let times = c.new-auto(c.i64, 4)
+
+    (times[0], times[1]) = atime
+    (times[2], times[3]) = mtime
+
+    assert(utimensat(os.AT_FDCWD, path.cstr(), times, 0) == 0)
+}
+
+class ReadOnly < fuse.Operations {
+    read(path: String, size: Int, offset: Int, _) -> String { '' }
+}
+
+class Appending < ReadOnly {
+    write(path: String, data: Blob, offset: Int, _) -> Int { data.size() }
+}
+
+ns test
+
+pub fn version() {
+    let (major, minor) = fuse.version()
+    assert(major == 3)
+    assert(fuse.pkgversion().starts?("{major}.{minor}"))
+}
+
+pub fn no-context-outside-callbacks() {
+    assert(fuse.context() == nil)
+    assert(fuse.groups() == [])
+    assert(!fuse.interrupted?())
+}
+
+pub fn operation-resolution() {
+    let ro = ReadOnly()
+    assert(ro.operation('read') :: Function)
+    assert(ro.operation('write') == nil)
+    assert(ro.operation('getattr') == nil)
+    assert(ro.operation('ioctl') == nil)
+
+    let ap = Appending()
+    assert(ap.operation('read')('/', 0, 0, nil) == '')
+    assert(ap.operation('write')('/', Blob(1, 2, 3), 0, nil) == 3)
+    assert(ap.operation('truncate') == nil)
+}
+
+pub fn memory-files() {
+    with-memory(fn (dir) {
+        let file = "{dir}/hello.txt"
+
+        put(file, "hello, fuse\n")
+
+        assert(slurp(file) == "hello, fuse\n")
+        assert(os.listdir(dir) == ['hello.txt'])
+
+        let st = stat(file)
+        assert(st.size == 12)
+        assert((st.mode & S_IFMT) == S_IFREG)
+        assert((st.mode & 0o777) == 0o644)
+        assert(st.uid == os.getuid())
+        assert(stat(dir).uid == os.getuid())
+
+        put-at(file, 'J', 0)
+        put-at(file, '!', 15)
+        assert(slurp(file) == "Jello, fuse\n\x00\x00\x00!")
+
+        assert(os.truncate(file, 5) == 0)
+        assert(slurp(file) == 'Jello')
+
+        assert(os.unlink(file) == 0)
+        assert(os.listdir(dir) == [])
+        assert(errno-of(os.open(file, O_RDONLY)) == ENOENT)
+    })
+}
+
+pub fn memory-directories() {
+    with-memory(fn (dir) {
+        assert(os.mkdir("{dir}/a", 0o755) == 0)
+        assert(os.mkdir("{dir}/a/b", 0o700) == 0)
+        put("{dir}/a/b/c", 'deep')
+
+        assert(errno-of(os.mkdir("{dir}/a", 0o755)) == EEXIST)
+        assert(errno-of(os.rmdir("{dir}/a")) == ENOTEMPTY)
+        assert(kind("{dir}/a/b") == S_IFDIR)
+        assert((stat("{dir}/a/b").mode & 0o777) == 0o700)
+
+        assert(os.rename("{dir}/a", "{dir}/z") == 0)
+        assert(os.listdir(dir) == ['z'])
+        assert(slurp("{dir}/z/b/c") == 'deep')
+
+        assert(os.unlink("{dir}/z/b/c") == 0)
+        assert(os.rmdir("{dir}/z/b") == 0)
+        assert(os.rmdir("{dir}/z") == 0)
+        assert(os.listdir(dir) == [])
+    })
+}
+
+pub fn memory-symlinks() {
+    with-memory(fn (dir) {
+        put("{dir}/target", 'pointed at')
+        assert(os.symlink('target', "{dir}/link") == 0)
+        assert(kind("{dir}/link") == S_IFLNK)
+        assert(os.readlink("{dir}/link") == 'target')
+        assert(slurp("{dir}/link") == 'pointed at')
+    })
+}
+
+pub fn memory-metadata() {
+    with-memory(fn (dir) {
+        let file = "{dir}/f"
+        put(file, '')
+
+        assert(os.chmod(file, 0o600) == 0)
+        assert((stat(file).mode & 0o7777) == 0o600)
+
+        set-times(file, (1000000000, 250000000), (978307200, (1 << 30) - 2))
+        let st = stat(file)
+        assert(st.atime == 1000000000.25)
+        assert(st.mtime != 978307200.0)
+
+        set-times(file, (0, (1 << 30) - 2), (978307200, 0))
+        assert(stat(file).mtime == 978307200.0)
+        assert(stat(file).atime == 1000000000.25)
+
+        let vfs = os.statvfs(dir)
+        assert(vfs.bsize == 512)
+        assert(vfs.blocks == 4096)
+        assert(vfs.bavail == 2048)
+    })
+}
+
+pub fn memory-xattrs() {
+    with-memory(fn (dir) {
+        let file = "{dir}/f".cstr()
+        put(file, '')
+
+        assert(setxattr(file, 'user.color'.cstr(), 'teal', 4, 0) == 0)
+        assert(setxattr(file, 'user.size'.cstr(), 'xl', 2, 0) == 0)
+        assert(errno-of(setxattr(file, 'user.size'.cstr(), 'xs', 2, fuse.XATTR_CREATE)) == EEXIST)
+        assert(errno-of(setxattr(file, 'user.nope'.cstr(), 'x', 1, fuse.XATTR_REPLACE)) == ENODATA)
+
+        let buf = Blob()
+        buf.reserve(64)
+
+        assert(getxattr(file, 'user.color'.cstr(), nil, 0) == 4)
+        assert(getxattr(file, 'user.color'.cstr(), buf.ptr(), 64) == 4)
+        assert(c.str(buf.ptr(), 4) == 'teal')
+        assert(errno-of(getxattr(file, 'user.missing'.cstr(), buf.ptr(), 64)) == ENODATA)
+
+        let n = listxattr(file, buf.ptr(), 64)
+        assert(c.str(buf.ptr(), n).split("\x00").filter(\#_ > 0).sort() == ['user.color', 'user.size'])
+
+        assert(removexattr(file, 'user.color'.cstr()) == 0)
+        assert(errno-of(removexattr(file, 'user.color'.cstr())) == ENODATA)
+    })
+}
+
+pub fn memory-xattrs-outlive-requests() {
+    with-memory(fn (dir) {
+        let file = "{dir}/f".cstr()
+        put(file, '')
+
+        assert(setxattr(file, 'user.kept'.cstr(), 'original', 8, 0) == 0)
+
+        for i in ..16 {
+            put("{dir}/noise-{i}", 'z' * 65536)
+            assert(setxattr(file, "user.noise-{i}".cstr(), 'y' * 64, 64, 0) == 0)
+        }
+
+        let buf = Blob()
+        buf.reserve(16)
+        assert(getxattr(file, 'user.kept'.cstr(), buf.ptr(), 16) == 8)
+        assert(c.str(buf.ptr(), 8) == 'original')
+    })
+}
+
+pub fn memory-threads() {
+    with-memory(threads: true, fn (dir) {
+        let workers = [
+            Thread(fn () {
+                for j in ..10 {
+                    put("{dir}/{i}-{j}", "{i}:{j}")
+                    assert(slurp("{dir}/{i}-{j}") == "{i}:{j}")
+                }
+            })
+            for i in ..8
+        ]
+
+        for workers {
+            it.join()
+        }
+
+        assert(#os.listdir(dir) == 80)
+    })
+}
+
+pub fn loopback-passthrough() {
+    with-loopback(fn (root, dir) {
+        put("{root}/outside", 'from the root')
+        assert(slurp("{dir}/outside") == 'from the root')
+
+        put("{dir}/inside", 'through the mount')
+        assert(slurp("{root}/inside") == 'through the mount')
+
+        put("{dir}/inside", ', appended', flags: os.O_APPEND)
+        assert(slurp("{root}/inside") == 'through the mount, appended')
+
+        assert(os.listdir(dir).sort() == ['inside', 'outside'])
+
+        assert(os.mkdir("{dir}/sub", 0o755) == 0)
+        assert(os.rename("{dir}/inside", "{dir}/sub/moved") == 0)
+        assert(slurp("{root}/sub/moved") == 'through the mount, appended')
+
+        assert(os.link("{dir}/sub/moved", "{dir}/hard") == 0)
+        assert(stat("{root}/hard").nlink == 2)
+
+        assert(os.symlink('sub/moved', "{dir}/soft") == 0)
+        assert(os.readlink("{root}/soft") == 'sub/moved')
+
+        assert(os.truncate("{dir}/hard", 7) == 0)
+        assert(slurp("{root}/sub/moved") == 'through')
+
+        assert(errno-of(os.rmdir("{dir}/sub")) == ENOTEMPTY)
+        assert(errno-of(os.unlink("{dir}/missing")) == ENOENT)
+    })
+}
+
+pub fn loopback-metadata() {
+    with-loopback(fn (root, dir) {
+        put("{dir}/f", 'x')
+
+        assert(os.chmod("{dir}/f", 0o640) == 0)
+        assert((stat("{root}/f").mode & 0o7777) == 0o640)
+
+        set-times("{dir}/f", (1234567890, 500000000), (978307200, 125000000))
+        let st = stat("{root}/f")
+        assert(st.atime == 1234567890.5)
+        assert(st.mtime == 978307200.125)
+
+        assert(stat("{dir}/f").mtime == st.mtime)
+        assert(os.statvfs(dir).blocks == os.statvfs(root).blocks)
+    })
+}

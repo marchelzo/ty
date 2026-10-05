@@ -626,7 +626,17 @@ TySpawnRun(
                 return ENOENT;
         }
 
-#if !defined(__linux__)
+#if defined(__linux__)
+        if (
+                (sp->flags & SPAWN_PDEATHSIG)
+             && (
+                        (getuid() != geteuid())
+                     || (getgid() != getegid())
+                )
+        ) {
+                return EPERM;
+        }
+#else
         if (sp->flags & SPAWN_PDEATHSIG) {
                 return ENOTSUP;
         }

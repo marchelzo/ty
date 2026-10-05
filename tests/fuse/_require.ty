@@ -1,0 +1,17 @@
+import ffi as c
+import os
+
+if c.open('fuse3', [nil, 3]) == nil {
+    print('libfuse3 is not installed')
+    os.exit(77)
+}
+
+if os.access('/dev/fuse', os.R_OK | os.W_OK) != 0 {
+    print('/dev/fuse is not accessible')
+    os.exit(77)
+}
+
+if !(getenv('PATH') ?? '').split(':').any?(\os.access("{_}/fusermount3", os.X_OK) == 0) {
+    print('fusermount3 is not installed')
+    os.exit(77)
+}

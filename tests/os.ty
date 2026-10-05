@@ -1,4 +1,4 @@
-import errno (ENOENT, EACCES, EINVAL)
+import errno (ENOENT, EACCES, EINVAL, EPERM)
 import os (..)
 
 ns test
@@ -157,6 +157,13 @@ pub fn spawn-sigdefault() {
     }
 }
 
+fn single-digit(fd: Int) -> Int {
+    let $low = (3..10).find(\fcntl(_, F_GETFD) == -1) or return fd
+    dup2(fd, low)
+    close(fd)
+    low
+}
+
 pub fn spawn-inherit() {
     if !__windows__ {
         let fd = open('/dev/null', O_RDONLY)
@@ -169,8 +176,9 @@ pub fn spawn-inherit() {
 
         let (r, w) = pipe()
         defer close(r)
+        let w = single-digit(w)
         fcntl(w, F_SETFD, FD_CLOEXEC)
-        let writer = spawn(['sh', '-c', "printf through > /dev/fd/{w}"], inherit: [w])
+        let writer = spawn(['sh', '-c', "printf through >&{w}"], inherit: [w])
         close(w)
         wait4(writer.pid)
         assert(read(r, 64).str() == 'through')
@@ -184,8 +192,14 @@ pub fn spawn-umask() {
     }
 }
 
+fn mixed-ids?() -> Bool {
+    getuid() != geteuid() || getgid() != getegid()
+}
+
 pub fn spawn-pdeathsig() {
-    if __linux__ {
+    if __linux__ && mixed-ids?() {
+        assert(errno-of(-> spawn(['true'], pdeathsig: SIGKILL)) == EPERM)
+    } else if __linux__ {
         let pid = Thread(-> spawn(['sleep', '30'], pdeathsig: SIGKILL).pid).join()
         let result = wait4(pid)!
         assert(WIFSIGNALED(result.status) && WTERMSIG(result.status) == SIGKILL)
