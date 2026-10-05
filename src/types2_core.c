@@ -6984,7 +6984,7 @@ doc_parameter(T2Printer *printer, T2Node const *parameter, unsigned depth)
         if (kind == T2_PARAMETER_PACK) {
                 text(printer, T2_TOKEN_PUNCTUATION, "...");
         }
-        if (parameter->text != NULL && parameter->text[0] != '#') {
+        if (parameter->text != NULL) {
                 if (optional) {
                         text(printer, T2_TOKEN_PUNCTUATION, "?");
                 }
@@ -10249,14 +10249,6 @@ constrain_positional_suffix_pack(
                      && (function_keyword_parameter(universe, expected, spec.name) != NULL)
                 ) {
                         continue;
-                }
-                if (
-                        (spec.name != NULL)
-                     && (spec.name[0] == '#')
-                     && (spec.kind == T2_PARAMETER_POSITIONAL_OR_KEYWORD)
-                ) {
-                        spec.name = NULL;
-                        spec.kind = T2_PARAMETER_POSITIONAL_ONLY;
                 }
                 elements[n++] = t2_pack_element(universe, &spec);
         }

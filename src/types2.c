@@ -5582,6 +5582,26 @@ record_default_type(T2Checker *checker, Expr const *function, usize index, T2Typ
         }));
 }
 
+static void
+anonymize_parameter(T2ParameterSpec *spec)
+{
+        if (spec->name == NULL || spec->name[0] != '#') {
+                return;
+        }
+
+        switch (spec->kind) {
+        case T2_PARAMETER_POSITIONAL_OR_KEYWORD:
+                spec->kind = T2_PARAMETER_POSITIONAL_ONLY;
+        case T2_PARAMETER_POSITIONAL_REST:
+        case T2_PARAMETER_KEYWORD_REST:
+        case T2_PARAMETER_PACK:
+                spec->name = NULL;
+                break;
+        default:
+                break;
+        }
+}
+
 static bool
 defers_default(T2Checker *checker, Expr const *annotation, T2Type parameter)
 {
@@ -5756,6 +5776,7 @@ interface_function_scheme_x(
                                     )
                                  && !type_admits_nil(checker, parameter_type)
                 };
+                anonymize_parameter(&parameters[i]);
                 if (
                         is_pack_type(checker, parameters[i].type)
                      && (parameters[i].kind != T2_PARAMETER_KEYWORD_REST)
@@ -9370,7 +9391,7 @@ apply_callable_candidate(
                         ) {
                                 continue;
                         }
-                        if (parameter.name != NULL && parameter.name[0] != '#') {
+                        if (parameter.name != NULL) {
                                 call_shape_error(checker, site, "missing argument `%s`", parameter.name);
                         } else {
                                 call_shape_error(checker, site, "missing positional argument %zu", i + 1);
@@ -24422,6 +24443,7 @@ infer_single_function(T2Checker *checker, Expr const *function)
                         .kind     = kind,
                         .required = required
                 };
+                anonymize_parameter(&parameters[i]);
 
                 if (i < vN(function->param_symbols)) {
                         T2Binding *binding = ensure_binding(
@@ -35444,7 +35466,6 @@ ast_push_parameter(
         unsigned               depth
 )
 {
-        char const *name = (spec->name != NULL && spec->name[0] != '#') ? spec->name : NULL;
         Value type = ast_of_type(ty, spec->type, depth + 1);
 
         switch (spec->kind) {
@@ -35453,7 +35474,7 @@ ast_push_parameter(
                 break;
 
         case T2_PARAMETER_POSITIONAL_OR_KEYWORD:
-                vAp(out, ast_record_entry(ty, name, type, !spec->required));
+                vAp(out, ast_record_entry(ty, spec->name, type, !spec->required));
                 break;
 
         case T2_PARAMETER_KEYWORD_ONLY:
@@ -35461,14 +35482,14 @@ ast_push_parameter(
                         vAp(out, tagged(ty, TySpread, NIL, NONE));
                         *closed = true;
                 }
-                vAp(out, ast_record_entry(ty, name, type, !spec->required));
+                vAp(out, ast_record_entry(ty, spec->name, type, !spec->required));
                 break;
 
         case T2_PARAMETER_POSITIONAL_REST:
         case T2_PARAMETER_PACK:
         {
                 Value spread = tagged(ty, TySpread, type, NONE);
-                vAp(out, (name == NULL) ? spread : ast_record_entry(ty, name, spread, false));
+                vAp(out, (spec->name == NULL) ? spread : ast_record_entry(ty, spec->name, spread, false));
                 *closed = true;
                 break;
         }
@@ -35476,7 +35497,7 @@ ast_push_parameter(
         case T2_PARAMETER_KEYWORD_REST:
         {
                 Value spread = tagged(ty, TySpread, tagged(ty, TySpread, type, NONE), NONE);
-                vAp(out, (name == NULL) ? spread : ast_record_entry(ty, name, spread, false));
+                vAp(out, (spec->name == NULL) ? spread : ast_record_entry(ty, spec->name, spread, false));
                 break;
         }
         }
