@@ -27,7 +27,7 @@ fn forked(f) {
     }
 
     os.close(w)
-    let err = os.read(r, 4096).str!()
+    let err = slurp(r)
     os.close(r)
     let (_, status) = os.wait(pid)!
     ((status >> 8) & 0xFF, err)

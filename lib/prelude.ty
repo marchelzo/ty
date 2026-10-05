@@ -2281,7 +2281,7 @@ trait Iterable[T] {
         __iter__().set()
     }
 
-    str() {
+    str() -> String {
         __iter__().str()
     }
 
@@ -2297,8 +2297,12 @@ trait Iterable[T] {
         __iter__().unwords()
     }
 
-    tally(f: T -> Any = nil) {
-        __iter__().tally(f if f != nil)
+    tally() -> Dict[T, Int] {
+        __iter__().tally()
+    }
+
+    tally[a](key: T -> a) -> Dict[a, Int] {
+        __iter__().tally(key)
     }
 
     each(f) {
@@ -3090,9 +3094,9 @@ trait Iter[T] < Iterable[T] {
         Set(self)
     }
 
-    str() -> String | nil {
+    str() -> String {
         if not let Some($s) = __next__() {
-            return nil
+            return ''
         }
 
         let b = Blob("{s}")
@@ -3101,17 +3105,21 @@ trait Iter[T] < Iterable[T] {
             b.push("{s}")
         }
 
-        return b.str()
+        b.str!()
     }
 
-    tally(f = id) {
-        let d = %{*:0}
-        for x in self { d[f(x)] += 1 }
-        return d
+    tally[a](key: T -> a = id) -> Dict[a, Int] {
+        const tally = %{*:0}
+        for self {
+            tally[key(it)] += 1
+        }
+        %{**tally}
     }
 
-    each(f) {
-        for x in self { f(x) }
+    each(f: T -> Any) {
+        for self {
+            f(it)
+        }
     }
 
     enumerate*() {
