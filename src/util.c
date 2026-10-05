@@ -60,89 +60,175 @@ sclonea(Ty *ty, char const *s)
         return new;
 }
 
-char *
-fslurp(FILE *f)
+typedef void *Grow(Ty *ty, void *p, usize n, usize m);
+typedef isize Read(void *src, void *p, usize n);
+
+enum {
+        MAP_MIN = 1 << 16
+};
+
+static void *
+HeapGrow(Ty *ty, void *p, usize n, usize m)
+{
+        return mrealloc(p, n);
+}
+
+static void *
+ArenaGrow(Ty *ty, void *p, usize n, usize m)
+{
+        return Resize(p, n, m);
+}
+
+static void *
+ScratchGrow(Ty *ty, void *p, usize n, usize m)
+{
+        return resize_scratch(p, n, m);
+}
+
+inline static void
+reserve(Ty *ty, byte_vector *v, usize n, Grow *grow)
+{
+        if (vC(*v) < n) {
+                v->items    = grow(ty, vv(*v), n, vN(*v));
+                v->capacity = n;
+        }
+}
+
+static isize
+fdread(void *src, void *p, usize n)
+{
+        for (;;) {
+                isize ret = read(*(int *)src, p, n);
+                if (ret >= 0 || errno != EINTR) {
+                        return ret;
+                }
+        }
+}
+
+static isize
+fileread(void *src, void *p, usize n)
+{
+        usize r = fread(p, 1, n, src);
+        return (r == 0 && ferror(src)) ? -1 : (isize)r;
+}
+
+static bool
+drain(Ty *ty, byte_vector *out, Grow *grow, Read *rd, void *src)
+{
+        for (isize r;; out->count += r) {
+                if (vN(*out) == vC(*out)) {
+                        reserve(ty, out, zmaxu(2 * vC(*out), 4096), grow);
+                }
+
+                switch (r = rd(src, vZ(*out), vC(*out) - vN(*out))) {
+                case -1: return false;
+                case  0: return true;
+                }
+        }
+}
+
+#ifndef _WIN32
+static void
+fdmap(int fd, byte_vector *out, off_t off, usize n)
+{
+        off_t base = off & -(off_t)sysconf(_SC_PAGESIZE);
+        usize skip = off - base;
+        int flags  = MAP_PRIVATE;
+
+#ifdef MAP_POPULATE
+        flags |= MAP_POPULATE;
+#endif
+
+        char *p = mmap(NULL, skip + n, PROT_READ, flags, fd, base);
+        if (p == MAP_FAILED) {
+                return;
+        }
+
+        memcpy(vZ(*out), p + skip, n);
+        munmap(p, skip + n);
+
+        out->count += n;
+        lseek(fd, off + n, SEEK_SET);
+}
+#endif
+
+static bool
+fdslurp_into(Ty *ty, int fd, byte_vector *out, Grow *grow)
+{
+        struct stat st;
+        off_t off = lseek(fd, 0, SEEK_CUR);
+
+        if (
+                (off >= 0)
+             && (fstat(fd, &st) == 0)
+             && S_ISREG(st.st_mode)
+             && (st.st_size > off)
+        ) {
+                usize n = st.st_size - off;
+                reserve(ty, out, vN(*out) + n + 1, grow);
+#ifndef _WIN32
+                if (n >= MAP_MIN) {
+                        fdmap(fd, out, off, n);
+                }
+#endif
+        }
+
+        return drain(ty, out, grow, fdread, &fd);
+}
+
+static char *
+fdslurp_padded(Ty *ty, int fd, usize *n, Grow *grow)
 {
         byte_vector s = {0};
 
-        xvP(s, '\0');
-        for (int c; (c = getc_unlocked(f)) != EOF;) {
-                xvP(s, c);
-        }
-        xvP(s, '\0');
+        reserve(ty, &s, 1, grow);
+        vPx(s, '\0');
 
-        return &vv(s)[1];
-}
-
-int
-xslurp(char const *path, byte_vector *out)
-{
-        FILE *f = fopen(path, "rb");
-        if (f == NULL) {
-                return errno;
-        }
-
-        for (int c; (c = getc_unlocked(f)) != EOF;) {
-                xvP(*out, c);
-        }
-
-        int err = ferror_unlocked(f);
-        (void)fclose(f);
-
-        return err;
-}
-
-char *
-slurp(char const *path)
-{
-        int fd = open(path, O_RDONLY | O_CLOEXEC);
-        if (fd == -1) {
+        if (!fdslurp_into(ty, fd, &s, grow)) {
+                if (grow == HeapGrow) {
+                        xvF(s);
+                }
                 return NULL;
         }
 
-        struct stat st;
-        fstat(fd, &st);
+        reserve(ty, &s, vN(s) + 1, grow);
+        vPx(s, '\0');
 
-        if (false && (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode))) {
-                isize n = st.st_size;
-
-#ifdef _WIN32
-                void *p = VirtualAlloc(NULL, n, MEM_RESERVE, PAGE_READWRITE);
-#else
-                void *p = mmap(NULL, n, PROT_READ, MAP_SHARED, fd, 0);
-#endif
-                if (p == NULL) {
-                        return NULL;
-                }
-
-                char *s = xmA(n + 2);
-                memcpy(s + 1, p, n);
-                s[0] = s[n + 1] = '\0';
-
-#ifdef _WIN32
-                VirtualFree(p, n, MEM_RELEASE);
-#else
-                munmap(p, n);
-#endif
-                close(fd);
-
-                return s + 1;
-        } else {
-                byte_vector s = {0};
-
-                char b[8192];
-                isize n;
-
-                xvP(s, '\0');
-                while ((n = read(fd, b, sizeof b)) > 0) {
-                        xvPn(s, b, n);
-                }
-                xvP(s, '\0');
-
-                close(fd);
-
-                return vv(s) + 1;
+        if (n != NULL) {
+                *n = vN(s) - 2;
         }
+
+        return vv(s) + 1;
+}
+
+bool
+xfdslurp(int fd, byte_vector *out)
+{
+        return fdslurp_into(NULL, fd, out, HeapGrow);
+}
+
+bool
+xfslurp(FILE *f, byte_vector *out)
+{
+        return drain(NULL, out, HeapGrow, fileread, f);
+}
+
+char *
+fdslurp(int fd, usize *n)
+{
+        return fdslurp_padded(NULL, fd, n, HeapGrow);
+}
+
+char *
+afdslurp(Ty *ty, int fd, usize *n)
+{
+        return fdslurp_padded(ty, fd, n, ArenaGrow);
+}
+
+char *
+sfdslurp(Ty *ty, int fd, usize *n)
+{
+        return fdslurp_padded(ty, fd, n, ScratchGrow);
 }
 
 bool
@@ -159,7 +245,7 @@ get_directory_where_chad_looks_for_runtime_dependencies(char *buffer)
         return dirname_r(path, buffer) != NULL;
 #elif defined(__linux__)
         char path[PATH_MAX + 1], *dir;
-        ssize_t len = readlink("/proc/self/exe", path, PATH_MAX);
+        isize len = readlink("/proc/self/exe", path, PATH_MAX);
         if (len <= 0)
                 return false;
         path[len] = '\0';
@@ -214,7 +300,7 @@ this_executable(Ty *ty)
         return vSsz(path);
 #elif defined(__linux__)
         char path[PATH_MAX];
-        ssize_t len = readlink("/proc/self/exe", path, sizeof path - 1);
+        isize len = readlink("/proc/self/exe", path, sizeof path - 1);
         if (len <= 0)
                 return NIL;
         return vSs(path, len);

@@ -126,7 +126,7 @@ extern char **environ;
 #define fflush_unlocked fflush
 #endif
 
-static _Thread_local vec(char) B;
+static _Thread_local byte_vector B;
 static _Atomic(u64) tid = 0;
 
 void
@@ -610,96 +610,34 @@ TY_BUILTIN_RAW(slurp)
 {
         ASSERT_ARGC("slurp()", 0, 1);
 
-        char const *p;
         int fd;
-        bool need_close = false;
+        bool own = false;
 
         if (argc == 0) {
-                fd = 0;
+                fd = STDIN_FILENO;
         } else if (ARG(0).type == VALUE_INTEGER) {
                 fd = ARG(0).z;
         } else {
-                p = PATH_ARG(0);
-#ifdef _WIN32
-                fd = _open(p, _O_RDONLY);
-#else
-                fd = open(p, O_RDONLY | O_CLOEXEC);
-#endif
-                if (fd < 0)
-                        return NIL;
-
-                need_close = true;
+                fd  = ropen(PATH_ARG(0));
+                own = true;
         }
 
-        StatStruct st;
-        if (fstat(fd, &st) != 0) {
-                if (need_close) {
-                        close(fd);
-                }
-                return NIL;
+        usize n;
+        SCRATCH_SAVE();
+
+        UnlockTy();
+        char *s = (fd < 0) ? NULL : sfdslurp(ty, fd, &n);
+        LockTy();
+
+        Value str = (s == NULL) ? NIL : vSs(s, n);
+
+        SCRATCH_RESTORE();
+
+        if (own) {
+                rclose(fd);
         }
 
-        Value *mmap_arg = NAMED("mmap");
-
-        bool try_mmap = (mmap_arg == NULL) || v_truthy(mmap_arg);
-
-#ifdef _WIN32
-#define S_ISLNK(m) 0
-#endif
-#if !defined(S_ISREG) && defined(S_IFMT) && defined(S_IFREG)
-#define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
-#endif
-#if !defined(S_ISDIR)
-#define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
-#endif
-
-#ifndef _WIN32
-        usize len = st.st_size;
-
-        if (
-                try_mmap
-             && (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode))
-             && (len > 0) // If stat() says size==0 skip to read() anyway, e.g. for procfs
-        ) {
-                void *mapped = mmap(NULL, len, PROT_READ, MAP_SHARED, fd, 0);
-                if (mapped != MAP_FAILED) {
-                        Value str = vSs(mapped, len);
-                        munmap(mapped, len);
-                        if (need_close) {
-                                close(fd);
-                        }
-                        return str;
-                }
-        }
-#endif
-        if (!S_ISDIR(st.st_mode)) {
-                FILE *fp = fdopen(fd, "r");
-                if (fp == NULL) {
-                        if (need_close) {
-                                close(fd);
-                        }
-                        return NIL;
-                }
-
-                void *tmp = TY_TMP();
-                v0(B);
-
-                UnlockTy();
-                for (isize n; !feof(fp) && (n = fread(tmp, 1, TY_TMP_N, fp)) > 0;) {
-                        xvPn(B, tmp, n);
-                }
-                LockTy();
-
-                Value str = vSs(vv(B), vN(B));
-
-                if (need_close) {
-                        fclose(fp);
-                }
-
-                return str;
-        }
-
-        return NIL;
+        return str;
 }
 
 // ident[T](x: T) -> Ptr[Any] | (Ptr[Any], Int) | T
@@ -7992,7 +7930,7 @@ tz_offset_at(
         for (int i = 0; roots[i] != NULL; i++) {
                 int m = ty_snprintf(path, sizeof path, "%s%.*s", roots[i], (int)name_n, name);
                 if (m > 0 && (usize)m < sizeof path) {
-                        if (xslurp(path, &_buf) == 0) {
+                        if (xslurp(path, &_buf)) {
                                 break;
                         }
                         v0(_buf);
@@ -8551,23 +8489,14 @@ TY_BUILTIN_RAW(stdio_slurp)
         ASSERT_ARGC("stdio.slurp()", 1);
 
         FILE *fp = PTR_ARG(0);
-        int c;
 
         v0(B);
 
         UnlockTy();
-        while ((c = fgetc(fp)) != EOF) {
-                xvP(B, c);
-        }
+        bool ok = xfslurp(fp, &B);
         LockTy();
 
-        if (c == EOF && B.count == 0) {
-                return NIL;
-        }
-
-        Value s = vSs(vv(B), vN(B));
-
-        return s;
+        return (ok && vN(B) > 0) ? vSs(vv(B), vN(B)) : NIL;
 }
 
 // stdio.fgetc(fp: ?Ptr[Any]) -> Int

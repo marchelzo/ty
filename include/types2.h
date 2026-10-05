@@ -62,9 +62,6 @@ t2_symbol_tag(u64 symbol)
              : (int)(symbol - T2_TAG_SYMBOL_BASE);
 }
 
-void
-t2_startup_finished(void);
-
 T2Checker *
 t2_checker_begin(Ty *ty, Module const *module);
 

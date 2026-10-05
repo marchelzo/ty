@@ -43,7 +43,7 @@ extern _Atomic(uint64_t) LogCounter;
                 } while (0)
 
 #define XXLOG(...)                              \
-        if (EnableLogging >= 0) {                \
+        if (EnableLogging >= 0) {               \
                 fprintf(stdout, __VA_ARGS__);   \
                 fprintf(stdout, "\n");          \
         } else if (0)

@@ -1434,8 +1434,8 @@ PushInfo(Ty *ty, void const *ctx, char const *fmt, ...)
 static Value
 VMakeCompileError(Ty *ty, char const *fmt, va_list ap)
 {
-        byte_vector msg  = {0};
-        byte_vector text = {0};
+        byte_vector  msg   = {0};
+        byte_vector  text  = {0};
         StringVector notes = {0};
 
         vdump(&msg, fmt, ap);
@@ -2129,11 +2129,11 @@ method_cmp(void const *a_, void const *b_)
 
         int o = (a->name == NULL || b->name == NULL) ? 0 : strcmp(a->name, b->name);
 
-        if (o != 0 && strncmp(a->name, "init#", 5) == 0) { return -1; }
-        if (o != 0 && strncmp(b->name, "init#", 5) == 0) { return +1; }
+        if (o != 0 && s_eq_n(a->name, "init#", 5)) { return -1; }
+        if (o != 0 && s_eq_n(b->name, "init#", 5)) { return +1; }
 
-        if (o != 0 && strcmp(a->name, "init") == 0) { return -1; }
-        if (o != 0 && strcmp(b->name, "init") == 0) { return +1; }
+        if (o != 0 && s_eq(a->name, "init")) { return -1; }
+        if (o != 0 && s_eq(b->name, "init")) { return +1; }
 
         return (o != 0) ? o : (a->t - b->t);
 }
@@ -2149,7 +2149,7 @@ try_slurp_module(Ty *ty, char const *name, char const **path_out)
 
         for (int i = 0; i < vN(*search); ++i) {
                 ty_snprintf(path, sizeof path, "%s/%s.ty", ss(v__(*search, i)), name);
-                if ((source = slurp(path)) != NULL) {
+                if ((source = slurp(path, NULL)) != NULL) {
                         break;
                 }
         }
@@ -2162,7 +2162,7 @@ try_slurp_module(Ty *ty, char const *name, char const **path_out)
                         }
                 }
                 ty_snprintf(path, sizeof path, "%s/%s.ty", root, name);
-                if ((source = slurp(path)) == NULL) {
+                if ((source = slurp(path, NULL)) == NULL) {
                         return NULL;
                 }
         }
@@ -3179,7 +3179,7 @@ get_import_scope(Ty *ty, char const *name)
                 Module const *this_mod = ExpressionModule(dbg_ctx);
 
                 if (this_mod != NULL) {
-                        if (strcmp(this_mod->name, name) == 0) {
+                        if (s_eq(this_mod->name, name)) {
                                 return this_mod->scope;
                         }
 
@@ -4056,7 +4056,7 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                      && e->start.line == QueryLine
                      && e->start.col  <= QueryCol
                      && e->end.col    >= QueryCol
-                     && strcmp(CurrentModulePath(ty), QueryFile) == 0
+                     && s_eq(CurrentModulePath(ty), QueryFile)
                 ) {
                         QueryResult = e->symbol;
                 }
@@ -11640,7 +11640,7 @@ get_module_scope(char const *name)
 {
         for (int i = 0; i < vN(modules); ++i) {
                 Module *mod = v__(modules, i);
-                if (strcmp(name, mod->name) == 0) {
+                if (s_eq(name, mod->name)) {
                         return mod->scope;
                 }
         }
@@ -12679,7 +12679,7 @@ compiler_path_in_search_path(Ty *ty, char const *path)
                 char const *root = ss(v__(*search, i));
                 usize length = strlen(root);
                 if (
-                        (strncmp(path, root, length) == 0)
+                        (s_eq_n(path, root, length))
                      && (path[length] == '/')
                 ) {
                         return true;
@@ -13875,7 +13875,7 @@ module_prefix(char const *path, char const *id)
         char const *last_slash = strrchr(path, '/');
         char const *start = last_slash == NULL ? path : last_slash + 1;
 
-        if (strncmp(path, id, strlen(id)) == 0) {
+        if (s_eq_n(path, id, strlen(id))) {
                 return start;
         } else {
                 return NULL;
@@ -18798,7 +18798,7 @@ RelativePath(char const *path)
 
         usize n = strlen(cwd);
 
-        if (n > 0 && strncmp(path, cwd, n) == 0 && path[n] == '/') {
+        if (n > 0 && s_eq_n(path, cwd, n) && path[n] == '/') {
                 return path + n + 1;
         }
 
@@ -19223,7 +19223,7 @@ WriteDiagnostic(
         int after
 )
 {
-        bool note = (strcmp(kind, "note") == 0);
+        bool note = s_eq(kind, "note");
 
         dump(
                 out,
@@ -19305,15 +19305,15 @@ char const *
 NextCaption(ProgramAnnotation *annotation, char const *pc)
 {
         while (
-                annotation->i < vN(annotation->map) &&
-                pc > v__(annotation->map, annotation->i)
+                (annotation->i < vN(annotation->map))
+             && (pc > v__(annotation->map, annotation->i))
         ) {
                 annotation->i += 1;
         }
 
         if (
-                annotation->i == vN(annotation->map) ||
-                pc != v__(annotation->map, annotation->i)
+                (annotation->i == vN(annotation->map))
+             || (pc != v__(annotation->map, annotation->i))
         ) {
                 return NULL;
         }
@@ -20190,7 +20190,9 @@ DumpProgram(
                         break;
 
                 CASE(HALT)
-                        if (end == NULL) goto End;
+                        if (end == NULL) {
+                                goto End;
+                        }
                         break;
 
                 default:
@@ -20199,16 +20201,11 @@ DumpProgram(
                 }
 
                 if (!DebugScan && caption != NULL) {
-                        int width = term_width(
-                                v_(*out, begin),
-                                out->count - begin
-                        );
-
+                        int width = term_width(v_(*out, begin), out->count - begin);
                         while (width < 70) {
                                 xvP(*out, ' ');
                                 width += 1;
                         }
-
                         dump(out, "  %s#  %s%s", TERM(34;1), caption, TERM(0));
                 }
         }
@@ -20257,10 +20254,10 @@ CompileSource(
         }
 
         Module *mod = amA0(sizeof (Module));
-        mod->name = name;
-        mod->path = path;
+        mod->name   = name;
+        mod->path   = path;
         mod->source = source;
-        mod->scope = scope_new(ty, mod->name, global, false);
+        mod->scope  = scope_new(ty, mod->name, global, false);
 
         STATE = freshstate(ty, mod);
         STATE.flags = flags;

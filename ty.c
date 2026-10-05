@@ -44,15 +44,9 @@ static char buffer[8192];
 static char const *print_function = "print";
 
 static char const *SourceFile;
-static char const *SourceFileName;
-static char SourceFilePath[PATH_MAX];
 
 static bool KindOfEnableLogging = false;
 int EnableLogging = 0;
-
-#if 1
-_Atomic u64 LogCounter;
-#endif
 
 #if defined(TY_TRACE_GC)
 _Thread_local u64 ThisReached;
@@ -156,29 +150,29 @@ execln(Ty *ty, char *line)
 
         xvP(buffer, '\0');
 
-        if (strncmp(line, ":!", 2) == 0) {
+        if (s_eq_n(line, ":!", 2)) {
                 (void)system(line + 2);
                 goto End;
-        } else if (strncmp(line, ":s ", 3) == 0) {
+        } else if (s_eq_n(line, ":s ", 3)) {
                 dump(&buffer, "%s", line + 3);
                 if (vm_execute_file(ty, v_(buffer, 1))) {
                         goto End;
                 } else {
                         goto Bad;
                 }
-        } else if (strncmp(line, ":r ", 3) == 0) {
+        } else if (s_eq_n(line, ":r ", 3)) {
                 if (TyReloadModule(ty, line + 3)) {
                         goto End;
                 } else {
                         goto Bad;
                 }
-        } else if (strncmp(line, "help ", 5) == 0) {
+        } else if (s_eq_n(line, "help ", 5)) {
                 dump(&buffer, "help(%s);", line + 5);
                 if (repl_exec(ty, v_(buffer, 1)))
                         goto End;
                 else
                         goto Bad;
-        } else if (strncmp(line, ":t ", 3) == 0) {
+        } else if (s_eq_n(line, ":t ", 3)) {
                 dump(&buffer, "%s", line + 3);
                 Stmt **prog = parse(ty, v_(buffer, 1), "(repl)");
                 if (prog == NULL || prog[0] == NULL) {
@@ -199,7 +193,7 @@ execln(Ty *ty, char *line)
                 } else {
                         goto Bad;
                 }
-        } else if (strcmp(line, ":tt") == 0) {
+        } else if (s_eq(line, ":tt")) {
                 CheckTypes = !CheckTypes;
                 if (CheckTypes) {
                         puts("Types: \x1b[92;1mON\x1b[0m");
@@ -208,7 +202,7 @@ execln(Ty *ty, char *line)
                 }
                 goto End;
 #if defined(TY_RELEASE)
-        } else if (strncmp(line, ":u ", 3) == 0) {
+        } else if (s_eq_n(line, ":u ", 3)) {
                 dump(&buffer, "(__type!((%s)))", line + 3);
 
                 if (!repl_exec(ty, v_(buffer, 1))) {
@@ -220,15 +214,15 @@ execln(Ty *ty, char *line)
                 T2Type t0 = t2_resolve(ty, v__(pair->es, 0));
                 T2Type t1 = t2_resolve(ty, v__(pair->es, 1));
 
-                bool related = t0 == T2_TYPE_INVALID
-                            || t1 == T2_TYPE_INVALID
-                            || t2_subtype(t2_global_universe(), t0, t1) != T2_RELATION_NO;
+                bool related = (t0 == T2_TYPE_INVALID)
+                            || (t1 == T2_TYPE_INVALID)
+                            || (t2_subtype(t2_global_universe(), t0, t1) != T2_RELATION_NO);
 
                 puts(related ? "true" : "false");
 
                 goto End;
 #endif
-        } else if (strncmp(line, "dis ", 4) == 0) {
+        } else if (s_eq_n(line, "dis ", 4)) {
                 dump(&buffer, "print(ty.disassemble(%s));", line + 4);
                 if (repl_exec(ty, v_(buffer, 1))) {
                         goto End;
@@ -385,11 +379,11 @@ stdin_is_tty(void)
 static FILE *
 OpenOutputFile(char const *path)
 {
-        if (path[0] == '\0' || strcmp(path, "-") == 0) {
+        if (path[0] == '\0' || s_eq(path, "-")) {
                 return stdout;
         }
 
-        if (strcmp(path, "@") == 0) {
+        if (s_eq(path, "@")) {
                 return stderr;
         }
 
@@ -413,12 +407,12 @@ ProcessArgs(char *argv[], bool first)
 {
         int argi = 1;
         while (argv[argi] != NULL && argv[argi][0] == '-') {
-                if (strcmp(argv[argi], "--") == 0) {
+                if (s_eq(argv[argi], "--")) {
                         argi += 1;
                         break;
                 }
 
-                if (strcmp(argv[argi], "--version") == 0) {
+                if (s_eq(argv[argi], "--version")) {
 #ifdef TY_HAVE_VERSION_INFO
                         printf(
                                 "%s version %s (%s)\n"
@@ -452,7 +446,7 @@ ProcessArgs(char *argv[], bool first)
                         goto NextOption;
                 }
 
-                if (s_eq(argv[argi], "--highlight") || strncmp(argv[argi], "--highlight=", 12) == 0) {
+                if (s_eq(argv[argi], "--highlight") || s_eq_n(argv[argi], "--highlight=", 12)) {
                         HighlightOnly = true;
                         CheckTypes = false;
                         char const *eq = strchr(argv[argi], '=');
@@ -463,7 +457,7 @@ ProcessArgs(char *argv[], bool first)
                 }
 
                 char const prefix[] = "--color=";
-                if (strncmp(argv[argi], prefix, countof(prefix) - 1) == 0) {
+                if (s_eq_n(argv[argi], prefix, countof(prefix) - 1)) {
                         char const *when = strchr(argv[argi], '=') + 1;
                         if      (s_eq(when, "always")) { ColorMode = TY_COLOR_ALWAYS; }
                         else if (s_eq(when, "never"))  { ColorMode = TY_COLOR_NEVER;  }
@@ -474,7 +468,7 @@ ProcessArgs(char *argv[], bool first)
 
 #ifdef TY_PROFILER
                 extern bool UseWallTime;
-                if (strcmp(argv[argi], "--wall") == 0) {
+                if (s_eq(argv[argi], "--wall")) {
                         UseWallTime = true;
                 } else
 #endif
@@ -522,10 +516,16 @@ ProcessArgs(char *argv[], bool first)
                                                         fprintf(stderr, "Missing argument for -e\n");
                                                         exit(1);
                                                 }
-                                                if ((++argi, !first)) exit((int)!execln(ty, argv[argi]));
+                                                if (++argi, !first) {
+                                                        exit((int)!execln(ty, argv[argi]));
+                                                }
                                         } else {
-                                                if (!first) exit((int)!execln(ty, (char *)(opt + 1)));
-                                                while (opt[1] != '\0') ++opt;
+                                                if (!first) {
+                                                        exit((int)!execln(ty, (char *)(opt + 1)));
+                                                }
+                                                while (opt[1] != '\0') {
+                                                        ++opt;
+                                                }
                                         }
                                         break;
 
@@ -536,7 +536,6 @@ ProcessArgs(char *argv[], bool first)
                                         char const *fmt = (*opt == 'M') ? "import %s (..)\n"
                                                         : (*opt == 'm') ? "import %s\n"
                                                         :                 ":s %s";
-
                                         char const *module;
 
                                         if (opt[1] != '\0') {
@@ -562,7 +561,9 @@ ProcessArgs(char *argv[], bool first)
                                         char const *arg;
                                         if (opt[1] != '\0') {
                                                 arg = opt + 1;
-                                                while (opt[1] != '\0') ++opt;
+                                                while (opt[1] != '\0') {
+                                                        ++opt;
+                                                }
                                         } else if (argv[argi + 1] != NULL) {
                                                 arg = argv[++argi];
                                         } else {
@@ -590,7 +591,9 @@ ProcessArgs(char *argv[], bool first)
                                                 ProfileOut = OpenOutputFile(argv[++argi]);
                                         } else {
                                                 ProfileOut = OpenOutputFile(opt + 1);
-                                                while (opt[1] != '\0') ++opt;
+                                                while (opt[1] != '\0') {
+                                                        ++opt;
+                                                }
                                         }
                                         break;
 #endif
@@ -604,7 +607,9 @@ ProcessArgs(char *argv[], bool first)
                                                 DisassemblyOut = OpenOutputFile(argv[++argi]);
                                         } else {
                                                 DisassemblyOut = OpenOutputFile(opt + 1);
-                                                while (opt[1] != '\0') ++opt;
+                                                while (opt[1] != '\0') {
+                                                        ++opt;
+                                                }
                                         }
                                         break;
 
@@ -624,17 +629,8 @@ NextOption:
 
         if (first) {
                 SourceFile = argv[argi];
-                if (SourceFile == NULL) {
-                        SourceFile = "-";
-                }
-                if (SourceFile[0] == '-' && SourceFile[1] == ':') {
-                        SourceFileName = realpath(&SourceFile[2], SourceFilePath);
-                }
-                if (SourceFile[0] == '-') {
+                if (SourceFile == NULL || s_eq(SourceFile, "-"))  {
                         SourceFile = "/dev/stdin";
-                }
-                if (SourceFileName == NULL) {
-                        SourceFileName = SourceFile;
                 }
         }
 
@@ -683,30 +679,20 @@ main(int argc, char **argv)
                 return -1;
         }
 
-        t2_startup_finished();
-
         argv += ProcessArgs(argv, false);
-
-        FILE *file = fopen(SourceFile, "r");
-        if (file == NULL) {
-                fprintf(
-                        stderr,
-                        "Failed to open source file '%s': %s\n",
-                        SourceFile,
-                        strerror(errno)
-                );
-                return 1;
-        }
 
         if (argv[0] == NULL && stdin_is_tty()) {
                 repl(ty);
         }
 
-        char *source = fslurp(file);
-        fclose(file);
+        char *source = slurp(SourceFile, NULL);
+        if (source == NULL) {
+                fprintf(stderr, "ty: %s: %s\n", SourceFile, strerror(errno));
+                return 1;
+        }
 
         if (UNLIKELY(HighlightOnly)) {
-                if (!vm_load_program(ty, source, SourceFileName)) {
+                if (!vm_load_program(ty, source, SourceFile)) {
                         DyingOfError = true;
                         fprintf(stderr, "%s\n", TyError(ty));
                         return 1;
@@ -732,7 +718,7 @@ main(int argc, char **argv)
 
         DebugWaitForClient(ty);
 
-        if (!vm_execute(ty, source, SourceFileName)) {
+        if (!vm_execute(ty, source, SourceFile)) {
                 DyingOfError = true;
                 fprintf(stderr, "%s\n", TyError(ty));
                 exit(67);

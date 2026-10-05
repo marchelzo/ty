@@ -206,9 +206,6 @@ class_add_s_field(
 );
 
 int
-class_get_completions(Ty *ty, int class, char const *prefix, char **out, int max);
-
-int
 class_completions(
         Ty *ty,
         int class,

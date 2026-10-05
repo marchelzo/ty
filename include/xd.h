@@ -2,6 +2,7 @@
 #define XD_H_INCLUDED
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -10,6 +11,7 @@
 
 #include "defs.h"
 #include "panic.h"
+#include "polyfill_unistd.h"
 
 #ifdef max
   #undef max
@@ -101,6 +103,12 @@ s_eq(char const *a, char const *b)
 }
 
 inline static int
+s_eq_n(char const *a, char const *b, usize n)
+{
+        return strncmp(a, b, n) == 0;
+}
+
+inline static int
 bytes_eq(Bytes const a, Bytes const b)
 {
         return (a.length == b.length)
@@ -161,14 +169,76 @@ S2N(char const *s)
         return (s == NULL) ? NULL : S2(s);
 }
 
-char *
-slurp(char const *path);
+bool
+xfdslurp(int fd, byte_vector *out);
 
-int
-xslurp(char const *path, byte_vector *out);
+bool
+xfslurp(FILE *f, byte_vector *out);
 
 char *
-fslurp(FILE *f);
+fdslurp(int fd, usize *n);
+
+char *
+afdslurp(Ty *ty, int fd, usize *n);
+
+char *
+sfdslurp(Ty *ty, int fd, usize *n);
+
+inline static int
+ropen(char const *path)
+{
+#ifdef _WIN32
+        return _open(path, _O_RDONLY | _O_BINARY);
+#else
+        return open(path, O_RDONLY | O_CLOEXEC);
+#endif
+}
+
+inline static void
+rclose(int fd)
+{
+        if (fd >= 0) {
+                SAVE_(int, errno);
+                close(fd);
+                RESTORE_(errno);
+        }
+}
+
+inline static bool
+xslurp(char const *path, byte_vector *out)
+{
+        int fd = ropen(path);
+        bool ok = (fd >= 0) && xfdslurp(fd, out);
+        rclose(fd);
+        return ok;
+}
+
+inline static char *
+slurp(char const *path, usize *n)
+{
+        int fd = ropen(path);
+        char *s = (fd < 0) ? NULL : fdslurp(fd, n);
+        rclose(fd);
+        return s;
+}
+
+inline static char *
+aslurp(Ty *ty, char const *path, usize *n)
+{
+        int fd = ropen(path);
+        char *s = (fd < 0) ? NULL : afdslurp(ty, fd, n);
+        rclose(fd);
+        return s;
+}
+
+inline static char *
+sslurp(Ty *ty, char const *path, usize *n)
+{
+        int fd = ropen(path);
+        char *s = (fd < 0) ? NULL : sfdslurp(ty, fd, n);
+        rclose(fd);
+        return s;
+}
 
 inline static u64
 HashCombine(u64 seed, u64 hash)

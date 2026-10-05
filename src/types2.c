@@ -29098,7 +29098,7 @@ resolve_external_predicate(
                 return T2_RELATION_NO;
         }
 
-        T2CallEffect *previous    = checker->call_effect_sink;
+        T2CallEffect *previous = checker->call_effect_sink;
         checker->call_effect_sink = NULL;
         T2Relation relation = resolve_external_predicate_x(
                 context,
@@ -29192,14 +29192,6 @@ destroy_checker(T2Checker *checker)
         }
 
         ty_free(checker);
-}
-
-static bool AfterStartup = false;
-
-void
-t2_startup_finished(void)
-{
-        AfterStartup = true;
 }
 
 static bool
@@ -30453,49 +30445,6 @@ cache_file_path(Ty *ty, Module const *module)
         return S2N(path);
 }
 
-static unsigned char *
-read_file(char const *path, usize *size)
-{
-        int fd = open(path, O_RDONLY | O_CLOEXEC);
-        if (fd < 0) {
-                return NULL;
-        }
-
-        struct stat st;
-        if (
-                (fstat(fd, &st) != 0)
-             || (st.st_size <= 0)
-             || (st.st_size > INT32_MAX)
-        ) {
-                close(fd);
-                return NULL;
-        }
-
-        usize length        = (usize)st.st_size;
-        unsigned char *data = xmA(length);
-        usize have          = 0;
-        while (have < length) {
-                isize n = read(fd, data + have, length - have);
-                if (n < 0 && errno == EINTR) {
-                        continue;
-                }
-                if (n <= 0) {
-                        break;
-                }
-                have += (usize)n;
-        }
-
-        close(fd);
-        if (have != length) {
-                ty_free(data);
-                return NULL;
-        }
-
-        *size = length;
-
-        return data;
-}
-
 static bool
 write_file(char const *path, unsigned char const *data, usize size)
 {
@@ -30845,16 +30794,20 @@ free_cache(T2Cache *cache)
 static T2Cache *
 read_cache_file(char const *path, u64 key)
 {
-        usize size;
-        unsigned char *data = read_file(path, &size);
-        if (data == NULL) {
+        byte_vector data = {0};
+        if (
+                !xslurp(path, &data)
+             || (vN(data) == 0)
+             || (vN(data) > INT32_MAX)
+        ) {
+                xvF(data);
                 return NULL;
         }
 
         T2Cache *cache = alloc0(sizeof *cache);
 
-        cache->data = data;
-        cache->size = size;
+        cache->data = (unsigned char *)vv(data);
+        cache->size = vN(data);
         u32 magic;
         u32 version;
         u64 stored;

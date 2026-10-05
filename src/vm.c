@@ -9356,7 +9356,7 @@ vm_xerror(Ty *ty, int kind, char const *fmt, ...)
 bool
 vm_execute_file(Ty *ty, char const *path)
 {
-        char *source = slurp(path);
+        char *source = slurp(path, NULL);
         if (source == NULL) {
                 GC_STOP();
                 Value msg = TyErrorMessage(
