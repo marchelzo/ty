@@ -9,6 +9,8 @@
 #include "vec.h"
 #include "itable.h"
 
+#include "ty/thread.h"
+
 typedef struct class Class;
 struct tags;
 
@@ -17,31 +19,107 @@ struct link {
         struct tags *t;
 };
 
+struct links {
+        int n;
+        struct links *prev;
+        struct link items[];
+};
+
 struct tags {
         int n;
         int tag;
         struct tags *next;
-        vec(struct link) links;
+        _Atomic(struct links *) links;
 };
+
+static struct links nil;
+
+static TyMutex lock;
+static u32 nlists;
+static _Atomic(struct tags *) lists[1 << (8 * sizeof ((Value){0}).tags)];
 
 static u32 next_id = 0;
 
-static vec(struct tags *) lists;
 static vec(char const *) names;
 static vec(struct itable) tables;
 static vec(struct itable) statics;
 static vec(Class *) classes;
+
+[[gnu::always_inline]]
+inline static struct tags *
+L(int n)
+{
+        return atomic_load_explicit(&lists[n], memory_order_acquire);
+}
 
 static struct tags *
 mklist(int tag, struct tags *next)
 {
         struct tags *t = alloc0(sizeof *t);
 
-        t->n = lists.count;
-        t->tag = tag;
-        t->next = next;
+        t->n     = nlists++;
+        t->tag   = tag;
+        t->next  = next;
+        t->links = &nil;
 
-        xvP(lists, t);
+        atomic_store_explicit(&lists[t->n], t, memory_order_release);
+
+        return t;
+}
+
+[[gnu::always_inline]]
+inline static struct tags *
+follow(struct links const *ls, int tag)
+{
+        for (int i = 0; i < ls->n; ++i) {
+                if (ls->items[i].tag == tag) {
+                        return ls->items[i].t;
+                }
+        }
+
+        return NULL;
+}
+
+static struct links *
+snoc(struct links *old, struct link link)
+{
+        int n = old->n;
+        struct links *new = alloc0(sizeof *new + (n + 1) * sizeof new->items[0]);
+
+        memcpy(new->items, old->items, n * sizeof new->items[0]);
+
+        new->n        = n + 1;
+        new->prev     = old;
+        new->items[n] = link;
+
+        return new;
+}
+
+static struct tags *
+extend(Ty *ty, struct tags *list, int tag)
+{
+        struct links *ls;
+        struct tags *t;
+
+        TyMutexLock(&lock);
+
+        ls = atomic_load_explicit(&list->links, memory_order_relaxed);
+        t  = follow(ls, tag);
+
+        if (UNLIKELY(t == NULL) && UNLIKELY(nlists < countof(lists))) {
+                t = mklist(tag, list);
+                atomic_store_explicit(
+                        &list->links,
+                        snoc(ls, (struct link) { .tag = tag, .t = t }),
+                        memory_order_release
+                );
+        }
+
+        TyMutexUnlock(&lock);
+
+        if (t == NULL) {
+                zP("too many distinct tag chains (limit is %zu)", countof(lists));
+        }
 
         return t;
 }
@@ -49,9 +127,11 @@ mklist(int tag, struct tags *next)
 void
 tags_init(Ty *ty)
 {
-        next_id = 0;
+        TyMutexInit(&lock);
 
-        v0(lists);
+        next_id = 0;
+        nlists  = 0;
+
         v0(names);
         v0(tables);
         v0(statics);
@@ -77,6 +157,8 @@ tags_new(Ty *ty, char const *tag)
 {
         LOG("making new tag: %s -> %d", tag, next_id);
 
+        TyMutexLock(&lock);
+
         xvP(names, tag);
 
         struct itable table;
@@ -89,53 +171,43 @@ tags_new(Ty *ty, char const *tag)
 
         xvP(classes, NULL);
 
-        mklist(next_id, v_0(lists));
+        mklist(next_id, L(0));
 
-        return next_id++;
+        int id = next_id++;
+
+        TyMutexUnlock(&lock);
+
+        return id;
 }
 
 bool
 tags_same(Ty *ty, int t1, int t2)
 {
-        return (lists.items[t1]->tag == lists.items[t2]->tag);
+        return L(t1)->tag == L(t2)->tag;
 }
 
 int
 tags_push(Ty *ty, int tags, int tag)
 {
-        struct tags *list = v__(lists, tags);
-
-        for (int i = 0; i < vN(list->links); ++i) {
-                struct link *link = v_(list->links, i);
-                if (link->tag == tag) {
-                        return link->t->n;
-                }
-        }
-
-        struct tags *new = mklist(tag, list);
-
-        //XLOG("push: tags=%d tag=%d new=%d", tags, tag, new->n);
-        xvP(
-                list->links,
-                ((struct link) {
-                        .t = new,
-                        .tag = tag
-                })
+        struct tags *list = L(tags);
+        struct tags *t = follow(
+                atomic_load_explicit(&list->links, memory_order_acquire),
+                tag
         );
 
-        return new->n;
+        return (t ?: extend(ty, list, tag))->n;
 }
 
 int
 tags_pop(Ty *ty, int tags)
 {
-        return v__(lists, tags)->next->n;
+        return L(tags)->next->n;
 }
 
 bool
 tags_try_pop(Ty *ty, u16 *tags, int tag)
 {
-        struct tags *list = v__(lists, *tags);
+        struct tags *list = L(*tags);
 
         if (list->tag == tag) {
                 *tags = list->next->n;
@@ -148,7 +220,7 @@ tags_try_pop(Ty *ty, u16 *tags, int tag)
 int
 tags_first(Ty *ty, int tags)
 {
-        return v__(lists, tags)->tag;
+        return L(tags)->tag;
 }
 
 /*
@@ -157,9 +229,9 @@ tags_first(Ty *ty, int tags)
 char *
 tags_wrap(Ty *ty, char const *s, int tags, bool color)
 {
-        vec(char) cs = {0};
+        byte_vector cs = {0};
 
-        struct tags *list = lists.items[tags];
+        struct tags *list = L(tags);
 
         if (color && list->tag != 0) {
                 svPn(cs, TERM(94), strlen(TERM(94)));
@@ -200,9 +272,9 @@ tags_wrap(Ty *ty, char const *s, int tags, bool color)
 char *
 tags_open(Ty *ty, int tags, bool color)
 {
-        vec(char) cs = {0};
+        byte_vector cs = {0};
 
-        struct tags *list = lists.items[tags];
+        struct tags *list = L(tags);
 
         if (color && list->tag != 0) {
                 svPn(cs, TERM(94), strlen(TERM(94)));
@@ -229,7 +301,7 @@ tags_close(Ty *ty, int tags, bool color)
 {
         byte_vector cs = {0};
 
-        struct tags *list = v__(lists, tags);
+        struct tags *list = L(tags);
 
         i32 n = 0;
         while (list->tag != 0) {
@@ -260,16 +332,6 @@ int
 tags_count(Ty *ty)
 {
         return names.count;
-}
-
-int
-tags_lookup(Ty *ty, char const *name)
-{
-        for (int i = 0; i < names.count; ++i)
-                if (strcmp(names.items[i], name) == 0)
-                        return i + 1;
-
-        return -1;
 }
 
 char const *

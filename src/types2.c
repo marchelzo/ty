@@ -1855,7 +1855,7 @@ ensure_nominal(
         }
 
         Class *class = class_get(checker->ty, class_id);
-        char const *name = (class != NULL) && (class->name != NULL)
+        char const *name = (class != NULL && class->name != NULL)
                          ? class->name
                          : fallback_name;
         usize arity = fallback_arity;
@@ -2089,17 +2089,6 @@ ensure_symbol_nominal(
              && (symbol->tag > 0)
         ) {
                 return ensure_tag_nominal(checker, symbol->tag, fallback_name);
-        }
-
-        if (
-                SymbolIsMember(symbol)
-             && (fallback_name != NULL)
-             && (checker->ty != NULL)
-        ) {
-                int tag = tags_lookup(checker->ty, fallback_name);
-                if (tag > 0) {
-                        return ensure_tag_nominal(checker, tag, fallback_name);
-                }
         }
 
         if (SymbolIsClass(symbol) && symbol->class >= 0) {
@@ -4249,25 +4238,13 @@ lower_type(T2Checker *checker, Expr const *source)
         {
                 Expr const *container = unfurl(expression->container);
                 Expr const *name      = type_reference_leaf(container);
-                bool tag_application  = false;
-                if (name != NULL && name->symbol != NULL) {
-                        if (
-                                (
-                                        SymbolIsTag(name->symbol)
-                                     || SymbolIsBuiltin(name->symbol)
-                                )
-                             && (name->symbol->tag > 0)
-                        ) {
-                                tag_application = true;
-                        } else if (
-                                SymbolIsMember(name->symbol)
-                             && (name->identifier != NULL)
-                             && (checker->ty != NULL)
-                        ) {
-                                int tag = tags_lookup(checker->ty, name->identifier);
-                                tag_application = (tag > 0);
-                        }
-                }
+                bool tag_application  = (name != NULL)
+                                     && (name->symbol != NULL)
+                                     && (
+                                                SymbolIsTag(name->symbol)
+                                             || SymbolIsBuiltin(name->symbol)
+                                        )
+                                     && (name->symbol->tag > 0);
                 usize count;
                 if (tag_application) {
                         count = 1;

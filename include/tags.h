@@ -52,9 +52,6 @@ tags_name(Ty *ty, int tag);
 int
 tags_count(Ty *ty);
 
-int
-tags_lookup(Ty *ty, char const *name);
-
 void
 tags_add_method(Ty *ty, int tag, char const *name, struct value f);
 

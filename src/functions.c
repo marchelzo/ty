@@ -1089,88 +1089,64 @@ TY_BUILTIN_RAW(int)
 {
         ASSERT_ARGC("int()", 0, 1, 2);
 
-        Value v = INTEGER(0), a, s, b;
-        int base;
-
-        char *tmp = TY_TMP();
-        char const *string = tmp;
-
-        switch (argc) {
-        case 0: return v;
-        case 1: goto Coerce;
-        case 2: goto CustomBase;
+        if (UNLIKELY(argc == 0)) {
+                return INTEGER(0);
         }
 
-Coerce:
+        Value x = ARG(0);
 
-        a = ARG(0);
-        switch (a.type) {
-        default:
-                return NIL;
-
-        case VALUE_INTEGER:                                         return a;
-        case VALUE_REAL:    v.z = a.real;                           return v;
-        case VALUE_BOOLEAN: v.z = a.boolean;                        return v;
-        case VALUE_ARRAY:   v.z = a.array->count;                   return v;
-        case VALUE_DICT:    v.z = a.dict->count;                    return v;
-        case VALUE_SET:     v.z = a.set->count;                     return v;
-        case VALUE_HEAP:    v.z = vN(a.heap->xs);                   return v;
-        case VALUE_BLOB:    v.z = a.blob->count;                    return v;
-        case VALUE_PTR:     return INTEGER((uptr)a.ptr);
-
-        case VALUE_STRING:
-                base = 0;
-                if (sN(a) >= TY_TMP_N) {
-                        goto TooBig;
+        if (argc == 1) {
+                switch (x.type) {
+                case VALUE_STRING:  break;
+                case VALUE_INTEGER: return x;
+                case VALUE_REAL:    return INTEGER(x.real);
+                case VALUE_BOOLEAN: return INTEGER(x.boolean);
+                case VALUE_ARRAY:   return INTEGER(x.array->count);
+                case VALUE_DICT:    return INTEGER(x.dict->count);
+                case VALUE_SET:     return INTEGER(x.set->count);
+                case VALUE_HEAP:    return INTEGER(vN(x.heap->xs));
+                case VALUE_BLOB:    return INTEGER(x.blob->count);
+                case VALUE_PTR:     return INTEGER((uptr)x.ptr);
+                default:            return NIL;
                 }
-                memcpy(tmp, ss(a), sN(a));
-                tmp[sN(a)] = '\0';
-                goto String;
         }
 
-CustomBase:
+        imax base;
+        x = ARGx(0, VALUE_STRING);
 
-        s = ARGx(0, VALUE_STRING);
-        base = INT_ARG(1);
-
-        if (base < 0 || base == 1 || base > 36) {
-                bP("invalid base: expected 0 or 2..36, but got %"PRIiMAX, b.z);
+        if (argc == 2) {
+                base = INT_ARG(1);
+                if (base < 0 || base == 1 || base > 36) {
+                        bP("invalid base: expected 0 or 2..36, but got %"PRIiMAX, base);
+                }
+        } else {
+                base = 0;
         }
 
-        if (sN(s) >= TY_TMP_N) {
-                goto TooBig;
-        }
+        char const *str = TY_TMP_C_STR(x);
 
-        memcpy(tmp, ss(s), sN(s));
-        tmp[sN(s)] = '\0';
-
-String:
         /*
          * Handle 0b and 0o manually.
          */
-        if (base == 0 && string[0] == '0' && string[1] == 'b') {
+        if (base == 0 && str[0] == '0' && str[1] == 'b') {
                 base = 2;
-                string += 2;
+                str += 2;
         }
-        if (base == 0 && string[0] == '0' && string[1] == 'o') {
+        if (base == 0 && str[0] == '0' && str[1] == 'o') {
                 base = 8;
-                string += 2;
+                str += 2;
         }
 
         errno = 0;
 
         char *end;
-        imax n = strtoimax(string, &end, base);
+        imax n = strtoimax(str, &end, (int)base);
 
-        if (errno != 0 || *end != '\0' || end == string) {
+        if (errno != 0 || *end != '\0' || end == str) {
                 return NIL;
         }
 
         return INTEGER(n);
-
-TooBig:
-        errno = ERANGE;
-        return NIL;
 }
 
 // show(x: Any, color: Any = nil) -> String
