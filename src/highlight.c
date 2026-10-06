@@ -842,6 +842,8 @@ token_color(Token const *t, char const *source)
         case ']':
         case '{':
         case '}':
+        case TOKEN_DICT_OPEN:
+        case TOKEN_SET_OPEN:
         case '.':
         case ',':
                 return SC_PUNCT;
