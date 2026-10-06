@@ -37,7 +37,7 @@ pub fn operator-values-as-arguments() {
     assert(str(typeof small?(3)) == 'Bool')
     assert(small?(0) && !small?(3))
     assert(str(typeof [Meters(1), Meters(2)].fold(`+`)) == 'nil | Meters')
-    assert([Meters(1), Meters(2)].fold(`+`).n == 3)
+    assert([Meters(1), Meters(2)].fold(`+`)!.n == 3)
 }
 
 pub fn operator-values-reject-bad-operands() {

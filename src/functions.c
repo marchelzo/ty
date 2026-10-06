@@ -1996,46 +1996,21 @@ TY_BUILTIN_RAW(locale_setlocale)
         return (locale != NULL) ? vSsz(locale) : NIL;
 }
 
-// json.parse(json: String) -> _
-// json.parse[T](schema: Type[T], json: String) -> T
+// json.parse(json: String | Blob) -> _
+// json.parse[T](schema: Type[T], json: String | Blob) -> T
 TY_BUILTIN_RAW(json_parse)
 {
         ASSERT_ARGC_RANGE("json.parse()", 1, 2);
 
-        T2Type schema = T2_TYPE_INVALID;
-        Value jv;
-
         if (argc == 2) {
                 Value tv = ARGx(0, VALUE_TYPE);
-                schema = as_type(&tv);
-                jv = ARGx(1, VALUE_STRING, VALUE_BLOB);
-        } else {
-                jv = ARGx(0, VALUE_STRING, VALUE_BLOB);
+                Value jv = ARGx(1, VALUE_STRING, VALUE_BLOB);
+                return json_parse_typed(ty, as_type(&tv), &jv);
         }
 
-        u8 const *data;
-        usize len;
+        Value jv = ARGx(0, VALUE_STRING, VALUE_BLOB);
 
-        switch (jv.type) {
-        case VALUE_STRING:
-                data = ss(jv);
-                len  = sN(jv);
-                break;
-
-        case VALUE_BLOB:
-                data = vv(*jv.blob);
-                len  = vN(*jv.blob);
-                break;
-
-        default:
-                UNREACHABLE();
-        }
-
-        if (schema != T2_TYPE_INVALID) {
-                return json_parse_typed(ty, schema, (char const *)data, len);
-        }
-
-        return json_parse(ty, (char const *)data, len);
+        return json_parse(ty, &jv);
 }
 
 // json.parse!(json: String | Blob) -> _
@@ -2044,40 +2019,15 @@ TY_BUILTIN_RAW(json_parse_xD)
 {
         ASSERT_ARGC_RANGE("json.parse!()", 1, 2);
 
-        T2Type schema = T2_TYPE_INVALID;
-        Value jv;
-
         if (argc == 2) {
                 Value tv = ARGx(0, VALUE_TYPE);
-                schema = as_type(&tv);
-                jv = ARGx(1, VALUE_STRING, VALUE_BLOB);
-        } else {
-                jv = ARGx(0, VALUE_STRING, VALUE_BLOB);
+                Value jv = ARGx(1, VALUE_STRING, VALUE_BLOB);
+                return json_parse_typed(ty, as_type(&tv), &jv);
         }
 
-        u8 const *data;
-        usize len;
+        Value jv = ARGx(0, VALUE_STRING, VALUE_BLOB);
 
-        switch (jv.type) {
-        case VALUE_STRING:
-                data = ss(jv);
-                len  = sN(jv);
-                break;
-
-        case VALUE_BLOB:
-                data = vv(*jv.blob);
-                len  = vN(*jv.blob);
-                break;
-
-        default:
-                UNREACHABLE();
-        }
-
-        if (schema != T2_TYPE_INVALID) {
-                return json_parse_typed(ty, schema, (char const *)data, len);
-        }
-
-        return json_parse_xD(ty, (char const *)data, len);
+        return json_parse_xD(ty, &jv);
 }
 
 // json.encode(value: Any) -> String

@@ -12470,9 +12470,10 @@ infer_member_type(
         T2TypeKind kind = t2_type_kind(checker->universe, object);
         T2Type nil      = t2_primitive(checker->universe, T2_TYPE_NIL);
         if (kind == T2_TYPE_UNION) {
-                T2Type result = t2_primitive(checker->universe, T2_TYPE_NEVER);
-                usize count   = t2_type_arity(checker->universe, object);
-                usize covered = 0;
+                T2Type result  = t2_primitive(checker->universe, T2_TYPE_NEVER);
+                T2Type missing = t2_primitive(checker->universe, T2_TYPE_NEVER);
+                usize count    = t2_type_arity(checker->universe, object);
+                usize covered  = 0;
                 for (usize i = 0; i < count; ++i) {
                         T2Type arm_type = t2_type_child(checker->universe, object, i);
                         if (
@@ -12492,6 +12493,9 @@ infer_member_type(
                         );
                         if (t2_type_kind(checker->universe, arm) == T2_TYPE_ERROR) {
                                 if (!safe) {
+                                        if (t2_type_kind(checker->universe, arm_type) == T2_TYPE_NIL) {
+                                                missing = arm_type;
+                                        }
                                         continue;
                                 }
                                 arm = nil;
@@ -12512,6 +12516,40 @@ infer_member_type(
                                         "field `%s` does not exist on any arm of this union",
                                         name
                                 );
+                        }
+                        return t2_primitive(checker->universe, T2_TYPE_ERROR);
+                }
+                if (!safe && t2_type_kind(checker->universe, missing) != T2_TYPE_NEVER) {
+                        if (diagnose) {
+                                T2Diagnostic *diagnostic = add_diagnostic(
+                                        checker,
+                                        site,
+                                        T2_DIAGNOSTIC_ERROR,
+                                        "union-member-coverage",
+                                        T2_TYPE_INVALID,
+                                        T2_TYPE_INVALID,
+                                        "field `%s` is not defined on nil",
+                                        name
+                                );
+                                if (diagnostic != NULL) {
+                                        push_note(
+                                                &diagnostic->notes,
+                                                (T2Note) {
+                                                        .kind = T2_NOTE_TYPE,
+                                                        .left = snapshot_type(checker, object),
+                                                        .text = S2("receiver")
+                                                }
+                                        );
+                                        push_note(
+                                                &diagnostic->notes,
+                                                (T2Note) {
+                                                        .kind = T2_NOTE_UNDEFINED,
+                                                        .form = T2_UNDEFINED_METHOD,
+                                                        .left = snapshot_type(checker, missing),
+                                                        .text = S2(name)
+                                                }
+                                        );
+                                }
                         }
                         return t2_primitive(checker->universe, T2_TYPE_ERROR);
                 }
@@ -16446,6 +16484,55 @@ refine_path(
         binding->refinement = (refined == binding->type) ? T2_TYPE_INVALID : refined;
 }
 
+static T2Binding *
+assignment_target_binding(T2Checker *checker, Expr const *target)
+{
+        Expr const *tested = (target == NULL) ? NULL : unfurl(target);
+        if (tested == NULL) {
+                return NULL;
+        }
+
+        if (member_path_expression(tested)) {
+                return path_refinement_binding(checker, tested);
+        }
+
+        if (tested->type != EXPRESSION_IDENTIFIER) {
+                return NULL;
+        }
+
+        T2Binding *binding = find_binding(checker, tested->symbol);
+        if (binding == NULL || !binding->initialized) {
+                binding = member_refinement_binding(checker, tested->symbol, tested);
+        }
+
+        return (
+                (binding != NULL)
+             && binding->initialized
+             && monomorphic_binding(binding)
+        ) ? binding : NULL;
+}
+
+static void
+refine_maybe_assigned(
+        T2Checker  *checker,
+        Expr const *target,
+        T2Type      before,
+        T2Type      value
+)
+{
+        T2Binding *binding = assignment_target_binding(checker, target);
+        if (binding == NULL) {
+                return;
+        }
+
+        T2Type present = without_nil(checker, before);
+        T2Type after   = (present == before)
+                       ? before
+                       : t2_join(checker->universe, present, value);
+
+        binding->refinement = (after == binding->type) ? T2_TYPE_INVALID : after;
+}
+
 static void
 refine_keyword_presence(T2Checker *checker, Expr const *identifier, Expr const *key)
 {
@@ -16650,6 +16737,79 @@ apply_condition_refinements(
                         t2_primitive(checker->universe, T2_TYPE_NIL),
                         false
                 );
+        }
+}
+
+static T2Type
+condpart_subject_type(
+        T2Checker  *checker,
+        Expr const *pattern,
+        T2Type      subject,
+        bool        matched
+)
+{
+        T2TypeKind kind = t2_type_kind(
+                checker->universe,
+                resolved_type_head(checker, subject, T2_PREFER_LOWER_BOUND)
+        );
+
+        switch (kind) {
+        case T2_TYPE_DYNAMIC:
+        case T2_TYPE_UNKNOWN:
+        case T2_TYPE_ANY:
+        case T2_TYPE_META:
+        case T2_TYPE_VARIABLE:
+        case T2_TYPE_ERROR:
+                return T2_TYPE_INVALID;
+
+        default:
+                break;
+        }
+
+        if (matched) {
+                return pattern_narrowed_subject(checker, pattern, subject);
+        }
+
+        bool certain    = false;
+        T2Type coverage = pattern_coverage(checker, pattern, subject, &certain);
+
+        return certain
+             ? subtract_pattern_coverage(
+                       checker,
+                       subject,
+                       coverage,
+                       pattern_is_catch_all(pattern)
+               )
+             : T2_TYPE_INVALID;
+}
+
+static void
+apply_condpart_refinements(
+        T2Checker              *checker,
+        struct condpart const  *part,
+        T2Type                  subject,
+        bool                    matched
+)
+{
+        if (part->target == NULL) {
+                apply_condition_refinements(checker, part->e, matched);
+                return;
+        }
+
+        Expr const *tested = unfurl(part->e);
+        if (tested == NULL) {
+                return;
+        }
+
+        T2Type narrowed = condpart_subject_type(checker, part->target, subject, matched);
+        if (narrowed == T2_TYPE_INVALID || narrowed == subject) {
+                return;
+        }
+
+        if (tested->type == EXPRESSION_IDENTIFIER) {
+                refine_binding(checker, tested->symbol, tested, narrowed, true);
+        } else if (member_path_expression(tested)) {
+                refine_path(checker, tested, narrowed, true);
         }
 }
 
@@ -20303,7 +20463,20 @@ infer_expression(T2Checker *checker, Expr const *source)
                         if (value == T2_TYPE_INVALID) {
                                 value = infer_expression(checker, expression->value);
                         }
+                        T2Binding *target = (expression->type == EXPRESSION_MAYBE_EQ)
+                                          ? assignment_target_binding(checker, expression->target)
+                                          : NULL;
+                        T2Type before = (target == NULL)
+                                      ? T2_TYPE_INVALID
+                                      : resolved_type_head(
+                                              checker,
+                                              binding_effective_type(target),
+                                              T2_PREFER_LOWER_BOUND
+                                        );
                         valid = assign_lvalue(checker, expression->target, value, false);
+                        if (valid && before != T2_TYPE_INVALID) {
+                                refine_maybe_assigned(checker, expression->target, before, value);
+                        }
                 }
                 if (
                         !valid
@@ -23207,7 +23380,6 @@ infer_pattern(T2Checker *checker, Expr const *pattern, T2Type subject)
                 return infer_pattern(checker, pattern->right, viewed);
         }
         case EXPRESSION_REF_PATTERN:
-        case EXPRESSION_REF_MAYBE_PATTERN:
                 return assign_lvalue(checker, pattern->target, subject, false);
         case EXPRESSION_MUST_EQUAL:
         {
@@ -27601,7 +27773,7 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
                         if (negated) {
                                 continue;
                         }
-                        apply_condition_refinements(checker, part->e, true);
+                        apply_condpart_refinements(checker, part, conditions[i], true);
                         if (part->target != NULL) {
                                 (void)infer_refutable_pattern(
                                         checker,
@@ -27610,14 +27782,13 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
                                 );
                         }
                 }
-                if (negated) {
-                        for (usize i = 0; i < part_count; ++i) {
-                                apply_condition_refinements(
-                                        checker,
-                                        v__(statement->_if.parts, (int)i)->e,
-                                        false
-                                );
-                        }
+                if (negated && part_count == 1) {
+                        apply_condpart_refinements(
+                                checker,
+                                v__(statement->_if.parts, 0),
+                                conditions[0],
+                                false
+                        );
                 }
                 T2Flow then_flow = infer_statement_with_hint(
                         checker,
@@ -27629,11 +27800,16 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
                         binding_mark
                 );
                 restore_refinements(checker, before, binding_mark);
-                if (part_count == 1) {
-                        apply_condition_refinements(
+                for (usize i = 0; i < part_count && (negated || part_count == 1); ++i) {
+                        struct condpart const *part = v__(
+                                statement->_if.parts,
+                                (int)i
+                        );
+                        apply_condpart_refinements(
                                 checker,
-                                v__(statement->_if.parts, 0)->e,
-                                negated
+                                part,
+                                conditions[i],
+                                negated && (part->target != NULL)
                         );
                 }
                 T2Flow else_flow = (statement->_if._else == NULL)
@@ -27728,7 +27904,7 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
                         T2Type condition            = infer_expression(checker, part->e);
                         infinite &= (part->target == NULL)
                                  && loop_condition_is_true(part->e);
-                        apply_condition_refinements(checker, part->e, true);
+                        apply_condpart_refinements(checker, part, condition, true);
                         if (part->target != NULL) {
                                 (void)infer_refutable_pattern(
                                         checker,

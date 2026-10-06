@@ -2945,11 +2945,18 @@ Start:
                 for (int i = 0; ; ++i) {
                         push(INTEGER(i));
                         exec_fn(ty, vp, &subscript, 1, NULL);
+                        YieldFix(ty);
                         Value r = pop();
-                        if (r.type == VALUE_NIL)
+                        if (r.type == VALUE_NONE) {
                                 break;
-                        if (UNLIKELY(r.type != VALUE_INTEGER))
-                                zP("iterator yielded non-integer array index in subscript expression");
+                        }
+                        if (UNLIKELY(r.type != VALUE_INTEGER)) {
+                                zP(
+                                        "iterator yielded non-integer array index"
+                                        " in subscript expression: %s",
+                                        VSC(&r)
+                                );
+                        }
                         if (r.z < 0)
                                 r.z += vN(*container.array);
                         if (r.z < 0 || r.z >= vN(*container.array)) {

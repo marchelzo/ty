@@ -4,13 +4,13 @@
 #include "ty.h"
 
 Value
-json_parse(Ty *ty, char const *s, usize n);
+json_parse(Ty *ty, Value const *input);
 
 Value
-json_parse_xD(Ty *ty, char const *s, usize n);
+json_parse_xD(Ty *ty, Value const *input);
 
 Value
-json_parse_typed(Ty *ty, T2Type t0, char const *s, usize n);
+json_parse_typed(Ty *ty, T2Type t0, Value const *input);
 
 Value
 json_encode(Ty *ty, Value const *v);

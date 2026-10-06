@@ -153,7 +153,6 @@ typedef vec(struct condpart *) condpart_vector;
         X(IN),                                                                        \
         X(NOT_IN),                                                                    \
         X(REF_PATTERN),                                                               \
-        X(REF_MAYBE_PATTERN),                                                         \
         X(KEEP_LOC), /* Below here we store Location in instruction pointer index */  \
         X(TUPLE),                                                                     \
         X(TUPLE_SPEC),                                                                \

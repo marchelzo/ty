@@ -1459,7 +1459,7 @@ fn status-entry(p: Ptr[Any]) -> StatusEntry {
     let entry = raw.GitStatus(p)
     let staged = entry.staged ? delta(entry.staged) : nil
     let unstaged = entry.unstaged ? delta(entry.unstaged) : nil
-    let path = (unstaged ?? staged).path
+    let path = (unstaged ?? staged)!.path
     StatusEntry(path, entry.flags, staged, unstaged)
 }
 

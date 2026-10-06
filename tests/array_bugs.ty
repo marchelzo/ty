@@ -75,8 +75,8 @@ pub fn test-min-max-by() {
         {key: 2, value: 'b'},
     ]
 
-    assert(xs.min(&.key).value == 'a')
-    assert(xs.max(&.key).value == 'c')
+    assert(xs.min(&.key)!.value == 'a')
+    assert(xs.max(&.key)!.value == 'c')
 }
 
 pub fn test-shuffle-uses-ty-prng() {

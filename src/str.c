@@ -684,16 +684,20 @@ string_bsearchr(Ty *ty, Value *string, int argc, Value *kwargs)
 {
         ASSERT_ARGC("String.bsearchr()", 1, 2);
         Value pattern = ARGx(0, VALUE_STRING, VALUE_REGEX);
-        isize offset = (argc == 1) ? sN(*string) - 1 : INT_ARG(1);
+        isize len = sN(*string);
+        isize offset = (argc == 1) ? len - 1 : INT_ARG(1);
 
+        if (len == 0) {
+                return NIL;
+        }
         if (offset < 0) {
-                offset += sN(*string);
+                offset += len;
         }
         if (offset < 0) {
                 zP("String.bsearchr(): invalid offset: %"PRIi64, offset);
         }
-        if (offset >= sN(*string)) {
-                offset = sN(*string) - 1;
+        if (offset >= len) {
+                offset = len - 1;
         }
 
         u8 const *s = ss(*string);

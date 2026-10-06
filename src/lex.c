@@ -1297,6 +1297,10 @@ lexop(Ty *ty)
                         break;
                 }
 
+                if (i == 1 && op[0] == '!' && C(0) == '.') {
+                        break;
+                }
+
                 /* Another one :^) We want a=#self to mean a = #self, not a #= self...
                  * This comes up primarily with default function arguments.
                  */

@@ -4636,14 +4636,6 @@ infix_eq(Ty *ty, Expr *left)
         e->start = left->start;
         e->target = assignment_lvalue(ty, left);
 
-        if (get_prefix_parser(ty) == NULL) {
-                e->type = (e->type == EXPRESSION_EQ)
-                        ? EXPRESSION_REF_PATTERN
-                        : EXPRESSION_REF_MAYBE_PATTERN;
-                e->end = TEnd;
-                return e;
-        }
-
         SAVE_NA(true);
 
         if (left->type == EXPRESSION_LIST) {

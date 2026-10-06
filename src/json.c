@@ -17,11 +17,11 @@
 #include "ty.h"
 #include "types2.h"
 
-#define KW_DELIM(c) (strchr(" \n}],", c) != NULL)
-#define FAIL longjmp(jb, 1)
+#define FAIL Fail(json)
 
 static _Thread_local jmp_buf jb;
 static _Thread_local char const *json;
+static _Thread_local char const *furthest;
 static _Thread_local usize len;
 static _Thread_local bool xd;
 
@@ -48,6 +48,49 @@ next(void)
                 return '\0';
         --len;
         return *json++;
+}
+
+static noreturn void
+Fail(char const *at)
+{
+        if (at > furthest) {
+                furthest = at;
+        }
+
+        longjmp(jb, 1);
+}
+
+inline static void
+expect(char c)
+{
+        if (len == 0 || json[0] != c) {
+                FAIL;
+        }
+
+        next();
+}
+
+inline static Value
+keyword(char const *kw, usize n, Value v)
+{
+        if (len < n || memcmp(json, kw, n) != 0) {
+                FAIL;
+        }
+
+        if (
+                (len > n)
+             && !isspace((u8)json[n])
+             && (json[n] != ',')
+             && (json[n] != ']')
+             && (json[n] != '}')
+        ) {
+                Fail(json + n);
+        }
+
+        json += n;
+        len  -= n;
+
+        return v;
 }
 
 static Value
@@ -78,46 +121,19 @@ number(void)
 static Value
 null(void)
 {
-        if (strncmp(json, "null", 4) != 0)
-                FAIL;
-
-        if (!KW_DELIM(json[4]))
-                FAIL;
-
-        json += 4;
-        len -= 4;
-
-        return NIL;
+        return keyword("null", 4, NIL);
 }
 
 static Value
 jtrue(void)
 {
-        if (strncmp(json, "true", 4) != 0)
-                FAIL;
-
-        if (!KW_DELIM(json[4]))
-                FAIL;
-
-        json += 4;
-        len -= 4;
-
-        return BOOLEAN(true);
+        return keyword("true", 4, BOOLEAN(true));
 }
 
 static Value
 jfalse(void)
 {
-        if (strncmp(json, "false", 5) != 0)
-                FAIL;
-
-        if (!KW_DELIM(json[5]))
-                FAIL;
-
-        json += 5;
-        len -= 5;
-
-        return BOOLEAN(false);
+        return keyword("false", 5, BOOLEAN(false));
 }
 
 static u8 const xtable[256] = {
@@ -159,8 +175,9 @@ next8x(Ty *ty)
 static Value
 string(Ty *ty)
 {
-        if (next() != '"')
-                FAIL;
+        expect('"');
+
+        SCRATCH_SAVE();
 
         byte_vector str = {0};
 
@@ -172,25 +189,24 @@ string(Ty *ty)
 
         while (peek() != '\0' && peek() != '"') {
                 switch ((peek() == '\\') ? (next(), next()) : -1) {
-                case 't':  xvP(str, '\t'); break;
-                case 'f':  xvP(str, '\f'); break;
-                case 'n':  xvP(str, '\n'); break;
-                case 'r':  xvP(str, '\r'); break;
-                case 'b':  xvP(str, '\b'); break;
-                case '"':  xvP(str, '"');  break;
-                case '/':  xvP(str, '/');  break;
-                case '\\': xvP(str, '\\'); break;
+                case 't':  svP(str, '\t'); break;
+                case 'f':  svP(str, '\f'); break;
+                case 'n':  svP(str, '\n'); break;
+                case 'r':  svP(str, '\r'); break;
+                case 'b':  svP(str, '\b'); break;
+                case '"':  svP(str, '"');  break;
+                case '/':  svP(str, '/');  break;
+                case '\\': svP(str, '\\'); break;
 
                 case 'x':
-                        xvP(str, next8x(ty));
+                        svP(str, next8x(ty));
                         break;
 
                 case 'u':
                         cp = next16x(ty);
                         if ((cp & 0xF800) == 0xD800) {
-                                if (next() != '\\' || next() != 'u') {
-                                        FAIL;
-                                }
+                                expect('\\');
+                                expect('u');
 
                                 hi = cp;
                                 lo = next16x(ty);
@@ -198,26 +214,27 @@ string(Ty *ty)
                                 cp = 0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00);
                         }
                         n = utf8proc_encode_char(cp, (u8 *)b);
-                        xvPn(str, b, n);
+                        svPn(str, b, n);
                         break;
 
                 default:
-                        xvP(str, next());
+                        svP(str, next());
                 }
         }
 
-        if (next() != '"')
-                FAIL;
+        expect('"');
 
-        n = str.count;
+        n = vN(str);
 
-        if (n == 0)
+        if (n == 0) {
+                SCRATCH_RESTORE();
                 return STRING_NOGC(NULL, 0);
+        }
 
         char *s = value_string_alloc(ty, n);
-        memcpy(s, str.items, n);
+        memcpy(s, vv(str), n);
 
-        xvF(str);
+        SCRATCH_RESTORE();
 
         return STRING(s, n);
 }
@@ -225,20 +242,19 @@ string(Ty *ty)
 static Value
 array(Ty *ty)
 {
-        if (next() != '[')
-                FAIL;
+        expect('[');
 
         Array *a = vA();
 
         while (peek() != '\0' && peek() != ']') {
                 vvP(*a, value(ty));
                 space();
-                if (peek() != ']' && next() != ',')
-                        FAIL;
+                if (peek() != ']') {
+                        expect(',');
+                }
         }
 
-        if (next() != ']')
-                FAIL;
+        expect(']');
 
         return ARRAY(a);
 }
@@ -246,8 +262,7 @@ array(Ty *ty)
 inline static Value
 object_lol(Ty *ty)
 {
-        if (next() != '{')
-                FAIL;
+        expect('{');
 
         Dict *obj = dict_new(ty);
 
@@ -255,17 +270,16 @@ object_lol(Ty *ty)
                 space();
                 Value key = string(ty);
                 space();
-                if (next() != ':')
-                        FAIL;
+                expect(':');
                 Value val = value(ty);
                 dict_put_value(ty, obj, key, val);
                 space();
-                if (peek() != '}' && next() != ',')
-                        FAIL;
+                if (peek() != '}') {
+                        expect(',');
+                }
         }
 
-        if (next() != '}')
-                FAIL;
+        expect('}');
 
         return DICT(obj);
 }
@@ -273,8 +287,7 @@ object_lol(Ty *ty)
 inline static Value
 object_xD(Ty *ty)
 {
-        if (next() != '{')
-                FAIL;
+        expect('{');
 
         SCRATCH_SAVE();
 
@@ -287,25 +300,20 @@ object_xD(Ty *ty)
                 Value key = string(ty);
 
                 space();
-                if (next() != ':') {
-                        SCRATCH_RESTORE();
-                        FAIL;
-                }
+                expect(':');
 
                 Value val = value(ty);
 
                 space();
-                if (peek() != '}' && next() != ',') {
-                        SCRATCH_RESTORE();
-                        FAIL;
+                if (peek() != '}') {
+                        expect(',');
                 }
 
                 svP(keys, key);
                 svP(values, val);
         }
 
-        if (next() != '}')
-                FAIL;
+        expect('}');
 
         Value object = value_record(ty, vN(keys));
 
@@ -630,87 +638,40 @@ encode(Ty *ty, Value const *v, str *out)
         return true;
 }
 
-Value
-json_parse(Ty *ty, char const *s, usize n)
-{
-        json = s;
-        len = n;
-
-        xd = false;
-
-        GC_STOP();
-
-        if (setjmp(jb) != 0) {
-                GC_RESUME();
-                return NIL;
-        }
-
-        Value v = value(ty);
-        space();
-
-        if (peek() != '\0') {
-                v = NIL;
-        }
-
-        GC_RESUME();
-
-        return v;
-}
-
-Value
-json_parse_xD(Ty *ty, char const *s, usize n)
-{
-        json = s;
-        len = n;
-
-        xd = true;
-
-        GC_STOP();
-
-        if (setjmp(jb) != 0) {
-                GC_RESUME();
-                return NIL;
-        }
-
-        Value v = value(ty);
-        space();
-
-        if (peek() != '\0') {
-                v = NIL;
-        }
-
-        GC_RESUME();
-
-        return v;
-}
-
 static Value
 typed_value(Ty *ty, T2Type t0);
 
 static Value
 checked_value(Ty *ty, T2Type t0)
 {
+        space();
+
+        char const *start = json;
         Value v = value(ty);
+
         if (!t2_check(ty, t0, &v)) {
-                FAIL;
+                Fail(start);
         }
+
         return v;
 }
 
 static Value
 typed_array(Ty *ty, T2Type element)
 {
-        if (next() != '[') FAIL;
+        expect('[');
 
         Array *a = vA();
 
         while (peek() != '\0' && peek() != ']') {
                 vvP(*a, element == T2_TYPE_INVALID ? value(ty) : typed_value(ty, element));
                 space();
-                if (peek() != ']' && next() != ',') FAIL;
+                if (peek() != ']') {
+                        expect(',');
+                }
         }
 
-        if (next() != ']') FAIL;
+        expect(']');
 
         return ARRAY(a);
 }
@@ -718,17 +679,19 @@ typed_array(Ty *ty, T2Type element)
 static Value
 typed_set(Ty *ty, T2Type element)
 {
-        if (next() != '[') FAIL;
+        expect('[');
 
         Set *s = set_new(ty);
 
         while (peek() != '\0' && peek() != ']') {
                 set_add(ty, s, element == T2_TYPE_INVALID ? value(ty) : typed_value(ty, element));
                 space();
-                if (peek() != ']' && next() != ',') FAIL;
+                if (peek() != ']') {
+                        expect(',');
+                }
         }
 
-        if (next() != ']') FAIL;
+        expect(']');
 
         return SET(s);
 }
@@ -736,7 +699,7 @@ typed_set(Ty *ty, T2Type element)
 static Value
 typed_dict(Ty *ty, T2Type val_type)
 {
-        if (next() != '{') FAIL;
+        expect('{');
 
         Dict *obj = dict_new(ty);
 
@@ -744,14 +707,16 @@ typed_dict(Ty *ty, T2Type val_type)
                 space();
                 Value key = string(ty);
                 space();
-                if (next() != ':') FAIL;
+                expect(':');
                 Value val = val_type == T2_TYPE_INVALID ? value(ty) : typed_value(ty, val_type);
                 dict_put_value(ty, obj, key, val);
                 space();
-                if (peek() != '}' && next() != ',') FAIL;
+                if (peek() != '}') {
+                        expect(',');
+                }
         }
 
-        if (next() != '}') FAIL;
+        expect('}');
 
         return DICT(obj);
 }
@@ -761,7 +726,7 @@ typed_tuple(Ty *ty, T2Type t0, size_t typed_count)
 {
         T2Universe *universe = t2_global_universe();
 
-        if (next() != '[') FAIL;
+        expect('[');
 
         SCRATCH_SAVE();
         ValueVector items = {0};
@@ -770,15 +735,17 @@ typed_tuple(Ty *ty, T2Type t0, size_t typed_count)
                 size_t i = vN(items);
                 svP(items, i < typed_count ? typed_value(ty, t2_type_child(universe, t0, i)) : value(ty));
                 space();
-                if (peek() != ']' && next() != ',') {
-                        SCRATCH_RESTORE();
-                        FAIL;
+                if (peek() != ']') {
+                        expect(',');
                 }
         }
 
-        if (next() != ']' || vN(items) < typed_count) {
-                SCRATCH_RESTORE();
-                FAIL;
+        char const *close = json;
+
+        expect(']');
+
+        if (vN(items) < typed_count) {
+                Fail(close);
         }
 
         Value tuple = vT(vN(items));
@@ -796,7 +763,7 @@ typed_record(Ty *ty, T2Type t0)
 {
         T2Universe *universe = t2_global_universe();
 
-        if (next() != '{') FAIL;
+        expect('{');
 
         SCRATCH_SAVE();
 
@@ -809,29 +776,24 @@ typed_record(Ty *ty, T2Type t0)
                 space();
                 Value key = string(ty);
                 space();
-                if (next() != ':') {
-                        SCRATCH_RESTORE();
-                        FAIL;
-                }
+                expect(':');
 
                 char const *kstr = TY_TMP_C_STR(key);
                 T2Type field_type = t2_record_field_type(universe, t0, kstr, NULL, NULL);
                 Value val = field_type == T2_TYPE_INVALID ? value(ty) : typed_value(ty, field_type);
 
                 space();
-                if (peek() != '}' && next() != ',') {
-                        SCRATCH_RESTORE();
-                        FAIL;
+                if (peek() != '}') {
+                        expect(',');
                 }
 
                 svP(keys, key);
                 svP(values, val);
         }
 
-        if (next() != '}') {
-                SCRATCH_RESTORE();
-                FAIL;
-        }
+        char const *close = json;
+
+        expect('}');
 
         Value object = value_record(ty, vN(keys));
 
@@ -855,8 +817,7 @@ typed_record(Ty *ty, T2Type t0)
                         }
                 }
                 if (!found) {
-                        SCRATCH_RESTORE();
-                        FAIL;
+                        Fail(close);
                 }
         }
 
@@ -919,6 +880,7 @@ typed_value(Ty *ty, T2Type t0)
 
         space();
 
+        char const *start = json;
         Value v;
 
         switch (t2_type_kind(universe, t0)) {
@@ -928,7 +890,7 @@ typed_value(Ty *ty, T2Type t0)
         case T2_TYPE_INT:
                 v = number();
                 if (v.type != VALUE_INTEGER) {
-                        FAIL;
+                        Fail(start);
                 }
                 return v;
 
@@ -938,7 +900,7 @@ typed_value(Ty *ty, T2Type t0)
                         return REAL((double)v.z);
                 }
                 if (v.type != VALUE_REAL) {
-                        FAIL;
+                        Fail(start);
                 }
                 return v;
 
@@ -946,9 +908,7 @@ typed_value(Ty *ty, T2Type t0)
                 return string(ty);
 
         case T2_TYPE_BOOL:
-                if (peek() == 't') return jtrue();
-                if (peek() == 'f') return jfalse();
-                FAIL;
+                return (peek() == 't') ? jtrue() : jfalse();
 
         case T2_TYPE_LITERAL_BOOL:
         case T2_TYPE_LITERAL_INT:
@@ -995,38 +955,107 @@ typed_value(Ty *ty, T2Type t0)
         }
 }
 
-Value
-json_parse_typed(Ty *ty, T2Type t0, char const *s, usize n)
+static noreturn void
+Throw(Ty *ty, Value const *input, usize offset, char const *reason)
 {
-        json = s;
-        len  = n;
+        GC_STOP();
 
-        xd = true;
+        Value exc = NewInstance(
+                CLASS_JSON_ERROR,
+                (input->type == VALUE_BLOB) ? vSs(vv(*input->blob), vN(*input->blob)) : *input,
+                INTEGER(offset),
+                (reason != NULL) ? vSsz(reason) : NIL
+        );
+
+        GC_RESUME();
+
+        vmE(&exc);
+}
+
+static noreturn void
+ThrowTyped(Ty *ty, Value const *input, usize offset, char const *fmt, T2Type t0)
+{
+        char *shown = t2_show(ty, t0);
+        char *reason = afmt(fmt, shown);
+
+        t2_string_free(shown);
+
+        Throw(ty, input, offset, reason);
+}
+
+static Value
+parse(Ty *ty, Value const *input, T2Type t0, bool records)
+{
+        char const *start;
+        usize n;
+
+        switch (input->type) {
+        case VALUE_STRING:
+                start = (char const *)ss(*input);
+                n     = sN(*input);
+                break;
+
+        case VALUE_BLOB:
+                start = (char const *)vv(*input->blob);
+                n     = vN(*input->blob);
+                break;
+
+        default:
+                UNREACHABLE();
+        }
+
+        json     = start;
+        len      = n;
+        furthest = start;
+        xd       = records;
+
+        ScratchSave scratch = SaveScratch(ty);
 
         GC_STOP();
 
         if (setjmp(jb) != 0) {
                 GC_RESUME();
-                zP(
-                        "json.parse(): failed to parse JSON as %s",
-                        t2_show(ty, t0)
-                );
+                RestoreScratch(ty, scratch);
+                if (t0 == T2_TYPE_INVALID) {
+                        Throw(ty, input, furthest - start, NULL);
+                } else {
+                        ThrowTyped(ty, input, furthest - start, "failed to parse JSON as %s", t0);
+                }
         }
 
-        Value v = typed_value(ty, t0);
+        Value v = (t0 == T2_TYPE_INVALID) ? value(ty) : typed_value(ty, t0);
+
         space();
-
-        if (peek() != '\0') {
-                GC_RESUME();
-                zP(
-                        "json.parse(): unexpected trailing data after parsing %s",
-                        t2_show(ty, t0)
-                );
-        }
 
         GC_RESUME();
 
-        return v;
+        if (len == 0) {
+                return v;
+        }
+
+        if (t0 == T2_TYPE_INVALID) {
+                Throw(ty, input, json - start, "unexpected trailing data");
+        }
+
+        ThrowTyped(ty, input, json - start, "unexpected trailing data after parsing %s", t0);
+}
+
+Value
+json_parse(Ty *ty, Value const *input)
+{
+        return parse(ty, input, T2_TYPE_INVALID, false);
+}
+
+Value
+json_parse_xD(Ty *ty, Value const *input)
+{
+        return parse(ty, input, T2_TYPE_INVALID, true);
+}
+
+Value
+json_parse_typed(Ty *ty, T2Type t0, Value const *input)
+{
+        return parse(ty, input, t0, true);
 }
 
 Value

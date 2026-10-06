@@ -555,7 +555,6 @@ visit_pattern(Ty *ty, Expr *p, Scope *scope, VisitorCtx *ctxt)
                 break;
 
         case EXPRESSION_REF_PATTERN:
-        case EXPRESSION_REF_MAYBE_PATTERN:
                 VL(false, p->target);
                 break;
 
@@ -688,7 +687,6 @@ visit_lvalue(Ty *ty, Expr *t, Scope *scope, VisitorCtx *ctxt, bool decl)
                 break;
 
         case EXPRESSION_REF_PATTERN:
-        case EXPRESSION_REF_MAYBE_PATTERN:
                 VL(false, t->target);
                 break;
 

@@ -13235,6 +13235,7 @@ compiler_init(Ty *ty)
         class_set_super(ty, CLASS_TIMEOUT_ERROR,  CLASS_RUNTIME_ERROR);
         class_set_super(ty, CLASS_CANCELED_ERROR, CLASS_RUNTIME_ERROR);
         class_set_super(ty, CLASS_OS_ERROR,       CLASS_RUNTIME_ERROR);
+        class_set_super(ty, CLASS_JSON_ERROR,     CLASS_RUNTIME_ERROR);
 
         class_set_super(ty, CLASS_ITER, CLASS_ITERABLE);
         class_set_super(ty, CLASS_TAG, CLASS_FUNCTION);

@@ -63,6 +63,7 @@ enum {
         CLASS_TIMEOUT_ERROR,
         CLASS_CANCELED_ERROR,
         CLASS_OS_ERROR,
+        CLASS_JSON_ERROR,
         CLASS_RE_MATCH,
         CLASS_INTO_PTR,
         CLASS_ITERABLE,
@@ -1890,7 +1891,7 @@ value_truthy(Ty *ty, Value const *v)
         case VALUE_GENERATOR:        return true;
         case VALUE_TRACE:            return true;
         case VALUE_PTR:              return (v->ptr != NULL);
-        default:                     return false;
+        default:                     return (v->type & VALUE_TAGGED);
         }
 }
 

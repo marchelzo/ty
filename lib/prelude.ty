@@ -2140,6 +2140,38 @@ class OSError < RuntimeError {
     }
 }
 
+class JSONError < RuntimeError {
+    __input:  String
+    __offset: Int
+    __reason: String | nil
+
+    init(input: String, offset: Int, reason: ?String = nil) {
+        __input  = input
+        __offset = offset
+        __reason = reason
+    }
+
+    input  -> String { __input  }
+    offset -> Int    { __offset }
+
+    what -> String {
+        let seen   = __input.bslice(0, __offset)
+        let rest   = __input.bslice(__offset)
+        let before = seen.bslice((seen.bsearchr("\n") ?? -1) + 1).replace("\t", " ")
+        let after  = rest.bslice(0, rest.bsearch("\n") ?? rest.size()).replace("\t", " ")
+        let left   = (#before > 40) ? "...{before[-37;]}" : before
+        let right  = (#after > 40) ? "{after[;37]}..." : after
+        let token  = (rest == '') ? 'end of input' : show(rest[0])
+        let spot   = "line {seen.count("\n") + 1}, column {#before + 1}"
+        let why = match __reason {
+            $reason => "{reason} (found {token})",
+            _       => "unexpected {token}"
+        }
+
+        "{spot} (offset {__offset}): {why}\n    {left}{right}\n    {' ' * #left}^"
+    }
+}
+
 tag MatchError;
 tag IndexError;
 tag DispatchError;

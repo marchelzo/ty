@@ -650,7 +650,7 @@ pub class UV {
         }
 
         C! closure on_connection(server: c.ptr, status: c.int) {
-            let sock = __listening[server]
+            let sock = __listening[server]!
             if status == 0 {
                 spawn(sock.on-connection, sock)
             } else {
@@ -682,7 +682,7 @@ pub class UV {
             nread: ssize_t,
             buf: c.ptr
         ) {
-            let stream = __reading[handle]
+            let stream = __reading[handle]!
             let buf    = uv_buf_t(buf)
 
             if nread < 0 {
@@ -731,7 +731,7 @@ pub class UV {
             status: c.int
         ) {
             if status < 0 { return }
-            let watcher = __watching[handle]
+            let watcher = __watching[handle]!
             if let $cb = watcher.on-event {
                 let name = (filename != nil) ? c.str(filename) : nil
                 cb(name, events)

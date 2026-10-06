@@ -710,7 +710,10 @@ pub fn event-occurrences(events: Array[Event], start: PlainDate,
         if let $rid = event.recurrence-id {
             overrides[recurrence-key(uid, rid)] = event
         } else if event.rrule && uid != '' {
-            if !masters[uid] || event.sequence >= masters[uid].sequence { masters[uid] = event }
+            let master = masters[uid]
+            if !master || event.sequence >= master.sequence {
+                masters[uid] = event
+            }
         } else {
             standalone.push(event)
         }
