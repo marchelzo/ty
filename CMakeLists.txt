@@ -207,6 +207,44 @@ else()
 endif()
 
 # ---
+#  generate builtin function declarations/table
+# ---
+
+add_executable(tybi)
+target_sources(tybi PRIVATE tools/tybi.c)
+set_target_properties(tybi PROPERTIES C_STANDARD 11)
+
+set(_gen_builtins_dir ${_autogen_dir}/include/gen)
+set(_gen_builtins_sources
+  src/functions.c
+  src/ffi.c
+  src/sqlite.c
+)
+set(_gen_builtins_headers
+  ${_gen_builtins_dir}/builtin_decls.h
+  ${_gen_builtins_dir}/builtin_table.h
+)
+
+add_custom_command(
+  OUTPUT
+    ${_gen_builtins_headers}
+  COMMAND
+    ${CMAKE_COMMAND} -E make_directory "${_gen_builtins_dir}"
+  COMMAND
+    $<TARGET_FILE:tybi> "${_gen_builtins_dir}" ${_gen_builtins_sources}
+  DEPENDS
+    tybi
+    ${_gen_builtins_sources}
+  WORKING_DIRECTORY
+    "${PROJECT_SOURCE_DIR}"
+  COMMENT
+    "Generating builtin headers with tybi"
+  VERBATIM
+)
+add_custom_target(GenerateBuiltinsH DEPENDS ${_gen_builtins_headers})
+add_dependencies(${_tgt_ioctlconstants_h} GenerateBuiltinsH)
+
+# ---
 #  target: libco
 # ---
 add_library(libco)
