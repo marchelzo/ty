@@ -2421,6 +2421,20 @@ TryResolveIdentifier(Ty *ty, Expr *expr)
 }
 
 inline static Symbol *
+TryResolveSettledIdentifier(Ty *ty, Expr *expr)
+{
+        Symbol *sym = TryResolveIdentifier(ty, expr);
+
+        WITH_PERMISSIVE_SCOPE {
+                if (TryResolveIdentifier(ty, expr) != sym) {
+                        sym = NULL;
+                }
+        }
+
+        return sym;
+}
+
+inline static Symbol *
 addsymbolx(Ty *ty, Scope *scope, char const *name, bool check_ns_shadow)
 {
         Symbol *s = scope_local_lookup(ty, scope, name);
@@ -5813,7 +5827,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         while (vN(Globals) <= i) {
                                 Symbol *sym = v__(
                                         GlobalScope->owned,
-                                        vN(GlobalScope->owned)
+                                        vN(Globals)
                                 );
                                 xvP(Globals, UNINITIALIZED(sym));
                         }
@@ -13252,8 +13266,8 @@ compiler_init(Ty *ty)
         class_implement_trait(ty, CLASS_BLOB,         CLASS_ITERABLE);
         class_implement_trait(ty, CLASS_BLOB,         CLASS_INTO_PTR);
 
-        AnyTypeSymbol = scope_add_type_var(ty, GlobalScope, "Any", 0);
-        (void)scope_add_type_var(ty, GlobalScope, "Type", 0);
+        AnyTypeSymbol = scope_add_type_var(ty, GlobalScope, "Any", SYM_PUBLIC);
+        (void)scope_add_type_var(ty, GlobalScope, "Type", SYM_PUBLIC);
 }
 
 void
@@ -17937,7 +17951,7 @@ DeclareSymbols(Ty *ty, Stmt *stmt)
                         goto TryFullResolve;
 
                 case EXPRESSION_IDENTIFIER:
-                        if ((expr->symbol = TryResolveIdentifier(ty, expr)) == NULL) {
+                        if ((expr->symbol = TryResolveSettledIdentifier(ty, expr)) == NULL) {
                                 goto PartialResolve;
                         }
                 default:

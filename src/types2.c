@@ -2095,24 +2095,6 @@ ensure_symbol_nominal(
                 return ensure_nominal(checker, symbol->class, fallback_name, 0);
         }
 
-        if (
-                SymbolIsMember(symbol)
-             && (symbol->class >= 0)
-             && (checker->ty != NULL)
-             && (symbol->class < class_count(checker->ty))
-             && (fallback_name != NULL)
-        ) {
-                char const *name = class_name(checker->ty, symbol->class);
-                if (name != NULL && s_eq(name, fallback_name)) {
-                        return ensure_nominal(
-                                checker,
-                                symbol->class,
-                                fallback_name,
-                                0
-                        );
-                }
-        }
-
         return NULL;
 }
 
@@ -3229,6 +3211,24 @@ type_symbol_class_id(T2Checker *checker, Symbol const *symbol)
         return (class == NULL) ? -1 : class->i;
 }
 
+static bool
+names_primitive(Symbol const *symbol)
+{
+        return (symbol == NULL)
+            || (
+                       SymbolIsTypeVar(symbol)
+                    && (symbol->scope != NULL)
+                    && (symbol->scope->parent == NULL)
+               )
+            || (
+                       SymbolIsBuiltin(symbol)
+                    && !SymbolIsMember(symbol)
+                    && (symbol->tag <= 0)
+                    && (symbol->class >= 0)
+                    && (symbol->class < CLASS_BUILTIN_END)
+               );
+}
+
 enum {
         T2_TYPE_FUNCTION_IDENTITY = UINT64_C(1) << 62
 };
@@ -3297,10 +3297,7 @@ lower_named_type(
                 return result;
         }
 
-        if (
-                allow_primitive
-             && (type_symbol_class_id(checker, name->symbol) < CLASS_BUILTIN_END)
-        ) {
+        if (allow_primitive && names_primitive(name->symbol)) {
                 result = primitive_named(checker, name->identifier);
                 if (result != T2_TYPE_INVALID) {
                         return result;
@@ -4269,7 +4266,7 @@ lower_type(T2Checker *checker, Expr const *source)
                         (name != NULL)
                      && (name->identifier != NULL)
                      && s_eq(name->identifier, "Type")
-                     && (type_symbol_class_id(checker, name->symbol) < CLASS_BUILTIN_END)
+                     && names_primitive(name->symbol)
                 ) {
                         if (count == 1) {
                                 T2Type dynamic = t2_primitive(checker->universe, T2_TYPE_DYNAMIC);
@@ -4838,8 +4835,14 @@ constrain_gradually(
 
         t2_solver_rollback(checker->solver, mark);
 
-        T2Type head   = resolved_type_head(checker, actual, T2_PREFER_LOWER_BOUND);
-        T2Type target = resolved_type_head(checker, expected, T2_PREFER_UPPER_BOUND);
+        T2Type head = t2_recursive_unfold(
+                checker->universe,
+                resolved_type_head(checker, actual, T2_PREFER_LOWER_BOUND)
+        );
+        T2Type target = t2_recursive_unfold(
+                checker->universe,
+                resolved_type_head(checker, expected, T2_PREFER_UPPER_BOUND)
+        );
         if (t2_type_kind(checker->universe, head) == T2_TYPE_UNION) {
                 usize count = t2_type_arity(checker->universe, head);
                 for (usize i = 0; i < count; ++i) {
@@ -16108,11 +16111,9 @@ condition_test_type(T2Checker *checker, Expr const *source)
                 return T2_TYPE_INVALID;
         }
 
-        bool valid = (name != NULL)
-                  && (type_symbol_class_id(checker, name->symbol) < CLASS_BUILTIN_END);
-
-        T2Type primitive = valid ? primitive_named(checker, name->identifier)
-                                 : T2_TYPE_INVALID;
+        T2Type primitive = (name != NULL) && names_primitive(name->symbol)
+                         ? primitive_named(checker, name->identifier)
+                         : T2_TYPE_INVALID;
 
         if (primitive != T2_TYPE_INVALID) {
                 return primitive;
@@ -30625,7 +30626,7 @@ report_diagnostics(T2Checker *checker, usize errors, usize warnings)
 
 enum {
         T2_CACHE_MAGIC   = UINT32_C(0x32545954),
-        T2_CACHE_VERSION = 16,
+        T2_CACHE_VERSION = 17,
         T2_CACHE_NONE    = UINT32_MAX
 };
 
@@ -30634,6 +30635,7 @@ typedef struct t2_cache_symbol {
         char *name;
         u64   symbol;
         u32   arity;
+        u32   ordinal;
         bool  is_tag;
 } T2CacheSymbol;
 
@@ -30707,7 +30709,8 @@ static usize ModuleKeyCount;
 static usize ModuleKeyCapacity;
 static T2Index ModuleKeyIndex;
 
-static bool
+[[gnu::always_inline]]
+inline static bool
 same_text(char const *a, char const *b)
 {
         return (a == NULL) ? b == NULL : (b != NULL) && s_eq(a, b);
@@ -31038,6 +31041,56 @@ class_module_path(Class const *class)
 }
 
 static bool
+class_answers_to(Ty *ty, int class_id, char const *name, char const *module)
+{
+        Class const *class = class_get(ty, class_id);
+
+        return (class != NULL)
+            && (class->name != NULL)
+            && s_eq(class->name, name)
+            && same_text(class_module_path(class), module);
+}
+
+static bool
+tag_answers_to(Ty *ty, int tag, char const *name, char const *module)
+{
+        return s_eq(tags_name(ty, tag), name)
+            && same_text(class_module_path(tags_get_class(ty, tag)), module);
+}
+
+static u32
+class_ordinal(Ty *ty, int class_id)
+{
+        Class const *class = class_get(ty, class_id);
+        char const *module = class_module_path(class);
+        u32 n = 0;
+
+        if (class == NULL || class->name == NULL) {
+                return 0;
+        }
+
+        for (int i = 0; i < class_id; ++i) {
+                n += class_answers_to(ty, i, class->name, module);
+        }
+
+        return n;
+}
+
+static u32
+tag_ordinal(Ty *ty, int tag)
+{
+        char const *name   = tags_name(ty, tag);
+        char const *module = class_module_path(tags_get_class(ty, tag));
+        u32 n = 0;
+
+        for (int t = 1; t < tag; ++t) {
+                n += tag_answers_to(ty, t, name, module);
+        }
+
+        return n;
+}
+
+static bool
 cache_symbol_append(T2Cache *cache, T2CacheSymbol entry, u32 *index)
 {
         *index = (u32)vN(cache->symbols);
@@ -31066,15 +31119,17 @@ cache_symbol_out(void *context, u64 symbol)
              && (class_id < class_count(checker->ty))
         ) {
                 Class const *class = class_get(checker->ty, class_id);
-                entry.name   = S2N((class == NULL) ? NULL : class->name);
-                entry.module = S2N(class_module_path(class));
+                entry.name    = S2N((class == NULL) ? NULL : class->name);
+                entry.module  = S2N(class_module_path(class));
+                entry.ordinal = class_ordinal(checker->ty, class_id);
         } else if (
                 (tag_id > 0)
              && (tag_id <= tags_count(checker->ty))
         ) {
-                entry.is_tag = true;
-                entry.name   = S2N(tags_name(checker->ty, tag_id));
-                entry.module = S2N(class_module_path(tags_get_class(checker->ty, tag_id)));
+                entry.is_tag  = true;
+                entry.name    = S2N(tags_name(checker->ty, tag_id));
+                entry.module  = S2N(class_module_path(tags_get_class(checker->ty, tag_id)));
+                entry.ordinal = tag_ordinal(checker->ty, tag_id);
         }
 
         if (
@@ -31116,42 +31171,35 @@ restored_meta(void *context, T2VariableKind kind)
 static u64
 resolve_class_symbol(Ty *ty, T2CacheSymbol const *entry)
 {
-        int found = -1;
-        int count = class_count(ty);
-        for (int i = 0; i < count; ++i) {
-                Class const *class = class_get(ty, i);
+        u32 n = entry->ordinal;
+
+        for (int i = 0; i < class_count(ty); ++i) {
                 if (
-                        (class == NULL)
-                     || (class->name == NULL)
-                     || !s_eq(class->name, entry->name)
+                        class_answers_to(ty, i, entry->name, entry->module)
+                     && (n-- == 0)
                 ) {
-                        continue;
+                        return t2_class_symbol(i);
                 }
-                if (!same_text(class_module_path(class), entry->module)) {
-                        continue;
-                }
-                found = i;
         }
 
-        return (found < 0) ? 0 : t2_class_symbol(found);
+        return 0;
 }
 
 static u64
 resolve_tag_symbol(Ty *ty, T2CacheSymbol const *entry)
 {
-        int found = -1;
-        int count = tags_count(ty);
-        for (int tag = 1; tag <= count; ++tag) {
-                if (!s_eq(tags_name(ty, tag), entry->name)) {
-                        continue;
+        u32 n = entry->ordinal;
+
+        for (int tag = 1; tag <= tags_count(ty); ++tag) {
+                if (
+                        tag_answers_to(ty, tag, entry->name, entry->module)
+                     && (n-- == 0)
+                ) {
+                        return t2_tag_symbol(tag);
                 }
-                if (!same_text(class_module_path(tags_get_class(ty, tag)), entry->module)) {
-                        continue;
-                }
-                found = tag;
         }
 
-        return (found < 0) ? 0 : t2_tag_symbol(found);
+        return 0;
 }
 
 static bool
@@ -31361,6 +31409,7 @@ read_cache_file(char const *path, u64 key)
                   && read_text(cache, &entry.module)
                   && read_text(cache, &entry.name)
                   && read_u32(cache, &entry.arity)
+                  && read_u32(cache, &entry.ordinal)
                   && (entry.name != NULL)
                   && cache_symbol_append(cache, entry, &index);
                 if (!ok) {
@@ -32161,6 +32210,7 @@ write_symbols(T2Cache const *cache, byte_vector *out)
                      || !t2_bytes_string(out, entry->module)
                      || !t2_bytes_string(out, entry->name)
                      || !t2_bytes_u32(out, entry->arity)
+                     || !t2_bytes_u32(out, entry->ordinal)
                 ) {
                         return false;
                 }

@@ -89,6 +89,9 @@ static struct {
   { .module = "os",         .name = "SHUT_RD",                  .value = INT(SHUT_RD)                             },
   { .module = "os",         .name = "SHUT_WR",                  .value = INT(SHUT_WR)                             },
   { .module = "os",         .name = "SHUT_RDWR",                .value = INT(SHUT_RDWR)                           },
+#ifdef MSG_NOSIGNAL
+  { .module = "os",         .name = "MSG_NOSIGNAL",             .value = INT(MSG_NOSIGNAL)                        },
+#endif
 
   { .module = "os",         .name = "SIG_DFL",                  .value = INT(0)                                   },
   { .module = "os",         .name = "SIG_IGN",                  .value = INT(1)                                   },

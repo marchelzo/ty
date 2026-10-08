@@ -68,7 +68,7 @@ pub fn commits-trees-and-blobs() {
         assert(first.root? && !first.merge? && first.parents == [])
         assert(first.author.name == AUTHOR.name && first.author.offset == -240)
         assert(first.seconds == AUTHOR.seconds)
-        assert(repo.tip.id == first.id)
+        assert((repo.tip)!.id == first.id)
         assert(repo.read('dir/hello.txt') == 'hello\n')
         assert(first.tree.names == ['dir'])
         assert(first.files.map(&.path) == ['dir/hello.txt'])
@@ -183,7 +183,7 @@ pub fn object-accessors() {
         let annotation: git.GitObject = repo['v1']
         assert(annotation.tag? && annotation.name == 'v1')
         assert(annotation.message == 'release')
-        assert(annotation.tagger.email == AUTHOR.email)
+        assert((annotation.tagger)!.email == AUTHOR.email)
         assert(annotation.target.summary == 'Second' && annotation.tree.id == tree.id)
         assert(annotation['dir/a'].text == blob.text && annotation.names == tree.names)
         assert(annotation.files.map(&.path) == ['dir/a'])
@@ -217,8 +217,8 @@ pub fn commit-dates() {
         assert([*repo.log().map(&.date)] == [committed])
 
         repo.tag('dated', message: 'release', tagger: author)
-        assert(repo['dated'].tagger.date == written)
-        assert(repo.blame('a')[1].author.date == written)
+        assert((repo['dated'].tagger)!.date == written)
+        assert(repo.blame('a')[1]!.author.date == written)
         let reflog = repo.reflog()[0].committer
         assert(reflog.date.to-instant().epoch-seconds == reflog.seconds)
         repo.close()
@@ -309,7 +309,7 @@ pub fn history-and-graph() {
         assert(a.ancestor-of?(c) && c.descendant-of?(a))
         assert(repo.ancestor?(b, b) && !repo.ancestor?(c, a))
         assert(repo.ahead-behind(c, a) == (2, 0))
-        assert(repo.merge-base(a, c).id == a.id)
+        assert(repo.merge-base(a, c)!.id == a.id)
     }
 }
 
@@ -319,7 +319,7 @@ pub fn staging-status-and-diffs() {
         let a = save(repo, 'a', 'one\n', 'one')
         (path / 'a').write('two\n')
         (path / 'new file').write('new\n')
-        assert(repo.status['a'].unstaged?)
+        assert(repo.status['a']!.unstaged?)
         assert(repo.status.untracked.map(&.path) == ['new file'])
         assert(repo.diff().stats.deletions == 1)
         assert('-one\n+two\n' in repo.diff().patch)
@@ -327,7 +327,7 @@ pub fn staging-status-and-diffs() {
         assert(repo.status.staged.map(&.path) == ['a', 'new file'])
         assert(repo.staged.stats.files == 2 && repo.diff().empty?)
         repo.unstage('new file')
-        assert(repo.status['new file'].untracked?)
+        assert(repo.status['new file']!.untracked?)
         repo.add('new file')
         let b = repo.commit('two', author: AUTHOR)
         assert(repo.clean?)
@@ -337,14 +337,14 @@ pub fn staging-status-and-diffs() {
         assert(a.diff().stats.insertions == 1)
         let ^index = repo.index
         assert(index.paths == ['a', 'new file'])
-        assert(index['a'].id == b['a'].id)
-        assert(index['a'].stage == 0 && !index.conflicts?)
+        assert(index['a']!.id == b['a'].id)
+        assert(index['a']!.stage == 0 && !index.conflicts?)
         assert(index['absent'] == nil)
         assert(index.write-tree().id == b.tree.id)
         (path / 'ignored').write('ignored')
         repo.ignore('ignored')
         assert(repo.ignored?('ignored') && repo.clean?)
-        assert(repo.status-with(ignored: true)['ignored'].ignored?)
+        assert(repo.status-with(ignored: true)['ignored']!.ignored?)
     }
 }
 
@@ -391,8 +391,8 @@ pub fn config-and-errors() {
         assert(config.delete('ty.answer') && !config.delete('ty.answer'))
         assert(config.int('ty.answer', 7) == 7)
         assert('missing' not in repo)
-        let error = try repo['missing'] catch e: git.NotFoundError { e }
-        assert(error :: git.NotFoundError && error.code == -3)
+        let code = try repo['missing'] catch e: git.NotFoundError { e.code }
+        assert(code == -3)
     }
 }
 
@@ -420,15 +420,15 @@ pub fn clone-fetch-and-push() {
         assert(remote.bare? && remote.workdir == nil)
         source.remotes.add('origin', str(remote.path))
         source.push('origin', 'refs/heads/main:refs/heads/main')
-        assert(remote.tip.id == first.id)
+        assert((remote.tip)!.id == first.id)
         let ^copy = git.clone(remote.path, path / 'copy')
-        assert(copy.tip.id == first.id && copy.read('a') == 'first\n')
+        assert((copy.tip)!.id == first.id && copy.read('a') == 'first\n')
         assert(copy.remotes.names == ['origin'])
         let second = save(source, 'a', 'second\n', 'second')
         source.push('origin', 'refs/heads/main:refs/heads/main')
         copy.fetch()
         assert(copy.remote-branches['origin/main'].id == second.id)
-        assert(copy.branches['main'].upstream.id == second.id)
+        assert((copy.branches['main'].upstream)!.id == second.id)
         let specs = copy.remotes['origin'].fetch-specs
         assert(specs == ['+refs/heads/*:refs/remotes/origin/*'])
         assert(cli(remote.path, 'rev-parse', 'main') == second.hex)
@@ -442,7 +442,7 @@ pub fn lifetimes() {
         let entry = commit.tree.entry('a')
         let status = repo.status
         for ..100 {
-            assert(repo.tip.id == commit.id)
+            assert((repo.tip)!.id == commit.id)
         }
         ty.gc()
         assert(entry.text == 'a\n' && status.clean?)
@@ -482,10 +482,10 @@ pub fn blame-reflog-and-describe() {
         repo.tag('v1', message: 'release', tagger: AUTHOR)
         let second = save(repo, 'a', 'first\nchanged\n', 'second')
         let blame = repo.blame('a')
-        assert(blame[1].id == first.id && blame[2].id == second.id)
-        assert(blame[2].author.name == AUTHOR.name)
+        assert(blame[1]!.id == first.id && blame[2]!.id == second.id)
+        assert(blame[2]!.author.name == AUTHOR.name)
         assert(blame[0] == nil && blame[3] == nil)
-        assert(repo.blame('a', first)[2].id == first.id)
+        assert(repo.blame('a', first)[2]!.id == first.id)
         assert(repo.reflog()[0].new == second.id)
         assert(repo.reflog()[0].old == first.id)
         assert(repo.describe(first) == 'v1')
@@ -502,7 +502,7 @@ pub fn conflicts-and-string-boundaries() {
         (path / 'a').write('dirty\n')
         let error = try repo.checkout('old') catch e: git.ConflictError { e }
         assert(error :: git.ConflictError)
-        assert(repo.tip.id == second.id)
+        assert((repo.tip)!.id == second.id)
         assert((path / 'a').read-text() == 'dirty\n')
         let name = 'prefix-topicsuffix'[7;12]
         assert(repo.branch(name).shorthand == 'topic')
@@ -525,7 +525,7 @@ pub fn linked-worktrees() {
         let ^worktree = git.open(linked)
         assert(worktree.workdir.?resolve == linked.resolve && worktree.branch-name == 'linked')
         let second = save(worktree, 'a', 'second\n', 'second')
-        assert(repo.tip.id == first.id && worktree.tip.id == second.id)
+        assert((repo.tip)!.id == first.id && (worktree.tip)!.id == second.id)
         assert(repo.branches['linked'].id == second.id)
         assert(repo.read('a') == 'first\n' && worktree.read('a') == 'second\n')
     }
@@ -554,15 +554,15 @@ pub fn tree-merge-and-reference-comparison() {
         let right = repo.commit('right', parents: [base], tree: base.tree.edit().write('c', 'c\n').build(), update-ref: None)
         let tree = repo.merge-trees(base, left, right)
         assert(tree.names == ['a', 'b', 'c'])
-        let branch = repo.head.name
+        let branch = (repo.head)!.name
         try {
             repo.update-ref(branch, right, base)
             throw AssertionError('stale reference update succeeded')
         } catch _: git.GitError {
-            assert(repo.tip.id == left.id)
+            assert((repo.tip)!.id == left.id)
         }
         repo.update-ref(branch, right, left)
-        assert(repo.tip.id == right.id)
+        assert((repo.tip)!.id == right.id)
         let ^index = git.Index(repo, path / 'private-index')
         index.read-tree(tree).write()
         assert(index.write-tree().id == tree.id)

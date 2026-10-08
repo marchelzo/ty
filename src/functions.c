@@ -973,7 +973,7 @@ TY_BUILTIN(ord)
         return INTEGER(rune);
 }
 
-// ty.hash(x: Any) -> Int
+// ty.hash(x: prelude.Any) -> prelude.Int
 TY_BUILTIN_RAW(hash)
 {
         ASSERT_ARGC("hash()", 1);
@@ -9048,7 +9048,7 @@ TY_BUILTIN_RAW(ty_gc)
         return NIL;
 }
 
-// ty.bt() -> Array[(Function, String, String | nil, Int | nil, Int | nil)]
+// ty.bt() -> prelude.Array[(Function, prelude.String, prelude.String | nil, prelude.Int | nil, prelude.Int | nil)]
 TY_BUILTIN_RAW(ty_bt)
 {
         ASSERT_ARGC("ty.bt()", 0);
@@ -9142,7 +9142,7 @@ TY_BUILTIN_RAW(ty_lock)
         return NIL;
 }
 
-// ty.gensym() -> String
+// ty.gensym() -> prelude.String
 TY_BUILTIN_RAW(ty_gensym)
 {
         ASSERT_ARGC("ty.gensym()", 0);
@@ -9358,7 +9358,7 @@ make_tokens(Ty *ty, TokenVector const *ts)
         return ARRAY(a);
 }
 
-// ty.disassemble(what: Any) -> String
+// ty.disassemble(what: prelude.Any) -> prelude.String
 TY_BUILTIN_RAW(ty_disassemble)
 {
         ASSERT_ARGC("ty.disassemble()", 1);
@@ -9444,7 +9444,7 @@ TY_BUILTIN_RAW(ty_coro)
         return TyActiveGenerator(ty);
 }
 
-// ty.eval(expr: Any, scope: ?Ptr[Any] = nil) -> _
+// ty.eval(expr: prelude.Any, scope: ?Ptr[prelude.Any] = nil) -> _
 TY_BUILTIN_RAW(eval)
 {
         ASSERT_ARGC("ty.eval()", 1, 2);
@@ -9498,7 +9498,7 @@ TY_BUILTIN_RAW(eval)
         return v;
 }
 
-// ty.text(mod: String) -> String | nil
+// ty.text(mod: prelude.String) -> prelude.String | nil
 TY_BUILTIN_RAW(ty_text)
 {
         char const *_name__ = "ty.text()";
@@ -9510,7 +9510,7 @@ TY_BUILTIN_RAW(ty_text)
         return (source != NULL) ? xSz(source) : NIL;
 }
 
-// ty.tokens(mod: String) -> _
+// ty.tokens(mod: prelude.String) -> _
 TY_BUILTIN_RAW(ty_tokens)
 {
         char const *_name__ = "ty.tokens()";
@@ -9526,7 +9526,7 @@ TY_BUILTIN_RAW(ty_tokens)
         return make_tokens(ty, &tokens);
 }
 
-// ty.scope() -> Ptr[Any] | nil
+// ty.scope() -> Ptr[prelude.Any] | nil
 TY_BUILTIN_RAW(ty_scope)
 {
         ASSERT_ARGC("ty.scope()", 0);
@@ -9534,7 +9534,7 @@ TY_BUILTIN_RAW(ty_scope)
         return (scope == NULL) ? NIL : PTR(scope);
 }
 
-// ty.ctx() -> {scope: Ptr[Any] | nil, mod: String, path: String}
+// ty.ctx() -> {scope: Ptr[prelude.Any] | nil, mod: prelude.String, path: prelude.String}
 TY_BUILTIN_RAW(ty_ctx)
 {
         ASSERT_ARGC("ty.ctx()", 0);
@@ -10020,9 +10020,9 @@ ParseSource(Ty *ty, Value input, Scope *scope, u32 flags)
 }
 
 // ty.parse(
-//     source: String | Blob,
-//     deep: Bool = false,
-//     resolve: Bool = false,
+//     source: prelude.String | Blob,
+//     deep: prelude.Bool = false,
+//     resolve: prelude.Bool = false,
 //     scope: Ptr[_] = nil
 // ) -> Err[ParseFailure] | Ok[Module]
 //
@@ -10051,7 +10051,7 @@ TY_BUILTIN_RAW(ty_parse)
         return ParseSource(ty, input, IsMissing(scope) ? NULL : scope.ptr, flags);
 }
 
-// ty.id(x: Any) -> Int
+// ty.id(x: prelude.Any) -> prelude.Int
 TY_BUILTIN_RAW(ty_id)
 {
         ASSERT_ARGC("ty.id()", 1);
@@ -10523,14 +10523,14 @@ TY_BUILTIN_RAW(ty_type_show)
         return result;
 }
 
-// ty.definition(cls: Class) -> AST
+// ty.definition(cls: prelude.Class) -> AST
 TY_BUILTIN_RAW(ty_definition)
 {
         ASSERT_ARGC("ty.definition()", 1);
         return CToTyStmt(ty, class_get(ty, ARGx(0, VALUE_CLASS).class)->def);
 }
 
-// ty.copySource[T](from: Any, to: T) -> T
+// ty.copySource[T](from: prelude.Any, to: T) -> T
 TY_BUILTIN_RAW(ty_copy_source)
 {
         ASSERT_ARGC("ty.copySource()", 2);
@@ -10543,8 +10543,8 @@ TY_BUILTIN_RAW(ty_copy_source)
         return to;
 }
 
-// ty.getSource(x: Any) -> {start: {line: Int, col: Int, byte: Int}, end: {line: Int, col: Int, byte: Int}, file: String | nil, mod: Module | nil, prog: String, src: String}
-// ty.src(x: Any) -> {start: {line: Int, col: Int, byte: Int}, end: {line: Int, col: Int, byte: Int}, file: String | nil, mod: Module | nil, prog: String, src: String}
+// ty.getSource(x: prelude.Any) -> {start: {line: prelude.Int, col: prelude.Int, byte: prelude.Int}, end: {line: prelude.Int, col: prelude.Int, byte: prelude.Int}, file: prelude.String | nil, mod: Module | nil, prog: prelude.String, src: prelude.String}
+// ty.src(x: prelude.Any) -> {start: {line: prelude.Int, col: prelude.Int, byte: prelude.Int}, end: {line: prelude.Int, col: prelude.Int, byte: prelude.Int}, file: prelude.String | nil, mod: Module | nil, prog: prelude.String, src: prelude.String}
 TY_BUILTIN_RAW(ty_get_source)
 {
         ASSERT_ARGC("ty.getSource()", 1);
@@ -10674,7 +10674,7 @@ TY_BUILTIN_RAW(token_next)
 }
 
 // ty/parse.expr(prec: ?Int, raw: true, resolve: ?Bool = false) -> (AST, _)
-// ty/parse.expr(prec: ?Int, raw: ?Bool, resolve: ?Bool = false) -> AST
+// ty/parse.expr(prec: ?Int, raw: ?false, resolve: ?Bool = false) -> AST
 // ty/parse.expr(
 //     source: String | Blob,
 //     scope: ?Ptr[_],
@@ -10682,7 +10682,7 @@ TY_BUILTIN_RAW(token_next)
 //     resolve: ?Bool = false
 // ) -> (Ptr[_], AST)
 //
-// ty/parse.expr(source: String | Blob, scope: ?Ptr[_], raw: ?Bool, resolve: ?Bool = false) -> AST
+// ty/parse.expr(source: String | Blob, scope: ?Ptr[_], raw: ?false, resolve: ?Bool = false) -> AST
 TY_BUILTIN_RAW(parse_expr)
 {
         ASSERT_ARGC("ty.parse.expr()", 0, 1, 2);
@@ -10779,7 +10779,7 @@ TY_BUILTIN_RAW(parse_expr)
 }
 
 // ty/parse.type(prec: ?Int, raw: true, resolve: ?Bool = false) -> (Ptr[Any], AST)
-// ty/parse.type(prec: ?Int, raw: ?Bool, resolve: ?Bool = false) -> AST
+// ty/parse.type(prec: ?Int, raw: ?false, resolve: ?Bool = false) -> AST
 TY_BUILTIN_RAW(parse_type)
 {
         ASSERT_ARGC("ty.parse.type()", 0, 1);
@@ -10797,8 +10797,8 @@ TY_BUILTIN_RAW(parse_type)
         );
 }
 
-// ty/parse.stmt(prec: ?Int, raw: Bool) -> (AST, _)
-// ty/parse.stmt(prec: ?Int) -> AST
+// ty/parse.stmt(prec: ?Int, raw: true, resolve: ?Bool = false) -> (AST, _)
+// ty/parse.stmt(prec: ?Int, raw: ?false, resolve: ?Bool = false) -> AST
 TY_BUILTIN_RAW(parse_stmt)
 {
         ASSERT_ARGC("ty.parse.stmt()", 0, 1, 2);

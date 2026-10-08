@@ -65,7 +65,7 @@ pub fn test-insert-and-get() {
     assert(p.id == 1)
     assert(p.name == 'Alice')
 
-    let found = Person.get(p.id)
+    let $found = Person.get(p.id)!
     assert(found.name == 'Alice')
     assert(found.email == 'a@b')
     assert(found.age == 30)
@@ -79,7 +79,7 @@ pub fn test-get-missing() {
 pub fn test-defaults() {
     fresh()
     let p = Person(name='Bob').insert()
-    let found = Person.get(p.id)
+    let $found = Person.get(p.id)!
     assert(found.age == 0)
     assert(found.email == nil)
 }
@@ -114,7 +114,7 @@ pub fn test-save() {
     p.name = 'Alice Smith'
     p.save()
 
-    let found = Person.get(p.id)
+    let $found = Person.get(p.id)!
     assert(found.age == 31)
     assert(found.name == 'Alice Smith')
 }
@@ -165,9 +165,9 @@ pub fn test-update-all() {
     Person(name='B', age=20).insert()
     Person(name='B', age=30).insert()
     Person.where('age < ?', 25).update-all!('age = ?', 0)
-    assert(Person.get(1).age == 0)
-    assert(Person.get(2).age == 0)
-    assert(Person.get(3).age == 30)
+    assert(Person.get(1)!.age == 0)
+    assert(Person.get(2)!.age == 0)
+    assert(Person.get(3)!.age == 30)
 }
 
 pub fn test-delete-all() {
@@ -255,11 +255,11 @@ pub fn test-date-roundtrip() {
         published=PlainDate(2026, 6, 15)
     ).insert()
 
-    let found = Article.get(a.id)
+    let $found = Article.get(a.id)!
     assert(found.published :: PlainDate)
-    assert(found.published.year == 2026)
-    assert(found.published.month == 6)
-    assert(found.published.day == 15)
+    assert((found.published)!.year == 2026)
+    assert((found.published)!.month == 6)
+    assert((found.published)!.day == 15)
 }
 
 pub fn test-auto-timestamps() {
@@ -270,7 +270,7 @@ pub fn test-auto-timestamps() {
     ).insert()
     assert(a.created-at :: PlainDateTime)
     assert(a.updated-at :: PlainDateTime)
-    assert(a.created-at.year == 2026)
+    assert((a.created-at)!.year == 2026)
 }
 
 pub fn test-validation() {

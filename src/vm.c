@@ -989,23 +989,23 @@ add_builtins(Ty *ty, int ac, char **av)
         NAMES.c = vN(Globals);                            \
         *xvP(Globals, NIL)
 //---------------------------------------------------------------------------
-        BUILTIN_NAMED_VAR(NULL, "__env",          env,         "Dict[String, String]"          ) = DICT(env);
-        BUILTIN_NAMED_VAR(NULL, "__EXIT_HOOKS__", exit_hooks,  NULL                            ) = ARRAY(vA());
-        BUILTIN_NAMED_VAR(NULL, "_readln",        _readln,     NULL                            ) = NIL;
-        BUILTIN_NAMED_VAR(NULL, "pretty",         pretty,      NULL                            ) = NIL;
-        BUILTIN_NAMED_VAR(NULL, "pp",             pp,          NULL                            ) = NIL;
-        BUILTIN_NAMED_VAR("ty", "path",           path,        "Array[String]"                 ) = ARRAY(vA());
-        BUILTIN_NAMED_VAR("ty", "q",              q,           "Bool"                          ) = BOOLEAN(!CheckTypes);
-        BUILTIN_NAMED_VAR("ty", "jit",            jit,         "Bool"                          ) = BOOLEAN(!NoJIT);
-        BUILTIN_NAMED_VAR("ty", "TEST",           TEST,        "Bool"                          ) = BOOLEAN(RunningTests);
-        BUILTIN_NAMED_VAR("ty", "tests",          tests,       NULL                            ) = ARRAY(vA());
-        BUILTIN_NAMED_VAR("ty", "version",        version,     "{string: String, date: String}") = version;
-        BUILTIN_NAMED_VAR("ty", "interactive",    interactive, "Bool"                          ) = BOOLEAN(false);
+        BUILTIN_NAMED_VAR(NULL, "__env",          env,         "Dict[String, String]"                          ) = DICT(env);
+        BUILTIN_NAMED_VAR(NULL, "__EXIT_HOOKS__", exit_hooks,  NULL                                            ) = ARRAY(vA());
+        BUILTIN_NAMED_VAR(NULL, "_readln",        _readln,     NULL                                            ) = NIL;
+        BUILTIN_NAMED_VAR(NULL, "pretty",         pretty,      NULL                                            ) = NIL;
+        BUILTIN_NAMED_VAR(NULL, "pp",             pp,          NULL                                            ) = NIL;
+        BUILTIN_NAMED_VAR("ty", "path",           path,        "prelude.Array[prelude.String]"                 ) = ARRAY(vA());
+        BUILTIN_NAMED_VAR("ty", "q",              q,           "prelude.Bool"                                  ) = BOOLEAN(!CheckTypes);
+        BUILTIN_NAMED_VAR("ty", "jit",            jit,         "prelude.Bool"                                  ) = BOOLEAN(!NoJIT);
+        BUILTIN_NAMED_VAR("ty", "TEST",           TEST,        "prelude.Bool"                                  ) = BOOLEAN(RunningTests);
+        BUILTIN_NAMED_VAR("ty", "tests",          tests,       NULL                                            ) = ARRAY(vA());
+        BUILTIN_NAMED_VAR("ty", "version",        version,     "{string: prelude.String, date: prelude.String}") = version;
+        BUILTIN_NAMED_VAR("ty", "interactive",    interactive, "prelude.Bool"                                  ) = BOOLEAN(false);
 
-        BUILTIN_VAR("ty",  "executable", "String") = this_executable(ty);
-        BUILTIN_VAR("ty",  "platform",   "String") = xSz(TY_PLATFORM_NAME);
-        BUILTIN_VAR("ty",  "arch",       "String") = xSz(TY_PLATFORM_ARCH);
-        BUILTIN_VAR("ty",  "color",      "String") = xSz(COLOR_MODE_NAMES[ColorMode]);
+        BUILTIN_VAR("ty",  "executable", "prelude.String") = this_executable(ty);
+        BUILTIN_VAR("ty",  "platform",   "prelude.String") = xSz(TY_PLATFORM_NAME);
+        BUILTIN_VAR("ty",  "arch",       "prelude.String") = xSz(TY_PLATFORM_ARCH);
+        BUILTIN_VAR("ty",  "color",      "prelude.String") = xSz(COLOR_MODE_NAMES[ColorMode]);
 #if defined(_WIN32)
         BUILTIN_VAR("os",  "PAGE_SIZE",  "Int") = INTEGER(4096);
 #else

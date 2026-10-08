@@ -40,6 +40,8 @@ let FCGI_MAX_CONNS  = "FCGI_MAX_CONNS";
 let FCGI_MAX_REQS   = "FCGI_MAX_REQS";
 let FCGI_MPXS_CONNS = "FCGI_MPXS_CONNS";
 
+use RawRequest = (String, Dict[String, String], Int)
+
 let statusText = %{
     200: 'OK',
     400: 'Bad Request',
@@ -50,7 +52,7 @@ let statusText = %{
 class FCGIParser {
     __buffer: Blob
     __fd: Int
-    __parser: Generator[(String, Dict[String, String], Int)]
+    __parser: Generator[nil | RawRequest, Blob]
 
 
     init(fd) {
@@ -74,7 +76,7 @@ class FCGIParser {
         next(1)[0]
     }
 
-   __start*() -> Generator[(String, Dict[String, String], Int)] {
+    __start*() -> Generator[nil | RawRequest, Blob] {
         while true {
             let body = blob()
             let params = %{}
@@ -127,7 +129,7 @@ class FCGIParser {
         }
     }
 
-    push(data) -> nil | (String , Dict[String, String], Int) {
+    push(data: Blob) -> nil | RawRequest {
         if let Some($request) = (__parser)(data) {
             request
         }
@@ -179,9 +181,12 @@ fn decode(s) {
 }
 
 fn urlDecode(s: String) -> Dict[String, String] {
-    let components = s.split('&');
-    let pairs = [c.split('=').map(decode) for c in components];
-    return %{k: v for [k, v] in pairs};
+    let pair = match {
+        [k, v] => (decode(k), decode(v)),
+        [k]    => (decode(k), '')
+    }
+
+    %{k: v for (k, v) in s.split('&').filter(\_ != '').map(&split('=', 1)).map(pair)}
 }
 
 pub class FCGIRequest {
@@ -311,7 +316,7 @@ pub class FCGIRequest {
     }
 
     queryParams() {
-        return urlDecode(__params['QUERY_STRING']);
+        urlDecode(__params['QUERY_STRING'] ?? '')
     }
 
     [](param: String) -> ?String {
@@ -319,44 +324,50 @@ pub class FCGIRequest {
     }
 
     formData() {
-        if __params['CONTENT_TYPE'].match?(/^multipart\/form-data/) {
-            let form = %{}
-            let offset = 0
-            let delim = match __body { /^(.*)\r\n/ => $1 }
+        match __params['CONTENT_TYPE'] ?? '' {
+            /^multipart\/form-data/               => __multipart-form(),
+            /^application\/x-www-form-urlencoded/ => urlDecode(__body),
+            _                                     => queryParams()
+        }
+    }
 
-            while let $i = __body.bsearch(delim, offset) {
-                if not let $j = __body.bsearch('\r\n\r\n', i) {
-                    break
-                }
-                let headers = __body.bsplice(i + #delim + 2, j).split(/\r\n/)
-                offset = __body.bsearch(delim, j)
-                let content = __body.bsplice(j + 4, (offset - 2)!)
-                let headers = %{k.lower(): v for [k, v] in headers.map(&split(': ', 1))}
-                let disposition = %{k: v for [_, k, v] in headers['content-disposition'].matches(/(\w+)="([^"]+)"/)}
-                let name = disposition['name']
+    __multipart-form() {
+        let form = %{}
+        let offset = 0
+        let delim = match __body { /^(.*)\r\n/ => $1 }
 
-                if let $filename = disposition['filename'] {
-                    let f = {
-                        name: filename,
-                        type: headers['content-type'],
-                        content: Blob(content)
-                    }
-                    if let $fs = form[name] {
-                        fs.push(f)
-                    } else {
-                        form[name] = [f]
-                    }
-                } else {
-                    form[disposition['name']] = content
-                }
+        while let $i = __body.bsearch(delim, offset) {
+            let $j    = __body.bsearch('\r\n\r\n', i) or break
+            let $next = __body.bsearch(delim, j) or break
+
+            offset = next
+
+            let lines       = __body.bsplice(i + #delim + 2, j).split(/\r\n/)
+            let content     = __body.bsplice(j + 4, next - 2)
+            let headers     = %{k.lower(): v for [k, v] in lines.map(&split(': ', 1))}
+            let $cd         = headers['content-disposition'] or continue
+            let disposition = %{k: v for [_, k, v] in cd.matches(/(\w+)="([^"]+)"/)}
+            let name        = disposition['name']
+
+            if not let $filename = disposition['filename'] {
+                form[name] = content
+                continue
             }
 
-            return form
-        } else if __params['CONTENT_TYPE'].match?(/^application\/x-www-form-urlencoded/) {
-            return urlDecode(__body)
-        } else {
-            return urlDecode(__params['QUERY_STRING'])
+            let f = {
+                name: filename,
+                type: headers['content-type'],
+                content: Blob(content)
+            }
+
+            if let fs: Array = form[name] {
+                fs.push(f)
+            } else {
+                form[name] = [f]
+            }
         }
+
+        form
     }
 }
 

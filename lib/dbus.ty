@@ -105,8 +105,8 @@ fn _read-struct(sig: String, msg, i: Int) {
 
 fn _sig-read(sig: String, msg: _, i: Int = 0) {
     let ch = sig[i]
-    if ch in BASIC_READER {
-        return (_msg-call(msg, BASIC_READER[ch]), i + 1)
+    if let $reader = BASIC_READER[ch] {
+        return (_msg-call(msg, reader), i + 1)
     }
 
     if ch == 'a' && sig[i + 1] == '{' {
@@ -180,11 +180,15 @@ fn _xml-attr(line, name) -> String | nil {
     }
 }
 
+fn _xml-arg(line: String, i: Int) {
+    return {name: _xml-attr(line, 'name') ?? "arg{i}", sig: _xml-attr(line, 'type') ?? ''}
+}
+
 fn _parse-introspect(xml: String, filter: String | nil) {
     let ifaces: _ = %{}
     let cur-iface = nil
-    let cur-elem = nil
-    let cur-kind = nil
+    let cur-method = nil
+    let cur-signal = nil
 
     for match xml.lines().map(&strip) {
         /<interface name="([^"]+)"/ => {
@@ -206,62 +210,34 @@ fn _parse-introspect(xml: String, filter: String | nil) {
         },
 
         /<method name="([^"]+)"/ => {
-            cur-elem = {
-                name: $1, in-args: [],
-                out-args: [], out-sig: ''
-            }
-            cur-kind = 'method'
+            cur-method = {name: $1, in-args: [], out-args: []}
         },
 
         /<signal name="([^"]+)"/ => {
-            cur-elem = {name: $1, args: []}
-            cur-kind = 'signal'
+            cur-signal = {name: $1, args: []}
         },
 
-        (/<arg / as line) and cur-elem != nil => {
-            let sig = _xml-attr(line, 'type') ?? ''
-            let name = _xml-attr(line, 'name')
-            let dir = _xml-attr(line, 'direction')
-            if cur-kind == 'method' {
-                let nm = name ?? "arg{
-                    (dir == 'out')
-                        ? #cur-elem.out-args
-                        : #cur-elem.in-args
-                }"
-                match dir {
-                    'in' => cur-elem.in-args.push({
-                        name: nm, sig
-                    }),
-                    _ => {
-                        cur-elem.out-args.push({
-                            name: nm, sig
-                        })
-                        cur-elem.out-sig += sig
-                    }
-                }
-            } else {
-                cur-elem.args.push({
-                    name: name
-                        ?? "arg{#cur-elem.args}",
-                    sig
-                })
-            }
+        (/<arg / as line) and let $m = cur-method => {
+            let args = (_xml-attr(line, 'direction') == 'in') ? m.in-args : m.out-args
+            args.push(_xml-arg(line, #args))
+        },
+
+        (/<arg / as line) and let $s = cur-signal => {
+            s.args.push(_xml-arg(line, #s.args))
         },
 
         /<\/method>/ => {
-            if cur-elem != nil
-            && cur-iface not in SKIP_IFACES {
-                ifaces[cur-iface].methods.push(cur-elem)
+            if let $m = cur-method and cur-iface not in SKIP_IFACES {
+                ifaces[cur-iface].methods.push({*m, out-sig: m.out-args.map(&.sig).join()})
             }
-            cur-elem = nil
+            cur-method = nil
         },
 
         /<\/signal>/ => {
-            if cur-elem != nil
-            && cur-iface not in SKIP_IFACES {
-                ifaces[cur-iface].signals.push(cur-elem)
+            if let $s = cur-signal and cur-iface not in SKIP_IFACES {
+                ifaces[cur-iface].signals.push(s)
             }
-            cur-elem = nil
+            cur-signal = nil
         },
 
         _ => {}
@@ -583,8 +559,8 @@ fn _field-val(fields, name: String) {
  *       print("new session: {msg.read-string()}")
  *   })
  */
-pub macro dbus(def, bus-kind = nil) {
-    let ty.Class($cls) = def
+pub macro dbus(def: AST, bus-kind = nil) {
+    let ty.Class($cls) = def or throw RuntimeError("@dbus: expected a class definition")
 
     let kind = (bus-kind != nil)
         ? ty.eval(bus-kind)
@@ -603,10 +579,6 @@ pub macro dbus(def, bus-kind = nil) {
 
     let xml    = introspect(dest, path, kind)
     let ifaces = _parse-introspect(xml, iface)
-
-    cls.fields = [
-        ty.Id(name: '__bus', constraint: $$[_$$])
-    ]
 
     let $kind-str = ty.String(kind)
     let ms = [
@@ -653,9 +625,11 @@ pub macro dbus(def, bus-kind = nil) {
         }
     }
 
-    cls.methods = ms
-
-    def
+    ty.Class({
+        *cls,
+        fields: [ty.Id(name: '__bus', constraint: $$[_$$])],
+        methods: ms
+    })
 }
 
 pub fn system()  { default-bus('system') }

@@ -172,7 +172,7 @@ pub fn test-insert-and-get() {
     assert(alice.id == 1)
     assert(alice.name == 'Alice')
 
-    let found = User.get(1)
+    let $found = User.get(1)!
     assert(found.name == 'Alice')
     assert(found.email == 'a@b.com')
     assert(found.age == 30)
@@ -189,7 +189,7 @@ pub fn test-default-values() {
     User.create-table()
 
     let u = User(name='Test').insert()
-    let found = User.get(u.id)
+    let $found = User.get(u.id)!
     assert(found.age == 0)
     assert(found.email == nil)
 }
@@ -229,7 +229,7 @@ pub fn test-save() {
     u.name = 'Alice Smith'
     u.save()
 
-    let found = User.get(u.id)
+    let $found = User.get(u.id)!
     assert(found.age == 31)
     assert(found.name == 'Alice Smith')
 }
@@ -273,8 +273,8 @@ pub fn test-explicit-table-name() {
     fresh()
     let person = Person(name='Alice').insert()
     let pet = Pet(name='Miso', owner=person.id).insert()
-    assert(Person.get(person.id).name == 'Alice')
-    assert(Pet.get(pet.id).name == 'Miso')
+    assert(Person.get(person.id)!.name == 'Alice')
+    assert(Pet.get(pet.id)!.name == 'Miso')
     assert(pet.person().name == 'Alice')
 }
 
@@ -299,7 +299,7 @@ pub fn test-connect-loads-schema-before-sync() {
             INSERT INTO user (name) VALUES ('from schema');
         """
     )
-    assert(User.get(1).name == 'from schema')
+    assert(User.get(1)!.name == 'from schema')
     let row: Dict[String, Int] | nil = db.fetch-one('PRAGMA user_version')
     if row == nil {
         throw AssertionError('PRAGMA user_version returned no row')
@@ -337,11 +337,11 @@ pub fn test-composite-primary-key() {
     assert(found.value == 'first')
     found.value = 'updated'
     found.save()
-    assert(Enrollment.get([7, 11]).value == 'updated')
+    assert(Enrollment.get([7, 11])!.value == 'updated')
 
     Enrollment(student_id=7, course_id=11, value='upserted').upsert()
     assert(Enrollment.count() == 1)
-    assert(Enrollment.get([7, 11]).value == 'upserted')
+    assert(Enrollment.get([7, 11])!.value == 'upserted')
 
     found.delete!()
     assert(Enrollment.get([7, 11]) == nil)
@@ -356,7 +356,7 @@ pub fn test-file-persistence() {
             User(name='Saved').insert()
         }
         connect(p)
-        assert(User.get(1).name == 'Saved')
+        assert(User.get(1)!.name == 'Saved')
     }
 }
 
@@ -375,7 +375,7 @@ pub fn test-null-fields() {
     fresh()
     User.create-table()
     User(name='No-email').insert()
-    let found = User.get(1)
+    let $found = User.get(1)!
     assert(found.name == 'No-email')
     assert(found.email == nil)
 }
@@ -402,7 +402,7 @@ pub fn test-explicit-db() {
     let db = SQLite(':memory:')
     User.create-table(db)
     User(name='Explicit').insert(db)
-    let found = User.get(1, db)
+    let $found = User.get(1, db)!
     assert(found.name == 'Explicit')
     assert(#User.all(db) == 1)
 }
@@ -419,7 +419,7 @@ pub fn test-implicit-db-isolation() {
 
     User(name='Second').insert()
     assert(User.count() == 1)
-    assert(User.get(1).name == 'Second')
+    assert(User.get(1)!.name == 'Second')
 }
 
 pub fn test-scoped-db() {
@@ -430,10 +430,10 @@ pub fn test-scoped-db() {
     with patch(sql::_db, SQLite(':memory:')) {
         User.create-table()
         User(name='Inner').insert()
-        assert(User.get(1).name == 'Inner')
+        assert(User.get(1)!.name == 'Inner')
     }
 
-    assert(User.get(1).name == 'Outer')
+    assert(User.get(1)!.name == 'Outer')
 }
 
 pub fn test-find-by() {
@@ -630,7 +630,7 @@ pub fn test-query-first() {
     User(name='Alice', age=30).insert()
     User(name='Bob', age=25).insert()
 
-    let youngest = User.query().order('age').first()
+    let $youngest = User.query().order('age').first()!
     assert(youngest.name == 'Bob')
 
     let nobody = User.where('age > ?', 99).first()
@@ -685,9 +685,9 @@ pub fn test-has-many-returns-query() {
         .pluck('title')
     assert(sorted == ['A', 'B', 'C'])
 
-    let first = Post.of-user(u.id)
+    let $first = Post.of-user(u.id)
         .order('title')
-        .first()
+        .first()!
     assert(first.title == 'A')
 }
 
@@ -813,7 +813,7 @@ pub fn test-before-save-callback() {
     a.title = 'New Title'
     a.save()
 
-    let found = Article.get(a.id)
+    let $found = Article.get(a.id)!
     assert(found.slug == 'new-title')
 }
 
@@ -837,7 +837,7 @@ pub fn test-timestamps-on-save() {
     a.title = 'Changed'
     a.save()
 
-    let found = Article.get(a.id)
+    let $found = Article.get(a.id)!
     assert(found.updated-at != nil)
 }
 
@@ -851,9 +851,9 @@ pub fn test-update-all() {
     User.where('age < ?', 30)
         .update-all!('age = ?', 0)
 
-    assert(User.get(2).age == 0)
-    assert(User.get(1).age == 30)
-    assert(User.get(3).age == 35)
+    assert(User.get(2)!.age == 0)
+    assert(User.get(1)!.age == 30)
+    assert(User.get(3)!.age == 35)
 }
 
 pub fn test-scopes() {
@@ -1026,7 +1026,7 @@ pub fn test-date-auto-timestamps() {
     let entry = LogEntry(message='hello').insert()
     assert(entry.created-at :: PlainDateTime)
     assert(entry.updated-at :: PlainDateTime)
-    assert(entry.created-at.year == 2026)
+    assert((entry.created-at)!.year == 2026)
 }
 
 pub fn test-date-updated-at-on-save() {
@@ -1066,7 +1066,7 @@ pub fn test-auto-add-column-on-connect() {
 
         connect(p)
 
-        let alice = User.get(1)
+        let $alice = User.get(1)!
         assert(alice.name == 'Alice')
         assert(alice.age == 0)
     }
@@ -1120,11 +1120,11 @@ pub fn test-migrate-adds-column-preserves-data() {
         connect(p)
         migrate!()
 
-        let bob = User.get(1)
+        let $bob = User.get(1)!
         assert(bob.name == 'Bob')
 
         User(name='Carol', age=25).insert()
-        let carol = User.get(2)
+        let $carol = User.get(2)!
         assert(carol.age == 25)
     }
 }
@@ -1285,7 +1285,7 @@ pub fn test-upsert-update() {
 
     let p = Product(sku='X1', name='New', price=20).upsert()
     assert(Product.count() == 1)
-    let found = Product.get(p.id)
+    let $found = Product.get(p.id)!
     assert(found.name == 'New')
     assert(found.price == 20)
 }

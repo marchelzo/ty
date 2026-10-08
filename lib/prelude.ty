@@ -3749,12 +3749,9 @@ fn len(xs) {
     #xs
 }
 
-fn zip(*xs) {
-    match xs {
-        [x, *xs] => x.zip(*xs),
-        []       => []
-    }
-}
+fn zip[T]() -> Array[T] { [] }
+fn zip[T, ...U](xs: Array[T], *ys: ...Iterable[U]) -> Array[(T, U)] { xs.zip(*ys) }
+fn zip[T, ...U](xs: Iterable[T], *ys: ...Iterable[U]) -> Iterable[(T, U)] { xs.zip(*ys) }
 
 fn onExit(f) {
     __EXIT_HOOKS__.push(f)
