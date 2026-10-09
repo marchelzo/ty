@@ -1,0 +1,59 @@
+import support.client (Workspace, Server)
+import support.sample (SAMPLE)
+
+const STEP = int(getenv('LSP_TYPING_STEP') ?? '23')
+
+let ws = Workspace()
+let server = Server(ws)
+let target = ws.write('typing.ty', '')
+
+server.open(target, '')
+
+onExit(fn () {
+    server.close()
+    ws.remove()
+})
+
+fn cursor(src: String) -> (Int, Int) {
+    let lines = src.split('\n')
+    (#lines - 1, #lines[-1])
+}
+
+ns test
+
+pub fn type-sample-forwards() {
+    for n in [n for n in 1..#SAMPLE if n % STEP == 0] + [#SAMPLE] {
+        let src = SAMPLE[;n]
+        let (line, col) = cursor(src)
+        server.change(target, src)
+        server.completion(target, line, col)
+        server.hover(target, line, max(col - 1, 0))
+        server.tokens(target)
+        server.assert-healthy("typing offset {n}")
+    }
+}
+
+pub fn delete-sample-backwards() {
+    for n in [n for n in ..#SAMPLE if n % STEP == 0][;;-1] {
+        let src = SAMPLE[;n] + SAMPLE[n + STEP;]
+        let (line, col) = cursor(SAMPLE[;n])
+        server.change(target, src)
+        server.hover(target, line, col)
+        server.definition(target, line, col)
+        server.assert-healthy("deleting at offset {n}")
+    }
+}
+
+pub fn finished-sample-answers() {
+    server.change(target, SAMPLE)
+
+    let $ctor = server.hover(target, 54, 13) or throw 'no hover for Counter(...)'
+    assert(ctor.match?(/Counter\(items: Array\[\w+\]\) -> Counter/), ctor)
+    assert(ctor.match?(/Counter\(\) -> Counter/), ctor)
+
+    let labels = server.completion(target, 55, 6)
+    assert('push' in labels, labels)
+
+    assert(#server.tokens(target) > 0)
+    server.assert-healthy('finished sample')
+}

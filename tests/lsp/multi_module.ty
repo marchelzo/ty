@@ -1,0 +1,205 @@
+import support.client (Workspace, Server, uri)
+
+const SHAPES = '''
+pub tag Circle, Square;
+
+pub class Shape {
+    name: String
+
+    init(name: String) {
+        self.name = name
+    }
+
+    init() {
+        self.name = 'anon'
+    }
+
+    area() -> Float {
+        0.0
+    }
+}
+
+pub fn describe(s: Shape) -> String {
+    "{s.name}: {s.area()}"
+}
+'''
+
+const SHAPES_V2 = '''
+pub tag Circle, Square, Triangle;
+
+pub class Shape {
+    name: String
+    sides: Int
+
+    init(name: String, sides: Int) {
+        self.name = name
+        self.sides = sides
+    }
+
+    area() -> Float {
+        0.0
+    }
+
+    perimeter() -> Float {
+        1.0
+    }
+}
+
+pub fn describe(s: Shape) -> String {
+    "{s.name}/{s.sides}: {s.area()}"
+}
+'''
+
+const SHAPES_BROKEN = '''
+pub tag Circle, Square;
+
+pub class Shape {
+    name: String
+    init(name: String) {
+        self.name = (name +
+    }
+}
+'''
+
+const GEOM = '''
+import shapes (Shape, describe, Circle)
+
+pub fn unit() -> Shape {
+    Shape('unit')
+}
+
+pub fn label(s: Shape) -> String {
+    describe(s)
+}
+'''
+
+const MAIN = '''
+import geom
+import shapes (Shape, describe)
+
+let s = Shape('main')
+let u = geom.unit()
+let d = describe(s)
+let l = geom.label(u)
+s.
+'''
+
+let ws = Workspace()
+let shapes = ws.write('shapes.ty', SHAPES)
+let geom   = ws.write('geom.ty', GEOM)
+let main   = ws.write('main.ty', MAIN)
+let server = Server(ws)
+
+onExit(fn () {
+    server.close()
+    ws.remove()
+})
+
+ns test
+
+pub fn open-all() {
+    server.open(shapes)
+    server.open(geom)
+    server.open(main)
+    server.assert-healthy('opening modules')
+}
+
+pub fn hover-imported-constructor() {
+    let $text = server.hover(main, 3, 9) or throw 'no hover for Shape(...)'
+    assert(text.match?(/Shape\(name: String\) -> Shape/), text)
+    assert(text.match?(/Shape\(\) -> Shape/), text)
+    server.assert-healthy('hover')
+}
+
+pub fn definition-into-other-module() {
+    let $def = server.definition(main, 5, 9) or throw 'no definition for describe'
+    assert(def['uri'].match?(/shapes\.ty$/), def)
+    server.assert-healthy('definition')
+}
+
+pub fn completion-on-imported-class() {
+    let labels = server.completion(main, 7, 2)
+    assert('area' in labels, labels)
+    assert('name' in labels, labels)
+    server.assert-healthy('completion')
+}
+
+pub fn edit-dependency-on-disk() {
+    server.save(shapes, SHAPES_V2)
+    server.save(main, MAIN.replace("Shape('main')", "Shape('main', 4)"))
+
+    let labels = server.completion(main, 7, 2)
+    assert('perimeter' in labels, labels)
+    assert('sides' in labels, labels)
+
+    let $text = server.hover(main, 3, 9) or throw 'no hover after edit'
+    assert(text.match?(/sides: Int/), text)
+    server.assert-healthy('editing a dependency')
+}
+
+pub fn broken-dependency() {
+    server.save(shapes, SHAPES_BROKEN)
+    server.hover(main, 3, 4)
+    server.completion(main, 7, 2)
+    server.tokens(main)
+    server.hover(geom, 3, 4)
+    server.assert-healthy('broken dependency')
+
+    server.save(shapes, SHAPES)
+    server.save(main, MAIN)
+    let $text = server.hover(main, 3, 9) or throw 'no hover after fixing dependency'
+    assert(text.match?(/Shape\(\) -> Shape/), text)
+    server.assert-healthy('fixed dependency')
+}
+
+pub fn alternate-files() {
+    for i in ..20 {
+        server.hover(main, 3, 4)
+        server.hover(geom, 3, 8)
+        server.tokens(shapes)
+        server.completion(main, 7, 2)
+        server.definition(geom, 8, 4)
+        server.hover(shapes, 20, 8)
+    }
+    server.assert-healthy('alternating between files')
+}
+
+pub fn unsaved-edits-in-dependency() {
+    server.change(shapes, SHAPES_V2)
+    server.hover(shapes, 3, 10)
+    server.hover(main, 3, 4)
+    server.change(shapes, SHAPES_BROKEN)
+    server.hover(shapes, 3, 10)
+    server.completion(main, 7, 2)
+    server.change(shapes, SHAPES)
+    server.hover(shapes, 3, 10)
+    server.assert-healthy('unsaved edits in a dependency')
+}
+
+pub fn recompile-with-sibling-import() {
+    server.save(shapes, SHAPES)
+    let base = MAIN.lines().filter(\_ != 's.').join('\n')
+    for i in ..4 {
+        let src = "{base}\nlet n{i} = {i}\n"
+        server.change(main, src)
+        let $text = server.hover(main, 5, 4) or throw "no hover on edit {i}"
+        assert(text.match?(/d: String/), text)
+        let messages = server.latest-diagnostics(main).map(\_['message'])
+        assert(!messages.any?(\_.match?(/failed to load module/)), messages)
+    }
+    server.assert-healthy('recompiling with a sibling import')
+}
+
+pub fn dependency-changed-on-disk() {
+    server.change(main, MAIN)
+    let $before = server.hover(main, 5, 4) or throw 'no hover before external change'
+    assert(before.match?(/d: String/), before)
+
+    shapes.write(SHAPES.replace('pub fn describe(s: Shape) -> String', 'pub fn describe(s: Shape) -> Int'))
+
+    let $after = server.hover(main, 5, 4) or throw 'no hover after external change'
+    assert(after.match?(/d: Int/), after)
+
+    shapes.write(SHAPES)
+    server.assert-healthy('dependency changed on disk')
+}

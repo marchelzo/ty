@@ -1,0 +1,92 @@
+import support.client (Workspace, Server)
+import support.sample (SAMPLE)
+import path (Path)
+
+const ROUNDS = int(getenv('LSP_MUTATION_ROUNDS') ?? '40')
+const SEEDS  = (getenv('LSP_MUTATION_SEEDS') ?? '1,2,3').split(',').map(int)
+const CRASHES = Path(getenv('LSP_CRASH_DIR') ?? '/tmp/tyd-lsp-crashes')
+
+const JUNK = [
+    '(', ')', '{', '}', '[', ']', ',', '.', ':', '=>', '->', '|', '\\', '$', '%{', '"{', "'",
+    'fn ', 'class ', 'tag ', 'match ', 'if ', 'let ', 'import ', 'pub ', 'use ', 'macro ',
+    'ns ', 'return ', 'yield ', 'for ', 'while ', 'try ', 'catch ', 'init(', 'self.',
+    '\n', '\n    ', '[;', '?', '#', '@', '...', '::', 'and ', 'or ', 'not ', 'do {'
+]
+
+let ws = Workspace()
+let server = Server(ws)
+let target = ws.write('mutation.ty', '')
+
+server.open(target, '')
+
+onExit(fn () {
+    server.close()
+    ws.remove()
+})
+
+fn mutate(src: String) -> String {
+    if #src == 0 {
+        return rand(JUNK)
+    }
+
+    let i = rand(#src)
+    let lines = src.split('\n')
+
+    match rand(6) {
+        0 => "{src[;i]}{rand(JUNK)}{src[i;]}",
+        1 => "{src[;i]}{src[min(i + rand(1, 40), #src);]}",
+        2 => do {
+            lines.insert(rand(#lines), rand(lines))
+            lines.join('\n')
+        },
+        3 => do {
+            lines.pop(rand(#lines))
+            lines.join('\n')
+        },
+        4 => "{src[;i]}{rand(JUNK)}{rand(JUNK)}{src[i;]}",
+        _ => src[;i]
+    }
+}
+
+fn position(src: String) -> (Int, Int) {
+    let lines = src.split('\n')
+    let line = rand(#lines)
+    (line, rand(#lines[line] + 1))
+}
+
+fn query(src: String) {
+    let (line, col) = position(src)
+    match rand(3) {
+        0 => server.hover(target, line, col),
+        1 => server.definition(target, line, col),
+        _ => server.completion(target, line, col)
+    }
+}
+
+fn fuzz(seed: Int) {
+    srand(seed)
+    let src = SAMPLE
+    server.checkpoint()
+    for round in ..ROUNDS {
+        src = (rand(8) == 0) ? SAMPLE : mutate(src)
+        server.change(target, src)
+        for ..3 {
+            query(src)
+        }
+        server.tokens(target)
+        if !server.healthy?() {
+            CRASHES.mkdir(parents=true, exist-ok=true)
+            let saved = CRASHES / "mutation-seed-{seed}-round-{round}.ty"
+            saved.write(src)
+            server.assert-healthy("mutation seed {seed}, round {round} (input saved to {saved})")
+        }
+    }
+}
+
+ns test
+
+pub fn mutate-sample() {
+    for SEEDS {
+        fuzz(it)
+    }
+}

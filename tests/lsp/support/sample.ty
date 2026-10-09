@@ -1,0 +1,67 @@
+pub const SAMPLE = '''
+import ini (INIFile)
+import path (Path)
+
+pub tag Leaf, Node;
+
+use Pair = (Int, String)
+
+macro twice!(e) {
+    $$[ ($$e) + ($$e) $$]
+}
+
+pub class Counter[T] {
+    items: Array[T]
+    count: Int
+
+    init(items: Array[T]) {
+        self.items = items
+        self.count = #items
+    }
+
+    init() {
+        self.items = []
+        self.count = 0
+    }
+
+    push(x: T) {
+        items.push(x)
+        count += 1
+    }
+
+    each*() {
+        for items {
+            yield it
+        }
+    }
+}
+
+fn describe(x: Int | String | nil) -> String {
+    match x {
+        0          => 'zero',
+        n: Int     => "int {n}",
+        s: String  => "str {s}",
+        nil        => 'nothing'
+    }
+}
+
+fn walk(t: Leaf[Int] | Node[(Int, Int)]) -> Int {
+    match t {
+        Leaf(n)      => n,
+        Node((a, b)) => a + b
+    }
+}
+
+pub fn main() {
+    let c = Counter([1, 2, 3])
+    c.push(4)
+    let total = twice!(c.count)
+    let pairs: Array[Pair] = [(i, "{i}") for i in ..total]
+    let words = pairs.map(\_[1]).join(', ')
+    let f = INIFile()
+    for x in c.each*() {
+        print(describe(x), walk(Leaf(x)))
+    }
+    print(words, Path('/tmp').name, f)
+}
+'''

@@ -1,0 +1,249 @@
+import io
+import json
+import os (..)
+import path (Path)
+import ty
+
+pub const ROOT = Path(__file__).parent.parent.parent.parent
+
+pub const TIMEOUT = float(getenv('LSP_TEST_TIMEOUT') ?? '30')
+
+tag Closed, BadHeader;
+
+pub fn uri(p: Path) -> String {
+    "file://{p}"
+}
+
+pub class Workspace {
+    dir: Path
+
+    init() {
+        self.dir = Path('/tmp') / "tyd-test-{getpid()}"
+        self.dir.mkdir(parents=true, exist-ok=true)
+    }
+
+    write(name: String, src: String) -> Path {
+        let p = dir / name
+        p.write(src)
+        p
+    }
+
+    remove() {
+        dir.rmtree(quiet=true)
+    }
+}
+
+pub class Server {
+    ws: Workspace
+    state: Path
+    notifications: Array[_]
+
+    __restarts-seen: Int
+    __errors-seen: Int
+
+    __proc: _
+    __in: _
+    __inbox: SharedQueue[_]
+    __next-id: Int
+    __versions: Dict[String, Int]
+
+    init(ws: Workspace) {
+        self.ws = ws
+        self.state = ws.dir / '.tyd'
+        self.state.mkdir(parents=true, exist-ok=true)
+        self.notifications = []
+        self.__restarts-seen = 0
+        self.__errors-seen = 0
+        self.__next-id = 0
+        self.__versions = %{}
+        self.__inbox = SharedQueue()
+
+        let ls = getenv('TY_LS_CMD') ?? str(Path(ty.executable).parent / 'tyls')
+
+        setenv('TY_LS_CMD', ls)
+        setenv('TYD_STATE_DIR', str(state))
+        setenv('TYLS_TIMEOUT', getenv('TYLS_TIMEOUT') ?? '10')
+        setenv('TY_TYPES2_CACHE_DIR', str(state / 'cache'))
+
+        __proc = os.spawn(
+            [ty.executable, str(ROOT / 'tyd.ty')],
+            stdin=SPAWN_PIPE,
+            stdout=SPAWN_PIPE,
+            stderr=SPAWN_NULL,
+            chdir=str(ws.dir)
+        )
+
+        __in = io.open(__proc.stdin, 'w')
+
+        let out = io.open(__proc.stdout, 'r')
+        let inbox = __inbox
+
+        Thread(fn () {
+            while let $line = out.next-line() {
+                if not let [_, $n] = line.match(/Content-Length:\s*(\d+)/) {
+                    inbox.put(BadHeader(line))
+                    return
+                }
+                out.next-line()
+                inbox.put(json.parse(out.next(int(n)).str()))
+            }
+            inbox.put(Closed)
+        }).detach()
+
+        let rsp = request('initialize', {processId: nil, rootUri: uri(ws.dir), capabilities: {}})
+        if rsp['result'] == nil {
+            throw "initialize failed: {rsp}"
+        }
+        notify('initialized')
+    }
+
+    send(msg: _) {
+        let encoded = json.encode(msg)
+        __in.write("Content-Length: {#encoded}\r\n\r\n{encoded}")
+        __in.flush()
+    }
+
+    recv() -> _ {
+        match __inbox.try-take(TIMEOUT) {
+            Some(Closed)       => throw 'tyd closed the connection',
+            Some(BadHeader(h)) => throw "bad header from tyd: {h}",
+            Some(msg)          => msg,
+            None               => throw "tyd hung: no message after {TIMEOUT}s"
+        }
+    }
+
+    request(method: String, params: _ = {}) -> _ {
+        let id = ++__next-id
+        send({jsonrpc: '2.0', id, method, params})
+
+        while true {
+            let msg = recv()
+            if msg['id'] == id {
+                return msg
+            }
+            notifications.push(msg)
+        }
+    }
+
+    notify(method: String, params: _ = {}) {
+        send({jsonrpc: '2.0', method, params})
+    }
+
+    diagnostics-for(p: Path) -> _ {
+        while true {
+            let msg = recv()
+            if msg['method'] == 'textDocument/publishDiagnostics'
+            && msg['params']['uri'] == uri(p) {
+                return msg['params']['diagnostics']
+            }
+            notifications.push(msg)
+        }
+    }
+
+    latest-diagnostics(p: Path) -> Array[_] {
+        for msg in notifications[;;-1] {
+            if msg['method'] == 'textDocument/publishDiagnostics'
+            && msg['params']['uri'] == uri(p) {
+                return msg['params']['diagnostics']
+            }
+        }
+        []
+    }
+
+    open(p: Path, src: String = p.read-text()) -> _ {
+        __versions[str(p)] = 1
+        notify('textDocument/didOpen', {
+            textDocument: {uri: uri(p), languageId: 'ty', version: 1, text: src}
+        })
+        diagnostics-for(p)
+    }
+
+    change(p: Path, src: String) {
+        let version = (__versions[str(p)] ?? 0) + 1
+        __versions[str(p)] = version
+        notify('textDocument/didChange', {
+            textDocument: {uri: uri(p), version},
+            contentChanges: [{text: src}]
+        })
+    }
+
+    save(p: Path, src: String) -> _ {
+        p.write(src)
+        change(p, src)
+        notify('textDocument/didSave', {textDocument: {uri: uri(p)}})
+        diagnostics-for(p)
+    }
+
+    at(method: String, p: Path, line: Int, col: Int) -> _ {
+        request(method, {
+            textDocument: {uri: uri(p)},
+            position: {line, character: col}
+        })['result']
+    }
+
+    hover(p: Path, line: Int, col: Int) -> String | nil {
+        let $r = at('textDocument/hover', p, line, col) or return nil
+        r['contents']['value']
+    }
+
+    definition(p: Path, line: Int, col: Int) -> _ {
+        at('textDocument/definition', p, line, col)
+    }
+
+    completion(p: Path, line: Int, col: Int) -> Array[String] {
+        let $r = at('textDocument/completion', p, line, col) or return []
+        r['items'].map(\_['label'])
+    }
+
+    tokens(p: Path) -> Array[Int] {
+        let rsp = request('textDocument/semanticTokens/full', {
+            textDocument: {uri: uri(p)}
+        })
+        rsp['result']['data'] ?? []
+    }
+
+    tyls-errors() -> String {
+        let err = state / 'tyls.err'
+        if !err.file? {
+            return ''
+        }
+        err.read-text()
+    }
+
+    restarts() -> Int {
+        let log = state / 'tyd.log'
+        if !log.file? {
+            return 0
+        }
+        log.read-text().count(/restarting tyls/)
+    }
+
+    checkpoint() {
+        __restarts-seen = restarts()
+        __errors-seen = #tyls-errors()
+    }
+
+    new-errors() -> String {
+        tyls-errors()[__errors-seen;]
+    }
+
+    healthy?() -> Bool {
+        restarts() == __restarts-seen
+            && !new-errors().match?(/AddressSanitizer|panic|SIG[A-Z]+/)
+    }
+
+    assert-healthy(what: String) {
+        if healthy?() {
+            return
+        }
+        let n = restarts() - __restarts-seen
+        let msg = "tyls unhealthy after {what} ({n} restarts):\n{new-errors()[;4000]}"
+        checkpoint()
+        throw msg
+    }
+
+    close() {
+        kill(__proc.pid, SIGTERM)
+        wait(__proc.pid)
+    }
+}

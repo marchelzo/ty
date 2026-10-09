@@ -1,0 +1,146 @@
+import support.client (Workspace, Server)
+import path (Path)
+
+let ws = Workspace()
+let server = Server(ws)
+let target = ws.write('regression.ty', '')
+
+server.open(target, '')
+
+onExit(fn () {
+    server.close()
+    ws.remove()
+})
+
+fn cursor(src: String) -> (Int, Int) {
+    let lines = src.split('\n')
+    (#lines - 1, #lines[-1])
+}
+
+fn exercise(name: String, sources: Array[String]) {
+    server.checkpoint()
+    for src in sources {
+        let (line, col) = cursor(src)
+        server.change(target, src)
+        server.hover(target, line, max(col - 1, 0))
+        server.completion(target, line, col)
+        server.tokens(target)
+        server.assert-healthy(name)
+    }
+}
+
+ns test
+
+pub fn class-body-at-eof() {
+    exercise('class-body-at-eof', ['class X {\n '])
+}
+
+pub fn unterminated-params() {
+    exercise('unterminated-params', ['fn parse(s: ', 'pub fn parse(s: String, '])
+}
+
+pub fn match-statement-missing-arm() {
+    exercise('match-statement-missing-arm', [
+        'fn f(x) {\n    match x {\n        1 => 2,\n        re',
+        'match 1 {\n    1 => 2,\n    x => '
+    ])
+}
+
+pub fn match-expression-missing-arm() {
+    exercise('match-expression-missing-arm', [
+        'let h = match 1 {\n    1 => 2,\n    _ =>'
+    ])
+}
+
+pub fn function-prototype-recovery() {
+    exercise('function-prototype-recovery', ['fn {', 'fn $ ', 'let f = fn {', '->', 'let f = ->'])
+}
+
+pub fn empty-macro-expansion() {
+    exercise('empty-macro-expansion', [
+        'macro m!{ }\nm! x',
+        'macro doc!{}doc!',
+        "import ty.parse as parse\n"
+        'macro doc!{let(parse.show~>e,)=parse.stmt(0,:raw let(parse.show~>o,)=parse.stmt(9,:   }\n'
+        "doc! Array.sort\n(by:"
+    ])
+}
+
+pub fn recovered-group-not-shared() {
+    exercise('recovered-group-not-shared', [
+        'fn f(t) {\n    return (\n      ',
+        'fn f(t) {\n    return (\n        t + ',
+        'let x = (',
+        'let x = (1 +'
+    ])
+}
+
+pub fn classes-and-tags-across-edits() {
+    let a = 'tag A, B;\nclass C {\n    x: Int\n    m() -> Int { x }\n}\nlet c = C(1)\nc.m()\n'
+    let b = 'tag Q;\nclass D {\n    yy: String\n    n() -> String { yy }\n}\nlet d = D("a")\nd.n()\n'
+    exercise('classes-and-tags-across-edits', [a, b, a, b])
+}
+
+pub fn classes-and-tags-with-imports() {
+    exercise('classes-and-tags-with-imports', [
+        'import ini (INIFile)\ntag A, B;\nclass C {\n    x: Int\n}\nlet c = C(1)\n',
+        'import ini (INIFile)\ntag Z;\nclass E {\n    zz: Int\n}\nlet e = E(2)\n',
+        "import ini (INIFile)\nlet f = INIFile()\nf."
+    ])
+}
+
+pub fn many-tag-edits() {
+    let sources = [
+        "tag T{i}A, T{i}B, T{i}C;\nlet x = T{i}A(T{i}B(T{i}C(1)))\n"
+        for i in ..60
+    ]
+    exercise('many-tag-edits', sources)
+}
+
+pub fn stray-bracket-after-function() {
+    exercise('stray-bracket-after-function', [
+        'fn ke()]\nif 1 { }',
+        'fn ke(s)->r]\nif s { }',
+        'fn ke(s)->rmplak]\n     }   if s   g[]'
+    ])
+}
+
+pub fn macro-with-nil-operand() {
+    exercise('macro-with-nil-operand', [
+        'import ty\nmacro m!() { ty.Add(ty.Int(1), nil) }\nlet x = m!()',
+        'macro twice!(e$$[($$+($$e$$]fn e(x:Int|String|nil match x {s:String "{s}"let l=twice!('
+    ])
+}
+
+pub fn tag-inside-class-body() {
+    exercise('tag-inside-class-body', [
+        'pub class e{t(path:String{if path nil }) ->String tag r;}'
+    ])
+}
+
+pub fn ffi-struct-macros() {
+    exercise('ffi-struct-macros', [
+        'import ffi as c(C!if not let$lz4=c.open(\'\' {}const LZ4_u32=c.u32\nC!struct Z{LZ4_u32 e;}C!struct Zl{size_t e;}C!lz4 fn{int Ze()int Zt()}C!struct Zt{}'
+    ])
+}
+
+pub fn arrow-before-closing-bracket() {
+    exercise('arrow-before-closing-bracket', ['->]', 'let a = 1\nlet f = ->]', 'fn f() {\n    ->]\n}'])
+}
+
+pub fn keyword-and-in-expression() {
+    exercise('keyword-and-in-expression', [
+        'let x = 1\nlet y = x and 2\n',
+        'use INIDict=Dict[String,Dict[String,String]]pub class e{t(path:String{if path nil {}}) ->INIDict {}t(r{}d(path {if let$e=slurp(path {}}r:String){for line in str.() match line {/(])(.)/=>{o({e:\'\'s:[})and s[]}}}}'
+    ])
+}
+
+pub fn class-field-defaults-across-edits() {
+    let a = 'class C {\n    x: Int = 1\n    y: Int\n}\nlet c = C(y: 2)\n'
+    let b = 'class C {\n    x: Int = 1\n    y: Int\n}\nlet c = C(y: 3)\n'
+    exercise('class-field-defaults-across-edits', [a, b, a])
+}
+
+pub fn empty-lambda-params-without-arrow() {
+    exercise('empty-lambda-params-without-arrow', ['| |', '|\n|', 'let f = | |\nprint(1)'])
+}
