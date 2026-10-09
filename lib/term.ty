@@ -5,6 +5,7 @@ import unibilium as unibi
 import errno
 import ffi as c (C!)
 import ty
+import base64
 
 #|if getenv('TY_LOG') != nil
     import log (..)
@@ -22,6 +23,8 @@ import ty
 #|]
 
 tag _TermStop;
+tag StatusAck;
+tag DeviceAttrs;
 
 pub ns mod {
     pub const SHIFT = (1 << 0)
@@ -361,6 +364,8 @@ ns ctlseq {
         pub m-ev-sgr   = /^\x1b\[<(\d+);(\d+);(\d+)([mM])/
         pub k-ev-based = /^\x1b\[([0-9:]*)(?:;([0-9:]*))?(?:;([0-9:]+))?([ABCDEFHPQSu~])/
         pub cpr        = /^\x1b\[(\d+);(\d+)R/
+        pub osc-status = /^\x1b\]7501;\?([^\x07\x1b]*)(?:\x07|\x1b\\)/
+        pub da1        = /^\x1b\[\?([0-9;]*)c/
     }
 
     ns handler {
@@ -417,6 +422,96 @@ ns ctlseq {
             let row = int($1)
             let col = int($2)
             yield event.Cursor(row, col)
+        }
+
+        pub fn osc-status(_) {
+            yield StatusAck
+        }
+
+        pub fn da1(_) {
+            yield DeviceAttrs
+        }
+    }
+}
+
+pub ns status {
+    pub const IDLE    = 'idle'
+    pub const WORKING = 'working'
+    pub const DONE    = 'done'
+    pub const BLOCKED = 'blocked'
+    pub const ERROR   = 'error'
+    pub const CLEAR   = 'clear'
+
+    pub const PERMISSION = 'permission'
+    pub const QUESTION   = 'question'
+    pub const AUTH       = 'auth'
+
+    pub const PREFIX = "\x1b]7501;"
+    pub const SUFFIX = "\x1b\\"
+    pub const QUERY  = "{PREFIX}?{SUFFIX}"
+
+    let STATE = /^(?:idle|working|done|blocked|error|clear)$/
+    let KIND  = /^(?:permission|question|auth)$/
+    let APP   = /^[A-Za-z0-9_.+-]{1,32}$/
+    let ID    = /^[A-Za-z0-9_.+-]{1,32}(?:\/[A-Za-z0-9_.+-]{1,32}){0,7}$/
+
+    fn bad(what: String) {
+        throw ValueError("OSC 7501: invalid {what}")
+    }
+
+    fn text(key: String, s: ?String, limit: Int) -> ?String {
+        let $s = s or return nil
+
+        if s.size() > limit || s.match?(/[\x00-\x1f\x7f]/) {
+            bad(key)
+        }
+
+        base64.encode(s)
+    }
+
+    pub fn body(
+        state: String,
+        id: ?String = nil,
+        app: ?String = nil,
+        kind: ?String = nil,
+        progress: ?Int = nil,
+        title: ?String = nil,
+        msg: ?String = nil
+    ) -> String {
+        let ok? = state.match?(STATE)
+               && (id == nil || (#id <= 128 && id.match?(ID)))
+               && (app == nil || app.match?(APP))
+               && (kind == nil || kind.match?(KIND))
+               && (progress == nil || progress in 0..101)
+
+        if !ok? {
+            bad("report: {(state, id, app, kind, progress)}")
+        }
+
+        let pct? = (state == WORKING || state == BLOCKED)
+
+        let pairs = [
+            ('state',    state),
+            ('id',       id),
+            ('app',      app),
+            ('kind',     (state == BLOCKED) ? kind : nil),
+            ('progress', pct? ? progress : nil),
+            ('title',    text('title', title, 192)),
+            ('msg',      text('msg', msg, 2048))
+        ]
+
+        ["{k}={v}" for (k, v) in pairs if v != nil].join(':')
+    }
+
+    pub use Options = Keywords[Omit[typeof body, 'state']]
+
+    pub fn seq(state: String, %opts: ...Options) -> String {
+        "{PREFIX}{body(state, **opts)}{SUFFIX}"
+    }
+
+    pub fn from-terminfo(pst: String) -> ?(String, String) {
+        if let [_, pre, post] = pst.match(/^([^%]*)%p1%s([^%]*)$/) {
+            return (pre, post)
         }
     }
 }
@@ -533,6 +628,16 @@ pub class TermIO {
         x: ?Int
     }
 
+    __probe: {
+        lock: Mutex,
+        cond: CondVar,
+        sent?: Bool,
+        ok?: ?Bool
+    }
+
+    __pst: ?(String, String) = nil
+    __status-roots: Dict[String, Bool] = %{}
+
     init(
         fd: Int = nil,
         mouse: Bool = true,
@@ -546,11 +651,13 @@ pub class TermIO {
         }
 
         try {
-            for (i, str) in unibi.Term().strs {
+            let ti = unibi.Term()
+            for (i, str) in ti.strs {
                 if unibi.name(i).match?(/^key_/) {
                     __ti-keys[str] = i
                 }
             }
+            __pst = ti.ext-str('Pst') ?> status.from-terminfo
         } catch _ {
             ;
         }
@@ -569,6 +676,13 @@ pub class TermIO {
             t: 0,
             y: nil,
             x: nil
+        }
+
+        __probe = {
+            lock: Mutex(),
+            cond: CondVar(),
+            sent?: false,
+            ok?: nil
         }
 
         __state = {
@@ -649,10 +763,21 @@ pub class TermIO {
         copy.iflag &= ~ICRNL
         tcsetattr(__fd, TCSAFLUSH, copy)
         write(__fd, __enter)
+        __probe-status()
         with __state.lock {
             __state.on = true
         }
         __state.cond.broadcast()
+    }
+
+    __probe-status() {
+        with __probe.lock {
+            if __probe.sent? {
+                return
+            }
+            __probe.sent? = true
+        }
+        write(__fd, "{status.QUERY}\x1b[c")
     }
 
     __stop() {
@@ -780,6 +905,8 @@ pub class TermIO {
                 (ctlseq.pattern.m-ev-sgr,   ctlseq.handler.m-ev-sgr),
                 (ctlseq.pattern.k-ev-based, ctlseq.handler.k-ev-based),
                 (ctlseq.pattern.cpr,        ctlseq.handler.cpr),
+                (ctlseq.pattern.osc-status, ctlseq.handler.osc-status),
+                (ctlseq.pattern.da1,        ctlseq.handler.da1),
             ]
 
             while i < #buf && buf[i] == 0x1b {
@@ -861,10 +988,55 @@ pub class TermIO {
         write(__fd, "\x1b[6n")
 
         for (;;) {
-            if let { $y, $x, (t: t != t_0), * } = __cursor {
+            if let {$y, $x, (t: t != t_0), *} = __cursor {
                 return (y, x)
             }
             __cursor.cond.wait(__cursor.lock)
+        }
+    }
+
+    status-supported?(timeout: Float = 0.5) -> Bool {
+        let ^lock = __probe.lock.lock()
+
+        while __probe.ok? == nil {
+            if !__probe.cond.wait(__probe.lock, timeout) {
+                return __pst != nil
+            }
+        }
+
+        __probe.ok? == true
+    }
+
+    report-status(state: String, %opts: ...status.Options) {
+        with __probe.lock {
+            return if __probe.ok? == false
+        }
+
+        let (pre, post) = __pst ?? (status.PREFIX, status.SUFFIX)
+
+        write(__fd, "{pre}{status.body(state, **opts)}{post}")
+
+        let root = (opts['id'] ?? '').split('/')[0]
+
+        match (state, root) {
+            ('clear', '')  => __status-roots.clear(),
+            ('clear', $r)  => __status-roots.remove(r),
+            (_, $r)        => __status-roots[r] = true
+        }
+    }
+
+    clear-status(id: ?String = nil) {
+        report-status(status.CLEAR, id=id)
+    }
+
+    __clear-reported() {
+        if __status-roots.contains?('') {
+            clear-status()
+            return
+        }
+
+        for root in __status-roots.keys() {
+            clear-status(id=root)
         }
     }
 
@@ -877,6 +1049,20 @@ pub class TermIO {
                     __cursor.t += 1
                 }
                 __cursor.cond.broadcast()
+            },
+
+            Some(StatusAck) => {
+                with __probe.lock {
+                    __probe.ok? = true
+                }
+                __probe.cond.broadcast()
+            },
+
+            Some(DeviceAttrs) => {
+                with __probe.lock {
+                    __probe.ok? = __probe.ok? ?? false
+                }
+                __probe.cond.broadcast()
             },
 
             Some(ev) => {
@@ -906,6 +1092,7 @@ pub class TermIO {
     }
 
     __drop__() {
+        __clear-reported()
         stop()
     }
 
@@ -920,6 +1107,7 @@ pub class TermIO {
         }
 
         if do-close? {
+            __clear-reported()
             critical!("Closing TermIO...")
             os::close(__notif-w)
             __reader.join()

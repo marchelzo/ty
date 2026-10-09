@@ -46,6 +46,58 @@ pub fn suspend() {
     _event-queue.put(Suspend)
 }
 
+let _status-claims: Dict[String, (Component, _)] = %{}
+let _status-sent: Dict[String, _] = %{}
+
+fn status-record(status: _) -> _ {
+    match status {
+        nil       => nil,
+        s: String => ({state: s}),
+        _         => status
+    }
+}
+
+pub fn claim-status(owner: Component, id: String, status: _) {
+    _status-claims[id] = (owner, {*status-record(status), id})
+}
+
+pub fn release-status(owner: Component) {
+    let mine = [id for id, (o, _) in _status-claims if o == owner]
+
+    for mine {
+        _status-claims.remove(it)
+    }
+}
+
+fn send-status(tio: term.TermIO, rec: _) {
+    let {state, *opts} = rec
+    tio.report-status(state, **opts)
+}
+
+fn sync-status(tio: term.TermIO, app: Component) {
+    let want: Dict[String, _] = %{
+        '': status-record(app.?status ?? term.status.IDLE)
+    }
+
+    for id, (_, rec) in _status-claims {
+        want[id] = rec
+    }
+
+    for id in _status-sent.keys() {
+        if !want.contains?(id) {
+            tio.clear-status(id)
+            _status-sent.remove(id)
+        }
+    }
+
+    for id, rec in want {
+        if _status-sent[id] != rec {
+            send-status(tio, rec)
+            _status-sent[id] = rec
+        }
+    }
+}
+
 pub tag CycleCompletions, ListCompletions, Insert, ReplaceLine;
 
 use StyledText = String | chalk::Text
@@ -599,6 +651,7 @@ pub class Component {
     unmount!() {
         debug!("unmount {type(self)}")
         alive? = false
+        release-status(self)
         let n = 0
         for t in _timers if t.owner == self {
             t.cancel()
@@ -721,13 +774,19 @@ pub class StatusBar < Component {
 }
 
 pub class ProgressBar < Component {
-    value: Float | nil
-    width: Int | nil
-    color: String | nil
-    bg:    String | nil
+    value:     Float | nil
+    width:     Int | nil
+    color:     String | nil
+    bg:        String | nil
+    status-id: String | nil
 
     render() -> Node {
         let value  = float(value ?? 0)
+
+        if let $id = status-id {
+            claim-status(self, id, __status(value))
+        }
+
         let total  = int(width ?? 20)
         let color  = color ?? 'primary'
         let bg     = bg ?? 'subtle'
@@ -742,6 +801,12 @@ pub class ProgressBar < Component {
             <Text style="text-dim">{pct}</Text>
         </Box>
     }
+
+    __status(value: Float) -> _ {
+        (value >= 1.0)
+            ? {state: term.status.DONE}
+            : {state: term.status.WORKING, progress: int(value.clamp(0.0, 1.0) * 100)}
+    }
 }
 
 ns spin {
@@ -752,10 +817,11 @@ ns spin {
 }
 
 pub class Spinner < Component {
-    speed: Float | nil
-    style: String | nil
-    color: String | nil
-    label: String | nil
+    speed:     Float | nil
+    style:     String | nil
+    color:     String | nil
+    label:     String | nil
+    status-id: String | nil
 
     __frame: Int = 0
 
@@ -763,6 +829,10 @@ pub class Spinner < Component {
     tick() { __frame += 1 }
 
     render() -> Node {
+        if let $id = status-id {
+            claim-status(self, id, {state: term.status.WORKING, msg: label})
+        }
+
         let c = color ?? 'info'
         let chars = match style {
             'dots'   => spin.dots,
@@ -4512,6 +4582,7 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
         }
         dirty = false
         last-paint = now()
+        sync-status(tio, app)
     }
 
     fn handle(ev) -> Bool {
@@ -4627,6 +4698,9 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
             app.every(iv, app.tick)
         }
     }
+
+    _status-claims.clear()
+    _status-sent.clear()
 
     tio.start()
     defer cleanup()

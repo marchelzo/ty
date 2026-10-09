@@ -675,6 +675,14 @@ pub class Term {
         }
     }
 
+    ext-str(name: String) -> ?String {
+        for i in ..count_ext_str(__term) {
+            if c.str(get_ext_str_name(__term, i)) == name {
+                return get_ext_str(__term, i) ?> c::str
+            }
+        }
+    }
+
     bools* -> Generator[(Int, Bool)] {
         for cap in _bools {
             yield (cap, get_bool(__term, cap) != 0)

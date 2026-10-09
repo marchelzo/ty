@@ -47,6 +47,7 @@ typedef struct t2_node_info {
 typedef struct t2_binding {
         Symbol const *symbol;
         Expr const   *declaration;
+        Expr const   *signature;
         T2Type        type;
         T2Type        refinement;
         T2Scheme     *scheme;
@@ -21225,8 +21226,49 @@ named_scheme_type(T2Checker *checker, T2Scheme *scheme)
 }
 
 static T2Type
+typeof_declared_signature(T2Checker *checker, Expr const *operand)
+{
+        if (
+                (operand->type != EXPRESSION_IDENTIFIER)
+             || (operand->symbol == NULL)
+             || (operand->symbol->scheme != NULL)
+        ) {
+                return T2_TYPE_INVALID;
+        }
+
+        T2Binding const *binding = find_binding(checker, operand->symbol);
+        if (
+                (binding == NULL)
+             || !binding->forward
+             || (binding->signature == NULL)
+        ) {
+                return T2_TYPE_INVALID;
+        }
+
+        T2Scheme *scheme = interface_function_scheme(
+                checker,
+                binding->signature,
+                NULL,
+                0
+        );
+        if (scheme == NULL) {
+                return T2_TYPE_INVALID;
+        }
+
+        T2Type type = named_scheme_type(checker, scheme);
+        t2_scheme_free(scheme);
+
+        return type;
+}
+
+static T2Type
 typeof_operand_type(T2Checker *checker, Expr const *operand)
 {
+        T2Type declared = typeof_declared_signature(checker, operand);
+        if (declared != T2_TYPE_INVALID) {
+                return declared;
+        }
+
         T2Binding *binding = (operand->type == EXPRESSION_IDENTIFIER)
                            ? find_binding(checker, operand->symbol)
                            : NULL;
@@ -28416,12 +28458,21 @@ register_declaration(T2Checker *checker, Stmt const *statement)
         }
         case STATEMENT_FUNCTION_DEFINITION:
         case STATEMENT_PATTERN_DEFINITION:
-                register_forward_binding(
-                        checker,
-                        (statement->target == NULL) ? NULL : statement->target->symbol,
-                        false
-                );
+        {
+                Symbol const *symbol = (statement->target == NULL)
+                                     ? NULL
+                                     : statement->target->symbol;
+                register_forward_binding(checker, symbol, false);
+                T2Binding *binding = find_binding(checker, symbol);
+                if (
+                        (binding != NULL)
+                     && binding->forward
+                     && fully_annotated(statement->value)
+                ) {
+                        binding->signature = statement->value;
+                }
                 break;
+        }
         case STATEMENT_OPERATOR_DEFINITION:
                 register_forward_binding(
                         checker,

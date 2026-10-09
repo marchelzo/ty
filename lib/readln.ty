@@ -388,7 +388,9 @@ pub class InteractiveLineReader {
         complete: _ = nil,
         erase: Bool = false,
         keybinds: Dict[String, _] = %{},
-        render: RenderFunction | nil = nil
+        render: RenderFunction | nil = nil,
+        status: String = term.status.IDLE,
+        status-kind: ?String = nil
     ) -> String | nil {
         if __tio == nil {
             init()
@@ -470,6 +472,9 @@ pub class InteractiveLineReader {
 
         __tio.start()
         defer __tio.stop()
+
+        __tio.report-status(status, kind=status-kind)
+        defer __tio.report-status(term.status.WORKING)
 
         let hi = 0
         let h-prefix = nil
@@ -940,7 +945,14 @@ pub class InteractiveLineReader {
     }
 
     progress(work, prefix, width, effects=id, cleanup=false) {
+        let pct = -1
+
         for p in work {
+            let n = int(p.clamp(0.0, 1.0) * 100)
+            if n != pct {
+                __tio.report-status(term.status.WORKING, progress=(pct = n))
+            }
+
             let w = width ?? (__tio.size().1 - 8).clamp(0, 70)
             write(__tio.fd, "\r{prefix ?? ''}{effects(progress-string(p, w))} {p * 100:.1f}%%")
         }
@@ -968,7 +980,7 @@ fn progress-string(progress: Float, width: Int) {
         part-char = ''
     }
 
-    return "[{'█'.repeat(whole-width)}{part-char}{' '.repeat(width - whole-width - 1)}]"
+    return "[{'█'.repeat(whole-width)}{part-char}{' '.repeat(max(0, width - whole-width - 1))}]"
 }
 
 pub fn progress(work, prefix, width, effects=id, cleanup=false) {
@@ -1003,6 +1015,8 @@ pub fn getpass(
         prompt=prompt,
         complete=(_, _) -> None,
         erase=erase,
-        render=render
+        render=render,
+        status=term.status.BLOCKED,
+        status-kind=term.status.AUTH
     )
 }

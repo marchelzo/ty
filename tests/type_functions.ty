@@ -227,3 +227,10 @@ pub fn sh-options-are-checked() {
     assert(status != 0)
     assert('unexpected keyword argument `tmeout`' in err, err)
 }
+
+pub fn method-signatures-do-not-poison-aliases() {
+    let (status, err) = fixture('method_options')
+    assert(status != 0)
+    assert('method_options.ty:18:' in err, err)
+    assert('unexpected keyword argument `nope`' in err, err)
+}
