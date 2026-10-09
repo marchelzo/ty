@@ -837,7 +837,6 @@ visit_children(Ty *ty, Expr *e, Scope *scope, VisitorCtx *ctxt, bool type)
         case EXPRESSION_XOR:
         case EXPRESSION_SHR:
         case EXPRESSION_SHL:
-        case EXPRESSION_KW_OR:
         case EXPRESSION_IN:
         case EXPRESSION_NOT_IN:
                 VX(e->left);

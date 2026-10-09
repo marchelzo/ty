@@ -357,8 +357,10 @@ int QueryCol;
 char const *QueryFile;
 Symbol const *QueryResult;
 Expr const *QueryExpr;
+Expr const *QueryCall;
 
 bool ProduceAnnotation = true;
+bool ForgiveDuplicateImports = false;
 usize GlobalCount = 0;
 
 static int builtin_modules;
@@ -399,7 +401,6 @@ static Location UnknownStart = { 0, 0, 0, 0, UnknownString + 1 };
 static Location UnknownEnd = { 0, 0, 0, 0, UnknownString + sizeof UnknownString - 1 };
 static Symbol UndefinedSymbol = { .flags = SYM_PUBLIC | SYM_GLOBAL, .i = -1 };
 static Stmt null;
-static Expr nil;
 
 
 typedef struct context_entry ContextEntry;
@@ -821,6 +822,9 @@ NeedsConstructor(Class const *class)
         return false;
 }
 
+static Expr *
+mknil(Ty *ty, Location start, Location end);
+
 static void
 AddFieldParams(Ty *ty, Expr *ctor, ExprVec const *fields)
 {
@@ -829,7 +833,7 @@ AddFieldParams(Ty *ty, Expr *ctor, ExprVec const *fields)
                 bool has_init = (v__(*fields, i)->type == EXPRESSION_EQ);
                 if (field != NULL && !IsPrivateMember(field->identifier)) {
                         avP(ctor->params, field->identifier);
-                        avP(ctor->dflts, has_init ? &nil : NULL);
+                        avP(ctor->dflts, has_init ? mknil(ty, field->start, field->end) : NULL);
                         avP(ctor->constraints, field->constraint);
                 }
         }
@@ -4452,7 +4456,6 @@ TryResolveExpr(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_DOT_DOT_DOT:
         case EXPRESSION_BIT_OR:
         case EXPRESSION_BIT_AND:
-        case EXPRESSION_KW_OR:
         case EXPRESSION_IN:
         case EXPRESSION_NOT_IN:
                 ok &= TryResolveExpr(ty, scope, e->left);
@@ -4852,7 +4855,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_SHR:
         case EXPRESSION_BIT_OR:
         case EXPRESSION_BIT_AND:
-        case EXPRESSION_KW_OR:
         case EXPRESSION_LT:
         case EXPRESSION_LEQ:
         case EXPRESSION_GT:
@@ -12513,6 +12515,19 @@ lowkey(Expr *e, Scope *scope, void *ctx)
         }
 
         if (
+                (e->type == EXPRESSION_FUNCTION_CALL)
+             && (QueryCall == NULL)
+             && (QueryResult != NULL)
+             && (e->function->type == EXPRESSION_IDENTIFIER)
+             && (e->function->symbol == QueryResult)
+             && (e->function->start.line == QueryLine)
+             && (e->function->start.col <= QueryCol)
+             && (e->function->end.col >= QueryCol)
+        ) {
+                QueryCall = e;
+        }
+
+        if (
                 (e->end.line > QueryLine)
              || (e->end.line == QueryLine && e->end.col > QueryCol)
         ) {
@@ -13053,7 +13068,13 @@ NewModule(
 }
 
 static Module *
-load_module(Ty *ty, char const *name, Scope *scope)
+load_module_source(
+        Ty *ty,
+        char const *name,
+        char const *path,
+        char *source,
+        Scope *scope
+)
 {
         CompileState save = STATE;
         Module *module    = NULL;
@@ -13062,15 +13083,6 @@ load_module(Ty *ty, char const *name, Scope *scope)
                 AbandonModule(ty, module);
                 STATE = save;
                 TY_RETHROW();
-        }
-
-        char const *path;
-        char *source = slurp_module(ty, name, &path);
-
-        Module *existing = GetModuleByPath(ty, path);
-        if (existing != NULL) {
-                TY_CATCH_END();
-                return existing;
         }
 
         module = NewModule(ty, name, path, source, scope);
@@ -13091,6 +13103,20 @@ load_module(Ty *ty, char const *name, Scope *scope)
         TY_CATCH_END();
 
         return module;
+}
+
+static Module *
+load_module(Ty *ty, char const *name, Scope *scope)
+{
+        char const *path;
+        char *source = slurp_module(ty, name, &path);
+
+        Module *existing = GetModuleByPath(ty, path);
+        if (existing != NULL) {
+                return existing;
+        }
+
+        return load_module_source(ty, name, path, source, scope);
 }
 
 bool
@@ -13145,13 +13171,18 @@ import_module(Ty *ty, Stmt const *s)
          * are both errors.
          */
         bool forgive = HAVE_COMPILER_FLAG(FORGIVING);
+        bool forgive_dup = forgive || (
+                ForgiveDuplicateImports
+             && (STATE.module != NULL)
+             && s_eq(STATE.module->name, "(repl)")
+        );
 
-        for (int i = 0; i < vN(STATE.imports) && !forgive; ++i) {
+        for (int i = 0; i < vN(STATE.imports); ++i) {
                 bool collision = s_eq(as, v__(STATE.imports, i).name);
                 if (!collision) {
                         continue;
                 }
-                if (forgive) {
+                if (forgive_dup) {
                         vvXi(STATE.imports, i);
                         break;
                 } else {
@@ -13165,7 +13196,7 @@ import_module(Ty *ty, Stmt const *s)
 
         for (int i = 0; i < vN(STATE.imports); ++i) {
                 if (v__(STATE.imports, i).mod->scope == module_scope) {
-                        if (forgive) {
+                        if (forgive_dup) {
                                 vvXi(STATE.imports, i);
                                 break;
                         }
@@ -13224,8 +13255,6 @@ compiler_init(Ty *ty)
         m0(null);
         null.type = STATEMENT_NULL;
 
-        m0(nil);
-        nil.type = EXPRESSION_NIL;
 
         GlobalScope = scope_new(ty, "GLOBAL", NULL, false);
         GlobalModule = NewModule(ty, "prelude", "(built-in)", NULL, GlobalScope);
@@ -15857,6 +15886,9 @@ function_type_input(Ty *ty, Value const *source)
         return input;
 }
 
+static Expr *
+cexpr_req(Ty *ty, Value *v);
+
 Expr *
 cexpr(Ty *ty, Value *v)
 {
@@ -16693,128 +16725,128 @@ cexpr(Ty *ty, Value *v)
 
         case TyWtf:
                 e->type = EXPRESSION_WTF;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr_req(ty, &v->items[0]);
+                e->right = cexpr_req(ty, &v->items[1]);
                 break;
 
         case TyAdd:
                 e->type = EXPRESSION_PLUS;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr_req(ty, &v->items[0]);
+                e->right = cexpr_req(ty, &v->items[1]);
                 break;
 
         case TySub:
                 e->type = EXPRESSION_MINUS;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr_req(ty, &v->items[0]);
+                e->right = cexpr_req(ty, &v->items[1]);
                 break;
 
         case TyMod:
                 e->type = EXPRESSION_PERCENT;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr_req(ty, &v->items[0]);
+                e->right = cexpr_req(ty, &v->items[1]);
                 break;
 
         case TyDiv:
                 e->type = EXPRESSION_DIV;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr_req(ty, &v->items[0]);
+                e->right = cexpr_req(ty, &v->items[1]);
                 break;
 
         case TyMul:
                 e->type = EXPRESSION_STAR;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr_req(ty, &v->items[0]);
+                e->right = cexpr_req(ty, &v->items[1]);
                 break;
 
         case TyXor:
                 e->type = EXPRESSION_XOR;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr_req(ty, &v->items[0]);
+                e->right = cexpr_req(ty, &v->items[1]);
                 break;
 
         case TyShl:
                 e->type = EXPRESSION_SHL;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr_req(ty, &v->items[0]);
+                e->right = cexpr_req(ty, &v->items[1]);
                 break;
 
         case TyShr:
                 e->type = EXPRESSION_SHR;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr_req(ty, &v->items[0]);
+                e->right = cexpr_req(ty, &v->items[1]);
                 break;
 
         case TyEq:
                 e->type = EXPRESSION_DBL_EQ;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr_req(ty, &v->items[0]);
+                e->right = cexpr_req(ty, &v->items[1]);
                 break;
 
         case TyNotEq:
                 e->type = EXPRESSION_NOT_EQ;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr_req(ty, &v->items[0]);
+                e->right = cexpr_req(ty, &v->items[1]);
                 break;
 
         case TyGT:
                 e->type = EXPRESSION_GT;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr_req(ty, &v->items[0]);
+                e->right = cexpr_req(ty, &v->items[1]);
                 break;
 
         case TyGEQ:
                 e->type = EXPRESSION_GEQ;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr_req(ty, &v->items[0]);
+                e->right = cexpr_req(ty, &v->items[1]);
                 break;
 
         case TyLT:
                 e->type = EXPRESSION_LT;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr_req(ty, &v->items[0]);
+                e->right = cexpr_req(ty, &v->items[1]);
                 break;
 
         case TyLEQ:
                 e->type = EXPRESSION_LEQ;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr_req(ty, &v->items[0]);
+                e->right = cexpr_req(ty, &v->items[1]);
                 break;
 
         case TyCmp:
                 e->type = EXPRESSION_CMP;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr_req(ty, &v->items[0]);
+                e->right = cexpr_req(ty, &v->items[1]);
                 break;
 
         case TyMatches:
                 e->type = EXPRESSION_CHECK_MATCH;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr_req(ty, &v->items[0]);
+                e->right = cexpr_req(ty, &v->items[1]);
                 break;
 
         case TyIn:
                 e->type = EXPRESSION_IN;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr_req(ty, &v->items[0]);
+                e->right = cexpr_req(ty, &v->items[1]);
                 break;
 
         case TyNotIn:
                 e->type = EXPRESSION_NOT_IN;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr_req(ty, &v->items[0]);
+                e->right = cexpr_req(ty, &v->items[1]);
                 break;
 
         case TyOr:
                 e->type = EXPRESSION_OR;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr_req(ty, &v->items[0]);
+                e->right = cexpr_req(ty, &v->items[1]);
                 break;
 
         case TyAnd:
                 e->type = EXPRESSION_AND;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr_req(ty, &v->items[0]);
+                e->right = cexpr_req(ty, &v->items[1]);
                 break;
 
         case TyKwAnd:
@@ -16825,14 +16857,14 @@ cexpr(Ty *ty, Value *v)
 
         case TyBitAnd:
                 e->type = EXPRESSION_BIT_AND;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr_req(ty, &v->items[0]);
+                e->right = cexpr_req(ty, &v->items[1]);
                 break;
 
         case TyBitOr:
                 e->type = EXPRESSION_BIT_OR;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr_req(ty, &v->items[0]);
+                e->right = cexpr_req(ty, &v->items[1]);
                 break;
 
         case TyUserOp:
@@ -17008,6 +17040,28 @@ cexpr(Ty *ty, Value *v)
         e->origin = STATE.origin;
 
         return e;
+}
+
+static Expr *
+mknil(Ty *ty, Location start, Location end)
+{
+        Expr *e = amA0(sizeof *e);
+
+        e->type  = EXPRESSION_NIL;
+        e->arena = GetArenaAlloc(ty);
+        e->mod   = STATE.module;
+        e->start = start;
+        e->end   = end;
+
+        return e;
+}
+
+static Expr *
+cexpr_req(Ty *ty, Value *v)
+{
+        Expr *e = cexpr(ty, v);
+
+        return (e != NULL) ? e : mknil(ty, STATE.mstart, STATE.mend);
 }
 
 Value
@@ -17318,6 +17372,10 @@ xtyparse(
         //STATE.scopes = scopes;
 
         Expr *_e = cexpr(ty, &expr);
+
+        if (_e == NULL) {
+                _e = mknil(ty, *start, *end);
+        }
 
         STATE.mstart = mstart;
         STATE.mend = mend;
@@ -20363,6 +20421,12 @@ TyCompileModule(
         );
 
         if (mod->flags & (MOD_PARSE_ERR | MOD_COMPILE_ERR | MOD_TYPE_ERR)) {
+#ifdef TY_LS
+                if (mod->prog != NULL) {
+                        mod->arena = ty->arena;
+                        xvP(modules, mod);
+                }
+#endif
                 return NULL;
         }
 
@@ -20670,6 +20734,7 @@ CompilerFindDefinition(Ty *ty, Module *mod, i32 line, i32 col)
 
         QueryResult = NULL;
         QueryExpr   = NULL;
+        QueryCall   = NULL;
         QueryLine   = line;
         QueryCol    = col;
         QueryFile   = mod->path;
@@ -20696,13 +20761,16 @@ CompilerBaseline
 CompilerSaveBaseline(Ty *ty)
 {
         return (CompilerBaseline) {
-                .module_count  = vN(modules),
-                .class_count   = class_count(ty),
-                .trait_count   = trait_count(ty),
-                .global_count  = GlobalCount,
-                .symbol_count  = scope_get_symbol(ty),
-                .owned_count   = vN(GlobalScope->owned),
-                ._2op_baseline = op_baseline(ty)
+                .module_count   = vN(modules),
+                .class_count    = class_count(ty),
+                .trait_count    = trait_count(ty),
+                .tag_count      = tags_count(ty),
+                .tag_list_count = tags_list_count(ty),
+                .location_count = vN(location_lists),
+                .global_count   = GlobalCount,
+                .symbol_count   = scope_get_symbol(ty),
+                .owned_count    = vN(GlobalScope->owned),
+                ._2op_baseline  = op_baseline(ty)
         };
 }
 
@@ -20710,6 +20778,13 @@ void
 CompilerRestoreBaseline(Ty *ty, CompilerBaseline const *b)
 {
         class_truncate(ty, b->class_count, b->trait_count);
+        t2_forget_classes(b->class_count);
+        tags_truncate(ty, b->tag_count, b->tag_list_count);
+
+        for (int i = b->location_count; i < vN(location_lists); ++i) {
+                xvF(*v_(location_lists, i));
+        }
+        vN(location_lists) = b->location_count;
 
         vN(modules)  = b->module_count;
         MainModule   = NULL;
@@ -20748,12 +20823,20 @@ CompilerLoadModuleByPath(Ty *ty, char const *path)
                 module_name[dot - name] = '\0';
         }
 
-        load_module(ty, module_name, NULL);
+        char *source = slurp(path, NULL);
+        if (source == NULL) {
+                return;
+        }
+
+        load_module_source(ty, module_name, S2(path), source, NULL);
 }
 
 void
 CompilerSnapshotArena(Arena const *a, ArenaSnapshotVector *snaps)
 {
+        for (int i = 0; i < vN(*snaps); ++i) {
+                xmF(v_(*snaps, i)->copy);
+        }
         v0(*snaps);
 
         for (; a->base != NULL; a = NextArena(a)) {
@@ -20793,6 +20876,53 @@ SymbolToCompletionItem(Ty *ty, Symbol const *sym, i32 depth)
                 "kind",  INTEGER(6),
                 "depth", INTEGER(depth)
         );
+}
+
+static char const *
+SourcePosition(char const *source, i32 line, i32 col)
+{
+        char const *p = source;
+
+        for (i32 i = 0; i < line; ++i) {
+                p = strchr(p, '\n');
+                if (p == NULL) {
+                        return NULL;
+                }
+                p += 1;
+        }
+
+        for (i32 i = 0; i < col; ++i) {
+                if (p[i] == '\n' || p[i] == '\0') {
+                        return NULL;
+                }
+        }
+
+        return p + col;
+}
+
+static char const *
+DanglingMember(Ty *ty, Module const *mod, Expr const *e, i32 line, i32 col)
+{
+        char const *cursor = SourcePosition(mod->source, line, col);
+        char const *dot = e->end.s;
+
+        if (
+                (cursor == NULL)
+             || (dot == NULL)
+             || (dot < mod->source)
+             || (dot >= cursor)
+             || (*dot != '.')
+        ) {
+                return NULL;
+        }
+
+        for (char const *p = dot + 1; p < cursor; ++p) {
+                if (!isalnum((unsigned char)*p) && strchr("_-?!", *p) == NULL) {
+                        return NULL;
+                }
+        }
+
+        return afmt("%.*s", (int)(cursor - dot - 1), dot + 1);
 }
 
 static void
@@ -20863,6 +20993,16 @@ CompilerSuggestCompletions(
 
         if (QueryExpr == NULL) {
                 return false;
+        }
+
+        char const *member = DanglingMember(ty, mod, QueryExpr, line, col);
+        if (member != NULL) {
+                if (QueryExpr->type == EXPRESSION_MODULE) {
+                        AddScopeCompletions(ty, QueryExpr->scope, member, completions, 16);
+                } else {
+                        t2_completions(ty, QueryExpr->_type, member, completions);
+                }
+                return true;
         }
 
         Scope *scope = NULL;

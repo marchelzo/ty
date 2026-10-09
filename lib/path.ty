@@ -302,7 +302,7 @@ pub class Path : PathLike {
 
     read-text() -> String {
         with f = io.open(str(self), 'r') {
-            f.slurp()
+            f.slurp() ?? ''
         }
     }
 
@@ -590,20 +590,28 @@ pub class Path : PathLike {
     }
 
     mkdtemp(prefix: String = 'tmp') -> Path {
-        let name = "{prefix}-XXXXXX"
-        Path(os.mkdtemp("{self / name}"))
+        let $path = os.mkdtemp(self / prefix) or throw os.OSError('mkdtemp()')
+        Path(path)
     }
 
     mktemp(prefix: String = 'tmp', suffix: String = '') -> Path {
-        let name = "{prefix}-XXXXXX{suffix}"
+        let flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
 
-        if not let (fd, path) = os.mktemp("{self / name}") {
-            throw os.OSError('mkstemp()')
+        for ..100 {
+            let path = self / "{prefix}.{uuid4()[;6]}{suffix}"
+            let fd   = os.open(str(path), flags, 0o600)
+
+            if fd >= 0 {
+                os.close(fd)
+                return path
+            }
+
+            if errno.get() != errno.EEXIST {
+                throw os.OSError('mktemp()')
+            }
         }
-        
-        os.close(fd)
-        
-        Path(path)
+
+        throw os.OSError('mktemp()', errno.EEXIST)
     }
 
     tempdir(prefix: String = 'tmp') -> TempDir {

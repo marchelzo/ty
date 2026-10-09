@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "ty.h"
 #include "compiler.h"
@@ -41,6 +42,14 @@ static ConstStringVector PendingDeps;
 
 static char             *LastSource;
 static char             *LastFile;
+
+typedef struct {
+        char *path;
+        i64   mtime;
+        i64   size;
+} DepStamp;
+
+static vec(DepStamp)     DepStamps;
 
 TY xD;
 Ty *ty;
@@ -231,6 +240,107 @@ ReqField(Value const *req, char const *name, u32 type)
         return tget_t(req, (uptr)name, type);
 }
 
+static T2Type
+HoverType(Symbol const *sym)
+{
+        T2Universe *u = t2_global_universe();
+
+        if (
+                (QueryCall == NULL)
+             || (t2_type_kind(u, sym->type) != T2_TYPE_TYPE_VALUE)
+        ) {
+                return sym->type;
+        }
+
+        T2Type ctor = t2_type_value_constructor(u, sym->type);
+
+        return (ctor == T2_TYPE_INVALID) ? sym->type : ctor;
+}
+
+static Value
+ShowType(Ty *ty, T2Type type)
+{
+        T2Universe *u = t2_global_universe();
+
+        if (t2_type_kind(u, type) != T2_TYPE_OVERLOAD) {
+                return xSz(t2_show(ty, type));
+        }
+
+        Array *overloads = vA();
+
+        for (usize i = 0; i < t2_type_arity(u, type); ++i) {
+                vAp(overloads, xSz(t2_show(ty, t2_type_child(u, type, i))));
+        }
+
+        return ARRAY(overloads);
+}
+
+static DepStamp
+StampFile(char const *path)
+{
+        struct stat st;
+
+        if (stat(path, &st) != 0) {
+                return (DepStamp) { .mtime = -1, .size = -1 };
+        }
+
+#ifdef __APPLE__
+        struct timespec mtime = st.st_mtimespec;
+#else
+        struct timespec mtime = st.st_mtim;
+#endif
+
+        return (DepStamp) {
+                .mtime = (i64)mtime.tv_sec * 1000000000 + mtime.tv_nsec,
+                .size  = (i64)st.st_size
+        };
+}
+
+static void
+RecordDepStamps(char const *file)
+{
+        for (int i = 0; i < vN(DepStamps); ++i) {
+                xmF(v_(DepStamps, i)->path);
+        }
+        v0(DepStamps);
+
+        ModuleVector const *mods = TyActiveModules(ty);
+
+        for (int i = InitBaseline.module_count; i < vN(*mods); ++i) {
+                Module const *m = v__(*mods, i);
+                if (m->path == NULL || s_eq(m->path, file)) {
+                        continue;
+                }
+                DepStamp stamp = StampFile(m->path);
+                stamp.path = S2(m->path);
+                xvP(DepStamps, stamp);
+        }
+}
+
+static bool
+DepsStale(void)
+{
+        for (int i = 0; i < vN(DepStamps); ++i) {
+                DepStamp const *old = v_(DepStamps, i);
+                DepStamp now = StampFile(old->path);
+                if (now.mtime != old->mtime || now.size != old->size) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static void
+DropDeps(void)
+{
+        if (HaveDeps && (DepsArena.base != ty->arena.base)) {
+                FreeArena(&DepsArena);
+        }
+
+        HaveDeps = false;
+}
+
 static Value
 DiagnosticsResult(Ty *ty)
 {
@@ -330,8 +440,14 @@ main(int argc, char *argv[])
 
                         source = TY_0_C_STR(v);
 
+                        bool stale = DepsStale();
+                        if (stale) {
+                                DropDeps();
+                        }
+
                         if (
-                                   AllowErrors
+                                   !stale
+                                && AllowErrors
                                 && (LastFile != NULL)
                                 && (LastSource != NULL)
                                 && s_eq(file, LastFile)
@@ -356,6 +472,7 @@ main(int argc, char *argv[])
                                         CompilerRestoreBaseline(ty, &DepsBaseline);
                                         vN(Globals) = DepsBaseline.global_count;
                                 } else {
+                                        DropDeps();
                                         if (ty->arena.base != InitArena.base) {
                                                 FreeArena(&ty->arena);
                                         }
@@ -363,7 +480,6 @@ main(int argc, char *argv[])
                                         CompilerRestoreArena(&InitBaseline.arena_snaps);
                                         CompilerRestoreBaseline(ty, &InitBaseline);
                                         vN(Globals) = InitBaseline.global_count;
-                                        HaveDeps = false;
 
                                         if (same && (vN(PendingDeps) > 0)) {
                                                 NewArenaNoGC(ty, 1 << 22);
@@ -413,6 +529,8 @@ main(int argc, char *argv[])
                                 }
                         }
 
+                        RecordDepStamps(file);
+
                         xmF(LastSource);
                         xmF(LastFile);
                         LastSource = S2(source);
@@ -441,11 +559,11 @@ main(int argc, char *argv[])
                         }
 
                         result = vTn(
-                                "name",  xSz(sym->identifier),
-                                "line",  INTEGER(sym->loc.line),
-                                "col",   INTEGER(sym->loc.col),
-                                "file",  xSz(sym->mod ? sym->mod->path : "<unknown>"),
-                                "type",    xSz(t2_show(ty, sym->type)),
+                                "name",    xSz(sym->identifier),
+                                "line",    INTEGER(sym->loc.line),
+                                "col",     INTEGER(sym->loc.col),
+                                "file",    xSz(sym->mod ? sym->mod->path : "<unknown>"),
+                                "type",    ShowType(ty, HoverType(sym)),
                                 "doc",     (sym->doc == NULL) ? NIL : xSz(sym->doc),
                                 "builtin", BOOLEAN(SymbolIsBuiltin(sym))
                         );

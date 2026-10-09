@@ -3,6 +3,8 @@ import os
 import sh (sh, run, Exit, Killed, Timeout, Success)
 import support.process (FIXTURES, run as run-ty)
 
+const BLOCK = 'exec tail -f /dev/null'
+
 ns test
 
 pub fn sh-basic() {
@@ -35,15 +37,48 @@ pub fn sh-cpu-time() {
 }
 
 pub fn sh-timeout() {
-    let result = __windows__
-               ? sh('Sleep 1; echo Hello', shell: ['powershell', '-Command'], timeout: 0.1)
-               : sh('printf early; sleep 5', timeout=0.1)
+    if __windows__ {
+        let result = sh('Sleep 1; echo Hello', shell: ['powershell', '-Command'], timeout: 0.1)
+        assert(result.fate == Timeout)
+        assert(!result.ok?)
+        return
+    }
+
+    let result = sh(
+        "printf early; {BLOCK}",
+        timeout=0.01,
+        hook=(out, _, _, fd) -> fd != nil || #out < 5
+    )
 
     assert(result.fate == Timeout)
     assert(!result.ok?)
+    assert(result.stdout == 'early')
+}
 
+pub fn sh-hook-stops-on-output() {
     if not __windows__ {
-        assert(result.stdout == 'early')
+        let result = sh("printf go; {BLOCK}", hook=(out, _, _, fd) -> fd == nil || #out == 0)
+        assert(result.fate == Killed(os.SIGTERM), "{result.fate}")
+        assert(result.stdout == 'go')
+    }
+}
+
+pub fn sh-hook-restarts-timer() {
+    if not __windows__ {
+        let ticks = 0
+        let pids = []
+
+        fn tick(out: Blob, err: Blob, pid: Int, fd: Int | nil) -> Bool {
+            pids.push(pid)
+            ticks += (fd == nil) ? 1 : 0
+            ticks < 3
+        }
+
+        let result = sh(BLOCK, timeout=0.01, hook=tick)
+
+        assert(result.fate == Timeout)
+        assert(ticks == 3)
+        assert(#pids == 3 && pids.all?(\_ == pids[0]) && pids[0] > 0)
     }
 }
 

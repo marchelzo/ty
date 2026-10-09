@@ -8,11 +8,13 @@
 
 extern bool SuggestCompletions;
 extern bool FindDefinition;
+extern bool ForgiveDuplicateImports;
 extern int QueryLine;
 extern int QueryCol;
 extern char const *QueryFile;
 extern Symbol const *QueryResult;
 extern Expr const *QueryExpr;
+extern Expr const *QueryCall;
 
 typedef struct location Location;
 typedef struct expression Expr;
@@ -733,6 +735,9 @@ typedef struct {
         int module_count;
         int class_count;
         int trait_count;
+        int tag_count;
+        int tag_list_count;
+        int location_count;
         usize global_count;
         i64 symbol_count;
         usize owned_count;

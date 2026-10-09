@@ -5678,25 +5678,20 @@ TY_BUILTIN_RAW(os_poll)
 
         case 2:
                 fds_out = vA();
-                timeout = MSEC_ARG(1);
+                timeout = MSEC_TIMEOUT_ARG(1);
                 break;
 
         case 3:
                 fds_out = ARRAY_ARG(1);
-                timeout = MSEC_ARG(2);
+                timeout = MSEC_TIMEOUT_ARG(2);
                 break;
 
         default:
                 UNREACHABLE();
         }
 
-        // Don't treat -1 as an indefinite timeout if the argument was
-        // originally floating point
-        if (
-                (argc == 2 && ARG(1).type == VALUE_REAL)
-             || (argc == 3 && ARG(2).type == VALUE_REAL)
-        ) {
-                timeout += (timeout == -1);
+        if (timeout > INT_MAX) {
+                timeout = INT_MAX;
         }
 
         SCRATCH_SAVE();
@@ -10871,7 +10866,18 @@ TY_BUILTIN_RAW(parse_show)
 
         Expr const *src = SourceExpr(ty, ARG(0));
 
-        return (src == NULL) ? NIL : vSs(src->start.s, src->end.s - src->start.s);
+        if (
+                (src == NULL)
+             || (src->start.s == NULL)
+             || (src->end.s == NULL)
+             || (src->end.s < src->start.s)
+        ) {
+                return NIL;
+        }
+
+        usize n = strnlen(src->start.s, src->end.s - src->start.s);
+
+        return vSs(src->start.s, n);
 }
 
 // ty/parse.highlight(mod: Module, start: Int, end: Int, theme: ?String = nil) -> _

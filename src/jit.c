@@ -9409,7 +9409,8 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                                         baked_method
                                                 );
 
-                                                bc_copy_value(ctx, BC_OPS, OP_OFF(self_pos), BC_LOC, ctx->param_count * VALUE_SIZE);
+                                                bc_emit_deref(ctx, BC_S3, BC_LOC, ctx->param_count * VALUE_SIZE);
+                                                bc_copy_value(ctx, BC_OPS, OP_OFF(self_pos), BC_S3, 0);
                                                 jit_emit_mov(asm, BC_A0, BC_TY);
                                                 jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(self_pos));
                                                 jit_emit_load_imm(asm, BC_A2, (iptr)target);
@@ -12201,7 +12202,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 
                                 jit_emit_label(asm, lbl_slow);
                                 jit_emit_mov(asm, BC_A0, BC_TY);
-                                jit_emit_add_imm(asm, BC_A1, BC_LOC, self_off); // obj = self
+                                bc_emit_deref(ctx, BC_A1, BC_LOC, self_off);
                                 jit_emit_load_imm(asm, BC_A2, ctx->tgt_index); // member_id
                                 jit_emit_add_imm(asm, BC_A3, BC_OPS, addend_off); // addend
                                 jit_emit_add_imm(asm, BC_A4, BC_OPS, addend_off); // result = addend slot
@@ -12448,7 +12449,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         } else if (ctx->tgt_kind == TGT_SELF_MEMBER) {
                                 int self_off = ctx->param_count * VALUE_SIZE;
                                 jit_emit_mov(asm, BC_A0, BC_TY);
-                                jit_emit_add_imm(asm, BC_A1, BC_LOC, self_off);
+                                bc_emit_deref(ctx, BC_A1, BC_LOC, self_off);
                                 jit_emit_load_imm(asm, BC_A2, ctx->tgt_index);
                                 jit_emit_add_imm(asm, BC_A3, BC_OPS, OP_OFF(ctx->sp));
                                 jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_post_inc_member);
@@ -12551,7 +12552,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         } else if (ctx->tgt_kind == TGT_SELF_MEMBER) {
                                 int self_off = ctx->param_count * VALUE_SIZE;
                                 jit_emit_mov(asm, BC_A0, BC_TY);
-                                jit_emit_add_imm(asm, BC_A1, BC_LOC, self_off);
+                                bc_emit_deref(ctx, BC_A1, BC_LOC, self_off);
                                 jit_emit_load_imm(asm, BC_A2, ctx->tgt_index);
                                 jit_emit_add_imm(asm, BC_A3, BC_OPS, OP_OFF(ctx->sp));
                                 jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_post_dec_member);
@@ -12652,7 +12653,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         } else if (ctx->tgt_kind == TGT_SELF_MEMBER) {
                                 int self_off = ctx->param_count * VALUE_SIZE;
                                 jit_emit_mov(asm, BC_A0, BC_TY);
-                                jit_emit_add_imm(asm, BC_A1, BC_LOC, self_off);
+                                bc_emit_deref(ctx, BC_A1, BC_LOC, self_off);
                                 jit_emit_load_imm(asm, BC_A2, ctx->tgt_index);
                                 jit_emit_add_imm(asm, BC_A3, BC_OPS, OP_OFF(ctx->sp));
                                 jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_pre_inc_member);
@@ -12755,7 +12756,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         } else if (ctx->tgt_kind == TGT_SELF_MEMBER) {
                                 int self_off = ctx->param_count * VALUE_SIZE;
                                 jit_emit_mov(asm, BC_A0, BC_TY);
-                                jit_emit_add_imm(asm, BC_A1, BC_LOC, self_off);
+                                bc_emit_deref(ctx, BC_A1, BC_LOC, self_off);
                                 jit_emit_load_imm(asm, BC_A2, ctx->tgt_index);
                                 jit_emit_add_imm(asm, BC_A3, BC_OPS, OP_OFF(ctx->sp));
                                 jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_pre_dec_member);

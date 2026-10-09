@@ -514,6 +514,7 @@ ProcessArgs(char *argv[], bool first)
                                         break;
 
                                 case 'e':
+                                        ForgiveDuplicateImports = true;
                                         if (!first && !basic) pollute_with_bloat();
                                         if (opt[1] == '\0') {
                                                 if (argv[argi + 1] == NULL) {

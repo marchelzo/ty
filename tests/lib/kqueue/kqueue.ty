@@ -94,8 +94,8 @@ pub fn test-multiple-fds() {
     assert(#evs == 2)
 
     let by-fd = %{ev.ident: ev for ev in evs}
-    assert(by-fd[r1].data >= 3)
-    assert(by-fd[r2].data >= 5)
+    assert(by-fd[r1]!.data >= 3)
+    assert(by-fd[r2]!.data >= 5)
 
     os.close(r1)
     os.close(w1)

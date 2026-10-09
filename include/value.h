@@ -1737,10 +1737,28 @@ TryIntoTime(Ty *ty, char const *ctx, Value const *t, i64 factor)
 #define USEC_ARG(i) TryIntoTime(ty, _name__, &ARG(i), 1000000)
 #define MSEC_ARG(i) TryIntoTime(ty, _name__, &ARG(i), 1000)
 
-#define MSEC_TIMEOUT_ARG(i) (                          \
-        (ARG_T(i) == VALUE_REAL) ? max(MSEC_ARG(i), 0) \
-      : (ARG_T(i) == VALUE_NONE) ? (u64)-1             \
-      : MSEC_ARG(i)                                    \
+inline static i64
+MsecTimeout(double seconds)
+{
+        if (seconds <= 0.0) {
+                return 0;
+        }
+
+        double ms = 1000.0 * seconds;
+
+        if (ms >= (double)INT64_MAX) {
+                return INT64_MAX;
+        }
+
+        i64 whole = (i64)ms;
+
+        return whole + (whole < ms);
+}
+
+#define MSEC_TIMEOUT_ARG(i) (                               \
+        (ARG_T(i) == VALUE_REAL) ? MsecTimeout(ARG(i).real) \
+      : (ARG_T(i) == VALUE_NONE) ? (u64)-1                  \
+      : MSEC_ARG(i)                                         \
 )
 
 #define NSEC_TIMEOUT_ARG(i) (                          \
@@ -1883,7 +1901,7 @@ value_truthy(Ty *ty, Value const *v)
         case VALUE_BUILTIN_METHOD:   return true;
         case VALUE_FOREIGN_FUNCTION: return true;
         case VALUE_OPERATOR:         return true;
-        case VALUE_DICT:             return true;
+        case VALUE_DICT:             return (v->dict->count != 0);
         case VALUE_CLASS:            return true;
         case VALUE_OBJECT:           return true;
         case VALUE_METHOD:           return true;

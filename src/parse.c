@@ -1617,6 +1617,16 @@ clone_slice_a(Ty *ty, char const *p, char const *q)
         return s;
 }
 
+inline static char *
+clone_span_a(Ty *ty, char const *p, char const *q)
+{
+        if (p == NULL || q == NULL || q < p) {
+                return NULL;
+        }
+
+        return clone_slice_a(ty, p, q);
+}
+
 Expr *
 parse_decorator_macro(Ty *ty)
 {
@@ -1757,7 +1767,7 @@ parse_member(Ty *ty)
         setctx(LEX_MEMBER);
 
         if (AllowErrors && T0 != TOKEN_IDENTIFIER) {
-                member = &BlankID;
+                member = mkid("");
         } else {
                 expect(TOKEN_IDENTIFIER);
                 member = mkid(tok()->identifier);
@@ -2472,6 +2482,7 @@ static void
 parse_function_header(Ty *ty, Expr *e)
 {
         char const *volatile proto_start = tok()->start.s;
+        bool volatile recovered = false;
 
         SAVE_NE(true);
 
@@ -2480,6 +2491,7 @@ parse_function_header(Ty *ty, Expr *e)
         }
 
         if (CatchError()) {
+                recovered = true;
                 goto EndOfParams;
         }
 
@@ -2532,6 +2544,14 @@ parse_function_header(Ty *ty, Expr *e)
         EndCatch();
 
 EndOfParams:
+        while (vN(e->constraints) < vN(e->params)) {
+                avP(e->constraints, NULL);
+        }
+
+        while (vN(e->dflts) < vN(e->params)) {
+                avP(e->dflts, NULL);
+        }
+
         e->end = TEnd;
 
         if (T0 == TOKEN_ARROW) {
@@ -2539,7 +2559,9 @@ EndOfParams:
                 e->return_type = parse_type(ty, -1);
         }
 
-        e->proto = clone_slice_a(ty, proto_start, TEnd.s);
+        if (!recovered) {
+                e->proto = clone_span_a(ty, proto_start, TEnd.s);
+        }
 
         if (try_consume(KEYWORD_WHERE)) {
                 for (;;) {
@@ -2919,7 +2941,7 @@ next_pattern(Ty *ty)
         Expr *pat;
 
         if (try_consume(KEYWORD_ELSE)) {
-                pat = &WildCard;
+                pat = mkid("_");
         } else {
                 SAVE_NE(true);
                 SAVE_NC(false);
@@ -3185,6 +3207,10 @@ prefix_match(Ty *ty)
 
 End:
         LOAD_NA();
+
+        if (vN(e->patterns) > vN(e->thens)) {
+                vN(e->patterns) = vN(e->thens);
+        }
 
         if (id != NULL) {
                 Expr *f = mkfunc(ty);
@@ -3541,7 +3567,8 @@ prefix_parenthesis(Ty *ty)
         SAVE_NA(false);
         SAVE_NC(false);
         if (CatchError()) {
-                e = &NullExpr;
+                e = mkxpr(STATEMENT);
+                e->statement = mkstmtx(NULL);
         } else {
                 if (TypeContext && T0 == TOKEN_STAR) {
                         e = mkexpr(ty);
@@ -4328,6 +4355,10 @@ prefix_bit_or(Ty *ty)
 
         consume('|');
 
+        if (vN(e->es) == 0 && T0 != TOKEN_ARROW) {
+                die("expected `->` after empty parameter list `| |`");
+        }
+
         e->end = TEnd;
 
         return e;
@@ -4342,6 +4373,11 @@ prefix_arrow(Ty *ty)
         unconsume('(');
 
         Expr *f = parse_expr(ty, 0);
+
+        if (f->type != EXPRESSION_FUNCTION) {
+                die("expected a function body after `->`");
+        }
+
         f->type = EXPRESSION_IMPLICIT_FUNCTION;
         f->start = start;
         f->end = TEnd;
@@ -4911,6 +4947,14 @@ infix_member_access(Ty *ty, Expr *left)
 
         e->object = left;
 
+        if (AllowErrors && tok()->start.line > TEnd.line) {
+                e->member = mkid("");
+                e->member->start = TEnd;
+                e->member->end = TEnd;
+                e->end = TEnd;
+                return e;
+        }
+
         if (tok()->type == '{') {
                 next();
                 e->member = parse_expr(ty, 1);
@@ -4986,7 +5030,7 @@ infix_arrow_function(Ty *ty, Expr *left)
         e = mkfunc(ty);
         e->start = left->start;
 
-        e->proto = clone_slice_a(ty, left->start.s, left->end.s);
+        e->proto = clone_span_a(ty, left->start.s, left->end.s);
 
         if (
                 (left->type != EXPRESSION_LIST)
@@ -6284,6 +6328,10 @@ parse_match_statement(Ty *ty)
                 EndCatch();
         }
 
+        if (vN(s->match.patterns) > vN(s->match.statements)) {
+                vN(s->match.patterns) = vN(s->match.statements);
+        }
+
         return s;
 }
 
@@ -6384,7 +6432,7 @@ parse_operator_directive(Ty *ty)
 
         consume(TOKEN_NEWLINE);
 
-        return &NullStatement;
+        return mkstmtx(NULL);
 }
 
 inline static Stmt *
@@ -6552,7 +6600,7 @@ static Stmt *
 parse_null_statement(Ty *ty)
 {
         consume(';');
-        return &NullStatement;
+        return mkstmtx(NULL);
 }
 
 inline static bool
@@ -6906,6 +6954,9 @@ parse_class_definition(Ty *ty)
                 setctx(LEX_NAME);
                 char *name = tok()->identifier;
                 Location start = tok()->start;
+                if (name == NULL) {
+                        die("expected a class member but found %s", token_show(ty, tok()));
+                }
                 next();
                 setctx(LEX_PREFIX);
                 // =========================
@@ -7235,7 +7286,7 @@ parse_try(Ty *ty)
                 s->try.s->_if.then  = _else;
                 s->try.s->_if._else = NULL;
 
-                avP(s->try.patterns, &WildCard);
+                avP(s->try.patterns, mkid("_"));
                 avP(s->try.handlers, _else);
 
                 s->try.finally = NULL;
@@ -7261,7 +7312,7 @@ parse_try(Ty *ty)
         }
 
         if (vN(s->try.patterns) == 0 && s->try.finally == NULL) {
-                avP(s->try.patterns, &WildCard);
+                avP(s->try.patterns, mkid("_"));
                 avP(s->try.handlers, mkstmtx(NULL));
         }
 
@@ -7811,7 +7862,9 @@ parse_module(Ty *ty, Module *mod)
                                 TY_SUPPRESS("top-level definition");
                                 mod->flags = flags;
                                 UnresolveExpr(ty, (Expr *)s);
-                                s->retry = (s->type == STATEMENT_OPERATOR_DEFINITION);
+                                if (s->type == STATEMENT_OPERATOR_DEFINITION) {
+                                        s->retry = true;
+                                }
                         } else {
                                 define_top(ty, s, doc);
                                 TY_CATCH_END();

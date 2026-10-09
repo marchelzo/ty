@@ -39,7 +39,8 @@ fn __run(
     sigdefault: ?Array[Int] = nil,
     inherit: Array[Int] | Bool | nil = nil,
     umask: ?Int = nil,
-    pdeathsig: ?Int = nil
+    pdeathsig: ?Int = nil,
+    hook: ((Blob, Blob, Int, Int | nil) -> Bool) | nil = nil
 ) -> CmdResult {
     let stderr = combineOutput ? os.SPAWN_MERGED_STDERR
                : shareStderr   ? os.SPAWN_INHERIT
@@ -58,7 +59,7 @@ fn __run(
         inherit=inherit,
         umask=umask,
         pdeathsig=pdeathsig,
-        detach=timeout != nil
+        detach=(timeout != nil) || (hook != nil)
     )
 
     let out = Blob()
@@ -73,6 +74,10 @@ fn __run(
 
     let timed-out? = false
 
+    fn keep-going?(fd: ?Int) -> Bool {
+        hook == nil || hook(out, err, p.pid, fd)
+    }
+
     let pfds-in = [
         (p.stdout, os::POLLIN, out),
         (p.stderr, os::POLLIN, err) if p.stderr != p.stdout
@@ -83,7 +88,11 @@ fn __run(
     for (;;) {
         let left = deadline ?: (deadline - now())
 
-        if left && left <= 1.0e-3 {
+        if left != nil && left <= 0.0 {
+            if hook != nil && keep-going?(nil) {
+                deadline = now() + (timeout ?? 0)
+                continue
+            }
             os.kill(-p.pid, signal)
             timed-out? = true
             break
@@ -101,6 +110,10 @@ fn __run(
             }
             if ev & (os.POLLERR | os.POLLHUP) {
                 stop = true
+            }
+            if !keep-going?(fd) {
+                os.kill(-p.pid, signal)
+                break break
             }
         }
 

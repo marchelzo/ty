@@ -149,6 +149,10 @@ tags_set_class(Ty *ty, int tag, Class *c)
 Class *
 tags_get_class(Ty *ty, int tag)
 {
+        if (tag < 1 || tag > vN(classes)) {
+                return NULL;
+        }
+
         return v__(classes, tag - 1);
 }
 
@@ -334,9 +338,47 @@ tags_count(Ty *ty)
         return names.count;
 }
 
+int
+tags_list_count(Ty *ty)
+{
+        return nlists;
+}
+
+void
+tags_truncate(Ty *ty, int n_tags, int n_lists)
+{
+        TyMutexLock(&lock);
+
+        for (int i = 0; i < n_lists; ++i) {
+                struct tags *t = L(i);
+                struct links *ls = atomic_load_explicit(&t->links, memory_order_relaxed);
+                while (ls->n > 0 && ls->items[ls->n - 1].t->n >= n_lists) {
+                        ls = ls->prev;
+                }
+                atomic_store_explicit(&t->links, ls, memory_order_release);
+        }
+
+        for (int i = n_lists; i < nlists; ++i) {
+                atomic_store_explicit(&lists[i], NULL, memory_order_release);
+        }
+
+        nlists        = n_lists;
+        next_id       = n_tags + 1;
+        vN(names)     = n_tags;
+        vN(tables)    = n_tags;
+        vN(statics)   = n_tags;
+        vN(classes)   = n_tags;
+
+        TyMutexUnlock(&lock);
+}
+
 char const *
 tags_name(Ty *ty, int tag)
 {
+        if (tag < 1 || tag > vN(names)) {
+                return NULL;
+        }
+
         return names.items[tag - 1];
 }
 

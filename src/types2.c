@@ -2609,6 +2609,22 @@ interface_slot(int class_id)
         return &Interfaces[class_id];
 }
 
+void
+t2_forget_classes(int class_count)
+{
+        for (usize i = (usize)class_count; i < InterfaceCount; ++i) {
+                T2Interface *interface = &Interfaces[i];
+                for (usize j = 0; j < vN(interface->members); ++j) {
+                        t2_scheme_free(v_(interface->members, j)->scheme);
+                }
+                xvF(interface->members);
+        }
+
+        if ((usize)class_count < InterfaceCount) {
+                InterfaceCount = (usize)class_count;
+        }
+}
+
 static void
 note_defined_class(T2Checker *checker, int class_id)
 {
@@ -4972,11 +4988,16 @@ callable_object_view(
         }
 
         T2Member *protocol = NULL;
-        if (nominal->class_id >= 0) {
-                (void)ensure_class_interface(checker, nominal->class_id);
+        int class_id = nominal->class_id;
+        if (class_id >= 0) {
+                (void)ensure_class_interface(checker, class_id);
+                nominal = nominal_from_type(checker, head);
+                if (nominal == NULL) {
+                        return actual;
+                }
                 protocol = find_member(
                         checker,
-                        nominal->class_id,
+                        class_id,
                         "__call__",
                         T2_MEMBER_METHOD,
                         false
@@ -13121,6 +13142,7 @@ infer_method_type(
 
         if (class_id >= 0) {
                 (void)ensure_class_interface(checker, class_id);
+                nominal = nominal_from_type(checker, receiver);
                 T2Member *member = find_member(
                         checker,
                         class_id,
@@ -16367,8 +16389,6 @@ touch_condition_bindings(T2Checker *checker, Expr const *source)
                 return;
         case EXPRESSION_AND:
         case EXPRESSION_OR:
-        case EXPRESSION_KW_AND:
-        case EXPRESSION_KW_OR:
         case EXPRESSION_DBL_EQ:
         case EXPRESSION_NOT_EQ:
         case EXPRESSION_CHECK_MATCH:
@@ -16587,8 +16607,7 @@ apply_match_test(
                 return;
         }
 
-        bool conjunction = (tested->type == EXPRESSION_AND)
-                        || (tested->type == EXPRESSION_KW_AND);
+        bool conjunction = (tested->type == EXPRESSION_AND);
 
         if (conjunction && truth) {
                 apply_condition_refinements(checker, tested->left, true);
@@ -16625,10 +16644,8 @@ apply_condition_refinements(
                 return;
         }
 
-        bool conjunction = (condition->type == EXPRESSION_AND)
-                        || (condition->type == EXPRESSION_KW_AND);
-        bool disjunction = (condition->type == EXPRESSION_OR)
-                        || (condition->type == EXPRESSION_KW_OR);
+        bool conjunction = (condition->type == EXPRESSION_AND);
+        bool disjunction = (condition->type == EXPRESSION_OR);
         if (conjunction && truth) {
                 apply_condition_refinements(checker, condition->left, true);
                 apply_condition_refinements(checker, condition->right, true);
@@ -20098,14 +20115,11 @@ infer_expression(T2Checker *checker, Expr const *source)
         }
         case EXPRESSION_AND:
         case EXPRESSION_OR:
-        case EXPRESSION_KW_AND:
-        case EXPRESSION_KW_OR:
         {
                 T2Type left        = infer_expression(checker, expression->left);
                 usize binding_mark = vN(checker->bindings);
                 T2Type *before = snapshot_refinements(checker, binding_mark);
-                bool right_condition = (expression->type == EXPRESSION_AND)
-                                    || (expression->type == EXPRESSION_KW_AND);
+                bool right_condition = (expression->type == EXPRESSION_AND);
                 apply_condition_refinements(
                         checker,
                         expression->left,
@@ -30895,7 +30909,7 @@ cache_directory(char *buffer, usize size)
 {
         char const *override = getenv("TY_TYPES2_CACHE_DIR");
         if (override != NULL && *override != '\0') {
-                int n = ty_snprintf(buffer, size, "%s", override) < (int)size;
+                int n = ty_snprintf(buffer, size, "%s", override);
                 return n < (int)size;
         }
 

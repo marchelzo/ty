@@ -8,12 +8,14 @@ import os (..)
 import log (..)
 import path (Path)
 
-const TYD_LOGS_DIR     = Path.home() / '.local' / 'state' / 'tyd'
+const TYD_LOGS_DIR     = Path(getenv('TYD_STATE_DIR') ?? "{Path.home()}/.local/state/tyd")
 const TYD_LOG_PATH     = TYD_LOGS_DIR / 'tyd.log'
 const TYLS_ERR_PATH    = TYD_LOGS_DIR / 'tyls.err'
 const FAILED_JSON_PATH = TYD_LOGS_DIR / 'failed.json'
 
 TYD_LOGS_DIR.mkdir(parents=true, exist-ok=true)
+
+signal(SIGPIPE, 1)
 
 logging({
     path: str(TYD_LOG_PATH),
@@ -69,9 +71,9 @@ let err-fd = match open("{TYLS_ERR_PATH}", O_WRONLY | O_TRUNC | O_CREAT, 0644) {
 
 let TY_LS_CMD = getenv('TY_LS_CMD').?words() ?? ['tyls']
 
-let TYLS_TIMEOUT = 0.35
+let TYLS_TIMEOUT = float(getenv('TYLS_TIMEOUT') ?? '0.35')
 
-let responses: SharedQueue[(Int, String)] = SharedQueue()
+let responses: SharedQueue[(Int, String | nil)] = SharedQueue()
 
 fn spawn-tyls() {
     let proc = os.spawn(TY_LS_CMD, stdin=SPAWN_PIPE, stdout=SPAWN_PIPE, stderr=err-fd)
@@ -84,6 +86,7 @@ fn spawn-tyls() {
             while let $line = stream.next-line() {
                 responses.put((pid, line))
             }
+            responses.put((pid, nil))
         }
     }).detach()
 
@@ -110,6 +113,12 @@ onExit(fn () {
 
 fn get() -> String | nil {
     while match responses.try-take(TYLS_TIMEOUT) {
+        Some((tyls.pid, nil)) => {
+            error!("tyls exited unexpectedly")
+            restart-tyls!()
+            return nil
+        },
+
         Some((tyls.pid, line)) => {
             warn!("TYLS OUTPUT: {line}")
             return line
@@ -123,7 +132,6 @@ fn get() -> String | nil {
         None => {
             error!("tyls timed out after {TYLS_TIMEOUT}s")
             restart-tyls!()
-            error!("tyls failed to respond after 3 restarts, giving up")
             return nil
         }
     }
@@ -195,11 +203,15 @@ fn dedent(doc: String) -> String {
     lines.map(&[pre;]).join('\n').strip()
 }
 
+fn overload-line(name: String, sig: String) -> String {
+    sig.match?(/^[(\[]/) ? "{name}{sig}" : "{name}: {sig}"
+}
+
 fn hover-signature(info: _) -> String {
     let name = info['name']
-    match info['sig'] {
-        sig: String => sig.lines().map(\"{name}{_}").join('\n'),
-        _           => "{name}: {info['type']}"
+    match info['type'] {
+        sigs: Array[String] => sigs.map(overload-line@(name, _)).join('\n'),
+        type                => "{name}: {type}"
     }
 }
 

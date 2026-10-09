@@ -219,7 +219,6 @@ typedef vec(struct condpart *) condpart_vector;
         X(AND),                                                                       \
         X(OR),                                                                        \
         X(KW_AND),                                                                    \
-        X(KW_OR),                                                                     \
         X(WTF),                                                                       \
         X(LT),                                                                        \
         X(LEQ),                                                                       \
