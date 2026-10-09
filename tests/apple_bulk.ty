@@ -21,8 +21,7 @@ pub fn bulk-metadata-matches-lstat() {
         assert(#entries.map(\_.name).nub() == 145)
         for entry in entries {
             let st = os.lstat(str(root / entry.name))!
-            let got = entry.stat
-            assert(got != nil, entry.name)
+            let $got = entry.stat or throw AssertionError("no stat for {entry.name}")
             assert(got.dev == st.dev, entry.name)
             assert(got.ino == st.ino, entry.name)
             assert(got.mode == st.mode, entry.name)
