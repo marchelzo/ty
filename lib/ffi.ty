@@ -376,6 +376,21 @@ use LexState = {
     }
 }
 
+fn resolve-typedef(t: AST, typedefs: Dict[String, AST]) -> AST {
+    match t {
+        ty.Id({name, *}) => typedefs[name] ?? t,
+        _                => t,
+    }
+}
+
+fn next-typedef(typedefs: Dict[String, AST]) {
+    next()
+    let (t, name) = nexttype(has-name?=true)
+    let $name = name or fail("expected a name in typedef but found: {peek()}")
+    next!(';')
+    typedefs[name] = resolve-typedef(t, typedefs)
+}
+
 fn cfun() {
     let public = peek().type == 'pub'
     if public { next() }
@@ -450,6 +465,7 @@ fn cfun() {
         next!('{')
 
         let funs = []
+        let typedefs: Dict[String, AST] = %{}
 
         while peek().type != '}' {
             let doc = nil
@@ -458,17 +474,23 @@ fn cfun() {
                 doc = "{doc ?? ''}{next-comment()}"
             }
 
+            if peek().?id == 'typedef' {
+                next-typedef(typedefs)
+                continue
+            }
+
             let source = lex.state().source
 
             let i = peek().start.byte
-            let rt: AST = nexttype(has-name?=false).0
+            let rt = resolve-typedef(nexttype(has-name?=false).0, typedefs)
             let j = peek(-1).end.byte
             let rt-string = source.bsplice(i, j)
 
             let name = take-id()
 
             let i = peek().start.byte
-            let (ps, var?) = nextproto()
+            let (raw-ps, var?) = nextproto()
+            let ps = raw-ps.map(resolve-typedef@(_, typedefs))
             let j = peek(-1).end.byte
             let proto-string = source.bsplice(i, j).strip().comb(/^\(|\)$/)
 
@@ -982,64 +1004,100 @@ pub macro C! {
     }
 }
 
-pub fn open(
-    lib: String | [String],
-    versions: Array[String | Int | nil] | nil = nil
-) -> Ptr[Any] | nil {
-    fn try-open(lib: String) {
-        for version in versions ?? [nil] {
-            let names = match version {
 #|if __apple__
-                $version => ["{lib}.{version}.dylib", "{lib}-{version}.dylib"],
-                _        => ["{lib}.dylib"]
-#|else if __windows__
-                $version => ["{lib}-{version}.dll", "{lib}.{version}.dll"],
-                _        => ["{lib}.dll"]
+const SYSTEM_LIBRARY_DIRS = [
+    '/opt/homebrew/lib',
+    '/opt/local/lib',
+    '/usr/local/lib',
+    '/usr/lib',
+]
 #|else
-                $version => ["{lib}.so.{version}", "{lib}-{version}.so", "{lib}.{version}.so"],
-                _        => ["{lib}.so"]
+const SYSTEM_LIBRARY_DIRS = []
 #|]
-            }
-            for name in names {
-                if let $handle = c.dlopen(name) {
-                    return handle
-                }
-            }
-        }
+
+fn library-file?(name: String) -> Bool {
+    name.match?(/\.(?:so(?:\.[\w.]+)?|dylib|dll)$/)
+}
+
+fn library-names(lib: String, versions: Array[String | Int | nil]) -> Array[String] {
+    if library-file?(lib) {
+        return [lib]
     }
 
-    let libs = (lib :: String) ? [lib] : lib
+    let base = lib
+#|if !__windows__
+    if !lib.starts?('lib') {
+        base = "lib{lib}"
+    }
+#|]
+
+    let names = []
+    for version in versions {
+        names += match version {
+#|if __apple__
+            $version => ["{base}.{version}.dylib", "{base}-{version}.dylib"],
+            _        => ["{base}.dylib"]
+#|else if __windows__
+            $version => ["{base}-{version}.dll", "{base}.{version}.dll"],
+            _        => ["{base}.dll"]
+#|else
+            $version => ["{base}.so.{version}", "{base}-{version}.so", "{base}.{version}.so"],
+            _        => ["{base}.so"]
+#|]
+        }
+    }
+    names
+}
+
+fn library-candidates(
+    libs: Array[String],
+    versions: Array[String | Int | nil],
+    dirs: Array[String],
+    env: ?String
+) -> Array[String] {
     let prog-dir = try {
         Module('main').path.comb(/\/[^\/]+$/)
     }
 
+    let override = env && getenv(env)
+    let candidates = [override if override]
+
     for lib in libs {
-#|if !__windows__
-        if ('/' not in lib) && !lib.starts?('lib') {
-            lib = "lib{lib}"
-        }
-#|]
-
-#|if __apple__
-        if '/' not in lib {
-            let dirs = [
-                '/opt/homebrew/lib',
-                '/opt/local/lib'
-                '/usr/local/lib',
-                '/usr/lib',
-            ]
-            for dir in dirs {
-                if let $handle = try-open("{dir}/{lib}") {
-                    return handle
-                }
-            }
-        }
-#|]
-        if let $handle = try-open(lib) {
-            return handle
+        if '/' in lib {
+            let dir  = lib.comb(/\/[^\/]*$/)
+            let file = lib.comb(/^.*\//)
+            candidates += ["{dir}/{it}" for library-names(file, versions)]
+            continue
         }
 
-        if prog-dir != nil and let $handle = try-open("{prog-dir}/{lib}") {
+        let names  = library-names(lib, versions)
+        let search = [override if override] + dirs + SYSTEM_LIBRARY_DIRS
+
+        for dir in search {
+            candidates += ["{dir}/{it}" for names]
+        }
+
+        candidates += names
+
+        if prog-dir != nil {
+            candidates += ["{prog-dir}/{it}" for names]
+        }
+    }
+
+    candidates
+}
+
+pub fn open(
+    lib: String | [String],
+    versions: Array[String | Int | nil] | nil = nil,
+    dirs: Array[String | PathLike] = [],
+    env: ?String = nil
+) -> Ptr[Any] | nil {
+    let libs = (lib :: String) ? [lib] : lib
+    let candidates = library-candidates(libs, versions ?? [nil], dirs.map(prelude::str), env)
+
+    for candidates {
+        if let $handle = c.dlopen(it) {
             return handle
         }
     }
