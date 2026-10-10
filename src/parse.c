@@ -6969,7 +6969,46 @@ parse_class_definition(Ty *ty)
                 // =========================
 
                 Expr *meth;
-                if (
+                if (T0 == '=' && K1 == KEYWORD_USE) {
+                        if (def->type != STATEMENT_CLASS_DEFINITION) {
+                                die("method aliases are only supported in classes and traits");
+                        }
+
+                        if (
+                                (vN(decorators) > 0)
+                             || (vN(macro_decorators) > 0)
+                             || (decorator_macro != NULL)
+                             || dbg
+                             || jit
+                        ) {
+                                die("method alias %s'%s'%s cannot be decorated", TERM(34), name, TERM(39));
+                        }
+
+                        next();
+                        next();
+
+                        setctx(LEX_NAME);
+                        char *target = tok()->identifier;
+                        if (target == NULL) {
+                                die("expected a method name but found %s", token_show(ty, tok()));
+                        }
+                        Location end = tok()->end;
+                        next();
+                        setctx(LEX_PREFIX);
+
+                        avP(
+                                def->tag.aliases,
+                                ((MethodAlias) {
+                                        .name   = name,
+                                        .target = target,
+                                        .s      = _static,
+                                        .start  = start,
+                                        .end    = end
+                                })
+                        );
+
+                        try_consume(';');
+                } else if (
                         (T0 == ':')
                      || (T0 == '=' && tok()->start.s[-1] == ' ')
                 ) {

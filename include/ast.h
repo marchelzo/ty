@@ -33,6 +33,16 @@ struct ns {
         Namespace *next;
 };
 
+typedef struct {
+        char *name;
+        char *target;
+        bool s;
+        Location start;
+        Location end;
+} MethodAlias;
+
+typedef vec(MethodAlias) MethodAliasVec;
+
 struct class_definition {
         int symbol;
         bool pub;
@@ -54,6 +64,8 @@ struct class_definition {
                         ExprVec s_getters;
                         ExprVec s_setters;
                         ExprVec s_fields;
+
+                        MethodAliasVec aliases;
                 };
                 Expr *type;
         };

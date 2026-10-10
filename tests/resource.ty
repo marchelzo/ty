@@ -54,3 +54,35 @@ pub fn resource-drops-comprehensions() {
     assert(ps == [(10, 0), (20, 1)])
     assert(dropped == [1, 2, 3, 4, 5, 6, 8, 9])
 }
+
+class W {
+    k: Int
+    init(k) {
+        self.k = k
+    }
+    __enter__() {
+        dropped.push(-k)
+    }
+    __drop__() {
+        dropped.push(k)
+    }
+}
+
+pub fn with-drops-in-reverse() {
+    dropped = []
+    with a = W(1), b = W(2), c = W(3) {
+        dropped.push(0)
+    }
+    assert(dropped == [-1, -2, -3, 0, 3, 2, 1])
+}
+
+pub fn with-drops-in-reverse-on-throw() {
+    dropped = []
+    try {
+        with a = W(1), b = W(2) {
+            throw nil
+        }
+    } catch _ {
+    }
+    assert(dropped == [-1, -2, 2, 1])
+}

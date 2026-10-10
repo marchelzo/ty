@@ -496,6 +496,137 @@ qget(Ty *ty, ClassVector *cq, u32 *i, u32 j)
         return v__(*cq, i0);
 }
 
+typedef struct {
+        bool s;
+        i32 id;
+        i32 target;
+} PendingAlias;
+
+typedef vec(PendingAlias) PendingAliasVec;
+
+static i32
+AliasMemberId(Class const *c, char const *name)
+{
+        char scratch[512];
+
+        if (!IsPrivateMember(name)) {
+                return M_ID(name);
+        }
+
+        ty_snprintf(scratch, sizeof scratch, "%s$%d", &name[1], c->i);
+
+        return M_ID(scratch);
+}
+
+static bool
+IsAliasId(i32Vector const *ids, i32 id)
+{
+        for (int i = 0; i < vN(*ids); ++i) {
+                if (v__(*ids, i) == id) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static void
+ClaimAliases(Ty *ty, Class *c0, Class const *c, PendingAliasVec *pending)
+{
+        if (c->def == NULL || c->def->type != STATEMENT_CLASS_DEFINITION) {
+                return;
+        }
+
+        MethodAliasVec const *as = &c->def->class.aliases;
+
+        for (int i = 0; i < vN(*as); ++i) {
+                MethodAlias const *a = v_(*as, i);
+                struct itable *t     = a->s ? &c0->s_methods : &c0->methods;
+                i32 id               = AliasMemberId(c, a->name);
+                Value *v             = itable_get(ty, t, id);
+
+                if (v->type != VALUE_NIL) {
+                        continue;
+                }
+
+                *v = ZERO;
+
+                svP(
+                        *pending,
+                        ((PendingAlias) {
+                                .s      = a->s,
+                                .id     = id,
+                                .target = AliasMemberId(c, a->target)
+                        })
+                );
+        }
+}
+
+static void
+CopyMethodsWeak(
+        Ty *ty,
+        struct itable *dst,
+        struct itable const *src,
+        i32Vector const *skip
+)
+{
+        for (int i = 0; i < vN(src->ids); ++i) {
+                i32 id = v__(src->ids, i);
+                if (IsAliasId(skip, id)) {
+                        continue;
+                }
+                Value *v = itable_get(ty, dst, id);
+                if (v->type == VALUE_NIL) {
+                        *v = v__(src->values, i);
+                }
+        }
+}
+
+static Value
+ResolveAlias(
+        Ty *ty,
+        Class *c0,
+        PendingAliasVec const *pending,
+        PendingAlias const *p,
+        int depth
+)
+{
+        for (int i = 0; i < vN(*pending); ++i) {
+                PendingAlias const *q = v_(*pending, i);
+                if (q->s != p->s || q->id != p->target) {
+                        continue;
+                }
+                if (depth >= vN(*pending)) {
+                        return NIL;
+                }
+                return ResolveAlias(ty, c0, pending, q, depth + 1);
+        }
+
+        struct itable *t = p->s ? &c0->s_methods : &c0->methods;
+        Value *v         = itable_lookup(ty, t, p->target);
+
+        return (v == NULL) ? NIL : *v;
+}
+
+static void
+ResolveAliases(Ty *ty, Class *c0, PendingAliasVec const *pending)
+{
+        for (int i = 0; i < vN(*pending); ++i) {
+                PendingAlias const *p = v_(*pending, i);
+                struct itable *t      = p->s ? &c0->s_methods : &c0->methods;
+                i32Vector *ids        = p->s ? &c0->s_alias_ids : &c0->alias_ids;
+                Value v               = ResolveAlias(ty, c0, pending, p, 0);
+
+                xvP(*ids, p->id);
+
+                if (v.type == VALUE_NIL) {
+                        itable_remove(ty, t, p->id);
+                } else {
+                        *itable_get(ty, t, p->id) = v;
+                }
+        }
+}
+
 static void
 class_resolve_all(Ty *ty, int class)
 {
@@ -507,6 +638,7 @@ class_resolve_all(Ty *ty, int class)
         u32 i = 0;
         u32 j = 0;
         ClassVector sq = {0};
+        PendingAliasVec pending = {0};
 
         do {
                 if (c->super != NULL) {
@@ -515,18 +647,21 @@ class_resolve_all(Ty *ty, int class)
                 for (u32 t = 0; t < vN(c->traits); ++t) {
                         qput(ty, &sq, i, &j, v__(c->traits, t));
                 }
+                ClaimAliases(ty, c0, c, &pending);
                 if (c != c0) {
                         finalize(ty, c);
                         itable_copy_weak(ty, &c0->fields,    &c->fields);
-                        itable_copy_weak(ty, &c0->methods,   &c->methods);
+                        CopyMethodsWeak(ty, &c0->methods, &c->methods, &c->alias_ids);
                         itable_copy_weak(ty, &c0->getters,   &c->getters);
                         itable_copy_weak(ty, &c0->setters,   &c->setters);
-                        itable_copy_weak(ty, &c0->s_methods, &c->s_methods);
+                        CopyMethodsWeak(ty, &c0->s_methods, &c->s_methods, &c->s_alias_ids);
                         itable_copy_weak(ty, &c0->s_getters, &c->s_getters);
                         itable_copy_weak(ty, &c0->s_setters, &c->s_setters);
                         itable_copy_weak(ty, &c0->s_fields,  &c->s_fields);
                 }
         } while ((c = qget(ty, &sq, &i, j)) != NULL);
+
+        ResolveAliases(ty, c0, &pending);
 
         SCRATCH_RESTORE();
 }
@@ -821,16 +956,98 @@ FindSetter(Class const *c, char const *name)
         return NULL;
 }
 
-Expr *
-FindMethod(Class const *c, char const *name)
+MethodAlias const *
+FindAliasImmediate(Class const *c, char const *name, bool s)
 {
+        char const *dollar;
+
+        if (
+                (c == NULL)
+             || (c->def == NULL)
+             || (c->def->type != STATEMENT_CLASS_DEFINITION)
+        ) {
+                return NULL;
+        }
+
+        MethodAliasVec const *as = &c->def->class.aliases;
+
+        for (int i = 0; i < vN(*as); ++i) {
+                MethodAlias const *a = v_(*as, i);
+                if (a->s != s) {
+                        continue;
+                }
+                if (s_eq(name, a->name)) {
+                        return a;
+                }
+                if (
+                        (a->name[0] == '_')
+                     && ((dollar = strchr(name, '$')) != NULL)
+                     && (strlen(a->name + 1) == (usize)(dollar - name))
+                     && (memcmp(name, a->name + 1, dollar - name) == 0)
+                ) {
+                        return a;
+                }
+        }
+
+        return NULL;
+}
+
+static Expr *
+FindMethodFrom(Class const *c0, Class const *c, char const *name, int depth)
+{
+        MethodAlias const *a;
+
         while (c != NULL && c->def != NULL) {
                 Expr *m = FindMethodImmediate(&c->def->class.methods, name);
                 if (m != NULL) {
                         return m;
                 }
+                if ((a = FindAliasImmediate(c, name, false)) != NULL) {
+                        if (depth > 64) {
+                                return NULL;
+                        }
+                        return IsPrivateMember(a->target)
+                             ? FindMethodFrom(c, c, a->target, depth + 1)
+                             : FindMethodFrom(c0, c0, a->target, depth + 1);
+                }
                 for (int i = 0; i < vN(c->traits); ++i) {
-                        m = FindMethod(v__(c->traits, i), name);
+                        m = FindMethodFrom(c0, v__(c->traits, i), name, depth);
+                        if (m != NULL) {
+                                return m;
+                        }
+                }
+                c = c->super;
+        }
+
+        return NULL;
+}
+
+Expr *
+FindMethod(Class const *c, char const *name)
+{
+        return FindMethodFrom(c, c, name, 0);
+}
+
+static Expr *
+FindStaticFrom(Class const *c0, Class const *c, char const *name, int depth)
+{
+        MethodAlias const *a;
+
+        while (c != NULL && c->def != NULL) {
+                Expr *m = FindMethodImmediate(&c->def->class.s_methods, name);
+                if (m != NULL) {
+                        return m;
+                }
+                if ((a = FindAliasImmediate(c, name, true)) != NULL) {
+                        if (depth > 64) {
+                                return NULL;
+                        }
+                        return IsPrivateMember(a->target)
+                             ? FindStaticFrom(c, c, a->target, depth + 1)
+                             : FindStaticFrom(c0, c0, a->target, depth + 1);
+                }
+                for (int i = 0; i < vN(c->traits); ++i) {
+                        m = FindStaticFrom(c0, v__(c->traits, i), name, depth);
                         if (m != NULL) {
                                 return m;
                         }
@@ -844,21 +1061,7 @@ FindMethod(Class const *c, char const *name)
 Expr *
 FindStatic(Class const *c, char const *name)
 {
-        while (c != NULL && c->def != NULL) {
-                Expr *m = FindMethodImmediate(&c->def->class.s_methods, name);
-                if (m != NULL) {
-                        return m;
-                }
-                for (int i = 0; i < vN(c->traits); ++i) {
-                        m = FindStatic(v__(c->traits, i), name);
-                        if (m != NULL) {
-                                return m;
-                        }
-                }
-                c = c->super;
-        }
-
-        return NULL;
+        return FindStaticFrom(c, c, name, 0);
 }
 
 Expr *
@@ -1047,7 +1250,7 @@ cache_offsets(
                 }
                 if (find != NULL) {
                         Expr const *meth = (*find)(c, M_NAME(id));
-                        if (vN(meth->decorators) > 0) {
+                        if (meth != NULL && vN(meth->decorators) > 0) {
                                 flags |= OFF_DECORATED;
                                 off = decorated_slot(c, meth);
                         }

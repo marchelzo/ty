@@ -976,7 +976,10 @@ macro __define_ast! {
              setters: [AST],
              static-methods: [AST],
              static-getters: [AST],
-             static-fields: [AST]
+             static-setters: [AST],
+             static-fields: [AST],
+             aliases: [{name: String, target: String}],
+             static-aliases: [{name: String, target: String}]
          }]
        | ty.Let[(AST, AST)]
        | ty.Assign[(AST, AST)]
@@ -4735,7 +4738,10 @@ macro __walk! {
                 fields:  [walk(it, f) for c.?fields  ?? []],
                 static-methods: [walk(it, f) for c.?static-methods ?? []],
                 static-getters: [walk(it, f) for c.?static-getters ?? []],
-                static-fields:  [walk(it, f) for c.?static-fields  ?? []]
+                static-setters: [walk(it, f) for c.?static-setters ?? []],
+                static-fields:  [walk(it, f) for c.?static-fields  ?? []],
+                aliases:        c.?aliases ?? [],
+                static-aliases: c.?static-aliases ?? []
             ),
 
             ty.Cond(cond, a, b) => ty.Cond(

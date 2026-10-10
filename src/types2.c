@@ -2351,6 +2351,20 @@ find_member_x(
                 return NULL;
         }
 
+        MethodAlias const *alias = (kind == T2_MEMBER_METHOD)
+                                 ? FindAliasImmediate(class, name, is_static)
+                                 : NULL;
+        if (alias != NULL) {
+                return find_member_x(
+                        checker,
+                        class_id,
+                        alias->target,
+                        kind,
+                        is_static,
+                        depth + 1
+                );
+        }
+
         if (class->super != NULL && class->super->i != class_id) {
                 (void)ensure_class_interface(checker, class->super->i);
                 member = find_member_x(
@@ -12419,11 +12433,16 @@ infer_subscript_type(
 }
 
 static T2Member *
-find_missing_member(T2Checker *checker, int class_id, T2MemberKind kind)
+find_missing_member(
+        T2Checker   *checker,
+        int          class_id,
+        T2MemberKind kind,
+        bool         is_static
+)
 {
-        T2Member *member = find_member(checker, class_id, "__missing__", kind, false);
+        T2Member *member = find_member(checker, class_id, "__missing__", kind, is_static);
         if (member == NULL) {
-                member = find_member(checker, class_id, "__missing__=", kind, false);
+                member = find_member(checker, class_id, "__missing__=", kind, is_static);
         }
 
         return member;
@@ -12677,6 +12696,28 @@ infer_member_type(
                                 return inherited;
                         }
                 }
+                T2Member *missing = (class_id < 0) ? NULL : find_missing_member(
+                        checker,
+                        class_id,
+                        T2_MEMBER_METHOD,
+                        true
+                );
+                if (missing != NULL) {
+                        T2Type handler    = instantiate_member(checker, missing, instance, site);
+                        T2Type field_name = t2_literal_string(checker->universe, name);
+                        T2Type value = infer_call_types(
+                                checker,
+                                handler,
+                                &field_name,
+                                1,
+                                NULL,
+                                NULL,
+                                0,
+                                site,
+                                diagnose
+                        );
+                        return safe ? t2_join(checker->universe, value, nil) : value;
+                }
                 if (safe) {
                         return nil;
                 }
@@ -12858,7 +12899,8 @@ infer_member_type(
                 T2Member *missing = find_missing_member(
                         checker,
                         class_id,
-                        T2_MEMBER_METHOD
+                        T2_MEMBER_METHOD,
+                        false
                 );
                 if (missing != NULL) {
                         T2Type handler    = instantiate_member(checker, missing, object, site);
@@ -13793,6 +13835,36 @@ check_member_write(
                                         "static field write has the wrong value type"
                                 );
                         }
+                        T2Member *missing_setter = find_missing_member(
+                                checker,
+                                class_id,
+                                T2_MEMBER_SETTER,
+                                true
+                        );
+                        if (missing_setter != NULL) {
+                                T2Type handler = instantiate_member(
+                                        checker,
+                                        missing_setter,
+                                        instance,
+                                        site
+                                );
+                                T2Type arguments[2] = {
+                                        t2_literal_string(checker->universe, name),
+                                        value
+                                };
+                                T2Type result = infer_call_types(
+                                        checker,
+                                        handler,
+                                        arguments,
+                                        2,
+                                        NULL,
+                                        NULL,
+                                        0,
+                                        site,
+                                        diagnose
+                                );
+                                return t2_type_kind(checker->universe, result) != T2_TYPE_ERROR;
+                        }
                 }
                 if (diagnose) {
                         add_diagnostic(
@@ -13907,7 +13979,8 @@ check_member_write(
                 T2Member *missing_setter = find_missing_member(
                         checker,
                         class_id,
-                        T2_MEMBER_SETTER
+                        T2_MEMBER_SETTER,
+                        false
                 );
                 if (missing_setter != NULL) {
                         T2Type handler = instantiate_member(
@@ -36539,6 +36612,11 @@ declared_member(Class const *class, char const *name, bool is_static)
         }
 
         ClassDefinition const *definition = &class->def->class;
+
+        MethodAlias const *alias = FindAliasImmediate(class, name, is_static);
+        if (alias != NULL) {
+                return declared_member(class, alias->target, is_static);
+        }
 
         if (is_static) {
                 return find_member_declaration(&definition->s_methods, name);

@@ -405,6 +405,9 @@ struct class {
         struct itable s_setters;
         struct itable s_fields;
 
+        i32Vector alias_ids;
+        i32Vector s_alias_ids;
+
         vec(bool) impls;
         ClassVector traits;
 

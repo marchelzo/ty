@@ -35,6 +35,9 @@ itable_copy_weak(Ty *ty, struct itable *dst, struct itable const *src);
 Value *
 itable_lookup(Ty *ty, struct itable const *t, i64 id);
 
+void
+itable_remove(Ty *ty, struct itable *t, i64 id);
+
 Value *
 itable_get(Ty *ty, struct itable *t, i64 id);
 

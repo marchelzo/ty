@@ -253,6 +253,9 @@ FindStaticField(Class const *c, char const *name);
 Expr *
 FindMethodImmediate(ExprVec const *ms, char const *name);
 
+MethodAlias const *
+FindAliasImmediate(Class const *c, char const *name, bool s);
+
 Expr *
 FindField(Class const *c, char const *name);
 

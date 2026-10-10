@@ -518,6 +518,9 @@ static void
 InjectRedpill(Ty *ty, Stmt *s);
 
 static void
+InstallMethAliases(Ty *ty, Class *class, ClassDefinition *cd);
+
+static void
 DeclareSymbols(Ty *ty, Stmt *stmt);
 
 static void
@@ -11928,6 +11931,7 @@ InjectRedpill(Ty *ty, Stmt *s)
                         }
                 }
                 AddClassTraits(ty, def);
+                InstallMethAliases(ty, class, def);
                 ResolveFieldTypes(ty, def->scope, &def->fields);
                 ResolveFieldTypes(ty, def->s_scope, &def->s_fields);
                 RedpillMethods(ty, def->scope, &def->methods);
@@ -15204,7 +15208,9 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                         "staticMethods", ARRAY(vA()),
                         "staticGetters", ARRAY(vA()),
                         "staticSetters", ARRAY(vA()),
-                        "staticFields",  ARRAY(vA())
+                        "staticFields",  ARRAY(vA()),
+                        "aliases",       ARRAY(vA()),
+                        "staticAliases", ARRAY(vA())
                 );
                 for (int i = 0; i < vN(s->class.traits); ++i) {
                         vAp(v__(v, 2).array, go(v__(s->class.traits, i)));
@@ -15232,6 +15238,16 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 }
                 for (int i = 0; i < vN(s->class.s_fields); ++i) {
                         vAp(v__(v, 10).array, go(v__(s->class.s_fields, i)));
+                }
+                for (int i = 0; i < vN(s->class.aliases); ++i) {
+                        MethodAlias const *a = v_(s->class.aliases, i);
+                        vAp(
+                                v__(v, a->s ? 12 : 11).array,
+                                vTn(
+                                        "name",   vSsz(a->name),
+                                        "target", vSsz(a->target)
+                                )
+                        );
                 }
                 v = TAGGED(TyClass, v);
                 break;
@@ -15419,6 +15435,39 @@ cparts(Ty *ty, Value *v)
         return parts;
 }
 
+static void
+CAliases(Ty *ty, Stmt *s, Value const *as, bool _static)
+{
+        if (as == NULL || as->type == VALUE_NIL) {
+                return;
+        }
+
+        if (as->type != VALUE_ARRAY) {
+                fail("class %s: aliases must be an array: %s", s->class.name, VSC(as));
+        }
+
+        for (int i = 0; i < vN(*as->array); ++i) {
+                Value const *a = v_(*as->array, i);
+                char *name     = mkcstr(t_(a, "name"));
+                char *target   = mkcstr(t_(a, "target"));
+
+                if (name == NULL || target == NULL) {
+                        fail("class %s: invalid method alias: %s", s->class.name, VSC(a));
+                }
+
+                avP(
+                        s->class.aliases,
+                        ((MethodAlias) {
+                                .name   = name,
+                                .target = target,
+                                .s      = _static,
+                                .start  = s->start,
+                                .end    = s->end
+                        })
+                );
+        }
+}
+
 Stmt *
 cstmt(Ty *ty, Value *v)
 {
@@ -15589,6 +15638,8 @@ cstmt(Ty *ty, Value *v)
                 if (s_fields != NULL) for (int i = 0; i < vN(*s_fields->array); ++i) {
                         avP(s->class.s_fields, cexpr(ty, v_(*s_fields->array, i)));
                 }
+                CAliases(ty, s, tuple_get(v, "aliases"), false);
+                CAliases(ty, s, tuple_get(v, "staticAliases"), true);
                 break;
         }
 
@@ -17799,6 +17850,150 @@ AddToClass(Ty *ty, Expr *meth, add_to_class_fn *add, u32 flags)
         }
 }
 
+static void
+DeclareMethAliases(Ty *ty, Class *class, ClassDefinition *cd)
+{
+        char scratch[512];
+
+        for (int i = 0; i < vN(cd->aliases); ++i) {
+                MethodAlias const *a = v_(cd->aliases, i);
+
+                char *name   = GetPrivateName(a->name, class->i, scratch, sizeof scratch);
+                Scope *scope = a->s ? cd->s_scope : cd->scope;
+                Symbol *sym  = addsymbol(ty, scope, a->name);
+
+                sym->flags  |= SYM_MEMBER;
+                sym->flags  |= a->s ? (SYM_STATIC | SYM_FUNCTION) : 0;
+                sym->member  = M_ID(name);
+                sym->class   = class->i;
+                sym->loc     = a->start;
+        }
+}
+
+static bool
+IsAliasTarget(Class const *c, char const *name, bool s)
+{
+        if (c == NULL || c->def == NULL) {
+                return false;
+        }
+
+        MethodAliasVec const *as = &c->def->class.aliases;
+
+        for (int i = 0; i < vN(*as); ++i) {
+                MethodAlias const *a = v_(*as, i);
+                if (a->s == s && s_eq(a->target, name)) {
+                        return true;
+                }
+        }
+
+        for (int i = 0; i < vN(c->traits); ++i) {
+                if (IsAliasTarget(v__(c->traits, i), name, s)) {
+                        return true;
+                }
+        }
+
+        return IsAliasTarget(c->super, name, s);
+}
+
+static void
+CheckDecoratedAliasTargets(Ty *ty, Class *class, ExprVec const *ms, bool s)
+{
+        for (int i = 0; i < vN(*ms); ++i) {
+                Expr const *m = v__(*ms, i);
+                if (vN(m->decorators) == 0 || !IsAliasTarget(class, m->name, s)) {
+                        continue;
+                }
+                void *ctx = PushContext(ty, m);
+                fail(
+                        "cannot decorate %s%s%s: it is the target of a method alias",
+                        TERM(34), m->name, TERM(39)
+                );
+                RestoreContext(ty, ctx);
+        }
+}
+
+static void
+InstallMethAlias(Ty *ty, Class *class, ClassDefinition *cd, MethodAlias const *a)
+{
+        ExprVec *ms = a->s ? &cd->s_methods : &cd->methods;
+
+        if (FindAliasImmediate(class, a->name, a->s) != a) {
+                fail("duplicate method alias %s%s%s", TERM(34), a->name, TERM(39));
+        }
+
+        if (FindMethodImmediate(ms, a->name) != NULL) {
+                fail(
+                        "method alias %s%s%s conflicts with an existing method",
+                        TERM(34), a->name, TERM(39)
+                );
+        }
+
+        if (FindAliasImmediate(class, a->target, a->s) != NULL) {
+                fail(
+                        "alias target %s%s%s is itself an alias",
+                        TERM(34), a->target, TERM(39)
+                );
+        }
+
+        Expr *target = a->s
+                     ? FindStatic(class, a->target)
+                     : FindMethod(class, a->target);
+
+        if (target == NULL || target->class == NULL) {
+                fail(
+                        "alias target %s%s%s is not a method of %s%s%s",
+                        TERM(34), a->target,   TERM(39),
+                        TERM(34), class->name, TERM(39)
+                );
+        }
+
+        if (
+                IsPrivateMember(a->target)
+             && (target->class != class)
+        ) {
+                fail(
+                        "alias target %s%s%s is private to %s%s%s",
+                        TERM(34), a->target,           TERM(39),
+                        TERM(34), target->class->name, TERM(39)
+                );
+        }
+
+        if (vN(target->decorators) > 0) {
+                fail(
+                        "cannot alias decorated method %s%s%s",
+                        TERM(34), a->target, TERM(39)
+                );
+        }
+
+        Scope *scope = a->s ? cd->s_scope : cd->scope;
+        Symbol *sym  = scope_local_lookup(ty, scope, a->name);
+
+        if (sym != NULL) {
+                sym->expr = target;
+        }
+}
+
+static void
+InstallMethAliases(Ty *ty, Class *class, ClassDefinition *cd)
+{
+        for (int i = 0; i < vN(cd->aliases); ++i) {
+                MethodAlias const *a = v_(cd->aliases, i);
+
+                Expr *site = NewExpr(ty, EXPRESSION_IDENTIFIER);
+                site->identifier = a->name;
+                site->start      = a->start;
+                site->end        = a->end;
+                site->mod        = class->def->mod;
+
+                void *ctx = PushContext(ty, site);
+                InstallMethAlias(ty, class, cd, a);
+                RestoreContext(ty, ctx);
+        }
+
+        CheckDecoratedAliasTargets(ty, class, &cd->methods, false);
+        CheckDecoratedAliasTargets(ty, class, &cd->s_methods, true);
+}
+
 void
 define_class(Ty *ty, Stmt *s)
 {
@@ -17960,6 +18155,8 @@ define_class(Ty *ty, Stmt *s)
                         class_add_field(ty, class, id, m, m);
                 }
         }
+
+        DeclareMethAliases(ty, class, cd);
 
         AddClassFields(ty, class, cd->scope,   &cd->fields,   class_add_field,   0);
         AddClassFields(ty, class, cd->s_scope, &cd->s_fields, class_add_s_field, SYM_STATIC);

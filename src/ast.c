@@ -205,6 +205,17 @@ visit_function(Ty *ty, Expr *e, Scope *scope, VisitorCtx *ctxt)
 }
 
 static void
+bind_aliases(Ty *ty, MethodAliasVec const *aliases, Scope *scope, bool s, u32 flags)
+{
+        for (usize i = 0; i < vN(*aliases); ++i) {
+                MethodAlias const *a = v_(*aliases, i);
+                if (a->s == s) {
+                        bind_name(ty, scope, a->name, SYM_MEMBER | flags);
+                }
+        }
+}
+
+static void
 bind_members(Ty *ty, ExprVec const *members, Scope *scope, u32 flags)
 {
         for (usize i = 0; i < vN(*members); ++i) {
@@ -264,6 +275,7 @@ visit_class(Ty *ty, ClassDefinition *cd, Scope *scope, VisitorCtx *ctxt)
                 bind_members(ty, &cd->s_methods, scope, SYM_STATIC | SYM_FUNCTION);
                 bind_members(ty, &cd->s_getters, scope, SYM_STATIC | SYM_PROPERTY);
                 bind_members(ty, &cd->s_setters, scope, SYM_STATIC | SYM_PROPERTY);
+                bind_aliases(ty, &cd->aliases, scope, true, SYM_STATIC | SYM_FUNCTION);
                 visit_members(ty, &cd->s_fields, scope, ctxt);
 
                 SUB(false, "(static methods)",
@@ -278,6 +290,7 @@ visit_class(Ty *ty, ClassDefinition *cd, Scope *scope, VisitorCtx *ctxt)
                         bind_members(ty, &cd->methods, scope, SYM_FUNCTION);
                         bind_members(ty, &cd->getters, scope, SYM_PROPERTY);
                         bind_members(ty, &cd->setters, scope, SYM_PROPERTY);
+                        bind_aliases(ty, &cd->aliases, scope, false, SYM_FUNCTION);
                         visit_members(ty, &cd->fields, scope, ctxt);
                         bind_name(ty, scope, "self", 0);
                         visit_members(ty, &cd->methods, scope, ctxt);

@@ -269,6 +269,17 @@ itable_lookup(Ty *ty, struct itable const *t, i64 id)
 }
 
 void
+itable_remove(Ty *ty, struct itable *t, i64 id)
+{
+        int i;
+
+        if (bfind(t, id, &i)) {
+                vvXi(t->ids, i);
+                vvXi(t->values, i);
+        }
+}
+
+void
 itable_release(Ty *ty, struct itable *t)
 {
         vvF(t->ids);

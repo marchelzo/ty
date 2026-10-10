@@ -485,7 +485,7 @@ lexname(Ty *ty)
                 raw = true;
         }
 
-        bool special_ok = true;
+        bool special_ok = raw || contains(MethodNameChars, v_L(name));
 
         for (u8 c; strchr(STOP, (c = C(0))) == NULL; nextchar(ty)) {
                 if (c == ':') {

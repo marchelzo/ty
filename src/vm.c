@@ -2653,7 +2653,7 @@ DoDrop(Ty *ty)
 {
         Value group = *vvL(DROP_STACK);
 
-        for (int i = 0; i < vN(*group.array); ++i) {
+        for (int i = vN(*group.array) - 1; i >= 0; --i) {
                 xdrop(ty, v_(*group.array, i));
         }
 
@@ -4637,14 +4637,85 @@ DoPtrMutOp(Ty *ty, int op)
         put(val);
 }
 
+static void
+DoSetterMutOp(Ty *ty, uptr p, int op, bool exec)
+{
+        Value self;
+        Value *get;
+        Value *set;
+        uptr c;
+        i32 m;
+
+        switch (pT(p)) {
+        case 2:
+                set  = (Value *)pP(p);
+                c    = (uptr)poptarget();
+                self = OBJECT(vZ(TARGETS)->gc, c);
+                get  = poptarget();
+                break;
+
+        case 3:
+                m    = (i32)(p >> 3);
+                c    = (uptr)poptarget();
+                self = OBJECT(vZ(TARGETS)->gc, c);
+                get  = class_lookup_method_i(ty, c, NAMES.missing);
+                set  = class_lookup_setter_i(ty, c, NAMES.missing);
+                goto Missing;
+
+        case 4:
+                m    = (i32)(p >> 3);
+                c    = (uptr)poptarget();
+                self = CLASS(c);
+                get  = class_lookup_s_method_i(ty, c, NAMES.missing);
+                set  = class_lookup_s_setter_i(ty, c, NAMES.missing);
+                goto Missing;
+
+        case 6:
+                set  = (Value *)pP(p);
+                c    = (uptr)poptarget();
+                self = CLASS(c);
+                get  = poptarget();
+                break;
+
+        default:
+                zP("bad target pointer :(");
+        }
+
+        exec_fn(ty, get, &self, 0, NULL);
+        top()[-1] = vm_2op(ty, op, top(), top() - 1);
+        pop();
+
+        if (exec) {
+                exec_fn(ty, set, &self, 1, NULL);
+        } else {
+                call(ty, set, &self, 1, NULL);
+        }
+
+        return;
+
+Missing:
+        xpush(xSz(M_NAME(m)));
+        exec_fn(ty, get, &self, 1, NULL);
+        top()[-1] = vm_2op(ty, op, top(), top() - 1);
+        pop();
+        push(xSz(M_NAME(m)));
+        swap();
+
+        if (exec) {
+                exec_fn(ty, set, &self, 2, NULL);
+        } else {
+                call(ty, set, &self, 2, NULL);
+        }
+}
+
 void
 DoMutDiv(Ty *ty, bool exec)
 {
-        uptr c, p = (uptr)poptarget();
-        TyObject *o;
+        uptr p = (uptr)poptarget();
         Value *vp, *vp2, val, x;
-        void *v = vp = (void *)pP(p);
         unsigned char b;
+
+        vp = (Value *)pP(p);
 
         switch (pT(p)) {
         case 0:
@@ -4677,17 +4748,10 @@ DoMutDiv(Ty *ty, bool exec)
                 break;
 
         case 2:
-                c  = (uptr)poptarget();
-                o  = TARGETS.items[TARGETS.count].gc;
-                vp = poptarget();
-                exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
-                top()[-1] = vm_2op(ty, OP_DIV, top(), top() - 1);
-                pop();
-                if (exec) {
-                        exec_fn(ty, v, &OBJECT(o, c), 1, NULL);
-                } else {
-                        call(ty, v, &OBJECT(o, c), 1, NULL);
-                }
+        case 3:
+        case 4:
+        case 6:
+                DoSetterMutOp(ty, p, OP_DIV, exec);
                 break;
 
         case 5:
@@ -4702,11 +4766,11 @@ DoMutDiv(Ty *ty, bool exec)
 void
 DoMutMod(Ty *ty, bool exec)
 {
-        uptr c, p = (uptr)poptarget();
-        TyObject *o;
+        uptr p = (uptr)poptarget();
         Value *vp, val, x;
-        void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
+
+        vp = (Value *)(p & ~PMASK3);
 
         switch (p & PMASK3) {
         case 0:
@@ -4737,17 +4801,10 @@ DoMutMod(Ty *ty, bool exec)
                 break;
 
         case 2:
-                c = (uptr)poptarget();
-                o = TARGETS.items[TARGETS.count].gc;
-                vp = poptarget();
-                exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
-                top()[-1] = vm_2op(ty, OP_MOD, top(), top() - 1);
-                pop();
-                if (exec) {
-                        exec_fn(ty, v, &OBJECT(o, c), 1, NULL);
-                } else {
-                        call(ty, v, &OBJECT(o, c), 1, NULL);
-                }
+        case 3:
+        case 4:
+        case 6:
+                DoSetterMutOp(ty, p, OP_MOD, exec);
                 break;
 
         case 5:
@@ -4762,11 +4819,11 @@ DoMutMod(Ty *ty, bool exec)
 void
 DoMutMul(Ty *ty, bool exec)
 {
-        uptr c, p = (uptr)poptarget();
-        TyObject *o;
+        uptr p = (uptr)poptarget();
         Value *vp, val, x;
-        void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
+
+        vp = (Value *)(p & ~PMASK3);
 
         switch (p & PMASK3) {
         case 0:
@@ -4811,17 +4868,10 @@ DoMutMul(Ty *ty, bool exec)
                 break;
 
         case 2:
-                c = (uptr)poptarget();
-                o = TARGETS.items[TARGETS.count].gc;
-                vp = poptarget();
-                exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
-                top()[-1] = vm_2op(ty, OP_MUL, top(), top() - 1);
-                pop();
-                if (exec) {
-                        exec_fn(ty, v, &OBJECT(o, c), 1, NULL);
-                } else {
-                        call(ty, v, &OBJECT(o, c), 1, NULL);
-                }
+        case 3:
+        case 4:
+        case 6:
+                DoSetterMutOp(ty, p, OP_MUL, exec);
                 break;
 
         case 5:
@@ -4836,11 +4886,11 @@ DoMutMul(Ty *ty, bool exec)
 void
 DoMutSub(Ty *ty, bool exec)
 {
-        uptr c, p = (uptr)poptarget();
-        TyObject *o;
+        uptr p = (uptr)poptarget();
         Value *vp, x, val;
-        void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
+
+        vp = (Value *)(p & ~PMASK3);
 
         switch (p & PMASK3) {
         case 0:
@@ -4896,17 +4946,10 @@ DoMutSub(Ty *ty, bool exec)
                 break;
 
         case 2:
-                c = (uptr)poptarget();
-                o = TARGETS.items[TARGETS.count].gc;
-                vp = poptarget();
-                exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
-                top()[-1] = vm_2op(ty, OP_SUB, top(), top() - 1);
-                pop();
-                if (exec) {
-                        exec_fn(ty, v, &OBJECT(o, c), 1, NULL);
-                } else {
-                        call(ty, v, &OBJECT(o, c), 1, NULL);
-                }
+        case 3:
+        case 4:
+        case 6:
+                DoSetterMutOp(ty, p, OP_SUB, exec);
                 break;
 
         case 5:
@@ -4921,11 +4964,11 @@ DoMutSub(Ty *ty, bool exec)
 void
 DoMutAdd(Ty *ty, bool exec)
 {
-        uptr c, p = (uptr)poptarget();
-        TyObject *o;
+        uptr p = (uptr)poptarget();
         Value *vp, val, x;
-        void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
+
+        vp = (Value *)(p & ~PMASK3);
 
         switch (p & PMASK3) {
         case 0:
@@ -4978,17 +5021,10 @@ DoMutAdd(Ty *ty, bool exec)
                 break;
 
         case 2:
-                c = (uptr)poptarget();
-                o = vZ(TARGETS)->gc;
-                vp = poptarget();
-                exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
-                top()[-1] = vm_2op(ty, OP_ADD, top(), top() - 1);
-                pop();
-                if (exec) {
-                        exec_fn(ty, v, &OBJECT(o, c), 1, NULL);
-                } else {
-                        call(ty, v, &OBJECT(o, c), 1, NULL);
-                }
+        case 3:
+        case 4:
+        case 6:
+                DoSetterMutOp(ty, p, OP_ADD, exec);
                 break;
 
         case 5:
@@ -5003,11 +5039,11 @@ DoMutAdd(Ty *ty, bool exec)
 void
 DoMutAnd(Ty *ty, bool exec)
 {
-        uptr c, p = (uptr)poptarget();
-        TyObject *o;
+        uptr p = (uptr)poptarget();
         Value *vp, val, x;
-        void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
+
+        vp = (Value *)(p & ~PMASK3);
 
         switch (p & PMASK3) {
         case 0:
@@ -5050,17 +5086,10 @@ DoMutAnd(Ty *ty, bool exec)
                 break;
 
         case 2:
-                c = (uptr)poptarget();
-                o = TARGETS.items[TARGETS.count].gc;
-                vp = poptarget();
-                exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
-                top()[-1] = vm_2op(ty, OP_BIT_AND, top(), top() - 1);
-                pop();
-                if (exec) {
-                        exec_fn(ty, v, &OBJECT(o, c), 1, NULL);
-                } else {
-                        call(ty, v, &OBJECT(o, c), 1, NULL);
-                }
+        case 3:
+        case 4:
+        case 6:
+                DoSetterMutOp(ty, p, OP_BIT_AND, exec);
                 break;
 
         case 5:
@@ -5075,11 +5104,11 @@ DoMutAnd(Ty *ty, bool exec)
 void
 DoMutOr(Ty *ty, bool exec)
 {
-        uptr c, p = (uptr)poptarget();
-        TyObject *o;
+        uptr p = (uptr)poptarget();
         Value *vp, val, x;
-        void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
+
+        vp = (Value *)(p & ~PMASK3);
 
         switch (p & PMASK3) {
         case 0:
@@ -5118,17 +5147,10 @@ DoMutOr(Ty *ty, bool exec)
                 break;
 
         case 2:
-                c = (uptr)poptarget();
-                o = TARGETS.items[TARGETS.count].gc;
-                vp = poptarget();
-                exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
-                top()[-1] = vm_2op(ty, OP_BIT_OR, top(), top() - 1);
-                pop();
-                if (exec) {
-                        exec_fn(ty, v, &OBJECT(o, c), 1, NULL);
-                } else {
-                        call(ty, v, &OBJECT(o, c), 1, NULL);
-                }
+        case 3:
+        case 4:
+        case 6:
+                DoSetterMutOp(ty, p, OP_BIT_OR, exec);
                 break;
 
         case 5:
@@ -5143,11 +5165,11 @@ DoMutOr(Ty *ty, bool exec)
 void
 DoMutXor(Ty *ty, bool exec)
 {
-        uptr c, p = (uptr)poptarget();
-        TyObject *o;
+        uptr p = (uptr)poptarget();
         Value *vp, val, x;
-        void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
+
+        vp = (Value *)(p & ~PMASK3);
 
         switch (p & PMASK3) {
         case 0:
@@ -5186,17 +5208,10 @@ DoMutXor(Ty *ty, bool exec)
                 break;
 
         case 2:
-                c = (uptr)poptarget();
-                o = TARGETS.items[TARGETS.count].gc;
-                vp = poptarget();
-                exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
-                top()[-1] = vm_2op(ty, OP_BIT_XOR, top(), top() - 1);
-                pop();
-                if (exec) {
-                        exec_fn(ty, v, &OBJECT(o, c), 1, NULL);
-                } else {
-                        call(ty, v, &OBJECT(o, c), 1, NULL);
-                }
+        case 3:
+        case 4:
+        case 6:
+                DoSetterMutOp(ty, p, OP_BIT_XOR, exec);
                 break;
 
         case 5:
@@ -5211,11 +5226,11 @@ DoMutXor(Ty *ty, bool exec)
 void
 DoMutShl(Ty *ty, bool exec)
 {
-        uptr c, p = (uptr)poptarget();
-        TyObject *o;
+        uptr p = (uptr)poptarget();
         Value *vp, val, x;
-        void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
+
+        vp = (Value *)(p & ~PMASK3);
 
         switch (p & PMASK3) {
         case 0:
@@ -5246,17 +5261,10 @@ DoMutShl(Ty *ty, bool exec)
                 break;
 
         case 2:
-                c = (uptr)poptarget();
-                o = TARGETS.items[TARGETS.count].gc;
-                vp = poptarget();
-                exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
-                top()[-1] = vm_2op(ty, OP_BIT_SHL, top(), top() - 1);
-                pop();
-                if (exec) {
-                        exec_fn(ty, v, &OBJECT(o, c), 1, NULL);
-                } else {
-                        call(ty, v, &OBJECT(o, c), 1, NULL);
-                }
+        case 3:
+        case 4:
+        case 6:
+                DoSetterMutOp(ty, p, OP_BIT_SHL, exec);
                 break;
 
         case 5:
@@ -5271,11 +5279,11 @@ DoMutShl(Ty *ty, bool exec)
 void
 DoMutShr(Ty *ty, bool exec)
 {
-        uptr c, p = (uptr)poptarget();
-        TyObject *o;
+        uptr p = (uptr)poptarget();
         Value *vp, val, x;
-        void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
+
+        vp = (Value *)(p & ~PMASK3);
 
         switch (p & PMASK3) {
         case 0:
@@ -5306,17 +5314,10 @@ DoMutShr(Ty *ty, bool exec)
                 break;
 
         case 2:
-                c = (uptr)poptarget();
-                o = TARGETS.items[TARGETS.count].gc;
-                vp = poptarget();
-                exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
-                top()[-1] = vm_2op(ty, OP_BIT_SHR, top(), top() - 1);
-                pop();
-                if (exec) {
-                        exec_fn(ty, v, &OBJECT(o, c), 1, NULL);
-                } else {
-                        call(ty, v, &OBJECT(o, c), 1, NULL);
-                }
+        case 3:
+        case 4:
+        case 6:
+                DoSetterMutOp(ty, p, OP_BIT_SHR, exec);
                 break;
 
         case 5:
@@ -5368,6 +5369,12 @@ DoAssign(Ty *ty)
                 exec_fn(ty, class_lookup_s_setter_i(ty, c, NAMES.missing), &CLASS(c), 2, NULL);
                 break;
 
+        case 6:
+                c = (uptr)poptarget();
+                poptarget();
+                call(ty, v, &CLASS(c), 1, NULL);
+                break;
+
         default:
                 zP("bad target pointer :(");
         }
@@ -5411,6 +5418,12 @@ DoAssignExec(Ty *ty)
                 push(xSz(M_NAME(m)));
                 swap();
                 exec_fn(ty, class_lookup_s_setter_i(ty, c, NAMES.missing), &CLASS(c), 2, NULL);
+                break;
+
+        case 6:
+                c = (uptr)poptarget();
+                poptarget();
+                exec_fn(ty, v, &CLASS(c), 1, NULL);
                 break;
 
         default:
@@ -5475,15 +5488,28 @@ DoTargetMember(Ty *ty, Value v, i32 z)
                 break;
 
         case VALUE_CLASS:
+                vp = class_lookup_s_setter_i(ty, v.class, z);
+                if (vp != NULL) {
+                        vp2 = class_lookup_s_getter_i(ty, v.class, z);
+                        if (UNLIKELY(vp2 == NULL)) {
+                                zP(
+                                        "class %s%s%s needs a static getter for %s%s%s!",
+                                        TERM(33),
+                                        class_name(ty, v.class),
+                                        TERM(0),
+                                        TERM(34),
+                                        M_NAME(z),
+                                        TERM(0)
+                                );
+                        }
+                        pushtarget(vp2, NULL);
+                        pushtarget((Value *)(uptr)v.class, NULL);
+                        pushtarget((Value *)(((uptr)vp) | 6), NULL);
+                        return;
+                }
                 vp = class_lookup_field(ty, v.class, z);
                 if (vp != NULL) {
                         pushtarget(vp, NULL);
-                        return;
-                }
-                vp = class_lookup_s_setter_i(ty, v.class, z);
-                if (vp != NULL) {
-                        pushtarget(vp, NULL);
-                        pushtarget((Value *)(uptr)v.class, NULL);
                         return;
                 }
                 vp = class_lookup_s_setter_i(ty, v.class, NAMES.missing);
