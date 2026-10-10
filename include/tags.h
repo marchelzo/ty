@@ -52,12 +52,6 @@ tags_name(Ty *ty, int tag);
 int
 tags_count(Ty *ty);
 
-int
-tags_list_count(Ty *ty);
-
-void
-tags_truncate(Ty *ty, int n_tags, int n_lists);
-
 void
 tags_add_method(Ty *ty, int tag, char const *name, struct value f);
 

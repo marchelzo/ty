@@ -95,11 +95,17 @@ fn spawn-tyls() {
 
 let tyls = spawn-tyls()
 
+fn kill-tyls(sig: Int) {
+    if kill(-tyls.pid, sig) != 0 {
+        kill(tyls.pid, sig)
+    }
+}
+
 fn restart-tyls!() {
     warn!("restarting tyls")
 
     close(tyls.stdin)
-    kill(tyls.pid, SIGKILL)
+    kill-tyls(SIGKILL)
     wait(tyls.pid)
 
     responses.clear()
@@ -108,7 +114,7 @@ fn restart-tyls!() {
 }
 
 onExit(fn () {
-    kill(tyls.pid, SIGTERM)
+    kill-tyls(SIGTERM)
 })
 
 fn get() -> String | nil {

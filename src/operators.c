@@ -293,43 +293,17 @@ op_fun_info(i32 op, i32 t1, i32 t2)
 }
 
 
-U32Vector
-op_baseline(Ty *ty)
-{
-        U32Vector base = {0};
-
-        for (i32 i = 0; i < vN(_2.ops); ++i) {
-                DispatchGroup *group = v__(_2.ops, i);
-                xvP(base, (u32)vN(group->defs));
-        }
-
-        return base;
-}
-
 void
-op_reset(U32Vector const *base)
+op_reset(void)
 {
-        U32Vector _zero = {0};
-
-        if (base == NULL) {
-                base = &_zero;
-        }
-
-        for (i32 i = 0; i < vN(*base); ++i) {
-                DispatchGroup *group = v__(_2.ops, i);
-                xvF(group->cache);
-                v00(group->cache);
-                vN(group->defs) = v__(*base, i);
-        }
-
-        for (i32 i = vN(*base); i < vN(_2.ops); ++i) {
+        for (i32 i = 0; i < vN(_2.ops); ++i) {
                 DispatchGroup *group = v__(_2.ops, i);
                 xvF(group->cache);
                 xvF(group->defs);
                 xmF(group);
         }
 
-        vN(_2.ops) = vN(*base);
+        v0(_2.ops);
 }
 
 void

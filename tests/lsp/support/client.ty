@@ -228,8 +228,8 @@ pub class Server {
     }
 
     healthy?() -> Bool {
-        restarts() == __restarts-seen
-            && !new-errors().match?(/AddressSanitizer|panic|SIG[A-Z]+/)
+        (restarts() == __restarts-seen)
+     && new-errors() !:: /AddressSanitizer|panic|SIG[A-Z]+/
     }
 
     assert-healthy(what: String) {

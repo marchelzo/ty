@@ -555,9 +555,7 @@ void
 op_dump(int op);
 
 void
-op_reset(U32Vector const *base);
+op_reset(void);
 
-U32Vector
-op_baseline(Ty *ty);
 
 #endif

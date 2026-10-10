@@ -10,8 +10,15 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/time.h>
+#include <dirent.h>
+#include <time.h>
 #if defined(__linux__)
 #include <link.h>
+#endif
+#if defined(__APPLE__)
+#include <dlfcn.h>
+#include <mach-o/loader.h>
 #endif
 #include <xxhash.h>
 
@@ -2608,22 +2615,6 @@ interface_slot(int class_id)
         }
 
         return &Interfaces[class_id];
-}
-
-void
-t2_forget_classes(int class_count)
-{
-        for (usize i = (usize)class_count; i < InterfaceCount; ++i) {
-                T2Interface *interface = &Interfaces[i];
-                for (usize j = 0; j < vN(interface->members); ++j) {
-                        t2_scheme_free(v_(interface->members, j)->scheme);
-                }
-                xvF(interface->members);
-        }
-
-        if ((usize)class_count < InterfaceCount) {
-                InterfaceCount = (usize)class_count;
-        }
 }
 
 static void
@@ -30797,6 +30788,14 @@ cache_digest(void)
 }
 
 static void
+trace_cache_path(char const *event, char const *path)
+{
+        if (option_enabled("TY_TYPES2_CACHE_TRACE")) {
+                fprintf(stderr, "types2 cache %s %s\n", event, path);
+        }
+}
+
+static void
 trace_cache(T2Checker *checker, char const *event, char const *detail)
 {
         if (!option_enabled("TY_TYPES2_CACHE_TRACE")) {
@@ -30851,6 +30850,37 @@ build_id_note(struct dl_phdr_info *info, usize size, void *user)
 }
 #endif
 
+#if defined(__APPLE__)
+static u64
+image_uuid(void)
+{
+        Dl_info info;
+
+        if (
+                (dladdr((void const *)image_uuid, &info) == 0)
+             || (info.dli_fbase == NULL)
+        ) {
+                return 0;
+        }
+
+        struct mach_header_64 const *mh = info.dli_fbase;
+        if (mh->magic != MH_MAGIC_64) {
+                return 0;
+        }
+
+        struct load_command const *lc = (void const *)(mh + 1);
+        for (u32 i = 0; i < mh->ncmds; ++i) {
+                if (lc->cmd == LC_UUID) {
+                        struct uuid_command const *uc = (void const *)lc;
+                        return XXH3_64bits(uc->uuid, sizeof uc->uuid);
+                }
+                lc = (void const *)((char const *)lc + lc->cmdsize);
+        }
+
+        return 0;
+}
+#endif
+
 static u64
 build_identity(void)
 {
@@ -30860,6 +30890,8 @@ build_identity(void)
         }
 #if defined(__linux__)
         dl_iterate_phdr(build_id_note, &identity);
+#elif defined(__APPLE__)
+        identity = image_uuid();
 #endif
         if (identity == 0) {
                 char const *stamp = __DATE__ " " __TIME__;
@@ -30993,13 +31025,13 @@ cache_directory(char *buffer, usize size)
         return n < (int)size;
 }
 
-static void
+static bool
 ensure_directory(char const *path)
 {
         char buffer[PATH_MAX];
         usize length = strlen(path);
         if (length == 0 || length >= sizeof buffer) {
-                return;
+                return false;
         }
 
         memcpy(buffer, path, length + 1);
@@ -31012,7 +31044,124 @@ ensure_directory(char const *path)
                 buffer[i] = '/';
         }
 
-        (void)mkdir(buffer, 0777);
+        return mkdir(buffer, 0777) == 0;
+}
+
+enum {
+        CACHE_MAX_IDLE = 7 * 24 * 60 * 60
+};
+
+static bool
+has_suffix(char const *s, char const *suffix)
+{
+        usize n = strlen(s);
+        usize m = strlen(suffix);
+        return (n >= m) && (memcmp(s + n - m, suffix, m) == 0);
+}
+
+static bool
+is_build_directory_name(char const *name)
+{
+        usize n = 0;
+
+        for (; name[n] != '\0'; ++n) {
+                if (!isdigit((unsigned char)name[n]) && !(name[n] >= 'a' && name[n] <= 'f')) {
+                        return false;
+                }
+        }
+
+        return n == 16;
+}
+
+static void
+remove_build_directory(char const *path)
+{
+        DIR *dir = opendir(path);
+        if (dir == NULL) {
+                return;
+        }
+
+        struct dirent *entry;
+        while ((entry = readdir(dir)) != NULL) {
+                if (
+                        !has_suffix(entry->d_name, ".t2c")
+                     && !has_suffix(entry->d_name, ".tmp")
+                ) {
+                        continue;
+                }
+
+                char file[PATH_MAX];
+                int n = ty_snprintf(file, sizeof file, "%s/%s", path, entry->d_name);
+                if (n > 0 && (usize)n < sizeof file) {
+                        (void)unlink(file);
+                }
+        }
+
+        closedir(dir);
+        (void)rmdir(path);
+}
+
+static void
+prune_build_directories(char const *directory)
+{
+        char const *override = getenv("TY_TYPES2_CACHE_DIR");
+        if (override != NULL && *override != '\0') {
+                return;
+        }
+
+        char const *slash = strrchr(directory, '/');
+        char parent[PATH_MAX];
+        if (slash == NULL || (usize)(slash - directory) >= sizeof parent) {
+                return;
+        }
+
+        memcpy(parent, directory, slash - directory);
+        parent[slash - directory] = '\0';
+
+        DIR *dir = opendir(parent);
+        if (dir == NULL) {
+                return;
+        }
+
+        time_t now = time(NULL);
+        struct dirent *entry;
+        while ((entry = readdir(dir)) != NULL) {
+                if (
+                        !is_build_directory_name(entry->d_name)
+                     || (strcmp(entry->d_name, slash + 1) == 0)
+                ) {
+                        continue;
+                }
+
+                char path[PATH_MAX];
+                struct stat st;
+                int n = ty_snprintf(path, sizeof path, "%s/%s", parent, entry->d_name);
+                if (
+                        (n <= 0)
+                     || ((usize)n >= sizeof path)
+                     || (lstat(path, &st) != 0)
+                     || !S_ISDIR(st.st_mode)
+                     || (now - st.st_mtime < CACHE_MAX_IDLE)
+                ) {
+                        continue;
+                }
+
+                trace_cache_path("prune", path);
+                remove_build_directory(path);
+        }
+
+        closedir(dir);
+}
+
+static void
+touch_build_directory(char const *directory)
+{
+        static bool touched;
+
+        if (!touched) {
+                touched = true;
+                (void)utimes(directory, NULL);
+        }
 }
 
 static char *
@@ -31022,6 +31171,8 @@ cache_file_path(Ty *ty, Module const *module)
         if (!cache_directory(directory, sizeof directory)) {
                 return NULL;
         }
+
+        touch_build_directory(directory);
 
         char name[128];
         usize n = 0;
@@ -32311,8 +32462,11 @@ write_cache(T2Checker *checker)
                && t2_bytes_append(&file, vv(body), vN(body));
         if (ok) {
                 char directory[PATH_MAX];
-                if (cache_directory(directory, sizeof directory)) {
-                        ensure_directory(directory);
+                if (
+                        cache_directory(directory, sizeof directory)
+                     && ensure_directory(directory)
+                ) {
+                        prune_build_directories(directory);
                 }
                 ok = write_file(checker->cache_path, vv(file), vN(file));
         }
@@ -34507,8 +34661,11 @@ write_declarations(T2Checker *checker, char const *path, u64 key)
 
         if (ok) {
                 char directory[PATH_MAX];
-                if (cache_directory(directory, sizeof directory)) {
-                        ensure_directory(directory);
+                if (
+                        cache_directory(directory, sizeof directory)
+                     && ensure_directory(directory)
+                ) {
+                        prune_build_directories(directory);
                 }
                 ok = write_file(path, vv(file), vN(file));
         }

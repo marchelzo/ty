@@ -13250,6 +13250,7 @@ import_module(Ty *ty, Stmt const *s)
 void
 compiler_init(Ty *ty)
 {
+        parse_init(ty);
         tags_init(ty);
 
         m0(null);
@@ -20719,7 +20720,7 @@ CompilerReset(Ty *ty)
 
         t = 0;
 
-        op_reset(NULL);
+        op_reset();
         scope_reset();
         class_reset(ty);
         parse_reset(ty);
@@ -20757,56 +20758,6 @@ CompilerResetState(Ty *ty)
 
 #ifdef TY_LS
 
-CompilerBaseline
-CompilerSaveBaseline(Ty *ty)
-{
-        return (CompilerBaseline) {
-                .module_count   = vN(modules),
-                .class_count    = class_count(ty),
-                .trait_count    = trait_count(ty),
-                .tag_count      = tags_count(ty),
-                .tag_list_count = tags_list_count(ty),
-                .location_count = vN(location_lists),
-                .global_count   = GlobalCount,
-                .symbol_count   = scope_get_symbol(ty),
-                .owned_count    = vN(GlobalScope->owned),
-                ._2op_baseline  = op_baseline(ty)
-        };
-}
-
-void
-CompilerRestoreBaseline(Ty *ty, CompilerBaseline const *b)
-{
-        class_truncate(ty, b->class_count, b->trait_count);
-        t2_forget_classes(b->class_count);
-        tags_truncate(ty, b->tag_count, b->tag_list_count);
-
-        for (int i = b->location_count; i < vN(location_lists); ++i) {
-                xvF(*v_(location_lists, i));
-        }
-        vN(location_lists) = b->location_count;
-
-        vN(modules)  = b->module_count;
-        MainModule   = NULL;
-        ContextList  = NULL;
-        GlobalCount  = b->global_count;
-
-        UndefinedSymbol = (Symbol) {
-                .flags = SYM_PUBLIC | SYM_GLOBAL,
-                .i = -1
-        };
-
-        scope_set_symbol(ty, b->symbol_count);
-        vN(GlobalScope->owned) = b->owned_count;
-
-        op_reset(&b->_2op_baseline);
-
-        for (int i = 0; i < vN(ty->_2op_cache); ++i) {
-                xvF(v__(ty->_2op_cache, i));
-        }
-        v0(ty->_2op_cache);
-}
-
 void
 CompilerLoadModuleByPath(Ty *ty, char const *path)
 {
@@ -20829,39 +20780,6 @@ CompilerLoadModuleByPath(Ty *ty, char const *path)
         }
 
         load_module_source(ty, module_name, S2(path), source, NULL);
-}
-
-void
-CompilerSnapshotArena(Arena const *a, ArenaSnapshotVector *snaps)
-{
-        for (int i = 0; i < vN(*snaps); ++i) {
-                xmF(v_(*snaps, i)->copy);
-        }
-        v0(*snaps);
-
-        for (; a->base != NULL; a = NextArena(a)) {
-                Arena *next = NextArena(a);
-                ptrdiff_t used = a->beg - a->base;
-                char *copy = xmA(used);
-                memcpy(copy, a->base, used);
-                xvP(*snaps, ((ArenaSnapshot) {
-                        .base = a->base,
-                        .beg  = a->beg,
-                        .copy = copy,
-                        .used = used
-                }));
-        }
-}
-
-void
-CompilerRestoreArena(ArenaSnapshotVector const *snaps)
-{
-        for (int i = 0; i < vN(*snaps); ++i) {
-                ArenaSnapshot const *s = v_(*snaps, i);
-                memcpy(s->base, s->copy, s->used);
-                Arena *a = (Arena *)s->base;
-                a->beg = s->beg;
-        }
 }
 
 #endif

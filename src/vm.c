@@ -1015,6 +1015,9 @@ add_builtins(Ty *ty, int ac, char **av)
         BUILTIN_VAR("os",  "SIGRTMIN",   "Int") = INTEGER(SIGRTMIN);
         BUILTIN_VAR("os",  "SIGRTMAX",   "Int") = INTEGER(SIGRTMAX);
 #endif
+        BUILTIN_VAR("stdio", "stdin",  "Ptr[Any]") = PTR(stdin);
+        BUILTIN_VAR("stdio", "stdout", "Ptr[Any]") = PTR(stdout);
+        BUILTIN_VAR("stdio", "stderr", "Ptr[Any]") = PTR(stderr);
 //---------------------------------------------------------------------------
 #undef BUILTIN_VAR
 //===========================================================================

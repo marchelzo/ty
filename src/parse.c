@@ -267,6 +267,7 @@ enum {
 
 typedef struct ParserState {
         TokenVector tokens;
+        usize TokenBase;
         int TokenIndex;
 
         int depth;
@@ -305,6 +306,12 @@ typedef struct ParserState {
 } ParserState;
 
 static ParserState state;
+
+enum {
+        TOKEN_BUFFER_SIZE = 50000
+};
+
+static TokenVector TokenBuffer;
 
 struct table uops;
 struct table uopcs;
@@ -7670,6 +7677,24 @@ pns(Namespace const *ns, bool end)
 }
 #endif
 
+static void
+ClaimTokens(Ty *ty, ParserState const *outer)
+{
+        usize base = outer->TokenBase;
+
+        if (
+                (vv(outer->tokens) != NULL)
+             && (vv(outer->tokens) == v_(TokenBuffer, base))
+        ) {
+                base += vN(outer->tokens);
+        }
+
+        state.TokenBase       = base;
+        state.tokens.items    = v_(TokenBuffer, base);
+        state.tokens.count    = 0;
+        state.tokens.capacity = vC(TokenBuffer) - base;
+}
+
 static bool
 ImportModule(Ty *ty, Stmt *import)
 {
@@ -7696,6 +7721,7 @@ parse_module(Ty *ty, Module *mod)
         m0(state);
 
         state.module = mod;
+        ClaimTokens(ty, &save);
 
         CompileState *cs = TyCompilerState(ty);
         Scope *scope = cs->pscope;
@@ -7900,7 +7926,11 @@ Finally:
 
         avP(program, NULL);
         mod->prog = vv(program);
-        mod->tokens = TOKENS;
+
+        v00(mod->tokens);
+        avR(mod->tokens, vN(TOKENS));
+        avPv(mod->tokens, TOKENS);
+
         mod->last = state.last;
 
         state = save;
@@ -7944,6 +7974,7 @@ parse_fragment(Ty *ty, Module *mod, char const *source, Expr *(*parser)(Ty *))
         m0(state);
 
         state.module = mod;
+        ClaimTokens(ty, &save);
 
         usize n = strlen(source);
         char *src = amA(n + 2);
@@ -8265,6 +8296,14 @@ pp_if(Ty *ty)
         }
 
         SCRATCH_RESTORE();
+}
+
+void
+parse_init(Ty *ty)
+{
+        if (vC(TokenBuffer) == 0) {
+                avR(TokenBuffer, TOKEN_BUFFER_SIZE);
+        }
 }
 
 void

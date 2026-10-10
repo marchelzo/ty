@@ -15,7 +15,12 @@ pub class Stream : Iter[String] {
     __f: _
     __fd: Int
 
-    init(fd, mode: ?String = 'a+', buffering: ?BufferingMode = nil, dup: Bool = false) {
+    init(
+        fd: Int | Ptr[Any],
+        mode: ?String = 'a+',
+        buffering: ?BufferingMode = nil,
+        dup: Bool = false
+    ) {
         if fd :: Int {
             __fd = match dup { true => os.dup(fd), _ => fd }
 
@@ -32,6 +37,7 @@ pub class Stream : Iter[String] {
         } else {
             // fd is actually a file pointer
             __f = fd
+            __fd = stdio.fileno(fd)
         }
     }
 
@@ -165,9 +171,9 @@ pub class Stream : Iter[String] {
     }
 }
 
-pub stdin = Stream(0, 'r');
-pub stdout = Stream(1, 'w');
-pub stderr = Stream(2, 'w', NBF);
+pub stdin = Stream(stdio.stdin);
+pub stdout = Stream(stdio.stdout);
+pub stderr = Stream(stdio.stderr);
 
 pub function open(
     path: String | Int,

@@ -4,6 +4,8 @@
 #include <string.h>
 #include <math.h>
 #include <sys/mman.h>
+#include <unistd.h>
+#include <pthread.h>
 
 #ifdef __APPLE__
 #include <libkern/OSCacheControl.h>
@@ -13164,6 +13166,139 @@ bc_plan_raw_cache(JitCtx *ctx, char const *code, int code_size)
 #endif
 }
 
+enum {
+        JIT_REGION_SIZE  = 128 << 20,
+        JIT_REGION_ALIGN = 16
+};
+
+static TySpinLock JitRegionLock;
+static char *JitRegionRX;
+static char *JitRegionRW;
+static usize JitRegionUsed;
+static bool JitRegionTried;
+
+#if defined(__linux__)
+static void
+JitRegionAfterFork(void)
+{
+        TySpinLockInit(&JitRegionLock);
+        JitRegionRX = NULL;
+        JitRegionRW = NULL;
+}
+#endif
+
+static void
+JitRegionInit(void)
+{
+#if defined(__APPLE__) && defined(MAP_JIT)
+        void *p = mmap(
+                NULL, JIT_REGION_SIZE,
+                PROT_READ | PROT_WRITE | PROT_EXEC,
+                MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT,
+                -1, 0
+        );
+
+        if (p != MAP_FAILED) {
+                JitRegionRX = p;
+                JitRegionRW = p;
+        }
+#elif defined(__linux__)
+        void *rw = MAP_FAILED;
+        void *rx = MAP_FAILED;
+        int fd = memfd_create("ty-jit", MFD_CLOEXEC);
+
+        if (fd == -1) {
+                return;
+        }
+
+        if (ftruncate(fd, JIT_REGION_SIZE) != 0) {
+                goto End;
+        }
+
+        rw = mmap(NULL, JIT_REGION_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        if (rw == MAP_FAILED) {
+                goto End;
+        }
+
+        rx = mmap(NULL, JIT_REGION_SIZE, PROT_READ | PROT_EXEC, MAP_SHARED, fd, 0);
+        if (rx == MAP_FAILED) {
+                munmap(rw, JIT_REGION_SIZE);
+                goto End;
+        }
+
+        if (pthread_atfork(NULL, NULL, JitRegionAfterFork) != 0) {
+                munmap(rw, JIT_REGION_SIZE);
+                munmap(rx, JIT_REGION_SIZE);
+                goto End;
+        }
+
+        JitRegionRW = rw;
+        JitRegionRX = rx;
+End:
+        close(fd);
+#endif
+}
+
+static JitCode *
+JitAlloc(usize size, char **rw)
+{
+        usize n = (size + JIT_REGION_ALIGN - 1) & ~(usize)(JIT_REGION_ALIGN - 1);
+        JitCode *meta = NULL;
+
+        TySpinLockLock(&JitRegionLock);
+
+        if (!JitRegionTried) {
+                JitRegionTried = true;
+                JitRegionInit();
+        }
+
+        if (
+                (JitRegionRX != NULL)
+             && (n <= JIT_REGION_SIZE - JitRegionUsed)
+        ) {
+                meta = (JitCode *)(JitRegionRX + JitRegionUsed);
+                *rw  = JitRegionRW + JitRegionUsed;
+                JitRegionUsed += n;
+        }
+
+        TySpinLockUnlock(&JitRegionLock);
+
+        return meta;
+}
+
+static JitCode *
+JitMapOne(usize size)
+{
+        void *p = mmap(
+                NULL, size,
+                PROT_READ | PROT_WRITE,
+#ifdef MAP_JIT
+                MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT,
+#else
+                MAP_PRIVATE | MAP_ANONYMOUS,
+#endif
+                -1, 0
+        );
+
+        return (p == MAP_FAILED) ? NULL : p;
+}
+
+inline static void
+JitWriteBegin(void)
+{
+#if defined(__APPLE__) && defined(__aarch64__)
+        pthread_jit_write_protect_np(0);
+#endif
+}
+
+inline static void
+JitWriteEnd(void)
+{
+#if defined(__APPLE__) && defined(__aarch64__)
+        pthread_jit_write_protect_np(1);
+#endif
+}
+
 JitFn *
 jit_compile(Ty *ty, Value const *func)
 {
@@ -13345,30 +13480,34 @@ jit_compile(Ty *ty, Value const *func)
                 return NULL;
         }
 
-        JitCode *meta = mmap(
-                NULL, mapping_size,
-                PROT_READ | PROT_WRITE,
-#ifdef MAP_JIT
-                MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT,
-#else
-                MAP_PRIVATE | MAP_ANONYMOUS,
-#endif
-                -1, 0
-        );
+        bool mapped = false;
+        char *rw = NULL;
+        JitCode *meta = JitAlloc(mapping_size, &rw);
 
-        if (meta == MAP_FAILED) {
+        if (meta == NULL) {
+                meta = JitMapOne(mapping_size);
+                rw = (char *)meta;
+                mapped = true;
+        }
+
+        if (meta == NULL) {
                 dasm_free(&asm);
                 bc_free_cfg(&ctx);
                 return NULL;
         }
 
         void *code = meta + 1;
-        meta->size    = final_size;
-        meta->table   = table_offset;
-        meta->nsites  = vN(ctx.sites);
-        meta->nresume = ctx.call_site_count;
+        JitCode *wmeta = (JitCode *)rw;
+        void *wcode = wmeta + 1;
 
-        JitSite *sites = (void *)((char *)code + table_offset);
+        JitWriteBegin();
+
+        wmeta->size    = final_size;
+        wmeta->table   = table_offset;
+        wmeta->nsites  = vN(ctx.sites);
+        wmeta->nresume = ctx.call_site_count;
+
+        JitSite *sites = (void *)((char *)wcode + table_offset);
         for (usize i = 0; i < vN(ctx.sites); ++i) {
                 sites[i] = v__(ctx.sites, i);
                 sites[i].pc = dasm_getpclabel(&asm, sites[i].pc);
@@ -13379,10 +13518,15 @@ jit_compile(Ty *ty, Value const *func)
                 ctx.call_site_count * sizeof *ctx.resume_offsets
         );
 
-        status = dasm_encode(&asm, code);
+        status = dasm_encode(&asm, wcode);
         dasm_free(&asm);
+
+        JitWriteEnd();
+
         if (status != DASM_S_OK) {
-                munmap(meta, mapping_size);
+                if (mapped) {
+                        munmap(meta, mapping_size);
+                }
                 bc_free_cfg(&ctx);
                 return NULL;
         }
@@ -13393,7 +13537,10 @@ jit_compile(Ty *ty, Value const *func)
         __builtin___clear_cache(code, (char *)code + final_size);
 #endif
 
-        if (mprotect(meta, mapping_size, PROT_READ | PROT_EXEC) != 0) {
+        if (
+                mapped
+             && mprotect(meta, mapping_size, PROT_READ | PROT_EXEC) != 0
+        ) {
                 munmap(meta, mapping_size);
                 bc_free_cfg(&ctx);
                 return NULL;
@@ -13434,6 +13581,7 @@ void
 jit_init(Ty *ty)
 {
         (void)ty;
+        TySpinLockInit(&JitRegionLock);
 #ifdef TY_PROFILER
         TySpinLockInit(&JitLogMutex);
 #endif

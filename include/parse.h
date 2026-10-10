@@ -51,6 +51,9 @@ char *
 gensym(Ty *ty);
 
 void
+parse_init(Ty *ty);
+
+void
 parse_reset(Ty *ty);
 
 #endif

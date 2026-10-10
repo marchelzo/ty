@@ -86,9 +86,6 @@ t2_checker_abort(T2Checker *checker);
 T2Universe *
 t2_global_universe(void);
 
-void
-t2_forget_classes(int class_count);
-
 T2Type
 t2_object_type(Ty *ty, Class *class);
 
