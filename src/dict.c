@@ -293,6 +293,39 @@ dict_same_keys(Ty *ty, Dict const *d, Dict const *u)
         return ht_same_keys(ty, d, u);
 }
 
+bool
+dict_equal_x(Ty *ty, Dict const *d, Dict const *u, ValueEqFn *eq, void *ctx)
+{
+        if (d == u) {
+                return true;
+        }
+
+        if (d->count != u->count) {
+                return false;
+        }
+
+        htfor(it, d) {
+                usize i = ht_find_x(ty, u, it->h, &it->k, eq, ctx);
+                if (i == HT_NONE || !(*eq)(ty, &it->v, &u->items[i].v, ctx)) {
+                        return false;
+                }
+        }
+
+        return true;
+}
+
+u64
+dict_hash_x(Ty *ty, Dict const *d, ValueHashFn *hash, void *ctx)
+{
+        u64 h = hash64(d->count ^ 0xD1C7D1C7D1C7D1C7ULL);
+
+        htfor(it, d) {
+                h += hash64(HashCombine(it->h, (*hash)(ty, &it->v, ctx)));
+        }
+
+        return h;
+}
+
 static Value
 dict_diff(Ty *ty, Value *d, int argc, Value *kwargs)
 {

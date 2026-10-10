@@ -186,9 +186,7 @@ pub class PostgreSQL {
         }
     }
 
-    __drop__() {
-        close()
-    }
+    __drop__ = use close
 
     error-message() -> String {
         c.str(PQerrorMessage(__conn))

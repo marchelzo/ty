@@ -76,6 +76,37 @@ ht_find(Ty *ty, usize size, HT_ITEM const *items, u64 h, Value const *k)
 }
 
 inline static usize
+ht_find_x(
+        Ty *ty,
+        HT const *t,
+        u64 h,
+        Value const *k,
+        ValueEqFn *eq,
+        void *ctx
+)
+{
+        if (t->size == 0) {
+                return HT_NONE;
+        }
+
+        usize mask = t->size - 1;
+        usize i    = h & mask;
+
+        while (!HT_EMPTY(&t->items[i])) {
+                if (
+                        HT_LIVE(t, i)
+                     && (t->items[i].h == h)
+                     && (*eq)(ty, &t->items[i].k, k, ctx)
+                ) {
+                        return i;
+                }
+                i = (i + 1) & mask;
+        }
+
+        return HT_NONE;
+}
+
+inline static usize
 ht_seek(Ty *ty, HT const *t, HT_ITEM const *it)
 {
         return ht_find(ty, t->size, t->items, it->h, &it->k);

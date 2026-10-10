@@ -350,7 +350,7 @@ fn is-descendant(node: xml.XMLNode, ancestor: xml.XMLNode, include-self: Bool = 
     false
 }
 
-class Selection : Iterable[Element] {
+pub class Selection : Iterable[Element] {
     __doc: xml.Document
     __nodes: Array[xml.XMLNode]
 
@@ -396,9 +396,7 @@ class Selection : Iterable[Element] {
         select(css).first()
     }
 
-    find-all(css: String) -> Selection {
-        select(css)
-    }
+    find-all = use select
 
     filter(pred: Element -> Any) -> Selection {
         Selection(__doc, __nodes.filter(n -> pred(Element(__doc, n))))
@@ -409,7 +407,7 @@ class Selection : Iterable[Element] {
     }
 }
 
-class Element : Iterable[Element] {
+pub class Element : Iterable[Element] {
     __doc: xml.Document
     __node: xml.XMLNode
 
@@ -424,8 +422,8 @@ class Element : Iterable[Element] {
     text=(val: String) -> String {
         clear()
         let doc = parse-fragment(escape-text(val))
-        for child in doc.root.children {
-            __node.addChild(child)
+        for [*doc.root.children] {
+            __node.addChild(it)
         }
         val
     }
@@ -519,9 +517,7 @@ class Element : Iterable[Element] {
         select(css).first()
     }
 
-    find-all(css: String) -> Selection {
-        select(css)
-    }
+    find-all = use select
 
     remove() {
         __node.unlink()
@@ -534,19 +530,20 @@ class Element : Iterable[Element] {
 
     append-html(markup: String) {
         let doc = parse-fragment(markup)
-        for child in doc.root.children {
-            __node.addChild(child)
+        for [*doc.root.children] {
+            __node.addChild(it)
         }
     }
 
     unwrap() {
-        if let $p = __node.parent {
-            let kids = [*__node.children]
-            for child in kids {
-                p.addChild(child)
-            }
-            __node.unlink()
+        if __node.parent == nil {
+            return
         }
+
+        for [*__node.children] {
+            __node.addPrevSibling(it)
+        }
+        __node.unlink()
     }
 
     __iter__() -> Generator[Element] {
@@ -554,7 +551,7 @@ class Element : Iterable[Element] {
     }
 }
 
-class Html {
+pub class Html {
     __doc: xml.Document
 
     init(doc: xml.Document) {
@@ -573,17 +570,13 @@ class Html {
         select(css).first()
     }
 
-    select-all(css: String) -> Selection {
-        select(css)
-    }
+    select-all = use select
 
     find(css: String) -> ?Element {
         select(css).first()
     }
 
-    find-all(css: String) -> Selection {
-        select(css)
-    }
+    find-all = use select
 
     [](css: String) -> Selection {
         select(css)

@@ -919,7 +919,7 @@ pub class TextInput < Component {
     focusable? -> Bool { true }
     handles-tab? -> Bool { complete != nil }
 
-    mount() { __load-history() }
+    mount = use __load-history
 
     text -> String { __chars.join() }
 

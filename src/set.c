@@ -227,6 +227,26 @@ set_equal(Ty *ty, Set const *s, Set const *t)
         return (s == t) || ht_same_keys(ty, s, t);
 }
 
+bool
+set_equal_x(Ty *ty, Set const *s, Set const *t, ValueEqFn *eq, void *ctx)
+{
+        if (s == t) {
+                return true;
+        }
+
+        if (s->count != t->count) {
+                return false;
+        }
+
+        htfor(it, s) {
+                if (ht_find_x(ty, t, it->h, &it->k, eq, ctx) == HT_NONE) {
+                        return false;
+                }
+        }
+
+        return true;
+}
+
 int
 set_order(Ty *ty, Set const *s, Set const *t)
 {

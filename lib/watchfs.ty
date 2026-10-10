@@ -76,8 +76,8 @@ pub class Watcher {
         __closed = true
     }
 
-    __drop__() { close() }
-    __free__() { close() }
+    __drop__ = use close
+    __free__ = use close
 }
 
 #|else
@@ -188,8 +188,8 @@ pub class Watcher {
         __closed = true
     }
 
-    __drop__() { close() }
-    __free__() { close() }
+    __drop__ = use close
+    __free__ = use close
 }
 
 #|]

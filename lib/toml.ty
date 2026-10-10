@@ -656,7 +656,7 @@ pub class Document {
     []=(key, value) { data[key] = value }
     #() -> Int { #data }
     __iter__() { data.__iter__() }
-    __str__() -> String { str() }
+    __str__ = use str
 
     str() -> String {
         if !fits?(__root, data) {

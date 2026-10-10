@@ -482,7 +482,7 @@ pub class URL {
     }
 
     str() -> String { get(CURLUPART_URL) ?? '' }
-    __str__() -> String { str() }
+    __str__ = use str
 }
 
 /* ============================================================================
@@ -557,7 +557,7 @@ pub class Cookie {
         true
     }
 
-    __str__() -> String { to-header() }
+    __str__ = use to-header
 }
 
 /* ============================================================================
@@ -1076,7 +1076,7 @@ class StreamingSession {
         __multi = nil
     }
 
-    __drop__() { __cleanup() }
+    __drop__ = use __cleanup
 
     __setopt(opt: Int, val: (CType[Any], Any), ctx: String) {
         let res = curl_easy_setopt(__easy, opt, val)
@@ -1423,7 +1423,7 @@ pub class WebSocket {
         if let $stream = __stream { stream.close(); __stream = nil }
     }
 
-    __drop__() { close() }
+    __drop__ = use close
 }
 
 /* ============================================================================
@@ -2065,7 +2065,7 @@ pub class MultiSession {
         __multi = nil
     }
 
-    __drop__() { close() }
+    __drop__ = use close
     active -> Int { #__active }
 }
 

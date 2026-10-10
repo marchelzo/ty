@@ -84,7 +84,7 @@ pub class Cpu {
     __repr__() -> String {
         "Cpu(user={user:.3}, system={system:.3}, children={children:.3})"
     }
-    __str__() -> String { __repr__() }
+    __str__ = use __repr__
 }
 
 /** Process memory sizes, in bytes. */
@@ -109,7 +109,7 @@ pub class Memory {
     __repr__() -> String {
         "Memory(virtual={virtual}, resident={resident}, shared={shared})"
     }
-    __str__() -> String { __repr__() }
+    __str__ = use __repr__
 }
 
 /** Cumulative process I/O counters. */
@@ -127,7 +127,7 @@ pub class Io {
     }
 
     __repr__() -> String { "Io(read={read}, written={written})" }
-    __str__() -> String { __repr__() }
+    __str__ = use __repr__
 }
 
 pub use Faults = {minor: Int, major: Int}

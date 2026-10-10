@@ -666,8 +666,8 @@ class Handle {
     }
 
     __enter__() -> Self { self.handle; self }
-    __drop__() -> nil { close() }
-    __free__() -> nil { close() }
+    __drop__ = use close
+    __free__ = use close
 }
 
 pub class Oid {

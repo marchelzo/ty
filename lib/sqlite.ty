@@ -101,13 +101,9 @@ class SQLiteStatement[a] : Iterable[a] {
         return SQLiteRowIter(self, assoc)
     }
 
-    __drop__() {
-        finalize()
-    }
+    __drop__ = use finalize
 
-    __iter__() {
-        rows()
-    }
+    __iter__ = use rows
 }
 
 pub class SQLite {
@@ -136,9 +132,7 @@ pub class SQLite {
         }
     }
 
-    __drop__() {
-        close()
-    }
+    __drop__ = use close
 
     fetchOne[a](*args, assoc=true) -> a | nil {
         with q = query(*args) {
@@ -272,7 +266,5 @@ pub class SQLite {
         }
     }
 
-    __str__() -> String {
-        __repr__()
-    }
+    __str__ = use __repr__
 }

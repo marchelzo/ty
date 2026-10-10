@@ -718,9 +718,7 @@ pub class CFRef {
 
     __ptr__() { __ptr }
 
-    __free__() {
-        release!()
-    }
+    __free__ = use release!
 }
 
 pub class CGEvent : IntoPtr[Any] {
@@ -868,13 +866,9 @@ pub class EventTap {
         }
     }
 
-    __drop__() {
-        close()
-    }
+    __drop__ = use close
 
-    __free__() {
-        close()
-    }
+    __free__ = use close
 }
 
 pub ns run-loop {
@@ -1026,7 +1020,7 @@ pub class PowerAssertion {
 
     active? -> Bool { __active }
 
-    __free__() { release!() }
+    __free__ = use release!
 }
 
 pub fn prevent-display-sleep(reason: String = 'Ty: prevent display sleep') -> PowerAssertion {
@@ -1397,8 +1391,8 @@ pub ns audio {
             }
         }
 
-        __drop__() { close() }
-        __free__() { close() }
+        __drop__ = use close
+        __free__ = use close
     }
 }
 
@@ -1543,8 +1537,8 @@ pub class AudioQueue {
         }
     }
 
-    __drop__() { close() }
-    __free__() { close() }
+    __drop__ = use close
+    __free__ = use close
 }
 
 pub class AudioOutput {
@@ -1664,8 +1658,8 @@ pub class AudioOutput {
         }
     }
 
-    __drop__() { close() }
-    __free__() { close() }
+    __drop__ = use close
+    __free__ = use close
 }
 
 pub class ClipboardImage {

@@ -21,6 +21,9 @@ typedef struct value Value;
 #include "class.h"
 #include "queue.h"
 
+typedef bool ValueEqFn(Ty *ty, Value const *a, Value const *b, void *ctx);
+typedef u64 ValueHashFn(Ty *ty, Value const *v, void *ctx);
+
 #define V_ALIGN (_Alignof (Value))
 
 #define RawObject(c) ((RawObject)(ty, (c)))

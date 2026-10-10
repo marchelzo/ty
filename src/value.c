@@ -70,8 +70,251 @@ MarkNext(Ty *ty, Value *v)
         xvP(ty->marking, v);
 }
 
+enum {
+        CYCLE_DEPTH = 64,
+        CYCLE_CHUNK = 32
+};
+
+typedef struct {
+        void const *a;
+        void const *b;
+} CyclePair;
+
+typedef struct cycle_chunk CycleChunk;
+
+struct cycle_chunk {
+        CycleChunk *prev;
+        u32         n;
+        CyclePair   pairs[CYCLE_CHUNK];
+};
+
+typedef struct {
+        u32         depth;
+        u32         count;
+        bool        tracking;
+        bool        aborted;
+        bool        used;
+        bool        pending;
+        CyclePair   parent;
+        CycleChunk *top;
+} Cycles;
+
 static bool
-arrays_equal(Ty *ty, Value const *v1, Value const *v2)
+TestEquality(Ty *ty, Value const *v1, Value const *v2, Cycles *cs);
+
+static bool
+EqContainers(Ty *ty, Value const *v1, Value const *v2, Cycles *cs);
+
+static u64
+HashImpl(Ty *ty, Value const *val, Cycles *cs);
+
+static u64
+HashContainer(Ty *ty, Value const *v, Cycles *cs);
+
+static int
+CompareImpl(Ty *ty, Value const *v1, Value const *v2, Cycles *cs);
+
+static int
+CmpContainers(Ty *ty, Value const *v1, Value const *v2, Cycles *cs);
+
+#define CONTAINER_TYPES (                \
+        (1ULL << VALUE_ARRAY)            \
+      | (1ULL << VALUE_TUPLE)            \
+      | (1ULL << VALUE_DICT)             \
+      | (1ULL << VALUE_SET)              \
+      | (1ULL << VALUE_QUEUE)            \
+)
+
+inline static bool
+IsContainer(Value const *v)
+{
+        return (CONTAINER_TYPES >> (v->type & ~VALUE_TAGGED)) & 1;
+}
+
+inline static void const *
+ContainerOf(Value const *v)
+{
+        switch (v->type & ~VALUE_TAGGED) {
+        case VALUE_ARRAY:  return v->array;
+        case VALUE_TUPLE:  return v->items;
+        case VALUE_DICT:   return v->dict;
+        case VALUE_SET:    return v->set;
+        case VALUE_QUEUE:  return v->queue;
+        default:           return NULL;
+        }
+}
+
+inline static bool
+CycleAbort(Cycles *cs)
+{
+        if (cs->aborted || cs->depth == CYCLE_DEPTH) {
+                cs->aborted = true;
+                return true;
+        }
+
+        return false;
+}
+
+inline static bool
+EqX(Ty *ty, Value const *v1, Value const *v2, Cycles *cs)
+{
+        bool eq;
+
+        if (!IsContainer(v1)) {
+                return TestEquality(ty, v1, v2, cs);
+        }
+
+        if (cs->tracking) {
+                return EqContainers(ty, v1, v2, cs);
+        }
+
+        if (CycleAbort(cs)) {
+                return false;
+        }
+
+        cs->depth += 1;
+        eq = TestEquality(ty, v1, v2, cs);
+        cs->depth -= 1;
+
+        return eq;
+}
+
+inline static u64
+HashX(Ty *ty, Value const *v, Cycles *cs)
+{
+        u64 h;
+
+        if (!IsContainer(v)) {
+                return ((u64)v->tags) ^ HashImpl(ty, v, cs);
+        }
+
+        if (cs->tracking) {
+                return HashContainer(ty, v, cs);
+        }
+
+        if (CycleAbort(cs)) {
+                return 0;
+        }
+
+        cs->depth += 1;
+        h = HashImpl(ty, v, cs);
+        cs->depth -= 1;
+
+        return ((u64)v->tags) ^ h;
+}
+
+inline static int
+CmpX(Ty *ty, Value const *v1, Value const *v2, Cycles *cs)
+{
+        int c;
+
+        if (!IsContainer(v1)) {
+                return CompareImpl(ty, v1, v2, cs);
+        }
+
+        if (cs->tracking) {
+                return CmpContainers(ty, v1, v2, cs);
+        }
+
+        if (CycleAbort(cs)) {
+                return -1;
+        }
+
+        cs->depth += 1;
+        c = CompareImpl(ty, v1, v2, cs);
+        cs->depth -= 1;
+
+        return c;
+}
+
+static void
+CyclePush(Ty *ty, Cycles *cs, void const *a, void const *b)
+{
+        if (cs->top == NULL || cs->top->n == CYCLE_CHUNK) {
+                CycleChunk *c = smA(sizeof *c);
+                c->prev  = cs->top;
+                c->n     = 0;
+                cs->top  = c;
+                cs->used = true;
+        }
+
+        cs->top->pairs[cs->top->n++] = (CyclePair) { .a = a, .b = b };
+        cs->count += 1;
+}
+
+static void
+CyclePop(Cycles *cs)
+{
+        cs->count -= 1;
+
+        if (--cs->top->n == 0) {
+                cs->top = cs->top->prev;
+        }
+}
+
+static void
+CycleFlush(Ty *ty, Cycles *cs)
+{
+        if (cs->pending) {
+                cs->pending = false;
+                CyclePush(ty, cs, cs->parent.a, cs->parent.b);
+        }
+}
+
+static void
+CycleEnter(Cycles *cs, void const *a, void const *b, u32 *n0)
+{
+        *n0         = cs->count;
+        cs->parent  = (CyclePair) { .a = a, .b = b };
+        cs->pending = true;
+}
+
+static void
+CycleLeave(Cycles *cs, u32 n0)
+{
+        cs->pending = false;
+
+        if (cs->count > n0) {
+                CyclePop(cs);
+        }
+}
+
+static void
+CycleFind(Cycles const *cs, void const *a, void const *b, i64 *ia, i64 *ib)
+{
+        i64 i = cs->count;
+
+        *ia = -1;
+        *ib = -1;
+
+        for (CycleChunk const *c = cs->top; c != NULL; c = c->prev) {
+                for (u32 j = c->n; j > 0; --j) {
+                        CyclePair const *p = &c->pairs[j - 1];
+                        i -= 1;
+                        if (*ia < 0 && p->a == a) {
+                                *ia = i;
+                        }
+                        if (*ib < 0 && b != NULL && p->b == b) {
+                                *ib = i;
+                        }
+                }
+        }
+}
+
+static bool
+EqCb(Ty *ty, Value const *v1, Value const *v2, void *cs)
+{
+        return EqX(ty, v1, v2, cs);
+}
+
+static u64
+HashCb(Ty *ty, Value const *v, void *cs)
+{
+        return HashX(ty, v, cs);
+}
+
+static bool
+arrays_equal(Ty *ty, Value const *v1, Value const *v2, Cycles *cs)
 {
         if (v1->array == v2->array) {
                 return true;
@@ -84,13 +327,7 @@ arrays_equal(Ty *ty, Value const *v1, Value const *v2)
         usize n = vN(*v1->array);
 
         for (usize i = 0; i < n; ++i) {
-                if (
-                        !value_test_equality(
-                                ty,
-                                v_(*v1->array, i),
-                                v_(*v2->array, i)
-                        )
-                )  {
+                if (!EqX(ty, v_(*v1->array, i), v_(*v2->array, i), cs))  {
                         return false;
                 }
         }
@@ -118,7 +355,7 @@ itemcmp(const void *a, const void *b)
 }
 
 static bool
-records_equal(Ty *ty, Value const *v1, Value const *v2)
+records_equal(Ty *ty, Value const *v1, Value const *v2, Cycles *cs)
 {
         RecordItems xs_named = {0};
         RecordItems ys_named = {0};
@@ -166,14 +403,14 @@ records_equal(Ty *ty, Value const *v1, Value const *v2)
                         SCRATCH_RESTORE();
                         return false;
                 }
-                if (!v_eq(&v_(xs_named, i)->val, &v_(ys_named, i)->val)) {
+                if (!EqX(ty, &v_(xs_named, i)->val, &v_(ys_named, i)->val, cs)) {
                         SCRATCH_RESTORE();
                         return false;
                 }
         }
 
         for (usize i = 0; i < vN(xs_unnamed); ++i) {
-                if (!v_eq(v_(xs_unnamed, i), v_(ys_unnamed, i))) {
+                if (!EqX(ty, v_(xs_unnamed, i), v_(ys_unnamed, i), cs)) {
                         SCRATCH_RESTORE();
                         return false;
                 }
@@ -185,7 +422,7 @@ records_equal(Ty *ty, Value const *v1, Value const *v2)
 }
 
 static int
-compare_records(Ty *ty, Value const *v1, Value const *v2)
+compare_records(Ty *ty, Value const *v1, Value const *v2, Cycles *cs)
 {
         RecordItems xs = {0};
         RecordItems ys = {0};
@@ -228,7 +465,7 @@ compare_records(Ty *ty, Value const *v1, Value const *v2)
                         SCRATCH_RESTORE();
                         return (v_(xs, i)->id < v_(ys, i)->id) ? -1 : 1;
                 }
-                int cmp = value_compare(ty, &v_(xs, i)->val, &v_(ys, i)->val);
+                int cmp = CmpX(ty, &v_(xs, i)->val, &v_(ys, i)->val, cs);
                 if (cmp != 0) {
                         SCRATCH_RESTORE();
                         return cmp;
@@ -241,7 +478,7 @@ compare_records(Ty *ty, Value const *v1, Value const *v2)
 }
 
 static bool
-tuples_equal(Ty *ty, Value const *v1, Value const *v2)
+tuples_equal(Ty *ty, Value const *v1, Value const *v2, Cycles *cs)
 {
         if (v1->items == v2->items)
                 return true;
@@ -250,19 +487,13 @@ tuples_equal(Ty *ty, Value const *v1, Value const *v2)
                 return false;
 
         if (v1->ids != NULL && v2->ids != NULL) {
-                return records_equal(ty, v1, v2);
+                return records_equal(ty, v1, v2, cs);
         }
 
         usize n = v1->count;
 
         for (usize i = 0; i < n; ++i) {
-                if (
-                        !value_test_equality(
-                                ty,
-                                &v1->items[i],
-                                &v2->items[i]
-                        )
-                ) {
+                if (!EqX(ty, &v1->items[i], &v2->items[i], cs)) {
                         return false;
                 }
         }
@@ -285,12 +516,12 @@ flt_hash(double _x)
 }
 
 inline static u64
-ary_hash(Ty *ty, Value const *a)
+ary_hash(Ty *ty, Value const *a, Cycles *cs)
 {
         u64 hash = 7234782527432842341ULL;
 
         for (usize i = 0; i < vN(*a->array); ++i) {
-                u64 x = value_hash(ty, &a->array->items[i]);
+                u64 x = HashX(ty, &a->array->items[i], cs);
                 hash = HashCombine(hash, x);
         }
 
@@ -298,14 +529,14 @@ ary_hash(Ty *ty, Value const *a)
 }
 
 inline static u64
-queue_hash(Ty *ty, Value const *v)
+queue_hash(Ty *ty, Value const *v, Cycles *cs)
 {
         Queue *q = v->queue;
         u64 h = 7234782527432842341ULL;
         usize n = _queue_count(q->head, q->tail, q->cap);
 
         for (usize i = 0; i < n; ++i) {
-                u64 x = value_hash(ty, &q->items[(q->head + i) % q->cap]);
+                u64 x = HashX(ty, &q->items[(q->head + i) % q->cap], cs);
                 h = HashCombine(h, x);
         }
 
@@ -313,12 +544,12 @@ queue_hash(Ty *ty, Value const *v)
 }
 
 inline static u64
-tpl_hash(Ty *ty, Value const *t)
+tpl_hash(Ty *ty, Value const *t, Cycles *cs)
 {
         u64 hash = 1127573292757587281ULL;
 
         for (int i = 0; i < t->count; ++i) {
-                u64 x = value_hash(ty, &t->items[i]);
+                u64 x = HashX(ty, &t->items[i], cs);
                 hash = HashCombine(hash, x);
                 if (t->ids != NULL && t->ids[i] != -1) {
                         hash *= (t->ids[i] + 1);
@@ -349,7 +580,7 @@ obj_hash(Ty *ty, Value const *v)
 }
 
 static u64
-hash(Ty *ty, Value const *val)
+HashImpl(Ty *ty, Value const *val, Cycles *cs)
 {
         switch (val->type & ~VALUE_TAGGED) {
         case VALUE_NIL:               return 0xDEADDEADDEADULL;
@@ -357,10 +588,11 @@ hash(Ty *ty, Value const *val)
         case VALUE_STRING:            return XXH3_64bits(ss(*val), sN(*val));
         case VALUE_INTEGER:           return hash64(val->z);
         case VALUE_REAL:              return flt_hash(val->real);
-        case VALUE_ARRAY:             return ary_hash(ty, val);
-        case VALUE_QUEUE:             return queue_hash(ty, val);
-        case VALUE_TUPLE:             return tpl_hash(ty, val);
-        case VALUE_DICT:              return ptr_hash(val->dict);
+        case VALUE_ARRAY:             return ary_hash(ty, val, cs);
+        case VALUE_QUEUE:             return queue_hash(ty, val, cs);
+        case VALUE_TUPLE:             return tpl_hash(ty, val, cs);
+        case VALUE_DICT:              return dict_hash_x(ty, val->dict, HashCb, cs);
+        case VALUE_BLOB:              return XXH3_64bits(vv(*val->blob), vN(*val->blob));
         case VALUE_SET:               return set_hash(val->set);
         case VALUE_HEAP:              return ptr_hash(val->heap);
         case VALUE_OBJECT:            return obj_hash(ty, val);
@@ -378,10 +610,55 @@ hash(Ty *ty, Value const *val)
         }
 }
 
+static u64
+HashContainer(Ty *ty, Value const *v, Cycles *cs)
+{
+        void const *p = ContainerOf(v);
+        i64 i;
+        i64 _;
+        u32 n0;
+        u64 h;
+
+        CycleFlush(ty, cs);
+        CycleFind(cs, p, NULL, &i, &_);
+
+        if (i >= 0) {
+                return ((u64)v->tags) ^ hash64(0xC1C1EC1C1EC1C1EULL + (cs->count - i));
+        }
+
+        CycleEnter(cs, p, NULL, &n0);
+        h = HashImpl(ty, v, cs);
+        CycleLeave(cs, n0);
+
+        return ((u64)v->tags) ^ h;
+}
+
 u64
 value_hash(Ty *ty, Value const *val)
 {
-        return ((u64)val->tags) ^ hash(ty, val);
+        Cycles cs = {0};
+        u64 h;
+
+        if (!IsContainer(val)) {
+                return ((u64)val->tags) ^ HashImpl(ty, val, NULL);
+        }
+
+        h = HashX(ty, val, &cs);
+
+        if (!cs.aborted) {
+                return h;
+        }
+
+        SCRATCH_SAVE();
+
+        cs = (Cycles) { .tracking = true };
+        h  = HashX(ty, val, &cs);
+
+        if (cs.used) {
+                SCRATCH_RESTORE();
+        }
+
+        return h;
 }
 
 static noreturn void
@@ -1435,8 +1712,8 @@ check_cmp_result(Ty *ty, Value const *v1, Value const *v2, Value v)
         return v.z;
 }
 
-int
-value_compare(Ty *ty, Value const *v1, Value const *v2)
+static int
+CompareImpl(Ty *ty, Value const *v1, Value const *v2, Cycles *cs)
 {
         int c;
 
@@ -1465,7 +1742,7 @@ value_compare(Ty *ty, Value const *v1, Value const *v2)
 
         case PAIR_OF(VALUE_ARRAY):
                 for (int i = 0; i < v1->array->count && i < v2->array->count; ++i) {
-                        int o = value_compare(ty, &v1->array->items[i], &v2->array->items[i]);
+                        int o = CmpX(ty, &v1->array->items[i], &v2->array->items[i], cs);
                         if (o != 0)
                                 return o;
                 }
@@ -1476,10 +1753,10 @@ value_compare(Ty *ty, Value const *v1, Value const *v2)
                         return 0;
                 }
                 if (v1->ids != NULL && v2->ids != NULL) {
-                        return compare_records(ty, v1, v2);
+                        return compare_records(ty, v1, v2, cs);
                 }
                 for (int i = 0; i < v1->count && i < v2->count; ++i) {
-                        int o = value_compare(ty, &v1->items[i], &v2->items[i]);
+                        int o = CmpX(ty, &v1->items[i], &v2->items[i], cs);
                         if (o != 0) {
                                 return o;
                         }
@@ -1488,6 +1765,63 @@ value_compare(Ty *ty, Value const *v1, Value const *v2)
         }
 
         return check_cmp_result(ty, v1, v2, vm_try_2op(ty, OP_CMP, v1, v2));
+}
+
+static int
+CmpContainers(Ty *ty, Value const *v1, Value const *v2, Cycles *cs)
+{
+        void const *a = ContainerOf(v1);
+        void const *b = ContainerOf(v2);
+        i64 ia;
+        i64 ib;
+        u32 n0;
+        int c;
+
+        if (a == NULL || b == NULL || a == b) {
+                return CompareImpl(ty, v1, v2, cs);
+        }
+
+
+        CycleFlush(ty, cs);
+        CycleFind(cs, a, b, &ia, &ib);
+
+        if (ia >= 0 || ib >= 0) {
+                return (ia < ib) ? -1 : (ia != ib);
+        }
+
+        CycleEnter(cs, a, b, &n0);
+        c = CompareImpl(ty, v1, v2, cs);
+        CycleLeave(cs, n0);
+
+        return c;
+}
+
+int
+value_compare(Ty *ty, Value const *v1, Value const *v2)
+{
+        Cycles cs = {0};
+        int c;
+
+        if (!IsContainer(v1) || !IsContainer(v2)) {
+                return CompareImpl(ty, v1, v2, NULL);
+        }
+
+        c = CmpX(ty, v1, v2, &cs);
+
+        if (!cs.aborted) {
+                return c;
+        }
+
+        SCRATCH_SAVE();
+
+        cs = (Cycles) { .tracking = true };
+        c  = CmpX(ty, v1, v2, &cs);
+
+        if (cs.used) {
+                SCRATCH_RESTORE();
+        }
+
+        return c;
 }
 
 bool
@@ -1533,8 +1867,8 @@ value_apply_predicate(Ty *ty, Value *p, Value *v)
         }
 }
 
-bool
-value_test_equality(Ty *ty, Value const *v1, Value const *v2)
+static bool
+TestEquality(Ty *ty, Value const *v1, Value const *v2, Cycles *cs)
 {
         if (v1->tags != v2->tags) {
                 return false;
@@ -1555,16 +1889,16 @@ value_test_equality(Ty *ty, Value const *v1, Value const *v2)
                 return (v1->boolean == v2->boolean);
 
         case PAIR_OF(VALUE_ARRAY):
-                return arrays_equal(ty, v1, v2);
+                return arrays_equal(ty, v1, v2, cs);
 
         case PAIR_OF(VALUE_TUPLE):
-                return tuples_equal(ty, v1, v2);
+                return tuples_equal(ty, v1, v2, cs);
 
         case PAIR_OF(VALUE_DICT):
-                return (v1->dict == v2->dict);
+                return dict_equal_x(ty, v1->dict, v2->dict, EqCb, cs);
 
         case PAIR_OF(VALUE_SET):
-                return set_equal(ty, v1->set, v2->set);
+                return set_equal_x(ty, v1->set, v2->set, EqCb, cs);
 
         case PAIR_OF(VALUE_HEAP):
                 return (v1->heap == v2->heap);
@@ -1582,7 +1916,14 @@ value_test_equality(Ty *ty, Value const *v1, Value const *v2)
                 return (v1->ptr == v2->ptr);
 
         case PAIR_OF(VALUE_BLOB):
-                return (v1->blob == v2->blob);
+                return (v1->blob == v2->blob)
+                    || (
+                               (vN(*v1->blob) == vN(*v2->blob))
+                            && (
+                                       (vN(*v1->blob) == 0)
+                                    || (memcmp(vv(*v1->blob), vv(*v2->blob), vN(*v1->blob)) == 0)
+                               )
+                       );
 
         case PAIR_OF(VALUE_QUEUE):
         {
@@ -1595,7 +1936,9 @@ value_test_equality(Ty *ty, Value const *v1, Value const *v2)
                 for (usize i = 0; i < n1; ++i) {
                         Value a = q1->items[(q1->head + i) % q1->cap];
                         Value b = q2->items[(q2->head + i) % q2->cap];
-                        if (!v_eq(&a, &b)) return false;
+                        if (!EqX(ty, &a, &b, cs)) {
+                                return false;
+                        }
                 }
                 return true;
         }
@@ -1646,6 +1989,63 @@ value_test_equality(Ty *ty, Value const *v1, Value const *v2)
         }
 
         return check_cmp_result(ty, v1, v2, v) == 0;
+}
+
+static bool
+EqContainers(Ty *ty, Value const *v1, Value const *v2, Cycles *cs)
+{
+        void const *a = ContainerOf(v1);
+        void const *b = ContainerOf(v2);
+        i64 ia;
+        i64 ib;
+        u32 n0;
+        bool eq;
+
+        if (a == NULL || b == NULL || a == b) {
+                return TestEquality(ty, v1, v2, cs);
+        }
+
+
+        CycleFlush(ty, cs);
+        CycleFind(cs, a, b, &ia, &ib);
+
+        if (ia >= 0 || ib >= 0) {
+                return (ia == ib) && (v1->tags == v2->tags);
+        }
+
+        CycleEnter(cs, a, b, &n0);
+        eq = TestEquality(ty, v1, v2, cs);
+        CycleLeave(cs, n0);
+
+        return eq;
+}
+
+bool
+value_test_equality(Ty *ty, Value const *v1, Value const *v2)
+{
+        Cycles cs = {0};
+        bool eq;
+
+        if (!IsContainer(v1) || !IsContainer(v2)) {
+                return TestEquality(ty, v1, v2, NULL);
+        }
+
+        eq = EqX(ty, v1, v2, &cs);
+
+        if (!cs.aborted) {
+                return eq;
+        }
+
+        SCRATCH_SAVE();
+
+        cs = (Cycles) { .tracking = true };
+        eq = EqX(ty, v1, v2, &cs);
+
+        if (cs.used) {
+                SCRATCH_RESTORE();
+        }
+
+        return eq;
 }
 
 inline static void

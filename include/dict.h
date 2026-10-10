@@ -34,6 +34,12 @@ dict_put_member(Ty *ty, Dict *obj, char const *key, Value value);
 bool
 dict_same_keys(Ty *ty, Dict const *d, Dict const *u);
 
+bool
+dict_equal_x(Ty *ty, Dict const *d, Dict const *u, ValueEqFn *eq, void *ctx);
+
+u64
+dict_hash_x(Ty *ty, Dict const *d, ValueHashFn *hash, void *ctx);
+
 Value *
 dict_put_key_if_not_exists(Ty *ty, Dict *obj, Value key);
 

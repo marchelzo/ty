@@ -68,6 +68,9 @@ SetToggle(Ty *ty, Set *s, Set const *t);
 bool
 set_equal(Ty *ty, Set const *s, Set const *t);
 
+bool
+set_equal_x(Ty *ty, Set const *s, Set const *t, ValueEqFn *eq, void *ctx);
+
 int
 set_order(Ty *ty, Set const *s, Set const *t);
 

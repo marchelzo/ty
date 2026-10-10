@@ -44,9 +44,7 @@ pub class ThreadPool[F: Function] {
         __threads.map(&join)
     }
 
-    __drop__() {
-        close()
-    }
+    __drop__ = use close
 }
 
 ns state {

@@ -1823,6 +1823,7 @@ C! pub libxml fn {
     xmlNode *xmlNewNode(xmlNs *_ns, const xmlChar *name);
     c.void xmlDocSetRootElement(xmlDoc *doc, xmlNode *root);
     c.void xmlAddChild(xmlNode *parent, xmlNode *child);
+    c.void xmlAddPrevSibling(xmlNode *cur, xmlNode *elem);
 
     xmlChar *xmlGetProp(xmlNode *node, xmlChar const *key);
     xmlAttr *xmlSetProp(xmlNode *node, xmlChar const *key, xmlChar const *value);
@@ -2012,6 +2013,10 @@ pub class XMLNode : Iterable[XMLNode] {
 
     addChild(other: XMLNode) {
         xmlAddChild(__node, other.__node)
+    }
+
+    addPrevSibling(other: XMLNode) {
+        xmlAddPrevSibling(__node, other.__node)
     }
 
     content {
