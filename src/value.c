@@ -2624,6 +2624,14 @@ PrettySource(Ty *ty, Value const *v)
                 end = expr->end.byte;
                 break;
 
+        case VALUE_BUILTIN_FUNCTION:
+        {
+                char const *file;
+                int line;
+                char const *src = vm_builtin_source(v, &file, &line);
+                return (src != NULL) ? vSsz(src) : NIL;
+        }
+
         case VALUE_CLASS:
                 stmt = class_get(ty, v->class)->def;
                 mod = stmt->mod;

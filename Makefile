@@ -170,16 +170,17 @@ include/optokens.h: src/optokens.gperf
 
 GEN_DIR     := include/gen
 GEN_SOURCES := src/functions.c src/ffi.c src/sqlite.c
-GEN_HEADERS := $(GEN_DIR)/builtin_decls.h $(GEN_DIR)/builtin_table.h
+GEN_METHODS := src/str.c src/array.c src/dict.c src/blob.c src/heap.c src/queue.c src/set.c src/shared_queue.c
+GEN_HEADERS := $(GEN_DIR)/builtin_decls.h $(GEN_DIR)/builtin_table.h $(GEN_DIR)/builtin_method_src.h
 
 tools/tybi: tools/tybi.c
 	@echo cc $@
 	@$(CC) -std=c11 -O1 -o $@ $<
 
-$(GEN_DIR)/.stamp: tools/tybi $(GEN_SOURCES)
-	@echo tybi $(GEN_SOURCES)
+$(GEN_DIR)/.stamp: tools/tybi $(GEN_SOURCES) $(GEN_METHODS)
+	@echo tybi $(GEN_SOURCES) -m $(GEN_METHODS)
 	@mkdir -p $(GEN_DIR)
-	@tools/tybi $(GEN_DIR) $(GEN_SOURCES)
+	@tools/tybi $(GEN_DIR) $(GEN_SOURCES) -m $(GEN_METHODS)
 	@touch $@
 
 $(GEN_HEADERS): $(GEN_DIR)/.stamp

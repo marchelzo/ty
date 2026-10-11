@@ -23566,14 +23566,17 @@ infer_pattern(T2Checker *checker, Expr const *pattern, T2Type subject)
                 return false;
         }
         case EXPRESSION_CHECK_MATCH:
-                return infer_pattern(checker, pattern->left, subject)
-                    && pattern_types_overlap(
-                            checker,
-                            type_expression_syntax(pattern->right)
-                                ? lower_type(checker, pattern->right)
-                                : infer_expression(checker, pattern->right),
-                            subject
-                       );
+        {
+                bool typed = type_expression_syntax(pattern->right);
+                T2Type constraint = typed
+                                  ? lower_type(checker, pattern->right)
+                                  : infer_expression(checker, pattern->right);
+                T2Type narrowed = typed
+                                ? narrow_type_to(checker, subject, constraint)
+                                : subject;
+                return infer_pattern(checker, pattern->left, narrowed)
+                    && pattern_types_overlap(checker, constraint, subject);
+        }
         case EXPRESSION_DOT_DOT:
         case EXPRESSION_DOT_DOT_DOT:
                 (void)infer_expression(checker, pattern->left);
@@ -24024,6 +24027,20 @@ pattern_coverage(
                 }
                 return narrow_type_to(checker, subject, annotation);
         }
+        case EXPRESSION_CHECK_MATCH:
+                if (!type_expression_syntax(pattern->right)) {
+                        return never;
+                }
+                return pattern_coverage(
+                        checker,
+                        pattern->left,
+                        narrow_type_to(
+                                checker,
+                                subject,
+                                lower_type(checker, pattern->right)
+                        ),
+                        certain
+                );
         case EXPRESSION_MATCH_NOT_NIL:
                 if (certain != NULL) {
                         *certain = true;
@@ -29735,7 +29752,7 @@ resolve_external_predicate_x(
                         t2_solver_zonk(
                                 solver,
                                 predicate->supertype,
-                                T2_PREFER_UPPER_BOUND
+                                T2_PREFER_SOLUTION_ONLY
                         ),
                         predicate->provenance,
                         0

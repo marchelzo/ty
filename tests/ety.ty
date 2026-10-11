@@ -29,3 +29,17 @@ pub fn template() {
         '''
     assert(output == expected)
 }
+
+pub fn indented-code-after-an-expression() {
+    let tmpl = ety.compile(
+        '''
+        <% for x in xs { %>
+        - <%= x %>
+          <% if x == 2 { %>
+          - two
+          <% } %>
+        <% } %>
+        '''
+    )
+    assert(tmpl([1, 2, 3]) == "- 1\n- 2\n  - two\n- 3\n")
+}

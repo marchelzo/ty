@@ -4,6 +4,7 @@ import json
 import chalk
 import sh (sh, Timeout)
 import ty
+import help.corpus as corpus
 
 let doc-root  = Path(__file__).parent
 let intro-dir = doc-root / 'intro'
@@ -68,7 +69,7 @@ fn esc(s: String) -> String {
 
 let ck = chalk.Chalk()
 
-fn style-to-css(style) {
+fn style-to-css(style: _) -> String {
     let parts = []
 
     match style.?fg {
@@ -133,7 +134,7 @@ fn run-ty(code: String) -> String | nil {
     (result.fate != Timeout && result.stdout) ? sgr-to-html(result.stdout.comb(/\n$/)) : nil
 }
 
-fn render-code-block(node, renderers) {
+fn render-code-block(node: _, renderers: _) -> String {
     let lang = node.info-string ?? ''
     let code = node.text ?? ''
 
@@ -168,7 +169,7 @@ fn render-code-block(node, renderers) {
         : "<pre><code>{esc(code)}</code></pre>"
 }
 
-fn render-image(node, renderers) {
+fn render-image(node: _, renderers: _) -> String {
     let src = node.url ?? ''
     let alt = node.text ?? ''
 
@@ -236,7 +237,7 @@ fn try-parse-table(text: String) -> String | nil {
     html.str!()
 }
 
-fn collect-text(node) {
+fn collect-text(node: _) -> String {
     let buf = Blob()
     for child in node.children {
         match child.type {
@@ -249,7 +250,7 @@ fn collect-text(node) {
     buf.str!()
 }
 
-fn render-paragraph(node, renderers) {
+fn render-paragraph(node: _, renderers: _) -> String {
     let plain = collect-text(node)
     if plain.match?(/^\|/) {
         if let $table = try-parse-table(plain) {
@@ -265,7 +266,7 @@ renderers[NodeType.Image] = render-image
 renderers[NodeType.Paragraph] = render-paragraph
 
 fn render-page(pg, pages, idx) {
-    let doc = markdown.parse(pg.src)
+    let doc = markdown.parse(pg.src)!
     let body = doc.render(renderers)
 
     let nav-html = Blob('<div class="page-nav">')
@@ -442,34 +443,25 @@ if #pages == 0 {
     let ty-bin = ty.executable
     let doc-ty = doc-root.parent / 'doc.ty'
 
-    print('Building type index...')
+    print('Building symbol index...')
+    let entries = corpus.build(
+        out-dir / '_corpus.json',
+        progress: (i, n) -> print("\r  {i}/{n} modules", end: (i == n) ? '\n' : '')
+    )
+
     let full-index = %{}
     let search-index = %{}
 
-    for mod in pkg-modules {
-        let idx-json = sh(
-            "{ty-bin} {doc-ty} --emit-index {mod}"
-            " 2>/dev/null"
-        ).stdout
-        if idx-json == nil || #str(idx-json) <= 2 {
-            continue
+    for e: Dict[String, _] in entries if e['kind'] not in %{'module', 'guide'} {
+        let mod = e['mod']
+        let qual = e['qual']
+        let rest = (mod == 'prelude') ? qual : qual.slice(#mod + 1)
+        let fqn = "{mod.sub('.', '/')}.{rest}"
+        let anchor = rest.split('.')[-1].replace(/[^a-zA-Z0-9_-]/, '_')
+        if e['kind'] in %{'class', 'type', 'tag'} && fqn not in full-index {
+            full-index[fqn] = "pkg-{mod}.html#{anchor}"
         }
-        let idx: _ = json.parse(str(idx-json))
-        for fqn, kind in idx {
-            let sfqn = str(fqn)
-            let skind = str(kind)
-            let short = sfqn.split('.')[-1]
-            let sg = short.replace(/[^a-zA-Z0-9_-]/, '_')
-            if (skind == 'class'
-                || skind == 'type'
-                || skind == 'tag')
-                && sfqn not in full-index
-            {
-                full-index[sfqn] =
-                    "pkg-{mod-slug(mod)}.html#{sg}"
-            }
-            search-index[sfqn] = skind
-        }
+        search-index[fqn] = e['kind']
     }
 
     let index-file = out-dir / '_types.json'

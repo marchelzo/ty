@@ -1,3 +1,4 @@
+import ty.types as types
 ns test
 
 pub fn static-expr() {
@@ -7,4 +8,22 @@ pub fn static-expr() {
         ref ?= xs
         assert(xs == ref)
     }
+}
+
+fn counter() -> Int {
+    let box = static!([0])
+    box[0]++
+}
+
+pub fn static-array-keeps-its-type() {
+    assert(counter() == 0)
+    assert(counter() == 1)
+    assert(counter() == 2)
+}
+
+pub fn typeof-array-literal-in-type-position() {
+    let t: typeof [0] = [1, 2]
+    let u = [3] as typeof [0]
+    assert(t == [1, 2])
+    assert(types.show(typeof u) == 'Array[Int]')
 }

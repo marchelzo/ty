@@ -1142,6 +1142,51 @@ vm_builtin_type(char const *module, char const *name)
         return NULL;
 }
 
+char const *
+vm_builtin_source(Value const *f, char const **file, int *line)
+{
+        for (int i = 0; i < countof(builtins); ++i) {
+                if (
+                        (builtins[i].value.type == VALUE_BUILTIN_FUNCTION)
+                     && (builtins[i].value.builtin_function == f->builtin_function)
+                     && (builtins[i].src != NULL)
+                ) {
+                        *file = builtins[i].file;
+                        *line = builtins[i].line;
+                        return builtins[i].src;
+                }
+        }
+
+        return NULL;
+}
+
+static struct {
+        int class;
+        char const *name;
+        char const *src;
+        char const *file;
+        int line;
+} builtin_methods[] = {
+#include "gen/builtin_method_src.h"
+};
+
+char const *
+vm_builtin_method_source(int class, char const *name, char const **file, int *line)
+{
+        for (int i = 0; i < countof(builtin_methods); ++i) {
+                if (
+                        (builtin_methods[i].class == class)
+                     && s_eq(builtin_methods[i].name, name)
+                ) {
+                        *file = builtin_methods[i].file;
+                        *line = builtin_methods[i].line;
+                        return builtin_methods[i].src;
+                }
+        }
+
+        return NULL;
+}
+
 void
 vm_load_c_module(Ty *ty, char const *name, void *p)
 {
@@ -3687,8 +3732,9 @@ BuiltinMember:
 
         case VALUE_REGEX:
                 if (member == NAMES.source) {
+                        Value result = vSsz(v.regex->pattern);
                         pop();
-                        return vSsz(v.regex->pattern);
+                        return result;
                 }
                 n = CLASS_REGEX;
                 goto ClassLookup;
@@ -3709,14 +3755,17 @@ BuiltinMember:
                         pop();
                         return xSz(name_of(v.method));
                 } else if (member == NAMES._fqn_) {
+                        Value result = vSsz(fqn_of(v.method));
                         pop();
-                        return vSsz(fqn_of(v.method));
+                        return result;
                 } else if (member == NAMES._def_) {
+                        Value result = FunDef(ty, v.method);
                         pop();
-                        return FunDef(ty, v.method);
+                        return result;
                 } else if (member == NAMES._src_) {
+                        Value result = PrettySource(ty, &v);
                         pop();
-                        return PrettySource(ty, &v);
+                        return result;
                 }
                 n = CLASS_FUNCTION;
                 goto ClassLookup;
@@ -3730,14 +3779,17 @@ BuiltinMember:
                         pop();
                         return xSz(name_of(&v));
                 } else if (member == NAMES._fqn_) {
+                        Value result = vSsz(fqn_of(&v));
                         pop();
-                        return vSsz(fqn_of(&v));
+                        return result;
                 } else if (member == NAMES._def_) {
+                        Value result = FunDef(ty, &v);
                         pop();
-                        return FunDef(ty, &v);
+                        return result;
                 } else if (member == NAMES._src_) {
+                        Value result = PrettySource(ty, &v);
                         pop();
-                        return PrettySource(ty, &v);
+                        return result;
                 } else if (has_meta(&v)) {
                         push(*meta_of(ty, &v));
                         meta = GetMember(ty, member, false, exec);
@@ -3779,6 +3831,17 @@ BuiltinMember:
                                 class_name(ty, ClassOf(v.this)),
                                 M_NAME(v.name)
                         );
+                } else if (member == NAMES._src_) {
+                        char const *file;
+                        int line;
+                        char const *src = vm_builtin_method_source(
+                                ClassOf(v.this),
+                                M_NAME(v.name),
+                                &file,
+                                &line
+                        );
+                        pop();
+                        return (src != NULL) ? vSsz(src) : NIL;
                 } else if (member == NAMES._def_) {
                         pop();
                         return NIL;
@@ -3796,6 +3859,9 @@ BuiltinMember:
                 } else if (member == NAMES._def_) {
                         pop();
                         return NIL;
+                } else if (member == NAMES._src_) {
+                        pop();
+                        return PrettySource(ty, &v);
                 }
                 n = CLASS_FUNCTION;
                 goto ClassLookup;

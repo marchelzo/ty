@@ -145,6 +145,6 @@ pp(fun2(nums))
 Backticks can be used to refer to operators as functions:
 
 ```ty
-let sum-ints = [&sum, \_.map(int), \_.scan(/\d+/)].fold(`.`)
+let sum-ints = [\_.map(int), \_.scan(/\d+/)].fold(&sum, `.`)
 pp(sum-ints('the answer is 32 plus 10'))
 ```

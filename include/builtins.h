@@ -4,6 +4,9 @@ static struct {
         struct value value;
         char const *sig;
         char const *doc;
+        char const *src;
+        char const *file;
+        int line;
 } builtins[] = {
 #include "gen/builtin_table.h"
 #if defined(__APPLE__)

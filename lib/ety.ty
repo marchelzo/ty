@@ -20,7 +20,7 @@ fn tokenize(s: String) -> Array[TemplateToken] {
             tokens.push(Text(text))
             tokens.push(Expr(body))
         } else {
-            tokens.push(Text(text.comb(/^[ \t]*\z/)))
+            tokens.push(Text(text.comb(/(?:^|(?<=\n))[ \t]*\z/)))
             if kind == '@' {
                 tokens.push(Embed(body))
             } else if let [_, v] = (kind ?? '').match(/^\?(\w+)/) {

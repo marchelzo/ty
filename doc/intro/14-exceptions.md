@@ -2,9 +2,7 @@
 
 ## throw
 
-Any value can be thrown at any time, but the convention in Ty is to throw instances of `RuntimeError` or its subclasses, or to throw tags for simple error conditions. When an exception is thrown, control is transferred to the first active `try` block encountered when unwinding the stack. If no `try` block catches the exception, the program prints the exception and exits with a nonzero status:
-
-If an exception is not caught, the program prints the exception's value and stack trace, then exits with a nonzero status:
+Any value can be thrown at any time, but the convention in Ty is to throw instances of `RuntimeError` or its subclasses, or to throw tags for simple error conditions. When an exception is thrown, control is transferred to the first active `try` block encountered when unwinding the stack. If no `try` block catches the exception, the program prints the exception's value and stack trace, then exits with a nonzero status:
 
 ```ty
 fn main() {
@@ -173,16 +171,16 @@ A common use is closing resources:
 ```ty
 import os
 
-fn read-some(path: String) -> String {
+fn read-some(path: String) -> Blob {
     let fd = os.open(path, os.O_RDONLY)
     defer os.close(fd)
 
     let buf = Blob()
     os.read(fd, buf, 128)
-    buf.str()
+    buf
 }
 
-print(read-some('/dev/urandom').size())
+print(#read-some('/dev/urandom'))
 ```
 
 ## Custom exception classes

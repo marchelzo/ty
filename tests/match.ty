@@ -97,3 +97,19 @@ pub fn constrained-wildcard-pattern() {
     assert(widget-kind({name: 7}) == 'other')
     assert(#[Widget(), Gadget(), 3, Widget()].filter(match { _: Widget => true, _ => false }) == 2)
 }
+
+fn describe(x: Int | String | Array[Int]) -> String {
+    match x {
+        x :: Int     => "int: {x}",
+        x :: String  => "str: {x}",
+        x :: #x <= 3 => "small: {#x}",
+        x            => "big: {#x}"
+    }
+}
+
+pub fn class-constraints-narrow-later-arms() {
+    assert(describe(42) == 'int: 42')
+    assert(describe('hi') == 'str: hi')
+    assert(describe([1, 2]) == 'small: 2')
+    assert(describe([1, 2, 3, 4]) == 'big: 4')
+}

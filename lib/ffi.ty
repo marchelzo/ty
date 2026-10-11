@@ -1,4 +1,5 @@
 import ffi as c
+import os
 import ty
 import ty.token (next, peek)
 import ty.parse (expr, stmt)
@@ -691,6 +692,11 @@ fn strct() {
         $$[ if $$value != nil { $$copy } $$]
     }
 
+    fn store-scalar(name) {
+        let value = ty.Id({name})
+        $$[ if $$value != nil { $$(ty.MemberAccess($$[ self $$], name)) = $$value } $$]
+    }
+
     let init = ty.Func(
         name: 'init',
         params: [ty.Param(name: '<p>', default: ty.Nil, constraint: ty.Any), *init-params],
@@ -699,10 +705,7 @@ fn strct() {
             $$[ self.`<p>` = `<p>` $$],
             ty.Multi([
                 $$[ self.`<p>` = c.new($$ctype) $$],
-                *[
-                    $$[ $$(ty.MemberAccess($$[ self $$], name)) = $$(ty.Id({name})) $$]
-                    for name in scalar-names
-                ],
+                *[store-scalar(name) for name in scalar-names],
                 *[store-array(name) for name in array-names]
             ])
         )
@@ -1015,6 +1018,37 @@ const SYSTEM_LIBRARY_DIRS = [
 const SYSTEM_LIBRARY_DIRS = []
 #|]
 
+const SONAME_ROOTS = ['/usr/local/lib', '/usr/lib64', '/lib64', '/usr/lib', '/lib']
+
+fn entries(dir: String) -> Array[String] {
+    try {
+        os.listdir(dir) ?? []
+    } catch _: os.OSError {
+        []
+    }
+}
+
+fn soname-dirs() -> Array[String] {
+    let dirs = []
+    for root in SONAME_ROOTS {
+        let entries = entries(root)
+        dirs += [root, *entries.filter(\_.contains?('-linux-')).map(\"{root}/{_}")]
+    }
+    dirs
+}
+
+fn sonames(lib: String) -> Array[String] {
+    let base = lib.starts?('lib') ? lib : "lib{lib}"
+    let pattern = regex("^{base.sub(/\W/, \"\\{_}")}\\.so\\.\\d+(?:\\.\\d+)*$")
+    let found = []
+    for dir in soname-dirs() {
+        for name in entries(dir) if pattern.test(name) {
+            found.push("{dir}/{name}")
+        }
+    }
+    found.sort(by=\#_)
+}
+
 fn library-file?(name: String) -> Bool {
     name.match?(/\.(?:so(?:\.[\w.]+)?|dylib|dll)$/)
 }
@@ -1101,4 +1135,14 @@ pub fn open(
             return handle
         }
     }
+
+#|if __linux__
+    if versions == nil {
+        for candidate in libs.filter(\!library-file?(_)).map(sonames).flat() {
+            if let $handle = c.dlopen(candidate) {
+                return handle
+            }
+        }
+    }
+#|]
 }

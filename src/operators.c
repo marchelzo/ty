@@ -169,6 +169,42 @@ op_definition(int op, usize i)
         return expr;
 }
 
+usize
+op_count(void)
+{
+        TyRwLockRdLock(&_2.lock);
+        usize n = vN(_2.ops);
+        TyRwLockRdUnlock(&_2.lock);
+
+        return n;
+}
+
+bool
+op_definition_spec(int op, usize i, i32 *t1, i32 *t2, i32 *ref, Expr **expr)
+{
+        if (op < 0 || op >= op_count()) {
+                return false;
+        }
+
+        DispatchGroup *group = v__(_2.ops, op);
+        bool found = false;
+
+        TyRwLockRdLock(&group->lock);
+
+        if (i < vN(group->defs)) {
+                OperatorSpec const *spec = v_(group->defs, i);
+                *t1   = spec->t1;
+                *t2   = spec->t2;
+                *ref  = spec->ref;
+                *expr = spec->expr;
+                found = true;
+        }
+
+        TyRwLockRdUnlock(&group->lock);
+
+        return found;
+}
+
 void
 op_add(i32 op, i32 t1, i32 t2, i32 ref, Expr *expr)
 {

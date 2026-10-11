@@ -101,3 +101,14 @@ pub fn errors() {
         assert(message in err, err)
     }
 }
+
+fn gather(%kwargs) {
+    kwargs
+}
+
+pub fn named-arguments-before-a-keyword-spread() {
+    assert(gather(foo=1, **%{'q': 2}) == %{'foo': 1, 'q': 2})
+    assert(gather(foo='a', **%{'q': 'b'}) == %{'foo': 'a', 'q': 'b'})
+    assert(gather(foo=1, **{q: 2}) == %{'foo': 1, 'q': 2})
+    assert(gather(**{q: 2}, foo=1) == %{'foo': 1, 'q': 2})
+}

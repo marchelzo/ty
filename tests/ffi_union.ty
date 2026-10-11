@@ -19,3 +19,11 @@ pub fn ffiunion() {
     foo.b = 7
     assert(foo.b == 7)
 }
+
+pub fn constructor-sets-any-union-member() {
+    let foo = Foo(a=2, b=42, y=5)
+    assert(foo.b == 42)
+    assert(foo.a == 2)
+    assert(foo.y == 5)
+    assert(foo.z == 0)
+}

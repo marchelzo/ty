@@ -36,7 +36,7 @@ Ty is dynamically typed, but it has a modest gradual type system that is used fo
 You can use `typeof` (or `:t` in the REPL) to experiment and see what the type checker infers for different expressions. For example:
 
 ```ty
-let fun = (a, b) -> a.x + b(a.y)
+const fun = (a, b) -> a.x + b(a.y)
 print(typeof fun)
 print(typeof fun({x: 37, y: 'hello'}, &len))
 print(typeof fun({x: 'abc', y: {path: './test.log'}}, slurp@(_.path)))

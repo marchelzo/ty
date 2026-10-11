@@ -1,213 +1,1693 @@
 import ty
-import ty.lex as lex
+import ty.mod
 import ty.parse as parse
-import ty.token as tok
 import ty.types as types
 import os
-import chalk (chalk, Text)
-import json
-import readln (readln, InteractiveLineReader, ListCompletions, CycleCompletions)
+import chalk (Chalk, Text, escape, strip, parse as unansi)
+import ety
 import path (Path)
-import time
-import ffi as c (C!)
+import pretty (pretty)
+import help.corpus as corpus (Entry, fold, dedent, dotted, flat, kebab-text)
 
-let table: Dict[_, (String, String, String)] = %{}
+let ink = Chalk()
 
-macro doc! {
-    let (parse.show ~> name, func) = parse.stmt(0, :raw)
-    let (parse.show ~> proto, _) = parse.stmt(99, :raw)
+ink.title  = 'b #e1c78f'
+ink.name   = 'b #7daea3'
+ink.member = '#7daea3'
+ink.kind   = 'i #d3869b'
+ink.mod    = '#89b482'
+ink.dim    = '#847a6d'
+ink.faint  = '#5a524c'
+ink.prose  = '#ddc7a1'
+ink.code   = '#a9b665'
+ink.hit    = 'b u #d8a657'
+ink.head   = 'b #e78a4e'
+ink.warn   = 'b #ea6962'
+ink.ckw    = 'b #ea6962'
+ink.ctype  = '#d8a657'
+ink.cstr   = '#a9b665'
+ink.cmacro = '#d3869b'
+ink.cnum   = '#d3869b'
+ink.cpp    = '#89b482'
+ink.cmt    = 'i #847a6d'
+ink.type   = '#d8a657'
+ink.op     = 'b #e78a4e'
 
-    if tok.peek().type == '->' {
-        tok.next()
-        let (parse.show ~> rt, _) = parse.stmt(0, :raw)
-        proto = "{proto} -> {rt}"
-    }
+const MAX_SOURCE   = 60
+const MAX_RESULTS  = 40
+const GUTTER       = 6
 
-    let help = match tok.next() {
-        {str, *} => str,
-        _        => ''
-    }
-
-    $$[
-        table[$$(func)] = (
-            $$(ty.String(name)),
-            $$(ty.String(proto)),
-            $$(ty.String(help))
-        )
-    $$]
+const KEYWORDS = %{
+    'and', 'as', 'break', 'catch', 'class', 'const', 'continue', 'defer',
+    'do', 'else', 'false', 'finally', 'fn', 'for', 'function', 'generator',
+    'if', 'import', 'in', 'let', 'macro', 'match', 'namespace', 'nil', 'not',
+    'ns', 'operator', 'or', 'pub', 'return', 'static', 'super', 'tag',
+    'throw', 'trait', 'true', 'try', 'typeof', 'use', 'where', 'while',
+    'with', 'yield'
 }
 
-doc! Array.sort
-(by: ?Function, cmp: ?Function, desc: ?Bool)
-'''
-    Return a copy of the array with the elements sorted
-    in ascending order.
+const VALUE_KINDS = %{'var', 'const'}
 
-    by:
-        Sort by(xi) <=> by(xj) instead of xi <=> xj
+const KIND_ORDER = %{
+    'operator':  15,
+    'module':    0,
+    'class':     1,
+    'fn':        2,
+    'macro':     3,
+    'type':      4,
+    'tag':       5,
+    'namespace': 6,
+    'method':    7,
+    'static':    8,
+    'getter':    9,
+    'setter':    10,
+    'field':     11,
+    'const':     12,
+    'var':       13,
+    'guide':     14
+}
 
-    cmp:
-        Sort by cmp(xi, xj) instead of xi <=> xj
-
-    desc:
-        When true, reverse the usual sorting order.
-'''
-
-doc! print
-(*args, sep: String = ', ', end: String = '\n', flush: Bool = false)
-'''
-    Print each argument to stdout.
-'''
-
-doc! eprint
-(*args, sep: String = ', ', end: String = '\n', flush: Bool = false)
-'''
-    Print each argument to stderr.
-'''
-
-doc! os::getaddrinfo
-(
-    hostname: String,
-    service: String | Int,
-    family: Int,
-    socktype: Int,
-    protocol: Int,
-    flags: ?Int
-) -> Ok([{family: Int, type: Int, protocol: Int, address: Blob, canonname: ?String}]) | Err(Int)
-'''
-    See getaddrinfo(3).
-
-    Example
-    -------
-
-        let addr = match getaddrinfo('www.google.com', 80, AF_INET, SOCK_STREAM, 0) {
-            Ok([a, *]) => a,
-            Err(e) => {
-                eprint("getaddrinfo(): {gai_strerror(e)}")
-                exit(1)
-            }
-        }
-'''
-
-doc! os::sendto
-(socket: Int, data: Blob | String, flags: Int, address: Blob) -> Int
-'''
-    See sendto(2).
-
-    Example
-    -------
-
-
-        let sock = socket(AF_INET, SOCK_DGRAM, 0)
-
-        let Ok([&.address ~> addr]) = getaddrinfo(...)
-
-        if sendto(sock, "Hello!", 0, addr) < 0 {
-            eprint(...)
-            return -1
-        }
-'''
-
-doc! os::recvfrom
-[
-    (socket: Int, buffer: Blob, n: Int, flags: Int) -> Int,
-    (socket: Int, n: Int, flags: Int) -> Int
+const SECTIONS = [
+    ('class',     'Classes'),
+    ('fn',        'Functions'),
+    ('macro',     'Macros'),
+    ('type',      'Types'),
+    ('tag',       'Tags'),
+    ('namespace', 'Namespaces'),
+    ('const',     'Constants'),
+    ('var',       'Variables')
 ]
-'''
-    See recvfrom(2).
 
-    Example
-    -------
+const MEMBER_SECTIONS = [
+    ('field',  'Fields'),
+    ('getter', 'Properties'),
+    ('setter', 'Setters'),
+    ('method', 'Methods'),
+    ('static', 'Static')
+]
 
-    let b = Blob()
+fn plain?() -> Bool {
+    ty.color == 'never' || (ty.color == 'auto' && !os.isatty(1))
+}
 
-    while recvfrom(sock, b, 4096, 0) > 0 {
-        print("Got a message: {b.str()}")
-        b.clear()
+fn width() -> Int {
+    min(os.terminal-size().?cols ?? 100, 120)
+}
+
+fn ansi(text: String) -> Text {
+    ink.text(unansi(text))
+}
+
+fn colored(e: Entry, wrapped?: Bool = false) -> String | nil {
+    match (plain?(), wrapped?) {
+        (true, _)     => e.type,
+        (false, true) => e.wtype ?? e.ctype,
+        _             => e.ctype
     }
-'''
+}
 
-doc! os::exec
-(argv: [String]) -> Int
-'''
-    See execvp(2).
-
-    Example
-    -------
-
-    if os.exec(['nc', '-u', '-p3000']) != 0 {
-        eprint("exec(): {errno.str()}")
-        os.exit(1)
+fn hl(code: String) -> String {
+    if plain?() {
+        return code
     }
-'''
-
-pub fn help(x: Any) {
-    let x = docRef(x)
-
-    let doc = fn (x: Class | Function) {
-        return table[x] ?? doc(x)
+    let module = match ty.parse(code) {
+        Ok(m)            => m,
+        Err({module, *}) => module
     }
+    ((try { parse.highlight(module) }) ?? code).comb(/\n+$/)
+}
 
-    let helpString = Blob()
-    let p = fn (*args, sep=', ', end='\n') {
-        helpString.push(args.join(sep) ?? '');
-        helpString.push(end);
+let C_TOKENS = /(\/\/[^\n]*|\/\*.*?\*\/)|("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')|(?m:^([ \t]*#\s*\w+))|\b(if|else|for|while|do|return|switch|case|default|break|continue|goto|sizeof|static|inline|const|struct|union|enum|typedef|noreturn)\b|\b(void|char|int|bool|long|short|unsigned|signed|double|float|Value|Ty|u8|u16|u32|u64|i8|i16|i32|i64|isize|usize|imax|umax)\b|\b([A-Z][A-Z0-9_]{2,})\b|\b(\d+(?:\.\d+)?)\b/s
+
+const C_STYLES = ['cmt', 'cstr', 'cpp', 'ckw', 'ctype', 'cmacro', 'cnum']
+
+fn hl-c(code: String) -> String {
+    if plain?() {
+        return code
     }
+    code.sub(C_TOKENS, groups -> do {
+        let $i = groups[1;].search-by(g -> (g ?? '') != '') or return groups[0]
+        groups[0].split('\n').map(line -> str(ink[C_STYLES[i]](line))).join('\n')
+    })
+}
 
-    fn pdoc(s: String, indent: Int) {
-        let lines = s.lines().dropWhile!(/^\s*$/)
-
-        // Remove trailing empty lines at the end.
-        while #lines > 0 && lines[-1].match?(/^\s*$/) {
-            lines.pop()
-        }
-
-        // Find the leading whitespace length common to all lines
-        let leading = lines.map(\#(_.match(/^\s*/) ?? '')).min() ?? 0
-
-        for line in lines.map!(&slice(leading)) {
-            p(''.lpad(indent), line, sep='')
-        }
+fn source-text(e: Entry) -> String | nil {
+    match (e.lang, e.hsrc, e.src) {
+        (_, $h, _) and !plain?() => h,
+        ('c', _, $src)           => hl-c(dedent(src)),
+        (_, _, $src)             => plain?() ? dedent(src) : hl(dedent(src)),
+        _                        => nil
     }
+}
 
-    match doc(x) {
-        (name, doc, [*ms]) => {
-            p("class {name}:")
-            if doc != nil {
-                p()
-                pdoc(doc, 4)
+fn marked(text: String, needles: Array[String]) -> Text {
+    if !needles {
+        return ink"[prose]{text}[/]"
+    }
+    let pattern: RegexV = regex("({needles.map(quote).join('|')})", 'iv')
+    text.split(pattern)
+        .map(match {
+            s: String => ink"[prose]{s}[/]",
+            m         => ink"[hit]{m[0]}[/]"
+        })
+        .fold(ink"", \_ + _)
+}
+
+fn inline(text: String) -> Text {
+    let source = escape(text)
+        .sub(/`([^`]+)`/, \"[code]{_[1]}[/]")
+        .sub(/\*\*([^*]+)\*\*/, \"[b]{_[1]}[/]")
+    ink.text("[prose]{source}[/]")
+}
+
+fn short-path(file: ?String) -> String | nil {
+    let $file = file or return nil
+    let home = str(Path.home())
+    let lib = ty.path.find(dir -> file.starts?("{dir}/"))
+    match file {
+        _ and lib != nil         => "{Path(lib).name}/{file.slice(#lib + 1)}",
+        _ and file.starts?(home) => "~{file.slice(#home)}",
+        _                        => file
+    }
+}
+
+fn pick(d: Dict[String, Array[Entry]], k: String) -> Array[Entry] {
+    (k in d) ? d[k]! : []
+}
+
+fn quote(s: String) -> String {
+    s.sub(/[\\^$.|?*+()\[\]{}]/, \"\\{_}")
+}
+
+fn public-method?(e: Entry) -> Bool {
+    e.kind == 'method' && !e.name.starts?('_')
+}
+
+fn visible?(e: Entry, aliases: Dict[String, String]) -> Bool {
+    e.mod == 'prelude' || e.mod in aliases.values()
+}
+
+fn sort-key(e: Entry) -> (Int, String) {
+    (KIND_ORDER[e.kind] ?? 99, e.key)
+}
+
+class Index {
+    entries:   Array[Entry]
+    by-qual:   Dict[String, Array[Entry]]
+    by-key:    Dict[String, Array[Entry]]
+    by-parent: Dict[String, Array[Entry]]
+    operands:  Dict[String, Array[Entry]]
+    modules:   Dict[String, Entry]
+
+    init(entries: Array[Entry]) {
+        self.entries   = entries
+        self.by-qual   = %{*: []}
+        self.by-key    = %{*: []}
+        self.by-parent = %{*: []}
+        self.operands  = %{*: []}
+        self.modules   = %{}
+        for e in entries {
+            by-qual[fold(e.qual)]!.push(e)
+            by-key[e.key]!.push(e)
+            by-parent[fold(parent(e))]!.push(e)
+            if e.kind == 'module' {
+                modules[e.qual] = e
             }
-            for (name, proto, doc) in ms {
-                p()
-                if doc != nil {
-                    p("    {name.comb(/^\w+\./)}{proto}:")
-                    p()
-                    pdoc(doc, 6)
-                } else {
-                    p("    {name.comb(/^\w+\./)}{proto}")
-                }
+            for side in [e.lhs ?? '', e.rhs ?? ''].nub() if side != '' {
+                operands[fold(side)]!.push(e)
             }
-            p()
+        }
+    }
+
+    parent(e: Entry) -> String {
+        match e.kind {
+            'module' => '(modules)',
+            'guide'  => '(tour)',
+            _        => e.qual.slice(0, max(#e.qual - #e.name - 1, 0))
+        }
+    }
+
+    qual(q: String) -> Array[Entry] {
+        pick(by-qual, fold(q.comb(/^prelude\./)))
+    }
+
+    named(name: String) -> Array[Entry] {
+        pick(by-key, fold(name))
+    }
+
+    children(q: String) -> Array[Entry] {
+        pick(by-parent, fold(q.comb(/^prelude\.?/)))
+    }
+
+    guides() -> Array[Entry] {
+        children('(tour)')
+    }
+
+    operating(q: String) -> Array[Entry] {
+        pick(operands, fold(q))
+    }
+
+    operator-defs(op: String) -> Array[Entry] {
+        named(op).filter(\_.kind == 'operator')
+    }
+}
+
+class Library {
+    scope: Index
+    base:  Index
+
+    init(scope: Index, base: Index) {
+        self.scope = scope
+        self.base  = base
+    }
+
+    entries -> Array[Entry] {
+        [*scope.entries, *base.entries]
+    }
+
+    modules -> Dict[String, Entry] {
+        base.modules
+    }
+
+    qual(q: String) -> Array[Entry] {
+        scope.qual(q) || base.qual(q)
+    }
+
+    named(name: String) -> Array[Entry] {
+        [*scope.named(name), *base.named(name)]
+    }
+
+    children(q: String) -> Array[Entry] {
+        scope.children(q) || base.children(q)
+    }
+
+    guides() -> Array[Entry] {
+        base.guides()
+    }
+
+    operands(q: String) -> Array[Entry] {
+        [*scope.operating(q), *base.operating(q)]
+    }
+
+    operator-defs(op: String) -> Array[Entry] {
+        [*scope.operator-defs(op), *base.operator-defs(op)]
+    }
+}
+
+let __index: Index | nil = nil
+let __library: Library | nil = nil
+
+fn index() -> Index {
+    __index ?? (__index = Index(corpus.load(progress: indexing)))
+}
+
+fn lib() -> Library {
+    __library ?? (__library = Library(Index(scope-entries()), index()))
+}
+
+fn scope-entries() -> Array[Entry] {
+    (try { corpus.harvest-scope(ty.mod.get()) }) ?? []
+}
+
+fn fresh() {
+    __library = nil
+}
+
+fn indexing(i: Int, n: Int) {
+    match (os.isatty(2), i) {
+        (true, _)  => eprint(str(ink"\r[dim]indexing the standard library…[/] {i}/{n}"), end: (i == n) ? "\r\x1b[K" : ''),
+        (false, 1) => eprint("indexing the standard library ({n} modules)…"),
+        _          => ()
+    }
+}
+
+use Line = Text | String
+
+fn breadth(x: Line) -> Int {
+    match x {
+        t: Text => t.width(),
+        s       => s.width()
+    }
+}
+
+class Page {
+    __out: Blob
+    cols:  Int
+
+    init() {
+        __out = Blob()
+        cols  = width()
+    }
+
+    put(*parts) -> Page {
+        __out.push(parts.map(str).join())
+        __out.push('\n')
+        self
+    }
+
+    blank() -> Page {
+        put()
+    }
+
+    block(text: String, indent: Int = 2) -> Page {
+        for line in text.split('\n') {
+            put(' ' * indent, line)
+        }
+        self
+    }
+
+    rule(label: Line, right: Line = '') -> Page {
+        let fill = max(cols - breadth(label) - breadth(right) - 6, 3)
+        put(ink"[faint]──[/] {label} [faint]{'─' * fill}[/] {right}")
+    }
+
+    title(name: Line, badge: Line) -> Page {
+        let fill = max(cols - breadth(name) - breadth(badge) - 2, 1)
+        put(name, ' ' * fill, badge)
+    }
+
+    text -> String {
+        __out.str()
+    }
+}
+
+fn label(e: Entry) -> Text {
+    let n = e.qual.size() - e.name.size()
+    ink"[dim]{e.qual.bslice(0, n)}[/][name]{e.name}[/]"
+}
+
+fn badge(e: Entry) -> Text {
+    match e.kind {
+        'module' or 'guide' => ink"[kind]{e.kind}[/]",
+        _                   => ink"[kind]{e.kind}[/] · [mod]{e.mod}[/]"
+    }
+}
+
+fn signatures(e: Entry) -> Array[String] {
+    let decls = (e.decl ?? '').split('\n').filter(\_ != '')
+    match e.kind {
+        ('fn' or 'method' or 'macro') and decls => decls.map(\"{e.name}{_}"),
+        'static' and decls                      => decls.map(\"static {e.name}{_}"),
+        'operator'                              => [e.decl ?? e.name],
+        'class'                                 => [e.decl ?? "class {e.name}"],
+        'getter'                                => ["{e.name} -> {e.type ?? '_'}"],
+        'setter'                                => ["{e.name} = {e.type ?? '_'}"],
+        'type'                                  => ["use {e.name} = {e.type ?? '_'}"],
+        'tag'                                   => ["tag {e.name}"],
+        'namespace'                             => ["namespace {e.name}"],
+        'module'                                => ["import {e.qual}"],
+        'guide'                                 => [],
+        _ and e.type                            => ["{e.name}: {e.type}"],
+        _                                       => [e.name]
+    }
+}
+
+fn split-top(s: String, sep: String) -> Array[String] {
+    let parts = []
+    let depth = 0
+    let start = 0
+    for c; i in s.chars() {
+        match c {
+            '(' or '[' or '{'            => depth += 1,
+            ')' or ']' or '}'            => depth -= 1,
+            _ and c == sep && depth == 0 => {
+                parts.push(s.slice(start, i - start).trim())
+                start = i + 1
+            },
+            _                            => ()
+        }
+    }
+    parts.push(s.slice(start).trim())
+    parts
+}
+
+fn parameters(sig: String) -> (Int, Int) | nil {
+    let $open = sig.search('(') or return nil
+    let depth = 0
+    for c; i in sig.chars()[open;] {
+        depth += match c { '(' => 1, ')' => -1, _ => 0 }
+        if depth == 0 {
+            return (open, open + i)
+        }
+    }
+}
+
+fn wrap(sig: String, room: Int) -> String {
+    return sig if sig.width() <= room
+    let (open, close) = parameters(sig) or return sig
+    let params = split-top(sig.slice(open + 1, close - open - 1), ',')
+    [
+        "{sig.slice(0, open)}(",
+        params.map(\"    {_}").join(',\n'),
+        "){sig.slice(close + 1)}"
+    ].join('\n')
+}
+
+tag Declared, Undeclared, Unreturned;
+
+fn callable?(e: Entry) -> Bool {
+    e.kind in %{'fn', 'method', 'static', 'macro'} && e.name != 'init'
+}
+
+fn returns(t: String) -> String | nil {
+    let depth = 0
+    let at = nil
+    for c; i in t.chars() {
+        match c {
+            '(' or '[' or '{' => depth += 1,
+            ')' or ']' or '}' => depth -= 1,
+            '-' and depth == 0 && t.slice(i, 2) == '->' => at = i,
+            _ => ()
+        }
+    }
+    (at != nil) ? t.slice(at + 2).trim() : nil
+}
+
+fn annotation(e: Entry) -> Declared | Undeclared | Unreturned[String] {
+    return Declared if !callable?(e) || e.type == nil || e.type.starts?('overload')
+    let decls = (e.decl ?? '').split('\n').filter(\_ != '')
+    return Undeclared if !decls
+    let typed? = decls.all?(d -> do {
+        let (open, close) = parameters(d) or return false
+        split-top(d.slice(open + 1, close - open - 1), ',')
+            .filter(\_ != '')
+            .all?(/^[*%]*[\w?!-]+\??\s*:/)
+    })
+    return Undeclared if !typed?
+    let ret = returns(e.type ?? '')
+    match ret {
+        _ and decls.all?(\_.contains?('->')) => Declared,
+        $r and !r.contains?('where') && r not in %{'nil', '_', 'a', 'Dynamic'} => Unreturned(r),
+        _ => Declared
+    }
+}
+
+fn signature(e: Entry, sig: String, room: Int, inferred?: Bool = true) -> Text {
+    let painted = (e.hdecl != nil && #signatures(e) == 1 && !plain?())
+                ? ansi((e.kind == 'static') ? "{hl('static')} {e.hdecl}" : e.hdecl)
+                : ansi(hl(flat(sig)))
+    match (inferred?, annotation(e)) {
+        (true, Undeclared)    => (ink"[member]{e.name}[/]{ansi(colored(e) ?? '')}").clip(room),
+        (true, Unreturned(r)) => (ink"{painted}[dim] -> {r}[/]").clip(room),
+        _                     => painted.clip(room)
+    }
+}
+
+fn summary(e: Entry, room: Int) -> Text {
+    let sigs = signatures(e)
+    let first = signature(e, sigs[0] ?? e.name, room)
+    (#sigs > 1) ? ink"{first}[dim]  +{#sigs - 1} more[/]" : first
+}
+
+fn first-line(doc: ?String) -> String | nil {
+    let $doc = doc or return nil
+    doc.split(/\n\s*\n/)[0].split('\n').map(&trim).join(' ')
+}
+
+fn source-block(page: Page, e: Entry, limit: Int = MAX_SOURCE) {
+    let $text = source-text(e) or return
+    let lines = text.split('\n')
+    let skip = (e.lang == 'c') ? (dedent(e.src ?? '').split('\n').search-by(\!_.starts?('//')) ?? 0) : 0
+    let start = (e.line ?? 1) + skip
+    let loc = short-path(e.file)
+    let at = loc ? ((e.line != nil) ? ink"[dim]{loc}:{start}[/]" : ink"[dim]{loc}[/]") : ''
+    page.rule(ink"[head]{(e.lang == 'c') ? 'C source' : 'source'}[/]", at)
+    for line; i in lines[skip;skip + limit] {
+        let number = (e.line != nil) ? "{start + i}" : ''
+        page.put(ink"[faint]{number:>{GUTTER}} │ [/]", line)
+    }
+    if #lines - skip > limit {
+        page.put(ink"[faint]{'':>{GUTTER}} ┆ [/][dim]… {#lines - skip - limit} more lines[/]")
+    }
+}
+
+fn card(page: Page, e: Entry, source?: Bool = true, note: ?Line = nil) {
+    page.title(label(e), badge(e))
+    let sigs = signatures(e)
+    if sigs && e.kind != 'module' {
+        page.blank()
+        for sig in sigs {
+            let fits? = flat(sig).width() <= page.cols - 4
+            match (fits?, #sigs) {
+                (true, 1) => page.put('  ', signature(e, sig, page.cols - 4, inferred?: false)),
+                _         => page.block(hl(wrap(flat(sig), page.cols - 4)))
+            }
+        }
+    }
+    match annotation(e) {
+        Undeclared => {
+            page.blank().put(ink"  [dim]inferred[/]  ", ansi((colored(e, wrapped?: true) ?? '').split('\n').join("\n            ")))
+        },
+        Unreturned(r) => {
+            page.blank().put(ink"  [dim]returns   {r}  (inferred)[/]")
+        },
+        _ => ()
+    }
+    if let $note = note {
+        page.blank().put('  ', note)
+    }
+    if let $doc = e.doc {
+        page.blank()
+        for line in doc.split('\n') {
+            page.put('  ', line.starts?('    ') ? hl(line) : inline(line))
+        }
+    }
+    if source? && e.src {
+        page.blank()
+        source-block(page, e)
+    } else if let $loc = short-path(e.file) {
+        page.blank().put(ink"  [dim]{(e.line != nil) ? "{loc}:{e.line}" : loc}[/]")
+    }
+}
+
+fn member-section(page: Page, title: String, members: Array[Entry]) {
+    return if !members
+    page.blank().put(ink"[head]{title}[/][dim]  ({#members})[/]")
+    let room = page.cols - 4
+    for m in members.sort(by=sort-key) {
+        page.put('  ', summary(m, room))
+        if let $doc = first-line(m.doc) {
+            page.put('      ', (ink"[dim]{doc}[/]").clip(room - 4))
+        }
+    }
+}
+
+fn operator-line(e: Entry, room: Int, home?: Bool = true) -> Text {
+    let [left, op, right, *rest] = (e.decl ?? e.name).split(' ')
+    let result = (rest && rest[0] == '->') ? ink" [dim]->[/] [type]{rest[1;].join(' ')}[/]" : ink""
+    let home = (home? && e.mod != 'prelude') ? ink"  [dim]{e.mod}[/]" : ink""
+    (ink"[type]{left}[/] [op]{op}[/] [type]{right}[/]{result}{home}").clip(room)
+}
+
+fn operator-section(page: Page, title: String, ops: Array[Entry]) {
+    return if !ops
+    let ops = ops.nub(&.decl).sort(by=e -> (e.name, e.decl ?? ''))
+    page.blank().put(ink"[head]{title}[/][dim]  ({#ops})[/]")
+    for e in ops {
+        page.put('  ', operator-line(e, page.cols - 4))
+    }
+}
+
+fn operator-page(page: Page, op: String, ops: Array[Entry]) {
+    let modules = ops.map(&.mod).nub()
+    page.title(ink"[title]operator[/] [op]{op}[/]", ink"[dim]{#ops} definitions in {#modules} modules[/]")
+    for mod in modules.sort(by=m -> ((m == 'prelude') ? 0 : 1, m)) {
+        let here = ops.filter(\_.mod == mod).nub(&.decl)
+        page.blank().put(ink"[mod]{mod}[/]")
+        for e in here.sort(by=\(_.decl ?? '')) {
+            page.put('  ', operator-line(e, page.cols - 4, home?: false))
+        }
+    }
+}
+
+fn class-page(page: Page, cls: Entry) {
+    card(page, cls, source?: false)
+    let members = lib().children(cls.qual)
+    let ctors = members.filter(\_.name == 'init').map(\_.decl ?? '').filter(\_ != '')
+    if ctors {
+        let decls = ctors.map(\_.split('\n')).flat().nub()
+        page.blank().put(ink"[head]Constructors[/]")
+        for decl in decls {
+            page.put('  ', ansi(hl(flat("{cls.name}{decl}"))).clip(page.cols - 4))
+        }
+    }
+    let members = members.filter(\_.name != 'init')
+    for (kind, title) in MEMBER_SECTIONS {
+        member-section(page, title, members.filter(m -> m.kind == kind && !m.name.starts?('__')))
+    }
+    operator-section(page, 'Operators', lib().operands(cls.qual))
+    let hidden = members.filter(\_.name.starts?('__')).map(&.name).nub()
+    if hidden {
+        page.blank().put(ink"[head]Internals[/][dim]  {hidden.join(', ')}[/]")
+    }
+    if let $sup = superclass(cls) {
+        let inherited = lib().children(sup.qual).filter(public-method?)
+        if inherited {
+            page.blank().put(ink"[head]Inherited from {sup.name}[/][dim]  {inherited.map(&.name).nub().join(', ')}[/]")
+        }
+    }
+}
+
+fn superclass(cls: Entry) -> Entry | nil {
+    let [_, name] = (cls.decl ?? '').match(/ < ([\w.]+)/) or return nil
+    let candidates = lib().named(name.split('.')[-1]).filter(\_.kind == 'class')
+    candidates.find(\_.mod == cls.mod) ?? candidates.find(\_.mod == 'prelude') ?? candidates[0]
+}
+
+fn grid(page: Page, names: Array[String]) {
+    let w = (names.map(&width).max() ?? 0) + 2
+    let per = max(1, (page.cols - 2) / w)
+    for row in names.groups-of(per) {
+        page.put('  ', row.map(\"{_:<{w}}").join().comb(/\s+$/))
+    }
+}
+
+fn module-page(page: Page, m: Entry, note: ?Line = nil) {
+    card(page, m, source?: false, note: note)
+    let members = lib().children(m.qual)
+    for (kind, title) in SECTIONS {
+        let xs = members.filter(\_.kind == kind).sort(by=sort-key)
+        continue if !xs
+        page.blank().put(ink"[head]{title}[/][dim]  ({#xs})[/]")
+        if (kind == 'const' || kind == 'var') && #xs > 16 {
+            grid(page, xs.map(&.name))
+            continue
+        }
+        let room = page.cols - 4
+        for e in xs {
+            page.put('  ', summary(e, room))
+        }
+    }
+}
+
+fn guide-page(page: Page, sections: Array[Entry]) {
+    for g; i in sections {
+        if i > 0 {
+            page.blank()
+        }
+        page.title(ink"[title]{g.qual}[/]", ink"[kind]tour[/]")
+        page.blank()
+        markdown(page, (g.doc ?? '').comb(/^#+[^\n]*\n+/))
+    }
+}
+
+fn markdown(page: Page, text: String) {
+    for match text.split(/(?ms)^```(\w*)\n(.*?)^```[ \t]*$/v) {
+        prose: String => {
+            for line in prose.comb(/^\n+|\n+$/).sub(/\n{3,}/, '\n\n').split('\n') {
+                page.put('  ', markdown-line(line))
+            }
+        },
+        m => {
+            let [lang, body] = m.captures
+            page.blank()
+            let code = (body ?? '').comb(/\n$/)
+            page.block((lang == 'c') ? hl-c(code) : hl(code), 4)
+            page.blank()
+        }
+    }
+}
+
+fn markdown-line(line: String) -> Text {
+    match line {
+        /^#{1,2}\s+(.*)/  => ink"[title]{$1}[/]",
+        /^#{3,}\s+(.*)/   => ink"[head]{$1}[/]",
+        /^\s*[-*]\s+(.*)/ => ink"  [dim]•[/] {inline($1)}",
+        _                 => inline(line)
+    }
+}
+
+fn value-page(page: Page, text: String, value: _, type: _) {
+    let shown = kebab-text((try { pretty(value, width: page.cols - 4) }) ?? str(value))
+    page.title(hl(text), ink"[kind]value[/]")
+    page.blank()
+    page.put(ink"  [dim]value[/]  ", shown.split('\n').join("\n         "))
+    if let $t = type {
+        page.put(ink"  [dim]type[/]   ", kebab-text(types.show(t, color: !plain?(), width: page.cols - 12)).split('\n').join("\n         "))
+    }
+    page.put(ink"  [dim]class[/]  [name]{class-name(class-of(value))}[/]")
+    if let $cls = class-entry(class-of(value)) {
+        let methods = lib().children(cls.qual).filter(public-method?)
+        if methods {
+            page.blank().put(ink"[head]{cls.name} methods[/][dim]  ({#methods.map(&.name).nub()})  help {cls.name} for details[/]")
+            grid(page, methods.map(&.name).nub().sort())
+        }
+    }
+}
+
+fn class-of(value: _) -> Class | nil {
+    (value :: Class) ? Class : type(value)
+}
+
+fn class-name(cls: _) -> String {
+    (try { Class.name(cls) }) ?? str(cls)
+}
+
+fn class-entry(cls: _) -> Entry | nil {
+    let $fqn = try { cls.__fqn__ } or return nil
+    let here = "{ty.mod.name(ty.mod.get())}."
+    let fqn = fqn.starts?(here) ? fqn.slice(#here) : fqn
+    lib().qual(fqn).find(\_.kind == 'class')
+}
+
+fn expression(text: String) -> _ {
+    match ty.parse(text) {
+        Ok(m) => m.ast[-1],
+        _     => nil
+    }
+}
+
+fn path-of(ast: _) -> Array[String] | nil {
+    match ast {
+        ty.Id({name, module: nil, *}) => [name],
+        ty.Id({name, module, *})      => [*module.split('/'), name],
+        ty.MemberAccess(o, m)         => do {
+            let $prefix = path-of(o) or return nil
+            [*prefix, m]
+        },
+        _                             => nil
+    }
+}
+
+fn effectful?(text: String) -> Bool {
+    text.match?(/[\w\])}'"]\s*\(|(?<![=!<>])=(?![=>])|\+\+|--/)
+}
+
+fn evaluate(text: String) -> Some[_] | None {
+    try {
+        let here = ty.mod.get()
+        Some(ty.mod.eval(ty.mod.compile(text, here)))
+    } catch _: RuntimeError {
+        None
+    }
+}
+
+fn infer(ast: _) -> _ {
+    try { types.infer(ast) }
+}
+
+fn imports() -> Dict[String, String] {
+    let out = %{}
+    for alias, m in ty.mod.get().imports {
+        out[alias] = dotted(m.name)
+    }
+    out
+}
+
+fn by-value(value: _, text: String, ast: _) -> Array[Entry] | Some[_] {
+    match value {
+        cls: Class  => lib().qual(cls.__fqn__).filter(\_.kind == 'class'),
+        f: Function => function-hits(f, text) ?? Some(value),
+        _           => Some(value)
+    }
+}
+
+fn function-hits(f: _, text: String) -> Array[Entry] | nil {
+    let fqn = (try { f.__fqn__ }) ?? text
+    let hits = [*lib().qual(fqn)] || method-hits(f)
+    hits || nil
+}
+
+fn method-hits(f: _) -> Array[Entry] {
+    let owner = try { f.__class__ }
+    let name = try { f.__name__ }
+    match (owner, name) {
+        (cls: Class, $name) => members-named(cls, name),
+        _                   => []
+    }
+}
+
+fn members-named(cls: Class, name: String) -> Array[Entry] {
+    let $entry = class-entry(cls) or return []
+    let hits = lib().children(entry.qual).filter(\_.key == fold(name))
+    if hits {
+        return hits
+    }
+    let $sup = superclass(entry) or return []
+    lib().children(sup.qual).filter(\_.key == fold(name))
+}
+
+class Answer {
+    entries: Array[Entry]
+    hint:    Entry | nil
+    returns: _
+    value:   Some[_] | None
+    type:    _
+
+    init(
+        entries: Array[Entry],
+        hint: Entry | nil = nil,
+        returns: _ = nil,
+        value: Some[_] | None = None,
+        type: _ = nil
+    ) {
+        self.entries = entries
+        self.hint    = hint
+        self.returns = returns
+        self.value   = value
+        self.type    = type
+    }
+}
+
+tag Overview, Tour, Operators, Found, Listing, Missing;
+
+use Reply = Overview
+          | Tour[Array[Entry]]
+          | Operators[(String, Array[Entry])]
+          | Found[(Answer, String)]
+          | Listing[(String, Array[Entry])]
+          | Missing[String]
+
+fn resolve(text: String) -> Answer | nil {
+    let $ast = expression(text) or return nil
+    let parts = path-of(ast)
+
+    if let $parts = parts and let $hits = symbolic(parts) {
+        return hits
+    }
+
+    if let ty.Call({func: callee, *}) = ast and let $parts = path-of(callee) {
+        let $inner = resolve(parts.join('.')) or return typed(ast)
+        return Answer(inner.entries, hint: inner.hint, returns: infer(ast), value: inner.value, type: inner.type)
+    }
+
+    if let ty.MemberAccess(object, member) = ast and let $hits = member-of(object, member) {
+        return Answer(hits)
+    }
+
+    if effectful?(text) {
+        return typed(ast)
+    }
+
+    let Some(value) = evaluate(text) or return parts ? nil : typed(ast)
+    match by-value(value, text, ast) {
+        Some(v)  => Answer([], value: Some(v), type: infer(ast)),
+        []       => Answer([], value: Some(value), type: infer(ast)),
+        hits     => Answer(hits)
+    }
+}
+
+fn member-of(object: _, member: String) -> Array[Entry] | nil {
+    let source = parse.show(object)
+    let owner = match (effectful?(source) ? None : evaluate(source)) {
+        Some(c) and (c :: Class) => c,
+        Some(v)                  => class-of(v),
+        None                     => nominal-class(infer(object))
+    }
+    let hits = (owner != nil) ? members-named((owner)!, member) : []
+    hits || nil
+}
+
+fn nominal-class(t: _) -> Class | nil {
+    match t {
+        ty.Value(c) and (c :: Class)                 => c,
+        ty.Subscript(ty.Value(c), _) and (c :: Class) => c,
+        _                                            => nil
+    }
+}
+
+fn typed(ast: _) -> Answer | nil {
+    let $t = infer(ast) or return nil
+    Answer([], type: t)
+}
+
+fn symbolic(parts: Array[String]) -> Answer | nil {
+    let text = parts.join('.')
+    let aliases = imports()
+
+    let local = lib().scope.qual(text).filter(\_.kind not in VALUE_KINDS)
+    if local {
+        return Answer(local)
+    }
+
+    if let $mod = aliases[parts[0]] {
+        let hits = index().qual([mod, *parts[1;]].join('.'))
+        if hits {
+            return Answer(hits)
+        }
+    }
+
+    if let Some(value) = evaluate(text) {
+        return match by-value(value, text, nil) {
+            hits: Array[Entry] => hits ? Answer(hits) : nil,
+            _                  => nil
+        }
+    }
+
+    let hits = index().qual(text).filter(\corpus.kebab(_.qual) == corpus.kebab(text))
+    if hits {
+        return Answer(hits, hint: hits.any?(visible?@(_, aliases)) ? nil : hits[0])
+    }
+
+    nil
+}
+
+fn import-statement(e: Entry) -> String {
+    match e.kind {
+        'module'      => "import {e.qual}",
+        _ and e.owner => "import {e.mod} ({e.owner.split('.')[0]})",
+        _             => "import {e.mod} ({e.name})"
+    }
+}
+
+fn import-hint(e: Entry) -> Text {
+    ink"[warn]not in scope[/][dim] — bring it in with[/] {hl(import-statement(e))}"
+}
+
+fn standing(e: Entry) -> Int {
+    let aliases = imports()
+    [
+        visible?(e, aliases) ? 0 : 2,
+        e.name.starts?('_') ? 4 : 0,
+        (e.kind in VALUE_KINDS || e.kind == 'field') ? 1 : 0
+    ].sum(0)
+}
+
+fn suggestions(text: String, limit: Int = 8) -> Array[Entry] {
+    let parts = text.split('.')
+    let key = fold(parts[-1])
+    let budget = max(1, #key / 3)
+    let within = (#parts > 1) ? lib().children(parts[;-1].join('.')) : []
+    let pool = within || [*lib().scope.entries, *index().entries]
+    let scored = []
+    for e in pool if e.kind != 'guide' && abs(#e.key - #key) <= budget {
+        let d = key.edit-distance(e.key)
+        if d <= budget {
+            scored.push((d, standing(e), e))
+        }
+    }
+    let close = scored.sort!(by=|(d, s, e)| -> (d, s, sort-key(e))).map(&2)
+    let near = within
+        .filter(e -> e.kind != 'guide' && (name-score(key, e.key) ?? 0) >= 400)
+        .sort(by=standing)
+    let fuzzy = search(text)
+        .filter(|(score, _, _)| -> score >= 600)
+        .map(&1)
+    [*close, *near, *fuzzy].nub()[;limit]
+}
+
+fn guide-score(g: Entry, word: String) -> Int {
+    let w = word.lower()
+    let doc = (g.doc ?? '').lower()
+    [
+        regex("\\b{quote(w)}\\b").test(g.name.lower()) ? 60 : 0,
+        (g.owner ?? '').lower().contains?(w) ? 20 : 0,
+        ((g.owner ?? '').lower().contains?(w) && g.name == 'Overview') ? 50 : 0,
+        doc.count("`{w}") * 4,
+        (#w >= 3) ? doc.count(w) : 0
+    ].sum(0)
+}
+
+fn tour-sections(word: String) -> Array[Entry] {
+    lib().guides()
+        .map(g -> (guide-score(g, word), g))
+        .filter(|(score, _)| -> score >= 8)
+        .sort(by=|(score, _)| -> -score)
+        .map(&1)
+}
+
+fn tour-page(page: Page, ranked: Array[Entry]) {
+    guide-page(page, ranked[;1])
+    if #ranked > 1 {
+        page.blank().put(ink"[head]More in the tour[/]")
+        for g in ranked[1;9] {
+            page.put(ink"  [dim]•[/] [prose]{g.qual}[/]")
+        }
+    }
+}
+
+fn not-found(page: Page, text: String) {
+    page.put(ink"[warn]Nothing named[/] {hl(text)} [warn]is in scope or in the library index.[/]")
+    let close = suggestions(text)
+    if close {
+        page.blank().put(ink"[head]Did you mean[/]")
+        results(page, close.map(\(0, _, nil)), [])
+    }
+    page.blank().put(ink"[dim]grep[/] {hl(text)} [dim]searches docs and source too.[/]")
+}
+
+fn terminal-note(answer: Answer) -> Line | nil {
+    match (answer.returns, answer.hint) {
+        ($t, _) => ink"[dim]this call returns[/] {kebab-text(types.show(t, color: !plain?()))}",
+        (_, $e) => import-hint(e),
+        _       => nil
+    }
+}
+
+fn render(page: Page, answer: Answer, text: String = '') {
+    let entries = answer.entries
+    let note = terminal-note(answer)
+    match entries {
+        [] => {
+            let Some(value) = answer.value or return type-page(page, answer)
+            value-page(page, text, value, answer.type)
         },
 
-        (name, proto, doc) => {
-            if doc :: String {
-                p("{name}{proto}:")
-                p()
-                pdoc(doc, 4)
-                p()
-            } else {
-                p("{name}{proto}")
-            }
-        },
+        [e] => single(page, e, note),
 
-        nil => {
-            p("No help for {x}.")
+        _ => {
+            let primary = entries.sort(by=sort-key)
+            single(page, primary[0], note)
+            for e in primary[1;] {
+                page.blank()
+                single(page, e, nil)
+            }
         }
     }
+}
 
-    let p = os.spawn(['less', '-FRX'], stdin=os.SPAWN_PIPE)
-    os.write(p.stdin, helpString.str!())
+fn type-page(page: Page, answer: Answer) {
+    let t = answer.type
+    page.put(ink"[dim]type[/]  ", kebab-text(types.show(t, color: !plain?(), width: page.cols - 8)))
+    let nominal? = match t {
+        ty.Value(_) or ty.Subscript(ty.Value(_), _) => true,
+        _                                           => false
+    }
+    let info = nominal? ? (try { types.info(t) }) : nil
+    if let $name = info.?name and let $cls = lib().named(name).find(\_.kind == 'class') {
+        page.blank()
+        class-page(page, cls)
+    }
+}
+
+fn single(page: Page, e: Entry, note: ?Line) {
+    match e.kind {
+        'class'  => class-page(page, e),
+        'module' => module-page(page, e, note: note),
+        'guide'  => guide-page(page, [e]),
+        _        => card(page, e, note: note)
+    }
+}
+
+fn overview(page: Page) {
+    page.title(ink"[title]Ty interactive help[/]", ink"[dim]{#lib().entries} indexed symbols[/]")
+    page.blank()
+    for (cmd, what) in [
+        ('help <anything>', 'names, members, modules, classes, tags, types, expressions, keywords'),
+        ('grep <query>',    'fuzzy search over every name, doc comment, type, and line of source'),
+        ('grep /regex/',    'regex search over source code'),
+        ('grep kind:class mod:os …', 'filter by kind or module'),
+        (':t <expr>',       'show the static type of an expression'),
+        ('dis <expr>',      'disassemble'),
+        (':s <file>  :r <module>  :!<cmd>', 'source a file, reload a module, run a shell command')
+    ] {
+        page.put(ink"  [name]{cmd:<34}[/][prose]{what}[/]")
+    }
+    let imported = imports().values().nub()
+    let mods = lib().modules.keys().sort()
+    page.blank().put(ink"[head]Modules[/][dim]  ({#mods}; imported ones are bright)[/]")
+    let w = (mods.map(&width).max() ?? 0) + 2
+    let per = max(1, (page.cols - 2) / w)
+    for row in mods.groups-of(per) {
+        page.put('  ', *row.map(m -> ink[(m in imported) ? 'name' : 'dim']("{m:<{w}}")))
+    }
+    let pages = lib().guides().map(\_.owner ?? '').nub()
+    page.blank().put(ink"[head]The tour[/][dim]  (help <keyword> shows the relevant section)[/]")
+    for p in pages {
+        page.put(ink"  [dim]•[/] [prose]{p}[/]")
+    }
+}
+
+fn reply(text: String) -> Reply {
+    let text = text.trim()
+
+    if text == '' {
+        return Overview
+    }
+
+    let keyword = (text in KEYWORDS) ? tour-sections(text) : []
+    if keyword {
+        return Tour(keyword)
+    }
+
+    let ops = text.match?(/^[^\w\s'"`]+$/) ? lib().operator-defs(text) : []
+    if ops {
+        return Operators(text, ops)
+    }
+
+    if let $found = resolve(text) {
+        return Found(found, text)
+    }
+
+    let named = lib().named(text).filter(\corpus.kebab(_.name) == corpus.kebab(text))
+    if #named > 3 {
+        return Listing(text, named.sort(by=sort-key))
+    }
+    if named {
+        let hint = named.any?(visible?@(_, imports())) ? nil : named[0]
+        return Found(Answer(named, hint: hint), '')
+    }
+
+    let sections = tour-sections(text)
+    (sections) ? Tour(sections) : Missing(text)
+}
+
+fn value-reply(x: _) -> Reply {
+    match by-value(x, str(x), nil) {
+        Some(v) => Found(Answer([], value: Some(v)), str(x)),
+        []      => Found(Answer([], value: Some(x)), str(x)),
+        hits    => Found(Answer(hits), '')
+    }
+}
+
+fn terminal(reply: Reply) -> Page {
+    let page = Page()
+    match reply {
+        Overview            => overview(page),
+        Tour(sections)      => tour-page(page, sections),
+        Operators(op, ops)  => operator-page(page, op, ops),
+        Found(found, text)  => render(page, found, text),
+        Listing(text, many) => {
+            page.put(hl(text), ink"[dim] is defined in {#many} places:[/]")
+            page.blank()
+            results(page, many.map(\(0, _, nil)), [])
+        },
+        Missing(text)       => not-found(page, text)
+    }
+    page
+}
+
+fn deliver(page: Page) {
+    let text = page.text
+    let lines = text.count('\n')
+    let rows = os.terminal-size().?rows ?? 0
+    if !os.isatty(1) || lines < rows - 2 {
+        print(text, end: '')
+        return
+    }
+    let p = os.spawn(['less', '-FRX'], stdin: os.SPAWN_PIPE)
+    os.write(p.stdin, text)
     os.close(p.stdin)
     os.wait(p.pid)
+}
+
+use Hit = (Int, Entry, String | nil)
+
+class Query {
+    words:   Array[String]
+    folded:  Array[String]
+    kinds:   Array[String]
+    mods:    Array[String]
+    pattern: ?Regex
+    type?:   Bool
+
+    init(text: String) {
+        words   = []
+        kinds   = []
+        mods    = []
+        pattern = nil
+        type?   = false
+        let text = text.trim()
+        if let [_, body] = text.match(/^\/(.+)\/$/) {
+            pattern = regex(body)
+            folded = []
+            return
+        }
+        if let [_, t] = text.match(/^:\s*(.+)$/) {
+            type? = true
+            pattern = regex(t.lower().matches(/->|\w+/).map(quote).join('.*?'))
+            folded = []
+            return
+        }
+        for w in text.split(/\s+/) {
+            match w {
+                /^kind:(.+)$/        => kinds.push($1),
+                /^(?:mod|in):(.+)$/  => mods.push(dotted($1)),
+                ''                   => (),
+                _                    => words.push(w)
+            }
+        }
+        folded = words.map(fold)
+    }
+
+    admits?(e: Entry) -> Bool {
+        (!kinds || kinds.any?(\e.kind.starts?(_))) && (!mods || mods.any?(\e.mod.starts?(_)))
+    }
+}
+
+fn name-score(q: String, key: String) -> Int | nil {
+    match key {
+        _ and key == q         => 1000,
+        _ and key.starts?(q)   => 800 - min(#key - #q, 100),
+        _ and key.contains?(q) => 600 - min(#key - #q, 100),
+        _                     => subsequence(q, key)
+    }
+}
+
+fn subsequence(q: String, key: String) -> Int | nil {
+    let i = 0
+    let gaps = 0
+    let last = -1
+    for c; j in key.chars() {
+        break if i == #q
+        if c == q[i] {
+            gaps += (last >= 0) ? (j - last - 1) : j
+            last = j
+            i += 1
+        }
+    }
+    (i == #q && gaps <= #q && #key <= 3 * #q) ? 400 - gaps * 20 : nil
+}
+
+fn word-score(w: String, f: String, e: Entry) -> (Int, String | nil) | nil {
+    if let $s = name-score(f, e.key) {
+        return (s, nil)
+    }
+    if let $s = name-score(f, fold(e.qual)) and s >= 600 {
+        return (s - 150, nil)
+    }
+    let lw = w.lower()
+    if let $doc = e.doc and doc.lower().contains?(lw) {
+        let line = doc.lines().find(\_.lower().contains?(lw))
+        return (300, (e.kind == 'guide') ? line : nil)
+    }
+    if (e.type ?? e.decl ?? '').lower().contains?(lw) {
+        return (250, nil)
+    }
+    let $src = e.src or return nil
+    let $hit = src.lines().find(\_.lower().contains?(lw)) or return nil
+    (150, hit)
+}
+
+fn score(q: Query, e: Entry) -> (Int, String | nil) | nil {
+    return nil if !q.admits?(e)
+
+    if q.type? {
+        let $sig = e.type or return nil
+        let $re = q.pattern or return nil
+        return re.test(sig.lower()) ? (500 - min(#sig, 400), nil) : nil
+    }
+
+    if let $re = q.pattern {
+        let $src = e.src or return nil
+        let $hit = src.lines().find(re.test) or return nil
+        return (200, hit)
+    }
+
+    let total = 0
+    let line = nil
+    for w; i in q.words {
+        let (s, hit) = word-score(w, q.folded[i], e) or return nil
+        total += s
+        line = line ?? hit
+    }
+
+    let bonus = match e.kind {
+        'module' or 'class' => 40,
+        'fn' or 'macro'     => 25,
+        'method' or 'type' or 'tag' => 10,
+        'guide'             => -120,
+        _                   => 0
+    }
+    let private = e.name.starts?('_') ? -150 : 0
+    let prelude = (e.mod == 'prelude') ? 15 : 0
+    (total + bonus + private + prelude, line)
+}
+
+fn search(text: String) -> Array[Hit] {
+    let q = Query(text)
+    let hits = []
+    for e in lib().entries {
+        if let (s, line) = score(q, e) {
+            hits.push((s, e, line))
+        }
+    }
+    hits.sort!(by=|(s, e, _)| -> (-s, #e.qual))
+}
+
+fn results(page: Page, hits: Array[Hit], needles: Array[String]) {
+    let room = page.cols - 6
+    for (_, e, line) in hits {
+        page.title(label(e), badge(e))
+        if e.kind == 'guide' {
+            page.put('    ', marked((first-line(e.doc) ?? '').comb(/^#+\s*/), needles).clip(room))
+        } else {
+            page.put('    ', summary(e, room))
+        }
+        if let $line = line {
+            page.put((ink"    [faint]│[/] {marked(line.trim(), needles)}").clip(room + 4))
+        } else if let $doc = first-line(e.doc) and e.kind != 'guide' {
+            page.put((ink"    [faint]│[/] {marked(doc, needles)}").clip(room + 4))
+        }
+    }
+}
+
+pub fn grep(text: String) {
+    fresh()
+    let page = Page()
+    let hits = search(text)
+    let q = Query(text)
+    if !hits {
+        page.put(ink"[warn]No matches for[/] {hl(text)}")
+        deliver(page)
+        return
+    }
+    results(page, hits[;MAX_RESULTS], q.words)
+    let shown = (#hits > MAX_RESULTS) ? ", showing the best {MAX_RESULTS}" : ''
+    page.blank().put(ink"[dim]{#hits} matches{shown} · help <name> for details[/]")
+    deliver(page)
+}
+
+fn reply-for(xs: Array[_], query: ?String) -> Reply {
+    fresh()
+    match (xs, query) {
+        ([], $text) => reply(text),
+        ([], nil)   => reply(''),
+        ([x, *], _) => value-reply(x)
+    }
+}
+
+pub fn help(*xs, query: ?String = nil) {
+    deliver(terminal(reply-for(xs, query)))
+}
+
+const MD_CARD = '''
+    # <%= code(c.title) %> (<%= c.kind %>)
+    <% if c.sigs { %>
+
+    <%= fence(c.sigs) %>ty
+    <%= c.sigs %>
+    <%= fence(c.sigs) %>
+    <% } %>
+    <% if c.inferred { %>
+
+    Inferred type: <%= code(c.inferred) %>
+    <% } %>
+    <% for note in c.notes { %>
+
+    <%= note %>
+    <% } %>
+    <% if c.doc { %>
+
+    <%= c.doc %>
+    <% } %>
+    <% if c.loc { %>
+
+    Defined at <%= code(c.loc) %>.
+    <% } %>
+    <% if c.src { %>
+
+    <%= fence(c.src) %><%= c.lang %>
+    <%= c.src %>
+    <%= fence(c.src) %>
+      <% if c.more > 0 { %>
+
+    (<%= c.more %> more lines not shown)
+      <% } %>
+    <% } %>
+    '''
+
+const MD_SECTIONS = '''
+    <% for (title, items) in sections { %>
+
+    ## <%= title %>
+
+      <% for item in items { %>
+    - <%= item %>
+      <% } %>
+    <% } %>
+    '''
+
+const MD_PARAGRAPHS = '''
+    <% for (title, text) in paragraphs { %>
+
+    ## <%= title %>
+
+    <%= text %>
+    <% } %>
+    '''
+
+const MD_VALUE = '''
+    # <%= code(text) %> (value)
+
+    <%= fence(shown) %>
+    <%= shown %>
+    <%= fence(shown) %>
+
+    <% if inferred { %>
+    - Type: <%= code(inferred) %>
+    <% } %>
+    - Class: <%= code(cls) %>
+    <% if methods { %>
+
+    ## <%= cls %> methods
+
+    <%= methods %>
+    <% } %>
+    '''
+
+const MD_HITS = '''
+    <% for (head, context, prose?) in hits { %>
+    - <%= head %>
+      <% if context && prose? { %>
+      > <%= context %>
+      <% } else if context { %>
+      - <%= code(context) %>
+      <% } %>
+    <% } %>
+    '''
+
+let __templates = %{}
+
+fn template(source: String) -> _ {
+    __templates[source] ?? (__templates[source] = ety.compile(source))
+}
+
+fn code(s: String) -> String {
+    let ticks = '`' * ((s.matches(/`+/).map(&size).max() ?? 0) + 1)
+    let pad = (s.starts?('`') || s.ends?('`')) ? ' ' : ''
+    return "{ticks}{pad}{s}{pad}{ticks}"
+}
+
+fn fence(body: String) -> String {
+    '`' * max(3, (body.matches(/`+/).map(&size).max() ?? 0) + 1)
+}
+
+fn md-kind(e: Entry) -> String {
+    match e.kind {
+        'module' or 'guide' => e.kind,
+        _                   => "{e.kind} in {e.mod}"
+    }
+}
+
+fn md-signature(e: Entry, sig: String) -> String {
+    match annotation(e) {
+        Undeclared    => "{e.name}{e.type ?? ''}",
+        Unreturned(r) => "{flat(sig)} -> {r}",
+        Declared      => flat(sig)
+    }
+}
+
+fn md-member(e: Entry) -> String {
+    let sigs = signatures(e).map(code@(md-signature(e, _)))
+    let doc = first-line(e.doc)
+    (doc != nil) ? "{sigs.join(', ')}: {doc}" : sigs.join(', ')
+}
+
+fn md-hit(e: Entry) -> String {
+    let sigs = (e.kind == 'guide') ? [] : signatures(e)
+    let head = "{code(e.qual)} ({md-kind(e)})"
+    sigs ? "{head}: {code(md-signature(e, sigs[0]))}" : head
+}
+
+fn md-notes(answer: Answer) -> Array[String] {
+    match (answer.returns, answer.hint) {
+        ($t, _) => ["This call returns {code(kebab-text(types.show(t)))}."],
+        (_, $e) => ["Not in scope; bring it in with {code(import-statement(e))}."],
+        _       => []
+    }
+}
+
+fn md-card(e: Entry, notes: Array[String] = [], source?: Bool = true) -> String {
+    let lines = (source? && e.src != nil) ? dedent(e.src ?? '').split('\n') : []
+    let skip = (e.lang == 'c') ? (lines.search-by(\!_.starts?('//')) ?? 0) : 0
+    let shown = lines[skip;skip + MAX_SOURCE]
+    let loc = short-path(e.file)
+    let at = (e.line ?? 0 > 0) ? (e.line ?? 0) + skip : nil
+    let inferred = match annotation(e) {
+        Undeclared => e.type,
+        _          => nil
+    }
+    template(MD_CARD)(
+        c: {
+            title:    e.qual,
+            kind:     md-kind(e),
+            sigs:     (e.kind == 'module') ? '' : signatures(e).map(\wrap(flat(_), 96)).join('\n'),
+            inferred: inferred,
+            notes:    notes,
+            doc:      e.doc,
+            loc:      (loc != nil && at != nil) ? "{loc}:{at}" : loc,
+            src:      shown ? shown.join('\n') : nil,
+            lang:     (e.lang == 'c') ? 'c' : 'ty',
+            more:     max(#lines - skip - #shown, 0)
+        },
+        code: code,
+        fence: fence
+    )
+}
+
+fn md-sections(sections: Array[(String, Array[String])]) -> String {
+    template(MD_SECTIONS)(sections: sections.filter(|(_, items)| -> #items > 0))
+}
+
+fn md-class(cls: Entry, notes: Array[String] = []) -> String {
+    let members = lib().children(cls.qual)
+    let ctors = members
+        .filter(\_.name == 'init')
+        .map(\(_.decl ?? '').split('\n'))
+        .flat()
+        .filter(\_ != '')
+        .nub()
+        .map(\code(flat("{cls.name}{_}")))
+    let rest = members.filter(\_.name != 'init')
+    let public = rest.filter(\!_.name.starts?('__'))
+    let hidden = rest.filter(\_.name.starts?('__')).map(\code(_.name)).nub()
+    let ops = lib().operands(cls.qual).nub(&.decl).sort(by=e -> (e.name, e.decl ?? ''))
+    let sup = superclass(cls)
+    let inherited = (sup != nil) ? lib().children(sup.?qual ?? '').filter(public-method?).map(\code(_.name)).nub() : []
+    [
+        md-card(cls, notes, source?: false),
+        md-sections([
+            ('Constructors', ctors),
+            *MEMBER_SECTIONS.map(|(kind, title)| -> (
+                title,
+                public.filter(\_.kind == kind).sort(by=sort-key).map(md-member)
+            )),
+            ('Operators', ops.map(e -> [code(e.decl ?? e.name), " ({e.mod})" if e.mod != 'prelude'].join())),
+            ('Internals', hidden ? [hidden.join(', ')] : []),
+            ("Inherited from {sup.?name}", inherited ? [inherited.join(', ')] : [])
+        ])
+    ].join()
+}
+
+fn md-module(m: Entry, notes: Array[String] = []) -> String {
+    let members = lib().children(m.qual)
+    let bulleted = []
+    let inline = []
+    for (kind, title) in SECTIONS {
+        let xs = members.filter(\_.kind == kind).sort(by=sort-key)
+        match kind {
+            'const' or 'var' => inline.push((title, xs.map(e -> code(md-signature(e, signatures(e)[0] ?? e.name))).join(', '))),
+            _                => bulleted.push((title, xs.map(md-member)))
+        }
+    }
+    [
+        md-card(m, notes, source?: false),
+        md-sections(bulleted),
+        template(MD_PARAGRAPHS)(paragraphs: inline.filter(|(_, text)| -> text != ''))
+    ].join()
+}
+
+fn md-entry(e: Entry, notes: Array[String] = []) -> String {
+    match e.kind {
+        'class'  => md-class(e, notes),
+        'module' => md-module(e, notes),
+        'guide'  => md-tour([e]),
+        _        => md-card(e, notes)
+    }
+}
+
+fn md-tour(sections: Array[Entry]) -> String {
+    let [first, *more] = sections
+    let body = (first.doc ?? '').comb(/^#+[^\n]*\n+/)
+    [
+        "# Tour: {first.qual}\n\n{body.comb(/\n+$/)}\n",
+        md-sections([('More in the tour', more[;8].map(&.qual))])
+    ].join()
+}
+
+fn md-value(text: String, value: _, type: _) -> String {
+    let shown = strip((try { pretty(value, width: 96) }) ?? str(value))
+    let cls = class-of(value)
+    let entry = class-entry(cls)
+    let methods = (entry != nil) ? lib().children(entry.?qual ?? '').filter(public-method?).map(&.name).nub().sort() : []
+    template(MD_VALUE)(
+        text: text,
+        shown: kebab-text(shown),
+        inferred: (type != nil) ? kebab-text(types.show(type)) : nil,
+        cls: class-name(cls),
+        methods: methods.map(code).join(', '),
+        code: code,
+        fence: fence
+    )
+}
+
+fn md-type(answer: Answer) -> String {
+    let t = answer.type
+    let shown = kebab-text(types.show(t, width: 96))
+    let nominal? = match t {
+        ty.Value(_) or ty.Subscript(ty.Value(_), _) => true,
+        _                                           => false
+    }
+    let info = nominal? ? (try { types.info(t) }) : nil
+    let cls = (info.?name != nil) ? lib().named(info.?name).find(\_.kind == 'class') : nil
+    let head = "# Type\n\n{fence(shown)}ty\n{shown}\n{fence(shown)}\n"
+    match cls {
+        $c => "{head}\n{md-class(c)}",
+        _  => head
+    }
+}
+
+fn md-found(answer: Answer, text: String) -> String {
+    let notes = md-notes(answer)
+    match answer.entries {
+        [] => match answer.value {
+            Some(v) => md-value(text, v, answer.type),
+            _       => md-type(answer)
+        },
+        entries => do {
+            let [first, *rest] = entries.sort(by=sort-key)
+            [md-entry(first, notes), *rest.map(\md-entry(_))].join('\n')
+        }
+    }
+}
+
+fn md-hits(hits: Array[Hit]) -> String {
+    template(MD_HITS)(
+        hits: hits.map(|(_, e, line)| -> (md-hit(e), line.?trim(), e.kind == 'guide')),
+        code: code
+    )
+}
+
+fn md-overview() -> String {
+    let commands = [
+        ('help <anything>', 'names, members, modules, classes, tags, types, expressions, keywords'),
+        ('grep <query>', 'fuzzy search over every name, doc comment, type, and line of source'),
+        ('grep /regex/', 'regex search over source code'),
+        ('grep kind:class mod:os …', 'filter by kind or module'),
+        ('grep : String -> Int', 'search by type')
+    ]
+    [
+        "# Ty help\n\n{#lib().entries} indexed symbols.\n",
+        md-sections([
+            ('Commands', commands.map(|(cmd, what)| -> "{code(cmd)}: {what}")),
+            ('The tour', lib().guides().map(\_.owner ?? '').nub())
+        ]),
+        template(MD_PARAGRAPHS)(paragraphs: [('Modules', lib().modules.keys().sort().map(code).join(', '))])
+    ].join()
+}
+
+fn md-reply(reply: Reply) -> String {
+    match reply {
+        Overview            => md-overview(),
+        Tour(sections)      => md-tour(sections),
+        Operators(op, ops)  => [
+            "# Operator {code(op)}\n\n{#ops} definitions.\n",
+            md-sections(ops.map(&.mod).nub().sort(by=m -> ((m == 'prelude') ? 0 : 1, m)).map(m -> (
+                m,
+                ops.filter(\_.mod == m).nub(&.decl).sort(by=\(_.decl ?? '')).map(e -> code(e.decl ?? e.name))
+            )))
+        ].join(),
+        Found(found, text)  => md-found(found, text),
+        Listing(text, many) => "# {code(text)}\n\nDefined in {#many} places:\n\n{md-hits(many.map(\(0, _, nil)))}",
+        Missing(text)       => do {
+            let close = suggestions(text)
+            [
+                "# {code(text)}\n\nNothing named {code(text)} is in scope or in the library index.\n",
+                "\n## Did you mean\n\n{md-hits(close.map(\(0, _, nil)))}" if close
+            ].join()
+        }
+    }
+}
+
+pub fn help-md(query: String = '') -> String {
+    md-reply(reply-for([], query))
+}
+
+pub fn grep-md(query: String) -> String {
+    fresh()
+    let hits = search(query)
+    let shown = (#hits > MAX_RESULTS) ? ", showing the best {MAX_RESULTS}" : ''
+    [
+        "# grep {code(query)}\n\n{#hits} matches{shown}.\n",
+        "\n{md-hits(hits[;MAX_RESULTS])}" if hits
+    ].join()
+}
+
+pub fn use-index(entries: Array[Entry]) {
+    __index = Index(entries)
+}
+
+pub fn reindex() {
+    __index = Index(corpus.load(rebuild: true, progress: indexing))
 }

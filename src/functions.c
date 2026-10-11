@@ -112,6 +112,7 @@ extern char **environ;
 #include "object.h"
 #include "class.h"
 #include "compiler.h"
+#include "operators.h"
 #include "types2.h"
 #include "title.h"
 #include "cffi.h"
@@ -586,6 +587,9 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
 }
 
 // print(*args: Any, sep: String = ', ', end: String = '\n', file: _, flush: Bool = false) -> Int
+//
+// Print each argument to stdout, separated by `sep` and followed by `end`.
+// `file` redirects the output to a C `FILE *`.
 TY_BUILTIN_RAW(print)
 {
         Value *file = NAMED("file");
@@ -600,6 +604,8 @@ TY_BUILTIN_RAW(print)
 }
 
 // eprint(*args: Any, sep: ?String = ', ', end: ?String = '\n', flush: Any = false) -> Int
+//
+// Print each argument to stderr, separated by `sep` and followed by `end`.
 TY_BUILTIN_RAW(eprint)
 {
         return INTEGER(doprint(ty, argc, kwargs, stderr));
@@ -5428,6 +5434,13 @@ TY_BUILTIN_RAW(os_bind)
 //     protocol: Int | nil,
 //     flags: ?Int = 0
 // ) -> Ok[Array[AddrInfo]] | Err[Int]
+//
+// See getaddrinfo(3). Failures carry the error code; `gai_strerror` describes it.
+//
+//     let addr = match getaddrinfo('www.google.com', 80, AF_INET, SOCK_STREAM, 0) {
+//         Ok([a, *]) => a,
+//         Err(e)     => throw RuntimeError("getaddrinfo(): {gai_strerror(e)}")
+//     }
 TY_BUILTIN_RAW(os_getaddrinfo)
 {
         ASSERT_ARGC("os.getaddrinfo()", 5, 6);
@@ -5544,6 +5557,14 @@ TY_BUILTIN_RAW(os_accept)
 }
 
 // os.recvfrom(sock: Int, n: Int, flags: Int) -> (Blob, Blob)
+//
+// See recvfrom(2). Receives up to `n` bytes and returns the data together with
+// the sender's address, or nil on failure. Pass a Blob before `n` to receive
+// into an existing buffer.
+//
+//     while let (data, from) = recvfrom(sock, 4096, 0) {
+//         print("got {#data} bytes")
+//     }
 TY_BUILTIN_RAW(os_recvfrom)
 {
         ASSERT_ARGC("os.recvfrom()", 3, 4);
@@ -5594,6 +5615,16 @@ TY_BUILTIN_RAW(os_recvfrom)
 }
 
 // os.sendto(sock: Int, data: Any, flags: Int, addr: ?Blob) -> Int
+//
+// See sendto(2). `addr` is a socket address such as the `address` of an
+// AddrInfo returned by `getaddrinfo`.
+//
+//     let sock = socket(AF_INET, SOCK_DGRAM, 0)
+//     let Ok([{address, *}, *]) = getaddrinfo('localhost', 3000, AF_INET, SOCK_DGRAM, 0)
+//
+//     if sendto(sock, 'Hello!', 0, address) < 0 {
+//         eprint("sendto(): {errno.str()}")
+//     }
 TY_BUILTIN_RAW(os_sendto)
 {
         ASSERT_ARGC("os.sendto()", 3, 4);
@@ -6165,6 +6196,13 @@ TY_BUILTIN_RAW(os_pause)
 }
 
 // os.exec(argv: Array[String]) -> Int
+//
+// See execvp(3). Only returns if the exec fails.
+//
+//     if os.exec(['nc', '-u', '-p3000']) != 0 {
+//         eprint("exec(): {errno.str()}")
+//         os.exit(1)
+//     }
 TY_BUILTIN_RAW(os_exec)
 {
         ASSERT_ARGC("os.exec()", 1);
@@ -8913,7 +8951,9 @@ static void
 mdocs(Ty *ty, struct itable const *t, struct array *a)
 {
         for (int i = 0; i < vN(t->values); ++i) {
-                vAp(a, fdoc(ty, v_(t->values, i)));
+                if (v_(t->values, i)->type == VALUE_FUNCTION) {
+                        vAp(a, fdoc(ty, v_(t->values, i)));
+                }
         }
 }
 
@@ -9549,6 +9589,30 @@ TY_BUILTIN_RAW(ty_ctx)
         );
 }
 
+static T2Type
+SimplifiedType(T2Type type)
+{
+        T2Universe *universe = t2_global_universe();
+        T2Scheme *copy = t2_type_scheme(universe, type);
+
+        if (copy == NULL) {
+                return type;
+        }
+
+        T2Type simple = t2_scheme_type(universe, t2_scheme_simplify(copy));
+        t2_scheme_free(copy);
+
+        return (simple != T2_TYPE_INVALID) ? simple : type;
+}
+
+static T2Type
+SymbolType(Symbol const *sym)
+{
+        return (sym->scheme != NULL)
+             ? SimplifiedType(t2_scheme_type(t2_global_universe(), sym->scheme))
+             : sym->type;
+}
+
 static Value
 MethodSummary(Ty *ty, T2Type t0, Expr const *fun)
 {
@@ -9557,7 +9621,7 @@ MethodSummary(Ty *ty, T2Type t0, Expr const *fun)
         return vTn(
                 "name", vSsz(fun->name),
                 "doc", (fun->doc != NULL) ? vSsz(fun->doc) : NIL,
-                "type", t2_to_ty(ty, u0)
+                "type", t2_to_ty(ty, SimplifiedType(u0))
         );
 }
 
@@ -9694,7 +9758,7 @@ ScopeDict(Ty *ty, Scope *scope, bool public_only)
                                 Value *pval = vm_global(ty, sym->i);
                                 Value   val = (pval->type == VALUE_UNINITIALIZED) ? NIL : *pval;
 
-                                Value type = t2_to_ty(ty, sym->type);
+                                Value type = t2_to_ty(ty, SymbolType(sym));
 
                                 Value kind = SymbolIsTypeAlias(sym) ? xSz("type")
                                            : SymbolIsTag(sym)       ? xSz("tag")
@@ -10502,15 +10566,19 @@ TY_BUILTIN_RAW(ty_type_check)
         );
 }
 
-// ty/types.show(t: Any, color: Bool = false) -> String
+// ty/types.show(t: Any, color: Bool = false, width: Int = 0) -> String
 TY_BUILTIN_RAW(ty_type_show)
 {
         ASSERT_ARGC("ty.types.show()", 1);
 
         Value t = ARG(0);
         Value *color = NAMED("color");
+        Value *width = NAMED("width");
         char *shown = t2_render(ty, t2_from_ty(ty, &t), (T2Render) {
-                .color = (color != NULL) && value_truthy(ty, color)
+                .color = (color != NULL) && value_truthy(ty, color),
+                .width = (width != NULL && width->type == VALUE_INTEGER && width->z > 0)
+                       ? (unsigned)width->z
+                       : 0
         });
         Value result = vSsz(shown);
         t2_string_free(shown);
@@ -10538,6 +10606,125 @@ TY_BUILTIN_RAW(ty_copy_source)
         return to;
 }
 
+static Value
+SourceRecord(Ty *ty, char const *text, char const *file, int line)
+{
+
+        int lines = 0;
+        char const *last = text;
+
+        for (char const *c = text; *c != '\0'; ++c) {
+                if (*c == '\n') {
+                        lines += 1;
+                        last = c + 1;
+                }
+        }
+
+        GC_STOP();
+
+        Value src = vSsz(text);
+        Value result = vTn(
+                "start", vTn("line", INTEGER(line - 1),         "col", INTEGER(0),            "byte", INTEGER(0)),
+                "end",   vTn("line", INTEGER(line - 1 + lines), "col", INTEGER(strlen(last)), "byte", INTEGER(sN(src))),
+                "file",  vSsz(file),
+                "mod",   NIL,
+                "prog",  src,
+                "src",   src
+        );
+
+        GC_RESUME();
+
+        return result;
+}
+
+static Value
+BuiltinSource(Ty *ty, Value const *f)
+{
+        char const *file;
+        int line;
+        char const *text = vm_builtin_source(f, &file, &line);
+
+        return (text != NULL) ? SourceRecord(ty, text, file, line) : NIL;
+}
+
+// ty.methodSource(cls: prelude.Class, name: prelude.String) -> {start: {line: prelude.Int, col: prelude.Int, byte: prelude.Int}, end: {line: prelude.Int, col: prelude.Int, byte: prelude.Int}, file: prelude.String | nil, mod: Module | nil, prog: prelude.String, src: prelude.String} | nil
+TY_BUILTIN_RAW(ty_method_source)
+{
+        ASSERT_ARGC("ty.methodSource()", 2);
+
+        char const *file;
+        int line;
+        char const *text = vm_builtin_method_source(
+                ARGx(0, VALUE_CLASS).class,
+                TY_TMP_C_STR(ARGx(1, VALUE_STRING)),
+                &file,
+                &line
+        );
+
+        return (text != NULL) ? SourceRecord(ty, text, file, line) : NIL;
+}
+
+static Value
+OperandClass(Ty *ty, i32 c)
+{
+        return (c == CLASS_TOP || c < 0 || c >= class_count(ty)) ? NIL : CLASS(c);
+}
+
+static Value
+OperatorDefinition(Ty *ty, char const *name, i32 t1, i32 t2, i32 ref, Expr *expr)
+{
+        Value def = PTR((void *)expr);
+        def.src = source_register(ty, expr);
+
+        return vTn(
+                "op",    vSsz(name),
+                "left",  OperandClass(ty, t1),
+                "right", OperandClass(ty, t2),
+                "value", (ref >= 0) ? *vm_global(ty, ref) : NIL,
+                "def",   TAGGED(TyExpr, def),
+                "proto", (expr->proto != NULL) ? vSsz(expr->proto) : NIL,
+                "doc",   (expr->doc != NULL) ? vSsz(expr->doc) : NIL,
+                "type",  (expr->_type != T2_TYPE_INVALID) ? t2_to_ty(ty, expr->_type) : NIL
+        );
+}
+
+// ty.operators(op: prelude.String | nil = nil) -> prelude.Array[{op: prelude.String, left: prelude.Class | nil, right: prelude.Class | nil, value: prelude.Function | nil, def: _, proto: prelude.String | nil, doc: prelude.String | nil, type: _}]
+TY_BUILTIN_RAW(ty_operators)
+{
+        ASSERT_ARGC("ty.operators()", 0, 1);
+
+        Value only = (argc == 1) ? ARGx(0, VALUE_STRING, VALUE_NIL) : NIL;
+        char const *wanted = (only.type == VALUE_STRING) ? TY_TMP_C_STR(only) : NULL;
+        Array *defs = vA();
+
+        GC_STOP();
+
+        int count = (int)min(op_count(), vN(xD.b_ops.index));
+
+        for (int op = 0; op < count; ++op) {
+                char const *name = intern_entry(&xD.b_ops, op)->name;
+
+                if (wanted != NULL && !s_eq(name, wanted)) {
+                        continue;
+                }
+
+                i32 t1;
+                i32 t2;
+                i32 ref;
+                Expr *expr;
+
+                for (usize i = 0; op_definition_spec(op, i, &t1, &t2, &ref, &expr); ++i) {
+                        if (expr != NULL) {
+                                vAp(defs, OperatorDefinition(ty, name, t1, t2, ref, expr));
+                        }
+                }
+        }
+
+        GC_RESUME();
+
+        return ARRAY(defs);
+}
+
 // ty.getSource(x: prelude.Any) -> {start: {line: prelude.Int, col: prelude.Int, byte: prelude.Int}, end: {line: prelude.Int, col: prelude.Int, byte: prelude.Int}, file: prelude.String | nil, mod: Module | nil, prog: prelude.String, src: prelude.String}
 // ty.src(x: prelude.Any) -> {start: {line: prelude.Int, col: prelude.Int, byte: prelude.Int}, end: {line: prelude.Int, col: prelude.Int, byte: prelude.Int}, file: prelude.String | nil, mod: Module | nil, prog: prelude.String, src: prelude.String}
 TY_BUILTIN_RAW(ty_get_source)
@@ -10549,6 +10736,10 @@ TY_BUILTIN_RAW(ty_get_source)
 
         if (src == NULL && expr.type == VALUE_PTR) {
                 src = (Expr *)expr.ptr;
+        }
+
+        if (src == NULL && expr.type == VALUE_BUILTIN_FUNCTION) {
+                return BuiltinSource(ty, &expr);
         }
 
         if (src == NULL || src->start.s == NULL || src->end.s == NULL) {

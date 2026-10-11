@@ -76,6 +76,47 @@ use match RGB {
     (r: Int, g: Int, b: Int) => (r, g, b)
 }
 
+fn fit(text: String, width: Int) -> String {
+    let out = Blob()
+    let used = 0
+    for c in text.chars() {
+        break if used + c.width() > width
+        out.push(c)
+        used += c.width()
+    }
+    out.str!()
+}
+
+fn chunks(text: String, width: Int) -> Array[String] {
+    let out = []
+    let rest = text
+    while rest.width() > width && width > 0 {
+        let head = fit(rest, width)
+        out.push(head)
+        rest = rest.slice(#head)
+    }
+    [*out, rest]
+}
+
+fn trim-end(spans: Array[(TermStyle, String)]) -> Array[(TermStyle, String)] {
+    match spans {
+        [*init, (style, text)] => [*init, (style, text.comb(/\s+$/))],
+        _                      => spans
+    }
+}
+
+fn assemble(spans: Array[(TermStyle, String)]) -> String {
+    let out = Blob()
+    let last: TermStyle = {}
+    for (style, text) in spans {
+        out.push(trans(last, style))
+        out.push(text)
+        last = style
+    }
+    out.push(trans(last, {}))
+    parse(out.str!())
+}
+
 pub fn escape(text: String) -> String {
     text.sub(/\[|\\/, %{'[': '\\[', '\\': '\\\\'}[])
 }
@@ -330,62 +371,44 @@ pub class Text {
     }
 
     wrap(width: Int) -> Array[Text] {
-        let spans = spans.reverse()
-        let lines = []
-
-        let remain = width
-        let line   = Blob()
-
-        fn next() {
-            lines.push(Text(line.str!(), __chalk))
-            line.clear()
-            remain = width
-        }
-
-        fn add(style: TermStyle, text: String) {
-            let state = {}
-            for [_, attr] in trans({}, style).scan(/\x1b\[([^m]+)m/) {
-                state = record-of(attr, start=state)
-            }
-
-            line.push(detrans({}, state))
-            line.push(escape(text))
-            line.push('[/]')
-
-            remain -= text.width()
-        }
-
-        while spans {
-            let (style, text) = spans.pop()
-
-            if let $i = text.search('\n') {
-                let (line, rest) = text.split(i)
-                spans.push((style, rest + 1))
-                spans.push((style, line))
-                remain = min(remain, line.width())
-            } else if text.width() > remain {
-                let fits = text.searchr(/\s/, remain) ?? 0
-                let i    = (fits > 0) ? fits : (#line > 0 ? 0 : remain)
-
-                if i == 0 {
-                    spans.push((style, text.comb(/^ /)))
-                    next()
-                } else {
-                    let (keep, push) = text.split(i)
-                    spans.push((style, push.comb(/^ /)))
-                    add(style, keep)
-                    next()
+        let rows = [[]]
+        let room = width
+        for (style, text) in spans {
+            for piece; i in text.split('\n') {
+                if i > 0 {
+                    rows.push([])
+                    room = width
                 }
-            } else {
-                add(style, text)
+                for word in piece.matches(/\S+\s*|\s+/) {
+                    for chunk in chunks(word, width) {
+                        if chunk.width() > room && rows[-1] {
+                            rows.push([])
+                            room = width
+                        }
+                        let chunk = (rows[-1] || room < width) ? chunk : chunk.comb(/^\s+/)
+                        rows[-1].push((style, chunk))
+                        room -= chunk.width()
+                    }
+                }
             }
         }
+        rows.map(row -> Text(assemble(trim-end(row)), __chalk))
+    }
 
-        if #line > 0 {
-            next()
+    clip(width: Int, ellipsis: String = '…') -> Text {
+        return self if self.width() <= width
+        let room = max(width - ellipsis.width(), 0)
+        let kept = []
+        for (style, text) in spans {
+            if text.width() <= room {
+                kept.push((style, text))
+                room -= text.width()
+                continue
+            }
+            kept.push((style, "{fit(text, room)}{ellipsis}"))
+            break
         }
-
-        lines
+        Text(assemble(kept), __chalk)
     }
 
     style-span(
@@ -528,22 +551,30 @@ pub fn trans(a: TermStyle, b: TermStyle) -> String {
             'fg' or 'bg' or 'uc'       => attrs.push(val.join(';')),
             'underline' :: val != nil  => attrs.push(val.join(':')),
             'bold'      :: val != nil  => attrs.push(1),
+            'dim'       :: val != nil  => attrs.push(2),
             'italic'    :: val != nil  => attrs.push(3),
             'reverse'   :: val != nil  => attrs.push(7),
             _                          => ()
         }
     }
 
-    attrs += (a - b).keys().map?(match {
+    let gone = (a - b).keys()
+
+    attrs += gone.map?(match {
         'fg'        => Some(39),
         'bg'        => Some(49),
         'uc'        => Some(59),
         'bold'      => Some(22),
+        'dim'       => Some(22),
         'italic'    => Some(23),
         'underline' => Some(24),
         'reverse'   => Some(27),
         _           => None
     })
+
+    if 'bold' in gone || 'dim' in gone {
+        attrs += [1 if b['bold'], 2 if b['dim']]
+    }
 
     let combined = ["\x1b[{it}m" for attrs].join()
 
@@ -592,7 +623,9 @@ pub class Chalk {
         fn stops(stop, style) {
             match (stop, style) {
                 ('fg',        {fg, ?bright})    => true,
+                ('fg',        {bright})         => true,
                 ('bg',        {bg, ?bg-bright}) => true,
+                ('bg',        {bg-bright})      => true,
                 ('uc',        {uc, ?underline}) => true,
                 ('u',         {underline, ?uc}) => true,
                 ('underline', {underline, ?uc}) => true,

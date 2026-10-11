@@ -245,3 +245,9 @@ pub fn refine-union-match-test() {
     assert((31...39).__match__(35))
     assert(!(31...39).__match__('35'))
 }
+
+pub fn class-constraint-narrowing-stays-sound() {
+    let result = run([str(FIXTURES / 'check-match-narrowing.ty')])
+    assert(result.status != 0)
+    assert('[union-method-coverage]' in result.stderr, result.stderr)
+}

@@ -31,6 +31,8 @@ typedef struct {
         int line;
         char *cond;
         char *doc;
+        char *src;
+        int src_line;
         StrVec lines;
         Entry *entries;
         size_t nentries;
@@ -59,6 +61,18 @@ typedef struct {
         bool required;
         char *dflt;
 } Param;
+
+typedef struct {
+        char *class;
+        char *name;
+        char *src;
+        char *file;
+        int line;
+} Method;
+
+static Method *Methods;
+static size_t NMethods;
+static size_t CapMethods;
 
 static Builtin *Builtins;
 static size_t NBuiltins;
@@ -543,7 +557,7 @@ static void
 parse_comment(Builtin *b, char const *raw)
 {
         StrVec lines = {0};
-        bool prose = false;
+        StrVec prose = {0};
 
         comment_lines(raw, &lines);
 
@@ -551,7 +565,7 @@ parse_comment(Builtin *b, char const *raw)
                 char const *line = lines.items[i];
 
                 if (!sig_head(line)) {
-                        prose |= (*line != '\0');
+                        spush(&prose, xstrdup(line));
                         continue;
                 }
 
@@ -586,20 +600,37 @@ parse_comment(Builtin *b, char const *raw)
                         i = j;
                 } else {
                         free(norm);
-                        prose = true;
+                        spush(&prose, xstrdup(line));
                 }
         }
 
-        if (prose) {
+        size_t first = 0;
+        size_t last = prose.count;
+
+        while (first < last && *prose.items[first] == '\0') {
+                first += 1;
+        }
+
+        while (last > first && *prose.items[last - 1] == '\0') {
+                last -= 1;
+        }
+
+        if (first < last) {
                 Buf doc = {0};
-                for (size_t i = 0; i < lines.count; ++i) {
-                        if (i > 0) {
+                for (size_t i = first; i < last; ++i) {
+                        if (i > first) {
                                 bputc(&doc, '\n');
                         }
-                        bputs(&doc, lines.items[i]);
+                        bputs(&doc, prose.items[i]);
                 }
                 b->doc = doc.s;
         }
+
+        for (size_t i = 0; i < prose.count; ++i) {
+                free(prose.items[i]);
+        }
+
+        free(prose.items);
 
         for (size_t i = 0; i < lines.count; ++i) {
                 free(lines.items[i]);
@@ -646,6 +677,37 @@ invocation(char const *base, char const *p, char const *file, bool typed, char *
         add_builtin(b);
 
         return p + (*p == ')');
+}
+
+static void
+capture_source(Builtin *b, char const *base, char const *id, char const *after, char const *comment)
+{
+        char const *start = id;
+        char const *open = strchr(after, '{');
+        char const *close = (open == NULL) ? NULL : strstr(open, "\n}");
+        Buf src = {0};
+
+        if (close == NULL) {
+                return;
+        }
+
+        while (start > base && start[-1] != '\n') {
+                start -= 1;
+        }
+
+        b->src_line = line_of(base, start);
+
+        if (comment != NULL) {
+                bputs(&src, comment);
+                bputc(&src, '\n');
+                for (char const *c = comment; *c != '\0'; ++c) {
+                        b->src_line -= (*c == '\n');
+                }
+                b->src_line -= 1;
+        }
+
+        bputn(&src, start, close + 2 - start);
+        b->src = src.s;
 }
 
 static bool
@@ -761,6 +823,13 @@ scan(char const *file)
                                         current_cond(stack, n),
                                         attached ? comment.s : NULL
                                 );
+                                capture_source(
+                                        &Builtins[NBuiltins - 1],
+                                        src,
+                                        id,
+                                        p,
+                                        attached ? comment.s : NULL
+                                );
                                 comment_end = NULL;
                         }
                 } else {
@@ -770,6 +839,157 @@ scan(char const *file)
 
         free(comment.s);
         free(stack);
+        free(src);
+}
+
+static char const *
+line_before(char const *base, char const *p)
+{
+        if (p == base) {
+                return NULL;
+        }
+
+        p -= 1;
+
+        while (p > base && p[-1] != '\n') {
+                p -= 1;
+        }
+
+        return p;
+}
+
+static bool
+preamble(char const *line)
+{
+        char const *end = strchr(line, '\n');
+
+        while (end > line && isspace((unsigned char)end[-1])) {
+                end -= 1;
+        }
+
+        return (end > line)
+            && (*line != '#')
+            && (*line != '}')
+            && (end[-1] != ';')
+            && (end[-1] != '}');
+}
+
+static bool
+definition(char const *base, char const *func, char **src, int *line)
+{
+        size_t n = strlen(func);
+
+        for (char const *p = base; (p = strstr(p, func)) != NULL; p += n) {
+                if ((p != base && p[-1] != '\n') || p[n] != '(') {
+                        continue;
+                }
+
+                char const *open = strstr(p, "\n{");
+                char const *close = (open == NULL) ? NULL : strstr(open, "\n}");
+                char const *semi = strchr(p, ';');
+
+                if (close == NULL || (semi != NULL && semi < open)) {
+                        continue;
+                }
+
+                char const *start = p;
+                char const *prev;
+
+                while ((prev = line_before(base, start)) != NULL && preamble(prev)) {
+                        start = prev;
+                }
+
+                *src = xstrndup(start, close + 2 - start);
+                *line = line_of(base, start);
+
+                return true;
+        }
+
+        return false;
+}
+
+static void
+add_method(Method m)
+{
+        if (NMethods == CapMethods) {
+                CapMethods = CapMethods ? CapMethods * 2 : 64;
+                Methods = xrealloc(Methods, CapMethods * sizeof *Methods);
+        }
+
+        Methods[NMethods++] = m;
+}
+
+static void
+scan_methods(char const *file)
+{
+        char *src = slurp(file);
+
+        for (char const *p = src; (p = strstr(p, "DEFINE_METHOD_TABLE(")) != NULL;) {
+                char const *end = strstr(p, "\n);");
+                char const *q = skip_space(p + strlen("DEFINE_METHOD_TABLE("));
+                char const *id = q;
+
+                while (isalnum((unsigned char)*q) || *q == '_') {
+                        q += 1;
+                }
+
+                if (end == NULL || *q != ',') {
+                        p = q;
+                        continue;
+                }
+
+                Buf class = {0};
+                bputs(&class, "CLASS_");
+                for (char const *c = id; c < q; ++c) {
+                        bputc(&class, toupper((unsigned char)*c));
+                }
+
+                while ((q = strstr(q, ".name")) != NULL && q < end) {
+                        char const *name = strchr(q, '"') + 1;
+                        char const *name_end = strchr(name, '"');
+                        char const *func = strstr(name_end, ".func");
+
+                        if (func == NULL || func > end) {
+                                break;
+                        }
+
+                        func = skip_space(strchr(func, '=') + 1);
+
+                        char const *func_end = func;
+                        while (isalnum((unsigned char)*func_end) || *func_end == '_') {
+                                func_end += 1;
+                        }
+
+                        Method m = {
+                                .class = xstrdup(class.s),
+                                .name  = xstrndup(name, name_end - name),
+                                .file  = xstrdup(file)
+                        };
+
+                        char *fname = xstrndup(func, func_end - func);
+                        size_t flen = strlen(fname);
+
+                        if (
+                                !definition(src, fname, &m.src, &m.line)
+                             && (flen > 7)
+                             && (strcmp(fname + flen - 7, "_no_mut") == 0)
+                        ) {
+                                fname[flen - 7] = '\0';
+                                definition(src, fname, &m.src, &m.line);
+                        }
+
+                        if (m.src != NULL) {
+                                add_method(m);
+                        }
+
+                        free(fname);
+                        q = func_end;
+                }
+
+                free(class.s);
+                p = end;
+        }
+
         free(src);
 }
 
@@ -884,6 +1104,7 @@ c_quote(Buf *out, char const *s)
                 case '\\': bputs(out, "\\\\"); break;
                 case '\n': bputs(out, "\\n\" \""); break;
                 case '\t': bputs(out, "\\t"); break;
+                case '?':  bputs(out, "\\?"); break;
                 default:   bputc(out, *s); break;
                 }
         }
@@ -1517,12 +1738,20 @@ main(int argc, char **argv)
         char path[4096];
 
         if (argc < 3) {
-                fprintf(stderr, "usage: tybi <outdir> <source.c>...\n");
+                fprintf(stderr, "usage: tybi <outdir> <source.c>... [-m <methods.c>...]\n");
                 return 1;
         }
 
+        bool methods = false;
+
         for (int i = 2; i < argc; ++i) {
-                scan(argv[i]);
+                if (strcmp(argv[i], "-m") == 0) {
+                        methods = true;
+                } else if (methods) {
+                        scan_methods(argv[i]);
+                } else {
+                        scan(argv[i]);
+                }
         }
 
         for (size_t i = 0; i < NBuiltins; ++i) {
@@ -1583,6 +1812,13 @@ main(int argc, char **argv)
                         } else {
                                 c_quote(&table, b->doc);
                         }
+                        if (b->src != NULL) {
+                                bputs(&table, ", .src = ");
+                                c_quote(&table, b->src);
+                                bputs(&table, ", .file = ");
+                                c_quote(&table, b->file);
+                                bprintf(&table, ", .line = %d", b->src_line);
+                        }
                         bputs(&table, " },\n");
                 }
                 emit_cond_close(&table, b->cond);
@@ -1597,6 +1833,22 @@ main(int argc, char **argv)
 
         snprintf(path, sizeof path, "%s/builtin_table.h", argv[1]);
         write_if_changed(path, &table);
+
+        Buf msrc = {0};
+
+        for (size_t i = 0; i < NMethods; ++i) {
+                Method const *m = &Methods[i];
+                bprintf(&msrc, "  { .class = %s, .name = ", m->class);
+                c_quote(&msrc, m->name);
+                bputs(&msrc, ", .src = ");
+                c_quote(&msrc, m->src);
+                bputs(&msrc, ", .file = ");
+                c_quote(&msrc, m->file);
+                bprintf(&msrc, ", .line = %d },\n", m->line);
+        }
+
+        snprintf(path, sizeof path, "%s/builtin_method_src.h", argv[1]);
+        write_if_changed(path, &msrc);
 
         return 0;
 }

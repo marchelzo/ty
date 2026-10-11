@@ -220,9 +220,20 @@ set(_gen_builtins_sources
   src/ffi.c
   src/sqlite.c
 )
+set(_gen_builtins_methods
+  src/str.c
+  src/array.c
+  src/dict.c
+  src/blob.c
+  src/heap.c
+  src/queue.c
+  src/set.c
+  src/shared_queue.c
+)
 set(_gen_builtins_headers
   ${_gen_builtins_dir}/builtin_decls.h
   ${_gen_builtins_dir}/builtin_table.h
+  ${_gen_builtins_dir}/builtin_method_src.h
 )
 
 add_custom_command(
@@ -231,10 +242,11 @@ add_custom_command(
   COMMAND
     ${CMAKE_COMMAND} -E make_directory "${_gen_builtins_dir}"
   COMMAND
-    $<TARGET_FILE:tybi> "${_gen_builtins_dir}" ${_gen_builtins_sources}
+    $<TARGET_FILE:tybi> "${_gen_builtins_dir}" ${_gen_builtins_sources} -m ${_gen_builtins_methods}
   DEPENDS
     tybi
     ${_gen_builtins_sources}
+    ${_gen_builtins_methods}
   WORKING_DIRECTORY
     "${PROJECT_SOURCE_DIR}"
   COMMENT

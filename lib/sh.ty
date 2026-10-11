@@ -25,6 +25,12 @@ pub class CmdResult {
     }
 }
 
+fn drain(fd: Int, buf: Blob) {
+    while os.read(fd, buf, 65536) > 0 {
+        ()
+    }
+}
+
 fn __run(
     cmd: String,
     argv: Array[String],
@@ -101,15 +107,15 @@ fn __run(
         let n = os.poll(pfds-in, pfds-out, left)
 
         continue if (n == 0) || (n == EINTR)
-
-        let stop = (n < 0)
+        break if n < 0
 
         for (fd, ev, buf) in pfds-out {
             if ev & os.POLLIN {
-                os.read(fd, buf, 4096)
+                os.read(fd, buf, 65536)
             }
             if ev & (os.POLLERR | os.POLLHUP) {
-                stop = true
+                drain(fd, buf)
+                pfds-in.filter!(\_.0 != fd)
             }
             if !keep-going?(fd) {
                 os.kill(-p.pid, signal)
@@ -117,7 +123,7 @@ fn __run(
             }
         }
 
-        break if stop
+        break if !pfds-in
     }
 
     os.close(p.stdout)

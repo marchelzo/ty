@@ -1,0 +1,10 @@
+import json
+import path (Path)
+import help.corpus as corpus
+
+match argv {
+    [_, '--list']                => print(json.encode(corpus.builtin-modules())),
+    [_, name, out]               => Path(out).write(json.encode(corpus.harvest(name))),
+    [_, name, out, '--static']   => Path(out).write(json.encode(corpus.harvest(name, static?: true))),
+    _                            => ()
+}

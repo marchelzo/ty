@@ -44,7 +44,7 @@ use Record = {
 
 class RecordParser {
     _buf: Blob
-    _co:  Generator[Record, Blob | nil]
+    _co:  Generator[Record | nil, Blob]
 
     init() {
         _buf = Blob()
@@ -59,7 +59,7 @@ class RecordParser {
         _buf.splice(0, n)
     }
 
-    _run*() -> Generator[Record, Blob | nil] {
+    _run*() -> Generator[Record | nil, Blob] {
         for (;;) {
             let id  = c.load(c.u32, _next(4))
             eprint("Parsing record with id={id}")

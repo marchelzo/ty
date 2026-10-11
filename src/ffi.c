@@ -720,7 +720,9 @@ TY_BUILTIN_RAW(ffi_fields)
         return ARRAY(fields);
 }
 
-// ffi.load[T](type: CType[T], address: IntoPtr[T]) -> T
+// ffi.load[T](ptr: Ptr[T]) -> T
+// ffi.load[T](type: CType[T], address: IntoPtr[Any]) -> T
+// ffi.load[T](type: CType[T], address: IntoPtr[Any], n: Int) -> Array[T]
 TY_BUILTIN_RAW(ffi_load)
 {
         ASSERT_ARGC("ffi.load()", 1, 2, 3);

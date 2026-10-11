@@ -1,0 +1,752 @@
+import ty
+import ty.mod
+import ty.types as types
+import ty.parse as parse
+import json
+import os
+import path (Path)
+import sh (run, Success)
+import tp (ThreadPool, Future)
+
+pub const VERSION = 5
+
+const TYPE_WIDTH = 78
+const MAX_SOURCE_LINES = 120
+const SKIP_MODULES = %{'main', 'help/dump'}
+const SKIP_DIRS = %{'bin': true, 'lib': true, 'test': true, 'tests': true}
+
+pub class Entry {
+    name:  String
+    qual:  String
+    mod:   String
+    owner: ?String
+    kind:  String
+    type:  ?String
+    ctype: ?String
+    wtype: ?String
+    decl:  ?String
+    hdecl: ?String
+    doc:   ?String
+    src:   ?String
+    hsrc:  ?String
+    lang:  ?String
+    file:  ?String
+    line:  ?Int
+    lhs:   ?String
+    rhs:   ?String
+    key:   String
+
+    init(d: Dict[String, _]) {
+        name  = d['name']
+        qual  = d['qual']
+        mod   = d['mod']
+        owner = d['owner']
+        kind  = d['kind']
+        type  = d['type']
+        ctype = d['ctype']
+        wtype = d['wtype']
+        decl  = d['decl']
+        hdecl = d['hdecl']
+        doc   = d['doc']
+        src   = d['src']
+        hsrc  = d['hsrc']
+        lang  = d['lang']
+        file  = d['file']
+        line  = d['line']
+        lhs   = d['lhs']
+        rhs   = d['rhs']
+        key   = fold(name)
+    }
+}
+
+pub fn fold(s: String) -> String {
+    s.lower().comb(/(?<=[a-z0-9])[-_]+(?=[a-z0-9])/)
+}
+
+pub fn camel(name: String) -> String {
+    name.sub(/-([\w$])/, \_[1].upper())
+}
+
+pub fn kebab(name: String) -> String {
+    return name if !name.match?(/^[a-z_]/)
+    let k = name.sub(/(?<=[a-z0-9])[A-Z](?![A-Z])/, \"-{_.lower()}")
+    (camel(k) == name) ? k : name
+}
+
+fn kebab-opt(text: ?String) -> String | nil {
+    match text {
+        $t => kebab-text(t),
+        _  => nil
+    }
+}
+
+pub fn kebab-text(text: String) -> String {
+    text.sub(/\x1b\[[0-9;:]*m|'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|\d[\w.]*|[A-Za-z_$][\w$]*[?!]*/, match {
+        token and token.match?(/^[a-z_][\w$]*[A-Z]/) => kebab(token),
+        token                                        => token
+    })
+}
+
+pub fn dotted(mod: String) -> String {
+    mod.sub('/', '.')
+}
+
+fn margin(text: String) -> Int {
+    text.lines()
+        .filter(\_.match?(/\S/))
+        .map(\#(_.match(/^ */) ?? ''))
+        .min() ?? 0
+}
+
+fn unindent(text: String, n: Int) -> String {
+    text.lines().map(line -> line.slice(min(n, #(line.match(/^ */) ?? '')))).join('\n')
+}
+
+pub fn dedent(text: String) -> String {
+    unindent(text, margin(text))
+}
+
+pub fn show(t: _, color: Bool = false, width: Int = 0) -> String | nil {
+    (t == nil) ? nil : types.show(t, color: color, width: width)
+}
+
+pub fn class-qual(c: _) -> String | nil {
+    let $fqn = (try { c.__fqn__ }) or return nil
+    fqn.comb(/^prelude\./)
+}
+
+fn result-type(t: _) -> _ {
+    match t {
+        ty.FuncType(_, r)                          => r,
+        ty.Scheme({body: ty.FuncType(_, r), *}) => r,
+        _                                          => nil
+    }
+}
+
+fn doc-text(raw: ?String) -> String | nil {
+    let $raw = raw or return nil
+    let text = raw
+        .lines()
+        .map(\_.sub(/^\s*(?:\/\*\*|\*\/|\*(?!\/)|\/\/\/)\s?/, ''))
+        .join('\n')
+        .comb(/\s*\*\/\s*$/)
+    let text = dedent(text).trim()
+    (text == '') ? nil : text
+}
+
+fn bracket-depth(line: String) -> Int {
+    let code = line.comb(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|\/\/.*$/)
+    #code.comb(/[^(\[{]/) - #code.comb(/[^)\]}]/)
+}
+
+pub fn flat(s: String) -> String {
+    s.trim().sub(/\s*\n\s*/, ' ').sub(/([(\[{]) /, &1).sub(/,? ([)\]}])/, &1)
+}
+
+fn overloads(text: String) -> Array[String] {
+    let out = []
+    let pending = []
+    let depth = 0
+    for line in text.split('\n') {
+        pending.push(line)
+        depth += bracket-depth(line)
+        if depth <= 0 {
+            out.push(flat(pending.join('\n')))
+            pending = []
+            depth = 0
+        }
+    }
+    if pending {
+        out.push(flat(pending.join('\n')))
+    }
+    out.filter(\_ != '')
+}
+
+fn spelling-pattern(name: String) -> String {
+    name.chars().map(match {
+        /[A-Z]/ => "(?:{$0}|-{$0.lower()})",
+        /\w/    => $0,
+        c       => "\\{c}"
+    }).join()
+}
+
+fn spelling(name: String) -> Regex {
+    regex(['(?<![\\w-])', spelling-pattern(name), '(?![\\w?!-])'].join())
+}
+
+class Source {
+    module:  _
+    text:    String
+    lines:   Array[String]
+    offsets: Array[Int]
+    file:    ?String
+
+    init(module: _) {
+        self.module  = module
+        self.text    = ty.mod.source(module) ?? ''
+        self.lines   = text.lines()
+        self.offsets = [0]
+        let path = ty.mod.path(module)
+        self.file    = path.starts?('/') ? path : nil
+        let at = 0
+        for line in lines {
+            at += line.size() + 1
+            offsets.push(at)
+        }
+    }
+
+    at(line: Int) -> Int {
+        offsets[min(max(line, 0), #offsets - 1)]
+    }
+
+    paint(start: Int, stop: Int) -> String | nil {
+        (try { parse.highlight(module, start, stop) })
+    }
+
+    excerpt(line: Int, stop: Int) -> Dict[String, _] {
+        let start = at(line)
+        let stop = min(stop, at(line + MAX_SOURCE_LINES) - 1, text.size())
+        let plain = text.bslice(start, stop - start).comb(/\n+$/)
+        let n = margin(plain)
+        let painted = paint(start, stop)
+        %{
+            'src':  unindent(plain, n),
+            'hsrc': (painted != nil) ? unindent(painted.comb(/\n+$/), n) : nil,
+            'line': line + 1,
+            'file': file
+        }
+    }
+
+    span(line: Int, rows: Int) -> Dict[String, _] {
+        excerpt(line, at(line + rows) - 1)
+    }
+
+    header(line: Int, stop: Int, name: String) -> String | nil {
+        let start = at(line)
+        let head = text.bslice(start, stop - start)
+        let $i = head.bsearch(spelling(name)) or return nil
+        return nil if head.bslice(i).contains?('\n')
+        paint(start + i, stop).?comb(/[\s;]+$/)
+    }
+}
+
+class Body {
+    first:  Int
+    lines:  Array[String]
+    text:   String
+    indent: String
+
+    init(source: Source, at: Int) {
+        let outer = #(source.lines[at - 1].match(/^ */) ?? '')
+        self.first = at
+        self.lines = []
+        for line in source.lines[at;] {
+            break if line.match?(/\S/) && #(line.match(/^ */) ?? '') <= outer
+            lines.push(line)
+        }
+        self.text   = lines.join('\n')
+        self.indent = lines.find(/^ +\S/).?match(/^ +/) ?? '    '
+    }
+}
+
+class Harvest {
+    module:  _
+    name:    String
+    here:    Source
+    sources: Dict[String, Source]
+    static?: Bool
+    local?:  Bool
+    out:     Array[_]
+
+    init(module: _, name: String, static?: Bool = false, local?: Bool = false) {
+        self.module  = module
+        self.name    = name
+        self.static? = static?
+        self.local?  = local?
+        self.out     = []
+        self.here    = Source(module)
+        self.sources = %{ty.mod.path(module): here}
+    }
+
+    run() -> Array[_] {
+        emit(
+            [],
+            dotted(name),
+            'module',
+            doc:    module-doc(),
+            origin: %{'line': 1, 'file': here.file},
+            qual:   dotted(name)
+        )
+        walk(ty.mod.dict(module), [])
+        operators()
+        out
+    }
+
+    module-doc() -> String | nil {
+        let $head = here.text.match(/^(?:[ \t]*(?:\/\/\/|\/\/|#!)[^\n]*\n)+|^\s*\/\*\*.*?\*\//s) or return nil
+        doc-text(head.comb(/^#!.*\n/))
+    }
+
+    qual(owner: Array[String], name: String) -> String {
+        [dotted(self.name) if self.name != 'prelude' && !local?, *owner.map(kebab), name].join('.')
+    }
+
+    emit(
+        owner: Array[String],
+        name: String,
+        kind: String,
+        type: _ = nil,
+        decl: ?String = nil,
+        hdecl: ?String = nil,
+        doc: ?String = nil,
+        origin: Dict[String, _] = %{},
+        qual: ?String = nil,
+        lhs: ?String = nil,
+        rhs: ?String = nil
+    ) {
+        let src: ?String = origin['src']
+        let name = kebab(name)
+        let ctype = show(type, color: true)
+        let wtype = show(type, color: true, width: TYPE_WIDTH)
+        out.push(%{
+            'name':  name,
+            'qual':  kebab-opt(qual) ?? self.qual(owner, name),
+            'mod':   dotted(self.name),
+            'owner': owner ? owner.map(kebab).join('.') : nil,
+            'kind':  kind,
+            'type':  kebab-opt(show(type)),
+            'ctype': kebab-opt(ctype),
+            'wtype': (wtype != ctype) ? kebab-opt(wtype) : nil,
+            'decl':  kebab-opt(decl),
+            'hdecl': kebab-opt(hdecl),
+            'doc':   doc-text(doc),
+            'src':   src,
+            'hsrc':  origin['hsrc'],
+            'lang':  origin['lang'] ?? (src ? 'ty' : nil),
+            'file':  origin['file'] ?? here.file,
+            'line':  origin['line'],
+            'lhs':   lhs,
+            'rhs':   rhs
+        })
+    }
+
+    source-of(module: _) -> Source {
+        let path = ty.mod.path(module)
+        sources[path] ?? (sources[path] = Source(module))
+    }
+
+    definition(value: _) -> Dict[String, _] | nil {
+        let $def = (try { value.__def__ }) or return nil
+        let $span = (try { ty.src(def) }) or return nil
+        let $mod = span.mod or return nil
+        let src = source-of(mod)
+        let body = try { ty.src(def.body) }
+        let stop = body.?start.?byte ?? span.end.byte
+        let origin = src.excerpt(span.start.line, span.end.byte)
+        let name = try { value.__name__ }
+        origin['hdecl'] = (name != nil) ? src.header(span.start.line, stop, name) : nil
+        origin
+    }
+
+    walk(d: Dict[String, _], owner: Array[String]) {
+        for name, info in d if !name.match?(/[#$]/) {
+            match info {
+                inner: Dict  => nested(name, inner, owner),
+                {methods, *} => klass(name, info, owner),
+                {kind, *}    => binding(name, info, owner),
+                _            => ()
+            }
+        }
+    }
+
+    nested(name: String, inner: Dict[String, _], owner: Array[String]) {
+        emit(owner, name, 'namespace', origin: statement(name))
+        walk(inner, [*owner, name])
+    }
+
+    statement(name: String) -> Dict[String, _] {
+        let pattern = regex([
+            '(?m)^[ \\t]*(?:pub\\s+)?(?:use|type|tag|const|let|macro|ns|class|fn|trait)\\b[^\\n]*?',
+            spelling(name).source
+        ].join())
+        let $i = here.text.bsearch(pattern) or return %{}
+        let line = here.text.bslice(0, i).count('\n')
+        let depth = 0
+        let rows = 0
+        for text in here.lines[line;line + MAX_SOURCE_LINES] {
+            rows += 1
+            depth += bracket-depth(text)
+            break if depth <= 0
+        }
+        here.span(line, rows)
+    }
+
+    binding(name: String, info: _, owner: Array[String]) {
+        return if !owner && name.match?(/^[^\w]+$/) && info.kind == 'fn'
+        let value = static? ? nil : info.value
+        let kind = refine(info.kind, value)
+        let decl = (kind == 'fn' || kind == 'macro') ? declaration(value) : nil
+        let found = (kind == 'fn') ? function-source(value) : nil
+        let origin = found ?? statement(name)
+        emit(
+            owner,
+            name,
+            kind,
+            type:   info.type,
+            decl:   decl,
+            hdecl:  (decl != nil && !decl.contains?('\n')) ? origin['hdecl'] : nil,
+            doc:    info.doc,
+            origin: origin
+        )
+    }
+
+    refine(kind: String, value: _) -> String {
+        match (kind, value) {
+            ('var' or 'const', f: Function) and f !:: Class and f !:: Tag => 'fn',
+            _                                                         => kind
+        }
+    }
+
+    declaration(value: _) -> String | nil {
+        match try { doc(value) } {
+            (_, proto: String, _) => overloads(proto).join('\n'),
+            _                     => nil
+        }
+    }
+
+    function-source(value: _) -> Dict[String, _] | nil {
+        let $f = value or return nil
+        if let {src, file, start: {line, *}, *} = ty.src(f) and file.?ends?('.c') {
+            return %{'src': src, 'file': file, 'line': line + 1, 'lang': 'c'}
+        }
+        definition(f)
+    }
+
+    klass(name: String, info: _, owner: Array[String]) {
+        let cls = owner ? nil : (static? ? nil : try { ty.mod.lookup(module, name) })
+        let protos = prototypes(cls, name)
+        let origin = definition(cls) ?? statement(name)
+        let at = origin['line'] ?? 1
+        let inside = [*owner, name]
+
+        emit(
+            owner,
+            name,
+            'class',
+            decl:   class-header(name, info),
+            doc:    info.doc ?? init-doc(info),
+            origin: origin
+        )
+
+        let seen = %{}
+        let body = Body(self.here, at)
+
+        for (kind, members) in [
+            ('field',  info.fields),
+            ('method', info.methods),
+            ('getter', info.getters),
+            ('setter', info.setters),
+            ('static', info.static-methods),
+            ('static', info.static-getters)
+        ] {
+            for m in members if !m.name.contains?('#') && (kind, m.name) not in seen {
+                seen[(kind, m.name)] = true
+                member(inside, cls, kind, m, protos[m.name]!, body)
+            }
+        }
+    }
+
+    init-doc(info: _) -> String | nil {
+        info.methods.find(\_.name == 'init').?doc
+    }
+
+    class-header(name: String, info: _) -> String {
+        [
+            "class {name}",
+            "[{info.params.map(show).join(', ')}]" if info.params,
+            " < {show(info.`super`)}" if info.`super` != nil,
+            " : {info.traits.map(show).join(', ')}" if info.traits
+        ].join()
+    }
+
+    prototypes(cls: _, name: String) -> Dict[String, Array[String]] {
+        let protos = %{*: []}
+        let $cls = cls or return protos
+        let members = match try { doc(cls) } {
+            (_, _, ms: Array) => ms,
+            _                 => []
+        }
+        for (full, proto, _) in members if proto != nil && full.starts?("{name}.") {
+            protos[full.slice(#name + 1).comb(/#\d+$/)].push(proto)
+        }
+        protos
+    }
+
+    member(
+        owner: Array[String],
+        cls: _,
+        kind: String,
+        m: _,
+        protos: Array[String],
+        body: Body
+    ) {
+        let found = declared(m.name, kind, body)
+        let decls = found ? found.map(&0) : protos.map(flat).nub()
+        let painted = found.map(&1)
+        let origin = member-source(cls, kind, m.name)
+        let hdecl = (#decls == 1) ? ((painted ? painted[0] : nil) ?? origin['hdecl']) : nil
+        let name = m.name
+        emit(
+            owner,
+            name,
+            kind,
+            type:   (kind == 'getter') ? getter-type(m.type) : m.type,
+            decl:   decls ? decls.join('\n') : nil,
+            hdecl:  hdecl,
+            doc:    m.?doc,
+            origin: origin
+        )
+    }
+
+    getter-type(t: _) -> _ {
+        match t {
+            ty.FuncType([], r) => r,
+            _                  => t
+        }
+    }
+
+    member-source(cls: _, kind: String, name: String) -> Dict[String, _] {
+        let $cls = cls or return %{}
+        let table = match kind {
+            'method' => cls.__methods__,
+            'getter' => cls.__getters__,
+            'setter' => cls.__setters__,
+            'static' => cls.__static_methods__,
+            _        => nil
+        }
+        let f = (table != nil) ? (table[name] ?? cls.__static_getters__[name]) : nil
+        let own? = (try { f.__class__ == cls }) ?? false
+        let native = match try { ty.method-source(cls, name) } {
+            {src, file, start: {line, *}, *} => %{'src': src, 'file': file, 'line': line + 1, 'lang': 'c'},
+            _                                => nil
+        }
+        let def = (f != nil) ? definition(f) : nil
+        match (def, own?, native) {
+            ($d, true, _)   => d,
+            (_, _, $native) => native,
+            ($d, _, _)      => d,
+            _               => %{}
+        }
+    }
+
+    declared(name: String, kind: String, body: Body) -> Array[(String, String | nil)] {
+        return [] if !body.text.contains?(kebab(name)) && !body.text.contains?(name)
+        let head = regex([
+            "^{body.indent}",
+            (kind == 'static') ? 'static\\s+' : '(?!static\\s)',
+            spelling-pattern(name),
+            '(?=\\s*[(\\[]|\\s*->|\\s*;?\\s*$)'
+        ].join())
+        let found = []
+        for line; i in body.lines if head.test(line) && bracket-depth(line) == 0 {
+            found.push(decl-line(body.first + i, name))
+        }
+        found.filter(\_.0 != '')
+    }
+
+    decl-line(line: Int, name: String) -> (String, String | nil) {
+        let text = here.lines[line]
+        let $i = text.bsearch(spelling(name)) or return ('', nil)
+        let rest = text.bslice(i)
+        let cut = body-start(rest) ?? #rest
+        let decl = rest.slice(0, cut).trim().comb(/;$/)
+        let stop = here.at(line) + i + rest.slice(0, cut).trim().comb(/;$/).size()
+        let proto = decl.bslice(decl.bsearch(/[(\[]|\s*->/) ?? decl.size())
+        (proto, here.paint(here.at(line) + i, stop))
+    }
+
+    operators() {
+        for op in ty.operators() if from-here?(op.def) {
+            let lhs = class-qual(op.left)
+            let rhs = class-qual(op.right)
+            let ret = show(result-type(op.type))
+            let left = (op.left != nil) ? Class.name(op.left) : 'Any'
+            let right = (op.right != nil) ? Class.name(op.right) : 'Any'
+            emit(
+                [],
+                op.op,
+                'operator',
+                type:   op.type,
+                decl:   "{left} {op.op} {right}{(ret != nil) ? " -> {ret}" : ''}",
+                doc:    op.doc,
+                origin: definition-of(op.def),
+                qual:   "{lhs ?? 'Any'} {op.op} {rhs ?? 'Any'}",
+                lhs:    kebab-opt(lhs),
+                rhs:    kebab-opt(rhs)
+            )
+        }
+    }
+
+    from-here?(def: _) -> Bool {
+        let span = try { ty.src(def) }
+        let mod = span.?mod
+        (mod != nil) && ty.mod.path(mod) == ty.mod.path(module)
+    }
+
+    definition-of(def: _) -> Dict[String, _] {
+        let span: _ = ty.src(def)
+        source-of(span.mod).excerpt(span.start.line, span.end.byte)
+    }
+}
+
+pub fn harvest(name: String, static?: Bool = false) -> Array[_] {
+    let module = static? ? compile-only(name) : Module(name)
+    Harvest(module, name, static?).run()
+}
+
+pub fn harvest-scope(module: _) -> Array[Entry] {
+    Harvest(module, ty.mod.name(module), local?: true).run().drop(1).map(Entry)
+}
+
+fn body-start(text: String) -> Int | nil {
+    let depth = 0
+    for c; i in text.chars() {
+        match c {
+            '(' or '[' => depth += 1,
+            ')' or ']' => depth -= 1,
+            '{' and depth == 0 && !text.slice(0, i).match?(/(->|[|,(:])\s*$/) => return i,
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            _   => ()
+        }
+    }
+}
+
+fn compile-only(name: String) -> Module {
+    let $file = module-file(name) or throw RuntimeError("no such module: {name}")
+    ty.mod.compile(file.read-text(), nil, str(file))
+}
+
+pub fn module-file(name: String) -> Path | nil {
+    ty.path.map(\Path(_) / "{name}.ty").find(&.exists?)
+}
+
+pub fn library-modules() -> Dict[String, Path] {
+    let found = %{}
+    for dir in ty.path.map(Path).nub().filter(&.dir?) {
+        for file in scan(dir, dir) {
+            let name = str(file.relative-to(dir).with-suffix(''))
+            found[name] = found[name] ?? file
+        }
+    }
+    found
+}
+
+fn scan(root: Path, dir: Path) -> Array[Path] {
+    let files = dir.glob('*.ty')
+    for sub in dir.ls() if sub.dir? && sub.name.match?(/^[A-Za-z_]\w*$/) && sub.name not in SKIP_DIRS {
+        files += scan(root, sub)
+    }
+    files
+}
+
+pub fn builtin-modules() -> Array[String] {
+    Module.list.filter(\_.path == '(built-in)').map(&.name)
+}
+
+fn heading(text: String, pattern: Regex) -> String | nil {
+    match text.match(pattern) {
+        [_, title] => title.trim(),
+        _          => nil
+    }
+}
+
+fn tour-pages() -> Array[Path] {
+    let intro = Path(ty.executable).resolve.parent / 'doc' / 'intro'
+    intro.dir? ? intro.glob('*.md').sort!(by=str) : []
+}
+
+pub fn guides() -> Array[_] {
+    let entries = []
+    for page in tour-pages() {
+        let text = page.read-text()
+        let title = heading(text, /^#\s+(.+)$/m) ?? page.stem
+        let lineno = 1
+        for section in text.split(/(?m)^(?=## )/) {
+            let heading = heading(section, /^##\s+(.+)$/m) ?? title
+            entries.push(%{
+                'name':  heading,
+                'qual':  "{title} › {heading}",
+                'mod':   'tour',
+                'owner': title,
+                'kind':  'guide',
+                'doc':   section.trim(),
+                'lang':  'md',
+                'file':  str(page),
+                'line':  lineno
+            })
+            lineno += section.count('\n')
+        }
+    }
+    entries
+}
+
+pub fn cache-file() -> Path {
+    let base = os.getenv('XDG_CACHE_HOME') ?? "{Path.home()}/.cache"
+    Path(base) / 'ty' / 'help-index.json'
+}
+
+pub fn stamp() -> String {
+    let files = [*library-modules().values(), *tour-pages(), Path(ty.executable).resolve]
+    let times = files.map(\_.stat.mtime)
+    "{VERSION}|{#files}|{times.max()}|{times.sum()}"
+}
+
+fn worker() -> Path {
+    Path(__file__).parent / 'dump.ty'
+}
+
+fn dump(name: String, scratch: Path) -> Array[_] {
+    let out = scratch / "{dotted(name)}.json"
+    for flags in [[], ['--static']] {
+        let result = run(
+            [ty.executable, '--color=never', str(worker()), name, str(out), *flags],
+            timeout: 60
+        )
+        if result.fate == Success && out.exists? {
+            return json.parse(out.read-text()) ?? []
+        }
+    }
+    []
+}
+
+pub fn build(
+    out: Path = cache-file(),
+    jobs: Int = 8,
+    progress: _ = nil
+) -> Array[_] {
+    let names = [*builtin-modules(), *library-modules().keys()].nub().filter(\_ not in SKIP_MODULES)
+    let scratch = Path('/tmp').mkdtemp('ty-help-')
+    let pool = ThreadPool(jobs, dump)
+    let futures = names.map(pool.submit@(_, scratch))
+    let entries = []
+    for chunk; i in Future.iter(futures) {
+        entries += chunk
+        if progress { progress(i + 1, #names) }
+    }
+    pool.close()
+    scratch.rmtree(quiet: true)
+    entries += guides()
+    out.parent.mkdir(parents: true, exist-ok: true)
+    out.write(json.encode(%{'version': VERSION, 'stamp': stamp(), 'entries': entries}))
+    entries
+}
+
+pub fn load(rebuild: Bool = false, progress: _ = nil) -> Array[Entry] {
+    let file = cache-file()
+    let index: _ = (file.exists? && !rebuild) ? try { json.parse(file.read-text()) } : nil
+    let raw = (index != nil && index['stamp'] == stamp())
+            ? index['entries']
+            : build(file, progress: progress)
+    raw.map(Entry)
+}

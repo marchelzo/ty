@@ -548,6 +548,12 @@ op_definition(int op, usize i);
 int
 op_dispatch(Ty *ty, int op, int t1, int t2);
 
+usize
+op_count(void);
+
+bool
+op_definition_spec(int op, usize i, i32 *t1, i32 *t2, i32 *ref, Expr **expr);
+
 Expr *
 op_fun_info(int op, int t1, int t2);
 

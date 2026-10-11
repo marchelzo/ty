@@ -181,6 +181,12 @@ vm_load_c_module(Ty *ty, char const *name, void *p);
 char const *
 vm_builtin_type(char const *module, char const *name);
 
+char const *
+vm_builtin_source(Value const *f, char const **file, int *line);
+
+char const *
+vm_builtin_method_source(int class, char const *name, char const **file, int *line);
+
 void
 vm_exec(Ty *ty, char *ip);
 

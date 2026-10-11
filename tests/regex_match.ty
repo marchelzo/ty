@@ -266,3 +266,12 @@ pub fn incompatible-capture-types() {
         }
     }
 }
+
+pub fn source-of-a-dying-regex() {
+    fn fresh(i: Int) -> Regex {
+        regex("abc{i}(x)")
+    }
+    for i in ..200000 {
+        assert(fresh(i).source == "abc{i}(x)")
+    }
+}

@@ -1637,16 +1637,21 @@ typedef struct {
 
 typedef struct { char const *s; isize n; } StrLen;
 
+enum {
+        US_COLOR  = 10,
+        US_BRIGHT = 18
+};
+
 static StrLen us_fg_nm[] = {
-        {SN("red")},     {SN("green")},   {SN("yellow")},
-        {SN("blue")},    {SN("magenta")}, {SN("cyan")},
-        {SN("white")}
+        {SN("black")},   {SN("red")},     {SN("green")},
+        {SN("yellow")},  {SN("blue")},    {SN("magenta")},
+        {SN("cyan")},    {SN("white")}
 };
 
 static StrLen us_bg_nm[] = {
-        {SN("bg-red")},  {SN("bg-green")},   {SN("bg-yellow")},
-        {SN("bg-blue")}, {SN("bg-magenta")}, {SN("bg-cyan")},
-        {SN("bg-white")}
+        {SN("bg-black")},  {SN("bg-red")},     {SN("bg-green")},
+        {SN("bg-yellow")}, {SN("bg-blue")},    {SN("bg-magenta")},
+        {SN("bg-cyan")},   {SN("bg-white")}
 };
 
 static StrLen us_off_nm[] = {
@@ -1714,6 +1719,10 @@ us_parse_sgr(UnchalkSt *st, u8 const *p, isize n)
                         US_SET(st, US_BOLD, 2);
                         break;
 
+                case 2:
+                        US_SET(st, US_DIM, 2);
+                        break;
+
                 case 3:
                         US_SET(st, US_ITALIC, 2);
                         break;
@@ -1737,7 +1746,7 @@ us_parse_sgr(UnchalkSt *st, u8 const *p, isize n)
                         US_SET(st, US_REVERSE, 2);
                         break;
 
-                case 22: US_SET(st, US_BOLD,    1); break;
+                case 22: US_SET(st, US_BOLD,    1); US_SET(st, US_DIM, 1); break;
                 case 23: US_SET(st, US_ITALIC,  1); break;
                 case 24: US_SET(st, US_UL,      1); break;
                 case 27: US_SET(st, US_REVERSE, 1); break;
@@ -1788,15 +1797,16 @@ us_parse_sgr(UnchalkSt *st, u8 const *p, isize n)
                         break;
                 }
                 default:
-                        if (v >= 31 && v <= 37) {
-                                US_SET(st, US_FG, v - 30 + 1);
-                        } else if (v >= 41 && v <= 47) {
-                                US_SET(st, US_BG, v - 40 + 1);
-                        } else if (v >= 91 && v <= 97) {
-                                US_SET(st, US_FG, v - 90 + 1);
-                        } else if (v >= 101 && v <= 107) {
+                        if (v >= 30 && v <= 37) {
+                                US_SET(st, US_FG, US_COLOR + v - 30);
+                        } else if (v >= 40 && v <= 47) {
+                                US_SET(st, US_BGBR, 1);
+                                US_SET(st, US_BG, US_COLOR + v - 40);
+                        } else if (v >= 90 && v <= 97) {
+                                US_SET(st, US_FG, US_BRIGHT + v - 90);
+                        } else if (v >= 100 && v <= 107) {
                                 US_SET(st, US_BGBR, 2);
-                                US_SET(st, US_BG, v - 100 + 1);
+                                US_SET(st, US_BG, US_COLOR + v - 100);
                         }
                         break;
                 }
@@ -1840,8 +1850,12 @@ us_emit_on(Ty *ty, byte_vector *out, UnchalkSt const *st, int ai)
                 break;
 
         case US_FG:
-                if (v >= 2 && v <= 8) {
-                        StrLen nm = us_fg_nm[v - 2];
+                if (v >= US_BRIGHT) {
+                        StrLen nm = us_fg_nm[v - US_BRIGHT];
+                        svLIT(*out, "bright ");
+                        svPn(*out, nm.s, nm.n);
+                } else if (v >= US_COLOR) {
+                        StrLen nm = us_fg_nm[v - US_COLOR];
                         svPn(*out, nm.s, nm.n);
                 } else {
                         sxdf(out, "#%02x%02x%02x",
@@ -1852,8 +1866,8 @@ us_emit_on(Ty *ty, byte_vector *out, UnchalkSt const *st, int ai)
                 break;
 
         case US_BG:
-                if (v >= 2 && v <= 8) {
-                        StrLen nm = us_bg_nm[v - 2];
+                if (v >= US_COLOR) {
+                        StrLen nm = us_bg_nm[v - US_COLOR];
                         svPn(*out, nm.s, nm.n);
                 } else {
                         sxdf(out, "bg-#%02x%02x%02x",
@@ -2626,8 +2640,8 @@ ck_stops(Ty *ty, char const *stop, isize slen,
 #define IS(lit) \
         (slen == (isize)(sizeof (lit) - 1) && memcmp(stop, lit, slen) == 0)
 
-        if (IS("fg"))                   { return sty->fg_n > 0;      }
-        if (IS("bg"))                   { return sty->bg_n > 0;      }
+        if (IS("fg"))                   { return sty->fg_n > 0 || sty->bright;    }
+        if (IS("bg"))                   { return sty->bg_n > 0 || sty->bg_bright; }
         if (IS("uc"))                   { return sty->uc_n > 0;      }
         if (IS("u") || IS("underline")) { return sty->ul_n > 0;      }
         if (IS("link"))                 { return sty->link != NULL;   }
@@ -2902,6 +2916,9 @@ string_chalk(Ty *ty, Value *string, int argc, Value *kwargs)
                                         if (wn == 0) {
                                                 break;
                                         }
+                                        bool every = (wn == 2)
+                                                  && (ws[1] == 'g')
+                                                  && (ws[0] == 'f' || ws[0] == 'b');
                                         for (int fi = nf - 1; fi >= 0; --fi) {
                                                 CkFrame *f = &stack[fi];
                                                 if (f->is_fmt) {
@@ -2917,7 +2934,9 @@ string_chalk(Ty *ty, Value *string, int argc, Value *kwargs)
                                                                 f->s[k] = f->s[k + 1];
                                                         }
                                                         found = true;
-                                                        break;
+                                                        if (!every) {
+                                                                break;
+                                                        }
                                                 }
                                                 if (found) {
                                                         break;

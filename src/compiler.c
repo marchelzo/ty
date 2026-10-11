@@ -4941,11 +4941,16 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_POSTFIX_DEC:
         case EXPRESSION_PREFIX_HASH:
         case EXPRESSION_PREFIX_BANG:
-        case EXPRESSION_TYPE_OF:
         case EXPRESSION_PACK_UNION:
         case EXPRESSION_PACK_INTERSECT:
         case EXPRESSION_ENTER:
                 symbolize_expression(ty, scope, e->operand);
+                break;
+
+        case EXPRESSION_TYPE_OF:
+                WITH_CTX(EXPR) {
+                        symbolize_expression(ty, scope, e->operand);
+                }
                 break;
 
         case EXPRESSION_CONDITIONAL:

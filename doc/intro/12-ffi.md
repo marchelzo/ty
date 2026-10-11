@@ -165,7 +165,7 @@ for i in ..4 {
 }
 
 let octets = [buf.as(c.u8)[i] for i in ..(4 * c.size(c.i32))]
-let groups = octets.groups-of(4).map(&unwords)
+let groups = octets.map(\"{_:02x}").groups-of(4).map(&unwords)
 print('Hex:')
 for groups {
     print("  {it}")

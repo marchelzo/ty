@@ -536,6 +536,14 @@ class Array[T] : Iterable[T] {
     sort!(by: T -> Any, desc: Bool = false) -> Array[T];
     sort!(desc: Bool = false) -> Array[T];
     sort!(cmp: (T, T) -> Any, desc: Bool = false) -> Array[T];
+
+    /**
+     * Return a copy of the array with the elements sorted in ascending order.
+     *
+     * by:   sort by `by(x)` instead of `x` itself
+     * cmp:  sort with the comparison `cmp(a, b)` instead of `a <=> b`
+     * desc: when true, reverse the order
+     */
     sort(cmp: (T, T) -> Any, desc: Bool = false) -> Array[T];
     sort[U](by: T -> U, desc: Bool = false) -> Array[T] where (U <=> U): Int;
     sort(desc: Bool = false) -> Array[T] where (T <=> T): Int;
