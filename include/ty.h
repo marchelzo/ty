@@ -1025,6 +1025,7 @@ extern usize TotalBytesAllocated;
         X(TRY_UNAPPLY),           \
         X(UNAPPLY),               \
         X(SUBSCRIPT),             \
+        X(SAFE_SUBSCRIPT),        \
         X(SLICE),                 \
         X(TAIL_CALL),             \
         X(TRY_YIELD_FROM),        \

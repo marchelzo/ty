@@ -170,6 +170,7 @@ enum {
         X(DynMemberAccess)      \
         X(TryDynMemberAccess)   \
         X(Subscript)            \
+        X(SafeSubscript)        \
         X(Slice)                \
         X(NotNil)               \
         X(ArrayCompr)           \

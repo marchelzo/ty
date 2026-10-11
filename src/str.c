@@ -1406,6 +1406,10 @@ string_char(Ty *ty, Value *string, int argc, Value *kwargs)
                 i += string_length(ty, string, 0, NULL).z;
         }
 
+        if (i < 0) {
+                return NIL;
+        }
+
         i32 cp;
         isize j = i;
         isize offset = 0;
@@ -1413,7 +1417,7 @@ string_char(Ty *ty, Value *string, int argc, Value *kwargs)
 
         while (offset < sN(*string) && n > 0 && j --> 0) {
                 offset += max(1, n);
-                n = utf8proc_iterate(ss(*string) + offset, sN(*string), &cp);
+                n = utf8proc_iterate(ss(*string) + offset, sN(*string) - offset, &cp);
         }
 
         if (offset == sN(*string)) {

@@ -1958,6 +1958,7 @@ AdjustStack(Ty *ty, int c)
         case INSTR_INCRANGE:
         case INSTR_TARGET_MEMBER:
         case INSTR_SUBSCRIPT:
+        case INSTR_SAFE_SUBSCRIPT:
         case INSTR_CHECK_MATCH:
         case INSTR_ASSIGN_LOCAL:
         case INSTR_ASSIGN_REGEX_MATCHES:
@@ -4509,6 +4510,7 @@ TryResolveExpr(Ty *ty, Scope *scope, Expr *e)
                 break;
 
         case EXPRESSION_SUBSCRIPT:
+        case EXPRESSION_SAFE_SUBSCRIPT:
                 ok &= TryResolveExpr(ty, scope, e->container);
                 ok &= TryResolveExpr(ty, scope, e->subscript);
                 break;
@@ -5069,6 +5071,11 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         }
                         break;
                 }
+                symbolize_expression(ty, scope, e->subscript);
+                break;
+
+        case EXPRESSION_SAFE_SUBSCRIPT:
+                symbolize_expression(ty, scope, e->container);
                 symbolize_expression(ty, scope, e->subscript);
                 break;
 
@@ -10671,6 +10678,12 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 }
                 break;
 
+        case EXPRESSION_SAFE_SUBSCRIPT:
+                EE(e->container);
+                EE(e->subscript);
+                INSN(SAFE_SUBSCRIPT);
+                break;
+
         case EXPRESSION_SLICE:
                 if (e->slice.i != NULL) { EE(e->slice.i); } else { INSN(NIL); }
                 if (e->slice.j != NULL) { EE(e->slice.j); } else { INSN(NIL); }
@@ -14762,8 +14775,9 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 break;
 
         case EXPRESSION_SUBSCRIPT:
+        case EXPRESSION_SAFE_SUBSCRIPT:
                 v = TAGGED(
-                        TySubscript,
+                        (e->type == EXPRESSION_SUBSCRIPT) ? TySubscript : TySafeSubscript,
                         go(e->container),
                         go(e->subscript)
                 );
@@ -16623,8 +16637,9 @@ cexpr(Ty *ty, Value *v)
                 e->member = cexpr(ty, &v->items[1]);
                 break;
 
+        case TySafeSubscript:
         case TySubscript:
-                e->type = EXPRESSION_SUBSCRIPT;
+                e->type = (tag == TySubscript) ? EXPRESSION_SUBSCRIPT : EXPRESSION_SAFE_SUBSCRIPT;
                 e->container = cexpr(ty, &v->items[0]);
                 e->subscript = cexpr(ty, &v->items[1]);
                 break;
@@ -20257,6 +20272,7 @@ DumpProgram(
                         break;
                 CASE(SLICE)
                 CASE(SUBSCRIPT)
+                CASE(SAFE_SUBSCRIPT)
                 CASE(NOT)
                 CASE(QUESTION)
                 CASE(NEG)

@@ -960,6 +960,7 @@ macro __define_ast! {
        | ty.PreDec[AST]
        | ty.PostDec[AST]
        | ty.Subscript[(AST, AST)]
+       | ty.SafeSubscript[(AST, AST)]
        | ty.Slice[(AST, AST, AST, AST)]
        | ty.Array[Array[_ArrayItem]]
        | ty.Set[Array[_ArrayItem]]
@@ -4869,6 +4870,11 @@ macro __walk! {
             ),
 
             ty.Subscript(xs, i) => ty.Subscript(
+                walk(xs, f),
+                walk(i, f)
+            ),
+
+            ty.SafeSubscript(xs, i) => ty.SafeSubscript(
                 walk(xs, f),
                 walk(i, f)
             ),

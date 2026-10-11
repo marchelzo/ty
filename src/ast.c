@@ -754,6 +754,7 @@ Arguments:
                 break;
 
         case EXPRESSION_SUBSCRIPT:
+        case EXPRESSION_SAFE_SUBSCRIPT:
                 V(t->container);
                 V(t->subscript);
                 break;
@@ -948,6 +949,7 @@ visit_children(Ty *ty, Expr *e, Scope *scope, VisitorCtx *ctxt, bool type)
                 break;
 
         case EXPRESSION_SUBSCRIPT:
+        case EXPRESSION_SAFE_SUBSCRIPT:
                 VX(e->container);
                 VX(e->subscript);
                 break;

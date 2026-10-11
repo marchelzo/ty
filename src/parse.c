@@ -4938,6 +4938,25 @@ End:
 }
 
 static Expr *
+infix_safe_subscript(Ty *ty, Expr *left)
+{
+        Expr *e = mkxpr(SAFE_SUBSCRIPT);
+
+        e->start = left->start;
+
+        consume('[');
+
+        e->container = left;
+        e->subscript = parse_expr(ty, 0);
+
+        consume(']');
+
+        e->end = TEnd;
+
+        return e;
+}
+
+static Expr *
 infix_as(Ty *ty, Expr *left)
 {
         consume_kw(AS);
@@ -4954,12 +4973,18 @@ infix_as(Ty *ty, Expr *left)
 static Expr *
 infix_member_access(Ty *ty, Expr *left)
 {
+        bool maybe = (T0 == TOKEN_DOT_MAYBE);
+
+        next();
+
+        if (maybe && T0 == '[') {
+                return infix_safe_subscript(ty, left);
+        }
+
         Expr *e = mkxpr(MEMBER_ACCESS);
 
         e->start = left->start;
-        e->maybe = (T0 == TOKEN_DOT_MAYBE);
-
-        next();
+        e->maybe = maybe;
 
         /*
          * xs.N is syntactic sugar for xs[N]

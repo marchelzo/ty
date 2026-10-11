@@ -201,6 +201,7 @@ typedef vec(struct condpart *) condpart_vector;
         X(NAMESPACE),                                                                 \
         X(SELF_ACCESS),                                                               \
         X(SUBSCRIPT),                                                                 \
+        X(SAFE_SUBSCRIPT),                                                            \
         X(SLICE),                                                                     \
         X(METHOD_CALL),                                                               \
         X(USER_OP),                                                                   \

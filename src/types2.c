@@ -13622,6 +13622,57 @@ check_subscript_write(
         return false;
 }
 
+static bool
+constant_tuple_miss(T2Checker *checker, T2Type container, T2Type index)
+{
+        container = resolved_operation_type(
+                checker,
+                container,
+                T2_PREFER_LOWER_BOUND
+        );
+        if (t2_type_kind(checker->universe, container) != T2_TYPE_TUPLE) {
+                return false;
+        }
+
+        T2Type resolved = resolved_type_head(checker, index, T2_PREFER_KNOWN_VALUE);
+        if (t2_type_kind(checker->universe, resolved) != T2_TYPE_LITERAL_INT) {
+                return false;
+        }
+
+        imax position = (i64)t2_type_payload(checker->universe, resolved);
+        imax count    = (imax)t2_type_arity(checker->universe, container);
+
+        return (position < -count) || (position >= count);
+}
+
+static T2Type
+infer_safe_index_access(T2Checker *checker, Expr const *site)
+{
+        T2Type nil       = t2_primitive(checker->universe, T2_TYPE_NIL);
+        T2Type container = without_nil(checker, infer_expression(checker, site->container));
+        T2Type index     = infer_expression(checker, site->subscript);
+
+        if (
+                (t2_type_kind(checker->universe, container) == T2_TYPE_NEVER)
+             || constant_tuple_miss(checker, container, index)
+        ) {
+                return nil;
+        }
+
+        T2Type item = infer_subscript_type(
+                checker,
+                container,
+                index,
+                site->subscript,
+                site,
+                true
+        );
+
+        return (t2_type_kind(checker->universe, item) == T2_TYPE_ERROR)
+             ? item
+             : t2_join(checker->universe, item, nil);
+}
+
 static T2Type
 infer_index_access(T2Checker *checker, Expr const *site, T2Type value)
 {
@@ -20309,6 +20360,9 @@ infer_expression(T2Checker *checker, Expr const *source)
         }
         case EXPRESSION_SUBSCRIPT:
                 result = infer_index_access(checker, expression, T2_TYPE_INVALID);
+                break;
+        case EXPRESSION_SAFE_SUBSCRIPT:
+                result = infer_safe_index_access(checker, expression);
                 break;
         case EXPRESSION_SLICE:
         {

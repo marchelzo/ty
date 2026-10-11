@@ -133,8 +133,14 @@ noreturn void
 vm_throw(Ty *ty, Value const *);
 
 
+typedef enum {
+        INDEX_OPTIONAL,
+        INDEX_STRICT,
+        INDEX_SAFE
+} IndexMode;
+
 Value
-ArraySubscript(Ty *ty, Value container, Value subscript, bool strict);
+ArraySubscript(Ty *ty, Value container, Value subscript, IndexMode mode);
 
 Value
 vm_call(Ty *ty, Value const *f, int argc);
@@ -373,6 +379,9 @@ void
 DoSubscript(Ty *ty, bool exec);
 
 void
+DoSafeSubscript(Ty *ty, bool exec);
+
+void
 DoMutAdd(Ty *ty, bool exec);
 
 void
@@ -440,6 +449,9 @@ vm_jit_member_access(Ty *ty, int z);
 
 void
 vm_jit_try_member_access(Ty *ty, int z);
+
+void
+vm_jit_try_get_member(Ty *ty);
 
 char *
 co_colored(Ty *ty);

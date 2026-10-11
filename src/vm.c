@@ -2920,13 +2920,37 @@ YieldFix(Ty *ty)
         *top() = NONE;
 }
 
+inline static bool
+WrapIndex(imax *i, isize n)
+{
+        if (*i < 0) {
+                *i += n;
+        }
+
+        return (*i >= 0) && (*i < n);
+}
+
+inline static bool
+ArrayPick(Ty *ty, Array const *a, imax i, IndexMode mode, Value *out)
+{
+        if (!WrapIndex(&i, vN(*a))) {
+                *out = (mode == INDEX_OPTIONAL) ? None : NIL;
+                return (mode != INDEX_STRICT);
+        }
+
+        *out = (mode == INDEX_OPTIONAL) ? Some(v__(*a, i)) : v__(*a, i);
+
+        return true;
+}
+
 Value
-ArraySubscript(Ty *ty, Value container, Value subscript, bool strict)
+ArraySubscript(Ty *ty, Value container, Value subscript, IndexMode mode)
 {
         char *ip;
         Value *vp;
         Array *a;
         Value err;
+        Value x;
 
 Start:
         switch (EXPECT(subscript.type, VALUE_INTEGER)) {
@@ -2950,16 +2974,10 @@ Start:
                                         VSC(&r)
                                 );
                         }
-                        if (r.z < 0)
-                                r.z += container.array->count;
-                        if (r.z < 0 || r.z >= container.array->count) {
-                                if (strict) goto Error;
-                                vAp(a, None);
-                        } else if (strict) {
-                                vAp(a, container.array->items[r.z]);
-                        } else {
-                                vAp(a, Some(container.array->items[r.z]));
+                        if (!ArrayPick(ty, container.array, r.z, mode, &x)) {
+                                goto Error;
                         }
+                        vAp(a, x);
                 }
 
                 OKGC(a);
@@ -3005,16 +3023,10 @@ Start:
                                         VSC(&r)
                                 );
                         }
-                        if (r.z < 0)
-                                r.z += vN(*container.array);
-                        if (r.z < 0 || r.z >= vN(*container.array)) {
-                                if (strict) goto Error;
-                                vAp(a, None);
-                        } else if (strict) {
-                                vAp(a, v__(*container.array, r.z));
-                        } else {
-                                vAp(a, Some(v__(*container.array, r.z)));
+                        if (!ArrayPick(ty, container.array, r.z, mode, &x)) {
+                                goto Error;
                         }
+                        vAp(a, x);
                 }
 
                 OKGC(a);
@@ -3023,17 +3035,11 @@ Start:
                 return ARRAY(a);
 
         case VALUE_INTEGER:
-                if (subscript.z < 0) {
-                        subscript.z += vN(*container.array);
+                if (!ArrayPick(ty, container.array, subscript.z, mode, &x)) {
+                        goto Error;
                 }
-                if (subscript.z < 0 || subscript.z >= vN(*container.array)) {
-                        if (strict) goto Error;
-                        return None;
-                } else if (strict) {
-                        return v__(*container.array, subscript.z);
-                } else {
-                        return Some(v__(*container.array, subscript.z));
-                }
+                return x;
+
         default:
                 zP(
                         "non-integer array index used in subscript expression: %s",
@@ -3372,7 +3378,7 @@ DoCallEx(Ty *ty, Value const *f, int n, Value const *_kwargs, bool exec)
         case VALUE_ARRAY:
                 subscript = peek();
                 push(v);
-                value = ArraySubscript(ty, v, subscript, false);
+                value = ArraySubscript(ty, v, subscript, INDEX_OPTIONAL);
                 STACK.count -= (n + 1);
                 xpush(value);
                 return false;
@@ -6494,7 +6500,7 @@ DoSubscript(Ty *ty, bool exec)
         case VALUE_HEAP:
                 container = HEAP_VIEW(container.heap);
         case VALUE_ARRAY:
-                v = ArraySubscript(ty, container, subscript, true);
+                v = ArraySubscript(ty, container, subscript, INDEX_STRICT);
                 pop();
                 put(v);
                 break;
@@ -6538,9 +6544,17 @@ DoSubscript(Ty *ty, bool exec)
                 break;
 
         case VALUE_BLOB:
-                v = blob_get(ty, &container, 1, NULL);
+                if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
+                        zP("non-integer index used in subscript expression: %s", VSC(&subscript));
+                }
+                v = subscript;
+                if (!WrapIndex(&v.z, vN(*container.blob))) {
+                        put(TAGGED(TAG_INDEX_ERR, container, pop()));
+                        RaiseException(ty);
+                        break;
+                }
                 pop();
-                put(v);
+                put(INTEGER(v__(*container.blob, v.z)));
                 break;
 
         case VALUE_DICT:
@@ -6623,6 +6637,61 @@ DoSubscript(Ty *ty, bool exec)
 BadContainer:
                 zP("invalid container in subscript expression: %s", VSC(&container));
         }
+}
+
+void
+DoSafeSubscript(Ty *ty, bool exec)
+{
+        Value subscript = top()[0];
+        Value container = top()[-1];
+        Value v;
+        Value *vp;
+
+        switch (container.type) {
+        case VALUE_HEAP:
+                container = HEAP_VIEW(container.heap);
+        case VALUE_ARRAY:
+                v = ArraySubscript(ty, container, subscript, INDEX_SAFE);
+                break;
+
+        case VALUE_STRING:
+                v = string_char(ty, &container, 1, NULL);
+                break;
+
+        case VALUE_TUPLE:
+                if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
+                        goto Strict;
+                }
+                v = WrapIndex(&subscript.z, container.count)
+                  ? container.items[subscript.z]
+                  : NIL;
+                break;
+
+        case VALUE_BLOB:
+                if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
+                        goto Strict;
+                }
+                v = WrapIndex(&subscript.z, vN(*container.blob))
+                  ? INTEGER(v__(*container.blob, subscript.z))
+                  : NIL;
+                break;
+
+        case VALUE_QUEUE:
+                if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
+                        goto Strict;
+                }
+                vp = queue_index(container.queue, subscript.z);
+                v = (vp == NULL) ? NIL : *vp;
+                break;
+
+        default:
+Strict:
+                DoSubscript(ty, exec);
+                return;
+        }
+
+        pop();
+        put(v);
 }
 
 char *
@@ -8399,6 +8468,10 @@ BadField:
 
                 CASE(SUBSCRIPT)
                         DoSubscript(ty, false);
+                        break;
+
+                CASE(SAFE_SUBSCRIPT)
+                        DoSafeSubscript(ty, false);
                         break;
 
                 CASE(NOT)
@@ -10281,7 +10354,7 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect)
                 return v;
 
         case VALUE_ARRAY:
-                v = (argc >= 1) ? ArraySubscript(ty, *f, top()[-(argc - 1)], false) : None;
+                v = (argc >= 1) ? ArraySubscript(ty, *f, top()[-(argc - 1)], INDEX_OPTIONAL) : None;
                 STACK.count -= argc;
                 return v;
 
@@ -10397,7 +10470,7 @@ vm_call(Ty *ty, Value const *f, int argc)
                 return v;
 
         case VALUE_ARRAY:
-                v = (argc >= 1) ? ArraySubscript(ty, *f, top()[-(argc - 1)], false) : None;
+                v = (argc >= 1) ? ArraySubscript(ty, *f, top()[-(argc - 1)], INDEX_OPTIONAL) : None;
                 STACK.count -= argc;
                 return v;
 
@@ -11095,6 +11168,7 @@ StepInstruction(char const *ip)
                 break;
         CASE(SLICE)
         CASE(SUBSCRIPT)
+        CASE(SAFE_SUBSCRIPT)
         CASE(NOT)
         CASE(QUESTION)
         CASE(NEG)
@@ -11609,6 +11683,18 @@ vm_jit_try_member_access(Ty *ty, int z)
 {
         Value v = GetMember(ty, z, true, true);
         push(!IsNone(v) ? v : NIL);
+}
+
+void
+vm_jit_try_get_member(Ty *ty)
+{
+        i32 z = GetDynamicMemberId(ty, false);
+
+        if (z < 0) {
+                *top() = NIL;
+        } else {
+                vm_jit_try_member_access(ty, z);
+        }
 }
 
 void
