@@ -47,7 +47,7 @@ class Kernel {
     __buffer:  Blob = Blob()
     __closed?: Bool = false
 
-    init() {
+    init(wrap: Array[String] = []) {
         let (parent, child) = os.socketpair(os.AF_UNIX, os.SOCK_STREAM, 0)
         defer os.close(child)
         __fd = parent
@@ -59,6 +59,7 @@ class Kernel {
 #|]
             __process = os.spawn(
                 [
+                    *wrap,
                     ty.executable,
                     '-b',
                     '--color=never',
@@ -166,13 +167,16 @@ pub class Repl {
     __next = 0
     __canceled?: () -> Bool
     __host: ((String, Any) -> Any) | nil
+    __wrap: Array[String]
 
     init(
         canceled?: () -> Bool = -> false,
-        host: ((String, Any) -> Any) | nil = nil
+        host: ((String, Any) -> Any) | nil = nil,
+        wrap: Array[String] = []
     ) {
         __canceled? = canceled?
         __host = host
+        __wrap = wrap
     }
 
     respond(call: Call) -> Blob {
@@ -202,7 +206,7 @@ pub class Repl {
         }
         let output = Blob()
         try {
-            __kernel = __kernel ?? Kernel()
+            __kernel = __kernel ?? Kernel(__wrap)
             __next += 1
             return exchange(code, timeout-ms, output)
         } catch error {

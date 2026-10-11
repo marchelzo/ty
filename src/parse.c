@@ -4218,7 +4218,7 @@ prefix_dot_dot_dot(Ty *ty)
                 }
         }
 
-        e->left = zero;
+        e->left = TypeContext ? NULL : zero;
         e->right = parse_expr(ty, 7);
         e->end = e->right->end;
 

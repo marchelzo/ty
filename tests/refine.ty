@@ -233,3 +233,15 @@ pub fn member-assignment-refinement-is-scoped() {
     assert('found:    Int | String' in result.stderr, result.stderr)
     assert('mismatch: Int is not a subtype of String' in result.stderr, result.stderr)
 }
+
+fn bump(x) {
+    (x :: (Int | Float)) ? x + 1 : x
+}
+
+pub fn refine-union-match-test() {
+    assert(bump(1) == 2)
+    assert(bump(1.5) == 2.5)
+    assert(bump('s') == 's')
+    assert((31...39).__match__(35))
+    assert(!(31...39).__match__('35'))
+}

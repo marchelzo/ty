@@ -363,11 +363,13 @@ pub class Text {
                 spans.push((style, line))
                 remain = min(remain, line.width())
             } else if text.width() > remain {
-                if remain < width / 3 {
-                    spans.push((style, text))
+                let fits = text.searchr(/\s/, remain) ?? 0
+                let i    = (fits > 0) ? fits : (#line > 0 ? 0 : remain)
+
+                if i == 0 {
+                    spans.push((style, text.comb(/^ /)))
                     next()
                 } else {
-                    let i = text.searchr(/\s/, remain) ?? remain
                     let (keep, push) = text.split(i)
                     spans.push((style, push.comb(/^ /)))
                     add(style, keep)

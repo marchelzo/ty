@@ -6530,7 +6530,7 @@ fail_match_if_not(Ty *ty, Expr const *e)
 inline static bool
 is_pack_type(Expr const *e)
 {
-        return (e->type == EXPRESSION_DOT_DOT_DOT)
+        return ((e->type == EXPRESSION_DOT_DOT_DOT) && (e->left == NULL))
             || (e->type == EXPRESSION_PACK_UNION)
             || (e->type == EXPRESSION_PACK_INTERSECT);
 }

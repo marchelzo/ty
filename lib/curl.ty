@@ -10,7 +10,10 @@ const LIBRARIES = [
     'curl'
 ]
 #|else
-const LIBRARIES = ['curl']
+const LIBRARIES = [
+    str(Path.home() / '.local' / 'opt' / 'curl' / 'lib' / 'libcurl'),
+    'curl'
+]
 #|]
 
 if not let $libcurl = c.open(LIBRARIES) {

@@ -53,3 +53,24 @@ pub fn union-annotation-pattern() {
     assert(head-kind([[1]]) == 'other')
     assert(head-kind([]) == 'other')
 }
+
+fn ansi-kind(x) {
+    match x {
+        c :: 31...39 => "fg {c}",
+        c :: ...9    => "attr {c}",
+        _            => 'other'
+    }
+}
+
+fn clamp-fg(c: 31...39) -> Int { c }
+
+pub fn range-constraint-pattern() {
+    assert(ansi-kind(31) == 'fg 31')
+    assert(ansi-kind(39) == 'fg 39')
+    assert(ansi-kind(4) == 'attr 4')
+    assert(ansi-kind(40) == 'other')
+    assert(ansi-kind(9.5) == 'other')
+    assert(ansi-kind('35') == 'other')
+    assert(ansi-kind([35]) == 'other')
+    assert(clamp-fg(35) == 35)
+}

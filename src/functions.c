@@ -6188,7 +6188,7 @@ TY_BUILTIN_RAW(os_exec)
                 xvP(argv, arg);
         }
 
-        vvP(argv, NULL);
+        xvP(argv, NULL);
 
         return INTEGER(execvp(v_0(argv), vv(argv)));
 }

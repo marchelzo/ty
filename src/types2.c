@@ -4011,12 +4011,6 @@ lower_type(T2Checker *checker, Expr const *source)
                         lower_type(checker, expression->value)
                 );
                 break;
-        case EXPRESSION_DOT_DOT_DOT:
-                result = t2_pack_expansion(
-                        checker->universe,
-                        lower_type(checker, expression->right)
-                );
-                break;
         case EXPRESSION_PACK_UNION:
                 result = t2_pack_fold_union(
                         checker->universe,
@@ -4029,6 +4023,14 @@ lower_type(T2Checker *checker, Expr const *source)
                         lower_type(checker, expression->operand)
                 );
                 break;
+        case EXPRESSION_DOT_DOT_DOT:
+                if (expression->left == NULL) {
+                        result = t2_pack_expansion(
+                                checker->universe,
+                                lower_type(checker, expression->right)
+                        );
+                        break;
+                }
         case EXPRESSION_DOT_DOT:
                 result = t2_integer_range(
                         checker->universe,
@@ -4038,7 +4040,7 @@ lower_type(T2Checker *checker, Expr const *source)
                         (expression->right == NULL)
                         ? T2_TYPE_INVALID
                         : lower_type(checker, expression->right),
-                        false
+                        expression->type == EXPRESSION_DOT_DOT_DOT
                 );
                 break;
         case EXPRESSION_TYPE_UNION:
@@ -16191,7 +16193,20 @@ exclude_type(T2Checker *checker, T2Type current, T2Type excluded)
 }
 
 static T2Type
-condition_test_type(T2Checker *checker, Expr const *source)
+condition_test_type(T2Checker *checker, Expr const *source);
+
+static T2Type
+condition_test_union(T2Checker *checker, T2Type a, T2Type b)
+{
+        if (a == T2_TYPE_INVALID || b == T2_TYPE_INVALID) {
+                return T2_TYPE_INVALID;
+        }
+
+        return t2_union(checker->universe, (T2Type[]) { a, b }, 2);
+}
+
+static T2Type
+condition_test_name(T2Checker *checker, Expr const *source)
 {
         Expr const *name = type_reference_leaf(source);
         if (name != NULL && name->type != EXPRESSION_IDENTIFIER) {
@@ -16229,6 +16244,40 @@ condition_test_type(T2Checker *checker, Expr const *source)
         ty_free(arguments);
 
         return result;
+}
+
+static T2Type
+condition_test_type(T2Checker *checker, Expr const *source)
+{
+        Expr const *test = (source == NULL) ? NULL : unfurl(source);
+        T2Type joined;
+
+        if (test == NULL) {
+                return T2_TYPE_INVALID;
+        }
+
+        switch (test->type) {
+        case EXPRESSION_BIT_OR:
+                return condition_test_union(
+                        checker,
+                        condition_test_type(checker, test->left),
+                        condition_test_type(checker, test->right)
+                );
+
+        case EXPRESSION_TYPE_UNION:
+                joined = T2_TYPE_INVALID;
+                for (int i = 0; i < vN(test->es); ++i) {
+                        T2Type arm = condition_test_type(checker, v__(test->es, i));
+                        joined = (i == 0) ? arm : condition_test_union(checker, joined, arm);
+                        if (joined == T2_TYPE_INVALID) {
+                                break;
+                        }
+                }
+                return joined;
+
+        default:
+                return condition_test_name(checker, source);
+        }
 }
 
 static bool
