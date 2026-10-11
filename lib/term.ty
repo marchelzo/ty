@@ -940,6 +940,12 @@ pub class TermIO {
                     }
                 }
 
+                if i + 1 == #buf || buf[i + 1] == 0x1b {
+                    yield-basic("\x1b")
+                    i += 1
+                    continue
+                }
+
                 // If we get here that means we have 0x1b but don't know how
                 // how to parse what follows it. Not sure what to do here
                 // besides skip the ESC byte and hope for the best :)
