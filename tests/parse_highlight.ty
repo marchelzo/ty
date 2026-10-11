@@ -34,9 +34,9 @@ fn check-ranges(mod: Module, i: Int) {
     }
 }
 
-fn color-of(mod: Module, i: Int) -> String {
+fn color-of(mod: Module, i: Int) -> String | nil {
     let colored = parse.highlight(mod, i, i + 1, theme='gruvbox')
-    colored.match(/\x1b\[([0-9;]+)m/)[1]
+    colored.match(/\x1b\[([0-9;]+)m/).?[1]
 }
 
 pub fn module-result() {

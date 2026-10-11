@@ -537,10 +537,55 @@ blob_hex(Ty *ty, Value *blob, int argc, Value *kwargs)
         return STRING(str, n*2);
 }
 
+inline static isize
+BlobWrap(isize i, isize n)
+{
+        return (i < 0) ? (i + n) : i;
+}
+
+static Value
+BlobSlice3(Ty *ty, Blob const *b, Value const *_i, Value const *_j, Value const *_k)
+{
+        isize n = vN(*b);
+        isize i = _i->z;
+        isize k = (_k->type == VALUE_NIL) ? 1 : (_k->z + !_k->z);
+
+        Blob *slice = value_blob_new(ty);
+
+        if (k < 0) {
+                isize j     = (_j->type == VALUE_NIL) ? 0 : _j->z;
+                isize start = min(BlobWrap(i - 1, n), n - 1);
+                isize stop  = max(BlobWrap(j, n), 0);
+                for (isize ix = start; ix >= stop; ix += k) {
+                        uvP(*slice, v__(*b, ix));
+                }
+        } else {
+                isize j     = (_j->type == VALUE_NIL) ? n : _j->z;
+                isize start = min(max(BlobWrap(i, n), 0), n);
+                isize stop  = min(BlobWrap(j, n), n);
+                if (k == 1) {
+                        uvPn(*slice, v_(*b, start), max(stop - start, 0));
+                        return BLOB(slice);
+                }
+                for (isize ix = start; ix < stop; ix += k) {
+                        uvP(*slice, v__(*b, ix));
+                }
+        }
+
+        return BLOB(slice);
+}
+
 static Value
 blob_slice(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
-        ASSERT_ARGC("Blob.slice()", 0, 1, 2);
+        ASSERT_ARGC("Blob.slice()", 0, 1, 2, 3);
+
+        if (argc == 3) {
+                Value _i = ARGx(0, VALUE_INTEGER);
+                Value _j = ARGx(1, VALUE_INTEGER, VALUE_NIL);
+                Value _k = ARGx(2, VALUE_INTEGER, VALUE_NIL);
+                return BlobSlice3(ty, blob->blob, &_i, &_j, &_k);
+        }
 
         isize start;
         isize n;

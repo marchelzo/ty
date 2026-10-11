@@ -609,6 +609,7 @@ struct try {
         u32 nsp;
         u16 vs;
         u16 ed;
+        int off;
 
         bool executing;
         bool need_trace;

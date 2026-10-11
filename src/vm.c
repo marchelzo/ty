@@ -2764,6 +2764,7 @@ PushTry(Ty *ty)
         t->nsp    = vN(SP_STACK);
         t->vs     = vN(VISITING);
         t->ed     = EXEC_DEPTH;
+        t->off    = ty->GC_OFF_COUNT;
         t->ss     = SaveScratch(ty);
         t->state  = TRY_TRY;
         t->native = false;
@@ -2851,6 +2852,8 @@ DoThrow(Ty *ty)
                                 vN(RootSet)   = min(vN(RootSet), t->gc);
                                 vN(VISITING)  = t->vs;
                                 IP            = t->catch;
+
+                                ty->GC_OFF_COUNT = t->off;
 
                                 RestoreScratch(ty, t->ss);
 
@@ -6629,9 +6632,11 @@ DoSubscript(Ty *ty, bool exec)
                 break;
 
         case VALUE_NIL:
-                pop();
-                put(NIL);
-                break;
+                zP(
+                        "subscript of nil: nil[%s] (use x.?[%s] to get nil when x is nil)",
+                        VSC(&subscript),
+                        VSC(&subscript)
+                );
 
         default:
 BadContainer:
@@ -6648,6 +6653,10 @@ DoSafeSubscript(Ty *ty, bool exec)
         Value *vp;
 
         switch (container.type) {
+        case VALUE_NIL:
+                v = NIL;
+                break;
+
         case VALUE_HEAP:
                 container = HEAP_VIEW(container.heap);
         case VALUE_ARRAY:

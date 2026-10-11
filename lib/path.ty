@@ -687,6 +687,8 @@ class TempFile {
     }
 }
 
+fn <=>(a: Path, b: Path) -> Int { prelude::str(a) <=> prelude::str(b) }
+
 pub cwd = Path.cwd
 pub home = Path.home
 pub temp = Path.temp

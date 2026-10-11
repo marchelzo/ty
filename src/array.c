@@ -977,37 +977,27 @@ array_join(Ty *ty, Value *array, int argc, Value *kwargs)
                 return STRING_EMPTY;
         }
 
-        Value sep;
-        if (argc == 0) {
-                sep = STRING_EMPTY;
-        } else {
-                sep = ARGx(0, VALUE_STRING);
-        }
+        Value sep = (argc == 0) ? STRING_EMPTY : ARGx(0, VALUE_STRING);
 
-        vmP(v_(*array->array, 0));
-        Value sum = builtin_str(ty, 1, NULL);
-        vmX();
-        Value v = NIL;
+        vec(u8) chars = {0};
 
-        for (usize i = 1; i < vN(*array->array); ++i) {
-                gP(&sum);
-                gP(&v);
+        SCRATCH_SAVE();
+
+        for (usize i = 0; i < vN(*array->array); ++i) {
+                if (i > 0) {
+                        svPn(chars, ss(sep), sN(sep));
+                }
                 vmP(v_(*array->array, i));
-                v = builtin_str(ty, 1, NULL);
+                Value part = builtin_str(ty, 1, NULL);
                 vmX();
-                gX();
-                gP(&v);
-                sum = vm_2op(ty, OP_ADD, &sum, &sep);
-                gX();
-                gX();
-                gP(&v);
-                gP(&sum);
-                sum = vm_2op(ty, OP_ADD, &sum, &v);
-                gX();
-                gX();
+                svPn(chars, ss(part), sN(part));
         }
 
-        return sum;
+        Value joined = vSs(vv(chars), vN(chars));
+
+        SCRATCH_RESTORE();
+
+        return joined;
 }
 
 static Value

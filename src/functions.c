@@ -1019,7 +1019,21 @@ TY_BUILTIN(isnan)
         return BOOLEAN(isnan(x));
 }
 
-// blob(*parts: Int | Blob | String) -> Blob
+inline static void
+PushByte(Ty *ty, Blob *blob, Value const *v)
+{
+        if (v->type != VALUE_INTEGER) {
+                zP("Blob(): expected an Int byte but got: %s", VSC(v));
+        }
+
+        if (v->z < 0 || v->z > UCHAR_MAX) {
+                zP("Blob(): Int argument is outside byte range (0-255): %s", VSC(v));
+        }
+
+        uvP(*blob, v->z);
+}
+
+// blob(*parts: Int | Blob | String | Array[Int]) -> Blob
 TY_BUILTIN_RAW(blob)
 {
         ASSERT_ARGC_MIN("blob()", 0);
@@ -1027,14 +1041,11 @@ TY_BUILTIN_RAW(blob)
         Blob *blob = value_blob_new(ty);
 
         for (int i = 0; i < argc; ++i) {
-                Value arg = ARGx(i, VALUE_INTEGER, VALUE_BLOB, VALUE_STRING);
+                Value arg = ARGx(i, VALUE_INTEGER, VALUE_BLOB, VALUE_STRING, VALUE_ARRAY);
 
                 switch (arg.type) {
                 case VALUE_INTEGER:
-                        if (arg.z < 0 || arg.z > UCHAR_MAX) {
-                                bP("Int argument is outside byte range (0-255)", VSC(&arg));
-                        }
-                        uvP(*blob, arg.z);
+                        PushByte(ty, blob, &arg);
                         break;
 
                 case VALUE_BLOB:
@@ -1043,6 +1054,13 @@ TY_BUILTIN_RAW(blob)
 
                 case VALUE_STRING:
                         uvPn(*blob, ss(arg), sN(arg));
+                        break;
+
+                case VALUE_ARRAY:
+                        uvR(*blob, vN(*blob) + vN(*arg.array));
+                        for (usize j = 0; j < vN(*arg.array); ++j) {
+                                PushByte(ty, blob, v_(*arg.array, j));
+                        }
                         break;
                 }
         }

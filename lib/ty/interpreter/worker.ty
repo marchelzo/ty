@@ -68,5 +68,3 @@ pub fn run() {
         send(output, evaluate(repl, json.parse(Request, line)))
     }
 }
-
-run()

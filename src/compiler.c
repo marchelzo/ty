@@ -13216,12 +13216,8 @@ import_module(Ty *ty, Stmt const *s)
                 module_scope = load_module(ty, name, NULL)->scope;
         }
 
-        for (int i = 0; i < vN(STATE.imports); ++i) {
+        for (int i = 0; !forgive_dup && i < vN(STATE.imports); ++i) {
                 if (v__(STATE.imports, i).mod->scope == module_scope) {
-                        if (forgive_dup) {
-                                vvXi(STATE.imports, i);
-                                break;
-                        }
                         fail(
                                 "the module '%s' has already been imported (as '%s')",
                                 name,

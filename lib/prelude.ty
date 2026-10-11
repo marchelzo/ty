@@ -1825,6 +1825,10 @@ class Blob : Iterable[Int], IntoPtr[Int], PathLike {
         base64::encode(self)
     }
 
+    [;;](i: Int = 0, j: Int | nil = nil, k: Int = 1) -> Blob {
+        slice(i, j, k)
+    }
+
     __iter__*() -> Generator[Int] {
         for x in self {
             yield x
@@ -1847,6 +1851,7 @@ class Blob : Iterable[Int], IntoPtr[Int], PathLike {
 
     splice(i: ?Int = 0, n: Int = #self) -> Blob;
     slice(i: ?Int = 0, n: Int = #self) -> Blob;
+    slice(i: Int, j: ?Int, k: ?Int) -> Blob;
 
 
     clear(i: Int = 0, n: ?Int = nil) -> Blob;
