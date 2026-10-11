@@ -27,6 +27,8 @@ C! zstd fn {
 
     size_t ZSTD_compressBound(size_t srcSize);
 
+    long long ZSTD_getFrameContentSize(const void* src, size_t srcSize);
+
     unsigned ZSTD_maxCLevel(void);
 
     size_t ZSTD_versionNumber(void);
@@ -116,7 +118,15 @@ pub fn compress(data: String | Blob, level: Int = 3) -> Blob {
     return out
 }
 
-pub fn decompress(data: String | Blob, originalSize: Int) -> Blob {
+pub fn content-size(data: String | Blob) -> Int {
+    match ZSTD_getFrameContentSize(data, data.size()) {
+        -1 => throw RuntimeError('zstd: the frame does not record its content size'),
+        -2 => throw RuntimeError('zstd: not a zstd frame'),
+        n  => n
+    }
+}
+
+pub fn decompress(data: String | Blob, originalSize: Int = content-size(data)) -> Blob {
     let buf = c.alloc(originalSize)
     defer c.free(buf)
 

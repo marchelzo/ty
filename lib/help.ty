@@ -314,10 +314,11 @@ fn fresh() {
 }
 
 fn indexing(i: Int, n: Int) {
-    match (os.isatty(2), i) {
-        (true, _)  => eprint(str(ink"\r[dim]indexing the standard library…[/] {i}/{n}"), end: (i == n) ? "\r\x1b[K" : ''),
-        (false, 1) => eprint("indexing the standard library ({n} modules)…"),
-        _          => ()
+    if ty.interactive {
+        eprint(
+            ink"\r[dim]indexing the standard library…[/] {i}/{n}",
+            end=(i == n) ? "\r\x1b[K" : ''
+        )
     }
 }
 
@@ -1674,13 +1675,13 @@ pub fn help-md(query: String = '') -> String {
     md-reply(reply-for([], query))
 }
 
-pub fn grep-md(query: String) -> String {
+pub fn grep-md(query: String, limit: Int = MAX_RESULTS) -> String {
     fresh()
     let hits = search(query)
-    let shown = (#hits > MAX_RESULTS) ? ", showing the best {MAX_RESULTS}" : ''
+    let shown = (#hits > limit) ? ", showing the best {limit}; add words to narrow it down" : ''
     [
         "# grep {code(query)}\n\n{#hits} matches{shown}.\n",
-        "\n{md-hits(hits[;MAX_RESULTS])}" if hits
+        "\n{md-hits(hits[;limit])}" if hits
     ].join()
 }
 
