@@ -74,3 +74,26 @@ pub fn range-constraint-pattern() {
     assert(ansi-kind([35]) == 'other')
     assert(clamp-fg(35) == 35)
 }
+
+class Widget { }
+class Gadget { }
+
+fn widget-kind(x) {
+    match x {
+        _: Widget              => 'widget',
+        [_: Int, _: String]    => 'pair',
+        {name: _: String, *}   => 'named',
+        _                      => 'other'
+    }
+}
+
+pub fn constrained-wildcard-pattern() {
+    assert(widget-kind(Widget()) == 'widget')
+    assert(widget-kind(Gadget()) == 'other')
+    assert(widget-kind(5) == 'other')
+    assert(widget-kind([1, 'a']) == 'pair')
+    assert(widget-kind([1, 2]) == 'other')
+    assert(widget-kind({name: 'w'}) == 'named')
+    assert(widget-kind({name: 7}) == 'other')
+    assert(#[Widget(), Gadget(), 3, Widget()].filter(match { _: Widget => true, _ => false }) == 2)
+}

@@ -5621,13 +5621,25 @@ UserOp:
 }
 
 static Expr *
+wildcard(Expr *e)
+{
+        if (
+                (e->module == NULL)
+             && (e->constraint == NULL)
+             && s_eq(e->identifier, "_")
+        ) {
+                e->type = EXPRESSION_MATCH_ANY;
+        }
+
+        return e;
+}
+
+static Expr *
 definition_lvalue(Ty *ty, Expr *e)
 {
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
-                if (strcmp(e->identifier, "_") == 0 && e->module == NULL) {
-                        e->type = EXPRESSION_MATCH_ANY;
-                }
+                wildcard(e);
                 /* fallthrough */
         case EXPRESSION_RESOURCE_BINDING:
         case EXPRESSION_TAG_APPLICATION:
@@ -5708,10 +5720,7 @@ patternize(Ty *ty, Expr *e)
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
-                if (strcmp(e->identifier, "_") == 0 && e->module == NULL) {
-                        e->type = EXPRESSION_MATCH_ANY;
-                }
-                return e;
+                return wildcard(e);
 
         case EXPRESSION_TAG_APPLICATION:
                 e->tagged = patternize(ty, e->tagged);

@@ -16125,7 +16125,7 @@ cexpr(Ty *ty, Value *v)
                         e->constraint = NULL;
                 }
         Any:
-                e->type = EXPRESSION_MATCH_ANY;
+                e->type = (e->constraint == NULL) ? EXPRESSION_MATCH_ANY : EXPRESSION_IDENTIFIER;
                 e->identifier = "_";
                 e->module = NULL;
                 break;

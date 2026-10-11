@@ -2,6 +2,7 @@ import ty
 import ty.parse
 import ty.token
 import json
+import os
 
 class UnknownStyleError < RuntimeError {
     __chalk: Chalk
@@ -554,6 +555,10 @@ pub fn trans(a: TermStyle, b: TermStyle) -> String {
          :                      "{combined}\x1b]8;;{b-link}\x1b\\"
 }
 
+const NO_COLOR = (getenv('NO_COLOR') != nil)
+              || (ty.color == 'never')
+              || (ty.color == 'auto' && !os.isatty(1))
+
 pub class Chalk {
     __styles: Dict[String, TermStyle | nil]
 
@@ -561,14 +566,7 @@ pub class Chalk {
         __styles = %{**styles, *: parse-style(it, self)}
     }
 
-    render(
-        text: String,
-#|if getenv('NO_COLOR') || (ty.color == 'never')
-        plain: Bool = true
-#|else
-        plain: Bool = false
-#|]
-    ) -> String {
+    render(text: String, plain: Bool = NO_COLOR) -> String {
         !plain ? text.chalk(__styles) : text.plain()
     }
 
