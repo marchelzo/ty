@@ -46,6 +46,10 @@ pub fn suspend() {
     _event-queue.put(Suspend)
 }
 
+pub fn quit() {
+    _event-queue.put(Exit)
+}
+
 let _status-claims: Dict[String, (Component, _)] = %{}
 let _status-sent: Dict[String, _] = %{}
 
@@ -4591,8 +4595,8 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
             return false
         }
 
-        if ev == event.EOF || (is-ctrl-c(ev) && !interrupt?) {
-            debug!("handle: quit ({(ev == event.EOF) ? 'EOF' : 'Ctrl-C'})")
+        if ev == Exit || ev == event.EOF || (is-ctrl-c(ev) && !interrupt?) {
+            debug!("handle: quit")
             return true
         }
 
