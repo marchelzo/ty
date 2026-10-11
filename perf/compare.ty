@@ -77,7 +77,7 @@ fn run-ty(filter: String | nil, rounds: Int, warmup: Int, jit: Bool) -> SuiteRec
     ]
     let mode = if jit { 'JIT' } else { 'no-JIT' }
     print(chalk"[dim]Running ty benchmarks"
-              " ({mode})...[/]")
+               " ({mode})...[/]")
     run-suite(cmd)
     json.parse(SuiteRecord, Path(ty-results-file(jit)).read-text())
 }
@@ -95,7 +95,7 @@ fn run-python(filter: String | nil, rounds: Int, warmup: Int) -> SuiteRecord {
 fn load-cached(path: String, label: String) -> SuiteRecord {
     if !Path(path).file? {
         print(chalk"[red bold]No cached {label} results."
-                    " Run without --cached first.[/]")
+                   " Run without --cached first.[/]")
         os.exit(1)
     }
     json.parse(SuiteRecord, Path(path).read-text())
@@ -131,11 +131,11 @@ fn print-table(
 
     print()
     print(chalk"[bold bright cyan]"
-              "  ty vs Python[/]  ({mode})")
+               "  ty vs Python[/]  ({mode})")
     print()
     print(chalk"[bold]  {'Benchmark':{nw}}"
-              "  {'ty':>10}  {'Python':>10}"
-              "  {'Ratio':>10}  {'Winner':>8}[/]")
+               "  {'ty':>10}  {'Python':>10}"
+               "  {'Ratio':>10}  {'Winner':>8}[/]")
     print(chalk"  [dim]{rule}[/]")
 
     let ty-wins  = 0
@@ -151,8 +151,8 @@ fn print-table(
             let t = t == nil ? '--' : fmt-time(t.median)
             let p = p == nil ? '--' : fmt-time(p.median)
             print(chalk"  [bold]{name:{nw}}[/]"
-                      "  [dim]{t:>10}  {p:>10}"
-                      "  {'--':>10}  {'--':>8}[/]")
+                       "  [dim]{t:>10}  {p:>10}"
+                       "  {'--':>10}  {'--':>8}[/]")
             continue
         }
 
@@ -170,22 +170,22 @@ fn print-table(
         if ratio > 1.05 {
             ty-wins += 1
             print(chalk"  [bold]{name:{nw}}[/]"
-                      "  [bright green]{t:>10}[/]"
-                      "  {p:>10}"
-                      "  [bright green bold]{rs:>10}[/]"
-                      "  [bright green bold]{'ty':>8}[/]")
+                       "  [bright green]{t:>10}[/]"
+                       "  {p:>10}"
+                       "  [bright green bold]{rs:>10}[/]"
+                       "  [bright green bold]{'ty':>8}[/]")
         } else if ratio < 0.95 {
             py-wins += 1
             print(chalk"  [bold]{name:{nw}}[/]"
-                      "  {t:>10}"
-                      "  [bright green]{p:>10}[/]"
-                      "  [red bold]{rs:>10}[/]"
-                      "  [red bold]{'Python':>8}[/]")
+                       "  {t:>10}"
+                       "  [bright green]{p:>10}[/]"
+                       "  [red bold]{rs:>10}[/]"
+                       "  [red bold]{'Python':>8}[/]")
         } else {
             print(chalk"  [bold]{name:{nw}}[/]"
-                      "  {t:>10}  {p:>10}"
-                      "  [dim]{'~1.00x':>10}[/]"
-                      "  [dim]{'tie':>8}[/]")
+                       "  {t:>10}  {p:>10}"
+                       "  [dim]{'~1.00x':>10}[/]"
+                       "  [dim]{'tie':>8}[/]")
         }
     }
 
@@ -211,20 +211,20 @@ fn print-table(
 
     let geo-str = if geo >= 1.0 {
         chalk"[bold bright cyan]"
-            "ty {geo:.2}x faster[/]"
+             "ty {geo:.2}x faster[/]"
     } else {
         let inv = 1.0 / geo
         chalk"[bold red]"
-            "Python {inv:.2}x faster[/]"
+             "Python {inv:.2}x faster[/]"
     }
 
     let tied = #ratios - ty-wins - py-wins
 
     print()
     print(chalk"  {'Total time:':24}"
-              " ty [cyan]{fmt-time(ty-total):>10}[/]"
-              "   Python [magenta]"
-              "{fmt-time(py-total):>10}[/]")
+               " ty [cyan]{fmt-time(ty-total):>10}[/]"
+               "   Python [magenta]"
+               "{fmt-time(py-total):>10}[/]")
     print("  {'Geometric mean:':24} {geo-str}")
     print("  {'Best:':24} {describe(ratios.max() ?? 1.0)}")
     print("  {'Worst:':24} {describe(ratios.min() ?? 1.0)}")

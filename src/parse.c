@@ -296,6 +296,7 @@ typedef struct ParserState {
         bool NoConstraint;
         bool NoIn;
         bool NoAndOr;
+        bool InList;
         bool NoPipe;
         bool NoLG;
         bool TypeContext;
@@ -345,6 +346,7 @@ static Expr NullExpr = {
 #define FileName          (state.filename)
 #define LCTX              (state.lctx)
 #define NoAndOr           (state.NoAndOr)
+#define InList            (state.InList)
 #define NoConstraint      (state.NoConstraint)
 #define NoEquals          (state.NoEquals)
 #define NoIn              (state.NoIn)
@@ -1897,16 +1899,38 @@ merge_strings(Ty *ty, Expr *s1, Expr *s2)
         avPn(s1->strings, s2->strings.items + 1, s2->strings.count - 1);
 }
 
+inline static u32
+quote_column(Token const *t)
+{
+        return (t->type == TOKEN_IDENTIFIER)
+             ? t->start.col + strlen(t->identifier)
+             : t->start.col;
+}
+
+inline static bool
+continues_string(Ty *ty, Location const *first)
+{
+        Token const *t = tok();
+
+        return (t->start.line == TEnd.line)
+            || (quote_column(t) == first->col);
+}
+
 Expr *
 extend_string(Ty *ty, Expr *s)
 {
+        Location first = s->start;
+
         while (
-                (T0 == TOKEN_STRING)
-             || (T0 == '"')
-             || (
-                        (T0 == TOKEN_IDENTIFIER)
-                     && IsMacroName(ty, tok()->module, tok()->identifier)
+                (
+                        (T0 == TOKEN_STRING)
+                     || (T0 == '"')
+                     || (
+                                (T0 == TOKEN_IDENTIFIER)
+                             && IsMacroName(ty, tok()->module, tok()->identifier)
+                        )
                 )
+             && continues_string(ty, &first)
         ) {
                 Expr *s2 = parse_expr(ty, 999);
 
@@ -6741,6 +6765,7 @@ parse_block(Ty *ty)
                 goto End;
         }
         while (!try_consume('}')) {
+                InList = true;
                 Stmt *s = parse_statement(ty, -1);
                 s->end = TEnd;
                 avP(block->statements, s);
@@ -7483,15 +7508,49 @@ parse_import(Ty *ty)
         return s;
 }
 
+static bool
+looks_like_record(Ty *ty)
+{
+        int i = 1;
+
+        while (
+                (token(i)->type == TOKEN_IDENTIFIER)
+             && (token(i + 1)->type == ',')
+        ) {
+                i += 2;
+        }
+
+        switch (token(i)->type) {
+        case '$':
+        case '?':
+        case TOKEN_STAR:
+                return token(i + 1)->type == TOKEN_IDENTIFIER;
+
+        case TOKEN_IDENTIFIER:
+                return (token(i + 1)->type == ':')
+                    || (token(i + 1)->type == '}');
+
+        default:
+                return false;
+        }
+}
+
 static Stmt *
 _parse_statement(Ty *ty, int prec)
 {
         Stmt *s;
+        bool item = InList;
+
+        InList = false;
 
         setctx(LEX_PREFIX);
 
         switch (T0) {
-        case '{':            return parse_block(ty);
+        case '{':
+                if (item && looks_like_record(ty)) {
+                        goto Expression;
+                }
+                return parse_block(ty);
         case ';':            return parse_null_statement(ty);
         case TOKEN_KEYWORD:  goto Keyword;
         default:             goto Expression;
@@ -7604,12 +7663,17 @@ parse_statement(Ty *ty, int prec)
 
         ExprVec decorators       = {0};
         ExprVec macro_decorators = {0};
+        bool item                = InList;
+
+        InList = false;
 
         SCRATCH_SAVE();
 
         parse_decorators(ty, &decorators, &macro_decorators);
 
         bool pub = try_consume(KEYWORD_PUB);
+
+        InList = item;
 
         Stmt *stmt = _parse_statement(ty, prec);
 
@@ -7904,6 +7968,7 @@ parse_module(Ty *ty, Module *mod)
                 }
 
 
+                InList = true;
                 Stmt *s = parse_statement(ty, -1);
                 if (s == NULL) {
                         break;

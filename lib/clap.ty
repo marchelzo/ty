@@ -20,6 +20,34 @@ fn camel(name: String) -> String {
     [first, *rest].join()
 }
 
+fn _flagName(arg: _) -> String {
+    "--{arg.long ?? lisp(arg.name)}"
+}
+
+fn _settleShorts(parser: String, args: Array[_]) -> Array[_] {
+    let taken = %{'h': '--help'}
+
+    for arg in args if !arg.pos && arg.short != nil && !arg.autoShort {
+        if let $other = taken[arg.short] {
+            throw "clap!: {parser}: -{arg.short} is claimed by both {other} and {_flagName(arg)}"
+        }
+        taken[arg.short] = _flagName(arg)
+    }
+
+    args.map(fn (arg: _) -> _ {
+        if arg.pos || arg.short == nil || !arg.autoShort {
+            return arg
+        }
+
+        if taken[arg.short] {
+            return {*arg, short: nil}
+        }
+
+        taken[arg.short] = _flagName(arg)
+        arg
+    })
+}
+
 fn _cleanDoc(doc: String | nil) {
     if doc == nil {
         return nil
@@ -1135,6 +1163,7 @@ pub macro clap! {
         let constraint = ty.eval(constraintExpr)
         short = name[0]
         long = lisp(name)
+        let autoShort = true
 
         while peek(0).type == ',' {
             next()
@@ -1151,6 +1180,7 @@ pub macro clap! {
                 'short' => {
                     next()
                     short = match ty.eval(expr(1)) { None => nil, x => x }
+                    autoShort = false
                 },
 
                 'long' => {
@@ -1251,9 +1281,11 @@ pub macro clap! {
             name, constraint, constraintExpr, help, conv,
             short, long, default, required, env, pos, repeat,
             count, min, check, hidden, placeholder,
-            conflicts, requires, group, delim, aliases
+            conflicts, requires, group, delim, aliases, autoShort
         })
     }
+
+    args = _settleShorts(name, args)
 
     let classFields = []
     for arg in args {

@@ -1,4 +1,4 @@
-import chalk (chalk, escape as chalk-escape)
+import chalk (chalk, escape as chalk-escape, parse as chalk-parse)
 import term (event)
 import os (SIGWINCH, signal, write, sleep, mktemp, spawn, wait, unlink)
 import time (now)
@@ -1214,8 +1214,8 @@ pub class TextInput < Component {
             let after  = past-end ? '' : visible.slice(cursor-pos + 1)
             let trail  = ' ' * max(past-end ? (pad - 1) : pad, 0)
             str(chalk"[{text-color}]{before}[/]"
-                "[reverse]{cur-ch}[/]"
-                "[{text-color}]{after}[/]{trail}")
+                     "[reverse]{cur-ch}[/]"
+                     "[{text-color}]{after}[/]{trail}")
         } else {
             str(chalk"[{text-color}]{visible}[/]{' ' * pad}")
         }
@@ -1432,8 +1432,8 @@ pub class TextArea < Component {
                         : ''
                     let trail = max(pad - ((cursor-pos >= visible.width()) ? 1 : 0), 0)
                     rendered.push(str(chalk"[{clr}]{before}[/]"
-                        "[reverse]{cur-ch}[/]"
-                        "[{clr}]{after}[/]{' ' * trail}"))
+                                           "[reverse]{cur-ch}[/]"
+                                           "[{clr}]{after}[/]{' ' * trail}"))
                 } else {
                     rendered.push(str(chalk"[{clr}]{visible}[/]{' ' * pad}"))
                 }
@@ -1646,8 +1646,8 @@ pub class Slider < Component {
         let clr-bold = "{clr} bold"
         let track = str(
             chalk"[{clr}]{track-l}[/]"
-                "[{clr-bold}]{thumb}[/]"
-                "[subtle]{track-r}[/]"
+                 "[{clr-bold}]{thumb}[/]"
+                 "[subtle]{track-r}[/]"
         )
 
         if lbl {
@@ -1810,10 +1810,10 @@ pub class RangeSelector < Component {
 
         let track = str(
             chalk"[subtle]{seg-before}[/]"
-                "[{clr-bold}]{thumb-lo}[/]"
-                "[{clr}]{seg-mid}[/]"
-                "[{clr-bold}]{thumb-hi}[/]"
-                "[subtle]{seg-after}[/]"
+                 "[{clr-bold}]{thumb-lo}[/]"
+                 "[{clr}]{seg-mid}[/]"
+                 "[{clr-bold}]{thumb-hi}[/]"
+                 "[subtle]{seg-after}[/]"
         )
 
         if lbl {
@@ -1962,8 +1962,8 @@ pub class TrackBar < Component {
 
         let track-str = str(
             chalk"[{clr}]{seg-before}[/]"
-                "[{clr-bold}]{thumb}[/]"
-                "[subtle]{seg-after}[/]"
+                 "[{clr-bold}]{thumb}[/]"
+                 "[subtle]{seg-after}[/]"
         )
 
         let play-icon = is-playing ? '‖' : '▶'
@@ -3467,6 +3467,14 @@ fn build-markup(children) -> String {
     buf.str!()
 }
 
+fn styled-lines(rendered: String) -> Array[String] {
+    if !rendered.contains?('\n') || !rendered.contains?("\x1b") {
+        return rendered.lines() ?? [rendered]
+    }
+
+    chalk.text(chalk-parse(rendered)).lines().map(str)
+}
+
 fn layout-text(
     node: Node,
     max-w: Int,
@@ -3485,7 +3493,7 @@ fn layout-text(
     } else {
         chalk.render(markup)
     }
-    let lines = rendered.lines() ?? [rendered]
+    let lines = styled-lines(rendered)
     let width = lines.map(&width).max() ?? 0
     let padded = lines.map(fmt@('%-*s', width, _))
     let output = Output(padded, width)
@@ -5008,8 +5016,8 @@ pub class TestHarness {
             let expected = p.read-text()
             if actual != expected {
                 throw "snapshot mismatch '{name}':\n"
-                    "--- expected ---\n{expected}\n"
-                    "--- actual ---\n{actual}"
+                      "--- expected ---\n{expected}\n"
+                      "--- actual ---\n{actual}"
             }
         } else {
             p.parent.mkdir(parents=true, exist-ok=true)

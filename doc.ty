@@ -433,9 +433,9 @@ fn render-fn-sig(name, t, anchor = nil) {
         let ps = params.map(param-sig).join(', ')
         let rs = type-str(ret)
         let inner = "<span class=\"sig\">"
-            "{name-html}{tp}({ps}) "
-            "<span class=\"type\">&rarr; {rs}</span>"
-            "</span>"
+                    "{name-html}{tp}({ps}) "
+                    "<span class=\"type\">&rarr; {rs}</span>"
+                    "</span>"
         print(wrap != nil
             ? "<div class=\"overload\">{inner}</div>"
             : inner)

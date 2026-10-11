@@ -371,21 +371,24 @@ pub class Text {
     }
 
     wrap(width: Int) -> Array[Text] {
-        let rows = [[]]
-        let room = width
+        let rows  = [[]]
+        let room  = width
+        let soft? = false
         for (style, text) in spans {
             for piece; i in text.split('\n') {
                 if i > 0 {
                     rows.push([])
-                    room = width
+                    room  = width
+                    soft? = false
                 }
                 for word in piece.matches(/\S+\s*|\s+/) {
                     for chunk in chunks(word, width) {
                         if chunk.width() > room && rows[-1] {
                             rows.push([])
-                            room = width
+                            room  = width
+                            soft? = true
                         }
-                        let chunk = (rows[-1] || room < width) ? chunk : chunk.comb(/^\s+/)
+                        let chunk = (rows[-1] || !soft?) ? chunk : chunk.comb(/^\s+/)
                         rows[-1].push((style, chunk))
                         room -= chunk.width()
                     }
@@ -393,6 +396,21 @@ pub class Text {
             }
         }
         rows.map(row -> Text(assemble(trim-end(row)), __chalk))
+    }
+
+    lines() -> Array[Text] {
+        let rows = [[]]
+        for (style, text) in spans {
+            for piece; i in text.split('\n') {
+                if i > 0 {
+                    rows.push([])
+                }
+                if piece {
+                    rows[-1].push((style, piece))
+                }
+            }
+        }
+        rows.map(row -> Text(assemble(row), __chalk))
     }
 
     clip(width: Int, ellipsis: String = '…') -> Text {

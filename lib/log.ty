@@ -63,8 +63,8 @@ pub class Logger {
 
             if color {
                 __chalk"[time]{time-str}[/] "
-                    "[{levels[level]}]{levelName}[/] "
-                    "[thread{Thread.id()}?]{"[{threadName}]":8}[/]"
+                       "[{levels[level]}]{levelName}[/] "
+                       "[thread{Thread.id()}?]{"[{threadName}]":8}[/]"
             } else {
                 "{time-str} {levelName} {"[{threadName}]":8}"
             }

@@ -4341,6 +4341,13 @@ ClassLookup:
                 break;
 
         case VALUE_NIL:
+                if (!maybe) {
+                        zP(
+                                "call to method '%s' on nil (use x.?%s() to skip the call when x is nil)",
+                                M_NAME(i),
+                                M_NAME(i)
+                        );
+                }
                 (void)BuildKwargsDict(ty, &IP, nkw);
                 STACK.count -= (n + 1);
                 push(NIL);
@@ -7924,7 +7931,7 @@ TargetMember:
                         break;
 
                 CASE(TO_STRING)
-                        if (top()->type == VALUE_STRING) {
+                        if (top()->type == VALUE_STRING || top()->type == VALUE_NIL) {
                                 break;
                         }
                         if (UNLIKELY(top()->type == VALUE_PTR)) {
@@ -7943,7 +7950,7 @@ TargetMember:
                         if (UNLIKELY(top()->type == VALUE_PTR)) {
                                 char *s = VSC(top());
                                 put(STRING_NOGC(s, strlen(s)));
-                        } else {
+                        } else if (top()->type != VALUE_NIL) {
                                 CallMethod(ty, NAMES._str_, 0, 0, false, false);
                         }
                         put(builtin_regex_escape(ty, 1, NULL));

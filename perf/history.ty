@@ -290,7 +290,7 @@ pub fn record-run(
     let recorded-at = "{utc-now()}Z"
     let benchmark-count = #results
     let phase = "run metadata (dirty={dirty-value}, full_suite={full-suite-value}, "
-              "auto_eligible={eligible-value}, benchmarks={#results}/{expected-count})"
+                "auto_eligible={eligible-value}, benchmarks={#results}/{expected-count})"
     try {
         transaction(fn () {
             let run = Run(
@@ -487,9 +487,9 @@ pub fn print-run(path: String, run-id: Int) {
         .all()
         .map(\_.to-dict())
     print(chalk"[bold bright cyan]Run[/] {run-label(run-id)}  {timestamp-label(run['recorded_at'])}  "
-                "[dim]{run['runner']}[/]/[bold]{mode-label(run['mode'])}[/]  {status-label(run)}")
+               "[dim]{run['runner']}[/]/[bold]{mode-label(run['mode'])}[/]  {status-label(run)}")
     print(chalk"{revision-label(run['commit_hash'], 12)}  {branch-label(run['branch'])}  "
-                "[dim]machine=[/]{machine-label(run['machine_id'])}")
+               "[dim]machine=[/]{machine-label(run['machine_id'])}")
     if run['note'] { print(chalk"[italic dim]Note:[/] [italic]{run['note']}[/]") }
     print()
     let width: Int = (rows.map(r -> #String(r['benchmark'])).max() ?? 7) + 2
@@ -498,9 +498,9 @@ pub fn print-run(path: String, run-id: Int) {
     for row in rows {
         let verdict = String(row['verdict'])
         print(chalk"  {benchmark-label(row['benchmark'], width)}"
-                    " {duration-label(row['median_seconds'], verdict=verdict, width=10)}  "
-                    "{duration-label(row['baseline_seconds'], role='baseline', width=10)}  "
-                    "{delta-label(row['change_ratio'], 8)}  {verdict-label(verdict)}")
+                   " {duration-label(row['median_seconds'], verdict=verdict, width=10)}  "
+                   "{duration-label(row['baseline_seconds'], role='baseline', width=10)}  "
+                   "{delta-label(row['change_ratio'], 8)}  {verdict-label(verdict)}")
     }
     close-history()
 }
@@ -534,9 +534,9 @@ pub fn print-history(
     for row in rows {
         let note = row['note'] ?? ''
         print(chalk"  {run-label(row['id'], 4)}  {timestamp-label(row['recorded_at'])}  "
-                    "{mode-label(row['mode'], 11)}  {revision-label(row['commit_hash'])}  "
-                    "{status-label(row):10}  [cyan]{row['benchmark_count']:>7}[/]  "
-                    "[italic dim]{note}[/]")
+                   "{mode-label(row['mode'], 11)}  {revision-label(row['commit_hash'])}  "
+                   "{status-label(row):10}  [cyan]{row['benchmark_count']:>7}[/]  "
+                   "[italic dim]{note}[/]")
     }
     if #rows == 0 {
         print(chalk"[dim]  No matching runs. Use --all to include dirty and partial runs.[/]")
@@ -578,16 +578,16 @@ pub fn compare-runs(path: String, run-id: Int, against: Int | nil = nil) {
         chalk"[magenta]robust baseline[/]"
     }
     print(chalk"[bold bright cyan]Compare[/]  {run-label(run-id)} "
-                "[dim]vs[/] {reference-label}")
+               "[dim]vs[/] {reference-label}")
     print()
     let width: Int = (rows.map(r -> #String(r['benchmark'])).max() ?? 7) + 2
     for row in rows {
         let ratio = row['baseline'] ? row['current'] / row['baseline'] : nil
         let verdict = ratio == nil ? nil : ratio > 1.05 ? 'regression' : ratio < 0.95 ? 'improvement' : 'stable'
         print(chalk"  {benchmark-label(row['benchmark'], width)} "
-                    "{duration-label(row['baseline'], role='baseline', width=10)} "
-                    "[dim]→[/] {duration-label(row['current'], verdict=verdict, width=10)}  "
-                    "{delta-label(ratio, 8)}")
+                   "{duration-label(row['baseline'], role='baseline', width=10)} "
+                   "[dim]→[/] {duration-label(row['current'], verdict=verdict, width=10)}  "
+                   "{delta-label(ratio, 8)}")
     }
     close-history()
 }
@@ -621,19 +621,19 @@ pub fn print-trend(path: String, benchmark: String, limit: Int = 20, all: Bool =
     }).join('')
     let overall-ratio = values[-1] / values[0]
     print(chalk"{benchmark-label(benchmark)} [bold bright cyan]trend[/]  "
-                "[cyan]{spark}[/]")
+               "[cyan]{spark}[/]")
     let overall-verdict = overall-ratio > 1.05 ? 'regression'
                         : overall-ratio < 0.95 ? 'improvement'
                         : nil
     print(chalk"{duration-label(values[0], role='baseline')} [dim]→[/] "
-                "{duration-label(values[-1], verdict=overall-verdict)}  "
-                "[cyan]{#values} runs[/] [dim]· lower is better[/]")
+               "{duration-label(values[-1], verdict=overall-verdict)}  "
+               "[cyan]{#values} runs[/] [dim]· lower is better[/]")
     print()
     for row in rows {
         let dirty = row['dirty'] ? chalk" [yellow]dirty[/]" : ''
         print(chalk"  {run-label(row['id'], 4)} {timestamp-label(row['recorded_at'], date-only=true)}  "
-                    "{duration-label(row['median_seconds'], width=10)}  "
-                    "{revision-label(row['commit_hash'])}{dirty}")
+                   "{duration-label(row['median_seconds'], width=10)}  "
+                   "{revision-label(row['commit_hash'])}{dirty}")
     }
     close-history()
 }
@@ -651,13 +651,13 @@ pub fn check-run(path: String, run-id: Int, threshold: Float) -> Bool {
     ))
     if #failures == 0 {
         print(chalk"[bright green bold]PASS[/] {run-label(run-id)}[dim]: no regressions above[/] "
-                    "[yellow]{threshold * 100:.1}%[/]")
+                   "[yellow]{threshold * 100:.1}%[/]")
     } else {
         print(chalk"[red bold]FAIL[/] {run-label(run-id)}[dim]:[/] "
-                    "[red bold]{#failures} performance problem(s)[/]")
+                   "[red bold]{#failures} performance problem(s)[/]")
         for row in failures {
             print(chalk"  {benchmark-label(row['benchmark'])}  {verdict-label(row['verdict'])}  "
-                        "{delta-label(row['change_ratio'])}")
+                       "{delta-label(row['change_ratio'])}")
         }
     }
     close-history()

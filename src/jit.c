@@ -2169,6 +2169,10 @@ jit_rt_to_string(Ty *ty, Value *val)
                 return;
         }
 
+        if (val->type == VALUE_NIL) {
+                return;
+        }
+
         ptrdiff_t idx = (val - vv(STACK));
         vN(STACK) = idx + 1;
         CallMethod(ty, NAMES._str_, 0, 0, false, true);
@@ -3605,7 +3609,7 @@ jit_rt_call_method(Ty *ty, Value *result, Value *self, int member_id, int argc)
                 self = vm_get_self(ty);
         }
         xvP(STACK, *self);
-        CallMethod(ty, member_id, argc, 0, true, true);
+        CallMethod(ty, member_id, argc, 0, false, true);
         CO_LOG("jit_rt_call", TERM(32;1), "");
 }
 

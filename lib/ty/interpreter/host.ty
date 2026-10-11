@@ -8,6 +8,15 @@ let output: io.Stream | nil = nil
 let next-id = 0
 let lock = Mutex()
 let active? = false
+let presenter: (Any) -> String | nil = str
+
+pub fn display-with(f: (Any) -> String | nil) {
+    presenter = f
+}
+
+pub fn display(value: Any) -> String | nil {
+    presenter(value)
+}
 
 pub fn connect(reader: io.Stream, writer: io.Stream) {
     input = reader

@@ -63,6 +63,8 @@ pub class Path : PathLike {
         (drv, root, parts)
     }
 
+    str = use __str__
+
     __str__() -> String {
         if __drv || __root {
             "{__drv}{__root}{__parts.join(sep)}"
@@ -127,7 +129,7 @@ pub class Path : PathLike {
 
     with-name(name: String) -> Path {
         if !__parts {
-            throw PathError({msg: 'path has no name', path: str(self)})
+            throw PathError({msg: 'path has no name', path: prelude::str(self)})
         }
         
         if sep in name || name == '.' || !name {
@@ -192,28 +194,28 @@ pub class Path : PathLike {
     }
 
     file? -> Bool {
-        match os.stat(str(self)) {
+        match os.stat(prelude::str(self)) {
             {mode, *} => (mode & os.S_IFMT) == os.S_IFREG,
             _         => false
         }
     }
 
     dir? -> Bool {
-        match os.stat(str(self)) {
+        match os.stat(prelude::str(self)) {
             {mode, *} => (mode & os.S_IFMT) == os.S_IFDIR,
             _         => false
         }
     }
 
     symlink? -> Bool {
-        match os.lstat(str(self)) {
+        match os.lstat(prelude::str(self)) {
             {mode, *} => (mode & os.S_IFMT) == os.S_IFLNK,
             _         => false
         }
     }
 
     socket? -> Bool {
-        match os.stat(str(self)) {
+        match os.stat(prelude::str(self)) {
             {mode, *} => (mode & os.S_IFMT) == os.S_IFSOCK,
             _         => false
         }
@@ -228,7 +230,7 @@ pub class Path : PathLike {
     }
 
     resolve -> Path {
-        match os.realpath(str(self)) {
+        match os.realpath(prelude::str(self)) {
             $p => Path(p),
             _ => throw os.OSError('realpath()')
         }
@@ -242,7 +244,7 @@ pub class Path : PathLike {
 
         let self-abs = self.absolute
         if self-abs.__drv != other-path.__drv {
-            throw PathError({msg: 'different drives', path: str(self), other: str(other-path)})
+            throw PathError({msg: 'different drives', path: prelude::str(self), other: prelude::str(other-path)})
         }
 
         let i = 0
@@ -301,25 +303,25 @@ pub class Path : PathLike {
     }
 
     read-text() -> String {
-        with f = io.open(str(self), 'r') {
+        with f = io.open(prelude::str(self), 'r') {
             f.slurp() ?? ''
         }
     }
 
     read-bytes() -> Blob {
-        with f = io.open(str(self), 'r') {
+        with f = io.open(prelude::str(self), 'r') {
             f.blob()
         }
     }
 
     write(text: String | Blob) {
-        with f = io.open(str(self), 'w') {
+        with f = io.open(prelude::str(self), 'w') {
             f.write(text)
         }
     }
 
     append(text: String | Blob) {
-        with f = io.open(str(self), 'a') {
+        with f = io.open(prelude::str(self), 'a') {
             f.write(text)
         }
     }
@@ -348,13 +350,13 @@ pub class Path : PathLike {
     }
 
     rmdir() {
-        if os.rmdir(str(self)) == -1 {
+        if os.rmdir(prelude::str(self)) == -1 {
             throw os.OSError('rmdir()')
         }
     }
 
     unlink() {
-        if os.unlink(str(self)) == -1 {
+        if os.unlink(prelude::str(self)) == -1 {
             throw os.OSError('unlink()')
         }
     }
@@ -365,7 +367,7 @@ pub class Path : PathLike {
             s => Path(s)
         }
         
-        if os.rename(str(self), str(target-path)) == -1 {
+        if os.rename(prelude::str(self), prelude::str(target-path)) == -1 {
             throw os.OSError('rename()')
         }
 
@@ -375,7 +377,7 @@ pub class Path : PathLike {
     link(target: String | Path) -> Path {
         let target-path = (target :: String) ? Path(target) : target
 
-        if os.link(str(self), str(target-path)) == -1 {
+        if os.link(prelude::str(self), prelude::str(target-path)) == -1 {
             throw os.OSError('link()')
         }
 
@@ -383,13 +385,13 @@ pub class Path : PathLike {
     }
 
     chmod(mode: Int) {
-        if os.chmod(str(self), mode) == -1 {
+        if os.chmod(prelude::str(self), mode) == -1 {
             throw os.OSError('chmod()')
         }
     }
 
     touch(mode: Int = 0o644) {
-        let fd = os.open(str(self), os.O_CREAT | os.O_WRONLY, mode)
+        let fd = os.open(prelude::str(self), os.O_CREAT | os.O_WRONLY, mode)
         if fd == -1 {
             throw os.OSError('open()')
         }
@@ -402,7 +404,7 @@ pub class Path : PathLike {
     }
 
     chdir() {
-        if os.chdir(str(self)) == -1 {
+        if os.chdir(prelude::str(self)) == -1 {
             throw os.OSError('chdir()')
         }
     }
@@ -417,14 +419,14 @@ pub class Path : PathLike {
         fn copy-file(src: Path, dst: Path, follow-symlinks: Bool) {
             let flags = if follow-symlinks { 0 } else { os.O_NOFOLLOW }
 
-            let src-fd = os.open(str(src), os.O_RDONLY | flags)
+            let src-fd = os.open(prelude::str(src), os.O_RDONLY | flags)
             if src-fd == -1 {
                 throw os.OSError('open()')
             }
 
             defer os.close(src-fd)
             
-            let dst-fd = os.open(str(dst), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | flags, 0o666)
+            let dst-fd = os.open(prelude::str(dst), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | flags, 0o666)
             if dst-fd == -1 {
                 throw os.OSError('open()')
             }
@@ -458,11 +460,11 @@ pub class Path : PathLike {
             copy-file(self, target-path, follow-symlinks)
         } else if self.symlink? && !follow-symlinks {
             let link-target = self.readlink
-            if os.symlink(str(link-target), str(target-path)) == -1 {
+            if os.symlink(prelude::str(link-target), prelude::str(target-path)) == -1 {
                 throw os.OSError('symlink()')
             }
         } else {
-            throw PathError({msg: 'source does not exist', path: str(self)})
+            throw PathError({msg: 'source does not exist', path: prelude::str(self)})
         }
 
         target-path
@@ -485,7 +487,7 @@ pub class Path : PathLike {
         } else if self.file? {
             unlink()
         } else if !quiet {
-            throw PathError({msg: 'path does not exist', path: str(self)})
+            throw PathError({msg: 'path does not exist', path: prelude::str(self)})
         }
     }
 
@@ -500,7 +502,7 @@ pub class Path : PathLike {
                         .sub(/\*/, '[^/]*')
                         .sub(/\?/, '[^/]')
                         .sub(/\./, '\\.')
-        str(self) :: regex("^{re}$")
+        prelude::str(self) :: regex("^{re}$")
     }
 
     glob(pattern: String) -> Array[Path] {
@@ -599,7 +601,7 @@ pub class Path : PathLike {
 
         for ..100 {
             let path = self / "{prefix}.{uuid4()[;6]}{suffix}"
-            let fd   = os.open(str(path), flags, 0o600)
+            let fd   = os.open(prelude::str(path), flags, 0o600)
 
             if fd >= 0 {
                 os.close(fd)

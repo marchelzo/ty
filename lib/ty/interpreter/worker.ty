@@ -31,7 +31,7 @@ fn evaluate(repl: Evaluator, request: Request) -> Result {
     host.active(true)
     try {
         let result = repl.eval(request.code)
-        value = result == nil ? nil : str(result)
+        value = result == nil ? nil : host.display(result)
     } catch exception {
         error = str(exception)
     } finally {

@@ -1089,8 +1089,19 @@ fn overview(page: Page) {
     }
 }
 
-fn reply(text: String) -> Reply {
-    let text = text.trim()
+fn builtin-type(text: String) -> String | nil {
+    if !text.match?(/^[a-z][\w-]*$/) {
+        return nil
+    }
+
+    let name    = "{text[0].upper()}{text[1;]}"
+    let builtin = lib().named(name).find(e -> e.kind == 'class' && e.mod == 'prelude')
+
+    builtin ? name : nil
+}
+
+fn reply(query: String) -> Reply {
+    let text = builtin-type(query.trim()) ?? query.trim()
 
     if text == '' {
         return Overview
