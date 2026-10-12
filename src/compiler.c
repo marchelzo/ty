@@ -392,6 +392,7 @@ static Module *MainModule;
 static Module *GlobalModule;
 static Scope *GlobalScope;
 static Symbol *AnyTypeSymbol;
+static Symbol *TypeTypeSymbol;
 static Scope *ThreadLocals;
 static u64 t;
 static char const EmptyString[] = "\0";
@@ -6130,6 +6131,28 @@ target_captured(Ty *ty, Scope const *scope, Symbol const *s)
 #endif
 }
 
+static void
+emit_any_type_value(Ty *ty)
+{
+        T2Universe *universe = t2_global_universe();
+        T2Type dynamic = t2_primitive(universe, T2_TYPE_DYNAMIC);
+
+        INSN(TYPE);
+        EP((uptr)t2_type_value(universe, dynamic, dynamic));
+}
+
+inline static bool
+is_type_type(Expr const *e)
+{
+        while (e->type == EXPRESSION_SUBSCRIPT) {
+                e = e->container;
+        }
+
+        return (e->type == EXPRESSION_IDENTIFIER)
+            && (e->symbol != NULL)
+            && (e->symbol == TypeTypeSymbol);
+}
+
 inline static void
 emit_load(Ty *ty, Symbol const *s, Scope const *scope)
 {
@@ -6137,6 +6160,11 @@ emit_load(Ty *ty, Symbol const *s, Scope const *scope)
                   && !SymbolIsTypeVar(s)
                   && (scope != NULL)
                   && (s->scope->function == scope->function);
+
+        if (s == TypeTypeSymbol) {
+                emit_any_type_value(ty);
+                return;
+        }
 
         if (SymbolIsTypeVar(s)) {
                 INSN(TRUE);
@@ -6150,8 +6178,9 @@ emit_load(Ty *ty, Symbol const *s, Scope const *scope)
         }
 
         if (SymbolIsTypeAlias(s) && !SymbolIsTypeFunction(s)) {
+                T2Type type = (s->type != T2_TYPE_INVALID) ? s->type : t2_resolve(ty, (Expr *)s->alias);
                 INSN(TYPE);
-                EP((uptr)s->type);
+                EP((uptr)type);
                 return;
         }
 
@@ -6569,6 +6598,12 @@ _xemit_constraint(Ty *ty, Expr const *c)
                 return;
         }
 
+        if (is_type_type(c)) {
+                emit_any_type_value(ty);
+                INSN(CHECK_MATCH);
+                return;
+        }
+
         if (c->type != EXPRESSION_TYPE_UNION) {
                 EE(c);
                 INSN(CHECK_MATCH);
@@ -6751,6 +6786,82 @@ PatchAnnotations(Ty *ty)
                 }
 
                 PatchAnnotation(annotation, vv(STATE.code));
+        }
+}
+
+static void
+emit_overload_attempt(Ty *ty, Expr const *e, Expr *f)
+{
+        if (!is_method(e)) {
+                INSN(SAVE_STACK_POS);
+                emit_load_instr(ty, "[@]", INSTR_LOAD_LOCAL, 0);
+                emit_spread(ty, NULL, false);
+                emit_load_instr(ty, "[%]", INSTR_LOAD_LOCAL, 1);
+                emit_load_instr(ty, "", INSTR_LOAD_GLOBAL, ((Stmt *)f)->target->symbol->i);
+                CHECK_INIT();
+                ECALL(-1, 1);
+                ESTR("*");
+                INSN(RETURN_IF_NOT_NONE);
+                INSN(POP);
+        } else {
+                INSN(SAVE_STACK_POS);
+                emit_load_instr(ty, "[@]", INSTR_LOAD_LOCAL, 0);
+                emit_spread(ty, NULL, false);
+                emit_load_instr(ty, "[%]", INSTR_LOAD_LOCAL, 1);
+                emit_load_instr(ty, "self", INSTR_LOAD_LOCAL, 2);
+                EMCALL(PRIV_ID(f->name), -1, 1);
+                ESTR("*");
+                INSN(RETURN_IF_NOT_NONE);
+                INSN(POP);
+        }
+}
+
+static void
+emit_fitting_overload_attempt(Ty *ty, Expr const *e, Expr *f)
+{
+        int required   = 0;
+        int positional = 0;
+
+        for (int i = 0; i < vN(f->params); ++i) {
+                if (i == f->rest || i == f->ikwargs) {
+                        continue;
+                }
+                if (f->rest >= 0 && i > f->rest) {
+                        continue;
+                }
+                positional += 1;
+                if (v__(f->dflts, i) == NULL) {
+                        required += 1;
+                }
+        }
+
+        emit_load_instr(ty, "[@]", INSTR_LOAD_LOCAL, 0);
+        INSN(COUNT);
+        emit_load_instr(ty, "[%]", INSTR_LOAD_LOCAL, 1);
+        INSN(COUNT);
+        INSN(ADD);
+        INSN(INTEGER);
+        EiMAX(required);
+        INSN(GEQ);
+        PLACEHOLDER_JUMP(JUMP_IF_NOT, few);
+
+        JumpPlaceholder many = few;
+
+        if (f->rest < 0) {
+                emit_load_instr(ty, "[@]", INSTR_LOAD_LOCAL, 0);
+                INSN(COUNT);
+                INSN(INTEGER);
+                EiMAX(positional);
+                INSN(LEQ);
+                many = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF_NOT);
+        }
+
+        emit_overload_attempt(ty, e, f);
+
+        PATCH_JUMP(few);
+
+        if (f->rest < 0) {
+                PATCH_JUMP(many);
         }
 }
 
@@ -7041,20 +7152,12 @@ emit_function(Ty *ty, Expr const *e)
                 JUMP(end);
                 patch_jumps_to(&STATE.co_returns, end.off);
         } else if (e->type == EXPRESSION_MULTI_FUNCTION) {
+                for (int i = 0; !(e->mtype & MT_SET) && i < vN(e->functions); ++i) {
+                        emit_fitting_overload_attempt(ty, e, *v_(e->functions, i));
+                }
                 for (int i = 0; i < vN(e->functions); ++i) {
                         Expr *f = *v_(e->functions, i);
-                        if (!is_method(e)) {
-                                INSN(SAVE_STACK_POS);
-                                emit_load_instr(ty, "[@]", INSTR_LOAD_LOCAL, 0);
-                                emit_spread(ty, NULL, false);
-                                emit_load_instr(ty, "[%]", INSTR_LOAD_LOCAL, 1);
-                                emit_load_instr(ty, "", INSTR_LOAD_GLOBAL, ((Stmt *)f)->target->symbol->i);
-                                CHECK_INIT();
-                                ECALL(-1, 1);
-                                ESTR("*");
-                                INSN(RETURN_IF_NOT_NONE);
-                                INSN(POP);
-                        } else if (e->mtype & MT_SET) {
+                        if (e->mtype & MT_SET) {
                                 emit_load_instr(ty, "[@]", INSTR_LOAD_LOCAL, 0);
                                 emit_load_instr(ty, "self", INSTR_LOAD_LOCAL, 1);
                                 INSN(TARGET_MEMBER);
@@ -7063,15 +7166,7 @@ emit_function(Ty *ty, Expr const *e)
                                 INSN(RETURN_IF_NOT_NONE);
                                 INSN(POP);
                         } else {
-                                INSN(SAVE_STACK_POS);
-                                emit_load_instr(ty, "[@]", INSTR_LOAD_LOCAL, 0);
-                                emit_spread(ty, NULL, false);
-                                emit_load_instr(ty, "[%]", INSTR_LOAD_LOCAL, 1);
-                                emit_load_instr(ty, "self", INSTR_LOAD_LOCAL, 2);
-                                EMCALL(PRIV_ID(f->name), -1, 1);
-                                ESTR("*");
-                                INSN(RETURN_IF_NOT_NONE);
-                                INSN(POP);
+                                emit_overload_attempt(ty, e, f);
                         }
                 }
                 if (e->name != NULL && s_eq(e->name, M_NAME(NAMES.unapply))) {
@@ -10659,7 +10754,9 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
 
         case EXPRESSION_SUBSCRIPT:
-                if (e->subscript->type == EXPRESSION_LIST) {
+                if (is_type_type(e)) {
+                        emit_any_type_value(ty);
+                } else if (e->subscript->type == EXPRESSION_LIST) {
                         if (vN(e->subscript->es) > 1) {
                                 for (int i = 0; i < vN(e->subscript->es); ++i) {
                                         EE(v__(e->subscript->es, i));
@@ -13315,7 +13412,7 @@ compiler_init(Ty *ty)
         class_implement_trait(ty, CLASS_BLOB,         CLASS_INTO_PTR);
 
         AnyTypeSymbol = scope_add_type_var(ty, GlobalScope, "Any", SYM_PUBLIC);
-        (void)scope_add_type_var(ty, GlobalScope, "Type", SYM_PUBLIC);
+        TypeTypeSymbol = scope_add_type_var(ty, GlobalScope, "Type", SYM_PUBLIC);
 }
 
 void
@@ -20924,6 +21021,7 @@ CompilerReset(Ty *ty)
         GlobalModule    = NULL;
         GlobalScope     = NULL;
         AnyTypeSymbol   = NULL;
+        TypeTypeSymbol  = NULL;
         ThreadLocals    = NULL;
         ContextList     = NULL;
         GlobalCount     = 0;

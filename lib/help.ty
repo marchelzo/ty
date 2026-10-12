@@ -7,7 +7,7 @@ import chalk (Chalk, Text, escape, strip, parse as unansi)
 import ety
 import path (Path)
 import pretty (pretty)
-import help.corpus as corpus (Entry, fold, dedent, dotted, flat, kebab-text)
+import help.corpus as corpus (Entry, Snippet, fold, dedent, dotted, flat, kebab-text)
 
 let ink = Chalk()
 
@@ -131,7 +131,7 @@ fn hl-c(code: String) -> String {
     })
 }
 
-fn source-text(e: Entry) -> String | nil {
+fn source-text(e: Entry | Snippet) -> String | nil {
     match (e.lang, e.hsrc, e.src) {
         (_, $h, _) and !plain?() => h,
         ('c', _, $src)           => hl-c(dedent(src)),
@@ -483,10 +483,17 @@ fn annotation(e: Entry) -> Declared | Undeclared | Unreturned[String] {
     }
 }
 
-fn signature(e: Entry, sig: String, room: Int, inferred?: Bool = true) -> Text {
-    let painted = (e.hdecl != nil && #signatures(e) == 1 && !plain?())
-                ? ansi((e.kind == 'static') ? "{hl('static')} {e.hdecl}" : e.hdecl)
-                : ansi(hl(flat(sig)))
+fn headed(e: Entry) -> Array[(String, String | nil)] {
+    let sigs = signatures(e)
+    let heads = (plain?() ? nil : e.hdecl.?split('\n')) ?? []
+    (#heads == #sigs) ? sigs.zip(heads) : sigs.map(sig -> (sig, nil))
+}
+
+fn signature(e: Entry, sig: String, head: ?String, room: Int, inferred?: Bool = true) -> Text {
+    let painted = match head {
+        $h => ansi((e.kind == 'static') ? "{hl('static')} {h}" : h),
+        _  => ansi(hl(flat(sig)))
+    }
     match (inferred?, annotation(e)) {
         (true, Undeclared)    => (ink"[member]{e.name}[/]{ansi(colored(e) ?? '')}").clip(room),
         (true, Unreturned(r)) => (ink"{painted}[dim] -> {r}[/]").clip(room),
@@ -495,8 +502,9 @@ fn signature(e: Entry, sig: String, room: Int, inferred?: Bool = true) -> Text {
 }
 
 fn summary(e: Entry, room: Int) -> Text {
-    let sigs = signatures(e)
-    let first = signature(e, sigs[0] ?? e.name, room)
+    let sigs = headed(e)
+    let (sig, head) = sigs[0] ?? (e.name, nil)
+    let first = signature(e, sig, head, room)
     (#sigs > 1) ? ink"{first}[dim]  +{#sigs - 1} more[/]" : first
 }
 
@@ -505,7 +513,7 @@ fn first-line(doc: ?String) -> String | nil {
     doc.split(/\n\s*\n/)[0].split('\n').map(&trim).join(' ')
 }
 
-fn source-block(page: Page, e: Entry, limit: Int = MAX_SOURCE) {
+fn source-block(page: Page, e: Entry | Snippet, limit: Int = MAX_SOURCE) {
     let $text = source-text(e) or return
     let lines = text.split('\n')
     let skip = (e.lang == 'c') ? (dedent(e.src ?? '').split('\n').search-by(\!_.starts?('//')) ?? 0) : 0
@@ -524,14 +532,14 @@ fn source-block(page: Page, e: Entry, limit: Int = MAX_SOURCE) {
 
 fn card(page: Page, e: Entry, source?: Bool = true, note: ?Line = nil) {
     page.title(label(e), badge(e))
-    let sigs = signatures(e)
+    let sigs = headed(e)
     if sigs && e.kind != 'module' {
         page.blank()
-        for sig in sigs {
+        for (sig, head) in sigs {
             let fits? = flat(sig).width() <= page.cols - 4
-            match (fits?, #sigs) {
-                (true, 1) => page.put('  ', signature(e, sig, page.cols - 4, inferred?: false)),
-                _         => page.block(hl(wrap(flat(sig), page.cols - 4)))
+            match fits? {
+                true  => page.put('  ', signature(e, sig, head, page.cols - 4, inferred?: false)),
+                false => page.block(hl(wrap(flat(sig), page.cols - 4)))
             }
         }
     }
@@ -554,8 +562,10 @@ fn card(page: Page, e: Entry, source?: Bool = true, note: ?Line = nil) {
         }
     }
     if source? && e.src {
-        page.blank()
-        source-block(page, e)
+        for s in [e, *e.more] {
+            page.blank()
+            source-block(page, s)
+        }
     } else if let $loc = short-path(e.file) {
         page.blank().put(ink"  [dim]{(e.line != nil) ? "{loc}:{e.line}" : loc}[/]")
     }
@@ -1377,14 +1387,18 @@ const MD_CARD = '''
 
     Defined at <%= code(c.loc) %>.
     <% } %>
-    <% if c.src { %>
+    <% for s; i in c.srcs { %>
+      <% if i > 0 && s.loc { %>
 
-    <%= fence(c.src) %><%= c.lang %>
-    <%= c.src %>
-    <%= fence(c.src) %>
-      <% if c.more > 0 { %>
+    Overload defined at <%= code(s.loc) %>.
+      <% } %>
 
-    (<%= c.more %> more lines not shown)
+    <%= fence(s.src) %><%= s.lang %>
+    <%= s.src %>
+    <%= fence(s.src) %>
+      <% if s.more > 0 { %>
+
+    (<%= s.more %> more lines not shown)
       <% } %>
     <% } %>
     '''
@@ -1490,12 +1504,22 @@ fn md-notes(answer: Answer) -> Array[String] {
     }
 }
 
-fn md-card(e: Entry, notes: Array[String] = [], source?: Bool = true) -> String {
-    let lines = (source? && e.src != nil) ? dedent(e.src ?? '').split('\n') : []
-    let skip = (e.lang == 'c') ? (lines.search-by(\!_.starts?('//')) ?? 0) : 0
+fn md-excerpt(s: Entry | Snippet, source?: Bool = true) -> _ {
+    let lines = (source? && s.src != nil) ? dedent(s.src ?? '').split('\n') : []
+    let skip = (s.lang == 'c') ? (lines.search-by(\!_.starts?('//')) ?? 0) : 0
     let shown = lines[skip;skip + MAX_SOURCE]
-    let loc = short-path(e.file)
-    let at = (e.line ?? 0 > 0) ? (e.line ?? 0) + skip : nil
+    let loc = short-path(s.file)
+    let at = (s.line ?? 0 > 0) ? (s.line ?? 0) + skip : nil
+    return {
+        loc:  (loc != nil && at != nil) ? "{loc}:{at}" : loc,
+        src:  shown ? shown.join('\n') : nil,
+        lang: (s.lang == 'c') ? 'c' : 'ty',
+        more: max(#lines - skip - #shown, 0)
+    }
+}
+
+fn md-card(e: Entry, notes: Array[String] = [], source?: Bool = true) -> String {
+    let excerpts = [md-excerpt(e, source?), *e.more.map(md-excerpt@(_, source?))]
     let inferred = match annotation(e) {
         Undeclared => e.type,
         _          => nil
@@ -1508,10 +1532,8 @@ fn md-card(e: Entry, notes: Array[String] = [], source?: Bool = true) -> String 
             inferred: inferred,
             notes:    notes,
             doc:      e.doc,
-            loc:      (loc != nil && at != nil) ? "{loc}:{at}" : loc,
-            src:      shown ? shown.join('\n') : nil,
-            lang:     (e.lang == 'c') ? 'c' : 'ty',
-            more:     max(#lines - skip - #shown, 0)
+            loc:      excerpts[0].loc,
+            srcs:     excerpts.filter(\_.src != nil)
         },
         code: code,
         fence: fence

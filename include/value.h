@@ -1650,10 +1650,38 @@ TagAndReturn:
 }
 
 static inline Value
+ExprDef(Ty *ty, Expr *fun)
+{
+        Value def = CToTyExpr(ty, fun);
+        return unwrap(ty, &def);
+}
+
+static inline Value
 FunDef(Ty *ty, Value const *f)
 {
-        Value def = CToTyExpr(ty, expr_of(f));
-        return unwrap(ty, &def);
+        Expr *fun = expr_of(f);
+        Value defs;
+
+        if (fun->type != EXPRESSION_MULTI_FUNCTION) {
+                return ExprDef(ty, fun);
+        }
+
+        defs = ARRAY(vA());
+        gP(&defs);
+
+        for (int i = 0; i < vN(fun->functions); ++i) {
+                Expr *arm = v__(fun->functions, i);
+                if (IsStmt(arm)) {
+                        arm = ((Stmt *)arm)->value;
+                }
+                if (HasBody(arm)) {
+                        vAp(defs.array, ExprDef(ty, arm));
+                }
+        }
+
+        gX();
+
+        return defs;
 }
 
 static inline Value

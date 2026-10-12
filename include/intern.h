@@ -42,6 +42,12 @@ intern_entry(InternSet *set, i64 id)
         return &b->items[key >> 8u];
 }
 
+char const *
+KebabNameInto(char *out, usize cap, char const *name);
+
+char const *
+KebabName(Ty *ty, char const *name);
+
 #endif
 
 /* vim: set sts=8 sw=8 expandtab: */

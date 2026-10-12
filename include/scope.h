@@ -92,6 +92,7 @@ typedef struct symbol {
         T2Type type;
         T2Scheme *scheme;
         Expr *expr;
+        Expr const *alias;
         Scope *scope;
 
         u64 hash;

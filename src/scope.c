@@ -358,6 +358,7 @@ xadd(Ty *ty, Scope *scope, char const *id)
                         old->flags = SYM_GLOBAL;
                         old->type  = T2_TYPE_INVALID;
                         old->expr  = NULL;
+                        old->alias = NULL;
                         old->class = -1;
                         old->tag   = -1;
                         old->mod   = CompilerCurrentModule(ty);
@@ -439,6 +440,7 @@ scope_add_type_alias(Ty *ty, Scope *s, char const *id, Expr const *src)
         Symbol *sym = xadd(ty, s, id);
 
         sym->scope = s;
+        sym->alias  = src;
         sym->flags |= SYM_TYPE_ALIAS;
 
         return sym;

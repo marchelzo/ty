@@ -79,4 +79,45 @@ intern_put(InternEntry *e, void *data)
         return e;
 }
 
+inline static bool
+hump(char const *s, usize i)
+{
+        return (i > 0)
+            && xisupper(s[i])
+            && (xislower(s[i - 1]) || xisdigit(s[i - 1]))
+            && !xisupper(s[i + 1]);
+}
+
+char const *
+KebabNameInto(char *out, usize cap, char const *name)
+{
+        usize n = strlen(name);
+
+        if (n == 0 || !xislower(name[0]) || cap < 2 * n + 1) {
+                return name;
+        }
+
+        char *p = out;
+
+        for (usize i = 0; i < n; ++i) {
+                if (hump(name, i)) {
+                        *p++ = '-';
+                        *p++ = xtolower(name[i]);
+                } else {
+                        *p++ = name[i];
+                }
+        }
+
+        *p = '\0';
+
+        return out;
+}
+
+char const *
+KebabName(Ty *ty, char const *name)
+{
+        usize cap = 2 * strlen(name) + 1;
+        return KebabNameInto(smA(cap), cap, name);
+}
+
 /* vim: set sts=8 sw=8 expandtab: */

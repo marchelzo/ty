@@ -2718,7 +2718,7 @@ BadFieldAccess(Ty *ty, Value const *val, i32 z)
                 zP(
                         "attempt to access non-existent field %s'%s'%s of %s%s%s",
                         TERM(34),
-                        M_NAME(z),
+                        KebabName(ty, M_NAME(z)),
                         TERM(39),
                         TERM(97),
                         VSC(val),
@@ -2728,7 +2728,7 @@ BadFieldAccess(Ty *ty, Value const *val, i32 z)
                 zP(
                         "attempt to access non-existent member %s'%s'%s of %s%s%s",
                         TERM(34),
-                        M_NAME(z),
+                        KebabName(ty, M_NAME(z)),
                         TERM(39),
                         TERM(97),
                         VSC(val),
@@ -4422,7 +4422,7 @@ QuietFailure:
                 xpush(NIL);
                 return false;
         } else {
-                zP("call to non-existent method '%s' on %s", M_NAME(i), VSC(&value));
+                zP("call to non-existent method '%s' on %s", KebabName(ty, M_NAME(i)), VSC(&value));
         }
 }
 

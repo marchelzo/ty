@@ -32,6 +32,7 @@
 #include "types2_core.h"
 #include "value.h"
 #include "diag.h"
+#include "intern.h"
 
 enum {
         T2_ROLE_EXPRESSION = 1 << 0,
@@ -12943,6 +12944,7 @@ infer_member_type(
         }
 
         if (diagnose) {
+                char kebab[256];
                 add_diagnostic(
                         checker,
                         site,
@@ -12951,7 +12953,7 @@ infer_member_type(
                         object,
                         T2_TYPE_INVALID,
                         "field `%s` does not exist on this type",
-                        name
+                        KebabNameInto(kebab, sizeof kebab, name)
                 );
         }
 

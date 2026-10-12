@@ -2298,6 +2298,14 @@ trait Iterable[T] {
         __iter__().all?(pred)
     }
 
+    flat-map[U](f: T -> Array[U]) -> Array[U] {
+        list().flat-map(f)
+    }
+
+    group-by[U](f: T -> U) -> Array[Array[T]] {
+        list().group-by(f)
+    }
+
     list() {
         __iter__().list()
     }

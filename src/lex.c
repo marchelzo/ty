@@ -609,6 +609,66 @@ lexdocstring(Ty *ty)
         return mkstring(ty, vv(s), vN(s) - 1);
 }
 
+inline static bool
+readhex(Ty *ty, int ndigits, u64 *k);
+
+static void
+lex_code_escape(Ty *ty, byte_vector *str)
+{
+        int c = C(0);
+
+        nextchar(ty);
+
+        if (c == '0') {
+                avP(*str, '\0');
+                return;
+        }
+
+        if (c == 'x') {
+                u64 b;
+                if (!readhex(ty, 2, &b)) {
+                        error(ty, "invalid hexadecimal byte value in string: \\x%.2s", SRC);
+                }
+                avP(*str, b);
+                return;
+        }
+
+        int ndigits = (c == 'u') ? 4 : 8;
+        u64 cp;
+
+        if (!readhex(ty, ndigits, &cp)) {
+                error(ty, "expected %d hexadecimal digits after \\%c in string", ndigits, c);
+        }
+
+        if (!utf8proc_codepoint_valid(cp)) {
+                error(ty, "invalid Unicode codepoint in string: %u", cp);
+        }
+
+        unsigned char bytes[4];
+        int n = utf8proc_encode_char(cp, bytes);
+        avPn(*str, (char *)bytes, max(n, 0));
+}
+
+static void
+check_escape(Ty *ty, char const *allowed)
+{
+        int c = C(0);
+
+        if (strchr(allowed, c) != NULL) {
+                return;
+        }
+
+        if (c > ' ' && c < 0x7f) {
+                error(
+                        ty,
+                        "unknown escape \\%c in string: write \\\\%c for a backslash followed by %c, or use a regex literal such as /\\%c/",
+                        c, c, c, c
+                );
+        }
+
+        error(ty, "unknown escape sequence in string: write \\\\ for a literal backslash");
+}
+
 static Token
 lexrawstr(Ty *ty)
 {
@@ -655,6 +715,14 @@ lexrawstr(Ty *ty)
                                 nextchar(ty);
                                 avP(str, '\t');
                                 continue;
+                        case '0':
+                        case 'x':
+                        case 'u':
+                        case 'U':
+                                lex_code_escape(ty, &str);
+                                continue;
+                        default:
+                                check_escape(ty, "\\'\"{}/");
                         }
                         //------- FALLTHROUGH -------
                 default:
@@ -791,44 +859,12 @@ lex_ss_string(Ty *ty, usize indent, bool first, char const *limit)
                                 avP(str, '\t');
                                 continue;
 
+                        case '0':
                         case 'x':
-                        {
-                                u64 b;
-
-                                nextchar(ty);
-
-                                if (!readhex(ty, 2, &b)) {
-                                        error(ty, "invalid hexadecimal byte value in string: \\x%.2s", SRC);
-                                }
-
-                                avP(str, b);
-
-                                continue;
-                        }
-
                         case 'u':
                         case 'U':
-                        {
-                                int c = C(0);
-                                int ndigits = (c == 'u') ? 4 : 8;
-                                u64 cp;
-
-                                nextchar(ty);
-
-                                if (!readhex(ty, ndigits, &cp)) {
-                                        error(ty, "expected %d hexadecimal digits after \\%c in string", ndigits, c, SRC);
-                                }
-
-                                if (!utf8proc_codepoint_valid(cp)) {
-                                        error(ty, "invalid Unicode codepoint in string: %u", cp);
-                                }
-
-                                unsigned char bytes[4];
-                                int n = utf8proc_encode_char(cp, bytes);
-                                avPn(str, (char *)bytes, max(n, 0));
-
+                                lex_code_escape(ty, &str);
                                 continue;
-                        }
 
                         case '>':
                                 nextchar(ty);
@@ -846,6 +882,9 @@ lex_ss_string(Ty *ty, usize indent, bool first, char const *limit)
                                 nextchar(ty);
                                 nextchar(ty);
                                 continue;
+
+                        default:
+                                check_escape(ty, "\\'\"{}/[]");
                         }
                 }
 

@@ -8,12 +8,29 @@ import path (Path)
 import sh (run, Success)
 import tp (ThreadPool, Future)
 
-pub const VERSION = 5
+pub const VERSION = 6
 
 const TYPE_WIDTH = 78
 const MAX_SOURCE_LINES = 120
 const SKIP_MODULES = %{'main', 'help/dump'}
 const SKIP_DIRS = %{'bin': true, 'lib': true, 'test': true, 'tests': true}
+const SNIPPET = ['src', 'hsrc', 'lang', 'file', 'line']
+
+pub class Snippet {
+    src:  ?String
+    hsrc: ?String
+    lang: ?String
+    file: ?String
+    line: ?Int
+
+    init(d: Dict[String, _]) {
+        src  = d['src']
+        hsrc = d['hsrc']
+        lang = d['lang'] ?? 'ty'
+        file = d['file']
+        line = d['line']
+    }
+}
 
 pub class Entry {
     name:  String
@@ -34,6 +51,7 @@ pub class Entry {
     line:  ?Int
     lhs:   ?String
     rhs:   ?String
+    more:  Array[Snippet]
     key:   String
 
     init(d: Dict[String, _]) {
@@ -55,6 +73,7 @@ pub class Entry {
         line  = d['line']
         lhs   = d['lhs']
         rhs   = d['rhs']
+        more  = (d['more'] ?? []).map(Snippet)
         key   = fold(name)
     }
 }
@@ -89,6 +108,17 @@ pub fn kebab-text(text: String) -> String {
 
 pub fn dotted(mod: String) -> String {
     mod.sub('/', '.')
+}
+
+fn joined(lines: Array[String | nil]) -> String | nil {
+    (lines && lines.all?(\_ != nil)) ? lines.join('\n') : nil
+}
+
+fn aligned(decl: ?String, hdecl: ?String) -> String | nil {
+    match (decl, hdecl) {
+        ($d, $h) and d.count('\n') == h.count('\n') => h,
+        _                                           => nil
+    }
 }
 
 fn margin(text: String) -> Int {
@@ -221,12 +251,15 @@ class Source {
         excerpt(line, at(line + rows) - 1)
     }
 
-    header(line: Int, stop: Int, name: String) -> String | nil {
+    header(line: Int, stop: Int, name: String) -> (String, String) | nil {
         let start = at(line)
         let head = text.bslice(start, stop - start)
         let $i = head.bsearch(spelling(name)) or return nil
-        return nil if head.bslice(i).contains?('\n')
-        paint(start + i, stop).?comb(/[\s;]+$/)
+        let rest = head.bslice(i)
+        return nil if rest.contains?('\n')
+        let $spelled = rest.match(spelling(name)) or return nil
+        let $painted = paint(start + i, stop) or return nil
+        (flat(rest.bslice(spelled.size()).comb(/[\s;]+$/)), painted.comb(/[\s;]+$/))
     }
 }
 
@@ -326,7 +359,8 @@ class Harvest {
             'file':  origin['file'] ?? here.file,
             'line':  origin['line'],
             'lhs':   lhs,
-            'rhs':   rhs
+            'rhs':   rhs,
+            'more':  origin['more']
         })
     }
 
@@ -336,15 +370,35 @@ class Harvest {
     }
 
     definition(value: _) -> Dict[String, _] | nil {
-        let $def = (try { value.__def__ }) or return nil
+        let name = (try { value.__name__ }).?comb(/#\d+$/)
+        match try { value.__def__ } {
+            defs: Array => overloaded(defs.map(arm@(_, name)).filter(\_ != nil)),
+            $def        => arm(def, name),
+            _           => nil
+        }
+    }
+
+    arm(def: _, name: ?String) -> Dict[String, _] | nil {
         let $span = (try { ty.src(def) }) or return nil
         let $mod = span.mod or return nil
         let src = source-of(mod)
         let body = try { ty.src(def.body) }
         let stop = body.?start.?byte ?? span.end.byte
         let origin = src.excerpt(span.start.line, span.end.byte)
-        let name = try { value.__name__ }
-        origin['hdecl'] = (name != nil) ? src.header(span.start.line, stop, name) : nil
+        if let $name = name and let (proto, hdecl) = src.header(span.start.line, stop, name) {
+            origin['proto'] = proto
+            origin['hdecl'] = hdecl
+        }
+        origin
+    }
+
+    overloaded(arms: Array[Dict[String, _]]) -> Dict[String, _] | nil {
+        if not let [origin, *rest] = arms {
+            return nil
+        }
+        origin['decl']  = joined(arms.map(&['proto']))
+        origin['hdecl'] = joined(arms.map(&['hdecl']))
+        origin['more']  = rest.map(arm -> %{k: arm[k] for k in SNIPPET})
         origin
     }
 
@@ -385,16 +439,16 @@ class Harvest {
         return if !owner && name.match?(/^[^\w]+$/) && info.kind == 'fn'
         let value = static? ? nil : info.value
         let kind = refine(info.kind, value)
-        let decl = (kind == 'fn' || kind == 'macro') ? declaration(value) : nil
         let found = (kind == 'fn') ? function-source(value) : nil
         let origin = found ?? statement(name)
+        let decl = origin['decl'] ?? ((kind == 'fn' || kind == 'macro') ? declaration(value) : nil)
         emit(
             owner,
             name,
             kind,
             type:   info.type,
             decl:   decl,
-            hdecl:  (decl != nil && !decl.contains?('\n')) ? origin['hdecl'] : nil,
+            hdecl:  aligned(decl, origin['hdecl']),
             doc:    info.doc,
             origin: origin
         )
@@ -490,19 +544,17 @@ class Harvest {
         protos: Array[String],
         body: Body
     ) {
-        let found = declared(m.name, kind, body)
-        let decls = found ? found.map(&0) : protos.map(flat).nub()
-        let painted = found.map(&1)
         let origin = member-source(cls, kind, m.name)
-        let hdecl = (#decls == 1) ? ((painted ? painted[0] : nil) ?? origin['hdecl']) : nil
-        let name = m.name
+        let found = declared(m.name, kind, body)
+        let decl = origin['decl'] ?? (found ? found.map(&0) : protos.map(flat).nub()).join('\n')
+        let hdecl = (origin['decl'] != nil) ? origin['hdecl'] : (joined(found.map(&1)) ?? origin['hdecl'])
         emit(
             owner,
-            name,
+            m.name,
             kind,
             type:   (kind == 'getter') ? getter-type(m.type) : m.type,
-            decl:   decls ? decls.join('\n') : nil,
-            hdecl:  hdecl,
+            decl:   (decl != '') ? decl : nil,
+            hdecl:  aligned(decl, hdecl),
             doc:    m.?doc,
             origin: origin
         )
