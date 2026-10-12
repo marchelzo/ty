@@ -48,6 +48,9 @@ KebabNameInto(char *out, usize cap, char const *name);
 char const *
 KebabName(Ty *ty, char const *name);
 
+char const *
+DashedName(Ty *ty, char const *name);
+
 #endif
 
 /* vim: set sts=8 sw=8 expandtab: */

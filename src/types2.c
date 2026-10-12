@@ -12945,6 +12945,26 @@ infer_member_type(
 
         if (diagnose) {
                 char kebab[256];
+                char hint[300] = "";
+                usize n = strlen(name);
+                char alt[256];
+                char const *suffixes = (n > 1 && (name[n - 1] == '?' || name[n - 1] == '!')) ? "" : "?!";
+
+                if (n > 1 && *suffixes == '\0' && n < sizeof alt) {
+                        memcpy(alt, name, n - 1);
+                        alt[n - 1] = '\0';
+                        if (t2_type_kind(checker->universe, infer_member_type(checker, object, alt, false, site, false)) != T2_TYPE_ERROR) {
+                                snprintf(hint, sizeof hint, "; did you mean `%s`?", KebabNameInto(kebab, sizeof kebab, alt));
+                        }
+                }
+
+                for (char const *s = suffixes; *s != '\0' && hint[0] == '\0' && n + 2 < sizeof alt; ++s) {
+                        snprintf(alt, sizeof alt, "%s%c", name, *s);
+                        if (t2_type_kind(checker->universe, infer_member_type(checker, object, alt, false, site, false)) != T2_TYPE_ERROR) {
+                                snprintf(hint, sizeof hint, "; did you mean `%s`?", KebabNameInto(kebab, sizeof kebab, alt));
+                        }
+                }
+
                 add_diagnostic(
                         checker,
                         site,
@@ -12952,8 +12972,9 @@ infer_member_type(
                         "missing-field",
                         object,
                         T2_TYPE_INVALID,
-                        "field `%s` does not exist on this type",
-                        KebabNameInto(kebab, sizeof kebab, name)
+                        "field `%s` does not exist on this type%s",
+                        KebabNameInto(kebab, sizeof kebab, name),
+                        hint
                 );
         }
 

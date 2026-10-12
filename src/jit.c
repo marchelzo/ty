@@ -1964,10 +1964,10 @@ jit_rt_double_max(Value *result, Value const *a, Value const *b)
 
 static void
 jit_rt_tail_loop(Value *locals, Value const *arguments, int param_count,
-                 int bound)
+                 int bound, int kept)
 {
         memmove(locals, arguments, param_count * sizeof *locals);
-        for (int i = param_count; i < bound; ++i) {
+        for (int i = kept; i < bound; ++i) {
                 locals[i] = NIL;
         }
         STAT(self_tail_fast);
@@ -9919,6 +9919,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(first));
                         jit_emit_load_imm(asm, BC_A2, ctx->param_count);
                         jit_emit_load_imm(asm, BC_A3, ctx->bound);
+                        jit_emit_load_imm(asm, BC_A4, ctx->param_count + (ctx->func->info[FUN_INFO_CLASS] != -1));
                         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_tail_loop);
                         bc_emit_runtime_call(ctx, BC_CALL);
 

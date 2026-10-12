@@ -2505,6 +2505,80 @@ addsymbol(Ty *ty, Scope *scope, char const *name)
         return addsymbolx(ty, scope, name, false);
 }
 
+static char const *
+spelled(Ty *ty, char const *name)
+{
+        char const *a = STATE.start.s;
+        char const *b = STATE.end.s;
+
+        if (a == NULL || b == NULL || b <= a || b - a > 128) {
+                return DashedName(ty, name);
+        }
+
+        for (char const *p = a; p < b; ++p) {
+                if (!xisalnum(*p) && !contains("_-?!", *p)) {
+                        return DashedName(ty, name);
+                }
+        }
+
+        return afmt("%.*s", (int)(b - a), a);
+}
+
+static char *
+unkebab(Ty *ty, char const *s, usize n)
+{
+        char *out = smA(n + 1);
+        usize j = 0;
+
+        for (usize i = 0; i < n; ++i) {
+                if (s[i] == '-' && i + 1 < n) {
+                        out[j++] = xtoupper(s[++i]);
+                } else {
+                        out[j++] = s[i];
+                }
+        }
+
+        out[j] = '\0';
+
+        return out;
+}
+
+static char const *
+undefined_hint(Ty *ty, Scope const *scope, char const *word, u32 flags)
+{
+        usize n = strlen(word);
+
+        if (n > 1 && (word[n - 1] == '!' || word[n - 1] == '?')) {
+                char const *head = unkebab(ty, word, n - 1);
+
+                if (ScopeLookupEx(scope, head, flags) == NULL) {
+                        return "";
+                }
+
+                return (word[n - 1] == '!')
+                     ? afmt("\n\n  hint: `%s` is one name, since `!` can end an identifier; write `%.*s != ...` for inequality", word, (int)(n - 1), word)
+                     : afmt("\n\n  hint: `%s` is one name, since `?` can end an identifier; write `%.*s ? ... : ...` for a conditional", word, (int)(n - 1), word);
+        }
+
+        for (usize i = 1; i + 1 < n; ++i) {
+                if (word[i] != '-') {
+                        continue;
+                }
+
+                if (ScopeLookupEx(scope, unkebab(ty, word, i), flags) != NULL) {
+                        return afmt(
+                                "\n\n  hint: `%s` is one kebab-case name; write `%.*s - %s` to subtract",
+                                word,
+                                (int)i,
+                                word,
+                                word + i + 1
+                        );
+                }
+        }
+
+        return "";
+}
+
 static Symbol *
 getsymbol(Ty *ty, Scope const *scope, char const *name, u32 flags)
 {
@@ -2542,12 +2616,14 @@ getsymbol(Ty *ty, Scope const *scope, char const *name, u32 flags)
         Symbol *s = ScopeLookupEx(scope, name, flags);
 
         if (s == NULL) {
+                char const *word = spelled(ty, name);
                 fail_or(
-                        "reference to undefined variable: %s%s%s%s",
+                        "reference to undefined variable: %s%s%s%s%s",
                         TERM(1),
                         TERM(93),
-                        name,
-                        TERM(0)
+                        word,
+                        TERM(0),
+                        undefined_hint(ty, scope, word, flags)
                 ) {
                         s = &UndefinedSymbol;
                         s->scope = GlobalScope;

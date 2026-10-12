@@ -1376,6 +1376,40 @@ no_rhs(Ty *ty, int i)
             || (token(i)->type == '}');
 }
 
+static char const *
+found_hint(Ty *ty)
+{
+        if (
+                (T0 == TOKEN_KEYWORD)
+             && (TokenIndex > 0)
+             && (KW(-1) == KEYWORD_LET || KW(-1) == KEYWORD_FOR || KW(-1) == KEYWORD_CONST)
+        ) {
+                return afmt("\n\n  hint: `%s` is a keyword, so it can't be used as a name", keyword_show(K0));
+        }
+
+        for (int i = 1; i <= 3 && i <= TokenIndex; ++i) {
+                Token const *prev = token(-i);
+
+                if (prev->type != TOKEN_IDENTIFIER || prev->identifier == NULL) {
+                        continue;
+                }
+
+                char const *name = DashedName(ty, prev->identifier);
+                usize n = strlen(name);
+
+                if (n < 2) {
+                        continue;
+                }
+
+                switch (name[n - 1]) {
+                case '?':  return afmt("\n\n  hint: `%s` is one name, since `?` can end an identifier; put a space before `?` for a conditional", name);
+                case '!':  return afmt("\n\n  hint: `%s` is one name, since `!` can end an identifier; put a space before `!=`", name);
+                }
+        }
+
+        return "";
+}
+
 static bool
 (expect)(Ty *ty, int type)
 {
@@ -1393,11 +1427,12 @@ static bool
         }
 
         die(
-                "expected %s but found %s%s%s",
+                "expected %s but found %s%s%s%s",
                 token_show_type(ty, type),
                 TERM(34),
                 token_show(ty, tok()),
-                TERM(0)
+                TERM(0),
+                found_hint(ty)
         );
 }
 
@@ -1440,7 +1475,7 @@ static bool
         }
         va_end(ap);
 
-        adump(&msg, " but found %s%s%s", TERM(34), token_show(ty, tok()), TERM(0));
+        adump(&msg, " but found %s%s%s%s", TERM(34), token_show(ty, tok()), TERM(0), found_hint(ty));
 
         die("%s", v_(msg, 0));
 }
@@ -6717,10 +6752,11 @@ parse_expr(Ty *ty, int prec)
         prefix_parse_fn *f = get_prefix_parser(ty);
         if (f == NULL) {
                 die(
-                        "expected expression but found %s%s%s",
+                        "expected expression but found %s%s%s%s",
                         TERM(34),
                         token_show(ty, tok()),
-                        TERM(0)
+                        TERM(0),
+                        found_hint(ty)
                 );
         }
 

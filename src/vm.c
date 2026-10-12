@@ -4151,6 +4151,48 @@ GetDynamicMemberId(Ty *ty, bool strict)
         }
 }
 
+static bool
+responds_to(Ty *ty, Value const *v, int i)
+{
+        BuiltinMethod *func = NULL;
+
+        switch (v->type) {
+        case VALUE_ARRAY:   func = get_array_method_i(i);   break;
+        case VALUE_STRING:  func = get_string_method_i(i);  break;
+        case VALUE_DICT:    func = get_dict_method_i(i);    break;
+        case VALUE_BLOB:    func = get_blob_method_i(i);    break;
+        default:                                            break;
+        }
+
+        return (func != NULL)
+            || (class_lookup_method_i(ty, ClassOf(v), i) != NULL);
+}
+
+static char const *
+method_hint(Ty *ty, Value const *v, int i)
+{
+        char const *name = M_NAME(i);
+        usize n = strlen(name);
+        char const *alts[3];
+        int nalts = 0;
+
+        if (n > 1 && (name[n - 1] == '?' || name[n - 1] == '!')) {
+                alts[nalts++] = afmt("%.*s", (int)(n - 1), name);
+        } else {
+                alts[nalts++] = afmt("%s?", name);
+                alts[nalts++] = afmt("%s!", name);
+        }
+
+        for (int k = 0; k < nalts; ++k) {
+                int alt = M_ID(alts[k]);
+                if (responds_to(ty, v, alt)) {
+                        return afmt("\n\n  hint: did you mean `%s`?", KebabName(ty, M_NAME(alt)));
+                }
+        }
+
+        return "";
+}
+
 bool
 CallMethod(Ty *ty, int i, int n, int nkw, bool maybe, bool exec)
 {
@@ -4422,7 +4464,7 @@ QuietFailure:
                 xpush(NIL);
                 return false;
         } else {
-                zP("call to non-existent method '%s' on %s", KebabName(ty, M_NAME(i)), VSC(&value));
+                zP("call to non-existent method '%s' on %s%s", KebabName(ty, M_NAME(i)), VSC(&value), method_hint(ty, &value, i));
         }
 }
 
@@ -8944,7 +8986,7 @@ BinaryOp:
                                 n * sizeof (Value)
                         );
 
-                        i = n;
+                        i = n + (ActiveFun(ty)->info[FUN_INFO_CLASS] != -1);
                         n = ActiveFun(ty)->info[FUN_INFO_BOUND];
 
                         for (; i < n; ++i) {

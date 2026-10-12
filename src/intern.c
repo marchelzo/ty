@@ -120,4 +120,27 @@ KebabName(Ty *ty, char const *name)
         return KebabNameInto(smA(cap), cap, name);
 }
 
+char const *
+DashedName(Ty *ty, char const *name)
+{
+        if (!xislower(name[0])) {
+                return name;
+        }
+
+        byte_vector out = {0};
+
+        for (char const *p = name; *p != '\0'; ++p) {
+                if (xisupper(*p)) {
+                        svP(out, '-');
+                        svP(out, xtolower(*p));
+                } else {
+                        svP(out, *p);
+                }
+        }
+
+        svP(out, '\0');
+
+        return vv(out);
+}
+
 /* vim: set sts=8 sw=8 expandtab: */

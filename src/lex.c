@@ -1340,6 +1340,15 @@ lexop(Ty *ty)
                         break;
                 }
 
+                if (
+                        (i == 2)
+                     && (op[0] == '-')
+                     && (op[1] == '>')
+                     && contains("!#&*-", C(0))
+                ) {
+                        break;
+                }
+
                 /* Another one :^) We want a=#self to mean a = #self, not a #= self...
                  * This comes up primarily with default function arguments.
                  */
