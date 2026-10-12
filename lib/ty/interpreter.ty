@@ -84,6 +84,10 @@ class Kernel {
         }
     }
 
+    pid -> Int {
+        __process.pid
+    }
+
     interrupt() {
         os.kill(__process.pid, os.SIGUSR2)
     }
@@ -167,8 +171,32 @@ class Kernel {
     }
 }
 
+class Cell {
+    id:         Int
+    request:    Blob
+    output      = Blob()
+    truncated?  = false
+    began       = now(CLOCK_MONOTONIC)
+    stopping:   String | nil = nil
+    deadline    = 0.0
+    nudged      = 0.0
+
+    init(id: Int, code: String) {
+        self.id = id
+        request = Blob(json.encode({id, code}), 10)
+    }
+
+    stop(why: String) {
+        if stopping == nil {
+            stopping = why
+            deadline = now(CLOCK_MONOTONIC) + GRACE
+        }
+    }
+}
+
 pub class Repl {
     __kernel: Kernel | nil = nil
+    __cell: Cell | nil = nil
     __next = 0
     __canceled?: () -> Bool
     __host: ((String, Any) -> Any) | nil
@@ -184,6 +212,22 @@ pub class Repl {
         __wrap = wrap
     }
 
+    busy? -> Bool {
+        __cell != nil
+    }
+
+    pid -> Int | nil {
+        __kernel.?pid
+    }
+
+    running-for -> Float {
+        __cell ? now(CLOCK_MONOTONIC) - __cell.began : 0.0
+    }
+
+    partial -> String {
+        __cell.?output.?str() ?? ''
+    }
+
     respond(call: Call) -> Blob {
         let value: Any = nil
         let error: String | nil = nil
@@ -197,70 +241,87 @@ pub class Repl {
     }
 
     close() {
+        __cell = nil
         let $kernel = __kernel or return
         __kernel = nil
         kernel.close()
+    }
+
+    start(code: String) {
+        if __cell != nil {
+            throw RuntimeError('a Ty REPL cell is already running')
+        }
+        if __canceled?() {
+            throw RuntimeError('Canceled')
+        }
+        __kernel = __kernel ?? Kernel(__wrap)
+        __next += 1
+        __cell = Cell(__next, code)
+    }
+
+    pump(until: Float) -> Result | nil {
+        let $cell = __cell or throw RuntimeError('no Ty REPL cell is running')
+        try {
+            let result = exchange(cell, until)
+            if result != nil {
+                __cell = nil
+            }
+            return result
+        } catch error {
+            close()
+            return {
+                output: cell.output.str(), value: nil, error: str(error),
+                truncated: cell.truncated?, reset: true
+            }
+        }
+    }
+
+    stop(why: String) -> Result {
+        let $cell = __cell or throw RuntimeError('no Ty REPL cell is running')
+        cell.stop(why)
+        pump(now(CLOCK_MONOTONIC) + GRACE * 2) ?? throw RuntimeError('the Ty REPL cell did not stop')
     }
 
     eval(code: String, timeout-ms: Int = 30000) -> Result {
         if timeout-ms <= 0 {
             throw ValueError('timeout-ms must be positive')
         }
-        if __canceled?() {
-            throw RuntimeError('Canceled')
-        }
-        let output = Blob()
-        try {
-            __kernel = __kernel ?? Kernel(__wrap)
-            __next += 1
-            return exchange(code, timeout-ms, output)
-        } catch error {
-            close()
-            return {
-                output: output.str(), value: nil, error: str(error),
-                truncated: #output == OUTPUT_LIMIT, reset: true
-            }
-        }
+        start(code)
+        pump(now(CLOCK_MONOTONIC) + timeout-ms / 1000.0) ?? stop("Timed out after {timeout-ms / 1000}s")
     }
 
-    exchange(code: String, timeout-ms: Int, output: Blob) -> Result {
+    exchange(cell: Cell, until: Float) -> Result | nil {
         let $kernel = __kernel or throw RuntimeError('Ty REPL is not running')
-        let request = Blob(json.encode({id: __next, code}), 10)
-        let deadline = now(CLOCK_MONOTONIC) + timeout-ms / 1000.0
-        let truncated? = false
-        let stopping: String | nil = nil
-        let nudged = 0.0
         while true {
-            if stopping == nil && __canceled?() {
-                stopping = 'Canceled'
-                deadline = now(CLOCK_MONOTONIC) + GRACE
+            if __canceled?() {
+                cell.stop('Canceled')
             }
-            if now(CLOCK_MONOTONIC) >= deadline {
-                if let $why = stopping {
-                    throw RuntimeError("{why}; the cell did not stop, so the Ty REPL state was discarded")
-                }
-                stopping = "Timed out after {timeout-ms / 1000}s"
-                deadline = now(CLOCK_MONOTONIC) + GRACE
+            let clock = now(CLOCK_MONOTONIC)
+            if let $why = cell.stopping and clock >= cell.deadline {
+                throw RuntimeError("{why}; the cell did not stop, so the Ty REPL state was discarded")
             }
-            if stopping && now(CLOCK_MONOTONIC) - nudged >= 1.0 {
+            if cell.stopping == nil && clock >= until {
+                return nil
+            }
+            if cell.stopping && clock - cell.nudged >= 1.0 {
                 kernel.interrupt()
-                nudged = now(CLOCK_MONOTONIC)
+                cell.nudged = clock
             }
-            if #request {
-                kernel.write(request)
+            if #cell.request {
+                kernel.write(cell.request)
             }
-            truncated? = kernel.output(output) || truncated?
-            match kernel.reply(__next) {
-                {type: 'call', *} as call => request = respond(call),
+            cell.truncated? = kernel.output(cell.output) || cell.truncated?
+            match kernel.reply(cell.id) {
+                {type: 'call', *} as call => cell.request = respond(call),
                 {type: 'result', value, error, truncated, *} => do {
-                    truncated? = kernel.output(output) || truncated?
-                    let failure = (error && stopping) ? "{stopping}; the cell was interrupted, and state from earlier cells is kept" : error
-                    return {output: output.str(), value, error: failure,
-                            truncated: truncated? || truncated, reset: false}
+                    cell.truncated? = kernel.output(cell.output) || cell.truncated?
+                    let failure = (error && cell.stopping) ? "{cell.stopping}; the cell was interrupted, and state from earlier cells is kept" : error
+                    return {output: cell.output.str(), value, error: failure,
+                            truncated: cell.truncated? || truncated, reset: false}
                 },
                 nil => ()
             }
-            kernel.poll(bool(#request))
+            kernel.poll(bool(#cell.request))
         }
     }
 }

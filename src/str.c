@@ -2992,6 +2992,288 @@ string_chalk(Ty *ty, Value *string, int argc, Value *kwargs)
 #undef SN
 #undef svLIT
 
+typedef struct {
+        u8 const *s;
+        isize     n;
+        isize     w;
+} WrapWord;
+
+typedef vec(WrapWord) WrapWords;
+
+static isize
+WrapDefaultWidth(void)
+{
+        char const *env = getenv("COLUMNS");
+        isize cols = (env != NULL) ? atoi(env) : 0;
+
+        return (cols > 0) ? min(cols, 80) : 80;
+}
+
+static isize
+WrapFit(u8 const *s, isize n, isize room)
+{
+        isize fit = term_fit_cols(s, n, (int)room);
+
+        if (fit > 0) {
+                return fit;
+        }
+
+        i32 cp;
+        isize step = utf8proc_iterate(s, n, &cp);
+
+        return (step > 0) ? step : 1;
+}
+
+static void
+WrapPush(Ty *ty, WrapWords *words, u8 const *s, isize n, isize room)
+{
+        while (n > 0) {
+                isize w = term_width(s, n);
+
+                if (w <= room) {
+                        svP(*words, ((WrapWord) { s, n, w }));
+                        return;
+                }
+
+                isize cut = WrapFit(s, n, room);
+                svP(*words, ((WrapWord) { s, cut, term_width(s, cut) }));
+                s += cut;
+                n -= cut;
+        }
+}
+
+static void
+WrapSplit(Ty *ty, WrapWords *words, u8 const *s, isize n, isize room)
+{
+        isize i = 0;
+
+        while (i < n) {
+                while (i < n && (s[i] == ' ' || s[i] == '\t')) {
+                        i += 1;
+                }
+
+                isize start = i;
+
+                while (i < n && s[i] != ' ' && s[i] != '\t') {
+                        i += 1;
+                }
+
+                if (i > start) {
+                        WrapPush(ty, words, s + start, i - start, room);
+                }
+        }
+}
+
+static void
+WrapStyle(Ty *ty, byte_vector *active, u8 const *s, isize n)
+{
+        for (isize i = 0; i + 1 < n; ++i) {
+                if (s[i] != 0x1b || s[i + 1] != '[') {
+                        continue;
+                }
+
+                isize end = i + 2;
+
+                while (end < n && s[end] != 'm') {
+                        end += 1;
+                }
+
+                if (end >= n) {
+                        return;
+                }
+
+                isize params = end - (i + 2);
+                bool reset   = (params == 0) || (params == 1 && s[i + 2] == '0');
+
+                if (reset) {
+                        vN(*active) = 0;
+                } else {
+                        svPn(*active, (char const *)s + i, end + 1 - i);
+                }
+
+                i = end;
+        }
+}
+
+static isize *
+WrapGreedy(Ty *ty, WrapWords const *words, isize first, isize rest)
+{
+        isize n     = vN(*words);
+        isize *from = smA((n + 1) * sizeof (isize));
+        isize start = 0;
+
+        while (start < n) {
+                isize room  = (start == 0) ? first : rest;
+                isize width = v_(*words, start)->w;
+                isize end   = start + 1;
+
+                while (end < n && width + 1 + v_(*words, end)->w <= room) {
+                        width += 1 + v_(*words, end)->w;
+                        end += 1;
+                }
+
+                from[end] = start;
+                start = end;
+        }
+
+        return from;
+}
+
+static isize *
+WrapBreaks(Ty *ty, WrapWords const *words, isize first, isize rest)
+{
+        isize n     = vN(*words);
+        isize *from = smA((n + 1) * sizeof (isize));
+        isize *cost = smA((n + 1) * sizeof (isize));
+
+        cost[0] = 0;
+
+        for (isize j = 1; j <= n; ++j) {
+                cost[j] = -1;
+
+                isize width = -1;
+
+                for (isize i = j - 1; i >= 0; --i) {
+                        isize room = (i == 0) ? first : rest;
+
+                        width += v_(*words, i)->w + 1;
+
+                        if (width > room && i < j - 1) {
+                                break;
+                        }
+
+                        isize slack = room - width;
+                        isize bad   = (j == n || slack < 0) ? 0 : slack * slack;
+                        isize total = cost[i] + bad;
+
+                        if (cost[j] == -1 || total < cost[j]) {
+                                cost[j] = total;
+                                from[j] = i;
+                        }
+                }
+        }
+
+        return from;
+}
+
+static void
+WrapEmit(
+        Ty *ty,
+        byte_vector *out,
+        WrapWords const *words,
+        isize const *from,
+        Value const *first,
+        Value const *rest,
+        u8 const *lead,
+        isize nlead
+)
+{
+        isize n      = vN(*words);
+        isize *ends  = smA((n + 1) * sizeof (isize));
+        isize nlines = 0;
+
+        for (isize j = n; j > 0; j = from[j]) {
+                ends[nlines++] = j;
+        }
+
+        byte_vector active = {0};
+        isize start = 0;
+
+        for (isize k = nlines - 1; k >= 0; --k) {
+                Value const *prefix = (start == 0) ? first : rest;
+
+                if (k != nlines - 1) {
+                        svP(*out, '\n');
+                }
+
+                svPn(*out, (char const *)ss(*prefix), sN(*prefix));
+                svPn(*out, (char const *)lead, nlead);
+                svPn(*out, vv(active), vN(active));
+
+                for (isize i = start; i < ends[k]; ++i) {
+                        WrapWord const *w = v_(*words, i);
+
+                        if (i > start) {
+                                svP(*out, ' ');
+                        }
+
+                        svPn(*out, (char const *)w->s, w->n);
+                        WrapStyle(ty, &active, w->s, w->n);
+                }
+
+                if (vN(active) > 0) {
+                        svPn(*out, "\x1b[0m", 4);
+                }
+
+                start = ends[k];
+        }
+}
+
+static Value
+string_wrap(Ty *ty, Value *string, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("String.wrap()", 0, 1);
+
+        Value width  = ARGxD(0, "width", INTEGER, _NIL, _NONE);
+        Value indent = KWARG("indent", STRING);
+        Value first  = KWARG("first", STRING);
+        Value greedy = KWARG("greedy", BOOLEAN);
+
+        Value rest = IsNone(indent) ? STRING_EMPTY : indent;
+        Value head = IsNone(first) ? rest : first;
+
+        isize cols = (width.type == VALUE_INTEGER) ? width.z : WrapDefaultWidth();
+        bool  fill = !IsNone(greedy) && greedy.boolean;
+
+        u8 const *s = ss(*string);
+        isize len   = sN(*string);
+
+        SCRATCH_SAVE();
+
+        byte_vector out = {0};
+        isize pos = 0;
+
+        while (pos <= len) {
+                isize end = pos;
+
+                while (end < len && s[end] != '\n') {
+                        end += 1;
+                }
+
+                if (pos > 0) {
+                        svP(out, '\n');
+                }
+
+                isize nlead = 0;
+
+                while (pos + nlead < end && (s[pos + nlead] == ' ' || s[pos + nlead] == '\t')) {
+                        nlead += 1;
+                }
+
+                isize lead  = term_width(s + pos, nlead);
+                isize room1 = max(1, cols - term_width(ss(head), sN(head)) - lead);
+                isize room  = max(1, cols - term_width(ss(rest), sN(rest)) - lead);
+
+                WrapWords words = {0};
+                WrapSplit(ty, &words, s + pos + nlead, end - pos - nlead, min(room1, room));
+
+                if (vN(words) > 0) {
+                        isize *from = fill
+                                    ? WrapGreedy(ty, &words, room1, room)
+                                    : WrapBreaks(ty, &words, room1, room);
+                        WrapEmit(ty, &out, &words, from, &head, &rest, s + pos, nlead);
+                }
+
+                pos = end + 1;
+        }
+
+        Value result = vSs(vv(out), vN(out));
+
+        SCRATCH_RESTORE();
+
+        return result;
+}
+
 DEFINE_METHOD_TABLE(
         string,
         { .name = "bsearch",   .func = string_bsearch          },
@@ -3035,6 +3317,7 @@ DEFINE_METHOD_TABLE(
         { .name = "upper",     .func = string_upper            },
         { .name = "width",     .func = string_width            },
         { .name = "words",     .func = string_words            },
+        { .name = "wrap",      .func = string_wrap             },
 );
 
 DEFINE_METHOD_LOOKUP(string)

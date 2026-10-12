@@ -75,6 +75,7 @@ pub fn run() {
         throw os.OSError('redirect REPL streams')
     }
     os.close(fd)
+    stdio.setvbuf(stdio.stdout, stdio._IOLBF)
     let repl = Evaluator()
     host.connect(input, output)
     os.signal(os.SIGUSR2, interrupt)
