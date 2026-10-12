@@ -46,9 +46,11 @@ float_from(Value const *v)
 inline static imax
 int_from(Value const *v)
 {
-        return (v->type == VALUE_INTEGER) ? v->z
-             : (v->type == VALUE_PTR)     ? (iptr)v->ptr
-             : v->real;
+        switch (v->type) {
+        case VALUE_INTEGER: return v->z;
+        case VALUE_PTR:     return (iptr)v->ptr;
+        default:            return v->real;
+        }
 }
 
 bool

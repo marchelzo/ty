@@ -1,0 +1,380 @@
+import duckdb
+import date (PlainDate, PlainTime, PlainDateTime, Instant, Duration)
+import path (Path)
+
+ns test
+
+fn throws?(f: () -> _, kind: Class) -> Bool {
+    try {
+        f()
+    } catch e {
+        return e :: kind
+    }
+    false
+}
+
+fn one(con: duckdb.Connection, sql: String, *params, %named) -> _ {
+    con.execute(sql, *params, **named).fetchone().0
+}
+
+pub fn fetch-forms() {
+    let con = duckdb.connect()
+    con.execute('SELECT range AS n FROM range(5)')
+    assert(con.fetchone() == (0,))
+    assert(con.fetchmany(2) == [(1,), (2,)])
+    assert(con.fetchall() == [(3,), (4,)])
+    assert(con.fetchone() == nil)
+    assert(con.fetchall() == [])
+}
+
+pub fn rows-are-records() {
+    let con = duckdb.connect()
+    let row: _ = con.execute("SELECT 1 AS id, 'ada' AS name").fetchone()
+    assert(row.id == 1)
+    assert(row.name == 'ada')
+    assert(row == (1, 'ada'))
+    assert(con.description == [{name: 'id', type: 'INTEGER'}, {name: 'name', type: 'VARCHAR'}])
+}
+
+pub fn duplicate-columns-make-plain-tuples() {
+    let con = duckdb.connect()
+    let row: _ = con.execute('SELECT 1 AS a, 2 AS a').fetchone()
+    assert(row == (1, 2))
+    assert(row.0 == 1)
+}
+
+pub fn positional-and-named-parameters() {
+    let con = duckdb.connect()
+    let row: _ = con.execute('SELECT ? AS a, ? AS b, ? AS c, ? AS d, ? AS e', 1, 'two', 3.5, nil, true).fetchone()
+    assert(row == (1, 'two', 3.5, nil, true))
+    assert(one(con, 'SELECT $x * $y', x: 6, y: 7) == 42)
+}
+
+pub fn integer-precision() {
+    let con = duckdb.connect()
+    let big = 9_007_199_254_740_993
+    assert(one(con, 'SELECT ?', big) == big)
+    assert(one(con, 'SELECT ?::BIGINT + 1', Int.MAX - 1) == Int.MAX)
+    assert(one(con, 'SELECT 170141183460469231731687303715884105727::HUGEINT - 170141183460469231731687303715884105726::HUGEINT') == 1)
+    assert(one(con, 'SELECT (-5)::HUGEINT') == -5)
+}
+
+pub fn scalar-types() {
+    let con = duckdb.connect()
+    let row: _ = con.execute("
+        SELECT true, 7::TINYINT, 300::SMALLINT, 70000::INTEGER, 255::UTINYINT,
+               1.5::FLOAT, 0.25::DOUBLE, 12.34::DECIMAL(6, 2),
+               'short', 'definitely longer than twelve bytes', NULL
+    ").fetchone()
+    assert(row == (true, 7, 300, 70000, 255, 1.5, 0.25, 12.34, 'short', 'definitely longer than twelve bytes', nil))
+}
+
+pub fn blobs() {
+    let con = duckdb.connect()
+    let b: Blob = one(con, "SELECT '\\xAA\\x00\\xFF'::BLOB")
+    assert([*b] == [0xAA, 0x00, 0xFF])
+
+    let round: Blob = one(con, 'SELECT ?', Blob(1, 2, 3))
+    assert([*round] == [1, 2, 3])
+}
+
+pub fn temporal-types() {
+    let con = duckdb.connect()
+    let row: _ = con.execute("
+        SELECT DATE '2020-02-29',
+               TIME '12:34:56.789012',
+               TIMESTAMP '2021-03-04 05:06:07.123456',
+               TIMESTAMPTZ '1970-01-01 00:00:01+00',
+               INTERVAL '1 year 2 months 3 days 90 minutes'
+    ").fetchone()
+    assert("{row.0}" == '2020-02-29')
+    assert("{row.1}" == '12:34:56.789012')
+    assert("{row.2}" == '2021-03-04T05:06:07.123456')
+    assert(row.3.epoch-seconds == 1)
+    assert("{row.4}" == 'P14M3DT1H30M')
+}
+
+pub fn temporal-parameters() {
+    let con = duckdb.connect()
+    let row: _ = con.execute(
+        "SELECT ?::VARCHAR, ?::VARCHAR, ?::VARCHAR, epoch(?), ?::VARCHAR",
+        PlainDate(1999, 12, 31),
+        PlainTime(23, 59, 58, 500),
+        PlainDateTime(2000, 1, 2, 3, 4, 5),
+        Instant.from-epoch-seconds(86_400),
+        Duration(months: 1, days: 2, hours: 3)
+    ).fetchone()
+    assert(row == ('1999-12-31', '23:59:58.5', '2000-01-02 03:04:05', 86400.0, '1 month 2 days 03:00:00'))
+}
+
+pub fn nested-types() {
+    let con = duckdb.connect()
+    let row: _ = con.execute("
+        SELECT [1, 2, NULL] AS l,
+               [[1], [], NULL] AS ll,
+               struct_pack(a := 1, b := 'x') AS s,
+               MAP(['k', 'j'], [1, 2]) AS m,
+               [1, 2, 3]::INTEGER[3] AS a
+    ").fetchone()
+    assert(row.l == [1, 2, nil])
+    assert(row.ll == [[1], [], nil])
+    assert(row.s.a == 1 && row.s.b == 'x')
+    assert(row.m == %{'k': 1, 'j': 2})
+    assert(row.a == [1, 2, 3])
+}
+
+pub fn nested-parameters() {
+    let con = duckdb.connect()
+    let row: _ = con.execute(
+        'SELECT ? AS l, ? AS w, ? AS s, ? AS m, ?::INTEGER[] AS e',
+        [1, nil, 3],
+        [1, 2.5],
+        {a: 1, b: ['x']},
+        %{'k': 1},
+        []
+    ).fetchone()
+    assert(row.l == [1, nil, 3])
+    assert(row.w == [1.0, 2.5])
+    assert(row.s.a == 1 && row.s.b == ['x'])
+    assert(row.m == %{'k': 1})
+    assert(row.e == [])
+    assert(throws?(() -> con.execute('SELECT ?', [1, 'x']), duckdb.ConversionException))
+}
+
+pub fn exotic-types() {
+    let con = duckdb.connect()
+    let row: _ = con.execute("
+        SELECT 'a8098c1a-f86e-11da-bd1a-00112444be1e'::UUID,
+               'ok'::ENUM('sad', 'ok'),
+               union_value(num := 2)::UNION(num INTEGER, str VARCHAR),
+               '0101'::BIT,
+               TIMETZ '12:00:00+05'
+    ").fetchone()
+    assert(row.0 == 'a8098c1a-f86e-11da-bd1a-00112444be1e')
+    assert(row.1 == 'ok')
+    assert(row.2 == 2)
+    assert(row.3 == '0101')
+    assert("{row.4.0}" == '12:00:00' && row.4.1 == 18_000)
+}
+
+pub fn type-names() {
+    let con = duckdb.connect()
+    let rel = con.sql("SELECT 1::DECIMAL(5, 2) AS d, [1] AS l, struct_pack(a := 1) AS s, MAP(['k'], [1]) AS m, 'x'::ENUM('x') AS e")
+    assert(rel.types == ['DECIMAL(5,2)', 'INTEGER[]', 'STRUCT("a" INTEGER)', 'MAP(VARCHAR, INTEGER)', "ENUM('x')"])
+}
+
+pub fn multiple-statements() {
+    let con = duckdb.connect()
+    con.execute('CREATE TABLE t (x INT); INSERT INTO t VALUES (1), (2); SELECT sum(x) AS s FROM t')
+    assert(con.fetchone() == (3,))
+    assert(con.sql('INSERT INTO t VALUES (3); SELECT max(x) AS m FROM t').fetchone() == (3,))
+}
+
+pub fn streams-many-chunks() {
+    let con = duckdb.connect()
+    let total = 0
+    let count = 0
+    for row in con.sql('SELECT range AS n FROM range(10000)') {
+        total += row.n
+        count += 1
+    }
+    assert(count == 10000)
+    assert(total == 49_995_000)
+    assert(#con.execute('SELECT * FROM range(5000)').fetchall() == 5000)
+}
+
+pub fn relation-composition() {
+    let con = duckdb.connect()
+    con.execute("CREATE TABLE people AS SELECT * FROM (VALUES (1, 'ada', 36), (2, 'bob', 25), (3, 'cy', NULL)) v(id, name, age)")
+    let people = con.table('people')
+
+    assert(people.columns == ['id', 'name', 'age'])
+    assert(people.shape == (3, 3))
+    assert(#people == 3)
+    assert(people.filter('age > ?', 30).project('name').fetchall() == [('ada',)])
+    assert(people.order('id DESC').limit(1).fetchone() == (3, 'cy', nil))
+    assert(people.limit(1, offset: 1).project('id').fetchall() == [(2,)])
+    assert(people.count().fetchone() == (3,))
+    assert(people.sum('id').fetchone() == (6,))
+    assert(people.max('age').fetchone() == (36,))
+    assert(people.aggregate('age IS NULL AS unknown, count(*) AS n').order('unknown').fetchall() == [(false, 2), (true, 1)])
+    assert(people.project('age IS NULL AS u').distinct().order('u').fetchall() == [(false,), (true,)])
+    assert(people.query('p', 'SELECT max(id) FROM p').fetchone() == (3,))
+}
+
+pub fn relation-parameters-compose() {
+    let con = duckdb.connect()
+    let rel = con.sql('SELECT range AS n FROM range(?)', 10)
+    assert(rel.filter('n >= ?', 7).filter('n < ?', 9).fetchall() == [(7,), (8,)])
+    assert(rel.union(con.sql('SELECT ? AS n', 100)).count().fetchone() == (11,))
+}
+
+pub fn relation-set-operations() {
+    let con = duckdb.connect()
+    let small = con.sql('SELECT range AS n FROM range(3)')
+    let big = con.sql('SELECT range AS n FROM range(1, 5)')
+    assert(small.union(big).count().fetchone() == (7,))
+    assert(big.except(small).order('n').fetchall() == [(3,), (4,)])
+    assert(big.intersect(small).order('n').fetchall() == [(1,), (2,)])
+    assert(small.cross(big).count().fetchone() == (12,))
+}
+
+pub fn relation-joins() {
+    let con = duckdb.connect()
+    let names = con.values([1, 'one'], [2, 'two'], columns: ['id', 'name'])
+    let colors = con.values([1, 'red'], [3, 'blue'], columns: ['id', 'color'])
+
+    assert(names.join(colors, 'id').fetchall() == [(1, 'one', 'red')])
+    assert(names.join(colors, 'id', how: 'left').order('id').fetchall() == [(1, 'one', 'red'), (2, 'two', nil)])
+
+    let a = names.set-alias('a')
+    let b = colors.set-alias('b')
+    assert(a.join(b, 'a.id = b.id').project('a.name', 'b.color').fetchall() == [('one', 'red')])
+}
+
+pub fn relation-materialization() {
+    let con = duckdb.connect()
+    con.sql('SELECT range AS n FROM range(3)').create('nums')
+    con.sql('SELECT 10').insert-into('nums')
+    let view = con.sql('SELECT n * 2 AS twice FROM nums').create-view('doubled')
+    assert(view.order('twice').fetchall() == [(0,), (2,), (4,), (20,)])
+    assert(con.tables() == ['doubled', 'nums'])
+    assert(con.table?('nums'))
+}
+
+pub fn sql-executes-statements-eagerly() {
+    let con = duckdb.connect()
+    let created = con.sql('CREATE TABLE t (x INT)')
+    assert(created.fetchall() == [])
+    assert(con.table?('t'))
+    assert(con.sql('INSERT INTO t VALUES (5), (6) RETURNING x').fetchall() == [(5,), (6,)])
+    assert(con.sql('SELECT count(*) FROM t').fetchone() == (2,))
+}
+
+pub fn executemany-and-append() {
+    let con = duckdb.connect()
+    con.execute('CREATE TABLE kv (k VARCHAR, v INT)')
+    con.executemany('INSERT INTO kv VALUES (?, ?)', [['a', 1], ('b', 2)])
+    con.executemany('INSERT INTO kv VALUES ($k, $v)', [{k: 'c', v: 3}, %{'k': 'd', 'v': 4}])
+    con.append('kv', [('e', 5), ['f', nil]])
+    assert(con.sql('SELECT string_agg(k, \'\' ORDER BY k), sum(v), count(v) FROM kv').fetchone() == ('abcdef', 15, 5))
+}
+
+pub fn transactions() {
+    let con = duckdb.connect()
+    con.execute('CREATE TABLE acct (id INT PRIMARY KEY, bal INT)')
+    con.execute('INSERT INTO acct VALUES (1, 100)')
+
+    let failed? = throws?(
+        () -> con.transaction(fn () {
+            con.execute('UPDATE acct SET bal = 0 WHERE id = 1')
+            con.execute('INSERT INTO acct VALUES (1, 1)')
+        }),
+        duckdb.ConstraintException
+    )
+    assert(failed?)
+    assert(one(con, 'SELECT bal FROM acct') == 100)
+
+    let n = con.transaction(fn () {
+        con.execute('INSERT INTO acct VALUES (2, 50)')
+        one(con, 'SELECT count(*) FROM acct')
+    })
+    assert(n == 2)
+    assert(one(con, 'SELECT sum(bal) FROM acct') == 150)
+}
+
+pub fn error-hierarchy() {
+    let con = duckdb.connect()
+    assert(throws?(() -> con.execute('SELECT * FROM nowhere'), duckdb.CatalogException))
+    assert(throws?(() -> con.execute('SELEKT 1'), duckdb.ParserException))
+    assert(throws?(() -> con.execute('SELECT ?::INT', 'abc'), duckdb.ConversionException))
+    assert(throws?(() -> con.execute('SELECT nope FROM range(1)'), duckdb.BinderException))
+    assert(throws?(() -> con.execute('SELECT * FROM nowhere'), duckdb.DuckDBError))
+    assert(throws?(() -> con.execute('SELECT * FROM nowhere'), RuntimeError))
+}
+
+pub fn closed-connections() {
+    let con = duckdb.connect()
+    con.close()
+    assert(con.closed?)
+    assert(throws?(() -> con.execute('SELECT 1'), duckdb.ConnectionException))
+}
+
+pub fn cursors-share-the-database() {
+    let con = duckdb.connect()
+    con.execute('CREATE TABLE shared AS SELECT 42 AS x')
+    let cur = con.cursor()
+    assert(one(cur, 'SELECT x FROM shared') == 42)
+    cur.close()
+    assert(one(con, 'SELECT x FROM shared') == 42)
+}
+
+pub fn files-persist() {
+    with tmp = Path.tempdir('duckdb-test') {
+        let file = "{tmp}/test.duckdb"
+
+        with con = duckdb.connect(file) {
+            con.execute("CREATE TABLE saved AS SELECT 'kept' AS v")
+        }
+
+        let ro = duckdb.connect(file, read-only: true)
+        assert(one(ro, 'SELECT v FROM saved') == 'kept')
+        assert(throws?(() -> ro.execute('CREATE TABLE nope (x INT)'), duckdb.DuckDBError))
+        ro.close()
+    }
+}
+
+pub fn csv-and-parquet() {
+    with tmp = Path.tempdir('duckdb-test') {
+        let con = duckdb.connect()
+        let rel = con.sql("SELECT range AS n, 'row ' || range AS label FROM range(4)")
+
+        rel.write-csv("{tmp}/out.csv")
+        rel.write-parquet("{tmp}/out.parquet")
+
+        assert(con.read-csv("{tmp}/out.csv").fetchall() == rel.fetchall())
+        assert(con.read-parquet("{tmp}/out.parquet").fetchall() == rel.fetchall())
+        assert(con.read-csv("{tmp}/out.csv", header: false).count().fetchone() == (5,))
+    }
+}
+
+pub fn configuration() {
+    let con = duckdb.connect(config: %{'threads': 1})
+    assert(one(con, "SELECT current_setting('threads')") == 1)
+    assert(throws?(() -> duckdb.connect(config: %{'no_such_option': 1}), duckdb.DuckDBError))
+}
+
+pub fn rendering() {
+    let con = duckdb.connect()
+    let rel = con.sql("SELECT * FROM (VALUES (1, 'a'), (22, NULL)) v(n, s)")
+    assert("{rel}" == [
+        '┌─────────┬─────────┐',
+        '│    n    │    s    │',
+        '│ integer │ varchar │',
+        '├─────────┼─────────┤',
+        '│       1 │ a       │',
+        '│      22 │ NULL    │',
+        '└─────────┴─────────┘'
+    ].join("\n"))
+}
+
+pub fn rendering-truncates() {
+    let con = duckdb.connect()
+    let lines = con.sql('SELECT range AS i FROM range(30)').render(max-rows: 4).lines()
+    assert(lines.map(&trim).filter(/^│/).map(\_.comb(/[│\s]/)) == ['i', 'bigint', '0', '1', '·', '·', '·', '28', '29'])
+    assert(lines[-1].trim() == '30 rows (4 shown)  1 columns')
+}
+
+pub fn default-connection() {
+    assert(duckdb.sql('SELECT 40 + 2 AS answer').fetchone().answer == 42)
+    assert(duckdb.values([1, 'x']).fetchall() == [(1, 'x')])
+    assert(duckdb.version() != '')
+}
+
+pub fn sql-literals() {
+    assert(duckdb.sql-literal("it's") == "'it''s'")
+    assert(duckdb.sql-literal([1, nil, true]) == '[1, NULL, true]')
+    assert(duckdb.sql-literal({a: 1}) == 'struct_pack("a" := 1)')
+    let con = duckdb.connect()
+    assert(one(con, "SELECT {duckdb.sql-literal(%{'k': [1.5]})}") == %{'k': [1.5]})
+}
