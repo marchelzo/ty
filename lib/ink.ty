@@ -55,9 +55,10 @@ let _status-sent: Dict[String, _] = %{}
 
 fn status-record(status: _) -> _ {
     match status {
-        nil       => nil,
-        s: String => ({state: s}),
-        _         => status
+        nil           => nil,
+        s: String     => ({state: s}),
+        {state: _, *} => status,
+        _             => throw ValueError("not a terminal status: {status}")
     }
 }
 

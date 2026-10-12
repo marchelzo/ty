@@ -355,9 +355,11 @@ pub class Path : PathLike {
         }
     }
 
-    unlink() {
+    unlink(missing-ok: Bool = false) {
         if os.unlink(prelude::str(self)) == -1 {
-            throw os.OSError('unlink()')
+            if !missing-ok || errno.get() != errno.ENOENT {
+                throw os.OSError('unlink()')
+            }
         }
     }
 

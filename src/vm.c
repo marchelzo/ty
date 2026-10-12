@@ -8279,8 +8279,7 @@ TargetMember:
                         v = peek();
 
                         if (UNLIKELY(v.type != VALUE_TUPLE || v.ids == NULL)) {
-                                value = v;
-                                goto BadField;
+                                BadFieldAccess(ty, &v, z);
                         }
 
                         for (int i = 0; i < v.count; ++i) {
@@ -8295,8 +8294,7 @@ TargetMember:
                                 goto NextInstruction;
                         }
 
-                        value = v;
-                        goto BadField;
+                        BadFieldAccess(ty, &v, z);
 
                 CASE(CONCAT_STRINGS)
                         READVALUE(n);
