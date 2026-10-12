@@ -925,7 +925,9 @@ ctx_insensitive(Token const *t, int ctx)
 
         unsigned char c = *t->start.s;
 
-        return !xisdigit(c) && !contains("/-#&*!?$'%", c);
+        return !xisdigit(c)
+            && !contains("/-#&*!?$'%", c)
+            && !(c == '.' && xisdigit(t->start.s[1]));
 }
 
 inline static void

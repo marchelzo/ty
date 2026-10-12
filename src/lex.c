@@ -1586,6 +1586,14 @@ Begin:
         } else if (C(0) == ':' && !xisspace(C(-1))) {
                 nextchar(ty);
                 return mktoken(ty, ':');
+        } else if (
+                (C(0) == '.')
+             && xisdigit(C(1))
+             && (ctx == LEX_PREFIX)
+             && !idchar(C(-1))
+             && !contains(")]}'\"?!", C(-1))
+        ) {
+                return lexnum(ty, true);
         } else if (C(0) == '-' && C(1) == '>' && ctx == LEX_PREFIX) {
                 nextchar(ty);
                 nextchar(ty);
