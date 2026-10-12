@@ -930,6 +930,18 @@ ctx_insensitive(Token const *t, int ctx)
             && !(c == '.' && xisdigit(t->start.s[1]));
 }
 
+inline static bool
+need_nl_before_tok(Ty *ty)
+{
+        if (TokenIndex == 0) {
+                return false;
+        }
+
+        Token const *t = v_(TOKENS, TokenIndex - 1);
+
+        return t->nl && (t->type != TOKEN_NEWLINE);
+}
+
 inline static void
 (setctx)(Ty *ty, int ctx)
 {
@@ -959,7 +971,7 @@ inline static void
                       ? token(-1)->end
                       : tok()->start;
 
-        bool nl = tok()->nl;
+        bool nl = need_nl_before_tok(ty);
 
         PLOGC('\n');
 
@@ -3843,7 +3855,7 @@ prefix_unterminated_regex(Ty *ty)
 static Expr *
 prefix_invalid_regex_flags(Ty *ty)
 {
-        die("invalid regex flags");
+        die("invalid regex flags: the flags are a, i, m, s, U, x, u and v; there is no g, since sub, matches and split already act on every match");
 }
 
 static Expr *

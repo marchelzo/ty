@@ -10332,6 +10332,11 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
                 break;
 
         case EXPRESSION_SUBSCRIPT:
+                if (maybe) {
+                        emit_target(ty, target, def);
+                        INSN(MAYBE_ASSIGN);
+                        break;
+                }
                 EE(target->container);
                 if (target->subscript->type == EXPRESSION_LIST) {
                         vfor(target->subscript->es, EE(*it));

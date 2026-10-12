@@ -1827,6 +1827,14 @@ bind_primitive_nominal(T2Checker *checker, int class_id)
                 return;
         }
 
+        if (class_id == CLASS_TUPLE) {
+                T2Type dynamic = t2_primitive(checker->universe, T2_TYPE_DYNAMIC);
+                T2Type bound   = t2_nominal(checker->universe, nominal->symbol, &dynamic, 1);
+                (void)t2_primitive_bind_nominal(checker->universe, T2_TYPE_TUPLE, bound);
+                (void)t2_primitive_bind_nominal(checker->universe, T2_TYPE_RECORD, bound);
+                return;
+        }
+
         T2Type bound = t2_nominal(checker->universe, nominal->symbol, NULL, 0);
         if (class_id == CLASS_FUNCTION) {
                 (void)t2_primitive_bind_nominal(checker->universe, T2_TYPE_FUNCTION, bound);
@@ -2000,7 +2008,8 @@ bind_primitive_classes(T2Checker *checker)
                 CLASS_INT,
                 CLASS_FLOAT,
                 CLASS_STRING,
-                CLASS_FUNCTION
+                CLASS_FUNCTION,
+                CLASS_TUPLE
         };
         if (checker->primitives_bound || checker->ty == NULL) {
                 return;
@@ -20656,9 +20665,23 @@ infer_expression(T2Checker *checker, Expr const *source)
                                               binding_effective_type(target),
                                               T2_PREFER_LOWER_BOUND
                                         );
+                        T2Type current = before;
+                        if (
+                                (expression->type == EXPRESSION_MAYBE_EQ)
+                             && (current == T2_TYPE_INVALID)
+                        ) {
+                                current = infer_expression(checker, expression->target);
+                        }
                         valid = assign_lvalue(checker, expression->target, value, false);
                         if (valid && before != T2_TYPE_INVALID) {
                                 refine_maybe_assigned(checker, expression->target, before, value);
+                        }
+                        if (valid && current != T2_TYPE_INVALID) {
+                                value = t2_join(
+                                        checker->universe,
+                                        without_nil(checker, current),
+                                        value
+                                );
                         }
                 }
                 if (

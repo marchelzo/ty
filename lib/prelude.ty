@@ -256,6 +256,7 @@ fn *(a: String, b: Int | Bool) -> String;
 fn -(a: String, b: Int | Bool) -> String;
 
 fn +[T, U](a: Array[T], b: Array[U]) -> Array[T | U];
+fn +(a: Blob, b: Blob) -> Blob;
 fn *[T](a: Array[T], b: Int) -> Array[T];
 
 fn +[K, U, V](a: Dict[K, U], b: Dict[K, V]) -> Dict[K, U | V];

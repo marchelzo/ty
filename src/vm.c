@@ -7437,8 +7437,13 @@ TargetMember:
 
                 CASE(MAYBE_ASSIGN)
                         vp = poptarget();
+                        if (UNLIKELY(((uptr)vp & PMASK3) != 0)) {
+                                zP("?= needs a target that can hold nil");
+                        }
                         if (vp->type == VALUE_NIL) {
                                 *vp = peek();
+                        } else {
+                                *top() = *vp;
                         }
                         break;
 

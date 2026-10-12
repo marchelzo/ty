@@ -84,3 +84,24 @@ pub fn invalid-destructuring() {
     rejects('nil-view-argument', '[bad-call]')
     rejects('union-subscript', '[union-subscript-coverage]')
 }
+
+pub fn maybe-assignment() {
+    let groups: Dict[String, Array[Int]] = %{}
+
+    for k; i in ['a', 'b', 'a'] {
+        (groups[k] ?= []).push(i)
+    }
+
+    assert(groups == %{'a': [0, 2], 'b': [1]})
+    assert(str(typeof (groups['c'] ?= [])) == 'Array[Int]')
+
+    let slots: Array[Int | nil] = [nil, 4]
+    slots[0] ?= 7
+    slots[1] ?= 8
+    assert(slots == [7, 4])
+
+    let kept: Int | nil = 1
+    let fresh: Int | nil = nil
+    assert((kept ?= 2) == 1)
+    assert((fresh ?= 2) == 2)
+}

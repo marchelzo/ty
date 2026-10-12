@@ -1388,15 +1388,17 @@ bool
 t2_primitive_bind_nominal(T2Universe *universe, T2TypeKind kind, T2Type nominal)
 {
         T2Node const *node = (universe == NULL) ? NULL : get_node(universe, nominal);
+        bool structural = (kind == T2_TYPE_TUPLE) || (kind == T2_TYPE_RECORD);
         if (
                 (node == NULL)
              || (node->kind != T2_TYPE_NOMINAL)
-             || (node->arity != 0)
+             || ((node->arity != 0) && !structural)
              || (kind == T2_TYPE_ERROR)
              || (
                         ((kind < T2_TYPE_OBJECT) || (kind > T2_TYPE_STRING))
                      && (kind != T2_TYPE_FUNCTION)
                      && (kind != T2_TYPE_OVERLOAD)
+                     && !structural
                 )
         ) {
                 return false;

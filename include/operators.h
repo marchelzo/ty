@@ -109,6 +109,14 @@ op_builtin_add(Ty *ty)
                 COMPLETE(v);
         }
 
+        case PAIR_OF(VALUE_BLOB):
+        {
+                Blob *b = value_blob_new(ty);
+                uvPn(*b, vv(*left->blob), vN(*left->blob));
+                uvPn(*b, vv(*right->blob), vN(*right->blob));
+                COMPLETE(BLOB(b));
+        }
+
         case PAIR_OF(VALUE_DICT):
         {
                 Dict *new = DictClone(ty, left->dict);

@@ -1110,7 +1110,7 @@ BadFlags:
         if (!strict) {
                 return mktoken(ty, TOKEN_INVALID_REGEX_FLAGS);
         }
-        error(ty, "invalid regex flags");
+        error(ty, "invalid regex flags: the flags are a, i, m, s, U, x, u and v; there is no g, since sub, matches and split already act on every match");
 }
 
 static Token
