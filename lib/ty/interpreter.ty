@@ -5,6 +5,7 @@ import time (now, CLOCK_MONOTONIC)
 import ty
 
 const OUTPUT_LIMIT = 65536
+const GRACE = 5.0
 const FRAME_LIMIT = 64 * 1024 * 1024
 
 #|if __apple__
@@ -81,6 +82,10 @@ class Kernel {
             close()
             throw error
         }
+    }
+
+    interrupt() {
+        os.kill(__process.pid, os.SIGUSR2)
     }
 
     write(data: Blob) {
@@ -223,12 +228,23 @@ pub class Repl {
         let request = Blob(json.encode({id: __next, code}), 10)
         let deadline = now(CLOCK_MONOTONIC) + timeout-ms / 1000.0
         let truncated? = false
+        let stopping: String | nil = nil
+        let nudged = 0.0
         while true {
-            if __canceled?() {
-                throw RuntimeError('Canceled; Ty REPL state discarded')
+            if stopping == nil && __canceled?() {
+                stopping = 'Canceled'
+                deadline = now(CLOCK_MONOTONIC) + GRACE
             }
             if now(CLOCK_MONOTONIC) >= deadline {
-                throw RuntimeError('Timed out; Ty REPL state discarded')
+                if let $why = stopping {
+                    throw RuntimeError("{why}; the cell did not stop, so the Ty REPL state was discarded")
+                }
+                stopping = "Timed out after {timeout-ms / 1000}s"
+                deadline = now(CLOCK_MONOTONIC) + GRACE
+            }
+            if stopping && now(CLOCK_MONOTONIC) - nudged >= 1.0 {
+                kernel.interrupt()
+                nudged = now(CLOCK_MONOTONIC)
             }
             if #request {
                 kernel.write(request)
@@ -238,7 +254,8 @@ pub class Repl {
                 {type: 'call', *} as call => request = respond(call),
                 {type: 'result', value, error, truncated, *} => do {
                     truncated? = kernel.output(output) || truncated?
-                    return {output: output.str(), value, error,
+                    let failure = (error && stopping) ? "{stopping}; the cell was interrupted, and state from earlier cells is kept" : error
+                    return {output: output.str(), value, error: failure,
                             truncated: truncated? || truncated, reset: false}
                 },
                 nil => ()

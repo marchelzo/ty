@@ -482,6 +482,14 @@ class Function : Iter {
     }
 }
 
+fn __spliced(x: _) -> _ {
+    match x {
+        _: Array | String | Blob => x,
+        it: Iterable             => it.list(),
+        _                        => x
+    }
+}
+
 class Array[T] : Iterable[T] {
     contains?(item: Any) -> Bool;
 
@@ -716,8 +724,8 @@ class Array[T] : Iterable[T] {
 
     flat(n: ?Int) -> Flat[T];
 
-    flatMap[U](f: T -> Array[U]) -> Array[U] {
-        map(f).flat(1)
+    flatMap[U](f: T -> Iterable[U]) -> Array[U] {
+        map(x -> __spliced(f(x))).flat(1)
     }
 
     sorted? {
@@ -2298,7 +2306,7 @@ trait Iterable[T] {
         __iter__().all?(pred)
     }
 
-    flat-map[U](f: T -> Array[U]) -> Array[U] {
+    flat-map[U](f: T -> Iterable[U]) -> Array[U] {
         list().flat-map(f)
     }
 

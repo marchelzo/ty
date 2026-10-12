@@ -7,6 +7,16 @@ import ty.mod
 import ty.interpreter.host as host
 
 use Request = {id: Int, code: String}
+
+class CellInterrupted < RuntimeError {}
+
+let evaluating? = false
+
+fn interrupt() {
+    if evaluating? {
+        throw CellInterrupted('the cell was interrupted')
+    }
+}
 use Result = {
     type: 'result', id: Int, value: String | nil, error: String | nil,
     truncated: Bool
@@ -30,11 +40,15 @@ fn evaluate(repl: Evaluator, request: Request) -> Result {
     let truncated = false
     host.active(true)
     try {
+        evaluating? = true
         let result = repl.eval(request.code)
+        evaluating? = false
         value = result == nil ? nil : host.display(result)
     } catch exception {
         error = str(exception)
     } finally {
+        evaluating? = false
+        try { host.finish() } catch exception { error = error ?? str(exception) }
         host.active(false)
     }
     stdio.fflush(ptr.null)
@@ -63,8 +77,12 @@ pub fn run() {
     os.close(fd)
     let repl = Evaluator()
     host.connect(input, output)
+    os.signal(os.SIGUSR2, interrupt)
     send(output, {type: 'ready', version: 1})
     while let $line = input.nextLine() {
-        send(output, evaluate(repl, json.parse(Request, line)))
+        match json.parse(line) {
+            {type: 'reply', *} => (),
+            _                  => send(output, evaluate(repl, json.parse(Request, line)))
+        }
     }
 }

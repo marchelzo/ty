@@ -20,6 +20,8 @@ if not let $libcurl = c.open(LIBRARIES) {
     throw RuntimeError('failed to load libcurl')
 }
 
+pub const USER_AGENT = 'ty-curl/1.0'
+
 const CURLcode    = c.int
 const CURLoption  = c.int
 const CURLUPart   = c.int
@@ -1630,7 +1632,7 @@ pub class Session {
         let proxy = opts.proxy ?? defaults.proxy
         let proxy-auth = opts.proxy-auth ?? defaults.proxy-auth
         let proxy-type = opts.proxy ? opts.proxy-type : defaults.proxy-type
-        let user-agent = opts.user-agent ?? defaults.user-agent
+        let user-agent = opts.user-agent ?? defaults.user-agent ?? USER_AGENT
         let referer = opts.referer ?? defaults.referer
         let accept-encoding = opts.accept-encoding ?? defaults.accept-encoding
         let verbose = opts.verbose || defaults.verbose
@@ -1694,7 +1696,7 @@ pub class Session {
         t.setopt-long(CURLOPT_SSL_VERIFYPEER, verify ? 1 : 0, 'CURLOPT_SSL_VERIFYPEER')
         t.setopt-long(CURLOPT_SSL_VERIFYHOST, verify-host ? 2 : 0, 'CURLOPT_SSL_VERIFYHOST')
 
-        if let $ca = opts.ca-cert ?? defaults.ca-cert { t.setopt-str(CURLOPT_CAINFO, ca, 'CURLOPT_CAINFO') }
+        if let $ca = opts.ca-cert ?? defaults.ca-cert ?? getenv('CURL_CA_BUNDLE') { t.setopt-str(CURLOPT_CAINFO, ca, 'CURLOPT_CAINFO') }
         if let $ca = opts.ca-path ?? defaults.ca-path { t.setopt-str(CURLOPT_CAPATH, ca, 'CURLOPT_CAPATH') }
         if let $cert = opts.client-cert ?? defaults.client-cert { t.setopt-str(CURLOPT_SSLCERT, cert, 'CURLOPT_SSLCERT') }
         if let $key = opts.client-key ?? defaults.client-key { t.setopt-str(CURLOPT_SSLKEY, key, 'CURLOPT_SSLKEY') }

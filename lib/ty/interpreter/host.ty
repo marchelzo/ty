@@ -9,6 +9,7 @@ let next-id = 0
 let lock = Mutex()
 let active? = false
 let presenter: (Any) -> String | nil = str
+let finishers: Array[() -> Any] = []
 
 pub fn display-with(f: (Any) -> String | nil) {
     presenter = f
@@ -16,6 +17,16 @@ pub fn display-with(f: (Any) -> String | nil) {
 
 pub fn display(value: Any) -> String | nil {
     presenter(value)
+}
+
+pub fn on-finish(f: () -> Any) {
+    finishers.push(f)
+}
+
+pub fn finish() {
+    for f in finishers {
+        f()
+    }
 }
 
 pub fn connect(reader: io.Stream, writer: io.Stream) {

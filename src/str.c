@@ -2856,8 +2856,7 @@ string_chalk(Ty *ty, Value *string, int argc, Value *kwargs)
 
                 if (plen == 0) {
                         if (nf >= CK_MAX_DEPTH) {
-                                abort();
-                                continue;
+                                zP("String.chalk(): styles nest deeper than %d levels", CK_MAX_DEPTH);
                         }
                         CkFrame *f = &stack[nf++];
                         f->is_fmt = false;
@@ -2882,8 +2881,7 @@ string_chalk(Ty *ty, Value *string, int argc, Value *kwargs)
                         CK_UPDATE();
                 } else if (plen == 1 && s[ps] == '%') {
                         if (nf >= CK_MAX_DEPTH || nos >= CK_MAX_OSTACK) {
-                                abort();
-                                continue;
+                                zP("String.chalk(): styles nest deeper than %d levels", CK_MAX_DEPTH);
                         }
                         ostack[nos++] = out;
                         out = (byte_vector){0};
