@@ -323,7 +323,7 @@ static struct {
   { .module = "time",       .name = "CLOCK_REALTIME_COARSE",    .value = INT(CLOCK_REALTIME_COARSE)               },
 #endif
   { .module = "time",       .name = "CLOCK_MONOTONIC",          .value = INT(CLOCK_MONOTONIC)                     },
-#ifdef CLOCK_REALTIME_COARSE
+#ifdef CLOCK_MONOTONIC_COARSE
   { .module = "time",       .name = "CLOCK_MONOTONIC_COARSE",   .value = INT(CLOCK_MONOTONIC_COARSE)              },
 #endif
 #ifdef CLOCK_PROCESS_CPUTIME_ID
@@ -334,6 +334,12 @@ static struct {
 #endif
 #ifdef CLOCK_MONOTONIC_RAW
   { .module = "time",       .name = "CLOCK_MONOTONIC_RAW",      .value = INT(CLOCK_MONOTONIC_RAW)                 },
+#endif
+#ifdef CLOCK_BOOTTIME
+  { .module = "time",       .name = "CLOCK_BOOTTIME",           .value = INT(CLOCK_BOOTTIME)                      },
+#endif
+#ifdef CLOCK_TAI
+  { .module = "time",       .name = "CLOCK_TAI",                .value = INT(CLOCK_TAI)                           },
 #endif
   { .module = "ptr",        .name = "null",                     .value = POINTER(NULL)                            },
 

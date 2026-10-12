@@ -85,6 +85,7 @@ typedef struct stat StatStruct;
 #include <sys/mman.h>
 #include <sys/random.h>
 #include <sys/resource.h>
+#include <sys/syscall.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/un.h>
@@ -486,9 +487,7 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
 
         imax written = 0;
 
-        u32 show_flags = !isatty(fileno_unlocked(f))
-                       ? TY_SHOW_NOCOLOR
-                       : 0;
+        int tty = -1;
 
         for (int i = 0; i < argc; ++i) {
                 Value *v = &ARG(i);
@@ -534,8 +533,11 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
 
                 default:
                 Show:
+                        if (tty == -1) {
+                                tty = isatty(fileno_unlocked(f));
+                        }
                         LockTy();
-                        s = VSC(&ARG(i), show_flags);
+                        s = VSC(&ARG(i), tty ? 0 : TY_SHOW_NOCOLOR);
                         UnlockTy();
                         n = strlen(s);
                         need_free = true;
@@ -6617,10 +6619,62 @@ TY_BUILTIN_RAW(os_signame)
         }
 
 #if defined(__linux__)
-        return xSz(sigabbrev_np(sig));
+        char const *name = sigabbrev_np(sig);
 #else
-        return xSz(sys_signame[sig]);
+        char const *name = sys_signame[sig];
 #endif
+        return (name != NULL) ? xSz(name) : NIL;
+#endif
+}
+
+#ifndef _WIN32
+static struct {
+        char const *name;
+        imax nr;
+} const syscalls[] = {
+#include "syscall_names.h"
+        { 0 }
+};
+#endif
+
+// os.sysname(nr: Int) -> String | nil
+TY_BUILTIN_RAW(os_sysname)
+{
+        ASSERT_ARGC("os.sysname()", 1);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.sysname()");
+#else
+        imax nr = INT_ARG(0);
+
+        for (int i = 0; syscalls[i].name != NULL; ++i) {
+                if (syscalls[i].nr == nr) {
+                        return xSz(syscalls[i].name);
+                }
+        }
+
+        return NIL;
+#endif
+}
+
+// os.sysno(name: String) -> Int | nil
+TY_BUILTIN_RAW(os_sysno)
+{
+        ASSERT_ARGC("os.sysno()", 1);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.sysno()");
+#else
+        Value name = ARGx(0, VALUE_STRING);
+
+        for (int i = 0; syscalls[i].name != NULL; ++i) {
+                if (
+                        (strlen(syscalls[i].name) == sN(name))
+                     && memcmp(syscalls[i].name, ss(name), sN(name)) == 0
+                ) {
+                        return INTEGER(syscalls[i].nr);
+                }
+        }
+
+        return NIL;
 #endif
 }
 
@@ -7531,6 +7585,34 @@ TY_BUILTIN_RAW(errno_str)
         int e = (argc == 0) ? errno : INT_ARG(0);
 
         return vSsz(strerror(e));
+}
+
+#define INT(k) (k)
+static struct {
+        char const *module;
+        char const *name;
+        int value;
+} const errnames[] = {
+#include "errno_constants.h"
+        { 0 }
+};
+#undef INT
+
+// errno.name(err: Int) -> String | nil
+// errno.name() -> String | nil
+TY_BUILTIN_RAW(errno_name)
+{
+        ASSERT_ARGC("errno.name()", 0, 1);
+
+        imax e = (argc == 0) ? errno : INT_ARG(0);
+
+        for (int i = 0; errnames[i].name != NULL; ++i) {
+                if (errnames[i].value == e) {
+                        return xSz(errnames[i].name);
+                }
+        }
+
+        return NIL;
 }
 
 // time.gettime(clock: ?time::ClockID) -> time::Timespec

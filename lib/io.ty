@@ -175,6 +175,72 @@ pub stdin = Stream(stdio.stdin);
 pub stdout = Stream(stdio.stdout);
 pub stderr = Stream(stdio.stderr);
 
+fn __transient?(err: Int) -> Bool {
+    err in [errno.EAGAIN, errno.EWOULDBLOCK, errno.EINTR]
+}
+
+pub class LineReader : Iter[String] {
+    __fd:   Int
+    __buf:  Blob
+    __seen: Int
+    __eof?: Bool
+    chunk:  Int
+
+    init(fd: Int, chunk: Int = 65536) {
+        __fd       = fd
+        __buf      = Blob()
+        __seen     = 0
+        __eof?     = false
+        self.chunk = chunk
+    }
+
+    fd -> Int { __fd }
+
+    eof? -> Bool { __eof? }
+
+    buffered -> Int { #__buf }
+
+    fill() -> Bool {
+        let n = os.read(__fd, __buf, chunk)
+
+        if n == 0 {
+            __eof? = true
+        } else if n < 0 && !__transient?(errno.get()) {
+            throw os.OSError('read()')
+        }
+
+        n > 0
+    }
+
+    drain() -> Bool {
+        while fill() {
+            ;
+        }
+
+        !__eof?
+    }
+
+    __take(n: Int, skip: Int) -> String {
+        let line = __buf.str(0, n)
+        __buf.clear(0, n + skip)
+        __seen = 0
+        line
+    }
+
+    __next__() {
+        if let $i = __buf.search(__seen, 10) {
+            return Some(__take(i, 1))
+        }
+
+        if __eof? && #__buf > 0 {
+            return Some(__take(#__buf, 0))
+        }
+
+        __seen = #__buf
+        None
+    }
+}
+
 pub function open(
     path: String | Int,
     mode: String = 'a+',

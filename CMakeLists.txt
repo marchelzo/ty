@@ -111,6 +111,8 @@ file(MAKE_DIRECTORY ${_autogen_dir}/include)
 
 set(_file_errno_constants_h ${_autogen_dir}/include/errno_constants.h)
 set(_gen_errno_script       ${PROJECT_SOURCE_DIR}/scripts/geterrnos.sh)
+set(_file_syscall_names_h   ${_autogen_dir}/include/syscall_names.h)
+set(_gen_syscall_script     ${PROJECT_SOURCE_DIR}/scripts/getsyscalls.sh)
 
 set(_tgt_errnoconstants_h "ErrnoConstantsH")
 add_library(${_tgt_errnoconstants_h} INTERFACE)
@@ -123,11 +125,15 @@ if (WIN32)
   if (NOT EXISTS ${_file_errno_constants_h})
     file(TOUCH ${_file_errno_constants_h})
   endif()
+  if (NOT EXISTS ${_file_syscall_names_h})
+    file(TOUCH ${_file_syscall_names_h})
+  endif()
 else()
   set(_tgt_gen_errno_h GenerateErrnoConstantsH)
   add_custom_target(${_tgt_gen_errno_h}
     BYPRODUCTS
       ${_file_errno_constants_h}
+      ${_file_syscall_names_h}
     COMMAND # generate tmp file
       sh "${_gen_errno_script}" > "${_file_errno_constants_h}.tmp"
     COMMAND # replace existing (if different)
@@ -136,12 +142,21 @@ else()
         "${_file_errno_constants_h}"
     COMMAND # remove tmp file
       ${CMAKE_COMMAND} -E rm "${_file_errno_constants_h}.tmp"
+    COMMAND
+      sh "${_gen_syscall_script}" > "${_file_syscall_names_h}.tmp"
+    COMMAND
+      ${CMAKE_COMMAND} -E copy_if_different
+        "${_file_syscall_names_h}.tmp"
+        "${_file_syscall_names_h}"
+    COMMAND
+      ${CMAKE_COMMAND} -E rm "${_file_syscall_names_h}.tmp"
     WORKING_DIRECTORY
       "${PROJECT_SOURCE_DIR}"
     COMMENT
       "Generating errno_constants.h file using geterrnos.sh"
     DEPENDS
       ${_gen_errno_script}
+      ${_gen_syscall_script}
     VERBATIM
   )
   add_dependencies(${_tgt_errnoconstants_h} ${_tgt_gen_errno_h})

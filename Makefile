@@ -168,6 +168,10 @@ include/optokens.h: src/optokens.gperf
 	@echo gperf $<
 	@gperf $< > $@
 
+include/syscall_names.h: scripts/getsyscalls.sh
+	@echo sh $<
+	@sh $< > $@
+
 GEN_DIR     := include/gen
 GEN_SOURCES := src/functions.c src/ffi.c src/sqlite.c
 GEN_METHODS := src/str.c src/array.c src/dict.c src/blob.c src/heap.c src/queue.c src/set.c src/shared_queue.c
@@ -190,6 +194,7 @@ $(OBJECTS) $(TYLS_OBJECTS) $(TYPROF_OBJECTS): | $(GEN_HEADERS)
 obj/ty-main.o obj/tyls-main.o obj/typrof-main.o: | $(GEN_HEADERS)
 
 obj/token.o: include/keywords.h include/optokens.h
+obj/functions.o obj/tyls/functions.o obj/typrof/functions.o: include/syscall_names.h
 obj/tyls/token.o: include/keywords.h include/optokens.h
 obj/typrof/token.o: include/keywords.h include/optokens.h
 

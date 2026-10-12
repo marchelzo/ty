@@ -304,11 +304,24 @@ pub use time::Timespec = {
     nsec: Int
 }
 
+#|if __linux__
+pub use time::ClockID =
+    time::CLOCK_REALTIME
+  | time::CLOCK_REALTIME_COARSE
+  | time::CLOCK_MONOTONIC
+  | time::CLOCK_MONOTONIC_COARSE
+  | time::CLOCK_MONOTONIC_RAW
+  | time::CLOCK_BOOTTIME
+  | time::CLOCK_TAI
+  | time::CLOCK_PROCESS_CPUTIME_ID
+  | time::CLOCK_THREAD_CPUTIME_ID
+#|else
 pub use time::ClockID =
     time::CLOCK_REALTIME
   | time::CLOCK_MONOTONIC
   | time::CLOCK_PROCESS_CPUTIME_ID
   | time::CLOCK_THREAD_CPUTIME_ID
+#|]
 
 const `,` = tuple
 

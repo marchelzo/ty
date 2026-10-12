@@ -30,3 +30,4 @@ typrof
 !.gitignore
 include/gen/
 tools/tybi
+include/syscall_names.h
