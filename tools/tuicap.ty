@@ -1053,6 +1053,7 @@ pub class Screen {
     __ansi:    Dict[Int, Bool]
     __keys:    Array[Int]
     __misc:    Dict[String, _]
+    __titles:  Array[(String, String)]
 
     init(cols: Int, rows: Int) {
         self.cols = cols
@@ -1084,6 +1085,7 @@ pub class Screen {
         __ansi   = %{}
         __keys   = [0]
         __misc   = %{}
+        __titles = []
     }
 
     __fresh(n: Int, style: String = '') -> Array[Array[Cell]] {
@@ -1296,7 +1298,10 @@ pub class Screen {
     __osc(ch: String) {
         match ch {
             '\a'   => __osc-done(),
-            '\x1b' => __osc-done(),
+            '\x1b' => do {
+                __osc-done()
+                __enter(Escape)
+            },
             c      => __string = "{__string}{c}"
         }
     }
@@ -1373,6 +1378,23 @@ pub class Screen {
             ('=', '', 'u') => __keys[-1] = __kitty(__keys[-1], __n(ps, 0, 0), __n(ps, 1)),
             ('', ' ', 'q') => __misc['cursor_shape'] = CURSOR_SHAPES[__n(ps, 0, 0)] ?? 'default',
             ('', '!', 'p') => __soft-reset(),
+            ('', '', 't') => __window-op(__n(ps, 0, 0), __n(ps, 1, 0)),
+            _ => ()
+        }
+    }
+
+    __window-op(op: Int, which: Int) {
+        match op {
+            22 => __titles.push((title, icon)),
+            23 and #__titles > 0 => do {
+                let (t, i) = __titles.pop()
+                if which != 1 {
+                    title = t
+                }
+                if which != 2 {
+                    icon = i
+                }
+            },
             _ => ()
         }
     }
@@ -1982,7 +2004,7 @@ class Timeline {
         e
     }
 
-    frame(why: String) -> Int {
+    frame(why: String, at: Int = us(), event: Int = #events - 1) -> Int {
         let s     = __screen
         let size  = [s.cols, s.rows]
         let rows  = [s.row(r) for r in ..s.rows]
@@ -2033,7 +2055,7 @@ class Timeline {
         __bells = s.bells
         __lines = s.scrolled
 
-        frames.push(%{'us': us(), 'why': why, 'event': #events - 1, 'digest': digest(__shown)} + delta)
+        frames.push(%{'us': at, 'why': why, 'event': event, 'digest': digest(__shown)} + delta)
         #frames - 1
     }
 }
@@ -2214,20 +2236,23 @@ use Options = {
     command: Array[String],
     output:  String | nil,
     size:    (Int, Int) | nil,
-    trace?:  Bool
+    trace?:  Bool,
+    replay:  String | nil
 }
 
 fn usage(status: Int = 2) {
-    eprint("usage: {argv[0]} [-o FILE] [-s COLSxROWS] [--no-trace] COMMAND [ARGS...]")
+    eprint("usage: {argv[0]} [-o FILE] [-s COLSxROWS] [-r REC.tui] [--no-trace] COMMAND [ARGS...]")
     eprint("       {argv[0]} --diff A.tui B.tui")
+    eprint("       {argv[0]} --refresh REC.tui [OUT.tui]")
     os.exit(status)
 }
 
-fn options(args: Array[String], opts: Options = {command: [], output: nil, size: nil, trace?: true}) -> Options {
+fn options(args: Array[String], opts: Options = {command: [], output: nil, size: nil, trace?: true, replay: nil}) -> Options {
     match args {
         ['-h' or '--help', *_]            => usage(0),
         ['-o' or '--output', file, *rest] => options(rest, {*opts, output: file}),
         ['-s' or '--size', size, *rest]   => options(rest, {*opts, size: dimensions(size) ?? usage()}),
+        ['-r' or '--replay', file, *rest] => options(rest, {*opts, replay: file}),
         ['--no-trace', *rest]             => options(rest, {*opts, trace?: false}),
         ['--', cmd, *rest]                => ({*opts, command: [cmd, *rest]}),
         [flag, *_] and flag[0] == '-'     => usage(),
@@ -2310,6 +2335,7 @@ class Capture {
     __quiet:    Float
     __termios:  _
     __started:  String
+    __script:   Array[(Int, String)]
 
     init(opts: Options) {
         __opts    = opts
@@ -2322,8 +2348,11 @@ class Capture {
         __termios = nil
         __started = time.strftime('%Y-%m-%dT%H:%M:%S%z')
         __saved   = os.isatty(0) ? termios.tcgetattr(0) : nil
+        __script  = []
 
-        let (cols, rows) = opts.size ?? terminal-size() ?? (80, 24)
+        let recorded = opts.replay ?> __rehearse
+
+        let (cols, rows) = opts.size ?? recorded ?? terminal-size() ?? (80, 24)
 
         __pty    = os.openpty((rows, cols)) ?? throw OSError('openpty()')
         __screen = Screen(cols, rows)
@@ -2337,6 +2366,17 @@ class Capture {
         if opts.trace? {
             __start-tracer()
         }
+    }
+
+    __rehearse(file: String) -> (Int, Int) {
+        let doc = load(file)
+        __stdin? = false
+        __script = [
+            (e['us'], e['text'] ?? base64.decode(e['base64']).str!())
+            for e in doc['events']
+            if e['type'] == 'input' && !e['eof']
+        ]
+        (doc['size']['cols'], doc['size']['rows'])
     }
 
     __start-tracer() {
@@ -2414,15 +2454,37 @@ class Capture {
     __loop() {
         let ready = []
         while __status == nil {
-            os.poll(__fds(), ready, __dirty? ? SETTLE : 0.1)
+            os.poll(__fds(), ready, __timeout())
             for (fd, _) in ready {
                 if !__dispatch(fd) {
                     return
                 }
             }
+            __replay()
             __settle()
             __watch-termios()
         }
+    }
+
+    __timeout() -> Float {
+        let wait = __dirty? ? SETTLE : 0.1
+        match __script {
+            [(at, _), *] => max(0.0, min(wait, (at - __tl.us()) / 1.0e6)),
+            _            => wait
+        }
+    }
+
+    __replay() {
+        while let [(at, data), *] = __script and at <= __tl.us() {
+            __script.pop(0)
+            __type(Blob(data))
+        }
+    }
+
+    __type(data: Blob) {
+        let shown = __tl.frame('input')
+        __tl.event('input', %{'frame': shown} + payload(data))
+        os.write(__pty.master, data, all=true)
     }
 
     __dispatch(fd: Int) -> Bool {
@@ -2450,9 +2512,7 @@ class Capture {
             __send-eof()
             return
         }
-        let shown = __tl.frame('input')
-        __tl.event('input', %{'frame': shown} + payload(data))
-        os.write(__pty.master, data, all=true)
+        __type(data)
     }
 
     __send-eof() {
@@ -2664,6 +2724,49 @@ fn contrast(a: Dict[String, _], b: Dict[String, _]) -> Array[String] {
     lines
 }
 
+fn bytes(e: Dict[String, _]) -> Blob {
+    match e['text'] {
+        nil => base64.decode(e['base64']),
+        t   => Blob(t)
+    }
+}
+
+fn refresh(input: String, output: String) -> Int {
+    let doc    = load(input)
+    let screen = Screen(doc['size']['cols'], doc['size']['rows'])
+    let tl     = Timeline(screen)
+    let idle   = [f['us'] for f in doc['frames'] if f['why'] == 'idle']
+    let events = doc['events']
+
+    fn settle(until: Int, last: Int) {
+        while let [t, *] = idle and t <= until {
+            tl.frame('idle', at=idle.pop(0), event=last)
+        }
+    }
+
+    tl.frame('start', at=doc['frames'][0]['us'], event=-1)
+
+    for e; i in events {
+        settle(e['us'], i - 1)
+        match e['type'] {
+            'output' => screen.feed(bytes(e)),
+            'input'  => e['frame'] = tl.frame('input', at=e['us'], event=i - 1),
+            'resize' => {
+                tl.frame('resize', at=e['us'], event=i - 1)
+                screen.resize(e['cols'], e['rows'])
+            },
+            _ => ()
+        }
+    }
+
+    settle(Int.MAX, #events - 1)
+    tl.frame('exit', at=doc['duration_us'], event=#events - 1)
+
+    doc['frames'] = tl.frames
+    Path(output).write(zstd.compress(json.encode(doc), 9))
+    0
+}
+
 fn compare(left: String, right: String) -> Int {
     let (a, b) = (load(left), load(right))
     let (ia, ib) = (typed(a), typed(b))
@@ -2686,7 +2789,9 @@ fn compare(left: String, right: String) -> Int {
 
 if __module__ == 'main' {
     match argv[1;] {
-        ['--diff', left, right] => os.exit(compare(left, right)),
+        ['--diff', left, right]    => os.exit(compare(left, right)),
+        ['--refresh', file]        => os.exit(refresh(file, file)),
+        ['--refresh', file, out]   => os.exit(refresh(file, out)),
         ['--tracer', tty, skip] => {
             try {
                 tracer(tty, int(skip)!)

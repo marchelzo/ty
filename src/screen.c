@@ -1125,6 +1125,13 @@ move_to(Emit *e, Cell const *r, int y, int x)
         e->cx = x;
 }
 
+static bool
+erasable(Cell const *c)
+{
+        return isvoid(c)
+            || (c->n == 1 && c->g[0] == ' ' && c->ln == 0 && pen_plain(&c->s));
+}
+
 static void
 flush_row(Emit *e, int y)
 {
@@ -1134,7 +1141,7 @@ flush_row(Emit *e, int y)
         Cell *p = s->prev + (isize)y * cols;
         int vend = cols;
 
-        while (vend > 0 && isvoid(&c[vend - 1])) {
+        while (vend > 0 && erasable(&c[vend - 1])) {
                 vend -= 1;
         }
 

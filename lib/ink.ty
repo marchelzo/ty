@@ -11,6 +11,11 @@ import net
 import io
 import ink.themes as themes
 import ink.look as look
+pub import ink.edit (
+    Editor, History, Trigger, Completion, Picker, Suggestion, Span, Ignored,
+    narrow, fuzzy-hits, prefix-hits, spans-of, wrap-line, key-name,
+    EDITOR_KEYS, MULTILINE_KEYS, SUGGEST_KEYS
+)
 
 logging({level: ERROR})
 
@@ -42,7 +47,6 @@ let __tls::_inline?        = false
 
 pub tag Exit;
 pub tag Wake;
-pub tag Ignored;
 tag Suspend;
 tag DevSave;
 tag Call;
@@ -811,6 +815,7 @@ pub class Component {
 
     focusable? -> Bool        { false }
     wants-hover? -> Bool      { false }
+    stale? -> Bool            { false }
     interval   -> Float | nil { nil   }
     // Optional render-loop frame cap. Dirty events and timers continue to be
     // processed and coalesced; only terminal painting is deferred.
@@ -1113,415 +1118,609 @@ pub class Spinner < Component {
     }
 }
 
+pub const CURSOR_SHAPES: Dict[String, Int] = %{
+    'terminal':           0,
+    'blinking-block':     1,
+    'block':              2,
+    'blinking-underline': 3,
+    'underline':          4,
+    'blinking-bar':       5,
+    'bar':                6
+}
+
+const CURSOR_MARK = /\x1b\]7777;([\w-]*)\x07/
+
+pub fn cursor-mark(shape: String = 'terminal') -> String {
+    "\x1b]7777;{shape}\x07"
+}
+
+fn markup-run(spec: String, s: String) -> String {
+    (#spec.trim() == 0) ? chalk-escape(s) : "[{spec}]{chalk-escape(s)}[/]"
+}
+
+fn legacy-trigger(complete: CompletionFunction) -> Trigger {
+    fn source(c: Completion) -> Array[_] {
+        let ed = c.editor
+        match complete({before: ed.before, after: ed.after}) {
+            CycleCompletions($items) => do {
+                c.cycle? = true
+                items
+            },
+            ListCompletions($items) => items,
+            Insert($s) => do {
+                ed.insert(s)
+                []
+            },
+            ReplaceLine($s) => do {
+                ed.set-text(s)
+                []
+            },
+            _ => []
+        }
+    }
+    Trigger(_ -> true, source, auto?=false)
+}
+
+pub class EditView {
+    editor:   Editor
+    scroll-x: Int
+    scroll-y: Int
+
+    init(editor: Editor) {
+        self.editor = editor
+        scroll-x    = 0
+        scroll-y    = 0
+    }
+
+    rows(width: Int, wrap?: Bool) -> Int {
+        #editor.visual-rows(wrap? ? max(width, 1) : nil)
+    }
+
+    lines(
+        width: Int,
+        height: Int | nil = nil,
+        wrap?: Bool = false,
+        focused?: Bool = true,
+        text: String = '',
+        cursor: String = 'reverse',
+        shape: String = 'reverse',
+        placeholder: String | nil = nil,
+        hint: String = '',
+        highlight: Function | nil = nil
+    ) -> Array[String] {
+        let ed = editor
+        let w  = max(width, 1)
+        ed.wrap-width = wrap? ? w : nil
+
+        if ed.empty? && placeholder != nil {
+            let first = __placeholder(placeholder, w, focused?, hint, cursor, shape)
+            return [first] + [' ' * w for _ in 1..(height ?? 1)]
+        }
+
+        let rows   = ed.visual-rows(ed.wrap-width)
+        let (r, _) = ed.visual-pos(rows)
+        let h      = height ?? #rows
+
+        scroll-y = scroll-y.clamp(max(r - h + 1, 0), r).clamp(0, max(#rows - h, 0))
+
+        let chars = ed.chars
+        let off = if wrap? {
+            0
+        } else {
+            let (s, e) = rows[r]
+            let (sx, _) = text-window(chars[s;e], ed.cursor - s, scroll-x, w)
+            scroll-x = sx
+            chars[s;s + sx].map(&width).sum(0)
+        }
+
+        let styles = __styles(text, highlight)
+        [
+            (i < #rows) ? __row(rows[i], off, w, styles, (focused? && i == r) ? shape : nil, cursor) : ' ' * w
+            for i in scroll-y..scroll-y + h
+        ]
+    }
+
+    __styles(base: String, highlight: Function | nil) -> Array[String] {
+        let n = #editor.chars
+        let styles = [base] * n
+        let extra = (highlight != nil) ? highlight(editor.text) : []
+        for (from, to, spec) in editor.spans() + extra {
+            for i in max(from, 0)..min(to, n) {
+                styles[i] = "{styles[i]} {spec}"
+            }
+        }
+        styles
+    }
+
+    __row(
+        span: (Int, Int),
+        off: Int,
+        w: Int,
+        styles: Array[String],
+        shape: String | nil,
+        cursor: String
+    ) -> String {
+        let (s, e) = span
+        let chars  = editor.chars
+        let at     = editor.cursor
+        let here?  = shape != nil && at >= s && at <= e
+        let start = s + skip-cols(chars[s;e], off)
+        let room  = (here? && at == e) ? w - 1 : w
+        let end   = start
+        let used  = 0
+        while end < e && used + chars[end].width() <= room {
+            used += chars[end].width()
+            end += 1
+        }
+
+        let pre  = Blob()
+        let post = Blob()
+        let mark = ''
+        let i = start
+        while i < end {
+            let j = i + 1
+            while j < end && styles[j] == styles[i] && !(here? && j == at) {
+                j += 1
+            }
+            let buf = (here? && i >= at) ? post : pre
+            if here? && i == at && shape == 'reverse' {
+                buf.push(markup-run("{styles[i]} {cursor}", chars[i]))
+                buf.push(markup-run(styles[i], chars[i + 1;j].join()))
+            } else {
+                buf.push(markup-run(styles[i], chars[i;j].join()))
+            }
+            i = j
+        }
+
+        if here? && at == end {
+            if shape == 'reverse' {
+                post.push(markup-run(cursor, ' '))
+                used += 1
+            }
+        }
+        if here? && shape != 'reverse' {
+            mark = cursor-mark(shape ?? 'terminal')
+        }
+
+        let fill = ' ' * max(w - used, 0)
+        "{chalk.render(pre.str!())}{mark}{chalk.render(post.str!())}{fill}"
+    }
+
+    __placeholder(ph: String, w: Int, focused?: Bool, hint: String, cursor: String, shape: String) -> String {
+        let cs       = ph.chars()
+        let (_, end) = text-window(cs, 0, 0, w)
+        let shown    = cs[;end]
+        let fake?    = focused? && shape == 'reverse'
+        let used     = max(shown.map(&width).sum(0), fake? ? 1 : 0)
+        let body     = fake?
+            ? "{markup-run("{hint} {cursor}", shown.?[0] ?? ' ')}{markup-run(hint, shown[1;].join())}"
+            : markup-run(hint, shown.join())
+        let mark     = (focused? && !fake?) ? cursor-mark(shape) : ''
+        "{mark}{chalk.render(body)}{' ' * max(w - used, 0)}"
+    }
+}
+
+pub class SuggestionList < Component {
+    variant:    String | nil
+    completion: Picker | nil
+    rows:       Int | nil
+    width:      Int | nil
+    gap:        Int | nil
+    arrows?:    Bool | nil
+    layout:     String | nil
+
+    __seen: Int = -1
+
+    stale? -> Bool {
+        (completion.?rev ?? -1) != __seen
+    }
+
+    static __chrome(fr: Dict[String, _]) -> (Int, Int) {
+        let border = ((fr['border'] ?? 'none') != 'none') ? 2 : 0
+        (
+            border + 2 * int(fr['pad-x'] ?? fr['padding'] ?? 0),
+            border + 2 * int(fr['pad-y'] ?? fr['padding'] ?? 0)
+        )
+    }
+
+    static height(c: Picker | nil, rows: Int = 8, variant: String | nil = nil, arrows?: Bool = false) -> Int {
+        let $c = c or return 0
+        if !c.visible? {
+            return 0
+        }
+        let (_, chrome) = __chrome(part('SuggestionList', 'frame', [], variant))
+        max(min(#c.items, rows), 1) + chrome + (arrows? ? 2 : 0)
+    }
+
+    __p(name: String, sel?: Bool = false) -> Dict[String, _] {
+        part('SuggestionList', name, sel? ? ['selected'] : [], variant)
+    }
+
+    __inner-w() -> Int {
+        let (chrome, _) = __chrome(__p('frame'))
+        let w = width ?? ((layout-max-w < INF) ? layout-max-w : 40)
+        max(w - chrome, 1)
+    }
+
+    static __ellipsize(s: String, w: Int) -> String {
+        if w <= 0 {
+            return ''
+        }
+        let out = Blob()
+        let used = 0
+        for c in s.chars() {
+            break if used + c.width() > w - 1
+            out.push(c)
+            used += c.width()
+        }
+        "{out.str!()}…"
+    }
+
+    __label(item: Suggestion, sel?: Bool, w: Int) -> String {
+        let spec     = __p('label', sel?)['spec'] ?? ''
+        let hit-spec = __p('match', sel?)['spec'] ?? ''
+        if !(item.label :: String) {
+            return "{item.label}"
+        }
+        let text = (item.plain.width() > w) ? __ellipsize(item.plain, w) : item.label
+        let cs = text.chars()
+        let hits = %[*item.hits]
+        let buf = Blob()
+        let i = 0
+        while i < #cs {
+            let hit? = i in hits
+            let j = i + 1
+            while j < #cs && (j in hits) == hit? {
+                j += 1
+            }
+            buf.push(markup-run(hit? ? "{spec} {hit-spec}" : spec, cs[i;j].join()))
+            i = j
+        }
+        buf.str!()
+    }
+
+    __row(item: Suggestion, sel?: Bool, cols: (Int, Int, Int, Int), inner-w: Int) -> String {
+        let (mark-w, label-w, detail-w, kind-w) = cols
+        let gap        = gap ?? 2
+        let item-spec  = sel? ? (__p('item', true)['spec'] ?? '') : "{__p('item')['spec'] ?? ''} {item.style ?? ''}"
+        let label-spec = __p('label', sel?)['spec'] ?? ''
+        let marker     = __p('marker', sel?)
+        let mark-text  = (marker['content'] ?? '').fit(mark-w)
+        let label      = __label(item, sel?, label-w - gap)
+        let label-pad  = ' ' * max(label-w - min(item.plain.width(), label-w - gap), 0)
+        let detail-raw = "{item.detail ?? ''}"
+        let detail-txt = (detail-raw.width() > detail-w) ? __ellipsize(detail-raw, detail-w) : detail-raw
+        let detail     = markup-run(__p('detail', sel?)['spec'] ?? '', detail-txt)
+        let kind-txt   = "{item.kind ?? ''}"
+        let kind       = (kind-w > 0) ? markup-run(__p('kind', sel?)['spec'] ?? '', kind-txt.fit(kind-w)) : ''
+        let used       = mark-w + label-w + detail-txt.width() + kind-w
+        let fill       = ' ' * max(inner-w - used, 0)
+        str(chalk.render(
+            "[{item-spec}]"
+            "{markup-run(marker['spec'] ?? '', mark-text)}{label}{markup-run(label-spec, label-pad)}"
+            "{detail}{markup-run(label-spec, fill)}{kind}[/]"
+        ))
+    }
+
+    __columns(c: Picker, inner-w: Int) -> (Int, Int, Int, Int) {
+        let gap    = gap ?? 2
+        let mark-w = [__p('marker', false), __p('marker', true)].map(m -> (m['content'] ?? '').width()).max() ?? 0
+        let kind-w = c.items.map(it -> "{it.kind ?? ''}".width()).max() ?? 0
+        let avail  = inner-w - mark-w - ((kind-w > 0) ? kind-w + gap : 0)
+        let widest = (c.items.map(it -> it.plain.width()).max() ?? 0) + gap
+        let label-w = min(widest, (avail + 1) / 2)
+        let detail-w = avail - label-w
+        (mark-w, label-w, detail-w, kind-w)
+    }
+
+    __grid(c: Picker, inner-w: Int) -> Array[String] {
+        let rows  = fit-items(c.items.map(&.label), max(inner-w, 20))
+        let ncols = max(#(rows.?[0] ?? []), 1)
+        let per   = (#c.items + ncols - 1) / ncols
+        let hi    = c.index
+        let spec  = __p('item', true)['spec'] ?? 'reverse'
+        let out: Array[String] = []
+        for row; ri in rows {
+            let parts = [*row]
+            let ci = (hi >= 0) ? hi / per : -1
+            if hi >= 0 && hi % per == ri && ci < #parts {
+                parts[ci] = str(chalk"[{spec}]{parts[ci]}[/]")
+            }
+            out.push(parts.join('    '))
+        }
+        out
+    }
+
+    __arrow(name: String, show?: Bool, fallback: String) -> String {
+        let p = __p(name)
+        show? ? str(chalk.render(markup-run(p['spec'] ?? '', p['content'] ?? fallback))) : ' '
+    }
+
+    __list(c: Picker, inner-w: Int) -> Array[String] {
+        let (s, e) = c.open? ? c.window(rows ?? 8) : (0, 0)
+        let lines = if c.open? {
+            let cols = __columns(c, inner-w)
+            [__row(item, s + k == c.index, cols, inner-w) for item; k in c.items[s;e]]
+        } else {
+            let empty = __p('empty')
+            [str(chalk.render(markup-run(empty['spec'] ?? '', empty['content'] ?? 'no matches')))]
+        }
+        if !(arrows? ?? false) {
+            return lines
+        }
+        [__arrow('scroll-up', s > 0, '↑'), *lines, __arrow('scroll-down', e < #c.items, '↓')]
+    }
+
+    render() -> Node | nil {
+        __seen = completion.?rev ?? -1
+        let $c = completion or return nil
+        if !c.visible? {
+            return nil
+        }
+        let inner-w = __inner-w()
+        let lines = ((layout ?? (c.cycle? ? 'grid' : 'list')) == 'grid')
+            ? __grid(c, inner-w)
+            : __list(c, inner-w)
+        <Box look=__p('frame') direction="column">
+            {lines.map(l -> <Text wrap="truncate">{l}</Text>)}
+        </Box>
+    }
+}
+
 pub class TextInput < Component {
-    variant: String | nil
+    variant:       String | nil
     cls:           String | nil
     placeholder:   String | nil
     on-change:     Function | nil
     on-submit:     Function | nil
     on-edit:       Function | nil
     complete:      CompletionFunction | nil
+    triggers:      Array[Trigger] | nil
+    highlight:     Function | nil
+    keymap:        Dict[String, Function] | nil
+    editor:        Editor | nil
     history:       Array[String] | nil
     history-file:  String | nil
+    multiline?:    Bool | nil
+    wrap?:         Bool | nil
+    rows:          Int | nil
+    popup:         Function | nil
+    popup-at:      String | nil
+    popup-rows:    Int | nil
     width:         Int | nil
     color:         String | Function | nil
     border-style:  String | Array[String] | Function | false | nil
     border-color:  String | Function | nil
     value:         String | nil
 
-    __chars:     Array[String]
-    __cursor:    Int
-    __scroll:    Int
-    __last-val:  String | nil
-    __cycler:    _
-    __comp-lines: Array[String]
-    __hist-idx:  Int
-    __hist-save: String
-    __hist-loaded?: Bool
-    __hist:      Array[String] = []
+    __own:      Editor | nil
+    __view:     EditView | nil
+    __last-val: String | nil
+    __seen:     _ = nil
 
     init(*children, %props) {
         super(*children, **props)
-        __chars        = (value ?? '').chars()
-        __cursor       = #__chars
-        __scroll       = 0
-        __last-val     = value
-        __cycler       = nil
-        __comp-lines   = []
-        __hist-idx     = -1
-        __hist-save    = ''
-        __hist-loaded? = false
-    }
-
-    __load-history() {
-        if __hist-loaded? { return }
-        __hist-loaded? = true
-        __hist = [*(history ?? [])]
-        if let $f = history-file and let p = Path(f) and p.file? {
-            for line in p.read-text().lines() if #line > 0 {
-                __hist.push(line)
-            }
-        }
-    }
-
-    __save-history-entry(entry: String) {
-        if let Path $~> p = history-file {
-            p.parent.mkdir(parents=true, exist-ok=true)
-            p.append("{entry}\n")
-        }
+        __own      = nil
+        __view     = nil
+        __last-val = value
     }
 
     focusable? -> Bool { true }
-    handles-tab? -> Bool { complete != nil }
 
-    mount = use __load-history
-
-    text -> String { __chars.join() }
-
-    __emit() {
-        if on-change { on-change(text) }
+    __state() -> _ {
+        let e = ed
+        (e.version, e.cursor, e.completion, e.completion.?rev)
     }
 
-    __cancel-completion() {
-        __cycler = nil
-        __comp-lines = []
+    stale? -> Bool {
+        __state() != __seen
     }
 
-    __do-tab() {
-        if !complete { cycle-focus(); return }
+    handles-tab? -> Bool {
+        let e = ed
+        #e.triggers > 0 || e.suggesting?
+    }
 
-        if __cycler == nil {
-            let before = __chars[;__cursor].join()
-            let after  = __chars[__cursor;].join()
-            match complete({before, after}) {
-                (CycleCompletions($items) or ListCompletions($items)) and #items > 0 => {
-                    __cycler = {
-                        items: items,
-                        line:  [*__chars],
-                        ci:    0,
-                        pos:   __cursor,
-                    }
-                },
-                Insert($s) => {
-                    for ch in s.chars() {
-                        __chars.insert(__cursor++, ch)
-                    }
-                    __emit()
-                    return
-                },
-                ReplaceLine($s) => {
-                    __chars = s.chars()
-                    __cursor = #__chars
-                    __emit()
-                    return
-                },
-                _ => return
-            }
+    ed -> Editor {
+        editor ?? __own ?? (__own = __make-editor())
+    }
+
+    text -> String { ed.text }
+
+    __triggers() -> Array[Trigger] {
+        [*(triggers ?? []), *((complete != nil) ? [legacy-trigger(complete)] : [])]
+    }
+
+    __keys() -> Dict[String, Function] {
+        let keys = %{**(multiline? ? MULTILINE_KEYS : %{}), **(keymap ?? %{})}
+        if #__triggers() > 0 && keys['Tab'] == nil {
+            keys['Tab'] = &complete
         }
+        %{**EDITOR_KEYS, **keys}
+    }
 
-        if let $cy = __cycler {
-            if cy.ci >= #cy.items {
-                __chars  = [*cy.line]
-                __cursor = cy.pos
-                cy.ci    = 0
-                __emit()
-            } else {
-                let ins = completion-text(cy.items[cy.ci])
-                __chars  = [*cy.line]
-                __cursor = cy.pos
-                for ch in ins.chars() {
-                    __chars.insert(__cursor++, ch)
-                }
-                cy.ci += 1
-                __emit()
-            }
+    __make-editor() -> Editor {
+        let hist = (history != nil || history-file != nil) ? History(history ?? [], file=history-file) : nil
+        let e = Editor(
+            text=value ?? '',
+            multiline?=multiline? ?? false,
+            triggers=__triggers(),
+            history=hist
+        )
+        e.keymap = __keys()
+        e
+    }
 
-            let w = int(width ?? 20)
-            let labels = cy.items.map(completion-label)
-            let rows = fit-items(labels, max(w, 20))
-            let ci = (cy.ci - 1 + #cy.items) % #cy.items
-            let ncols = max(#rows[0], 1)
-            let n-per-col = (#cy.items + ncols - 1) / ncols
-            let hi-row = ci % n-per-col
-            let hi-col = ci / n-per-col
-
-            __comp-lines = []
-            for row; ri in rows {
-                let parts = [*row]
-                if cy.ci > 0 && cy.ci <= #cy.items
-                && ri == hi-row && hi-col < #parts {
-                    parts[hi-col] = str(chalk"[reverse]{parts[hi-col]}[/]")
-                }
-                __comp-lines.push(parts.join('    '))
-            }
+    __sync() {
+        if editor != nil || __own == nil {
+            return
         }
+        __own.triggers = __triggers()
+        __own.keymap   = __keys()
     }
 
     on-event(ev) {
-        match ev {
-            event.Key({key: 'TAB', event: (1 or 2), *}) =>
-                __do-tab(),
+        __sync()
+        let e = ed
+        let v0 = e.version
+        let r = e.handle(ev)
+        if r == Ignored {
+            r = __fallback(ev)
+        }
+        if e.version != v0 and let $f = on-change {
+            f(e.text)
+        }
+        r
+    }
 
-            event.Key({key: 'ENTER', event: 1, *}) => {
-                __cancel-completion()
-                let t = text
-                if (history != nil || history-file != nil) && #t > 0 {
-                    if #__hist == 0 || __hist[-1] != t {
-                        __hist.push(t)
-                        if let $h = history {
-                            h.push(t)
-                        }
-                        __save-history-entry(t)
-                    }
-                }
-                __hist-idx = -1
-                if on-submit { on-submit(t) }
-            },
-
-            event.Key({key: 'UP', event: (1 or 2), *})
-            and (history != nil || history-file != nil) and let h = __hist => {
-                __cancel-completion()
-                if #h > 0 {
-                    if __hist-idx == -1 { __hist-save = text }
-                    __hist-idx = min(__hist-idx + 1, #h - 1)
-                    __chars = h[#h - 1 - __hist-idx].chars()
-                    __cursor = #__chars
-                    __emit()
-                }
-            },
-
-            event.Key({key: 'DOWN', event: (1 or 2), *})
-            and (history != nil || history-file != nil) and let h = __hist => {
-                __cancel-completion()
-                if __hist-idx > 0 {
-                    __hist-idx -= 1
-                    __chars = h[#h - 1 - __hist-idx].chars()
-                    __cursor = #__chars
-                    __emit()
-                } else if __hist-idx == 0 {
-                    __hist-idx = -1
-                    __chars = __hist-save.chars()
-                    __cursor = #__chars
-                    __emit()
-                }
-            },
-
-            event.Key({key: 'ESCAPE', event: (1 or 2), *}) => {
-                if __cycler != nil {
-                    let cy = __cycler
-                    __chars  = [*cy.line]
-                    __cursor = cy.pos
-                    __cancel-completion()
-                    __emit()
-                } else {
-                    unfocus()
-                }
-            },
-
-            (event.Text($s) or event.Paste($s)) => {
-                __cancel-completion()
-                for ch in s.sub(/[\r\n\t]+/, ' ').chars() {
-                    __chars.insert(__cursor++, ch)
-                }
-                __emit()
-            },
-
-            event.Key({key: 'LEFT', event: (1 or 2), *}) => {
-                __cancel-completion()
-                if __cursor > 0 { __cursor -= 1 }
-            },
-
-            event.Key({key: 'RIGHT', event: (1 or 2), *}) => {
-                __cancel-completion()
-                if __cursor < #__chars { __cursor += 1 }
-            },
-
-            event.Key({key: 'HOME', event: (1 or 2), *}) => {
-                __cancel-completion()
-                __cursor = 0
-            },
-
-            event.Key({key: 'END', event: (1 or 2), *}) => {
-                __cancel-completion()
-                __cursor = #__chars
-            },
-
-            event.Key({key: 'BACKSPACE', event: (1 or 2), *}) => {
-                __cancel-completion()
-                if __cursor > 0 {
-                    __chars.pop(--__cursor)
-                    __emit()
-                }
-            },
-
-            event.Key({key: 'DELETE', event: (1 or 2), *}) => {
-                __cancel-completion()
-                if __cursor < #__chars {
-                    __chars.pop(__cursor)
-                    __emit()
-                }
-            },
-
-            event.Key({key: 'a' or 97, event: (1 or 2), mods: $m, *})
-            and (m & CTRL) != 0 => {
-                __cancel-completion()
-                __cursor = 0
-            },
-
-            event.Key({key: 'e' or 101, event: (1 or 2), mods: $m, *})
-            and (m & CTRL) != 0 => {
-                __cancel-completion()
-                __cursor = #__chars
-            },
-
-            event.Key({key: 'k' or 107, event: (1 or 2), mods: $m, *})
-            and (m & CTRL) != 0 => {
-                __cancel-completion()
-                __chars.splice(__cursor, #__chars - __cursor)
-                __emit()
-            },
-
-            event.Key({key: 'u' or 117, event: (1 or 2), mods: $m, *})
-            and (m & CTRL) != 0 => {
-                __cancel-completion()
-                __chars.splice(0, __cursor)
-                __cursor = 0
-                __emit()
-            },
-
-            event.Key({key: 'w' or 119, event: (1 or 2), mods: $m, *})
-            and (m & CTRL) != 0 => {
-                __cancel-completion()
-                let end = __cursor
-                while __cursor > 0 && __chars[__cursor - 1].match?(/\s/) {
-                    __cursor -= 1
-                }
-                while __cursor > 0 && !__chars[__cursor - 1].match?(/\s/) {
-                    __cursor -= 1
-                }
-                __chars.splice(__cursor, end - __cursor)
-                __emit()
-            },
-
-            event.Key({key: 'x' or 120, event: (1 or 2), mods: $m, *})
-            and (m & CTRL) != 0 and on-edit != nil => {
-                __cancel-completion()
-                let dir = (getenv('TMPDIR') ?? '/tmp').comb(/\/+$/)
-                if not let (fd, tmp) = mktemp("{dir}/ink-edit") {
-                    return
-                }
-                let seed = __chars.join()
-                if #seed > 0 {
-                    write(fd, seed)
-                }
-                os.close(fd)
-
-                if let $tio = _tio {
-                    tio.stop()
-                    write(1, "\x1b[?25h\x1b[?1049l")
-                    try {
-                        let cmd = (getenv('EDITOR') ?? 'vi').split(/\s+/).filter(\_ != '')
-                        let ed = spawn([*cmd, tmp])
-                        wait(ed.pid)
-                    } finally {
-                        write(1, _inline? ? "\x1b[?25l" : "\x1b[?1049h\x1b[?25l")
-                        tio.start()
-                        invalidate-screen()
-                    }
-                }
-
-                let out = (slurp(tmp) ?? '').comb(/\r/).trim()
-                unlink(tmp)
-                if #out > 0 {
-                    on-edit(out)
-                }
-            },
-
-            _ => Ignored
+    __fallback(ev) -> _ {
+        let $name = (ev :: event.Key) ? key-name(ev) : nil or return Ignored
+        match name {
+            /Enter$/                    => __submit(),
+            'Esc'                       => unfocus(),
+            'Tab'                       => true,
+            'C-x' and on-edit != nil    => __external(),
+            _                           => Ignored
         }
     }
 
+    __submit() {
+        let e = ed
+        let t = e.text
+        e.completion = nil
+        e.history.?push(t)
+        if let $f = on-submit {
+            f(t)
+        }
+    }
+
+    __external() {
+        let dir = (getenv('TMPDIR') ?? '/tmp').comb(/\/+$/)
+        if not let (fd, tmp) = mktemp("{dir}/ink-edit") {
+            return
+        }
+        let seed = ed.text
+        if #seed > 0 {
+            write(fd, seed)
+        }
+        os.close(fd)
+
+        if let $tio = _tio {
+            tio.stop()
+            write(1, "\x1b[?25h\x1b[?1049l")
+            try {
+                let cmd = (getenv('EDITOR') ?? 'vi').split(/\s+/).filter(\_ != '')
+                let ed = spawn([*cmd, tmp])
+                wait(ed.pid)
+            } finally {
+                write(1, _inline? ? "\x1b[?25l" : "\x1b[?1049h\x1b[?25l")
+                tio.start()
+                invalidate-screen()
+            }
+        }
+
+        let out = (slurp(tmp) ?? '').comb(/\r/).trim()
+        unlink(tmp)
+        if #out > 0 and let $f = on-edit {
+            f(out)
+        }
+    }
+
+    static __border?(fr: Dict[String, _], bstyle: _) -> Bool {
+        match bstyle {
+            nil   => (fr['border'] ?? 'none') != 'none',
+            false => false,
+            _     => true
+        }
+    }
+
+    static __chrome(fr: Dict[String, _], bstyle: _) -> Int {
+        let border = __border?(fr, bstyle) ? 2 : 0
+        border + 2 * int(fr['pad-x'] ?? fr['padding'] ?? 0) + 2 * int(fr['margin-x'] ?? fr['margin'] ?? 0)
+    }
+
+    __popup(at: String, w: Int, frame-h: Int) -> Node | nil {
+        let e = ed
+        let $c = e.completion or return nil
+        if !c.visible? || !focused? {
+            return nil
+        }
+        let rows = popup-rows ?? 8
+        let node = match popup {
+            f: Function => f(c, self),
+            _           => <SuggestionList completion=c rows=rows width=w variant=variant />
+        }
+        if at != 'overlay' {
+            return node
+        }
+        let h = SuggestionList.height(c, rows, variant)
+        let y = (layout-y >= h) ? layout-y - h : layout-y + frame-h
+        <Overlay x=layout-x y=y>{node}</Overlay>
+    }
+
     render() -> Node {
+        __sync()
+        let e = ed
+        __seen = __state()
         if value != __last-val {
             __last-val = value
-            if let $v = value and v != __chars.join() {
-                __chars  = v.chars()
-                __cursor = #__chars
+            if let $v = value and v != e.text {
+                e.set-text(v)
             }
         }
-
-        let w: Int = int(width ?? 20)
-        let ph = placeholder ?? ''
-        let fs = focused? ? ['focused'] : []
-        let fr = part('TextInput', 'frame', fs, variant)
-        let clr = color ? resolve(color) : (part('TextInput', 'text', fs, variant)['spec'] ?? '')
-        let ph-spec = part('TextInput', 'placeholder', fs, variant)['spec'] ?? ''
-        let cur-spec = part('TextInput', 'cursor', fs, variant)['spec'] ?? 'reverse'
-        let pop = part('TextInput', 'popup', fs, variant)
-        let pop-item = part('TextInput', 'popup-item', fs, variant)
-        let bstyle = (border-style != nil) ? resolve(border-style) : nil
-        let bcolor = border-color ? resolve(border-color) : nil
-        let inner-w = max(w - 2, 1)
-        let show-placeholder = #__chars == 0
-        let text-color = show-placeholder ? ph-spec : clr
-
-        let content = if show-placeholder {
-            let (_, ph-end) = text-window(ph.chars(), 0, 0, inner-w)
-            let shown = ph.chars()[;ph-end].join()
-            let pad = ' ' * max(inner-w - shown.width(), 0)
-            focused?
-                ? str(chalk"[{cur-spec}]{shown[;1] ?? ' '}[/][{text-color}]{shown[1;]}[/]{pad}")
-                : str(chalk"[{text-color}]{shown}[/]{pad}")
-        } else {
-            let (scroll, end) = text-window(__chars, __cursor, __scroll, inner-w)
-            __scroll = scroll
-            if focused? {
-                let before = __chars[scroll;__cursor].join()
-                let past-end? = __cursor >= #__chars
-                let cur-ch = past-end? ? ' ' : __chars[__cursor]
-                let after = past-end? ? '' : __chars[__cursor + 1;max(end, __cursor + 1)].join()
-                let used = before.width() + cur-ch.width() + after.width()
-                str(chalk"[{text-color}]{before}[/]"
-                         "[{cur-spec}]{cur-ch}[/]"
-                         "[{text-color}]{after}[/]{' ' * max(inner-w - used, 0)}")
-            } else {
-                let shown = __chars[scroll;end].join()
-                str(chalk"[{text-color}]{shown}[/]{' ' * max(inner-w - shown.width(), 0)}")
-            }
+        let view = match __view {
+            v: EditView and v.editor == e => v,
+            _                             => (__view = EditView(e))
         }
 
-        let show-comp? = #__comp-lines > 0 && focused?
+        let fs       = focused? ? ['focused'] : []
+        let fr       = part('TextInput', 'frame', fs, variant)
+        let clr      = color ? resolve(color) : (part('TextInput', 'text', fs, variant)['spec'] ?? '')
+        let ph-spec  = part('TextInput', 'placeholder', fs, variant)['spec'] ?? ''
+        let cur      = part('TextInput', 'cursor', fs, variant)
+        let prompt   = part('TextInput', 'prompt', fs, variant)
+        let bstyle   = (border-style != nil) ? resolve(border-style) : nil
+        let bcolor   = border-color ? resolve(border-color) : nil
+        let w        = int(width ?? 20)
+        let p-text   = prompt['content'] ?? ''
+        let p-w      = p-text.width()
+        let inner-w  = max(w - __chrome(fr, bstyle) - p-w, 1)
+        let multi?   = multiline? ?? false
+        let wrap     = wrap? ?? multi?
+        let height   = multi? ? view.rows(inner-w, wrap).clamp(1, rows ?? 6) : 1
+
+        let lines = view.lines(
+            inner-w,
+            height=height,
+            wrap?=wrap,
+            focused?=focused?,
+            text=clr,
+            cursor=cur['spec'] ?? 'reverse',
+            shape=cur['shape'] ?? 'reverse',
+            placeholder=placeholder ?? '',
+            hint=ph-spec,
+            highlight=highlight
+        )
+
+        let lead    = str(chalk.render(markup-run(prompt['spec'] ?? '', p-text)))
+        let indent  = ' ' * p-w
+        let at      = popup-at ?? (_inline? ? 'above' : 'overlay')
+        let pad-y   = int(fr['pad-y'] ?? fr['padding'] ?? 0)
+        let frame-h = height + 2 * pad-y + (__border?(fr, bstyle) ? 2 : 0)
+        let rows    = [<Text>{"{(i == 0) ? lead : indent}{l}"}</Text> for l; i in lines]
 
         <Box direction="column">
-            {show-comp? && _inline? &&
-                <Box direction="column" look=pop>
-                    {__comp-lines.map(l ->
-                        <Text look=pop-item>{l}</Text>
-                    )}
-                </Box>
-            }
-            <Box look=fr cls=cls border-style=bstyle border-color=bcolor>
-                <Text>{content}</Text>
+            {at == 'above' && __popup(at, w, frame-h)}
+            <Box look=fr cls=cls border-style=bstyle border-color=bcolor direction="column">
+                {rows}
             </Box>
-            {show-comp? && !_inline? &&
-                do {
-                    let popup-h = #__comp-lines + 2
-                    let popup-y = (layout-y >= popup-h) ? (layout-y - popup-h) : (layout-y + 3)
-                    <Overlay x=layout-x y=popup-y>
-                        <Box direction="column" look=pop>
-                            {__comp-lines.map(l ->
-                                <Text look=pop-item>{l}</Text>
-                            )}
-                        </Box>
-                    </Overlay>
-                }
-            }
+            {(at == 'below' || at == 'overlay') && __popup(at, w, frame-h)}
         </Box>
     }
 }
 
 pub class TextArea < Component {
-    variant: String | nil
+    variant:      String | nil
     cls:          String | nil
     width:        Int | nil
     height:       Int | nil
@@ -1530,219 +1729,84 @@ pub class TextArea < Component {
     border-color: String | Function | nil
     placeholder:  String | nil
     value:        String | nil
+    editor:       Editor | nil
+    highlight:    Function | nil
+    triggers:     Array[Trigger] | nil
+    keymap:       Dict[String, Function] | nil
+    wrap?:        Bool | nil
 
-    __lines:    Array[Array[String]]
-    __row:      Int
-    __col:      Int
-    __scroll-y: Int
-    __scroll-x: Int
-    __goal:     Int | nil = nil
+    __own:  Editor | nil
+    __view: EditView | nil
+    __seen: _ = nil
 
     init(*children, %props) {
         super(*children, **props)
-        __lines = [[]]
-        __row = 0
-        __col = 0
-        __scroll-y = 0
-        __scroll-x = 0
-    }
-
-    mount() {
-        __lines = (value ?? '').split('\n').map(&chars)
+        __own  = nil
+        __view = nil
     }
 
     focusable? -> Bool { true }
 
-    text -> String {
-        __lines.map(&join).join('\n')
+    stale? -> Bool {
+        (ed.version, ed.cursor) != __seen
     }
 
-    __emit() {
-        if on-change { on-change(text) }
+    handles-tab? -> Bool {
+        ed.suggesting?
     }
 
-    __line -> Array[String] { __lines[__row] }
-
-    __clamp-col() {
-        __col = min(__goal ?? __col, #__line)
+    ed -> Editor {
+        editor ?? __own ?? (__own = Editor(
+            text=value ?? '',
+            multiline?=true,
+            keymap=%{'Enter': &newline, **(keymap ?? %{})},
+            triggers=triggers ?? []
+        ))
     }
+
+    text -> String { ed.text }
 
     on-event(ev) {
-        let goal = __goal
-        __goal = nil
-        match ev {
-            event.Paste($s) => {
-                for ch in s.comb(/\r/).chars() {
-                    on-event((ch == '\n') ? event.Key({key: 'ENTER', _key: nil, base: nil, mods: 0, event: 1, text: []}) : event.Text(ch))
-                }
-            },
-
-            event.Text($s) and s != '\t' => {
-                for ch in s.chars() {
-                    __line.insert(__col++, ch)
-                }
-                __emit()
-            },
-
-            event.Key({key: 'ENTER', event: (1 or 2), *}) => {
-                let rest = __line.splice(__col, #__line - __col)
-                __row += 1
-                __lines.insert(__row, rest)
-                __col = 0
-                __emit()
-            },
-
-            event.Key({key: 'BACKSPACE', event: (1 or 2), *}) => {
-                if __col > 0 {
-                    __line.pop(--__col)
-                } else if __row > 0 {
-                    let removed = __lines.pop(__row)
-                    __row -= 1
-                    __col = #__line
-                    __lines[__row] += removed
-                }
-                __emit()
-            },
-
-            event.Key({key: 'DELETE', event: (1 or 2), *}) => {
-                if __col < #__line {
-                    __line.pop(__col)
-                } else if __row < #__lines - 1 {
-                    __lines[__row] += __lines.pop(__row + 1)
-                }
-                __emit()
-            },
-
-            event.Key({key: 'LEFT', event: (1 or 2), *}) => {
-                if __col > 0 { __col -= 1 }
-                else if __row > 0 { __row -= 1; __col = #__line }
-            },
-
-            event.Key({key: 'RIGHT', event: (1 or 2), *}) => {
-                if __col < #__line { __col += 1 }
-                else if __row < #__lines - 1 { __row += 1; __col = 0 }
-            },
-
-            event.Key({key: 'UP', event: (1 or 2), *}) => do {
-                if __row > 0 {
-                    __goal = goal ?? __col
-                    __row -= 1
-                    __clamp-col()
-                }
-                return true
-            },
-
-            event.Key({key: 'DOWN', event: (1 or 2), *}) => do {
-                if __row < #__lines - 1 {
-                    __goal = goal ?? __col
-                    __row += 1
-                    __clamp-col()
-                }
-                return true
-            },
-
-            event.Key({key: 'HOME', event: (1 or 2), *}) =>
-                __col = 0,
-
-            event.Key({key: 'END', event: (1 or 2), *}) =>
-                __col = #__line,
-
-            event.Key({key: 'a' or 97, event: (1 or 2), mods: $m, *})
-            and (m & CTRL) != 0 =>
-                __col = 0,
-
-            event.Key({key: 'e' or 101, event: (1 or 2), mods: $m, *})
-            and (m & CTRL) != 0 =>
-                __col = #__line,
-
-            event.Key({key: 'k' or 107, event: (1 or 2), mods: $m, *})
-            and (m & CTRL) != 0 => do {
-                __line.splice(__col, #__line - __col)
-                __emit()
-            },
-
-            event.Key({key: 'p' or 112, event: (1 or 2), mods: $m, *})
-            and (m & CTRL) != 0 => do {
-                if __row > 0 { __row -= 1; __clamp-col() }
-            },
-
-            event.Key({key: 'n' or 110, event: (1 or 2), mods: $m, *})
-            and (m & CTRL) != 0 => do {
-                if __row < #__lines - 1 {
-                    __row += 1
-                    __clamp-col()
-                }
-            },
-
-            event.Key({key: 'w' or 119, event: (1 or 2), mods: $m, *})
-            and (m & CTRL) != 0 => do {
-                let end = __col
-                while __col > 0 && __line[__col - 1].match?(/\s/) {
-                    __col -= 1
-                }
-                while __col > 0 && !__line[__col - 1].match?(/\s/) {
-                    __col -= 1
-                }
-                __line.splice(__col, end - __col)
-                __emit()
-            },
-
-            _ => Ignored
+        let e = ed
+        let v0 = e.version
+        let r = e.handle(ev)
+        if e.version != v0 and let $f = on-change {
+            f(e.text)
         }
+        r
     }
 
     render() -> Node {
-        let w: Int = int(width ?? 40)
-        let h: Int = int(height ?? 10)
-        let fs = focused? ? ['focused'] : []
-        let fr = part('TextArea', 'frame', fs, variant)
-        let clr = color ? resolve(color) : (part('TextArea', 'text', fs, variant)['spec'] ?? '')
-        let ph-spec = part('TextArea', 'placeholder', fs, variant)['spec'] ?? ''
-        let cur-spec = part('TextArea', 'cursor', fs, variant)['spec'] ?? 'reverse'
-        let bc = border-color ? resolve(border-color) : nil
-        let inner-w = max(w - 2, 1)
-        let inner-h = max(h - 2, 1)
-
-        if __row < __scroll-y { __scroll-y = __row }
-        if __row >= __scroll-y + inner-h { __scroll-y = __row - inner-h + 1 }
-
-        let cur-line = (__row < #__lines) ? __lines[__row] : []
-        let (sx, _) = text-window(cur-line, __col, __scroll-x, inner-w)
-        __scroll-x = sx
-        let col-off = cur-line[;sx].map(&width).sum() ?? 0
-        let empty? = #__lines == 1 && #__lines[0] == 0
-
-        let rendered = []
-        for vi in ..inner-h {
-            let li = __scroll-y + vi
-            if empty? && vi == 0 && !focused? && placeholder != nil {
-                let ph = clip-line(placeholder, inner-w)
-                rendered.push(str(chalk"[{ph-spec}]{ph.comb(/\x1b\[[0-9;]*m/)}[/]{' ' * max(inner-w - ph.width(), 0)}"))
-            } else if li < #__lines {
-                let chars = __lines[li]
-                let start = skip-cols(chars, col-off)
-                let (_, end) = text-window(chars[start;], 0, 0, inner-w)
-                let end = start + end
-                if focused? && li == __row {
-                    let before = chars[start;__col].join()
-                    let past-end? = __col >= #chars
-                    let cur-ch = past-end? ? ' ' : chars[__col]
-                    let after = past-end? ? '' : chars[__col + 1;max(end, __col + 1)].join()
-                    let used = before.width() + cur-ch.width() + after.width()
-                    rendered.push(str(chalk"[{clr}]{before}[/]"
-                                           "[{cur-spec}]{cur-ch}[/]"
-                                           "[{clr}]{after}[/]{' ' * max(inner-w - used, 0)}"))
-                } else {
-                    let shown = chars[start;end].join()
-                    rendered.push(str(chalk"[{clr}]{shown}[/]{' ' * max(inner-w - shown.width(), 0)}"))
-                }
-            } else {
-                rendered.push(' ' * inner-w)
-            }
+        let e = ed
+        __seen = (e.version, e.cursor)
+        let view = match __view {
+            v: EditView and v.editor == e => v,
+            _                             => (__view = EditView(e))
         }
+        let w       = int(width ?? 40)
+        let h       = int(height ?? 10)
+        let fs      = focused? ? ['focused'] : []
+        let fr      = part('TextArea', 'frame', fs, variant)
+        let clr     = color ? resolve(color) : (part('TextArea', 'text', fs, variant)['spec'] ?? '')
+        let ph-spec = part('TextArea', 'placeholder', fs, variant)['spec'] ?? ''
+        let cur     = part('TextArea', 'cursor', fs, variant)
+        let bc      = border-color ? resolve(border-color) : nil
+
+        let lines = view.lines(
+            max(w - 2, 1),
+            height=max(h - 2, 1),
+            wrap?=wrap? ?? false,
+            focused?=focused?,
+            text=clr,
+            cursor=cur['spec'] ?? 'reverse',
+            shape=cur['shape'] ?? 'reverse',
+            placeholder=(focused? ? nil : placeholder),
+            hint=ph-spec,
+            highlight=highlight
+        )
 
         <Box look=fr cls=cls border-color=bc direction="column">
-            {rendered.map(line -> <Text>{line}</Text>)}
+            {lines.map(line -> <Text>{line}</Text>)}
         </Box>
     }
 }
@@ -4688,6 +4752,10 @@ fn layout-node(
             sync-interval(inst)
             inst.ink-parent = _layout-owner
 
+            if !inst.dirty? && inst.stale? {
+                inst.invalidate!()
+            }
+
             let fw = force-w ?? inst.?width
             let fh = force-h ?? inst.?height
 
@@ -4843,7 +4911,11 @@ fn render-tree(root, max-w: Int, max-h: Int = INF) -> (Output, Element) {
     if let $cls = _pending-focus-type {
         _pending-focus-type = nil
         debug!("render-tree: resolving deferred focus-by-type({cls})")
+        let before = _focused
         focus-by-type(cls)
+        if _focused != before {
+            return render-tree(root, max-w, max-h)
+        }
     }
 
     result
@@ -4896,10 +4968,70 @@ fn restore-global-bg(line: String, bg: String) -> String {
 
 let __tls::_last-inline-height: Int = 0
 
+let __tls::_cursor:       (Int, Int, String) | nil = nil
+let __tls::_cursor-shown: (Int, Int, String) | nil = nil
+let __tls::_shape-sent:   String | nil             = nil
+let __tls::_title:        String | nil             = nil
+let __tls::_title-sent:   String | nil             = nil
+
+pub fn set-title(title: String | nil) {
+    _title = title
+}
+
+fn strip-cursor(lines: Array[String], dx: Int = 0, dy: Int = 0) -> Array[String] {
+    if !lines.any?(\_.contains?("\x1b]7777;")) {
+        return lines
+    }
+    [unmark(line, row, dx, dy) for line; row in lines]
+}
+
+fn unmark(line: String, row: Int, dx: Int, dy: Int) -> String {
+    let $at = line.search(CURSOR_MARK) or return line
+    if _cursor == nil and let [_, shape] = line[at;].match(CURSOR_MARK) {
+        _cursor = (row + dy, line[;at].width() + dx, shape)
+    }
+    line.sub(CURSOR_MARK, '')
+}
+
+fn title-escape() -> String {
+    if _title == _title-sent {
+        return ''
+    }
+    let push = (_title-sent == nil) ? "\x1b[22;0t" : ''
+    _title-sent = _title ?? ''
+    "{push}\x1b]0;{_title ?? ''}\x07"
+}
+
+fn cursor-shape-escape(shape: String) -> String {
+    if shape == _shape-sent || shape == 'reverse' {
+        return ''
+    }
+    _shape-sent = shape
+    "\x1b[{CURSOR_SHAPES[shape] ?? 0} q"
+}
+
+fn release-terminal-state() -> String {
+    let out = Blob()
+    if _shape-sent != nil {
+        out.push("\x1b[0 q")
+    }
+    if _title-sent != nil {
+        out.push("\x1b[23;0t")
+    }
+    _shape-sent  = nil
+    _title-sent  = nil
+    _title       = nil
+    _cursor      = nil
+    _cursor-shown = nil
+    out.str!()
+}
+
 fn paint-inline(output: Output, cols: Int) {
     _out.clear()
-    _out.push("\x1b[?2026h\x1b[?7l")
-    let lines = composite-overlays(output.lines, cols)
+    _out.push("\x1b[?2026h\x1b[?7l\x1b[?25l")
+    _out.push(title-escape())
+    _cursor = nil
+    let lines = strip-cursor(composite-overlays(output.lines, cols))
     if _last-inline-height > 0 {
         _out.push("\x1b[{_last-inline-height}A\r")
     }
@@ -4913,8 +5045,18 @@ fn paint-inline(output: Output, cols: Int) {
             _out.push("{line}\n")
         }
     }
-    _out.push("\x1b[?7h\x1b[?2026l")
     _last-inline-height = #lines
+    if let ($row, $col, $shape) = _cursor {
+        let up = #lines - row
+        _out.push(cursor-shape-escape(shape))
+        _out.push("\x1b[{up}A\r")
+        if col > 0 {
+            _out.push("\x1b[{col}C")
+        }
+        _out.push("\x1b[?25h")
+        _last-inline-height = row
+    }
+    _out.push("\x1b[?7h\x1b[?2026l")
     write(1, _out)
 }
 
@@ -4952,6 +5094,7 @@ pub fn ink-log(*args) {
 
 pub fn invalidate-screen() {
     _screen.invalidate()
+    _cursor-shown = nil
     _prev-kitties = []
 }
 
@@ -4971,13 +5114,30 @@ fn paint-fullscreen(output: Output, rows: Int, cols: Int) {
         _screen.touch()
     }
     _screen-touched? = _debug-borders?
-    _screen.put-lines(output.lines)
+    _cursor = nil
+    _screen.put-lines(strip-cursor(output.lines))
     for ov in _overlays {
-        for line; i in ov.output.lines {
+        for line; i in strip-cursor(ov.output.lines, ov.x, ov.y) {
             _screen.put(ov.y + i, ov.x, line)
         }
     }
     _screen.flush(_out)
+    _out.push(title-escape())
+    match _cursor {
+        ($row, $col, $shape) => {
+            _out.push(cursor-shape-escape(shape))
+            _out.push("\x1b[{row + 1};{col + 1}H")
+            if _cursor-shown == nil {
+                _out.push("\x1b[?25h")
+            }
+        },
+        nil => {
+            if _cursor-shown != nil {
+                _out.push("\x1b[?25l")
+            }
+        }
+    }
+    _cursor-shown = _cursor
     for ki in _kitty-images {
         if ki.fresh? || ki.id not in old-kitties {
             if ki.id in old-kitties {
@@ -5575,7 +5735,17 @@ pub fn render(root) {
     paint-output(output)
 }
 
-pub fn run(app: Node | Component, fullscreen: Bool = true) {
+pub fn terminal-color(n: Int) -> (Int, Int, Int) | nil {
+    _tio.?color(n)
+}
+
+pub fn run(
+    app: Node | Component,
+    fullscreen: Bool = true,
+    title: String | nil = nil,
+    probe: Float = 0.5,
+    %terminal
+) {
     if app :: Node {
         render(app)
         return
@@ -5583,23 +5753,27 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
 
     reset-runtime()
 
-    let tio = (_tio = term.TermIO(mouse=fullscreen, events=cast(_event-queue)))
+    let tio = (_tio = term.TermIO(events=cast(_event-queue), **(%{'mouse': fullscreen} + terminal)))
     _inline? = !fullscreen
     let interrupt? = app.handles-interrupt?
 
-    if fullscreen {
+    if title != nil {
+        set-title(title)
+    }
+
+    fn enter-screen() {
         _out.clear()
-        _out.push("\x1b[?1049h\x1b[?25l")
-        if #_bg-global-sgr > 0 {
-            _out.push(_bg-global-sgr)
-            _out.push("\x1b[2J")
+        if fullscreen {
+            _out.push("\x1b[?1049h\x1b[?25l")
+            if #_bg-global-sgr > 0 {
+                _out.push(_bg-global-sgr)
+                _out.push("\x1b[2J")
+            }
+        } else {
+            _out.push("\x1b[?25l")
+            _last-inline-height = 0
         }
         write(1, _out)
-    } else {
-        _out.clear()
-        _out.push("\x1b[?25l")
-        write(1, _out)
-        _last-inline-height = 0
     }
 
     let dirty = true
@@ -5631,10 +5805,11 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
 
     fn suspend-terminal() {
         tio.stop()
+        let restore = release-terminal-state()
         if fullscreen {
-            write(1, "\x1b[0m\x1b[?25h\x1b[?1049l")
+            write(1, "\x1b[0m\x1b[?25h\x1b[?1049l{restore}")
         } else {
-            ink-write("\x1b[0m\x1b[?25h")
+            ink-write("\x1b[0m\x1b[?25h{restore}")
         }
 
         signal(os.SIGTSTP, os.SIG_DFL)
@@ -5642,6 +5817,9 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
         signal(os.SIGTSTP, suspend)
 
         tio.start()
+        if title != nil {
+            set-title(title)
+        }
         if fullscreen {
             write(1, "\x1b[?1049h\x1b[?25l")
         } else {
@@ -5663,14 +5841,18 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
         if app.alive? {
             app.unmount!()
         }
-        tio.stop()
         _out.clear()
         if fullscreen {
             _out.push("\x1b[?25h\x1b[?1049l")
         } else {
-            _out.push("\x1b[?25h\n")
+            if _last-inline-height < (_last-output.?height ?? 0) {
+                _out.push("\x1b[{(_last-output.?height ?? 0) - _last-inline-height}B")
+            }
+            _out.push("\r\x1b[?25h\n")
         }
+        _out.push(release-terminal-state())
         write(1, _out)
+        tio.stop()
         tio.close()
     }
 
@@ -5743,7 +5925,8 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
         false
     }
 
-    tio.start()
+    tio.start(settle=probe)
+    enter-screen()
     defer cleanup()
 
     if !app.mounted? {
@@ -5793,6 +5976,7 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
 }
 
 pub class TestHarness {
+    __cursor: (Int, Int, String) | nil = nil
     __app: Component
     __tree: Element | nil
     __output: Output | nil
@@ -5849,9 +6033,13 @@ pub class TestHarness {
             }
         }
         let (out, t) = render-root(__app, __cols, __rows)
-        __output = Output(composite-overlays(out.lines, __cols), out.width)
+        _cursor = nil
+        __output = Output(strip-cursor(composite-overlays(out.lines, __cols)), out.width)
+        __cursor = _cursor
         __tree = t
     }
+
+    cursor -> (Int, Int, String) | nil { __cursor }
 
     __dispatch(ev) {
         ev = layout-key(ev)

@@ -44,11 +44,11 @@ fn make() {
 }
 
 fn chars(ti) -> Array[String] {
-    ink.TextInput.__get__(ti, '__chars')
+    ti.ed.chars
 }
 
 fn cursor(ti) -> Int {
-    ink.TextInput.__get__(ti, '__cursor')
+    ti.ed.cursor
 }
 
 pub fn typing() {
@@ -170,8 +170,8 @@ pub fn scroll-long-input() {
     let long = 'abcdefghijklmnopqrstuvwxyz0123456789'
     h.send-text(long)
     assert(chars(ti).join() == long)
-    let scroll = ink.TextInput.__get__(ti, '__scroll')
-    assert(scroll > 0)
+    h.assert-contains('0123456789')
+    h.assert-not-contains('abcdef')
 }
 
 pub fn history-up-down() {
@@ -274,4 +274,128 @@ pub fn ctrl-shortcuts-use-base-layout-key() {
 pub fn ctrl-c-with-base-layout-key-exits() {
     let (h, ti) = make()
     assert(h.send(cyrillic('c')) == ink.Exit)
+}
+
+class Shared < ink.Component {
+    ed: ink.Editor
+    render() {
+        <ink.Box direction="column">
+            <ink.TextInput editor=ed width=30 popup-at="below"
+                highlight=ink.spans-of([(/#\w+/, 'magenta')]) />
+            <ink.Text>{"len={#ed.text}"}</ink.Text>
+        </ink.Box>
+    }
+}
+
+fn shared(ed: ink.Editor, looks: String = '') {
+    ink.use-looks(looks)
+    let h = ink.TestHarness(Shared(ed=ed), cols=40, rows=12)
+    h.focus!(h.find(ink.TextInput)!)
+    h
+}
+
+pub fn terminal-cursor-shape-places-real-cursor() {
+    let h = shared(ink.Editor(), 'TextInput::cursor \{ shape: bar \}')
+    h.send-text('abc')
+    assert(h.cursor == (1, 4, 'bar'))
+    h.left()
+    assert(h.cursor == (1, 3, 'bar'))
+    ink.use-looks('')
+}
+
+pub fn fake-cursor-keeps-terminal-cursor-hidden() {
+    let h = shared(ink.Editor())
+    h.send-text('abc')
+    assert(h.cursor == nil)
+}
+
+pub fn popup-renders-and-navigates() {
+    let ed = ink.Editor(triggers=[
+        ink.Trigger(/(?<=^|\s)#(\w*)$/, c -> ink.narrow(['red', 'green', 'grey'], c.query))
+    ])
+    let h = shared(ed)
+    h.send-text('a #g')
+    h.assert-contains('green')
+    h.assert-contains('grey')
+    h.assert-not-contains('red')
+    h.down()
+    h.enter()
+    assert(ed.text == 'a #grey')
+    h.assert-not-contains('green')
+}
+
+pub fn prompt-part() {
+    let h = shared(ink.Editor(), 'TextInput::prompt \{ content: "> " \}')
+    h.send-text('hi')
+    h.assert-contains('│> hi')
+    ink.use-looks('')
+}
+
+pub fn highlight-hook-styles-spans() {
+    let h = shared(ink.Editor())
+    h.send-text('x #tag y')
+    let row = h.lines[1]
+    assert(row.contains?('#tag'))
+    assert(row.contains?(ink.fg-sgr('magenta')))
+}
+
+pub fn external-mutation-rerenders() {
+    let ed = ink.Editor()
+    let h = shared(ed)
+    h.send-text('abc')
+    ed.set-text('zz')
+    h.repaint()
+    h.assert-contains('zz')
+    h.assert-contains('len=2')
+}
+
+class Legacy < ink.Component {
+    render() {
+        <ink.TextInput width=30 complete=(ctx -> ink.CycleCompletions(['foo', 'far'])) />
+    }
+}
+
+pub fn legacy-complete-cycles-with-tab() {
+    let h = ink.TestHarness(Legacy(), cols=40, rows=12)
+    let $ti = h.find(ink.TextInput) or throw 'no TI'
+    h.focus!(ti)
+    h.tab()
+    assert(ti.text == 'foo')
+    h.tab()
+    assert(ti.text == 'far')
+    h.send-text('!')
+    assert(ti.text == 'far!')
+}
+
+class Area < ink.Component {
+    render() { <ink.TextArea width=20 height=5 /> }
+}
+
+pub fn text-area-enter-inserts-newlines() {
+    let h = ink.TestHarness(Area(), cols=30, rows=8)
+    let $ta = h.find(ink.TextArea) or throw 'no TA'
+    h.focus!(ta)
+    h.send-text('ab')
+    h.enter()
+    h.send-text('cd')
+    assert(ta.text == "ab\ncd")
+    h.up()
+    assert(ta.ed.row == 0)
+    h.assert-contains('ab')
+    h.assert-contains('cd')
+}
+
+class Menu < ink.Component {
+    picker: ink.Picker = ink.Picker([ink.Suggestion('one', detail='first'), ink.Suggestion('two', detail='second')])
+    render() { <ink.SuggestionList completion=picker width=30 /> }
+}
+
+pub fn suggestion-list-renders-a-picker() {
+    let app = Menu()
+    let h = ink.TestHarness(app, cols=40, rows=8)
+    h.assert-contains('one  first')
+    app.picker.move(1)
+    h.repaint()
+    assert(h.lines.any?(\_.contains?(ink.fg-sgr('text'))))
+    h.assert-contains('two  second')
 }

@@ -27,6 +27,7 @@ import time
 tag _TermStop;
 tag StatusAck;
 tag DeviceAttrs;
+tag Palette;
 
 pub ns mod {
     pub const SHIFT = (1 << 0)
@@ -53,6 +54,7 @@ pub ns event {
     pub tag ScrollRight;
     pub tag Cursor;
     pub tag Paste;
+    pub tag Focus;
 
     pub tag Key[T] {
         nice-name() -> String where T: KeyDetails {
@@ -89,6 +91,7 @@ pub use Event = (
   | event.ScrollRight[event.MouseDetails]
   | event.Cursor[CursorAddress]
   | event.Paste[String]
+  | event.Focus[Bool]
   | event.EOF
 )
 
@@ -536,6 +539,7 @@ ns ctlseq {
     let SS3        = /^\x1bO([0-9;]*)([\x40-\x7e])$/
     let LINUX_FN   = /^\x1b\[\[([A-E])$/
     let OSC_STATUS = /^\x1b\]7501;\?/
+    let OSC_COLOR  = /^\x1b\](1[01]);rgb:([0-9a-fA-F]+)\/([0-9a-fA-F]+)\/([0-9a-fA-F]+)/
 
     let ss3-keys = %{
         'A': (keys.UP,           0),
@@ -788,6 +792,10 @@ ns ctlseq {
             ('<', '', 'M' or 'm') => mouse(ps, f),
             ('?', '', 'c')        => da1(),
             ('',  '', 'R')        => cpr(ps),
+            ('',  '', 'I')        => do { yield event.Focus(true); true },
+            ('',  '', 'O')        => do { yield event.Focus(false); true },
+            ('?', '', 'u')        => true,
+            ('>', '', 'c')        => true,
             ('',  '', _)          => key(ps, f, extra),
             _                     => false
         }
@@ -812,6 +820,11 @@ ns ctlseq {
     fn osc(s: String) -> Bool {
         if s.match?(OSC_STATUS) {
             yield StatusAck
+        }
+
+        if let [_, n, r, g, b] = s.match(OSC_COLOR) {
+            let byte = h -> int(h[;2], 16) ?? 0
+            yield Palette(int(n)!, (byte(r), byte(g), byte(b)))
         }
 
         true
@@ -912,12 +925,15 @@ pub class TermIO {
         open: Bool
     }
 
-    __kitty: Bool
+    __kitty: Int
     __mouse: Bool
     __paste: Bool
 
     __enter: String
     __exit:  String
+    __pointer: String
+
+    __colors: Dict[Int, (Int, Int, Int)] = %{}
 
     __cursor: {
         lock: Mutex,
@@ -940,8 +956,11 @@ pub class TermIO {
     init(
         fd: Int = nil,
         mouse: Bool = true,
-        kitty: Bool = true,
+        kitty: Bool | Int = true,
         paste: Bool = true,
+        focus: Bool = false,
+        modify-keys: Int | nil = nil,
+        alt-scroll: Bool | nil = nil,
         esc-delay: Float = 0.05,
         events: SharedQueue[event.Event] = SharedQueue()
     ) {
@@ -965,13 +984,15 @@ pub class TermIO {
         }
 
         __mouse = mouse
-        __kitty = kitty
+        __kitty = match kitty {
+            true  => 1 | 2 | 4 | 8 | 16,
+            false => 0,
+            n     => n
+        }
         __paste = paste
 
         __ev-stream = __read-events()
         __ev-queue = events
-
-        __mouse = mouse
         __cursor = {
             lock: Mutex(),
             cond: CondVar(),
@@ -996,28 +1017,43 @@ pub class TermIO {
 
         let enter = Blob()
         let exit = Blob()
+        let pointer = Blob()
 
-        if __kitty {
-            // kitty progressive enchancement for keyboard input
-            enter.push("\x1b[>{1|2|4|8|16}u")
-            exit.push("\x1b[<1u")
+        if __paste {
+            enter.push("\x1b[?2004h")
+        }
+        if let $n = modify-keys {
+            enter.push("\x1b[>4;{n}m")
+        }
+        if __kitty != 0 {
+            enter.push("\x1b[>{__kitty}u")
+        }
+        if focus {
+            enter.push("\x1b[?1004h")
+        }
+        if let $on = alt-scroll {
+            pointer.push(on ? "\x1b[?1007h" : "\x1b[?1007l")
         }
         if __mouse {
-            // turn on mouse event reporting
-            enter.push("\x1b[?1003h")
-            // ask for SGR-style mouse reporting instead of X10 compatibility mode
-            enter.push("\x1b[?1006h")
-            exit.push("\x1b[?1006l")
-            exit.push("\x1b[?1003l")
+            pointer.push("\x1b[?1003h\x1b[?1006h")
+            exit.push("\x1b[?1006l\x1b[?1003l")
+        }
+        if __kitty != 0 {
+            exit.push("\x1b[<1u")
+        }
+        if modify-keys != nil {
+            exit.push("\x1b[>4m")
         }
         if __paste {
-            // enable bracketed paste mode
-            enter.push("\x1b[?2004h")
             exit.push("\x1b[?2004l")
         }
-    
-        __enter = enter.str!()
-        __exit  = exit.str!()
+        if focus {
+            exit.push("\x1b[?1004l")
+        }
+
+        __enter   = enter.str!()
+        __exit    = exit.str!()
+        __pointer = pointer.str!()
 
         (__notif-r, __notif-w) = pipe()
         if fcntl(__notif-r, F_SETFD, FD_CLOEXEC) < 0
@@ -1030,7 +1066,7 @@ pub class TermIO {
         __reader = Thread(__run-reader)
     }
 
-    start() {
+    start(settle: Float = 0.0) {
         warn!("Main: request start")
         write(__notif-w, 1)
         with __state.lock {
@@ -1038,8 +1074,23 @@ pub class TermIO {
                 __state.cond.wait(__state.lock)
             }
         }
+        if settle > 0.0 {
+            status-supported?(settle)
+        }
+        if #__pointer > 0 {
+            write(__fd, __pointer)
+        }
         warn!("Main: started")
     }
+
+    color(n: Int) -> (Int, Int, Int) | nil {
+        with __probe.lock {
+            __colors[n]
+        }
+    }
+
+    foreground -> (Int, Int, Int) | nil { color(10) }
+    background -> (Int, Int, Int) | nil { color(11) }
 
     stop() {
         warn!("Main: request stop")
@@ -1079,7 +1130,7 @@ pub class TermIO {
             }
             __probe.sent? = true
         }
-        write(__fd, "{status.QUERY}\x1b[c")
+        write(__fd, "\x1b]10;?\x1b\\\x1b]11;?\x1b\\{status.QUERY}\x1b[c")
     }
 
     __stop() {
@@ -1358,6 +1409,12 @@ pub class TermIO {
                     __probe.ok? = __probe.ok? ?? false
                 }
                 __probe.cond.broadcast()
+            },
+
+            Some(Palette(n, rgb)) => {
+                with __probe.lock {
+                    __colors[n] = rgb
+                }
             },
 
             Some(ev) => {
