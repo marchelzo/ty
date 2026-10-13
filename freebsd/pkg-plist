@@ -32,7 +32,6 @@ bin/tytest
 %%TYMODDIR%%/ical.ty
 %%TYMODDIR%%/ini.ty
 %%TYMODDIR%%/ink.ty
-%%TYMODDIR%%/ink/dev.ty
 %%TYMODDIR%%/ink/edit.ty
 %%TYMODDIR%%/ink/look.ty
 %%TYMODDIR%%/ink/themes.ty

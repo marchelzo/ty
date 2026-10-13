@@ -48,10 +48,9 @@ let __tls::_inline?        = false
 pub tag Exit;
 pub tag Wake;
 tag Suspend;
-tag DevSave;
 tag Call;
 
-use InkEventInternal = Exit | Wake | Suspend | DevSave | Call[Function] | event.Event
+use InkEventInternal = Exit | Wake | Suspend | Call[Function] | event.Event
 
 let _event-queue: SharedQueue[InkEventInternal] = SharedQueue()
 let _tio: term.TermIO | nil = nil
@@ -407,6 +406,10 @@ fn refresh-looks() {
 
 pub fn part(w: String, p: String, states: Array[String], variant: String | nil = nil) -> Dict[String, _] {
     _looks.part(w, p, states, variant)
+}
+
+pub fn look-of(cls: String) -> Dict[String, _] {
+    _looks.classes(cls)
 }
 
 fn spec-of-part(d: Dict[String, _]) -> String {
@@ -5068,6 +5071,7 @@ pub fn ink-write(*args) {
     _out.push("\x1b[0J")
     for arg in args { _out.push("{arg}") }
     _last-inline-height = 0
+    _last-output = nil
     write(1, _out)
 }
 
@@ -5089,6 +5093,7 @@ pub fn ink-log(*args) {
         }
     }
     _last-inline-height = 0
+    _last-output = nil
     write(1, _out)
 }
 
@@ -5481,67 +5486,6 @@ fn plain-value?(v: Any) -> Bool {
     }
 }
 
-fn dev-state(c: Component) -> Dict[String, Any] {
-    let ms = members(c)
-    let props: Array[String] = []
-    for name, v in ms {
-        if name.match?(/^_propNames\$/) {
-            props = v
-        }
-    }
-    let state: Dict[String, Any] = %{}
-    for name, v in ms {
-        let base = name.sub(/\$\d+$/, '')
-        if base in DEV_SKIP || base == '_propNames' || base in props || !plain-value?(v) {
-            continue
-        }
-        state[base] = v
-    }
-    state
-}
-
-fn dev-apply(c: Component, state: Dict[String, Any]) {
-    let ms = members(c)
-    for name, old in ms {
-        let base = name.sub(/\$\d+$/, '')
-        if not let $v = state[base] {
-            continue
-        }
-        if old == nil || type(old) == type(v) {
-            c.{name} = v
-        }
-    }
-}
-
-fn dev-snapshot(app: Component) -> String {
-    let fibers: Dict[String, Any] = %{}
-    for path, c in _fibers {
-        fibers[path] = %{'class': "{type(c)}", 'state': dev-state(c)}
-    }
-    let focus: String | nil = nil
-    for p, c in _fibers {
-        if c == _focused {
-            focus = p
-        }
-    }
-    json.encode(%{'root': dev-state(app), 'fibers': fibers, 'focus': focus})
-}
-
-fn dev-restore(app: Component, text: String) {
-    let snap = json.parse(text)
-    dev-apply(app, snap['root'] ?? %{})
-    for path, rec in snap['fibers'] ?? %{} {
-        if let $c = _fibers[path] and "{type(c)}" == rec['class'] {
-            dev-apply(c, rec['state'] ?? %{})
-        }
-    }
-    if let $p = snap['focus'] and let $c = _fibers[p] {
-        set-focus(c)
-    }
-    app.invalidate!()
-    invalidate-all()
-}
-
 fn fiber-paths() -> Dict[Any, String] {
     let paths: Dict[Any, String] = %{}
     for p, c in _fibers {
@@ -5782,14 +5726,10 @@ pub fn run(
     _dragging? = false
     _capture = nil
 
-    let dev-snap = getenv('INK_DEV_SNAP')
     if let $sock = getenv('INK_SOCK') {
         serve(sock)
     }
     signal(SIGWINCH, fn () { dirty = true })
-    if dev-snap != nil {
-        signal(os.SIGUSR1, -> _event-queue.put(DevSave))
-    }
     let on-term = signal(os.SIGTERM)
     let on-hup = signal(os.SIGHUP)
     signal(os.SIGTERM, -> _event-queue.put(Exit))
@@ -5877,13 +5817,6 @@ pub fn run(
     fn handle(ev) -> Bool {
         ev = layout-key(ev)
 
-        if ev == DevSave {
-            if let $p = dev-snap {
-                Path(p).write(dev-snapshot(app))
-            }
-            return true
-        }
-
         if ev == Suspend {
             suspend-terminal()
             return false
@@ -5934,12 +5867,6 @@ pub fn run(
     }
 
     repaint()
-
-    if let $p = dev-snap and Path(p).file? {
-        dev-restore(app, Path(p).read-text())
-        unlink(p)
-        repaint()
-    }
 
     for (;;) {
         let fps = app.max-fps ?? DEFAULT_FPS

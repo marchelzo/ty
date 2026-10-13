@@ -3,6 +3,7 @@
 import ffi as c
 import atomic
 import base64
+import clap (clap!)
 import errno
 import hash
 import ioctls (TIOCSCTTY, TIOCGWINSZ, TIOCSWINSZ)
@@ -13,6 +14,171 @@ import termios
 import time
 import ty
 import zstd
+
+/**
+ * Record a terminal program's complete observable behavior, like script(1) but for
+ * programmatically testing TUI apps (e.g. checking that two programs behave identically).
+ *
+ * tuicap runs COMMAND on a fresh pseudo-terminal and passes everything through, so using it
+ * feels exactly like running COMMAND directly. When COMMAND exits, tuicap writes a recording
+ * and prints `Recording written to: FILE` on stderr. It exits with COMMAND's status
+ * (128+N if killed by signal N).
+ *
+ * [b]Running[/]
+ *   tools/tuicap.ty 'nvim -u NONE'      one argument: run through /bin/sh -c
+ *   tools/tuicap.ty vim -u NONE f.txt   several: exec'd directly; tuicap's own flags must come
+ *                                       before COMMAND (use -- if COMMAND starts with -)
+ *   tools/tuicap.ty -r old.tui nvim     replay old.tui's keystrokes into nvim, no tty needed
+ *   tools/tuicap.ty --diff a.tui b.tui  compare two recordings (exit 0 iff identical)
+ *
+ *   The default output file is <command-name>_<pid>.tui in the current directory
+ *   (e.g. nvim_24512.tui). The pty gets the terminal's size (80x24 without a terminal, the
+ *   recording's size with -r, or -s) and a copy of the terminal's termios. Resizes are
+ *   forwarded. SIGTERM/SIGHUP/SIGINT/SIGQUIT sent to tuicap go to COMMAND's process group.
+ *   With a piped (non-tty) stdin, its bytes are typed into the program, and EOF is
+ *   delivered as the VEOF character if the pty is in canonical mode.
+ *
+ * [b]Syscall tracing[/]
+ *   Unless --no-trace is given, tuicap starts a root helper via `sudo -n` (or the setuid
+ *   /usr/bin/tyxx) that loads eBPF programs and captures every read/write/readv/writev/pread/
+ *   pwrite/preadv(2)/pwritev(2)/ioctl/fcntl/close any process makes on the pty, including
+ *   through /dev/tty, with full data. This adds about 0.5s before COMMAND starts.
+ *   Without root the recording is still made; `trace.reason` explains why it was skipped.
+ *   Not captured: io_uring, splice/sendfile, mmap, and open() of the terminal.
+ *
+ * [b]The .tui file[/]
+ *   zstd-compressed JSON (`zstd -dc f.tui | jq .`), one object:
+ *
+ *   format        "tuicap/1"
+ *   command       COMMAND as given (array of strings);  argv: what was exec'd
+ *   pid           COMMAND's pid;  cwd, term ($TERM), started (local ISO-8601 time)
+ *   duration_us   length of the session
+ *   size          {cols, rows} of the pty at start
+ *   exit          {"code": N} or {"signal": "SIGKILL"}; null if never reaped
+ *   trace         {"source": "ebpf", "lost": N, "error": null} or {"source": null, "reason": "..."}
+ *                 (lost = syscall records dropped because the ring buffer was full)
+ *   frames        rendered screen states over time, as deltas (see below)
+ *   events        everything that happened, sorted by time (see below)
+ *
+ *   All times are integer microseconds ("us") since COMMAND was spawned (monotonic clock).
+ *   Byte payloads are {"text": "..."} when the bytes are valid UTF-8, else {"base64": "..."}.
+ *
+ * [b]Frames[/]: what the screen looked like
+ *   tuicap runs its own xterm-compatible emulator over the program's output. A frame is
+ *   recorded only if the state changed, at these moments ("why"):
+ *     start   initial blank screen        input   right before input is delivered to COMMAND
+ *     idle    output paused for 20ms (deferred while synchronized output, DEC mode 2026,
+ *             is on, for up to 1s)
+ *     resize  right before a resize       exit    after COMMAND exited and output drained
+ *   Each frame has us, why, "event" (index into events of the last event at or before the
+ *   frame; -1 if none) and "digest", plus only the parts that changed since the previous frame:
+ *     size      \[cols, rows]; a size change resets every row to blank first
+ *     rows      {"<row index>": \[\[text, sgr], ...]}; changed rows only, complete, as runs of
+ *               same-styled text. sgr is a canonical SGR parameter string, "" = default:
+ *               attributes in the order 1 2 3 4|4:n 5 7 8 9 53, then fg, bg, underline color
+ *               (58;...). Palette colors 0-15 are normalized to 30-37/90-97 (40-47/100-107 for
+ *               bg). Trailing default blanks are trimmed (a blank row is \[]); a wide char
+ *               appears once; combining marks stay attached. Blank cells keep only visible
+ *               attributes (bg, underline, strike, overline; everything when reversed), so
+ *               an erase and explicitly printed spaces look the same.
+ *     cursor    {"row": r, "col": c}, 0-based (after writing the last column, col stays
+ *               cols-1 while the wrap is pending)
+ *     modes     changed keys only; null means the key no longer exists. Keys: alt_screen,
+ *               cursor_visible, cursor_blink, cursor_shape (default|block|underline|bar, with
+ *               blinking_ variants), app_cursor, app_keypad, autowrap, origin, insert, newline,
+ *               reverse_video, mouse (off|x10|normal|button|any), mouse_encoding
+ *               (default|utf8|sgr|urxvt|sgr_pixels), focus_events, bracketed_paste,
+ *               synchronized, kitty_keyboard (current flags), scroll_region \[top, bottom],
+ *               title, icon_title, dec (other DEC private modes ever set: {"1007": true}),
+ *               modify_keys_N (xterm XTMODKEYS values).
+ *     bell      number of BELs since the previous frame
+ *     scrolled  lines scrolled off the top of the main screen since the previous frame
+ *   To get the full state at frame i, start from an empty screen and apply frames 0..i in
+ *   order: size (reset rows), rows (replace), cursor, modes (set, or delete on null).
+ *   digest = first 16 hex chars of sha256 over the full reconstructed state (size, rows,
+ *   cursor, modes). Equal digests mean identical screens, so they are the cheapest way to compare
+ *   runs. Recompute with tuicap's own digest() (import the file as module `tuicap`), since
+ *   it depends on Ty's exact JSON encoding.
+ *
+ * [b]Events[/]: what happened (all have "us" and "type")
+ *   input     bytes typed into the program: text|base64, "frame" = index of the frame that
+ *             was on screen when they were sent; "eof": true for a synthesized VEOF
+ *   output    bytes the program wrote, as the terminal received them (after the line
+ *             discipline, e.g. "\\n" became "\\r\\n")
+ *   termios   the pty's settings whenever they changed: iflag/oflag/cflag/lflag (lists of
+ *             flag names like "ICANON", "ECHO", "CS8"), speed, cc ({"VINTR": 3, "VMIN": 1, ...})
+ *   resize    cols, rows                  signal   signal forwarded to COMMAND: "SIGTERM"
+ *   exit      code | signal
+ *   syscall   (eBPF) the program's own view: call (read, writev, ioctl, ...), pid, tid, comm,
+ *             fd, ret (negative = -errno), start_us (entry time; "us" is the return time)
+ *               reads/writes: count (or iovcnt), text|base64 = the ret bytes actually
+ *                 transferred, truncated: true if cut short (more than 2MiB in one call)
+ *               ioctl: request ("TCSETSW", "TIOCGWINSZ", or hex), arg (raw), value (decoded
+ *                 termios/winsize/int/char) or data (hex of up to 64 bytes read at arg)
+ *               fcntl: cmd ("F_SETFL", ...), arg, flags (e.g. \["O_RDWR", "O_NONBLOCK"])
+ *             Syscalls of COMMAND's process before exec show the interpreter's comm
+ *             (e.g. "ty": TIOCSCTTY, close).
+ *
+ * [b]Comparing and replaying[/]
+ *   --diff A B   prints whether the typed input matched, then compares the reconstructed screen
+ *                before every input byte offset that both recordings have, plus at exit, and shows
+ *                the first difference (rows, cursor, modes). Exit 0 only if inputs and all
+ *                compared screens match. Input chunking may differ between runs.
+ *   -r REC       sends REC's input events (excluding eof) to COMMAND at their recorded times,
+ *                using REC's size; stdin is ignored. The session ends when COMMAND exits, so the
+ *                input must make it quit. A hand-written script works too: write
+ *                {"size": {"cols": 80, "rows": 24}, "events": \[{"us": 500000, "type": "input",
+ *                "text": ":q\\r"}]} to s.json and pass it as is (every REC may be plain JSON
+ *                instead of zstd).
+ *   Typical check that two programs behave the same:
+ *     tools/tuicap.ty -o a.tui prog-a; tools/tuicap.ty -r a.tui -o b.tui prog-b
+ *     tools/tuicap.ty --diff a.tui b.tui
+ *   --refresh REC \[OUT] re-runs REC's output through the current emulator and rewrites
+ *   its frames (in place by default). Use it after emulator fixes.
+ *   --show REC \[WHICH] prints reconstructed screens: WHICH is a frame index (negative
+ *   counts from the end), A:B for a range, "inputs" for the screen before every input,
+ *   or "all"; the default is the last frame. --ansi keeps the colors and attributes.
+ *
+ * [b]Emulator notes[/]
+ *   Semantics follow xterm: alt screens 47/1047/1049 with per-buffer saved cursors, scroll
+ *   regions, origin mode, IRM, pending wrap (cleared by cursor motion, LF, IND, ICH/DCH;
+ *   kept by HT), DEC line drawing, title stack, kitty keyboard flags. It was
+ *   checked against libvterm on nvim/vim/htop/less/bash sessions; they differ only where
+ *   libvterm departs from xterm. Queries such as DSR/DA are answered by the real terminal
+ *   (or nobody, under -r), not by tuicap.
+ */
+clap! Tuicap {
+    /// Write the recording to FILE instead of <command-name>_<pid>.tui
+    output: String, short: 'o', placeholder: 'FILE'
+
+    /// Use a COLSxROWS pty instead of the terminal's size (resizes are then ignored)
+    size: String, short: 's', placeholder: 'COLSxROWS', check: /^\d+x\d+$/
+
+    /// Replay REC's input events into COMMAND instead of reading stdin
+    replay: String, short: 'r', placeholder: 'REC'
+
+    /// Capture the program's terminal syscalls with eBPF (disable with --no-trace)
+    trace: Bool, short: None, default: true
+
+    group 'Modes (instead of running a command)' {
+        /// Compare two recordings: --diff A.tui B.tui
+        diff: Bool, short: None
+
+        /// Re-emulate a recording with the current emulator: --refresh REC.tui \[OUT.tui]
+        refresh: Bool, short: None
+
+        /// Print a recording's screens: --show REC.tui \[N | A:B | inputs | all]
+        show: Bool, short: None
+    }
+
+    /// With --show, print colors and attributes instead of plain text
+    ansi: Bool, short: None
+
+    tracer: Bool, short: None, hidden: true
+
+    /// The program to record, or the files for --diff/--refresh
+    command: [String], pos: true, repeat: true
+}
 
 class Reg {
     n: Int
@@ -2240,27 +2406,6 @@ use Options = {
     replay:  String | nil
 }
 
-fn usage(status: Int = 2) {
-    eprint("usage: {argv[0]} [-o FILE] [-s COLSxROWS] [-r REC.tui] [--no-trace] COMMAND [ARGS...]")
-    eprint("       {argv[0]} --diff A.tui B.tui")
-    eprint("       {argv[0]} --refresh REC.tui [OUT.tui]")
-    os.exit(status)
-}
-
-fn options(args: Array[String], opts: Options = {command: [], output: nil, size: nil, trace?: true, replay: nil}) -> Options {
-    match args {
-        ['-h' or '--help', *_]            => usage(0),
-        ['-o' or '--output', file, *rest] => options(rest, {*opts, output: file}),
-        ['-s' or '--size', size, *rest]   => options(rest, {*opts, size: dimensions(size) ?? usage()}),
-        ['-r' or '--replay', file, *rest] => options(rest, {*opts, replay: file}),
-        ['--no-trace', *rest]             => options(rest, {*opts, trace?: false}),
-        ['--', cmd, *rest]                => ({*opts, command: [cmd, *rest]}),
-        [flag, *_] and flag[0] == '-'     => usage(),
-        [cmd, *rest]                      => ({*opts, command: [cmd, *rest]}),
-        []                                => usage()
-    }
-}
-
 fn dimensions(spec: String) -> (Int, Int) | nil {
     if let [_, cols, rows] = spec.match(/^(\d+)x(\d+)$/) {
         (int(cols)!, int(rows)!)
@@ -2641,7 +2786,8 @@ class Capture {
 }
 
 pub fn load(file: String) -> Dict[String, _] {
-    json.parse(zstd.decompress(Path(file).read-bytes()))
+    let raw = Path(file).read-bytes()
+    json.parse((raw[;4] == Blob(0x28, 0xB5, 0x2F, 0xFD)) ? zstd.decompress(raw) : raw.str())
 }
 
 pub fn states*(doc: Dict[String, _]) {
@@ -2787,19 +2933,96 @@ fn compare(left: String, right: String) -> Int {
     (ia == ib) ? 0 : 1
 }
 
-if __module__ == 'main' {
-    match argv[1;] {
-        ['--diff', left, right]    => os.exit(compare(left, right)),
-        ['--refresh', file]        => os.exit(refresh(file, file)),
-        ['--refresh', file, out]   => os.exit(refresh(file, out)),
-        ['--tracer', tty, skip] => {
-            try {
-                tracer(tty, int(skip)!)
-            } catch e {
-                frame.put(frame.ERROR, "{e}")
-                os.exit(1)
-            }
-        },
-        args => os.exit(Capture(options(args)).run())
+fn painted(row: Array[Array[String]], ansi?: Bool) -> String {
+    match ansi? {
+        true  => row.map(|[text, sgr]| -> sgr ? "\x1b[{sgr}m{text}\x1b[0m" : text).join(''),
+        false => text-of(row)
     }
+}
+
+fn picks(doc: Dict[String, _], which: String) -> Array[Int] {
+    let n = #doc['frames']
+    let at = i -> (i < 0) ? n + i : i
+    match which {
+        'all'               => [*..n],
+        'inputs'            => [e['frame'] for e in doc['events'] if e['type'] == 'input'].nub(),
+        /^(-?\d*):(-?\d*)$/ => [*at(int($1) ?? 0)..at(int($2) ?? n)],
+        /^-?\d+$/           => [at(int(which)!)],
+        _                   => throw ValueError("bad frame selector '{which}'")
+    }
+}
+
+fn show(file: String, which: String, ansi?: Bool) -> Int {
+    let doc     = load(file)
+    let screens = [*states(doc)]
+    for i in picks(doc, which) if i >= 0 && i < #screens {
+        let f     = doc['frames'][i]
+        let s     = screens[i]
+        let [w, _] = s['size']
+        let cur   = s['cursor'] ?? ['-', '-']
+        let shown = (s['modes']['cursor_visible'] ?? true) ? '' : ' hidden'
+        print("── frame {i} · {f['why']} · {f['us'] / 1000}ms · cursor {cur[0]},{cur[1]}{shown} {'─' * max(0, w - 40)}")
+        let rows  = s['rows']
+        let used  = #rows - #rows.reverse().take-while!(\#_ == 0).list()
+        for row in rows[;used] {
+            print("{painted(row, ansi?)}")
+        }
+        if used < #rows {
+            print("── {#rows - used} blank rows")
+        }
+    }
+    0
+}
+
+fn serve-tracer(tty: String, skip: Int) -> Int {
+    try {
+        tracer(tty, skip)
+        0
+    } catch e {
+        frame.put(frame.ERROR, "{e}")
+        1
+    }
+}
+
+fn record(opts: _) -> Int {
+    let options = {
+        command: opts.command,
+        output:  opts.output,
+        size:    opts.size ?> dimensions,
+        trace?:  opts.trace,
+        replay:  opts.replay
+    }
+    Capture(options).run()
+}
+
+fn misuse(message: String) -> Int {
+    eprint("error: {message}")
+    eprint("Try '{argv[0]} --help' for more information.")
+    2
+}
+
+fn main(opts: _) -> Int {
+    if opts.show {
+        return match opts.command {
+            [file]        => show(file, '-1', opts.ansi),
+            [file, which] => show(file, which, opts.ansi),
+            _             => misuse('--show takes REC.tui [N | A:B | inputs | all]')
+        }
+    }
+
+    match (opts.diff, opts.refresh, opts.tracer, opts.command) {
+        (true, false, false, [left, right])  => compare(left, right),
+        (true, _, _, _)                      => misuse('--diff takes exactly two recordings'),
+        (false, true, false, [file])         => refresh(file, file),
+        (false, true, false, [file, out])    => refresh(file, out),
+        (_, true, _, _)                      => misuse('--refresh takes REC.tui [OUT.tui]'),
+        (false, false, true, [tty, skip])    => serve-tracer(tty, int(skip)!),
+        (false, false, false, [_, *_])       => record(opts),
+        _                                    => misuse('no command given')
+    }
+}
+
+if __module__ == 'main' {
+    let (opts, _) = Tuicap.parse()
+    os.exit(main(opts))
 }

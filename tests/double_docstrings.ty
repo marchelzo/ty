@@ -17,6 +17,19 @@ fn reject(source, message) {
     }
 }
 
+/// first line
+///   indented
+///
+/// last line
+fn documented() {
+    nil
+}
+
+///    only one
+fn single() {
+    nil
+}
+
 pub fn dedent() {
     let actual = """
         first
@@ -197,4 +210,9 @@ pub fn preprocessor() {
         """"
     #|]
     assert(s == 'selected 42')
+}
+
+pub fn consecutive-line-comments-form-one-doc() {
+    assert(doc(documented)!.2 == 'first line\n  indented\n\nlast line')
+    assert(doc(single)!.2 == 'only one')
 }

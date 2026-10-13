@@ -1391,32 +1391,74 @@ lexop(Ty *ty)
         return mktoken(ty, type);
 }
 
+inline static isize
+nextlinecomment(void)
+{
+        isize n = 0;
+
+        if (C(n++) != '\n') {
+                return -1;
+        }
+
+        while (C(n) == ' ' || C(n) == '\t') {
+                n += 1;
+        }
+
+        if (C(n) != '/' || C(n + 1) != '/' || C(n + 2) != '/') {
+                return -1;
+        }
+
+        return n;
+}
+
 static Token
 lexlinecomment(Ty *ty)
 {
-        /* /// */
-        nextchar(ty);
-        nextchar(ty);
-        nextchar(ty);
-
-        while (xisspace(C(0)) && C(0) != '\n') {
-                nextchar(ty);
-        }
-
         byte_vector comment = {0};
+        bool        multi   = false;
 
-        while (C(0) != '\n' && C(0) != '\0') {
-                avP(comment, nextchar(ty));
-        }
+        for (;;) {
+                /* /// */
+                nextchar(ty);
+                nextchar(ty);
+                nextchar(ty);
 
-        while (vN(comment) > 0 && v_L(comment) == ' ') {
-                vvX(comment);
+                if (C(0) == ' ') {
+                        nextchar(ty);
+                }
+
+                while (C(0) != '\n' && C(0) != '\0') {
+                        avP(comment, nextchar(ty));
+                }
+
+                while (vN(comment) > 0 && v_L(comment) == ' ') {
+                        vvX(comment);
+                }
+
+                isize skip = nextlinecomment();
+                if (skip < 0) {
+                        break;
+                }
+
+                while (skip-- > 0) {
+                        nextchar(ty);
+                }
+
+                avP(comment, '\n');
+                multi = true;
         }
 
         avP(comment, '\0');
 
+        char *text = vv(comment);
+        if (!multi) {
+                while (xisspace(*text)) {
+                        text += 1;
+                }
+        }
+
         Token t = mktoken(ty, TOKEN_COMMENT);
-        t.comment = vv(comment);
+        t.comment = text;
 
         Start = state.loc;
 
