@@ -1,0 +1,383 @@
+import ty.test.events (
+    Event,
+    FAILING,
+    get-str,
+    get-int,
+    get-float,
+    get-bool,
+    get-event,
+    get-events,
+    get-strs
+)
+
+pub ESCAPES = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/
+
+pub RULE = '─'
+
+pub LABELS: Dict[String, String] = %{
+    'pass':    'PASS',
+    'fail':    'FAIL',
+    'error':   'ERROR',
+    'skip':    'SKIP',
+    'todo':    'TODO',
+    'xfail':   'XFAIL',
+    'xpass':   'XPASS',
+    'timeout': 'TIMEOUT',
+    'crash':   'CRASH',
+    'exit':    'EXIT',
+}
+
+pub LABEL_WIDTH = 7
+
+pub XPASS_HINT = 'fixed? remove @xfail'
+
+pub COUNT_ORDER: Array[(String, String, String)] = [
+    ('pass',    'passed',    'passed'),
+    ('fail',    'failed',    'failed'),
+    ('error',   'error',     'errors'),
+    ('timeout', 'timed out', 'timed out'),
+    ('crash',   'crashed',   'crashed'),
+    ('exit',    'exited',    'exited'),
+    ('skip',    'skipped',   'skipped'),
+    ('todo',    'todo',      'todo'),
+    ('xfail',   'xfail',     'xfail'),
+    ('xpass',   'xpass',     'xpass'),
+]
+
+let STYLES: Dict[String, String] = %{
+    'pass':    '32',
+    'fail':    '31;1',
+    'error':   '31;1',
+    'timeout': '35;1',
+    'crash':   '31;1',
+    'exit':    '31;1',
+    'skip':    '33',
+    'todo':    '33',
+    'xfail':   '36',
+    'xpass':   '35;1',
+    'dim':     '90',
+    'bold':    '1',
+    'red':     '31;1',
+}
+
+pub fn strip(s: String) -> String {
+    s.comb(ESCAPES)
+}
+
+pub fn width(s: String) -> Int {
+    strip(s).width()
+}
+
+pub fn pad(s: String, w: Int) -> String {
+    let n = w - width(s)
+    (n > 0) ? "{s}{' ' * n}" : s
+}
+
+pub fn paint(s: String, style: String, color?: Bool) -> String {
+    let $code = STYLES[style] or return s
+    color? ? "\x1b[{code}m{s}\x1b[0m" : s
+}
+
+pub fn label(outcome: String) -> String {
+    LABELS[outcome] ?? outcome.upper()
+}
+
+pub fn fmt-dur(dur: Float) -> String {
+    (dur < 1.0) ? "{dur * 1000.0:.2}ms" : "{dur:.2}s"
+}
+
+pub fn fmt-secs(secs: Float) -> String {
+    "{secs:.2}s"
+}
+
+pub fn plural(n: Int, word: String) -> String {
+    (n == 1) ? "{n} {word}" : "{n} {word}s"
+}
+
+pub fn shell-quote(s: String) -> String {
+    s.match?(/^[A-Za-z0-9_.\/:@%+=,-]+$/) ? s : "'{s.sub(/'/, "'\\''")}'"
+}
+
+pub fn indent(s: String, n: Int) -> String {
+    let sp = ' ' * n
+    s.split("\n").map(line -> (#line == 0) ? line : "{sp}{line}").join("\n")
+}
+
+pub fn display-name(id: String) -> String {
+    match id.search('::') {
+        nil => id,
+        i   => id[i + 2;],
+    }
+}
+
+pub fn file-of(id: String) -> String {
+    match id.search('::') {
+        nil => id,
+        i   => id[;i],
+    }
+}
+
+pub fn signal-name(sig: Any) -> String {
+    match sig {
+        s: String => s,
+        n: Int    => "signal {n}",
+        _         => 'unknown signal',
+    }
+}
+
+pub fn strict-xfail?(xfail: Any) -> Bool {
+    match xfail {
+        d: Dict => d['strict'] != false,
+        _       => true,
+    }
+}
+
+pub fn outcome-of(ev: Event) -> String {
+    get-str(ev, 'outcome') ?? 'error'
+}
+
+pub fn failing?(ev: Event, strict?: Bool = true) -> Bool {
+    match outcome-of(ev) {
+        'xpass' => strict?,
+        o       => o in FAILING,
+    }
+}
+
+pub fn first-line(s: ?String) -> String {
+    let $text = s or return ''
+    text.split("\n")[0] ?? ''
+}
+
+pub fn message-of(ev: Event) -> ?String {
+    get-str(get-event(ev, 'failure'), 'message')
+}
+
+pub fn detail(ev: Event, strict?: Bool = true) -> String {
+    let reason = get-str(ev, 'reason') ?? ''
+    match outcome-of(ev) {
+        'skip' or 'todo' or 'xfail' => reason,
+        'xpass'   => strict? ? XPASS_HINT : 'unexpected pass',
+        'timeout' => get-bool(ev, 'hard') ? 'hard kill' : reason,
+        'crash'   => signal-name(ev['signal']),
+        'exit'    => "exit code {get-int(ev, 'code')}",
+        'error'   => (#reason > 0) ? reason : first-line(message-of(ev)),
+        _         => '',
+    }
+}
+
+fn fail-kind(cls: ?String) -> String {
+    match cls {
+        nil              => 'failed',
+        'AssertionError' => 'assertion failed',
+        c                => "uncaught {c}",
+    }
+}
+
+pub fn kind(ev: Event, strict?: Bool = true) -> String {
+    match outcome-of(ev) {
+        'fail'    => fail-kind(get-str(get-event(ev, 'failure'), 'class')),
+        'timeout' => get-bool(ev, 'hard') ? 'timeout (hard kill)' : 'timeout',
+        'crash'   => "crash ({signal-name(ev['signal'])})",
+        'exit'    => "exit ({get-int(ev, 'code')})",
+        'xpass'   => strict? ? "unexpected pass ({XPASS_HINT})" : 'unexpected pass',
+        o         => o,
+    }
+}
+
+pub fn lines-of(s: String) -> Array[String] {
+    let ls = s.split("\n")
+    (#ls > 0 && ls[-1] == '') ? ls[;-1] : ls
+}
+
+pub fn clip(s: String, max-lines: Int = 40) -> Array[String] {
+    let ls = lines-of(s)
+    if #ls <= max-lines {
+        return ls
+    }
+    let head = max-lines / 4
+    let tail = max-lines - head
+    let gone = #ls - head - tail
+    [*ls[;head], "[… {plural(gone, 'line')} elided …]", *ls[#ls - tail;]]
+}
+
+fn assertion-lines(f: Event) -> Array[String] {
+    let operands = get-events(f, 'operands')
+    let src = get-str(f, 'src')
+    let structured? = (src != nil) && (f['op'] != nil || #operands > 0)
+    if !structured? {
+        return lines-of(get-str(f, 'message') ?? '')
+    }
+    let out = [(f['op'] == 'throws') ? (src ?? '') : "assert({src})"]
+    for operands {
+        let text = "{get-str(it, 'src')}: {get-str(it, 'value')}"
+        out.push(*lines-of(indent(text, 2)))
+    }
+    if let $note = get-str(f, 'note') {
+        out.push("  ({note})")
+    }
+    out
+}
+
+fn section(out: Array[String], title: String, body: Array[String], color?: Bool) {
+    if #body == 0 {
+        return
+    }
+    out.push(paint("  {title}", 'dim', color?))
+    for body {
+        out.push("    {it}")
+    }
+}
+
+pub fn failure(
+    ev: Event,
+    color?: Bool = false,
+    file: ?String = nil,
+    line: ?Int = nil,
+    strict?: Bool = true,
+    max-lines: Int = 40
+) -> String {
+    let clean: String -> String = color? ? (s -> s) : strip
+    let id = get-str(ev, 'id') ?? '(unknown)'
+    let f = get-event(ev, 'failure')
+    let outcome = outcome-of(ev)
+    let dur = get-float(ev, 'dur') ?? 0.0
+    let at-file = get-str(f, 'file') ?? file ?? file-of(id)
+    let at-line = get-int(f, 'line') ?? line
+    let loc = (at-line == nil) ? at-file : "{at-file}:{at-line}"
+    let head = [
+        paint(label(outcome), outcome, color?),
+        paint(id, 'bold', color?),
+        paint("({fmt-dur(dur)})", 'dim', color?) if outcome != 'error' || dur > 0.0,
+    ]
+    let out = [head.join(' '), "  {loc}: {kind(ev, strict?: strict?)}"]
+
+    let reason = get-str(ev, 'reason')
+    if reason != nil && outcome in ['error', 'timeout'] {
+        out.push("    {reason}")
+    }
+
+    if let $fl = f {
+        for assertion-lines(fl) {
+            out.push("    {clean(it)}")
+        }
+        let trace = clean(get-str(fl, 'trace') ?? '')
+        section(out, 'trace:', clip(trace, max-lines), color?)
+    }
+
+    section(out, 'log:', get-strs(ev, 'logs').map(clean), color?)
+
+    let output = clean(get-str(ev, 'output') ?? '')
+    let title = "captured output ({plural(#lines-of(output), 'line')}):"
+    section(out, title, clip(output, max-lines), color?)
+
+    let stderr = clean(get-str(ev, 'stderr_tail') ?? '')
+    section(out, 'worker stderr:', clip(stderr, max-lines), color?)
+
+    if let $tmp = get-str(ev, 'tmp_dir') {
+        out.push("  kept tmp dir: {tmp}")
+    }
+
+    out.join("\n")
+}
+
+pub fn counts-line(counts: Dict[String, Int], color?: Bool = false) -> String {
+    let parts: Array[String] = []
+    for (key, one, many) in COUNT_ORDER {
+        let n = counts[key] ?? 0
+        if n > 0 {
+            parts.push(paint("{n} {(n == 1) ? one : many}", key, color?))
+        }
+    }
+    (#parts == 0) ? 'no tests' : parts.join('  ')
+}
+
+pub fn wrap(
+    head: String,
+    items: Array[String],
+    limit: Int,
+    sep: String = ', '
+) -> Array[String] {
+    let lines: Array[String] = []
+    let cur = head
+    let fresh? = true
+    let hang = ' ' * width(head)
+    for items {
+        let next = fresh? ? "{cur}{it}" : "{cur}{sep}{it}"
+        if !fresh? && width(next) + #sep.strip() > limit {
+            lines.push("{cur}{sep.strip()}")
+            cur = "{hang}{it}"
+        } else {
+            cur = next
+        }
+        fresh? = false
+    }
+    lines.push(cur)
+    lines
+}
+
+fn rerun-command(id: String) -> String {
+    if let [_, file] = id.match(/^(.*)::\(script\)$/) {
+        return "ty {shell-quote(file)}"
+    }
+    if id.match?(/(^|\/)(__test__|_require)\.ty$/) {
+        return "ty {shell-quote(id)}"
+    }
+    "ty --test {shell-quote(id)}"
+}
+
+pub fn summary(
+    counts: Dict[String, Int],
+    files: ?Dict[String, Int] = nil,
+    wall: ?Float = nil,
+    user: ?Float = nil,
+    sys: ?Float = nil,
+    seed: ?Int = nil,
+    warnings: Int = 0,
+    slowest: Array[(String, Float)] = [],
+    rerun: Array[String] = [],
+    interrupted?: Bool = false,
+    color?: Bool = false,
+    width: Int = 80,
+    max-rerun: Int = 20
+) -> String {
+    let stop = interrupted? ? "{paint('interrupted', 'red', color?)}   " : ''
+    let info: Array[String] = []
+
+    if let $fs = files {
+        let extra = [
+            "{fs['failed']} failed" if (fs['failed'] ?? 0) > 0,
+            "{fs['skipped']} skipped" if (fs['skipped'] ?? 0) > 0,
+            "{fs['empty']} empty" if (fs['empty'] ?? 0) > 0,
+        ]
+        let note = (#extra == 0) ? '' : " ({extra.join(', ')})"
+        info.push("{plural(fs['total'] ?? 0, 'file')}{note}")
+    }
+
+    let times = [
+        "{fmt-secs(wall)} wall" if wall != nil,
+        "{fmt-secs(user)} user" if user != nil,
+        "{fmt-secs(sys)} sys" if sys != nil,
+    ]
+    if #times > 0 {
+        info.push(times.join('  '))
+    }
+    if seed != nil {
+        info.push("seed {seed}")
+    }
+    info.push("warnings: {(warnings == 0) ? 'none' : str(warnings)}")
+
+    let slow = slowest.map(|(id, d)| -> "{id} {fmt-dur(d)}")
+    let out = [
+        paint(RULE * width, 'dim', color?),
+        " {stop}{counts-line(counts, color?: color?)}",
+        *wrap(' ', info, width, sep: '   '),
+        *(#slow > 0 ? wrap(' slowest: ', slow, width) : []),
+    ]
+    for rerun[;max-rerun] {
+        out.push(" rerun: {rerun-command(it)}")
+    }
+    if #rerun > max-rerun {
+        out.push(" rerun: … and {#rerun - max-rerun} more")
+    }
+    out.join("\n")
+}

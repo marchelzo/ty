@@ -1,0 +1,64 @@
+import ty
+
+fn break-in-finally() -> Int {
+    let n = 0
+    for ..3 {
+        try {
+            n += 1
+        } finally {
+            break
+        }
+    }
+    n
+}
+
+fn continue-in-catch() -> Int {
+    let n = 0
+    for ..3 {
+        try {
+            throw 'x'
+        } catch _ {
+            n += 1
+            continue
+        }
+    }
+    n
+}
+
+fn break-swallows-pending-throw() -> Int {
+    let n = 0
+    for ..3 {
+        try {
+            throw 'y'
+        } finally {
+            n += 10
+            break
+        }
+    }
+    n
+}
+
+fn guarded(f: () -> Int) -> Int {
+    try {
+        let r = f()
+        return r + 100
+    } catch _ {
+        return -1
+    }
+}
+
+ns test {
+    pub fn break-in-finally-pops-its-try() {
+        assert(guarded(break-in-finally) == 101)
+    }
+
+    pub fn continue-in-catch-pops-the-throw() {
+        assert(guarded(continue-in-catch) == 103)
+        assert(ty.trace() == nil)
+    }
+
+    pub fn break-in-finally-discards-the-exception() {
+        assert(guarded(break-swallows-pending-throw) == 110)
+        assert(ty.trace() == nil)
+    }
+}

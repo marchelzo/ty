@@ -1,0 +1,161 @@
+import ty
+import ty.mod as tymod
+
+ns my-group {
+    ns test {
+        pub fn adds-up() -> Int {
+            __line__ - 1
+        }
+
+        fn helper() -> Int {
+            __line__ - 1
+        }
+    }
+}
+
+ns a {
+    ns test {
+        pub fn f() -> String {
+            'a'
+        }
+    }
+}
+
+ns b {
+    ns test {
+        pub fn f() -> String {
+            'b'
+        }
+    }
+}
+
+ns shapes {
+    ns test {
+        fn gen*() -> Generator[Int] {
+            yield 1
+        }
+
+        fn takes(t: Int, u: Int = 1, *rest: Int) -> Int {
+            t + u + #rest
+        }
+
+        fn over(a: Int) -> Int {
+            a
+        }
+
+        fn over(a: String) -> String {
+            a
+        }
+    }
+}
+
+ns locals {
+    ns test {
+        fn outer() -> Int {
+            fn inner() -> Int {
+                1
+            }
+            inner()
+        }
+    }
+}
+
+use Site = {
+    module:      String,
+    file:        ?String,
+    scopes:      Array[String],
+    name:        String,
+    ident:       String,
+    line:        Int,
+    col:         Int,
+    end-line:    Int,
+    doc:         ?String,
+    params:      Array[String],
+    required:    Int,
+    generator?:  Bool,
+    public?:     Bool,
+    overloaded?: Bool,
+    func:        Any
+}
+
+fn sites-in(scope: String) -> Array[Site] {
+    ty.tests().filter(\_.scopes[0] == scope)
+}
+
+fn compile-doomed() -> Bool {
+    try {
+        tymod.compile('ns test { pub fn doomed() {} }\nlet x: Int = nope', nil, 'doomed.ty')
+    } catch _: RuntimeError {
+        return false
+    }
+    true
+}
+
+fn register-late() {
+    tymod.eval(tymod.compile('ns test { pub fn late-arrival() {} }', nil, 'late.ty'))
+}
+
+ns test
+
+pub fn nested-namespace-sites() {
+    let [adds, helper] = sites-in('my-group')
+    assert(adds.scopes == ['my-group', 'test'])
+    assert(adds.name == 'adds-up')
+    assert(adds.ident == 'addsUp')
+    assert(adds.public?)
+    assert(adds.line == adds.func())
+    assert(adds.end-line == adds.line + 2)
+    assert(helper.scopes == ['my-group', 'test'])
+    assert(helper.name == 'helper')
+    assert(!helper.public?)
+    assert(helper.line == helper.func())
+    assert(helper.end-line == helper.line + 2)
+}
+
+pub fn sibling-namespaces-are-distinct() {
+    let fa = sites-in('a')
+    let fb = sites-in('b')
+    assert(fa.map(&.scopes) == [['a', 'test']])
+    assert(fb.map(&.scopes) == [['b', 'test']])
+    assert(fa[0].func() == 'a')
+    assert(fb[0].func() == 'b')
+}
+
+pub fn site-shapes() {
+    let sites = sites-in('shapes')
+    assert(sites.map(&.name) == ['gen', 'takes', 'over'])
+    let [gen, takes, over] = sites
+    assert(gen.generator?)
+    assert(!takes.generator?)
+    assert(takes.params == ['t', 'u', 'rest'])
+    assert(takes.required == 1)
+    assert(over.overloaded?)
+    assert(!takes.overloaded?)
+    assert(over.end-line > over.line)
+    assert(sites.all?(\!_.public?))
+}
+
+pub fn snapshot-ignores-later-registrations() {
+    let snap = ty.tests()
+    let seen = []
+    for snap {
+        if #seen == 0 {
+            register-late()
+        }
+        seen.push(it.name)
+    }
+    assert(#seen == #snap)
+    assert(!seen.contains?('late-arrival'))
+    assert(ty.tests().any?(\_.name == 'late-arrival'))
+}
+
+pub fn local-functions-are-not-sites() {
+    let sites = sites-in('locals')
+    assert(sites.map(&.name) == ['outer'])
+    assert(sites[0].func() == 1)
+}
+
+pub fn failed-compiles-register-nothing() {
+    assert(!compile-doomed())
+    assert(!ty.tests().any?(\_.name == 'doomed'))
+}

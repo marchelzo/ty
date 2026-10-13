@@ -2146,8 +2146,37 @@ class CompileError < RuntimeError {
 class ParseError  < CompileError {}
 class SyntaxError < ParseError   {}
 
-class ValueError     < RuntimeError {}
-class AssertionError < RuntimeError {}
+class ValueError < RuntimeError {}
+
+class AssertionError < RuntimeError {
+    src:      ?String
+    file:     ?String
+    line:     ?Int
+    op:       ?String
+    operands: Array[(String, String)]
+    values:   Array[Any]
+    note:     ?String
+
+    init(
+        what:     String,
+        src:      ?String = nil,
+        file:     ?String = nil,
+        line:     ?Int = nil,
+        op:       ?String = nil,
+        operands: Array[(String, String)] = [],
+        values:   Array[Any] = [],
+        note:     ?String = nil
+    ) {
+        super(what)
+        self.src      = src
+        self.file     = file
+        self.line     = line
+        self.op       = op
+        self.operands = operands
+        self.values   = values
+        self.note     = note
+    }
+}
 
 class TimeoutError < RuntimeError {
     init() {
@@ -5273,74 +5302,155 @@ fn memoized[F](fun: F, max: ?Int = nil) -> F {
     __eval__(ty.Func({name: fun.__name__, params, body}))
 }
 
+fn __assertion-error(
+    site:   {src: String, op: ?String, labels: Array[?String]},
+    file:   ?String,
+    line:   ?Int,
+    values: Array[Any],
+    note:   ?String,
+    show:   Any -> String
+) -> AssertionError {
+    let operands: Array[(String, String)] = []
+
+    for label; i in site.labels {
+        let $s = label or continue
+        let v = show(values[i])
+        if s != v {
+            operands.push((s, v))
+        }
+    }
+
+    let head = (note == nil) ? site.src : "{site.src} ({note})"
+    let what = [
+        "failed assertion: {head}",
+        *["    {s}: {v}" for (s, v) in operands]
+    ].join('\n')
+
+    AssertionError(
+        what,
+        src: site.src,
+        file: file,
+        line: line,
+        op: site.op,
+        operands: operands,
+        values: values,
+        note: note
+    )
+}
+
 macro assert(condition, message) {
-    let color? = (getenv('NO_COLOR') == nil) && (ty.color != 'never')
-
-    fn pretty-expr(expr) {
-        let {mod, start: {byte: i, *}, end: {byte: j, *}, *} = ty.get-source(expr)
-        color? ? $$[ $$::(parse.highlight)($${mod}, $${i}, $${j}) $$]
-               : ty.String(parse.show(expr))
+    fn source-of(expr) {
+        parse.show(expr) ?? '?'
     }
 
-    let pretty-cond = pretty-expr(condition)
-
-    let (op, lhs, rhs) = match condition {
-        ty.Eq(a, b)      => (ty.Eq,      a, b),
-        ty.NotEq(a, b)   => (ty.NotEq,   a, b),
-        ty.LT(a, b)      => (ty.LT,      a, b),
-        ty.LEQ(a, b)     => (ty.LEQ,     a, b),
-        ty.GT(a, b)      => (ty.GT,      a, b),
-        ty.GEQ(a, b)     => (ty.GEQ,     a, b),
-        ty.In(a, b)      => (ty.In,      a, b),
-        ty.NotIn(a, b)   => (ty.NotIn,   a, b),
-        ty.Matches(a, b) => (ty.Matches, a, b),
-        _                => (nil, nil, nil)
+    fn literal?(expr) {
+        match expr {
+            ty.Int(_) or ty.Float(_) or ty.String(_) => true,
+            ty.Bool(_) or ty.Regex(_) or ty.Nil      => true,
+            ty.Array(xs) or ty.Record(xs)            => xs.all?(literal?),
+            ty.ArrayItem(x) or ty.RecordEntry(x)     => entry-literal?(x),
+            _                                        => false
+        }
     }
 
-    let msg = (message != nil) ? $$[" ({$$message})"$$] : ty.String('')
+    fn entry-literal?(entry) {
+        (entry.cond == nil) && !entry.optional && literal?(entry.item)
+    }
 
-    if op != nil {
-        let lhs-id = ty.gensym()
-        let rhs-id = ty.gensym()
+    fn simple?(expr) {
+        match expr {
+            ty.Id(_) => true,
+            _        => literal?(expr)
+        }
+    }
 
-        let lhs-var = ty.Id(name: lhs-id)
-        let rhs-var = ty.Id(name: rhs-id)
-        let cond    = op(lhs-var, rhs-var)
+    fn label(expr) {
+        literal?(expr) ? nil : source-of(expr)
+    }
 
-        let pp? = ty.IfDef(name: 'Printer', module: 'pretty')
-        let show = $$[ $$pp?.map(\__().print(_)).or-else($${::show}) $$]
+    let (op, name, lhs, rhs) = match condition {
+        ty.Eq(a, b)      => (ty.Eq,      '==',     a, b),
+        ty.NotEq(a, b)   => (ty.NotEq,   '!=',     a, b),
+        ty.LT(a, b)      => (ty.LT,      '<',      a, b),
+        ty.LEQ(a, b)     => (ty.LEQ,     '<=',     a, b),
+        ty.GT(a, b)      => (ty.GT,      '>',      a, b),
+        ty.GEQ(a, b)     => (ty.GEQ,     '>=',     a, b),
+        ty.In(a, b)      => (ty.In,      'in',     a, b),
+        ty.NotIn(a, b)   => (ty.NotIn,   'not in', a, b),
+        ty.Matches(a, b) => (ty.Matches, '::',     a, b),
+        _                => (nil,        nil,      nil, nil)
+    }
 
-        let chalk? = ty.IfDef(name: 'chalk', module: 'chalk')
+    let fail = $$[ $${__assertion-error} $$]
+    let note = (message != nil) ? $$[ "{$$message}" $$] : $$[ nil $$]
+    let site = {
+        src: source-of(condition),
+        op: name,
+        labels: match name {
+            nil  => [],
+            '::' => [label(lhs)],
+            _    => [label(lhs), label(rhs)]
+        }
+    }
 
-        let pretty-lhs = pretty-expr(lhs)
-        let pretty-rhs = pretty-expr(rhs)
+    let raise = (values, show) -> $$[
+        throw $$fail($${site}, __file__, __line__, $$values, $$note, $$show)
+    $$]
 
-        ty.Block([
-            ty.Let(lhs-var, lhs),
-            ty.Let(rhs-var, rhs),
+    if op == nil {
+        return $$[
+            if !$$condition {
+                $$(raise($$[ [] $$], $$[ $${::show} $$]))
+            }
+        $$]
+    }
+
+    let pp?  = ty.IfDef(name: 'Printer', module: 'pretty')
+    let show = $$[
+        $$pp?.map(P -> (v -> P(color: false).print(v))).or-else($${::show})
+    $$]
+
+    let narrow? = match (name, lhs, rhs) {
+        ('==', ty.Nil, _) or ('==', _, ty.Nil) => false,
+        ('::', _, _)                           => simple?(lhs),
+        _                                      => simple?(lhs) && simple?(rhs)
+    }
+
+    let pattern? = (name == '::')
+
+    if narrow? {
+        let values = pattern? ? $$[ [$$lhs] $$] : $$[ [$$lhs, $$rhs] $$]
+        return $$[
+            if !$$condition {
+                $$(raise(values, show))
+            }
+        $$]
+    }
+
+    let lv = ty.Id(name: ty.gensym())
+
+    if pattern? {
+        return ty.Block([
+            ty.Let(lv, lhs),
             $$[
-                if !$$cond {
-                    let what = match $$chalk? {
-                        Some(chalk) => do {
-                            chalk"[red b]failed assertion[/]: {$$pretty-cond}{$$msg}\n"
-                                 "    [%20]{$$pretty-lhs}[/]: {$$show($$lhs-var)}\n"
-                                 "    [%20]{$$pretty-rhs}[/]: {$$show($$rhs-var)}"
-                        },
-                        None => do {
-                            "failed assertion: {$$pretty-cond}{$$msg}\n"
-                            "    lhs: {$$show($$lhs-var)}\n"
-                            "    rhs: {$$show($$rhs-var)}"
-                        }
-                    }
-                    throw AssertionError("{what}")
+                if !$$(op(lv, rhs)) {
+                    $$(raise($$[ [$$lv] $$], show))
                 }
             $$]
         ])
-    } else $$[
-        if !$$condition {
-            throw AssertionError("failed assertion: {$$pretty-cond}{$$msg}")
-        }
-    $$]
+    }
+
+    let rv = ty.Id(name: ty.gensym())
+
+    ty.Block([
+        ty.Let(lv, lhs),
+        ty.Let(rv, rhs),
+        $$[
+            if !$$(op(lv, rv)) {
+                $$(raise($$[ [$$lv, $$rv] $$], show))
+            }
+        $$]
+    ])
 }
 
 macro unreachable! = throw AssertionError('unreachable')

@@ -364,6 +364,12 @@ compiler_symbol_count(Ty *ty);
 Symbol *
 compiler_lookup(Ty *ty, char const *module, char const *name);
 
+bool
+compiler_test_runner_failed(void);
+
+bool
+compiler_module_exists(Ty *ty, char const *name);
+
 int
 gettag(Ty *ty, char const *module, char const *name);
 

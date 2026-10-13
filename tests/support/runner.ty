@@ -1,0 +1,54 @@
+import ty.test (Test)
+import ty.test.events as events (Event)
+import process (run)
+
+pub FIX = 'tests/fixtures/runner'
+
+pub use Run = {status: Int, stdout: String, stderr: String, events: Array[Event]}
+
+let RUNS = [0]
+
+pub fn drive(t: Test, args: Array[String], vm: Array[String] = []) -> Run {
+    RUNS[0] += 1
+    let ev = str(t.tmp-dir() / "events-{RUNS[0]}.jsonl")
+    let r = run([*vm, '--test', *args, '--events', ev])
+    {status: r.status, stdout: r.stdout, stderr: r.stderr, events: events.read-file(ev)}
+}
+
+pub fn ends(r: Run) -> Array[Event] {
+    r.events.filter(\_['ev'] == 'test-end')
+}
+
+pub fn local(id: String) -> String {
+    id.split('::')[1;].join('::')
+}
+
+pub fn outcomes(r: Run) -> Dict[String, String] {
+    let out: Dict[String, String] = %{}
+    for ends(r) {
+        out[local(events.get-str(it, 'id') ?? '?')] = events.get-str(it, 'outcome') ?? '?'
+    }
+    out
+}
+
+pub fn end-of(r: Run, name: String) -> Event {
+    let hits = ends(r).filter(e -> local(events.get-str(e, 'id') ?? '') == name)
+    assert(#hits == 1, "no single test-end for {name}")
+    hits[0]
+}
+
+pub fn code-of(w: Event) -> String {
+    events.get-str(w, 'code') ?? '?'
+}
+
+pub fn warnings(r: Run) -> Array[String] {
+    let codes: Array[String] = []
+    for r.events {
+        match it['ev'] {
+            'warning' => codes.push(events.get-str(it, 'code') ?? '?'),
+            'collect' => codes.push(*events.get-events(it, 'warnings').map(code-of)),
+            _         => nil,
+        }
+    }
+    codes.sort()
+}

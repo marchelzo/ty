@@ -1,0 +1,110 @@
+import os
+import path (Path)
+
+pub class Recorder {
+    __process: os.ProcessDescriptor
+    __temporary: Path
+    __output: Path
+    __stopped: Bool
+
+    init(helper-source: String | Path, output: String | Path, cancelled: _ = () -> false) {
+        let source = Path(helper-source).resolve
+        __output = Path(output).absolute
+        __temporary = __output.parent / ".{__output.name}.termrec-{os.getpid()}.mp4"
+        __stopped = false
+
+        if __temporary.exists? { __temporary.unlink() }
+
+        let helper = cached-helper(source)
+        let shell-pid = os.getppid()
+        __process = os.spawn(
+            [str(helper), str(__temporary), str(shell-pid)],
+            stdout=os.SPAWN_PIPE,
+            detach=true
+        ) ?? throw RuntimeError('termrec: unable to start the capture helper')
+
+        for (;;) {
+            if cancelled() {
+                os.kill(__process.pid, os.SIGTERM)
+                wait-for(__process.pid)
+                os.close(__process.stdout)
+                cleanup()
+                throw RuntimeError('termrec: interrupted while starting capture')
+            }
+            let events: [(Int, Int, Bool)] = []
+            if os.poll([(__process.stdout, os.POLLIN, true)], events, 0.25) > 0 { break }
+        }
+
+        let response = os.read(__process.stdout, 6, all=true)
+        os.close(__process.stdout)
+        if response.str() != "READY\n" {
+            let status = wait-for(__process.pid)
+            cleanup()
+            throw RuntimeError("termrec: capture failed to start (status {exit-code(status)})")
+        }
+    }
+
+    stop!() -> Int {
+        if __stopped { return 0 }
+        __stopped = true
+
+        os.kill(__process.pid, os.SIGINT)
+        let status = wait-for(__process.pid)
+        if exit-code(status) != 0 {
+            cleanup()
+            return exit-code(status)
+        }
+
+        if os.rename(str(__temporary), str(__output)) != 0 {
+            cleanup()
+            throw os.OSError('termrec: rename()')
+        }
+        return 0
+    }
+
+    cleanup() {
+        if __temporary.exists? { __temporary.unlink() }
+    }
+}
+
+fn cached-helper(source: Path) -> Path {
+    let helper = Path('/tmp') / "ty-termrec-helper-{os.getuid()}"
+    let fresh = helper.exists? && helper.stat.mtime >= source.stat.mtime
+    if fresh { return helper }
+
+    let candidate = Path("{helper}.{os.getpid()}")
+    if candidate.exists? { candidate.unlink() }
+
+    let compiler = os.spawn([
+        '/usr/bin/xcrun', 'swiftc', '-parse-as-library', '-O',
+        '-module-cache-path', "/tmp/ty-termrec-module-cache-{os.getuid()}",
+        '-framework', 'AppKit',
+        '-framework', 'AVFoundation',
+        '-framework', 'ScreenCaptureKit',
+        str(source), '-o', str(candidate)
+    ]) ?? throw RuntimeError('termrec: unable to start swiftc')
+
+    let status = wait-for(compiler.pid)
+    if exit-code(status) != 0 {
+        if candidate.exists? { candidate.unlink() }
+        throw RuntimeError("termrec: failed to build capture helper (status {exit-code(status)})")
+    }
+
+    if os.rename(str(candidate), str(helper)) != 0 {
+        if candidate.exists? { candidate.unlink() }
+        throw os.OSError('termrec: rename()')
+    }
+    helper
+}
+
+fn wait-for(pid: Int) -> Int {
+    for (;;) {
+        if let (waited, status) = os.wait(pid) {
+            if waited == pid { return status }
+        }
+    }
+}
+
+fn exit-code(status: Int) -> Int {
+    os.WIFEXITED(status) ? os.WEXITSTATUS(status) : 128 + os.WTERMSIG(status)
+}

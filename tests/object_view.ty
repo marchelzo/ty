@@ -1,0 +1,77 @@
+class Small {
+    a: Int
+
+    init(a: Int) { self.a = a }
+}
+
+class Big {
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+
+    init() {
+        a = 0
+        b = 0
+        c = 0
+        d = 0
+    }
+}
+
+class Twin {
+    a: Int
+
+    init(a: Int) { self.a = a }
+
+    twice() -> Int { a * 2 }
+}
+
+class Base {
+    __secret: Int
+
+    init() { __secret = 42 }
+
+    secret() -> Int { __secret }
+}
+
+class Derived < Base {
+    name: String
+
+    init() {
+        super()
+        name = 'derived'
+    }
+}
+
+fn raises?(f: () -> Any) -> Bool {
+    try {
+        f()
+    } catch _: RuntimeError {
+        return true
+    }
+    false
+}
+
+ns test
+
+pub fn object-accepts-class-literals() {
+    let fresh: Small = object(Small)
+    assert(fresh.a == nil)
+    let same: Small = object(Small, Small(5))
+    assert(same.a == 5)
+}
+
+pub fn compatible-view-shares-storage() {
+    let s = Small(3)
+    let t: Twin = object(Twin, s)
+    assert(t.twice() == 6)
+    t.a = 10
+    assert(s.a == 10)
+}
+
+pub fn incompatible-view-is-rejected() {
+    let smalls = [Small(i) for i in ..32]
+    assert(raises?(() -> object(Big, smalls[10])))
+    assert(raises?(() -> object(Base, Derived())))
+    assert([it.a for smalls[;16]] == [*..16])
+}

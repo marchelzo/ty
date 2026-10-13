@@ -1,0 +1,3 @@
+import ty.test.config (configure)
+
+configure(opt-in: 'full', timeout: 30.0)

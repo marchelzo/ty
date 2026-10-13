@@ -1,0 +1,54 @@
+F...xC..TC.
+
+FAIL tests/beta.ty::fails-here (9.00ms)
+  tests/beta.ty:12: assertion failed
+    assert(out == 'x')
+      out: 'y'
+  trace:
+    at tests/beta.ty:12:9 in fails-here
+  captured output (1 line):
+    spawning sh
+
+CRASH tests/beta.ty::segv (400.00ms)
+  tests/beta.ty:20: crash (SIGSEGV)
+  captured output (1 line):
+    before crash
+  worker stderr:
+    Segmentation fault: 11
+
+TIMEOUT tests/gamma.ty::hangs (3.00s)
+  tests/gamma.ty:4: timeout (hard kill)
+    exceeded 1.0s + 2.0s grace
+  captured output (1 line):
+    waiting on socket
+
+EXIT tests/gamma.ty::quits (10.00ms)
+  tests/gamma.ty:9: exit (3)
+  captured output (1 line):
+    bye
+
+ERROR tests/delta.ty
+  tests/delta.ty: error: load timeout
+  worker stdout:
+    loading fixtures...
+
+ERROR tests/on_exit.ty
+  tests/on_exit.ty: error: process exited 1 after reporting 0 (onExit handler?)
+  worker stderr:
+    onExit: cleanup failed
+
+warnings (1):
+  tests/empty.ty: empty-file: no tests found; 1 function in `ns test` is not `pub` and never runs (missing `pub`?): helper
+────────────────────────────────────────────────────────────────────────────────
+ 6 passed  1 failed  1 timed out  1 crashed  1 exited  1 xfail
+ 8 files (4 failed, 2 skipped, 1 empty)   3.95s wall  1.83s user  0.19s sys
+ seed 48213   warnings: 1
+ slowest: tests/gamma.ty::hangs 3.00s, tests/beta.ty::segv 400.00ms,
+          tests/alpha.ty::a3 300.00ms, tests/alpha.ty::a2 20.00ms,
+          tests/alpha.ty::a1 10.00ms
+ rerun: ty --test tests/beta.ty::fails-here
+ rerun: ty --test tests/beta.ty::segv
+ rerun: ty --test tests/gamma.ty::hangs
+ rerun: ty --test tests/gamma.ty::quits
+ rerun: ty --test tests/delta.ty
+ rerun: ty --test tests/on_exit.ty

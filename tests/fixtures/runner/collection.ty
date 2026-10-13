@@ -1,0 +1,37 @@
+import ty.test (tags)
+
+fn forty-two[F](f: F) -> Any {
+    42
+}
+
+@tags('orphan')
+fn not-a-test() {
+}
+
+ns a {
+    ns test {
+        pub fn same() {
+        }
+    }
+}
+
+ns test {
+    ns a {
+        pub fn same() {
+        }
+    }
+
+    @forty-two
+    pub fn decorated() {
+    }
+
+    pub fn gen*() {
+        yield 1
+    }
+
+    pub fn needs-arg(a) {
+    }
+
+    pub fn takes-t-and-default(t, n = 1) {
+    }
+}

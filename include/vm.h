@@ -118,7 +118,13 @@ bool
 vm_execute_file(Ty *ty, char const *path);
 
 int
-RunTests(Ty *ty);
+RunTestsNative(Ty *ty);
+
+int
+RunTestHarness(Ty *ty, char **args, int n);
+
+void
+TestAllowModule(char const *name);
 
 void
 vm_push(Ty *ty, Value const *v);

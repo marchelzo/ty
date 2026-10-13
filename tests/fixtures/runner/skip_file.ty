@@ -1,0 +1,9 @@
+import ty.test (skip-file)
+
+skip-file('not on this machine')
+
+ns test {
+    pub fn never-runs() {
+        assert(false)
+    }
+}

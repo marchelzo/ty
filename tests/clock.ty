@@ -1,0 +1,105 @@
+import os
+import path
+import time
+
+fn seconds(clock: time.ClockID) -> Float {
+    let t = time.gettime(clock)
+    t.sec + t.nsec / 1.0e9
+}
+
+fn burn(cpu: Float) {
+    let start = seconds(time.CLOCK_THREAD_CPUTIME_ID)
+    let acc = 0
+
+    while seconds(time.CLOCK_THREAD_CPUTIME_ID) - start < cpu {
+        for ..1000 {
+            acc += it
+        }
+    }
+}
+
+fn sub-microsecond?(nsecs: Array[Int]) -> Bool {
+    nsecs.any?(\_ % 1000 != 0)
+}
+
+ns test
+
+pub fn monotonic-is-not-the-wall-clock() {
+    let mono = time.gettime(time.CLOCK_MONOTONIC)
+    let real = time.gettime(time.CLOCK_REALTIME)
+
+    assert(mono.sec < 1_000_000_000, "monotonic clock reads {mono}")
+    assert(real.sec > 1_000_000_000, "realtime clock reads {real}")
+}
+
+pub fn now-defaults-to-monotonic() {
+    let drift = time.now() - seconds(time.CLOCK_MONOTONIC)
+    assert(drift.abs < 1.0, "time.now() is {drift}s off CLOCK_MONOTONIC")
+}
+
+pub fn monotonic-never-goes-backwards() {
+    let prev = time.now()
+
+    for ..1000 {
+        let now = time.now()
+        assert(now >= prev, "time.now() went from {prev} back to {now}")
+        prev = now
+    }
+}
+
+pub fn cpu-clocks-ignore-sleep() {
+    let cpu0  = seconds(time.CLOCK_THREAD_CPUTIME_ID)
+    let wall0 = seconds(time.CLOCK_MONOTONIC)
+
+    os.sleep(0.2)
+
+    let cpu  = seconds(time.CLOCK_THREAD_CPUTIME_ID) - cpu0
+    let wall = seconds(time.CLOCK_MONOTONIC) - wall0
+
+    assert(wall >= 0.19, "slept 0.2s but wall time advanced {wall}s")
+    assert(cpu < 0.1, "slept 0.2s but thread CPU time advanced {cpu}s")
+}
+
+pub fn thread-cpu-time-is-bounded-by-wall-time() {
+    let cpu0  = seconds(time.CLOCK_THREAD_CPUTIME_ID)
+    let wall0 = seconds(time.CLOCK_MONOTONIC)
+
+    burn(0.03)
+
+    let cpu  = seconds(time.CLOCK_THREAD_CPUTIME_ID) - cpu0
+    let wall = seconds(time.CLOCK_MONOTONIC) - wall0
+
+    assert(cpu >= 0.03, "burned CPU but thread CPU time advanced {cpu}s")
+    assert(cpu <= wall + 0.001, "thread CPU {cpu}s exceeds wall {wall}s")
+}
+
+pub fn process-cpu-time-is-sane() {
+    let thread  = seconds(time.CLOCK_THREAD_CPUTIME_ID)
+    let process = seconds(time.CLOCK_PROCESS_CPUTIME_ID)
+    let uptime  = seconds(time.CLOCK_MONOTONIC)
+
+    assert(process < 3600.0, "process CPU time is {process}s")
+    assert(process <= uptime, "process CPU {process}s > uptime {uptime}s")
+    assert(process + 0.001 >= thread, "process {process}s < thread {thread}s")
+}
+
+pub fn thread-cpu-clock-has-nanosecond-resolution() {
+    let nsecs = [time.gettime(time.CLOCK_THREAD_CPUTIME_ID).nsec for ..20]
+    assert(sub-microsecond?(nsecs), "whole microseconds only: {nsecs}")
+}
+
+pub fn touch-stamps-wall-clock-time() {
+    with tmp = path.tempdir() {
+        let file = tmp / 'touched'
+        file.touch()
+        let skew = file.stat.mtime - time.now(time.CLOCK_REALTIME)
+        assert(skew.abs < 60.0, "touch() set mtime {skew}s off the wall clock")
+    }
+}
+
+#|if __linux__
+pub fn monotonic-clock-has-nanosecond-resolution() {
+    let nsecs = [time.gettime(time.CLOCK_MONOTONIC).nsec for ..20]
+    assert(sub-microsecond?(nsecs), "whole microseconds only: {nsecs}")
+}
+#|]

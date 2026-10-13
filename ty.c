@@ -9,6 +9,7 @@
 #include "include/parse.h"
 #include "polyfill_unistd.h"
 #include <fcntl.h>
+#include <sys/stat.h>
 
 #include "vm.h"
 #include "gc.h"
@@ -45,6 +46,16 @@ static char const *print_function = "print";
 static bool help_imported = false;
 
 static char const *SourceFile;
+
+static int    TestArgIndex = -1;
+static bool   TestSuite;
+static bool   SawEvalOption;
+static char **TestRunnerArgs;
+static int    TestRunnerArgc;
+static char **TestProgramArgs;
+static int    TestProgramArgc;
+
+static char const TestSuiteSource[] = "import os\nimport ty.test.cli as cli\nos.exit(cli.main(argv[1;]))\n";
 
 static bool KindOfEnableLogging = false;
 int EnableLogging = 0;
@@ -111,9 +122,8 @@ usage(void)
                 "    -q            Ignore constraints on function parameters and return values            \0"
                 "    -S FILE       Write the program's annotated disassembly to FILE                      \0"
                 "                    (- is interpreted as stdout, and @ is interpreted as stderr)         \0"
-                "    --test        Any top-level functions decorated with @test will be executed after    \0"
-                "                  initialization. If all tests pass, ty will exit normally; otherwise, it\0"
-                "                  will exit with a non-zero status code                                  \0"
+                "    --test [FILE | TARGET...] [OPTS]   Run tests: pub functions inside `ns test`.        \0"
+                "                                       `ty --test --help` lists runner options.          \0"
 #ifdef TY_PROFILER
                 "    -F FREQ       Set profiler sampling frequency in Hz (default: every instruction)     \0"
                 "    -o FILE       Write profile data to FILE instead of stdout                           \0"
@@ -477,7 +487,10 @@ ProcessArgs(char *argv[], bool first)
 
                 if (s_eq(argv[argi], "--test")) {
                         RunningTests = true;
-                        goto NextOption;
+                        if (first) {
+                                TestArgIndex = argi;
+                        }
+                        break;
                 }
 
                 if (s_eq(argv[argi], "--highlight") || s_eq_n(argv[argi], "--highlight=", 12)) {
@@ -544,6 +557,7 @@ ProcessArgs(char *argv[], bool first)
                                         break;
 
                                 case 'e':
+                                        SawEvalOption = true;
                                         ForgiveDuplicateImports = true;
                                         if (!first && !basic) pollute_with_bloat();
                                         if (opt[1] == '\0') {
@@ -583,6 +597,10 @@ ProcessArgs(char *argv[], bool first)
                                         }
 
                                         ty_snprintf(buffer, sizeof buffer, fmt, module);
+
+                                        if (!first && *opt != 'f' && RunningTests) {
+                                                TestAllowModule(module);
+                                        }
 
                                         if (!first && !execln(ty, buffer)) {
                                                 exit(1);
@@ -662,7 +680,7 @@ NextOption:
                 argi += 1;
         }
 
-        if (first) {
+        if (first && !RunningTests) {
                 SourceFile = argv[argi];
                 if (SourceFile == NULL || s_eq(SourceFile, "-"))  {
                         SourceFile = "/dev/stdin";
@@ -670,6 +688,218 @@ NextOption:
         }
 
         return argi;
+}
+
+static bool
+IsRegularFile(char const *path)
+{
+        struct stat st;
+        return (stat(path, &st) == 0) && S_ISREG(st.st_mode);
+}
+
+static bool
+IsLegacyTestFlag(char const *arg)
+{
+        if (arg[0] != '-' || arg[1] == '\0') {
+                return false;
+        }
+
+        for (char const *p = arg + 1; *p != '\0'; ++p) {
+                if (*p != 'j' && *p != 'q') {
+                        return false;
+                }
+        }
+
+        return true;
+}
+
+static char *
+CloneSlice(char const *s, usize n)
+{
+        char *clone = xmA(n + 1);
+
+        memcpy(clone, s, n);
+        clone[n] = '\0';
+
+        return clone;
+}
+
+static bool
+SplitTestTarget(char const *arg, char **file, char **id, char **line)
+{
+        char const *sep;
+
+        *id   = NULL;
+        *line = NULL;
+
+        if (IsRegularFile(arg)) {
+                *file = (char *)arg;
+                return true;
+        }
+
+        if ((sep = strstr(arg, "::")) != NULL) {
+                *file = CloneSlice(arg, sep - arg);
+                if (IsRegularFile(*file)) {
+                        *id = (char *)(sep + 2);
+                        return true;
+                }
+        }
+
+        if (
+                ((sep = strrchr(arg, ':')) != NULL)
+             && (sep[1] != '\0')
+             && (strspn(sep + 1, "0123456789") == strlen(sep + 1))
+        ) {
+                *file = CloneSlice(arg, sep - arg);
+                if (IsRegularFile(*file)) {
+                        *line = (char *)(sep + 1);
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static void
+ClassifyTestArgs(int argc, char **argv)
+{
+        int k = TestArgIndex + 1;
+        char *file;
+        char *id;
+        char *line;
+
+        while (argv[k] != NULL && IsLegacyTestFlag(argv[k])) {
+                for (char const *p = argv[k] + 1; *p != '\0'; ++p) {
+                        if (*p == 'j') {
+                                NoJIT = true;
+                        } else {
+                                CheckTypes = false;
+                                DetailedExceptions = false;
+                        }
+                }
+                k += 1;
+        }
+
+        if (
+                SawEvalOption
+             || ((argv[k] != NULL) && s_eq_n(argv[k], "-e", 2))
+        ) {
+                fprintf(stderr, "ty: --test needs a file or directory, not -e\n");
+                exit(2);
+        }
+
+        if (
+                (argv[k] != NULL)
+             && (argv[k][0] != '-')
+             && ((argv[k + 1] == NULL) || (argv[k + 1][0] == '-'))
+             && SplitTestTarget(argv[k], &file, &id, &line)
+        ) {
+                int end = k + 1;
+
+                while (argv[end] != NULL && !s_eq(argv[end], "--")) {
+                        end += 1;
+                }
+
+                TestRunnerArgs = xmA((end - k + 4) * sizeof (char *));
+                TestRunnerArgc = 0;
+
+                for (int i = k + 1; i < end; ++i) {
+                        TestRunnerArgs[TestRunnerArgc++] = argv[i];
+                }
+
+                if (id != NULL) {
+                        TestRunnerArgs[TestRunnerArgc++] = "--id";
+                        TestRunnerArgs[TestRunnerArgc++] = id;
+                }
+
+                if (line != NULL) {
+                        TestRunnerArgs[TestRunnerArgc++] = "--line";
+                        TestRunnerArgs[TestRunnerArgc++] = line;
+                }
+
+                TestRunnerArgs[TestRunnerArgc] = NULL;
+
+                int rest = (argv[end] == NULL) ? end : end + 1;
+
+                TestProgramArgs = xmA((argc - rest + 2) * sizeof (char *));
+                TestProgramArgc = 0;
+                TestProgramArgs[TestProgramArgc++] = file;
+
+                for (int i = rest; i < argc; ++i) {
+                        TestProgramArgs[TestProgramArgc++] = argv[i];
+                }
+
+                TestProgramArgs[TestProgramArgc] = NULL;
+
+                SourceFile = file;
+                TestSuite  = false;
+
+                return;
+        }
+
+        if (CompileOnly) {
+                fprintf(stderr, "ty: -c --test needs a single test file\n");
+                exit(2);
+        }
+
+        TestProgramArgs = xmA((argc - k + 2) * sizeof (char *));
+        TestProgramArgc = 0;
+        TestProgramArgs[TestProgramArgc++] = argv[TestArgIndex];
+
+        for (int i = k; i < argc; ++i) {
+                TestProgramArgs[TestProgramArgc++] = argv[i];
+        }
+
+        TestProgramArgs[TestProgramArgc] = NULL;
+
+        SourceFile = "(ty --test)";
+        TestSuite  = true;
+}
+
+static noreturn void
+RunTestMode(void)
+{
+        if (TestSuite) {
+                if (!compiler_module_exists(ty, "ty/test/cli")) {
+                        fprintf(stderr, "ty --test: suite runner unavailable\n");
+                        exit(70);
+                }
+
+                if (!vm_execute(ty, TestSuiteSource, SourceFile)) {
+                        DyingOfError = true;
+                        fprintf(stderr, "%s\n", TyError(ty));
+                        exit(70);
+                }
+
+                exit(0);
+        }
+
+        char *source = slurp(SourceFile, NULL);
+        if (source == NULL) {
+                fprintf(stderr, "ty: %s: %s\n", SourceFile, strerror(errno));
+                exit(1);
+        }
+
+        DebugWaitForClient(ty);
+
+        if (!vm_execute(ty, source, SourceFile)) {
+                DyingOfError = true;
+                fprintf(stderr, "%s\n", TyError(ty));
+                exit(67);
+        }
+
+        if (CompileOnly) {
+                char **args = xmA((TestRunnerArgc + 3) * sizeof (char *));
+                args[0] = "--list";
+                args[1] = "--static";
+                for (int i = 0; i < TestRunnerArgc; ++i) {
+                        args[i + 2] = TestRunnerArgs[i];
+                }
+                args[TestRunnerArgc + 2] = NULL;
+                exit(RunTestHarness(ty, args, TestRunnerArgc + 2));
+        }
+
+        exit(RunTestHarness(ty, TestRunnerArgs, TestRunnerArgc));
 }
 
 int
@@ -685,6 +915,10 @@ main(int argc, char **argv)
 #endif
 
         int nopt = (argc == 0) ? 0 : ProcessArgs(argv, true);
+
+        if (RunningTests) {
+                ClassifyTestArgs(argc, argv);
+        }
 
         switch (ColorMode) {
         case TY_COLOR_AUTO:   ColorStdout = isatty(1); ColorStderr = isatty(2); break;
@@ -708,13 +942,20 @@ main(int argc, char **argv)
         ColorOutput = ColorStderr;
 #endif
 
-        if (!vm_init(ty, argc - nopt, argv + nopt)) {
+        bool ok = RunningTests ? vm_init(ty, TestProgramArgc, TestProgramArgs)
+                               : vm_init(ty, argc - nopt, argv + nopt);
+
+        if (!ok) {
                 DyingOfError = true;
                 fprintf(stderr, "%s\n", TyError(ty));
                 return -1;
         }
 
         argv += ProcessArgs(argv, false);
+
+        if (RunningTests) {
+                RunTestMode();
+        }
 
         if (argv[0] == NULL && stdin_is_tty()) {
                 repl(ty);
@@ -757,10 +998,6 @@ main(int argc, char **argv)
                 DyingOfError = true;
                 fprintf(stderr, "%s\n", TyError(ty));
                 exit(67);
-        }
-
-        if (UNLIKELY(RunningTests)) {
-                exit(RunTests(ty));
         }
 
         return 0;

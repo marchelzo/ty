@@ -1,0 +1,38 @@
+ns test {
+    pub fn arithmetic() {
+        assert(1 + 2 * 3 == 7)
+        assert(7 / 2 == 3)
+    }
+
+    pub fn strings() {
+        let s = 'hello'
+        assert("{s}, world" == 'hello, world')
+        assert(#s == 5)
+    }
+
+    pub fn collections() {
+        let xs = [3, 1, 2]
+        assert(xs.sort() == [1, 2, 3])
+        let d = %{'a': 1}
+        assert(d['a'] == 1)
+    }
+
+    pub fn closures-and-exceptions() {
+        let add = (a, b) -> a + b
+        assert(add(2, 3) == 5)
+        let caught = try {
+            throw 'boom'
+        } catch e {
+            e
+        }
+        assert(caught == 'boom')
+    }
+
+    pub fn pattern-matching() {
+        let r = match [1, 2] {
+            [a, b] => a + b,
+            _      => 0,
+        }
+        assert(r == 3)
+    }
+}

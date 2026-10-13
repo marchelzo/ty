@@ -1,0 +1,773 @@
+import json
+import os
+import ty
+pub import ty.test.events as events (
+    Event,
+    Reporter,
+    FAILING,
+    get-str,
+    get-int,
+    get-float,
+    get-bool,
+    get-event,
+    get-events
+)
+import ty.test.render as render
+
+pub use Writer = String -> Any
+
+pub fn stdout-writer() -> Writer {
+    s -> print(s, end: '', flush: true)
+}
+
+pub fn fd-writer(fd: Int) -> Writer {
+    s -> os.write(fd, s, all: true)
+}
+
+pub fn default-color?() -> Bool {
+    match (getenv('NO_COLOR'), ty.color) {
+        ($nc, _) and nc != '' => false,
+        (_, 'always')         => true,
+        (_, 'never')          => false,
+        _                     => os.isatty(1),
+    }
+}
+
+pub fn default-width(tty?: Bool) -> Int {
+    let cols = tty? ? (os.terminal-size(1).?cols ?? 80) : 80
+    cols.clamp(60, 120)
+}
+
+fn bump(counts: Dict[String, Int], key: String) {
+    counts[key] = (counts[key] ?? 0) + 1
+}
+
+pub class FileRow {
+    path:     String
+    counts:   Dict[String, Int]
+    tests:    Int
+    dur:      ?Float
+    skip:     ?String
+    error:    ?String
+    stdout:   String
+    stderr:   String
+    rc:       ?Int
+    respawns: Int
+    done?:    Bool
+    printed?: Bool
+
+    init(path: String) {
+        self.path     = path
+        self.counts   = %{}
+        self.tests    = 0
+        self.dur      = nil
+        self.skip     = nil
+        self.error    = nil
+        self.stdout   = ''
+        self.stderr   = ''
+        self.rc       = nil
+        self.respawns = 0
+        self.done?    = false
+        self.printed? = false
+    }
+
+    total -> Int {
+        self.counts.values().sum() ?? 0
+    }
+
+    failed? -> Bool {
+        self.error != nil || FAILING.any?(o -> (self.counts[o] ?? 0) > 0)
+    }
+
+    empty? -> Bool {
+        self.skip == nil && self.error == nil && self.total == 0
+    }
+}
+
+pub class Tally {
+    mode:     ?String
+    start:    ?Event
+    end:      ?Event
+    first-t:  ?Float
+    last-t:   ?Float
+    infos:    Dict[String, Event]
+    results:  Array[Event]
+    counts:   Dict[String, Int]
+    rows:     Array[FileRow]
+    warnings: Array[Event]
+    user:     Float
+    sys:      Float
+    rusage?:  Bool
+    __index:  Dict[String, FileRow]
+    __seen:   Dict[String, Bool]
+
+    init(mode: ?String = nil) {
+        self.mode     = mode
+        self.start    = nil
+        self.end      = nil
+        self.first-t  = nil
+        self.last-t   = nil
+        self.infos    = %{}
+        self.results  = []
+        self.counts   = %{}
+        self.rows     = []
+        self.warnings = []
+        self.user     = 0.0
+        self.sys      = 0.0
+        self.rusage?  = false
+        __index       = %{}
+        __seen        = %{}
+    }
+
+    row(path: String) -> FileRow {
+        if let $r = __index[path] {
+            return r
+        }
+        let r = FileRow(path)
+        __index[path] = r
+        self.rows.push(r)
+        r
+    }
+
+    info(id: String) -> ?Event {
+        self.infos[id]
+    }
+
+    file-of(id: String) -> String {
+        get-str(info(id), 'file') ?? render.file-of(id)
+    }
+
+    line-of(id: String) -> ?Int {
+        get-int(info(id), 'line')
+    }
+
+    strict?(id: String) -> Bool {
+        render.strict-xfail?((info(id) ?? %{})['xfail'])
+    }
+
+    id-of(ev: Event) -> String {
+        get-str(ev, 'id') ?? ''
+    }
+
+    failing?(ev: Event) -> Bool {
+        render.failing?(ev, strict?: strict?(id-of(ev)))
+    }
+
+    add-warning(w: Event) {
+        let key = "{w['code']}|{w['file']}|{w['id']}|{w['line']}|{w['message']}"
+        if __seen[key] == nil {
+            __seen[key] = true
+            self.warnings.push(w)
+        }
+    }
+
+    on(ev: Event) {
+        if let $t = get-float(ev, 't') {
+            self.first-t = self.first-t ?? t
+            self.last-t  = t
+        }
+        match get-str(ev, 'ev') {
+            'run-start'  => on-run-start(ev),
+            'file-start' => on-file-start(ev),
+            'file-skip'  => on-file-skip(ev),
+            'collect'    => on-collect(ev),
+            'test-end'   => on-test-end(ev),
+            'warning'    => add-warning(ev),
+            'file-end'   => on-file-end(ev),
+            'file-done'  => on-file-done(ev),
+            'run-end'    => on-run-end(ev),
+            _            => nil,
+        }
+    }
+
+    on-run-start(ev: Event) {
+        self.start = ev
+        self.mode  = self.mode ?? get-str(ev, 'mode')
+    }
+
+    on-run-end(ev: Event) {
+        self.end = ev
+    }
+
+    on-file-start(ev: Event) {
+        self.mode = self.mode ?? 'suite'
+        let r = row(get-str(ev, 'file') ?? '?')
+        if (get-int(ev, 'attempt') ?? 1) > 1 {
+            r.respawns += 1
+        }
+    }
+
+    on-file-skip(ev: Event) {
+        let r = row(get-str(ev, 'path') ?? '?')
+        r.skip  = get-str(ev, 'reason') ?? 'skipped'
+        r.done? = true
+    }
+
+    on-collect(ev: Event) {
+        self.mode = self.mode ?? 'file'
+        let file = get-str(ev, 'file') ?? '?'
+        let r = row(file)
+        let tests = get-events(ev, 'tests')
+        r.tests = #tests
+        for tests {
+            let entry: Event = %{}
+            for k, v in it {
+                entry[k] = v
+            }
+            entry['file'] = file
+            self.infos[id-of(it)] = entry
+        }
+        if let $why = get-str(ev, 'file_skip') {
+            r.skip = why
+        }
+        for get-events(ev, 'warnings') {
+            add-warning(events.warning(
+                get-str(it, 'code') ?? 'warning',
+                get-str(it, 'message') ?? '',
+                file: file,
+                line: get-int(it, 'line')
+            ))
+        }
+    }
+
+    on-test-end(ev: Event) {
+        self.mode = self.mode ?? 'file'
+        let outcome = render.outcome-of(ev)
+        self.results.push(ev)
+        bump(self.counts, outcome)
+        bump(row(file-of(id-of(ev))).counts, outcome)
+    }
+
+    on-file-end(ev: Event) {
+        row(get-str(ev, 'file') ?? '?').rc = get-int(ev, 'rc')
+    }
+
+    on-file-done(ev: Event) {
+        let r = row(get-str(ev, 'file') ?? '?')
+        r.done?  = true
+        r.dur    = get-float(ev, 'dur')
+        r.stdout = get-str(ev, 'stdout_tail') ?? ''
+        r.stderr = get-str(ev, 'stderr_tail') ?? ''
+        if let $ru = get-event(ev, 'rusage') {
+            self.user    += get-float(ru, 'utime') ?? 0.0
+            self.sys     += get-float(ru, 'stime') ?? 0.0
+            self.rusage?  = true
+        }
+        let st = get-event(ev, 'status') ?? %{}
+        let quiet? = r.rc == nil && r.total == 0 && r.tests == 0
+        if quiet? && get-str(st, 'kind') == 'exit' && get-int(st, 'code') == 77 {
+            r.skip = r.skip ?? 'exit status 77 (requirements not met)'
+        }
+        if r.skip == nil {
+            r.error = file-error(r, st)
+        }
+    }
+
+    file-error(r: FileRow, st: Event) -> ?String {
+        let phase  = get-str(st, 'phase')
+        let code   = get-int(st, 'code')
+        let quiet? = r.rc == nil && r.total == 0
+        let sig    = render.signal-name(st['signal'])
+        match get-str(st, 'kind') {
+            'exit' and r.rc != nil && code != r.rc => do {
+                "process exited {code} after reporting {r.rc} (onExit handler?)"
+            },
+            'exit' and quiet? && code != 0 => "exited {code} before reporting results",
+            'timeout' and phase in ['load', 'teardown'] => "{phase} timeout",
+            'signal' and quiet? => "killed by {sig} during {phase ?? 'load'}",
+            'killed' => 'stopped before finishing (run interrupted)',
+            _ => nil,
+        }
+    }
+
+    file-mode? -> Bool {
+        self.mode == 'file'
+    }
+
+    compare-results(a: Event, b: Event) -> Int {
+        let ia = id-of(a)
+        let ib = id-of(b)
+        (file-of(ia) <=> file-of(ib))
+     || ((line-of(ia) ?? 0) <=> (line-of(ib) ?? 0))
+     || (ia <=> ib)
+    }
+
+    failures() -> Array[Event] {
+        let fs = self.results.filter(ev -> failing?(ev))
+        fs.sort!(cmp: (a, b) -> compare-results(a, b))
+        fs
+    }
+
+    file-errors() -> Array[FileRow] {
+        self.rows.filter(r -> r.error != nil)
+    }
+
+    compare-warnings(a: Event, b: Event) -> Int {
+        ((get-str(a, 'file') ?? '') <=> (get-str(b, 'file') ?? ''))
+     || ((get-int(a, 'line') ?? 0) <=> (get-int(b, 'line') ?? 0))
+     || ((get-str(a, 'id') ?? '') <=> (get-str(b, 'id') ?? ''))
+     || ((get-str(a, 'code') ?? '') <=> (get-str(b, 'code') ?? ''))
+    }
+
+    sorted-warnings() -> Array[Event] {
+        let ws = self.warnings.clone()
+        ws.sort!(cmp: (a, b) -> compare-warnings(a, b))
+        ws
+    }
+
+    slowest(n: Int = 5) -> Array[(String, Float)] {
+        let ran: Array[(String, Float)] = []
+        for self.results {
+            let $dur = get-float(it, 'dur') or continue
+            if render.outcome-of(it) not in ['skip', 'todo'] {
+                ran.push((id-of(it), dur))
+            }
+        }
+        ran.sort!(cmp: (a, b) -> (b.1 <=> a.1) || (a.0 <=> b.0))
+        ran[;n]
+    }
+
+    file-counts() -> Dict[String, Int] {
+        return %{
+            'total':   #self.rows,
+            'failed':  #self.rows.filter(r -> r.failed?),
+            'skipped': #self.rows.filter(r -> r.skip != nil),
+            'empty':   #self.rows.filter(r -> r.empty?),
+        }
+    }
+
+    wall -> ?Float {
+        if let $d = get-float(self.end, 'dur') {
+            return d
+        }
+        let $a = self.first-t or return nil
+        let $b = self.last-t or return nil
+        b - a
+    }
+
+    cpu -> (Float | nil, Float | nil) {
+        if let $c = get-event(self.end, 'cpu') {
+            return (get-float(c, 'user'), get-float(c, 'sys'))
+        }
+        self.rusage? ? (self.user, self.sys) : (nil, nil)
+    }
+
+    rerun-ids() -> Array[String] {
+        [*failures().map(ev -> id-of(ev)), *file-errors().map(&.path)]
+    }
+
+    summary(color?: Bool, width: Int) -> String {
+        let (user, sys) = self.cpu
+        render.summary(
+            self.counts,
+            files: file-mode? ? nil : file-counts(),
+            wall: self.wall,
+            user: user,
+            sys: sys,
+            seed: get-int(self.start, 'seed'),
+            warnings: #self.warnings,
+            slowest: slowest(),
+            rerun: rerun-ids(),
+            interrupted?: get-bool(self.end, 'interrupted'),
+            color?: color?,
+            width: width
+        )
+    }
+}
+
+pub fn render-file-error(
+    r: FileRow,
+    color?: Bool = false,
+    max-lines: Int = 40
+) -> String {
+    let clean: String -> String = color? ? (s -> s) : render.strip
+    let head = [render.paint('ERROR', 'error', color?), render.paint(r.path, 'bold', color?)]
+    let out = [head.join(' '), "  {r.path}: error: {r.error}"]
+    let tails = [('worker stdout:', r.stdout), ('worker stderr:', r.stderr)]
+    for (title, text) in tails {
+        let body = render.clip(clean(text), max-lines)
+        if #body > 0 {
+            out.push(render.paint("  {title}", 'dim', color?))
+        }
+        for line in body {
+            out.push("    {line}")
+        }
+    }
+    out.join("\n")
+}
+
+fn warning-site(w: Event) -> String {
+    let file = get-str(w, 'file')
+    let line = get-int(w, 'line')
+    match (get-str(w, 'id'), file, line) {
+        ($id, _, _)   => id,
+        (_, $f, $l)   => "{f}:{l}",
+        (_, $f, _)    => f,
+        _             => '(run)',
+    }
+}
+
+pub fn render-warnings(ws: Array[Event]) -> String {
+    let out = ["warnings ({#ws}):"]
+    for ws {
+        let code = get-str(it, 'code') ?? 'warning'
+        out.push("  {warning-site(it)}: {code}: {get-str(it, 'message')}")
+    }
+    out.join("\n")
+}
+
+pub fn render-tail(tally: Tally, color?: Bool = false, width: Int = 80) -> String {
+    let blocks: Array[String] = []
+    for tally.failures() {
+        let id = tally.id-of(it)
+        blocks.push(render.failure(
+            it,
+            color?: color?,
+            file: tally.file-of(id),
+            line: tally.line-of(id),
+            strict?: tally.strict?(id)
+        ))
+    }
+    for tally.file-errors() {
+        blocks.push(render-file-error(it, color?: color?))
+    }
+    if #tally.warnings > 0 {
+        blocks.push(render-warnings(tally.sorted-warnings()))
+    }
+    let summary = tally.summary(color?, width)
+    (#blocks == 0) ? "{summary}\n" : "\n{blocks.join("\n\n")}\n{summary}\n"
+}
+
+pub class Pretty < Reporter {
+    __tally:  Tally
+    __write:  Writer
+    __color?: Bool
+    __tty?:   Bool
+    __quiet?: Bool
+    __width:  Int
+    __name-w: Int
+    __live:   String
+
+    init(
+        color?: Bool = false,
+        tty?: Bool = false,
+        width: ?Int = nil,
+        write: ?Writer = nil,
+        mode: ?String = nil,
+        quiet?: Bool = false
+    ) {
+        __tally  = Tally(mode: mode)
+        __write  = write ?? stdout-writer()
+        __color? = color?
+        __tty?   = tty?
+        __quiet? = quiet?
+        __width  = width ?? default-width(tty?)
+        __name-w = 0
+        __live   = ''
+    }
+
+    tally -> Tally {
+        __tally
+    }
+
+    on(ev: Event) {
+        __tally.on(ev)
+        match get-str(ev, 'ev') {
+            'run-start'  => header(ev),
+            'collect'    => collected(ev),
+            'test-end'   => test-ended(ev),
+            'file-start' => progress(),
+            'file-skip'  => flush(),
+            'file-done'  => flush(),
+            _            => nil,
+        }
+    }
+
+    done() {
+        if !__tally.file-mode? {
+            flush(all?: true)
+        }
+        clear-live()
+        __write(render-tail(__tally, color?: __color?, width: __width))
+    }
+
+    paint(s: String, style: String) -> String {
+        render.paint(s, style, __color?)
+    }
+
+    out(s: String) {
+        clear-live()
+        __write("{s}\n")
+    }
+
+    clear-live() {
+        if #__live > 0 {
+            __write("\r\x1b[K")
+            __live = ''
+        }
+    }
+
+    header(ev: Event) {
+        if __tally.file-mode? {
+            return
+        }
+        let info = get-event(ev, 'ty')
+        let plat = [get-str(info, 'platform'), get-str(info, 'arch')].filter(\_ != nil)
+        let jit? = (info ?? %{})['jit'] != false
+        let parts = [
+            'ty --test',
+            "seed {get-int(ev, 'seed')}" if ev['seed'] != nil,
+            "jobs {get-int(ev, 'jobs')}" if ev['jobs'] != nil,
+            "jit {jit? ? 'on' : 'off'}",
+            plat.join('/') if #plat > 0,
+        ]
+        out(paint(parts.join('  '), 'dim'))
+    }
+
+    collected(ev: Event) {
+        if !__tally.file-mode? {
+            return
+        }
+        for get-events(ev, 'tests') {
+            let name = render.display-name(__tally.id-of(it))
+            __name-w = max(__name-w, render.width(name))
+        }
+        if let $why = get-str(ev, 'file_skip') {
+            let lbl = paint(render.pad('SKIP', render.LABEL_WIDTH), 'skip')
+            out("{lbl} {get-str(ev, 'file')}  {why}")
+        }
+    }
+
+    test-ended(ev: Event) {
+        if !__tally.file-mode? {
+            progress()
+            return
+        }
+        if __quiet? && render.outcome-of(ev) == 'pass' {
+            return
+        }
+        out(test-line(ev))
+    }
+
+    test-line(ev: Event) -> String {
+        let outcome = render.outcome-of(ev)
+        let id = __tally.id-of(ev)
+        let name = render.display-name(id)
+        let secs = get-float(ev, 'dur') ?? 0.0
+        let ran? = outcome not in ['skip', 'todo'] && (outcome != 'error' || secs > 0.0)
+        let dur = ran? ? paint("({render.fmt-dur(secs)})", 'dim') : ''
+        let detail = render.detail(ev, strict?: __tally.strict?(id))
+        let tail = [dur if #dur > 0, detail if #detail > 0]
+        let lbl = paint(render.pad(render.label(outcome), render.LABEL_WIDTH), outcome)
+        match tail {
+            [] => "{lbl} {name}",
+            _  => "{lbl} {render.pad(name, __name-w)} {tail.join('  ')}",
+        }
+    }
+
+    row-style(r: FileRow) -> ?String {
+        match (r.failed?, r.skip) {
+            (true, _) => 'red',
+            (_, $s)   => 'skip',
+            _         => nil,
+        }
+    }
+
+    row-line(r: FileRow) -> String {
+        let label = match row-style(r) {
+            nil => r.path,
+            st  => paint(r.path, st),
+        }
+        let summary = row-summary(r)
+        let used = render.width(r.path) + 3
+        let aligned = __width - 32 - used
+        let fitted = __width - used - render.width(summary) - 1
+        let fill = max(3, min(aligned, fitted))
+        " {label} {paint('.' * fill, 'dim')} {summary}"
+    }
+
+    row-summary(r: FileRow) -> String {
+        if let $why = r.skip {
+            return paint("skipped: {why}", 'skip')
+        }
+        let parts: Array[String] = []
+        if let $err = r.error {
+            parts.push(paint("error: {err}", 'error'))
+        }
+        if r.total > 0 || r.error == nil {
+            parts.push(render.counts-line(r.counts, color?: __color?))
+        }
+        if r.respawns > 0 {
+            parts.push(paint(render.plural(r.respawns, 'respawn'), 'dim'))
+        }
+        if let $d = r.dur {
+            parts.push(paint(render.fmt-secs(d), 'dim'))
+        }
+        parts.join('  ')
+    }
+
+    visible?(r: FileRow) -> Bool {
+        !__quiet? || r.failed? || r.skip != nil
+    }
+
+    emit-row(r: FileRow) {
+        r.printed? = true
+        if visible?(r) {
+            out(row-line(r))
+        }
+    }
+
+    flush(all?: Bool = false) {
+        if __tally.file-mode? {
+            return
+        }
+        for r in __tally.rows {
+            if r.printed? {
+                continue
+            }
+            if r.done? || all? {
+                emit-row(r)
+            } else if !__tty? {
+                break
+            }
+        }
+        progress()
+    }
+
+    progress() {
+        if !__tty? || __tally.file-mode? {
+            return
+        }
+        let running = __tally.rows.filter(r -> !r.done?).map(&.path)
+        if #running == 0 {
+            clear-live()
+            return
+        }
+        let more = (#running > 3) ? " +{#running - 3}" : ''
+        let line = " running {#running}: {running[;3].join(' ')}{more}"
+        let w = __width - 1
+        let shown = (line.width() > w) ? "{line[;w - 1]}…" : line
+        __write("\r\x1b[K{paint(shown, 'dim')}")
+        __live = shown
+    }
+}
+
+pub DOTS: Dict[String, String] = %{
+    'pass':    '.',
+    'fail':    'F',
+    'error':   'E',
+    'skip':    's',
+    'todo':    't',
+    'xfail':   'x',
+    'xpass':   'X',
+    'timeout': 'T',
+    'crash':   'C',
+    'exit':    'C',
+}
+
+pub class Dot < Reporter {
+    __tally:  Tally
+    __write:  Writer
+    __color?: Bool
+    __width:  Int
+    __col:    Int
+
+    init(
+        color?: Bool = false,
+        width: ?Int = nil,
+        write: ?Writer = nil,
+        mode: ?String = nil
+    ) {
+        __tally  = Tally(mode: mode)
+        __write  = write ?? stdout-writer()
+        __color? = color?
+        __width  = width ?? 80
+        __col    = 0
+    }
+
+    tally -> Tally {
+        __tally
+    }
+
+    on(ev: Event) {
+        __tally.on(ev)
+        if get-str(ev, 'ev') != 'test-end' {
+            return
+        }
+        let outcome = render.outcome-of(ev)
+        if __col >= __width {
+            __write("\n")
+            __col = 0
+        }
+        __write(render.paint(DOTS[outcome] ?? '?', outcome, __color?))
+        __col += 1
+    }
+
+    done() {
+        if __col > 0 {
+            __write("\n")
+        }
+        __write(render-tail(__tally, color?: __color?, width: __width))
+    }
+}
+
+pub class Json < Reporter {
+    __write: Writer
+    __fd:    ?Int
+
+    init(path: ?String = nil, write: ?Writer = nil) {
+        __fd    = (path == nil) ? nil : open-out(path)
+        __write = (__fd == nil) ? (write ?? stdout-writer()) : fd-writer(__fd)
+    }
+
+    on(ev: Event) {
+        __write("{json.encode(ev)}\n")
+    }
+
+    done() {
+        if let $fd = __fd {
+            os.close(fd)
+            __fd = nil
+        }
+    }
+}
+
+fn open-out(path: String) -> Int {
+    let fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    if fd < 0 {
+        throw RuntimeError("ty --test: cannot open {path} for the json reporter")
+    }
+    fd
+}
+
+pub REPORTERS = 'expected pretty, dot or json[=PATH]'
+
+pub fn make(
+    spec: String,
+    color?: ?Bool = nil,
+    tty?: ?Bool = nil,
+    width: ?Int = nil,
+    write: ?Writer = nil,
+    mode: ?String = nil,
+    quiet?: Bool = false
+) -> Reporter {
+    let istty = tty? ?? (os.isatty(1))
+    let paint? = color? ?? default-color?()
+    let (name, arg) = match spec.match(/^([a-z]+)=(.+)$/) {
+        [_, n, a] => (n, a),
+        _         => (spec, nil),
+    }
+    match name {
+        'pretty' => Pretty(
+            color?: paint?,
+            tty?: istty,
+            width: width,
+            write: write,
+            mode: mode,
+            quiet?: quiet?
+        ),
+        'dot'  => Dot(color?: paint?, width: width, write: write, mode: mode),
+        'json' => Json(path: arg, write: write),
+        _      => throw ValueError("ty --test: unknown reporter '{spec}' ({REPORTERS})"),
+    }
+}

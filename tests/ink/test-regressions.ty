@@ -1,0 +1,614 @@
+import ink
+import term (event, keys)
+import path
+import os
+import net
+import io
+import json
+
+ns test
+
+class Counter < ink.Component {
+    label: String | nil
+    __n: Int = 0
+
+    focusable? -> Bool { true }
+
+    on-event(ev) {
+        match ev {
+            event.Text('+') => __n += 1,
+            _               => ink.Ignored
+        }
+    }
+
+    render() -> ink.Node {
+        <ink.Text>{label}={__n}</ink.Text>
+    }
+}
+
+class InputApp < ink.Component {
+    keys-seen: Array[String] = []
+
+    on-event(ev) {
+        match ev {
+            event.Key({key: k, event: (1 or 2), *}) => keys-seen.push("{k}"),
+            _ => ()
+        }
+    }
+
+    render() -> ink.Node {
+        <ink.Box>
+            <ink.TextInput />
+        </ink.Box>
+    }
+}
+
+pub fn esc-in-text-input-unfocuses-without-crashing() {
+    let h = ink.TestHarness(InputApp())
+    h.tab()
+    h.assert-focused(ink.TextInput)
+    h.esc()
+    h.assert-unfocused()
+}
+
+pub fn unhandled-keys-bubble-to-root() {
+    let app = InputApp()
+    let h = ink.TestHarness(app)
+    h.tab()
+    h.send-key('F5')
+    assert(app.keys-seen == ['F5'])
+    h.send-text('x')
+    assert(app.keys-seen == ['F5'])
+}
+
+class KeyedList < ink.Component {
+    names: Array[String] = ['b', 'c']
+
+    render() -> ink.Node {
+        <ink.Box>
+            {[<Counter key=name label=name /> for name in names]}
+        </ink.Box>
+    }
+}
+
+pub fn keyed-children-keep-their-state() {
+    let app = KeyedList()
+    let h = ink.TestHarness(app)
+    h.tab()
+    h.send-text('++')
+    assert(h.line(0) == 'b=2')
+    app.names = ['a', 'b', 'c']
+    app.invalidate!()
+    h.repaint()
+    assert(h.line(0) == 'a=0')
+    assert(h.line(1) == 'b=2')
+}
+
+class FormA < ink.Component {
+    render() -> ink.Node { <ink.Box><Counter label="field" /></ink.Box> }
+}
+
+class FormB < ink.Component {
+    render() -> ink.Node { <ink.Box><Counter label="field" /></ink.Box> }
+}
+
+class Swapper < ink.Component {
+    a?: Bool = true
+
+    render() -> ink.Node {
+        <ink.Box>{a? ? <FormA /> : <FormB />}</ink.Box>
+    }
+}
+
+pub fn parent-type-change-resets-descendant-state() {
+    let app = Swapper()
+    let h = ink.TestHarness(app)
+    h.tab()
+    h.send-text('+++')
+    assert(h.line(0) == 'field=3')
+    app.a? = false
+    app.invalidate!()
+    h.repaint()
+    assert(h.line(0) == 'field=0')
+}
+
+class Reader < ink.Component {
+    render() -> ink.Node {
+        <ink.Text>{ink.context('theme', 'none')}</ink.Text>
+    }
+}
+
+class Middle < ink.Component {
+    render() -> ink.Node { <ink.Box><Reader /></ink.Box> }
+}
+
+class Provider < ink.Component {
+    render() -> ink.Node {
+        ink.provide('theme', 'dark')
+        <ink.Box><Middle /></ink.Box>
+    }
+}
+
+pub fn context-reaches-descendants() {
+    let h = ink.TestHarness(Provider())
+    assert(h.line(0) == 'dark')
+    h.repaint()
+    assert(h.line(0) == 'dark')
+}
+
+class Panel < ink.Component {
+    render() -> ink.Node {
+        <ink.Box border-style="single"><ink.Text>p</ink.Text></ink.Box>
+    }
+}
+
+class FlexRow < ink.Component {
+    render() -> ink.Node {
+        <ink.Box direction="row">
+            <Panel flex=1 />
+            <Panel flex=1 />
+        </ink.Box>
+    }
+}
+
+pub fn flex-components-follow-resize() {
+    let h = ink.TestHarness(FlexRow(), cols=40, rows=5)
+    assert(h.line(0).width() == 40)
+    h.resize(20, 5)
+    assert(h.line(0).width() == 20)
+    h.resize(60, 5)
+    assert(h.line(0).width() == 60)
+}
+
+class ToastApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box><ink.Toast duration=1.0>saved</ink.Toast></ink.Box>
+    }
+}
+
+pub fn toast-hides-after-its-duration() {
+    let h = ink.TestHarness(ToastApp())
+    h.assert-contains('saved')
+    for ..5 {
+        h.repaint()
+    }
+    h.advance(2.0)
+    h.assert-not-contains('saved')
+}
+
+class TimerApp < ink.Component {
+    __text: String = 'before'
+
+    mount() {
+        after(0.5, -> do { __text = 'after' })
+    }
+
+    render() -> ink.Node {
+        <ink.Box><ink.Text>{__text}</ink.Text></ink.Box>
+    }
+}
+
+class TimerHost < ink.Component {
+    render() -> ink.Node { <ink.Box><TimerApp /></ink.Box> }
+}
+
+pub fn timer-callbacks-repaint-their-owner() {
+    let h = ink.TestHarness(TimerHost())
+    assert(h.line(0) == 'before')
+    h.advance(1.0)
+    assert(h.line(0) == 'after')
+}
+
+class SliderApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box><ink.Slider width=20 value=0.5 /></ink.Box>
+    }
+}
+
+pub fn hovering-a-slider-does-not-change-it() {
+    let h = ink.TestHarness(SliderApp())
+    let before = h.plain-text
+    h.send(event.MouseMove({x: 3, y: 1, button: 3, mods: 0}))
+    assert(h.plain-text == before)
+}
+
+class Modal < ink.Component {
+    open?: Bool = true
+
+    render() -> ink.Node {
+        <ink.Box>{open? ? <Counter label="m" /> : nil}</ink.Box>
+    }
+}
+
+pub fn unmounting-the-focused-component-clears-focus() {
+    let app = Modal()
+    let h = ink.TestHarness(app)
+    h.tab()
+    h.assert-focused(Counter)
+    app.open? = false
+    app.invalidate!()
+    h.repaint()
+    h.assert-unfocused()
+}
+
+class Three < ink.Component {
+    render() -> ink.Node {
+        <ink.Box>
+            <Counter label="a" />
+            <Counter label="b" />
+            <Counter label="c" />
+        </ink.Box>
+    }
+}
+
+pub fn shift-tab-cycles-backwards() {
+    let h = ink.TestHarness(Three())
+    h.send-key('TAB', mods=ink.SHIFT)
+    let c: _ = h.focused
+    assert(c.label == 'c')
+    h.send-key('TAB', mods=ink.SHIFT)
+    let b: _ = h.focused
+    assert(b.label == 'b')
+}
+
+class GapApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box gap=1>
+            <ink.Text>a</ink.Text>
+            {false}
+            {nil}
+            <ink.Text>b</ink.Text>
+        </ink.Box>
+    }
+}
+
+pub fn falsy-children-do-not-take-gap-slots() {
+    let h = ink.TestHarness(GapApp())
+    assert(h.line(0) == 'a')
+    assert(h.line(2) == 'b')
+}
+
+class Clicker < ink.Component {
+    __clicks: Int = 0
+
+    render() -> ink.Node {
+        <ink.Box on-click=(_ -> __clicks += 1)>
+            <ink.Text>clicks={__clicks}</ink.Text>
+        </ink.Box>
+    }
+}
+
+class ClickHost < ink.Component {
+    render() -> ink.Node { <ink.Box><Clicker /></ink.Box> }
+}
+
+pub fn prop-click-handlers-repaint-their-owner() {
+    let h = ink.TestHarness(ClickHost())
+    h.click(1, 0)
+    h.click(1, 0)
+    assert(h.line(0) == 'clicks=2')
+}
+
+pub fn harness-colour-output-is-deterministic() {
+    let h = ink.TestHarness(ToastApp())
+    assert("\x1b[" in h.lines[0])
+    let plain = ink.TestHarness(ToastApp(), color?=false)
+    assert(!("\x1b[" in plain.lines[0]))
+}
+
+class WrapApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box width=12 border-style="single">
+            <ink.Text>the quick brown fox</ink.Text>
+        </ink.Box>
+    }
+}
+
+pub fn text-wraps-to-its-container() {
+    let h = ink.TestHarness(WrapApp(), cols=40, rows=10)
+    assert(h.lines.all?(\_.width() == 12))
+    assert(h.line(1).match?(/the quick/))
+    assert(h.line(2).match?(/brown fox/))
+}
+
+class OverlayApp < ink.Component {
+    __hits: Int = 0
+
+    render() -> ink.Node {
+        <ink.Box>
+            <ink.Text>base</ink.Text>
+            <ink.Overlay x=10 y=2>
+                <ink.Box on-click=(_ -> __hits += 1)>
+                    <ink.Text>popup {__hits}</ink.Text>
+                </ink.Box>
+            </ink.Overlay>
+        </ink.Box>
+    }
+}
+
+pub fn overlays-are-visible-and-clickable() {
+    let h = ink.TestHarness(OverlayApp(), cols=40, rows=10)
+    assert(h.line(2).match?(/^ {10}popup 0/))
+    h.click(11, 2)
+    assert(h.line(2).match?(/popup 1/))
+}
+
+class ScrollClick < ink.Component {
+    __picked: String = '-'
+
+    pick(i: Int) {
+        __picked = "{i}"
+    }
+
+    render() -> ink.Node {
+        <ink.Box>
+            <ink.Text>picked {__picked}</ink.Text>
+            <ink.Box height=2 scroll=3>
+                {[<ink.Box on-click=(_ -> pick(i))><ink.Text>row{i}</ink.Text></ink.Box> for i in ..6]}
+            </ink.Box>
+        </ink.Box>
+    }
+}
+
+pub fn clicks-in-scrolled-boxes-hit-the-visible-row() {
+    let h = ink.TestHarness(ScrollClick(), cols=20, rows=10)
+    assert(h.line(1).match?(/^row3\s*$/))
+    h.click(1, 1)
+    assert(h.line(0).match?(/^picked 3\s*$/))
+}
+
+class FlexThree < ink.Component {
+    render() -> ink.Node {
+        <ink.Box direction="row" width=10>
+            <ink.Box flex=1 bg="red"><ink.Text>a</ink.Text></ink.Box>
+            <ink.Box flex=1 bg="red"><ink.Text>b</ink.Text></ink.Box>
+            <ink.Box flex=1 bg="red"><ink.Text>c</ink.Text></ink.Box>
+        </ink.Box>
+    }
+}
+
+pub fn flex-shares-use-every-cell() {
+    let h = ink.TestHarness(FlexThree(), cols=20, rows=4)
+    assert(h.line(0) == 'a   b  c  ')
+}
+
+class JustifyApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box direction="row" width=11 justify="space-between" gap=1>
+            <ink.Text>a</ink.Text>
+            <ink.Text>b</ink.Text>
+            <ink.Text>c</ink.Text>
+        </ink.Box>
+    }
+}
+
+pub fn space-between-spans-the-row() {
+    let h = ink.TestHarness(JustifyApp(), cols=20, rows=4)
+    assert(h.line(0) == 'a    b    c')
+}
+
+class PadXApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box paddingX=2><ink.Text>x</ink.Text></ink.Box>
+    }
+}
+
+pub fn padding-x-is-accepted() {
+    let h = ink.TestHarness(PadXApp(), cols=20, rows=4)
+    assert(h.line(0) == '  x  ')
+}
+
+class NilTextApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box><ink.Text>a{nil}{false}b</ink.Text></ink.Box>
+    }
+}
+
+pub fn nil-and-false-text-children-render-nothing() {
+    let h = ink.TestHarness(NilTextApp(), cols=20, rows=4)
+    assert(h.line(0) == 'ab')
+}
+
+class WideInput < ink.Component {
+    render() -> ink.Node { <ink.Box><ink.TextInput width=12 /></ink.Box> }
+}
+
+pub fn text-input-keeps-its-width-with-wide-text() {
+    let h = ink.TestHarness(WideInput(), cols=40, rows=5, color?=false)
+    h.tab()
+    h.send-text('hello 日本語テキスト é😀👍🏽x')
+    assert(h.lines.all?(\_.width() == 12))
+    for ..12 {
+        h.backspace()
+    }
+    assert(h.line(1).match?(/│hello +│/))
+}
+
+class LongArea < ink.Component {
+    render() -> ink.Node {
+        <ink.Box><ink.TextArea width=12 height=4 value="ab\nthis is a much longer line" /></ink.Box>
+    }
+}
+
+pub fn text-area-scrolls-horizontally() {
+    let h = ink.TestHarness(LongArea(), cols=40, rows=8, color?=false)
+    h.tab()
+    h.down()
+    for ..20 {
+        h.right()
+    }
+    assert(h.line(2).match?(/longer/))
+    h.up()
+    h.down()
+    assert(h.line(2).match?(/longer/))
+}
+
+class EmptyArea < ink.Component {
+    render() -> ink.Node { <ink.Box><ink.TextArea width=14 height=3 placeholder="write here" /></ink.Box> }
+}
+
+pub fn text-area-shows-its-placeholder() {
+    let h = ink.TestHarness(EmptyArea(), cols=40, rows=5, color?=false)
+    assert(h.line(1).match?(/write here/))
+}
+
+class PasteApp < ink.Component {
+    render() -> ink.Node { <ink.Box><ink.TextInput width=20 /></ink.Box> }
+}
+
+pub fn paste-inserts-into-text-input() {
+    let h = ink.TestHarness(PasteApp(), cols=40, rows=5, color?=false)
+    h.tab()
+    h.send(event.Paste("one\ntwo"))
+    assert(h.line(1).match?(/one two/))
+}
+
+class LongSelect < ink.Component {
+    submitted: Int = -1
+
+    submit(i: Int) {
+        submitted = i
+    }
+
+    render() -> ink.Node {
+        <ink.Box><ink.Select items=[*"abcdefghij"] height=5 on-submit=submit /></ink.Box>
+    }
+}
+
+pub fn select-scrolls-and-submits() {
+    let app = LongSelect()
+    let h = ink.TestHarness(app, cols=30, rows=12, color?=false)
+    h.tab()
+    for ..5 {
+        h.down()
+    }
+    assert(h.line-count == 5)
+    assert(h.line(3).match?(/▸ f/))
+    h.click(3, 2)
+    h.enter()
+    assert(app.submitted == 4)
+}
+
+pub fn select-with-no-items-ignores-keys() {
+    let h = ink.TestHarness(EmptySelect(), cols=30, rows=6)
+    h.tab()
+    h.down()
+    h.up()
+}
+
+class EmptySelect < ink.Component {
+    render() -> ink.Node { <ink.Box><ink.Select items=[] /></ink.Box> }
+}
+
+class LookApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box cls="card">
+            <ink.Select items=['one', 'two'] selected=1 />
+        </ink.Box>
+    }
+}
+
+pub fn looks-restyle-classes-and-parts() {
+    ink.use-looks('.card { border: double; pad-x: 2 }\nSelect::indicator:selected { content: "→" }')
+    let h = ink.TestHarness(LookApp(), cols=30, rows=10, color?=false)
+    assert(h.line(0).match?(/^╔/))
+    h.assert-contains('→ two')
+    ink.use-looks('')
+}
+
+pub fn looks-file-reloads-and-reports-errors() {
+    let file = "{getenv('TMPDIR') ?? '/tmp'}/ink-looks-test.looks"
+    path.Path(file).write('.card { border: single }')
+    ink.watch-looks(file)
+    let h = ink.TestHarness(LookApp(), cols=30, rows=10, color?=false)
+    assert(h.line(0).match?(/^┌/))
+    os.sleep(1.1)
+    path.Path(file).write('.card { borderr: double }')
+    h.repaint()
+    assert(h.line(0).match?(/^┌/))
+    assert(ink.look-error() != nil)
+    os.sleep(1.1)
+    path.Path(file).write('.card { border: bold }')
+    h.repaint()
+    assert(h.line(0).match?(/^┏/))
+    ink.use-looks('')
+}
+
+class SockApp < ink.Component {
+    __count: Int = 0
+
+    render() -> ink.Node {
+        <ink.Box><ink.Text>count={__count}</ink.Text></ink.Box>
+    }
+}
+
+fn sock-session(h: ink.TestHarness, path: String, reqs: Array[String]) -> Array[Dict[String, _]] {
+    let replies: SharedQueue[String] = SharedQueue()
+    Thread(fn () {
+        let fd = net.dial('unix', path)
+        let reader = io.LineReader(fd)
+        for reqs {
+            os.write(fd, "{it}\n")
+            let got? = false
+            while !got? && reader.fill() {
+                for line in reader {
+                    replies.put(line)
+                    got? = true
+                }
+            }
+        }
+        os.close(fd)
+    }).detach()
+    let out: Array[Dict[String, _]] = []
+    while #out < #reqs {
+        h.repaint()
+        if let Some(line) = replies.try-take(0.01) {
+            out.push(json.parse(line))
+        }
+    }
+    out
+}
+
+pub fn control-socket-reads-and-modifies-the-ui() {
+    let h = ink.TestHarness(SockApp(), cols=30, rows=5, color?=false)
+    let path = "{getenv('TMPDIR') ?? '/tmp'}/ink-test-{os.getpid()}.sock"
+    ink.serve(path)
+    let rs = sock-session(h, path, [
+        '{"cmd":"screen"}',
+        '{"cmd":"set","field":"count","value":7}',
+        '{"cmd":"get"}',
+        '{"cmd":"nope"}'
+    ])
+    h.repaint()
+    assert(rs[0]['result'][0].match?(/count=0/))
+    assert(rs[1]['ok'])
+    assert(rs[2]['result']['_count'] == 7)
+    assert(!rs[3]['ok'])
+    assert(h.line(0).match?(/count=7/))
+}
+
+class PartsApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box>
+            <ink.Slider width=20 value=0.5 />
+            <ink.TreeView root='r' label=(n -> n) children=(n -> (n == 'r') ? ['a'] : []) height=2 />
+            <ink.ProgressBar value=0.5 width=12 />
+            <ink.BarChart data=[] />
+        </ink.Box>
+    }
+}
+
+pub fn looks-reach-every-widget() {
+    ink.use-looks('''
+        Slider::thumb { content: "◉" }
+        TreeView::toggle { content: "+ " }
+        ProgressBar::fill { content: "█" }
+        BarChart::empty { content: "nothing" }
+    ''')
+    let h = ink.TestHarness(PartsApp(), cols=40, rows=10, color?=false)
+    h.assert-contains('◉')
+    h.assert-contains('[+] r')
+    h.assert-contains('█')
+    h.assert-contains('nothing')
+    ink.use-looks('')
+}

@@ -1,0 +1,118 @@
+let ESC = "\x1b"
+let ST  = "\x1b\\"
+
+fn link(url: String, text: String) -> String {
+    "{ESC}]8;;{url}{ST}{text}{ESC}]8;;{ST}"
+}
+
+fn closes-link?(s: String) -> Bool {
+    let urls: Array[String] = s.matches(/\x1b\]8;[^;\x07\x1b]*;([^\x07\x1b]*)/).map(&1)
+    #urls == 0 || urls[-1] == ''
+}
+
+let SAMPLES = [
+    'plain ascii',
+    '漢字かな한국어',
+    "café Ā́x",
+    '👍🏽 ok ✔️ 1️⃣ 🇺🇸 👨‍👩‍👧 ⭐',
+    "\x1b[1;31mstyled\x1b[0m text",
+    link('https://example.com/a/b?c=d', 'linked 漢字'),
+    "\x1b[44mab漢字\x1b[0m{link('https://x.org', 'cd👍🏽')}"
+]
+
+ns test
+
+pub fn escape-sequences-are-zero-width() {
+    assert(link('https://example.com/some/long/path?q=1', 'click').width() == 5)
+    assert("{ESC}]8;;https://x.org\x07click{ESC}]8;;\x07".width() == 5)
+    assert("{ESC}]8;id=7;https://x.org{ST}link{ESC}]8;;{ST}".width() == 4)
+    assert("{ESC}]0;my title\x07ok".width() == 2)
+    assert("{ESC}_Ga=T,f=100;AAAA{ST}img".width() == 3)
+    assert("{ESC}P1$r0m{ST}ok".width() == 2)
+    assert("ab{ESC}[Kcd".width() == 4)
+    assert("{ESC}[?25lab{ESC}[2;5Hcd".width() == 4)
+    assert("{ESC}(Bok".width() == 2)
+    assert("{ESC}Oxy".width() == 2)
+    assert("{ESC}[38;5;196mred{ESC}[m".width() == 3)
+    assert("ab{ESC}]8;;unterminated".width() == 2)
+}
+
+pub fn grapheme-cluster-widths() {
+    assert('👍🏽'.width() == 2)
+    assert('👨‍👩‍👧'.width() == 2)
+    assert('🏳️‍🌈'.width() == 2)
+    assert('🇺🇸'.width() == 2)
+    assert('🇺🇸🇯🇵'.width() == 4)
+    assert("\U0001F1FA".width() == 2)
+    assert('1️⃣'.width() == 2)
+    assert("✔️".width() == 2)
+    assert("✔".width() == 1)
+    assert("⌚︎".width() == 1)
+    assert("a️".width() == 1)
+    assert("☝".width() == 1)
+    assert("☝\U0001F3FD".width() == 2)
+    assert(['✅', '⚡', '⭐'].map(&width) == [2, 2, 2])
+    assert("é".width() == 1)
+    assert("각".width() == 2)
+    assert("क्षि".width() == 1)
+    assert('漢字'.width() == 4)
+}
+
+pub fn chars-are-grapheme-clusters() {
+    assert('1️⃣x'.chars() == ['1️⃣', 'x'])
+    assert("Ā́x".chars() == ["Ā́", 'x'])
+    assert("а́".chars() == ["а́"])
+    assert('👍🏽👨‍👩‍👧'.chars() == ['👍🏽', '👨‍👩‍👧'])
+    assert("a\r\nb".chars() == ['a', "\r\n", 'b'])
+    assert('1️⃣👍🏽'.charCount() == 2)
+    for SAMPLES[;4] {
+        assert(it.chars().map(&width).sum() == it.width(), it)
+        assert(#it.chars() == it.charCount(), it)
+    }
+}
+
+pub fn padding-uses-display-width() {
+    for SAMPLES {
+        let w = max(it.width() + 3, 12)
+        assert(fmt('%-*s', w, it).width() == w, it)
+        assert(fmt('%*s', w, it).width() == w, it)
+        assert("{it:<{w}}".width() == w, it)
+        assert("{it:>{w}}".width() == w, it)
+        assert("{it:^{w}}".width() == w, it)
+    }
+    assert("[{'ab':漢^7}]".width() == 9)
+    assert("[{'ab':漢<7}]".width() == 9)
+    assert("[{'ab':漢>8}]".width() == 10)
+}
+
+pub fn clipping-is-exact-and-closes-state() {
+    for SAMPLES {
+        let w = it.width()
+        for k in 0..(w + 2) {
+            let r = fmt('%.*s', k, it)
+            assert(r.width() == min(k, w), "{it.escape()} k={k}")
+            assert("{r}X".width() == min(k, w) + 1, "{it.escape()} k={k}")
+            assert(closes-link?(r), "{it.escape()} k={k}")
+        }
+    }
+    assert(fmt('%.3s', 'ab漢字') == 'ab ')
+    assert(fmt('[%-6.3s]', '漢字漢字') == '[漢    ]')
+    assert(fmt('%.1s', "\x1b[31mabc\x1b[0m") == "\x1b[31ma\x1b[0m")
+    assert(fmt('%.2s', "\x1b[1mab\x1b[22mcd") == "\x1b[1mab\x1b[22m")
+    assert(fmt('%.3s', link('https://x.org', 'click')) == "{ESC}]8;;https://x.org{ST}cli{ESC}]8;;{ST}")
+    assert(fmt('%.3s', [1, 2, 3]) == '[1,')
+    assert("{'ab漢字':.3}" == 'ab ')
+}
+
+pub fn wrap-respects-clusters-and-links() {
+    let s = link('https://example.com/a', 'click here now')
+    let lines = s.wrap(6).lines()
+    assert(lines.map(&width) == [5, 4, 3])
+    for lines {
+        assert(closes-link?(it), it.escape())
+        assert(it.match?(/\x1b\]8;;https:\/\/example\.com\/a/), it.escape())
+    }
+    assert('👍🏽👍🏽👍🏽'.wrap(4).lines() == ['👍🏽👍🏽', '👍🏽'])
+    assert('漢字漢字漢'.wrap(3).lines().map(&width) == [2, 2, 2, 2, 2])
+    assert("\x1b]0;my title\x07ok then".wrap(5).lines()[0] == "\x1b]0;my title\x07ok")
+}

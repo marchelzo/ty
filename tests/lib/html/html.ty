@@ -1,0 +1,301 @@
+import html (parse, read, html, Html, Element, Selection)
+import path (tempdir)
+
+const PAGE = '''
+    <html>
+        <head><title>Fruit &amp; Veg</title></head>
+        <body>
+            <div id="main" class="content wide">
+                <h1>Produce</h1>
+                <ul class="items">
+                    <li class="item fruit" data-kind="berry">Raspberry</li>
+                    <li class="item fruit" data-kind="stone">Mango</li>
+                    <li class="item veg">Carrot</li>
+                </ul>
+                <p>Some <b>bold</b> text.</p>
+                <a href="/a" title="it's">first</a>
+                <a href="/b">second</a>
+            </div>
+            <div id="side">
+                <ul><li class="item">Sidebar</li></ul>
+            </div>
+        </body>
+    </html>
+'''
+
+fn page() -> Html {
+    parse(PAGE)
+}
+
+fn texts(sel: Selection) -> Array[String] {
+    [it.text for sel]
+}
+
+fn must(e: ?Element) -> Element {
+    e ?? throw 'element not found'
+}
+
+ns test
+
+pub fn select-by-tag() {
+    let doc = page()
+    assert(#doc.select('li') == 4)
+    assert(doc.select('li').count == 4)
+    assert(#doc.select('table') == 0)
+}
+
+pub fn select-by-id-and-class() {
+    let doc = page()
+    assert(texts(doc.select('#main h1')) == ['Produce'])
+    assert(texts(doc.select('li.fruit')) == ['Raspberry', 'Mango'])
+    assert(texts(doc.select('.item.veg')) == ['Carrot'])
+    assert(#doc.select('.wide') == 1)
+    assert(#doc.select('.wid') == 0)
+}
+
+pub fn select-by-attribute() {
+    let doc = page()
+    assert(texts(doc.select('li[data-kind]')) == ['Raspberry', 'Mango'])
+    assert(texts(doc.select('li[data-kind="stone"]')) == ['Mango'])
+    assert(texts(doc.select("li[data-kind='berry']")) == ['Raspberry'])
+    assert(texts(doc.select('li[data-kind=berry]')) == ['Raspberry'])
+    assert(texts(doc.select('a[title="it\'s"]')) == ['first'])
+}
+
+pub fn select-combinators() {
+    let doc = page()
+    assert(#doc.select('div li') == 4)
+    assert(#doc.select('#main > ul > li') == 3)
+    assert(#doc.select('#main > li') == 0)
+    assert(#doc.select('#side li') == 1)
+}
+
+pub fn select-groups() {
+    let doc = page()
+    assert(#doc.select('h1, a') == 3)
+    assert(#doc.select('#side li, li.veg') == 2)
+}
+
+pub fn select-xpath-passthrough() {
+    let doc = page()
+    assert(texts(doc.select('//a[@href="/b"]')) == ['second'])
+}
+
+pub fn select-aliases() {
+    let doc = page()
+    assert(texts(doc.select-all('li.fruit')) == texts(doc.select('li.fruit')))
+    assert(texts(doc.find-all('li.fruit')) == ['Raspberry', 'Mango'])
+    assert(texts(doc['li.veg']) == ['Carrot'])
+
+    let main = must(doc.find('#main'))
+    assert(texts(main.find-all('li')) == ['Raspberry', 'Mango', 'Carrot'])
+
+    let uls = doc.select('ul')
+    assert(#uls.find-all('li') == 4)
+}
+
+pub fn find-and-select-one() {
+    let doc = page()
+    assert(doc.find('li').?text == 'Raspberry')
+    assert(doc.select-one('li.veg').?text == 'Carrot')
+    assert(doc.find('table') == nil)
+}
+
+pub fn scoped-selection() {
+    let doc = page()
+    let side = must(doc.find('#side'))
+    assert(texts(side.select('li')) == ['Sidebar'])
+    assert(side.find('li.fruit') == nil)
+
+    let main = doc.select('#main')
+    assert(texts(main.select('li.item')) == ['Raspberry', 'Mango', 'Carrot'])
+    assert(main.find('b').?text == 'bold')
+}
+
+pub fn selection-accessors() {
+    let doc = page()
+    let lis = doc.select('li')
+    assert(lis.first().?text == 'Raspberry')
+    assert(lis.last().?text == 'Sidebar')
+    assert(lis[1].text == 'Mango')
+    assert(lis.attr('data-kind') == 'berry')
+    assert(lis.text() == 'Raspberry Mango Carrot Sidebar')
+    assert(texts(lis.filter(\_.has-class('veg'))) == ['Carrot'])
+
+    let none = doc.select('table')
+    assert(none.first() == nil)
+    assert(none.last() == nil)
+    assert(none.attr('x') == nil)
+    assert(none.text() == '')
+}
+
+pub fn element-basics() {
+    let doc = page()
+    let a = must(doc.find('a'))
+    assert(a.name == 'a')
+    assert(a.text == 'first')
+    assert(a['href'] == '/a')
+    assert(a.attr('title') == "it's")
+    assert(a.attrs == %{'href': '/a', 'title': "it's"})
+    assert(a.has-attr('href'))
+    assert(!a.has-attr('rel'))
+    assert(a['rel'] == nil)
+    assert(a.id == nil)
+    assert(doc.find('div').?id == 'main')
+}
+
+pub fn element-text-unescapes() {
+    let doc = page()
+    assert(doc.find('title').?text == 'Fruit & Veg')
+    assert(doc.find('p').?text == 'Some bold text.')
+}
+
+pub fn element-html() {
+    let doc = parse('<div><p>a <i>b</i></p></div>')
+    let p = must(doc.find('p'))
+    assert(p.inner-html == 'a <i>b</i>')
+    assert(p.html == p.inner-html)
+    assert(p.outer-html == '<p>a <i>b</i></p>')
+}
+
+pub fn element-navigation() {
+    let doc = page()
+    let mango = must(doc.find('li[data-kind="stone"]'))
+    assert(mango.prev.?text == 'Raspberry')
+    assert(mango.next.?text == 'Carrot')
+    assert(mango.parent.?name == 'ul')
+    assert(mango.parent.?parent.?id == 'main')
+
+    let ul = must(doc.find('ul.items'))
+    assert([it.text for ul.children] == ['Raspberry', 'Mango', 'Carrot'])
+    assert([it.text for ul] == ['Raspberry', 'Mango', 'Carrot'])
+    assert(ul.find('li').?prev == nil)
+}
+
+pub fn element-attribute-mutation() {
+    let doc = page()
+    let a = must(doc.find('a'))
+    a['rel'] = 'nofollow'
+    assert(a['rel'] == 'nofollow')
+    assert(texts(doc.select('a[rel="nofollow"]')) == ['first'])
+    assert(a.remove-attr('rel') == 'nofollow')
+    assert(!a.has-attr('rel'))
+    a.id = 'link'
+    assert(doc.find('#link').?text == 'first')
+}
+
+pub fn element-classes() {
+    let doc = page()
+    let div = must(doc.find('#main'))
+    assert(div.classes == ['content', 'wide'])
+    assert(div.has-class('wide'))
+    assert(!div.has-class('narrow'))
+
+    div.add-class('narrow')
+    div.add-class('narrow')
+    assert(div.classes == ['content', 'wide', 'narrow'])
+    assert(#doc.select('.narrow') == 1)
+
+    div.remove-class('wide')
+    assert(div['class'] == 'content narrow')
+
+    div.toggle-class('content')
+    div.toggle-class('extra')
+    assert(div.classes == ['narrow', 'extra'])
+
+    div.remove-class('narrow')
+    div.remove-class('extra')
+    assert(!div.has-attr('class'))
+    assert(div.classes == [])
+}
+
+pub fn element-text-setter-escapes() {
+    let doc = parse('<div><p>old <b>x</b></p></div>')
+    let p = must(doc.find('p'))
+    p.text = '<b>&</b>'
+    assert(p.text == '<b>&</b>')
+    assert(#p.select('b') == 0)
+    assert(p.inner-html == '&lt;b&gt;&amp;&lt;/b&gt;')
+}
+
+pub fn element-html-setter() {
+    let doc = parse('<div><p>old</p></div>')
+    let p = must(doc.find('p'))
+    p.html = '<i>new</i> stuff'
+    assert(p.inner-html == '<i>new</i> stuff')
+    assert(doc.find('i').?text == 'new')
+
+    p.append-html('<em>more</em>')
+    assert(texts(doc.select('p > *')) == ['new', 'more'])
+}
+
+pub fn element-remove-clear-unwrap() {
+    let doc = page()
+
+    doc.find('li.veg').?remove()
+    assert(texts(doc.select('ul.items li')) == ['Raspberry', 'Mango'])
+
+    let ul = must(doc.find('ul.items'))
+    ul.clear()
+    assert(#ul.select('li') == 0)
+    assert(ul.inner-html == '')
+
+    let b = must(doc.find('b'))
+    b.unwrap()
+    assert(#doc.select('b') == 0)
+    assert(doc.find('p').?text == 'Some bold text.')
+    assert(doc.find('p').?inner-html == 'Some bold text.')
+}
+
+pub fn unwrap-keeps-position() {
+    let doc = parse('<r><p>a <b>b <i>c</i></b> d</p></r>')
+    doc.find('b').?unwrap()
+    assert(doc.dump() == '<r><p>a b <i>c</i> d</p></r>')
+}
+
+pub fn unwrap-detached-is-noop() {
+    let doc = parse('<r><p><b>x</b></p></r>')
+    let p = must(doc.find('p'))
+    p.remove()
+    p.unwrap()
+    assert(p.outer-html == '<p><b>x</b></p>')
+    assert(doc.dump() == '<r/>')
+}
+
+pub fn append-html-keeps-all-nodes() {
+    let doc = parse('<r><ul><li>a</li></ul></r>')
+    let ul = must(doc.find('ul'))
+    ul.append-html('<li>b</li>text<li>c</li>')
+    assert(ul.inner-html == '<li>a</li><li>b</li>text<li>c</li>')
+}
+
+pub fn root-text-and-dump() {
+    let doc = parse('<r><a>x</a><b>y</b></r>')
+    assert(doc.root.name == 'r')
+    assert(doc.text == 'x y')
+    assert(doc.dump() == '<r><a>x</a><b>y</b></r>')
+}
+
+pub fn dump-and-read-roundtrip() {
+    let doc = parse('<r><a href="/x">x</a></r>')
+    with dir = tempdir() {
+        let file = dir / 'page.html'
+        assert(doc.dump(file) == doc.dump())
+        let back = read(str(file))
+        assert(back.dump() == doc.dump())
+        assert(back.find('a').?attr('href') == '/x')
+    }
+}
+
+pub fn html-builder() {
+    let item = parse('<li>inner</li>').root
+    let doc = html([
+        '<ul>',
+        ('<script>', nil),
+        item,
+        '</ul>'
+    ])
+    assert(doc.find('li').?text == 'inner')
+    assert(doc.root.text == '<script> inner')
+    assert(#doc.select('script') == 0)
+}

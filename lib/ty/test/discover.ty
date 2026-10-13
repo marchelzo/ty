@@ -1,0 +1,333 @@
+import os
+import path (Path)
+import ty.test.dirconf as dirconf (DirConf, Effective)
+
+pub IGNORED = ['fixtures', 'support', 'examples', 'testdata', '__snapshots__']
+
+pub class Target {
+    raw:  String
+    path: String
+    abs:  String
+    dir?: Bool
+    id:   ?String
+    line: ?Int
+
+    init(raw: String, abs: String, id: ?String = nil, line: ?Int = nil) {
+        self.raw  = raw
+        self.abs  = abs
+        self.path = display(abs)
+        self.dir? = Path(abs).dir?
+        self.id   = id
+        self.line = line
+    }
+
+    whole? -> Bool {
+        self.id == nil && self.line == nil
+    }
+}
+
+pub fn display(abs: String) -> String {
+    let cwd = os.getcwd()
+    match abs {
+        _ :: abs == cwd                   => '.',
+        _ :: abs[;#cwd + 1] == "{cwd}/" => abs[#cwd + 1;],
+        _                                 => abs,
+    }
+}
+
+pub fn parent-of(p: String) -> String {
+    match p.sub(/\/[^\/]*$/, '') {
+        '' => '/',
+        d  => d,
+    }
+}
+
+fn regular-file(p: String) -> ?String {
+    let $abs = os.realpath(p) or return nil
+    Path(abs).file? ? abs : nil
+}
+
+pub fn parse-target(raw: String) -> Target | String {
+    let p = match raw.sub(/\/+$/, '') {
+        '' => '/',
+        s  => s,
+    }
+    if let $abs = os.realpath(p) {
+        return Target(raw, abs)
+    }
+    if let [_, f, id] = raw.match(/^(.+?)::(.+)$/) {
+        if let $abs = regular-file(f) {
+            return Target(raw, abs, id: id)
+        }
+    }
+    if let [_, f, n] = raw.match(/^(.+):(\d+)$/) {
+        if let $abs = regular-file(f) {
+            return Target(raw, abs, line: int(n))
+        }
+    }
+    "no such test file or directory: {raw}"
+}
+
+pub fn project-root() -> String {
+    let cwd = os.getcwd()
+    let d = cwd
+    while true {
+        if Path("{d}/.git").exists? {
+            return d
+        }
+        if d == '/' {
+            return cwd
+        }
+        d = parent-of(d)
+    }
+    cwd
+}
+
+pub fn test-name?(name: String) -> Bool {
+    name.match?(/^[^._].*\.ty$/)
+}
+
+pub fn dir-name-ok?(name: String) -> Bool {
+    !name.match?(/^\./) && !(name in IGNORED)
+}
+
+fn listing(dir: String) -> (Array[String], Array[String]) {
+    let files: Array[String] = []
+    let dirs: Array[String] = []
+    for name in os.listdir(dir).sort() {
+        let p = Path("{dir}/{name}")
+        if p.dir? {
+            dirs.push(name)
+        } else if p.file? {
+            files.push(name)
+        }
+    }
+    (files, dirs)
+}
+
+pub class PlanFile {
+    abs:          String
+    path:         String
+    eff:          Effective
+    ids:          Array[String] = []
+    line:         ?Int = nil
+    whole?:       Bool = false
+    script?:      Bool = false
+    allow-empty?: Bool = false
+
+    init(abs: String, eff: Effective) {
+        self.abs  = abs
+        self.path = display(abs)
+        self.eff  = eff
+    }
+}
+
+pub class Plan {
+    files:        Array[PlanFile] = []
+    skips:        Array[DirConf] = []
+    errors:       Array[DirConf] = []
+    interrupted?: Bool = false
+}
+
+pub class Planner {
+    root:          String
+    cmd:           Array[String]
+    all?:          Bool
+    opted:         Array[String]
+    plan:          Plan
+    __stop?:       () -> Bool
+    __confs:       Dict[String, DirConf] = %{}
+    __effs:        Dict[String, Effective] = %{}
+    __files:       Dict[String, PlanFile] = %{}
+    __rows:        Dict[String, Bool] = %{}
+    __has:         Dict[String, Bool] = %{}
+    __scripts:     Dict[String, Bool] = %{}
+    __allow-empty: Dict[String, Bool] = %{}
+
+    init(cmd: Array[String], all?: Bool, opted: Array[String], interrupted?: () -> Bool) {
+        self.root = project-root()
+        self.cmd  = cmd
+        self.all? = all?
+        self.opted = opted
+        self.plan = Plan()
+        __stop?   = interrupted?
+    }
+
+    norm(p: String) -> String {
+        os.realpath(p) ?? p
+    }
+
+    ensure(dirs: Array[String]) {
+        let todo: Array[String] = []
+        for d in dirs {
+            if __confs[d] == nil && !(d in todo) {
+                todo.push(d)
+            }
+        }
+        if #todo == 0 {
+            return
+        }
+        for d, c in dirconf.probe(todo, self.cmd, __stop?) {
+            __confs[d] = c
+            for c.scripts {
+                __scripts[norm("{d}/{it}")] = true
+            }
+            for c.allow-empty {
+                __allow-empty[norm("{d}/{it}")] = true
+            }
+        }
+    }
+
+    conf(dir: String) -> DirConf {
+        __confs[dir] ?? DirConf(dir)
+    }
+
+    eff-of(dir: String) -> Effective {
+        if let $e = __effs[dir] {
+            return e
+        }
+        let base = __effs[parent-of(dir)] ?? Effective()
+        let e = base.child(conf(dir))
+        __effs[dir] = e
+        e
+    }
+
+    chain(dir: String) -> Array[String] {
+        if dir != self.root && dir[;#self.root + 1] != "{self.root}/" {
+            return [dir]
+        }
+        let out = [self.root]
+        let d = self.root
+        let rest = dir[#self.root;].split('/').filter(\#_ > 0)
+        for rest {
+            d = (d == '/') ? "/{it}" : "{d}/{it}"
+            out.push(d)
+        }
+        out
+    }
+
+    has-tests?(dir: String) -> Bool {
+        if let $b = __has[dir] {
+            return b
+        }
+        let (files, dirs) = listing(dir)
+        let found? = files.any?(test-name?)
+                  || dirs.any?(d -> dir-name-ok?(d) && has-tests?("{dir}/{d}"))
+        __has[dir] = found?
+        found?
+    }
+
+    blocked?(e: Effective, explicit?: Bool) -> Bool {
+        if let $c = e.error {
+            if !__rows[c.dir] {
+                __rows[c.dir] = true
+                self.plan.errors.push(c)
+            }
+            return true
+        }
+        let $c = e.skip or return false
+        if !__rows[c.dir] && (explicit? || has-tests?(c.dir)) {
+            __rows[c.dir] = true
+            self.plan.skips.push(c)
+        }
+        true
+    }
+
+    opted-in?(c: DirConf) -> Bool {
+        match c.opt-in {
+            true      => self.all?,
+            s: String => s in self.opted,
+            _         => true,
+        }
+    }
+
+    add-file(abs: String, e: Effective, t: ?Target) {
+        let pf = __files[abs] ?? PlanFile(abs, e)
+        __files[abs] = pf
+        pf.script?      = __scripts[abs] ?? false
+        pf.allow-empty? = __allow-empty[abs] ?? false
+        match t {
+            nil or $x :: x.whole? => do {
+                pf.whole? = true
+                pf.ids    = []
+                pf.line   = nil
+            },
+            _ and pf.whole? => nil,
+            $x => do {
+                if let $id = x.id {
+                    pf.ids.push(id)
+                }
+                pf.line = x.line ?? pf.line
+            },
+        }
+    }
+
+    add(t: Target) {
+        let dir = t.dir? ? t.abs : parent-of(t.abs)
+        for d in chain(dir) {
+            ensure([d])
+            if blocked?(eff-of(d), explicit?: true) {
+                return
+            }
+        }
+        if t.dir? {
+            walk(t.abs)
+        } else {
+            add-file(t.abs, eff-of(dir), t)
+        }
+    }
+
+    walk(top: String) {
+        let frontier = [top]
+        while #frontier > 0 {
+            if __stop?() {
+                self.plan.interrupted? = true
+                return
+            }
+            ensure(frontier)
+            let next: Array[String] = []
+            for d in frontier {
+                next += visit(d, top)
+            }
+            frontier = next
+        }
+    }
+
+    visit(d: String, top: String) -> Array[String] {
+        let e = eff-of(d)
+        let c = conf(d)
+        if d != top && !opted-in?(c) {
+            return []
+        }
+        if blocked?(e, explicit?: false) {
+            return []
+        }
+        let (files, dirs) = listing(d)
+        for f in files {
+            let abs = "{d}/{f}"
+            if test-name?(f) && !e.excluded?(abs) {
+                add-file(abs, e, nil)
+            }
+        }
+        for c.scripts {
+            let abs = norm("{d}/{it}")
+            if Path(abs).file? {
+                add-file(abs, e, nil)
+            }
+        }
+        let subs: Array[String] = []
+        for name in dirs {
+            let abs = "{d}/{name}"
+            if dir-name-ok?(name) && !e.excluded?(abs) {
+                subs.push(abs)
+            }
+        }
+        subs
+    }
+
+    finish() -> Plan {
+        let files = [pf for _, pf in __files]
+        self.plan.files = files.sort(by: &.path)
+        self.plan
+    }
+}

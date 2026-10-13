@@ -1,0 +1,584 @@
+import json
+import os
+import path (Path)
+import thread
+import time
+import ty
+import ty.test.args as args (Options, UsageError, USAGE)
+import ty.test.capture (Capture)
+import ty.test.core as core (Test, SkipTest, TestTimeout)
+import ty.test.events as events (Event, EventSink)
+import ty.test.registry as registry (TestCase, Collection)
+import ty.test.report as report
+import ty.test.select as select
+
+let RUNNER-DIR = Path(__file__).parent.str()
+
+let DEFAULT-WORKER-TIMEOUT = 10.0
+
+class AlarmState {
+    tid:     Int = thread.id()
+    secs:    Float = 0.0
+    armed?:  Bool = false
+}
+
+let ALARM = AlarmState()
+
+fn on-alarm(sig: Int) {
+    if !ALARM.armed? {
+        return
+    }
+    if thread.id() == ALARM.tid {
+        ALARM.armed? = false
+        throw TestTimeout(ALARM.secs)
+    }
+    os.kill(os.getpid(), os.SIGALRM)
+}
+
+fn arm(secs: ?Float) {
+    let $s = secs or return
+    if s <= 0.0 {
+        return
+    }
+    ALARM.tid    = thread.id()
+    ALARM.secs   = s
+    ALARM.armed? = true
+    os.alarm(s)
+}
+
+fn disarm() {
+    ALARM.armed? = false
+    os.alarm(0.0)
+}
+
+fn cpu-time() -> Float {
+    let t = time.gettime(time.CLOCK_PROCESS_CPUTIME_ID)
+    t.sec + t.nsec / 1.0e9
+}
+
+use Frame = {file: ?String, line: Int, col: Int, func: ?String, src: String}
+
+fn runner-frame?(f: Frame) -> Bool {
+    match f.file {
+        nil => true,
+        p   => p[;#RUNNER-DIR + 1] == "{RUNNER-DIR}/" || p == "{RUNNER-DIR}.ty",
+    }
+}
+
+fn user-frames(tr: Any) -> Array[Frame] {
+    let frames: Array[Frame] = ty.frames(tr)
+    frames.filter(f -> !runner-frame?(f)).reverse()
+}
+
+fn render-frames(frames: Array[Frame]) -> String {
+    let lines: Array[String] = []
+    for f in frames {
+        let at = "{registry.relative(f.file ?? '?')}:{f.line}:{f.col}"
+        let who = match f.func {
+            nil => '',
+            fun => " in {fun}",
+        }
+        lines.push("at {at}{who}")
+        lines.push("    {f.src.strip()}")
+    }
+    lines.join('\n')
+}
+
+fn failure-of(e: Any, tr: Any) -> Event {
+    let frames = user-frames(tr)
+    let fl = events.failure-of(e, trace: render-frames(frames))
+    if let $p = fl['file'] {
+        fl['file'] = registry.relative(p)
+    } else if #frames > 0 {
+        fl['file'] = registry.relative(frames[0].file ?? '?')
+        fl['line'] = frames[0].line
+    }
+    fl
+}
+
+class Outcome {
+    kind:     String
+    reason:   ?String = nil
+    failure:  ?Event = nil
+    result:   Any = nil
+
+    init(kind: String, reason: ?String = nil, failure: ?Event = nil, result: Any = nil) {
+        self.kind    = kind
+        self.reason  = reason
+        self.failure = failure
+        self.result  = result
+    }
+}
+
+fn invoke(c: TestCase, t: Test, secs: ?Float) -> Outcome {
+    try {
+        arm(secs)
+        let r = c.wants-t? ? c.func(t) : c.func()
+        disarm()
+        return Outcome('pass', result: r)
+    } catch e: SkipTest {
+        disarm()
+        return Outcome('skip', reason: e.reason)
+    } catch e: TestTimeout {
+        disarm()
+        let tr = ty.trace()
+        return Outcome('timeout', reason: "exceeded {e.secs}s", failure: failure-of(e, tr))
+    } catch e {
+        disarm()
+        let tr = ty.trace()
+        return Outcome('fail', failure: failure-of(e, tr))
+    }
+}
+
+fn run-cleanups(t: Test) -> ?Event {
+    let first: ?Event = nil
+    while let $f = t.pop-cleanup() {
+        try {
+            f()
+        } catch e {
+            let tr = ty.trace()
+            first = first ?? failure-of(e, tr)
+        }
+    }
+    first
+}
+
+fn eval-condition(cond: core.Condition) -> Bool {
+    match cond {
+        b: Bool => b,
+        f       => f() == true,
+    }
+}
+
+fn static-skip(c: TestCase, file-skip: ?String) -> ?String {
+    if let $r = file-skip {
+        return r
+    }
+    if let $r = c.meta.skip {
+        return r
+    }
+    for (cond, reason) in c.meta.skip-if {
+        if eval-condition(cond) {
+            return reason
+        }
+    }
+    let ps = c.meta.platforms
+    if #ps > 0 && !(ty.platform in ps) {
+        return "only on {ps.join(', ')}"
+    }
+    nil
+}
+
+fn effective-timeout(c: TestCase, o: Options) -> ?Float {
+    let base = c.meta.timeout
+            ?? o.timeout
+            ?? (o.worker? ? DEFAULT-WORKER-TIMEOUT : nil)
+    let $secs = base or return nil
+    c.meta.slow? ? secs * 5.0 : secs
+}
+
+class Run {
+    opts:     Options
+    sink:     EventSink
+    seed:     Int
+    capture:  ?Capture
+    counts:   Dict[String, Int] = %{}
+    failed:   Int = 0
+    rc:       Int = 0
+
+    init(opts: Options, sink: EventSink, seed: Int, capture: ?Capture) {
+        self.opts    = opts
+        self.sink    = sink
+        self.seed    = seed
+        self.capture = capture
+    }
+
+    count(kind: String) {
+        counts[kind] = (counts[kind] ?? 0) + 1
+    }
+
+    finish(
+        c:      TestCase,
+        o:      Outcome,
+        dur:    Float = 0.0,
+        output: String = '',
+        logs:   Array[String] = [],
+        tmp:    ?String = nil
+    ) {
+        let kind = o.kind
+        let reason = o.reason
+        if let $x = c.xfail {
+            match kind {
+                'fail' or 'timeout' => do {
+                    kind = 'xfail'
+                    reason = x.reason
+                },
+                'pass' => do {
+                    kind = 'xpass'
+                    reason = x.reason
+                },
+                _ => nil,
+            }
+        }
+
+        count(kind)
+
+        let failing? = kind in events.FAILING
+                    || (kind == 'xpass' && (c.xfail.?strict? ?? true))
+
+        if failing? {
+            failed += 1
+            rc = 1
+        }
+
+        let ev = events.test-end(
+            c.id,
+            kind,
+            dur: dur,
+            reason: reason,
+            failure: o.failure,
+            output: output,
+            logs: logs
+        )
+
+        if failing? && tmp != nil {
+            ev['tmp_dir'] = tmp
+        }
+
+        sink.emit(ev)
+    }
+
+    stop?() -> Bool {
+        let limit = opts.max-fail ?? (opts.fail-fast? ? 1 : 0)
+        limit > 0 && failed >= limit
+    }
+
+    run-case(c: TestCase, file-skip: ?String) {
+        if let $err = c.error {
+            finish(c, Outcome('error', reason: err))
+            return
+        }
+
+        if let $why = c.meta.todo {
+            finish(c, Outcome('todo', reason: why))
+            return
+        }
+
+        let skip = try {
+            static-skip(c, file-skip)
+        } catch e {
+            let tr = ty.trace()
+            let fl = failure-of(e, tr)
+            finish(c, Outcome('error', reason: 'skip-if condition threw', failure: fl))
+            return
+        }
+
+        if let $why = skip {
+            finish(c, Outcome('skip', reason: why))
+            return
+        }
+
+        let offset = capture.?offset ?? 0
+        sink.emit(events.test-start(
+            c.id,
+            capture-path: capture.?path,
+            capture-offset: offset
+        ))
+
+        srand(seed ^ select.fnv1a32(c.id))
+
+        let t = Test(c.id, c.name, c.file, c.line, seed)
+        let secs = effective-timeout(c, opts)
+
+        capture.?begin()
+        let t0 = time.now()
+        let o = invoke(c, t, secs)
+        let cleanup-failure = run-cleanups(t)
+        let dur = time.now() - t0
+        capture.?end()
+
+        let output = capture.?read(offset) ?? ''
+
+        if let $fl = cleanup-failure {
+            if o.kind in ['pass', 'skip'] {
+                o = Outcome('error', reason: 'cleanup failed', failure: fl)
+            }
+        }
+
+        if o.kind == 'pass' && o.result == false {
+            sink.emit(events.warning(
+                'returned-false',
+                'test returned false (ignored; use assert)',
+                file: c.file,
+                id: c.id,
+                line: c.line
+            ))
+        }
+
+        let tmp = t.tmp-path
+        let keep? = opts.keep-tmp? || (o.kind in events.FAILING)
+
+        if let $p = tmp {
+            if !keep? {
+                Path(p).rmtree(quiet: true)
+            }
+        }
+
+        finish(c, o, dur: dur, output: output, logs: t.logs, tmp: tmp)
+    }
+}
+
+fn read-ids(p: ?String) -> ?Array[String] {
+    let $file = p or return nil
+    let text = slurp(file) ?? ''
+    text.split('\n').filter(\_ != '')
+}
+
+fn select-cases(col: Collection, o: Options) -> Array[TestCase] | String {
+    let cases = col.cases
+
+    if #o.ids > 0 {
+        cases = cases.filter(c -> o.ids.any?(p -> select.id-matches?(p, c.local)))
+    }
+
+    if let $n = o.line {
+        let hits = cases.filter(c -> c.line <= n && n <= c.end-line)
+        if #hits == 0 {
+            let nearest = cases.min(c -> (c.line - n).abs)
+            let hint = match nearest {
+                nil => 'the file has no tests',
+                c   => "nearest: {c.local} (line {c.line})",
+            }
+            return "no test at {col.file}:{n}; {hint}"
+        }
+        cases = hits
+    }
+
+    if #o.filters > 0 {
+        cases = cases.filter(c -> o.filters.any?(p -> select.pattern-matches?(p, c.id)))
+    }
+
+    if #o.excludes > 0 {
+        cases = cases.filter(c -> !o.excludes.any?(p -> select.pattern-matches?(p, c.id)))
+    }
+
+    if let $src = o.tags {
+        let e = select.parse-tags(src)
+        cases = cases.filter(c -> e.matches?(c.tags))
+    }
+
+    if let $keep = read-ids(o.select-file) {
+        cases = cases.filter(c -> c.id in keep)
+    }
+
+    if let $skip = read-ids(o.skip-ids) {
+        cases = cases.filter(c -> !(c.id in skip))
+    }
+
+    let only = cases.filter(&.only?)
+    if #only > 0 {
+        if o.forbid-only? {
+            for only {
+                it.error = it.error ?? '@only is forbidden here (--forbid-only, or CI is set)'
+            }
+        } else {
+            cases = only
+        }
+    }
+
+    cases
+}
+
+fn xfail-event(c: TestCase) -> ?Event {
+    let $x = c.xfail or return nil
+    events.xfail-info(x.reason, strict?: x.strict?)
+}
+
+fn collect-event(col: Collection, cases: Array[TestCase], file-skip: ?String) -> Event {
+    let tests = cases.map(c -> events.collect-test(
+        c.id,
+        c.local,
+        c.line,
+        end-line: c.end-line,
+        tags: c.tags,
+        skip: c.meta.skip,
+        xfail: xfail-event(c),
+        todo: c.meta.todo,
+        only?: c.only?,
+        timeout: c.meta.timeout
+    ))
+    let warnings = col.warnings.map(w -> events.collect-warning(w.code, w.message, line: w.line))
+    events.collect(col.file, tests: tests, file-skip: file-skip, warnings: warnings)
+}
+
+fn list-cases(cases: Array[TestCase], ev: Event, o: Options) {
+    match o.list {
+        'json' => print(json.encode(ev['tests'])),
+        _      => for cases { print(it.id) },
+    }
+}
+
+fn make-sink(o: Options, file-mode?: Bool) -> EventSink {
+    let sink = match o.events {
+        nil => EventSink(),
+        p   => EventSink.to-file(p),
+    }
+    if o.worker? || o.list != nil {
+        return sink
+    }
+    let specs = (#o.reporters > 0) ? o.reporters : ['pretty']
+    for spec in specs {
+        sink.add(report.make(spec, mode: 'file', quiet?: o.quiet?))
+    }
+    sink
+}
+
+fn seed-of(o: Options) -> Int {
+    if let $s = o.seed {
+        return s
+    }
+    match getenv('TY_TEST_SEED') {
+        $s :: s.match?(/^\d+$/) => int(s),
+        _                     => rand(1, 1 << 30),
+    }
+}
+
+fn target-file() -> ?String {
+    match argv {
+        [f, *] => f,
+        _      => nil,
+    }
+}
+
+fn empty-warning(col: Collection) -> String {
+    match #col.private {
+        0 => 'no tests found',
+        n => "no tests found ({n} non-pub function{(n == 1) ? '' : 's'} in `ns test`)",
+    }
+}
+
+pub fn run(argv: Array[String]) -> Int {
+    let o = try {
+        args.parse(argv)
+    } catch e: UsageError {
+        eprint("ty --test: {e.what}")
+        return 2
+    }
+
+    if o.help? {
+        print(USAGE)
+        return 0
+    }
+
+    let $file = target-file() or do {
+        eprint('ty --test: no test file')
+        return 2
+    }
+
+    let col = registry.collect(file, include-imported?: o.include-imported?, static?: o.static?)
+    let file-skip = core.file-skip-reason()
+
+    let picked = try {
+        select-cases(col, o)
+    } catch e: select.TagError {
+        eprint("ty --test: {e.what}")
+        return 2
+    }
+
+    let cases = match picked {
+        msg: String => do {
+            eprint("ty --test: {msg}")
+            return 5
+        },
+        cs => cs,
+    }
+
+    let seed = seed-of(o)
+
+    if o.shuffle? {
+        cases = select.shuffled(cases, seed)
+    }
+
+    let filtered? = #o.ids > 0
+                 || #o.filters > 0
+                 || #o.excludes > 0
+                 || o.tags != nil
+                 || o.line != nil
+
+    let cev = collect-event(col, cases, file-skip)
+
+    if o.list != nil {
+        if let $p = o.events {
+            let sink = EventSink.to-file(p)
+            sink.emit(cev)
+            sink.done()
+        }
+        list-cases(cases, cev, o)
+        return 0
+    }
+
+    let sink = make-sink(o, !o.worker?)
+    let t0 = time.now()
+    let cpu0 = cpu-time()
+
+    if !o.worker? {
+        sink.emit(events.run-start(seed, argv: [file, *argv], root: os.getcwd(), mode: 'file'))
+    }
+
+    sink.emit(cev)
+
+    let capture = match (o.no-capture?, o.capture) {
+        (true, _) => nil,
+        (_, nil)  => Capture.temp(),
+        (_, $p)   => Capture(p),
+    }
+
+    let old-handler = os.signal(os.SIGALRM)
+    os.signal(os.SIGALRM, on-alarm)
+
+    let r = Run(o, sink, seed, capture)
+
+    try {
+        for c in cases {
+            if r.stop?() {
+                break
+            }
+            r.run-case(c, file-skip)
+        }
+    } catch e {
+        capture.?end()
+        throw e
+    }
+
+    os.signal(os.SIGALRM, old-handler)
+    capture.?close()
+
+    if #col.cases == 0 && file-skip == nil {
+        sink.emit(events.warning('empty-file', empty-warning(col), file: col.file))
+        if o.strict? {
+            r.rc = 1
+        }
+    }
+
+    if #cases == 0 && filtered? && #col.cases > 0 && r.rc == 0 {
+        eprint('ty --test: no tests matched the selection')
+        r.rc = 5
+    }
+
+    sink.emit(events.file-end(col.file, r.rc, r.counts))
+
+    if !o.worker? {
+        let files = %{'total': 1, 'failed': (r.failed > 0) ? 1 : 0, 'skipped': 0, 'empty': 0}
+        sink.emit(events.run-end(
+            r.counts,
+            files: files,
+            dur: time.now() - t0,
+            cpu: %{'user': cpu-time() - cpu0},
+            rc: r.rc
+        ))
+    }
+
+    sink.done()
+
+    r.rc
+}

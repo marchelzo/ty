@@ -1,0 +1,6 @@
+print('BOOM')
+
+ns test {
+    fn forgot-pub() {
+    }
+}

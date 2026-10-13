@@ -45,4 +45,8 @@ pub fn bulk-empty-and-unreadable() {
         assert(bulk-directory-entries(str(file)) == [])
     }
 }
+#|else
+import ty.test (skip-file)
+
+skip-file('apple.bulk-directory-entries is macOS-only')
 #|]

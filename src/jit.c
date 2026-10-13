@@ -2289,6 +2289,14 @@ jit_rt_end_try(Ty *ty)
         return vXx(ty->st->try_stack)->end;
 }
 
+static void
+jit_rt_pop_try(Ty *ty)
+{
+        if (vXx(ty->st->try_stack)->end == NULL) {
+                vXx(ty->throw_stack);
+        }
+}
+
 // ARRAY_REST: extract sub-array from index 'start', excluding 'suffix' elements at end
 // Returns 1 on success, 0 on failure
 static int
@@ -2906,6 +2914,7 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                 case INSTR_CATCH:
                 case INSTR_FINALLY:
                 case INSTR_END_TRY:
+                case INSTR_POP_TRY:
                 case INSTR_NONE:
                 case INSTR_SENTINEL:
                 case INSTR_RETURN_IF_NOT_NONE:
@@ -10915,6 +10924,16 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         break;
                 }
 
+                CASE(POP_TRY) {
+                        if (ctx->try_depth <= 0) {
+                                BAIL("POP_TRY outside try block");
+                        }
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_pop_try);
+                        bc_emit_runtime_call(ctx, BC_CALL);
+                        break;
+                }
+
                 CASE(END_TRY) {
                         if (ctx->try_depth <= 0) {
                                 BAIL("END_TRY outside try block");
@@ -11647,9 +11666,11 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 jit_emit_load_imm(asm, BC_CALL, (iptr)vm_jit_fail);
                                 bc_emit_runtime_call(ctx, BC_CALL);
                         } else {
+                                ctx->sp -= 1;
                                 bc_push_nil(ctx);
                         }
                         jit_emit_label(asm, lbl_done);
+                        ctx->op_types[ctx->sp - 1] = T2_TYPE_INVALID;
                         break;
                 }
 
@@ -13367,6 +13388,7 @@ bc_cfg_resets_raw(u8 op)
         case INSTR_CATCH:
         case INSTR_FINALLY:
         case INSTR_END_TRY:
+        case INSTR_POP_TRY:
                 return true;
         default:
                 return false;

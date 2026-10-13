@@ -1,0 +1,74 @@
+import log (..)
+import path (Path)
+
+ns test
+
+let calls = 0
+
+fn expensive(s: String) -> String {
+    calls += 1
+    s
+}
+
+fn messages(p: Path) -> Array[String] {
+    p.read-text().lines().map(\_.split(': ')[-1])
+}
+
+pub fn disabled-levels-skip-message-evaluation() {
+    with p = Path.temp('ty-log-test', '.log') {
+        logging({level: ERROR, path: str(p)})
+        calls = 0
+        debug!(expensive('debug-1'))
+        info!(expensive('info-1'))
+        warn!(expensive('warn-1'))
+        assert(calls == 0)
+        error!(expensive('error-1'))
+        critical!(expensive('critical-1'))
+        assert(calls == 2)
+        assert(messages(p) == ['error-1', 'critical-1'])
+    }
+}
+
+fn emit-debug(t: String) {
+    debug!(expensive("debug-{t}"))
+}
+
+pub fn runtime-level-changes-apply-to-existing-call-sites() {
+    with p = Path.temp('ty-log-test', '.log') {
+        logging({level: ERROR, path: str(p)})
+        calls = 0
+        emit-debug('a')
+        assert(calls == 0)
+
+        logging({level: DEBUG})
+        emit-debug('b')
+        assert(calls == 1)
+
+        logging({level: ERROR})
+        emit-debug('c')
+        assert(calls == 1)
+        assert(messages(p) == ['debug-b'])
+    }
+}
+
+fn emit-info(t: String) {
+    info!(expensive("info-{t}"))
+}
+
+pub fn level-is-shared-with-other-threads() {
+    with p = Path.temp('ty-log-test', '.log') {
+        logging({level: ERROR, path: str(p)})
+        calls = 0
+        Thread(-> emit-info('t1')).join()
+        assert(calls == 0)
+
+        logging({level: INFO})
+        Thread(-> emit-info('t2')).join()
+        assert(calls == 1)
+
+        logging({level: ERROR})
+        Thread(-> emit-info('t3')).join()
+        assert(calls == 1)
+        assert(messages(p) == ['info-t2'])
+    }
+}

@@ -1,0 +1,160 @@
+class Secretive {
+    __secret: Int
+    pub-value: Int
+
+    init() {
+        __secret = 42
+        pub-value = 7
+    }
+
+    secret() -> Int { __secret }
+    set-secret(v: Int) { __secret = v }
+    value() -> Int { pub-value }
+}
+
+class Named < Secretive {
+    name: String
+
+    init() {
+        super()
+        name = 'named'
+    }
+}
+
+class Narrow {
+    __a: Int
+
+    init(a: Int) { __a = a }
+
+    a() -> Int { __a }
+}
+
+class Wide {
+    __x: Int
+    __y: Int
+    __z: Int
+    __w: Int
+
+    init() {
+        __x = 1
+        __y = 2
+        __z = 3
+        __w = 4
+    }
+
+    smash() {
+        __y = 111
+        __z = 222
+        __w = 333
+    }
+}
+
+class Unrelated {
+    x: Int
+
+    init() { x = 1 }
+}
+
+fn shout(f: Function) -> Function {
+    return fn (*args) { "{f(*args)}!" }
+}
+
+class Greeter {
+    @shout
+    greet() -> String { 'base' }
+}
+
+class LoudGreeter < Greeter {
+    name: String
+    value: Int
+
+    init() {
+        name = 'loud'
+        value = 1
+    }
+
+    greet() -> String { "derived+{super()}" }
+}
+
+class Counter {
+    n: Int
+
+    init(n: Int) { self.n = n }
+
+    zz-alpha() -> String { 'alpha' }
+    zz-beta() -> String { 'beta' }
+    run() -> String { "{zz-alpha()} {zz-beta()} {n}" }
+    add(k: Int) -> Int { n + k }
+}
+
+fn raises?(f: () -> Any) -> Bool {
+    try {
+        f()
+    } catch _: RuntimeError {
+        return true
+    }
+    false
+}
+
+ns test
+
+pub fn subclass-with-shifted-layout-reads-private-field() {
+    let named = Named()
+    for ..1000 {
+        assert(named.secret() == 42)
+        assert(named.value() == 7)
+    }
+    named.set-secret(5)
+    assert(named.secret() == 5)
+    assert(named.name == 'named')
+}
+
+pub fn unbound-method-call-raises() {
+    let g = Secretive.secret
+    assert(raises?(() -> g()))
+    let h = Secretive.value
+    assert(raises?(() -> h()))
+}
+
+pub fn foreign-receiver-raises() {
+    let s = Secretive()
+    let id: Int = Secretive.__id__
+    assert(raises?(() -> s.secret.bind(id)()))
+    assert(raises?(() -> s.value.bind(id)()))
+    assert(raises?(() -> s.secret.bind(Unrelated())()))
+}
+
+pub fn transplanted-private-writer-does-not-corrupt-neighbors() {
+    let narrows = [Narrow(i) for i in ..64]
+    let wide: _ = Wide
+    defineMethod(Narrow, 'smash', wide.__methods__['smash'])
+    let victim: _ = narrows[10]
+    victim.smash()
+    assert([it.a() for narrows[;20]] == [*..20])
+}
+
+pub fn super-into-decorated-method-with-shifted-layout() {
+    assert(LoudGreeter().greet() == 'derived+base!')
+    assert(Greeter().greet() == 'base!')
+}
+
+pub fn apply-rebinds-self() {
+    let a = Counter(5)
+    let b = Counter(100)
+    assert(apply(a.add, 1) == 6)
+    assert(apply(a.add, 1, self=b) == 101)
+    assert(apply(Counter.add, 2, self=b) == 102)
+}
+
+pub fn define-method-keeps-existing-dispatch() {
+    let c = Counter(3)
+    for ..100 {
+        assert(c.run() == 'alpha beta 3')
+    }
+    defineMethod(Counter, 'put', fn () { 'new' })
+    for ..100 {
+        assert(c.run() == 'alpha beta 3')
+        assert(c.zz-beta() == 'beta')
+    }
+    assert(Counter(4).run() == 'alpha beta 4')
+}

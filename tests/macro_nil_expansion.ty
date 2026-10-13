@@ -1,0 +1,3 @@
+macro nodebug!(expr) { nil }
+nodebug!("x")
+print("after")

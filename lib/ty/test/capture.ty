@@ -1,0 +1,78 @@
+import os
+import stdio
+
+fn flush() {
+    stdio.fflush(stdio.stdout)
+    stdio.fflush(stdio.stderr)
+}
+
+pub class Capture {
+    path:      ?String
+    __fd:      Int
+    __saved:   (Int, Int)
+    __active?: Bool = false
+
+    init(path: String, anonymous?: Bool = false) {
+        let flags = os.O_RDWR | os.O_CREAT | os.O_APPEND
+        let fd = os.open(path, flags, 0o600)
+        if fd < 0 {
+            throw RuntimeError("ty --test: cannot open capture file {path}")
+        }
+        if anonymous? {
+            os.unlink(path)
+        }
+        self.path = anonymous? ? nil : path
+        __fd      = fd
+        __saved   = (os.dup(1), os.dup(2))
+    }
+
+    static temp() -> Capture {
+        let base = (getenv('TMPDIR') ?? '/tmp').sub(/\/+$/, '')
+        let (fd, p) = os.mktemp("{base}/ty-test-capture")
+        if fd < 0 {
+            throw RuntimeError("ty --test: cannot create a capture file under {base}")
+        }
+        os.close(fd)
+        Capture(p, anonymous?: true)
+    }
+
+    offset -> Int {
+        os.lseek(__fd, 0, stdio.SEEK_END)
+    }
+
+    begin() {
+        if __active? {
+            return
+        }
+        flush()
+        os.dup2(__fd, 1)
+        os.dup2(__fd, 2)
+        __active? = true
+    }
+
+    end() {
+        if !__active? {
+            return
+        }
+        flush()
+        os.dup2(__saved.0, 1)
+        os.dup2(__saved.1, 2)
+        __active? = false
+    }
+
+    read(from: Int) -> String {
+        let stop = offset
+        if stop <= from {
+            return ''
+        }
+        os.lseek(__fd, from, stdio.SEEK_SET)
+        os.read(__fd, stop - from, all: true).str()
+    }
+
+    close() {
+        end()
+        os.close(__fd)
+        os.close(__saved.0)
+        os.close(__saved.1)
+    }
+}

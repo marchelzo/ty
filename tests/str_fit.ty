@@ -1,0 +1,83 @@
+ns test
+
+const RED   = "\x1b[31m"
+const RST   = "\x1b[0m"
+const LINK  = "\x1b]8;;https://example.com\x1b\\"
+const UNLINK = "\x1b]8;;\x1b\\"
+
+pub fn fit-pads-and-clips-plain-text() {
+    assert('abc'.fit(5) == 'abc  ')
+    assert('abcdef'.fit(3) == 'abc')
+    assert('abc'.fit(0) == '')
+    assert(''.fit(2) == '  ')
+}
+
+pub fn fit-returns-exact-width-strings-unchanged() {
+    let s = "{RED}abc{RST}"
+    assert(s.fit(3) == s)
+}
+
+pub fn fit-aligns-and-fills() {
+    assert('ab'.fit(6, '^') == '  ab  ')
+    assert('ab'.fit(7, 'center') == '  ab   ')
+    assert('ab'.fit(5, '>') == '   ab')
+    assert('ab'.fit(5, 'end') == '   ab')
+    assert('ab'.fit(5, 1) == '   ab')
+    assert('ab'.fit(5, -1, '.') == 'ab...')
+    assert('ab'.fit(7, fill='世') == 'ab世世 ')
+    assert('ab'.fit(7, fill='世').width() == 7)
+}
+
+pub fn fit-closes-styles-when-clipping() {
+    let s = "{RED}hello{RST} world"
+    assert(s.fit(3) == "{RED}hel{RST}")
+    assert("plain text".fit(5) == 'plain')
+    assert("{RED}hello{RST} world".fit(8) == "{RED}hello{RST} wo")
+}
+
+pub fn fit-pads-straddled-wide-chars() {
+    assert('世界abc'.fit(1) == ' ')
+    assert('世界abc'.fit(3) == '世 ')
+    assert('世界abc'.fit(3).width() == 3)
+}
+
+pub fn fit-keeps-combining-marks-at-the-edge() {
+    assert("éx".fit(1) == "é")
+}
+
+pub fn fit-closes-links() {
+    let s = "{LINK}hello{UNLINK}"
+    assert(s.width() == 5)
+    assert(s.fit(2) == "{LINK}he{UNLINK}")
+}
+
+pub fn width-skips-osc-and-non-sgr-csi() {
+    assert("{LINK}hi{UNLINK}".width() == 2)
+    assert("a\x1b[2Kb".width() == 2)
+    assert("a\x1b[?25lb\x1b[0m".width() == 2)
+    assert("\x1b_Gq=2;AAAA\x1b\\x".width() == 1)
+}
+
+pub fn ansi-lines-matches-lines-for-plain-text() {
+    assert('a\nb\n'.ansi-lines() == 'a\nb\n'.lines())
+    assert('a\r\nb'.ansi-lines() == ['a', 'b'])
+    assert(''.ansi-lines() == [''])
+    assert('\n'.ansi-lines() == [''])
+}
+
+pub fn ansi-lines-carries-styles() {
+    let lines = "{RED}a\nb{RST}c\nd".ansi-lines()
+    assert(lines == ["{RED}a{RST}", "\x1b[31mb{RST}c", 'd'])
+    let bold = "\x1b[1;38;2;1;2;3mx\ny\x1b[22mz\x1b[0m".ansi-lines()
+    assert(bold == ["\x1b[1;38;2;1;2;3mx{RST}", "\x1b[1;38;2;1;2;3my\x1b[22mz\x1b[0m"])
+}
+
+pub fn ansi-lines-carries-links() {
+    let lines = "{LINK}li\nnk{UNLINK}".ansi-lines()
+    assert(lines == ["{LINK}li{UNLINK}", "{LINK}nk{UNLINK}"])
+}
+
+pub fn ansi-lines-preserves-widths() {
+    let s = "\x1b[3mone\ntwo three\x1b[23m\nfour"
+    assert(s.ansi-lines().map(&width) == [3, 9, 4])
+}

@@ -399,7 +399,7 @@ pub class Path : PathLike {
         }
         defer os.close(fd)
         
-        let now = time.now()
+        let now = time.now(time.CLOCK_REALTIME)
         if os.futimes(fd, now, now) == -1 {
             throw os.OSError('futimes()')
         }

@@ -1,0 +1,26 @@
+import path (Path)
+import ty
+import ty.test.config (configure, skip-dir)
+
+let root = Path(ty.executable).parent
+let tyls = root / 'tyls'
+
+fn newest-source() -> Float {
+    let files = [*(root / 'src').glob('*.c'), *(root / 'include').glob('*.h'), root / 'tyls.c']
+    files.filter(&.file?).map(f -> f.stat.mtime).max() ?? 0.0
+}
+
+if !tyls.file? || tyls.stat.mtime < newest-source() {
+    skip-dir(
+        'tyls is missing or older than the interpreter sources (run `make tyls`)',
+        opt-in: true
+    )
+}
+
+configure(
+    opt-in:       true,
+    serial:       true,
+    timeout:      120.0,
+    load-timeout: 120.0,
+    tags:         ['lsp']
+)

@@ -1293,18 +1293,32 @@ ParseError(Ty *ty, char const *fmt, ...)
         } while (0)
 
 inline static Namespace *
-PushNS(Ty *ty, char *id, bool pub)
+PushNS(Ty *ty, char *id, Token const *src, bool pub)
 {
         if (s_eq(id, "test")) {
                 TestNamespace += 1;
         }
 
         Namespace *ns = amA(sizeof *ns);
-        ns->id = id;
-        ns->pub = pub;
+        ns->id     = id;
+        ns->src_id = id;
+        ns->pub    = pub;
         ns->braced = true;
-        ns->test = (TestNamespace > 0);
-        ns->next = CurrentNamespace;
+        ns->test   = (TestNamespace > 0);
+        ns->next   = CurrentNamespace;
+
+        if (
+                (src->start.s != NULL)
+             && (src->end.s != NULL)
+             && (src->end.s > src->start.s)
+             && (strcspn(src->start.s, " \t\n(){}[]") >= (usize)(src->end.s - src->start.s))
+        ) {
+                usize n = src->end.s - src->start.s;
+                char *sid = amA(n + 1);
+                memcpy(sid, src->start.s, n);
+                sid[n] = '\0';
+                ns->src_id = sid;
+        }
 
         CompilerEnterNS(ty, ns);
 
@@ -7980,13 +7994,13 @@ parse_module(Ty *ty, Module *mod)
                         next();
 
                         expect(TOKEN_IDENTIFIER);
-                        Namespace *ns = PushNS(ty, tok()->identifier, pub);
+                        Namespace *ns = PushNS(ty, tok()->identifier, tok(), pub);
                         next();
 
                         while (T0 == '.') {
                                 next();
                                 expect(TOKEN_IDENTIFIER);
-                                PushNS(ty, tok()->identifier, true);
+                                PushNS(ty, tok()->identifier, tok(), true);
                                 CurrentNamespace->braced = false;
                                 next();
                         }
@@ -8072,20 +8086,17 @@ parse_module(Ty *ty, Module *mod)
 
                 SetNamespace(s, CurrentNamespace);
 
-                bool skip = TestNamespace && !RunningTests;
-                if (!skip) {
-                        u32 flags = mod->flags;
-                        if (TY_CATCH_ERROR()) {
-                                TY_SUPPRESS("top-level definition");
-                                mod->flags = flags;
-                                UnresolveExpr(ty, (Expr *)s);
-                                if (s->type == STATEMENT_OPERATOR_DEFINITION) {
-                                        s->retry = true;
-                                }
-                        } else {
-                                define_top(ty, s, doc);
-                                TY_CATCH_END();
+                u32 flags = mod->flags;
+                if (TY_CATCH_ERROR()) {
+                        TY_SUPPRESS("top-level definition");
+                        mod->flags = flags;
+                        UnresolveExpr(ty, (Expr *)s);
+                        if (s->type == STATEMENT_OPERATOR_DEFINITION) {
+                                s->retry = true;
                         }
+                } else {
+                        define_top(ty, s, doc);
+                        TY_CATCH_END();
                 }
 
                 avP(program, s);

@@ -31,3 +31,5 @@ typrof
 include/gen/
 tools/tybi
 include/syscall_names.h
+.ty-test-cache/
+!__test__.ty

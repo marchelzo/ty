@@ -1,0 +1,761 @@
+import math (nan, inf)
+
+let t? = true
+
+fn lt-ff(a: Float, b: Float) -> Array[Bool] {
+    [
+        a < b,
+        do { if a < b { true } else { false } },
+        do { if !(a < b) { false } else { true } },
+        (a < b) ? true : false,
+        do { let r = false; while a < b { r = true; break }; r },
+        do { let r = true; while !(a < b) { r = false; break }; r },
+        match 0 { _ and a < b => true, _ => false },
+        do { let x = a; let y = b; if x < y { true } else { false } },
+        do { let r = false; for ..2 { if a < b { r = true } }; r },
+        do { if t? && a < b { true } else { false } },
+    ]
+}
+
+fn le-ff(a: Float, b: Float) -> Array[Bool] {
+    [
+        a <= b,
+        do { if a <= b { true } else { false } },
+        do { if !(a <= b) { false } else { true } },
+        (a <= b) ? true : false,
+        do { let r = false; while a <= b { r = true; break }; r },
+        do { let r = true; while !(a <= b) { r = false; break }; r },
+        match 0 { _ and a <= b => true, _ => false },
+        do { let x = a; let y = b; if x <= y { true } else { false } },
+        do { let r = false; for ..2 { if a <= b { r = true } }; r },
+        do { if t? && a <= b { true } else { false } },
+    ]
+}
+
+fn gt-ff(a: Float, b: Float) -> Array[Bool] {
+    [
+        a > b,
+        do { if a > b { true } else { false } },
+        do { if !(a > b) { false } else { true } },
+        (a > b) ? true : false,
+        do { let r = false; while a > b { r = true; break }; r },
+        do { let r = true; while !(a > b) { r = false; break }; r },
+        match 0 { _ and a > b => true, _ => false },
+        do { let x = a; let y = b; if x > y { true } else { false } },
+        do { let r = false; for ..2 { if a > b { r = true } }; r },
+        do { if t? && a > b { true } else { false } },
+    ]
+}
+
+fn ge-ff(a: Float, b: Float) -> Array[Bool] {
+    [
+        a >= b,
+        do { if a >= b { true } else { false } },
+        do { if !(a >= b) { false } else { true } },
+        (a >= b) ? true : false,
+        do { let r = false; while a >= b { r = true; break }; r },
+        do { let r = true; while !(a >= b) { r = false; break }; r },
+        match 0 { _ and a >= b => true, _ => false },
+        do { let x = a; let y = b; if x >= y { true } else { false } },
+        do { let r = false; for ..2 { if a >= b { r = true } }; r },
+        do { if t? && a >= b { true } else { false } },
+    ]
+}
+
+fn eq-ff(a: Float, b: Float) -> Array[Bool] {
+    [
+        a == b,
+        do { if a == b { true } else { false } },
+        do { if !(a == b) { false } else { true } },
+        (a == b) ? true : false,
+        do { let r = false; while a == b { r = true; break }; r },
+        do { let r = true; while !(a == b) { r = false; break }; r },
+        match 0 { _ and a == b => true, _ => false },
+        do { let x = a; let y = b; if x == y { true } else { false } },
+        do { let r = false; for ..2 { if a == b { r = true } }; r },
+        do { if t? && a == b { true } else { false } },
+    ]
+}
+
+fn ne-ff(a: Float, b: Float) -> Array[Bool] {
+    [
+        a != b,
+        do { if a != b { true } else { false } },
+        do { if !(a != b) { false } else { true } },
+        (a != b) ? true : false,
+        do { let r = false; while a != b { r = true; break }; r },
+        do { let r = true; while !(a != b) { r = false; break }; r },
+        match 0 { _ and a != b => true, _ => false },
+        do { let x = a; let y = b; if x != y { true } else { false } },
+        do { let r = false; for ..2 { if a != b { r = true } }; r },
+        do { if t? && a != b { true } else { false } },
+    ]
+}
+
+fn lt-aa(a: Any, b: Any) -> Array[Bool] {
+    [
+        a < b,
+        do { if a < b { true } else { false } },
+        do { if !(a < b) { false } else { true } },
+        (a < b) ? true : false,
+        do { let r = false; while a < b { r = true; break }; r },
+        do { let r = true; while !(a < b) { r = false; break }; r },
+        match 0 { _ and a < b => true, _ => false },
+        do { let x = a; let y = b; if x < y { true } else { false } },
+        do { let r = false; for ..2 { if a < b { r = true } }; r },
+        do { if t? && a < b { true } else { false } },
+    ]
+}
+
+fn le-aa(a: Any, b: Any) -> Array[Bool] {
+    [
+        a <= b,
+        do { if a <= b { true } else { false } },
+        do { if !(a <= b) { false } else { true } },
+        (a <= b) ? true : false,
+        do { let r = false; while a <= b { r = true; break }; r },
+        do { let r = true; while !(a <= b) { r = false; break }; r },
+        match 0 { _ and a <= b => true, _ => false },
+        do { let x = a; let y = b; if x <= y { true } else { false } },
+        do { let r = false; for ..2 { if a <= b { r = true } }; r },
+        do { if t? && a <= b { true } else { false } },
+    ]
+}
+
+fn gt-aa(a: Any, b: Any) -> Array[Bool] {
+    [
+        a > b,
+        do { if a > b { true } else { false } },
+        do { if !(a > b) { false } else { true } },
+        (a > b) ? true : false,
+        do { let r = false; while a > b { r = true; break }; r },
+        do { let r = true; while !(a > b) { r = false; break }; r },
+        match 0 { _ and a > b => true, _ => false },
+        do { let x = a; let y = b; if x > y { true } else { false } },
+        do { let r = false; for ..2 { if a > b { r = true } }; r },
+        do { if t? && a > b { true } else { false } },
+    ]
+}
+
+fn ge-aa(a: Any, b: Any) -> Array[Bool] {
+    [
+        a >= b,
+        do { if a >= b { true } else { false } },
+        do { if !(a >= b) { false } else { true } },
+        (a >= b) ? true : false,
+        do { let r = false; while a >= b { r = true; break }; r },
+        do { let r = true; while !(a >= b) { r = false; break }; r },
+        match 0 { _ and a >= b => true, _ => false },
+        do { let x = a; let y = b; if x >= y { true } else { false } },
+        do { let r = false; for ..2 { if a >= b { r = true } }; r },
+        do { if t? && a >= b { true } else { false } },
+    ]
+}
+
+fn eq-aa(a: Any, b: Any) -> Array[Bool] {
+    [
+        a == b,
+        do { if a == b { true } else { false } },
+        do { if !(a == b) { false } else { true } },
+        (a == b) ? true : false,
+        do { let r = false; while a == b { r = true; break }; r },
+        do { let r = true; while !(a == b) { r = false; break }; r },
+        match 0 { _ and a == b => true, _ => false },
+        do { let x = a; let y = b; if x == y { true } else { false } },
+        do { let r = false; for ..2 { if a == b { r = true } }; r },
+        do { if t? && a == b { true } else { false } },
+    ]
+}
+
+fn ne-aa(a: Any, b: Any) -> Array[Bool] {
+    [
+        a != b,
+        do { if a != b { true } else { false } },
+        do { if !(a != b) { false } else { true } },
+        (a != b) ? true : false,
+        do { let r = false; while a != b { r = true; break }; r },
+        do { let r = true; while !(a != b) { r = false; break }; r },
+        match 0 { _ and a != b => true, _ => false },
+        do { let x = a; let y = b; if x != y { true } else { false } },
+        do { let r = false; for ..2 { if a != b { r = true } }; r },
+        do { if t? && a != b { true } else { false } },
+    ]
+}
+
+fn lt-if(a: Int, b: Float) -> Array[Bool] {
+    [
+        a < b,
+        do { if a < b { true } else { false } },
+        do { if !(a < b) { false } else { true } },
+        (a < b) ? true : false,
+        do { let r = false; while a < b { r = true; break }; r },
+        do { let r = true; while !(a < b) { r = false; break }; r },
+        match 0 { _ and a < b => true, _ => false },
+        do { let x = a; let y = b; if x < y { true } else { false } },
+        do { let r = false; for ..2 { if a < b { r = true } }; r },
+        do { if t? && a < b { true } else { false } },
+    ]
+}
+
+fn le-if(a: Int, b: Float) -> Array[Bool] {
+    [
+        a <= b,
+        do { if a <= b { true } else { false } },
+        do { if !(a <= b) { false } else { true } },
+        (a <= b) ? true : false,
+        do { let r = false; while a <= b { r = true; break }; r },
+        do { let r = true; while !(a <= b) { r = false; break }; r },
+        match 0 { _ and a <= b => true, _ => false },
+        do { let x = a; let y = b; if x <= y { true } else { false } },
+        do { let r = false; for ..2 { if a <= b { r = true } }; r },
+        do { if t? && a <= b { true } else { false } },
+    ]
+}
+
+fn gt-if(a: Int, b: Float) -> Array[Bool] {
+    [
+        a > b,
+        do { if a > b { true } else { false } },
+        do { if !(a > b) { false } else { true } },
+        (a > b) ? true : false,
+        do { let r = false; while a > b { r = true; break }; r },
+        do { let r = true; while !(a > b) { r = false; break }; r },
+        match 0 { _ and a > b => true, _ => false },
+        do { let x = a; let y = b; if x > y { true } else { false } },
+        do { let r = false; for ..2 { if a > b { r = true } }; r },
+        do { if t? && a > b { true } else { false } },
+    ]
+}
+
+fn ge-if(a: Int, b: Float) -> Array[Bool] {
+    [
+        a >= b,
+        do { if a >= b { true } else { false } },
+        do { if !(a >= b) { false } else { true } },
+        (a >= b) ? true : false,
+        do { let r = false; while a >= b { r = true; break }; r },
+        do { let r = true; while !(a >= b) { r = false; break }; r },
+        match 0 { _ and a >= b => true, _ => false },
+        do { let x = a; let y = b; if x >= y { true } else { false } },
+        do { let r = false; for ..2 { if a >= b { r = true } }; r },
+        do { if t? && a >= b { true } else { false } },
+    ]
+}
+
+fn eq-if(a: Int, b: Float) -> Array[Bool] {
+    [
+        a == b,
+        do { if a == b { true } else { false } },
+        do { if !(a == b) { false } else { true } },
+        (a == b) ? true : false,
+        do { let r = false; while a == b { r = true; break }; r },
+        do { let r = true; while !(a == b) { r = false; break }; r },
+        match 0 { _ and a == b => true, _ => false },
+        do { let x = a; let y = b; if x == y { true } else { false } },
+        do { let r = false; for ..2 { if a == b { r = true } }; r },
+        do { if t? && a == b { true } else { false } },
+    ]
+}
+
+fn ne-if(a: Int, b: Float) -> Array[Bool] {
+    [
+        a != b,
+        do { if a != b { true } else { false } },
+        do { if !(a != b) { false } else { true } },
+        (a != b) ? true : false,
+        do { let r = false; while a != b { r = true; break }; r },
+        do { let r = true; while !(a != b) { r = false; break }; r },
+        match 0 { _ and a != b => true, _ => false },
+        do { let x = a; let y = b; if x != y { true } else { false } },
+        do { let r = false; for ..2 { if a != b { r = true } }; r },
+        do { if t? && a != b { true } else { false } },
+    ]
+}
+
+fn lt-fi(a: Float, b: Int) -> Array[Bool] {
+    [
+        a < b,
+        do { if a < b { true } else { false } },
+        do { if !(a < b) { false } else { true } },
+        (a < b) ? true : false,
+        do { let r = false; while a < b { r = true; break }; r },
+        do { let r = true; while !(a < b) { r = false; break }; r },
+        match 0 { _ and a < b => true, _ => false },
+        do { let x = a; let y = b; if x < y { true } else { false } },
+        do { let r = false; for ..2 { if a < b { r = true } }; r },
+        do { if t? && a < b { true } else { false } },
+    ]
+}
+
+fn le-fi(a: Float, b: Int) -> Array[Bool] {
+    [
+        a <= b,
+        do { if a <= b { true } else { false } },
+        do { if !(a <= b) { false } else { true } },
+        (a <= b) ? true : false,
+        do { let r = false; while a <= b { r = true; break }; r },
+        do { let r = true; while !(a <= b) { r = false; break }; r },
+        match 0 { _ and a <= b => true, _ => false },
+        do { let x = a; let y = b; if x <= y { true } else { false } },
+        do { let r = false; for ..2 { if a <= b { r = true } }; r },
+        do { if t? && a <= b { true } else { false } },
+    ]
+}
+
+fn gt-fi(a: Float, b: Int) -> Array[Bool] {
+    [
+        a > b,
+        do { if a > b { true } else { false } },
+        do { if !(a > b) { false } else { true } },
+        (a > b) ? true : false,
+        do { let r = false; while a > b { r = true; break }; r },
+        do { let r = true; while !(a > b) { r = false; break }; r },
+        match 0 { _ and a > b => true, _ => false },
+        do { let x = a; let y = b; if x > y { true } else { false } },
+        do { let r = false; for ..2 { if a > b { r = true } }; r },
+        do { if t? && a > b { true } else { false } },
+    ]
+}
+
+fn ge-fi(a: Float, b: Int) -> Array[Bool] {
+    [
+        a >= b,
+        do { if a >= b { true } else { false } },
+        do { if !(a >= b) { false } else { true } },
+        (a >= b) ? true : false,
+        do { let r = false; while a >= b { r = true; break }; r },
+        do { let r = true; while !(a >= b) { r = false; break }; r },
+        match 0 { _ and a >= b => true, _ => false },
+        do { let x = a; let y = b; if x >= y { true } else { false } },
+        do { let r = false; for ..2 { if a >= b { r = true } }; r },
+        do { if t? && a >= b { true } else { false } },
+    ]
+}
+
+fn eq-fi(a: Float, b: Int) -> Array[Bool] {
+    [
+        a == b,
+        do { if a == b { true } else { false } },
+        do { if !(a == b) { false } else { true } },
+        (a == b) ? true : false,
+        do { let r = false; while a == b { r = true; break }; r },
+        do { let r = true; while !(a == b) { r = false; break }; r },
+        match 0 { _ and a == b => true, _ => false },
+        do { let x = a; let y = b; if x == y { true } else { false } },
+        do { let r = false; for ..2 { if a == b { r = true } }; r },
+        do { if t? && a == b { true } else { false } },
+    ]
+}
+
+fn ne-fi(a: Float, b: Int) -> Array[Bool] {
+    [
+        a != b,
+        do { if a != b { true } else { false } },
+        do { if !(a != b) { false } else { true } },
+        (a != b) ? true : false,
+        do { let r = false; while a != b { r = true; break }; r },
+        do { let r = true; while !(a != b) { r = false; break }; r },
+        match 0 { _ and a != b => true, _ => false },
+        do { let x = a; let y = b; if x != y { true } else { false } },
+        do { let r = false; for ..2 { if a != b { r = true } }; r },
+        do { if t? && a != b { true } else { false } },
+    ]
+}
+
+fn check(name: String, got: Array[Bool], want: Bool) {
+    for got {
+        assert(it == want, "{name}: {got}")
+    }
+}
+
+ns test
+
+pub fn lt-ff-matches-ieee() {
+    check("lt-ff(nan, nan)", lt-ff(nan, nan), false)
+    check("lt-ff(nan, 1.0)", lt-ff(nan, 1.0), false)
+    check("lt-ff(nan, 2.0)", lt-ff(nan, 2.0), false)
+    check("lt-ff(nan, inf)", lt-ff(nan, inf), false)
+    check("lt-ff(nan, -inf)", lt-ff(nan, -inf), false)
+    check("lt-ff(1.0, nan)", lt-ff(1.0, nan), false)
+    check("lt-ff(1.0, 1.0)", lt-ff(1.0, 1.0), false)
+    check("lt-ff(1.0, 2.0)", lt-ff(1.0, 2.0), true)
+    check("lt-ff(1.0, inf)", lt-ff(1.0, inf), true)
+    check("lt-ff(1.0, -inf)", lt-ff(1.0, -inf), false)
+    check("lt-ff(2.0, nan)", lt-ff(2.0, nan), false)
+    check("lt-ff(2.0, 1.0)", lt-ff(2.0, 1.0), false)
+    check("lt-ff(2.0, 2.0)", lt-ff(2.0, 2.0), false)
+    check("lt-ff(2.0, inf)", lt-ff(2.0, inf), true)
+    check("lt-ff(2.0, -inf)", lt-ff(2.0, -inf), false)
+    check("lt-ff(inf, nan)", lt-ff(inf, nan), false)
+    check("lt-ff(inf, 1.0)", lt-ff(inf, 1.0), false)
+    check("lt-ff(inf, 2.0)", lt-ff(inf, 2.0), false)
+    check("lt-ff(inf, inf)", lt-ff(inf, inf), false)
+    check("lt-ff(inf, -inf)", lt-ff(inf, -inf), false)
+    check("lt-ff(-inf, nan)", lt-ff(-inf, nan), false)
+    check("lt-ff(-inf, 1.0)", lt-ff(-inf, 1.0), true)
+    check("lt-ff(-inf, 2.0)", lt-ff(-inf, 2.0), true)
+    check("lt-ff(-inf, inf)", lt-ff(-inf, inf), true)
+    check("lt-ff(-inf, -inf)", lt-ff(-inf, -inf), false)
+}
+
+pub fn le-ff-matches-ieee() {
+    check("le-ff(nan, nan)", le-ff(nan, nan), false)
+    check("le-ff(nan, 1.0)", le-ff(nan, 1.0), false)
+    check("le-ff(nan, 2.0)", le-ff(nan, 2.0), false)
+    check("le-ff(nan, inf)", le-ff(nan, inf), false)
+    check("le-ff(nan, -inf)", le-ff(nan, -inf), false)
+    check("le-ff(1.0, nan)", le-ff(1.0, nan), false)
+    check("le-ff(1.0, 1.0)", le-ff(1.0, 1.0), true)
+    check("le-ff(1.0, 2.0)", le-ff(1.0, 2.0), true)
+    check("le-ff(1.0, inf)", le-ff(1.0, inf), true)
+    check("le-ff(1.0, -inf)", le-ff(1.0, -inf), false)
+    check("le-ff(2.0, nan)", le-ff(2.0, nan), false)
+    check("le-ff(2.0, 1.0)", le-ff(2.0, 1.0), false)
+    check("le-ff(2.0, 2.0)", le-ff(2.0, 2.0), true)
+    check("le-ff(2.0, inf)", le-ff(2.0, inf), true)
+    check("le-ff(2.0, -inf)", le-ff(2.0, -inf), false)
+    check("le-ff(inf, nan)", le-ff(inf, nan), false)
+    check("le-ff(inf, 1.0)", le-ff(inf, 1.0), false)
+    check("le-ff(inf, 2.0)", le-ff(inf, 2.0), false)
+    check("le-ff(inf, inf)", le-ff(inf, inf), true)
+    check("le-ff(inf, -inf)", le-ff(inf, -inf), false)
+    check("le-ff(-inf, nan)", le-ff(-inf, nan), false)
+    check("le-ff(-inf, 1.0)", le-ff(-inf, 1.0), true)
+    check("le-ff(-inf, 2.0)", le-ff(-inf, 2.0), true)
+    check("le-ff(-inf, inf)", le-ff(-inf, inf), true)
+    check("le-ff(-inf, -inf)", le-ff(-inf, -inf), true)
+}
+
+pub fn gt-ff-matches-ieee() {
+    check("gt-ff(nan, nan)", gt-ff(nan, nan), false)
+    check("gt-ff(nan, 1.0)", gt-ff(nan, 1.0), false)
+    check("gt-ff(nan, 2.0)", gt-ff(nan, 2.0), false)
+    check("gt-ff(nan, inf)", gt-ff(nan, inf), false)
+    check("gt-ff(nan, -inf)", gt-ff(nan, -inf), false)
+    check("gt-ff(1.0, nan)", gt-ff(1.0, nan), false)
+    check("gt-ff(1.0, 1.0)", gt-ff(1.0, 1.0), false)
+    check("gt-ff(1.0, 2.0)", gt-ff(1.0, 2.0), false)
+    check("gt-ff(1.0, inf)", gt-ff(1.0, inf), false)
+    check("gt-ff(1.0, -inf)", gt-ff(1.0, -inf), true)
+    check("gt-ff(2.0, nan)", gt-ff(2.0, nan), false)
+    check("gt-ff(2.0, 1.0)", gt-ff(2.0, 1.0), true)
+    check("gt-ff(2.0, 2.0)", gt-ff(2.0, 2.0), false)
+    check("gt-ff(2.0, inf)", gt-ff(2.0, inf), false)
+    check("gt-ff(2.0, -inf)", gt-ff(2.0, -inf), true)
+    check("gt-ff(inf, nan)", gt-ff(inf, nan), false)
+    check("gt-ff(inf, 1.0)", gt-ff(inf, 1.0), true)
+    check("gt-ff(inf, 2.0)", gt-ff(inf, 2.0), true)
+    check("gt-ff(inf, inf)", gt-ff(inf, inf), false)
+    check("gt-ff(inf, -inf)", gt-ff(inf, -inf), true)
+    check("gt-ff(-inf, nan)", gt-ff(-inf, nan), false)
+    check("gt-ff(-inf, 1.0)", gt-ff(-inf, 1.0), false)
+    check("gt-ff(-inf, 2.0)", gt-ff(-inf, 2.0), false)
+    check("gt-ff(-inf, inf)", gt-ff(-inf, inf), false)
+    check("gt-ff(-inf, -inf)", gt-ff(-inf, -inf), false)
+}
+
+pub fn ge-ff-matches-ieee() {
+    check("ge-ff(nan, nan)", ge-ff(nan, nan), false)
+    check("ge-ff(nan, 1.0)", ge-ff(nan, 1.0), false)
+    check("ge-ff(nan, 2.0)", ge-ff(nan, 2.0), false)
+    check("ge-ff(nan, inf)", ge-ff(nan, inf), false)
+    check("ge-ff(nan, -inf)", ge-ff(nan, -inf), false)
+    check("ge-ff(1.0, nan)", ge-ff(1.0, nan), false)
+    check("ge-ff(1.0, 1.0)", ge-ff(1.0, 1.0), true)
+    check("ge-ff(1.0, 2.0)", ge-ff(1.0, 2.0), false)
+    check("ge-ff(1.0, inf)", ge-ff(1.0, inf), false)
+    check("ge-ff(1.0, -inf)", ge-ff(1.0, -inf), true)
+    check("ge-ff(2.0, nan)", ge-ff(2.0, nan), false)
+    check("ge-ff(2.0, 1.0)", ge-ff(2.0, 1.0), true)
+    check("ge-ff(2.0, 2.0)", ge-ff(2.0, 2.0), true)
+    check("ge-ff(2.0, inf)", ge-ff(2.0, inf), false)
+    check("ge-ff(2.0, -inf)", ge-ff(2.0, -inf), true)
+    check("ge-ff(inf, nan)", ge-ff(inf, nan), false)
+    check("ge-ff(inf, 1.0)", ge-ff(inf, 1.0), true)
+    check("ge-ff(inf, 2.0)", ge-ff(inf, 2.0), true)
+    check("ge-ff(inf, inf)", ge-ff(inf, inf), true)
+    check("ge-ff(inf, -inf)", ge-ff(inf, -inf), true)
+    check("ge-ff(-inf, nan)", ge-ff(-inf, nan), false)
+    check("ge-ff(-inf, 1.0)", ge-ff(-inf, 1.0), false)
+    check("ge-ff(-inf, 2.0)", ge-ff(-inf, 2.0), false)
+    check("ge-ff(-inf, inf)", ge-ff(-inf, inf), false)
+    check("ge-ff(-inf, -inf)", ge-ff(-inf, -inf), true)
+}
+
+pub fn eq-ff-matches-ieee() {
+    check("eq-ff(nan, nan)", eq-ff(nan, nan), false)
+    check("eq-ff(nan, 1.0)", eq-ff(nan, 1.0), false)
+    check("eq-ff(nan, 2.0)", eq-ff(nan, 2.0), false)
+    check("eq-ff(nan, inf)", eq-ff(nan, inf), false)
+    check("eq-ff(nan, -inf)", eq-ff(nan, -inf), false)
+    check("eq-ff(1.0, nan)", eq-ff(1.0, nan), false)
+    check("eq-ff(1.0, 1.0)", eq-ff(1.0, 1.0), true)
+    check("eq-ff(1.0, 2.0)", eq-ff(1.0, 2.0), false)
+    check("eq-ff(1.0, inf)", eq-ff(1.0, inf), false)
+    check("eq-ff(1.0, -inf)", eq-ff(1.0, -inf), false)
+    check("eq-ff(2.0, nan)", eq-ff(2.0, nan), false)
+    check("eq-ff(2.0, 1.0)", eq-ff(2.0, 1.0), false)
+    check("eq-ff(2.0, 2.0)", eq-ff(2.0, 2.0), true)
+    check("eq-ff(2.0, inf)", eq-ff(2.0, inf), false)
+    check("eq-ff(2.0, -inf)", eq-ff(2.0, -inf), false)
+    check("eq-ff(inf, nan)", eq-ff(inf, nan), false)
+    check("eq-ff(inf, 1.0)", eq-ff(inf, 1.0), false)
+    check("eq-ff(inf, 2.0)", eq-ff(inf, 2.0), false)
+    check("eq-ff(inf, inf)", eq-ff(inf, inf), true)
+    check("eq-ff(inf, -inf)", eq-ff(inf, -inf), false)
+    check("eq-ff(-inf, nan)", eq-ff(-inf, nan), false)
+    check("eq-ff(-inf, 1.0)", eq-ff(-inf, 1.0), false)
+    check("eq-ff(-inf, 2.0)", eq-ff(-inf, 2.0), false)
+    check("eq-ff(-inf, inf)", eq-ff(-inf, inf), false)
+    check("eq-ff(-inf, -inf)", eq-ff(-inf, -inf), true)
+}
+
+pub fn ne-ff-matches-ieee() {
+    check("ne-ff(nan, nan)", ne-ff(nan, nan), true)
+    check("ne-ff(nan, 1.0)", ne-ff(nan, 1.0), true)
+    check("ne-ff(nan, 2.0)", ne-ff(nan, 2.0), true)
+    check("ne-ff(nan, inf)", ne-ff(nan, inf), true)
+    check("ne-ff(nan, -inf)", ne-ff(nan, -inf), true)
+    check("ne-ff(1.0, nan)", ne-ff(1.0, nan), true)
+    check("ne-ff(1.0, 1.0)", ne-ff(1.0, 1.0), false)
+    check("ne-ff(1.0, 2.0)", ne-ff(1.0, 2.0), true)
+    check("ne-ff(1.0, inf)", ne-ff(1.0, inf), true)
+    check("ne-ff(1.0, -inf)", ne-ff(1.0, -inf), true)
+    check("ne-ff(2.0, nan)", ne-ff(2.0, nan), true)
+    check("ne-ff(2.0, 1.0)", ne-ff(2.0, 1.0), true)
+    check("ne-ff(2.0, 2.0)", ne-ff(2.0, 2.0), false)
+    check("ne-ff(2.0, inf)", ne-ff(2.0, inf), true)
+    check("ne-ff(2.0, -inf)", ne-ff(2.0, -inf), true)
+    check("ne-ff(inf, nan)", ne-ff(inf, nan), true)
+    check("ne-ff(inf, 1.0)", ne-ff(inf, 1.0), true)
+    check("ne-ff(inf, 2.0)", ne-ff(inf, 2.0), true)
+    check("ne-ff(inf, inf)", ne-ff(inf, inf), false)
+    check("ne-ff(inf, -inf)", ne-ff(inf, -inf), true)
+    check("ne-ff(-inf, nan)", ne-ff(-inf, nan), true)
+    check("ne-ff(-inf, 1.0)", ne-ff(-inf, 1.0), true)
+    check("ne-ff(-inf, 2.0)", ne-ff(-inf, 2.0), true)
+    check("ne-ff(-inf, inf)", ne-ff(-inf, inf), true)
+    check("ne-ff(-inf, -inf)", ne-ff(-inf, -inf), false)
+}
+
+pub fn lt-aa-matches-ieee() {
+    check("lt-aa(nan, nan)", lt-aa(nan, nan), false)
+    check("lt-aa(nan, 1.0)", lt-aa(nan, 1.0), false)
+    check("lt-aa(nan, 2.0)", lt-aa(nan, 2.0), false)
+    check("lt-aa(nan, inf)", lt-aa(nan, inf), false)
+    check("lt-aa(1.0, nan)", lt-aa(1.0, nan), false)
+    check("lt-aa(1.0, 1.0)", lt-aa(1.0, 1.0), false)
+    check("lt-aa(1.0, 2.0)", lt-aa(1.0, 2.0), true)
+    check("lt-aa(1.0, inf)", lt-aa(1.0, inf), true)
+    check("lt-aa(2.0, nan)", lt-aa(2.0, nan), false)
+    check("lt-aa(2.0, 1.0)", lt-aa(2.0, 1.0), false)
+    check("lt-aa(2.0, 2.0)", lt-aa(2.0, 2.0), false)
+    check("lt-aa(2.0, inf)", lt-aa(2.0, inf), true)
+    check("lt-aa(inf, nan)", lt-aa(inf, nan), false)
+    check("lt-aa(inf, 1.0)", lt-aa(inf, 1.0), false)
+    check("lt-aa(inf, 2.0)", lt-aa(inf, 2.0), false)
+    check("lt-aa(inf, inf)", lt-aa(inf, inf), false)
+}
+
+pub fn le-aa-matches-ieee() {
+    check("le-aa(nan, nan)", le-aa(nan, nan), false)
+    check("le-aa(nan, 1.0)", le-aa(nan, 1.0), false)
+    check("le-aa(nan, 2.0)", le-aa(nan, 2.0), false)
+    check("le-aa(nan, inf)", le-aa(nan, inf), false)
+    check("le-aa(1.0, nan)", le-aa(1.0, nan), false)
+    check("le-aa(1.0, 1.0)", le-aa(1.0, 1.0), true)
+    check("le-aa(1.0, 2.0)", le-aa(1.0, 2.0), true)
+    check("le-aa(1.0, inf)", le-aa(1.0, inf), true)
+    check("le-aa(2.0, nan)", le-aa(2.0, nan), false)
+    check("le-aa(2.0, 1.0)", le-aa(2.0, 1.0), false)
+    check("le-aa(2.0, 2.0)", le-aa(2.0, 2.0), true)
+    check("le-aa(2.0, inf)", le-aa(2.0, inf), true)
+    check("le-aa(inf, nan)", le-aa(inf, nan), false)
+    check("le-aa(inf, 1.0)", le-aa(inf, 1.0), false)
+    check("le-aa(inf, 2.0)", le-aa(inf, 2.0), false)
+    check("le-aa(inf, inf)", le-aa(inf, inf), true)
+}
+
+pub fn gt-aa-matches-ieee() {
+    check("gt-aa(nan, nan)", gt-aa(nan, nan), false)
+    check("gt-aa(nan, 1.0)", gt-aa(nan, 1.0), false)
+    check("gt-aa(nan, 2.0)", gt-aa(nan, 2.0), false)
+    check("gt-aa(nan, inf)", gt-aa(nan, inf), false)
+    check("gt-aa(1.0, nan)", gt-aa(1.0, nan), false)
+    check("gt-aa(1.0, 1.0)", gt-aa(1.0, 1.0), false)
+    check("gt-aa(1.0, 2.0)", gt-aa(1.0, 2.0), false)
+    check("gt-aa(1.0, inf)", gt-aa(1.0, inf), false)
+    check("gt-aa(2.0, nan)", gt-aa(2.0, nan), false)
+    check("gt-aa(2.0, 1.0)", gt-aa(2.0, 1.0), true)
+    check("gt-aa(2.0, 2.0)", gt-aa(2.0, 2.0), false)
+    check("gt-aa(2.0, inf)", gt-aa(2.0, inf), false)
+    check("gt-aa(inf, nan)", gt-aa(inf, nan), false)
+    check("gt-aa(inf, 1.0)", gt-aa(inf, 1.0), true)
+    check("gt-aa(inf, 2.0)", gt-aa(inf, 2.0), true)
+    check("gt-aa(inf, inf)", gt-aa(inf, inf), false)
+}
+
+pub fn ge-aa-matches-ieee() {
+    check("ge-aa(nan, nan)", ge-aa(nan, nan), false)
+    check("ge-aa(nan, 1.0)", ge-aa(nan, 1.0), false)
+    check("ge-aa(nan, 2.0)", ge-aa(nan, 2.0), false)
+    check("ge-aa(nan, inf)", ge-aa(nan, inf), false)
+    check("ge-aa(1.0, nan)", ge-aa(1.0, nan), false)
+    check("ge-aa(1.0, 1.0)", ge-aa(1.0, 1.0), true)
+    check("ge-aa(1.0, 2.0)", ge-aa(1.0, 2.0), false)
+    check("ge-aa(1.0, inf)", ge-aa(1.0, inf), false)
+    check("ge-aa(2.0, nan)", ge-aa(2.0, nan), false)
+    check("ge-aa(2.0, 1.0)", ge-aa(2.0, 1.0), true)
+    check("ge-aa(2.0, 2.0)", ge-aa(2.0, 2.0), true)
+    check("ge-aa(2.0, inf)", ge-aa(2.0, inf), false)
+    check("ge-aa(inf, nan)", ge-aa(inf, nan), false)
+    check("ge-aa(inf, 1.0)", ge-aa(inf, 1.0), true)
+    check("ge-aa(inf, 2.0)", ge-aa(inf, 2.0), true)
+    check("ge-aa(inf, inf)", ge-aa(inf, inf), true)
+}
+
+pub fn eq-aa-matches-ieee() {
+    check("eq-aa(nan, nan)", eq-aa(nan, nan), false)
+    check("eq-aa(nan, 1.0)", eq-aa(nan, 1.0), false)
+    check("eq-aa(nan, 2.0)", eq-aa(nan, 2.0), false)
+    check("eq-aa(nan, inf)", eq-aa(nan, inf), false)
+    check("eq-aa(1.0, nan)", eq-aa(1.0, nan), false)
+    check("eq-aa(1.0, 1.0)", eq-aa(1.0, 1.0), true)
+    check("eq-aa(1.0, 2.0)", eq-aa(1.0, 2.0), false)
+    check("eq-aa(1.0, inf)", eq-aa(1.0, inf), false)
+    check("eq-aa(2.0, nan)", eq-aa(2.0, nan), false)
+    check("eq-aa(2.0, 1.0)", eq-aa(2.0, 1.0), false)
+    check("eq-aa(2.0, 2.0)", eq-aa(2.0, 2.0), true)
+    check("eq-aa(2.0, inf)", eq-aa(2.0, inf), false)
+    check("eq-aa(inf, nan)", eq-aa(inf, nan), false)
+    check("eq-aa(inf, 1.0)", eq-aa(inf, 1.0), false)
+    check("eq-aa(inf, 2.0)", eq-aa(inf, 2.0), false)
+    check("eq-aa(inf, inf)", eq-aa(inf, inf), true)
+}
+
+pub fn ne-aa-matches-ieee() {
+    check("ne-aa(nan, nan)", ne-aa(nan, nan), true)
+    check("ne-aa(nan, 1.0)", ne-aa(nan, 1.0), true)
+    check("ne-aa(nan, 2.0)", ne-aa(nan, 2.0), true)
+    check("ne-aa(nan, inf)", ne-aa(nan, inf), true)
+    check("ne-aa(1.0, nan)", ne-aa(1.0, nan), true)
+    check("ne-aa(1.0, 1.0)", ne-aa(1.0, 1.0), false)
+    check("ne-aa(1.0, 2.0)", ne-aa(1.0, 2.0), true)
+    check("ne-aa(1.0, inf)", ne-aa(1.0, inf), true)
+    check("ne-aa(2.0, nan)", ne-aa(2.0, nan), true)
+    check("ne-aa(2.0, 1.0)", ne-aa(2.0, 1.0), true)
+    check("ne-aa(2.0, 2.0)", ne-aa(2.0, 2.0), false)
+    check("ne-aa(2.0, inf)", ne-aa(2.0, inf), true)
+    check("ne-aa(inf, nan)", ne-aa(inf, nan), true)
+    check("ne-aa(inf, 1.0)", ne-aa(inf, 1.0), true)
+    check("ne-aa(inf, 2.0)", ne-aa(inf, 2.0), true)
+    check("ne-aa(inf, inf)", ne-aa(inf, inf), false)
+}
+
+pub fn lt-if-matches-ieee() {
+    check("lt-if(1, nan)", lt-if(1, nan), false)
+    check("lt-if(1, 1.0)", lt-if(1, 1.0), false)
+    check("lt-if(1, 2.0)", lt-if(1, 2.0), true)
+    check("lt-if(2, nan)", lt-if(2, nan), false)
+    check("lt-if(2, 1.0)", lt-if(2, 1.0), false)
+    check("lt-if(2, 2.0)", lt-if(2, 2.0), false)
+}
+
+pub fn le-if-matches-ieee() {
+    check("le-if(1, nan)", le-if(1, nan), false)
+    check("le-if(1, 1.0)", le-if(1, 1.0), true)
+    check("le-if(1, 2.0)", le-if(1, 2.0), true)
+    check("le-if(2, nan)", le-if(2, nan), false)
+    check("le-if(2, 1.0)", le-if(2, 1.0), false)
+    check("le-if(2, 2.0)", le-if(2, 2.0), true)
+}
+
+pub fn gt-if-matches-ieee() {
+    check("gt-if(1, nan)", gt-if(1, nan), false)
+    check("gt-if(1, 1.0)", gt-if(1, 1.0), false)
+    check("gt-if(1, 2.0)", gt-if(1, 2.0), false)
+    check("gt-if(2, nan)", gt-if(2, nan), false)
+    check("gt-if(2, 1.0)", gt-if(2, 1.0), true)
+    check("gt-if(2, 2.0)", gt-if(2, 2.0), false)
+}
+
+pub fn ge-if-matches-ieee() {
+    check("ge-if(1, nan)", ge-if(1, nan), false)
+    check("ge-if(1, 1.0)", ge-if(1, 1.0), true)
+    check("ge-if(1, 2.0)", ge-if(1, 2.0), false)
+    check("ge-if(2, nan)", ge-if(2, nan), false)
+    check("ge-if(2, 1.0)", ge-if(2, 1.0), true)
+    check("ge-if(2, 2.0)", ge-if(2, 2.0), true)
+}
+
+pub fn eq-if-matches-ieee() {
+    check("eq-if(1, nan)", eq-if(1, nan), false)
+    check("eq-if(1, 1.0)", eq-if(1, 1.0), false)
+    check("eq-if(1, 2.0)", eq-if(1, 2.0), false)
+    check("eq-if(2, nan)", eq-if(2, nan), false)
+    check("eq-if(2, 1.0)", eq-if(2, 1.0), false)
+    check("eq-if(2, 2.0)", eq-if(2, 2.0), false)
+}
+
+pub fn ne-if-matches-ieee() {
+    check("ne-if(1, nan)", ne-if(1, nan), true)
+    check("ne-if(1, 1.0)", ne-if(1, 1.0), true)
+    check("ne-if(1, 2.0)", ne-if(1, 2.0), true)
+    check("ne-if(2, nan)", ne-if(2, nan), true)
+    check("ne-if(2, 1.0)", ne-if(2, 1.0), true)
+    check("ne-if(2, 2.0)", ne-if(2, 2.0), true)
+}
+
+pub fn lt-fi-matches-ieee() {
+    check("lt-fi(nan, 1)", lt-fi(nan, 1), false)
+    check("lt-fi(nan, 2)", lt-fi(nan, 2), false)
+    check("lt-fi(1.0, 1)", lt-fi(1.0, 1), false)
+    check("lt-fi(1.0, 2)", lt-fi(1.0, 2), true)
+    check("lt-fi(2.0, 1)", lt-fi(2.0, 1), false)
+    check("lt-fi(2.0, 2)", lt-fi(2.0, 2), false)
+}
+
+pub fn le-fi-matches-ieee() {
+    check("le-fi(nan, 1)", le-fi(nan, 1), false)
+    check("le-fi(nan, 2)", le-fi(nan, 2), false)
+    check("le-fi(1.0, 1)", le-fi(1.0, 1), true)
+    check("le-fi(1.0, 2)", le-fi(1.0, 2), true)
+    check("le-fi(2.0, 1)", le-fi(2.0, 1), false)
+    check("le-fi(2.0, 2)", le-fi(2.0, 2), true)
+}
+
+pub fn gt-fi-matches-ieee() {
+    check("gt-fi(nan, 1)", gt-fi(nan, 1), false)
+    check("gt-fi(nan, 2)", gt-fi(nan, 2), false)
+    check("gt-fi(1.0, 1)", gt-fi(1.0, 1), false)
+    check("gt-fi(1.0, 2)", gt-fi(1.0, 2), false)
+    check("gt-fi(2.0, 1)", gt-fi(2.0, 1), true)
+    check("gt-fi(2.0, 2)", gt-fi(2.0, 2), false)
+}
+
+pub fn ge-fi-matches-ieee() {
+    check("ge-fi(nan, 1)", ge-fi(nan, 1), false)
+    check("ge-fi(nan, 2)", ge-fi(nan, 2), false)
+    check("ge-fi(1.0, 1)", ge-fi(1.0, 1), true)
+    check("ge-fi(1.0, 2)", ge-fi(1.0, 2), false)
+    check("ge-fi(2.0, 1)", ge-fi(2.0, 1), true)
+    check("ge-fi(2.0, 2)", ge-fi(2.0, 2), true)
+}
+
+pub fn eq-fi-matches-ieee() {
+    check("eq-fi(nan, 1)", eq-fi(nan, 1), false)
+    check("eq-fi(nan, 2)", eq-fi(nan, 2), false)
+    check("eq-fi(1.0, 1)", eq-fi(1.0, 1), false)
+    check("eq-fi(1.0, 2)", eq-fi(1.0, 2), false)
+    check("eq-fi(2.0, 1)", eq-fi(2.0, 1), false)
+    check("eq-fi(2.0, 2)", eq-fi(2.0, 2), false)
+}
+
+pub fn ne-fi-matches-ieee() {
+    check("ne-fi(nan, 1)", ne-fi(nan, 1), true)
+    check("ne-fi(nan, 2)", ne-fi(nan, 2), true)
+    check("ne-fi(1.0, 1)", ne-fi(1.0, 1), true)
+    check("ne-fi(1.0, 2)", ne-fi(1.0, 2), true)
+    check("ne-fi(2.0, 1)", ne-fi(2.0, 1), true)
+    check("ne-fi(2.0, 2)", ne-fi(2.0, 2), true)
+}

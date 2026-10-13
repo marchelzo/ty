@@ -1,0 +1,37 @@
+import errno (ENAMETOOLONG)
+import net
+import os
+
+fn long-path() -> String {
+    "/tmp/ty-sock-{os.getpid()}/{'a' * 200}.sock"
+}
+
+fn os-error-code(f: () -> Any) -> Int | nil {
+    try {
+        f()
+    } catch e: OSError {
+        return e.code
+    }
+    nil
+}
+
+ns test
+
+pub fn bind-rejects-overlong-path() {
+    let sock = os.socket(os.AF_UNIX, os.SOCK_STREAM, 0)
+    assert(os.bind(sock, {family: os.AF_UNIX, path: long-path()}) == -1)
+    assert(errno.get() == ENAMETOOLONG)
+    os.close(sock)
+}
+
+pub fn connect-rejects-overlong-path() {
+    let sock = os.socket(os.AF_UNIX, os.SOCK_STREAM, 0)
+    assert(os.connect(sock, {family: os.AF_UNIX, path: long-path()}) == -1)
+    assert(errno.get() == ENAMETOOLONG)
+    os.close(sock)
+}
+
+pub fn net-reports-overlong-path() {
+    assert(os-error-code(() -> net.listen('unix', long-path())) == ENAMETOOLONG)
+    assert(os-error-code(() -> net.dial('unix', long-path())) == ENAMETOOLONG)
+}

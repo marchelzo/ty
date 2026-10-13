@@ -1,0 +1,18 @@
+fn body(state: String, id: ?String = nil) -> String {
+    "{state}{id}"
+}
+
+use Options = Keywords[Omit[typeof body, 'state']]
+
+class Reporter {
+    report(state: String, %opts: ...Options) -> String {
+        body(state, **opts)
+    }
+}
+
+fn report(state: String, %opts: ...Options) -> String {
+    body(state, **opts)
+}
+
+Reporter().report('x', id: 'a')
+report('x', nope: 'a')

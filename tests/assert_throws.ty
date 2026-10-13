@@ -1,0 +1,120 @@
+import ty
+import ty.test.assert (assert-throws)
+
+fn failure-of(f: () -> Any) -> AssertionError {
+    try {
+        f()
+    } catch e: AssertionError {
+        return e
+    }
+    throw AssertionError('expected an AssertionError')
+}
+
+fn parse-num(s: String) -> Int {
+    int(s) ?? throw ValueError("invalid number: {s}")
+}
+
+fn noted(calls: Array[String], s: String) -> String {
+    calls.push(s)
+    s
+}
+
+ns test
+
+pub fn returns-caught-class-instance() {
+    let e = assert-throws(parse-num('x'), ValueError)
+    assert(e :: ValueError)
+    assert(e.what == 'invalid number: x')
+}
+
+pub fn accepts-subclasses() {
+    let e = assert-throws(ty.eval('let x = ('), CompileError)
+    assert(e :: ParseError)
+}
+
+pub fn catches-tags() {
+    let xs = [1, 2]
+    let e = assert-throws(xs[10], IndexError)
+    assert(e :: IndexError)
+    assert(str(e) == 'IndexError([1, 2], 10)')
+}
+
+pub fn matches-regex-against-message() {
+    let src = 'let x: Int = "s"'
+    let e = assert-throws(ty.eval(src), CompileError, /\[assignment-type\]/)
+    assert('assignment-type' in e.what)
+}
+
+pub fn matches-string-against-message() {
+    let e = assert-throws(parse-num('abc'), ValueError, 'abc')
+    assert(e.what == 'invalid number: abc')
+}
+
+pub fn catches-anything-without-kind() {
+    assert(assert-throws(throw 42) == 42)
+    let e = assert-throws(parse-num('q'))
+    assert(e :: ValueError)
+}
+
+pub fn accepts-nil-kind-with-pattern() {
+    let e = assert-throws(parse-num('w'), nil, /number: w/)
+    assert(e :: ValueError)
+    let e = failure-of(fn () { assert-throws(parse-num('w'), nil, /digits/) })
+    assert(e.note == (
+        'expected an exception matching /digits/, '
+        "got ValueError('invalid number: w')"
+    ))
+    assert(e.src == "assert-throws(parse-num('w'), nil, /digits/)")
+}
+
+pub fn catches-assertion-errors() {
+    let x = 1
+    let e = assert-throws(assert(x == 2), AssertionError)
+    assert(e.operands == [('x', '1')])
+}
+
+pub fn evaluates-expression-once() {
+    let calls: Array[String] = []
+    let e = assert-throws(parse-num(noted(calls, 'z')), ValueError)
+    assert(calls == ['z'])
+    assert(e.what == 'invalid number: z')
+}
+
+pub fn reports-nothing-thrown() {
+    let line = __line__ + 1
+    let e = failure-of(fn () { assert-throws(parse-num('3'), ValueError) })
+    assert(e.what == (
+        "failed assertion: assert-throws(parse-num('3'), ValueError)\n"
+        '    expected ValueError, nothing was thrown (returned 3)'
+    ))
+    assert(e.src == "assert-throws(parse-num('3'), ValueError)")
+    assert(e.op == 'throws')
+    assert(e.values == [3])
+    assert(e.note == 'expected ValueError, nothing was thrown (returned 3)')
+    assert(e.file == __file__)
+    assert(e.line == line)
+}
+
+pub fn reports-nothing-thrown-without-kind() {
+    let e = failure-of(fn () { assert-throws(7) })
+    assert(e.note == 'expected an exception, nothing was thrown (returned 7)')
+}
+
+pub fn reports-wrong-class() {
+    let xs = [1]
+    let e = failure-of(fn () { assert-throws(xs[5], ValueError) })
+    assert(e.note == 'expected ValueError, got IndexError([1], 5)')
+    let e = failure-of(fn () { assert-throws(parse-num('k'), IndexError) })
+    assert(e.note == "expected IndexError, got ValueError('invalid number: k')")
+}
+
+pub fn reports-pattern-mismatch() {
+    let e = failure-of(fn () {
+        assert-throws(parse-num('k'), ValueError, /digits/)
+    })
+    assert(e.note == (
+        'expected ValueError matching /digits/, '
+        "got ValueError('invalid number: k')"
+    ))
+    assert(e.src == "assert-throws(parse-num('k'), ValueError, /digits/)")
+}

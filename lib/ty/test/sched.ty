@@ -1,0 +1,823 @@
+import os
+import time
+import ty
+import ty.test.events as events (
+    Event,
+    get-str,
+    get-int,
+    get-float,
+    get-event,
+    get-events,
+    get-strs
+)
+
+pub TAIL_LIMIT = 65536
+pub SNIPPET_LIMIT = 4096
+pub DEFAULT_TIMEOUT = 10.0
+pub DEFAULT_LOAD_TIMEOUT = 30.0
+pub DEFAULT_GRACE = 2.0
+pub TEARDOWN_TIMEOUT = 10.0
+pub TERM_GRACE = 1.0
+pub TICK = 0.05
+
+let PDEATH: ?Int = (ty.platform == 'linux') ? os.SIGKILL : nil
+
+pub fn signal-name(sig: Int) -> String {
+    "SIG{os.signame(sig).upper()}"
+}
+
+pub fn tail-str(buf: Blob, limit: Int = TAIL_LIMIT) -> String {
+    let n = min(#buf, limit)
+    buf.str(#buf - n, n)
+}
+
+pub fn read-from(file: String, offset: Int) -> String {
+    let fd = os.open(file, os.O_RDONLY)
+    if fd < 0 {
+        return ''
+    }
+    os.lseek(fd, offset, os.SEEK_SET)
+    let buf = Blob()
+    while os.read(fd, buf, 65536) > 0 {
+        if #buf > 4 * TAIL_LIMIT {
+            break
+        }
+    }
+    os.close(fd)
+    buf.str()
+}
+
+pub fn merge(a: Dict[String, String], b: Dict[String, String]) -> Dict[String, String] {
+    let out: Dict[String, String] = %{}
+    for k, v in a {
+        out[k] = v
+    }
+    for k, v in b {
+        out[k] = v
+    }
+    out
+}
+
+fn env-prefix(env: Dict[String, String]) -> Array[String] {
+    let assigns: Array[String] = []
+    for k, v in env {
+        assigns.push("{k}={v}")
+    }
+    (#assigns == 0) ? [] : ['/usr/bin/env', *assigns.sort()]
+}
+
+pub class Proc {
+    pid:     Int
+    t0:      Float
+    out-buf: Blob
+    err-buf: Blob
+    status:  ?Int
+    rusage:  ?os.RUsage
+    __fds:   Array[Int]
+    __out:   Int
+
+    init(argv: Array[String], env: Dict[String, String] = %{}, pipes?: Bool = true) {
+        let io = pipes? ? os.SPAWN_PIPE : os.SPAWN_INHERIT
+        let p = os.spawn(
+            [*env-prefix(env), *argv],
+            stdin: os.SPAWN_NULL,
+            stdout: io,
+            stderr: io,
+            detach: true,
+            pdeathsig: PDEATH
+        )
+        self.pid     = p.pid
+        self.t0      = time.now()
+        self.out-buf = Blob()
+        self.err-buf = Blob()
+        self.status  = nil
+        self.rusage  = nil
+        __out        = pipes? ? p.stdout : -1
+        __fds        = pipes? ? [p.stdout, p.stderr] : []
+    }
+
+    fds() -> Array[(Int, Int)] {
+        __fds.map(fd -> (fd, os.POLLIN))
+    }
+
+    owns?(fd: Int) -> Bool {
+        fd in __fds
+    }
+
+    close-fd(fd: Int) {
+        os.close(fd)
+        __fds = __fds.filter(\_ != fd)
+    }
+
+    ready(fd: Int) {
+        let buf = (fd == __out) ? self.out-buf : self.err-buf
+        let n = os.read(fd, buf, 65536)
+        if #buf > TAIL_LIMIT {
+            buf.splice(0, #buf - TAIL_LIMIT)
+        }
+        if n <= 0 {
+            close-fd(fd)
+        }
+    }
+
+    drain() {
+        let rounds = 0
+        while #__fds > 0 && rounds < 64 {
+            let hits: Array[(Int, Int)] = []
+            if os.poll(fds(), hits, 0) <= 0 {
+                break
+            }
+            for (fd, _) in hits {
+                ready(fd)
+            }
+            rounds += 1
+        }
+        for [*__fds] {
+            close-fd(it)
+        }
+    }
+
+    exited? -> Bool {
+        self.status != nil
+    }
+
+    take(r: os.Wait4Result) {
+        self.status = r.status
+        self.rusage = r.rusage
+        os.kill(-self.pid, os.SIGKILL)
+    }
+
+    reap() -> Bool {
+        if self.status != nil {
+            return true
+        }
+        let $r = os.wait4(self.pid, os.WNOHANG) or return false
+        if r.pid != self.pid {
+            return false
+        }
+        take(r)
+        true
+    }
+
+    reap-blocking() {
+        if self.status != nil {
+            return
+        }
+        if let $r = os.wait4(self.pid, 0) {
+            take(r)
+        }
+    }
+
+    kill(sig: Int) {
+        if os.kill(-self.pid, sig) != 0 {
+            os.kill(self.pid, sig)
+        }
+    }
+
+    signal -> ?Int {
+        let st = self.status ?? 0
+        (os.WIFSIGNALED(st) != 0) ? os.WTERMSIG(st) : nil
+    }
+
+    code -> ?Int {
+        let st = self.status ?? 0
+        (os.WIFEXITED(st) != 0) ? os.WEXITSTATUS(st) : nil
+    }
+
+    describe() -> String {
+        match (self.signal, self.code) {
+            ($s, _) => "killed by {signal-name(s)}",
+            (_, $c) => "exited {c}",
+            _       => 'ended abnormally',
+        }
+    }
+}
+
+pub class Job {
+    file:         String
+    k:            Int = 0
+    ids:          Array[String] = []
+    line:         ?Int = nil
+    script?:      Bool = false
+    strict?:      Bool = false
+    allow-empty?: Bool = false
+    timeout:      ?Float = nil
+    load-timeout: ?Float = nil
+    tags:         ?String = nil
+    group:        ?String = nil
+    env:          Dict[String, String] = %{}
+    attempt:      Int = 0
+    finished:     Dict[String, Bool] = %{}
+    selected:     ?Array[String] = nil
+    infos:        Dict[String, Event] = %{}
+    t0:           ?Float = nil
+    utime:        Float = 0.0
+    stime:        Float = 0.0
+    maxrss:       Int = 0
+    rc:           ?Int = nil
+    ev-path:      String = ''
+    cap-path:     String = ''
+    skip-path:    String = ''
+    ev-fd:        ?Int = nil
+    ev-buf:       Blob = Blob()
+    out-tail:     String = ''
+    err-tail:     String = ''
+
+    script-id -> String {
+        "{self.file}::(script)"
+    }
+
+    remaining() -> Array[String] {
+        (self.selected ?? []).filter(id -> !self.finished[id])
+    }
+}
+
+pub class Settings {
+    cmd:          Array[String] = []
+    fwd:          Array[String] = []
+    jobs:         Int = 1
+    timeout:      ?Float = nil
+    load-timeout: ?Float = nil
+    grace:        Float = DEFAULT_GRACE
+    max-respawns: Int = 5
+    max-fail:     ?Int = nil
+    list?:        Bool = false
+    no-capture?:  Bool = false
+    run-dir:      String = '.'
+    seed:         Int = 0
+}
+
+class Live {
+    job:          Job
+    slot:         Int
+    proc:         Proc
+    phase:        String = 'load'
+    deadline:     ?Float = nil
+    open:         ?Event = nil
+    open-at:      Float = 0.0
+    open-soft:    ?Float = nil
+    collected?:   Bool = false
+    ended?:       Bool = false
+    kill-reason:  ?String = nil
+
+    init(job: Job, slot: Int, proc: Proc) {
+        self.job  = job
+        self.slot = slot
+        self.proc = proc
+    }
+}
+
+pub class Sched {
+    cfg:          Settings
+    queue:        Array[Job]
+    pending:      Array[(String, Event)]
+    stopping:     ?String = nil
+    bad-rc:       Int = 0
+    __emit:       Event -> Any
+    __failures:   () -> Int
+    __interrupts: () -> Int
+    __live:       Array[Live] = []
+    __free:       Array[Int] = []
+    __busy:       Dict[String, Bool] = %{}
+    __term-at:    ?Float = nil
+    __hard?:      Bool = false
+    __dirty?:     Bool = false
+
+    init(
+        cfg: Settings,
+        jobs: Array[Job],
+        emit: Event -> Any,
+        failures: () -> Int,
+        interrupts: () -> Int,
+        pending: Array[(String, Event)] = []
+    ) {
+        self.cfg      = cfg
+        self.queue    = [*jobs]
+        self.pending  = pending.sort(by: &0)
+        __emit        = emit
+        __failures    = failures
+        __interrupts  = interrupts
+        __free        = [*0..cfg.jobs]
+        for j; i in self.queue {
+            j.k         = i + 1
+            j.ev-path   = "{cfg.run-dir}/f{j.k}.events.jsonl"
+            j.cap-path  = "{cfg.run-dir}/f{j.k}.out"
+            j.skip-path = "{cfg.run-dir}/f{j.k}.skip"
+        }
+        for __free {
+            os.mkdir("{cfg.run-dir}/w{it}", 0o755)
+        }
+    }
+
+    emit(ev: Event) {
+        if get-str(ev, 'ev') in ['test-end', 'file-done'] {
+            __dirty? = true
+        }
+        __emit(ev)
+    }
+
+    run() -> Bool {
+        while true {
+            check-interrupt()
+            check-fail()
+            fill()
+            if #__live == 0 && (self.stopping != nil || #self.queue == 0) {
+                break
+            }
+            wait()
+            service()
+        }
+        for job in self.queue {
+            if job.attempt > 0 {
+                job-done(job, events.status('killed', phase: 'interrupt'))
+            }
+        }
+        if self.stopping == nil {
+            flush-pending(nil)
+        }
+        self.stopping == 'interrupt'
+    }
+
+    flush-pending(upto: ?String) {
+        while #self.pending > 0 && (upto == nil || self.pending[0].0 < upto) {
+            let (_, ev) = self.pending.pop(0)
+            emit(ev)
+        }
+    }
+
+    check-interrupt() {
+        let n = __interrupts()
+        if n == 0 {
+            return
+        }
+        if self.stopping != 'interrupt' {
+            self.stopping = 'interrupt'
+            __term-at = time.now() + TERM_GRACE
+            for __live {
+                it.kill-reason = 'interrupt'
+                it.proc.kill(os.SIGTERM)
+            }
+        }
+        let late? = time.now() >= (__term-at ?? 0.0)
+        if !__hard? && (n > 1 || late?) {
+            __hard? = true
+            for __live {
+                it.proc.kill(os.SIGKILL)
+            }
+        }
+    }
+
+    check-fail() {
+        let $limit = self.cfg.max-fail or return
+        if self.stopping != nil || !__dirty? {
+            return
+        }
+        __dirty? = false
+        if __failures() < limit {
+            return
+        }
+        self.stopping = 'fail-fast'
+        for __live {
+            it.kill-reason = 'stop'
+            it.proc.kill(os.SIGKILL)
+        }
+    }
+
+    eligible() -> ?Int {
+        for j; i in self.queue {
+            if j.group == nil || !__busy[j.group] {
+                return i
+            }
+        }
+        nil
+    }
+
+    fill() {
+        while #__free > 0 && self.stopping == nil {
+            let $i = eligible() or break
+            let job = self.queue.pop(i)
+            start(job, __free.pop(0))
+        }
+    }
+
+    worker-argv(job: Job) -> Array[String] {
+        let argv = [
+            *self.cfg.cmd,
+            '--color=never',
+            '--test',
+            job.file,
+            '--worker',
+            '--events',
+            job.ev-path,
+            '--capture',
+            job.cap-path,
+        ]
+        if job.script? {
+            return argv
+        }
+        argv += self.cfg.fwd
+        for job.ids {
+            argv += ['--id', it]
+        }
+        if let $n = job.line {
+            argv += ['--line', str(n)]
+        }
+        if let $t = job.tags {
+            argv += ['--tags', t]
+        }
+        if let $t = job.timeout ?? self.cfg.timeout {
+            argv += ['--timeout', str(t)]
+        }
+        if job.strict? {
+            argv.push('--strict')
+        }
+        if job.attempt > 1 {
+            argv += ['--skip-ids', job.skip-path]
+        }
+        argv
+    }
+
+    load-limit(job: Job) -> Float {
+        job.load-timeout ?? self.cfg.load-timeout ?? DEFAULT_LOAD_TIMEOUT
+    }
+
+    start(job: Job, slot: Int) {
+        job.attempt += 1
+        if job.attempt == 1 {
+            flush-pending(job.file)
+            job.t0    = time.now()
+            job.ev-fd = os.open(job.ev-path, os.O_RDONLY | os.O_CREAT, 0o644)
+        }
+        let env = merge(job.env, %{
+            'TMPDIR':         "{self.cfg.run-dir}/w{slot}",
+            'TY_TEST_WORKER': '1',
+            'TY_TEST_SEED':   str(self.cfg.seed),
+        })
+        let proc = Proc(worker-argv(job), env: env, pipes?: !self.cfg.no-capture?)
+        let w = Live(job, slot, proc)
+        w.deadline = time.now() + load-limit(job)
+        if job.script? {
+            w.phase = 'test'
+        }
+        if let $g = job.group {
+            __busy[g] = true
+        }
+        __live.push(w)
+        let ev = events.file-start(job.file, attempt: job.attempt, pid: proc.pid)
+        ev['worker'] = slot
+        emit(ev)
+        if job.script? && job.attempt == 1 {
+            emit-script-collect(w)
+        }
+    }
+
+    emit-script-collect(w: Live) {
+        let job = w.job
+        let limit = load-limit(job)
+        let entry = events.collect-test(job.script-id, '(script)', 1, timeout: limit)
+        job.infos[job.script-id] = entry
+        job.selected = [job.script-id]
+        let ev = events.collect(job.file, tests: [entry])
+        ev['worker'] = w.slot
+        emit(ev)
+    }
+
+    next-deadline() -> ?Float {
+        let soonest = __term-at
+        for w in __live {
+            let $d = w.deadline or continue
+            soonest = min(d, soonest ?? d)
+        }
+        soonest
+    }
+
+    wait() {
+        let fds: Array[(Int, Int)] = []
+        for __live {
+            fds.push(*it.proc.fds())
+        }
+        let timeout = match next-deadline() {
+            nil => TICK,
+            d   => (d - time.now()).clamp(0.0, TICK),
+        }
+        let hits: Array[(Int, Int)] = []
+        os.poll(fds, hits, timeout)
+        for (fd, _) in hits {
+            for w in __live {
+                if w.proc.owns?(fd) {
+                    w.proc.ready(fd)
+                    break
+                }
+            }
+        }
+    }
+
+    service() {
+        for w in [*__live] {
+            pump(w)
+            if w.proc.reap() {
+                w.proc.drain()
+                pump(w, final?: true)
+                finish(w)
+            } else {
+                check-deadline(w)
+            }
+        }
+    }
+
+    pump(w: Live, final?: Bool = false) {
+        let $fd = w.job.ev-fd or return
+        let evs = events.read-lines(fd, w.job.ev-buf)
+        if final? {
+            evs.push(*events.drain(w.job.ev-buf, final?: true))
+        }
+        for evs {
+            handle(w, it)
+        }
+    }
+
+    handle(w: Live, ev: Event) {
+        ev['worker'] = w.slot
+        let job = w.job
+        match get-str(ev, 'ev') {
+            'collect'    => on-collect(w, ev),
+            'test-start' => on-test-start(w, ev),
+            'test-end'   => on-test-end(w, ev),
+            'file-end'   => on-file-end(w, ev),
+            'warning' and quiet-empty?(job, ev) => nil,
+            _            => emit(ev),
+        }
+    }
+
+    quiet-empty?(job: Job, ev: Event) -> Bool {
+        (job.script? || job.allow-empty?) && get-str(ev, 'code') == 'empty-file'
+    }
+
+    on-collect(w: Live, ev: Event) {
+        let job = w.job
+        w.collected? = true
+        if job.script? {
+            return
+        }
+        let ids: Array[String] = []
+        for get-events(ev, 'tests') {
+            let id = get-str(it, 'id') ?? ''
+            job.infos[id] = it
+            ids.push(id)
+        }
+        job.selected = job.selected ?? ids
+        w.phase    = 'between'
+        w.deadline = time.now() + load-limit(job)
+        emit(ev)
+    }
+
+    hard-limit(job: Job, id: String) -> (Float | nil, Float | nil) {
+        let info = job.infos[id]
+        let base = get-float(info, 'timeout')
+                ?? job.timeout
+                ?? self.cfg.timeout
+                ?? DEFAULT_TIMEOUT
+        if base <= 0.0 {
+            return (nil, nil)
+        }
+        let soft = ('slow' in get-strs(info, 'tags')) ? base * 5.0 : base
+        (soft, soft + self.cfg.grace)
+    }
+
+    on-test-start(w: Live, ev: Event) {
+        w.open    = ev
+        w.open-at = time.now()
+        if !w.job.script? {
+            let (soft, hard) = hard-limit(w.job, get-str(ev, 'id') ?? '')
+            w.phase     = 'test'
+            w.open-soft = soft
+            w.deadline  = (hard == nil) ? nil : w.open-at + hard
+        }
+        emit(ev)
+    }
+
+    on-test-end(w: Live, ev: Event) {
+        w.open = nil
+        w.job.finished[get-str(ev, 'id') ?? ''] = true
+        if !w.job.script? {
+            w.phase    = 'between'
+            w.deadline = time.now() + load-limit(w.job)
+        }
+        emit(ev)
+    }
+
+    on-file-end(w: Live, ev: Event) {
+        w.job.rc = get-int(ev, 'rc')
+        w.ended? = true
+        if !(w.job.rc in [nil, 0, 5]) {
+            self.bad-rc += 1
+        }
+        if w.job.script? {
+            return
+        }
+        w.phase    = 'teardown'
+        w.deadline = time.now() + TEARDOWN_TIMEOUT
+        emit(ev)
+    }
+
+    check-deadline(w: Live) {
+        let $d = w.deadline or return
+        if w.kill-reason != nil || time.now() < d {
+            return
+        }
+        w.kill-reason = "timeout-{w.phase}"
+        w.proc.kill(os.SIGKILL)
+    }
+
+    release(w: Live) {
+        __live = __live.filter(\_.slot != w.slot)
+        __free.push(w.slot)
+        __free.sort!()
+        if let $g = w.job.group {
+            __busy[g] = false
+        }
+        let job = w.job
+        job.out-tail = tail-str(w.proc.out-buf)
+        job.err-tail = tail-str(w.proc.err-buf)
+        if let $ru = w.proc.rusage {
+            job.utime  += ru.utime
+            job.stime  += ru.stime
+            job.maxrss  = max(job.maxrss, ru.maxrss)
+        }
+    }
+
+    status-of(w: Live) -> Event {
+        let p = w.proc
+        let sig = match p.signal {
+            nil => nil,
+            s   => signal-name(s),
+        }
+        match w.kill-reason {
+            'interrupt' or 'stop' => events.status(
+                'killed',
+                code: p.code,
+                signal: sig,
+                phase: 'interrupt'
+            ),
+            $r :: r.match?(/^timeout-/) => do {
+                let phase = match w.phase {
+                    'between' => 'test',
+                    'load' and w.job.script? => 'test',
+                    ph => ph,
+                }
+                events.status('timeout', signal: 'SIGKILL', phase: phase)
+            },
+            _ and sig != nil => events.status(
+                'signal',
+                signal: sig,
+                phase: (w.phase == 'between') ? 'test' : w.phase
+            ),
+            _ => events.status('exit', code: p.code),
+        }
+    }
+
+    finish(w: Live) {
+        release(w)
+        let job = w.job
+        let st = status-of(w)
+        if w.kill-reason in ['interrupt', 'stop'] {
+            file-done(w, st)
+            return
+        }
+        if job.script? {
+            finish-script(w)
+            file-done(w, st)
+            return
+        }
+        if let $open = w.open {
+            synth-death(w, open)
+            if respawn?(w) {
+                return
+            }
+        } else if w.collected? && !w.ended? {
+            let why = (w.kill-reason == 'timeout-between')
+                    ? "worker stalled for {load-limit(job)}s between tests"
+                    : "worker {w.proc.describe()} between tests"
+            not-run(w, why)
+        }
+        file-done(w, st)
+    }
+
+    respawn?(w: Live) -> Bool {
+        let job = w.job
+        if #job.remaining() == 0 {
+            return false
+        }
+        if job.attempt - 1 < self.cfg.max-respawns && self.stopping == nil {
+            write(job.skip-path, "{job.finished.keys().join("\n")}\n")
+            self.queue.insert(0, job)
+            return true
+        }
+        not-run(w, "worker died {job.attempt} time{(job.attempt == 1) ? '' : 's'}")
+        false
+    }
+
+    write(file: String, text: String) {
+        let fd = os.open(file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        os.write(fd, text, all: true)
+        os.close(fd)
+    }
+
+    not-run(w: Live, why: String) {
+        for id in w.job.remaining() {
+            w.job.finished[id] = true
+            let ev = events.test-end(id, 'error', reason: "not run ({why})")
+            ev['worker'] = w.slot
+            emit(ev)
+        }
+    }
+
+    synth-death(w: Live, open: Event) {
+        let id = get-str(open, 'id') ?? ''
+        let cap = get-event(open, 'capture')
+        let output = match (get-str(cap, 'path'), get-int(cap, 'offset')) {
+            ($p, $off) => read-from(p, off),
+            _          => '',
+        }
+        let p = w.proc
+        let dur = time.now() - w.open-at
+        let ev = match (w.kill-reason, p.signal) {
+            ('timeout-test', _) => events.test-end(
+                id,
+                'timeout',
+                dur: dur,
+                reason: "exceeded {w.open-soft}s + {self.cfg.grace}s grace",
+                output: output,
+                hard?: true
+            ),
+            (_, $sig) => events.test-end(
+                id,
+                'crash',
+                dur: dur,
+                output: output,
+                signal: signal-name(sig)
+            ),
+            _         => events.test-end(id, 'exit', dur: dur, output: output, code: p.code),
+        }
+        ev['stderr_tail'] = tail-str(p.err-buf, SNIPPET_LIMIT)
+        ev['worker'] = w.slot
+        w.job.finished[id] = true
+        emit(ev)
+    }
+
+    finish-script(w: Live) {
+        let job = w.job
+        let p = w.proc
+        let dur = time.now() - p.t0
+        let out = tail-str(p.out-buf, SNIPPET_LIMIT)
+        let err = tail-str(p.err-buf, SNIPPET_LIMIT)
+        let output = [out, err].filter(\#_ > 0).join('')
+        let first: Array[String | nil] = [*output.lines().map(&strip).filter(\#_ > 0), nil]
+        let id = job.script-id
+        let ev = match (w.kill-reason, p.signal, p.code) {
+            ($r, _, _) => events.test-end(
+                id,
+                'timeout',
+                dur: dur,
+                reason: "exceeded {load-limit(job)}s",
+                output: output,
+                hard?: true
+            ),
+            (_, $sig, _) => events.test-end(
+                id,
+                'crash',
+                dur: dur,
+                output: output,
+                signal: signal-name(sig)
+            ),
+            (_, _, 0)    => events.test-end(id, 'pass', dur: dur),
+            (_, _, 77)   => events.test-end(id, 'skip', reason: first[0] ?? 'exit status 77'),
+            (_, _, c)    => events.test-end(id, 'exit', dur: dur, output: output, code: c),
+        }
+        ev['worker'] = w.slot
+        job.finished[id] = true
+        emit(ev)
+    }
+
+    file-done(w: Live, st: Event) {
+        job-done(w.job, st, w.slot)
+    }
+
+    job-done(job: Job, st: Event, slot: ?Int = nil) {
+        if let $fd = job.ev-fd {
+            os.close(fd)
+            job.ev-fd = nil
+        }
+        let ev = events.file-done(
+            job.file,
+            st,
+            dur: time.now() - (job.t0 ?? time.now()),
+            rusage: events.rusage(job.utime, job.stime, job.maxrss),
+            stdout-tail: job.out-tail,
+            stderr-tail: job.err-tail,
+            respawns: job.attempt - 1
+        )
+        ev['worker'] = slot
+        emit(ev)
+    }
+}

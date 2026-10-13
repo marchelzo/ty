@@ -1,0 +1,126 @@
+import term (Screen)
+
+ns test
+
+const BG  = "\x1b[48;5;236m"
+const RED = "\x1b[31m"
+const RST = "\x1b[0m"
+
+fn flush(s: Screen) -> String {
+    let b = Blob()
+    s.flush(b)
+    b.str()
+}
+
+fn flush-inline(s: Screen) -> String {
+    let b = Blob()
+    s.flush(b, inline=true)
+    b.str()
+}
+
+pub fn first-flush-clears-and-paints() {
+    let s = Screen(8, 2)
+    s.background = BG
+    s.put-lines(['hi', 'there'])
+    assert(!s.valid?)
+    assert(flush(s) == "\x1b[0;48;5;236m\x1b[2J\x1b[1;1Hhi\r\nthere\x1b[0m")
+    assert(s.valid?)
+    assert(s.text() == ['hi      ', 'there   '])
+}
+
+pub fn unchanged-frames-emit-nothing() {
+    let s = Screen(10, 3)
+    s.put-lines(["{RED}abc{RST}", 'def'])
+    flush(s)
+    s.put-lines(["{RED}abc{RST}", 'def'])
+    assert(flush(s) == '')
+}
+
+pub fn only-changed-cells-are-sent() {
+    let s = Screen(10, 2)
+    s.put-lines(['hello', 'world'])
+    flush(s)
+    s.put-lines(['hello', 'wOrld'])
+    assert(flush(s) == "\x1b[2;2HO")
+}
+
+pub fn styles-are-deduplicated() {
+    let s = Screen(10, 1)
+    s.put-lines(["{RED}a{RST}{RED}b{RST}"])
+    let out = flush(s)
+    assert(out == "\x1b[m\x1b[2J\x1b[1;1H\x1b[31mab\x1b[0m", out.escape())
+}
+
+pub fn shrinking-lines-erase-the-rest() {
+    let s = Screen(12, 1)
+    s.put-lines(['abcdefghij'])
+    flush(s)
+    s.put-lines(['ab'])
+    assert(flush(s) == "\x1b[1;3H\x1b[K")
+    assert(s.text() == ['ab          '])
+}
+
+pub fn wide-chars-and-overlays() {
+    let s = Screen(6, 1)
+    s.put-lines(['世界ab'])
+    flush(s)
+    s.put(0, 1, 'Q')
+    assert(s.text() == [' Q界ab'])
+    assert(flush(s) == "\x1b[1;1H Q")
+}
+
+pub fn wide-char-straddling-the-edge-becomes-a-space() {
+    let s = Screen(3, 1)
+    s.put-lines(['ab世'])
+    assert(s.text() == ['ab '])
+}
+
+pub fn combining-marks-stay-with-their-base() {
+    let s = Screen(4, 1)
+    s.put-lines(["éx"])
+    assert(s.text() == ["éx  "])
+}
+
+pub fn links-are-reopened-per-run() {
+    let s = Screen(6, 1)
+    s.put-lines(["\x1b]8;;https://x.y\x1b\\ab\x1b]8;;\x1b\\cd"])
+    let out = flush(s)
+    assert(out.contains?("\x1b]8;;https://x.y\x1b\\ab\x1b]8;;\x1b\\cd"), out.escape())
+}
+
+pub fn invalidate-and-touch() {
+    let s = Screen(4, 1)
+    s.put-lines(['abcd'])
+    flush(s)
+    s.invalidate()
+    assert(flush(s).contains?("\x1b[2J"))
+    s.touch()
+    let out = flush(s)
+    assert(!out.contains?("\x1b[2J") && out.contains?('abcd'), out.escape())
+}
+
+pub fn resize-forces-a-full-repaint() {
+    let s = Screen(4, 1)
+    s.put-lines(['abcd'])
+    flush(s)
+    s.resize(5, 2)
+    assert(!s.valid?)
+    s.put-lines(['abcd'])
+    assert(flush(s).contains?("\x1b[2J"))
+}
+
+pub fn background-change-invalidates() {
+    let s = Screen(4, 1)
+    s.put-lines(['ab'])
+    flush(s)
+    s.background = BG
+    assert(!s.valid?)
+}
+
+pub fn inline-mode-uses-relative-motion() {
+    let s = Screen(6, 2)
+    s.put-lines(['ab', 'cd'])
+    assert(flush-inline(s) == "\x1b[mab\r\ncd\r\n")
+    s.put-lines(['ab', 'cX'])
+    assert(flush-inline(s) == "\x1b[1AcX\r\n")
+}

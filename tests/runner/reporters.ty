@@ -1,0 +1,474 @@
+import os
+import json
+import ty
+import ty.test.events as events (Event, EventSink, Reporter)
+import ty.test.report as report
+import ty.test.render as render
+
+let FIXTURES = "{__file__.sub(/[^\/]*$/, '')}../fixtures/runner/events"
+
+let UPDATE? = getenv('TY_UPDATE_GOLDEN') == '1'
+
+let TMP = getenv('TMPDIR') ?? '/tmp'
+
+fn fixture(name: String) -> Array[Event] {
+    events.read-file("{FIXTURES}/{name}.jsonl")
+}
+
+fn replay(
+    evs: Array[Event],
+    spec: String,
+    color?: Bool = false,
+    tty?: Bool = false
+) -> String {
+    let out: Array[String] = []
+    let r = report.make(spec, color?: color?, tty?: tty?, width: 80, write: s -> out.push(s))
+    for evs {
+        r.on(it)
+    }
+    r.done()
+    out.join('')
+}
+
+fn terminal(s: String) -> String {
+    s.split("\n").map(line -> line.split("\r")[-1].comb(/\x1b\[K/)).join("\n")
+}
+
+fn first-diff(actual: String, expected: String) -> ?String {
+    let a = actual.split("\n")
+    let b = expected.split("\n")
+    for i in ..max(#a, #b) {
+        let x = (i < #a) ? a[i] : '<eof>'
+        let y = (i < #b) ? b[i] : '<eof>'
+        if x != y {
+            return "line {i + 1}:\n  got:  {x}\n  want: {y}"
+        }
+    }
+}
+
+fn golden(name: String, actual: String) -> ?String {
+    let path = "{FIXTURES}/{name}.txt"
+    if UPDATE? {
+        let fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        os.write(fd, actual, all: true)
+        os.close(fd)
+        return nil
+    }
+    first-diff(actual, slurp(path) ?? '<missing golden file>')
+}
+
+fn lcg(state: Int) -> Int {
+    (state * 1103515245 + 12345) % 2147483648
+}
+
+fn scheduler-event?(ev: Event) -> Bool {
+    match events.get-str(ev, 'ev') {
+        'file-skip'  => true,
+        'file-start' => (events.get-int(ev, 'attempt') ?? 1) == 1,
+        _            => false,
+    }
+}
+
+fn file-key(ev: Event) -> String {
+    events.get-str(ev, 'file') ?? render.file-of(events.get-str(ev, 'id') ?? '')
+}
+
+fn interleave(evs: Array[Event], seed: Int) -> Array[Event] {
+    let head = evs[0]
+    let tail = evs[-1]
+    let sched: Array[Event] = []
+    let keys: Array[String] = []
+    let streams: Array[Array[Event]] = []
+    for evs[1;-1] {
+        if scheduler-event?(it) {
+            sched.push(it)
+            continue
+        }
+        let k = file-key(it)
+        if k not in keys {
+            keys.push(k)
+            streams.push([])
+        }
+        streams[keys.search(k) ?? 0].push(it)
+    }
+    let started: Array[String] = []
+    let out = [head]
+    let state = seed
+    while #sched > 0 || streams.any?(\#_ > 0) {
+        let ready = [i for i in ..#keys if #streams[i] > 0 && keys[i] in started]
+        let choices = #ready + ((#sched > 0) ? 1 : 0)
+        state = lcg(state)
+        let pick = state % choices
+        if pick == #ready {
+            let ev = sched.pop(0)
+            started.push(file-key(ev))
+            out.push(ev)
+        } else {
+            out.push(streams[ready[pick]].pop(0))
+        }
+    }
+    out.push(tail)
+    out
+}
+
+fn caught(f: () -> Any) -> Any {
+    try {
+        f()
+    } catch e {
+        return e
+    }
+}
+
+fn tmp-path(name: String) -> String {
+    "{TMP}/ty-wp5-{os.getpid()}-{name}"
+}
+
+ns test {
+    pub fn pretty-file-mode() {
+        assert(golden('file_mode.pretty', replay(fixture('file_mode'), 'pretty')) == nil)
+    }
+
+    pub fn pretty-suite-mode() {
+        assert(golden('suite.pretty', replay(fixture('suite'), 'pretty')) == nil)
+    }
+
+    pub fn pretty-truncation() {
+        let text = replay(fixture('truncation'), 'pretty')
+        assert(golden('truncation.pretty', text) == nil)
+        assert('[… 4096 bytes elided …]' in text)
+        assert('[… 46 lines elided …]' in text)
+        assert('[… 5 lines elided …]' in text)
+        assert(' interrupted ' in text)
+    }
+
+    pub fn dot-file-mode() {
+        assert(golden('file_mode.dot', replay(fixture('file_mode'), 'dot')) == nil)
+    }
+
+    pub fn dot-suite-mode() {
+        assert(golden('suite.dot', replay(fixture('suite'), 'dot')) == nil)
+    }
+
+    pub fn dot-wraps-at-width() {
+        let evs = [events.test-end("t.ty::t{it}", 'pass', dur: 0.001) for ..100]
+        let out: Array[String] = []
+        let r = report.make('dot', color?: false, width: 30, write: s -> out.push(s))
+        for evs {
+            r.on(it)
+        }
+        r.done()
+        let lines = out.join('').split("\n")
+        assert(lines[0] == '.' * 30)
+        assert(lines[3] == '.' * 10)
+    }
+
+    pub fn json-round-trips() {
+        for name in ['file_mode', 'suite', 'truncation'] {
+            let evs = fixture(name)
+            let text = replay(evs, 'json')
+            let back = events.drain(Blob(text))
+            assert(#back == #evs)
+            assert(back.map(json.encode) == evs.map(json.encode))
+        }
+    }
+
+    pub fn json-reporter-writes-path() {
+        let path = tmp-path('json.jsonl')
+        let evs = fixture('suite')
+        let r = report.make("json={path}")
+        for evs {
+            r.on(it)
+        }
+        r.done()
+        let back = events.read-file(path)
+        os.unlink(path)
+        assert(back.map(json.encode) == evs.map(json.encode))
+    }
+
+    pub fn suite-order-stable-when-completion-shuffled() {
+        let evs = fixture('suite')
+        let want = replay(evs, 'pretty')
+        for seed in [1, 7, 42, 1234, 99999, 31337, 8, 77, 5150, 2718] {
+            let shuffled = interleave(evs, seed)
+            assert(#shuffled == #evs)
+            assert(first-diff(replay(shuffled, 'pretty'), want) == nil)
+        }
+    }
+
+    pub fn shuffle-actually-reorders() {
+        let evs = fixture('suite')
+        let a = interleave(evs, 1).map(json.encode)
+        let b = interleave(evs, 42).map(json.encode)
+        assert(a != b)
+        assert(a != evs.map(json.encode))
+    }
+
+    pub fn tty-prints-files-as-they-finish() {
+        let text = terminal(replay(fixture('suite'), 'pretty', tty?: true))
+        let rows = text.split("\n").filter(/^ tests\//).map(\_.words()[0])
+        assert(rows == [
+            'tests/lib/zstd/',
+            'tests/alpha.ty',
+            'tests/beta.ty',
+            'tests/empty.ty',
+            'tests/delta.ty',
+            'tests/on_exit.ty',
+            'tests/skipme.ty',
+            'tests/gamma.ty',
+        ])
+        let raw = replay(fixture('suite'), 'pretty', tty?: true)
+        assert("\r\x1b[K running 2: tests/alpha.ty tests/beta.ty" in raw)
+    }
+
+    pub fn non-tty-prints-in-discovery-order() {
+        let text = replay(fixture('suite'), 'pretty')
+        let rows = text.split("\n").filter(/^ tests\//).map(\_.words()[0])
+        assert(rows == [
+            'tests/lib/zstd/',
+            'tests/alpha.ty',
+            'tests/beta.ty',
+            'tests/delta.ty',
+            'tests/empty.ty',
+            'tests/gamma.ty',
+            'tests/on_exit.ty',
+            'tests/skipme.ty',
+        ])
+        assert("\r" not in text)
+    }
+
+    pub fn color-strips-to-plain() {
+        for name in ['file_mode', 'suite', 'truncation'] {
+            let evs = fixture(name)
+            let colored = replay(evs, 'pretty', color?: true)
+            assert("\x1b[" in colored)
+            assert(first-diff(render.strip(colored), replay(evs, 'pretty')) == nil)
+            let dots = render.strip(replay(evs, 'dot', color?: true))
+            assert(first-diff(dots, replay(evs, 'dot')) == nil)
+        }
+    }
+
+    pub fn widths-ignore-escapes() {
+        let s = "\x1b[32mPASS\x1b[0m"
+        assert(render.width(s) == 4)
+        assert(render.width("\x1b]8;;http://x\x1b\\link\x1b]8;;\x1b\\") == 4)
+        assert(render.strip(render.pad(s, 7)) == 'PASS   ')
+        assert(render.pad('héllo', 3) == 'héllo')
+        let colored = replay(fixture('suite'), 'pretty', color?: true).split("\n")
+        let plain = replay(fixture('suite'), 'pretty').split("\n")
+        assert(#colored == #plain)
+        assert(colored.map(render.width) == plain.map(&width))
+    }
+
+    pub fn synthesized-outcomes-render() {
+        let text = replay(fixture('suite'), 'pretty')
+        assert('tests/beta.ty:20: crash (SIGSEGV)' in text)
+        assert('Segmentation fault: 11' in text)
+        assert('tests/gamma.ty:4: timeout (hard kill)' in text)
+        assert('tests/gamma.ty:9: exit (3)' in text)
+        assert('tests/delta.ty: error: load timeout' in text)
+        assert('process exited 1 after reporting 0' in text)
+        assert('skipped: libzstd not found' in text)
+        assert('skipped: Apple-only APIs' in text)
+        assert('2 respawns' in text)
+    }
+
+    pub fn failures-sorted-by-file-and-line() {
+        let text = replay(fixture('suite'), 'pretty')
+        let heads = text.split("\n").filter(/^(FAIL|CRASH|TIMEOUT|EXIT|ERROR) /).map(\_.words()[1])
+        assert(heads == [
+            'tests/beta.ty::fails-here',
+            'tests/beta.ty::segv',
+            'tests/gamma.ty::hangs',
+            'tests/gamma.ty::quits',
+            'tests/delta.ty',
+            'tests/on_exit.ty',
+        ])
+    }
+
+    pub fn lenient-xpass-is-not-a-failure() {
+        let text = replay(fixture('file_mode'), 'pretty')
+        assert('rerun: ty --test tests/demo.ty::fixed-bug' in text)
+        assert('rerun: ty --test tests/demo.ty::lenient' not in text)
+        assert('XPASS   lenient          (0.80ms)  unexpected pass' in text)
+    }
+
+    pub fn mode-is-inferred-without-run-start() {
+        let file-evs = fixture('file_mode')[1;]
+        assert(replay(file-evs, 'pretty').match?(/^PASS    push-pop/))
+        let suite-evs = fixture('suite')[1;]
+        assert(replay(suite-evs, 'pretty').match?(/^ tests\/lib\/zstd\/ \.+ skipped/))
+    }
+
+    pub fn summary-falls-back-to-event-times() {
+        let evs = fixture('suite')[;-1]
+        let text = replay(evs, 'pretty')
+        assert('3.93s wall  1.83s user  0.19s sys' in text)
+    }
+
+    pub fn quiet-hides-passes() {
+        let out: Array[String] = []
+        let r = report.make(
+            'pretty',
+            color?: false,
+            tty?: false,
+            width: 80,
+            write: s -> out.push(s),
+            quiet?: true
+        )
+        for fixture('file_mode') {
+            r.on(it)
+        }
+        r.done()
+        let text = out.join('')
+        assert('PASS    push-pop' not in text)
+        assert('FAIL    index-error' in text)
+    }
+
+    pub fn render-summary-directly() {
+        let s = render.summary(
+            %{'pass': 2, 'error': 1},
+            files: %{'total': 3, 'failed': 1, 'skipped': 1, 'empty': 0},
+            wall: 1.5,
+            seed: 9,
+            warnings: 2,
+            rerun: ['tests/m.ty::adds[zero]', "it's"],
+            width: 20
+        )
+        let want = [
+            '─' * 20,
+            ' 2 passed  1 error',
+            ' 3 files (1 failed, 1 skipped)',
+            ' 1.50s wall   seed 9',
+            ' warnings: 2',
+            " rerun: ty --test 'tests/m.ty::adds[zero]'",
+            " rerun: ty --test 'it'\\''s'",
+        ]
+        assert(first-diff(s, want.join("\n")) == nil)
+    }
+
+    pub fn render-failure-directly() {
+        let f = events.failure(
+            'AssertionError',
+            'failed assertion: a == b',
+            file: 'x.ty',
+            line: 4,
+            src: 'a == b',
+            op: '==',
+            operands: [('a', "[1,\n 2]"), ('b', '3')]
+        )
+        let ev = events.test-end('x.ty::eq', 'fail', dur: 0.002, failure: f, output: "o1\no2\n")
+        let want = [
+            'FAIL x.ty::eq (2.00ms)',
+            '  x.ty:4: assertion failed',
+            '    assert(a == b)',
+            '      a: [1,',
+            '       2]',
+            '      b: 3',
+            '  captured output (2 lines):',
+            '    o1',
+            '    o2',
+        ]
+        assert(first-diff(render.failure(ev), want.join("\n")) == nil)
+    }
+
+    pub fn events-follow-schema-v1() {
+        let ev = events.test-end('f.ty::x', 'crash', dur: 0.5, signal: 'SIGSEGV', output: 'partial')
+        assert(ev['v'] == 1)
+        assert(ev['ev'] == 'test-end')
+        assert(ev['t'] :: Float)
+        for k, _ in ev {
+            assert(k.match?(/^[a-z_]+$/))
+        }
+        let entry = events.collect-test('f.ty::x', 'x', 3, end-line: 5, only?: true)
+        let c = events.collect('f.ty', tests: [entry])
+        let t = events.get-events(c, 'tests')[0]
+        assert(t['end_line'] == 5)
+        assert(t['only'] == true)
+        assert('file_skip' in c)
+        let d = events.file-done('f.ty', events.status('exit', code: 0), stdout-tail: 'out')
+        assert(d['stdout_tail'] == 'out')
+        assert(d['status']['kind'] == 'exit')
+        let s = events.test-start('f.ty::x', capture-path: '/tmp/c', capture-offset: 12)
+        let cap = events.get-event(s, 'capture')
+        assert(events.get-str(cap, 'path') == '/tmp/c')
+        assert(events.get-int(cap, 'offset') == 12)
+        assert(events.test-start('f.ty::x')['capture'] == nil)
+        let rs = events.run-start(5, jobs: 3, mode: 'file')
+        assert(rs['mode'] == 'file')
+        assert(events.get-str(events.get-event(rs, 'ty'), 'platform') == ty.platform)
+        let text = json.encode(ev)
+        assert(json.encode(json.parse(text)) == text)
+    }
+
+    pub fn truncate-marks-elided-bytes() {
+        let big = "{'a' * 100}{'b' * 100}"
+        let cut = events.truncate(big, 40)
+        assert(cut == "{'a' * 20}\n[… 160 bytes elided …]\n{'b' * 20}")
+        assert(events.truncate('short', 40) == 'short')
+        let ev = events.test-end('f.ty::x', 'fail', output: 'x' * (events.OUTPUT_LIMIT + 10))
+        assert('[… 10 bytes elided …]' in ev['output'])
+    }
+
+    pub fn sink-writes-lines-and-tail-reader-buffers() {
+        let path = tmp-path('sink.jsonl')
+        let sink = EventSink.to-file(path)
+        let rd = os.open(path, os.O_RDONLY)
+        let buf = Blob()
+        assert(events.read-lines(rd, buf) == [])
+        sink.emit(events.file-start('a.ty'))
+        sink.emit(events.test-end('a.ty::x', 'pass', output: "line\nwith \x1b[31mcolor\x1b[0m"))
+        let got = events.read-lines(rd, buf)
+        assert(got.map(&['ev']) == ['file-start', 'test-end'])
+        assert(got[1]['output'] == "line\nwith \x1b[31mcolor\x1b[0m")
+        let wr = os.open(path, os.O_WRONLY | os.O_APPEND)
+        os.write(wr, '{"v":1,"ev":"file-e')
+        assert(events.read-lines(rd, buf) == [])
+        assert(#buf > 0)
+        os.write(wr, 'nd","file":"a.ty","rc":0}' "\nnot json\n\n")
+        let rest = events.read-lines(rd, buf)
+        assert(rest.map(&['ev']) == ['file-end', 'warning'])
+        assert(rest[1]['code'] == 'bad-event')
+        assert(#buf == 0)
+        os.close(wr)
+        os.close(rd)
+        sink.done()
+        let lines = slurp(path).split("\n").filter(\#_ > 0)
+        assert(#lines == 4)
+        for lines[;2] {
+            assert(json.parse(it) :: Dict)
+        }
+        os.unlink(path)
+    }
+
+    pub fn sink-fans-out-to-reporters() {
+        let seen: Array[String] = []
+        let out: Array[String] = []
+        let r = report.make('dot', color?: false, write: s -> out.push(s))
+        let sink = EventSink.to-reporters([r])
+        sink.emit(events.test-end('a.ty::x', 'pass'))
+        sink.emit(events.test-end('a.ty::y', 'skip', reason: 'nope'))
+        sink.done()
+        assert(out.join('').match?(/^\.s\n/))
+        assert(sink.fd == nil)
+    }
+
+    pub fn failure-of-reads-exceptions() {
+        let f = events.failure-of(ValueError('bad input'), trace: 'tb')
+        assert(f['class'] == 'ValueError')
+        assert(f['message'] == 'bad input')
+        assert(f['trace'] == 'tb')
+        let g = events.failure-of(caught(-> assert(1 + 1 == 3)))
+        assert(g['class'] == 'AssertionError')
+        assert(render.strip(g['message']).match?(/assertion/))
+        assert(events.failure-of('plain string')['message'] == 'plain string')
+    }
+
+    pub fn make-parses-specs() {
+        assert(report.make('pretty', color?: false, tty?: false) :: report.Pretty)
+        assert(report.make('dot', color?: false) :: report.Dot)
+        assert(report.make('json') :: report.Json)
+        let e = caught(-> report.make('junit'))
+        assert(e :: ValueError)
+        assert("unknown reporter 'junit'" in str(e))
+    }
+}

@@ -1,0 +1,62 @@
+import json
+import os
+import stdio
+
+pub MARKER = 'ty_test_dir'
+
+pub SKIP_STATUS = 77
+
+fn emit(conf: Dict[String, Any]) {
+    let line = json.encode(%{MARKER: conf})
+    print(line)
+    stdio.fflush(stdio.stdout)
+}
+
+pub fn configure(
+    timeout: ?Float = nil,
+    load-timeout: ?Float = nil,
+    tags: Array[String] = [],
+    opt-in: Bool | String | nil = nil,
+    serial: ?Bool = nil,
+    env: Dict[String, String] = %{},
+    exclude: Array[String] = [],
+    scripts: Array[String] = [],
+    allow-empty: Array[String] = []
+) {
+    let conf: Dict[String, Any] = %{}
+    let opts: Array[(String, Any)] = [
+        ('timeout',      timeout),
+        ('load-timeout', load-timeout),
+        ('opt-in',       opt-in),
+        ('serial',       serial),
+    ]
+    for (k, v) in opts {
+        if v != nil {
+            conf[k] = v
+        }
+    }
+    let lists: Array[(String, Array[String])] = [
+        ('tags',        tags),
+        ('exclude',     exclude),
+        ('scripts',     scripts),
+        ('allow-empty', allow-empty),
+    ]
+    for (k, xs) in lists {
+        if #xs > 0 {
+            conf[k] = xs
+        }
+    }
+    if #env > 0 {
+        conf['env'] = env
+    }
+    emit(conf)
+}
+
+pub fn skip-dir(reason: String, opt-in: Bool | String | nil = nil) {
+    let conf: Dict[String, Any] = %{'skip': reason}
+    if opt-in != nil {
+        conf['opt-in'] = opt-in
+    }
+    emit(conf)
+    os.exit(SKIP_STATUS)
+}

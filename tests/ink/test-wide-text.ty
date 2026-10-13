@@ -1,0 +1,78 @@
+import ink
+
+let LINK = "\x1b]8;;https://example.com/a/rather/long/path?with=query\x1b\\click\x1b]8;;\x1b\\"
+
+class Wrap < ink.Component {
+    node: ink.Node
+    render() -> ink.Node { node }
+}
+
+fn harness(node: ink.Node) -> ink.TestHarness {
+    ink.TestHarness(Wrap(node=node), cols=40, rows=10)
+}
+
+fn uniform?(h: ink.TestHarness) -> Bool {
+    let ws = h.lines.map(&width)
+    #ws > 0 && ws.all?(\_ == ws[0])
+}
+
+fn visible(s: String) -> String {
+    s.comb(/\x1b(?:\[[0-?]*[ -\/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|[ -\/]*[0-~])/)
+}
+
+fn closes-link?(s: String) -> Bool {
+    let urls: Array[String] = s.matches(/\x1b\]8;[^;\x07\x1b]*;([^\x07\x1b]*)/).map(&1)
+    #urls == 0 || urls[-1] == ''
+}
+
+ns test
+
+pub fn link-in-border() {
+    let h = harness(ink.Box(ink.Text(LINK), ink.Text('after link'), border-style='single'))
+    assert(uniform?(h), h.lines.map(&width))
+    assert(h.lines[0].width() == 12)
+    assert(h.lines[1].width() == 12)
+}
+
+pub fn emoji-in-border() {
+    let h = harness(ink.Box(
+        ink.Text('👍🏽 ok'),
+        ink.Text('✔️ done ✔ text'),
+        ink.Text('1️⃣ 🇺🇸 👨‍👩‍👧 ⭐'),
+        border-style='round'
+    ))
+    assert(uniform?(h), h.lines.map(&width))
+    assert(h.lines[0].width() == 16)
+}
+
+pub fn cjk-in-border() {
+    let h = harness(ink.Box(ink.Text('漢字かな한국어'), ink.Text("café ok"), border-style='single'))
+    assert(uniform?(h), h.lines.map(&width))
+    assert(h.lines[0].width() == 16)
+}
+
+pub fn wide-char-straddling-clip-keeps-width() {
+    let h = harness(ink.Box(
+        ink.Box(ink.Text('ab日本語cd'), width=5),
+        ink.Text('|X'),
+        direction='row',
+        border-style='single'
+    ))
+    assert(uniform?(h), h.lines.map(&width))
+    assert(h.line(1) == '│ab日 |X│')
+}
+
+pub fn clipped-link-is-closed() {
+    let h = harness(ink.Box(
+        ink.Box(ink.Text(LINK), width=3),
+        ink.Text('|'),
+        direction='row',
+        border-style='single'
+    ))
+    assert(uniform?(h), h.lines.map(&width))
+    let row = h.lines[1]
+    let parts = row.split('|')
+    assert(#parts == 2, row.escape())
+    assert(closes-link?(parts[0]), row.escape())
+    assert(visible(row) == '│cli|│', row.escape())
+}

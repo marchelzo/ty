@@ -1,0 +1,17 @@
+class Duck {
+    quack() -> String {
+        'quack'
+    }
+}
+
+class Rock {
+}
+
+fn speak(x: Duck | Rock, y: Duck | Rock) -> String {
+    match y {
+        _: Duck => x.quack(),
+        _       => 'silence',
+    }
+}
+
+print(speak(Rock(), Duck()))

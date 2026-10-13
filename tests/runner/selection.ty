@@ -1,0 +1,69 @@
+import json
+import path (Path)
+import ty.test (Test)
+import ty.test.events as events (Event)
+import super.support.process (run)
+import super.support.runner (
+    FIX, Run, drive, ends, local, outcomes, end-of, warnings
+)
+
+ns test {
+    pub fn static-listing-runs-nothing() {
+        let r = run(['-c', '--test', "{FIX}/private_only.ty"])
+        assert(r.status == 0)
+        assert(!('BOOM' in r.stdout))
+        let r = run(['-c', '--test', "{FIX}/order.ty"])
+        assert(r.stdout.lines() == ['a', 'b', 'c', 'd', 'e', 'f'].map(n -> "{FIX}/order.ty::{n}"))
+    }
+
+    pub fn list-json(t: Test) {
+        let r = run(['--test', "{FIX}/order.ty", '--list=json'])
+        let tests = json.parse(r.stdout)
+        assert(tests.map(\_['name']) == ['a', 'b', 'c', 'd', 'e', 'f'])
+    }
+
+    pub fn selection(t: Test) {
+        let ran = (args: Array[String]) -> outcomes(drive(t, ["{FIX}/outcomes.ty", *args]))
+            .keys()
+            .sort()
+        assert(ran(['-k', 'cleanup']) == ['cleanup-order', 'cleanup-ran-lifo'])
+        assert(ran(['-k', '/^.*::pass/']) == ['passes'])
+        assert(ran(['--tags', 'slow and not db']) == ['tagged'])
+        assert(ran(['--tags', 'not slow', '-k', 'tag']) == [])
+        assert(outcomes(drive(t, ["{FIX}/outcomes.ty:49"])).keys() == ['unexpected-pass'])
+        assert(outcomes(drive(t, ["{FIX}/outcomes.ty::nested"])).keys() == ['nested::deep'])
+        let excluded = ran(['--exclude', 'skip', '-k', 'skip'])
+        assert(excluded == [])
+    }
+
+    pub fn missing-line-explains(t: Test) {
+        let r = drive(t, ["{FIX}/outcomes.ty:2"])
+        assert(r.status == 5)
+        let want = 'no test at tests/fixtures/runner/outcomes.ty:2; nearest: passes (line 8)'
+        assert(want in r.stderr, r.stderr)
+    }
+
+    pub fn shuffle-is-reproducible(t: Test) {
+        let order = (seed: String) -> ends(
+            drive(t, ["{FIX}/order.ty", '--shuffle', '--seed', seed])
+        )
+            .map(e -> local(events.get-str(e, 'id') ?? ''))
+        let a = order('7')
+        assert(a == order('7'))
+        assert(a.sort() == ['a', 'b', 'c', 'd', 'e', 'f'])
+        assert(a != ['a', 'b', 'c', 'd', 'e', 'f'] || order('8') != a)
+    }
+
+    pub fn skip-file(t: Test) {
+        let r = drive(t, ["{FIX}/skip_file.ty"])
+        assert(r.status == 0)
+        assert(outcomes(r) == %{'never-runs': 'skip'})
+        let collect = r.events.filter(\_['ev'] == 'collect')[0]
+        assert(events.get-str(collect, 'file_skip') == 'not on this machine')
+    }
+
+    pub fn usage-errors-exit-2() {
+        assert(run(['--test', "{FIX}/order.ty", '--bogus']).status == 2)
+        assert(run(['--test', "{FIX}/order.ty", '--tags', 'a and']).status == 2)
+    }
+}

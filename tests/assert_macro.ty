@@ -1,0 +1,259 @@
+import path
+import sh (Exit)
+import ty
+
+fn failure-of(f: () -> Any) -> AssertionError {
+    try {
+        f()
+    } catch e: AssertionError {
+        return e
+    }
+    throw AssertionError('expected an AssertionError')
+}
+
+class Counter {
+    reads: Int = 0
+    value: Int = 0
+
+    init(value: Int) {
+        self.value = value
+    }
+
+    current -> Int {
+        reads += 1
+        value
+    }
+}
+
+class DetailedError < RuntimeError {
+    a:      Int
+    values: Array[Int]
+
+    init(what: String, a: Int) {
+        super(what)
+        self.a      = a
+        self.values = [a]
+    }
+}
+
+let hook: (() -> Int) | nil = nil
+
+fn install-hook() {
+    hook = fn () { 42 }
+}
+
+fn traced(trail: Array[String], label: String, x: Int) -> Int {
+    trail.push(label)
+    x
+}
+
+ns test
+
+pub fn passing-assertions-do-not-throw() {
+    let x = 3
+    let xs = [1, 2, 3]
+    assert(x == 3)
+    assert(x != 4)
+    assert(x < 4)
+    assert(x <= 3)
+    assert(x > 2)
+    assert(x >= 3)
+    assert(x in xs)
+    assert(9 not in xs)
+    assert(x :: Int)
+    assert(#xs == x)
+    assert(x == 3, 'unused note')
+    assert(xs)
+}
+
+pub fn records-structured-fields() {
+    let x = 2
+    let line = __line__ + 1
+    let e = failure-of(fn () { assert(x == 3) })
+    assert(e.what == 'failed assertion: x == 3\n    x: 2')
+    assert(e.src == 'x == 3')
+    assert(e.op == '==')
+    assert(e.operands == [('x', '2')])
+    assert(e.values == [2, 3])
+    assert(e.note == nil)
+    assert(e.file == __file__)
+    assert(e.line == line)
+}
+
+pub fn records-caller-line-of-multiline-call() {
+    let x = 2
+    let line = __line__ + 2
+    let e = failure-of(fn () {
+        assert(
+            x == 5
+        )
+    })
+    assert(e.line == line)
+    assert(e.file == __file__)
+}
+
+pub fn lists-every-non-literal-operand() {
+    let xs = [1, 2, 3]
+    let n = 4
+    let e = failure-of(fn () { assert(#xs == n) })
+    assert(e.operands == [('#xs', '3'), ('n', '4')])
+    assert(e.values == [3, 4])
+    assert(e.what == 'failed assertion: #xs == n\n    #xs: 3\n    n: 4')
+}
+
+pub fn omits-literal-operands() {
+    let s = 'abc'
+    let xs = [1, 2]
+    let e1 = failure-of(fn () { assert('xyz' == s) })
+    assert(e1.operands == [('s', '"abc"')])
+    assert(e1.values == ['xyz', 'abc'])
+    let e2 = failure-of(fn () { assert(xs == [1, 3]) })
+    assert(e2.operands == [('xs', '[1, 2]')])
+    let e3 = failure-of(fn () { assert(xs == [1, -1, {a: nil}]) })
+    assert(e3.operands == [('xs', '[1, 2]')])
+    let e4 = failure-of(fn () { assert(xs == [1, s]) })
+    assert(e4.operands == [('xs', '[1, 2]'), ('[1, s]', '[1, "abc"]')])
+}
+
+pub fn omits-operands-shown-as-their-source() {
+    let x = Some(3)
+    let e = failure-of(fn () { assert(x == None) })
+    assert(e.what == 'failed assertion: x == None\n    x: Some(3)')
+    assert(e.operands == [('x', 'Some(3)')])
+    assert(e.values == [Some(3), None])
+}
+
+pub fn type-checks-list-only-the-subject() {
+    let y: Int | String = 'a'
+    let e = failure-of(fn () { assert(y :: Int) })
+    assert(e.what == 'failed assertion: y :: Int\n    y: "a"')
+    assert(e.operands == [('y', '"a"')])
+    assert(e.values == ['a'])
+    let c = Counter(5)
+    let e = failure-of(fn () { assert(c.current :: String) })
+    assert(c.reads == 1)
+    assert(e.operands == [('c.current', '5')])
+    assert(e.values == [5])
+}
+
+pub fn records-operator-names() {
+    let x = 3
+    let xs = [1, 2]
+    assert(failure-of(fn () { assert(x != 3) }).op == '!=')
+    assert(failure-of(fn () { assert(x < 1) }).op == '<')
+    assert(failure-of(fn () { assert(x <= 1) }).op == '<=')
+    assert(failure-of(fn () { assert(x > 5) }).op == '>')
+    assert(failure-of(fn () { assert(x >= 5) }).op == '>=')
+    assert(failure-of(fn () { assert(x in xs) }).op == 'in')
+    assert(failure-of(fn () { assert(1 not in xs) }).op == 'not in')
+    assert(failure-of(fn () { assert(x :: String) }).op == '::')
+}
+
+pub fn records-note() {
+    let x = 3
+    let e = failure-of(fn () { assert(x > 5, "x was {x}") })
+    assert(e.note == 'x was 3')
+    assert(e.what == 'failed assertion: x > 5 (x was 3)\n    x: 3')
+}
+
+pub fn non-comparisons-have-no-operands() {
+    let a = true
+    let b = false
+    let e = failure-of(fn () { assert(a && b, 'both') })
+    assert(e.what == 'failed assertion: a && b (both)')
+    assert(e.src == 'a && b')
+    assert(e.op == nil)
+    assert(e.operands == [])
+    assert(e.values == [])
+    assert(e.note == 'both')
+}
+
+pub fn evaluates-side-effecting-operands-once() {
+    let c = Counter(7)
+    assert(c.current == 7)
+    assert(c.reads == 1)
+    let e = failure-of(fn () { assert(c.current == 8) })
+    assert(c.reads == 2)
+    assert(e.values == [7, 8])
+    assert(e.operands == [('c.current', '7')])
+}
+
+pub fn evaluates-operands-in-order() {
+    let ok: Array[String] = []
+    assert(traced(ok, 'lhs', 1) == traced(ok, 'rhs', 1))
+    assert(ok == ['lhs', 'rhs'])
+    let bad: Array[String] = []
+    let e = failure-of(fn () {
+        assert(traced(bad, 'lhs', 1) < traced(bad, 'rhs', 0))
+    })
+    assert(bad == ['lhs', 'rhs'])
+    assert(e.values == [1, 0])
+}
+
+pub fn narrows-identifier-comparisons() {
+    let src = 'do { fn f(x: ?Int) -> Int { assert(x != nil); x + 1 }; f(1) }'
+    assert(ty.eval(src) == 2)
+    let src = 'do { fn g(x: Int | String) -> Int { assert(x :: Int); x }; '
+              'g(4) }'
+    assert(ty.eval(src) == 4)
+    let src = 'do { fn h(x: ?Int) -> Int { assert(nil != x); x * 2 }; h(4) }'
+    assert(ty.eval(src) == 8)
+}
+
+pub fn nil-equality-does-not-narrow() {
+    assert(hook == nil)
+    install-hook()
+    assert(hook != nil)
+    assert(hook() == 42)
+}
+
+pub fn runtime-error-subclass-fields-keep-what() {
+    for ..200 {
+        let e = DetailedError("detail {it}", it)
+        assert(e.what == "detail {it}")
+        assert(e.a == it)
+        assert(e.values == [it])
+    }
+}
+
+pub fn message-is-plain-under-forced-color() {
+    let program = '''
+        try {
+            let xs = [1, 2]
+            assert(xs == [1, 3], 'note')
+        } catch e: AssertionError {
+            print(e.what.match?(/\x1b/) ? 'escapes' : 'plain')
+        }
+    '''
+    let env = %{k: v for k, v in __env if k != 'NO_COLOR'}
+    with dir = path.tempdir() {
+        let file = dir / 'color.ty'
+        file.write(program)
+        let result = sh.run(
+            [ty.executable, '--color=always', str(file)],
+            env=env,
+            timeout=30
+        )
+        assert(result.fate == Exit(0), result.stderr)
+        assert(result.stdout.strip() == 'plain', result.stdout)
+    }
+}
+
+pub fn plain-constructor-still-works() {
+    let e = AssertionError('msg')
+    assert(e.what == 'msg')
+    assert(str(e) == 'AssertionError: msg')
+    assert(e.src == nil)
+    assert(e.file == nil)
+    assert(e.line == nil)
+    assert(e.op == nil)
+    assert(e.operands == [])
+    assert(e.values == [])
+    assert(e.note == nil)
+    assert(e :: RuntimeError)
+}
+
+pub fn unreachable-throws-assertion-error() {
+    let e = failure-of(fn () { unreachable! })
+    assert(e.what == 'unreachable')
+}

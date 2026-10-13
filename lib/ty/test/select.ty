@@ -1,0 +1,136 @@
+pub class TagError < RuntimeError {}
+
+pub class TagExpr {
+    src:   String
+    names: Array[String]
+    __f:   Array[String] -> Bool
+
+    init(src: String, names: Array[String], f: Array[String] -> Bool) {
+        self.src   = src
+        self.names = names
+        __f        = f
+    }
+
+    matches?(tags: Array[String]) -> Bool {
+        __f(tags)
+    }
+}
+
+class TagParser {
+    __toks:  Array[String]
+    __i:     Int = 0
+    __names: Array[String] = []
+
+    init(src: String) {
+        __toks = src.matches(/\(|\)|[^\s()]+/)
+    }
+
+    names -> Array[String] {
+        __names
+    }
+
+    peek() -> ?String {
+        (__i < #__toks) ? __toks[__i] : nil
+    }
+
+    next() -> ?String {
+        let t = peek()
+        __i += 1
+        t
+    }
+
+    done?() -> Bool {
+        __i >= #__toks
+    }
+
+    expr() -> Array[String] -> Bool {
+        let f = term()
+        while peek() == 'or' {
+            next()
+            let (a, b) = (f, term())
+            f = tags -> a(tags) || b(tags)
+        }
+        f
+    }
+
+    term() -> Array[String] -> Bool {
+        let f = factor()
+        while peek() == 'and' {
+            next()
+            let (a, b) = (f, factor())
+            f = tags -> a(tags) && b(tags)
+        }
+        f
+    }
+
+    factor() -> Array[String] -> Bool {
+        match next() {
+            nil   => throw TagError('unexpected end of tag expression'),
+            'not' => do {
+                let f = factor()
+                tags -> !f(tags)
+            },
+            '(' => do {
+                let f = expr()
+                if next() != ')' {
+                    throw TagError("missing ')'")
+                }
+                f
+            },
+            ')' or 'and' or 'or' => throw TagError("unexpected '{__toks[__i - 1]}'"),
+            'all' => (_ -> true),
+            name  => do {
+                __names.push(name)
+                tags -> name in tags
+            },
+        }
+    }
+}
+
+pub fn parse-tags(src: String) -> TagExpr {
+    let p = TagParser(src)
+    if p.done?() {
+        throw TagError('empty tag expression')
+    }
+    let f = p.expr()
+    if !p.done?() {
+        throw TagError("unexpected '{p.peek()}' in tag expression")
+    }
+    TagExpr(src, p.names, f)
+}
+
+pub fn matches?(e: TagExpr, tags: Array[String]) -> Bool {
+    e.matches?(tags)
+}
+
+pub fn pattern-matches?(pat: String, s: String) -> Bool {
+    match pat.match(/^\/(.*)\/([a-z]*)$/s) {
+        [_, re, flags] => s.match?(regex(re, flags)),
+        _              => pat in s,
+    }
+}
+
+pub fn id-matches?(prefix: String, local: String) -> Bool {
+    local[;#prefix] == prefix
+}
+
+pub fn fnv1a32(s: String) -> Int {
+    let h = 0x811c9dc5
+    for Blob(s) {
+        h = ((h ^ it) * 0x01000193) & 0xffffffff
+    }
+    h
+}
+
+pub fn shuffled[T](xs: Array[T], seed: Int) -> Array[T] {
+    let out = [*xs]
+    let state = seed & 0x7fffffff
+    let i = #out - 1
+    while i > 0 {
+        state = (state * 1103515245 + 12345) & 0x7fffffff
+        let j = state % (i + 1)
+        (out[i], out[j]) = (out[j], out[i])
+        i -= 1
+    }
+    out
+}

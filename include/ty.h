@@ -641,8 +641,10 @@ typedef struct {
 } ThrowCtx;
 
 typedef struct {
+        Stmt const *def;
+        Symbol     *var;
         char const *name;
-        Symbol *var;
+        bool        pub;
 } TyTest;
 
 typedef struct ty0 {
@@ -806,7 +808,6 @@ typedef struct {
         int q;
         int jit;
         int TEST;
-        int tests;
         int version;
 } InternedNames;
 
@@ -1115,6 +1116,7 @@ extern usize TotalBytesAllocated;
         X(TRY),                   \
         X(CATCH),                 \
         X(END_TRY),               \
+        X(POP_TRY),               \
         X(FINALLY),               \
         X(PUSH_DEFER_GROUP),      \
         X(DEFER),                 \

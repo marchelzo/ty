@@ -1,0 +1,33 @@
+ns test
+
+pub fn left-align-zero-width() {
+    let w = 0
+    let e = ''
+    assert("[{e:<{w}}]" == '[]')
+    assert("[{'ab':<{w}}]" == '[ab]')
+    assert("[{'ab':<0}]" == '[ab]')
+    assert("[{12:<0}]" == '[12]')
+    assert("[{1.5:<0}]" == "[{1.5:<1}]")
+    assert(fmt('%-0s', 'ab') == 'ab')
+    assert(fmt('%-0d', 12) == '12')
+}
+
+pub fn left-align-zero-fill() {
+    assert("[{12:<05}]" == '[12000]')
+    assert("[{12:0<5}]" == '[12000]')
+    assert("[{'ab':0<5}]" == '[ab000]')
+    assert("[{255:<06x}]" == '[ff0000]')
+    assert(fmt('%-05d', 12) == '12000')
+}
+
+pub fn other-alignments-unchanged() {
+    assert("[{12:05}]" == '[00012]')
+    assert("[{-12:05}]" == '[-0012]')
+    assert("[{12:+05}]" == '[+0012]')
+    assert("[{12:^05}]" == '[01200]')
+    assert("[{'ab':>0}]" == '[ab]')
+    assert("[{'ab':^0}]" == '[ab]')
+    assert("[{'ab':<4}]" == '[ab  ]')
+    assert("[{1.5:08.2f}]" == '[00001.50]')
+    assert(fmt('%05d', -12) == '-0012')
+}

@@ -389,6 +389,7 @@ static vec(Expr const *) source_map;
 static u32 source_map_hole;
 static JumpGroup PreludeAssertionOffsets;
 static Module *MainModule;
+static bool TestRunnerFailed;
 static Module *GlobalModule;
 static Scope *GlobalScope;
 static Symbol *AnyTypeSymbol;
@@ -1040,28 +1041,44 @@ CountEmitted(ExprVec const *funs)
         return count;
 }
 
+static void
+DumpTestSrcName(byte_vector *out, Stmt const *def)
+{
+        Expr const *target = def->target;
+        char const *p = target->start.s;
+        char const *q = target->end.s;
+
+        if (
+                (p == NULL)
+             || (q == NULL)
+             || (q <= p)
+             || (strcspn(p, " \t\n(){}[]") < (usize)(q - p))
+        ) {
+                dump(out, "::%s", target->identifier);
+        } else {
+                dump(out, "::%.*s", (int)(q - p), p);
+        }
+}
+
 static char *
 QualifiedTestName(Ty *ty, Stmt const *def)
 {
         byte_vector name = {0};
-        StringVector parts = {0};
+        vec(char const *) parts = {0};
 
         dump(&name, "%s", def->mod->name);
 
-        SCRATCH_SAVE();
-
-        for (Namespace const *ns = def->ns; ns->next != NULL; ns = ns->next) {
-                svP(parts, ns->id);
+        for (Namespace const *ns = def->ns; ns != NULL; ns = ns->next) {
+                xvP(parts, ns->src_id);
         }
 
         for (int i = vN(parts) - 1; i >= 0; --i) {
-                char const *part = v__(parts, i);
-                dump(&name, ".%s", part);
+                dump(&name, "::%s", v__(parts, i));
         }
 
-        SCRATCH_RESTORE();
+        DumpTestSrcName(&name, def);
 
-        dump(&name, ".%s", def->target->identifier);
+        xvF(parts);
 
         return vv(name);
 }
@@ -5679,6 +5696,17 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
         case STATEMENT_EXPRESSION:
                 symbolize_expression(ty, scope, s->expression);
                 s->will_return = WillReturn(s->expression);
+                if (
+                        (s->expression->type == EXPRESSION_IDENTIFIER)
+                     && (s->expression->symbol != NULL)
+                     && SymbolIsFunMacro(s->expression->symbol)
+                ) {
+                        fail(
+                                "function-like macro `%s` must be called: %s(cond[, msg])",
+                                s->expression->identifier,
+                                s->expression->identifier
+                        );
+                }
                 break;
 
         case STATEMENT_BREAK:
@@ -5959,11 +5987,18 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 
         case STATEMENT_FUNCTION_DEFINITION:
                 symbolize_fun_def(ty, scope, s, SYM_FUNCTION);
-                if (s->ns != NULL && s->ns->test && s->pub) {
+                if (
+                        (s->ns != NULL)
+                     && s->ns->test
+                     && (s->value->overload == NULL)
+                     && SymbolIsGlobal(s->target->symbol)
+                ) {
                         char const *name = QualifiedTestName(ty, s);
                         xvP(xD.tests, ((TyTest) {
+                                .def  = s,
+                                .var  = s->target->symbol,
                                 .name = name,
-                                .var  = s->target->symbol
+                                .pub  = s->pub
                         }));
                 }
                 break;
@@ -7669,6 +7704,31 @@ emit_implicit_tail_body(Ty *ty, Stmt const *body)
         INSN(TAIL_CALL);
 
         return true;
+}
+
+static void
+emit_loop_unwind(Ty *ty, LoopState const *loop)
+{
+        for (int i = 0;; ++i) {
+                TryState *_try = get_try(ty, i);
+
+                if (_try == NULL || _try->t <= loop->t) {
+                        break;
+                }
+
+                switch (_try->ctx) {
+                case TRY_CATCH:
+                        INSN(CATCH);
+                        INSN(FINALLY);
+                        break;
+                case TRY_FINALLY:
+                        INSN(POP_TRY);
+                        break;
+                default:
+                        INSN(FINALLY);
+                        break;
+                }
+        }
 }
 
 static void
@@ -11764,17 +11824,7 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                         INSN(NIL);
                 }
 
-                for (int i = 0;; ++i) {
-                        TryState *_try = get_try(ty, i);
-
-                        if (_try == NULL || _try->t <= loop->t) {
-                                break;
-                        }
-
-                        if (_try->ctx != TRY_FINALLY) {
-                                INSN(FINALLY);
-                        }
-                }
+                emit_loop_unwind(ty, loop);
 
                 for (int i = loop->resources; i < STATE.resources; ++i) {
                         INSN(DROP);
@@ -11794,17 +11844,7 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
 
                 UnwindStack(ty, loop->stack, 0);
 
-                for (int i = 0;; ++i) {
-                        TryState *_try = get_try(ty, i);
-
-                        if (_try == NULL || _try->t <= loop->t) {
-                                break;
-                        }
-
-                        if (_try->ctx != TRY_FINALLY) {
-                                INSN(FINALLY);
-                        }
-                }
+                emit_loop_unwind(ty, loop);
 
                 for (int i = loop->resources; i < STATE.resources; ++i) {
                         INSN(DROP);
@@ -13552,7 +13592,18 @@ compiler_load_builtin_modules(Ty *ty)
         }
         load_module(ty, "pretty", NULL);
         if (RunningTests) {
-                load_module(ty, "ty/test", NULL);
+                if (TY_CATCH_ERROR()) {
+                        TY_CATCH_FAIL();
+                        fprintf(
+                                stderr,
+                                "ty --test: warning: failed to load ty/test, using the native runner: %s\n",
+                                TyError(ty)
+                        );
+                        TestRunnerFailed = true;
+                } else {
+                        load_module(ty, "ty/test", NULL);
+                        TY_CATCH_END();
+                }
         }
 
         t2_settle_declarations(ty);
@@ -13618,6 +13669,18 @@ gettag(Ty *ty, char const *module, char const *name)
                 exit(1);
         }
         return sym->tag;
+}
+
+bool
+compiler_test_runner_failed(void)
+{
+        return TestRunnerFailed;
+}
+
+bool
+compiler_module_exists(Ty *ty, char const *name)
+{
+        return try_slurp_module(ty, name, NULL) != NULL;
 }
 
 Symbol *
@@ -20204,6 +20267,8 @@ DumpProgram(
                         break;
                 CASE(END_TRY)
                         break;
+                CASE(POP_TRY)
+                        break;
                 CASE(CATCH)
                         break;
                 CASE(TRY)
@@ -20737,6 +20802,20 @@ IsTopLevel(Symbol const *sym)
             || (GlobalScope == s->parent);
 }
 
+static void
+DropTestsFrom(Module const *mod)
+{
+        usize n = 0;
+
+        for (usize i = 0; i < vN(xD.tests); ++i) {
+                if (v_(xD.tests, i)->def->mod != mod) {
+                        v__(xD.tests, n++) = v__(xD.tests, i);
+                }
+        }
+
+        xD.tests.count = n;
+}
+
 static Module *
 CompileSource(
         Ty *ty,
@@ -20791,6 +20870,7 @@ CompileSource(
         if (TY_CATCH_ERROR()) {
                 TY_CATCH_FAIL();
                 mod->flags |= MOD_COMPILE_ERR;
+                DropTestsFrom(mod);
                 scope_set_symbol(ty, symbol);
                 TYPES_OFF = types;
                 ContextList = ctx;
@@ -21131,6 +21211,7 @@ CompilerReset(Ty *ty)
         v0(source_map);
         source_map_hole = 0;
         v0(PreludeAssertionOffsets);
+        v0(xD.tests);
 
         MainModule      = NULL;
         GlobalModule    = NULL;

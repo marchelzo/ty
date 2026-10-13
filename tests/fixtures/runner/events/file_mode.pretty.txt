@@ -1,0 +1,64 @@
+PASS    push-pop         (1.23ms)
+FAIL    math::adds-up    (12.00ms)
+FAIL    index-error      (0.40ms)
+SKIP    needs-postgres   TY_PG_URL not set
+SKIP    uring            io_uring is Linux-only
+TODO    expires-session  needs a fake clock
+XFAIL   count-boundaries (2.10ms)  count(/\b/) double-counts
+XPASS   fixed-bug        (0.90ms)  fixed? remove @xfail
+XPASS   lenient          (0.80ms)  unexpected pass
+TIMEOUT spins            (500.00ms)  exceeded 0.5s
+ERROR   gen              generator functions cannot be tests
+
+FAIL tests/demo.ty::math::adds-up (12.00ms)
+  tests/demo.ty:14: assertion failed
+    assert(total == 10)
+      total: 9
+      (sum of 1..4)
+  trace:
+    at tests/demo.ty:14:5 in adds-up
+        assert(total == 10)
+  log:
+    started with 4 items
+  captured output (2 lines):
+    summing 1..4
+    partial: 6
+
+FAIL tests/demo.ty::index-error (0.40ms)
+  tests/demo.ty:22: uncaught IndexError
+    IndexError([1, 2], 5)
+  trace:
+    at tests/demo.ty:22:9 in index-error
+
+XPASS tests/demo.ty::fixed-bug (0.90ms)
+  tests/demo.ty:40: unexpected pass (fixed? remove @xfail)
+
+TIMEOUT tests/demo.ty::spins (500.00ms)
+  tests/demo.ty:51: timeout
+    exceeded 0.5s
+    test exceeded its 0.5s timeout
+  trace:
+    at tests/demo.ty:51:5 in spins
+        while true {}
+  captured output (1 line):
+    spinning
+
+ERROR tests/demo.ty::gen
+  tests/demo.ty:55: error
+    generator functions cannot be tests
+
+warnings (3):
+  tests/demo.ty: private-tests: 2 functions in `ns test` are not `pub` and never run (missing `pub`?): helper, check-all
+  tests/demo.ty::push-pop: returned-false: test returned false (ignored; use assert)
+  tests/demo.ty:60: metadata-on-non-test: @tags applied to a function that is not a test (decorator order?)
+────────────────────────────────────────────────────────────────────────────────
+ 1 passed  2 failed  1 error  1 timed out  2 skipped  1 todo  1 xfail  2 xpass
+ 0.63s wall  0.41s user  0.07s sys   seed 1234   warnings: 3
+ slowest: tests/demo.ty::spins 500.00ms, tests/demo.ty::math::adds-up 12.00ms,
+          tests/demo.ty::count-boundaries 2.10ms,
+          tests/demo.ty::push-pop 1.23ms, tests/demo.ty::fixed-bug 0.90ms
+ rerun: ty --test tests/demo.ty::math::adds-up
+ rerun: ty --test tests/demo.ty::index-error
+ rerun: ty --test tests/demo.ty::fixed-bug
+ rerun: ty --test tests/demo.ty::spins
+ rerun: ty --test tests/demo.ty::gen

@@ -1,0 +1,230 @@
+import term (..)
+import os (..)
+
+ns test
+
+const SENTINEL = "\x1b[57399u"
+
+fn mods-str(m: Int) -> String {
+    [
+        '+S' if (m & mod.SHIFT) != 0,
+        '+A' if (m & mod.ALT) != 0,
+        '+C' if (m & mod.CTRL) != 0,
+        '+M' if (m & mod.SUPER) != 0,
+        '+LOCK' if (m & 0xc0) != 0
+    ].join('')
+}
+
+fn key-str(k: Int | String) -> String {
+    match k {
+        s: String => s,
+        n: Int    => (n < 33 || n == 127) ? "#{n}" : chr(n)
+    }
+}
+
+fn show(ev: Event) -> String {
+    match ev {
+        event.Key({key, mods, event: e, base, *}) => do {
+            let b = (base == nil) ? '' : "[b={base}]"
+            let t = (e == 1) ? '' : "/{e}"
+            "K:{key-str(key)}{mods-str(mods)}{b}{t}"
+        },
+        event.Text(s)  => "T:{s}",
+        event.Paste(s) => "P:{s}",
+        _              => "{ev}"
+    }
+}
+
+class Pty {
+    __pty: {master: Int, slave: Int, name: String}
+    __tio: TermIO
+    __drain: Thread
+
+    init(esc-delay: Float = 0.01) {
+        __pty = openpty((24, 80))!
+        __tio = TermIO(fd=__pty.slave, mouse=true, esc-delay=esc-delay)
+        __drain = Thread(__discard-output)
+        __tio.start()
+    }
+
+    __discard-output() {
+        while let $b = read(__pty.master, 4096) and #b > 0 {
+            ;
+        }
+    }
+
+    send(chunks: Array[String | Float]) -> Array[String] {
+        for chunks {
+            match it {
+                s: String => write(__pty.master, s),
+                t: Float  => sleep(t)
+            }
+        }
+
+        write(__pty.master, SENTINEL)
+
+        let out: Array[String] = []
+
+        while let $ev = __tio.next-event(2.0) {
+            let s = show(ev)
+            break if s == 'K:KP_0'
+            out.push(s)
+        }
+
+        out
+    }
+
+    feed(s: String, gap: Float) -> String {
+        send([s, gap]).join(' ')
+    }
+
+    close() {
+        __tio.close()
+        os.close(__pty.slave)
+        __drain.join()
+        os.close(__pty.master)
+    }
+}
+
+fn check(cases: Array[(String, String)], gap: Float = 0.0) {
+    let p = Pty()
+    let bad: Array[(String, String, String)] = []
+
+    for (bytes, want) in cases {
+        let got = p.feed(bytes, gap)
+        if got != want {
+            bad.push((bytes, got, want))
+        }
+    }
+
+    p.close()
+    assert(bad == [])
+}
+
+pub fn legacy-control-keys() {
+    check([
+        ("\t",       'K:TAB'),
+        ("\x1b[Z",   'K:TAB+S'),
+        ("\r",       'K:ENTER'),
+        ("\x7f",     'K:BACKSPACE'),
+        ("\x08",     'K:BACKSPACE+C'),
+        ("\x00",     'K:#32+C'),
+        ("\x01",     'K:a+C'),
+        ("\x1b",     'K:ESCAPE'),
+        ("\x1b\x1b", 'K:ESCAPE K:ESCAPE')
+    ], gap=0.1)
+}
+
+pub fn legacy-alt-keys() {
+    check([
+        ("\x1ba",           'K:a+A'),
+        ("\x1b\x7f",        'K:BACKSPACE+A'),
+        ("\x1b\r",          'K:ENTER+A'),
+        ("\x1b\x01",        'K:a+A+C'),
+        ("\x1b\u00e9",      'K:é+A'),
+        ("\x1b[",           'K:[+A'),
+        ("\x1bO",           'K:O+A'),
+        ("\x1b\x1b[A",      'K:UP+A')
+    ], gap=0.1)
+}
+
+pub fn legacy-navigation-keys() {
+    check([
+        ("\x1b[A",    'K:UP'),
+        ("\x1bOA",    'K:UP'),
+        ("\x1b[1;5A", 'K:UP+C'),
+        ("\x1b[H",    'K:HOME'),
+        ("\x1b[1~",   'K:HOME'),
+        ("\x1bOH",    'K:HOME'),
+        ("\x1b[7~",   'K:HOME'),
+        ("\x1b[F",    'K:END'),
+        ("\x1b[4~",   'K:END'),
+        ("\x1bOF",    'K:END'),
+        ("\x1b[8~",   'K:END'),
+        ("\x1b[2~",   'K:INSERT'),
+        ("\x1b[3;2~", 'K:DELETE+S'),
+        ("\x1b[5~",   'K:PAGE_UP'),
+        ("\x1b[6;5~", 'K:PAGE_DOWN+C'),
+        ("\x1b[G",    'K:KP_BEGIN')
+    ])
+}
+
+pub fn legacy-function-keys() {
+    check([
+        ("\x1bOP",    'K:F1'),
+        ("\x1bOQ",    'K:F2'),
+        ("\x1bOR",    'K:F3'),
+        ("\x1bOS",    'K:F4'),
+        ("\x1b[11~",  'K:F1'),
+        ("\x1b[1;2P", 'K:F1+S'),
+        ("\x1b[15~",  'K:F5'),
+        ("\x1b[24~",  'K:F12'),
+        ("\x1b[[A",   'K:F1'),
+        ("\x1b[[E",   'K:F5'),
+        ("\x1b[25~",  'K:F13'),
+        ("\x1b[29~",  'K:MENU')
+    ])
+}
+
+pub fn unknown-sequences-are-dropped() {
+    check([
+        ("\x1b[I",                            ''),
+        ("\x1b[?2026;2$y",                    ''),
+        ("\x1b[?31u",                         ''),
+        ("\x1b[99~",                          ''),
+        ("\x1b]11;rgb:0000/0000/0000\x1b\\",  ''),
+        ("a\x1b[Ab",                          'T:a K:a K:UP T:b K:b')
+    ])
+}
+
+pub fn kitty-keys() {
+    check([
+        ("\x1b[9u",           'K:TAB'),
+        ("\x1b[9;2u",         'K:TAB+S'),
+        ("\x1b[97;5u",        'K:a+C'),
+        ("\x1b[1089::99;5u",  'K:с+C[b=99]'),
+        ("\x1b[97;;97u",      'K:a T:a'),
+        ("\x1b[97:65;2;65u",  'K:a+S T:A'),
+        ("\x1b[97;1:3u",      'K:a/3'),
+        ("\x1b[97;129;97u",   'K:a T:a'),
+        ("\x1b[97;65;65u",    'K:a T:A'),
+        ("\x1b[27;5;97~",     'K:a+C'),
+        ("\x1b[27;2;9~",      'K:TAB+S')
+    ])
+}
+
+pub fn mouse-and-paste() {
+    check([
+        ("\x1b[<0;10;5M",                'MouseDown(button: 0, mods: 0, x: 10, y: 5)'),
+        ("\x1b[<64;3;4M",                'ScrollUp(button: 64, mods: 0, x: 3, y: 4)'),
+        ("\x1b[200~hi \x1b[A there\x1b[201~", 'P:hi \x1b[A there')
+    ])
+}
+
+pub fn split-sequences() {
+    let p = Pty(esc-delay=1.0)
+    let got = [
+        p.send(["\x1b[1;", 0.002, "5A"]),
+        p.send(["\x1b", 0.002, "[B"]),
+        p.send(["\x1b[200~ab\x1b[20", 0.02, "1~"]),
+        p.send(["\xc3", 0.002, "\xa9"]),
+        p.send(["z"])
+    ]
+    p.close()
+    assert(got == [
+        ['K:UP+C'],
+        ['K:DOWN'],
+        ['P:ab'],
+        ['T:é', 'K:é'],
+        ['T:z', 'K:z']
+    ])
+}
+
+pub fn mouse-burst-across-reads() {
+    let p = Pty(esc-delay=1.0)
+    let burst = ["\x1b[<35;{1 + i % 90};{1 + i % 20}M" for i in ..2000].join('')
+    let got = p.send([burst])
+    p.close()
+    assert(#got == 2000)
+    assert(got.all?(\_.match?(/^MouseMove/)))
+}

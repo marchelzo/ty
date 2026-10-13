@@ -1,0 +1,178 @@
+import ty (hash)
+
+ns test
+
+pub fn dict-structural-equality() {
+    assert(%{'a': '1'} == %{'a': '1'})
+    assert(%{'a': 1, 'b': 2} == %{'b': 2, 'a': 1})
+    assert(%{} == %{})
+    assert(%{'a': 1} != %{'a': 2})
+    assert(%{'a': 1} != %{'b': 1})
+    assert(%{'a': 1} != %{'a': 1, 'b': 2})
+    assert(%{'a': [1, %{'x': 2}]} == %{'a': [1, %{'x': 2}]})
+    assert(%{'a': [1, %{'x': 2}]} != %{'a': [1, %{'x': 3}]})
+}
+
+pub fn dict-equality-ignores-insertion-order() {
+    let d = %{}
+    d['b'] = 2
+    d['a'] = 1
+    assert(d == %{'a': 1, 'b': 2})
+    d.remove('b')
+    assert(d == %{'a': 1})
+}
+
+pub fn blob-structural-equality() {
+    let a = Blob()
+    let b = Blob()
+    let c = Blob()
+    a.push('abc')
+    b.push('abc')
+    c.push('abd')
+    assert(a == b)
+    assert(a != c)
+    assert(Blob() == Blob())
+    b.push(0)
+    assert(a != b)
+}
+
+pub fn dict-and-blob-hashing() {
+    assert(#%[%{'k': 1}, %{'k': 1}, %{'k': 2}] == 2)
+
+    let d = %{}
+    d[%{'x': 1, 'y': 2}] = 'dict'
+    assert(d[%{'y': 2, 'x': 1}] == 'dict')
+
+    let a = Blob()
+    let b = Blob()
+    a.push('key')
+    b.push('key')
+    d[a] = 'blob'
+    assert(d[b] == 'blob')
+}
+
+pub fn dict-and-blob-membership() {
+    let b = Blob()
+    b.push('x')
+    let c = Blob()
+    c.push('x')
+    assert(%{'a': 1} in [%{'a': 1}])
+    assert(c in [b])
+}
+
+fn self-array(x: Int) -> Array[Any] {
+    let a: Array[Any] = [x]
+    a.push(a)
+    a
+}
+
+fn self-dict(x: Int) -> Dict[String, Any] {
+    let d: Dict[String, Any] = %{'k': x}
+    d['self'] = d
+    d
+}
+
+fn nest(n: Int) -> Array[Any] {
+    let x: Array[Any] = [0]
+    for _ in ..n {
+        x = [x]
+    }
+    x
+}
+
+class Boom {
+    ==(other: Boom) -> Bool {
+        throw 'boom'
+    }
+}
+
+pub fn cyclic-array-equality() {
+    let a = self-array(1)
+    let b = self-array(1)
+    assert(a == a)
+    assert(a == b)
+    assert(a != self-array(2))
+    assert([a] == [b])
+
+    let c: Array[Any] = [1]
+    c.push([1, c])
+    assert(a != c)
+}
+
+pub fn cyclic-dict-equality() {
+    let d = self-dict(1)
+    let e = self-dict(1)
+    assert(d == e)
+    e['k'] = 2
+    assert(d != e)
+}
+
+pub fn cyclic-tuple-queue-set() {
+    let t: (Int, Array[Any]) = (1, [])
+    t.1.push(t)
+    let u: (Int, Array[Any]) = (1, [])
+    u.1.push(u)
+    assert(t == u)
+    assert(hash(t) == hash(u))
+
+    let q: Queue[Any] = Queue()
+    q.push(q)
+    let r: Queue[Any] = Queue()
+    r.push(r)
+    assert(q == r)
+    assert(hash(q) == hash(r))
+
+    let s: Set[Any] = %[]
+    let w1: Array[Any] = [s]
+    w1.push(w1)
+    let w2: Array[Any] = [s]
+    w2.push(w2)
+    assert(w1 == w2)
+}
+
+pub fn cyclic-hash-consistency() {
+    assert(hash(self-array(1)) == hash(self-array(1)))
+    assert(hash(self-dict(1)) == hash(self-dict(1)))
+
+    let d: Dict[Any, String] = %{}
+    d[self-array(7)] = 'found'
+    assert(d[self-array(7)] == 'found')
+}
+
+pub fn cyclic-ordering() {
+    let x = self-array(1)
+    let y = self-array(2)
+    assert((x <=> y) < 0)
+    assert((y <=> x) > 0)
+    assert((x <=> self-array(1)) == 0)
+}
+
+pub fn wide-self-reference() {
+    let a: Array[Any] = []
+    let b: Array[Any] = []
+    for _ in ..1000 {
+        a.push(a)
+        b.push(b)
+    }
+    assert(a == b)
+    assert(hash(a) == hash(b))
+}
+
+pub fn deep-acyclic-nesting() {
+    let p = nest(3000)
+    let q = nest(3000)
+    assert(p == q)
+    assert(hash(p) == hash(q))
+    assert((p <=> q) == 0)
+    assert(p != nest(2999))
+}
+
+pub fn throw-during-cyclic-comparison() {
+    let a: Array[Any] = [Boom()]
+    a.push(a)
+    let b: Array[Any] = [Boom()]
+    b.push(b)
+    let r = try { a == b } catch 'boom' { 'caught' }
+    assert(r == 'caught')
+    assert(self-array(1) == self-array(1))
+}

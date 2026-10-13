@@ -27,6 +27,7 @@ typedef struct ns Namespace;
 
 struct ns {
         char *id;
+        char const *src_id;
         bool pub;
         bool braced;
         bool test;

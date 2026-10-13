@@ -1,0 +1,11 @@
+import ty.test.config (configure)
+
+configure(
+    scripts: [
+        'on_exit.ty',
+        'match_inference.ty',
+        'ffi_struct_thread_new.ty',
+        'tuple_class.ty'
+    ],
+    env: %{'NO_COLOR': '', 'MIMALLOC_ALLOW_LARGE_OS_PAGES': '0'}
+)

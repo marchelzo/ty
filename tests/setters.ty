@@ -1,0 +1,103 @@
+import ty
+
+ns test
+
+class Box {
+    _v: Int = 0
+
+    v=(x: Int) {
+        _v = x * 2
+    }
+
+    v -> Int {
+        _v
+    }
+}
+
+class StaticBox {
+    static _v: Int = 0
+
+    static val=(x: Int) {
+        _v = x * 2
+    }
+
+    static val -> Int {
+        _v
+    }
+}
+
+class Bag {
+    __d: Dict[String, Int] = %{}
+
+    __missing__=(name: String, x: Int) {
+        __d[name] = x
+    }
+
+    __missing__(name: String) -> Int {
+        __d[name] ?? 0
+    }
+}
+
+class StaticBag {
+    static __d: Dict[String, Int] = %{}
+
+    static __missing__=(name: String, x: Int) {
+        __d[name] = x
+    }
+
+    static __missing__(name: String) -> Int {
+        __d[name] ?? 0
+    }
+}
+
+pub fn single-char-setter() {
+    let b = Box()
+    b.v = 5
+    assert(b.v == 10)
+    b.v -= 1
+    assert(b.v == 18)
+}
+
+pub fn static-setter-assign() {
+    StaticBox.val = 21
+    assert(StaticBox.val == 42)
+}
+
+pub fn static-setter-compound() {
+    StaticBox.val = 1
+    StaticBox.val += 1
+    assert(StaticBox.val == 6)
+    StaticBox.val *= 2
+    assert(StaticBox.val == 24)
+    StaticBox.val <<= 1
+    assert(StaticBox.val == 96)
+}
+
+pub fn missing-setter-compound() {
+    let b = Bag()
+    b.foo = 3
+    b.foo += 4
+    assert(b.foo == 7)
+    assert(b.bar == 0)
+}
+
+pub fn static-missing() {
+    StaticBag.foo = 3
+    StaticBag.foo += 4
+    assert(StaticBag.foo == 7)
+    assert(StaticBag.bar == 0)
+    assert(StaticBag.__name__ == 'StaticBag')
+}
+
+pub fn setter-ast() {
+    let ty.Class($c) = $$[
+        class Q {
+            v=(x) { }
+            static w=(x) { }
+        }
+    $$]
+    assert(#c.setters == 1)
+    assert(#c.static-setters == 1)
+    assert(#c.methods == 0)
+    assert(#c.static-methods == 0)
+}

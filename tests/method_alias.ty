@@ -1,0 +1,215 @@
+import ty
+
+ns test
+
+let log = []
+
+class R {
+    k: Int
+
+    init(k: Int) {
+        self.k = k
+    }
+
+    close() {
+        log.push(k)
+    }
+
+    __private() -> String {
+        "private {k}"
+    }
+
+    __drop__ = use close
+    shut     = use close
+    peek     = use __private
+
+    static make(k: Int) -> R {
+        R(k)
+    }
+
+    static mk = use make
+}
+
+class S < R {
+    close() {
+        log.push(-k)
+    }
+
+    bye = use close
+}
+
+class T < R {
+    bye = use close
+}
+
+pub fn alias-calls-target() {
+    log = []
+    R(1).shut()
+    assert(log == [1])
+}
+
+pub fn alias-drop() {
+    log = []
+    with a = R(1), b = R(2) {
+        ;
+    }
+    assert(log == [2, 1])
+}
+
+pub fn alias-private-target() {
+    assert(R(3).peek() == "private 3")
+}
+
+pub fn alias-static() {
+    assert(R.mk(4).k == 4)
+}
+
+pub fn alias-inherited-target() {
+    log = []
+    T(5).bye()
+    assert(log == [5])
+}
+
+pub fn alias-dispatches-dynamically() {
+    log = []
+    S(6).shut()
+    S(7).bye()
+    T(8).shut()
+    assert(log == [-6, -7, 8])
+}
+
+pub fn alias-drop-dispatches-dynamically() {
+    log = []
+    with s = S(1), r = R(2) {
+        ;
+    }
+    assert(log == [2, -1])
+}
+
+class U < S {
+    shut() {
+        log.push(100 + k)
+    }
+}
+
+pub fn alias-overridden-by-method() {
+    log = []
+    U(1).shut()
+    U(2).__drop__()
+    U(3).bye()
+    assert(log == [101, -2, -3])
+}
+
+trait Closer {
+    finish() -> Int;
+    done = use finish
+}
+
+class C : Closer {
+    finish() -> Int {
+        42
+    }
+}
+
+pub fn alias-abstract-trait-target() {
+    assert(C().done() == 42)
+}
+
+class V {
+    a() -> Int {
+        1
+    }
+
+    b = use a
+}
+
+class W < V {
+    a() -> Int {
+        2
+    }
+
+    c = use b
+}
+
+pub fn alias-of-inherited-alias() {
+    assert(V().b() == 1)
+    assert(W().b() == 2)
+    assert(W().c() == 2)
+}
+
+macro keep(def) {
+    let ty.Class($cls) = def
+    ty.Class({*cls, name: 'Kept'})
+}
+
+macro grow(def) {
+    let ty.Class($cls) = def
+    ty.Class({
+        *cls,
+        aliases: [*cls.aliases, {name: 'again', target: 'run'}],
+        static-aliases: [{name: 'build', target: 'new'}]
+    })
+}
+
+macro walked(def) {
+    ty.walk(def, x -> x)
+}
+
+@keep
+class K {
+    run() -> Int {
+        7
+    }
+
+    go = use run
+}
+
+@grow
+class G {
+    run() -> Int {
+        9
+    }
+
+    go = use run
+
+    static new() -> G {
+        G()
+    }
+}
+
+@walked
+class H {
+    run() -> Int {
+        11
+    }
+
+    go = use run
+}
+
+pub fn alias-macro-roundtrip() {
+    assert(Kept().go() == 7)
+    assert(G().go() == 9)
+    assert(G().again() == 9)
+    assert(G.build().run() == 9)
+    assert(H().go() == 11)
+}
+
+pub fn alias-macro-ast() {
+    let ty.Class($cls) = $$[
+        class Q {
+            f() { }
+            g = use f
+            static h() { }
+            static i = use h
+        }
+    $$]
+    assert(cls.aliases == [{name: 'g', target: 'f'}])
+    assert(cls.static-aliases == [{name: 'i', target: 'h'}])
+}
+
+pub fn walk-keeps-static-setters() {
+    let setter = ty.Func(name: 'v', params: [ty.Param(name: 'x')], body: ty.Null)
+    let def    = ty.Class(name: 'StaticBox', static-setters: [setter])
+    let ty.Class($cls) = ty.walk(def, x -> x)
+    assert(#cls.static-setters == 1)
+}

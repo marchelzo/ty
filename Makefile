@@ -146,7 +146,7 @@ TYPROF_OBJECTS := $(patsubst src/%.c,obj/typrof/%.o,$(SOURCES))
 EXTERNAL := obj/libco.o obj/dtoa.o libmd/libmd.a nsync/out/libnsync.a
 ASSEMBLY := $(patsubst %.c,%.s,$(SOURCES))
 .DEFAULT_GOAL := all
-.PHONY: all clean test test-types2
+.PHONY: all clean test test-types2 install freebsd-plist
 DEPFILES := $(OBJECTS:.o=.d) $(TYLS_OBJECTS:.o=.d) $(TYPROF_OBJECTS:.o=.d) \
             obj/ty-main.d obj/tyls-main.d obj/typrof-main.d \
             obj/libco.d obj/dtoa.d
@@ -239,6 +239,12 @@ obj/libco.o: libco/libco.c
 obj/dtoa.o: dtoa/SwiftDtoa.c
 	$(CC) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c -o $@ $<
 
+nsync/out/libnsync.a: nsync/CMakeLists.txt
+	@echo cmake nsync
+	@rm -rf nsync/out
+	@CC="$(CC)" cmake -S nsync -B nsync/out -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-w >/dev/null
+	@MAKEFLAGS= cmake --build nsync/out --target nsync --parallel $(NPROC) >/dev/null
+
 obj/%.o: src/%.c
 	@echo cc $<
 	@$(CC) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c -o $@ -DFILENAME=$(patsubst src/%.c,%,$<) $<
@@ -256,7 +262,8 @@ clean:
 	rm -rf $(PROG) *.gcda $(OBJECTS) $(TYLS_OBJECTS) $(TYPROF_OBJECTS) obj/libco.o obj/dtoa.o include/keywords.h include/optokens.h $(GEN_DIR) tools/tybi $(BUILD_SIG_FILE) $(DEPFILES) obj/ty-main.o obj/tyls-main.o obj/typrof-main.o obj/types2-core-test
 
 test: ty tyls test-types2
-	./ty test.ty $(TEST_ARGS)
+	TY_TEST_NATIVE=1 ./ty --test tests/runner/smoke.ty
+	./ty test.ty --strict $(TEST_ARGS)
 
 test-types2: obj/types2-core-test
 	./obj/types2-core-test
@@ -265,10 +272,23 @@ obj/types2-core-test: tests/types2_core.c src/types2_core.c src/panic.c include/
 	@echo cc $@
 	@$(CC) $(CFLAGS) -o $@ tests/types2_core.c src/types2_core.c src/panic.c $(LDFLAGS)
 
+LIB_DIRS = $(sort $(dir $(shell find lib -type f -name '*.ty')))
+
+define install-lib-dir
+	install -d $(HOME)/.ty/$(patsubst lib/%,%,$(1))
+	install -m644 $(1)*.ty $(HOME)/.ty/$(patsubst lib/%,%,$(1))
+
+endef
+
 install: $(PROG)
 	sudo install -m755 -s $(PROG) $(DESTDIR)$(PREFIX)$(bindir)
-	install -d $(HOME)/.ty
-	install -m644 lib/* $(HOME)/.ty
+	$(foreach d,$(LIB_DIRS),$(call install-lib-dir,$(d)))
+
+freebsd-plist:
+	{ printf 'bin/ty\nbin/tyls\n'; \
+	  git ls-files 'lib/*.ty' \
+	  | sed 's|^lib/|%%TYMODDIR%%/|' \
+	  | LC_ALL=C sort; } > freebsd/pkg-plist
 
 based: $(SOURCES)
 	cat $^ | gcc-13 $(CFLAGS) -c -x c -o $@ -

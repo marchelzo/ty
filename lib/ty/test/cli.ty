@@ -1,0 +1,680 @@
+import json
+import os
+import path (Path)
+import time
+import ty
+import ty.test.discover as discover (Target, Plan, PlanFile, Planner)
+import ty.test.dirconf as dirconf (DirConf)
+import ty.test.events as events (
+    Event,
+    EventSink,
+    get-str,
+    get-events,
+    get-event,
+    get-int
+)
+import ty.test.report as report (Tally)
+import ty.test.sched as sched (Sched, Settings, Job)
+import ty.test.select as select (TagExpr, TagError)
+
+pub class UsageError < RuntimeError {}
+
+pub class Options {
+    targets:           Array[String] = []
+    filters:           Array[String] = []
+    excludes:          Array[String] = []
+    path-filters:      Array[String] = []
+    path-excludes:     Array[String] = []
+    tags:              ?String = nil
+    all?:              Bool = false
+    opted:             Array[String] = []
+    list:              ?String = nil
+    fail-fast?:        Bool = false
+    max-fail:          ?Int = nil
+    shuffle?:          Bool = false
+    seed:              ?Int = nil
+    jobs:              ?Int = nil
+    timeout:           ?Float = nil
+    load-timeout:      ?Float = nil
+    grace:             ?Float = nil
+    no-capture?:       Bool = false
+    keep-tmp?:         Bool = false
+    include-imported?: Bool = false
+    max-respawns:      Int = 5
+    strict?:           Bool = false
+    forbid-only?:      Bool = false
+    reporters:         Array[String] = []
+    events:            ?String = nil
+    verbose?:          Bool = false
+    quiet?:            Bool = false
+    color:             ?String = nil
+    help?:             Bool = false
+    warnings:          Array[String] = []
+}
+
+pub USAGE = """
+usage: ty --test [OPTIONS] [TARGET...]
+       ty --test FILE[::ID-PREFIX | :LINE] [OPTIONS] [-- PROGRAM-ARGS]
+
+TARGET is DIR, FILE, FILE::ID-PREFIX or FILE:LINE (default: tests/ if present, else .)
+
+selection:
+  -k, --filter PAT        run tests whose ID contains PAT (or matches /RE/); repeatable
+      --exclude PAT       skip tests whose ID contains PAT (or matches /RE/)
+      --path-filter RE    only run files whose path matches RE
+      --path-exclude RE   skip files whose path matches RE
+  -t, --tags EXPR         tag expression: a and (b or not c)
+      --all               include opt-in directories (opt-in: true)
+      --with NAME         include directories marked opt-in: 'NAME'
+      --list[=json]       list the selected tests without running them
+      --include-imported  also run tests from imported modules
+
+run control:
+  -J, --jobs N            worker processes (default: number of CPUs)
+  -x, --fail-fast         stop after the first failure
+      --max-fail N        stop after N failures
+      --shuffle[=SEED]    shuffle file and test order
+      --seed N            seed for --shuffle and per-test srand
+      --timeout S         per-test timeout (default 10)
+      --load-timeout S    per-file load timeout (default 30)
+      --grace S           extra time before a hung test is killed (default 2)
+      --max-respawns N    respawn a crashed worker at most N times (default 5)
+  -s, --no-capture        do not capture test output (implies -J 1)
+      --keep-tmp          keep the run directory and t.tmp-dir() directories
+      --strict            empty files and unknown options are errors
+      --forbid-only       @only is an error (default when CI is set)
+
+reporting:
+  -r, --reporter NAME     pretty, dot, json or json=PATH (repeatable)
+      --events PATH       append JSONL events to PATH
+      --color WHEN        always, never or auto
+  -v, --verbose           more output
+      --quiet             only show failures
+
+exit status: 0 ok, 1 failures, 2 usage, 5 nothing selected, 130 interrupted
+"""
+
+fn number(opt: String, s: String) -> Float {
+    match s {
+        /^\d+(\.\d+)?$/ => float(s),
+        _               => throw UsageError("{opt} expects a number, got '{s}'"),
+    }
+}
+
+fn integer(opt: String, s: String) -> Int {
+    match s {
+        /^\d+$/ => int(s),
+        _       => throw UsageError("{opt} expects a non-negative integer, got '{s}'"),
+    }
+}
+
+fn split(arg: String) -> (String, String | nil) {
+    if let [_, k, v] = arg.match(/^(--[a-z-]+)=(.*)$/s) {
+        return (k, v)
+    }
+    if let [_, k, v] = arg.match(/^(-[kJtr])(.+)$/s) {
+        return (k, v)
+    }
+    (arg, nil)
+}
+
+pub fn parse(args: Array[String]) -> Options {
+    let o = Options()
+    let strict? = '--strict' in args
+    let i = 0
+
+    fn value(opt: String, inline: ?String) -> String {
+        if let $v = inline {
+            return v
+        }
+        i += 1
+        if i >= #args {
+            throw UsageError("{opt} needs a value")
+        }
+        args[i]
+    }
+
+    fn flag(opt: String, inline: ?String) -> Bool {
+        if inline != nil {
+            throw UsageError("{opt} does not take a value")
+        }
+        true
+    }
+
+    while i < #args {
+        let arg = args[i]
+        let (opt, inline) = split(arg)
+        match opt {
+            '--'                   => do {
+                o.targets += args[i + 1;]
+                break
+            },
+            '-k' or '--filter'     => o.filters.push(value(opt, inline)),
+            '--exclude'            => o.excludes.push(value(opt, inline)),
+            '--path-filter'        => o.path-filters.push(value(opt, inline)),
+            '--path-exclude'       => o.path-excludes.push(value(opt, inline)),
+            '-t' or '--tags'       => o.tags = value(opt, inline),
+            '--all'                => o.all? = flag(opt, inline),
+            '--with'               => o.opted.push(value(opt, inline)),
+            '--list'               => o.list = inline ?? 'text',
+            '-x' or '--fail-fast'  => o.fail-fast? = flag(opt, inline),
+            '--max-fail'           => o.max-fail = integer(opt, value(opt, inline)),
+            '--shuffle'            => do {
+                o.shuffle? = true
+                if let $s = inline {
+                    o.seed = integer(opt, s)
+                }
+            },
+            '--seed'               => o.seed = integer(opt, value(opt, inline)),
+            '-J' or '--jobs'       => o.jobs = integer(opt, value(opt, inline)),
+            '--timeout'            => o.timeout = number(opt, value(opt, inline)),
+            '--load-timeout'       => o.load-timeout = number(opt, value(opt, inline)),
+            '--grace'              => o.grace = number(opt, value(opt, inline)),
+            '-s' or '--no-capture' => o.no-capture? = flag(opt, inline),
+            '--keep-tmp'           => o.keep-tmp? = flag(opt, inline),
+            '--include-imported'   => o.include-imported? = flag(opt, inline),
+            '--max-respawns'       => o.max-respawns = integer(opt, value(opt, inline)),
+            '--strict'             => o.strict? = flag(opt, inline),
+            '--forbid-only'        => o.forbid-only? = flag(opt, inline),
+            '-r' or '--reporter'   => o.reporters.push(value(opt, inline)),
+            '--events'             => o.events = value(opt, inline),
+            '--color'              => o.color = value(opt, inline),
+            '-v' or '--verbose'    => o.verbose? = flag(opt, inline),
+            '--quiet'              => o.quiet? = flag(opt, inline),
+            '-h' or '--help'       => o.help? = true,
+            _ :: arg.match?(/^-./) => do {
+                if strict? {
+                    throw UsageError("unknown option '{arg}' (see ty --test --help)")
+                }
+                o.warnings.push("ignoring unknown option '{arg}'")
+            },
+            _ => o.targets.push(arg),
+        }
+        i += 1
+    }
+
+    if o.list != nil && !(o.list in ['text', 'json']) {
+        throw UsageError("--list expects 'json', got '{o.list}'")
+    }
+
+    if o.color != nil && !(o.color in ['always', 'never', 'auto']) {
+        throw UsageError("--color expects always, never or auto, got '{o.color}'")
+    }
+
+    if o.jobs == 0 {
+        throw UsageError('--jobs must be at least 1')
+    }
+
+    if getenv('CI') not in [nil, '', '0', 'false'] {
+        o.forbid-only? = true
+    }
+
+    o
+}
+
+class Interrupts {
+    n: Int = 0
+}
+
+let INTERRUPTS = Interrupts()
+
+fn on-interrupt(sig: Int) {
+    INTERRUPTS.n += 1
+}
+
+fn ty-cmd() -> Array[String] {
+    let bin = getenv('TY_PATH') ?? ty.executable
+    [bin, '-q' if ty.q, '-j' if !ty.jit]
+}
+
+fn seed-of(o: Options) -> Int {
+    if let $s = o.seed {
+        return s
+    }
+    match getenv('TY_TEST_SEED') {
+        $s :: s.match?(/^\d+$/) => int(s),
+        _                       => rand(1, 1 << 30),
+    }
+}
+
+fn default-targets() -> Array[String] {
+    Path('tests').dir? ? ['tests'] : ['.']
+}
+
+fn rewrite-tags(expr: String, dir-tags: Array[String]) -> String {
+    if #dir-tags == 0 {
+        return expr
+    }
+    let ops = ['and', 'or', 'not', 'all', '(', ')']
+    let toks = expr.matches(/\(|\)|[^\s()]+/)
+    toks.map(t -> (t in dir-tags && !(t in ops)) ? 'all' : t).join(' ')
+}
+
+fn any-match?(pats: Array[String], s: String) -> Bool {
+    pats.any?(p -> select.pattern-matches?(p, s))
+}
+
+fn path-selected?(o: Options, p: String) -> Bool {
+    let inc? = #o.path-filters == 0 || o.path-filters.any?(re -> p.match?(regex(re)))
+    inc? && !o.path-excludes.any?(re -> p.match?(regex(re)))
+}
+
+fn script-selected?(o: Options, pf: PlanFile, tags: ?TagExpr) -> Bool {
+    let id = "{pf.path}::(script)"
+    let inc? = #o.filters == 0 || any-match?(o.filters, id)
+    let tagged? = tags == nil || tags.matches?(pf.eff.tags)
+    inc? && tagged? && !any-match?(o.excludes, id)
+}
+
+let CACHE-DIR = '.ty-test-cache'
+
+fn durations-file() -> String {
+    "{CACHE-DIR}/durations.json"
+}
+
+fn load-durations() -> Dict[String, Float] {
+    let out: Dict[String, Float] = %{}
+    let $text = slurp(durations-file()) or return out
+    let data = try {
+        json.parse(text)
+    } catch _: JSONError {
+        nil
+    }
+    if !(data :: Dict) {
+        return out
+    }
+    for k, v in data {
+        match (k, v) {
+            (f: String, x: Float) => out[f] = x,
+            (f: String, n: Int)   => out[f] = float(n),
+            _                     => nil,
+        }
+    }
+    out
+}
+
+fn save-durations(durs: Dict[String, Float]) {
+    if !Path(CACHE-DIR).dir? {
+        os.mkdir(CACHE-DIR, 0o755)
+    }
+    let tmp = "{durations-file()}.{os.getpid()}"
+    let fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    if fd < 0 {
+        return
+    }
+    os.write(fd, json.encode(durs), all: true)
+    os.close(fd)
+    os.rename(tmp, durations-file())
+}
+
+fn longest-first(jobs: Array[Job], durs: Dict[String, Float]) -> Array[Job] {
+    jobs.sort(by: j -> (-(durs[j.file] ?? 1.0e9), j.file))
+}
+
+fn make-jobs(o: Options, plan: Plan, tags: ?TagExpr, seed: Int) -> Array[Job] {
+    let jobs: Array[Job] = []
+    for pf in plan.files {
+        if !path-selected?(o, pf.path) {
+            continue
+        }
+        if pf.script? && !script-selected?(o, pf, tags) {
+            continue
+        }
+        let j = Job(pf.path)
+        j.ids          = pf.ids
+        j.line         = pf.line
+        j.script?      = pf.script?
+        j.strict?      = o.strict? && !pf.allow-empty?
+        j.allow-empty? = pf.allow-empty?
+        j.timeout      = pf.eff.timeout
+        j.load-timeout = pf.eff.load-timeout ?? o.load-timeout
+        j.tags         = (o.tags == nil) ? nil : rewrite-tags(o.tags, pf.eff.tags)
+        j.group        = pf.eff.group
+        j.env          = pf.eff.env
+        jobs.push(j)
+    }
+    o.shuffle? ? select.shuffled(jobs, seed) : longest-first(jobs, load-durations())
+}
+
+fn forwarded(o: Options, seed: Int) -> Array[String] {
+    let fwd = ['--seed', str(seed)]
+    for o.filters {
+        fwd += ['-k', it]
+    }
+    for o.excludes {
+        fwd += ['--exclude', it]
+    }
+    if let $g = o.grace {
+        fwd += ['--grace', str(g)]
+    }
+    if let $n = o.max-fail ?? (o.fail-fast? ? 1 : nil) {
+        fwd += ['--max-fail', str(n)]
+    }
+    let flags = [
+        '--shuffle' if o.shuffle?,
+        '--list' if o.list != nil,
+        '--forbid-only' if o.forbid-only?,
+        '--include-imported' if o.include-imported?,
+        '-s' if o.no-capture?,
+        '--keep-tmp' if o.keep-tmp?,
+    ]
+    fwd + flags
+}
+
+fn settings(o: Options, run-dir: String, seed: Int, n: Int) -> Settings {
+    let s = Settings()
+    let want = o.no-capture? ? 1 : (o.jobs ?? os.ncpu())
+    s.cmd          = ty-cmd()
+    s.fwd          = forwarded(o, seed)
+    s.jobs         = max(1, min(want, n))
+    s.timeout      = o.timeout
+    s.load-timeout = o.load-timeout
+    s.grace        = o.grace ?? sched.DEFAULT_GRACE
+    s.max-respawns = o.max-respawns
+    s.max-fail     = o.max-fail ?? (o.fail-fast? ? 1 : nil)
+    s.list?        = o.list != nil
+    s.no-capture?  = o.no-capture?
+    s.run-dir      = run-dir
+    s.seed         = seed
+    s
+}
+
+fn row-events(o: Options, plan: Plan) -> Array[(String, Event)] {
+    let rows: Array[(String, Event)] = []
+    for c in plan.skips {
+        let p = "{discover.display(c.dir)}/"
+        if !path-selected?(o, p) {
+            continue
+        }
+        let source = c.source ?? dirconf.REQUIRE
+        rows.push((p, events.file-skip(p, c.skip ?? 'skipped', source: source)))
+    }
+    for c in plan.errors {
+        let p = discover.display(c.file(c.source ?? dirconf.REQUIRE))
+        if !path-selected?(o, p) {
+            continue
+        }
+        let ev = events.file-done(
+            p,
+            c.status ?? events.status('exit', code: 1),
+            stdout-tail: c.stdout,
+            stderr-tail: c.stderr
+        )
+        rows.push((p, ev))
+    }
+    rows
+}
+
+fn make-run-dir() -> String {
+    let base = (getenv('TMPDIR') ?? '/tmp').sub(/\/+$/, '')
+    os.mkdtemp("{base}/ty-test-{os.getpid()}")
+}
+
+fn color-of(o: Options) -> ?Bool {
+    match o.color {
+        'always' => true,
+        'never'  => false,
+        _        => nil,
+    }
+}
+
+fn make-sink(o: Options) -> EventSink {
+    let sink = match o.events {
+        nil => EventSink(),
+        p   => EventSink.to-file(p),
+    }
+    let specs = (#o.reporters > 0) ? o.reporters : ['pretty']
+    for spec in specs {
+        sink.add(report.make(spec, color?: color-of(o), mode: 'suite', quiet?: o.quiet?))
+    }
+    sink
+}
+
+fn kept-tmp?(tally: Tally) -> Bool {
+    tally.failures().any?(ev -> ev['tmp_dir'] != nil)
+}
+
+fn plan-run(o: Options, targets: Array[Target]) -> Plan {
+    let p = Planner(ty-cmd(), o.all?, o.opted, -> INTERRUPTS.n > 0)
+    for targets {
+        if INTERRUPTS.n > 0 {
+            p.plan.interrupted? = true
+            break
+        }
+        p.add(it)
+    }
+    p.finish()
+}
+
+fn list-run(o: Options, jobs: Array[Job], cfg: Settings) -> Int {
+    let tests: Dict[String, Array[Event]] = %{}
+    let failed: Array[Event] = []
+
+    fn on-event(ev: Event) {
+        let file = get-str(ev, 'file') ?? ''
+        match get-str(ev, 'ev') {
+            'collect'   => tests[file] = get-events(ev, 'tests'),
+            'file-done' => do {
+                if tests[file] == nil {
+                    failed.push(ev)
+                }
+            },
+            _ => nil,
+        }
+    }
+
+    let runnable = jobs.filter(j -> !j.script?)
+    let s = Sched(cfg, runnable, on-event, -> 0, -> INTERRUPTS.n)
+    let interrupted? = s.run()
+
+    let entries: Array[Event] = []
+    for j in jobs {
+        if j.script? {
+            entries.push(%{
+                'id':   j.script-id,
+                'name': '(script)',
+                'file': j.file,
+                'line': 1,
+            })
+            continue
+        }
+        for t in tests[j.file] ?? [] {
+            let e: Event = %{'file': j.file}
+            for k, v in t {
+                e[k] = v
+            }
+            entries.push(e)
+        }
+    }
+
+    let lines = match o.list {
+        'json' => [json.encode(entries)],
+        _      => entries.map(e -> str(e['id'])),
+    }
+    for lines {
+        print(it)
+    }
+
+    for failed {
+        let st = get-event(it, 'status')
+        let why = match (get-str(st, 'kind'), get-int(st, 'code')) {
+            ('exit', $c) => "exited {c}",
+            (k, _)       => k ?? 'failed',
+        }
+        eprint("ty --test: {get-str(it, 'file')}: could not be collected ({why})")
+        let tail = (get-str(it, 'stderr_tail') ?? '').strip()
+        if #tail > 0 {
+            eprint(tail.lines().map(l -> "    {l}").join("\n"))
+        }
+    }
+
+    interrupted? ? 130 : (#failed > 0) ? 1 : 0
+}
+
+fn cpu-of(tally: Tally) -> Dict[String, Float] {
+    %{'user': tally.user, 'sys': tally.sys}
+}
+
+fn exit-status(tally: Tally, bad-rc: Int, interrupted?: Bool) -> Int {
+    if interrupted? {
+        return 130
+    }
+    if #tally.failures() > 0 || #tally.file-errors() > 0 || bad-rc > 0 {
+        return 1
+    }
+    if #tally.results == 0 && tally.file-counts()['skipped'] == 0 {
+        return 5
+    }
+    0
+}
+
+fn suite-run(o: Options, args: Array[String], plan: Plan, seed: Int) -> Int {
+    let tags = (o.tags == nil) ? nil : select.parse-tags(o.tags)
+    let jobs = make-jobs(o, plan, tags, seed)
+    let sink = make-sink(o)
+    let run-dir = make-run-dir()
+    let cfg = settings(o, run-dir, seed, #jobs)
+    let tally = Tally(mode: 'suite')
+    let t0 = time.now()
+    let seq = 0
+
+    let durs = load-durations()
+
+    fn emit(ev: Event) {
+        seq += 1
+        ev['seq'] = seq
+        if ev['ev'] == 'file-done' {
+            if let $f = events.get-str(ev, 'file') and let $d = events.get-float(ev, 'dur') {
+                durs[f] = d
+            }
+        }
+        tally.on(ev)
+        sink.emit(ev)
+    }
+
+    fn failures() -> Int {
+        #tally.results.filter(ev -> tally.failing?(ev)) + #tally.file-errors()
+    }
+
+    if o.list != nil {
+        let rc = list-run(o, jobs, cfg)
+        Path(run-dir).rmtree(quiet: true)
+        return rc
+    }
+
+    emit(events.run-start(
+        seed,
+        jobs: cfg.jobs,
+        argv: args,
+        root: os.getcwd(),
+        mode: 'suite'
+    ))
+
+    let rows = row-events(o, plan)
+    let s = Sched(cfg, jobs, emit, failures, -> INTERRUPTS.n, pending: rows)
+    let interrupted? = s.run() || plan.interrupted?
+
+    let rc = exit-status(tally, s.bad-rc, interrupted?)
+
+    if !interrupted? {
+        save-durations(durs)
+    }
+
+    emit(events.run-end(
+        tally.counts,
+        files: tally.file-counts(),
+        dur: time.now() - t0,
+        cpu: cpu-of(tally),
+        rc: rc,
+        interrupted?: interrupted?
+    ))
+
+    sink.done()
+
+    if o.keep-tmp? || kept-tmp?(tally) {
+        eprint("ty --test: kept run directory {run-dir}")
+    } else {
+        Path(run-dir).rmtree(quiet: true)
+    }
+
+    if rc == 5 {
+        eprint('ty --test: no tests were selected')
+    }
+
+    rc
+}
+
+fn resolve-targets(o: Options) -> Array[Target] {
+    let raw = (#o.targets > 0) ? o.targets : default-targets()
+    let out: Array[Target] = []
+    for raw {
+        match discover.parse-target(it) {
+            t: Target => out.push(t),
+            msg       => throw UsageError(str(msg)),
+        }
+    }
+    out
+}
+
+fn main-run(args: Array[String]) -> Int {
+    let o = parse(args)
+
+    if o.help? {
+        print(USAGE)
+        return 0
+    }
+
+    for o.warnings {
+        eprint("ty --test: {it}")
+    }
+
+    let bin = ty-cmd()[0]
+    if !Path(bin).executable? {
+        throw UsageError("worker binary {bin} is not executable (check TY_PATH)")
+    }
+
+    for o.reporters {
+        if !it.match?(/^(pretty|dot|json)(=.+)?$/) {
+            throw UsageError("unknown reporter '{it}' ({report.REPORTERS})")
+        }
+    }
+
+    let targets = resolve-targets(o)
+
+    if let $src = o.tags {
+        select.parse-tags(src)
+    }
+
+    for o.path-filters + o.path-excludes {
+        regex(it)
+    }
+
+    let seed = seed-of(o)
+    let plan = plan-run(o, targets)
+
+    if plan.interrupted? {
+        eprint('ty --test: interrupted')
+        return 130
+    }
+
+    suite-run(o, args, plan, seed)
+}
+
+pub fn main(args: Array[String]) -> Int {
+    let old = os.signal(os.SIGINT)
+    os.signal(os.SIGINT, on-interrupt)
+    let rc = try {
+        main-run(args)
+    } catch e: UsageError {
+        eprint("ty --test: {e.what}")
+        2
+    } catch e: TagError {
+        eprint("ty --test: {e.what}")
+        2
+    } catch e: ValueError {
+        eprint("{e.what}")
+        2
+    }
+    os.signal(os.SIGINT, old)
+    rc
+}

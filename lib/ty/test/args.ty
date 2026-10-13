@@ -1,0 +1,147 @@
+pub class UsageError < RuntimeError {}
+
+pub class Options {
+    worker?:           Bool = false
+    events:            ?String = nil
+    capture:           ?String = nil
+    skip-ids:          ?String = nil
+    select-file:       ?String = nil
+    ids:               Array[String] = []
+    line:              ?Int = nil
+    filters:           Array[String] = []
+    excludes:          Array[String] = []
+    tags:              ?String = nil
+    seed:              ?Int = nil
+    shuffle?:          Bool = false
+    timeout:           ?Float = nil
+    grace:             ?Float = nil
+    list:              ?String = nil
+    static?:           Bool = false
+    strict?:           Bool = false
+    forbid-only?:      Bool = false
+    include-imported?: Bool = false
+    no-capture?:       Bool = false
+    keep-tmp?:         Bool = false
+    fail-fast?:        Bool = false
+    max-fail:          ?Int = nil
+    reporters:         Array[String] = []
+    verbose?:          Bool = false
+    quiet?:            Bool = false
+    help?:             Bool = false
+}
+
+pub USAGE = """
+usage: ty --test FILE[::ID-PREFIX | :LINE] [OPTIONS] [-- PROGRAM-ARGS]
+       ty --test [OPTIONS] [TARGET...]
+
+selection:
+  -k, --filter PAT        run tests whose ID contains PAT (or matches /RE/)
+      --exclude PAT       skip tests whose ID contains PAT (or matches /RE/)
+  -t, --tags EXPR         tag expression: a and (b or not c)
+      --list[=json]       list the selected tests without running them
+      --include-imported  also run tests from imported modules
+
+run control:
+  -x, --fail-fast         stop after the first failure
+      --max-fail N        stop after N failures
+      --shuffle[=SEED]    run tests in a random order
+      --seed N            seed for --shuffle and per-test srand
+      --timeout S         per-test timeout in seconds
+  -s, --no-capture        do not capture test output
+      --keep-tmp          keep t.tmp-dir() directories
+      --strict            empty files are errors
+      --forbid-only       @only is an error (default when CI is set)
+
+reporting:
+  -r, --reporter NAME     pretty, dot, json or json=PATH (repeatable)
+      --events PATH       append JSONL events to PATH
+  -v, --verbose           show logs and output for passing tests
+      --quiet             only show failures
+"""
+
+fn number(opt: String, s: String) -> Float {
+    match s {
+        /^-?\d+(\.\d+)?$/ => float(s),
+        _                 => throw UsageError("{opt} expects a number, got '{s}'"),
+    }
+}
+
+fn integer(opt: String, s: String) -> Int {
+    match s {
+        /^-?\d+$/ => int(s),
+        _         => throw UsageError("{opt} expects an integer, got '{s}'"),
+    }
+}
+
+fn split(arg: String) -> (String, String | nil) {
+    match arg.match(/^(--[a-z-]+)=(.*)$/s) {
+        [_, k, v] => (k, v),
+        _         => (arg, nil),
+    }
+}
+
+pub fn parse(args: Array[String]) -> Options {
+    let o = Options()
+    let i = 0
+
+    fn value(opt: String, inline: ?String) -> String {
+        if let $v = inline {
+            return v
+        }
+        i += 1
+        if i >= #args {
+            throw UsageError("{opt} needs a value")
+        }
+        args[i]
+    }
+
+    while i < #args {
+        let (opt, inline) = split(args[i])
+        match opt {
+            '--worker'                => o.worker? = true,
+            '--events'                => o.events = value(opt, inline),
+            '--capture'               => o.capture = value(opt, inline),
+            '--skip-ids'              => o.skip-ids = value(opt, inline),
+            '--select-file'           => o.select-file = value(opt, inline),
+            '--id'                    => o.ids.push(value(opt, inline)),
+            '--line'                  => o.line = integer(opt, value(opt, inline)),
+            '-k' or '--filter'        => o.filters.push(value(opt, inline)),
+            '--exclude'               => o.excludes.push(value(opt, inline)),
+            '-t' or '--tags'          => o.tags = value(opt, inline),
+            '--seed'                  => o.seed = integer(opt, value(opt, inline)),
+            '--timeout'               => o.timeout = number(opt, value(opt, inline)),
+            '--grace'                 => o.grace = number(opt, value(opt, inline)),
+            '--static'                => o.static? = true,
+            '--strict'                => o.strict? = true,
+            '--forbid-only'           => o.forbid-only? = true,
+            '--include-imported'      => o.include-imported? = true,
+            '-s' or '--no-capture'    => o.no-capture? = true,
+            '--keep-tmp'              => o.keep-tmp? = true,
+            '-x' or '--fail-fast'     => o.fail-fast? = true,
+            '--max-fail'              => o.max-fail = integer(opt, value(opt, inline)),
+            '-r' or '--reporter'      => o.reporters.push(value(opt, inline)),
+            '-v' or '--verbose'       => o.verbose? = true,
+            '--quiet'                 => o.quiet? = true,
+            '-h' or '--help'          => o.help? = true,
+            '--list'                  => o.list = inline ?? 'text',
+            '--shuffle'               => do {
+                o.shuffle? = true
+                if let $s = inline {
+                    o.seed = integer(opt, s)
+                }
+            },
+            _ => throw UsageError("unknown option '{args[i]}' (see ty --test --help)"),
+        }
+        i += 1
+    }
+
+    if o.list != nil && !(o.list in ['text', 'json']) {
+        throw UsageError("--list expects 'json', got '{o.list}'")
+    }
+
+    if getenv('CI') not in [nil, '', '0', 'false'] {
+        o.forbid-only? = true
+    }
+
+    o
+}

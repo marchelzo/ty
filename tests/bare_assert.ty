@@ -1,0 +1,46 @@
+import ty
+
+fn compile-error-of(src: String) -> ?String {
+    try {
+        ty.eval(src)
+    } catch e: CompileError {
+        return e.what
+    }
+    nil
+}
+
+fn assertion-error-of(f: () -> Any) -> ?String {
+    try {
+        f()
+    } catch e: AssertionError {
+        return e.what
+    }
+    nil
+}
+
+ns test
+
+pub fn bare-assert-is-a-compile-error() {
+    match compile-error-of('assert 1 == 2') {
+        nil  => assert(false, 'bare `assert 1 == 2` compiled'),
+        what => assert('must be called' in what),
+    }
+}
+
+pub fn bare-assert-false-is-a-compile-error() {
+    match compile-error-of('assert false') {
+        nil  => assert(false, 'bare `assert false` compiled'),
+        what => assert('assert(cond[, msg])' in what),
+    }
+}
+
+pub fn macro-as-value-still-compiles() {
+    assert(compile-error-of('let f = assert') == nil)
+}
+
+pub fn called-assert-still-throws() {
+    match assertion-error-of(-> assert(1 == 2)) {
+        nil  => assert(false, '`assert(1 == 2)` did not throw'),
+        what => assert('1 == 2' in what),
+    }
+}

@@ -4,7 +4,6 @@
 #include <errno.h>
 #include <utf8proc.h>
 
-#include "test.h"
 #include "value.h"
 #include "dict.h"
 #include "set.h"
@@ -431,7 +430,8 @@ encode(Ty *ty, Value const *v, str *out)
                                 if ((ss(*v)[i]) > 127) {
                                         n = utf8proc_iterate(&ss(*v)[i], sN(*v) - i, &cp);
                                         if (n <= 0) {
-                                                dump(out, "\\x%02hhx", ss(*v)[i]);
+                                                xvPn(*out, "\\ufffd", 6);
+                                                n = 1;
                                         } else {
                                                 if (cp <= 0xFFFF) {
                                                         dump(out, "\\u%04x", cp);

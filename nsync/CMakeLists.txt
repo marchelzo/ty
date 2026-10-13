@@ -55,7 +55,6 @@ elseif ("${CMAKE_SYSTEM_NAME}X" STREQUAL "DarwinX")
 	set (NSYNC_POSIX ON)
 
 	set (NSYNC_OS_EXTRA_SRC
-		"platform/posix/src/clock_gettime.c"
 		"platform/posix/src/nsync_semaphore_mutex.c"
 	)
 elseif ("${CMAKE_SYSTEM_NAME}X" STREQUAL "LinuxX")

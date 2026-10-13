@@ -1,0 +1,180 @@
+import os
+import path (Path)
+import ty
+
+pub use XFail = {reason: String, strict?: Bool}
+
+pub use Condition = Bool | (() -> Bool)
+
+pub class SkipTest < BaseException {
+    reason: String
+
+    init(reason: String) {
+        self.reason = reason
+    }
+
+    what -> String {
+        reason
+    }
+}
+
+pub class TestTimeout < RuntimeError {
+    secs: Float
+
+    init(secs: Float) {
+        super("test exceeded its {secs}s timeout")
+        self.secs = secs
+    }
+}
+
+pub class Meta {
+    tags:      Array[String] = []
+    skip:      ?String = nil
+    skip-if:   Array[(Condition, String)] = []
+    platforms: Array[String] = []
+    xfail:     ?XFail = nil
+    todo:      ?String = nil
+    only?:     Bool = false
+    timeout:   ?Float = nil
+    slow?:     Bool = false
+    names:     Array[String] = []
+}
+
+let META: Dict[Any, Meta] = %{}
+
+let FILE-SKIP: Array[String] = []
+
+fn meta-of(f: Any, name: String) -> Meta {
+    let m = META[f] ?? Meta()
+    META[f] = m
+    m.names.push(name)
+    m
+}
+
+pub fn meta-for(f: Any) -> ?Meta {
+    META[f]
+}
+
+pub fn meta-keys() -> Array[Any] {
+    [k for k, _ in META]
+}
+
+pub fn file-skip-reason() -> ?String {
+    (#FILE-SKIP > 0) ? FILE-SKIP[0] : nil
+}
+
+pub fn skip[F](f: F, reason: String) -> F {
+    meta-of(f, 'skip').skip = reason
+    f
+}
+
+pub fn skip-if[F](f: F, cond: Condition, reason: String) -> F {
+    meta-of(f, 'skip-if').skip-if.push((cond, reason))
+    f
+}
+
+pub fn platform[F](f: F, *names: String) -> F {
+    meta-of(f, 'platform').platforms.push(*names)
+    f
+}
+
+pub fn xfail[F](f: F, reason: String, strict: Bool = true) -> F {
+    meta-of(f, 'xfail').xfail = {reason, strict?: strict}
+    f
+}
+
+pub fn todo[F](f: F, reason: String) -> F {
+    meta-of(f, 'todo').todo = reason
+    f
+}
+
+pub fn only[F](f: F) -> F {
+    meta-of(f, 'only').only? = true
+    f
+}
+
+pub fn tags[F](f: F, *names: String) -> F {
+    meta-of(f, 'tags').tags.push(*names)
+    f
+}
+
+pub fn timeout[F](f: F, secs: Int | Float) -> F {
+    meta-of(f, 'timeout').timeout = float(secs)
+    f
+}
+
+pub fn slow[F](f: F) -> F {
+    let m = meta-of(f, 'slow')
+    m.slow? = true
+    if !('slow' in m.tags) {
+        m.tags.push('slow')
+    }
+    f
+}
+
+pub fn skip-file(reason: String) {
+    FILE-SKIP.push(reason)
+}
+
+pub fn skip-file-unless(cond: Bool, reason: String) {
+    if !cond {
+        FILE-SKIP.push(reason)
+    }
+}
+
+pub class Test {
+    id:        String
+    name:      String
+    file:      String
+    line:      Int
+    seed:      Int
+    attempt:   Int
+    __cleanups: Array[() -> Any] = []
+    __logs:     Array[String] = []
+    __tmp:      ?String = nil
+
+    init(id: String, name: String, file: String, line: Int, seed: Int, attempt: Int = 1) {
+        self.id      = id
+        self.name    = name
+        self.file    = file
+        self.line    = line
+        self.seed    = seed
+        self.attempt = attempt
+    }
+
+    skip(reason: String) -> Any {
+        throw SkipTest(reason)
+    }
+
+    cleanup(f: () -> Any) {
+        __cleanups.push(f)
+    }
+
+    pop-cleanup() -> (() -> Any) | nil {
+        (#__cleanups > 0) ? __cleanups.pop() : nil
+    }
+
+    logs -> Array[String] {
+        __logs
+    }
+
+    tmp-path -> ?String {
+        __tmp
+    }
+
+    tmp-dir() -> Path {
+        if let $p = __tmp {
+            return Path(p)
+        }
+        let base = getenv('TMPDIR') ?? '/tmp'
+        let slug = name.sub(/[^A-Za-z0-9_.-]+/, '-')[;40]
+        let $p = os.mkdtemp("{base.sub(/\/+$/, '')}/ty-{slug}")
+              or throw RuntimeError("ty --test: cannot create a tmp dir under {base}")
+        __tmp = p
+        Path(p)
+    }
+
+    log(msg: String) {
+        __logs.push(msg)
+    }
+}

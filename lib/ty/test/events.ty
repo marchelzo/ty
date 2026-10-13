@@ -1,0 +1,459 @@
+import json
+import os
+import time
+import ty
+
+pub use Event = Dict[String, Any]
+
+pub SCHEMA = 1
+
+pub OUTCOMES = [
+    'pass', 'fail', 'error', 'skip', 'todo', 'xfail', 'xpass', 'timeout', 'crash', 'exit'
+]
+
+pub FAILING = ['fail', 'error', 'timeout', 'crash', 'exit']
+
+pub OUTPUT_LIMIT = 65536
+
+let CHUNK = 65536
+
+pub class Reporter {
+    on(ev: Event) {
+    }
+
+    done() {
+    }
+}
+
+pub fn get-str(ev: ?Event, key: String) -> ?String {
+    match (ev ?? %{})[key] {
+        s: String => s,
+        _         => nil,
+    }
+}
+
+pub fn get-int(ev: ?Event, key: String) -> ?Int {
+    match (ev ?? %{})[key] {
+        n: Int => n,
+        _      => nil,
+    }
+}
+
+pub fn get-float(ev: ?Event, key: String) -> ?Float {
+    match (ev ?? %{})[key] {
+        x: Float => x,
+        n: Int   => float(n),
+        _        => nil,
+    }
+}
+
+pub fn get-bool(ev: ?Event, key: String) -> Bool {
+    (ev ?? %{})[key] == true
+}
+
+pub fn get-event(ev: ?Event, key: String) -> ?Event {
+    match (ev ?? %{})[key] {
+        d: Dict => d,
+        _       => nil,
+    }
+}
+
+pub fn get-events(ev: ?Event, key: String) -> Array[Event] {
+    let out: Array[Event] = []
+    let xs = (ev ?? %{})[key]
+    if !(xs :: Array) {
+        return out
+    }
+    for match xs {
+        d: Dict => out.push(d),
+        _       => nil,
+    }
+    out
+}
+
+pub fn get-strs(ev: ?Event, key: String) -> Array[String] {
+    let out: Array[String] = []
+    let xs = (ev ?? %{})[key]
+    if !(xs :: Array) {
+        return out
+    }
+    for match xs {
+        s: String => out.push(s),
+        _         => nil,
+    }
+    out
+}
+
+fn mk(name: String, fields: Event) -> Event {
+    let ev: Event = %{'v': SCHEMA, 'ev': name, 't': time.now()}
+    for k, v in fields {
+        ev[k] = v
+    }
+    ev
+}
+
+pub fn ty-info() -> Event {
+    %{'version': nil, 'jit': ty.jit, 'platform': ty.platform, 'arch': nil}
+}
+
+pub fn run-start(
+    seed: Int,
+    jobs: Int = 1,
+    argv: Array[String] = [],
+    root: String = '.',
+    mode: String = 'suite',
+    info: ?Event = nil
+) -> Event {
+    mk('run-start', %{
+        'seed': seed,
+        'jobs': jobs,
+        'argv': argv,
+        'root': root,
+        'mode': mode,
+        'ty':   info ?? ty-info(),
+        'time': time.utime() / 1.0e6,
+    })
+}
+
+pub fn file-start(file: String, attempt: Int = 1, pid: ?Int = nil) -> Event {
+    mk('file-start', %{'file': file, 'attempt': attempt, 'pid': pid})
+}
+
+pub fn file-skip(path: String, reason: String, source: String = 'skip-file') -> Event {
+    mk('file-skip', %{'path': path, 'reason': reason, 'source': source})
+}
+
+pub fn xfail-info(reason: String, strict?: Bool = true) -> Event {
+    %{'reason': reason, 'strict': strict?}
+}
+
+pub fn collect-test(
+    id: String,
+    name: String,
+    line: Int,
+    end-line: ?Int = nil,
+    tags: Array[String] = [],
+    skip: ?String = nil,
+    xfail: ?Event = nil,
+    todo: ?String = nil,
+    only?: Bool = false,
+    timeout: ?Float = nil
+) -> Event {
+    %{
+        'id':       id,
+        'name':     name,
+        'line':     line,
+        'end_line': end-line ?? line,
+        'tags':     tags,
+        'skip':     skip,
+        'xfail':    xfail,
+        'todo':     todo,
+        'only':     only?,
+        'timeout':  timeout,
+    }
+}
+
+pub fn collect-warning(code: String, message: String, line: ?Int = nil) -> Event {
+    %{'code': code, 'message': message, 'line': line}
+}
+
+pub fn collect(
+    file: String,
+    tests: Array[Event] = [],
+    file-skip: ?String = nil,
+    warnings: Array[Event] = []
+) -> Event {
+    mk('collect', %{
+        'file':      file,
+        'tests':     tests,
+        'file_skip': file-skip,
+        'warnings':  warnings,
+    })
+}
+
+pub fn test-start(
+    id: String,
+    attempt: Int = 1,
+    capture-path: ?String = nil,
+    capture-offset: Int = 0
+) -> Event {
+    let capture: ?Event = match capture-path {
+        nil => nil,
+        p   => %{'path': p, 'offset': capture-offset},
+    }
+    mk('test-start', %{'id': id, 'attempt': attempt, 'capture': capture})
+}
+
+pub fn failure(
+    cls: String,
+    message: String,
+    file: ?String = nil,
+    line: ?Int = nil,
+    src: ?String = nil,
+    op: ?String = nil,
+    operands: Array[(String, String)] = [],
+    trace: ?String = nil,
+    note: ?String = nil
+) -> Event {
+    %{
+        'class':    cls,
+        'message':  message,
+        'file':     file,
+        'line':     line,
+        'src':      src,
+        'op':       op,
+        'operands': operands.map(|(s, v)| -> %{'src': s, 'value': v}),
+        'trace':    trace,
+        'note':     note,
+    }
+}
+
+pub fn class-name(x: Any) -> String {
+    match type(x) {
+        c: Class => c.__name__,
+        t        => str(t),
+    }
+}
+
+fn operand-pairs(xs: Any) -> Array[(String, String)] {
+    let pairs: Array[(String, String)] = []
+    if !(xs :: Array) {
+        return pairs
+    }
+    for match xs {
+        (s, v) => pairs.push((str(s), str(v))),
+        _      => nil,
+    }
+    pairs
+}
+
+fn opt-str(x: Any) -> ?String {
+    (x == nil) ? nil : str(x)
+}
+
+fn opt-int(x: Any) -> ?Int {
+    match x {
+        n: Int => n,
+        _      => nil,
+    }
+}
+
+pub fn failure-of(e: Any, trace: ?String = nil) -> Event {
+    failure(
+        class-name(e),
+        opt-str(e.?what) ?? str(e),
+        file: opt-str(e.?file),
+        line: opt-int(e.?line),
+        src: opt-str(e.?src),
+        op: opt-str(e.?op),
+        operands: operand-pairs(e.?operands),
+        trace: trace,
+        note: opt-str(e.?note)
+    )
+}
+
+pub fn truncate(s: String, limit: Int = OUTPUT_LIMIT) -> String {
+    let b = Blob(s)
+    if #b <= limit {
+        return s
+    }
+    let half = limit / 2
+    let head = b.str(0, half)
+    let tail = b.str(#b - half, half)
+    let gone = #b - Blob(head).size() - Blob(tail).size()
+    "{head}\n[… {gone} bytes elided …]\n{tail}"
+}
+
+pub fn test-end(
+    id: String,
+    outcome: String,
+    dur: Float = 0.0,
+    reason: ?String = nil,
+    failure: ?Event = nil,
+    output: String = '',
+    logs: Array[String] = [],
+    hard?: Bool = false,
+    signal: Int | String | nil = nil,
+    code: ?Int = nil
+) -> Event {
+    mk('test-end', %{
+        'id':      id,
+        'outcome': outcome,
+        'dur':     dur,
+        'reason':  reason,
+        'failure': failure,
+        'output':  truncate(output),
+        'logs':    logs,
+        'hard':    hard?,
+        'signal':  signal,
+        'code':    code,
+    })
+}
+
+pub fn warning(
+    code: String,
+    message: String,
+    file: ?String = nil,
+    id: ?String = nil,
+    line: ?Int = nil
+) -> Event {
+    mk('warning', %{
+        'code':    code,
+        'file':    file,
+        'id':      id,
+        'line':    line,
+        'message': message,
+    })
+}
+
+pub fn file-end(file: String, rc: Int, counts: Dict[String, Int]) -> Event {
+    mk('file-end', %{'file': file, 'rc': rc, 'counts': counts})
+}
+
+pub fn status(
+    kind: String,
+    code: ?Int = nil,
+    signal: Int | String | nil = nil,
+    phase: ?String = nil
+) -> Event {
+    %{'kind': kind, 'code': code, 'signal': signal, 'phase': phase}
+}
+
+pub fn rusage(utime: Float, stime: Float, maxrss: ?Int = nil) -> Event {
+    %{'utime': utime, 'stime': stime, 'maxrss': maxrss}
+}
+
+pub fn file-done(
+    file: String,
+    status: Event,
+    dur: Float = 0.0,
+    rusage: ?Event = nil,
+    stdout-tail: String = '',
+    stderr-tail: String = '',
+    respawns: Int = 0
+) -> Event {
+    mk('file-done', %{
+        'file':        file,
+        'status':      status,
+        'dur':         dur,
+        'rusage':      rusage,
+        'stdout_tail': stdout-tail,
+        'stderr_tail': stderr-tail,
+        'respawns':    respawns,
+    })
+}
+
+pub fn run-end(
+    counts: Dict[String, Int],
+    files: ?Dict[String, Int] = nil,
+    dur: Float = 0.0,
+    cpu: ?Dict[String, Float] = nil,
+    rc: Int = 0,
+    interrupted?: Bool = false
+) -> Event {
+    mk('run-end', %{
+        'counts':      counts,
+        'files':       files,
+        'dur':         dur,
+        'cpu':         cpu,
+        'rc':          rc,
+        'interrupted': interrupted?,
+    })
+}
+
+fn decode(line: String) -> Any {
+    try {
+        return json.parse(line)
+    } catch e: RuntimeError {
+        return e
+    }
+}
+
+pub fn parse-line(line: String) -> ?Event {
+    if line.match?(/^\s*$/) {
+        return nil
+    }
+    match decode(line) {
+        d: Dict => d,
+        _       => warning('bad-event', "unparseable event line: {line[;200]}"),
+    }
+}
+
+pub fn drain(buf: Blob, final?: Bool = false) -> Array[Event] {
+    let evs: Array[Event] = []
+    while let $i = buf.search(10) {
+        let line = buf.splice(0, i + 1).str(0, i)
+        if let $ev = parse-line(line) {
+            evs.push(ev)
+        }
+    }
+    if final? && #buf > 0 {
+        if let $ev = parse-line(buf.splice(0).str()) {
+            evs.push(ev)
+        }
+    }
+    evs
+}
+
+pub fn read-lines(fd: Int, buf: Blob) -> Array[Event] {
+    let n = CHUNK
+    while n == CHUNK {
+        n = os.read(fd, buf, CHUNK)
+    }
+    drain(buf)
+}
+
+pub fn read-file(path: String) -> Array[Event] {
+    let $text = slurp(path) or return []
+    drain(Blob(text), final?: true)
+}
+
+pub class EventSink {
+    __fd: ?Int
+    __reporters: Array[Reporter]
+
+    init(fd: ?Int = nil, reporters: Array[Reporter] = []) {
+        __fd = fd
+        __reporters = reporters
+    }
+
+    static to-file(path: String) -> EventSink {
+        let fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        if fd < 0 {
+            throw RuntimeError("ty --test: cannot open events file {path}")
+        }
+        EventSink(fd: fd)
+    }
+
+    static to-reporters(rs: Array[Reporter]) -> EventSink {
+        EventSink(reporters: rs)
+    }
+
+    add(r: Reporter) -> EventSink {
+        __reporters.push(r)
+        self
+    }
+
+    fd -> ?Int {
+        __fd
+    }
+
+    emit(ev: Event) {
+        if let $fd = __fd {
+            os.write(fd, "{json.encode(ev)}\n", all: true)
+        }
+        for __reporters {
+            it.on(ev)
+        }
+    }
+
+    done() {
+        for __reporters {
+            it.done()
+        }
+        if let $fd = __fd {
+            os.close(fd)
+            __fd = nil
+        }
+    }
+}

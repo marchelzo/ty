@@ -1,0 +1,72 @@
+class Plain {
+    n: Int
+
+    init() { n = 1 }
+}
+
+class Donor {
+    extra: Int
+    n: Int
+
+    init() {
+        n = 3
+        extra = 99
+    }
+
+    implicit() -> Int { extra }
+    explicit() -> Int { self.extra }
+    implicitcall() -> Int { helper() }
+    helper() -> Int { 7 }
+}
+
+class Ghost {
+    n: Int
+
+    init() { n = 1 }
+
+    __missing__(name: String) -> String { "ghost:{name}" }
+}
+
+class Seer {
+    extra: Int
+
+    init() { extra = 0 }
+
+    peek() -> Any { extra }
+}
+
+fn error-of(f: () -> Any) -> String | nil {
+    try {
+        f()
+    } catch e: RuntimeError {
+        return str(e)
+    }
+    nil
+}
+
+defineMethod(Plain, 'implicit', unbindMethod(Donor().implicit))
+defineMethod(Plain, 'explicit', unbindMethod(Donor().explicit))
+defineMethod(Plain, 'implicitcall', unbindMethod(Donor().implicitcall))
+defineMethod(Ghost, 'peek', unbindMethod(Seer().peek))
+
+ns test
+
+pub fn implicit-self-missing-member-raises() {
+    let p: _ = Plain()
+    let implicit = error-of(() -> p.implicit())
+    let explicit = error-of(() -> p.explicit())
+    assert(implicit != nil)
+    assert(implicit == explicit)
+    assert(error-of(() -> p.implicitcall()) != nil)
+}
+
+pub fn unbound-implicit-self-raises() {
+    let g = Donor.implicit
+    assert(error-of(() -> g()) != nil)
+}
+
+pub fn implicit-self-uses-missing-hook() {
+    let g: _ = Ghost()
+    assert(g.peek() == 'ghost:extra')
+    assert(g.extra == 'ghost:extra')
+}

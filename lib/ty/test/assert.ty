@@ -1,0 +1,124 @@
+import ty
+import ty.parse as parse
+import ty.test.core (SkipTest, TestTimeout)
+
+use Site = {src: String, kind: String | nil, pattern: String | nil}
+
+fn describe(x: Any) -> String {
+    match x {
+        e: BaseException => "{Class.name(type(e))}({show(e.what)})",
+        _                => show(x)
+    }
+}
+
+fn text-of(x: Any) -> String {
+    match x {
+        e: BaseException => e.what,
+        _                => str(x)
+    }
+}
+
+fn capture(f: () -> Any) -> (Bool, Any) {
+    try {
+        return (false, f())
+    } catch e: SkipTest {
+        throw e
+    } catch e: TestTimeout {
+        throw e
+    } catch e {
+        return (true, e)
+    }
+}
+
+fn matches?(x: Any, pattern: Regex | String) -> Bool {
+    match pattern {
+        re: Regex => text-of(x).match?(re),
+        s         => s in text-of(x)
+    }
+}
+
+fn failure(
+    site:      Site,
+    file:      ?String,
+    line:      ?Int,
+    value:     Any,
+    returned?: Bool
+) -> AssertionError {
+    let expected = match site {
+        {kind: nil, pattern: nil, *} => 'an exception',
+        {kind: nil, pattern: $p, *}  => "an exception matching {p}",
+        {kind: $k, pattern: nil, *}  => k,
+        {kind: $k, pattern: $p, *}   => "{k} matching {p}"
+    }
+
+    let shown  = describe(value)
+    let detail = returned?
+               ? "expected {expected}, nothing was thrown (returned {shown})"
+               : "expected {expected}, got {shown}"
+
+    let args = match site {
+        {kind: nil, pattern: nil, *} => [site.src],
+        {kind: $k, pattern: nil, *}  => [site.src, k],
+        {kind: k, pattern: $p, *}    => [site.src, k ?? 'nil', p]
+    }
+
+    let src = "assert-throws({args.join(', ')})"
+
+    AssertionError(
+        "failed assertion: {src}\n    {detail}",
+        src: src,
+        file: file,
+        line: line,
+        op: 'throws',
+        values: [value],
+        note: detail
+    )
+}
+
+pub macro assert-throws(expr, kind, pattern) {
+    fn given(e) {
+        match e {
+            ty.Nil => nil,
+            _      => e
+        }
+    }
+
+    fn source-of(e) {
+        (e == nil) ? nil : (parse.show(e) ?? '?')
+    }
+
+    let kind    = given(kind)
+    let pattern = given(pattern)
+
+    let site = {
+        src: source-of(expr),
+        kind: source-of(kind),
+        pattern: source-of(pattern)
+    }
+
+    let thrown? = ty.Id(name: ty.gensym())
+    let caught  = ty.Id(name: ty.gensym())
+
+    let kind-ok    = (kind == nil) ? $$[ true $$] : $$[ $$caught :: $$kind $$]
+    let pattern-ok = (pattern == nil)
+                   ? $$[ true $$]
+                   : $$[ $$::(matches?)($$caught, $$pattern) $$]
+
+    let fail = $$[ $$::(failure) $$]
+
+    $$[
+        do {
+            let ($$thrown?, $$caught) = $$::(capture)(() -> $$expr)
+            if !$$thrown? {
+                throw $$fail($${site}, __file__, __line__, $$caught, true)
+            }
+            if !$$kind-ok {
+                throw $$fail($${site}, __file__, __line__, $$caught, false)
+            }
+            if !$$pattern-ok {
+                throw $$fail($${site}, __file__, __line__, $$caught, false)
+            }
+            $$caught
+        }
+    $$]
+}

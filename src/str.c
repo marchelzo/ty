@@ -995,6 +995,9 @@ string_count(Ty *ty, Value *string, int argc, Value *kwargs)
 
                         count += 1;
 
+                        if (off > len) {
+                                break;
+                        }
                 }
         } else {
                 ARGx(0, VALUE_STRING, VALUE_REGEX);

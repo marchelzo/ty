@@ -6737,6 +6737,40 @@ TY_BUILTIN(os_raise)
         return INTEGER(raise(sig));
 }
 
+// os.alarm(secs: Int | Float) -> Float
+TY_BUILTIN(os_alarm)
+{
+#if defined(_WIN32)
+        bP("not supported on this platform");
+#else
+        struct itimerval new = {0};
+        struct itimerval old = {0};
+
+        if (!(secs >= 0.0)) {
+                bP("invalid duration: %g", secs);
+        }
+
+        double whole = floor(secs);
+
+        new.it_value.tv_sec  = (time_t)whole;
+        new.it_value.tv_usec = (suseconds_t)((secs - whole) * 1.0e6);
+
+        if (
+                (secs > 0.0)
+             && (new.it_value.tv_sec == 0)
+             && (new.it_value.tv_usec == 0)
+        ) {
+                new.it_value.tv_usec = 1;
+        }
+
+        if (setitimer(ITIMER_REAL, &new, &old) != 0) {
+                bP("setitimer(): %s", strerror(errno));
+        }
+
+        return REAL(old.it_value.tv_sec + old.it_value.tv_usec / 1.0e6);
+#endif
+}
+
 static Value
 timespec_tuple(Ty *ty, struct timespec const *ts)
 {
@@ -9288,6 +9322,142 @@ TY_BUILTIN_RAW(ty_bt)
         return ARRAY(avFrames);
 }
 
+static Value
+test_scopes(Ty *ty, Namespace const *ns)
+{
+        Array *scopes = vA();
+
+        for (; ns != NULL; ns = ns->next) {
+                vAp(scopes, vSsz(ns->src_id));
+        }
+
+        for (int i = 0, j = vN(*scopes) - 1; i < j; ++i, --j) {
+                Value tmp = v__(*scopes, i);
+                v__(*scopes, i) = v__(*scopes, j);
+                v__(*scopes, j) = tmp;
+        }
+
+        return ARRAY(scopes);
+}
+
+static char const *
+test_src_name(TyTest const *test)
+{
+        char const *name = test->name;
+
+        for (char const *p = name; (p = strstr(p, "::")) != NULL; p += 2) {
+                name = p + 2;
+        }
+
+        return name;
+}
+
+static Value
+test_site(Ty *ty, TyTest const *test, usize n)
+{
+        Stmt const *def = test->def;
+        Stmt const *first = def;
+        Stmt const *last = def;
+        Expr const *fun = def->value;
+        Module const *mod = def->mod;
+        Array *params = vA();
+        int required = 0;
+        int sharing = 0;
+        bool overloaded = false;
+
+        if (
+                (fun->type == EXPRESSION_MULTI_FUNCTION)
+             && (vN(fun->functions) > 0)
+        ) {
+                first      = (Stmt const *)v__(fun->functions, 0);
+                last       = (Stmt const *)*vvL(fun->functions);
+                fun        = first->value;
+                overloaded = true;
+        }
+
+        char const *doc = (first->doc != NULL) ? first->doc : fun->doc;
+        Location start = first->start;
+
+        if (vN(fun->decorators) > 0) {
+                Expr const *deco = v__(fun->decorators, 0);
+                if (
+                        (deco->start.s != NULL)
+                     && (deco->start.byte < start.byte)
+                ) {
+                        start = deco->start;
+                }
+        }
+
+        for (int i = 0; i < vN(fun->params); ++i) {
+                vAp(params, vSsz(v__(fun->params, i)));
+                if (
+                        (i != fun->rest)
+                     && (i != fun->ikwargs)
+                     && (i >= vN(fun->dflts) || v__(fun->dflts, i) == NULL)
+                ) {
+                        required += 1;
+                }
+        }
+
+        for (usize i = 0; i < n; ++i) {
+                if (v_(xD.tests, i)->var == test->var) {
+                        sharing += 1;
+                }
+        }
+
+        Value func = NIL;
+
+        if (
+                !CompileOnly
+             && (test->var->i >= 0)
+             && (test->var->i < vN(Globals))
+        ) {
+                func = v__(Globals, test->var->i);
+        }
+
+        if (func.type == VALUE_UNINITIALIZED) {
+                func = NIL;
+        }
+
+        return vTn(
+                "module",      (mod == NULL) ? xSz("") : vSsz(mod->name),
+                "file",        (mod == NULL || mod->path == NULL) ? NIL : vSsz(mod->path),
+                "scopes",      test_scopes(ty, def->ns),
+                "name",        vSsz(test_src_name(test)),
+                "ident",       vSsz(def->target->identifier),
+                "line",        INTEGER(start.line + 1),
+                "col",         INTEGER(start.col + 1),
+                "endLine",     INTEGER(last->end.line + 1),
+                "doc",         (doc == NULL) ? NIL : vSsz(doc),
+                "params",      ARRAY(params),
+                "required",    INTEGER(required),
+                "generator?",  BOOLEAN(fun->star || fun->type == EXPRESSION_GENERATOR),
+                "public?",     BOOLEAN(test->pub),
+                "overloaded?", BOOLEAN(overloaded || sharing > 1),
+                "func",        func
+        );
+}
+
+// ty.tests() -> prelude.Array[{module: prelude.String, file: prelude.String | nil, scopes: prelude.Array[prelude.String], name: prelude.String, ident: prelude.String, line: prelude.Int, col: prelude.Int, endLine: prelude.Int, doc: prelude.String | nil, params: prelude.Array[prelude.String], required: prelude.Int, generator?: prelude.Bool, public?: prelude.Bool, overloaded?: prelude.Bool, func: _}]
+TY_BUILTIN_RAW(ty_tests)
+{
+        ASSERT_ARGC("ty.tests()", 0);
+
+        usize n = vN(xD.tests);
+
+        GC_STOP();
+
+        Array *sites = vA();
+
+        for (usize i = 0; i < n; ++i) {
+                vAp(sites, test_site(ty, v_(xD.tests, i), n));
+        }
+
+        GC_RESUME();
+
+        return ARRAY(sites);
+}
+
 // ty.trace() -> _
 TY_BUILTIN_RAW(ty_trace)
 {
@@ -9311,6 +9481,82 @@ TY_BUILTIN_RAW(ty_trace)
         }
 
         return TRACE(clone);
+}
+
+static Value
+trace_frame(Ty *ty, Expr const *e)
+{
+        char const *func = NULL;
+        char const *cls = NULL;
+        char const *src = "";
+        char const *end;
+        Value name = NIL;
+
+        if (e->origin != NULL) {
+                e = e->origin;
+        }
+
+        if (e->xfunc != NULL) {
+                func = e->xfunc->name;
+                if (e->xfunc->class != NULL) {
+                        cls = e->xfunc->class->name;
+                }
+        }
+
+        if (func != NULL && cls != NULL) {
+                name = vSsz(afmt("%s.%s", cls, KebabName(ty, func)));
+        } else if (func != NULL) {
+                name = vSsz(KebabName(ty, func));
+        }
+
+        if (e->start.s != NULL) {
+                src = e->start.s - e->start.col;
+        }
+
+        end = strchr(src, '\n');
+        if (end == NULL) {
+                end = src + strlen(src);
+        }
+
+        return vTn(
+                "file", (e->mod == NULL || e->mod->path == NULL) ? NIL : vSsz(e->mod->path),
+                "line", INTEGER(e->start.line + 1),
+                "col",  INTEGER(e->start.col + 1),
+                "func", name,
+                "src",  vSs(src, end - src)
+        );
+}
+
+// ty.frames(t: _) -> prelude.Array[{file: prelude.String | nil, line: prelude.Int, col: prelude.Int, func: prelude.String | nil, src: prelude.String}]
+TY_BUILTIN_RAW(ty_frames)
+{
+        ASSERT_ARGC("ty.frames()", 1);
+
+        Value t = ARG(0);
+        Array *frames = vA();
+
+        if (t.type != VALUE_TRACE) {
+                return ARRAY(frames);
+        }
+
+        ThrowCtx const *ctx = t.ptr;
+
+        GC_STOP();
+
+        for (int i = 0; i < vN(*ctx); ++i) {
+                char *ip = (char *)v__(*ctx, i);
+                if (ip == NULL) {
+                        break;
+                }
+                Expr const *e = compiler_find_expr(ty, ip - 1);
+                if (e != NULL) {
+                        vAp(frames, trace_frame(ty, e));
+                }
+        }
+
+        GC_RESUME();
+
+        return ARRAY(frames);
 }
 
 // ty.stack-ctx() -> {stack: Int, fp: Int, frames: Int}

@@ -91,7 +91,6 @@
 #include "sqlite.h"
 #include "str.h"
 #include "tags.h"
-#include "test.h"
 #include "types2.h"
 #include "utf8.h"
 #include "xd.h"
@@ -998,7 +997,6 @@ add_builtins(Ty *ty, int ac, char **av)
         BUILTIN_NAMED_VAR("ty", "q",              q,           "prelude.Bool"                                  ) = BOOLEAN(!CheckTypes);
         BUILTIN_NAMED_VAR("ty", "jit",            jit,         "prelude.Bool"                                  ) = BOOLEAN(!NoJIT);
         BUILTIN_NAMED_VAR("ty", "TEST",           TEST,        "prelude.Bool"                                  ) = BOOLEAN(RunningTests);
-        BUILTIN_NAMED_VAR("ty", "tests",          tests,       NULL                                            ) = ARRAY(vA());
         BUILTIN_NAMED_VAR("ty", "version",        version,     "{string: prelude.String, date: prelude.String}") = version;
         BUILTIN_NAMED_VAR("ty", "interactive",    interactive, "prelude.Bool"                                  ) = BOOLEAN(false);
 
@@ -7669,6 +7667,13 @@ TargetMember:
                         v_L(TRY_STACK)->state = TRY_FINALLY;
                         break;
 
+                CASE(POP_TRY)
+                        _try = vXx(TRY_STACK);
+                        if (_try->end == NULL) {
+                                PopThrowCtx(ty);
+                        }
+                        break;
+
                 CASE(TRY)
                 {
                         _try = PushTry(ty);
@@ -10002,21 +10007,119 @@ FlipGC_EVERY_ALLOC(int _)
 }
 #endif
 
-int
-RunTests(Ty *ty)
-{
-        int maxw = 0;
+static vec(char *) TestModules;
+static vec(Module const *) TestTopModules;
 
-        for (usize i = 0; i < vN(xD.tests); ++i) {
-                TyTest const *test = v_(xD.tests, i);
-                maxw = max(maxw, term_width(test->name, -1));
+void
+TestAllowModule(char const *name)
+{
+        char *copy = S2(name);
+
+        for (char *p = copy; *p != '\0'; ++p) {
+                if (*p == '.') {
+                        *p = '/';
+                }
         }
 
+        xvP(TestModules, copy);
+}
+
+static bool
+TestSelected(TyTest const *test)
+{
+        Module const *mod = test->def->mod;
+
+        if (!test->pub || mod == NULL) {
+                return false;
+        }
+
+        for (int i = 0; i < vN(TestTopModules); ++i) {
+                if (v__(TestTopModules, i) == mod) {
+                        return true;
+                }
+        }
+
+        for (int i = 0; i < vN(TestModules); ++i) {
+                if (s_eq(v__(TestModules, i), mod->name)) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static bool
+TestCallable(Value const *v)
+{
+        switch (v->type) {
+        case VALUE_FUNCTION:
+        case VALUE_BOUND_FUNCTION:
+        case VALUE_METHOD:
+        case VALUE_BUILTIN_FUNCTION:
+        case VALUE_BUILTIN_METHOD:
+        case VALUE_FOREIGN_FUNCTION:
+        case VALUE_OPERATOR:
+                return true;
+
+        default:
+                return false;
+        }
+}
+
+int
+RunTestsNative(Ty *ty)
+{
+        usize n = vN(xD.tests);
+        int maxw = 0;
+        int pass = 0;
         int fail = 0;
 
-        for (usize i = 0; i < vN(xD.tests); ++i) {
+        for (usize i = 0; i < n; ++i) {
                 TyTest const *test = v_(xD.tests, i);
-                Value fun = v__(Globals, test->var->i);
+                if (TestSelected(test)) {
+                        maxw = max(maxw, term_width(test->name, -1));
+                }
+        }
+
+        for (usize i = 0; i < n; ++i) {
+                TyTest test = v__(xD.tests, i);
+
+                if (!TestSelected(&test)) {
+                        continue;
+                }
+
+                char const *name = test.name;
+                Symbol *var = test.var;
+
+                if (CompileOnly) {
+                        printf("%s\n", name);
+                        continue;
+                }
+
+                Value fun = (var->i >= 0 && var->i < vN(Globals))
+                          ? v__(Globals, var->i)
+                          : NIL;
+
+                if (fun.type == VALUE_UNINITIALIZED) {
+                        fun = NIL;
+                }
+
+                if (!TestCallable(&fun)) {
+                        fprintf(
+                                stderr,
+                                "%sFAIL%s %s%*s%s (not callable: %s)\n",
+                                TERM(91;1),
+                                TERM(0),
+                                TERM(93),
+                                -maxw,
+                                name,
+                                TERM(0),
+                                VSC(&fun)
+                        );
+                        fail += 1;
+                        continue;
+                }
+
                 if (TY_CATCH_ERROR()) {
                         char *trace = FormatTrace(ty, NULL, NULL);
                         Value   exc = TY_CATCH();
@@ -10027,7 +10130,7 @@ RunTests(Ty *ty)
                                 TERM(0),
                                 TERM(93),
                                 -maxw,
-                                test->name,
+                                name,
                                 TERM(0),
                                 trace,
                                 VSC(&exc)
@@ -10035,7 +10138,7 @@ RunTests(Ty *ty)
                         fail += 1;
                 } else {
                         u64 t0 = TyMonotonicTime();
-                        exec_fn(ty, &fun, NULL, 0, NULL);
+                        vm_call(ty, &fun, 0);
                         u64 t1 = TyMonotonicTime();
                         fprintf(
                                 stderr,
@@ -10044,17 +10147,63 @@ RunTests(Ty *ty)
                                 TERM(0),
                                 TERM(93),
                                 -maxw,
-                                test->name,
+                                name,
                                 TERM(0),
                                 TERM(90),
                                 (t1 - t0) / 1.0e6,
                                 TERM(0)
                         );
+                        pass += 1;
                         TY_CATCH_END();
                 }
         }
 
+        if (!CompileOnly) {
+                fprintf(stderr, "%d passed, %d failed\n", pass, fail);
+        }
+
         return (fail == 0) ? 0 : 1;
+}
+
+int
+RunTestHarness(Ty *ty, char **args, int n)
+{
+        Symbol *sym = compiler_lookup(ty, "ty/test", "main");
+        int volatile rc = 70;
+
+        if (
+                (getenv("TY_TEST_NATIVE") != NULL)
+             || compiler_test_runner_failed()
+             || (sym == NULL)
+             || (sym->i < 0)
+             || (sym->i >= vN(Globals))
+             || !TestCallable(v_(Globals, sym->i))
+        ) {
+                return RunTestsNative(ty);
+        }
+
+        if (TY_CATCH_ERROR()) {
+                Value exc = TY_CATCH();
+                fprintf(stderr, "ty --test: internal runner error: %s\n", VSC(&exc));
+        } else {
+                Value main = v__(Globals, sym->i);
+                GC_STOP();
+                Value argv = ARRAY(vA());
+                for (int i = 0; i < n; ++i) {
+                        vAp(argv.array, vSsz(args[i]));
+                }
+                push(argv);
+                GC_RESUME();
+                Value r = vm_call(ty, &main, 1);
+                if (r.type == VALUE_INTEGER) {
+                        rc = (int)r.z;
+                } else {
+                        fprintf(stderr, "ty --test: runner returned %s, not an Int\n", VSC(&r));
+                }
+                TY_CATCH_END();
+        }
+
+        return rc;
 }
 
 bool
@@ -10256,6 +10405,10 @@ vm_load_program(Ty *ty, char const *source, char const *file)
                 GC_RESUME();
                 TY_FINISH_LOADING();
                 return false;
+        }
+
+        if (RunningTests) {
+                xvP(TestTopModules, mod);
         }
 
         if (DisassemblyOut != NULL) {
@@ -10985,6 +11138,8 @@ StepInstruction(char const *ip)
         CASE(FINALLY)
                 break;
         CASE(END_TRY)
+                break;
+        CASE(POP_TRY)
                 break;
         CASE(CATCH)
                 break;

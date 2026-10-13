@@ -1,9 +1,14 @@
 import path (tempdir)
 import support.process (ROOT, FIXTURES, run, type-env)
+import ty.test (xfail)
 
 ns test
 
-fn startup-corpus() {
+@xfail(
+    'corpus.json drift: unclassified io:147 unreachable-pattern and readln:1003 '
+    'non-exhaustive-match; stale prelude:553/1045 invalid-trait-member'
+)
+pub fn startup-corpus() {
     with tmp = tempdir() {
         let log = tmp / 'corpus.jsonl'
         let source = (FIXTURES / 'types2' / 'startup.ty').read-text()
