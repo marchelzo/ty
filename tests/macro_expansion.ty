@@ -1,0 +1,52 @@
+import ty
+import ty.types as types
+import ty.test (Test)
+import support.process (run)
+
+macro tenfold(x) {
+    $$[ ($$x) * 10 $$]
+}
+
+macro tenfold-plus-one(y) {
+    $$[ tenfold($$y) + 1 $$]
+}
+
+macro resolved?(e) {
+    let found = types.resolve(e)
+    $$[ $$(ty.Bool(found != nil)) $$]
+}
+
+macro probe-name(e) {
+    ty.IfDef(name: e)
+}
+
+pub fn nested-macro-calls-in-templates-expand-per-use() {
+    assert(tenfold-plus-one(4) == 41)
+    assert(tenfold-plus-one(5) == 51)
+}
+
+pub fn resolve-in-a-macro-survives-a-failed-lookup() {
+    assert(!resolved?(ty))
+    assert(tenfold(2) == 20)
+}
+
+fn compile-error(t: Test, node: String) -> String {
+    let file = t.tmp-dir() / 'bad.ty'
+    file.write("import ty\nmacro m(e) \{ {node} \}\nlet a = 1\nm(a)\n")
+    let r = run([str(file)])
+    assert(r.status != 0)
+    r.stderr
+}
+
+pub fn ast-nodes-with-non-string-names-are-compile-errors(t: Test) {
+    let nodes = [
+        'ty.IfDef(name: e)',
+        'ty.Defined(name: e)',
+        'ty.UserOp(e, ty.Int(1))',
+        'ty.UserOp(e, ty.Int(1), ty.Int(2))',
+    ]
+    for nodes {
+        let err = compile-error(t, it)
+        assert(err.match?(/invalid value passed to cexpr/), err)
+    }
+}
