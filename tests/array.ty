@@ -27,3 +27,11 @@ pub fn classify-groups-without-leaking-a-default() {
     assert(groups['c'] == nil)
     assert('c' not in groups)
 }
+
+pub fn postfix-bang-ends-a-subscript() {
+    let xs = [10, 20, 30]
+    let at = (s: String) -> int(s)
+    assert(xs[at('1')!] == 20)
+    assert(xs[at('0')!;at('2')!] == [10, 20])
+    assert([1, 2, 3].map(\_ * 2)[at('2')!] == 6)
+}

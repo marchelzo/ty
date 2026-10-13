@@ -1,0 +1,2700 @@
+#!/usr/bin/env ty
+
+import ffi as c
+import atomic
+import base64
+import errno
+import hash
+import ioctls (TIOCSCTTY, TIOCGWINSZ, TIOCSWINSZ)
+import json
+import os
+import path (Path)
+import termios
+import time
+import ty
+import zstd
+
+class Reg {
+    n: Int
+
+    init(n: Int) {
+        self.n = n
+    }
+}
+
+const R0 = Reg(0)
+const R1 = Reg(1)
+const R2 = Reg(2)
+const R3 = Reg(3)
+const R4 = Reg(4)
+const R5 = Reg(5)
+const R6 = Reg(6)
+const R7 = Reg(7)
+const R8 = Reg(8)
+const R9 = Reg(9)
+const FP = Reg(10)
+
+const W  = 0x00
+const DW = 0x18
+
+ns helper {
+    pub const lookup         = 1
+    pub const update         = 2
+    pub const delete         = 3
+    pub const ktime-ns       = 5
+    pub const pid-tgid       = 14
+    pub const comm           = 16
+    pub const task           = 35
+    pub const read-user      = 112
+    pub const read-kernel    = 113
+    pub const ringbuf-output = 130
+    pub const loop           = 181
+}
+
+class Asm {
+    __code:   Blob
+    __labels: Dict[String, Int]
+    __fixups: Array[(Int, String, Int)]
+    __gensym: Int
+
+    init() {
+        __code   = Blob()
+        __labels = %{}
+        __fixups = []
+        __gensym = 0
+    }
+
+    __emit(op: Int, dst: Int = 0, src: Int = 0, off: Int = 0, imm: Int = 0) {
+        c.pack(__code, '=BBhi', op, (src << 4) | dst, off, imm)
+    }
+
+    __alu(op: Int, dst: Reg, x: Reg | Int) {
+        match x {
+            src: Reg => __emit(0x07 | op | 0x08, dst.n, src.n),
+            k: Int   => __emit(0x07 | op, dst.n, 0, 0, k)
+        }
+    }
+
+    pc -> Int {
+        #__code / 8
+    }
+
+    fresh(stem: String) -> String {
+        __gensym += 1
+        "{stem}.{__gensym}"
+    }
+
+    label(name: String) {
+        __labels[name] = pc
+    }
+
+    at(name: String) -> Int {
+        __labels[name]!
+    }
+
+    add(dst: Reg, x: Reg | Int) { __alu(0x00, dst, x) }
+    sub(dst: Reg, x: Reg | Int) { __alu(0x10, dst, x) }
+    lsh(dst: Reg, x: Reg | Int) { __alu(0x60, dst, x) }
+    rsh(dst: Reg, x: Reg | Int) { __alu(0x70, dst, x) }
+    mov(dst: Reg, x: Reg | Int) { __alu(0xB0, dst, x) }
+
+    ldx(size: Int, dst: Reg, src: Reg, off: Int) {
+        __emit(0x61 | size, dst.n, src.n, off)
+    }
+
+    stx(size: Int, dst: Reg, off: Int, src: Reg) {
+        __emit(0x63 | size, dst.n, src.n, off)
+    }
+
+    st(size: Int, dst: Reg, off: Int, imm: Int) {
+        __emit(0x62 | size, dst.n, 0, off, imm)
+    }
+
+    xadd(dst: Reg, off: Int, src: Reg) {
+        __emit(0xDB, dst.n, src.n, off, 0)
+    }
+
+    map(dst: Reg, fd: Int) {
+        __emit(0x18, dst.n, 1, 0, fd)
+        __emit(0x00)
+    }
+
+    jmp(dst: Reg, cmp: String, x: Reg | Int, target: String) {
+        let op = match cmp {
+            '=='  => 0x10, '>'   => 0x20, '>=' => 0x30, '!='  => 0x50,
+            's>'  => 0x60, 's>=' => 0x70, '<'  => 0xA0, '<='  => 0xB0,
+            's<'  => 0xC0, 's<=' => 0xD0
+        }
+        __fixups.push((pc, target, 2))
+        match x {
+            src: Reg => __emit(0x05 | op | 0x08, dst.n, src.n),
+            k: Int   => __emit(0x05 | op, dst.n, 0, 0, k)
+        }
+    }
+
+    goto(target: String) {
+        __fixups.push((pc, target, 2))
+        __emit(0x05)
+    }
+
+    func(dst: Reg, target: String) {
+        __fixups.push((pc, target, 4))
+        __emit(0x18, dst.n, 4)
+        __emit(0x00)
+    }
+
+    call(f: Int) {
+        __emit(0x85, 0, 0, 0, f)
+    }
+
+    exit() {
+        __emit(0x95)
+    }
+
+    stack(dst: Reg, off: Int) {
+        mov(dst, FP)
+        add(dst, off)
+    }
+
+    lookup(map: Int, key: Int) {
+        self.map(R1, map)
+        stack(R2, key)
+        call(helper.lookup)
+    }
+
+    assemble() -> Blob {
+        for (at, target, field) in __fixups {
+            let $to = __labels[target] or throw RuntimeError("bpf: undefined label {target}")
+            c.store((field == 2) ? c.i16 : c.i32, __code.ptr() + 8 * at + field, to - at - 1)
+        }
+        __code
+    }
+}
+
+class Btf {
+    __data:  Blob
+    __strs:  Int
+    __where: Array[Int]
+    __named: Dict[String, Int]
+
+    init(file: String = '/sys/kernel/btf/vmlinux') {
+        __data = Path(file).read-bytes()
+        let (magic, _, _, hdr, types, size, strs) = c.unpack('=HBBIIIII', __data)
+        if magic != 0xEB9F {
+            throw RuntimeError("{file}: not BTF")
+        }
+        __strs  = hdr + strs
+        __where = [0]
+        __named = %{}
+        let p   = hdr + types
+        while p < hdr + types + size {
+            let (name, info) = c.unpack('=II', __data, p)
+            let kind = (info >> 24) & 0x1F
+            if kind in [4, 5] {
+                __named[__name(name)] = #__where
+            }
+            __where.push(p)
+            p += 12 + match kind {
+                1 or 14 or 17      => 4,
+                3                  => 12,
+                4 or 5 or 15 or 19 => 12 * (info & 0xFFFF),
+                6 or 13            => 8 * (info & 0xFFFF),
+                _                  => 0
+            }
+        }
+    }
+
+    __name(off: Int) -> String {
+        c.str(__data.ptr() + __strs + off)
+    }
+
+    __head(id: Int) -> (Int, Int, Int) {
+        let (_, info, next) = c.unpack('=III', __data, __where[id])
+        ((info >> 24) & 0x1F, info, next)
+    }
+
+    __strip(id: Int) -> Int {
+        match __head(id) {
+            (8 or 9 or 10 or 11 or 18, _, next) => __strip(next),
+            _                                   => id
+        }
+    }
+
+    __member(id: Int, name: String) -> Int | nil {
+        let id = __strip(id)
+        let (kind, info, _) = __head(id)
+        if kind not in [4, 5] {
+            return nil
+        }
+        for i in ..(info & 0xFFFF) {
+            let (moff, mtype, bits) = c.unpack('=III', __data, __where[id] + 12 + 12 * i)
+            let byte = ((info >> 31 == 1) ? (bits & 0xFFFFFF) : bits) / 8
+            match __name(moff) {
+                ''                  => if let $inner = __member(mtype, name) { return byte + inner },
+                n and n == name     => return byte,
+                _                   => ()
+            }
+        }
+    }
+
+    offset(struct: String, member: String) -> Int {
+        let $id = __named[struct] or throw RuntimeError("BTF: no struct {struct}")
+        __member(id, member) ?? throw RuntimeError("BTF: no member {struct}.{member}")
+    }
+}
+
+ns rec {
+    pub const TS     = 0
+    pub const ENTER  = 8
+    pub const ID     = 16
+    pub const NR     = 24
+    pub const A0     = 32
+    pub const A1     = 40
+    pub const A2     = 48
+    pub const RET    = 56
+    pub const COMM   = 64
+    pub const OFF    = 80
+    pub const LEN    = 84
+    pub const HDR    = 88
+    pub const FORMAT = '=QQQQQQQq16sII'
+    pub const CHUNK  = 16384
+    pub const CHUNKS = 128
+}
+
+ns cfg {
+    pub const TTY    = 0
+    pub const CALIB  = 8
+    pub const FD     = 12
+    pub const SKIP   = 16
+    pub const LOST   = 24
+    pub const FORMAT = '=QIIIIQ'
+    pub const SIZE   = 32
+}
+
+ns nr {
+    pub const read     = os.sysno('read')!
+    pub const write    = os.sysno('write')!
+    pub const pread64  = os.sysno('pread64')!
+    pub const pwrite64 = os.sysno('pwrite64')!
+    pub const readv    = os.sysno('readv')!
+    pub const writev   = os.sysno('writev')!
+    pub const preadv   = os.sysno('preadv')!
+    pub const pwritev  = os.sysno('pwritev')!
+    pub const preadv2  = os.sysno('preadv2')!
+    pub const pwritev2 = os.sysno('pwritev2')!
+    pub const ioctl    = os.sysno('ioctl')!
+    pub const fcntl    = os.sysno('fcntl')!
+    pub const close    = os.sysno('close')!
+
+    pub const VECTORED = [readv, writev, preadv, pwritev, preadv2, pwritev2]
+    pub const BARE     = [fcntl, close]
+    pub const TRACED   = [read, write, pread64, pwrite64, ioctl, *VECTORED, *BARE]
+}
+
+use Maps = {cfg: Int, inflight: Int, scratch: Int, ring: Int}
+use Kernel = {files: Int, fdt: Int, max-fds: Int, fd: Int, private: Int}
+
+fn deref(a: Asm, width: Int, off: Int, fail: String) {
+    a.mov(R3, R0)
+    a.add(R3, off)
+    a.stack(R1, -8)
+    a.mov(R2, width)
+    a.call(helper.read-kernel)
+    a.jmp(R0, '!=', 0, fail)
+    a.ldx((width == 8) ? DW : W, R0, FP, -8)
+    a.jmp(R0, '==', 0, fail)
+}
+
+fn tty-of-fd(a: Asm, k: Kernel, fail: String) {
+    a.mov(R9, R3)
+    a.call(helper.task)
+    deref(a, 8, k.files, fail)
+    deref(a, 8, k.fdt, fail)
+    a.stx(DW, FP, -24, R0)
+    deref(a, 4, k.max-fds, fail)
+    a.jmp(R9, '>=', R0, fail)
+    a.ldx(DW, R0, FP, -24)
+    deref(a, 8, k.fd, fail)
+    a.lsh(R9, 3)
+    a.add(R0, R9)
+    deref(a, 8, 0, fail)
+    deref(a, 8, k.private, fail)
+    deref(a, 8, 0, fail)
+}
+
+fn enter-program(m: Maps, k: Kernel) -> Blob {
+    let a = Asm()
+
+    a.mov(R6, R1)
+    a.call(helper.pid-tgid)
+    a.mov(R7, R0)
+    a.ldx(DW, R2, R6, 8)
+    for n in nr.TRACED {
+        a.jmp(R2, '==', n, 'wanted')
+    }
+    a.goto('out')
+
+    a.label('wanted')
+    a.stx(DW, FP, -32, R2)
+    a.st(W, FP, -16, 0)
+    a.lookup(m.cfg, -16)
+    a.jmp(R0, '==', 0, 'out')
+    a.mov(R8, R0)
+    a.mov(R1, R7)
+    a.rsh(R1, 32)
+    a.ldx(W, R2, R8, cfg.CALIB)
+    a.jmp(R1, '!=', R2, 'watch')
+
+    a.ldx(DW, R3, FP, -32)
+    a.jmp(R3, '!=', nr.ioctl, 'out')
+    a.ldx(DW, R3, R6, 16)
+    a.ldx(W, R4, R8, cfg.FD)
+    a.jmp(R3, '!=', R4, 'out')
+    tty-of-fd(a, k, 'out')
+    a.stx(DW, R8, cfg.TTY, R0)
+    a.goto('out')
+
+    a.label('watch')
+    a.ldx(W, R2, R8, cfg.SKIP)
+    a.jmp(R1, '==', R2, 'out')
+    a.ldx(DW, R2, R8, cfg.TTY)
+    a.jmp(R2, '==', 0, 'out')
+    a.ldx(DW, R3, R6, 16)
+    tty-of-fd(a, k, 'out')
+    a.ldx(DW, R1, R8, cfg.TTY)
+    a.jmp(R0, '!=', R1, 'out')
+
+    a.ldx(DW, R1, FP, -32)
+    a.stx(DW, FP, -72, R1)
+    for i in ..3 {
+        a.ldx(DW, R1, R6, 16 + 8 * i)
+        a.stx(DW, FP, -64 + 8 * i, R1)
+    }
+    a.call(helper.ktime-ns)
+    a.stx(DW, FP, -40, R0)
+    a.stx(W, FP, -16, R7)
+    a.map(R1, m.inflight)
+    a.stack(R2, -16)
+    a.stack(R3, -72)
+    a.mov(R4, 0)
+    a.call(helper.update)
+
+    a.label('out')
+    a.mov(R0, 0)
+    a.exit()
+
+    a.assemble()
+}
+
+ns ctx {
+    pub const SRC     = rec.HDR + rec.CHUNK
+    pub const LEFT    = SRC + 8
+    pub const OFF     = SRC + 16
+    pub const BUDGET  = SRC + 24
+    pub const INDEX   = SRC + 32
+    pub const VECTOR  = SRC + 40
+    pub const END     = SRC + 48
+}
+
+fn stream-step(a: Asm, m: Maps) {
+    a.label('step')
+    a.st(W, FP, -4, 0)
+    a.lookup(m.scratch, -4)
+    a.jmp(R0, '==', 0, 'stop')
+    a.mov(R9, R0)
+    a.ldx(DW, R7, R9, ctx.LEFT)
+    a.jmp(R7, 's>', 0, 'chunk')
+
+    a.ldx(DW, R1, R9, ctx.VECTOR)
+    a.jmp(R1, '==', 0, 'stop')
+    a.ldx(DW, R2, R9, ctx.BUDGET)
+    a.jmp(R2, 's<=', 0, 'stop')
+    a.ldx(DW, R1, R9, ctx.INDEX)
+    a.ldx(DW, R2, R9, rec.A2)
+    a.jmp(R1, '>=', R2, 'stop')
+    a.mov(R3, R1)
+    a.add(R1, 1)
+    a.stx(DW, R9, ctx.INDEX, R1)
+    a.lsh(R3, 4)
+    a.ldx(DW, R1, R9, rec.A1)
+    a.add(R3, R1)
+    a.stack(R1, -24)
+    a.mov(R2, 16)
+    a.call(helper.read-user)
+    a.jmp(R0, '!=', 0, 'stop')
+    a.ldx(DW, R1, FP, -24)
+    a.stx(DW, R9, ctx.SRC, R1)
+    a.ldx(DW, R7, FP, -16)
+    a.ldx(DW, R1, R9, ctx.BUDGET)
+    a.jmp(R7, '<=', R1, 'take')
+    a.mov(R7, R1)
+    a.label('take')
+    a.sub(R1, R7)
+    a.stx(DW, R9, ctx.BUDGET, R1)
+    a.stx(DW, R9, ctx.LEFT, R7)
+    a.mov(R0, 0)
+    a.exit()
+
+    a.label('chunk')
+    a.mov(R2, R7)
+    a.jmp(R2, '<=', rec.CHUNK, 'fit')
+    a.mov(R2, rec.CHUNK)
+    a.label('fit')
+    a.ldx(DW, R8, R9, ctx.OFF)
+    a.stx(W, R9, rec.OFF, R8)
+    a.stx(W, R9, rec.LEN, R2)
+    a.mov(R1, R9)
+    a.add(R1, rec.HDR)
+    a.ldx(DW, R3, R9, ctx.SRC)
+    a.call(helper.read-user)
+    a.jmp(R0, '!=', 0, 'fault')
+    a.ldx(W, R3, R9, rec.LEN)
+    a.jmp(R3, '>', rec.CHUNK, 'stop')
+    a.add(R3, rec.HDR)
+    a.map(R1, m.ring)
+    a.mov(R2, R9)
+    a.mov(R4, 0)
+    a.call(helper.ringbuf-output)
+    a.jmp(R0, '==', 0, 'sent')
+    a.lookup(m.cfg, -4)
+    a.jmp(R0, '==', 0, 'sent')
+    a.mov(R1, 1)
+    a.xadd(R0, cfg.LOST, R1)
+    a.label('sent')
+    a.ldx(W, R3, R9, rec.LEN)
+    for (slot, op) in [(ctx.SRC, a.add), (ctx.LEFT, a.sub), (ctx.OFF, a.add)] {
+        a.ldx(DW, R1, R9, slot)
+        op(R1, R3)
+        a.stx(DW, R9, slot, R1)
+    }
+    a.mov(R0, 0)
+    a.exit()
+
+    a.label('fault')
+    a.st(DW, R9, ctx.LEFT, 0)
+    a.mov(R0, 0)
+    a.exit()
+
+    a.label('stop')
+    a.mov(R0, 1)
+    a.exit()
+}
+
+fn stream(a: Asm, src: Reg | Int, left: Reg | Int, vectored: Bool = false) {
+    for (slot, x) in [(ctx.SRC, src), (ctx.LEFT, left)] {
+        a.mov(R1, x)
+        a.stx(DW, R9, slot, R1)
+    }
+    for slot in [ctx.OFF, ctx.BUDGET, ctx.INDEX, ctx.VECTOR] {
+        a.st(DW, R9, slot, 0)
+    }
+    if vectored {
+        a.ldx(DW, R1, R9, rec.RET)
+        a.stx(DW, R9, ctx.BUDGET, R1)
+        a.st(DW, R9, ctx.VECTOR, 1)
+    }
+    a.mov(R1, rec.CHUNKS + 1024)
+    a.func(R2, 'step')
+    a.mov(R3, 0)
+    a.mov(R4, 0)
+    a.call(helper.loop)
+    a.ldx(DW, R8, R9, ctx.OFF)
+}
+
+fn exit-program(m: Maps) -> (Blob, Int) {
+    let a = Asm()
+
+    a.mov(R6, R1)
+    a.call(helper.pid-tgid)
+    a.mov(R7, R0)
+    a.stx(W, FP, -16, R7)
+    a.st(W, FP, -12, 0)
+    a.lookup(m.inflight, -16)
+    a.jmp(R0, '==', 0, 'out')
+    a.mov(R8, R0)
+    a.lookup(m.scratch, -12)
+    a.jmp(R0, '==', 0, 'forget')
+    a.mov(R9, R0)
+
+    for (from, to) in [(0, rec.NR), (8, rec.A0), (16, rec.A1), (24, rec.A2), (32, rec.ENTER)] {
+        a.ldx(DW, R1, R8, from)
+        a.stx(DW, R9, to, R1)
+    }
+    a.stx(DW, R9, rec.ID, R7)
+    a.ldx(DW, R1, R6, 16)
+    a.stx(DW, R9, rec.RET, R1)
+    a.call(helper.ktime-ns)
+    a.stx(DW, R9, rec.TS, R0)
+    a.mov(R1, R9)
+    a.add(R1, rec.COMM)
+    a.mov(R2, 16)
+    a.call(helper.comm)
+    a.st(W, R9, rec.OFF, 0)
+    a.st(W, R9, rec.LEN, 0)
+
+    a.map(R1, m.inflight)
+    a.stack(R2, -16)
+    a.call(helper.delete)
+
+    a.mov(R8, 0)
+    a.ldx(DW, R1, R9, rec.NR)
+    a.jmp(R1, '==', nr.ioctl, 'ioctl')
+    for n in nr.VECTORED {
+        a.jmp(R1, '==', n, 'vectored')
+    }
+    for n in nr.BARE {
+        a.jmp(R1, '==', n, 'finish')
+    }
+
+    a.ldx(DW, R6, R9, rec.A1)
+    a.ldx(DW, R7, R9, rec.RET)
+    stream(a, R6, R7)
+    a.goto('finish')
+
+    a.label('ioctl')
+    a.ldx(DW, R6, R9, rec.A2)
+    stream(a, R6, 64)
+    a.jmp(R8, '!=', 0, 'finish')
+    a.ldx(DW, R6, R9, rec.A2)
+    stream(a, R6, 4)
+    a.goto('finish')
+
+    a.label('vectored')
+    stream(a, 0, 0, vectored: true)
+
+    a.label('finish')
+    a.jmp(R8, '!=', 0, 'out')
+    a.map(R1, m.ring)
+    a.mov(R2, R9)
+    a.mov(R3, rec.HDR)
+    a.mov(R4, 0)
+    a.call(helper.ringbuf-output)
+    a.goto('out')
+
+    a.label('forget')
+    a.map(R1, m.inflight)
+    a.stack(R2, -16)
+    a.call(helper.delete)
+
+    a.label('out')
+    a.mov(R0, 0)
+    a.exit()
+
+    stream-step(a, m)
+
+    (a.assemble(), a.at('step'))
+}
+
+fn zeros(n: Int) -> Blob {
+    let b = Blob()
+    b.pad(n)
+    b
+}
+
+ns bpf {
+    pub const MAP_CREATE      = 0
+    pub const MAP_LOOKUP      = 1
+    pub const MAP_UPDATE      = 2
+    pub const PROG_LOAD       = 5
+    pub const BTF_LOAD        = 18
+
+    pub const ARRAY           = 2
+    pub const PERCPU_ARRAY    = 6
+    pub const LRU_HASH        = 9
+    pub const RINGBUF         = 27
+
+    pub const TRACEPOINT      = 5
+
+    pub const RING_BUSY       = 1 << 31
+    pub const RING_DISCARD    = 1 << 30
+
+    pub fn call(cmd: Int, attr: Blob) -> Int {
+        c.syscall(os.sysno('bpf')!, (c.int, cmd), (c.ptr, attr.ptr()), (c.ulong, #attr))
+    }
+
+    pub fn map(type: Int, key: Int, value: Int, entries: Int, name: String) -> Int {
+        let fd = call(MAP_CREATE, c.pack(Blob(), '=IIIIIII16s', type, key, value, entries, 0, 0, 0, name))
+        if fd < 0 {
+            throw OSError("bpf(MAP_CREATE {name})")
+        }
+        fd
+    }
+
+    pub fn elem(cmd: Int, fd: Int, key: Blob, value: Blob) -> Int {
+        call(cmd, c.pack(Blob(), '=IIQQQ', fd, 0, int(key.ptr()), int(value.ptr()), 0))
+    }
+
+    pub fn btf(funcs: Array[String]) -> Int {
+        let strs  = Blob(0, 'int', 0, 'x', 0)
+        let types = c.pack(Blob(), '=IIII', 1, 1 << 24, 4, 0x01000020)
+        c.pack(types, '=IIIII', 0, (13 << 24) | 1, 1, 5, 1)
+        for f in funcs {
+            c.pack(types, '=III', #strs, (12 << 24), 2)
+            strs.push(f).push(0)
+        }
+        let blob = c.pack(Blob(), '=HBBIIIII', 0xEB9F, 1, 0, 24, 0, #types, #types, #strs)
+        blob.push(types).push(strs)
+        let fd = call(BTF_LOAD, c.pack(Blob(), '=QQIII', int(blob.ptr()), 0, #blob, 0, 0))
+        if fd < 0 {
+            let log = zeros(65536)
+            call(BTF_LOAD, c.pack(Blob(), '=QQIII', int(blob.ptr()), int(log.ptr()), #blob, #log, 1))
+            throw RuntimeError("bpf(BTF_LOAD): {c.str(log.ptr())}")
+        }
+        fd
+    }
+
+    pub fn load(name: String, code: Blob, funcs: Array[(Int, String)] = [(0, 'main')]) -> Int {
+        let license = Blob('GPL', 0)
+        let btf     = btf(funcs.map(&1))
+        let info    = Blob()
+        for (at, _); i in funcs {
+            c.pack(info, '=II', at, 3 + i)
+        }
+        let attempt = fn (log: Blob | nil) {
+            call(
+                PROG_LOAD,
+                c.pack(
+                    Blob(),
+                    '=IIQQIIQII16sIIIIQII',
+                    TRACEPOINT, #code / 8, int(code.ptr()), int(license.ptr()),
+                    log ? 1 : 0, log ? #log : 0, log ? int(log.ptr()) : 0, 0, 0, name,
+                    0, 0, btf, 8, int(info.ptr()), #funcs, 0
+                )
+            )
+        }
+        let fd = match attempt(nil) {
+            fd and fd >= 0 => fd,
+            _ => do {
+                let log = zeros(1 << 22)
+                attempt(log)
+                let text = c.str(log.ptr())
+                throw RuntimeError("bpf: {name} rejected by the verifier:\n{text.lines()[-30;].unlines()}")
+            }
+        }
+        os.close(btf)
+        fd
+    }
+}
+
+class Ring {
+    __fd:   Int
+    __size: Int
+    __cons: Ptr[Any]
+    __prod: Ptr[Any]
+    __data: Ptr[Any]
+
+    init(size: Int) {
+        __fd   = bpf.map(bpf.RINGBUF, 0, 0, size, 'tuicap_ring')
+        __size = size
+        __cons = os.mmap(nil, 4096, os.PROT_READ | os.PROT_WRITE, os.MAP_SHARED, __fd, 0)
+        __prod = os.mmap(nil, 4096, os.PROT_READ, os.MAP_SHARED, __fd, 4096)
+        __data = os.mmap(nil, 2 * size, os.PROT_READ, os.MAP_SHARED, __fd, 8192)
+    }
+
+    fd -> Int {
+        __fd
+    }
+
+    drain*() {
+        while true {
+            let head = atomic.load(c.u64, __cons)
+            let tail = atomic.load(c.u64, __prod)
+            if head == tail {
+                break
+            }
+            let at  = __data + (head & (__size - 1))
+            let len = atomic.load(c.u32, at)
+            if len & bpf.RING_BUSY {
+                break
+            }
+            if !(len & bpf.RING_DISCARD) {
+                yield Blob().push(at + 8, len & ~(bpf.RING_BUSY | bpf.RING_DISCARD))
+            }
+            atomic.store(c.u64, __cons, head + ((8 + (len & 0x3FFFFFFF) + 7) & ~7))
+        }
+    }
+}
+
+fn tracepoint(name: String) -> Int {
+    for root in ['/sys/kernel/tracing', '/sys/kernel/debug/tracing'] {
+        if let $id = slurp("{root}/events/{name}/id") {
+            return int(id.strip())
+        }
+    }
+    throw RuntimeError("tracepoint {name} not found (is tracefs mounted?)")
+}
+
+ns perf {
+    pub const TYPE_TRACEPOINT = 2
+    pub const ATTR_SIZE       = 72
+    pub const DISABLED        = 1
+    pub const FD_CLOEXEC      = 8
+    pub const IOC_ENABLE      = 0x2400
+    pub const IOC_SET_BPF     = 0x40042408
+}
+
+fn attach(name: String, prog: Int) {
+    let attr = c.pack(
+        Blob(),
+        '=IIQQQQQIIQ',
+        perf.TYPE_TRACEPOINT, perf.ATTR_SIZE, tracepoint(name), 1, 0, 0, perf.DISABLED, 0, 0, 0
+    )
+    let fd = c.syscall(
+        os.sysno('perf_event_open')!,
+        (c.ptr, attr.ptr()),
+        (c.int, -1),
+        (c.int, 0),
+        (c.int, -1),
+        (c.ulong, perf.FD_CLOEXEC)
+    )
+    if fd < 0 {
+        throw OSError("perf_event_open({name})")
+    }
+    if os.ioctl(fd, perf.IOC_SET_BPF, prog) < 0 {
+        throw OSError("PERF_EVENT_IOC_SET_BPF({name})")
+    }
+    os.ioctl(fd, perf.IOC_ENABLE, 0)
+}
+
+ns frame {
+    pub const READY = 1
+    pub const CALL  = 2
+    pub const DONE  = 3
+    pub const ERROR = 4
+
+    pub fn put(kind: Int, payload: String | Blob) {
+        os.write(1, c.pack(Blob(), '=BI', kind, #payload).push(payload), all=true)
+    }
+}
+
+fn tracer(tty: String, skip: Int) {
+    let btf = Btf()
+    let k   = {
+        files:   btf.offset('task_struct', 'files'),
+        fdt:     btf.offset('files_struct', 'fdt'),
+        max-fds: btf.offset('fdtable', 'max_fds'),
+        fd:      btf.offset('fdtable', 'fd'),
+        private: btf.offset('file', 'private_data')
+    }
+
+    let ring = Ring(32 << 20)
+    let m    = {
+        cfg:      bpf.map(bpf.ARRAY, 4, cfg.SIZE, 1, 'tuicap_cfg'),
+        inflight: bpf.map(bpf.LRU_HASH, 4, 40, 16384, 'tuicap_inflight'),
+        scratch:  bpf.map(bpf.PERCPU_ARRAY, 4, ctx.END, 1, 'tuicap_scratch'),
+        ring:     ring.fd
+    }
+
+    let probe = os.open(tty, os.O_RDWR | os.O_NOCTTY | os.O_CLOEXEC)
+    if probe < 0 {
+        throw OSError("open({tty})")
+    }
+
+    let zero = c.pack(Blob(), '=I', 0)
+    bpf.elem(bpf.MAP_UPDATE, m.cfg, zero, c.pack(Blob(), cfg.FORMAT, 0, os.getpid(), probe, skip, 0, 0))
+
+    let (code, step) = exit-program(m)
+    attach('raw_syscalls/sys_enter', bpf.load('tuicap_enter', enter-program(m, k)))
+    attach('raw_syscalls/sys_exit',  bpf.load('tuicap_exit', code, [(0, 'main'), (step, 'step')]))
+
+    os.ioctl(probe, TIOCGWINSZ, zeros(8))
+    os.close(probe)
+
+    let state = zeros(cfg.SIZE)
+    bpf.elem(bpf.MAP_LOOKUP, m.cfg, zero, state)
+    if c.unpack(cfg.FORMAT, state).0 == 0 {
+        throw RuntimeError("bpf: calibration against {tty} failed")
+    }
+
+    frame.put(frame.READY, '')
+
+    let fds = [(0, os.POLLIN), (ring.fd, os.POLLIN)]
+    let out = []
+    let live = true
+    while live {
+        os.poll(fds, out, 0.05)
+        for (fd, _) in out if fd == 0 {
+            live = (os.read(0, 4096) ?? Blob()).size() > 0
+        }
+        for record in ring.drain() {
+            frame.put(frame.CALL, record)
+        }
+    }
+
+    os.usleep(20000)
+    for record in ring.drain() {
+        frame.put(frame.CALL, record)
+    }
+
+    bpf.elem(bpf.MAP_LOOKUP, m.cfg, zero, state)
+    frame.put(frame.DONE, "{c.unpack(cfg.FORMAT, state).5}")
+}
+
+const DEC_GRAPHICS = %{
+    '`': '◆', 'a': '▒', 'b': '␉', 'c': '␌', 'd': '␍', 'e': '␊', 'f': '°', 'g': '±',
+    'h': '␤', 'i': '␋', 'j': '┘', 'k': '┐', 'l': '┌', 'm': '└', 'n': '┼', 'o': '⎺',
+    'p': '⎻', 'q': '─', 'r': '⎼', 's': '⎽', 't': '├', 'u': '┤', 'v': '┴', 'w': '┬',
+    'x': '│', 'y': '≤', 'z': '≥', '{': 'π', '|': '≠', '}': '£', '~': '·'
+}
+
+const MOUSE_MODES = [(1003, 'any'), (1002, 'button'), (1000, 'normal'), (9, 'x10')]
+const MOUSE_CODECS = [(1016, 'sgr_pixels'), (1015, 'urxvt'), (1006, 'sgr'), (1005, 'utf8')]
+
+const CURSOR_SHAPES = [
+    'default', 'blinking_block', 'block', 'blinking_underline',
+    'underline', 'blinking_bar', 'bar'
+]
+
+const NAMED_DEC_MODES = [
+    1, 5, 6, 7, 9, 12, 25, 47, 1000, 1002, 1003, 1004,
+    1005, 1006, 1015, 1016, 1047, 1048, 1049, 2004, 2026
+]
+
+fn blank-style(style: String) -> String {
+    let codes = style.split(';')
+    if '7' in codes {
+        return style
+    }
+    let kept = []
+    while #codes > 0 {
+        let n    = match codes {
+            ['38' or '48' or '58', '5', *] => 3,
+            ['38' or '48' or '58', *]      => 5,
+            _                              => 1
+        }
+        let code = codes.splice(0, n)
+        if code[0].match?(/^(4|4:\d|9|53|4[0-7]|10[0-7]|48|58)$/) {
+            kept += code
+        }
+    }
+    kept.join(';')
+}
+
+const BLANK_STYLE = %{*: blank-style(it)}
+
+const TOKENS = /[\x00-\x1f\x7f]|[^\x00-\x1f\x7f]+/
+
+tag Ground, Escape, Csi, Osc, Str;
+
+use Cell = (String, String)
+
+const PEN_FIELDS = [
+    'bold', 'dim', 'italic', 'underline', 'blink', 'inverse',
+    'hidden', 'strike', 'overline', 'fg', 'bg', 'ul'
+]
+
+class Pen {
+    bold:      Bool
+    dim:       Bool
+    italic:    Bool
+    underline: Int
+    blink:     Bool
+    inverse:   Bool
+    hidden:    Bool
+    strike:    Bool
+    overline:  Bool
+    fg:        String | nil
+    bg:        String | nil
+    ul:        String | nil
+
+    init() {
+        reset()
+    }
+
+    reset() {
+        bold = dim = italic = blink = inverse = hidden = strike = overline = false
+        underline = 0
+        fg = bg = ul = nil
+    }
+
+    clone() -> Pen {
+        let p = Pen()
+        for name in PEN_FIELDS {
+            p.{name} = self.{name}
+        }
+        p
+    }
+
+    style -> String {
+        [
+            bold     ? '1' : nil,
+            dim      ? '2' : nil,
+            italic   ? '3' : nil,
+            match underline { 0 => nil, 1 => '4', n => "4:{n}" },
+            blink    ? '5' : nil,
+            inverse  ? '7' : nil,
+            hidden   ? '8' : nil,
+            strike   ? '9' : nil,
+            overline ? '53' : nil,
+            fg, bg, ul
+        ].remove(nil).join(';')
+    }
+
+    blank -> String {
+        bg ?? ''
+    }
+
+    static color(base: Int, spec: Array[Int | nil]) -> String | nil {
+        match spec {
+            [5, n: Int, *] and n < 8  => "{base + n}",
+            [5, n: Int, *] and n < 16 => "{base + 60 + n - 8}",
+            [5, n: Int, *]            => "{base + 8};5;{n}",
+            [2, _, r: Int, g: Int, b: Int, *] => "{base + 8};2;{r};{g};{b}",
+            [2, r: Int, g: Int, b: Int]       => "{base + 8};2;{r};{g};{b}",
+            _                                 => nil
+        }
+    }
+
+    sgr(params: Array[Array[Int | nil]]) {
+        let i = 0
+        while i < #params {
+            let p = params[i]
+            i += 1
+            match p[0] ?? 0 {
+                0  => reset(),
+                1  => bold = true,
+                2  => dim = true,
+                3  => italic = true,
+                4  => underline = (#p > 1) ? (p[1] ?? 1) : 1,
+                5 or 6 => blink = true,
+                7  => inverse = true,
+                8  => hidden = true,
+                9  => strike = true,
+                21 => underline = 2,
+                22 => bold = dim = false,
+                23 => italic = false,
+                24 => underline = 0,
+                25 => blink = false,
+                27 => inverse = false,
+                28 => hidden = false,
+                29 => strike = false,
+                53 => overline = true,
+                55 => overline = false,
+                39 => fg = nil,
+                49 => bg = nil,
+                59 => ul = nil,
+                n and n >= 30 and n <= 37   => fg = "{n}",
+                n and n >= 40 and n <= 47   => bg = "{n}",
+                n and n >= 90 and n <= 97   => fg = "{n}",
+                n and n >= 100 and n <= 107 => bg = "{n}",
+                n and n in [38, 48, 58]     => i += __extended(n, p, params[i;]),
+                _ => ()
+            }
+        }
+    }
+
+    __extended(n: Int, p: Array[Int | nil], rest: Array[Array[Int | nil]]) -> Int {
+        let used = match (p, rest) {
+            ([_, _, *], _)   => 0,
+            (_, [[5, *], *]) => 2,
+            _                => 5
+        }
+        let spec  = (used == 0) ? p[1;] : rest[;used].map(&[0])
+        let color = color(n - 8, spec)
+        match n {
+            38 => fg = color,
+            48 => bg = color,
+            _  => ul = color
+        }
+        used
+    }
+}
+
+class Saved {
+    x:      Int
+    y:      Int
+    wrap:   Bool
+    pen:    Pen
+    origin: Bool
+    g:      Array[String]
+    gl:     Int
+
+    init(x: Int, y: Int, wrap: Bool, pen: Pen, origin: Bool, g: Array[String], gl: Int) {
+        self.x      = x
+        self.y      = y
+        self.wrap   = wrap
+        self.pen    = pen
+        self.origin = origin
+        self.g      = g
+        self.gl     = gl
+    }
+}
+
+pub class Screen {
+    cols:      Int
+    rows:      Int
+    x:         Int
+    y:         Int
+    bells:     Int
+    scrolled:  Int
+    title:     String
+    icon:      String
+    __grid:    Array[Array[Cell]]
+    __other:   Array[Array[Cell]]
+    __alt:     Bool
+    __wrap:    Bool
+    __pen:     Pen
+    __style:   String
+    __blank:   String
+    __top:     Int
+    __bottom:  Int
+    __tabs:    Array[Bool]
+    __saved:   Array[Saved | nil]
+    __g:       Array[String]
+    __gl:      Int
+    __state:   _
+    __params:  String
+    __inter:   String
+    __string:  String
+    __kind:    String
+    __last:    String | nil
+    __carry:   Blob
+    __dec:     Dict[Int, Bool]
+    __ansi:    Dict[Int, Bool]
+    __keys:    Array[Int]
+    __misc:    Dict[String, _]
+
+    init(cols: Int, rows: Int) {
+        self.cols = cols
+        self.rows = rows
+        __carry   = Blob()
+        reset()
+    }
+
+    reset() {
+        x = y = bells = scrolled = 0
+        title = icon = ''
+        __pen    = Pen()
+        __style  = ''
+        __blank  = ''
+        __grid   = __fresh(rows)
+        __other  = __fresh(rows)
+        __alt    = false
+        __wrap   = false
+        __top    = 0
+        __bottom = rows - 1
+        __tabs   = [i % 8 == 0 for i in ..cols]
+        __saved  = [nil, nil]
+        __g      = ['B', 'B', 'B', 'B']
+        __gl     = 0
+        __state  = Ground
+        __params = __inter = __string = __kind = ''
+        __last   = nil
+        __dec    = %{7: true, 25: true}
+        __ansi   = %{}
+        __keys   = [0]
+        __misc   = %{}
+    }
+
+    __fresh(n: Int, style: String = '') -> Array[Array[Cell]] {
+        [__line(style) for _ in ..n]
+    }
+
+    __line(style: String = '') -> Array[Cell] {
+        [(' ', style)] * cols
+    }
+
+    __pen-changed() {
+        __style = __pen.style
+        __blank = __pen.blank
+    }
+
+    __origin -> Int {
+        __dec[6] ? __top : 0
+    }
+
+    resize(cols: Int, rows: Int) {
+        let lift = max(0, y - rows + 1)
+        __grid   = __fit(__grid, cols, rows, lift)
+        __other  = __fit(__other, cols, rows, 0)
+        self.cols = cols
+        self.rows = rows
+        x         = min(x, cols - 1)
+        y        -= lift
+        __wrap    = false
+        __top     = 0
+        __bottom  = rows - 1
+        __tabs    = [i % 8 == 0 for i in ..cols]
+    }
+
+    static __fit(grid: Array[Array[Cell]], cols: Int, rows: Int, lift: Int) -> Array[Array[Cell]] {
+        let fitted = [
+            (#line >= cols) ? line[;cols] : line + [(' ', '')] * (cols - #line)
+            for line in grid[lift;rows]
+        ]
+        fitted + [[(' ', '')] * cols for _ in ..(rows - #fitted)]
+    }
+
+    feed(data: Blob) {
+        __carry.push(data)
+        let keep = __incomplete(__carry)
+        let text = __carry.str(0, #__carry - keep)
+        __carry.splice(0, #__carry - keep)
+        for token in text.matches(TOKENS) {
+            __consume(token)
+        }
+    }
+
+    __consume(token: String) {
+        if #token == 1 {
+            __step(token)
+            return
+        }
+        let chars = token.chars()
+        let i     = 0
+        while i < #chars && __state != Ground {
+            __step(chars[i])
+            i += 1
+        }
+        match token[i;] {
+            '' => (),
+            plain and __plain? && plain.match?(/^[ -~]+$/) => __print-plain(plain.chars()),
+            rest => __print-each(rest)
+        }
+    }
+
+    __print-each(text: String) {
+        for c in text {
+            __print(c)
+        }
+    }
+
+    __plain? -> Bool {
+        __g[__gl] == 'B' && !__ansi[4] && (__dec[7] ?? false)
+    }
+
+    __print-plain(chars: Array[String]) {
+        let i = 0
+        while i < #chars {
+            if __wrap {
+                __next-line()
+            }
+            let line = __grid[y]
+            let n    = min(#chars - i, cols - x)
+            __unwiden(line, x, n)
+            for k in ..n {
+                line[x + k] = (chars[i + k], __style)
+            }
+            i += n
+            x += n
+            if x == cols {
+                x      = cols - 1
+                __wrap = true
+            }
+        }
+        __last = chars[-1]
+    }
+
+    __unwiden(line: Array[Cell], at: Int, width: Int) {
+        if line[at].0 == '' && at > 0 {
+            line[at - 1] = (' ', line[at - 1].1)
+        }
+        if at + width < cols && line[at + width].0 == '' {
+            line[at + width] = (' ', line[at + width].1)
+        }
+    }
+
+    static __incomplete(b: Blob) -> Int {
+        for k in 1..(min(3, #b) + 1) {
+            let byte = b[#b - k]
+            if (byte & 0xC0) == 0xC0 {
+                let need = match byte {
+                    b and b >= 0xF0 => 4,
+                    b and b >= 0xE0 => 3,
+                    _               => 2
+                }
+                return (need > k) ? k : 0
+            }
+            if (byte & 0xC0) != 0x80 {
+                return 0
+            }
+        }
+        0
+    }
+
+    __enter(state: _, kind: String = '') {
+        __state  = state
+        __kind   = kind
+        __params = __inter = __string = ''
+    }
+
+    __next-line() {
+        x = 0
+        __index()
+    }
+
+    __step(ch: String) {
+        match __state {
+            Ground => __ground(ch),
+            Escape => __escape(ch),
+            Csi    => __csi(ch),
+            Osc    => __osc(ch),
+            Str    => __str(ch)
+        }
+    }
+
+    __ground(ch: String) {
+        match ch {
+            '\x1b' => __enter(Escape),
+            '\a'   => bells += 1,
+            '\b'   => __backspace(),
+            '\t'   => __tab(1),
+            '\n' or '\x0b' or '\x0c' => __newline(),
+            '\r'   => do {
+                x = 0
+                __wrap = false
+            },
+            '\x0e' => __gl = 1,
+            '\x0f' => __gl = 0,
+            c and (c < ' ' || c == '\x7f') => (),
+            c      => __print(c)
+        }
+    }
+
+    __escape(ch: String) {
+        if ch >= ' ' && ch <= '/' {
+            __inter = "{__inter}{ch}"
+            return
+        }
+        __state = Ground
+        match (__inter, ch) {
+            ('', '[')  => __enter(Csi),
+            ('', ']')  => __enter(Osc),
+            ('', 'P' or '_' or '^' or 'X') => __enter(Str, ch),
+            ('', '7')  => __save(),
+            ('', '8')  => __restore(),
+            ('', 'D')  => __index(),
+            ('', 'E')  => __next-line(),
+            ('', 'M')  => __reverse-index(),
+            ('', 'H')  => __tabs[x] = true,
+            ('', 'c')  => reset(),
+            ('', '=')  => __misc['app_keypad'] = true,
+            ('', '>')  => __misc['app_keypad'] = false,
+            ('#', '8') => __align(),
+            ('(', f)   => __g[0] = f,
+            (')', f)   => __g[1] = f,
+            ('*', f)   => __g[2] = f,
+            ('+', f)   => __g[3] = f,
+            _          => ()
+        }
+    }
+
+    __csi(ch: String) {
+        match ch {
+            c and c >= '0' and c <= '?' => __params = "{__params}{c}",
+            c and c >= ' ' and c <= '/' => __inter = "{__inter}{c}",
+            c and c >= '@' and c <= '~' => do {
+                __state = Ground
+                __dispatch(c)
+            },
+            '\x1b' => __enter(Escape),
+            c and c < ' ' => __ground(c),
+            _ => __state = Ground
+        }
+    }
+
+    __osc(ch: String) {
+        match ch {
+            '\a'   => __osc-done(),
+            '\x1b' => __osc-done(),
+            c      => __string = "{__string}{c}"
+        }
+    }
+
+    __str(ch: String) {
+        match ch {
+            '\x1b' => __enter(Escape),
+            '\a' and __kind != 'P' => __state = Ground,
+            c => __string = "{__string}{c}"
+        }
+    }
+
+    __osc-done() {
+        __state = Ground
+        match __string.split(';', 2) {
+            ['0', t] => title = icon = t,
+            ['1', t] => icon = t,
+            ['2', t] => title = t,
+            _        => ()
+        }
+    }
+
+    __numbers() -> Array[Array[Int | nil]] {
+        let body = (__params && __params[0] in '<=>?') ? __params[1;] : __params
+        body.split(';').map(\_.split(':').map(int))
+    }
+
+    __n(ps: Array[Array[Int | nil]], i: Int, default: Int = 1) -> Int {
+        match ps.?[i].?[0] {
+            nil or 0 => default,
+            n        => n
+        }
+    }
+
+    __dispatch(final: String) {
+        let ps     = __numbers()
+        let marker = (__params && __params[0] in '<=>?') ? __params[0] : ''
+        let n      = __n(ps, 0)
+
+        match (marker, __inter, final) {
+            ('', '', '@') => __insert-chars(n),
+            ('', '', 'A') => __move(x, max(y - n, __ceiling)),
+            ('', '', 'B') => __move(x, min(y + n, __floor)),
+            ('', '', 'C') => __move(min(x + n, cols - 1), y),
+            ('', '', 'D') => __move(max(x - n, 0), y),
+            ('', '', 'E') => __move(0, min(y + n, __floor)),
+            ('', '', 'F') => __move(0, max(y - n, __ceiling)),
+            ('', '', 'G' or '`') => __move(n - 1, y),
+            ('', '', 'H' or 'f') => __goto(__n(ps, 1), n),
+            ('', '', 'I') => __tab(n),
+            ('', '', 'Z') => __back-tab(n),
+            ('', '', 'J') or ('?', '', 'J') => __erase-display(__n(ps, 0, 0)),
+            ('', '', 'K') or ('?', '', 'K') => __erase-line(__n(ps, 0, 0)),
+            ('', '', 'L') => __insert-lines(n),
+            ('', '', 'M') => __delete-lines(n),
+            ('', '', 'P') => __delete-chars(n),
+            ('', '', 'S') => __scroll-up(n),
+            ('', '', 'T') and #ps <= 1 => __scroll-down(n),
+            ('', '', 'X') => __erase-chars(n),
+            ('', '', 'a') => __move(min(x + n, cols - 1), y),
+            ('', '', 'b') => __repeat(n),
+            ('', '', 'd') => __goto(x + 1, n),
+            ('', '', 'e') => __move(x, min(y + n, rows - 1)),
+            ('', '', 'g') => __clear-tabs(__n(ps, 0, 0)),
+            ('', '', 'h' or 'l')  => __ansi-modes(ps, final == 'h'),
+            ('?', '', 'h' or 'l') => __dec-modes(ps, final == 'h'),
+            ('', '', 'm') => __sgr(ps),
+            ('>', '', 'm') => __misc["modify_keys_{__n(ps, 0, 0)}"] = ps.?[1].?[0] ?? 0,
+            ('', '', 'r') => __margins(n, __n(ps, 1, rows)),
+            ('', '', 's') => __save(),
+            ('', '', 'u') => __restore(),
+            ('>', '', 'u') => __keys.push(__n(ps, 0, 0)),
+            ('<', '', 'u') => __keys = __keys[;max(1, #__keys - n)],
+            ('=', '', 'u') => __keys[-1] = __kitty(__keys[-1], __n(ps, 0, 0), __n(ps, 1)),
+            ('', ' ', 'q') => __misc['cursor_shape'] = CURSOR_SHAPES[__n(ps, 0, 0)] ?? 'default',
+            ('', '!', 'p') => __soft-reset(),
+            _ => ()
+        }
+    }
+
+    __ceiling -> Int {
+        (y >= __top) ? __top : 0
+    }
+
+    __floor -> Int {
+        (y <= __bottom) ? __bottom : rows - 1
+    }
+
+    static __kitty(old: Int, flags: Int, how: Int) -> Int {
+        match how {
+            1 => flags,
+            2 => old | flags,
+            3 => old & ~flags,
+            _ => old
+        }
+    }
+
+    __sgr(ps: Array[Array[Int | nil]]) {
+        __pen.sgr(ps)
+        __pen-changed()
+    }
+
+    __ansi-modes(ps: Array[Array[Int | nil]], on: Bool) {
+        for [mode, *] in ps {
+            __ansi[mode ?? 0] = on
+        }
+    }
+
+    __dec-modes(ps: Array[Array[Int | nil]], on: Bool) {
+        for [mode, *] in ps {
+            __dec-mode(mode ?? 0, on)
+        }
+    }
+
+    __dec-mode(mode: Int, on: Bool) {
+        __dec[mode] = on
+        match mode {
+            6    => __goto(1, 1),
+            47   => __switch(on, clear: false),
+            1047 => __switch(on, clear: !on),
+            1048 => on ? __save() : __restore(),
+            1049 => __alt-screen(on),
+            _ => ()
+        }
+    }
+
+    __alt-screen(on: Bool) {
+        if on {
+            __save()
+            __switch(true, clear: true)
+        } else {
+            __switch(false, clear: false)
+            __restore()
+        }
+    }
+
+    __switch(alt: Bool, clear: Bool) {
+        if alt != __alt {
+            (__grid, __other) = (__other, __grid)
+            __alt = alt
+        }
+        if clear && alt {
+            __grid = __fresh(rows)
+        } else if clear {
+            __other = __fresh(rows)
+        }
+    }
+
+    __soft-reset() {
+        __pen = Pen()
+        __pen-changed()
+        __dec[6] = false
+        __dec[7] = true
+        __dec[25] = true
+        __ansi[4] = false
+        __top = 0
+        __bottom = rows - 1
+        __g = ['B', 'B', 'B', 'B']
+        __gl = 0
+        __saved[__alt ? 1 : 0] = nil
+    }
+
+    __save() {
+        __saved[__alt ? 1 : 0] = Saved(x, y, __wrap, __pen.clone(), __dec[6] ?? false, [*__g], __gl)
+    }
+
+    __restore() {
+        match __saved[__alt ? 1 : 0] {
+            nil => do {
+                __pen    = Pen()
+                __dec[6] = false
+                __g      = ['B', 'B', 'B', 'B']
+                __gl     = 0
+                __move(0, 0)
+            },
+            s => do {
+                x = min(s.x, cols - 1)
+                y = min(s.y, rows - 1)
+                __wrap = s.wrap
+                __pen = s.pen.clone()
+                __dec[6] = s.origin
+                __g = [*s.g]
+                __gl = s.gl
+            }
+        }
+        __pen-changed()
+    }
+
+    __move(x: Int, y: Int) {
+        self.x = max(0, min(x, cols - 1))
+        self.y = max(0, min(y, rows - 1))
+        __wrap = false
+    }
+
+    __goto(col: Int, row: Int) {
+        let top    = __origin
+        let bottom = __dec[6] ? __bottom : rows - 1
+        __move(col - 1, min(top + row - 1, bottom))
+    }
+
+    __margins(top: Int, bottom: Int) {
+        if top < bottom && bottom <= rows {
+            __top    = top - 1
+            __bottom = bottom - 1
+            __goto(1, 1)
+        }
+    }
+
+    __tab(n: Int) {
+        if __wrap {
+            return
+        }
+        for _ in ..n {
+            x = (x + 1..cols).find(\__tabs[_]) ?? (cols - 1)
+        }
+    }
+
+    __back-tab(n: Int) {
+        for _ in ..n {
+            x = (..x).reverse().find(\__tabs[_]) ?? 0
+        }
+        __wrap = false
+    }
+
+    __clear-tabs(mode: Int) {
+        match mode {
+            0 => __tabs[x] = false,
+            3 => __tabs = [false] * cols,
+            _ => ()
+        }
+    }
+
+    __backspace() {
+        if x > 0 {
+            x -= 1
+        }
+        __wrap = false
+    }
+
+    __newline() {
+        if __ansi[20] {
+            x = 0
+        }
+        __index()
+    }
+
+    __index() {
+        if y == __bottom {
+            __scroll-up(1)
+        } else if y < rows - 1 {
+            y += 1
+        }
+        __wrap = false
+    }
+
+    __reverse-index() {
+        if y == __top {
+            __scroll-down(1)
+        } else if y > 0 {
+            y -= 1
+        }
+        __wrap = false
+    }
+
+    __scroll-up(n: Int) {
+        let n = min(n, __bottom - __top + 1)
+        for _ in ..n {
+            __grid.pop(__top)
+            __grid.insert(__bottom, __line(__blank))
+        }
+        if !__alt && __top == 0 {
+            scrolled += n
+        }
+    }
+
+    __scroll-down(n: Int) {
+        let n = min(n, __bottom - __top + 1)
+        for _ in ..n {
+            __grid.pop(__bottom)
+            __grid.insert(__top, __line(__blank))
+        }
+    }
+
+    __insert-lines(n: Int) {
+        if y < __top || y > __bottom {
+            return
+        }
+        for _ in ..min(n, __bottom - y + 1) {
+            __grid.pop(__bottom)
+            __grid.insert(y, __line(__blank))
+        }
+        x = 0
+        __wrap = false
+    }
+
+    __delete-lines(n: Int) {
+        if y < __top || y > __bottom {
+            return
+        }
+        for _ in ..min(n, __bottom - y + 1) {
+            __grid.pop(y)
+            __grid.insert(__bottom, __line(__blank))
+        }
+        x = 0
+        __wrap = false
+    }
+
+    __insert-chars(n: Int) {
+        let line = __grid[y]
+        let n    = min(n, cols - x)
+        line.splice(cols - n, n)
+        line.insert(x, *([(' ', __blank)] * n))
+        __wrap = false
+    }
+
+    __delete-chars(n: Int) {
+        let line = __grid[y]
+        let n    = min(n, cols - x)
+        line.splice(x, n)
+        line += [(' ', __blank)] * n
+        __wrap = false
+    }
+
+    __erase(line: Array[Cell], from: Int, to: Int) {
+        for i in from..min(to, cols) {
+            line[i] = (' ', __blank)
+        }
+    }
+
+    __erase-chars(n: Int) {
+        __erase(__grid[y], x, x + n)
+        __wrap = false
+    }
+
+    __erase-line(mode: Int) {
+        match mode {
+            0 => __erase(__grid[y], x, cols),
+            1 => __erase(__grid[y], 0, x + 1),
+            2 => __erase(__grid[y], 0, cols),
+            _ => ()
+        }
+    }
+
+    __erase-display(mode: Int) {
+        match mode {
+            0 => do {
+                __erase-line(0)
+                __erase-rows(y + 1, rows)
+            },
+            1 => do {
+                __erase-line(1)
+                __erase-rows(0, y)
+            },
+            2 => __erase-rows(0, rows),
+            _ => ()
+        }
+    }
+
+    __erase-rows(from: Int, to: Int) {
+        for r in from..to {
+            __erase(__grid[r], 0, cols)
+        }
+    }
+
+    __align() {
+        __grid   = [[('E', '')] * cols for _ in ..rows]
+        __top    = 0
+        __bottom = rows - 1
+        __move(0, 0)
+    }
+
+    __repeat(n: Int) {
+        if let $c = __last {
+            for _ in ..min(n, cols * rows) {
+                __print(c)
+            }
+        }
+    }
+
+    __print(ch: String) {
+        let c = (__g[__gl] == '0') ? (DEC_GRAPHICS[ch] ?? ch) : ch
+        let w = c.width()
+
+        if w == 0 {
+            __combine(c)
+            return
+        }
+
+        if __wrap && __dec[7] {
+            x = 0
+            __index()
+        }
+
+        if w == 2 && x == cols - 1 {
+            if __dec[7] {
+                __grid[y][x] = (' ', __blank)
+                x = 0
+                __index()
+            } else {
+                w = 1
+            }
+        }
+
+        let line = __grid[y]
+
+        if __ansi[4] {
+            line.splice(cols - w, w)
+            line.insert(x, *([(' ', '')] * w))
+        }
+
+        __unwiden(line, x, w)
+
+        line[x] = (c, __style)
+        if w == 2 {
+            line[x + 1] = ('', __style)
+        }
+
+        __last = c
+
+        if x + w >= cols {
+            x = cols - 1
+            __wrap = true
+        } else {
+            x += w
+            __wrap = false
+        }
+    }
+
+    __combine(c: String) {
+        let (cx, cy) = (__wrap || x == 0) ? (x, y) : (x - 1, y)
+        let line = __grid[cy]
+        let at = (line[cx].0 == '' && cx > 0) ? cx - 1 : cx
+        line[at] = ("{line[at].0}{c}", line[at].1)
+        __last   = __last && "{__last}{c}"
+    }
+
+    row(r: Int) -> Array[Array[String]] {
+        let cells = [
+            (c, (c == ' ') ? BLANK_STYLE[s] : s)
+            for (c, s) in __grid[r]
+            if c != ''
+        ]
+        while #cells > 0 && cells[-1] == (' ', '') {
+            cells.pop()
+        }
+        cells.group(&1).map(run -> [run.map(&0).join(''), run[0].1])
+    }
+
+    modes -> Dict[String, _] {
+        let modes = %{
+            'alt_screen':      __alt,
+            'cursor_visible':  __dec[25] ?? true,
+            'cursor_blink':    __dec[12] ?? false,
+            'cursor_shape':    'default',
+            'app_cursor':      __dec[1] ?? false,
+            'app_keypad':      false,
+            'autowrap':        __dec[7] ?? true,
+            'origin':          __dec[6] ?? false,
+            'insert':          __ansi[4] ?? false,
+            'newline':         __ansi[20] ?? false,
+            'reverse_video':   __dec[5] ?? false,
+            'mouse':           __first(MOUSE_MODES) ?? 'off',
+            'mouse_encoding':  __first(MOUSE_CODECS) ?? 'default',
+            'focus_events':    __dec[1004] ?? false,
+            'bracketed_paste': __dec[2004] ?? false,
+            'synchronized':    __dec[2026] ?? false,
+            'kitty_keyboard':  __keys[-1],
+            'scroll_region':   [__top, __bottom],
+            'title':           title,
+            'icon_title':      icon,
+            'dec':             %{"{k}": v for k, v in __dec if k not in NAMED_DEC_MODES}
+        }
+        for k, v in __misc {
+            modes[k] = v
+        }
+        modes
+    }
+
+    __first(table: Array[(Int, String)]) -> String | nil {
+        for (mode, name) in table if __dec[mode] {
+            return name
+        }
+    }
+
+    synchronized? -> Bool {
+        __dec[2026] ?? false
+    }
+}
+
+ns linux {
+    fn bits(table: Array[(String, Int)]) -> Array[(String, Int, Int)] {
+        [(name, bit, bit) for (name, bit) in table]
+    }
+
+    pub const IOCTLS = %{
+        0x5401: 'TCGETS',       0x5402: 'TCSETS',       0x5403: 'TCSETSW',      0x5404: 'TCSETSF',
+        0x5405: 'TCGETA',       0x5406: 'TCSETA',       0x5407: 'TCSETAW',      0x5408: 'TCSETAF',
+        0x5409: 'TCSBRK',       0x540A: 'TCXONC',       0x540B: 'TCFLSH',       0x540C: 'TIOCEXCL',
+        0x540D: 'TIOCNXCL',     0x540E: 'TIOCSCTTY',    0x540F: 'TIOCGPGRP',    0x5410: 'TIOCSPGRP',
+        0x5411: 'TIOCOUTQ',     0x5412: 'TIOCSTI',      0x5413: 'TIOCGWINSZ',   0x5414: 'TIOCSWINSZ',
+        0x5415: 'TIOCMGET',     0x5416: 'TIOCMBIS',     0x5417: 'TIOCMBIC',     0x5418: 'TIOCMSET',
+        0x5419: 'TIOCGSOFTCAR', 0x541A: 'TIOCSSOFTCAR', 0x541B: 'FIONREAD',     0x541C: 'TIOCLINUX',
+        0x541D: 'TIOCCONS',     0x541E: 'TIOCGSERIAL',  0x541F: 'TIOCSSERIAL',  0x5420: 'TIOCPKT',
+        0x5421: 'FIONBIO',      0x5422: 'TIOCNOTTY',    0x5423: 'TIOCSETD',     0x5424: 'TIOCGETD',
+        0x5425: 'TCSBRKP',      0x5427: 'TIOCSBRK',     0x5428: 'TIOCCBRK',     0x5429: 'TIOCGSID',
+        0x5437: 'TIOCVHANGUP',  0x5441: 'TIOCGPTPEER',  0x5450: 'FIONCLEX',     0x5451: 'FIOCLEX',
+        0x5452: 'FIOASYNC',     0x5456: 'TIOCGLCKTRMIOS', 0x5457: 'TIOCSLCKTRMIOS',
+        0x545C: 'TIOCMIWAIT',   0x545D: 'TIOCGICOUNT',  0x5460: 'FIOQSIZE',
+        0x802C542A: 'TCGETS2',  0x402C542B: 'TCSETS2',  0x402C542C: 'TCSETSW2', 0x402C542D: 'TCSETSF2',
+        0x80045430: 'TIOCGPTN', 0x40045431: 'TIOCSPTLCK', 0x80045432: 'TIOCGDEV', 0x40045436: 'TIOCSIG',
+        0x80045438: 'TIOCGPKT', 0x80045439: 'TIOCGPTLCK', 0x80045440: 'TIOCGEXCL'
+    }
+
+    pub const IFLAG = bits([
+        ('IGNBRK', 0o1), ('BRKINT', 0o2), ('IGNPAR', 0o4), ('PARMRK', 0o10), ('INPCK', 0o20),
+        ('ISTRIP', 0o40), ('INLCR', 0o100), ('IGNCR', 0o200), ('ICRNL', 0o400), ('IUCLC', 0o1000),
+        ('IXON', 0o2000), ('IXANY', 0o4000), ('IXOFF', 0o10000), ('IMAXBEL', 0o20000), ('IUTF8', 0o40000)
+    ])
+
+    pub const OFLAG = bits([
+        ('OPOST', 0o1), ('OLCUC', 0o2), ('ONLCR', 0o4), ('OCRNL', 0o10), ('ONOCR', 0o20),
+        ('ONLRET', 0o40), ('OFILL', 0o100), ('OFDEL', 0o200), ('NL1', 0o400), ('BS1', 0o20000),
+        ('VT1', 0o40000), ('FF1', 0o100000)
+    ]) + [
+        ('CR1', 0o1000, 0o3000), ('CR2', 0o2000, 0o3000), ('CR3', 0o3000, 0o3000),
+        ('TAB1', 0o4000, 0o14000), ('TAB2', 0o10000, 0o14000), ('TAB3', 0o14000, 0o14000)
+    ]
+
+    pub const CFLAG = [
+        ('CS5', 0o0, 0o60), ('CS6', 0o20, 0o60), ('CS7', 0o40, 0o60), ('CS8', 0o60, 0o60)
+    ] + bits([
+        ('CSTOPB', 0o100), ('CREAD', 0o200), ('PARENB', 0o400), ('PARODD', 0o1000), ('HUPCL', 0o2000),
+        ('CLOCAL', 0o4000), ('CMSPAR', 0o10000000000), ('CRTSCTS', 0o20000000000)
+    ])
+
+    pub const LFLAG = bits([
+        ('ISIG', 0o1), ('ICANON', 0o2), ('XCASE', 0o4), ('ECHO', 0o10), ('ECHOE', 0o20), ('ECHOK', 0o40),
+        ('ECHONL', 0o100), ('NOFLSH', 0o200), ('TOSTOP', 0o400), ('ECHOCTL', 0o1000), ('ECHOPRT', 0o2000),
+        ('ECHOKE', 0o4000), ('FLUSHO', 0o10000), ('PENDIN', 0o40000), ('IEXTEN', 0o100000),
+        ('EXTPROC', 0o200000)
+    ])
+
+    pub const CC = [
+        'VINTR', 'VQUIT', 'VERASE', 'VKILL', 'VEOF', 'VTIME', 'VMIN', 'VSWTC', 'VSTART',
+        'VSTOP', 'VSUSP', 'VEOL', 'VREPRINT', 'VDISCARD', 'VWERASE', 'VLNEXT', 'VEOL2'
+    ]
+
+    pub const BAUD = [
+        0, 50, 75, 110, 134, 150, 200, 300, 600, 1200, 1800, 2400, 4800, 9600, 19200, 38400,
+        nil, 57600, 115200, 230400, 460800, 500000, 576000, 921600, 1000000, 1152000, 1500000,
+        2000000, 2500000, 3000000, 3500000, 4000000
+    ]
+
+    pub fn flags(word: Int, table: Array[(String, Int, Int)]) -> Array[String] {
+        [name for (name, value, mask) in table if (word & mask) == value]
+    }
+
+    pub fn termios(iflag: Int, oflag: Int, cflag: Int, lflag: Int, cc: Blob) -> Dict[String, _] {
+        let baud = (cflag & 0o17) | ((cflag & 0o10000) >> 8)
+        %{
+            'iflag': flags(iflag, IFLAG),
+            'oflag': flags(oflag, OFLAG),
+            'cflag': flags(cflag, CFLAG),
+            'lflag': flags(lflag, LFLAG),
+            'speed': BAUD[baud] ?? 'BOTHER',
+            'cc':    %{name: cc[i] for name; i in CC if i < #cc}
+        }
+    }
+
+    fn kernel-termios(data: Blob) -> Dict[String, _] | nil {
+        if #data >= 44 {
+            let (i, o, cf, l, _, cc, ispeed, ospeed) = c.unpack('=IIIIB19sII', data)
+            termios(i, o, cf, l, cc) + %{'ispeed': ispeed, 'ospeed': ospeed}
+        } else if #data >= 36 {
+            let (i, o, cf, l, _, cc) = c.unpack('=IIIIB19s', data)
+            termios(i, o, cf, l, cc)
+        }
+    }
+
+    fn winsize(data: Blob) -> Dict[String, Int] | nil {
+        if #data >= 8 {
+            let (rows, cols, xpixel, ypixel) = c.unpack('=HHHH', data)
+            %{'rows': rows, 'cols': cols, 'xpixel': xpixel, 'ypixel': ypixel}
+        }
+    }
+
+    pub fn ioctl(req: Int, arg: Int, data: Blob) -> Dict[String, _] {
+        let fields = %{'request': IOCTLS[req] ?? "0x{req:x}", 'arg': arg}
+        match ioctl-value(req, arg, data) {
+            nil and #data > 0 => fields + %{'data': data.hex()},
+            nil               => fields,
+            value             => fields + %{'value': value}
+        }
+    }
+
+    pub const INT_IOCTLS = [
+        'TIOCGPGRP', 'TIOCSPGRP', 'TIOCOUTQ', 'FIONREAD', 'FIONBIO', 'FIOASYNC', 'TIOCGETD',
+        'TIOCSETD', 'TIOCGSID', 'TIOCMGET', 'TIOCMSET', 'TIOCMBIS', 'TIOCMBIC', 'TIOCPKT',
+        'TIOCGPTN', 'TIOCGPKT', 'TIOCGEXCL'
+    ]
+
+    fn ioctl-value(req: Int, arg: Int, data: Blob) -> _ {
+        match IOCTLS[req] {
+            'TCGETS' or 'TCSETS' or 'TCSETSW' or 'TCSETSF' => kernel-termios(data[;36]),
+            'TCGETS2' or 'TCSETS2' or 'TCSETSW2' or 'TCSETSF2' => kernel-termios(data),
+            'TIOCGWINSZ' or 'TIOCSWINSZ' => winsize(data),
+            'TIOCSTI' => (#data > 0) ? data.str(0, 1) : nil,
+            'TCSBRK' or 'TCSBRKP' or 'TCXONC' or 'TCFLSH' or 'TIOCSCTTY' or 'TIOCSIG' => arg,
+            name and name in INT_IOCTLS && #data >= 4 => c.unpack('=i', data),
+            _ => nil
+        }
+    }
+
+    pub const FCNTLS = %{
+        0: 'F_DUPFD', 1: 'F_GETFD', 2: 'F_SETFD', 3: 'F_GETFL', 4: 'F_SETFL', 5: 'F_GETLK',
+        6: 'F_SETLK', 7: 'F_SETLKW', 8: 'F_SETOWN', 9: 'F_GETOWN', 10: 'F_SETSIG', 11: 'F_GETSIG',
+        1024: 'F_SETLEASE', 1025: 'F_GETLEASE', 1026: 'F_NOTIFY', 1030: 'F_DUPFD_CLOEXEC'
+    }
+
+    pub const OPEN_FLAGS = [
+        ('O_WRONLY', 0o1, 0o3), ('O_RDWR', 0o2, 0o3), ('O_APPEND', 0o2000, 0o2000),
+        ('O_NONBLOCK', 0o4000, 0o4000), ('O_DSYNC', 0o10000, 0o10000), ('O_ASYNC', 0o20000, 0o20000),
+        ('O_DIRECT', 0o40000, 0o40000), ('O_NOATIME', 0o1000000, 0o1000000)
+    ]
+
+    pub fn fcntl(cmd: Int, arg: Int, ret: Int) -> Dict[String, _] {
+        let fields = %{'cmd': FCNTLS[cmd] ?? "{cmd}", 'arg': arg}
+        match FCNTLS[cmd] {
+            'F_SETFL'            => fields + %{'flags': flags(arg, OPEN_FLAGS)},
+            'F_GETFL' and ret >= 0 => fields + %{'flags': flags(ret, OPEN_FLAGS)},
+            _                    => fields
+        }
+    }
+}
+
+fn utf8?(b: Blob) -> Bool {
+    b.str() == b.str!()
+}
+
+fn payload(b: Blob) -> Dict[String, String] {
+    utf8?(b) ? %{'text': b.str()} : %{'base64': base64.encode(b)}
+}
+
+pub fn digest(state: Dict[String, _]) -> String {
+    let modes = [[k, state['modes'][k]] for k in state['modes'].keys().sort()]
+    hash.sha256(json.encode([state['size'], state['rows'], state['cursor'], modes])).hexdigest()[;16]
+}
+
+class Timeline {
+    __t0:     Float
+    __screen: Screen
+    __shown:  Dict[String, _]
+    __bells:  Int
+    __lines:  Int
+    events:   Array[Dict[String, _]]
+    frames:   Array[Dict[String, _]]
+
+    init(screen: Screen) {
+        __t0     = time.now()
+        __screen = screen
+        __shown  = %{}
+        __bells  = 0
+        __lines  = 0
+        events   = []
+        frames   = []
+    }
+
+    zero() {
+        __t0 = time.now()
+    }
+
+    us(t: Float = time.now()) -> Int {
+        iround((t - __t0) * 1.0e6)
+    }
+
+    since(nanos: Int) -> Int {
+        iround(nanos / 1000.0 - __t0 * 1.0e6)
+    }
+
+    event(type: String, fields: Dict[String, _] = %{}) -> Dict[String, _] {
+        let e = %{'us': us(), 'type': type} + fields
+        events.push(e)
+        e
+    }
+
+    frame(why: String) -> Int {
+        let s     = __screen
+        let size  = [s.cols, s.rows]
+        let rows  = [s.row(r) for r in ..s.rows]
+        let modes = s.modes
+        let delta = %{}
+
+        if __shown['size'] != size {
+            delta['size'] = size
+            __shown['rows'] = [[]] * s.rows
+        }
+
+        let changed = %{
+            "{r}": row
+            for row; r in rows
+            if __shown['rows'].?[r] != row
+        }
+
+        if #changed > 0 {
+            delta['rows'] = changed
+        }
+
+        if __shown['cursor'] != [s.y, s.x] {
+            delta['cursor'] = %{'row': s.y, 'col': s.x}
+        }
+
+        let before  = __shown['modes'] ?? %{}
+        let flipped = %{k: v for k, v in modes if before[k] != v}
+        for k, _ in before if k not in modes {
+            flipped[k] = nil
+        }
+        if #flipped > 0 {
+            delta['modes'] = flipped
+        }
+
+        if s.bells != __bells {
+            delta['bell'] = s.bells - __bells
+        }
+
+        if s.scrolled != __lines {
+            delta['scrolled'] = s.scrolled - __lines
+        }
+
+        if #delta == 0 {
+            return #frames - 1
+        }
+
+        __shown = %{'size': size, 'rows': rows, 'cursor': [s.y, s.x], 'modes': modes}
+        __bells = s.bells
+        __lines = s.scrolled
+
+        frames.push(%{'us': us(), 'why': why, 'event': #events - 1, 'digest': digest(__shown)} + delta)
+        #frames - 1
+    }
+}
+
+class Tracer {
+    __pid:    Int
+    __in:     Int
+    __out:    Int
+    __err:    Int
+    __buf:    Blob
+    __calls:  Dict[(Int, Int), Dict[String, _]]
+    __order:  Array[(Int, Int)]
+    __data:   Dict[(Int, Int), Blob]
+    ready?:   Bool
+    error:    String | nil
+    lost:     Int | nil
+
+    init(tty: String) {
+        let $root = escalation()
+            or throw RuntimeError('cannot run the eBPF tracer as root (needs passwordless sudo or setuid /usr/bin/tyxx)')
+        let proc = os.spawn(
+            [*root, os.realpath(__file__) ?? __file__, '--tracer', tty, str(os.getpid())],
+            stdin:  os.SPAWN_PIPE,
+            stdout: os.SPAWN_PIPE,
+            stderr: os.SPAWN_PIPE
+        )
+        __pid    = proc.pid
+        __in     = proc.stdin
+        __out    = proc.stdout
+        __err    = proc.stderr
+        __buf    = Blob()
+        __calls  = %{}
+        __order  = []
+        __data   = %{}
+        ready?   = false
+        error    = nil
+        lost     = nil
+    }
+
+    static escalation() -> Array[String] | nil {
+        if os.geteuid() == 0 {
+            return [ty.executable]
+        }
+        let sudo = os.spawn(['sudo', '-n', 'true'], stdin: os.SPAWN_NULL, stdout: os.SPAWN_NULL, stderr: os.SPAWN_NULL)
+        if let (_, status) = os.wait(sudo.pid) and status == 0 {
+            let lib = os.getenv('TY_LIBRARY_PATH') ?? "{Path(ty.executable).parent}/lib"
+            return ['sudo', '-n', 'env', "TY_LIBRARY_PATH={lib}", ty.executable]
+        }
+        if let $st = os.stat('/usr/bin/tyxx') and st.uid == 0 && (st.mode & 0o4000) != 0 {
+            return ['/usr/bin/tyxx']
+        }
+    }
+
+    fd -> Int {
+        __out
+    }
+
+    alive? -> Bool {
+        error == nil && lost == nil
+    }
+
+    wait-ready(timeout: Float) -> Bool {
+        let deadline = time.now() + timeout
+        while !ready? && alive? && time.now() < deadline {
+            os.poll([(__out, os.POLLIN)], [], deadline - time.now())
+            pump()
+        }
+        ready?
+    }
+
+    pump() {
+        let chunk = os.read(__out, 1 << 20)
+        if chunk == nil || #chunk == 0 {
+            error = error ?? "tracer exited unexpectedly: {__stderr()}"
+            lost  = lost ?? 0
+            return
+        }
+        __buf.push(chunk)
+        let at = 0
+        while #__buf - at >= 5 {
+            let (kind, n) = c.unpack('=BI', __buf, at)
+            if #__buf - at < 5 + n {
+                break
+            }
+            let body = __buf.slice(at + 5, n)
+            at += 5 + n
+            match kind {
+                frame.READY => ready? = true,
+                frame.CALL  => __absorb(body),
+                frame.DONE  => lost = int(body.str()),
+                frame.ERROR => error = body.str(),
+                _            => ()
+            }
+        }
+        __buf.splice(0, at)
+    }
+
+    __absorb(r: Blob) {
+        let (ts, enter, id, nr, a0, a1, a2, ret, comm, _, len) = c.unpack(rec.FORMAT, r)
+        let key = (id, enter)
+        if key not in __calls {
+            __order.push(key)
+            __data[key]  = Blob()
+            __calls[key] = %{
+                'ts':    ts,
+                'enter': enter,
+                'pid':   id >> 32,
+                'tid':   id & 0xFFFFFFFF,
+                'comm':  comm.str!().split("\x00")[0],
+                'nr':    nr,
+                'args':  [a0, a1, a2],
+                'ret':   ret
+            }
+        }
+        __data[key]!.push(r.slice(rec.HDR, len))
+    }
+
+    __stderr() -> String {
+        let ready = []
+        if os.poll([(__err, os.POLLIN)], ready, 1.0) > 0 {
+            (os.read(__err, 4096) ?? Blob()).str().lines().filter(\#_ > 0)[-1] ?? ''
+        } else {
+            ''
+        }
+    }
+
+    finish(timeout: Float = 3.0) {
+        os.close(__in)
+        let deadline = time.now() + timeout
+        while lost == nil && time.now() < deadline {
+            os.poll([(__out, os.POLLIN)], [], deadline - time.now())
+            pump()
+        }
+        os.close(__out)
+        os.close(__err)
+        os.kill(__pid, os.SIGTERM)
+        os.wait(__pid)
+    }
+
+    events(tl: Timeline) -> Array[Dict[String, _]] {
+        [__event(tl, __calls[key]!, __data[key]!) for key in __order]
+    }
+
+    __event(tl: Timeline, call: Dict[String, _], data: Blob) -> Dict[String, _] {
+        let num          = call['nr']
+        let ret          = call['ret']
+        let [fd, a1, a2] = call['args']
+        let common = %{
+            'us':       tl.since(call['ts']),
+            'type':     'syscall',
+            'call':     os.sysname(num) ?? "{num}",
+            'pid':      call['pid'],
+            'tid':      call['tid'],
+            'comm':     call['comm'],
+            'fd':       fd,
+            'ret':      ret,
+            'start_us': tl.since(call['enter'])
+        }
+        common + match num {
+            nr.ioctl                    => linux.ioctl(a1, a2, data),
+            nr.fcntl                    => linux.fcntl(a1, a2, ret),
+            nr.close                    => %{},
+            n and n in nr.VECTORED      => %{'iovcnt': a2} + transfer(ret, data),
+            _                           => %{'count': a2} + transfer(ret, data)
+        }
+    }
+
+    static transfer(ret: Int, data: Blob) -> Dict[String, _] {
+        (ret > #data) ? payload(data) + %{'truncated': true} : payload(data)
+    }
+}
+
+const SETTLE    = 0.02
+const SYNC_WAIT = 1.0
+const SIGNALS   = [os.SIGWINCH, os.SIGCHLD, os.SIGTERM, os.SIGHUP, os.SIGINT, os.SIGQUIT]
+
+use Options = {
+    command: Array[String],
+    output:  String | nil,
+    size:    (Int, Int) | nil,
+    trace?:  Bool
+}
+
+fn usage(status: Int = 2) {
+    eprint("usage: {argv[0]} [-o FILE] [-s COLSxROWS] [--no-trace] COMMAND [ARGS...]")
+    eprint("       {argv[0]} --diff A.tui B.tui")
+    os.exit(status)
+}
+
+fn options(args: Array[String], opts: Options = {command: [], output: nil, size: nil, trace?: true}) -> Options {
+    match args {
+        ['-h' or '--help', *_]            => usage(0),
+        ['-o' or '--output', file, *rest] => options(rest, {*opts, output: file}),
+        ['-s' or '--size', size, *rest]   => options(rest, {*opts, size: dimensions(size) ?? usage()}),
+        ['--no-trace', *rest]             => options(rest, {*opts, trace?: false}),
+        ['--', cmd, *rest]                => ({*opts, command: [cmd, *rest]}),
+        [flag, *_] and flag[0] == '-'     => usage(),
+        [cmd, *rest]                      => ({*opts, command: [cmd, *rest]}),
+        []                                => usage()
+    }
+}
+
+fn dimensions(spec: String) -> (Int, Int) | nil {
+    if let [_, cols, rows] = spec.match(/^(\d+)x(\d+)$/) {
+        (int(cols)!, int(rows)!)
+    }
+}
+
+fn program(command: Array[String]) -> Array[String] {
+    match command {
+        [line] => ['/bin/sh', '-c', line],
+        argv   => argv
+    }
+}
+
+fn stem(command: Array[String]) -> String {
+    let word = command[0].words()[0] ?? 'tuicap'
+    word.split('/')[-1]
+}
+
+fn raw(attrs: _) -> _ {
+    let cc = Blob(attrs.cc)
+    cc[termios.VTIME] = 0
+    cc[termios.VMIN]  = 1
+    {
+        *attrs,
+        iflag: attrs.iflag & ~(termios.BRKINT | termios.ICRNL | termios.INPCK | termios.ISTRIP | termios.IXON),
+        oflag: attrs.oflag & ~termios.OPOST,
+        cflag: attrs.cflag | termios.CS8,
+        lflag: attrs.lflag & ~(termios.ECHO | termios.ICANON | termios.ISIG | termios.IEXTEN),
+        cc:    cc
+    }
+}
+
+fn terminal-size() -> (Int, Int) | nil {
+    match os.terminal-size(0) ?? os.terminal-size(1) {
+        {cols, rows, *} and cols > 0 && rows > 0 => (cols, rows),
+        _                                        => nil
+    }
+}
+
+fn spawn(argv: Array[String], pty: _) -> Int {
+    let pid = os.fork()
+    if pid == 0 {
+        os.sigprocmask(os.SIG_SETMASK, [])
+        os.setsid()
+        os.ioctl(pty.slave, TIOCSCTTY, 0)
+        for fd in ..3 {
+            os.dup2(pty.slave, fd)
+        }
+        os.close(pty.slave)
+        os.close(pty.master)
+        os.exec(argv)
+        os.write(2, "tuicap: cannot execute {argv[0]}: {errno.str()}\r\n")
+        os.exit(127)
+    }
+    pid
+}
+
+class Capture {
+    __opts:     Options
+    __argv:     Array[String]
+    __pty:      _
+    __pid:      Int
+    __screen:   Screen
+    __tl:       Timeline
+    __tracer:   Tracer | nil
+    __notes:    Array[String]
+    __status:   Int | nil
+    __saved:    _
+    __sigfd:    Int
+    __stdin?:   Bool
+    __dirty?:   Bool
+    __quiet:    Float
+    __termios:  _
+    __started:  String
+
+    init(opts: Options) {
+        __opts    = opts
+        __argv    = program(opts.command)
+        __notes   = []
+        __status  = nil
+        __stdin?  = true
+        __dirty?  = false
+        __quiet   = time.now()
+        __termios = nil
+        __started = time.strftime('%Y-%m-%dT%H:%M:%S%z')
+        __saved   = os.isatty(0) ? termios.tcgetattr(0) : nil
+
+        let (cols, rows) = opts.size ?? terminal-size() ?? (80, 24)
+
+        __pty    = os.openpty((rows, cols)) ?? throw OSError('openpty()')
+        __screen = Screen(cols, rows)
+        __tl     = Timeline(__screen)
+
+        if __saved != nil {
+            termios.tcsetattr(__pty.slave, termios.TCSANOW, __saved)
+        }
+
+        __tracer = nil
+        if opts.trace? {
+            __start-tracer()
+        }
+    }
+
+    __start-tracer() {
+        let failure = try {
+            let t = Tracer(__pty.name)
+            if t.wait-ready(10.0) {
+                __tracer = t
+                return
+            }
+            t.finish(0.5)
+            t.error ?? 'tracer did not become ready'
+        } catch e: RuntimeError | OSError {
+            "{e}"
+        }
+        __notes.push("syscall tracing unavailable: {failure}")
+    }
+
+    run() -> Int {
+        os.sigprocmask(os.SIG_BLOCK, SIGNALS)
+        __sigfd = os.signalfd(-1, os.sigset(SIGNALS), os.SFD_CLOEXEC | os.SFD_NONBLOCK)
+
+        __tl.zero()
+        __pid = spawn(__argv, __pty)
+        os.close(__pty.slave)
+
+        if __saved != nil {
+            termios.tcsetattr(0, termios.TCSANOW, raw(__saved))
+        }
+
+        try {
+            __tl.frame('start')
+            __watch-termios()
+            __loop()
+            __drain()
+            __tl.frame('exit')
+        } finally {
+            if __saved != nil {
+                termios.tcsetattr(0, termios.TCSADRAIN, __saved)
+            }
+            os.sigprocmask(os.SIG_UNBLOCK, SIGNALS)
+        }
+
+        if let $t = __tracer {
+            t.finish()
+            if let $error = t.error {
+                __notes.push("syscall tracer: {error}")
+            }
+        }
+
+        let file = __opts.output ?? "{stem(__opts.command)}_{__pid}.tui"
+        Path(file).write(zstd.compress(json.encode(__document()), 9))
+
+        for note in __notes {
+            eprint("tuicap: {note}")
+        }
+        eprint("Recording written to: {file}")
+
+        __exit-code()
+    }
+
+    __exit-code() -> Int {
+        let $s = __status or return 1
+        (os.WIFSIGNALED(s) != 0) ? 128 + os.WTERMSIG(s) : os.WEXITSTATUS(s)
+    }
+
+    __fds() -> Array[(Int, Int)] {
+        [
+            *(__stdin? ? [(0, os.POLLIN)] : []),
+            (__pty.master, os.POLLIN),
+            (__sigfd, os.POLLIN),
+            *((__tracer != nil && __tracer.alive?) ? [(__tracer.fd, os.POLLIN)] : [])
+        ]
+    }
+
+    __loop() {
+        let ready = []
+        while __status == nil {
+            os.poll(__fds(), ready, __dirty? ? SETTLE : 0.1)
+            for (fd, _) in ready {
+                if !__dispatch(fd) {
+                    return
+                }
+            }
+            __settle()
+            __watch-termios()
+        }
+    }
+
+    __dispatch(fd: Int) -> Bool {
+        match fd {
+            0                             => __on-input(),
+            m and m == __pty.master       => return __on-output(),
+            s and s == __sigfd            => __on-signal(),
+            _                             => __tracer.?pump()
+        }
+        true
+    }
+
+    __drain() {
+        let ready = []
+        while os.poll([(__pty.master, os.POLLIN)], ready, 0.05) > 0 {
+            break if !__on-output()
+        }
+        __reap(0)
+    }
+
+    __on-input() {
+        let data = os.read(0, 65536)
+        if data == nil || #data == 0 {
+            __stdin? = false
+            __send-eof()
+            return
+        }
+        let shown = __tl.frame('input')
+        __tl.event('input', %{'frame': shown} + payload(data))
+        os.write(__pty.master, data, all=true)
+    }
+
+    __send-eof() {
+        let $t = termios.tcgetattr(__pty.master) or return
+        if (t.lflag & termios.ICANON) != 0 {
+            let eof = t.cc.str(linux.CC.search('VEOF')!, 1)
+            __tl.event('input', %{'frame': #__tl.frames - 1, 'eof': true, 'text': eof})
+            os.write(__pty.master, eof, all=true)
+        }
+    }
+
+    __on-output() -> Bool {
+        let data = os.read(__pty.master, 65536)
+        if data == nil || #data == 0 {
+            return false
+        }
+        os.write(1, data, all=true)
+        __tl.event('output', payload(data))
+        __screen.feed(data)
+        __dirty? = true
+        __quiet  = time.now()
+        true
+    }
+
+    __settle() {
+        let idle = time.now() - __quiet
+        if __dirty? && idle >= SETTLE && (!__screen.synchronized? || idle >= SYNC_WAIT) {
+            __tl.frame('idle')
+            __dirty? = false
+        }
+    }
+
+    __on-signal() {
+        while let $info = os.read(__sigfd, 128) and #info == 128 {
+            match c.unpack('=I', info) {
+                os.SIGWINCH => __resize(),
+                os.SIGCHLD  => __reap(os.WNOHANG),
+                sig          => do {
+                    __tl.event('signal', %{'signal': "SIG{os.signame(sig) ?? sig}"})
+                    os.kill(-__pid, sig)
+                }
+            }
+        }
+    }
+
+    __reap(flags: Int) {
+        if __status != nil {
+            return
+        }
+        if let (pid, status) = os.wait(__pid, flags) and pid == __pid {
+            __status = status
+            __tl.event('exit', __exit-detail(status)!)
+        }
+    }
+
+    static __exit-detail(status: Int | nil) -> Dict[String, _] | nil {
+        let $s = status or return nil
+        (os.WIFSIGNALED(s) != 0)
+            ? %{'signal': "SIG{os.signame(os.WTERMSIG(s)) ?? os.WTERMSIG(s)}"}
+            : %{'code': os.WEXITSTATUS(s)}
+    }
+
+    __resize() {
+        if __opts.size != nil {
+            return
+        }
+        let (cols, rows) = terminal-size() ?? return
+        if cols == __screen.cols && rows == __screen.rows {
+            return
+        }
+        __tl.frame('resize')
+        os.ioctl(__pty.master, TIOCSWINSZ, c.pack(Blob(), '=HHHH', rows, cols, 0, 0))
+        __screen.resize(cols, rows)
+        __tl.event('resize', %{'cols': cols, 'rows': rows})
+    }
+
+    __watch-termios() {
+        let $t = termios.tcgetattr(__pty.master) or return
+        if t != __termios {
+            __termios = t
+            __tl.event('termios', linux.termios(t.iflag, t.oflag, t.cflag, t.lflag, t.cc))
+        }
+    }
+
+    __document() -> Dict[String, _] {
+        let events = __tl.events
+        let calls  = __tracer.?events(__tl) ?? []
+        for e; i in events {
+            e['_'] = i
+        }
+        let merged = (events + calls).sort(by=e -> (e['us'], e['_'] ?? Int.MAX))
+        let index  = %{}
+        for e; i in merged {
+            if let $j = e['_'] {
+                index[j] = i
+                e.remove('_')
+            }
+        }
+        for f in __tl.frames {
+            f['event'] = index[f['event']] ?? -1
+        }
+
+        %{
+            'format':      'tuicap/1',
+            'command':     __opts.command,
+            'argv':        __argv,
+            'pid':         __pid,
+            'cwd':         os.getcwd(),
+            'term':        os.getenv('TERM'),
+            'started':     __started,
+            'duration_us': __tl.us(),
+            'size':        %{'cols': __tl.frames[0]['size'][0], 'rows': __tl.frames[0]['size'][1]},
+            'exit':        __exit-detail(__status),
+            'trace':       __trace-summary(),
+            'frames':      __tl.frames,
+            'events':      merged
+        }
+    }
+
+    __trace-summary() -> Dict[String, _] {
+        match __tracer {
+            nil => %{'source': nil, 'reason': __notes.join('; ')},
+            t   => %{'source': 'ebpf', 'lost': t.lost, 'error': t.error}
+        }
+    }
+}
+
+pub fn load(file: String) -> Dict[String, _] {
+    json.parse(zstd.decompress(Path(file).read-bytes()))
+}
+
+pub fn states*(doc: Dict[String, _]) {
+    let size   = nil
+    let rows   = []
+    let cursor = nil
+    let modes  = %{}
+    for f in doc['frames'] {
+        if let $s = f['size'] {
+            size = s
+            rows = [[]] * s[1]
+        }
+        for k, row in f['rows'] ?? %{} {
+            let r = int(k)!
+            rows[r] = row
+        }
+        if let $c = f['cursor'] {
+            cursor = [c['row'], c['col']]
+        }
+        for k, v in f['modes'] ?? %{} {
+            modes[k] = v
+        }
+        yield %{'size': size, 'rows': [*rows], 'cursor': cursor, 'modes': %{k: v for k, v in modes if v != nil}}
+    }
+}
+
+fn checkpoints(doc: Dict[String, _]) -> Dict[Int, (String, Dict[String, _])] {
+    let screens = [*states(doc)]
+    let marks   = %{}
+    let offset  = 0
+    for e in doc['events'] if e['type'] == 'input' {
+        let bytes = e['text'] ?? base64.decode(e['base64']).str()
+        marks[offset] = (bytes, screens[e['frame']])
+        offset += #Blob(bytes)
+    }
+    marks[Int.MAX] = ('', screens[-1])
+    marks
+}
+
+fn typed(doc: Dict[String, _]) -> Blob {
+    let all = Blob()
+    for e in doc['events'] if e['type'] == 'input' {
+        all.push(e['text'] ?? base64.decode(e['base64']))
+    }
+    all
+}
+
+fn text-of(row: Array[Array[String]]) -> String {
+    row.map(&0).join('')
+}
+
+fn contrast-row(r: Int, x: Array[Array[String]], y: Array[Array[String]]) -> String {
+    match (text-of(x), text-of(y)) {
+        (s, t) and s != t => "  row {r:>2}: {json.encode(s.strip-right())}\n          {json.encode(t.strip-right())}",
+        _                 => "  row {r:>2} styles: {json.encode(x)}\n                 {json.encode(y)}"
+    }
+}
+
+fn contrast(a: Dict[String, _], b: Dict[String, _]) -> Array[String] {
+    let lines = []
+    if a['size'] != b['size'] {
+        lines.push("  size:   {a['size']} | {b['size']}")
+    }
+    let rows = [
+        r for r in ..max(#a['rows'], #b['rows'])
+        if a['rows'].?[r] != b['rows'].?[r]
+    ]
+    for r in rows[;8] {
+        lines.push(contrast-row(r, a['rows'].?[r] ?? [], b['rows'].?[r] ?? []))
+    }
+    if #rows > 8 {
+        lines.push("  ... and {#rows - 8} more rows")
+    }
+    if a['cursor'] != b['cursor'] {
+        lines.push("  cursor: {a['cursor']} | {b['cursor']}")
+    }
+    for k in (a['modes'].keys() + b['modes'].keys()).nub().sort() if a['modes'][k] != b['modes'][k] {
+        lines.push("  {k}: {json.encode(a['modes'][k])} | {json.encode(b['modes'][k])}")
+    }
+    lines
+}
+
+fn compare(left: String, right: String) -> Int {
+    let (a, b) = (load(left), load(right))
+    let (ia, ib) = (typed(a), typed(b))
+    print(ia == ib ? "inputs: identical ({#ia} bytes)" : "inputs: differ ({#ia} vs {#ib} bytes)")
+
+    let (ca, cb) = (checkpoints(a), checkpoints(b))
+    let shared   = ca.keys().filter(\_ in cb).sort()
+    for at in shared {
+        let ((key, sa), (_, sb)) = (ca[at]!, cb[at]!)
+        if digest(sa) != digest(sb) {
+            let label = (at == Int.MAX) ? 'at exit' : "before input byte {at} ({json.encode(key)})"
+            print("screens differ {label}:")
+            print(contrast(sa, sb).unlines())
+            return 1
+        }
+    }
+    print("screens: identical at {#shared} checkpoints")
+    (ia == ib) ? 0 : 1
+}
+
+if __module__ == 'main' {
+    match argv[1;] {
+        ['--diff', left, right] => os.exit(compare(left, right)),
+        ['--tracer', tty, skip] => {
+            try {
+                tracer(tty, int(skip)!)
+            } catch e {
+                frame.put(frame.ERROR, "{e}")
+                os.exit(1)
+            }
+        },
+        args => os.exit(Capture(options(args)).run())
+    }
+}

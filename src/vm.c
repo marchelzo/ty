@@ -7706,6 +7706,9 @@ TargetMember:
                         break;
 
                 CASE(PUSH_DROP)
+                        if (vN(DROP_STACK) == 0) {
+                                zP("no active drop group for resource binding");
+                        }
                         uvP(*vvL(DROP_STACK)->array, peek());
                         break;
 

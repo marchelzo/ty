@@ -2498,7 +2498,9 @@ prefix_identifier(Ty *ty)
 
         // TODO: maybe get rid of this
         if (!NoConstraint && try_consume(':', TT_PUNCT)) {
+                SAVE_NA(true);
                 e->constraint = parse_type(ty, 0);
+                LOAD_NA();
         } else {
                 e->constraint = NULL;
         }
@@ -5594,6 +5596,7 @@ is_postfix(struct token const *t)
         switch (t->type) {
         case TOKEN_INC:
         case TOKEN_DEC:
+        case '!':
                 return true;
         default:
                 return false;

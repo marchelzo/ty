@@ -1,0 +1,204 @@
+import io
+
+pub use Source = Int | io.Stream | PathLike
+
+pub class CSVError < RuntimeError {
+    line: Int
+
+    init(msg: String, line: Int) {
+        super("{msg} on line {line}")
+        self.line = line
+    }
+}
+
+pub class Reader : Iter[_] {
+    __lines:  Iter[String]
+    __stream: io.Stream | nil
+    __sep:    String
+    __quote:  String
+    __line:   Int
+
+    header: Array[String] | nil
+
+    init(
+        lines: Iterable[String],
+        stream: io.Stream | nil = nil,
+        sep: String = ',',
+        quote: String = '"',
+        header: Bool | Array[String] = false
+    ) {
+        __lines  = lines.__iter__()
+        __stream = stream
+        __sep    = sep
+        __quote  = quote
+        __line   = 0
+
+        self.header = match header {
+            true  => __record(),
+            false => nil,
+            names => names
+        }
+    }
+
+    line -> Int { __line }
+
+    close() {
+        if let $s = __stream {
+            __stream = nil
+            s.close()
+        }
+    }
+
+    __enter__() { self }
+    __drop__() { close() }
+
+    __next__() -> Some[_] | None {
+        let $fields = __record() or return None
+        let $names  = header or return Some(fields)
+        Some(tuple(**%{k: v for (k, v) in names.zip(fields)}))
+    }
+
+    __pull() -> String | nil {
+        if let Some(line) = __lines.__next__() {
+            __line += 1
+            return line
+        }
+
+        close()
+    }
+
+    __record() -> Array[String] | nil {
+        let $record = __pull() or return nil
+
+        while record == '' {
+            record = __pull() ?? return nil
+        }
+
+        while record.count(__quote) % 2 == 1 {
+            let $more = __pull() or throw CSVError('unterminated quoted field', __line)
+            record = "{record}\n{more}"
+        }
+
+        split(record, __sep, __quote)
+    }
+}
+
+fn split(record: String, sep: String, q: String) -> Array[String] {
+    if !record.contains?(q) {
+        return record.split(sep)
+    }
+
+    record.split(sep).fold([], absorb@(_, _, sep, q)).map(unquote@(_, q))
+}
+
+fn absorb(fields: Array[String], piece: String, sep: String, q: String) -> Array[String] {
+    if fields && fields[-1].count(q) % 2 == 1 {
+        fields[-1] = "{fields[-1]}{sep}{piece}"
+    } else {
+        fields.push(piece)
+    }
+
+    fields
+}
+
+fn unquote(field: String, q: String) -> String {
+    (#field > 1 && field.starts?(q) && field.ends?(q))
+        ? field[1;-1].replace(q * 2, q)
+        : field
+}
+
+fn cell(x: _, sep: String, q: String) -> String {
+    let s = (x == nil) ? '' : prelude::str(x)
+    (s.contains?(sep) || s.contains?(q) || s.match?(/[\r\n]/))
+        ? "{q}{s.replace(q, q * 2)}{q}"
+        : s
+}
+
+fn keyed(row: _) -> Dict | nil {
+    match row {
+        d: Dict  => d,
+        t: Tuple => Tuple.named?(t) ? members(t) : nil,
+        _        => nil
+    }
+}
+
+fn cells(row: _, names: Array | nil) -> Iterable {
+    match keyed(row) {
+        nil => row,
+        d   => names ? names.map(k -> d[k]) : d.values()
+    }
+}
+
+fn lines*(
+    rows: Iterable,
+    sep: String = ',',
+    quote: String = '"',
+    eol: String = '\n',
+    header: Bool | Array[String] = true
+) {
+    let render = row -> "{[cell(x, sep, quote) for x in row].join(sep)}{eol}"
+    let names  = (header :: Array) ? header : nil
+
+    if names {
+        yield render(names)
+    }
+
+    for row; i in rows {
+        if i == 0 and header == true and let $d = keyed(row) {
+            names = d.keys()
+            yield render(names)
+        }
+        yield render(cells(row, names))
+    }
+}
+
+fn attach(target: Source, mode: String) -> (io.Stream, Bool) {
+    match target {
+        fd: Int      => (io.Stream(fd, mode, dup: true), true),
+        s: io.Stream => (s, false),
+        p            => (io.open(prelude::str(p.__path__()), mode), true)
+    }
+}
+
+fn chomp*(stream: io.Stream) {
+    while let $line = stream.next-line() {
+        yield line.ends?('\r') ? line[;-1] : line
+    }
+}
+
+pub fn read(src: Source, %opts) -> Reader {
+    let (stream, own?) = attach(src, 'r')
+    Reader(chomp(stream), own? ? stream : nil, **opts)
+}
+
+pub fn load(src: Source, %opts) -> Array {
+    read(src, **opts).list()
+}
+
+pub fn scan(data: String | Blob, %opts) -> Reader {
+    Reader(((data :: Blob) ? data.str() : data).lines(), **opts)
+}
+
+pub fn parse(data: String | Blob, %opts) -> Array {
+    scan(data, **opts).list()
+}
+
+pub fn str(rows: Iterable, %opts) -> String {
+    let out = Blob()
+
+    for line in lines(rows, **opts) {
+        out.push(line)
+    }
+
+    out.str!()
+}
+
+pub fn write(rows: Iterable, dst: Source, %opts) {
+    let (stream, own?) = attach(dst, 'w')
+
+    for line in lines(rows, **opts) {
+        stream.write(line)
+    }
+
+    own? ? stream.close() : stream.flush()
+}

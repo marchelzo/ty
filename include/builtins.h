@@ -601,6 +601,88 @@ static struct {
   { .module = "termios",    .name = "TCSAFLUSH",                .value = INT(TCSAFLUSH)                           },
   { .module = "termios",    .name = "VMIN",                     .value = INT(VMIN)                                },
   { .module = "termios",    .name = "VTIME",                    .value = INT(VTIME)                               },
+  { .module = "termios",    .name = "VEOF",                     .value = INT(VEOF)                                },
+  { .module = "termios",    .name = "VEOL",                     .value = INT(VEOL)                                },
+  { .module = "termios",    .name = "VERASE",                   .value = INT(VERASE)                              },
+  { .module = "termios",    .name = "VINTR",                    .value = INT(VINTR)                               },
+  { .module = "termios",    .name = "VKILL",                    .value = INT(VKILL)                               },
+  { .module = "termios",    .name = "VQUIT",                    .value = INT(VQUIT)                               },
+  { .module = "termios",    .name = "VSTART",                   .value = INT(VSTART)                              },
+  { .module = "termios",    .name = "VSTOP",                    .value = INT(VSTOP)                               },
+  { .module = "termios",    .name = "VSUSP",                    .value = INT(VSUSP)                               },
+  { .module = "termios",    .name = "NCCS",                     .value = INT(NCCS)                                },
+#ifdef VEOL2
+  { .module = "termios",    .name = "VEOL2",                    .value = INT(VEOL2)                               },
+#endif
+#ifdef VWERASE
+  { .module = "termios",    .name = "VWERASE",                  .value = INT(VWERASE)                             },
+#endif
+#ifdef VLNEXT
+  { .module = "termios",    .name = "VLNEXT",                   .value = INT(VLNEXT)                              },
+#endif
+#ifdef VREPRINT
+  { .module = "termios",    .name = "VREPRINT",                 .value = INT(VREPRINT)                            },
+#endif
+#ifdef VDISCARD
+  { .module = "termios",    .name = "VDISCARD",                 .value = INT(VDISCARD)                            },
+#endif
+#ifdef VSWTC
+  { .module = "termios",    .name = "VSWTC",                    .value = INT(VSWTC)                               },
+#endif
+#ifdef ECHOCTL
+  { .module = "termios",    .name = "ECHOCTL",                  .value = INT(ECHOCTL)                             },
+#endif
+#ifdef ECHOKE
+  { .module = "termios",    .name = "ECHOKE",                   .value = INT(ECHOKE)                              },
+#endif
+#ifdef ECHOPRT
+  { .module = "termios",    .name = "ECHOPRT",                  .value = INT(ECHOPRT)                             },
+#endif
+#ifdef PENDIN
+  { .module = "termios",    .name = "PENDIN",                   .value = INT(PENDIN)                              },
+#endif
+#ifdef FLUSHO
+  { .module = "termios",    .name = "FLUSHO",                   .value = INT(FLUSHO)                              },
+#endif
+#ifdef EXTPROC
+  { .module = "termios",    .name = "EXTPROC",                  .value = INT(EXTPROC)                             },
+#endif
+#ifdef XCASE
+  { .module = "termios",    .name = "XCASE",                    .value = INT(XCASE)                               },
+#endif
+#ifdef IUCLC
+  { .module = "termios",    .name = "IUCLC",                    .value = INT(IUCLC)                               },
+#endif
+#ifdef OLCUC
+  { .module = "termios",    .name = "OLCUC",                    .value = INT(OLCUC)                               },
+#endif
+#ifdef CRTSCTS
+  { .module = "termios",    .name = "CRTSCTS",                  .value = INT(CRTSCTS)                             },
+#endif
+#ifdef CMSPAR
+  { .module = "termios",    .name = "CMSPAR",                   .value = INT(CMSPAR)                              },
+#endif
+#ifdef CBAUD
+  { .module = "termios",    .name = "CBAUD",                    .value = INT(CBAUD)                               },
+#endif
+#ifdef BOTHER
+  { .module = "termios",    .name = "BOTHER",                   .value = INT(BOTHER)                              },
+#endif
+#ifdef NLDLY
+  { .module = "termios",    .name = "NLDLY",                    .value = INT(NLDLY)                               },
+#endif
+#ifdef CRDLY
+  { .module = "termios",    .name = "CRDLY",                    .value = INT(CRDLY)                               },
+#endif
+#ifdef TABDLY
+  { .module = "termios",    .name = "TABDLY",                   .value = INT(TABDLY)                              },
+#endif
+#ifdef BSDLY
+  { .module = "termios",    .name = "BSDLY",                    .value = INT(BSDLY)                               },
+#endif
+#ifdef FFDLY
+  { .module = "termios",    .name = "FFDLY",                    .value = INT(FFDLY)                               },
+#endif
 #endif
 
   { .module = "ty",         .name = "valueSize",                .value = INT(sizeof (Value))                      },

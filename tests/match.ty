@@ -113,3 +113,31 @@ pub fn class-constraints-narrow-later-arms() {
     assert(describe([1, 2]) == 'small: 2')
     assert(describe([1, 2, 3, 4]) == 'big: 4')
 }
+
+fn classify(x) -> String {
+    match x {
+        n: Int and n > 0         => "positive {n + 1}",
+        s: String and #s > 2     => "long {s}",
+        f: Float | Int and f < 0 => 'negative',
+        _                        => 'other'
+    }
+}
+
+fn successor(x: Int | nil) -> Int {
+    match x {
+        n: Int and n > 0 => n + 1,
+        _                => 0
+    }
+}
+
+pub fn annotated-patterns-take-guards() {
+    assert(classify(3) == 'positive 4')
+    assert(classify(-1) == 'negative')
+    assert(classify(-0.5) == 'negative')
+    assert(classify('abcd') == 'long abcd')
+    assert(classify('a') == 'other')
+    assert(classify(nil) == 'other')
+    assert(successor(41) == 42)
+    assert(successor(-3) == 0)
+    assert(successor(nil) == 0)
+}
