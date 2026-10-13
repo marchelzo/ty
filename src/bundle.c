@@ -344,11 +344,38 @@ collect_modules(Ty *ty, char const *script, Files *files, char *entry, usize cap
 }
 
 static void
-collect_natives(Files *files, List *origs)
+add_native(Files *files, List *origs, char const *name, char const *real)
+{
+        char rel[PATH_MAX];
+
+        for (int i = 0; i < files->n; ++i) {
+                if (strcmp(files->items[i].path, real) == 0) {
+                        return;
+                }
+        }
+
+        snprintf(rel, sizeof rel, "native/%s", base(name));
+        for (int k = 1; !fput(files, rel, real, 0755); ++k) {
+                snprintf(rel, sizeof rel, "native/%d-%s", k, base(name));
+        }
+
+        lput(origs, name);
+        lput(origs, rel);
+}
+
+static bool
+collect_natives(Files *files, List *origs, char **extra, int nextra)
 {
         List after = {0};
         char real[PATH_MAX];
-        char rel[PATH_MAX];
+
+        for (int i = 0; i < nextra; ++i) {
+                if (realpath(extra[i], real) == NULL || !regular(real)) {
+                        fprintf(stderr, "ty --bundle: %s: not a file\n", extra[i]);
+                        return false;
+                }
+                add_native(files, origs, extra[i], real);
+        }
 
         images(&after);
 
@@ -364,14 +391,10 @@ collect_natives(Files *files, List *origs)
                         continue;
                 }
 
-                snprintf(rel, sizeof rel, "native/%s", base(name));
-                for (int k = 1; !fput(files, rel, real, 0755); ++k) {
-                        snprintf(rel, sizeof rel, "native/%d-%s", k, base(name));
-                }
-
-                lput(origs, name);
-                lput(origs, rel);
+                add_native(files, origs, name, real);
         }
+
+        return true;
 }
 
 static bool
@@ -620,7 +643,15 @@ default_output(char const *script)
 }
 
 int
-bundle_create(Ty *ty, char const *script, char const *out, char **flags, int nflags)
+bundle_create(
+        Ty *ty,
+        char const *script,
+        char const *out,
+        char **flags,
+        int nflags,
+        char **extra,
+        int nextra
+)
 {
         Files files = {0};
         List natives = {0};
@@ -658,7 +689,9 @@ bundle_create(Ty *ty, char const *script, char const *out, char **flags, int nfl
                 return 1;
         }
 
-        collect_natives(&files, &natives);
+        if (!collect_natives(&files, &natives, extra, nextra)) {
+                return 1;
+        }
 
         bputs(&manifest, "entry\t");
         bputs(&manifest, entry);

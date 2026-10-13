@@ -61,6 +61,14 @@ void
 bundle_snapshot(void);
 
 int
-bundle_create(Ty *ty, char const *script, char const *out, char **flags, int nflags);
+bundle_create(
+        Ty *ty,
+        char const *script,
+        char const *out,
+        char **flags,
+        int nflags,
+        char **natives,
+        int nnatives
+);
 
 #endif

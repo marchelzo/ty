@@ -99,6 +99,8 @@ static char const *HighlightTheme = NULL;
 #ifdef TY_BUNDLER
 static char const *BundleOut = NULL;
 static bool BundleRunning = false;
+static char **BundleNatives = NULL;
+static int BundleNativeCount = 0;
 #endif
 
 extern bool ProduceAnnotation;
@@ -138,6 +140,8 @@ usage(void)
                 "    --bundle[=OUT] SCRIPT                                                                \0"
                 "                  Write a standalone executable OUT (default: SCRIPT without .ty) that   \0"
                 "                  runs SCRIPT; ty options given alongside --bundle are kept              \0"
+                "    --bundle-native=LIB                                                                  \0"
+                "                  Also include native library LIB in the bundle (repeatable)             \0"
 #endif
 #ifdef TY_PROFILER
                 "    -F FREQ       Set profiler sampling frequency in Hz (default: every instruction)     \0"
@@ -519,6 +523,22 @@ ProcessArgs(char *argv[], bool first)
                 }
 
 #ifdef TY_BUNDLER
+                if (s_eq(argv[argi], "--bundle-native") || s_eq_n(argv[argi], "--bundle-native=", 16)) {
+                        char const *lib = (argv[argi][15] == '=') ? argv[argi] + 16 : argv[++argi];
+                        if (lib == NULL || *lib == '\0') {
+                                fprintf(stderr, "Missing argument for --bundle-native\n");
+                                exit(1);
+                        }
+                        if (first) {
+                                BundleNatives = realloc(
+                                        BundleNatives,
+                                        (BundleNativeCount + 1) * sizeof *BundleNatives
+                                );
+                                BundleNatives[BundleNativeCount++] = (char *)lib;
+                        }
+                        goto NextOption;
+                }
+
                 if (s_eq(argv[argi], "--bundle") || s_eq_n(argv[argi], "--bundle=", 9)) {
                         char const *eq = strchr(argv[argi], '=');
                         BundleOut = (eq != NULL) ? eq + 1 : "";
@@ -983,10 +1003,13 @@ RunBundler(int argc, char **argv, int nopt)
         }
 
         for (int i = 1; i < nopt; ++i) {
-                if (
+                if (s_eq(argv[i], "--bundle-native")) {
+                        i += 1;
+                } else if (
                         !s_eq(argv[i], "--")
                      && !s_eq(argv[i], "--bundle")
                      && !s_eq_n(argv[i], "--bundle=", 9)
+                     && !s_eq_n(argv[i], "--bundle-native=", 16)
                 ) {
                         flags[nflags++] = argv[i];
                 }
@@ -1000,7 +1023,17 @@ RunBundler(int argc, char **argv, int nopt)
                 exit(1);
         }
 
-        exit(bundle_create(ty, SourceFile, BundleOut, flags, nflags));
+        exit(
+                bundle_create(
+                        ty,
+                        SourceFile,
+                        BundleOut,
+                        flags,
+                        nflags,
+                        BundleNatives,
+                        BundleNativeCount
+                )
+        );
 }
 #endif
 
@@ -1105,6 +1138,11 @@ main(int argc, char **argv)
 #ifdef TY_BUNDLER
         if (BundleRunning && nopt < argc) {
                 argv[nopt] = argv[0];
+        }
+
+        if (BundleNativeCount > 0 && BundleOut == NULL) {
+                fprintf(stderr, "ty: --bundle-native requires --bundle\n");
+                exit(1);
         }
 
         if (BundleOut != NULL && !RunningTests) {
