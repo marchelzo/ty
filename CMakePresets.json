@@ -157,6 +157,46 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug"
             }
+        },
+        {
+            "name": "gcc-single",
+            "inherits": "gcc",
+            "displayName": "GCC - amd64 - Release - Single Binary",
+            "description": "Using GCC; ty, tyls, tytest, typrof and lib/ in one executable",
+            "cacheVariables": {
+                "TY_MULTICALL": true,
+                "TY_EMBED_LIB": true
+            }
+        },
+        {
+            "name": "gcc-ninja-single",
+            "inherits": "gcc-ninja",
+            "displayName": "GCC - amd64 - Release - Single Binary",
+            "description": "Using GCC with Ninja; ty, tyls, tytest, typrof and lib/ in one executable",
+            "cacheVariables": {
+                "TY_MULTICALL": true,
+                "TY_EMBED_LIB": true
+            }
+        },
+        {
+            "name": "clang-osx-single",
+            "inherits": "clang-osx",
+            "displayName": "Clang - amd64 - Release - Single Binary",
+            "description": "Using Clang on MacOS; ty, tyls, tytest, typrof and lib/ in one executable",
+            "cacheVariables": {
+                "TY_MULTICALL": true,
+                "TY_EMBED_LIB": true
+            }
+        },
+        {
+            "name": "clang-freebsd-single",
+            "inherits": "clang-freebsd",
+            "displayName": "Clang - amd64 - Release - Single Binary",
+            "description": "Using base system Clang on FreeBSD; ty, tyls, tytest, typrof and lib/ in one executable",
+            "cacheVariables": {
+                "TY_MULTICALL": true,
+                "TY_EMBED_LIB": true
+            }
         }
     ],
     "buildPresets": [
@@ -227,6 +267,34 @@
             "inherits": "base-build",
             "displayName": "FreeBSD Ports - amd64 - Release",
             "configurePreset": "freebsd-ports",
+            "configuration": "Release"
+        },
+        {
+            "name": "gcc-single",
+            "inherits": "base-build",
+            "displayName": "GCC - amd64 - Release - Single Binary",
+            "configurePreset": "gcc-single",
+            "configuration": "Release"
+        },
+        {
+            "name": "gcc-ninja-single",
+            "inherits": "base-build",
+            "displayName": "GCC - amd64 - Release - Single Binary",
+            "configurePreset": "gcc-ninja-single",
+            "configuration": "Release"
+        },
+        {
+            "name": "clang-osx-single",
+            "inherits": "base-build",
+            "displayName": "Clang - amd64 - Release - Single Binary",
+            "configurePreset": "clang-osx-single",
+            "configuration": "Release"
+        },
+        {
+            "name": "clang-freebsd-single",
+            "inherits": "base-build",
+            "displayName": "Clang - amd64 - Release - Single Binary",
+            "configurePreset": "clang-freebsd-single",
             "configuration": "Release"
         }
     ],
@@ -399,6 +467,58 @@
                 {
                     "type": "build",
                     "name": "freebsd-ports"
+                }
+            ]
+        },
+        {
+            "name": "gcc-single",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "gcc-single"
+                },
+                {
+                    "type": "build",
+                    "name": "gcc-single"
+                }
+            ]
+        },
+        {
+            "name": "gcc-ninja-single",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "gcc-ninja-single"
+                },
+                {
+                    "type": "build",
+                    "name": "gcc-ninja-single"
+                }
+            ]
+        },
+        {
+            "name": "clang-osx-single",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "clang-osx-single"
+                },
+                {
+                    "type": "build",
+                    "name": "clang-osx-single"
+                }
+            ]
+        },
+        {
+            "name": "clang-freebsd-single",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "clang-freebsd-single"
+                },
+                {
+                    "type": "build",
+                    "name": "clang-freebsd-single"
                 }
             ]
         }

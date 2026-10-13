@@ -11,6 +11,7 @@
 #include "vm.h"
 #include "cffi.h"
 #include "class.h"
+#include "bundle.h"
 
 static usize
 struct_count(ffi_type const *t)
@@ -921,6 +922,10 @@ TY_BUILTIN_RAW(ffi_dlopen)
 
 #ifdef _WIN32
         void *p = LoadLibraryA(PATH_ARG(0));
+#elif defined(TY_EMBED_LIB)
+        char const *path = PATH_ARG(0);
+        char const *bundled = bundle_native(path);
+        void *p = dlopen((bundled != NULL) ? bundled : path, RTLD_NOW);
 #else
         void *p = dlopen(PATH_ARG(0), RTLD_NOW);
 #endif

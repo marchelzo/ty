@@ -32,6 +32,11 @@
 #include "title.h"
 #include "ty/debug.h"
 
+#if defined(TY_EMBED_LIB) && !defined(TY_TEST) && !defined(TY_PROFILER)
+#define TY_BUNDLER
+#include "bundle.h"
+#endif
+
 Ty vvv;
 TY xD;
 
@@ -91,6 +96,11 @@ bool InteractiveSession = false;
 
 static char const *HighlightTheme = NULL;
 
+#ifdef TY_BUNDLER
+static char const *BundleOut = NULL;
+static bool BundleRunning = false;
+#endif
+
 extern bool ProduceAnnotation;
 extern FILE *DisassemblyOut;
 
@@ -124,6 +134,11 @@ usage(void)
                 "                    (- is interpreted as stdout, and @ is interpreted as stderr)         \0"
                 "    --test [FILE | TARGET...] [OPTS]   Run tests: top-level pub functions in test files. \0"
                 "                                       `ty --test --help` lists runner options.          \0"
+#ifdef TY_BUNDLER
+                "    --bundle[=OUT] SCRIPT                                                                \0"
+                "                  Write a standalone executable OUT (default: SCRIPT without .ty) that   \0"
+                "                  runs SCRIPT; ty options given alongside --bundle are kept              \0"
+#endif
 #ifdef TY_PROFILER
                 "    -F FREQ       Set profiler sampling frequency in Hz (default: every instruction)     \0"
                 "    -o FILE       Write profile data to FILE instead of stdout                           \0"
@@ -503,6 +518,14 @@ ProcessArgs(char *argv[], bool first)
                         goto NextOption;
                 }
 
+#ifdef TY_BUNDLER
+                if (s_eq(argv[argi], "--bundle") || s_eq_n(argv[argi], "--bundle=", 9)) {
+                        char const *eq = strchr(argv[argi], '=');
+                        BundleOut = (eq != NULL) ? eq + 1 : "";
+                        goto NextOption;
+                }
+#endif
+
                 char const prefix[] = "--color=";
                 if (s_eq_n(argv[argi], prefix, countof(prefix) - 1)) {
                         char const *when = strchr(argv[argi], '=') + 1;
@@ -853,11 +876,23 @@ ClassifyTestArgs(int argc, char **argv)
 }
 
 #if !defined(TY_TEST) && !defined(TY_PROFILER)
+#if defined(TY_MULTICALL)
+int
+tytest_main(int argc, char **argv);
+#endif
+
 static noreturn void
-ExecTestBinary(char **argv)
+ExecTestBinary(int argc, char **argv)
 {
         char path[4096];
         char const *env = getenv("TY_TEST_BINARY");
+
+#if defined(TY_MULTICALL)
+        if (env == NULL || *env == '\0') {
+                argv[0] = "tytest";
+                exit(tytest_main(argc, argv));
+        }
+#endif
 
         if (env != NULL && *env != '\0') {
                 snprintf(path, sizeof path, "%s", env);
@@ -880,6 +915,92 @@ ExecTestBinary(char **argv)
         );
 
         exit(2);
+}
+#endif
+
+#ifdef TY_BUNDLER
+static char **
+BundleArgv(int *argc, char **argv)
+{
+        char const *const *flags;
+        char const *entry;
+        int nflags;
+        int k = 0;
+
+        if (*argc == 0) {
+                return argv;
+        }
+
+        switch (bundle_state()) {
+        case BUNDLE_NONE:
+                return argv;
+
+        case BUNDLE_BROKEN:
+                fprintf(stderr, "%s: failed to unpack bundle: %s\n", argv[0], bundle_error());
+                exit(1);
+
+        case BUNDLE_READY:
+                break;
+        }
+
+        entry = bundle_entry();
+        if (entry == NULL) {
+                return argv;
+        }
+
+        nflags = bundle_flags(&flags);
+
+        char **out = xmA((*argc + nflags + 3) * sizeof *out);
+
+        out[k++] = argv[0];
+        for (int i = 0; i < nflags; ++i) {
+                out[k++] = (char *)flags[i];
+        }
+        out[k++] = "--";
+        out[k++] = (char *)entry;
+        for (int i = 1; i < *argc; ++i) {
+                out[k++] = argv[i];
+        }
+        out[k] = NULL;
+
+        *argc = k;
+
+        BundleRunning = true;
+        bundle_preload();
+
+        return out;
+}
+
+static noreturn void
+RunBundler(int argc, char **argv, int nopt)
+{
+        char **flags = xmA((nopt + 1) * sizeof *flags);
+        int nflags = 0;
+
+        if (SourceFile == NULL || s_eq(SourceFile, "/dev/stdin")) {
+                fprintf(stderr, "ty --bundle: missing script\n");
+                exit(1);
+        }
+
+        for (int i = 1; i < nopt; ++i) {
+                if (
+                        !s_eq(argv[i], "--")
+                     && !s_eq(argv[i], "--bundle")
+                     && !s_eq_n(argv[i], "--bundle=", 9)
+                ) {
+                        flags[nflags++] = argv[i];
+                }
+        }
+
+        bundle_snapshot();
+
+        if (!vm_init(ty, argc - nopt, argv + nopt)) {
+                DyingOfError = true;
+                fprintf(stderr, "%s\n", TyError(ty));
+                exit(1);
+        }
+
+        exit(bundle_create(ty, SourceFile, BundleOut, flags, nflags));
 }
 #endif
 
@@ -936,6 +1057,10 @@ main(int argc, char **argv)
 {
         ty = &vvv;
 
+#ifdef TY_BUNDLER
+        argv = BundleArgv(&argc, argv);
+#endif
+
         TyArgc = argc;
         TyArgv = argv;
 
@@ -947,7 +1072,7 @@ main(int argc, char **argv)
 
 #if !defined(TY_TEST) && !defined(TY_PROFILER)
         if (RunningTests) {
-                ExecTestBinary(argv);
+                ExecTestBinary(argc, argv);
         }
 #endif
 
@@ -975,6 +1100,16 @@ main(int argc, char **argv)
         ColorOutput = ColorProfile;
 #else
         ColorOutput = ColorStderr;
+#endif
+
+#ifdef TY_BUNDLER
+        if (BundleRunning && nopt < argc) {
+                argv[nopt] = argv[0];
+        }
+
+        if (BundleOut != NULL && !RunningTests) {
+                RunBundler(argc, argv, nopt);
+        }
 #endif
 
         bool ok = RunningTests ? vm_init(ty, TestProgramArgc, TestProgramArgs)

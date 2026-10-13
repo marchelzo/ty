@@ -10,6 +10,8 @@ include(cmake/VersionInfoTarget.cmake)
 
 option(BUILD_PROFILER "Build the typrof executable for profiling" OFF)
 option(USE_SYSTEM_DEPS "Use system-installed libraries instead of vcpkg (e.g. FreeBSD ports)" OFF)
+option(TY_MULTICALL "Build ty, tyls, tytest and typrof into a single ty executable" OFF)
+option(TY_EMBED_LIB "Embed lib/*.ty in the executable" OFF)
 
 # ---
 #   find 3rd-party dependencies
@@ -338,10 +340,12 @@ set(_src_files
   src/array.c
   src/ast.c
   src/blob.c
+  src/bundle.c
   src/chan.c
   src/class.c
   src/compiler.c
   src/diag.c
+  src/embed.c
   src/queue.c
   src/debug.c
   src/dict.c
@@ -457,7 +461,10 @@ target_sources(${_tgt_ty_interface}
     ${_src_files}
 )
 
-target_link_libraries(${_tgt_ty_interface}
+set(_tgt_ty_link "${PROJECT_NAME}_Link")
+add_library(${_tgt_ty_link} INTERFACE)
+
+target_link_libraries(${_tgt_ty_link}
   INTERFACE
     ${_tgt_ty_interface_version_info}
     ${_tgt_ioctlconstants_h}
@@ -478,22 +485,61 @@ target_link_libraries(${_tgt_ty_interface}
     $<$<BOOL:${WIN32}>:Shlwapi.lib>
 )
 
-target_link_libraries(${_tgt_ty_interface} INTERFACE nsync)
+target_link_libraries(${_tgt_ty_link} INTERFACE nsync)
 
 if(BSD)
-  target_link_libraries(${_tgt_ty_interface} INTERFACE util)
+  target_link_libraries(${_tgt_ty_link} INTERFACE util)
 endif()
 
 if(APPLE)
-  target_link_libraries(${_tgt_ty_interface} INTERFACE
+  target_link_libraries(${_tgt_ty_link} INTERFACE
     -Wl,-force_load,$<TARGET_FILE:unibilium>
   )
-  target_link_options(${_tgt_ty_interface} INTERFACE -Wl,-export_dynamic)
+  target_link_options(${_tgt_ty_link} INTERFACE -Wl,-export_dynamic)
 else()
-  target_link_libraries(${_tgt_ty_interface} INTERFACE
+  target_link_libraries(${_tgt_ty_link} INTERFACE
     -Wl,--whole-archive unibilium -Wl,--no-whole-archive
   )
-  target_link_options(${_tgt_ty_interface} INTERFACE -rdynamic)
+  target_link_options(${_tgt_ty_link} INTERFACE -rdynamic)
+endif()
+
+target_link_libraries(${_tgt_ty_interface} INTERFACE ${_tgt_ty_link})
+
+if(TY_EMBED_LIB)
+  add_executable(tyembed)
+  target_sources(tyembed PRIVATE tools/tyembed.c)
+  set_target_properties(tyembed PROPERTIES C_STANDARD 11)
+
+  file(GLOB_RECURSE _embed_lib_files
+    RELATIVE ${PROJECT_SOURCE_DIR}/lib
+    CONFIGURE_DEPENDS
+    ${PROJECT_SOURCE_DIR}/lib/*.ty
+  )
+  list(TRANSFORM _embed_lib_files
+    PREPEND ${PROJECT_SOURCE_DIR}/lib/
+    OUTPUT_VARIABLE _embed_lib_paths
+  )
+
+  set(_file_embedded_lib_c ${_autogen_dir}/embedded_lib.c)
+  add_custom_command(
+    OUTPUT
+      ${_file_embedded_lib_c}
+    COMMAND
+      $<TARGET_FILE:tyembed> ${_file_embedded_lib_c} ${PROJECT_SOURCE_DIR}/lib
+        ${_embed_lib_files}
+    DEPENDS
+      tyembed
+      ${_embed_lib_paths}
+    COMMENT
+      "Embedding lib/*.ty"
+    VERBATIM
+  )
+
+  add_library(ty_EmbeddedLib STATIC ${_file_embedded_lib_c})
+  set_target_properties(ty_EmbeddedLib PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+
+  target_link_libraries(${_tgt_ty_link} INTERFACE ty_EmbeddedLib)
+  target_compile_definitions(${_tgt_ty_interface} INTERFACE TY_EMBED_LIB)
 endif()
 
 target_include_directories(${_tgt_ty_interface}
@@ -524,28 +570,125 @@ target_compile_definitions(${_tgt_ty_interface}
 # ---
 
 set(_tgt_ty ${PROJECT_NAME})
-add_executable(${_tgt_ty})
-target_sources(${_tgt_ty} PRIVATE ty.c)
-target_link_libraries(${_tgt_ty} PRIVATE ${_tgt_ty_interface})
+set(_multicall_tools tyls tytest typrof)
 
-set(_tgt_ty_ls "${PROJECT_NAME}ls")
-add_executable(${_tgt_ty_ls})
-target_sources(${_tgt_ty_ls} PRIVATE tyls.c)
-target_compile_definitions(${_tgt_ty_ls} PRIVATE TY_LS)
-target_link_libraries(${_tgt_ty_ls} PRIVATE ${_tgt_ty_interface})
+if(TY_MULTICALL)
+  if(WIN32)
+    message(FATAL_ERROR "TY_MULTICALL is not supported on Windows")
+  endif()
+  if(NOT APPLE AND NOT CMAKE_OBJCOPY)
+    message(FATAL_ERROR "TY_MULTICALL requires objcopy")
+  endif()
 
-set(_tgt_ty_test "${PROJECT_NAME}test")
-add_executable(${_tgt_ty_test})
-target_sources(${_tgt_ty_test} PRIVATE ty.c)
-target_compile_definitions(${_tgt_ty_test} PRIVATE TY_TEST)
-target_link_libraries(${_tgt_ty_test} PRIVATE ${_tgt_ty_interface})
+  string(TOUPPER "${CMAKE_BUILD_TYPE}" _bundle_cfg)
+  separate_arguments(_bundle_flags UNIX_COMMAND
+    "${CMAKE_C_FLAGS} ${CMAKE_C_FLAGS_${_bundle_cfg}}"
+  )
+  if(CMAKE_INTERPROCEDURAL_OPTIMIZATION)
+    list(APPEND _bundle_flags ${CMAKE_C_COMPILE_OPTIONS_IPO})
+  endif()
+  if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+    list(APPEND _bundle_flags -flto -flinker-output=nolto-rel)
+  endif()
 
-if(BUILD_PROFILER)
-  set(_tgt_ty_profiler "${PROJECT_NAME}prof")
-  add_executable(${_tgt_ty_profiler})
-  target_sources(${_tgt_ty_profiler} PRIVATE ty.c)
-  target_compile_definitions(${_tgt_ty_profiler} PRIVATE TY_PROFILER)
-  target_link_libraries(${_tgt_ty_profiler} PRIVATE ${_tgt_ty_interface})
+  set(_bundle_dir ${PROJECT_BINARY_DIR}/bundles)
+  set(_bundle_objects)
+
+  foreach(_v ty tyls tytest typrof)
+    set(_main_c ty.c)
+    set(_defs TY_MULTICALL)
+    if(_v STREQUAL "tyls")
+      set(_main_c tyls.c)
+      list(APPEND _defs TY_LS)
+    elseif(_v STREQUAL "tytest")
+      list(APPEND _defs TY_TEST)
+    elseif(_v STREQUAL "typrof")
+      list(APPEND _defs TY_PROFILER)
+    endif()
+
+    set(_objlib "${_v}_BundleObjects")
+    add_library(${_objlib} OBJECT ${_main_c})
+    target_compile_definitions(${_objlib} PRIVATE ${_defs})
+    target_compile_options(${_objlib} PRIVATE -fno-common)
+    target_link_libraries(${_objlib} PRIVATE ${_tgt_ty_interface})
+
+    set(_out ${_bundle_dir}/${_v}.o)
+    if(APPLE)
+      set(_localize
+        -Wl,-alias,_main,_${_v}_main
+        -Wl,-exported_symbol,_${_v}_main
+      )
+      set(_post)
+    else()
+      set(_localize)
+      set(_post
+        COMMAND ${CMAKE_OBJCOPY} --redefine-sym main=${_v}_main ${_out}
+        COMMAND ${CMAKE_OBJCOPY} --keep-global-symbol=${_v}_main ${_out}
+      )
+    endif()
+
+    add_custom_command(
+      OUTPUT
+        ${_out}
+      COMMAND
+        ${CMAKE_COMMAND} -E make_directory ${_bundle_dir}
+      COMMAND
+        ${CMAKE_C_COMPILER} ${_bundle_flags} -r -nostdlib ${_localize}
+          -o ${_out} $<TARGET_OBJECTS:${_objlib}>
+      ${_post}
+      DEPENDS
+        ${_objlib}
+        $<TARGET_OBJECTS:${_objlib}>
+      COMMENT
+        "Bundling ${_v}"
+      COMMAND_EXPAND_LISTS
+      VERBATIM
+    )
+    list(APPEND _bundle_objects ${_out})
+  endforeach()
+
+  set_source_files_properties(${_bundle_objects}
+    PROPERTIES
+      EXTERNAL_OBJECT TRUE
+      GENERATED TRUE
+  )
+
+  add_executable(${_tgt_ty})
+  target_sources(${_tgt_ty} PRIVATE tymulti.c ${_bundle_objects})
+  target_link_libraries(${_tgt_ty} PRIVATE ${_tgt_ty_link})
+
+  foreach(_tool IN LISTS _multicall_tools)
+    add_custom_command(TARGET ${_tgt_ty} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E rm -f ${_tool}
+      COMMAND ${CMAKE_COMMAND} -E create_symlink $<TARGET_FILE_NAME:${_tgt_ty}> ${_tool}
+      WORKING_DIRECTORY $<TARGET_FILE_DIR:${_tgt_ty}>
+      VERBATIM
+    )
+  endforeach()
+else()
+  add_executable(${_tgt_ty})
+  target_sources(${_tgt_ty} PRIVATE ty.c)
+  target_link_libraries(${_tgt_ty} PRIVATE ${_tgt_ty_interface})
+
+  set(_tgt_ty_ls "${PROJECT_NAME}ls")
+  add_executable(${_tgt_ty_ls})
+  target_sources(${_tgt_ty_ls} PRIVATE tyls.c)
+  target_compile_definitions(${_tgt_ty_ls} PRIVATE TY_LS)
+  target_link_libraries(${_tgt_ty_ls} PRIVATE ${_tgt_ty_interface})
+
+  set(_tgt_ty_test "${PROJECT_NAME}test")
+  add_executable(${_tgt_ty_test})
+  target_sources(${_tgt_ty_test} PRIVATE ty.c)
+  target_compile_definitions(${_tgt_ty_test} PRIVATE TY_TEST)
+  target_link_libraries(${_tgt_ty_test} PRIVATE ${_tgt_ty_interface})
+
+  if(BUILD_PROFILER)
+    set(_tgt_ty_profiler "${PROJECT_NAME}prof")
+    add_executable(${_tgt_ty_profiler})
+    target_sources(${_tgt_ty_profiler} PRIVATE ty.c)
+    target_compile_definitions(${_tgt_ty_profiler} PRIVATE TY_PROFILER)
+    target_link_libraries(${_tgt_ty_profiler} PRIVATE ${_tgt_ty_interface})
+  endif()
 endif()
 
 # ---
@@ -558,16 +701,27 @@ install(TARGETS ${_tgt_ty} ${_tgt_ty_profiler} ${_tgt_ty_ls} ${_tgt_ty_test}
   DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
-install(DIRECTORY ${PROJECT_SOURCE_DIR}/lib/
-  COMPONENT InstallComponentTy
-  DESTINATION ${CMAKE_INSTALL_LIBDIR}/ty
-  FILES_MATCHING PATTERN "*.ty"
-  PATTERN ".history" EXCLUDE
-  PERMISSIONS
-    OWNER_READ OWNER_WRITE   # 6
-    GROUP_READ               # 4
-    WORLD_READ               # 4
-)
+if(TY_MULTICALL)
+  foreach(_tool IN LISTS _multicall_tools)
+    install(CODE
+      "file(CREATE_LINK ${_tgt_ty} \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/${_tool}\" SYMBOLIC)"
+      COMPONENT InstallComponentTy
+    )
+  endforeach()
+endif()
+
+if(NOT TY_EMBED_LIB)
+  install(DIRECTORY ${PROJECT_SOURCE_DIR}/lib/
+    COMPONENT InstallComponentTy
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/ty
+    FILES_MATCHING PATTERN "*.ty"
+    PATTERN ".history" EXCLUDE
+    PERMISSIONS
+      OWNER_READ OWNER_WRITE   # 6
+      GROUP_READ               # 4
+      WORLD_READ               # 4
+  )
+endif()
 
 # ---
 #  include cpack (must be very last thing in cmakelists.txt)

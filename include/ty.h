@@ -1705,6 +1705,9 @@ this_executable(Ty *ty);
 bool
 executable_path(char *out, usize cap);
 
+bool
+embedded_lib_dir(char *out, usize cap);
+
 void
 TyFunctionsCleanup(void);
 

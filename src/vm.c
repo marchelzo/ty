@@ -98,6 +98,7 @@
 #include "jit.h"
 #include "vm.h"
 #include "ty/debug.h"
+#include "bundle.h"
 
 #define TY_LOG_VERBOSE 1
 
@@ -1036,6 +1037,22 @@ add_builtins(Ty *ty, int ac, char **av)
         char real[PATH_MAX + 1];
 
         char const *env_path = getenv("TY_LIBRARY_PATH");
+
+#ifdef TY_EMBED_LIB
+        char const *bundle = bundle_dir();
+        if (bundle != NULL) {
+                ty_snprintf(path, sizeof path, "%s/lib", bundle);
+                add(path);
+                if (embedded_lib_dir(path, sizeof path)) {
+                        add(path);
+                }
+                if (env_path != NULL) {
+                        add(env_path);
+                }
+                goto SearchPathReady;
+        }
+#endif
+
         if (env_path != NULL) {
                 add(env_path);
         }
@@ -1065,6 +1082,14 @@ add_builtins(Ty *ty, int ac, char **av)
                 ty_snprintf(path, sizeof path, "%s/../lib/ty", chad);
                 add(path);
         }
+
+#ifdef TY_EMBED_LIB
+        if (embedded_lib_dir(path, sizeof path)) {
+                add(path);
+        }
+SearchPathReady:
+        ;
+#endif
 }
 //---------------------------------------------------------------------------
 #undef add

@@ -31175,6 +31175,14 @@ build_identity(void)
                 identity = XXH3_64bits(stamp, strlen(stamp));
         }
 
+#if defined(TY_TEST)
+        identity = HashCombine(identity, hash64z("tytest"));
+#elif defined(TY_PROFILER)
+        identity = HashCombine(identity, hash64z("typrof"));
+#elif defined(TY_LS)
+        identity = HashCombine(identity, hash64z("tyls"));
+#endif
+
         if (identity == 0) {
                 identity = 1;
         }
