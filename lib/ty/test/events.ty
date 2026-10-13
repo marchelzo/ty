@@ -276,7 +276,8 @@ pub fn test-end(
     hard?: Bool = false,
     signal: Int | String | nil = nil,
     code: ?Int = nil,
-    steps: Array[Event] = []
+    steps: Array[Event] = [],
+    checks: Array[Event] = []
 ) -> Event {
     let ev = mk('test-end', %{
         'id':      id,
@@ -292,6 +293,9 @@ pub fn test-end(
     })
     if #steps > 0 {
         ev['steps'] = steps
+    }
+    if #checks > 0 {
+        ev['checks'] = checks
     }
     ev
 }

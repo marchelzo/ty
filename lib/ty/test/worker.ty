@@ -89,6 +89,28 @@ fn render-frames(frames: Array[Frame]) -> String {
     lines.join('\n')
 }
 
+fn diff-of(e: Any) -> ?Event {
+    match e {
+        a: AssertionError and a.op == '==' and #a.values == 2 => explain(a),
+        _                                                     => nil,
+    }
+}
+
+fn explain(a: AssertionError) -> ?Event {
+    let lines: Array[String] = try {
+        let differ: Any = Module('diff')
+        let explain: Any = differ.explain
+        explain(a.values[0], a.values[1])
+    } catch _: RuntimeError {
+        []
+    }
+    if #lines == 0 {
+        return nil
+    }
+    let sides = (#a.sides == 2) ? a.sides : ['left', 'right']
+    %{'left': sides[0], 'right': sides[1], 'lines': lines}
+}
+
 fn failure-of(e: Any, tr: Any) -> Event {
     let frames = user-frames(tr)
     let fl = events.failure-of(e, trace: render-frames(frames))
@@ -97,6 +119,9 @@ fn failure-of(e: Any, tr: Any) -> Event {
     } else if #frames > 0 {
         fl['file'] = registry.relative(frames[0].file ?? '?')
         fl['line'] = frames[0].line
+    }
+    if let $d = diff-of(e) {
+        fl['diff'] = d
     }
     fl
 }
@@ -198,6 +223,21 @@ fn step-events(c: TestCase, steps: Array[StepResult]) -> Array[Event] {
     ))
 }
 
+fn check-failure(e: Any, tr: Any) -> Event {
+    let fl = failure-of(e, tr)
+    fl['via'] = 'check'
+    fl
+}
+
+fn with-checks(o: Outcome, checks: Array[Event]) -> Outcome {
+    if o.kind != 'pass' || #checks == 0 {
+        return o
+    }
+    let n = #checks
+    let why = "{n} check{(n == 1) ? '' : 's'} failed"
+    Outcome('fail', reason: why, failure: checks[0])
+}
+
 fn with-steps(o: Outcome, steps: Array[Event]) -> Outcome {
     if o.kind != 'pass' {
         return o
@@ -258,6 +298,7 @@ class Attempt {
     logs:   Array[String]
     tmp:    ?String
     steps:  Array[Event]
+    checks: Array[Event] = []
 
     init(
         o:      Outcome,
@@ -339,7 +380,8 @@ class Run {
         output: String = '',
         logs:   Array[String] = [],
         tmp:    ?String = nil,
-        steps:  Array[Event] = []
+        steps:  Array[Event] = [],
+        checks: Array[Event] = []
     ) {
         let kind = o.kind
         let reason = o.reason
@@ -377,7 +419,8 @@ class Run {
             failure: o.failure,
             output: output,
             logs: logs,
-            steps: steps
+            steps: steps,
+            checks: checks
         )
 
         if failing? && tmp != nil {
@@ -467,7 +510,8 @@ class Run {
             output: a.output,
             logs:   a.logs,
             tmp:    a.tmp,
-            steps:  a.steps
+            steps:  a.steps,
+            checks: a.checks
         )
     }
 
@@ -511,16 +555,19 @@ class Run {
         capture.?begin()
         let t0 = time.now()
         patching.push-scope(t.cleanup)
+        core.enter-test(t)
         let o = invoke(c, t, secs, fixtures)
         let after-failure = run-after-each(t)
         let cleanup-failure = run-cleanups(t)
+        core.leave-test()
         patching.pop-scope()
         let dur = time.now() - t0
         capture.?end()
 
         let output = capture.?read(offset) ?? ''
         let steps = step-events(c, t.steps)
-        o = with-steps(o, steps)
+        let checks = t.checks.map(|(e, tr)| -> check-failure(e, tr))
+        o = with-checks(with-steps(o, steps), checks)
 
         if let ($why, $fl) = after-failure {
             if o.kind in ['pass', 'skip'] {
@@ -534,7 +581,9 @@ class Run {
             }
         }
 
-        Attempt(o, dur, output, t.logs, t.tmp-path, steps)
+        let a = Attempt(o, dur, output, t.logs, t.tmp-path, steps)
+        a.checks = checks
+        a
     }
 
     finish-file(file: String) {

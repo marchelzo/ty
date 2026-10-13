@@ -1,6 +1,7 @@
 import ty
 import ty.parse as parse
-import ty.test.core (SkipTest, TestTimeout)
+import pretty (Raw)
+import ty.test.core as core (SkipTest, TestTimeout)
 
 use Site = {src: String, kind: String | nil, pattern: String | nil}
 
@@ -121,4 +122,98 @@ pub macro assert-throws(expr, kind, pattern) {
             $$caught
         }
     $$]
+}
+
+pub class Approx {
+    value: Any
+    rel:   Float
+    abs:   Float
+
+    init(value: Any, rel: Float, abs: Float) {
+        self.value = value
+        self.rel   = rel
+        self.abs   = abs
+    }
+
+    close?(x: Any) -> Bool {
+        match (value, x) {
+            (v: Int | Float, y: Int | Float) => within?(float(v), float(y)),
+            (vs: Array, ys: Array) => #vs == #ys && vs.zip(ys).all?(
+                |(v, y)| -> Approx(v, rel, abs).close?(y)
+            ),
+            _ => value == x,
+        }
+    }
+
+    within?(v: Float, y: Float) -> Bool {
+        (y - v).abs <= max(abs, rel * v.abs)
+    }
+
+    __str__() -> String {
+        match value {
+            v: Int | Float => "{v} ± {max(abs, rel * float(v).abs)}",
+            v              => "approx({show(v)})",
+        }
+    }
+
+    __pretty__() -> Array[Any] {
+        [Raw(str(self))]
+    }
+}
+
+pub fn approx(value: Any, rel: Float = 1.0e-9, abs: Float = 0.0) -> Approx {
+    Approx(value, rel, abs)
+}
+
+fn ==(a: Float, b: Approx) -> Bool { b.close?(a) }
+fn ==(a: Approx, b: Float) -> Bool { a.close?(b) }
+fn ==(a: Int, b: Approx) -> Bool { b.close?(a) }
+fn ==(a: Approx, b: Int) -> Bool { a.close?(b) }
+fn ==(a: Array[Any], b: Approx) -> Bool { b.close?(a) }
+fn ==(a: Approx, b: Array[Any]) -> Bool { a.close?(b) }
+
+fn record(e: AssertionError) {
+    let tr = ty.trace()
+    match core.current-test() {
+        nil => throw e,
+        t   => t.record-check(e, tr),
+    }
+}
+
+pub macro check(condition, message) {
+    let assertion = __assert-expansion(condition, message)
+    $$[
+        try {
+            $$assertion
+        } catch caught: AssertionError {
+            $$::(record)(caught)
+        }
+    $$]
+}
+
+fn indented(src: String) -> String {
+    src.strip().lines().map(l -> "    {l}").join("\n")
+}
+
+pub fn assert-compile-error(
+    src: String,
+    pattern: Regex | String | nil = nil
+) -> CompileError {
+    let caught = try {
+        __eval__(src)
+        nil
+    } catch e: CompileError {
+        e
+    }
+    let $e = caught or throw AssertionError(
+        "expected a compile error from:\n{indented(src)}",
+        op: 'compile-error'
+    )
+    if let $p = pattern and !matches?(e, p) {
+        throw AssertionError(
+            "the compile error did not match {show(p)}:\n{indented(e.what)}",
+            op: 'compile-error'
+        )
+    }
+    e
 }

@@ -15,6 +15,7 @@ bin/tytest
 %%TYMODDIR%%/dbus/core.ty
 %%TYMODDIR%%/dbus/hostname.ty
 %%TYMODDIR%%/dbus/login.ty
+%%TYMODDIR%%/diff.ty
 %%TYMODDIR%%/dotenv.ty
 %%TYMODDIR%%/duckdb.ty
 %%TYMODDIR%%/ety.ty

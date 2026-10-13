@@ -2156,6 +2156,7 @@ class AssertionError < RuntimeError {
     operands: Array[(String, String)]
     values:   Array[Any]
     note:     ?String
+    sides:    Array[String]
 
     init(
         what:     String,
@@ -2165,7 +2166,8 @@ class AssertionError < RuntimeError {
         op:       ?String = nil,
         operands: Array[(String, String)] = [],
         values:   Array[Any] = [],
-        note:     ?String = nil
+        note:     ?String = nil,
+        sides:    Array[String] = []
     ) {
         super(what)
         self.src      = src
@@ -2175,6 +2177,7 @@ class AssertionError < RuntimeError {
         self.operands = operands
         self.values   = values
         self.note     = note
+        self.sides    = sides
     }
 }
 
@@ -5302,8 +5305,22 @@ fn memoized[F](fun: F, max: ?Int = nil) -> F {
     __eval__(ty.Func({name: fun.__name__, params, body}))
 }
 
+fn __assertion-operand(raw: Any, maybe?: Bool) -> (Bool, Any) {
+    match (maybe?, raw) {
+        (false, v)   => (true, v),
+        (_, Some(v)) => (true, v),
+        _            => (false, nil),
+    }
+}
+
 fn __assertion-error(
-    site:   {src: String, op: ?String, labels: Array[?String]},
+    site:   {
+        src: String,
+        op: ?String,
+        labels: Array[?String],
+        sides: Array[String],
+        maybe: Array[Bool]
+    },
     file:   ?String,
     line:   ?Int,
     values: Array[Any],
@@ -5311,10 +5328,16 @@ fn __assertion-error(
     show:   Any -> String
 ) -> AssertionError {
     let operands: Array[(String, String)] = []
+    let kept: Array[Any] = []
 
     for label; i in site.labels {
+        let (present?, value) = __assertion-operand(values[i], site.maybe[i])
+        if !present? {
+            continue
+        }
+        kept.push(value)
         let $s = label or continue
-        let v = show(values[i])
+        let v = show(value)
         if s != v {
             operands.push((s, v))
         }
@@ -5333,12 +5356,13 @@ fn __assertion-error(
         line: line,
         op: site.op,
         operands: operands,
-        values: values,
-        note: note
+        values: kept,
+        note: note,
+        sides: site.sides
     )
 }
 
-macro assert(condition, message) {
+pub fn __assert-expansion(condition: Any, message: Any) -> Any {
     fn source-of(expr) {
         parse.show(expr) ?? '?'
     }
@@ -5348,7 +5372,9 @@ macro assert(condition, message) {
             ty.Int(_) or ty.Float(_) or ty.String(_) => true,
             ty.Bool(_) or ty.Regex(_) or ty.Nil      => true,
             ty.Array(xs) or ty.Record(xs)            => xs.all?(literal?),
+            ty.Dict(d)                               => d.items.all?(literal?),
             ty.ArrayItem(x) or ty.RecordEntry(x)     => entry-literal?(x),
+            ty.DictItem(k, v)                        => literal?(k) && literal?(v),
             _                                        => false
         }
     }
@@ -5368,89 +5394,244 @@ macro assert(condition, message) {
         literal?(expr) ? nil : source-of(expr)
     }
 
-    let (op, name, lhs, rhs) = match condition {
-        ty.Eq(a, b)      => (ty.Eq,      '==',     a, b),
-        ty.NotEq(a, b)   => (ty.NotEq,   '!=',     a, b),
-        ty.LT(a, b)      => (ty.LT,      '<',      a, b),
-        ty.LEQ(a, b)     => (ty.LEQ,     '<=',     a, b),
-        ty.GT(a, b)      => (ty.GT,      '>',      a, b),
-        ty.GEQ(a, b)     => (ty.GEQ,     '>=',     a, b),
-        ty.In(a, b)      => (ty.In,      'in',     a, b),
-        ty.NotIn(a, b)   => (ty.NotIn,   'not in', a, b),
-        ty.Matches(a, b) => (ty.Matches, '::',     a, b),
-        _                => (nil,        nil,      nil, nil)
+    fn conjuncts(expr) {
+        match expr {
+            ty.And(a, b) => [*conjuncts(a), *conjuncts(b)],
+            _            => [expr]
+        }
+    }
+
+    fn spread?(expr) {
+        match expr {
+            ty.Spread(_) or ty.Splat(_) => true,
+            _                           => false
+        }
+    }
+
+    fn plain-arg?(arg) {
+        match arg {
+            ty.Arg(a) => (a.cond == nil) && (a.name == nil) && !spread?(a.arg),
+            _         => false
+        }
+    }
+
+    fn arg-expr(arg) {
+        match arg {
+            ty.Arg(a) => a.arg
+        }
+    }
+
+    fn plain-name(expr) {
+        match expr {
+            ty.Id(x) and (x.module == nil) => x.name,
+            _                              => nil
+        }
+    }
+
+    fn place?(expr) {
+        match expr {
+            ty.Id(_)              => true,
+            ty.MemberAccess(o, _) => place?(o),
+            _                     => false
+        }
+    }
+
+    fn array-of(items) {
+        items.fold($$[ [] $$], (acc, x) -> $$[ [*$$acc, $$x] $$])
+    }
+
+    fn comparison(expr) {
+        match expr {
+            ty.Eq(a, b)      => (ty.Eq,      '==',     a, b),
+            ty.NotEq(a, b)   => (ty.NotEq,   '!=',     a, b),
+            ty.LT(a, b)      => (ty.LT,      '<',      a, b),
+            ty.LEQ(a, b)     => (ty.LEQ,     '<=',     a, b),
+            ty.GT(a, b)      => (ty.GT,      '>',      a, b),
+            ty.GEQ(a, b)     => (ty.GEQ,     '>=',     a, b),
+            ty.In(a, b)      => (ty.In,      'in',     a, b),
+            ty.NotIn(a, b)   => (ty.NotIn,   'not in', a, b),
+            ty.Matches(a, b) => (ty.Matches, '::',     a, b),
+            _                => nil
+        }
     }
 
     let fail = $$[ $${__assertion-error} $$]
     let note = (message != nil) ? $$[ "{$$message}" $$] : $$[ nil $$]
-    let site = {
-        src: source-of(condition),
-        op: name,
-        labels: match name {
-            nil  => [],
-            '::' => [label(lhs)],
-            _    => [label(lhs), label(rhs)]
-        }
-    }
-
-    let raise = (values, show) -> $$[
-        throw $$fail($${site}, __file__, __line__, $$values, $$note, $$show)
-    $$]
-
-    if op == nil {
-        return $$[
-            if !$$condition {
-                $$(raise($$[ [] $$], $$[ $${::show} $$]))
-            }
-        $$]
-    }
-
     let pp?  = ty.IfDef(name: 'Printer', module: 'pretty')
     let show = $$[
         $$pp?.map(P -> (v -> P(color: false).print(v))).or-else($${::show})
     $$]
+    let plain = $$[ $${::show} $$]
 
-    let narrow? = match (name, lhs, rhs) {
-        ('==', ty.Nil, _) or ('==', _, ty.Nil) => false,
-        ('::', _, _)                           => simple?(lhs),
-        _                                      => simple?(lhs) && simple?(rhs)
+    fn site-of(expr, op, labels, sides, maybe) {
+        {src: source-of(expr), op, labels, sides, maybe}
     }
 
-    let pattern? = (name == '::')
-
-    if narrow? {
-        let values = pattern? ? $$[ [$$lhs] $$] : $$[ [$$lhs, $$rhs] $$]
-        return $$[
-            if !$$condition {
-                $$(raise(values, show))
-            }
+    fn raise(site, values, show) {
+        $$[
+            throw $$fail($${site}, __file__, __line__, $$values, $$note, $$show)
         $$]
     }
 
-    let lv = ty.Id(name: ty.gensym())
+    fn call-check(expr, call, negate?) {
+        let (receiver, args, rebuild) = match call {
+            ty.Call(c) => (nil, c.args, (ids, _) -> ty.Call(
+                func: c.func,
+                args: ids.map(id -> ty.Arg(arg: id, cond: nil, name: nil))
+            )),
+            ty.MethodCall(m) => (m.object, m.args, (ids, obj) -> ty.MethodCall(
+                object: obj,
+                method: m.method,
+                args: ids.map(id -> ty.Arg(arg: id, cond: nil, name: nil))
+            )),
+            _ => return nil
+        }
 
-    if pattern? {
-        return ty.Block([
-            ty.Let(lv, lhs),
+        if !args.all?(plain-arg?) {
+            return nil
+        }
+
+        let lets   = []
+        let values = []
+        let labels = []
+        let maybe  = []
+        let obj    = receiver
+
+        if receiver != nil && !place?(receiver) {
+            obj = ty.Id(name: ty.gensym())
+            lets.push(ty.Let(obj, receiver))
+            values.push(obj)
+            labels.push(source-of(receiver))
+            maybe.push(false)
+        } else if let $name = plain-name(receiver) {
+            values.push(ty.IfDef(name: name))
+            labels.push(name)
+            maybe.push(true)
+        }
+
+        let ids = []
+        for arg in args {
+            let e = arg-expr(arg)
+            let id = ty.Id(name: ty.gensym())
+            ids.push(id)
+            lets.push(ty.Let(id, e))
+            values.push(id)
+            labels.push(label(e))
+            maybe.push(false)
+        }
+
+        let check = rebuild(ids, obj)
+        let site  = site-of(expr, nil, labels, [], maybe)
+        let fails = negate? ? check : $$[ !$$check $$]
+
+        ty.Block([
+            *lets,
             $$[
-                if !$$(op(lv, rhs)) {
-                    $$(raise($$[ [$$lv] $$], show))
+                if $$fails {
+                    $$(raise(site, array-of(values), show))
                 }
             $$]
         ])
     }
 
-    let rv = ty.Id(name: ty.gensym())
+    fn narrow?(name, lhs, rhs) {
+        match (name, lhs, rhs) {
+            ('==', ty.Nil, _) or ('==', _, ty.Nil) => false,
+            ('::', _, _)                           => simple?(lhs),
+            _                                      => simple?(lhs) && simple?(rhs)
+        }
+    }
 
-    ty.Block([
-        ty.Let(lv, lhs),
-        ty.Let(rv, rhs),
-        $$[
-            if !$$(op(lv, rv)) {
-                $$(raise($$[ [$$lv, $$rv] $$], show))
+    fn compare-site(expr, name, lhs, rhs) {
+        let labels = match name {
+            '::' => [label(lhs)],
+            _    => [label(lhs), label(rhs)]
+        }
+        let sides = [source-of(lhs), source-of(rhs)]
+        site-of(expr, name, labels, sides, labels.map(_ -> false))
+    }
+
+    fn narrow-step(expr) {
+        if let ty.Id(_) = expr {
+            let site = site-of(expr, nil, [], [], [])
+            return ($$[ !$$expr $$], raise(site, $$[ [] $$], plain))
+        }
+        let (_, name, lhs, rhs) = comparison(expr) ?? (nil, nil, nil, nil)
+        if name == nil || !narrow?(name, lhs, rhs) {
+            return nil
+        }
+        let values = (name == '::') ? $$[ [$$lhs] $$] : $$[ [$$lhs, $$rhs] $$]
+        ($$[ !$$expr $$], raise(compare-site(expr, name, lhs, rhs), values, show))
+    }
+
+    fn single(expr) {
+        if let (fails, body) = narrow-step(expr) {
+            return $$[ if $$fails { $$body } $$]
+        }
+
+        let (op, name, lhs, rhs) = comparison(expr) ?? (nil, nil, nil, nil)
+
+        if op == nil {
+            let introspected = match expr {
+                ty.Not(inner) => call-check(expr, inner, true),
+                _             => call-check(expr, expr, false)
             }
-        $$]
-    ])
+            return introspected ?? $$[
+                if !$$expr {
+                    $$(raise(site-of(expr, nil, [], [], []), $$[ [] $$], plain))
+                }
+            $$]
+        }
+
+        let site = compare-site(expr, name, lhs, rhs)
+        let lv = ty.Id(name: ty.gensym())
+
+        if name == '::' {
+            return ty.Block([
+                ty.Let(lv, lhs),
+                $$[
+                    if !$$(op(lv, rhs)) {
+                        $$(raise(site, $$[ [$$lv] $$], show))
+                    }
+                $$]
+            ])
+        }
+
+        let rv = ty.Id(name: ty.gensym())
+
+        ty.Block([
+            ty.Let(lv, lhs),
+            ty.Let(rv, rhs),
+            $$[
+                if !$$(op(lv, rv)) {
+                    $$(raise(site, $$[ [$$lv, $$rv] $$], show))
+                }
+            $$]
+        ])
+    }
+
+    fn step(expr) {
+        narrow-step(expr) ?? (
+            $$[ do { $$(single(expr)); false } $$],
+            $$[ throw AssertionError('unreachable') $$]
+        )
+    }
+
+    fn chain(steps) {
+        let (fails, body) = steps[0]
+        if #steps == 1 {
+            return $$[ if $$fails { $$body } $$]
+        }
+        $$[ if $$fails { $$body } else { $$(chain(steps[1;])) } $$]
+    }
+
+    let parts = conjuncts(condition)
+
+    (#parts == 1) ? single(condition) : chain(parts.map(step))
+}
+
+macro assert(condition, message) {
+    __assert-expansion(condition, message)
 }
 
 macro unreachable! = throw AssertionError('unreachable')

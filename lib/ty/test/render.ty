@@ -58,6 +58,7 @@ let STYLES: Dict[String, String] = %{
     'todo':    '33',
     'xfail':   '36',
     'xpass':   '35;1',
+    'green':   '32',
     'dim':     '90',
     'bold':    '1',
     'red':     '31;1',
@@ -203,6 +204,14 @@ pub fn clip(s: String, max-lines: Int = 40) -> Array[String] {
     [*ls[;head], "[… {plural(gone, 'line')} elided …]", *ls[#ls - tail;]]
 }
 
+fn operand-lines(text: String, diff?: Bool) -> Array[String] {
+    let ls = lines-of(indent(text, 2))
+    if !diff? || #ls <= 4 {
+        return ls
+    }
+    [*ls[;3], "    … ({#ls - 3} more lines; see the diff)"]
+}
+
 fn assertion-lines(f: Event) -> Array[String] {
     let operands = get-events(f, 'operands')
     let src = get-str(f, 'src')
@@ -210,13 +219,34 @@ fn assertion-lines(f: Event) -> Array[String] {
     if !structured? {
         return lines-of(get-str(f, 'message') ?? '')
     }
-    let out = [(f['op'] == 'throws') ? (src ?? '') : "assert({src})"]
+    let diff? = get-event(f, 'diff') != nil
+    let via = get-str(f, 'via') ?? 'assert'
+    let out = [(f['op'] == 'throws') ? (src ?? '') : "{via}({src})"]
     for operands {
         let text = "{get-str(it, 'src')}: {get-str(it, 'value')}"
-        out.push(*lines-of(indent(text, 2)))
+        out.push(*operand-lines(text, diff?))
     }
     if let $note = get-str(f, 'note') {
         out.push("  ({note})")
+    }
+    out
+}
+
+fn check-lines(ev: Event, color?: Bool, max-lines: Int) -> Array[String] {
+    let checks = get-events(ev, 'checks')
+    if #checks < 2 {
+        return []
+    }
+    let out: Array[String] = []
+    for fl in checks[1;] {
+        let at = "{get-str(fl, 'file') ?? '?'}:{get-int(fl, 'line') ?? 0}"
+        let body = assertion-lines(fl)
+        out.push("{at}: {body[0] ?? ''}")
+        out.push(*body[1;].map(\"  {_}"))
+        let (title, diff) = diff-lines(fl, color?, max-lines)
+        if #diff > 0 {
+            out.push("  {title}", *diff.map(\"    {_}"))
+        }
     }
     out
 }
@@ -230,6 +260,27 @@ fn step-line(s: Event) -> String {
 
 fn step-lines(ev: Event) -> Array[String] {
     get-events(ev, 'steps').map(step-line)
+}
+
+fn diff-line(line: String, color?: Bool) -> String {
+    let style = match line[;1] {
+        '-' => 'red',
+        '+' => 'green',
+        _   => 'dim',
+    }
+    match line[;2] {
+        '- ' or '+ ' => paint(line, style, color?),
+        _ :: line.match?(/^  …/) => paint(line, 'dim', color?),
+        _ => line,
+    }
+}
+
+fn diff-lines(f: Event, color?: Bool, max-lines: Int) -> (String, Array[String]) {
+    let $d = get-event(f, 'diff') or return ('', [])
+    let left = get-str(d, 'left') ?? 'left'
+    let right = get-str(d, 'right') ?? 'right'
+    let title = "diff (- {left}, + {right}):"
+    (title, clip(get-strs(d, 'lines').join("\n"), max-lines).map(\diff-line(_, color?)))
 }
 
 fn section(out: Array[String], title: String, body: Array[String], color?: Bool) {
@@ -274,11 +325,14 @@ pub fn failure(
         for assertion-lines(fl) {
             out.push("    {clean(it)}")
         }
+        let (title, body) = diff-lines(fl, color?, max-lines)
+        section(out, title, body, color?)
         let trace = clean(get-str(fl, 'trace') ?? '')
         section(out, 'trace:', clip(trace, max-lines), color?)
     }
 
     section(out, 'steps:', step-lines(ev), color?)
+    section(out, 'more failed checks:', check-lines(ev, color?, max-lines), color?)
     section(out, 'log:', get-strs(ev, 'logs').map(clean), color?)
 
     let output = clean(get-str(ev, 'output') ?? '')

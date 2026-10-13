@@ -112,6 +112,22 @@ let HOOKS: Dict[String, Array[Any]] = %{k: [] for k in HOOK_KINDS}
 
 let SPECIAL: Dict[Any, String] = %{}
 
+let ACTIVE: Array[Test] = []
+
+pub fn current-test() -> ?Test {
+    (#ACTIVE > 0) ? ACTIVE[-1] : nil
+}
+
+pub fn enter-test(t: Test) {
+    ACTIVE.push(t)
+}
+
+pub fn leave-test() {
+    if #ACTIVE > 0 {
+        ACTIVE.pop()
+    }
+}
+
 pub fn camel-name(name: String) -> String {
     let parts = name.split('-')
     let tail = parts[1;].map(p -> "{p[;1].upper()}{p[1;]}")
@@ -294,6 +310,7 @@ pub class Test {
     __logs:     Array[String] = []
     __tmp:      ?String = nil
     __steps:    Array[StepResult] = []
+    __checks:   Array[(Any, Any)] = []
 
     init(id: String, name: String, file: String, line: Int, seed: Int, attempt: Int = 1) {
         self.id      = id
@@ -342,6 +359,14 @@ pub class Test {
 
     steps -> Array[StepResult] {
         __steps
+    }
+
+    checks -> Array[(Any, Any)] {
+        __checks
+    }
+
+    record-check(e: Any, trace: Any) {
+        __checks.push((e, trace))
     }
 
     step(name: String, f: () -> Any) -> Bool {

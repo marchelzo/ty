@@ -1,0 +1,34 @@
+import ty.test (approx, assert-compile-error, assert-throws)
+
+pub fn approx-compares-floats() {
+    assert(0.1 + 0.2 == approx(0.3))
+    assert(approx(0.3) == 0.1 + 0.2)
+    assert(3 == approx(3.0000000001))
+    assert(1.005 == approx(1.0, abs: 0.01))
+    assert(!(1.1 == approx(1.0)))
+    assert(!(1.1 == approx(1.0, rel: 0.01)))
+}
+
+pub fn approx-compares-arrays() {
+    assert([0.1 + 0.2, 1.0] == approx([0.3, 1.0]))
+    assert(!([0.3] == approx([0.3, 1.0])))
+}
+
+pub fn approx-shows-its-tolerance() {
+    assert(str(approx(0.5, rel: 0.1)) == '0.5 ± 0.05')
+    assert(str(approx(2.0, abs: 0.25)) == '2.0 ± 0.25')
+}
+
+pub fn compile-errors-are-returned() {
+    let e = assert-compile-error('let x: Int = "s"')
+    assert(e :: CompileError)
+    assert-compile-error('let x: Int = "s"', /Int/)
+}
+
+pub fn compiling-code-fails-the-assertion() {
+    let e = assert-throws(assert-compile-error('let x = 1'), AssertionError)
+    assert(e.what.match?(/expected a compile error/))
+    let bad = 'let x: Int = "s"'
+    let e = assert-throws(assert-compile-error(bad, /zzz/), AssertionError)
+    assert(e.what.match?(/did not match/))
+}

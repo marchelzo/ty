@@ -1,0 +1,57 @@
+import ty.test (Test)
+import ty.test.events as events (Event)
+import super.support.process (run)
+import super.support.runner (FIX, drive, outcomes, end-of)
+
+fn failure(e: Event) -> Event {
+    events.get-event(e, 'failure') ?? %{}
+}
+
+fn diff-lines(e: Event) -> Array[String] {
+    events.get-strs(events.get-event(failure(e), 'diff'), 'lines')
+}
+
+pub fn outcomes-of-the-fixture(t: Test) {
+    let r = drive(t, ["{FIX}/assertions.ty"])
+    assert(outcomes(r) == %{
+        'structural-diff':    'fail',
+        'string-diff':        'fail',
+        'scalar-has-no-diff': 'fail',
+        'soft-checks':        'fail',
+        'checks-that-pass':   'pass',
+    })
+}
+
+pub fn equality-failures-carry-a-diff(t: Test) {
+    let r = drive(t, ["{FIX}/assertions.ty"])
+    let structural = end-of(r, 'structural-diff')
+    let d = events.get-event(failure(structural), 'diff')
+    assert(events.get-str(d, 'left') == 'got')
+    assert(events.get-str(d, 'right') == 'want')
+    assert(diff-lines(structural) == ["[1].tags[0]: 'a' != 'b'"])
+    let lines = diff-lines(end-of(r, 'string-diff'))
+    assert(lines == ['  one', '- two', '+ 2', '  three'])
+    let scalar = failure(end-of(r, 'scalar-has-no-diff'))
+    assert(events.get-event(scalar, 'diff') == nil)
+}
+
+pub fn checks-are-collected(t: Test) {
+    let r = drive(t, ["{FIX}/assertions.ty", '-k', 'soft-checks'])
+    let e = end-of(r, 'soft-checks')
+    assert(events.get-str(e, 'reason') == '2 checks failed')
+    let checks = events.get-events(e, 'checks')
+    let srcs = checks.map(\events.get-str(_, 'src'))
+    assert(srcs == ['#xs == 4', 'xs == [1, 2, 4]'])
+    assert(checks.map(\events.get-int(_, 'line')) == [21, 23])
+    assert(checks.all?(\events.get-str(_, 'via') == 'check'))
+    assert(events.get-str(e, 'output') == "kept going\n")
+}
+
+pub fn the-report-shows-diffs-and-checks() {
+    let r = run(['--test', "{FIX}/assertions.ty"])
+    let out = r.stdout
+    assert(out.match?(/diff \(- got, \+ want\):\n    \[1\]\.tags\[0\]/), out)
+    assert(out.match?(/check\(#xs == 4\)/), out)
+    let more = /more failed checks:\n    \S+:23: check\(xs == \[1, 2, 4\]\)/
+    assert(out.match?(more), out)
+}

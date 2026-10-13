@@ -1,0 +1,29 @@
+import ty.test (check)
+
+pub fn structural-diff() {
+    let got = [{id: 1, tags: ['a', 'b']}, {id: 2, tags: ['a']}]
+    let want = [{id: 1, tags: ['a', 'b']}, {id: 2, tags: ['b']}]
+    assert(got == want)
+}
+
+pub fn string-diff() {
+    let got = "one\ntwo\nthree"
+    assert(got == "one\n2\nthree")
+}
+
+pub fn scalar-has-no-diff() {
+    let n = 3
+    assert(n == 4)
+}
+
+pub fn soft-checks() {
+    let xs = [1, 2, 3]
+    check(#xs == 4)
+    check(xs[0] == 1)
+    check(xs == [1, 2, 4], 'third')
+    print('kept going')
+}
+
+pub fn checks-that-pass() {
+    check(1 == 1)
+}

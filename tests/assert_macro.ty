@@ -1,3 +1,4 @@
+import math
 import path
 import sh (Exit)
 import ty
@@ -154,12 +155,12 @@ pub fn records-note() {
     assert(e.what == 'failed assertion: x > 5 (x was 3)\n    x: 3')
 }
 
-pub fn non-comparisons-have-no-operands() {
+pub fn conjunctions-report-the-failing-part() {
     let a = true
     let b = false
     let e = failure-of(fn () { assert(a && b, 'both') })
-    assert(e.what == 'failed assertion: a && b (both)')
-    assert(e.src == 'a && b')
+    assert(e.what == 'failed assertion: b (both)')
+    assert(e.src == 'b')
     assert(e.op == nil)
     assert(e.operands == [])
     assert(e.values == [])
@@ -254,4 +255,89 @@ pub fn plain-constructor-still-works() {
 pub fn unreachable-throws-assertion-error() {
     let e = failure-of(fn () { unreachable! })
     assert(e.what == 'unreachable')
+}
+
+class Bag {
+    items: Array[Int] = [1, 2, 3]
+
+    has?(x: Int) -> Bool {
+        x in items
+    }
+}
+
+fn bigger?(a: Int, b: Int) -> Bool {
+    a > b
+}
+
+pub fn calls-show-their-arguments() {
+    let lo = 1
+    let e = failure-of(fn () { assert(bigger?(lo, lo + 4)) })
+    assert(e.src == 'bigger?(lo, lo + 4)')
+    assert(e.operands == [('lo', '1'), ('lo + 4', '5')])
+    assert(e.values == [1, 5])
+}
+
+pub fn method-calls-show-their-receiver() {
+    let bag = Bag()
+    let e = failure-of(fn () { assert(bag.has?(9)) })
+    assert(e.operands == [('bag', 'Bag(items=[1, 2, 3])')])
+    assert(e.values == [bag, 9])
+    let e = failure-of(fn () { assert(!bag.has?(2)) })
+    assert(e.src == '!bag.has?(2)')
+}
+
+pub fn computed-receivers-are-evaluated-once() {
+    let made = [0]
+    let fresh = fn () {
+        made[0] += 1
+        Bag()
+    }
+    let e = failure-of(fn () { assert(fresh().has?(7)) })
+    assert(made[0] == 1)
+    assert(e.operands == [('fresh()', 'Bag(items=[1, 2, 3])')])
+}
+
+pub fn call-arguments-are-evaluated-once-in-order() {
+    let trail: Array[String] = []
+    let e = failure-of(fn () {
+        assert(bigger?(traced(trail, 'a', 1), traced(trail, 'b', 2)))
+    })
+    assert(trail == ['a', 'b'])
+    assert(e.values == [1, 2])
+}
+
+pub fn module-receivers-are-not-shown() {
+    let e = failure-of(fn () { assert(math.sqrt(4.0) > 3.0) })
+    assert(e.operands == [('math.sqrt(4.0)', '2.0')])
+}
+
+pub fn conjunctions-check-each-part-in-order() {
+    let xs = [1, 2, 3]
+    let e = failure-of(fn () { assert(#xs == 3 && xs[0] == 2 && xs[9] == 0) })
+    assert(e.src == 'xs[0] == 2')
+    assert(e.operands == [('xs[0]', '1')])
+}
+
+pub fn conjunctions-short-circuit() {
+    let x: ?Array[Int] = nil
+    let e = failure-of(fn () { assert(x != nil && #x > 0) })
+    assert(e.src == 'x != nil')
+}
+
+pub fn conjunctions-keep-narrowing() {
+    let src = 'do { fn f(x: ?Int, y: ?Int) -> Int { '
+              'assert(x != nil && #[1] == 1 && y != nil); x + y }; f(1, 2) }'
+    assert(ty.eval(src) == 3)
+}
+
+pub fn literal-dicts-are-not-listed() {
+    let d = %{'a': 1}
+    let e = failure-of(fn () { assert(d == %{'a': 2}) })
+    assert(e.operands == [('d', '%{"a": 1}')])
+}
+
+pub fn equality-records-both-sides() {
+    let got = [1, 2]
+    let e = failure-of(fn () { assert(got == [1, 3]) })
+    assert(e.sides == ['got', '[1, 3]'])
 }

@@ -68,7 +68,7 @@ Output written by a test is captured and shown only if the test fails. Failures 
 
 ## Assertions
 
-`assert(cond)` and `assert(cond, message)` throw an `AssertionError` when `cond` is false. For comparisons, the error records each operand's source and value:
+`assert(cond)` and `assert(cond, message)` throw an `AssertionError` when `cond` is false. The error shows the values that went into the condition:
 
 ```
 tests/demo.ty:14: assertion failed
@@ -77,7 +77,33 @@ tests/demo.ty:14: assertion failed
       (sum of 1..4)
 ```
 
+- **Comparisons** (`==`, `!=`, `<`, `in`, `::` and so on) show each operand that isn't a literal.
+- **Calls** show their arguments, and method calls show their receiver: a failing `assert(bag.has?(item))` lists `bag` and `item`. `!call(...)` works the same way.
+- **`&&` chains** are checked one part at a time, and the failure names the part that failed, so `assert(#xs == 3 && xs[0] == 2)` reports `xs[0] == 2` with `xs[0]: 1`. Later parts are not evaluated once one fails.
+
+Every operand is evaluated exactly once, in order, and `assert(x != nil)` still narrows `x` for the code after it, including inside an `&&` chain.
+
+When `==` fails on strings or on structured values, the report includes a diff:
+
+```
+FAIL tests/users.ty::loads-users
+  tests/users.ty:9: assertion failed
+    assert(users == want)
+      users: [{id: 1, tags: ["a", "b"]}, {id: 2, tags: ["a"]}]
+      want: [{id: 1, tags: ["a", "b"]}, {id: 2, tags: ["b"]}]
+  diff (- users, + want):
+    [1].tags[0]: 'a' != 'b'
+```
+
+Single-line strings get a caret under the first difference, multi-line strings get a line diff, and large arrays, dicts, records and objects get the paths that differ followed by a line diff of their pretty-printed forms, with unchanged runs elided. `lib/diff.ty` provides the same views to other code.
+
 `assert` must be called. A bare `assert x == y` is a compile error rather than a silent no-op.
+
+`check(cond)` and `check(cond, message)` are soft assertions: a failing check is recorded and the test keeps running. The test fails at the end, and the report lists every failed check with its line. Outside a test, `check` behaves like `assert`.
+
+`approx(v, rel: 1e-9, abs: 0.0)` compares numbers, and arrays of numbers, within a tolerance: `assert(0.1 + 0.2 == approx(0.3))`. A failure shows the expected value as `0.31 ± 3.1e-10`.
+
+`assert-compile-error(src, pattern?)` checks that `src` fails to compile, optionally with a message matching `pattern` (a string or regex), and returns the `CompileError`.
 
 `assert-throws` checks that an expression throws, and returns what was thrown:
 
