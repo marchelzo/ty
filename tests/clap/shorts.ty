@@ -1,0 +1,99 @@
+import clap (clap!)
+import os
+import path (Path)
+import sh
+import ty
+
+clap! Args {
+    model: String, short: 'm', default: 'base'
+    memory: Int
+    sandbox: String
+    size: Int
+    host: String
+}
+
+fn forked(f) {
+    let (r, w) = os.pipe()
+    let pid = os.fork()
+
+    if pid == 0 {
+        os.close(r)
+        os.dup2(w, 2)
+        os.close(w)
+        f()
+        os.exit(0)
+    }
+
+    os.close(w)
+    let err = slurp(r)
+    os.close(r)
+    let (_, status) = os.wait(pid)!
+    ((status >> 8) & 0xFF, err)
+}
+
+fn compiled(source: String) -> sh.CmdResult {
+    let dir  = Path('/tmp').mkdtemp('clap-shorts-')
+    let file = dir / 'opts.ty'
+
+    file.write(source)
+    defer dir.rmtree(quiet: true)
+
+    sh.run([ty.executable, '-c', str(file)], timeout=30, combineOutput=true)
+}
+
+ns test
+
+pub fn clap-automatic-shorts-yield-to-explicit-ones() {
+    let (code, err) = forked(fn () {
+        let (opts, _) = Args.parse(['prog', '-m', 'gpt', '--memory', '512'])
+        assert(opts.model == 'gpt')
+        assert(opts.memory == 512)
+    })
+    assert(code == 0, "exit {code}: {err}")
+}
+
+pub fn clap-first-automatic-short-wins() {
+    let (code, err) = forked(fn () {
+        let (opts, _) = Args.parse(['prog', '-s', 'hide', '--size', '3'])
+        assert(opts.sandbox == 'hide')
+        assert(opts.size == 3)
+    })
+    assert(code == 0, "exit {code}: {err}")
+}
+
+pub fn clap-help-keeps-h() {
+    let (code, err) = forked(fn () {
+        os.dup2(os.open('/dev/null', os.O_WRONLY), 1)
+        Args.parse(['prog', '-h', 'example.com'])
+    })
+    assert(code == 0, "exit {code}: {err}")
+
+    let (code, err) = forked(fn () {
+        Args.parse(['prog', '--memory', '1', '-z'])
+    })
+    assert(code != 0)
+    assert('-z' in err, err)
+}
+
+pub fn clap-duplicate-explicit-shorts-fail-to-compile() {
+    let result = compiled('''
+        import clap (clap!)
+        clap! Opts {
+            model: String, short: 'm'
+            memory: Int, short: 'm'
+        }
+    ''')
+    assert(!result.ok?)
+    assert('-m is claimed by both --model and --memory' in result.stdout, result.stdout)
+}
+
+pub fn clap-explicit-h-fails-to-compile() {
+    let result = compiled('''
+        import clap (clap!)
+        clap! Opts {
+            host: String, short: 'h'
+        }
+    ''')
+    assert(!result.ok?)
+    assert('-h is claimed by both --help and --host' in result.stdout, result.stdout)
+}

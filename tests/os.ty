@@ -178,7 +178,7 @@ pub fn spawn-inherit() {
         defer close(r)
         let w = single-digit(w)
         fcntl(w, F_SETFD, FD_CLOEXEC)
-        let writer = spawn(['sh', '-c', "printf through >&{w}"], inherit: [w])
+        let writer = spawn(['bash', '-c', "printf through >&{w}"], inherit: [w])
         close(w)
         wait4(writer.pid)
         assert(read(r, 64).str() == 'through')

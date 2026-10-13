@@ -1,0 +1,4 @@
+fn bad(x: Int | String | nil) -> String {
+    x ?= "a"
+    x
+}
