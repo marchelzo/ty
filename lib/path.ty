@@ -479,17 +479,16 @@ pub class Path : PathLike {
     }
 
     rmtree(quiet: Bool = false) {
-        if self.symlink? {
-            unlink()
-        } else if self.dir? {
-            for entry in self.ls() {
-                entry.rmtree()
-            }
-            rmdir()
-        } else if self.file? {
-            unlink()
-        } else if !quiet {
-            throw PathError({msg: 'path does not exist', path: prelude::str(self)})
+        match os.lstat(prelude::str(self)) {
+            {mode, *} and (mode & os.S_IFMT) == os.S_IFDIR => do {
+                for self.ls() {
+                    it.rmtree(quiet: quiet)
+                }
+                rmdir()
+            },
+            nil and quiet => nil,
+            nil => throw PathError({msg: 'path does not exist', path: prelude::str(self)}),
+            _   => unlink(missing-ok: quiet),
         }
     }
 

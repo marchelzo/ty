@@ -88,3 +88,13 @@ pub fn test-shuffle-uses-ty-prng() {
 
     assert(xs == ys)
 }
+
+pub fn test-repeat-by-zero-or-less() {
+    let xs = [1, 2]
+    assert(xs * 0 == [])
+    assert(xs * -3 == [])
+    assert(xs * 2 == [1, 2, 1, 2])
+    let ys = xs * 0
+    ys.push(3)
+    assert(xs == [1, 2])
+}

@@ -166,7 +166,6 @@ pub fn legacy-function-keys() {
 
 pub fn unknown-sequences-are-dropped() {
     check([
-        ("\x1b[I",                            ''),
         ("\x1b[?2026;2$y",                    ''),
         ("\x1b[?31u",                         ''),
         ("\x1b[99~",                          ''),

@@ -2,6 +2,7 @@ import path
 import os
 import ty
 import ty.parse as parse
+import ty.test (assert-throws)
 
 pub fn rmtree-preserves-symlink-targets() {
     with tmp = path.tempdir() {
@@ -16,6 +17,24 @@ pub fn rmtree-preserves-symlink-targets() {
         tree.rmtree()
         assert(!tree.exists?)
         assert((target / 'keep.txt').read-text() == 'keep')
+    }
+}
+
+pub fn rmtree-removes-special-files() {
+    with tmp = path.tempdir() {
+        let tree = tmp / 'tree'
+        (tree / 'sub').mkdir(parents: true)
+        assert(os.mkfifo(str(tree / 'sub' / 'pipe'), 0o600) == 0)
+        tree.rmtree()
+        assert(!tree.exists?)
+    }
+}
+
+pub fn quiet-rmtree-ignores-missing-paths() {
+    with tmp = path.tempdir() {
+        (tmp / 'nothing-here').rmtree(quiet: true)
+        let e = assert-throws((tmp / 'nothing-here').rmtree())
+        assert(str(e).match?(/path does not exist/), str(e))
     }
 }
 

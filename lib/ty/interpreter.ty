@@ -156,17 +156,13 @@ class Kernel {
             return
         }
         __closed? = true
-        os.close(__fd)
-        os.close(__process.stderr)
         let result = os.kill(-__process.pid, os.SIGKILL)
         let error = result < 0 ? errno.get() : 0
-        let reaped? = os.wait(__process.pid, os.WNOHANG) != nil
-        if error != 0 && error != errno.ESRCH
-        && !(error == errno.EPERM && reaped?) {
+        os.close(__fd)
+        os.close(__process.stderr)
+        os.wait(__process.pid)
+        if error != 0 && error != errno.ESRCH && error != errno.EPERM {
             throw os.OSError('stop Ty REPL', error)
-        }
-        if !reaped? {
-            os.wait(__process.pid)
         }
     }
 }

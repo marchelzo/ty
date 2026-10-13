@@ -21,6 +21,7 @@ import json
 import io
 import sh (sh)
 import ty
+import ty.test (patch)
 
 @table
 class User {

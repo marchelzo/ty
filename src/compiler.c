@@ -17245,12 +17245,18 @@ cexpr(Ty *ty, Value *v)
                 case 2:
                         e->type = EXPRESSION_UNARY_OP;
                         e->uop = mkcstr(&v->items[0]);
+                        if (e->uop == NULL) {
+                                goto Bad;
+                        }
                         e->operand = cexpr(ty, &v->items[1]);
                         break;
 
                 case 3:
                         e->type = EXPRESSION_USER_OP;
                         e->op_name = mkcstr(&v->items[0]);
+                        if (e->op_name == NULL) {
+                                goto Bad;
+                        }
                         e->left = cexpr(ty, &v->items[1]);
                         e->right = cexpr(ty, &v->items[2]);
                         break;
@@ -17355,6 +17361,9 @@ cexpr(Ty *ty, Value *v)
         {
                 e->type = EXPRESSION_IFDEF;
                 e->identifier = mkcstr(t_(v, "name"));
+                if (e->identifier == NULL) {
+                        goto Bad;
+                }
                 Value *mod = tuple_get(v, "module");
                 e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
                 break;
@@ -17363,6 +17372,9 @@ cexpr(Ty *ty, Value *v)
         {
                 e->type = EXPRESSION_DEFINED;
                 e->identifier = mkcstr(t_(v, "name"));
+                if (e->identifier == NULL) {
+                        goto Bad;
+                }
                 Value *mod = tuple_get(v, "module");
                 e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
                 break;
@@ -17442,7 +17454,10 @@ CToTyExpr(Ty *ty, Expr *e)
 {
         GC_STOP();
 
+        void *ctx = ContextList;
+
         if (TY_CATCH_ERROR()) {
+                ContextList = ctx;
                 TY_SUPPRESS("AST conversion");
                 GC_RESUME();
                 return NONE;
@@ -17461,7 +17476,10 @@ CToTyStmt(Ty *ty, Stmt *s)
 {
         GC_STOP();
 
+        void *ctx = ContextList;
+
         if (TY_CATCH_ERROR()) {
+                ContextList = ctx;
                 TY_SUPPRESS("AST conversion");
                 GC_RESUME();
                 return NONE;
@@ -17480,7 +17498,10 @@ TyToCExpr(Ty *ty, Value *v)
 {
         GC_STOP();
 
+        void *ctx = ContextList;
+
         if (TY_CATCH_ERROR()) {
+                ContextList = ctx;
                 TY_CATCH_FAIL();
                 GC_RESUME();
                 return NULL;
@@ -17520,7 +17541,10 @@ tyeval(Ty *ty, Expr *e, Value *ret, Scope *scope)
 
         EVAL_DEPTH += 1;
 
+        void *ctx = ContextList;
+
         if (TY_CATCH_ERROR()) {
+                ContextList = ctx;
                 *ret = TY_CATCH();
                 EVAL_DEPTH -= 1;
                 STATE = state;
@@ -17591,7 +17615,10 @@ compiler_compile_debug_expr(
 
         EVAL_DEPTH += 1;
 
+        void *ctx = ContextList;
+
         if (TY_CATCH_ERROR()) {
+                ContextList = ctx;
                 *error = TY_CATCH();
                 EVAL_DEPTH -= 1;
                 STATE = state;
@@ -18748,7 +18775,10 @@ compiler_symbolize_expression(Ty *ty, Expr *e, Scope *scope)
 
         EVAL_DEPTH += 1;
 
+        void *ctx = ContextList;
+
         if (TY_CATCH_ERROR()) {
+                ContextList = ctx;
                 TY_CATCH_FAIL();
                 EVAL_DEPTH -= 1;
                 STATE = state;
@@ -18803,7 +18833,7 @@ compiler_render_template(Ty *ty, Expr *e)
         }
 
         if (vN(e->template.stmts) == 1) {
-                v = tstmtx(v__(e->template.stmts, 0));
+                v = tstmtx(v__(e->template.stmts, 0), TX_NO_RESOLVE);
                 goto End;
         }
 
@@ -18811,7 +18841,7 @@ compiler_render_template(Ty *ty, Expr *e)
 
         GC_STOP();
         for (usize i = 0; i < vN(e->template.stmts); ++i) {
-                vAp(a, tstmtx(v__(e->template.stmts, i)));
+                vAp(a, tstmtx(v__(e->template.stmts, i), TX_NO_RESOLVE));
         }
         v = tagged(ty, TyMulti, ARRAY(a), NONE);
         GC_RESUME();
@@ -21086,7 +21116,10 @@ CompilerResolveExpr(Ty *ty, Expr *e)
                       : STATE.global;
         }
 
+        void *ctx = ContextList;
+
         if (TY_CATCH_ERROR()) {
+                ContextList = ctx;
                 TY_CATCH_FAIL();
                 return false;
         }

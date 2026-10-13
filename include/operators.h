@@ -214,7 +214,7 @@ op_builtin_mul(Ty *ty)
         case PACK_TYPES(VALUE_ARRAY, VALUE_INTEGER):
         {
                 if (right->z <= 0) {
-                        COMPLETE(ARRAY(ArrayClone(ty, NULL)));
+                        COMPLETE(ARRAY(vAn(0)));
                 }
                 v = ARRAY(vAn(vN(*left->array) * right->z));
                 vN(*v.array) = vN(*left->array) * right->z;
