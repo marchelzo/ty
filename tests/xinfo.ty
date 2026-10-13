@@ -2,8 +2,6 @@ import ffi as c (C!)
 import ty (gc)
 import os
 
-ns test
-
 /// Original user-function documentation.
 fn documented(x: Int, y: String = 'ok') -> String {
     "{x}:{y}"

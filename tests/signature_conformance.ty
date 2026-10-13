@@ -17,8 +17,6 @@ fn nil-safe-union[a, b](x: (a & nil) | (a & Object), f: (a & Object) -> b) -> (a
 
 fn first[T, U](xs: T) -> U where T: Array[U] { xs[0] }
 
-ns test
-
 pub fn bodies-may-not-strengthen-signatures() {
     for source in [
         'fn bad[T](x: T) -> T { 1 }',

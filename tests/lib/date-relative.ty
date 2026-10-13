@@ -23,8 +23,6 @@ fn uses-clock(value: RelativeDate, clock: () -> RelativeDate,
     assert(actual in [before, after])
 }
 
-ns test
-
 pub fn default-reference() {
     let date = PlainDate(2000, 1, 1)
     let plain = date.to-plain-date-time()

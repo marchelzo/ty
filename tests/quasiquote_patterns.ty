@@ -47,8 +47,6 @@ fn g(*xs: Int) -> Int {
     #xs
 }
 
-ns test
-
 pub fn binds-holes() {
     let x = 10
     let y = 3

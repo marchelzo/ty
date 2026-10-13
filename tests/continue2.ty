@@ -1,5 +1,3 @@
-ns test
-
 let n = 0
 
 let drops = 0

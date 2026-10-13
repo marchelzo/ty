@@ -1,8 +1,6 @@
 import ink
 import term (event)
 
-ns test
-
 class RSApp < ink.Component {
     lo-val: Float = -1.0
     hi-val: Float = -1.0

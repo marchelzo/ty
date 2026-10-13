@@ -1,7 +1,5 @@
 import ty
 
-ns test
-
 fn tag-match-in-loop(nodes) {
     let out = []
     for node in nodes {

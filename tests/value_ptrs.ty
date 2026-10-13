@@ -2,8 +2,6 @@ import ffi as c
 import ptr
 import ty
 
-ns test
-
 pub fn custom-auto-destructor-is-retained-and-called-once() {
     let calls = []
     let p = c.new(c.i64)

@@ -83,8 +83,6 @@ fn fuzz(seed: Int) {
     }
 }
 
-ns test
-
 pub fn mutate-sample() {
     for SEEDS {
         fuzz(it)

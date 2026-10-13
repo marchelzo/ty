@@ -29,8 +29,6 @@ fn bound(kind, subtype, supertype, operand = nil, name = nil) {
     ty.Bound({kind, subtype, supertype, operand, name})
 }
 
-ns test
-
 pub fn captured-assignment() {
     let x: ?Int = 5
     let change = fn () { x = 0 }

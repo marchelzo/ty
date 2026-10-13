@@ -1,5 +1,3 @@
-ns test
-
 const RED   = "\x1b[31m"
 const RST   = "\x1b[0m"
 const LINK  = "\x1b]8;;https://example.com\x1b\\"

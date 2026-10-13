@@ -21,10 +21,6 @@ fn bar(a: Int, b: Int) {
     2
 }
 
-fn o() {}
-
-ns test
-
 pub fn overload() {
     assert([A.foo(4.0), A.foo([1, 2]), A.foo([1, 2.0]), A.foo(['a'])] == [1, 2, 3, 4])
     assert((bar('x'), bar(4, 5)) == (1, 2))

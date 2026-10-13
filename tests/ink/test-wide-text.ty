@@ -25,8 +25,6 @@ fn closes-link?(s: String) -> Bool {
     #urls == 0 || urls[-1] == ''
 }
 
-ns test
-
 pub fn link-in-border() {
     let h = harness(ink.Box(ink.Text(LINK), ink.Text('after link'), border-style='single'))
     assert(uniform?(h), h.lines.map(&width))

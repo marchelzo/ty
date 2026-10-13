@@ -10,8 +10,6 @@ fn forward[...Args, b](g: Args -> b, *xs: ...Args) -> b {
 
 fn add(x: Int, y: Int) -> Int { x + y }
 
-ns test
-
 pub fn declared-pack-survives-the-body() {
     assert(str(typeof compose) == '(f: (a) -> b, g: (...c) -> a) -> (...c) -> b')
     assert(str(typeof forward) == '(g: (...a) -> b, ...xs: a) -> b')

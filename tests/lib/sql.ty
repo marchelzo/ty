@@ -148,8 +148,6 @@ class Pet {
     owner: ForeignKey[Person.id]
 }
 
-ns test
-
 fn fresh() { connect(':memory:') }
 
 pub fn test-create-table() {

@@ -4,8 +4,6 @@ import ty.parse as parse
 import ty.repl as repl
 import ety
 
-ns test
-
 fn parsed(source: String | Blob) -> Module {
     match ty.parse(source) {
         Ok(mod)               => mod,

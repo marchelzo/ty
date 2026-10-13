@@ -1,8 +1,6 @@
 import ink
 import term (event)
 
-ns test
-
 class TreeApp < ink.Component {
     rev: Int = 1
     child-calls: Int = 0

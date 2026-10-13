@@ -1,7 +1,5 @@
 import chalk (Chalk, Text, chalk, strip, escape, trans, parse, hslToRgb, hsl-hex, hash-hsl)
 
-ns test
-
 let ESC = "\x1b"
 
 let ink = Chalk()

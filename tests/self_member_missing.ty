@@ -49,8 +49,6 @@ defineMethod(Plain, 'explicit', unbindMethod(Donor().explicit))
 defineMethod(Plain, 'implicitcall', unbindMethod(Donor().implicitcall))
 defineMethod(Ghost, 'peek', unbindMethod(Seer().peek))
 
-ns test
-
 pub fn implicit-self-missing-member-raises() {
     let p: _ = Plain()
     let implicit = error-of(() -> p.implicit())

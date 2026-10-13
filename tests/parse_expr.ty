@@ -5,8 +5,6 @@ import support.parse_expr (filtered, recovered, rejected)
 
 const OFFSET = 7
 
-ns test
-
 pub fn source-expression() {
     assert(parse.expr('42') == ty.Int(42))
     assert(parse.expr(blob('12 / 3')) == ty.Div(ty.Int(12), ty.Int(3)))

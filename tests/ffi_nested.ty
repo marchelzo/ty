@@ -1,7 +1,5 @@
 import ffi as c (C!)
 
-ns test
-
 // Struct with anonymous nested struct, union containing
 // a struct, a nested union, and a plain field.
 C! struct Nested {

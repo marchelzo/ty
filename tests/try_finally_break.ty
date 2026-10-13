@@ -47,18 +47,16 @@ fn guarded(f: () -> Int) -> Int {
     }
 }
 
-ns test {
-    pub fn break-in-finally-pops-its-try() {
-        assert(guarded(break-in-finally) == 101)
-    }
+pub fn break-in-finally-pops-its-try() {
+    assert(guarded(break-in-finally) == 101)
+}
 
-    pub fn continue-in-catch-pops-the-throw() {
-        assert(guarded(continue-in-catch) == 103)
-        assert(ty.trace() == nil)
-    }
+pub fn continue-in-catch-pops-the-throw() {
+    assert(guarded(continue-in-catch) == 103)
+    assert(ty.trace() == nil)
+}
 
-    pub fn break-in-finally-discards-the-exception() {
-        assert(guarded(break-swallows-pending-throw) == 110)
-        assert(ty.trace() == nil)
-    }
+pub fn break-in-finally-discards-the-exception() {
+    assert(guarded(break-swallows-pending-throw) == 110)
+    assert(ty.trace() == nil)
 }

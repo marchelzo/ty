@@ -3,8 +3,6 @@ import os
 import ty
 import ty.parse as parse
 
-ns test
-
 pub fn rmtree-preserves-symlink-targets() {
     with tmp = path.tempdir() {
         let target = tmp / 'target'

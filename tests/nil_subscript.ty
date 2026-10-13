@@ -10,8 +10,6 @@ fn maybe-first(xs) {
     xs.?[0]
 }
 
-ns test
-
 pub fn subscripting-nil-throws() {
     let m = hidden('abc'.match(/x(y)/))
     let error = try { m[1]; nil } catch e { str(e) }

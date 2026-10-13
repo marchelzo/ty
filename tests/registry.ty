@@ -2,61 +2,51 @@ import ty
 import ty.mod as tymod
 
 ns my-group {
-    ns test {
-        pub fn adds-up() -> Int {
-            __line__ - 1
-        }
+    pub fn adds-up() -> Int {
+        __line__ - 1
+    }
 
-        fn helper() -> Int {
-            __line__ - 1
-        }
+    fn helper() -> Int {
+        __line__ - 1
     }
 }
 
 ns a {
-    ns test {
-        pub fn f() -> String {
-            'a'
-        }
+    pub fn f() -> String {
+        'a'
     }
 }
 
 ns b {
-    ns test {
-        pub fn f() -> String {
-            'b'
-        }
+    pub fn f() -> String {
+        'b'
     }
 }
 
 ns shapes {
-    ns test {
-        fn gen*() -> Generator[Int] {
-            yield 1
-        }
+    fn gen*() -> Generator[Int] {
+        yield 1
+    }
 
-        fn takes(t: Int, u: Int = 1, *rest: Int) -> Int {
-            t + u + #rest
-        }
+    fn takes(t: Int, u: Int = 1, *rest: Int) -> Int {
+        t + u + #rest
+    }
 
-        fn over(a: Int) -> Int {
-            a
-        }
+    fn over(a: Int) -> Int {
+        a
+    }
 
-        fn over(a: String) -> String {
-            a
-        }
+    fn over(a: String) -> String {
+        a
     }
 }
 
 ns locals {
-    ns test {
-        fn outer() -> Int {
-            fn inner() -> Int {
-                1
-            }
-            inner()
+    fn outer() -> Int {
+        fn inner() -> Int {
+            1
         }
+        inner()
     }
 }
 
@@ -79,33 +69,27 @@ use Site = {
 }
 
 fn sites-in(scope: String) -> Array[Site] {
-    ty.tests().filter(\_.scopes[0] == scope)
+    ty.tests().filter(\_.scopes == [scope])
 }
 
 fn compile-doomed() -> Bool {
     try {
-        tymod.compile('ns test { pub fn doomed() {} }\nlet x: Int = nope', nil, 'doomed.ty')
+        tymod.compile('pub fn doomed() {}\nlet x: Int = nope', nil, 'doomed.ty')
     } catch _: RuntimeError {
         return false
     }
     true
 }
 
-fn register-late() {
-    tymod.eval(tymod.compile('ns test { pub fn late-arrival() {} }', nil, 'late.ty'))
-}
-
-ns test
-
 pub fn nested-namespace-sites() {
     let [adds, helper] = sites-in('my-group')
-    assert(adds.scopes == ['my-group', 'test'])
+    assert(adds.scopes == ['my-group'])
     assert(adds.name == 'adds-up')
     assert(adds.ident == 'addsUp')
     assert(adds.public?)
     assert(adds.line == adds.func())
     assert(adds.end-line == adds.line + 2)
-    assert(helper.scopes == ['my-group', 'test'])
+    assert(helper.scopes == ['my-group'])
     assert(helper.name == 'helper')
     assert(!helper.public?)
     assert(helper.line == helper.func())
@@ -115,10 +99,15 @@ pub fn nested-namespace-sites() {
 pub fn sibling-namespaces-are-distinct() {
     let fa = sites-in('a')
     let fb = sites-in('b')
-    assert(fa.map(&.scopes) == [['a', 'test']])
-    assert(fb.map(&.scopes) == [['b', 'test']])
+    assert(fa.map(&.scopes) == [['a']])
+    assert(fb.map(&.scopes) == [['b']])
     assert(fa[0].func() == 'a')
     assert(fb[0].func() == 'b')
+}
+
+pub fn top-level-sites-have-no-scopes() {
+    let sites = ty.tests().filter(\_.name == 'top-level-sites-have-no-scopes')
+    assert(sites.map(&.scopes) == [[]])
 }
 
 pub fn site-shapes() {
@@ -135,27 +124,20 @@ pub fn site-shapes() {
     assert(sites.all?(\!_.public?))
 }
 
-pub fn snapshot-ignores-later-registrations() {
-    let snap = ty.tests()
-    let seen = []
-    for snap {
-        if #seen == 0 {
-            register-late()
-        }
-        seen.push(it.name)
-    }
-    assert(#seen == #snap)
-    assert(!seen.contains?('late-arrival'))
-    assert(ty.tests().any?(\_.name == 'late-arrival'))
-}
-
 pub fn local-functions-are-not-sites() {
     let sites = sites-in('locals')
     assert(sites.map(&.name) == ['outer'])
     assert(sites[0].func() == 1)
 }
 
-pub fn failed-compiles-register-nothing() {
+pub fn imported-modules-register-nothing() {
+    assert(ty.tests().all?(\_.file == __file__))
+}
+
+pub fn runtime-compiled-code-registers-nothing() {
+    let n = #ty.tests()
+    tymod.eval(tymod.compile('pub fn late-arrival() {}', nil, 'late.ty'))
+    __eval__('pub fn evaluated-arrival() {}')
     assert(!compile-doomed())
-    assert(!ty.tests().any?(\_.name == 'doomed'))
+    assert(#ty.tests() == n)
 }

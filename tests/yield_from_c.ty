@@ -1,5 +1,3 @@
-ns test
-
 fn gen*(fun) {
     let cs = 'pass:fail'.chars()
     cs.map(fun)

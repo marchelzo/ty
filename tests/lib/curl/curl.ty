@@ -4,8 +4,6 @@ import json
 import net
 import os
 
-ns test
-
 fn reply(fd: Int, body: String | Blob = '', status: Int = 200, headers = %{}) {
     let reason = match status {
         200 => 'OK',

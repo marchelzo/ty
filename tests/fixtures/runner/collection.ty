@@ -8,30 +8,23 @@ fn forty-two[F](f: F) -> Any {
 fn not-a-test() {
 }
 
+let lambda = tags(() -> nil, 'lambda')
+
 ns a {
-    ns test {
-        pub fn same() {
-        }
+    pub fn same() {
     }
 }
 
-ns test {
-    ns a {
-        pub fn same() {
-        }
-    }
+@forty-two
+pub fn decorated() {
+}
 
-    @forty-two
-    pub fn decorated() {
-    }
+pub fn gen*() {
+    yield 1
+}
 
-    pub fn gen*() {
-        yield 1
-    }
+pub fn needs-arg(a) {
+}
 
-    pub fn needs-arg(a) {
-    }
-
-    pub fn takes-t-and-default(t, n = 1) {
-    }
+pub fn takes-t-and-default(t, n = 1) {
 }

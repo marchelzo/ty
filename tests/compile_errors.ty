@@ -5,8 +5,6 @@ fn fixture(name: String, env: Dict[String, String] = %{}) -> (Int, String) {
     (result.status, result.stderr)
 }
 
-ns test
-
 pub fn import-parse-error-names-both-sites() {
     let (status, err) = fixture('import_bad_syntax')
     assert(status != 0)

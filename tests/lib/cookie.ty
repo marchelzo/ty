@@ -3,8 +3,6 @@ import path (Path)
 import sqlite (SQLite)
 import time
 
-ns test
-
 pub fn test-chrome-expiry-conversion() {
     assert(chrome-expiry(0) == nil)
     assert(chrome-expiry(11644473600000000) == 0.0)

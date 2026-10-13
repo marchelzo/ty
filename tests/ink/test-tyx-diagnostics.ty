@@ -1,7 +1,5 @@
 import super.support.process (FIXTURES, run)
 
-ns test
-
 pub fn parse-error-is-not-masked-by-tyx-regex-error() {
     let result = run(['-c', str(FIXTURES / 'tyx-parse-error.ty')])
     assert(result.status != 0)

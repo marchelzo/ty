@@ -5,8 +5,6 @@ import path (Path)
 const URL = os.getenv('TY_GIT_AUTH_URL')!
 const AUTH = git.Credentials.password('ty', 'secret')
 
-ns test
-
 pub fn authenticated-push-clone-and-fetch() {
     with path = Path.tempdir('ty-git-auth') {
         let ^source = git.init(path / 'source')

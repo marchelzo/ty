@@ -20,8 +20,6 @@ let SAMPLES = [
     "\x1b[44mab漢字\x1b[0m{link('https://x.org', 'cd👍🏽')}"
 ]
 
-ns test
-
 pub fn escape-sequences-are-zero-width() {
     assert(link('https://example.com/some/long/path?q=1', 'click').width() == 5)
     assert("{ESC}]8;;https://x.org\x07click{ESC}]8;;\x07".width() == 5)

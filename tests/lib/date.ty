@@ -1,8 +1,6 @@
 import date (..)
 import time
 
-ns test
-
 pub fn test-duration-basic() {
     let d = Duration(hours=1, minutes=30)
     assert(d.hours == 1)

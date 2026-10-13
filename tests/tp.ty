@@ -1,8 +1,6 @@
 import os
 import tp (..)
 
-ns test
-
 pub fn test-thread-pool-stress() {
     let pool = ThreadPool(os.ncpu(), fn (s) {
         for ..3000 {

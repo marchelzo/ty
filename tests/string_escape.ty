@@ -1,7 +1,5 @@
 import ty
 
-ns test
-
 fn check(s: String, escaped: String) {
     assert(s.escape() == escaped)
     assert(show(s, color=false) == "'{escaped}'")

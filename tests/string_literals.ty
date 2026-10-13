@@ -21,8 +21,6 @@ class FormatEcho {
     }
 }
 
-ns test
-
 pub fn embedded-nuls() {
     assert("abc\x00def".size() == 7)
     assert("abc\x00def".bytes() == [97, 98, 99, 0, 100, 101, 102])

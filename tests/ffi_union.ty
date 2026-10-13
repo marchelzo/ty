@@ -1,7 +1,5 @@
 import ffi as c (C!)
 
-ns test
-
 C! struct Foo {
     int a;
     union {

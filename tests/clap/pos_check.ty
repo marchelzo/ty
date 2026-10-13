@@ -26,8 +26,6 @@ fn forked(f) {
     ((status >> 8) & 0xFF, err)
 }
 
-ns test
-
 pub fn clap-pos-check-valid() {
     let (code, err) = forked(fn () {
         let (opts, rest) = Args.parse(['prog', 'build', '3', 'a.ty', 'b.ty'])

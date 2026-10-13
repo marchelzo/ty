@@ -1,8 +1,6 @@
 import term (..)
 import os (..)
 
-ns test
-
 const SENTINEL = "\x1b[57399u"
 
 fn mods-str(m: Int) -> String {

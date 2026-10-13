@@ -6,8 +6,6 @@ fn merge(styles: Dict[String, ?Style], names: String) -> ?Style {
     names.words().map(name -> styles[name]!).fold(\{*_, *_})
 }
 
-ns test
-
 pub fn fold-after-map() {
     let styles: Dict[String, ?Style] = %{
         'bold': {bold: true},

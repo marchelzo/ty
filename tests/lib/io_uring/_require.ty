@@ -1,3 +1,0 @@
-import os (exit)
-
-exit(__linux__ ? 0 : 77)

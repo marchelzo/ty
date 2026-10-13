@@ -1,15 +1,13 @@
 import ty.test (Test, assert-throws, timeout)
-ns test {
-    pub fn skip-passes-through(t: Test) {
-        assert-throws(t.skip('inner skip'))
-    }
+pub fn skip-passes-through(t: Test) {
+    assert-throws(t.skip('inner skip'))
+}
 
-    @timeout(0.2)
-    pub fn timeout-passes-through() {
-        assert-throws(do { while true {} })
-    }
+@timeout(0.2)
+pub fn timeout-passes-through() {
+    assert-throws(do { while true {} })
+}
 
-    pub fn still-catches() {
-        assert-throws(throw 'x')
-    }
+pub fn still-catches() {
+    assert-throws(throw 'x')
 }

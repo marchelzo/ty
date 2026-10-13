@@ -1,8 +1,0 @@
-import os
-
-try {
-    Module('xml')
-} catch e {
-    print("the xml module is unavailable: {e}")
-    os.exit(77)
-}

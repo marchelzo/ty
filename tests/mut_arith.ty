@@ -1,5 +1,3 @@
-ns test
-
 let global-target-value = 0
 
 pub fn global-target() {

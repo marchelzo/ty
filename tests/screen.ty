@@ -1,7 +1,5 @@
 import term (Screen)
 
-ns test
-
 const BG  = "\x1b[48;5;236m"
 const RED = "\x1b[31m"
 const RST = "\x1b[0m"

@@ -10,8 +10,6 @@ class OperatorChild < OperatorBase {
     }
 }
 
-ns test
-
 pub fn predicate-fallback() -> nil {
     let (a, b) = (/a/, /b/)
     assert(str(typeof a | b) == '(Any) -> Bool')

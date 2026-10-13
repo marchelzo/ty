@@ -30,7 +30,6 @@ struct ns {
         char const *src_id;
         bool pub;
         bool braced;
-        bool test;
         Namespace *next;
 };
 

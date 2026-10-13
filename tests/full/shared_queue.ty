@@ -1,7 +1,5 @@
 import super.support.queues as queues
 
-ns test
-
 pub fn shared-queue-stress() {
     for (writers, readers) in [(1, 1), (6, 1), (1, 6), (6, 6)] {
         queues.transfer(SharedQueue(), writers, readers, 1024, 65)

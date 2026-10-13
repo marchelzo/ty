@@ -254,10 +254,6 @@ pub class Tally {
             self.rusage?  = true
         }
         let st = get-event(ev, 'status') ?? %{}
-        let quiet? = r.rc == nil && r.total == 0 && r.tests == 0
-        if quiet? && get-str(st, 'kind') == 'exit' && get-int(st, 'code') == 77 {
-            r.skip = r.skip ?? 'exit status 77 (requirements not met)'
-        }
         if r.skip == nil {
             r.error = file-error(r, st)
         }

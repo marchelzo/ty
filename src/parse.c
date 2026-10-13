@@ -279,7 +279,6 @@ typedef struct ParserState {
         bool comments;
 
         Namespace *CurrentNamespace;
-        int ns_test;
 
         Expr *CurrentTemplate;
         Expr *last;
@@ -338,7 +337,6 @@ static Expr NullExpr = {
 
 #define CtxCheckpoint     (state.CtxCheckpoint)
 #define CurrentNamespace  (state.CurrentNamespace)
-#define TestNamespace     (state.ns_test)
 #define CurrentTemplate   (state.CurrentTemplate)
 #define TEnd              (state.TEnd)
 #define EEnd              (state.EEnd)
@@ -1295,16 +1293,11 @@ ParseError(Ty *ty, char const *fmt, ...)
 inline static Namespace *
 PushNS(Ty *ty, char *id, Token const *src, bool pub)
 {
-        if (s_eq(id, "test")) {
-                TestNamespace += 1;
-        }
-
         Namespace *ns = amA(sizeof *ns);
         ns->id     = id;
         ns->src_id = id;
         ns->pub    = pub;
         ns->braced = true;
-        ns->test   = (TestNamespace > 0);
         ns->next   = CurrentNamespace;
 
         if (
@@ -1328,10 +1321,6 @@ PushNS(Ty *ty, char *id, Token const *src, bool pub)
 inline static void
 PopNS(Ty *ty)
 {
-        if (s_eq(CurrentNamespace->id, "test")) {
-                TestNamespace -= 1;
-        }
-
         CompilerLeaveNS(ty);
 
         CurrentNamespace = CurrentNamespace->next;
@@ -5688,7 +5677,8 @@ get_infix_prec(Ty *ty)
         case TOKEN_QUESTION:       return 3;
         case TOKEN_ELVIS:          return 3;
 
-        case '!':                  return 3;
+        case '!':
+                return have_without_nl(ty, '!') ? 3 : -3;
 
         case TOKEN_MAYBE_EQ:
         case TOKEN_EQ:             return NoEquals ? -3 : 2;

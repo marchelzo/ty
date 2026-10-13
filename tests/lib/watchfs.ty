@@ -2,8 +2,6 @@ import watchfs (..)
 import path (Path)
 import os
 
-ns test
-
 let TIMEOUT = 2.0
 
 fn after(ms, f) {

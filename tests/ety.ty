@@ -1,7 +1,5 @@
 import ety
 
-ns test
-
 pub fn template() {
     let tmpl = ety.compile(
         '''

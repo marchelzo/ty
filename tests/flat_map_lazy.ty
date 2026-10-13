@@ -1,7 +1,5 @@
 fn hidden(x: _) -> _ { x }
 
-ns test
-
 pub fn flat-map-splices-lazy-results() {
     assert([1, 2].flat-map(n -> (0..n).map(\_ * 10)) == [0, 0, 10])
     assert([1, 2].flat-map(n -> hidden(0..n)) == [0, 0, 1])

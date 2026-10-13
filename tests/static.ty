@@ -1,5 +1,4 @@
 import ty.types as types
-ns test
 
 pub fn static-expr() {
     let ref = nil

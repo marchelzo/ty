@@ -38,7 +38,7 @@ ERROR tests/on_exit.ty
     onExit: cleanup failed
 
 warnings (1):
-  tests/empty.ty: empty-file: no tests found; 1 function in `ns test` is not `pub` and never runs (missing `pub`?): helper
+  tests/empty.ty: empty-file: no tests found
 ────────────────────────────────────────────────────────────────────────────────
  6 passed  1 failed  1 timed out  1 crashed  1 exited  1 xfail
  8 files (4 failed, 2 skipped, 1 empty)   3.95s wall  1.83s user  0.19s sys

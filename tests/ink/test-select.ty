@@ -1,8 +1,6 @@
 import ink
 import term (event)
 
-ns test
-
 class SelApp < ink.Component {
     changed: Int = -1
     render() {

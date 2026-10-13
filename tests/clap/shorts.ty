@@ -41,8 +41,6 @@ fn compiled(source: String) -> sh.CmdResult {
     sh.run([ty.executable, '-c', str(file)], timeout=30, combineOutput=true)
 }
 
-ns test
-
 pub fn clap-automatic-shorts-yield-to-explicit-ones() {
     let (code, err) = forked(fn () {
         let (opts, _) = Args.parse(['prog', '-m', 'gpt', '--memory', '512'])

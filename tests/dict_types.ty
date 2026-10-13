@@ -47,8 +47,6 @@ fn shown(t: _) -> String {
     types.show(t)
 }
 
-ns test
-
 pub fn lowering() {
     assert(shown(typeof take) == '(o: %{cwd: String, ?quiet: Bool}) -> String')
     assert(shown(typeof take-opts) == '(o: %{?b: String, ?c: Bool}) -> Bool')

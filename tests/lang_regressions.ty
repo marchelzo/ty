@@ -7,32 +7,30 @@ fn eval(src: String) -> Any {
     ty.eval(src)
 }
 
-ns test {
-    @xfail('a chalk template followed by an adjacent string on the next line fails to parse')
-    pub fn chalk-template-then-adjacent-string() {
-        let src = ['do { let a = 1; str(chalk"[bold]{a}[/] "', '"tail") }'].join('\n')
-        assert(eval(src) :: String)
-    }
+@xfail('a chalk template followed by an adjacent string on the next line fails to parse')
+pub fn chalk-template-then-adjacent-string() {
+    let src = ['do { let a = 1; str(chalk"[bold]{a}[/] "', '"tail") }'].join('\n')
+    assert(eval(src) :: String)
+}
 
-    @xfail('an inner #|] directly followed by the outer #|] fails to parse')
-    pub fn nested-conditional-closers() {
-        let src = ['do {', '#|if true', '#|if true', 'let x = 1', '#|]', '#|]', '2', '}'].join('\n')
-        assert(eval(src) == 2)
-    }
+@xfail('an inner #|] directly followed by the outer #|] fails to parse')
+pub fn nested-conditional-closers() {
+    let src = ['do {', '#|if true', '#|if true', 'let x = 1', '#|]', '#|]', '2', '}'].join('\n')
+    assert(eval(src) == 2)
+}
 
-    @xfail('__defined__ only accepts a bare identifier, not module.name')
-    pub fn defined-accepts-qualified-names() {
-        assert(eval('__defined__(os.pipe)') == true)
-    }
+@xfail('__defined__ only accepts a bare identifier, not module.name')
+pub fn defined-accepts-qualified-names() {
+    assert(eval('__defined__(os.pipe)') == true)
+}
 
-    @xfail('a lambda with only a rest parameter, (*a) -> a, is not variadic')
-    pub fn rest-only-lambda-is-variadic() {
-        assert(eval('do { let f = (*a) -> a; [f(), f(1, 2)] }') == [[], [1, 2]])
-    }
+@xfail('a lambda with only a rest parameter, (*a) -> a, is not variadic')
+pub fn rest-only-lambda-is-variadic() {
+    assert(eval('do { let f = (*a) -> a; [f(), f(1, 2)] }') == [[], [1, 2]])
+}
 
-    @xfail('?T inside a tuple type is checked as T')
-    pub fn optional-inside-tuple-type() {
-        let src = 'do { fn f(s: String) -> (String, ?String) { (s, nil) }; f("x") }'
-        assert(eval(src) == ('x', nil))
-    }
+@xfail('?T inside a tuple type is checked as T')
+pub fn optional-inside-tuple-type() {
+    let src = 'do { fn f(s: String) -> (String, ?String) { (s, nil) }; f("x") }'
+    assert(eval(src) == ('x', nil))
 }

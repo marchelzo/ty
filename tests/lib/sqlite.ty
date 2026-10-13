@@ -1,8 +1,6 @@
 import sqlite (..)
 import path (..)
 
-ns test
-
 pub fn test-open-memory() {
     let db = SQLite(':memory:')
     db.close()

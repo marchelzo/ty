@@ -47,8 +47,6 @@ fn traced(trail: Array[String], label: String, x: Int) -> Int {
     x
 }
 
-ns test
-
 pub fn passing-assertions-do-not-throw() {
     let x = 3
     let xs = [1, 2, 3]

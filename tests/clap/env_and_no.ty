@@ -33,8 +33,6 @@ fn forked(f) {
     ((status >> 8) & 0xFF, err)
 }
 
-ns test
-
 pub fn clap-env-and-no() {
     let (code, err) = forked(fn () {
         setenv('MYAPP_VERBOSE', 'true')

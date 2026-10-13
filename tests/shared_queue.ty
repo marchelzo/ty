@@ -2,8 +2,6 @@ import os (sleep)
 import ty
 import support.queues as queues
 
-ns test
-
 pub fn basic() {
     let q = SharedQueue()
     q.put(1)

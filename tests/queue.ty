@@ -1,5 +1,3 @@
-ns test
-
 pub fn basic() {
     let q = Queue()
     assert(#q == 0)

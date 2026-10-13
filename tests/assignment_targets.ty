@@ -1,8 +1,6 @@
 import json
 import support.process (FIXTURES, run)
 
-ns test
-
 pub fn view-declarations() {
     fn content-length(line: String) -> Int {
         let &words $~> &[-1] ~> int ~> $n = line

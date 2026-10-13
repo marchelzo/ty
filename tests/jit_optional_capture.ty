@@ -9,23 +9,21 @@ fn pair-then-local(xs: Array[String]) -> String {
     "p={p} q={q} y={y}"
 }
 
-ns test {
-    pub fn optional-capture-present() {
-        for ..50 {
-            assert(pair(['1', '2']) == 'p=1 q=2')
-        }
+pub fn optional-capture-present() {
+    for ..50 {
+        assert(pair(['1', '2']) == 'p=1 q=2')
     }
+}
 
-    pub fn optional-capture-missing() {
-        for ..50 {
-            assert(pair(['1']) == 'p=1 q=')
-        }
+pub fn optional-capture-missing() {
+    for ..50 {
+        assert(pair(['1']) == 'p=1 q=')
     }
+}
 
-    pub fn optional-capture-keeps-stack-balanced() {
-        for ..50 {
-            assert(pair-then-local(['1', '2']) == 'p=1 q=2 y=5')
-            assert(pair-then-local(['1']) == 'p=1 q= y=5')
-        }
+pub fn optional-capture-keeps-stack-balanced() {
+    for ..50 {
+        assert(pair-then-local(['1', '2']) == 'p=1 q=2 y=5')
+        assert(pair-then-local(['1']) == 'p=1 q= y=5')
     }
 }

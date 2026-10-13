@@ -6,8 +6,6 @@ import net
 import io
 import json
 
-ns test
-
 class Counter < ink.Component {
     label: String | nil
     __n: Int = 0

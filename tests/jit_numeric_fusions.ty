@@ -1,5 +1,3 @@
-ns test
-
 fn fused-int-source-mutation(n: Int) {
     let total = 0
     for i in ..n {

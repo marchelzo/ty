@@ -1,7 +1,5 @@
 import os (..)
 
-ns test
-
 pub fn concurrent-wait4-results() {
     if !__windows__ {
         let gate = Note()

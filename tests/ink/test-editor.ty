@@ -1,8 +1,6 @@
 import ink (..)
 import term (event, mod)
 
-ns test
-
 fn key(k: String | Int, mods: Int = 0) -> event.Event {
     event.Key({key: k, _key: nil, base: nil, mods, event: 1, text: []})
 }

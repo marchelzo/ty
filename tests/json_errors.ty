@@ -1,7 +1,5 @@
 import json
 
-ns test
-
 use Pair  = (Int, Int)
 use Named = {a: Int, b: String}
 

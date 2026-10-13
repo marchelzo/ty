@@ -1,7 +1,5 @@
 import super.support.process (FIXTURES, run)
 
-ns test
-
 fn run-trace(mode: String, options: [String]) {
     run([*options, str(FIXTURES / 'jit-backtrace.ty'), mode])
 }

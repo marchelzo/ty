@@ -1,7 +1,5 @@
 import support.process (FIXTURES)
 
-ns test
-
 class Foo {
     foo*(x) {
         yield __eval__(x)

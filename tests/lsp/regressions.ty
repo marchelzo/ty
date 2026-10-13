@@ -29,8 +29,6 @@ fn exercise(name: String, sources: Array[String]) {
     }
 }
 
-ns test
-
 pub fn class-body-at-eof() {
     exercise('class-body-at-eof', ['class X {\n '])
 }

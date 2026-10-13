@@ -1,5 +1,3 @@
-ns test
-
 pub fn wrap-breaks-optimally() {
     assert('aaa bb cc ddddd'.wrap(6) == "aaa\nbb cc\nddddd")
     assert('aaa bb cc ddddd'.wrap(6, greedy: true) == "aaa bb\ncc\nddddd")

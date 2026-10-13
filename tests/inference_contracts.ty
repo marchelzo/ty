@@ -98,8 +98,6 @@ fn opaque[T](value: _) -> T {
     cast(value)
 }
 
-ns test
-
 pub fn forward-call-inference() {
     let number: Int = read-later({raw: 7})
     let text: String = read-later({raw: 'seven'})

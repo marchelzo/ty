@@ -1,8 +1,6 @@
 import json
 import pretty (pretty)
 
-ns test
-
 pub fn queue_bounded() {
     let q = Queue(max-len: 3).push(1, 2, 3, 4)
     assert([*q] == [2, 3, 4] && q.max-len == 3 && Queue().max-len == nil)

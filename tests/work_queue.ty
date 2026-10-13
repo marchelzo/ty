@@ -1,7 +1,5 @@
 import support.queues as queues
 
-ns test
-
 pub fn batches() {
     queues.batches(WorkQueue(4))
 }

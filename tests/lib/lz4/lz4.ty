@@ -1,7 +1,5 @@
 import lz4
 
-ns test
-
 pub fn version() {
     let v = lz4.version()
     assert(v.match?(/^\d+\.\d+\.\d+$/))

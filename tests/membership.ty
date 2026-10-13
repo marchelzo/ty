@@ -36,8 +36,6 @@ fn record[T](events: [String], name: String, value: T) -> T {
     value
 }
 
-ns test
-
 pub fn builtins() {
     assert(2 in [1, 2, 3])
     assert(4 not in [1, 2, 3])

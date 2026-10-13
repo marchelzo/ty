@@ -161,8 +161,6 @@ notify('initialized', {})
 
 // ── Tests ───────────────────────────────────────────────────────────
 
-ns test
-
 pub fn capabilities() {
     let caps: _ = init-resp['result']['capabilities']
     assert(caps['hoverProvider'] == true)

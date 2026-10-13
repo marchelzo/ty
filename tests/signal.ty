@@ -1,7 +1,5 @@
 import os (..)
 
-ns test
-
 pub fn blocks-and-queries() {
     let blocked = Signals(SIGUSR1, SIGUSR2)
     let old = blocked.block()

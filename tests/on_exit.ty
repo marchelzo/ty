@@ -1,7 +1,5 @@
 import os (..)
 
-ns test
-
 let order = []
 
 onExit(-> order.push('a'))

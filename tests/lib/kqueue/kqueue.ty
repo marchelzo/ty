@@ -2,8 +2,6 @@ import kqueue
 import os
 import time
 
-ns test
-
 #|if __bsd__ || __apple__
 pub fn test-create() {
     let kq = kqueue.Kqueue()

@@ -1,8 +1,6 @@
 import ty
 import ty.token as lex
 
-ns test
-
 macro x {
     let s = ty.String('pass')
     $$[

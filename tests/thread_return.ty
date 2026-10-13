@@ -1,7 +1,5 @@
 import ty
 
-ns test
-
 pub fn thread-return() {
     let t = Thread(${'PASS'})
     assert(t.join() == 'PASS')

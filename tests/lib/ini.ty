@@ -1,7 +1,5 @@
 import ini
 
-ns test
-
 pub fn inferred-dictionary-types() {
     let expected = 'DefaultDict[nil | String, Dict[String, String]]'
 

@@ -1,11 +1,10 @@
 import ffi as c (C!)
-import os
+import ty.test.config (skip-dir)
 
 let libpq = c.open('pq')
 
 if libpq == nil {
-    print('libpq is not installed')
-    os.exit(77)
+    skip-dir('libpq is not installed')
 }
 
 C! libpq fn {
@@ -22,8 +21,7 @@ let conn = PQconnectdb('dbname=postgres'.cstr())
 
 if PQstatus(conn) != 0 {
     PQfinish(conn)
-    print('local PostgreSQL is unavailable for the current user')
-    os.exit(77)
+    skip-dir('local PostgreSQL is unavailable for the current user')
 }
 
 let result = PQexec(
@@ -36,8 +34,7 @@ let result = PQexec(
 
 if result == nil {
     PQfinish(conn)
-    print('failed to check the current PostgreSQL role')
-    os.exit(77)
+    skip-dir('failed to check the current PostgreSQL role')
 }
 
 let usable = PQresultStatus(result) == 2
@@ -47,9 +44,8 @@ PQclear(result)
 PQfinish(conn)
 
 if !usable {
-    print(
+    skip-dir(
         'the current PostgreSQL role cannot use an existing ty_psql_test '
         'database or create it'
     )
-    os.exit(77)
 }

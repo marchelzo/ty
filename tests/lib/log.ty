@@ -1,8 +1,6 @@
 import log (..)
 import path (Path)
 
-ns test
-
 let calls = 0
 
 fn expensive(s: String) -> String {

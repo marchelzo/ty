@@ -7,8 +7,6 @@ macro fun(e) {
 
 let p = fun(ssap)
 
-ns test
-
 pub fn fun-macro() {
     let rev = &reverse
     assert(rev(p) == 'PASS')

@@ -1,7 +1,0 @@
-import ffi as c
-import os
-
-if c.open('duckdb') == nil {
-    print('libduckdb is not installed')
-    os.exit(77)
-}

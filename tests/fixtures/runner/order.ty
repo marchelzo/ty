@@ -1,19 +1,17 @@
-ns test {
-    pub fn a() {
-    }
+pub fn a() {
+}
 
-    pub fn b() {
-    }
+pub fn b() {
+}
 
-    pub fn c() {
-    }
+pub fn c() {
+}
 
-    pub fn d() {
-    }
+pub fn d() {
+}
 
-    pub fn e() {
-    }
+pub fn e() {
+}
 
-    pub fn f() {
-    }
+pub fn f() {
 }

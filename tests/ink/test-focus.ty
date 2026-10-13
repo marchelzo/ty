@@ -1,8 +1,6 @@
 import ink
 import term (event)
 
-ns test
-
 class FocA < ink.Component {
     focusable? -> Bool { true }
     render() { <ink.Text>A</ink.Text> }

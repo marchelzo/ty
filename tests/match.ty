@@ -1,5 +1,3 @@
-ns test
-
 fn tagged-array-match(x) -> Bool {
     match x {
         Ok([(fd, ev)]) => (fd, ev) == (6, 1),

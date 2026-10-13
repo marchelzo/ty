@@ -450,13 +450,6 @@ fn target-file() -> ?String {
     }
 }
 
-fn empty-warning(col: Collection) -> String {
-    match #col.private {
-        0 => 'no tests found',
-        n => "no tests found ({n} non-pub function{(n == 1) ? '' : 's'} in `ns test`)",
-    }
-}
-
 pub fn run(argv: Array[String]) -> Int {
     let o = try {
         args.parse(argv)
@@ -475,7 +468,7 @@ pub fn run(argv: Array[String]) -> Int {
         return 2
     }
 
-    let col = registry.collect(file, include-imported?: o.include-imported?, static?: o.static?)
+    let col = registry.collect(file, static?: o.static?)
     let file-skip = core.file-skip-reason()
 
     let picked = try {
@@ -554,7 +547,8 @@ pub fn run(argv: Array[String]) -> Int {
     capture.?close()
 
     if #col.cases == 0 && file-skip == nil {
-        sink.emit(events.warning('empty-file', empty-warning(col), file: col.file))
+        let ev = events.warning('empty-file', 'no tests found', file: col.file)
+        sink.emit(ev)
         if o.strict? {
             r.rc = 1
         }

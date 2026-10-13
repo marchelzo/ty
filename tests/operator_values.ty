@@ -9,8 +9,6 @@ class Meters {
 fn inc(x: Int) -> Int { x + 1 }
 fn show(x: Int) -> String { str(x) }
 
-ns test
-
 pub fn composition-keeps-polymorphism() {
     assert(
         str(typeof (&sum . &map(str)))

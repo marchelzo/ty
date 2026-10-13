@@ -48,8 +48,8 @@ ERROR tests/demo.ty::gen
     generator functions cannot be tests
 
 warnings (3):
-  tests/demo.ty: private-tests: 2 functions in `ns test` are not `pub` and never run (missing `pub`?): helper, check-all
   tests/demo.ty::push-pop: returned-false: test returned false (ignored; use assert)
+  tests/demo.ty:58: missing-pub: `check-all` is never called but is not `pub`, so it never runs (missing `pub`?)
   tests/demo.ty:60: metadata-on-non-test: @tags applied to a function that is not a test (decorator order?)
 ────────────────────────────────────────────────────────────────────────────────
  1 passed  2 failed  1 error  1 timed out  2 skipped  1 todo  1 xfail  2 xpass

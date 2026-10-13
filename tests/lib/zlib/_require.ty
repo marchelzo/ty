@@ -1,7 +1,0 @@
-import ffi as c
-import os
-
-if c.open('z', [nil, 1]) == nil {
-    print('zlib is not installed')
-    os.exit(77)
-}

@@ -19,8 +19,6 @@ fn noted(calls: Array[String], s: String) -> String {
     s
 }
 
-ns test
-
 pub fn returns-caught-class-instance() {
     let e = assert-throws(parse-num('x'), ValueError)
     assert(e :: ValueError)

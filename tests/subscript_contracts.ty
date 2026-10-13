@@ -1,5 +1,3 @@
-ns test
-
 fn throws-index-error(f: () -> _) -> Bool {
     try {
         f()

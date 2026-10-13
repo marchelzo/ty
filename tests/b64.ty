@@ -1,8 +1,6 @@
 import base64
 import ffi (memcmp)
 
-ns test
-
 pub fn b64() {
     for _ in ..100 {
         let len = rand(1, 1000)

@@ -18,8 +18,6 @@ fn assertion-error-of(f: () -> Any) -> ?String {
     nil
 }
 
-ns test
-
 pub fn bare-assert-is-a-compile-error() {
     match compile-error-of('assert 1 == 2') {
         nil  => assert(false, 'bare `assert 1 == 2` compiled'),

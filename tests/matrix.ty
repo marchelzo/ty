@@ -75,8 +75,6 @@ fn **(X: Matrix, n: Int) -> Matrix {
     (X for ..n).fold(`*`) as Matrix
 }
 
-ns test
-
 pub fn matrix-power() {
     let P = m('
          0.75      0.04      0.14      0.07

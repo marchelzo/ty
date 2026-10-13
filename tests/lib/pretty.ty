@@ -4,8 +4,6 @@ import ty
 
 const escape-string = &escape
 
-ns test
-
 pub fn inferred-return-type() {
     assert(str(typeof escape-string('x')) == 'String')
 

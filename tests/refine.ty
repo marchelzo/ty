@@ -1,7 +1,5 @@
 import support.process (FIXTURES, run)
 
-ns test
-
 let thing: Array[String] | nil = nil
 
 fn go() -> Array[String] {

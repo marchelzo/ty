@@ -1,7 +1,5 @@
 import markdown (..)
 
-ns test
-
 fn first-child-of-type(node, tp) {
     for child in node.children {
         if child.type == tp {

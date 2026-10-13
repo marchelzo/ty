@@ -1,8 +1,6 @@
 import ink
 import term (event)
 
-ns test
-
 class CtxReader < ink.Component {
     key: String | nil
     default-val: String | nil

@@ -1,7 +1,5 @@
 import ty.interpreter (Repl)
 
-ns test
-
 pub fn timeouts-interrupt-the-cell-and-keep-state() {
     let repl = Repl()
     defer repl.close()

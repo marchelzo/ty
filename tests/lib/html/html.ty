@@ -35,8 +35,6 @@ fn must(e: ?Element) -> Element {
     e ?? throw 'element not found'
 }
 
-ns test
-
 pub fn select-by-tag() {
     let doc = page()
     assert(#doc.select('li') == 4)

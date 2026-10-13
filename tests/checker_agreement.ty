@@ -33,8 +33,6 @@ fn run(source: String, checker: String) -> String {
     sh.run([ty.executable, str(file)], timeout=30).stdout.trim()
 }
 
-ns test
-
 const EXPECTED = 'none, schema <class Int>, one, two, schema <class Int>\nfalse, false, true, false\npair, other, other, other'
 
 pub fn overloads-and-type-checks-agree-with-and-without-the-checker() {

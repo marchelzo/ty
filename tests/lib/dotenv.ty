@@ -4,8 +4,6 @@ import path (Path)
 let seq = 0
 fn fresh-key(prefix) { seq += 1; "__{prefix}_{seq}" }
 
-ns test
-
 pub fn test-parse-simple() {
     let vars = parse('FOO=bar\nBAZ=qux')
     assert(vars['FOO'] == 'bar')

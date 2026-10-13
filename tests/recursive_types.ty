@@ -55,8 +55,6 @@ fn one-choice(value: PointerType[Int]) {
     }
 }
 
-ns test
-
 pub fn recursive-record-spread() {
     let decl: Decl = {name: 'int'}
     assert(pointer(decl) == {name: '*', pointee: decl})

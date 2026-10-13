@@ -40,8 +40,6 @@ fn rejects(object: git.GitObject, access: git.GitObject -> Any,
     assert(error.operation != '')
 }
 
-ns test
-
 pub fn creation-and-discovery() {
     with path = Path.tempdir('ty-git') {
         let ^repo = repository(path)

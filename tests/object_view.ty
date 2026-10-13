@@ -52,8 +52,6 @@ fn raises?(f: () -> Any) -> Bool {
     false
 }
 
-ns test
-
 pub fn object-accepts-class-literals() {
     let fresh: Small = object(Small)
     assert(fresh.a == nil)

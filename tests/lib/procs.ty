@@ -1,8 +1,6 @@
 import procs (..)
 import os
 
-ns test
-
 pub fn current-process() {
     let p = this()
 

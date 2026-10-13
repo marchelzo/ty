@@ -2,8 +2,6 @@ import ink
 import term
 use term
 
-ns test
-
 class Probe < ink.Component {
     focusable? -> Bool { true }
     on-event(ev) {}

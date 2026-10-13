@@ -2,8 +2,6 @@ import ty
 import json
 import pretty (pretty)
 
-ns test
-
 pub fn literals() {
     let reserved = %['true', 'false', 'null']
     assert(#reserved == 3)

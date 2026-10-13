@@ -1,7 +1,5 @@
 import support.process (FIXTURES, run)
 
-ns test
-
 fn rejects(rule: String, source: String) {
     try {
         __eval__(source)

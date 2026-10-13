@@ -1,7 +1,5 @@
 import zlib as z
 
-ns test
-
 pub fn zlib-roundtrip() {
     const id = &str
             .? z.uncompress2

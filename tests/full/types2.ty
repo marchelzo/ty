@@ -2,8 +2,6 @@ import json
 import path (tempdir)
 import super.support.process (FIXTURES, run, type-env)
 
-ns test
-
 const VALID = [
     'alias-basic', 'valid', 'overload-union', 'flow', 'flow-defer', 'flow-calls', 'class-operator',
     'operator-constraints', 'pack-constraints', 'scoped-obligations',

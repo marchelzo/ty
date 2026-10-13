@@ -1,7 +1,5 @@
 import ty
 
-ns test
-
 let log = []
 
 class R {

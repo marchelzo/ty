@@ -41,8 +41,6 @@ class Article {
     }
 }
 
-ns test
-
 fn fresh() {
     let db: _ = connect(dsn)
     db.exec('SET client_min_messages TO WARNING')

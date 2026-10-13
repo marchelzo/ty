@@ -1,5 +1,3 @@
-ns test
-
 pub fn defparam() {
     fn f(g=(x -> x + 1), x=4) {
         g(x)

@@ -1,7 +1,5 @@
 import ty
 
-ns test
-
 pub fn evthrow() {
     let Ok(mod) = ty.parse('throw 0') or assert(false)
     try {

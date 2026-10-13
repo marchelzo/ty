@@ -43,8 +43,6 @@ fn reference(strings: [String], keep-leaf?: Bool, adaptive?: Bool,
     rows.map(render)
 }
 
-ns test
-
 pub fn contextual-prefixes() {
     let strings = [
         'src/components/button/index.ts',

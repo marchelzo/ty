@@ -16,8 +16,6 @@ fn ensure-db!() {
 
 ensure-db!()
 
-ns test
-
 fn fresh() {
     let db = PostgreSQL(conninfo)
     db.exec('SET client_min_messages TO WARNING')

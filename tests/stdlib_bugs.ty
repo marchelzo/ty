@@ -4,8 +4,6 @@ import io
 import errno
 import time
 
-ns test
-
 pub fn test-os-read-all() {
     let (r, w) = os.pipe()!
     let data = Blob()

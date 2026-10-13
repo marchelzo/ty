@@ -1,8 +1,6 @@
 import ty
 import math (sin, cos)
 
-ns test
-
 fn linked-leaf(value: Int) -> Int {
     value + 1
 }

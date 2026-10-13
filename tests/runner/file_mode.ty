@@ -7,139 +7,136 @@ import super.support.runner (
     FIX, Run, drive, ends, local, outcomes, end-of, warnings
 )
 
-ns test {
-    pub fn every-outcome(t: Test) {
-        let r = drive(t, ["{FIX}/outcomes.ty"])
-        assert(r.status == 1, r.stderr)
-        assert(outcomes(r) == %{
-            'passes':           'pass',
-            'fails':            'fail',
-            'throws':           'fail',
-            'skipped':          'skip',
-            'skipped-if':       'skip',
-            'skipped-thunk':    'skip',
-            'plan9-only':       'skip',
-            'expected-failure': 'xfail',
-            'unexpected-pass':  'xpass',
-            'lenient-pass':     'xpass',
-            'not-yet':          'todo',
-            'runtime-skip':     'skip',
-            'cleanup-order':    'pass',
-            'cleanup-ran-lifo': 'pass',
-            'returns-false':    'pass',
-            'tagged':           'pass',
-            'spins':            'timeout',
-            'uses-tmp':         'pass',
-            'nested::deep':     'pass',
-        })
-    }
+pub fn every-outcome(t: Test) {
+    let r = drive(t, ["{FIX}/outcomes.ty"])
+    assert(r.status == 1, r.stderr)
+    assert(outcomes(r) == %{
+        'passes':           'pass',
+        'fails':            'fail',
+        'throws':           'fail',
+        'skipped':          'skip',
+        'skipped-if':       'skip',
+        'skipped-thunk':    'skip',
+        'plan9-only':       'skip',
+        'expected-failure': 'xfail',
+        'unexpected-pass':  'xpass',
+        'lenient-pass':     'xpass',
+        'not-yet':          'todo',
+        'runtime-skip':     'skip',
+        'cleanup-order':    'pass',
+        'cleanup-ran-lifo': 'pass',
+        'returns-false':    'pass',
+        'tagged':           'pass',
+        'spins':            'timeout',
+        'uses-tmp':         'pass',
+        'nested::deep':     'pass',
+    })
+}
 
-    pub fn skip-reasons(t: Test) {
-        let r = drive(t, ["{FIX}/outcomes.ty", '-k', 'skip', '-k', 'plan9'])
-        let reasons = %{
-            local(events.get-str(e, 'id') ?? ''): events.get-str(e, 'reason')
-            for e in ends(r)
-        }
-        assert(reasons == %{
-            'skipped':       'not today',
-            'skipped-if':    'condition held',
-            'skipped-thunk': 'thunk held',
-            'plan9-only':    'only on plan9',
-            'runtime-skip':  'no postgres',
-        })
+pub fn skip-reasons(t: Test) {
+    let r = drive(t, ["{FIX}/outcomes.ty", '-k', 'skip', '-k', 'plan9'])
+    let reasons = %{
+        local(events.get-str(e, 'id') ?? ''): events.get-str(e, 'reason')
+        for e in ends(r)
     }
+    assert(reasons == %{
+        'skipped':       'not today',
+        'skipped-if':    'condition held',
+        'skipped-thunk': 'thunk held',
+        'plan9-only':    'only on plan9',
+        'runtime-skip':  'no postgres',
+    })
+}
 
-    pub fn assertion-failure-is-structured(t: Test) {
-        let r = drive(t, ["{FIX}/outcomes.ty", '-k', '::fails'])
-        let fl = events.get-event(end-of(r, 'fails'), 'failure')
-        assert(events.get-str(fl, 'class') == 'AssertionError')
-        assert(events.get-str(fl, 'op') == '==')
-        assert(events.get-str(fl, 'src') == 'total == 10')
-        assert(events.get-str(fl, 'note') == 'sum of 1..4')
-        assert(events.get-int(fl, 'line') == 15)
-        assert(events.get-str(fl, 'file') == "{FIX}/outcomes.ty")
-        assert(events.get-str(end-of(r, 'fails'), 'output') == "partial output\n")
-    }
+pub fn assertion-failure-is-structured(t: Test) {
+    let r = drive(t, ["{FIX}/outcomes.ty", '-k', '::fails'])
+    let fl = events.get-event(end-of(r, 'fails'), 'failure')
+    assert(events.get-str(fl, 'class') == 'AssertionError')
+    assert(events.get-str(fl, 'op') == '==')
+    assert(events.get-str(fl, 'src') == 'total == 10')
+    assert(events.get-str(fl, 'note') == 'sum of 1..4')
+    assert(events.get-int(fl, 'line') == 14)
+    assert(events.get-str(fl, 'file') == "{FIX}/outcomes.ty")
+    assert(events.get-str(end-of(r, 'fails'), 'output') == "partial output\n")
+}
 
-    pub fn soft-timeout-points-at-the-loop(t: Test) {
-        for vm in [[], ['-j']] {
-            let r = drive(t, ["{FIX}/outcomes.ty", '-k', 'spins'], vm: vm)
-            let e = end-of(r, 'spins')
-            assert(events.get-str(e, 'outcome') == 'timeout')
-            let trace = events.get-str(events.get-event(e, 'failure'), 'trace') ?? ''
-            assert(trace.match?(/^at tests\/fixtures\/runner\/outcomes\.ty:8[56]:\d+/), trace)
-        }
+pub fn soft-timeout-points-at-the-loop(t: Test) {
+    for vm in [[], ['-j']] {
+        let r = drive(t, ["{FIX}/outcomes.ty", '-k', 'spins'], vm: vm)
+        let e = end-of(r, 'spins')
+        assert(events.get-str(e, 'outcome') == 'timeout')
+        let trace = events.get-str(events.get-event(e, 'failure'), 'trace') ?? ''
+        assert(trace.match?(/^at tests\/fixtures\/runner\/outcomes\.ty:8[45]:\d+/), trace)
     }
+}
 
-    pub fn warnings-are-reported(t: Test) {
-        let r = drive(t, ["{FIX}/outcomes.ty", '-k', 'returns-false'])
-        assert(warnings(r) == ['returned-false'])
-    }
+pub fn warnings-are-reported(t: Test) {
+    let r = drive(t, ["{FIX}/outcomes.ty", '-k', 'returns-false'])
+    assert(warnings(r) == ['returned-false'])
+}
 
-    pub fn collection-errors(t: Test) {
-        let r = drive(t, ["{FIX}/collection.ty"])
-        assert(r.status == 1)
-        let reasons = [
-            (
-                local(events.get-str(e, 'id') ?? ''),
-                events.get-str(e, 'outcome'),
-                events.get-str(e, 'reason')
-            )
-            for e in ends(r)
-        ]
-        assert(reasons == [
-            ('a::same', 'pass', nil),
-            ('a::same', 'error', 'duplicate test id (also defined at line 13)'),
-            (
-                'decorated',
-                'error',
-                'test is not callable (bound to 42; does a decorator return its argument?)'
-            ),
-            ('gen', 'error', 'generator functions cannot be tests'),
-            (
-                'needs-arg',
-                'error',
-                'test takes required parameter `a` (only a first parameter named `t` is supported)'
-            ),
-            ('takes-t-and-default', 'pass', nil),
-        ])
-        assert(warnings(r) == ['metadata-on-non-test'])
-    }
+pub fn collection-errors(t: Test) {
+    let r = drive(t, ["{FIX}/collection.ty"])
+    assert(r.status == 1)
+    let reasons = [
+        (
+            local(events.get-str(e, 'id') ?? ''),
+            events.get-str(e, 'outcome'),
+            events.get-str(e, 'reason')
+        )
+        for e in ends(r)
+    ]
+    assert(reasons == [
+        ('a::same', 'pass', nil),
+        (
+            'decorated',
+            'error',
+            'test is not callable (bound to 42; does a decorator return its argument?)'
+        ),
+        ('gen', 'error', 'generator functions cannot be tests'),
+        (
+            'needs-arg',
+            'error',
+            'test takes required parameter `a` (only a first parameter named `t` is supported)'
+        ),
+        ('takes-t-and-default', 'pass', nil),
+    ])
+    assert(warnings(r) == ['metadata-on-non-test', 'missing-pub'])
+}
 
-    pub fn empty-file-hints-at-missing-pub(t: Test) {
-        let r = drive(t, ["{FIX}/private_only.ty"])
-        assert(r.status == 0)
-        assert(warnings(r) == ['empty-file', 'private-tests'])
-        assert(drive(t, ["{FIX}/private_only.ty", '--strict']).status == 1)
-    }
+pub fn empty-file-hints-at-missing-pub(t: Test) {
+    let r = drive(t, ["{FIX}/private_only.ty"])
+    assert(r.status == 0)
+    assert(warnings(r) == ['empty-file', 'missing-pub'])
+    assert(drive(t, ["{FIX}/private_only.ty", '--strict']).status == 1)
+}
 
-    pub fn capture-offsets-are-monotonic(t: Test) {
-        let cap = str(t.tmp-dir() / 'capture.out')
-        let r = drive(t, ["{FIX}/outcomes.ty", '--capture', cap, '--exclude', 'spins'])
-        let offsets = [
-            events.get-int(events.get-event(e, 'capture'), 'offset') ?? -1
-            for e in r.events if e['ev'] == 'test-start'
-        ]
-        assert(#offsets > 10)
-        assert(offsets == offsets.sort())
-        assert(offsets[-1] > 0)
-        assert(Path(cap).read-text().match?(/partial output/))
-    }
+pub fn capture-offsets-are-monotonic(t: Test) {
+    let cap = str(t.tmp-dir() / 'capture.out')
+    let r = drive(t, ["{FIX}/outcomes.ty", '--capture', cap, '--exclude', 'spins'])
+    let offsets = [
+        events.get-int(events.get-event(e, 'capture'), 'offset') ?? -1
+        for e in r.events if e['ev'] == 'test-start'
+    ]
+    assert(#offsets > 10)
+    assert(offsets == offsets.sort())
+    assert(offsets[-1] > 0)
+    assert(Path(cap).read-text().match?(/partial output/))
+}
 
-    pub fn tmp-dir-is-removed-on-pass(t: Test) {
-        let r = drive(t, ["{FIX}/outcomes.ty", '-k', 'uses-tmp'])
-        let out = events.get-str(end-of(r, 'uses-tmp'), 'output') ?? ''
-        let $dir = out.match(/tmp=(\S+)/).?[1]
-                or throw AssertionError("no tmp dir in output: {out}")
-        assert(!Path(dir).exists?)
-    }
+pub fn tmp-dir-is-removed-on-pass(t: Test) {
+    let r = drive(t, ["{FIX}/outcomes.ty", '-k', 'uses-tmp'])
+    let out = events.get-str(end-of(r, 'uses-tmp'), 'output') ?? ''
+    let $dir = out.match(/tmp=(\S+)/).?[1]
+            or throw AssertionError("no tmp dir in output: {out}")
+    assert(!Path(dir).exists?)
+}
 
-    pub fn assert-throws-lets-runner-control-through(t: Test) {
-        let r = drive(t, ["{FIX}/control.ty"])
-        assert(outcomes(r) == %{
-            'skip-passes-through':    'skip',
-            'timeout-passes-through': 'timeout',
-            'still-catches':          'pass',
-        })
-    }
+pub fn assert-throws-lets-runner-control-through(t: Test) {
+    let r = drive(t, ["{FIX}/control.ty"])
+    assert(outcomes(r) == %{
+        'skip-passes-through':    'skip',
+        'timeout-passes-through': 'timeout',
+        'still-catches':          'pass',
+    })
 }

@@ -5,8 +5,6 @@ import support.process (FIXTURES, run as run-ty)
 
 const BLOCK = 'exec tail -f /dev/null'
 
-ns test
-
 pub fn sh-basic() {
     if __windows__ {
         assert(sh('echo hello').stdout.strip() == 'hello')

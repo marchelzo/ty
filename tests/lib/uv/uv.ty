@@ -1,8 +1,6 @@
 import uv
 import os
 
-ns test
-
 fn with-echo-server(f) {
     uv.run(fn () {
         let srv = uv.server('127.0.0.1', 0)

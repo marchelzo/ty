@@ -1,8 +1,6 @@
 import ty
 import ini (INIFile)
 
-ns test
-
 class ArgumentCollector {
     collect(prefix: String, *values: Int) -> Array[Int] {
         values

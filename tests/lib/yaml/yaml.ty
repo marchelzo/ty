@@ -2,8 +2,6 @@ import yaml (..)
 import math (inf, nan)
 import path (Path)
 
-ns test
-
 pub fn test-version() {
     let v = version()
     assert(v.match?(/^\d+\.\d+\.\d+$/), "version should be X.Y.Z, got: {v}")

@@ -1,5 +1,3 @@
-ns test
-
 fn registerized-int-source(n: Int) {
     let total = 0
     for i in ..n {

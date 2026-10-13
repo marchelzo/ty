@@ -1,5 +1,3 @@
-ns test
-
 pub fn test-rotate-empty() {
     let a = []
     a.rotate()

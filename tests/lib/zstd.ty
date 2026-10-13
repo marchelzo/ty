@@ -1,7 +1,5 @@
 import zstd
 
-ns test
-
 pub fn compress-decompress() {
     let data = 'Hello from zstd!'
     let compressed = zstd.compress(data)

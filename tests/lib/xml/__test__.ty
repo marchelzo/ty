@@ -1,0 +1,7 @@
+import ty.test.config (skip-dir)
+
+try {
+    Module('xml')
+} catch e {
+    skip-dir("the xml module is unavailable: {e}")
+}

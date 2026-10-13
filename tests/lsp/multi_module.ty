@@ -95,8 +95,6 @@ onExit(fn () {
     ws.remove()
 })
 
-ns test
-
 pub fn open-all() {
     server.open(shapes)
     server.open(geom)

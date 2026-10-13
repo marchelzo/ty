@@ -1,5 +1,3 @@
-ns test
-
 class Foo {
     x: Int = 0
     init(val: Int) {

@@ -1,5 +1,3 @@
-ns test
-
 pub fn blob-accepts-arrays-of-bytes() {
     assert(Blob([104, 105], ' ', 0x21).str() == 'hi !')
     assert(Blob([b ^ 0x20 for b in Blob('abc')]).str() == 'ABC')

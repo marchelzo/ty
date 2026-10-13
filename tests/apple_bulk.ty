@@ -3,8 +3,6 @@ import apple (bulk-directory-entries)
 import os
 import path
 
-ns test
-
 pub fn bulk-metadata-matches-lstat() {
     with root = path.tempdir() {
         for i in ..140 { (root / "file-{i}-é").write('abc'.repeat(i)) }

@@ -1,5 +1,3 @@
-ns test
-
 pub fn basic-match() {
     fn color-name(c) {
         match c {

@@ -4,100 +4,99 @@ let ORDER = []
 
 print('top-level output')
 
-ns test {
-    pub fn passes() {
-        assert(1 + 1 == 2)
-    }
+pub fn passes() {
+    assert(1 + 1 == 2)
+}
 
-    pub fn fails() {
-        let total = 9
-        print('partial output')
-        assert(total == 10, 'sum of 1..4')
-    }
+pub fn fails() {
+    let total = 9
+    print('partial output')
+    assert(total == 10, 'sum of 1..4')
+}
 
-    pub fn throws() {
-        let xs = [1, 2]
-        xs[5]
-    }
+pub fn throws() {
+    let xs = [1, 2]
+    xs[5]
+}
 
-    @skip('not today')
-    pub fn skipped() {
-        assert(false)
-    }
+@skip('not today')
+pub fn skipped() {
+    assert(false)
+}
 
-    @skip-if(true, 'condition held')
-    pub fn skipped-if() {
-        assert(false)
-    }
+@skip-if(true, 'condition held')
+pub fn skipped-if() {
+    assert(false)
+}
 
-    @skip-if(-> #ORDER == 0, 'thunk held')
-    pub fn skipped-thunk() {
-        assert(false)
-    }
+@skip-if(-> #ORDER == 0, 'thunk held')
+pub fn skipped-thunk() {
+    assert(false)
+}
 
-    @platform('plan9')
-    pub fn plan9-only() {
-        assert(false)
-    }
+@platform('plan9')
+pub fn plan9-only() {
+    assert(false)
+}
 
-    @xfail('known bug')
-    pub fn expected-failure() {
-        assert(1 == 2)
-    }
+@xfail('known bug')
+pub fn expected-failure() {
+    assert(1 == 2)
+}
 
-    @xfail('was a bug')
-    pub fn unexpected-pass() {
-        assert(1 == 1)
-    }
+@xfail('was a bug')
+pub fn unexpected-pass() {
+    assert(1 == 1)
+}
 
-    @xfail('lenient', strict: false)
-    pub fn lenient-pass() {
-        assert(true)
-    }
+@xfail('lenient', strict: false)
+pub fn lenient-pass() {
+    assert(true)
+}
 
-    @todo('later')
-    pub fn not-yet() {
-    }
+@todo('later')
+pub fn not-yet() {
+}
 
-    pub fn runtime-skip(t: Test) {
-        t.skip('no postgres')
-    }
+pub fn runtime-skip(t: Test) {
+    t.skip('no postgres')
+}
 
-    pub fn cleanup-order(t: Test) {
-        t.cleanup(-> ORDER.push(1))
-        t.cleanup(-> ORDER.push(2))
-        t.log('logged message')
-    }
+pub fn cleanup-order(t: Test) {
+    t.cleanup(-> ORDER.push(1))
+    t.cleanup(-> ORDER.push(2))
+    t.log('logged message')
+}
 
-    pub fn cleanup-ran-lifo() {
-        assert(ORDER == [2, 1])
-    }
+pub fn cleanup-ran-lifo() {
+    assert(ORDER == [2, 1])
+}
 
-    pub fn returns-false() {
-        false
-    }
+pub fn returns-false() {
+    false
+}
 
-    @tags('slow', 'net')
-    pub fn tagged() {
-    }
+@tags('slow', 'net')
+pub fn tagged() {
+}
 
-    @timeout(0.5)
-    pub fn spins() {
-        while true {}
-    }
+@timeout(0.5)
+pub fn spins() {
+    while true {}
+}
 
-    pub fn uses-tmp(t: Test) {
-        let d = t.tmp-dir()
-        (d / 'a.txt').write('hi')
-        print("tmp={d}")
-        assert((d / 'a.txt').read-text() == 'hi')
-    }
+pub fn uses-tmp(t: Test) {
+    let d = t.tmp-dir()
+    (d / 'a.txt').write('hi')
+    print("tmp={d}")
+    assert((d / 'a.txt').read-text() == 'hi')
+}
 
-    fn helper() {
-    }
+fn helper(x: Int) -> Int {
+    x
+}
 
-    ns nested {
-        pub fn deep() {
-        }
+ns nested {
+    pub fn deep() {
     }
 }

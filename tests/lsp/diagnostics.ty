@@ -48,8 +48,6 @@ fn located(record: _, name: String) -> _ {
     record['trace'].find(\Path(_['file'] ?? '').name == name)
 }
 
-ns test
-
 pub fn type-error-has-location() {
     let rsp = compile('type.ty', true)
     let record: _ = json.parse(rsp['error'])

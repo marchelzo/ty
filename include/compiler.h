@@ -55,7 +55,8 @@ enum {
         MOD_PARSE_ERR   = (1 << 1),
         MOD_TYPE_ERR    = (1 << 2),
         MOD_COMPILE_ERR = (1 << 3),
-        MOD_RESULT      = (1 << 4)
+        MOD_RESULT      = (1 << 4),
+        MOD_TESTS       = (1 << 5)
 };
 
 enum {

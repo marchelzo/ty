@@ -1,7 +1,5 @@
 import os (..)
 
-ns test
-
 class IsolatedWorker {
     gate: Channel
     result: Channel

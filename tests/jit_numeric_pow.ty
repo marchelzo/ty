@@ -1,5 +1,3 @@
-ns test
-
 pub class PowBox {
     value: Int
 

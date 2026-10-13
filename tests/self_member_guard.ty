@@ -96,8 +96,6 @@ fn raises?(f: () -> Any) -> Bool {
     false
 }
 
-ns test
-
 pub fn subclass-with-shifted-layout-reads-private-field() {
     let named = Named()
     for ..1000 {

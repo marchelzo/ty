@@ -19,7 +19,6 @@ pub class Options {
     static?:           Bool = false
     strict?:           Bool = false
     forbid-only?:      Bool = false
-    include-imported?: Bool = false
     no-capture?:       Bool = false
     keep-tmp?:         Bool = false
     fail-fast?:        Bool = false
@@ -39,7 +38,6 @@ selection:
       --exclude PAT       skip tests whose ID contains PAT (or matches /RE/)
   -t, --tags EXPR         tag expression: a and (b or not c)
       --list[=json]       list the selected tests without running them
-      --include-imported  also run tests from imported modules
 
 run control:
   -x, --fail-fast         stop after the first failure
@@ -114,7 +112,6 @@ pub fn parse(args: Array[String]) -> Options {
             '--static'                => o.static? = true,
             '--strict'                => o.strict? = true,
             '--forbid-only'           => o.forbid-only? = true,
-            '--include-imported'      => o.include-imported? = true,
             '-s' or '--no-capture'    => o.no-capture? = true,
             '--keep-tmp'              => o.keep-tmp? = true,
             '-x' or '--fail-fast'     => o.fail-fast? = true,

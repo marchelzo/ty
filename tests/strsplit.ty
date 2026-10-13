@@ -1,5 +1,3 @@
-ns test
-
 pub fn strsplit() {
     assert(' one  two three'.split(/\s+/) == ['', 'one', 'two', 'three'])
     assert('camelCaseSplit'.split(/(?=[[:upper:]])/) == ['camel', 'Case', 'Split'])

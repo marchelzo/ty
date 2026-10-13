@@ -17,8 +17,6 @@ fn same?(a, b) {
     }
 }
 
-ns test
-
 pub fn sort-preserves-format() {
     const BEFORE =
         '''

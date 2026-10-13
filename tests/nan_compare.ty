@@ -368,8 +368,6 @@ fn check(name: String, got: Array[Bool], want: Bool) {
     }
 }
 
-ns test
-
 pub fn lt-ff-matches-ieee() {
     check("lt-ff(nan, nan)", lt-ff(nan, nan), false)
     check("lt-ff(nan, 1.0)", lt-ff(nan, 1.0), false)

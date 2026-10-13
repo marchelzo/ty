@@ -8,8 +8,6 @@ C! fn {
     int memcmp(void *a, void *b, size_t n);
 };
 
-ns test
-
 #|if __linux__
 pub fn test-create() {
     let ring = IoUring(entries: 4)

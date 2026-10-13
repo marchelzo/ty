@@ -1,0 +1,6 @@
+import ffi as c
+import ty.test.config (skip-dir)
+
+if c.open('duckdb') == nil {
+    skip-dir('libduckdb is not installed')
+}

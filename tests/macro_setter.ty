@@ -30,8 +30,6 @@ macro based {
 
 based
 
-ns test
-
 pub fn macro-setter() {
     let o = Widget()
     o.x = 'pass'

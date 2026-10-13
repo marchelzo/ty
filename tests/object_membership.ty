@@ -1,8 +1,6 @@
 fn half(x: Int) -> Int { x / 2 }
 fn maybe(s: String) -> nil | Int { int(s) }
 
-ns test
-
 pub fn nil-is-the-only-classless-value() {
     let values = [nil, 1, 'a', [1], %{1: 2}, (1, 2), {a: 1}, Some(1), Int, x -> x]
 

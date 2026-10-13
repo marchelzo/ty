@@ -1,7 +1,5 @@
 import ty (hash)
 
-ns test
-
 pub fn dict-structural-equality() {
     assert(%{'a': '1'} == %{'a': '1'})
     assert(%{'a': 1, 'b': 2} == %{'b': 2, 'a': 1})

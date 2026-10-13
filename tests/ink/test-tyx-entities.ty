@@ -12,7 +12,6 @@ class RegexPropText < Component {
     }
 }
 
-ns test
 pub fn named-tyx-entities() {
     let h = TestHarness(EntityText(), cols=40, rows=4)
     assert(h.plain-text == '&<>"\'A')

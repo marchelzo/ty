@@ -63,8 +63,6 @@ fn blocks() -> Int {
 
 fn body(x) { x }
 
-ns test
-
 pub fn strings-on-separate-lines-stay-separate() {
     assert(split-across-lines() == '(abc)')
 }

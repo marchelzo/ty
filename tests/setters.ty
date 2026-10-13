@@ -1,7 +1,5 @@
 import ty
 
-ns test
-
 class Box {
     _v: Int = 0
 

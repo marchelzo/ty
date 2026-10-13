@@ -1,0 +1,22 @@
+fn negate-after-let(x: Bool) -> Bool {
+    let xs = [x]
+    !xs[0]
+}
+
+fn negate-after-call(x: Bool) -> Bool {
+    print('')
+    !x
+}
+
+pub fn bang-on-a-new-line-is-prefix-not() {
+    assert(negate-after-let(false))
+    assert(!negate-after-let(true))
+    assert(negate-after-call(false))
+}
+
+pub fn bang-on-the-same-line-is-postfix() {
+    let xs = [{key: 2, value: 'a'}, {key: 1, value: 'b'}]
+    assert(xs.min(&.key)!.value == 'b')
+    let ys: Array[Int] = [3]
+    assert(ys.pop()! == 3)
+}

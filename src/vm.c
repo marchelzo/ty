@@ -10007,45 +10007,12 @@ FlipGC_EVERY_ALLOC(int _)
 }
 #endif
 
-static vec(char *) TestModules;
-static vec(Module const *) TestTopModules;
-
-void
-TestAllowModule(char const *name)
-{
-        char *copy = S2(name);
-
-        for (char *p = copy; *p != '\0'; ++p) {
-                if (*p == '.') {
-                        *p = '/';
-                }
-        }
-
-        xvP(TestModules, copy);
-}
-
 static bool
 TestSelected(TyTest const *test)
 {
-        Module const *mod = test->def->mod;
-
-        if (!test->pub || mod == NULL) {
-                return false;
-        }
-
-        for (int i = 0; i < vN(TestTopModules); ++i) {
-                if (v__(TestTopModules, i) == mod) {
-                        return true;
-                }
-        }
-
-        for (int i = 0; i < vN(TestModules); ++i) {
-                if (s_eq(v__(TestModules, i), mod->name)) {
-                        return true;
-                }
-        }
-
-        return false;
+        return test->pub
+            && (test->def->mod != NULL)
+            && (test->def->mod->flags & MOD_TESTS);
 }
 
 static bool
@@ -10405,10 +10372,6 @@ vm_load_program(Ty *ty, char const *source, char const *file)
                 GC_RESUME();
                 TY_FINISH_LOADING();
                 return false;
-        }
-
-        if (RunningTests) {
-                xvP(TestTopModules, mod);
         }
 
         if (DisassemblyOut != NULL) {

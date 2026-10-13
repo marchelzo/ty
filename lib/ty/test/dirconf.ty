@@ -6,7 +6,6 @@ import ty.test.events as events (Event)
 import ty.test.sched as sched (Proc)
 import ty.test.config as config (MARKER, SKIP_STATUS)
 
-pub REQUIRE = '_require.ty'
 pub CONFIG = '__test__.ty'
 pub PROBE_TIMEOUT = 30.0
 
@@ -270,11 +269,9 @@ pub fn probe(
     for d in dirs {
         let c = DirConf(d)
         out[d] = c
-        for name in [REQUIRE, CONFIG] {
-            let f = c.file(name)
-            if Path(f).file? {
-                running.push(Probe(c, name, Proc([*cmd, f])))
-            }
+        let f = c.file(CONFIG)
+        if Path(f).file? {
+            running.push(Probe(c, CONFIG, Proc([*cmd, f])))
         }
     }
     let deadline = time.now() + timeout

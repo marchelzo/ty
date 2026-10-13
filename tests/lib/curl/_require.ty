@@ -1,7 +1,0 @@
-import ffi as c
-import os
-
-if c.open('curl') == nil {
-    print('libcurl is not installed')
-    os.exit(77)
-}

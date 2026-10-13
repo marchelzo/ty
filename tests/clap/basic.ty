@@ -28,8 +28,6 @@ fn forked(f) {
     ((status >> 8) & 0xFF, err)
 }
 
-ns test
-
 pub fn clap-basic() {
     let (code, err) = forked(fn () {
         let argv = ['prog', '-v', '-dd', '-I', 'inc1', '-Iinc2', '--output', 'out.txt', 'a', 'b']

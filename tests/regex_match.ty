@@ -1,8 +1,6 @@
 import ty
 import ty.parse as parse
 
-ns test
-
 pub fn value-display() {
     assert(show(/\//, color=false) == "/\\//")
     assert(show(regex('a/b'), color=false) == '/a\\/b/')

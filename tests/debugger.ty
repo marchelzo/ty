@@ -4,8 +4,6 @@ import net
 import ty
 import support.process (FIXTURES)
 
-ns test
-
 const DEBUGGEE = str(FIXTURES / 'debuggee.ty')
 
 fn line-of(needle: String) -> Int {

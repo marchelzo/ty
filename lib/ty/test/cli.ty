@@ -39,7 +39,6 @@ pub class Options {
     grace:             ?Float = nil
     no-capture?:       Bool = false
     keep-tmp?:         Bool = false
-    include-imported?: Bool = false
     max-respawns:      Int = 5
     strict?:           Bool = false
     forbid-only?:      Bool = false
@@ -67,7 +66,6 @@ selection:
       --all               include opt-in directories (opt-in: true)
       --with NAME         include directories marked opt-in: 'NAME'
       --list[=json]       list the selected tests without running them
-      --include-imported  also run tests from imported modules
 
 run control:
   -J, --jobs N            worker processes (default: number of CPUs)
@@ -172,7 +170,6 @@ pub fn parse(args: Array[String]) -> Options {
             '--grace'              => o.grace = number(opt, value(opt, inline)),
             '-s' or '--no-capture' => o.no-capture? = flag(opt, inline),
             '--keep-tmp'           => o.keep-tmp? = flag(opt, inline),
-            '--include-imported'   => o.include-imported? = flag(opt, inline),
             '--max-respawns'       => o.max-respawns = integer(opt, value(opt, inline)),
             '--strict'             => o.strict? = flag(opt, inline),
             '--forbid-only'        => o.forbid-only? = flag(opt, inline),
@@ -354,7 +351,6 @@ fn forwarded(o: Options, seed: Int) -> Array[String] {
         '--shuffle' if o.shuffle?,
         '--list' if o.list != nil,
         '--forbid-only' if o.forbid-only?,
-        '--include-imported' if o.include-imported?,
         '-s' if o.no-capture?,
         '--keep-tmp' if o.keep-tmp?,
     ]
@@ -386,11 +382,11 @@ fn row-events(o: Options, plan: Plan) -> Array[(String, Event)] {
         if !path-selected?(o, p) {
             continue
         }
-        let source = c.source ?? dirconf.REQUIRE
+        let source = c.source ?? dirconf.CONFIG
         rows.push((p, events.file-skip(p, c.skip ?? 'skipped', source: source)))
     }
     for c in plan.errors {
-        let p = discover.display(c.file(c.source ?? dirconf.REQUIRE))
+        let p = discover.display(c.file(c.source ?? dirconf.CONFIG))
         if !path-selected?(o, p) {
             continue
         }

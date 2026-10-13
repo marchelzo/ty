@@ -1,5 +1,3 @@
-ns test
-
 pub fn arr() {
     let x = []
     assert(x.len() == 0 && #x == 0)

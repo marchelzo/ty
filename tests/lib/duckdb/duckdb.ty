@@ -2,8 +2,6 @@ import duckdb
 import date (PlainDate, PlainTime, PlainDateTime, Instant, Duration)
 import path (Path)
 
-ns test
-
 fn throws?(f: () -> _, kind: Class) -> Bool {
     try {
         f()

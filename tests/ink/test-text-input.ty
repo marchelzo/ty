@@ -3,8 +3,6 @@ import term (event)
 
 let CTRL = 4
 
-ns test
-
 class TIApp < ink.Component {
     submitted: String | nil = nil
     changed: String | nil = nil

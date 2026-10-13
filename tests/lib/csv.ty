@@ -38,8 +38,6 @@ fn descriptors(p: Path) {
     }
 }
 
-ns test
-
 pub fn parse-simple() {
     assert(csv.parse('a,b,c\n1,2,3\n') == [['a', 'b', 'c'], ['1', '2', '3']])
 }

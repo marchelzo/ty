@@ -7,8 +7,6 @@ fn values(cells: Array[String]) -> Array[String | nil] {
     cells.map(c -> repl.eval(c, 30000)).map(r -> r.error ?? r.value)
 }
 
-ns test
-
 pub fn realiasing-a-module-keeps-the-first-alias() {
     let seen = values([
         'import json',

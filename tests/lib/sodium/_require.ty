@@ -1,7 +1,0 @@
-import ffi as c
-import os
-
-if c.open('sodium') == nil {
-    print('libsodium is not installed')
-    os.exit(77)
-}

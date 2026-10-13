@@ -124,9 +124,6 @@ int
 RunTestHarness(Ty *ty, char **args, int n);
 
 void
-TestAllowModule(char const *name);
-
-void
 vm_push(Ty *ty, Value const *v);
 
 Value *

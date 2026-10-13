@@ -842,6 +842,7 @@ extern bool ColorOutput;
 extern char const *COLOR_MODE_NAMES[TY_COLOR_MODE_COUNT];
 
 extern bool RunningTests;
+extern char const *TestFilePath;
 extern bool CheckTypes;
 extern bool DetailedExceptions;
 extern bool NoJIT;

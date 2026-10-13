@@ -1,5 +1,3 @@
-ns test
-
 tag Measured {
     size -> Int { #str(self) }
     static name -> String { 'Measured' }

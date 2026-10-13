@@ -2,8 +2,6 @@ import os (sleep, ncpu)
 import thread
 import tp (..)
 
-ns test
-
 pub fn test-mutex-lock-unlock() {
     let mtx = Mutex()
     mtx.lock()

@@ -1,3 +1,19 @@
-import ty.test.config (configure)
+import ffi as c
+import os
+import ty.test.config (configure, skip-dir)
 
 configure(opt-in: true)
+
+if c.open('fuse3', [nil, 3]) == nil {
+    skip-dir('libfuse3 is not installed')
+}
+
+if os.access('/dev/fuse', os.R_OK | os.W_OK) != 0 {
+    skip-dir('/dev/fuse is not accessible')
+}
+
+let path = (getenv('PATH') ?? '').split(':')
+
+if !path.any?(\os.access("{_}/fusermount3", os.X_OK) == 0) {
+    skip-dir('fusermount3 is not installed')
+}

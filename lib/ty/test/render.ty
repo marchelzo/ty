@@ -319,7 +319,7 @@ fn rerun-command(id: String) -> String {
     if let [_, file] = id.match(/^(.*)::\(script\)$/) {
         return "ty {shell-quote(file)}"
     }
-    if id.match?(/(^|\/)(__test__|_require)\.ty$/) {
+    if id.match?(/(^|\/)__test__\.ty$/) {
         return "ty {shell-quote(id)}"
     }
     "ty --test {shell-quote(id)}"

@@ -1,8 +1,6 @@
 import ical (..)
 import date (PlainDate, PlainDateTime, Duration)
 
-ns test
-
 let example = 'BEGIN:VCALENDAR\r\n' +
     'PRODID:-//Example Corp.//CalDAV Client//EN\r\n' +
     'VERSION:2.0\r\n' +

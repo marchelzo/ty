@@ -1,5 +1,3 @@
-ns test
-
 pub fn if-let-guard() {
     if let Some(x) = Some(10) and x > 20 {
         assert(false)

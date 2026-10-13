@@ -4,8 +4,6 @@ fn lexes?(source: String) -> Bool {
     try { ty.mod.compile(source, nil, '(escape)'); true } catch _ { false }
 }
 
-ns test
-
 pub fn single-quotes-know-byte-and-unicode-escapes() {
     assert('\x1b' == "\x1b")
     assert('\u00e9' == "\u00e9")

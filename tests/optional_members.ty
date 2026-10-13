@@ -1,5 +1,3 @@
-ns test
-
 pub fn optional-union-members() {
     let x: Int | String = 12
 

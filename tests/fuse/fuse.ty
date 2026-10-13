@@ -121,8 +121,6 @@ class Appending < ReadOnly {
     write(path: String, data: Blob, offset: Int, _) -> Int { data.size() }
 }
 
-ns test
-
 pub fn version() {
     let (major, minor) = fuse.version()
     assert(major == 3)

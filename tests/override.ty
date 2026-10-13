@@ -1,5 +1,3 @@
-ns test
-
 class A {
     foo(x: Int) -> Int {
         x * 2

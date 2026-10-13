@@ -15,8 +15,6 @@ fn growth(output: String) -> Int {
     int(output.trim().lines()[-1])
 }
 
-ns test
-
 pub fn repl-worker-collects-garbage() {
     let repl   = Repl()
     let result = repl.eval(CHURN, 60000)

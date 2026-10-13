@@ -72,8 +72,6 @@ fn rejects-foreign-owner() -> nil {
     }
 }
 
-ns test
-
 pub fn effective-root-can-open-foreign-repositories() {
     as-user(0, can-open)
 }

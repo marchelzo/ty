@@ -17,8 +17,6 @@ fn reject(source, message) {
     }
 }
 
-ns test
-
 pub fn dedent() {
     let actual = """
         first

@@ -31,8 +31,6 @@ class Values[T] < Box[T] : Iterable[T] {
 
 fn collect(xs: Iterable[Int]) -> [Int] { [*xs] }
 
-ns test
-
 pub fn superclass-and-traits() {
     let numbers = Numbers(3)
     assert(numbers.value == 3 && numbers.doubled == 6)

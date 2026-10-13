@@ -30,8 +30,6 @@ fn schema-kind(schema: Type[Int]) { 'int' }
 fn schema-kind(schema: Type) { 'type' }
 fn schema-kind(value: Any) { 'value' }
 
-ns test
-
 pub fn alias-expression-types() {
     let schema = Point
     assert(str(typeof Point) == 'type[{x: Int, y: Int}]')

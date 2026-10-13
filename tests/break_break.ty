@@ -1,5 +1,3 @@
-ns test
-
 let drops = 0
 
 class A {

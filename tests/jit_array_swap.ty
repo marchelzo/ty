@@ -1,5 +1,3 @@
-ns test
-
 fn swap-array-cursors() {
     let values = [0, 1, 2]
     let i = 0

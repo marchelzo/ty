@@ -2,8 +2,6 @@ import os
 import path (Path, tempdir)
 import super.support.process (ROOT, FIXTURES, run, type-env)
 
-ns test
-
 const SOURCES = FIXTURES / 'types2' / 'cache'
 
 fn modules(tmp: Path) -> Path {

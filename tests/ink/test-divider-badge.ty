@@ -1,8 +1,6 @@
 import ink
 import term (event)
 
-ns test
-
 class DivApp < ink.Component {
     render() {
         <ink.Box width=20>

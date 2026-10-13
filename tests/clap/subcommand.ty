@@ -30,8 +30,6 @@ fn forked(f) {
     ((status >> 8) & 0xFF, err)
 }
 
-ns test
-
 pub fn clap-subcommand() {
     let (code, err) = forked(fn () {
         let argv = ['prog', '--output', 'out.txt', 'init', '-f', 'proj']

@@ -9,8 +9,6 @@ fn reject(source: String) {
     }
 }
 
-ns test
-
 pub fn ev() {
     function e() {
         let n = 21

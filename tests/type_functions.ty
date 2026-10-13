@@ -88,8 +88,6 @@ fn shown(t: _) -> String {
     types.show(t)
 }
 
-ns test
-
 pub fn quote-expressions() {
     let u = $$[: String $$]
     assert(shown($$[: Int | nil $$]) == 'nil | Int')

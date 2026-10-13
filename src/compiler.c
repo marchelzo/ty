@@ -389,6 +389,8 @@ static vec(Expr const *) source_map;
 static u32 source_map_hole;
 static JumpGroup PreludeAssertionOffsets;
 static Module *MainModule;
+
+char const *TestFilePath;
 static bool TestRunnerFailed;
 static Module *GlobalModule;
 static Scope *GlobalScope;
@@ -5988,8 +5990,8 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
         case STATEMENT_FUNCTION_DEFINITION:
                 symbolize_fun_def(ty, scope, s, SYM_FUNCTION);
                 if (
-                        (s->ns != NULL)
-                     && s->ns->test
+                        (s->mod != NULL)
+                     && (s->mod->flags & MOD_TESTS)
                      && (s->value->overload == NULL)
                      && SymbolIsGlobal(s->target->symbol)
                 ) {
@@ -13975,6 +13977,13 @@ compiler_compile_source(
         if (MainModule == NULL) {
                 MainModule = module;
                 MainModule->name = "main";
+        }
+
+        if (
+                (TestFilePath != NULL)
+             && s_eq(module_path, TestFilePath)
+        ) {
+                module->flags |= MOD_TESTS;
         }
 
         i64 symbol = scope_get_symbol(ty);

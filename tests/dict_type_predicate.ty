@@ -1,5 +1,3 @@
-ns test
-
 pub fn test-dict-type-predicate-accepts-matching-entries() {
     assert(%{1: 'a', 2: 'b'} :: Dict[Int, String])
     assert(%{'x': 1.5} :: Dict[String, Float])

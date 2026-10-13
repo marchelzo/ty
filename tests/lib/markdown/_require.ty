@@ -1,7 +1,0 @@
-import ffi as c
-import os
-
-if c.open('cmark') == nil {
-    print('libcmark is not installed')
-    os.exit(77)
-}

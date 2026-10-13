@@ -263,7 +263,7 @@ clean:
 
 test: ty tyls test-types2
 	TY_TEST_NATIVE=1 ./ty --test tests/runner/smoke.ty
-	./ty test.ty --strict $(TEST_ARGS)
+	./ty --test tests --strict $(TEST_ARGS)
 
 test-types2: obj/types2-core-test
 	./obj/types2-core-test

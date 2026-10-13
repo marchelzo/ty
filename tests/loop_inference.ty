@@ -87,8 +87,6 @@ fn finally-value() -> Int {
     value + 1
 }
 
-ns test
-
 pub fn loop-values() {
     assert(header-end(Blob('GET / HTTP/1.1\r\n\r\n')) == 18)
     assert(header-end(Blob('incomplete')) == -1)

@@ -11,8 +11,6 @@ import chalk
 fn twice(x: Int) -> Int { x * 2 }
 fn twice(s: String) -> String { "{s}{s}" }
 
-ns test
-
 pub fn builtin-functions-carry-their-c-source() {
     let f: _ = print
     assert(f.__src__.starts?('// print('))

@@ -122,7 +122,7 @@ usage(void)
                 "    -q            Ignore constraints on function parameters and return values            \0"
                 "    -S FILE       Write the program's annotated disassembly to FILE                      \0"
                 "                    (- is interpreted as stdout, and @ is interpreted as stderr)         \0"
-                "    --test [FILE | TARGET...] [OPTS]   Run tests: pub functions inside `ns test`.        \0"
+                "    --test [FILE | TARGET...] [OPTS]   Run tests: top-level pub functions in test files. \0"
                 "                                       `ty --test --help` lists runner options.          \0"
 #ifdef TY_PROFILER
                 "    -F FREQ       Set profiler sampling frequency in Hz (default: every instruction)     \0"
@@ -598,10 +598,6 @@ ProcessArgs(char *argv[], bool first)
 
                                         ty_snprintf(buffer, sizeof buffer, fmt, module);
 
-                                        if (!first && *opt != 'f' && RunningTests) {
-                                                TestAllowModule(module);
-                                        }
-
                                         if (!first && !execln(ty, buffer)) {
                                                 exit(1);
                                         }
@@ -879,6 +875,8 @@ RunTestMode(void)
                 fprintf(stderr, "ty: %s: %s\n", SourceFile, strerror(errno));
                 exit(1);
         }
+
+        TestFilePath = realpath(SourceFile, NULL);
 
         DebugWaitForClient(ty);
 

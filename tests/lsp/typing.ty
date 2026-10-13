@@ -19,8 +19,6 @@ fn cursor(src: String) -> (Int, Int) {
     (#lines - 1, #lines[-1])
 }
 
-ns test
-
 pub fn type-sample-forwards() {
     for n in [n for n in 1..#SAMPLE if n % STEP == 0] + [#SAMPLE] {
         let src = SAMPLE[;n]

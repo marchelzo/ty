@@ -2,8 +2,6 @@ import ink
 import ink.themes as themes
 import term (event)
 
-ns test
-
 class EmptyBoxApp < ink.Component {
     render() -> ink.Node { <ink.Box /> }
 }

@@ -22,8 +22,6 @@ fn sub-microsecond?(nsecs: Array[Int]) -> Bool {
     nsecs.any?(\_ % 1000 != 0)
 }
 
-ns test
-
 pub fn monotonic-is-not-the-wall-clock() {
     let mono = time.gettime(time.CLOCK_MONOTONIC)
     let real = time.gettime(time.CLOCK_REALTIME)
