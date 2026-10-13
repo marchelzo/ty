@@ -234,6 +234,7 @@ set(_gen_builtins_sources
   src/functions.c
   src/ffi.c
   src/sqlite.c
+  src/screen.c
 )
 set(_gen_builtins_methods
   src/str.c
@@ -363,6 +364,7 @@ set(_src_files
   src/parse.c
   src/qcache.c
   src/scope.c
+  src/screen.c
   src/shared_queue.c
   src/spawn.c
   src/sqlite.c
@@ -376,6 +378,7 @@ set(_src_files
   src/util.c
   src/value.c
   src/vm.c
+  src/width.c
 )
 
 set(_tgt_ty_interface "${PROJECT_NAME}_Objects")

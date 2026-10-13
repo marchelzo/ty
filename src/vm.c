@@ -8407,12 +8407,17 @@ TargetMember:
                         push(GetSelf(ty));
 
                         if (UNLIKELY(IsNone((v = LoadFieldFast(ty, z))))) {
-                                v = GetMember(ty, z, false, false);
+                                v = GetMember(ty, z, true, false);
                         }
 
                         switch (v.type) {
                         case VALUE_BREAK:
                                 continue;
+
+                        case VALUE_NONE:
+                                xpush(GetSelf(ty));
+                                BadFieldAccess(ty, top(), z);
+                                UNREACHABLE();
 
                         default:
                                 xpush(v);
@@ -8868,7 +8873,10 @@ BinaryOp:
                                                 break;
 
                                         case OFF_METHOD_X:
-                                                vp = &top()->object->slots[i & OFF_MASK];
+                                                vp = DecoratedSlot(top(), n, i & OFF_MASK);
+                                                if (vp == NULL) {
+                                                        vp = class_lookup_method_i(ty, n, z);
+                                                }
                                                 break;
 
                                         default:
@@ -8897,7 +8905,10 @@ BinaryOp:
                                                 break;
 
                                         case OFF_GETTER_X:
-                                                vp = &top()->object->slots[i & OFF_MASK];
+                                                vp = DecoratedSlot(top(), n, i & OFF_MASK);
+                                                if (vp == NULL) {
+                                                        vp = class_lookup_getter_i(ty, n, z);
+                                                }
                                                 break;
 
                                         default:
@@ -8926,7 +8937,10 @@ BinaryOp:
                                                 break;
 
                                         case OFF_SETTER_X:
-                                                vp = &top()->object->slots[i & OFF_MASK];
+                                                vp = DecoratedSlot(top(), n, i & OFF_MASK);
+                                                if (vp == NULL) {
+                                                        vp = class_lookup_setter_i(ty, n, z);
+                                                }
                                                 break;
 
                                         default:
@@ -9668,6 +9682,8 @@ ProfileReport(Ty *ty)
 
         char color_buffer[64] = {0};
         double total_ticks = 0.0;
+        char const *min_pct = getenv("TY_PROFILE_MIN_PCT");
+        double min_share = (min_pct != NULL) ? atof(min_pct) / 100.0 : 0.01;
 
         dfor(Samples, {
                 ProfileEntry entry = ((ProfileEntry) {
@@ -9692,7 +9708,7 @@ ProfileReport(Ty *ty)
         for (int i = 0; i < func_profile.count; ++i) {
                 ProfileEntry *entry = &func_profile.items[i];
 
-                if (entry->count / total_ticks < 0.01) {
+                if (entry->count / total_ticks < min_share) {
                         break;
                 }
 
@@ -11730,6 +11746,30 @@ vm_jit_get_member(Ty *ty)
         }
 
         xpush(vm_jit_member_access(ty, z));
+}
+
+void
+vm_jit_target_member(Ty *ty, Value *v, i32 z)
+{
+        if (!TargetFieldFast(ty, v, z)) {
+                DoTargetMember(ty, *v, z);
+        }
+}
+
+void
+vm_jit_dyn_member_assign(Ty *ty)
+{
+        i32 z = GetDynamicMemberId(ty, true);
+        if (z < 0) {
+                z = -(z + 1);
+        }
+
+        if (!TargetFieldFast(ty, top(), z)) {
+                DoTargetMember(ty, peek(), z);
+        }
+
+        pop();
+        DoAssignExec(ty);
 }
 
 void

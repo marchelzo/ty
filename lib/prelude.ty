@@ -1339,6 +1339,8 @@ class String : Iterable[String], IntoPtr[Int], PathLike {
     size()  -> Int;
     width() -> Int;
     wrap(width: ?Int = nil, indent: String = '', first: ?String = nil, greedy: Bool = false) -> String;
+    fit(width: Int, align: Int | String = -1, fill: String = ' ') -> String;
+    ansi-lines() -> [String];
 
     slice(i: Int, j: ?Int, k: ?Int) -> String;
     bslice(i: Int, j: ?Int) -> String;

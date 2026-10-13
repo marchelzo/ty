@@ -85,6 +85,10 @@ pub class Watcher {
 const VNODE_FFLAGS = kqueue.NOTE_WRITE | kqueue.NOTE_DELETE
                    | kqueue.NOTE_RENAME | kqueue.NOTE_ATTRIB
 
+const DIR_FFLAGS = kqueue.NOTE_WRITE | kqueue.NOTE_DELETE | kqueue.NOTE_RENAME
+
+const GONE = kqueue.NOTE_DELETE | kqueue.NOTE_RENAME
+
 pub class Watcher {
     __kq: kqueue.Kqueue
     __dir: Path
@@ -112,7 +116,7 @@ pub class Watcher {
         if fd == -1 { return }
         let entries = os.listdir(ds)
         if entries == nil { os.close(fd); return }
-        __kq.clear(fd, kqueue.EVFILT_VNODE, fflags=kqueue.NOTE_WRITE)
+        __kq.clear(fd, kqueue.EVFILT_VNODE, fflags=DIR_FFLAGS)
         __dir-fds[fd] = dir
         __paths << ds
         for name in entries {
@@ -144,34 +148,55 @@ pub class Watcher {
         os.close(fd)
     }
 
+    __add(p: Path) {
+        if __recursive && p.dir? {
+            __add-dir(p)
+        } else {
+            __add-file(p)
+        }
+    }
+
+    __rescan(dir: Path) {
+        for name in os.listdir("{dir}") ?? [] {
+            let p = dir / name
+            if "{p}" not in __paths {
+                __add(p)
+                yield Create(p)
+            }
+        }
+    }
+
+    __replaced(fd: Int, p: Path) {
+        __remove(fd)
+
+        if p.exists? {
+            __add(p)
+            yield Create(p)
+        } else {
+            yield Delete(p)
+        }
+    }
+
     dir -> Path { __dir }
     open? -> Bool { !__closed }
 
     events*(timeout: Float = -1.0) {
         for ev in __kq.events(timeout) {
             let fd = ev.ident
+            let ff = ev.fflags
 
             if let $dir = __dir-fds[fd] {
-                for name in os.listdir("{dir}") {
-                    let p = dir / name
-                    if "{p}" not in __paths {
-                        if __recursive && (p.dir?) {
-                            __add-dir(p)
-                        } else {
-                            __add-file(p)
-                        }
-                        yield Create(p)
-                    }
+                if ff & GONE {
+                    __replaced(fd, dir)
+                } else {
+                    __rescan(dir)
                 }
                 continue
             }
 
             if let $p = __file-fds[fd] {
-                let ff = ev.fflags
-
-                if ff & (kqueue.NOTE_DELETE | kqueue.NOTE_RENAME) {
-                    __remove(fd)
-                    yield Delete(p)
+                if ff & GONE {
+                    __replaced(fd, p)
                 } else {
                     if ff & kqueue.NOTE_WRITE  { yield Modify(p) }
                     if ff & kqueue.NOTE_ATTRIB { yield Attrib(p) }

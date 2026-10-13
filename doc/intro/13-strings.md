@@ -76,6 +76,30 @@ let msg = "\x1b[92;1m Howdy! 🤠 \x1b[0m"
 print("{msg:{pad}^24}")
 ```
 
+#### Display width
+
+`String.width()`, format padding (`{s:<N}`, `%-*s`), precision (`{s:.N}`, `%.*s`) and
+`String.wrap()` all measure strings the same way, in terminal columns:
+
+- Escape sequences take no columns: CSI (`\x1b[...m`, `\x1b[K`, ...), OSC (including
+  OSC 8 hyperlinks, terminated by BEL or `\x1b\\`), DCS, APC (kitty graphics), PM, SOS and
+  two-byte/charset escapes such as `\x1b(B`.
+- Text is measured per extended grapheme cluster (UAX #29). A cluster is as wide as its first
+  code point (UAX #11: wide and fullwidth characters and emoji-presentation emoji take 2 columns,
+  combining marks and other zero-width characters take 0), except that a regional-indicator
+  flag is 2, and a base with the Emoji property followed directly by VS16 (U+FE0F) or a skin-tone
+  modifier is 2, and followed by VS15 (U+FE0E) is 1. So `'👍🏽'`, `'👨‍👩‍👧'`, `'🇺🇸'`, `'1️⃣'` and
+  `'✔️'` are 2 columns, `'✔'` and `"é"` are 1. This is the grapheme-cluster model used by
+  kitty and by terminals implementing mode 2027; terminals that sum per-code-point `wcwidth`
+  (e.g. tmux 3.3) draw some emoji sequences wider or narrower.
+- Precision clips to exactly N columns: a wide character that straddles the edge is replaced by
+  a space, and the SGR and OSC 8 sequences that follow the cut are kept, so the clipped text
+  leaves the terminal in the same style/hyperlink state as the original.
+
+`s.chars()` (and `s.charCount()`) split a string into the same grapheme clusters, so
+`s.chars().map(&width).sum() == s.width()` for text without escape sequences. Note that
+`for c in s` and `s[i]` work on code points, not clusters.
+
 You can use `*` as a width specifier to have the width determined by the width of the literal interpolation
 region in the source code. This is useful for aligning multiple interpolated strings to the same width:
 

@@ -15,6 +15,7 @@
 #include "itable.h"
 #include "chan.h"
 #include "queue.h"
+#include "screen.h"
 
 static GCRootSet ImmortalSet;
 
@@ -93,6 +94,10 @@ collect(Ty *ty, struct alloc *a)
 
         case GC_CHANNEL:
                 chan_destroy(ty, p);
+                break;
+
+        case GC_SCREEN:
+                screen_free(ty, p);
                 break;
 
         case GC_THREAD:

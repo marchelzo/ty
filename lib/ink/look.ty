@@ -1,0 +1,346 @@
+import os (stat)
+
+pub class LookError < RuntimeError {
+    msg: String
+
+    init(msg: String) {
+        self.msg = msg
+    }
+
+    what -> String { msg }
+}
+
+const INT_PROPS: Set[String] = %[
+    'pad-x', 'pad-y', 'padding', 'gap',
+    'margin', 'margin-x', 'margin-y', 'width', 'height'
+]
+const BOOL_PROPS: Set[String] = %['bold', 'italic', 'underline', 'dim', 'reverse']
+const STR_PROPS: Set[String] = %['fg', 'bg', 'border-color', 'content', 'text']
+const ENUM_PROPS: Dict[String, Set[String]] = %{
+    'border':    %['none', 'single', 'double', 'round', 'bold'],
+    'align':     %['start', 'center', 'end'],
+    'justify':   %['start', 'center', 'end', 'space-between', 'space-around', 'space-evenly'],
+    'direction': %['row', 'column'],
+    'wrap':      %['word', 'truncate', 'none']
+}
+
+pub PARTS: Dict[String, (Array[String], Array[String])] = %{
+    'Select':        (['frame', 'item', 'indicator'], ['focused', 'selected']),
+    'Checkbox':      (['icon', 'label'], ['focused', 'checked']),
+    'Card':          (['frame'], ['focused']),
+    'StatusBar':     (['bar', 'text'], []),
+    'ProgressBar':   (['fill', 'track', 'pct'], ['done']),
+    'Spinner':       (['frame', 'label'], []),
+    'Divider':       (['line', 'title'], []),
+    'Badge':         (['label'], []),
+    'SectionHeader': (['title'], []),
+    'Toast':         (['icon', 'text'], []),
+    'TextInput':     (['frame', 'text', 'placeholder', 'cursor', 'popup', 'popup-item'], ['focused']),
+    'TextArea':      (['frame', 'text', 'placeholder', 'cursor'], ['focused']),
+    'Slider':        (['label', 'fill', 'thumb', 'track', 'value'], ['focused']),
+    'RangeSelector': (['label', 'fill', 'thumb', 'track', 'value'], ['focused', 'active']),
+    'TrackBar':      (['label', 'fill', 'thumb', 'track', 'value', 'button', 'play', 'speed'], ['focused', 'playing']),
+    'ScrollView':    (['frame'], ['focused']),
+    'TreeView':      (['frame', 'row', 'mark', 'guide', 'toggle', 'label', 'empty'], ['focused', 'selected', 'active', 'expanded']),
+    'DatePicker':    (['header', 'weekday', 'day'], ['focused', 'today', 'selected']),
+    'BarChart':      (['bar', 'axis', 'empty'], []),
+    'LinePlot':      (['series', 'axis', 'selection', 'empty'], [])
+}
+
+fn check-key(key: String, line: Int) {
+    match key {
+        /^\.[\w-]+$/ => (),
+        /^([A-Z]\w*)(?:\.([\w-]+))?::([\w-]+)((?::[\w-]+)*)$/ => do {
+            let w = $1
+            let p = $3
+            let sts = $4
+            let (parts, states) = PARTS[w] ?? throw LookError("line {line}: unknown widget '{w}' in '{key}'")
+            if p not in parts {
+                throw LookError("line {line}: {w} has no part '{p}' (parts: {parts.join(', ')})")
+            }
+            for s in sts.split(':') if #s > 0 && s not in states {
+                throw LookError("line {line}: {w} has no state ':{s}' (states: {states.join(', ')})")
+            }
+        },
+        _ => throw LookError("line {line}: bad key '{key}' (want .class or Widget[.variant]::part[:state...])")
+    }
+}
+
+fn check-value(k: String, v: _, ctx: String) -> _ {
+    if k in INT_PROPS {
+        let n = (v :: Int) ? v : int(v, 10)
+        if !(n :: Int) || n < 0 {
+            throw LookError("{ctx}: '{k}' wants a non-negative integer, got '{v}'")
+        }
+        return n
+    }
+    if k in BOOL_PROPS {
+        match v {
+            true or 'true'   => return true,
+            false or 'false' => return false,
+            _                => throw LookError("{ctx}: '{k}' wants true/false, got '{v}'")
+        }
+    }
+    if let $allowed = ENUM_PROPS[k] {
+        if v not in allowed {
+            throw LookError("{ctx}: unknown {k} '{v}' (want {allowed.list().join('|')})")
+        }
+        return v
+    }
+    if k in STR_PROPS {
+        let s = "{v}"
+        if s.match?(/[\[\]]/) {
+            throw LookError("{ctx}: '{k}' value may not contain brackets: '{s}'")
+        }
+        return s
+    }
+    throw LookError("{ctx}: unknown property '{k}'")
+}
+
+fn unquote(v: String) -> String {
+    match v {
+        /^"(.*)"$/s => $1,
+        /^'(.*)'$/s => $1,
+        _           => v
+    }
+}
+
+pub fn parse(src: String) -> Dict[String, Dict[String, _]] {
+    let out: Dict[String, Dict[String, _]] = %{}
+    let line = 1
+    let i = 0
+    let n = #src
+    while i < n {
+        let $m = src[i;].match(/^(\s*(?:#[^\n]*\n\s*)*)([^{}\s][^{}]*?)\s*\{([^{}]*)\}/s) or do {
+            let rest = src[i;]
+            if rest.match?(/^\s*(#[^\n]*\s*)*$/) { break }
+            throw LookError("line {line}: expected 'key \{ prop: value; ... \}'")
+        }
+        line += #m[1].matches(/\n/)
+        let key-line = line
+        let keys = m[2].split(/\s*,\s*/)
+        let body = m[3]
+        let decl: Dict[String, _] = %{}
+        let dl = key-line
+        for d in body.split(/[;\n]/) {
+            let t = d.trim()
+            if #t > 0 {
+                let $kv = t.match(/^([\w-]+)\s*:\s*(.+)$/s)
+                    or throw LookError("line {dl}: bad declaration '{t}'")
+                decl[kv[1]] = (keys == ['@tokens'])
+                    ? unquote(kv[2].trim())
+                    : check-value(kv[1], unquote(kv[2].trim()), "line {dl}")
+            }
+            dl += #d.matches(/\n/)
+        }
+        for k in keys {
+            if k == '@tokens' {
+                out[k] = %{**(out[k] ?? %{}), **decl}
+                continue
+            }
+            check-key(k, key-line)
+            out[k] = %{**(out[k] ?? %{}), **decl}
+        }
+        line += #m[0].matches(/\n/) - #m[1].matches(/\n/)
+        i += #m[0]
+    }
+    out
+}
+
+fn spec-of(d: Dict[String, _]) -> String | nil {
+    let ps: Array[String] = []
+    if let $fg = d['fg'] { ps.push(fg) }
+    match d['bold'] {
+        true  => ps.push('bold'),
+        false => ps.push('no-bold'),
+        _     => ()
+    }
+    match d['italic'] {
+        true  => ps.push('italic'),
+        false => ps.push('no-italic'),
+        _     => ()
+    }
+    match d['underline'] {
+        true  => ps.push('u'),
+        false => ps.push('no-u'),
+        _     => ()
+    }
+    if d['dim'] == true { ps.push('dim') }
+    if d['reverse'] == true { ps.push('reverse') }
+    if let $t = d['text'] { ps.push(t) }
+    (#ps > 0) ? ps.join(' ') : nil
+}
+
+pub class Looks {
+    base:  Dict[String, Dict[String, _]]
+    defs:  Dict[String, Dict[String, _]]
+    cache: Dict[String, Dict[String, _]]
+    epoch: Int
+
+    init(base: Dict[String, Dict[String, _]]) {
+        self.base = base
+        defs      = base
+        cache     = %{}
+        epoch     = 0
+    }
+
+    use(user: Dict[String, Dict[String, _]]) {
+        let merged = %{**base}
+        for k, d in user {
+            merged[k] = %{**(merged[k] ?? %{}), **d}
+        }
+        defs  = merged
+        cache = %{}
+        epoch += 1
+    }
+
+    merge(keys: Array[String], ck: String) -> Dict[String, _] {
+        let d: Dict[String, _] = %{}
+        for keys {
+            if let $x = defs[it] {
+                for k, v in x { d[k] = v }
+            }
+        }
+        d['spec'] = spec-of(d)
+        cache[ck] = d
+        d
+    }
+
+    classes(cls: String) -> Dict[String, _] {
+        cache[cls] ?? merge(cls.words().map(\".{_}"), cls)
+    }
+
+    part(w: String, p: String, states: Array[String], variant: String | nil = nil) -> Dict[String, _] {
+        let ck = "{w}|{variant}|{p}|{states}"
+        if let $hit = cache[ck] { return hit }
+        let keys = ["{w}::{p}", *states.map(\"{w}::{p}:{_}")]
+        if variant != nil {
+            keys.push("{w}.{variant}::{p}")
+            for states { keys.push("{w}.{variant}::{p}:{it}") }
+        }
+        merge(keys, ck)
+    }
+}
+
+pub class LookFile {
+    path:  String
+    mtime: Float
+    error: String | nil
+
+    init(path: String) {
+        self.path = path
+        mtime     = -1.0
+        error     = nil
+    }
+
+    poll() -> Dict[String, Dict[String, _]] | nil {
+        let $st = stat(path) or return nil
+        if st.mtime == mtime { return nil }
+        mtime = st.mtime
+        try {
+            let parsed = parse(slurp(path) ?? '')
+            error = nil
+            parsed
+        } catch e: LookError {
+            error = "{path}: {e.what}"
+            nil
+        }
+    }
+}
+
+pub DEFAULTS: Dict[String, Dict[String, _]] = %{
+    'Select::frame':              %{'border': 'round', 'border-color': 'border', 'pad-x': 1},
+    'Select::frame:focused':      %{'border-color': 'border-focus'},
+    'Select::item':               %{'fg': 'text'},
+    'Select::item:selected':      %{'fg': 'selection', 'bold': true},
+    'Select::indicator':          %{'content': ' '},
+    'Select::indicator:selected': %{'content': '▸'},
+    'Checkbox::icon':             %{'fg': 'subtle', 'content': '○'},
+    'Checkbox::icon:focused':     %{'fg': 'selection'},
+    'Checkbox::icon:checked':     %{'fg': 'success', 'bold': true, 'content': '✓'},
+    'Checkbox::label':            %{'fg': 'text'},
+    'Checkbox::label:focused':    %{'fg': 'selection', 'bold': true},
+    'Card::frame':                %{'border': 'round', 'border-color': 'border', 'pad-x': 1},
+    'Card::frame:focused':        %{'border-color': 'border-focus'},
+    'StatusBar::bar':             %{'pad-x': 1, 'bg': 'bg-surface'},
+    'StatusBar::text':            %{'fg': 'fg-dim'},
+    'ProgressBar::fill':          %{'fg': 'primary', 'content': '━'},
+    'ProgressBar::track':         %{'fg': 'subtle', 'content': '━'},
+    'ProgressBar::pct':           %{'fg': 'text-dim'},
+    'Spinner::frame':             %{'fg': 'info'},
+    'Spinner::label':             %{},
+    'Divider::line':              %{'fg': 'subtle', 'content': '─'},
+    'Divider::title':             %{'fg': 'subtle', 'bold': true},
+    'Badge::label':               %{'fg': 'muted', 'reverse': true},
+    'SectionHeader::title':       %{'fg': 'fg-default', 'underline': true},
+    'Toast::frame':               %{'fg': 'success', 'bold': true},
+    'Toast::icon':                %{'content': '✓'},
+    'TextInput::frame':           %{'border': 'round', 'border-color': 'border'},
+    'TextInput::frame:focused':   %{'border-color': 'border-focus'},
+    'TextInput::text':            %{'fg': 'text'},
+    'TextInput::text:focused':    %{'fg': 'selection'},
+    'TextInput::placeholder':     %{'fg': 'subtle'},
+    'TextInput::cursor':          %{'reverse': true},
+    'TextInput::popup':           %{'bg': 'bg-surface', 'border': 'single', 'border-color': 'border', 'pad-x': 1},
+    'TextInput::popup-item':      %{'fg': 'text'},
+    'TextArea::frame':            %{'border': 'round', 'border-color': 'border'},
+    'TextArea::frame:focused':    %{'border-color': 'border-focus'},
+    'TextArea::text':             %{'fg': 'text'},
+    'TextArea::text:focused':     %{'fg': 'selection'},
+    'TextArea::placeholder':      %{'fg': 'subtle'},
+    'TextArea::cursor':           %{'reverse': true},
+    'Slider::label':              %{'fg': 'primary'},
+    'Slider::label:focused':      %{'fg': 'selection', 'bold': true},
+    'Slider::fill':               %{'fg': 'primary', 'content': '━'},
+    'Slider::fill:focused':       %{'fg': 'selection'},
+    'Slider::thumb':              %{'fg': 'primary', 'bold': true, 'content': '●'},
+    'Slider::thumb:focused':      %{'fg': 'selection', 'content': '◆'},
+    'Slider::track':              %{'fg': 'subtle', 'content': '━'},
+    'Slider::value':              %{'fg': 'text-dim'},
+    'RangeSelector::label':         %{'fg': 'primary'},
+    'RangeSelector::label:focused': %{'fg': 'selection', 'bold': true},
+    'RangeSelector::fill':          %{'fg': 'primary', 'content': '━'},
+    'RangeSelector::fill:focused':  %{'fg': 'selection'},
+    'RangeSelector::thumb':         %{'fg': 'primary', 'bold': true, 'content': '●'},
+    'RangeSelector::thumb:focused': %{'fg': 'selection'},
+    'RangeSelector::thumb:active':  %{'content': '◆'},
+    'RangeSelector::track':         %{'fg': 'subtle', 'content': '━'},
+    'RangeSelector::value':         %{'fg': 'text-dim'},
+    'TrackBar::label':            %{'fg': 'primary'},
+    'TrackBar::label:focused':    %{'bold': true},
+    'TrackBar::fill':             %{'fg': 'primary', 'content': '━'},
+    'TrackBar::thumb':            %{'fg': 'primary', 'bold': true, 'content': '●'},
+    'TrackBar::thumb:focused':    %{'content': '◆'},
+    'TrackBar::track':            %{'fg': 'subtle', 'content': '━'},
+    'TrackBar::value':            %{'fg': 'text-dim'},
+    'TrackBar::button':           %{'fg': 'text-dim'},
+    'TrackBar::button:focused':   %{'fg': 'text'},
+    'TrackBar::play':             %{'fg': 'text-dim', 'content': '▶'},
+    'TrackBar::play:playing':     %{'content': '‖'},
+    'TrackBar::play:focused':     %{'fg': 'primary', 'bold': true},
+    'TrackBar::speed':            %{'fg': 'text-dim'},
+    'ScrollView::frame':          %{},
+    'TreeView::frame':            %{},
+    'TreeView::row':              %{},
+    'TreeView::mark':             %{'fg': 'text-dim', 'content': '  '},
+    'TreeView::mark:selected':    %{'fg': 'selection', 'bold': true},
+    'TreeView::mark:active':      %{'content': '▸ '},
+    'TreeView::guide':            %{'fg': 'subtle'},
+    'TreeView::toggle':           %{'content': '▸ '},
+    'TreeView::toggle:expanded':  %{'content': '▾ '},
+    'TreeView::label':            %{'fg': 'text'},
+    'TreeView::label:selected':   %{'fg': 'selection', 'bold': true},
+    'TreeView::empty':            %{'fg': 'text-dim', 'content': '  (empty)'},
+    'DatePicker::header':         %{'fg': 'primary', 'bold': true},
+    'DatePicker::weekday':        %{'fg': 'text-dim'},
+    'DatePicker::day':            %{'fg': 'text'},
+    'DatePicker::day:today':      %{'fg': 'accent', 'bold': true},
+    'DatePicker::day:selected':   %{'fg': 'selection', 'reverse': true, 'bold': true},
+    'BarChart::bar':              %{'fg': 'primary'},
+    'BarChart::axis':             %{'fg': 'text-dim'},
+    'BarChart::empty':            %{'fg': 'text-dim', 'content': 'no data'},
+    'LinePlot::series':           %{'fg': 'primary'},
+    'LinePlot::axis':             %{'fg': 'text-dim'},
+    'LinePlot::selection':        %{'bg': 'bg-hover'},
+    'LinePlot::empty':            %{'fg': 'text-dim', 'content': 'no data'}
+}

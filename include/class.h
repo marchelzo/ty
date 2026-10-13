@@ -160,6 +160,11 @@ class_ctor(Ty *ty, int class);
 TyObject *
 class_new_instance(Ty *ty, int class);
 
+void
+class_refresh_offsets(Ty *ty, int class);
+
+extern _Atomic u32 ClassMethodEpoch;
+
 bool
 class_fold_field(Ty *ty, Expr const *dflt, Value *out);
 

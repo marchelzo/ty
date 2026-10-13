@@ -74,6 +74,7 @@ enum {
         GC_NOTE,
         GC_COUNTER,
         GC_CHANNEL,
+        GC_SCREEN,
         GC_ANY
 };
 

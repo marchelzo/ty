@@ -4390,6 +4390,12 @@ static int
 Listen(char const *path)
 {
         struct sockaddr_un addr = { .sun_family = AF_UNIX };
+
+        if (strlen(path) >= sizeof addr.sun_path) {
+                errno = ENAMETOOLONG;
+                return -1;
+        }
+
         int fd = socket(AF_UNIX, SOCK_STREAM, 0);
 
         if (fd < 0) {

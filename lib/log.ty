@@ -1,4 +1,5 @@
 import ty
+import ty.mod
 import ty.parse as parse
 import ty.token (next)
 import os (..)
@@ -29,9 +30,29 @@ fn log-open(path: ?String) {
     path == nil ? 2 : open(path, O_RDWR | O_TRUNC | O_CREAT, 0644)
 }
 
-let global-log-fds  = %{*: log-open(it)}
-let global-log-conf = %{}
-let global-log-lock = Mutex()
+class LevelCell {
+    level: Int
+
+    init(level: Int) {
+        self.level = level
+    }
+}
+
+let global-log-fds    = %{*: log-open(it)}
+let global-log-conf:   Dict[String, LoggingConfig] = %{}
+let global-log-levels: Dict[String, LevelCell]     = %{}
+let global-log-lock   = Mutex()
+
+fn _level(name: String) -> LevelCell {
+    with global-log-lock {
+        if let $cell = global-log-levels[name] {
+            return cell
+        }
+        let cell = LevelCell(global-log-conf[name].?level ?? WARN)
+        global-log-levels[name] = cell
+        cell
+    }
+}
 
 pub DEFAULT_LOG_PATH = getenv('TY_LOG')
 
@@ -41,14 +62,19 @@ pub class Logger {
     __prefix: (Int, Bool) -> _
     __stack:  Array[String]
     __indent: Int
-    __level:  Int
+    __level:  LevelCell
     __color:  Bool
     __path:   String | nil
 
-    init(name: String, path: ?String, chalk: chalk::Chalk = chalk::Chalk()) {
+    init(
+        name: String,
+        path: ?String,
+        chalk: chalk::Chalk = chalk::Chalk(),
+        level: ?LevelCell = nil
+    ) {
         __name = name
         __indent = 4
-        __level = WARN
+        __level = level ?? LevelCell(WARN)
         __stack = []
         __chalk = chalk
         __prefix = fn (level: Int, color: Bool) {
@@ -82,16 +108,16 @@ pub class Logger {
     }
 
     setup(config: LoggingConfig) {
-        __path  = config.?path  ?? __path
-        __level = config.?level ?? __level
+        __path = config.?path ?? __path
+        __level.level = config.?level ?? __level.level
 
         with global-log-lock {
             __color = isatty(global-log-fds[__path])
         }
     }
 
-    setLevel(level) {
-        __level = level
+    setLevel(level: Int) {
+        __level.level = level
     }
 
     setPrefix(f) {
@@ -99,7 +125,7 @@ pub class Logger {
     }
 
     log(level, msg) {
-        if __level >= level {
+        if __level.level >= level {
             let name = if #__stack == 0 {
                 __name
             } else {
@@ -172,22 +198,30 @@ fn _conf(name: String) {
 
 fn _get(name: String, path: ?String) -> Logger {
     let loggers = _loggers ?? (_loggers = %{})
-    let chalk   = _chalk   ?? (_chalk = chalk.Chalk())
+
     if let $logger = loggers[name] {
-        logger
-    } else {
-        let logger = Logger(name, path, chalk)
-        if let $conf = _conf(name) {
-            logger.setup(conf)
-        }
-        loggers[name] = logger
-        logger
+        return logger
     }
+
+    let chalk  = _chalk ?? (_chalk = chalk.Chalk())
+    let logger = Logger(name, path, chalk, _level(name))
+
+    if let $conf = _conf(name) {
+        logger.setup({path: conf.?path})
+    }
+
+    loggers[name] = logger
+    logger
 }
 
-fn _log(level, expr) $$[
-    $${_get}(__module__, $$::(DEFAULT_LOG_PATH)).log($${level}, $$expr)
-$$]
+fn _log(level, expr) {
+    let cell = _level(ty.mod.name())
+    $$[
+        ($$(ty.Value(cell)).level >= $${level})
+            ? $${_get}(__module__, $$::(DEFAULT_LOG_PATH)).log($${level}, $$expr)
+            : nil
+    $$]
+}
 
 fn _ctx(name) $$[
     let ^_ = $$::(LogContextGuard)(
@@ -204,11 +238,16 @@ pub macro critical!(expr) { _log(CRITICAL, expr) }
 
 pub macro log-ctx(name) { _ctx(name) }
 
-pub macro logging(config) = do {
-    let config = $$config
-    let logger = $${_get}(__module__, $$::(DEFAULT_LOG_PATH))
-    logger.setup(config)
-    $$::(global-log-lock).lock()
-    $$::(global-log-conf)[__module__] = config
-    $$::(global-log-lock).unlock()
+fn _configure(name: String, config: LoggingConfig) {
+    _get(name, DEFAULT_LOG_PATH).setup(config)
+
+    with global-log-lock {
+        let old = global-log-conf[name]
+        global-log-conf[name] = {
+            level: config.?level ?? old.?level,
+            path:  config.?path  ?? old.?path
+        }
+    }
 }
+
+pub macro logging(config) = $${_configure}(__module__, $$config)

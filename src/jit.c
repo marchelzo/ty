@@ -1232,6 +1232,13 @@ jit_rt_try_get_member(Ty *ty, Value *top)
         vm_jit_try_get_member(ty);
 }
 
+static void
+jit_rt_dyn_member_assign(Ty *ty, Value *top)
+{
+        vN(STACK) = top - vv(STACK);
+        vm_jit_dyn_member_assign(ty);
+}
+
 #define JIT_RT_MUT_OP(op, vm_op)                                                           \
         static void                                                                        \
         jit_rt_mut_##op(Ty *ty, Value *target, Value *val, Value *result)                  \
@@ -1285,7 +1292,7 @@ jit_rt_member_set(Ty *ty, Value *obj, int member_id, Value *val)
         if (obj == NULL) {
                 obj = vm_get_self(ty);
         }
-        DoTargetMember(ty, *obj, member_id);
+        vm_jit_target_member(ty, obj, member_id);
         DoAssignExec(ty);
 }
 
@@ -1476,7 +1483,10 @@ jit_rt_bind_instance(Ty *ty, Value *result, int n, int z)
                                 vp = v_(class_get(ty, n)->methods.values, off & OFF_MASK);
                                 break;
                         case OFF_METHOD_X:
-                                vp = &result->object->slots[off & OFF_MASK];
+                                vp = DecoratedSlot(result, n, off & OFF_MASK);
+                                if (vp == NULL) {
+                                        vp = class_lookup_method_i(ty, n, z);
+                                }
                                 break;
                         default:
                                 return;
@@ -2044,6 +2054,32 @@ jit_rt_tls0(Ty *ty, Value *top, int n)
         EnsureThreadLocal(ty, n);
 }
 
+static void
+jit_rt_tls_mut(Ty *ty, Value *val, int n, void (*f)(Ty *, Value *, Value *, Value *))
+{
+        ptrdiff_t vi = val - vv(STACK);
+        Value tmp;
+
+        vN(STACK) = vi + 1;
+        EnsureThreadLocal(ty, n);
+        tmp = v__(ty->tls, n);
+        f(ty, &tmp, v_(STACK, vi), v_(STACK, vi));
+        *v_(ty->tls, n) = tmp;
+}
+
+static void
+jit_rt_tls_incdec(Ty *ty, Value *top, int n, void (*f)(Ty *, Value *, Value *))
+{
+        ptrdiff_t ti = top - vv(STACK);
+        Value tmp;
+
+        vN(STACK) = ti;
+        EnsureThreadLocal(ty, n);
+        tmp = v__(ty->tls, n);
+        f(ty, &tmp, v_(STACK, ti));
+        *v_(ty->tls, n) = tmp;
+}
+
 // Subscript assign: container[subscript] = value
 // Stack layout: value, container, subscript (TOS)
 // Pops all 3
@@ -2385,6 +2421,10 @@ typedef struct {
         bool save_sp_divergent[16]; // Whether branches caused divergent sp since SAVE_STACK_POS
         int save_sp_top;       // Top of save_sp stack (-1 = empty)
         char const *last_op;   // DEBUG: last opcode name for bail diagnostics
+        int cur_off;
+        char const *fail_op;
+        int fail_off;
+        char fail_msg[160];
 
         // Track which local each operand stack slot came from (-1 = unknown)
         // Used to look up types for CALL_METHOD/MEMBER_ACCESS fast paths
@@ -2409,6 +2449,7 @@ typedef struct {
                 TGT_LOCAL,
                 TGT_CAPTURED,
                 TGT_GLOBAL,
+                TGT_THREAD_LOCAL,
                 TGT_MEMBER,
                 TGT_SELF_MEMBER,
                 TGT_SUBSCRIPT
@@ -2447,6 +2488,89 @@ typedef struct {
 // Operand stack offset: address of ops[i] relative to BC_OPS
 #define OP_OFF(i) ((i) * VALUE_SIZE)
 
+static int JitAudit = -1;
+
+static int
+jit_audit_level(void)
+{
+        if (JitAudit < 0) {
+                char const *s = getenv("TY_JIT_AUDIT");
+                JitAudit = (s == NULL || *s == '\0') ? 0 : atoi(s);
+                if (JitAudit <= 0 && s != NULL && *s != '\0') {
+                        JitAudit = 1;
+                }
+        }
+
+        return JitAudit;
+}
+
+[[gnu::format(printf, 2, 3)]]
+static void
+bc_note_fail(JitCtx *ctx, char const *fmt, ...)
+{
+        va_list ap;
+
+        if (jit_audit_level() == 0 || ctx->fail_msg[0] != '\0') {
+                return;
+        }
+
+        ctx->fail_op  = ctx->last_op;
+        ctx->fail_off = ctx->cur_off;
+
+        va_start(ap, fmt);
+        vsnprintf(ctx->fail_msg, sizeof ctx->fail_msg, fmt, ap);
+        va_end(ap);
+}
+
+static void
+jit_audit_report(JitCtx const *ctx, char const *stage, usize native)
+{
+        Expr const *e = !from_eval(ctx->func) ? expr_of(ctx->func) : NULL;
+        char const *clsn = (e != NULL && e->class != NULL) ? e->class->name : NULL;
+        char const *path = (e != NULL && e->mod != NULL) ? e->mod->path : "?";
+        int line = (e != NULL) ? e->start.line + 1 : 0;
+        int level = jit_audit_level();
+        char const *op;
+
+        if (level == 0) {
+                return;
+        }
+
+        if (stage == NULL) {
+                if (level >= 2) {
+                        fprintf(
+                                stderr,
+                                "jit-audit: ok %s%s%s %s:%d code=%d native=%zu\n",
+                                clsn ? clsn : "",
+                                clsn ? "." : "",
+                                ctx->name,
+                                path,
+                                line,
+                                ctx->func->info[FUN_INFO_CODE_SIZE],
+                                native
+                        );
+                }
+                return;
+        }
+
+        op = (ctx->fail_op != NULL) ? ctx->fail_op : ctx->last_op;
+
+        fprintf(
+                stderr,
+                "jit-audit: decline %s%s%s %s:%d code=%d stage=%s op=%s off=%d reason=%s\n",
+                clsn ? clsn : "",
+                clsn ? "." : "",
+                ctx->name,
+                path,
+                line,
+                ctx->func->info[FUN_INFO_CODE_SIZE],
+                stage,
+                (op != NULL) ? op : "-",
+                (ctx->fail_op != NULL) ? ctx->fail_off : ctx->cur_off,
+                (ctx->fail_msg[0] != '\0') ? ctx->fail_msg : "unspecified"
+        );
+}
+
 // Allocate a new DynASM PC label, growing the pclabel array if needed
 static int
 bc_next_label(JitCtx *ctx)
@@ -2468,6 +2592,7 @@ bc_label_for(JitCtx *ctx, int offset)
                 }
         }
         if (ctx->label_count >= MAX_BC_LABELS) {
+                bc_note_fail(ctx, "too many jump targets (limit %d)", MAX_BC_LABELS);
                 return -1;
         }
         int label = bc_next_label(ctx);
@@ -2705,6 +2830,9 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                 int nkw;
                 uptr s;
 
+                ctx->last_op = GetInstructionName(op);
+                ctx->cur_off = instr_off;
+
 #if JIT_SCAN_LOG
                 LOGX(
                         "[jit] [%12.12s] [%16.16s] scan[%4jd] %s",
@@ -2894,7 +3022,15 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                         break;
 
                 case INSTR_TARGET_DYN_MEMBER:
-                        return false;
+                        if (
+                                (ip >= end)
+                             || ((u8)*ip != INSTR_ASSIGN)
+                             || (getenv("TY_JIT_NO_DYN_TARGET") != NULL)
+                        ) {
+                                bc_note_fail(ctx, "TARGET_DYN_MEMBER without ASSIGN");
+                                return false;
+                        }
+                        break;
 
                 case INSTR_JUMP: {
                         int off;
@@ -2949,7 +3085,10 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                         int member;
                         BC_SKIP(i32);  // n (argc)
                         BC_READ(member);
-                        if (member < 0) return false;
+                        if (member < 0) {
+                                bc_note_fail(ctx, "dynamic method name");
+                                return false;
+                        }
                         BC_READ(nkw);
                         for (int q = 0; q < nkw; ++q) BC_SKIPSTR();
                         break;
@@ -2977,6 +3116,14 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
 
                 case INSTR_ASSIGN_GLOBAL:
                 case INSTR_TARGET_GLOBAL:
+                        BC_SKIP(i32);
+                        break;
+
+                case INSTR_TARGET_THREAD_LOCAL:
+                        if (getenv("TY_JIT_NO_TLS_TARGET") != NULL) {
+                                bc_note_fail(ctx, "unsupported opcode");
+                                return false;
+                        }
                         BC_SKIP(i32);
                         break;
 
@@ -3134,6 +3281,7 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
 
                 case INSTR_RENDER_TEMPLATE:
                         // FIXME: need to emit #holes so JIT knows how to adjust sp
+                        bc_note_fail(ctx, "unsupported opcode");
                         return false;
 
                 case INSTR_CAPTURE:
@@ -3142,6 +3290,7 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                         break;
 
                 case INSTR_BIND_INSTANCE:
+                        bc_note_fail(ctx, "unsupported opcode");
                         return false;
                         BC_SKIP(i32);
                         BC_SKIP(i32);
@@ -3327,6 +3476,7 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                         LOGX("JIT: prescan bail on %s at offset %d",
                             GetInstructionName(op), instr_off);
 #endif
+                        bc_note_fail(ctx, "unsupported opcode");
                         return false;
                 }
 
@@ -3367,6 +3517,7 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
         // Can't use setjmp-based try blocks in generators: yield suspends
         // the coroutine, invalidating the setjmp frame.
         if (has_try && has_yield) {
+                bc_note_fail(ctx, "try block in generator");
                 return false;
         }
         ctx->cfg_has_try = has_try;
@@ -3484,11 +3635,44 @@ jit_run_trampoline(Ty *ty, JitFn *jit, Value **env)
         CO_LOG("jit_run_trampoline", TERM(31;1), "ret");
 }
 
+static bool
+jit_baked_method_live(Ty *ty, int class_id, int member_id, Value const *baked)
+{
+        if (LIKELY(atomic_load_explicit(&ClassMethodEpoch, memory_order_acquire) == 0)) {
+                return true;
+        }
+
+        Class *c = class_get(ty, class_id);
+
+        if (member_id >= vN(c->offsets_r)) {
+                return false;
+        }
+
+        u16 off = v__(c->offsets_r, member_id);
+
+        if ((off >> OFF_SHIFT) != OFF_METHOD) {
+                return false;
+        }
+
+        Value const *live = v_(c->methods.values, off & OFF_MASK);
+
+        return live->type == VALUE_FUNCTION
+            && live->info == baked->info
+            && live->env == baked->env;
+}
+
 // ret 1 for handled, 0 for fallback
 static int
-jit_rt_baked_call(Ty *ty, Value *self, Value *fn, int class_id, int argc)
+jit_rt_baked_call(Ty *ty, Value *self, Value *fn, int64_t class_and_member, int argc)
 {
+        int class_id  = (int)(class_and_member >> 32);
+        int member_id = (int)(class_and_member);
+
         if (UNLIKELY(ClassOf(self) != class_id)) {
+                return 0;
+        }
+
+        if (UNLIKELY(!jit_baked_method_live(ty, class_id, member_id, fn))) {
                 return 0;
         }
 
@@ -3677,7 +3861,10 @@ jit_rt_call_self_method_guarded(Ty *ty, Value *result, Value *self,
 
         CO_LOG("jit_rt_call_self_method_guarded", TERM(32;1), "class_id %d member_id %d", class_id, member_id);
 
-        if (ClassOf(self) == class_id) {
+        if (
+                (ClassOf(self) == class_id)
+             && jit_baked_method_live(ty, class_id, member_id, baked)
+        ) {
                 STAT(call_method_baked);
                 jit_rt_call_method_direct(ty, result, self, baked, argc);
         } else {
@@ -3773,13 +3960,26 @@ jit_rt_check_match(Ty *ty, Value *result, Value *value, Value *pattern)
 }
 
 static int
-jit_rt_compare(Ty *ty, Value *a, Value *b)
+jit_rt_relop(Ty *ty, Value *a, Value *b, int op)
 {
-        /* An overloaded <=> re-enters the VM and pushes at vN(STACK). */
         ptrdiff_t ia = a - vv(STACK);
         ptrdiff_t ib = b - vv(STACK);
+        Value     x  = *a;
+        Value     y  = *b;
+
         vN(STACK) = max(ia, ib) + 1;
-        return value_compare(ty, a, b);
+        xvP(STACK, x);
+        xvP(STACK, y);
+
+        switch (op) {
+        case INSTR_JLT: DoLt(ty);  break;
+        case INSTR_JLE: DoLeq(ty); break;
+        case INSTR_JGT: DoGt(ty);  break;
+        case INSTR_JGE: DoGeq(ty); break;
+        default:        UNREACHABLE();
+        }
+
+        return vvX(STACK)->boolean;
 }
 
 static void
@@ -4097,6 +4297,58 @@ bc_emit_global_incdec(JitCtx *ctx, void *helper)
         bc_emit_reentrant_call(ctx, BC_CALL);
 }
 
+static void
+bc_emit_tls_slot(JitCtx *ctx, int n)
+{
+        dasm_State **asm = &ctx->asm;
+        int lbl_slow = bc_next_label(ctx);
+        int lbl_fast = bc_next_label(ctx);
+
+        jit_emit_ldr64(asm, BC_S0, BC_TY, OFF_TY_TLS + OFF_VEC_LEN);
+        jit_emit_cmp_ri(asm, BC_S0, n);
+        jit_emit_branch_le(asm, lbl_slow);
+        jit_emit_ldr64(asm, BC_S3, BC_TY, OFF_TY_TLS + OFF_VEC_DATA);
+        jit_emit_add_imm(asm, BC_S3, BC_S3, n * VALUE_SIZE);
+        jit_emit_ldrb(asm, BC_S0, BC_S3, VAL_OFF_TYPE);
+        jit_emit_cmp_ri(asm, BC_S0, VALUE_NONE);
+        jit_emit_branch_ne(asm, lbl_fast);
+        jit_emit_label(asm, lbl_slow);
+        jit_emit_mov(asm, BC_A0, BC_TY);
+        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
+        jit_emit_load_imm(asm, BC_A2, n);
+        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_tls0);
+        bc_emit_reentrant_call(ctx, BC_CALL);
+        jit_emit_ldr64(asm, BC_S3, BC_TY, OFF_TY_TLS + OFF_VEC_DATA);
+        jit_emit_add_imm(asm, BC_S3, BC_S3, n * VALUE_SIZE);
+        jit_emit_label(asm, lbl_fast);
+}
+
+static void
+bc_emit_tls_mut(JitCtx *ctx, u8 op, int addend_off)
+{
+        dasm_State **asm = &ctx->asm;
+
+        jit_emit_mov(asm, BC_A0, BC_TY);
+        jit_emit_add_imm(asm, BC_A1, BC_OPS, addend_off);
+        jit_emit_load_imm(asm, BC_A2, ctx->tgt_index);
+        jit_emit_load_imm(asm, BC_A3, (iptr)bc_mut_runtime(op));
+        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_tls_mut);
+        bc_emit_reentrant_call(ctx, BC_CALL);
+}
+
+static void
+bc_emit_tls_incdec(JitCtx *ctx, void *helper)
+{
+        dasm_State **asm = &ctx->asm;
+
+        jit_emit_mov(asm, BC_A0, BC_TY);
+        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
+        jit_emit_load_imm(asm, BC_A2, ctx->tgt_index);
+        jit_emit_load_imm(asm, BC_A3, (iptr)helper);
+        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_tls_incdec);
+        bc_emit_reentrant_call(ctx, BC_CALL);
+}
+
 static int
 bc_emit_int_local_operand(JitCtx *ctx, int local, int scratch, int lbl_slow)
 {
@@ -4169,17 +4421,13 @@ bc_emit_int_local_jcmp(JitCtx *ctx, int left, int right, imax immediate,
         jit_emit_mov(asm, BC_A0, BC_TY);
         jit_emit_add_imm(asm, BC_A1, BC_OPS, left_off);
         jit_emit_add_imm(asm, BC_A2, BC_OPS, right_off);
-        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_compare);
+        jit_emit_load_imm(asm, BC_A3, op);
+        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_relop);
         bc_emit_runtime_call(ctx, BC_CALL);
         /* Reload clobbers BC_RET on x64, but preserves comparison flags. */
         jit_emit_cmp_ri32(asm, BC_RET, 0);
         jit_emit_reload_stack(asm, ctx->bound);
-        switch (op) {
-        case INSTR_JLT: jit_emit_branch_lt(asm, lbl_target); break;
-        case INSTR_JGT: jit_emit_branch_gt(asm, lbl_target); break;
-        case INSTR_JLE: jit_emit_branch_le(asm, lbl_target); break;
-        case INSTR_JGE: jit_emit_branch_ge(asm, lbl_target); break;
-        }
+        jit_emit_branch_ne(asm, lbl_target);
         jit_emit_label(asm, lbl_done);
 }
 
@@ -5072,18 +5320,13 @@ bc_try_range_guard(
         jit_emit_mov(asm, BC_A0, BC_TY);
         jit_emit_add_imm(asm, BC_A1, BC_OPS, cursor_off);
         jit_emit_add_imm(asm, BC_A2, BC_OPS, bound_off);
-        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_compare);
+        jit_emit_load_imm(asm, BC_A3, op);
+        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_relop);
         bc_emit_runtime_call(ctx, BC_CALL);
         /* Reload clobbers BC_RET on x64, but preserves comparison flags. */
         jit_emit_cmp_ri32(asm, BC_RET, 0);
         jit_emit_reload_stack(asm, ctx->bound);
-        if (op == INSTR_JGE) {
-                jit_emit_branch_ge(asm, lbl_target);
-        } else if (op == INSTR_JGT) {
-                jit_emit_branch_gt(asm, lbl_target);
-        } else {
-                jit_emit_branch_lt(asm, lbl_target);
-        }
+        jit_emit_branch_ne(asm, lbl_target);
 
         jit_emit_label(asm, lbl_assign);
         bc_copy_value(
@@ -6120,13 +6363,44 @@ bc_emit_truthy(JitCtx *ctx)
         jit_emit_label(asm, lbl_done);
 }
 
+static void
+bc_emit_self_slot_guard(JitCtx *ctx, int member_id, u16 off, int vec_off, int lbl_slow)
+{
+        dasm_State **asm = &ctx->asm;
+        int lbl_ok    = bc_next_label(ctx);
+        int items_off = vec_off + (int)offsetof(u16Vector, items);
+        int count_off = vec_off + (int)offsetof(u16Vector, count);
+
+        jit_emit_ldrb(asm, BC_S0, BC_S3, VAL_OFF_TYPE);
+        jit_emit_cmp_ri(asm, BC_S0, VALUE_OBJECT);
+        jit_emit_branch_ne(asm, lbl_slow);
+
+        jit_emit_ldr32(asm, BC_S0, BC_S3, VAL_OFF_CLASS);
+        jit_emit_cmp_ri(asm, BC_S0, ctx->self_class_id);
+        jit_emit_branch_eq(asm, lbl_ok);
+
+        jit_emit_ldr64(asm, BC_S2, BC_S3, VAL_OFF_OBJECT);
+        jit_emit_ldr64(asm, BC_S2, BC_S2, OBJ_OFF_CLASS);
+        jit_emit_ldr64(asm, BC_S0, BC_S2, count_off);
+        jit_emit_load_imm(asm, BC_S1, member_id);
+        jit_emit_cmp_rr(asm, BC_S0, BC_S1);
+        jit_emit_branch_ule(asm, lbl_slow);
+        jit_emit_ldr64(asm, BC_S2, BC_S2, items_off);
+        jit_emit_load_imm(asm, BC_S1, (i64)(u32)member_id * sizeof (u16));
+        jit_emit_ldr16_index(asm, BC_S0, BC_S2, BC_S1);
+        jit_emit_load_imm(asm, BC_S1, off);
+        jit_emit_cmp_rr(asm, BC_S0, BC_S1);
+        jit_emit_branch_ne(asm, lbl_slow);
+
+        jit_emit_label(asm, lbl_ok);
+}
+
 static bool
 bc_emit_self_member_read_fast(JitCtx *ctx, int member_id, char const *bc_ip)
 {
         (void)bc_ip;
         if (ctx->self_class == NULL) return false;
 
-        Ty *ty = ctx->ty;
         Class *cls = ctx->self_class;
 
         if (member_id >= (int)vN(cls->offsets_r)) return false;
@@ -6138,7 +6412,6 @@ bc_emit_self_member_read_fast(JitCtx *ctx, int member_id, char const *bc_ip)
         if (kind != OFF_FIELD) return false;
 
         u16 slot_idx = off & OFF_MASK;
-        int class_id = ctx->self_class_id;
         int slot_byte_off = OBJ_OFF_SLOTS + slot_idx * VALUE_SIZE;
 
         // Check offset fits in ARM64 ldp range (need slot_byte_off + 16 <= 504)
@@ -6155,20 +6428,13 @@ bc_emit_self_member_read_fast(JitCtx *ctx, int member_id, char const *bc_ip)
         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
 
         bc_emit_deref(ctx, BC_S3, BC_LOC, self_val_off);
-
-        // Skip class ID check for private fields since they can't be overridden
-        if (strchr(M_NAME(member_id), '$') == NULL) {
-                // Check self.class == expected_class_id
-                jit_emit_ldr32(asm, BC_S0, BC_S3, VAL_OFF_CLASS);
-                jit_emit_cmp_ri(asm, BC_S0, class_id);
-                jit_emit_branch_ne(asm, lbl_slow);
-        }
-
-        // Check self.object->dynamic == NULL (layout changed at runtime)
-        jit_emit_ldr64(asm, BC_S0, BC_S3, VAL_OFF_OBJECT);
-        jit_emit_ldr64(asm, BC_S0, BC_S0, OBJ_OFF_DYN);
-        jit_emit_cmp_ri(asm, BC_S0, 0);
-        jit_emit_branch_ne(asm, lbl_slow);
+        bc_emit_self_slot_guard(
+                ctx,
+                member_id,
+                off,
+                (int)offsetof(Class, offsets_r),
+                lbl_slow
+        );
 
         // Fast path: load self.object => BC_S2, then copy slot to ops
         EMIT_STAT(jit_rt_stat_self_member_read_fast);
@@ -6198,7 +6464,6 @@ bc_emit_self_member_write_fast(JitCtx *ctx, int member_id, char const *bc_ip)
         (void)bc_ip;
         if (ctx->self_class == NULL) return false;
 
-        Ty *ty = ctx->ty;
         Class *cls = ctx->self_class;
 
         if (member_id >= (int)vN(cls->offsets_w)) return false;
@@ -6210,7 +6475,6 @@ bc_emit_self_member_write_fast(JitCtx *ctx, int member_id, char const *bc_ip)
         if (kind != OFF_FIELD) return false;
 
         u16 slot_idx = off & OFF_MASK;
-        int class_id = ctx->self_class_id;
         int slot_byte_off = OBJ_OFF_SLOTS + slot_idx * VALUE_SIZE;
 
         if (slot_byte_off + 16 > 504) return false;
@@ -6222,19 +6486,13 @@ bc_emit_self_member_write_fast(JitCtx *ctx, int member_id, char const *bc_ip)
         int val_off = OP_OFF(ctx->sp - 1);
 
         bc_emit_deref(ctx, BC_S3, BC_LOC, self_val_off);
-
-        if (strchr(M_NAME(member_id), '$') == NULL) {
-                // Check self.class == expected_class_id
-                jit_emit_ldr32(asm, BC_S0, BC_S3, VAL_OFF_CLASS);
-                jit_emit_cmp_ri(asm, BC_S0, class_id);
-                jit_emit_branch_ne(asm, lbl_slow);
-        }
-
-        // Check self.object->dynamic == NULL (layout changed at runtime)
-        jit_emit_ldr64(asm, BC_S0, BC_S3, VAL_OFF_OBJECT);
-        jit_emit_ldr64(asm, BC_S0, BC_S0, OBJ_OFF_DYN);
-        jit_emit_cmp_ri(asm, BC_S0, 0);
-        jit_emit_branch_ne(asm, lbl_slow);
+        bc_emit_self_slot_guard(
+                ctx,
+                member_id,
+                off,
+                (int)offsetof(Class, offsets_w),
+                lbl_slow
+        );
 
         // Fast path: load self.object => BC_S2, copy val to slot
         EMIT_STAT(jit_rt_stat_self_member_write_fast);
@@ -6339,7 +6597,10 @@ bc_resolve_method(JitCtx *ctx, Class *cls, int member_id)
                 return NULL;
         }
 
-        return v_(cls->methods.values, method_idx);
+        Value *stable = xmA(sizeof *stable);
+        *stable = *method;
+
+        return stable;
 }
 
 static Value *
@@ -7268,11 +7529,13 @@ bc_emit_inline_operator(JitCtx *ctx, int op, void *fallback)
 #define BAIL(fmt, ...) do {                                                     \
         LOGX("JIT[scan]: cannot emit %s at offset %d: " fmt,                    \
                 ctx->last_op, (int)(ip - code - 1) __VA_OPT__(,) __VA_ARGS__);  \
+        bc_note_fail(ctx, fmt __VA_OPT__(,) __VA_ARGS__);                       \
         return false;                                                           \
 } while (0)
 #else
-#define BAIL(...) do { \
-        return false;  \
+#define BAIL(fmt, ...) do {                                                     \
+        bc_note_fail(ctx, fmt __VA_OPT__(,) __VA_ARGS__);                       \
+        return false;                                                           \
 } while (0)
 #endif
 
@@ -7522,7 +7785,7 @@ bc_emit_call_method(JitCtx *ctx, char const *op_ip, int z, int n, int nkw)
                                 jit_emit_mov(asm, BC_A0, BC_TY);
                                 jit_emit_add_imm(asm, BC_A1, BC_OPS, self_off);
                                 jit_emit_load_imm(asm, BC_A2, (iptr)baked_method);
-                                jit_emit_load_imm(asm, BC_A3, recv_cls->i);
+                                jit_emit_load_imm(asm, BC_A3, PACK32(recv_cls->i, z));
                                 jit_emit_load_imm(asm, BC_A4, n);
                                 jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_baked_call);
                                 bc_emit_runtime_call(ctx, BC_CALL);
@@ -7605,6 +7868,8 @@ bc_preserves_stack_base(u8 op)
         case INSTR_NONE:
         case INSTR_SENTINEL:
         case INSTR_LOAD_GLOBAL:
+        case INSTR_LOAD_THREAD_LOCAL:
+        case INSTR_TARGET_THREAD_LOCAL:
         case INSTR_DUP2_SWAP:
         case INSTR_PUSH_INDEX:
 
@@ -7691,6 +7956,11 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
         while (ip < end) {
                 int off = (int)(ip - code);
                 ctx->ip = StepInstruction(ip);
+                ctx->cur_off = off;
+
+                if (ctx->sp > MAX_BC_OPS - 8) {
+                        BAIL("operand stack deeper than %d", MAX_BC_OPS - 8);
+                }
                 if (off >= 0 && off <= code_size) {
                         ctx->raw_dirty = ctx->cfg_dirty[off];
                 }
@@ -8890,25 +9160,21 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 }
                         }
 
-                        // === Slow path: call jit_rt_compare(ty, &a, &b) ===
+                        // === Slow path: call jit_rt_relop(ty, &a, &b, op) ===
                         jit_emit_label(asm, lbl_slow);
                         EMIT_SLOW2(op_ip, SLOW_JCMP, BC_OPS, a_off, BC_OPS, b_off);
                         jit_emit_mov(asm, BC_A0, BC_TY);
                         jit_emit_add_imm(asm, BC_A1, BC_OPS, a_off);
                         jit_emit_add_imm(asm, BC_A2, BC_OPS, b_off);
-                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_compare);
+                        jit_emit_load_imm(asm, BC_A3, op);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_relop);
                         bc_emit_runtime_call(ctx, BC_CALL);
 
-                        // Result in w0: <0, 0, >0 (int, 32-bit).
+                        // Result in w0: 0 or 1 (int, 32-bit).
                         // Reload clobbers BC_RET on x64, but preserves flags.
                         jit_emit_cmp_ri32(asm, BC_RET, 0);
                         jit_emit_reload_stack(asm, ctx->bound);
-                        switch (op) {
-                        case INSTR_JLT: jit_emit_branch_lt(asm, lbl_target); break;
-                        case INSTR_JGT: jit_emit_branch_gt(asm, lbl_target); break;
-                        case INSTR_JLE: jit_emit_branch_le(asm, lbl_target); break;
-                        case INSTR_JGE: jit_emit_branch_ge(asm, lbl_target); break;
-                        }
+                        jit_emit_branch_ne(asm, lbl_target);
 
                         jit_emit_label(asm, lbl_done);
                         ctx->sp -= 2;
@@ -9114,6 +9380,20 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_try_get_member);
                         bc_emit_runtime_call(ctx, BC_CALL);
                         ctx->sp--;
+                        break;
+                }
+
+                CASE(TARGET_DYN_MEMBER) {
+                        if (ip >= end || (u8) * ip != INSTR_ASSIGN || ctx->sp < 3) {
+                                BAIL("TARGET_DYN_MEMBER without ASSIGN");
+                        }
+                        EMIT_FUSED_TICK(ip);
+                        ip++;
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_dyn_member_assign);
+                        bc_emit_reentrant_call(ctx, BC_CALL);
+                        ctx->sp -= 2;
                         break;
                 }
 
@@ -9993,24 +10273,28 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 #ifndef TY_NO_LOG
                         BC_SKIPSTR();
 #endif
-                        int lbl_slow = bc_next_label(ctx);
-                        int lbl_fast = bc_next_label(ctx);
-                        jit_emit_ldr64(asm, BC_S0, BC_TY, OFF_TY_TLS + OFF_VEC_LEN);
-                        jit_emit_cmp_ri(asm, BC_S0, n);
-                        jit_emit_branch_le(asm, lbl_slow);
-                        jit_emit_ldr64(asm, BC_S3, BC_TY, OFF_TY_TLS + OFF_VEC_DATA);
-                        jit_emit_ldrb(asm, BC_S0, BC_S3, n * sizeof (Value) + VAL_OFF_TYPE);
-                        jit_emit_cmp_ri(asm, BC_S0, VALUE_NONE);
-                        jit_emit_branch_ne(asm, lbl_fast);
-                        jit_emit_label(asm, lbl_slow);
-                        jit_emit_mov(asm, BC_A0, BC_TY);
-                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
-                        jit_emit_load_imm(asm, BC_A2, n);
-                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_tls0);
-                        bc_emit_runtime_call(ctx, BC_CALL);
-                        jit_emit_ldr64(asm, BC_S3, BC_TY, OFF_TY_TLS + OFF_VEC_DATA);
-                        jit_emit_label(asm, lbl_fast);
-                        bc_push_from(ctx, BC_S3, n * sizeof (Value));
+                        bc_emit_tls_slot(ctx, n);
+                        bc_push_from(ctx, BC_S3, 0);
+                        break;
+                }
+
+                CASE(TARGET_THREAD_LOCAL) {
+                        int n;
+                        BC_READ(n);
+                        if (ip < end && (u8) * ip == INSTR_ASSIGN) {
+                                EMIT_FUSED_TICK(ip);
+                                ip++;
+                                bc_emit_tls_slot(ctx, n);
+                                bc_copy_value(ctx, BC_S3, 0, BC_OPS, OP_OFF(ctx->sp - 1));
+                        } else if (
+                                (ip < end)
+                             && bc_is_target_consumer((u8) * ip)
+                        ) {
+                                ctx->tgt_kind  = TGT_THREAD_LOCAL;
+                                ctx->tgt_index = n;
+                        } else {
+                                BAIL("TARGET_THREAD_LOCAL without supported consumer");
+                        }
                         break;
                 }
 
@@ -12033,6 +12317,8 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 jit_emit_mov(asm, BC_A3, BC_A2);
                                 jit_emit_load_imm(asm, BC_CALL, (iptr)bc_mut_runtime(op));
                                 bc_emit_reentrant_call(ctx, BC_CALL);
+                        } else if (ctx->tgt_kind == TGT_THREAD_LOCAL) {
+                                bc_emit_tls_mut(ctx, op, addend_off);
                         } else if (ctx->tgt_kind == TGT_CAPTURED) {
                                 // Load env[n] => BC_S2, then call helper
                                 jit_emit_ldr64(asm, BC_S2, BC_ENV, ctx->tgt_index * 8);
@@ -12512,6 +12798,8 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 jit_emit_label(asm, lbl_done);
                         } else if (ctx->tgt_kind == TGT_GLOBAL) {
                                 bc_emit_global_incdec(ctx, (void *)jit_rt_post_inc);
+                        } else if (ctx->tgt_kind == TGT_THREAD_LOCAL) {
+                                bc_emit_tls_incdec(ctx, (void *)jit_rt_post_inc);
                         } else if (ctx->tgt_kind == TGT_CAPTURED) {
                                 int lbl_slow = bc_next_label(ctx);
                                 int lbl_done = bc_next_label(ctx);
@@ -12618,6 +12906,8 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 jit_emit_label(asm, lbl_done);
                         } else if (ctx->tgt_kind == TGT_GLOBAL) {
                                 bc_emit_global_incdec(ctx, (void *)jit_rt_post_dec);
+                        } else if (ctx->tgt_kind == TGT_THREAD_LOCAL) {
+                                bc_emit_tls_incdec(ctx, (void *)jit_rt_post_dec);
                         } else if (ctx->tgt_kind == TGT_CAPTURED) {
                                 int lbl_slow = bc_next_label(ctx);
                                 int lbl_done = bc_next_label(ctx);
@@ -12720,6 +13010,8 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 jit_emit_label(asm, lbl_done);
                         } else if (ctx->tgt_kind == TGT_GLOBAL) {
                                 bc_emit_global_incdec(ctx, (void *)jit_rt_pre_inc);
+                        } else if (ctx->tgt_kind == TGT_THREAD_LOCAL) {
+                                bc_emit_tls_incdec(ctx, (void *)jit_rt_pre_inc);
                         } else if (ctx->tgt_kind == TGT_CAPTURED) {
                                 int lbl_slow = bc_next_label(ctx);
                                 int lbl_done = bc_next_label(ctx);
@@ -12822,6 +13114,8 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 jit_emit_label(asm, lbl_done);
                         } else if (ctx->tgt_kind == TGT_GLOBAL) {
                                 bc_emit_global_incdec(ctx, (void *)jit_rt_pre_dec);
+                        } else if (ctx->tgt_kind == TGT_THREAD_LOCAL) {
+                                bc_emit_tls_incdec(ctx, (void *)jit_rt_pre_dec);
                         } else if (ctx->tgt_kind == TGT_CAPTURED) {
                                 int lbl_slow = bc_next_label(ctx);
                                 int lbl_done = bc_next_label(ctx);
@@ -12989,6 +13283,8 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 
                 default:
                         LOG("JIT: unknown emit opcode %d=%s", op, GetInstructionName(op));
+                        ctx->last_op = GetInstructionName(op);
+                        bc_note_fail(ctx, "no emitter for opcode");
                         return false;
                 }
 
@@ -13486,11 +13782,13 @@ jit_compile(Ty *ty, Value const *func)
 #if JIT_SCAN_LOG
                 LOGX("JIT: bail on %s", name);
 #endif
+                jit_audit_report(&ctx, "prescan", 0);
                 bc_free_cfg(&ctx);
                 return NULL;
         }
 
         if (!bc_build_cfg_blocks(&ctx, code_size)) {
+                jit_audit_report(&ctx, "cfg", 0);
                 bc_free_cfg(&ctx);
                 return NULL;
         }
@@ -13535,6 +13833,7 @@ jit_compile(Ty *ty, Value const *func)
         ctx.asm = asm;
         if (!bc_emit(&ctx, bc, code_size)) {
                 LOG("JIT: emission failed for %s", name);
+                jit_audit_report(&ctx, "emit", 0);
                 dasm_free(&asm);
                 bc_free_cfg(&ctx);
                 return NULL;
@@ -13570,6 +13869,8 @@ jit_compile(Ty *ty, Value const *func)
         usize final_size;
         int status = dasm_link(&asm, &final_size);
         if (status != DASM_S_OK) {
+                bc_note_fail(&ctx, "dasm_link status 0x%x", (unsigned)status);
+                jit_audit_report(&ctx, "link", 0);
                 dasm_free(&asm);
                 bc_free_cfg(&ctx);
                 return NULL;
@@ -13630,6 +13931,8 @@ jit_compile(Ty *ty, Value const *func)
         JitWriteEnd();
 
         if (status != DASM_S_OK) {
+                bc_note_fail(&ctx, "dasm_encode status 0x%x", (unsigned)status);
+                jit_audit_report(&ctx, "encode", 0);
                 if (mapped) {
                         munmap(meta, mapping_size);
                 }
@@ -13656,6 +13959,8 @@ jit_compile(Ty *ty, Value const *func)
         LOGX("JIT: compiled %s (%d params, %d bound, %zu bytes native)",
             name, param_count, bound, final_size);
 #endif
+
+        jit_audit_report(&ctx, NULL, final_size);
 
 #ifdef TY_PROFILER
         {

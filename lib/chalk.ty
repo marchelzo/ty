@@ -610,13 +610,15 @@ const NO_COLOR = (getenv('NO_COLOR') != nil)
 
 pub class Chalk {
     __styles: Dict[String, TermStyle | nil]
+    plain?: Bool
 
     init() {
         __styles = %{**styles, *: parse-style(it, self)}
+        plain? = NO_COLOR
     }
 
-    render(text: String, plain: Bool = NO_COLOR) -> String {
-        !plain ? text.chalk(__styles) : text.plain()
+    render(text: String, plain: Bool | nil = nil) -> String {
+        !(plain ?? plain?) ? text.chalk(__styles) : text.plain()
     }
 
     spans(text: String) -> [(TermStyle, String)] {

@@ -4330,7 +4330,7 @@ comptime(Ty *ty, Scope *scope, Expr *e)
 
         Expr *ast = cexpr(ty, &v);
         if (ast != NULL) {
-                *e = *cexpr(ty, &v);
+                *e = *ast;
         } else {
                 e->type = EXPRESSION_NIL;
         }
@@ -4430,7 +4430,12 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
         Expr *origin = STATE.origin;
         CloneContext(ty);
         STATE.origin = ContextList->e;
-        *e = *cexpr(ty, &v);
+        Expr *expansion = cexpr(ty, &v);
+        if (expansion != NULL) {
+                *e = *expansion;
+        } else {
+                e->type = EXPRESSION_NIL;
+        }
         STATE.origin = origin;
 
         STATE.mstart = mstart;
@@ -6471,6 +6476,31 @@ static JumpPlaceholder
         }
 }
 
+static bool
+expr_is_int(Ty *ty, Expr const *e)
+{
+        Class const *c = t2_class_of(ty, e->_type);
+        return (c != NULL) && (c->i == CLASS_INT);
+}
+
+static JumpPlaceholder
+PlaceholderJumpUnlessOrdered(Ty *ty, Expr const *e, int insn, int inverse)
+{
+        EE(e->left);
+        EE(e->right);
+
+        if (expr_is_int(ty, e->left) && expr_is_int(ty, e->right)) {
+                return (PLACEHOLDER_JUMP)(ty, inverse);
+        }
+
+        JumpPlaceholder skip = (PLACEHOLDER_JUMP)(ty, insn);
+        JumpPlaceholder jmp  = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP);
+
+        PATCH_JUMP(skip);
+
+        return jmp;
+}
+
 static JumpPlaceholder
 (PLACEHOLDER_JUMP_IF_NOT)(Ty *ty, Expr const *e)
 {
@@ -6478,24 +6508,16 @@ static JumpPlaceholder
 
         switch (e->type) {
         case EXPRESSION_LT:
-                EE(e->left);
-                EE(e->right);
-                return (PLACEHOLDER_JUMP)(ty, INSTR_JGE);
+                return PlaceholderJumpUnlessOrdered(ty, e, INSTR_JLT, INSTR_JGE);
 
         case EXPRESSION_LEQ:
-                EE(e->left);
-                EE(e->right);
-                return (PLACEHOLDER_JUMP)(ty, INSTR_JGT);
+                return PlaceholderJumpUnlessOrdered(ty, e, INSTR_JLE, INSTR_JGT);
 
         case EXPRESSION_GT:
-                EE(e->left);
-                EE(e->right);
-                return (PLACEHOLDER_JUMP)(ty, INSTR_JLE);
+                return PlaceholderJumpUnlessOrdered(ty, e, INSTR_JGT, INSTR_JLE);
 
         case EXPRESSION_GEQ:
-                EE(e->left);
-                EE(e->right);
-                return (PLACEHOLDER_JUMP)(ty, INSTR_JLT);
+                return PlaceholderJumpUnlessOrdered(ty, e, INSTR_JGE, INSTR_JLT);
 
         case EXPRESSION_DBL_EQ:
                 EE(e->left);
@@ -6587,31 +6609,43 @@ fail_match_if(Ty *ty, Expr const *e)
 }
 
 static void
+FailMatchUnlessOrdered(Ty *ty, Expr const *e, int insn, int inverse)
+{
+        EE(e->left);
+        EE(e->right);
+
+        if (expr_is_int(ty, e->left) && expr_is_int(ty, e->right)) {
+                EMIT_GROUP_LABEL(STATE.match_fails, "Fail");
+                (emit_instr)(ty, inverse);
+                avP(STATE.match_fails, vN(STATE.code));
+                Ei32(0);
+                return;
+        }
+
+        JumpPlaceholder skip = (PLACEHOLDER_JUMP)(ty, insn);
+
+        FAIL_MATCH_IF(JUMP);
+        PATCH_JUMP(skip);
+}
+
+static void
 fail_match_if_not(Ty *ty, Expr const *e)
 {
         switch (e->type) {
         case EXPRESSION_LT:
-                EE(e->left);
-                EE(e->right);
-                FAIL_MATCH_IF(JGE);
+                FailMatchUnlessOrdered(ty, e, INSTR_JLT, INSTR_JGE);
                 break;
 
         case EXPRESSION_LEQ:
-                EE(e->left);
-                EE(e->right);
-                FAIL_MATCH_IF(JGT);
+                FailMatchUnlessOrdered(ty, e, INSTR_JLE, INSTR_JGT);
                 break;
 
         case EXPRESSION_GT:
-                EE(e->left);
-                EE(e->right);
-                FAIL_MATCH_IF(JLE);
+                FailMatchUnlessOrdered(ty, e, INSTR_JGT, INSTR_JLE);
                 break;
 
         case EXPRESSION_GEQ:
-                EE(e->left);
-                EE(e->right);
-                FAIL_MATCH_IF(JLT);
+                FailMatchUnlessOrdered(ty, e, INSTR_JGE, INSTR_JLT);
                 break;
 
         case EXPRESSION_DBL_EQ:

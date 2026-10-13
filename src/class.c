@@ -18,6 +18,8 @@
 #include "set.h"
 
 static vec(Class *) classes;
+
+_Atomic u32 ClassMethodEpoch;
 static vec(Class *) traits;
 
 inline static Class *
@@ -1275,6 +1277,24 @@ finalize(Ty *ty, Class *c)
         cache_offsets(ty, c, &c->offsets_w, &c->setters, OFF_SETTER, FindSetter);
 
         c->final = true;
+}
+
+void
+class_refresh_offsets(Ty *ty, int class)
+{
+        Class *c = C(class);
+
+        if (!c->final) {
+                return;
+        }
+
+        cache_offsets(ty, c, &c->offsets_r, &c->fields,  OFF_FIELD,  NULL);
+        cache_offsets(ty, c, &c->offsets_r, &c->methods, OFF_METHOD, FindMethod);
+        cache_offsets(ty, c, &c->offsets_r, &c->getters, OFF_GETTER, FindGetter);
+        cache_offsets(ty, c, &c->offsets_w, &c->fields,  OFF_FIELD,  NULL);
+        cache_offsets(ty, c, &c->offsets_w, &c->setters, OFF_SETTER, FindSetter);
+
+        atomic_fetch_add_explicit(&ClassMethodEpoch, 1, memory_order_release);
 }
 
 void

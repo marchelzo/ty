@@ -6,6 +6,8 @@ import errno
 import ffi as c (C!)
 import ty
 import base64
+import vt
+import time
 
 #|if getenv('TY_LOG') != nil
     import log (..)
@@ -222,9 +224,12 @@ let function-keys = %{
     "5~":     keys.PAGE_UP,
     "6~":     keys.PAGE_DOWN,
     "1H":     keys.HOME,
+    "1~":     keys.HOME,
     "7~":     keys.HOME,
     "1F":     keys.END,
+    "4~":     keys.END,
     "8~":     keys.END,
+    "1Z":     keys.TAB,
     "57358u": keys.CAPS_LOCK,
     "57359u": keys.SCROLL_LOCK,
     "57360u": keys.NUM_LOCK,
@@ -246,6 +251,14 @@ let function-keys = %{
     "21~":    keys.F10,
     "23~":    keys.F11,
     "24~":    keys.F12,
+    "25~":    keys.F13,
+    "26~":    keys.F14,
+    "28~":    keys.F15,
+    "29~":    keys.MENU,
+    "31~":    keys.F17,
+    "32~":    keys.F18,
+    "33~":    keys.F19,
+    "34~":    keys.F20,
     "57376u": keys.F13,
     "57377u": keys.F14,
     "57378u": keys.F15,
@@ -298,6 +311,7 @@ let function-keys = %{
     "57425u": keys.KP_INSERT,
     "57426u": keys.KP_DELETE,
     "1E":     keys.KP_BEGIN,
+    "1G":     keys.KP_BEGIN,
     "57427~": keys.KP_BEGIN,
     "57428u": keys.MEDIA_PLAY,
     "57429u": keys.MEDIA_PAUSE,
@@ -343,6 +357,7 @@ fn nice-key-name(ev: event.KeyDetails) -> String {
         '\n' or '\r' => 'Enter',
         ' '          => 'Space',
         '\t'         => 'Tab',
+        chr(8)       => 'Backspace',
         chr(127)     => 'Backspace',
         chr(27)      => 'Esc',
         _            => out
@@ -354,84 +369,6 @@ fn nice-key-name(ev: event.KeyDetails) -> String {
     if mods & mod.SUPER { out = "Cmd-{out}" }
 
     return out
-}
-
-ns ctlseq {
-    pub paste-start = "\x1b[200~"
-    pub paste-end   = "\x1b[201~"
-
-    ns pattern {
-        pub m-ev-sgr   = /^\x1b\[<(\d+);(\d+);(\d+)([mM])/
-        pub k-ev-based = /^\x1b\[([0-9:]*)(?:;([0-9:]*))?(?:;([0-9:]+))?([ABCDEFHPQSu~])/
-        pub cpr        = /^\x1b\[(\d+);(\d+)R/
-        pub osc-status = /^\x1b\]7501;\?([^\x07\x1b]*)(?:\x07|\x1b\\)/
-        pub da1        = /^\x1b\[\?([0-9;]*)c/
-    }
-
-    ns handler {
-        pub fn m-ev-sgr($1, $2, $3, $4) {
-            let st = int($1)
-            let x  = int($2)
-            let y  = int($3)
-            let t  = ($4 == 'm') ? 0 : 1
-
-            let motion? = (st & 0b00100000) != 0
-            let button  = st & 0b11000011
-            let mods    = st & 0b00011100
-
-            let ev = match (motion?, button, t) {
-                (true,  _,  _) => event.MouseMove,
-                (_,     64, _) => event.ScrollUp,
-                (_,     65, _) => event.ScrollDown,
-                (_,     66, _) => event.ScrollLeft,
-                (_,     67, _) => event.ScrollRight,
-                (_,     _,  1) => event.MouseDown,
-                (_,     _,  0) => event.MouseUp
-            }
-
-            yield ev({
-                button,
-                mods,
-                x, y
-            })
-        }
-
-        pub fn k-ev-based($1: String, $2: String, $3: String, $4: String) {
-            let (key, _key, base) = match keys.function-keys("{$1 || 1}{$4}") {
-                Some(sp) => (sp, nil, nil),
-
-                None => do {
-                    let [?key, ?_key, ?base] = $1.split(':').map(int)
-                    (key, _key, base)
-                }
-            }
-
-            let [?_mods, ?ev] = ($2 || '1').split(':').map(int)
-            let mods = (_mods ?? 1) - 1
-
-            let text = $3.split(':').map(int).remove(nil)
-
-            yield event.Key({event: ev ?? 1, key, _key, base, mods, text})
-
-            if text && (mods & ~mod.SHIFT) == 0 {
-                yield event.Text(text.map(chr).join())
-            }
-        }
-
-        pub fn cpr($1, $2) {
-            let row = int($1)
-            let col = int($2)
-            yield event.Cursor(row, col)
-        }
-
-        pub fn osc-status(_) {
-            yield StatusAck
-        }
-
-        pub fn da1(_) {
-            yield DeviceAttrs
-        }
-    }
 }
 
 pub ns status {
@@ -520,14 +457,17 @@ fn unctrl(c: Int) -> Int {
     ord(chr(c + 64).lower())
 }
 
-fn yield-basic(ch: String, extra-mods=0) {
+fn yield-basic(ch: String, extra-mods: Int = 0) {
     let c = ord(ch)
 
     let (key, _key, _mods, text?) = match c {
+        0             => (32,             nil, mod.CTRL, false),
+        8             => (keys.BACKSPACE, c,   mod.CTRL, false),
+        9             => (keys.TAB,       c,   0,        false),
         10 or 13      => (keys.ENTER,     c,   0,        false),
         27            => (keys.ESCAPE,    c,   0,        false),
         127           => (keys.BACKSPACE, c,   0,        false),
-        0..32         => (unctrl(c),      nil, mod.CTRL, false)
+        0..32         => (unctrl(c),      nil, mod.CTRL, false),
         _             => (c,              nil, 0,        true)
     }
 
@@ -537,13 +477,370 @@ fn yield-basic(ch: String, extra-mods=0) {
         yield event.Text(ch)
     }
 
-    if c < 256 {
+    if c < 256 || mods != 0 {
         yield event.Key({
             key, _key, mods,
             base: nil,
             event: 1,
             text: [c]
         })
+    }
+}
+
+let TI_KEYS = %{
+    'key_up':        (keys.UP,        0),
+    'key_down':      (keys.DOWN,      0),
+    'key_left':      (keys.LEFT,      0),
+    'key_right':     (keys.RIGHT,     0),
+    'key_home':      (keys.HOME,      0),
+    'key_end':       (keys.END,       0),
+    'key_ic':        (keys.INSERT,    0),
+    'key_dc':        (keys.DELETE,    0),
+    'key_ppage':     (keys.PAGE_UP,   0),
+    'key_npage':     (keys.PAGE_DOWN, 0),
+    'key_beg':       (keys.KP_BEGIN,  0),
+    'key_b2':        (keys.KP_BEGIN,  0),
+    'key_enter':     (keys.KP_ENTER,  0),
+    'key_btab':      (keys.TAB,       mod.SHIFT),
+    'key_sr':        (keys.UP,        mod.SHIFT),
+    'key_sf':        (keys.DOWN,      mod.SHIFT),
+    'key_sleft':     (keys.LEFT,      mod.SHIFT),
+    'key_sright':    (keys.RIGHT,     mod.SHIFT),
+    'key_shome':     (keys.HOME,      mod.SHIFT),
+    'key_send':      (keys.END,       mod.SHIFT),
+    'key_sic':       (keys.INSERT,    mod.SHIFT),
+    'key_sdc':       (keys.DELETE,    mod.SHIFT),
+    'key_sprevious': (keys.PAGE_UP,   mod.SHIFT),
+    'key_snext':     (keys.PAGE_DOWN, mod.SHIFT),
+    'key_f1':        (keys.F1,        0),
+    'key_f2':        (keys.F2,        0),
+    'key_f3':        (keys.F3,        0),
+    'key_f4':        (keys.F4,        0),
+    'key_f5':        (keys.F5,        0),
+    'key_f6':        (keys.F6,        0),
+    'key_f7':        (keys.F7,        0),
+    'key_f8':        (keys.F8,        0),
+    'key_f9':        (keys.F9,        0),
+    'key_f10':       (keys.F10,       0),
+    'key_f11':       (keys.F11,       0),
+    'key_f12':       (keys.F12,       0)
+}
+
+ns ctlseq {
+    pub paste-start = "\x1b[200~"
+    pub paste-end   = "\x1b[201~"
+
+    const LOCKS = 0xc0
+
+    let CSI        = /^\x1b\[([<=>?]?)([0-9:;]*)([\x20-\x2f]*)([\x40-\x7e])$/
+    let SS3        = /^\x1bO([0-9;]*)([\x40-\x7e])$/
+    let LINUX_FN   = /^\x1b\[\[([A-E])$/
+    let OSC_STATUS = /^\x1b\]7501;\?/
+
+    let ss3-keys = %{
+        'A': (keys.UP,           0),
+        'B': (keys.DOWN,         0),
+        'C': (keys.RIGHT,        0),
+        'D': (keys.LEFT,         0),
+        'H': (keys.HOME,         0),
+        'F': (keys.END,          0),
+        'E': (keys.KP_BEGIN,     0),
+        'M': (keys.KP_ENTER,     0),
+        'P': (keys.F1,           0),
+        'Q': (keys.F2,           0),
+        'R': (keys.F3,           0),
+        'S': (keys.F4,           0),
+        'X': (keys.KP_EQUAL,     0),
+        'a': (keys.UP,           mod.CTRL),
+        'b': (keys.DOWN,         mod.CTRL),
+        'c': (keys.RIGHT,        mod.CTRL),
+        'd': (keys.LEFT,         mod.CTRL),
+        'j': (keys.KP_MULTIPLY,  0),
+        'k': (keys.KP_ADD,       0),
+        'l': (keys.KP_SEPARATOR, 0),
+        'm': (keys.KP_SUBTRACT,  0),
+        'n': (keys.KP_DECIMAL,   0),
+        'o': (keys.KP_DIVIDE,    0),
+        'p': (keys.KP_0,         0),
+        'q': (keys.KP_1,         0),
+        'r': (keys.KP_2,         0),
+        's': (keys.KP_3,         0),
+        't': (keys.KP_4,         0),
+        'u': (keys.KP_5,         0),
+        'v': (keys.KP_6,         0),
+        'w': (keys.KP_7,         0),
+        'x': (keys.KP_8,         0),
+        'y': (keys.KP_9,         0)
+    }
+
+    let linux-keys = %{
+        'A': keys.F1,
+        'B': keys.F2,
+        'C': keys.F3,
+        'D': keys.F4,
+        'E': keys.F5
+    }
+
+    fn utf8-len(b: Int) -> Int {
+        match b {
+            0xc0...0xdf => 2,
+            0xe0...0xef => 3,
+            0xf0...0xf7 => 4,
+            _           => 1
+        }
+    }
+
+    pub fn partial-utf8(buf: Blob, i: Int, j: Int) -> Int {
+        let k = j
+
+        while k > i && j - k < 3 && (buf[k - 1] & 0xc0) == 0x80 {
+            k -= 1
+        }
+
+        return 0 if k == i
+
+        let have = j - k + 1
+
+        (utf8-len(buf[k - 1]) > have) ? have : 0
+    }
+
+    fn csi-end(buf: Blob, j: Int) -> Int {
+        let n = #buf
+
+        if j < n && buf[j] == 0x5b {
+            return (j + 1 < n) ? j + 2 : -1
+        }
+
+        while j < n && buf[j] >= 0x20 && buf[j] <= 0x3f {
+            j += 1
+        }
+
+        return -1 if j == n
+
+        (buf[j] >= 0x40 && buf[j] <= 0x7e) ? j + 1 : j
+    }
+
+    fn ss3-end(buf: Blob, j: Int) -> Int {
+        let n = #buf
+
+        while j < n && ((buf[j] >= 0x30 && buf[j] <= 0x39) || buf[j] == 0x3b) {
+            j += 1
+        }
+
+        (j == n) ? -1 : j + 1
+    }
+
+    fn st-end(buf: Blob, j: Int) -> Int {
+        let n = #buf
+
+        while j < n && buf[j] != 0x07 && buf[j] != 0x1b {
+            j += 1
+        }
+
+        return -1    if j == n
+        return j + 1 if buf[j] == 0x07
+        return -1    if j + 1 == n
+
+        (buf[j + 1] == 0x5c) ? j + 2 : j
+    }
+
+    fn esc-esc-end(buf: Blob, i: Int) -> Int {
+        return -1 if i + 2 >= #buf
+
+        match buf[i + 2] {
+            0x5b or 0x4f => seq-end(buf, i + 1),
+            _            => i + 1
+        }
+    }
+
+    pub fn seq-end(buf: Blob, i: Int) -> Int {
+        let n = #buf
+
+        return -1 if i + 1 >= n
+
+        match buf[i + 1] {
+            0x5b                 => csi-end(buf, i + 2),
+            0x4f                 => ss3-end(buf, i + 2),
+            0x5d or 0x50 or 0x5f => st-end(buf, i + 2),
+            0x1b                 => esc-esc-end(buf, i),
+            b                    => (i + 1 + utf8-len(b) <= n) ? i + 1 + utf8-len(b) : -1
+        }
+    }
+
+    pub fn give-up(buf: Blob, i: Int) -> Int {
+        let rest = #buf - i
+        let c = (rest > 1) ? buf[i + 1] : 0x1b
+
+        match c {
+            0x1b => do {
+                yield-basic("\x1b")
+                i + 1
+            },
+
+            (0x5b or 0x4f) and rest > 2 => #buf,
+
+            0x80...0xff => #buf,
+
+            _ => do {
+                yield-basic(chr(c), mod.ALT)
+                i + 2
+            }
+        }
+    }
+
+    fn mouse(ps: String, f: String) -> Bool {
+        if not let [$st, $x, $y] = ps.split(';').map(int) {
+            return false
+        }
+
+        let motion? = (st & 0b00100000) != 0
+        let button  = st & 0b11000011
+        let mods    = st & 0b00011100
+        let t       = (f == 'm') ? 0 : 1
+
+        let ev = match (motion?, button, t) {
+            (true,  _,  _) => event.MouseMove,
+            (_,     64, _) => event.ScrollUp,
+            (_,     65, _) => event.ScrollDown,
+            (_,     66, _) => event.ScrollLeft,
+            (_,     67, _) => event.ScrollRight,
+            (_,     _,  1) => event.MouseDown,
+            (_,     _,  0) => event.MouseUp
+        }
+
+        yield ev({button, mods, x, y})
+
+        true
+    }
+
+    fn cpr(ps: String) -> Bool {
+        if not let [$row, $col] = ps.split(';').map(int) {
+            return false
+        }
+
+        yield event.Cursor(row, col)
+
+        true
+    }
+
+    fn da1() -> Bool {
+        yield DeviceAttrs
+        true
+    }
+
+    fn key(ps: String, f: String, extra: Int) -> Bool {
+        let [?p0, ?p1, ?p2] = ps.split(';')
+        let [?c0, ?c1, ?c2] = ((p0 ?? '') || '1').split(':')
+        let [?m, ?ev]       = (p1 ?? '').split(':').map(int)
+
+        let mods = (((m ?? 1) - 1) & ~LOCKS) | extra
+        let text = (p2 ?? '').split(':').map(int).remove(nil)
+
+        if f == '~' and c0 == '27' and let $c = int(p2 ?? '') {
+            match function-keys["{c}u"] {
+                $name => yield-key(name, nil, nil, mods, ev ?? 1, []),
+                _     => yield-key(c,    nil, nil, mods, ev ?? 1, [c])
+            }
+            return true
+        }
+
+        let (k, k1, k2) = if let $name = function-keys["{c0 || 1}{f}"] {
+            (name, nil, nil)
+        } else if f == 'u' and let $c = int(c0 ?? '') {
+            (c, int(c1 ?? ''), int(c2 ?? ''))
+        } else {
+            return false
+        }
+
+        let mods = (f == 'Z') ? (mods | mod.SHIFT) : mods
+
+        yield-key(k, k1, k2, mods, ev ?? 1, text)
+
+        true
+    }
+
+    fn yield-key(
+        k: Int | String,
+        k1: ?Int,
+        k2: ?Int,
+        mods: Int,
+        ev: Int,
+        text: Array[Int]
+    ) {
+        yield event.Key({event: ev, key: k, _key: k1, base: k2, mods, text})
+
+        if text && (mods & ~mod.SHIFT) == 0 {
+            yield event.Text(text.map(chr).join())
+        }
+    }
+
+    fn csi(s: String, extra: Int) -> Bool {
+        if let [_, $f] = s.match(LINUX_FN) {
+            yield-key(linux-keys[f]!, nil, nil, extra, 1, [])
+            return true
+        }
+
+        if not let [_, pm, ps, im, f] = s.match(CSI) {
+            return false
+        }
+
+        match (pm, im, f) {
+            ('<', '', 'M' or 'm') => mouse(ps, f),
+            ('?', '', 'c')        => da1(),
+            ('',  '', 'R')        => cpr(ps),
+            ('',  '', _)          => key(ps, f, extra),
+            _                     => false
+        }
+    }
+
+    fn ss3(s: String, extra: Int) -> Bool {
+        if not let [_, ps, f] = s.match(SS3) {
+            return false
+        }
+
+        if not let (k, m) = ss3-keys[f] {
+            return false
+        }
+
+        let n = int(ps.split(';')[-1]) ?? 1
+
+        yield-key(k, nil, nil, m | ((n - 1) & ~LOCKS) | extra, 1, [])
+
+        true
+    }
+
+    fn osc(s: String) -> Bool {
+        if s.match?(OSC_STATUS) {
+            yield StatusAck
+        }
+
+        true
+    }
+
+    fn terminfo(s: String, ti: Dict[String, (String, Int)], extra: Int) -> Bool {
+        if not let (k, m) = ti[s] {
+            return false
+        }
+
+        yield-key(k, nil, nil, m | extra, 1, [])
+
+        true
+    }
+
+    fn alt(s: String, extra: Int) -> Bool {
+        yield-basic(s[1;], extra | mod.ALT)
+        true
+    }
+
+    pub fn decode(s: String, ti: Dict[String, (String, Int)], extra: Int = 0) -> Bool {
+        match s.byte(1) {
+            0x5b         => csi(s, extra) || terminfo(s, ti, extra),
+            0x4f         => ss3(s, extra) || terminfo(s, ti, extra),
+            0x5d         => osc(s),
+            0x50 or 0x5f => true,
+            0x1b         => decode(s[1;], ti, extra | mod.ALT),
+            _            => terminfo(s, ti, extra) || alt(s, extra)
+        }
     }
 }
 
@@ -596,7 +893,9 @@ pub fn cell-size(fd: Int = 0) -> (Int, Int) {
 pub class TermIO {
     __fd: Int
 
-    __ti-keys: Dict[String, Int] = %{}
+    __ti-keys: Dict[String, (String, Int)] = %{}
+
+    __esc-delay: Int
 
     __saved-termios: _
 
@@ -643,6 +942,7 @@ pub class TermIO {
         mouse: Bool = true,
         kitty: Bool = true,
         paste: Bool = true,
+        esc-delay: Float = 0.05,
         events: SharedQueue[event.Event] = SharedQueue()
     ) {
         __fd = fd ?? open(terminal-path(), O_RDWR)
@@ -650,11 +950,13 @@ pub class TermIO {
             throw OSError('TermIO()', errno.ENOTTY)
         }
 
+        __esc-delay = int(esc-delay * 1.0e6)
+
         try {
             let ti = unibi.Term()
-            for (i, str) in ti.strs {
-                if unibi.name(i).match?(/^key_/) {
-                    __ti-keys[str] = i
+            for (i, s) in ti.strs {
+                if s.match?(/^\x1b./) and let $k = TI_KEYS[unibi.name(i)] {
+                    __ti-keys[s] = k
                 }
             }
             __pst = ti.ext-str('Pst') ?> status.from-terminfo
@@ -798,6 +1100,7 @@ pub class TermIO {
         let closed? = false
         let buf = Blob()
         let i = 0
+        let stale = -1
 
         fn wait-for-resume() {
             for (;;) {
@@ -816,10 +1119,10 @@ pub class TermIO {
             warn!("Reader: resuming.")
         }
 
-        fn more() -> Bool {
+        fn more(ms: Int = -1) -> Bool {
             warn!("Reader: polling...")
 
-            let fds = match poll([__notif-r, __fd], -1) {
+            let fds = match poll([__notif-r, __fd], ms) {
                 Ok(fds) => fds,
                 err     => throw err
             }
@@ -850,22 +1153,38 @@ pub class TermIO {
             stop?
         }
 
+        fn await() -> Bool {
+            let n  = #buf
+            let t1 = time.utime() + __esc-delay
+
+            while !closed? {
+                let ms = (t1 - time.utime()) / 1000
+                break if ms <= 0
+                more(ms)
+                return true if #buf > n
+            }
+
+            stale = #buf
+
+            false
+        }
+
         fn do-paste() {
-            let i0 = (i += ctlseq.paste-start.size())
+            let i0   = i
+            let from = i
 
             for (;;) {
-                i = buf.search(i, ctlseq.paste-end) ?? #buf
-                break if i < #buf
+                if let $j = buf.search(from, ctlseq.paste-end) {
+                    yield event.Paste(buf.str!(i0, j - i0))
+                    i = j + #ctlseq.paste-end
+                    return
+                }
+                from = max(i0, #buf - #ctlseq.paste-end + 1)
                 while !more() {
                     ;
                 }
                 return if closed?
             }
-
-            let paste = buf.str!(i0, i - i0)
-            i += ctlseq.paste-end.size()
-
-            yield event.Paste(paste)
         }
 
         // Initially off
@@ -874,6 +1193,7 @@ pub class TermIO {
         while !closed? {
             if i == #buf {
                 i = 0
+                stale = -1
                 buf.clear()
                 while !more() {
                     ;
@@ -882,74 +1202,43 @@ pub class TermIO {
                 debug!("Read: {ppp(buf.str!())}")
             }
 
-            let plain = Blob()
-            while i < #buf && buf[i] != 0x1b {
-                plain.push(buf[i++])
+            let j = i
+            while j < #buf && buf[j] != 0x1b {
+                j += 1
             }
 
-            let n = 0
-            for plain.str!().chars() {
+            let held = (j == #buf) ? ctlseq.partial-utf8(buf, i, j) : 0
+
+            for buf.str!(i, j - i - held).chars() {
                 yield-basic(it)
-                n += it.size()
             }
 
-            // The last bit of `plain` wasn't valid utf8, but since we're at the
-            // end of our buffer it could just be that we're in the middle of a
-            // valid codepoint. We'll put our leftover bytes back into the buffer
-            // and hope that our next read() completes something valid.
-            if n < #plain && i == #buf {
-                buf.push(plain.str!(n))
-            }
+            i = j - held
 
-            let ctlseqs = [
-                (ctlseq.pattern.m-ev-sgr,   ctlseq.handler.m-ev-sgr),
-                (ctlseq.pattern.k-ev-based, ctlseq.handler.k-ev-based),
-                (ctlseq.pattern.cpr,        ctlseq.handler.cpr),
-                (ctlseq.pattern.osc-status, ctlseq.handler.osc-status),
-                (ctlseq.pattern.da1,        ctlseq.handler.da1),
-            ]
+            if held > 0 {
+                if #buf == stale || !await() {
+                    i = j
+                }
+                continue
+            }
 
             while i < #buf && buf[i] == 0x1b {
-                if buf.str!(i, ctlseq.paste-start.size()) == ctlseq.paste-start {
+                let end = ctlseq.seq-end(buf, i)
+
+                if end < 0 {
+                    continue if #buf != stale && await()
+                    i = ctlseq.give-up(buf, i)
+                    continue
+                }
+
+                let s = buf.str!(i, end - i)
+                i = end
+
+                if s == ctlseq.paste-start {
                     do-paste()
-                    continue
+                } else if !ctlseq.decode(s, __ti-keys) {
+                    debug!("Unhandled: {ppp(s)}")
                 }
-
-                // Let's see if we have a terminfo entry that matches
-                for key-str, k in __ti-keys {
-                    let n = key-str.size()
-                    if buf.str!(i, n) == key-str {
-                        match k {
-                            unibi.string.key_btab   => yield-basic('\t'),
-                            unibi.string.key_sleft  => ctlseq.handler.k-ev-based('1', '2:1', '', 'D'),
-                            unibi.string.key_sright => ctlseq.handler.k-ev-based('1', '2:1', '', 'C'),
-                            _                       => break
-                        }
-                        i += n
-                        continue continue
-                    }
-                }
-
-                // No terminfo match. Hopefully this means we have either a mouse event,
-                // or a keyboard event in the kitty progressive-enhancement format
-                for (pattern, handler) in ctlseqs {
-                    if let [matched, *captures] = buf.str!(i).match(pattern) {
-                        handler(*captures)
-                        i += matched.size()
-                        continue continue
-                    }
-                }
-
-                if i + 1 == #buf || buf[i + 1] == 0x1b {
-                    yield-basic("\x1b")
-                    i += 1
-                    continue
-                }
-
-                // If we get here that means we have 0x1b but don't know how
-                // how to parse what follows it. Not sure what to do here
-                // besides skip the ESC byte and hope for the best :)
-                i += 1
             }
         }
 
@@ -1120,6 +1409,66 @@ pub class TermIO {
             os::close(__notif-r)
             critical!("TermIO closed.")
         }
+    }
+}
+
+pub class Screen {
+    __s:    Ptr[Any]
+    __cols: Int
+    __rows: Int
+    __bg:   String
+
+    init(cols: Int, rows: Int) {
+        __s    = vt.screen(cols, rows)
+        __cols = cols
+        __rows = rows
+        __bg   = ''
+    }
+
+    cols -> Int { __cols }
+    rows -> Int { __rows }
+
+    background -> String { __bg }
+
+    background=(sgr: String) {
+        if sgr != __bg {
+            vt.background(__s, sgr)
+            __bg = sgr
+        }
+    }
+
+    resize(cols: Int, rows: Int) {
+        if cols != __cols || rows != __rows {
+            vt.resize(__s, cols, rows)
+            __cols = cols
+            __rows = rows
+        }
+    }
+
+    put-lines(lines: Array[String]) {
+        vt.frame(__s, lines)
+    }
+
+    put(y: Int, x: Int, line: String) {
+        vt.put(__s, y, x, line)
+    }
+
+    flush(out: Blob, inline: Bool = false) -> Int {
+        vt.flush(__s, out, inline)
+    }
+
+    valid? -> Bool { vt.valid(__s) }
+
+    invalidate() {
+        vt.invalidate(__s)
+    }
+
+    touch() {
+        vt.touch(__s)
+    }
+
+    text() -> Array[String] {
+        vt.text(__s)
     }
 }
 

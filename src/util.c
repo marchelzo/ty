@@ -682,6 +682,8 @@ fspec_pad(char const *text, isize tlen, struct fspec const *spec)
         FspecPad r = {
                 .left    = 0,
                 .right   = 0,
+                .lspace  = 0,
+                .rspace  = 0,
                 .fill    = spec->fill,
                 .fill_sz = strlen(spec->fill)
         };
@@ -706,7 +708,13 @@ fspec_pad(char const *text, isize tlen, struct fspec const *spec)
         }
 
         int fw = term_width(r.fill, r.fill_sz);
-        if (fw > 1) {
+
+        if (fw < 1) {
+                r.fill    = " ";
+                r.fill_sz = 1;
+        } else if (fw > 1) {
+                r.lspace = r.left  % fw;
+                r.rspace = r.right % fw;
                 r.left  /= fw;
                 r.right /= fw;
         }

@@ -12,6 +12,7 @@
 #include "value.h"
 #include "str.h"
 #include "vm.h"
+#include "screen.h"
 
 #define ty_re_match(...) pcre2_match(__VA_ARGS__, 0, ty->pcre2.match, ty->pcre2.ctx)
 #define ty_re_ovec()     pcre2_get_ovector_pointer(ty->pcre2.match)
@@ -246,30 +247,20 @@ static Value
 string_grapheme_count(Ty *ty, Value *string, int argc, Value *kwargs)
 {
         u8 const *s = ss(*string);
-        isize size = sN(*string);
-        isize offset = 0;
+        isize n = sN(*string);
         isize length = 0;
-        i32 state = 0;
 
-        while (size > 0) {
+        for (isize i = 0; i < n;) {
                 i32 rune;
-                isize n = utf8proc_iterate(s + offset, size, &rune);
-                if (n <= 0) {
-                        size -= 1;
-                        offset += 1;
+                int w;
+
+                if (s[i] >= 0x80 && utf8proc_iterate(s + i, n - i, &rune) <= 0) {
+                        i += 1;
                         continue;
-                } else while (n < size) {
-                        i32 next;
-                        isize m = utf8proc_iterate(s + offset + n, size - n, &next);
-                        if (m < 0)
-                                break;
-                        if (utf8proc_grapheme_break_stateful(rune, next, &state))
-                                break;
-                        n += m;
                 }
+
+                i += term_cluster(s, n, i, &w);
                 length += 1;
-                size -= n;
-                offset += n;
         }
 
         return INTEGER(length);
@@ -280,33 +271,24 @@ string_chars(Ty *ty, Value *string, int argc, Value *kwargs)
 {
         ASSERT_ARGC("String.chars()", 0);
 
-        u8 const *s = (u8 *)ss(*string);
-        isize size = sN(*string);
-        isize offset = 0;
-        i32 state = 0;
+        u8 const *s = ss(*string);
+        isize n = sN(*string);
 
         Array *r = vA();
         NOGC(r);
 
-        while (size > 0) {
+        for (isize i = 0; i < n;) {
                 i32 rune;
-                isize n = utf8proc_iterate(s + offset, size, &rune);
-                if (n < 0) {
-                        size -= 1;
-                        offset += 1;
+                int w;
+
+                if (s[i] >= 0x80 && utf8proc_iterate(s + i, n - i, &rune) <= 0) {
+                        i += 1;
                         continue;
-                } else if (rune & 0xC0) while (n < size) {
-                        i32 next;
-                        isize m = utf8proc_iterate(s + offset + n, size - n, &next);
-                        if (m < 0)
-                                break;
-                        if (utf8proc_grapheme_break_stateful(rune, next, &state))
-                                break;
-                        n += m;
                 }
-                vAp(r, STRING_VIEW(*string, offset, n));
-                size -= n;
-                offset += n;
+
+                isize m = term_cluster(s, n, i, &w);
+                vAp(r, STRING_VIEW(*string, i, m));
+                i += m;
         }
 
         OKGC(r);
@@ -2719,7 +2701,13 @@ ck_apply_fmt(Ty *ty, byte_vector *dst,
         for (int i = 0; i < fp.left; ++i) {
                 svPn(*dst, fp.fill, fp.fill_sz);
         }
+        for (int i = 0; i < fp.lspace; ++i) {
+                svP(*dst, ' ');
+        }
         svPn(*dst, text, tlen);
+        for (int i = 0; i < fp.rspace; ++i) {
+                svP(*dst, ' ');
+        }
         for (int i = 0; i < fp.right; ++i) {
                 svPn(*dst, fp.fill, fp.fill_sz);
         }
@@ -3013,15 +3001,9 @@ static isize
 WrapFit(u8 const *s, isize n, isize room)
 {
         isize fit = term_fit_cols(s, n, (int)room);
+        int w;
 
-        if (fit > 0) {
-                return fit;
-        }
-
-        i32 cp;
-        isize step = utf8proc_iterate(s, n, &cp);
-
-        return (step > 0) ? step : 1;
+        return (fit > 0) ? fit : term_cluster(s, n, 0, &w);
 }
 
 static void
@@ -3055,7 +3037,8 @@ WrapSplit(Ty *ty, WrapWords *words, u8 const *s, isize n, isize room)
                 isize start = i;
 
                 while (i < n && s[i] != ' ' && s[i] != '\t') {
-                        i += 1;
+                        isize k = term_esc_len(s, n, i);
+                        i += (k > 0) ? k : 1;
                 }
 
                 if (i > start) {
@@ -3064,34 +3047,38 @@ WrapSplit(Ty *ty, WrapWords *words, u8 const *s, isize n, isize room)
         }
 }
 
+typedef struct {
+        byte_vector sgr;
+        byte_vector link;
+} WrapPen;
+
 static void
-WrapStyle(Ty *ty, byte_vector *active, u8 const *s, isize n)
+WrapStyle(Ty *ty, WrapPen *pen, u8 const *s, isize n)
 {
-        for (isize i = 0; i + 1 < n; ++i) {
-                if (s[i] != 0x1b || s[i + 1] != '[') {
+        for (isize i = 0; i < n;) {
+                isize k = term_esc_len(s, n, i);
+
+                if (k == 0) {
+                        i += 1;
                         continue;
                 }
 
-                isize end = i + 2;
-
-                while (end < n && s[end] != 'm') {
-                        end += 1;
+                if (term_esc_is_sgr(s + i, k)) {
+                        int reset = term_sgr_reset(s + i, k);
+                        if (reset != 0) {
+                                vN(pen->sgr) = 0;
+                        }
+                        if (reset != 1) {
+                                svPn(pen->sgr, (char const *)s + i, k);
+                        }
+                } else if (term_esc_is_osc8(s + i, k)) {
+                        vN(pen->link) = 0;
+                        if (term_osc8_opens(s + i, k)) {
+                                svPn(pen->link, (char const *)s + i, k);
+                        }
                 }
 
-                if (end >= n) {
-                        return;
-                }
-
-                isize params = end - (i + 2);
-                bool reset   = (params == 0) || (params == 1 && s[i + 2] == '0');
-
-                if (reset) {
-                        vN(*active) = 0;
-                } else {
-                        svPn(*active, (char const *)s + i, end + 1 - i);
-                }
-
-                i = end;
+                i += k;
         }
 }
 
@@ -3176,7 +3163,7 @@ WrapEmit(
                 ends[nlines++] = j;
         }
 
-        byte_vector active = {0};
+        WrapPen pen = {0};
         isize start = 0;
 
         for (isize k = nlines - 1; k >= 0; --k) {
@@ -3188,7 +3175,8 @@ WrapEmit(
 
                 svPn(*out, (char const *)ss(*prefix), sN(*prefix));
                 svPn(*out, (char const *)lead, nlead);
-                svPn(*out, vv(active), vN(active));
+                svPn(*out, vv(pen.sgr), vN(pen.sgr));
+                svPn(*out, vv(pen.link), vN(pen.link));
 
                 for (isize i = start; i < ends[k]; ++i) {
                         WrapWord const *w = v_(*words, i);
@@ -3198,10 +3186,14 @@ WrapEmit(
                         }
 
                         svPn(*out, (char const *)w->s, w->n);
-                        WrapStyle(ty, &active, w->s, w->n);
+                        WrapStyle(ty, &pen, w->s, w->n);
                 }
 
-                if (vN(active) > 0) {
+                if (vN(pen.link) > 0) {
+                        svPn(*out, "\x1b]8;;\x1b\\", 7);
+                }
+
+                if (vN(pen.sgr) > 0) {
                         svPn(*out, "\x1b[0m", 4);
                 }
 
@@ -3274,6 +3266,321 @@ string_wrap(Ty *ty, Value *string, int argc, Value *kwargs)
         return result;
 }
 
+static int
+fit_justify(Ty *ty, char const *_name__, Value align)
+{
+        if (align.type == VALUE_INTEGER) {
+                if (align.z < 0) {
+                        return -1;
+                }
+                return (align.z > 0) ? 1 : 0;
+        }
+
+        if (align.type != VALUE_STRING || sN(align) == 0) {
+                return -1;
+        }
+
+        switch (ss(align)[0]) {
+        case '<':
+        case 'l':
+        case 's':
+                return -1;
+
+        case '^':
+        case 'c':
+                return 0;
+
+        case '>':
+        case 'r':
+        case 'e':
+                return 1;
+        }
+
+        bP("bad align: %s", VSC(&align));
+}
+
+static char const FitSpaces[] = "                                                                ";
+
+static void
+fit_spaces(Ty *ty, byte_vector *out, isize n)
+{
+        while (n > 0) {
+                isize k = min(n, (isize)(sizeof FitSpaces - 1));
+                svPn(*out, FitSpaces, k);
+                n -= k;
+        }
+}
+
+static void
+fit_pad(Ty *ty, byte_vector *out, Value const *fill, isize fw, isize n)
+{
+        if (fw == 1 && sN(*fill) == 1 && ss(*fill)[0] == ' ') {
+                fit_spaces(ty, out, n);
+                return;
+        }
+
+        isize full = (fw > 0) ? n / fw : 0;
+
+        for (isize i = 0; i < full; ++i) {
+                svPn(*out, (char const *)ss(*fill), sN(*fill));
+        }
+
+        fit_spaces(ty, out, n - full * fw);
+}
+
+static bool
+osc8_open(u8 const *s, isize k, bool open)
+{
+        isize off;
+        isize len;
+
+        if (!pen_osc8(s, k, &off, &len)) {
+                return open;
+        }
+
+        u8 const *semi = memchr(s + off, ';', len);
+
+        return (semi != NULL) && (semi != s + off + len - 1);
+}
+
+typedef struct {
+        isize w;
+        isize keep;
+        bool  over;
+        bool  sgr;
+        bool  link;
+} FitScan;
+
+inline static bool
+sgr_is_reset(u8 const *s, isize k)
+{
+        return (k == 3) || (k == 4 && s[2] == '0');
+}
+
+static isize
+fit_scan(u8 const *s, isize n, isize goal, FitScan *f)
+{
+        isize w    = 0;
+        isize keep = 0;
+        bool zwj   = false;
+        bool sgr   = false;
+        bool link  = false;
+
+        f->over = false;
+        f->sgr  = false;
+        f->link = false;
+
+        for (isize i = 0; i < n;) {
+                u8 c = s[i];
+                isize cw;
+                isize m;
+
+                if (c >= 0x20 && c < 0x7f && (i + 1 >= n || s[i + 1] < 0x80)) {
+                        cw = 1;
+                        m  = 1;
+                        zwj = false;
+                } else {
+                        isize k = term_esc_len(s, n, i);
+
+                        if (k > 0) {
+                                if (s[i + 1] == '[' && s[i + k - 1] == 'm') {
+                                        sgr = !sgr_is_reset(s + i, k);
+                                } else if (s[i + 1] == ']') {
+                                        link = osc8_open(s + i, k, link);
+                                }
+                                i += k;
+                                zwj = false;
+                                continue;
+                        }
+
+                        int cluster_w;
+                        m = term_cluster(s, n, i, &cluster_w);
+
+                        if (m <= 0) {
+                                i += 1;
+                                continue;
+                        }
+
+                        cw  = cluster_w;
+                        zwj = false;
+                }
+
+                if (w + cw > goal) {
+                        f->over = true;
+                        break;
+                }
+
+                w       += cw;
+                i       += m;
+                keep     = i;
+                f->sgr   = sgr;
+                f->link  = link;
+        }
+
+        f->w    = w;
+        f->keep = keep;
+
+        return keep;
+}
+
+static Value
+string_fit(Ty *ty, Value *string, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("String.fit()", 1, 2, 3);
+
+        Value width = ARGxD(0, "width", INTEGER);
+        isize goal  = max(width.z, 0);
+
+        u8 const *s = ss(*string);
+        isize n     = sN(*string);
+        FitScan f;
+        isize keep  = fit_scan(s, n, goal, &f);
+        isize w     = f.w;
+
+        if (!f.over && w == goal) {
+                return *string;
+        }
+
+        Value align = ARGxD(1, "align", INTEGER, STRING, _NIL, _NONE);
+        Value fill  = ARGxD(2, "fill", STRING, _NIL, _NONE);
+
+        if (fill.type != VALUE_STRING) {
+                fill = STRING_NOGC(" ", 1);
+        }
+
+        int just = fit_justify(ty, _name__, align);
+
+        SCRATCH_SAVE();
+
+        byte_vector out = {0};
+        isize pad = goal - w;
+
+        if (f.over) {
+                svPn(out, (char const *)s, keep);
+                if (f.link) {
+                        svPn(out, "\x1b]8;;\x1b\\", 7);
+                }
+                if (f.sgr) {
+                        svPn(out, "\x1b[0m", 4);
+                }
+                fit_spaces(ty, &out, pad);
+        } else {
+                isize fw   = max(term_width(ss(fill), sN(fill)), 0);
+                isize left = 0;
+                if (just > 0) {
+                        left = pad;
+                } else if (just == 0) {
+                        left = pad / 2;
+                }
+                fit_pad(ty, &out, &fill, fw, left);
+                svPn(out, (char const *)s, n);
+                fit_pad(ty, &out, &fill, fw, pad - left);
+        }
+
+        Value result = vSs(vv(out), vN(out));
+
+        SCRATCH_RESTORE();
+
+        return result;
+}
+
+static Value
+string_ansi_lines(Ty *ty, Value *string, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("String.ansi-lines()", 0);
+
+        u8 const *s = ss(*string);
+        isize len   = sN(*string);
+        Array *a    = vA();
+        Value av    = ARRAY(a);
+        Pen pen     = {0};
+        isize loff  = -1;
+        isize llen  = 0;
+        isize i     = 0;
+
+        gP(string);
+        gP(&av);
+
+        if (len == 0 || memchr(s, '\n', len) == NULL) {
+                vAp(a, *string);
+                i = len;
+        }
+
+        while (i < len) {
+                Pen p0     = pen;
+                isize l0   = loff;
+                isize l0n  = llen;
+                isize from = i;
+
+                while (i < len && s[i] != '\n') {
+                        isize k = term_esc_len(s, len, i);
+                        isize off;
+                        isize n;
+
+                        if (k == 0) {
+                                i += 1;
+                                continue;
+                        }
+
+                        if (s[i + 1] == '[' && s[i + k - 1] == 'm') {
+                                pen_sgr(&pen, s + i + 2, k - 3);
+                        } else if (pen_osc8(s + i, k, &off, &n)) {
+                                loff = osc8_open(s + i, k, false) ? i + off : -1;
+                                llen = n;
+                        }
+
+                        i += k;
+                }
+
+                isize to = i;
+
+                if (to > from && s[to - 1] == '\r') {
+                        to -= 1;
+                }
+
+                if (pen_plain(&p0) && l0 < 0 && pen_plain(&pen) && loff < 0) {
+                        vAp(a, STRING_VIEW(*string, from, to - from));
+                } else {
+                        SCRATCH_SAVE();
+
+                        byte_vector out = {0};
+                        char sgr[PEN_SGR_MAX];
+                        Pen zero = {0};
+
+                        if (!pen_plain(&p0)) {
+                                svPn(out, sgr, pen_diff(sgr, &zero, &p0, true));
+                        }
+                        if (l0 >= 0) {
+                                svPn(out, "\x1b]8;", 4);
+                                svPn(out, (char const *)s + l0, l0n);
+                                svPn(out, "\x1b\\", 2);
+                        }
+
+                        svPn(out, (char const *)s + from, to - from);
+
+                        if (loff >= 0) {
+                                svPn(out, "\x1b]8;;\x1b\\", 7);
+                        }
+                        if (!pen_plain(&pen)) {
+                                svPn(out, "\x1b[0m", 4);
+                        }
+
+                        vAp(a, vSs(vv(out), vN(out)));
+
+                        SCRATCH_RESTORE();
+                }
+
+                if (i < len) {
+                        i += 1;
+                }
+        }
+
+        gX();
+        gX();
+
+        return av;
+}
+
 DEFINE_METHOD_TABLE(
         string,
         { .name = "bsearch",   .func = string_bsearch          },
@@ -3288,10 +3595,12 @@ DEFINE_METHOD_TABLE(
         { .name = "comb?",     .func = string_try_comb         },
         { .name = "contains?", .func = string_contains         },
         { .name = "count",     .func = string_count            },
+        { .name = "ansiLines", .func = string_ansi_lines       },
         { .name = "cstr",      .func = string_cstr             },
         { .name = "chalk",     .func = string_chalk            },
         { .name = "charCount", .func = string_grapheme_count   },
         { .name = "escape",    .func = string_escape           },
+        { .name = "fit",       .func = string_fit              },
         { .name = "len",       .func = string_length           },
         { .name = "lines",     .func = string_lines            },
         { .name = "lower",     .func = string_lower            },

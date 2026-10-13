@@ -188,3 +188,66 @@ pub fn test-create-then-delete() {
         thrd.join()
     }
 }
+
+fn saved-after-replace(replace: (Path, Path) -> _) -> Bool {
+    with dir = Path.tempdir('watchfs') {
+        let file = dir / 'app.ty'
+        file.write('v0')
+
+        let thrd = after(50, fn () {
+            replace(dir, file)
+            os.sleep(0.15)
+            file.write('v2')
+        })
+
+        let replaced? = false
+        let modified? = false
+        for match watch(dir, timeout=TIMEOUT) {
+            Create(Path(name: 'app.ty')) => { replaced? = true },
+            Modify(Path(name: 'app.ty')) and replaced? => { modified? = true; break },
+            _ => ()
+        }
+
+        thrd.join()
+        replaced? && modified?
+    }
+}
+
+pub fn test-atomic-rename-save-keeps-watching() {
+    assert(saved-after-replace(fn (dir, file) {
+        (dir / 'app.ty.tmp').write('v1')
+        (dir / 'app.ty.tmp').rename(file)
+    }))
+}
+
+pub fn test-backup-rename-save-keeps-watching() {
+    assert(saved-after-replace(fn (dir, file) {
+        file.rename(dir / 'app.ty~')
+        file.write('v1')
+        (dir / 'app.ty~').unlink()
+    }))
+}
+
+pub fn test-recursive-dir-recreated() {
+    with dir = Path.tempdir('watchfs') {
+        let sub = dir / 'sub'
+        sub.mkdir()
+
+        let thrd = after(50, fn () {
+            sub.rmtree()
+            os.sleep(0.05)
+            sub.mkdir()
+            os.sleep(0.05)
+            (sub / 'again.txt').write('x')
+        })
+
+        let found? = false
+        for match watch(dir, recursive=true, timeout=TIMEOUT) {
+            Create(p) and p.name == 'again.txt' => { found? = true; break },
+            _ => ()
+        }
+        assert(found?)
+
+        thrd.join()
+    }
+}

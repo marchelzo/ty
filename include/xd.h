@@ -398,97 +398,32 @@ only_blanks(char const *s)
         return true;
 }
 
-static isize
-term_fit_cols(void const *_s, isize n, int cols)
-{
-        isize width = 0;
-        u8 const *s = _s;
-        bool zwj = false;
+isize
+term_esc_len(u8 const *s, isize n, isize i);
 
-        if (n == -1) {
-                n = strlen(_s);
-        }
+isize
+term_cluster(u8 const *s, isize n, isize i, int *w);
 
-        for (isize i = 0; i < n;) {
-                if (
-                        (i + 1 < n)
-                     && (s[i    ] == 0x1b)
-                     && (s[i + 1] == '[')
-                ) {
-                        while (++i < n && s[i] != 'm') {
-                                ;
-                        }
+isize
+term_width(void const *s, isize n);
 
-                        i += 1;
-                        zwj = false;
+isize
+term_fit_cols(void const *s, isize n, int cols);
 
-                        continue;
-                }
+bool
+term_esc_is_sgr(u8 const *e, isize k);
 
-                i32 cp;
-                isize ret = utf8proc_iterate(s + i, n - i, &cp);
+int
+term_sgr_reset(u8 const *e, isize k);
 
-                if (ret <= 0) {
-                        i += 1;
-                        continue;
-                }
+bool
+term_esc_is_osc8(u8 const *e, isize k);
 
-                width += !zwj * utf8proc_charwidth(cp);
+bool
+term_osc8_opens(u8 const *e, isize k);
 
-                if (width > cols) {
-                        return i;
-                }
-
-                i += ret;
-                zwj = (cp == 0x200d);
-        }
-
-        return n;
-}
-
-static isize
-term_width(void const *_s, isize n)
-{
-        if (n == -1) {
-                n = strlen(_s);
-        }
-
-        isize width = 0;
-        u8 const *s = _s;
-        bool zwj = false;
-
-        for (isize i = 0; i < n;) {
-                if (
-                        (i + 1 < n)
-                     && (s[i    ] == 0x1b)
-                     && (s[i + 1] == '[')
-                ) {
-                        while (++i < n && s[i] != 'm') {
-                                ;
-                        }
-
-                        i += 1;
-                        zwj = false;
-
-                        continue;
-                }
-
-                i32 cp;
-                isize ret = utf8proc_iterate(s + i, n - i, &cp);
-
-                if (ret <= 0) {
-                        i += 1;
-                        continue;
-                }
-
-                width += !zwj * utf8proc_charwidth(cp);
-                i += ret;
-
-                zwj = (cp == 0x200d);
-        }
-
-        return width;
-}
+void
+term_clip(byte_vector *out, u8 const *s, isize n, int cols);
 
 inline static i32
 u8_rune_sz(u8 const *str)
@@ -559,6 +494,8 @@ fspec_parse(char const **s, char const *end, struct fspec *out);
 typedef struct {
         int left;
         int right;
+        int lspace;
+        int rspace;
         char const *fill;
         int fill_sz;
 } FspecPad;

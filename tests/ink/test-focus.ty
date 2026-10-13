@@ -104,3 +104,15 @@ pub fn tab-between-text-inputs() {
     h.tab()
     assert(h.focused == tis[1])
 }
+
+pub fn shift-tab-cycles-backwards() {
+    let h = ink.TestHarness(MultiFocApp(), cols=40, rows=10)
+    h.tab()
+    h.assert-focused(FocA)
+    h.send-key('TAB', mods=1)
+    h.assert-focused(FocC)
+    h.send-key('TAB', mods=1)
+    h.assert-focused(FocB)
+    h.tab()
+    h.assert-focused(FocC)
+}

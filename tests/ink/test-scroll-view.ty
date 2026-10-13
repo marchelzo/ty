@@ -1,5 +1,5 @@
 import ink
-import term (event)
+import term (event, keys)
 
 ns test
 
@@ -88,5 +88,15 @@ pub fn vi-j-k() {
     h.send-text('j')
     assert(scroll-pos(h) == 1)
     h.send-text('k')
+    assert(scroll-pos(h) == 0)
+}
+
+pub fn page-keys-use-term-names() {
+    let h = ink.TestHarness(SVApp(), cols=40, rows=10)
+    let $sv = h.find(ink.ScrollView) or throw 'no SV'
+    h.focus!(sv)
+    h.send-key(keys.PAGE_DOWN)
+    assert(scroll-pos(h) == 3)
+    h.send-key(keys.PAGE_UP)
     assert(scroll-pos(h) == 0)
 }

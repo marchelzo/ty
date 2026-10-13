@@ -263,8 +263,12 @@ CaptureContextEx(Ty *ty, ThrowCtx *ctx);
 inline static void
 EnsureThreadLocal(Ty *ty, usize i)
 {
-        while (UNLIKELY(vN(ty->tls) <= i)) {
-                xvP(ty->tls, NONE);
+        if (UNLIKELY(vN(ty->tls) <= i)) {
+                usize n = max(i + 1, vN(xD.tls0));
+                xvR(ty->tls, n);
+                while (vN(ty->tls) < n) {
+                        xvP(ty->tls, NONE);
+                }
         }
 
         if (UNLIKELY(IsNone(v__(ty->tls, i)))) {
@@ -443,6 +447,12 @@ vm_trampoline_linked(Ty *ty, JitFn *func, Value **env);
 
 void
 vm_jit_get_member(Ty *ty);
+
+void
+vm_jit_dyn_member_assign(Ty *ty);
+
+void
+vm_jit_target_member(Ty *ty, Value *v, i32 z);
 
 Value
 vm_jit_member_access(Ty *ty, int z);

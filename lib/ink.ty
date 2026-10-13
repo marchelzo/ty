@@ -1,12 +1,16 @@
 import chalk (chalk, escape as chalk-escape, parse as chalk-parse)
-import term (event)
+import term (event, Screen)
 import os (SIGWINCH, signal, write, sleep, mktemp, spawn, wait, unlink)
 import time (now)
 import base64
 import path (Path)
 import date
 import log (..)
+import json
+import net
+import io
 import ink.themes as themes
+import ink.look as look
 
 logging({level: ERROR})
 
@@ -26,8 +30,11 @@ let __tls::_prev-kitties: Array[Int] = []
 let __tls::_kitties:      Array[Int] = []
 let __tls::_kitty-images: Array[Any] = []
 
-const CTRL  = 4
-const SHIFT = 1
+const DEFAULT_FPS = 60.0
+const IDLE_POLL   = 0.25
+
+pub const CTRL  = 4
+pub const SHIFT = 1
 const INF   = 100000
 
 let __tls::_debug-borders? = false
@@ -35,15 +42,22 @@ let __tls::_inline?        = false
 
 pub tag Exit;
 pub tag Wake;
+pub tag Ignored;
 tag Suspend;
+tag DevSave;
+tag Call;
 
-use InkEventInternal = Exit | Wake | Suspend | event.Event
+use InkEventInternal = Exit | Wake | Suspend | DevSave | Call[Function] | event.Event
 
 let _event-queue: SharedQueue[InkEventInternal] = SharedQueue()
 let _tio: term.TermIO | nil = nil
 
 pub fn suspend() {
     _event-queue.put(Suspend)
+}
+
+pub fn post(f: Function) {
+    _event-queue.put(Call(f))
 }
 
 pub fn quit() {
@@ -114,7 +128,47 @@ pub use CompletionAction = CycleCompletions[Array[CompletionItem]]
                          | Insert[String]
                          | ReplaceLine[String]
                          | None
-pub use CompletionFunction = {before: String, after: String} -> CompletionAction
+pub use CompletionContext = {before: String, after: String}
+pub use CompletionFunction = (CompletionContext) -> CompletionAction
+
+fn text-window(chars: Array[String], cursor: Int, scroll: Int, inner-w: Int) -> (Int, Int) {
+    let n = #chars
+    let ws = chars.map(&width)
+    let cur-w = (cursor < n) ? max(ws[cursor], 1) : 1
+    let s = min(scroll, cursor)
+
+    fn span(a: Int, b: Int) -> Int {
+        ws[a;b].sum() ?? 0
+    }
+
+    while s < cursor && span(s, cursor) + cur-w > inner-w {
+        s += 1
+    }
+
+    let tail-w = (cursor >= n) ? 1 : 0
+    while s > 0 && span(s - 1, n) + tail-w <= inner-w {
+        s -= 1
+    }
+
+    let e = s
+    let used = 0
+    while e < n && used + ws[e] <= inner-w {
+        used += ws[e]
+        e += 1
+    }
+
+    (s, e)
+}
+
+fn skip-cols(chars: Array[String], cols: Int) -> Int {
+    let i = 0
+    let used = 0
+    while i < #chars && used < cols {
+        used += chars[i].width()
+        i += 1
+    }
+    i
+}
 
 fn completion-label(item: CompletionItem) -> CompletionLabel {
     (item :: String) ? item : item.0
@@ -265,14 +319,24 @@ pub default-theme = %{
 let __tls::_bg-global-sgr: String = ''
 let __tls::__theme-colors: Dict[String, String] = %{}
 
+let __tls::_base-theme: Dict[String, String] = %{}
+let __tls::_look-tokens: Dict[String, String] = %{}
+
 pub fn set-theme(name: String) {
     set-theme(themes.get(name))
 }
 
 pub fn set-theme(overrides: Dict[String, String] = %{}) {
     let base = (#overrides > 0) ? default-theme : native-theme
-    let theme = %{**base, **overrides}
+    _base-theme = %{**base, **overrides}
+    install-theme()
+}
+
+fn install-theme() {
+    let theme = %{**_base-theme, **_look-tokens}
     __theme-colors = theme
+    _fg-cache = %{}
+    _bg-cache = %{}
     for name, val in theme if #val > 0 {
         chalk.{name} = val
     }
@@ -280,9 +344,131 @@ pub fn set-theme(overrides: Dict[String, String] = %{}) {
         $style and style => resolve-bg-sgr(style),
         _                => ''
     }
+    invalidate-all()
+}
+
+pub fn invalidate-all() {
+    for _, c in _fibers {
+        c.invalidate!()
+    }
+    _event-queue.put(Wake)
 }
 
 set-theme()
+
+let __tls::_looks: look.Looks = look.Looks(look.DEFAULTS)
+let __tls::_look-file: look.LookFile | nil = nil
+let __tls::_inh-spec: String | nil = nil
+
+fn install-looks(d: Dict[String, Dict[String, _]]) {
+    let tokens = d['@tokens'] ?? %{}
+    _looks.use(%{**d, '@tokens': %{}})
+    if tokens != _look-tokens {
+        _look-tokens = tokens
+        install-theme()
+    }
+    invalidate-all()
+}
+
+pub fn use-looks(src: String) {
+    install-looks(look.parse(src))
+}
+
+pub fn watch-looks(path: String, interval: Float = 0.2) {
+    _look-file = look.LookFile(path)
+    refresh-looks()
+    Thread(fn () {
+        let last = os.stat(path).?mtime
+        for (;;) {
+            sleep(interval)
+            let m = os.stat(path).?mtime
+            if m != last {
+                last = m
+                _event-queue.put(Wake)
+            }
+        }
+    }).detach()
+}
+
+pub fn look-error() -> String | nil {
+    _look-file.?error
+}
+
+fn refresh-looks() {
+    let $f = _look-file or return
+    if let $d = f.poll() {
+        install-looks(d)
+    }
+}
+
+pub fn part(w: String, p: String, states: Array[String], variant: String | nil = nil) -> Dict[String, _] {
+    _looks.part(w, p, states, variant)
+}
+
+fn spec-of-part(d: Dict[String, _]) -> String {
+    d['spec'] ?? ''
+}
+
+fn apply-look(n: Node, cls: String) {
+    apply-look-dict(n, _looks.classes(cls))
+}
+
+fn apply-look-dict(n: Node, d: Dict[String, _]) {
+    let props = n.props
+    if props['borderStyle'] == nil and let $b = d['border'] {
+        n.bstyle = (b == 'none') ? nil : resolve-border(b)
+    }
+    if props['borderColor'] == nil and let $bc = d['border-color'] {
+        n.bcolor = bc
+    }
+    if props['bg'] == nil and let $bg = d['bg'] {
+        n.bg = bg
+    }
+    if props['padding'] == nil {
+        if props['padX'] == nil {
+            n.px = d['pad-x'] ?? d['padding'] ?? n.px
+        }
+        if props['padY'] == nil {
+            n.py = d['pad-y'] ?? d['padding'] ?? n.py
+        }
+    }
+    if props['gap'] == nil and let $g = d['gap'] {
+        n.gap = g
+    }
+    if props['margin'] == nil {
+        if props['marginX'] == nil {
+            n.mx = d['margin-x'] ?? d['margin'] ?? n.mx
+        }
+        if props['marginY'] == nil {
+            n.my = d['margin-y'] ?? d['margin'] ?? n.my
+        }
+    }
+    if props['width'] == nil and let $w = d['width'] {
+        n.width = w
+    }
+    if props['height'] == nil and let $h = d['height'] {
+        n.height = h
+    }
+    if props['direction'] == nil and let $dir = d['direction'] {
+        n.direction = dir
+    }
+    if props['align'] == nil and let $a = d['align'] {
+        n.align = a
+    }
+    if props['justify'] == nil and let $j = d['justify'] {
+        n.justify = j
+    }
+    if props['wrap'] == nil and let $wr = d['wrap'] {
+        props['wrap'] = wr
+    }
+    if let $sp = d['spec'] {
+        if n.tag == NodeText {
+            n.style = (n.style == nil) ? sp : "{sp} {n.style}"
+        } else {
+            n.inh = sp
+        }
+    }
+}
 
 pub fn provide(key, value) {
     _ctx-stack[-1][key] = value
@@ -296,9 +482,7 @@ pub fn context(key, default = nil) {
 }
 
 pub fn focus(comp: Component) {
-    debug!("focus -> {type(comp)}")
-    _focused = comp
-    comp.focus!(true)
+    set-focus(comp)
 }
 
 let __tls::_pending-focus-type: Any = nil
@@ -306,91 +490,112 @@ let __tls::_pending-focus-type: Any = nil
 pub fn focus-by-type(cls) {
     for comp in _focusables {
         if comp :: cls {
-            debug!("focus-by-type({cls}) -> {type(comp)}")
-            _focused = comp
-            comp.focus!(true)
+            set-focus(comp)
+            _pending-focus-type = nil
             return
         }
     }
-    debug!("focus-by-type({cls}): deferred (not yet in tree)")
     _pending-focus-type = cls
 }
 
 pub fn unfocus() {
-    if _focused != nil { debug!("unfocus (was {type(_focused)})") }
-    _focused = nil
+    set-focus(nil)
 }
 
 pub fn cycle-focus(reverse?: Bool = false) {
-    if #_focusables == 0 { return }
-    let idx = (_focused != nil)
-        ? (_focusables.search(_focused) ?? -1)
-        : -1
-    let next = reverse?
-        ? (idx - 1 + #_focusables) % #_focusables
-        : (idx + 1) % #_focusables
-    _focused = _focusables[next]
-    debug!("cycle-focus: {idx} -> {next} ({type(_focused)}) [#{#_focusables} focusables]")
+    let n = #_focusables
+    if n == 0 {
+        return
+    }
+    let idx = _focusables.search(_focused)
+    let next = match (idx, reverse?) {
+        (nil, false) => 0,
+        (nil, true)  => n - 1,
+        (i: Int, false) => (i + 1) % n,
+        (i: Int, true)  => (i - 1 + n) % n
+    }
+    set-focus(_focusables[next])
 }
 
 tag NodeBox, NodeText, NodeOverlay, NodeRaw;
 
-let __color-sgr-cache = %{}
+let __tls::_fg-cache: Dict[String, String] = %{}
+let __tls::_bg-cache: Dict[String, String] = %{}
+
+fn sgr-prefix(spec: String) -> String {
+    let s = chalk.render("[{spec}]@[/]")
+    s[;s.search('@') ?? 0]
+}
 
 pub fn fg-sgr(color: String) -> String {
-    if let $c = __color-sgr-cache[color] { return c }
-    let s = chalk.render("[{color}]@[/]")
-    let i = s.search('@') ?? 0
-    let result = s[;i]
-    __color-sgr-cache[color] = result
+    if let $c = _fg-cache[color] {
+        return c
+    }
+    let result = sgr-prefix(color)
+    _fg-cache[color] = result
     result
+}
+
+fn bg-from-sgr(sgr: String) -> String {
+    match sgr {
+        /[34]8;2;(\d+;\d+;\d+)/  => "\x1b[48;2;{$1}m",
+        /[34]8;5;(\d+)/           => "\x1b[48;5;{$1}m",
+        /\[(?:[0-9;]*;)?[34]([0-7])m/ => "\x1b[4{$1}m",
+        /\[(?:[0-9;]*;)?(?:9|10)([0-7])m/ => "\x1b[10{$1}m",
+        _                         => ''
+    }
 }
 
 let RST = "\x1b[0m"
 let BG_RST = "\x1b[49m"
 
 fn resolve-bg-sgr(color: String) -> String {
-    let (r, g, b) = resolve-color-rgb(color)
-    "\x1b[48;2;{r};{g};{b}m"
+    if let $c = _bg-cache[color] {
+        return c
+    }
+    let token = __theme-colors[color]
+    let result = match token {
+        ''        => '',
+        t: String => bg-from-sgr(sgr-prefix(t)),
+        _         => bg-from-sgr(sgr-prefix(color))
+    }
+    _bg-cache[color] = result
+    result
 }
 
-let kitty-graphics? = do {
-    let tp = getenv('TERM_PROGRAM') ?? ''
-    let tm = getenv('TERM') ?? ''
-    tp == 'ghostty'
-    || tp == 'WezTerm'
-    || tm == 'xterm-kitty'
-    || (getenv('KITTY_WINDOW_ID') ?? '') != ''
-}
-
-fn hex-to-rgb(hex: String) -> (Int, Int, Int) {
-    let h = hex.match?(/^#/) ? hex.slice(1) : hex
-    if #h == 3 {
-        let r = int("0x{h[0]}{h[0]}")
-        let g = int("0x{h[1]}{h[1]}")
-        let b = int("0x{h[2]}{h[2]}")
-        (r, g, b)
-    } else {
-        let r = int("0x{h[;2]}")
-        let g = int("0x{h[2;4]}")
-        let b = int("0x{h[4;6]}")
-        (r, g, b)
+let kitty-graphics? = match getenv('INK_KITTY') {
+    '0' or 'no' or 'false' => false,
+    '1' or 'yes' or 'true' => true,
+    _ => do {
+        let tp = getenv('TERM_PROGRAM') ?? ''
+        let tm = getenv('TERM') ?? ''
+        tp == 'ghostty'
+        || tp == 'WezTerm'
+        || tm == 'xterm-kitty'
+        || (getenv('KITTY_WINDOW_ID') ?? '') != ''
     }
 }
 
+pub fn set-kitty-graphics(on: Bool) {
+    kitty-graphics? = on
+}
+
+const ANSI_RGB = [
+    (0, 0, 0),       (205, 0, 0),     (0, 205, 0),     (205, 205, 0),
+    (0, 0, 238),     (205, 0, 205),   (0, 205, 205),   (229, 229, 229),
+    (127, 127, 127), (255, 0, 0),     (0, 255, 0),     (255, 255, 0),
+    (92, 92, 255),   (255, 0, 255),   (0, 255, 255),   (255, 255, 255)
+]
+
 fn resolve-color-rgb(name: String) -> (Int, Int, Int) {
-    let color = __theme-colors[name]
-    if !color { color = name }
-    // Chalk does not emit styling for an empty span. Render a marker and keep
-    // only its prefix so semantic theme names resolve just like fg-sgr().
-    let rendered = chalk.render("[{color}]@[/]")
-    let resolved = rendered[;rendered.search('@') ?? 0]
-    if let $m = resolved.match(/38;2;(\d+);(\d+);(\d+)/) {
-        (int(m[1]), int(m[2]), int(m[3]))
-    } else if color.match?(/^#/) {
-        hex-to-rgb(color)
-    } else {
-        (200, 200, 200)
+    let color = __theme-colors[name] || name
+    let s = chalk.render("[{color}]@[/]", plain=false)
+    let sgr = s[;s.search('@') ?? 0]
+    match sgr {
+        /[34]8;2;(\d+);(\d+);(\d+)/ => (int($1), int($2), int($3)),
+        /\[(?:[0-9;]*;)?([34])([0-7])m/  => ANSI_RGB[int($2)],
+        /\[(?:[0-9;]*;)?(9|10)([0-7])m/  => ANSI_RGB[8 + int($2)],
+        _                                => (200, 200, 200)
     }
 }
 
@@ -411,7 +616,7 @@ fn kitty-transmit(buf: Blob, pw: Int, ph: Int, cols: Int, rows: Int, id: Int = 0
     let payload = base64.encode(buf)
     let plen = #payload
     let out = Blob()
-    let chunk-size = 131072
+    let chunk-size = 4096
     let id-part = (id > 0) ? ",i={id}" : ""
     let hdr = "\x1b_Ga=T,q=2,f=32,s={pw},v={ph},c={cols},r={rows}{id-part}"
     let i = 0
@@ -419,7 +624,7 @@ fn kitty-transmit(buf: Blob, pw: Int, ph: Int, cols: Int, rows: Int, id: Int = 0
     while i < plen {
         let end = min(i + chunk-size, plen)
         let more = (end < plen) ? 1 : 0
-        let chunk = payload.slice(i, end - i)
+        let chunk = payload[i;end]
 
         if i == 0 {
             out.push("{hdr},m={more};{chunk}\x1b\\")
@@ -480,6 +685,7 @@ pub class Node {
     justify: String
 
     style: String | nil
+    inh:   String | nil
 
     init(tg, prps, chldrn) {
         `tag`    = tg
@@ -491,8 +697,8 @@ pub class Node {
 
         direction  = props['direction'] ?? 'column'
         gap        = int(props['gap'] ?? 0)
-        px         = int(props['padX'] ?? p)
-        py         = int(props['padY'] ?? p)
+        px         = int(props['padX'] ?? props['paddingX'] ?? p)
+        py         = int(props['padY'] ?? props['paddingY'] ?? p)
         mx         = int(props['marginX'] ?? m)
         my         = int(props['marginY'] ?? m)
         width      = props['width']
@@ -502,9 +708,21 @@ pub class Node {
         bstyle     = resolve-border(props['borderStyle'])
         bcolor     = props['borderColor']
         focusable? = props['focusable'] ?? false
-        align      = props['align'] ?? 'start'
+        align      = match props['align'] {
+            'right' or 'bottom' or 'end' => 'end',
+            'center'                     => 'center',
+            _                            => 'start'
+        }
         justify    = props['justify'] ?? 'start'
         style      = props['style']
+        inh        = nil
+
+        if let $d = props['look'] {
+            apply-look-dict(self, d)
+        }
+        if let $c = props['cls'] {
+            apply-look(self, c)
+        }
     }
 }
 
@@ -533,7 +751,10 @@ class PendingTimer {
     nudge(dt: Float) { __deadline -= dt }
 
     fire() {
-        if !__canceled { __callback() }
+        if !__canceled {
+            __callback()
+            __owner.?invalidate!()
+        }
     }
 
     reschedule() {
@@ -565,8 +786,14 @@ pub class Component {
 
     __prop-names: Array[String]
 
+    ink-ctx-frame:        Dict[Any, Any]       = %{}
+    ink-parent:           Any                  = nil
+    ink-memo:             Any                  = nil
+    ink-interval-timer:   PendingTimer | nil   = nil
+    ink-interval-period:  Float | nil          = nil
+
     init(*chldrn, %prps) {
-        children     = strip-ws-children(chldrn)
+        children     = chldrn.flat()
         focused?     = false
         mounted?     = false
         alive?       = false
@@ -583,6 +810,7 @@ pub class Component {
     }
 
     focusable? -> Bool        { false }
+    wants-hover? -> Bool      { false }
     interval   -> Float | nil { nil   }
     // Optional render-loop frame cap. Dirty events and timers continue to be
     // processed and coalesced; only terminal painting is deferred.
@@ -594,7 +822,14 @@ pub class Component {
     handles-tab? -> Bool { false }
     handles-interrupt? -> Bool { false }
 
-    invalidate!() { dirty? = true }
+    invalidate!() {
+        dirty? = true
+        let p: Any = self
+        while p != nil {
+            p.ink-memo = nil
+            p = p.ink-parent
+        }
+    }
 
     after(delay: Float, callback: Function) -> PendingTimer {
         let t = PendingTimer(now() + delay, nil, callback, self)
@@ -604,6 +839,9 @@ pub class Component {
     }
 
     every(iv: Float, callback: Function) -> PendingTimer {
+        if !(iv > 0.0) {
+            throw ValueError("every(): interval must be positive, got {iv}")
+        }
         let t = PendingTimer(now() + iv, iv, callback, self)
         _timers.push(t)
         debug!("timer every({iv}) registered for {type(self)}")
@@ -611,7 +849,7 @@ pub class Component {
     }
 
     notify() {
-        dirty? = true
+        invalidate!()
         _event-queue.put(Wake)
     }
 
@@ -621,6 +859,13 @@ pub class Component {
         if children != new-children { dirty? = true }
         children = new-children
         let changed-props = []
+        for name in __prop-names {
+            if !(name in other.__prop-names) {
+                self.{name} = other.{name}
+                dirty? = true
+            }
+        }
+        __prop-names = other.__prop-names
         for name in other.__prop-names {
             let new-val = other.{name}
             if !dirty? && !(new-val :: Function) && self.{name} != new-val {
@@ -642,8 +887,7 @@ pub class Component {
 
     focus!(v: Bool) {
         if focused? != v {
-            dirty? = true
-            debug!("focus! {type(self)}: {v}")
+            invalidate!()
         }
         focused? = v
     }
@@ -654,8 +898,14 @@ pub class Component {
         mount()
     }
     unmount!() {
+        if !mounted? {
+            return
+        }
         debug!("unmount {type(self)}")
+        mounted? = false
         alive? = false
+        ink-interval-timer = nil
+        ink-interval-period = nil
         release-status(self)
         let n = 0
         for t in _timers if t.owner == self {
@@ -691,51 +941,56 @@ pub fn Raw(lines: Array[String], raw-width: Int) -> Node {
 }
 
 pub class Divider < Component {
+    variant: String | nil
     char:   String | nil
     color:  String | nil
     title:  String | nil
     width:  Int | nil
 
     render() -> Node {
-        let ch = char ?? '─'
-        let color = color ?? 'subtle'
-        let title = title
+        let ln = part('Divider', 'line', [], variant)
+        let tl = part('Divider', 'title', [], variant)
+        let ch = char ?? ln['content'] ?? '─'
+        let lk = color ? nil : ln
         let w = width ?? layout-max-w
 
-        if title {
-            let rest = max(w - title.width() - 4, 2)
+        if let $t = title {
+            let side = max(w - t.width() - 2, 4)
+            let left = side / 2
             <Box direction="row">
-                <Text style=color>{ch * 2} </Text>
-                <Text style="{color} bold">{title}</Text>
-                <Text style=color> {ch * rest}</Text>
+                <Text look=lk style=color>{ch * left} </Text>
+                <Text look=(color ? nil : tl) style=(color ? "{color} bold" : nil)>{t}</Text>
+                <Text look=lk style=color> {ch * (side - left)}</Text>
             </Box>
         } else {
-            <Text style=color>{ch * w}</Text>
+            <Text look=lk style=color>{ch * w}</Text>
         }
     }
 }
 
 pub class Badge < Component {
+    variant: String | nil
     color: String | nil
 
     render() -> Node {
-        let c = color ?? 'muted'
-        let label = children.join()
-        <Text style="{c} reverse"> {label} </Text>
+        let lb = part('Badge', 'label', [], variant)
+        <Text look=(color ? nil : lb) style=(color ? "{color} reverse" : nil)> {children} </Text>
     }
 }
 
 pub class SectionHeader < Component {
+    variant: String | nil
     color: String | nil
 
     render() -> Node {
-        let color = color ?? 'fg-default'
-        let title = children.join()
-        <Text style="{color} u">{title}</Text>
+        let tl = part('SectionHeader', 'title', [], variant)
+        <Text look=(color ? nil : tl) style=(color ? "{color} u" : nil)>{children}</Text>
     }
 }
 
 pub class Card < Component {
+    variant: String | nil
+    cls:          String | nil
     focus-color:  String | nil
     border-color: String | nil
     border-style: String | Array[String] | nil
@@ -746,39 +1001,33 @@ pub class Card < Component {
     focusable? -> Bool { focusable ?? false }
 
     render() -> Node {
-        let bc = focused? ? (focus-color ?? 'border-focus') : (border-color ?? 'border')
-        let bs = border-style ?? 'round'
-
-        if width {
-            <Box direction="column" border-style=bs border-color=bc width=width pad-x=1
-                on-click=on-click
-            >
-                {children}
-            </Box>
-        } else {
-            <Box direction="column" border-style=bs border-color=bc pad-x=1
-                on-click=on-click
-            >
-                {children}
-            </Box>
-        }
+        let fr = part('Card', 'frame', focused? ? ['focused'] : [], variant)
+        let bc = focused? ? focus-color : border-color
+        <Box direction="column" look=fr cls=cls border-style=border-style border-color=bc
+             width=width on-click=on-click
+        >
+            {children}
+        </Box>
     }
 }
 
 pub class StatusBar < Component {
+    variant: String | nil
+    cls:   String | nil
     color: String | nil
     bg:    String | nil
 
     render() -> Node {
-        let c = color ?? 'fg-dim'
-        let b = bg ?? 'bg-surface'
-        <Box direction="row" pad-x=1>
-            <Text style="{c} {b}">{children}</Text>
+        let bar = part('StatusBar', 'bar', [], variant)
+        let tx = part('StatusBar', 'text', [], variant)
+        <Box direction="row" look=bar cls=cls bg=bg>
+            <Text look=(color ? nil : tx) style=color>{children}</Text>
         </Box>
     }
 }
 
 pub class ProgressBar < Component {
+    variant: String | nil
     value:     Float | nil
     width:     Int | nil
     color:     String | nil
@@ -792,18 +1041,20 @@ pub class ProgressBar < Component {
             claim-status(self, id, __status(value))
         }
 
+        let sts    = (value >= 1.0) ? ['done'] : []
+        let fl     = part('ProgressBar', 'fill', sts, variant)
+        let tr     = part('ProgressBar', 'track', sts, variant)
+        let pc     = part('ProgressBar', 'pct', sts, variant)
         let total  = int(width ?? 20)
-        let color  = color ?? 'primary'
-        let bg     = bg ?? 'subtle'
         let pct    = " {int(value * 100)}%"
         let w      = max(total - pct.width(), 2)
         let filled = int(value.clamp(0.0, 1.0) * w)
         let empty  = w - filled
 
         <Box direction="row">
-            <Text style=color>{'━' * filled}</Text>
-            <Text style=bg>{'━' * empty}</Text>
-            <Text style="text-dim">{pct}</Text>
+            <Text look=(color ? nil : fl) style=color>{(fl['content'] ?? '━') * filled}</Text>
+            <Text look=(bg ? nil : tr) style=bg>{(tr['content'] ?? '━') * empty}</Text>
+            <Text look=pc>{pct}</Text>
         </Box>
     }
 
@@ -822,6 +1073,7 @@ ns spin {
 }
 
 pub class Spinner < Component {
+    variant: String | nil
     speed:     Float | nil
     style:     String | nil
     color:     String | nil
@@ -838,7 +1090,9 @@ pub class Spinner < Component {
             claim-status(self, id, {state: term.status.WORKING, msg: label})
         }
 
-        let c = color ?? 'info'
+        let fr = part('Spinner', 'frame', [], variant)
+        let lb = part('Spinner', 'label', [], variant)
+        let fk = color ? nil : fr
         let chars = match style {
             'dots'   => spin.dots,
             'dots2'  => spin.dots2,
@@ -852,14 +1106,16 @@ pub class Spinner < Component {
 
         label ? (
             <Box direction="row" gap=1>
-                <Text style=c>{chars[__frame % #chars]}</Text>
-                <Text>{label}</Text>
+                <Text look=fk style=color>{chars[__frame % #chars]}</Text>
+                <Text look=lb>{label}</Text>
             </Box>
-        ) : <Text style=color>{chars[__frame % #chars]}</Text>
+        ) : <Text look=fk style=color>{chars[__frame % #chars]}</Text>
     }
 }
 
 pub class TextInput < Component {
+    variant: String | nil
+    cls:           String | nil
     placeholder:   String | nil
     on-change:     Function | nil
     on-submit:     Function | nil
@@ -882,6 +1138,7 @@ pub class TextInput < Component {
     __hist-idx:  Int
     __hist-save: String
     __hist-loaded?: Bool
+    __hist:      Array[String] = []
 
     init(*children, %props) {
         super(*children, **props)
@@ -899,25 +1156,18 @@ pub class TextInput < Component {
     __load-history() {
         if __hist-loaded? { return }
         __hist-loaded? = true
-        if let $f = history-file and let $h = history {
-            try {
-                let p = Path(f)
-                if p.file? {
-                    for line in p.read-text().lines() if #line > 0 {
-                        h.push(line)
-                    }
-                    debug!("TextInput: loaded {#h} history entries from {f}")
-                }
-            } catch _ { }
+        __hist = [*(history ?? [])]
+        if let $f = history-file and let p = Path(f) and p.file? {
+            for line in p.read-text().lines() if #line > 0 {
+                __hist.push(line)
+            }
         }
     }
 
     __save-history-entry(entry: String) {
         if let Path $~> p = history-file {
-            try {
-                p.parent.mkdir(parents=true, exist-ok=true)
-                p.append("{entry}\n")
-            }
+            p.parent.mkdir(parents=true, exist-ok=true)
+            p.append("{entry}\n")
         }
     }
 
@@ -943,8 +1193,8 @@ pub class TextInput < Component {
         if __cycler == nil {
             let before = __chars[;__cursor].join()
             let after  = __chars[__cursor;].join()
-            match complete(before, after) {
-                CycleCompletions($items) and #items > 0 => {
+            match complete({before, after}) {
+                (CycleCompletions($items) or ListCompletions($items)) and #items > 0 => {
                     __cycler = {
                         items: items,
                         line:  [*__chars],
@@ -965,7 +1215,7 @@ pub class TextInput < Component {
                     __emit()
                     return
                 },
-                _ => { cycle-focus(); return }
+                _ => return
             }
         }
 
@@ -1015,11 +1265,13 @@ pub class TextInput < Component {
             event.Key({key: 'ENTER', event: 1, *}) => {
                 __cancel-completion()
                 let t = text
-                if let h: Array[String] = history and #t > 0 {
-                    if #h == 0 || h[-1] != t {
-                        h.push(t)
+                if (history != nil || history-file != nil) && #t > 0 {
+                    if #__hist == 0 || __hist[-1] != t {
+                        __hist.push(t)
+                        if let $h = history {
+                            h.push(t)
+                        }
                         __save-history-entry(t)
-                        debug!("TextInput: history push, now {#h} entries")
                     }
                 }
                 __hist-idx = -1
@@ -1027,7 +1279,7 @@ pub class TextInput < Component {
             },
 
             event.Key({key: 'UP', event: (1 or 2), *})
-            and let h: Array[String] = history => {
+            and (history != nil || history-file != nil) and let h = __hist => {
                 __cancel-completion()
                 if #h > 0 {
                     if __hist-idx == -1 { __hist-save = text }
@@ -1039,7 +1291,7 @@ pub class TextInput < Component {
             },
 
             event.Key({key: 'DOWN', event: (1 or 2), *})
-            and let h: Array[String] = history => {
+            and (history != nil || history-file != nil) and let h = __hist => {
                 __cancel-completion()
                 if __hist-idx > 0 {
                     __hist-idx -= 1
@@ -1066,9 +1318,11 @@ pub class TextInput < Component {
                 }
             },
 
-            event.Text($ch) => {
+            (event.Text($s) or event.Paste($s)) => {
                 __cancel-completion()
-                __chars.insert(__cursor++, ch)
+                for ch in s.sub(/[\r\n\t]+/, ' ').chars() {
+                    __chars.insert(__cursor++, ch)
+                }
                 __emit()
             },
 
@@ -1152,36 +1406,45 @@ pub class TextInput < Component {
             event.Key({key: 'x' or 120, event: (1 or 2), mods: $m, *})
             and (m & CTRL) != 0 and on-edit != nil => {
                 __cancel-completion()
-                let (fd, tmp) = mktemp()
+                let dir = (getenv('TMPDIR') ?? '/tmp').comb(/\/+$/)
+                if not let (fd, tmp) = mktemp("{dir}/ink-edit") {
+                    return
+                }
                 let seed = __chars.join()
-                if #seed > 0 { write(fd, seed) }
+                if #seed > 0 {
+                    write(fd, seed)
+                }
                 os.close(fd)
-                os.chmod(tmp, 0o666)
 
                 if let $tio = _tio {
                     tio.stop()
-                    write(1, "\x1b[?25h")
-
-                    let ed = spawn([getenv('EDITOR') ?? 'vi', tmp])
-                    wait(ed.pid)
-
-                    write(1, "\x1b[?25l")
-                    tio.start()
+                    write(1, "\x1b[?25h\x1b[?1049l")
+                    try {
+                        let cmd = (getenv('EDITOR') ?? 'vi').split(/\s+/).filter(\_ != '')
+                        let ed = spawn([*cmd, tmp])
+                        wait(ed.pid)
+                    } finally {
+                        write(1, _inline? ? "\x1b[?25l" : "\x1b[?1049h\x1b[?25l")
+                        tio.start()
+                        invalidate-screen()
+                    }
                 }
 
                 let out = (slurp(tmp) ?? '').comb(/\r/).trim()
                 unlink(tmp)
-                if #out > 0 { on-edit(out) }
+                if #out > 0 {
+                    on-edit(out)
+                }
             },
 
-            _ => ()
+            _ => Ignored
         }
     }
 
     render() -> Node {
         if value != __last-val {
             __last-val = value
-            if let $v = value {
+            if let $v = value and v != __chars.join() {
                 __chars  = v.chars()
                 __cursor = #__chars
             }
@@ -1189,63 +1452,65 @@ pub class TextInput < Component {
 
         let w: Int = int(width ?? 20)
         let ph = placeholder ?? ''
-        let clr = resolve(color, focused? ? 'selection' : 'text')
-        let bstyle = resolve(border-style, 'round')
-        let bcolor = resolve(border-color, focused? ? 'border-focus' : 'border')
-        let inner-w = max(w - 4, 1)
-
-        let display = (#__chars > 0) ? __chars.join() : ''
+        let fs = focused? ? ['focused'] : []
+        let fr = part('TextInput', 'frame', fs, variant)
+        let clr = color ? resolve(color) : (part('TextInput', 'text', fs, variant)['spec'] ?? '')
+        let ph-spec = part('TextInput', 'placeholder', fs, variant)['spec'] ?? ''
+        let cur-spec = part('TextInput', 'cursor', fs, variant)['spec'] ?? 'reverse'
+        let pop = part('TextInput', 'popup', fs, variant)
+        let pop-item = part('TextInput', 'popup-item', fs, variant)
+        let bstyle = (border-style != nil) ? resolve(border-style) : nil
+        let bcolor = border-color ? resolve(border-color) : nil
+        let inner-w = max(w - 2, 1)
         let show-placeholder = #__chars == 0
+        let text-color = show-placeholder ? ph-spec : clr
 
-        if __cursor > __scroll + inner-w - 1 { __scroll = __cursor - inner-w + 1 }
-        if __cursor < __scroll { __scroll = __cursor }
-
-        let visible = show-placeholder
-            ? ph.slice(0, inner-w)
-            : display.slice(__scroll).slice(0, inner-w)
-
-        let cursor-pos = __cursor - __scroll
-        let pad = inner-w - visible.width()
-
-        let text-color = show-placeholder ? 'subtle' : clr
-        let content = if focused? {
-            let before = visible.slice(0, cursor-pos)
-            let past-end = cursor-pos >= visible.width()
-            let cur-ch = past-end ? ' ' : visible.slice(cursor-pos, 1)
-            let after  = past-end ? '' : visible.slice(cursor-pos + 1)
-            let trail  = ' ' * max(past-end ? (pad - 1) : pad, 0)
-            str(chalk"[{text-color}]{before}[/]"
-                     "[reverse]{cur-ch}[/]"
-                     "[{text-color}]{after}[/]{trail}")
+        let content = if show-placeholder {
+            let (_, ph-end) = text-window(ph.chars(), 0, 0, inner-w)
+            let shown = ph.chars()[;ph-end].join()
+            let pad = ' ' * max(inner-w - shown.width(), 0)
+            focused?
+                ? str(chalk"[{cur-spec}]{shown[;1] ?? ' '}[/][{text-color}]{shown[1;]}[/]{pad}")
+                : str(chalk"[{text-color}]{shown}[/]{pad}")
         } else {
-            str(chalk"[{text-color}]{visible}[/]{' ' * pad}")
+            let (scroll, end) = text-window(__chars, __cursor, __scroll, inner-w)
+            __scroll = scroll
+            if focused? {
+                let before = __chars[scroll;__cursor].join()
+                let past-end? = __cursor >= #__chars
+                let cur-ch = past-end? ? ' ' : __chars[__cursor]
+                let after = past-end? ? '' : __chars[__cursor + 1;max(end, __cursor + 1)].join()
+                let used = before.width() + cur-ch.width() + after.width()
+                str(chalk"[{text-color}]{before}[/]"
+                         "[{cur-spec}]{cur-ch}[/]"
+                         "[{text-color}]{after}[/]{' ' * max(inner-w - used, 0)}")
+            } else {
+                let shown = __chars[scroll;end].join()
+                str(chalk"[{text-color}]{shown}[/]{' ' * max(inner-w - shown.width(), 0)}")
+            }
         }
 
         let show-comp? = #__comp-lines > 0 && focused?
 
         <Box direction="column">
             {show-comp? && _inline? &&
-                <Box direction="column" bg="bg-surface"
-                     border-style="single" border-color="border"
-                     pad-x=1>
+                <Box direction="column" look=pop>
                     {__comp-lines.map(l ->
-                        <Text style="text">{l}</Text>
+                        <Text look=pop-item>{l}</Text>
                     )}
                 </Box>
             }
-            <Box border-style=bstyle border-color=bcolor>
+            <Box look=fr cls=cls border-style=bstyle border-color=bcolor>
                 <Text>{content}</Text>
             </Box>
             {show-comp? && !_inline? &&
                 do {
                     let popup-h = #__comp-lines + 2
-                    let popup-y = max(layout-y - popup-h, 0)
+                    let popup-y = (layout-y >= popup-h) ? (layout-y - popup-h) : (layout-y + 3)
                     <Overlay x=layout-x y=popup-y>
-                        <Box direction="column" bg="bg-surface"
-                             border-style="single" border-color="border"
-                             pad-x=1>
+                        <Box direction="column" look=pop>
                             {__comp-lines.map(l ->
-                                <Text style="text">{l}</Text>
+                                <Text look=pop-item>{l}</Text>
                             )}
                         </Box>
                     </Overlay>
@@ -1256,6 +1521,8 @@ pub class TextInput < Component {
 }
 
 pub class TextArea < Component {
+    variant: String | nil
+    cls:          String | nil
     width:        Int | nil
     height:       Int | nil
     on-change:    Function | nil
@@ -1269,22 +1536,25 @@ pub class TextArea < Component {
     __col:      Int
     __scroll-y: Int
     __scroll-x: Int
+    __goal:     Int | nil = nil
 
     init(*children, %props) {
         super(*children, **props)
-        let initial = value ?? ''
-        let init-lines = initial.lines()
-        __lines = init-lines ? init-lines.map(&chars) : [[]]
+        __lines = [[]]
         __row = 0
         __col = 0
         __scroll-y = 0
         __scroll-x = 0
     }
 
+    mount() {
+        __lines = (value ?? '').split('\n').map(&chars)
+    }
+
     focusable? -> Bool { true }
 
     text -> String {
-        __lines.map(&join).unlines()
+        __lines.map(&join).join('\n')
     }
 
     __emit() {
@@ -1294,13 +1564,23 @@ pub class TextArea < Component {
     __line -> Array[String] { __lines[__row] }
 
     __clamp-col() {
-        __col = min(__col, #__line)
+        __col = min(__goal ?? __col, #__line)
     }
 
     on-event(ev) {
+        let goal = __goal
+        __goal = nil
         match ev {
-            event.Text($ch) and ch != '\t' => {
-                __line.insert(__col++, ch)
+            event.Paste($s) => {
+                for ch in s.comb(/\r/).chars() {
+                    on-event((ch == '\n') ? event.Key({key: 'ENTER', _key: nil, base: nil, mods: 0, event: 1, text: []}) : event.Text(ch))
+                }
+            },
+
+            event.Text($s) and s != '\t' => {
+                for ch in s.chars() {
+                    __line.insert(__col++, ch)
+                }
                 __emit()
             },
 
@@ -1343,14 +1623,22 @@ pub class TextArea < Component {
                 else if __row < #__lines - 1 { __row += 1; __col = 0 }
             },
 
-            event.Key({key: 'UP', event: (1 or 2), *}) =>
-                { if __row > 0 { __row -= 1; __clamp-col() } },
+            event.Key({key: 'UP', event: (1 or 2), *}) => do {
+                if __row > 0 {
+                    __goal = goal ?? __col
+                    __row -= 1
+                    __clamp-col()
+                }
+                return true
+            },
 
             event.Key({key: 'DOWN', event: (1 or 2), *}) => do {
                 if __row < #__lines - 1 {
+                    __goal = goal ?? __col
                     __row += 1
                     __clamp-col()
                 }
+                return true
             },
 
             event.Key({key: 'HOME', event: (1 or 2), *}) =>
@@ -1399,51 +1687,61 @@ pub class TextArea < Component {
                 __emit()
             },
 
-            _ => ()
+            _ => Ignored
         }
     }
 
     render() -> Node {
         let w: Int = int(width ?? 40)
         let h: Int = int(height ?? 10)
-        let clr = resolve(color, focused? ? 'selection' : 'text')
-        let bc = resolve(border-color, focused? ? 'border-focus' : 'border')
+        let fs = focused? ? ['focused'] : []
+        let fr = part('TextArea', 'frame', fs, variant)
+        let clr = color ? resolve(color) : (part('TextArea', 'text', fs, variant)['spec'] ?? '')
+        let ph-spec = part('TextArea', 'placeholder', fs, variant)['spec'] ?? ''
+        let cur-spec = part('TextArea', 'cursor', fs, variant)['spec'] ?? 'reverse'
+        let bc = border-color ? resolve(border-color) : nil
         let inner-w = max(w - 2, 1)
         let inner-h = max(h - 2, 1)
 
         if __row < __scroll-y { __scroll-y = __row }
         if __row >= __scroll-y + inner-h { __scroll-y = __row - inner-h + 1 }
 
+        let cur-line = (__row < #__lines) ? __lines[__row] : []
+        let (sx, _) = text-window(cur-line, __col, __scroll-x, inner-w)
+        __scroll-x = sx
+        let col-off = cur-line[;sx].map(&width).sum() ?? 0
+        let empty? = #__lines == 1 && #__lines[0] == 0
+
         let rendered = []
         for vi in ..inner-h {
             let li = __scroll-y + vi
-            if li < #__lines {
-                let line = __lines[li].join()
-                let visible = line.slice(0, inner-w)
-                let pad = inner-w - visible.width()
-
+            if empty? && vi == 0 && !focused? && placeholder != nil {
+                let ph = clip-line(placeholder, inner-w)
+                rendered.push(str(chalk"[{ph-spec}]{ph.comb(/\x1b\[[0-9;]*m/)}[/]{' ' * max(inner-w - ph.width(), 0)}"))
+            } else if li < #__lines {
+                let chars = __lines[li]
+                let start = skip-cols(chars, col-off)
+                let (_, end) = text-window(chars[start;], 0, 0, inner-w)
+                let end = start + end
                 if focused? && li == __row {
-                    let cursor-pos = min(__col, inner-w)
-                    let before = visible.slice(0, cursor-pos)
-                    let cur-ch = (cursor-pos < visible.width())
-                        ? visible.slice(cursor-pos, 1)
-                        : ' '
-                    let after = (cursor-pos < visible.width())
-                        ? visible.slice(cursor-pos + 1)
-                        : ''
-                    let trail = max(pad - ((cursor-pos >= visible.width()) ? 1 : 0), 0)
+                    let before = chars[start;__col].join()
+                    let past-end? = __col >= #chars
+                    let cur-ch = past-end? ? ' ' : chars[__col]
+                    let after = past-end? ? '' : chars[__col + 1;max(end, __col + 1)].join()
+                    let used = before.width() + cur-ch.width() + after.width()
                     rendered.push(str(chalk"[{clr}]{before}[/]"
-                                           "[reverse]{cur-ch}[/]"
-                                           "[{clr}]{after}[/]{' ' * trail}"))
+                                           "[{cur-spec}]{cur-ch}[/]"
+                                           "[{clr}]{after}[/]{' ' * max(inner-w - used, 0)}"))
                 } else {
-                    rendered.push(str(chalk"[{clr}]{visible}[/]{' ' * pad}"))
+                    let shown = chars[start;end].join()
+                    rendered.push(str(chalk"[{clr}]{shown}[/]{' ' * max(inner-w - shown.width(), 0)}"))
                 }
             } else {
                 rendered.push(' ' * inner-w)
             }
         }
 
-        <Box border-style="round" border-color=bc direction="column">
+        <Box look=fr cls=cls border-color=bc direction="column">
             {rendered.map(line -> <Text>{line}</Text>)}
         </Box>
     }
@@ -1456,8 +1754,12 @@ pub class Select < Component {
     color:          String | Function | nil
     selected-color: String | Function | nil
     border-color:   String | Function | nil
+    on-submit:      Function | nil
+    height:         Int | nil
+    variant:        String | nil
 
     __sel: Int
+    __top: Int = 0
 
     init(*children, %props) {
         super(*children, **props)
@@ -1469,40 +1771,97 @@ pub class Select < Component {
     selected-index -> Int { __sel }
     selected-item { (items ?? [])[__sel] }
 
+    __clamp(n: Int) {
+        __sel = (n == 0) ? 0 : __sel.clamp(0, n - 1)
+    }
+
     __emit() {
         if on-change { on-change(__sel) }
     }
 
+    __move(to: Int, n: Int) {
+        let next = to.clamp(0, n - 1)
+        if next != __sel {
+            __sel = next
+            __emit()
+        }
+    }
+
+    __item-style(sel?: Bool, d: Dict[String, _]) -> String | nil {
+        match (sel?, selected-color, color) {
+            (true, $c, _)  => "{resolve(c)} bold",
+            (false, _, $c) => resolve(c),
+            _              => d['spec']
+        }
+    }
+
+    __rows(n: Int) -> Int {
+        (height != nil) ? max(int(height) - 2, 1) : n
+    }
+
     on-event(ev) {
         let itms = items ?? []
+        let n = #itms
+        if n == 0 {
+            return Ignored
+        }
+        __clamp(n)
+        let page = __rows(n)
 
         match ev {
-            event.Key({key: 'UP', event: (1 or 2), *}) or event.Text('k') => {
-                __sel = (__sel - 1 + #itms) % #itms; __emit()
+            event.Key({key: 'UP', event: (1 or 2), *}) or event.Text('k') => do {
+                __sel = (__sel - 1 + n) % n
+                __emit()
             },
-            event.Key({key: 'DOWN', event: (1 or 2), *}) or event.Text('j') => {
-                __sel = (__sel + 1) % #itms; __emit()
+            event.Key({key: 'DOWN', event: (1 or 2), *}) or event.Text('j') => do {
+                __sel = (__sel + 1) % n
+                __emit()
             },
-            event.Key({key: 'ENTER', event: (1 or 2), *}) or event.Text(' ') => __emit(),
-            _ => ()
+            event.Key({key: 'HOME', event: (1 or 2), *})      => __move(0, n),
+            event.Key({key: 'END', event: (1 or 2), *})       => __move(n - 1, n),
+            event.Key({key: 'PAGE_UP', event: (1 or 2), *})   => __move(__sel - page, n),
+            event.Key({key: 'PAGE_DOWN', event: (1 or 2), *}) => __move(__sel + page, n),
+            event.Key({key: 'ENTER', event: 1, *}) or event.Text(' ') => do {
+                if on-submit {
+                    on-submit(__sel)
+                } else {
+                    __emit()
+                }
+            },
+            event.MouseDown({y, button: 0, *}) => __move(__top + int(y) - 2 - layout-y, n),
+            event.ScrollUp(_)   => __move(__sel - 1, n),
+            event.ScrollDown(_) => __move(__sel + 1, n),
+            _ => return Ignored
         }
+        true
     }
 
     render() -> Node {
         let itms = items ?? []
-        let clr = resolve(color, 'text')
-        let sel-clr = resolve(selected-color, 'selection')
-        let bc = resolve(border-color, focused? ? 'border-focus' : 'border')
+        __clamp(#itms)
+        let fs = focused? ? ['focused'] : []
+        let fr = part('Select', 'frame', fs, variant)
+        let bc = border-color ? resolve(border-color) : fr['border-color']
+        let bs = (fr['border'] == 'none') ? nil : fr['border']
 
-        <Box direction="column" border-style="round" border-color=bc pad-x=1>
+        let rows = __rows(#itms)
+        if __sel < __top {
+            __top = __sel
+        } else if __sel >= __top + rows {
+            __top = __sel - rows + 1
+        }
+        __top = __top.clamp(0, max(#itms - rows, 0))
+
+        <Box direction="column" border-style=bs border-color=bc pad-x=fr['pad-x'] pad-y=fr['pad-y']>
             {[
                 do {
-                    let sel? = (i == __sel)
-                    let icon = sel? ? '▸' : ' '
-                    let c = sel? ? sel-clr : clr
-                    <Text style=(sel? ? "{sel-clr} bold" : clr)>{icon} {item}</Text>
+                    let sel? = (__top + i == __sel)
+                    let sts = sel? ? [*fs, 'selected'] : fs
+                    let it = part('Select', 'item', sts, variant)
+                    let ic = part('Select', 'indicator', sts, variant)
+                    <Text style=__item-style(sel?, it)>{ic['content']} {item}</Text>
                 }
-                for item; i in itms
+                for item; i in itms[__top;__top + rows]
             ]}
         </Box>
     }
@@ -1513,6 +1872,7 @@ pub class Checkbox < Component {
     on-change: Function | nil
     label:     String | nil
     color:     String | Function | nil
+    variant:   String | nil
 
     __on: Bool
 
@@ -1527,30 +1887,32 @@ pub class Checkbox < Component {
 
     on-event(ev) {
         match ev {
-            event.Key({key: 'ENTER', event: (1 or 2), *})
+            event.Key({key: 'ENTER', event: 1, *})
             or event.Text(' ')
-            or event.Text('x') => {
+            or event.Text('x')
+            or event.MouseDown({button: 0, *}) => {
                 __on = !__on
                 if on-change { on-change(__on) }
             },
-            _ => ()
+            _ => Ignored
         }
     }
 
     render() -> Node {
-        let lbl = label ?? children.join()
-        let clr = resolve(color, focused? ? 'selection' : 'text')
-        let icon-color = __on ? 'success' : (focused? ? 'selection' : 'subtle')
-        let icon = __on ? '✓' : '○'
+        let sts = [*(focused? ? ['focused'] : []), *(__on ? ['checked'] : [])]
+        let ic = part('Checkbox', 'icon', sts, variant)
+        let lb = part('Checkbox', 'label', sts, variant)
+        let ls = color ? (focused? ? "{resolve(color)} bold" : resolve(color)) : lb['spec']
 
         <Box direction="row" gap=1>
-            <Text style=(__on ? "{icon-color} bold" : icon-color)>{icon}</Text>
-            <Text style=(focused? ? "{clr} bold" : clr)>{lbl}</Text>
+            <Text style=ic['spec']>{ic['content']}</Text>
+            <Text style=ls>{label ?? children}</Text>
         </Box>
     }
 }
 
 pub class Slider < Component {
+    variant: String | nil
     min-val:   Float | nil
     max-val:   Float | nil
     value:     Float | nil
@@ -1585,7 +1947,7 @@ pub class Slider < Component {
 
     __jump(click-x: Int) {
         if __track-w > 0 {
-            let rel = (float(click-x - __track-x) - 0.5) / float(__track-w)
+            let rel = (float(click-x - layout-x - __track-x) - 0.5) / float(__track-w)
             __val = (__mn + rel.clamp(0.0, 1.0) * (__mx - __mn))
             __emit()
         }
@@ -1612,13 +1974,19 @@ pub class Slider < Component {
             event.MouseMove({x: $mx, *}) =>
                 __jump(int(mx) - 1),
 
-            _ => ()
+            _ => Ignored
         }
     }
 
     render() -> Node {
         let total-w: Int = int(width ?? 20)
-        let clr = resolve(color, focused? ? 'selection' : 'primary')
+        let fs = focused? ? ['focused'] : []
+        let lp = part('Slider', 'label', fs, variant)
+        let fp = part('Slider', 'fill', fs, variant)
+        let hp = part('Slider', 'thumb', fs, variant)
+        let tp = part('Slider', 'track', fs, variant)
+        let vp = part('Slider', 'value', fs, variant)
+        let clr = color ? resolve(color) : nil
         let lbl = label
         let display = format ? format(__val) : "{__val:.1f}"
 
@@ -1634,9 +2002,9 @@ pub class Slider < Component {
         let filled = int(pct.clamp(0.0, 1.0) * tw)
         let empty = tw - filled
 
-        let thumb = focused? ? '◆' : '●'
-        let track-l = '━' * max(filled - 1, 0)
-        let track-r = '━' * max(empty - 1, 0)
+        let thumb = hp['content'] ?? '●'
+        let track-l = (fp['content'] ?? '━') * max(filled - 1, 0)
+        let track-r = (tp['content'] ?? '━') * max(empty - 1, 0)
 
         let on-track-click = ev -> do {
             if let event.MouseDown({x, *}) = ev.raw {
@@ -1644,29 +2012,34 @@ pub class Slider < Component {
             }
         }
 
-        let clr-bold = "{clr} bold"
+        let fill-spec = clr ?? spec-of-part(fp)
+        let thumb-spec = clr ? "{clr} bold" : spec-of-part(hp)
+        let track-spec = spec-of-part(tp)
         let track = str(
-            chalk"[{clr}]{track-l}[/]"
-                 "[{clr-bold}]{thumb}[/]"
-                 "[subtle]{track-r}[/]"
+            chalk"[{fill-spec}]{track-l}[/]"
+                 "[{thumb-spec}]{thumb}[/]"
+                 "[{track-spec}]{track-r}[/]"
         )
+        let label-look = clr ? nil : lp
+        let label-style = clr ? (focused? ? "{clr} bold" : clr) : nil
 
         if lbl {
             <Box direction="row" gap=1 on-click=on-track-click>
-                <Text style=(focused? ? clr-bold : clr)>{lbl}</Text>
+                <Text look=label-look style=label-style>{lbl}</Text>
                 <Text>{track}</Text>
-                <Text style="text-dim">{display}</Text>
+                <Text look=vp>{display}</Text>
             </Box>
         } else {
             <Box direction="row" gap=1 on-click=on-track-click>
                 <Text>{track}</Text>
-                <Text style="text-dim">{display}</Text>
+                <Text look=vp>{display}</Text>
             </Box>
         }
     }
 }
 
 pub class RangeSelector < Component {
+    variant: String | nil
     min-val:   Float | nil
     max-val:   Float | nil
     low:       Float | nil
@@ -1714,7 +2087,7 @@ pub class RangeSelector < Component {
 
     __jump(click-x: Int) {
         if __track-w > 0 {
-            let rel = (float(click-x - __track-x) - 0.5) / float(__track-w)
+            let rel = (float(click-x - layout-x - __track-x) - 0.5) / float(__track-w)
             let v = __mn + rel.clamp(0.0, 1.0) * (__mx - __mn)
             let d-lo = (v - __lo).abs
             let d-hi = (v - __hi).abs
@@ -1765,16 +2138,20 @@ pub class RangeSelector < Component {
                 if on-set { on-set(__lo, __hi) }
             },
 
-            _ => ()
+            _ => Ignored
         }
     }
 
     render() -> Node {
         let total-w: Int = int(width ?? 20)
-        let clr = resolve(
-            color,
-            focused? ? 'selection' : 'primary'
-        )
+        let fs = focused? ? ['focused'] : []
+        let lp = part('RangeSelector', 'label', fs, variant)
+        let fp = part('RangeSelector', 'fill', fs, variant)
+        let tp = part('RangeSelector', 'track', fs, variant)
+        let vp = part('RangeSelector', 'value', fs, variant)
+        let lo-p = part('RangeSelector', 'thumb', (focused? && __active == 0) ? [*fs, 'active'] : fs, variant)
+        let hi-p = part('RangeSelector', 'thumb', (focused? && __active == 1) ? [*fs, 'active'] : fs, variant)
+        let clr = color ? resolve(color) : nil
         let lbl = label
         let fmt = format ?? (v -> "{v:.1f}")
         let display = "{fmt(__lo)}–{fmt(__hi)}"
@@ -1794,14 +2171,18 @@ pub class RangeSelector < Component {
             ? int(((__hi - __mn) / rng).clamp(0.0, 1.0) * tw)
             : tw
 
-        let thumb-lo = (focused? && __active == 0) ? '◆' : '●'
-        let thumb-hi = (focused? && __active == 1) ? '◆' : '●'
+        let thumb-lo = lo-p['content'] ?? '●'
+        let thumb-hi = hi-p['content'] ?? '●'
+        let track-ch = tp['content'] ?? '━'
 
-        let seg-before = '━' * max(lo-pos, 0)
-        let seg-mid = '━' * max(hi-pos - lo-pos - 1, 0)
-        let seg-after = '━' * max(tw - hi-pos - 1, 0)
+        let seg-before = track-ch * max(lo-pos, 0)
+        let seg-mid = (fp['content'] ?? '━') * max(hi-pos - lo-pos - 1, 0)
+        let seg-after = track-ch * max(tw - hi-pos - 1, 0)
 
-        let clr-bold = "{clr} bold"
+        let fill-spec = clr ?? spec-of-part(fp)
+        let lo-spec = clr ? "{clr} bold" : spec-of-part(lo-p)
+        let hi-spec = clr ? "{clr} bold" : spec-of-part(hi-p)
+        let track-spec = spec-of-part(tp)
         let on-track-click = ev -> do {
             if let event.MouseDown({x, *}) = ev.raw {
                 __dragging? = true
@@ -1810,31 +2191,34 @@ pub class RangeSelector < Component {
         }
 
         let track = str(
-            chalk"[subtle]{seg-before}[/]"
-                 "[{clr-bold}]{thumb-lo}[/]"
-                 "[{clr}]{seg-mid}[/]"
-                 "[{clr-bold}]{thumb-hi}[/]"
-                 "[subtle]{seg-after}[/]"
+            chalk"[{track-spec}]{seg-before}[/]"
+                 "[{lo-spec}]{thumb-lo}[/]"
+                 "[{fill-spec}]{seg-mid}[/]"
+                 "[{hi-spec}]{thumb-hi}[/]"
+                 "[{track-spec}]{seg-after}[/]"
         )
+        let label-look = clr ? nil : lp
+        let label-style = clr ? (focused? ? "{clr} bold" : clr) : nil
 
         if lbl {
             <Box direction="row" gap=1 on-click=on-track-click>
-                <Text style=(focused? ? clr-bold : clr)>
+                <Text look=label-look style=label-style>
                     {lbl}
                 </Text>
                 <Text>{track}</Text>
-                <Text style="text-dim">{display}</Text>
+                <Text look=vp>{display}</Text>
             </Box>
         } else {
             <Box direction="row" gap=1 on-click=on-track-click>
                 <Text>{track}</Text>
-                <Text style="text-dim">{display}</Text>
+                <Text look=vp>{display}</Text>
             </Box>
         }
     }
 }
 
 pub class TrackBar < Component {
+    variant: String | nil
     value:     Float | nil
     min-val:   Float | nil
     max-val:   Float | nil
@@ -1869,7 +2253,7 @@ pub class TrackBar < Component {
 
     __seek(click-x: Int) {
         if __track-w > 0 {
-            let local = click-x - __track-x
+            let local = click-x - layout-x - __track-x
             let rel = 1.0 * local / __track-w
             __emit(__mn + rel * (__mx - __mn))
         }
@@ -1924,15 +2308,24 @@ pub class TrackBar < Component {
                 __seek(x - 1)
             },
 
-            _ => ()
+            _ => Ignored
         }
     }
 
     render() -> Node {
         let total-w = width ?? 40
-        let clr = color ?? 'primary'
-        let fmt = format ?? (v -> "{v:.1f}")
+        let fs = focused? ? ['focused'] : []
+        let lp = part('TrackBar', 'label', fs, variant)
+        let fp = part('TrackBar', 'fill', fs, variant)
+        let hp = part('TrackBar', 'thumb', fs, variant)
+        let tp = part('TrackBar', 'track', fs, variant)
+        let vp = part('TrackBar', 'value', fs, variant)
+        let bp = part('TrackBar', 'button', fs, variant)
         let is-playing = playing? ?? false
+        let pp = part('TrackBar', 'play', is-playing ? [*fs, 'playing'] : fs, variant)
+        let sp-p = part('TrackBar', 'speed', fs, variant)
+        let clr = color
+        let fmt = format ?? (v -> "{v:.1f}")
         let sp = __spd
 
         let display = fmt(__val)
@@ -1949,10 +2342,14 @@ pub class TrackBar < Component {
             ? int(((__val - __mn) / rng).clamp(0.0, 1.0) * max(tw - 1, 0))
             : 0
 
-        let thumb = focused? ? '◆' : '●'
-        let seg-before = '━' * max(pos, 0)
-        let seg-after  = '━' * max(tw - pos - 1, 0)
-        let clr-bold = "{clr} bold"
+        let thumb = hp['content'] ?? '●'
+        let seg-before = (fp['content'] ?? '━') * max(pos, 0)
+        let seg-after  = (tp['content'] ?? '━') * max(tw - pos - 1, 0)
+        let fill-spec = clr ?? spec-of-part(fp)
+        let thumb-spec = clr ? "{clr} bold" : spec-of-part(hp)
+        let track-spec = spec-of-part(tp)
+        let label-look = clr ? nil : lp
+        let label-style = clr ? (focused? ? "{clr} bold" : clr) : nil
 
         let on-track-click = ev -> do {
             if let event.MouseDown({x, *}) = ev.raw {
@@ -1962,50 +2359,50 @@ pub class TrackBar < Component {
         }
 
         let track-str = str(
-            chalk"[{clr}]{seg-before}[/]"
-                 "[{clr-bold}]{thumb}[/]"
-                 "[subtle]{seg-after}[/]"
+            chalk"[{fill-spec}]{seg-before}[/]"
+                 "[{thumb-spec}]{thumb}[/]"
+                 "[{track-spec}]{seg-after}[/]"
         )
 
-        let play-icon = is-playing ? '‖' : '▶'
+        let play-icon = pp['content'] ?? (is-playing ? '‖' : '▶')
         let speed-str = match sp {
             s and s == float(int(s)) and s < 0.0 => "{int(s)}×",
             s and s == float(int(s))             => "{int(s)}×",
             s                                    => "{s}×"
         }
-        let btn = focused? ? "text" : "text-dim"
 
         <Box direction="column">
             {if lbl {
                 <Box direction="row" gap=1 on-click=on-track-click>
-                    <Text style=(focused? ? clr-bold : clr)>{lbl}</Text>
+                    <Text look=label-look style=label-style>{lbl}</Text>
                     <Text>{track-str}</Text>
-                    <Text style="text-dim">{display}</Text>
+                    <Text look=vp>{display}</Text>
                 </Box>
             } else {
                 <Box direction="row" gap=1 on-click=on-track-click>
                     <Text>{track-str}</Text>
-                    <Text style="text-dim">{display}</Text>
+                    <Text look=vp>{display}</Text>
                 </Box>
             }}
             <Box direction="row" gap=1>
                 <Box on-click=(ev -> __cycle-speed(-1))>
-                    <Text style=btn>◀◀</Text>
+                    <Text look=bp>◀◀</Text>
                 </Box>
                 <Box on-click=(ev -> __toggle())>
-                    <Text style=(focused? ? clr-bold : btn)>{play-icon}</Text>
+                    <Text look=((clr && focused?) ? nil : pp) style=((clr && focused?) ? "{clr} bold" : nil)>{play-icon}</Text>
                 </Box>
                 <Box on-click=(ev -> __cycle-speed(1))>
-                    <Text style=btn>▶▶</Text>
+                    <Text look=bp>▶▶</Text>
                 </Box>
                 <Box flex=1 />
-                <Text style="text-dim">{speed-str}</Text>
+                <Text look=sp-p>{speed-str}</Text>
             </Box>
         </Box>
     }
 }
 
 pub class BarChart < Component {
+    variant: String | nil
     data:       Array[Float] | nil
     width:      Int | nil
     height:     Int | nil
@@ -2025,22 +2422,26 @@ pub class BarChart < Component {
         let h    = int(height ?? 8)
         let bw   = int(bar-width ?? 2)
         let g    = int(gap ?? 1)
-        let clr  = color ?? 'primary'
+        let clr  = color ?? (part('BarChart', 'bar', [], variant)['fg'] ?? 'primary')
+        let axis-spec = spec-of-part(part('BarChart', 'axis', [], variant))
         let clrs = colors
         let lbls = labels
         let fmt  = format ?? (v -> "{v:.1f}")
 
-        if #vs == 0 { return <Text style="text-dim">no data</Text> }
+        if #vs == 0 {
+            let ep = part('BarChart', 'empty', [], variant)
+            return <Text look=ep>{ep['content'] ?? 'no data'}</Text>
+        }
 
         let ticks = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
-        let lo = min-val ?? vs.min() ?? 0.0
-        let hi = max-val ?? vs.max() ?? 0.0
+        let lo = min-val ?? min(vs.min() ?? 0.0, 0.0)
+        let hi = max-val ?? max(vs.max() ?? 0.0, 0.0)
         let hi = max(hi, lo + 1.0e-9)
         let range = hi - lo
 
         let ya? = y-axis? ?? true
         let yw = ya? ? max(fmt(lo).width(), fmt(hi).width(), 1) + 1 : 0
-        let dim = fg-sgr('text-dim')
+        let dim = fg-sgr(axis-spec)
 
         let color-table = [fg-sgr((clrs && i < #clrs) ? clrs[i] : clr) for i in ..#vs]
 
@@ -2099,6 +2500,7 @@ pub class BarChart < Component {
 }
 
 pub class LinePlot < Component {
+    variant: String | nil
     data:    Array[Float] | nil
     series:  Array[Array[Float]] | nil
     width:   Int | nil
@@ -2144,6 +2546,7 @@ pub class LinePlot < Component {
     __eff-y-lo: Float = 0.0
     __eff-y-hi: Float = 1.0
 
+    wants-hover? -> Bool { true }
     focusable? -> Bool { true }
 
     mount() {
@@ -2305,7 +2708,7 @@ pub class LinePlot < Component {
                 invalidate!()
             },
 
-            _ => ()
+            _ => Ignored
         }
     }
 
@@ -2321,7 +2724,7 @@ pub class LinePlot < Component {
 
         let ya? = y-axis? ?? true
         let yw = ya? ? max(fmt(lo).width(), fmt(hi).width(), 1) + 1 : 0
-        let dim = fg-sgr('text-dim')
+        let dim = fg-sgr(spec-of-part(part('LinePlot', 'axis', [], variant)))
 
         if range == 0.0 || range != range { range = 1.0 }
         let pw = min(cw * cell-w, 1120)
@@ -2470,11 +2873,11 @@ pub class LinePlot < Component {
         if range == 0.0 || range != range { range = 1.0 }
         let ya? = y-axis? ?? true
         let yw = ya? ? max(fmt(lo).width(), fmt(hi).width(), 1) + 1 : 0
-        let dim = fg-sgr('text-dim')
+        let dim = fg-sgr(spec-of-part(part('LinePlot', 'axis', [], variant)))
 
         let dot-h = h * 4
         let dot-w = cw * 2
-        let dot-bits = [3, 4, 5, 6, 0, 1, 2, 7]
+        let dot-bits = [6, 7, 2, 5, 1, 4, 0, 3]
         let cells = cw * h
 
         let bits  = [0 for ..cells]
@@ -2519,7 +2922,7 @@ pub class LinePlot < Component {
         }
         let default-fg = fg-sgr(clr)
 
-        let sel-bg = resolve-bg-sgr('bg-hover')
+        let sel-bg = resolve-bg-sgr(part('LinePlot', 'selection', [], variant)['bg'] ?? 'bg-hover')
         let (sel-c0, sel-c1, sel-r0, sel-r1) = if !__drag? {
             (-1, -1, -1, -1)
         } else {
@@ -2592,7 +2995,7 @@ pub class LinePlot < Component {
 
     render() -> Node {
         let h   = int(height ?? 8)
-        let clr = color ?? 'primary'
+        let clr = color ?? (part('LinePlot', 'series', [], variant)['fg'] ?? 'primary')
         let clrs = colors
         let fmt  = format ?? (v -> "{v:.2f}")
         let do-fill = fill? ?? false
@@ -2626,7 +3029,8 @@ pub class LinePlot < Component {
         }
 
         if #all-series == 0 || all-series.all?(s -> #s == 0) {
-            return <Text style="text-dim">no data</Text>
+            let ep = part('LinePlot', 'empty', [], variant)
+            return <Text look=ep>{ep['content'] ?? 'no data'}</Text>
         }
 
         let all-vals = all-series.flat()
@@ -2641,7 +3045,8 @@ pub class LinePlot < Component {
             else if ya? { max(fmt(lo).width(), fmt(hi).width(), 1) + 1 }
             else { 0 }
         let max-len = all-series.map(s -> #s).max() ?? 0
-        let total-w = int(width ?? max(max-len / 2 + yw, 10))
+        let avail-w = (layout-max-w > 0 && layout-max-w < INF) ? layout-max-w : 80
+        let total-w = int(width ?? min(max(max-len / 2 + yw, 10), avail-w))
         let cw = max(total-w - yw, 4)
 
         __yw = yw
@@ -2661,7 +3066,7 @@ pub class LinePlot < Component {
         }
         if kitty-entry != nil { kitty-entry.x-off = yw }
 
-        let dim = fg-sgr('text-dim')
+        let dim = fg-sgr(spec-of-part(part('LinePlot', 'axis', [], variant)))
         let line-w = total-w
 
         let xl-label = if raw? && time-format != nil { time-format(eff-t0) } else { x-lo }
@@ -2695,7 +3100,7 @@ pub class LinePlot < Component {
             }
         } else if (use-kitty || raw?) && __mouse-col != nil {
             let mx = __mouse-col - yw
-            if mx >= 0 && mx < cw && #all-series > 0 {
+            if mx >= 0 && mx < cw && #all-series > 0 && #all-series[0] > 0 {
                 let frac = float(mx) / float(max(cw - 1, 1))
                 let di = int(frac * float(#all-series[0] - 1) + 0.5)
                     .clamp(0, #all-series[0] - 1)
@@ -2710,7 +3115,7 @@ pub class LinePlot < Component {
         }
 
         if use-kitty {
-            let sel-bg = resolve-bg-sgr('bg-hover')
+            let sel-bg = resolve-bg-sgr(part('LinePlot', 'selection', [], variant)['bg'] ?? 'bg-hover')
             let (sel-c0, sel-c1, sel-r0, sel-r1) = if !__drag? {
                 (-1, -1, -1, -1)
             } else {
@@ -2786,6 +3191,8 @@ pub class LinePlot < Component {
 }
 
 pub class ScrollView < Component {
+    variant: String | nil
+    cls: String | nil
     height: Int | nil
     scroll-color: String | nil
 
@@ -2807,10 +3214,10 @@ pub class ScrollView < Component {
             or event.Text('j') =>
                 __scroll += 1,
 
-            event.Key({key: 'PAGEUP', event: (1 or 2), *}) =>
+            event.Key({key: 'PAGE_UP', event: (1 or 2), *}) =>
                 __scroll = max(__scroll - h, 0),
 
-            event.Key({key: 'PAGEDOWN', event: (1 or 2), *}) =>
+            event.Key({key: 'PAGE_DOWN', event: (1 or 2), *}) =>
                 __scroll += h,
 
             event.Key({key: 'HOME', event: (1 or 2), *}) =>
@@ -2819,7 +3226,7 @@ pub class ScrollView < Component {
             event.Key({key: 'END', event: (1 or 2), *}) =>
                 __scroll = 999999,
 
-            _ => ()
+            _ => Ignored
         }
     }
 
@@ -2829,13 +3236,14 @@ pub class ScrollView < Component {
             __scroll = __scroll.clamp(0, max(scroll-total - h, 0))
         }
 
-        <Box direction="column" height=h scroll=__scroll>
+        <Box direction="column" height=h scroll=__scroll look=part('ScrollView', 'frame', focused? ? ['focused'] : [], variant) cls=cls>
             {children}
         </Box>
     }
 }
 
 pub class DatePicker < Component {
+    variant: String | nil
     value:        date.PlainDate | nil
     on-change:    Function | nil
     on-select:    Function | nil
@@ -2920,10 +3328,10 @@ pub class DatePicker < Component {
             event.Key({key: 'DOWN', event: (1 or 2), *}) or event.Text('j') =>
                 __nav(7 * date.DAY),
 
-            event.Key({key: 'PAGEUP', event: (1 or 2), *}) =>
+            event.Key({key: 'PAGE_UP', event: (1 or 2), *}) =>
                 __set-month(__year, __month - 1),
 
-            event.Key({key: 'PAGEDOWN', event: (1 or 2), *}) =>
+            event.Key({key: 'PAGE_DOWN', event: (1 or 2), *}) =>
                 __set-month(__year, __month + 1),
 
             event.Text('[') => __set-month(__year, __month - 1),
@@ -2951,7 +3359,7 @@ pub class DatePicker < Component {
             event.MouseDown({x, y, *}) =>
                 __click(int(x) - 1, int(y) - 1),
 
-            _ => ()
+            _ => Ignored
         }
     }
 
@@ -2964,11 +3372,12 @@ pub class DatePicker < Component {
         }
 
         let fd    = int(first-day ?? 0)
-        let hclr  = header-color ?? 'primary'
-        let cclr  = cursor-color ?? 'selection'
-        let tclr  = today-color ?? 'accent'
-        let dclr  = dim-color ?? 'text-dim'
-        let nclr  = color ?? 'text'
+        let fs    = focused? ? ['focused'] : []
+        let hspec = header-color ? "{header-color} bold" : spec-of-part(part('DatePicker', 'header', fs, variant))
+        let cspec = cursor-color ? "{cursor-color} reverse bold" : spec-of-part(part('DatePicker', 'day', [*fs, 'selected'], variant))
+        let tspec = today-color ? "{today-color} bold" : spec-of-part(part('DatePicker', 'day', [*fs, 'today'], variant))
+        let dclr  = dim-color ?? spec-of-part(part('DatePicker', 'weekday', fs, variant))
+        let nclr  = color ?? spec-of-part(part('DatePicker', 'day', fs, variant))
 
         let first = date.PlainDate(__year, __month, 1)
         let dim   = first.daysInMonth
@@ -2984,11 +3393,8 @@ pub class DatePicker < Component {
             'September', 'October', 'November', 'December'
         ]
 
-        let day-hdrs = if fd == 1 {
-            'Mo Tu We Th Fr Sa Su'
-        } else {
-            'Su Mo Tu We Th Fr Sa'
-        }
+        let day-names = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
+        let day-hdrs = [day-names[(fd + i) % 7] for i in ..7].join(' ')
 
         let title = "{month-names[__month]} {__year}"
         let w = 20
@@ -2997,7 +3403,7 @@ pub class DatePicker < Component {
         let rpad = pad - lpad
 
         let rows: Array[Any] = [
-            <Text style="{hclr} bold">{' ' * lpad}{title}{' ' * rpad}</Text>,
+            <Text style=hspec>{' ' * lpad}{title}{' ' * rpad}</Text>,
             <Text style=dclr>{day-hdrs}</Text>
         ]
 
@@ -3019,9 +3425,9 @@ pub class DatePicker < Component {
             let tod?  = is-today-month && d == td.day
             let label = "{d:>2}"
             let styled = if cur? {
-                str(chalk"[{cclr} reverse bold] {label} [/]")[;-1]
+                str(chalk"[{cspec}] {label}[/]")
             } else if tod? {
-                str(chalk"[{tclr} bold]{label}[/]")
+                str(chalk"[{tspec}]{label}[/]")
             } else {
                 str(chalk"[{nclr}]{label}[/]")
             }
@@ -3042,6 +3448,8 @@ pub class DatePicker < Component {
 }
 
 pub class TreeView < Component {
+    variant: String | nil
+    cls:           String | nil
     root:          Any
     children:      Any
     label:         Function
@@ -3088,7 +3496,7 @@ pub class TreeView < Component {
     }
 
     __can-expand?(node) -> Bool {
-        expandable ? expandable(node) : #(try { children(node) } catch _ { [] }) > 0
+        expandable ? expandable(node) : #children(node) > 0
     }
 
     __is-expanded?(node) -> Bool {
@@ -3120,7 +3528,7 @@ pub class TreeView < Component {
             let exp? = can? && __is-expanded?(node)
             rows.push({node: node, depth: depth, lasts: lasts, exp?: exp?, can?: can?})
             if exp? {
-                let kids = try { children(node) } catch _ { [] }
+                let kids = children(node)
                 for kid; i in kids {
                     walk(kid, depth + 1, [*lasts, i == #kids - 1])
                 }
@@ -3130,7 +3538,7 @@ pub class TreeView < Component {
         if show-root? ?? true {
             walk(__current-root, 0, [])
         } else {
-            let kids = try { children(__current-root) } catch _ { [] }
+            let kids = children(__current-root)
             for kid; i in kids {
                 walk(kid, 0, [i == #kids - 1])
             }
@@ -3244,13 +3652,13 @@ pub class TreeView < Component {
             event.Key({key: 'HOME', event: 1, *}) => move-to(0),
             event.Key({key: 'END', event: 1, *})  => move-to(n - 1),
 
-            event.Key({key: 'PAGEUP', event: (1 or 2), *}) =>
+            event.Key({key: 'PAGE_UP', event: (1 or 2), *}) =>
                 move-to(__cursor - h),
 
-            event.Key({key: 'PAGEDOWN', event: (1 or 2), *}) =>
+            event.Key({key: 'PAGE_DOWN', event: (1 or 2), *}) =>
                 move-to(__cursor + h),
 
-            _ => ()
+            _ => Ignored
         }
     }
 
@@ -3279,10 +3687,11 @@ pub class TreeView < Component {
         }
         let h = int(height ?? 20)
         let guides? = show-guides? ?? true
-        let clr = resolve(color, 'text')
-        let cur-clr = resolve(cursor-color, 'selection')
+        let fs = focused? ? ['focused'] : []
+        let clr = color ? resolve(color) : nil
+        let cur-clr = cursor-color ? resolve(cursor-color) : nil
         let cur-bg = cursor-bg ? resolve(cursor-bg, 'selection') : nil
-        let g-clr = guide-color ?? 'subtle'
+        let g-clr = guide-color ?? spec-of-part(part('TreeView', 'guide', fs, variant))
         let row-w = int(width ?? layout-max-w)
 
         if __cursor >= #__visible { __cursor = max(#__visible - 1, 0) }
@@ -3313,57 +3722,64 @@ pub class TreeView < Component {
                 guide-str = '  ' * depth
             }
 
+            let sts = sel? ? [*fs, 'selected'] : fs
+            let tog = part('TreeView', 'toggle', row.exp? ? [*sts, 'expanded'] : sts, variant)
             let exp-str = row.can?
-                ? (row.exp? ? '▾ ' : '▸ ')
+                ? (tog['content'] ?? (row.exp? ? '▾ ' : '▸ '))
                 : (icon ? "{icon(row.node)} " : '  ')
 
             let lbl = label(row.node)
-            let lbl-clr = sel? ? "{cur-clr} bold" : clr
-            let mark = (sel? && focused?) ? '▸ ' : '  '
-            let mark-clr = sel? ? "{cur-clr} bold" : 'text-dim'
+            let lbl-clr = match (sel?, cur-clr, clr) {
+                (true, $c, _)  => "{c} bold",
+                (false, _, $c) => c,
+                _              => spec-of-part(part('TreeView', 'label', sts, variant))
+            }
+            let mark-p = part('TreeView', 'mark', (sel? && focused?) ? [*sts, 'active'] : sts, variant)
+            let mark = mark-p['content'] ?? '  '
+            let mark-clr = (sel? && cur-clr != nil) ? "{cur-clr} bold" : spec-of-part(mark-p)
+            let row-bg = sel? ? (cur-bg ?? part('TreeView', 'row', sts, variant)['bg']) : nil
 
             let content=<Text>
                 <Text style=mark-clr>{mark}</Text>
                 <Text style=g-clr>{guide-str}</Text>
                 <Text style=lbl-clr>{exp-str}{lbl}</Text>
             </Text>
-            if sel? && cur-bg != nil {
-                rows.push(<Box direction="row" width=row-w bg=cur-bg>{content}</Box>)
+            if row-bg != nil {
+                rows.push(<Box direction="row" width=row-w bg=row-bg>{content}</Box>)
             } else {
                 rows.push(content)
             }
         }
 
         if #__visible == 0 {
-            rows.push(<Text style="text-dim">  (empty)</Text>)
+            let ep = part('TreeView', 'empty', fs, variant)
+            rows.push(<Text look=ep>{ep['content'] ?? '  (empty)'}</Text>)
         }
 
-        <Box direction="column" height=h width=width>
+        <Box direction="column" height=h width=width look=part('TreeView', 'frame', fs, variant) cls=cls>
             {rows}
         </Box>
     }
 }
 
 pub class Toast < Component {
+    variant: String | nil
     duration: Float | nil
     color:    String | nil
     icon:     String | nil
 
-    __visible: Bool
+    __visible: Bool = true
 
-    init(*children, %props) {
-        super(*children, **props)
-        __visible = true
+    mount() {
         after(float(duration ?? 3.0), -> do { __visible = false })
     }
 
-    render() -> Node {
-        let clr = color ?? 'success'
-        let icn = icon ?? '✓'
+    render() -> Node | nil {
+        let fr = part('Toast', 'frame', [], variant)
+        let ic = part('Toast', 'icon', [], variant)
+        let icn = icon ?? ic['content'] ?? '✓'
 
-        __visible
-            ? <Text style="{clr} bold"> {icn} {children}</Text>
-            : <Text> </Text>
+        __visible ? <Text look=(color ? nil : fr) style=(color ? "{color} bold" : nil)> {icn} {children}</Text> : nil
     }
 }
 
@@ -3462,6 +3878,10 @@ fn build-markup(children) -> String {
                     buf.push(inner)
                 }
             },
+            nil or false => (),
+            (n: Node) or (n: Component) => throw ValueError(
+                "Text children must be strings or <Text> nodes, got {type(n)}"
+            ),
             x => buf.push(chalk-escape("{x}"))
         }
     }
@@ -3473,7 +3893,7 @@ fn styled-lines(rendered: String) -> Array[String] {
         return rendered.lines() ?? [rendered]
     }
 
-    chalk.text(chalk-parse(rendered)).lines().map(str)
+    rendered.ansi-lines()
 }
 
 fn layout-text(
@@ -3485,28 +3905,44 @@ fn layout-text(
 ) -> (Output, Element) {
     let markup = build-markup(node.children)
 
-    if #markup == 0 && !node.style {
+    if #markup == 0 {
         return (Output([], 0), Element(ox, oy, 0, 0, node.props))
     }
 
-    let rendered = if let $s = node.style {
+    let spec = match (_inh-spec, node.style) {
+        (nil, s)     => s,
+        (i, nil)     => i,
+        (i, s)       => "{i} {s}"
+    }
+
+    let rendered = if let $s = spec {
         chalk.render("[{s}]{markup}[/]")
     } else {
         chalk.render(markup)
     }
-    let lines = styled-lines(rendered)
+    let lines = fit-text(styled-lines(rendered), max-w, node.props['wrap'])
     let width = lines.map(&width).max() ?? 0
-    let padded = lines.map(fmt@('%-*s', width, _))
+    let padded = lines.map(\_.fit(width))
     let output = Output(padded, width)
     (output, Element(ox, oy, width, output.height, node.props))
 }
 
+fn fit-text(lines: Array[String], max-w: Int, mode: Any) -> Array[String] {
+    if max-w >= INF || mode == 'none' || !lines.any?(\_.width() > max-w) {
+        return lines
+    }
+    match mode {
+        'truncate' => lines.map(line -> (line.width() > max-w) ? clip-line(line, max-w) : line),
+        _          => lines.flat-map(line -> (line.width() > max-w) ? (line.wrap(max(max-w, 1)).lines() ?? [line]) : [line])
+    }
+}
+
 fn pad-line(line: String, lw: Int, target-w: Int) -> String {
-    (lw >= target-w) ? line : fmt('%-*s', target-w, line)
+    (lw >= target-w) ? line : line.fit(target-w)
 }
 
 fn clip-line(line: String, target-w: Int) -> String {
-    fmt('%.*s%s', target-w, line, RST)
+    line.fit(target-w)
 }
 
 fn align-line(line: String, lw: Int, w: Int, align: String) -> String {
@@ -3514,9 +3950,9 @@ fn align-line(line: String, lw: Int, w: Int, align: String) -> String {
         return line
     }
     match align {
-        'center'       => "{line:^{w}}",
-        'end', 'right' => "{line:>{w}}",
-        _              => "{line:<{w}}"
+        'center'       => line.fit(w, 0),
+        'end', 'right' => line.fit(w, 1),
+        _              => line.fit(w)
     }
 }
 
@@ -3536,44 +3972,33 @@ fn compute-gaps(
     n: Int, content-size: Int, avail: Int,
     gap: Int, justify: String
 ) -> Array[Int] {
-    if n <= 0 { return [] }
+    if n <= 0 {
+        return []
+    }
 
-    let total-gap = avail - content-size
-    if total-gap <= 0 || justify == 'start' {
-        return [0] + [(gap) for ..n - 1]
+    let extra = avail - content-size
+    if extra <= 0 || justify == 'start' {
+        return [0] + [gap for ..n - 1]
+    }
+
+    let free = extra + gap * (n - 1)
+
+    fn spread(k: Int) -> Array[Int] {
+        let g = free / k
+        let rem = free - g * k
+        [g + ((i < rem) ? 1 : 0) for i in ..k]
     }
 
     match justify {
-        'center' => do {
-            let pad = total-gap / 2
-            let gaps = [pad]
-            for ..n - 1 { gaps.push(gap) }
-            gaps
-        },
-        'end' => do {
-            let gaps = [total-gap - gap * max(n - 1, 0)]
-            for ..n - 1 { gaps.push(gap) }
-            gaps
-        },
-        'space-between' => do {
-            if n == 1 { return [0] }
-            let g = total-gap / (n - 1)
-            let rem = total-gap - g * (n - 1)
-            let gaps = [0]
-            for i in ..n - 1 {
-                gaps.push(g + ((i < rem) ? 1 : 0))
-            }
-            gaps
-        },
+        'center' => [extra / 2] + [gap for ..n - 1],
+        'end'    => [extra] + [gap for ..n - 1],
+        'space-between' => (n == 1) ? [0] : ([0] + spread(n - 1)),
         'space-around' => do {
-            let g = total-gap / (n * 2)
-            [g for ..n]
+            let unit = free / n
+            [unit / 2] + [unit for ..n - 1]
         },
-        'space-evenly' => do {
-            let g = total-gap / (n + 1)
-            [g for ..n]
-        },
-        _ => [0] + [(gap) for ..n - 1]
+        'space-evenly' => spread(n + 1)[;n],
+        _ => [0] + [gap for ..n - 1]
     }
 }
 
@@ -3658,7 +4083,8 @@ fn stack-row(
                 _buf.push(blanks[i])
             }
         }
-        lines.push(_buf.str!())
+        let row-line = _buf.str!()
+        lines.push(use-justify ? pad-line(row-line, row-line.width(), w) : row-line)
     }
 
     (lines, w)
@@ -3668,7 +4094,7 @@ fn apply-bg(lines: Array[String], bg: String) -> Array[String] {
     let on = resolve-bg-sgr(bg)
     let off = "\x1b[49m"
     lines.map(line ->
-        "{on}{line.sub(/\x1b\[0m/, "\x1b[0m{on}").sub(/\x1b\[49m/, "\x1b[49m{on}")}{off}"
+        "{on}{line.sub(/\x1b\[(?:(?:[0-9:]*;)*(?:0|49)(?:;[0-9:]*)*)?m/, sgr -> "{sgr}{on}")}{off}"
     )
 }
 
@@ -3751,11 +4177,81 @@ fn apply-border(
     (out, total-w)
 }
 
+let __tls::_fiber-log: Array[(String, Component)] = []
+let __tls::_layout-owner: Any = nil
+
+class LayoutMemo {
+    path:       String
+    max-w:      Int
+    max-h:      Int
+    fw:         Any
+    fh:         Any
+    inh:        String | nil
+    output:     Output
+    el:         Element
+    fibers:     Array[(String, Component)]
+    focusables: Array[Any]
+    overlays:   Array[Any]
+    kitties:    Array[Int]
+    images:     Array[Any]
+
+    init(
+        path: String, max-w: Int, max-h: Int, fw: Any, fh: Any,
+        output: Output, el: Element,
+        fibers: Array[(String, Component)], focusables: Array[Any],
+        overlays: Array[Any], kitties: Array[Int], images: Array[Any]
+    ) {
+        self.path       = path
+        self.max-w      = max-w
+        self.max-h      = max-h
+        self.fw         = fw
+        self.fh         = fh
+        self.inh        = _inh-spec
+        self.output     = output
+        self.el         = el
+        self.fibers     = fibers
+        self.focusables = focusables
+        self.overlays   = overlays
+        self.kitties    = kitties
+        self.images     = images
+    }
+
+    valid?(p: String, w: Int, h: Int, fw2: Any, fh2: Any) -> Bool {
+        path == p && max-w == w && max-h == h && fw == fw2 && fh == fh2 && inh == _inh-spec
+    }
+
+    replay(ox: Int, oy: Int) -> (Output, Element) {
+        let dx = ox - el.x
+        let dy = oy - el.y
+        if dx != 0 || dy != 0 {
+            shift-element(el, dx, dy)
+        }
+        for (p, f) in fibers {
+            _next-fibers[p] = f
+            _fiber-log.push((p, f))
+        }
+        for focusables {
+            _focusables.push(it)
+        }
+        for overlays {
+            _overlays.push(it)
+        }
+        for kitties {
+            _kitties.push(it)
+        }
+        for k: _ in images {
+            _kitty-images.push({id: k.id, escape: k.escape, ox: el.x + k.rx, oy: el.y + k.ry, fresh?: false})
+        }
+        (output, el)
+    }
+}
+
 fn reconcile(comp: Component, path: String) -> Component {
     let old = _fibers[path]
     if old != nil && type(old) == type(comp) {
         old.adopt(comp)
         _next-fibers[path] = old
+        _fiber-log.push((path, old))
         old
     } else {
         if old != nil && old.mounted? {
@@ -3768,7 +4264,78 @@ fn reconcile(comp: Component, path: String) -> Component {
             comp.mount!()
         }
         _next-fibers[path] = comp
+        _fiber-log.push((path, comp))
         comp
+    }
+}
+
+class Measured {
+    output: Output
+    el: Element
+    overlays: Array[Any]
+    focusables: Array[Any]
+    kitties: Array[Any]
+
+    init(output: Output, el: Element, overlays: Array[Any], focusables: Array[Any], kitties: Array[Any]) {
+        self.output     = output
+        self.el         = el
+        self.overlays   = overlays
+        self.focusables = focusables
+        self.kitties    = kitties
+    }
+
+    replay(dx: Int, dy: Int) -> (Output, Element) {
+        shift-element(el, dx, dy)
+        for overlays {
+            _overlays.push(it)
+        }
+        for focusables {
+            _focusables.push(it)
+        }
+        for k: _ in kitties {
+            _kitty-images.push({id: k.id, escape: k.escape, ox: k.ox + dx, oy: k.oy + dy, fresh?: k.fresh?})
+        }
+        (output, el)
+    }
+}
+
+fn child-key(child: Any, i: Int) -> String {
+    let key = match child {
+        n: Node      => n.props['key'],
+        c: Component => c.?key,
+        _            => nil
+    }
+    match key {
+        k: String => "#{k}",
+        k: Int    => "#{k}",
+        _         => "{i}"
+    }
+}
+
+fn size-node(r: Any, w: Any, h: Any) -> Any {
+    if !(r :: Node) || (w == nil && h == nil) {
+        return r
+    }
+    let props = %{**r.props}
+    if w != nil {
+        props['width'] = w
+    }
+    if h != nil {
+        props['height'] = h
+    }
+    Node(r.tag, props, r.children)
+}
+
+fn sync-interval(inst: Component) {
+    let iv = inst.interval
+    if iv == inst.ink-interval-period && (iv == nil || inst.ink-interval-timer != nil) {
+        return
+    }
+    inst.ink-interval-timer.?cancel()
+    inst.ink-interval-timer = nil
+    inst.ink-interval-period = iv
+    if let $p = iv {
+        inst.ink-interval-timer = inst.every(p, -> do { inst.tick(); inst.invalidate!() })
     }
 }
 
@@ -3788,7 +4355,7 @@ fn finish-box(
     }
 
     if let $bg = bg {
-        if !target-w && max-w < INF && max-w > w {
+        if target-w == nil && max-w < INF && max-w > w {
             for line; i in lines {
                 lines[i] = pad-line(line, line.width(), max-w)
             }
@@ -3817,7 +4384,14 @@ fn layout-box(
     ox: Int,
     oy: Int
 ) -> (Output, Element) {
-    let children   = node.children
+    let children: Array[Any] = []
+    let child-keys: Array[String] = []
+    for c; i in node.children {
+        if c != nil && c != false {
+            children.push(c)
+            child-keys.push(child-key(c, i))
+        }
+    }
     let n-children = #children
     let direction  = node.direction
     let gap        = node.gap
@@ -3836,16 +4410,16 @@ fn layout-box(
 
     let outer-w = target-w ?? max-w
     let outer-h = target-h ?? max-h
-    let content-w = max(outer-w - chrome-x, 0)
-    let content-h = max(outer-h - chrome-y, 0)
+    let content-w = (outer-w >= INF) ? INF : max(outer-w - chrome-x, 0)
+    let content-h = (outer-h >= INF) ? INF : max(outer-h - chrome-y, 0)
 
     let content-ox = ox + mx + px + border-v
     let content-oy = oy + my + py + border-v
 
     if n-children == 0 {
-        let w = target-w ? content-w : 0
+        let w = (target-w != nil) ? content-w : 0
         let lines: Array[String] = []
-        if target-h {
+        if target-h != nil {
             let blank = ' ' * w
             for ..max(int(target-h) - chrome-y, 0) {
                 lines.push(blank)
@@ -3877,23 +4451,35 @@ fn layout-box(
     let child-widths: Array[Int] = []
     let child-heights: Array[Int] = []
 
+    let measured: Dict[Int, Measured] = %{}
+
     if has-flex? {
         let fixed = 0
-        let snap-ov = #_overlays
-        let snap-fc = #_focusables
-        let snap-ki = #_kitty-images
         for child; i in children if flexes[i] == nil {
-            let (o, _) = layout-node(child, content-w, content-h, "{path}.{i}", 0, 0)
+            let ov0 = #_overlays
+            let fc0 = #_focusables
+            let ki0 = #_kitty-images
+            let (o, el) = layout-node(child, content-w, content-h, "{path}.{child-keys[i]}", 0, 0)
+            measured[i] = Measured(o, el, _overlays[ov0;], _focusables[fc0;], _kitty-images[ki0;])
+            _overlays.take!(ov0)
+            _focusables.take!(fc0)
+            _kitty-images.take!(ki0)
             fixed += row? ? o.width : o.height
         }
-        _overlays.take!(snap-ov)
-        _focusables.take!(snap-fc)
-        _kitty-images.take!(snap-ki)
         let num-gaps = gap * max(n-children - 1, 0)
         let pool = max((row? ? content-w : content-h) - fixed - num-gaps, 0)
         debug!("{row? ? 'flex-row' : 'flex-col'} [{path}]: pool={pool} fixed={fixed} total-flex={total-flex}")
+        let shares: Array[Int | nil] = [
+            (f != nil && total-flex > 0) ? (pool * int(f) / total-flex) : nil
+            for f in flexes
+        ]
+        let rem = pool - (shares.map(\_ ?? 0).sum() ?? 0)
         for i in ..n-children {
-            let share = flexes[i] ? max(pool * int(flexes[i]) / total-flex, 0) : nil
+            let share = if let $sh = shares[i] {
+                let bonus = (rem > 0) ? 1 : 0
+                rem -= bonus
+                sh + bonus
+            }
             child-widths.push(row?  ? (share ?? content-w) : content-w)
             child-heights.push(row? ? content-h : (share ?? content-h))
         }
@@ -3909,46 +4495,56 @@ fn layout-box(
     let cx = content-ox
     let cy = content-oy
     let flex-prop = row? ? 'width' : 'height'
+    let pinh = _inh-spec
+    if let $own = node.inh {
+        _inh-spec = (pinh == nil) ? own : "{pinh} {own}"
+    }
 
     for child; i in children {
         let fw = child-widths[i]
         let fh = child-heights[i]
-        let child-node = if flexes[i] {
+        let cpath = "{path}.{child-keys[i]}"
+        let (out, el) = if let $m = measured[i] {
+            m.replay(cx, cy)
+        } else if flexes[i] {
             match child {
-                n: Node      => Node(n.tag, n.props + %{flex-prop: (row? ? fw : fh)}, n.children),
-                c: Component => do {
-                    if row? { c.width  = fw }
-                    else    { c.height = fh }
-                    c
-                },
-                _            => child
+                n: Node => layout-node(
+                    Node(n.tag, n.props + %{flex-prop: (row? ? fw : fh)}, n.children),
+                    fw, fh, cpath, cx, cy
+                ),
+                _ => layout-node(
+                    child, fw, fh, cpath, cx, cy,
+                    force-w=(row? ? fw : nil),
+                    force-h=(row? ? nil : fh)
+                )
             }
         } else {
-            child
+            layout-node(child, fw, fh, cpath, cx, cy)
         }
-        let (out, el) = layout-node(child-node, fw, fh, "{path}.{i}", cx, cy)
         blocks.push(out)
         child-elements.push(el)
         if row? { cx += out.width  + gap }
         else    { cy += out.height + gap }
     }
+    _inh-spec = pinh
 
-    let min-content-w: Int = target-w ? content-w : 0
-    let min-content-h: Int = target-h ? content-h : 0
+    let min-content-w: Int = (target-w != nil) ? content-w : 0
+    let min-content-h: Int = (target-h != nil) ? content-h : 0
+    let justify-h = (target-h != nil) ? content-h : 0
     let align   = node.align
     let justify = node.justify
 
     let (lines, w) = row?
         ? stack-row(blocks, gap, align, justify, content-w, min-content-h)
-        : stack-column(blocks, gap, min-content-w, align, justify, content-h)
+        : stack-column(blocks, gap, min-content-w, align, justify, justify-h)
 
     if justify != 'start' || align != 'start' {
         let do-justify = justify != 'start'
         if !row? {
             let stacked-w = max(blocks.map(&.width).max() ?? 0, min-content-w)
             let stacked-h = blocks.map(&.height).sum(0) + gap * max(n-children - 1, 0)
-            let gaps = (do-justify && content-h > 0 && content-h < INF)
-                ? compute-gaps(n-children, stacked-h, content-h, gap, justify)
+            let gaps = (do-justify && justify-h > 0 && justify-h < INF)
+                ? compute-gaps(n-children, stacked-h, justify-h, gap, justify)
                 : nil
             let dy = 0
             for el; i in child-elements {
@@ -3989,7 +4585,7 @@ fn layout-box(
         }
     }
 
-    if target-w {
+    if target-w != nil {
         if w > content-w {
             for line; i in lines if line.width() > content-w {
                 lines[i] = clip-line(line, content-w)
@@ -4003,7 +4599,7 @@ fn layout-box(
         }
     }
 
-    if target-h {
+    if target-h != nil {
         let th = max(int(target-h) - chrome-y, 0)
         let scroll-offset = node.props['scroll']
         if scroll-offset != nil {
@@ -4012,6 +4608,11 @@ fn layout-box(
             debug!("scroll [{path}]: offset={s} visible={th} total={total}")
             lines = lines[s;min(s + th, total)]
             node.props['_scroll-total'] = total
+            if s > 0 {
+                for el in child-elements {
+                    shift-element(el, 0, -s)
+                }
+            }
         }
         if #lines > th {
             lines.take!(th)
@@ -4033,22 +4634,23 @@ fn layout-overlay(node: Node, max-w: Int, max-h: Int, path: String) -> (Output, 
     let ov-w = node.width
     let ov-h = node.height
 
-    if ov-w && (child :: Node) {
-        child = Node(child.tag, %{**child.props, 'width': ov-w}, child.children)
-    }
-    if ov-h && (child :: Node) {
-        child = Node(child.tag, %{**child.props, 'height': ov-h}, child.children)
-    }
+    let sw = (_screen-w < INF) ? _screen-w : max-w
+    let sh = (_screen-h < INF) ? _screen-h : max-h
 
-    let (output, el) = layout-node(child, ov-w ?? max-w, ov-h ?? max-h, "{path}@", 0, 0)
+    let (output, el) = layout-node(
+        size-node(child, ov-w, ov-h),
+        ov-w ?? sw, ov-h ?? sh, "{path}@", 0, 0,
+        force-w=ov-w, force-h=ov-h
+    )
 
     let ov-x = node.props['x']
     let ov-y = node.props['y']
     let center = node.props['center']
 
-    let x: Int = ov-x ?? (center ? max((max-w - output.width) / 2, 0) : 0)
-    let y: Int = ov-y ?? (center ? max((max-h - output.height) / 2, 0) : 0)
+    let x: Int = ov-x ?? (center ? max((sw - output.width) / 2, 0) : 0)
+    let y: Int = ov-y ?? (center ? max((sh - output.height) / 2, 0) : 0)
 
+    shift-element(el, x, y)
     _overlays.push({output, x, y, el})
 
     (Output([], 0), Element(0, 0, 0, 0, node.props))
@@ -4060,7 +4662,9 @@ fn layout-node(
     max-h: Int = INF,
     path: String = '',
     ox: Int = 0,
-    oy: Int = 0
+    oy: Int = 0,
+    force-w: Int | nil = nil,
+    force-h: Int | nil = nil
 ) -> (Output, Element) {
     match node {
         n: Node => match n.tag {
@@ -4081,15 +4685,21 @@ fn layout-node(
                 _focusables.push(inst)
             }
 
-            if let $iv = inst.interval {
-                let exists = _timers.any?(
-                    t -> !t.canceled? && (t.owner == inst) && (t.repeat != nil)
-                )
-                if !exists {
-                    inst.every(iv, -> do { inst.tick(); inst.invalidate!() })
-                }
+            sync-interval(inst)
+            inst.ink-parent = _layout-owner
 
+            let fw = force-w ?? inst.?width
+            let fh = force-h ?? inst.?height
+
+            if !inst.dirty? and let $memo = inst.ink-memo and memo.valid?(path, max-w, max-h, fw, fh) {
+                return memo.replay(ox, oy)
             }
+
+            let fl0 = #_fiber-log
+            let fc0 = #_focusables
+            let ov0 = #_overlays
+            let ki0 = #_kitties
+            let im0 = #_kitty-images
 
             inst.layout-x = ox
             inst.layout-y = oy
@@ -4101,24 +4711,17 @@ fn layout-node(
             inst.layout-max-h = max-h
 
             let rendered = if !inst.dirty? && inst.cached-node != nil && same-constraints {
-                debug!("render {type(inst)} [{path}]: cache hit")
                 inst.cached-node
             } else {
-                let reason = inst.dirty? ? 'dirty' : (!inst.cached-node ? 'no cache' : 'constraints changed')
-                debug!("render {type(inst)} [{path}]: {reason} ({max-w}×{max-h})")
+                inst.dirty? = false
                 _ctx-stack.push(%{})
                 let r = inst.render()
-                _ctx-stack.pop()
-                if let $w = inst.?width and (r :: Node) {
-                    r = Node(r.tag, %{**r.props, 'width': w}, r.children)
-                }
-                if let $h = inst.?height and (r :: Node) {
-                    r = Node(r.tag, %{**r.props, 'height': h}, r.children)
-                }
+                inst.ink-ctx-frame = _ctx-stack.pop()
                 inst.cached-node = r
-                inst.dirty? = false
                 r
             }
+
+            let sized = size-node(rendered, fw, fh)
 
             if let $entry = inst.?kitty-entry {
                 let fresh? = entry.fresh? ?? false
@@ -4130,29 +4733,94 @@ fn layout-node(
                 entry.fresh? = false
             }
 
-            let (output, el) = layout-node(rendered, max-w, max-h, "{path}$", ox, oy)
+            _ctx-stack.push(inst.ink-ctx-frame)
+            let owner = _layout-owner
+            _layout-owner = inst
+            let (output, el) = layout-node(sized, max-w, max-h, "{path}${type(inst).__id__}", ox, oy)
+            _layout-owner = owner
+            _ctx-stack.pop()
 
             if (rendered :: Node) and let $st = rendered.props['_scroll-total'] {
                 inst.scroll-total = int(st)
             }
 
-            (output, Element(
+            let wrapper = Element(
                 ox, oy, output.width, output.height,
                 %{}, [el], component=inst
-            ))
+            )
+
+            let images: Array[Any] = []
+            for k: _ in _kitty-images[im0;] {
+                images.push({id: k.id, escape: k.escape, rx: k.ox - ox, ry: k.oy - oy})
+            }
+
+            inst.ink-memo = LayoutMemo(
+                path, max-w, max-h, fw, fh, output, wrapper,
+                _fiber-log[fl0;], _focusables[fc0;], _overlays[ov0;],
+                _kitties[ki0;], images
+            )
+
+            (output, wrapper)
         },
         nil or false => (Output([], 0), Element(ox, oy, 0, 0, %{})),
         x => do {
-            let s = "{x}"
-            (Output([s], s.width()), Element(ox, oy, s.width(), 1, %{}))
+            let ls = "{x}".lines() ?? ['']
+            let w = ls.map(&width).max() ?? 0
+            let out = Output(ls.map(fmt@('%-*s', w, _)), w)
+            (out, Element(ox, oy, w, #ls, %{}))
         }
     }
 }
 
+let __tls::_screen-w: Int = INF
+let __tls::_screen-h: Int = INF
+
+fn drop-cols(line: String, n: Int) -> String {
+    let out = Blob()
+    let col = 0
+    for tok in line.matches(/\x1b\[[0-9;:]*m|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\X/u) {
+        if tok.match?(/^\x1b/) {
+            out.push(tok)
+        } else if col >= n {
+            out.push(tok)
+        } else {
+            col += tok.width()
+            if col > n {
+                out.push(' ' * (col - n))
+            }
+        }
+    }
+    out.str!()
+}
+
+fn composite-overlays(lines: Array[String], width: Int) -> Array[String] {
+    if #_overlays == 0 {
+        return lines
+    }
+    let out: Array[String] = [*lines]
+    for ov in _overlays {
+        for piece; i in ov.output.lines {
+            let row: Int = ov.y + i
+            while #out <= row {
+                out.push(' ' * width)
+            }
+            let base: String = out[row]
+            let left = pad-line(clip-line(base, ov.x), min(base.width(), ov.x), ov.x)
+            out[row] = "{left}{RST}{piece}{RST}{drop-cols(base, ov.x + ov.output.width)}"
+        }
+    }
+    out
+}
+
 fn render-tree(root, max-w: Int, max-h: Int = INF) -> (Output, Element) {
     debug!("--- render-tree ({max-w}×{max-h}) ---")
+    _screen-w = max-w
+    _screen-h = max-h
     let prev-count = #_fibers
     _next-fibers = %{}
+    _fiber-log = []
+    _layout-owner = nil
+    _inh-spec = nil
     _focusables = []
     _overlays = []
     _kitty-images = []
@@ -4166,6 +4834,10 @@ fn render-tree(root, max-w: Int, max-h: Int = INF) -> (Output, Element) {
         }
     }
     _fibers = _next-fibers
+
+    if _focused != nil && !_focused.alive? {
+        set-focus(nil)
+    }
     debug!("render-tree: {#_fibers} fibers ({#_fibers - prev-count + unmounted} new, {unmounted} removed), {#_focusables} focusables, {#_overlays} overlays")
 
     if let $cls = _pending-focus-type {
@@ -4219,49 +4891,30 @@ fn paint-output(output: Output) {
 }
 
 fn restore-global-bg(line: String, bg: String) -> String {
-    line.sub(/\x1b\[0m/, "\x1b[0m{bg}")
-        .sub(/\x1b\[49m/, "\x1b[49m{bg}")
+    line.sub(/\x1b\[(?:(?:[0-9:]*;)*(?:0|49)(?:;[0-9:]*)*)?m/, sgr -> "{sgr}{bg}")
 }
 
 let __tls::_last-inline-height: Int = 0
 
-fn paint-inline(output: Output) {
+fn paint-inline(output: Output, cols: Int) {
     _out.clear()
-    _out.push("\x1b[?7l")
-    let new-h = #output.lines
-    let gap = _last-inline-height - new-h
+    _out.push("\x1b[?2026h\x1b[?7l")
+    let lines = composite-overlays(output.lines, cols)
     if _last-inline-height > 0 {
         _out.push("\x1b[{_last-inline-height}A\r")
     }
     _out.push("\x1b[0J")
-    if gap > 0 {
-        _out.push("\x1b[{gap}+T")
-        _out.push("\x1b[{gap}B")
-    }
     let bg = _bg-global-sgr
     let bg-off = (#bg > 0) ? "\x1b[49m" : ''
-    for line in output.lines {
+    for line in lines {
         if #bg > 0 {
             _out.push("{bg}{restore-global-bg(line, bg)}{bg-off}\n")
         } else {
             _out.push("{line}\n")
         }
     }
-    for ov in _overlays {
-        for line; i in ov.output.lines {
-            _out.push("\x1b[{ov.y + i + 1};{ov.x + 1}H")
-            if #bg > 0 {
-                _out.push("{bg}{restore-global-bg(line, bg)}{bg-off}")
-            } else {
-                _out.push(line)
-            }
-        }
-    }
-    if #_overlays > 0 {
-        _out.push("\x1b[{new-h};1H")
-    }
-    _out.push("\x1b[?7h")
-    _last-inline-height = new-h
+    _out.push("\x1b[?7h\x1b[?2026l")
+    _last-inline-height = #lines
     write(1, _out)
 }
 
@@ -4297,44 +4950,38 @@ pub fn ink-log(*args) {
     write(1, _out)
 }
 
-fn paint-fullscreen(output: Output, rows: Int = INF) {
+pub fn invalidate-screen() {
+    _screen.invalidate()
+    _prev-kitties = []
+}
+
+let __tls::_screen: Screen = Screen(0, 0)
+let __tls::_screen-touched?: Bool = false
+
+fn paint-fullscreen(output: Output, rows: Int, cols: Int) {
     _out.clear()
-    _out.push("\x1b[?7l")
+    _out.push("\x1b[?2026h\x1b[?7l")
     let old-kitties = _prev-kitties
     for id in old-kitties if id not in _kitties {
-        debug!("paint: deleting kitty id={id}")
         _out.push(kitty-delete(id))
     }
-    let bg = _bg-global-sgr
-    let bg-off = (#bg > 0) ? "\x1b[49m" : ''
-    for line; i in output.lines {
-        _out.push("\x1b[{i + 1};1H{bg}\x1b[2K")
-        if #bg > 0 {
-            _out.push("{bg}{restore-global-bg(line, bg)}{bg-off}")
-        } else {
-            _out.push(line)
-        }
+    _screen.resize(cols, rows)
+    _screen.background = _bg-global-sgr
+    if _debug-borders? || _screen-touched? {
+        _screen.touch()
     }
-    if #output.lines < rows {
-        _out.push("\x1b[{#output.lines + 1};1H{bg}\x1b[0J")
-    }
+    _screen-touched? = _debug-borders?
+    _screen.put-lines(output.lines)
     for ov in _overlays {
         for line; i in ov.output.lines {
-            _out.push("\x1b[{ov.y + i + 1};{ov.x + 1}H")
-            if #bg > 0 {
-                _out.push("{bg}{restore-global-bg(line, bg)}{bg-off}")
-            } else {
-                _out.push(line)
-            }
+            _screen.put(ov.y + i, ov.x, line)
         }
     }
+    _screen.flush(_out)
     for ki in _kitty-images {
         if ki.fresh? || ki.id not in old-kitties {
             if ki.id in old-kitties {
-                debug!("paint: replacing kitty id={ki.id}")
                 _out.push(kitty-delete(ki.id))
-            } else {
-                debug!("paint: new kitty id={ki.id} at ({ki.ox},{ki.oy})")
             }
             _out.push("\x1b[{ki.oy + 1};{ki.ox + 1}H")
             _out.push(ki.escape)
@@ -4342,7 +4989,7 @@ fn paint-fullscreen(output: Output, rows: Int = INF) {
     }
     _prev-kitties = _kitties
     _kitties = []
-    _out.push("\x1b[?7h")
+    _out.push("\x1b[?7h\x1b[?2026l")
     write(1, _out)
 }
 
@@ -4415,6 +5062,15 @@ fn paint-debug-borders(tree: Element, rows: Int) {
 
 const CTRL_C = event.Key({key: 'c', _key: nil, base: nil, mods: CTRL, event: 1, text: [3]})
 
+fn layout-key(ev) {
+    match ev {
+        event.Key({base: $b, mods: m, *} as k)
+        and (m & (term.mod.CTRL | term.mod.ALT | term.mod.SUPER)) != 0 =>
+            event.Key({*k, key: b, _key: nil}),
+        _ => ev
+    }
+}
+
 fn is-ctrl-c(ev) {
     match ev {
         event.Key({key: 'c' or 99, mods: m, *}) => (m & CTRL) != 0,
@@ -4429,58 +5085,488 @@ fn is-ctrl-l(ev) {
     }
 }
 
-fn dispatch-mouse(tree: Element, raw-ev, handler-name: String) -> Bool {
-    let (mx, my) = match raw-ev {
-        event.MouseDown( {x, y, *})  => (x, y),
-        event.MouseUp(   {x, y, *})  => (x, y),
-        event.MouseMove( {x, y, *})  => (x, y),
-        event.ScrollUp(  {x, y, *})  => (x, y),
-        event.ScrollDown({x, y, *})  => (x, y),
-        _                            => return false
+let __tls::_dragging?: Bool = false
+let __tls::_capture: Any = nil
+
+fn mouse-xy(ev) -> (Int, Int) | nil {
+    match ev {
+        event.MouseDown({x, y, *})  => (int(x) - 1, int(y) - 1),
+        event.MouseUp({x, y, *})    => (int(x) - 1, int(y) - 1),
+        event.MouseMove({x, y, *})  => (int(x) - 1, int(y) - 1),
+        event.ScrollUp({x, y, *})   => (int(x) - 1, int(y) - 1),
+        event.ScrollDown({x, y, *}) => (int(x) - 1, int(y) - 1),
+        _                           => nil
     }
+}
 
-    let $path = tree.hit(int(mx) - 1, int(my) - 1) or return false
+fn hit-path(tree: Element, x: Int, y: Int) -> Array[Element] {
+    for ov in _overlays[;;-1] {
+        if let $path = ov.el.hit(x, y) {
+            return path
+        }
+    }
+    tree.hit(x, y) ?? []
+}
 
-    let ev = InkEvent(raw-ev, target=path[0])
+fn path-components(path: Array[Element]) -> Array[Component] {
+    let comps: Array[Component] = []
+    for el in path {
+        if let $c = el.component {
+            comps.push(c)
+        }
+    }
+    comps
+}
+
+fn component-chain(el: Element, target: Component) -> Array[Component] | nil {
+    if el.component == target {
+        return [target]
+    }
+    for child in el.children {
+        if let $chain = component-chain(child, target) {
+            if let $c = el.component {
+                chain.push(c)
+            }
+            return chain
+        }
+    }
+    nil
+}
+
+fn call-prop-handlers(path: Array[Element], ev: InkEvent, name: String, app: Component) -> Bool {
     let handled? = false
-
-    for el in path while !ev.stopped? {
-        if let $handler = el.props[handler-name] {
-            debug!("dispatch-mouse: {handler-name} -> prop handler")
+    for el in path {
+        if ev.stopped? {
+            break
+        }
+        if let $handler = el.props[name] {
             handler(ev)
             handled? = true
         }
-        if let $comp = el.?component {
-            if let $handler = comp.?on-event {
-                debug!("dispatch-mouse: {handler-name} -> {type(comp)}.on-event")
-                handler(raw-ev)
-                comp.invalidate!()
-                handled? = true
-            }
-        }
     }
-
+    if handled? {
+        for path-components(path) {
+            it.invalidate!()
+        }
+        app.invalidate!()
+    }
     handled?
 }
 
-fn dispatch-key(tree: Element, focused: Element | nil, raw-ev) -> Bool {
-    let path = [focused if focused != nil]
+fn deliver(c: Component, ev) -> Exit | Ignored | Bool {
+    let $handler = c.?on-event or return Ignored
+    let r = handler(ev)
+    if r == Ignored {
+        return Ignored
+    }
+    c.invalidate!()
+    (r == Exit) ? Exit : true
+}
 
-    let ev = InkEvent(raw-ev, target=focused)
-
-    for el in path while !ev.stopped? {
-        if let $handler = el.props['onKey'] {
-            handler(ev)
-        }
-        if let $comp = ev.?component {
-            if let $handler = comp.?on-event {
-                handler(ev)
-                comp.invalidate!()
-            }
+fn bubble(comps: Array[Component], ev) -> Exit | Bool {
+    for c in comps {
+        match deliver(c, ev) {
+            Ignored => continue,
+            r       => return r
         }
     }
+    false
+}
 
-    ev.stopped?
+fn set-focus(c: Component | nil) {
+    if _focused == c {
+        return
+    }
+    debug!("focus -> {type(c)}")
+    _focused.?focus!(false)
+    _focused = c
+    c.?focus!(true)
+}
+
+fn dispatch-mouse(app: Component, tree: Element, ev) -> Exit | Bool {
+    if not let (x, y) = mouse-xy(ev) {
+        return false
+    }
+
+    let path  = hit-path(tree, x, y)
+    let comps = path-components(path)
+    let ie    = InkEvent(ev, target=((#path > 0) ? path[0] : nil))
+
+    match ev {
+        event.MouseDown({button, *}) => do {
+            let focusable = comps.filter(\_.focusable?)
+            if #focusable > 0 {
+                set-focus(focusable[0])
+            } else if !path.any?(el -> el.props['onClick'] != nil) {
+                set-focus(nil)
+            }
+            _dragging? = true
+            _capture = nil
+            if button == 0 {
+                call-prop-handlers(path, ie, 'onClick', app)
+            }
+            if ie.stopped? {
+                return true
+            }
+            for c in comps {
+                match deliver(c, ev) {
+                    Ignored => continue,
+                    Exit    => return Exit,
+                    _       => do { _capture = c; break }
+                }
+            }
+            true
+        },
+
+        event.MouseUp(_) => do {
+            let cap = _capture
+            _dragging? = false
+            _capture = nil
+            call-prop-handlers(path, ie, 'onMouseUp', app)
+            let targets = (cap != nil) ? [cap] : comps
+            (bubble(targets, ev) == Exit) ? Exit : true
+        },
+
+        event.MouseMove(_) => do {
+            let handled? = call-prop-handlers(path, ie, 'onMouseMove', app)
+            if _dragging? and let $c = _capture {
+                return (deliver(c, ev) == Exit) ? Exit : true
+            }
+            let hover = comps.filter(\_.wants-hover?)
+            if #hover > 0 && deliver(hover[0], ev) == true {
+                handled? = true
+            }
+            handled?
+        },
+
+        _ => do {
+            if call-prop-handlers(path, ie, 'onScroll', app) {
+                return true
+            }
+            bubble([*comps, app], ev)
+        }
+    }
+}
+
+fn dispatch-key(app: Component, tree: Element, ev) -> Exit | Bool {
+    match ev {
+        event.Key({event: e, *}) and e == 3 => return false,
+        event.Key({key: 'TAB', event: (1 or 2), mods: m, *})
+        and !(_focused.?handles-tab? ?? false) => do {
+            cycle-focus(reverse?=((m & SHIFT) != 0))
+            return true
+        },
+        _ => ()
+    }
+
+    let chain = if _focused.?focusable? {
+        component-chain(tree, _focused) ?? [_focused]
+    } else {
+        []
+    }
+
+    bubble([*chain, app], ev)
+}
+
+fn dispatch(app: Component, tree: Element | nil, ev, interrupt?: Bool) -> Exit | Bool {
+    if ev == Exit || ev == event.EOF || (is-ctrl-c(ev) && !interrupt?) {
+        return Exit
+    }
+
+    let $t = tree or return false
+
+    match ev {
+        event.MouseDown(_) or event.MouseUp(_) or event.MouseMove(_)
+        or event.ScrollUp(_) or event.ScrollDown(_) => dispatch-mouse(app, t, ev),
+        _ => dispatch-key(app, t, ev)
+    }
+}
+
+let __tls::_root-node: Any = nil
+
+let __tls::_app: Any = nil
+let __tls::_last-output: Output | nil = nil
+let __tls::_last-tree: Element | nil = nil
+
+fn render-root(app: Component, cols: Int, rows: Int) -> (Output, Element) {
+    _app = app
+    refresh-looks()
+    app.layout-max-w = cols
+    app.layout-max-h = rows
+    sync-interval(app)
+    app.dirty? = false
+    _ctx-stack.push(%{})
+    _root-node = app.render()
+    app.ink-ctx-frame = _ctx-stack.pop()
+    _ctx-stack.push(app.ink-ctx-frame)
+    let (out, tree) = render-tree(_root-node, cols, rows)
+    _ctx-stack.pop()
+    _last-output = out
+    _last-tree = tree
+    (out, tree)
+}
+
+const DEV_SKIP = %{
+    'width', 'height', 'children', 'focused?', 'mounted?', 'alive?', 'dirty?',
+    'cachedNode', 'scrollTotal', 'layoutX', 'layoutY', 'layoutMaxW', 'layoutMaxH',
+    'inkCtxFrame', 'inkParent', 'inkMemo', 'inkIntervalTimer', 'inkIntervalPeriod'
+}
+
+fn plain-value?(v: Any) -> Bool {
+    match v {
+        nil or (_: Int) or (_: Float) or (_: String) or (_: Bool) => true,
+        xs: Array => xs.all?(plain-value?),
+        d: Dict   => d.keys().all?(\_ :: String) && d.values().all?(plain-value?),
+        _         => false
+    }
+}
+
+fn dev-state(c: Component) -> Dict[String, Any] {
+    let ms = members(c)
+    let props: Array[String] = []
+    for name, v in ms {
+        if name.match?(/^_propNames\$/) {
+            props = v
+        }
+    }
+    let state: Dict[String, Any] = %{}
+    for name, v in ms {
+        let base = name.sub(/\$\d+$/, '')
+        if base in DEV_SKIP || base == '_propNames' || base in props || !plain-value?(v) {
+            continue
+        }
+        state[base] = v
+    }
+    state
+}
+
+fn dev-apply(c: Component, state: Dict[String, Any]) {
+    let ms = members(c)
+    for name, old in ms {
+        let base = name.sub(/\$\d+$/, '')
+        if not let $v = state[base] {
+            continue
+        }
+        if old == nil || type(old) == type(v) {
+            c.{name} = v
+        }
+    }
+}
+
+fn dev-snapshot(app: Component) -> String {
+    let fibers: Dict[String, Any] = %{}
+    for path, c in _fibers {
+        fibers[path] = %{'class': "{type(c)}", 'state': dev-state(c)}
+    }
+    let focus: String | nil = nil
+    for p, c in _fibers {
+        if c == _focused {
+            focus = p
+        }
+    }
+    json.encode(%{'root': dev-state(app), 'fibers': fibers, 'focus': focus})
+}
+
+fn dev-restore(app: Component, text: String) {
+    let snap = json.parse(text)
+    dev-apply(app, snap['root'] ?? %{})
+    for path, rec in snap['fibers'] ?? %{} {
+        if let $c = _fibers[path] and "{type(c)}" == rec['class'] {
+            dev-apply(c, rec['state'] ?? %{})
+        }
+    }
+    if let $p = snap['focus'] and let $c = _fibers[p] {
+        set-focus(c)
+    }
+    app.invalidate!()
+    invalidate-all()
+}
+
+fn fiber-paths() -> Dict[Any, String] {
+    let paths: Dict[Any, String] = %{}
+    for p, c in _fibers {
+        paths[c] = p
+    }
+    paths
+}
+
+fn dev-tree(el: Element, paths: Dict[Any, String]) -> Array[Any] {
+    let kids = el.children.flat-map(\dev-tree(_, paths))
+    match el.component {
+        nil => kids,
+        c   => [%{
+            'path':     paths[c] ?? '',
+            'type':     "{type(c)}".comb(/^<class |>$/),
+            'rect':     [el.x, el.y, el.w, el.h],
+            'focused':  c == _focused,
+            'children': kids
+        }]
+    }
+}
+
+fn dev-target(req: Dict[String, Any]) -> Component {
+    match req['path'] {
+        nil or '' => _app,
+        p         => _fibers[p] ?? throw ValueError("no component at path '{p}'")
+    }
+}
+
+fn field-key(name: String) -> String {
+    name.sub(/\$\d+$/, '').sub(/^_+/, '').sub(/-(\w)/, m -> m[1].upper())
+}
+
+fn dev-fields(c: Component) -> Dict[String, Any] {
+    let fields: Dict[String, Any] = %{}
+    for name, v in members(c) {
+        let base = name.sub(/\$\d+$/, '')
+        if base in DEV_SKIP || base == '_propNames' || !plain-value?(v) {
+            continue
+        }
+        fields[base] = v
+    }
+    fields
+}
+
+fn dev-set(c: Component, field: String, value: Any) {
+    let want = field-key(field)
+    for name, _ in members(c) {
+        if field-key(name) == want {
+            c.{name} = value
+            c.invalidate!()
+            return
+        }
+    }
+    throw ValueError("no field '{field}' on {type(c)}")
+}
+
+fn dev-key(name: String, mods: Int) -> Any {
+    event.Key({key: name, _key: nil, base: nil, mods: mods, event: 1, text: []})
+}
+
+fn dev-exec(req: Dict[String, Any]) -> Any {
+    match req['cmd'] {
+        'tree' => %{
+            'path':     '',
+            'type':     "{type(_app)}".comb(/^<class |>$/),
+            'children': dev-tree(_last-tree ?? throw ValueError('nothing rendered yet'), fiber-paths())
+        },
+        'get' => dev-fields(dev-target(req)),
+        'set' => do {
+            dev-set(dev-target(req), req['field'], req['value'])
+            true
+        },
+        'focus' => do {
+            set-focus(dev-target(req))
+            true
+        },
+        'looks' => do {
+            use-looks(req['src'] ?? '')
+            true
+        },
+        'theme' => do {
+            match req {
+                %{'name': n: String} => set-theme(n),
+                _                    => set-theme(req['tokens'] ?? %{})
+            }
+            true
+        },
+        'screen' => do {
+            let out = _last-output ?? throw ValueError('nothing rendered yet')
+            composite-overlays(out.lines, out.width).map(\_.comb(/\x1b\[[0-9;:]*m|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/))
+        },
+        'key' => do {
+            _event-queue.put(dev-key(req['key'], req['mods'] ?? 0))
+            true
+        },
+        'text' => do {
+            for ch in (req['text'] ?? '').chars() {
+                _event-queue.put(event.Text(ch))
+            }
+            true
+        },
+        'invalidate' => do {
+            invalidate-all()
+            true
+        },
+        other => throw ValueError("unknown cmd '{other}'")
+    }
+}
+
+fn dev-request(line: String) -> String {
+    let reply = SharedQueue()
+    let req = try {
+        json.parse(line)
+    } catch e {
+        return json.encode(%{'ok': false, 'error': "bad json: {e}"})
+    }
+    post(fn () {
+        let result = try {
+            %{'ok': true, 'result': dev-exec(req)}
+        } catch e {
+            %{'ok': false, 'error': "{e}"}
+        }
+        reply.put(json.encode(result))
+    })
+    reply.take()
+}
+
+let _dev-sock: (Int, String) | nil = nil
+
+fn stop-serving() {
+    if let (fd, path) = _dev-sock {
+        os.close(fd)
+        unlink(path)
+        _dev-sock = nil
+    }
+}
+
+pub fn serve(path: String) {
+    unlink(path)
+    let sock = net.listen('unix', path)
+    _dev-sock = (sock, path)
+    Thread(fn () {
+        for (;;) {
+            let (conn, _) = os.accept(sock) ?? break
+            Thread(fn () {
+                let reader = io.LineReader(conn)
+                while reader.fill() {
+                    for line in reader {
+                        if #line.trim() > 0 {
+                            write(conn, "{dev-request(line)}\n")
+                        }
+                    }
+                }
+                os.close(conn)
+            }).detach()
+        }
+    }).detach()
+}
+
+fn reset-runtime() {
+    _root-node = nil
+    for _, c in _fibers {
+        if c.alive? {
+            c.unmount!()
+        }
+    }
+    _focused            = nil
+    _timers             = []
+    _fibers             = %{}
+    _next-fibers        = %{}
+    _ctx-stack          = [%{}]
+    _focusables         = []
+    _overlays           = []
+    _prev-kitties       = []
+    _kitties            = []
+    _kitty-images       = []
+    _pending-focus-type = nil
+    _dragging?          = false
+    _capture            = nil
+    _status-claims.clear()
+    _status-sent.clear()
+    while let Some(_) = _event-queue.try-take(0) {
+        ;
+    }
 }
 
 pub fn render(root) {
@@ -4495,24 +5581,11 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
         return
     }
 
-    while let Some(_) = _event-queue.try-take(0) {
-        ;
-    }
+    reset-runtime()
 
     let tio = (_tio = term.TermIO(mouse=fullscreen, events=cast(_event-queue)))
     _inline? = !fullscreen
     let interrupt? = app.handles-interrupt?
-
-    let on-ev = app.?on-event
-
-    fn dispatch-scroll(t: Element, ev) {
-        if dispatch-mouse(t, ev, 'onScroll') || !on-ev {
-            return
-        }
-
-        app.invalidate!()
-        on-ev(ev)
-    }
 
     if fullscreen {
         _out.clear()
@@ -4531,10 +5604,24 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
 
     let dirty = true
     let tree: Element | nil = nil
-    let dragging = false
     let last-paint = 0.0
+    _dragging? = false
+    _capture = nil
 
+    let dev-snap = getenv('INK_DEV_SNAP')
+    if let $sock = getenv('INK_SOCK') {
+        serve(sock)
+    }
     signal(SIGWINCH, fn () { dirty = true })
+    if dev-snap != nil {
+        signal(os.SIGUSR1, -> _event-queue.put(DevSave))
+    }
+    let on-term = signal(os.SIGTERM)
+    let on-hup = signal(os.SIGHUP)
+    signal(os.SIGTERM, -> _event-queue.put(Exit))
+    signal(os.SIGHUP, -> _event-queue.put(Exit))
+    defer signal(os.SIGTERM, on-term)
+    defer signal(os.SIGHUP, on-hup)
     let on-interrupt = signal(os.SIGINT)
     signal(os.SIGINT, -> _event-queue.put(interrupt? ? CTRL_C : event.EOF))
     defer signal(os.SIGINT, on-interrupt)
@@ -4560,11 +5647,22 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
         } else {
             write(1, "\x1b[?25l")
         }
-        dragging = false
+        _dragging? = false
+        _capture = nil
+        invalidate-screen()
         dirty = true
     }
 
     fn cleanup() {
+        stop-serving()
+        for _, c in _fibers {
+            if c.alive? {
+                c.unmount!()
+            }
+        }
+        if app.alive? {
+            app.unmount!()
+        }
         tio.stop()
         _out.clear()
         if fullscreen {
@@ -4577,39 +5675,40 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
     }
 
     fn repaint() {
+        dirty = false
+        last-paint = now()
         let (rows, cols) = tio.size()
-        app.layout-max-w = cols
-        app.layout-max-h = rows
-        _ctx-stack.push(%{})
-        let root = app.render()
-        _ctx-stack.pop()
-        let (output, t) = render-tree(root, cols, rows)
+        let (output, t) = render-root(app, cols, rows)
         tree = t
         if fullscreen {
-            paint-fullscreen(output, rows)
+            paint-fullscreen(output, rows, cols)
         } else {
-            paint-inline(output)
+            paint-inline(output, cols)
         }
         if _debug-borders? and let $t = tree {
             paint-debug-borders(t, rows)
+            invalidate-screen()
         }
-        dirty = false
-        last-paint = now()
         sync-status(tio, app)
     }
 
     fn handle(ev) -> Bool {
+        ev = layout-key(ev)
+
+        if ev == DevSave {
+            if let $p = dev-snap {
+                Path(p).write(dev-snapshot(app))
+            }
+            return true
+        }
+
         if ev == Suspend {
             suspend-terminal()
             return false
         }
 
-        if ev == Exit || ev == event.EOF || (is-ctrl-c(ev) && !interrupt?) {
-            debug!("handle: quit")
-            return true
-        }
-
         if is-ctrl-l(ev) {
+            invalidate-screen()
             _out.clear()
             if fullscreen {
                 _out.push("\x1b[H{_bg-global-sgr}\x1b[2J")
@@ -4624,128 +5723,61 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
 
         if (ev :: event.Key) && ev.nice-name() == 'C-S-i' {
             _debug-borders? = !_debug-borders?
+            invalidate-screen()
             dirty = true
             return false
         }
 
-        if let $t = tree {
-            match ev {
-                event.MouseDown({x, y, *}) => {
-                    debug!("handle: MouseDown({x},{y})")
-                    let found-focus = false
-                    if let $path = t.hit(int(x) - 1, int(y) - 1) {
-                        for el in path {
-                            if let $c = el.component and c.focusable? {
-                                debug!("  click-focus -> {type(c)}")
-                                _focused = c
-                                found-focus = true
-                                break
-                            }
-                        }
-                    }
-                    if !found-focus {
-                        if _focused != nil { debug!("  click-unfocus (was {type(_focused)})") }
-                        _focused = nil
-                    }
-                    dragging = true
-                    dispatch-mouse(t, ev, 'onClick')
-                },
-
-                event.MouseUp(_) => {
-                    dragging = false
-                    dispatch-mouse(t, ev, 'onMouseUp')
-                },
-
-                event.MouseMove({x: $dmx, y: $dmy, *}) => {
-                    if _debug-borders? {
-                        _debug-mouse-x = int(dmx) - 1
-                        _debug-mouse-y = int(dmy) - 1
-                        dirty = true
-                    }
-                    if dragging and let $handler = _focused.?on-event {
-                        handler(ev)
-                        _focused.invalidate!()
-                    }
-                    dispatch-mouse(t, ev, 'onMouseMove')
-                },
-
-                (event.ScrollUp(_) or event.ScrollDown(_)) =>
-                    dispatch-scroll(t, ev),
-
-                _ => match ev {
-                    event.Key({key: 'TAB', event: (1 or 2), *})
-                    and _focused.?handles-tab? => {
-                        debug!("handle: TAB -> {type(_focused)} (handles-tab)")
-                        _focused.on-event(ev)
-                        _focused.invalidate!()
-                    },
-
-                    event.Key({key: 'TAB', event: (1 or 2), *}) =>
-                        cycle-focus(),
-
-                    _ => {
-                        if _focused.?focusable? and let $handler = _focused.?on-event {
-                            debug!("handle: key -> {type(_focused)}")
-                            let handled = handler(ev)
-                            _focused.invalidate!()
-                            if handled == Exit { return true }
-                        } else if on-ev
-                        && do { app.invalidate!(); on-ev(ev) } == Exit {
-                            debug!("handle: root on-event returned Exit")
-                            return true
-                        }
-                    }
-                }
-            }
+        if _debug-borders? and let event.MouseMove({x: $dmx, y: $dmy, *}) = ev {
+            _debug-mouse-x = int(dmx) - 1
+            _debug-mouse-y = int(dmy) - 1
+            dirty = true
         }
 
-        dirty = true
+        match dispatch(app, tree, ev, interrupt?) {
+            Exit => return true,
+            true => dirty = true,
+            _    => ()
+        }
+
         false
     }
-
-    if app :: Component {
-        if !app.mounted? {
-            app.mount!()
-        }
-        if let $iv = app.interval {
-            app.every(iv, app.tick)
-        }
-    }
-
-    _status-claims.clear()
-    _status-sent.clear()
 
     tio.start()
     defer cleanup()
 
+    if !app.mounted? {
+        app.mount!()
+    }
+
     repaint()
 
+    if let $p = dev-snap and Path(p).file? {
+        dev-restore(app, Path(p).read-text())
+        unlink(p)
+        repaint()
+    }
+
     for (;;) {
+        let fps = app.max-fps ?? DEFAULT_FPS
+        let frame = (fps > 0.0) ? 1.0 / fps : 0.0
         let deadline = next-timer-deadline()
-        let timeout  = deadline ? max(deadline - now(), 0.0) : 10.0
-        // Frame limiting belongs at the renderer boundary: keep consuming input,
-        // wakes, and timers, but coalesce their visual effects into one paint.
-        if dirty and let $fps = app.max-fps and fps > 0.0 {
-            timeout = min(timeout,max(last-paint + 1.0 / fps - now(),0.0))
+        let timeout = (deadline != nil) ? min(max(deadline - now(), 0.0), IDLE_POLL) : IDLE_POLL
+        if dirty {
+            timeout = min(timeout, max(last-paint + frame - now(), 0.0))
         }
 
-        debug!(
-            "poll: timers={#_timers} "
-            "timeout={show(timeout)}"
-        )
-
         while let Some(ev) = _event-queue.try-take(timeout) {
-            debug!("event: {ev}")
             timeout = 0.0
             if ev == Wake {
+                dirty = true
+            } else if let Call($f) = ev {
+                f()
                 dirty = true
             } else {
                 break break if handle(ev)
             }
-            // A continuously busy input/wake queue must not starve a frame that
-            // has reached its deadline.
-            if dirty and let $fps = app.max-fps and fps > 0.0
-            and now() - last-paint >= 1.0 / fps {
+            if dirty && now() - last-paint >= frame {
                 break
             }
         }
@@ -4754,12 +5786,8 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
             dirty = true
         }
 
-        if dirty {
-            let ready? = true
-            if let $fps = app.max-fps and fps > 0.0 {
-                ready? = now() - last-paint >= 1.0 / fps
-            }
-            if ready? { repaint() }
+        if dirty && now() - last-paint >= frame {
+            repaint()
         }
     }
 }
@@ -4770,29 +5798,21 @@ pub class TestHarness {
     __output: Output | nil
     __cols: Int
     __rows: Int
-    __on-ev: Function | nil
-    __dragging?: Bool
 
-    init(app: Component, cols: Int = 80, rows: Int = 24) {
+    init(app: Component, cols: Int = 80, rows: Int = 24, color?: Bool = true) {
         __app = app
         __cols = cols
         __rows = rows
         __tree = nil
         __output = nil
-        __dragging? = false
-        __on-ev = app.?on-event
 
-        _focused      = nil
-        _timers       = []
-        _fibers       = %{}
-        _ctx-stack    = [%{}]
-        _prev-kitties = []
-        _kitties      = []
+        reset-runtime()
+        chalk.plain? = !color?
+        _fg-cache = %{}
+        _bg-cache = %{}
+        set-theme(__theme-colors)
 
         if app :: Component {
-            if let $iv = app.interval {
-                app.every(iv, -> app.tick())
-            }
             if !app.mounted? { app.mount!() }
         }
 
@@ -4823,87 +5843,22 @@ pub class TestHarness {
     }
 
     repaint() {
-        __app.layout-max-w = __cols
-        __app.layout-max-h = __rows
-        _ctx-stack.push(%{})
-        let root = __app.render()
-        _ctx-stack.pop()
-        let (out, t) = render-tree(root, __cols, __rows)
-        __output = out
+        while let Some(ev) = _event-queue.try-take(0) {
+            if let Call($f) = ev {
+                f()
+            }
+        }
+        let (out, t) = render-root(__app, __cols, __rows)
+        __output = Output(composite-overlays(out.lines, __cols), out.width)
         __tree = t
     }
 
-    __dispatch-scroll(t: Element, ev) {
-        if dispatch-mouse(t, ev, 'onScroll') || !__on-ev {
+    __dispatch(ev) {
+        ev = layout-key(ev)
+        if is-ctrl-l(ev) {
             return
         }
-
-        __app.invalidate!()
-        __on-ev(ev)
-    }
-
-    __dispatch(ev) {
-        if ev == event.EOF || is-ctrl-c(ev) { return Exit }
-        if is-ctrl-l(ev) { return }
-
-        let $t = __tree or return
-
-        match ev {
-            event.MouseDown({x, y, *}) => do {
-                let found = false
-                if let $path = t.hit(int(x) - 1, int(y) - 1) {
-                    for el in path {
-                        if let $c = el.component and c.focusable? {
-                            _focused = c
-                            found = true
-                            break
-                        }
-                    }
-                }
-                if !found { _focused = nil }
-                __dragging? = true
-                dispatch-mouse(t, ev, 'onClick')
-            },
-
-            event.MouseUp(_) => {
-                __dragging? = false
-                dispatch-mouse(t, ev, 'onMouseUp')
-            },
-
-            event.MouseMove(_) => {
-                if __dragging? and let $handler = _focused.?on-event {
-                    handler(ev)
-                    _focused.invalidate!()
-                }
-                dispatch-mouse(t, ev, 'onMouseMove')
-            },
-
-            (event.ScrollUp(_) or event.ScrollDown(_)) =>
-                __dispatch-scroll(t, ev),
-
-            _ => match ev {
-                event.Key({key: 'TAB', event: (1 or 2), *})
-                and _focused.?handles-tab? => {
-                    _focused.on-event(ev)
-                    _focused.invalidate!()
-                },
-
-                event.Key({key: 'TAB', event: (1 or 2), *}) =>
-                    cycle-focus(),
-
-                _ => {
-                    if _focused.?focusable?
-                    and let $handler = _focused.?on-event {
-                        let handled = handler(ev)
-                        _focused.invalidate!()
-                        if handled == Exit { return Exit }
-                    } else if __on-ev
-                    && do { __app.invalidate!(); __on-ev(ev) } == Exit {
-                        return Exit
-                    }
-                }
-            }
-        }
+        (dispatch(__app, __tree, ev, __app.handles-interrupt?) == Exit) ? Exit : nil
     }
 
     send(ev) {
@@ -4940,8 +5895,8 @@ pub class TestHarness {
     del()      { send-key('DELETE') }
     home()     { send-key('HOME') }
     end()      { send-key('END') }
-    pageup()   { send-key('PAGEUP') }
-    pagedown() { send-key('PAGEDOWN') }
+    pageup()   { send-key('PAGE_UP') }
+    pagedown() { send-key('PAGE_DOWN') }
 
     find(cls) {
         for path, comp in _fibers {
@@ -4972,8 +5927,7 @@ pub class TestHarness {
     }
 
     focus!(comp: Component) {
-        _focused = comp
-        comp.focus!(true)
+        set-focus(comp)
         repaint()
     }
 

@@ -25,7 +25,7 @@ pub fn dial(
         let addr = {family: AF_UNIX, path: address}
         match connect(sock, addr) {
             0 => { return sock },
-            _ => throw OSError('connect()')
+            _ => { close(sock); throw OSError("connect('{address}')") }
         }
     }
 
@@ -66,12 +66,12 @@ pub fn listen(
 
         if bind(sock, addr) != 0 {
             close(sock)
-            throw OSError('bind()')
+            throw OSError("bind('{address}')")
         }
 
         if os.listen(sock, backlog) != 0 {
             close(sock)
-            throw OSError('listen()')
+            throw OSError("listen('{address}')")
         }
 
         return sock

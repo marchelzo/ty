@@ -256,3 +256,22 @@ pub fn right-at-end-noop() {
     h.right()
     assert(cursor(ti) == 2)
 }
+
+fn cyrillic(base: String, mods: Int = CTRL) -> event.Event {
+    let key = %{'a': 1092, 'e': 1091, 'c': 1089}[base]!
+    event.Key({key, _key: nil, base: ord(base), mods, event: 1, text: []})
+}
+
+pub fn ctrl-shortcuts-use-base-layout-key() {
+    let (h, ti) = make()
+    h.send-text('hello')
+    h.send(cyrillic('a'))
+    assert(cursor(ti) == 0)
+    h.send(cyrillic('e'))
+    assert(cursor(ti) == 5)
+}
+
+pub fn ctrl-c-with-base-layout-key-exits() {
+    let (h, ti) = make()
+    assert(h.send(cyrillic('c')) == ink.Exit)
+}

@@ -292,7 +292,7 @@ pub fn selected-box-colors-entire-subtree() {
     assert(line.starts?("{bg}{fg}"))
     assert("\x1b[38;2;234;105;98m{fg}" in line)
     assert("\x1b[38;2;169;182;101m{fg}" in line)
-    assert(h.plain-text.match?(/^danger ok\s+$/))
+    assert(h.plain-text.match?(/^ danger ok\s+$/))
 }
 
 pub fn resize() {

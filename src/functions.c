@@ -1313,6 +1313,7 @@ TY_BUILTIN_RAW(fmt)
 
         byte_vector cs = {0};
         byte_vector sb = {0};
+        byte_vector cb = {0};
 
         char *tmp = TY_TMP();
 
@@ -1397,26 +1398,24 @@ MissingArgument:
                         if (spec.sign)  scratch[si++] = '+';
 
                         int wlen;
-                        if (s_eq(spec.fill, "0") && spec.justify != 0) {
+                        if (s_eq(spec.fill, "0") && spec.justify == 1) {
                                 scratch[si++] = '0';
-                                if (spec.justify == -1) {
-                                        scratch[si++] = '-';
-                                }
                                 wlen = strlen(spec.width);
                         } else {
                                 wlen = 0;
                         }
 
-                        if (spec.prec[0] != '\0') {
-                                if (arg.type == VALUE_STRING) {
-                                        u32 cols  = max(atoll(&spec.prec[1]), 0);
-                                        u32 bytes = term_fit_cols(ss(arg), sN(arg), cols);
-                                        ty_snprintf(spec.prec, sizeof spec.prec, ".%u", bytes);
-                                } else if (arg.type == VALUE_BLOB) {
-                                        u32 cols  = max(atoll(&spec.prec[1]), 0);
-                                        u32 bytes = term_fit_cols(vv(*arg.blob), vN(*arg.blob), cols);
-                                        ty_snprintf(spec.prec, sizeof spec.prec, ".%u", bytes);
-                                }
+                        int clip = -1;
+
+                        if (
+                                (spec.prec[0] != '\0')
+                             && (
+                                        (t == 's')
+                                     || (t == 0 && arg.type != VALUE_INTEGER && arg.type != VALUE_REAL)
+                                )
+                        ) {
+                                clip = (int)max(atoll(&spec.prec[1]), 0);
+                                spec.prec[0] = '\0';
                         }
 
                         int plen = strlen(spec.prec);
@@ -1556,6 +1555,13 @@ MissingArgument:
                                         break;
                                 }
 
+                                if (clip >= 0) {
+                                        v0(cb);
+                                        term_clip(&cb, p, strlen(p), clip);
+                                        xvP(cb, '\0');
+                                        p = vv(cb);
+                                }
+
                                 ty_snprintf(tmp, TY_TMP_N, scratch, p);
                                 break;
 
@@ -1595,7 +1601,13 @@ MissingArgument:
                                 for (int i = 0; i < fp.left; ++i) {
                                         xvPn(cs, fp.fill, fp.fill_sz);
                                 }
+                                for (int i = 0; i < fp.lspace; ++i) {
+                                        xvP(cs, ' ');
+                                }
                                 xvPn(cs, tmp, tl);
+                                for (int i = 0; i < fp.rspace; ++i) {
+                                        xvP(cs, ' ');
+                                }
                                 for (int i = 0; i < fp.right; ++i) {
                                         xvPn(cs, fp.fill, fp.fill_sz);
                                 }
@@ -1609,6 +1621,7 @@ MissingArgument:
 
         xvF(cs);
         xvF(sb);
+        xvF(cb);
 
         return s;
 }
@@ -5346,7 +5359,11 @@ TY_BUILTIN_RAW(os_connect)
                         if (v == NULL) {
                                 bP("missing or invalid `path` in address: %s", VSC(&addr));
                         }
-                        memcpy(un_addr.sun_path, ss(*v), min(sN(*v), sizeof un_addr.sun_path));
+                        if (sN(*v) >= sizeof un_addr.sun_path) {
+                                errno = ENAMETOOLONG;
+                                return INTEGER(-1);
+                        }
+                        memcpy(un_addr.sun_path, ss(*v), sN(*v));
                         sa = (struct sockaddr *)&un_addr;
                         sa_len = sizeof un_addr;
                         break;
@@ -5421,7 +5438,11 @@ TY_BUILTIN_RAW(os_bind)
                 if (v == NULL || v->type != VALUE_STRING) {
                         bP("expected `path: String` in address tuple: %s", VSC(&addr));
                 }
-                memcpy(un_addr.sun_path, ss(*v), min(sN(*v), sizeof un_addr.sun_path));
+                if (sN(*v) >= sizeof un_addr.sun_path) {
+                        errno = ENAMETOOLONG;
+                        return INTEGER(-1);
+                }
+                memcpy(un_addr.sun_path, ss(*v), sN(*v));
                 return INTEGER(bind(fd, (struct sockaddr *)&un_addr, sizeof un_addr));
 #endif
         case AF_INET:
@@ -8726,19 +8747,53 @@ TY_BUILTIN_RAW(stdio_fseek)
         return INTEGER(fseek(fp, off, whence));
 }
 
-// object[T](cls: Class[T]) -> T
+static bool
+ObjectViewCompatible(Ty *ty, int class, TyObject const *obj)
+{
+        Class *want = class_get(ty, class);
+        Class *have = obj->class;
+
+        if (want == have) {
+                return true;
+        }
+
+        class_ctor(ty, class);
+
+        usize n = vN(want->fields.ids);
+
+        if ((n > obj->nslot) || (n > vN(have->fields.ids))) {
+                return false;
+        }
+
+        for (usize i = 0; i < n; ++i) {
+                if (v__(want->fields.ids, i) != v__(have->fields.ids, i)) {
+                        return false;
+                }
+        }
+
+        return true;
+}
+
+// object[T](cls: Type[T], obj: ?Object = nil) -> T
 TY_BUILTIN_RAW(object)
 {
         ASSERT_ARGC("object()", 1, 2);
 
         Value obj;
 
-        if (argc == 1) {
+        if ((argc == 1) || IsNil(ARG(1))) {
                 Value class = ARGx(0, VALUE_CLASS);
                 obj = NewInstance(class.class);
         } else {
                 Value class = ARGx(0, VALUE_CLASS);
                 Value old   = ARGx(1, VALUE_OBJECT);
+                if (!ObjectViewCompatible(ty, class.class, old.object)) {
+                        bP(
+                                "cannot view %s object as %s: field layouts differ",
+                                old.object->class->name,
+                                class_name(ty, class.class)
+                        );
+                }
                 obj = OBJECT(old.object, class.class);
         }
 
@@ -8814,6 +8869,7 @@ TY_BUILTIN_RAW(define_method)
         Value f = ARGx(2, VALUE_FUNCTION);
 
         class_add_method(ty, class.class, TY_C_STR(name), f);
+        class_refresh_offsets(ty, class.class);
 
         return NIL;
 }
@@ -8833,7 +8889,13 @@ TY_BUILTIN_RAW(apply)
 
         Value fun;
         if (self != NULL && fun0.type == VALUE_METHOD) {
-                fun = METHOD(fun0.name, &fun0, self);
+                fun = METHOD(fun0.name, fun0.method, self);
+        } else if (
+                (self != NULL)
+             && (fun0.type == VALUE_FUNCTION)
+             && (class_of(&fun0) != -1)
+        ) {
+                fun = METHOD(M_ID(name_of(&fun0)), &fun0, self);
         } else {
                 fun = fun0;
         }

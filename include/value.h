@@ -1741,6 +1741,22 @@ static inline Value *
         }
 }
 
+#define DecoratedSlot(v, c, off) ((DecoratedSlot)(ty, (v), (c), (off)))
+static inline Value *
+(DecoratedSlot)(Ty *ty, Value const *v, int c, u16 off)
+{
+        Class *class = class_get(ty, c);
+
+        if (
+                (v->type != VALUE_OBJECT)
+             || (off >= vN(class->fields.ids))
+        ) {
+                return NULL;
+        }
+
+        return ObjectMember(*v, v__(class->fields.ids, off));
+}
+
 inline static i64
 TryIntoTime(Ty *ty, char const *ctx, Value const *t, i64 factor)
 {
