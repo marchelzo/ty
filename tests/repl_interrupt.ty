@@ -1,0 +1,27 @@
+import ty.interpreter (Repl)
+
+ns test
+
+pub fn timeouts-interrupt-the-cell-and-keep-state() {
+    let repl = Repl()
+    defer repl.close()
+
+    repl.eval('let kept = 42', 5000)
+
+    let spun = repl.eval('let n = 0; while true { n += 1 }', 1000)
+    assert(!spun.reset, spun.error)
+    assert('interrupted' in (spun.error ?? ''), spun.error)
+
+    assert(repl.eval('kept', 5000).value == '42')
+    assert(repl.eval('n > 0', 5000).value == 'true')
+}
+
+pub fn swallowed-interrupts-are-repeated() {
+    let repl = Repl()
+    defer repl.close()
+
+    repl.eval('let kept = 1', 5000)
+    let r = repl.eval('try { while true { } } catch _ { () }; while true { }', 1000)
+    assert(!r.reset, r.error)
+    assert(repl.eval('kept', 5000).value == '1')
+}

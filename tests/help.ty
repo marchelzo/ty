@@ -1,0 +1,198 @@
+import ty
+import ty.mod
+import ty.types as types
+import os
+import sh (run)
+import help
+import help.corpus as corpus
+import markdown
+import chalk
+
+fn twice(x: Int) -> Int { x * 2 }
+fn twice(s: String) -> String { "{s}{s}" }
+
+ns test
+
+pub fn builtin-functions-carry-their-c-source() {
+    let f: _ = print
+    assert(f.__src__.starts?('// print('))
+    assert(f.__src__.contains?('TY_BUILTIN_RAW(print)'))
+
+    let {file, start: {line, *}, src, *} = ty.src(os.open)
+    assert(file == 'src/functions.c')
+    assert(line > 0)
+    assert(src.contains?('TY_BUILTIN_RAW(os_open)'))
+}
+
+pub fn builtin-methods-carry-their-c-source() {
+    assert((ty.method-source(String, 'split').?src ?? '').contains?('string_split('))
+    assert((ty.method-source(Array, 'map').?src ?? '').contains?('array_map('))
+    assert(ty.method-source(Dict, 'no-such-method') == nil)
+
+    let bound: _ = 'abc'.split
+    assert(bound.__src__.contains?('string_split('))
+}
+
+pub fn builtin-docs-exclude-signatures() {
+    let (_, _, text) = doc(os.exec)!
+    assert((text ?? '').starts?('See execvp(3).'))
+    assert(!(text ?? '').contains?('os.exec(argv'))
+}
+
+pub fn class-docs-survive-native-members() {
+    assert(doc(Array) :: (String, Any, Array))
+    assert(doc(String) :: (String, Any, Array))
+}
+
+pub fn type-rendering-wraps() {
+    let narrow = types.show(typeof os.spawn, width: 40)
+    let wide = types.show(typeof os.spawn)
+    assert(#narrow.lines() > 10)
+    assert(#wide.lines() == 1)
+}
+
+pub fn names-fold-across-spellings() {
+    assert(corpus.fold('read-text') == corpus.fold('readText'))
+    assert(corpus.fold('read_text') == corpus.fold('ReadText'))
+    assert(corpus.fold('_') != corpus.fold('-'))
+    assert(corpus.kebab('copyInto') == 'copy-into')
+}
+
+pub fn harvest-finds-members-sources-and-declarations() {
+    let entries = corpus.harvest('path').map(corpus.Entry)
+    let by-qual = %{}
+
+    for e in entries {
+        by-qual[e.qual] = e
+    }
+
+    let read-text = by-qual['path.Path.read-text']!
+    assert(read-text.kind == 'method')
+    assert(read-text.decl == '() -> String')
+    assert((read-text.src ?? '').starts?('read-text() -> String {'))
+    assert((read-text.line ?? 0) > 1)
+
+    assert(by-qual['path.Path']!.kind == 'class')
+    assert(by-qual['path.PathError']!.kind == 'tag')
+    assert(by-qual['path.Path.parent']!.kind == 'getter')
+    assert(by-qual['path']!.kind == 'module')
+}
+
+pub fn harvest-reads-builtin-class-declarations() {
+    let entries = corpus.harvest('prelude').map(corpus.Entry)
+    let $split = entries.find(\_.qual == 'String.split') or throw AssertionError('String.split')
+
+    assert((split.decl ?? '').lines() == [
+        '(offset: Int) -> (String, String)',
+        '(pattern: RegexV, n: ?Int) -> [RegexMatch | String]',
+        '(pattern: String | Regex, n: ?Int) -> [String]'
+    ])
+    assert(split.lang == 'c')
+    assert(entries.find(\_.qual == 'Array.count-by') != nil)
+}
+
+pub fn concurrent-commands-keep-all-output() {
+    let n = 2000000
+    let threads = [
+        Thread(-> run(['head', '-c', "{n}", '/dev/zero']).stdout)
+        for _ in ..24
+    ]
+    for t in threads {
+        assert(t.join().size() == n)
+    }
+}
+
+pub fn operator-registry-is-reflected() {
+    let defs = ty.operators('*')
+    let mixed = defs.find(d -> d.left == Int && d.right == Float)
+    assert(mixed != nil)
+    assert((mixed.?proto ?? '').contains?('-> Float'))
+    assert((ty.src(mixed.?def).?file ?? '').ends?('prelude.ty'))
+    assert(ty.operators().map(&.op).contains?('+'))
+}
+
+pub fn harvest-records-operators-and-painted-spans() {
+    let entries = corpus.harvest('path').map(corpus.Entry)
+    let ops = entries.filter(\_.kind == 'operator')
+    assert(ops.any?(\_.decl == 'Path / String -> Path'))
+    assert(ops.all?(\_.lhs == 'path.Path'))
+
+    let $copy = entries.find(\_.qual == 'path.Path.copy') or throw AssertionError('copy')
+    assert((copy.hdecl ?? '').contains?("\x1b["))
+    assert(chalk.strip(copy.hdecl ?? '') == 'copy(target: String | Path, follow-symlinks: Bool = true) -> Path')
+    assert(chalk.strip(copy.hsrc ?? '').starts?('copy(target'))
+}
+
+pub fn overloads-define-one-record-per-arm() {
+    let defs = (twice as _).__def__
+    let [[ty.Param({name: x, *})], [ty.Param({name: s, *})]] = defs.map(&.params)
+    assert((x, s) == ('x', 's'))
+    assert(defs.map(\ty.src(_).start.line) == [10, 11])
+}
+
+pub fn overloads-carry-painted-headers-and-sources() {
+    let $e = corpus.harvest-scope(ty.mod.get()).find(\_.name == 'twice') or throw AssertionError('twice')
+    assert((e.decl ?? '').lines() == ['(x: Int) -> Int', '(s: String) -> String'])
+    assert(chalk.strip(e.hdecl ?? '').lines() == ['twice(x: Int) -> Int', 'twice(s: String) -> String'])
+    assert(e.more.map(&.line) == [(e.line ?? 0) + 1])
+    assert((e.more[0].src ?? '').starts?('fn twice(s: String)'))
+}
+
+pub fn module-types-keep-their-bounds() {
+    let d: _ = Module('os').dict
+    assert(types.show(d['rm'].type).contains?('PathLike'))
+}
+
+pub fn identifiers-are-shown-in-kebab-case() {
+    assert(corpus.kebab('readText') == 'read-text')
+    assert(corpus.kebab('isRelativeTo?') == 'is-relative-to?')
+    assert(corpus.kebab('parseHTTPRequest') == 'parseHTTPRequest')
+    assert(corpus.kebab('TempFile') == 'TempFile')
+    assert(corpus.kebab('SDL_Init') == 'SDL_Init')
+    assert(corpus.camel(corpus.kebab('utf8Decode')) == 'utf8Decode')
+
+    let typed = "(?followSymlinks: Bool, x: 'fooBar') -> ty.methodSource"
+    assert(corpus.kebab-text(typed) == "(?follow-symlinks: Bool, x: 'fooBar') -> ty.method-source")
+
+    let painted = "\x1b[38;2;178;153;191mfollowSymlinks\x1b[0m: \x1b[92;1mBool\x1b[0m"
+    assert(chalk.strip(corpus.kebab-text(painted)) == 'follow-symlinks: Bool')
+}
+
+fn plain-markdown?(text: String) -> Bool {
+    !text.contains?("\x1b") && !text.contains?("\t") && !text.lines().any?(/[ \t]$/)
+}
+
+fn small-index() {
+    let entries = [*corpus.harvest('path'), *corpus.harvest('os'), *corpus.guides()]
+    help.use-index(entries.map(corpus.Entry))
+}
+
+pub fn markdown-help-is-plain-and-well-formed() {
+    small-index()
+    for query in ['Path', 'os.spawn', 'os.rm', 'match', '/', 'spwan', '', '[1, 2] + [3]'] {
+        let text = help.help-md(query)
+        assert(plain-markdown?(text), query)
+        let html = markdown.parse(text)!.render()
+        assert(html.contains?('<h1>'), query)
+    }
+
+    let card = markdown.parse(help.help-md('path.Path.read-text'))!.render()
+    assert(card.contains?('<h1><code>path.Path.read-text</code> (method in path)</h1>'))
+    assert(card.contains?('<code class="language-ty">read-text() -&gt; String'))
+    assert(card.contains?('<code>lib/path.ty:'))
+
+    let cls = markdown.parse(help.help-md('Path'))!.render()
+    assert(cls.contains?('<h2>Methods</h2>'))
+    assert(cls.contains?('<h2>Operators</h2>'))
+    assert(cls.contains?('<code>read-text() -&gt; String</code>'))
+}
+
+pub fn markdown-grep-lists-matches() {
+    small-index()
+    let text = help.grep-md('spawn')
+    assert(plain-markdown?(text))
+    assert(text.starts?('# grep `spawn`'))
+    let html = markdown.parse(text)!.render()
+    assert(html.contains?('<code>os.spawn</code> (fn in os)'))
+    assert(help.grep-md('zzzqqqxx').contains?('0 matches.'))
+}

@@ -1,0 +1,45 @@
+import ty
+import sh
+import path (Path)
+
+const SCRIPT = '''
+    class A {
+        f[T](schema: Type[T]) -> String { "schema {schema}" }
+        f() -> String { 'none' }
+        g(x: Int, y: Int) -> String { 'two' }
+        g(x: Int) -> String { 'one' }
+    }
+    fn hidden(x: _) -> _ { x }
+    print(A().f(), A().f(Int), A().g(1), A().g(1, 2), A().f(schema: Int))
+    print(hidden(nil) :: Type, hidden(nil) :: Type[Int], Int :: Type[Int], hidden(3) :: Type)
+    use Pair = (Int, Int)
+    let kind = match {
+        p: Pair => 'pair',
+        _       => 'other'
+    }
+    print(kind(hidden((1, 2))), kind(hidden((1, 'a'))), kind(hidden(nil)), kind(hidden({a: 1})))
+'''
+
+fn run(source: String, checker: String) -> String {
+    let dir  = Path('/tmp').mkdtemp('overload-arity-')
+    let file = dir / 'script.ty'
+
+    file.write(source)
+    defer dir.rmtree(quiet: true)
+
+    setenv('TY_TYPES2', checker)
+    defer setenv('TY_TYPES2', '')
+
+    sh.run([ty.executable, str(file)], timeout=30).stdout.trim()
+}
+
+ns test
+
+const EXPECTED = 'none, schema <class Int>, one, two, schema <class Int>\nfalse, false, true, false\npair, other, other, other'
+
+pub fn overloads-and-type-checks-agree-with-and-without-the-checker() {
+    for checker in ['off', 'on'] {
+        let out = run(SCRIPT, checker)
+        assert(out == EXPECTED, "TY_TYPES2={checker}: {out}")
+    }
+}

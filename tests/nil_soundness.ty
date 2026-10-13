@@ -1,0 +1,179 @@
+import support.process (FIXTURES, run)
+
+ns test
+
+fn rejects(rule: String, source: String) {
+    try {
+        __eval__(source)
+    } catch ex :: CompileError {
+        assert(rule in ex.what, ex.what)
+        return
+    }
+
+    throw AssertionError("accepted invalid program: {source}")
+}
+
+pub fn tagged-values-are-truthy() {
+    assert(Some(0) && Some(false) && Some(nil) && Some(''))
+    assert(Ok([]) && Err(0))
+    assert(!!None)
+    assert(!nil)
+    assert([Some(0), nil, Some(false)].filter(\_) == [Some(0), Some(false)])
+
+    let hits = 0
+    for _ in ..1000 {
+        if Some(0) {
+            hits += 1
+        }
+    }
+    assert(hits == 1000)
+}
+
+pub fn identifier-pattern-does-not-narrow-its-subject() {
+    rejects('[return-type]', '
+        fn bad(y: Int | nil) -> Int {
+            if let x = y {
+                return y
+            }
+            0
+        }
+    ')
+}
+
+pub fn if-let-narrows-by-pattern() {
+    fn present(y: Int | nil) -> Int {
+        if let $_ = y {
+            return y
+        }
+        0
+    }
+
+    fn tagged(x: Some[Int] | None) -> Some[Int] {
+        if not let Some(_) = x {
+            return Some(0)
+        }
+        x
+    }
+
+    fn absent(x: Some[Int] | None) -> None {
+        if let Some(_) = x {
+            return None
+        }
+        x
+    }
+
+    fn typed(y: Int | String) -> String {
+        if let n: Int = y {
+            return str(n)
+        } else {
+            return y
+        }
+    }
+
+    fn guard(y: Int | nil) -> Int {
+        let $_ = y or return -1
+        y
+    }
+
+    assert(present(3) == 3 && present(nil) == 0)
+    assert(tagged(None) == Some(0) && tagged(Some(4)) == Some(4))
+    assert(absent(None) == None)
+    assert(typed(5) == '5' && typed('s') == 's')
+    assert(guard(nil) == -1 && guard(2) == 2)
+}
+
+pub fn negated-disjunction-narrows-every-part() {
+    fn both(x: Int | nil, y: String | nil) -> String {
+        if not let $_ = x or not let $_ = y {
+            return 'missing'
+        }
+        "{x + 1} {y.upper()}"
+    }
+
+    fn plain(x: Int | nil, n: Int | nil) -> Int {
+        if not let $_ = x or n == nil {
+            return 0
+        }
+        x + n
+    }
+
+    assert(both(1, 'a') == '2 A')
+    assert(both(nil, 'a') == 'missing' && both(1, nil) == 'missing')
+    assert(plain(1, 2) == 3 && plain(1, nil) == 0)
+}
+
+pub fn while-let-narrows-by-pattern() {
+    fn total(xs: Array[Int | nil]) -> Int {
+        let sum = 0
+        let i   = 0
+        while let $_ = xs[i] {
+            sum += xs[i]!
+            i += 1
+        }
+        sum
+    }
+
+    assert(total([1, 2, 3, nil, 4]) == 6)
+}
+
+pub fn failed-pattern-keeps-the-subject-wide() {
+    rejects('[function-fallthrough]', '
+        fn bad(y: Int | String | nil) -> String {
+            if let n: Int = y {
+                return str(n)
+            }
+            y
+        }
+    ')
+}
+
+pub fn maybe-assignment-keeps-the-present-value() {
+    fn widen(x: Int | nil) -> Int {
+        x ?= 5
+        x
+    }
+
+    assert(widen(nil) == 5)
+    assert(widen(2) == 2)
+
+    let result = run(['-c', str(FIXTURES / 'nil_soundness' / 'maybe-eq-widens.ty')])
+    assert(result.status != 0)
+    assert('[function-fallthrough]' in result.stderr, result.stderr)
+}
+
+pub fn field-access-on-nil-is-rejected() {
+    rejects('[union-member-coverage]', '
+        fn bad(x: {a: Int} | nil) -> Int {
+            x.a
+        }
+    ')
+}
+
+pub fn bang-before-member-access() {
+    let xs = [{key: 2, value: 'a'}, {key: 1, value: 'b'}]
+    assert(xs.min(&.key)!.value == 'b')
+    assert((xs[0])!.value == 'a')
+    assert(3 != 4)
+}
+
+class Evens {
+    n: Int
+
+    __next__(i: Int) -> Some[Int] | None {
+        (2 * i < n) ? Some(2 * i) : None
+    }
+}
+
+class EvensFrom {
+    __iter__() -> Evens {
+        Evens(5)
+    }
+}
+
+pub fn iterator-subscripts-use-some-none() {
+    let xs: _ = [10, 11, 12, 13, 14, 15]
+    let it: _ = Evens(5)
+    assert(xs[it] == [10, 12, 14])
+    assert(xs(Evens(9)) == [Some(10), Some(12), Some(14), None, None])
+    assert(xs[EvensFrom()] == [10, 12, 14])
+}

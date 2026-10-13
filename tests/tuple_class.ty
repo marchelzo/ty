@@ -1,0 +1,9 @@
+fn pair() -> Tuple { (1, 'one') }
+fn named() -> Tuple { {id: 1, name: 'one'} }
+fn built(d: Dict) -> Tuple { tuple(**d) }
+fn either(x: Array[Int] | Tuple) -> Int { #[*x] }
+
+assert(pair() == (1, 'one'))
+assert(named() == (1, 'one'))
+assert(built(%{'k': 'v'}) == ('v',))
+assert(either((1, 2, 3)) == 3 && either([4]) == 1)

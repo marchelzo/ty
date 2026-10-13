@@ -1,0 +1,26 @@
+import ty.interpreter (Repl)
+
+fn values(cells: Array[String]) -> Array[String | nil] {
+    let repl = Repl()
+    defer repl.close()
+
+    cells.map(c -> repl.eval(c, 30000)).map(r -> r.error ?? r.value)
+}
+
+ns test
+
+pub fn realiasing-a-module-keeps-the-first-alias() {
+    let seen = values([
+        'import json',
+        'import json as goat-json',
+        'json.encode([1])',
+        'goat-json.encode([2])'
+    ])
+
+    assert(seen[2;] == ['[1]', '[2]'], seen)
+}
+
+pub fn reimporting-a-module-is-forgiven() {
+    let seen = values(['import json', 'import json', 'json.encode(3)'])
+    assert(seen[2] == '3', seen)
+}

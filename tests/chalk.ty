@@ -1,0 +1,791 @@
+import chalk (Chalk, Text, chalk, strip, escape, trans, parse, hslToRgb, hsl-hex, hash-hsl)
+
+ns test
+
+let ESC = "\x1b"
+
+let ink = Chalk()
+
+fn ansi(t: Text) -> String {
+    t.chalk.render(t.src, plain: false)
+}
+
+pub fn test-escape-brackets() {
+    assert(escape('[hello]') == '\\[hello]')
+}
+
+pub fn test-escape-backslash() {
+    assert(escape('a\\b') == 'a\\\\b')
+}
+
+pub fn test-escape-no-change() {
+    assert(escape('hello world') == 'hello world')
+}
+
+pub fn test-strip-sgr() {
+    let styled = "{ESC}[1mhello{ESC}[0m"
+    assert(strip(styled) == 'hello')
+}
+
+pub fn test-strip-multiple-sgr() {
+    let styled = "{ESC}[1m{ESC}[31mhello{ESC}[0m"
+    assert(strip(styled) == 'hello')
+}
+
+pub fn test-strip-plain-text() {
+    assert(strip('hello') == 'hello')
+}
+
+pub fn test-strip-osc8() {
+    let linked = "{ESC}]8;;https://example.com{ESC}\\hello{ESC}]8;;{ESC}\\"
+    assert(strip(linked) == 'hello')
+}
+
+pub fn test-strip-sgr-and-osc8() {
+    let text = "{ESC}[1m{ESC}]8;;https://x.com{ESC}\\hello{ESC}]8;;{ESC}\\{ESC}[0m"
+    assert(strip(text) == 'hello')
+}
+
+pub fn test-trans-empty-to-empty() {
+    assert(trans({}, {}) == '')
+}
+
+pub fn test-trans-bold-on() {
+    let result = trans({}, {bold: true})
+    assert(result == "{ESC}[1m")
+}
+
+pub fn test-trans-bold-off() {
+    let result = trans({bold: true}, {})
+    assert(result == "{ESC}[22m")
+}
+
+pub fn test-trans-italic-on() {
+    let result = trans({}, {italic: true})
+    assert(result == "{ESC}[3m")
+}
+
+pub fn test-trans-fg-color() {
+    let result = trans({}, {fg: [31]})
+    assert(result == "{ESC}[31m")
+}
+
+pub fn test-trans-rgb-fg() {
+    let result = trans({}, {fg: [38, 2, 255, 0, 0]})
+    assert(result == "{ESC}[38;2;255;0;0m")
+}
+
+pub fn test-trans-link-open() {
+    let result = trans({}, {link: 'https://example.com'})
+    assert(result == "{ESC}]8;;https://example.com{ESC}\\")
+}
+
+pub fn test-trans-link-close() {
+    let result = trans({link: 'https://example.com'}, {})
+    assert(result == "{ESC}]8;;{ESC}\\")
+}
+
+pub fn test-trans-link-change() {
+    let result = trans({link: 'https://a.com'}, {link: 'https://b.com'})
+    assert(result == "{ESC}]8;;https://b.com{ESC}\\")
+}
+
+pub fn test-trans-link-same() {
+    let result = trans({link: 'https://x.com'}, {link: 'https://x.com'})
+    assert(result == '')
+}
+
+pub fn test-trans-bold-and-link() {
+    let result = trans({}, {bold: true, link: 'https://x.com'})
+    assert("{ESC}[1m" in result)
+    assert("{ESC}]8;;https://x.com{ESC}\\" in result)
+}
+
+pub fn test-render-plain-text() {
+    let result = chalk.render('hello', plain: false)
+    assert('hello' in result)
+}
+
+pub fn test-render-bold() {
+    let result = chalk.render('[bold]hello[/]', plain: false)
+    assert("{ESC}[1m" in result)
+    assert('hello' in result)
+}
+
+pub fn test-render-italic() {
+    let result = chalk.render('[italic]hello[/]', plain: false)
+    assert("{ESC}[3m" in result)
+}
+
+pub fn test-render-named-color() {
+    let result = chalk.render('[red]hello[/]', plain: false)
+    assert("{ESC}[31m" in result)
+}
+
+pub fn test-render-hex-color() {
+    let result = chalk.render('[#ff0000]hello[/]', plain: false)
+    assert("{ESC}[38;2;255;0;0m" in result)
+}
+
+pub fn test-render-bg-color() {
+    let result = chalk.render('[bg-red]hello[/]', plain: false)
+    assert("{ESC}[41m" in result)
+}
+
+pub fn test-render-underline() {
+    let result = chalk.render('[u]hello[/]', plain: false)
+    assert('hello' in result)
+}
+
+pub fn test-render-combined-styles() {
+    let result = chalk.render('[bold red]hello[/]', plain: false)
+    let has-style = "{ESC}[1m" in result || "{ESC}[31m" in result
+    assert(has-style)
+    assert('hello' in result)
+}
+
+pub fn test-render-nested-styles() {
+    let result = chalk.render('[bold][red]hello[/][/]', plain: false)
+    assert('hello' in result)
+}
+
+pub fn test-render-close-all() {
+    let result = chalk.render('[bold][red]hello[//]', plain: false)
+    assert('hello' in result)
+}
+
+pub fn test-render-close-named() {
+    let result = chalk.render('[bold red]hello[/bold]world[/]', plain: false)
+    assert('hello' in result)
+    assert('world' in result)
+}
+
+pub fn test-render-plain-mode() {
+    let result = chalk.render('[bold red]hello[/]', plain=true)
+    assert(result == 'hello')
+}
+
+pub fn test-render-plain-mode-no-escapes() {
+    let result = chalk.render('[bold][link=https://x.com]hello[/][/]', plain=true)
+    assert(ESC not in result)
+    assert(result == 'hello')
+}
+
+pub fn test-render-link-basic() {
+    let result = chalk.render('[link=https://example.com]click here[/link]', plain: false)
+    assert("{ESC}]8;;https://example.com{ESC}\\" in result)
+    assert('click here' in result)
+    assert("{ESC}]8;;{ESC}\\" in result)
+}
+
+pub fn test-render-link-with-styles() {
+    let result = chalk.render('[bold link=https://example.com]click[/]', plain: false)
+    assert("{ESC}[1m" in result)
+    assert("{ESC}]8;;https://example.com{ESC}\\" in result)
+    assert('click' in result)
+}
+
+pub fn test-render-link-close-all() {
+    let result = chalk.render('[link=https://x.com]hello[/]', plain: false)
+    // After [/], the link should be closed
+    assert("{ESC}]8;;{ESC}\\" in result)
+}
+
+pub fn test-render-link-close-named() {
+    let result = chalk.render('[bold][link=https://x.com]hello[/link] world[/]', plain: false)
+    let parts = result.split("{ESC}]8;;{ESC}\\")
+    // Link should close after "hello", bold should continue for "world"
+    assert('hello' in result)
+    assert('world' in result)
+}
+
+pub fn test-render-link-nested-in-style() {
+    let result = chalk.render('[red][link=https://x.com]click[/link] more[/]', plain: false)
+    assert("{ESC}]8;;https://x.com{ESC}\\" in result)
+    assert('click' in result)
+    assert('more' in result)
+}
+
+pub fn test-render-link-plain-mode() {
+    let result = chalk.render('[link=https://example.com]click[/link]', plain=true)
+    assert(result == 'click')
+    assert(ESC not in result)
+}
+
+pub fn test-render-link-stripped() {
+    let result = chalk.render('[link=https://x.com]hello[/link]', plain: false)
+    assert(strip(result) == 'hello')
+}
+
+pub fn test-render-multiple-links() {
+    let result = chalk.render('[link=https://a.com]A[/link] [link=https://b.com]B[/link]', plain: false)
+    assert("{ESC}]8;;https://a.com{ESC}\\" in result)
+    assert("{ESC}]8;;https://b.com{ESC}\\" in result)
+    assert('A' in result)
+    assert('B' in result)
+}
+
+pub fn test-render-link-with-path() {
+    let url = 'https://example.com/path/to/page?q=1&r=2#section'
+    let result = chalk.render("[link={url}]page[/link]", plain: false)
+    assert("{ESC}]8;;{url}{ESC}\\" in result)
+}
+
+pub fn test-parse-bold-ansi() {
+    let ansi = "{ESC}[1mhello{ESC}[0m"
+    let result = parse(ansi)
+    let has-bold = '[b]' in result || '[bold]' in result
+    assert(has-bold)
+    assert('hello' in result)
+}
+
+pub fn test-parse-roundtrip-plain() {
+    let src = '[bold red]hello[/]'
+    let rendered = chalk.render(src, plain: false)
+    let chalked = parse(rendered)
+    let re-rendered = chalk.render(chalked, plain: false)
+    // Stripping both should give the same text
+    assert(strip(rendered) == strip(re-rendered))
+}
+
+pub fn test-parse-osc8-roundtrip() {
+    let src = '[link=https://example.com]click here[/link]'
+    let rendered = chalk.render(src, plain: false)
+    let chalked = parse(rendered)
+    let re-rendered = chalk.render(chalked, plain: false)
+    assert(strip(rendered) == strip(re-rendered))
+    assert("{ESC}]8;;https://example.com{ESC}\\" in re-rendered)
+    assert("{ESC}]8;;{ESC}\\" in re-rendered)
+}
+
+pub fn test-parse-osc8-with-styles-roundtrip() {
+    let src = '[bold][link=https://x.com]click[/link] plain[/]'
+    let rendered = chalk.render(src, plain: false)
+    let chalked = parse(rendered)
+    let re-rendered = chalk.render(chalked, plain: false)
+    assert(strip(rendered) == strip(re-rendered))
+    assert("{ESC}]8;;https://x.com{ESC}\\" in re-rendered)
+}
+
+pub fn test-render-dynamic-style-name() {
+    let color = 'red'
+    let result = "[{color}]hello[/]".chalk()
+    assert("{ESC}[31m" in result)
+    assert(strip(result) == 'hello')
+}
+
+pub fn test-render-dynamic-hex-style() {
+    let color = '#ff8000'
+    let result = "[{color}]hello[/]".chalk()
+    assert("{ESC}[38;2;255;128;0m" in result)
+    assert(strip(result) == 'hello')
+}
+
+pub fn test-render-multi-word-close() {
+    let result = "[bright green]hello[/bright green] world".chalk()
+    assert(strip(result) == 'hello world')
+    assert("{ESC}[32m" not in result || result.count("{ESC}[") >= 2)
+}
+
+pub fn test-render-nested-color-override() {
+    let result = "[red]a [blue]b[/fg] c[/]".chalk()
+    let plain = strip(result)
+    assert(plain == 'a b c')
+    assert("{ESC}[31m" in result)
+    assert("{ESC}[34m" in result)
+}
+
+pub fn test-render-nested-color-restore() {
+    let result = "[red]before [blue]inner[/blue] after[/]".chalk()
+    let segs = strip(result)
+    assert(segs == 'before inner after')
+}
+
+pub fn test-render-bold-inside-color() {
+    let result = "[red][b]bold red[/b] just red[/]".chalk()
+    let plain = strip(result)
+    assert(plain == 'bold red just red')
+    assert("{ESC}[1m" in result)
+    assert("{ESC}[22m" in result)
+}
+
+pub fn test-render-reverse() {
+    let result = "[reverse]hello[/]".chalk()
+    assert("{ESC}[7m" in result)
+    assert("{ESC}[27m" in result)
+}
+
+pub fn test-render-dim() {
+    let result = "[dim]hello[/]".chalk()
+    assert(strip(result) == 'hello')
+}
+
+pub fn test-render-combined-dynamic() {
+    let clr = '#aabbcc'
+    let result = "[{clr} bold]styled[/]".chalk()
+    assert("{ESC}[38;2;170;187;204m" in result)
+    assert("{ESC}[1m" in result)
+    assert(strip(result) == 'styled')
+}
+
+pub fn test-render-combined-reverse-bold() {
+    let cclr = 'cyan'
+    let result = "[{cclr} reverse bold]hello[/]".chalk()
+    assert("{ESC}[36m" in result)
+    assert("{ESC}[7m" in result)
+    assert("{ESC}[1m" in result)
+    assert(strip(result) == 'hello')
+}
+
+pub fn test-render-bright-color() {
+    let result = "[bright red]hello[/]".chalk()
+    assert("{ESC}[91m" in result)
+    assert(strip(result) == 'hello')
+}
+
+pub fn test-render-bright-bg-color() {
+    let result = "[bg-bright bg-red]hello[/]".chalk()
+    assert("{ESC}[101m" in result)
+    assert(strip(result) == 'hello')
+}
+
+pub fn test-render-underline-variants() {
+    assert("{ESC}[4m" in "[u]a[/]".chalk())
+    assert("{ESC}[4:2m" in "[uu]a[/]".chalk())
+    assert("{ESC}[4:3m" in "[u~]a[/]".chalk())
+    assert("{ESC}[4:4m" in "[u.]a[/]".chalk())
+    assert("{ESC}[4:5m" in "[u-]a[/]".chalk())
+}
+
+pub fn test-render-bg-hex-color() {
+    let result = "[bg-#00ff00]hello[/]".chalk()
+    assert("{ESC}[48;2;0;255;0m" in result)
+}
+
+pub fn test-render-bg-named-colors() {
+    assert("{ESC}[41m" in "[bg-red]a[/]".chalk())
+    assert("{ESC}[44m" in "[bg-blue]a[/]".chalk())
+    assert("{ESC}[42m" in "[bg-green]a[/]".chalk())
+    assert("{ESC}[46m" in "[bg-cyan]a[/]".chalk())
+}
+
+pub fn test-render-short-hex() {
+    let result = "[#f80]hello[/]".chalk()
+    assert("{ESC}[38;2;255;136;0m" in result)
+}
+
+pub fn test-render-triple-close() {
+    let result = "[b][i][u]hello[///]".chalk()
+    let plain = strip(result)
+    assert(plain == 'hello')
+    assert("{ESC}[1m" in result)
+    assert("{ESC}[3m" in result)
+    assert("{ESC}[4m" in result)
+}
+
+pub fn test-render-selective-close-fg() {
+    let result = "[b][red]hello[/fg] still bold[/]".chalk()
+    let plain = strip(result)
+    assert(plain == 'hello still bold')
+    assert("{ESC}[39m" in result)
+}
+
+pub fn test-render-selective-close-bold() {
+    let result = "[red][b]hello[/bold] still red[/]".chalk()
+    let plain = strip(result)
+    assert(plain == 'hello still red')
+    assert("{ESC}[22m" in result)
+}
+
+pub fn test-render-selective-close-bg() {
+    let result = "[bg-red][b]hello[/bg] no bg[/]".chalk()
+    let plain = strip(result)
+    assert(plain == 'hello no bg')
+    assert("{ESC}[49m" in result)
+}
+
+pub fn test-render-format-spec-right-align() {
+    let result = "[%20]hi[/]".chalk()
+    let plain = strip(result)
+    assert(#plain == 20)
+    assert(plain == '                  hi')
+}
+
+pub fn test-render-format-spec-left-align() {
+    let result = "[%-20]hi[/]".chalk()
+    let plain = strip(result)
+    assert(#plain == 20)
+    assert(plain == 'hi                  ')
+}
+
+pub fn test-render-format-spec-center() {
+    let result = "[%^20]hi[/]".chalk()
+    let plain = strip(result)
+    assert(#plain == 20)
+}
+
+pub fn test-render-format-spec-with-styles() {
+    let result = "[%20][red b]hi[/][/]".chalk()
+    let plain = strip(result)
+    assert(#plain == 20)
+    assert("{ESC}[31m" in result)
+    assert("{ESC}[1m" in result)
+}
+
+pub fn test-render-format-spec-fill-char() {
+    let result = "[%.>20]hi[/]".chalk()
+    let plain = strip(result)
+    assert(#plain == 20)
+    assert('..' in plain)
+}
+
+pub fn test-render-format-spec-dynamic-width() {
+    let w = 15
+    let result = "[%-{w}]hi[/]".chalk()
+    let plain = strip(result)
+    assert(#plain == 15)
+    assert(plain == 'hi             ')
+}
+
+pub fn test-render-nested-format-spec() {
+    let result = "[%10][b]hi[/][/]".chalk()
+    let plain = strip(result)
+    assert(#plain == 10)
+}
+
+pub fn test-render-escaped-backslash() {
+    let result = "a\\\\b".chalk()
+    assert(strip(result) == 'a\\b')
+}
+
+pub fn test-render-escaped-bracket() {
+    let result = "hello \\[world]".chalk()
+    assert(strip(result) == 'hello [world]')
+}
+
+pub fn test-render-unmatched-bracket() {
+    let result = "hello [world".chalk()
+    assert(strip(result) == 'hello [world')
+}
+
+pub fn test-render-empty-brackets() {
+    let result = "[]hello".chalk()
+    assert(strip(result) == 'hello')
+}
+
+pub fn test-render-empty-string() {
+    let result = "".chalk()
+    assert(strip(result) == '')
+}
+
+pub fn test-render-no-markup() {
+    let result = "just text".chalk()
+    assert(strip(result) == 'just text')
+}
+
+pub fn test-render-adjacent-styles() {
+    let result = "[red]a[/][blue]b[/]".chalk()
+    assert(strip(result) == 'ab')
+    assert("{ESC}[31m" in result)
+    assert("{ESC}[34m" in result)
+}
+
+pub fn test-render-deeply-nested() {
+    let result = "[b][i][u][red]deep[/][/][/][/]".chalk()
+    assert(strip(result) == 'deep')
+}
+
+pub fn test-render-deeply-nested-double-close() {
+    let result = "[b][i][u][red]deep[////]".chalk()
+    assert(strip(result) == 'deep')
+}
+
+pub fn test-render-style-reopen() {
+    let result = "[b]bold[/][b]bold again[/]".chalk()
+    assert(strip(result) == 'boldbold again')
+}
+
+pub fn test-render-text-between-styles() {
+    let result = "[red]a[/] gap [blue]b[/]".chalk()
+    assert(strip(result) == 'a gap b')
+}
+
+pub fn test-render-unclosed-style() {
+    let result = "[red]hello".chalk()
+    assert(strip(result) == 'hello')
+    assert("{ESC}[31m" in result)
+    assert("{ESC}[0m" in result)
+}
+
+pub fn test-render-multiple-unclosed() {
+    let result = "[b][red]hello".chalk()
+    assert(strip(result) == 'hello')
+}
+
+pub fn test-render-close-more-than-open() {
+    let result = "[b]hello[//]".chalk()
+    assert(strip(result) == 'hello')
+}
+
+pub fn test-render-link-with-styles-inside() {
+    let result = "[link=https://x.com][b red]click[/][/link]".chalk()
+    assert("{ESC}]8;;https://x.com{ESC}\\" in result)
+    assert("{ESC}]8;;{ESC}\\" in result)
+    assert("{ESC}[1m" in result)
+    assert(strip(result) == 'click')
+}
+
+pub fn test-render-selective-close-underline() {
+    let result = "[b][u]text[/u] still bold[/]".chalk()
+    assert(strip(result) == 'text still bold')
+    assert("{ESC}[24m" in result)
+}
+
+pub fn test-render-selective-close-underline-alias() {
+    let result = "[b][u]text[/underline] still bold[/]".chalk()
+    assert(strip(result) == 'text still bold')
+    assert("{ESC}[24m" in result)
+}
+
+pub fn test-plain-strips-all-markup() {
+    let result = "[b red]hello [u]world[/] foo[/]".plain()
+    assert(result == 'hello world foo')
+}
+
+pub fn test-plain-unescapes() {
+    assert("\\[not a style\\]".plain() == '[not a style]')
+    assert("back\\\\slash".plain() == 'back\\slash')
+}
+
+pub fn test-plain-empty() {
+    assert("".plain() == '')
+}
+
+pub fn test-plain-no-markup() {
+    assert("hello world".plain() == 'hello world')
+}
+
+pub fn test-plain-nested() {
+    assert("[b][i][red]text[/][/][/]".plain() == 'text')
+}
+
+pub fn test-plain-format-spec() {
+    assert("[%20]text[/]".plain() == 'text')
+}
+
+pub fn test-plain-with-link() {
+    assert("[link=https://x.com]click[/link]".plain() == 'click')
+}
+
+pub fn test-plain-preserves-whitespace() {
+    assert("[b]  spaced  [/]".plain() == '  spaced  ')
+}
+
+pub fn test-render-str-chalk-roundtrip() {
+    let src = '[bold red]hello[/]'
+    let ansi = src.chalk()
+    let back = ansi.unchalk()
+    let ansi2 = back.chalk()
+    assert(strip(ansi) == strip(ansi2))
+}
+
+pub fn test-render-complex-roundtrip() {
+    let src = '[red]a [blue]b[/fg] c[/]'
+    let ansi = src.chalk()
+    let plain = strip(ansi)
+    assert(plain == 'a b c')
+}
+
+pub fn test-render-ink-input-pattern() {
+    let text-color = '#aabbcc'
+    let before = 'hel'
+    let cur-ch = 'l'
+    let after = 'o'
+    let trail = '   '
+    let result = str(chalk"[{text-color}]{before}[/]"
+                          "[reverse]{cur-ch}[/]"
+                          "[{text-color}]{after}[/]{trail}")
+    assert(strip(result) == 'hello   ')
+}
+
+pub fn test-render-ink-calendar-pattern() {
+    let cclr = 'cyan'
+    let label = ' 5'
+    let result = str(chalk"[{cclr} reverse bold] {label} [/]")
+    assert(strip(result) == " {label} ")
+}
+
+pub fn test-render-ink-slider-pattern() {
+    let clr = 'blue'
+    let clr-bold = 'blue'
+    let track-l = '====='
+    let thumb = '|'
+    let track-r = '====='
+    let result = chalk"[{clr}]{track-l}[/]"
+                      "[{clr-bold}]{thumb}[/]"
+                      "[dim]{track-r}[/]"
+    assert(result.plain == '=====|=====')
+}
+
+pub fn test-render-clap-help-pattern() {
+    let w = 20
+    let result = str(chalk"  [%-{w}][b blue]    --completions[/] [green]<SHELL>[/][/]"
+                          "  Output shell completions")
+    let plain = strip(result)
+    assert('--completions' in plain)
+    assert('<SHELL>' in plain)
+    assert('Output shell completions' in plain)
+}
+
+pub fn test-render-clap-nested-dim() {
+    let result = "[dim](default: [bright green]42[/bright green])[/]".chalk()
+    let plain = strip(result)
+    assert(plain == '(default: 42)')
+}
+
+pub fn test-render-clap-choices() {
+    let c1 = str(chalk"[magenta]a[/]")
+    let c2 = str(chalk"[magenta]b[/]")
+    let sep = str(chalk"[dim],[/] ")
+    let joined = "{c1}{sep}{c2}"
+    let result = "[dim](values: [/]{joined}[dim])[/]".chalk()
+    let plain = strip(result)
+    assert(plain == '(values: a, b)')
+}
+
+pub fn test-render-preserves-ansi-in-interpolated-text() {
+    let styled = ansi(chalk"[red]inner[/]")
+    let result = "[b]{styled}[/]".chalk()
+    assert(strip(result) == 'inner')
+    assert("{ESC}[31m" in result)
+}
+
+pub fn test-render-whitespace-only-content() {
+    let result = "[red]   [/]".chalk()
+    assert(strip(result) == '   ')
+}
+
+pub fn test-render-newlines-preserved() {
+    let result = "[b]line1\nline2[/]".chalk()
+    assert(strip(result) == "line1\nline2")
+}
+
+pub fn test-hsl-to-rgb-black() {
+    let (r, g, b) = hslToRgb(0.0, 0.0, 0.0)
+    assert(r == 0)
+    assert(g == 0)
+    assert(b == 0)
+}
+
+pub fn test-hsl-to-rgb-white() {
+    let (r, g, b) = hslToRgb(0.0, 0.0, 1.0)
+    assert(r == 255)
+    assert(g == 255)
+    assert(b == 255)
+}
+
+pub fn test-hsl-to-rgb-red() {
+    let (r, g, b) = hslToRgb(0.0, 1.0, 0.5)
+    assert(r == 255)
+    assert(g == 0)
+    assert(b == 0)
+}
+
+pub fn test-hsl-hex-format() {
+    let hex = hsl-hex(0.0, 1.0, 0.5)
+    assert(hex == '#ff0000')
+}
+
+pub fn test-text-plain() {
+    let t = chalk"[bold]hello[/]"
+    assert(t.plain == 'hello')
+}
+
+pub fn test-text-width() {
+    let t = chalk"[bold red]hello[/]"
+    assert(t.width() == 5)
+}
+
+pub fn test-text-concatenation() {
+    let a = chalk"[bold]hello[/]"
+    let b = chalk"[red] world[/]"
+    let c = a + b
+    assert(c.plain == 'hello world')
+}
+
+pub fn test-text-renders-escapes() {
+    let t = chalk"[bold]hello[/]"
+    let s = ansi(t)
+    assert(ESC in s)
+    assert(strip(s) == 'hello')
+}
+
+pub fn test-text-link() {
+    let t = chalk"[link=https://x.com]click[/link]"
+    assert(t.plain == 'click')
+    let s = ansi(t)
+    assert("{ESC}]8;;https://x.com{ESC}\\" in s)
+}
+
+pub fn test-hash-hsl-is-deterministic() {
+    assert(hash-hsl('git-1303616?') == hash-hsl('git-1303616?'))
+    assert(hash-hsl('git-1303616?') != hash-hsl('git-1303617?'))
+}
+
+pub fn test-hash-hsl-respects-ranges() {
+    let (h, s, l) = hash-hsl('thread7?', s: 0.5, l: (0.6, 0.75))
+    assert(0.0 <= h && h <= 1.0)
+    assert(s == 0.5)
+    assert(0.6 <= l && l <= 0.75)
+}
+
+pub fn test-hashed-style-is-stable-across-chalks() {
+    rand()
+    let a = Chalk().render('[git-abc1234?]x[/]', plain: false)
+    rand()
+    let b = Chalk().render('[git-abc1234?]x[/]', plain: false)
+    assert(a == b)
+    assert(a != Chalk().render('[git-abc1235?]x[/]', plain: false))
+}
+
+pub fn test-parse-keeps-dim-bright-and-black() {
+    let ansi = "\x1b[92mread\x1b[0m\x1b[2m(\x1b[0m\x1b[90m:\x1b[0m \x1b[1;33mString\x1b[0m"
+    let markup = parse(ansi)
+    assert(markup.contains?('[bright green]'))
+    assert(markup.contains?('[dim]'))
+    assert(markup.contains?('[bright black]'))
+    assert(markup.contains?('[b yellow]'))
+    assert(ink.text(markup).plain == 'read(: String')
+}
+
+pub fn test-render-closing-fg-closes-bright() {
+    let s = '[bright green]g[/fg] [b yellow]S[/]'.chalk(%{})
+    assert(s.contains?("\x1b[33m"))
+    assert(!s.contains?("\x1b[93m"))
+}
+
+pub fn test-trans-dim() {
+    assert(trans({}, {dim: true}) == "\x1b[2m")
+    assert(trans({bold: true, dim: true}, {bold: true}) == "\x1b[22m\x1b[1m")
+}
+
+pub fn test-text-clip() {
+    let t = ink.text(parse("\x1b[1;31mhello\x1b[0m there \x1b[38;2;1;2;3mrgb\x1b[0m"))
+    let clipped = t.clip(8)
+    assert(clipped.plain == 'hello t…')
+    assert(clipped.width() == 8)
+    assert(t.clip(100).plain == t.plain)
+}
+
+pub fn test-text-wrap() {
+    let t = ink.text(parse("\x1b[1;31mhello\x1b[0m there [x] \x1b[38;2;1;2;3mrgb text here\x1b[0m end"))
+    let rows = t.wrap(10).map(&.plain)
+    assert(rows == ['hello', 'there [x]', 'rgb text', 'here end'])
+    assert(t.wrap(10).all?(\_.width() <= 10))
+}
+
+pub fn test-text-wrap-keeps-indentation() {
+    let t    = ink.text('    if x:\n        return one two three\nend')
+    let rows = t.wrap(20).map(&.plain)
+    assert(rows == ['    if x:', '        return one', 'two three', 'end'], rows)
+}

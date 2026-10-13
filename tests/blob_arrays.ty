@@ -1,0 +1,35 @@
+ns test
+
+pub fn blob-accepts-arrays-of-bytes() {
+    assert(Blob([104, 105], ' ', 0x21).str() == 'hi !')
+    assert(Blob([b ^ 0x20 for b in Blob('abc')]).str() == 'ABC')
+    assert(#Blob([]) == 0)
+}
+
+pub fn blob-rejects-arrays-of-non-bytes() {
+    assert(try { Blob([1, 300]); false } catch _ { true })
+    assert(try { Blob(['a']); false } catch _ { true })
+}
+
+pub fn blobs-slice-like-arrays() {
+    let b = Blob('abcdefgh')
+    assert(b[;3].str() == 'abc')
+    assert(b[2;5].str() == 'cde')
+    assert(b[-3;].str() == 'fgh')
+    assert(b[;;2].str() == 'aceg')
+    assert(b[1;;3].str() == 'beh')
+    assert(b[;;-1].str() == 'hgfedcba')
+    assert(b[-2;1;-2].str() == 'fdb')
+    assert(#b[10;] == 0)
+    assert(b.slice(2, 3).str() == 'cde')
+}
+
+pub fn blobs-concatenate-with-plus() {
+    let head = Blob([1, 2])
+    let tail = Blob([3])
+    let both = head + tail
+
+    assert(both.list() == [1, 2, 3])
+    assert(head.list() == [1, 2])
+    assert(str(typeof both) == 'Blob')
+}

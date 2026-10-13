@@ -1,0 +1,1252 @@
+import term (event, mod)
+import path (Path)
+
+pub tag Ignored;
+
+pub use Span = (Int, Int, String)
+
+const WORD   = /^[\p{L}\p{N}_]/
+const SPACE  = /^\s/
+const KILLS  = 32
+const UNDOS  = 256
+
+fn word?(c: String) -> Bool {
+    c.match?(WORD)
+}
+
+fn space?(c: String) -> Bool {
+    c.match?(SPACE)
+}
+
+fn whole(m: _) -> String {
+    (m :: String) ? m : (m.?[0] ?? '')
+}
+
+fn groups(m: _) -> Array[_] {
+    (m :: String) ? [] : m[1;]
+}
+
+pub fn key-name(ev: _) -> String {
+    match ev {
+        event.Key({key: k: String, mods, *}) and #k == 1 => [
+            ('S-', mod.SHIFT),
+            ('M-', mod.ALT),
+            ('C-', mod.CTRL),
+            ('Cmd-', mod.SUPER)
+        ].fold(k, (name, (p, m)) -> ((mods & m) != 0) ? "{p}{name}" : name),
+        _ => match ev.nice-name() {
+            /^(.*)Escape$/ => "{$1}Esc",
+            name           => name
+        }
+    }
+}
+
+fn boundary?(cs: Array[String], i: Int) -> Bool {
+    i == 0
+    || !cs[i - 1].match?(/^[\p{L}\p{N}]/)
+    || (cs[i - 1].lower() == cs[i - 1] && cs[i].upper() == cs[i] && cs[i].lower() != cs[i])
+}
+
+pub class Suggestion {
+    text:   String
+    label:  _
+    detail: _
+    kind:   _
+    hits:   Array[Int]
+    score:  Int
+    style:  String | nil
+    data:   _
+
+    init(
+        text: String,
+        label: _ = nil,
+        detail: _ = nil,
+        kind: _ = nil,
+        hits: Array[Int] = [],
+        style: String | nil = nil,
+        data: _ = nil
+    ) {
+        self.text   = text
+        self.label  = label ?? text
+        self.detail = detail
+        self.kind   = kind
+        self.hits   = hits
+        self.score  = 0
+        self.style  = style
+        self.data   = data
+    }
+
+    static of(x: _) -> Suggestion {
+        match x {
+            s: Suggestion       => s,
+            s: String           => Suggestion(s),
+            (label, s: String)  => Suggestion(s, label=label),
+            _                   => throw ValueError("not a suggestion: {x}")
+        }
+    }
+
+    plain -> String {
+        "{label}".comb(/\x1b\[[0-9;:]*m/)
+    }
+
+    with(hits: Array[Int], score: Int = 0) -> Suggestion {
+        let s = Suggestion(text, label, detail, kind, hits, style, data)
+        s.score = score
+        s
+    }
+}
+
+pub fn prefix-hits(query: String, s: String) -> Array[Int] | nil {
+    let q  = query.chars().map(&lower)
+    let cs = s.chars().map(&lower)
+    (#q <= #cs && cs[;#q] == q) ? [i for i in ..#q] : nil
+}
+
+pub fn fuzzy-hits(query: String, s: String) -> (Int, Array[Int]) | nil {
+    let q  = query.chars().map(&lower)
+    let cs = s.chars()
+    let lc = cs.map(&lower)
+
+    fn from(start: Int) -> (Int, Array[Int]) | nil {
+        let hits: Array[Int] = []
+        let score = 0
+        let j = 0
+        for i in start..#lc {
+            break if j == #q
+            if lc[i] == q[j] {
+                score += 16
+                if boundary?(cs, i) {
+                    score += 12
+                }
+                if #hits > 0 && hits[-1] == i - 1 {
+                    score += 10
+                } else if #hits > 0 {
+                    score -= min(i - hits[-1], 8)
+                }
+                hits.push(i)
+                j += 1
+            }
+        }
+        (j == #q) ? (score - (hits.?[0] ?? 0), hits) : nil
+    }
+
+    if #q == 0 {
+        return (0, [])
+    }
+
+    let best: (Int, Array[Int]) | nil = nil
+    let top = Int.MIN
+    for i in ..#lc if lc[i] == q[0] {
+        if let ($score, $hits) = from(i) and score > top {
+            top  = score
+            best = (score, hits)
+        }
+    }
+    best
+}
+
+pub fn narrow(
+    items: Array[_],
+    query: String,
+    by: String | Function = 'fuzzy',
+    key: Function | nil = nil
+) -> Array[Suggestion] {
+    let target = key ?? &.plain
+    let ranked: Array[(Int, Int, Suggestion)] = []
+
+    for x; i in items {
+        let s = Suggestion.of(x)
+        let t = target(s)
+        let hit = match by {
+            'prefix'    => match prefix-hits(query, t) {
+                nil => nil,
+                hs  => (0, hs)
+            },
+            'fuzzy'     => fuzzy-hits(query, t),
+            f: Function => f(query, t)
+        }
+        if let ($score, $hits) = hit {
+            let off = #(s.plain[;s.plain.search(t) ?? 0]).chars()
+            ranked.push((score, i, s.with(hits.map(\_ + off), score)))
+        }
+    }
+
+    ranked.sort(by=|(score, i, _)| -> (-score, i)).map(&2)
+}
+
+pub class History {
+    entries:  Array[String]
+    file:     String | nil
+    prefix?:  Bool
+    __disk:   Array[String]
+    __loaded?: Bool
+    __idx:    Int
+    __saved:  String
+
+    init(entries: Array[String] = [], file: String | nil = nil, prefix?: Bool = false) {
+        self.entries = entries
+        self.file    = file
+        self.prefix? = prefix?
+        __disk       = []
+        __loaded?    = false
+        __idx        = -1
+        __saved      = ''
+    }
+
+    static of(x: _) -> History | nil {
+        match x {
+            h: History       => h,
+            xs: Array        => History(xs),
+            f: String        => History(file=f),
+            _                => nil
+        }
+    }
+
+    __load() {
+        if __loaded? {
+            return
+        }
+        __loaded? = true
+        if let $f = file and let p = Path(f) and p.file? {
+            __disk = p.read-text().lines().filter(\#_ > 0)
+        }
+    }
+
+    all -> Array[String] {
+        __load()
+        __disk + entries
+    }
+
+    browsing? -> Bool {
+        __idx >= 0
+    }
+
+    __matches -> Array[String] {
+        let xs = all
+        let n = #__saved
+        prefix? ? xs.filter(\_[;n] == __saved) : xs
+    }
+
+    push(entry: String) {
+        reset()
+        if #entry == 0 || all.?[-1] == entry {
+            return
+        }
+        entries.push(entry)
+        if let Path $~> p = file {
+            p.parent.mkdir(parents=true, exist-ok=true)
+            p.append("{entry}\n")
+        }
+    }
+
+    prev(current: String) -> String | nil {
+        if __idx < 0 {
+            __saved = current
+        }
+        let xs = __matches
+        if __idx + 1 >= #xs {
+            return nil
+        }
+        __idx += 1
+        xs[#xs - 1 - __idx]
+    }
+
+    next() -> String | nil {
+        match __idx {
+            i and i < 0 => nil,
+            0           => do {
+                __idx = -1
+                __saved
+            },
+            _           => do {
+                __idx -= 1
+                let xs = __matches
+                xs[#xs - 1 - __idx]
+            }
+        }
+    }
+
+    reset() {
+        __idx = -1
+    }
+}
+
+pub class Trigger {
+    when:      _
+    source:    Function
+    on-accept: Function | nil
+    auto?:     Bool
+    cycle?:    Bool
+    suffix:    String
+    tail:      Regex | nil
+    name:      String | nil
+    style:     String | nil
+    sticky?:   Bool
+    keymap:    Dict[String, Function]
+
+    init(
+        when: _,
+        source: Function,
+        on-accept: Function | nil = nil,
+        auto?: Bool = true,
+        cycle?: Bool = false,
+        suffix: String = '',
+        tail: Regex | nil = nil,
+        name: String | nil = nil,
+        style: String | nil = nil,
+        sticky?: Bool = false,
+        keymap: Dict[String, Function] = %{}
+    ) {
+        self.when      = when
+        self.source    = source
+        self.on-accept = on-accept
+        self.auto?     = auto?
+        self.cycle?    = cycle?
+        self.suffix    = suffix
+        self.tail      = tail
+        self.name      = name
+        self.style     = style
+        self.sticky?   = sticky?
+        self.keymap    = keymap
+    }
+
+    probe(ed: Editor) -> (Int, Int, String, Array[_]) | nil {
+        let extra = if let $re = tail and let $t = ed.after.match(re) {
+            #whole(t).chars()
+        } else {
+            0
+        }
+        let at = ed.cursor
+        let to = at + extra
+        let (from, query, groups) = match when {
+            re: Regex => do {
+                let scope = ed.chars[;to].join()
+                let $m = scope.match(re) or return nil
+                let w = whole(m)
+                if scope[#scope - #w;] != w {
+                    return nil
+                }
+                let gs = groups(m)
+                (to - #w.chars(), gs.?[0] ?? w, gs)
+            },
+            f => match f(ed) {
+                nil or false => return nil,
+                true         => (at, '', []),
+                i: Int       => (i, ed.chars[i;at].join(), []),
+                q: String    => (at - #q.chars(), q, []),
+                (i: Int, q: String) => (i, q, [])
+            }
+        }
+        (from, to, query, groups)
+    }
+}
+
+pub class Picker {
+    items:  Array[Suggestion]
+    index:  Int
+    scroll: Int
+    cycle?: Bool
+    rev:    Int
+
+    init(items: Array[_] = [], index: Int = 0) {
+        self.items  = items.map(Suggestion.of)
+        self.index  = index
+        self.scroll = 0
+        self.cycle? = false
+        self.rev    = 0
+    }
+
+    touch() {
+        rev += 1
+    }
+
+    set(items: Array[_], index: Int = 0) {
+        self.items = items.map(Suggestion.of)
+        self.index = index
+        scroll = 0
+        touch()
+    }
+
+    open? -> Bool {
+        #items > 0
+    }
+
+    visible? -> Bool {
+        true
+    }
+
+    selected -> Suggestion | nil {
+        (index >= 0 && index < #items) ? items[index] : nil
+    }
+
+    window(h: Int) -> (Int, Int) {
+        let n = #items
+        let h = min(max(h, 1), n)
+        let i = max(index, 0)
+        if i < scroll {
+            scroll = i
+        } else if i >= scroll + h {
+            scroll = i - h + 1
+        }
+        scroll = scroll.clamp(0, max(n - h, 0))
+        (scroll, scroll + h)
+    }
+
+    move(d: Int) {
+        let n = #items
+        if n > 0 {
+            index = (index + d + n) % n
+        }
+        touch()
+    }
+
+    page(d: Int, h: Int) {
+        if #items > 0 {
+            index = (index + d * h).clamp(0, #items - 1)
+        }
+        touch()
+    }
+}
+
+pub class Completion < Picker {
+    editor:  Editor
+    trigger: Trigger
+    slot:    Int
+    from:    Int
+    to:      Int
+    anchor:  Int
+    query:   String
+    groups:  Array[_]
+    key:     String | nil
+    version: Int
+    __base:  (Array[String], Int, Int) | nil
+
+    init(editor: Editor, slot: Int, from: Int, to: Int, query: String, groups: Array[_]) {
+        super()
+        self.editor  = editor
+        self.trigger = editor.triggers[slot]
+        self.slot    = slot
+        self.from    = from
+        self.to      = to
+        self.query   = query
+        self.groups  = groups
+        self.anchor  = anchor-of(editor, from, to, query)
+        self.cycle?  = trigger.cycle?
+        self.key     = nil
+        self.version = editor.version
+        self.__base  = nil
+    }
+
+    visible? -> Bool {
+        open? || trigger.sticky?
+    }
+
+    static anchor-of(ed: Editor, from: Int, to: Int, query: String) -> Int {
+        let q = query.chars()
+        (#q <= to - from && ed.chars[to - #q;to] == q) ? to - #q : from
+    }
+
+    reload() {
+        fetch()
+        version = editor.version
+    }
+
+    fetch() {
+        items = (trigger.source)(self).map(Suggestion.of)
+        index = cycle? ? -1 : 0
+        scroll = 0
+        touch()
+        if cycle? {
+            __base = ([*editor.chars], anchor, to)
+        }
+    }
+
+    move(d: Int) {
+        if cycle? {
+            __preview((index + 1 + d + #items + 1) % (#items + 1) - 1)
+            return
+        }
+        super(d)
+    }
+
+    __preview(i: Int) {
+        let (chars, from, to) = __base ?? return
+        index = i
+        touch()
+        let shown = (i >= 0) ? items[i].text : chars[from;to].join()
+        editor.quietly(-> editor.preview(chars, from, to, shown))
+        self.to = from + #shown.chars()
+        version = editor.version
+    }
+
+    insert(text: String | nil = nil) {
+        let s = text ?? selected.?text ?? return
+        editor.replace(anchor, to, "{s}{trigger.suffix}")
+    }
+
+    accept(key: String | nil = nil) -> Bool {
+        let $item = selected or return false
+        self.key = key
+        editor.completion = nil
+        editor.mute(slot)
+        match trigger.on-accept {
+            nil => insert(),
+            f   => f(item, self)
+        }
+        true
+    }
+
+    dismiss() {
+        if let ($chars, $from, $to) = __base and index >= 0 {
+            editor.quietly(-> editor.preview(chars, from, to, chars[from;to].join()))
+        }
+        editor.suppress(self)
+    }
+}
+
+pub class Editor {
+    multiline?: Bool
+    keymap:     Dict[String, Function]
+    triggers:   Array[Trigger]
+    history:    History | nil
+    highlight:  Function | nil
+    on-change:  Function | nil
+    max-length: Int | nil
+    completion: Completion | nil
+    wrap-width: Int | nil
+
+    __chars:     Array[String]
+    __cursor:    Int
+    __goal:      Int | nil
+    __undo:      Array[(Array[String], Int)]
+    __redo:      Array[(Array[String], Int)]
+    __kills:     Array[String]
+    __yank:      (Int, Int) | nil
+    __last:      String | nil
+    __kind:      String | nil
+    __origin:    Int | nil
+    __version:   Int
+    __dismissed: (Int, String) | nil
+    __muted:     Int | nil
+    __quiet?:    Bool
+    __busy?:     Bool
+
+    init(
+        text: String = '',
+        multiline?: Bool = false,
+        keymap: Dict[String, Function] = %{},
+        triggers: Array[Trigger] = [],
+        history: _ = nil,
+        highlight: Function | nil = nil,
+        on-change: Function | nil = nil,
+        max-length: Int | nil = nil
+    ) {
+        self.multiline? = multiline?
+        self.keymap     = %{**EDITOR_KEYS, **(multiline? ? MULTILINE_KEYS : %{}), **keymap}
+        self.triggers   = triggers
+        self.history    = History.of(history)
+        self.highlight  = highlight
+        self.on-change  = on-change
+        self.max-length = max-length
+        self.completion = nil
+        self.wrap-width = nil
+        __chars     = __clean(text).chars()
+        __cursor    = #__chars
+        __goal      = nil
+        __undo      = []
+        __redo      = []
+        __kills     = []
+        __yank      = nil
+        __last      = nil
+        __kind      = nil
+        __origin    = nil
+        __version   = 0
+        __dismissed = nil
+        __muted     = nil
+        __quiet?    = false
+        __busy?     = false
+    }
+
+    text    -> String         { __chars.join() }
+    chars   -> Array[String]  { __chars }
+    cursor  -> Int            { __cursor }
+    version -> Int            { __version }
+    empty?  -> Bool           { #__chars == 0 }
+    before  -> String         { __chars[;__cursor].join() }
+    after   -> String         { __chars[__cursor;].join() }
+
+    suggesting? -> Bool {
+        completion.?visible? ?? false
+    }
+
+    lines -> Array[String] {
+        text.split('\n')
+    }
+
+    row -> Int {
+        __chars[;__cursor].count('\n')
+    }
+
+    col -> Int {
+        __cursor - __bol(__cursor)
+    }
+
+    __clean(s: String) -> String {
+        multiline? ? s.comb(/\r/) : s.sub(/[\r\n\t]+/, ' ')
+    }
+
+    __bol(i: Int) -> Int {
+        let j = i
+        while j > 0 && __chars[j - 1] != '\n' {
+            j -= 1
+        }
+        j
+    }
+
+    __eol(i: Int) -> Int {
+        let j = i
+        while j < #__chars && __chars[j] != '\n' {
+            j += 1
+        }
+        j
+    }
+
+    __edit(kind: String) {
+        if kind != 'insert' || __last != 'insert' {
+            __undo.push(([*__chars], __origin ?? __cursor))
+            if #__undo > UNDOS {
+                __undo.pop(0)
+            }
+        }
+        __redo = []
+        __kind = kind
+    }
+
+    __changed() {
+        __version += 1
+        __goal = nil
+        if !__quiet? {
+            history.?reset()
+        }
+        if let $f = on-change {
+            f(text)
+        }
+    }
+
+    quietly(f: Function) {
+        let was = __quiet?
+        __quiet? = true
+        try {
+            f()
+        } finally {
+            __quiet? = was
+        }
+    }
+
+    preview(chars: Array[String], from: Int, to: Int, shown: String) {
+        __chars  = chars[;from] + shown.chars() + chars[to;]
+        __cursor = from + #shown.chars()
+        __changed()
+    }
+
+    __fits(s: String) -> String {
+        let cs = __clean(s).chars()
+        match max-length {
+            nil => cs.join(),
+            n   => cs[;max(n - #__chars, 0)].join()
+        }
+    }
+
+    replace(from: Int, to: Int, s: String, kind: String = 'replace') {
+        let from = from.clamp(0, #__chars)
+        let to   = to.clamp(from, #__chars)
+        let ins  = __fits(s).chars()
+        __edit(kind)
+        __chars  = __chars[;from] + ins + __chars[to;]
+        __cursor = from + #ins
+        __changed()
+    }
+
+    insert(s: String, kind: String = 'insert') {
+        replace(__cursor, __cursor, s, kind)
+    }
+
+    set-text(s: String, at: Int | nil = nil) {
+        let cs = __clean(s).chars()
+        if cs == __chars {
+            __cursor = (at ?? __cursor).clamp(0, #__chars)
+            return
+        }
+        __edit('set')
+        __chars  = cs
+        __cursor = (at ?? #cs).clamp(0, #cs)
+        __changed()
+    }
+
+    clear() {
+        set-text('')
+        completion  = nil
+        __dismissed = nil
+        __muted     = nil
+    }
+
+    move-to(i: Int) {
+        __cursor = i.clamp(0, #__chars)
+    }
+
+    handle(ev: _) -> Bool | Ignored {
+        __origin = __cursor
+        let r = __handle(ev)
+        __origin = nil
+        if r != Ignored {
+            __last = __kind
+            __kind = nil
+            refresh()
+        }
+        r
+    }
+
+    __handle(ev: _) -> Bool | Ignored {
+        match ev {
+            event.Paste($s)                        => insert(s, 'paste'),
+            event.Text($s) and !s.match?(/^[\t\x00-\x08\x0b-\x1f\x7f]+$/) => insert(s),
+            event.Key({event: 1 or 2, *})          => return command(key-name(ev)),
+            _                                      => return Ignored
+        }
+        true
+    }
+
+    command(name: String) -> Bool | Ignored {
+        if let $c = completion and c.visible? {
+            let keys = %{**SUGGEST_KEYS, **c.trigger.keymap}
+            if let $f = keys[name] {
+                return (f(self) == Ignored) ? Ignored : true
+            }
+        }
+        let $f = keymap[name] or return Ignored
+        (f(self) == Ignored) ? Ignored : true
+    }
+
+    run(f: Function) -> _ {
+        __origin = __cursor
+        let r = f(self)
+        __origin = nil
+        __last = __kind
+        __kind = nil
+        refresh()
+        r
+    }
+
+    refresh() {
+        if __busy? {
+            return
+        }
+        __busy? = true
+        try {
+            __refresh()
+        } finally {
+            __busy? = false
+        }
+    }
+
+    __refresh() {
+        if let $c = completion and c.cycle? && c.version == __version {
+            return
+        }
+
+        if let $c = completion and c.slot < #triggers {
+            c.trigger = triggers[c.slot]
+        } else {
+            completion = nil
+        }
+
+        if let $c = completion and !c.trigger.auto? && c.version != __version {
+            completion = nil
+        }
+
+        let hit = __probe(completion.?slot)
+        if hit == nil {
+            completion = nil
+            __muted    = nil
+            return
+        }
+
+        let (slot, from, to, query, groups) = hit
+        if let $m = __muted {
+            __muted = nil
+            if m == slot {
+                __dismissed = (slot, query)
+            }
+        }
+        if let ($ds, $dq) = __dismissed and ds == slot {
+            if dq == query {
+                completion = nil
+                return
+            }
+            __dismissed = nil
+        }
+
+        if let $c = completion and c.slot == slot && c.from == from && c.query == query {
+            c.to = to
+            c.anchor = Completion.anchor-of(self, from, to, query)
+            c.version = __version
+            return
+        }
+
+        __open(slot, from, to, query, groups)
+    }
+
+    __probe(current: Int | nil, manual?: Bool = false) -> (Int, Int, Int, String, Array[_]) | nil {
+        for t; i in triggers if t.auto? || manual? || i == current {
+            if let ($from, $to, $query, $groups) = t.probe(self) {
+                return (i, from, to, query, groups)
+            }
+        }
+    }
+
+    __open(slot: Int, from: Int, to: Int, query: String, groups: Array[_]) {
+        let c = Completion(self, slot, from, to, query, groups)
+        completion = c
+        c.fetch()
+        if completion != c {
+            return
+        }
+        c.version = __version
+        if c.cycle? && #c.items > 0 {
+            c.move(1)
+        }
+    }
+
+    mute(slot: Int) {
+        __muted = slot
+    }
+
+    suppress(c: Completion) {
+        __dismissed = (c.slot, c.query)
+        if completion == c {
+            completion = nil
+        }
+    }
+
+    complete() -> Bool | Ignored {
+        if let $c = completion and c.visible? {
+            if c.cycle? {
+                c.move(1)
+                return true
+            }
+            return (c.accept('Tab') || c.trigger.sticky?) ? true : Ignored
+        }
+        let (slot, from, to, query, groups) = __probe(nil, manual?=true) ?? return Ignored
+        let v0 = __version
+        __dismissed = nil
+        __open(slot, from, to, query, groups)
+        if !(completion.?visible? ?? false) {
+            completion = nil
+            return (__version != v0) ? true : Ignored
+        }
+        true
+    }
+
+    accept-enter() -> _ {
+        let $c = completion or return Ignored
+        if c.cycle? {
+            completion = nil
+            return Ignored
+        }
+        (c.accept('Enter') || c.trigger.sticky?) ? true : Ignored
+    }
+
+    dismiss() -> Bool | Ignored {
+        let $c = completion or return Ignored
+        c.dismiss()
+        true
+    }
+
+    backward-char() {
+        __cursor = max(__cursor - 1, 0)
+    }
+
+    forward-char() {
+        __cursor = min(__cursor + 1, #__chars)
+    }
+
+    backward-word() {
+        while __cursor > 0 && !word?(__chars[__cursor - 1]) {
+            __cursor -= 1
+        }
+        while __cursor > 0 && word?(__chars[__cursor - 1]) {
+            __cursor -= 1
+        }
+    }
+
+    forward-word() {
+        while __cursor < #__chars && !word?(__chars[__cursor]) {
+            __cursor += 1
+        }
+        while __cursor < #__chars && word?(__chars[__cursor]) {
+            __cursor += 1
+        }
+    }
+
+    line-start() {
+        __cursor = __bol(__cursor)
+    }
+
+    line-end() {
+        __cursor = __eol(__cursor)
+    }
+
+    buffer-start() {
+        __cursor = 0
+    }
+
+    buffer-end() {
+        __cursor = #__chars
+    }
+
+    visual-rows(width: Int | nil = wrap-width) -> Array[(Int, Int)] {
+        let rows: Array[(Int, Int)] = []
+        let start = 0
+        for (;;) {
+            let end = __eol(start)
+            rows += wrap-line(__chars, start, end, width)
+            break if end >= #__chars
+            start = end + 1
+        }
+        rows
+    }
+
+    visual-pos(rows: Array[(Int, Int)] = visual-rows()) -> (Int, Int) {
+        for (s, e); r in rows {
+            let last? = r + 1 == #rows || rows[r + 1].0 != e
+            if __cursor >= s && (__cursor < e || (__cursor == e && last?)) {
+                return (r, __chars[s;__cursor].map(&width).sum(0))
+            }
+        }
+        (max(#rows - 1, 0), 0)
+    }
+
+    __vertical(d: Int) -> Bool {
+        let rows = visual-rows()
+        let (r, col) = visual-pos(rows)
+        let goal = __goal ?? col
+        let target = r + d
+        if target < 0 || target >= #rows {
+            return false
+        }
+        let (s, e) = rows[target]
+        let i = s
+        let w = 0
+        while i < e && w + __chars[i].width() <= goal {
+            w += __chars[i].width()
+            i += 1
+        }
+        let last? = target + 1 == #rows || rows[target + 1].0 != e
+        __cursor = (i == e && !last? && e > s) ? e - 1 : i
+        __goal = goal
+        true
+    }
+
+    up() -> _ {
+        if multiline? && __vertical(-1) {
+            return
+        }
+        let $h = history or return Ignored
+        let $s = h.prev(text) or return
+        quietly(-> set-text(s))
+    }
+
+    down() -> _ {
+        if multiline? && __vertical(1) {
+            return
+        }
+        let $h = history or return Ignored
+        if !h.browsing? {
+            return Ignored
+        }
+        let $s = h.next() or return
+        quietly(-> set-text(s))
+    }
+
+    delete-backward() -> _ {
+        if __cursor == 0 {
+            return
+        }
+        replace(__cursor - 1, __cursor, '', 'delete')
+    }
+
+    delete-forward() -> _ {
+        if __cursor >= #__chars {
+            return empty? ? Ignored : nil
+        }
+        replace(__cursor, __cursor + 1, '', 'delete')
+    }
+
+    __kill(from: Int, to: Int, backward?: Bool = false) {
+        if from >= to {
+            return
+        }
+        let piece = __chars[from;to].join()
+        match (__last, __kills) {
+            ('kill', [*_, top]) => {
+                __kills[-1] = backward? ? "{piece}{top}" : "{top}{piece}"
+            },
+            _ => {
+                __kills.push(piece)
+                if #__kills > KILLS {
+                    __kills.pop(0)
+                }
+            }
+        }
+        replace(from, to, '', 'kill')
+    }
+
+    kill-line() {
+        let end = __eol(__cursor)
+        __kill(__cursor, (end == __cursor && end < #__chars) ? end + 1 : end)
+    }
+
+    kill-line-backward() {
+        let start = __bol(__cursor)
+        __kill((start == __cursor && start > 0) ? start - 1 : start, __cursor, backward?=true)
+    }
+
+    kill-word-backward() {
+        let end = __cursor
+        backward-word()
+        __kill(__cursor, end, backward?=true)
+    }
+
+    kill-word-forward() {
+        let start = __cursor
+        forward-word()
+        let end = __cursor
+        __cursor = start
+        __kill(start, end)
+    }
+
+    rubout-word() {
+        let end = __cursor
+        while __cursor > 0 && space?(__chars[__cursor - 1]) {
+            __cursor -= 1
+        }
+        while __cursor > 0 && !space?(__chars[__cursor - 1]) {
+            __cursor -= 1
+        }
+        __kill(__cursor, end, backward?=true)
+    }
+
+    yank() {
+        let $top = __kills.?[-1] or return
+        let start = __cursor
+        insert(top, 'yank')
+        __yank = (start, __cursor)
+    }
+
+    yank-pop() {
+        if __last != 'yank' || #__kills < 2 {
+            return
+        }
+        let (from, to) = __yank ?? return
+        __kills.insert(0, __kills.pop())
+        replace(from, to, __kills[-1], 'yank')
+        __yank = (from, __cursor)
+    }
+
+    transpose-chars() {
+        if #__chars < 2 || __cursor == 0 {
+            return
+        }
+        let i = (__cursor >= #__chars) ? __cursor - 1 : __cursor
+        let swapped = "{__chars[i]}{__chars[i - 1]}"
+        replace(i - 1, i + 1, swapped, 'transpose')
+    }
+
+    __recase(f: Function) {
+        let start = __cursor
+        forward-word()
+        let end = __cursor
+        if end > start {
+            replace(start, end, f(__chars[start;end].join()), 'case')
+        }
+    }
+
+    upcase-word() {
+        __recase(&upper)
+    }
+
+    downcase-word() {
+        __recase(&lower)
+    }
+
+    capitalize-word() {
+        __recase(w -> w.sub(/[\p{L}\p{N}]+/, m -> "{m[;1].upper()}{m[1;].lower()}"))
+    }
+
+    newline() -> _ {
+        if !multiline? {
+            return Ignored
+        }
+        insert('\n', 'newline')
+    }
+
+    undo() {
+        let (chars, at) = __undo.pop() ?? return
+        __redo.push(([*__chars], __cursor))
+        __chars  = chars
+        __cursor = at
+        __changed()
+        __kind = 'undo'
+    }
+
+    redo() {
+        let (chars, at) = __redo.pop() ?? return
+        __undo.push(([*__chars], __cursor))
+        __chars  = chars
+        __cursor = at
+        __changed()
+        __kind = 'undo'
+    }
+
+    spans() -> Array[Span] {
+        let spans: Array[Span] = []
+        if let $f = highlight {
+            spans += f(text)
+        }
+        if let $c = completion and let $st = c.trigger.style {
+            spans.push((c.from, c.to, st))
+        }
+        spans
+    }
+}
+
+pub fn wrap-line(chars: Array[String], start: Int, end: Int, width: Int | nil) -> Array[(Int, Int)] {
+    if width == nil || width <= 0 {
+        return [(start, end)]
+    }
+    let rows: Array[(Int, Int)] = []
+    let s = start
+    let w = 0
+    let gap = nil
+    let i = start
+    while i < end {
+        let cw = chars[i].width()
+        if w + cw > width && i > s {
+            let cut = (gap != nil && gap > s) ? gap : i
+            rows.push((s, cut))
+            s = cut
+            w = chars[s;i].map(&width).sum(0)
+            gap = nil
+            continue
+        }
+        w += cw
+        i += 1
+        if space?(chars[i - 1]) {
+            gap = i
+        }
+    }
+    rows.push((s, end))
+    if w >= width && end > s {
+        rows.push((end, end))
+    }
+    rows
+}
+
+pub fn spans-of(rules: Array[(Regex, String)]) -> Function {
+    fn spans(text: String) -> Array[Span] {
+        let index = %{0: 0}
+        let cp = 0
+        for c; i in text.chars() {
+            cp += #c
+            index[cp] = i + 1
+        }
+
+        fn char-at(at: Int) -> Int {
+            let k = at
+            while k > 0 && index[k] == nil {
+                k -= 1
+            }
+            index[k] ?? 0
+        }
+
+        let out: Array[Span] = []
+        for (re, style) in rules {
+            let at = 0
+            while let $p = text.search(re, at) {
+                let w = whole(text[p;].match(re))
+                out.push((char-at(p), char-at(p + #w), style))
+                at = p + max(#w, 1)
+            }
+        }
+        out
+    }
+    spans
+}
+
+pub EDITOR_KEYS: Dict[String, Function] = %{
+    'Left':          &backward-char,
+    'C-b':           &backward-char,
+    'Right':         &forward-char,
+    'C-f':           &forward-char,
+    'M-b':           &backward-word,
+    'C-Left':        &backward-word,
+    'M-Left':        &backward-word,
+    'M-f':           &forward-word,
+    'C-Right':       &forward-word,
+    'M-Right':       &forward-word,
+    'Home':          &line-start,
+    'C-a':           &line-start,
+    'End':           &line-end,
+    'C-e':           &line-end,
+    'C-Home':        &buffer-start,
+    'M-<':           &buffer-start,
+    'C-End':         &buffer-end,
+    'M->':           &buffer-end,
+    'Up':            &up,
+    'C-p':           &up,
+    'Down':          &down,
+    'C-n':           &down,
+    'Backspace':     &delete-backward,
+    'C-h':           &delete-backward,
+    'S-Backspace':   &delete-backward,
+    'Delete':        &delete-forward,
+    'C-d':           &delete-forward,
+    'C-k':           &kill-line,
+    'C-u':           &kill-line-backward,
+    'C-w':           &rubout-word,
+    'M-Backspace':   &kill-word-backward,
+    'C-Backspace':   &kill-word-backward,
+    'M-d':           &kill-word-forward,
+    'C-Delete':      &kill-word-forward,
+    'C-y':           &yank,
+    'M-y':           &yank-pop,
+    'C-t':           &transpose-chars,
+    'M-u':           &upcase-word,
+    'M-l':           &downcase-word,
+    'M-c':           &capitalize-word,
+    'C-_':           &undo,
+    'C-/':           &undo,
+    'C-z':           &undo,
+    'C-S-z':         &redo,
+    'C-Z':           &redo,
+    'M-_':           &redo
+}
+
+pub MULTILINE_KEYS: Dict[String, Function] = %{
+    'S-Enter': &newline,
+    'M-Enter': &newline,
+    'C-j':     &newline
+}
+
+pub SUGGEST_KEYS: Dict[String, Function] = %{
+    'Up':       ed -> ed.completion.?move(-1),
+    'C-p':      ed -> ed.completion.?move(-1),
+    'Down':     ed -> ed.completion.?move(1),
+    'C-n':      ed -> ed.completion.?move(1),
+    'S-Tab':    ed -> ed.completion.?move(-1),
+    'PageUp':   ed -> ed.completion.?page(-1, 8),
+    'PageDown': ed -> ed.completion.?page(1, 8),
+    'Tab':      &complete,
+    'Enter':    &accept-enter,
+    'Esc':      &dismiss
+}

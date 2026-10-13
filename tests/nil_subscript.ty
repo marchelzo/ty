@@ -1,0 +1,34 @@
+fn hidden(x: _) -> _ {
+    x
+}
+
+fn first(xs) {
+    xs[0]
+}
+
+fn maybe-first(xs) {
+    xs.?[0]
+}
+
+ns test
+
+pub fn subscripting-nil-throws() {
+    let m = hidden('abc'.match(/x(y)/))
+    let error = try { m[1]; nil } catch e { str(e) }
+    assert(error != nil && 'x.?[1]' in error, error)
+}
+
+pub fn subscripting-nil-throws-from-jitted-code() {
+    for ..3000 {
+        first([1])
+    }
+    assert(try { first(hidden(nil)); false } catch _ { true })
+}
+
+pub fn safe-subscript-of-nil-is-nil() {
+    for ..3000 {
+        maybe-first([1])
+    }
+    assert(maybe-first(nil) == nil)
+    assert(maybe-first([7]) == 7)
+}

@@ -1,0 +1,25 @@
+ns test
+
+pub fn wrap-breaks-optimally() {
+    assert('aaa bb cc ddddd'.wrap(6) == "aaa\nbb cc\nddddd")
+    assert('aaa bb cc ddddd'.wrap(6, greedy: true) == "aaa bb\ncc\nddddd")
+}
+
+pub fn wrap-keeps-paragraphs-and-indents() {
+    let text = "one two three four\n\n  five six seven eight"
+    assert(text.wrap(11) == "one two\nthree four\n\n  five six\n  seven\n  eight")
+    assert('a b c d e f'.wrap(6, first: '* ', indent: '  ') == "* a b\n  c d\n  e f")
+}
+
+pub fn wrap-measures-display-width() {
+    let wide = '日本語 テキスト'.wrap(8)
+    assert(wide.lines().all?(\_.width() <= 8), wide)
+
+    let colored = "\x1b[31mred words here and more\x1b[0m".wrap(10)
+    assert(colored.lines().all?(\_.width() <= 10), colored)
+    assert(colored.lines().all?(\_.ends?("\x1b[0m")), colored)
+}
+
+pub fn wrap-splits-long-words() {
+    assert('abcdefghij xy'.wrap(4) == "abcd\nefgh\nij\nxy")
+}

@@ -1,0 +1,103 @@
+import csv
+import io
+import os
+import path (Path)
+
+fn scratch(test: Path -> _) {
+    let dir = Path(os.mkdtemp('/tmp/ty-csv'))
+    try {
+        test(dir / 'data.csv')
+    } finally {
+        dir.rmtree()
+    }
+}
+
+fn round-trip(p: Path) {
+    let rows = [{id: 1, note: 'hello, world'}, {id: 2, note: 'multi\nline'}]
+    csv.write(rows, p)
+    assert(csv.load(p, header: true) == [('1', 'hello, world'), ('2', 'multi\nline')])
+    assert(csv.load("{p}")[0] == ['id', 'note'])
+
+    with r = csv.read(p, header: true) {
+        assert(r.header == ['id', 'note'])
+        assert(r.list()[-1].note == 'multi\nline')
+    }
+}
+
+fn descriptors(p: Path) {
+    let fd = os.open("{p}", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    csv.write([['x', 'y'], ['1', '2']], fd)
+    os.close(fd)
+
+    let fd = os.open("{p}", os.O_RDONLY)
+    assert(csv.load(fd) == [['x', 'y'], ['1', '2']])
+    os.close(fd)
+
+    with s = io.open("{p}", 'r') {
+        assert(csv.load(s, header: true)[0].y == '2')
+    }
+}
+
+ns test
+
+pub fn parse-simple() {
+    assert(csv.parse('a,b,c\n1,2,3\n') == [['a', 'b', 'c'], ['1', '2', '3']])
+}
+
+pub fn parse-quoted() {
+    let rows = csv.parse('"a,b","say ""hi""",,"line\none"\r\nx,"",y\r\n')
+    assert(rows == [['a,b', 'say "hi"', '', 'line\none'], ['x', '', 'y']])
+}
+
+pub fn parse-blob-and-blank-lines() {
+    assert(csv.parse(Blob().push('a;b\n\n\nc;d'), sep: ';') == [['a', 'b'], ['c', 'd']])
+}
+
+pub fn parse-header() {
+    let rows = csv.parse('name,age\nAda,36\nAlan,41\n', header: true)
+    assert(rows[0].name == 'Ada')
+    assert(rows[1].{'age'} == '41')
+    assert(rows[1] == ('Alan', '41'))
+}
+
+pub fn parse-explicit-header() {
+    let rows = csv.parse('1\t2\n', sep: '\t', header: ['x', 'y'])
+    assert(rows[0].x == '1' && rows[0].y == '2')
+}
+
+pub fn scan-is-lazy() {
+    let r = csv.scan('k,v\na,1\nb,2\n', header: true)
+    assert(r.header == ['k', 'v'])
+    assert(r.line == 1)
+    assert(r.map(&.k).list() == ['a', 'b'])
+}
+
+pub fn unterminated-quote() {
+    try {
+        csv.parse('a,"b\nc\n')
+        throw AssertionError('expected CSVError')
+    } catch e: csv.CSVError {
+        assert(e.line == 2)
+    }
+}
+
+pub fn str-quoting() {
+    let s = csv.str([['a', 'b,c', 'd"e'], [1, nil, 'x\ny']])
+    assert(s == 'a,"b,c","d""e"\n1,,"x\ny"\n')
+    assert(csv.parse(s) == [['a', 'b,c', 'd"e'], ['1', '', 'x\ny']])
+}
+
+pub fn str-records-and-dicts() {
+    assert(csv.str([{a: 1, b: 2}, {a: 3, b: 4}]) == 'a,b\n1,2\n3,4\n')
+    assert(csv.str([%{'b': 2, 'a': 1}], header: false) == '2,1\n')
+    assert(csv.str([%{'b': 2, 'a': 1}], header: ['a', 'b'], eol: '\r\n') == 'a,b\r\n1,2\r\n')
+    assert(csv.str([(1, 2)]) == '1,2\n')
+}
+
+pub fn file-round-trip() {
+    scratch(round-trip)
+}
+
+pub fn fd-and-stream() {
+    scratch(descriptors)
+}

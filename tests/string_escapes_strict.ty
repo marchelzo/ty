@@ -1,0 +1,26 @@
+import ty.mod
+
+fn lexes?(source: String) -> Bool {
+    try { ty.mod.compile(source, nil, '(escape)'); true } catch _ { false }
+}
+
+ns test
+
+pub fn single-quotes-know-byte-and-unicode-escapes() {
+    assert('\x1b' == "\x1b")
+    assert('\u00e9' == "\u00e9")
+    assert('\0'.bytes().list() == [0])
+    assert(#'\x1b[0m' == 4)
+}
+
+pub fn unknown-escapes-are-errors() {
+    assert(!lexes?('let r = \'\\d+\''))
+    assert(!lexes?('let r = "\\s"'))
+    assert(!lexes?('let r = \'\\.\''))
+}
+
+pub fn punctuation-escapes-still-work() {
+    assert(lexes?('let s = \'\\{ \\} \\/ \\\' \\\\\''))
+    assert(lexes?('let s = "\\{ \\} \\" \\\\"'))
+    assert('\{' == '{')
+}

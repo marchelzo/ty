@@ -1,0 +1,223 @@
+import ink (..)
+import term (event, mod)
+
+ns test
+
+fn key(k: String | Int, mods: Int = 0) -> event.Event {
+    event.Key({key: k, _key: nil, base: nil, mods, event: 1, text: []})
+}
+
+fn typed(ed: Editor, s: String) -> Editor {
+    for c in s.chars() {
+        ed.handle(event.Text(c))
+    }
+    ed
+}
+
+fn press(ed: Editor, *keys) -> Editor {
+    for k in keys {
+        match k {
+            /^C-(.)$/ => ed.handle(key($1, mod.CTRL)),
+            /^M-(.)$/ => ed.handle(key($1, mod.ALT)),
+            name      => ed.handle(key(name))
+        }
+    }
+    ed
+}
+
+pub fn key-names-normalize-layouts() {
+    assert(key-name(key('a', mod.CTRL)) == 'C-a')
+    assert(key-name(key('_', mod.CTRL)) == 'C-_')
+    assert(key-name(key('z', mod.CTRL | mod.SHIFT)) == 'C-S-z')
+    assert(key-name(key('ESCAPE')) == 'Esc')
+    assert(key-name(key('PAGE_UP')) == 'PageUp')
+}
+
+pub fn kill-and-yank() {
+    let ed = typed(Editor(), 'hello big world')
+    press(ed, 'C-w')
+    assert(ed.text == 'hello big ')
+    press(ed, 'C-w')
+    assert(ed.text == 'hello ')
+    press(ed, 'C-y')
+    assert(ed.text == 'hello big world')
+}
+
+pub fn undo-groups-typing-and-redo() {
+    let ed = typed(Editor(), 'abc')
+    press(ed, 'Backspace')
+    assert(ed.text == 'ab')
+    press(ed, 'C-_')
+    assert(ed.text == 'abc')
+    press(ed, 'C-_')
+    assert(ed.text == '')
+    press(ed, 'C-Z')
+    assert(ed.text == 'abc')
+}
+
+pub fn word-motion-and-case() {
+    let ed = typed(Editor(), 'one two three')
+    press(ed, 'M-b', 'M-b')
+    assert(ed.cursor == 4)
+    press(ed, 'M-u')
+    assert(ed.text == 'one TWO three')
+    press(ed, 'M-c')
+    assert(ed.text == 'one TWO Three')
+    press(ed, 'C-a', 'M-d')
+    assert(ed.text == ' TWO Three')
+}
+
+pub fn transpose() {
+    let ed = typed(Editor(), 'ab')
+    press(ed, 'C-t')
+    assert(ed.text == 'ba')
+}
+
+pub fn single-line-flattens-newlines() {
+    let ed = Editor()
+    ed.handle(event.Paste("a\nb\tc"))
+    assert(ed.text == 'a b c')
+    assert(press(ed, 'S-Enter').text == 'a b c')
+}
+
+pub fn max-length() {
+    let ed = typed(Editor(max-length=3), 'abcdef')
+    assert(ed.text == 'abc')
+}
+
+pub fn delete-forward-on-empty-declines() {
+    let ed = Editor()
+    assert(ed.handle(key('d', mod.CTRL)) == Ignored)
+    typed(ed, 'x')
+    press(ed, 'Home')
+    assert(ed.handle(key('d', mod.CTRL)) == true)
+    assert(ed.empty?)
+}
+
+pub fn multiline-vertical-motion-keeps-goal-column() {
+    let ed = Editor(multiline?=true)
+    ed.set-text("abcdef\nx\nabcdef")
+    ed.move-to(5)
+    press(ed, 'Down')
+    assert(ed.row == 1 && ed.col == 1)
+    press(ed, 'Down')
+    assert(ed.row == 2 && ed.col == 5)
+}
+
+pub fn soft-wrapped-rows-drive-vertical-motion() {
+    let ed = Editor(multiline?=true)
+    ed.set-text('hello big world')
+    ed.wrap-width = 6
+    assert(ed.visual-rows() == [(0, 6), (6, 10), (10, 15)])
+    ed.move-to(13)
+    press(ed, 'Up')
+    assert(ed.cursor == 9)
+}
+
+pub fn history-browsing-with-prefix() {
+    let ed = Editor(history=History(['git status', 'ls', 'git log'], prefix?=true))
+    typed(ed, 'git')
+    press(ed, 'Up')
+    assert(ed.text == 'git log')
+    press(ed, 'Up')
+    assert(ed.text == 'git status')
+    press(ed, 'Down', 'Down')
+    assert(ed.text == 'git')
+}
+
+pub fn fuzzy-prefers-boundaries() {
+    let ranked = narrow(['skills', 'status_line', 'subagents'], 'sl')
+    assert(ranked[0].text == 'status_line')
+    assert(ranked[0].hits == [0, 7])
+    assert(narrow(['SideLoad', 'skills'], 'sl')[0].text == 'SideLoad')
+    assert(narrow(['model', 'side'], 's', by='prefix').map(&.text) == ['side'])
+}
+
+pub fn narrow-maps-hits-into-labels() {
+    let [s] = narrow([Suggestion('side', '/side')], 'si', by='prefix', key=&.text)
+    assert(s.hits == [1, 2])
+}
+
+pub fn regex-trigger-opens-and-filters() {
+    let t = Trigger(/(?<=^|\s)@(\S*)$/, c -> narrow(['alpha', 'beta', 'alphabet'], c.query))
+    let ed = typed(Editor(triggers=[t]), 'hi @')
+    assert(ed.suggesting?)
+    assert(#(ed.completion.?items ?? []) == 3)
+    typed(ed, 'al')
+    assert((ed.completion.?items ?? []).map(&.text) == ['alpha', 'alphabet'])
+    press(ed, 'Down', 'Enter')
+    assert(ed.text == 'hi @alphabet')
+    assert(!ed.suggesting?)
+}
+
+pub fn predicate-trigger() {
+    let t = Trigger(ed -> ed.before.match?(/::$/), _ -> ['Int', 'String'], suffix=' ')
+    let ed = typed(Editor(triggers=[t]), 'x ::')
+    assert(ed.suggesting?)
+    press(ed, 'Tab')
+    assert(ed.text == 'x ::Int ')
+}
+
+pub fn dismissal-lasts-until-the-query-changes() {
+    let t = Trigger(/^\/(\S*)$/, c -> narrow(['help', 'hello'], c.query))
+    let ed = typed(Editor(triggers=[t]), '/')
+    press(ed, 'Esc')
+    assert(!ed.suggesting?)
+    press(ed, 'Backspace')
+    typed(ed, '/')
+    assert(!ed.suggesting?)
+    typed(ed, 'h')
+    assert(ed.suggesting?)
+}
+
+pub fn tail-matches-token-around-cursor() {
+    let t = Trigger(/(?<=^|\s)@(\S*)$/, c -> [c.query], tail=/^\S*/)
+    let ed = typed(Editor(triggers=[t]), '@abc')
+    press(ed, 'Home')
+    assert(ed.suggesting?)
+    assert(ed.completion.?query == 'abc')
+}
+
+pub fn manual-trigger-cycles() {
+    let t = Trigger(_ -> true, _ -> ['foo', 'far'], auto?=false, cycle?=true)
+    let ed = Editor(triggers=[t], keymap=%{'Tab': &complete})
+    assert(!ed.suggesting?)
+    press(ed, 'Tab')
+    assert(ed.text == 'foo')
+    press(ed, 'Tab')
+    assert(ed.text == 'far')
+    press(ed, 'Tab')
+    assert(ed.text == '')
+    press(ed, 'Tab', 'Esc')
+    assert(ed.text == '')
+}
+
+pub fn sticky-trigger-stays-open-when-empty() {
+    let t = Trigger(/@(\S*)$/, c -> narrow(['x'], c.query), sticky?=true)
+    let ed = typed(Editor(triggers=[t]), '@zz')
+    assert(ed.suggesting?)
+    assert(!ed.completion.?open?!)
+}
+
+pub fn trigger-keymap-overrides() {
+    let hits = []
+    let t = Trigger(/@(\S*)$/, _ -> ['a'], keymap=%{'Left': ed -> hits.push(ed.cursor)})
+    let ed = typed(Editor(triggers=[t]), '@')
+    press(ed, 'Left')
+    assert(hits == [1])
+    assert(ed.cursor == 1)
+}
+
+pub fn highlight-spans() {
+    let hl = spans-of([(/#\w+/, 'magenta'), (/é\w*/, 'red')])
+    assert(hl("é #tag étoile") == [(2, 6, 'magenta'), (7, 13, 'red')])
+}
+
+pub fn picker-windows() {
+    let p = Picker([i for i in ..20].map(str))
+    p.move(-1)
+    assert(p.index == 19)
+    assert(p.window(5) == (15, 20))
+    p.move(1)
+    assert(p.window(5) == (0, 5))
+}

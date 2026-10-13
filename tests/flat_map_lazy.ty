@@ -1,0 +1,15 @@
+fn hidden(x: _) -> _ { x }
+
+ns test
+
+pub fn flat-map-splices-lazy-results() {
+    assert([1, 2].flat-map(n -> (0..n).map(\_ * 10)) == [0, 0, 10])
+    assert([1, 2].flat-map(n -> hidden(0..n)) == [0, 0, 1])
+    assert(['f', 'r'].flat-map(d -> (1..3).map(n -> "{d}{n}")) == ['f1', 'f2', 'r1', 'r2'])
+    assert((1..3).flat-map(n -> [n, n]) == [1, 1, 2, 2])
+}
+
+pub fn flat-map-keeps-strings-whole() {
+    assert(['ab', 'c'].flat-map(s -> hidden(s)) == ['ab', 'c'])
+    assert([1, 2].flat-map(n -> [n, n]) == [1, 1, 2, 2])
+}

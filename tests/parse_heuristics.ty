@@ -1,0 +1,94 @@
+import chalk (chalk)
+
+fn split-across-lines() -> String {
+    let x = 'abc'
+    "({x})"
+}
+
+fn merged-under-the-quote() -> String {
+    let y = 'abc'
+            "def"
+    y
+}
+
+fn merged-on-one-line() -> String {
+    'a' "b" 'c'
+}
+
+fn chalk-under-the-quote() -> String {
+    let summary = chalk"foo bar baz"
+                       " quux"
+    summary.plain
+}
+
+fn not-merged-under-the-prefix() -> String {
+    let z = 'one'
+        'two'
+    z
+}
+
+fn pair(a, b) {
+    {a, b}
+}
+
+fn named(a) {
+    {a: a + 1, b: 2}
+}
+
+fn spread(r) {
+    {*r, extra: true}
+}
+
+fn single(a) {
+    {a}
+}
+
+fn destructured(r: _) -> Int {
+    let a = 0
+    let b = 0
+    {a, b} = r
+    a + b
+}
+
+fn optional(a) {
+    {?maybe: a}
+}
+
+fn blocks() -> Int {
+    let n = 0
+    { n += 1 }
+    { n += 2 }
+    n
+}
+
+fn body(x) { x }
+
+ns test
+
+pub fn strings-on-separate-lines-stay-separate() {
+    assert(split-across-lines() == '(abc)')
+}
+
+pub fn strings-aligned-under-the-quote-merge() {
+    assert(merged-under-the-quote() == 'abcdef')
+    assert(merged-on-one-line() == 'abc')
+    assert(chalk-under-the-quote() == 'foo bar baz quux')
+}
+
+pub fn strings-aligned-elsewhere-do-not-merge() {
+    assert(not-merged-under-the-prefix() == 'one')
+}
+
+pub fn braces-that-look-like-records-are-records() {
+    assert(pair(1, 2) == {a: 1, b: 2})
+    assert(named(1) == {a: 2, b: 2})
+    assert(spread({q: 1}) == {q: 1, extra: true})
+    assert(single(5) == {a: 5})
+    assert(destructured({a: 1, b: 2}) == 3)
+    assert(optional(4).maybe == 4)
+}
+
+pub fn other-braces-are-blocks() {
+    assert(blocks() == 3)
+    assert(body(7) == 7)
+}

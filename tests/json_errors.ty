@@ -1,0 +1,91 @@
+import json
+
+ns test
+
+use Pair  = (Int, Int)
+use Named = {a: Int, b: String}
+
+fn failure(f: () -> Any) -> JSONError {
+    try {
+        f()
+    } catch e: JSONError {
+        return e
+    }
+
+    throw AssertionError('expected a JSONError')
+}
+
+pub fn offset-points-at-illegal-token() {
+    let e = failure(-> json.parse('{"a": 1,, "b": 2}'))
+    assert(e.offset == 8)
+    assert(e.input == '{"a": 1,, "b": 2}')
+    assert(e.what.lines() == [
+        "line 1, column 9 (offset 8): unexpected ','",
+        '    {"a": 1,, "b": 2}',
+        '            ^'
+    ])
+}
+
+pub fn records-mode-throws-too() {
+    let e = failure(-> json.parse!('{\n  "a": [1, 2,\n  "b": tru }'))
+    assert(e.offset == 21)
+    assert(e.what.lines()[0] == "line 3, column 6 (offset 21): unexpected ':'")
+}
+
+pub fn end-of-input() {
+    assert(failure(-> json.parse('')).what.lines()[0] == 'line 1, column 1 (offset 0): unexpected end of input')
+    assert(failure(-> json.parse('"abc')).offset == 4)
+    assert(failure(-> json.parse('[1, 2')).offset == 5)
+}
+
+pub fn trailing-data() {
+    let e = failure(-> json.parse('[1, 2] x'))
+    assert(e.offset == 7)
+    assert('unexpected trailing data' in e.what)
+}
+
+pub fn keywords-need-delimiters() {
+    assert(failure(-> json.parse('[nul]')).offset == 1)
+    assert(failure(-> json.parse('truex')).offset == 4)
+    assert(json.parse('[true\t,false]') == [true, false])
+    assert(json.parse('null') == nil)
+}
+
+pub fn blob-input-is-reported-as-a-string() {
+    let e = failure(-> json.parse(Blob().push('{"x": nul}')))
+    assert(e.offset == 6)
+    assert(e.input == '{"x": nul}')
+}
+
+pub fn schema-failures() {
+    let int = failure(-> json.parse(Pair, '[1]'))
+    assert(int.offset == 2)
+    assert('failed to parse JSON as (Int, Int)' in int.what)
+
+    let record = failure(-> json.parse(Named, '{"a": 1}'))
+    assert(record.offset == 7)
+
+    let trailing = failure(-> json.parse(Pair, '[1, 2]]'))
+    assert(trailing.offset == 6)
+    assert('unexpected trailing data after parsing (Int, Int)' in trailing.what)
+}
+
+pub fn long-lines-are-clipped() {
+    let pad   = 'x' * 100
+    let text  = "[\"{pad}\", @, \"{pad}\"]"
+    let lines = failure(-> json.parse(text)).what.lines()
+    assert(lines[1].starts?('    ...'))
+    assert(lines[1].ends?('...'))
+    assert(#lines[1] == 4 + 40 + 40)
+    assert(lines[2] == "{' ' * 44}^")
+    assert(lines[1][44] == '@')
+}
+
+pub fn json-error-is-a-runtime-error() {
+    try {
+        json.parse('[')
+        assert(false)
+    } catch _: RuntimeError {
+        ;
+    }
+}

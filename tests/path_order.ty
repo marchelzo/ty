@@ -1,0 +1,8 @@
+import path (Path)
+
+ns test
+
+pub fn paths-sort-by-their-text() {
+    assert([Path('/b'), Path('/a/z'), Path('/a')].sort().map(str) == ['/a', '/a/z', '/b'])
+    assert(Path('/a') < Path('/b'))
+}

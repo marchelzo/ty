@@ -1,0 +1,42 @@
+import ty
+import ty.interpreter (Repl)
+import time (now)
+import sh
+
+const CHURN = '''
+    import procs
+    let rss = -> procs.this().memory.rss
+    let before = rss()
+    for ..2000 { let s = 'x' * 100000 }
+    rss() - before
+'''
+
+fn growth(output: String) -> Int {
+    int(output.trim().lines()[-1])
+}
+
+ns test
+
+pub fn repl-worker-collects-garbage() {
+    let repl   = Repl()
+    let result = repl.eval(CHURN, 60000)
+    repl.close()
+
+    assert(result.error == nil, result.error)
+    assert(int(result.value) < 50_000_000, "worker grew by {result.value} bytes")
+}
+
+pub fn failed-parse-under-dash-e-keeps-gc-running() {
+    let script = [*CHURN.lines().map(&trim).filter(bool)[;-1], 'print(rss() - before)'].join('; ')
+    let result = sh.run([ty.executable, '-b', '-e', script], timeout=60)
+    assert(growth(result.stdout) < 50_000_000, result.stdout)
+}
+
+pub fn join-is-linear() {
+    let parts = [str(i) for i in ..300000]
+    let start = now()
+    let text  = parts.join(',')
+
+    assert(text.split(',') == parts)
+    assert(now() - start < 2.0, "join took {now() - start:.2f}s")
+}
