@@ -97,7 +97,7 @@ pub fn collection-errors(t: Test) {
         (
             'needs-arg',
             'error',
-            'test takes required parameter `a` (only a first parameter named `t` is supported)'
+            'test takes required parameter `a`, which is not a fixture'
         ),
         ('takes-t-and-default', 'pass', nil),
     ])

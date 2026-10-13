@@ -16,6 +16,7 @@ pub RULE = '─'
 
 pub LABELS: Dict[String, String] = %{
     'pass':    'PASS',
+    'flaky':   'FLAKY',
     'fail':    'FAIL',
     'error':   'ERROR',
     'skip':    'SKIP',
@@ -33,6 +34,7 @@ pub XPASS_HINT = 'fixed? remove @xfail'
 
 pub COUNT_ORDER: Array[(String, String, String)] = [
     ('pass',    'passed',    'passed'),
+    ('flaky',   'flaky',     'flaky'),
     ('fail',    'failed',    'failed'),
     ('error',   'error',     'errors'),
     ('timeout', 'timed out', 'timed out'),
@@ -46,6 +48,7 @@ pub COUNT_ORDER: Array[(String, String, String)] = [
 
 let STYLES: Dict[String, String] = %{
     'pass':    '32',
+    'flaky':   '33;1',
     'fail':    '31;1',
     'error':   '31;1',
     'timeout': '35;1',
@@ -155,7 +158,7 @@ pub fn message-of(ev: Event) -> ?String {
 pub fn detail(ev: Event, strict?: Bool = true) -> String {
     let reason = get-str(ev, 'reason') ?? ''
     match outcome-of(ev) {
-        'skip' or 'todo' or 'xfail' => reason,
+        'skip' or 'todo' or 'xfail' or 'flaky' => reason,
         'xpass'   => strict? ? XPASS_HINT : 'unexpected pass',
         'timeout' => get-bool(ev, 'hard') ? 'hard kill' : reason,
         'crash'   => signal-name(ev['signal']),
@@ -218,6 +221,17 @@ fn assertion-lines(f: Event) -> Array[String] {
     out
 }
 
+fn step-line(s: Event) -> String {
+    let outcome = pad(get-str(s, 'outcome') ?? '?', 4)
+    let name = get-str(s, 'name') ?? '?'
+    let note = get-str(s, 'reason') ?? fmt-dur(get-float(s, 'dur') ?? 0.0)
+    "{outcome}  {name} ({note})"
+}
+
+fn step-lines(ev: Event) -> Array[String] {
+    get-events(ev, 'steps').map(step-line)
+}
+
 fn section(out: Array[String], title: String, body: Array[String], color?: Bool) {
     if #body == 0 {
         return
@@ -252,7 +266,7 @@ pub fn failure(
     let out = [head.join(' '), "  {loc}: {kind(ev, strict?: strict?)}"]
 
     let reason = get-str(ev, 'reason')
-    if reason != nil && outcome in ['error', 'timeout'] {
+    if reason != nil && outcome in ['error', 'timeout', 'fail'] {
         out.push("    {reason}")
     }
 
@@ -264,6 +278,7 @@ pub fn failure(
         section(out, 'trace:', clip(trace, max-lines), color?)
     }
 
+    section(out, 'steps:', step-lines(ev), color?)
     section(out, 'log:', get-strs(ev, 'logs').map(clean), color?)
 
     let output = clean(get-str(ev, 'output') ?? '')
@@ -322,6 +337,9 @@ fn rerun-command(id: String) -> String {
     if id.match?(/(^|\/)__test__\.ty$/) {
         return "ty {shell-quote(id)}"
     }
+    if let [_, file] = id.match(/^(.*)::\(teardown\)$/) {
+        return "ty --test {shell-quote(file)}"
+    }
     "ty --test {shell-quote(id)}"
 }
 
@@ -335,6 +353,7 @@ pub fn summary(
     warnings: Int = 0,
     slowest: Array[(String, Float)] = [],
     rerun: Array[String] = [],
+    flaky: Array[String] = [],
     interrupted?: Bool = false,
     color?: Bool = false,
     width: Int = 80,
@@ -372,6 +391,7 @@ pub fn summary(
         " {stop}{counts-line(counts, color?: color?)}",
         *wrap(' ', info, width, sep: '   '),
         *(#slow > 0 ? wrap(' slowest: ', slow, width) : []),
+        *(#flaky > 0 ? wrap(' flaky: ', flaky, width) : []),
     ]
     for rerun[;max-rerun] {
         out.push(" rerun: {rerun-command(it)}")

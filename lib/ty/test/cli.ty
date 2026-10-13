@@ -1,8 +1,10 @@
 import json
 import os
 import path (Path)
+import sh as shell
 import time
 import ty
+import ty.test.cache as cache
 import ty.test.discover as discover (Target, Plan, PlanFile, Planner)
 import ty.test.dirconf as dirconf (DirConf)
 import ty.test.events as events (
@@ -31,6 +33,13 @@ pub class Options {
     list:              ?String = nil
     fail-fast?:        Bool = false
     max-fail:          ?Int = nil
+    retries:           ?Int = nil
+    repeat:            ?Int = nil
+    last-failed?:      Bool = false
+    failed-first?:     Bool = false
+    shard:             ?(Int, Int) = nil
+    durations:         ?Int = nil
+    tracked-only?:     Bool = false
     shuffle?:          Bool = false
     seed:              ?Int = nil
     jobs:              ?Int = nil
@@ -62,6 +71,7 @@ selection:
       --exclude PAT       skip tests whose ID contains PAT (or matches /RE/)
       --path-filter RE    only run files whose path matches RE
       --path-exclude RE   skip files whose path matches RE
+      --tracked-only      skip files that git does not track
   -t, --tags EXPR         tag expression: a and (b or not c)
       --all               include opt-in directories (opt-in: true)
       --with NAME         include directories marked opt-in: 'NAME'
@@ -71,6 +81,12 @@ run control:
   -J, --jobs N            worker processes (default: number of CPUs)
   -x, --fail-fast         stop after the first failure
       --max-fail N        stop after N failures
+      --retries N         rerun a failing test up to N times; a pass is 'flaky'
+      --repeat N          run each test N times; it fails if any run fails
+      --lf, --last-failed only run tests (and files) that failed last time
+      --ff, --failed-first
+                          run files with last time's failures first
+      --shard I/N         run only the I-th of N slices of the files
       --shuffle[=SEED]    shuffle file and test order
       --seed N            seed for --shuffle and per-test srand
       --timeout S         per-test timeout (default 10)
@@ -86,6 +102,7 @@ reporting:
   -r, --reporter NAME     pretty, dot, json or json=PATH (repeatable)
       --events PATH       append JSONL events to PATH
       --color WHEN        always, never or auto
+      --durations N       list the N slowest tests (default 5; 0 hides them)
   -v, --verbose           more output
       --quiet             only show failures
 
@@ -104,6 +121,17 @@ fn integer(opt: String, s: String) -> Int {
         /^\d+$/ => int(s),
         _       => throw UsageError("{opt} expects a non-negative integer, got '{s}'"),
     }
+}
+
+fn shard(s: String) -> (Int, Int) {
+    let $g = s.match(/^(\d+)\/(\d+)$/) or throw UsageError(
+        "--shard expects I/N (for example 2/4), got '{s}'"
+    )
+    let (k, m) = (int(g[1]), int(g[2]))
+    if m < 1 || k < 1 || k > m {
+        throw UsageError("--shard {s}: I must be between 1 and N")
+    }
+    (k, m)
 }
 
 fn split(arg: String) -> (String, String | nil) {
@@ -151,12 +179,19 @@ pub fn parse(args: Array[String]) -> Options {
             '--exclude'            => o.excludes.push(value(opt, inline)),
             '--path-filter'        => o.path-filters.push(value(opt, inline)),
             '--path-exclude'       => o.path-excludes.push(value(opt, inline)),
+            '--tracked-only'       => o.tracked-only? = flag(opt, inline),
             '-t' or '--tags'       => o.tags = value(opt, inline),
             '--all'                => o.all? = flag(opt, inline),
             '--with'               => o.opted.push(value(opt, inline)),
             '--list'               => o.list = inline ?? 'text',
             '-x' or '--fail-fast'  => o.fail-fast? = flag(opt, inline),
             '--max-fail'           => o.max-fail = integer(opt, value(opt, inline)),
+            '--retries'            => o.retries = integer(opt, value(opt, inline)),
+            '--repeat'             => o.repeat = integer(opt, value(opt, inline)),
+            '--lf' or '--last-failed'  => o.last-failed? = flag(opt, inline),
+            '--ff' or '--failed-first' => o.failed-first? = flag(opt, inline),
+            '--shard'              => o.shard = shard(value(opt, inline)),
+            '--durations'          => o.durations = integer(opt, value(opt, inline)),
             '--shuffle'            => do {
                 o.shuffle? = true
                 if let $s = inline {
@@ -263,55 +298,121 @@ fn script-selected?(o: Options, pf: PlanFile, tags: ?TagExpr) -> Bool {
     inc? && tagged? && !any-match?(o.excludes, id)
 }
 
-let CACHE-DIR = '.ty-test-cache'
-
-fn durations-file() -> String {
-    "{CACHE-DIR}/durations.json"
+fn file-of-id(id: String) -> String {
+    id.split('::')[0]
 }
 
-fn load-durations() -> Dict[String, Float] {
-    let out: Dict[String, Float] = %{}
-    let $text = slurp(durations-file()) or return out
-    let data = try {
-        json.parse(text)
-    } catch _: JSONError {
-        nil
+fn update-last-failed(
+    old:   Dict[String, String],
+    tally: Tally
+) -> Dict[String, String] {
+    let out: Dict[String, String] = %{}
+    for k, v in old {
+        out[k] = v
     }
-    if !(data :: Dict) {
-        return out
+    for ev in tally.results {
+        let id = tally.id-of(ev)
+        if tally.failing?(ev) {
+            out[id] = file-of-id(id)
+        } else {
+            out.remove(id)
+        }
     }
-    for k, v in data {
-        match (k, v) {
-            (f: String, x: Float) => out[f] = x,
-            (f: String, n: Int)   => out[f] = float(n),
-            _                     => nil,
+    for r in tally.rows {
+        if r.error != nil {
+            out[r.path] = r.path
+        } else {
+            out.remove(r.path)
         }
     }
     out
 }
 
-fn save-durations(durs: Dict[String, Float]) {
-    if !Path(CACHE-DIR).dir? {
-        os.mkdir(CACHE-DIR, 0o755)
+fn sharded(jobs: Array[Job], shard: ?(Int, Int)) -> Array[Job] {
+    let $sh = shard or return jobs
+    let (k, n) = sh
+    let sorted = jobs.sort(by: &.file)
+    [j for j; i in sorted if i % n == k - 1]
+}
+
+class LastFailed {
+    ids:    Dict[String, String]
+    active?: Bool
+
+    init(ids: Dict[String, String], active?: Bool) {
+        self.ids     = ids
+        self.active? = active?
     }
-    let tmp = "{durations-file()}.{os.getpid()}"
-    let fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+
+    files -> Array[String] {
+        [f for _, f in ids].nub()
+    }
+
+    whole-file?(f: String) -> Bool {
+        ids[f] == f
+    }
+
+    ids-in(f: String) -> Array[String] {
+        [id for id, file in ids if file == f && id != f]
+    }
+}
+
+fn apply-last-failed(
+    o:       Options,
+    jobs:    Array[Job],
+    lf:      LastFailed,
+    run-dir: String
+) -> Array[Job] {
+    if !lf.active? && !o.failed-first? {
+        return jobs
+    }
+    let failed = lf.files
+    if lf.active? {
+        let picked = jobs.filter(j -> j.file in failed)
+        for j; i in picked {
+            if lf.whole-file?(j.file) {
+                continue
+            }
+            let p = "{run-dir}/last-failed-{i}.ids"
+            write-text(p, lf.ids-in(j.file).join("\n"))
+            j.select-path = p
+        }
+        return picked
+    }
+    let (first, rest) = jobs.partition(j -> j.file in failed)
+    [*first, *rest]
+}
+
+fn write-text(p: String, text: String) {
+    let fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
     if fd < 0 {
-        return
+        throw RuntimeError("ty --test: cannot write {p}")
     }
-    os.write(fd, json.encode(durs), all: true)
+    os.write(fd, text, all: true)
     os.close(fd)
-    os.rename(tmp, durations-file())
 }
 
 fn longest-first(jobs: Array[Job], durs: Dict[String, Float]) -> Array[Job] {
     jobs.sort(by: j -> (-(durs[j.file] ?? 1.0e9), j.file))
 }
 
+fn tracked-files() -> Dict[String, Bool] {
+    let r = shell.run(['git', 'ls-files', '-z'])
+    if !r.ok? {
+        throw UsageError('--tracked-only needs a git repository')
+    }
+    let root = os.realpath(os.getcwd()) ?? os.getcwd()
+    %{"{root}/{p}": true for p in r.stdout.split("\0") if p != ''}
+}
+
 fn make-jobs(o: Options, plan: Plan, tags: ?TagExpr, seed: Int) -> Array[Job] {
     let jobs: Array[Job] = []
+    let tracked = o.tracked-only? ? tracked-files() : nil
     for pf in plan.files {
         if !path-selected?(o, pf.path) {
+            continue
+        }
+        if let $t = tracked and !t[pf.abs] {
             continue
         }
         if pf.script? && !script-selected?(o, pf, tags) {
@@ -330,7 +431,11 @@ fn make-jobs(o: Options, plan: Plan, tags: ?TagExpr, seed: Int) -> Array[Job] {
         j.env          = pf.eff.env
         jobs.push(j)
     }
-    o.shuffle? ? select.shuffled(jobs, seed) : longest-first(jobs, load-durations())
+    let mine = sharded(jobs, o.shard)
+    if o.shuffle? {
+        return select.shuffled(mine, seed)
+    }
+    longest-first(mine, cache.load-durations())
 }
 
 fn forwarded(o: Options, seed: Int) -> Array[String] {
@@ -346,6 +451,12 @@ fn forwarded(o: Options, seed: Int) -> Array[String] {
     }
     if let $n = o.max-fail ?? (o.fail-fast? ? 1 : nil) {
         fwd += ['--max-fail', str(n)]
+    }
+    if let $n = o.retries {
+        fwd += ['--retries', str(n)]
+    }
+    if let $n = o.repeat {
+        fwd += ['--repeat', str(n)]
     }
     let flags = [
         '--shuffle' if o.shuffle?,
@@ -421,7 +532,13 @@ fn make-sink(o: Options) -> EventSink {
     }
     let specs = (#o.reporters > 0) ? o.reporters : ['pretty']
     for spec in specs {
-        sink.add(report.make(spec, color?: color-of(o), mode: 'suite', quiet?: o.quiet?))
+        sink.add(report.make(
+            spec,
+            color?: color-of(o),
+            mode: 'suite',
+            quiet?: o.quiet?,
+            slowest: o.durations ?? 5
+        ))
     }
     sink
 }
@@ -526,15 +643,21 @@ fn exit-status(tally: Tally, bad-rc: Int, interrupted?: Bool) -> Int {
 
 fn suite-run(o: Options, args: Array[String], plan: Plan, seed: Int) -> Int {
     let tags = (o.tags == nil) ? nil : select.parse-tags(o.tags)
-    let jobs = make-jobs(o, plan, tags, seed)
-    let sink = make-sink(o)
     let run-dir = make-run-dir()
+    let remember? = cache.claim()
+    let previous = cache.load-last-failed()
+    let lf = LastFailed(previous, o.last-failed? && #previous > 0)
+    if o.last-failed? && !lf.active? {
+        eprint('ty --test: no earlier failures recorded; running everything')
+    }
+    let jobs = apply-last-failed(o, make-jobs(o, plan, tags, seed), lf, run-dir)
+    let sink = make-sink(o)
     let cfg = settings(o, run-dir, seed, #jobs)
     let tally = Tally(mode: 'suite')
     let t0 = time.now()
     let seq = 0
 
-    let durs = load-durations()
+    let durs = cache.load-durations()
 
     fn emit(ev: Event) {
         seq += 1
@@ -572,8 +695,9 @@ fn suite-run(o: Options, args: Array[String], plan: Plan, seed: Int) -> Int {
 
     let rc = exit-status(tally, s.bad-rc, interrupted?)
 
-    if !interrupted? {
-        save-durations(durs)
+    if remember? && !interrupted? {
+        cache.save-durations(durs)
+        cache.save-last-failed(update-last-failed(previous, tally))
     }
 
     emit(events.run-end(

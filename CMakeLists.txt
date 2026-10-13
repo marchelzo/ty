@@ -534,6 +534,12 @@ target_sources(${_tgt_ty_ls} PRIVATE tyls.c)
 target_compile_definitions(${_tgt_ty_ls} PRIVATE TY_LS)
 target_link_libraries(${_tgt_ty_ls} PRIVATE ${_tgt_ty_interface})
 
+set(_tgt_ty_test "${PROJECT_NAME}test")
+add_executable(${_tgt_ty_test})
+target_sources(${_tgt_ty_test} PRIVATE ty.c)
+target_compile_definitions(${_tgt_ty_test} PRIVATE TY_TEST)
+target_link_libraries(${_tgt_ty_test} PRIVATE ${_tgt_ty_interface})
+
 if(BUILD_PROFILER)
   set(_tgt_ty_profiler "${PROJECT_NAME}prof")
   add_executable(${_tgt_ty_profiler})
@@ -547,7 +553,7 @@ endif()
 # ---
 
 include(GNUInstallDirs)
-install(TARGETS ${_tgt_ty} ${_tgt_ty_profiler} ${_tgt_ty_ls}
+install(TARGETS ${_tgt_ty} ${_tgt_ty_profiler} ${_tgt_ty_ls} ${_tgt_ty_test}
   COMPONENT InstallComponentTy
   DESTINATION ${CMAKE_INSTALL_BINDIR}
 )

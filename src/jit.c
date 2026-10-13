@@ -1776,6 +1776,12 @@ jit_simple_ctor_plan(Ty *ty, int class_id, int argc, u64 *packed,
                 return false;
         }
 
+#ifdef TY_TEST
+        if (class->init_patched) {
+                return false;
+        }
+#endif
+
         Value *ctor = class_ctor(ty, class_id);
         if (ctor == NULL || ctor->type != VALUE_FUNCTION
             || argc != param_count_of(ctor) || argc <= 0 || argc > 8
@@ -1908,6 +1914,12 @@ jit_rt_simple_ctor(Ty *ty, Value *result, int class_id, int argc,
                 STAT(simple_ctor_slow);
                 return 0;
         }
+#ifdef TY_TEST
+        if (class_get(ty, class_id)->init_patched) {
+                STAT(simple_ctor_slow);
+                return 0;
+        }
+#endif
         if (nil_guard) {
                 for (int i = 0; i < argc; ++i) {
                         if (result[i].type == VALUE_NIL) {

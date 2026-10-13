@@ -1,0 +1,6 @@
+import time
+import ty.test (patch)
+
+pub fn freeze-time(at: Float) {
+    patch(time.now, () -> at)
+}

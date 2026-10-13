@@ -1,0 +1,106 @@
+import ty.test (Test)
+import ty.test.events as events (Event)
+import super.support.runner (FIX, drive, ends, local, outcomes, end-of)
+
+fn reason-of(e: Event) -> String {
+    events.get-str(e, 'reason') ?? ''
+}
+
+fn failure-str(e: Event, key: String) -> String {
+    events.get-str(events.get-event(e, 'failure'), key) ?? ''
+}
+
+fn reasons(args: Array[String], t: Test) -> Dict[String, String] {
+    let r = drive(t, ["{FIX}/authoring.ty", *args])
+    %{local(events.get-str(e, 'id') ?? ''): reason-of(e) for e in ends(r)}
+}
+
+pub fn every-outcome(t: Test) {
+    let r = drive(t, ["{FIX}/authoring.ty"])
+    assert(r.status == 1)
+    assert(outcomes(r) == %{
+        'adds[0]':         'pass',
+        'adds[1]':         'pass',
+        'adds[2]':         'pass',
+        'adds[zero]':      'xfail',
+        'adds[skipped]':   'skip',
+        'with-fixture[0]': 'pass',
+        'with-fixture[1]': 'pass',
+        'imported':        'pass',
+        'cycle':           'error',
+        'no-yield':        'error',
+        'teardown-fails':  'error',
+        'setup-times-out': 'timeout',
+        'unknown':         'error',
+        'bad-row[0]':      'error',
+        'too-many[0]':     'error',
+        'no-rows':         'error',
+        'steps':           'fail',
+        'order':           'pass',
+    })
+}
+
+pub fn collection-errors-name-the-problem(t: Test) {
+    let got = reasons(['-k', 'unknown', '-k', '[0]', '-k', 'no-rows'], t)
+    assert(got == %{
+        'unknown':         'test takes required parameter `nope`, '
+                           'which is not a fixture',
+        'bad-row[0]':      'case 0 sets `c`, which `bad-row` doesn\'t take',
+        'too-many[0]':     'case 0 has 3 values but `too-many` takes 1',
+        'no-rows':         '@cases has no rows',
+        'adds[0]':         '',
+        'with-fixture[0]': '',
+    })
+}
+
+pub fn fixture-failures(t: Test) {
+    let args = ['-k', 'cycle', '-k', 'no-yield', '-k', 'teardown']
+    let r = drive(t, ["{FIX}/authoring.ty", *args])
+    let cycle = failure-str(end-of(r, 'cycle'), 'message')
+    assert(cycle == 'fixture cycle: loop-a -> loop-b -> loop-a')
+    assert(reason-of(end-of(r, 'no-yield')) == 'fixture `never` failed')
+    let teardown = failure-str(end-of(r, 'teardown-fails'), 'message')
+    assert(teardown == 'teardown blew up')
+}
+
+pub fn fixture-setup-is-under-the-timeout(t: Test) {
+    let r = drive(t, ["{FIX}/authoring.ty", '-k', 'setup-times-out'])
+    let trace = failure-str(end-of(r, 'setup-times-out'), 'trace')
+    assert(trace.match?(/in slow-setup/), trace)
+}
+
+pub fn steps-are-reported(t: Test) {
+    let r = drive(t, ["{FIX}/authoring.ty", '-k', 'steps'])
+    let e = end-of(r, 'steps')
+    assert(reason-of(e) == 'step `two` failed')
+    let steps = events.get-events(e, 'steps')
+    let ids = steps.map(\local(events.get-str(_, 'id') ?? ''))
+    assert(steps.map(\events.get-str(_, 'outcome')) == ['pass', 'fail', 'skip'])
+    assert(ids == ['steps/one', 'steps/two', 'steps/three'])
+    assert(events.get-str(steps[2], 'reason') == 'later')
+}
+
+pub fn file-teardown-errors(t: Test) {
+    let r = drive(t, ["{FIX}/teardown_fails.ty"])
+    assert(r.status == 1)
+    assert(outcomes(r) == %{'uses-resource': 'pass', '(teardown)': 'error'})
+    let why = reason-of(end-of(r, '(teardown)'))
+    assert(why == 'after-all hook `finale` failed; '
+                  'file-scoped fixture teardown failed')
+}
+
+pub fn context-helpers(t: Test) {
+    let home = getenv('HOME')
+    t.cleanup(-> assert(getenv('HOME') == home))
+    t.cleanup(-> assert(getenv('TY_TEST_AUTHORING') == nil))
+    let c = t.capture(-> do {
+        print('out')
+        eprint('err')
+        7
+    })
+    assert(c == {stdout: "out\n", stderr: "err\n", result: 7})
+    t.setenv('TY_TEST_AUTHORING', 'yes')
+    t.unsetenv('HOME')
+    assert(getenv('TY_TEST_AUTHORING') == 'yes')
+    assert(getenv('HOME') == nil)
+}

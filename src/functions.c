@@ -1987,6 +1987,21 @@ TY_BUILTIN_RAW(setenv)
         return NIL;
 }
 
+// unsetenv(var: String) -> nil
+TY_BUILTIN_RAW(unsetenv)
+{
+        ASSERT_ARGC("unsetenv()", 1);
+
+        char *key = TY_TMP_C_STR_A(ARGx(0, VALUE_STRING, VALUE_BLOB));
+
+#ifdef _WIN32
+        SetEnvironmentVariableA(key, NULL);
+#else
+        unsetenv(key);
+#endif
+        return NIL;
+}
+
 // getenv(var: String) -> String | nil
 TY_BUILTIN_RAW(getenv)
 {
@@ -8908,6 +8923,88 @@ TY_BUILTIN_RAW(define_method)
         return NIL;
 }
 
+static struct itable *
+class_slot_table(Class *c, char const *kind)
+{
+        static struct {
+                char const *kind;
+                usize off;
+        } const tables[] = {
+                { "method",        offsetof(Class, methods)   },
+                { "getter",        offsetof(Class, getters)   },
+                { "setter",        offsetof(Class, setters)   },
+                { "static",        offsetof(Class, s_methods) },
+                { "static-getter", offsetof(Class, s_getters) },
+                { "static-setter", offsetof(Class, s_setters) },
+        };
+
+        for (usize i = 0; i < countof(tables); ++i) {
+                if (s_eq(tables[i].kind, kind)) {
+                        return (struct itable *)((char *)c + tables[i].off);
+                }
+        }
+
+        return NULL;
+}
+
+// ty.class-slot(cls: prelude.Class, kind: prelude.String, name: prelude.String) -> _
+TY_BUILTIN_RAW(ty_class_slot)
+{
+        ASSERT_ARGC("ty.class-slot()", 3);
+
+        Value cls  = ARGx(0, VALUE_CLASS);
+        Value kind = ARGx(1, VALUE_STRING);
+        Value name = ARGx(2, VALUE_STRING);
+
+        struct itable *t = class_slot_table(class_get(ty, cls.class), TY_TMP_C_STR_A(kind));
+
+        if (t == NULL) {
+                bP("unknown member kind: %s", TY_TMP_C_STR_A(kind));
+        }
+
+        InternEntry *e = intern(&xD.members, TY_TMP_C_STR_B(name));
+        Value *v = itable_lookup(ty, t, e->id);
+
+        return (v == NULL) ? NIL : *v;
+}
+
+// ty.set-class-slot(cls: prelude.Class, kind: prelude.String, name: prelude.String, f: _) -> nil
+TY_BUILTIN_RAW(ty_set_class_slot)
+{
+        ASSERT_ARGC("ty.set-class-slot()", 4);
+
+        Value cls  = ARGx(0, VALUE_CLASS);
+        Value kind = ARGx(1, VALUE_STRING);
+        Value name = ARGx(2, VALUE_STRING);
+        Value f    = ARG(3);
+        Class *c   = class_get(ty, cls.class);
+
+        struct itable *t = class_slot_table(c, TY_TMP_C_STR_A(kind));
+
+        if (t == NULL) {
+                bP("unknown member kind: %s", TY_TMP_C_STR_A(kind));
+        }
+
+        if (IsNil(f)) {
+                bP("cannot remove a class member");
+        }
+
+        InternEntry *e = intern(&xD.members, TY_TMP_C_STR_B(name));
+
+        itable_add(ty, t, e->id, f);
+
+        if (t == &c->methods && e->id == NAMES.init) {
+                c->init = f;
+#ifdef TY_TEST
+                c->init_patched = true;
+#endif
+        }
+
+        class_refresh_offsets(ty, c->i);
+
+        return NIL;
+}
+
 // apply(f: Any, *args: Any, self: Any = nil, kwargs: Any = nil, collect: Bool = false) -> _
 TY_BUILTIN_RAW(apply)
 {
@@ -9352,6 +9449,25 @@ test_src_name(TyTest const *test)
         return name;
 }
 
+static int
+fun_params(Ty *ty, Expr const *fun, Array *params)
+{
+        int required = 0;
+
+        for (int i = 0; i < vN(fun->params); ++i) {
+                vAp(params, vSsz(v__(fun->params, i)));
+                if (
+                        (i != fun->rest)
+                     && (i != fun->ikwargs)
+                     && (i >= vN(fun->dflts) || v__(fun->dflts, i) == NULL)
+                ) {
+                        required += 1;
+                }
+        }
+
+        return required;
+}
+
 static Value
 test_site(Ty *ty, TyTest const *test, usize n)
 {
@@ -9388,16 +9504,7 @@ test_site(Ty *ty, TyTest const *test, usize n)
                 }
         }
 
-        for (int i = 0; i < vN(fun->params); ++i) {
-                vAp(params, vSsz(v__(fun->params, i)));
-                if (
-                        (i != fun->rest)
-                     && (i != fun->ikwargs)
-                     && (i >= vN(fun->dflts) || v__(fun->dflts, i) == NULL)
-                ) {
-                        required += 1;
-                }
-        }
+        required = fun_params(ty, fun, params);
 
         for (usize i = 0; i < n; ++i) {
                 if (v_(xD.tests, i)->var == test->var) {
@@ -9525,6 +9632,42 @@ trace_frame(Ty *ty, Expr const *e)
                 "func", name,
                 "src",  vSs(src, end - src)
         );
+}
+
+// ty.signature(f: _) -> {params: prelude.Array[prelude.String], required: prelude.Int, generator?: prelude.Bool} | nil
+TY_BUILTIN_RAW(ty_signature)
+{
+        ASSERT_ARGC("ty.signature()", 1);
+
+        Value f = ARG(0);
+
+        if (f.type != VALUE_FUNCTION || f.info == NULL) {
+                return NIL;
+        }
+
+        Expr const *fun = expr_of(&f);
+
+        if (
+                (fun == NULL)
+             || (fun->type == EXPRESSION_MULTI_FUNCTION)
+        ) {
+                return NIL;
+        }
+
+        GC_STOP();
+
+        Array *params = vA();
+        int required = fun_params(ty, fun, params);
+
+        Value sig = vTn(
+                "params",     ARRAY(params),
+                "required",   INTEGER(required),
+                "generator?", BOOLEAN(fun->star || fun->type == EXPRESSION_GENERATOR)
+        );
+
+        GC_RESUME();
+
+        return sig;
 }
 
 // ty.frames(t: _) -> prelude.Array[{file: prelude.String | nil, line: prelude.Int, col: prelude.Int, func: prelude.String | nil, src: prelude.String}]
@@ -10516,6 +10659,27 @@ TY_BUILTIN_RAW(ty_parse)
         );
 
         return ParseSource(ty, input, IsMissing(scope) ? NULL : scope.ptr, flags);
+}
+
+// ty.same?(a: prelude.Any, b: prelude.Any) -> prelude.Bool
+TY_BUILTIN_RAW(ty_same)
+{
+        ASSERT_ARGC("ty.same?()", 2);
+
+        Value a = ARG(0);
+        Value b = ARG(1);
+
+        if (a.type != b.type) {
+                return BOOLEAN(false);
+        }
+
+        switch (a.type) {
+        case VALUE_OBJECT: return BOOLEAN(a.object == b.object);
+        case VALUE_ARRAY:  return BOOLEAN(a.array  == b.array);
+        case VALUE_DICT:   return BOOLEAN(a.dict   == b.dict);
+        case VALUE_BLOB:   return BOOLEAN(a.blob   == b.blob);
+        default:           return BOOLEAN(value_test_equality(ty, &a, &b));
+        }
 }
 
 // ty.id(x: prelude.Any) -> prelude.Int

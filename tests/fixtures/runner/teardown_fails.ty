@@ -1,0 +1,16 @@
+import ty.test (fixture, after-all)
+
+@fixture(scope: 'file')
+fn resource*() {
+    yield 1
+    throw RuntimeError('file teardown blew up')
+}
+
+@after-all
+fn finale() {
+    throw RuntimeError('after-all blew up')
+}
+
+pub fn uses-resource(resource: Int) {
+    assert(resource == 1)
+}

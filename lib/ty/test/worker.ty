@@ -5,9 +5,14 @@ import thread
 import time
 import ty
 import ty.test.args as args (Options, UsageError, USAGE)
+import ty.test.cache as cache
 import ty.test.capture (Capture)
-import ty.test.core as core (Test, SkipTest, TestTimeout)
+import ty.test.core as core (
+    Test, SkipTest, TestTimeout, StepResult, kebab-name
+)
 import ty.test.events as events (Event, EventSink)
+import ty.test.fixtures as fixtures (Resolver)
+import ty.test.patch as patching
 import ty.test.registry as registry (TestCase, Collection)
 import ty.test.report as report
 import ty.test.select as select
@@ -110,10 +115,47 @@ class Outcome {
     }
 }
 
-fn invoke(c: TestCase, t: Test, secs: ?Float) -> Outcome {
+fn hook-name(f: Any) -> String {
+    let name = match f {
+        g: Function => kebab-name(g.__name__),
+        _           => show(f),
+    }
+    "`{name}`"
+}
+
+fn call-hook(f: Any, t: Test) -> Any {
+    let sig = ty.signature(f)
+    let g: Any = f
+    match sig.?params {
+        ['t', *] => g(t),
+        _        => g(),
+    }
+}
+
+class Stage {
+    what: ?String = nil
+}
+
+fn invoke(c: TestCase, t: Test, secs: ?Float, fx: Resolver) -> Outcome {
+    let stage = Stage()
     try {
         arm(secs)
-        let r = c.wants-t? ? c.func(t) : c.func()
+        for h in core.hooks('before-each') {
+            stage.what = "before-each hook {hook-name(h)} failed"
+            call-hook(h, t)
+        }
+        let kws: Dict[String, Any] = %{}
+        for k, v in c.kwargs {
+            kws[k] = v
+        }
+        for name in c.fixtures {
+            stage.what = "fixture `{kebab-name(name)}` failed"
+            kws[name] = fx.value(name, t)
+        }
+        stage.what = nil
+        let pos: Array[Any] = c.wants-t? ? [t, *c.args] : c.args
+        let f: Any = c.func
+        let r = f(*pos, **kws)
         disarm()
         return Outcome('pass', result: r)
     } catch e: SkipTest {
@@ -126,8 +168,48 @@ fn invoke(c: TestCase, t: Test, secs: ?Float) -> Outcome {
     } catch e {
         disarm()
         let tr = ty.trace()
-        return Outcome('fail', failure: failure-of(e, tr))
+        let kind = (stage.what == nil) ? 'fail' : 'error'
+        return Outcome(kind, reason: stage.what, failure: failure-of(e, tr))
     }
+}
+
+fn run-after-each(t: Test) -> ?(String, Event) {
+    let first: ?(String, Event) = nil
+    for h in core.hooks('after-each').reverse() {
+        try {
+            call-hook(h, t)
+        } catch e {
+            let tr = ty.trace()
+            let why = "after-each hook {hook-name(h)} failed"
+            first = first ?? (why, failure-of(e, tr))
+        }
+    }
+    first
+}
+
+fn step-events(c: TestCase, steps: Array[StepResult]) -> Array[Event] {
+    steps.map(s -> events.step-result(
+        "{c.id}/{s.name}",
+        s.name,
+        s.outcome,
+        dur: s.dur,
+        reason: s.reason,
+        failure: (s.error == nil) ? nil : failure-of(s.error, s.trace)
+    ))
+}
+
+fn with-steps(o: Outcome, steps: Array[Event]) -> Outcome {
+    if o.kind != 'pass' {
+        return o
+    }
+    let failed = steps.filter(\events.get-str(_, 'outcome') == 'fail')
+    if #failed == 0 {
+        return o
+    }
+    let names = failed.map(s -> "`{events.get-str(s, 'name')}`").join(', ')
+    let what = (#failed == 1) ? 'step' : 'steps'
+    let fl = events.get-event(failed[0], 'failure')
+    Outcome('fail', reason: "{what} {names} failed", failure: fl)
 }
 
 fn run-cleanups(t: Test) -> ?Event {
@@ -169,6 +251,57 @@ fn static-skip(c: TestCase, file-skip: ?String) -> ?String {
     nil
 }
 
+class Attempt {
+    o:      Outcome
+    dur:    Float
+    output: String
+    logs:   Array[String]
+    tmp:    ?String
+    steps:  Array[Event]
+
+    init(
+        o:      Outcome,
+        dur:    Float,
+        output: String,
+        logs:   Array[String],
+        tmp:    ?String,
+        steps:  Array[Event]
+    ) {
+        self.o      = o
+        self.dur    = dur
+        self.output = output
+        self.logs   = logs
+        self.tmp    = tmp
+        self.steps  = steps
+    }
+
+    discard(opts: Options) {
+        if let $p = tmp and !opts.keep-tmp? {
+            Path(p).rmtree(quiet: true)
+        }
+        tmp = nil
+    }
+
+    keep-or-discard(opts: Options) {
+        if !(o.kind in events.FAILING) {
+            discard(opts)
+        }
+    }
+}
+
+class Attempts {
+    count: Int = 0
+    flaky: ?Attempt = nil
+}
+
+fn retry?(c: TestCase, a: Attempt) -> Bool {
+    c.xfail == nil && a.o.kind in events.FAILING
+}
+
+fn plural(n: Int, word: String) -> String {
+    (n == 1) ? "{n} {word}" : "{n} {word}s"
+}
+
 fn effective-timeout(c: TestCase, o: Options) -> ?Float {
     let base = c.meta.timeout
             ?? o.timeout
@@ -185,6 +318,8 @@ class Run {
     counts:   Dict[String, Int] = %{}
     failed:   Int = 0
     rc:       Int = 0
+    fixtures: Resolver = Resolver()
+    outcomes: Dict[String, Bool] = %{}
 
     init(opts: Options, sink: EventSink, seed: Int, capture: ?Capture) {
         self.opts    = opts
@@ -203,7 +338,8 @@ class Run {
         dur:    Float = 0.0,
         output: String = '',
         logs:   Array[String] = [],
-        tmp:    ?String = nil
+        tmp:    ?String = nil,
+        steps:  Array[Event] = []
     ) {
         let kind = o.kind
         let reason = o.reason
@@ -231,6 +367,8 @@ class Run {
             rc = 1
         }
 
+        outcomes[c.id] = failing?
+
         let ev = events.test-end(
             c.id,
             kind,
@@ -238,7 +376,8 @@ class Run {
             reason: reason,
             failure: o.failure,
             output: output,
-            logs: logs
+            logs: logs,
+            steps: steps
         )
 
         if failing? && tmp != nil {
@@ -278,34 +417,20 @@ class Run {
             return
         }
 
-        let offset = capture.?offset ?? 0
-        sink.emit(events.test-start(
-            c.id,
-            capture-path: capture.?path,
-            capture-offset: offset
-        ))
-
-        srand(seed ^ select.fnv1a32(c.id))
-
-        let t = Test(c.id, c.name, c.file, c.line, seed)
-        let secs = effective-timeout(c, opts)
-
-        capture.?begin()
-        let t0 = time.now()
-        let o = invoke(c, t, secs)
-        let cleanup-failure = run-cleanups(t)
-        let dur = time.now() - t0
-        capture.?end()
-
-        let output = capture.?read(offset) ?? ''
-
-        if let $fl = cleanup-failure {
-            if o.kind in ['pass', 'skip'] {
-                o = Outcome('error', reason: 'cleanup failed', failure: fl)
-            }
+        let n = Attempts()
+        let runs = max(1, opts.repeat)
+        let a = run-with-retries(c, n)
+        let run = 1
+        while a.o.kind == 'pass' && run < runs {
+            a.discard(opts)
+            run += 1
+            a = run-with-retries(c, n)
+        }
+        if a.o.kind != 'pass' && runs > 1 {
+            a.o.reason = a.o.reason ?? "failed on run {run} of {runs}"
         }
 
-        if o.kind == 'pass' && o.result == false {
+        if a.o.kind == 'pass' && a.o.result == false {
             sink.emit(events.warning(
                 'returned-false',
                 'test returned false (ignored; use assert)',
@@ -315,16 +440,130 @@ class Run {
             ))
         }
 
-        let tmp = t.tmp-path
-        let keep? = opts.keep-tmp? || (o.kind in events.FAILING)
+        report(c, a, n)
+    }
 
-        if let $p = tmp {
-            if !keep? {
-                Path(p).rmtree(quiet: true)
+    report(c: TestCase, a: Attempt, n: Attempts) {
+        if let $f = n.flaky and a.o.kind == 'pass' {
+            a.discard(opts)
+            f.discard(opts)
+            let why = "passed after {plural(n.count, 'attempt')}"
+            f.o = Outcome('flaky', reason: why, failure: f.o.failure)
+            finish-attempt(c, f)
+            return
+        }
+        if let $f = n.flaky {
+            f.discard(opts)
+        }
+        a.keep-or-discard(opts)
+        finish-attempt(c, a)
+    }
+
+    finish-attempt(c: TestCase, a: Attempt) {
+        finish(
+            c,
+            a.o,
+            dur:    a.dur,
+            output: a.output,
+            logs:   a.logs,
+            tmp:    a.tmp,
+            steps:  a.steps
+        )
+    }
+
+    run-with-retries(c: TestCase, n: Attempts) -> Attempt {
+        let limit = c.meta.retries ?? opts.retries
+        let a = next-attempt(c, n)
+        let tries = 0
+        while retry?(c, a) && tries < limit {
+            tries += 1
+            let b = next-attempt(c, n)
+            if b.o.kind == 'pass' && n.flaky == nil {
+                n.flaky = a
+            } else {
+                a.discard(opts)
+            }
+            a = b
+        }
+        a
+    }
+
+    next-attempt(c: TestCase, n: Attempts) -> Attempt {
+        n.count += 1
+        run-once(c, n.count)
+    }
+
+    run-once(c: TestCase, attempt: Int) -> Attempt {
+        let offset = capture.?offset ?? 0
+        sink.emit(events.test-start(
+            c.id,
+            attempt: attempt,
+            capture-path: capture.?path,
+            capture-offset: offset
+        ))
+
+        srand(seed ^ select.fnv1a32(c.id) ^ (attempt - 1))
+
+        let t = Test(c.id, c.name, c.file, c.line, seed, attempt: attempt)
+        let secs = effective-timeout(c, opts)
+
+        fixtures.begin-test()
+        capture.?begin()
+        let t0 = time.now()
+        patching.push-scope(t.cleanup)
+        let o = invoke(c, t, secs, fixtures)
+        let after-failure = run-after-each(t)
+        let cleanup-failure = run-cleanups(t)
+        patching.pop-scope()
+        let dur = time.now() - t0
+        capture.?end()
+
+        let output = capture.?read(offset) ?? ''
+        let steps = step-events(c, t.steps)
+        o = with-steps(o, steps)
+
+        if let ($why, $fl) = after-failure {
+            if o.kind in ['pass', 'skip'] {
+                o = Outcome('error', reason: why, failure: fl)
             }
         }
 
-        finish(c, o, dur: dur, output: output, logs: t.logs, tmp: tmp)
+        if let $fl = cleanup-failure {
+            if o.kind in ['pass', 'skip'] {
+                o = Outcome('error', reason: 'cleanup failed', failure: fl)
+            }
+        }
+
+        Attempt(o, dur, output, t.logs, t.tmp-path, steps)
+    }
+
+    finish-file(file: String) {
+        let errors: Array[(String, Event)] = []
+        let t = Test("{file}::(after-all)", '(after-all)', file, 0, seed)
+        for h in core.hooks('after-all') {
+            try {
+                call-hook(h, t)
+            } catch e {
+                let tr = ty.trace()
+                let why = "after-all hook {hook-name(h)} failed"
+                errors.push((why, failure-of(e, tr)))
+            }
+        }
+        for (e, tr) in fixtures.teardown-file() {
+            let why = 'file-scoped fixture teardown failed'
+            errors.push((why, failure-of(e, tr)))
+        }
+        if #errors == 0 {
+            return
+        }
+        let id = "{file}::(teardown)"
+        sink.emit(events.test-start(id))
+        let why = errors.map(&0).join('; ')
+        let fl = errors[0].1
+        count('error')
+        failed += 1
+        rc = 1
+        sink.emit(events.test-end(id, 'error', reason: why, failure: fl))
     }
 }
 
@@ -428,7 +667,12 @@ fn make-sink(o: Options, file-mode?: Bool) -> EventSink {
     }
     let specs = (#o.reporters > 0) ? o.reporters : ['pretty']
     for spec in specs {
-        sink.add(report.make(spec, mode: 'file', quiet?: o.quiet?))
+        sink.add(report.make(
+            spec,
+            mode: 'file',
+            quiet?: o.quiet?,
+            slowest: o.durations
+        ))
     }
     sink
 }
@@ -492,6 +736,22 @@ pub fn run(argv: Array[String]) -> Int {
         cases = select.shuffled(cases, seed)
     }
 
+    let remember? = !o.worker? && o.list == nil && cache.claim()
+    let lf? = o.last-failed? || o.failed-first? || remember?
+    let previous = lf? ? cache.load-last-failed() : %{}
+    let earlier = cache.failed-in(previous, col.file)
+
+    if o.last-failed? && #earlier > 0 {
+        cases = cases.filter(c -> c.id in earlier)
+    } else if o.last-failed? {
+        eprint('ty --test: no earlier failures in this file; running everything')
+    }
+
+    if o.failed-first? {
+        let (first, rest) = cases.partition(c -> c.id in earlier)
+        cases = [*first, *rest]
+    }
+
     let filtered? = #o.ids > 0
                  || #o.filters > 0
                  || #o.excludes > 0
@@ -538,6 +798,9 @@ pub fn run(argv: Array[String]) -> Int {
             }
             r.run-case(c, file-skip)
         }
+        capture.?begin()
+        r.finish-file(col.file)
+        capture.?end()
     } catch e {
         capture.?end()
         throw e
@@ -560,6 +823,19 @@ pub fn run(argv: Array[String]) -> Int {
     }
 
     sink.emit(events.file-end(col.file, r.rc, r.counts))
+
+    if remember? {
+        let ids = previous
+        ids.remove(col.file)
+        for id, bad? in r.outcomes {
+            if bad? {
+                ids[id] = col.file
+            } else {
+                ids.remove(id)
+            }
+        }
+        cache.save-last-failed(ids)
+    }
 
     if !o.worker? {
         let files = %{'total': 1, 'failed': (r.failed > 0) ? 1 : 0, 'skipped': 0, 'empty': 0}

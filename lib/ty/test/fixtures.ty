@@ -1,0 +1,174 @@
+import ty
+import ty.test.core as core (Test, Fixture, camel-name, kebab-name)
+import ty.test.patch as patching
+
+pub class FixtureError < RuntimeError {
+    init(msg: String) {
+        super(msg)
+    }
+}
+
+use Signature = {params: Array[String], required: Int, generator?: Bool}
+
+fn signature-of(f: Any) -> Signature {
+    ty.signature(f) ?? {params: [], required: 0, generator?: false}
+}
+
+fn shown(name: String) -> String {
+    "`{kebab-name(name)}`"
+}
+
+fn chain(stack: Array[String], name: String) -> String {
+    [*stack, name].map(kebab-name).join(' -> ')
+}
+
+pub class Resolver {
+    __file-values:    Dict[String, Any] = %{}
+    __file-teardowns: Array[() -> Any] = []
+    __test-values:    Dict[String, Any] = %{}
+
+    begin-test() {
+        __test-values = %{}
+    }
+
+    value(name: String, t: ?Test, stack: Array[String] = []) -> Any {
+        let $fx = core.fixture-for(name)
+               or throw FixtureError("{shown(name)} is not a fixture")
+        if fx.name in stack {
+            throw FixtureError("fixture cycle: {chain(stack, fx.name)}")
+        }
+        let cache = (fx.scope == 'file') ? __file-values : __test-values
+        if fx.name in cache {
+            return cache[fx.name]
+        }
+        let v = setup(fx, t, [*stack, fx.name])
+        cache[fx.name] = v
+        v
+    }
+
+    setup(fx: Fixture, t: ?Test, stack: Array[String]) -> Any {
+        let file? = fx.scope == 'file'
+        let sig = signature-of(fx.func)
+        let pos: Array[Any] = []
+        let kws: Dict[String, Any] = %{}
+        for p; i in sig.params {
+            if i == 0 && p == 't' {
+                if file? || t == nil {
+                    throw FixtureError(
+                        "file-scoped fixture {shown(fx.name)} cannot take `t`"
+                    )
+                }
+                pos.push(t)
+                continue
+            }
+            let dep = core.fixture-for(p)
+            if dep == nil {
+                if i < sig.required {
+                    throw FixtureError(
+                        "fixture {shown(fx.name)} takes {shown(p)}, "
+                        'which is not a fixture'
+                    )
+                }
+                continue
+            }
+            if file? && dep.?scope == 'test' {
+                throw FixtureError(
+                    "file-scoped fixture {shown(fx.name)} cannot use "
+                    "test-scoped fixture {shown(p)}"
+                )
+            }
+            kws[p] = value(p, file? ? nil : t, stack)
+        }
+        if !file? {
+            return start(fx, sig, pos, kws, t)
+        }
+        patching.push-scope(__file-teardowns.push)
+        try {
+            return start(fx, sig, pos, kws, t)
+        } finally {
+            patching.pop-scope()
+        }
+    }
+
+    start(
+        fx:  Fixture,
+        sig: Signature,
+        pos: Array[Any],
+        kws: Dict[String, Any],
+        t:   ?Test
+    ) -> Any {
+        let file? = fx.scope == 'file'
+        let f: Any = fx.func
+        let r = f(*pos, **kws)
+        if !sig.generator? {
+            return r
+        }
+        let v = match r() {
+            Some(x) => x,
+            _       => throw FixtureError(
+                "fixture {shown(fx.name)} finished without yielding a value"
+            ),
+        }
+        let finish = () -> finish-generator(fx, r)
+        if let $tt = t and !file? {
+            tt.cleanup(finish)
+        } else {
+            __file-teardowns.push(finish)
+        }
+        v
+    }
+
+    teardown-file() -> Array[(Any, Any)] {
+        let errors: Array[(Any, Any)] = []
+        while #__file-teardowns > 0 {
+            let f = __file-teardowns.pop()
+            try {
+                f()
+            } catch e {
+                errors.push((e, ty.trace()))
+            }
+        }
+        __file-values = %{}
+        errors
+    }
+
+    has-file-state?() -> Bool {
+        #__file-teardowns > 0
+    }
+}
+
+fn finish-generator(fx: Fixture, g: Any) {
+    if let Some(_) = g() {
+        throw FixtureError("fixture {shown(fx.name)} yielded more than once")
+    }
+}
+
+pub fn wants(params: Array[String], have: Array[String]) -> Array[String] {
+    let out: Array[String] = []
+    for p; i in params {
+        if (i == 0 && p == 't') || p in have {
+            continue
+        }
+        if core.fixture-for(p) != nil {
+            out.push(p)
+        }
+    }
+    out
+}
+
+pub fn missing(
+    params:   Array[String],
+    required: Int,
+    have:     Array[String]
+) -> ?String {
+    for p; i in params {
+        if i >= required {
+            break
+        }
+        if (i == 0 && p == 't') || p in have || core.fixture-for(p) != nil {
+            continue
+        }
+        return p
+    }
+    nil
+}

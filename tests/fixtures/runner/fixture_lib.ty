@@ -1,0 +1,6 @@
+import ty.test (fixture)
+
+@fixture
+pub fn lib-value() -> String {
+    'from-lib'
+}

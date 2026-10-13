@@ -1,0 +1,152 @@
+import ty
+import ty.mod as tymod
+
+pub use Restorer = (() -> Any) -> Any
+
+let SCOPES: Array[Restorer] = []
+
+pub fn push-scope(f: Restorer) {
+    SCOPES.push(f)
+}
+
+pub fn pop-scope() {
+    if #SCOPES > 0 {
+        SCOPES.pop()
+    }
+}
+
+pub class Patch {
+    value:      Any
+    __undo:     () -> Any
+    __restored?: Bool = false
+
+    init(value: Any, undo: () -> Any) {
+        self.value = value
+        __undo     = undo
+        if #SCOPES > 0 {
+            SCOPES[-1](self.restore)
+        }
+    }
+
+    restored? -> Bool {
+        __restored?
+    }
+
+    restore() {
+        if __restored? {
+            return
+        }
+        __restored? = true
+        (__undo)()
+    }
+
+    __enter__() -> Any {
+        value
+    }
+
+    __drop__() {
+        restore()
+    }
+}
+
+fn simple-place?(e: Any) -> Bool {
+    match e {
+        ty.Id(_)                  => true,
+        ty.MemberAccess(obj, _)   => simple-place?(obj),
+        _                         => false,
+    }
+}
+
+pub macro patch(target, val) {
+    let old = ty.Id(name: ty.gensym())
+    let new = ty.Id(name: ty.gensym())
+    let obj = ty.Id(name: ty.gensym())
+    let key = ty.Id(name: ty.gensym())
+
+    let (setup, place) = match target {
+        ty.MemberAccess(object, member) and !simple-place?(object) => (
+            [ty.Let(obj, object)],
+            ty.MemberAccess(obj, member)
+        ),
+        ty.Subscript(xs, i) => (
+            [ty.Let(obj, xs), ty.Let(key, i)],
+            ty.Subscript(obj, key)
+        ),
+        ty.Id(_) or ty.MemberAccess(_, _) => ([], target),
+        _ => throw ValueError("patch(): can't patch {target}"),
+    }
+
+    let make = ty.Value(Patch)
+    let undo = ty.Unsafe($$[ $$place = $$old $$])
+
+    ty.Unsafe(ty.Block([
+        *setup,
+        ty.Let(new, val),
+        ty.Let(old, place),
+        $$[ $$place = $$new $$],
+        $$[ $$make($$new, () -> $$undo) $$]
+    ]))
+}
+
+pub TRAMPOLINES: Array[Any] = []
+
+let KINDS = ['method', 'getter', 'static', 'static-getter']
+
+fn trampoline-source(n: Int, kind: String) -> String {
+    let call = "TRAMPOLINES[{n}]"
+    let body = match kind {
+        'method' => "m(*args, %kwargs) \{ {call}(self, *args, **kwargs) \}",
+        'getter' => "m -> Any \{ {call}(self) \}",
+        _        => throw ValueError("no trampoline for {kind}"),
+    }
+    "import ty.test.patch (TRAMPOLINES)\npub class P \{ {body} \}\n"
+}
+
+fn trampoline(kind: String, f: Any) -> Any {
+    TRAMPOLINES.push(f)
+    let n = #TRAMPOLINES - 1
+    let src = trampoline-source(n, kind)
+    let m: Any = tymod.compile(src, nil, "(ty.test patch {n})")
+    tymod.eval(m)
+    ty.class-slot(m.P, kind, 'm')
+}
+
+fn installable(kind: String, f: Any) -> Any {
+    match kind {
+        'method' or 'getter' => trampoline(kind, f),
+        _                    => f,
+    }
+}
+
+fn only-for(target: Any, f: Any, original: Any) -> Any {
+    fn dispatch(self: Any, *args: Any, %kwargs: Any) -> Any {
+        ty.same?(self, target)
+            ? f(self, *args, **kwargs)
+            : apply(original, *args, self: self, kwargs: kwargs)
+    }
+    dispatch
+}
+
+pub fn patch-method(
+    cls:  Class,
+    name: String,
+    f:    Any,
+    kind: String = 'method',
+    only: Any = nil
+) -> Patch {
+    if !(kind in KINDS) {
+        let kinds = KINDS.join(', ')
+        throw ValueError(
+            "patch-method(): kind must be one of {kinds}, not '{kind}'"
+        )
+    }
+    let $old = ty.class-slot(cls, kind, name) or throw ValueError(
+        "patch-method(): {cls} has no {kind} named `{name}`"
+    )
+    let impl = match only {
+        nil    => f,
+        target => only-for(target, f, member(cls, name)),
+    }
+    ty.set-class-slot(cls, kind, name, installable(kind, impl))
+    Patch(f, () -> ty.set-class-slot(cls, kind, name, old))
+}

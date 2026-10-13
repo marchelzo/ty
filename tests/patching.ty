@@ -1,0 +1,183 @@
+import time
+import ty.test (
+    Test,
+    Spy,
+    fixture,
+    patch,
+    patch-method,
+    spy,
+    stub,
+    spy-method,
+    assert-throws
+)
+import fixtures.patching.target as target (Client, Base)
+import fixtures.patching.helpers (freeze-time)
+
+fn local-fn(x: Int) -> Int {
+    x + 1
+}
+
+fn calls-local() -> Int {
+    local-fn(1)
+}
+
+@fixture(scope: 'file')
+fn frozen*() {
+    let p = patch(target.setting, () -> 'frozen')
+    yield p
+}
+
+pub fn module-functions-and-their-callers() {
+    patch(target.greet, (n: String) -> 'fake')
+    assert(target.greet-twice('x') == 'fake fake')
+}
+
+pub fn local-functions() {
+    patch(local-fn, (x: Int) -> 'anything goes')
+    assert(calls-local() == 'anything goes')
+}
+
+pub fn patches-end-with-the-test() {
+    assert(calls-local() == 2)
+    assert(target.stamp() > 1000.0)
+}
+
+pub fn builtins-reach-other-modules() {
+    patch(time.now, () -> 5.0)
+    assert(time.now() == 5.0)
+    assert(target.stamp() == 5.0)
+}
+
+pub fn with-restores-at-the-end-of-the-block() {
+    with patch(time.now, () -> 5.0) {
+        assert(target.stamp() == 5.0)
+    }
+    assert(target.stamp() > 1000.0)
+}
+
+pub fn explicit-restore() {
+    let p = patch(time.now, () -> 5.0)
+    p.restore()
+    p.restore()
+    assert(time.now() > 1000.0)
+}
+
+pub fn patching-from-a-helper-module() {
+    freeze-time(9.0)
+    assert(target.stamp() == 9.0)
+}
+
+pub fn fields-and-entries() {
+    let d = %{'k': 1}
+    let c = Client(3)
+    patch(d['k'], 'two')
+    patch(c.v, 40)
+    assert(d['k'] == 'two')
+    assert(c.get() == 40)
+}
+
+pub fn methods-take-an-explicit-self() {
+    let c = Client(3)
+    patch-method(Client, 'get', (self: Client, k: Int = 0) -> self.v * 100 + k)
+    assert(c.get() == 300)
+    assert(c.get(5) == 305)
+    assert(c.get(k: 7) == 307)
+}
+
+pub fn methods-are-restored() {
+    assert(Client(3).get() == 3)
+}
+
+pub fn hot-methods(t: Test) {
+    let c = Client(1)
+    assert(target.hot-get(c, 50000) == 50000)
+    t.step('patched', -> do {
+        let p = patch-method(Client, 'get', (self: Client, k: Int = 0) -> 2)
+        assert(target.hot-get(c, 10) == 20)
+        p.restore()
+    })
+    assert(target.hot-get(c, 10) == 10)
+}
+
+pub fn one-instance() {
+    let a = Client(1)
+    let b = Client(2)
+    patch-method(Client, 'get', (self: Client, k: Int = 0) -> -1, only: a)
+    assert(a.get() == -1)
+    assert(b.get() == 2)
+    assert(b.get(3) == 5)
+}
+
+pub fn inherited-methods() {
+    patch-method(Client, 'fetch', (self: Client) -> 'fake')
+    assert(target.use-client() == 'fake')
+    assert(Base().fetch() == 'base')
+}
+
+pub fn inherited-methods-are-restored() {
+    assert(target.use-client() == 'base')
+}
+
+pub fn getters-and-statics() {
+    let label = (self: Client) -> "fake {self.v}"
+    patch-method(Client, 'label', label, kind: 'getter')
+    patch-method(Client, 'make', () -> 'fake', kind: 'static')
+    assert(Client(7).label == 'fake 7')
+    assert(Client.make() == 'fake')
+}
+
+pub fn constructors() {
+    let init = (self: Client, v: Int = 1) -> (self.v = v * 10)
+    patch-method(Client, 'init', init)
+    assert(Client(2).v == 20)
+}
+
+pub fn constructors-are-restored() {
+    assert(Client(2).v == 2)
+}
+
+pub fn unknown-members-are-errors() {
+    let f = (self: Client) -> nil
+    assert-throws(patch-method(Client, 'nope', f), ValueError)
+    assert-throws(patch-method(Client, 'get', f, kind: 'x'), ValueError)
+}
+
+pub fn spies-call-through() {
+    let s = spy(target.greet)
+    patch(target.greet, s)
+    assert(target.greet-twice('x') == 'hi x hi x')
+    assert(s.count == 2)
+    s.assert-called-with('x')
+    s.assert-called(2)
+    assert-throws(s.assert-called-with('y'), AssertionError)
+}
+
+pub fn stubs-and-sequences() {
+    assert(stub(3)() == 3)
+    let seq = Spy().returns-each(1, 2)
+    assert([seq(), seq()] == [1, 2])
+    let e = assert-throws(seq(), AssertionError)
+    assert(e.what.match?(/ran out of return values after 2 calls/))
+    let boom = Spy().throws(ValueError('no'))
+    assert-throws(boom(1), ValueError)
+    assert(boom.last.args == [1])
+}
+
+pub fn spy-keyword-arguments() {
+    let s = Spy()
+    s(1, mode: 'r')
+    s.assert-called-with(1, mode: 'r')
+    assert(!s.called-with?(1))
+    assert(str(s.last) == "(1, mode: 'r')")
+}
+
+pub fn method-spies-see-self() {
+    let s = spy-method(Client, 'get')
+    let c = Client(4)
+    assert(c.get(1) == 5)
+    s.assert-called-with(c, 1)
+}
+
+pub fn file-scoped-fixture-patches(frozen: Any) {
+    assert(target.setting() == 'frozen')
+}

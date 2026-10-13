@@ -391,6 +391,17 @@ static JumpGroup PreludeAssertionOffsets;
 static Module *MainModule;
 
 char const *TestFilePath;
+
+inline static bool
+InTestModule(Ty *ty)
+{
+#ifdef TY_TEST
+        return (STATE.module != NULL) && (STATE.module->flags & MOD_TESTS);
+#else
+        (void)ty;
+        return false;
+#endif
+}
 static bool TestRunnerFailed;
 static Module *GlobalModule;
 static Scope *GlobalScope;
@@ -3978,7 +3989,12 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, u32 flags)
                                 target->symbol->loc = target->start;
                         }
 
-                        if (!proto && SymbolIsConst(target->symbol) && !HAVE_COMPILER_FLAG(MUT_CONST)) {
+                        if (
+                                !proto
+                             && SymbolIsConst(target->symbol)
+                             && !HAVE_COMPILER_FLAG(MUT_CONST)
+                             && !InTestModule(ty)
+                        ) {
                                 fail(
                                         "assignment to const variable %s%s%s%s%s",
                                         TERM(34),
@@ -3988,6 +4004,11 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, u32 flags)
                                         TERM(39)
                                 );
                         }
+#ifdef TY_TEST
+                        if (!proto && SymbolIsConst(target->symbol)) {
+                                target->symbol->flags &= ~SYM_CONST;
+                        }
+#endif
                 }
                 if (target->type == EXPRESSION_RESOURCE_BINDING) {
                         STATE.resources += 1;

@@ -1,0 +1,191 @@
+import ty.test.core (kebab-name)
+import ty.test.patch (Patch, patch-method)
+
+pub class Call {
+    args:   Array[Any]
+    kwargs: Dict[String, Any]
+
+    init(args: Array[Any], kwargs: Dict[String, Any]) {
+        self.args   = args
+        self.kwargs = kwargs
+    }
+
+    matches?(args: Array[Any], kwargs: Dict[String, Any]) -> Bool {
+        self.args == args && self.kwargs == kwargs
+    }
+
+    __str__() -> String {
+        let named = [
+            "{kebab-name(k)}: {show(v)}"
+            for k, v in kwargs
+        ]
+        "({[*args.map(show), *named].join(', ')})"
+    }
+}
+
+fn shown(args: Array[Any], kwargs: Dict[String, Any]) -> String {
+    str(Call(args, kwargs))
+}
+
+pub class Spy {
+    name:       String
+    calls:      Array[Call] = []
+    __impl:     Any = nil
+    __values:   ?Array[Any] = nil
+    __next:     Int = 0
+    __forever?: Bool = false
+    __error:    Any = nil
+
+    init(impl: Any = nil, name: String = 'spy') {
+        self.name = name
+        __impl    = impl
+    }
+
+    __call__(*args: Any, %kwargs: Any) -> Any {
+        calls.push(Call(args, kwargs))
+        if __error != nil {
+            throw __error
+        }
+        if let $vs = __values {
+            return next-value(vs)
+        }
+        match __impl {
+            nil => nil,
+            f   => f(*args, **kwargs),
+        }
+    }
+
+    next-value(vs: Array[Any]) -> Any {
+        if __forever? {
+            return vs[0]
+        }
+        if __next >= #vs {
+            throw AssertionError(
+                "{name} ran out of return values after {#vs} calls"
+            )
+        }
+        __next += 1
+        vs[__next - 1]
+    }
+
+    returns(value: Any) -> Spy {
+        __values   = [value]
+        __forever? = true
+        __error    = nil
+        self
+    }
+
+    returns-each(*values: Any) -> Spy {
+        __values   = values
+        __forever? = false
+        __next     = 0
+        __error    = nil
+        self
+    }
+
+    throws(error: Any) -> Spy {
+        __error = error
+        self
+    }
+
+    does(f: Any) -> Spy {
+        __impl   = f
+        __values = nil
+        __error  = nil
+        self
+    }
+
+    count -> Int {
+        #calls
+    }
+
+    called? -> Bool {
+        #calls > 0
+    }
+
+    last -> ?Call {
+        (#calls > 0) ? calls[-1] : nil
+    }
+
+    reset() {
+        calls  = []
+        __next = 0
+    }
+
+    called-with?(*args: Any, %kwargs: Any) -> Bool {
+        calls.any?(\_.matches?(args, kwargs))
+    }
+
+    history() -> String {
+        match #calls {
+            0 => "{name} was never called",
+            n => "{name} was called {n} time{(n == 1) ? '' : 's'}:\n"
+                 "{calls.map(c -> "  {c}").join("\n")}",
+        }
+    }
+
+    assert-called(times: ?Int = nil) {
+        let ok? = match times {
+            nil => #calls > 0,
+            n   => #calls == n,
+        }
+        if !ok? {
+            let want = (times == nil) ? 'at least once' : "{times} time(s)"
+            throw AssertionError(
+                "expected {name} to be called {want}; {history()}"
+            )
+        }
+    }
+
+    assert-not-called() {
+        if #calls > 0 {
+            throw AssertionError(
+                "expected {name} not to be called; {history()}"
+            )
+        }
+    }
+
+    assert-called-with(*args: Any, %kwargs: Any) {
+        let $c = last or throw AssertionError(
+            "expected {name}{shown(args, kwargs)}; {history()}"
+        )
+        if !c.matches?(args, kwargs) {
+            throw AssertionError(
+                "expected last call {name}{shown(args, kwargs)}; {history()}"
+            )
+        }
+    }
+
+    assert-any-call(*args: Any, %kwargs: Any) {
+        if !called-with?(*args, **kwargs) {
+            throw AssertionError(
+                "expected a call {name}{shown(args, kwargs)}; {history()}"
+            )
+        }
+    }
+}
+
+fn name-of(f: Any) -> String {
+    match f {
+        g: Function => kebab-name(g.__name__),
+        _           => 'spy',
+    }
+}
+
+pub fn spy(f: Any = nil, name: ?String = nil) -> Spy {
+    Spy(f, name ?? ((f == nil) ? 'spy' : name-of(f)))
+}
+
+pub fn stub(value: Any = nil, name: String = 'stub') -> Spy {
+    Spy(nil, name).returns(value)
+}
+
+pub fn spy-method(cls: Class, name: String) -> Spy {
+    let original = member(cls, name)
+    fn through(self: Any, *args: Any, %kwargs: Any) -> Any {
+        apply(original, *args, self: self, kwargs: kwargs)
+    }
+    let s = Spy(through, "{cls}.{name}")
+    patch-method(cls, name, s)
+    s
+}

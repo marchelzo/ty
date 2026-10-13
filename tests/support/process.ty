@@ -7,11 +7,15 @@ pub const FIXTURES = ROOT / 'tests' / 'fixtures'
 
 pub use Result = {status: Int, stdout: String, stderr: String}
 
-pub fn run(args: [String], env: Dict[String, String] = %{}) -> Result {
+pub fn run(
+    args: [String],
+    env: Dict[String, String] = %{},
+    chdir: ?String = nil
+) -> Result {
     let result = sh.run(
         [ty.executable, '--color=never', *args],
         env=%{**__env, 'NO_COLOR': '', **env},
-        chdir=str(ROOT),
+        chdir=chdir ?? str(ROOT),
         timeout=30
     )
     let status = match result.fate {

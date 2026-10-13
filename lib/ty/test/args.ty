@@ -23,6 +23,11 @@ pub class Options {
     keep-tmp?:         Bool = false
     fail-fast?:        Bool = false
     max-fail:          ?Int = nil
+    durations:         Int = 5
+    retries:           Int = 0
+    repeat:            Int = 1
+    last-failed?:      Bool = false
+    failed-first?:     Bool = false
     reporters:         Array[String] = []
     verbose?:          Bool = false
     quiet?:            Bool = false
@@ -45,6 +50,10 @@ run control:
       --shuffle[=SEED]    run tests in a random order
       --seed N            seed for --shuffle and per-test srand
       --timeout S         per-test timeout in seconds
+      --retries N         rerun a failing test up to N times; a pass is 'flaky'
+      --repeat N          run each test N times; it fails if any run fails
+      --last-failed       only run the tests that failed last time
+      --failed-first      run the tests that failed last time first
   -s, --no-capture        do not capture test output
       --keep-tmp          keep t.tmp-dir() directories
       --strict            empty files are errors
@@ -53,6 +62,7 @@ run control:
 reporting:
   -r, --reporter NAME     pretty, dot, json or json=PATH (repeatable)
       --events PATH       append JSONL events to PATH
+      --durations N       list the N slowest tests (default 5; 0 hides them)
   -v, --verbose           show logs and output for passing tests
       --quiet             only show failures
 """
@@ -116,6 +126,11 @@ pub fn parse(args: Array[String]) -> Options {
             '--keep-tmp'              => o.keep-tmp? = true,
             '-x' or '--fail-fast'     => o.fail-fast? = true,
             '--max-fail'              => o.max-fail = integer(opt, value(opt, inline)),
+            '--retries'               => o.retries = integer(opt, value(opt, inline)),
+            '--durations'             => o.durations = integer(opt, value(opt, inline)),
+            '--repeat'                => o.repeat = integer(opt, value(opt, inline)),
+            '--lf' or '--last-failed' => o.last-failed? = true,
+            '--ff' or '--failed-first' => o.failed-first? = true,
             '-r' or '--reporter'      => o.reporters.push(value(opt, inline)),
             '-v' or '--verbose'       => o.verbose? = true,
             '--quiet'                 => o.quiet? = true,

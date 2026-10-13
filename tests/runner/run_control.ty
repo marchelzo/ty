@@ -1,0 +1,121 @@
+import json
+import path (Path)
+import ty.test (Test)
+import ty.test.events as events (Event)
+import super.support.process (run, ROOT)
+import super.support.runner (FIX, Run, drive, outcomes, end-of)
+
+fn reason-of(e: Event) -> String {
+    events.get-str(e, 'reason') ?? ''
+}
+
+fn fixture-copy(t: Test, name: String) -> String {
+    let dir = t.tmp-dir()
+    let src = (ROOT / FIX / 'run_control.ty').read-text()
+    (dir / name).write(src)
+    str(dir)
+}
+
+fn cached-run(
+    dir:  String,
+    args: Array[String],
+    env:  Dict[String, String] = %{}
+) -> Int {
+    let full = %{'TY_TEST_NO_CACHE': '', **env}
+    run(['--test', *args], env: full, chdir: dir).status
+}
+
+fn fixture-run(t: Test, args: Array[String]) -> Run {
+    drive(t, ["{FIX}/run_control.ty", *args])
+}
+
+fn last-failed(dir: String) -> Array[String] {
+    let text = (Path(dir) / '.ty-test-cache' / 'lastfailed.json').read-text()
+    let ids: Dict[String, String] = json.parse(text)
+    ids.keys().sort()
+}
+
+pub fn retries-turn-a-late-pass-into-flaky(t: Test) {
+    let r = fixture-run(t, ['-k', 'flaky-twice', '--retries', '2'])
+    assert(r.status == 0)
+    let e = end-of(r, 'flaky-twice')
+    assert(events.get-str(e, 'outcome') == 'flaky')
+    assert(reason-of(e) == 'passed after 3 attempts')
+    let starts = r.events.filter(\_['ev'] == 'test-start')
+    assert(starts.map(\_['attempt']) == [1, 2, 3])
+}
+
+pub fn too-few-retries-still-fail(t: Test) {
+    let r = fixture-run(t, ['-k', 'flaky-twice', '--retries', '1'])
+    assert(r.status == 1)
+    assert(outcomes(r) == %{'flaky-twice': 'fail'})
+}
+
+pub fn retries-decorator(t: Test) {
+    let r = drive(t, ["{FIX}/run_control.ty", '-k', 'decorated-flaky'])
+    assert(outcomes(r) == %{'decorated-flaky': 'flaky'})
+}
+
+pub fn repeat-reports-the-failing-run(t: Test) {
+    let args = ['-k', 'second-run-fails', '-k', 'stable', '--repeat', '3']
+    let r = drive(t, ["{FIX}/run_control.ty", *args])
+    assert(outcomes(r) == %{'second-run-fails': 'fail', 'stable': 'pass'})
+    assert(reason-of(end-of(r, 'second-run-fails')) == 'failed on run 2 of 3')
+}
+
+pub fn last-failed-in-file-mode(t: Test) {
+    let dir = fixture-copy(t, 'a.ty')
+    let picks = ['-k', 'always', '-k', 'env', '-k', 'stable']
+    assert(cached-run(dir, ['a.ty', *picks]) == 1)
+    assert(last-failed(dir) == ['a.ty::always-fails', 'a.ty::env-gated'])
+    assert(cached-run(dir, ['a.ty', '--lf'], env: %{'RC_FIX': '1'}) == 1)
+    assert(last-failed(dir) == ['a.ty::always-fails'])
+}
+
+pub fn last-failed-in-suite-mode(t: Test) {
+    let dir = fixture-copy(t, 'a.ty')
+    (Path(dir) / 'b.ty').write("pub fn fine() \{\}\n")
+    assert(cached-run(dir, ['.', '-k', 'always', '-k', 'fine']) == 1)
+    assert(last-failed(dir) == ['a.ty::always-fails'])
+    let r = run(['--test', '.', '--lf', '--list'], chdir: dir)
+    assert(r.stdout.lines() == ['a.ty::always-fails'], r.stdout)
+}
+
+pub fn nested-runs-leave-the-cache-alone(t: Test) {
+    let dir = fixture-copy(t, 'a.ty')
+    run(['--test', 'a.ty', '-k', 'always'], chdir: dir)
+    assert(!(Path(dir) / '.ty-test-cache' / 'lastfailed.json').exists?)
+}
+
+pub fn shards-split-files-round-robin(t: Test) {
+    let dir = t.tmp-dir()
+    for name in ['a', 'b', 'c', 'd', 'e'] {
+        (dir / "{name}.ty").write("pub fn {name}-test() \{\}\n")
+    }
+    let list = ['--test', '.', '--list']
+    let files = (s: String) -> run([*list, '--shard', s], chdir: str(dir))
+        .stdout
+        .lines()
+        .map(\_.split('::')[0])
+    assert(files('1/2') == ['a.ty', 'c.ty', 'e.ty'])
+    assert(files('2/2') == ['b.ty', 'd.ty'])
+    let bad = run(['--test', '.', '--shard', '3/2'], chdir: str(dir))
+    assert(bad.status == 2)
+    assert(bad.stderr.match?(/I must be between 1 and N/))
+}
+
+pub fn durations-zero-hides-slowest(t: Test) {
+    let base = ['--test', "{FIX}/run_control.ty", '-k', 'stable']
+    let r = run([*base, '--durations', '0'])
+    assert(!r.stdout.match?(/slowest:/), r.stdout)
+    let r = run(base)
+    assert(r.stdout.match?(/slowest:/), r.stdout)
+}
+
+pub fn tracked-only-needs-git(t: Test) {
+    let dir = t.tmp-dir()
+    (dir / 'a.ty').write("pub fn a() \{\}\n")
+    let r = run(['--test', '.', '--tracked-only'], chdir: str(dir))
+    assert(r.status == 2)
+    assert(r.stderr.match?(/needs a git repository/), r.stderr)
+}

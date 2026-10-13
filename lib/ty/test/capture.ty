@@ -76,3 +76,46 @@ pub class Capture {
         os.close(__saved.1)
     }
 }
+
+pub use Captured = {stdout: String, stderr: String, result: Any}
+
+fn scratch(fd: Int) -> (Int, String) {
+    let base = (getenv('TMPDIR') ?? '/tmp').sub(/\/+$/, '')
+    let (out, p) = os.mktemp("{base}/ty-test-capture-{fd}")
+    if out < 0 {
+        throw RuntimeError("t.capture(): cannot create a file under {base}")
+    }
+    os.unlink(p)
+    (out, p)
+}
+
+fn drain(fd: Int) -> String {
+    let n = os.lseek(fd, 0, stdio.SEEK_END)
+    if n <= 0 {
+        return ''
+    }
+    os.lseek(fd, 0, stdio.SEEK_SET)
+    os.read(fd, n, all: true).str()
+}
+
+pub fn call(f: () -> Any) -> Captured {
+    let (out, _) = scratch(1)
+    let (err, _) = scratch(2)
+    let saved = (os.dup(1), os.dup(2))
+    flush()
+    os.dup2(out, 1)
+    os.dup2(err, 2)
+    let result = try {
+        f()
+    } finally {
+        flush()
+        os.dup2(saved.0, 1)
+        os.dup2(saved.1, 2)
+        os.close(saved.0)
+        os.close(saved.1)
+    }
+    let c = {stdout: drain(out), stderr: drain(err), result}
+    os.close(out)
+    os.close(err)
+    c
+}

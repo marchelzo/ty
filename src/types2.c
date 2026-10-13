@@ -393,6 +393,9 @@ struct t2_checker {
         char const       *argument_failure_parameter;
         char const       *argument_parameter;
         unsigned          muted;
+#ifdef TY_TEST
+        unsigned          unsafe;
+#endif
         unsigned          recording;
         vec(T2DefaultType) default_types;
         vec(void const *) touched;
@@ -19228,6 +19231,25 @@ known_nil_type(T2Checker *checker)
         return result;
 }
 
+#ifdef TY_TEST
+static T2Type
+infer_unsafe_assignment(T2Checker *checker, Expr const *expression)
+{
+        T2Type value = infer_expression(checker, expression->value);
+        T2SolverMark mark = t2_solver_mark(checker->solver);
+        bool failed = checker->failed;
+
+        checker->muted += 1;
+        (void)infer_expression(checker, expression->target);
+        checker->muted -= 1;
+
+        t2_solver_rollback(checker->solver, mark);
+        checker->failed = failed;
+
+        return value;
+}
+#endif
+
 static T2Type
 infer_expression(T2Checker *checker, Expr const *source)
 {
@@ -20622,6 +20644,16 @@ infer_expression(T2Checker *checker, Expr const *source)
         case EXPRESSION_EQ:
         case EXPRESSION_MAYBE_EQ:
         {
+#ifdef TY_TEST
+                if (
+                        (checker->unsafe > 0)
+                     && (expression->type == EXPRESSION_EQ)
+                     && !is_value_list_target(expression->target)
+                ) {
+                        result = infer_unsafe_assignment(checker, expression);
+                        break;
+                }
+#endif
                 T2SolverMark assignment = t2_solver_mark(checker->solver);
                 bool list_target = is_value_list_target(expression->target);
                 T2Type expected  = (!list_target && fresh_literal_expression(expression->value))
@@ -21176,9 +21208,15 @@ infer_expression(T2Checker *checker, Expr const *source)
                 break;
         case EXPRESSION_UNSAFE:
         case EXPRESSION_EVAL:
+#ifdef TY_TEST
+                checker->unsafe += (expression->type == EXPRESSION_UNSAFE);
+#endif
                 if (expression->operand != NULL) {
                         (void)infer_expression(checker, expression->operand);
                 }
+#ifdef TY_TEST
+                checker->unsafe -= (expression->type == EXPRESSION_UNSAFE);
+#endif
                 defer_node(checker, T2_DEFER_UNSAFE_EVAL, expression, NULL);
                 result = t2_primitive(checker->universe, T2_TYPE_DYNAMIC);
                 break;
@@ -33969,6 +34007,18 @@ t2_checker_will_restore(T2Checker const *checker)
             && (checker->cache->shape == checker->shape);
 }
 
+static bool
+lenient_unit(T2Checker const *checker)
+{
+#ifdef TY_TEST
+        return (checker->module != NULL)
+            && (checker->module->flags & MOD_TESTS);
+#else
+        (void)checker;
+        return false;
+#endif
+}
+
 void
 t2_checker_finish(Ty *ty, T2Checker *checker)
 {
@@ -34018,7 +34068,7 @@ t2_checker_finish(Ty *ty, T2Checker *checker)
                 warnings += v__(checker->diagnostics, i).severity == T2_DIAGNOSTIC_WARNING;
         }
 
-        bool fatal = (errors != 0) && !AllowErrors;
+        bool fatal = (errors != 0) && !AllowErrors && !lenient_unit(checker);
         bool reported = !fatal && report_all_units();
         if (
                 (fatal || reported)

@@ -286,40 +286,51 @@ directory_of(char const *path, char *buf)
 #endif
 }
 
+bool
+executable_path(char *out, usize cap)
+{
+#if defined(__APPLE__)
+        if (cap < PROC_PIDPATHINFO_MAXSIZE) {
+                char path[PROC_PIDPATHINFO_MAXSIZE];
+                if (proc_pidpath(getpid(), path, sizeof path) <= 0) {
+                        return false;
+                }
+                if (strlen(path) >= cap) {
+                        return false;
+                }
+                strcpy(out, path);
+                return true;
+        }
+        return proc_pidpath(getpid(), out, cap) > 0;
+#elif defined(__linux__)
+        isize len = readlink("/proc/self/exe", out, cap - 1);
+        if (len <= 0) {
+                return false;
+        }
+        out[len] = '\0';
+        return true;
+#elif defined(_WIN32)
+        DWORD len = GetModuleFileName(NULL, out, cap);
+        return (len != 0) && (len < cap);
+#elif defined(__FreeBSD__)
+        int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1 };
+        size_t len = cap;
+        return sysctl(mib, 4, out, &len, NULL, 0) == 0;
+#else
+        return false;
+#endif
+}
+
 Value
 this_executable(Ty *ty)
 {
-#if defined(__APPLE__)
-        pid_t pid = getpid();
-        char path[PROC_PIDPATHINFO_MAXSIZE];
+        char path[4096];
 
-        if (proc_pidpath(pid, path, sizeof path) <= 0) {
+        if (!executable_path(path, sizeof path)) {
                 return NIL;
         }
 
         return vSsz(path);
-#elif defined(__linux__)
-        char path[PATH_MAX];
-        isize len = readlink("/proc/self/exe", path, sizeof path - 1);
-        if (len <= 0)
-                return NIL;
-        return vSs(path, len);
-#elif defined(_WIN32)
-        char path[MAX_PATH];
-        DWORD len = GetModuleFileName(NULL, path, MAX_PATH);
-        if (len == 0)
-                return NIL;
-        return vSs(path, len);
-#elif defined(__FreeBSD__)
-        int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1 };
-        char path[PATH_MAX];
-        size_t len = sizeof path;
-        if (sysctl(mib, 4, path, &len, NULL, 0) != 0)
-                return NIL;
-        return vSs(path, len - 1);
-#else
-        return NIL;
-#endif
 }
 
 bool

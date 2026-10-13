@@ -1,6 +1,8 @@
 import os
 import path (Path)
+import time
 import ty
+import ty.test.capture as cap (Captured)
 
 pub use XFail = {reason: String, strict?: Bool}
 
@@ -27,6 +29,28 @@ pub class TestTimeout < RuntimeError {
     }
 }
 
+pub class Case {
+    values: Any
+    id:     ?String
+    skip:   ?String
+    xfail:  ?String
+    tags:   Array[String]
+
+    init(
+        values: Any,
+        id:     ?String = nil,
+        skip:   ?String = nil,
+        xfail:  ?String = nil,
+        tags:   Array[String] = []
+    ) {
+        self.values = values
+        self.id     = id
+        self.skip   = skip
+        self.xfail  = xfail
+        self.tags   = tags
+    }
+}
+
 pub class Meta {
     tags:      Array[String] = []
     skip:      ?String = nil
@@ -37,12 +61,80 @@ pub class Meta {
     only?:     Bool = false
     timeout:   ?Float = nil
     slow?:     Bool = false
+    cases:     ?Array[Any] = nil
+    retries:   ?Int = nil
     names:     Array[String] = []
+
+    for-case(c: ?Case) -> Meta {
+        let m = Meta()
+        m.tags      = [*tags]
+        m.skip      = skip
+        m.skip-if   = skip-if
+        m.platforms = platforms
+        m.xfail     = xfail
+        m.todo      = todo
+        m.only?     = only?
+        m.timeout   = timeout
+        m.slow?     = slow?
+        m.retries   = retries
+        m.names     = names
+        let $k = c or return m
+        m.tags.push(*k.tags.filter(\!(_ in m.tags)))
+        m.skip = k.skip ?? m.skip
+        if let $x = k.xfail {
+            m.xfail = {reason: x, strict?: true}
+        }
+        m
+    }
 }
+
+pub class Fixture {
+    name:  String
+    func:  Any
+    scope: String
+
+    init(name: String, func: Any, scope: String) {
+        self.name  = name
+        self.func  = func
+        self.scope = scope
+    }
+}
+
+pub HOOK_KINDS = ['before-each', 'after-each', 'after-all']
 
 let META: Dict[Any, Meta] = %{}
 
 let FILE-SKIP: Array[String] = []
+
+let FIXTURES: Dict[String, Fixture] = %{}
+
+let HOOKS: Dict[String, Array[Any]] = %{k: [] for k in HOOK_KINDS}
+
+let SPECIAL: Dict[Any, String] = %{}
+
+pub fn camel-name(name: String) -> String {
+    let parts = name.split('-')
+    let tail = parts[1;].map(p -> "{p[;1].upper()}{p[1;]}")
+    [parts[0], *tail].join('')
+}
+
+pub fn kebab-name(name: String) -> String {
+    let out: Array[String] = []
+    for ch; i in name.chars() {
+        let hump? = i > 0
+                 && ch.match?(/^[A-Z]$/)
+                 && name[i - 1].match?(/^[a-z0-9]$/)
+        out.push(hump? ? "-{ch.lower()}" : ch)
+    }
+    out.join('')
+}
+
+fn func-name(f: Any) -> String {
+    match f {
+        g: Function => g.__name__,
+        _           => show(f),
+    }
+}
 
 fn meta-of(f: Any, name: String) -> Meta {
     let m = META[f] ?? Meta()
@@ -112,6 +204,60 @@ pub fn slow[F](f: F) -> F {
     f
 }
 
+pub fn retries[F](f: F, n: Int) -> F {
+    meta-of(f, 'retries').retries = n
+    f
+}
+
+pub fn cases[F](f: F, rows: Array[Any]) -> F {
+    meta-of(f, 'cases').cases = rows
+    f
+}
+
+pub fn fixture[F](f: F, scope: String = 'test', name: ?String = nil) -> F {
+    if !(scope in ['test', 'file']) {
+        throw RuntimeError(
+            "@fixture: scope must be 'test' or 'file', not '{scope}'"
+        )
+    }
+    let key = camel-name(name ?? func-name(f))
+    FIXTURES[key] = Fixture(key, f, scope)
+    SPECIAL[f] = 'fixture'
+    f
+}
+
+fn hook[F](kind: String, f: F) -> F {
+    let hs = HOOKS[kind] ?? []
+    HOOKS[kind] = hs
+    hs.push(f)
+    SPECIAL[f] = kind
+    f
+}
+
+pub fn before-each[F](f: F) -> F {
+    hook('before-each', f)
+}
+
+pub fn after-each[F](f: F) -> F {
+    hook('after-each', f)
+}
+
+pub fn after-all[F](f: F) -> F {
+    hook('after-all', f)
+}
+
+pub fn fixture-for(name: String) -> ?Fixture {
+    FIXTURES[camel-name(name)]
+}
+
+pub fn hooks(kind: String) -> Array[Any] {
+    HOOKS[kind] ?? []
+}
+
+pub fn special?(f: Any) -> Bool {
+    SPECIAL[f] != nil
+}
+
 pub fn skip-file(reason: String) {
     FILE-SKIP.push(reason)
 }
@@ -119,6 +265,21 @@ pub fn skip-file(reason: String) {
 pub fn skip-file-unless(cond: Bool, reason: String) {
     if !cond {
         FILE-SKIP.push(reason)
+    }
+}
+
+pub class StepResult {
+    name:    String
+    outcome: String
+    dur:     Float
+    error:   Any = nil
+    trace:   Any = nil
+    reason:  ?String = nil
+
+    init(name: String, outcome: String, dur: Float) {
+        self.name    = name
+        self.outcome = outcome
+        self.dur     = dur
     }
 }
 
@@ -132,6 +293,7 @@ pub class Test {
     __cleanups: Array[() -> Any] = []
     __logs:     Array[String] = []
     __tmp:      ?String = nil
+    __steps:    Array[StepResult] = []
 
     init(id: String, name: String, file: String, line: Int, seed: Int, attempt: Int = 1) {
         self.id      = id
@@ -176,5 +338,67 @@ pub class Test {
 
     log(msg: String) {
         __logs.push(msg)
+    }
+
+    steps -> Array[StepResult] {
+        __steps
+    }
+
+    step(name: String, f: () -> Any) -> Bool {
+        let t0 = time.now()
+        let r = try {
+            f()
+            StepResult(name, 'pass', time.now() - t0)
+        } catch e: SkipTest {
+            let s = StepResult(name, 'skip', time.now() - t0)
+            s.reason = e.reason
+            s
+        } catch e: TestTimeout {
+            throw e
+        } catch e {
+            let s = StepResult(name, 'fail', time.now() - t0)
+            s.error = e
+            s.trace = ty.trace()
+            s
+        }
+        __steps.push(r)
+        r.outcome != 'fail'
+    }
+
+    setenv(key: String, value: String) {
+        let old = getenv(key)
+        put-env(key, value)
+        cleanup(-> put-env(key, old))
+    }
+
+    unsetenv(key: String) {
+        let old = getenv(key)
+        put-env(key, nil)
+        cleanup(-> put-env(key, old))
+    }
+
+    chdir(dir: String | Path) {
+        let old = os.getcwd()
+        if os.chdir(str(dir)) != 0 {
+            throw RuntimeError("t.chdir(): cannot change to {dir}")
+        }
+        cleanup(-> os.chdir(old))
+    }
+
+    capture(f: () -> Any) -> Captured {
+        cap.call(f)
+    }
+}
+
+fn put-env(key: String, value: ?String) {
+    match value {
+        nil => do {
+            unsetenv(key)
+            __env.remove(key)
+        },
+        v => do {
+            setenv(key, v)
+            __env[key] = v
+        },
     }
 }

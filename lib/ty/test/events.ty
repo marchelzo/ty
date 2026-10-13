@@ -8,7 +8,8 @@ pub use Event = Dict[String, Any]
 pub SCHEMA = 1
 
 pub OUTCOMES = [
-    'pass', 'fail', 'error', 'skip', 'todo', 'xfail', 'xpass', 'timeout', 'crash', 'exit'
+    'pass', 'flaky', 'fail', 'error', 'skip', 'todo', 'xfail', 'xpass',
+    'timeout', 'crash', 'exit'
 ]
 
 pub FAILING = ['fail', 'error', 'timeout', 'crash', 'exit']
@@ -274,9 +275,10 @@ pub fn test-end(
     logs: Array[String] = [],
     hard?: Bool = false,
     signal: Int | String | nil = nil,
-    code: ?Int = nil
+    code: ?Int = nil,
+    steps: Array[Event] = []
 ) -> Event {
-    mk('test-end', %{
+    let ev = mk('test-end', %{
         'id':      id,
         'outcome': outcome,
         'dur':     dur,
@@ -288,6 +290,28 @@ pub fn test-end(
         'signal':  signal,
         'code':    code,
     })
+    if #steps > 0 {
+        ev['steps'] = steps
+    }
+    ev
+}
+
+pub fn step-result(
+    id: String,
+    name: String,
+    outcome: String,
+    dur: Float = 0.0,
+    reason: ?String = nil,
+    failure: ?Event = nil
+) -> Event {
+    %{
+        'id':      id,
+        'name':    name,
+        'outcome': outcome,
+        'dur':     dur,
+        'reason':  reason,
+        'failure': failure,
+    }
 }
 
 pub fn warning(

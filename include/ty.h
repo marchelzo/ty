@@ -413,6 +413,9 @@ struct class {
 
         Value finalizer;
         Value init;
+#ifdef TY_TEST
+        bool init_patched;
+#endif
 
         TyObject *proto;
         u16Vector empty;
@@ -1698,6 +1701,9 @@ get_my_ty(void);
 
 Value
 this_executable(Ty *ty);
+
+bool
+executable_path(char *out, usize cap);
 
 void
 TyFunctionsCleanup(void);

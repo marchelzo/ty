@@ -1,0 +1,55 @@
+import time
+
+pub fn greet(name: String) -> String {
+    "hi {name}"
+}
+
+pub fn greet-twice(name: String) -> String {
+    "{greet(name)} {greet(name)}"
+}
+
+pub fn setting() -> String {
+    'real'
+}
+
+pub fn stamp() -> Float {
+    time.now()
+}
+
+pub class Base {
+    fetch() -> String {
+        'base'
+    }
+}
+
+pub class Client : Base {
+    v: Int = 1
+
+    init(v: Int = 1) {
+        self.v = v
+    }
+
+    get(k: Int = 0) -> Int {
+        v + k
+    }
+
+    label -> String {
+        "client {v}"
+    }
+
+    static make() -> String {
+        'real'
+    }
+}
+
+pub fn use-client() -> String {
+    Client().fetch()
+}
+
+pub fn hot-get(c: Client, n: Int) -> Int {
+    let s = 0
+    for _ in ..n {
+        s += c.get()
+    }
+    s
+}

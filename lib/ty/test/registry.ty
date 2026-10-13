@@ -1,7 +1,8 @@
 import os
 import path (Path)
 import ty
-import ty.test.core as core (XFail, Meta)
+import ty.test.core as core (XFail, Meta, Case, camel-name, kebab-name)
+import ty.test.fixtures as fixtures
 
 pub use TestSite = {
     module:      String,
@@ -36,6 +37,9 @@ pub class TestCase {
     func:      Any
     wants-t?:  Bool
     error:     ?String
+    args:      Array[Any] = []
+    kwargs:    Dict[String, Any] = %{}
+    fixtures:  Array[String] = []
 
     init(
         id:       String,
@@ -118,21 +122,90 @@ fn site-error(site: TestSite, static?: Bool) -> ?String {
     if site.generator? {
         return 'generator functions cannot be tests'
     }
-    let extra = match site.params {
-        ['t', *rest] => rest,
-        ps           => ps,
-    }
-    let required = site.required - (#site.params - #extra)
-    if required > 0 {
-        let names = extra[;required].map(p -> "`{p}`").join(', ')
-        return "test takes required parameter {names} "
-               '(only a first parameter named `t` is supported)'
-    }
     if !static? && !callable?(site.func) {
         return "test is not callable (bound to {show(site.func)}; "
                'does a decorator return its argument?)'
     }
     nil
+}
+
+use Binding = {args: Array[Any], kwargs: Dict[String, Any]}
+
+fn quoted(name: String) -> String {
+    "`{kebab-name(name)}`"
+}
+
+fn extra-params(site: TestSite) -> Array[String] {
+    match site.params {
+        ['t', *rest] => rest,
+        ps           => ps,
+    }
+}
+
+fn row-values(row: Any) -> Any {
+    match row {
+        c: Case => c.values,
+        v       => v,
+    }
+}
+
+fn keyed(
+    kws:   Dict[String, Any],
+    site:  TestSite,
+    label: String
+) -> Binding | String {
+    let fun = quoted(site.ident)
+    for k, _ in kws {
+        if !(k in extra-params(site)) {
+            return "case {label} sets {quoted(k)}, which {fun} doesn't take"
+        }
+    }
+    ({args: [], kwargs: kws})
+}
+
+fn bind-row(row: Any, site: TestSite, label: String) -> Binding | String {
+    let n = #extra-params(site)
+    match row-values(row) {
+        d: Dict => do {
+            let kws: Dict[String, Any] = %{}
+            for k, v in d {
+                kws[camel-name(str(k))] = v
+            }
+            keyed(kws, site, label)
+        },
+        tp: Tuple => do {
+            let ms = members(tp)
+            if ms.keys().any?(\_ :: String) {
+                let kws: Dict[String, Any] = %{}
+                for k, v in ms {
+                    kws[str(k)] = v
+                }
+                return keyed(kws, site, label)
+            }
+            let vs = [*tp]
+            if #vs > n {
+                let fun = quoted(site.ident)
+                return "case {label} has {#vs} values but {fun} takes {n}"
+            }
+            ({args: vs, kwargs: %{}})
+        },
+        x => ({args: [x], kwargs: %{}}),
+    }
+}
+
+fn covered(site: TestSite, b: Binding) -> Array[String] {
+    let extra = extra-params(site)
+    [*extra[;#b.args], *b.kwargs.keys()]
+}
+
+fn param-error(site: TestSite, b: Binding, label: ?String) -> ?String {
+    let have = covered(site, b)
+    let $p = fixtures.missing(site.params, site.required, have) or return nil
+    match label {
+        nil => "test takes required parameter {quoted(p)}, "
+               'which is not a fixture',
+        l   => "case {l} doesn't provide {quoted(p)}, which is not a fixture",
+    }
 }
 
 fn word-regex(name: String) -> Regex {
@@ -164,6 +237,49 @@ fn missing-pub(site: TestSite, meta: ?Meta) -> Warning {
     }
 }
 
+fn row-label(row: Any, i: Int) -> String {
+    match row {
+        k: Case => k.id ?? str(i),
+        _       => str(i),
+    }
+}
+
+fn make-case(
+    site:    TestSite,
+    file:    String,
+    meta:    Meta,
+    error:   ?String,
+    row:     Any,
+    label:   ?String,
+    static?: Bool
+) -> TestCase {
+    let local = match label {
+        nil => local-id(site),
+        l   => "{local-id(site)}[{l}]",
+    }
+    let k = match row {
+        c: Case => c,
+        _       => nil,
+    }
+    let wants-t? = (#site.params > 0) && (site.params[0] == 't')
+    let b: Binding = {args: [], kwargs: %{}}
+    if let $l = label and !static? {
+        match bind-row(row, site, l) {
+            msg: String => error = error ?? msg,
+            bound       => b = bound,
+        }
+    }
+    if !static? {
+        error = error ?? param-error(site, b, label)
+    }
+    let m = meta.for-case(k)
+    let tc = TestCase("{file}::{local}", local, file, site, m, wants-t?, error)
+    tc.args     = b.args
+    tc.kwargs   = b.kwargs
+    tc.fixtures = static? ? [] : fixtures.wants(site.params, covered(site, b))
+    tc
+}
+
 pub fn collect(target: String, static?: Bool = false) -> Collection {
     let path = resolve(target)
     let file = relative(path)
@@ -178,6 +294,10 @@ pub fn collect(target: String, static?: Bool = false) -> Collection {
     for site in sites() {
         funcs.push(site.func)
 
+        if core.special?(site.func) {
+            continue
+        }
+
         if !site.public? {
             let meta = core.meta-for(site.func)
             if meta != nil || uncalled?(site, source) {
@@ -186,14 +306,23 @@ pub fn collect(target: String, static?: Bool = false) -> Collection {
             continue
         }
 
-        let local = local-id(site)
-        let id = "{file}::{local}"
         let meta = core.meta-for(site.func) ?? Meta()
-
         let error = site-error(site, static?)
-        let wants-t? = (#site.params > 0) && (site.params[0] == 't')
 
-        c.cases.push(TestCase(id, local, file, site, meta, wants-t?, error))
+        let $rows = meta.cases or do {
+            c.cases.push(make-case(site, file, meta, error, nil, nil, static?))
+            continue
+        }
+        if #rows == 0 {
+            let why = error ?? '@cases has no rows'
+            c.cases.push(make-case(site, file, meta, why, nil, nil, static?))
+            continue
+        }
+        for row; i in rows {
+            let label = row-label(row, i)
+            let tc = make-case(site, file, meta, error, row, label, static?)
+            c.cases.push(tc)
+        }
     }
 
     for f in core.meta-keys() {

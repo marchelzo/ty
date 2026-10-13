@@ -21,6 +21,7 @@ compile_commands.json
 /ty
 tyls
 typrof
+tytest
 
 *.log
 *.err

@@ -121,7 +121,7 @@ PREV_SIG := $(shell cat $(BUILD_SIG_FILE) 2>/dev/null)
 
 ifneq ($(BUILD_SIG),$(PREV_SIG))
 $(shell rm -rf obj)
-$(shell mkdir -p obj obj/tyls obj/typrof)
+$(shell mkdir -p obj obj/tyls obj/typrof obj/tytest)
 $(shell echo '$(BUILD_SIG)' > $(BUILD_SIG_FILE))
 endif
 
@@ -143,12 +143,14 @@ SOURCES := $(wildcard src/*.c)
 OBJECTS := $(patsubst src/%.c,obj/%.o,$(SOURCES))
 TYLS_OBJECTS := $(patsubst src/%.c,obj/tyls/%.o,$(SOURCES))
 TYPROF_OBJECTS := $(patsubst src/%.c,obj/typrof/%.o,$(SOURCES))
+TYTEST_OBJECTS := $(patsubst src/%.c,obj/tytest/%.o,$(SOURCES))
 EXTERNAL := obj/libco.o obj/dtoa.o libmd/libmd.a nsync/out/libnsync.a
 ASSEMBLY := $(patsubst %.c,%.s,$(SOURCES))
 .DEFAULT_GOAL := all
 .PHONY: all clean test test-types2 install freebsd-plist
 DEPFILES := $(OBJECTS:.o=.d) $(TYLS_OBJECTS:.o=.d) $(TYPROF_OBJECTS:.o=.d) \
-            obj/ty-main.d obj/tyls-main.d obj/typrof-main.d \
+            $(TYTEST_OBJECTS:.o=.d) \
+            obj/ty-main.d obj/tyls-main.d obj/typrof-main.d obj/tytest-main.d \
             obj/libco.d obj/dtoa.d
 
 -include $(DEPFILES)
@@ -190,18 +192,20 @@ $(GEN_DIR)/.stamp: tools/tybi $(GEN_SOURCES) $(GEN_METHODS)
 $(GEN_HEADERS): $(GEN_DIR)/.stamp
 	@test -f $@
 
-$(OBJECTS) $(TYLS_OBJECTS) $(TYPROF_OBJECTS): | $(GEN_HEADERS)
-obj/ty-main.o obj/tyls-main.o obj/typrof-main.o: | $(GEN_HEADERS)
+$(OBJECTS) $(TYLS_OBJECTS) $(TYPROF_OBJECTS) $(TYTEST_OBJECTS): | $(GEN_HEADERS)
+obj/ty-main.o obj/tyls-main.o obj/typrof-main.o obj/tytest-main.o: | $(GEN_HEADERS)
 
 obj/token.o: include/keywords.h include/optokens.h
-obj/functions.o obj/tyls/functions.o obj/typrof/functions.o: include/syscall_names.h
+obj/functions.o obj/tyls/functions.o obj/typrof/functions.o obj/tytest/functions.o: include/syscall_names.h
 obj/tyls/token.o: include/keywords.h include/optokens.h
 obj/typrof/token.o: include/keywords.h include/optokens.h
+obj/tytest/token.o: include/keywords.h include/optokens.h
 
 # jit.c depends on the generated DynASM header
 obj/jit.o: $(JIT_HDR)
 obj/tyls/jit.o: $(JIT_HDR)
 obj/typrof/jit.o: $(JIT_HDR)
+obj/tytest/jit.o: $(JIT_HDR)
 
 ty: obj/ty-main.o $(OBJECTS) $(EXTERNAL)
 	@echo cc $@
@@ -215,6 +219,10 @@ typrof: obj/typrof-main.o $(TYPROF_OBJECTS) $(EXTERNAL)
 	@echo cc $@
 	@$(CC) $(CFLAGS) -DTY_PROFILER -o $@ $^ $(LDFLAGS)
 
+tytest: obj/tytest-main.o $(TYTEST_OBJECTS) $(EXTERNAL)
+	@echo cc $@
+	@$(CC) $(CFLAGS) -DTY_TEST -o $@ $^ $(LDFLAGS)
+
 obj/ty-main.o: ty.c
 	@echo cc $<
 	@$(CC) $(CFLAGS) -MMD -MP -MF obj/ty-main.d -c -o $@ $<
@@ -226,6 +234,10 @@ obj/tyls-main.o: tyls.c
 obj/typrof-main.o: ty.c
 	@echo cc $<
 	@$(CC) $(CFLAGS) -DTY_PROFILER -MMD -MP -MF obj/typrof-main.d -c -o $@ $<
+
+obj/tytest-main.o: ty.c
+	@echo cc $<
+	@$(CC) $(CFLAGS) -DTY_TEST -MMD -MP -MF obj/tytest-main.d -c -o $@ $<
 
 asm: $(ASSEMBLY)
 
@@ -257,11 +269,20 @@ obj/typrof/%.o: src/%.c
 	@echo cc $<
 	@$(CC) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c -o $@ -DTY_PROFILER -DFILENAME=$(patsubst src/%.c,%,$<) $<
 
+obj/tytest:
+	@mkdir -p $@
+
+$(TYTEST_OBJECTS) obj/tytest-main.o: | obj/tytest
+
+obj/tytest/%.o: src/%.c
+	@echo cc $<
+	@$(CC) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c -o $@ -DTY_TEST -DFILENAME=$(patsubst src/%.c,%,$<) $<
+
 
 clean:
-	rm -rf $(PROG) *.gcda $(OBJECTS) $(TYLS_OBJECTS) $(TYPROF_OBJECTS) obj/libco.o obj/dtoa.o include/keywords.h include/optokens.h $(GEN_DIR) tools/tybi $(BUILD_SIG_FILE) $(DEPFILES) obj/ty-main.o obj/tyls-main.o obj/typrof-main.o obj/types2-core-test
+	rm -rf $(PROG) *.gcda $(OBJECTS) $(TYLS_OBJECTS) $(TYPROF_OBJECTS) $(TYTEST_OBJECTS) obj/libco.o obj/dtoa.o include/keywords.h include/optokens.h $(GEN_DIR) tools/tybi $(BUILD_SIG_FILE) $(DEPFILES) obj/ty-main.o obj/tyls-main.o obj/typrof-main.o obj/tytest-main.o obj/types2-core-test tytest
 
-test: ty tyls test-types2
+test: ty tyls tytest test-types2
 	TY_TEST_NATIVE=1 ./ty --test tests/runner/smoke.ty
 	./ty --test tests --strict $(TEST_ARGS)
 
@@ -280,12 +301,12 @@ define install-lib-dir
 
 endef
 
-install: $(PROG)
-	sudo install -m755 -s $(PROG) $(DESTDIR)$(PREFIX)$(bindir)
+install: $(PROG) tytest
+	sudo install -m755 -s $(PROG) tytest $(DESTDIR)$(PREFIX)$(bindir)
 	$(foreach d,$(LIB_DIRS),$(call install-lib-dir,$(d)))
 
 freebsd-plist:
-	{ printf 'bin/ty\nbin/tyls\n'; \
+	{ printf 'bin/ty\nbin/tyls\nbin/tytest\n'; \
 	  git ls-files 'lib/*.ty' \
 	  | sed 's|^lib/|%%TYMODDIR%%/|' \
 	  | LC_ALL=C sort; } > freebsd/pkg-plist

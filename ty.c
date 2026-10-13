@@ -852,6 +852,37 @@ ClassifyTestArgs(int argc, char **argv)
         TestSuite  = true;
 }
 
+#if !defined(TY_TEST) && !defined(TY_PROFILER)
+static noreturn void
+ExecTestBinary(char **argv)
+{
+        char path[4096];
+        char const *env = getenv("TY_TEST_BINARY");
+
+        if (env != NULL && *env != '\0') {
+                snprintf(path, sizeof path, "%s", env);
+        } else if (executable_path(path, sizeof path)) {
+                char *slash = strrchr(path, '/');
+                usize dir = (slash == NULL) ? 0 : (usize)(slash - path + 1);
+                snprintf(path + dir, sizeof path - dir, "tytest");
+        } else {
+                snprintf(path, sizeof path, "tytest");
+        }
+
+        argv[0] = path;
+        execv(path, argv);
+
+        fprintf(
+                stderr,
+                "ty --test: cannot run %s: %s (build it with `make tytest`)\n",
+                path,
+                strerror(errno)
+        );
+
+        exit(2);
+}
+#endif
+
 static noreturn void
 RunTestMode(void)
 {
@@ -913,6 +944,12 @@ main(int argc, char **argv)
 #endif
 
         int nopt = (argc == 0) ? 0 : ProcessArgs(argv, true);
+
+#if !defined(TY_TEST) && !defined(TY_PROFILER)
+        if (RunningTests) {
+                ExecTestBinary(argv);
+        }
+#endif
 
         if (RunningTests) {
                 ClassifyTestArgs(argc, argv);

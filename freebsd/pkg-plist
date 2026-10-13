@@ -1,7 +1,9 @@
 bin/ty
 bin/tyls
+bin/tytest
 %%TYMODDIR%%/abbrev.ty
 %%TYMODDIR%%/apple.ty
+%%TYMODDIR%%/apple/screencapture.ty
 %%TYMODDIR%%/chalk.ty
 %%TYMODDIR%%/clap.ty
 %%TYMODDIR%%/cookie.ty
@@ -73,6 +75,7 @@ bin/tyls
 %%TYMODDIR%%/ty/test.ty
 %%TYMODDIR%%/ty/test/args.ty
 %%TYMODDIR%%/ty/test/assert.ty
+%%TYMODDIR%%/ty/test/cache.ty
 %%TYMODDIR%%/ty/test/capture.ty
 %%TYMODDIR%%/ty/test/cli.ty
 %%TYMODDIR%%/ty/test/config.ty
@@ -80,11 +83,14 @@ bin/tyls
 %%TYMODDIR%%/ty/test/dirconf.ty
 %%TYMODDIR%%/ty/test/discover.ty
 %%TYMODDIR%%/ty/test/events.ty
+%%TYMODDIR%%/ty/test/fixtures.ty
+%%TYMODDIR%%/ty/test/patch.ty
 %%TYMODDIR%%/ty/test/registry.ty
 %%TYMODDIR%%/ty/test/render.ty
 %%TYMODDIR%%/ty/test/report.ty
 %%TYMODDIR%%/ty/test/sched.ty
 %%TYMODDIR%%/ty/test/select.ty
+%%TYMODDIR%%/ty/test/spy.ty
 %%TYMODDIR%%/ty/test/worker.ty
 %%TYMODDIR%%/unibilium.ty
 %%TYMODDIR%%/uv.ty

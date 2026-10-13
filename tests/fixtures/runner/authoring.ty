@@ -1,0 +1,136 @@
+import ty.test (Test, Case, cases, fixture, before-each, after-each, timeout)
+import fixture_lib
+
+let LOG: Array[String] = []
+
+@fixture
+fn base() -> Int {
+    10
+}
+
+@fixture
+fn conn*(t: Test, base: Int) {
+    LOG.push("open {t.name}")
+    yield base + 1
+    LOG.push("close {t.name}")
+}
+
+@fixture(scope: 'file')
+fn shared*() {
+    LOG.push('shared-up')
+    yield [1, 2, 3]
+    LOG.push('shared-down')
+}
+
+@fixture
+fn loop-a(loop-b: Int) -> Int {
+    loop-b
+}
+
+@fixture
+fn loop-b(loop-a: Int) -> Int {
+    loop-a
+}
+
+@fixture
+fn never*() {
+    if false {
+        yield 1
+    }
+}
+
+@fixture
+fn bad-teardown*() {
+    yield 1
+    throw RuntimeError('teardown blew up')
+}
+
+@fixture
+fn slow-setup() -> Int {
+    while true {
+        ;
+    }
+    1
+}
+
+@before-each
+fn note-before(t: Test) {
+    LOG.push("before {t.name}")
+}
+
+@after-each
+fn note-after() {
+    LOG.push('after')
+}
+
+@cases([
+    {a: 1, b: 2, want: 3},
+    (2, 2, 4),
+    %{'a': 5, 'b': 5, 'want': 10},
+    Case({a: 0, b: 0, want: 1}, id: 'zero', xfail: 'off by one'),
+    Case((9, 9, 18), id: 'skipped', skip: 'not today'),
+])
+pub fn adds(a: Int, b: Int, want: Int) {
+    assert(a + b == want)
+}
+
+@cases([1, 2])
+pub fn with-fixture(t: Test, n: Int, conn: Int, shared: Array[Int]) {
+    assert(conn == 11)
+    assert(n in shared)
+}
+
+pub fn imported(lib-value: String) {
+    assert(lib-value == 'from-lib')
+}
+
+pub fn cycle(loop-a: Int) {
+}
+
+pub fn no-yield(never: Int) {
+}
+
+pub fn teardown-fails(bad-teardown: Int) {
+}
+
+@timeout(0.3)
+pub fn setup-times-out(slow-setup: Int) {
+}
+
+pub fn unknown(nope: Int) {
+}
+
+@cases([{a: 1, c: 2}])
+pub fn bad-row(a: Int) {
+}
+
+@cases([(1, 2, 3)])
+pub fn too-many(a: Int) {
+}
+
+@cases([])
+pub fn no-rows(a: Int) {
+}
+
+pub fn steps(t: Test) {
+    t.step('one', -> assert(1 == 1))
+    t.step('two', -> assert(1 == 2))
+    t.step('three', -> t.skip('later'))
+}
+
+pub fn order() {
+    let want = [
+        'before with-fixture',
+        'open with-fixture',
+        'shared-up',
+        'after',
+        'close with-fixture',
+        'before with-fixture',
+        'open with-fixture',
+        'after',
+        'close with-fixture',
+    ]
+    let start = LOG.search('before with-fixture') ?? -1
+    assert(start >= 0, LOG)
+    assert(LOG[start;start + #want] == want, LOG)
+}

@@ -1,5 +1,7 @@
 pub import ty.test.core (..)
 pub import ty.test.assert (..)
+pub import ty.test.patch (patch, patch-method, Patch)
+pub import ty.test.spy (Spy, Call, spy, stub, spy-method)
 
 import os
 import stdio

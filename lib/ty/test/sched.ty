@@ -204,6 +204,7 @@ pub class Job {
     timeout:      ?Float = nil
     load-timeout: ?Float = nil
     tags:         ?String = nil
+    select-path:  ?String = nil
     group:        ?String = nil
     env:          Dict[String, String] = %{}
     attempt:      Int = 0
@@ -421,6 +422,9 @@ pub class Sched {
         }
         if let $n = job.line {
             argv += ['--line', str(n)]
+        }
+        if let $p = job.select-path {
+            argv += ['--select-file', p]
         }
         if let $t = job.tags {
             argv += ['--tags', t]

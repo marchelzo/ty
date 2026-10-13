@@ -1,0 +1,87 @@
+import json
+import os
+import path (Path)
+
+pub CACHE-DIR = '.ty-test-cache'
+
+fn durations-file() -> String {
+    "{CACHE-DIR}/durations.json"
+}
+
+pub fn load-durations() -> Dict[String, Float] {
+    let out: Dict[String, Float] = %{}
+    let $text = slurp(durations-file()) or return out
+    let data = try {
+        json.parse(text)
+    } catch _: JSONError {
+        nil
+    }
+    if !(data :: Dict) {
+        return out
+    }
+    for k, v in data {
+        match (k, v) {
+            (f: String, x: Float) => out[f] = x,
+            (f: String, n: Int)   => out[f] = float(n),
+            _                     => nil,
+        }
+    }
+    out
+}
+
+pub fn save-json(path: String, data: Any) {
+    if !Path(CACHE-DIR).dir? {
+        os.mkdir(CACHE-DIR, 0o755)
+    }
+    let tmp = "{path}.{os.getpid()}"
+    let fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    if fd < 0 {
+        return
+    }
+    os.write(fd, json.encode(data), all: true)
+    os.close(fd)
+    os.rename(tmp, path)
+}
+
+pub fn save-durations(durs: Dict[String, Float]) {
+    save-json(durations-file(), durs)
+}
+
+fn last-failed-file() -> String {
+    "{CACHE-DIR}/lastfailed.json"
+}
+
+pub fn load-last-failed() -> Dict[String, String] {
+    let out: Dict[String, String] = %{}
+    let $text = slurp(last-failed-file()) or return out
+    let data = try {
+        json.parse(text)
+    } catch _: JSONError {
+        nil
+    }
+    if !(data :: Dict) {
+        return out
+    }
+    for k, v in data {
+        match (k, v) {
+            (id: String, f: String) => out[id] = f,
+            _                       => nil,
+        }
+    }
+    out
+}
+
+pub fn save-last-failed(ids: Dict[String, String]) {
+    save-json(last-failed-file(), ids)
+}
+
+pub fn failed-in(ids: Dict[String, String], file: String) -> Array[String] {
+    [id for id, f in ids if f == file && id != file]
+}
+
+pub fn claim() -> Bool {
+    let free? = getenv('TY_TEST_NO_CACHE') in [nil, '', '0']
+    setenv('TY_TEST_NO_CACHE', '1')
+    __env['TY_TEST_NO_CACHE'] = '1'
+    free?
+}

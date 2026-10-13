@@ -100,6 +100,7 @@ pub class Tally {
     rusage?:  Bool
     __index:  Dict[String, FileRow]
     __seen:   Dict[String, Bool]
+    slowest-n: Int = 5
 
     init(mode: ?String = nil) {
         self.mode     = mode
@@ -348,6 +349,10 @@ pub class Tally {
         self.rusage? ? (self.user, self.sys) : (nil, nil)
     }
 
+    flaky-ids() -> Array[String] {
+        self.results.filter(\render.outcome-of(_) == 'flaky').map(id-of)
+    }
+
     rerun-ids() -> Array[String] {
         [*failures().map(ev -> id-of(ev)), *file-errors().map(&.path)]
     }
@@ -362,8 +367,9 @@ pub class Tally {
             sys: sys,
             seed: get-int(self.start, 'seed'),
             warnings: #self.warnings,
-            slowest: slowest(),
+            slowest: slowest(self.slowest-n),
             rerun: rerun-ids(),
+            flaky: flaky-ids(),
             interrupted?: get-bool(self.end, 'interrupted'),
             color?: color?,
             width: width
@@ -650,6 +656,7 @@ pub class Pretty < Reporter {
 
 pub DOTS: Dict[String, String] = %{
     'pass':    '.',
+    'flaky':   'f',
     'fail':    'F',
     'error':   'E',
     'skip':    's',
@@ -745,7 +752,8 @@ pub fn make(
     width: ?Int = nil,
     write: ?Writer = nil,
     mode: ?String = nil,
-    quiet?: Bool = false
+    quiet?: Bool = false,
+    slowest: Int = 5
 ) -> Reporter {
     let istty = tty? ?? (os.isatty(1))
     let paint? = color? ?? default-color?()
@@ -754,15 +762,23 @@ pub fn make(
         _         => (spec, nil),
     }
     match name {
-        'pretty' => Pretty(
-            color?: paint?,
-            tty?: istty,
-            width: width,
-            write: write,
-            mode: mode,
-            quiet?: quiet?
-        ),
-        'dot'  => Dot(color?: paint?, width: width, write: write, mode: mode),
+        'pretty' => do {
+            let p = Pretty(
+                color?: paint?,
+                tty?: istty,
+                width: width,
+                write: write,
+                mode: mode,
+                quiet?: quiet?
+            )
+            p.tally.slowest-n = slowest
+            p
+        },
+        'dot' => do {
+            let d = Dot(color?: paint?, width: width, write: write, mode: mode)
+            d.tally.slowest-n = slowest
+            d
+        },
         'json' => Json(path: arg, write: write),
         _      => throw ValueError("ty --test: unknown reporter '{spec}' ({REPORTERS})"),
     }
