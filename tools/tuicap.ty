@@ -15,6 +15,12 @@ import time
 import ty
 import zstd
 
+#|if __apple__
+import kqueue
+import net
+import sh
+#|]
+
 /**
  * Record a terminal program's complete observable behavior, like script(1) but for
  * programmatically testing TUI apps (e.g. checking that two programs behave identically).
@@ -39,12 +45,19 @@ import zstd
  *   delivered as the VEOF character if the pty is in canonical mode.
  *
  * [b]Syscall tracing[/]
- *   Unless --no-trace is given, tuicap starts a root helper via `sudo -n` (or the setuid
- *   /usr/bin/tyxx) that loads eBPF programs and captures every read/write/readv/writev/pread/
- *   pwrite/preadv(2)/pwritev(2)/ioctl/fcntl/close any process makes on the pty, including
- *   through /dev/tty, with full data. This adds about 0.5s before COMMAND starts.
- *   Without root the recording is still made; `trace.reason` explains why it was skipped.
- *   Not captured: io_uring, splice/sendfile, mmap, and open() of the terminal.
+ *   Unless --no-trace is given, tuicap captures every read/write/readv/writev/pread/pwrite/
+ *   preadv(2)/pwritev(2)/ioctl/fcntl/close made on the pty, including through /dev/tty,
+ *   with full data. Not captured: io_uring, splice/sendfile, mmap, and open() of the terminal.
+ *   Linux: a root helper started via `sudo -n` (or the setuid /usr/bin/tyxx) loads eBPF
+ *     programs that see every process. This adds about 0.5s before COMMAND starts. Without
+ *     root the recording is still made; `trace.reason` explains why it was skipped.
+ *   macOS: no root needed. A small dylib, compiled with cc on first use and cached in
+ *     ~/Library/Caches/tuicap, is injected with DYLD_INSERT_LIBRARIES and interposes the
+ *     libc wrappers (and their $NOCANCEL variants). Only COMMAND and its descendants are
+ *     seen, and only those that keep the environment: dyld drops DYLD_* for SIP-protected
+ *     binaries (/bin, /usr/bin; this includes the /bin/sh used for a one-argument COMMAND)
+ *     unless SIP is disabled, for hardened-runtime apps, and `env -i`/sudo clear it.
+ *     Raw syscall instructions that bypass libc are missed.
  *
  * [b]The .tui file[/]
  *   zstd-compressed JSON (`zstd -dc f.tui | jq .`), one object:
@@ -56,7 +69,9 @@ import zstd
  *   size          {cols, rows} of the pty at start
  *   exit          {"code": N} or {"signal": "SIGKILL"}; null if never reaped
  *   trace         {"source": "ebpf", "lost": N, "error": null} or {"source": null, "reason": "..."}
- *                 (lost = syscall records dropped because the ring buffer was full)
+ *                 (lost = syscall records dropped because the ring buffer was full); on macOS
+ *                 {"source": "dyld", "lost": 0, "error": null, "processes": N}, where
+ *                 processes counts those that reported terminal syscalls
  *   frames        rendered screen states over time, as deltas (see below)
  *   events        everything that happened, sorted by time (see below)
  *
@@ -109,14 +124,17 @@ import zstd
  *             flag names like "ICANON", "ECHO", "CS8"), speed, cc ({"VINTR": 3, "VMIN": 1, ...})
  *   resize    cols, rows                  signal   signal forwarded to COMMAND: "SIGTERM"
  *   exit      code | signal
- *   syscall   (eBPF) the program's own view: call (read, writev, ioctl, ...), pid, tid, comm,
+ *   syscall   (traced) the program's own view: call (read, writev, ioctl, ...), pid, tid, comm,
  *             fd, ret (negative = -errno), start_us (entry time; "us" is the return time)
  *               reads/writes: count (or iovcnt), text|base64 = the ret bytes actually
  *                 transferred, truncated: true if cut short (more than 2MiB in one call)
  *               ioctl: request ("TCSETSW", "TIOCGWINSZ", or hex), arg (raw), value (decoded
- *                 termios/winsize/int/char) or data (hex of up to 64 bytes read at arg)
+ *                 termios/winsize/int/char) or data (hex of up to 64 bytes read at arg; on
+ *                 macOS, the size encoded in the request, up to 512, and only bytes the
+ *                 kernel reads unless the call succeeded)
  *               fcntl: cmd ("F_SETFL", ...), arg, flags (e.g. \["O_RDWR", "O_NONBLOCK"])
- *             Syscalls of COMMAND's process before exec show the interpreter's comm
+ *             Names (calls, requests, flags) are the recording platform's. With eBPF,
+ *             syscalls of COMMAND's process before exec show the interpreter's comm
  *             (e.g. "ty": TIOCSCTTY, close).
  *
  * [b]Comparing and replaying[/]
@@ -157,7 +175,7 @@ clap! Tuicap {
     /// Replay REC's input events into COMMAND instead of reading stdin
     replay: String, short: 'r', placeholder: 'REC'
 
-    /// Capture the program's terminal syscalls with eBPF (disable with --no-trace)
+    /// Capture terminal syscalls (eBPF on Linux, dyld on macOS; disable with --no-trace)
     trace: Bool, short: None, default: true
 
     group 'Modes (instead of running a command)' {
@@ -180,6 +198,7 @@ clap! Tuicap {
     command: [String], pos: true, repeat: true
 }
 
+#|if !__apple__
 class Reg {
     n: Int
 
@@ -408,6 +427,7 @@ class Btf {
         __member(id, member) ?? throw RuntimeError("BTF: no member {struct}.{member}")
     }
 }
+#|]
 
 ns rec {
     pub const TS     = 0
@@ -427,6 +447,7 @@ ns rec {
     pub const CHUNKS = 128
 }
 
+#|if !__apple__
 ns cfg {
     pub const TTY    = 0
     pub const CALIB  = 8
@@ -921,6 +942,23 @@ fn attach(name: String, prog: Int) {
     }
     os.ioctl(fd, perf.IOC_ENABLE, 0)
 }
+#|else
+ns nr {
+    pub const read    = os.sysno('read')!
+    pub const write   = os.sysno('write')!
+    pub const pread   = os.sysno('pread')!
+    pub const pwrite  = os.sysno('pwrite')!
+    pub const readv   = os.sysno('readv')!
+    pub const writev  = os.sysno('writev')!
+    pub const preadv  = os.sysno('preadv')!
+    pub const pwritev = os.sysno('pwritev')!
+    pub const ioctl   = os.sysno('ioctl')!
+    pub const fcntl   = os.sysno('fcntl')!
+    pub const close   = os.sysno('close')!
+
+    pub const VECTORED = [readv, writev, preadv, pwritev]
+}
+#|]
 
 ns frame {
     pub const READY = 1
@@ -933,6 +971,31 @@ ns frame {
     }
 }
 
+class Frames {
+    __buf: Blob
+
+    init() {
+        __buf = Blob()
+    }
+
+    feed(chunk: Blob) -> Array[(Int, Blob)] {
+        __buf.push(chunk)
+        let out = []
+        let at  = 0
+        while #__buf - at >= 5 {
+            let (kind, n) = c.unpack('=BI', __buf, at)
+            if #__buf - at < 5 + n {
+                break
+            }
+            out.push((kind, __buf.slice(at + 5, n)))
+            at += 5 + n
+        }
+        __buf.splice(0, at)
+        out
+    }
+}
+
+#|if !__apple__
 fn tracer(tty: String, skip: Int) {
     let btf = Btf()
     let k   = {
@@ -995,6 +1058,7 @@ fn tracer(tty: String, skip: Int) {
     bpf.elem(bpf.MAP_LOOKUP, m.cfg, zero, state)
     frame.put(frame.DONE, "{c.unpack(cfg.FORMAT, state).5}")
 }
+#|]
 
 const DEC_GRAPHICS = %{
     '`': '◆', 'a': '▒', 'b': '␉', 'c': '␌', 'd': '␍', 'e': '␊', 'f': '°', 'g': '±',
@@ -1974,7 +2038,167 @@ pub class Screen {
     }
 }
 
-ns linux {
+#|if __apple__
+ns sys {
+    fn bits(table: Array[(String, Int)]) -> Array[(String, Int, Int)] {
+        [(name, bit, bit) for (name, bit) in table]
+    }
+
+    pub const IOCTLS = %{
+        0x40047403: 'TIOCMODG',      0x80047404: 'TIOCMODS',      0x2000740D: 'TIOCEXCL',
+        0x2000740E: 'TIOCNXCL',      0x80047410: 'TIOCFLUSH',     0x40487413: 'TIOCGETA',
+        0x80487414: 'TIOCSETA',      0x80487415: 'TIOCSETAW',     0x80487416: 'TIOCSETAF',
+        0x4004741A: 'TIOCGETD',      0x8004741B: 'TIOCSETD',      0x20007481: 'TIOCIXON',
+        0x20007480: 'TIOCIXOFF',     0x2000747B: 'TIOCSBRK',      0x2000747A: 'TIOCCBRK',
+        0x20007479: 'TIOCSDTR',      0x20007478: 'TIOCCDTR',      0x40047477: 'TIOCGPGRP',
+        0x80047476: 'TIOCSPGRP',     0x40047473: 'TIOCOUTQ',      0x80017472: 'TIOCSTI',
+        0x20007471: 'TIOCNOTTY',     0x80047470: 'TIOCPKT',       0x2000746F: 'TIOCSTOP',
+        0x2000746E: 'TIOCSTART',     0x8004746D: 'TIOCMSET',      0x8004746C: 'TIOCMBIS',
+        0x8004746B: 'TIOCMBIC',      0x4004746A: 'TIOCMGET',      0x40087468: 'TIOCGWINSZ',
+        0x80087467: 'TIOCSWINSZ',    0x80047466: 'TIOCUCNTL',     0x20007465: 'TIOCSTAT',
+        0x20007463: 'TIOCSCONS',     0x80047462: 'TIOCCONS',      0x20007461: 'TIOCSCTTY',
+        0x80047460: 'TIOCEXT',       0x2000745F: 'TIOCSIG',       0x2000745E: 'TIOCDRAIN',
+        0x8004745B: 'TIOCMSDTRWAIT', 0x4004745A: 'TIOCMGDTRWAIT', 0x80047457: 'TIOCSDRAINWAIT',
+        0x40047456: 'TIOCGDRAINWAIT', 0x20007454: 'TIOCPTYGRANT', 0x40807453: 'TIOCPTYGNAME',
+        0x20007452: 'TIOCPTYUNLK',   0x20006601: 'FIOCLEX',       0x20006602: 'FIONCLEX',
+        0x4004667F: 'FIONREAD',      0x8004667E: 'FIONBIO',       0x8004667D: 'FIOASYNC',
+        0x8004667C: 'FIOSETOWN',     0x4004667B: 'FIOGETOWN',     0x4004667A: 'FIODTYPE'
+    }
+
+    pub const IFLAG = bits([
+        ('IGNBRK', 0x1), ('BRKINT', 0x2), ('IGNPAR', 0x4), ('PARMRK', 0x8), ('INPCK', 0x10),
+        ('ISTRIP', 0x20), ('INLCR', 0x40), ('IGNCR', 0x80), ('ICRNL', 0x100), ('IXON', 0x200),
+        ('IXOFF', 0x400), ('IXANY', 0x800), ('IMAXBEL', 0x2000), ('IUTF8', 0x4000)
+    ])
+
+    pub const OFLAG = bits([
+        ('OPOST', 0x1), ('ONLCR', 0x2), ('ONOEOT', 0x8), ('OCRNL', 0x10), ('ONOCR', 0x20),
+        ('ONLRET', 0x40), ('OFILL', 0x80), ('FF1', 0x4000), ('BS1', 0x8000), ('VT1', 0x10000),
+        ('OFDEL', 0x20000)
+    ]) + [
+        ('NL1', 0x100, 0x300), ('NL2', 0x200, 0x300), ('NL3', 0x300, 0x300),
+        ('TAB1', 0x400, 0xC04), ('TAB2', 0x800, 0xC04), ('TAB3', 0x4, 0xC04),
+        ('CR1', 0x1000, 0x3000), ('CR2', 0x2000, 0x3000), ('CR3', 0x3000, 0x3000)
+    ]
+
+    pub const CFLAG = [
+        ('CS5', 0x0, 0x300), ('CS6', 0x100, 0x300), ('CS7', 0x200, 0x300), ('CS8', 0x300, 0x300)
+    ] + bits([
+        ('CIGNORE', 0x1), ('CSTOPB', 0x400), ('CREAD', 0x800), ('PARENB', 0x1000),
+        ('PARODD', 0x2000), ('HUPCL', 0x4000), ('CLOCAL', 0x8000), ('CCTS_OFLOW', 0x10000),
+        ('CRTS_IFLOW', 0x20000), ('CDTR_IFLOW', 0x40000), ('CDSR_OFLOW', 0x80000),
+        ('CCAR_OFLOW', 0x100000)
+    ])
+
+    pub const LFLAG = bits([
+        ('ECHOKE', 0x1), ('ECHOE', 0x2), ('ECHOK', 0x4), ('ECHO', 0x8), ('ECHONL', 0x10),
+        ('ECHOPRT', 0x20), ('ECHOCTL', 0x40), ('ISIG', 0x80), ('ICANON', 0x100),
+        ('ALTWERASE', 0x200), ('IEXTEN', 0x400), ('EXTPROC', 0x800), ('TOSTOP', 0x400000),
+        ('FLUSHO', 0x800000), ('NOKERNINFO', 0x2000000), ('PENDIN', 0x20000000),
+        ('NOFLSH', 0x80000000)
+    ])
+
+    pub const CC = [
+        'VEOF', 'VEOL', 'VEOL2', 'VERASE', 'VWERASE', 'VKILL', 'VREPRINT', nil, 'VINTR', 'VQUIT',
+        'VSUSP', 'VDSUSP', 'VSTART', 'VSTOP', 'VLNEXT', 'VDISCARD', 'VMIN', 'VTIME', 'VSTATUS'
+    ]
+
+    pub fn flags(word: Int, table: Array[(String, Int, Int)]) -> Array[String] {
+        [name for (name, value, mask) in table if (word & mask) == value]
+    }
+
+    pub fn termios(
+        iflag: Int,
+        oflag: Int,
+        cflag: Int,
+        lflag: Int,
+        cc:    Blob,
+        speed: Int
+    ) -> Dict[String, _] {
+        %{
+            'iflag': flags(iflag, IFLAG),
+            'oflag': flags(oflag, OFLAG),
+            'cflag': flags(cflag, CFLAG),
+            'lflag': flags(lflag, LFLAG),
+            'speed': speed,
+            'cc':    %{name: cc[i] for name; i in CC if name != nil && i < #cc}
+        }
+    }
+
+    pub fn attrs(t: _) -> Dict[String, _] {
+        termios(t.iflag, t.oflag, t.cflag, t.lflag, t.cc, t.ospeed)
+    }
+
+    fn kernel-termios(data: Blob) -> Dict[String, _] | nil {
+        if #data >= 72 {
+            let (i, o, cf, l, cc, _, ispeed, ospeed) = c.unpack('=QQQQ20sIQQ', data)
+            termios(i, o, cf, l, cc, ospeed) + %{'ispeed': ispeed}
+        }
+    }
+
+    fn winsize(data: Blob) -> Dict[String, Int] | nil {
+        if #data >= 8 {
+            let (rows, cols, xpixel, ypixel) = c.unpack('=HHHH', data)
+            %{'rows': rows, 'cols': cols, 'xpixel': xpixel, 'ypixel': ypixel}
+        }
+    }
+
+    pub fn ioctl(req: Int, arg: Int, data: Blob) -> Dict[String, _] {
+        let code   = req & 0xFFFFFFFF
+        let fields = %{'request': IOCTLS[code] ?? "0x{code:x}", 'arg': arg}
+        match ioctl-value(code, data) {
+            nil and #data > 0 => fields + %{'data': data.hex()},
+            nil               => fields,
+            value             => fields + %{'value': value}
+        }
+    }
+
+    pub const INT_IOCTLS = [
+        'TIOCMODG', 'TIOCMODS', 'TIOCFLUSH', 'TIOCGETD', 'TIOCSETD', 'TIOCGPGRP', 'TIOCSPGRP',
+        'TIOCOUTQ', 'TIOCPKT', 'TIOCMSET', 'TIOCMBIS', 'TIOCMBIC', 'TIOCMGET', 'TIOCUCNTL',
+        'TIOCCONS', 'TIOCEXT', 'TIOCMSDTRWAIT', 'TIOCMGDTRWAIT', 'TIOCSDRAINWAIT',
+        'TIOCGDRAINWAIT', 'FIONREAD', 'FIONBIO', 'FIOASYNC', 'FIOSETOWN', 'FIOGETOWN', 'FIODTYPE'
+    ]
+
+    fn ioctl-value(req: Int, data: Blob) -> _ {
+        match IOCTLS[req] {
+            'TIOCGETA' or 'TIOCSETA' or 'TIOCSETAW' or 'TIOCSETAF' => kernel-termios(data),
+            'TIOCGWINSZ' or 'TIOCSWINSZ' => winsize(data),
+            'TIOCSTI' => (#data > 0) ? data.str(0, 1) : nil,
+            'TIOCPTYGNAME' and #data > 0 => data.str!().split("\x00")[0],
+            name and name in INT_IOCTLS && #data >= 4 => c.unpack('=i', data),
+            _ => nil
+        }
+    }
+
+    pub const FCNTLS = %{
+        0: 'F_DUPFD', 1: 'F_GETFD', 2: 'F_SETFD', 3: 'F_GETFL', 4: 'F_SETFL', 5: 'F_GETOWN',
+        6: 'F_SETOWN', 7: 'F_GETLK', 8: 'F_SETLK', 9: 'F_SETLKW', 48: 'F_NOCACHE',
+        50: 'F_GETPATH', 51: 'F_FULLFSYNC', 66: 'F_GETLKPID', 67: 'F_DUPFD_CLOEXEC',
+        73: 'F_SETNOSIGPIPE', 74: 'F_GETNOSIGPIPE'
+    }
+
+    pub const POINTER_FCNTLS = ['F_GETLK', 'F_SETLK', 'F_SETLKW', 'F_GETPATH', 'F_GETLKPID']
+
+    pub const OPEN_FLAGS = [('O_WRONLY', 0x1, 0x3), ('O_RDWR', 0x2, 0x3)] + bits([
+        ('O_NONBLOCK', 0x4), ('O_APPEND', 0x8), ('O_SHLOCK', 0x10), ('O_EXLOCK', 0x20),
+        ('O_ASYNC', 0x40), ('O_FSYNC', 0x80), ('O_NOFOLLOW', 0x100), ('O_EVTONLY', 0x8000),
+        ('O_NOCTTY', 0x20000), ('O_DSYNC', 0x400000), ('O_CLOEXEC', 0x1000000)
+    ])
+
+    pub fn fcntl(cmd: Int, arg: Int, ret: Int) -> Dict[String, _] {
+        let name   = FCNTLS[cmd]
+        let value  = (name in POINTER_FCNTLS) ? arg : arg & 0xFFFFFFFF
+        let fields = %{'cmd': name ?? "{cmd}", 'arg': value}
+        match name {
+            'F_SETFL'              => fields + %{'flags': flags(value, OPEN_FLAGS)},
+            'F_GETFL' and ret >= 0 => fields + %{'flags': flags(ret, OPEN_FLAGS)},
+            _                      => fields
+        }
+    }
+}
+#|else
+ns sys {
     fn bits(table: Array[(String, Int)]) -> Array[(String, Int, Int)] {
         [(name, bit, bit) for (name, bit) in table]
     }
@@ -2054,6 +2278,10 @@ ns linux {
         }
     }
 
+    pub fn attrs(t: _) -> Dict[String, _] {
+        termios(t.iflag, t.oflag, t.cflag, t.lflag, t.cc)
+    }
+
     fn kernel-termios(data: Blob) -> Dict[String, _] | nil {
         if #data >= 44 {
             let (i, o, cf, l, _, cc, ispeed, ospeed) = c.unpack('=IIIIB19sII', data)
@@ -2119,6 +2347,7 @@ ns linux {
         }
     }
 }
+#|]
 
 fn utf8?(b: Blob) -> Bool {
     b.str() == b.str!()
@@ -2226,100 +2455,18 @@ class Timeline {
     }
 }
 
-class Tracer {
-    __pid:    Int
-    __in:     Int
-    __out:    Int
-    __err:    Int
-    __buf:    Blob
-    __calls:  Dict[(Int, Int), Dict[String, _]]
-    __order:  Array[(Int, Int)]
-    __data:   Dict[(Int, Int), Blob]
-    ready?:   Bool
-    error:    String | nil
-    lost:     Int | nil
+class Syscalls {
+    __calls: Dict[(Int, Int), Dict[String, _]]
+    __order: Array[(Int, Int)]
+    __data:  Dict[(Int, Int), Blob]
 
-    init(tty: String) {
-        let $root = escalation()
-            or throw RuntimeError('cannot run the eBPF tracer as root (needs passwordless sudo or setuid /usr/bin/tyxx)')
-        let proc = os.spawn(
-            [*root, os.realpath(__file__) ?? __file__, '--tracer', tty, str(os.getpid())],
-            stdin:  os.SPAWN_PIPE,
-            stdout: os.SPAWN_PIPE,
-            stderr: os.SPAWN_PIPE
-        )
-        __pid    = proc.pid
-        __in     = proc.stdin
-        __out    = proc.stdout
-        __err    = proc.stderr
-        __buf    = Blob()
-        __calls  = %{}
-        __order  = []
-        __data   = %{}
-        ready?   = false
-        error    = nil
-        lost     = nil
+    init() {
+        __calls = %{}
+        __order = []
+        __data  = %{}
     }
 
-    static escalation() -> Array[String] | nil {
-        if os.geteuid() == 0 {
-            return [ty.executable]
-        }
-        let sudo = os.spawn(['sudo', '-n', 'true'], stdin: os.SPAWN_NULL, stdout: os.SPAWN_NULL, stderr: os.SPAWN_NULL)
-        if let (_, status) = os.wait(sudo.pid) and status == 0 {
-            let lib = os.getenv('TY_LIBRARY_PATH') ?? "{Path(ty.executable).parent}/lib"
-            return ['sudo', '-n', 'env', "TY_LIBRARY_PATH={lib}", ty.executable]
-        }
-        if let $st = os.stat('/usr/bin/tyxx') and st.uid == 0 && (st.mode & 0o4000) != 0 {
-            return ['/usr/bin/tyxx']
-        }
-    }
-
-    fd -> Int {
-        __out
-    }
-
-    alive? -> Bool {
-        error == nil && lost == nil
-    }
-
-    wait-ready(timeout: Float) -> Bool {
-        let deadline = time.now() + timeout
-        while !ready? && alive? && time.now() < deadline {
-            os.poll([(__out, os.POLLIN)], [], deadline - time.now())
-            pump()
-        }
-        ready?
-    }
-
-    pump() {
-        let chunk = os.read(__out, 1 << 20)
-        if chunk == nil || #chunk == 0 {
-            error = error ?? "tracer exited unexpectedly: {__stderr()}"
-            lost  = lost ?? 0
-            return
-        }
-        __buf.push(chunk)
-        let at = 0
-        while #__buf - at >= 5 {
-            let (kind, n) = c.unpack('=BI', __buf, at)
-            if #__buf - at < 5 + n {
-                break
-            }
-            let body = __buf.slice(at + 5, n)
-            at += 5 + n
-            match kind {
-                frame.READY => ready? = true,
-                frame.CALL  => __absorb(body),
-                frame.DONE  => lost = int(body.str()),
-                frame.ERROR => error = body.str(),
-                _            => ()
-            }
-        }
-        __buf.splice(0, at)
-    }
-
-    __absorb(r: Blob) {
+    absorb(r: Blob) {
         let (ts, enter, id, nr, a0, a1, a2, ret, comm, _, len) = c.unpack(rec.FORMAT, r)
         let key = (id, enter)
         if key not in __calls {
@@ -2337,28 +2484,6 @@ class Tracer {
             }
         }
         __data[key]!.push(r.slice(rec.HDR, len))
-    }
-
-    __stderr() -> String {
-        let ready = []
-        if os.poll([(__err, os.POLLIN)], ready, 1.0) > 0 {
-            (os.read(__err, 4096) ?? Blob()).str().lines().filter(\#_ > 0)[-1] ?? ''
-        } else {
-            ''
-        }
-    }
-
-    finish(timeout: Float = 3.0) {
-        os.close(__in)
-        let deadline = time.now() + timeout
-        while lost == nil && time.now() < deadline {
-            os.poll([(__out, os.POLLIN)], [], deadline - time.now())
-            pump()
-        }
-        os.close(__out)
-        os.close(__err)
-        os.kill(__pid, os.SIGTERM)
-        os.wait(__pid)
     }
 
     events(tl: Timeline) -> Array[Dict[String, _]] {
@@ -2381,8 +2506,8 @@ class Tracer {
             'start_us': tl.since(call['enter'])
         }
         common + match num {
-            nr.ioctl                    => linux.ioctl(a1, a2, data),
-            nr.fcntl                    => linux.fcntl(a1, a2, ret),
+            nr.ioctl                    => sys.ioctl(a1, a2, data),
+            nr.fcntl                    => sys.fcntl(a1, a2, ret),
             nr.close                    => %{},
             n and n in nr.VECTORED      => %{'iovcnt': a2} + transfer(ret, data),
             _                           => %{'count': a2} + transfer(ret, data)
@@ -2393,6 +2518,722 @@ class Tracer {
         (ret > #data) ? payload(data) + %{'truncated': true} : payload(data)
     }
 }
+
+#|if __apple__
+const SHIM = '''
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <pthread.h>
+#include <stdarg.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+#include <sys/ioccom.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
+#include <sys/uio.h>
+#include <sys/un.h>
+
+#define CALL    2
+#define MAXDATA (2 << 20)
+#define MAXIOC  512
+#define HIGHFD  200
+
+struct rec {
+        uint64_t ts;
+        uint64_t enter;
+        uint64_t id;
+        uint64_t nr;
+        uint64_t a[3];
+        int64_t  ret;
+        char     comm[16];
+        uint32_t off;
+        uint32_t len;
+};
+
+struct __attribute__((packed)) hdr {
+        uint8_t  kind;
+        uint32_t len;
+};
+
+static struct sockaddr_un addr;
+static dev_t              tty;
+static dev_t              ctty;
+static int                on;
+static int                sock = -1;
+static pid_t              owner;
+static dev_t              sdev;
+static ino_t              sino;
+static pthread_mutex_t    mu = PTHREAD_MUTEX_INITIALIZER;
+
+ssize_t read_nc(int, void *, size_t) __asm__("_read$NOCANCEL");
+ssize_t write_nc(int, void const *, size_t) __asm__("_write$NOCANCEL");
+ssize_t pread_nc(int, void *, size_t, off_t) __asm__("_pread$NOCANCEL");
+ssize_t pwrite_nc(int, void const *, size_t, off_t) __asm__("_pwrite$NOCANCEL");
+ssize_t readv_nc(int, struct iovec const *, int) __asm__("_readv$NOCANCEL");
+ssize_t writev_nc(int, struct iovec const *, int) __asm__("_writev$NOCANCEL");
+ssize_t preadv_nc(int, struct iovec const *, int, off_t) __asm__("_preadv$NOCANCEL");
+ssize_t pwritev_nc(int, struct iovec const *, int, off_t) __asm__("_pwritev$NOCANCEL");
+int     fcntl_nc(int, int, ...) __asm__("_fcntl$NOCANCEL");
+int     close_nc(int) __asm__("_close$NOCANCEL");
+
+ssize_t __read_nocancel(int, void *, size_t);
+ssize_t __write_nocancel(int, void const *, size_t);
+ssize_t __pread_nocancel(int, void *, size_t, off_t);
+ssize_t __pwrite_nocancel(int, void const *, size_t, off_t);
+ssize_t __readv_nocancel(int, struct iovec const *, int);
+ssize_t __writev_nocancel(int, struct iovec const *, int);
+int     __fcntl_nocancel(int, int, long);
+int     __close_nocancel(int);
+
+ssize_t preadv(int, struct iovec const *, int, off_t);
+ssize_t pwritev(int, struct iovec const *, int, off_t);
+
+static uint64_t
+now(void)
+{
+        return clock_gettime_nsec_np(CLOCK_MONOTONIC);
+}
+
+static int
+ours(int fd)
+{
+        struct stat st;
+        return on
+            && fstat(fd, &st) == 0
+            && S_ISCHR(st.st_mode)
+            && (st.st_rdev == tty || st.st_rdev == ctty);
+}
+
+static void
+prepare(void)
+{
+        pthread_mutex_lock(&mu);
+}
+
+static void
+release(void)
+{
+        pthread_mutex_unlock(&mu);
+}
+
+__attribute__((constructor)) static void
+start(void)
+{
+        char const *path = getenv("TUICAP_SOCK");
+        char const *name = getenv("TUICAP_TTY");
+        struct stat st;
+        if (
+                path == NULL
+             || name == NULL
+             || strlen(path) >= sizeof addr.sun_path
+             || stat(name, &st) != 0
+        ) {
+                return;
+        }
+        tty  = st.st_rdev;
+        ctty = (stat("/dev/tty", &st) == 0) ? st.st_rdev : tty;
+        addr.sun_family = AF_UNIX;
+        strcpy(addr.sun_path, path);
+        pthread_atfork(prepare, release, release);
+        on = 1;
+}
+
+static int
+alive(void)
+{
+        struct stat st;
+        return sock >= 0
+            && owner == getpid()
+            && fstat(sock, &st) == 0
+            && st.st_dev == sdev
+            && st.st_ino == sino;
+}
+
+static int
+dial(void)
+{
+        struct stat st;
+        int fd;
+        int hi;
+        int sz = 1 << 20;
+        if (
+                sock >= 0
+             && owner != getpid()
+             && fstat(sock, &st) == 0
+             && st.st_dev == sdev
+             && st.st_ino == sino
+        ) {
+                close(sock);
+        }
+        sock = -1;
+        fd = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (fd < 0) {
+                return -1;
+        }
+        if (connect(fd, (struct sockaddr *)&addr, sizeof addr) != 0) {
+                close(fd);
+                return -1;
+        }
+        hi = fcntl(fd, F_DUPFD_CLOEXEC, HIGHFD);
+        if (hi >= 0) {
+                close(fd);
+                fd = hi;
+        } else {
+                fcntl(fd, F_SETFD, FD_CLOEXEC);
+        }
+        setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sz, sizeof sz);
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &(int){1}, sizeof (int));
+        fstat(fd, &st);
+        sock  = fd;
+        owner = getpid();
+        sdev  = st.st_dev;
+        sino  = st.st_ino;
+        return 0;
+}
+
+static void
+sendall(struct iovec *v, int n)
+{
+        ssize_t w;
+        while (n > 0) {
+                w = writev(sock, v, n > IOV_MAX ? IOV_MAX : n);
+                if (w < 0 && errno == EINTR) {
+                        continue;
+                }
+                if (w <= 0) {
+                        close(sock);
+                        sock = -1;
+                        on   = 0;
+                        return;
+                }
+                while (n > 0 && (size_t)w >= v->iov_len) {
+                        w -= v->iov_len;
+                        v += 1;
+                        n -= 1;
+                }
+                if (n > 0) {
+                        v->iov_base  = (char *)v->iov_base + w;
+                        v->iov_len  -= w;
+                }
+        }
+}
+
+static void
+report(
+        int nr,
+        uint64_t t0,
+        int fd,
+        uint64_t a1,
+        uint64_t a2,
+        int64_t ret,
+        struct iovec const *iov,
+        int n,
+        int64_t limit
+)
+{
+        int m = (limit > 0) ? n : 0;
+        struct iovec v[m + 2];
+        struct hdr h;
+        struct rec r = {0};
+        uint64_t tid;
+        size_t left;
+        int k = 2;
+        int e = errno;
+        r.ts    = now();
+        r.enter = t0;
+        r.nr    = nr;
+        r.a[0]  = fd;
+        r.a[1]  = a1;
+        r.a[2]  = a2;
+        r.ret   = ret;
+        pthread_threadid_np(NULL, &tid);
+        r.id = ((uint64_t)getpid() << 32) | (tid & 0xFFFFFFFF);
+        strlcpy(r.comm, getprogname(), sizeof r.comm);
+        left = (limit > MAXDATA) ? MAXDATA : limit;
+        if (limit < 0) {
+                left = 0;
+        }
+        for (int i = 0; i < m && left > 0; ++i) {
+                v[k].iov_base = iov[i].iov_base;
+                v[k].iov_len  = (iov[i].iov_len < left) ? iov[i].iov_len : left;
+                left -= v[k].iov_len;
+                r.len += v[k].iov_len;
+                k += 1;
+        }
+        h.kind = CALL;
+        h.len  = sizeof r + r.len;
+        v[0]   = (struct iovec){ &h, sizeof h };
+        v[1]   = (struct iovec){ &r, sizeof r };
+        pthread_mutex_lock(&mu);
+        if (alive() || dial() == 0) {
+                sendall(v, k);
+        }
+        pthread_mutex_unlock(&mu);
+        errno = e;
+}
+
+static int64_t
+result(int64_t r)
+{
+        return (r < 0) ? -errno : r;
+}
+
+#define RW(hook, real, nr, Q)                                                           \
+        static ssize_t                                                                  \
+        hook(int fd, Q void *buf, size_t n)                                             \
+        {                                                                               \
+                uint64_t t0;                                                            \
+                ssize_t r;                                                              \
+                if (!ours(fd)) {                                                        \
+                        return real(fd, buf, n);                                        \
+                }                                                                       \
+                t0 = now();                                                             \
+                r  = real(fd, buf, n);                                                  \
+                report(nr, t0, fd, (uintptr_t)buf, n, result(r),                        \
+                       &(struct iovec){ (void *)buf, n }, 1, r);                        \
+                return r;                                                               \
+        }
+
+#define PRW(hook, real, nr, Q)                                                          \
+        static ssize_t                                                                  \
+        hook(int fd, Q void *buf, size_t n, off_t off)                                  \
+        {                                                                               \
+                uint64_t t0;                                                            \
+                ssize_t r;                                                              \
+                if (!ours(fd)) {                                                        \
+                        return real(fd, buf, n, off);                                   \
+                }                                                                       \
+                t0 = now();                                                             \
+                r  = real(fd, buf, n, off);                                             \
+                report(nr, t0, fd, (uintptr_t)buf, n, result(r),                        \
+                       &(struct iovec){ (void *)buf, n }, 1, r);                        \
+                return r;                                                               \
+        }
+
+#define VEC(hook, real, nr)                                                             \
+        static ssize_t                                                                  \
+        hook(int fd, struct iovec const *iov, int cnt)                                  \
+        {                                                                               \
+                uint64_t t0;                                                            \
+                ssize_t r;                                                              \
+                if (!ours(fd)) {                                                        \
+                        return real(fd, iov, cnt);                                      \
+                }                                                                       \
+                t0 = now();                                                             \
+                r  = real(fd, iov, cnt);                                                \
+                report(nr, t0, fd, (uintptr_t)iov, cnt, result(r), iov, cnt, r);       \
+                return r;                                                               \
+        }
+
+#define PVEC(hook, real, nr)                                                            \
+        static ssize_t                                                                  \
+        hook(int fd, struct iovec const *iov, int cnt, off_t off)                       \
+        {                                                                               \
+                uint64_t t0;                                                            \
+                ssize_t r;                                                              \
+                if (!ours(fd)) {                                                        \
+                        return real(fd, iov, cnt, off);                                 \
+                }                                                                       \
+                t0 = now();                                                             \
+                r  = real(fd, iov, cnt, off);                                           \
+                report(nr, t0, fd, (uintptr_t)iov, cnt, result(r), iov, cnt, r);       \
+                return r;                                                               \
+        }
+
+#define FCNTL(hook, real)                                                               \
+        static int                                                                      \
+        hook(int fd, int cmd, ...)                                                      \
+        {                                                                               \
+                va_list ap;                                                             \
+                uint64_t t0;                                                            \
+                long arg;                                                               \
+                int r;                                                                  \
+                va_start(ap, cmd);                                                      \
+                arg = va_arg(ap, long);                                                 \
+                va_end(ap);                                                             \
+                if (!ours(fd)) {                                                        \
+                        return real(fd, cmd, arg);                                      \
+                }                                                                       \
+                t0 = now();                                                             \
+                r  = real(fd, cmd, arg);                                                \
+                report(SYS_fcntl, t0, fd, cmd, arg, result(r), NULL, 0, 0);             \
+                return r;                                                               \
+        }
+
+#define CLOSE(hook, real)                                                               \
+        static int                                                                      \
+        hook(int fd)                                                                    \
+        {                                                                               \
+                uint64_t t0;                                                            \
+                int r;                                                                  \
+                if (!ours(fd)) {                                                        \
+                        return real(fd);                                                \
+                }                                                                       \
+                t0 = now();                                                             \
+                r  = real(fd);                                                          \
+                report(SYS_close, t0, fd, 0, 0, result(r), NULL, 0, 0);                 \
+                return r;                                                               \
+        }
+
+RW(h_read,            read,              SYS_read,  )
+RW(h_read_nc,         read_nc,           SYS_read,  )
+RW(h_read_nocancel,   __read_nocancel,   SYS_read,  )
+RW(h_write,           write,             SYS_write, const)
+RW(h_write_nc,        write_nc,          SYS_write, const)
+RW(h_write_nocancel,  __write_nocancel,  SYS_write, const)
+
+PRW(h_pread,           pread,             SYS_pread,  )
+PRW(h_pread_nc,        pread_nc,          SYS_pread,  )
+PRW(h_pread_nocancel,  __pread_nocancel,  SYS_pread,  )
+PRW(h_pwrite,          pwrite,            SYS_pwrite, const)
+PRW(h_pwrite_nc,       pwrite_nc,         SYS_pwrite, const)
+PRW(h_pwrite_nocancel, __pwrite_nocancel, SYS_pwrite, const)
+
+VEC(h_readv,            readv,              SYS_readv)
+VEC(h_readv_nc,         readv_nc,           SYS_readv)
+VEC(h_readv_nocancel,   __readv_nocancel,   SYS_readv)
+VEC(h_writev,           writev,             SYS_writev)
+VEC(h_writev_nc,        writev_nc,          SYS_writev)
+VEC(h_writev_nocancel,  __writev_nocancel,  SYS_writev)
+
+PVEC(h_preadv,     preadv,     SYS_preadv)
+PVEC(h_preadv_nc,  preadv_nc,  SYS_preadv)
+PVEC(h_pwritev,    pwritev,    SYS_pwritev)
+PVEC(h_pwritev_nc, pwritev_nc, SYS_pwritev)
+
+FCNTL(h_fcntl,    fcntl)
+FCNTL(h_fcntl_nc, fcntl_nc)
+
+CLOSE(h_close,          close)
+CLOSE(h_close_nc,       close_nc)
+CLOSE(h_close_nocancel, __close_nocancel)
+
+static int
+h_fcntl_nocancel(int fd, int cmd, long arg)
+{
+        uint64_t t0;
+        int r;
+        if (!ours(fd)) {
+                return __fcntl_nocancel(fd, cmd, arg);
+        }
+        t0 = now();
+        r  = __fcntl_nocancel(fd, cmd, arg);
+        report(SYS_fcntl, t0, fd, cmd, arg, result(r), NULL, 0, 0);
+        return r;
+}
+
+static int
+h_ioctl(int fd, unsigned long req, ...)
+{
+        va_list ap;
+        uint64_t t0;
+        void *arg;
+        size_t n;
+        int r;
+        va_start(ap, req);
+        arg = va_arg(ap, void *);
+        va_end(ap);
+        if (!ours(fd)) {
+                return ioctl(fd, req, arg);
+        }
+        t0 = now();
+        r  = ioctl(fd, req, arg);
+        n  = 0;
+        if (arg != NULL && (req & ((r < 0) ? IOC_IN : IOC_INOUT))) {
+                n = IOCPARM_LEN(req);
+        }
+        report(
+                SYS_ioctl,
+                t0,
+                fd,
+                req,
+                (uintptr_t)arg,
+                result(r),
+                &(struct iovec){ arg, n },
+                1,
+                (n > MAXIOC) ? MAXIOC : n
+        );
+        return r;
+}
+
+#define I(hook, real) { (void const *)hook, (void const *)real }
+
+__attribute__((used, section("__DATA,__interpose")))
+static struct { void const *hook; void const *real; } const interposers[] = {
+        I(h_read,              read),
+        I(h_read_nc,           read_nc),
+        I(h_read_nocancel,     __read_nocancel),
+        I(h_write,             write),
+        I(h_write_nc,          write_nc),
+        I(h_write_nocancel,    __write_nocancel),
+        I(h_pread,             pread),
+        I(h_pread_nc,          pread_nc),
+        I(h_pread_nocancel,    __pread_nocancel),
+        I(h_pwrite,            pwrite),
+        I(h_pwrite_nc,         pwrite_nc),
+        I(h_pwrite_nocancel,   __pwrite_nocancel),
+        I(h_readv,             readv),
+        I(h_readv_nc,          readv_nc),
+        I(h_readv_nocancel,    __readv_nocancel),
+        I(h_writev,            writev),
+        I(h_writev_nc,         writev_nc),
+        I(h_writev_nocancel,   __writev_nocancel),
+        I(h_preadv,            preadv),
+        I(h_preadv_nc,         preadv_nc),
+        I(h_pwritev,           pwritev),
+        I(h_pwritev_nc,        pwritev_nc),
+        I(h_fcntl,             fcntl),
+        I(h_fcntl_nc,          fcntl_nc),
+        I(h_fcntl_nocancel,    __fcntl_nocancel),
+        I(h_close,             close),
+        I(h_close_nc,          close_nc),
+        I(h_close_nocancel,    __close_nocancel),
+        I(h_ioctl,             ioctl),
+};
+'''
+
+const SHIM_FLAGS = ['-dynamiclib', '-O2', '-arch', 'x86_64', '-arch', 'arm64', '-arch', 'arm64e']
+
+fn shim() -> String {
+    let id  = hash.sha256("{SHIM_FLAGS}{SHIM}").hexdigest()[;16]
+    let dir = Path.home() / 'Library' / 'Caches' / 'tuicap'
+    let lib = dir / "shim-{id}.dylib"
+    if lib.exists? {
+        return str(lib)
+    }
+    dir.mkdir(parents: true, exist-ok: true)
+    let src = dir / "shim-{id}.{os.getpid()}.c"
+    let tmp = dir / "shim-{id}.{os.getpid()}.dylib"
+    src.write(SHIM)
+    let cc = try {
+        sh.run(['cc', *SHIM_FLAGS, '-o', str(tmp), str(src)])
+    } finally {
+        src.unlink()
+    }
+    if !cc.ok? {
+        tmp.unlink(missing-ok: true)
+        let why = cc.stderr.lines().filter(\#_ > 0)[0] ?? cc.fate
+        throw RuntimeError("cannot build the dyld shim: {why}")
+    }
+    tmp.rename(lib)
+    str(lib)
+}
+
+class Tracer {
+    __dir:   Path
+    __sock:  Int
+    __peers: Dict[Int, Frames]
+    __log:   Syscalls
+    __seen:  Int
+    env:     Dict[String, String]
+    error:   String | nil
+    lost:    Int | nil
+
+    init(tty: String) {
+        let lib   = shim()
+        let prior = os.getenv('DYLD_INSERT_LIBRARIES')
+        __dir   = Path.tmp().mkdtemp('tuicap')
+        __sock  = net.listen('unix', str(__dir / 'sock'))
+        __peers = %{}
+        __log   = Syscalls()
+        __seen  = 0
+        error   = nil
+        lost    = nil
+        env     = %{
+            'DYLD_INSERT_LIBRARIES': (prior == nil) ? lib : "{lib}:{prior}",
+            'TUICAP_SOCK':           str(__dir / 'sock'),
+            'TUICAP_TTY':            tty
+        }
+        os.fcntl(__sock, os.F_SETFD, os.FD_CLOEXEC)
+    }
+
+    fds -> Array[Int] {
+        [__sock, *__peers.keys()]
+    }
+
+    wait-ready(timeout: Float) -> Bool {
+        true
+    }
+
+    pump(fd: Int) {
+        if fd == __sock {
+            __accept()
+        } else {
+            __receive(fd)
+        }
+    }
+
+    __accept() {
+        let (conn, _) = os.accept(__sock) ?? return
+        os.fcntl(conn, os.F_SETFD, os.FD_CLOEXEC)
+        __peers[conn] = Frames()
+        __seen += 1
+    }
+
+    __receive(fd: Int) {
+        let chunk = os.read(fd, 1 << 20)
+        if chunk == nil || #chunk == 0 {
+            os.close(fd)
+            __peers.remove(fd)
+            return
+        }
+        for (_, body) in __peers[fd]!.feed(chunk) {
+            __log.absorb(body)
+        }
+    }
+
+    finish(timeout: Float = 3.0) {
+        let deadline = time.now() + timeout
+        let ready    = []
+        while #__peers > 0 && time.now() < deadline {
+            break if os.poll([(it, os.POLLIN) for fds], ready, 0.05) == 0
+            for (fd, _) in ready {
+                pump(fd)
+            }
+        }
+        for fd, _ in __peers {
+            os.close(fd)
+        }
+        __peers = %{}
+        os.close(__sock)
+        __dir.rmtree(quiet: true)
+        lost = 0
+        if __seen == 0 {
+            error = 'no traced process touched the terminal (DYLD_INSERT_LIBRARIES is dropped '
+                    'for SIP-protected and hardened-runtime executables)'
+        }
+    }
+
+    events(tl: Timeline) -> Array[Dict[String, _]] {
+        __log.events(tl)
+    }
+
+    summary -> Dict[String, _] {
+        %{'source': 'dyld', 'lost': lost, 'error': error, 'processes': __seen}
+    }
+}
+#|else
+class Tracer {
+    __pid:    Int
+    __in:     Int
+    __out:    Int
+    __err:    Int
+    __frames: Frames
+    __log:    Syscalls
+    ready?:   Bool
+    error:    String | nil
+    lost:     Int | nil
+
+    init(tty: String) {
+        let $root = escalation()
+            or throw RuntimeError('cannot run the eBPF tracer as root (needs passwordless sudo or setuid /usr/bin/tyxx)')
+        let proc = os.spawn(
+            [*root, os.realpath(__file__) ?? __file__, '--tracer', tty, str(os.getpid())],
+            stdin:  os.SPAWN_PIPE,
+            stdout: os.SPAWN_PIPE,
+            stderr: os.SPAWN_PIPE
+        )
+        __pid    = proc.pid
+        __in     = proc.stdin
+        __out    = proc.stdout
+        __err    = proc.stderr
+        __frames = Frames()
+        __log    = Syscalls()
+        ready?   = false
+        error    = nil
+        lost     = nil
+    }
+
+    static escalation() -> Array[String] | nil {
+        if os.geteuid() == 0 {
+            return [ty.executable]
+        }
+        let sudo = os.spawn(['sudo', '-n', 'true'], stdin: os.SPAWN_NULL, stdout: os.SPAWN_NULL, stderr: os.SPAWN_NULL)
+        if let (_, status) = os.wait(sudo.pid) and status == 0 {
+            let lib = os.getenv('TY_LIBRARY_PATH') ?? "{Path(ty.executable).parent}/lib"
+            return ['sudo', '-n', 'env', "TY_LIBRARY_PATH={lib}", ty.executable]
+        }
+        if let $st = os.stat('/usr/bin/tyxx') and st.uid == 0 && (st.mode & 0o4000) != 0 {
+            return ['/usr/bin/tyxx']
+        }
+    }
+
+    env -> Dict[String, String] {
+        %{}
+    }
+
+    fds -> Array[Int] {
+        alive? ? [__out] : []
+    }
+
+    alive? -> Bool {
+        error == nil && lost == nil
+    }
+
+    wait-ready(timeout: Float) -> Bool {
+        let deadline = time.now() + timeout
+        while !ready? && alive? && time.now() < deadline {
+            os.poll([(__out, os.POLLIN)], [], deadline - time.now())
+            pump(__out)
+        }
+        ready?
+    }
+
+    pump(fd: Int) {
+        let chunk = os.read(fd, 1 << 20)
+        if chunk == nil || #chunk == 0 {
+            error = error ?? "tracer exited unexpectedly: {__stderr()}"
+            lost  = lost ?? 0
+            return
+        }
+        for (kind, body) in __frames.feed(chunk) {
+            match kind {
+                frame.READY => ready? = true,
+                frame.CALL  => __log.absorb(body),
+                frame.DONE  => lost = int(body.str()),
+                frame.ERROR => error = body.str(),
+                _           => ()
+            }
+        }
+    }
+
+    __stderr() -> String {
+        let ready = []
+        if os.poll([(__err, os.POLLIN)], ready, 1.0) > 0 {
+            (os.read(__err, 4096) ?? Blob()).str().lines().filter(\#_ > 0)[-1] ?? ''
+        } else {
+            ''
+        }
+    }
+
+    finish(timeout: Float = 3.0) {
+        os.close(__in)
+        let deadline = time.now() + timeout
+        while lost == nil && time.now() < deadline {
+            os.poll([(__out, os.POLLIN)], [], deadline - time.now())
+            pump(__out)
+        }
+        os.close(__out)
+        os.close(__err)
+        os.kill(__pid, os.SIGTERM)
+        os.wait(__pid)
+    }
+
+    events(tl: Timeline) -> Array[Dict[String, _]] {
+        __log.events(tl)
+    }
+
+    summary -> Dict[String, _] {
+        %{'source': 'ebpf', 'lost': lost, 'error': error}
+    }
+}
+#|]
 
 const SETTLE    = 0.02
 const SYNC_WAIT = 1.0
@@ -2417,6 +3258,10 @@ fn program(command: Array[String]) -> Array[String] {
         [line] => ['/bin/sh', '-c', line],
         argv   => argv
     }
+}
+
+fn signame(sig: Int) -> String {
+    "SIG{(os.signame(sig) ?? str(sig)).upper()}"
 }
 
 fn stem(command: Array[String]) -> String {
@@ -2445,7 +3290,55 @@ fn terminal-size() -> (Int, Int) | nil {
     }
 }
 
-fn spawn(argv: Array[String], pty: _) -> Int {
+#|if __apple__
+class SignalQueue {
+    __kq: kqueue.Kqueue
+
+    init(sigs: Array[Int]) {
+        __kq = kqueue.Kqueue()
+        for sigs {
+            __kq.add(it, kqueue.EVFILT_SIGNAL)
+        }
+    }
+
+    fd -> Int {
+        __kq.fd
+    }
+
+    take() -> Array[Int] {
+        let sigs    = [it.ident for __kq.poll(0.0)]
+        let pending = os.Signals.pending
+        for sigs {
+            if it in pending {
+                os.sigwait([it])
+            }
+        }
+        sigs
+    }
+}
+#|else
+class SignalQueue {
+    __fd: Int
+
+    init(sigs: Array[Int]) {
+        __fd = os.signalfd(-1, os.sigset(sigs), os.SFD_CLOEXEC | os.SFD_NONBLOCK)
+    }
+
+    fd -> Int {
+        __fd
+    }
+
+    take() -> Array[Int] {
+        let sigs = []
+        while let $info = os.read(__fd, 128) and #info == 128 {
+            sigs.push(c.unpack('=I', info))
+        }
+        sigs
+    }
+}
+#|]
+
+fn spawn(argv: Array[String], pty: _, env: Dict[String, String]) -> Int {
     let pid = os.fork()
     if pid == 0 {
         os.sigprocmask(os.SIG_SETMASK, [])
@@ -2456,6 +3349,9 @@ fn spawn(argv: Array[String], pty: _) -> Int {
         }
         os.close(pty.slave)
         os.close(pty.master)
+        for k, v in env {
+            setenv(k, v)
+        }
         os.exec(argv)
         os.write(2, "tuicap: cannot execute {argv[0]}: {errno.str()}\r\n")
         os.exit(127)
@@ -2474,7 +3370,7 @@ class Capture {
     __notes:    Array[String]
     __status:   Int | nil
     __saved:    _
-    __sigfd:    Int
+    __signals:  SignalQueue
     __stdin?:   Bool
     __dirty?:   Bool
     __quiet:    Float
@@ -2541,10 +3437,10 @@ class Capture {
 
     run() -> Int {
         os.sigprocmask(os.SIG_BLOCK, SIGNALS)
-        __sigfd = os.signalfd(-1, os.sigset(SIGNALS), os.SFD_CLOEXEC | os.SFD_NONBLOCK)
+        __signals = SignalQueue(SIGNALS)
 
         __tl.zero()
-        __pid = spawn(__argv, __pty)
+        __pid = spawn(__argv, __pty, __tracer.?env ?? %{})
         os.close(__pty.slave)
 
         if __saved != nil {
@@ -2591,8 +3487,8 @@ class Capture {
         [
             *(__stdin? ? [(0, os.POLLIN)] : []),
             (__pty.master, os.POLLIN),
-            (__sigfd, os.POLLIN),
-            *((__tracer != nil && __tracer.alive?) ? [(__tracer.fd, os.POLLIN)] : [])
+            (__signals.fd, os.POLLIN),
+            *[(it, os.POLLIN) for __tracer.?fds ?? []]
         ]
     }
 
@@ -2636,8 +3532,8 @@ class Capture {
         match fd {
             0                             => __on-input(),
             m and m == __pty.master       => return __on-output(),
-            s and s == __sigfd            => __on-signal(),
-            _                             => __tracer.?pump()
+            s and s == __signals.fd       => __on-signal(),
+            _                             => __tracer.?pump(fd)
         }
         true
     }
@@ -2663,7 +3559,7 @@ class Capture {
     __send-eof() {
         let $t = termios.tcgetattr(__pty.master) or return
         if (t.lflag & termios.ICANON) != 0 {
-            let eof = t.cc.str(linux.CC.search('VEOF')!, 1)
+            let eof = t.cc.str(termios.VEOF, 1)
             __tl.event('input', %{'frame': #__tl.frames - 1, 'eof': true, 'text': eof})
             os.write(__pty.master, eof, all=true)
         }
@@ -2691,14 +3587,12 @@ class Capture {
     }
 
     __on-signal() {
-        while let $info = os.read(__sigfd, 128) and #info == 128 {
-            match c.unpack('=I', info) {
-                os.SIGWINCH => __resize(),
-                os.SIGCHLD  => __reap(os.WNOHANG),
-                sig          => do {
-                    __tl.event('signal', %{'signal': "SIG{os.signame(sig) ?? sig}"})
-                    os.kill(-__pid, sig)
-                }
+        for match __signals.take() {
+            os.SIGWINCH => __resize(),
+            os.SIGCHLD  => __reap(os.WNOHANG),
+            sig         => do {
+                __tl.event('signal', %{'signal': signame(sig)})
+                os.kill(-__pid, sig)
             }
         }
     }
@@ -2716,7 +3610,7 @@ class Capture {
     static __exit-detail(status: Int | nil) -> Dict[String, _] | nil {
         let $s = status or return nil
         (os.WIFSIGNALED(s) != 0)
-            ? %{'signal': "SIG{os.signame(os.WTERMSIG(s)) ?? os.WTERMSIG(s)}"}
+            ? %{'signal': signame(os.WTERMSIG(s))}
             : %{'code': os.WEXITSTATUS(s)}
     }
 
@@ -2738,7 +3632,7 @@ class Capture {
         let $t = termios.tcgetattr(__pty.master) or return
         if t != __termios {
             __termios = t
-            __tl.event('termios', linux.termios(t.iflag, t.oflag, t.cflag, t.lflag, t.cc))
+            __tl.event('termios', sys.attrs(t))
         }
     }
 
@@ -2780,7 +3674,7 @@ class Capture {
     __trace-summary() -> Dict[String, _] {
         match __tracer {
             nil => %{'source': nil, 'reason': __notes.join('; ')},
-            t   => %{'source': 'ebpf', 'lost': t.lost, 'error': t.error}
+            t   => t.summary
         }
     }
 }
@@ -2974,6 +3868,7 @@ fn show(file: String, which: String, ansi?: Bool) -> Int {
     0
 }
 
+#|if !__apple__
 fn serve-tracer(tty: String, skip: Int) -> Int {
     try {
         tracer(tty, skip)
@@ -2983,6 +3878,7 @@ fn serve-tracer(tty: String, skip: Int) -> Int {
         1
     }
 }
+#|]
 
 fn record(opts: _) -> Int {
     let options = {
@@ -3016,7 +3912,9 @@ fn main(opts: _) -> Int {
         (false, true, false, [file])         => refresh(file, file),
         (false, true, false, [file, out])    => refresh(file, out),
         (_, true, _, _)                      => misuse('--refresh takes REC.tui [OUT.tui]'),
+#|if !__apple__
         (false, false, true, [tty, skip])    => serve-tracer(tty, int(skip)!),
+#|]
         (false, false, false, [_, *_])       => record(opts),
         _                                    => misuse('no command given')
     }
