@@ -5280,6 +5280,45 @@ TY_BUILTIN(os_getsockopt)
         return INTEGER(o);
 }
 
+// os.peercred(sock: Int) -> (Int, Int, Int) | nil
+TY_BUILTIN_RAW(os_peercred)
+{
+        ASSERT_ARGC("os.peercred()", 1);
+#if defined(__linux__)
+        struct ucred cred;
+        socklen_t n = sizeof cred;
+
+        if (getsockopt(INT_ARG(0), SOL_SOCKET, SO_PEERCRED, &cred, &n) != 0) {
+                return NIL;
+        }
+
+        Value out = vT(3);
+
+        out.items[0] = INTEGER(cred.pid);
+        out.items[1] = INTEGER(cred.uid);
+        out.items[2] = INTEGER(cred.gid);
+
+        return out;
+#elif defined(__APPLE__) || defined(__FreeBSD__)
+        uid_t uid;
+        gid_t gid;
+
+        if (getpeereid(INT_ARG(0), &uid, &gid) != 0) {
+                return NIL;
+        }
+
+        Value out = vT(3);
+
+        out.items[0] = INTEGER(-1);
+        out.items[1] = INTEGER(uid);
+        out.items[2] = INTEGER(gid);
+
+        return out;
+#else
+        NOT_ON_WINDOWS("os.peercred()");
+#endif
+}
+
 // os.getnameinfo(addr: Ptr[Any] | Blob, flags: Int = 0) -> (String, String)
 TY_BUILTIN_RAW(os_getnameinfo)
 {
