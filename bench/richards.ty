@@ -250,8 +250,9 @@ fn task_release(t: Task, i: Int, work: TaskWorkArea) -> Task {
 fn task_run_task(t: Task, work: TaskWorkArea) -> Task | nil {
     let msg: Packet | nil = nil
     if t.is_waiting_with_packet() {
-        msg = t.input
-        t.input = msg.link
+        let $packet = t.input or throw 'waiting task has no packet'
+        msg = packet
+        t.input = packet.link
         if t.input == nil {
             t.set_running()
         } else {
@@ -411,11 +412,14 @@ fn main() {
     }
     print("Running benchmark...")
     let times = [richards_run() for ..n]
+    let $min-time  = times.min()  or throw 'no benchmark samples'
+    let $max-time  = times.max()  or throw 'no benchmark samples'
+    let $mean-time = times.mean() or throw 'no benchmark samples'
     print("Results:")
     print("  Total:  {times.sum():.2}s")
-    print("  Min:    {times.min() * 1000:.2}ms")
-    print("  Max:    {times.max() * 1000:.2}ms")
-    print("  Mean:   {times.mean() * 1000:.2}ms")
+    print("  Min:    {min-time * 1000:.2}ms")
+    print("  Max:    {max-time * 1000:.2}ms")
+    print("  Mean:   {mean-time * 1000:.2}ms")
 }
 
 main()

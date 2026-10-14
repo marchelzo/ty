@@ -207,6 +207,7 @@ pub fn iter(type, p, n) {
 
 pub memcpy = wrap(nil, 'memcpy', c.ptr, c.ptr, c.ptr, c.u64)
 pub strlen = wrap(nil, 'strlen', c.u64, c.ptr)
+pub qsort = wrap(nil, 'qsort', c.void, c.ptr, c.u64, c.u64, c.ptr)
 pub memcmp = wrap(nil, 'memcmp', c.int, c.ptr, c.ptr, c.u64)
 pub strcmp = wrap(nil, 'strcmp', c.int, c.ptr, c.ptr)
 pub memset = wrap(nil, 'memset', c.void, c.ptr, c.int, c.u64)

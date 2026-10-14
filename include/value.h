@@ -9,6 +9,7 @@ typedef struct value Value;
 #include <string.h>
 
 #include "ty.h"
+#include "lir.h"
 #include "ast.h"
 #include "vec.h"
 #include "object.h"
@@ -282,6 +283,7 @@ TypeName(Ty const *ty, int t0)
         case VALUE_METHOD:
         case VALUE_BUILTIN_METHOD:
         case VALUE_BUILTIN_FUNCTION:
+        case VALUE_JIT_FUNCTION:
         case VALUE_FOREIGN_FUNCTION:
         case VALUE_BOUND_FUNCTION:
         case VALUE_FUNCTION:
@@ -1329,6 +1331,9 @@ code_of(Value const *v)
 static inline i32
 class_of(Value const *v)
 {
+        if (v->type == VALUE_JIT_FUNCTION) {
+                return v->xinfo != NULL && v->xinfo->class > 0 ? v->xinfo->class : CLASS_FUNCTION;
+        }
         return (v->xinfo != NULL && v->xinfo->class > 0)
              ? v->xinfo->class
              : v->info[FUN_INFO_CLASS];
@@ -1403,6 +1408,8 @@ name_of(Value const *f)
 {
         if (f->xinfo != NULL && f->xinfo->name != NULL) {
                 return f->xinfo->name;
+        } else if (f->type == VALUE_JIT_FUNCTION) {
+                return f->jit_code->name;
         } else {
                 return (char const *)*(uptr *)info_of(f, FUN_NAME);
         }
@@ -1467,6 +1474,20 @@ set_jit_of(Value const *f, void *code)
         memcpy((char *)f->info + FUN_JIT, &jit, sizeof jit);
 }
 
+static inline void *
+jit_code_of(Value const *f)
+{
+        void *code;
+        memcpy(&code, (char const *)f->info + FUN_JIT_CODE, sizeof code);
+        return code;
+}
+
+static inline void
+set_jit_code_of(Value const *f, void *code)
+{
+        memcpy((char *)f->info + FUN_JIT_CODE, &code, sizeof code);
+}
+
 static inline bool
 from_eval(Value const *f)
 {
@@ -1507,6 +1528,8 @@ ClassOf(Value const *v)
         case VALUE_METHOD:            return CLASS_FUNCTION;
         case VALUE_BUILTIN_FUNCTION:  return CLASS_FUNCTION;
         case VALUE_BUILTIN_METHOD:    return CLASS_FUNCTION;
+        case VALUE_JIT_FUNCTION:
+                return v->xinfo != NULL && v->xinfo->class > 0 ? v->xinfo->class : CLASS_FUNCTION;
         case VALUE_FOREIGN_FUNCTION:  return CLASS_FUNCTION;
         case VALUE_OPERATOR:          return CLASS_FUNCTION;
         case VALUE_MODULE:            return CLASS_MODULE;
@@ -1947,6 +1970,7 @@ value_truthy(Ty *ty, Value const *v)
         case VALUE_BOUND_FUNCTION:   return true;
         case VALUE_BUILTIN_FUNCTION: return true;
         case VALUE_BUILTIN_METHOD:   return true;
+        case VALUE_JIT_FUNCTION:
         case VALUE_FOREIGN_FUNCTION: return true;
         case VALUE_OPERATOR:         return true;
         case VALUE_DICT:             return (v->dict->count != 0);

@@ -13,6 +13,8 @@ option(USE_SYSTEM_DEPS "Use system-installed libraries instead of vcpkg (e.g. Fr
 option(TY_MULTICALL "Build ty, tyls, tytest and typrof into a single ty executable" OFF)
 option(TY_EMBED_LIB "Embed lib/*.ty in the executable" OFF)
 
+include(CTest)
+
 # ---
 #   find 3rd-party dependencies
 # ---
@@ -237,6 +239,7 @@ set(_gen_builtins_sources
   src/ffi.c
   src/sqlite.c
   src/screen.c
+  src/jitmod.c
 )
 set(_gen_builtins_methods
   src/str.c
@@ -313,9 +316,13 @@ if(LUAJIT)
   if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
     set(_jit_dasc ${PROJECT_SOURCE_DIR}/src/jit_arm64.dasc)
     set(_jit_hdr  ${PROJECT_SOURCE_DIR}/src/jit_arm64.h)
+    set(_lir_dasc ${PROJECT_SOURCE_DIR}/src/lir_arm64.dasc)
+    set(_lir_hdr  ${PROJECT_SOURCE_DIR}/src/lir_arm64.h)
   else()
     set(_jit_dasc ${PROJECT_SOURCE_DIR}/src/jit_x64.dasc)
     set(_jit_hdr  ${PROJECT_SOURCE_DIR}/src/jit_x64.h)
+    set(_lir_dasc ${PROJECT_SOURCE_DIR}/src/lir_x64.dasc)
+    set(_lir_hdr  ${PROJECT_SOURCE_DIR}/src/lir_x64.h)
   endif()
 
   add_custom_command(
@@ -327,6 +334,16 @@ if(LUAJIT)
     VERBATIM
   )
   add_custom_target(GenerateJitHeader DEPENDS ${_jit_hdr})
+  if(_lir_hdr)
+    add_custom_command(
+      OUTPUT ${_lir_hdr}
+      COMMAND ${LUAJIT} ${PROJECT_SOURCE_DIR}/dynasm/dynasm.lua
+        -o ${_lir_hdr} ${_lir_dasc}
+      DEPENDS ${_lir_dasc} ${PROJECT_SOURCE_DIR}/dynasm/dasm_x86.lua dynasm/dasm_arm64.lua dynasm/dynasm.lua
+      VERBATIM
+    )
+    add_custom_target(GenerateLirHeader DEPENDS ${_lir_hdr})
+  endif()
 else()
   message(WARNING "luajit not found -- JIT headers will not be regenerated")
 endif()
@@ -359,6 +376,12 @@ set(_src_files
   src/itable.c
   src/inline.c
   src/jit.c
+  src/jitmod.c
+  src/jitmem.c
+  src/lir.c
+  src/lir_emit.c
+  src/lir_interp.c
+  src/lir_ra.c
   src/json.c
   src/lex.c
   src/mod.c
@@ -461,6 +484,55 @@ target_sources(${_tgt_ty_interface}
     ${_src_files}
 )
 
+if(BUILD_TESTING)
+  set(_lir_tests core interp ra)
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64|x86_64|amd64|AMD64")
+    list(APPEND _lir_tests native entry)
+  endif()
+  foreach(_lir_test IN LISTS _lir_tests)
+    add_executable(lir-${_lir_test}-test tests/lir_${_lir_test}.c src/lir.c)
+    target_include_directories(lir-${_lir_test}-test PRIVATE include libco nsync/public)
+    target_compile_definitions(lir-${_lir_test}-test PRIVATE PCRE2_CODE_UNIT_WIDTH=8 _GNU_SOURCE)
+    target_compile_options(lir-${_lir_test}-test PRIVATE
+      $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:
+        -Wall
+        -Wextra
+        -Wno-sign-compare
+        -Wno-unused-parameter
+        -Wno-unused-function
+      >
+    )
+    target_link_libraries(lir-${_lir_test}-test PRIVATE
+      unofficial::libffi::libffi PCRE2::8BIT Threads::Threads
+      $<$<NOT:$<BOOL:${WIN32}>>:m>
+    )
+    add_test(NAME lir-${_lir_test} COMMAND lir-${_lir_test}-test)
+  endforeach()
+  target_sources(lir-interp-test PRIVATE src/lir_interp.c)
+  target_sources(lir-ra-test PRIVATE src/lir_ra.c)
+  if(TARGET lir-native-test)
+    target_sources(lir-native-test PRIVATE
+      src/lir_interp.c src/lir_ra.c src/lir_emit.c src/jitmem.c)
+    target_link_libraries(lir-native-test PRIVATE nsync)
+    if(TARGET GenerateLirHeader)
+      add_dependencies(lir-native-test GenerateLirHeader)
+    endif()
+  endif()
+  if(TARGET lir-entry-test)
+    target_sources(lir-entry-test PRIVATE
+      src/lir_interp.c src/lir_ra.c src/lir_emit.c src/jitmem.c)
+    target_link_libraries(lir-entry-test PRIVATE nsync)
+    if(TARGET GenerateLirHeader)
+      add_dependencies(lir-entry-test GenerateLirHeader)
+    endif()
+  endif()
+  add_executable(jitmem-test tests/jitmem.c src/jitmem.c)
+  target_include_directories(jitmem-test PRIVATE include nsync/public)
+  target_compile_definitions(jitmem-test PRIVATE _GNU_SOURCE)
+  target_link_libraries(jitmem-test PRIVATE nsync Threads::Threads)
+  add_test(NAME jitmem COMMAND jitmem-test)
+endif()
+
 set(_tgt_ty_link "${PROJECT_NAME}_Link")
 add_library(${_tgt_ty_link} INTERFACE)
 
@@ -552,6 +624,9 @@ target_include_directories(${_tgt_ty_interface}
 
 if(TARGET GenerateJitHeader)
   add_dependencies(${_tgt_ty_interface} GenerateJitHeader)
+endif()
+if(TARGET GenerateLirHeader)
+  add_dependencies(${_tgt_ty_interface} GenerateLirHeader)
 endif()
 
 target_compile_definitions(${_tgt_ty_interface}

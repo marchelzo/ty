@@ -145,6 +145,10 @@ typedef struct {
         char *proto;
         char *doc;
         i32 class;
+        Value *cif_owner;
+        u32 ffi_nfixed;
+        bool ffi_variadic;
+        bool ffi_signature;
 } FunUserInfo;
 
 typedef struct object TyObject;
@@ -184,6 +188,7 @@ enum {
         VALUE_BUILTIN_FUNCTION ,
         VALUE_BUILTIN_METHOD   ,
         VALUE_FOREIGN_FUNCTION ,
+        VALUE_JIT_FUNCTION     ,
         VALUE_NATIVE_FUNCTION  ,
         VALUE_CLASS            ,
         VALUE_GENERATOR        ,
@@ -271,7 +276,8 @@ enum {
         FUN_NAME        = FUN_META        + sizeof (uptr),
         FUN_EXPR        = FUN_NAME        + sizeof (uptr),
         FUN_JIT         = FUN_EXPR        + sizeof (uptr),
-        FUN_PARAM_NAMES = FUN_JIT         + sizeof (uptr)
+        FUN_JIT_CODE    = FUN_JIT         + sizeof (uptr),
+        FUN_PARAM_NAMES = FUN_JIT_CODE    + sizeof (uptr)
 };
 
 enum {
@@ -360,6 +366,10 @@ struct value {
                                 struct {
                                         void (*ff)();
                                         ffi_cif *ffi;
+                                };
+                                struct {
+                                        struct lir_code *jit_code;
+                                        void (*jit_entry)(Ty *, Value *, Value const *, i32);
                                 };
                                 struct {
                                         i32 *info;
@@ -972,7 +982,6 @@ extern usize TotalBytesAllocated;
         X(CAPTURE),               \
         X(DECORATE),              \
         X(INTO_METHOD),           \
-        X(BIND_CAPTURED),         \
         X(TARGET_LOCAL),          \
         X(TARGET_REF),            \
         X(TARGET_CAPTURED),       \
@@ -1091,7 +1100,6 @@ extern usize TotalBytesAllocated;
         X(RETURN_IF_NOT_NONE),    \
         X(SENTINEL),              \
         X(FIX_TO),                \
-        X(FIXED_TO),              \
         X(REVERSE),               \
         X(SWAP),                  \
         X(NONE),                  \
@@ -1184,7 +1192,6 @@ extern usize TotalBytesAllocated;
         X(CMP),                   \
         X(CHECK_MATCH),           \
         X(TYPE),                  \
-        X(ASSIGN_TYPE),           \
         X(MUT_ADD),               \
         X(MUT_MUL),               \
         X(MUT_DIV),               \
@@ -1252,6 +1259,7 @@ enum {
 #define THREAD(t)                ((Value){ .type = VALUE_THREAD,           .thread         = (t),                                  .tags = 0 })
 #define BUILTIN_METHOD(n, m, t)  ((Value){ .type = VALUE_BUILTIN_METHOD,   .builtin_method = (m),  .this   = (t),  .name = (n),    .tags = 0 })
 #define FOREIGN_FUN(p, i, x)     ((Value){ .type = VALUE_FOREIGN_FUNCTION, .ffi            = (i),  .ff     = (p),  .xinfo = (x),   .tags = 0 })
+#define JIT_FUN(c, e, x)         ((Value){ .type = VALUE_JIT_FUNCTION, .jit_code = (c), .jit_entry = (e), .xinfo = (x), .tags = 0 })
 #define NIL                      ((Value){ .type = VALUE_NIL,                                                                      .tags = 0 })
 #define INDEX(ix, o, n)          ((Value){ .type = VALUE_INDEX,            .i              = (ix), .off   = (o), .nt = (n),        .tags = 0 })
 #define SENTINEL                 ((Value){ .type = VALUE_SENTINEL,         .i              = 0,    .off   = 0,                     .tags = 0 })

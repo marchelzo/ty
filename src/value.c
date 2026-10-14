@@ -26,6 +26,7 @@
 #include "functions.h"
 #include "types2.h"
 #include "highlight.h"
+#include "lir.h"
 
 static _Thread_local vec(Dict *) show_dicts;
 static _Thread_local vec(Set *) show_sets;
@@ -602,6 +603,7 @@ HashImpl(Ty *ty, Value const *val, Cycles *cs)
         case VALUE_BOUND_FUNCTION:
         case VALUE_FUNCTION:          return HashCombine(ptr_hash(val->info), ptr_hash(val->env));
         case VALUE_FOREIGN_FUNCTION:  return HashCombine(ptr_hash((void *)val->ff), ptr_hash(val->ffi));
+        case VALUE_JIT_FUNCTION:      return ptr_hash(val->jit_code);
         case VALUE_REGEX:             return ptr_hash(val->regex);
         case VALUE_PTR:               return ptr_hash(val->ptr);
         case VALUE_TAG:               return (((u64)val->tag) * 517929173925273293ULL);
@@ -1244,6 +1246,10 @@ show_impl(
                                         );
                                 }
                         }
+                        break;
+
+                case VALUE_JIT_FUNCTION:
+                        sxdf(&buf, "<jit function %s>", v.jit_code->name);
                         break;
 
                 case VALUE_FOREIGN_FUNCTION:
@@ -1949,6 +1955,9 @@ TestEquality(Ty *ty, Value const *v1, Value const *v2, Cycles *cs)
         case PAIR_OF(VALUE_FUNCTION):
                 return (v1->info == v2->info);
 
+        case PAIR_OF(VALUE_JIT_FUNCTION):
+                return v1->jit_code == v2->jit_code;
+
         case PAIR_OF(VALUE_BUILTIN_FUNCTION):
                 return (v1->builtin_function == v2->builtin_function);
 
@@ -2113,12 +2122,17 @@ mark_string(Ty *ty, Value const *v)
 inline static void
 mark_generator(Ty *ty, Value const *v)
 {
-        if (MARKED(v->gen)) return;
+        if (MARKED(v->gen)) {
+                return;
+        }
 
         MARK(v->gen);
         MarkNext(ty, &v->gen->f);
 
         co_state *st = v->gen->st;
+        if (st == NULL) {
+                return;
+        }
 
         for (int i = 0; i < vN(st->stack); ++i) {
                 MarkNext(ty, v_(st->stack, i));
@@ -2157,6 +2171,8 @@ mark_function(Ty *ty, Value const *v)
         int n = v->info[FUN_INFO_CAPTURES]
               + ((v->type & ~VALUE_TAGGED) == VALUE_BOUND_FUNCTION);
 
+        lir_code_mark(ty, jit_code_of(v));
+
         if (from_eval(v)) {
                 MARK(v->info);
         }
@@ -2194,10 +2210,132 @@ mark_method(Ty *ty, Value const *v)
         MarkNext(ty, v->this);
 }
 
+LirCode *
+lir_code_adopt(Ty *ty, LirCode *code)
+{
+        LirCode *owned = gc_alloc_object_unchecked(ty, sizeof *owned, GC_JIT_CODE);
+        *owned = *code;
+        owned->gc_owned = true;
+        free(code);
+        if (ty->group->GCPhase == GC_PHASE_SWEEP) {
+                lir_code_mark(ty, owned);
+        }
+        return owned;
+}
+
+Lir *
+lir_adopt(Ty *ty, Lir *L)
+{
+        Lir *owned = gc_alloc_object_unchecked(ty, sizeof *owned, GC_LIR);
+        *owned = *L;
+        free(L);
+        if (ty->group->GCPhase == GC_PHASE_SWEEP) {
+                MARK(owned);
+                lir_mark(ty, owned);
+        }
+        return owned;
+}
+
+void
+lir_mark(Ty *ty, Lir *L)
+{
+        for (u32 i = 0; i < L->nroots; ++i) {
+                value_mark(ty, &L->roots[i]);
+        }
+        for (u32 pc = 0; pc < L->ninsts; ++pc) {
+                LirInst const *in = &L->insts[pc];
+                for (u32 i = 0; i < in->nargs; ++i) {
+                        if (in->args[i].kind == LIR_OPERAND_CODE) {
+                                lir_code_mark(ty, in->args[i].code);
+                        }
+                }
+        }
+}
+
+void
+lir_code_mark(Ty *ty, LirCode *code)
+{
+        if (code == NULL) {
+                return;
+        }
+        if (code->gc_owned) {
+                if (MARKED(code)) {
+                        return;
+                }
+                MARK(code);
+        }
+        for (u32 i = 0; i < code->nroots; ++i) {
+                value_mark(ty, &code->roots[i]);
+        }
+        lir_code_mark(ty, code->entry_code);
+        if (code->lir != NULL) {
+                lir_mark(ty, code->lir);
+        }
+}
+
+static bool
+registered_reference(Ty *ty, void const *p)
+{
+        ThreadGroup const *group = ty->group;
+        for (usize i = 0; i < group->TyList.count; ++i) {
+                AllocList const *allocs = &group->TyList.items[i]->allocs;
+                for (usize j = 0; j < allocs->count; ++j) {
+                        if (allocs->items[j]->data == p) {
+                                return true;
+                        }
+                }
+        }
+        for (usize i = 0; i < group->DeadAllocs.count; ++i) {
+                if (group->DeadAllocs.items[i]->data == p) {
+                        return true;
+                }
+        }
+        return false;
+}
+
 inline static void
 mark_pointer(Ty *ty, Value const *v)
 {
         if (v->gcptr != NULL) {
+                if (v->extra == &LirRefRoot && !registered_reference(ty, v->gcptr)) {
+                        return;
+                }
+                switch (ALLOC_OF(v->gcptr)->type) {
+                case GC_ARRAY: value_array_mark(ty, v->gcptr); return;
+                case GC_OBJECT: object_mark(ty, v->gcptr); return;
+                case GC_DICT: dict_mark(ty, v->gcptr); return;
+                case GC_SET: set_mark(ty, v->gcptr); return;
+                case GC_HEAP: heap_mark(ty, v->gcptr); return;
+                case GC_QUEUE: queue_mark(ty, v->gcptr); return;
+                case GC_SHARED_QUEUE: shared_queue_mark(ty, v->gcptr); return;
+                case GC_TUPLE: {
+                        Value tuple = TUPLE(v->gcptr, NULL, ALLOC_OF(v->gcptr)->size / sizeof (Value));
+                        mark_tuple(ty, &tuple);
+                        return;
+                }
+                case GC_GENERATOR: {
+                        Value gen = GENERATOR(v->gcptr);
+                        mark_generator(ty, &gen);
+                        return;
+                }
+                case GC_THREAD: {
+                        Value thread = THREAD(v->gcptr);
+                        mark_thread(ty, &thread);
+                        return;
+                }
+                default: break;
+                }
+                if (ALLOC_OF(v->gcptr)->type == GC_LIR) {
+                        if (!MARKED(v->gcptr)) {
+                                MARK(v->gcptr);
+                                lir_mark(ty, v->gcptr);
+                        }
+                        return;
+                }
+                if (ALLOC_OF(v->gcptr)->type == GC_JIT_CODE) {
+                        lir_code_mark(ty, v->gcptr);
+                        return;
+                }
                 MARK(v->gcptr);
                 switch (ALLOC_OF(v->gcptr)->type) {
                 case GC_VALUE:
@@ -2253,7 +2391,22 @@ _value_mark_xd(Ty *ty, Value const *v)
         switch (v->type & ~VALUE_TAGGED) {
         case VALUE_METHOD:           if (!MARKED(v->this)) { mark_method(ty, v); }                     break;
         case VALUE_BUILTIN_METHOD:   if (!MARKED(v->this)) { MARK(v->this); MarkNext(ty, v->this); }   break;
-        case VALUE_FOREIGN_FUNCTION: if (v->xinfo != NULL) { MARK(v->xinfo); }                         break;
+        case VALUE_FOREIGN_FUNCTION:
+                if (v->xinfo != NULL) {
+                        MARK(v->xinfo);
+                        Value *owner = v->xinfo->cif_owner;
+                        if (owner != NULL && !MARKED(owner)) {
+                                MARK(owner);
+                                MarkNext(ty, owner);
+                        }
+                }
+                break;
+        case VALUE_JIT_FUNCTION:
+                lir_code_mark(ty, v->jit_code);
+                if (v->xinfo != NULL) {
+                        MARK(v->xinfo);
+                }
+                break;
         case VALUE_ARRAY:            value_array_mark(ty, v->array);                                   break;
         case VALUE_TUPLE:            mark_tuple(ty, v);                                                break;
         case VALUE_DICT:             dict_mark(ty, v->dict);                                           break;

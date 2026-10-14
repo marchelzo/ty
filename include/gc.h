@@ -67,6 +67,8 @@ enum {
         GC_REGEX,
         GC_ARENA,
         GC_FUN_INFO,
+        GC_JIT_CODE,
+        GC_LIR,
         GC_FFI_AUTO,
         GC_MUTEX,
         GC_SPINLOCK,

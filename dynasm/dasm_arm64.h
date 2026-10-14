@@ -144,7 +144,7 @@ void dasm_setup(Dst_DECL, const void *actionlist)
   if (D->pclabels) memset((void *)D->pclabels, 0, D->pcsize);
   for (i = 0; i < D->maxsection; i++) {
     D->sections[i].pos = DASM_SEC2POS(i);
-    D->sections[i].rbuf = D->sections[i].buf - D->sections[i].pos;
+    D->sections[i].rbuf = D->sections[i].buf ? D->sections[i].buf - D->sections[i].pos : NULL;
     D->sections[i].ofs = 0;
   }
 }
@@ -454,10 +454,10 @@ int dasm_encode(Dst_DECL, void *buffer)
 	    cp[-1] |= ((n >> 2) & 0x03ffffff);
 	  } else if ((ins & 0x800)) {  /* B.cond, CBZ, CBNZ, LDR* literal */
 	    CK((n & 3) == 0 && ((n+0x00100000) >> 21) == 0, RANGE_REL);
-	    cp[-1] |= ((n << 3) & 0x00ffffe0);
+	    cp[-1] |= (((unsigned int)n << 3) & 0x00ffffe0);
 	  } else if ((ins & 0x3000) == 0x2000) {  /* ADR */
 	    CK(((n+0x00100000) >> 21) == 0, RANGE_REL);
-	    cp[-1] |= ((n << 3) & 0x00ffffe0) | ((n & 3) << 29);
+	    cp[-1] |= (((unsigned int)n << 3) & 0x00ffffe0) | ((n & 3) << 29);
 	  } else if ((ins & 0x3000) == 0x3000) {  /* ADRP */
 	    cp[-1] |= ((n >> 9) & 0x00ffffe0) | (((n >> 12) & 3) << 29);
 	  } else if ((ins & 0x1000)) {  /* TBZ, TBNZ */

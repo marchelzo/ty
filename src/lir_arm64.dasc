@@ -1,0 +1,1011 @@
+|.arch arm64
+|.actionlist lir_actions
+|.section code
+
+static void
+native_label(dasm_State **Dst, u32 label)
+{
+        |=>label:
+}
+
+static void
+native_jump(dasm_State **Dst, u32 label)
+{
+        | b =>label
+}
+
+static void
+native_li(dasm_State **Dst, u8 d, u64 bits)
+{
+        | movz Rx(d), #(bits & 0xffff)
+        if ((bits >> 16) & 0xffff) {
+                | movk Rx(d), #((bits >> 16) & 0xffff), lsl #16
+        }
+        if ((bits >> 32) & 0xffff) {
+                | movk Rx(d), #((bits >> 32) & 0xffff), lsl #32
+        }
+        if ((bits >> 48) & 0xffff) {
+                | movk Rx(d), #((bits >> 48) & 0xffff), lsl #48
+        }
+}
+
+static void
+native_mov(dasm_State **Dst, u8 d, u8 a, LirClass cls, bool from_gp, bool to_gp)
+{
+        if (d == a && from_gp == to_gp) {
+                return;
+        }
+        if (cls == LIR_F32) {
+                if (from_gp) {
+                        | fmov Rs(d), Rw(a)
+                } else if (to_gp) {
+                        | fmov Rw(d), Rs(a)
+                } else {
+                        | fmov Rs(d), Rs(a)
+                }
+        } else if (cls == LIR_F64) {
+                if (from_gp) {
+                        | fmov Rd(d), Rx(a)
+                } else if (to_gp) {
+                        | fmov Rx(d), Rd(a)
+                } else {
+                        | fmov Rd(d), Rd(a)
+                }
+        } else if (cls == LIR_I32) {
+                | mov Rw(d), Rw(a)
+        } else {
+                | mov Rx(d), Rx(a)
+        }
+}
+
+static void
+native_addr(dasm_State **Dst, u8 d, u8 base, i64 disp)
+{
+        if (disp >= 0 && disp <= 4095) {
+                | add Rx(d), Rx(base), #disp
+        } else if (disp < 0 && disp >= -4095) {
+                | sub Rx(d), Rx(base), #(-disp)
+        } else {
+                native_li(Dst, 17, disp);
+                | add Rx(d), Rx(base), x17
+        }
+}
+
+static void
+native_memory(dasm_State **Dst, bool write, u8 reg, u8 base, i64 disp,
+           u32 size, bool sign, bool floating)
+{
+        if (disp < 0 || (u64)disp > 4095 * size || disp % size != 0) {
+                native_addr(Dst, 17, base, disp);
+                base = 17;
+                disp = 0;
+        }
+        if (floating) {
+                if (size == 4) {
+                        if (write) {
+                                | str Rs(reg), [Rx(base), #disp]
+                        } else {
+                                | ldr Rs(reg), [Rx(base), #disp]
+                        }
+                } else {
+                        if (write) {
+                                | str Rd(reg), [Rx(base), #disp]
+                        } else {
+                                | ldr Rd(reg), [Rx(base), #disp]
+                        }
+                }
+        } else if (size == 1) {
+                if (write) {
+                        | strb Rw(reg), [Rx(base), #disp]
+                } else if (sign) {
+                        | ldrsb Rx(reg), [Rx(base), #disp]
+                } else {
+                        | ldrb Rw(reg), [Rx(base), #disp]
+                }
+        } else if (size == 2) {
+                if (write) {
+                        | strh Rw(reg), [Rx(base), #disp]
+                } else if (sign) {
+                        | ldrsh Rx(reg), [Rx(base), #disp]
+                } else {
+                        | ldrh Rw(reg), [Rx(base), #disp]
+                }
+        } else if (size == 4) {
+                if (write) {
+                        | str Rw(reg), [Rx(base), #disp]
+                } else if (sign) {
+                        | ldrsw Rx(reg), [Rx(base), #disp]
+                } else {
+                        | ldr Rw(reg), [Rx(base), #disp]
+                }
+        } else {
+                if (write) {
+                        | str Rx(reg), [Rx(base), #disp]
+                } else {
+                        | ldr Rx(reg), [Rx(base), #disp]
+                }
+        }
+}
+
+static void
+native_frame_read16(dasm_State **Dst, u32 offset)
+{
+        if (offset <= 4095 * 8 && offset % 8 == 0) {
+                | ldr x16, [x29, #offset]
+        } else {
+                native_li(Dst, 16, offset);
+                | add x16, x29, x16
+                | ldr x16, [x16]
+        }
+}
+
+static void
+native_stack_bounds(dasm_State **Dst, u32 ty_slot, u32 base, u32 end)
+{
+        native_frame_read16(Dst, ty_slot);
+        native_memory(Dst, false, 16, 16, offsetof(Ty, stack.items), 8, false, false);
+        native_memory(Dst, true, 16, 29, base, 8, false, false);
+        native_frame_read16(Dst, ty_slot);
+        native_memory(Dst, false, 16, 16, offsetof(Ty, stack.capacity), 8, false, false);
+        native_memory(Dst, false, 17, 29, base, 8, false, false);
+        | add x16, x17, x16, lsl #5
+        native_memory(Dst, true, 16, 29, end, 8, false, false);
+}
+
+static void
+native_rebase_begin(dasm_State **Dst, u32 ty_slot, u32 base, u32 done)
+{
+        native_frame_read16(Dst, ty_slot);
+        native_memory(Dst, false, 16, 16, offsetof(Ty, stack.items), 8, false, false);
+        native_memory(Dst, false, 17, 29, base, 8, false, false);
+        | cmp x16, x17
+        | beq =>done
+}
+
+static void
+native_rebase_pointer(dasm_State **Dst, u8 p, u32 ty_slot, u32 base, u32 end)
+{
+        native_frame_read16(Dst, base);
+        | cmp Rx(p), x16
+        | blo >1
+        native_frame_read16(Dst, end);
+        | cmp Rx(p), x16
+        | bhs >1
+        native_frame_read16(Dst, base);
+        | sub Rx(p), Rx(p), x16
+        native_frame_read16(Dst, ty_slot);
+        native_memory(Dst, false, 16, 16, offsetof(Ty, stack.items), 8, false, false);
+        | add Rx(p), Rx(p), x16
+        |1:
+}
+
+static void
+native_fli(dasm_State **Dst, u8 d, LirClass cls, u32 label)
+{
+        if (cls == LIR_F32) {
+                | ldr Rs(d), =>label
+        } else {
+                | ldr Rd(d), =>label
+        }
+}
+
+static void
+native_literal(dasm_State **Dst, u32 label, u64 bits)
+{
+        |.align 8
+        |=>label:
+        |.quad bits
+}
+
+static void
+native_prologue(dasm_State **Dst, u32 frame, u32 align, u32 origin)
+{
+        | stp x29, x30, [sp, #-16]!
+        | mov x17, sp
+        if (frame <= 4095) {
+                | sub sp, sp, #frame
+        } else {
+                native_li(Dst, 16, frame);
+                | sub sp, sp, x16
+        }
+        if (align > 16) {
+                | mov x16, sp
+                | and x16, x16, #(-(i64)align)
+                | mov sp, x16
+        }
+        | mov x29, sp
+        | mov x16, x17
+        native_memory(Dst, true, 16, 29, origin, 8, false, false);
+}
+
+static void
+native_epilogue(dasm_State **Dst, u32 origin, bool tail)
+{
+        native_memory(Dst, false, 17, 29, origin, 8, false, false);
+        | mov sp, x17
+        | ldp x29, x30, [sp], #16
+        if (tail) {
+                | br x16
+        } else {
+                | ret
+        }
+}
+
+static void
+native_runtime_call(dasm_State **Dst, u32 label, u32 pc_slot)
+{
+        |=>label:
+        native_memory(Dst, true, 30, 29, pc_slot, 8, false, false);
+        | blr x16
+        native_memory(Dst, false, 30, 29, pc_slot, 8, false, false);
+        | ret
+}
+
+static void
+native_vm_top(dasm_State **Dst, u8 d, u8 ty)
+{
+        native_memory(Dst, false, d, ty, offsetof(Ty, stack.items), 8, false, false);
+        native_memory(Dst, false, 17, ty, offsetof(Ty, stack.count), 8, false, false);
+        | add Rx(d), Rx(d), x17, lsl #5
+}
+
+static void
+native_vm_slots(dasm_State **Dst, u8 d, u8 ty, u32 top_slot)
+{
+        native_memory(Dst, false, d, ty, offsetof(Ty, stack.items), 8, false, false);
+        native_memory(Dst, false, 17, 29, top_slot, 8, false, false);
+        | add Rx(d), Rx(d), x17, lsl #5
+}
+
+static void
+native_call(dasm_State **Dst, bool site, u32 thunk)
+{
+        if (site) {
+                | bl =>thunk
+        } else {
+                | blr x16
+        }
+}
+
+static void
+native_integer_imm(dasm_State **Dst, LirOp op, u8 d, u8 a, u64 imm, bool narrow)
+{
+        i32 n = imm;
+        if (narrow) {
+                if (op == LIR_ADD) {
+                        | add Rw(d), Rw(a), #n
+                } else {
+                        | sub Rw(d), Rw(a), #n
+                }
+        } else {
+                if (op == LIR_ADD) {
+                        | add Rx(d), Rx(a), #n
+                } else {
+                        | sub Rx(d), Rx(a), #n
+                }
+        }
+}
+
+static void
+native_integer(dasm_State **Dst, LirOp op, u8 d, u8 a, u8 b, bool narrow)
+{
+        if (narrow) {
+                switch (op) {
+                case LIR_ADD:
+                        | add Rw(d), Rw(a), Rw(b)
+                        break;
+                case LIR_SUB:
+                        | sub Rw(d), Rw(a), Rw(b)
+                        break;
+                case LIR_MUL:
+                        | mul Rw(d), Rw(a), Rw(b)
+                        break;
+                case LIR_SDIV:
+                        | sdiv Rw(d), Rw(a), Rw(b)
+                        break;
+                case LIR_UDIV:
+                        | udiv Rw(d), Rw(a), Rw(b)
+                        break;
+                case LIR_AND:
+                        | and Rw(d), Rw(a), Rw(b)
+                        break;
+                case LIR_OR:
+                        | orr Rw(d), Rw(a), Rw(b)
+                        break;
+                case LIR_XOR:
+                        | eor Rw(d), Rw(a), Rw(b)
+                        break;
+                case LIR_SHL:
+                        | lsl Rw(d), Rw(a), Rw(b)
+                        break;
+                case LIR_SHR:
+                        | lsr Rw(d), Rw(a), Rw(b)
+                        break;
+                case LIR_SAR:
+                        | asr Rw(d), Rw(a), Rw(b)
+                        break;
+                case LIR_ROTR:
+                        | ror Rw(d), Rw(a), Rw(b)
+                        break;
+                case LIR_MULHS:
+                        | smull x16, Rw(a), Rw(b)
+                        | lsr x16, x16, #32
+                        | mov Rw(d), w16
+                        break;
+                case LIR_MULHU:
+                        | umull x16, Rw(a), Rw(b)
+                        | lsr x16, x16, #32
+                        | mov Rw(d), w16
+                        break;
+                case LIR_SREM:
+                        | sdiv w16, Rw(a), Rw(b)
+                        | msub Rw(d), w16, Rw(b), Rw(a)
+                        break;
+                case LIR_UREM:
+                        | udiv w16, Rw(a), Rw(b)
+                        | msub Rw(d), w16, Rw(b), Rw(a)
+                        break;
+                default: break;
+                }
+        } else {
+                switch (op) {
+                case LIR_ADD:
+                        | add Rx(d), Rx(a), Rx(b)
+                        break;
+                case LIR_SUB:
+                        | sub Rx(d), Rx(a), Rx(b)
+                        break;
+                case LIR_MUL:
+                        | mul Rx(d), Rx(a), Rx(b)
+                        break;
+                case LIR_SDIV:
+                        | sdiv Rx(d), Rx(a), Rx(b)
+                        break;
+                case LIR_UDIV:
+                        | udiv Rx(d), Rx(a), Rx(b)
+                        break;
+                case LIR_AND:
+                        | and Rx(d), Rx(a), Rx(b)
+                        break;
+                case LIR_OR:
+                        | orr Rx(d), Rx(a), Rx(b)
+                        break;
+                case LIR_XOR:
+                        | eor Rx(d), Rx(a), Rx(b)
+                        break;
+                case LIR_SHL:
+                        | lsl Rx(d), Rx(a), Rx(b)
+                        break;
+                case LIR_SHR:
+                        | lsr Rx(d), Rx(a), Rx(b)
+                        break;
+                case LIR_SAR:
+                        | asr Rx(d), Rx(a), Rx(b)
+                        break;
+                case LIR_ROTR:
+                        | ror Rx(d), Rx(a), Rx(b)
+                        break;
+                case LIR_MULHS:
+                        | smulh Rx(d), Rx(a), Rx(b)
+                        break;
+                case LIR_MULHU:
+                        | umulh Rx(d), Rx(a), Rx(b)
+                        break;
+                case LIR_SREM:
+                        | sdiv x16, Rx(a), Rx(b)
+                        | msub Rx(d), x16, Rx(b), Rx(a)
+                        break;
+                case LIR_UREM:
+                        | udiv x16, Rx(a), Rx(b)
+                        | msub Rx(d), x16, Rx(b), Rx(a)
+                        break;
+                default: break;
+                }
+        }
+}
+
+static void
+native_unary(dasm_State **Dst, LirOp op, u8 d, u8 a, bool narrow)
+{
+        if (narrow) {
+                switch (op) {
+                case LIR_NEG:
+                        | neg Rw(d), Rw(a)
+                        break;
+                case LIR_NOT:
+                        | mvn Rw(d), Rw(a)
+                        break;
+                case LIR_CLZ:
+                        | clz Rw(d), Rw(a)
+                        break;
+                case LIR_BSWAP:
+                        | rev Rw(d), Rw(a)
+                        break;
+                case LIR_SEXT8:
+                        | sxtb Rw(d), Rw(a)
+                        break;
+                case LIR_SEXT16:
+                        | sxth Rw(d), Rw(a)
+                        break;
+                case LIR_SEXT32:
+                        | mov Rw(d), Rw(a)
+                        break;
+                case LIR_ZEXT8:
+                        | uxtb Rw(d), Rw(a)
+                        break;
+                case LIR_ZEXT16:
+                        | uxth Rw(d), Rw(a)
+                        break;
+                case LIR_ZEXT32:
+                        | mov Rw(d), Rw(a)
+                        break;
+                case LIR_CTZ:
+                        | rbit w16, Rw(a)
+                        | clz Rw(d), w16
+                        break;
+                default: break;
+                }
+        } else {
+                switch (op) {
+                case LIR_NEG:
+                        | neg Rx(d), Rx(a)
+                        break;
+                case LIR_NOT:
+                        | mvn Rx(d), Rx(a)
+                        break;
+                case LIR_CLZ:
+                        | clz Rx(d), Rx(a)
+                        break;
+                case LIR_BSWAP:
+                        | rev Rx(d), Rx(a)
+                        break;
+                case LIR_CTZ:
+                        | rbit x16, Rx(a)
+                        | clz Rx(d), x16
+                        break;
+                case LIR_SEXT8:
+                        | sxtb Rx(d), Rx(a)
+                        break;
+                case LIR_SEXT16:
+                        | sxth Rx(d), Rx(a)
+                        break;
+                case LIR_SEXT32:
+                        | sxtw Rx(d), Rw(a)
+                        break;
+                case LIR_ZEXT8:
+                        | uxtb Rw(d), Rw(a)
+                        break;
+                case LIR_ZEXT16:
+                        | uxth Rw(d), Rw(a)
+                        break;
+                case LIR_ZEXT32:
+                        | mov Rw(d), Rw(a)
+                        break;
+                default: break;
+                }
+        }
+}
+
+static void
+native_float(dasm_State **Dst, LirOp op, u8 d, u8 a, u8 b, u8 c, bool narrow)
+{
+        if (narrow) {
+                switch (op) {
+                case LIR_FADD:
+                        | fadd Rs(d), Rs(a), Rs(b)
+                        break;
+                case LIR_FSUB:
+                        | fsub Rs(d), Rs(a), Rs(b)
+                        break;
+                case LIR_FMUL:
+                        | fmul Rs(d), Rs(a), Rs(b)
+                        break;
+                case LIR_FDIV:
+                        | fdiv Rs(d), Rs(a), Rs(b)
+                        break;
+                case LIR_FMIN:
+                        | fminnm Rs(d), Rs(a), Rs(b)
+                        break;
+                case LIR_FMAX:
+                        | fmaxnm Rs(d), Rs(a), Rs(b)
+                        break;
+                case LIR_FSQRT:
+                        | fsqrt Rs(d), Rs(a)
+                        break;
+                case LIR_FABS:
+                        | fabs Rs(d), Rs(a)
+                        break;
+                case LIR_FNEG:
+                        | fneg Rs(d), Rs(a)
+                        break;
+                case LIR_FMA:
+                        | fmadd Rs(d), Rs(a), Rs(b), Rs(c)
+                        break;
+                default: break;
+                }
+        } else {
+                switch (op) {
+                case LIR_FADD:
+                        | fadd Rd(d), Rd(a), Rd(b)
+                        break;
+                case LIR_FSUB:
+                        | fsub Rd(d), Rd(a), Rd(b)
+                        break;
+                case LIR_FMUL:
+                        | fmul Rd(d), Rd(a), Rd(b)
+                        break;
+                case LIR_FDIV:
+                        | fdiv Rd(d), Rd(a), Rd(b)
+                        break;
+                case LIR_FMIN:
+                        | fminnm Rd(d), Rd(a), Rd(b)
+                        break;
+                case LIR_FMAX:
+                        | fmaxnm Rd(d), Rd(a), Rd(b)
+                        break;
+                case LIR_FSQRT:
+                        | fsqrt Rd(d), Rd(a)
+                        break;
+                case LIR_FABS:
+                        | fabs Rd(d), Rd(a)
+                        break;
+                case LIR_FNEG:
+                        | fneg Rd(d), Rd(a)
+                        break;
+                case LIR_FMA:
+                        | fmadd Rd(d), Rd(a), Rd(b), Rd(c)
+                        break;
+                default: break;
+                }
+        }
+}
+
+static void
+native_compare(dasm_State **Dst, u8 a, u8 b, LirClass cls)
+{
+        switch (cls) {
+        case LIR_I32:
+                | cmp Rw(a), Rw(b)
+                break;
+        case LIR_F32:
+                | fcmp Rs(a), Rs(b)
+                break;
+        case LIR_F64:
+                | fcmp Rd(a), Rd(b)
+                break;
+        default:
+                | cmp Rx(a), Rx(b)
+                break;
+        }
+}
+
+static void
+native_branch(dasm_State **Dst, LirCC cc, u32 label)
+{
+        switch (cc) {
+        case LIR_EQ:
+                | bne >1
+                | b =>label
+                break;
+        case LIR_NE:
+                | beq >1
+                | b =>label
+                break;
+        case LIR_LT:
+                | bge >1
+                | b =>label
+                break;
+        case LIR_LE:
+                | bgt >1
+                | b =>label
+                break;
+        case LIR_GT:
+                | ble >1
+                | b =>label
+                break;
+        case LIR_GE:
+                | blt >1
+                | b =>label
+                break;
+        case LIR_ULT:
+                | bhs >1
+                | b =>label
+                break;
+        case LIR_ULE:
+                | bhi >1
+                | b =>label
+                break;
+        case LIR_UGT:
+                | bls >1
+                | b =>label
+                break;
+        case LIR_UGE:
+                | blo >1
+                | b =>label
+                break;
+        case LIR_FEQ:
+                | bne >1
+                | b =>label
+                break;
+        case LIR_FNE:
+                | beq >1
+                | b =>label
+                break;
+        case LIR_FLT:
+                | bpl >1
+                | b =>label
+                break;
+        case LIR_FLE:
+                | bhi >1
+                | b =>label
+                break;
+        case LIR_FGT:
+                | ble >1
+                | b =>label
+                break;
+        case LIR_FGE:
+                | blt >1
+                | b =>label
+                break;
+        case LIR_FUN:
+                | bvc >1
+                | b =>label
+                break;
+        default: break;
+        }
+        |1:
+}
+
+static void
+native_setcc(dasm_State **Dst, u8 d, LirCC cc)
+{
+        switch (cc) {
+        case LIR_EQ:
+                | cset Rx(d), eq
+                break;
+        case LIR_NE:
+                | cset Rx(d), ne
+                break;
+        case LIR_LT:
+                | cset Rx(d), lt
+                break;
+        case LIR_LE:
+                | cset Rx(d), le
+                break;
+        case LIR_GT:
+                | cset Rx(d), gt
+                break;
+        case LIR_GE:
+                | cset Rx(d), ge
+                break;
+        case LIR_ULT:
+                | cset Rx(d), lo
+                break;
+        case LIR_ULE:
+                | cset Rx(d), ls
+                break;
+        case LIR_UGT:
+                | cset Rx(d), hi
+                break;
+        case LIR_UGE:
+                | cset Rx(d), hs
+                break;
+        case LIR_FEQ:
+                | cset Rx(d), eq
+                break;
+        case LIR_FNE:
+                | cset Rx(d), ne
+                break;
+        case LIR_FLT:
+                | cset Rx(d), mi
+                break;
+        case LIR_FLE:
+                | cset Rx(d), ls
+                break;
+        case LIR_FGT:
+                | cset Rx(d), gt
+                break;
+        case LIR_FGE:
+                | cset Rx(d), ge
+                break;
+        case LIR_FUN:
+                | cset Rx(d), vs
+                break;
+        default: break;
+        }
+}
+
+static void
+native_convert(dasm_State **Dst, LirOp op, u8 d, u8 a, LirClass dst, LirClass src)
+{
+        if (op == LIR_I2F || op == LIR_U2F) {
+                if (dst == LIR_F32 && src == LIR_I32) {
+                        if (op == LIR_I2F) {
+                                | scvtf Rs(d), Rw(a)
+                        } else {
+                                | ucvtf Rs(d), Rw(a)
+                        }
+                } else if (dst == LIR_F32) {
+                        if (op == LIR_I2F) {
+                                | scvtf Rs(d), Rx(a)
+                        } else {
+                                | ucvtf Rs(d), Rx(a)
+                        }
+                } else if (src == LIR_I32) {
+                        if (op == LIR_I2F) {
+                                | scvtf Rd(d), Rw(a)
+                        } else {
+                                | ucvtf Rd(d), Rw(a)
+                        }
+                } else {
+                        if (op == LIR_I2F) {
+                                | scvtf Rd(d), Rx(a)
+                        } else {
+                                | ucvtf Rd(d), Rx(a)
+                        }
+                }
+        } else if (op == LIR_F2I) {
+                if (dst == LIR_I32 && src == LIR_F32) {
+                        | fcvtzs Rw(d), Rs(a)
+                } else if (dst == LIR_I32) {
+                        | fcvtzs Rw(d), Rd(a)
+                } else if (src == LIR_F32) {
+                        | fcvtzs Rx(d), Rs(a)
+                } else {
+                        | fcvtzs Rx(d), Rd(a)
+                }
+        } else if (op == LIR_FEXT) {
+                | fcvt Rd(d), Rs(a)
+        } else if (op == LIR_FTRUNC) {
+                | fcvt Rs(d), Rd(a)
+        } else if (op == LIR_BITCAST) {
+                if (src == dst || ((src == LIR_I64 || src == LIR_PTR || src == LIR_REF)
+                                  && (dst == LIR_I64 || dst == LIR_PTR || dst == LIR_REF))) {
+                        native_mov(Dst, d, a, dst, false, false);
+                } else if (dst == LIR_F32) {
+                        | fmov Rs(d), Rw(a)
+                } else if (dst == LIR_F64) {
+                        | fmov Rd(d), Rx(a)
+                } else if (src == LIR_F32) {
+                        | fmov Rw(d), Rs(a)
+                } else {
+                        | fmov Rx(d), Rd(a)
+                }
+        }
+}
+
+static void
+native_narrow(dasm_State **Dst, u8 d, LirType type)
+{
+        switch (type) {
+        case LIR_TYPE_I8:
+                | sxtb Rx(d), Rx(d)
+                break;
+        case LIR_TYPE_U8:
+                | uxtb Rw(d), Rw(d)
+                break;
+        case LIR_TYPE_I16:
+                | sxth Rx(d), Rx(d)
+                break;
+        case LIR_TYPE_U16:
+                | uxth Rw(d), Rw(d)
+                break;
+        case LIR_TYPE_I32:
+                | sxtw Rx(d), Rw(d)
+                break;
+        case LIR_TYPE_U32:
+                | mov Rw(d), Rw(d)
+                break;
+        case LIR_TYPE_BOOL:
+                | cmp Rx(d), #0
+                | cset Rx(d), ne
+                break;
+        default: break;
+        }
+}
+
+static void
+native_checked(dasm_State **Dst, LirOp op, u8 d, u8 a, u8 b, bool narrow)
+{
+        if (op == LIR_ADDO) {
+                if (narrow) {
+                        | adds Rw(d), Rw(a), Rw(b)
+                } else {
+                        | adds Rx(d), Rx(a), Rx(b)
+                }
+        } else if (op == LIR_SUBO) {
+                if (narrow) {
+                        | subs Rw(d), Rw(a), Rw(b)
+                } else {
+                        | subs Rx(d), Rx(a), Rx(b)
+                }
+        } else if (narrow) {
+                | smull x16, Rw(a), Rw(b)
+                | mov Rw(d), w16
+                | sxtw x17, Rw(d)
+                | cmp x16, x17
+        } else {
+                | smulh x16, Rx(a), Rx(b)
+                | mul Rx(d), Rx(a), Rx(b)
+                | asr x17, Rx(d), #63
+                | cmp x16, x17
+        }
+}
+
+static void
+native_checked_branch(dasm_State **Dst, LirOp op, u32 label)
+{
+        if (op == LIR_MULO) {
+                | beq >1
+                | b =>label
+        } else {
+                | bvc >1
+                | b =>label
+        }
+        |1:
+}
+
+static void
+native_select(dasm_State **Dst, u8 d, u8 a, u8 b, LirClass cls, u32 yes, u32 end)
+{
+        native_mov(Dst, d, b, cls, false, false);
+        native_jump(Dst, end);
+        native_label(Dst, yes);
+        native_mov(Dst, d, a, cls, false, false);
+        native_label(Dst, end);
+}
+
+static void
+native_zero_branch(dasm_State **Dst, u8 a, bool nonzero, bool narrow, u32 label)
+{
+        if (narrow) {
+                if (nonzero) {
+                        | cbz Rw(a), >1
+                } else {
+                        | cbnz Rw(a), >1
+                }
+        } else {
+                if (nonzero) {
+                        | cbz Rx(a), >1
+                } else {
+                        | cbnz Rx(a), >1
+                }
+        }
+        | b =>label
+        |1:
+}
+
+static void
+native_lea(dasm_State **Dst, u8 d, u8 base, u8 index, u8 scale, i32 disp, bool narrow)
+{
+        if (index == LIR_PHYS_NONE) {
+                native_addr(Dst, d, base, disp);
+        } else {
+                u32 shift = scale == 1 ? 0 : scale == 2 ? 1 : scale == 4 ? 2 : 3;
+                if (narrow) {
+                        | add Rx(d), Rx(base), Rw(index), uxtw #shift
+                } else {
+                        | add Rx(d), Rx(base), Rx(index), lsl #shift
+                }
+                if (disp != 0) {
+                        native_addr(Dst, d, d, disp);
+                }
+        }
+}
+
+static void
+native_popcnt(dasm_State **Dst, u8 d, u8 a, bool narrow)
+{
+        if (narrow) {
+                | fmov s31, Rw(a)
+        } else {
+                | fmov d31, Rx(a)
+        }
+        |.long 0x0e205bff
+        |.long 0x0e31bbff
+        | fmov Rw(d), s31
+}
+
+static void
+native_fence(dasm_State **Dst)
+{
+        |.long 0xd5033bbf
+}
+
+static void
+native_word(dasm_State **Dst, u32 word)
+{
+        |.long word
+}
+
+static void
+native_atomic(dasm_State **Dst, LirOp op, u8 d, u8 address, u8 expected, u8 value,
+           bool narrow, u32 loop, u32 done)
+{
+        native_label(Dst, loop);
+        if (narrow) {
+                |.long (0x885ffc00u | ((u32)address << 5) | d)
+                if (op == LIR_CAS) {
+                        | cmp Rw(d), Rw(expected)
+                        | bne =>done
+                        |.long (0x8811fc00u | ((u32)address << 5) | value)
+                } else if (op == LIR_XADD) {
+                        | add w15, Rw(d), Rw(expected)
+                        |.long (0x8811fc00u | ((u32)address << 5) | 15)
+                } else {
+                        |.long (0x8811fc00u | ((u32)address << 5) | expected)
+                }
+        } else {
+                |.long (0xc85ffc00u | ((u32)address << 5) | d)
+                if (op == LIR_CAS) {
+                        | cmp Rx(d), Rx(expected)
+                        | bne =>done
+                        |.long (0xc811fc00u | ((u32)address << 5) | value)
+                } else if (op == LIR_XADD) {
+                        | add x15, Rx(d), Rx(expected)
+                        |.long (0xc811fc00u | ((u32)address << 5) | 15)
+                } else {
+                        |.long (0xc811fc00u | ((u32)address << 5) | expected)
+                }
+        }
+        | cbnz w17, =>loop
+        native_label(Dst, done);
+        |.long 0xd5033f5f
+}
+
+static void
+native_table(dasm_State **Dst, u32 label, LirLabel const *targets, u32 n)
+{
+        |.align 8
+        native_label(Dst, label);
+        for (u32 i = 0; i < n; ++i) {
+                (void)targets;
+                |.quad 0
+        }
+}
+
+static void
+native_switch(dasm_State **Dst, u8 a, u32 n, u32 fallback, u32 table)
+{
+        native_li(Dst, 17, n);
+        | cmp Rx(a), x17
+        | blo >1
+        | b =>fallback
+        |1:
+        | mov x17, Rx(a)
+        | adr x16, =>table
+        | ldr x17, [x16, x17, lsl #3]
+        | br x17
+}
+
+static void
+native_zero_store(dasm_State **Dst, u8 base)
+{
+        native_memory(Dst, true, 31, base, 0, 8, false, false);
+}
+
+static void
+native_zero_compare(dasm_State **Dst, u8 a, LirClass cls)
+{
+        native_compare(Dst, a, 31, cls);
+}
+
+static void
+native_varargs(dasm_State **Dst, u32 nf)
+{
+}
+
+static void
+native_twice_call(dasm_State **Dst, u32 slot, u32 label)
+{
+        | adr x17, =>label
+        if (slot <= 4095 * 8 && slot % 8 == 0) {
+                native_memory(Dst, true, 17, 29, slot, 8, false, false);
+        } else {
+                | str x16, [sp, #-16]!
+                | mov x16, x17
+                native_memory(Dst, true, 16, 29, slot, 8, false, false);
+                | ldr x16, [sp], #16
+        }
+        | blr x16
+}

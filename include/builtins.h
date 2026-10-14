@@ -1,3 +1,5 @@
+#include "jitmod.h"
+
 static struct {
         char const *module;
         char const *name;
@@ -9,6 +11,9 @@ static struct {
         int line;
 } builtins[] = {
 #include "gen/builtin_table.h"
+#define JIT_TABLE(c, n, s) { .module = "jit", .name = n, .value = TY_GENERATED_BUILTIN(builtin_jit_##c), .sig = s },
+JIT_BUILTINS(JIT_TABLE)
+#undef JIT_TABLE
 #if defined(__APPLE__)
   { .module = NULL,         .name = "__apple__",                .value = BOOL_(true)                              },
   { .module = NULL,         .name = "__windows__",              .value = BOOL_(false)                             },

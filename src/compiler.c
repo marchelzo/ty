@@ -368,7 +368,8 @@ static int builtin_modules;
 static char const *BuiltinSourceModules[] = {
         "ty",
         "ffi",
-        "os"
+        "os",
+        "jit"
 };
 static int BuiltinCount;
 
@@ -7170,6 +7171,8 @@ emit_function(Ty *ty, Expr const *e)
         } else {
                 EP(NULL);
         }
+
+        EP(NULL);
 
         LOG("COMPILING FUNCTION: %s", scope_name(ty, e->scope));
 

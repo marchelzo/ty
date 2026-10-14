@@ -1065,6 +1065,8 @@ local map_op = {
   -- 8E: *mov seg,mdw
   -- 8F: pop mdw
   nop_0 =	"90",
+  cmpxchg_2 = "mr:0FB1Rm",
+  xadd_2 = "mr:0FC1Rm",
   xchg_2 =	"Rrqdw:90R|rRqdw:90r|rm:87rM|mr:87Rm",
   cbw_0 =	"6698",
   cwde_0 =	"98",

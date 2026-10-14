@@ -84,6 +84,10 @@ ptr_from_ty(Ty *ty, Value const *v, void **out)
                 *out = (void *)v->ff;
                 return true;
 
+        case VALUE_JIT_FUNCTION:
+                *out = v->jit_code->body;
+                return true;
+
         case VALUE_OBJECT:
                 f = class_lookup_method_i(ty, v->class, NAMES.ptr);
                 if (f != NULL) {
@@ -436,9 +440,10 @@ TY_BUILTIN_RAW(ffi_cif)
                 return NIL;
         }
 
-        Value *dtor = mAo(sizeof (Value [2]), GC_FFI_AUTO);
+        Value *dtor = mAo(sizeof (Value [3]), GC_FFI_AUTO);
         dtor[0] = PTR(free_cif);
         dtor[1] = PTR(cif);
+        dtor[2] = INTEGER(IsMissing(nFixed) ? -1 : nFixed.z);
 
         return GCPTR(cif, dtor);
 }
@@ -866,12 +871,27 @@ TY_BUILTIN_RAW(ffi_fun)
 
         void (*ff)(void) = (void (*)(void))PTR_ARG(0);
         ffi_cif *cif = PTR_ARG(1);
-        FunUserInfo *xinfo = NULL;
-
+        Value owner = ARG(1);
+        FunUserInfo *xinfo;
+        GC_STOP();
+        xinfo = mAo0(sizeof *xinfo, GC_ANY);
         if (ARG_T(2) == VALUE_STRING) {
-                xinfo = mAo0(sizeof (FunUserInfo), GC_ANY);
                 xinfo->name = TY_C_STR(ARG(2));
         }
+        if (owner.gcptr != NULL) {
+                xinfo->cif_owner = mAo(sizeof *xinfo->cif_owner, GC_VALUE);
+                *xinfo->cif_owner = owner;
+                if (ALLOC_OF(owner.gcptr)->type == GC_FFI_AUTO
+                    && ALLOC_OF(owner.gcptr)->size == sizeof (Value [3])) {
+                        Value const *metadata = owner.gcptr;
+                        if (metadata[0].ptr == free_cif && metadata[2].type == VALUE_INTEGER) {
+                                xinfo->ffi_signature = true;
+                                xinfo->ffi_variadic = metadata[2].z >= 0;
+                                xinfo->ffi_nfixed = xinfo->ffi_variadic ? metadata[2].z : cif->nargs;
+                        }
+                }
+        }
+        GC_RESUME();
 
         return FOREIGN_FUN(ff, cif, xinfo);
 }

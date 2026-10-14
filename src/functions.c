@@ -9329,7 +9329,7 @@ TY_BUILTIN_RAW(set_doc)
 {
         ASSERT_ARGC("set-doc()", 1);
 
-        Value f     = ARGx(0, VALUE_FUNCTION, VALUE_FOREIGN_FUNCTION);
+        Value f     = ARGx(0, VALUE_FUNCTION, VALUE_FOREIGN_FUNCTION, VALUE_JIT_FUNCTION);
         Value name  = KWARG("name",  STRING, _NIL);
         Value proto = KWARG("proto", STRING, _NIL);
         Value doc   = KWARG("doc",   STRING, _NIL);
@@ -9395,6 +9395,7 @@ TY_BUILTIN_RAW(doc)
         case VALUE_FUNCTION:
                 return fdoc(ty, &ARG(0));
 
+        case VALUE_JIT_FUNCTION:
         case VALUE_FOREIGN_FUNCTION:
                 return ffdoc(ty, &ARG(0));
 

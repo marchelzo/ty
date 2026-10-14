@@ -347,6 +347,12 @@ vm_jit_loop_iter(Ty *ty);
 bool
 vm_jit_loop_check(Ty *ty, int z);
 
+bool
+vm_jit_spread_check(Ty *ty, bool inject_nil);
+
+void
+vm_jit_tuple_literal(Ty *ty, char *ip);
+
 void
 vm_jit_fail(Ty *ty, Value *top, char *ip);
 
@@ -462,6 +468,45 @@ vm_jit_member_access(Ty *ty, int z);
 
 void
 vm_jit_try_member_access(Ty *ty, int z);
+
+bool
+vm_jit_try_match_member(Ty *ty, int z);
+
+bool
+vm_jit_unapply(Ty *ty, bool maybe);
+
+void
+vm_jit_scope(Ty *ty, int op);
+
+void
+vm_jit_mutation(Ty *ty, int op);
+
+void
+vm_jit_target(Ty *ty, int op, int n, int z);
+
+void
+vm_jit_binding(Ty *ty, int op, int n, int z, void *info);
+
+Value *
+vm_jit_state_slot(Ty *ty, int n, bool tls);
+
+bool
+vm_jit_check_init(Ty *ty);
+
+void
+vm_jit_misc(Ty *ty, int op, int n, void *data);
+
+bool
+vm_jit_extra_branch(Ty *ty, int op);
+
+void
+vm_jit_declaration(Ty *ty, char *ip);
+
+void
+vm_jit_failure(Ty *ty, int op, char *ip);
+
+bool
+vm_jit_yield_from(Ty *ty);
 
 void
 vm_jit_try_get_member(Ty *ty);

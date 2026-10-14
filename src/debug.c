@@ -1401,6 +1401,7 @@ DbgTypeName(Ty *ty, Value const *v)
         case VALUE_METHOD:
         case VALUE_BUILTIN_FUNCTION:
         case VALUE_BUILTIN_METHOD:
+        case VALUE_JIT_FUNCTION:
         case VALUE_FOREIGN_FUNCTION:
         case VALUE_NATIVE_FUNCTION:
                 return "Function";

@@ -1,0 +1,914 @@
+import jit as j (asm!)
+import ty
+import ffi as c
+import support.process (run)
+
+fn make-poly(cs: Array[Float]) -> Float -> Float {
+    let a = j.Asm('poly', params: [j.F64], ret: j.F64)
+    let [x] = a.params
+    let acc = a.reg(j.F64, 0.0)
+
+    for cs.reverse() {
+        acc.set(acc * x + it)
+    }
+
+    a.ret(acc)
+    a.finish() as (Float -> Float)
+}
+
+fn make-root() -> j.Fn {
+    let a = j.Asm('root', params: [], ret: j.VAL)
+    a.ret(a.const([12, 34]))
+    a.finish()
+}
+
+fn make-sum(type: j.Type) -> j.Fn {
+    let a = j.Asm('sum', params: [type for ..48], ret: type)
+    let acc = a.reg(type, type == j.F64 ? 0.0 : 0)
+    for a.params {
+        acc.set(acc + it)
+    }
+    a.ret(acc)
+    a.finish()
+}
+
+fn ephemeral-code() {
+    let a = j.Asm('ephemeral', params: [], ret: j.I64)
+    a.ret(123)
+    let f = a.finish()
+    assert(f() == 123)
+}
+
+pub fn test-polynomial-builder() {
+    let f = make-poly([1.0, 2.0, 3.0])
+    assert(f(2.0) == 17.0)
+    assert(f(-1.0) == 2.0)
+    assert(f(0.0) == 1.0)
+    assert(f(2) == 17.0)
+}
+
+pub fn test-fn-metadata-and-identity() {
+    let a = j.Asm('identity', params: [j.I64], ret: j.I64)
+    a.ret(a.params[0])
+    let f = a.finish()
+    let g = a.finish()
+    assert(f(123) == 123)
+    assert(f.name == 'identity')
+    assert(f.sig.ret == j.I64)
+    assert(f.sig.params == [j.I64])
+    assert(f.code.size > 0)
+    assert('RET' in f.code.lir())
+    assert(#f.code.dis() > 0)
+    assert(f == f)
+    assert(f != g)
+    assert(%{f: 42}[f] == 42)
+    assert(type(f.ptr) == Ptr)
+}
+
+pub fn test-rooted-code-constants() {
+    let f = make-root()
+    ty.gc()
+    assert(f() == [12, 34])
+    ty.gc()
+    assert(f() == [12, 34])
+}
+
+pub fn test-user-register-pressure() {
+    let integers = make-sum(j.I64)
+    let floats = make-sum(j.F64)
+    assert(integers(*[it for ..48]) == 1128)
+    assert(floats(*[it + 0.25 for ..48]) == 1140.0)
+}
+
+pub fn test-user-arity-and-argument-guards() {
+    let a = j.Asm('guarded', params: [j.I64], ret: j.I64)
+    a.ret(a.params[0])
+    let f = a.finish()
+    try {
+        f()
+        assert(false)
+    } catch e: RuntimeError {
+        assert('arguments' in e.what)
+    }
+    try {
+        f('bad')
+        assert(false)
+    } catch e: RuntimeError {
+        assert('argument 1' in e.what)
+    }
+    assert(f(19) == 19)
+}
+
+pub fn test-validator-errors() {
+    let a = j.Asm('bad', params: [], ret: j.I64)
+    a.ret(a.reg(j.I64))
+    try {
+        a.finish()
+        assert(false)
+    } catch e: j.Error {
+        assert(e.op == 0)
+        assert('before definition' in e.what)
+    }
+}
+
+pub fn test-value-slots() {
+    let a = j.Asm('slot', params: [], ret: j.I64)
+    let p = a.vslot()
+    a.store(p.off(j.I64, 8), 42)
+    a.ret(a.load(p.off(j.I64, 8)))
+    let f = a.finish()
+    assert(f() == 42)
+    ty.gc()
+    assert(f() == 42)
+}
+
+pub fn test-foreign-call-signatures() {
+    let a = j.Asm('length', params: [j.PTR], ret: j.U64)
+    let r = a.ccall(c.strlen, [a.params[0]]) as j.Reg
+    a.ret(r)
+    let f = a.finish()
+    assert(f('hello') == 5)
+    assert(f('') == 0)
+}
+
+pub fn test-code-reclaimed-after-drop() {
+    ephemeral-code()
+    ty.gc()
+    let before = j.stats().chunks
+    ephemeral-code()
+    ty.gc()
+    assert(j.stats().chunks == before)
+}
+
+fn helper-function(helper: j.rt.Helper, n: Int) -> j.Fn {
+    let a = j.Asm(helper.name, params: [j.VAL for ..n], ret: j.VAL)
+    let out = a.vslot()
+    a.ccall(helper, [out, *a.params])
+    a.ret(out)
+    a.finish()
+}
+
+fn collect() {
+    ty.gc()
+}
+
+fn fresh-array() -> Array[Array[String]] {
+    [["nested-{it}" for ..3]]
+}
+
+fn grow-stack(n: Int) -> Int {
+    if n == 0 {
+        return 0
+    }
+
+    grow-stack(n - 1) + 1
+}
+
+fn fresh-ref() -> Ptr[Any] {
+    let a = j.Asm('fresh-ref', params: [], ret: j.REF)
+    let value = a.call-ty(a.const(fresh-array), [])
+    let bad = a.label()
+    a.ret(a.unbox(value, Array, `else`: bad))
+    a.bind(bad)
+    a.ret(a.ref([]))
+    a.finish()()
+}
+
+pub fn test-runtime-helper-arithmetic() {
+    for (helper, expected) in [
+        (j.rt.add, 11), (j.rt.sub, 3), (j.rt.mul, 28),
+        (j.rt.div, 1), (j.rt.mod, 3), (j.rt.pow, 2401.0),
+        (j.rt.eq, false), (j.rt.ne, true), (j.rt.lt, false),
+        (j.rt.le, false), (j.rt.gt, true), (j.rt.ge, true),
+        (j.rt.cmp, 1),
+    ] {
+        let f = helper-function(helper, 2)
+        assert(f(7, 4) == expected)
+    }
+}
+
+pub fn test-runtime-helper-containers() {
+    assert(helper-function(j.rt.array-new, 0)() == [])
+    assert(helper-function(j.rt.dict-new, 0)() == %{})
+    let xs = [10, 20]
+    assert(helper-function(j.rt.subscript, 2)(xs, 1) == 20)
+    helper-function(j.rt.subscript-set, 3)(xs, 1, 42)
+    assert(xs == [10, 42])
+    assert(helper-function(j.rt.array-push, 2)(xs, 99) == [10, 42, 99])
+    let dict = %{'x': 19}
+    assert(helper-function(j.rt.dict-get, 2)(dict, 'x') == 19)
+    assert(helper-function(j.rt.dict-get, 2)(dict, 'missing') == nil)
+    helper-function(j.rt.dict-set, 3)(dict, 'x', 42)
+    assert(dict['x'] == 42)
+    let obj = {x: 19}
+    assert(helper-function(j.rt.member, 2)(obj, 'x') == 19)
+    helper-function(j.rt.member-set, 3)(obj, 'x', 42)
+    assert(obj.x == 42)
+    assert(helper-function(j.rt.call, 2)(\_ * 2, [21]) == 42)
+    assert(helper-function(j.rt.call-method, 3)(xs, 'count', [42]) == 1)
+}
+
+pub fn test-runtime-helper-strings-and-hash() {
+    assert(helper-function(j.rt.str-concat, 2)('ab', 'cd') == 'abcd')
+    assert(helper-function(j.rt.to-string, 1)(123) == '123')
+    assert(helper-function(j.rt.hash, 1)('abc') == ty.hash('abc'))
+}
+
+pub fn test-guarded-value-boxing() {
+    let a = j.Asm('increment', params: [j.VAL], ret: j.VAL)
+    let bad = a.label()
+    let n = a.unbox(a.params[0], Int, `else`: bad)
+    a.ret(a.box(a.add(n, 1), Int))
+    a.bind(bad)
+    a.ret(a.const(nil))
+    let f = a.finish()
+    assert(f(41) == 42)
+    assert(f('bad') == nil)
+}
+
+pub fn test-callback-stack-relocation() {
+    let a = j.Asm('callback-growth', params: [j.VAL], ret: j.VAL)
+    let out = a.call-ty(a.const(grow-stack), [a.const(400)])
+    let original = a.params[0]
+    a.ccall(j.rt.add, [out, out, original])
+    a.ret(out)
+    let f = a.finish()
+    assert(f(42) == 442)
+    assert(f(7) == 407)
+}
+
+pub fn test-returned-reference-owns-children() {
+    let ptr = fresh-ref()
+    ty.gc()
+    let a = j.Asm('ref-child', params: [j.PTR], ret: j.VAL)
+    let items = a.load(a.params[0].off(j.PTR, j.layout.Array.OFF_ITEMS))
+    a.ret(items)
+    let f = a.finish()
+    assert(f(ptr) == ['nested-0', 'nested-1', 'nested-2'])
+    ty.gc()
+    assert(f(ptr) == ['nested-0', 'nested-1', 'nested-2'])
+}
+
+pub fn test-spilled-references-survive-gc() {
+    let a = j.Asm('spilled-refs', params: [], ret: j.VAL)
+    let bad = a.label()
+    let refs = []
+    for ..48 {
+        let value = a.call-ty(a.const(fresh-array), [])
+        refs.push(a.unbox(value, Array, `else`: bad))
+        a.box(0, Int, into: value)
+    }
+    a.call-ty(a.const(collect), [])
+    let sum = a.reg(j.I64, 0)
+    for refs {
+        let items = a.load(it.off(j.PTR, j.layout.Array.OFF_ITEMS))
+        let child = a.unbox(items, Array, `else`: bad)
+        let count = a.load(child.off(j.U64, j.layout.Array.OFF_COUNT))
+        sum.set(sum + count)
+    }
+    a.ret(a.box(sum, Int))
+    a.bind(bad)
+    a.ret(a.const('invalid reference'))
+    let f = a.finish()
+    assert(f() == 144)
+    ty.gc()
+    assert(f() == 144)
+}
+
+pub fn test-readonly-reference-arguments() {
+    let a = j.Asm('readonly-refs', params: [j.REF, j.REF], ret: j.REF)
+    a.call-ty(a.const(collect), [])
+    a.ret(a.params[1])
+    let f = a.finish()
+    let p = f('first', 'second')
+    ty.gc()
+    assert(c.strlen(p) == 6)
+}
+
+pub fn test-exception-through-native-helper() {
+    let a = j.Asm('throw-helper', params: [j.VAL], ret: j.VOID)
+    a.ccall(j.rt.throw, a.params)
+    let f = a.finish()
+    for ..3 {
+        try {
+            f('native exception')
+            assert(false)
+        } catch 'native exception' {
+            assert(true)
+        }
+        ty.gc()
+    }
+    assert(make-poly([1.0, 2.0])(3.0) == 7.0)
+}
+
+pub fn test-atomic-builder-operations() {
+    let a = j.Asm('atomics', params: [], ret: j.I64)
+    let ptr = a.alloca(8)
+    let mem = ptr.off(j.I64, 0)
+    a.store(mem, 0)
+    let x = a.xadd(mem, 7)
+    let y = a.cas(mem, 7, 99)
+    let z = a.cas(mem, 7, 30)
+    let w = a.xchg(mem, 1)
+    a.fence()
+    a.ret(x + y + z + w + a.load(mem))
+    let f = a.finish()
+    assert(f() == 206)
+}
+
+pub fn test-builder-resume-entry-validation() {
+    let a = j.Asm('entry', params: [j.I64], ret: j.I64)
+    a.entry(a.label(), 17)
+    a.ret(a.params[0])
+    try {
+        a.finish()
+        assert(false)
+    } catch e: j.Error {
+        assert('resume entry' in e.what)
+    }
+}
+
+pub fn test-raw-register-bindings() {
+    if j.ARCH != 'arm64' {
+        return
+    }
+
+    let a = j.Asm('raw-add', params: [j.I64], ret: j.I64)
+    let out = a.reg(j.I64)
+    a.raw(arm64: [0x91001C01], `in`: %{'x0': a.params[0]},
+          out: %{'x1': out}, clobber: ['x1'])
+    a.ret(out)
+    let f = a.finish()
+    assert(f(35) == 42)
+    assert(f(-7) == 0)
+}
+
+pub fn test-builder-register-ownership() {
+    let a = j.Asm('owner', params: [], ret: j.I64)
+    let b = j.Asm('other', params: [], ret: j.I64)
+    let ptr = b.alloca(8)
+    try {
+        a.load(ptr.off(j.I64))
+        assert(false)
+    } catch e: j.Error {
+        assert('another assembler' in e.what)
+    }
+    try {
+        a.move(b.reg(j.I64), 42)
+        assert(false)
+    } catch e: j.Error {
+        assert('another assembler' in e.what)
+    }
+}
+
+pub fn test-serialized-scalar-holes() {
+    let a = j.Asm('holes', params: [j.I64], ret: j.I64)
+    let hole = j.Hole(0, j.I64)
+    a.ret(a.add(a.params[0], hole))
+    let encoded = a.serialize()
+    assert(encoded.ninputs == 1)
+    assert(#encoded.bytes > 4)
+    assert(j.load(encoded, [7])(35) == 42)
+    assert(j.load(encoded, [19])(23) == 42)
+    try {
+        j.load(encoded, [1.5])
+        assert(false)
+    } catch e: j.Error {
+        assert('hole binding' in e.what)
+    }
+    try {
+        j.load(encoded, [])
+        assert(false)
+    } catch e: j.Error {
+        assert('bindings' in e.what)
+    }
+}
+
+pub fn test-serialized-float-holes() {
+    let a = j.Asm('float-hole', params: [j.F64], ret: j.F64)
+    a.ret(a.mul(a.params[0], j.Hole(0, j.F64)))
+    let encoded = j.serialize(a)
+    assert(j.load(encoded, [2.5])(4.0) == 10.0)
+}
+
+fn serialized-root() -> j.Encoding {
+    let a = j.Asm('serialized-root', params: [], ret: j.VAL)
+    a.ret(a.const(["capture-{it}" for ..3]))
+    a.serialize()
+}
+
+pub fn test-serialized-captures-survive-gc() {
+    let encoded = serialized-root()
+    ty.gc()
+    let f = j.load(encoded)
+    ty.gc()
+    assert(f() == ['capture-0', 'capture-1', 'capture-2'])
+}
+
+pub fn test-serialized-runtime-helper() {
+    let a = j.Asm('serialized-add', params: [j.VAL, j.VAL], ret: j.VAL)
+    let out = a.vslot()
+    a.ccall(j.rt.add, [out, *a.params])
+    a.ret(out)
+    let encoded = a.serialize()
+    ty.gc()
+    let f = j.load(encoded)
+    assert(f(20, 22) == 42)
+}
+
+pub fn test-serialized-callee-hole() {
+    let a = j.Asm('callee-hole', params: [j.PTR], ret: j.U64)
+    let target = j.Hole(0, j.PTR, callee?: true)
+    a.ret(a.ccall(target, a.params, ret: j.U64, sig: [j.PTR]))
+    let encoded = a.serialize()
+    let f = j.load(encoded, [c.strlen])
+    ty.gc()
+    assert(f('hello') == 5)
+}
+
+pub fn test-serialized-malformed-bytes() {
+    let encoded = j.Encoding(Blob([0, 1, 2, 3]))
+    try {
+        j.load(encoded)
+        assert(false)
+    } catch e: j.Error {
+        assert('encoding' in e.what)
+    }
+}
+
+pub fn test-interpreter-callable-scalars() {
+    let a = j.Asm('interp-poly', params: [j.F64], ret: j.F64)
+    let x = a.params[0]
+    a.ret(x * x + 2.0)
+    let f = j.interp(a)
+    assert(f(3.0) == 11.0)
+    assert(f(3) == 11.0)
+    assert(f.name == 'interp-poly')
+    assert(type(f.ptr) == Ptr)
+    assert('FMUL' in f.code.lir())
+    let b = j.Asm('interp-foreign', params: [j.PTR], ret: j.U64)
+    b.ret(b.ccall(c.strlen, b.params))
+    assert(j.interp(b)('hello') == 5)
+}
+
+pub fn test-interpreter-values-and-callbacks() {
+    let a = j.Asm('interp-values', params: [j.VAL], ret: j.VAL)
+    let out = a.call-ty(a.const(grow-stack), [a.const(400)])
+    a.ccall(j.rt.add, [out, out, a.params[0]])
+    a.ret(out)
+    let f = j.interp(a)
+    assert(f(42) == 442)
+    ty.gc()
+    assert(f(7) == 407)
+}
+
+pub fn test-interpreter-references-and-gc() {
+    let a = j.Asm('interp-refs', params: [], ret: j.VAL)
+    let bad = a.label()
+    let refs = []
+    for ..48 {
+        let value = a.call-ty(a.const(fresh-array), [])
+        refs.push(a.unbox(value, Array, `else`: bad))
+        a.box(0, Int, into: value)
+    }
+    a.call-ty(a.const(collect), [])
+    let sum = a.reg(j.I64, 0)
+    for refs {
+        let items = a.load(it.off(j.PTR, j.layout.Array.OFF_ITEMS))
+        let child = a.unbox(items, Array, `else`: bad)
+        let count = a.load(child.off(j.U64, j.layout.Array.OFF_COUNT))
+        sum.set(sum + count)
+    }
+    a.ret(a.box(sum, Int))
+    a.bind(bad)
+    a.ret(a.const('invalid reference'))
+    let f = j.interp(a)
+    assert(f() == 144)
+    ty.gc()
+    assert(f() == 144)
+}
+
+pub fn test-interpreter-raw-rejected() {
+    let a = j.Asm('interp-raw', params: [], ret: j.VOID)
+    a.raw(arm64: [0xD503201F])
+    a.ret()
+    try {
+        j.interp(a)
+        assert(false)
+    } catch e: j.Error {
+        assert('RAW' in e.what)
+    }
+}
+
+pub fn test-interpreter-exception-through-callback() {
+    let a = j.Asm('interp-throw', params: [j.VAL], ret: j.VOID)
+    a.ccall(j.rt.throw, a.params)
+    let f = j.interp(a)
+    try {
+        f('interpreted exception')
+        assert(false)
+    } catch 'interpreted exception' {
+        ty.gc()
+    }
+    assert(make-poly([1.0, 2.0])(3.0) == 7.0)
+}
+
+pub fn test-serialized-callee-signature-guard() {
+    let a = j.Asm('bad-callee-hole', params: [j.I64], ret: j.I64)
+    let target = j.Hole(0, j.PTR, callee?: true)
+    a.ret(a.ccall(target, a.params, ret: j.I64, sig: [j.I64]))
+    let encoded = a.serialize()
+    try {
+        j.load(encoded, [c.strlen])
+        assert(false)
+    } catch e: j.Error {
+        assert('signature' in e.what)
+    }
+}
+
+pub fn test-serialized-bool-and-value-holes() {
+    let a = j.Asm('bool-hole', params: [], ret: j.I64)
+    a.ret(a.reg(j.I64, j.Hole(0, j.BOOL)))
+    let encoded = a.serialize()
+    assert(j.load(encoded, [true])() == 1)
+    assert(j.load(encoded, [false])() == 0)
+    let b = j.Asm('value-hole', params: [], ret: j.VAL)
+    b.ret(b.reg(j.PTR, j.Hole(0, j.VAL)))
+    let values = b.serialize()
+    let f = j.load(values, [['value-hole']])
+    ty.gc()
+    assert(f() == ['value-hole'])
+}
+
+pub fn test-fixed-foreign-signature-and-argument-order() {
+    let a = j.Asm('reverse-strcmp', params: [j.PTR, j.PTR], ret: j.I32)
+    a.ret(a.ccall(c.strcmp, [a.params[1], a.params[0]]))
+    let f = a.finish()
+    assert(f('abc', 'abd') > 0)
+    assert(f('abd', 'abc') < 0)
+    assert(f('same', 'same') == 0)
+    let g = j.interp(a)
+    assert(g('abc', 'abd') > 0)
+    assert(g('abd', 'abc') < 0)
+}
+
+pub fn test-foreign-variadic-signature() {
+    let cif = c.cif(c.i32, c.ptr, c.u64, c.ptr, c.i32, c.double, nFixed: 3)
+    let snprintf = c.fun(c.dlsym('snprintf'), cif)
+    let a = j.Asm('variadic', params: [j.PTR, j.PTR], ret: j.I32)
+    a.ret(a.ccall(snprintf, [a.params[0], 64, a.params[1], 7, 2.5]))
+    let buffer = Blob([0 for ..64])
+    let format = Blob('%d %.1f\0')
+    assert(a.finish()(buffer, format) == 5)
+    assert(buffer[;5] == Blob('7 2.5'))
+    assert(j.interp(a)(buffer, format) == 5)
+    assert(buffer[;5] == Blob('7 2.5'))
+}
+
+fn owned-callee-encoding() -> j.Encoding {
+    let target = c.fun(c.dlsym('strlen'), c.cif(c.u64, c.ptr))
+    let a = j.Asm('owned-cif', params: [j.PTR], ret: j.U64)
+    a.ret(a.ccall(target, a.params))
+    a.serialize()
+}
+
+pub fn test-foreign-interface-owned-by-code() {
+    let encoded = owned-callee-encoding()
+    ty.gc()
+    let f = j.load(encoded)
+    ty.gc()
+    assert(f('gc-owned') == 8)
+}
+
+fn finish-mode(a: j.Asm, interp?: Bool) -> j.Fn {
+    interp? ? j.interp(a) : a.finish()
+}
+
+fn make-slot-callee(interp?: Bool) -> j.Fn {
+    let a = j.Asm('slot-callee', params: [], ret: j.I64)
+    for ..5 {
+        a.box(a.reg(j.I64, 99 + it), Int)
+    }
+    a.ret(99)
+    finish-mode(a, interp?)
+}
+
+fn verify-nested-slots(callee: j.Fn, interp?: Bool) {
+    let a = j.Asm('slot-caller', params: [], ret: j.I64)
+    let value = a.box(a.reg(j.I64, 42), Int)
+    a.ccall(callee, [])
+    a.ret(a.load(value.off(j.I64, j.layout.OFF_Z)))
+    let f = finish-mode(a, interp?)
+    assert(f() == 42)
+    ty.gc()
+    assert(f() == 42)
+}
+
+pub fn test-nested-callee-slot-isolation() {
+    for (caller?, callee?) in [(false, false), (false, true),
+                              (true, false), (true, true)] {
+        verify-nested-slots(make-slot-callee(callee?), caller?)
+    }
+}
+
+fn make-value-callee(interp?: Bool) -> j.Fn {
+    let a = j.Asm('value-callee', params: [], ret: j.VAL)
+    for ..5 {
+        a.box(a.reg(j.I64, 99 + it), Int)
+    }
+    a.ret(a.call-ty(a.const(fresh-array), []))
+    finish-mode(a, interp?)
+}
+
+fn verify-nested-value-result(callee: j.Fn, interp?: Bool) {
+    let a = j.Asm('value-caller', params: [], ret: j.VAL)
+    let result = a.ccall(callee, [])
+    a.ccall(make-slot-callee(false), [])
+    a.call-ty(a.const(collect), [])
+    a.ret(result)
+    let f = finish-mode(a, interp?)
+    assert(f() == [['nested-0', 'nested-1', 'nested-2']])
+    ty.gc()
+    assert(f() == [['nested-0', 'nested-1', 'nested-2']])
+}
+
+pub fn test-nested-value-result-survives-calls-and-gc() {
+    for (caller?, callee?) in [(false, false), (false, true),
+                              (true, false), (true, true)] {
+        verify-nested-value-result(make-value-callee(callee?), caller?)
+    }
+}
+
+fn verify-value-tailcall(callee: j.Fn, interp?: Bool) {
+    let a = j.Asm('value-tailcaller', params: [], ret: j.VAL)
+    a.tailcall(callee, [])
+    let f = finish-mode(a, interp?)
+    assert(f() == [['nested-0', 'nested-1', 'nested-2']])
+}
+
+pub fn test-value-tailcall-slot-lifetime() {
+    for (caller?, callee?) in [(false, false), (false, true),
+                              (true, false), (true, true)] {
+        verify-value-tailcall(make-value-callee(callee?), caller?)
+    }
+}
+
+fn make-collecting-slot-callee(interp?: Bool) -> j.Fn {
+    let a = j.Asm('collecting-slot-callee', params: [], ret: j.VOID)
+    for ..5 {
+        a.box(a.reg(j.I64, 99 + it), Int)
+    }
+    a.call-ty(a.const(collect), [])
+    a.ret()
+    finish-mode(a, interp?)
+}
+
+fn verify-nested-reference-root(callee: j.Fn, interp?: Bool) {
+    let a = j.Asm('nested-ref-caller', params: [], ret: j.VAL)
+    let bad = a.label()
+    let value = a.call-ty(a.const(fresh-array), [])
+    let ref = a.unbox(value, Array, `else`: bad)
+    a.box(0, Int, into: value)
+    a.ccall(callee, [])
+    a.ret(a.load(ref.off(j.PTR, j.layout.Array.OFF_ITEMS)))
+    a.bind(bad)
+    a.ret(a.const('invalid reference'))
+    let f = finish-mode(a, interp?)
+    assert(f() == ['nested-0', 'nested-1', 'nested-2'])
+}
+
+pub fn test-reference-root-across-nested-callee-gc() {
+    for (caller?, callee?) in [(false, false), (false, true),
+                              (true, false), (true, true)] {
+        verify-nested-reference-root(make-collecting-slot-callee(callee?),
+                                     caller?)
+    }
+}
+
+pub fn test-scalar-tailcall-with-callee-slots() {
+    let a = j.Asm('scalar-tailcaller', params: [], ret: j.I64)
+    a.tailcall(make-slot-callee(false), [])
+    assert(a.finish()() == 99)
+    assert(j.interp(a)() == 99)
+}
+
+fn make-asm-scale(k: Float) -> (Ptr[Any], Int) -> nil {
+    asm! scale(p: ptr, n: i64) {
+        i: i64 = 0
+        while i < n {
+            f64[p + i*8] = f64[p + i*8] * {k}
+            i += 1
+        }
+    }
+}
+
+pub fn test-asm-scale-example() {
+    let f = make-asm-scale(2.5)
+    let bytes = Blob([0 for ..24])
+    for ..3 {
+        c.store(c.double, bytes.ptr() + it*8, it + 1.0)
+    }
+    f(bytes.ptr(), 3)
+    assert([c.load(c.double, bytes.ptr() + it*8) for ..3]
+           == [2.5, 5.0, 7.5])
+    make-asm-scale(-2.0)(bytes.ptr(), 3)
+    assert([c.load(c.double, bytes.ptr() + it*8) for ..3]
+           == [-5.0, -10.0, -15.0])
+}
+
+pub fn test-asm-strlen-example() {
+    let total-len = asm! total-len(ps: ptr, n: i64) -> i64 {
+        t: i64 = 0
+        i: i64 = 0
+        while i < n {
+            t += {c.strlen}(ptr[ps + i*8])
+            i += 1
+        }
+        return t
+    }
+    let strings = [Blob('abc\0'), Blob('hello\0'), Blob('\0')]
+    let pointers = Blob([0 for ..24])
+    for ..3 {
+        c.store(c.ptr, pointers.ptr() + it*8, strings[it])
+    }
+    assert(total-len(pointers.ptr(), 3) == 8)
+    assert(total-len(pointers.ptr(), 0) == 0)
+}
+
+pub fn test-asm-qsort-example() {
+    let cmp = asm! cmp-i64(a: ptr, b: ptr) -> i32 detached {
+        x: i64 = i64[a]
+        y: i64 = i64[b]
+        return ((x > y) - (x < y)) as i32
+    }
+    let bytes = Blob([0 for ..40])
+    for ..5 {
+        c.store(c.i64, bytes.ptr() + it*8, [4, 1, 3, 2, 0][it])
+    }
+    c.qsort(bytes, 5, 8, cmp.ptr)
+    assert([c.load(c.i64, bytes.ptr() + it*8) for ..5] == [0, 1, 2, 3, 4])
+    assert(type(cmp.ptr) == Ptr)
+    assert(cmp.sig.ret == j.I32)
+}
+
+pub fn test-asm-loop-control-and-labels() {
+    let f = asm! sum(n: i64) -> i64 {
+        sum: i64 = 0
+        i: i64 = 0
+        loop {
+            i += 1
+            if i > n { break }
+            if i % 2 == 0 { continue }
+            sum += i
+        }
+        goto done
+        sum = 999
+        done:
+        return sum
+    }
+    assert(f(10) == 25)
+    assert(f(0) == 0)
+}
+
+pub fn test-asm-branches-and-short-circuit() {
+    let f = asm! branch(x: i64) -> i64 {
+        if x == 0 || 10 / x == 2 { return 1 }
+        else if x < 0 { return -1 }
+        else { return 0 }
+    }
+    assert(f(0) == 1)
+    assert(f(5) == 1)
+    assert(f(-3) == -1)
+    assert(f(3) == 0)
+}
+
+pub fn test-asm-conversions-and-unsigned-operations() {
+    let f = asm! conversions(x: i64) -> f64 {
+        y: i32 = x as i32
+        return (y as f64) * 0.5
+    }
+    assert(f(0xFFFFFFFF) == -0.5)
+    assert(f(4) == 2.0)
+    let g = asm! unsigned(x: u64) -> u64 {
+        return (x u>> 60) + (x u/ 2)
+    }
+    assert(g(-1) == 0x800000000000000E)
+}
+
+pub fn test-asm-raw-scalar-instructions() {
+    let f = asm! raw-scalar(x: i64) -> i64 {
+        y: i64 = 0
+        .add y, x, 7
+        .ret y
+    }
+    assert(f(35) == 42)
+}
+
+pub fn test-asm-raw-memory-branches-and-calls() {
+    let f = asm! raw-memory(p: ptr) -> i64 {
+        x: i64 = 0
+        .ld_i64 x, i64[p]
+        .add x, x, 1
+        .st64 i64[p], x
+        .br eq, x, 42, good
+        return 0
+        good:
+        return x
+    }
+    let bytes = Blob([0 for ..8])
+    c.store(c.i64, bytes.ptr(), 41)
+    assert(f(bytes.ptr()) == 42)
+    assert(c.load(c.i64, bytes) == 42)
+    let length = asm! raw-call(p: ptr) -> u64 {
+        n: u64 = 0
+        .call n, {c.strlen}, p
+        return n
+    }
+    assert(length('hello') == 5)
+}
+
+pub fn test-asm-pointer-and-float-width-casts() {
+    let ptr = asm! pointer-roundtrip(p: ptr) -> ptr {
+        n: u64 = p as u64
+        return n as ptr
+    }
+    let bytes = Blob([0 for ..8])
+    assert(ptr(bytes.ptr()) == bytes.ptr())
+    let f = asm! float-width(x: f64) -> f64 {
+        y: f32 = x as f32
+        return y as f64
+    }
+    assert(f(1.5) == 1.5)
+}
+
+pub fn test-asm-raw-tailcall() {
+    let f = asm! length-tail(p: ptr) -> u64 {
+        .tailcall {c.strlen}, p
+    }
+    assert(f('tail') == 4)
+}
+
+let asm-hole-count = 0
+
+fn next-asm-hole() -> Float {
+    asm-hole-count += 1
+    2.0
+}
+
+fn make-side-effect-asm() -> Float -> Float {
+    asm! side-effect(x: f64) -> f64 { return x + {next-asm-hole()} }
+}
+
+pub fn test-asm-holes-evaluated-per-expansion() {
+    let before = asm-hole-count
+    let f = make-side-effect-asm()
+    let g = make-side-effect-asm()
+    assert(asm-hole-count == before + 2)
+    assert(f(40.0) == 42.0)
+    assert(g(1.0) == 3.0)
+    assert(f(0.0) == 2.0)
+    assert(asm-hole-count == before + 2)
+}
+
+fn make-value-hole(v: Any) -> j.Fn {
+    asm! value-hole() -> val { return {v} }
+}
+
+pub fn test-asm-value-hole-rooted() {
+    let f = make-value-hole(["hole-{it}" for ..3])
+    ty.gc()
+    assert(f() == ['hole-0', 'hole-1', 'hole-2'])
+}
+
+fn asm-compile-error(source: String) -> String {
+    let result = run(['-e', "import jit (asm!)\n{source}"])
+    assert(result.status != 0)
+    result.stderr
+}
+
+pub fn test-asm-compile-time-validation() {
+    let missing = asm-compile-error(
+        'let f = asm! bad() -> i64 { x: i64; return x }'
+    )
+    assert('live into function before definition' in missing)
+    assert('while expanding macro asm!' in missing)
+    let unknown = asm-compile-error(
+        'let f = asm! bad() -> i64 { return unknown }'
+    )
+    assert("undefined register 'unknown'" in unknown)
+    let detached = asm-compile-error(
+        'let f = asm! bad() -> val detached { return {nil} }'
+    )
+    assert('detached' in detached)
+}
+
+pub fn test-asm-runtime-helper-catalog() {
+    let f = asm! value-add(x: val, y: val) -> val {
+        out: val = {nil}
+        rt.add(out, x, y)
+        return out
+    }
+    assert(f(20, 22) == 42)
+    ty.gc()
+    assert(f('a', 'b') == 'ab')
+}

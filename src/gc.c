@@ -16,6 +16,7 @@
 #include "chan.h"
 #include "queue.h"
 #include "screen.h"
+#include "lir.h"
 
 static GCRootSet ImmortalSet;
 
@@ -140,6 +141,14 @@ collect(Ty *ty, struct alloc *a)
                 mF(((FunUserInfo *)p)->doc);
                 mF(((FunUserInfo *)p)->proto);
                 mF(((FunUserInfo *)p)->name);
+                break;
+
+        case GC_JIT_CODE:
+                lir_code_destroy(p);
+                break;
+
+        case GC_LIR:
+                lir_destroy(p);
                 break;
 
         case GC_FFI_AUTO:

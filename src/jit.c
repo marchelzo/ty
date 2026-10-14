@@ -3,13 +3,6 @@
 #include <stdbool.h>
 #include <string.h>
 #include <math.h>
-#include <sys/mman.h>
-#include <unistd.h>
-#include <pthread.h>
-
-#ifdef __APPLE__
-#include <libkern/OSCacheControl.h>
-#endif
 
 #include "ty.h"
 #include "value.h"
@@ -18,9 +11,11 @@
 #include "scope.h"
 #include "class.h"
 #include "jit.h"
+#include "lir.h"
 #include "log.h"
 #include "vm.h"
 #include "compiler.h"
+#include "cffi.h"
 #include "str.h"
 #include "array.h"
 #include "dict.h"
@@ -34,6 +29,156 @@
 #include "compiler.h"
 
 char JIT;
+
+static void
+lir_arity_error(Ty *ty, i32 expected, i32 actual)
+{
+        zP("jit: expected %d arguments but got %d", expected, actual);
+}
+
+static void
+lir_arg_type_error(Ty *ty, i32 index, LirType type, Value const *v)
+{
+        zP("jit: argument %d has an invalid value for C type %d: %s", index + 1, type, VSC(v));
+}
+
+static void
+lir_interpret_error(Ty *ty, LirError const *error)
+{
+        zP("jit interpreter: %s", error->message);
+}
+
+static void *
+lir_rebase(Ty *ty, LirEntryFrame *frame)
+{
+        uptr base = (uptr)frame->base;
+        uptr end = base + frame->capacity * sizeof (Value);
+        uptr ai = (uptr)frame->args;
+        uptr oi = (uptr)frame->out;
+        if (base != 0 && ai >= base && ai <= end) {
+                frame->args = (void *)((uptr)ty->stack.items + ai - base);
+        }
+        if (base != 0 && oi >= base && oi < end) {
+                frame->out = (void *)((uptr)ty->stack.items + oi - base);
+        }
+        frame->base     = ty->stack.items;
+        frame->capacity = ty->stack.capacity;
+        return frame->out;
+}
+
+static void *
+lir_ptr_from(Ty *ty, LirEntryFrame *frame, i32 index)
+{
+        Value v = frame->args[index];
+        void *p;
+        if (!ptr_from_ty(ty, &v, &p)) {
+                lir_arg_type_error(ty, index, LIR_TYPE_PTR, &v);
+        }
+        lir_rebase(ty, frame);
+        return p;
+}
+
+static void *
+lir_ref_from(Ty *ty, Value const *v, i32 index)
+{
+        switch (v->type & ~VALUE_TAGGED) {
+        case VALUE_ARRAY: return v->array;
+        case VALUE_DICT: return v->dict;
+        case VALUE_SET: return v->set;
+        case VALUE_HEAP: return v->heap;
+        case VALUE_BLOB: return v->blob;
+        case VALUE_OBJECT: return v->object;
+        case VALUE_TUPLE: return v->items;
+        case VALUE_STRING:
+                return v->str0 == NULL || v->ro ? value_string_clone(ty, v->str, v->bytes) : v->str0;
+        case VALUE_NIL: return NULL;
+        default:
+                lir_arg_type_error(ty, index, LIR_TYPE_REF, v);
+                return NULL;
+        }
+}
+
+static void
+lir_reserve(Ty *ty, LirEntryFrame *frame, u32 n)
+{
+        usize count = ty->stack.count;
+        frame->base     = ty->stack.items;
+        frame->capacity = ty->stack.capacity;
+        frame->top      = count;
+        if (n > (SIZE_MAX / sizeof (Value)) - count) {
+                zP("jit: value stack is too large");
+        }
+        xvR(ty->stack, count + n);
+        lir_rebase(ty, frame);
+        if (n != 0) {
+                memset(ty->stack.items + count, 0, n * sizeof (Value));
+        }
+        ty->stack.count = count + n;
+}
+
+static Value *
+lir_restore(Ty *ty, LirEntryFrame *frame)
+{
+        lir_rebase(ty, frame);
+        ty->stack.count = frame->top;
+        return frame->out;
+}
+
+static void
+lir_unlock(Ty *ty)
+{
+        UnlockTy();
+}
+
+static void
+lir_lock(Ty *ty)
+{
+        LockTy();
+}
+
+static i32
+lir_vm_poll(Ty *ty, Value *top, void const *info)
+{
+        return vm_jit_handle_interrupt(ty, top, info);
+}
+
+static LirRuntime const LirVM = {
+        .interrupt = &JitInterruptFlag,
+        .poll = lir_vm_poll,
+        .current_ty = GetMyTy,
+        .arity_error = lir_arity_error,
+        .arg_type_error = lir_arg_type_error,
+        .ptr_from = lir_ptr_from,
+        .ref_from = lir_ref_from,
+        .reserve = lir_reserve,
+        .restore = lir_restore,
+        .unlock = lir_unlock,
+        .lock = lir_lock,
+        .interpret_error = lir_interpret_error
+};
+
+static void
+bc_perf_map(void *code, usize size, char const *name, Expr const *expr)
+{
+        char const *enabled = getenv("TY_JIT_PERF_MAP");
+        char const *mod;
+        char const *cls;
+        char *qualified;
+        usize n;
+        if (enabled == NULL || strcmp(enabled, "1") != 0) {
+                return;
+        }
+        mod = expr != NULL && expr->mod != NULL ? expr->mod->name : "";
+        cls = expr != NULL && expr->class != NULL ? expr->class->name : "";
+        n = strlen(mod) + strlen(cls) + strlen(name) + 3;
+        qualified = malloc(n);
+        if (qualified != NULL) {
+                snprintf(qualified, n, "%s%s%s%s%s", mod, *mod ? "." : "",
+                         cls, *cls ? "." : "", name);
+                jm_perf(code, size, qualified);
+                free(qualified);
+        }
+}
 
 typedef struct {
         u32 pc;
@@ -158,8 +303,18 @@ static int const x64_param_regs[] = {7, 6, 2, 1};
 #  define JIT_ARCH_NONE 1
 #endif
 #if defined(JIT_ARCH_NONE)
-void jit_init(Ty *ty) { (void)ty; }
-void jit_free(Ty *ty) { (void)ty; }
+void
+jit_init(Ty *ty)
+{
+        (void)ty;
+        lir_set_runtime(&LirVM);
+}
+void
+jit_free(Ty *ty)
+{
+        (void)ty;
+        jm_trim();
+}
 JitFn *jit_compile(Ty *ty, Value const *func) { (void)ty; (void)func; return NULL; }
 #else
 
@@ -3968,6 +4123,10 @@ static int
 jit_rt_yield_none(Ty *ty, Value *top)
 {
         vN(STACK) = top - vv(STACK);
+        if (vN(ty->st->frames) > 1) {
+                xvP(STACK, NIL);
+                return -1;
+        }
         xvP(STACK, None);
         DoYield(ty);
         return vvL(ty->st->frames)->fp;
@@ -13602,142 +13761,16 @@ bc_plan_raw_cache(JitCtx *ctx, char const *code, int code_size)
 #endif
 }
 
-enum {
-        JIT_REGION_SIZE  = 128 << 20,
-        JIT_REGION_ALIGN = 16
-};
-
-static TySpinLock JitRegionLock;
-static char *JitRegionRX;
-static char *JitRegionRW;
-static usize JitRegionUsed;
-static bool JitRegionTried;
-
-#if defined(__linux__)
-static void
-JitRegionAfterFork(void)
-{
-        TySpinLockInit(&JitRegionLock);
-        JitRegionRX = NULL;
-        JitRegionRW = NULL;
-}
-#endif
-
-static void
-JitRegionInit(void)
-{
-#if defined(__APPLE__) && defined(MAP_JIT)
-        void *p = mmap(
-                NULL, JIT_REGION_SIZE,
-                PROT_READ | PROT_WRITE | PROT_EXEC,
-                MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT,
-                -1, 0
-        );
-
-        if (p != MAP_FAILED) {
-                JitRegionRX = p;
-                JitRegionRW = p;
-        }
-#elif defined(__linux__)
-        void *rw = MAP_FAILED;
-        void *rx = MAP_FAILED;
-        int fd = memfd_create("ty-jit", MFD_CLOEXEC);
-
-        if (fd == -1) {
-                return;
-        }
-
-        if (ftruncate(fd, JIT_REGION_SIZE) != 0) {
-                goto End;
-        }
-
-        rw = mmap(NULL, JIT_REGION_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-        if (rw == MAP_FAILED) {
-                goto End;
-        }
-
-        rx = mmap(NULL, JIT_REGION_SIZE, PROT_READ | PROT_EXEC, MAP_SHARED, fd, 0);
-        if (rx == MAP_FAILED) {
-                munmap(rw, JIT_REGION_SIZE);
-                goto End;
-        }
-
-        if (pthread_atfork(NULL, NULL, JitRegionAfterFork) != 0) {
-                munmap(rw, JIT_REGION_SIZE);
-                munmap(rx, JIT_REGION_SIZE);
-                goto End;
-        }
-
-        JitRegionRW = rw;
-        JitRegionRX = rx;
-End:
-        close(fd);
-#endif
-}
-
-static JitCode *
-JitAlloc(usize size, char **rw)
-{
-        usize n = (size + JIT_REGION_ALIGN - 1) & ~(usize)(JIT_REGION_ALIGN - 1);
-        JitCode *meta = NULL;
-
-        TySpinLockLock(&JitRegionLock);
-
-        if (!JitRegionTried) {
-                JitRegionTried = true;
-                JitRegionInit();
-        }
-
-        if (
-                (JitRegionRX != NULL)
-             && (n <= JIT_REGION_SIZE - JitRegionUsed)
-        ) {
-                meta = (JitCode *)(JitRegionRX + JitRegionUsed);
-                *rw  = JitRegionRW + JitRegionUsed;
-                JitRegionUsed += n;
-        }
-
-        TySpinLockUnlock(&JitRegionLock);
-
-        return meta;
-}
-
-static JitCode *
-JitMapOne(usize size)
-{
-        void *p = mmap(
-                NULL, size,
-                PROT_READ | PROT_WRITE,
-#ifdef MAP_JIT
-                MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT,
-#else
-                MAP_PRIVATE | MAP_ANONYMOUS,
-#endif
-                -1, 0
-        );
-
-        return (p == MAP_FAILED) ? NULL : p;
-}
-
-inline static void
-JitWriteBegin(void)
-{
-#if defined(__APPLE__) && defined(__aarch64__)
-        pthread_jit_write_protect_np(0);
-#endif
-}
-
-inline static void
-JitWriteEnd(void)
-{
-#if defined(__APPLE__) && defined(__aarch64__)
-        pthread_jit_write_protect_np(1);
-#endif
-}
+#include "jit_lir.h"
 
 JitFn *
 jit_compile(Ty *ty, Value const *func)
 {
+        JitFn *lir = bc_lir_compile(ty, func);
+        if (lir != NULL) {
+                return lir;
+        }
+
 #ifdef TY_PROFILER
         u64 compile_t0 = jit_wall_time();
 #endif
@@ -13921,15 +13954,9 @@ jit_compile(Ty *ty, Value const *func)
                 return NULL;
         }
 
-        bool mapped = false;
-        char *rw = NULL;
-        JitCode *meta = JitAlloc(mapping_size, &rw);
-
-        if (meta == NULL) {
-                meta = JitMapOne(mapping_size);
-                rw = (char *)meta;
-                mapped = true;
-        }
+        JitMapping mapping = jm_alloc(mapping_size);
+        JitCode *meta = mapping.rx;
+        char *rw = mapping.rw;
 
         if (meta == NULL) {
                 dasm_free(&asm);
@@ -13941,7 +13968,7 @@ jit_compile(Ty *ty, Value const *func)
         JitCode *wmeta = (JitCode *)rw;
         void *wcode = wmeta + 1;
 
-        JitWriteBegin();
+        jm_write_begin();
 
         wmeta->size    = final_size;
         wmeta->table   = table_offset;
@@ -13962,32 +13989,17 @@ jit_compile(Ty *ty, Value const *func)
         status = dasm_encode(&asm, wcode);
         dasm_free(&asm);
 
-        JitWriteEnd();
+        bool sealed = jm_write_end(mapping.rx, mapping_size);
 
-        if (status != DASM_S_OK) {
+        if (status != DASM_S_OK || !sealed) {
                 bc_note_fail(&ctx, "dasm_encode status 0x%x", (unsigned)status);
                 jit_audit_report(&ctx, "encode", 0);
-                if (mapped) {
-                        munmap(meta, mapping_size);
-                }
+                jm_free(mapping.rx);
                 bc_free_cfg(&ctx);
                 return NULL;
         }
 
-#ifdef __APPLE__
-        sys_icache_invalidate(code, final_size);
-#elif defined(__aarch64__)
-        __builtin___clear_cache(code, (char *)code + final_size);
-#endif
-
-        if (
-                mapped
-             && mprotect(meta, mapping_size, PROT_READ | PROT_EXEC) != 0
-        ) {
-                munmap(meta, mapping_size);
-                bc_free_cfg(&ctx);
-                return NULL;
-        }
+        bc_perf_map(code, final_size, name, _e);
 
 #if JIT_SCAN_LOG
         LOGX("JIT: compiled %s (%d params, %d bound, %zu bytes native)",
@@ -14026,7 +14038,7 @@ void
 jit_init(Ty *ty)
 {
         (void)ty;
-        TySpinLockInit(&JitRegionLock);
+        lir_set_runtime(&LirVM);
 #ifdef TY_PROFILER
         TySpinLockInit(&JitLogMutex);
 #endif
@@ -14036,7 +14048,7 @@ void
 jit_free(Ty *ty)
 {
         (void)ty;
-        // TODO: munmap all cached JIT code
+        jm_trim();
 }
 
 #endif // JIT_ARCH_NONE

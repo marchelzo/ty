@@ -1,0 +1,1950 @@
+import ffi as c
+import jit as j
+import ty
+import ty.token as jt
+import ty.lex as jl
+import ty.parse as jp
+
+let OPS = j._ops()
+let OP_SIGNATURES = j._op-signatures()
+
+pub ARCH = j._arch()
+pub OS = __apple__ ? 'macos' : (__linux__ ? 'linux' : 'freebsd')
+
+pub class Error < RuntimeError {
+    op: Int;
+    span: (Int, Int, Int);
+
+    init(message: String, op: Int = -1, span: (Int, Int, Int) = (0, 0, 0)) {
+        super(message)
+        self.op = op
+        self.span = span
+    }
+}
+
+fn check-error(error: Any) {
+    if let (message: String, op: Int, source: Int, start: Int, end: Int) = error {
+        throw Error(message, op, (source, start, end))
+    }
+}
+
+pub class Type {
+    code: Int;
+    name: String;
+    cls: Int;
+    size: Int;
+
+    init(code: Int, name: String, cls: Int, size: Int) {
+        self.code = code
+        self.name = name
+        self.cls = cls
+        self.size = size
+    }
+
+    __str__() -> String { name }
+}
+
+pub VOID = Type(0, 'void', -1, 0)
+pub I8   = Type(1, 'i8', 1, 1)
+pub U8   = Type(2, 'u8', 1, 1)
+pub I16  = Type(3, 'i16', 1, 2)
+pub U16  = Type(4, 'u16', 1, 2)
+pub I32  = Type(5, 'i32', 0, 4)
+pub U32  = Type(6, 'u32', 0, 4)
+pub I64  = Type(7, 'i64', 1, 8)
+pub U64  = Type(8, 'u64', 1, 8)
+pub F32  = Type(9, 'f32', 2, 4)
+pub F64  = Type(10, 'f64', 3, 8)
+pub BOOL = Type(11, 'bool', 1, 1)
+pub PTR  = Type(12, 'ptr', 4, 8)
+pub REF  = Type(13, 'ref', 5, 8)
+pub VAL  = Type(14, 'val', 4, 32)
+
+let TYPES = [VOID, I8, U8, I16, U16, I32, U32, I64, U64,
+             F32, F64, BOOL, PTR, REF, VAL]
+let CLASSES = [I32, I64, F32, F64, PTR, REF]
+
+pub EQ  = 0
+pub NE  = 1
+pub LT  = 2
+pub LE  = 3
+pub GT  = 4
+pub GE  = 5
+pub ULT = 6
+pub ULE = 7
+pub UGT = 8
+pub UGE = 9
+pub FEQ = 10
+pub FNE = 11
+pub FLT = 12
+pub FLE = 13
+pub FGT = 14
+pub FGE = 15
+pub FUN = 16
+
+pub MAY_GC = 1
+pub MAY_THROW = 2
+pub RETURNS_TWICE = 4
+pub NORETURN = 8
+pub SITE = 16
+
+let OFFSETS = j._layout()
+
+pub ns layout {
+    pub VALUE_SIZE = OFFSETS['VALUE_SIZE'] ?? throw Error('missing layout offset')
+    pub OFF_TYPE = OFFSETS['OFF_TYPE'] ?? throw Error('missing layout offset')
+    pub OFF_TAGS = OFFSETS['OFF_TAGS'] ?? throw Error('missing layout offset')
+    pub OFF_Z = OFFSETS['OFF_Z'] ?? throw Error('missing layout offset')
+    pub OFF_REAL = OFFSETS['OFF_REAL'] ?? throw Error('missing layout offset')
+    pub OFF_BOOL = OFFSETS['OFF_BOOL'] ?? throw Error('missing layout offset')
+    pub OFF_PTR = OFFSETS['OFF_PTR'] ?? throw Error('missing layout offset')
+    pub OFF_CLASS = OFFSETS['OFF_CLASS'] ?? throw Error('missing layout offset')
+    pub OFF_OBJECT = OFFSETS['OFF_OBJECT'] ?? throw Error('missing layout offset')
+    pub OFF_STR = OFFSETS['OFF_STR'] ?? throw Error('missing layout offset')
+    pub OFF_BYTES = OFFSETS['OFF_BYTES'] ?? throw Error('missing layout offset')
+    pub OFF_COUNT = OFFSETS['OFF_COUNT'] ?? throw Error('missing layout offset')
+    pub OFF_ITEMS = OFFSETS['OFF_ITEMS'] ?? throw Error('missing layout offset')
+    pub OFF_SLOTS = OFFSETS['OFF_SLOTS'] ?? throw Error('missing layout offset')
+
+    pub Array = ({
+        OFF_ITEMS: OFFSETS['ARRAY_OFF_ITEMS'] ?? throw Error('missing layout offset'),
+        OFF_COUNT: OFFSETS['ARRAY_OFF_COUNT'] ?? throw Error('missing layout offset'),
+        OFF_CAPACITY: OFFSETS['ARRAY_OFF_CAPACITY'] ?? throw Error('missing layout offset'),
+    })
+
+    pub Blob = ({
+        OFF_ITEMS: OFFSETS['BLOB_OFF_ITEMS'] ?? throw Error('missing layout offset'),
+        OFF_COUNT: OFFSETS['BLOB_OFF_COUNT'] ?? throw Error('missing layout offset'),
+        OFF_CAPACITY: OFFSETS['BLOB_OFF_CAPACITY'] ?? throw Error('missing layout offset'),
+    })
+
+    pub Dict = ({
+        OFF_ITEMS: OFFSETS['DICT_OFF_ITEMS'] ?? throw Error('missing layout offset'),
+        OFF_COUNT: OFFSETS['DICT_OFF_COUNT'] ?? throw Error('missing layout offset'),
+        OFF_CAPACITY: OFFSETS['DICT_OFF_CAPACITY'] ?? throw Error('missing layout offset'),
+    })
+}
+
+pub ns `tag` {
+    let TAGS = j._tags()
+    pub ZERO = TAGS['ZERO'] ?? throw Error('missing value tag')
+    pub INT = TAGS['INT'] ?? throw Error('missing value tag')
+    pub FLOAT = TAGS['FLOAT'] ?? throw Error('missing value tag')
+    pub BOOL = TAGS['BOOL'] ?? throw Error('missing value tag')
+    pub NIL = TAGS['NIL'] ?? throw Error('missing value tag')
+    pub STRING = TAGS['STRING'] ?? throw Error('missing value tag')
+    pub ARRAY = TAGS['ARRAY'] ?? throw Error('missing value tag')
+    pub DICT = TAGS['DICT'] ?? throw Error('missing value tag')
+    pub SET = TAGS['SET'] ?? throw Error('missing value tag')
+    pub HEAP = TAGS['HEAP'] ?? throw Error('missing value tag')
+    pub BLOB = TAGS['BLOB'] ?? throw Error('missing value tag')
+    pub TUPLE = TAGS['TUPLE'] ?? throw Error('missing value tag')
+    pub OBJECT = TAGS['OBJECT'] ?? throw Error('missing value tag')
+    pub PTR = TAGS['PTR'] ?? throw Error('missing value tag')
+    pub REF = TAGS['REF'] ?? throw Error('missing value tag')
+    pub FUNCTION = TAGS['FUNCTION'] ?? throw Error('missing value tag')
+    pub BOUND_FUNCTION = TAGS['BOUND_FUNCTION'] ?? throw Error('missing value tag')
+    pub STAR_FUNCTION = TAGS['STAR_FUNCTION'] ?? throw Error('missing value tag')
+    pub FOREIGN_FUNCTION = TAGS['FOREIGN_FUNCTION'] ?? throw Error('missing value tag')
+    pub JIT_FUNCTION = TAGS['JIT_FUNCTION'] ?? throw Error('missing value tag')
+    pub NATIVE_FUNCTION = TAGS['NATIVE_FUNCTION'] ?? throw Error('missing value tag')
+    pub BUILTIN_FUNCTION = TAGS['BUILTIN_FUNCTION'] ?? throw Error('missing value tag')
+    pub METHOD = TAGS['METHOD'] ?? throw Error('missing value tag')
+    pub BUILTIN_METHOD = TAGS['BUILTIN_METHOD'] ?? throw Error('missing value tag')
+    pub CLASS = TAGS['CLASS'] ?? throw Error('missing value tag')
+    pub GENERATOR = TAGS['GENERATOR'] ?? throw Error('missing value tag')
+    pub GENERATOR_0 = TAGS['GENERATOR_0'] ?? throw Error('missing value tag')
+    pub TAG = TAGS['TAG'] ?? throw Error('missing value tag')
+    pub OPERATOR = TAGS['OPERATOR'] ?? throw Error('missing value tag')
+    pub TYPE = TAGS['TYPE'] ?? throw Error('missing value tag')
+    pub REGEX = TAGS['REGEX'] ?? throw Error('missing value tag')
+    pub QUEUE = TAGS['QUEUE'] ?? throw Error('missing value tag')
+    pub SHARED_QUEUE = TAGS['SHARED_QUEUE'] ?? throw Error('missing value tag')
+    pub THREAD = TAGS['THREAD'] ?? throw Error('missing value tag')
+    pub SENTINEL = TAGS['SENTINEL'] ?? throw Error('missing value tag')
+    pub INDEX = TAGS['INDEX'] ?? throw Error('missing value tag')
+    pub NONE = TAGS['NONE'] ?? throw Error('missing value tag')
+    pub UNINITIALIZED = TAGS['UNINITIALIZED'] ?? throw Error('missing value tag')
+    pub NAMESPACE = TAGS['NAMESPACE'] ?? throw Error('missing value tag')
+    pub MODULE = TAGS['MODULE'] ?? throw Error('missing value tag')
+    pub TRACE = TAGS['TRACE'] ?? throw Error('missing value tag')
+    pub BREAK = TAGS['BREAK'] ?? throw Error('missing value tag')
+    pub TOMBSTONE = TAGS['TOMBSTONE'] ?? throw Error('missing value tag')
+    pub FUN_META = TAGS['FUN_META'] ?? throw Error('missing value tag')
+    pub ANY = TAGS['ANY'] ?? throw Error('missing value tag')
+    pub TAGGED = TAGS['TAGGED'] ?? throw Error('missing value tag')
+}
+
+pub class Code {
+    __handle: Ptr[Any];
+
+    init(handle: Ptr[Any]) { __handle = handle }
+
+    size -> Int { j._code-size(__handle) }
+
+    lir() -> String { j._code-lir(__handle) }
+
+    dis() -> String {
+        let bytes = j._code-bytes(__handle).list()
+        [bytes[i;i+16].map(it -> "{it:02x}").join(' ')
+         for i in 0..#bytes : 16].join('\n')
+    }
+}
+
+pub class Fn < Function {
+    ptr -> Ptr[Any] { j._ptr(self) }
+    code -> Code { Code(j._code(self)) }
+    name -> String { j._name(self) }
+
+    sig -> {params: Array[Type], ret: Type, nfixed: Int,
+            variadic?: Bool} {
+        let (r, ps, fixed, var?, _) = j._sig(self)
+        return {params: [TYPES[it] for ps], ret: TYPES[r],
+                nfixed: fixed, variadic?: var?}
+    }
+}
+
+pub class Encoding {
+    bytes: Blob;
+    ninputs: Int;
+    captures: Array[Array[Any]];
+
+    init(bytes: Blob, ninputs: Int = 0,
+         captures: Array[Array[Any]] = []) {
+        self.bytes = bytes
+        self.ninputs = ninputs
+        self.captures = captures
+    }
+}
+
+pub class Hole {
+    kind: Int;
+    id: Int;
+    type: Type;
+
+    init(id: Int, type: Type, callee?: Bool = false) {
+        self.id = id
+        self.type = type
+        kind = hole-kind(type, callee?)
+    }
+
+    encode() -> Array[Any] { [kind, id] }
+}
+
+fn hole-kind(type: Type, callee?: Bool) -> Int {
+    if callee? {
+        return 16
+    }
+    match type.code {
+        9 or 10 => 13,
+        12 => 14,
+        14 => 15,
+        1 or 2 or 3 or 4 or 5 or 6 or 7 or 8 or 11 => 12,
+        _ => throw Error('unsupported hole type'),
+    }
+}
+
+pub class Label {
+    asm: Asm;
+    id: Int;
+
+    init(asm: Asm, id: Int) {
+        self.asm = asm
+        self.id = id
+    }
+}
+
+pub class Mem {
+    base: Reg;
+    index: Reg | nil;
+    scale: Int;
+    disp: Int;
+    type: Type;
+
+    init(base: Reg, index: Reg | nil, scale: Int, disp: Int, type: Type) {
+        self.base = base
+        self.index = index
+        self.scale = scale
+        self.disp = disp
+        self.type = type
+    }
+
+    encode(asm: Asm) -> Array[Any] {
+        reg-operand(asm, base)
+        if let r: Reg = index {
+            reg-operand(asm, r)
+        }
+        [4, base.id, index.?id ?? -1, scale, disp, type.code]
+    }
+}
+
+pub class Reg {
+    asm: Asm;
+    id: Int;
+    type: Type;
+
+    init(asm: Asm, id: Int, type: Type) {
+        self.asm = asm
+        self.id = id
+        self.type = type
+    }
+
+    set(value: Any) { asm.move(self, value) }
+
+    off(type: Type, disp: Int = 0) -> Mem {
+        Mem(self, nil, 1, disp, type)
+    }
+
+    at(type: Type, index: Reg | Int, disp: Int = 0) -> Mem {
+        match index {
+            n: Int => off(type, disp + n * type.size),
+            r: Reg => indexed-memory(self, type, r, disp),
+        }
+    }
+}
+
+fn indexed-memory(base: Reg, type: Type, index: Reg, disp: Int) -> Mem {
+    if type.size in [1, 2, 4, 8] {
+        return Mem(base, index, type.size, disp, type)
+    }
+
+    Mem(base, base.asm.mul(index, type.size), 1, disp, type)
+}
+
+fn reg-operand(asm: Asm, reg: Reg) -> Array[Any] {
+    if reg.asm != asm {
+        throw Error('register belongs to another assembler')
+    }
+
+    [1, reg.id]
+}
+
+fn label-operand(asm: Asm, label: Label) -> Array[Any] {
+    if label.asm != asm {
+        throw Error('label belongs to another assembler')
+    }
+
+    [5, label.id]
+}
+
+fn operand(asm: Asm, value: Any) -> Array[Any] {
+    match value {
+        r: Reg => reg-operand(asm, r),
+        h: Hole => h.encode(),
+        l: Label => label-operand(asm, l),
+        m: Mem => m.encode(asm),
+        n: Int => [2, n],
+        f: Float => [3, f],
+        p: Ptr[Any] => [2, p],
+        _ => [7, j._const(asm.handle, value, false)],
+    }
+}
+
+fn target-operand(asm: Asm, target: Any) -> Array[Any] {
+    match target {
+        r: Reg => reg-operand(asm, r),
+        h: Hole => h.encode(),
+        f: Fn => [9, f],
+        h: rt.Helper => [10, h.handle],
+        _ => [2, target],
+    }
+}
+
+fn mode-code(mode: String | nil) -> Int {
+    match mode {
+        nil => 0,
+        'detached' => 1,
+        'attached' => 2,
+        _ => throw Error("invalid mode: {mode}"),
+    }
+}
+
+fn float?(reg: Reg) -> Bool { reg.type.cls in [2, 3] }
+
+fn scalar-type(value: Any) -> Type {
+    match value {
+        r: Reg => r.type,
+        h: Hole => h.type,
+        _: Float => F64,
+        _: Int => I64,
+        _: Ptr[Any] => PTR,
+        _ => VAL,
+    }
+}
+
+pub class Asm {
+    __handle: Ptr[Any];
+    params: Array[Reg];
+    name: String;
+    result: Type;
+    span: (Int, Int, Int);
+
+    init(name: String, params: Array[Type], ret: Type = VOID,
+         mode: String | nil = nil) {
+        self.name = name
+        result = ret
+        span = (0, 0, 0)
+        __handle = j._new(name, [it.code for params], ret.code, mode-code(mode))
+        self.params = [Reg(self, id, CLASSES[cls])
+                       for (id, cls) in j._params(__handle)]
+    }
+
+    handle -> Ptr[Any] { __handle }
+
+    emit(op: String, dst: Reg | nil, args: Array[Array[Any]],
+         meta: Dict[String, Any] | nil = nil) {
+        if let r: Reg = dst {
+            reg-operand(self, r)
+        }
+        let opcode = OPS[op] ?? throw Error("unknown operation: {op}")
+        let data = meta ?? %{}
+        data['span'] = [span[0], span[1], span[2]]
+        check-error(j._emit(__handle, opcode, dst.?id ?? -1, args, data))
+    }
+
+    reg(type: Type, init: Any = nil) -> Reg {
+        let r = Reg(self, j._reg(__handle, type.cls), type)
+        if init != nil {
+            r.set(init)
+        }
+        r
+    }
+
+    label() -> Label { Label(self, j._label(__handle)) }
+
+    bind(label: Label) {
+        label-operand(self, label)
+        check-error(j._bind(__handle, label.id))
+    }
+
+    move(dst: Reg, value: Any) {
+        emit('MOV', dst, [operand(self, value)])
+    }
+
+    unary(op: String, a: Reg, type: Type | nil = nil) -> Reg {
+        let r = reg(type ?? a.type)
+        emit(op, r, [operand(self, a)])
+        r
+    }
+
+    binary(op: String, a: Reg, b: Any) -> Reg {
+        let r = reg(a.type)
+        emit(op, r, [operand(self, a), operand(self, b)])
+        r
+    }
+
+    add(a: Reg, b: Any) -> Reg { binary(float?(a) ? 'FADD' : 'ADD', a, b) }
+    sub(a: Reg, b: Any) -> Reg { binary(float?(a) ? 'FSUB' : 'SUB', a, b) }
+    mul(a: Reg, b: Any) -> Reg { binary(float?(a) ? 'FMUL' : 'MUL', a, b) }
+    div(a: Reg, b: Any) -> Reg { binary(float?(a) ? 'FDIV' : 'SDIV', a, b) }
+    mod(a: Reg, b: Any) -> Reg { binary('SREM', a, b) }
+    mulhs(a: Reg, b: Any) -> Reg { binary('MULHS', a, b) }
+    mulhu(a: Reg, b: Any) -> Reg { binary('MULHU', a, b) }
+    udiv(a: Reg, b: Any) -> Reg { binary('UDIV', a, b) }
+    urem(a: Reg, b: Any) -> Reg { binary('UREM', a, b) }
+    band(a: Reg, b: Any) -> Reg { binary('AND', a, b) }
+    bor(a: Reg, b: Any) -> Reg { binary('OR', a, b) }
+    bxor(a: Reg, b: Any) -> Reg { binary('XOR', a, b) }
+    shl(a: Reg, b: Any) -> Reg { binary('SHL', a, b) }
+    shr(a: Reg, b: Any) -> Reg { binary('SHR', a, b) }
+    sar(a: Reg, b: Any) -> Reg { binary('SAR', a, b) }
+    rotr(a: Reg, b: Any) -> Reg { binary('ROTR', a, b) }
+    neg(a: Reg) -> Reg { unary(float?(a) ? 'FNEG' : 'NEG', a) }
+    bnot(a: Reg) -> Reg { unary('NOT', a) }
+    clz(a: Reg) -> Reg { unary('CLZ', a) }
+    ctz(a: Reg) -> Reg { unary('CTZ', a) }
+    popcnt(a: Reg) -> Reg { unary('POPCNT', a) }
+    bswap(a: Reg) -> Reg { unary('BSWAP', a) }
+    sext8(a: Reg) -> Reg { unary('SEXT8', a, I64) }
+    sext16(a: Reg) -> Reg { unary('SEXT16', a, I64) }
+    sext32(a: Reg) -> Reg { unary('SEXT32', a, I64) }
+    zext8(a: Reg) -> Reg { unary('ZEXT8', a, I64) }
+    zext16(a: Reg) -> Reg { unary('ZEXT16', a, I64) }
+    zext32(a: Reg) -> Reg { unary('ZEXT32', a, I64) }
+    fadd(a: Reg, b: Any) -> Reg { binary('FADD', a, b) }
+    fsub(a: Reg, b: Any) -> Reg { binary('FSUB', a, b) }
+    fmul(a: Reg, b: Any) -> Reg { binary('FMUL', a, b) }
+    fdiv(a: Reg, b: Any) -> Reg { binary('FDIV', a, b) }
+    fmin(a: Reg, b: Any) -> Reg { binary('FMIN', a, b) }
+    fmax(a: Reg, b: Any) -> Reg { binary('FMAX', a, b) }
+    fsqrt(a: Reg) -> Reg { unary('FSQRT', a) }
+    fabs(a: Reg) -> Reg { unary('FABS', a) }
+    fneg(a: Reg) -> Reg { unary('FNEG', a) }
+    i2f(a: Reg, type: Type = F64) -> Reg { unary('I2F', a, type) }
+    u2f(a: Reg, type: Type = F64) -> Reg { unary('U2F', a, type) }
+    f2i(a: Reg, type: Type = I64) -> Reg { unary('F2I', a, type) }
+    fext(a: Reg) -> Reg { unary('FEXT', a, F64) }
+    ftrunc(a: Reg) -> Reg { unary('FTRUNC', a, F32) }
+    bitcast(a: Reg, type: Type) -> Reg { unary('BITCAST', a, type) }
+
+    fma(a: Reg, b: Reg, c: Reg) -> Reg {
+        let r = reg(a.type)
+        emit('FMA', r, [operand(self, a), operand(self, b), operand(self, c)])
+        r
+    }
+
+    checked(op: String, a: Reg, b: Any, overflow: Label) -> Reg {
+        let r = reg(a.type)
+        emit(op, r, [operand(self, a), operand(self, b), operand(self, overflow)])
+        r
+    }
+
+    addo(a: Reg, b: Any, overflow: Label) -> Reg { checked('ADDO', a, b, overflow) }
+    subo(a: Reg, b: Any, overflow: Label) -> Reg { checked('SUBO', a, b, overflow) }
+    mulo(a: Reg, b: Any, overflow: Label) -> Reg { checked('MULO', a, b, overflow) }
+
+    jmp(label: Label) { emit('JMP', nil, [operand(self, label)]) }
+    brz(a: Reg, label: Label) { emit('BRZ', nil, [operand(self, a), operand(self, label)]) }
+    brnz(a: Reg, label: Label) { emit('BRNZ', nil, [operand(self, a), operand(self, label)]) }
+
+    br(cc: Int, a: Reg, b: Any, label: Label) {
+        emit(float?(a) ? 'FBR' : 'BR', nil,
+             [[6, cc], operand(self, a), operand(self, b), operand(self, label)])
+    }
+
+    switch(a: Reg, labels: Array[Label], default: Label) {
+        emit('SWITCH', nil, [operand(self, a), operand(self, default)],
+             %{'targets': [label-operand(self, it)[1] for labels]})
+    }
+
+    setcc(cc: Int, a: Reg, b: Any) -> Reg {
+        let r = reg(I64)
+        emit(float?(a) ? 'FSETCC' : 'SETCC', r,
+             [[6, cc], operand(self, a), operand(self, b)])
+        r
+    }
+
+    select(cc: Int, a: Reg, b: Any, then: Reg, other: Any) -> Reg {
+        let r = reg(then.type)
+        emit(float?(a) ? 'FSELECT' : 'SELECT', r,
+             [[6, cc], operand(self, a), operand(self, b),
+              operand(self, then), operand(self, other)])
+        r
+    }
+
+    load(mem: Mem) -> Reg {
+        let r = reg(mem.type)
+        emit(load-op(mem.type), r, [mem.encode(self)])
+        r
+    }
+
+    store(mem: Mem, value: Any) {
+        emit(store-op(mem.type), nil, [mem.encode(self), operand(self, value)])
+    }
+
+    lea(mem: Mem) -> Reg {
+        let r = reg(PTR)
+        emit('LEA', r, [mem.encode(self)])
+        r
+    }
+
+    cas(mem: Mem, expected: Any, value: Any) -> Reg {
+        let r = reg(mem.type)
+        emit('CAS', r, [mem.encode(self), operand(self, expected),
+                        operand(self, value)])
+        r
+    }
+
+    xadd(mem: Mem, value: Any) -> Reg {
+        let r = reg(mem.type)
+        emit('XADD', r, [mem.encode(self), operand(self, value)])
+        r
+    }
+
+    xchg(mem: Mem, value: Any) -> Reg {
+        let r = reg(mem.type)
+        emit('XCHG', r, [mem.encode(self), operand(self, value)])
+        r
+    }
+
+    alloca(n: Int, align: Int = 8) -> Reg {
+        let r = reg(PTR)
+        emit('ALLOCA', r, [[2, n], [2, align]])
+        r
+    }
+
+    const(value: Any) -> Reg {
+        let r = reg(PTR)
+        emit('MOV', r, [[7, j._const(__handle, value, false)]])
+        r
+    }
+
+    ref(value: Any) -> Reg {
+        let r = reg(REF)
+        emit('MOV', r, [[8, j._const(__handle, value, true)]])
+        r
+    }
+
+    vslot() -> Reg { Reg(self, j._vslot(__handle), PTR) }
+
+    ret(value: Any = nil) {
+        emit('RET', nil, value == nil ? [] : [operand(self, value)])
+    }
+
+    tag-of(value: Reg) -> Reg {
+        band(load(value.off(U8, layout.OFF_TYPE)), ~j.tag.TAGGED)
+    }
+
+    unbox(value: Reg, type-class: Class, `else`: Label) -> Reg {
+        let (wanted, type, offset) = unbox-layout(type-class)
+        br(NE, tag-of(value), wanted, `else`)
+        load(value.off(type, offset))
+    }
+
+    box(value: Reg, type-class: Class, into: Reg | nil = nil) -> Reg {
+        let (kind, type, offset) = box-layout(type-class)
+        let out = into ?? vslot()
+        for [0, 8, 16, 24] {
+            store(out.off(U64, it), 0)
+        }
+        store(out.off(type, offset), value)
+        store(out.off(U8, layout.OFF_TYPE), kind)
+        out
+    }
+
+    ty-context() -> Reg {
+        ccall(j._current-ty(), [], ret: PTR, sig: []) as Reg
+    }
+
+    call-ty(f: Any, args: Array[Reg]) -> Reg {
+        let xs = vslot()
+        ccall(rt.array-new, [xs])
+        for args {
+            ccall(rt.array-push, [xs, xs, it])
+        }
+        let out = vslot()
+        ccall(rt.call, [out, f, xs])
+        out
+    }
+
+    raw(arm64: Array[Int] | nil = nil, x64: Blob | nil = nil,
+        out: Dict[String, Reg] = %{}, clobber: Array[String] = [],
+        %kwargs: Dict[String, Any]) {
+        let inputs = raw-inputs(kwargs)
+        let (gp, fp) = raw-clobbers(clobber)
+        emit('RAW', nil, [], %{
+            'arm64': arm64, 'x64': x64,
+            'in': [raw-binding(self, name, r) for (name, r) in inputs],
+            'out': [raw-binding(self, name, r) for (name, r) in out],
+            'gpr-clobber': gp, 'fpr-clobber': fp,
+        })
+    }
+
+    fence() { emit('FENCE', nil, []) }
+    site(site-id: Int) { emit('SITE', nil, [[2, site-id]]) }
+    entry(label: Label, entry-id: Int = 0) {
+        emit('ENTRY', nil, [operand(self, label)], %{'tag': entry-id})
+    }
+    poll(deopt: Label) { emit('POLL', nil, [operand(self, deopt)]) }
+
+    ccall(target: Any, args: Array[Any], ret: Type = VOID,
+          sig: Array[Type] | nil = nil, may-gc: Bool = false,
+          may-throw: Bool = false, flags: Int = 0,
+          nfixed: Int | nil = nil) -> Reg | nil {
+        call-op(self, 'CALL', target, args, ret, sig, may-gc, may-throw,
+                flags, nfixed)
+    }
+
+    tailcall(target: Any, args: Array[Any], ret: Type = VOID,
+             sig: Array[Type] | nil = nil, may-gc: Bool = false,
+             may-throw: Bool = false, flags: Int = 0,
+             nfixed: Int | nil = nil) {
+        call-op(self, 'TAILCALL', target, args, ret, sig, may-gc, may-throw,
+                flags, nfixed)
+    }
+
+    dump(stage: String = 'lir') -> String {
+        let (text, error) = j._dump(__handle, stage)
+        check-error(error)
+        text as String
+    }
+
+    serialize() -> Encoding {
+        let (bytes, inputs, captures, error) = j._serialize(__handle)
+        check-error(error)
+        Encoding(bytes as Blob, inputs, captures)
+    }
+
+    finish() -> Fn {
+        let (compiled, error) = j._finish(__handle, Fn)
+        check-error(error)
+        compiled as Fn
+    }
+}
+
+fn raw-inputs(kwargs: Dict[String, Any]) -> Dict[String, Reg] {
+    let names = ['arm64', 'x64', 'in', 'out', 'clobber']
+    if kwargs.keys().any?(\_ not in names) {
+        throw Error('unknown raw option')
+    }
+    (kwargs['in'] ?? %{}) as Dict[String, Reg]
+}
+
+fn arm64-register(name: String) -> (Int, Bool) {
+    let [_, bank, number] = /^([xwvsd])(\d+)$/(name)
+        ?? throw Error("invalid arm64 register: {name}")
+    let p = int(number)
+    let fp? = bank in ['v', 's', 'd']
+    if p < 0 || p >= (fp? ? 32 : 29) || (!fp? && p == 18) {
+        throw Error("unavailable arm64 register: {name}")
+    }
+    (p, fp?)
+}
+
+fn x64-gpr(name: String, p: Int) -> (Int, Bool) {
+    if p in [4, 5] {
+        throw Error("unavailable x64 register: {name}")
+    }
+    (p, false)
+}
+
+fn x64-register(name: String) -> (Int, Bool) {
+    let names = ['rax', 'rcx', 'rdx', 'rbx', 'rsp', 'rbp', 'rsi', 'rdi',
+                 'r8', 'r9', 'r10', 'r11', 'r12', 'r13', 'r14', 'r15']
+    if let p: Int = names.search(name) {
+        return x64-gpr(name, p)
+    }
+
+    let [_, number] = /^xmm(\d+)$/(name)
+        ?? throw Error("invalid x64 register: {name}")
+    let p = int(number)
+    if p >= 16 {
+        throw Error("unavailable x64 register: {name}")
+    }
+    (p, true)
+}
+
+fn physical-register(name: String) -> (Int, Bool) {
+    match ARCH {
+        'arm64' => arm64-register(name),
+        'x64' => x64-register(name),
+        _ => throw Error('raw instructions require a native target'),
+    }
+}
+
+fn raw-binding(asm: Asm, name: String, reg: Reg) -> Array[Int] {
+    reg-operand(asm, reg)
+    let (p, fp?) = physical-register(name)
+    if fp? != float?(reg) {
+        throw Error("register class does not match {name}")
+    }
+
+    if ARCH == 'arm64' && !fp? && p in [16, 17] {
+        throw Error("raw bindings cannot use scratch register {name}")
+    }
+
+    [p, reg.id]
+}
+
+fn raw-clobbers(names: Array[String]) -> (Int, Int) {
+    let gp = 0
+    let fp = 0
+    for names {
+        let (p, fp?) = physical-register(it)
+        match fp? {
+            true => fp |= 1 << p,
+            false => gp |= 1 << p,
+        }
+    }
+    (gp, fp)
+}
+
+fn unbox-layout(type-class: Class) -> (Int, Type, Int) {
+    match type-class {
+        Int => (j.tag.INT, I64, layout.OFF_Z),
+        Float => (j.tag.FLOAT, F64, layout.OFF_REAL),
+        Bool => (j.tag.BOOL, U8, layout.OFF_BOOL),
+        Ptr => (j.tag.PTR, PTR, layout.OFF_PTR),
+        Blob => (j.tag.BLOB, REF, layout.OFF_PTR),
+        String => (j.tag.STRING, PTR, layout.OFF_STR),
+        Array => (j.tag.ARRAY, REF, layout.OFF_PTR),
+        _ => throw Error('unsupported unbox type'),
+    }
+}
+
+fn box-layout(type-class: Class) -> (Int, Type, Int) {
+    match type-class {
+        Int => (j.tag.INT, I64, layout.OFF_Z),
+        Float => (j.tag.FLOAT, F64, layout.OFF_REAL),
+        Bool => (j.tag.BOOL, U8, layout.OFF_BOOL),
+        Ptr => (j.tag.PTR, PTR, layout.OFF_PTR),
+        _ => throw Error('unsupported box type'),
+    }
+}
+
+fn load-op(type: Type) -> String {
+    match type.code {
+        8 or 12 or 13 or 14 => 'LD_I64',
+        11 => 'LD_U8',
+        _ => "LD_{type.name.upper()}",
+    }
+}
+
+fn store-op(type: Type) -> String {
+    match type.code {
+        9 => 'ST_F32',
+        10 => 'ST_F64',
+        _ => "ST{type.size * 8}",
+    }
+}
+
+fn known-target?(target: Any) -> Bool {
+    let t = type(target)
+    t == Fn || t == Function
+}
+
+fn call-op(asm: Asm, op: String, target: Any, args: Array[Any],
+           ret: Type, sig: Array[Type] | nil, may-gc: Bool,
+           may-throw: Bool, flags: Int, nfixed: Int | nil) -> Reg | nil {
+    let types = sig ?? [scalar-type(it) for args]
+    let fixed = nfixed ?? #types
+    let var? = nfixed != nil
+    let inferred-flags = 0
+
+    if known-target?(target) {
+        let (r, ps, nf, v?, fs) = j._sig(target)
+        ret = ret == VOID ? TYPES[r] : ret
+        types = sig ?? [TYPES[it] for ps]
+        fixed = nfixed ?? nf
+        var? = v?
+        inferred-flags = fs
+    }
+
+    if let h: rt.Helper = target {
+        ret = ret == VOID ? h.ret : ret
+        types = sig ?? h.params
+        fixed = #types
+        var? = false
+        inferred-flags = h.flags
+        args = #args == #types - 1 ? [asm.ty-context(), *args] : args
+    }
+
+    let dst = (op == 'TAILCALL' || ret == VOID) ? nil : asm.reg(ret)
+    let opts: Dict[String, Any] = %{
+        'ret': ret.code,
+        'types': [it.code for types],
+        'args': [operand(asm, it) for args],
+        'nfixed': fixed,
+        'variadic': var?,
+        'flags': flags | inferred-flags | (may-gc ? MAY_GC : 0)
+            | (may-throw ? MAY_THROW : 0),
+    }
+    asm.emit(op, dst, [target-operand(asm, target)], opts)
+    dst
+}
+
+pub fn +(a: Reg, b: Reg | Int | Float) -> Reg { a.asm.add(a, b) }
+pub fn -(a: Reg, b: Reg | Int | Float) -> Reg { a.asm.sub(a, b) }
+pub fn *(a: Reg, b: Reg | Int | Float) -> Reg { a.asm.mul(a, b) }
+pub fn /(a: Reg, b: Reg | Int | Float) -> Reg { a.asm.div(a, b) }
+pub fn %(a: Reg, b: Reg | Int) -> Reg { a.asm.mod(a, b) }
+pub fn &(a: Reg, b: Reg | Int) -> Reg { a.asm.band(a, b) }
+pub fn |(a: Reg, b: Reg | Int) -> Reg { a.asm.bor(a, b) }
+pub fn ^(a: Reg, b: Reg | Int) -> Reg { a.asm.bxor(a, b) }
+pub fn <<(a: Reg, b: Reg | Int) -> Reg { a.asm.shl(a, b) }
+pub fn >>(a: Reg, b: Reg | Int) -> Reg { a.asm.sar(a, b) }
+pub fn -(a: Reg) -> Reg { a.asm.neg(a) }
+
+pub fn load(encoding: Encoding, holes: Array[Any] = []) -> Fn {
+    let inputs = [hole-value(it) for holes]
+    let (f, error) = j._load(encoding.bytes, encoding.ninputs,
+                            encoding.captures, inputs, Fn)
+    check-error(error)
+    f as Fn
+}
+
+fn hole-value(value: Any) -> Any {
+    match value {
+        h: rt.Helper => h.handle,
+        _ => value,
+    }
+}
+
+pub fn serialize(asm: Asm) -> Encoding { asm.serialize() }
+
+pub fn interp(asm: Asm) -> Fn {
+    let (f, error) = j._interp(asm.handle, Fn)
+    check-error(error)
+    f as Fn
+}
+
+pub fn stats() -> {allocated: Int, used: Int, chunks: Int} {
+    let (allocated, used, chunks) = j._stats()
+    return {allocated, used, chunks}
+}
+
+
+pub ns rt {
+    pub class Helper {
+        name: String;
+        handle: Ptr[Any];
+        ret: Type;
+        params: Array[Type];
+        flags: Int;
+
+        init(name: String, handle: Ptr[Any], ret: Type,
+             params: Array[Type], flags: Int) {
+            self.name = name
+            self.handle = handle
+            self.ret = ret
+            self.params = params
+            self.flags = flags
+        }
+    }
+
+    let HELPERS = %{name: Helper(name, handle, TYPES[r],
+                                [TYPES[it] for params], flags)
+                   for (name, handle, r, params, flags) in j._helpers()}
+
+    pub fn helper(name: String) -> Helper {
+        HELPERS[name] ?? throw Error("unknown runtime helper: {name}")
+    }
+
+    /// (Ty*, Value* out, Value const* input, Value const* other) -> void
+    pub add = HELPERS['add'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input, Value const* other) -> void
+    pub sub = HELPERS['sub'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input, Value const* other) -> void
+    pub mul = HELPERS['mul'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input, Value const* other) -> void
+    pub div = HELPERS['div'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input, Value const* other) -> void
+    pub mod = HELPERS['mod'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input, Value const* other) -> void
+    pub pow = HELPERS['pow'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input, Value const* other) -> void
+    pub eq = HELPERS['eq'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input, Value const* other) -> void
+    pub ne = HELPERS['ne'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input, Value const* other) -> void
+    pub lt = HELPERS['lt'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input, Value const* other) -> void
+    pub le = HELPERS['le'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input, Value const* other) -> void
+    pub gt = HELPERS['gt'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input, Value const* other) -> void
+    pub ge = HELPERS['ge'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input, Value const* other) -> void
+    pub cmp = HELPERS['cmp'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input, Value const* other) -> void
+    pub subscript = HELPERS['subscript'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input, Value const* other, Value const* value) -> void
+    pub subscript-set = HELPERS['subscript-set'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input, Value const* other) -> void
+    pub member = HELPERS['member'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input, Value const* other, Value const* value) -> void
+    pub member-set = HELPERS['member-set'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* function, Value const* arguments) -> void
+    pub call = HELPERS['call'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input, Value const* other, Value const* value) -> void
+    pub call-method = HELPERS['call-method'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out) -> void
+    pub array-new = HELPERS['array-new'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input, Value const* other) -> void
+    pub array-push = HELPERS['array-push'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out) -> void
+    pub dict-new = HELPERS['dict-new'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input, Value const* other) -> void
+    pub dict-get = HELPERS['dict-get'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input, Value const* other, Value const* value) -> void
+    pub dict-set = HELPERS['dict-set'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input, Value const* other) -> void
+    pub str-concat = HELPERS['str-concat'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input) -> void
+    pub to-string = HELPERS['to-string'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input) -> void
+    pub hash = HELPERS['hash'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value const* exception) -> void
+    pub `throw` = HELPERS['throw'] ?? throw Error('missing runtime helper')
+    /// (Ty*, Value* out, Value const* input) -> void
+    pub alloc-object = HELPERS['alloc-object'] ?? throw Error('missing runtime helper')
+    /// (Ty*, i32 expected, i32 actual) -> void
+    pub arity-error = HELPERS['arity-error'] ?? throw Error('missing runtime helper')
+    /// (Ty*, i32 index, i32 type, Value const* value) -> void
+    pub arg-type-error = HELPERS['arg-type-error'] ?? throw Error('missing runtime helper')
+}
+
+ns asm-expr {
+    pub tag Number;
+    pub tag Name;
+    pub tag Hole;
+    pub tag Unary;
+    pub tag Binary;
+    pub tag Cast;
+    pub tag Memory;
+    pub tag Call;
+    pub tag Helper;
+}
+
+ns asm-stmt {
+    pub tag At;
+    pub tag Declare;
+    pub tag Assign;
+    pub tag If;
+    pub tag While;
+    pub tag Loop;
+    pub tag Break;
+    pub tag Continue;
+    pub tag Goto;
+    pub tag Label;
+    pub tag Return;
+    pub tag Effect;
+    pub tag Raw;
+}
+
+let ASM_TYPES = %{it.name: it for TYPES}
+let ASM_PRECEDENCE = %{
+    '||': 1, '&&': 2, '|': 3, '^': 4, '&': 5,
+    '==': 6, '!=': 6,
+    '<': 7, '<=': 7, '>': 7, '>=': 7,
+    'u<': 7, 'u<=': 7, 'u>': 7, 'u>=': 7,
+    '<<': 8, '>>': 8, 'u>>': 8,
+    '+': 9, '-': 9,
+    '*': 10, '/': 10, '%': 10, 'u/': 10, 'u%': 10,
+}
+let ASM_ASSIGN = ['=', '+=', '-=', '*=', '/=', '%=', '&=', '|=',
+                  '^=', '<<=', '>>=']
+
+class AsmToken {
+    text: String;
+    value: Any;
+    start: Int;
+    end: Int;
+
+    init(text: String, value: Any, start: Int, end: Int) {
+        self.text = text
+        self.value = value
+        self.start = start
+        self.end = end
+    }
+}
+
+fn asm-type(name: String) -> Type {
+    ASM_TYPES[name] ?? throw Error("asm!: unknown type '{name}'")
+}
+
+fn asm-number(text: String) -> Int | Float {
+    let digits = text.replace('_', '')
+    if digits.starts?('0x') || digits.starts?('0X') {
+        return int(digits)
+    }
+    digits.match?(/[.eE]/) ? float(digits) : int(digits)
+}
+
+class AsmReader {
+    __pending: Array[AsmToken];
+    holes: Array[Any];
+    known: Array[Any];
+    position: Int;
+
+    init() {
+        __pending = []
+        holes = []
+        known = []
+        position = jl.state().position.byte
+    }
+
+    skip-gap() {
+        while jl.peekc().?match?(/[ \t\r]/) {
+            jl.getc()
+        }
+    }
+
+    identifier(first: String) -> String {
+        let chars = [first]
+        while jl.peekc().?match?(/[A-Za-z0-9_]/) {
+            chars.push(jl.getc() as String)
+        }
+        chars.join('')
+    }
+
+    number(first: String) -> String {
+        let chars = [first]
+        while number-char?(jl.peekc(), chars[-1]) {
+            chars.push(jl.getc() as String)
+        }
+        chars.join('')
+    }
+
+    operator-token(first: String) -> String {
+        let chars = [first]
+        let next = jl.peekc()
+        if next != nil && "{first}{next}" in ['<<', '>>', '<=', '>=',
+            '==', '!=', '+=', '-=', '*=', '/=', '%=', '&=', '|=',
+            '^=', '&&', '||'] {
+            chars.push(jl.getc() as String)
+        }
+        let word = chars.join('')
+        if word in ['<<', '>>'] && jl.peekc() == '=' {
+            chars.push(jl.getc() as String)
+        }
+        chars.join('')
+    }
+
+    read() -> AsmToken {
+        skip-gap()
+        let start = jl.state().position.byte
+        let ch = jl.getc() ?? throw Error('asm!: unexpected end of source')
+        let token = classify(ch)
+        AsmToken(token[0], token[1], start, jl.state().position.byte)
+    }
+
+    classify(ch: String) -> (String, Any) {
+        if ch == '\n' {
+            return (';', nil)
+        }
+        if ch.match?(/[A-Za-z_]/) {
+            return read-name(ch)
+        }
+        if ch.match?(/[0-9]/) || (ch == '.' && jl.peekc().?match?(/[0-9]/)) {
+            return ('number', asm-number(number(ch)))
+        }
+        (operator-token(ch), nil)
+    }
+
+    read-name(ch: String) -> (String, Any) {
+        let name = identifier(ch)
+        if name == 'u' && jl.peekc() in ['/', '%', '<', '>'] {
+            return ("u{operator-token(jl.getc() as String)}", nil)
+        }
+        (name, nil)
+    }
+
+    peek(n: Int = 0) -> AsmToken {
+        while #__pending <= n {
+            __pending.push(read())
+        }
+        __pending[n]
+    }
+
+    next() -> AsmToken {
+        let token = peek()
+        __pending.pop(0)
+        position = token.end
+        token
+    }
+
+    accept(text: String) -> Bool {
+        if peek().text != text {
+            return false
+        }
+        next()
+        true
+    }
+
+    expect(text: String) -> AsmToken {
+        let token = next()
+        if token.text != text {
+            throw Error("asm!: expected '{text}', found '{token.text}'",
+                        span: (0, token.start, token.end))
+        }
+        token
+    }
+
+    separators() {
+        while accept(';') { }
+    }
+
+    hole() -> Any {
+        if #__pending != 0 {
+            throw Error('asm!: buffered tokens inside a Ty hole')
+        }
+        let expr = jp.expr()
+        let close = jt.next()
+        if close.type != '}' {
+            throw Error('asm!: expected closing brace after a Ty expression')
+        }
+        let index = #holes
+        holes.push(expr)
+        known.push(j._static-value(expr))
+        position = close.end.byte
+        asm-expr.Hole(index)
+    }
+}
+
+fn number-char?(ch: String | nil, previous: String) -> Bool {
+    match ch {
+        nil => false,
+        '+' or '-' => previous in ['e', 'E'],
+        c: String => c.match?(/[0-9a-fA-FxX._]/),
+    }
+}
+
+class AsmParser {
+    reader: AsmReader;
+
+    init() { reader = AsmReader() }
+
+    block() -> Array[Any] {
+        reader.expect('{')
+        statements()
+    }
+
+    statements() -> Array[Any] {
+        let out = []
+        reader.separators()
+        while reader.peek().text != '}' {
+            out.push(statement())
+            reader.separators()
+        }
+        reader.expect('}')
+        out
+    }
+
+    statement() -> Any {
+        let start = reader.peek().start
+        let value = statement-body()
+        asm-stmt.At(value, start, reader.position)
+    }
+
+    statement-body() -> Any {
+        match reader.peek().text {
+            'if' => parse-if(),
+            'while' => parse-while(),
+            'loop' => parse-loop(),
+            'break' => simple-statement(asm-stmt.Break),
+            'continue' => simple-statement(asm-stmt.Continue),
+            'goto' => parse-goto(),
+            'return' => parse-return(),
+            '.' => parse-raw(),
+            _ => parse-assignment(),
+        }
+    }
+
+    simple-statement(variant: Tag) -> Any { reader.next(); variant(nil) }
+
+    parse-if() -> Any {
+        reader.next()
+        let cond = expression()
+        let yes = block()
+        reader.separators()
+        let no = reader.accept('else') ? parse-else() : []
+        asm-stmt.If(cond, yes, no)
+    }
+
+    parse-else() -> Array[Any] {
+        reader.peek().text == 'if' ? [statement()] : block()
+    }
+
+    parse-while() -> Any {
+        reader.next()
+        let cond = expression()
+        asm-stmt.While(cond, block())
+    }
+
+    parse-loop() -> Any { reader.next(); asm-stmt.Loop(block()) }
+
+    parse-goto() -> Any { reader.next(); asm-stmt.Goto(reader.next().text) }
+
+    parse-return() -> Any {
+        reader.next()
+        let value = reader.peek().text in [';', '}'] ? nil : expression()
+        asm-stmt.Return(value)
+    }
+
+    parse-assignment() -> Any {
+        let first = reader.peek().text
+        if first.match?(/^[A-Za-z_]/) && reader.peek(1).text == ':' {
+            return parse-declaration()
+        }
+        let target = expression()
+        let op = reader.peek().text
+        if op in ASM_ASSIGN {
+            reader.next()
+            return asm-stmt.Assign(target, op, expression())
+        }
+        asm-stmt.Effect(target)
+    }
+
+    parse-declaration() -> Any {
+        let name = reader.next().text
+        reader.expect(':')
+        let next = reader.peek().text
+        if next not in ASM_TYPES {
+            return asm-stmt.Label(name)
+        }
+        let type = asm-type(reader.next().text)
+        let init = reader.accept('=') ? expression() : nil
+        asm-stmt.Declare(name, type, init)
+    }
+
+    parse-raw() -> Any {
+        reader.next()
+        let name = reader.next().text.upper()
+        let args = []
+        if reader.peek().text not in [';', '}'] {
+            args.push(expression())
+        }
+        while reader.accept(',') {
+            args.push(expression())
+        }
+        asm-stmt.Raw(name, args)
+    }
+
+    expression(min: Int = 0) -> Any {
+        let left = primary()
+        let op = reader.peek().text
+        while (ASM_PRECEDENCE[op] ?? -1) >= min {
+            reader.next()
+            let right = expression((ASM_PRECEDENCE[op] ?? 0) + 1)
+            left = asm-expr.Binary(op, left, right)
+            op = reader.peek().text
+        }
+        left
+    }
+
+    primary() -> Any {
+        let token = reader.next()
+        let value = prefix(token)
+        value = postfix(value)
+        value
+    }
+
+    prefix(token: AsmToken) -> Any {
+        match token.text {
+            'number' => asm-expr.Number(token.value),
+            '(' => parenthesized(),
+            '{' => reader.hole(),
+            '-' or '+' or '~' or '!' => asm-expr.Unary(token.text, primary()),
+            'rt' => helper-expression(),
+            'true' => asm-expr.Number(1),
+            'false' => asm-expr.Number(0),
+            _ => named-expression(token.text),
+        }
+    }
+
+    parenthesized() -> Any {
+        let value = expression()
+        reader.expect(')')
+        value
+    }
+
+    named-expression(name: String) -> Any {
+        if name in ASM_TYPES && reader.accept('[') {
+            return memory-expression(name)
+        }
+        asm-expr.Name(name)
+    }
+
+    memory-expression(name: String) -> Any {
+        let addr = expression()
+        reader.expect(']')
+        asm-expr.Memory(asm-type(name), addr)
+    }
+
+    helper-expression() -> Any {
+        reader.expect('.')
+        let parts = [reader.next().text]
+        while reader.accept('-') {
+            parts.push(reader.next().text)
+        }
+        asm-expr.Helper(rt.helper(parts.join('-')))
+    }
+
+    postfix(value: Any) -> Any {
+        let result = value
+        while reader.peek().text in ['(', 'as'] {
+            result = next-postfix(result)
+        }
+        result
+    }
+
+    next-postfix(value: Any) -> Any {
+        if reader.accept('as') {
+            return asm-expr.Cast(value, asm-type(reader.next().text))
+        }
+        reader.expect('(')
+        let args = []
+        if reader.peek().text != ')' {
+            args.push(expression())
+        }
+        while reader.accept(',') {
+            args.push(expression())
+        }
+        reader.expect(')')
+        asm-expr.Call(value, args)
+    }
+}
+let ASM_CC = %{
+    '==': EQ, '!=': NE, '<': LT, '<=': LE, '>': GT, '>=': GE,
+    'u<': ULT, 'u<=': ULE, 'u>': UGT, 'u>=': UGE,
+}
+let ASM_INT_OP = %{
+    '+': 'ADD', '-': 'SUB', '*': 'MUL', '/': 'SDIV', '%': 'SREM',
+    'u/': 'UDIV', 'u%': 'UREM', '&': 'AND', '|': 'OR', '^': 'XOR',
+    '<<': 'SHL', '>>': 'SAR', 'u>>': 'SHR',
+}
+let ASM_FLOAT_OP = %{'+': 'FADD', '-': 'FSUB', '*': 'FMUL', '/': 'FDIV'}
+let ASM_RAW_CC = %{
+    'eq': EQ, 'ne': NE, 'lt': LT, 'le': LE, 'gt': GT, 'ge': GE,
+    'ult': ULT, 'ule': ULE, 'ugt': UGT, 'uge': UGE,
+    'feq': FEQ, 'fne': FNE, 'flt': FLT, 'fle': FLE,
+    'fgt': FGT, 'fge': FGE, 'fun': FUN,
+}
+
+fn asm-unsigned?(type: Type) -> Bool { type.code in [2, 4, 6, 8, 11] }
+
+fn number-hint(n: Any, fallback: Type) -> Type {
+    n :: Float ? F64 : fallback
+}
+
+fn asm-common(a: Type, b: Type) -> Type {
+    if a == PTR || b == PTR {
+        return PTR
+    }
+    if a == F64 || b == F64 {
+        return F64
+    }
+    if a == F32 || b == F32 {
+        return F32
+    }
+    a
+}
+
+fn asm-condition(op: String, type: Type) -> Int {
+    let cc = ASM_CC[op] ?? throw Error("asm!: unknown comparison: {op}")
+    type.cls in [2, 3] ? cc + FEQ : cc
+}
+
+fn asm-ty-type(type: Type) -> Any {
+    match type.code {
+        0 => ty.Nil,
+        9 or 10 => $$[: Float $$],
+        11 => $$[: Bool $$],
+        12 or 13 => $$[: Ptr[Any] $$],
+        14 => ty.Any,
+        _ => $$[: Int $$],
+    }
+}
+
+class AsmLower {
+    asm: Asm;
+    reader: AsmReader;
+    __vars: Dict[String, Reg];
+    __labels: Dict[String, Label];
+    __loops: Array[(Label, Label)];
+
+    init(name: String, names: Array[String], params: Array[Type],
+         ret: Type, mode: String | nil, reader: AsmReader) {
+        asm = Asm(name, params: params, ret: ret, mode: mode)
+        self.reader = reader
+        __vars = %{}
+        __labels = %{}
+        __loops = []
+        for ..#names {
+            __vars[names[it]] = convert(asm.params[it], params[it])
+        }
+    }
+
+    variable(name: String) -> Reg {
+        __vars[name] ?? throw Error("asm!: undefined register '{name}'")
+    }
+
+    label(name: String) -> Label {
+        __labels[name] ?? (__labels[name] = asm.label())
+    }
+
+    hint(node: Any, fallback: Type = I64) -> Type {
+        match node {
+            asm-expr.Name(name) => variable(name).type,
+            asm-expr.Number(n) => number-hint(n, fallback),
+            asm-expr.Memory(type, _) => type,
+            asm-expr.Cast(_, type) => type,
+            asm-expr.Unary(_, x) => hint(x, fallback),
+            asm-expr.Binary(_, a, b) => asm-common(hint(a, fallback),
+                                                  hint(b, fallback)),
+            asm-expr.Hole(i) => known-type(reader.known[i], fallback),
+            asm-expr.Call(target, _) => call-type(target, fallback),
+            _ => fallback,
+        }
+    }
+
+    known-type(value: Any, fallback: Type) -> Type {
+        match value {
+            _: Float => F64,
+            _: Int => I64,
+            _: Bool => BOOL,
+            _: Ptr[Any] => PTR,
+            nil => fallback,
+            _ => VAL,
+        }
+    }
+
+    call-type(target: Any, fallback: Type) -> Type {
+        match target {
+            asm-expr.Helper(h) => h.ret,
+            asm-expr.Hole(i) => known-call-type(reader.known[i], fallback),
+            _ => fallback,
+        }
+    }
+
+    known-call-type(target: Any, fallback: Type) -> Type {
+        if target == nil {
+            return fallback
+        }
+        let (ret, _, _, _, _) = j._sig(target)
+        TYPES[ret]
+    }
+
+    expression(node: Any, expected: Type = I64) -> Reg {
+        match node {
+            asm-expr.Number(n) => number(n, expected),
+            asm-expr.Name(name) => variable(name),
+            asm-expr.Hole(i) => hole(i, expected),
+            asm-expr.Memory(type, addr) => asm.load(memory(type, addr)),
+            asm-expr.Cast(x, type) => convert(expression(x, hint(x)), type),
+            asm-expr.Unary(op, x) => unary(op, x, expected),
+            asm-expr.Binary(op, a, b) => binary(op, a, b, expected),
+            asm-expr.Call(target, args) => value-call(target, args, expected),
+            _ => throw Error('asm!: expected a scalar expression'),
+        }
+    }
+
+    number(n: Int | Float, type: Type) -> Reg {
+        if type.cls in [2, 3] {
+            return asm.reg(type, float(n))
+        }
+        asm.reg(n :: Float ? F64 : type, n)
+    }
+
+    hole(i: Int, expected: Type) -> Reg {
+        let type = known-type(reader.known[i], expected)
+        asm.reg(type, Hole(i, type))
+    }
+
+    convert(value: Reg, type: Type) -> Reg {
+        let from = value.type
+        if from == type {
+            return value
+        }
+        if type == BOOL {
+            return asm.setcc(from.cls in [2, 3] ? FNE : NE,
+                             value, from.cls in [2, 3] ? 0.0 : 0)
+        }
+        if from.cls in [2, 3] || type.cls in [2, 3] {
+            return convert-float(value, type)
+        }
+        if type.code in [1, 2, 3, 4, 5, 6] {
+            return asm.unary(narrow-op(type), value, type)
+        }
+        if from.cls == 0 && type.cls == 1 {
+            return asm.unary(asm-unsigned?(from) ? 'ZEXT32' : 'SEXT32',
+                             value, type)
+        }
+        if from.cls == type.cls {
+            return Reg(asm, value.id, type)
+        }
+        asm.bitcast(value, type)
+    }
+
+    convert-float(value: Reg, type: Type) -> Reg {
+        let from = value.type
+        if from.cls in [2, 3] && type.cls in [2, 3] {
+            return from == F32 ? asm.fext(value) : asm.ftrunc(value)
+        }
+        if type.cls in [2, 3] {
+            return asm-unsigned?(from) ? asm.u2f(value, type)
+                                       : asm.i2f(value, type)
+        }
+        asm.f2i(value, type)
+    }
+
+    unary(op: String, node: Any, expected: Type) -> Reg {
+        let value = expression(node, expected)
+        match op {
+            '+' => value,
+            '-' => asm.neg(value),
+            '~' => asm.bnot(value),
+            '!' => asm.setcc(float?(value) ? FEQ : EQ, value,
+                             float?(value) ? 0.0 : 0),
+            _ => throw Error("asm!: unsupported unary operator '{op}'"),
+        }
+    }
+
+    binary(op: String, left: Any, right: Any, expected: Type) -> Reg {
+        if op in ['&&', '||'] {
+            return logical(op, left, right)
+        }
+        let type = asm-common(hint(left, expected), hint(right, expected))
+        let a = convert(expression(left, type), type)
+        let btype = type == PTR ? I64 : type
+        let b = convert(expression(right, btype), btype)
+        if op in ASM_CC {
+            return asm.setcc(asm-condition(op, type), a, b)
+        }
+        let ops = float?(a) ? ASM_FLOAT_OP : ASM_INT_OP
+        let code = ops[op] ?? throw Error("asm!: unsupported operator '{op}'")
+        asm.binary(code, a, b)
+    }
+
+    logical(op: String, left: Any, right: Any) -> Reg {
+        let out = asm.reg(I64, op == '||' ? 1 : 0)
+        let done = asm.label()
+        let a = convert(expression(left), BOOL)
+        if op == '||' {
+            asm.brnz(a, done)
+        } else {
+            asm.brz(a, done)
+        }
+        out.set(convert(expression(right), BOOL))
+        asm.bind(done)
+        out
+    }
+
+    memory(type: Type, addr: Any) -> Mem {
+        match addr {
+            asm-expr.Binary('+', base, asm-expr.Number(n))
+                => expression(base, PTR).off(type, n as Int),
+            asm-expr.Binary('+', base,
+                asm-expr.Binary('*', index, asm-expr.Number(n)))
+                => indexed-memory(type, base, index, n as Int),
+            _ => convert(expression(addr, PTR), PTR).off(type, 0),
+        }
+    }
+
+    indexed-memory(type: Type, base: Any, index: Any, scale: Int) -> Mem {
+        if scale in [1, 2, 4, 8] {
+            return Mem(expression(base, PTR), expression(index),
+                       scale, 0, type)
+        }
+        let offset = asm.mul(expression(index), scale)
+        let pointer = asm.add(expression(base, PTR), offset)
+        pointer.off(type, 0)
+    }
+
+    call(target: Any, args: Array[Any], expected: Type,
+         op: String = 'CALL') -> Reg | nil {
+        match target {
+            asm-expr.Helper(helper) => helper-call(helper, args, op),
+            asm-expr.Hole(i) => hole-call(i, args, expected, op),
+            _ => throw Error('asm!: call target must be a Ty hole or rt helper'),
+        }
+    }
+
+    value-call(target: Any, args: Array[Any], expected: Type) -> Reg {
+        call(target, args, expected)
+            ?? throw Error('asm!: void call used as an expression')
+    }
+
+    helper-call(helper: rt.Helper, args: Array[Any], op: String) -> Reg | nil {
+        let types = #args == #helper.params - 1 ? helper.params[1;]
+                                              : helper.params
+        if #args != #types {
+            throw Error("asm!: wrong argument count for rt.{helper.name}")
+        }
+        let values = [expression(node, type)
+                      for (node, type) in args.zip(types)]
+        call-op(asm, op, helper, values, VOID, nil, false, false, 0, nil)
+    }
+
+    hole-call(i: Int, args: Array[Any], expected: Type,
+              op: String) -> Reg | nil {
+        let known = reader.known[i]
+        let signature = known == nil ? nil : j._sig(known)
+        let ret = signature == nil ? expected : TYPES[signature[0]]
+        let types = signature == nil ? [hint(it) for args]
+                                     : [TYPES[it] for signature[1]]
+        if #args != #types {
+            throw Error('asm!: callee argument count does not match signature')
+        }
+        let fixed = signature.?[2] ?? #types
+        let flags = signature.?[4] ?? 0
+        let values = [convert(expression(node, type), type)
+                      for (node, type) in args.zip(types)]
+        call-op(asm, op, Hole(i, PTR, callee?: true), values,
+                ret, types, false, false, flags,
+                signature.?[3] ? fixed : nil)
+    }
+
+    block(statements: Array[Any]) -> Bool {
+        let terminated? = false
+        for statements {
+            terminated? = statement(it)
+        }
+        terminated?
+    }
+
+    statement(node: Any) -> Bool {
+        let asm-stmt.At(value, start, end) = node
+        asm.span = (0, start, end)
+        statement-body(value)
+    }
+
+    statement-body(node: Any) -> Bool {
+        match node {
+            asm-stmt.Declare(name, type, init) => declare(name, type, init),
+            asm-stmt.Assign(target, op, value) => assign(target, op, value),
+            asm-stmt.If(cond, yes, no) => branch(cond, yes, no),
+            asm-stmt.While(cond, body) => loop(cond, body),
+            asm-stmt.Loop(body) => loop(nil, body),
+            asm-stmt.Break(_) => exit-loop(false),
+            asm-stmt.Continue(_) => exit-loop(true),
+            asm-stmt.Goto(name) => jump(name),
+            asm-stmt.Label(name) => bind(name),
+            asm-stmt.Return(value) => return-value(value),
+            asm-stmt.Effect(value) => effect(value),
+            asm-stmt.Raw(name, args) => raw(name, args),
+            _ => throw Error('asm!: invalid statement'),
+        }
+    }
+
+    declare(name: String, type: Type, init: Any) -> Bool {
+        if name in __vars || type == VOID {
+            throw Error("asm!: invalid or duplicate declaration '{name}'")
+        }
+        let reg = asm.reg(type)
+        __vars[name] = reg
+        if init != nil {
+            reg.set(convert(expression(init, type), type))
+        }
+        false
+    }
+
+    assign(target: Any, op: String, value: Any) -> Bool {
+        match target {
+            asm-expr.Name(name) => assign-register(variable(name), op, value),
+            asm-expr.Memory(type, addr) => assign-memory(type, addr, op, value),
+            _ => throw Error('asm!: invalid assignment target'),
+        }
+        false
+    }
+
+    assign-register(reg: Reg, op: String, value: Any) {
+        let rhs = convert(expression(value, reg.type), reg.type)
+        if op != '=' {
+            let code = (float?(reg) ? ASM_FLOAT_OP : ASM_INT_OP)[op[;-1]]
+                ?? throw Error('asm!: unsupported register assignment')
+            rhs = asm.binary(code, reg, rhs)
+        }
+        reg.set(convert(rhs, reg.type))
+    }
+
+    assign-memory(type: Type, addr: Any, op: String, value: Any) {
+        let mem = memory(type, addr)
+        let rhs = convert(expression(value, type), type)
+        if op != '=' {
+            let code = (type.cls in [2, 3] ? ASM_FLOAT_OP : ASM_INT_OP)[op[;-1]]
+                ?? throw Error('asm!: unsupported memory assignment')
+            rhs = asm.binary(code, asm.load(mem), rhs)
+        }
+        asm.store(mem, rhs)
+    }
+
+    branch(cond: Any, yes: Array[Any], no: Array[Any]) -> Bool {
+        let other = asm.label()
+        let done = asm.label()
+        asm.brz(convert(expression(cond), BOOL), other)
+        let yes? = block(yes)
+        if !yes? {
+            asm.jmp(done)
+        }
+        asm.bind(other)
+        let no? = block(no)
+        asm.bind(done)
+        yes? && no? && #no > 0
+    }
+
+    loop(cond: Any, body: Array[Any]) -> Bool {
+        let head = asm.label()
+        let done = asm.label()
+        asm.bind(head)
+        emit-loop-condition(cond, done)
+        __loops.push((head, done))
+        let terminated? = block(body)
+        __loops.pop()
+        if !terminated? {
+            asm.jmp(head)
+        }
+        asm.bind(done)
+        false
+    }
+
+    emit-loop-condition(cond: Any, done: Label) {
+        if cond != nil {
+            asm.brz(convert(expression(cond), BOOL), done)
+        }
+    }
+
+    exit-loop(continue?: Bool) -> Bool {
+        let pair = __loops[-1] ?? throw Error('asm!: break/continue outside a loop')
+        asm.jmp(continue? ? pair[0] : pair[1])
+        true
+    }
+
+    jump(name: String) -> Bool { asm.jmp(label(name)); true }
+    bind(name: String) -> Bool { asm.bind(label(name)); false }
+
+    return-value(node: Any) -> Bool {
+        if node == nil {
+            asm.ret()
+        } else {
+            asm.ret(convert(expression(node, asm.result), asm.result))
+        }
+        true
+    }
+
+    effect(node: Any) -> Bool {
+        match node {
+            asm-expr.Call(target, args) => call(target, args, VOID),
+            _ => expression(node),
+        }
+        false
+    }
+
+    raw(name: String, args: Array[Any]) -> Bool {
+        match name {
+            'RET' => return-value(args[0]),
+            'JMP' => raw-jump(args),
+            'FENCE' => asm.fence(),
+            'SITE' => asm.site(raw-number(args[0])),
+            'ENTRY' => asm.entry(label(raw-name(args[0]))),
+            'SWITCH' => raw-switch(args),
+            'CALL' or 'TAILCALL' => raw-call(name, args),
+            'RAW' => raw-words(args),
+            _ => raw-scalar(name, args),
+        }
+        name in ['RET', 'JMP', 'TAILCALL']
+    }
+
+    raw-switch(args: Array[Any]) {
+        let index = expression(args[0])
+        let default = label(raw-name(args[1]))
+        asm.switch(index, [label(raw-name(it)) for args[2;]], default)
+    }
+
+    raw-call(name: String, args: Array[Any]) {
+        let dst? = raw-destination?(args[0])
+        let target = dst? ? args[1] : args[0]
+        let values = dst? ? args[2;] : args[1;]
+        let type = name == 'TAILCALL' ? asm.result : raw-call-type(args[0], dst?)
+        let result = call(target, values, type, name)
+        if name == 'CALL' && dst? {
+            variable(raw-name(args[0])).set(result)
+        }
+    }
+
+    raw-destination?(node: Any) -> Bool {
+        match node {
+            asm-expr.Name(name) => name in __vars,
+            _ => false,
+        }
+    }
+
+    raw-call-type(dst: Any, dst?: Bool) -> Type {
+        dst? ? variable(raw-name(dst)).type : VOID
+    }
+
+    raw-words(args: Array[Any]) {
+        if ARCH == 'arm64' {
+            asm.raw(arm64: [raw-number(it) for args])
+        } else {
+            asm.raw(x64: Blob([raw-number(it) for args]))
+        }
+    }
+
+    raw-jump(args: Array[Any]) {
+        let asm-expr.Name(name) = args[0]
+        asm.jmp(label(name))
+    }
+
+    raw-scalar(name: String, args: Array[Any]) {
+        let signature = OP_SIGNATURES[name]
+            ?? throw Error("asm!: unknown instruction '{name}'")
+        let dst? = signature.starts?('d,')
+        let dst = dst? ? variable(raw-name(args[0])) : nil
+        let values = dst? ? args[1;] : args
+        asm.emit(name, dst, [raw-operand(it) for values])
+    }
+
+    raw-operand(node: Any) -> Array[Any] {
+        match node {
+            asm-expr.Memory(type, addr) => memory(type, addr).encode(asm),
+            asm-expr.Number(n) => operand(asm, n),
+            asm-expr.Name(name) => raw-named-operand(name),
+            _ => operand(asm, expression(node)),
+        }
+    }
+
+    raw-named-operand(name: String) -> Array[Any] {
+        if name in ASM_RAW_CC {
+            return [6, ASM_RAW_CC[name]]
+        }
+        if name in __vars {
+            return operand(asm, variable(name))
+        }
+        operand(asm, label(name))
+    }
+}
+
+fn narrow-op(type: Type) -> String {
+    match type.code {
+        1 => 'SEXT8', 2 => 'ZEXT8', 3 => 'SEXT16',
+        4 => 'ZEXT16', 5 => 'SEXT32', 6 => 'ZEXT32',
+        _ => throw Error('asm!: invalid narrowing conversion'),
+    }
+}
+
+fn raw-name(node: Any) -> String {
+    let asm-expr.Name(name) = node
+    name
+}
+
+fn raw-number(node: Any) -> Int {
+    let asm-expr.Number(n) = node
+    n as Int
+}
+
+fn asm-header-word() -> String {
+    let token = jt.next()
+    token.?id ?? token.type
+}
+
+fn asm-header-expect(word: String) {
+    let actual = asm-header-word()
+    if actual != word {
+        throw Error("asm!: expected '{word}', found '{actual}'")
+    }
+}
+
+fn expand-asm() -> Any {
+    let name = asm-header-word()
+    asm-header-expect('(')
+    let names = []
+    let params = []
+    while jt.peek().type != ')' {
+        names.push(asm-header-word())
+        asm-header-expect(':')
+        params.push(asm-type(asm-header-word()))
+        if jt.peek().type != ')' {
+            asm-header-expect(',')
+        }
+    }
+    asm-header-expect(')')
+    let ret = VOID
+    if jt.peek().type == '->' {
+        jt.next()
+        ret = asm-type(asm-header-word())
+    }
+    let mode = nil
+    if jt.peek().?id in ['attached', 'detached'] {
+        mode = asm-header-word()
+    }
+    let parser = AsmParser()
+    let statements = parser.block()
+    let lower = AsmLower(name, names, params, ret, mode, parser.reader)
+    let terminated? = lower.block(statements)
+    if !terminated? && ret == VOID {
+        lower.asm.ret()
+    }
+    let encoding = lower.asm.serialize()
+    let holes = ty.Array([ty.ArrayItem(item: it) for parser.reader.holes])
+    let call = ty.Call(func: ty.Value(load), args: [ty.Arg(arg: ty.Value(encoding)),
+                                                  ty.Arg(arg: holes)])
+    let signature = ty.FuncType(
+        ty.Record([ty.RecordEntry({item: asm-ty-type(it)}) for params]),
+        asm-ty-type(ret)
+    )
+    ty.Cast(call, ty.And(ty.Value(Fn), signature))
+}
+
+pub macro asm! { expand-asm() }

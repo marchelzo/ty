@@ -1759,6 +1759,7 @@ xjit(Ty *ty, isize depth, JitFn *func, i32 resume_idx, Value *args, Value **env)
 
         switch (JIT_REASON(rc)) {
         case JIT_RETURN:
+JitReturn:
                 CO_LOG("jit_return", TERM(93;1), "ret = %s", SHOW(vvL(STACK), BASIC));
                 IP = vXx(CALLS);
                 v = v_L(STACK);
@@ -1786,6 +1787,10 @@ xjit(Ty *ty, isize depth, JitFn *func, i32 resume_idx, Value *args, Value **env)
                 break;
 
         case JIT_YIELD_NONE:
+                if (vN(FRAMES) > 1) {
+                        push(NIL);
+                        goto JitReturn;
+                }
                 top->jit_resume = next_resume;
                 push(None);
                 CO_LOG("jit_yield_none", TERM(91;1), "yielding: %s", VSC(vvL(STACK)));
@@ -3204,6 +3209,23 @@ InertInit(Value const *init, int argc, Value const *kwargs)
             && expr_of(init)->inert;
 }
 
+static Value
+jfun_call(Ty *ty, Value const *f, int argc, Value *kwargs)
+{
+        Value fn = *f;
+        Value out = ZERO;
+        if (kwargs != NULL && kwargs->type == VALUE_DICT && kwargs->dict->count != 0) {
+                zP("jit: keyword arguments are not supported");
+        }
+        if (fn.jit_entry == NULL) {
+                zP("jit: function has no entry thunk");
+        }
+        gP(&fn);
+        fn.jit_entry(ty, &out, ty->stack.items + ty->stack.count - argc, argc);
+        gX();
+        return out;
+}
+
 bool
 DoCallEx(Ty *ty, Value const *f, int n, Value const *_kwargs, bool exec)
 {
@@ -3258,6 +3280,14 @@ DoCallEx(Ty *ty, Value const *f, int n, Value const *_kwargs, bool exec)
         case VALUE_FOREIGN_FUNCTION:
                 k = vN(STACK) - n;
                 v = cffi_fast_call(ty, &v, n, NULL);
+                STACK.count = k;
+                push(v);
+                CheckPendingSignals(ty);
+                return false;
+
+        case VALUE_JIT_FUNCTION:
+                k = vN(STACK) - n;
+                v = jfun_call(ty, &v, n, &kwargs);
                 STACK.count = k;
                 push(v);
                 CheckPendingSignals(ty);
@@ -3834,6 +3864,7 @@ BuiltinMember:
                 n = CLASS_FUNCTION;
                 goto ClassLookup;
 
+        case VALUE_JIT_FUNCTION:
         case VALUE_FOREIGN_FUNCTION:
                 if (member == NAMES._class_) {
                         pop();
@@ -3845,7 +3876,8 @@ BuiltinMember:
                         pop();
                         return NIL;
                 }
-                n = CLASS_FUNCTION;;
+                n = v.type == VALUE_JIT_FUNCTION && v.xinfo != NULL && v.xinfo->class > 0
+                  ? v.xinfo->class : CLASS_FUNCTION;
                 goto ClassLookup;
 
         case VALUE_BUILTIN_METHOD:
@@ -4368,6 +4400,7 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool maybe, bool exec)
         case VALUE_BOUND_FUNCTION:
         case VALUE_BUILTIN_FUNCTION:
         case VALUE_FOREIGN_FUNCTION:
+        case VALUE_JIT_FUNCTION:
         case VALUE_METHOD:
         case VALUE_BUILTIN_METHOD:
         case VALUE_OPERATOR:
@@ -6059,6 +6092,15 @@ DoTupleLiteral(Ty *ty)
 }
 
 void
+vm_jit_tuple_literal(Ty *ty, char *ip)
+{
+        char *saved = IP;
+        IP = ip;
+        DoTupleLiteral(ty);
+        IP = saved;
+}
+
+void
 IncValue(Ty *ty, Value *v)
 {
         i32 n;
@@ -6425,6 +6467,16 @@ SpreadShuffle(Ty *ty, bool inject_nil)
         }
         push(idx);
         push(xs);
+}
+
+bool
+vm_jit_spread_check(Ty *ty, bool inject_nil)
+{
+        bool done = vm_jit_loop_check(ty, 1);
+        if (!done) {
+                SpreadShuffle(ty, inject_nil);
+        }
+        return done;
 }
 
 static void
@@ -6895,6 +6947,8 @@ IntoMethod(Ty *ty, Value const *fun, i32 c)
                       ? uAo(size, GC_ANY)
                       : mrealloc(NULL, size);
         method.info = memcpy(storage, fun->info, size);
+        set_jit_of(&method, NULL);
+        set_jit_code_of(&method, NULL);
         DebugSanitizeCode(code_of(fun), code_of(&method), code_size_of(fun));
         method.info[FUN_INFO_CLASS] = c;
 
@@ -9076,6 +9130,9 @@ BinaryOp:
                         xvP(FRAMES, v_0(v.gen->st->frames));
                         vvL(FRAMES)->fp = vN(STACK);
                         xvPn(STACK, v_(v.gen->st->stack, 1), vN(v.gen->st->stack) - 1);
+                        if (v.gen->ip != code_of(&v.gen->f)) {
+                                push(NIL);
+                        }
                         xvP(ty->co_states, v.gen->st);
                         v.gen->st = NULL;
                         DOJUMP(jump);
@@ -10051,6 +10108,7 @@ TestCallable(Value const *v)
         case VALUE_BUILTIN_FUNCTION:
         case VALUE_BUILTIN_METHOD:
         case VALUE_FOREIGN_FUNCTION:
+        case VALUE_JIT_FUNCTION:
         case VALUE_OPERATOR:
                 return true;
 
@@ -10530,6 +10588,11 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect)
                 STACK.count = n;
                 return v;
 
+        case VALUE_JIT_FUNCTION:
+                v = jfun_call(ty, f, argc, kwargs);
+                STACK.count = n;
+                return v;
+
         case VALUE_FOREIGN_FUNCTION:
                 v = cffi_fast_call(ty, f, argc, kwargs);
                 STACK.count = n;
@@ -10631,6 +10694,11 @@ vm_call(Ty *ty, Value const *f, int argc)
                 STACK.count = n;
                 return v;
 
+        case VALUE_JIT_FUNCTION:
+                v = jfun_call(ty, f, argc, NULL);
+                STACK.count = n;
+                return v;
+
         case VALUE_FOREIGN_FUNCTION:
                 v = cffi_fast_call(ty, f, argc, NULL);
                 STACK.count = n;
@@ -10726,6 +10794,11 @@ vm_call1(Ty *ty, Value const *f, Value const *x)
                 STACK.count = n;
                 return v;
 
+        case VALUE_JIT_FUNCTION:
+                v = jfun_call(ty, f, 1, NULL);
+                STACK.count = n;
+                return v;
+
         case VALUE_FOREIGN_FUNCTION:
                 v = cffi_fast_call(ty, f, 1, NULL);
                 STACK.count = n;
@@ -10790,6 +10863,11 @@ vm_eval_function(Ty *ty, Value const *f, ...)
 
         case VALUE_BUILTIN_FUNCTION:
                 r = f->builtin_function(ty, argc, NULL);
+                STACK.count = n;
+                return r;
+
+        case VALUE_JIT_FUNCTION:
+                r = jfun_call(ty, f, argc, NULL);
                 STACK.count = n;
                 return r;
 
@@ -10996,7 +11074,6 @@ StepInstruction(char const *ip)
         CASE(LOAD_LOCAL)
         CASE(LOAD_REF)
         CASE(LOAD_CAPTURED)
-        CASE(BIND_CAPTURED)
         CASE(LOAD_GLOBAL)
         CASE(LOAD_THREAD_LOCAL)
                 SKIPVALUE(n);
@@ -11020,6 +11097,8 @@ StepInstruction(char const *ip)
         CASE(DUP2_SWAP)
                 break;
         CASE(JUMP)
+        CASE(TRY_UNAPPLY)
+        CASE(TRY_YIELD_FROM)
                 SKIPVALUE(n);
                 break;
         CASE(JUMP_IF)
@@ -11044,10 +11123,12 @@ StepInstruction(char const *ip)
         CASE(JUMP_AND)
         CASE(JUMP_OR)
         CASE(JUMP_WTF)
+        CASE(NONE_IF_NOT)
         CASE(SKIP_CHECK)
                 SKIPVALUE(n);
                 break;
         CASE(TARGET_GLOBAL)
+        CASE(TARGET_THREAD_LOCAL)
         CASE(ASSIGN_GLOBAL)
                 SKIPVALUE(n);
                 break;
@@ -11295,11 +11376,13 @@ StepInstruction(char const *ip)
                 SKIPVALUE(s);
                 break;
         CASE(RENDER_TEMPLATE)
+        CASE(NAMESPACE)
                 SKIPVALUE(s);
                 break;
         CASE(UNAPPLY)
                 break;
         CASE(TRAP)
+        CASE(TRAP_TY)
                 break;
         CASE(GET_NEXT)
                 break;
@@ -11370,6 +11453,8 @@ StepInstruction(char const *ip)
         CASE(RANGE)
         CASE(INCRANGE)
                 break;
+        CASE(STATIC_MEMBER_ACCESS)
+                SKIPVALUE(n);
         CASE(TRY_MEMBER_ACCESS)
         CASE(MEMBER_ACCESS)
         CASE(SELF_MEMBER_ACCESS)
@@ -11381,6 +11466,7 @@ StepInstruction(char const *ip)
         CASE(TARGET_DYN_MEMBER)
                 break;
         CASE(BIND_CLASS)
+        CASE(INTO_METHOD)
                 SKIPVALUE(n);
                 break;
         CASE(SLICE)
@@ -11540,6 +11626,9 @@ StepInstruction(char const *ip)
         CASE(RETURN)
         CASE(RETURN_PRESERVE_CTX)
         CASE(HALT)
+                break;
+        CASE(DEBUG)
+                SKIPSTR();
                 break;
         }
 
@@ -11924,6 +12013,583 @@ vm_jit_try_member_access(Ty *ty, int z)
 {
         Value v = GetMember(ty, z, true, true);
         push(!IsNone(v) ? v : NIL);
+}
+
+bool
+vm_jit_try_match_member(Ty *ty, int z)
+{
+        push(peek());
+        Value value = GetMember(ty, z, false, true);
+        if (IsNone(value)) {
+                return false;
+        }
+        push(value);
+        return true;
+}
+
+bool
+vm_jit_unapply(Ty *ty, bool maybe)
+{
+        Value f = pop();
+        Value self = NIL;
+        if (maybe && f.type == VALUE_CLASS) {
+                Value *method = class_lookup_s_method_i(ty, f.class, NAMES.unapply);
+                if (method == NULL) {
+                        return false;
+                }
+                self = f;
+                f = *method;
+        }
+        if (f.type == VALUE_METHOD) {
+                self = *f.this;
+                f = *f.method;
+        }
+        char *saved = IP;
+        IP = &halt;
+        push(peek());
+        if (f.type == VALUE_FUNCTION || f.type == VALUE_BOUND_FUNCTION) {
+                call6t(ty, &f, self.type == VALUE_NIL ? NULL : &self, 1, NULL, unapply);
+                if (!is_starred(&f) && call_jit(ty, &f)) {
+                        vXx(CALLS);
+                } else {
+                        vm_exec(ty, IP);
+                }
+        } else if (DoCall(ty, &f, 1, 0, false)) {
+                xvP(CALLS, unapply);
+                vm_exec(ty, IP);
+        }
+        IP = saved;
+        return true;
+}
+
+bool
+vm_jit_yield_from(Ty *ty)
+{
+        Value value = peek();
+        if (value.type != VALUE_GENERATOR
+            || value.gen->co != NULL || value.gen->st == NULL) {
+                return false;
+        }
+        char *saved = IP;
+        char *body = value.gen->ip;
+        pop();
+        xvP(FRAMES, v_0(value.gen->st->frames));
+        vvL(FRAMES)->fp = vN(STACK);
+        xvPn(STACK, v_(value.gen->st->stack, 1), vN(value.gen->st->stack) - 1);
+        if (body != code_of(&value.gen->f)) {
+                push(NIL);
+        }
+        xvP(ty->co_states, value.gen->st);
+        value.gen->st = NULL;
+        xvP(CALLS, &halt);
+        IP = body;
+        Value f = vvL(FRAMES)->f;
+        if (body == &JIT) {
+                go_jit(ty);
+        } else if (body != code_of(&f) || !call_jit(ty, &f)) {
+                vm_exec(ty, body);
+        }
+        IP = saved;
+        return true;
+}
+
+void
+vm_jit_declaration(Ty *ty, char *ip)
+{
+        char *saved = IP;
+        int op = (u8)*ip;
+        IP = ip + 1;
+        if (op == INSTR_DEFINE_TAG) {
+                i32 tag;
+                i32 super;
+                i32 n;
+                i32 c;
+                i32 g;
+                i32 s_g;
+                memcpy(&tag, IP, sizeof tag);
+                IP += sizeof tag;
+                memcpy(&super, IP, sizeof super);
+                IP += sizeof super;
+                memcpy(&n, IP, sizeof n);
+                IP += sizeof n;
+                memcpy(&c, IP, sizeof c);
+                IP += sizeof c;
+                memcpy(&g, IP, sizeof g);
+                IP += sizeof g;
+                memcpy(&s_g, IP, sizeof s_g);
+                IP += sizeof s_g;
+                while (n-- > 0) {
+                        Value value = pop();
+                        tags_add_method(ty, tag, IP, value);
+                        IP += strlen(IP) + 1;
+                }
+                while (c-- > 0) {
+                        Value value = pop();
+                        tags_add_static(ty, tag, IP, value);
+                        IP += strlen(IP) + 1;
+                }
+                if (g != 0 || s_g != 0) {
+                        Class *class = tags_get_class(ty, tag);
+                        InstallMethods(ty, class->i, &class->getters, g);
+                        InstallMethods(ty, class->i, &class->s_getters, s_g);
+                }
+                if (super != -1) {
+                        tags_copy_methods(ty, tag, super);
+                }
+        } else if (op == INSTR_DEFINE_CLASS) {
+                i32 id;
+                i32 s_m;
+                i32 s_g;
+                i32 s_s;
+                i32 m;
+                i32 g;
+                i32 s;
+                memcpy(&id, IP, sizeof id);
+                IP += sizeof id;
+                memcpy(&s_m, IP, sizeof s_m);
+                IP += sizeof s_m;
+                memcpy(&s_g, IP, sizeof s_g);
+                IP += sizeof s_g;
+                memcpy(&s_s, IP, sizeof s_s);
+                IP += sizeof s_s;
+                memcpy(&m, IP, sizeof m);
+                IP += sizeof m;
+                memcpy(&g, IP, sizeof g);
+                IP += sizeof g;
+                memcpy(&s, IP, sizeof s);
+                IP += sizeof s;
+                Class *class = class_get(ty, id);
+                        InstallMethods(ty, id, &class->s_methods, s_m);
+                InstallMethods(ty, id, &class->s_getters, s_g);
+                InstallMethods(ty, id, &class->s_setters, s_s);
+                InstallMethods(ty, id, &class->methods, m);
+                InstallMethods(ty, id, &class->getters, g);
+                InstallMethods(ty, id, &class->setters, s);
+                if (class->super != NULL) {
+                        Value *hook = class_lookup_s_method_i(ty, class->super->i, NAMES._init_subclass_);
+                        if (hook != NULL) {
+                                Value self = CLASS(id);
+                                exec_fn(ty, hook, &self, 0, NULL);
+                                pop();
+                        }
+                }
+        } else {
+                i32 id;
+                i32 member;
+                memcpy(&id, IP, sizeof id);
+                IP += sizeof id;
+                memcpy(&member, IP, sizeof member);
+                IP += sizeof member;
+                Value value = pop();
+                Value *slot = itable_get(ty, &class_get(ty, id)->s_fields, member);
+                if (slot->type == VALUE_REF) {
+                        *slot->ref = value;
+                }
+                *slot = value;
+        }
+        IP = saved;
+}
+
+void
+vm_jit_failure(Ty *ty, int op, char *ip)
+{
+        if (op != INSTR_BAD_ASSIGN && v_L(CALLS) == unapply) {
+                if (op == INSTR_BAD_DISPATCH) {
+                        push(NONE);
+                } else {
+                        put(NONE);
+                }
+                return;
+        }
+        if (op == INSTR_BAD_DISPATCH) {
+                push(TAG(TAG_DISPATCH_ERR));
+                vXx(FRAMES);
+                IP = vXx(CALLS);
+                RaiseException(ty);
+                UNREACHABLE("dispatch failure returned");
+        }
+        char *name = ip + 1;
+        char *label = name;
+        if (op == INSTR_BAD_CALL) {
+                label += strlen(name) + 1;
+                zP(
+                        "constraint on %s%s%s%s%s violated in call to %s%s%s%s%s: %s%s%s = %s%s%s",
+                        TERM(34), TERM(1), label, TERM(22), TERM(39),
+                        TERM(34), TERM(1), name, TERM(22), TERM(39),
+                        TERM(34), TERM(1), label, VSC(top()), TERM(22), TERM(39)
+                );
+        }
+        zP(
+                "constraint on %s%s%s%s%s violated in assignment: %s%s%s = %s%s%s",
+                TERM(34), TERM(1), label, TERM(22), TERM(39),
+                TERM(34), TERM(1), label, VSC(top()), TERM(22), TERM(39)
+        );
+}
+
+bool
+vm_jit_check_init(Ty *ty)
+{
+        Value self = GetSelf(ty);
+        bool initialized = self.object->init;
+        self.object->init = true;
+        return initialized;
+}
+
+bool
+vm_jit_extra_branch(Ty *ty, int op)
+{
+        switch (op) {
+        case INSTR_JUMP_WTF:
+                if (top()->type == VALUE_NIL) {
+                        pop();
+                        return false;
+                }
+                return true;
+        case INSTR_NONE_IF_NOT:
+                if (value_truthy(ty, top())) {
+                        pop();
+                        return false;
+                }
+                put(NONE);
+                return true;
+        default:
+                if (!TY_IS_INITIALIZED) {
+                        put(BOOLEAN(true));
+                        return true;
+                }
+                return false;
+        }
+}
+
+void
+vm_jit_misc(Ty *ty, int op, int n, void *data)
+{
+        Value value;
+        switch (op) {
+        case INSTR_UNARY_OP:
+                DoUnaryOp(ty, n, true);
+                break;
+        case INSTR_BINARY_OP:
+                DoBinaryOp(ty, n, true);
+                break;
+        case INSTR_QUESTION:
+                DoQuestion(ty, true);
+                break;
+        case INSTR_SLICE:
+                CallMethod(ty, NAMES.slice, 3, 0, false, true);
+                break;
+        case INSTR_TO_REGEX:
+                if (top()->type == VALUE_REGEX) {
+                        put(vSsz(top()->regex->pattern));
+                        break;
+                }
+                if (top()->type == VALUE_PTR) {
+                        char *s = VSC(top());
+                        put(STRING_NOGC(s, strlen(s)));
+                } else if (top()->type != VALUE_NIL) {
+                        CallMethod(ty, NAMES._str_, 0, 0, false, true);
+                }
+                put(builtin_regex_escape(ty, 1, NULL));
+                break;
+        case INSTR_COMPILE_REGEX:
+                push(xSz(data));
+                value = builtin_regex(ty, 2, NULL);
+                pop();
+                put(value);
+                break;
+        case INSTR_EVAL:
+                push(PTR(data));
+                value = builtin_eval(ty, 2, NULL);
+                pop();
+                put(value);
+                break;
+        case INSTR_EXEC_CODE:
+                vm_exec(ty, data);
+                break;
+        case INSTR_RENDER_TEMPLATE:
+                push(compiler_render_template(ty, data));
+                break;
+        case INSTR_NAMESPACE:
+                push(NAMESPACE(data));
+                break;
+        case INSTR_TRACE:
+                push(ResolveTrace(ty, CurrentThrowCtx(ty)));
+                break;
+        case INSTR_GET_TAG:
+                value = pop();
+                push(value.tags == 0 ? NIL : TAG(tags_first(ty, value.tags)));
+                break;
+        case INSTR_OPERATOR: {
+                i32 b;
+                memcpy(&b, data, sizeof b);
+                push(OPERATOR(n, b));
+                break;
+        }
+        case INSTR_GET_NEXT:
+                IterGetNext(ty, true);
+                break;
+        case INSTR_READ_INDEX:
+                push(INTEGER(top()[-3].z - 1));
+                break;
+        case INSTR_NONE_IF_NIL:
+                YieldFix(ty);
+                break;
+        case INSTR_FIX_EXTRA:
+        case INSTR_FIX_TO: {
+                i32 count = 0;
+                while (top()[-count].type != VALUE_SENTINEL) {
+                        ++count;
+                }
+                if (op == INSTR_FIX_TO) {
+                        while (count > n) {
+                                --count;
+                                pop();
+                        }
+                        while (count < n) {
+                                ++count;
+                                push(NIL);
+                        }
+                }
+                for (i32 i = 0, j = count - 1; i < j; ++i, --j) {
+                        value = top()[-i];
+                        top()[-i] = top()[-j];
+                        top()[-j] = value;
+                }
+                break;
+        }
+        case INSTR_REVERSE:
+                for (i32 i = 0, j = n - 1; i < j; ++i, --j) {
+                        value = top()[-i];
+                        top()[-i] = top()[-j];
+                        top()[-j] = value;
+                }
+                break;
+        case INSTR_DEBUG:
+                fprintf(stderr, "%s\n", (char const *)data);
+                break;
+        case INSTR_TRAP:
+                *(volatile char *)0 = 0;
+                break;
+        default:
+                UNREACHABLE("invalid JIT miscellaneous operation");
+        }
+}
+
+Value *
+vm_jit_state_slot(Ty *ty, int n, bool tls)
+{
+        if (tls) {
+                EnsureThreadLocal(ty, n);
+                return v_(THREAD_LOCALS, n);
+        }
+        while (vN(Globals) <= n) {
+                xvP(Globals, NIL);
+        }
+        return v_(Globals, n);
+}
+
+void
+vm_jit_scope(Ty *ty, int op)
+{
+        switch (op) {
+        case INSTR_DROP:
+                DoDrop(ty);
+                break;
+        case INSTR_DISCARD_DROP_GROUP:
+                vXx(DROP_STACK);
+                break;
+        case INSTR_PUSH_DROP_GROUP:
+                xvP(DROP_STACK, ARRAY(vA()));
+                break;
+        case INSTR_PUSH_DROP:
+                if (vN(DROP_STACK) == 0) {
+                        zP("no active drop group for resource binding");
+                }
+                uvP(*vvL(DROP_STACK)->array, peek());
+                break;
+        case INSTR_DEFER:
+                xvP(GetCurrentTry(ty)->defer, pop());
+                break;
+        case INSTR_CLEANUP: {
+                struct try *t = GetCurrentTry(ty);
+                while (vN(t->defer) > 0) {
+                        Value f = vXx(t->defer);
+                        vm_call(ty, &f, 0);
+                }
+                break;
+        }
+        case INSTR_ENTER: {
+                int class = ClassOf(top());
+                if (class < 0) {
+                        break;
+                }
+                if (vN(DROP_STACK) == 0) {
+                        zP("no active drop group for enter instruction");
+                }
+                uvP(*vvL(DROP_STACK)->array, peek());
+                Value *f = class_lookup_method_i(ty, class, NAMES._enter_);
+                if (f != NULL) {
+                        Value self = pop();
+                        exec_fn(ty, f, &self, 0, NULL);
+                }
+                break;
+        }
+        default:
+                UNREACHABLE("invalid JIT scope operation");
+        }
+}
+
+void
+vm_jit_mutation(Ty *ty, int op)
+{
+        if (op == INSTR_MAYBE_ASSIGN) {
+                Value *target = poptarget();
+                if (((uptr)target & PMASK3) != 0) {
+                        zP("?= needs a target that can hold nil");
+                }
+                if (target->type == VALUE_NIL) {
+                        *target = peek();
+                } else {
+                        *top() = *target;
+                }
+                return;
+        }
+        if (SpecialTarget(ty)) {
+                char const *name = op == INSTR_POST_DEC ? "post-decrement" : "pre-increment";
+                if (op == INSTR_PRE_DEC) {
+                        name = "pre-decrement";
+                }
+                zP("%s applied to invalid target", name);
+        }
+        bool post = op == INSTR_POST_INC || op == INSTR_POST_DEC;
+        bool dec = op == INSTR_PRE_DEC || op == INSTR_POST_DEC;
+        if (post) {
+                push(*peektarget());
+        }
+        if (dec) {
+                DecValue(ty, peektarget());
+        } else {
+                IncValue(ty, peektarget());
+        }
+        Value value = *poptarget();
+        if (!post) {
+                push(value);
+        }
+}
+
+void
+vm_jit_target(Ty *ty, int op, int n, int z)
+{
+        switch (op) {
+        case INSTR_TARGET_GLOBAL:
+        case INSTR_TARGET_THREAD_LOCAL:
+                vm_jit_push_target(ty, vm_jit_state_slot(ty, n, op == INSTR_TARGET_THREAD_LOCAL));
+                break;
+        case INSTR_TARGET_SELF_STATIC: {
+                Value self = GetSelf(ty);
+                DoTargetMember(ty, CLASS(ClassOf(&self)), n);
+                break;
+        }
+        case INSTR_TARGET_STATIC_MEMBER:
+                DoTargetMember(ty, CLASS(n), z);
+                break;
+        case INSTR_TARGET_DYN_MEMBER:
+                z = GetDynamicMemberId(ty, true);
+                if (z < 0) {
+                        z = -(z + 1);
+                }
+                DoTargetMember(ty, peek(), z);
+                pop();
+                break;
+        default:
+                UNREACHABLE("invalid JIT target operation");
+        }
+}
+
+void
+vm_jit_binding(Ty *ty, int op, int n, int z, void *info)
+{
+        isize index = vN(STACK) - 1;
+        Value value = NIL;
+        if (
+                op != INSTR_BIND_STATIC
+             && op != INSTR_SELF_STATIC_ACCESS
+             && op != INSTR_STATIC_MEMBER_ACCESS
+        ) {
+                value = peek();
+        }
+        Value *f;
+        int class = n < 0 ? -n : n;
+        switch (op) {
+        case INSTR_DECORATE:
+                if (value.type == VALUE_FUNCTION) {
+                        top()->xinfo = info;
+                }
+                return;
+        case INSTR_INTO_METHOD:
+                if (value.type != VALUE_FUNCTION) {
+                        zP("method decorator returned non-function: %s", VSC(&value));
+                }
+                value = IntoMethod(ty, &value, n);
+                break;
+        case INSTR_BIND_CLASS:
+                value = BindMethod(ty, &value, &CLASS(n));
+                break;
+        case INSTR_BIND_STATIC:
+                f = class_lookup_s_method_i(ty, n, z);
+                push(*f);
+                return;
+        case INSTR_SELF_STATIC_ACCESS:
+                value = GetSelf(ty);
+                z = n;
+                n = ClassOf(&value);
+        case INSTR_STATIC_MEMBER_ACCESS:
+                push(CLASS(n));
+                value = GetMember(ty, z, false, true);
+                push(value);
+                return;
+        default: {
+                u16 offset = OFF_NOT_FOUND;
+                if (n >= 0) {
+                        Value receiver = OBJECT(value.object, n);
+                        offset = op == INSTR_BIND_SETTER
+                               ? FastWriteOffset(ty, &receiver, z)
+                               : FastReadOffset(ty, &receiver, z);
+                }
+                if (offset == OFF_NOT_FOUND) {
+                        switch (op) {
+                        case INSTR_BIND_INSTANCE: f = class_lookup_method_i(ty, class, z); break;
+                        case INSTR_BIND_GETTER:   f = class_lookup_getter_i(ty, class, z); break;
+                        default:                 f = class_lookup_setter_i(ty, class, z); break;
+                        }
+                } else {
+                        int kind = offset >> OFF_SHIFT;
+                        int slot = offset & OFF_MASK;
+                        switch (kind) {
+                        case OFF_METHOD: f = v_(class_get(ty, n)->methods.values, slot); break;
+                        case OFF_GETTER: f = v_(class_get(ty, n)->getters.values, slot); break;
+                        case OFF_SETTER: f = v_(class_get(ty, n)->setters.values, slot); break;
+                        case OFF_METHOD_X:
+                        case OFF_GETTER_X:
+                        case OFF_SETTER_X:
+                                f = DecoratedSlot(&value, n, slot);
+                                if (f == NULL) {
+                                        switch (kind) {
+                                        case OFF_METHOD_X: f = class_lookup_method_i(ty, n, z); break;
+                                        case OFF_GETTER_X: f = class_lookup_getter_i(ty, n, z); break;
+                                        default:          f = class_lookup_setter_i(ty, n, z); break;
+                                        }
+                                }
+                                break;
+                        default:
+                                UNREACHABLE("invalid JIT binding offset");
+                        }
+                }
+                value = BindMethod(ty, f, &value);
+                break;
+        }
+        }
+        *v_(STACK, index) = value;
 }
 
 void

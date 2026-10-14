@@ -1,0 +1,1010 @@
+import ty
+import ty.test.assert (assert-throws)
+
+__jit__ fn lir-int-leaf(x: Int, y: Int) -> Int {
+    (x + y) * (x - y)
+}
+
+__jit__ fn lir-float-leaf(x: Float, y: Float) -> Float {
+    (x + y) * (x - y)
+}
+
+__jit__ fn lir-dynamic-leaf(x: Any, y: Any) -> Any {
+    x + y
+}
+
+__jit__ fn lir-identity(x: Any) -> Any {
+    x
+}
+
+class LirBytecodeBox {
+    value: Int
+
+    init(value: Int) {
+        self.value = value
+    }
+
+    __enter__() -> LirBytecodeBox {
+        self
+    }
+}
+
+fn +(left: LirBytecodeBox, right: LirBytecodeBox) -> LirBytecodeBox {
+    ty.gc()
+    LirBytecodeBox(left.value + right.value)
+}
+
+pub fn test-numeric-leaves() {
+    assert(lir-int-leaf(9, 4) == 65)
+    assert(lir-float-leaf(9.5, 4.25) == 72.1875)
+    assert(lir-dynamic-leaf(7, 2.5) == 9.5)
+    assert(lir-dynamic-leaf('one', 'two') == 'onetwo')
+}
+
+pub fn test-bytecode-owner-survives-gc() {
+    let box = LirBytecodeBox(11)
+    let xs = [1, 2, 3]
+    assert(lir-identity(xs) == xs)
+    assert(box.__enter__().value == 11)
+    for ..8 {
+        ty.gc()
+        assert(lir-identity(xs) == xs)
+        assert(box.__enter__().value == 11)
+        assert(lir-int-leaf(9, 4) == 65)
+    }
+}
+
+pub fn test-slow-path-can-collect() {
+    let left = LirBytecodeBox(7)
+    let right = LirBytecodeBox(13)
+    let result = lir-dynamic-leaf(left, right) as LirBytecodeBox
+    assert(result.value == 20)
+    assert(left.value == 7)
+    assert(right.value == 13)
+}
+
+__jit__ fn lir-loop(n: Int) -> Int {
+    let i = 0
+    let total = 0
+    while i < n {
+        total = total + i
+        i = i + 1
+    }
+    total
+}
+
+__jit__ fn lir-choice(x: Bool, left: Int, right: Int) -> Int {
+    x ? left + 1 : right - 1
+}
+
+__jit__ fn lir-short-or(x: Any, y: Any) -> Any {
+    x || y
+}
+
+__jit__ fn lir-short-and(x: Any, y: Any) -> Any {
+    x && y
+}
+
+pub fn test-branches-and-loop-joins() {
+    assert(lir-choice(true, 4, 9) == 5)
+    assert(lir-choice(false, 4, 9) == 8)
+    assert(lir-loop(100) == 4950)
+    assert(lir-loop(0) == 0)
+    ty.gc()
+    assert(lir-loop(100) == 4950)
+}
+
+pub fn test-short-circuit-stack-depth() {
+    assert(lir-short-or(nil, 9) == 9)
+    assert(lir-short-or(7, 9) == 7)
+    assert(lir-short-and(nil, 9) == nil)
+    assert(lir-short-and(7, 9) == 9)
+}
+
+__jit__ fn lir-call-leaf(x: Int) -> Int {
+    x + 1
+}
+
+__jit__ fn lir-call-middle(x: Int) -> Int {
+    lir-call-leaf(x) * 2
+}
+
+__jit__ fn lir-call-indirect(f: Int -> Int, x: Int) -> Int {
+    f(x) + 3
+}
+
+__jit__ fn lir-call-recursive(n: Int) -> Int {
+    n == 0 ? 0 : lir-call-recursive(n - 1) + 1
+}
+
+__jit__ fn lir-weighted(x: Int, y: Int) -> Int {
+    x * 3 + y
+}
+
+__jit__ fn lir-keyword-global(x: Int) -> Int {
+    lir-weighted(y: 7, x: x)
+}
+
+__jit__ fn lir-keyword-indirect(f: Any, x: Int) -> Int {
+    f(y: 7, x: x)
+}
+
+class LirCallBox {
+    scale(x: Int) -> Int {
+        x * 2
+    }
+
+    nested(x: Int) -> Int {
+        scale(x) + 1
+    }
+
+    keyword(x: Int) -> Int {
+        scale(x: x) + 1
+    }
+
+    static times(x: Int) -> Int {
+        x * 3
+    }
+
+    static nested(x: Int) -> Int {
+        times(x: x) + 1
+    }
+
+    spread(xs: Array[Int]) -> Int {
+        scale(*xs)
+    }
+}
+
+__jit__ fn lir-method-driver(box: LirCallBox, x: Int) -> Int {
+    box.scale(x) + box.nested(x)
+}
+
+pub fn test-global-and-indirect-resumption() {
+    assert(lir-call-middle(7) == 16)
+    assert(lir-call-indirect(lir-call-leaf, 8) == 12)
+    assert(lir-call-recursive(400) == 400)
+    ty.gc()
+    assert(lir-call-middle(7) == 16)
+}
+
+pub fn test-keyword-call-layouts() {
+    assert(lir-keyword-global(4) == 19)
+    assert(lir-keyword-indirect(lir-weighted, 4) == 19)
+}
+
+pub fn test-object-and-self-method-calls() {
+    assert(lir-method-driver(LirCallBox(), 4) == 17)
+}
+
+__jit__ fn lir-closure-factory(k: Int) -> Int -> Int {
+    fn multiply(x: Int) -> Int {
+        x * k
+    }
+    multiply
+}
+
+__jit__ fn lir-counter(n: Int) -> () -> Int {
+    fn next() -> Int {
+        n += 1
+        n
+    }
+    next
+}
+
+__jit__ fn lir-generator*(n: Int) -> Generator[Int] {
+    let i = 0
+    while i < n {
+        yield i
+        i = i + 1
+    }
+}
+
+__jit__ fn lir-failing(n: Int) -> Int {
+    n == 0 ? throw n : lir-failing(n - 1)
+}
+
+pub fn test-captured-values-and-mutation() {
+    let multiply = lir-closure-factory(7)
+    let next = lir-counter(11)
+    assert(multiply(3) == 21)
+    assert(next() == 12)
+    ty.gc()
+    assert(multiply(4) == 28)
+    assert(next() == 13)
+}
+
+pub fn test-generator-resumption() {
+    let gen = lir-generator(4)
+    assert(gen() == Some(0))
+    ty.gc()
+    assert(gen() == Some(1))
+    assert(gen() == Some(2))
+    assert(gen() == Some(3))
+    assert(gen() == None)
+    assert(gen() == None)
+}
+
+pub fn test-throw-through-resumed-call() {
+    try {
+        lir-failing(5)
+        assert(false)
+    } catch 0 {
+    }
+}
+
+__jit__ fn lir-protected-value(x: Int) -> Int {
+    try {
+        x == 0 ? throw x : x + 1
+    } catch 0 {
+        7
+    } finally {
+        x = x + 1
+    }
+}
+
+__jit__ fn lir-early-finally(x: Int) -> Int {
+    try {
+        return x + 4
+    } finally {
+        x = x + 1
+    }
+}
+
+__jit__ fn lir-nested-catch(x: Int) -> Int {
+    try {
+        try {
+            throw x
+        } catch 1 {
+            13
+        } finally {
+            x = x + 1
+        }
+    } catch 0 {
+        9
+    }
+}
+
+__jit__ fn lir-gc-throw(n: Int) -> Int {
+    if n == 0 {
+        ty.gc()
+        throw 0
+    }
+    lir-gc-throw(n - 1) + 1
+}
+
+__jit__ fn lir-protected-growth(x: Int) -> Int {
+    try {
+        lir-gc-throw(400)
+    } catch 0 {
+        x + 7
+    } finally {
+        x = x + 1
+    }
+}
+
+pub fn test-native-catch-and-finally() {
+    assert(lir-protected-value(0) == 7)
+    assert(lir-protected-value(3) == 4)
+    assert(lir-early-finally(3) == 7)
+    assert(lir-nested-catch(1) == 13)
+    assert(lir-nested-catch(0) == 9)
+}
+
+pub fn test-exception-after-stack-growth-and-gc() {
+    assert(lir-protected-growth(5) == 12)
+    assert(lir-protected-growth(15) == 22)
+}
+
+__jit__ fn lir-array-value(x: Int) -> Array[Int] {
+    [1, x, 3]
+}
+
+__jit__ fn lir-dict-value(x: Int) -> Dict[String, Int] {
+    %{'one': 1, 'value': x}
+}
+
+__jit__ fn lir-tuple-value(x: Int) -> (Int, Int) {
+    (x, x + 1)
+}
+
+__jit__ fn lir-modify(xs: Array[Int], x: Int) -> Int {
+    xs[1] = x
+    xs[1]
+}
+
+__jit__ fn lir-scalar-ops(a: Int, b: Int) -> Array[Int | Float] {
+    [-a, a % b, a / b, a & b, a | b, a ^ b, a << b, a >> b]
+}
+
+class LirMemberBox {
+    value: Int
+
+    init(value: Int) {
+        self.value = value
+    }
+
+    read() -> Int {
+        self.value
+    }
+
+    write(x: Int) {
+        self.value = x
+    }
+}
+
+__jit__ fn lir-for-sum(xs: Array[Int]) -> Int {
+    let total = 0
+    for xs {
+        total += it
+    }
+    total
+}
+
+__jit__ fn lir-doubled(xs: Array[Int]) -> Array[Int] {
+    [it * 2 for xs]
+}
+
+__jit__ fn lir-keyed(xs: Array[Int]) -> Dict[Int, Int] {
+    %{it: it * 2 for xs}
+}
+
+__jit__ fn lir-unique(xs: Array[Int]) -> Set[Int] {
+    %[it for xs]
+}
+
+pub fn test-aggregate-literals() {
+    let array = lir-array-value(7)
+    let dict = lir-dict-value(7)
+    let tuple = lir-tuple-value(7)
+    ty.gc()
+    assert(array == [1, 7, 3])
+    assert(dict == %{'one': 1, 'value': 7})
+    assert(tuple == (7, 8))
+}
+
+pub fn test-member-and-index-assignment() {
+    let box = LirMemberBox(7)
+    box.write(11)
+    assert(box.read() == 11)
+    let array = [1, 7]
+    assert(lir-modify(array, 11) == 11)
+    assert(array == [1, 11])
+}
+
+pub fn test-scalar-operation-layouts() {
+    assert(lir-scalar-ops(7, 2) == [-7, 1, 3, 2, 7, 5, 28, 1])
+}
+
+pub fn test-iteration-and-comprehensions() {
+    assert(lir-for-sum([1, 2, 3]) == 6)
+    assert(lir-for-sum([]) == 0)
+    assert(lir-doubled([1, 2, 3]) == [2, 4, 6])
+    assert(lir-keyed([1, 2, 3]) == %{1: 2, 2: 4, 3: 6})
+    assert(lir-unique([1, 2, 2]) == %[1, 2])
+    ty.gc()
+    assert(lir-for-sum([4, 5]) == 9)
+}
+
+__jit__ fn lir-optional-call(box: Any, x: Int) -> Any {
+    box.?scale(x: x)
+}
+
+__jit__ fn lir-static-call(x: Int) -> Int {
+    LirCallBox.times(x: x)
+}
+
+__jit__ fn lir-global-spread(xs: Array[Int]) -> Int {
+    lir-weighted(*xs)
+}
+
+__jit__ fn lir-indirect-spread(f: Any, xs: Array[Int]) -> Int {
+    f(*xs)
+}
+
+__jit__ fn lir-keyword-spread(xs: Array[Int]) -> Int {
+    lir-weighted(*xs, y: 7)
+}
+
+__jit__ fn lir-method-spread(box: LirCallBox, xs: Array[Int]) -> Int {
+    box.scale(*xs)
+}
+
+__jit__ fn lir-literal-spread(xs: Array[Int]) -> Array[Int] {
+    [0, *xs, 9]
+}
+
+__jit__ fn lir-tuple-spread(xs: Array[Int]) -> Any {
+    (0, *xs, 9)
+}
+
+pub fn test-optional-static-and-self-keyword-calls() {
+    let box = LirCallBox()
+    assert(lir-optional-call(box, 7) == 14)
+    assert(lir-optional-call(nil, 7) == nil)
+    assert(lir-static-call(7) == 21)
+    assert(box.keyword(7) == 15)
+    assert(LirCallBox.nested(7) == 22)
+    ty.gc()
+    assert(box.keyword(7) == 15)
+}
+
+pub fn test-spread-calls-and-literals() {
+    let box = LirCallBox()
+    assert(lir-global-spread([2, 7]) == 13)
+    assert(lir-indirect-spread(lir-weighted, [2, 7]) == 13)
+    assert(lir-keyword-spread([2]) == 13)
+    assert(lir-method-spread(box, [7]) == 14)
+    assert(box.spread([7]) == 14)
+    assert(lir-literal-spread([2, 7]) == [0, 2, 7, 9])
+    assert(lir-literal-spread([]) == [0, 9])
+    assert(lir-tuple-spread([2, 7]) == (0, 2, 7, 9))
+    let large = [it for ..400]
+    ty.gc()
+    assert(lir-literal-spread(large) == [0, *large, 9])
+}
+
+__jit__ fn lir-array-match(x: Any) -> Int {
+    match x {
+        [a: Int, b: Int] => a * 10 + b,
+        _ => -1
+    }
+}
+
+__jit__ fn lir-tuple-match(x: Any) -> Int {
+    match x {
+        (a: Int, b: Int) => a * 10 + b,
+        _ => -1
+    }
+}
+
+__jit__ fn lir-tag-match(x: Any) -> Int {
+    match x {
+        Some(n) => n,
+        None => 0,
+        _ => -1
+    }
+}
+
+__jit__ fn lir-string-match(x: Any) -> Int {
+    match x {
+        'one' => 1,
+        'two' => 2,
+        _ => -1
+    }
+}
+
+__jit__ fn lir-rest-match(x: Any) -> Any {
+    match x {
+        [1, *rest, 9] => rest,
+        _ => nil
+    }
+}
+
+__jit__ fn lir-record-match(x: Any) -> Any {
+    match x {
+        {name: n, *rest} => (n, rest),
+        _ => nil
+    }
+}
+
+__jit__ fn lir-nonlinear-match(x: Any) -> Int {
+    match x {
+        [a, a] => a,
+        _ => -1
+    }
+}
+
+__jit__ fn lir-regex-pattern(x: Any) -> Any {
+    match x {
+        /([a-z]+)([0-9]+)/ => ($1, $2),
+        _ => nil
+    }
+}
+
+__jit__ fn lir-ranged-pattern(x: Any) -> Int {
+    match x {
+        1..4 => 1,
+        4...7 => 2,
+        _ => 0
+    }
+}
+
+__jit__ fn lir-array-destructure(xs: Array[Int]) -> Int {
+    let [a, b] = xs
+    a * 10 + b
+}
+
+__jit__ fn lir-tuple-destructure(x: (Int, Int)) -> Int {
+    let (a, b) = x
+    a * 10 + b
+}
+
+__jit__ fn lir-tagged-destructure(x: Any) -> Int {
+    let Some(a) = x
+    a
+}
+
+class LirPatternBox {
+    n: Int
+
+    init(n: Int) {
+        self.n = n
+    }
+}
+
+fn ==(a: LirPatternBox, b: LirPatternBox) -> Bool {
+    ty.gc()
+    a.n == b.n
+}
+
+__jit__ fn lir-class-pattern(x: Any) -> Int {
+    match x {
+        LirPatternBox(n) => n,
+        _ => -1
+    }
+}
+
+use match LirPatternHalf {
+    (k: Int) and (k % 2 == 0) => k / 2
+}
+
+__jit__ fn lir-unapply-pattern(x: Any) -> Any {
+    match x {
+        LirPatternHalf(n) => n,
+        _ => nil
+    }
+}
+
+__jit__ fn lir-collecting-pattern(x: Any) -> Bool {
+    match x {
+        [a, a] => true,
+        _ => false
+    }
+}
+
+pub fn test-pattern-dispatch-and-failure-paths() {
+    assert(lir-array-match([2, 7]) == 27)
+    assert(lir-array-match([2, 7, 8]) == -1)
+    assert(lir-array-match([2]) == -1)
+    assert(lir-array-match(nil) == -1)
+    assert(lir-tuple-match((2, 7)) == 27)
+    assert(lir-tuple-match((2,)) == -1)
+    assert(lir-tuple-match([2, 7]) == -1)
+    assert(lir-tag-match(Some(7)) == 7)
+    assert(lir-tag-match(None) == 0)
+    assert(lir-tag-match(7) == -1)
+    assert(lir-string-match('one') == 1)
+    assert(lir-string-match('two') == 2)
+    assert(lir-string-match('three') == -1)
+    assert(lir-string-match(nil) == -1)
+    assert(lir-rest-match([1, 2, 3, 9]) == [2, 3])
+    assert(lir-rest-match([1, 9]) == [])
+    assert(lir-rest-match([1]) == nil)
+    assert(lir-record-match({name: 'test', count: 7})
+        == ('test', {count: 7}))
+    assert(lir-record-match(nil) == nil)
+    assert(lir-nonlinear-match([7, 7]) == 7)
+    assert(lir-nonlinear-match([7, 8]) == -1)
+    assert(lir-regex-pattern('abc123') == ('abc', '123'))
+    assert(lir-regex-pattern('...') == nil)
+    assert(lir-regex-pattern(nil) == nil)
+    assert(lir-ranged-pattern(0) == 0)
+    assert(lir-ranged-pattern(1) == 1)
+    assert(lir-ranged-pattern(3) == 1)
+    assert(lir-ranged-pattern(4) == 2)
+    assert(lir-ranged-pattern(7) == 2)
+    assert(lir-ranged-pattern(8) == 0)
+}
+
+pub fn test-strict-destructuring() {
+    assert(lir-array-destructure([2, 7]) == 27)
+    assert(lir-tuple-destructure((2, 7)) == 27)
+    assert(lir-tagged-destructure(Some(7)) == 7)
+    assert-throws(lir-array-destructure([2]), MatchError)
+    assert-throws(lir-tagged-destructure(7), MatchError)
+}
+
+pub fn test-pattern-comparison-can-collect() {
+    assert(lir-class-pattern(LirPatternBox(7)) == 7)
+    assert(lir-class-pattern(nil) == -1)
+    assert(lir-unapply-pattern(8) == 4)
+    assert(lir-unapply-pattern(7) == nil)
+    assert(lir-unapply-pattern(nil) == nil)
+    assert(lir-collecting-pattern([LirPatternBox(7), LirPatternBox(7)]))
+    assert(!lir-collecting-pattern([LirPatternBox(7), LirPatternBox(8)]))
+    ty.gc()
+    assert(lir-collecting-pattern([LirPatternBox(11), LirPatternBox(11)]))
+}
+
+let lir-state-counter = 0
+let __tls::lir-tls-counter = 11
+
+__jit__ fn lir-global-change(n: Int) -> (Int, Int, Int) {
+    lir-state-counter = n
+    lir-state-counter += 2
+    let pre = ++lir-state-counter
+    let post = lir-state-counter++
+    (pre, post, lir-state-counter)
+}
+
+__jit__ fn lir-tls-change(n: Int) -> (Int, Int, Int) {
+    let old = lir-tls-counter
+    lir-tls-counter += n
+    let post = lir-tls-counter++
+    (old, post, lir-tls-counter)
+}
+
+__jit__ fn lir-default-value(x: Int | nil) -> Int {
+    x ?= 7
+    x
+}
+
+__jit__ fn lir-dynamic-set(box: Any, key: String, n: Int) -> Int {
+    box.{key} = n
+    box.{key}
+}
+
+class LirStateBox {
+    n: Int
+
+    init(n: Int) {
+        self.n = n
+    }
+
+    value() -> Int {
+        self.n
+    }
+}
+
+__jit__ fn lir-bound-call(box: LirStateBox) -> Int {
+    let f = box.value
+    f()
+}
+
+__jit__ fn lir-cleaned(xs: Array[Int]) -> Int {
+    defer xs.push(1)
+    defer xs.push(2)
+    ty.gc()
+    7
+}
+
+class LirStateResource {
+    xs: Array[Int]
+
+    init(xs: Array[Int]) {
+        self.xs = xs
+    }
+
+    __enter__() -> LirStateResource {
+        xs.push(1)
+        self
+    }
+
+    __drop__() {
+        ty.gc()
+        xs.push(2)
+    }
+}
+
+__jit__ fn lir-scoped(xs: Array[Int]) -> Int {
+    with resource = LirStateResource(xs) {
+        xs.push(3)
+    }
+    7
+}
+
+__jit__ fn lir-cleaned-throw(xs: Array[Int]) {
+    defer xs.push(1)
+    defer xs.push(2)
+    throw ValueError('deferred')
+}
+
+__jit__ fn lir-scoped-throw(xs: Array[Int]) {
+    with resource = LirStateResource(xs) {
+        xs.push(3)
+        throw ValueError('resource')
+    }
+}
+
+fn lir-prepared-method(method: Any) -> Any {
+    let f = __jit__ fn (x: Int) -> () -> Int {
+        let y = x + 1
+        fn next() -> Int {
+            y
+        }
+        next
+    }
+    assert(f(1)() == 2)
+    f
+}
+
+class LirCachedMethod {
+    @lir-prepared-method
+    factory(x: Int) -> () -> Int {
+        () -> x
+    }
+}
+
+pub fn test-global-and-thread-local-state() {
+    assert(lir-global-change(7) == (10, 10, 11))
+    assert(lir-global-change(17) == (20, 20, 21))
+    assert(lir-tls-change(2) == (11, 13, 14))
+    assert(lir-tls-change(3) == (14, 17, 18))
+    assert(lir-default-value(nil) == 7)
+    assert(lir-default-value(3) == 3)
+}
+
+pub fn test-dynamic-target-and-bound-call() {
+    let box = LirStateBox(2)
+    assert(lir-dynamic-set(box, 'n', 7) == 7)
+    assert(lir-bound-call(box) == 7)
+    ty.gc()
+    assert(lir-bound-call(box) == 7)
+}
+
+pub fn test-deferred-callbacks() {
+    let xs: Array[Int] = []
+    assert(lir-cleaned(xs) == 7)
+    assert(xs == [2, 1])
+    xs = []
+    assert-throws(lir-cleaned-throw(xs), ValueError)
+    assert(xs == [2, 1])
+}
+
+pub fn test-resource-enter-and-drop() {
+    let xs: Array[Int] = []
+    assert(lir-scoped(xs) == 7)
+    assert(xs == [1, 3, 2])
+    xs = []
+    assert-throws(lir-scoped-throw(xs), ValueError)
+    assert(xs == [1, 3, 2])
+}
+
+pub fn test-precompiled-function-converted-to-method() {
+    let box = LirCachedMethod()
+    let first = box.factory(7)
+    let second = box.factory(17)
+    ty.gc()
+    assert(first() == 8)
+    assert(second() == 18)
+}
+
+macro lir-misc-local-eval!(e: AST) -> AST {
+    ty.Eval(e)
+}
+
+__jit__ fn lir-misc-power(a: Int, b: Int) -> Int | Float {
+    a ** b
+}
+
+__jit__ fn lir-misc-sliced(xs: Array[Int]) -> Array[Int] {
+    xs[1;5;2]
+}
+
+__jit__ fn lir-misc-quoted(x: Int) -> Any {
+    $$[ $${x} + 1 $$]
+}
+
+__jit__ fn lir-misc-scoped-eval(x: Int) -> Any {
+    lir-misc-local-eval!('x + 1')
+}
+
+__jit__ fn lir-misc-regex(pattern: String) -> Regex[(0..)] {
+    /${pattern}/
+}
+
+__jit__ fn lir-misc-multiple(x: Int) -> (Int, Int) {
+    let (a, b) = (x, x + 1)
+    a, b = b, a
+    (a, b)
+}
+
+__jit__ fn lir-misc-captured-reference(f: Int -> Int) -> Int {
+    fn a() -> Int {
+        f(1)
+    }
+    fn b() -> Int {
+        f(2)
+    }
+    ty.gc()
+    f(3) + a() + b()
+}
+
+__jit__ fn lir-misc-padded(x: Int) -> (Int | nil, Int | nil) {
+    let a: Int | nil = nil
+    let b: Int | nil = nil
+    a, b = x
+    (a, b)
+}
+
+pub fn test-generic-operator-and-slice() {
+    assert(lir-misc-power(2, 7) == 128)
+    assert(lir-misc-sliced([0, 1, 2, 3, 4, 5]) == [1, 3])
+}
+
+pub fn test-template-holes-and-scoped-eval() {
+    let expr = lir-misc-quoted(7)
+    ty.gc()
+    assert(expr == ty.Add(ty.Value(7), ty.Int(1)))
+    assert(lir-misc-scoped-eval(7) == 8)
+    assert(lir-misc-scoped-eval(17) == 18)
+}
+
+pub fn test-interpolated-regex-escaping() {
+    let re = lir-misc-regex('(x)')
+    ty.gc()
+    assert('(x)'.match(re) == '(x)')
+    assert('x'.match(re) == nil)
+}
+
+pub fn test-multiple-value-stack-normalization() {
+    assert(lir-misc-multiple(7) == (8, 7))
+    assert(lir-misc-multiple(17) == (18, 17))
+    assert(lir-misc-padded(7) == (7, nil))
+}
+
+pub fn test-reference-chains-after-capture() {
+    assert(lir-misc-captured-reference(x -> x * 2) == 12)
+}
+
+__jit__ fn lir-tail-sum(n: Int, total: Int) -> Int {
+    if n == 0 {
+        return total
+    }
+    lir-tail-sum(n - 1, total + n)
+}
+
+__jit__ fn lir-local-class(n: Int) -> Int {
+    class LirLocalBox {
+        static value: Int = 7
+
+        static read() -> Int {
+            value
+        }
+    }
+    LirLocalBox.read() + n
+}
+
+__jit__ fn lir-local-tag(n: Int) -> Int {
+    tag LirLocalTag {}
+    n
+}
+
+__jit__ fn lir-delegated*(xs: Any) -> Generator[Int] {
+    yield *xs
+    yield 9
+}
+
+__jit__ fn lir-delegated-child*(n: Int) -> Generator[Int] {
+    let i = 0
+    while i < n {
+        ty.gc()
+        yield i
+        i += 1
+    }
+}
+
+__jit__ fn lir-delegated-throw*() -> Generator[Int] {
+    yield 1
+    ty.gc()
+    throw ValueError('delegated child')
+}
+
+use match LirEvenHalf {
+    (k: Int) and (k % 2 == 0) => k / 2
+}
+
+__jit__ fn lir-constrained-unapply(x: Any) -> Any {
+    match x {
+        LirEvenHalf(n) => n,
+        _ => nil
+    }
+}
+
+pub fn test-tail-call-reuses-frame() {
+    assert(lir-tail-sum(10000, 0) == 50005000)
+    assert(lir-tail-sum(0, 7) == 7)
+}
+
+pub fn test-local-class-and-tag-declarations() {
+    assert(lir-local-class(7) == 14)
+    ty.gc()
+    assert(lir-local-class(17) == 24)
+    assert(lir-local-tag(7) == 7)
+}
+
+pub fn test-delegated-generators-and-iterables() {
+    assert([*lir-delegated(lir-delegated-child(3))] == [0, 1, 2, 9])
+    assert([*lir-delegated(lir-delegated-child(0))] == [9])
+    assert([*lir-delegated(lir-delegated(lir-delegated-child(2)))]
+        == [0, 1, 9, 9])
+    assert([*lir-delegated([2, 3])] == [2, 3, 9])
+    assert([*lir-delegated([])] == [9])
+}
+
+pub fn test-delegated-resumption-and-exceptions() {
+    let child = lir-delegated-child(3)
+    assert(child() == Some(0))
+    assert([*lir-delegated(child)] == [1, 2, 9])
+    assert-throws([*lir-delegated(lir-delegated-throw())], ValueError)
+    ty.gc()
+    assert([*lir-delegated(lir-delegated-child(1))] == [0, 9])
+}
+
+pub fn test-constrained-unapply-no-match() {
+    assert(lir-constrained-unapply(8) == 4)
+    assert(lir-constrained-unapply(7) == nil)
+    assert(lir-constrained-unapply(nil) == nil)
+}
+
+__jit__ fn lir-protected-generator*(log: Array[Int]) -> Generator[Int] {
+    try {
+        yield 1
+        ty.gc()
+        throw ValueError('protected generator')
+    } catch _: ValueError {
+        yield 2
+    } finally {
+        log.push(3)
+        ty.gc()
+    }
+}
+
+pub fn test-generator-keeps-native-try-frame() {
+    let log: Array[Int] = []
+    let gen = lir-protected-generator(log)
+    assert(gen() == Some(1))
+    assert(log == [])
+    ty.gc()
+    assert(gen() == Some(2))
+    assert(log == [])
+    ty.gc()
+    assert(gen() == None)
+    assert(log == [3])
+    log = []
+    assert([*lir-delegated(lir-protected-generator(log))] == [1, 2, 9])
+    assert(log == [3])
+}
+
+__jit__ fn lir-wide-operands(x: Int) -> Array[Int] {
+    [
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+        x, x, x, x, x, x, x, x, x, x,
+    ]
+}
+
+pub fn test-wide-static-operand-stack() {
+    let xs = lir-wide-operands(7)
+    assert(#xs == 300)
+    assert(xs.all?(it -> it == 7))
+    ty.gc()
+    assert(lir-wide-operands(17)[299] == 17)
+}
