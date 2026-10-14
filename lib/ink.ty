@@ -44,6 +44,10 @@ const INF   = 100000
 
 let __tls::_debug-borders? = false
 let __tls::_inline?        = false
+let __tls::_anchored?      = false
+let __tls::_alt?           = false
+let __tls::_alt-want?      = false
+let __tls::_held:          Array[Array[_]] = []
 
 pub tag Exit;
 pub tag Wake;
@@ -1652,6 +1656,9 @@ pub class TextInput < Component {
             f: Function => f(c, self),
             _           => <SuggestionList completion=c rows=rows width=w variant=variant />
         }
+        if at == 'lift' {
+            return <Overlay above=true>{node}</Overlay>
+        }
         if at != 'overlay' {
             return node
         }
@@ -1706,13 +1713,13 @@ pub class TextInput < Component {
 
         let lead    = str(chalk.render(markup-run(prompt['spec'] ?? '', p-text)))
         let indent  = ' ' * p-w
-        let at      = popup-at ?? (_inline? ? 'above' : 'overlay')
+        let at      = popup-at ?? (_anchored? ? 'lift' : _inline? ? 'above' : 'overlay')
         let pad-y   = int(fr['pad-y'] ?? fr['padding'] ?? 0)
         let frame-h = height + 2 * pad-y + (__border?(fr, bstyle) ? 2 : 0)
         let rows    = [<Text>{"{(i == 0) ? lead : indent}{l}"}</Text> for l; i in lines]
 
         <Box direction="column">
-            {at == 'above' && __popup(at, w, frame-h)}
+            {(at == 'above' || at == 'lift') && __popup(at, w, frame-h)}
             <Box look=fr cls=cls border-style=bstyle border-color=bcolor direction="column">
                 {rows}
             </Box>
@@ -4695,7 +4702,7 @@ fn layout-box(
                ox, oy, node.props, child-elements)
 }
 
-fn layout-overlay(node: Node, max-w: Int, max-h: Int, path: String) -> (Output, Element) {
+fn layout-overlay(node: Node, max-w: Int, max-h: Int, path: String, ox: Int = 0, oy: Int = 0) -> (Output, Element) {
     let child = (#node.children == 1) ? node.children[0] : Box(*node.children)
     let ov-w = node.width
     let ov-h = node.height
@@ -4717,9 +4724,22 @@ fn layout-overlay(node: Node, max-w: Int, max-h: Int, path: String) -> (Output, 
     let y: Int = ov-y ?? (center ? max((sh - output.height) / 2, 0) : 0)
 
     shift-element(el, x, y)
-    _overlays.push({output, x, y, el})
 
-    (Output([], 0), Element(0, 0, 0, 0, node.props))
+    let spot = Element(ox, oy, 0, 0, node.props)
+    _overlays.push({output, x, y, el, anchor: node.props['above'] ? spot : nil})
+
+    (Output([], 0), spot)
+}
+
+fn place-overlays() {
+    for ov; i in _overlays {
+        if let $a = ov.anchor {
+            let x = a.x + ov.x
+            let y = a.y - ov.output.height
+            shift-element(ov.el, x - ov.el.x, y - ov.el.y)
+            _overlays[i] = {output: ov.output, x, y, el: ov.el, anchor: nil}
+        }
+    }
 }
 
 fn layout-node(
@@ -4736,7 +4756,7 @@ fn layout-node(
         n: Node => match n.tag {
             NodeBox     => layout-box(n, max-w, max-h, path, ox, oy),
             NodeText    => layout-text(n, max-w, max-h, ox, oy),
-            NodeOverlay => layout-overlay(n, max-w, max-h, path),
+            NodeOverlay => layout-overlay(n, max-w, max-h, path, ox, oy),
             NodeRaw => do {
                 let lines = n.props['lines'] ?? []
                 let w = int(n.props['width'] ?? 0)
@@ -4863,14 +4883,17 @@ fn drop-cols(line: String, n: Int) -> String {
     out.str!()
 }
 
-fn composite-overlays(lines: Array[String], width: Int) -> Array[String] {
+fn composite-overlays(lines: Array[String], width: Int, base: Array[String] = []) -> Array[String] {
     if #_overlays == 0 {
-        return lines
+        return (#base == 0) ? lines : [*base, *lines]
     }
-    let out: Array[String] = [*lines]
+    let out: Array[String] = [*base, *lines]
     for ov in _overlays {
         for piece; i in ov.output.lines {
-            let row: Int = ov.y + i
+            let row: Int = ov.y + i + #base
+            if row < 0 {
+                continue
+            }
             while #out <= row {
                 out.push(' ' * width)
             }
@@ -4895,6 +4918,7 @@ fn render-tree(root, max-w: Int, max-h: Int = INF) -> (Output, Element) {
     _overlays = []
     _kitty-images = []
     let result = layout-node(root, max-w, max-h)
+    place-overlays()
     let unmounted = 0
     for path, comp in _fibers {
         if _next-fibers[path] == nil {
@@ -5063,6 +5087,16 @@ fn paint-inline(output: Output, cols: Int) {
 }
 
 pub fn ink-write(*args) {
+    if _anchored? {
+        _out.clear()
+        anchor-release()
+        for arg in args { _out.push("{arg}") }
+        write(1, _out)
+        if args.any?(a -> #"{a}" > 0) {
+            _rehome = 'push'
+        }
+        return
+    }
     _out.clear()
     if _last-inline-height > 0 {
         _out.push("\x1b[{_last-inline-height}A\r")
@@ -5074,7 +5108,33 @@ pub fn ink-write(*args) {
     write(1, _out)
 }
 
+pub fn ink-clear() {
+    if !_anchored? {
+        ink-write("\x1b[2J\x1b[H")
+        return
+    }
+    _out.clear()
+    anchor-release()
+    _out.push("\x1b[{_rows};1H{"\n" * _top}")
+    write(1, _out)
+    _tail   = []
+    _logged = []
+    _top    = 0
+}
+
+pub fn alt-screen(on: Bool) {
+    _alt-want? = on
+}
+
 pub fn ink-log(*args) {
+    if _alt? {
+        _held.push(args)
+        return
+    }
+    if _anchored? {
+        anchor-log(args)
+        return
+    }
     _out.clear()
     if _last-inline-height > 0 {
         _out.push("\x1b[{_last-inline-height}A\r")
@@ -5093,6 +5153,181 @@ pub fn ink-log(*args) {
     }
     _last-inline-height = 0
     _last-output = nil
+    write(1, _out)
+}
+
+let __tls::_tail:    Array[String]                = []
+let __tls::_logged:  Array[(Any, Int)]            = []
+let __tls::_top:     Int                          = 0
+let __tls::_owned:   Int                          = 0
+let __tls::_rows:    Int                          = 0
+let __tls::_cols:    Int                          = 0
+let __tls::_live:    Array[String]                = []
+let __tls::_spot:    (Int, Int, String) | nil     = nil
+let __tls::_rehome:  String | nil                 = nil
+
+fn log-lines(arg: _, cols: Int) -> Array[String] {
+    match arg {
+        (n: Node) or (n: Component) => layout-node(n, cols).0.lines,
+        _                           => "{arg}".split("\n")
+    }
+}
+
+fn remember(arg: _, lines: Array[String]) {
+    _logged.push((arg, #lines))
+    for line in lines {
+        _tail.push(line)
+    }
+    let cap = max(2 * _rows, 256)
+    let drop = 0
+    let n = 0
+    while n < #_logged - 1 && #_tail - drop - _logged[n].1 >= cap {
+        drop += _logged[n].1
+        n += 1
+    }
+    if n > 0 {
+        _logged.drop!(n)
+        _tail.drop!(drop)
+    }
+}
+
+fn relayout(cols: Int) {
+    let entries = _logged.map(\_.0)
+    _logged = []
+    _tail   = []
+    for e in entries {
+        remember(e, log-lines(e, cols))
+    }
+}
+
+fn anchor-row(r: Int) -> String {
+    (r < _top) ? _tail[#_tail - _top + r] : ''
+}
+
+fn anchor-release() {
+    if _rows == 0 {
+        return
+    }
+    let start = max(min(_top, _rows - _owned), 0)
+    if start < _top {
+        _out.push("\x1b[{start + 1};1H")
+        for r in start.._top {
+            _out.push("\x1b[2K{anchor-row(r)}{RST}\r\n")
+        }
+    }
+    _out.push("\x1b[{_top + 1};1H\x1b[0J")
+    _owned = 0
+}
+
+fn anchor-show(rows: Array[String], first: Int) {
+    let bg = _bg-global-sgr
+    for line; i in rows {
+        let painted = (#bg > 0) ? "{bg}{restore-global-bg(line, bg)}\x1b[49m" : line
+        _out.push("\x1b[{first + i + 1};1H\x1b[2K{painted}{RST}")
+    }
+}
+
+fn anchor-cursor() {
+    if let ($row, $col, $shape) = _spot {
+        _out.push(cursor-shape-escape(shape))
+        _out.push("\x1b[{_rows - #_live + row + 1};{col + 1}H\x1b[?25h")
+    }
+}
+
+fn anchor-log(args: Array[_]) {
+    if _rows == 0 {
+        (_rows, _cols) = _tio ? _tio.size() : (24, 80)
+    }
+    let cols = _cols
+    _out.clear()
+    _out.push("\x1b[?2026h\x1b[?7l\x1b[?25l")
+    if _rehome != nil {
+        rehome(_rows, _cols, #_live)
+    }
+    anchor-release()
+    for arg in args {
+        let lines = log-lines(arg, cols)
+        remember(arg, lines)
+        for line in lines {
+            _out.push("\x1b[2K{line}{RST}\r\n")
+        }
+        _top = min(_top + #lines, _rows - 1)
+    }
+    let room = _rows - #_live
+    if _top > room {
+        _out.push("\x1b[{_rows};1H{"\n" * (_top - room)}")
+        _top = room
+    }
+    anchor-show(_live, room)
+    _owned = #_live
+    anchor-cursor()
+    _out.push("\x1b[?7h\x1b[?2026l")
+    write(1, _out)
+}
+
+fn rehome(rows: Int, cols: Int, h: Int) {
+    if _rehome == 'push' {
+        _out.push("\r{"\n" * (rows - 1)}")
+        _top = 0
+    } else {
+        _out.push((_rehome == 'reset') ? "\x1b[H\x1b[2J" : "\r{"\n" * (rows - 1)}\x1b[H")
+        if cols != _cols {
+            relayout(cols)
+        }
+        _top = min(#_tail, max(rows - h, 0), rows - 1)
+        for line in _tail[#_tail - _top;] {
+            _out.push("\x1b[2K{line}{RST}\r\n")
+        }
+    }
+    _rehome = nil
+    _owned  = 0
+}
+
+fn paint-anchored(output: Output, rows: Int, cols: Int) {
+    _out.clear()
+    _out.push("\x1b[?2026h\x1b[?7l\x1b[?25l")
+    _out.push(title-escape())
+
+    if rows != _rows || cols != _cols {
+        _rehome ?= 'reset'
+    }
+
+    let h = min(#output.lines, rows)
+    if _rehome != nil {
+        rehome(rows, cols, h)
+    }
+    _rows = rows
+    _cols = cols
+
+    let lift = 0
+    for ov in _overlays {
+        lift = max(lift, -ov.y)
+    }
+    lift = min(lift, rows - h)
+    let base = [anchor-row(rows - h - lift + i) for i in ..lift]
+
+    _cursor = nil
+    let shown = strip-cursor(composite-overlays(output.lines, cols, base))
+    let cut = max(#shown - (lift + #output.lines), 0)
+    shown = shown[;#shown - cut]
+    let over = max(#shown - rows, 0)
+    shown = shown[over;]
+    lift = max(lift - over, 0)
+
+    let start = rows - max(_owned, #shown)
+    if start < rows - #shown {
+        anchor-show([anchor-row(r) for r in start..rows - #shown], start)
+    }
+    anchor-show(shown, rows - #shown)
+
+    _owned = #shown
+    _live  = shown[lift;]
+    _spot  = nil
+    if let ($row, $col, $shape) = _cursor and row - over - lift >= 0 {
+        _spot = (row - over - lift, col, shape)
+    }
+    anchor-cursor()
+    _out.push("\x1b[?7h\x1b[?2026l")
     write(1, _out)
 }
 
@@ -5687,6 +5922,7 @@ pub fn run(
     fullscreen: Bool = true,
     title: String | nil = nil,
     probe: Float = 0.5,
+    anchored: Bool = false,
     %terminal
 ) {
     if app :: Node {
@@ -5698,6 +5934,7 @@ pub fn run(
 
     let tio = (_tio = term.TermIO(events=cast(_event-queue), **(%{'mouse': fullscreen} + terminal)))
     _inline? = !fullscreen
+    _anchored? = anchored && !fullscreen
     let interrupt? = app.handles-interrupt?
 
     if title != nil {
@@ -5715,6 +5952,20 @@ pub fn run(
         } else {
             _out.push("\x1b[?25l")
             _last-inline-height = 0
+        }
+        _alt?      = false
+        _alt-want? = false
+        _held      = []
+        if _anchored? {
+            _tail   = []
+            _logged = []
+            _live   = []
+            _spot   = nil
+            _top    = 0
+            _owned  = 0
+            _rows   = 0
+            _cols   = 0
+            _rehome = 'push'
         }
         write(1, _out)
     }
@@ -5745,8 +5996,17 @@ pub fn run(
     fn suspend-terminal() {
         tio.stop()
         let restore = release-terminal-state()
+        if _alt? {
+            write(1, "\x1b[?1049l")
+            _alt? = false
+        }
         if fullscreen {
             write(1, "\x1b[0m\x1b[?25h\x1b[?1049l{restore}")
+        } else if _anchored? {
+            _out.clear()
+            anchor-release()
+            _out.push("\x1b[0m\x1b[?25h{restore}")
+            write(1, _out)
         } else {
             ink-write("\x1b[0m\x1b[?25h{restore}")
         }
@@ -5764,6 +6024,9 @@ pub fn run(
         } else {
             write(1, "\x1b[?25l")
         }
+        if _anchored? {
+            _rehome = 'reprint'
+        }
         _dragging? = false
         _capture = nil
         invalidate-screen()
@@ -5780,9 +6043,16 @@ pub fn run(
         if app.alive? {
             app.unmount!()
         }
+        _alt-want? = false
+        if _alt? {
+            switch-screen()
+        }
         _out.clear()
         if fullscreen {
             _out.push("\x1b[?25h\x1b[?1049l")
+        } else if _anchored? {
+            anchor-release()
+            _out.push("\x1b[?25h")
         } else {
             if _last-inline-height < (_last-output.?height ?? 0) {
                 _out.push("\x1b[{(_last-output.?height ?? 0) - _last-inline-height}B")
@@ -5791,18 +6061,40 @@ pub fn run(
         }
         _out.push(release-terminal-state())
         write(1, _out)
+        _anchored? = false
         tio.stop()
         tio.close()
+    }
+
+    fn switch-screen() {
+        if _alt-want? {
+            write(1, "\x1b[?1049h\x1b[?25l{_bg-global-sgr}\x1b[H\x1b[2J")
+            _alt? = true
+            invalidate-screen()
+            return
+        }
+        write(1, "\x1b[?1049l")
+        _alt? = false
+        let held = _held
+        _held = []
+        for args in held {
+            ink-log(*args)
+        }
     }
 
     fn repaint() {
         dirty = false
         last-paint = now()
+        if !fullscreen && _alt-want? != _alt? {
+            switch-screen()
+        }
         let (rows, cols) = tio.size()
         let (output, t) = render-root(app, cols, rows)
         tree = t
-        if fullscreen {
+        if fullscreen || _alt? {
             paint-fullscreen(output, rows, cols)
+        } else if _anchored? {
+            paint-anchored(output, rows, cols)
         } else {
             paint-inline(output, cols)
         }
@@ -5824,8 +6116,10 @@ pub fn run(
         if is-ctrl-l(ev) {
             invalidate-screen()
             _out.clear()
-            if fullscreen {
+            if fullscreen || _alt? {
                 _out.push("\x1b[H{_bg-global-sgr}\x1b[2J")
+            } else if _anchored? {
+                _rehome = 'reset'
             } else {
                 _last-inline-height = 0
                 _out.push("\x1b[2J\x1b[H")
