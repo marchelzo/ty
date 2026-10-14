@@ -17,6 +17,7 @@
 #include <xxhash.h>
 
 #include "ty.h"
+#include "xd.h"
 #include "bundle.h"
 
 struct embedded_file {
@@ -42,6 +43,8 @@ static struct {
         u64          flags;
         char         dir[PATH_MAX];
         char         entry[PATH_MAX];
+        char         self[PATH_MAX];
+        char         ty[PATH_MAX];
         char const **args;
         int          nargs;
         Native      *natives;
@@ -465,6 +468,39 @@ read_manifest(void)
         return true;
 }
 
+static char const *
+base(char const *path)
+{
+        char const *slash = strrchr(path, '/');
+        return (slash == NULL) ? path : slash + 1;
+}
+
+static bool
+install_ty(char const *self)
+{
+        char bin[PATH_MAX];
+        usize n;
+
+        snprintf(B.ty, sizeof B.ty, "%s/bin/ty", B.dir);
+
+        if (access(B.ty, X_OK) == 0) {
+                return true;
+        }
+
+        snprintf(bin, sizeof bin, "%s/bin", B.dir);
+
+        if (mkdirs(bin) && link(self, B.ty) == 0) {
+                return true;
+        }
+
+        char *data = slurp(self, &n);
+        if (data == NULL) {
+                return false;
+        }
+
+        return bundle_put_file(B.dir, "bin/ty", data, n, 0755);
+}
+
 static void
 bundle_init(void)
 {
@@ -489,6 +525,8 @@ bundle_init(void)
                 return;
         }
 
+        snprintf(B.self, sizeof B.self, "%s", self);
+
         fd = open(self, O_RDONLY | O_CLOEXEC);
         if (fd < 0) {
                 return;
@@ -510,6 +548,11 @@ bundle_init(void)
         snprintf(B.dir, sizeof B.dir, "%s/bundles/%016llx", root, (unsigned long long)t.hash);
 
         if (!stamped(B.dir) && !unpack(fd, &t)) {
+                goto Done;
+        }
+
+        if (!install_ty(self)) {
+                B.error = "failed to install bundled ty";
                 goto Done;
         }
 
@@ -539,6 +582,13 @@ bundle_dir(void)
 }
 
 char const *
+bundle_ty(void)
+{
+        bundle_init();
+        return (B.state == BUNDLE_READY) ? B.ty : NULL;
+}
+
+char const *
 bundle_entry(void)
 {
         bundle_init();
@@ -547,6 +597,7 @@ bundle_entry(void)
                 (B.state != BUNDLE_READY)
              || !(B.flags & TY_BUNDLE_RUN)
              || (B.entry[0] == '\0')
+             || (strcmp(base(B.self), "ty") == 0)
         ) {
                 return NULL;
         }
@@ -567,13 +618,6 @@ bundle_flags(char const *const **out)
         bundle_init();
         *out = B.args;
         return B.nargs;
-}
-
-static char const *
-base(char const *path)
-{
-        char const *slash = strrchr(path, '/');
-        return (slash == NULL) ? path : slash + 1;
 }
 
 static usize

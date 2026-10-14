@@ -2555,13 +2555,47 @@ make_temp_dir(char *template)
 #endif
 }
 
-static char *
-mktemplate(Ty *ty, char const *prefix, usize n)
+static char const *
+tmpdir(Ty *ty, usize *n)
 {
-        char *template = TY_BUF_A(max(n + sizeof ".XXXXXX", PATH_MAX + 1));
+#ifdef _WIN32
+        char const *seps = "/\\";
+        char *buf = TY_TMP();
+        DWORD w = GetTempPathA(TY_TMP_N, buf);
+        char const *dir = (w == 0 || w >= TY_TMP_N) ? "." : buf;
+#else
+        char const *seps = "/";
+        char const *dir = getenv("TMPDIR");
+        if (dir == NULL || *dir == '\0') {
+                dir = "/tmp";
+        }
+#endif
+        *n = strlen(dir);
+        while (*n > 1 && strchr(seps, dir[*n - 1]) != NULL) {
+                *n -= 1;
+        }
 
-        memcpy(template, prefix, n);
-        memcpy(template + n, ".XXXXXX", sizeof ".XXXXXX");
+        return dir;
+}
+
+// os.tmpdir() -> String
+TY_BUILTIN_RAW(os_tmpdir)
+{
+        ASSERT_ARGC("os.tmpdir()", 0);
+
+        usize n;
+        char const *dir = tmpdir(ty, &n);
+
+        return vSs(dir, n);
+}
+
+static char *
+mktemplate(Ty *ty, char const *fmt, char const *p, usize n)
+{
+        usize cap = max(n + sizeof "/tmp.XXXXXX", PATH_MAX + 1);
+        char *template = TY_BUF_A(cap);
+
+        ty_snprintf(template, cap, fmt, (int)n, p);
 
         return template;
 }
@@ -2574,13 +2608,14 @@ xmktemplate(Ty *ty, char const *_name__, int argc)
         usize n;
 
         if (argc == 0 || ARG(0).type == VALUE_NIL) {
-                return mktemplate(ty, "tmp", 3);
+                p = tmpdir(ty, &n);
+                return mktemplate(ty, "%.*s/tmp.XXXXXX", p, n);
         }
 
         prefix = PATH_ARGx(0);
         p      = TyPathBytes(&prefix, &n);
 
-        return mktemplate(ty, p, n);
+        return mktemplate(ty, "%.*s.XXXXXX", p, n);
 }
 
 // os.mkdtemp(prefix: ?PathLike = nil) -> String
@@ -2627,7 +2662,7 @@ make_temp_file(char *template, int flags)
     return fd;
 }
 
-// os.mktemp(pattern: PathLike = 'tmp.XXXXXX') -> (Int, String)
+// os.mktemp(prefix: ?PathLike = nil, flags: Int = -1) -> (Int, String)
 TY_BUILTIN_RAW(os_mktemp)
 {
         ASSERT_ARGC("os.mktemp()", 0, 1, 2);

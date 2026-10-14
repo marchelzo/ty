@@ -8,6 +8,7 @@ import os
 import chalk (chalk)
 import json
 import path (Path)
+import dirs
 import time
 import readln (
     InteractiveLineReader,
@@ -173,6 +174,6 @@ if ty.interactive {
         prompt=() -> chalk"[#d3a2ff b]>>[/] ",
         complete=tab-complete,
         render=pretty-code,
-        history-file=Path.home() / '.ty' / '.history'
+        history-file=(dirs.STATE ?? dirs.DATA_LOCAL) / 'ty' / 'history'
     ).readln
 }

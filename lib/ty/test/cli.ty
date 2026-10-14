@@ -513,8 +513,7 @@ fn row-events(o: Options, plan: Plan) -> Array[(String, Event)] {
 }
 
 fn make-run-dir() -> String {
-    let base = (getenv('TMPDIR') ?? '/tmp').sub(/\/+$/, '')
-    os.mkdtemp("{base}/ty-test-{os.getpid()}")
+    os.mkdtemp(Path.tmp() / "ty-test-{os.getpid()}")
 }
 
 fn color-of(o: Options) -> ?Bool {

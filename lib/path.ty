@@ -584,6 +584,10 @@ pub class Path : PathLike {
         Path(os.getcwd())
     }
 
+    static tmp() -> Path {
+        Path(os.tmpdir())
+    }
+
     static home() -> Path {
 #|if __windows__
         Path(getenv('USERPROFILE') ?? getenv('HOMEPATH') ?? '.')
@@ -622,7 +626,7 @@ pub class Path : PathLike {
     }
 
     static tempdir(prefix: String = 'tmp') -> TempDir {
-        Path('/tmp').tempdir(prefix)
+        Path.tmp().tempdir(prefix)
     }
 
     temp(prefix: String = 'tmp', suffix: String = '') -> TempFile {
@@ -630,7 +634,7 @@ pub class Path : PathLike {
     }
 
     static temp(prefix: String = 'tmp', suffix: String = '') -> TempFile {
-        Path('/tmp').temp(prefix, suffix)
+        Path.tmp().temp(prefix, suffix)
     }
 }
 
@@ -693,4 +697,5 @@ fn <=>(a: Path, b: Path) -> Int { prelude::str(a) <=> prelude::str(b) }
 pub cwd = Path.cwd
 pub home = Path.home
 pub temp = Path.temp
+pub tmp = Path.tmp
 pub tempdir = Path.tempdir

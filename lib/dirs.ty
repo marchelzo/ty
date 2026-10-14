@@ -1,0 +1,88 @@
+import path (Path)
+
+pub HOME = Path.home()
+
+fn xdg[T](var: String, fallback: T = nil) -> Path | T {
+    let p = Path(getenv(var) ?? '')
+    p.absolute? ? p : fallback
+}
+
+#|if __windows__
+fn known(var: String, fallback: String) -> Path {
+    xdg(var, HOME / fallback)
+}
+
+pub CACHE        = known('LOCALAPPDATA', 'AppData\\Local')
+pub CONFIG       = known('APPDATA', 'AppData\\Roaming')
+pub CONFIG_LOCAL = CACHE
+pub DATA         = CONFIG
+pub DATA_LOCAL   = CACHE
+pub PREFERENCES  = CONFIG
+pub EXECUTABLES  = nil
+pub RUNTIME      = nil
+pub STATE        = nil
+
+pub AUDIO        = HOME / 'Music'
+pub DESKTOP      = HOME / 'Desktop'
+pub DOCUMENTS    = HOME / 'Documents'
+pub DOWNLOADS    = HOME / 'Downloads'
+pub FONTS        = nil
+pub PICTURES     = HOME / 'Pictures'
+pub PUBLIC       = xdg('PUBLIC')
+pub TEMPLATES    = CONFIG / 'Microsoft\\Windows\\Templates'
+pub VIDEOS       = HOME / 'Videos'
+#|else if __apple__
+let LIBRARY = HOME / 'Library'
+
+pub CACHE        = LIBRARY / 'Caches'
+pub CONFIG       = LIBRARY / 'Application Support'
+pub CONFIG_LOCAL = CONFIG
+pub DATA         = CONFIG
+pub DATA_LOCAL   = CONFIG
+pub PREFERENCES  = LIBRARY / 'Preferences'
+pub EXECUTABLES  = nil
+pub RUNTIME      = nil
+pub STATE        = nil
+
+pub AUDIO        = HOME / 'Music'
+pub DESKTOP      = HOME / 'Desktop'
+pub DOCUMENTS    = HOME / 'Documents'
+pub DOWNLOADS    = HOME / 'Downloads'
+pub FONTS        = LIBRARY / 'Fonts'
+pub PICTURES     = HOME / 'Pictures'
+pub PUBLIC       = HOME / 'Public'
+pub TEMPLATES    = nil
+pub VIDEOS       = HOME / 'Movies'
+#|else
+pub CACHE        = xdg('XDG_CACHE_HOME', HOME / '.cache')
+pub CONFIG       = xdg('XDG_CONFIG_HOME', HOME / '.config')
+pub CONFIG_LOCAL = CONFIG
+pub DATA         = xdg('XDG_DATA_HOME', HOME / '.local/share')
+pub DATA_LOCAL   = DATA
+pub PREFERENCES  = CONFIG
+pub EXECUTABLES  = xdg('XDG_BIN_HOME', HOME / '.local/bin')
+pub RUNTIME      = xdg('XDG_RUNTIME_DIR')
+pub STATE        = xdg('XDG_STATE_HOME', HOME / '.local/state')
+
+fn expand(s: String) -> Path {
+    match s {
+        /^\$HOME\/?(.*)$/ => HOME / $1,
+        _                 => Path(s)
+    }
+}
+
+let USER = %{
+    k: expand(v)
+    for [_, k, v] in (slurp(CONFIG / 'user-dirs.dirs') ?? '').matches(/(?m)^XDG_(\w+)_DIR="(.*)"/)
+}
+
+pub AUDIO        = USER['MUSIC']
+pub DESKTOP      = USER['DESKTOP']
+pub DOCUMENTS    = USER['DOCUMENTS']
+pub DOWNLOADS    = USER['DOWNLOAD']
+pub FONTS        = DATA / 'fonts'
+pub PICTURES     = USER['PICTURES']
+pub PUBLIC       = USER['PUBLICSHARE']
+pub TEMPLATES    = USER['TEMPLATES']
+pub VIDEOS       = USER['VIDEOS']
+#|]

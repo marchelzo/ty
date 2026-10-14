@@ -60,15 +60,26 @@ bundle_preload(void);
 void
 bundle_snapshot(void);
 
+typedef struct {
+        char const  *script;
+        char const  *out;
+        char       **flags;
+        int          nflags;
+        char       **natives;
+        int          nnatives;
+        char       **scripts;
+        int          nscripts;
+        char       **files;
+        int          nfiles;
+} BundleSpec;
+
+char const *
+bundle_ty(void);
+
 int
-bundle_create(
-        Ty *ty,
-        char const *script,
-        char const *out,
-        char **flags,
-        int nflags,
-        char **natives,
-        int nnatives
-);
+bundle_create(Ty *ty, BundleSpec const *spec);
+
+int
+bundle_scan(Ty *ty, char const *script, int fd);
 
 #endif

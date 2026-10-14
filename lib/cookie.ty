@@ -8,6 +8,7 @@ import date (Duration, Instant)
 import ffi as c (C!)
 import json
 import path (Path)
+import dirs
 import sh
 import sqlite (SQLite)
 import time
@@ -237,11 +238,11 @@ fn windows-local-app-data() -> Path | nil {
 
 fn profile-path(profile: String | Path | nil) -> Path {
 #|if __windows__
-    let root = Path(getenv('LOCALAPPDATA') ?? '.') / 'Google/Chrome/User Data'
+    let root = dirs.DATA_LOCAL / 'Google/Chrome/User Data'
 #|else if __apple__
-    let root = Path.home() / 'Library/Application Support/Google/Chrome'
+    let root = dirs.CONFIG / 'Google/Chrome'
 #|else
-    let linux-root = Path(getenv('XDG_CONFIG_HOME') ?? "{Path.home()}/.config") / 'google-chrome'
+    let linux-root = dirs.CONFIG / 'google-chrome'
     let windows-root = windows-local-app-data()
     let root = windows-root == nil
         ? linux-root

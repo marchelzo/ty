@@ -1598,8 +1598,7 @@ pub class TextInput < Component {
     }
 
     __external() {
-        let dir = (getenv('TMPDIR') ?? '/tmp').comb(/\/+$/)
-        if not let (fd, tmp) = mktemp("{dir}/ink-edit") {
+        if not let (fd, tmp) = mktemp(Path.tmp() / 'ink-edit') {
             return
         }
         let seed = ed.text

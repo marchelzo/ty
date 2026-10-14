@@ -101,6 +101,11 @@ static char const *BundleOut = NULL;
 static bool BundleRunning = false;
 static char **BundleNatives = NULL;
 static int BundleNativeCount = 0;
+static char **BundleScripts = NULL;
+static int BundleScriptCount = 0;
+static char **BundleFiles = NULL;
+static int BundleFileCount = 0;
+static int BundleScanFd = -1;
 #endif
 
 extern bool ProduceAnnotation;
@@ -142,6 +147,10 @@ usage(void)
                 "                  runs SCRIPT; ty options given alongside --bundle are kept              \0"
                 "    --bundle-native=LIB                                                                  \0"
                 "                  Also include native library LIB in the bundle (repeatable)             \0"
+                "    --bundle-script=SCRIPT                                                               \0"
+                "                  Also include SCRIPT and everything it imports (repeatable)             \0"
+                "    --bundle-file=PATH                                                                   \0"
+                "                  Also include file or directory PATH verbatim (repeatable)              \0"
 #endif
 #ifdef TY_PROFILER
                 "    -F FREQ       Set profiler sampling frequency in Hz (default: every instruction)     \0"
@@ -465,6 +474,44 @@ OpenOutputFile(char const *path)
         return file;
 }
 
+#ifdef TY_BUNDLER
+static bool
+BundleOption(char **argv, int *argi, char const *name, char ***list, int *n, bool first)
+{
+        usize len = strlen(name);
+        char const *arg = argv[*argi];
+        char const *val;
+
+        if (s_eq(arg, name)) {
+                val = argv[++*argi];
+        } else if (s_eq_n(arg, name, len) && arg[len] == '=') {
+                val = arg + len + 1;
+        } else {
+                return false;
+        }
+
+        if (val == NULL || *val == '\0') {
+                fprintf(stderr, "Missing argument for %s\n", name);
+                exit(1);
+        }
+
+        if (first) {
+                *list = realloc(*list, (*n + 1) * sizeof **list);
+                (*list)[(*n)++] = (char *)val;
+        }
+
+        return true;
+}
+
+static bool
+BundleSeparate(char const *arg)
+{
+        return s_eq(arg, "--bundle-native")
+            || s_eq(arg, "--bundle-script")
+            || s_eq(arg, "--bundle-file");
+}
+#endif
+
 static int
 ProcessArgs(char *argv[], bool first)
 {
@@ -523,19 +570,16 @@ ProcessArgs(char *argv[], bool first)
                 }
 
 #ifdef TY_BUNDLER
-                if (s_eq(argv[argi], "--bundle-native") || s_eq_n(argv[argi], "--bundle-native=", 16)) {
-                        char const *lib = (argv[argi][15] == '=') ? argv[argi] + 16 : argv[++argi];
-                        if (lib == NULL || *lib == '\0') {
-                                fprintf(stderr, "Missing argument for --bundle-native\n");
-                                exit(1);
-                        }
-                        if (first) {
-                                BundleNatives = realloc(
-                                        BundleNatives,
-                                        (BundleNativeCount + 1) * sizeof *BundleNatives
-                                );
-                                BundleNatives[BundleNativeCount++] = (char *)lib;
-                        }
+                if (
+                        BundleOption(argv, &argi, "--bundle-native", &BundleNatives, &BundleNativeCount, first)
+                     || BundleOption(argv, &argi, "--bundle-script", &BundleScripts, &BundleScriptCount, first)
+                     || BundleOption(argv, &argi, "--bundle-file", &BundleFiles, &BundleFileCount, first)
+                ) {
+                        goto NextOption;
+                }
+
+                if (s_eq_n(argv[argi], "--bundle-scan=", 14)) {
+                        BundleScanFd = atoi(argv[argi] + 14);
                         goto NextOption;
                 }
 
@@ -963,8 +1007,10 @@ BundleArgv(int *argc, char **argv)
                 break;
         }
 
-        entry = bundle_entry();
+        char const *slash = strrchr(argv[0], '/');
+        entry = s_eq((slash != NULL) ? slash + 1 : argv[0], "ty") ? NULL : bundle_entry();
         if (entry == NULL) {
+                bundle_preload();
                 return argv;
         }
 
@@ -1003,13 +1049,13 @@ RunBundler(int argc, char **argv, int nopt)
         }
 
         for (int i = 1; i < nopt; ++i) {
-                if (s_eq(argv[i], "--bundle-native")) {
+                if (BundleSeparate(argv[i])) {
                         i += 1;
                 } else if (
                         !s_eq(argv[i], "--")
                      && !s_eq(argv[i], "--bundle")
                      && !s_eq_n(argv[i], "--bundle=", 9)
-                     && !s_eq_n(argv[i], "--bundle-native=", 16)
+                     && !s_eq_n(argv[i], "--bundle-", 9)
                 ) {
                         flags[nflags++] = argv[i];
                 }
@@ -1023,17 +1069,39 @@ RunBundler(int argc, char **argv, int nopt)
                 exit(1);
         }
 
-        exit(
-                bundle_create(
-                        ty,
-                        SourceFile,
-                        BundleOut,
-                        flags,
-                        nflags,
-                        BundleNatives,
-                        BundleNativeCount
-                )
-        );
+        BundleSpec spec = {
+                .script   = SourceFile,
+                .out      = BundleOut,
+                .flags    = flags,
+                .nflags   = nflags,
+                .natives  = BundleNatives,
+                .nnatives = BundleNativeCount,
+                .scripts  = BundleScripts,
+                .nscripts = BundleScriptCount,
+                .files    = BundleFiles,
+                .nfiles   = BundleFileCount
+        };
+
+        exit(bundle_create(ty, &spec));
+}
+
+static noreturn void
+RunBundleScan(int argc, char **argv, int nopt)
+{
+        if (SourceFile == NULL || s_eq(SourceFile, "/dev/stdin")) {
+                fprintf(stderr, "ty --bundle-scan: missing script\n");
+                exit(1);
+        }
+
+        bundle_snapshot();
+
+        if (!vm_init(ty, argc - nopt, argv + nopt)) {
+                DyingOfError = true;
+                fprintf(stderr, "%s\n", TyError(ty));
+                exit(1);
+        }
+
+        exit(bundle_scan(ty, SourceFile, BundleScanFd));
 }
 #endif
 
@@ -1140,9 +1208,16 @@ main(int argc, char **argv)
                 argv[nopt] = argv[0];
         }
 
-        if (BundleNativeCount > 0 && BundleOut == NULL) {
-                fprintf(stderr, "ty: --bundle-native requires --bundle\n");
+        if (
+                (BundleNativeCount + BundleScriptCount + BundleFileCount > 0)
+             && (BundleOut == NULL)
+        ) {
+                fprintf(stderr, "ty: --bundle-native, --bundle-script and --bundle-file require --bundle\n");
                 exit(1);
+        }
+
+        if (BundleScanFd >= 0) {
+                RunBundleScan(argc, argv, nopt);
         }
 
         if (BundleOut != NULL && !RunningTests) {

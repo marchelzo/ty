@@ -49,7 +49,7 @@ fn labelled(names: Array[String], prefix: String) -> Array[CompletionItem] {
 }
 
 fn history-path() -> Path {
-    Path.home() / '.ty' / '.history'
+    Path((getenv('XDG_STATE_HOME') ?? '') || "{Path.home()}/.local/state") / 'ty' / 'history'
 }
 
 print(

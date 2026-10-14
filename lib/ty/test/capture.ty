@@ -27,7 +27,7 @@ pub class Capture {
     }
 
     static temp() -> Capture {
-        let base = (getenv('TMPDIR') ?? '/tmp').sub(/\/+$/, '')
+        let base = os.tmpdir()
         let (fd, p) = os.mktemp("{base}/ty-test-capture")
         if fd < 0 {
             throw RuntimeError("ty --test: cannot create a capture file under {base}")
@@ -80,7 +80,7 @@ pub class Capture {
 pub use Captured = {stdout: String, stderr: String, result: Any}
 
 fn scratch(fd: Int) -> (Int, String) {
-    let base = (getenv('TMPDIR') ?? '/tmp').sub(/\/+$/, '')
+    let base = os.tmpdir()
     let (out, p) = os.mktemp("{base}/ty-test-capture-{fd}")
     if out < 0 {
         throw RuntimeError("t.capture(): cannot create a file under {base}")

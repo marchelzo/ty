@@ -1001,7 +1001,13 @@ add_builtins(Ty *ty, int ac, char **av)
         BUILTIN_NAMED_VAR("ty", "version",        version,     "{string: prelude.String, date: prelude.String}") = version;
         BUILTIN_NAMED_VAR("ty", "interactive",    interactive, "prelude.Bool"                                  ) = BOOLEAN(false);
 
+#ifdef TY_EMBED_LIB
+        BUILTIN_VAR("ty",  "executable", "prelude.String") = (bundle_ty() != NULL) ? vSsz(bundle_ty()) : this_executable(ty);
+        BUILTIN_VAR("ty",  "bundle",     "prelude.String | nil") = (bundle_dir() != NULL) ? vSsz(bundle_dir()) : NIL;
+#else
         BUILTIN_VAR("ty",  "executable", "prelude.String") = this_executable(ty);
+        BUILTIN_VAR("ty",  "bundle",     "prelude.String | nil") = NIL;
+#endif
         BUILTIN_VAR("ty",  "platform",   "prelude.String") = xSz(TY_PLATFORM_NAME);
         BUILTIN_VAR("ty",  "arch",       "prelude.String") = xSz(TY_PLATFORM_ARCH);
         BUILTIN_VAR("ty",  "color",      "prelude.String") = xSz(COLOR_MODE_NAMES[ColorMode]);
@@ -1068,11 +1074,6 @@ add_builtins(Ty *ty, int ac, char **av)
                 add(path);
         } else if (home != NULL) {
                 ty_snprintf(path, sizeof path, "%s/.local/share/ty/lib", home);
-                add(path);
-        }
-
-        if (home != NULL) {
-                ty_snprintf(path, sizeof path, "%s/.ty", home);
                 add(path);
         }
 

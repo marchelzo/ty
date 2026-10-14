@@ -6,6 +6,7 @@ import os
 import chalk (Chalk, Text, escape, strip, parse as unansi)
 import ety
 import path (Path)
+import dirs
 import pretty (pretty)
 import help.corpus as corpus (Entry, Snippet, fold, dedent, dotted, flat, kebab-text)
 
@@ -162,7 +163,7 @@ fn inline(text: String) -> Text {
 
 fn short-path(file: ?String) -> String | nil {
     let $file = file or return nil
-    let home = str(Path.home())
+    let home = str(dirs.HOME)
     let lib = ty.path.find(dir -> file.starts?("{dir}/"))
     match file {
         _ and lib != nil         => "{Path(lib).name}/{file.slice(#lib + 1)}",
@@ -185,6 +186,10 @@ fn public-method?(e: Entry) -> Bool {
 
 fn visible?(e: Entry, aliases: Dict[String, String]) -> Bool {
     e.mod == 'prelude' || e.mod in aliases.values()
+}
+
+fn unimported(hits: Array[Entry], aliases: Dict[String, String]) -> Entry | nil {
+    (ty.interactive && !hits.any?(visible?@(_, aliases))) ? hits[0] : nil
 }
 
 fn sort-key(e: Entry) -> (Int, String) {
@@ -891,9 +896,9 @@ fn member-of(object: _, member: String) -> Array[Entry] | nil {
 
 fn nominal-class(t: _) -> Class | nil {
     match t {
-        ty.Value(c) and (c :: Class)                 => c,
+        ty.Value(c) and (c :: Class)                  => c,
         ty.Subscript(ty.Value(c), _) and (c :: Class) => c,
-        _                                            => nil
+        _                                             => nil
     }
 }
 
@@ -927,7 +932,7 @@ fn symbolic(parts: Array[String]) -> Answer | nil {
 
     let hits = index().qual(text).filter(\corpus.kebab(_.qual) == corpus.kebab(text))
     if hits {
-        return Answer(hits, hint: hits.any?(visible?@(_, aliases)) ? nil : hits[0])
+        return Answer(hits, hint: unimported(hits, aliases))
     }
 
     nil
@@ -1136,8 +1141,7 @@ fn reply(query: String) -> Reply {
         return Listing(text, named.sort(by=sort-key))
     }
     if named {
-        let hint = named.any?(visible?@(_, imports())) ? nil : named[0]
-        return Found(Answer(named, hint: hint), '')
+        return Found(Answer(named, hint: unimported(named, imports())), '')
     }
 
     let sections = tour-sections(text)
@@ -1169,8 +1173,7 @@ fn terminal(reply: Reply) -> Page {
     page
 }
 
-fn deliver(page: Page) {
-    let text = page.text
+fn deliver(text: String) {
     let lines = text.count('\n')
     let rows = os.terminal-size().?rows ?? 0
     if !os.isatty(1) || lines < rows - 2 {
@@ -1334,20 +1337,20 @@ fn results(page: Page, hits: Array[Hit], needles: Array[String]) {
     }
 }
 
-pub fn grep(text: String) {
+fn grep-page(text: String) -> Page {
     fresh()
     let page = Page()
     let hits = search(text)
-    let q = Query(text)
     if !hits {
-        page.put(ink"[warn]No matches for[/] {hl(text)}")
-        deliver(page)
-        return
+        return page.put(ink"[warn]No matches for[/] {hl(text)}")
     }
-    results(page, hits[;MAX_RESULTS], q.words)
+    results(page, hits[;MAX_RESULTS], Query(text).words)
     let shown = (#hits > MAX_RESULTS) ? ", showing the best {MAX_RESULTS}" : ''
     page.blank().put(ink"[dim]{#hits} matches{shown} · help <name> for details[/]")
-    deliver(page)
+}
+
+pub fn grep(text: String) {
+    deliver(os.isatty(1) ? grep-page(text).text : grep-md(text))
 }
 
 fn reply-for(xs: Array[_], query: ?String) -> Reply {
@@ -1360,7 +1363,8 @@ fn reply-for(xs: Array[_], query: ?String) -> Reply {
 }
 
 pub fn help(*xs, query: ?String = nil) {
-    deliver(terminal(reply-for(xs, query)))
+    let reply = reply-for(xs, query)
+    deliver(os.isatty(1) ? terminal(reply).text : md-reply(reply))
 }
 
 const MD_CARD = '''

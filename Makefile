@@ -294,10 +294,11 @@ obj/types2-core-test: tests/types2_core.c src/types2_core.c src/panic.c include/
 	@$(CC) $(CFLAGS) -o $@ tests/types2_core.c src/types2_core.c src/panic.c $(LDFLAGS)
 
 LIB_DIRS = $(sort $(dir $(shell find lib -type f -name '*.ty')))
+LIB_HOME = $(or $(XDG_DATA_HOME),$(HOME)/.local/share)/ty/lib
 
 define install-lib-dir
-	install -d $(HOME)/.ty/$(patsubst lib/%,%,$(1))
-	install -m644 $(1)*.ty $(HOME)/.ty/$(patsubst lib/%,%,$(1))
+	install -d $(LIB_HOME)/$(patsubst lib/%,%,$(1))
+	install -m644 $(1)*.ty $(LIB_HOME)/$(patsubst lib/%,%,$(1))
 
 endef
 

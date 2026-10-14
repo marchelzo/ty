@@ -1,5 +1,6 @@
 #ifdef TY_EMBED_LIB
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -15,6 +16,7 @@
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
 #else
+#include <elf.h>
 #include <link.h>
 #endif
 
@@ -257,28 +259,16 @@ lib_rel(List const *dirs, char const *path, char const *name, char *buf, usize c
 }
 
 static bool
-collect_modules(Ty *ty, char const *script, Files *files, char *entry, usize cap)
+gather(Ty *ty, List const *dirs, Files *files, List *app)
 {
-        List dirs = {0};
-        List app  = {0};
         char embedded[PATH_MAX];
         char real[PATH_MAX];
         char rel[PATH_MAX];
-        char root[PATH_MAX];
         bool have_embedded = false;
-
-        search_dirs(&dirs);
 
         if (embedded_lib_dir(rel, sizeof rel) && realpath(rel, embedded) != NULL) {
                 have_embedded = true;
         }
-
-        if (realpath(script, real) == NULL) {
-                fprintf(stderr, "ty --bundle: %s: %s\n", script, strerror(errno));
-                return false;
-        }
-
-        lput(&app, real);
 
         ModuleVector const *mods = TyActiveModules(ty);
 
@@ -298,40 +288,81 @@ collect_modules(Ty *ty, char const *script, Files *files, char *entry, usize cap
                         continue;
                 }
 
-                if (lib_rel(&dirs, real, mod->name, rel, sizeof rel) != NULL) {
+                if (lib_rel(dirs, real, mod->name, rel, sizeof rel) != NULL) {
                         if (!fput(files, rel, real, 0644)) {
                                 fprintf(stderr, "ty --bundle: conflicting files for %s\n", rel);
                                 return false;
                         }
-                } else if (!lhas(&app, real)) {
-                        lput(&app, real);
+                } else if (!lhas(app, real)) {
+                        lput(app, real);
                 }
         }
 
-        int nsrc = app.n;
-        for (int i = 0; i < nsrc; ++i) {
-                char const *r = mod_root(ty, app.items[i]);
-                if (r == NULL) {
+        return true;
+}
+
+static bool
+add_data(List *app, char const *path)
+{
+        char real[PATH_MAX];
+        char sub[PATH_MAX];
+        struct stat st;
+        struct dirent *e;
+        DIR *d;
+
+        if (realpath(path, real) == NULL || stat(real, &st) != 0) {
+                fprintf(stderr, "ty --bundle: %s: %s\n", path, strerror(errno));
+                return false;
+        }
+
+        if (S_ISREG(st.st_mode)) {
+                if (!lhas(app, real)) {
+                        lput(app, real);
+                }
+                return true;
+        }
+
+        if (!S_ISDIR(st.st_mode) || (d = opendir(real)) == NULL) {
+                fprintf(stderr, "ty --bundle: %s: not a file or directory\n", path);
+                return false;
+        }
+
+        while ((e = readdir(d)) != NULL) {
+                if (e->d_name[0] == '.') {
                         continue;
                 }
-                snprintf(real, sizeof real, "%s/__pkg__.ty", r);
-                if (regular(real) && !lhas(&app, real)) {
-                        lput(&app, real);
+                snprintf(sub, sizeof sub, "%s/%s", real, e->d_name);
+                if (!add_data(app, sub)) {
+                        closedir(d);
+                        return false;
                 }
         }
 
-        snprintf(root, sizeof root, "%s", app.items[0]);
+        closedir(d);
+
+        return true;
+}
+
+static bool
+place_app(List *app, Files *files, char *entry, usize cap)
+{
+        char rel[PATH_MAX];
+        char root[PATH_MAX];
+        struct stat st;
+
+        snprintf(root, sizeof root, "%s", app->items[0]);
         parent(root);
 
-        for (int i = 1; i < app.n; ++i) {
-                while (under(app.items[i], root) == NULL) {
+        for (int i = 1; i < app->n; ++i) {
+                while (under(app->items[i], root) == NULL) {
                         parent(root);
                 }
         }
 
-        for (int i = 0; i < app.n; ++i) {
-                snprintf(rel, sizeof rel, "app/%s", under(app.items[i], root));
-                if (!fput(files, rel, app.items[i], 0644)) {
+        for (int i = 0; i < app->n; ++i) {
+                u32 mode = (stat(app->items[i], &st) == 0) ? (st.st_mode & 0777) : 0644;
+                snprintf(rel, sizeof rel, "app/%s", under(app->items[i], root));
+                if (!fput(files, rel, app->items[i], mode)) {
                         fprintf(stderr, "ty --bundle: conflicting files for %s\n", rel);
                         return false;
                 }
@@ -341,6 +372,24 @@ collect_modules(Ty *ty, char const *script, Files *files, char *entry, usize cap
         }
 
         return true;
+}
+
+static void
+add_packages(Ty *ty, List *app)
+{
+        char real[PATH_MAX];
+        int n = app->n;
+
+        for (int i = 0; i < n; ++i) {
+                char const *r = mod_root(ty, app->items[i]);
+                if (r == NULL) {
+                        continue;
+                }
+                snprintf(real, sizeof real, "%s/__pkg__.ty", r);
+                if (regular(real) && !lhas(app, real)) {
+                        lput(app, real);
+                }
+        }
 }
 
 static void
@@ -363,19 +412,11 @@ add_native(Files *files, List *origs, char const *name, char const *real)
         lput(origs, rel);
 }
 
-static bool
-collect_natives(Files *files, List *origs, char **extra, int nextra)
+static void
+loaded(List *out)
 {
         List after = {0};
         char real[PATH_MAX];
-
-        for (int i = 0; i < nextra; ++i) {
-                if (realpath(extra[i], real) == NULL || !regular(real)) {
-                        fprintf(stderr, "ty --bundle: %s: not a file\n", extra[i]);
-                        return false;
-                }
-                add_native(files, origs, extra[i], real);
-        }
 
         images(&after);
 
@@ -391,10 +432,381 @@ collect_natives(Files *files, List *origs, char **extra, int nextra)
                         continue;
                 }
 
-                add_native(files, origs, name, real);
+                lput(out, name);
+        }
+}
+
+static bool
+collect_natives(Files *files, List *origs, char **extra, int nextra)
+{
+        List libs = {0};
+        char real[PATH_MAX];
+
+        for (int i = 0; i < nextra; ++i) {
+                if (realpath(extra[i], real) == NULL || !regular(real)) {
+                        fprintf(stderr, "ty --bundle: %s: not a file\n", extra[i]);
+                        return false;
+                }
+                add_native(files, origs, extra[i], real);
+        }
+
+        loaded(&libs);
+
+        for (int i = 0; i < libs.n; ++i) {
+                if (realpath(libs.items[i], real) != NULL) {
+                        add_native(files, origs, libs.items[i], real);
+                }
         }
 
         return true;
+}
+
+static bool
+write_all(int fd, void const *p, usize n)
+{
+        char const *s = p;
+
+        while (n > 0) {
+                ssize_t w = write(fd, s, n);
+                if (w < 0 && errno == EINTR) {
+                        continue;
+                }
+                if (w <= 0) {
+                        return false;
+                }
+                s += w;
+                n -= (usize)w;
+        }
+
+        return true;
+}
+
+static bool
+load(Ty *ty, char const *script)
+{
+        char *source = slurp(script, NULL);
+
+        if (source == NULL) {
+                fprintf(stderr, "ty --bundle: %s: %s\n", script, strerror(errno));
+                return false;
+        }
+
+        if (!vm_load_program(ty, source, script)) {
+                fprintf(stderr, "%s\n", TyError(ty));
+                return false;
+        }
+
+        return true;
+}
+
+int
+bundle_scan(Ty *ty, char const *script, int fd)
+{
+        List dirs = {0};
+        List app  = {0};
+        List libs = {0};
+        Files files = {0};
+        Buf out = {0};
+        char real[PATH_MAX];
+
+        if (!load(ty, script)) {
+                return 1;
+        }
+
+        search_dirs(&dirs);
+
+        if (!gather(ty, &dirs, &files, &app)) {
+                return 1;
+        }
+
+        loaded(&libs);
+
+        for (int i = 0; i < files.n; ++i) {
+                bputs(&out, "lib\t");
+                bputs(&out, files.items[i].rel);
+                bputs(&out, "\t");
+                bputs(&out, files.items[i].path);
+                bputs(&out, "\n");
+        }
+
+        for (int i = 0; i < app.n; ++i) {
+                bputs(&out, "app\t");
+                bputs(&out, app.items[i]);
+                bputs(&out, "\n");
+        }
+
+        for (int i = 0; i < libs.n; ++i) {
+                if (realpath(libs.items[i], real) == NULL) {
+                        continue;
+                }
+                bputs(&out, "native\t");
+                bputs(&out, libs.items[i]);
+                bputs(&out, "\t");
+                bputs(&out, real);
+                bputs(&out, "\n");
+        }
+
+        return write_all(fd, out.data, out.n) ? 0 : 1;
+}
+
+static bool
+absorb(char *text, Files *files, List *app, List *origs)
+{
+        char *save = NULL;
+
+        for (char *line = strtok_r(text, "\n", &save); line != NULL; line = strtok_r(NULL, "\n", &save)) {
+                char *a = strchr(line, '\t');
+                char *b = (a == NULL) ? NULL : strchr(a + 1, '\t');
+
+                if (a == NULL) {
+                        continue;
+                }
+
+                *a++ = '\0';
+                if (b != NULL) {
+                        *b++ = '\0';
+                }
+
+                if (strcmp(line, "app") == 0) {
+                        if (!lhas(app, a)) {
+                                lput(app, a);
+                        }
+                } else if (b == NULL) {
+                        continue;
+                } else if (strcmp(line, "lib") == 0) {
+                        if (!fput(files, a, b, 0644)) {
+                                fprintf(stderr, "ty --bundle: conflicting files for %s\n", a);
+                                return false;
+                        }
+                } else if (strcmp(line, "native") == 0) {
+                        add_native(files, origs, a, b);
+                }
+        }
+
+        return true;
+}
+
+static bool
+scan(BundleSpec const *spec, char const *script, Files *files, List *app, List *origs)
+{
+        char self[PATH_MAX];
+        char opt[64];
+        char chunk[4096];
+        Buf text = {0};
+        pid_t pid;
+        int status;
+        int p[2];
+        int k = 0;
+
+        if (!executable_path(self, sizeof self)) {
+                fprintf(stderr, "ty --bundle: cannot locate the ty executable\n");
+                return false;
+        }
+
+        if (pipe(p) != 0) {
+                fprintf(stderr, "ty --bundle: pipe: %s\n", strerror(errno));
+                return false;
+        }
+
+        fcntl(p[0], F_SETFD, FD_CLOEXEC);
+        snprintf(opt, sizeof opt, "--bundle-scan=%d", p[1]);
+
+        char **argv = malloc((spec->nflags + 4) * sizeof *argv);
+
+        argv[k++] = self;
+        for (int i = 0; i < spec->nflags; ++i) {
+                argv[k++] = spec->flags[i];
+        }
+        argv[k++] = opt;
+        argv[k++] = (char *)script;
+        argv[k]   = NULL;
+
+        int rc = posix_spawn(&pid, self, NULL, NULL, argv, environ);
+
+        close(p[1]);
+        free(argv);
+
+        if (rc != 0) {
+                fprintf(stderr, "ty --bundle: %s: %s\n", self, strerror(rc));
+                close(p[0]);
+                return false;
+        }
+
+        for (;;) {
+                ssize_t n = read(p[0], chunk, sizeof chunk);
+                if (n < 0 && errno == EINTR) {
+                        continue;
+                }
+                if (n <= 0) {
+                        break;
+                }
+                bput(&text, chunk, (usize)n);
+        }
+
+        close(p[0]);
+
+        while (waitpid(pid, &status, 0) < 0) {
+                if (errno != EINTR) {
+                        status = -1;
+                        break;
+                }
+        }
+
+        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+                fprintf(stderr, "ty --bundle: failed to scan %s\n", script);
+                return false;
+        }
+
+        bput(&text, "", 1);
+
+        return absorb(text.data, files, app, origs);
+}
+
+#if !defined(__APPLE__)
+static bool
+at(Elf64_Phdr const *ph, int nph, u64 vaddr, usize n, u64 *out)
+{
+        for (int i = 0; i < nph; ++i) {
+                if (
+                        (ph[i].p_type == PT_LOAD)
+                     && (vaddr >= ph[i].p_vaddr)
+                     && (vaddr < ph[i].p_vaddr + ph[i].p_filesz)
+                ) {
+                        *out = vaddr - ph[i].p_vaddr + ph[i].p_offset;
+                        return *out < n;
+                }
+        }
+
+        return false;
+}
+
+static void
+linkage(char const *path, List *soname, List *needed)
+{
+        Elf64_Ehdr const *eh;
+        Elf64_Phdr const *ph;
+        Elf64_Dyn const *dyn = NULL;
+        usize ndyn = 0;
+        u64 strtab = 0;
+        u64 off;
+        usize n;
+
+        char *img = slurp(path, &n);
+        if (img == NULL) {
+                return;
+        }
+
+        eh = (void *)img;
+
+        if (
+                (n < sizeof *eh)
+             || (memcmp(eh->e_ident, ELFMAG, SELFMAG) != 0)
+             || (eh->e_ident[EI_CLASS] != ELFCLASS64)
+             || (eh->e_phoff + (u64)eh->e_phnum * sizeof *ph > n)
+        ) {
+                return;
+        }
+
+        ph = (void *)(img + eh->e_phoff);
+
+        for (int i = 0; i < eh->e_phnum; ++i) {
+                if (ph[i].p_type == PT_DYNAMIC && ph[i].p_offset + ph[i].p_filesz <= n) {
+                        dyn  = (void *)(img + ph[i].p_offset);
+                        ndyn = ph[i].p_filesz / sizeof *dyn;
+                }
+        }
+
+        for (usize i = 0; i < ndyn && dyn[i].d_tag != DT_NULL; ++i) {
+                if (dyn[i].d_tag == DT_STRTAB) {
+                        strtab = dyn[i].d_un.d_ptr;
+                }
+        }
+
+        if (dyn == NULL || !at(ph, eh->e_phnum, strtab, n, &strtab)) {
+                return;
+        }
+
+        for (usize i = 0; i < ndyn && dyn[i].d_tag != DT_NULL; ++i) {
+                off = strtab + dyn[i].d_un.d_val;
+                if (off >= n || memchr(img + off, '\0', n - off) == NULL) {
+                        continue;
+                }
+                switch (dyn[i].d_tag) {
+                case DT_SONAME: lput(soname, img + off); break;
+                case DT_NEEDED: lput(needed, img + off); break;
+                }
+        }
+}
+#else
+static void
+linkage(char const *path, List *soname, List *needed)
+{
+        (void)path;
+        (void)soname;
+        (void)needed;
+}
+#endif
+
+static char const *
+fpath(Files const *files, char const *rel)
+{
+        for (int i = 0; i < files->n; ++i) {
+                if (strcmp(files->items[i].rel, rel) == 0) {
+                        return files->items[i].path;
+                }
+        }
+
+        return NULL;
+}
+
+static void
+order_natives(Files const *files, List *natives)
+{
+        int n = natives->n / 2;
+        List *needs = calloc(n, sizeof *needs);
+        List *names = calloc(n, sizeof *names);
+        bool *done = calloc(n, sizeof *done);
+        List out = {0};
+
+        for (int i = 0; i < n; ++i) {
+                char const *rel = natives->items[2 * i + 1];
+                char const *path = fpath(files, rel);
+                lput(&names[i], base(rel));
+                if (path != NULL) {
+                        linkage(path, &names[i], &needs[i]);
+                }
+        }
+
+        while (out.n < natives->n) {
+                int pick = -1;
+
+                for (int i = 0; i < n && pick < 0; ++i) {
+                        bool ready = !done[i];
+                        for (int j = 0; ready && j < n; ++j) {
+                                if (done[j] || j == i) {
+                                        continue;
+                                }
+                                for (int k = 0; ready && k < needs[i].n; ++k) {
+                                        ready = !lhas(&names[j], needs[i].items[k]);
+                                }
+                        }
+                        if (ready) {
+                                pick = i;
+                        }
+                }
+
+                for (int i = 0; i < n && pick < 0; ++i) {
+                        if (!done[i]) {
+                                pick = i;
+                        }
+                }
+
+                done[pick] = true;
+                lput(&out, natives->items[2 * pick]);
+                lput(&out, natives->items[2 * pick + 1]);
+        }
+
+        *natives = out;
 }
 
 static bool
@@ -514,26 +926,6 @@ codesign(char const *path, char const *ident)
 #endif
 
 static bool
-write_all(int fd, void const *p, usize n)
-{
-        char const *s = p;
-
-        while (n > 0) {
-                ssize_t w = write(fd, s, n);
-                if (w < 0 && errno == EINTR) {
-                        continue;
-                }
-                if (w <= 0) {
-                        return false;
-                }
-                s += w;
-                n -= (usize)w;
-        }
-
-        return true;
-}
-
-static bool
 write_bundle(char const *out, Buf const *payload)
 {
         char self[PATH_MAX];
@@ -643,26 +1035,29 @@ default_output(char const *script)
 }
 
 int
-bundle_create(
-        Ty *ty,
-        char const *script,
-        char const *out,
-        char **flags,
-        int nflags,
-        char **extra,
-        int nextra
-)
+bundle_create(Ty *ty, BundleSpec const *spec)
 {
         Files files = {0};
         List natives = {0};
+        List dirs = {0};
+        List app = {0};
         Buf manifest = {0};
         Buf payload = {0};
         char entry[PATH_MAX];
         char a[PATH_MAX];
         char b[PATH_MAX];
+        char const *script = spec->script;
+        char const *out = spec->out;
+        char **flags = spec->flags;
+        int nflags = spec->nflags;
 
         if (out == NULL || *out == '\0') {
                 out = default_output(script);
+        }
+
+        if (strcmp(base(out), "ty") == 0) {
+                fprintf(stderr, "ty --bundle: a bundle cannot be named ty\n");
+                return 1;
         }
 
         if (
@@ -674,22 +1069,42 @@ bundle_create(
                 return 1;
         }
 
-        char *source = slurp(script, NULL);
-        if (source == NULL) {
+        if (realpath(script, a) == NULL) {
                 fprintf(stderr, "ty --bundle: %s: %s\n", script, strerror(errno));
                 return 1;
         }
 
-        if (!vm_load_program(ty, source, script)) {
-                fprintf(stderr, "%s\n", TyError(ty));
+        lput(&app, a);
+
+        if (!load(ty, script)) {
                 return 1;
         }
 
-        if (!collect_modules(ty, script, &files, entry, sizeof entry)) {
+        search_dirs(&dirs);
+
+        if (!gather(ty, &dirs, &files, &app)) {
                 return 1;
         }
 
-        if (!collect_natives(&files, &natives, extra, nextra)) {
+        if (!collect_natives(&files, &natives, spec->natives, spec->nnatives)) {
+                return 1;
+        }
+
+        for (int i = 0; i < spec->nscripts; ++i) {
+                if (!scan(spec, spec->scripts[i], &files, &app, &natives)) {
+                        return 1;
+                }
+        }
+
+        add_packages(ty, &app);
+
+        for (int i = 0; i < spec->nfiles; ++i) {
+                if (!add_data(&app, spec->files[i])) {
+                        return 1;
+                }
+        }
+
+        if (!place_app(&app, &files, entry, sizeof entry)) {
                 return 1;
         }
 
@@ -706,6 +1121,8 @@ bundle_create(
                 bputs(&manifest, flags[i]);
                 bputs(&manifest, "\n");
         }
+
+        order_natives(&files, &natives);
 
         for (int i = 0; i < natives.n; i += 2) {
                 bputs(&manifest, "native\t");
@@ -740,7 +1157,7 @@ bundle_create(
 
         fprintf(
                 stderr,
-                "ty --bundle: wrote %s (%d module%s, %d native librar%s, %zu KiB payload)\n",
+                "ty --bundle: wrote %s (%d file%s, %d native librar%s, %zu KiB payload)\n",
                 out,
                 nmods,
                 (nmods == 1) ? "" : "s",

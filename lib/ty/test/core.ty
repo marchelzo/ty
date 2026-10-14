@@ -345,10 +345,9 @@ pub class Test {
         if let $p = __tmp {
             return Path(p)
         }
-        let base = getenv('TMPDIR') ?? '/tmp'
         let slug = name.sub(/[^A-Za-z0-9_.-]+/, '-')[;40]
-        let $p = os.mkdtemp("{base.sub(/\/+$/, '')}/ty-{slug}")
-              or throw RuntimeError("ty --test: cannot create a tmp dir under {base}")
+        let $p = os.mkdtemp(Path.tmp() / "ty-{slug}")
+              or throw RuntimeError("ty --test: cannot create a tmp dir under {Path.tmp()}")
         __tmp = p
         Path(p)
     }

@@ -1,5 +1,6 @@
 import os
 import path (Path)
+import dirs
 
 pub class Recorder {
     __process: os.ProcessDescriptor
@@ -68,16 +69,19 @@ pub class Recorder {
 }
 
 fn cached-helper(source: Path) -> Path {
-    let helper = Path('/tmp') / "ty-termrec-helper-{os.getuid()}"
+    let cache  = dirs.CACHE / 'ty'
+    let helper = cache / 'termrec-helper'
     let fresh = helper.exists? && helper.stat.mtime >= source.stat.mtime
     if fresh { return helper }
+
+    cache.mkdir(parents: true, exist-ok: true)
 
     let candidate = Path("{helper}.{os.getpid()}")
     if candidate.exists? { candidate.unlink() }
 
     let compiler = os.spawn([
         '/usr/bin/xcrun', 'swiftc', '-parse-as-library', '-O',
-        '-module-cache-path', "/tmp/ty-termrec-module-cache-{os.getuid()}",
+        '-module-cache-path', "{cache}/termrec-module-cache",
         '-framework', 'AppKit',
         '-framework', 'AVFoundation',
         '-framework', 'ScreenCaptureKit',

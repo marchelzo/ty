@@ -389,7 +389,7 @@ fn multipart*(boundary: String) {
                     }
 
                     if filename != nil {
-                        path = Path('/tmp').mktemp('upload')
+                        path = Path.tmp().mktemp('upload')
                         file = path.open('w+')
                     } else {
                         data = Blob()

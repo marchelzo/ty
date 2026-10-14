@@ -2,6 +2,7 @@ import os (terminal-size)
 import ffi as c (C!)
 import chalk (chalk)
 import json
+import dirs
 
 tag TooMuchError;
 tag TooWideError;
@@ -14,8 +15,7 @@ pub tag Newline;
 pub tag Raw;
 
 fn _load-colors() {
-    let $home = __env['HOME'] or return nil
-    let $conf = slurp("{home}/.config/ty/colors.json") or return nil
+    let $conf = slurp(dirs.CONFIG / 'ty' / 'colors.json') or return nil
     json.parse!(conf)
 }
 
