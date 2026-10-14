@@ -506,6 +506,10 @@ typedef struct lir_native_context {
         LirArgLocation *arguments;
         u32 *pointers;
         u32 npointers;
+        u32 *phase_at;
+        u32 *phase_next;
+        u32 *constraint_at;
+        u32 *constraint_next;
 } LirEmitContext;
 
 static bool
@@ -625,7 +629,14 @@ arg_locations(LirTarget const *target, LirSig const *sig, LirArgLocation *args)
 static u8
 physical(LirEmitContext const *c, LirReg r, u32 pc, bool output)
 {
-        return lir_physical(c->alloc, r, pc, output);
+        for (u32 i = c->constraint_at[pc]; i != LIR_NONE; i = c->constraint_next[i]) {
+                LirConstraint const *constraint = &c->alloc->constraints[i];
+                if (constraint->reg == r && constraint->output == output
+                    && constraint->phys != LIR_PHYS_NONE) {
+                        return constraint->phys;
+                }
+        }
+        return c->alloc->intervals[r].phys;
 }
 
 static void
@@ -674,11 +685,9 @@ native_phase(LirEmitContext *c, u32 pc, LirMovePhase phase)
         LirMove *ordered;
         u32 n = 0;
         u32 count;
-        for (u32 i = 0; i < c->alloc->nmoves; ++i) {
-                LirMove const *m = &c->alloc->moves[i];
-                if (m->op == pc && m->phase == phase) {
-                        ++n;
-                }
+        u32 first = c->phase_at[2 * pc + phase];
+        for (u32 i = first; i != LIR_NONE; i = c->phase_next[i]) {
+                ++n;
         }
         if (n == 0) {
                 return true;
@@ -688,15 +697,13 @@ native_phase(LirEmitContext *c, u32 pc, LirMovePhase phase)
                 return false;
         }
         n = 0;
-        for (u32 i = 0; i < c->alloc->nmoves; ++i) {
+        for (u32 i = first; i != LIR_NONE; i = c->phase_next[i]) {
                 LirMove const *m = &c->alloc->moves[i];
-                if (m->op == pc && m->phase == phase) {
-                        if (m->kind == LIR_MOVE_ROOT) {
-                                native_root_move(c, m);
-                                continue;
-                        }
-                        moves[n++] = *m;
+                if (m->kind == LIR_MOVE_ROOT) {
+                        native_root_move(c, m);
+                        continue;
                 }
+                moves[n++] = *m;
         }
         bool ok = lir_parallel_moves(moves, n, &c->target->gpr, &ordered, &count, c->err);
         free(moves);
@@ -1190,12 +1197,23 @@ native_instruction(LirEmitContext *c, u32 pc)
                         native_lea(Dst, d, base, index, mem.scale, mem.disp,
                                 mem.index != LIR_NONE && L->regs[mem.index].cls == LIR_I32);
                 } else {
-                        native_lea(Dst, LIR_TMP0, base, index, mem.scale, mem.disp,
-                                mem.index != LIR_NONE && L->regs[mem.index].cls == LIR_I32);
                         LirType type = LirOps[in->op].type;
+                        u32 size = lir_type_size(type);
+                        bool direct = index == LIR_PHYS_NONE;
+#if defined(__aarch64__)
+                        direct = direct && mem.disp >= 0 && (u32)mem.disp <= 4095 * size
+                                        && mem.disp % size == 0;
+#endif
+                        i32 disp = mem.disp;
+                        if (!direct) {
+                                native_lea(Dst, LIR_TMP0, base, index, mem.scale, mem.disp,
+                                        mem.index != LIR_NONE && L->regs[mem.index].cls == LIR_I32);
+                                base = LIR_TMP0;
+                                disp = 0;
+                        }
                         bool sign = type == LIR_TYPE_I8 || type == LIR_TYPE_I16 || type == LIR_TYPE_I32;
                         native_memory(Dst, form == LIR_FORM_ST, form == LIR_FORM_ST ? a[1] : d,
-                                   LIR_TMP0, 0, lir_type_size(type), sign, native_fp(lir_type_class(type)));
+                                   base, disp, size, sign, native_fp(lir_type_class(type)));
                 }
                 break;
         }
@@ -1326,11 +1344,36 @@ native_emit(Lir const *L, LirAlloc const *alloc, LirCode *code, LirError *err)
         void *globals[1] = {0};
         labels = malloc(((usize)L->ninsts + 1) * sizeof *labels);
         next = malloc(((usize)L->nlabels + 1) * sizeof *next);
-        if (labels == NULL || next == NULL) {
+        c.phase_at = malloc(((usize)L->ninsts * 2 + 2) * sizeof *c.phase_at);
+        c.phase_next = malloc(((usize)alloc->nmoves + 1) * sizeof *c.phase_next);
+        c.constraint_at = malloc(((usize)L->ninsts + 1) * sizeof *c.constraint_at);
+        c.constraint_next = malloc(((usize)alloc->nconstraints + 1) * sizeof *c.constraint_next);
+        if (labels == NULL || next == NULL || c.phase_at == NULL || c.phase_next == NULL
+            || c.constraint_at == NULL || c.constraint_next == NULL) {
                 goto End;
         }
         for (u32 pc = 0; pc <= L->ninsts; ++pc) {
                 labels[pc] = LIR_NONE;
+                c.phase_at[2 * pc] = LIR_NONE;
+                c.phase_at[2 * pc + 1] = LIR_NONE;
+                c.constraint_at[pc] = LIR_NONE;
+        }
+        for (u32 i = alloc->nmoves; i-- > 0;) {
+                LirMove const *move = &alloc->moves[i];
+                if (move->op >= L->ninsts) {
+                        continue;
+                }
+                u32 pc = 2 * move->op + move->phase;
+                c.phase_next[i] = c.phase_at[pc];
+                c.phase_at[pc] = i;
+        }
+        for (u32 i = alloc->nconstraints; i-- > 0;) {
+                LirConstraint const *constraint = &alloc->constraints[i];
+                if (constraint->op >= L->ninsts) {
+                        continue;
+                }
+                c.constraint_next[i] = c.constraint_at[constraint->op];
+                c.constraint_at[constraint->op] = i;
         }
         for (u32 l = L->nlabels; l-- > 0;) {
                 u32 pc = L->labels[l].pos;
@@ -1526,6 +1569,10 @@ End:
         }
         free(c.arguments);
         free(c.pointers);
+        free(c.phase_at);
+        free(c.phase_next);
+        free(c.constraint_at);
+        free(c.constraint_next);
         free(labels);
         free(next);
         if (!ok && err != NULL && err->kind == LIR_ERROR_NONE) {
@@ -1635,7 +1682,7 @@ finish(Lir *L, bool entry, bool interpreted, bool entry_thunk, u32 body_slots, L
         if (err != NULL) {
                 *err = (LirError) {0};
         }
-        if (!lir_validate(L, err)) {
+        if (!entry_thunk && !lir_validate(L, err)) {
                 return NULL;
         }
         debug_dump(L, NULL, "lir");

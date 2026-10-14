@@ -31,6 +31,7 @@
         X(code_size, "_codeSize", "(code: Ptr[Any]) -> Int") \
         X(code_lir, "_codeLir", "(code: Ptr[Any]) -> String") \
         X(code_bytes, "_codeBytes", "(code: Ptr[Any]) -> Blob") \
+        X(code_sites, "_codeSites", "(code: Ptr[Any]) -> Array[(Int, Int)]") \
         X(stats, "_stats", "() -> (Int, Int, Int)") \
         X(current_ty, "_currentTy", "() -> Ptr[Any]")
 

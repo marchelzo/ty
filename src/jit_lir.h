@@ -24,6 +24,12 @@ typedef struct bc_lir_node {
         bool branch;
 } BcLirNode;
 
+typedef struct bc_local {
+        i32 slot;
+        LirReg regs[4];
+        bool floating;
+} BcLocal;
+
 typedef struct bc_lir {
         Lir *L;
         LirReg ty;
@@ -37,6 +43,7 @@ typedef struct bc_lir {
         i32 sp;
         i32 bound;
         i32 max_sp;
+        i32 self_index;
         u32 nresume;
         u32 offset;
         bool ok;
@@ -46,7 +53,33 @@ typedef struct bc_lir {
         i32 sentinel;
         i32 sentinel_sp;
         char const *code;
+        BcLocal *cached;
+        i32 *cache_at;
+        u32 ncached;
+        u32 last_call;
+        bool cache_ready;
+        Ty *ctx;
+        Value const *function;
 } BcLir;
+
+static bool
+bc_method_fast(BcLir *c, BcLirNode const *node);
+
+static i32
+bc_prepare_call(Ty *ty, Value *out, Value *fn, i32 argc);
+
+static void
+bc_sync_call(Ty *ty, Value *out, Value *fn, i32 argc);
+
+static void
+bc_cache_flush(BcLir *c);
+
+static void
+bc_cache_reload(BcLir *c);
+
+static LirReg
+bc_call(BcLir *c, void *helper, LirType ret, LirType const *types,
+        LirOpnd *args, u32 n);
 
 static LirReg
 bc_value(BcLir *c, LirOp op, LirClass cls, LirOpnd const *args, u32 n)
@@ -59,6 +92,9 @@ bc_value(BcLir *c, LirOp op, LirClass cls, LirOpnd const *args, u32 n)
 static void
 bc_effect(BcLir *c, LirOp op, LirOpnd const *args, u32 n)
 {
+        if (op == LIR_RET) {
+                bc_cache_flush(c);
+        }
         c->ok = c->ok && lir_emit_to(c->L, op, LIR_NONE, args, n);
 }
 
@@ -91,6 +127,8 @@ bc_value_copy(BcLir *c, LirReg dst, i32 di, LirReg src, i32 si)
                 bc_store(c, LIR_ST64, dst, di + i, lir_r(r));
         }
 }
+
+#include "jit_lir_local.h"
 
 static void
 bc_literal(BcLir *c, i32 type, u64 bits)
@@ -189,13 +227,7 @@ bc_numeric(BcLir *c, u8 op)
         LirReg rhs = bc_addr(c, c->ops, right);
         LirType types[] = { LIR_TYPE_PTR, LIR_TYPE_PTR, LIR_TYPE_PTR, LIR_TYPE_PTR };
         LirOpnd call_args[] = { lir_r(c->ty), lir_r(out), lir_r(out), lir_r(rhs) };
-        LirInst call = {
-                .op = LIR_CALL, .dst = LIR_NONE, .args = { lir_i((uptr)helper) }, .nargs = 1,
-                .sig = { .ret = LIR_VOID, .params = types, .nparams = 4, .nfixed = 4 },
-                .flags = LIR_MAY_GC | LIR_MAY_THROW | LIR_CALL_SITE,
-                .tag = c->offset, .call_args = call_args, .ncall_args = 4
-        };
-        c->ok = c->ok && lir_emit(c->L, &call);
+        bc_call(c, helper, LIR_VOID, types, call_args, countof(call_args));
         bc_bind(c, end);
         --c->sp;
 }
@@ -1079,14 +1111,9 @@ bc_truthy(BcLir *c)
         LirReg ptr = bc_addr(c, c->ops, off);
         LirType types[] = { LIR_TYPE_PTR, LIR_TYPE_PTR };
         LirOpnd args[] = { lir_r(c->ty), lir_r(ptr) };
-        LirInst call = {
-                .op = LIR_CALL, .dst = r, .args = { lir_i((uptr)jit_rt_truthy) }, .nargs = 1,
-                .sig = { .ret = LIR_TYPE_I32, .params = types, .nparams = 2, .nfixed = 2 },
-                .flags = LIR_MAY_GC | LIR_MAY_THROW | LIR_CALL_SITE,
-                .tag = c->offset, .call_args = args, .ncall_args = countof(args)
-        };
-        bc_stack_count(c);
-        c->ok = c->ok && lir_emit(c->L, &call);
+        LirReg truth = bc_call(c, jit_rt_truthy, LIR_TYPE_I32, types, args, countof(args));
+        LirOpnd answer = lir_r(truth);
+        c->ok = c->ok && lir_emit_to(c->L, LIR_MOV, r, &answer, 1);
         bc_jump(c, end);
         bc_bind(c, scalar);
         LirReg value = bc_load(c, LIR_LD_I64, LIR_I64, c->ops, off + offsetof(Value, z));
@@ -1103,6 +1130,7 @@ bc_truthy(BcLir *c)
 static void
 bc_poll(BcLir *c, LirOpnd const *args)
 {
+        bc_cache_flush(c);
         LirInst in = {
                 .op = LIR_POLL, .dst = LIR_NONE, .nargs = 4,
                 .flags = LIR_CALL_SITE,
@@ -1110,6 +1138,78 @@ bc_poll(BcLir *c, LirOpnd const *args)
         };
         memcpy(in.args, args, 4 * sizeof *args);
         c->ok = c->ok && lir_emit(c->L, &in);
+        if (c->cache_ready) {
+                bc_cache_reload(c);
+        }
+}
+
+static void
+bc_compare_branch(BcLir *c, BcLirNode const *node, u8 op)
+{
+        i32 left = (c->sp - 2) * sizeof (Value);
+        i32 right = left + sizeof (Value);
+        bool equality = op == INSTR_EQ || op == INSTR_NEQ;
+        LirLabel nil = equality ? lir_label(c->L) : LIR_NONE;
+        LirLabel floats = lir_label(c->L);
+        LirLabel slow = lir_label(c->L);
+        LirLabel done = lir_label(c->L);
+        LirReg result = lir_reg(c->L, LIR_I64);
+        LirCC integer;
+        LirCC floating;
+        void *helper;
+        switch (op) {
+        case INSTR_EQ:  integer = LIR_EQ; floating = LIR_FEQ; helper = jit_rt_eq; break;
+        case INSTR_NEQ: integer = LIR_NE; floating = LIR_FNE; helper = jit_rt_ne; break;
+        case INSTR_LT:  integer = LIR_LT; floating = LIR_FLT; helper = jit_rt_lt; break;
+        case INSTR_GT:  integer = LIR_GT; floating = LIR_FGT; helper = jit_rt_gt; break;
+        case INSTR_LEQ: integer = LIR_LE; floating = LIR_FLE; helper = jit_rt_le; break;
+        default:       integer = LIR_GE; floating = LIR_FGE; helper = jit_rt_ge; break;
+        }
+        LirReg at = bc_load(c, LIR_LD_U8, LIR_I64, c->ops, left + offsetof(Value, type));
+        LirReg bt = bc_load(c, LIR_LD_U8, LIR_I64, c->ops, right + offsetof(Value, type));
+        if (equality) {
+                bc_branch(c, LIR_EQ, lir_r(at), lir_i(VALUE_NIL), nil);
+                bc_branch(c, LIR_EQ, lir_r(bt), lir_i(VALUE_NIL), nil);
+        }
+        bc_branch(c, LIR_NE, lir_r(at), lir_i(VALUE_INTEGER), floats);
+        bc_branch(c, LIR_NE, lir_r(bt), lir_i(VALUE_INTEGER), floats);
+        LirReg a = bc_load(c, LIR_LD_I64, LIR_I64, c->ops, left + offsetof(Value, z));
+        LirReg b = bc_load(c, LIR_LD_I64, LIR_I64, c->ops, right + offsetof(Value, z));
+        LirOpnd args[] = { lir_cc(integer), lir_r(a), lir_r(b) };
+        c->ok = c->ok && lir_emit_to(c->L, LIR_SETCC, result, args, countof(args));
+        bc_jump(c, done);
+        bc_bind(c, floats);
+        bc_branch(c, LIR_NE, lir_r(at), lir_i(VALUE_REAL), slow);
+        bc_branch(c, LIR_NE, lir_r(bt), lir_i(VALUE_REAL), slow);
+        a = bc_load(c, LIR_LD_F64, LIR_F64, c->ops, left + offsetof(Value, real));
+        b = bc_load(c, LIR_LD_F64, LIR_F64, c->ops, right + offsetof(Value, real));
+        args[0] = lir_cc(floating);
+        args[1] = lir_r(a);
+        args[2] = lir_r(b);
+        c->ok = c->ok && lir_emit_to(c->L, LIR_FSETCC, result, args, countof(args));
+        bc_jump(c, done);
+        if (equality) {
+                bc_bind(c, nil);
+                args[0] = lir_cc(integer);
+                args[1] = lir_r(at);
+                args[2] = lir_r(bt);
+                c->ok = c->ok && lir_emit_to(c->L, LIR_SETCC, result, args, countof(args));
+                bc_jump(c, done);
+        }
+        bc_bind(c, slow);
+        LirReg out = bc_addr(c, c->ops, left);
+        LirReg rhs = bc_addr(c, c->ops, right);
+        LirType types[] = { LIR_TYPE_PTR, LIR_TYPE_PTR, LIR_TYPE_PTR, LIR_TYPE_PTR };
+        LirOpnd call_args[] = { lir_r(c->ty), lir_r(out), lir_r(out), lir_r(rhs) };
+        bc_call(c, helper, LIR_VOID, types, call_args, countof(call_args));
+        LirOpnd memory = lir_m(c->ops, LIR_NONE, 1, left + offsetof(Value, z));
+        c->ok = c->ok && lir_emit_to(c->L, LIR_LD_I64, result, &memory, 1);
+        bc_bind(c, done);
+        c->sp = node->fall_sp;
+        if (c->dynamic) {
+                bc_stack_count(c);
+        }
+        bc_branch(c, LIR_NE, lir_r(result), lir_i(0), c->nodes[node->target].label);
 }
 
 static void
@@ -1136,14 +1236,7 @@ bc_control(BcLir *c, BcLirNode const *node)
         default: compare = 0; break;
         }
         if (compare != 0) {
-                bc_numeric(c, compare);
-                LirReg value = bc_load(c, LIR_LD_I64, LIR_I64, c->ops,
-                                      (c->sp - 1) * sizeof (Value) + offsetof(Value, z));
-                if (c->dynamic) {
-                        c->sp = node->fall_sp;
-                        bc_stack_count(c);
-                }
-                bc_branch(c, LIR_NE, lir_r(value), lir_i(0), target);
+                bc_compare_branch(c, node, compare);
                 return;
         }
         if (node->op == INSTR_JUMP) {
@@ -1182,17 +1275,40 @@ bc_control(BcLir *c, BcLirNode const *node)
 }
 
 static LirReg
-bc_call(BcLir *c, void *helper, LirType ret, LirType const *types, LirOpnd *args, u32 n)
+bc_call_flags(BcLir *c, void *helper, LirType ret, LirType const *types,
+              LirOpnd *args, u32 n, u32 flags)
 {
+        if (!(flags & LIR_READS_NO_LOCALS) || (flags & (LIR_MAY_GC | LIR_MAY_THROW))) {
+                bc_cache_flush(c);
+        }
         LirReg r = ret == LIR_VOID ? LIR_NONE : lir_reg(c->L, lir_type_class(ret));
         LirInst in = {
                 .op = LIR_CALL, .dst = r, .args = { lir_i((uptr)helper) }, .nargs = 1,
                 .sig = { .ret = ret, .params = types, .nparams = n, .nfixed = n },
-                .flags = LIR_MAY_GC | LIR_MAY_THROW | LIR_CALL_SITE,
+                .flags = flags,
                 .tag = c->offset, .call_args = args, .ncall_args = n
         };
+        c->last_call = c->L->ninsts;
         c->ok = c->ok && lir_emit(c->L, &in);
+        if (c->cache_ready && (flags & LIR_WRITES_LOCALS)
+            && !(flags & (LIR_RETURNS_TWICE | LIR_NORETURN))) {
+                bc_cache_reload(c);
+        }
         return r;
+}
+
+static LirReg
+bc_call(BcLir *c, void *helper, LirType ret, LirType const *types, LirOpnd *args, u32 n)
+{
+        u32 flags = LIR_MAY_GC | LIR_MAY_THROW | LIR_CALL_SITE | LIR_WRITES_LOCALS;
+        if (helper == vm_global || helper == vm_get_self || helper == ClassOf
+            || helper == jit_rt_truthy) {
+                flags = LIR_READS_NO_LOCALS;
+        }
+        if (helper == jit_rt_throw || helper == vm_jit_end_try_rethrow) {
+                flags |= LIR_NORETURN;
+        }
+        return bc_call_flags(c, helper, ret, types, args, n, flags);
 }
 
 static void
@@ -1246,6 +1362,9 @@ bc_method(Ty *ty, Value *top, i32 op, i32 class, i32 member, i32 argc,
 static void
 bc_invoke_method(BcLir *c, BcLirNode const *node)
 {
+        if (bc_method_fast(c, node)) {
+                return;
+        }
         LirReg top = bc_addr(c, c->ops, c->sp * sizeof (Value));
         LirType types[] = { LIR_TYPE_PTR, LIR_TYPE_PTR, LIR_TYPE_I32,
                             LIR_TYPE_I32, LIR_TYPE_I32, LIR_TYPE_I32,
@@ -1304,10 +1423,10 @@ bc_invoke(BcLir *c, BcLirNode const *node)
         LirOpnd args[] = { lir_r(c->ty), lir_r(out), lir_r(fn), lir_i(node->argc) };
         bc_stack_count(c);
         if (node->resume_id == 0) {
-                bc_call(c, jit_rt_call, LIR_VOID, types, args, countof(args));
+                bc_call(c, bc_sync_call, LIR_VOID, types, args, countof(args));
                 return;
         }
-        LirReg status = bc_call(c, jit_rt_call_trampoline, LIR_TYPE_I32,
+        LirReg status = bc_call(c, bc_prepare_call, LIR_TYPE_I32,
                                 types, args, countof(args));
         LirLabel returned = lir_label(c->L);
         bc_branch(c, LIR_EQ, lir_r(status), lir_i(0), returned);
@@ -1319,6 +1438,7 @@ bc_invoke(BcLir *c, BcLirNode const *node)
 static LirReg
 bc_reference(BcLir *c, i32 local, bool all)
 {
+        bc_cache_flush(c);
         LirReg ptr = bc_addr(c, c->locals, local * sizeof (Value));
         LirLabel again = lir_label(c->L);
         LirLabel end = lir_label(c->L);
@@ -1446,6 +1566,9 @@ bc_yield(BcLir *c, BcLirNode const *node)
 }
 
 #include "jit_lir_try.h"
+#include "jit_lir_call.h"
+#include "jit_lir_local_ops.h"
+#include "jit_lir_member.h"
 #include "jit_lir_ops.h"
 #include "jit_lir_pattern.h"
 #include "jit_lir_state.h"
@@ -1476,7 +1599,10 @@ bc_lir_compile(Ty *ty, Value const *f)
         LirSig sig = { .ret = LIR_TYPE_I32, .params = types, .nparams = 5, .nfixed = 5 };
         LirError err;
         BcLir c = { .L = lir_new(name_of(f), &sig, LIR_MODE_ATTACHED, &err),
-                    .bound = f->info[FUN_INFO_BOUND], .ok = true };
+                    .bound = f->info[FUN_INFO_BOUND],
+                    .self_index = f->info[FUN_INFO_CLASS] == -1
+                                ? -1 : f->info[FUN_INFO_PARAM_COUNT],
+                    .ctx = ty, .function = f, .ok = true };
         if (c.L == NULL) {
                 return NULL;
         }
@@ -1489,6 +1615,7 @@ bc_lir_compile(Ty *ty, Value const *f)
                 free(c.nodes);
                 return NULL;
         }
+        c.ok = c.ok && bc_cache_plan(&c, ty, f);
         for (i32 off = 0; off < c.size; ++off) {
                 if (c.nodes[off].next != 0 && c.nodes[off].sp >= 0) {
                         if (((c.nodes[off].op == INSTR_CALL || c.nodes[off].op == INSTR_CALL_GLOBAL)
@@ -1581,6 +1708,7 @@ bc_lir_compile(Ty *ty, Value const *f)
         static JitDeopt const deopt = {0};
         LirOpnd poll[] = { lir_r(c.ty), lir_r(c.ops), lir_i((uptr)&deopt), lir_l(c.deopt) };
         bc_poll(&c, poll);
+        bc_cache_reload(&c);
         char const *ip = code_of(f);
         while (c.ok && ip < code_of(f) + c.size) {
                 BcLirNode const *node = &c.nodes[ip - code_of(f)];
@@ -1720,7 +1848,7 @@ bc_lir_compile(Ty *ty, Value const *f)
                         LirOpnd args[] = { lir_r(c.ty), lir_r(top), lir_i((uptr)ip) };
                         bc_call(&c, bc_destructure, LIR_VOID, types, args, countof(args));
                         if (op == INSTR_BAD_MATCH) {
-                                c.L->insts[c.L->ninsts - 1].flags |= LIR_NORETURN;
+                                c.L->insts[c.last_call].flags |= LIR_NORETURN;
                         }
                         break;
                 }
@@ -1765,8 +1893,6 @@ bc_lir_compile(Ty *ty, Value const *f)
                 case INSTR_MEMBER_ACCESS:
                 case INSTR_SELF_MEMBER_ACCESS:
                 case INSTR_TRY_MEMBER_ACCESS:
-                case INSTR_TARGET_MEMBER:
-                case INSTR_TARGET_SELF_MEMBER:
                 case INSTR_TARGET_SUBSCRIPT:
                 case INSTR_SUBSCRIPT:
                 case INSTR_SAFE_SUBSCRIPT:
@@ -1823,7 +1949,7 @@ bc_lir_compile(Ty *ty, Value const *f)
                         break;
                 case INSTR_LOAD_LOCAL:
                         memcpy(&local, ip + 1, sizeof local);
-                        bc_value_copy(&c, c.ops, c.sp++ * sizeof (Value), c.locals, local * sizeof (Value));
+                        bc_local_load(&c, local);
                         break;
                 case INSTR_LOAD_GLOBAL: {
                         memcpy(&local, ip + 1, sizeof local);
@@ -1846,6 +1972,20 @@ bc_lir_compile(Ty *ty, Value const *f)
                         break;
                 }
                 case INSTR_TARGET_LOCAL:
+                        if (bc_cached_target(&c, node, ip)) {
+                                ip = StepInstruction(ip);
+                                break;
+                        }
+                        bc_target(&c, ip, op);
+                        break;
+                case INSTR_TARGET_MEMBER:
+                case INSTR_TARGET_SELF_MEMBER:
+                        if (bc_member_assign(&c, node, ip)) {
+                                ip = StepInstruction(ip);
+                        } else {
+                                bc_more(&c, node, ip);
+                        }
+                        break;
                 case INSTR_TARGET_CAPTURED:
                 case INSTR_TARGET_REF:
                         bc_target(&c, ip, op);
@@ -1894,12 +2034,12 @@ bc_lir_compile(Ty *ty, Value const *f)
                         LirType types[] = { LIR_TYPE_PTR, LIR_TYPE_PTR };
                         LirOpnd args[] = { lir_r(c.ty), lir_r(ptr) };
                         bc_call(&c, jit_rt_throw, LIR_VOID, types, args, countof(args));
-                        c.L->insts[c.L->ninsts - 1].flags |= LIR_NORETURN;
+                        c.L->insts[c.last_call].flags |= LIR_NORETURN;
                         break;
                 }
                 case INSTR_ASSIGN_LOCAL:
                         memcpy(&local, ip + 1, sizeof local);
-                        bc_value_copy(&c, c.locals, local * sizeof (Value), c.ops, --c.sp * sizeof (Value));
+                        bc_local_store(&c, local);
                         break;
                 case INSTR_INT8:
                         bc_literal(&c, VALUE_INTEGER, (i8)ip[1]);
@@ -1983,9 +2123,11 @@ bc_lir_compile(Ty *ty, Value const *f)
                 if (node->next != 0 && node->resume_id != 0) {
                         c.ok = c.ok && lir_entry(c.L, node->resume);
                         c.L->insts[c.L->ninsts - 1].tag = node->next;
+                        bc_cache_reload(&c);
                         bc_jump(&c, c.nodes[node->next].label);
                 }
         }
+        c.cache_ready = false;
         bc_bind(&c, c.deopt);
         LirOpnd ret = lir_i(JIT_PACK(JIT_DEOPT, 0));
         bc_effect(&c, LIR_RET, &ret, 1);
@@ -2000,6 +2142,8 @@ bc_lir_compile(Ty *ty, Value const *f)
         LirCode *code = c.ok ? lir_finish(c.L, false, &err) : NULL;
         lir_free(c.L);
         free(c.nodes);
+        free(c.cached);
+        free(c.cache_at);
         if (code == NULL) {
                 if (jit_audit_level() >= 2) {
                         fprintf(stderr, "jit-audit: lir decline %s op=%u reason=%s\n",

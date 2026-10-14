@@ -12,8 +12,8 @@ spill slots preserve references and their children across runtime calls and GC.
 operations and reclamation. The `jit.Asm`/`Reg`/`Mem`/`Label`/`Fn`/`Code` API,
 frozen runtime helper catalog, layout constants, guards, boxing, callbacks,
 atomics and raw register bindings are available. The exact polynomial example
-works. The module has 57 integration tests; both full Ty suite modes currently
-pass with 1,327 passed and 6 xfail. C tests include 2,000 interpreter/native
+works. The module has 58 integration tests; both full Ty suite modes currently
+pass with 1,337 passed and 6 xfail. C tests include 2,000 interpreter/native
 differential programs per run; an extended 20,000-program run also passed.
 The public `Encoding`/`Hole`/`serialize`/`load` API retains GC-owned captures
 and validates callee signatures. `jit.interp` returns a callable `jit.Fn`, with
@@ -24,9 +24,8 @@ base and roots, and retain returned Values in caller-owned slots. Native and
 interpreter calls and tailcalls are covered in every backend combination.
 The first `asm!` frontend parses and lowers at compile time, validates and
 serializes LIR, splices runtime holes, and expands with a typed FuncType and Fn
-members. The scale, strlen and qsort examples work. Complete macro coverage,
-the bytecode-to-LIR port, final documentation and performance gates remain
-open. The x64 native scalar fixture passes 62,054 checks and an extended
+members. The scale, strlen and qsort examples work. Complete macro coverage, final documentation and performance gates remain
+open. The x64 native scalar fixture passes 62,069 checks and an extended
 20,000-program differential run under Rosetta. Its 769-check entry fixture
 also passes with ASan and UBSan.
 The bytecode-to-LIR path now handles scalar literals, local loads and
@@ -42,7 +41,7 @@ resume-offset metadata. Keyword
 calls, object/self method calls and global loads also lower to LIR. Captured
 reads, references, function/generator literals, capture setup, assignments,
 compound mutations, yields and throw paths now lower through the same path.
-Thirty-nine integration tests cover numeric/control-flow execution, code lifetime,
+Forty-two integration tests cover numeric/control-flow execution, code lifetime,
 collecting callbacks, call resumption, 400-level recursion, keywords and
 method dispatch, mutable closures under GC, generator resumption and throws
 through resumed calls. Array, dictionary, set and tuple literals, member and
@@ -79,6 +78,10 @@ their operand base static. Register allocation indexes call positions and
 registers that cross calls; native pointer rebasing uses the same candidate
 set. The prelude walk function's measured compile time fell from roughly
 540 ms to 143 ms. Full runtime and compile-time performance gates remain open.
+A fresh seven-run comparison averages 3.52 s versus 1.73 s for Richards and
+4.86 s versus 3.18 s for the template benchmark. These regressions still fail
+the runtime gate. The latest 100-op Ty `finish()` average is 53.6 us, above
+the 50 us target.
 Class and tag declarations, static initialization, tail calls, constrained
 unapply failures and generator delegation now lower to LIR. Delegation handles
 fresh and started children, nested generators, GC and exceptions. Generators
@@ -86,8 +89,22 @@ with try handlers keep their native frames across yields. Static operand stacks
 reserve their measured capacity; the 240-slot limit is gone. Three unused
 instruction names with no compiler or VM implementation were removed.
 The profiler uses LIR and records instruction ticks and compilation statistics.
-Some CFG shapes still use the legacy emitter. Static local registerization
-and legacy-emitter deletion remain part of the port. Try/catch/finally now lower through direct RETURNS_TWICE `_setjmp`
+The legacy emitter, architecture templates and build rules are removed.
+Bytecode compilation now uses LIR exclusively; final runtime optimizations
+remain open.
+Loop-local Int and Float values now live in LIR registers. The frontend writes
+them back before observing calls, polls and returns, and reloads them after
+writing calls, ENTRY resumption and exception recovery. Captured variables
+retain their existing slot semantics. There is no runtime cache-validity mask;
+`TY_JIT_NO_REGISTERIZE` disables this path. Scalar local assignments and
+compound mutations can update cached registers directly.
+Object field reads have a native path guarded by the value tag and current
+field layout. Known method calls retain rooted callee values, guard runtime
+method identity, and respect built-in method priority. Simple ordinary calls
+use fast frame setup while retaining ENTRY/SWITCH suspension and resumption.
+Comparison branches avoid boxing temporary booleans and compare nil directly.
+Native emission indexes moves and constraints by instruction; spill workspace
+allocation indexes constraints and physical-register occupancy. Try/catch/finally now lower through direct RETURNS_TWICE `_setjmp`
 calls. Protected calls keep the native try frame live; saved-stack operations
 and dynamic operand positions preserve catch cleanup and finally return
 values. Exception recovery reloads VM-stack addresses from a pinned fp offset.
@@ -98,6 +115,8 @@ ARM64 conditional branches expand through unconditional branches for distant
 targets. Large bodies place floating literals and switch tables in nearby
 islands. A native fixture verifies targets and literals across a 1.2 MB body
 on ARM64 and x64. Emission indexes labels by instruction position.
+`Code.dis()` loads Capstone 4, 5 or 6 through `ffi` when available, and falls
+back to a hex dump otherwise. Both outputs annotate native site offsets.
 `TY_JIT_DUMP` prints the LIR, legal and allocation stages for matching names;
 [the introductory guide](intro/11-jit.md) covers the builder and macro.
 Scope: one contiguous body of work. Nothing in here is a stepping stone that a

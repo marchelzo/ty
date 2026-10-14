@@ -56,6 +56,6 @@ bc_misc(BcLir *c, BcLirNode const *node, char const *ip)
         LirOpnd args[] = { lir_r(c->ty), lir_i(node->op), lir_i(n), lir_i(data) };
         bc_call(c, vm_jit_misc, LIR_VOID, types, args, countof(args));
         if (node->op == INSTR_TRAP) {
-                c->L->insts[c->L->ninsts - 1].flags |= LIR_NORETURN;
+                c->L->insts[c->last_call].flags |= LIR_NORETURN;
         }
 }

@@ -10,6 +10,13 @@ typedef struct lir_interval_build {
         u8 hint;
 } LirIntervalBuild;
 
+typedef struct lir_constraint_index {
+        u32 *at;
+        u32 *last;
+        u32 *next;
+        u32 capacity;
+} LirConstraintIndex;
+
 typedef struct lir_scan {
         Lir const *L;
         LirTarget const *target;
@@ -21,6 +28,9 @@ typedef struct lir_scan {
         u64 gpr;
         u64 fpr;
         LirError *err;
+        LirConstraintIndex *cindex;
+        u64 *live_gp;
+        u64 *live_fp;
 } LirScan;
 
 static bool
@@ -61,6 +71,56 @@ reserve(void *ptr, u32 *cap, u32 n, usize size)
         memcpy(ptr, &q, sizeof q);
         *cap = count;
         return true;
+}
+
+static void
+constraint_index_free(LirConstraintIndex *index)
+{
+        free(index->at);
+        free(index->last);
+        free(index->next);
+        *index = (LirConstraintIndex) {0};
+}
+
+static bool
+constraint_index_add(LirConstraintIndex *index, u32 i, u32 pc)
+{
+        if (!reserve(&index->next, &index->capacity, i + 1, sizeof *index->next)) {
+                return false;
+        }
+        index->next[i] = LIR_NONE;
+        if (index->last[pc] == LIR_NONE) {
+                index->at[pc] = i;
+        } else {
+                index->next[index->last[pc]] = i;
+        }
+        index->last[pc] = i;
+        return true;
+}
+
+static bool
+constraint_index_init(LirConstraintIndex *index, LirAlloc const *alloc, u32 n)
+{
+        *index = (LirConstraintIndex) {0};
+        index->at = malloc(((usize)n + 1) * sizeof *index->at);
+        index->last = malloc(((usize)n + 1) * sizeof *index->last);
+        if (index->at == NULL || index->last == NULL) {
+                goto Error;
+        }
+        for (u32 pc = 0; pc <= n; ++pc) {
+                index->at[pc] = LIR_NONE;
+                index->last[pc] = LIR_NONE;
+        }
+        for (u32 i = 0; i < alloc->nconstraints; ++i) {
+                if (alloc->constraints[i].op < n
+                    && !constraint_index_add(index, i, alloc->constraints[i].op)) {
+                        goto Error;
+                }
+        }
+        return true;
+Error:
+        constraint_index_free(index);
+        return false;
 }
 
 static bool
@@ -668,10 +728,20 @@ fixed_move(LirScan *s, u32 r, u8 phys, bool output, u32 pc)
 static bool
 constraint_moves(LirScan *s)
 {
+        LirConstraintIndex own = {0};
+        LirConstraintIndex *index = s->cindex;
+        bool ok = false;
+        if (index == NULL && s->alloc->nconstraints != 0) {
+                if (!constraint_index_init(&own, s->alloc, s->L->ninsts)) {
+                        goto End;
+                }
+                index = &own;
+        }
         for (u32 pc = 0; pc < s->L->ninsts; ++pc) {
                 u64 gp = s->L->insts[pc].raw.gpr_clobber;
                 u64 fr = s->L->insts[pc].raw.fpr_clobber;
-                for (u32 c = 0; c < s->alloc->nconstraints; ++c) {
+                u32 first = index == NULL ? LIR_NONE : index->at[pc];
+                for (u32 c = first; c != LIR_NONE; c = index->next[c]) {
                         LirConstraint const *con = &s->alloc->constraints[c];
                         if (con->op != pc || con->phys == LIR_PHYS_NONE) {
                                 continue;
@@ -687,7 +757,7 @@ constraint_moves(LirScan *s)
                                 continue;
                         }
                         if (!fixed_move(s, con->reg, con->phys, con->output, pc)) {
-                                return false;
+                                goto End;
                         }
                 }
                 LirRaw const *raw = &s->L->insts[pc].raw;
@@ -699,7 +769,7 @@ constraint_moves(LirScan *s)
                                 gp |= (u64)1 << raw->in[o].phys;
                         }
                         if (!fixed_move(s, r, raw->in[o].phys, false, pc)) {
-                                return false;
+                                goto End;
                         }
                 }
                 for (u32 o = 0; o < raw->nout; ++o) {
@@ -710,7 +780,7 @@ constraint_moves(LirScan *s)
                                 gp |= (u64)1 << raw->out[o].phys;
                         }
                         if (!fixed_move(s, r, raw->out[o].phys, true, pc)) {
-                                return false;
+                                goto End;
                         }
                 }
                 if (gp == 0 && fr == 0) {
@@ -726,7 +796,7 @@ constraint_moves(LirScan *s)
                         bool owner = false;
                         bool overwritten = ((fp(s->L->regs[r].cls)
                                              ? raw->fpr_clobber : raw->gpr_clobber) >> i->phys) & 1;
-                        for (u32 c = 0; c < s->alloc->nconstraints; ++c) {
+                        for (u32 c = first; c != LIR_NONE; c = index->next[c]) {
                                 LirConstraint const *con = &s->alloc->constraints[c];
                                 owner = owner || (con->op == pc && con->reg == r
                                                   && !con->output && con->phys == i->phys);
@@ -744,11 +814,14 @@ constraint_moves(LirScan *s)
                                 owner = owner || (raw->in[o].reg == r && raw->in[o].phys == i->phys);
                         }
                         if ((!owner || overwritten) && !save_move(s, r, pc, i->phys)) {
-                                return false;
+                                goto End;
                         }
                 }
         }
-        return true;
+        ok = true;
+End:
+        constraint_index_free(&own);
+        return ok;
 }
 
 static bool
@@ -1077,11 +1150,19 @@ workspace_reg(LirScan *s, LirReg r, u32 pc, bool output, u64 *gp, u64 *fr, u32 *
                 return true;
         }
         f = fp(s->L->regs[r].cls);
-        phys = lir_physical(s->alloc, r, pc, output);
+        phys = interval->phys;
+        u32 first = s->cindex->at[pc];
+        for (u32 i = first; i != LIR_NONE; i = s->cindex->next[i]) {
+                LirConstraint const *other = &s->alloc->constraints[i];
+                if (other->reg == r && other->output == output && other->phys != LIR_PHYS_NONE) {
+                        phys = other->phys;
+                        break;
+                }
+        }
         if (phys != LIR_PHYS_NONE) {
                 return true;
         }
-        for (u32 i = 0; i < s->alloc->nconstraints; ++i) {
+        for (u32 i = first; i != LIR_NONE; i = s->cindex->next[i]) {
                 LirConstraint const *other = &s->alloc->constraints[i];
                 if (other->op == pc && other->reg == r && other->phys != LIR_PHYS_NONE) {
                         phys = other->phys;
@@ -1091,13 +1172,8 @@ workspace_reg(LirScan *s, LirReg r, u32 pc, bool output, u64 *gp, u64 *fr, u32 *
         if (phys == LIR_PHYS_NONE) {
                 available = (f ? s->target->fpr.available : s->gpr) & ~(f ? *fr : *gp);
                 free_regs = available;
-                for (u32 i = 0; i < s->L->nregs; ++i) {
-                        LirInterval const *v = &s->alloc->intervals[i];
-                        if (v->phys != LIR_PHYS_NONE && fp(s->L->regs[i].cls) == f
-                            && (covers(v, 2 * pc) || covers(v, 2 * pc + 1))) {
-                                free_regs &= ~((u64)1 << v->phys);
-                        }
-                }
+                u64 *live = f ? s->live_fp : s->live_gp;
+                free_regs &= ~(live[2 * pc] | live[2 * pc + 1]);
                 if (available == 0) {
                         return false;
                 }
@@ -1114,7 +1190,12 @@ workspace_reg(LirScan *s, LirReg r, u32 pc, bool output, u64 *gp, u64 *fr, u32 *
                      sizeof *s->alloc->constraints)) {
                 return false;
         }
-        s->alloc->constraints[s->alloc->nconstraints++] = c;
+        u32 i = s->alloc->nconstraints;
+        if (!constraint_index_add(s->cindex, i, pc)) {
+                return false;
+        }
+        s->alloc->constraints[i] = c;
+        ++s->alloc->nconstraints;
         return true;
 }
 
@@ -1134,13 +1215,35 @@ occupy(LirScan const *s, LirReg r, u64 *gp, u64 *fr)
 bool
 lir_allocate_workspaces(Lir const *L, LirTarget const *target, LirAlloc *alloc, LirError *err)
 {
+        if (alloc->spill_size == 0) {
+                return true;
+        }
+        LirConstraintIndex index = {0};
         LirScan s = { .L = L, .target = target, .alloc = alloc, .err = err,
                       .gpr = target->gpr.available, .fpr = target->fpr.available,
-                      .move_capacity = alloc->nmoves };
+                      .move_capacity = alloc->nmoves, .cindex = &index };
+        bool ok = false;
         u32 cap = alloc->nconstraints;
+        s.live_gp = calloc((usize)L->ninsts * 2 + 1, sizeof *s.live_gp);
+        s.live_fp = calloc((usize)L->ninsts * 2 + 1, sizeof *s.live_fp);
+        if (s.live_gp == NULL || s.live_fp == NULL
+            || !constraint_index_init(&index, alloc, L->ninsts)) {
+                goto Error;
+        }
         for (u32 r = 0; r < L->nregs; ++r) {
                 if (L->regs[r].pin != LIR_NONE) {
                         s.gpr &= ~((u64)1 << alloc->intervals[r].phys);
+                }
+                LirInterval const *interval = &alloc->intervals[r];
+                if (interval->phys == LIR_PHYS_NONE) {
+                        continue;
+                }
+                u64 *live = fp(L->regs[r].cls) ? s.live_fp : s.live_gp;
+                for (u32 j = 0; j < interval->nranges; ++j) {
+                        LirRange range = interval->ranges[j];
+                        for (u32 pos = range.start; pos < range.end; ++pos) {
+                                live[pos] |= (u64)1 << interval->phys;
+                        }
                 }
         }
         for (u32 pc = 0; pc < L->ninsts; ++pc) {
@@ -1165,7 +1268,7 @@ lir_allocate_workspaces(Lir const *L, LirTarget const *target, LirAlloc *alloc, 
                                 }
                         }
                 }
-                for (u32 c = 0; c < alloc->nconstraints; ++c) {
+                for (u32 c = index.at[pc]; c != LIR_NONE; c = index.next[c]) {
                         LirConstraint const *con = &alloc->constraints[c];
                         if (con->op == pc && con->phys != LIR_PHYS_NONE) {
                                 if (con->fpr || (con->reg < L->nregs && fp(L->regs[con->reg].cls))) {
@@ -1203,7 +1306,13 @@ lir_allocate_workspaces(Lir const *L, LirTarget const *target, LirAlloc *alloc, 
         if (!call_moves(&s) || !constraint_moves(&s) || !frame(&s)) {
                 goto Error;
         }
-        return true;
+        ok = true;
+        goto End;
 Error:
-        return ra_fail(err, LIR_ERROR_TARGET, LIR_NONE, "could not assign native spill workspaces");
+        ra_fail(err, LIR_ERROR_TARGET, LIR_NONE, "could not assign native spill workspaces");
+End:
+        free(s.live_gp);
+        free(s.live_fp);
+        constraint_index_free(&index);
+        return ok;
 }

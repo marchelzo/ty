@@ -175,6 +175,88 @@ pub ns `tag` {
     pub TAGGED = TAGS['TAGGED'] ?? throw Error('missing value tag')
 }
 
+class Capstone {
+    __version: Int;
+    __open: (Int, Int, Ptr[Any]) -> Int;
+    __close: Ptr[Any] -> Int;
+    __decode: (Int, Ptr[Any], Int, Int, Int, Ptr[Any]) -> Int;
+    __free: (Ptr[Any], Int) -> Any;
+
+    init(lib: Ptr[Any], version: Int) {
+        __version = version
+        __open = c.wrap(lib, 'cs_open', c.i32, c.i32, c.i32, c.ptr)
+        __close = c.wrap(lib, 'cs_close', c.i32, c.ptr)
+        __decode = c.wrap(lib, 'cs_disasm', c.u64, c.u64, c.ptr,
+                          c.u64, c.u64, c.u64, c.ptr)
+        __free = c.wrap(lib, 'cs_free', c.void, c.ptr, c.u64)
+    }
+
+    instruction(p: Ptr[Any], version: Int) -> (Int, String) {
+        let size-off = version == 6 ? 24 : 16
+        let text-off = match version {
+            4 => 34,
+            5 => 42,
+            6 => 50,
+        }
+        let size = c.load(c.u16, p + size-off)
+        let name = c.str(p + text-off)
+        let args = c.str(p + text-off + 32)
+        (size, args == '' ? name : "{name} {args}")
+    }
+
+    dis(p: Ptr[Any], size: Int) -> Array[(Int, String)] | nil {
+        let handle = c.box(c.u64, 0)
+        defer c.free(handle)
+        let x64-arch = __version == 6 ? 4 : 3
+        let arch = ARCH == 'arm64' ? 1 : x64-arch
+        let mode = ARCH == 'arm64' ? 0 : 8
+        if __open(arch, mode, handle) != 0 {
+            return nil
+        }
+        defer __close(handle)
+        let out = c.box(c.ptr, nil)
+        defer c.free(out)
+        let lines = []
+        let offset = 0
+        while offset < size {
+            if __decode(handle[0], p + offset, size - offset,
+                        offset, 1, out) == 0 {
+                return nil
+            }
+            let insn = out[0]
+            let (n, text) = instruction(insn, __version)
+            __free(insn, 1)
+            if n <= 0 || n > size - offset {
+                return nil
+            }
+            lines.push((offset, text))
+            offset += n
+        }
+        lines
+    }
+}
+
+fn open-capstone() -> Capstone | nil {
+    let $lib = c.open('capstone', [nil, 5, 4, 6]) or return nil
+    let version = c.wrap(lib, 'cs_version', c.u32, c.ptr, c.ptr)
+    let major = version(nil, nil) >> 8
+    if major in [4, 5, 6] {
+        return Capstone(lib, major)
+    }
+}
+
+let __tls::capstone: Capstone | Bool | nil = nil
+
+fn disassemble(p: Ptr[Any], bytes: Blob) -> Array[(Int, String)] {
+    let decoder = capstone ?? (capstone = open-capstone() ?? false)
+    if let cs: Capstone = decoder and let $lines = cs.dis(p, #bytes) {
+        return lines
+    }
+    let xs = bytes.list()
+    [(i, xs[i;i+16].map(it -> "{it:02x}").join(' '))
+     for i in (0..#xs)[;;16]]
+}
+
 pub class Code {
     __handle: Ptr[Any];
 
@@ -185,9 +267,13 @@ pub class Code {
     lir() -> String { j._code-lir(__handle) }
 
     dis() -> String {
-        let bytes = j._code-bytes(__handle).list()
-        [bytes[i;i+16].map(it -> "{it:02x}").join(' ')
-         for i in 0..#bytes : 16].join('\n')
+        let bytes = j._code-bytes(__handle)
+        let lines = disassemble(j._ptr(__handle), bytes)
+        for (pc, site-id) in j._code-sites(__handle) {
+            lines.push((pc, "site {site-id}"))
+        }
+        ["{pc:04x}: {text}" for (pc, text) in lines.sort(by: &0)]
+            .join('\n')
     }
 }
 

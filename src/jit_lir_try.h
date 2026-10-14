@@ -206,14 +206,16 @@ bc_try(BcLir *c, BcLirNode const *node)
                 };
                 LirReg env = bc_call(c, bc_push_try, ptr, types, args, countof(args));
                 LirOpnd buffer = lir_r(env);
-                LirReg status = bc_call(c, _setjmp, LIR_TYPE_I32, &ptr, &buffer, 1);
-                c->L->insts[c->L->ninsts - 1].flags = LIR_RETURNS_TWICE;
+                LirReg status = bc_call_flags(c, _setjmp, LIR_TYPE_I32, &ptr, &buffer, 1,
+                                             LIR_RETURNS_TWICE);
                 LirLabel normal = lir_label(c->L);
                 bc_branch(c, LIR_EQ, lir_r(status), lir_i(0), normal);
                 bc_restore_locals(c);
+                bc_cache_reload(c);
                 bc_store(c, LIR_ST64, c->ty, offsetof(Ty, ip), lir_i((uptr)&JIT));
                 bc_jump(c, c->nodes[t->catch_to].label);
                 bc_bind(c, normal);
+                bc_cache_reload(c);
                 break;
         }
         case INSTR_CATCH:
@@ -239,7 +241,7 @@ bc_try(BcLir *c, BcLirNode const *node)
                 LirLabel returned = lir_label(c->L);
                 bc_branch(c, LIR_NE, lir_r(end), lir_i(0), returned);
                 bc_call(c, vm_jit_end_try_rethrow, LIR_VOID, &ptr, &ty, 1);
-                c->L->insts[c->L->ninsts - 1].flags |= LIR_NORETURN;
+                c->L->insts[c->last_call].flags |= LIR_NORETURN;
                 bc_bind(c, returned);
                 if (t->end_to >= 0) {
                         bc_branch(c, LIR_EQ, lir_r(end), lir_i((uptr)(c->code + t->end_to)),

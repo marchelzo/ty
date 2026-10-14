@@ -314,26 +314,13 @@ add_subdirectory(unibilium)
 find_program(LUAJIT luajit)
 if(LUAJIT)
   if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
-    set(_jit_dasc ${PROJECT_SOURCE_DIR}/src/jit_arm64.dasc)
-    set(_jit_hdr  ${PROJECT_SOURCE_DIR}/src/jit_arm64.h)
     set(_lir_dasc ${PROJECT_SOURCE_DIR}/src/lir_arm64.dasc)
     set(_lir_hdr  ${PROJECT_SOURCE_DIR}/src/lir_arm64.h)
   else()
-    set(_jit_dasc ${PROJECT_SOURCE_DIR}/src/jit_x64.dasc)
-    set(_jit_hdr  ${PROJECT_SOURCE_DIR}/src/jit_x64.h)
     set(_lir_dasc ${PROJECT_SOURCE_DIR}/src/lir_x64.dasc)
     set(_lir_hdr  ${PROJECT_SOURCE_DIR}/src/lir_x64.h)
   endif()
 
-  add_custom_command(
-    OUTPUT ${_jit_hdr}
-    COMMAND ${LUAJIT} ${PROJECT_SOURCE_DIR}/dynasm/dynasm.lua
-      -o ${_jit_hdr} ${_jit_dasc}
-    DEPENDS ${_jit_dasc}
-    COMMENT "Generating JIT emission header from ${_jit_dasc}"
-    VERBATIM
-  )
-  add_custom_target(GenerateJitHeader DEPENDS ${_jit_hdr})
   if(_lir_hdr)
     add_custom_command(
       OUTPUT ${_lir_hdr}
@@ -622,9 +609,6 @@ target_include_directories(${_tgt_ty_interface}
     ${PROJECT_SOURCE_DIR}/src
 )
 
-if(TARGET GenerateJitHeader)
-  add_dependencies(${_tgt_ty_interface} GenerateJitHeader)
-endif()
 if(TARGET GenerateLirHeader)
   add_dependencies(${_tgt_ty_interface} GenerateLirHeader)
 endif()

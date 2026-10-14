@@ -927,6 +927,20 @@ builtin_jit_code_bytes(Ty *ty, int argc, Value *kwargs)
 }
 
 Value
+builtin_jit_code_sites(Ty *ty, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("jit._code-sites", 1);
+        LirCode *code = code_arg(ty, &ARG(0));
+        GC_STOP();
+        Value out = ARRAY(vA());
+        for (u32 i = 0; i < code->nsites; ++i) {
+                vAp(out.array, PAIR(INTEGER(code->sites[i].pc), INTEGER(code->sites[i].tag)));
+        }
+        GC_RESUME();
+        return out;
+}
+
+Value
 builtin_jit_stats(Ty *ty, int argc, Value *kwargs)
 {
         ASSERT_ARGC("jit._stats", 0);

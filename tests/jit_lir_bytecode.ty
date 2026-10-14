@@ -371,6 +371,44 @@ pub fn test-member-and-index-assignment() {
     assert(array == [1, 11])
 }
 
+class LirFieldAssignBox {
+    value: Any = nil;
+
+    write(value: Any) -> Any {
+        self.value = value
+    }
+}
+
+class LirFieldAssignSetter {
+    __value: Any = nil;
+
+    value=(value: Any) {
+        ty.gc()
+        __value = [value]
+    }
+
+    value -> Any { __value }
+}
+
+__jit__ fn lir-field-assign(box: Any, value: Any) -> Any {
+    box.value = value
+}
+
+pub fn test-field-assignment-result-and-setter-fallback() {
+    let box = LirFieldAssignBox()
+    let value = [1, [2, 3]]
+    assert(lir-field-assign(box, value) == value)
+    assert(box.value == value)
+    assert(box.write(17) == 17)
+    assert(box.value == 17)
+    let setter = LirFieldAssignSetter()
+    lir-field-assign(setter, value)
+    ty.gc()
+    assert(setter.value == [value])
+    lir-field-assign(box, setter.value)
+    assert(box.value == [value])
+}
+
 pub fn test-scalar-operation-layouts() {
     assert(lir-scalar-ops(7, 2) == [-7, 1, 3, 2, 7, 5, 28, 1])
 }
@@ -1007,4 +1045,91 @@ pub fn test-wide-static-operand-stack() {
     assert(xs.all?(it -> it == 7))
     ty.gc()
     assert(lir-wide-operands(17)[299] == 17)
+}
+
+fn lir-register-step(a: Int, b: Float) -> (Int, Float) {
+    ty.gc()
+    (a + 1, b + 0.5)
+}
+
+__jit__ fn lir-register-pressure(
+    n: Int,
+    step: (Int, Float) -> (Int, Float)
+) -> (Int, Float, Int) {
+    let i = 0
+    let a = 7
+    let b = 0.5
+    let c = 11
+    let d = 13
+    let e = 17
+    let f = 19
+    let g = 23
+    let h = 29
+    while i < n {
+        a += i
+        b += 0.25
+        c += 2
+        d += 3
+        e += 4
+        f += 5
+        g += 6
+        h += 7
+        let (v, w) = step(a, b)
+        a = v
+        b = w
+        i += 1
+    }
+    (a, b, c + d + e + f + g + h)
+}
+
+__jit__ fn lir-register-protected(n: Int) -> (Int, Float) {
+    let i = 0
+    let a = 7
+    let b = 0.5
+    while i < n {
+        try {
+            a += 1
+            b += 0.5
+            ty.gc()
+            if i == 2 {
+                throw 1
+            }
+        } catch 1 {
+            a += 10
+        } finally {
+            b += 0.25
+        }
+        i += 1
+    }
+    (a, b)
+}
+
+__jit__ fn lir-register-generator*(n: Int) -> Generator[(Int, Float)] {
+    let i = 0
+    let value = 0.5
+    while i < n {
+        yield (i, value)
+        ty.gc()
+        i += 1
+        value += 0.25
+    }
+}
+
+pub fn test-registerized-locals-through-calls-and-gc() {
+    assert(lir-register-pressure(0, lir-register-step) == (7, 0.5, 112))
+    assert(lir-register-pressure(5, lir-register-step) == (22, 4.25, 247))
+    assert(lir-register-pressure(5, (a, b) -> (a, b)) == (17, 1.75, 247))
+}
+
+pub fn test-registerized-locals-through-exceptions() {
+    assert(lir-register-protected(0) == (7, 0.5))
+    assert(lir-register-protected(5) == (22, 4.25))
+}
+
+pub fn test-registerized-locals-through-yields() {
+    assert([*lir-register-generator(3)] == [(0, 0.5), (1, 0.75), (2, 1.0)])
+    let gen = lir-register-generator(3)
+    assert(gen() == Some((0, 0.5)))
+    ty.gc()
+    assert([*gen] == [(1, 0.75), (2, 1.0)])
 }

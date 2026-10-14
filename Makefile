@@ -130,16 +130,10 @@ LUAJIT := luajit
 DYNASM := $(LUAJIT) dynasm/dynasm.lua
 
 ifeq ($(shell uname -m),arm64)
-	DYNASM_ARCH := arm64
-	JIT_DASC := src/jit_arm64.dasc
-	JIT_HDR  := src/jit_arm64.h
 	LIR_DASC := src/lir_arm64.dasc
 	LIR_HDR  := src/lir_arm64.h
 	LIR_NATIVE_TEST := obj/lir-native-test obj/lir-entry-test
 else
-	DYNASM_ARCH := x64
-	JIT_DASC := src/jit_x64.dasc
-	JIT_HDR  := src/jit_x64.h
 	LIR_DASC := src/lir_x64.dasc
 	LIR_HDR  := src/lir_x64.h
 	LIR_NATIVE_TEST := obj/lir-native-test obj/lir-entry-test
@@ -162,11 +156,6 @@ DEPFILES := $(OBJECTS:.o=.d) $(TYLS_OBJECTS:.o=.d) $(TYPROF_OBJECTS:.o=.d) \
 -include $(DEPFILES)
 
 all: $(PROG)
-
-# DynASM pre-build step: generate JIT code emission header
-$(JIT_HDR): $(JIT_DASC)
-	@echo dynasm $<
-	@$(DYNASM) -o $@ $<
 
 ifneq ($(LIR_HDR),)
 $(LIR_HDR): $(LIR_DASC) dynasm/dasm_arm64.lua dynasm/dasm_x86.lua dynasm/dynasm.lua
@@ -212,12 +201,6 @@ obj/functions.o obj/tyls/functions.o obj/typrof/functions.o obj/tytest/functions
 obj/tyls/token.o: include/keywords.h include/optokens.h
 obj/typrof/token.o: include/keywords.h include/optokens.h
 obj/tytest/token.o: include/keywords.h include/optokens.h
-
-# jit.c depends on the generated DynASM header
-obj/jit.o: $(JIT_HDR)
-obj/tyls/jit.o: $(JIT_HDR)
-obj/typrof/jit.o: $(JIT_HDR)
-obj/tytest/jit.o: $(JIT_HDR)
 
 obj/lir_emit.o obj/tyls/lir_emit.o obj/typrof/lir_emit.o obj/tytest/lir_emit.o: $(LIR_HDR) src/lir_x64_target.h
 

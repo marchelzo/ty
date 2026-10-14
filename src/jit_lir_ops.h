@@ -53,7 +53,7 @@ bc_target_member(Ty *ty, Value *top, i32 member, bool self)
 {
         ty->stack.count = top - ty->stack.items;
         Value obj = self ? *vm_get_self(ty) : ty->stack.items[--ty->stack.count];
-        DoTargetMember(ty, obj, member);
+        vm_jit_target_member(ty, &obj, member);
 }
 
 static void
@@ -61,6 +61,55 @@ bc_target_subscript(Ty *ty, Value *top)
 {
         ty->stack.count = top - ty->stack.items;
         DoTargetSubscript(ty);
+}
+
+static bool
+bc_member_assign(BcLir *c, BcLirNode const *node, char const *ip)
+{
+        bool self = node->op == INSTR_TARGET_SELF_MEMBER;
+        if (node->next >= c->size || (self && c->self_index < 0)) {
+                return false;
+        }
+        BcLirNode const *next = &c->nodes[node->next];
+        if (next->op != INSTR_ASSIGN || next->label != LIR_NONE
+            || next->sp != node->sp - !self) {
+                return false;
+        }
+        i32 member;
+        memcpy(&member, ip + 1, sizeof member);
+        LirLabel slow = lir_label(c->L);
+        LirLabel done = lir_label(c->L);
+        LirReg receiver = self
+                       ? bc_addr(c, c->locals, c->self_index * sizeof (Value))
+                       : bc_addr(c, c->ops, (c->sp - 1) * sizeof (Value));
+        LirReg slot = bc_field_slot(c, receiver, member, true, slow);
+        bc_value_copy(c, slot, 0, c->ops, (next->sp - 1) * sizeof (Value));
+#ifdef TY_PROFILER
+        LirOpnd counter = lir_i((uptr)&jit_stats.member_set_fast);
+        LirReg base = bc_value(c, LIR_LI, LIR_PTR, &counter, 1);
+        LirOpnd increment[] = { lir_m(base, LIR_NONE, 1, 0), lir_i(1) };
+        bc_value(c, LIR_XADD, LIR_I64, increment, countof(increment));
+#endif
+        bc_jump(c, done);
+        bc_bind(c, slow);
+        LirReg top = bc_addr(c, c->ops, c->sp * sizeof (Value));
+        LirType types[] = { LIR_TYPE_PTR, LIR_TYPE_PTR, LIR_TYPE_I32, LIR_TYPE_BOOL };
+        LirOpnd args[] = { lir_r(c->ty), lir_r(top), lir_i(member), lir_i(self) };
+        bc_call(c, bc_target_member, LIR_VOID, types, args, countof(args));
+        c->offset = next->next;
+        LirReg value = bc_addr(c, c->ops, (next->sp - 1) * sizeof (Value));
+        LirType assign_types[] = { LIR_TYPE_PTR, LIR_TYPE_PTR };
+        LirOpnd assign_args[] = { lir_r(c->ty), lir_r(value) };
+        bc_call(c, bc_assign_value, LIR_VOID, assign_types, assign_args, countof(assign_args));
+        bc_bind(c, done);
+        c->sp = next->sp;
+#ifdef TY_PROFILER
+        LirType tick_types[] = { LIR_TYPE_PTR, LIR_TYPE_PTR };
+        LirOpnd tick_args[] = { lir_r(c->ty), lir_i((uptr)(c->code + node->next)) };
+        bc_stack_count(c);
+        bc_call(c, jit_profiler_tick, LIR_VOID, tick_types, tick_args, countof(tick_args));
+#endif
+        return true;
 }
 
 static void
@@ -89,6 +138,10 @@ bc_more(BcLir *c, BcLirNode const *node, char const *ip)
         void *helper;
         switch (node->op) {
         case INSTR_SELF: {
+                if (c->self_index >= 0) {
+                        bc_local_load(c, c->self_index);
+                        return;
+                }
                 LirOpnd arg = lir_r(c->ty);
                 LirReg self = bc_call(c, vm_get_self, ptr, &ptr, &arg, 1);
                 bc_value_copy(c, c->ops, c->sp++ * sizeof (Value), self, 0);
@@ -261,11 +314,7 @@ bc_more(BcLir *c, BcLirNode const *node, char const *ip)
         case INSTR_SELF_MEMBER_ACCESS: {
                 memcpy(&n, ip + 1, sizeof n);
                 bool self = node->op == INSTR_SELF_MEMBER_ACCESS;
-                LirReg out = self ? top : last;
-                LirType types[] = { ptr, ptr, ptr, integer };
-                LirOpnd args[] = { lir_r(c->ty), lir_r(out), self ? lir_i(0) : lir_r(out), lir_i(n) };
-                bc_call(c, jit_rt_member, LIR_VOID, types, args, countof(args));
-                c->sp += self;
+                bc_member(c, n, self);
                 return;
         }
         case INSTR_TRY_MEMBER_ACCESS:
@@ -277,12 +326,22 @@ bc_more(BcLir *c, BcLirNode const *node, char const *ip)
                 bc_call(c, helper, LIR_VOID, types, args, countof(args));
                 return;
         }
-        case INSTR_NEG:
         case INSTR_NOT: {
+                LirReg truth = bc_truthy(c);
+                LirOpnd args[] = { lir_cc(LIR_EQ), lir_r(truth), lir_i(0) };
+                LirReg value = bc_value(c, LIR_SETCC, LIR_I64, args, countof(args));
+                i32 offset = (c->sp - 1) * sizeof (Value);
+                for (u32 i = 0; i < sizeof (Value); i += 8) {
+                        bc_store(c, LIR_ST64, c->ops, offset + i, lir_i(0));
+                }
+                bc_store(c, LIR_ST8, c->ops, offset + offsetof(Value, type), lir_i(VALUE_BOOLEAN));
+                bc_store(c, LIR_ST64, c->ops, offset + offsetof(Value, boolean), lir_r(value));
+                return;
+        }
+        case INSTR_NEG: {
                 LirType types[] = { ptr, ptr, ptr };
                 LirOpnd args[] = { lir_r(c->ty), lir_r(last), lir_r(last) };
-                helper = node->op == INSTR_NEG ? jit_rt_neg : jit_rt_not;
-                bc_call(c, helper, LIR_VOID, types, args, countof(args));
+                bc_call(c, jit_rt_neg, LIR_VOID, types, args, countof(args));
                 return;
         }
         case INSTR_INC:

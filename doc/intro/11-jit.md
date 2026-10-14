@@ -135,7 +135,8 @@ signatures and collection/exception flags into generated calls.
 `a.dump(stage: 'lir')` shows portable instructions. The `'legal'` and `'alloc'`
 stages show legalized instructions and register or spill assignments.
 `f.code.lir()` shows the original LIR of a finished function, and
-`f.code.dis()` currently returns its native bytes as a hex dump.
+`f.code.dis()` shows assembly when Capstone is available through `ffi`,
+and a hex dump otherwise. Both outputs include site IDs at native offsets.
 
 Set `TY_JIT_DUMP='^poly$'` to print the LIR, legalization and allocation stages
 for matching function names. This also works for bytecode JIT functions.

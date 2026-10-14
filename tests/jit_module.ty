@@ -65,6 +65,20 @@ pub fn test-fn-metadata-and-identity() {
     assert(type(f.ptr) == Ptr)
 }
 
+pub fn test-disassembly-sites-and-lifetime() {
+    let a = j.Asm('disassembly', params: [], ret: j.I64)
+    a.site(73)
+    a.ret(42)
+    let f = a.finish()
+    let text = f.code.dis()
+    assert('site 73' in text)
+    assert('0000:' in text)
+    ty.gc()
+    assert(f() == 42)
+    assert(f.code.dis() == text)
+    assert('\0' not in text)
+}
+
 pub fn test-rooted-code-constants() {
     let f = make-root()
     ty.gc()
