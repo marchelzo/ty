@@ -1,5 +1,6 @@
 import jit (kernel!)
 import support.process (run)
+import fixtures.kernels.public as public
 
 kernel! fn k-arith(a: Int, b: Int) -> Int {
     let x = a * 3 - b
@@ -295,6 +296,20 @@ fn compare(name: String, k: _, t: _, args: _, failures: Array[String]) {
             failures.push("{name}{args}: kernel={a} ty={b}")
         }
     }
+}
+
+kernel! fn literals(x: Float) -> Float {
+    let a = 2.0 * 3.0
+    let b = 4 * 5
+    x * a + float(b) + 1.5 / 0.5
+}
+
+pub fn literal-only-arithmetic() {
+    assert(literals(2.0) == 35.0)
+}
+
+pub fn public-kernels-are-exported() {
+    assert(public.twice(21) == 42)
 }
 
 kernel! fn at(xs: Array[Int], i: Int) -> Int { xs[i] }

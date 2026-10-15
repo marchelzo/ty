@@ -1,0 +1,3 @@
+import jit (kernel!)
+
+kernel! pub fn twice(x: Int) -> Int { x * 2 }

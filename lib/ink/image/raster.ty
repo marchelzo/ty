@@ -2,6 +2,28 @@ import jit (kernel!)
 
 pub class ImageError < RuntimeError {}
 
+kernel! pub fn alpha-box(src: Blob, w: Int, h: Int, floor: Int, out: Array[Int]) {
+    let x0 = w
+    let y0 = h
+    let x1 = 0
+    let y1 = 0
+    for y in ..h {
+        let row = y * w * 4 + 3
+        for x in ..w {
+            if src[row + x * 4] > floor {
+                x0 = min(x0, x)
+                x1 = max(x1, x + 1)
+                y0 = min(y0, y)
+                y1 = y + 1
+            }
+        }
+    }
+    out[0] = x0
+    out[1] = y0
+    out[2] = x1
+    out[3] = y1
+}
+
 pub class Frame {
     rgba:  Blob
     delay: Float
@@ -19,6 +41,8 @@ pub class Picture {
     format: String
     loops:  Int
 
+    __extent: Array[Int] | nil = nil
+
     init(width: Int, height: Int, frames: Array[Frame], format: String, loops: Int = 0) {
         self.width  = width
         self.height = height
@@ -28,6 +52,18 @@ pub class Picture {
     }
 
     animated? -> Bool { #frames > 1 }
+
+    extent() -> Array[Int] {
+        __extent ?? (__extent = do {
+            let all = [width, height, 0, 0]
+            let bb = [0, 0, 0, 0]
+            for f in frames {
+                alpha-box(f.rgba, width, height, 12, bb)
+                all = [min(all[0], bb[0]), min(all[1], bb[1]), max(all[2], bb[2]), max(all[3], bb[3])]
+            }
+            all
+        })
+    }
 
     __str__() -> String {
         "Picture({format}, {width}x{height}, {#frames} frame{#frames == 1 ? '' : 's'})"
@@ -131,28 +167,6 @@ kernel! pub fn resample(
             }
         }
     }
-}
-
-kernel! pub fn alpha-box(src: Blob, w: Int, h: Int, floor: Int, out: Array[Int]) {
-    let x0 = w
-    let y0 = h
-    let x1 = 0
-    let y1 = 0
-    for y in ..h {
-        let row = y * w * 4 + 3
-        for x in ..w {
-            if src[row + x * 4] > floor {
-                x0 = min(x0, x)
-                x1 = max(x1, x + 1)
-                y0 = min(y0, y)
-                y1 = y + 1
-            }
-        }
-    }
-    out[0] = x0
-    out[1] = y0
-    out[2] = x1
-    out[3] = y1
 }
 
 kernel! fn dist(src: Blob, p: Int, r: Int, g: Int, b: Int) -> Float {
