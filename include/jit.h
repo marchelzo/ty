@@ -61,8 +61,54 @@ void
 jit_stats_report(Ty *ty, FILE *out);
 #endif
 
+enum {
+        JIT_UNSEEN    = 0xFA57,
+        JIT_BUDGET    = 1000,
+        JIT_CALL_COST = 1,
+        JIT_PENDING   = JIT_UNSEEN + 0x100000,
+        JIT_TIER_BUDGET = 5000,
+        JIT_PINNED_BUDGET = 32
+};
+
+bool
+jit_hot_on_entry(Value const *f);
+
+int
+jit_eager(void);
+
+bool
+jit_pinned_loop(Value const *f);
+
+int
+jit_tier(void);
+
+void
+jit_tier_up(Value const *f);
+
+void
+jit_note_deopt(Value const *f);
+
+inline static uptr
+jit_budget(Value const *f)
+{
+        if (jit_eager() == 2) {
+                return 2;
+        }
+        if (jit_pinned_loop(f)) {
+                return JIT_PINNED_BUDGET;
+        }
+        uptr budget = JIT_BUDGET + (uptr)code_size_of(f) / 2;
+        return budget < JIT_PENDING - JIT_UNSEEN - 1 ? budget : JIT_PENDING - JIT_UNSEEN - 1;
+}
+
+inline static bool
+jit_pending(void const *jit)
+{
+        return (uptr)jit >= JIT_UNSEEN && (uptr)jit < JIT_PENDING;
+}
+
 inline static JitFn *
-try_jit(Ty *ty, Value const *f)
+try_jit_ex(Ty *ty, Value const *f, bool now)
 {
         if (UNLIKELY(DebugJitOff)) {
                 return NULL;
@@ -70,8 +116,23 @@ try_jit(Ty *ty, Value const *f)
 
         void *jit = jit_of(f);
 
-        if (LIKELY(jit != (void *)0xFA57)) {
+        if (LIKELY(!jit_pending(jit))) {
                 return jit;
+        }
+
+        uptr state = (uptr)jit;
+
+        if (!now && state == JIT_UNSEEN) {
+                if (jit_hot_on_entry(f)) {
+                        now = true;
+                } else {
+                        state = JIT_UNSEEN + jit_budget(f);
+                }
+        }
+
+        if (!now && state > JIT_UNSEEN + JIT_CALL_COST) {
+                set_jit_of(f, (void *)(state - JIT_CALL_COST));
+                return NULL;
         }
 
         _Atomic i16 *flags = (void *)flags_of(f);
@@ -104,6 +165,18 @@ try_jit(Ty *ty, Value const *f)
         set_jit_of(f, jit);
 
         return jit;
+}
+
+inline static JitFn *
+try_jit(Ty *ty, Value const *f)
+{
+        return try_jit_ex(ty, f, false);
+}
+
+inline static JitFn *
+try_jit_now(Ty *ty, Value const *f)
+{
+        return try_jit_ex(ty, f, true);
 }
 
 #endif

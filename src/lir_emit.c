@@ -54,6 +54,67 @@ fold_imm(LirInst *in)
 }
 
 static bool
+fits_i32(LirOpnd a)
+{
+        return a.kind == LIR_OPERAND_IMM && a.imm >= INT32_MIN && a.imm <= INT32_MAX;
+}
+
+static bool
+x64_fold_binary(LirInst const *in, LirClass cls)
+{
+#if defined(__x86_64__)
+        if (!fits_i32(in->args[1]) || in->args[0].kind != LIR_OPERAND_REG) {
+                return false;
+        }
+        switch (in->op) {
+        case LIR_ADD:
+        case LIR_SUB:
+        case LIR_AND:
+        case LIR_OR:
+        case LIR_XOR:
+        case LIR_MUL:
+                return true;
+        case LIR_SHL:
+        case LIR_SHR:
+        case LIR_SAR:
+        case LIR_ROTR:
+                return in->args[1].imm >= 0 && in->args[1].imm < (cls == LIR_I32 ? 32 : 64);
+        default:
+                return false;
+        }
+#else
+        (void)in;
+        (void)cls;
+        return false;
+#endif
+}
+
+static bool
+x64_fold_compare(LirInst const *in, bool floating)
+{
+#if defined(__x86_64__)
+        return !floating && in->args[1].kind == LIR_OPERAND_REG && fits_i32(in->args[2]);
+#else
+        (void)in;
+        (void)floating;
+        return false;
+#endif
+}
+
+static bool
+x64_fold_store(LirInst const *in)
+{
+#if defined(__x86_64__)
+        LirType type = LirOps[in->op].type;
+        LirClass cls = lir_type_class(type);
+        return fits_i32(in->args[1]) && cls != LIR_F32 && cls != LIR_F64;
+#else
+        (void)in;
+        return false;
+#endif
+}
+
+static bool
 backward(Lir const *L, LirInst const *in, u32 pc)
 {
         LirForm form = LirOps[in->op].form;
@@ -262,6 +323,7 @@ lir_normalize(Lir *L, LirError *err)
         u32 nold = L->ninsts;
         u32 nlabels = L->nlabels;
         u32 *positions = calloc((usize)nold + 1, sizeof *positions);
+        u32 moved = 0;
         bool ok = false;
         if (positions == NULL) {
                 return emit_error(err, LIR_ERROR_MEMORY, LIR_NONE, (LirSpan) {0}, "out of memory legalizing LIR");
@@ -302,7 +364,7 @@ lir_normalize(Lir *L, LirError *err)
                         use[0] = use[1] = true;
                         classes[0] = value_class(L, in.args[0], d);
                         classes[1] = value_class(L, in.args[1], d == LIR_PTR ? LIR_I64 : d);
-                        if (fold_imm(&in)) {
+                        if ((form == LIR_FORM_IBINARY && x64_fold_binary(&in, d)) || fold_imm(&in)) {
                                 use[1] = false;
                         }
                         break;
@@ -330,7 +392,7 @@ lir_normalize(Lir *L, LirError *err)
                 case LIR_FORM_BITCAST:
                         break;
                 case LIR_FORM_ST:
-                        use[1] = true;
+                        use[1] = !x64_fold_store(&in);
                         classes[1] = value_class(L, in.args[1], lir_type_class(LirOps[in.op].type));
                         break;
                 case LIR_FORM_SETCC:
@@ -342,7 +404,8 @@ lir_normalize(Lir *L, LirError *err)
                         bool f = form == LIR_FORM_FSETCC || form == LIR_FORM_FSELECT || form == LIR_FORM_FBR;
                         LirClass cls = value_class(L, in.args[1], f ? LIR_F64 : LIR_I64);
                         cls = value_class(L, in.args[2], cls);
-                        use[1] = use[2] = true;
+                        use[1] = true;
+                        use[2] = !x64_fold_compare(&in, f);
                         classes[1] = classes[2] = cls;
                         if (form == LIR_FORM_SELECT || form == LIR_FORM_FSELECT) {
                                 use[3] = use[4] = true;
@@ -421,9 +484,10 @@ lir_normalize(Lir *L, LirError *err)
                                 in.dst = lir_reg(L, LIR_PTR);
                         }
                 }
-                if (!lir_emit(L, &in)) {
+                if (!lir_emit_owned(L, &in)) {
                         goto Error;
                 }
+                moved = pc + 1;
                 if ((frame != LIR_NONE || slot != LIR_NONE)
                     && !restore_call_frame(L, &in, frame, ty, slot, dst, tail)) {
                         goto Error;
@@ -440,7 +504,7 @@ Error:
                 emit_error(err, LIR_ERROR_ENCODING, L->ninsts, (LirSpan) {0}, "could not materialize LIR operand");
         }
 End:
-        for (u32 i = 0; i < nold; ++i) {
+        for (u32 i = moved; i < nold; ++i) {
                 free((void *)old[i].sig.params);
                 free(old[i].call_args);
                 free(old[i].targets);
@@ -503,6 +567,9 @@ typedef struct lir_native_context {
         u32 literals;
         u32 sites;
         u32 rebased;
+        u32 stubs;
+        u8 ty_reg;
+        bool *stackish;
         LirArgLocation *arguments;
         u32 *pointers;
         u32 npointers;
@@ -841,17 +908,174 @@ native_rebases(LirEmitContext const *c, u32 pc)
         return false;
 }
 
+static bool
+native_stack_pointer(LirEmitContext const *c, u32 r)
+{
+        return c->stackish[r];
+}
+
+static void
+native_stack_items(LirEmitContext *c, u8 d)
+{
+        dasm_State **Dst = &c->dasm;
+        if (c->ty_reg != LIR_PHYS_NONE) {
+                native_memory(Dst, false, d, c->ty_reg, offsetof(Ty, stack.items), 8, false, false);
+        } else {
+                native_memory(Dst, false, d, LIR_FRAME, c->ty_slot, 8, false, false);
+                native_memory(Dst, false, d, d, offsetof(Ty, stack.items), 8, false, false);
+        }
+}
+
+static bool
+native_stack_base(Lir const *L, bool const *stackish, LirInst const *in)
+{
+        LirOpnd const *a = in->args;
+        switch (in->op) {
+        case LIR_LEA:
+                return a[0].kind == LIR_OPERAND_MEM && stackish[a[0].mem.base]
+                    && (a[0].mem.index == LIR_NONE || L->regs[a[0].mem.index].cls != LIR_PTR);
+        case LIR_MOV:
+                return a[0].kind == LIR_OPERAND_REG && stackish[a[0].reg];
+        case LIR_ADD:
+        case LIR_SUB:
+                return a[0].kind == LIR_OPERAND_REG && stackish[a[0].reg]
+                    && (a[1].kind == LIR_OPERAND_IMM
+                        || (a[1].kind == LIR_OPERAND_REG && L->regs[a[1].reg].cls == LIR_I64));
+        default:
+                return false;
+        }
+}
+
+static bool
+native_classify_stack(LirEmitContext *c)
+{
+        Lir const *L = c->L;
+        bool *stackish = calloc((usize)L->nregs + 1, sizeof *stackish);
+        bool changed = true;
+        if (stackish == NULL) {
+                return false;
+        }
+        for (u32 r = 0; r < L->nregs; ++r) {
+                u32 pin = L->regs[r].pin;
+                if (pin != LIR_NONE) {
+                        stackish[r] = pin < 8 && ((L->stack_pins >> pin) & 1);
+                } else {
+                        stackish[r] = L->regs[r].cls == LIR_PTR && L->regs[r].param == LIR_NONE;
+                }
+        }
+        while (changed) {
+                changed = false;
+                for (u32 pc = 0; pc < L->ninsts; ++pc) {
+                        LirInst const *in = &L->insts[pc];
+                        for (u32 j = 0; j < in->raw.nout; ++j) {
+                                u32 r = in->raw.out[j].reg;
+                                if (stackish[r] && L->regs[r].pin == LIR_NONE) {
+                                        stackish[r] = false;
+                                        changed = true;
+                                }
+                        }
+                        if (
+                                in->dst == LIR_NONE
+                             || !stackish[in->dst]
+                             || L->regs[in->dst].pin != LIR_NONE
+                             || native_stack_base(L, stackish, in)
+                        ) {
+                                continue;
+                        }
+                        stackish[in->dst] = false;
+                        changed = true;
+                }
+        }
+        c->stackish = stackish;
+        return true;
+}
+
+static bool
+native_checked_rebase(LirEmitContext const *c, u32 pc)
+{
+        for (u32 k = 0; k < c->npointers; ++k) {
+                u32 r = c->pointers[k];
+                if (!native_stack_pointer(c, r) && native_live_pointer(c, r, pc)) {
+                        return true;
+                }
+        }
+        return false;
+}
+
+static void
+native_save_bounds(LirEmitContext *c, u32 pc)
+{
+        dasm_State **Dst = &c->dasm;
+        if (!native_checked_rebase(c, pc)) {
+                return;
+        }
+        if (c->ty_reg == LIR_PHYS_NONE) {
+                native_stack_bounds(Dst, c->ty_slot, c->stack_base, c->stack_end);
+                return;
+        }
+        native_memory(Dst, false, LIR_TMP0, c->ty_reg, offsetof(Ty, stack.capacity), 8, false, false);
+        native_memory(Dst, false, LIR_TMP1, c->ty_reg, offsetof(Ty, stack.items), 8, false, false);
+        native_integer_imm(Dst, LIR_SHL, LIR_TMP0, LIR_TMP0, 5, false);
+        native_integer(Dst, LIR_ADD, LIR_TMP0, LIR_TMP0, LIR_TMP1, false);
+        native_memory(Dst, true, LIR_TMP0, LIR_FRAME, c->stack_end, 8, false, false);
+}
+
+static bool
+native_moves_stack(LirEmitContext const *c, u32 pc)
+{
+        LirInst const *in = &c->L->insts[pc];
+        return c->L->resolved_mode == LIR_MODE_ATTACHED
+            && (in->op == LIR_POLL
+                || (in->op == LIR_CALL && (in->flags & (LIR_MAY_GC | LIR_MAY_THROW | LIR_RETURNS_TWICE))));
+}
+
+static void
+native_rebase_add(LirEmitContext *c, u32 pc)
+{
+        dasm_State **Dst = &c->dasm;
+        for (u32 k = 0; k < c->npointers; ++k) {
+                u32 r = c->pointers[k];
+                if (!native_stack_pointer(c, r) || !native_live_pointer(c, r, pc)) {
+                        continue;
+                }
+                LirInterval const *i = &c->alloc->intervals[r];
+                if (i->spilled) {
+                        native_memory(Dst, false, LIR_TMP1, LIR_FRAME, c->outgoing + i->spill, 8, false, false);
+                        native_integer(Dst, LIR_ADD, LIR_TMP1, LIR_TMP1, LIR_TMP0, false);
+                        native_memory(Dst, true, LIR_TMP1, LIR_FRAME, c->outgoing + i->spill, 8, false, false);
+                } else {
+                        native_integer(Dst, LIR_ADD, i->phys, i->phys, LIR_TMP0, false);
+                }
+        }
+}
+
 static void
 native_rebase_live(LirEmitContext *c, u32 pc)
 {
+        dasm_State **Dst = &c->dasm;
         if (!native_rebases(c, pc)) {
+                if (c->context && native_moves_stack(c, pc)) {
+                        native_stack_items(c, LIR_TMP0);
+                        native_memory(Dst, true, LIR_TMP0, LIR_FRAME, c->stack_base, 8, false, false);
+                }
                 return;
         }
-        dasm_State **Dst = &c->dasm;
-        native_rebase_begin(Dst, c->ty_slot, c->stack_base, c->rebased + pc);
+        native_stack_items(c, LIR_TMP0);
+        native_rebase_check(Dst, c->stack_base, c->stubs + pc);
+        native_label(Dst, c->rebased + pc);
+        native_cold(Dst);
+        native_label(Dst, c->stubs + pc);
+        if (!native_checked_rebase(c, pc)) {
+                native_memory(Dst, true, LIR_TMP0, LIR_FRAME, c->stack_base, 8, false, false);
+                native_integer(Dst, LIR_SUB, LIR_TMP0, LIR_TMP0, LIR_TMP1, false);
+                native_rebase_add(c, pc);
+                native_jump(Dst, c->rebased + pc);
+                native_hot(Dst);
+                return;
+        }
         for (u32 k = 0; k < c->npointers; ++k) {
                 u32 r = c->pointers[k];
-                if (!native_live_pointer(c, r, pc)) {
+                if (!native_live_pointer(c, r, pc) || native_stack_pointer(c, r)) {
                         continue;
                 }
                 LirInterval const *i = &c->alloc->intervals[r];
@@ -865,7 +1089,12 @@ native_rebase_live(LirEmitContext *c, u32 pc)
                         native_memory(Dst, true, LIR_TMP0, LIR_FRAME, c->outgoing + i->spill, 8, false, false);
                 }
         }
-        native_label(Dst, c->rebased + pc);
+        native_rebase_delta(Dst, c->ty_slot, c->stack_base);
+        native_rebase_add(c, pc);
+        native_stack_items(c, LIR_TMP0);
+        native_memory(Dst, true, LIR_TMP0, LIR_FRAME, c->stack_base, 8, false, false);
+        native_jump(Dst, c->rebased + pc);
+        native_hot(Dst);
 }
 
 static bool
@@ -873,7 +1102,7 @@ native_call_inst(LirEmitContext *c, LirInst const *in, u32 pc)
 {
         LirOpnd target = in->args[0];
         if (native_rebases(c, pc)) {
-                native_stack_bounds(&c->dasm, c->ty_slot, c->stack_base, c->stack_end);
+                native_save_bounds(c, pc);
         }
         u64 address = 0;
         if (target.kind == LIR_OPERAND_REG) {
@@ -931,13 +1160,13 @@ native_call_inst(LirEmitContext *c, LirInst const *in, u32 pc)
         if ((in->flags & (LIR_RETURNS_TWICE | LIR_CALL_SITE)) == (LIR_RETURNS_TWICE | LIR_CALL_SITE)) {
                 native_twice_call(&c->dasm, c->pc_slot, c->sites + pc);
         } else {
-                native_call(&c->dasm, (in->flags & LIR_CALL_SITE) != 0, c->thunk);
+                native_call(&c->dasm, (in->flags & LIR_CALL_SITE) != 0, c->thunk, c->pc_slot);
         }
         if (in->flags & LIR_CALL_SITE) {
                 native_label(&c->dasm, c->sites + pc);
         }
         if (in->sig.ret != LIR_VOID && !native_fp(lir_type_class(in->sig.ret))) {
-                native_narrow(&c->dasm, 0, in->sig.ret);
+                native_narrow(&c->dasm, 0, in->sig.ret == LIR_TYPE_BOOL ? LIR_TYPE_U8 : in->sig.ret);
         }
         if (in->dst != LIR_NONE) {
                 LirInterval const *d = &c->alloc->intervals[in->dst];
@@ -1003,11 +1232,17 @@ native_parameters(LirEmitContext *c)
                 }
         }
         if (c->context) {
-                native_li(&c->dasm, LIR_TMP0, (uptr)lir_runtime()->current_ty);
-                native_call(&c->dasm, false, c->thunk);
+                if (L->ty_param != LIR_NONE && L->ty_param < L->sig.nparams) {
+                        native_memory(&c->dasm, false, 0, LIR_FRAME, c->params + L->ty_param * 8, 8, false, false);
+                } else {
+                        native_li(&c->dasm, LIR_TMP0, (uptr)lir_runtime()->current_ty);
+                        native_call(&c->dasm, false, c->thunk, c->pc_slot);
+                }
                 native_memory(&c->dasm, true, 0, LIR_FRAME, c->ty_slot, 8, false, false);
                 native_memory(&c->dasm, false, LIR_TMP0, 0, offsetof(Ty, stack.count), 8, false, false);
                 native_memory(&c->dasm, true, LIR_TMP0, LIR_FRAME, c->top_slot, 8, false, false);
+                native_memory(&c->dasm, false, LIR_TMP0, 0, offsetof(Ty, stack.items), 8, false, false);
+                native_memory(&c->dasm, true, LIR_TMP0, LIR_FRAME, c->stack_base, 8, false, false);
         }
         for (u32 r = 0; r < L->nregs; ++r) {
                 LirRegInfo const *ri = &L->regs[r];
@@ -1046,7 +1281,7 @@ native_poll(LirEmitContext *c, LirInst const *in, u32 pc, u32 fast, u32 end)
                 return emit_error(c->err, LIR_ERROR_MODE, pc, in->span, "POLL requires a VM runtime");
         }
         if (native_rebases(c, pc)) {
-                native_stack_bounds(Dst, c->ty_slot, c->stack_base, c->stack_end);
+                native_save_bounds(c, pc);
         }
         native_li(Dst, LIR_TMP0, (uptr)rt->interrupt);
         native_memory(Dst, false, LIR_TMP0, LIR_TMP0, 0, 4, false, false);
@@ -1066,7 +1301,7 @@ native_poll(LirEmitContext *c, LirInst const *in, u32 pc, u32 fast, u32 end)
                 native_li(Dst, c->target->gpr.args[2], 0);
         }
         native_li(Dst, LIR_TMP0, (uptr)rt->poll);
-        native_call(Dst, (in->flags & LIR_CALL_SITE) != 0, c->thunk);
+        native_call(Dst, (in->flags & LIR_CALL_SITE) != 0, c->thunk, c->pc_slot);
         if (in->flags & LIR_CALL_SITE) {
                 native_label(Dst, c->sites + pc);
         }
@@ -1212,6 +1447,12 @@ native_instruction(LirEmitContext *c, u32 pc)
                                 disp = 0;
                         }
                         bool sign = type == LIR_TYPE_I8 || type == LIR_TYPE_I16 || type == LIR_TYPE_I32;
+#if defined(__x86_64__)
+                        if (form == LIR_FORM_ST && in->args[1].kind == LIR_OPERAND_IMM) {
+                                native_store_imm(Dst, base, disp, size, in->args[1].imm);
+                                break;
+                        }
+#endif
                         native_memory(Dst, form == LIR_FORM_ST, form == LIR_FORM_ST ? a[1] : d,
                                    base, disp, size, sign, native_fp(lir_type_class(type)));
                 }
@@ -1224,7 +1465,15 @@ native_instruction(LirEmitContext *c, u32 pc)
         case LIR_FORM_BR:
         case LIR_FORM_FBR: {
                 LirClass source = L->regs[in->args[1].reg].cls;
+#if defined(__x86_64__)
+                if (in->args[2].kind == LIR_OPERAND_IMM) {
+                        native_compare_imm(Dst, a[1], in->args[2].imm, source);
+                } else {
+                        native_compare(Dst, a[1], a[2], source);
+                }
+#else
                 native_compare(Dst, a[1], a[2], source);
+#endif
                 if (form == LIR_FORM_BR || form == LIR_FORM_FBR) {
                         if (!native_phase(c, pc, LIR_MOVE_AFTER)) {
                                 return false;
@@ -1294,6 +1543,19 @@ native_instruction(LirEmitContext *c, u32 pc)
         case LIR_FORM_FENCE:
                 native_fence(Dst);
                 break;
+        case LIR_FORM_COPY: {
+                u8 dst = physical(c, in->args[0].mem.base, pc, false);
+                u8 src = physical(c, in->args[1].mem.base, pc, false);
+#if defined(__x86_64__)
+                native_copy32(Dst, dst, in->args[0].mem.disp, src, in->args[1].mem.disp);
+#else
+                for (i32 i = 0; i < 32; i += 8) {
+                        native_memory(Dst, false, LIR_TMP0, src, in->args[1].mem.disp + i, 8, false, false);
+                        native_memory(Dst, true, LIR_TMP0, dst, in->args[0].mem.disp + i, 8, false, false);
+                }
+#endif
+                break;
+        }
         case LIR_FORM_ALLOCA:
                 native_addr(Dst, d, LIR_FRAME, c->outgoing + c->alloc->alloca_offsets[pc]);
                 break;
@@ -1333,7 +1595,7 @@ native_emit(Lir const *L, LirAlloc const *alloc, LirCode *code, LirError *err)
         JitMapping mapping = {0};
         u32 *labels = NULL;
         u32 *next = NULL;
-        u32 nlabels = L->nlabels + 5 * L->ninsts + 4;
+        u32 nlabels = L->nlabels + 6 * L->ninsts + 4;
         u32 ns = 0;
         u32 ne = 0;
         usize size;
@@ -1385,10 +1647,26 @@ native_emit(Lir const *L, LirAlloc const *alloc, LirCode *code, LirError *err)
         if (c.arguments == NULL || c.pointers == NULL) {
                 goto End;
         }
+        c.ty_reg = LIR_PHYS_NONE;
         for (u32 r = 0; r < L->nregs; ++r) {
+                u32 pin = L->regs[r].pin;
+                if (pin != LIR_NONE && pin < 8 && ((L->stable_pins >> pin) & 1)) {
+                        if (
+                                L->ty_param != LIR_NONE
+                             && L->regs[r].param == L->ty_param
+                             && !alloc->intervals[r].spilled
+                             && alloc->intervals[r].phys != LIR_PHYS_NONE
+                        ) {
+                                c.ty_reg = alloc->intervals[r].phys;
+                        }
+                        continue;
+                }
                 if (L->regs[r].cls == LIR_PTR && alloc->intervals[r].crosses_call) {
                         c.pointers[c.npointers++] = r;
                 }
+        }
+        if (!native_classify_stack(&c)) {
+                goto End;
         }
         c.incoming = arg_locations(c.target, &L->sig, c.arguments);
         for (u32 pc = 0; pc < L->ninsts; ++pc) {
@@ -1433,10 +1711,11 @@ native_emit(Lir const *L, LirAlloc const *alloc, LirCode *code, LirError *err)
         c.literals = c.thunk + 1;
         c.sites = c.literals + L->ninsts;
         c.rebased = c.sites + L->ninsts;
+        c.stubs = c.rebased + L->ninsts;
 #if defined(__aarch64__)
 Emit:
 #endif
-        dasm_init(&c.dasm, 1);
+        dasm_init(&c.dasm, DASM_MAXSECTION);
         dasm_setupglobal(&c.dasm, globals, 0);
         dasm_growpc(&c.dasm, nlabels);
         dasm_setup(&c.dasm, lir_actions);
@@ -1458,6 +1737,7 @@ Emit:
         native_save_registers(&c, false);
         native_epilogue(&c.dasm, c.origin, false);
         native_runtime_call(&c.dasm, c.thunk, c.pc_slot);
+        native_cold(&c.dasm);
         for (u32 pc = 0; pc < L->ninsts; ++pc) {
                 LirInst const *in = &L->insts[pc];
                 if (c.islands) {
@@ -1569,6 +1849,7 @@ End:
         }
         free(c.arguments);
         free(c.pointers);
+        free(c.stackish);
         free(c.phase_at);
         free(c.phase_next);
         free(c.constraint_at);
@@ -1621,6 +1902,8 @@ lir_code_destroy(LirCode *code)
         free(code->sites);
         free(code->entries);
         free(code->name);
+        free(code->osr);
+        free(code->tier);
 }
 
 void
@@ -1670,7 +1953,11 @@ debug_dump(Lir const *L, LirAlloc const *alloc, char const *stage)
 }
 
 static LirCode *
-finish(Lir *L, bool entry, bool interpreted, bool entry_thunk, u32 body_slots, LirError *err)
+finish(Lir *L, bool entry, bool interpreted, bool entry_thunk, u32 body_slots, LirError *err);
+
+static LirCode *
+finish_ex(Lir *L, bool entry, bool interpreted, bool entry_thunk, u32 body_slots, bool consume,
+          LirError *err)
 {
         LirCode *code = NULL;
         Lir *legal = NULL;
@@ -1682,7 +1969,10 @@ finish(Lir *L, bool entry, bool interpreted, bool entry_thunk, u32 body_slots, L
         if (err != NULL) {
                 *err = (LirError) {0};
         }
-        if (!entry_thunk && !lir_validate(L, err)) {
+        if (!entry_thunk && (!consume || getenv("TY_JIT_VALIDATE") != NULL) && !lir_validate(L, err)) {
+                return NULL;
+        }
+        if (consume && !lir_prepare(L, err)) {
                 return NULL;
         }
         debug_dump(L, NULL, "lir");
@@ -1697,11 +1987,18 @@ finish(Lir *L, bool entry, bool interpreted, bool entry_thunk, u32 body_slots, L
                 goto Error;
         }
         strcpy(code->name, L->name);
-        code->lir = lir_clone(L, err);
-        if (code->lir == NULL) {
-                goto Error;
+        if (consume) {
+                code->sig = L->sig;
+                code->sig.params = NULL;
+                code->sig.nparams = 0;
+                code->sig.nfixed = 0;
+        } else {
+                code->lir = lir_clone(L, err);
+                if (code->lir == NULL) {
+                        goto Error;
+                }
+                code->sig = code->lir->sig;
         }
-        code->sig = code->lir->sig;
         code->mode = L->resolved_mode;
         code->nroots = L->nroots;
         code->roots = calloc((usize)L->nroots + 1, sizeof *code->roots);
@@ -1717,7 +2014,7 @@ finish(Lir *L, bool entry, bool interpreted, bool entry_thunk, u32 body_slots, L
                 }
                 code->nvslots = L->nvslots;
         } else {
-                legal = lir_clone(L, err);
+                legal = consume ? L : lir_clone(L, err);
                 if (legal == NULL || !lir_legalize(legal, target, &constraints, &nconstraints, err)
                     || !lir_cfg(legal, &cfg, err)
                     || !lir_allocate(legal, &cfg, target, constraints, nconstraints, &alloc, err)
@@ -1765,13 +2062,17 @@ finish(Lir *L, bool entry, bool interpreted, bool entry_thunk, u32 body_slots, L
                 code->entry = code->entry_code->body;
         }
         free(constraints);
-        lir_free(legal);
+        if (legal != L) {
+                lir_free(legal);
+        }
         lir_alloc_free(&alloc);
         lir_cfg_free(&cfg);
         return code;
 Error:
         free(constraints);
-        lir_free(legal);
+        if (legal != L) {
+                lir_free(legal);
+        }
         lir_alloc_free(&alloc);
         lir_cfg_free(&cfg);
         lir_code_free(code);
@@ -1781,10 +2082,22 @@ Error:
         return NULL;
 }
 
+static LirCode *
+finish(Lir *L, bool entry, bool interpreted, bool entry_thunk, u32 body_slots, LirError *err)
+{
+        return finish_ex(L, entry, interpreted, entry_thunk, body_slots, false, err);
+}
+
 LirCode *
 lir_finish(Lir *L, bool entry, LirError *err)
 {
         return finish(L, entry, false, false, 0, err);
+}
+
+LirCode *
+lir_finish_owned(Lir *L, LirError *err)
+{
+        return finish_ex(L, false, false, false, 0, true, err);
 }
 
 LirCode *

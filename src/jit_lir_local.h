@@ -1,7 +1,7 @@
 static bool
 bc_cache_plan(BcLir *c, Ty *ty, Value const *f)
 {
-        if (getenv("TY_JIT_NO_REGISTERIZE") != NULL || c->bound == 0) {
+        if (getenv("TY_JIT_REGISTERIZE") == NULL || c->bound == 0) {
                 return true;
         }
         Expr const *expr = expr_of(f);

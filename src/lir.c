@@ -177,6 +177,7 @@ lir_new(char const *name, LirSig const *sig, LirMode mode, LirError *err)
         L->params = calloc(sig->nparams, sizeof *L->params);
         L->mode = mode;
         L->pc_param = LIR_NONE;
+        L->ty_param = LIR_NONE;
         if (
                 L->name == NULL
              || (sig->nparams != 0 && (L->sig.params == NULL || L->params == NULL))
@@ -262,6 +263,9 @@ lir_clone(Lir *L, LirError *err)
         D->resolved_mode = L->resolved_mode;
         D->nvslots       = L->nvslots;
         D->pc_param      = L->pc_param;
+        D->ty_param      = L->ty_param;
+        D->stable_pins   = L->stable_pins;
+        D->stack_pins    = L->stack_pins;
         memcpy(D->pins, L->pins, sizeof D->pins);
         if (D->name == NULL
             || (L->sig.nparams != 0 && (D->sig.params == NULL || D->params == NULL))
@@ -451,7 +455,7 @@ lir_ref_const(Lir *L, Value const *value)
 bool
 lir_emit(Lir *L, LirInst const *inst)
 {
-        LirInst in;
+        LirInst *in;
         if (L->error.kind != LIR_ERROR_NONE) {
                 return false;
         }
@@ -469,43 +473,97 @@ lir_emit(Lir *L, LirInst const *inst)
         ) {
                 return build_fail(L, LIR_ERROR_OPERAND, "missing instruction payload");
         }
-        in = *inst;
-        in.sig.params = copy(inst->sig.params, inst->sig.nparams, sizeof *inst->sig.params);
-        in.call_args  = copy(inst->call_args, inst->ncall_args, sizeof *inst->call_args);
-        in.targets    = copy(inst->targets, inst->ntargets, sizeof *inst->targets);
-        in.raw.arm64  = copy(inst->raw.arm64, inst->raw.narm64, sizeof *inst->raw.arm64);
-        in.raw.x64    = copy(inst->raw.x64, inst->raw.nx64, sizeof *inst->raw.x64);
-        in.raw.in     = copy(inst->raw.in, inst->raw.nin, sizeof *inst->raw.in);
-        in.raw.out    = copy(inst->raw.out, inst->raw.nout, sizeof *inst->raw.out);
         if (
-                (inst->sig.nparams != 0 && in.sig.params == NULL)
-             || (inst->ncall_args != 0 && in.call_args == NULL)
-             || (inst->ntargets != 0 && in.targets == NULL)
-             || (inst->raw.narm64 != 0 && in.raw.arm64 == NULL)
-             || (inst->raw.nx64 != 0 && in.raw.x64 == NULL)
-             || (inst->raw.nin != 0 && in.raw.in == NULL)
-             || (inst->raw.nout != 0 && in.raw.out == NULL)
-             || L->ninsts == LIR_NONE
+                L->ninsts == LIR_NONE
              || !grow(&L->insts, &L->inst_capacity, L->ninsts + 1, sizeof *L->insts)
         ) {
-                inst_free(&in);
                 return build_fail(L, LIR_ERROR_MEMORY, "could not copy instruction payload");
         }
-        L->insts[L->ninsts++] = in;
+        in = &L->insts[L->ninsts];
+        *in = *inst;
+        if (
+                inst->sig.nparams == 0
+             && inst->ncall_args == 0
+             && inst->ntargets == 0
+             && inst->raw.narm64 == 0
+             && inst->raw.nx64 == 0
+             && inst->raw.nin == 0
+             && inst->raw.nout == 0
+        ) {
+                in->sig.params = NULL;
+                in->call_args  = NULL;
+                in->targets    = NULL;
+                in->raw.arm64  = NULL;
+                in->raw.x64    = NULL;
+                in->raw.in     = NULL;
+                in->raw.out    = NULL;
+                L->ninsts += 1;
+                return true;
+        }
+        in->sig.params = copy(inst->sig.params, inst->sig.nparams, sizeof *inst->sig.params);
+        in->call_args  = copy(inst->call_args, inst->ncall_args, sizeof *inst->call_args);
+        in->targets    = copy(inst->targets, inst->ntargets, sizeof *inst->targets);
+        in->raw.arm64  = copy(inst->raw.arm64, inst->raw.narm64, sizeof *inst->raw.arm64);
+        in->raw.x64    = copy(inst->raw.x64, inst->raw.nx64, sizeof *inst->raw.x64);
+        in->raw.in     = copy(inst->raw.in, inst->raw.nin, sizeof *inst->raw.in);
+        in->raw.out    = copy(inst->raw.out, inst->raw.nout, sizeof *inst->raw.out);
+        if (
+                (inst->sig.nparams != 0 && in->sig.params == NULL)
+             || (inst->ncall_args != 0 && in->call_args == NULL)
+             || (inst->ntargets != 0 && in->targets == NULL)
+             || (inst->raw.narm64 != 0 && in->raw.arm64 == NULL)
+             || (inst->raw.nx64 != 0 && in->raw.x64 == NULL)
+             || (inst->raw.nin != 0 && in->raw.in == NULL)
+             || (inst->raw.nout != 0 && in->raw.out == NULL)
+        ) {
+                inst_free(in);
+                return build_fail(L, LIR_ERROR_MEMORY, "could not copy instruction payload");
+        }
+        L->ninsts += 1;
+        return true;
+}
+
+bool
+lir_emit_owned(Lir *L, LirInst const *inst)
+{
+        if (L->error.kind != LIR_ERROR_NONE) {
+                return false;
+        }
+        if (
+                L->ninsts == LIR_NONE
+             || !grow(&L->insts, &L->inst_capacity, L->ninsts + 1, sizeof *L->insts)
+        ) {
+                return build_fail(L, LIR_ERROR_MEMORY, "could not copy instruction payload");
+        }
+        L->insts[L->ninsts++] = *inst;
         return true;
 }
 
 bool
 lir_emit_to(Lir *L, LirOp op, LirReg dst, LirOpnd const *args, u32 nargs)
 {
-        LirInst inst = { .op = op, .dst = dst, .nargs = nargs };
-        if (nargs > LIR_MAX_OPERANDS || (nargs != 0 && args == NULL)) {
+        LirInst *in;
+        if (L->error.kind != LIR_ERROR_NONE) {
+                return false;
+        }
+        if (nargs > LIR_MAX_OPERANDS || (nargs != 0 && args == NULL) || (u32)op >= LIR_OP_COUNT) {
                 return build_fail(L, LIR_ERROR_OPERAND, "invalid operand count");
         }
-        if (nargs != 0) {
-                memcpy(inst.args, args, nargs * sizeof *args);
+        if (
+                L->ninsts == LIR_NONE
+             || !grow(&L->insts, &L->inst_capacity, L->ninsts + 1, sizeof *L->insts)
+        ) {
+                return build_fail(L, LIR_ERROR_MEMORY, "could not copy instruction payload");
         }
-        return lir_emit(L, &inst);
+        in = &L->insts[L->ninsts++];
+        memset(in, 0, sizeof *in);
+        in->op    = op;
+        in->dst   = dst;
+        in->nargs = nargs;
+        if (nargs != 0) {
+                memcpy(in->args, args, nargs * sizeof *args);
+        }
+        return true;
 }
 
 static bool
@@ -883,6 +941,10 @@ inst_valid(Lir const *L, u32 i, LirError *err)
         case LIR_FORM_FENCE:
                 ok = true;
                 break;
+        case LIR_FORM_COPY:
+                ok = a[0].kind == LIR_OPERAND_MEM && a[1].kind == LIR_OPERAND_MEM
+                  && a[0].mem.index == LIR_NONE && a[1].mem.index == LIR_NONE;
+                break;
         case LIR_FORM_ALLOCA:
                 ok = d == LIR_PTR && a[0].kind == LIR_OPERAND_IMM && a[0].imm > 0
                   && a[0].imm <= INT32_MAX && a[1].kind == LIR_OPERAND_IMM
@@ -927,49 +989,124 @@ bit_has(u64 const *bits, u32 r)
 }
 
 static void
-use_reg(u64 *use, u64 const *def, u32 r)
+use_reg(u64 *use, u64 const *def, u32 const *global, u32 r)
 {
-        if (!bit_has(def, r)) {
-                bit_set(use, r);
+        u32 g = global[r];
+        if (g != LIR_NONE && !bit_has(def, g)) {
+                bit_set(use, g);
         }
 }
 
 static void
-use_operand(u64 *use, u64 const *def, LirOpnd a)
+use_operand(u64 *use, u64 const *def, u32 const *global, LirOpnd a)
 {
         if (a.kind == LIR_OPERAND_REG) {
-                use_reg(use, def, a.reg);
+                use_reg(use, def, global, a.reg);
         } else if (a.kind == LIR_OPERAND_MEM) {
-                use_reg(use, def, a.mem.base);
+                use_reg(use, def, global, a.mem.base);
                 if (a.mem.index != LIR_NONE) {
-                        use_reg(use, def, a.mem.index);
+                        use_reg(use, def, global, a.mem.index);
                 }
         }
 }
 
 static void
-inst_uses(LirInst const *in, u64 *use, u64 const *def)
+inst_uses(LirInst const *in, u64 *use, u64 const *def, u32 const *global)
 {
         for (u32 i = 0; i < in->nargs; ++i) {
-                use_operand(use, def, in->args[i]);
+                use_operand(use, def, global, in->args[i]);
         }
         for (u32 i = 0; i < in->ncall_args; ++i) {
-                use_operand(use, def, in->call_args[i]);
+                use_operand(use, def, global, in->call_args[i]);
         }
         for (u32 i = 0; i < in->raw.nin; ++i) {
-                use_reg(use, def, in->raw.in[i].reg);
+                use_reg(use, def, global, in->raw.in[i].reg);
         }
 }
 
 static void
-inst_defs(LirInst const *in, u64 *def)
+def_reg(u64 *def, u32 const *global, u32 r)
+{
+        if (global[r] != LIR_NONE) {
+                bit_set(def, global[r]);
+        }
+}
+
+static void
+inst_defs(LirInst const *in, u64 *def, u32 const *global)
 {
         if (in->dst != LIR_NONE) {
-                bit_set(def, in->dst);
+                def_reg(def, global, in->dst);
         }
         for (u32 i = 0; i < in->raw.nout; ++i) {
-                bit_set(def, in->raw.out[i].reg);
+                def_reg(def, global, in->raw.out[i].reg);
         }
+}
+
+static void
+stamp_reg(u32 const *stamp, u32 *global, u32 tag, u32 r)
+{
+        if (stamp[r] != tag) {
+                global[r] = 0;
+        }
+}
+
+static void
+stamp_operand(u32 const *stamp, u32 *global, u32 tag, LirOpnd a)
+{
+        if (a.kind == LIR_OPERAND_REG) {
+                stamp_reg(stamp, global, tag, a.reg);
+        } else if (a.kind == LIR_OPERAND_MEM) {
+                stamp_reg(stamp, global, tag, a.mem.base);
+                if (a.mem.index != LIR_NONE) {
+                        stamp_reg(stamp, global, tag, a.mem.index);
+                }
+        }
+}
+
+static bool
+find_globals(Lir const *L, LirCFG *cfg)
+{
+        u32 *stamp = calloc((usize)L->nregs + 1, sizeof *stamp);
+        cfg->global = malloc(((usize)L->nregs + 1) * sizeof *cfg->global);
+        cfg->globals = malloc(((usize)L->nregs + 1) * sizeof *cfg->globals);
+        if (stamp == NULL || cfg->global == NULL || cfg->globals == NULL) {
+                free(stamp);
+                return false;
+        }
+        for (u32 r = 0; r < L->nregs; ++r) {
+                cfg->global[r] = LIR_NONE;
+        }
+        for (u32 b = 0; b < cfg->nblocks; ++b) {
+                LirBlock const *block = &cfg->blocks[b];
+                for (u32 j = block->first; j < block->end; ++j) {
+                        LirInst const *in = &L->insts[j];
+                        for (u32 i = 0; i < in->nargs; ++i) {
+                                stamp_operand(stamp, cfg->global, b + 1, in->args[i]);
+                        }
+                        for (u32 i = 0; i < in->ncall_args; ++i) {
+                                stamp_operand(stamp, cfg->global, b + 1, in->call_args[i]);
+                        }
+                        for (u32 i = 0; i < in->raw.nin; ++i) {
+                                stamp_reg(stamp, cfg->global, b + 1, in->raw.in[i].reg);
+                        }
+                        if (in->dst != LIR_NONE) {
+                                stamp[in->dst] = b + 1;
+                        }
+                        for (u32 i = 0; i < in->raw.nout; ++i) {
+                                stamp[in->raw.out[i].reg] = b + 1;
+                        }
+                }
+        }
+        free(stamp);
+        cfg->nglobals = 0;
+        for (u32 r = 0; r < L->nregs; ++r) {
+                if (cfg->global[r] != LIR_NONE) {
+                        cfg->global[r] = cfg->nglobals;
+                        cfg->globals[cfg->nglobals++] = r;
+                }
+        }
+        return true;
 }
 
 static bool
@@ -996,12 +1133,12 @@ branch_label(LirInst const *in)
 void
 lir_cfg_free(LirCFG *cfg)
 {
-        for (u32 i = 0; i < cfg->nblocks; ++i) {
-                free(cfg->blocks[i].succ);
-                free(cfg->blocks[i].use);
-        }
+        free(cfg->sets);
+        free(cfg->edges);
         free(cfg->blocks);
         free(cfg->block_at);
+        free(cfg->global);
+        free(cfg->globals);
         *cfg = (LirCFG) {0};
 }
 
@@ -1010,6 +1147,11 @@ lir_cfg(Lir const *L, LirCFG *cfg, LirError *err)
 {
         bool *leaders = NULL;
         u32 *queue = NULL;
+        u32 *npred = NULL;
+        u32 *preds = NULL;
+        u32 *fill = NULL;
+        bool *inq = NULL;
+        u32 pending = 0;
         u32 nb = 0;
         u32 qhead = 0;
         u32 qtail = 0;
@@ -1027,7 +1169,7 @@ lir_cfg(Lir const *L, LirCFG *cfg, LirError *err)
                                     "label %u is unbound", i);
                 }
         }
-        for (u32 i = 0; i < L->ninsts; ++i) {
+        for (u32 i = 0; !L->trusted && i < L->ninsts; ++i) {
                 if (!inst_valid(L, i, err)) {
                         return false;
                 }
@@ -1060,7 +1202,6 @@ lir_cfg(Lir const *L, LirCFG *cfg, LirError *err)
                 goto NoMemory;
         }
         cfg->nblocks = nb;
-        cfg->nwords  = (L->nregs + (usize)63) / 64;
         nb = 0;
         for (u32 i = 0; i <= L->ninsts; ++i) {
                 if (leaders[i]) {
@@ -1078,19 +1219,39 @@ lir_cfg(Lir const *L, LirCFG *cfg, LirError *err)
                         cfg->blocks[b].entry = true;
                 }
         }
+        if (!find_globals(L, cfg)) {
+                goto NoMemory;
+        }
+        cfg->nwords = (cfg->nglobals + (usize)63) / 64;
+        usize nedges = 0;
+        for (u32 i = 0; i < nb; ++i) {
+                LirBlock const *b = &cfg->blocks[i];
+                if (b->first == b->end) {
+                        continue;
+                }
+                LirInst const *in = &L->insts[b->end - 1];
+                nedges += 1;
+                if (isbranch(in)) {
+                        nedges += in->op == LIR_SWITCH ? in->ntargets + 1 : 1;
+                }
+        }
+        usize words = cfg->nwords == 0 ? 1 : cfg->nwords;
+        cfg->sets = calloc(nb * words * 4, sizeof *cfg->sets);
+        cfg->edges = malloc((nedges + 1) * sizeof *cfg->edges);
+        if (cfg->sets == NULL || cfg->edges == NULL) {
+                goto NoMemory;
+        }
+        nedges = 0;
         for (u32 i = 0; i < nb; ++i) {
                 LirBlock *b = &cfg->blocks[i];
-                usize nw = cfg->nwords == 0 ? 1 : cfg->nwords;
-                b->use = calloc(nw * 4, sizeof *b->use);
-                if (b->use == NULL) {
-                        goto NoMemory;
-                }
+                usize nw = words;
+                b->use = cfg->sets + i * nw * 4;
                 b->def      = b->use + nw;
                 b->live_in  = b->def + nw;
                 b->live_out = b->live_in + nw;
                 for (u32 j = b->first; j < b->end; ++j) {
-                        inst_uses(&L->insts[j], b->use, b->def);
-                        inst_defs(&L->insts[j], b->def);
+                        inst_uses(&L->insts[j], b->use, b->def, cfg->global);
+                        inst_defs(&L->insts[j], b->def, cfg->global);
                 }
                 if (b->first == b->end) {
                         continue;
@@ -1100,10 +1261,8 @@ lir_cfg(Lir const *L, LirCFG *cfg, LirError *err)
                 if (isbranch(in)) {
                         n += in->op == LIR_SWITCH ? in->ntargets + 1 : 1;
                 }
-                b->succ = calloc(n, sizeof *b->succ);
-                if (b->succ == NULL) {
-                        goto NoMemory;
-                }
+                b->succ = cfg->edges + nedges;
+                nedges += n;
                 if (isbranch(in)) {
                         b->succ[b->nsucc++] = cfg->block_at[L->labels[branch_label(in)].pos];
                         for (u32 j = 0; j < in->ntargets; ++j) {
@@ -1130,33 +1289,88 @@ lir_cfg(Lir const *L, LirCFG *cfg, LirError *err)
                         }
                 }
         }
-        do {
+        npred = calloc((usize)nb + 1, sizeof *npred);
+        inq = calloc(nb, sizeof *inq);
+        if (npred == NULL || inq == NULL) {
+                goto NoMemory;
+        }
+        for (u32 i = 0; i < nb; ++i) {
+                LirBlock const *b = &cfg->blocks[i];
+                for (u32 j = 0; j < b->nsucc; ++j) {
+                        npred[b->succ[j] + 1] += 1;
+                }
+        }
+        for (u32 i = 0; i < nb; ++i) {
+                npred[i + 1] += npred[i];
+        }
+        preds = malloc(((usize)npred[nb] + 1) * sizeof *preds);
+        fill = calloc(nb, sizeof *fill);
+        if (preds == NULL || fill == NULL) {
+                goto NoMemory;
+        }
+        for (u32 i = 0; i < nb; ++i) {
+                LirBlock const *b = &cfg->blocks[i];
+                for (u32 j = 0; j < b->nsucc; ++j) {
+                        u32 t = b->succ[j];
+                        preds[npred[t] + fill[t]++] = i;
+                }
+        }
+        qhead = 0;
+        qtail = 0;
+        for (u32 i = nb; i-- > 0;) {
+                if (cfg->blocks[i].reachable) {
+                        queue[qtail++] = i;
+                        inq[i] = true;
+                }
+        }
+        pending = qtail;
+        qtail = qtail == nb ? 0 : qtail;
+        while (pending != 0) {
+                u32 bi = queue[qhead];
+                qhead = qhead + 1 == nb ? 0 : qhead + 1;
+                pending -= 1;
+                inq[bi] = false;
+                LirBlock *b = &cfg->blocks[bi];
                 changed = false;
-                for (u32 i = nb; i-- > 0;) {
-                        LirBlock *b = &cfg->blocks[i];
-                        if (!b->reachable) {
-                                continue;
+                for (u32 w = 0; w < cfg->nwords; ++w) {
+                        u64 out = 0;
+                        u64 in;
+                        for (u32 j = 0; j < b->nsucc; ++j) {
+                                out |= cfg->blocks[b->succ[j]].live_in[w];
                         }
-                        for (u32 w = 0; w < cfg->nwords; ++w) {
-                                u64 out = 0;
-                                u64 in;
-                                for (u32 j = 0; j < b->nsucc; ++j) {
-                                        out |= cfg->blocks[b->succ[j]].live_in[w];
-                                }
-                                in = b->use[w] | (out & ~b->def[w]);
-                                changed = changed || in != b->live_in[w] || out != b->live_out[w];
-                                b->live_in[w]  = in;
-                                b->live_out[w] = out;
+                        in = b->use[w] | (out & ~b->def[w]);
+                        changed = changed || in != b->live_in[w];
+                        b->live_in[w]  = in;
+                        b->live_out[w] = out;
+                }
+                if (!changed) {
+                        continue;
+                }
+                for (u32 j = npred[bi]; j < npred[bi + 1]; ++j) {
+                        u32 p = preds[j];
+                        if (!inq[p] && cfg->blocks[p].reachable) {
+                                inq[p] = true;
+                                queue[qtail] = p;
+                                qtail = qtail + 1 == nb ? 0 : qtail + 1;
+                                pending += 1;
                         }
                 }
-        } while (changed);
+        }
         free(leaders);
         free(queue);
+        free(npred);
+        free(preds);
+        free(fill);
+        free(inq);
         return true;
 NoMemory:
         fail(err, LIR_ERROR_MEMORY, LIR_NONE, (LirSpan) {0}, "out of memory building CFG");
         free(leaders);
         free(queue);
+        free(npred);
+        free(preds);
+        free(fill);
+        free(inq);
         lir_cfg_free(cfg);
         return false;
 }
@@ -1171,6 +1385,28 @@ attached_operand(LirOpnd a)
 
 static bool
 resolve_mode(Lir *L, LirError *err);
+
+bool
+lir_prepare(Lir *L, LirError *err)
+{
+        if (err != NULL) {
+                *err = (LirError) {0};
+        }
+        if (L->error.kind != LIR_ERROR_NONE) {
+                if (err != NULL) {
+                        *err = L->error;
+                }
+                return false;
+        }
+        for (u32 i = 0; i < L->nlabels; ++i) {
+                if (L->labels[i].pos > L->ninsts) {
+                        return fail(err, LIR_ERROR_LABEL, LIR_NONE, (LirSpan) {0},
+                                    "label %u is unbound", i);
+                }
+        }
+        L->trusted = getenv("TY_JIT_VALIDATE") == NULL;
+        return resolve_mode(L, err);
+}
 
 bool
 lir_validate(Lir *L, LirError *err)
@@ -1241,10 +1477,11 @@ lir_validate(Lir *L, LirError *err)
                         goto End;
                 }
                 if (i == 0 || b->entry) {
-                        for (u32 r = 0; r < L->nregs; ++r) {
+                        for (u32 g = 0; g < cfg.nglobals; ++g) {
+                                u32 r = cfg.globals[g];
                                 bool pin = L->regs[r].pin != LIR_NONE;
                                 bool param = L->regs[r].param != LIR_NONE;
-                                if (bit_has(b->live_in, r) && !pin && (b->entry || !param)) {
+                                if (bit_has(b->live_in, g) && !pin && (b->entry || !param)) {
                                         u32 pos = b->first;
                                         LirSpan span = pos < L->ninsts ? L->insts[pos].span : (LirSpan) {0};
                                         fail(err, b->entry ? LIR_ERROR_ENTRY : LIR_ERROR_UNDEFINED,
@@ -1259,8 +1496,9 @@ lir_validate(Lir *L, LirError *err)
                 }
                 LirInst const *in = &L->insts[b->end - 1];
                 if (in->flags & LIR_RETURNS_TWICE) {
-                        for (u32 r = 0; r < L->nregs; ++r) {
-                                if (r != in->dst && L->regs[r].pin == LIR_NONE && bit_has(b->live_out, r)) {
+                        for (u32 g = 0; g < cfg.nglobals; ++g) {
+                                u32 r = cfg.globals[g];
+                                if (r != in->dst && L->regs[r].pin == LIR_NONE && bit_has(b->live_out, g)) {
                                         fail(err, LIR_ERROR_RETURNS_TWICE, b->end - 1, in->span,
                                              "register r%u is live across RETURNS_TWICE", r);
                                         goto End;

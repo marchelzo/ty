@@ -186,7 +186,7 @@ fn worker-fn(t: Task, pkt: Packet | nil, work: TaskWorkArea) -> Task | nil {
 fn run-task(t: Task, work: TaskWorkArea) -> Task | nil {
     let msg: Packet | nil = nil
     if t.waiting-with-packet? {
-        msg = t.input; t.input = msg.link
+        if let $p = t.input { msg = p; t.input = p.link }
         if t.input == nil { t.set-running!() } else { t.mark-pending!() }
     }
     match t.kind {

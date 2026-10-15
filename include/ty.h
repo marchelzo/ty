@@ -256,7 +256,9 @@ enum {
         FF_HAS_META  = (1 << 3),
         FF_OVERLOAD  = (1 << 4),
         FF_STAR      = (1 << 5),
-        FF_JIT_FIRST = (1 << 6)
+        FF_JIT_FIRST = (1 << 6),
+        FF_JIT_NOSPEC = (1 << 7),
+        FF_JIT_TIER2  = (1 << 8)
 };
 
 enum {
@@ -445,6 +447,7 @@ struct frame {
         Value f;
         i32 jit_resume;
         uptr const *jit_pc;
+        void const *jit_code;
 };
 
 typedef struct cothread_state {

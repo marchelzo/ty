@@ -251,7 +251,7 @@ op_builtin_div(Ty *ty)
                 if (right->z == 0) {
                         ZeroDividePanic(ty);
                 }
-                COMPLETE(INTEGER(left->z / right->z));
+                COMPLETE(INTEGER(IntDiv(left->z, right->z)));
 
         case PAIR_OF(VALUE_REAL):
                 if (right->real == 0.0) {
@@ -374,7 +374,7 @@ op_builtin_mod(Ty *ty)
                 if (right->z == 0) {
                         ZeroDividePanic(ty);
                 }
-                COMPLETE(INTEGER(left->z % right->z));
+                COMPLETE(INTEGER(IntMod(left->z, right->z)));
 
         case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
                 if (right->z == 0) {
@@ -404,15 +404,12 @@ op_builtin_divmod(Ty *ty)
         Value const *left = look(-1);
         Value const *right = look(0);
 
-        imaxdiv_t div;
-
         switch (PACK_TYPES(left->type, right->type)) {
         case PAIR_OF(VALUE_INTEGER):
                 if (right->z == 0) {
                         ZeroDividePanic(ty);
                 }
-                div = imaxdiv(left->z, right->z);
-                COMPLETE(PAIR(INTEGER(div.quot), INTEGER(div.rem)));
+                COMPLETE(PAIR(INTEGER(IntDiv(left->z, right->z)), INTEGER(IntMod(left->z, right->z))));
         }
 
         return false;
@@ -518,7 +515,7 @@ op_builtin_shl(Ty *ty)
 
         switch (PACK_TYPES(left->type, right->type)) {
         case PAIR_OF(VALUE_INTEGER):
-                COMPLETE(INTEGER(left->z << right->z));
+                COMPLETE(INTEGER(IntShl(left->z, right->z)));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_BOOLEAN):
                 COMPLETE(INTEGER(left->z << right->boolean));
@@ -535,7 +532,7 @@ op_builtin_shr(Ty *ty)
 
         switch (PACK_TYPES(left->type, right->type)) {
         case PAIR_OF(VALUE_INTEGER):
-                COMPLETE(INTEGER(left->z >> right->z));
+                COMPLETE(INTEGER(IntShr(left->z, right->z)));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_BOOLEAN):
                 COMPLETE(INTEGER(left->z >> right->boolean));

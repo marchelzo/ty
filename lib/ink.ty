@@ -188,91 +188,6 @@ fn completion-text(item: CompletionItem) -> String {
     }
 }
 
-fn fit-items(items: Array[CompletionLabel], W: Int) -> Array[Array[String]] {
-    fn width(text: StyledText | nil) -> Int {
-        (text == nil) ? 0 : "{text}".width()
-    }
-
-    fn group-cols(n: Int) -> Array[Array[CompletionLabel]] {
-        items.groups-of((#items + n - 1) / n)
-    }
-
-    fn widths(ncol: Int) -> Array[Array[Int]] {
-        let cols = group-cols(ncol)
-
-        fn col-widths(i: Int) -> Array[Int] {
-            if i >= #cols { return [] }
-
-            let nparts = cols[i]
-                .map(label -> (label :: Array) ? #label : 1)
-                .max() ?? 0
-
-            let parts: Array[Int] = []
-
-            fn limit() -> Int {
-                W - (parts.sum() ?? 0)
-            }
-
-            let max-singleton = 0
-
-            for j in ..nparts {
-                let w = cols[i].map(match {
-                    (label: Array[StyledText | nil]) and (#label > j) =>
-                        min(limit(), width(label[j])),
-                    (label: StyledText) and (j == 0) => do {
-                        max-singleton = max(
-                            max-singleton,
-                            min(limit(), width(label))
-                        )
-                        0
-                    },
-                    _ => 0
-                }).max() 
-                parts.push(w || max-singleton ?? 0)
-            }
-
-            parts
-        }
-
-        [col-widths(it) for ..ncol]
-    }
-
-    let (ncol, ws) = (
-        for ncol in 1..#items {
-            let ws = widths(ncol + 1)
-            if ws.flat().sum(0) + 6 * ncol > W {
-                break (ncol, widths(ncol))
-            }
-        }
-    ) ?? (#items, widths(#items))
-
-    let cols: Array[Array[CompletionLabel]] = group-cols(ncol)
-    let nrow: Int = cols.map(s -> #s).max() ?? 0
-
-    fn s(x: StyledText | nil) -> String {
-        match x {
-            x: String => x,
-            nil       => '',
-            _         => "{x}"
-        }
-    }
-
-    fn format(label: CompletionLabel, widths: Array[Int]) -> String {
-        match label {
-            parts: Array[StyledText | nil] => [
-                "{s(parts[i]):<{widths[i]}}"
-                for i in ..#parts
-            ].str() ?? '',
-            part => "{s(part):<{widths.sum()}}"
-        }
-    }
-
-    return [
-        cols.map(c -> (#c > i) ? c[i] : '').zip(ws, f=format)
-        for i in ..nrow
-    ]
-}
-
 pub native-theme = %{
     'primary':       'green',
     'secondary':     'magenta',
@@ -424,55 +339,225 @@ fn apply-look(n: Node, cls: String) {
     apply-look-dict(n, _looks.classes(cls))
 }
 
+const LOOK_PROPS: Array[(String, String, String)] = [
+    ('width',      'width',     'width'),
+    ('height',     'height',    'height'),
+    ('min-width',  'minWidth',  'minw'),
+    ('max-width',  'maxWidth',  'maxw'),
+    ('min-height', 'minHeight', 'minh'),
+    ('max-height', 'maxHeight', 'maxh'),
+    ('flex',       'flex',      'flex'),
+    ('shrink',     'shrink',    'shrink'),
+    ('basis',      'basis',     'basis'),
+    ('align-self', 'alignSelf', 'self-align'),
+    ('gap',        'gap',       'gap'),
+    ('row-gap',    'rowGap',    'rgap'),
+    ('column-gap', 'columnGap', 'cgap'),
+    ('direction',  'direction', 'direction'),
+    ('align',      'align',     'align'),
+    ('justify',    'justify',   'justify'),
+    ('overflow',   'overflow',  'overflow'),
+    ('bg',         'bg',        'bg')
+]
+
+fn percent(v: _) -> Int | nil {
+    match v {
+        s: String and s.match?(/^\d+%$/) => int(s[;-1]),
+        _                                 => nil
+    }
+}
+
+fn resolve-pcts(n: Node, w: Int, h: Int, main: Int = w) {
+    let $ps = n.pcts or return
+    for field, p in ps {
+        let of = match field {
+            'height' or 'minh' or 'maxh' => h,
+            'basis'                      => main,
+            _                            => w
+        }
+        if of < INF {
+            member(n, field, of * p / 100)
+        }
+    }
+}
+
+const NODE_KEYS: Set[String] = %[
+    'direction', 'gap', 'rowGap', 'columnGap', 'flex', 'shrink', 'basis', 'alignSelf',
+    'width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight', 'flexWrap',
+    'display', 'visibility', 'overflow', 'bg', 'borderStyle', 'borderColor', 'borderLeft',
+    'focusable', 'justify', 'style', 'align',
+    'textOverflow', 'maxLines', 'textAlign', 'lineFill', 'overflowNote',
+    'padding', 'padX', 'paddingX', 'padY', 'paddingY', 'padTop', 'padBottom', 'padLeft', 'padRight',
+    'margin', 'marginX', 'marginY', 'marginTop', 'marginBottom', 'marginLeft', 'marginRight'
+]
+
+const RICH_KEYS: Set[String] = %['textOverflow', 'maxLines', 'textAlign', 'lineFill', 'overflowNote']
+
+const PCT_FIELDS: Dict[String, String] = %{
+    'width':     'width',
+    'height':    'height',
+    'minWidth':  'minw',
+    'maxWidth':  'maxw',
+    'minHeight': 'minh',
+    'maxHeight': 'maxh',
+    'basis':     'basis'
+}
+
+const LOOK_TEXT_PROPS: Array[(String, String)] = [
+    ('content-visibility', 'contentVisibility'),
+    ('scroll-anchor', 'scrollAnchor'),
+    ('overflow-note', 'overflowNote'),
+    ('line-fill',     'lineFill'),
+    ('overflow-note-color', 'overflowNoteColor'),
+    ('scroll-snap',   'scrollSnap'),
+    ('wrap',          'wrap'),
+    ('max-lines',     'maxLines'),
+    ('text-overflow', 'textOverflow'),
+    ('text-align',    'textAlign')
+]
+
+const ITEM_KEYS: Set[String] = %[
+    'flex', 'shrink', 'basis', 'align-self', 'min-width', 'max-width', 'min-height', 'max-height', 'display',
+    'margin', 'margin-x', 'margin-y', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left'
+]
+
+pub fn outer-look(d: Dict[String, _]) -> Dict[String, _] {
+    d['_outer'] ?? (d['_outer'] = %{k: v for k, v in d if k in ITEM_KEYS})
+}
+
+pub fn inner-look(d: Dict[String, _]) -> Dict[String, _] {
+    d['_inner'] ?? (d['_inner'] = %{k: v for k, v in d if k not in ITEM_KEYS && !k.starts?('_')})
+}
+
+class LookOps {
+    border:  _
+    bcolor:  _
+    rail:    _
+    sides:   Array[(String, Array[String], Int)]
+    fields:  Array[(String, String, _)]
+    pcts:    Array[(String, String, Int)]
+    texts:   Array[(String, _)]
+    vis:     _
+    fwrap:   _
+    display: _
+    content: _
+    spec:    _
+
+    init(d: Dict[String, _]) {
+        border  = d['border']
+        bcolor  = d['border-color']
+        rail    = d['border-left']
+        vis     = d['visibility']
+        fwrap   = d['flex-wrap']
+        display = d['display']
+        content = d['content']
+        spec    = d['spec']
+        sides   = []
+        fields  = []
+        pcts    = []
+        texts   = []
+        for (field, ps, ls) in SIDES {
+            for k in ls {
+                if let $v = d[k] {
+                    sides.push((field, ps, v))
+                    break
+                }
+            }
+        }
+        for (lk, pk, field) in LOOK_PROPS {
+            if let $v = d[lk] {
+                if let $p = percent(v) {
+                    pcts.push((pk, field, p))
+                } else {
+                    fields.push((pk, field, v))
+                }
+            }
+        }
+        for (lk, pk) in LOOK_TEXT_PROPS {
+            if let $v = d[lk] {
+                texts.push((pk, v))
+            }
+        }
+    }
+}
+
+const SIDES: Array[(String, Array[String], Array[String])] = [
+    ('pt', ['padTop', 'padY', 'paddingY', 'padding'], ['pad-top', 'pad-y', 'padding']),
+    ('pb', ['padBottom', 'padY', 'paddingY', 'padding'], ['pad-bottom', 'pad-y', 'padding']),
+    ('pl', ['padLeft', 'padX', 'paddingX', 'padding'], ['pad-left', 'pad-x', 'padding']),
+    ('pr', ['padRight', 'padX', 'paddingX', 'padding'], ['pad-right', 'pad-x', 'padding']),
+    ('mt', ['marginTop', 'marginY', 'margin'], ['margin-top', 'margin-y', 'margin']),
+    ('mb', ['marginBottom', 'marginY', 'margin'], ['margin-bottom', 'margin-y', 'margin']),
+    ('ml', ['marginLeft', 'marginX', 'margin'], ['margin-left', 'margin-x', 'margin']),
+    ('mr', ['marginRight', 'marginX', 'margin'], ['margin-right', 'margin-x', 'margin'])
+]
+
+fn set-any?(props: Dict[String, _], keys: Array[String]) -> Bool {
+    for k in keys {
+        if props[k] != nil {
+            return true
+        }
+    }
+    false
+}
+
+fn ops-of(d: Dict[String, _]) -> LookOps {
+    match d['_ops'] {
+        o: LookOps => o,
+        _          => (d['_ops'] = LookOps(d))
+    }
+}
+
 fn apply-look-dict(n: Node, d: Dict[String, _]) {
+    let o     = ops-of(d)
     let props = n.props
-    if props['borderStyle'] == nil and let $b = d['border'] {
+    if let $b = o.border and props['borderStyle'] == nil {
         n.bstyle = (b == 'none') ? nil : resolve-border(b)
     }
-    if props['borderColor'] == nil and let $bc = d['border-color'] {
+    if let $bc = o.bcolor and props['borderColor'] == nil {
         n.bcolor = bc
     }
-    if props['bg'] == nil and let $bg = d['bg'] {
-        n.bg = bg
+    if let $bl = o.rail and props['borderLeft'] == nil {
+        n.rail = bl
     }
-    if props['padding'] == nil {
-        if props['padX'] == nil {
-            n.px = d['pad-x'] ?? d['padding'] ?? n.px
-        }
-        if props['padY'] == nil {
-            n.py = d['pad-y'] ?? d['padding'] ?? n.py
+    for (field, ps, v) in o.sides {
+        if !set-any?(props, ps) {
+            member(n, field, v)
         }
     }
-    if props['gap'] == nil and let $g = d['gap'] {
-        n.gap = g
-    }
-    if props['margin'] == nil {
-        if props['marginX'] == nil {
-            n.mx = d['margin-x'] ?? d['margin'] ?? n.mx
-        }
-        if props['marginY'] == nil {
-            n.my = d['margin-y'] ?? d['margin'] ?? n.my
+    for (pk, field, v) in o.fields {
+        if props[pk] == nil {
+            member(n, field, v)
         }
     }
-    if props['width'] == nil and let $w = d['width'] {
-        n.width = w
+    for (pk, field, p) in o.pcts {
+        if props[pk] == nil {
+            n.pcts = %{**(n.pcts ?? %{}), field: p}
+        }
     }
-    if props['height'] == nil and let $h = d['height'] {
-        n.height = h
+    if let $vis = o.vis and props['visibility'] == nil {
+        n.invisible? = vis == 'hidden'
     }
-    if props['direction'] == nil and let $dir = d['direction'] {
-        n.direction = dir
+    if let $fw = o.fwrap and props['flexWrap'] == nil {
+        n.fwrap? = fw == 'wrap'
     }
-    if props['align'] == nil and let $a = d['align'] {
-        n.align = a
+    if let $dp = o.display and props['display'] == nil {
+        n.hidden?   = dp == 'none'
+        n.table?    = dp == 'table'
+        n.columns?  = dp == 'columns'
     }
-    if props['justify'] == nil and let $j = d['justify'] {
-        n.justify = j
+    for (pk, v) in o.texts {
+        if props[pk] == nil {
+            props[pk] = v
+            if pk in RICH_KEYS {
+                n.rich? = true
+            }
+        }
     }
-    if props['wrap'] == nil and let $wr = d['wrap'] {
-        props['wrap'] = wr
+    if let $c = o.content and n.tag == NodeText && #n.children == 0 {
+        n.children = [c]
     }
-    if let $sp = d['spec'] {
+    if let $sp = o.spec {
         if n.tag == NodeText {
             n.style = (n.style == nil) ? sp : "{sp} {n.style}"
         } else {
@@ -681,16 +766,38 @@ pub class Node {
 
     direction: String
     gap:    Int
-    px:     Int
-    py:     Int
-    mx:     Int
-    my:     Int
+    rgap:   Int | nil
+    cgap:   Int | nil
+    pt:     Int
+    pr:     Int
+    pb:     Int
+    pl:     Int
+    mt:     Int
+    mr:     Int
+    mb:     Int
+    ml:     Int
     width:  Int | nil
     height: Int | nil
+    minw:   Int | nil
+    maxw:   Int | nil
+    minh:   Int | nil
+    maxh:   Int | nil
     flex:   Int | nil
+    shrink: Int | nil
+    basis:  Int | nil
+    self-align: String | nil
+    fwrap?: Bool
+    hidden?: Bool
+    table?: Bool
+    columns?: Bool
+    invisible?: Bool
+    rich?:  Bool
+    pcts:   Dict[String, Int] | nil
+    overflow: String
     bg:     String | nil
     bstyle: Array[String] | nil
     bcolor: String | nil
+    rail:   String | nil
     focusable?: Bool
     align:   String
     justify: String
@@ -703,30 +810,49 @@ pub class Node {
         props    = prps
         children = chldrn
 
-        let p = props['padding'] ?? 0
-        let m = props['margin'] ?? 0
-
-        direction  = props['direction'] ?? 'column'
-        gap        = int(props['gap'] ?? 0)
-        px         = int(props['padX'] ?? props['paddingX'] ?? p)
-        py         = int(props['padY'] ?? props['paddingY'] ?? p)
-        mx         = int(props['marginX'] ?? m)
-        my         = int(props['marginY'] ?? m)
-        width      = props['width']
-        height     = props['height']
-        flex       = props['flex']
-        bg         = props['bg']
-        bstyle     = resolve-border(props['borderStyle'])
-        bcolor     = props['borderColor']
-        focusable? = props['focusable'] ?? false
-        align      = match props['align'] {
-            'right' or 'bottom' or 'end' => 'end',
-            'center'                     => 'center',
-            _                            => 'start'
-        }
-        justify    = props['justify'] ?? 'start'
-        style      = props['style']
+        direction  = 'column'
+        gap        = 0
+        rgap       = nil
+        cgap       = nil
+        pt         = 0
+        pr         = 0
+        pb         = 0
+        pl         = 0
+        mt         = 0
+        mr         = 0
+        mb         = 0
+        ml         = 0
+        width      = nil
+        height     = nil
+        minw       = nil
+        maxw       = nil
+        minh       = nil
+        maxh       = nil
+        flex       = nil
+        shrink     = nil
+        basis      = nil
+        self-align = nil
+        fwrap?     = false
+        hidden?    = false
+        table?     = false
+        columns?   = false
+        invisible? = false
+        rich?      = false
+        pcts       = nil
+        overflow   = 'hidden'
+        bg         = nil
+        bstyle     = nil
+        bcolor     = nil
+        rail       = nil
+        focusable? = false
+        align      = 'start'
+        justify    = 'start'
+        style      = nil
         inh        = nil
+
+        if #props > 0 {
+            __read()
+        }
 
         if let $d = props['look'] {
             apply-look-dict(self, d)
@@ -734,6 +860,83 @@ pub class Node {
         if let $c = props['cls'] {
             apply-look(self, c)
         }
+    }
+
+    __read() {
+        let sides: _ = nil
+        for k, v in props if k in NODE_KEYS {
+            match k {
+                'direction'   => direction = v ?? 'column',
+                'gap'         => gap = int(v ?? 0),
+                'rowGap'      => rgap = v,
+                'columnGap'   => cgap = v,
+                'flex'        => flex = v,
+                'shrink'      => shrink = v,
+                'basis'       => basis = __size('basis', v),
+                'alignSelf'   => self-align = v,
+                'width'       => width = __size('width', v),
+                'height'      => height = __size('height', v),
+                'minWidth'    => minw = __size('minw', v),
+                'maxWidth'    => maxw = __size('maxw', v),
+                'minHeight'   => minh = __size('minh', v),
+                'maxHeight'   => maxh = __size('maxh', v),
+                'flexWrap'    => fwrap? = v == 'wrap',
+                'display'     => do {
+                    hidden?   = v == 'none'
+                    table?    = v == 'table'
+                    columns?  = v == 'columns'
+                },
+                'visibility'  => invisible? = v == 'hidden',
+                'textOverflow' or 'maxLines' or 'textAlign' or 'lineFill' or 'overflowNote' => rich? = true,
+                'overflow'    => overflow = v ?? 'hidden',
+                'bg'          => bg = v,
+                'borderStyle' => bstyle = resolve-border(v),
+                'borderColor' => bcolor = v,
+                'borderLeft'  => rail = v,
+                'focusable'   => focusable? = v ?? false,
+                'justify'     => justify = v ?? 'start',
+                'style'       => style = v,
+                'align'       => align = match v {
+                    'right' or 'bottom' or 'end' => 'end',
+                    'center'                     => 'center',
+                    'stretch'                    => 'stretch',
+                    _                            => 'start'
+                },
+                'padding' or 'padX' or 'paddingX' or 'padY' or 'paddingY'
+                or 'padTop' or 'padBottom' or 'padLeft' or 'padRight'
+                or 'margin' or 'marginX' or 'marginY'
+                or 'marginTop' or 'marginBottom' or 'marginLeft' or 'marginRight' => do {
+                    sides ?= %{}
+                    sides[k] = v
+                },
+                _ => ()
+            }
+        }
+        if sides != nil {
+            let sd = sides
+            let p  = sd['padding'] ?? 0
+            let m  = sd['margin'] ?? 0
+            let px = sd['padX'] ?? sd['paddingX'] ?? p
+            let py = sd['padY'] ?? sd['paddingY'] ?? p
+            let mx = sd['marginX'] ?? m
+            let my = sd['marginY'] ?? m
+            pt = int(sd['padTop'] ?? py)
+            pb = int(sd['padBottom'] ?? py)
+            pl = int(sd['padLeft'] ?? px)
+            pr = int(sd['padRight'] ?? px)
+            mt = int(sd['marginTop'] ?? my)
+            mb = int(sd['marginBottom'] ?? my)
+            ml = int(sd['marginLeft'] ?? mx)
+            mr = int(sd['marginRight'] ?? mx)
+        }
+    }
+
+    __size(field: String, v: _) -> _ {
+        if v :: String and let $p = percent(v) {
+            pcts = %{**(pcts ?? %{}), field: p}
+            return nil
+        }
+        v
     }
 }
 
@@ -794,12 +997,14 @@ pub class Component {
     layout-y:     Int
     layout-max-w: Int
     layout-max-h: Int
+    layout-fw:    Int | nil
+    layout-fh:    Int | nil
 
     __prop-names: Array[String]
 
     ink-ctx-frame:        Dict[Any, Any]       = %{}
     ink-parent:           Any                  = nil
-    ink-memo:             Any                  = nil
+    ink-memo:             Array[Any]           = []
     ink-interval-timer:   PendingTimer | nil   = nil
     ink-interval-period:  Float | nil          = nil
 
@@ -814,6 +1019,8 @@ pub class Component {
         layout-y     = 0
         layout-max-w = 0
         layout-max-h = 0
+        layout-fw    = nil
+        layout-fh    = nil
         __prop-names = prps.keys()
         for prop, val in prps {
             self.{prop} = val
@@ -821,6 +1028,8 @@ pub class Component {
     }
 
     focusable? -> Bool        { false }
+    volatile? -> Bool         { false }
+    shell() -> Node | nil     { nil }
     wants-hover? -> Bool      { false }
     stale? -> Bool            { false }
     interval   -> Float | nil { nil   }
@@ -838,7 +1047,7 @@ pub class Component {
         dirty? = true
         let p: Any = self
         while p != nil {
-            p.ink-memo = nil
+            p.ink-memo = []
             p = p.ink-parent
         }
     }
@@ -886,6 +1095,9 @@ pub class Component {
             }
             self.{name} = new-val
         }
+        if volatile? {
+            dirty? = true
+        }
         if dirty? && !was-dirty {
             debug!("adopt {type(self)}: dirtied by {#changed-props > 0 ? changed-props.join(', ') : 'children'}")
         }
@@ -930,6 +1142,9 @@ pub class Component {
 }
 
 pub fn Box(*children, %props) -> Node {
+    if !_ids-used? && props['id'] != nil {
+        _ids-used? = true
+    }
     let box-props = props
     if props['selected'] ?? false {
         box-props = %{**props,
@@ -948,8 +1163,26 @@ pub fn Overlay(*children, %props) -> Node {
     Node(NodeOverlay, props, strip-ws-children(children))
 }
 
-pub fn Raw(lines: Array[String], raw-width: Int) -> Node {
-    Node(NodeRaw, %{'lines': lines, 'width': raw-width}, [])
+pub fn Raw(lines: Array[String], raw-width: Int | nil = nil) -> Node {
+    Node(NodeRaw, %{'lines': lines, 'width': raw-width ?? (lines.map(&width).max() ?? 0)}, [])
+}
+
+pub class Sized < Component {
+    draw: Function
+    cls:  String | nil
+
+    volatile? -> Bool { true }
+
+    shell() -> Node | nil {
+        Box(cls=cls)
+    }
+
+    render() -> Node {
+        let box   = Box(cls=cls)
+        let frame = box.ml + box.mr + box.pl + box.pr + (box.bstyle ? 2 : 0)
+        let w     = layout-fw ?? layout-max-w
+        <Box cls=cls>{draw(max(((w < INF) ? w : 80) - frame, 1))}</Box>
+    }
 }
 
 pub class Divider < Component {
@@ -964,7 +1197,7 @@ pub class Divider < Component {
         let tl = part('Divider', 'title', [], variant)
         let ch = char ?? ln['content'] ?? '─'
         let lk = color ? nil : ln
-        let w = width ?? layout-max-w
+        let w = min(width ?? layout-max-w, ln['max-width'] ?? INF)
 
         if let $t = title {
             let side = max(w - t.width() - 2, 4)
@@ -1172,11 +1405,18 @@ pub class EditView {
     editor:   Editor
     scroll-x: Int
     scroll-y: Int
+    mask:     String | nil
 
     init(editor: Editor) {
         self.editor = editor
         scroll-x    = 0
         scroll-y    = 0
+        mask        = nil
+    }
+
+    glyphs -> Array[String] {
+        let chars = editor.chars
+        mask ? [mask] * #chars : chars
     }
 
     rows(width: Int, wrap?: Bool) -> Int {
@@ -1193,11 +1433,13 @@ pub class EditView {
         shape: String = 'reverse',
         placeholder: String | nil = nil,
         hint: String = '',
-        highlight: Function | nil = nil
+        highlight: Function | nil = nil,
+        mask: String | nil = nil
     ) -> Array[String] {
         let ed = editor
         let w  = max(width, 1)
         ed.wrap-width = wrap? ? w : nil
+        self.mask     = mask
 
         if ed.empty? && placeholder != nil {
             let first = __placeholder(placeholder, w, focused?, hint, cursor, shape)
@@ -1210,7 +1452,7 @@ pub class EditView {
 
         scroll-y = scroll-y.clamp(max(r - h + 1, 0), r).clamp(0, max(#rows - h, 0))
 
-        let chars = ed.chars
+        let chars = glyphs
         let off = if wrap? {
             0
         } else {
@@ -1248,7 +1490,7 @@ pub class EditView {
         cursor: String
     ) -> String {
         let (s, e) = span
-        let chars  = editor.chars
+        let chars  = glyphs
         let at     = editor.cursor
         let here?  = shape != nil && at >= s && at <= e
         let start = s + skip-cols(chars[s;e], off)
@@ -1322,120 +1564,59 @@ pub class SuggestionList < Component {
         (completion.?rev ?? -1) != __seen
     }
 
-    static __chrome(fr: Dict[String, _]) -> (Int, Int) {
-        let border = ((fr['border'] ?? 'none') != 'none') ? 2 : 0
-        (
-            border + 2 * int(fr['pad-x'] ?? fr['padding'] ?? 0),
-            border + 2 * int(fr['pad-y'] ?? fr['padding'] ?? 0)
-        )
-    }
-
-    static height(c: Picker | nil, rows: Int = 8, variant: String | nil = nil, arrows?: Bool = false) -> Int {
-        let $c = c or return 0
-        if !c.visible? {
-            return 0
-        }
-        let (_, chrome) = __chrome(part('SuggestionList', 'frame', [], variant))
-        max(min(#c.items, rows), 1) + chrome + (arrows? ? 2 : 0)
-    }
-
     __p(name: String, sel?: Bool = false) -> Dict[String, _] {
         part('SuggestionList', name, sel? ? ['selected'] : [], variant)
     }
 
-    __inner-w() -> Int {
-        let (chrome, _) = __chrome(__p('frame'))
-        let w = width ?? ((layout-max-w < INF) ? layout-max-w : 40)
-        max(w - chrome, 1)
-    }
-
-    static __ellipsize(s: String, w: Int) -> String {
-        if w <= 0 {
-            return ''
-        }
-        let out = Blob()
-        let used = 0
-        for c in s.chars() {
-            break if used + c.width() > w - 1
-            out.push(c)
-            used += c.width()
-        }
-        "{out.str!()}…"
-    }
-
-    __label(item: Suggestion, sel?: Bool, w: Int) -> String {
-        let spec     = __p('label', sel?)['spec'] ?? ''
-        let hit-spec = __p('match', sel?)['spec'] ?? ''
+    __label(item: Suggestion, sel?: Bool) -> _ {
         if !(item.label :: String) {
             return "{item.label}"
         }
-        let text = (item.plain.width() > w) ? __ellipsize(item.plain, w) : item.label
-        let cs = text.chars()
+        let hit  = __p('match', sel?)
+        let cs   = item.label.chars()
         let hits = %[*item.hits]
-        let buf = Blob()
-        let i = 0
+        let out  = []
+        let i    = 0
         while i < #cs {
             let hit? = i in hits
             let j = i + 1
             while j < #cs && (j in hits) == hit? {
                 j += 1
             }
-            buf.push(markup-run(hit? ? "{spec} {hit-spec}" : spec, cs[i;j].join()))
+            out.push(hit? ? <Text look=hit>{cs[i;j].join()}</Text> : cs[i;j].join())
             i = j
         }
-        buf.str!()
-    }
-
-    __row(item: Suggestion, sel?: Bool, cols: (Int, Int, Int, Int), inner-w: Int) -> String {
-        let (mark-w, label-w, detail-w, kind-w) = cols
-        let gap        = gap ?? 2
-        let item-spec  = sel? ? (__p('item', true)['spec'] ?? '') : "{__p('item')['spec'] ?? ''} {item.style ?? ''}"
-        let label-spec = __p('label', sel?)['spec'] ?? ''
-        let marker     = __p('marker', sel?)
-        let mark-text  = (marker['content'] ?? '').fit(mark-w)
-        let label      = __label(item, sel?, label-w - gap)
-        let label-pad  = ' ' * max(label-w - min(item.plain.width(), label-w - gap), 0)
-        let detail-raw = "{item.detail ?? ''}"
-        let detail-txt = (detail-raw.width() > detail-w) ? __ellipsize(detail-raw, detail-w) : detail-raw
-        let detail     = markup-run(__p('detail', sel?)['spec'] ?? '', detail-txt)
-        let kind-txt   = "{item.kind ?? ''}"
-        let kind       = (kind-w > 0) ? markup-run(__p('kind', sel?)['spec'] ?? '', kind-txt.fit(kind-w)) : ''
-        let used       = mark-w + label-w + detail-txt.width() + kind-w
-        let fill       = ' ' * max(inner-w - used, 0)
-        str(chalk.render(
-            "[{item-spec}]"
-            "{markup-run(marker['spec'] ?? '', mark-text)}{label}{markup-run(label-spec, label-pad)}"
-            "{detail}{markup-run(label-spec, fill)}{kind}[/]"
-        ))
-    }
-
-    __columns(c: Picker, inner-w: Int) -> (Int, Int, Int, Int) {
-        let gap    = gap ?? 2
-        let mark-w = [__p('marker', false), __p('marker', true)].map(m -> (m['content'] ?? '').width()).max() ?? 0
-        let kind-w = c.items.map(it -> "{it.kind ?? ''}".width()).max() ?? 0
-        let avail  = inner-w - mark-w - ((kind-w > 0) ? kind-w + gap : 0)
-        let widest = (c.items.map(it -> it.plain.width()).max() ?? 0) + gap
-        let label-w = min(widest, (avail + 1) / 2)
-        let detail-w = avail - label-w
-        (mark-w, label-w, detail-w, kind-w)
-    }
-
-    __grid(c: Picker, inner-w: Int) -> Array[String] {
-        let rows  = fit-items(c.items.map(&.label), max(inner-w, 20))
-        let ncols = max(#(rows.?[0] ?? []), 1)
-        let per   = (#c.items + ncols - 1) / ncols
-        let hi    = c.index
-        let spec  = __p('item', true)['spec'] ?? 'reverse'
-        let out: Array[String] = []
-        for row; ri in rows {
-            let parts = [*row]
-            let ci = (hi >= 0) ? hi / per : -1
-            if hi >= 0 && hi % per == ri && ci < #parts {
-                parts[ci] = str(chalk"[{spec}]{parts[ci]}[/]")
-            }
-            out.push(parts.join('    '))
-        }
         out
+    }
+
+    __row(item: Suggestion, sel?: Bool, kinds?: Bool) -> Node {
+        let look = __p('item', sel?)
+        let own  = (!sel? && item.style) ? %{**look, 'spec': "{look['spec'] ?? ''} {item.style}"} : look
+        <Box look=own>
+            <Text look=__p('marker', sel?)>{__p('marker', sel?)['content'] ?? ''}</Text>
+            <Text look=__p('label', sel?) pad-right=gap>{__label(item, sel?)}</Text>
+            <Text look=__p('detail', sel?)>{"{item.detail ?? ''}"}</Text>
+            {kinds? ? <Text look=__p('kind', sel?)>{"{item.kind ?? ''}"}</Text> : nil}
+        </Box>
+    }
+
+    __grid(c: Picker) -> Node {
+        fn text(x: StyledText | nil) -> String {
+            match x {
+                x: String => x,
+                nil       => '',
+                _         => "{x}"
+            }
+        }
+
+        <Box look=__p('grid')>
+            {[
+                (label :: Array)
+                    ? <Box direction="row" look=__p('item', i == c.index)>{label.map(p -> <Text>{text(p)}</Text>)}</Box>
+                    : <Text look=__p('item', i == c.index)>{text(label)}</Text>
+                for label; i in c.items.map(&.label)
+            ]}
+        </Box>
     }
 
     __arrow(name: String, show?: Bool, fallback: String) -> String {
@@ -1443,19 +1624,25 @@ pub class SuggestionList < Component {
         show? ? str(chalk.render(markup-run(p['spec'] ?? '', p['content'] ?? fallback))) : ' '
     }
 
-    __list(c: Picker, inner-w: Int) -> Array[String] {
+    __list(c: Picker) -> Array[Node] {
         let (s, e) = c.open? ? c.window(rows ?? 8) : (0, 0)
-        let lines = if c.open? {
-            let cols = __columns(c, inner-w)
-            [__row(item, s + k == c.index, cols, inner-w) for item; k in c.items[s;e]]
+        let body = if c.open? {
+            let kinds? = c.items.any?(it -> "{it.kind ?? ''}" != '')
+            <Box display="table" width="100%">
+                {[__row(item, s + k == c.index, kinds?) for item; k in c.items[s;e]]}
+            </Box>
         } else {
             let empty = __p('empty')
-            [str(chalk.render(markup-run(empty['spec'] ?? '', empty['content'] ?? 'no matches')))]
+            <Text look=empty>{empty['content'] ?? 'no matches'}</Text>
         }
         if !(arrows? ?? false) {
-            return lines
+            return [body]
         }
-        [__arrow('scroll-up', s > 0, '↑'), *lines, __arrow('scroll-down', e < #c.items, '↓')]
+        [
+            <Text wrap="truncate">{__arrow('scroll-up', s > 0, '↑')}</Text>,
+            body,
+            <Text wrap="truncate">{__arrow('scroll-down', e < #c.items, '↓')}</Text>
+        ]
     }
 
     render() -> Node | nil {
@@ -1464,12 +1651,11 @@ pub class SuggestionList < Component {
         if !c.visible? {
             return nil
         }
-        let inner-w = __inner-w()
-        let lines = ((layout ?? (c.cycle? ? 'grid' : 'list')) == 'grid')
-            ? __grid(c, inner-w)
-            : __list(c, inner-w)
-        <Box look=__p('frame') direction="column">
-            {lines.map(l -> <Text wrap="truncate">{l}</Text>)}
+        let body = ((layout ?? (c.cycle? ? 'grid' : 'list')) == 'grid')
+            ? [__grid(c)]
+            : __list(c)
+        <Box look=__p('frame') direction="column" width=width>
+            {body}
         </Box>
     }
 }
@@ -1484,6 +1670,7 @@ pub class TextInput < Component {
     complete:      CompletionFunction | nil
     triggers:      Array[Trigger] | nil
     highlight:     Function | nil
+    mask:          String | nil
     keymap:        Dict[String, Function] | nil
     editor:        Editor | nil
     history:       Array[String] | nil
@@ -1662,9 +1849,7 @@ pub class TextInput < Component {
         if at != 'overlay' {
             return node
         }
-        let h = SuggestionList.height(c, rows, variant)
-        let y = (layout-y >= h) ? layout-y - h : layout-y + frame-h
-        <Overlay x=layout-x y=y>{node}</Overlay>
+        <Overlay above=true flip=frame-h>{node}</Overlay>
     }
 
     render() -> Node {
@@ -1690,7 +1875,7 @@ pub class TextInput < Component {
         let prompt   = part('TextInput', 'prompt', fs, variant)
         let bstyle   = (border-style != nil) ? resolve(border-style) : nil
         let bcolor   = border-color ? resolve(border-color) : nil
-        let w        = int(width ?? 20)
+        let w        = int(width ?? layout-fw ?? 20)
         let p-text   = prompt['content'] ?? ''
         let p-w      = p-text.width()
         let inner-w  = max(w - __chrome(fr, bstyle) - p-w, 1)
@@ -1708,7 +1893,8 @@ pub class TextInput < Component {
             shape=cur['shape'] ?? 'reverse',
             placeholder=placeholder ?? '',
             hint=ph-spec,
-            highlight=highlight
+            highlight=highlight,
+            mask=mask
         )
 
         let lead    = str(chalk.render(markup-run(prompt['spec'] ?? '', p-text)))
@@ -1718,12 +1904,12 @@ pub class TextInput < Component {
         let frame-h = height + 2 * pad-y + (__border?(fr, bstyle) ? 2 : 0)
         let rows    = [<Text>{"{(i == 0) ? lead : indent}{l}"}</Text> for l; i in lines]
 
-        <Box direction="column">
-            {(at == 'above' || at == 'lift') && __popup(at, w, frame-h)}
-            <Box look=fr cls=cls border-style=bstyle border-color=bcolor direction="column">
+        <Box direction="column" look=outer-look(fr)>
+            {(at == 'above' || at == 'lift' || at == 'overlay') && __popup(at, w, frame-h)}
+            <Box look=inner-look(fr) cls=cls border-style=bstyle border-color=bcolor direction="column">
                 {rows}
             </Box>
-            {(at == 'below' || at == 'overlay') && __popup(at, w, frame-h)}
+            {at == 'below' && __popup(at, w, frame-h)}
         </Box>
     }
 }
@@ -3520,6 +3706,8 @@ pub class DatePicker < Component {
     }
 }
 
+let __tls::_tree-ids: Int = 0
+
 pub class TreeView < Component {
     variant: String | nil
     cls:           String | nil
@@ -3554,6 +3742,7 @@ pub class TreeView < Component {
     __prev-root:    Any = nil
     __expanded:     Set[String] = %[]
     __cursor:       Int = 0
+    __view:         String = "tree-{++_tree-ids}"
     __scroll:       Int = 0
     __root-stack:   Array[Any] = []
     __visible:      Array[Any] = []
@@ -3644,7 +3833,7 @@ pub class TreeView < Component {
     }
 
     on-event(ev) {
-        let h = int(height ?? 20)
+        let h = __viewport()
         let n = #__visible
 
         // Applications can layer shortcuts and modes (selection, search, quit)
@@ -3709,7 +3898,6 @@ pub class TreeView < Component {
                     __expand!(node)
                     __invalidate-flat!()
                     __cursor = 0
-                    __scroll = 0
                 }
             },
 
@@ -3718,7 +3906,6 @@ pub class TreeView < Component {
                     __current-root = __root-stack.pop()
                     __invalidate-flat!()
                     __cursor = 0
-                    __scroll = 0
                 }
             },
 
@@ -3735,12 +3922,61 @@ pub class TreeView < Component {
         }
     }
 
+    __viewport() -> Int {
+        max(element(__view).?h ?? int(height ?? part('TreeView', 'frame', [], variant)['height'] ?? 20), 1)
+    }
+
+    __draw(vi: Int, fs: Array[String], clr: _, cur-clr: _, cur-bg: _, g-clr: _, guides?: Bool) -> Node {
+        let row = __visible[vi]
+        let sel? = vi == __cursor
+        let d = row.depth
+        let lasts = row.lasts
+
+        let depth = int(d)
+        let guide-str = ''
+        if guides? && depth > 0 {
+            let buf = Blob()
+            for i in ..depth {
+                buf.push((i == depth - 1)
+                    ? (lasts[i] ? '└─ ' : '├─ ')
+                    : (lasts[i] ? '   ' : '│  '))
+            }
+            guide-str = buf.str!()
+        } else if depth > 0 {
+            guide-str = '  ' * depth
+        }
+
+        let sts = sel? ? [*fs, 'selected'] : fs
+        let tog = part('TreeView', 'toggle', row.exp? ? [*sts, 'expanded'] : sts, variant)
+        let exp-str = row.can?
+            ? (tog['content'] ?? (row.exp? ? '▾ ' : '▸ '))
+            : (icon ? "{icon(row.node)} " : '  ')
+
+        let lbl = label(row.node)
+        let lbl-clr = match (sel?, cur-clr, clr) {
+            (true, $c, _)  => "{c} bold",
+            (false, _, $c) => c,
+            _              => spec-of-part(part('TreeView', 'label', sts, variant))
+        }
+        let mark-p = part('TreeView', 'mark', (sel? && focused?) ? [*sts, 'active'] : sts, variant)
+        let mark = mark-p['content'] ?? '  '
+        let mark-clr = (sel? && cur-clr != nil) ? "{cur-clr} bold" : spec-of-part(mark-p)
+        let row-bg = sel? ? (cur-bg ?? part('TreeView', 'row', sts, variant)['bg']) : nil
+
+        <Box direction="row" bg=row-bg look=part('TreeView', 'row', sts, variant)>
+            <Text>
+                <Text style=mark-clr>{mark}</Text>
+                <Text style=g-clr>{guide-str}</Text>
+                <Text style=lbl-clr>{exp-str}{lbl}</Text>
+            </Text>
+        </Box>
+    }
+
     render() -> Node {
         if __current-root == nil || root != __prev-root {
             __current-root = root
             __root-stack = []
             __cursor = 0
-            __scroll = 0
             __prev-root = root
             __invalidate-flat!()
         }
@@ -3758,78 +3994,29 @@ pub class TreeView < Component {
             __visible = __flatten()
             __flat-dirty = false
         }
-        let h = int(height ?? 20)
         let guides? = show-guides? ?? true
         let fs = focused? ? ['focused'] : []
         let clr = color ? resolve(color) : nil
         let cur-clr = cursor-color ? resolve(cursor-color) : nil
         let cur-bg = cursor-bg ? resolve(cursor-bg, 'selection') : nil
         let g-clr = guide-color ?? spec-of-part(part('TreeView', 'guide', fs, variant))
-        let row-w = int(width ?? layout-max-w)
-
+        let h = __viewport()
         if __cursor >= #__visible { __cursor = max(#__visible - 1, 0) }
         if __cursor < __scroll { __scroll = __cursor }
         if __cursor >= __scroll + h { __scroll = __cursor - h + 1 }
         __scroll = __scroll.clamp(0, max(#__visible - h, 0))
 
-        let rows: Array[Any] = []
-        let vis-end = min(__scroll + h, #__visible)
-
-        for vi in __scroll..vis-end {
-            let row = __visible[vi]
-            let sel? = vi == __cursor
-            let d = row.depth
-            let lasts = row.lasts
-
-            let depth = int(d)
-            let guide-str = ''
-            if guides? && depth > 0 {
-                let buf = Blob()
-                for i in ..depth {
-                    buf.push((i == depth - 1)
-                        ? (lasts[i] ? '└─ ' : '├─ ')
-                        : (lasts[i] ? '   ' : '│  '))
-                }
-                guide-str = buf.str!()
-            } else if depth > 0 {
-                guide-str = '  ' * depth
-            }
-
-            let sts = sel? ? [*fs, 'selected'] : fs
-            let tog = part('TreeView', 'toggle', row.exp? ? [*sts, 'expanded'] : sts, variant)
-            let exp-str = row.can?
-                ? (tog['content'] ?? (row.exp? ? '▾ ' : '▸ '))
-                : (icon ? "{icon(row.node)} " : '  ')
-
-            let lbl = label(row.node)
-            let lbl-clr = match (sel?, cur-clr, clr) {
-                (true, $c, _)  => "{c} bold",
-                (false, _, $c) => c,
-                _              => spec-of-part(part('TreeView', 'label', sts, variant))
-            }
-            let mark-p = part('TreeView', 'mark', (sel? && focused?) ? [*sts, 'active'] : sts, variant)
-            let mark = mark-p['content'] ?? '  '
-            let mark-clr = (sel? && cur-clr != nil) ? "{cur-clr} bold" : spec-of-part(mark-p)
-            let row-bg = sel? ? (cur-bg ?? part('TreeView', 'row', sts, variant)['bg']) : nil
-
-            let content=<Text>
-                <Text style=mark-clr>{mark}</Text>
-                <Text style=g-clr>{guide-str}</Text>
-                <Text style=lbl-clr>{exp-str}{lbl}</Text>
-            </Text>
-            if row-bg != nil {
-                rows.push(<Box direction="row" width=row-w bg=row-bg>{content}</Box>)
-            } else {
-                rows.push(content)
-            }
-        }
+        let rows: Array[Any] = [
+            __draw(vi, fs, clr, cur-clr, cur-bg, g-clr, guides?)
+            for vi in __scroll..min(__scroll + h, #__visible)
+        ]
 
         if #__visible == 0 {
             let ep = part('TreeView', 'empty', fs, variant)
             rows.push(<Text look=ep>{ep['content'] ?? '  (empty)'}</Text>)
         }
 
-        <Box direction="column" height=h width=width look=part('TreeView', 'frame', fs, variant) cls=cls>
+        <Box id=__view direction="column" height=height width=width look=part('TreeView', 'frame', fs, variant) cls=cls>
             {rows}
         </Box>
     }
@@ -3857,17 +4044,19 @@ pub class Toast < Component {
 }
 
 class Output {
-    __lines: Array[String]
-    __width: Int
+    __lines:  Array[String]
+    __width:  Int
+    __height: Int
 
     init(lines: Array[String], width: Int) {
-        __lines = lines
-        __width = width
+        __lines  = lines
+        __width  = width
+        __height = #lines
     }
 
     lines  { __lines }
     width  { __width }
-    height { #__lines }
+    height { __height }
 }
 
 pub class Element {
@@ -3966,7 +4155,11 @@ fn styled-lines(rendered: String) -> Array[String] {
         return rendered.lines() ?? [rendered]
     }
 
-    rendered.ansi-lines()
+    let ls = rendered.ansi-lines()
+    if #ls > 1 && ls[-1].width() == 0 && rendered.comb(/\x1b\[[0-9;:]*m/).ends?("\n") {
+        ls.pop()
+    }
+    ls
 }
 
 fn layout-text(
@@ -3978,7 +4171,7 @@ fn layout-text(
 ) -> (Output, Element) {
     let markup = build-markup(node.children)
 
-    if #markup == 0 {
+    if #markup == 0 || node.hidden? {
         return (Output([], 0), Element(ox, oy, 0, 0, node.props))
     }
 
@@ -3993,19 +4186,232 @@ fn layout-text(
     } else {
         chalk.render(markup)
     }
-    let lines = fit-text(styled-lines(rendered), max-w, node.props['wrap'])
-    let width = lines.map(&width).max() ?? 0
-    let padded = lines.map(\_.fit(width))
-    let output = Output(padded, width)
-    (output, Element(ox, oy, width, output.height, node.props))
+    if node.pcts != nil {
+        resolve-pcts(node, max-w, max-h)
+    }
+    if plain-text?(node) {
+        let lines = fit-text(styled-lines(rendered), max-w, node.props['wrap'])
+        let width = lines.map(&width).max() ?? 0
+        let out   = Output(lines.map(\_.fit(width)), width)
+        return (out, Element(ox, oy, width, out.height, node.props))
+    }
+    let props  = node.props
+    let sx     = node.ml + node.mr + node.pl + node.pr
+    let room   = max((node.width ?? min(max-w, node.maxw ?? INF)) - sx, 0)
+    let over   = props['textOverflow']
+    let tail   = (over == 'ellipsis' || over == 'ellipsis-start') ? '…' : nil
+    let lines  = (over == 'ellipsis-start')
+        ? start-ellipsis(styled-lines(rendered), room)
+        : fit-text(styled-lines(rendered), room, props['wrap'], tail)
+    if let $n = props['maxLines'] and #lines > n {
+        let hidden = #lines - max(n, 0)
+        lines = lines[;max(n, 0)]
+        if let $note = overflow-note(props, hidden, room) {
+            lines.push(note)
+        } else if let $t = tail and #lines > 0 {
+            lines[-1] = ellipsize(lines[-1], room, t, true)
+        }
+    }
+    let width  = max(lines.map(&width).max() ?? 0, (node.minw ?? 0) - sx)
+    if let $w = node.width {
+        width = max(w - sx, 0)
+    }
+    let ta     = props['textAlign'] ?? 'start'
+    let plain? = ta == 'start' && node.pl == 0 && node.pr == 0 && node.pt == 0 && node.pb == 0 && props['lineFill'] == nil && pen-of(spec) == ''
+    let fill   = plain? ? plain-fill : filler(spec)
+    let padded = plain? ? fit-all(lines, width) : pad-lines(lines, width, ta, node, fill)
+    let iw    = width + node.pl + node.pr
+    let inner = if node.pt == 0 && node.pb == 0 {
+        padded
+    } else {
+        let blank = fill(iw)
+        [*[blank for ..node.pt], *padded, *[blank for ..node.pb]]
+    }
+    let inner = node.bg ? apply-bg(inner, node.bg) : inner
+    let (outer, ow) = (node.mt == 0 && node.mr == 0 && node.mb == 0 && node.ml == 0)
+        ? (inner, iw)
+        : apply-sides(inner, iw, node.mt, node.mr, node.mb, node.ml)
+    let output = Output(node.invisible? ? outer.map(l -> ' ' * l.width()) : outer, ow)
+    (output, Element(ox, oy, ow, output.height, node.props))
 }
 
-fn fit-text(lines: Array[String], max-w: Int, mode: Any) -> Array[String] {
+fn overflow-note(props: Dict[String, _], hidden: Int, room: Int) -> String | nil {
+    let $t = props['overflowNote'] or return nil
+    let text = t.replace('{n}', "{hidden}")
+    let fit  = (text.width() > room) ? clip-line(text, room) : text
+    let $c = props['overflowNoteColor'] or return fit
+    str(chalk.render("[{c}]{chalk-escape(fit)}[/]"))
+}
+
+fn trailing-bg(line: String) -> String | nil {
+    let bg: String | nil = nil
+    let last: String | nil = nil
+    for tok in line.matches(/\x1b\[[0-9;:]*m|[^\x1b]+/) {
+        if !tok.starts?("\x1b") {
+            last = bg
+            continue
+        }
+        let ps = tok[2;-1].split(';')
+        let i  = 0
+        while i < #ps {
+            match ps[i] {
+                '' or '0' or '49' => bg = nil,
+                '48' => do {
+                    let n = (ps.?[i + 1] == '5') ? 3 : 5
+                    bg = ps[i;i + n].join(';')
+                    i += n - 1
+                },
+                p and p.match?(/^(4[0-7]|10[0-7])$/) => bg = p,
+                '38' => i += (ps.?[i + 1] == '5') ? 2 : 4,
+                _ => ()
+            }
+            i += 1
+        }
+    }
+    last
+}
+
+let __tls::_fillers: Dict[String, (Int) -> String] = %{}
+
+fn plain-fill(n: Int) -> String {
+    ' ' * max(n, 0)
+}
+
+fn filler(spec: String | nil) -> (Int) -> String {
+    let $sp = spec or return plain-fill
+    _fillers[sp] ?? (_fillers[sp] = make-filler(sp))
+}
+
+let __tls::_pens: Dict[String, String] = %{}
+
+fn pen-of(spec: String | nil) -> String {
+    let $sp = spec or return ''
+    _pens[sp] ?? (_pens[sp] = sp.words().filter(w -> w in ['reverse', 'inverse'] || w.starts?('bg') || w.starts?('on_')).join(' '))
+}
+
+fn make-filler(spec: String | nil) -> (Int) -> String {
+    let keep = (spec ?? '').words().filter(w -> w in ['reverse', 'inverse'] || w.starts?('bg') || w.starts?('on_'))
+    if #keep == 0 {
+        return plain-fill
+    }
+    let pen = keep.join(' ')
+    n -> (n > 0) ? str(chalk.render("[{pen}]{' ' * n}[/]")) : ''
+}
+
+fn plain-text?(n: Node) -> Bool {
+    !n.rich? && !n.invisible? && n.width == nil && n.minw == nil && n.maxw == nil && n.bg == nil
+        && n.pl == 0 && n.pr == 0 && n.pt == 0 && n.pb == 0
+        && n.ml == 0 && n.mr == 0 && n.mt == 0 && n.mb == 0
+        && pen-of(n.style) == '' && (_inh-spec == nil || pen-of(_inh-spec) == '')
+}
+
+fn fit-all(lines: Array[String], width: Int) -> Array[String] {
+    lines.map(\_.fit(width))
+}
+
+fn start-ellipsis(lines: Array[String], room: Int) -> Array[String] {
+    lines.map(l -> (l.width() > room) ? "…{drop-cols(l, l.width() - room + 1)}" : l)
+}
+
+fn pad-lines(lines: Array[String], width: Int, ta: String, node: Node, fill: (Int) -> String) -> Array[String] {
+    let bg? = node.props['lineFill'] == 'bg'
+    let pl  = node.pl
+    let pr  = node.pr
+    lines.map(l -> do {
+        let c    = (l.width() > width) ? clip-line(l, width) : l
+        let room = width - c.width()
+        let left = match ta {
+            'center'       => room / 2,
+            'end', 'right' => room,
+            _              => 0
+        }
+        let tail = bg? ? trailing-bg(c) : nil
+        let rest = room - left + pr
+        let pad  = (tail && rest > 0) ? "\x1b[{tail}m{' ' * rest}{RST}" : fill(rest)
+        "{fill(pl + left)}{c}{pad}"
+    })
+}
+
+fn ellipsize(line: String, room: Int, tail: String, force?: Bool = false) -> String {
+    let w = line.width()
+    if !force? && w <= room {
+        return line
+    }
+    if force? && w + tail.width() <= room {
+        return "{line}{tail}"
+    }
+    "{clip-line(line, max(room - tail.width(), 0))}{tail}"
+}
+
+fn pre-wrap(line: String, w: Int) -> Array[String] {
+    if line.width() <= w {
+        return [line]
+    }
+
+    let out: Array[String] = []
+    let cur: Array[(String, Int)] = []
+    let sgr: Array[String] = []
+    let col = 0
+    let gap: Int | nil = nil
+
+    fn flush(cells: Array[(String, Int)]) {
+        let b = Blob()
+        for (t, _) in cells {
+            b.push(t)
+        }
+        if #sgr > 0 {
+            b.push(RST)
+        }
+        out.push(b.str!())
+    }
+
+    for tok in line.matches(/\x1b\[[0-9;:]*m|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\X/u) {
+        if tok.starts?("\x1b") {
+            if tok.match?(/^\x1b\[0?m$/) {
+                sgr = []
+            } else if tok.starts?("\x1b[") {
+                sgr.push(tok)
+            }
+            cur.push((tok, 0))
+            continue
+        }
+        let tw = tok.width()
+        if col + tw > w && col > 0 {
+            let lead = sgr.map(t -> (t, 0))
+            if let $g = gap and tok != ' ' {
+                flush(cur[;g])
+                let rest = cur[g + 1;]
+                cur = [*lead, *rest]
+                col = rest.map(c -> c.1).sum(0)
+            } else {
+                flush(cur)
+                cur = lead
+                col = 0
+                if tok == ' ' {
+                    gap = nil
+                    continue
+                }
+            }
+            gap = nil
+        }
+        if tok == ' ' && col > 0 {
+            gap = #cur
+        }
+        cur.push((tok, tw))
+        col += tw
+    }
+
+    flush(cur)
+    out
+}
+
+fn fit-text(lines: Array[String], max-w: Int, mode: Any, tail: String | nil = nil) -> Array[String] {
     if max-w >= INF || mode == 'none' || !lines.any?(\_.width() > max-w) {
         return lines
     }
     match mode {
-        'truncate' => lines.map(line -> (line.width() > max-w) ? clip-line(line, max-w) : line),
+        'pre-wrap' => lines.flat-map(pre-wrap@(_, max(max-w, 1))),
+        'truncate' => lines.map(line -> (line.width() > max-w) ? (tail ? ellipsize(line, max-w, tail) : clip-line(line, max-w)) : line),
         _          => lines.flat-map(line -> (line.width() > max-w) ? (line.wrap(max(max-w, 1)).lines() ?? [line]) : [line])
     }
 }
@@ -4075,94 +4481,6 @@ fn compute-gaps(
     }
 }
 
-fn stack-column(
-    blocks: Array[Output], gap: Int,
-    min-w: Int = 0, align: String = 'start',
-    justify: String = 'start', avail-h: Int = 0
-) -> (Array[String], Int) {
-    let w: Int = max(blocks.map(&.width).max() ?? 0, min-w)
-    let lines = []
-
-    let use-justify = justify != 'start' && avail-h > 0 && avail-h < INF
-    let content-h = blocks.map(&.height).sum(0) + gap * max(#blocks - 1, 0)
-    let gaps = use-justify
-        ? compute-gaps(#blocks, content-h, avail-h, gap, justify)
-        : nil
-    let blank = ' ' * w
-
-    let do-align = align != 'start'
-
-    for block; i in blocks {
-        let g = gaps
-            ? ((i < #gaps) ? gaps[i] : 0)
-            : ((i > 0) ? gap : 0)
-        for ..g { lines.push(blank) }
-        if do-align {
-            for line in block.lines {
-                lines.push(align-line(line, line.width(), w, align))
-            }
-        } else if block.width >= w {
-            for line in block.lines { lines.push(line) }
-        } else {
-            for line in block.lines {
-                lines.push(pad-line(line, line.width(), w))
-            }
-        }
-    }
-
-    (lines, w)
-}
-
-fn stack-row(
-    blocks: Array[Output], gap: Int,
-    align: String = 'start',
-    justify: String = 'start', avail-w: Int = 0,
-    min-h: Int = 0
-) -> (Array[String], Int) {
-    let h = max(blocks.map(&.height).max() ?? 0, min-h)
-    let content-w = blocks.map(&.width).sum(0) + gap * max(#blocks - 1, 0)
-
-    let use-justify = justify != 'start' && avail-w > 0 && avail-w < INF
-    let w = use-justify ? max(content-w, avail-w) : content-w
-
-    let gaps = use-justify
-        ? compute-gaps(#blocks, content-w, avail-w, gap, justify)
-        : nil
-    let lines = []
-
-    let offsets = blocks.map(block -> match align {
-        'center'          => (h - block.height) / 2,
-        'end' or 'bottom' => h - block.height,
-        _                 => 0
-    })
-    let blanks = blocks.map(block -> ' ' * block.width)
-
-    for row in ..h {
-        _buf.clear()
-        for block; i in blocks {
-            let g = gaps
-                ? ((i < #gaps) ? gaps[i] : 0)
-                : ((i > 0) ? gap : 0)
-            if g > 0 { _buf.push(' ' * g) }
-            let r = row - offsets[i]
-            if r >= 0 && r < block.height {
-                let ln = block.lines[r]
-                _buf.push(
-                    (ln.width() > block.width)
-                        ? clip-line(ln, block.width)
-                        : ln
-                )
-            } else {
-                _buf.push(blanks[i])
-            }
-        }
-        let row-line = _buf.str!()
-        lines.push(use-justify ? pad-line(row-line, row-line.width(), w) : row-line)
-    }
-
-    (lines, w)
-}
-
 fn apply-bg(lines: Array[String], bg: String) -> Array[String] {
     let on = resolve-bg-sgr(bg)
     let off = "\x1b[49m"
@@ -4182,38 +4500,6 @@ fn apply-forced-fg(lines: Array[String], fg: String) -> Array[String] {
         let styled = line.sub(/\x1b\[[0-9:;]*m/, sgr -> "{sgr}{on}")
         "{on}{styled}{off}"
     })
-}
-
-fn apply-padding(lines: Array[String], w: Int, px: Int, py: Int) -> (Array[String], Int) {
-    if px == 0 && py == 0 { return (lines, w) }
-
-    if px == 0 {
-        let blank = ' ' * w
-        let out = [blank for ..py]
-        for line in lines { out.push(line) }
-        for ..py { out.push(blank) }
-        return (out, w)
-    }
-
-    let total-w = w + 2 * px
-    let out = []
-    let blank = ' ' * total-w
-    let lpad = ' ' * px
-
-    for ..py { out.push(blank) }
-
-    for line in lines {
-        _buf.clear()
-        _buf.push(lpad)
-        _buf.push(line)
-        let fill = total-w - px - line.width()
-        if fill > 0 { _buf.push(' ' * fill) }
-        out.push(_buf.str!())
-    }
-
-    for ..py { out.push(blank) }
-
-    (out, total-w)
 }
 
 fn apply-border(
@@ -4412,41 +4698,275 @@ fn sync-interval(inst: Component) {
     }
 }
 
+fn apply-sides(lines: Array[String], w: Int, t: Int, r: Int, b: Int, l: Int) -> (Array[String], Int) {
+    if t == 0 && r == 0 && b == 0 && l == 0 {
+        return (lines, w)
+    }
+
+    let total-w = w + l + r
+    let blank   = ' ' * total-w
+    let lpad    = ' ' * l
+    let out     = [blank for ..t]
+
+    for line in lines {
+        _buf.clear()
+        _buf.push(lpad)
+        _buf.push(line)
+        let fill = total-w - l - line.width()
+        if fill > 0 {
+            _buf.push(' ' * fill)
+        }
+        out.push(_buf.str!())
+    }
+
+    for ..b {
+        out.push(blank)
+    }
+
+    (out, total-w)
+}
+
 fn finish-box(
     lines: Array[String], w: Int,
-    px: Int, py: Int, mx: Int, my: Int,
-    bstyle: Array[String] | nil, bcolor: String | nil,
-    bg: String | nil, forced-fg: String | nil,
-    target-w: Int | nil, max-w: Int,
-    ox: Int, oy: Int, props: Dict[String, Any],
+    node: Node, max-w: Int,
+    ox: Int, oy: Int,
     child-elements: Array[Element]
 ) -> (Output, Element) {
-    let (lines, w) = apply-padding(lines, w, px, py)
+    let (lines, w) = apply-sides(lines, w, node.pt, node.pr, node.pb, node.pl)
 
-    if let $fg = forced-fg {
+    if let $r = node.rail {
+        let spec = node.bcolor ?? node.inh
+        let pen  = spec ? str(chalk.render("[{spec}]{chalk-escape(r)}[/]")) : r
+        lines = lines.map(l -> "{pen}{l}")
+        w += r.width()
+    }
+
+    if let $fg = node.props['_forceFg'] {
         lines = apply-forced-fg(lines, fg)
     }
 
-    if let $bg = bg {
-        if target-w == nil && max-w < INF && max-w > w {
+    if let $bg = node.bg {
+        let room = max-w - node.ml - node.mr - (node.bstyle ? 2 : 0)
+        if node.width == nil && room < INF && room > w {
             for line; i in lines {
-                lines[i] = pad-line(line, line.width(), max-w)
+                lines[i] = pad-line(line, line.width(), room)
             }
-            w = max-w
+            w = room
         }
         lines = apply-bg(lines, bg)
     }
 
-    if bstyle {
-        let (lines, w) = apply-border(lines, w, bstyle, bcolor)
-        let (lines, w) = apply-padding(lines, w, mx, my)
-        let output = Output(lines, w)
-        return (output, Element(ox, oy, w, output.height, props, child-elements))
+    let (lines, w) = node.bstyle ? apply-border(lines, w, node.bstyle, node.bcolor) : (lines, w)
+    let (lines, w) = apply-sides(lines, w, node.mt, node.mr, node.mb, node.ml)
+    let output = Output(node.invisible? ? lines.map(l -> ' ' * l.width()) : lines, w)
+
+    (output, Element(ox, oy, w, output.height, node.props, child-elements))
+}
+
+let UNMEASURED = Measured(Output([], 0), Element(0, 0, 0, 0, %{}), [], [], [])
+
+class Item {
+    child:  Any
+    path:   String
+    key:    String
+    root:   Node | nil
+    m:      Measured
+    real?:  Bool
+    lazy?:  Bool
+    flex:   Int | nil
+    lo:     Int
+    hi:     Int
+    clo:    Int
+    main:   Int
+    fixed?: Bool
+    stretch?: Bool
+    align:  String
+    shrink: Int
+    ew:     Int
+    eh:     Int
+    x:      Int
+    y:      Int
+
+    init(child: Any, path: String, key: String) {
+        self.child = child
+        self.path  = path
+        self.key   = key
+        root       = nil
+        m          = UNMEASURED
+        real?      = false
+        lazy?      = false
+        flex       = nil
+        lo         = 0
+        hi         = INF
+        clo        = 0
+        main       = 0
+        fixed?     = false
+        stretch?   = false
+        align      = 'start'
+        shrink     = 0
+        ew         = 0
+        eh         = 0
+        x          = 0
+        y          = 0
     }
 
-    let (lines, w) = apply-padding(lines, w, mx, my)
-    let output = Output(lines, w)
-    (output, Element(ox, oy, w, output.height, props, child-elements))
+    w -> Int { ew }
+    h -> Int { eh }
+}
+
+fn measure(child: Any, w: Int, h: Int, path: String, fw: Int | nil = nil, fh: Int | nil = nil) -> Measured {
+    let ov0 = #_overlays
+    let fc0 = #_focusables
+    let ki0 = #_kitty-images
+    let (o, el) = match child {
+        n: Node => layout-node(size-node(n, fw, fh), w, h, path, 0, 0),
+        _       => layout-node(child, w, h, path, 0, 0, force-w=fw, force-h=fh)
+    }
+    let m = Measured(o, el, _overlays[ov0;], _focusables[fc0;], _kitty-images[ki0;])
+    _overlays.take!(ov0)
+    _focusables.take!(fc0)
+    _kitty-images.take!(ki0)
+    m
+}
+
+fn peek(child: Any, path: String, max-w: Int, max-h: Int) -> Node | nil {
+    let $c = (child :: Component) ? child : nil or return (child :: Node) ? child : nil
+    if let $sh = c.shell() {
+        return sh
+    }
+    let inst = reconcile(c, path)
+    inst.ink-parent = _layout-owner
+    if !inst.dirty? && inst.stale? {
+        inst.invalidate!()
+    }
+    if inst.dirty? || inst.cached-node == nil {
+        inst.ink-memo     = []
+        inst.dirty?       = false
+        inst.layout-max-w = max-w
+        inst.layout-max-h = max-h
+        inst.layout-fw    = nil
+        inst.layout-fh    = nil
+        _ctx-stack.push(%{})
+        inst.cached-node   = inst.render()
+        inst.ink-ctx-frame = _ctx-stack.pop()
+    }
+    match inst.cached-node {
+        n: Node      => n,
+        k: Component => do {
+            _ctx-stack.push(inst.ink-ctx-frame)
+            let owner = _layout-owner
+            _layout-owner = inst
+            let r = peek(k, "{path}${type(inst).__id__}", max-w, max-h)
+            _layout-owner = owner
+            _ctx-stack.pop()
+            r
+        },
+        _ => nil
+    }
+}
+
+let __tls::_scrolls: Dict[String, Int] = %{}
+let __tls::_sizes: Dict[String, (Int, Int)] = %{}
+
+fn revealed(items: Array[Item], target: Any) -> Item | nil {
+    match target {
+        i: Int    => (i >= 0 && i < #items) ? items[i] : nil,
+        k: String => items.find(\_.key == "#{k}"),
+        _         => nil
+    }
+}
+
+fn scrolled(node: Node, path: String, items: Array[Item], total: Int, limit: Int) -> Int {
+    let room = max(total - limit, 0)
+    if let $s = node.props['scroll'] {
+        return int(s).clamp(0, room)
+    }
+    let s = (_scrolls[path] ?? 0).clamp(0, room)
+    if node.props['scrollAnchor'] == 'end' && node.props['reveal'] == nil {
+        s = room
+    }
+    if let $it = revealed(items, node.props['reveal']) {
+        if it.y + it.h > s + limit {
+            s = it.y + it.h - limit
+            if node.props['scrollSnap'] == 'start' {
+                s = items.map(&.y).filter(y -> y >= s && y <= it.y).min() ?? s
+            }
+        }
+        if it.y < s {
+            s = it.y
+        }
+    }
+    s = s.clamp(0, room)
+    _scrolls[path] = s
+    s
+}
+
+class Flow {
+    row?:    Bool
+    wrap?:   Bool
+    mgap:    Int
+    xgap:    Int
+    align:   String
+    justify: String
+    extent:  Int
+    spans:   Array[Int]
+    reach:   Int
+    cross:   Int
+
+    init(row?: Bool, wrap?: Bool, mgap: Int, xgap: Int, align: String, justify: String, extent: Int) {
+        self.row?    = row?
+        self.wrap?   = wrap?
+        self.mgap    = mgap
+        self.xgap    = xgap
+        self.align   = align
+        self.justify = justify
+        self.extent  = extent
+        spans        = []
+        reach        = 0
+        cross        = 0
+    }
+
+    main-of(it: Item) -> Int  { row? ? it.w : it.h }
+    cross-of(it: Item) -> Int { row? ? it.h : it.w }
+
+    place(lines: Array[Array[Item]]) {
+        reach = 0
+        cross = 0
+        for line; li in lines {
+            let span  = spans[li]
+            let sizes = line.map(main-of)
+            let total = sizes.sum(0) + mgap * (#line - 1)
+            let gaps  = (justify != 'start' && extent > total)
+                ? compute-gaps(#line, total, extent, mgap, justify)
+                : nil
+            if li > 0 {
+                cross += xgap
+            }
+            let pos = 0
+            for it; i in line {
+                pos += gaps ? gaps[i] : ((i > 0) ? mgap : 0)
+                let c   = cross-of(it)
+                let off = match it.align {
+                    'center' => (span - c) / 2,
+                    'end'    => span - c,
+                    _        => 0
+                }
+                if row? {
+                    it.x = pos
+                    it.y = cross + off
+                } else {
+                    it.x = cross + off
+                    it.y = pos
+                }
+                pos += sizes[i]
+            }
+            if gaps {
+                pos = max(pos, extent)
+            }
+            reach = max(reach, pos)
+            cross += span
+        }
+    }
 }
 
 fn layout-box(
@@ -4457,249 +4977,773 @@ fn layout-box(
     ox: Int,
     oy: Int
 ) -> (Output, Element) {
-    let children: Array[Any] = []
-    let child-keys: Array[String] = []
-    for c; i in node.children {
-        if c != nil && c != false {
-            children.push(c)
-            child-keys.push(child-key(c, i))
-        }
+    if node.hidden? {
+        return (Output([], 0), Element(ox, oy, 0, 0, node.props))
     }
-    let n-children = #children
-    let direction  = node.direction
-    let gap        = node.gap
-    let px         = node.px
-    let py         = node.py
-    let mx         = node.mx
-    let my         = node.my
-    let bstyle     = node.bstyle
-    let bcolor     = node.bcolor
-    let target-w   = node.width
-    let target-h   = node.height
-    let border-v   = bstyle ? 1 : 0
 
-    let chrome-x = 2 * (mx + px + border-v)
-    let chrome-y = 2 * (my + py + border-v)
+    if node.pcts != nil {
+        resolve-pcts(node, max-w, max-h)
+    }
+    if node.table? {
+        return layout-table(node, max-w, path, ox, oy)
+    }
+    if node.columns? {
+        return layout-columns(node, max-w, path, ox, oy)
+    }
+    let target-w = node.width
+    let target-h = node.height
+    let border-v = node.bstyle ? 1 : 0
+    let chrome-l = node.ml + node.pl + border-v + (node.rail.?width() ?? 0)
+    let chrome-t = node.mt + node.pt + border-v
+    let chrome-x = chrome-l + node.mr + node.pr + border-v
+    let chrome-y = chrome-t + node.mb + node.pb + border-v
 
-    let outer-w = target-w ?? max-w
-    let outer-h = target-h ?? max-h
+    let outer-w   = target-w ?? min(max-w, node.maxw ?? INF)
+    let outer-h   = target-h ?? min(max-h, node.maxh ?? INF)
     let content-w = (outer-w >= INF) ? INF : max(outer-w - chrome-x, 0)
     let content-h = (outer-h >= INF) ? INF : max(outer-h - chrome-y, 0)
 
-    let content-ox = ox + mx + px + border-v
-    let content-oy = oy + my + py + border-v
-
-    if n-children == 0 {
-        let w = (target-w != nil) ? content-w : 0
-        let lines: Array[String] = []
-        if target-h != nil {
-            let blank = ' ' * w
-            for ..max(int(target-h) - chrome-y, 0) {
-                lines.push(blank)
-            }
-        }
-        return finish-box(lines, w, px, py, mx, my, bstyle, bcolor,
-                          node.bg, node.props['_forceFg'], target-w, max-w,
-                          ox, oy, node.props, [])
+    let limit = if target-h != nil {
+        content-h
+    } else if let $mh = node.maxh {
+        max(mh - chrome-y, 0)
     }
+    let floor   = (target-h != nil) ? content-h : max((node.minh ?? 0) - chrome-y, 0)
+    let scroll? = limit != nil && (node.props['scroll'] != nil || node.props['reveal'] != nil || node.overflow == 'scroll' || node.props['scrollAnchor'] == 'end')
 
-    let row? = (direction == 'row')
-    let total-flex = 0
-    let has-flex? = false
-    let flexes: Array[Int | nil] = []
-
-    for child in children {
-        let f = match child {
-            n: Node      => n.flex,
-            c: Component => c.?flex,
-            _            => nil
-        }
-        flexes.push(f)
-        if f {
-            total-flex += int(f)
-            has-flex? = true
+    if !scroll? && node.align != 'stretch' && !(node.fwrap? && node.direction == 'row') {
+        if let $done = layout-simple(node, max-w, path, ox, oy, content-w, content-h, chrome-l, chrome-t, chrome-x, limit, floor) {
+            return done
         }
     }
 
-    let child-widths: Array[Int] = []
-    let child-heights: Array[Int] = []
-
-    let measured: Dict[Int, Measured] = %{}
-
-    if has-flex? {
-        let fixed = 0
-        for child; i in children if flexes[i] == nil {
-            let ov0 = #_overlays
-            let fc0 = #_focusables
-            let ki0 = #_kitty-images
-            let (o, el) = layout-node(child, content-w, content-h, "{path}.{child-keys[i]}", 0, 0)
-            measured[i] = Measured(o, el, _overlays[ov0;], _focusables[fc0;], _kitty-images[ki0;])
-            _overlays.take!(ov0)
-            _focusables.take!(fc0)
-            _kitty-images.take!(ki0)
-            fixed += row? ? o.width : o.height
-        }
-        let num-gaps = gap * max(n-children - 1, 0)
-        let pool = max((row? ? content-w : content-h) - fixed - num-gaps, 0)
-        debug!("{row? ? 'flex-row' : 'flex-col'} [{path}]: pool={pool} fixed={fixed} total-flex={total-flex}")
-        let shares: Array[Int | nil] = [
-            (f != nil && total-flex > 0) ? (pool * int(f) / total-flex) : nil
-            for f in flexes
-        ]
-        let rem = pool - (shares.map(\_ ?? 0).sum() ?? 0)
-        for i in ..n-children {
-            let share = if let $sh = shares[i] {
-                let bonus = (rem > 0) ? 1 : 0
-                rem -= bonus
-                sh + bonus
-            }
-            child-widths.push(row?  ? (share ?? content-w) : content-w)
-            child-heights.push(row? ? content-h : (share ?? content-h))
-        }
-    } else {
-        for ..n-children {
-            child-widths.push(content-w)
-            child-heights.push(content-h)
+    let items: Array[Item] = []
+    for c; i in node.children {
+        if c != nil && c != false && !((c :: Node) && c.hidden?) {
+            let key = child-key(c, i)
+            items.push(Item(c, "{path}.{key}", key))
         }
     }
 
-    let blocks: Array[Output] = []
-    let child-elements: Array[Element] = []
-    let cx = content-ox
-    let cy = content-oy
-    let flex-prop = row? ? 'width' : 'height'
+    let row?        = (node.direction == 'row')
+    let main-avail  = row? ? content-w : content-h
+    let cross-avail = row? ? content-h : content-w
+    let wrap?       = row? && node.fwrap? && main-avail < INF
+    let definite?   = !wrap? && cross-avail < INF && (row? ? target-h : target-w) != nil
+    let target      = scroll? ? revealed(items, node.props['reveal']) : nil
+
+    let flow = Flow(
+        row?,
+        wrap?,
+        (row? ? node.cgap : node.rgap) ?? node.gap,
+        (row? ? node.rgap : node.cgap) ?? node.gap,
+        node.align,
+        node.justify,
+        row? ? ((main-avail < INF) ? main-avail : 0) : ((target-h != nil) ? content-h : floor)
+    )
+
     let pinh = _inh-spec
     if let $own = node.inh {
         _inh-spec = (pinh == nil) ? own : "{pinh} {own}"
     }
 
-    for child; i in children {
-        let fw = child-widths[i]
-        let fh = child-heights[i]
-        let cpath = "{path}.{child-keys[i]}"
-        let (out, el) = if let $m = measured[i] {
-            m.replay(cx, cy)
-        } else if flexes[i] {
-            match child {
-                n: Node => layout-node(
-                    Node(n.tag, n.props + %{flex-prop: (row? ? fw : fh)}, n.children),
-                    fw, fh, cpath, cx, cy
-                ),
-                _ => layout-node(
-                    child, fw, fh, cpath, cx, cy,
-                    force-w=(row? ? fw : nil),
-                    force-h=(row? ? nil : fh)
-                )
+    fn realize(it: Item, cross: Int | nil) {
+        let main = it.fixed? ? it.main : nil
+        it.m = row?
+            ? measure(it.child, main ?? content-w, cross ?? content-h, it.path, fw=main, fh=cross)
+            : measure(it.child, cross ?? content-w, main ?? content-h, it.path, fw=cross, fh=main)
+        it.real? = true
+        it.ew    = it.m.output.width
+        it.eh    = it.m.output.height
+        if cross == nil && it.lazy? {
+            _sizes[it.path] = (it.m.output.width, it.m.output.height)
+        }
+    }
+
+    for it in items {
+        let r      = peek(it.child, it.path, content-w, content-h)
+        if let $rn = r {
+            resolve-pcts(rn, content-w, content-h, row? ? content-w : content-h)
+        }
+        it.root    = r
+        it.flex    = ((it.child :: Component) ? it.child.?flex : nil) ?? r.?flex
+        it.lo      = (row? ? r.?minw : r.?minh) ?? 0
+        it.hi      = (row? ? r.?maxw : r.?maxh) ?? INF
+        it.clo     = (row? ? r.?minh : r.?minw) ?? 0
+        it.lazy?   = scroll? && it.key != target.?key && (r.?props ?? %{})['contentVisibility'] == 'auto'
+        let fixed  = row? ? r.?height : r.?width
+        let text?  = row? && (r :: Node) && r.`tag` == NodeText
+        it.align   = r.?self-align ?? node.align
+        it.shrink  = r.?shrink ?? 0
+        it.stretch? = it.align == 'stretch' && fixed == nil && !text?
+        let natural = if let $b = r.?basis {
+            b
+        } else if it.flex != nil && !wrap? && main-avail < INF {
+            0
+        } else if it.lazy? and let $sz = _sizes[it.path] {
+            row? ? sz.0 : sz.1
+        } else {
+            realize(it, nil)
+            row? ? it.w : it.h
+        }
+        it.main   = natural.clamp(it.lo, it.hi)
+        it.fixed? = r.?basis != nil || it.flex != nil || it.main != natural
+    }
+
+    let lines: Array[Array[Item]] = []
+    if wrap? {
+        let cur: Array[Item] = []
+        let used = 0
+        for it in items {
+            let need = (#cur > 0) ? used + flow.mgap + it.main : it.main
+            if #cur > 0 && need > main-avail {
+                lines.push(cur)
+                cur  = [it]
+                used = it.main
+            } else {
+                cur.push(it)
+                used = need
+            }
+        }
+        if #cur > 0 {
+            lines.push(cur)
+        }
+    } else if #items > 0 {
+        lines.push(items)
+    }
+
+    for line in lines {
+        let used  = line.map(&.main).sum(0) + flow.mgap * (#line - 1)
+        let free  = (main-avail < INF) ? main-avail - used : 0
+        let total = line.map(\_.flex ?? 0).sum(0)
+        if free > 0 && total > 0 {
+            let shares = line.map(it -> (it.flex ?? 0) * free / total)
+            let rem    = free - shares.sum(0)
+            for it; i in line if (it.flex ?? 0) > 0 {
+                let bonus = (rem > 0) ? 1 : 0
+                rem -= bonus
+                it.main = min(it.main + shares[i] + bonus, it.hi)
+            }
+        }
+        let give = line.map(&.shrink).sum(0)
+        if free < 0 && give > 0 {
+            let owed = -free
+            for it in line if it.shrink > 0 && owed > 0 {
+                let cut = min(-free * it.shrink / give + 1, owed, it.main - it.lo)
+                if cut > 0 {
+                    it.main  -= cut
+                    it.fixed? = true
+                    owed     -= cut
+                }
+            }
+        }
+    }
+
+    fn estimate(it: Item, span: Int | nil) {
+        let (sw, sh) = _sizes[it.path] ?? (0, it.clo)
+        let cross = span ?? (row? ? sh : sw)
+        let main  = it.fixed? ? it.main : (row? ? sw : sh)
+        it.ew = row? ? main : cross
+        it.eh = row? ? cross : main
+    }
+
+    fn settle(line: Array[Item], li: Int) {
+        let span = definite? ? cross-avail : (line.map(flow.cross-of).max() ?? 0)
+        if !definite? && !wrap? && cross-avail < INF && (row? ? target-h : target-w) != nil {
+            span = max(span, cross-avail)
+        }
+        for it in line if it.stretch? && flow.cross-of(it) != span {
+            if it.real? {
+                realize(it, span)
+            } else {
+                estimate(it, span)
+            }
+        }
+        flow.spans[li] = span
+    }
+
+    for line; li in lines {
+        flow.spans.push(0)
+        for it in line {
+            let cross = (definite? && it.stretch?) ? cross-avail : nil
+            if it.lazy? {
+                estimate(it, cross)
+            } else if it.fixed? || cross != nil || !it.real? {
+                realize(it, cross)
+            }
+        }
+        settle(line, li)
+    }
+
+    flow.place(lines)
+
+    let s = 0
+    if scroll? and let $lim = limit {
+        for ..4 {
+            let h = row? ? flow.cross : flow.reach
+            s = scrolled(node, path, items, h, lim)
+            let fresh = false
+            for line; li in lines {
+                let shown = line.filter(it -> it.lazy? && !it.real? && it.y < s + lim && it.y + it.h > s)
+                if #shown > 0 {
+                    for it in shown {
+                        realize(it, nil)
+                    }
+                    settle(line, li)
+                    fresh = true
+                }
+            }
+            if !fresh {
+                break
+            }
+            flow.place(lines)
+        }
+    }
+
+    _inh-spec = pinh
+
+    let w = row? ? flow.reach : flow.cross
+    let h = row? ? flow.cross : flow.reach
+    if target-w != nil {
+        w = content-w
+    } else if let $mn = node.minw {
+        w = max(w, mn - chrome-x)
+    }
+
+    let content-ox = ox + chrome-l
+    let content-oy = oy + chrome-t
+    let top        = s
+    let bottom     = (limit != nil) ? min(h, s + limit) : h
+    let segs: Array[Array[Item]] = [[] for ..max(bottom - top, 0)]
+    let child-elements: Array[Element] = []
+
+    for it in items {
+        if it.real? {
+            let (_, el) = it.m.replay(content-ox + it.x, content-oy + it.y - s)
+            child-elements.push(el)
+            for y in max(it.y, top)..min(it.y + it.h, bottom) {
+                segs[y - top].push(it)
             }
         } else {
-            layout-node(child, fw, fh, cpath, cx, cy)
+            child-elements.push(Element(content-ox + it.x, content-oy + it.y - s, it.w, it.h, %{}))
         }
-        blocks.push(out)
-        child-elements.push(el)
-        if row? { cx += out.width  + gap }
-        else    { cy += out.height + gap }
+    }
+
+    let out: Array[String] = []
+    for row; i in segs {
+        let y = top + i
+        _buf.clear()
+        let col = 0
+        for it in row {
+            if it.x > col {
+                _buf.push(' ' * (it.x - col))
+                col = it.x
+            }
+            let ln = it.m.output.lines[y - it.y]
+            let lw = ln.width()
+            if lw > it.w {
+                _buf.push(clip-line(ln, it.w))
+            } else {
+                _buf.push(ln)
+                if lw < it.w {
+                    _buf.push(' ' * (it.w - lw))
+                }
+            }
+            col += it.w
+        }
+        if col < w {
+            _buf.push(' ' * (w - col))
+        }
+        let line = _buf.str!()
+        out.push((col > w) ? clip-line(line, w) : line)
+    }
+
+    if scroll? {
+        node.props['_scroll-total'] = h
+    }
+
+    box-tail(node, out, w, h, target-w != nil, limit, floor, scroll?, max-w, ox, oy, child-elements)
+}
+
+fn box-tail(
+    node: Node, out: Array[String], w: Int, h: Int, fixed-w?: Bool,
+    limit: Int | nil, floor: Int, scroll?: Bool,
+    max-w: Int, ox: Int, oy: Int, child-elements: Array[Element]
+) -> (Output, Element) {
+    if let $lim = limit and #out > lim {
+        out.take!(lim)
+    }
+
+    if let $lim = limit and h > lim && !scroll? && #out > 0 and let $note = overflow-note(node.props, h - lim + 1, fixed-w? ? w : INF) {
+        if note.width() > w {
+            w   = note.width()
+            out = out.map(l -> pad-line(l, l.width(), w))
+        }
+        out[-1] = pad-line(note, note.width(), w)
+    }
+
+    if #out < floor {
+        let blank = ' ' * w
+        while #out < floor {
+            out.push(blank)
+        }
+    }
+
+    finish-box(out, w, node, max-w, ox, oy, child-elements)
+}
+
+fn simple?(r: Node | nil) -> Bool {
+    let $n = r or return true
+    n.basis == nil && n.shrink == nil && n.self-align == nil && n.pcts == nil
+        && (n.flex == nil || (n.minw == nil && n.maxw == nil && n.minh == nil && n.maxh == nil))
+}
+
+fn layout-simple(
+    node: Node, max-w: Int, path: String, ox: Int, oy: Int,
+    content-w: Int, content-h: Int, chrome-l: Int, chrome-t: Int, chrome-x: Int,
+    limit: Int | nil, floor: Int
+) -> (Output, Element) | nil {
+    let kids: Array[(Any, String)] = []
+    let flexes: Array[Int] = []
+    for c; i in node.children {
+        if c != nil && c != false {
+            if (c :: Node) && c.hidden? {
+                continue
+            }
+            let cp = "{path}.{child-key(c, i)}"
+            let f = match c {
+                n: Node      => simple?(n) ? (n.flex ?? 0) : -1,
+                k: Component => do {
+                    let r = peek(k, cp, content-w, content-h)
+                    simple?(r) ? (k.?flex ?? r.?flex ?? 0) : -1
+                },
+                _ => 0
+            }
+            if f < 0 {
+                return nil
+            }
+            kids.push((c, cp))
+            flexes.push(f)
+        }
+    }
+
+    let row?  = node.direction == 'row'
+    let gap   = (row? ? node.cgap : node.rgap) ?? node.gap
+    let cox   = ox + chrome-l
+    let coy   = oy + chrome-t
+    let main-avail = row? ? content-w : content-h
+    let pull  = (main-avail < INF) ? flexes.sum(0) : 0
+    let pinh  = _inh-spec
+    if let $own = node.inh {
+        _inh-spec = (pinh == nil) ? own : "{pinh} {own}"
+    }
+
+    let blocks: Array[Output] = []
+    let els: Array[Element] = []
+    let offs: Array[Int] = []
+    let pos  = 0
+    let wide = 0
+    if pull == 0 {
+        for (c, cp); i in kids {
+            if i > 0 {
+                pos += gap
+            }
+            let (o, el) = row?
+                ? layout-node(c, content-w, content-h, cp, cox + pos, coy)
+                : layout-node(c, content-w, content-h, cp, cox, coy + pos)
+            blocks.push(o)
+            els.push(el)
+            offs.push(pos)
+            if row? {
+                pos += o.width
+                wide = max(wide, o.height)
+            } else {
+                pos += o.height
+                wide = max(wide, o.width)
+            }
+        }
+    } else {
+        let laid: Array[(Output, Element) | nil] = [nil for ..#kids]
+        let fixed = 0
+        for (c, cp); i in kids if flexes[i] == 0 {
+            let (o, el) = layout-node(c, content-w, content-h, cp, cox, coy)
+            laid[i] = (o, el)
+            fixed += row? ? o.width : o.height
+        }
+        let pool = max(main-avail - fixed - gap * max(#kids - 1, 0), 0)
+        let rem  = pool - flexes.map(f -> pool * f / pull).sum(0)
+        for (c, cp); i in kids {
+            if i > 0 {
+                pos += gap
+            }
+            let (o, el) = if let $done = laid[i] {
+                let (o, el) = done
+                if pos != 0 {
+                    row? ? shift-element(el, pos, 0) : shift-element(el, 0, pos)
+                }
+                (o, el)
+            } else {
+                let bonus = (rem > 0) ? 1 : 0
+                rem -= bonus
+                let size = pool * flexes[i] / pull + bonus
+                let (fx, fy) = row? ? (cox + pos, coy) : (cox, coy + pos)
+                match c {
+                    n: Node => row?
+                        ? layout-node(size-node(n, size, nil), size, content-h, cp, fx, fy)
+                        : layout-node(size-node(n, nil, size), content-w, size, cp, fx, fy),
+                    _ => row?
+                        ? layout-node(c, size, content-h, cp, fx, fy, force-w=size)
+                        : layout-node(c, content-w, size, cp, fx, fy, force-h=size)
+                }
+            }
+            blocks.push(o)
+            els.push(el)
+            offs.push(pos)
+            if row? {
+                pos += o.width
+                wide = max(wide, o.height)
+            } else {
+                pos += o.height
+                wide = max(wide, o.width)
+            }
+        }
     }
     _inh-spec = pinh
 
-    let min-content-w: Int = (target-w != nil) ? content-w : 0
-    let min-content-h: Int = (target-h != nil) ? content-h : 0
-    let justify-h = (target-h != nil) ? content-h : 0
-    let align   = node.align
-    let justify = node.justify
+    let n      = #blocks
+    let total  = pos
+    let fixed-cross = row? ? node.height : node.width
+    let span   = (fixed-cross != nil) ? (row? ? content-h : content-w) : wide
+    let extent = row?
+        ? ((content-w < INF) ? content-w : 0)
+        : ((node.height != nil) ? content-h : floor)
+    let gaps   = (node.justify != 'start' && extent > total) ? compute-gaps(n, total, extent, gap, node.justify) : nil
+    let reach  = total
+    let align  = node.align
 
-    let (lines, w) = row?
-        ? stack-row(blocks, gap, align, justify, content-w, min-content-h)
-        : stack-column(blocks, gap, min-content-w, align, justify, justify-h)
-
-    if justify != 'start' || align != 'start' {
-        let do-justify = justify != 'start'
-        if !row? {
-            let stacked-w = max(blocks.map(&.width).max() ?? 0, min-content-w)
-            let stacked-h = blocks.map(&.height).sum(0) + gap * max(n-children - 1, 0)
-            let gaps = (do-justify && justify-h > 0 && justify-h < INF)
-                ? compute-gaps(n-children, stacked-h, justify-h, gap, justify)
-                : nil
-            let dy = 0
-            for el; i in child-elements {
-                let g = gaps ? ((i < #gaps) ? gaps[i] : 0) : ((i > 0) ? gap : 0)
-                let extra-y = dy + g - ((i > 0) ? gap : 0)
-                dy += g - ((i > 0) ? gap : 0)
-                if extra-y != 0 {
-                    shift-element(el, 0, extra-y)
-                }
-                let dx = match align {
-                    'center'         => (stacked-w - el.w) / 2,
-                    'end' or 'right' => stacked-w - el.w,
-                    _                => 0
-                }
-                if dx != 0 { shift-element(el, dx, 0) }
+    if gaps {
+        let at = 0
+        for b; i in blocks {
+            at += gaps[i]
+            let shift = at - offs[i]
+            offs[i] = at
+            if shift != 0 {
+                row? ? shift-element(els[i], shift, 0) : shift-element(els[i], 0, shift)
             }
-        } else {
-            let stacked-h = max(blocks.map(&.height).max() ?? 0, min-content-h)
-            let stacked-w = blocks.map(&.width).sum(0) + gap * max(n-children - 1, 0)
-            let gaps = (do-justify && content-w > 0 && content-w < INF)
-                ? compute-gaps(n-children, stacked-w, content-w, gap, justify)
-                : nil
-            let dx = 0
-            for el; i in child-elements {
-                let g = gaps ? ((i < #gaps) ? gaps[i] : 0) : ((i > 0) ? gap : 0)
-                let extra-x = dx + g - ((i > 0) ? gap : 0)
-                dx += g - ((i > 0) ? gap : 0)
-                if extra-x != 0 {
-                    shift-element(el, extra-x, 0)
-                }
-                let dy = match align {
-                    'center'          => (stacked-h - el.h) / 2,
-                    'end' or 'bottom' => stacked-h - el.h,
-                    _                 => 0
-                }
-                if dy != 0 { shift-element(el, 0, dy) }
+            at += row? ? b.width : b.height
+        }
+        reach = max(at, extent)
+    }
+
+    if align != 'start' {
+        for el; i in els {
+            let b   = blocks[i]
+            let c   = row? ? b.height : b.width
+            let off = match align {
+                'center' => (span - c) / 2,
+                'end'    => span - c,
+                _        => 0
+            }
+            if off != 0 {
+                row? ? shift-element(el, 0, off) : shift-element(el, off, 0)
             }
         }
     }
 
-    if target-w != nil {
-        if w > content-w {
-            for line; i in lines if line.width() > content-w {
-                lines[i] = clip-line(line, content-w)
-            }
-            w = content-w
-        } else if w < content-w {
-            for line; i in lines {
-                lines[i] = pad-line(line, line.width(), content-w)
-            }
-            w = content-w
-        }
+    let w = row? ? reach : span
+    let h = row? ? span : reach
+    if node.width != nil {
+        w = content-w
+    } else if let $mn = node.minw {
+        w = max(w, mn - chrome-x)
     }
 
-    if target-h != nil {
-        let th = max(int(target-h) - chrome-y, 0)
-        let scroll-offset = node.props['scroll']
-        if scroll-offset != nil {
-            let total = #lines
-            let s = int(scroll-offset).clamp(0, max(total - th, 0))
-            debug!("scroll [{path}]: offset={s} visible={th} total={total}")
-            lines = lines[s;min(s + th, total)]
-            node.props['_scroll-total'] = total
-            if s > 0 {
-                for el in child-elements {
-                    shift-element(el, 0, -s)
+    let out: Array[String] = []
+    if row? {
+        let downs = blocks.map(b -> match align {
+            'center' => (span - b.height) / 2,
+            'end'    => span - b.height,
+            _        => 0
+        })
+        for y in ..h {
+            _buf.clear()
+            let col = 0
+            for b; i in blocks {
+                let x = offs[i]
+                if x > col {
+                    _buf.push(' ' * (x - col))
+                    col = x
+                }
+                let c = b.height
+                let r = y - downs[i]
+                if r >= 0 && r < c {
+                    let ln = b.lines[r]
+                    let lw = ln.width()
+                    if lw > b.width {
+                        _buf.push(clip-line(ln, b.width))
+                    } else {
+                        _buf.push(ln)
+                        if lw < b.width {
+                            _buf.push(' ' * (b.width - lw))
+                        }
+                    }
+                } else {
+                    _buf.push(' ' * b.width)
+                }
+                col += b.width
+            }
+            if col < w {
+                _buf.push(' ' * (w - col))
+            }
+            let line = _buf.str!()
+            out.push((col > w) ? clip-line(line, w) : line)
+        }
+    } else {
+        let blank = ' ' * w
+        let y = 0
+        for b; i in blocks {
+            while y < offs[i] {
+                out.push(blank)
+                y += 1
+            }
+            let off = match align {
+                'center' => (span - b.width) / 2,
+                'end'    => span - b.width,
+                _        => 0
+            }
+            if off == 0 && b.width == w {
+                for ln in b.lines {
+                    out.push(ln)
+                }
+            } else {
+                let lead = ' ' * off
+                for ln in b.lines {
+                    out.push(((off > 0) ? "{lead}{ln}" : ln).fit(w))
                 }
             }
+            y += b.height
         }
-        if #lines > th {
-            lines.take!(th)
-        } else {
-            let blank = ' ' * w
-            while #lines < th {
-                lines.push(blank)
-            }
+        while y < h {
+            out.push(blank)
+            y += 1
         }
     }
 
-    finish-box(lines, w, px, py, mx, my, bstyle, bcolor,
-               node.bg, node.props['_forceFg'], target-w, max-w,
-               ox, oy, node.props, child-elements)
+    box-tail(node, out, w, h, node.width != nil, limit, floor, false, max-w, ox, oy, els)
+}
+
+fn junctions(frame: Array[String]) -> Array[String] {
+    match frame[4] {
+        '═' => ['╦', '╩', '╠', '╣', '╬'],
+        '━' => ['┳', '┻', '┣', '┫', '╋'],
+        _   => ['┬', '┴', '├', '┤', '┼']
+    }
+}
+
+fn layout-table(node: Node, max-w: Int, path: String, ox: Int, oy: Int) -> (Output, Element) {
+    let frame    = node.bstyle
+    let chrome-x = node.ml + node.pl + node.mr + node.pr
+    let outer-w  = node.width ?? min(max-w, node.maxw ?? INF)
+    let avail    = (outer-w >= INF) ? INF : max(outer-w - chrome-x, 0)
+    let sep      = frame ? 1 : (node.cgap ?? node.gap)
+    let edge     = frame ? 2 : 0
+
+    let rows: Array[(Node, String, Array[(Any, String)])] = []
+    for r; i in node.children if (r :: Node) && !r.hidden? {
+        let rpath = "{path}.{child-key(r, i)}"
+        let cells = [
+            (c, "{rpath}.{child-key(c, j)}")
+            for c; j in r.children if c != nil && c != false && !((c :: Node) && c.hidden?)
+        ]
+        rows.push((r, rpath, cells))
+    }
+
+    let pinh = _inh-spec
+    if let $own = node.inh {
+        _inh-spec = (pinh == nil) ? own : "{pinh} {own}"
+    }
+
+    let base = _inh-spec
+    fn styled(r: Node) {
+        _inh-spec = match (base, r.inh) {
+            (nil, i) => i,
+            (b, nil) => b,
+            (b, i)   => "{b} {i}"
+        }
+    }
+
+    let n      = rows.map(r -> #r.2).max() ?? 0
+    let widths = [0 for ..n]
+    let flexes = [0 for ..n]
+    for (r, _, cells) in rows {
+        styled(r)
+        for (c, cp); j in cells {
+            widths[j] = max(widths[j], measure(c, avail, INF, cp).output.width)
+            flexes[j] = max(flexes[j], ((c :: Node) ? c.flex : nil) ?? 0)
+        }
+    }
+
+    while widths.sum(0) + sep * max(n - 1, 0) + edge > avail && (widths.max() ?? 0) > 3 {
+        let widest = widths.max() ?? 0
+        widths[widths.search(widest) ?? 0] -= 1
+    }
+
+    let spare = avail - (widths.sum(0) + sep * max(n - 1, 0) + edge)
+    let pull  = flexes.sum(0)
+    if node.width != nil && avail < INF && spare > 0 && pull > 0 {
+        let given = 0
+        for f; j in flexes if f > 0 {
+            let add = spare * f / pull
+            widths[j] += add
+            given += add
+        }
+        widths[flexes.search(flexes.max() ?? 0) ?? 0] += spare - given
+    }
+
+    let w   = widths.sum(0) + sep * max(n - 1, 0) + edge
+    let ink = (t: String) -> (frame && node.bcolor) ? str(chalk.render("[{node.bcolor}]{chalk-escape(t)}[/]")) : t
+    let (tl, tr, bl, br, hz, vt) = frame ? (frame[0], frame[1], frame[2], frame[3], frame[4], frame[5]) : ('', '', '', '', '', '')
+    let (tm, bm, lm, rm, xm) = frame ? (junctions(frame)[0], junctions(frame)[1], junctions(frame)[2], junctions(frame)[3], junctions(frame)[4]) : ('', '', '', '', '')
+    let rule = (l: String, m: String, r: String) -> ink("{l}{widths.map(k -> hz * k).join(m)}{r}")
+    let bar  = ink(vt)
+    let gap  = frame ? bar : ' ' * sep
+
+    let x0 = ox + node.ml + node.pl
+    let y0 = oy + node.mt + node.pt
+    let lines: Array[String] = frame ? [rule(tl, tm, tr)] : []
+    let row-elements: Array[Element] = []
+
+    for (r, _, cells); ri in rows {
+        styled(r)
+        let ms = [measure(c, widths[j], INF, cp, fw=widths[j]) for (c, cp); j in cells]
+        let h  = max(1, ms.map(m -> m.output.height).max() ?? 1)
+        let y  = y0 + #lines
+        let x  = x0 + (frame ? 1 : 0)
+        let kids: Array[Element] = []
+        for m; j in ms {
+            let (_, el) = m.replay(x, y)
+            kids.push(el)
+            x += widths[j] + sep
+        }
+        row-elements.push(Element(x0, y, w, h, r.props, kids))
+        for k in ..h {
+            let parts = [
+                (j < #ms && k < ms[j].output.height) ? pad-line(ms[j].output.lines[k], ms[j].output.lines[k].width(), widths[j]) : ' ' * widths[j]
+                for j in ..n
+            ]
+            lines.push("{frame ? bar : ''}{parts.join(gap)}{frame ? bar : ''}")
+        }
+        if frame && ri < #rows - 1 {
+            lines.push(rule(lm, xm, rm))
+        }
+    }
+
+    if frame {
+        lines.push(rule(bl, bm, br))
+    }
+
+    _inh-spec = pinh
+
+    let own = node.bstyle
+    node.bstyle = nil
+    let out = finish-box(lines, w, node, max-w, ox, oy, row-elements)
+    node.bstyle = own
+    out
+}
+
+fn layout-columns(node: Node, max-w: Int, path: String, ox: Int, oy: Int) -> (Output, Element) {
+    let chrome-x = node.ml + node.pl + node.mr + node.pr
+    let outer-w  = node.width ?? min(max-w, node.maxw ?? INF)
+    let avail    = (outer-w >= INF) ? INF : max(outer-w - chrome-x, 0)
+    let gap      = node.cgap ?? node.gap
+
+    let pinh = _inh-spec
+    if let $own = node.inh {
+        _inh-spec = (pinh == nil) ? own : "{pinh} {own}"
+    }
+
+    let items: Array[(Array[(Any, String)], Node | nil)] = []
+    for c; i in node.children if c != nil && c != false && !((c :: Node) && c.hidden?) {
+        let cp = "{path}.{child-key(c, i)}"
+        let row? = (c :: Node) && c.`tag` == NodeBox && c.direction == 'row'
+        let parts = row?
+            ? [(k, "{cp}.{child-key(k, j)}") for k; j in c.children if k != nil && k != false]
+            : [(c, cp)]
+        items.push((parts, row? ? c : nil))
+    }
+
+    let natural = items.map(it -> it.0.map(p -> measure(p.0, avail, INF, p.1).output.width))
+    let n       = #items
+
+    if n == 0 {
+        _inh-spec = pinh
+        return finish-box([], 0, node, max-w, ox, oy, [])
+    }
+
+    fn layout(k: Int) -> (Int, Array[(Array[Int], Int)]) {
+        let per = (n + k - 1) / k
+        let out = natural.groups-of(per).map(g -> do {
+            let multi = g.filter(w -> #w > 1)
+            let parts = [multi.map(w -> (j < #w) ? w[j] : 0).max() ?? 0 for j in ..(multi.map(w -> #w).max() ?? 0)]
+            let solo  = g.filter(w -> #w == 1).map(w -> w[0]).max() ?? 0
+            (parts, max(parts.sum(0), solo))
+        })
+        (per, out)
+    }
+
+    let (per, widths) = layout(1)
+    for k in (1..n + 1).list().reverse() {
+        let (p, ws) = layout(k)
+        if ws.map(c -> c.1).sum(0) + gap * (#ws - 1) <= avail {
+            (per, widths) = (p, ws)
+            break
+        }
+    }
+
+    let cols  = widths.map(c -> c.1)
+    let w     = cols.sum(0) + gap * max(#cols - 1, 0)
+    let x0    = ox + node.ml + node.pl
+    let y0    = oy + node.mt + node.pt
+    let lines: Array[String] = ['' for ..per]
+    let segs: Array[Array[String]] = [[] for ..per]
+    let kids: Array[Element] = []
+    let x = 0
+
+    for col; ci in widths {
+        for r in ..per {
+            let i = ci * per + r
+            if i >= n {
+                segs[r].push(' ' * cols[ci])
+                continue
+            }
+            let (parts, row) = items[i]
+            let (subs, total) = col
+            let cells: Array[Element] = []
+            let line = Blob()
+            let px = x
+            for (c, cp); j in parts {
+                let cw = (#parts == 1) ? total : ((j == #parts - 1) ? total - subs[;j].sum(0) : subs[j])
+                let m = measure(c, cw, INF, cp, fw=cw)
+                let (_, el) = m.replay(x0 + px, y0 + r)
+                cells.push(el)
+                let ln = m.output.lines.?[0] ?? ''
+                line.push(pad-line(ln, ln.width(), cw))
+                px += cw
+            }
+            kids.push(row ? Element(x0 + x, y0 + r, cols[ci], 1, row.props, cells) : cells[0])
+            segs[r].push(line.str!())
+        }
+        x += cols[ci] + gap
+    }
+
+    let full = (node.width != nil && avail < INF) ? max(w, avail) : w
+    for r in ..per {
+        let ln = segs[r].join(' ' * gap)
+        lines[r] = pad-line(ln, ln.width(), full)
+    }
+
+    _inh-spec = pinh
+    finish-box(lines, full, node, max-w, ox, oy, kids)
 }
 
 fn layout-overlay(node: Node, max-w: Int, max-h: Int, path: String, ox: Int = 0, oy: Int = 0) -> (Output, Element) {
@@ -4726,7 +5770,7 @@ fn layout-overlay(node: Node, max-w: Int, max-h: Int, path: String, ox: Int = 0,
     shift-element(el, x, y)
 
     let spot = Element(ox, oy, 0, 0, node.props)
-    _overlays.push({output, x, y, el, anchor: node.props['above'] ? spot : nil})
+    _overlays.push({output, x, y, el, anchor: node.props['above'] ? spot : nil, flip: node.props['flip']})
 
     (Output([], 0), spot)
 }
@@ -4735,11 +5779,16 @@ fn place-overlays() {
     for ov; i in _overlays {
         if let $a = ov.anchor {
             let x = a.x + ov.x
-            let y = a.y - ov.output.height
+            let up = a.y - ov.output.height
+            let y = (ov.flip != nil && up < 0) ? a.y + ov.flip : up
             shift-element(ov.el, x - ov.el.x, y - ov.el.y)
-            _overlays[i] = {output: ov.output, x, y, el: ov.el, anchor: nil}
+            _overlays[i] = {output: ov.output, x, y, el: ov.el, anchor: nil, flip: nil}
         }
     }
+}
+
+fn other-memos(memos: Array[Any], path: String, max-w: Int, max-h: Int, fw: Any, fh: Any) -> Array[Any] {
+    memos.filter(m -> !m.valid?(path, max-w, max-h, fw, fh))[-2;]
 }
 
 fn layout-node(
@@ -4781,8 +5830,10 @@ fn layout-node(
             let fw = force-w ?? inst.?width
             let fh = force-h ?? inst.?height
 
-            if !inst.dirty? and let $memo = inst.ink-memo and memo.valid?(path, max-w, max-h, fw, fh) {
-                return memo.replay(ox, oy)
+            if !inst.dirty? {
+                for memo in inst.ink-memo if memo.valid?(path, max-w, max-h, fw, fh) {
+                    return memo.replay(ox, oy)
+                }
             }
 
             let fl0 = #_fiber-log
@@ -4796,13 +5847,20 @@ fn layout-node(
 
             let same-constraints = (inst.layout-max-w == max-w)
                                 && (inst.layout-max-h == max-h)
+                                && (inst.layout-fw == force-w)
+                                && (inst.layout-fh == force-h)
 
             inst.layout-max-w = max-w
             inst.layout-max-h = max-h
+            inst.layout-fw    = force-w
+            inst.layout-fh    = force-h
 
             let rendered = if !inst.dirty? && inst.cached-node != nil && same-constraints {
                 inst.cached-node
             } else {
+                if inst.dirty? {
+                    inst.ink-memo = []
+                }
                 inst.dirty? = false
                 _ctx-stack.push(%{})
                 let r = inst.render()
@@ -4826,7 +5884,12 @@ fn layout-node(
             _ctx-stack.push(inst.ink-ctx-frame)
             let owner = _layout-owner
             _layout-owner = inst
-            let (output, el) = layout-node(sized, max-w, max-h, "{path}${type(inst).__id__}", ox, oy)
+            let nested? = rendered :: Component
+            let (output, el) = layout-node(
+                sized, max-w, max-h, "{path}${type(inst).__id__}", ox, oy,
+                force-w=(nested? ? fw : nil),
+                force-h=(nested? ? fh : nil)
+            )
             _layout-owner = owner
             _ctx-stack.pop()
 
@@ -4844,11 +5907,13 @@ fn layout-node(
                 images.push({id: k.id, escape: k.escape, rx: k.ox - ox, ry: k.oy - oy})
             }
 
-            inst.ink-memo = LayoutMemo(
+            let memos = other-memos(inst.ink-memo, path, max-w, max-h, fw, fh)
+            memos.push(LayoutMemo(
                 path, max-w, max-h, fw, fh, output, wrapper,
                 _fiber-log[fl0;], _focusables[fc0;], _overlays[ov0;],
                 _kitties[ki0;], images
-            )
+            ))
+            inst.ink-memo = memos
 
             (output, wrapper)
         },
@@ -4905,6 +5970,63 @@ fn composite-overlays(lines: Array[String], width: Int, base: Array[String] = []
     out
 }
 
+let __tls::_ids: Dict[String, Element] = %{}
+let __tls::_ids-used?: Bool = false
+
+fn index-ids(el: Element) {
+    if let $id = el.props['id'] {
+        _ids[id] = el
+    }
+    for c in el.children {
+        index-ids(c)
+    }
+}
+
+pub fn element(id: String) -> Element | nil {
+    _ids[id]
+}
+
+fn nearest(cands: Array[(Int, Element)], from: Element, last?: Bool) -> Int | nil {
+    if #cands == 0 {
+        return nil
+    }
+    let ys   = cands.map(c -> c.1.y)
+    let line = last? ? ys.max() : ys.min()
+    let mid  = from.x + from.w / 2
+    cands
+        .filter(c -> c.1.y == line)
+        .sort(by=c -> abs(c.1.x + c.1.w / 2 - mid))[0]
+        .0
+}
+
+pub fn neighbor(id: String, i: Int, dir: String) -> Int | nil {
+    let $box = _ids[id] or return nil
+    let kids = box.children
+    let n    = #kids
+    if n == 0 {
+        return nil
+    }
+    let i    = i.clamp(0, n - 1)
+    let at   = kids[i]
+    let view = box.h
+    let all  = kids.enumerate()
+    match dir {
+        'left'  => max(i - 1, 0),
+        'right' => min(i + 1, n - 1),
+        'first' => 0,
+        'last'  => n - 1,
+        'up'    => nearest(all.filter(c -> c.1.y + c.1.h <= at.y), at, true) ?? i,
+        'down'  => nearest(all.filter(c -> c.1.y >= at.y + at.h), at, false) ?? i,
+        'page-up' => nearest(all.filter(c -> c.1.y < at.y && c.1.y >= at.y - view + 1), at, false)
+                  ?? nearest(all.filter(c -> c.1.y + c.1.h <= at.y), at, true)
+                  ?? i,
+        'page-down' => nearest(all.filter(c -> c.1.y > at.y && c.1.y <= at.y + view - 1), at, true)
+                    ?? nearest(all.filter(c -> c.1.y >= at.y + at.h), at, false)
+                    ?? i,
+        _ => i
+    }
+}
+
 fn render-tree(root, max-w: Int, max-h: Int = INF) -> (Output, Element) {
     debug!("--- render-tree ({max-w}×{max-h}) ---")
     _screen-w = max-w
@@ -4919,6 +6041,13 @@ fn render-tree(root, max-w: Int, max-h: Int = INF) -> (Output, Element) {
     _kitty-images = []
     let result = layout-node(root, max-w, max-h)
     place-overlays()
+    _ids = %{}
+    if _ids-used? {
+        index-ids(result.1)
+        for ov in _overlays {
+            index-ids(ov.el)
+        }
+    }
     let unmounted = 0
     for path, comp in _fibers {
         if _next-fibers[path] == nil {
@@ -5690,6 +6819,9 @@ let __tls::_last-tree: Element | nil = nil
 fn render-root(app: Component, cols: Int, rows: Int) -> (Output, Element) {
     _app = app
     refresh-looks()
+    if _looks.viewport(cols, rows) {
+        invalidate-all()
+    }
     app.layout-max-w = cols
     app.layout-max-h = rows
     sync-interval(app)

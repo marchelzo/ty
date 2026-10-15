@@ -11,17 +11,33 @@ pub class LookError < RuntimeError {
 }
 
 const INT_PROPS: Set[String] = %[
-    'pad-x', 'pad-y', 'padding', 'gap',
-    'margin', 'margin-x', 'margin-y', 'width', 'height'
+    'pad-x', 'pad-y', 'padding', 'gap', 'row-gap', 'column-gap',
+    'pad-top', 'pad-right', 'pad-bottom', 'pad-left',
+    'margin', 'margin-x', 'margin-y',
+    'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+    'width', 'height', 'min-width', 'max-width', 'min-height', 'max-height',
+    'flex', 'shrink', 'basis', 'max-lines'
 ]
+const PCT_PROPS: Set[String] = %['width', 'height', 'min-width', 'max-width', 'min-height', 'max-height', 'basis']
 const BOOL_PROPS: Set[String] = %['bold', 'italic', 'underline', 'dim', 'reverse']
-const STR_PROPS: Set[String] = %['fg', 'bg', 'border-color', 'content', 'text']
+const STR_PROPS: Set[String] = %['fg', 'bg', 'border-color', 'border-left', 'content', 'text', 'overflow-note', 'overflow-note-color']
 const ENUM_PROPS: Dict[String, Set[String]] = %{
+    'content-visibility': %['auto', 'visible'],
+    'scroll-snap': %['none', 'start'],
     'border':    %['none', 'single', 'double', 'round', 'bold'],
-    'align':     %['start', 'center', 'end'],
+    'align':     %['start', 'center', 'end', 'stretch'],
+    'text-align': %['start', 'center', 'end'],
+    'align-self': %['start', 'center', 'end', 'stretch'],
+    'flex-wrap': %['wrap', 'nowrap'],
+    'display':   %['none', 'flex', 'table', 'columns'],
+    'overflow':  %['hidden', 'scroll'],
+    'text-overflow': %['clip', 'ellipsis', 'ellipsis-start'],
+    'visibility': %['visible', 'hidden'],
+    'scroll-anchor': %['start', 'end'],
+    'line-fill': %['none', 'bg'],
     'justify':   %['start', 'center', 'end', 'space-between', 'space-around', 'space-evenly'],
     'direction': %['row', 'column'],
-    'wrap':      %['word', 'truncate', 'none'],
+    'wrap':      %['word', 'pre-wrap', 'truncate', 'none'],
     'shape':     %[
         'reverse', 'terminal', 'block', 'underline', 'bar',
         'blinking-block', 'blinking-underline', 'blinking-bar'
@@ -41,7 +57,7 @@ pub PARTS: Dict[String, (Array[String], Array[String])] = %{
     'Toast':         (['icon', 'text'], []),
     'TextInput':     (['frame', 'prompt', 'text', 'placeholder', 'cursor', 'popup', 'popup-item'], ['focused']),
     'TextArea':      (['frame', 'text', 'placeholder', 'cursor'], ['focused']),
-    'SuggestionList': (['frame', 'item', 'marker', 'label', 'match', 'detail', 'kind', 'empty', 'scroll-up', 'scroll-down'], ['selected']),
+    'SuggestionList': (['frame', 'grid', 'item', 'marker', 'label', 'match', 'detail', 'kind', 'empty', 'scroll-up', 'scroll-down'], ['selected']),
     'Slider':        (['label', 'fill', 'thumb', 'track', 'value'], ['focused']),
     'RangeSelector': (['label', 'fill', 'thumb', 'track', 'value'], ['focused', 'active']),
     'TrackBar':      (['label', 'fill', 'thumb', 'track', 'value', 'button', 'play', 'speed'], ['focused', 'playing']),
@@ -72,6 +88,9 @@ fn check-key(key: String, line: Int) {
 }
 
 fn check-value(k: String, v: _, ctx: String) -> _ {
+    if k in PCT_PROPS && "{v}".match?(/^\d+%$/) {
+        return "{v}"
+    }
     if k in INT_PROPS {
         let n = (v :: Int) ? v : int(v, 10)
         if !(n :: Int) || n < 0 {
@@ -110,13 +129,73 @@ fn unquote(v: String) -> String {
     }
 }
 
+fn media-key(conds: String, line: Int) -> String {
+    let parts = conds.split(/\s+and\s+/).map(&trim).filter(bool)
+    if #parts == 0 {
+        throw LookError("line {line}: @media needs at least one condition")
+    }
+    let keys = parts.map(c -> do {
+        let $m = c.match(/^\(\s*((?:min|max)-(?:width|height))\s*:\s*(\d+)\s*\)$/)
+            or throw LookError("line {line}: bad @media condition '{c}' (want (min-width: N), (max-height: N), ...)")
+        "{m[1]}:{m[2]}"
+    })
+    "@media {keys.join(',')}"
+}
+
+fn holds?(media: String, w: Int, h: Int) -> Bool {
+    for c in media[#'@media ';].split(',') {
+        let [k, v] = c.split(':')
+        let n = int(v)
+        let ok? = match k {
+            'min-width'  => w >= n,
+            'max-width'  => w <= n,
+            'min-height' => h >= n,
+            'max-height' => h <= n,
+            _            => true
+        }
+        if !ok? {
+            return false
+        }
+    }
+    true
+}
+
 pub fn parse(src: String) -> Dict[String, Dict[String, _]] {
     let out: Dict[String, Dict[String, _]] = %{}
     let line = 1
     let i = 0
     let n = #src
     while i < n {
-        let $m = src[i;].match(/^(\s*(?:#[^\n]*\n\s*)*)([^{}\s][^{}]*?)\s*\{([^{}]*)\}/s) or do {
+        if let $mm = src[i;].match(/^(\s*(?:#[^\n]*\n\s*)*)@media\b([^{]*)\{/s) {
+            line += #mm[1].matches(/\n/)
+            let key   = media-key(mm[2].trim(), line)
+            let start = i + #mm[0]
+            let depth = 1
+            let j     = start
+            while j < n && depth > 0 {
+                match src[j] {
+                    '{' => depth += 1,
+                    '}' => depth -= 1,
+                    _   => ()
+                }
+                j += 1
+            }
+            if depth > 0 {
+                throw LookError("line {line}: unterminated @media block")
+            }
+            let inner = src[start;j - 1]
+            let pad   = '\n' * (line - 1)
+            for k, d in parse("{pad}{inner}") {
+                if k == '@tokens' || k.starts?('@media') {
+                    throw LookError("line {line}: @media blocks may only contain rules")
+                }
+                out["{key}|{k}"] = %{**(out["{key}|{k}"] ?? %{}), **d}
+            }
+            line += #src[i + #mm[1];j].matches(/\n/)
+            i = j
+            continue
+        }
+        let $m = src[i;].match(/^(\s*(?:#[^\n]*\n\s*)*)([^{}\s][^{}]*?)\s*\{((?:'[^'\n]*'|"[^"\n]*"|[^{}'"])*)\}/s) or do {
             let rest = src[i;]
             if rest.match?(/^\s*(#[^\n]*\s*)*$/) { break }
             throw LookError("line {line}: expected 'key \{ prop: value; ... \}'")
@@ -127,8 +206,8 @@ pub fn parse(src: String) -> Dict[String, Dict[String, _]] {
         let body = m[3]
         let decl: Dict[String, _] = %{}
         let dl = key-line
-        for d in body.split(/[;\n]/) {
-            let t = d.trim()
+        for d in body.matches(/(?:'[^'\n]*'|"[^"\n]*"|[^;\n'"])*[;\n]?/).filter(bool) {
+            let t = d.sub(/[;\n]$/, '').trim()
             if #t > 0 {
                 let $kv = t.match(/^([\w-]+)\s*:\s*(.+)$/s)
                     or throw LookError("line {dl}: bad declaration '{t}'")
@@ -177,16 +256,24 @@ fn spec-of(d: Dict[String, _]) -> String | nil {
 }
 
 pub class Looks {
-    base:  Dict[String, Dict[String, _]]
-    defs:  Dict[String, Dict[String, _]]
-    cache: Dict[String, Dict[String, _]]
-    epoch: Int
+    base:   Dict[String, Dict[String, _]]
+    defs:   Dict[String, Dict[String, _]]
+    cache:  Dict[String, Dict[String, _]]
+    epoch:  Int
+    medias: Array[String]
+    active: Array[String]
+    w:      Int
+    h:      Int
 
     init(base: Dict[String, Dict[String, _]]) {
         self.base = base
         defs      = base
         cache     = %{}
         epoch     = 0
+        medias    = []
+        active    = []
+        w         = 80
+        h         = 24
     }
 
     use(user: Dict[String, Dict[String, _]]) {
@@ -194,9 +281,24 @@ pub class Looks {
         for k, d in user {
             merged[k] = %{**(merged[k] ?? %{}), **d}
         }
-        defs  = merged
-        cache = %{}
+        defs   = merged
+        medias = %[k.split('|')[0] for k in user.keys() if k.starts?('@media ')].list()
+        active = medias.filter(holds?@(_, w, h))
+        cache  = %{}
         epoch += 1
+    }
+
+    viewport(cols: Int, rows: Int) -> Bool {
+        w = cols
+        h = rows
+        let now = medias.filter(holds?@(_, w, h))
+        if now == active {
+            return false
+        }
+        active = now
+        cache  = %{}
+        epoch += 1
+        true
     }
 
     merge(keys: Array[String], ck: String) -> Dict[String, _] {
@@ -204,6 +306,11 @@ pub class Looks {
         for keys {
             if let $x = defs[it] {
                 for k, v in x { d[k] = v }
+            }
+            for m in active {
+                if let $x = defs["{m}|{it}"] {
+                    for k, v in x { d[k] = v }
+                }
             }
         }
         d['spec'] = spec-of(d)
@@ -290,13 +397,14 @@ pub DEFAULTS: Dict[String, Dict[String, _]] = %{
     'TextInput::popup':           %{},
     'TextInput::popup-item':      %{},
     'SuggestionList::frame':      %{'bg': 'bg-surface', 'border': 'single', 'border-color': 'border', 'pad-x': 1},
+    'SuggestionList::grid':       %{'display': 'columns', 'column-gap': 4},
     'SuggestionList::item':       %{'fg': 'text'},
     'SuggestionList::item:selected': %{'reverse': true},
     'SuggestionList::marker':     %{},
-    'SuggestionList::label':      %{},
+    'SuggestionList::label':      %{'pad-right': 2, 'max-width': '50%', 'wrap': 'truncate', 'text-overflow': 'ellipsis'},
     'SuggestionList::match':      %{'bold': true},
-    'SuggestionList::detail':     %{'fg': 'text-dim'},
-    'SuggestionList::kind':       %{'fg': 'text-dim'},
+    'SuggestionList::detail':     %{'fg': 'text-dim', 'flex': 1, 'wrap': 'truncate', 'text-overflow': 'ellipsis'},
+    'SuggestionList::kind':       %{'fg': 'text-dim', 'pad-left': 2},
     'SuggestionList::empty':      %{'fg': 'text-dim', 'italic': true, 'content': 'no matches'},
     'SuggestionList::scroll-up':  %{'fg': 'text-dim', 'content': '↑'},
     'SuggestionList::scroll-down': %{'fg': 'text-dim', 'content': '↓'},
@@ -337,7 +445,7 @@ pub DEFAULTS: Dict[String, Dict[String, _]] = %{
     'TrackBar::play:focused':     %{'fg': 'primary', 'bold': true},
     'TrackBar::speed':            %{'fg': 'text-dim'},
     'ScrollView::frame':          %{},
-    'TreeView::frame':            %{},
+    'TreeView::frame':            %{'height': 20},
     'TreeView::row':              %{},
     'TreeView::mark':             %{'fg': 'text-dim', 'content': '  '},
     'TreeView::mark:selected':    %{'fg': 'selection', 'bold': true},

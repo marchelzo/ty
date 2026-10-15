@@ -19,6 +19,7 @@
 #include "lir.h"
 
 static GCRootSet ImmortalSet;
+static TySpinLock ImmortalLock = TY_MUTEX_INIT;
 
 #define A_LOAD(p)     atomic_load_explicit((p), memory_order_relaxed)
 #define A_STORE(p, x) atomic_store_explicit((p), (x), memory_order_relaxed)
@@ -269,7 +270,9 @@ gc_register(Ty *ty, void *p)
 void
 gc_immortalize(Ty *ty, Value const *v)
 {
+        TySpinLockLock(&ImmortalLock);
         xvP(ImmortalSet, *v);
+        TySpinLockUnlock(&ImmortalLock);
 }
 
 void

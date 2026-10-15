@@ -304,6 +304,30 @@ TySyncThreadState(Ty *ty);
 noreturn void
 ZeroDividePanic(Ty *ty);
 
+inline static imax
+IntDiv(imax a, imax b)
+{
+        return (b == -1) ? (imax)(0 - (umax)a) : a / b;
+}
+
+inline static imax
+IntMod(imax a, imax b)
+{
+        return (b == -1) ? 0 : a % b;
+}
+
+inline static imax
+IntShl(imax a, imax b)
+{
+        return (imax)((umax)a << (b & 63));
+}
+
+inline static imax
+IntShr(imax a, imax b)
+{
+        return a >> (b & 63);
+}
+
 struct try *
 vm_push_try(Ty *ty);
 
@@ -453,6 +477,9 @@ vm_jit_neg(Ty *ty);
 
 void
 vm_trampoline_linked(Ty *ty, JitFn *func, Value **env);
+
+void
+vm_trampoline_resume(Ty *ty, i32 rc);
 
 void
 vm_jit_get_member(Ty *ty);

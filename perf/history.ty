@@ -351,7 +351,7 @@ pub fn record-run(
                 ).insert()
                 let $measurement-id = measurement.id
                     or throw RuntimeError('measurement insert did not return an id')
-                for seconds, i in r.per-iter-times {
+                for seconds; i in r.per-iter-times {
                     phase = "sample {i} for '{r.name}'"
                     Sample(
                         measurement_id=measurement-id,

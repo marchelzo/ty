@@ -34,6 +34,19 @@ bc_finish_op(BcLir *c, BcLirNode const *node, char const *ip)
                 LirReg top = bc_addr(c, c->ops, c->sp * sizeof (Value));
                 LirOpnd poll[] = { lir_r(c->ty), lir_r(top), lir_r(info), lir_l(node->deopt) };
                 bc_poll(c, poll);
+                if (!c->dynamic && c->base_index != LIR_NONE && node->argc <= 16 && c->bound <= 48) {
+                        for (i32 i = 0; i < node->argc; ++i) {
+                                bc_value_copy(c, c->locals, i * sizeof (Value), c->ops,
+                                              (c->sp - node->argc + i) * sizeof (Value));
+                        }
+                        for (i32 i = node->member; i < c->bound; ++i) {
+                                bc_store(c, LIR_ST64, c->locals, i * sizeof (Value), lir_i(VALUE_NIL));
+                        }
+                        bc_cache_reload(c);
+                        bc_stack_count_at(c, 0);
+                        bc_jump(c, c->nodes[0].label);
+                        return;
+                }
                 LirReg args = bc_addr(c, c->ops, (c->sp - node->argc) * sizeof (Value));
                 LirType types[] = { ptr, ptr, ptr, integer, integer, integer };
                 LirOpnd values[] = { lir_r(c->ty), lir_r(c->locals), lir_r(args),

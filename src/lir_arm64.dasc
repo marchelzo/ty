@@ -1,6 +1,6 @@
 |.arch arm64
 |.actionlist lir_actions
-|.section code
+|.section code, cold
 
 static void
 native_label(dasm_State **Dst, u32 label)
@@ -153,13 +153,32 @@ native_stack_bounds(dasm_State **Dst, u32 ty_slot, u32 base, u32 end)
 }
 
 static void
-native_rebase_begin(dasm_State **Dst, u32 ty_slot, u32 base, u32 done)
+native_rebase_check(dasm_State **Dst, u32 base, u32 stub)
+{
+        native_memory(Dst, false, 17, 29, base, 8, false, false);
+        | cmp x16, x17
+        | bne =>stub
+}
+
+static void
+native_rebase_delta(dasm_State **Dst, u32 ty_slot, u32 base)
 {
         native_frame_read16(Dst, ty_slot);
         native_memory(Dst, false, 16, 16, offsetof(Ty, stack.items), 8, false, false);
         native_memory(Dst, false, 17, 29, base, 8, false, false);
-        | cmp x16, x17
-        | beq =>done
+        | sub x16, x16, x17
+}
+
+static void
+native_cold(dasm_State **Dst)
+{
+        |.cold
+}
+
+static void
+native_hot(dasm_State **Dst)
+{
+        |.code
 }
 
 static void
@@ -258,7 +277,7 @@ native_vm_slots(dasm_State **Dst, u8 d, u8 ty, u32 top_slot)
 }
 
 static void
-native_call(dasm_State **Dst, bool site, u32 thunk)
+native_call(dasm_State **Dst, bool site, u32 thunk, u32 pc_slot)
 {
         if (site) {
                 | bl =>thunk

@@ -5,10 +5,19 @@
 #include "lir.h"
 
 typedef struct lir_interval_build {
-        u32 ranges;
-        u32 uses;
         u8 hint;
 } LirIntervalBuild;
+
+typedef struct lir_range_rec {
+        u32 reg;
+        u32 start;
+        u32 end;
+} LirRangeRec;
+
+typedef struct lir_use_rec {
+        u32 reg;
+        u32 pc;
+} LirUseRec;
 
 typedef struct lir_constraint_index {
         u32 *at;
@@ -31,6 +40,18 @@ typedef struct lir_scan {
         LirConstraintIndex *cindex;
         u64 *live_gp;
         u64 *live_fp;
+        u64 *saved;
+        u32 nsaved;
+        u32 saved_cap;
+        u32 *touched;
+        u32 ntouched;
+        u32 touched_cap;
+        LirRangeRec *range_recs;
+        u32 nrange_recs;
+        u32 range_cap;
+        LirUseRec *use_recs;
+        u32 nuse_recs;
+        u32 use_cap;
 } LirScan;
 
 static bool
@@ -138,28 +159,41 @@ has(u64 const *set, u32 r)
 static bool
 add_range(LirScan *s, u32 r, u32 start, u32 end)
 {
-        LirInterval *i = &s->alloc->intervals[r];
         if (start >= end) {
                 return true;
         }
-        if (!reserve(&i->ranges, &s->build[r].ranges, i->nranges + 1, sizeof *i->ranges)) {
+        if (!reserve(&s->range_recs, &s->range_cap, s->nrange_recs + 1, sizeof *s->range_recs)) {
                 return false;
         }
-        i->ranges[i->nranges++] = (LirRange) { .start = start, .end = end };
+        s->range_recs[s->nrange_recs++] = (LirRangeRec) { .reg = r, .start = start, .end = end };
+        s->alloc->intervals[r].nranges += 1;
+        return true;
+}
+
+static bool
+touch(LirScan *s, u32 r)
+{
+        if (!reserve(&s->touched, &s->touched_cap, s->ntouched + 1, sizeof *s->touched)) {
+                return false;
+        }
+        s->touched[s->ntouched++] = r;
         return true;
 }
 
 static bool
 add_use(LirScan *s, u32 r, u32 pc, u32 *ends)
 {
-        LirInterval *i = &s->alloc->intervals[r];
         if (ends[r] == LIR_NONE) {
                 ends[r] = pc + 1;
+                if (!touch(s, r)) {
+                        return false;
+                }
         }
-        if (!reserve(&i->uses, &s->build[r].uses, i->nuses + 1, sizeof *i->uses)) {
+        if (!reserve(&s->use_recs, &s->use_cap, s->nuse_recs + 1, sizeof *s->use_recs)) {
                 return false;
         }
-        i->uses[i->nuses++] = pc;
+        s->use_recs[s->nuse_recs++] = (LirUseRec) { .reg = r, .pc = pc };
+        s->alloc->intervals[r].nuses += 1;
         return true;
 }
 
@@ -188,23 +222,56 @@ add_def(LirScan *s, u32 r, u32 pc, u32 *ends)
         return add_range(s, r, pc, end);
 }
 
-static int
-range_cmp(void const *a, void const *b)
+static bool
+pool_intervals(LirScan *s)
 {
-        LirRange const *x = a;
-        LirRange const *y = b;
-        if (x->start != y->start) {
-                return x->start < y->start ? -1 : 1;
+        Lir const *L = s->L;
+        LirAlloc *alloc = s->alloc;
+        usize nr = 0;
+        usize nu = 0;
+        alloc->range_pool = malloc(((usize)s->nrange_recs + 1) * sizeof *alloc->range_pool);
+        alloc->use_pool = malloc(((usize)s->nuse_recs + 1) * sizeof *alloc->use_pool);
+        if (alloc->range_pool == NULL || alloc->use_pool == NULL) {
+                return false;
         }
-        return x->end < y->end ? -1 : x->end != y->end;
-}
-
-static int
-use_cmp(void const *a, void const *b)
-{
-        u32 x = *(u32 const *)a;
-        u32 y = *(u32 const *)b;
-        return x < y ? -1 : x != y;
+        for (u32 r = 0; r < L->nregs; ++r) {
+                LirInterval *i = &alloc->intervals[r];
+                nr += i->nranges;
+                nu += i->nuses;
+                i->ranges = alloc->range_pool + nr;
+                i->uses = alloc->use_pool + nu;
+        }
+        for (u32 k = 0; k < s->nrange_recs; ++k) {
+                LirRangeRec const *rec = &s->range_recs[k];
+                *--alloc->intervals[rec->reg].ranges = (LirRange) { .start = rec->start, .end = rec->end };
+        }
+        for (u32 k = 0; k < s->nuse_recs; ++k) {
+                LirUseRec const *rec = &s->use_recs[k];
+                *--alloc->intervals[rec->reg].uses = rec->pc;
+        }
+        for (u32 r = 0; r < L->nregs; ++r) {
+                LirInterval *i = &alloc->intervals[r];
+                u32 n = 0;
+                for (u32 j = 0; j < i->nranges; ++j) {
+                        LirRange range = i->ranges[j];
+                        if (n != 0 && range.start <= i->ranges[n - 1].end) {
+                                if (range.end > i->ranges[n - 1].end) {
+                                        i->ranges[n - 1].end = range.end;
+                                }
+                        } else {
+                                i->ranges[n++] = range;
+                        }
+                }
+                i->nranges = n;
+                n = 0;
+                for (u32 j = 0; j < i->nuses; ++j) {
+                        if (n == 0 || i->uses[j] != i->uses[n - 1]) {
+                                i->uses[n++] = i->uses[j];
+                        }
+                }
+                i->nuses = n;
+        }
+        return true;
 }
 
 static bool
@@ -215,10 +282,23 @@ build_intervals(LirScan *s, LirCFG const *cfg)
         if (ends == NULL) {
                 return false;
         }
-        for (u32 b = 0; b < cfg->nblocks; ++b) {
+        u32 nw = cfg->nwords;
+        for (u32 r = 0; r < L->nregs; ++r) {
+                ends[r] = LIR_NONE;
+        }
+        for (u32 b = cfg->nblocks; b-- > 0;) {
                 LirBlock const *block = &cfg->blocks[b];
-                for (u32 r = 0; r < L->nregs; ++r) {
-                        ends[r] = has(block->live_out, r) ? 2 * block->end : LIR_NONE;
+                s->ntouched = 0;
+                for (u32 w = 0; w < nw; ++w) {
+                        u64 bits = block->live_out[w];
+                        while (bits != 0) {
+                                u32 r = cfg->globals[w * 64 + (u32)__builtin_ctzll(bits)];
+                                bits &= bits - 1;
+                                ends[r] = 2 * block->end;
+                                if (!touch(s, r)) {
+                                        goto Error;
+                                }
+                        }
                 }
                 for (u32 pc = block->end; pc-- > block->first;) {
                         LirInst const *in = &L->insts[pc];
@@ -246,42 +326,16 @@ build_intervals(LirScan *s, LirCFG const *cfg)
                                 }
                         }
                 }
-                for (u32 r = 0; r < L->nregs; ++r) {
+                for (u32 t = 0; t < s->ntouched; ++t) {
+                        u32 r = s->touched[t];
                         if (ends[r] != LIR_NONE && !add_range(s, r, 2 * block->first, ends[r])) {
                                 goto Error;
                         }
+                        ends[r] = LIR_NONE;
                 }
-        }
-        for (u32 r = 0; r < L->nregs; ++r) {
-                LirInterval *i = &s->alloc->intervals[r];
-                u32 n = 0;
-                if (i->nranges > 1) {
-                        qsort(i->ranges, i->nranges, sizeof *i->ranges, range_cmp);
-                }
-                for (u32 j = 0; j < i->nranges; ++j) {
-                        LirRange range = i->ranges[j];
-                        if (n != 0 && range.start <= i->ranges[n - 1].end) {
-                                if (range.end > i->ranges[n - 1].end) {
-                                        i->ranges[n - 1].end = range.end;
-                                }
-                        } else {
-                                i->ranges[n++] = range;
-                        }
-                }
-                i->nranges = n;
-                if (i->nuses > 1) {
-                        qsort(i->uses, i->nuses, sizeof *i->uses, use_cmp);
-                }
-                n = 0;
-                for (u32 j = 0; j < i->nuses; ++j) {
-                        if (n == 0 || i->uses[j] != i->uses[n - 1]) {
-                                i->uses[n++] = i->uses[j];
-                        }
-                }
-                i->nuses = n;
         }
         free(ends);
-        return true;
+        return pool_intervals(s);
 Error:
         free(ends);
         return false;
@@ -377,18 +431,58 @@ append_move(LirScan *s, LirMove move)
 }
 
 static bool
+saved_grow(LirScan *s)
+{
+        u32 cap = s->saved_cap == 0 ? 64 : s->saved_cap * 2;
+        u64 *table = calloc(cap, sizeof *table);
+        if (table == NULL) {
+                free(s->saved);
+                s->saved = NULL;
+                return false;
+        }
+        for (u32 j = 0; j < s->saved_cap; ++j) {
+                u64 key = s->saved[j];
+                if (key != 0) {
+                        u32 h = (u32)((key * 0x9E3779B97F4A7C15ull) >> 32) & (cap - 1);
+                        while (table[h] != 0) {
+                                h = (h + 1) & (cap - 1);
+                        }
+                        table[h] = key;
+                }
+        }
+        free(s->saved);
+        s->saved = table;
+        s->saved_cap = cap;
+        return true;
+}
+
+static bool
+saved_add(LirScan *s, u64 key)
+{
+        if ((s->nsaved + 1) * 2 > s->saved_cap && !saved_grow(s)) {
+                return false;
+        }
+        u32 h = (u32)((key * 0x9E3779B97F4A7C15ull) >> 32) & (s->saved_cap - 1);
+        while (s->saved[h] != 0) {
+                if (s->saved[h] == key) {
+                        return false;
+                }
+                h = (h + 1) & (s->saved_cap - 1);
+        }
+        s->saved[h] = key;
+        s->nsaved += 1;
+        return true;
+}
+
+static bool
 save_move(LirScan *s, u32 reg, u32 pc, u8 phys)
 {
         LirInterval *i = &s->alloc->intervals[reg];
         if (i->call_save == LIR_NONE && !slot(s, &i->call_save)) {
                 return false;
         }
-        for (u32 j = 0; j < s->alloc->nmoves; ++j) {
-                LirMove const *m = &s->alloc->moves[j];
-                if (m->op == pc && m->phase == LIR_MOVE_BEFORE
-                    && m->kind == LIR_MOVE_COPY && m->to_slot == i->call_save) {
-                        return true;
-                }
+        if (!saved_add(s, ((u64)reg << 32 | pc) + 1)) {
+                return s->saved != NULL;
         }
         LirMove before = {
                 .op = pc, .phase = LIR_MOVE_BEFORE,
@@ -512,21 +606,52 @@ typedef struct lir_order {
         u32 start;
 } LirOrder;
 
-static int
-order_cmp(void const *a, void const *b)
+static bool
+sort_order(LirOrder *order, u32 n, u32 ninsts)
 {
-        LirOrder const *x = a;
-        LirOrder const *y = b;
-        if (x->start != y->start) {
-                return x->start < y->start ? -1 : 1;
+        usize limit = 2 * (usize)ninsts + 2;
+        u32 *count;
+        LirOrder *tmp;
+        if (n < 2) {
+                return true;
         }
-        return x->reg < y->reg ? -1 : x->reg != y->reg;
+        count = calloc(limit + 1, sizeof *count);
+        tmp = malloc((usize)n * sizeof *tmp);
+        if (count == NULL || tmp == NULL) {
+                free(count);
+                free(tmp);
+                return false;
+        }
+        for (u32 k = 0; k < n; ++k) {
+                count[order[k].start + 1] += 1;
+        }
+        for (usize k = 1; k <= limit; ++k) {
+                count[k] += count[k - 1];
+        }
+        for (u32 k = 0; k < n; ++k) {
+                tmp[count[order[k].start]++] = order[k];
+        }
+        memcpy(order, tmp, (usize)n * sizeof *order);
+        free(count);
+        free(tmp);
+        return true;
+}
+
+static int
+reg_cmp(void const *a, void const *b)
+{
+        u32 x = *(u32 const *)a;
+        u32 y = *(u32 const *)b;
+        return x < y ? -1 : x != y;
 }
 
 static bool
 assign(LirScan *s)
 {
         LirOrder *order = malloc(((usize)s->L->nregs + 1) * sizeof *order);
+        u32 *chead = NULL;
+        u32 *ctail = NULL;
+        u32 *cnext = NULL;
         u32 n = 0;
         if (order == NULL) {
                 return false;
@@ -537,7 +662,32 @@ assign(LirScan *s)
                         order[n++] = (LirOrder) { .reg = r, .start = i->ranges[0].start };
                 }
         }
-        qsort(order, n, sizeof *order, order_cmp);
+        if (!sort_order(order, n, s->L->ninsts)) {
+                free(order);
+                return false;
+        }
+        chead = malloc(((usize)s->L->nregs + 1) * sizeof *chead);
+        ctail = malloc(((usize)s->L->nregs + 1) * sizeof *ctail);
+        cnext = malloc(((usize)s->alloc->nconstraints + 1) * sizeof *cnext);
+        if (chead == NULL || ctail == NULL || cnext == NULL) {
+                goto Error;
+        }
+        for (u32 r = 0; r < s->L->nregs; ++r) {
+                chead[r] = LIR_NONE;
+        }
+        for (u32 c = 0; c < s->alloc->nconstraints; ++c) {
+                u32 r = s->alloc->constraints[c].reg;
+                cnext[c] = LIR_NONE;
+                if (r >= s->L->nregs) {
+                        continue;
+                }
+                if (chead[r] == LIR_NONE) {
+                        chead[r] = c;
+                } else {
+                        cnext[ctail[r]] = c;
+                }
+                ctail[r] = c;
+        }
         for (u32 o = 0; o < n; ++o) {
                 u32 r = order[o].reg;
                 LirInterval *cur = &s->alloc->intervals[r];
@@ -574,7 +724,7 @@ assign(LirScan *s)
                                 }
                         }
                 }
-                for (u32 c = 0; c < s->alloc->nconstraints; ++c) {
+                for (u32 c = chead[r]; c != LIR_NONE; c = cnext[c]) {
                         LirConstraint const *constraint = &s->alloc->constraints[c];
                         if (constraint->reg == r && constraint->phys != LIR_PHYS_NONE) {
                                 hint = constraint->phys;
@@ -632,24 +782,38 @@ assign(LirScan *s)
                 s->active[s->nactive++] = r;
         }
         free(order);
+        free(chead);
+        free(ctail);
+        free(cnext);
         return true;
 Error:
         free(order);
+        free(chead);
+        free(ctail);
+        free(cnext);
         return false;
 }
 
 static bool
 call_moves(LirScan *s)
 {
-        u32 *regs = malloc(((usize)s->L->nregs + 1) * sizeof *regs);
-        u32 count = 0;
-        if (regs == NULL) {
-                return false;
+        LirOrder *order = malloc(((usize)s->L->nregs + 1) * sizeof *order);
+        u32 *live = malloc(((usize)s->L->nregs + 1) * sizeof *live);
+        u32 *hits = malloc(((usize)s->L->nregs + 1) * sizeof *hits);
+        u32 norder = 0;
+        u32 nlive = 0;
+        u32 next = 0;
+        if (order == NULL || live == NULL || hits == NULL) {
+                goto Error;
         }
         for (u32 r = 0; r < s->L->nregs; ++r) {
-                if (s->alloc->intervals[r].crosses_call || s->L->regs[r].cls == LIR_REF) {
-                        regs[count++] = r;
+                LirInterval const *i = &s->alloc->intervals[r];
+                if ((i->crosses_call || s->L->regs[r].cls == LIR_REF) && i->nranges != 0) {
+                        order[norder++] = (LirOrder) { .reg = r, .start = i->ranges[0].start };
                 }
+        }
+        if (!sort_order(order, norder, s->L->ninsts)) {
+                goto Error;
         }
         for (u32 pc = 0; pc < s->L->ninsts; ++pc) {
                 LirInst const *in = &s->L->insts[pc];
@@ -658,17 +822,35 @@ call_moves(LirScan *s)
                 if (!call && !gc) {
                         continue;
                 }
-                for (u32 k = 0; k < count; ++k) {
-                        u32 r = regs[k];
+                while (next < norder && order[next].start <= 2 * pc + 1) {
+                        live[nlive++] = order[next++].reg;
+                }
+                u32 keep = 0;
+                u32 nhits = 0;
+                for (u32 a = 0; a < nlive; ++a) {
+                        u32 r = live[a];
+                        LirInterval const *i = &s->alloc->intervals[r];
+                        if (i->ranges[i->nranges - 1].end <= 2 * pc) {
+                                continue;
+                        }
+                        live[keep++] = r;
+                        hits[nhits++] = r;
+                }
+                nlive = keep;
+                if (nhits > 1) {
+                        qsort(hits, nhits, sizeof *hits, reg_cmp);
+                }
+                for (u32 k = 0; k < nhits; ++k) {
+                        u32 r = hits[k];
                         LirInterval *i = &s->alloc->intervals[r];
                         LirRegInfo const *ri = &s->L->regs[r];
-                        bool live = survives(s, r, pc);
+                        bool live_here = survives(s, r, pc);
                         bool root = gc && ri->cls == LIR_REF && covers(i, 2 * pc);
-                        if (!live && !root) {
+                        if (!live_here && !root) {
                                 continue;
                         }
                         LirRegPool const *pool = fp(ri->cls) ? &s->target->fpr : &s->target->gpr;
-                        if (live && call && i->phys != LIR_PHYS_NONE && ri->pin == LIR_NONE
+                        if (live_here && call && i->phys != LIR_PHYS_NONE && ri->pin == LIR_NONE
                             && ((pool->callee_saved >> i->phys) & 1) == 0) {
                                 if (!save_move(s, r, pc, i->phys)) {
                                         goto Error;
@@ -694,10 +876,14 @@ call_moves(LirScan *s)
                         }
                 }
         }
-        free(regs);
+        free(order);
+        free(live);
+        free(hits);
         return true;
 Error:
-        free(regs);
+        free(order);
+        free(live);
+        free(hits);
         return false;
 }
 
@@ -730,12 +916,33 @@ constraint_moves(LirScan *s)
 {
         LirConstraintIndex own = {0};
         LirConstraintIndex *index = s->cindex;
+        LirOrder *order = NULL;
+        u32 *live = NULL;
+        u32 *hits = NULL;
+        u32 norder = 0;
+        u32 nlive = 0;
+        u32 next = 0;
         bool ok = false;
         if (index == NULL && s->alloc->nconstraints != 0) {
                 if (!constraint_index_init(&own, s->alloc, s->L->ninsts)) {
                         goto End;
                 }
                 index = &own;
+        }
+        order = malloc(((usize)s->L->nregs + 1) * sizeof *order);
+        live = malloc(((usize)s->L->nregs + 1) * sizeof *live);
+        hits = malloc(((usize)s->L->nregs + 1) * sizeof *hits);
+        if (order == NULL || live == NULL || hits == NULL) {
+                goto End;
+        }
+        for (u32 r = 0; r < s->L->nregs; ++r) {
+                LirInterval const *i = &s->alloc->intervals[r];
+                if (i->phys != LIR_PHYS_NONE && i->nranges != 0) {
+                        order[norder++] = (LirOrder) { .reg = r, .start = i->ranges[0].start };
+                }
+        }
+        if (!sort_order(order, norder, s->L->ninsts)) {
+                goto End;
         }
         for (u32 pc = 0; pc < s->L->ninsts; ++pc) {
                 u64 gp = s->L->insts[pc].raw.gpr_clobber;
@@ -786,13 +993,30 @@ constraint_moves(LirScan *s)
                 if (gp == 0 && fr == 0) {
                         continue;
                 }
-                for (u32 r = 0; r < s->L->nregs; ++r) {
+                while (next < norder && order[next].start <= 2 * pc) {
+                        live[nlive++] = order[next++].reg;
+                }
+                u32 keep = 0;
+                u32 nhits = 0;
+                for (u32 a = 0; a < nlive; ++a) {
+                        u32 r = live[a];
                         LirInterval const *i = &s->alloc->intervals[r];
-                        u64 mask = fp(s->L->regs[r].cls) ? fr : gp;
-                        if (i->phys == LIR_PHYS_NONE || !((mask >> i->phys) & 1)
-                            || !survives(s, r, pc)) {
+                        if (i->ranges[i->nranges - 1].end <= 2 * pc + 1) {
                                 continue;
                         }
+                        live[keep++] = r;
+                        u64 mask = fp(s->L->regs[r].cls) ? fr : gp;
+                        if (((mask >> i->phys) & 1) && survives(s, r, pc)) {
+                                hits[nhits++] = r;
+                        }
+                }
+                nlive = keep;
+                if (nhits > 1) {
+                        qsort(hits, nhits, sizeof *hits, reg_cmp);
+                }
+                for (u32 h = 0; h < nhits; ++h) {
+                        u32 r = hits[h];
+                        LirInterval const *i = &s->alloc->intervals[r];
                         bool owner = false;
                         bool overwritten = ((fp(s->L->regs[r].cls)
                                              ? raw->fpr_clobber : raw->gpr_clobber) >> i->phys) & 1;
@@ -820,6 +1044,9 @@ constraint_moves(LirScan *s)
         }
         ok = true;
 End:
+        free(order);
+        free(live);
+        free(hits);
         constraint_index_free(&own);
         return ok;
 }
@@ -896,10 +1123,8 @@ frame(LirScan *s)
 void
 lir_alloc_free(LirAlloc *alloc)
 {
-        for (u32 i = 0; i < alloc->nintervals; ++i) {
-                free(alloc->intervals[i].ranges);
-                free(alloc->intervals[i].uses);
-        }
+        free(alloc->range_pool);
+        free(alloc->use_pool);
         free(alloc->intervals);
         free(alloc->moves);
         free(alloc->alloca_offsets);
@@ -989,6 +1214,10 @@ NoMemory:
 End:
         free(s.build);
         free(s.active);
+        free(s.saved);
+        free(s.touched);
+        free(s.range_recs);
+        free(s.use_recs);
         if (!ok) {
                 lir_alloc_free(alloc);
         }

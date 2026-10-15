@@ -1,6 +1,6 @@
 |.arch x64
 |.actionlist lir_actions
-|.section code
+|.section code, cold
 
 static void
 native_label(dasm_State **Dst, u32 label)
@@ -17,7 +17,13 @@ native_jump(dasm_State **Dst, u32 label)
 static void
 native_li(dasm_State **Dst, u8 d, u64 bits)
 {
-        | mov64 Rq(d), bits
+        if (bits <= UINT32_MAX) {
+                | mov Rd(d), (u32)bits
+        } else if ((i64)bits >= INT32_MIN && (i64)bits < 0) {
+                | mov Rq(d), (i32)bits
+        } else {
+                | mov64 Rq(d), bits
+        }
 }
 
 static void
@@ -53,6 +59,25 @@ static void
 native_addr(dasm_State **Dst, u8 d, u8 base, i64 disp)
 {
         | lea Rq(d), [Rq(base)+disp]
+}
+
+static void
+native_copy32(dasm_State **Dst, u8 dst, i32 ddisp, u8 src, i32 sdisp)
+{
+        u8 t = src != 10 && dst != 10 ? 10 : src != 11 && dst != 11 ? 11 : LIR_PHYS_NONE;
+        if (t != LIR_PHYS_NONE) {
+                | mov Rq(t), [Rq(src)+sdisp]
+                | mov [Rq(dst)+ddisp], Rq(t)
+                | mov Rq(t), [Rq(src)+sdisp+8]
+                | mov [Rq(dst)+ddisp+8], Rq(t)
+        } else {
+                | movq xmm14, qword [Rq(src)+sdisp]
+                | movq qword [Rq(dst)+ddisp], xmm14
+                | movq xmm14, qword [Rq(src)+sdisp+8]
+                | movq qword [Rq(dst)+ddisp+8], xmm14
+        }
+        | movups xmm15, [Rq(src)+sdisp+16]
+        | movups [Rq(dst)+ddisp+16], xmm15
 }
 
 static void
@@ -125,13 +150,32 @@ native_stack_bounds(dasm_State **Dst, u32 ty_slot, u32 base, u32 end)
 }
 
 static void
-native_rebase_begin(dasm_State **Dst, u32 ty_slot, u32 base, u32 done)
+native_rebase_check(dasm_State **Dst, u32 base, u32 stub)
+{
+        native_memory(Dst, false, 11, 5, base, 8, false, false);
+        | cmp r10, r11
+        | jne =>stub
+}
+
+static void
+native_rebase_delta(dasm_State **Dst, u32 ty_slot, u32 base)
 {
         native_frame_read10(Dst, ty_slot);
         native_memory(Dst, false, 10, 10, offsetof(Ty, stack.items), 8, false, false);
         native_memory(Dst, false, 11, 5, base, 8, false, false);
-        | cmp r10, r11
-        | je =>done
+        | sub r10, r11
+}
+
+static void
+native_cold(dasm_State **Dst)
+{
+        |.cold
+}
+
+static void
+native_hot(dasm_State **Dst)
+{
+        |.code
 }
 
 static void
@@ -224,10 +268,13 @@ native_vm_slots(dasm_State **Dst, u8 d, u8 ty, u32 top_slot)
 }
 
 static void
-native_call(dasm_State **Dst, bool site, u32 thunk)
+native_call(dasm_State **Dst, bool site, u32 thunk, u32 pc_slot)
 {
         if (site) {
-                | call =>thunk
+                | lea r11, [>1]
+                | mov [rbp+pc_slot], r11
+                | call r10
+                |1:
         } else {
                 | call r10
         }
@@ -242,19 +289,108 @@ native_varargs(dasm_State **Dst, u32 nf)
 static void
 native_integer_imm(dasm_State **Dst, LirOp op, u8 d, u8 a, u64 imm, bool narrow)
 {
-        native_mov(Dst, 10, a, narrow ? LIR_I32 : LIR_I64, false, false);
+        i32 n = (i32)imm;
+        native_mov(Dst, d, a, narrow ? LIR_I32 : LIR_I64, false, false);
         if (narrow) {
-                if (op == LIR_ADD) {
-                        | add r10d, imm
-                } else {
-                        | sub r10d, imm
+                switch (op) {
+                case LIR_ADD:
+                        | add Rd(d), n
+                        break;
+                case LIR_SUB:
+                        | sub Rd(d), n
+                        break;
+                case LIR_AND:
+                        | and Rd(d), n
+                        break;
+                case LIR_OR:
+                        | or Rd(d), n
+                        break;
+                case LIR_XOR:
+                        | xor Rd(d), n
+                        break;
+                case LIR_MUL:
+                        | imul Rd(d), Rd(d), n
+                        break;
+                case LIR_SHL:
+                        | shl Rd(d), (u8)n
+                        break;
+                case LIR_SHR:
+                        | shr Rd(d), (u8)n
+                        break;
+                case LIR_SAR:
+                        | sar Rd(d), (u8)n
+                        break;
+                case LIR_ROTR:
+                        | ror Rd(d), (u8)n
+                        break;
+                default:
+                        break;
                 }
-        } else if (op == LIR_ADD) {
-                | add r10, imm
-        } else {
-                | sub r10, imm
+                return;
         }
-        native_mov(Dst, d, 10, narrow ? LIR_I32 : LIR_I64, false, false);
+        switch (op) {
+        case LIR_ADD:
+                | add Rq(d), n
+                break;
+        case LIR_SUB:
+                | sub Rq(d), n
+                break;
+        case LIR_AND:
+                | and Rq(d), n
+                break;
+        case LIR_OR:
+                | or Rq(d), n
+                break;
+        case LIR_XOR:
+                | xor Rq(d), n
+                break;
+        case LIR_MUL:
+                | imul Rq(d), Rq(d), n
+                break;
+        case LIR_SHL:
+                | shl Rq(d), (u8)n
+                break;
+        case LIR_SHR:
+                | shr Rq(d), (u8)n
+                break;
+        case LIR_SAR:
+                | sar Rq(d), (u8)n
+                break;
+        case LIR_ROTR:
+                | ror Rq(d), (u8)n
+                break;
+        default:
+                break;
+        }
+}
+
+static void
+native_compare_imm(dasm_State **Dst, u8 a, i64 imm, LirClass cls)
+{
+        if (cls == LIR_I32) {
+                | cmp Rd(a), (i32)imm
+        } else {
+                | cmp Rq(a), (i32)imm
+        }
+}
+
+static void
+native_store_imm(dasm_State **Dst, u8 base, i64 disp, u32 size, i64 imm)
+{
+        switch (size) {
+        case 1:
+                | mov byte [Rq(base)+disp], (u8)imm
+                break;
+        case 2:
+                | mov word [Rq(base)+disp], (u16)imm
+                break;
+        case 4:
+                | mov dword [Rq(base)+disp], (i32)imm
+                break;
+        default:
+                | mov qword [Rq(base)+disp], (i32)imm
+                break;
+        }
 }
 
 static void
@@ -319,6 +455,65 @@ native_integer(dasm_State **Dst, LirOp op, u8 d, u8 a, u8 b, bool narrow)
                 native_divide(Dst, op, d, a, b, narrow);
                 return;
         }
+        bool plain = op == LIR_ADD || op == LIR_SUB || op == LIR_MUL || op == LIR_AND || op == LIR_OR || op == LIR_XOR;
+        if (plain) {
+                bool commutes = op != LIR_SUB;
+                u8 x = a;
+                u8 y = b;
+                if (d == b && d != a) {
+                        if (!commutes) {
+                                goto Scratch;
+                        }
+                        x = b;
+                        y = a;
+                }
+                native_mov(Dst, d, x, cls, false, false);
+                if (narrow) {
+                        switch (op) {
+                        case LIR_ADD:
+                                | add Rd(d), Rd(y)
+                                break;
+                        case LIR_SUB:
+                                | sub Rd(d), Rd(y)
+                                break;
+                        case LIR_MUL:
+                                | imul Rd(d), Rd(y)
+                                break;
+                        case LIR_AND:
+                                | and Rd(d), Rd(y)
+                                break;
+                        case LIR_OR:
+                                | or Rd(d), Rd(y)
+                                break;
+                        default:
+                                | xor Rd(d), Rd(y)
+                                break;
+                        }
+                } else {
+                        switch (op) {
+                        case LIR_ADD:
+                                | add Rq(d), Rq(y)
+                                break;
+                        case LIR_SUB:
+                                | sub Rq(d), Rq(y)
+                                break;
+                        case LIR_MUL:
+                                | imul Rq(d), Rq(y)
+                                break;
+                        case LIR_AND:
+                                | and Rq(d), Rq(y)
+                                break;
+                        case LIR_OR:
+                                | or Rq(d), Rq(y)
+                                break;
+                        default:
+                                | xor Rq(d), Rq(y)
+                                break;
+                        }
+                }
+                return;
+        }
+Scratch:
         native_mov(Dst, 10, a, cls, false, false);
         if (op == LIR_MULHS || op == LIR_MULHU) {
                 native_mov(Dst, 11, b, cls, false, false);

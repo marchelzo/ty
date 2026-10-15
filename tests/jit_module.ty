@@ -146,8 +146,11 @@ pub fn test-foreign-call-signatures() {
 }
 
 pub fn test-code-reclaimed-after-drop() {
-    ephemeral-code()
-    ty.gc()
+    for ..8 {
+        ephemeral-code()
+        ty.gc()
+        j.stats()
+    }
     let before = j.stats().chunks
     ephemeral-code()
     ty.gc()

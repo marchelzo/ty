@@ -1176,7 +1176,7 @@ jit_methods(Ty *ty, struct itable *t)
         for (u32 i = 0; i < vN(t->values); ++i) {
                 Value *v = v_(t->values, i);
                 if ((v->type == VALUE_FUNCTION) && expr_of(v)->must_jit) {
-                        if (UNLIKELY(try_jit(ty, v) == NULL)) {
+                        if (UNLIKELY(try_jit_now(ty, v) == NULL)) {
                                 zP("failed to JIT compile function %s", SHOW(v));
                         }
                 }

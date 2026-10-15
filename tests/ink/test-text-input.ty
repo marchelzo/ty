@@ -397,3 +397,40 @@ pub fn suggestion-list-renders-a-picker() {
     assert(h.lines.any?(\_.contains?(ink.fg-sgr('text'))))
     h.assert-contains('two  second')
 }
+
+pub fn suggestion-columns-come-from-the-look() {
+    ink.use-looks([
+        'SuggestionList::label  { pad-right: 5 }',
+        'SuggestionList::detail { text-align: end }'
+    ].join('\n'))
+    let h = ink.TestHarness(Menu(), cols=40, rows=8, color?=false)
+    h.assert-line(1, '^│ one +first │$')
+    h.assert-line(2, '^│ two +second │$')
+    ink.use-looks('')
+}
+
+class Floating < ink.Component {
+    top?: Bool
+    ed: ink.Editor = ink.Editor(triggers=[ink.Trigger(/(\w+)$/, c -> ['apple', 'apricot', 'avocado'].filter(\_.starts?(c.query)))])
+
+    render() {
+        <ink.Box direction="column">
+            {top? ? nil : [<ink.Text>a</ink.Text>, <ink.Text>b</ink.Text>, <ink.Text>c</ink.Text>, <ink.Text>d</ink.Text>, <ink.Text>e</ink.Text>, <ink.Text>f</ink.Text>]}
+            <ink.TextInput editor=ed width=20 popup-at="overlay" />
+        </ink.Box>
+    }
+}
+
+pub fn overlay-popup-flips-below-when-there-is-no-room-above() {
+    let low = ink.TestHarness(Floating(top?=false), cols=30, rows=14, color?=false)
+    low.focus!(low.find(ink.TextInput)!)
+    low.send-text('ap')
+    let row = [i for i in ..low.line-count if low.line(i).contains?('apple')][0]
+    assert(row < 6)
+
+    let high = ink.TestHarness(Floating(top?=true), cols=30, rows=14, color?=false)
+    high.focus!(high.find(ink.TextInput)!)
+    high.send-text('ap')
+    let row2 = [i for i in ..high.line-count if high.line(i).contains?('apple')][0]
+    assert(row2 >= 3)
+}

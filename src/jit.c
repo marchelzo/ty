@@ -161,23 +161,37 @@ static void
 bc_perf_map(void *code, usize size, char const *name, Expr const *expr)
 {
         char const *enabled = getenv("TY_JIT_PERF_MAP");
+        char const *dir = getenv("TY_JIT_BIN");
         char const *mod;
         char const *cls;
         char *qualified;
         usize n;
-        if (enabled == NULL || strcmp(enabled, "1") != 0) {
+        bool perf = enabled != NULL && strcmp(enabled, "1") == 0;
+        if (!perf && dir == NULL) {
                 return;
         }
         mod = expr != NULL && expr->mod != NULL ? expr->mod->name : "";
         cls = expr != NULL && expr->class != NULL ? expr->class->name : "";
         n = strlen(mod) + strlen(cls) + strlen(name) + 3;
         qualified = malloc(n);
-        if (qualified != NULL) {
-                snprintf(qualified, n, "%s%s%s%s%s", mod, *mod ? "." : "",
-                         cls, *cls ? "." : "", name);
-                jm_perf(code, size, qualified);
-                free(qualified);
+        if (qualified == NULL) {
+                return;
         }
+        snprintf(qualified, n, "%s%s%s%s%s", mod, *mod ? "." : "",
+                 cls, *cls ? "." : "", name);
+        if (perf) {
+                jm_perf(code, size, qualified);
+        }
+        if (dir != NULL) {
+                char path[4096];
+                snprintf(path, sizeof path, "%s/%s@%lx.bin", dir, qualified, (unsigned long)(uptr)code);
+                FILE *out = fopen(path, "wb");
+                if (out != NULL) {
+                        fwrite(code, 1, size, out);
+                        fclose(out);
+                }
+        }
+        free(qualified);
 }
 
 char const *
@@ -187,9 +201,9 @@ jit_frame_ip(Frame const *frame, char const *ip)
                 return ip;
         }
 
-        char const *entry = jit_of(&frame->f);
+        char const *entry = frame->jit_code != NULL ? frame->jit_code : jit_of(&frame->f);
         char const *bc = code_of(&frame->f);
-        if (entry == NULL || entry == (void *)0xFA57) {
+        if (entry == NULL || jit_pending(entry)) {
                 return bc + 1;
         }
 
@@ -1000,6 +1014,39 @@ jit_rt_ge(Ty *ty, Value *result, Value *a, Value *b)
 }
 
 static void
+jit_run_trampoline(Ty *ty, JitFn *jit, Value **env);
+
+static void
+jit_fast_frame(Ty *ty, Value const *fn, Value const *self, int argc);
+
+static bool
+jit_rt_getter(Ty *ty, ptrdiff_t idx, Value const *obj, Value const *fn)
+{
+        if (
+                (fn == NULL)
+             || (fn->type != VALUE_FUNCTION)
+             || (param_count_of(fn) != 0)
+             || (rest_idx_of(fn) >= 0)
+             || (kwargs_idx_of(fn) >= 0)
+             || is_starred(fn)
+        ) {
+                return false;
+        }
+
+        JitFn *jit = try_jit(ty, fn);
+        if (jit == NULL) {
+                return false;
+        }
+
+        Value self = *obj;
+        Value callee = *fn;
+        vN(STACK) = idx;
+        jit_fast_frame(ty, &callee, &self, 0);
+        jit_run_trampoline(ty, jit, callee.env);
+        return true;
+}
+
+static void
 jit_rt_member(Ty *ty, Value *result, Value *obj, int member_id)
 {
         ptrdiff_t idx = result - vv(STACK);
@@ -1021,6 +1068,35 @@ jit_rt_member(Ty *ty, Value *result, Value *obj, int member_id)
                                         *result = obj->object->slots[off & OFF_MASK];
                                         return;
                                 }
+                                if (
+                                        (kind == OFF_GETTER)
+                                     && jit_rt_getter(ty, idx, obj, v_(cls->getters.values, off & OFF_MASK))
+                                ) {
+                                        STAT(member_fast);
+                                        return;
+                                }
+                        }
+                }
+        }
+
+        if (
+                (
+                        (obj->type == VALUE_REAL)
+                     || (obj->type == VALUE_INTEGER)
+                     || (obj->type == VALUE_BOOLEAN)
+                )
+             && jit_rt_getter(ty, idx, obj, class_lookup_getter_i(ty, ClassOf(obj), member_id))
+        ) {
+                STAT(member_fast);
+                return;
+        }
+
+        if (obj->type == VALUE_TUPLE && obj->ids != NULL) {
+                for (int i = 0; i < obj->count; ++i) {
+                        if (obj->ids[i] == member_id) {
+                                STAT(member_fast);
+                                *result = obj->items[i];
+                                return;
                         }
                 }
         }
@@ -1460,6 +1536,19 @@ jit_rt_incrange(Ty *ty, Value *result, Value *a, Value *b)
         *v_(STACK, idx) = val;
 }
 
+// TO_STRING: convert value to string
+static bool
+jit_default_str(Ty *ty, int class_id)
+{
+        Value const *mine = class_lookup_method_i(ty, class_id, NAMES._str_);
+        Value const *root = class_lookup_method_i(ty, CLASS_OBJECT, NAMES._str_);
+        return (mine != NULL)
+            && (root != NULL)
+            && (mine->type == VALUE_FUNCTION)
+            && (root->type == VALUE_FUNCTION)
+            && (mine->info == root->info);
+}
+
 static void
 jit_rt_to_string(Ty *ty, Value *val)
 {
@@ -1474,6 +1563,21 @@ jit_rt_to_string(Ty *ty, Value *val)
         }
 
         if (val->type == VALUE_NIL) {
+                return;
+        }
+
+        if (
+                (
+                        (val->type == VALUE_INTEGER)
+                     || (val->type == VALUE_REAL)
+                     || (val->type == VALUE_BOOLEAN)
+                )
+             && jit_default_str(ty, ClassOf(val))
+        ) {
+                ptrdiff_t idx = (val - vv(STACK));
+                vN(STACK) = idx + 1;
+                Value str = value_vshow(ty, val, 0);
+                *v_(STACK, idx) = str;
                 return;
         }
 
@@ -1913,6 +2017,86 @@ bc_resolve_builtin_method(Class *cls, int member_id, int *value_type)
 }
 
 #include "jit_lir.h"
+
+void
+jit_note_deopt(Value const *f)
+{
+        LirCode *code = jit_code_of(f);
+        _Atomic i16 *flags = (void *)flags_of(f);
+        if (code == NULL || ++code->deopts < 16 || (atomic_load(flags) & FF_JIT_NOSPEC)) {
+                return;
+        }
+        atomic_fetch_or(flags, FF_JIT_NOSPEC);
+        atomic_fetch_and(flags, (i16)~FF_JIT_FIRST);
+        set_jit_of(f, (void *)(uptr)(JIT_UNSEEN + 1));
+}
+
+int
+jit_tier(void)
+{
+        static int tier = -1;
+        if (tier < 0) {
+                char const *s = getenv("TY_JIT_TIER");
+                tier = s == NULL ? 0 : atoi(s);
+        }
+        return tier;
+}
+
+void
+jit_tier_up(Value const *f)
+{
+        _Atomic i16 *flags = (void *)flags_of(f);
+        if (atomic_load(flags) & FF_JIT_TIER2) {
+                return;
+        }
+        atomic_fetch_or(flags, FF_JIT_TIER2);
+        atomic_fetch_and(flags, (i16)~FF_JIT_FIRST);
+        set_jit_of(f, (void *)(uptr)(JIT_UNSEEN + 1));
+}
+
+int
+jit_eager(void)
+{
+        static int eager = -1;
+        if (eager < 0) {
+                char const *s = getenv("TY_JIT_EAGER");
+                eager = (s == NULL || *s == '\0') ? 0 : atoi(s) == 2 ? 2 : 1;
+        }
+        return eager;
+}
+
+bool
+jit_hot_on_entry(Value const *f)
+{
+        return jit_eager() == 1;
+}
+
+bool
+jit_pinned_loop(Value const *f)
+{
+        char const *code = code_of(f);
+        char const *end = code + code_size_of(f);
+        bool loop = false;
+        bool pinned = false;
+        for (char const *ip = code; ip < end; ip = StepInstruction(ip)) {
+                switch ((u8)*ip) {
+                case INSTR_JUMP: {
+                        i32 jump;
+                        memcpy(&jump, ip + 1, sizeof jump);
+                        loop = loop || jump < 0;
+                        break;
+                }
+                case INSTR_TRY:
+                case INSTR_SPREAD_CHECK:
+                case INSTR_TRY_YIELD_FROM:
+                        pinned = true;
+                        break;
+                default:
+                        break;
+                }
+        }
+        return loop && pinned;
+}
 
 JitFn *
 jit_compile(Ty *ty, Value const *func)

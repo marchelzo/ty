@@ -420,7 +420,7 @@ int dasm_encode(Dst_DECL, void *buffer)
   for (secnum = 0; secnum < D->maxsection; secnum++) {
     dasm_Section *sec = D->sections + secnum;
     int *b = sec->buf;
-    int *endb = sec->rbuf + sec->pos;
+    int *endb = sec->rbuf ? sec->rbuf + sec->pos : b;
 
     while (b != endb) {
       dasm_ActList p = D->actionlist + *b++;

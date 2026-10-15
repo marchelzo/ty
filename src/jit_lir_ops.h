@@ -71,8 +71,8 @@ bc_member_assign(BcLir *c, BcLirNode const *node, char const *ip)
                 return false;
         }
         BcLirNode const *next = &c->nodes[node->next];
-        if (next->op != INSTR_ASSIGN || next->label != LIR_NONE
-            || next->sp != node->sp - !self) {
+        bool assign = next->op == INSTR_ASSIGN;
+        if (!bc_fusable_mutation(c, node, true) || next->sp != node->sp - !self) {
                 return false;
         }
         i32 member;
@@ -82,8 +82,14 @@ bc_member_assign(BcLir *c, BcLirNode const *node, char const *ip)
         LirReg receiver = self
                        ? bc_addr(c, c->locals, c->self_index * sizeof (Value))
                        : bc_addr(c, c->ops, (c->sp - 1) * sizeof (Value));
-        LirReg slot = bc_field_slot(c, receiver, member, true, slow);
-        bc_value_copy(c, slot, 0, c->ops, (next->sp - 1) * sizeof (Value));
+        Class *class = self ? class_get(c->ctx, c->function->info[FUN_INFO_CLASS])
+                            : bc_hint_class(c, node - c->nodes);
+        LirReg slot = bc_any_field_slot(c, receiver, class, member, true, slow);
+        if (!assign) {
+                bc_inline_mutation(c, next->op, slot, 0, next->sp - 1, slow, done);
+        } else {
+                bc_value_copy(c, slot, 0, c->ops, (next->sp - 1) * sizeof (Value));
+        }
 #ifdef TY_PROFILER
         LirOpnd counter = lir_i((uptr)&jit_stats.member_set_fast);
         LirReg base = bc_value(c, LIR_LI, LIR_PTR, &counter, 1);
@@ -97,10 +103,15 @@ bc_member_assign(BcLir *c, BcLirNode const *node, char const *ip)
         LirOpnd args[] = { lir_r(c->ty), lir_r(top), lir_i(member), lir_i(self) };
         bc_call(c, bc_target_member, LIR_VOID, types, args, countof(args));
         c->offset = next->next;
-        LirReg value = bc_addr(c, c->ops, (next->sp - 1) * sizeof (Value));
-        LirType assign_types[] = { LIR_TYPE_PTR, LIR_TYPE_PTR };
-        LirOpnd assign_args[] = { lir_r(c->ty), lir_r(value) };
-        bc_call(c, bc_assign_value, LIR_VOID, assign_types, assign_args, countof(assign_args));
+        if (assign) {
+                LirReg value = bc_addr(c, c->ops, (next->sp - 1) * sizeof (Value));
+                LirType assign_types[] = { LIR_TYPE_PTR, LIR_TYPE_PTR };
+                LirOpnd assign_args[] = { lir_r(c->ty), lir_r(value) };
+                bc_call(c, bc_assign_value, LIR_VOID, assign_types, assign_args, countof(assign_args));
+        } else {
+                c->sp = next->sp;
+                bc_mutate(c, next->op);
+        }
         bc_bind(c, done);
         c->sp = next->sp;
 #ifdef TY_PROFILER
@@ -223,6 +234,10 @@ bc_more(BcLir *c, BcLirNode const *node, char const *ip)
         }
         case INSTR_ASSIGN_SUBSCRIPT: {
                 n = (u8)ip[1];
+                if (n == 1) {
+                        bc_fast_assign_subscript(c);
+                        return;
+                }
                 LirType types[] = { ptr, ptr, integer };
                 LirOpnd args[] = { lir_r(c->ty), lir_r(top), lir_i(n) };
                 bc_call(c, jit_rt_assign_subscript, LIR_VOID, types, args, countof(args));
@@ -346,18 +361,17 @@ bc_more(BcLir *c, BcLirNode const *node, char const *ip)
         }
         case INSTR_INC:
         case INSTR_DEC:
+                bc_fast_step(c, node->op == INSTR_INC);
+                return;
         case INSTR_TO_STRING: {
                 LirType types[] = { ptr, ptr };
                 LirOpnd args[] = { lir_r(c->ty), lir_r(last) };
-                switch (node->op) {
-                case INSTR_INC: helper = jit_rt_inc; break;
-                case INSTR_DEC: helper = jit_rt_dec; break;
-                default: helper = jit_rt_to_string; break;
-                }
-                bc_call(c, helper, LIR_VOID, types, args, countof(args));
+                bc_call(c, jit_rt_to_string, LIR_VOID, types, args, countof(args));
                 return;
         }
         case INSTR_SUBSCRIPT:
+                bc_fast_subscript(c);
+                return;
         case INSTR_SAFE_SUBSCRIPT:
         case INSTR_GET_MEMBER:
         case INSTR_TRY_GET_MEMBER: {
@@ -365,7 +379,6 @@ bc_more(BcLir *c, BcLirNode const *node, char const *ip)
                 LirReg left = bc_addr(c, c->ops, (c->sp - 2) * sizeof (Value));
                 LirOpnd args[] = { lir_r(c->ty), lir_r(left) };
                 switch (node->op) {
-                case INSTR_SUBSCRIPT: helper = jit_rt_subscript; break;
                 case INSTR_SAFE_SUBSCRIPT: helper = jit_rt_safe_subscript; break;
                 case INSTR_GET_MEMBER: helper = jit_rt_get_member; args[1] = lir_r(top); break;
                 default: helper = jit_rt_try_get_member; args[1] = lir_r(top); break;
@@ -377,10 +390,13 @@ bc_more(BcLir *c, BcLirNode const *node, char const *ip)
         default:
                 break;
         }
+        if (node->op == INSTR_DIV) {
+                bc_fast_div(c);
+                return;
+        }
         switch (node->op) {
         case INSTR_CMP:       helper = jit_rt_cmp; break;
         case INSTR_CHECK_MATCH: helper = jit_rt_check_match; break;
-        case INSTR_DIV:       helper = jit_rt_div; break;
         case INSTR_MOD:       helper = jit_rt_mod; break;
         case INSTR_BIT_AND:   helper = jit_rt_bit_and; break;
         case INSTR_BIT_OR:    helper = jit_rt_bit_or; break;

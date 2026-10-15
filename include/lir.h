@@ -180,7 +180,8 @@ typedef enum lir_form {
         LIR_FORM_POLL,
         LIR_FORM_SITE,
         LIR_FORM_ENTRY,
-        LIR_FORM_RAW
+        LIR_FORM_RAW,
+        LIR_FORM_COPY
 } LirForm;
 
 #define LIR_OPS(X) \
@@ -271,7 +272,8 @@ typedef enum lir_form {
         X(POLL,     POLL,     VOID, 1, "[ty,top,info],Ldeopt") \
         X(SITE,     SITE,     VOID, 1, "tag") \
         X(ENTRY,    ENTRY,    VOID, 1, "L") \
-        X(RAW,      RAW,      VOID, 0, ";bytes,inputs,outputs,clobbers")
+        X(RAW,      RAW,      VOID, 0, ";bytes,inputs,outputs,clobbers") \
+        X(COPY32,   COPY,     VOID, 2, "mem,mem")
 
 typedef enum lir_op {
 #define LIR_ENUM(name, form, type, argc, signature) LIR_##name,
@@ -376,6 +378,11 @@ typedef struct lir_cfg {
         u32       nblocks;
         u32      *block_at;
         u32       nwords;
+        u32      *global;
+        u32      *globals;
+        u32       nglobals;
+        u64      *sets;
+        u32      *edges;
 } LirCFG;
 
 struct lir {
@@ -399,6 +406,10 @@ struct lir {
         u32           root_capacity;
         u32           nvslots;
         u32           pc_param;
+        u32           ty_param;
+        u8            stable_pins;
+        bool          trusted;
+        u8            stack_pins;
         LirError      error;
 };
 
@@ -491,6 +502,8 @@ struct lir_alloc {
         u32           *alloca_offsets;
         LirConstraint *constraints;
         u32            nconstraints;
+        LirRange      *range_pool;
+        u32           *use_pool;
 };
 
 typedef struct lir_site {
@@ -533,6 +546,10 @@ struct lir_code {
         LirCode      *entry_code;
         void         *interp_state;
         u32           entry_body_slots;
+        u32           deopts;
+        u32          *osr;
+        u32           nosr;
+        i32          *tier;
         bool          entry_thunk;
         bool          gc_owned;
 };
@@ -625,10 +642,13 @@ LirReg lir_vslot(Lir *L);
 LirOpnd lir_const(Lir *L, Value const *value);
 LirOpnd lir_ref_const(Lir *L, Value const *value);
 bool lir_emit(Lir *L, LirInst const *inst);
+bool lir_emit_owned(Lir *L, LirInst const *inst);
 bool lir_emit_to(Lir *L, LirOp op, LirReg dst, LirOpnd const *args, u32 nargs);
 bool lir_cfg(Lir const *L, LirCFG *cfg, LirError *err);
 void lir_cfg_free(LirCFG *cfg);
 bool lir_validate(Lir *L, LirError *err);
+void lir_cfg_free(LirCFG *cfg);
+bool lir_prepare(Lir *L, LirError *err);
 bool lir_serialize(Lir *L, LirBytes *bytes, LirError *err);
 Lir *lir_deserialize(void const *bytes, usize size, LirBinding const *holes,
                      u32 nholes, LirError *err);
@@ -651,6 +671,7 @@ Lir *lir_clone(Lir *L, LirError *err);
 bool lir_normalize(Lir *L, LirError *err);
 LirCode *lir_finish(Lir *L, bool entry, LirError *err);
 LirCode *lir_finish_interpreted(Lir *L, bool entry, LirError *err);
+LirCode *lir_finish_owned(Lir *L, LirError *err);
 bool lir_interp_emit(LirCode *code, LirError *err);
 void lir_interp_destroy(LirCode *code);
 bool lir_interpret(Ty *ty, Lir const *L, LirScalar const *args, u32 nargs,

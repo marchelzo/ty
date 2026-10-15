@@ -1736,6 +1736,15 @@ DeoptFrame(Ty *ty, char *ip)
 }
 
 inline static i32
+xjit_finish(Ty *ty, isize depth, i32 rc);
+
+inline static JitFn *
+frame_jit(Frame const *frame)
+{
+        return frame->jit_code != NULL ? (JitFn *)frame->jit_code : jit_of(&frame->f);
+}
+
+inline static i32
 xjit(Ty *ty, isize depth, JitFn *func, i32 resume_idx, Value *args, Value **env)
 {
         if (UNLIKELY(vN(STACK) + 256 > vC(STACK))) {
@@ -1748,9 +1757,16 @@ xjit(Ty *ty, isize depth, JitFn *func, i32 resume_idx, Value *args, Value **env)
 
         ++EXEC_DEPTH;
         ++EXEC_DEPTH;
+        v_(FRAMES, depth)->jit_code = func;
         i32 rc = (*func)(ty, resume_idx, args, env, &v_(FRAMES, depth)->jit_pc);
         --EXEC_DEPTH;
 
+        return xjit_finish(ty, depth, rc);
+}
+
+inline static i32
+xjit_finish(Ty *ty, isize depth, i32 rc)
+{
         v_(FRAMES, depth)->jit_pc = NULL;
 
         i32 next_resume = JIT_RESUME(rc);
@@ -1798,6 +1814,7 @@ JitReturn:
                 break;
 
         case JIT_DEOPT:
+                jit_note_deopt(&top->f);
                 top->jit_resume = 0;
                 DeoptFrame(ty, (char *)code_of(&top->f) + next_resume);
                 break;
@@ -1824,10 +1841,63 @@ go_jit(Ty *ty)
 
                 CO_LOG("go()", TERM(34;1), "%s => resume%s: %d", TERM(92;1), TERM(0), resume_idx);
 
-                xjit(ty, depth, jit_of(&top->f), resume_idx, args, top->f.env);
+                xjit(ty, depth, frame_jit(top), resume_idx, args, top->f.env);
         }
 
         CO_LOG("go()", TERM(34;1), "%s => end%s", TERM(91;1), TERM(0));
+}
+
+static bool
+vm_osr(Ty *ty)
+{
+        if (vN(FRAMES) == 0) {
+                return false;
+        }
+        Frame *frame = vvL(FRAMES);
+        Value fn = frame->f;
+        if (fn.type != VALUE_FUNCTION || DebugJitOff) {
+                return false;
+        }
+        char const *code = code_of(&fn);
+        if (IP < code || IP >= code + code_size_of(&fn)) {
+                return false;
+        }
+        uptr state = (uptr)jit_of(&fn);
+        if (!jit_pending((void *)state)) {
+                return false;
+        }
+        if (state == JIT_UNSEEN) {
+                state = jit_eager() == 1 ? JIT_UNSEEN + 1 : JIT_UNSEEN + jit_budget(&fn);
+        }
+        if (state > JIT_UNSEEN + 1) {
+                set_jit_of(&fn, (void *)(state - 1));
+                return false;
+        }
+        JitFn *jit = try_jit_now(ty, &fn);
+        LirCode const *lc = jit == NULL ? NULL : jit_code_of(&fn);
+        if (lc == NULL) {
+                return false;
+        }
+        u32 offset = IP - code;
+        i32 entry = -1;
+        for (u32 i = 0; i < lc->nosr; ++i) {
+                if (lc->osr[2 * i] == offset) {
+                        entry = lc->osr[2 * i + 1];
+                        break;
+                }
+        }
+        if (entry < 0) {
+                return false;
+        }
+        usize f0 = vN(FRAMES) - 1;
+        frame->jit_resume = 0;
+        xjit(ty, f0, jit, entry, v_(STACK, frame->fp), fn.env);
+        while (vN(FRAMES) > f0) {
+                isize i = vN(FRAMES) - 1;
+                Frame *top = vvL(FRAMES);
+                xjit(ty, i, frame_jit(top), top->jit_resume, v_(STACK, top->fp), top->f.env);
+        }
+        return true;
 }
 
 inline static bool
@@ -1865,7 +1935,7 @@ call_jit(Ty *ty, Value const *f)
 
                 CO_LOG("call_jit()", TERM(34;1), "%s => resume%s: %d", TERM(92;1), TERM(0), resume_idx);
 
-                xjit(ty, i, jit_of(&top->f), resume_idx, args, top->f.env);
+                xjit(ty, i, frame_jit(top), resume_idx, args, top->f.env);
         }
 
         CO_LOG("call_jit()", TERM(34;1), "%s => return%s", TERM(91;1), TERM(0));
@@ -2074,16 +2144,53 @@ vm_trampoline(Ty *ty)
 }
 
 void
-vm_trampoline_linked(Ty *ty, JitFn *func, Value **env)
+vm_trampoline_resume(Ty *ty, i32 rc)
 {
         isize depth0 = vN(FRAMES) - 1;
-        Frame *frame = vvL(FRAMES);
-        xjit(ty, depth0, func, 0, v_(STACK, frame->fp), env);
+
+        while (v_(FRAMES, depth0)->jit_pc == NULL) {
+                depth0 -= 1;
+        }
+
+        --EXEC_DEPTH;
+        xjit_finish(ty, depth0, rc);
 
         while (vN(FRAMES) > depth0) {
                 isize depth = vN(FRAMES) - 1;
                 Frame *top = vvL(FRAMES);
-                xjit(ty, depth, jit_of(&top->f), top->jit_resume, v_(STACK, top->fp), top->f.env);
+                xjit(ty, depth, frame_jit(top), top->jit_resume, v_(STACK, top->fp), top->f.env);
+        }
+}
+
+void
+vm_trampoline_linked(Ty *ty, JitFn *func, Value **env)
+{
+        isize depth0 = vN(FRAMES) - 1;
+        Frame *frame = vvL(FRAMES);
+
+        if (LIKELY(vN(STACK) + 256 <= vC(STACK))) {
+                IP = &JIT;
+                EXEC_DEPTH += 2;
+                i32 rc = (*func)(ty, 0, v_(STACK, frame->fp), env, &frame->jit_pc);
+                --EXEC_DEPTH;
+                if (LIKELY(JIT_REASON(rc) == JIT_RETURN)) {
+                        v_(FRAMES, depth0)->jit_pc = NULL;
+                        IP = vXx(CALLS);
+                        Value v = v_L(STACK);
+                        vN(STACK) = vXx(FRAMES).fp + 1;
+                        v_L(STACK) = v;
+                        --EXEC_DEPTH;
+                        return;
+                }
+                xjit_finish(ty, depth0, rc);
+        } else {
+                xjit(ty, depth0, func, 0, v_(STACK, frame->fp), env);
+        }
+
+        while (vN(FRAMES) > depth0) {
+                isize depth = vN(FRAMES) - 1;
+                Frame *top = vvL(FRAMES);
+                xjit(ty, depth, frame_jit(top), top->jit_resume, v_(STACK, top->fp), top->f.env);
         }
 }
 
@@ -6880,7 +6987,7 @@ DoFunction(Ty *ty, char const *ip)
         }
 
         if (!NoJIT && !DebugJitOff && !from_eval(&v) && expr_of(&v)->must_jit) {
-                if (UNLIKELY(try_jit(ty, &v) == NULL)) {
+                if (UNLIKELY(try_jit_now(ty, &v) == NULL)) {
                         zP("failed to JIT compile function %s", SHOW(&v));
                 }
         }
@@ -7246,6 +7353,9 @@ NextInstruction:
                                 zP("invalid jump offset: 0");
                         }
                         IP += n;
+                        if (n < 0) {
+                                vm_osr(ty);
+                        }
                         break;
 
                 CASE(JUMP_IF)

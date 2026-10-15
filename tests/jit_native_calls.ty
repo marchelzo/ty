@@ -1,0 +1,347 @@
+fn kw-target(a: Int, scale: Int = 1) -> Int {
+    a * scale
+}
+
+fn suspends(n: Int) -> Int {
+    let g = [kw-target][n % 1]
+    g(n, scale: 3) + g(n) - n + 1
+}
+
+fn calls-suspending(n: Int) -> Int {
+    let before = n + 1
+    suspends(n) + before
+}
+
+pub fn callee-that-suspends-resumes-in-caller() {
+    for i in ..500 {
+        assert(calls-suspending(i) == i * 4 + 2)
+    }
+}
+
+fn bottomless(n: Int) -> Int {
+    bottomless(n + 1) + 1
+}
+
+fn bounded(n: Int) -> Int {
+    if n == 0 { 0 } else { bounded(n - 1) + 1 }
+}
+
+pub fn depth-limit-is-catchable-and-recoverable() {
+    for _ in ..3 {
+        let caught = try { bottomless(0); false } catch _ { true }
+        assert(caught)
+        assert(bounded(900) == 900)
+    }
+}
+
+fn many-locals(a: Int, b: Int) -> Int {
+    let c = a + b
+    let d = c * 2
+    let e = d - a
+    let f = e + b
+    let g = f * f
+    let h = g % 1000
+    let i = h + c + d + e + f
+    i
+}
+
+fn wide-caller(n: Int) -> Int {
+    let total = 0
+    for k in ..n {
+        total += many-locals(k, k + 1)
+    }
+    total
+}
+
+pub fn callees-with-many-locals() {
+    let expected = 0
+    for k in ..300 {
+        let c = k + k + 1
+        let d = c * 2
+        let e = d - k
+        let f = e + k + 1
+        expected += (f * f) % 1000 + c + d + e + f
+    }
+    assert(wide-caller(300) == expected)
+}
+
+fn swappable(n: Int) -> Int {
+    n + 1
+}
+
+fn calls-swappable(n: Int) -> Int {
+    swappable(n) * 10
+}
+
+pub fn rebinding-a-global-bypasses-the-native-call() {
+    for i in ..200 {
+        assert(calls-swappable(i) == (i + 1) * 10)
+    }
+    swappable = n -> n - 1
+    for i in ..200 {
+        assert(calls-swappable(i) == (i - 1) * 10)
+    }
+}
+
+fn leaf-gen(n: Int) -> Int {
+    n * n
+}
+
+fn squares*(n: Int) {
+    for i in ..n {
+        yield leaf-gen(i)
+    }
+}
+
+pub fn generators-make-native-calls() {
+    let xs = [x for x in squares(50)]
+    assert(xs == [i * i for i in ..50])
+}
+
+fn thrower(n: Int) -> Int {
+    if n == 0 { throw 'deep' }
+    thrower(n - 1) + 1
+}
+
+fn middle(n: Int) -> Int {
+    let before = n * 2
+    thrower(n) + before
+}
+
+pub fn exceptions-unwind-native-frames() {
+    for i in ..50 {
+        let r = try { middle(i) } catch 'deep' { -1 }
+        assert(r == -1)
+    }
+    assert(bounded(900) == 900)
+}
+
+fn error-site(n: Int) -> Int {
+    if n == 0 {
+        throw RuntimeError('boom')
+    }
+    error-site(n - 1) + 1
+}
+
+fn error-outer() -> Int {
+    error-site(3) + 2
+}
+
+pub fn backtraces-see-native-frames() {
+    for _ in ..5 {
+        let trace = try { error-outer(); '' } catch e: RuntimeError { str(e.trace()) }
+        assert(#trace.split('error-site(n - 1) + 1') - 1 >= 3)
+        assert(trace.contains?('error-site(3) + 2'))
+    }
+}
+
+class Acc {
+    total: Int
+
+    init() {
+        self.total = 0
+    }
+}
+
+fn bump(acc: Acc, k: Int) -> Int {
+    acc.total += k
+    acc.total
+}
+
+fn drive(acc: Acc, n: Int) -> Int {
+    let last = 0
+    for k in ..n {
+        last = bump(acc, k)
+    }
+    last
+}
+
+pub fn native-callees-mutate-shared-objects() {
+    let acc = Acc()
+    assert(drive(acc, 100) == 4950)
+    assert(acc.total == 4950)
+}
+
+fn fib(n: Int) -> Int {
+    if n < 2 { return n }
+    fib(n - 1) + fib(n - 2)
+}
+
+pub fn recursion-through-own-entry() {
+    assert(fib(20) == 6765)
+    let local-fib = fib
+    assert(local-fib(15) == 610)
+}
+
+fn emit-twice(x: Int) {
+    yield x
+    yield x * 10
+}
+
+fn walk(n: Int) {
+    if n > 0 {
+        walk(n - 1)
+        emit-twice(n)
+    }
+}
+
+fn walker*(n: Int) {
+    walk(n)
+}
+
+fn walker-via-value*(n: Int) {
+    let emit = [emit-twice][0]
+    for i in ..n {
+        emit(i + 1)
+    }
+}
+
+pub fn yields-from-native-callees() {
+    for _ in ..50 {
+        assert([x for x in walker(4)] == [1, 10, 2, 20, 3, 30, 4, 40])
+        assert([x for x in walker-via-value(3)] == [1, 10, 2, 20, 3, 30])
+    }
+}
+
+class Shape {
+    w: Int
+    h: Int
+
+    init(w: Int, h: Int) {
+        self.w = w
+        self.h = h
+    }
+
+    area -> Int {
+        let a = w * h
+        if a < 0 { throw 'negative' }
+        a
+    }
+
+    depth -> Int {
+        if w <= 0 { 0 } else { Shape(w - 1, h).depth + 1 }
+    }
+}
+
+fn total-area(shapes: [Shape]) -> Int {
+    let total = 0
+    for s in shapes {
+        total += s.area
+    }
+    total
+}
+
+pub fn getters-are-called-natively() {
+    let shapes = [Shape(i, i + 1) for i in ..100]
+    for _ in ..20 {
+        assert(total-area(shapes) == [i * (i + 1) for i in ..100].sum())
+    }
+    assert(Shape(300, 1).depth == 300)
+    let caught = try { total-area([Shape(2, 3), Shape(-1, 4)]); false } catch 'negative' { true }
+    assert(caught)
+    assert(total-area(shapes) == [i * (i + 1) for i in ..100].sum())
+}
+
+class Animal {
+    legs: Int
+
+    init(legs: Int) {
+        self.legs = legs
+    }
+
+    describe(prefix: String = '') -> String {
+        "{prefix}{legs}"
+    }
+
+    weight(scale: Int, bias: Int = 1) -> Int {
+        legs * scale + bias
+    }
+}
+
+class Bird < Animal {
+    init() {
+        super(2)
+    }
+
+    weight(scale: Int, bias: Int = 2) -> Int {
+        scale + bias
+    }
+}
+
+fn weigh-all(xs: [_], scale: Int) -> Int {
+    let total = 0
+    for x in xs {
+        total += x.weight(scale)
+    }
+    total
+}
+
+fn describe-all(xs: [_]) -> String {
+    xs.map(x -> x.describe('#')).join(',')
+}
+
+pub fn dynamic-method-dispatch() {
+    let zoo = [Animal(4), Bird(), Animal(6), Bird(), 7]
+    for _ in ..50 {
+        assert(weigh-all(zoo[;4], 3) == (4 * 3 + 1) + (3 + 2) + (6 * 3 + 1) + (3 + 2))
+        assert(describe-all(zoo[;4]) == '#4,#2,#6,#2')
+    }
+    let caught = try { weigh-all(zoo, 3); false } catch _ { true }
+    assert(caught)
+}
+
+class Vec3 {
+    x: Float
+    y: Float
+    z: Float
+
+    init(i: Int, scale: Float = 1.0) {
+        let f = i.float
+        if f < 0.0 {
+            throw 'negative'
+        }
+        x = f * scale
+        y = f + scale
+        z = x * y
+        if i == 7 {
+            return
+        }
+        z = z + 1.0
+    }
+}
+
+class Vec4 < Vec3 {
+    w: Float
+
+    init(i: Int) {
+        super(i, 2.0)
+        w = x + y + z
+    }
+}
+
+fn build(n: Int) -> [Vec3] {
+    [Vec3(i) for i in ..n]
+}
+
+fn build4(n: Int) -> Float {
+    let total = 0.0
+    for i in ..n {
+        let v = Vec4(i)
+        total += v.w
+    }
+    total
+}
+
+pub fn constructors-run-init-natively() {
+    for _ in ..30 {
+        let vs = build(10)
+        assert(#vs == 10)
+        assert(vs[3].x == 3.0 && vs[3].y == 4.0 && vs[3].z == 13.0)
+        assert(vs[7].z == 7.0 * 8.0)
+        let expected = [do { let x = i.float * 2.0; let y = i.float + 2.0; let z = x * y + (i == 7 ? 0.0 : 1.0); x + y + z } for i in ..10].sum()
+        assert(build4(10) == expected)
+    }
+    let caught = try { Vec3(-1); false } catch 'negative' { true }
+    assert(caught)
+    assert(build(3)[2].x == 2.0)
+}

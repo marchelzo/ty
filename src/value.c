@@ -1055,7 +1055,7 @@ show_impl(
                         char const *cls  = class_name(ty, class_of(&v));
                         char const *name = name_of(&v);
                         char const *star = is_starred(&v) ? "*" : "";
-                        char const *jit  = ((iptr)jit_of(&v) > 0xFA57)  ? " [jit]" : "";
+                        char const *jit  = (jit_of(&v) != NULL && !jit_pending(jit_of(&v))) ? " [jit]" : "";
 
                         if (color) {
                                 if (class_of(&v) == -1) {

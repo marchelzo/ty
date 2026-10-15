@@ -71,6 +71,64 @@ bc_clear_extra(Ty *ty)
         --ty->stack.count;
 }
 
+static bool
+bc_inline_saved_stack(BcLir *c, u8 op)
+{
+        i32 drop;
+        switch (op) {
+        case INSTR_SAVE_STACK_POS:      drop = -1; break;
+        case INSTR_POP_STACK_POS:       drop = 0;  break;
+        case INSTR_POP_STACK_POS_POP:   drop = 1;  break;
+        case INSTR_POP_STACK_POS_POP2:  drop = 2;  break;
+        case INSTR_DROP_STACK_POS:      drop = -2; break;
+        default:                        return false;
+        }
+        if (c->dynamic || c->compact || c->base_index == LIR_NONE) {
+                return false;
+        }
+        LirReg st = bc_load(c, LIR_LD_I64, LIR_PTR, c->ty, offsetof(Ty, st));
+        LirReg n = bc_load(c, LIR_LD_I64, LIR_I64, st, offsetof(co_state, sps.count));
+        if (drop == -1) {
+                LirLabel slow = lir_label(c->L);
+                LirLabel done = lir_label(c->L);
+                LirReg cap = bc_load(c, LIR_LD_I64, LIR_I64, st, offsetof(co_state, sps.capacity));
+                bc_branch(c, LIR_UGE, lir_r(n), lir_r(cap), slow);
+                LirReg count = c->base_index;
+                if (c->sp != 0) {
+                        LirOpnd add[] = { lir_r(c->base_index), lir_i(c->sp) };
+                        count = bc_value(c, LIR_ADD, LIR_I64, add, countof(add));
+                }
+                LirReg items = bc_load(c, LIR_LD_I64, LIR_PTR, st, offsetof(co_state, sps.items));
+                LirOpnd at = lir_m(items, n, sizeof (usize), 0);
+                LirOpnd store[] = { at, lir_r(count) };
+                c->ok = c->ok && lir_emit_to(c->L, LIR_ST64, LIR_NONE, store, countof(store));
+                LirOpnd one[] = { lir_r(n), lir_i(1) };
+                LirReg next = bc_value(c, LIR_ADD, LIR_I64, one, countof(one));
+                bc_store(c, LIR_ST64, st, offsetof(co_state, sps.count), lir_r(next));
+                bc_jump(c, done);
+                bc_bind(c, slow);
+                LirType type = LIR_TYPE_PTR;
+                LirOpnd arg = lir_r(c->ty);
+                bc_call(c, bc_stack_save, LIR_VOID, &type, &arg, 1);
+                bc_bind(c, done);
+                return true;
+        }
+        LirOpnd minus[] = { lir_r(n), lir_i(-1) };
+        LirReg last = bc_value(c, LIR_ADD, LIR_I64, minus, countof(minus));
+        bc_store(c, LIR_ST64, st, offsetof(co_state, sps.count), lir_r(last));
+        if (drop >= 0) {
+                LirReg items = bc_load(c, LIR_LD_I64, LIR_PTR, st, offsetof(co_state, sps.items));
+                LirOpnd at = lir_m(items, last, sizeof (usize), 0);
+                LirReg count = bc_value(c, LIR_LD_I64, LIR_I64, &at, 1);
+                if (drop != 0) {
+                        LirOpnd less[] = { lir_r(count), lir_i(-drop) };
+                        count = bc_value(c, LIR_ADD, LIR_I64, less, countof(less));
+                }
+                bc_store(c, LIR_ST64, c->ty, offsetof(Ty, stack.count), lir_r(count));
+        }
+        return true;
+}
+
 static void
 bc_saved_stack(BcLir *c, u8 op)
 {
@@ -84,7 +142,13 @@ bc_saved_stack(BcLir *c, u8 op)
         case INSTR_DROP_STACK_POS:      helper = bc_stack_drop; break;
         default:                       helper = bc_clear_extra; break;
         }
-        bc_stack_count(c);
+        if (c->dynamic || op == INSTR_SAVE_STACK_POS || op == INSTR_DROP_STACK_POS
+            || op == INSTR_CLEAR_EXTRA) {
+                bc_stack_count(c);
+        }
+        if (bc_inline_saved_stack(c, op)) {
+                return;
+        }
         LirType type = LIR_TYPE_PTR;
         LirOpnd arg = lir_r(c->ty);
         bc_call(c, helper, LIR_VOID, &type, &arg, 1);

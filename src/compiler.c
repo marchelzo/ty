@@ -368,7 +368,10 @@ static int builtin_modules;
 static char const *BuiltinSourceModules[] = {
         "ty",
         "ffi",
-        "os",
+        "os"
+};
+
+static char const *LazyBuiltinSourceModules[] = {
         "jit"
 };
 static int BuiltinCount;
@@ -12306,7 +12309,7 @@ zfold(Expr *e, Scope *scope, void *ctx)
              && (e->operand->type == EXPRESSION_INTEGER)
         ) {
                 e->type = EXPRESSION_INTEGER;
-                e->integer = -e->operand->integer;
+                e->integer = (imax)(0 - (umax)e->operand->integer);
                 return e;
         }
 
@@ -12361,17 +12364,21 @@ zfold(Expr *e, Scope *scope, void *ctx)
         imax a = e->left->integer;
         imax b = e->right->integer;
 
+        if ((e->type == EXPRESSION_DIV || e->type == EXPRESSION_PERCENT) && b == 0) {
+                return e;
+        }
+
         switch (e->type) {
-        case EXPRESSION_PLUS:     e->integer = a + b;  break;
-        case EXPRESSION_MINUS:    e->integer = a - b;  break;
-        case EXPRESSION_STAR:     e->integer = a * b;  break;
-        case EXPRESSION_DIV:      e->integer = a / b;  break;
-        case EXPRESSION_PERCENT:  e->integer = a % b;  break;
-        case EXPRESSION_BIT_OR:   e->integer = a | b;  break;
-        case EXPRESSION_BIT_AND:  e->integer = a & b;  break;
-        case EXPRESSION_XOR:      e->integer = a ^ b;  break;
-        case EXPRESSION_SHL:      e->integer = a << b; break;
-        case EXPRESSION_SHR:      e->integer = a >> b; break;
+        case EXPRESSION_PLUS:     e->integer = (imax)((umax)a + (umax)b);   break;
+        case EXPRESSION_MINUS:    e->integer = (imax)((umax)a - (umax)b);   break;
+        case EXPRESSION_STAR:     e->integer = (imax)((umax)a * (umax)b);   break;
+        case EXPRESSION_DIV:      e->integer = IntDiv(a, b);                break;
+        case EXPRESSION_PERCENT:  e->integer = IntMod(a, b);                break;
+        case EXPRESSION_BIT_OR:   e->integer = a | b;                       break;
+        case EXPRESSION_BIT_AND:  e->integer = a & b;                       break;
+        case EXPRESSION_XOR:      e->integer = a ^ b;                       break;
+        case EXPRESSION_SHL:      e->integer = IntShl(a, b);                break;
+        case EXPRESSION_SHR:      e->integer = IntShr(a, b);                break;
         default: UNREACHABLE();
         }
 
@@ -13492,6 +13499,12 @@ import_module(Ty *ty, Stmt const *s)
 
         if (module_scope == NULL) {
                 module_scope = load_module(ty, name, NULL)->scope;
+        } else {
+                for (int i = 0; i < countof(LazyBuiltinSourceModules); ++i) {
+                        if (s_eq(name, LazyBuiltinSourceModules[i])) {
+                                load_module(ty, name, module_scope);
+                        }
+                }
         }
 
         for (int i = 0; !forgive_dup && i < vN(STATE.imports); ++i) {

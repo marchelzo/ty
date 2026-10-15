@@ -239,3 +239,22 @@ pub fn large-flattened-cache-is-reused() {
     assert(visible-count(tv) == 300)
     assert(app.child-calls == 2)
 }
+
+class LookSizedTree < ink.Component {
+    render() {
+        <ink.TreeView root="root" show-root?=false
+            children=(node -> node == 'root' ? ["n{i}" for i in ..40] : [])
+            label=(node -> node) expandable=(_ -> false) />
+    }
+}
+
+pub fn look-sets-the-viewport-and-page-size() {
+    ink.use-looks('TreeView::frame \{ height: 5 \}')
+    let h = ink.TestHarness(LookSizedTree(), cols=20, rows=20, color?=false)
+    assert(h.line-count == 5)
+    h.focus!(tree(h))
+    h.pagedown()
+    h.assert-contains('n5')
+    h.assert-not-contains('n0')
+    ink.use-looks('')
+}

@@ -788,6 +788,11 @@ run(LirMachine *m, u32 pc)
                 case LIR_FORM_FENCE:
                         __atomic_thread_fence(__ATOMIC_SEQ_CST);
                         break;
+                case LIR_FORM_COPY:
+                        a = operand(m, in->args[0], LIR_PTR);
+                        b = operand(m, in->args[1], LIR_PTR);
+                        memmove(a.ptr, b.ptr, 32);
+                        break;
                 case LIR_FORM_ALLOCA:
                         result.ptr = m->frame + m->slots[pc];
                         break;

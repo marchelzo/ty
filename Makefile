@@ -279,9 +279,13 @@ obj/tytest/%.o: src/%.c
 clean:
 	rm -rf $(PROG) *.gcda $(OBJECTS) $(TYLS_OBJECTS) $(TYPROF_OBJECTS) $(TYTEST_OBJECTS) obj/libco.o obj/dtoa.o include/keywords.h include/optokens.h $(GEN_DIR) tools/tybi $(BUILD_SIG_FILE) $(DEPFILES) obj/ty-main.o obj/tyls-main.o obj/typrof-main.o obj/tytest-main.o obj/types2-core-test obj/lir-core-test obj/lir-interp-test obj/lir-ra-test obj/lir-native-test obj/lir-entry-test obj/jitmem-test tytest
 
-test: ty tyls tytest test-types2 test-lir test-jitmem
+test: ty tyls tytest test-types2 test-lir test-jitmem test-jit
 	TY_TEST_NATIVE=1 ./ty --test tests/runner/smoke.ty
 	./ty --test tests --strict $(TEST_ARGS)
+
+test-jit: ty tytest
+	TY_JIT_EAGER=1 ./ty --test tests --strict $(TEST_ARGS)
+	TY_JIT_EAGER=2 TY_JIT_TIER=3 ./ty --test tests --strict $(TEST_ARGS)
 
 test-types2: obj/types2-core-test
 	./obj/types2-core-test

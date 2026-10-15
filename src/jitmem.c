@@ -15,8 +15,6 @@
 enum {
         JM_REGION_SIZE = 128 << 20,
         JM_MIN_SHIFT = 6,
-        JM_MAX_SHIFT = 16,
-        JM_NCLASS = JM_MAX_SHIFT - JM_MIN_SHIFT + 1,
         JM_NBUCKET = 4096
 };
 
@@ -41,7 +39,6 @@ typedef struct jm_chunk {
 static TySpinLock Lock = TY_MUTEX_INIT;
 static pthread_once_t Once = PTHREAD_ONCE_INIT;
 static JmChunk *Active[JM_NBUCKET];
-static JmChunk *Classes[JM_NCLASS];
 static JmChunk *Extents;
 static JmChunk *Retired;
 static JmRegion *Regions;
@@ -67,18 +64,6 @@ find(void const *rx)
                 p = &(*p)->next;
         }
         return p;
-}
-
-static i32
-size_class(usize size)
-{
-        u32 shift = JM_MIN_SHIFT;
-        usize n = (usize)1 << shift;
-        while (n < size && shift < JM_MAX_SHIFT) {
-                ++shift;
-                n <<= 1;
-        }
-        return size <= n ? (i32)(shift - JM_MIN_SHIFT) : -1;
 }
 
 static void
@@ -107,18 +92,6 @@ insert_extent(JmChunk *c)
 }
 
 static void
-reclaim_classes(void)
-{
-        for (u32 i = 0; i < JM_NCLASS; ++i) {
-                while (Classes[i] != NULL) {
-                        JmChunk *c = Classes[i];
-                        Classes[i] = c->next;
-                        insert_extent(c);
-                }
-        }
-}
-
-static void
 fork_prepare(void)
 {
         TySpinLockLock(&Lock);
@@ -140,14 +113,6 @@ fork_child(void)
                 Pool->retired = true;
                 munmap(Pool->rw, JM_REGION_SIZE);
                 Pool->rw = NULL;
-        }
-        for (u32 i = 0; i < JM_NCLASS; ++i) {
-                while (Classes[i] != NULL) {
-                        JmChunk *c = Classes[i];
-                        Classes[i] = c->next;
-                        c->next = Retired;
-                        Retired = c;
-                }
         }
         while (Extents != NULL) {
                 JmChunk *c = Extents;
@@ -190,7 +155,15 @@ region_init(void)
                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT, -1, 0);
         rx = rw;
 #elif defined(__linux__)
-        int fd = memfd_create("ty-jit", MFD_CLOEXEC);
+        char const *perf = getenv("TY_JIT_PERF_MAP");
+        int fd = -1;
+        if (perf != NULL && strcmp(perf, "1") == 0) {
+                rw = mmap(NULL, JM_REGION_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC,
+                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+                rx = rw;
+        } else {
+                fd = memfd_create("ty-jit", MFD_CLOEXEC);
+        }
         if (fd != -1) {
                 if (ftruncate(fd, JM_REGION_SIZE) == 0) {
                         rw = mmap(NULL, JM_REGION_SIZE, PROT_READ | PROT_WRITE,
@@ -297,14 +270,12 @@ jm_alloc(usize size)
 {
         JmChunk *c = NULL;
         usize n;
-        i32 cls;
         JitMapping result = {0};
         if (size == 0 || size > SIZE_MAX - 63) {
                 return result;
         }
         pthread_once(&Once, initialize);
-        cls = size_class(size);
-        n = cls < 0 ? (size + 63) & ~(usize)63 : (usize)1 << (JM_MIN_SHIFT + cls);
+        n = (size + 63) & ~(usize)63;
         TySpinLockLock(&Lock);
         while (Retired != NULL) {
                 JmChunk *c = Retired;
@@ -315,15 +286,8 @@ jm_alloc(usize size)
                 RegionTried = true;
                 region_init();
         }
-        if (cls >= 0 && Classes[cls] != NULL) {
-                c = Classes[cls];
-                Classes[cls] = c->next;
-        } else if (RegionRX != NULL) {
+        if (RegionRX != NULL) {
                 c = region_alloc(n);
-                if (c == NULL) {
-                        reclaim_classes();
-                        c = region_alloc(n);
-                }
         }
         if (c == NULL) {
                 c = map_one(n);
@@ -396,7 +360,6 @@ jm_free(void *rx)
 {
         JmChunk **p;
         JmChunk *c;
-        i32 cls;
         if (rx == NULL) {
                 return;
         }
@@ -422,13 +385,7 @@ jm_free(void *rx)
                         jm_trim();
                         return;
                 }
-                cls = size_class(c->size);
-                if (cls >= 0) {
-                        c->next = Classes[cls];
-                        Classes[cls] = c;
-                } else {
-                        insert_extent(c);
-                }
+                insert_extent(c);
         }
         TySpinLockUnlock(&Lock);
 }
@@ -444,7 +401,6 @@ jm_trim(void)
                 free(c);
         }
         if (Pool != NULL && Pool->live == 0) {
-                reclaim_classes();
                 while (Extents != NULL) {
                         JmChunk *c = Extents;
                         Extents = c->next;

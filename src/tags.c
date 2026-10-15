@@ -193,13 +193,30 @@ tags_same(Ty *ty, int t1, int t2)
 int
 tags_push(Ty *ty, int tags, int tag)
 {
+        static _Thread_local struct {
+                int tags;
+                int tag;
+                int n;
+        } memo[256];
+
+        u32 h = ((u32)tags * 2654435761u ^ (u32)tag) & (countof(memo) - 1);
+        if (memo[h].tags == tags && memo[h].tag == tag && memo[h].n != 0) {
+                return memo[h].n;
+        }
+
         struct tags *list = L(tags);
         struct tags *t = follow(
                 atomic_load_explicit(&list->links, memory_order_acquire),
                 tag
         );
 
-        return (t ?: extend(ty, list, tag))->n;
+        int n = (t ?: extend(ty, list, tag))->n;
+
+        memo[h].tags = tags;
+        memo[h].tag  = tag;
+        memo[h].n    = n;
+
+        return n;
 }
 
 int

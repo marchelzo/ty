@@ -1,0 +1,276 @@
+import ink
+
+class Grid < ink.Component {
+    n:      Int
+    reveal: Int | nil
+
+    render() -> ink.Node {
+        <ink.Box id="grid" direction="row" flex-wrap="wrap" gap=1 row-gap=0 align="stretch" height=6 overflow="scroll" reveal=reveal>
+            {[
+                <ink.Box key="c{i}" basis=6 flex=1 border-style="single" justify="space-between">
+                    <ink.Text>c{i}</ink.Text>
+                    {(i % 2 == 0) ? <ink.Text>tall</ink.Text> : nil}
+                </ink.Box>
+                for i in ..n
+            ]}
+        </ink.Box>
+    }
+}
+
+pub fn wrap-fills-lines-evenly() {
+    let h = ink.TestHarness(Grid(n=5, reveal=nil), cols=22, rows=12, color?=false)
+    h.assert-line(0, '┌─────┐ ┌─────┐ ┌────┐')
+    h.assert-line(1, '│c0   │ │c1   │ │c2  │')
+    h.assert-line(2, '│tall │ │     │ │tall│')
+    h.assert-line(3, '└─────┘ └─────┘ └────┘')
+    h.assert-line(4, '┌─────────┐ ┌────────┐')
+    h.assert-line(5, '│c3       │ │c4      │')
+}
+
+pub fn reveal-scrolls-a-child-into-view() {
+    let h = ink.TestHarness(Grid(n=9, reveal=8), cols=20, rows=12, color?=false)
+    assert(h.plain-text.contains?('c8'))
+    assert(!h.plain-text.contains?('c0'))
+}
+
+pub fn neighbor-moves-between-lines() {
+    let h = ink.TestHarness(Grid(n=7, reveal=nil), cols=20, rows=12, color?=false)
+    assert(ink.neighbor('grid', 1, 'down') == 4)
+    assert(ink.neighbor('grid', 4, 'up') == 1)
+    assert(ink.neighbor('grid', 6, 'down') == 6)
+    assert(ink.neighbor('grid', 2, 'right') == 3)
+}
+
+class Clamp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box width=10>
+            <ink.Text max-lines=2 text-overflow="ellipsis">one two three four five six</ink.Text>
+            <ink.Text wrap="truncate" text-overflow="ellipsis">abcdefghijklmnop</ink.Text>
+            <ink.Text display="none">hidden</ink.Text>
+            <ink.Text text-align="end" width=10>r</ink.Text>
+        </ink.Box>
+    }
+}
+
+pub fn text-clamps-and-ellipsizes() {
+    let h = ink.TestHarness(Clamp(), cols=40, rows=10, color?=false)
+    h.assert-line(0, 'one two   ')
+    h.assert-line(1, 'three fou…')
+    h.assert-line(2, 'abcdefghi…')
+    h.assert-line(3, '         r')
+    assert(h.line-count == 4)
+}
+
+class Looked < ink.Component {
+    render() -> ink.Node {
+        <ink.Box cls="outer">
+            <ink.Box cls="head">
+                <ink.Text cls="name">a-very-long-model-name</ink.Text>
+                <ink.Text>tag</ink.Text>
+            </ink.Box>
+            <ink.Card variant="tile">x</ink.Card>
+        </ink.Box>
+    }
+}
+
+pub fn look-drives-layout() {
+    ink.use-looks([
+        '.outer { width: 16; direction: column; align: stretch }',
+        '.head  { direction: row; gap: 1; margin-bottom: 1 }',
+        '.name  { flex: 1; wrap: truncate; text-overflow: ellipsis }',
+        'Card.tile::frame { border: single; pad-x: 0 }'
+    ].join('\n'))
+    let h = ink.TestHarness(Looked(), cols=40, rows=10, color?=false)
+    h.assert-line(0, 'a-very-long… tag')
+    h.assert-line(1, '                ')
+    h.assert-line(2, '┌──────────────┐')
+    h.assert-line(3, '│x             │')
+    ink.use-looks('')
+}
+
+class Responsive < ink.Component {
+    render() -> ink.Node {
+        <ink.Box direction="row">
+            <ink.Text cls="art">ART</ink.Text>
+            <ink.Text cls="path">/home/someone/projects/deep/tree</ink.Text>
+        </ink.Box>
+    }
+}
+
+pub fn media-queries-and-percentages() {
+    ink.use-looks([
+        '.art  { display: none; margin-right: 1 }',
+        '.path { max-width: 50%; text-overflow: ellipsis-start }',
+        '@media (min-width: 30) { .art { display: flex } }'
+    ].join('\n'))
+    let wide = ink.TestHarness(Responsive(), cols=40, rows=4, color?=false)
+    wide.assert-line(0, 'ART …/projects/deep/tree')
+    let narrow = ink.TestHarness(Responsive(), cols=20, rows=4, color?=false)
+    narrow.assert-line(0, '^…deep/tree')
+    ink.use-looks('')
+}
+
+class Panel < ink.Component {
+    n: Int
+
+    render() -> ink.Node {
+        <ink.Box direction="column" width=layout-max-w>
+            <ink.Text>above</ink.Text>
+            <ink.Box align-self="stretch" border-style="single" shrink=1>
+                <ink.Box basis=n max-height=6 min-height=2 shrink=1 reveal=(n - 1)>
+                    {[<ink.Text key="r{i}">row {i}</ink.Text> for i in ..n]}
+                </ink.Box>
+                <ink.Text visibility="hidden">ghost</ink.Text>
+                <ink.Sized draw=(w -> <ink.Text>{'=' * w}</ink.Text>) />
+            </ink.Box>
+            <ink.Text>below</ink.Text>
+        </ink.Box>
+    }
+}
+
+pub fn panels-shrink-and-stretch() {
+    let roomy = ink.TestHarness(Panel(n=9), cols=12, rows=20, color?=false)
+    roomy.assert-line(0, 'above')
+    roomy.assert-line(1, '┌──────────┐')
+    roomy.assert-line(2, '│row 3     │')
+    roomy.assert-line(7, '│row 8     │')
+    roomy.assert-line(8, '│          │')
+    roomy.assert-line(9, '│==========│')
+    roomy.assert-line(11, 'below')
+
+    let tight = ink.TestHarness(Panel(n=9), cols=12, rows=8, color?=false)
+    tight.assert-line(2, '│row 7     │')
+    tight.assert-line(3, '│row 8     │')
+    tight.assert-line(7, 'below')
+}
+
+class Tail < ink.Component {
+    render() -> ink.Node {
+        <ink.Box height=2 scroll-anchor="end">
+            {[<ink.Text key="t{i}">line {i}</ink.Text> for i in ..5]}
+        </ink.Box>
+    }
+}
+
+pub fn scroll-anchor-follows-the-end() {
+    let h = ink.TestHarness(Tail(), cols=20, rows=4, color?=false)
+    h.assert-line(0, 'line 3')
+    h.assert-line(1, 'line 4')
+}
+
+class Rails < ink.Component {
+    text: String
+
+    render() -> ink.Node {
+        <ink.Box width=12>
+            <ink.Box border-left="│ ">
+                <ink.Text wrap="pre-wrap">{text}</ink.Text>
+            </ink.Box>
+            <ink.Divider />
+            <ink.Sized draw=(w -> <ink.Text>{text[;2]}:{w}</ink.Text>) />
+        </ink.Box>
+    }
+}
+
+pub fn rails-pre-wrap-and-sized() {
+    use-rule-look()
+    let h = ink.TestHarness(Rails(text="ab   cd efgh ij\n"), cols=40, rows=10, color?=false)
+    h.assert-line(0, '^│ ab   cd   $')
+    h.assert-line(1, '^│ efgh ij   $')
+    h.assert-line(2, '^──────      $')
+    h.assert-line(3, '^ab:12')
+    assert(h.line-count == 4)
+    h.app.text = 'zz   zz'
+    h.app.invalidate!()
+    h.repaint()
+    h.assert-line(2, '^zz:12')
+    ink.use-looks('')
+}
+
+fn use-rule-look() {
+    ink.use-looks('Divider::line { max-width: 6 }')
+}
+
+class Grid2 < ink.Component {
+    framed?: Bool
+
+    render() -> ink.Node {
+        <ink.Box cls=(framed? ? 'tbl framed' : 'tbl')>
+            <ink.Box><ink.Text cls="th">a</ink.Text><ink.Text cls="th">b</ink.Text></ink.Box>
+            <ink.Box><ink.Text cls="td">1</ink.Text><ink.Text cls="td num">22</ink.Text></ink.Box>
+            <ink.Box><ink.Text cls="td">three blind mice</ink.Text><ink.Text cls="td num">4</ink.Text></ink.Box>
+        </ink.Box>
+    }
+}
+
+pub fn tables-share-column-widths() {
+    ink.use-looks([
+        '.tbl    { display: table; column-gap: 2 }',
+        '.framed { border: single }',
+        '.th     { pad-x: 1; text-align: center }',
+        '.td     { pad-x: 1 }',
+        '.num    { text-align: end }'
+    ].join('\n'))
+    let plain = ink.TestHarness(Grid2(framed?=false), cols=40, rows=10, color?=false)
+    plain.assert-line(0, '^        a            b  $')
+    plain.assert-line(1, '^ 1                   22 $')
+    plain.assert-line(2, '^ three blind mice     4 $')
+    let boxed = ink.TestHarness(Grid2(framed?=true), cols=16, rows=12, color?=false)
+    boxed.assert-line(0, '^┌─────────┬────┐$')
+    boxed.assert-line(1, '^│    a    │ b  │$')
+    boxed.assert-line(2, '^├─────────┼────┤$')
+    boxed.assert-line(5, '^│ three   │  4 │$')
+    boxed.assert-line(7, '^│ mice    │    │$')
+    boxed.assert-line(8, '^└─────────┴────┘$')
+    ink.use-looks('')
+}
+
+class Ls < ink.Component {
+    render() -> ink.Node {
+        <ink.Box display="columns" column-gap=4 width=30>
+            {['alpha', 'be', 'gamma-ray', 'd', 'epsilon', 'zeta', 'eta', 'theta', 'iota', 'kappa-long'].map(w -> <ink.Text>{w}</ink.Text>)}
+            <ink.Box direction="row"><ink.Text>x</ink.Text><ink.Text>-y</ink.Text></ink.Box>
+        </ink.Box>
+    }
+}
+
+pub fn columns-flow-down-then-across() {
+    let h = ink.TestHarness(Ls(), cols=40, rows=10, color?=false)
+    h.assert-line(0, '^alpha        eta {14}$')
+    h.assert-line(2, '^gamma-ray    iota {13}$')
+    h.assert-line(4, '^epsilon      x-y {14}$')
+    h.assert-line(5, '^zeta {26}$')
+}
+
+class Notes < ink.Component {
+    render() -> ink.Node {
+        <ink.Box>
+            <ink.Text cls="n" max-lines=2>{(1..6).map(str).join('\n')}</ink.Text>
+            <ink.Box cls="n" max-height=3>{[<ink.Text key="k{i}">{i}</ink.Text> for i in ..9]}</ink.Box>
+        </ink.Box>
+    }
+}
+
+pub fn overflow-notes-count-hidden-lines() {
+    ink.use-looks(".n \{ overflow-note: '… \{n\} more' \}")
+    let h = ink.TestHarness(Notes(), cols=20, rows=10, color?=false)
+    h.assert-line(0, '^1 ')
+    h.assert-line(1, '^2 ')
+    h.assert-line(2, '^… 3 more')
+    h.assert-line(5, '^… 7 more')
+    ink.use-looks('')
+}
+
+class Filled < ink.Component {
+    render() -> ink.Node {
+        <ink.Box width=12 align="stretch">
+            <ink.Text line-fill="bg">{"\x1b[48;5;22mab\x1b[0m\nplain"}</ink.Text>
+        </ink.Box>
+    }
+}
+
+pub fn line-fill-extends-the-last-background() {
+    let h = ink.TestHarness(Filled(), cols=20, rows=4)
+    assert(h.lines[0].contains?("\x1b[48;5;22m          "))
+    assert(!h.lines[1].contains?("\x1b[48;5;22m"))
+}

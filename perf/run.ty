@@ -216,8 +216,8 @@ fn print-comparison(
                         : ratio > 1.05 ? 'regression'
                         :                'stable'
             print(chalk"  {label} {duration-label(old.median, role='baseline', width=10)} "
-                        "[dim]→[/] {duration-label(r.med, verdict=verdict, width=10)}  "
-                        "{delta-label(ratio)}")
+                       "[dim]→[/] {duration-label(r.med, verdict=verdict, width=10)}  "
+                       "{delta-label(ratio)}")
         } else {
             print(chalk"  {label} [dim]no previous data[/]")
         }
@@ -238,7 +238,7 @@ fn run-suite(opts: RunOptions, database: String) {
     let mode = ty.jit ? 'jit' : 'interpreter'
     print(chalk"[bold bright cyan]Ty performance suite[/]  {mode-label(mode)}")
     print(chalk"[cyan]{#running} benchmark(s)[/] [dim]· {opts.rounds} rounds · "
-                "{opts.warmup} warmup[/]")
+               "{opts.warmup} warmup[/]")
     print()
 
     let started = now()
@@ -251,8 +251,8 @@ fn run-suite(opts: RunOptions, database: String) {
         results.push(r)
         print("\r\x1b[K", end='')
         print(chalk"{label} {duration-label(r.med, width=10)}[dim]/iter[/] "
-                    "[dim]±[/] {duration-label(r.sd, role='spread', width=9)}  "
-                    "[dim]{r.iters:>7} iters × {opts.rounds:>3} rounds[/]")
+                   "[dim]±[/] {duration-label(r.sd, role='spread', width=9)}  "
+                   "[dim]{r.iters:>7} iters × {opts.rounds:>3} rounds[/]")
     }
 
     if opts.compare {

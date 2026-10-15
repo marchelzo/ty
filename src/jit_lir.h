@@ -15,6 +15,8 @@ typedef struct bc_lir_node {
         LirLabel deopt;
         LirLabel resume;
         u32 resume_id;
+        LirLabel osr;
+        u32 osr_id;
         i32 argc;
         i32 global;
         i32 nkw;
@@ -29,6 +31,13 @@ typedef struct bc_local {
         LirReg regs[4];
         bool floating;
 } BcLocal;
+
+typedef struct bc_slot {
+        u8 kind;
+        LirReg r;
+        u64 bits;
+        T2Type hint;
+} BcSlot;
 
 typedef struct bc_lir {
         Lir *L;
@@ -45,10 +54,20 @@ typedef struct bc_lir {
         i32 max_sp;
         i32 self_index;
         u32 nresume;
+        u32 nosr;
         u32 offset;
+        i32 at;
         bool ok;
         bool dynamic;
         bool has_try;
+        bool compact;
+        i32 *tier;
+        BcSlot *known;
+        u32 *known_gen;
+        u32 gen;
+        i32 tuple_off;
+        i32 tuple_sp;
+        i32 tuple_min;
         i32 saved;
         i32 sentinel;
         i32 sentinel_sp;
@@ -60,6 +79,13 @@ typedef struct bc_lir {
         bool cache_ready;
         Ty *ctx;
         Value const *function;
+        BcSlot *vs;
+        i32 *local_class;
+        T2Type *local_type;
+        TypeHintVector const *hints;
+        bool speculate;
+        bool skip_next;
+        LirReg base_index;
 } BcLir;
 
 static bool
@@ -72,6 +98,32 @@ static void
 bc_sync_call(Ty *ty, Value *out, Value *fn, i32 argc);
 
 static void
+bc_native_call(BcLir *c, LirOpnd *enter_args);
+
+static void
+bc_native_invoke(BcLir *c, LirReg frame, LirReg out);
+
+static Frame *
+bc_method_enter(Ty *ty, Value *top, i32 op, i32 member, i32 argc, char *kw_ip);
+
+static void
+bc_inline_call(BcLir *c, LirReg fn, Value const *callee, i32 out, i32 argc, LirReg self,
+               LirLabel miss, LirLabel done);
+
+static bool
+bc_inline_method(BcLir *c, BcLirNode const *node, LirLabel *done);
+
+static bool
+bc_builtin_call(BcLir *c, LirReg fn, Value const *callee, i32 out, i32 argc, LirLabel miss, LirLabel done);
+
+static bool
+bc_inline_ctor(BcLir *c, LirReg fn, Value const *callee, i32 out, i32 argc, LirLabel *ready);
+
+static bool
+bc_try_plan(BcLir *c, Value const *callee, TyInlineKind kind, i32 argc, i32 base, LirReg self,
+            Class *self_class, Class **arg_classes, i32 out, LirLabel done);
+
+static void
 bc_cache_flush(BcLir *c);
 
 static void
@@ -80,6 +132,13 @@ bc_cache_reload(BcLir *c);
 static LirReg
 bc_call(BcLir *c, void *helper, LirType ret, LirType const *types,
         LirOpnd *args, u32 n);
+
+static LirReg
+bc_call_flags(BcLir *c, void *helper, LirType ret, LirType const *types,
+              LirOpnd *args, u32 n, u32 flags);
+
+static void
+bc_state(BcLir *c, BcLirNode const *node, char const *ip);
 
 static LirReg
 bc_value(BcLir *c, LirOp op, LirClass cls, LirOpnd const *args, u32 n)
@@ -122,10 +181,8 @@ bc_store(BcLir *c, LirOp op, LirReg base, i32 disp, LirOpnd value)
 static void
 bc_value_copy(BcLir *c, LirReg dst, i32 di, LirReg src, i32 si)
 {
-        for (u32 i = 0; i < sizeof (Value); i += 8) {
-                LirReg r = bc_load(c, LIR_LD_I64, LIR_I64, src, si + i);
-                bc_store(c, LIR_ST64, dst, di + i, lir_r(r));
-        }
+        LirOpnd args[] = { lir_m(dst, LIR_NONE, 1, di), lir_m(src, LIR_NONE, 1, si) };
+        bc_effect(c, LIR_COPY32, args, countof(args));
 }
 
 #include "jit_lir_local.h"
@@ -204,10 +261,39 @@ bc_numeric(BcLir *c, u8 op)
         bc_store(c, LIR_ST64, c->ops, left + offsetof(Value, z), lir_r(d));
         bc_jump(c, end);
         bc_bind(c, floats);
-        bc_branch(c, LIR_NE, lir_r(at), lir_i(VALUE_REAL), slow);
-        bc_branch(c, LIR_NE, lir_r(bt), lir_i(VALUE_REAL), slow);
-        a = bc_load(c, LIR_LD_F64, LIR_F64, c->ops, left + offsetof(Value, real));
-        b = bc_load(c, LIR_LD_F64, LIR_F64, c->ops, right + offsetof(Value, real));
+        if (c->compact || op == INSTR_EQ || op == INSTR_NEQ) {
+                bc_branch(c, LIR_NE, lir_r(at), lir_i(VALUE_REAL), slow);
+                bc_branch(c, LIR_NE, lir_r(bt), lir_i(VALUE_REAL), slow);
+                a = bc_load(c, LIR_LD_F64, LIR_F64, c->ops, left + offsetof(Value, real));
+                b = bc_load(c, LIR_LD_F64, LIR_F64, c->ops, right + offsetof(Value, real));
+        } else {
+                LirLabel left_int = lir_label(c->L);
+                LirLabel right_int = lir_label(c->L);
+                LirLabel ready = lir_label(c->L);
+                a = lir_reg(c->L, LIR_F64);
+                b = lir_reg(c->L, LIR_F64);
+                LirOpnd la = lir_m(c->ops, LIR_NONE, 1, left + offsetof(Value, real));
+                LirOpnd lb = lir_m(c->ops, LIR_NONE, 1, right + offsetof(Value, real));
+                bc_branch(c, LIR_NE, lir_r(at), lir_i(VALUE_REAL), left_int);
+                c->ok = c->ok && lir_emit_to(c->L, LIR_LD_F64, a, &la, 1);
+                bc_branch(c, LIR_NE, lir_r(bt), lir_i(VALUE_REAL), right_int);
+                c->ok = c->ok && lir_emit_to(c->L, LIR_LD_F64, b, &lb, 1);
+                bc_jump(c, ready);
+                bc_bind(c, right_int);
+                bc_branch(c, LIR_NE, lir_r(bt), lir_i(VALUE_INTEGER), slow);
+                LirReg zb = bc_load(c, LIR_LD_I64, LIR_I64, c->ops, right + offsetof(Value, z));
+                LirOpnd cb = lir_r(zb);
+                c->ok = c->ok && lir_emit_to(c->L, LIR_I2F, b, &cb, 1);
+                bc_jump(c, ready);
+                bc_bind(c, left_int);
+                bc_branch(c, LIR_NE, lir_r(at), lir_i(VALUE_INTEGER), slow);
+                bc_branch(c, LIR_NE, lir_r(bt), lir_i(VALUE_REAL), slow);
+                LirReg za = bc_load(c, LIR_LD_I64, LIR_I64, c->ops, left + offsetof(Value, z));
+                LirOpnd ca = lir_r(za);
+                c->ok = c->ok && lir_emit_to(c->L, LIR_I2F, a, &ca, 1);
+                c->ok = c->ok && lir_emit_to(c->L, LIR_LD_F64, b, &lb, 1);
+                bc_bind(c, ready);
+        }
         args[0] = lir_r(a);
         args[1] = lir_r(b);
         compare[0] = lir_cc(fcc);
@@ -219,6 +305,9 @@ bc_numeric(BcLir *c, u8 op)
                         bc_store(c, LIR_ST64, c->ops, left + i, lir_i(0));
                 }
                 bc_store(c, LIR_ST8, c->ops, left + offsetof(Value, type), lir_i(VALUE_BOOLEAN));
+        }
+        if (!cmp) {
+                bc_store(c, LIR_ST64, c->ops, left + offsetof(Value, type), lir_i(VALUE_REAL));
         }
         bc_store(c, cmp ? LIR_ST64 : LIR_ST_F64, c->ops, left + offsetof(Value, real), lir_r(d));
         bc_jump(c, end);
@@ -233,8 +322,47 @@ bc_numeric(BcLir *c, u8 op)
 }
 
 static void
+bc_base_index(BcLir *c)
+{
+        LirReg base = bc_load(c, LIR_LD_I64, LIR_I64, c->ty, offsetof(Ty, stack.items));
+        LirOpnd arg = lir_r(c->ops);
+        LirReg bits = bc_value(c, LIR_BITCAST, LIR_I64, &arg, 1);
+        LirOpnd sub[] = { lir_r(bits), lir_r(base) };
+        LirReg bytes = bc_value(c, LIR_SUB, LIR_I64, sub, countof(sub));
+        LirOpnd shift[] = { lir_r(bytes), lir_i(5) };
+        c->ok = c->ok && lir_emit_to(c->L, LIR_SHR, c->base_index, shift, countof(shift));
+}
+
+static void
+bc_stack_count_at(BcLir *c, i32 slot)
+{
+        if (c->base_index != LIR_NONE) {
+                LirReg count = c->base_index;
+                if (slot != 0) {
+                        LirOpnd add[] = { lir_r(c->base_index), lir_i(slot) };
+                        count = bc_value(c, LIR_ADD, LIR_I64, add, countof(add));
+                }
+                bc_store(c, LIR_ST64, c->ty, offsetof(Ty, stack.count), lir_r(count));
+                return;
+        }
+        LirReg top = bc_addr(c, c->ops, slot * sizeof (Value));
+        LirReg base = bc_load(c, LIR_LD_I64, LIR_I64, c->ty, offsetof(Ty, stack.items));
+        LirOpnd arg = lir_r(top);
+        LirReg bits = bc_value(c, LIR_BITCAST, LIR_I64, &arg, 1);
+        LirOpnd sub[] = { lir_r(bits), lir_r(base) };
+        LirReg bytes = bc_value(c, LIR_SUB, LIR_I64, sub, countof(sub));
+        LirOpnd shift[] = { lir_r(bytes), lir_i(5) };
+        LirReg count = bc_value(c, LIR_SHR, LIR_I64, shift, countof(shift));
+        bc_store(c, LIR_ST64, c->ty, offsetof(Ty, stack.count), lir_r(count));
+}
+
+static void
 bc_stack_count(BcLir *c)
 {
+        if (c->base_index != LIR_NONE) {
+                bc_stack_count_at(c, c->sp);
+                return;
+        }
         LirReg top = bc_addr(c, c->ops, c->sp * sizeof (Value));
         LirReg base = bc_load(c, LIR_LD_I64, LIR_I64, c->ty, offsetof(Ty, stack.items));
         LirOpnd arg = lir_r(top);
@@ -254,7 +382,12 @@ bc_cfg_edge(BcLir *c, i32 offset, i32 sp, i32 *queue, u32 *n)
         }
         BcLirNode *node = &c->nodes[offset];
         if (node->sp >= 0) {
-                if (node->saved != c->saved) {
+                bool resets = node->op == INSTR_RESTORE_STACK_POS || node->op == INSTR_POP_STACK_POS
+                           || node->op == INSTR_POP_STACK_POS_POP || node->op == INSTR_POP_STACK_POS_POP2;
+                bool twins = resets && node->saved >= 0 && c->saved >= 0
+                          && c->nodes[node->saved].sp == c->nodes[c->saved].sp
+                          && c->nodes[node->saved].saved == c->nodes[c->saved].saved;
+                if (node->saved != c->saved && !twins) {
                         i32 a = node->saved;
                         i32 b = c->saved;
                         i32 n = 0;
@@ -267,7 +400,7 @@ bc_cfg_edge(BcLir *c, i32 offset, i32 sp, i32 *queue, u32 *n)
                         }
                         c->dynamic = true;
                 }
-                c->dynamic = c->dynamic || node->sp != sp;
+                c->dynamic = c->dynamic || (node->sp != sp && !resets);
                 return true;
         }
         node->sp = sp;
@@ -276,6 +409,57 @@ bc_cfg_edge(BcLir *c, i32 offset, i32 sp, i32 *queue, u32 *n)
         node->sentinel_sp = c->sentinel_sp;
         queue[(*n)++] = offset;
         return true;
+}
+
+static bool
+bc_in_try(BcLir const *c, i32 offset)
+{
+        for (i32 t = 0; t < c->size; ++t) {
+                BcLirNode const *node = &c->nodes[t];
+                if (node->next == 0 || node->op != INSTR_TRY || t > offset) {
+                        continue;
+                }
+                i32 end = node->catch_to;
+                if (node->finally_to > end) {
+                        end = node->finally_to;
+                }
+                if (node->end_to > end) {
+                        end = node->end_to;
+                }
+                if (end < 0 || offset < end) {
+                        return true;
+                }
+        }
+        return false;
+}
+
+static void
+bc_tier_hot(i32 *count, i32 *info)
+{
+        Value f = { .type = VALUE_FUNCTION, .info = info };
+        *count = INT32_MAX;
+        jit_tier_up(&f);
+}
+
+static void
+bc_tier_check(BcLir *c, LirLabel deopt)
+{
+        LirOpnd where = lir_i((uptr)c->tier);
+        LirReg p = bc_value(c, LIR_LI, LIR_PTR, &where, 1);
+        LirReg n = bc_load(c, LIR_LD_I32, LIR_I64, p, 0);
+        LirOpnd dec[] = { lir_r(n), lir_i(-1) };
+        LirReg m = bc_value(c, LIR_ADD, LIR_I64, dec, countof(dec));
+        LirLabel cold = lir_label(c->L);
+        bc_store(c, LIR_ST32, p, 0, lir_r(m));
+        bc_branch(c, LIR_GT, lir_r(m), lir_i(0), cold);
+        LirType types[] = { LIR_TYPE_PTR, LIR_TYPE_PTR };
+        LirOpnd args[] = { lir_r(p), lir_i((uptr)c->function->info) };
+        bc_call_flags(c, bc_tier_hot, LIR_VOID, types, args, countof(args), LIR_READS_NO_LOCALS);
+        if (deopt != LIR_NONE) {
+                bc_stack_count(c);
+                bc_jump(c, deopt);
+        }
+        bc_bind(c, cold);
 }
 
 static bool
@@ -1224,6 +1408,13 @@ bc_control(BcLir *c, BcLirNode const *node)
                 LirReg top = bc_addr(c, c->ops, c->sp * sizeof (Value));
                 LirOpnd poll[] = { lir_r(c->ty), lir_r(top), lir_r(info), lir_l(node->deopt) };
                 bc_poll(c, poll);
+                if (
+                        c->tier != NULL
+                     && node->op == INSTR_JUMP
+                     && c->nodes[node->target].osr_id != 0
+                ) {
+                        bc_tier_check(c, node->deopt);
+                }
         }
         u8 compare;
         switch (node->op) {
@@ -1275,15 +1466,15 @@ bc_control(BcLir *c, BcLirNode const *node)
 }
 
 static LirReg
-bc_call_flags(BcLir *c, void *helper, LirType ret, LirType const *types,
-              LirOpnd *args, u32 n, u32 flags)
+bc_call_target(BcLir *c, LirOpnd target, LirType ret, LirType const *types,
+               LirOpnd *args, u32 n, u32 flags)
 {
         if (!(flags & LIR_READS_NO_LOCALS) || (flags & (LIR_MAY_GC | LIR_MAY_THROW))) {
                 bc_cache_flush(c);
         }
         LirReg r = ret == LIR_VOID ? LIR_NONE : lir_reg(c->L, lir_type_class(ret));
         LirInst in = {
-                .op = LIR_CALL, .dst = r, .args = { lir_i((uptr)helper) }, .nargs = 1,
+                .op = LIR_CALL, .dst = r, .args = { target }, .nargs = 1,
                 .sig = { .ret = ret, .params = types, .nparams = n, .nfixed = n },
                 .flags = flags,
                 .tag = c->offset, .call_args = args, .ncall_args = n
@@ -1295,6 +1486,13 @@ bc_call_flags(BcLir *c, void *helper, LirType ret, LirType const *types,
                 bc_cache_reload(c);
         }
         return r;
+}
+
+static LirReg
+bc_call_flags(BcLir *c, void *helper, LirType ret, LirType const *types,
+              LirOpnd *args, u32 n, u32 flags)
+{
+        return bc_call_target(c, lir_i((uptr)helper), ret, types, args, n, flags);
 }
 
 static LirReg
@@ -1365,7 +1563,24 @@ bc_invoke_method(BcLir *c, BcLirNode const *node)
         if (bc_method_fast(c, node)) {
                 return;
         }
+        LirLabel inlined = LIR_NONE;
+        bc_inline_method(c, node, &inlined);
         LirReg top = bc_addr(c, c->ops, c->sp * sizeof (Value));
+        if (node->nkw == 0 && node->argc >= 0 && node->member >= 0
+            && (node->op == INSTR_CALL_METHOD || node->op == INSTR_CALL_SELF_METHOD)) {
+                bool explicit = node->op == INSTR_CALL_METHOD;
+                LirReg out = bc_addr(c, c->ops, (c->sp - explicit - node->argc) * sizeof (Value));
+                LirType types[] = { LIR_TYPE_PTR, LIR_TYPE_PTR, LIR_TYPE_I32,
+                                    LIR_TYPE_I32, LIR_TYPE_I32, LIR_TYPE_PTR };
+                LirOpnd args[] = { lir_r(c->ty), lir_r(top), lir_i(node->op), lir_i(node->member),
+                                  lir_i(node->argc), lir_i((uptr)node->kw_ip) };
+                LirReg frame = bc_call(c, bc_method_enter, LIR_TYPE_PTR, types, args, countof(args));
+                bc_native_invoke(c, frame, out);
+                if (inlined != LIR_NONE) {
+                        bc_bind(c, inlined);
+                }
+                return;
+        }
         LirType types[] = { LIR_TYPE_PTR, LIR_TYPE_PTR, LIR_TYPE_I32,
                             LIR_TYPE_I32, LIR_TYPE_I32, LIR_TYPE_I32,
                             LIR_TYPE_I32, LIR_TYPE_PTR };
@@ -1385,6 +1600,82 @@ bc_spread_call(Ty *ty, Value *top, i32 global, i32 nkw, char *kw_ip)
         Value kwargs = BuildKwargsDict(ty, &kw_ip, nkw);
         DoCallEx(ty, &fn, argc, &kwargs, true);
         gX();
+}
+
+static bool
+bc_tail_position(BcLir const *c, BcLirNode const *node)
+{
+        i32 n = node->next;
+        for (i32 hops = 0; hops < 8 && n > 0 && n < c->size && c->nodes[n].op == INSTR_JUMP; ++hops) {
+                n = c->nodes[n].target;
+        }
+        if (n <= 0 || n >= c->size || c->nodes[n].op != INSTR_RETURN) {
+                return false;
+        }
+        for (i32 off = 0; off < c->size; ++off) {
+                u8 op = c->nodes[off].op;
+                if (
+                        c->nodes[off].next != 0
+                     && (op == INSTR_PUSH_DROP_GROUP || op == INSTR_PUSH_DEFER_GROUP || op == INSTR_DEFER)
+                ) {
+                        return false;
+                }
+        }
+        return true;
+}
+
+static void
+bc_tail_self(BcLir *c, BcLirNode const *node, LirReg fn)
+{
+        Value const *f = c->function;
+        if (
+                c->dynamic
+             || c->has_try
+             || c->ncached != 0
+             || c->base_index == LIR_NONE
+             || c->self_index >= 0
+             || is_starred(f)
+             || node->argc > 16
+             || c->bound > 48
+             || !jit_linkable_global(f, node->argc)
+             || !bc_tail_position(c, node)
+        ) {
+                return;
+        }
+        LirLabel miss = lir_label(c->L);
+        LirLabel deopt = lir_label(c->L);
+        LirLabel go = lir_label(c->L);
+        LirReg type = bc_load(c, LIR_LD_U8, LIR_I64, fn, offsetof(Value, type));
+        bc_branch(c, LIR_NE, lir_r(type), lir_i(VALUE_FUNCTION), miss);
+        LirReg info = bc_load(c, LIR_LD_I64, LIR_PTR, fn, offsetof(Value, info));
+        LirOpnd expected = lir_i((uptr)f->info);
+        LirReg want = bc_value(c, LIR_LI, LIR_PTR, &expected, 1);
+        bc_branch(c, LIR_NE, lir_r(info), lir_r(want), miss);
+        LirReg env = bc_load(c, LIR_LD_I64, LIR_PTR, fn, offsetof(Value, env));
+        bc_branch(c, LIR_NE, lir_r(env), lir_r(c->env), miss);
+        LirOpnd allocation[] = { lir_i(sizeof (JitDeopt)), lir_i(alignof (JitDeopt)) };
+        LirReg state = bc_value(c, LIR_ALLOCA, LIR_PTR, allocation, countof(allocation));
+        bc_store(c, LIR_ST32, state, offsetof(JitDeopt, sp), lir_i(c->sp));
+        bc_store(c, LIR_ST32, state, offsetof(JitDeopt, nsave), lir_i(0));
+        LirReg top = bc_addr(c, c->ops, c->sp * sizeof (Value));
+        LirOpnd poll[] = { lir_r(c->ty), lir_r(top), lir_r(state), lir_l(deopt) };
+        bc_poll(c, poll);
+        bc_jump(c, go);
+        bc_bind(c, deopt);
+        bc_stack_count(c);
+        LirOpnd result = lir_i(JIT_PACK(JIT_DEOPT, c->at));
+        bc_effect(c, LIR_RET, &result, 1);
+        bc_bind(c, go);
+        i32 base = c->sp - 1 - node->argc;
+        for (i32 i = 0; i < node->argc; ++i) {
+                bc_value_copy(c, c->locals, i * sizeof (Value), c->ops, (base + i) * sizeof (Value));
+        }
+        for (i32 i = node->argc; i < c->bound; ++i) {
+                bc_store(c, LIR_ST64, c->locals, i * sizeof (Value), lir_i(VALUE_NIL));
+        }
+        bc_stack_count_at(c, 0);
+        bc_jump(c, c->nodes[0].label);
+        bc_bind(c, miss);
 }
 
 static void
@@ -1410,18 +1701,72 @@ bc_invoke(BcLir *c, BcLirNode const *node)
         }
         LirReg fn;
         bool global = node->op == INSTR_CALL_GLOBAL;
+        i32 first = c->sp - node->argc - !global;
+        LirLabel done = LIR_NONE;
         if (global) {
-                LirType types[] = { LIR_TYPE_PTR, LIR_TYPE_I32 };
-                LirOpnd args[] = { lir_r(c->ty), lir_i(node->global) };
-                fn = bc_call(c, vm_global, LIR_TYPE_PTR, types, args, countof(args));
+                LirOpnd where = lir_i((uptr)&Globals.items);
+                LirReg address = bc_value(c, LIR_LI, LIR_PTR, &where, 1);
+                LirReg globals = bc_load(c, LIR_LD_I64, LIR_PTR, address, 0);
+                fn = bc_addr(c, globals, node->global * sizeof (Value));
+                Value const *callee = vm_global(c->ctx, node->global);
+                if (
+                        !c->compact
+                     && jit_linkable_global(callee, node->argc)
+                     && callee->info[FUN_INFO_BOUND] - node->argc <= 32
+                ) {
+                        LirLabel miss = lir_label(c->L);
+                        done = lir_label(c->L);
+                        LirReg type = bc_load(c, LIR_LD_U8, LIR_I64, fn, offsetof(Value, type));
+                        bc_branch(c, LIR_NE, lir_r(type), lir_i(VALUE_FUNCTION), miss);
+                        LirReg info = bc_load(c, LIR_LD_I64, LIR_PTR, fn, offsetof(Value, info));
+                        LirOpnd expected = lir_i((uptr)callee->info);
+                        LirReg want = bc_value(c, LIR_LI, LIR_PTR, &expected, 1);
+                        bc_branch(c, LIR_NE, lir_r(info), lir_r(want), miss);
+                        bc_try_plan(c, callee, TY_INLINE_GLOBAL, node->argc, first, LIR_NONE,
+                                    NULL, NULL, first, done);
+                        bc_inline_call(c, fn, callee, first, node->argc, LIR_NONE, miss, done);
+                        bc_bind(c, miss);
+                } else if (callee->type == VALUE_CLASS && node->argc <= 8) {
+                        bc_inline_ctor(c, fn, callee, first, node->argc, &done);
+                } else if (callee->type == VALUE_BUILTIN_FUNCTION) {
+                        LirLabel miss = lir_label(c->L);
+                        done = lir_label(c->L);
+                        bc_builtin_call(c, fn, callee, first, node->argc, miss, done);
+                        bc_bind(c, miss);
+                }
         } else {
                 fn = bc_addr(c, c->ops, (c->sp - 1) * sizeof (Value));
+                i32 at = node - c->nodes;
+                bc_tail_self(c, node, fn);
+                if (
+                        !c->compact
+                     && jit_linkable_global(c->function, node->argc)
+                     && c->function->info[FUN_INFO_BOUND] - node->argc <= 32
+                     && !(at >= 5 && (u8)c->code[at - 5] == INSTR_CLASS)
+                ) {
+                        LirLabel miss = lir_label(c->L);
+                        done = lir_label(c->L);
+                        bc_inline_call(c, fn, c->function, first, node->argc, LIR_NONE, miss, done);
+                        bc_bind(c, miss);
+                }
+                if (at >= 5 && (u8)c->code[at - 5] == INSTR_CLASS && c->nodes[at - 5].sp >= 0
+                    && c->nodes[at - 5].next == at && node->label == LIR_NONE && node->argc <= 8) {
+                        Value klass = { .type = VALUE_CLASS };
+                        memcpy(&klass.class, c->code + at - 4, sizeof klass.class);
+                        bc_inline_ctor(c, fn, &klass, first, node->argc, &done);
+                }
         }
-        i32 first = c->sp - node->argc - !global;
         LirReg out = bc_addr(c, c->ops, first * sizeof (Value));
         LirType types[] = { LIR_TYPE_PTR, LIR_TYPE_PTR, LIR_TYPE_PTR, LIR_TYPE_I32 };
         LirOpnd args[] = { lir_r(c->ty), lir_r(out), lir_r(fn), lir_i(node->argc) };
         bc_stack_count(c);
+        if (node->resume_id == 0) {
+                bc_native_call(c, args);
+                if (done != LIR_NONE) {
+                        bc_bind(c, done);
+                }
+                return;
+        }
         if (node->resume_id == 0) {
                 bc_call(c, bc_sync_call, LIR_VOID, types, args, countof(args));
                 return;
@@ -1569,6 +1914,9 @@ bc_yield(BcLir *c, BcLirNode const *node)
 #include "jit_lir_call.h"
 #include "jit_lir_local_ops.h"
 #include "jit_lir_member.h"
+#include "jit_lir_fast.h"
+#include "jit_lir_inline.h"
+#include "jit_lir_vstack.h"
 #include "jit_lir_ops.h"
 #include "jit_lir_pattern.h"
 #include "jit_lir_state.h"
@@ -1583,6 +1931,29 @@ bc_mark_label(BcLir *c, i32 offset)
                 c->nodes[offset].label = lir_label(c->L);
         }
 }
+
+static u64 OpStatInsts[256];
+static u64 OpStatCount[256];
+
+static void
+opstat_dump(void)
+{
+        for (int i = 0; i < 256; ++i) {
+                if (OpStatCount[i] != 0) {
+                        fprintf(stderr, "opstat %s %llu %llu\n", GetInstructionName(i),
+                                (unsigned long long)OpStatCount[i], (unsigned long long)OpStatInsts[i]);
+                }
+        }
+}
+
+__attribute__((constructor)) static void
+opstat_init(void)
+{
+        if (getenv("TY_JIT_OPSTAT") != NULL) {
+                atexit(opstat_dump);
+        }
+}
+
 
 static JitFn *
 bc_lir_compile(Ty *ty, Value const *f)
@@ -1602,10 +1973,13 @@ bc_lir_compile(Ty *ty, Value const *f)
                     .bound = f->info[FUN_INFO_BOUND],
                     .self_index = f->info[FUN_INFO_CLASS] == -1
                                 ? -1 : f->info[FUN_INFO_PARAM_COUNT],
-                    .ctx = ty, .function = f, .ok = true };
+                    .ctx = ty, .function = f, .ok = true, .tuple_off = -1 };
         if (c.L == NULL) {
                 return NULL;
         }
+        c.compact = jit_tier() == 1
+                 || ((jit_tier() == 0 || jit_tier() == 3)
+                     && !(atomic_load((_Atomic i16 *)flags_of(f)) & FF_JIT_TIER2));
         if (!bc_lir_cfg(&c, f)) {
                 if (jit_audit_level() >= 2) {
                         fprintf(stderr, "jit-audit: lir cfg decline %s off=%u op=%s\n",
@@ -1615,13 +1989,18 @@ bc_lir_compile(Ty *ty, Value const *f)
                 free(c.nodes);
                 return NULL;
         }
+        if (c.dynamic && c.size > 4096) {
+                if (jit_audit_level() >= 2) {
+                        fprintf(stderr, "jit-audit: lir decline %s reason=large dynamic stack\n", name_of(f));
+                }
+                lir_free(c.L);
+                free(c.nodes);
+                return NULL;
+        }
         c.ok = c.ok && bc_cache_plan(&c, ty, f);
         for (i32 off = 0; off < c.size; ++off) {
                 if (c.nodes[off].next != 0 && c.nodes[off].sp >= 0) {
-                        if (((c.nodes[off].op == INSTR_CALL || c.nodes[off].op == INSTR_CALL_GLOBAL)
-                             && c.nodes[off].nkw == 0 && c.nodes[off].argc >= 0
-                             && c.nodes[off].owner < 0)
-                            || (!c.has_try && (c.nodes[off].op == INSTR_YIELD
+                        if ((!c.has_try && (c.nodes[off].op == INSTR_YIELD
                                 || c.nodes[off].op == INSTR_YIELD_SOME
                                 || c.nodes[off].op == INSTR_YIELD_NONE))) {
                                 c.nodes[off].resume = lir_label(c.L);
@@ -1634,6 +2013,9 @@ bc_lir_compile(Ty *ty, Value const *f)
                         BcLirNode const *node = &c.nodes[off];
                         if (node->branch) {
                                 bc_mark_label(&c, node->target);
+                        }
+                        if (node->op == INSTR_CALL && bc_tail_position(&c, node)) {
+                                bc_mark_label(&c, 0);
                         }
                         if (node->op == INSTR_TRY) {
                                 bc_mark_label(&c, node->catch_to);
@@ -1655,10 +2037,30 @@ bc_lir_compile(Ty *ty, Value const *f)
                         }
                 }
         }
+        if (!c.dynamic && getenv("TY_JIT_NO_OSR") == NULL) {
+                for (i32 off = 0; off < c.size; ++off) {
+                        BcLirNode const *node = &c.nodes[off];
+                        if (node->next == 0 || node->sp < 0 || !node->branch || node->target > off) {
+                                continue;
+                        }
+                        BcLirNode *head = &c.nodes[node->target];
+                        if (c.has_try && bc_in_try(&c, node->target)) {
+                                continue;
+                        }
+                        if (head->osr_id == 0 && head->label != LIR_NONE && head->sp >= 0) {
+                                head->osr = lir_label(c.L);
+                                head->osr_id = ++c.nresume;
+                                c.nosr += 1;
+                        }
+                }
+        }
         c.ok = lir_pin_param(c.L, LIR_PIN_0, 0)
             && lir_pin_param(c.L, LIR_PIN_1, 2)
             && lir_pin_param(c.L, LIR_PIN_2, 3)
             && lir_pc_param(c.L, 4);
+        c.L->ty_param = 0;
+        c.L->stable_pins = (1 << LIR_PIN_0) | (1 << LIR_PIN_2);
+        c.L->stack_pins = (1 << LIR_PIN_1) | (1 << LIR_PIN_3);
         c.ty = lir_pinned(c.L, LIR_PIN_0);
         c.locals = lir_pinned(c.L, LIR_PIN_1);
         c.env = lir_pinned(c.L, LIR_PIN_2);
@@ -1674,6 +2076,11 @@ bc_lir_compile(Ty *ty, Value const *f)
         }
         LirOpnd mem = lir_m(c.locals, LIR_NONE, 1, c.bound * sizeof (Value));
         c.ok = c.ok && lir_emit_to(c.L, LIR_LEA, c.ops, &mem, 1);
+        c.base_index = LIR_NONE;
+        if (!c.dynamic) {
+                c.base_index = lir_reg(c.L, LIR_I64);
+                bc_base_index(&c);
+        }
         c.deopt = lir_label(c.L);
         LirLabel normal = lir_label(c.L);
         if (c.nresume != 0) {
@@ -1688,6 +2095,9 @@ bc_lir_compile(Ty *ty, Value const *f)
                         BcLirNode const *node = &c.nodes[off];
                         if (node->next != 0 && node->resume_id != 0) {
                                 targets[node->resume_id] = node->resume;
+                        }
+                        if (node->next != 0 && node->osr_id != 0) {
+                                targets[node->osr_id] = node->osr;
                         }
                 }
                 LirInst dispatch = {
@@ -1708,22 +2118,53 @@ bc_lir_compile(Ty *ty, Value const *f)
         static JitDeopt const deopt = {0};
         LirOpnd poll[] = { lir_r(c.ty), lir_r(c.ops), lir_i((uptr)&deopt), lir_l(c.deopt) };
         bc_poll(&c, poll);
+        if (c.compact && jit_tier() != 1) {
+                c.tier = malloc(sizeof *c.tier);
+                if (c.tier != NULL) {
+                        *c.tier = jit_tier() == 3 ? 3 : JIT_TIER_BUDGET;
+                        bc_tier_check(&c, LIR_NONE);
+                }
+        }
         bc_cache_reload(&c);
+        c.ok = c.ok && bc_vs_plan(&c, ty, f);
         char const *ip = code_of(f);
+        int stat_op = -1;
+        u32 stat_n = c.L->ninsts;
         while (c.ok && ip < code_of(f) + c.size) {
                 BcLirNode const *node = &c.nodes[ip - code_of(f)];
+                if (stat_op >= 0) {
+                        OpStatInsts[stat_op] += c.L->ninsts - stat_n;
+                }
+                stat_op = (u8)*ip;
+                OpStatCount[stat_op] += node->sp >= 0;
+                stat_n = c.L->ninsts;
                 if (node->sp < 0) {
                         ip = StepInstruction(ip);
                         continue;
                 }
                 c.sp = node->sp;
                 if (node->label != LIR_NONE) {
+                        bc_vs_flush_below(&c, node->sp);
+                        bc_vs_forget(&c);
                         bc_bind(&c, node->label);
+                }
+                if (c.vs != NULL) {
+                        for (i32 i = node->sp; i < c.max_sp + 8; ++i) {
+                                c.vs[i].kind = VS_MEM;
+                                c.vs[i].hint = T2_TYPE_INVALID;
+                        }
+                        if (c.hints != NULL && node->sp > 0) {
+                                T2Type hint = find_type_hint(c.hints, ip - code_of(f));
+                                if (hint != T2_TYPE_INVALID) {
+                                        c.vs[node->sp - 1].hint = hint;
+                                }
+                        }
                 }
                 if (c.dynamic) {
                         bc_dynamic_ops(&c);
                 }
                 c.offset = StepInstruction(ip) - code_of(f);
+                c.at = ip - code_of(f);
 #ifdef TY_PROFILER
                 bc_stack_count(&c);
                 LirType tick_types[] = { LIR_TYPE_PTR, LIR_TYPE_PTR };
@@ -1734,6 +2175,16 @@ bc_lir_compile(Ty *ty, Value const *f)
                 u8 op = *ip;
                 i32 local;
                 u64 bits;
+                if (bc_vs_lower(&c, node, ip)) {
+                        ip = StepInstruction(ip);
+                        if (c.skip_next) {
+                                ip = StepInstruction(ip);
+                                c.skip_next = false;
+                        }
+                        continue;
+                }
+                bc_vs_flush_all(&c);
+                bc_vs_forget(&c);
                 switch (op) {
                 case INSTR_TRY_YIELD_FROM:
                 case INSTR_TAIL_CALL:
@@ -1830,7 +2281,9 @@ bc_lir_compile(Ty *ty, Value const *f)
                 case INSTR_JII:
                 case INSTR_MATCH_TAG:
                 case INSTR_MATCH_STRING:
-                        bc_pattern(&c, node, ip);
+                        if (bc_pattern(&c, node, ip)) {
+                                ip = StepInstruction(ip);
+                        }
                         break;
                 case INSTR_UNAPPLY:
                 case INSTR_PUSH_ARRAY_ELEM:
@@ -1870,7 +2323,6 @@ bc_lir_compile(Ty *ty, Value const *f)
                 case INSTR_SET_COMPR:
                 case INSTR_DICT_COMPR:
                 case INSTR_PUSH_INDEX:
-                case INSTR_LOOP_ITER:
                 case INSTR_LOOP_CHECK:
                 case INSTR_SPREAD_CHECK:
                 case INSTR_ASSIGN_SUBSCRIPT:
@@ -1893,7 +2345,6 @@ bc_lir_compile(Ty *ty, Value const *f)
                 case INSTR_MEMBER_ACCESS:
                 case INSTR_SELF_MEMBER_ACCESS:
                 case INSTR_TRY_MEMBER_ACCESS:
-                case INSTR_TARGET_SUBSCRIPT:
                 case INSTR_SUBSCRIPT:
                 case INSTR_SAFE_SUBSCRIPT:
                 case INSTR_GET_MEMBER:
@@ -1950,6 +2401,9 @@ bc_lir_compile(Ty *ty, Value const *f)
                 case INSTR_LOAD_LOCAL:
                         memcpy(&local, ip + 1, sizeof local);
                         bc_local_load(&c, local);
+                        if (c.vs != NULL && c.local_type != NULL && local >= 0 && local < c.bound) {
+                                c.vs[c.sp - 1].hint = c.local_type[local];
+                        }
                         break;
                 case INSTR_LOAD_GLOBAL: {
                         memcpy(&local, ip + 1, sizeof local);
@@ -1971,8 +2425,22 @@ bc_lir_compile(Ty *ty, Value const *f)
                         bc_value_copy(&c, c.ops, c.sp++ * sizeof (Value), ptr, 0);
                         break;
                 }
+                case INSTR_LOOP_ITER:
+                        if (bc_fast_loop(&c, node)) {
+                                ip = StepInstruction(ip);
+                                break;
+                        }
+                        bc_more(&c, node, ip);
+                        break;
+                case INSTR_TARGET_SUBSCRIPT:
+                        if (bc_fast_target_subscript(&c, node)) {
+                                ip = StepInstruction(ip);
+                                break;
+                        }
+                        bc_more(&c, node, ip);
+                        break;
                 case INSTR_TARGET_LOCAL:
-                        if (bc_cached_target(&c, node, ip)) {
+                        if (bc_cached_target(&c, node, ip) || bc_fast_target_local(&c, node, ip)) {
                                 ip = StepInstruction(ip);
                                 break;
                         }
@@ -2069,7 +2537,9 @@ bc_lir_compile(Ty *ty, Value const *f)
                 case INSTR_GT:
                 case INSTR_LEQ:
                 case INSTR_GEQ:
-                        bc_numeric(&c, op);
+                        if (!bc_inline_operator(&c, op)) {
+                                bc_numeric(&c, op);
+                        }
                         break;
                 case INSTR_CALL:
                 case INSTR_CALL_GLOBAL:
@@ -2120,9 +2590,21 @@ bc_lir_compile(Ty *ty, Value const *f)
         }
         for (i32 off = 0; off < c.size; ++off) {
                 BcLirNode const *node = &c.nodes[off];
+                if (node->next != 0 && node->osr_id != 0) {
+                        c.ok = c.ok && lir_entry(c.L, node->osr);
+                        c.L->insts[c.L->ninsts - 1].tag = off;
+                        if (c.base_index != LIR_NONE) {
+                                bc_base_index(&c);
+                        }
+                        bc_cache_reload(&c);
+                        bc_jump(&c, node->label);
+                }
                 if (node->next != 0 && node->resume_id != 0) {
                         c.ok = c.ok && lir_entry(c.L, node->resume);
                         c.L->insts[c.L->ninsts - 1].tag = node->next;
+                        if (c.base_index != LIR_NONE) {
+                                bc_base_index(&c);
+                        }
                         bc_cache_reload(&c);
                         bc_jump(&c, c.nodes[node->next].label);
                 }
@@ -2139,12 +2621,32 @@ bc_lir_compile(Ty *ty, Value const *f)
                         bc_effect(&c, LIR_RET, &ret, 1);
                 }
         }
-        LirCode *code = c.ok ? lir_finish(c.L, false, &err) : NULL;
+        u32 ninsts = c.L->ninsts;
+        u32 nregs = c.L->nregs;
+        u32 *osr = c.nosr != 0 ? malloc(2 * c.nosr * sizeof *osr) : NULL;
+        u32 nosr = 0;
+        if (osr != NULL) {
+                for (i32 off = 0; off < c.size; ++off) {
+                        if (c.nodes[off].next != 0 && c.nodes[off].osr_id != 0) {
+                                osr[2 * nosr] = off;
+                                osr[2 * nosr + 1] = c.nodes[off].osr_id;
+                                nosr += 1;
+                        }
+                }
+        }
+        LirCode *code = c.ok ? lir_finish_owned(c.L, &err) : NULL;
         lir_free(c.L);
         free(c.nodes);
         free(c.cached);
         free(c.cache_at);
+        free(c.vs);
+        free(c.local_class);
+        free(c.local_type);
+        free(c.known);
+        free(c.known_gen);
         if (code == NULL) {
+                free(osr);
+                free(c.tier);
                 if (jit_audit_level() >= 2) {
                         fprintf(stderr, "jit-audit: lir decline %s op=%u reason=%s\n",
                                 name_of(f), err.op, err.message);
@@ -2152,8 +2654,8 @@ bc_lir_compile(Ty *ty, Value const *f)
                 return NULL;
         }
         if (jit_audit_level() >= 2) {
-                fprintf(stderr, "jit-audit: lir %s native=%zu compile_us=%llu\n",
-                        name_of(f), code->size,
+                fprintf(stderr, "jit-audit: lir %s native=%zu insts=%u regs=%u bc=%d dynamic=%d try=%d compile_us=%llu\n",
+                        name_of(f), code->size, ninsts, nregs, c.size, c.dynamic, c.has_try,
                         (unsigned long long)((TyMonotonicTime() - begin) / 1000));
         }
 #ifdef TY_PROFILER
@@ -2173,6 +2675,9 @@ bc_lir_compile(Ty *ty, Value const *f)
         }));
         TySpinLockUnlock(&JitLogMutex);
 #endif
+        code->osr = osr;
+        code->nosr = nosr;
+        code->tier = c.tier;
         bc_perf_map(code->body, code->size, name_of(f),
                     !from_eval(f) ? expr_of(f) : NULL);
         code = lir_code_adopt(ty, code);

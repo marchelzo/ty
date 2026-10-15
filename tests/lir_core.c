@@ -150,6 +150,10 @@ check_ops(void)
                         d = lir_reg(L, LIR_F32);
                         in.args[0] = lir_r(f);
                         break;
+                case LIR_FORM_COPY:
+                        in.args[0] = lir_m(p, LIR_NONE, 1, 0);
+                        in.args[1] = lir_m(p, LIR_NONE, 1, 32);
+                        break;
                 case LIR_FORM_LD:
                         d = lir_reg(L, lir_type_class(info->type));
                         in.args[0] = mem;

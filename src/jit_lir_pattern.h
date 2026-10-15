@@ -203,9 +203,17 @@ Failed:
         vm_jit_fail(ty, ty->stack.items + ty->stack.count, ip);
 }
 
-static void
+static bool
 bc_pattern(BcLir *c, BcLirNode const *node, char const *ip)
 {
+        bool fused = false;
+        if (
+                !c->dynamic
+             && c->nodes[node->target].label != LIR_NONE
+             && bc_fast_pattern(c, node, ip, &fused)
+        ) {
+                return fused;
+        }
         LirReg top = bc_addr(c, c->ops, c->sp * sizeof (Value));
         LirReg last = bc_addr(c, c->ops, (c->sp - 1) * sizeof (Value));
         bc_stack_count(c);
@@ -233,10 +241,11 @@ bc_pattern(BcLir *c, BcLirNode const *node, char const *ip)
                         }
                 }
                 bc_jump(c, c->nodes[node->target].label);
-                return;
+                return false;
         }
         LirType types[] = { LIR_TYPE_PTR, LIR_TYPE_PTR, LIR_TYPE_PTR };
         LirOpnd args[] = { lir_r(c->ty), lir_r(top), lir_i((uptr)ip) };
         LirReg pass = bc_call(c, bc_pattern_test, LIR_TYPE_BOOL, types, args, countof(args));
         bc_branch(c, LIR_EQ, lir_r(pass), lir_i(0), c->nodes[node->target].label);
+        return false;
 }

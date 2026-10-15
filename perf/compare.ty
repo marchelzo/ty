@@ -33,6 +33,9 @@ clap! Compare {
 
     /// Number of warmup iterations
     warmup: Int, default: 3, check: 0..100
+
+    /// Python interpreter to compare against
+    python: String, short: 'p', default: 'python3'
 }
 
 let PERF_DIR = Path(__file__).parent
@@ -82,12 +85,12 @@ fn run-ty(filter: String | nil, rounds: Int, warmup: Int, jit: Bool) -> SuiteRec
     json.parse(SuiteRecord, Path(ty-results-file(jit)).read-text())
 }
 
-fn run-python(filter: String | nil, rounds: Int, warmup: Int) -> SuiteRecord {
+fn run-python(python: String, filter: String | nil, rounds: Int, warmup: Int) -> SuiteRecord {
     let cmd = [
-        'python3', "{PERF_DIR}/run_py.py",
+        python, "{PERF_DIR}/run_py.py",
         '-n', "{rounds}", "--warmup={warmup}", filter if filter
     ]
-    print(chalk"[dim]Running Python benchmarks...[/]")
+    print(chalk"[dim]Running Python benchmarks ({python})...[/]")
     run-suite(cmd)
     json.parse(SuiteRecord, Path(PY_RESULTS).read-text())
 }
@@ -263,7 +266,7 @@ fn main() {
             load-cached(PY_RESULTS, 'Python')
         } else {
             run-python(
-                opts.filter, opts.rounds,
+                opts.python, opts.filter, opts.rounds,
                 opts.warmup
             )
         }

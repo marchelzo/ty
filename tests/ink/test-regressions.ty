@@ -431,7 +431,7 @@ class LongArea < ink.Component {
 pub fn text-area-scrolls-horizontally() {
     let h = ink.TestHarness(LongArea(), cols=40, rows=8, color?=false)
     h.tab()
-    h.down()
+    h.home()
     for ..20 {
         h.right()
     }
