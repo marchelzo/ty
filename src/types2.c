@@ -46,9 +46,9 @@ typedef struct t2_node_info {
         void const *syntax;
         u64         id;
         u32         roles;
-        u8          construct;
         T2Type      type;
         T2Type      annotation;
+        u8          construct;
         bool        inferred;
 } T2NodeInfo;
 
@@ -28455,10 +28455,10 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
 static void
 observe_node(T2Checker *checker, Expr const *expr, u32 role, u32 visit)
 {
-        checker->role_visits[visit] += 1;
         fold_shape(checker, expr);
 
-        if (!checker->restored || checker->log != NULL) {
+        if (checker->log != NULL) {
+                checker->role_visits[visit] += 1;
                 (void)remember_node(checker, expr, expr->type, role);
         }
 }
@@ -33231,10 +33231,13 @@ t2_checker_observe(
         }
 
         usize before = checker->node_count;
-        checker->hashing_shape = (checkpoint == T2_CHECKPOINT_DECLARATION)
-                              || (checkpoint == T2_CHECKPOINT_CLASS_OPERATOR_DECLARATION);
+        checker->hashing_shape = (checker->cache_path != NULL)
+                             && (
+                                     (checkpoint == T2_CHECKPOINT_DECLARATION)
+                                  || (checkpoint == T2_CHECKPOINT_CLASS_OPERATOR_DECLARATION)
+                                );
 
-        if (checker->hashing_shape || !checker->restored || checker->log != NULL) {
+        if (checker->hashing_shape || checker->log != NULL) {
                 T2Walk walk = { .checker = checker };
                 VisitorCtx visitor = visit_identity(ty);
 

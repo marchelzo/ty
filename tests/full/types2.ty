@@ -94,8 +94,10 @@ fn check-deferred-counters(finish) {
 fn check-valid(name: String) {
     let disabled = run([source(name)], type-env(%{'TY_TYPES2': '0'}))
     let (result, events) = logged(name)
+    let unlogged = run([source(name)], type-env())
     assert(result.status == 0, "{name}: {result.stderr}")
     assert(result == disabled, "checker changed program output: {name}")
+    assert(unlogged == result, "logging changed program output: {name}")
     assert(!has-event(events, %{'event': 'deferred'}))
     let finish = summary(events, name)
     check-fields(finish, %{
@@ -114,7 +116,9 @@ pub fn valid-programs() {
 
 fn check-invalid(name: String, expected: [String]) {
     let (result, events) = logged(name)
+    let unlogged = run([source(name)], type-env())
     assert(result.status != 0, "accepted invalid program: {name}")
+    assert(unlogged == result, "logging changed diagnostics: {name}")
     assert('CompileError' in result.stderr, result.stderr)
     let codes = events.filter(\_['path'] == source(name)).map(\_['code'])
     let found = name == 'flow-invalidation' ? expected.any?(\_ in codes)
