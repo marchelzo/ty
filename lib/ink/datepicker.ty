@@ -1,0 +1,209 @@
+import ink (..)
+import date
+import chalk (chalk)
+import log (..)
+
+pub class DatePicker < Component {
+    variant: String | nil
+    value:        date.PlainDate | nil
+    on-change:    Function | nil
+    on-select:    Function | nil
+    first-day:    Int | nil
+    header-color: String | nil
+    cursor-color: String | nil
+    today-color:  String | nil
+    dim-color:    String | nil
+    color:        String | nil
+
+    __year:       Int = 0
+    __month:      Int = 0
+    __day:        Int = 0
+    __today:      date.PlainDate | nil = nil
+    __grid-offset: Int = 0
+    __grid-dim:    Int = 0
+
+    focusable? -> Bool { true }
+
+    __ensure-init() {
+        if __today { return }
+        let td = date.today()
+        __today = td
+        let v = value ?? td
+        __year  = v.year
+        __month = v.month
+        __day   = v.day
+    }
+
+    __cursor-date() {
+        date.PlainDate(__year, __month, __day.clamp(1, __dim()))
+    }
+
+    __dim() -> Int {
+        date.PlainDate(__year, __month, 1).daysInMonth
+    }
+
+    __nav(d) {
+        let next = __cursor-date().add(d)
+        __year  = next.year
+        __month = next.month
+        __day   = next.day
+        __fire-change()
+    }
+
+    __set-month(y: Int, m: Int) {
+        while m < 1  { m += 12; y -= 1 }
+        while m > 12 { m -= 12; y += 1 }
+        __year  = y
+        __month = m
+        __day   = __day.clamp(1, date.PlainDate(y, m, 1).daysInMonth)
+        __fire-change()
+    }
+
+    __fire-change() {
+        if on-change { on-change(__cursor-date()) }
+    }
+
+    __click(mx: Int, my: Int) {
+        let row = my - layout-y - 2
+        let col = (mx - layout-x) / 3
+        if row < 0 || col < 0 || col > 6 { return }
+        let d = row * 7 + col - __grid-offset + 1
+        if d < 1 || d > __grid-dim { return }
+        __day = d
+        __fire-change()
+        if on-select { on-select(__cursor-date()) }
+    }
+
+    on-event(ev) {
+        __ensure-init()
+        match ev {
+            event.Key({key: 'LEFT', event: (1 or 2), *}) or event.Text('h') =>
+                __nav(-1 * date.DAY),
+
+            event.Key({key: 'RIGHT', event: (1 or 2), *}) or event.Text('l') =>
+                __nav(1 * date.DAY),
+
+            event.Key({key: 'UP', event: (1 or 2), *}) or event.Text('k') =>
+                __nav(-7 * date.DAY),
+
+            event.Key({key: 'DOWN', event: (1 or 2), *}) or event.Text('j') =>
+                __nav(7 * date.DAY),
+
+            event.Key({key: 'PAGE_UP', event: (1 or 2), *}) =>
+                __set-month(__year, __month - 1),
+
+            event.Key({key: 'PAGE_DOWN', event: (1 or 2), *}) =>
+                __set-month(__year, __month + 1),
+
+            event.Text('[') => __set-month(__year, __month - 1),
+            event.Text(']') => __set-month(__year, __month + 1),
+            event.Text('{') => __set-month(__year - 1, __month),
+            event.Text('}') => __set-month(__year + 1, __month),
+
+            event.Text('t') => if let $td = __today {
+                __year  = td.year
+                __month = td.month
+                __day   = td.day
+                __fire-change()
+            },
+
+            event.Key({key: 'HOME', event: 1, *}) =>
+                { __day = 1; __fire-change() },
+
+            event.Key({key: 'END', event: 1, *}) =>
+                { __day = __dim(); __fire-change() },
+
+            event.Key({key: 'ENTER', event: 1, *}) => {
+                if on-select { on-select(__cursor-date()) }
+            },
+
+            event.MouseDown({x, y, *}) =>
+                __click(int(x) - 1, int(y) - 1),
+
+            _ => Ignored
+        }
+    }
+
+    render() -> Node {
+        __ensure-init()
+        if let $v = value {
+            __year  = v.year
+            __month = v.month
+            __day   = v.day
+        }
+
+        let fd    = int(first-day ?? 0)
+        let fs    = focused? ? ['focused'] : []
+        let hspec = header-color ? "{header-color} bold" : spec-of-part(part('DatePicker', 'header', fs, variant))
+        let cspec = cursor-color ? "{cursor-color} reverse bold" : spec-of-part(part('DatePicker', 'day', [*fs, 'selected'], variant))
+        let tspec = today-color ? "{today-color} bold" : spec-of-part(part('DatePicker', 'day', [*fs, 'today'], variant))
+        let dclr  = dim-color ?? spec-of-part(part('DatePicker', 'weekday', fs, variant))
+        let nclr  = color ?? spec-of-part(part('DatePicker', 'day', fs, variant))
+
+        let first = date.PlainDate(__year, __month, 1)
+        let dim   = first.daysInMonth
+        let dow1  = first.dayOfWeek % 7
+
+        let offset = (dow1 - fd + 7) % 7
+        __grid-offset = offset
+        __grid-dim = dim
+
+        let month-names = [
+            '', 'January', 'February', 'March', 'April',
+            'May', 'June', 'July', 'August',
+            'September', 'October', 'November', 'December'
+        ]
+
+        let day-names = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
+        let day-hdrs = [day-names[(fd + i) % 7] for i in ..7].join(' ')
+
+        let title = "{month-names[__month]} {__year}"
+        let w = 20
+        let pad = max(w - title.width(), 0)
+        let lpad = pad / 2
+        let rpad = pad - lpad
+
+        let rows: Array[Any] = [
+            <Text style=hspec>{' ' * lpad}{title}{' ' * rpad}</Text>,
+            <Text style=dclr>{day-hdrs}</Text>
+        ]
+
+        let $td = __today or return <Text style="text-dim">...</Text>
+        let is-today-month = __year == td.year && __month == td.month
+        let sel-day = __day.clamp(1, dim)
+
+        let cell = 0
+        let week-buf = Blob()
+        for d in 1..dim + 1 {
+            if d == 1 {
+                for ..offset {
+                    week-buf.push('   ')
+                    cell += 1
+                }
+            }
+
+            let cur?  = d == sel-day && focused?
+            let tod?  = is-today-month && d == td.day
+            let label = "{d:>2}"
+            let styled = if cur? {
+                str(chalk"[{cspec}] {label}[/]")
+            } else if tod? {
+                str(chalk"[{tspec}]{label}[/]")
+            } else {
+                str(chalk"[{nclr}]{label}[/]")
+            }
+
+            week-buf.push(cur? ? styled : " {styled}")
+            cell += 1
+
+            if cell % 7 == 0 || d == dim {
+                rows.push(<Text>{week-buf.str!()}</Text>)
+                week-buf.clear()
+            }
+        }
+
+        <Box direction="column">
+            {rows}
+        </Box>
+    }
+}

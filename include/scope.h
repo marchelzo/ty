@@ -111,6 +111,7 @@ typedef struct scope {
 
         u32 size;
         u32 count;
+        u32 dense;
         u32 flags;
         i32 eval;
 

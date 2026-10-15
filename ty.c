@@ -1171,6 +1171,9 @@ main(int argc, char **argv)
 
         int nopt = (argc == 0) ? 0 : ProcessArgs(argv, true);
 
+        ProduceAnnotation = (getenv("TY_ANNOTATE") != NULL)
+                         || ((nopt >= argc) && stdin_is_tty());
+
 #if !defined(TY_TEST) && !defined(TY_PROFILER)
         if (RunningTests) {
                 ExecTestBinary(argc, argv);

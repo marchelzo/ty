@@ -359,7 +359,7 @@ Symbol const *QueryResult;
 Expr const *QueryExpr;
 Expr const *QueryCall;
 
-bool ProduceAnnotation = true;
+bool ProduceAnnotation = false;
 bool ForgiveDuplicateImports = false;
 usize GlobalCount = 0;
 
@@ -1572,18 +1572,6 @@ CompilerPushContext(Ty *ty, void const *ctx)
         return PushContext(ty, ctx);
 }
 
-static int
-eloc_cmp(void const *a_, void const *b_)
-{
-        struct eloc const *a = a_;
-        struct eloc const *b = b_;
-
-        if (a->p_start < b->p_start) return -1;
-        if (a->p_start > b->p_start) return  1;
-
-        return 0;
-}
-
 char *
 edbg(Ty *ty, Expr const *e)
 {
@@ -2270,24 +2258,65 @@ add_location(Ty *ty, Expr const *e, usize start_off, usize end_off)
 }
 
 static void
+sort_locations(struct eloc *locs, usize n)
+{
+        enum { BITS = 11, BUCKETS = 1 << BITS };
+        usize top = 0;
+        usize count[BUCKETS];
+        struct eloc *tmp;
+        struct eloc *src = locs;
+        struct eloc *dst;
+
+        for (usize i = 0; i < n; ++i) {
+                top = max(top, locs[i].start_off);
+        }
+
+        if (n < 2) {
+                return;
+        }
+
+        tmp = mrealloc(NULL, n * sizeof *tmp);
+        dst = tmp;
+
+        for (u32 shift = 0; shift == 0 || (top >> shift) != 0; shift += BITS) {
+                memset(count, 0, sizeof count);
+                for (usize i = 0; i < n; ++i) {
+                        count[(src[i].start_off >> shift) & (BUCKETS - 1)] += 1;
+                }
+                for (usize i = 0, sum = 0; i < BUCKETS; ++i) {
+                        usize c = count[i];
+                        count[i] = sum;
+                        sum += c;
+                }
+                for (usize i = 0; i < n; ++i) {
+                        dst[count[(src[i].start_off >> shift) & (BUCKETS - 1)]++] = src[i];
+                }
+                struct eloc *t = src;
+                src = dst;
+                dst = t;
+        }
+
+        if (src != locs) {
+                memcpy(locs, src, n * sizeof *locs);
+        }
+
+        ty_free(tmp);
+}
+
+static void
 add_location_info(Ty *ty)
 {
         if (vN(STATE.expression_locations) == 0) {
                 return;
         }
 
+        sort_locations(vv(STATE.expression_locations), vN(STATE.expression_locations));
+
         struct eloc *locs = vv(STATE.expression_locations);
         for (int i = 0; i < vN(STATE.expression_locations); ++i) {
                 locs[i].p_start = (uptr)(v_(STATE.code, locs[i].start_off));
                 locs[i].p_end = (uptr)(v_(STATE.code, locs[i].end_off));
         }
-
-        qsort(
-                vv(STATE.expression_locations),
-                vN(STATE.expression_locations),
-                sizeof (struct eloc),
-                eloc_cmp
-        );
 
         DebugLockLocations();
         xvP(location_lists, STATE.expression_locations);

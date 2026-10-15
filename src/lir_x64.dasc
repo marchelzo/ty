@@ -713,23 +713,38 @@ native_float(dasm_State **Dst, LirOp op, u8 d, u8 a, u8 b, u8 c, bool narrow)
                 | call r10
                 return;
         }
-        native_mov(Dst, 14, a, cls, false, false);
+        bool commutes = op == LIR_FADD || op == LIR_FMUL;
+        bool move = op != LIR_FSQRT;
+        u8 t = d;
+        if (op == LIR_FSQRT || op == LIR_FABS || op == LIR_FNEG) {
+                b = a;
+        } else if (d == b && d != a) {
+                if (commutes) {
+                        b = a;
+                        move = false;
+                } else {
+                        t = 14;
+                }
+        }
+        if (move) {
+                native_mov(Dst, t, a, cls, false, false);
+        }
         if (narrow) {
                 switch (op) {
                 case LIR_FADD:
-                        | addss xmm14, xmm(b)
+                        | addss xmm(t), xmm(b)
                         break;
                 case LIR_FSUB:
-                        | subss xmm14, xmm(b)
+                        | subss xmm(t), xmm(b)
                         break;
                 case LIR_FMUL:
-                        | mulss xmm14, xmm(b)
+                        | mulss xmm(t), xmm(b)
                         break;
                 case LIR_FDIV:
-                        | divss xmm14, xmm(b)
+                        | divss xmm(t), xmm(b)
                         break;
                 case LIR_FSQRT:
-                        | sqrtss xmm14, xmm14
+                        | sqrtss xmm(t), xmm(a)
                         break;
                 default:
                         break;
@@ -737,24 +752,24 @@ native_float(dasm_State **Dst, LirOp op, u8 d, u8 a, u8 b, u8 c, bool narrow)
         } else {
                 switch (op) {
                 case LIR_FADD:
-                        | addsd xmm14, xmm(b)
+                        | addsd xmm(t), xmm(b)
                         break;
                 case LIR_FSUB:
-                        | subsd xmm14, xmm(b)
+                        | subsd xmm(t), xmm(b)
                         break;
                 case LIR_FMUL:
-                        | mulsd xmm14, xmm(b)
+                        | mulsd xmm(t), xmm(b)
                         break;
                 case LIR_FDIV:
-                        | divsd xmm14, xmm(b)
+                        | divsd xmm(t), xmm(b)
                         break;
                 case LIR_FSQRT:
-                        | sqrtsd xmm14, xmm14
+                        | sqrtsd xmm(t), xmm(a)
                         break;
                 default:
                         break;
                 }
-        } 
+        }
         if (op == LIR_FABS || op == LIR_FNEG) {
                 u64 mask = narrow ? UINT32_C(0x80000000) : UINT64_C(0x8000000000000000);
                 if (op == LIR_FABS) {
@@ -763,12 +778,12 @@ native_float(dasm_State **Dst, LirOp op, u8 d, u8 a, u8 b, u8 c, bool narrow)
                 native_li(Dst, 10, mask);
                 native_mov(Dst, 15, 10, cls, true, false);
                 if (op == LIR_FABS) {
-                        | andps xmm14, xmm15
+                        | andps xmm(t), xmm15
                 } else {
-                        | xorps xmm14, xmm15
+                        | xorps xmm(t), xmm15
                 }
         }
-        native_mov(Dst, d, 14, cls, false, false);
+        native_mov(Dst, d, t, cls, false, false);
 }
 
 static void

@@ -71,6 +71,10 @@ lir_ptr_from(Ty *ty, LirEntryFrame *frame, i32 index)
 {
         Value v = frame->args[index];
         void *p;
+        if (frame->base == NULL) {
+                frame->base     = ty->stack.items;
+                frame->capacity = ty->stack.capacity;
+        }
         if (!ptr_from_ty(ty, &v, &p)) {
                 lir_arg_type_error(ty, index, LIR_TYPE_PTR, &v);
         }

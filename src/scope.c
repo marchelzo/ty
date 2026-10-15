@@ -477,6 +477,10 @@ scope_add_i(Ty *ty, Scope *scope, char const *id, int idx)
                 TyImmortalizeArena(ty);
         }
 
+        if (idx < (int)owner->dense) {
+                idx = owner->dense;
+        }
+
         while (vN(owner->owned) <= idx) {
                 avP(owner->owned, NULL);
         }
@@ -492,6 +496,13 @@ scope_add_i(Ty *ty, Scope *scope, char const *id, int idx)
                 avP(owner->owned, sym);
         } else {
                 v__(owner->owned, idx) = sym;
+        }
+
+        while (
+                (owner->dense < vN(owner->owned))
+             && (v__(owner->owned, owner->dense) != NULL)
+        ) {
+                owner->dense += 1;
         }
 
         sym->i = idx;

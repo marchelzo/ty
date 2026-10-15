@@ -86,6 +86,7 @@ struct t2_universe {
         u32   next_recursive_id;
         usize unbound_lookups;
         bool  failed;
+        bool  trusted_sets;
 
         T2ComputedHook *computed_hook;
         void           *computed_context;
@@ -238,12 +239,18 @@ enum {
         T2_RANGE_UPPER_INCLUSIVE = 0x4
 };
 
+inline static bool
+index_used(T2Index const *index, T2IndexEntry const *entry)
+{
+        return entry->stamp == index->generation + 1;
+}
+
 static usize
 index_slot(T2Index const *index, u64 key)
 {
         usize slot = (usize)hash64(key) & (index->capacity - 1);
         while (
-                index->entries[slot].used
+                index_used(index, &index->entries[slot])
              && (index->entries[slot].key != key)
         ) {
                 slot = (slot + 1) & (index->capacity - 1);
@@ -260,7 +267,7 @@ t2_index_find(T2Index const *index, u64 key, u32 *value)
         }
 
         usize slot = index_slot(index, key);
-        if (!index->entries[slot].used) {
+        if (!index_used(index, &index->entries[slot])) {
                 return false;
         }
 
@@ -277,11 +284,12 @@ index_grow(T2Index *index)
 
         T2Index grown = { .entries = entries, .capacity = capacity };
         for (usize i = 0; i < index->capacity; ++i) {
-                T2IndexEntry const *entry = &index->entries[i];
-                if (!entry->used) {
+                T2IndexEntry entry = index->entries[i];
+                if (!index_used(index, &entry)) {
                         continue;
                 }
-                grown.entries[index_slot(&grown, entry->key)] = *entry;
+                entry.stamp = 1;
+                grown.entries[index_slot(&grown, entry.key)] = entry;
                 grown.count += 1;
         }
 
@@ -297,22 +305,27 @@ t2_index_put(T2Index *index, u64 key, u32 value)
         }
 
         usize slot = index_slot(index, key);
-        index->count += !index->entries[slot].used;
+        index->count += !index_used(index, &index->entries[slot]);
         index->entries[slot] = (T2IndexEntry) {
                 .key   = key,
                 .value = value,
-                .used  = true
+                .stamp = index->generation + 1
         };
 }
 
 void
 t2_index_clear(T2Index *index)
 {
-        if (index->capacity != 0) {
-                memset(index->entries, 0, index->capacity * sizeof *index->entries);
+        if (index->count == 0) {
+                return;
         }
 
         index->count = 0;
+        index->generation += 1;
+        if (index->generation + 1 == 0) {
+                memset(index->entries, 0, index->capacity * sizeof *index->entries);
+                index->generation = 0;
+        }
 }
 
 void
@@ -5929,7 +5942,7 @@ make_set(
 
         bool *removed = xtA0(*removed, vN(arms));
 
-        for (usize i = 0; i < vN(arms); ++i) {
+        for (usize i = 0; !universe->trusted_sets && i < vN(arms); ++i) {
                 if (removed[i]) {
                         continue;
                 }
@@ -8442,7 +8455,9 @@ t2_type_reader_new(
 
         T2Type *arguments = xtA(T2Type, widest);
         T2Index binders   = {0};
+        bool    trusted   = universe->trusted_sets;
 
+        universe->trusted_sets = true;
         for (u32 i = 0; ok && i < count; ++i) {
                 struct wire_record const *record = &records[i];
                 for (u32 j = 0; j < record->arity; ++j) {
@@ -8471,6 +8486,7 @@ t2_type_reader_new(
                 );
                 ok = (types[i] != T2_TYPE_INVALID);
         }
+        universe->trusted_sets = trusted;
 
         for (u32 i = 0; i < count; ++i) {
                 ty_free(records[i].text);

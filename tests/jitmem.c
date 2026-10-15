@@ -87,9 +87,12 @@ check_classes(void)
         for (u32 i = 0; i < countof(mappings); ++i) {
                 void *rx = mappings[i].rx;
                 jm_free(rx);
-                JitMapping next = jm_alloc((usize)1 << (6 + i));
-                CHECK(next.rx == rx);
-                jm_free(next.rx);
+                mappings[i] = jm_alloc((usize)1 << (6 + i));
+                CHECK(mappings[i].rx == rx);
+        }
+        CHECK(jm_stats().used == bytes);
+        for (u32 i = 0; i < countof(mappings); ++i) {
+                jm_free(mappings[i].rx);
         }
         CHECK(jm_stats().used == 0);
         CHECK(jm_alloc(0).rx == NULL);

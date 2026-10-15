@@ -552,6 +552,7 @@ struct lir_code {
         i32          *tier;
         bool          entry_thunk;
         bool          gc_owned;
+        bool          release;
 };
 
 typedef union lir_scalar {

@@ -129,6 +129,12 @@ static bool
 bc_builtin_call(BcLir *c, LirReg fn, Value const *callee, i32 out, i32 argc, LirLabel miss, LirLabel done);
 
 static bool
+bc_kernel_ok(LirCode const *code, i32 argc);
+
+static bool
+bc_kernel_call(BcLir *c, LirReg fn, Value const *callee, i32 out, i32 argc, LirLabel miss, LirLabel done);
+
+static bool
 bc_inline_ctor(BcLir *c, LirReg fn, Value const *callee, i32 out, i32 argc, LirLabel *ready);
 
 static bool
@@ -1752,6 +1758,11 @@ bc_invoke(BcLir *c, BcLirNode const *node)
                         LirLabel miss = lir_label(c->L);
                         done = lir_label(c->L);
                         bc_builtin_call(c, fn, callee, first, node->argc, miss, done);
+                        bc_bind(c, miss);
+                } else if (callee->type == VALUE_JIT_FUNCTION && bc_kernel_ok(callee->jit_code, node->argc)) {
+                        LirLabel miss = lir_label(c->L);
+                        done = lir_label(c->L);
+                        bc_kernel_call(c, fn, callee, first, node->argc, miss, done);
                         bc_bind(c, miss);
                 }
         } else {

@@ -2631,9 +2631,11 @@ lir_build_entry(LirCode *code, LirError *err)
         LirSig sig = { .ret = LIR_VOID, .params = params, .nparams = countof(params), .nfixed = countof(params) };
         Lir *L = NULL;
         LirOpnd *args = NULL;
+        bool lean = code->nvslots == 0 && code->mode == LIR_MODE_DETACHED;
+        bool pointers = false;
         if (rt == NULL || rt->arity_error == NULL || rt->arg_type_error == NULL
             || rt->reserve == NULL || rt->restore == NULL
-            || (code->mode == LIR_MODE_DETACHED && (rt->unlock == NULL || rt->lock == NULL))) {
+            || (code->release && (rt->unlock == NULL || rt->lock == NULL))) {
                 fail(err, LIR_ERROR_MODE, LIR_NONE, (LirSpan) {0}, "entry thunk requires a VM runtime");
                 return NULL;
         }
@@ -2644,6 +2646,7 @@ lir_build_entry(LirCode *code, LirError *err)
                         fail(err, LIR_ERROR_MODE, LIR_NONE, (LirSpan) {0}, "entry conversion requires a VM runtime");
                         return NULL;
                 }
+                pointers = pointers || type == LIR_TYPE_PTR;
         }
         L = lir_new(code->name, &sig, LIR_MODE_ATTACHED, err);
         args = malloc(((usize)code->sig.nparams + 1) * sizeof *args);
@@ -2662,9 +2665,14 @@ lir_build_entry(LirCode *code, LirError *err)
         lir_emit_to(L, LIR_ALLOCA, e.frame, allocation, countof(allocation));
         entry_store(L, LIR_ST64, e.frame, offsetof(LirEntryFrame, out), lir_r(e.out));
         entry_store(L, LIR_ST64, e.frame, offsetof(LirEntryFrame, args), lir_r(L->params[2]));
-        LirType reserve_types[] = { LIR_TYPE_PTR, LIR_TYPE_PTR, LIR_TYPE_U32 };
-        LirOpnd reserve_args[] = { lir_r(e.ty), lir_r(e.frame), lir_i(code->nvslots) };
-        entry_call(L, (void *)rt->reserve, LIR_VOID, reserve_types, reserve_args, countof(reserve_args), LIR_MAY_GC);
+        if (lean) {
+                entry_store(L, LIR_ST64, e.frame, offsetof(LirEntryFrame, base), lir_i(0));
+        } else {
+                LirType reserve_types[] = { LIR_TYPE_PTR, LIR_TYPE_PTR, LIR_TYPE_U32 };
+                LirOpnd reserve_args[] = { lir_r(e.ty), lir_r(e.frame), lir_i(code->nvslots) };
+                entry_call(L, (void *)rt->reserve, LIR_VOID, reserve_types, reserve_args,
+                           countof(reserve_args), LIR_MAY_GC);
+        }
         for (u32 pass = 0; pass < 2; ++pass) {
                 for (u32 i = 0; i < code->sig.nparams; ++i) {
                         if ((code->sig.params[i] == LIR_TYPE_PTR) == (pass == 0)) {
@@ -2674,20 +2682,25 @@ lir_build_entry(LirCode *code, LirError *err)
         }
         LirType ty_type = LIR_TYPE_PTR;
         LirOpnd ty_arg = lir_r(e.ty);
-        if (code->mode == LIR_MODE_DETACHED) {
+        if (code->release) {
                 entry_call(L, (void *)rt->unlock, LIR_VOID, &ty_type, &ty_arg, 1, 0);
         }
         LirReg result = entry_call(L, code->body, code->sig.ret, code->sig.params, args,
                                   code->sig.nparams, code->mode == LIR_MODE_ATTACHED
                                   ? LIR_MAY_GC | LIR_MAY_THROW : 0);
-        if (code->mode == LIR_MODE_DETACHED) {
+        if (code->release) {
                 entry_call(L, (void *)rt->lock, LIR_VOID, &ty_type, &ty_arg, 1, 0);
         }
-        LirType restore_types[] = { LIR_TYPE_PTR, LIR_TYPE_PTR };
-        LirOpnd restore_args[] = { lir_r(e.ty), lir_r(e.frame) };
-        LirReg out = entry_call(L, (void *)rt->restore, LIR_TYPE_PTR,
-                               restore_types, restore_args, countof(restore_args), 0);
-        entry_move(L, e.out, out);
+        if (!lean) {
+                LirType restore_types[] = { LIR_TYPE_PTR, LIR_TYPE_PTR };
+                LirOpnd restore_args[] = { lir_r(e.ty), lir_r(e.frame) };
+                LirReg out = entry_call(L, (void *)rt->restore, LIR_TYPE_PTR,
+                                       restore_types, restore_args, countof(restore_args), 0);
+                entry_move(L, e.out, out);
+        } else if (pointers) {
+                LirReg out = entry_load(L, LIR_LD_I64, e.frame, offsetof(LirEntryFrame, out), LIR_PTR);
+                entry_move(L, e.out, out);
+        }
         entry_box(&e, result, code->sig.ret);
         lir_emit_to(L, LIR_RET, LIR_NONE, NULL, 0);
         lir_bind(L, error);

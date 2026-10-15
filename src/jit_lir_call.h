@@ -65,6 +65,14 @@ bc_call_enter(Ty *ty, Value *out, Value *fn, i32 argc)
                 return NULL;
         }
         gP(&value);
+        if (value.type == VALUE_JIT_FUNCTION && value.jit_entry != NULL) {
+                Value result = NIL;
+                value.jit_entry(ty, &result, ty->stack.items + count - argc, argc);
+                ty->stack.count = count - argc;
+                xvP(ty->stack, result);
+                gX();
+                return NULL;
+        }
         if (value.type == VALUE_CLASS && value.class > CLASS_PRIMITIVE) {
                 Value const *init = class_ctor(ty, value.class);
                 if (bc_enterable(init, argc)
@@ -523,6 +531,159 @@ bc_builtin_call(BcLir *c, LirReg fn, Value const *callee, i32 out, i32 argc, Lir
         LirType types[] = { LIR_TYPE_PTR, LIR_TYPE_PTR, LIR_TYPE_PTR, LIR_TYPE_I32 };
         LirOpnd args[] = { lir_r(c->ty), lir_r(at), lir_i((uptr)builtin), lir_i(argc) };
         bc_call(c, bc_call_builtin, LIR_VOID, types, args, countof(args));
+        bc_jump(c, done);
+        return true;
+}
+
+static bool
+bc_kernel_scalar(LirType type, bool param)
+{
+        switch (type) {
+        case LIR_TYPE_I8:
+        case LIR_TYPE_U8:
+        case LIR_TYPE_I16:
+        case LIR_TYPE_U16:
+        case LIR_TYPE_I32:
+        case LIR_TYPE_U32:
+        case LIR_TYPE_I64:
+        case LIR_TYPE_U64:
+        case LIR_TYPE_F32:
+        case LIR_TYPE_F64:
+        case LIR_TYPE_BOOL:
+        case LIR_TYPE_PTR:
+                return true;
+        case LIR_TYPE_VAL:
+                return param;
+        case LIR_VOID:
+                return !param;
+        default:
+                return false;
+        }
+}
+
+static bool
+bc_kernel_ok(LirCode const *code, i32 argc)
+{
+        if (
+                code == NULL
+             || code->body == NULL
+             || code->interp_state != NULL
+             || code->release
+             || code->nvslots != 0
+             || code->sig.nfixed != code->sig.nparams
+             || (i32)code->sig.nparams != argc
+             || argc > 8
+             || !bc_kernel_scalar(code->sig.ret, false)
+        ) {
+                return false;
+        }
+        for (u32 i = 0; i < code->sig.nparams; ++i) {
+                if (!bc_kernel_scalar(code->sig.params[i], true)) {
+                        return false;
+                }
+        }
+        return true;
+}
+
+static LirReg
+bc_kernel_arg(BcLir *c, LirType type, i32 slot, LirLabel slow)
+{
+        i32 at = slot * sizeof (Value);
+        if (type == LIR_TYPE_VAL) {
+                return bc_addr(c, c->ops, at);
+        }
+        if (type == LIR_TYPE_F64 || type == LIR_TYPE_F32) {
+                LirReg x = bc_float_arg(c, slot, slow);
+                if (type == LIR_TYPE_F64) {
+                        return x;
+                }
+                LirOpnd arg = lir_r(x);
+                return bc_value(c, LIR_FTRUNC, LIR_F32, &arg, 1);
+        }
+        LirReg tag = bc_load(c, LIR_LD_U8, LIR_I64, c->ops, at + offsetof(Value, type));
+        if (type == LIR_TYPE_BOOL) {
+                bc_branch(c, LIR_NE, lir_r(tag), lir_i(VALUE_BOOLEAN), slow);
+                return bc_load(c, LIR_LD_U8, LIR_I64, c->ops, at + offsetof(Value, boolean));
+        }
+        if (type != LIR_TYPE_PTR) {
+                bc_branch(c, LIR_NE, lir_r(tag), lir_i(VALUE_INTEGER), slow);
+                return bc_load(c, LIR_LD_I64, LIR_I64, c->ops, at + offsetof(Value, z));
+        }
+        LirLabel blob = lir_label(c->L);
+        LirLabel ready = lir_label(c->L);
+        LirReg p = lir_reg(c->L, LIR_PTR);
+        bc_branch(c, LIR_NE, lir_r(tag), lir_i(VALUE_PTR), blob);
+        LirOpnd raw = lir_m(c->ops, LIR_NONE, 1, at + offsetof(Value, ptr));
+        c->ok = c->ok && lir_emit_to(c->L, LIR_LD_I64, p, &raw, 1);
+        bc_jump(c, ready);
+        bc_bind(c, blob);
+        bc_branch(c, LIR_NE, lir_r(tag), lir_i(VALUE_BLOB), slow);
+        LirReg b = bc_load(c, LIR_LD_I64, LIR_PTR, c->ops, at + offsetof(Value, blob));
+        LirOpnd items = lir_m(b, LIR_NONE, 1, offsetof(Blob, items));
+        c->ok = c->ok && lir_emit_to(c->L, LIR_LD_I64, p, &items, 1);
+        bc_bind(c, ready);
+        return p;
+}
+
+static void
+bc_kernel_box(BcLir *c, i32 out, LirType type, LirReg value)
+{
+        i32 at = out * sizeof (Value);
+        for (u32 i = 0; i < sizeof (Value); i += 8) {
+                bc_store(c, LIR_ST64, c->ops, at + i, lir_i(0));
+        }
+        switch (type) {
+        case LIR_VOID:
+                bc_store(c, LIR_ST8, c->ops, at + offsetof(Value, type), lir_i(VALUE_NIL));
+                return;
+        case LIR_TYPE_F64:
+        case LIR_TYPE_F32:
+                if (type == LIR_TYPE_F32) {
+                        LirOpnd arg = lir_r(value);
+                        value = bc_value(c, LIR_FEXT, LIR_F64, &arg, 1);
+                }
+                bc_store(c, LIR_ST_F64, c->ops, at + offsetof(Value, real), lir_r(value));
+                bc_store(c, LIR_ST8, c->ops, at + offsetof(Value, type), lir_i(VALUE_REAL));
+                return;
+        case LIR_TYPE_BOOL:
+                bc_store(c, LIR_ST8, c->ops, at + offsetof(Value, boolean), lir_r(value));
+                bc_store(c, LIR_ST8, c->ops, at + offsetof(Value, type), lir_i(VALUE_BOOLEAN));
+                return;
+        case LIR_TYPE_PTR:
+                bc_store(c, LIR_ST64, c->ops, at + offsetof(Value, ptr), lir_r(value));
+                bc_store(c, LIR_ST8, c->ops, at + offsetof(Value, type), lir_i(VALUE_PTR));
+                return;
+        default:
+                bc_store(c, LIR_ST64, c->ops, at + offsetof(Value, z), lir_r(value));
+                bc_store(c, LIR_ST8, c->ops, at + offsetof(Value, type), lir_i(VALUE_INTEGER));
+                return;
+        }
+}
+
+static bool
+bc_kernel_call(BcLir *c, LirReg fn, Value const *callee, i32 out, i32 argc, LirLabel miss, LirLabel done)
+{
+        LirCode const *code = callee->jit_code;
+        if (c->compact || !bc_kernel_ok(code, argc)) {
+                return false;
+        }
+        lir_const(c->L, callee);
+        LirReg type = bc_load(c, LIR_LD_U8, LIR_I64, fn, offsetof(Value, type));
+        bc_branch(c, LIR_NE, lir_r(type), lir_i(VALUE_JIT_FUNCTION), miss);
+        LirReg pointer = bc_load(c, LIR_LD_I64, LIR_PTR, fn, offsetof(Value, jit_code));
+        LirOpnd expected = lir_i((uptr)code);
+        LirReg want = bc_value(c, LIR_LI, LIR_PTR, &expected, 1);
+        bc_branch(c, LIR_NE, lir_r(pointer), lir_r(want), miss);
+        LirOpnd args[8];
+        for (i32 i = 0; i < argc; ++i) {
+                args[i] = lir_r(bc_kernel_arg(c, code->sig.params[i], out + i, miss));
+        }
+        u32 flags = code->mode == LIR_MODE_DETACHED
+                  ? LIR_READS_NO_LOCALS
+                  : LIR_MAY_GC | LIR_MAY_THROW | LIR_CALL_SITE;
+        LirReg result = bc_call_flags(c, code->body, code->sig.ret, code->sig.params,
+                                      args, argc, flags);
+        bc_kernel_box(c, out, code->sig.ret, result);
         bc_jump(c, done);
         return true;
 }
