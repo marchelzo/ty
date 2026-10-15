@@ -1,0 +1,190 @@
+import jit (kernel!)
+
+kernel! fn k-mix(b: Blob, k: Int) -> Float {
+    let s = 0.0
+    for i in ..#b.f64 {
+        s += b.f64[i] * float(i + 1)
+    }
+    for i in ..#b.i32 {
+        s += float(b.i32[i] + b.u16[i] - b.i8[-i - 1])
+    }
+    b.u32[k] = b.u32[k] + 4000000000
+    b.i16[k + 1] = -40000
+    b.f32[k + 2] = b.f64[0] * 3.0
+    s + float(b.u32[k]) + float(b.i16[k + 1]) + b.f32[k + 2] + float(b.u8[3]) + float(b.i64[0] & 255)
+}
+
+fn t-mix(b: Blob, k: Int) -> Float {
+    let s = 0.0
+    for i in ..#b.f64 {
+        s += b.f64[i] * float(i + 1)
+    }
+    for i in ..#b.i32 {
+        s += float(b.i32[i] + b.u16[i] - b.i8[-i - 1])
+    }
+    b.u32[k] = (b.u32[k] + 4000000000) & 0xFFFFFFFF
+    b.i16[k + 1] = ((-40000 + 32768) & 0xFFFF) - 32768
+    b.f32[k + 2] = b.f64[0] * 3.0
+    s + float(b.u32[k]) + float(b.i16[k + 1]) + b.f32[k + 2] + float(b.u8[3]) + float(b.i64[0] & 255)
+}
+
+kernel! fn k-each(b: Blob) -> Float {
+    let s = 0.0
+    for x in b.f64 {
+        s = s * 0.5 + x
+    }
+    s
+}
+
+kernel! fn scale-view(b: Blob, k: Float) {
+    for i in ..#b.f32 {
+        b.f32[i] = b.f32[i] * k
+    }
+}
+
+kernel! fn k-scaled(b: Blob) -> Float {
+    scale-view(b, 2.0)
+    b.f32[0] + b.f32[-1]
+}
+
+fn filled(n: Int) -> Blob {
+    let b = Blob.zeros(n)
+    for i in ..n {
+        b[i] = (i * 53 + 7) % 256
+    }
+    b
+}
+
+fn same(a: _, b: _) -> Bool {
+    if let x: Float = a and let y: Float = b {
+        return x == y || (x != x && y != y)
+    }
+    a == b
+}
+
+fn run(f: _, args: _) -> _ {
+    let copies = [(it :: Blob) ? Blob(it) : it for args]
+    let r = try { f(*copies) } catch e: IndexError { 'IndexError' }
+    (r, copies)
+}
+
+pub fn blob-views-read-and-write() {
+    let b = Blob.zeros(16)
+    b.f64[1] = -2.5
+    b.i32[0] = -7
+    b.u16[1] = 65535
+    assert(#b.f64 == 2 && #b.i32 == 4 && #b.u8 == 16)
+    assert(b.f64[1] == -2.5 && b.f64[-1] == -2.5)
+    assert(b.i32[0] == -7 && b.u16[1] == 65535 && b.i16[1] == -1 && b.u8[0] == 249)
+    b.f32[0] = 0.1
+    assert(b.f32[0] != 0.1 && (b.f32[0] - 0.1).abs < 1.0e-7)
+    assert([*b.u16] == [b.u16[i] for i in ..8])
+    let r = try { b.f64[2]; nil } catch e: IndexError { 'index' }
+    assert(r == 'index')
+    let w = try { b.i64[-3] = 1; nil } catch e: IndexError { 'index' }
+    assert(w == 'index')
+}
+
+pub fn kernels-use-packed-views() {
+    for round in ..50 {
+        for n in [16, 24, 40] {
+            for k in [0, 1, 2] {
+                let a = run(k-mix, (filled(n), k))
+                let t = run(t-mix, (filled(n), k))
+                assert(same(a.0, t.0) && a.1 == t.1, "n={n} k={k}: {a} vs {t}")
+            }
+        }
+        let oob = run(k-mix, (filled(16), 3))
+        assert(oob.0 == 'IndexError')
+        let e = filled(32)
+        let want = do {
+            let s = 0.0
+            for x in e.f64 {
+                s = s * 0.5 + x
+            }
+            s
+        }
+        assert(same(k-each(e), want))
+        let f = Blob.zeros(16)
+        f.f32[0] = 1.5
+        f.f32[3] = -4.0
+        assert(k-scaled(f) == -5.0 && f.f32[1] == 0.0)
+    }
+}
+
+fn p-dot(x: Blob, y: Blob) -> Float {
+    let s = 0.0
+    for i in ..#x.f64 {
+        s += x.f64[i] * y.f64[i]
+    }
+    s
+}
+
+fn p-churn(b: Blob, k: Int) -> Int {
+    let t = 0
+    for i in ..#b.i32 {
+        let w = b.i32[i] + k
+        b.i32[i] = w
+        let v = b.u16[i] - 1
+        b.u16[i] = v
+        let q = b.i8[i] ^ 0x55
+        b.i8[i] = q
+        let f = b.f32[i] * 0.5
+        b.f32[i] = f
+        b.u8[i] = i * 37
+        t += b.i32[i] + b.i16[i] + b.u32[0] + b.i8[i]
+    }
+    t
+}
+
+fn p-fill(b: Blob, k: Int) {
+    for i in ..#b.f64 {
+        b.f64[i] = i * k
+        let n = b.i64[i] + 1
+        b.i64[i] = n
+    }
+}
+
+fn p-at(b: Blob, i: Int) -> Float {
+    let s = 0.0
+    for ..4 {
+        s += b.f64[i]
+    }
+    s
+}
+
+fn reference(f: _, b: Blob, k: Int) -> (_, Blob) {
+    let c = Blob(b)
+    (f(c, k), c)
+}
+
+pub fn plain-views-run-in-registers() {
+    let x = Blob.zeros(64)
+    let y = Blob.zeros(64)
+    for i in ..8 {
+        x.f64[i] = float(i) + 0.5
+        y.f64[i] = 1.0 / float(i + 1)
+    }
+    let dot = [(float(i) + 0.5) * (1.0 / float(i + 1)) for i in ..8].sum(0.0)
+    let src = filled(48)
+    let first = reference(p-churn, src, 3)
+    for round in ..3000 {
+        assert(p-dot(x, y) == dot, "round {round}")
+        assert(reference(p-churn, src, 3) == first)
+    }
+    let g = Blob.zeros(32)
+    for ..3000 {
+        p-fill(g, 3)
+    }
+    assert([*g.f64] != [] && g.i64[1] == 1 + Blob(g).i64[1] - 1)
+    let h = Blob.zeros(16)
+    p-fill(h, 2)
+    assert(h.i64[0] == 1 && h.f64[1] != 2.0)
+    for ..3000 {
+        assert(p-at(x, 1) == 6.0)
+    }
+    assert(p-at(x, -8) == 2.0)
+    assert(try { p-at(x, 8) } catch _: IndexError { -1.0 } == -1.0)
+    let short = Blob.zeros(4)
+    assert(try { p-dot(x, short) } catch _: IndexError { -1.0 } == -1.0)
+}

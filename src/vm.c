@@ -4830,6 +4830,11 @@ DoUnaryOp(Ty *ty, int op, bool exec)
         case OP_QUESTION: DoQuestion(ty, exec); return;
         }
 
+        if (op == OP_COMPL && peek().type == VALUE_INTEGER) {
+                put(INTEGER(~peek().z));
+                return;
+        }
+
         z = ClassOf(top());
         vp = class_lookup_method_i(ty, z, op);
 

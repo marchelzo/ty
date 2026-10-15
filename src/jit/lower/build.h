@@ -166,10 +166,34 @@ jnz(BcLir *c, LirReg r, LirLabel to)
         unless(c, r, 0, to);
 }
 
-inline static LirLabel
-dest(BcLir const *c, BcLirNode const *node)
+static LirLabel
+exit_edge(BcLir *c, i32 to);
+
+static void
+flush_active(BcLir *c);
+
+static void
+flush_around(BcLir *c, i32 off);
+
+static bool
+lazy_pinned(BcLir const *c, i32 pos);
+
+inline static i32
+opslot(BcLir const *c, i32 off)
 {
-        return c->nodes[node->target].label;
+        return load_i32(c->code + off + 1);
+}
+
+static bool
+in_range(BcLir const *c, i32 idx, i32 cont, u8 shift);
+
+static LirReg const *
+held_string(BcLir const *c, i32 i);
+
+inline static LirLabel
+dest(BcLir *c, BcLirNode const *node)
+{
+        return exit_edge(c, node->target);
 }
 
 inline static bool

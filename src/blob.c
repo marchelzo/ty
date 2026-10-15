@@ -683,6 +683,87 @@ blob_splice(Ty *ty, Value *blob, int argc, Value *kwargs)
         return BLOB(b);
 }
 
+static u8 const PackedSize[] = { 8, 4, 8, 4, 4, 2, 2, 1, 1 };
+
+static imax
+packed_index(Ty *ty, Value const *blob, char const *who, int argc, Value *kwargs, imax *kind)
+{
+        if (argc < 2) {
+                zP("Blob.%s(): expected at least 2 arguments but got %d", who, argc);
+        }
+
+        if (ARG(0).type != VALUE_INTEGER || ARG(1).type != VALUE_INTEGER) {
+                zP("Blob.%s(): expected Int kind and index", who);
+        }
+
+        *kind = ARG(0).z;
+
+        if (*kind < 0 || *kind >= (imax)countof(PackedSize)) {
+                zP("Blob.%s(): invalid element kind %" PRIiMAX, who, *kind);
+        }
+
+        imax i = ARG(1).z;
+        imax n = vN(*blob->blob) / PackedSize[*kind];
+
+        if (i < 0 || i >= n) {
+                zP("Blob.%s(): element %" PRIiMAX " is out of range for %" PRIiMAX " elements", who, i, n);
+        }
+
+        return i * PackedSize[*kind];
+}
+
+static Value
+blob_peek(Ty *ty, Value *blob, int argc, Value *kwargs)
+{
+        imax kind;
+        imax at = packed_index(ty, blob, "peek", argc, kwargs, &kind);
+        u8  *p  = vv(*blob->blob) + at;
+
+        switch (kind) {
+        case 0: { double x;   memcpy(&x, p, sizeof x); return REAL(x);    }
+        case 1: { float  x;   memcpy(&x, p, sizeof x); return REAL(x);    }
+        case 2: { i64    x;   memcpy(&x, p, sizeof x); return INTEGER(x); }
+        case 3: { i32    x;   memcpy(&x, p, sizeof x); return INTEGER(x); }
+        case 4: { u32    x;   memcpy(&x, p, sizeof x); return INTEGER(x); }
+        case 5: { i16    x;   memcpy(&x, p, sizeof x); return INTEGER(x); }
+        case 6: { u16    x;   memcpy(&x, p, sizeof x); return INTEGER(x); }
+        case 7: { i8     x;   memcpy(&x, p, sizeof x); return INTEGER(x); }
+        default:                                       return INTEGER(*p);
+        }
+}
+
+static Value
+blob_poke(Ty *ty, Value *blob, int argc, Value *kwargs)
+{
+        if (argc != 3) {
+                zP("Blob.poke(): expected 3 arguments but got %d", argc);
+        }
+
+        imax  kind;
+        imax  at = packed_index(ty, blob, "poke", argc, kwargs, &kind);
+        u8   *p  = vv(*blob->blob) + at;
+        Value v  = ARG(2);
+        bool  real = (kind <= 1);
+
+        if (real ? (v.type != VALUE_REAL && v.type != VALUE_INTEGER) : (v.type != VALUE_INTEGER)) {
+                zP("Blob.poke(): expected %s but got: %s", real ? "Float" : "Int", VSC(&v));
+        }
+
+        double f = (v.type == VALUE_REAL) ? v.real : (double)v.z;
+        imax   z = (v.type == VALUE_INTEGER) ? v.z : 0;
+
+        switch (kind) {
+        case 0: { double x = f;      memcpy(p, &x, sizeof x); break; }
+        case 1: { float  x = f;      memcpy(p, &x, sizeof x); break; }
+        case 2: { i64    x = z;      memcpy(p, &x, sizeof x); break; }
+        case 3: case 4: { u32 x = z; memcpy(p, &x, sizeof x); break; }
+        case 5: case 6: { u16 x = z; memcpy(p, &x, sizeof x); break; }
+        default:        { u8  x = z; memcpy(p, &x, sizeof x); break; }
+        }
+
+        return v;
+}
+
 DEFINE_METHOD_TABLE(
         blob,
         { .name = "clear",    .func = blob_clear        },
@@ -690,6 +771,8 @@ DEFINE_METHOD_TABLE(
         { .name = "get",      .func = blob_get          },
         { .name = "hex",      .func = blob_hex          },
         { .name = "pad",      .func = blob_pad          },
+        { .name = "peek",     .func = blob_peek         },
+        { .name = "poke",     .func = blob_poke         },
         { .name = "ptr",      .func = blob_ptr          },
         { .name = "push",     .func = blob_push         },
         { .name = "reserve",  .func = blob_reserve      },

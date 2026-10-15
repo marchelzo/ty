@@ -604,6 +604,10 @@ pass(Emit *e, LirInst const *in, u32 pc)
         locate(e->target, &in->sig, args);
 
         for (u32 p = 0; p < in->ncall_args; ++p) {
+                if (in->call_args[p].kind == LO_IMM) {
+                        continue;
+                }
+
                 LirReg   r    = in->call_args[p].reg;
                 LirType  type = in->sig.params[p];
                 LirClass cls  = rcls(e, r);
@@ -642,6 +646,19 @@ pass(Emit *e, LirInst const *in, u32 pc)
 
         if (!shuffle(e, moves, n)) {
                 return false;
+        }
+
+        for (u32 p = 0; p < in->ncall_args; ++p) {
+                if (in->call_args[p].kind != LO_IMM) {
+                        continue;
+                }
+
+                if (args[p].phys != LIR_PHYS_NONE) {
+                        li(Dst, args[p].phys, in->call_args[p].imm);
+                } else {
+                        li(Dst, TMP0, in->call_args[p].imm);
+                        mem(Dst, true, TMP0, FRAME, args[p].stack, argsize(in->sig.params[p]), false, false);
+                }
         }
 
         for (u32 p = 0; p < in->ncall_args; ++p) {
@@ -1366,6 +1383,12 @@ insn(Emit *e, u32 pc)
         case LF_SELECT:
         case LF_FSELECT:
                 test(e, in, a);
+#if defined(__x86_64__)
+                if (form == LF_SELECT) {
+                        choose(Dst, d, a[3], a[4], x[0].cc, cls);
+                        break;
+                }
+#endif
                 branch(Dst, x[0].cc, yes);
                 pick(Dst, d, a[3], a[4], cls, yes, end);
                 break;

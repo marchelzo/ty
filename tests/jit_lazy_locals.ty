@@ -1,0 +1,213 @@
+fn after-break(n: Int, stop: Int) -> (Int, Int, Float) {
+    let s = 0
+    let last = -1
+    let f = 0.5
+    for i in ..n {
+        if i == stop {
+            break
+        }
+        s += i
+        last = i
+        f *= 1.5
+    }
+    (s, last, f)
+}
+
+fn first-break(n: Int) -> Int {
+    let x = 7
+    for i in ..n {
+        if i >= 0 {
+            break
+        }
+        x = i
+    }
+    x
+}
+
+fn nested(n: Int) -> (Int, Int) {
+    let outer = 0
+    let total = 0
+    for i in ..n {
+        let inner = 0
+        for j in ..n {
+            if j > i {
+                break
+            }
+            inner += j
+            total += 1
+        }
+        outer += inner
+    }
+    (outer, total)
+}
+
+fn skip(n: Int) -> Int {
+    let s = 0
+    let i = 0
+    while i < n {
+        i += 1
+        if i % 3 == 0 {
+            continue
+        }
+        s += i
+    }
+    s + i
+}
+
+fn early(n: Int) -> Int {
+    let s = 0
+    for i in ..n {
+        s += i
+        if s > 1000 {
+            return s
+        }
+    }
+    -s
+}
+
+fn arms(n: Int) -> (Int, Int) {
+    let hits = 0
+    let s = 0
+    for i in ..n {
+        s += i
+        match i % 4 {
+            3 => { hits += 1 },
+            _ => ()
+        }
+        if hits == 5 {
+            break
+        }
+    }
+    (s, hits)
+}
+
+fn shifty(xs: Array[_]) -> (Int, Int) {
+    let s = 0
+    let k = 0
+    for x in xs {
+        s += k
+        k += 1
+        if x == 'stop' {
+            break
+        }
+    }
+    (s, k)
+}
+
+fn long(n: Int) -> (Int, Int) {
+    let a = 0
+    let b = 1
+    for i in ..n {
+        let t = (a + b) & 0xFFFFFF
+        a = b
+        b = t
+    }
+    (a, b)
+}
+
+fn reference-long(n: Int) -> (Int, Int) {
+    let (a, b) = (0, 1)
+    let i = 0
+    while i < n {
+        (a, b) = (b, (a + b) & 0xFFFFFF)
+        i += 1
+    }
+    (a, b)
+}
+
+pub fn locals-after-loop-exits() {
+    for round in ..400 {
+        assert(after-break(10, 4) == (6, 3, 0.5 * 1.5 ** 4), "round {round}")
+        assert(after-break(10, 100) == (45, 9, 0.5 * 1.5 ** 10))
+        assert(after-break(10, 0) == (0, -1, 0.5))
+        assert(first-break(5) == 7)
+        assert(nested(6) == (35, 21))
+        assert(skip(10) == 37 + 10)
+        assert(early(100) == 1035)
+        assert(early(10) == -45)
+        assert(arms(100) == (190, 5))
+    }
+}
+
+fn deopting(xs: Array[Int]) -> (Int | Float, Int) {
+    let s = 0
+    let k = 0
+    for i in ..#xs {
+        k += 1
+        s += xs[i]
+    }
+    (s, k)
+}
+
+pub fn locals-survive-deopts() {
+    let ints: _ = [1, 2, 3, 4, 5, 6]
+    let mixed: _ = [1, 2, 3, 4.5, 5, 6]
+    for round in ..5000 {
+        assert(deopting(ints) == (21, 6), "round {round}")
+    }
+    assert(deopting(mixed) == (21.5, 6))
+    for round in ..400 {
+        assert(shifty([1, 2, 3]) == (3, 3), "round {round}")
+        assert(shifty([1, 'stop', 3]) == (1, 2))
+        assert(shifty([1.5, nil, 'stop']) == (3, 3))
+    }
+}
+
+pub fn locals-survive-osr-and-tier-up() {
+    assert(long(3000000) == reference-long(3000000))
+    assert(long(7) == reference-long(7))
+}
+
+fn tally(b: Blob, h: Array[Int]) -> Array[Int] {
+    for i in ..#b {
+        h[b[i]] += 1
+    }
+    h
+}
+
+fn churn(xs: Array[Int], ys: Array[Float]) -> (Array[Int], Array[Float]) {
+    for i in ..#xs {
+        xs[i] -= i
+        xs[i] *= 3
+        xs[i] ^= 5
+        xs[i] <<= 2
+        xs[i] >>= 1
+        ys[i] += 0.25
+        ys[i] *= 2.0
+    }
+    (xs, ys)
+}
+
+fn counted(xs: Array[_]) -> Int {
+    let s = 0
+    for i in ..#xs {
+        xs[i] += 1
+        s += i
+    }
+    s
+}
+
+pub fn array-cells-mutate-in-place() {
+    for round in ..2000 {
+        let b = Blob(0, 1, 1, 3, 3, 3)
+        assert(tally(b, [0, 0, 0, 0]) == [1, 2, 0, 3], "round {round}")
+        let (xs, ys) = churn([10, 20, 30], [1.0, 2.0, 3.0])
+        assert(xs == [((10 * 3) ^ 5) << 2 >> 1, (((20 - 1) * 3) ^ 5) << 2 >> 1, (((30 - 2) * 3) ^ 5) << 2 >> 1])
+        assert(ys == [2.5, 4.5, 6.5])
+    }
+    assert(tally(Blob(0, 2), [0, 0.5, 1.5]) == [1, 0.5, 2.5])
+    assert(try { tally(Blob(9), [0, 0]); nil } catch _: IndexError { 'oob' } == 'oob')
+}
+
+pub fn lazy-counters-survive-deopts() {
+    for round in ..3000 {
+        assert(counted([1, 2, 3, 4]) == 6, "round {round}")
+    }
+    let mixed: _ = [1, 2, 3.5, nil, 5]
+    let s = try { counted(mixed) } catch _ { -1 }
+    assert(s == -1)
+    assert(mixed == [2, 3, 4.5, nil, 5])
+    let tail: _ = [1, 2, 3, 4.5]
+    assert(counted(tail) == 6)
+    assert(tail == [2, 3, 4, 5.5])
+}

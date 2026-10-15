@@ -2,6 +2,7 @@ import os
 import json
 import net
 import ty
+import time
 import support.process (FIXTURES)
 
 const DEBUGGEE = str(FIXTURES / 'debuggee.ty')
@@ -209,7 +210,7 @@ fn launch(*args: String) -> (Any, Dap) {
         [ty.executable, DEBUGGEE, *args],
         stdin=os.SPAWN_NULL,
         stdout=os.SPAWN_PIPE,
-        stderr=os.SPAWN_NULL
+        stderr=2
     )
 
     try {
@@ -292,6 +293,7 @@ pub fn debugger-breakpoint-in-hot-jit-loop() {
     assert(frame['name'] == 'main.hot')
     assert(frame['line'] == line)
     assert(dap.variables(frame, 'Locals')['i'] == '150000')
+    assert(dap.variables(frame, 'Locals')['acc'] == str([i for i in ..150000].sum(0) % 1000003))
 
     dap.ok('setVariable', %{
         'variablesReference': dap.ok('scopes', %{'frameId': frame['id']})['scopes'][0]['variablesReference'],
@@ -311,6 +313,51 @@ pub fn debugger-breakpoint-in-hot-jit-loop() {
     dap.ok('setBreakpoints', %{'source': %{'path': DEBUGGEE}, 'breakpoints': []})
     dap.ok('continue', %{'threadId': stop['threadId']})
     finish(proc, dap)
+}
+
+fn read-lines(fd: Int, want: Int, seconds: Float) -> Array[String] {
+    let out = Blob()
+    let end = time.now() + seconds
+
+    while #[b for b in out if b == 10] < want && time.now() < end {
+        let wait = max(int((end - time.now()) * 1000.0), 1)
+        if os.poll([(fd, os.POLLIN)], [], wait) <= 0 {
+            break
+        }
+        let $chunk = os.read(fd, 4096) or break
+        if #chunk == 0 {
+            break
+        }
+        out.push(chunk)
+    }
+
+    out.str().lines().filter(\_ != '')
+}
+
+pub fn debugger-attach-deopts-hot-loop-with-live-registers() {
+    let proc = os.spawn(
+        [ty.executable, str(FIXTURES / 'lazy_debuggee.ty')],
+        stdin=os.SPAWN_NULL,
+        stdout=os.SPAWN_PIPE,
+        stderr=os.SPAWN_NULL
+    )
+    defer reap(proc)
+
+    let before = read-lines(proc.stdout, 3, 30.0)
+    assert(before[;2] == ['ready', 'ok'], "{before}")
+
+    let dap = Dap(request-attach(proc.pid))
+    dap.ok('initialize', %{'adapterID': 'ty', 'linesStartAt1': true})
+    dap.event('initialized')
+    dap.ok('attach')
+
+    let during = read-lines(proc.stdout, 1, 30.0)
+    dap.close()
+    let after = read-lines(proc.stdout, 2, 30.0)
+
+    let results = [*before[1;], *during, *after]
+    assert(#during >= 1 && #after >= 2, "too few results: {results}")
+    assert(results.all?(\_ == 'ok'), "{results}")
 }
 
 pub fn debugger-stepping() {
@@ -377,7 +424,7 @@ pub fn debugger-stop-on-entry() {
         [ty.executable, DEBUGGEE],
         stdin=os.SPAWN_NULL,
         stdout=os.SPAWN_NULL,
-        stderr=os.SPAWN_NULL
+        stderr=2
     )
 
     setenv('TY_DEBUG_WAIT', '0')

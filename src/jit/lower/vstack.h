@@ -37,6 +37,7 @@ typedef struct {
         LirOp fop;
         LirCC icc;
         LirCC fcc;
+        bool  ints;
 } Numeric;
 
 static Numeric const Numerics[] = {
@@ -44,6 +45,12 @@ static Numeric const Numerics[] = {
         [INSTR_SUB] = { ARITH,   LIR_SUB,  LIR_FSUB },
         [INSTR_MUL] = { ARITH,   LIR_MUL,  LIR_FMUL },
         [INSTR_DIV] = { ARITH,   LIR_SDIV, LIR_FDIV },
+        [INSTR_MOD]     = { ARITH, LIR_SREM, .ints = true },
+        [INSTR_BIT_AND] = { ARITH, LIR_AND,  .ints = true },
+        [INSTR_BIT_OR]  = { ARITH, LIR_OR,   .ints = true },
+        [INSTR_BIT_XOR] = { ARITH, LIR_XOR,  .ints = true },
+        [INSTR_SHL]     = { ARITH, LIR_SHL,  .ints = true },
+        [INSTR_SHR]     = { ARITH, LIR_SAR,  .ints = true },
         [INSTR_EQ]  = { COMPARE, .icc = LIR_EQ, .fcc = LIR_FEQ },
         [INSTR_NEQ] = { COMPARE, .icc = LIR_NE, .fcc = LIR_FNE },
         [INSTR_LT]  = { COMPARE, .icc = LIR_LT, .fcc = LIR_FLT },
@@ -186,8 +193,45 @@ mutop(u8 op, bool real)
         switch (op) {
         case INSTR_MUT_ADD: return real ? LIR_FADD : LIR_ADD;
         case INSTR_MUT_SUB: return real ? LIR_FSUB : LIR_SUB;
+        case INSTR_MUT_AND: return LIR_AND;
+        case INSTR_MUT_OR:  return LIR_OR;
+        case INSTR_MUT_XOR: return LIR_XOR;
+        case INSTR_MUT_SHL: return LIR_SHL;
+        case INSTR_MUT_SHR: return LIR_SAR;
         default:            return real ? LIR_FMUL : LIR_MUL;
         }
+}
+
+inline static bool
+int_mutation(u8 op)
+{
+        switch (op) {
+        case INSTR_MUT_AND:
+        case INSTR_MUT_OR:
+        case INSTR_MUT_XOR:
+        case INSTR_MUT_SHL:
+        case INSTR_MUT_SHR:
+                return true;
+
+        default:
+                return false;
+        }
+}
+
+inline static bool
+shifting(LirOp op)
+{
+        return (op == LIR_SHL) || (op == LIR_SAR);
+}
+
+static LirOpnd
+shift_count(BcLir *c, LirOpnd y)
+{
+        if (y.kind == LO_IMM) {
+                return lir_i(y.imm & 63);
+        }
+
+        return lir_r(vop(c, LIR_AND, LIR_I64, y, lir_i(63)));
 }
 
 inline static Spot
@@ -344,6 +388,7 @@ vs_deopt(BcLir *c)
         }
 
         sync_sp(c);
+        flush_active(c);
         bail(c, c->at);
 }
 
@@ -432,13 +477,176 @@ vs_forget(BcLir *c)
 }
 
 static void
+vs_disown(BcLir *c, i32 slot)
+{
+        for (i32 i = 0; i < c->nfacts; ++i) {
+                if (c->facts[i].cont == slot || c->facts[i].base == slot) {
+                        c->facts[i].gen = c->gen - 1;
+                }
+        }
+
+        for (i32 i = 0; i < c->sp; ++i) {
+                if (c->vs[i].src == slot + 1) {
+                        c->vs[i].src = 0;
+                }
+        }
+
+        for (i32 i = 0; c->known != NULL && i < c->bound; ++i) {
+                if (c->known[i].src == slot + 1) {
+                        c->known[i].src = 0;
+                }
+        }
+}
+
+static void
 vs_release(BcLir *c, i32 slot)
 {
+        vs_disown(c, slot);
+
         for (i32 i = 0; i < c->sp; ++i) {
                 if (same_local(&c->vs[i], slot)) {
                         vs_flush(c, i);
                 }
         }
+}
+
+static bool
+index_at(BcLir const *c, i32 p, i32 cont, i32 base, i32 *off)
+{
+        BcLirNode const *n = &c->nodes[p];
+
+        if (n->op != INSTR_LOAD_LOCAL || opslot(c, p) != cont || n->next >= c->size) {
+                return false;
+        }
+
+        i32 q = n->next;
+
+        if (c->nodes[q].op != INSTR_LOAD_LOCAL || opslot(c, q) != base || c->nodes[q].next >= c->size) {
+                return false;
+        }
+
+        BcLirNode const *k = next_of(c, &c->nodes[q]);
+        char const      *ip = c->code + n->next + (k - &c->nodes[q]);
+        i64              v;
+
+        switch (k->op) {
+        case INSTR_SUBSCRIPT:
+        case INSTR_ASSIGN_SUBSCRIPT:
+        case INSTR_TARGET_SUBSCRIPT:
+                *off = 0;
+                return true;
+
+        case INSTR_INT8:
+                v = (i8)ip[1];
+                break;
+
+        case INSTR_INTEGER:
+                v = peek(i64, ip + 1);
+                break;
+
+        default:
+                return false;
+        }
+
+        if (k->next >= c->size || v < -(1 << 20) || v > (1 << 20)) {
+                return false;
+        }
+
+        BcLirNode const *op  = next_of(c, k);
+        BcLirNode const *use = (op->next < c->size) ? next_of(c, op) : NULL;
+
+        if (
+                (use == NULL)
+             || (op->op != INSTR_ADD && op->op != INSTR_SUB)
+             || (use->op != INSTR_SUBSCRIPT && use->op != INSTR_ASSIGN_SUBSCRIPT && use->op != INSTR_TARGET_SUBSCRIPT)
+        ) {
+                return false;
+        }
+
+        *off = (op->op == INSTR_ADD) ? (i32)v : (i32)-v;
+
+        return true;
+}
+
+static void
+offsets_ahead(BcLir const *c, i32 cont, i32 base, i32 *lo, i32 *hi)
+{
+        for (i32 p = c->at; p < c->size; p = c->nodes[p].next) {
+                BcLirNode const *n = &c->nodes[p];
+                i32              off;
+
+                if (
+                        (n->next == 0)
+                     || (n->sp < 0)
+                     || (p != c->at && n->label != LIR_NONE)
+                     || n->branch
+                     || is_call(n->op)
+                     || (
+                                (n->op == INSTR_TARGET_LOCAL || n->op == INSTR_ASSIGN_LOCAL)
+                             && (opslot(c, p) == cont || opslot(c, p) == base)
+                        )
+                ) {
+                        return;
+                }
+
+                if (index_at(c, p, cont, base, &off)) {
+                        *lo = min(*lo, off);
+                        *hi = max(*hi, off);
+                }
+        }
+}
+
+static bool
+merged_bounds(BcLir *c, i32 i, LirReg idx, LirReg count, LirLabel failed)
+{
+        BcSlot const *x = &c->vs[i + 1];
+        BcSlot const *h = &c->vs[i];
+        i32           base;
+        i32           off;
+
+        if (h->kind != VS_LOCAL || getenv("TY_JIT_NO_MERGE") != NULL) {
+                return false;
+        }
+
+        if (x->kind == VS_LOCAL) {
+                base = (i32)x->bits;
+                off  = 0;
+        } else if (intish(x->kind) && x->src != 0) {
+                base = x->src - 1;
+                off  = x->off;
+        } else {
+                return false;
+        }
+
+        i32 cont = (i32)h->bits;
+
+        for (i32 k = 0; k < c->nfacts; ++k) {
+                BcFact const *f = &c->facts[k];
+                if (f->gen == c->gen && f->cont == cont && f->base == base && f->lo <= off && off <= f->hi) {
+                        return true;
+                }
+        }
+
+        i32 lo = off;
+        i32 hi = off;
+
+        offsets_ahead(c, cont, base, &lo, &hi);
+
+        if (lo == hi) {
+                return false;
+        }
+
+        LirReg top = vop(c, LIR_ADD, LIR_I64, lir_r(idx), lir_i(hi - off));
+        LirReg bot = vop(c, LIR_ADD, LIR_I64, lir_r(idx), lir_i(lo - off));
+
+        jcc(c, LIR_GE, lir_r(top), lir_r(count), failed);
+        jcc(c, LIR_LT, lir_r(bot), lir_i(0), failed);
+
+        i32 slot = (c->nfacts < (i32)countof(c->facts)) ? c->nfacts++ : (i32)(c->gen % countof(c->facts));
+
+        c->facts[slot] = (BcFact) { .cont = cont, .base = base, .lo = lo, .hi = hi, .gen = c->gen };
+
+        return true;
 }
 
 static LirReg
@@ -456,12 +664,17 @@ subidx(BcLir *c, i32 i, LirLabel slow)
 }
 
 static LirReg
-cell(BcLir *c, i32 i, LirReg idx, LirLabel slow)
+array_at(BcLir *c, Spot s, LirReg idx, LirLabel slow);
+
+static LirReg
+cell(BcLir *c, i32 i, LirReg idx, LirLabel slow, bool merge)
 {
         LirReg const *held = held_array(c, i);
 
         if (held != NULL) {
-                jcc(c, LIR_UGE, lir_r(idx), lir_r(held[1]), slow);
+                if (!in_range(c, i + 1, i, 0) && !(merge && merged_bounds(c, i, idx, held[1], slow))) {
+                        jcc(c, LIR_UGE, lir_r(idx), lir_r(held[1]), slow);
+                }
                 return lea(c, held[2], vop(c, LIR_SHL, LIR_I64, lir_r(idx), lir_i(VALUE_SHIFT)), 0);
         }
 
@@ -469,6 +682,12 @@ cell(BcLir *c, i32 i, LirReg idx, LirLabel slow)
 
         typecheck(c, s, VALUE_ARRAY, slow);
 
+        return array_at(c, s, idx, slow);
+}
+
+static LirReg
+array_at(BcLir *c, Spot s, LirReg idx, LirLabel slow)
+{
         i32    at    = s.at + VOFF(array);
         LirReg array = ldp(c, s.base, at);
         LirReg count = ldq(c, array, offsetof(Array, count));
@@ -479,6 +698,69 @@ cell(BcLir *c, i32 i, LirReg idx, LirLabel slow)
         LirReg scaled = vop(c, LIR_SHL, LIR_I64, lir_r(idx), lir_i(VALUE_SHIFT));
 
         return lea(c, items, scaled, 0);
+}
+
+static i32
+container_class(BcLir *c, i32 i)
+{
+        BcSlot const *s = &c->vs[i];
+
+        if (s->kind != VS_LOCAL || s->hint == T2_TYPE_INVALID) {
+                return -1;
+        }
+
+        Class *class = expected_class_of(c->ctx, s->hint);
+
+        return (class != NULL) ? class->i : -1;
+}
+
+static LirReg
+blob_byte_at(BcLir *c, LirReg blob, LirReg idx, LirLabel slow)
+{
+        LirReg count = ldq(c, blob, offsetof(Blob, count));
+
+        jcc(c, LIR_UGE, lir_r(idx), lir_r(count), slow);
+
+        return lea(c, ldp(c, blob, offsetof(Blob, items)), idx, 0);
+}
+
+static LirReg
+byte_cell(BcLir *c, i32 i, LirReg idx, LirLabel slow, bool merge)
+{
+        LirReg const *held = held_blob(c, i);
+
+        if (held != NULL) {
+                if (!in_range(c, i + 1, i, 0) && !(merge && merged_bounds(c, i, idx, held[1], slow))) {
+                        jcc(c, LIR_UGE, lir_r(idx), lir_r(held[1]), slow);
+                }
+                return lea(c, held[2], idx, 0);
+        }
+
+        Spot s = spot(c, i);
+
+        typecheck(c, s, VALUE_BLOB, slow);
+
+        return blob_byte_at(c, ldp(c, s.base, s.at + VOFF(blob)), idx, slow);
+}
+
+inline static bool
+bytelike(u8 kind)
+{
+        return intish(kind) || boxed(kind);
+}
+
+static LirReg
+byte_value(BcLir *c, BcSlot value, i32 i, LirLabel slow)
+{
+        if (intish(value.kind)) {
+                return vreg(c, i);
+        }
+
+        Spot s = spot(c, i);
+
+        typecheck(c, s, VALUE_INTEGER, slow);
+
+        return unbox(c, s, false);
 }
 
 static bool
@@ -502,7 +784,7 @@ typed_subscript(BcLir *c, bool real)
 {
         LirLabel failed = vs_guard(c);
         LirReg   i      = subidx(c, c->sp - 1, failed);
-        Spot     e      = { cell(c, c->sp - 2, i, failed), 0 };
+        Spot     e      = { cell(c, c->sp - 2, i, failed, true), 0 };
 
         typecheck(c, e, numtag(real), failed);
 
@@ -516,7 +798,7 @@ typed_subscript(BcLir *c, bool real)
 static bool
 vs_count(BcLir *c)
 {
-        LirReg const *held = held_array(c, c->sp - 1);
+        LirReg const *held = held_any(c, c->sp - 1);
 
         if (held == NULL) {
                 return false;
@@ -540,9 +822,24 @@ vs_subscript(BcLir *c, BcLirNode const *node)
                 return false;
         }
 
+        i32 holder = container_class(c, c->sp - 2);
+
+        if (holder == CLASS_BLOB && c->speculate) {
+                LirLabel failed = vs_guard(c);
+                LirReg   i      = subidx(c, c->sp - 1, failed);
+                LirReg   p      = byte_cell(c, c->sp - 2, i, failed, true);
+                LirReg   r      = ldx(c, LIR_LD_U8, LIR_I64, p, 0);
+
+                vs_seal(c, failed);
+                vs_pop(c, 2);
+                vs_push(c, VS_INT, r, 0);
+
+                return true;
+        }
+
         i32 class = hinted_class(c, node);
 
-        if (class >= 0) {
+        if (class >= 0 && (holder < 0 || holder == CLASS_ARRAY)) {
                 typed_subscript(c, class == CLASS_FLOAT);
                 return true;
         }
@@ -550,9 +847,31 @@ vs_subscript(BcLir *c, BcLirNode const *node)
         LirLabel slow = newlabel(c);
         LirLabel done = newlabel(c);
         LirReg   i    = subidx(c, c->sp - 1, slow);
-        LirReg   p    = cell(c, c->sp - 2, i, slow);
 
-        copy(c, c->ops, vat(c->sp - 2), p, 0);
+        if (held_array(c, c->sp - 2) != NULL) {
+                copy(c, c->ops, vat(c->sp - 2), cell(c, c->sp - 2, i, slow, false), 0);
+        } else if (held_blob(c, c->sp - 2) != NULL) {
+                LirReg p = byte_cell(c, c->sp - 2, i, slow, false);
+
+                put_scalar(c, c->sp - 2, VALUE_INTEGER, lir_r(ldx(c, LIR_LD_U8, LIR_I64, p, 0)));
+        } else {
+                LirLabel bytes = newlabel(c);
+                Spot     s     = spot(c, c->sp - 2);
+                LirReg   tag   = ldtag(c, s);
+
+                unless(c, tag, VALUE_ARRAY, bytes);
+                copy(c, c->ops, vat(c->sp - 2), array_at(c, s, i, slow), 0);
+                jump(c, done);
+
+                bind(c, bytes);
+                unless(c, tag, VALUE_BLOB, slow);
+
+                LirReg blob = ldp(c, s.base, s.at + VOFF(blob));
+                LirReg p    = blob_byte_at(c, blob, i, slow);
+
+                put_scalar(c, c->sp - 2, VALUE_INTEGER, lir_r(ldx(c, LIR_LD_U8, LIR_I64, p, 0)));
+        }
+
         jump(c, done);
 
         bind(c, slow);
@@ -588,10 +907,51 @@ vs_assign_subscript(BcLir *c, char const *ip)
                 return false;
         }
 
-        LirLabel slow = newlabel(c);
-        LirLabel done = newlabel(c);
-        LirReg   i    = subidx(c, c->sp - 1, slow);
-        LirReg   p    = cell(c, c->sp - 2, i, slow);
+        if (container_class(c, c->sp - 2) == CLASS_BLOB && c->speculate && bytelike(value.kind)) {
+                LirLabel failed = vs_guard(c);
+                LirReg   i      = subidx(c, c->sp - 1, failed);
+                LirReg   p      = byte_cell(c, c->sp - 2, i, failed, true);
+                LirReg   v      = byte_value(c, value, c->sp - 3, failed);
+
+                stb(c, p, 0, lir_r(v));
+                vs_seal(c, failed);
+                vs_pop(c, 2);
+
+                return true;
+        }
+
+        LirLabel slow  = newlabel(c);
+        LirLabel done  = newlabel(c);
+        LirReg   i     = subidx(c, c->sp - 1, slow);
+
+        if (held_blob(c, c->sp - 2) != NULL && bytelike(value.kind)) {
+                LirReg q = byte_cell(c, c->sp - 2, i, slow, false);
+
+                stb(c, q, 0, lir_r(byte_value(c, value, c->sp - 3, slow)));
+                jump(c, done);
+                bind(c, slow);
+
+                for (i32 k = 3; k > 0; --k) {
+                        vs_spill(c, c->sp - k);
+                }
+
+                tycall(c, jit_rt_assign_subscript, LT_VOID, preg(slot_of(c, c->sp)), imm32(1));
+                bind(c, done);
+                vs_pop(c, 2);
+
+                return true;
+        }
+
+        bool     held  = held_array(c, c->sp - 2) != NULL;
+        LirLabel bytes = held ? LIR_NONE : newlabel(c);
+        Spot     s     = spot(c, c->sp - 2);
+        LirReg   tag   = held ? LIR_NONE : ldtag(c, s);
+
+        if (!held) {
+                unless(c, tag, VALUE_ARRAY, bytes);
+        }
+
+        LirReg p = held ? cell(c, c->sp - 2, i, slow, false) : array_at(c, s, i, slow);
 
         if (value.kind == VS_MEM) {
                 copy(c, p, 0, c->ops, vat(c->sp - 3));
@@ -600,6 +960,21 @@ vs_assign_subscript(BcLir *c, char const *ip)
         }
 
         jump(c, done);
+
+        if (!held && bytelike(value.kind)) {
+                bind(c, bytes);
+                unless(c, tag, VALUE_BLOB, slow);
+
+                LirReg blob = ldp(c, s.base, s.at + VOFF(blob));
+                LirReg q    = blob_byte_at(c, blob, i, slow);
+                LirReg v    = byte_value(c, value, c->sp - 3, slow);
+
+                stb(c, q, 0, lir_r(v));
+                jump(c, done);
+        } else if (!held) {
+                bind(c, bytes);
+                jump(c, slow);
+        }
 
         bind(c, slow);
 
@@ -807,6 +1182,10 @@ vs_binary(BcLir *c, u8 op)
         Numeric n    = numeric_op(op);
         int     pair = pairing(c->vs[c->sp - 2].kind, c->vs[c->sp - 1].kind);
 
+        if (n.ints && pair != INTS) {
+                return false;
+        }
+
         if (pair == MIXED && (op == INSTR_EQ || op == INSTR_NEQ)) {
                 vs_pop(c, 2);
                 vs_push(c, VS_CBOOL, LIR_NONE, op == INSTR_NEQ);
@@ -822,9 +1201,10 @@ vs_binary(BcLir *c, u8 op)
                 return false;
         }
 
-        bool real = (pair == REALS);
+        bool real   = (pair == REALS);
+        bool divide = (op == INSTR_DIV) || (op == INSTR_MOD);
 
-        if (op == INSTR_DIV && !checked_divisor(c, real)) {
+        if (divide && !checked_divisor(c, real)) {
                 return false;
         }
 
@@ -833,7 +1213,11 @@ vs_binary(BcLir *c, u8 op)
         LirReg  d;
         u8      kind;
 
-        operands(c, real, op == INSTR_DIV, &x, &y);
+        operands(c, real, divide, &x, &y);
+
+        if (shifting(n.iop)) {
+                y = shift_count(c, y);
+        }
 
         if (n.how == COMPARE) {
                 LirCC cc = real ? n.fcc : n.icc;
@@ -844,8 +1228,28 @@ vs_binary(BcLir *c, u8 op)
                 kind = numkind(real);
         }
 
+        BcSlot const *l    = &c->vs[c->sp - 2];
+        BcSlot const *r    = &c->vs[c->sp - 1];
+        bool          add  = (op == INSTR_ADD);
+        bool          step = !real && (add || op == INSTR_SUB);
+        i32           src  = 0;
+        i64           off  = 0;
+
+        if (step && l->src != 0 && r->kind == VS_CINT) {
+                src = l->src;
+                off = (i64)l->off + (add ? (i64)r->bits : -(i64)r->bits);
+        } else if (step && add && r->src != 0 && l->kind == VS_CINT) {
+                src = r->src;
+                off = (i64)r->off + (i64)l->bits;
+        }
+
         vs_pop(c, 2);
         vs_push(c, kind, d, 0);
+
+        if (src != 0 && off >= -(1 << 20) && off <= (1 << 20)) {
+                c->vs[c->sp - 1].src = src;
+                c->vs[c->sp - 1].off = (i32)off;
+        }
 
         return true;
 }
@@ -966,6 +1370,7 @@ vs_mutate(BcLir *c, BcLirNode const *node, char const *ip)
                         (next->op != INSTR_MUT_ADD)
                      && (next->op != INSTR_MUT_SUB)
                      && (next->op != INSTR_MUT_MUL)
+                     && !int_mutation(next->op)
                 )
         ) {
                 return false;
@@ -975,7 +1380,7 @@ vs_mutate(BcLir *c, BcLirNode const *node, char const *ip)
         i32  class = lclass(c, slot);
         u8   rhs   = c->vs[c->sp - 1].kind;
         bool ints  = (class == CLASS_INT) && intish(rhs);
-        bool reals = (class == CLASS_FLOAT) && realish(rhs);
+        bool reals = (class == CLASS_FLOAT) && realish(rhs) && !int_mutation(next->op);
 
         if (!ints && !reals) {
                 return false;
@@ -998,14 +1403,543 @@ vs_mutate(BcLir *c, BcLirNode const *node, char const *ip)
 
         vs_release(c, slot);
 
+        LirOp   op  = mutop(next->op, real);
         LirReg  cur = (known != NULL) ? numreg(c, known) : unbox(c, s, real);
         LirOpnd y   = real ? lir_r(vreg(c, c->sp - 1)) : iopnd(c, c->sp - 1);
-        LirReg  r   = vop(c, mutop(next->op, real), numcls(real), lir_r(cur), y);
+
+        if (shifting(op)) {
+                y = shift_count(c, y);
+        }
+
+        LirReg  r   = vop(c, op, numcls(real), lir_r(cur), y);
 
         put(c, s, r, real);
 
         c->vs[c->sp - 1] = (BcSlot) { .kind = numkind(real), .r = r };
         vs_remember(c, slot, &c->vs[c->sp - 1]);
+
+        return true;
+}
+
+static bool
+vs_mutate_cell(BcLir *c, BcLirNode const *node)
+{
+        if (!c->speculate || node->next >= c->size) {
+                return false;
+        }
+
+        BcLirNode const *next  = next_of(c, node);
+        BcSlot           value = c->vs[c->sp - 3];
+        bool             array = (held_array(c, c->sp - 2) != NULL)
+                              || (container_class(c, c->sp - 2) == CLASS_ARRAY);
+
+        if (
+                (next->label != LIR_NONE)
+             || !array
+             || !indexable(c->vs[c->sp - 2], c->vs[c->sp - 1])
+             || (
+                        (next->op != INSTR_MUT_ADD)
+                     && (next->op != INSTR_MUT_SUB)
+                     && (next->op != INSTR_MUT_MUL)
+                     && !int_mutation(next->op)
+                )
+        ) {
+                return false;
+        }
+
+        bool real = realish(value.kind) && !int_mutation(next->op);
+
+        if (!real && !intish(value.kind)) {
+                return false;
+        }
+
+        c->offset    = next->next;
+        c->skip_next = true;
+
+        LirLabel failed = vs_guard(c);
+        LirReg   i      = subidx(c, c->sp - 1, failed);
+        Spot     e      = { cell(c, c->sp - 2, i, failed, true), 0 };
+
+        typecheck(c, e, numtag(real), failed);
+
+        LirOp   op  = mutop(next->op, real);
+        LirReg  cur = unbox(c, e, real);
+        LirOpnd y   = real ? lir_r(vreg(c, c->sp - 3)) : iopnd(c, c->sp - 3);
+
+        if (shifting(op)) {
+                y = shift_count(c, y);
+        }
+
+        LirReg r = vop(c, op, numcls(real), lir_r(cur), y);
+
+        put(c, e, r, real);
+        vs_seal(c, failed);
+        vs_pop(c, 3);
+        vs_push(c, numkind(real), r, 0);
+
+        return true;
+}
+
+typedef struct {
+        char const *name;
+        LirOp       ld;
+        LirOp       st;
+        u8          shift;
+        bool        real;
+} Packed;
+
+static Packed const Packing[] = {
+        { "f64", LIR_LD_F64, LIR_ST_F64, 3, true  },
+        { "f32", LIR_LD_F32, LIR_ST_F32, 2, true  },
+        { "i64", LIR_LD_I64, LIR_ST64,   3, false },
+        { "i32", LIR_LD_I32, LIR_ST32,   2, false },
+        { "u32", LIR_LD_U32, LIR_ST32,   2, false },
+        { "i16", LIR_LD_I16, LIR_ST16,   1, false },
+        { "u16", LIR_LD_U16, LIR_ST16,   1, false },
+        { "i8",  LIR_LD_I8,  LIR_ST8,    0, false },
+        { "u8",  LIR_LD_U8,  LIR_ST8,    0, false }
+};
+
+enum { VIEW_LOAD, VIEW_STORE };
+
+static Packed const *
+packing(i32 member)
+{
+        for (i32 i = 0; i < countof(Packing); ++i) {
+                if (M_ID(Packing[i].name) == member) {
+                        return &Packing[i];
+                }
+        }
+
+        return NULL;
+}
+
+static bool
+index_node(u8 op)
+{
+        return (op == INSTR_LOAD_LOCAL) || (op == INSTR_INT8) || (op == INSTR_INTEGER);
+}
+
+static i32
+view_use(BcLirNode const *use, char const *at, Packed const *pk, u8 value)
+{
+        bool fits = pk->real ? (intish(value) || realish(value)) : intish(value);
+
+        switch (use->op) {
+        case INSTR_SUBSCRIPT:
+                return VIEW_LOAD;
+
+        case INSTR_ASSIGN_SUBSCRIPT:
+                return ((u8)at[1] == 1 && fits) ? VIEW_STORE : -1;
+
+        default:
+                return -1;
+        }
+}
+
+static bool
+vs_load_local(BcLir *c, BcLirNode const *node, i32 slot);
+
+static void
+push_view_index(BcLir *c, BcLirNode const *ix)
+{
+        char const *ip = c->code + (ix - c->nodes);
+
+        switch (ix->op) {
+        case INSTR_INT8:
+                vs_push(c, VS_CINT, LIR_NONE, (u64)(i64)(i8)ip[1]);
+                break;
+
+        case INSTR_INTEGER:
+                vs_push(c, VS_CINT, LIR_NONE, peek(u64, ip + 1));
+                break;
+
+        default:
+                if (!loop_lower(c, ix, ip)) {
+                        vs_load_local(c, ix, load_i32(ip + 1));
+                }
+                break;
+        }
+}
+
+static LirReg
+packed_cell(BcLir *c, Packed const *pk, i32 i, LirReg idx, LirLabel failed)
+{
+        LirReg const *held = held_blob(c, i);
+        LirReg        count;
+        LirReg        items;
+
+        if (held != NULL) {
+                count = held[1];
+                items = held[2];
+        } else {
+                Spot s = spot(c, i);
+
+                typecheck(c, s, VALUE_BLOB, failed);
+
+                LirReg blob = ldp(c, s.base, s.at + VOFF(blob));
+
+                count = ldq(c, blob, offsetof(Blob, count));
+                items = ldp(c, blob, offsetof(Blob, items));
+        }
+
+        if (held == NULL || !in_range(c, i + 1, i, pk->shift)) {
+                LirReg n = vop(c, LIR_SHR, LIR_I64, lir_r(count), lir_i(pk->shift));
+                jcc(c, LIR_UGE, lir_r(idx), lir_r(n), failed);
+        }
+
+        return vop(c, LIR_LEA, LIR_PTR, lir_m(items, idx, 1 << pk->shift, 0));
+}
+
+static LirReg
+packed_load(BcLir *c, Packed const *pk, LirReg p)
+{
+        if (pk->ld == LIR_LD_F32) {
+                return vop(c, LIR_FEXT, LIR_F64, lir_r(ldx(c, LIR_LD_F32, LIR_F32, p, 0)));
+        }
+
+        return ldx(c, pk->ld, pk->real ? LIR_F64 : LIR_I64, p, 0);
+}
+
+static void
+packed_store(BcLir *c, Packed const *pk, LirReg p, LirOpnd v)
+{
+        if (pk->st == LIR_ST_F32) {
+                v = lir_r(vop(c, LIR_FTRUNC, LIR_F32, v));
+        }
+
+        store(c, pk->st, p, 0, v);
+}
+
+static LirOpnd
+packed_value(BcLir *c, Packed const *pk, i32 i)
+{
+        if (!pk->real) {
+                return iopnd(c, i);
+        }
+
+        if (realish(c->vs[i].kind)) {
+                return lir_r(vreg(c, i));
+        }
+
+        return lir_r(vop(c, LIR_I2F, LIR_F64, lir_r(vreg(c, i))));
+}
+
+static void
+view_seal(BcLir *c, LirLabel failed, i32 sp)
+{
+        LirLabel ok   = newlabel(c);
+        i32      keep = c->sp;
+
+        jump(c, ok);
+        bind(c, failed);
+        c->sp = sp;
+        vs_deopt(c);
+        c->sp = keep;
+        bind(c, ok);
+}
+
+static bool
+vs_view(BcLir *c, BcLirNode const *node, char const *ip)
+{
+        Packed const *pk = packing(load_i32(ip + 1));
+
+        if (
+                !c->speculate
+             || (pk == NULL)
+             || (node->next >= c->size)
+             || (container_class(c, c->sp - 1) != CLASS_BLOB)
+        ) {
+                return false;
+        }
+
+        BcLirNode const *ix = next_of(c, node);
+
+        if (ix->label != LIR_NONE || !index_node(ix->op) || ix->next >= c->size) {
+                return false;
+        }
+
+        if (ix->op == INSTR_LOAD_LOCAL && !local_ok(c, load_i32(c->code + (ix - c->nodes) + 1))) {
+                return false;
+        }
+
+        BcLirNode const *use  = next_of(c, ix);
+        u8               val  = (c->sp >= 2) ? c->vs[c->sp - 2].kind : VS_MEM;
+        i32              mode = (use->label == LIR_NONE)
+                              ? view_use(use, c->code + (use - c->nodes), pk, val)
+                              : -1;
+
+        if (mode < 0) {
+                return false;
+        }
+
+        i32 sp = c->sp;
+
+        c->offset     = use->next;
+        c->skip_extra = 1;
+        c->skip_next  = true;
+
+        push_view_index(c, ix);
+
+        LirLabel failed = vs_guard(c);
+        LirReg   i      = subidx(c, c->sp - 1, failed);
+        LirReg   p      = packed_cell(c, pk, c->sp - 2, i, failed);
+        if (mode == VIEW_STORE) {
+                packed_store(c, pk, p, packed_value(c, pk, c->sp - 3));
+                view_seal(c, failed, sp);
+                vs_pop(c, 2);
+                return true;
+        }
+
+        LirReg r = packed_load(c, pk, p);
+
+        view_seal(c, failed, sp);
+        vs_pop(c, 2);
+        vs_push(c, pk->real ? VS_REAL : VS_INT, r, 0);
+
+        return true;
+}
+
+static bool
+vs_string_byte(BcLir *c, BcLirNode const *node)
+{
+        if (
+                !c->speculate
+             || (node->argc != 1)
+             || (node->nkw != 0)
+             || (node->member != M_ID("byte"))
+             || (c->sp < 2)
+             || (container_class(c, c->sp - 1) != CLASS_STRING)
+             || (!intish(c->vs[c->sp - 2].kind) && !boxed(c->vs[c->sp - 2].kind))
+        ) {
+                return false;
+        }
+
+        LirLabel      failed = vs_guard(c);
+        LirReg        i      = subidx(c, c->sp - 2, failed);
+        LirReg const *held   = held_string(c, c->sp - 1);
+        LirReg        n;
+        LirReg        str;
+
+        if (held != NULL) {
+                n   = held[1];
+                str = held[2];
+        } else {
+                Spot s = spot(c, c->sp - 1);
+
+                typecheck(c, s, VALUE_STRING, failed);
+
+                n   = ldx(c, LIR_LD_U32, LIR_I64, s.base, s.at + VOFF(bytes));
+                str = ldp(c, s.base, s.at + VOFF(str));
+        }
+
+        if (held == NULL || !in_range(c, c->sp - 2, c->sp - 1, 0)) {
+                jcc(c, LIR_UGE, lir_r(i), lir_r(n), failed);
+        }
+
+        LirReg r = ldx(c, LIR_LD_U8, LIR_I64, lea(c, str, i, 0), 0);
+
+        vs_seal(c, failed);
+        vs_pop(c, 2);
+        vs_push(c, VS_INT, r, 0);
+
+        return true;
+}
+
+typedef struct {
+        bool    real;
+        LirOpnd v;
+} Lane;
+
+static i32
+lane_kind(BcLir *c, Value const *callee, i32 pos, i32 index)
+{
+        u8     kind  = c->vs[pos].kind;
+        Class *class = param_class(c, callee, index);
+        i32    want  = (class == NULL) ? -1 : class->i;
+
+        if (want != -1 && want != CLASS_INT && want != CLASS_FLOAT) {
+                return -1;
+        }
+
+        if (intish(kind)) {
+                return (want == CLASS_FLOAT) ? -1 : CLASS_INT;
+        }
+
+        if (realish(kind)) {
+                return (want == CLASS_INT) ? -1 : CLASS_FLOAT;
+        }
+
+        return boxed(kind) ? want : -1;
+}
+
+static Lane
+lane_arg(BcLir *c, i32 pos, i32 class, LirLabel failed)
+{
+        bool real = (class == CLASS_FLOAT);
+
+        if (intish(c->vs[pos].kind)) {
+                return (Lane) { false, iopnd(c, pos) };
+        }
+
+        if (realish(c->vs[pos].kind)) {
+                return (Lane) { true, lir_r(vreg(c, pos)) };
+        }
+
+        Spot s = spot(c, pos);
+
+        typecheck(c, s, numtag(real), failed);
+
+        return (Lane) { real, lir_r(unbox(c, s, real)) };
+}
+
+static LirOpnd
+widen(BcLir *c, Lane l)
+{
+        if (l.real) {
+                return l.v;
+        }
+
+        if (l.v.kind == LO_IMM) {
+                return lir_r(fval(c, (double)l.v.imm));
+        }
+
+        return lir_r(vop(c, LIR_I2F, LIR_F64, l.v));
+}
+
+static bool
+lane_arith(BcLir *c, u8 op, Lane *a, Lane b, bool emit, LirLabel failed)
+{
+        bool real = a->real || b.real;
+
+        if (op == TY_INLINE_DIV && !real) {
+                return false;
+        }
+
+        if (!emit) {
+                a->real = real;
+                return true;
+        }
+
+        if (!real) {
+                a->v = lir_r(vop(c, Arith[op].iop, LIR_I64, a->v, b.v));
+                return true;
+        }
+
+        LirOpnd x = widen(c, *a);
+        LirOpnd y = widen(c, b);
+
+        if (op == TY_INLINE_DIV) {
+                nonzero_bits(c, y.reg, failed);
+        }
+
+        a->real = true;
+        a->v    = lir_r(vop(c, Arith[op].fop, LIR_F64, x, y));
+
+        return true;
+}
+
+static bool
+lane_plan(BcLir *c, Plan const *p, i32 first, i32 const *kinds, Lane *out, bool emit, LirLabel failed)
+{
+        TyInlinePlan const *plan = &p->plan;
+        Lane                st[TY_INLINE_MAX_STACK + 2];
+
+        for (i32 i = 0; i < plan->count; ++i) {
+                TyInlineInsn const *insn = &plan->insns[i];
+                i32                 d    = plan->depths[i];
+                u64                 bits = 0;
+
+                if (d > TY_INLINE_MAX_STACK) {
+                        return false;
+                }
+
+                switch (insn->op) {
+                case TY_INLINE_LOCAL:
+                        if (!is_arg(p, insn->local) || kinds[insn->local] < 0) {
+                                return false;
+                        }
+                        st[d] = emit
+                              ? lane_arg(c, first + insn->local, kinds[insn->local], failed)
+                              : (Lane) { kinds[insn->local] == CLASS_FLOAT };
+                        break;
+
+                case TY_INLINE_INTEGER:
+                        st[d] = (Lane) { false, lir_i(insn->integer) };
+                        break;
+
+                case TY_INLINE_REAL:
+                        memcpy(&bits, &insn->real, sizeof bits);
+                        st[d] = (Lane) { true, emit ? lir_r(fval(c, insn->real)) : lir_i((i64)bits) };
+                        break;
+
+                case TY_INLINE_POP:
+                        break;
+
+                case TY_INLINE_ADD:
+                case TY_INLINE_SUB:
+                case TY_INLINE_MUL:
+                case TY_INLINE_DIV:
+                        if (d < 2 || !lane_arith(c, insn->op, &st[d - 2], st[d - 1], emit, failed)) {
+                                return false;
+                        }
+                        break;
+
+                default:
+                        return false;
+                }
+        }
+
+        *out = st[0];
+
+        return true;
+}
+
+static bool
+vs_call_global(BcLir *c, BcLirNode const *node)
+{
+        i32 argc  = node->argc;
+        i32 first = c->sp - argc;
+
+        if (
+                !c->speculate
+             || (argc <= 0)
+             || (argc > TY_INLINE_MAX_STACK)
+             || (node->nkw != 0)
+             || (node->resume_id != 0)
+        ) {
+                return false;
+        }
+
+        Value const *callee = vm_global(c->ctx, node->global);
+        Plan         p      = { .base = first };
+        i32          kinds[TY_INLINE_MAX_STACK];
+        Lane         r;
+
+        if (!inlinable(c, callee, argc) || !analyze(&p, callee, TY_INLINE_GLOBAL, argc)) {
+                return false;
+        }
+
+        for (i32 i = 0; i < argc; ++i) {
+                kinds[i] = lane_kind(c, callee, first + i, i);
+        }
+
+        if (!lane_plan(c, &p, first, kinds, &r, false, LIR_NONE)) {
+                return false;
+        }
+
+        LirLabel failed = vs_guard(c);
+
+        guard_self(c, global_addr(c, node->global), callee, failed);
+        lane_plan(c, &p, first, kinds, &r, true, failed);
+        vs_seal(c, failed);
+        vs_pop(c, argc);
+
+        if (r.v.kind == LO_IMM) {
+                vs_push(c, VS_CINT, LIR_NONE, (u64)r.v.imm);
+        } else {
+                vs_push(c, numkind(r.real), r.v.reg, 0);
+        }
 
         return true;
 }
@@ -1040,6 +1974,7 @@ vs_load_local(BcLir *c, BcLirNode const *node, i32 slot)
 
         assume(c, s, numtag(real));
         vs_push(c, numkind(real), unbox(c, s, real), 0);
+        c->vs[c->sp - 1].src = slot + 1;
         vs_remember(c, slot, &c->vs[c->sp - 1]);
 
         return true;
@@ -1129,7 +2064,9 @@ vs_step(BcLir *c, bool up)
 
         if (vs_pinned(c, c->sp - 1)) {
                 vset(c, LIR_ADD, top.r, lir_r(top.r), lir_i(up ? 1 : -1));
-                put(c, sspot(c, c->sp - 1), top.r, false);
+                if (!lazy_pinned(c, c->sp - 1)) {
+                        put(c, sspot(c, c->sp - 1), top.r, false);
+                }
                 return true;
         }
 
@@ -1160,6 +2097,226 @@ vs_negate(BcLir *c)
 }
 
 static bool
+vs_unary(BcLir *c, char const *ip)
+{
+        BcSlot top = c->vs[c->sp - 1];
+
+        if (load_i32(ip + 1) != OP_COMPL || !intish(top.kind)) {
+                return false;
+        }
+
+        if (top.kind == VS_CINT) {
+                c->vs[c->sp - 1].bits = ~top.bits;
+                return true;
+        }
+
+        c->vs[c->sp - 1] = (BcSlot) {
+                .kind = VS_INT,
+                .r    = vop(c, LIR_NOT, LIR_I64, lir_r(top.r))
+        };
+
+        return true;
+}
+
+static bool
+join_eligible(BcLir const *c, i32 to)
+{
+        BcLirNode const *t = &c->nodes[to];
+
+        if (t->label == LIR_NONE || t->sp <= 0 || t->osr_id != 0 || t->resume_id != 0) {
+                return false;
+        }
+
+        for (i32 off = 0; off < c->size; ++off) {
+                BcLirNode const *n = &c->nodes[off];
+
+                if (!decoded(n) || n->sp < 0) {
+                        continue;
+                }
+
+                if (n->branch && n->target == to) {
+                        bool forward = (n->op == INSTR_JUMP) || (n->op == INSTR_JUMP_WTF);
+                        if (!forward || off >= to || n->sp != t->sp) {
+                                return false;
+                        }
+                }
+
+                each_arm(c, n, arm_to) {
+                        if (arm_to == to) {
+                                return false;
+                        }
+                }
+        }
+
+        return true;
+}
+
+static i32
+default_class(BcLir const *c, i32 to)
+{
+        i32 wtf = 0;
+        i32 lit = -1;
+
+        for (i32 off = 0; off < to; ++off) {
+                BcLirNode const *n = &c->nodes[off];
+
+                if (!decoded(n) || n->sp < 0 || !n->branch || n->target != to) {
+                        continue;
+                }
+
+                BcLirNode const *d = next_of(c, n);
+
+                if (n->op != INSTR_JUMP_WTF || d->next != to || d->label != LIR_NONE) {
+                        return -1;
+                }
+
+                switch (d->op) {
+                case INSTR_INT8:
+                case INSTR_INTEGER: lit = CLASS_INT;   break;
+                case INSTR_REAL:    lit = CLASS_FLOAT; break;
+                default:            return -1;
+                }
+
+                wtf += 1;
+        }
+
+        return (wtf == 1) ? lit : -1;
+}
+
+static bool
+join_plan(BcLir *c)
+{
+        if (c->vs == NULL || !c->speculate || c->dynamic || c->hints == NULL || getenv("TY_JIT_NO_JOIN") != NULL) {
+                return true;
+        }
+
+        for (i32 to = 1; to < c->size; ++to) {
+                BcLirNode const *t = &c->nodes[to];
+
+                if (!decoded(t) || t->label == LIR_NONE || t->sp <= 0) {
+                        continue;
+                }
+
+                i32  class = exact_class(find_type_hint(c->hints, to));
+                bool keep  = false;
+
+                if (class < 0) {
+                        class = default_class(c, to);
+                        keep  = (class >= 0);
+                }
+
+                if (class < 0 || !join_eligible(c, to)) {
+                        continue;
+                }
+
+                if (c->joins == NULL) {
+                        c->joins = new(c, BcJoin, c->size);
+                }
+
+                c->joins[to] = (BcJoin) {
+                        .kind = numkind(class == CLASS_FLOAT),
+                        .r    = LIR_NONE,
+                        .keep = keep
+                };
+        }
+
+        return true;
+}
+
+static BcJoin *
+vs_join_at(BcLir *c, i32 to)
+{
+        return (c->joins != NULL && c->joins[to].kind != 0) ? &c->joins[to] : NULL;
+}
+
+static void
+vs_carry(BcLir *c, BcJoin *join, i32 i)
+{
+        bool   real = (join->kind == VS_REAL);
+        BcSlot s    = c->vs[i];
+
+        if (join->r == LIR_NONE) {
+                join->r = lir_reg(c->L, numcls(real));
+        }
+
+        if (real ? realish(s.kind) : intish(s.kind)) {
+                mov(c, join->r, vreg(c, i));
+                return;
+        }
+
+        if (!boxed(s.kind)) {
+                vs_deopt(c);
+                return;
+        }
+
+        LirLabel failed = vs_guard(c);
+        Spot     at     = spot(c, i);
+
+        typecheck(c, at, numtag(real), failed);
+        unbox_to(c, join->r, at, real);
+        vs_seal(c, failed);
+}
+
+static void
+vs_joined(BcLir *c, BcJoin const *join, i32 i)
+{
+        if (join->r == LIR_NONE) {
+                c->vs[i].kind = VS_MEM;
+                return;
+        }
+
+        c->vs[i] = (BcSlot) { .kind = join->kind, .r = join->r };
+}
+
+static bool
+vs_join_jump(BcLir *c, BcLirNode const *node)
+{
+        BcJoin *join = vs_join_at(c, node->target);
+
+        if (join == NULL || node->deopt != LIR_NONE) {
+                return false;
+        }
+
+        vs_carry(c, join, c->sp - 1);
+        vs_flush_below(c, c->sp - 1);
+        jump(c, dest(c, node));
+
+        return true;
+}
+
+static bool
+vs_join_wtf(BcLir *c, BcLirNode const *node)
+{
+        BcJoin *join = vs_join_at(c, node->target);
+        BcSlot  top  = c->vs[c->sp - 1];
+
+        if (
+                (join == NULL)
+             || (node->deopt != LIR_NONE)
+             || !(boxed(top.kind) || intish(top.kind) || realish(top.kind))
+        ) {
+                return false;
+        }
+
+        LirLabel none = newlabel(c);
+
+        if (!join->keep) {
+                vs_flush_below(c, c->sp - 1);
+        }
+
+        if (boxed(top.kind)) {
+                jcc(c, LIR_EQ, lir_r(ldtag(c, spot(c, c->sp - 1))), lir_i(VALUE_NIL), none);
+        }
+
+        vs_carry(c, join, c->sp - 1);
+        jump(c, dest(c, node));
+        bind(c, none);
+        vs_pop(c, 1);
+
+        return true;
+}
+
+static bool
 vs_lower(BcLir *c, BcLirNode const *node, char const *ip)
 {
         u8 op = node->op;
@@ -1185,17 +2342,28 @@ vs_lower(BcLir *c, BcLirNode const *node, char const *ip)
         case INSTR_SUBSCRIPT:        return vs_subscript(c, node);
         case INSTR_COUNT:            return vs_count(c);
         case INSTR_ASSIGN_SUBSCRIPT: return vs_assign_subscript(c, ip);
+        case INSTR_TARGET_SUBSCRIPT: return vs_mutate_cell(c, node);
+        case INSTR_CALL_GLOBAL:      return vs_call_global(c, node);
+        case INSTR_MEMBER_ACCESS:    return vs_view(c, node, ip);
+        case INSTR_CALL_METHOD:      return vs_string_byte(c, node);
         case INSTR_POP:              return vs_drop(c);
         case INSTR_DUP:              return vs_dup(c);
         case INSTR_DUP2_SWAP:        return vs_dup2_swap(c);
         case INSTR_INC:              return vs_step(c, true);
         case INSTR_DEC:              return vs_step(c, false);
         case INSTR_NEG:              return vs_negate(c);
+        case INSTR_UNARY_OP:         return vs_unary(c, ip);
 
         case INSTR_ADD:
         case INSTR_SUB:
         case INSTR_MUL:
         case INSTR_DIV:
+        case INSTR_MOD:
+        case INSTR_BIT_AND:
+        case INSTR_BIT_OR:
+        case INSTR_BIT_XOR:
+        case INSTR_SHL:
+        case INSTR_SHR:
         case INSTR_EQ:
         case INSTR_NEQ:
         case INSTR_LT:
@@ -1203,6 +2371,9 @@ vs_lower(BcLir *c, BcLirNode const *node, char const *ip)
         case INSTR_LEQ:
         case INSTR_GEQ:
                 return vs_binary(c, op);
+
+        case INSTR_JUMP:             return vs_join_jump(c, node);
+        case INSTR_JUMP_WTF:         return vs_join_wtf(c, node);
 
         case INSTR_JUMP_IF:
         case INSTR_JUMP_IF_NOT:

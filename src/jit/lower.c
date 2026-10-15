@@ -40,6 +40,8 @@ typedef struct bc_slot {
         LirReg r;
         u64    bits;
         T2Type hint;
+        i32    src;
+        i32    off;
 } BcSlot;
 
 typedef struct bc_loop {
@@ -57,9 +59,39 @@ typedef struct bc_loop {
         bool     stack;
         LirReg   sreg[2];
         i32      arrays[4];
+        i32      akind[4];
         LirReg   areg[4][3];
         i32      narrays;
+        bool     lazy;
+        u8       written;
+        u8       escaping;
+        u8       deferred;
+        i32      ivar;
+        i32      isrc;
+        u8       ishift;
 } BcLoop;
+
+typedef struct {
+        LirLabel stub;
+        LirLabel target;
+        i32      to;
+        i32      inner;
+        bool     done;
+} BcExit;
+
+typedef struct {
+        u8     kind;
+        LirReg r;
+        bool   keep;
+} BcJoin;
+
+typedef struct {
+        i32 cont;
+        i32 base;
+        i32 lo;
+        i32 hi;
+        u32 gen;
+} BcFact;
 
 typedef struct bc_lir {
         Lir                  *L;
@@ -76,6 +108,7 @@ typedef struct bc_lir {
         bool                  compact;
         bool                  speculate;
         bool                  skip_next;
+        i32                   skip_extra;
 
         LirReg                ty;
         LirReg                locals;
@@ -101,6 +134,8 @@ typedef struct bc_lir {
         BcSlot               *known;
         u32                  *known_gen;
         u32                   gen;
+        BcFact                facts[8];
+        i32                   nfacts;
         i32                   tuple_off;
         i32                   tuple_sp;
         i32                   tuple_min;
@@ -112,6 +147,14 @@ typedef struct bc_lir {
         BcLoop               *loops;
         i32                   nloops;
         LirReg               *lreg;
+        i32                  *lowner;
+        i32                  *hkind;
+        BcJoin               *joins;
+        bool                 *stubbed;
+        bool                  falls;
+        BcExit               *exits;
+        i32                   nexits;
+        i32                   cexits;
         LirReg               *spin;
         i32                  *active;
         i32                   nactive;
@@ -210,6 +253,12 @@ loop_lower(BcLir *c, BcLirNode const *node, char const *ip);
 
 static LirReg const *
 held_array(BcLir const *c, i32 i);
+
+static LirReg const *
+held_blob(BcLir const *c, i32 i);
+
+static LirReg const *
+held_any(BcLir const *c, i32 i);
 
 static LirReg
 loop_reg(BcLir const *c, i32 slot);
@@ -1893,6 +1942,7 @@ tail_self(BcLir *c, BcLirNode const *node, LirReg fn)
 
         bind(c, deopt);
         sync_sp(c);
+        flush_active(c);
         leave(c, JIT_PACK(JIT_DEOPT, c->at));
 
         bind(c, go);
@@ -2898,14 +2948,31 @@ enter_node(BcLir *c, BcLirNode const *node, char const *ip)
 
         loop_leave(c, off);
 
-        if (node->label != LIR_NONE) {
+        BcJoin *join = (node->label != LIR_NONE) ? vs_join_at(c, off) : NULL;
+
+        if (join != NULL) {
+                if (c->falls) {
+                        c->at = off;
+                        vs_carry(c, join, node->sp - 1);
+                }
+                if (!join->keep) {
+                        vs_flush_below(c, node->sp - 1);
+                }
+        } else if (node->label != LIR_NONE) {
                 vs_flush_below(c, node->sp);
+        }
+
+        if (node->label != LIR_NONE) {
                 loop_enter(c, off);
                 vs_forget(c);
                 bind(c, node->label);
         }
 
         reset_slots(c, node, off);
+
+        if (join != NULL) {
+                vs_joined(c, join, node->sp - 1);
+        }
 
         if (c->dynamic) {
                 dynamic_ops(c);
@@ -2924,6 +2991,8 @@ static bool
 lower_node(BcLir *c, BcLirNode const *node, char const *ip)
 {
         enter_node(c, node, ip);
+
+        c->falls = falls(node->op);
 
         if (vs_lower(c, node, ip)) {
                 bool skip    = c->skip_next;
@@ -2958,6 +3027,10 @@ lower_all(BcLir *c)
                 opstat(c, (u8)*ip, node->sp >= 0);
 
                 if (node->sp >= 0 && lower_node(c, node, ip)) {
+                        ip = StepInstruction(ip);
+                }
+
+                for (; c->skip_extra > 0; --c->skip_extra) {
                         ip = StepInstruction(ip);
                 }
         }
@@ -2996,6 +3069,7 @@ epilogue(BcLir *c)
                 }
         }
 
+        exit_stubs(c);
         loop_stubs(c);
 
         bind(c, c->deopt);
@@ -3004,8 +3078,9 @@ epilogue(BcLir *c)
         for (i32 off = 0; off < c->size; ++off) {
                 BcLirNode const *node = &c->nodes[off];
 
-                if (node->deopt != LIR_NONE && reached(node)) {
+                if (node->deopt != LIR_NONE && reached(node) && !(c->stubbed != NULL && c->stubbed[off])) {
                         bind(c, node->deopt);
+                        flush_around(c, off);
                         leave(c, JIT_PACK(JIT_DEOPT, off));
                 }
         }
@@ -3138,6 +3213,7 @@ compile(Ty *ty, Value const *f, u64 begin)
 
         c.ok = c.ok && vs_plan(&c, ty, f);
         c.ok = c.ok && loop_plan(&c);
+        c.ok = c.ok && join_plan(&c);
 
         lower_all(&c);
         epilogue(&c);

@@ -266,7 +266,7 @@ switch_match(BcLir *c, BcLirNode const *node, LirReg last)
 
                 if (id != -1) {
                         LirOpnd want = lir_i(tag ? id : i);
-                        jcc(c, LIR_EQ, lir_r(key), want, c->nodes[to].label);
+                        jcc(c, LIR_EQ, lir_r(key), want, exit_edge(c, to));
                 }
         }
 

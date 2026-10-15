@@ -1823,6 +1823,43 @@ class Float {
     %(x: Float) -> Float { self % x }
 }
 
+class BlobView[T] : Iterable[T] {
+    __blob: Blob
+    __kind: Int
+    __size: Int
+
+    init(blob: Blob, kind: Int, size: Int) {
+        __blob = blob
+        __kind = kind
+        __size = size
+    }
+
+    blob -> Blob { __blob }
+
+    #() -> Int { #__blob / __size }
+
+    __at(i: Int) -> Int {
+        let n = #__blob / __size
+        let j = (i < 0) ? i + n : i
+        (j >= 0 && j < n) ? j : throw IndexError(self, i)
+    }
+
+    [](i: Int) -> T {
+        __blob.peek(__kind, __at(i)) as T
+    }
+
+    []=(i: Int, x: T) -> T {
+        __blob.poke(__kind, __at(i), x)
+        x
+    }
+
+    __iter__*() -> Generator[T] {
+        for i in ..#__blob / __size {
+            yield __blob.peek(__kind, i) as T
+        }
+    }
+}
+
 class Blob : Iterable[Int], IntoPtr[Int], PathLike {
     reserve(n: Int) -> nil;
     fill() -> Blob | nil;
@@ -1867,6 +1904,25 @@ class Blob : Iterable[Int], IntoPtr[Int], PathLike {
     #() -> Int;
 
     pad(n: Int, c: Int = 0) -> nil;
+
+    peek(kind: Int, i: Int) -> Int | Float;
+    poke(kind: Int, i: Int, x: Int | Float) -> Int | Float;
+
+    static zeros(n: Int) -> Blob {
+        let b = Blob()
+        b.pad(n)
+        b
+    }
+
+    f64 -> BlobView[Float] { BlobView(self, 0, 8) }
+    f32 -> BlobView[Float] { BlobView(self, 1, 4) }
+    i64 -> BlobView[Int]   { BlobView(self, 2, 8) }
+    i32 -> BlobView[Int]   { BlobView(self, 3, 4) }
+    u32 -> BlobView[Int]   { BlobView(self, 4, 4) }
+    i16 -> BlobView[Int]   { BlobView(self, 5, 2) }
+    u16 -> BlobView[Int]   { BlobView(self, 6, 2) }
+    i8  -> BlobView[Int]   { BlobView(self, 7, 1) }
+    u8  -> BlobView[Int]   { BlobView(self, 8, 1) }
 
     search(needle: Int | String | Blob) -> Int | nil;
     search(off: Int, needle: Int | String | Blob) -> Int | nil;

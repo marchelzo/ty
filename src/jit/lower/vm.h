@@ -1,13 +1,47 @@
+static bool
+fast_complement(BcLir *c, BcLirNode const *node, char const *ip)
+{
+        if (node->op != INSTR_UNARY_OP || load_i32(ip + 1) != OP_COMPL) {
+                return false;
+        }
+
+        LirLabel slow = newlabel(c);
+        LirLabel done = newlabel(c);
+        i32      top  = c->sp - 1;
+
+        unless(c, tag_of(c, top), VALUE_INTEGER, slow);
+        stq(c, c->ops, vat(top) + VOFF(z), lir_r(unop(c, LIR_NOT, LIR_I64, lir_r(int_at(c, top)))));
+        jump(c, done);
+
+        bind(c, slow);
+        sync_sp(c);
+        tycall(c, vm_jit_misc, LT_VOID, imm32(node->op), imm32(OP_COMPL), pimm(ip + 5));
+
+        bind(c, done);
+
+        return true;
+}
+
 static void
 misc(BcLir *c, BcLirNode const *node, char const *ip)
 {
         i32         n    = 0;
         void const *data = NULL;
 
+        if (fast_complement(c, node, ip)) {
+                return;
+        }
+
+        if (node->op == INSTR_JUMP_WTF && !c->dynamic && dest(c, node) != LIR_NONE) {
+                jcc(c, LIR_NE, lir_r(tag_of(c, c->sp - 1)), lir_i(VALUE_NIL), dest(c, node));
+                return;
+        }
+
         sync_sp(c);
 
         switch (node->op) {
         case INSTR_TRAP_TY:
+                flush_active(c);
                 leave(c, JIT_PACK(JIT_DEOPT, ip - c->code));
                 return;
 

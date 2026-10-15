@@ -22,11 +22,6 @@ promoted(BcLoop const *loop)
         return (loop->nslots != 0) || loop->stack || (loop->narrays != 0);
 }
 
-inline static i32
-opslot(BcLir const *c, i32 off)
-{
-        return load_i32(c->code + off + 1);
-}
 
 static bool
 backedge(BcLir const *c, i32 off)
@@ -194,6 +189,78 @@ liveness(BcLir const *c, BcLoop *loop)
         }
 }
 
+static u8
+writers(BcLir const *c, BcLoop const *loop)
+{
+        u8 bits = 0;
+
+        for (i32 off = loop->head; off <= loop->end; ++off) {
+                BcLirNode const *n = &c->nodes[off];
+
+                if (dead(n) || (n->op != INSTR_ASSIGN_LOCAL && n->op != INSTR_TARGET_LOCAL)) {
+                        continue;
+                }
+
+                i32 slot = opslot(c, off);
+
+                for (i32 k = 0; k < loop->nslots; ++k) {
+                        if (loop->slots[k] == slot) {
+                                bits |= 1 << k;
+                        }
+                }
+        }
+
+        return bits;
+}
+
+static u8
+escapers(BcLir const *c, BcLoop const *loop)
+{
+        u8 bits = 0;
+
+        for (i32 off = 0; off < c->size; ++off) {
+                BcLirNode const *n = &c->nodes[off];
+
+                if (dead(n) || inside(loop, off) || !local_op(n->op)) {
+                        continue;
+                }
+
+                i32 slot = opslot(c, off);
+
+                for (i32 k = 0; k < loop->nslots; ++k) {
+                        if (loop->slots[k] == slot) {
+                                bits |= 1 << k;
+                        }
+                }
+        }
+
+        return bits;
+}
+
+static u8
+written_within(BcLir const *c, BcLoop const *loop, BcLoop const *region)
+{
+        u8 bits = 0;
+
+        for (i32 off = region->head; off <= region->end; ++off) {
+                BcLirNode const *n = &c->nodes[off];
+
+                if (dead(n) || (n->op != INSTR_ASSIGN_LOCAL && n->op != INSTR_TARGET_LOCAL)) {
+                        continue;
+                }
+
+                i32 slot = opslot(c, off);
+
+                for (i32 k = 0; k < loop->nslots; ++k) {
+                        if (loop->slots[k] == slot) {
+                                bits |= 1 << k;
+                        }
+                }
+        }
+
+        return bits;
+}
+
 static i32
 busiest(BcLir const *c, i32 const *score)
 {
@@ -254,11 +321,13 @@ choose(BcLir const *c, BcLoop *loop, i32 *score)
 
         if (loop->nslots != 0) {
                 liveness(c, loop);
+                loop->written  = writers(c, loop);
+                loop->escaping = escapers(c, loop);
         }
 }
 
-static bool
-arrayish(BcLir const *c, i32 slot)
+static i32
+holdable(BcLir const *c, i32 slot)
 {
         if (
                 !local_ok(c, slot)
@@ -266,12 +335,34 @@ arrayish(BcLir const *c, i32 slot)
              || (slot == c->self_index)
              || (c->local_type[slot] == T2_TYPE_INVALID)
         ) {
-                return false;
+                return -1;
         }
 
         Class *class = t2_class_of(c->ctx, c->local_type[slot]);
 
-        return (class != NULL) && (class->i == CLASS_ARRAY);
+        if (
+                (class == NULL)
+             || (class->i != CLASS_ARRAY && class->i != CLASS_BLOB && class->i != CLASS_STRING)
+        ) {
+                return -1;
+        }
+
+        return class->i;
+}
+
+static bool
+string_byte_at(BcLir const *c, i32 off)
+{
+        BcLirNode const *n = &c->nodes[off];
+
+        return (n->op == INSTR_CALL_METHOD)
+            && (n->argc == 1)
+            && (n->nkw == 0)
+            && (n->member == M_ID("byte"))
+            && (off >= 5)
+            && (c->nodes[off - 5].op == INSTR_LOAD_LOCAL)
+            && (c->nodes[off - 5].next == off)
+            && (holdable(c, opslot(c, off - 5)) == CLASS_STRING);
 }
 
 static bool
@@ -294,12 +385,14 @@ containers(BcLir const *c, BcLoop *loop, i32 *score)
                         continue;
                 }
 
-                if (is_call(n->op)) {
+                bool bytes = string_byte_at(c, off);
+
+                if (is_call(n->op) && !bytes) {
                         loop->narrays = 0;
                         return;
                 }
 
-                any = any || indexes(n->op);
+                any = any || bytes || indexes(n->op);
 
                 if (!local_op(n->op)) {
                         continue;
@@ -313,7 +406,7 @@ containers(BcLir const *c, BcLoop *loop, i32 *score)
 
                 if (n->op != INSTR_LOAD_LOCAL) {
                         score[slot] = -1;
-                } else if (score[slot] >= 0 && arrayish(c, slot)) {
+                } else if (score[slot] >= 0 && holdable(c, slot) >= 0) {
                         score[slot] += 1;
                 }
         }
@@ -331,7 +424,7 @@ containers(BcLir const *c, BcLoop *loop, i32 *score)
                 for (i32 slot = 0; slot < c->bound; ++slot) {
                         if (
                                 (score[slot] > 0)
-                             && (score[slot] * 32 >= loop->end - loop->head)
+                             && (score[slot] * 64 >= loop->end - loop->head)
                              && (best < 0 || score[slot] > score[best])
                         ) {
                                 best = slot;
@@ -342,6 +435,7 @@ containers(BcLir const *c, BcLoop *loop, i32 *score)
                         break;
                 }
 
+                loop->akind[loop->narrays]    = holdable(c, best);
                 loop->arrays[loop->narrays++] = best;
                 score[best] = 0;
 
@@ -444,6 +538,102 @@ loop_at(BcLir *c, i32 head)
         return loop;
 }
 
+static bool
+node_is(BcLir const *c, i32 off, u8 op, i32 next)
+{
+        return (off >= 0)
+            && !dead(&c->nodes[off])
+            && (c->nodes[off].op == op)
+            && (c->nodes[off].next == next);
+}
+
+static i32
+writes_of(BcLir const *c, BcLoop const *loop, i32 slot)
+{
+        i32 n = 0;
+
+        for (i32 off = loop->head; off <= loop->end; ++off) {
+                BcLirNode const *node = &c->nodes[off];
+
+                if (
+                        !dead(node)
+                     && (node->op == INSTR_TARGET_LOCAL || node->op == INSTR_ASSIGN_LOCAL)
+                     && (opslot(c, off) == slot)
+                ) {
+                        n += 1;
+                }
+        }
+
+        return n;
+}
+
+static void
+ranged(BcLir const *c, BcLoop *loop)
+{
+        i32 h     = loop->head;
+        i32 src   = h - 8;
+        u8  shift = 0;
+
+        loop->ivar = -1;
+
+        if (
+                !loop->stack
+             || (h < 8)
+             || !node_is(c, h - 2, INSTR_INT8, h)
+             || (c->code[h - 1] != 0)
+             || !node_is(c, h - 3, INSTR_COUNT, h - 2)
+        ) {
+                return;
+        }
+
+        if (h >= 13 && node_is(c, h - 8, INSTR_MEMBER_ACCESS, h - 3)) {
+                Packed const *pk = packing(load_i32(c->code + h - 7));
+
+                if (pk == NULL) {
+                        return;
+                }
+
+                shift = pk->shift;
+                src   = h - 13;
+        }
+
+        if (!node_is(c, src, INSTR_LOAD_LOCAL, src + 5)) {
+                return;
+        }
+
+        i32  holder = opslot(c, src);
+        bool held   = false;
+
+        for (i32 k = 0; k < loop->narrays; ++k) {
+                held |= (loop->arrays[k] == holder)
+                     && (shift == 0 || loop->akind[k] == CLASS_BLOB);
+        }
+
+        BcLirNode const *head = &c->nodes[h];
+        BcLirNode const *test = next_of(c, head);
+        BcLirNode const *bind = next_of(c, test);
+
+        if (
+                !held
+             || (test->op != INSTR_JGE)
+             || (bind->op != INSTR_TARGET_LOCAL)
+             || (bind->sp != head->sp)
+             || (next_of(c, bind)->op != INSTR_ASSIGN)
+        ) {
+                return;
+        }
+
+        i32 ivar = opslot(c, bind - c->nodes);
+
+        if (!local_ok(c, ivar) || writes_of(c, loop, ivar) != 1) {
+                return;
+        }
+
+        loop->ivar   = ivar;
+        loop->isrc   = holder;
+        loop->ishift = shift;
+}
+
 static void
 shape(BcLir *c, i32 i, i32 *score)
 {
@@ -459,12 +649,15 @@ shape(BcLir *c, i32 i, i32 *score)
                 return;
         }
 
-        loop->sp = head->sp;
+        loop->sp   = head->sp;
+        loop->lazy = (c->nodes[loop->end].op == INSTR_JUMP) && (getenv("TY_JIT_NO_LAZY") == NULL);
 
         choose(c, loop, score);
         containers(c, loop, score);
 
         loop->stack = counted(c, loop);
+
+        ranged(c, loop);
 
         if (promoted(loop)) {
                 loop->deopt = newlabel(c);
@@ -499,7 +692,12 @@ loop_plan(BcLir *c)
 
         c->loops  = new(c, BcLoop, nloops);
         c->held   = new(c, LirReg *, c->bound);
+        c->hkind  = new(c, i32, c->bound);
         c->lreg   = nones(c, LirReg, c->bound);
+        c->lowner = nones(c, i32, c->bound);
+        c->cexits  = 2 * c->size + 16;
+        c->exits   = new(c, BcExit, c->cexits);
+        c->stubbed = new(c, bool, c->size);
         c->spin   = nones(c, LirReg, c->max_sp + 8);
         c->active = new(c, i32, nloops);
 
@@ -513,6 +711,23 @@ loop_plan(BcLir *c)
 
         for (i32 i = 0; i < c->nloops; ++i) {
                 shape(c, i, score);
+        }
+
+        for (i32 i = 0; i < c->nloops; ++i) {
+                BcLoop *outer = &c->loops[i];
+                bool    leaf  = true;
+                u8      busy  = 0;
+
+                for (i32 j = 0; j < c->nloops; ++j) {
+                        BcLoop const *inner = &c->loops[j];
+
+                        if (i != j && inside(outer, inner->head) && inner->end <= outer->end && promoted(inner)) {
+                                leaf  = false;
+                                busy |= written_within(c, outer, inner);
+                        }
+                }
+
+                outer->deferred = leaf ? 0xFF : busy;
         }
 
         return true;
@@ -566,21 +781,31 @@ own(BcLir *c, BcLoop *loop, i32 k)
                 reload(c, slot, r, loop->deopt, true);
         } else {
                 retag(c, slot);
+                if (loop->lazy && ((loop->written & loop->escaping & loop->deferred) >> k) & 1) {
+                        unbox_to(c, r, lspot(c, slot), lreal(c, slot));
+                }
         }
 
         i32 n = loop->nowned++;
 
         c->lreg[slot]       = r;
+        c->lowner[slot]     = (i32)(loop - c->loops);
         loop->owned_bit[n] = 1 << k;
         loop->owned[n]     = slot;
         loop->owned_reg[n] = r;
 }
 
 static void
+refresh_as(BcLir *c, LirOp op, LirReg r, LirReg base, i32 disp)
+{
+        vset(c, op, r, mref(base, disp));
+        vvL(c->L->insts)->flags |= LIR_REFRESH;
+}
+
+static void
 refresh(BcLir *c, LirReg r, LirReg base, i32 disp)
 {
-        vset(c, LIR_LD_I64, r, mref(base, disp));
-        vvL(c->L->insts)->flags |= LIR_REFRESH;
+        refresh_as(c, LIR_LD_I64, r, base, disp);
 }
 
 static void
@@ -588,6 +813,22 @@ view(BcLir *c, BcLoop const *loop, i32 k, LirLabel fail)
 {
         Spot          s = lspot(c, loop->arrays[k]);
         LirReg const *r = loop->areg[k];
+
+        if (loop->akind[k] == CLASS_STRING) {
+                typecheck(c, s, VALUE_STRING, fail);
+                refresh(c, r[0], s.base, s.at + VOFF(str));
+                refresh_as(c, LIR_LD_U32, r[1], s.base, s.at + VOFF(bytes));
+                refresh(c, r[2], s.base, s.at + VOFF(str));
+                return;
+        }
+
+        if (loop->akind[k] == CLASS_BLOB) {
+                typecheck(c, s, VALUE_BLOB, fail);
+                refresh(c, r[0], s.base, s.at + VOFF(blob));
+                refresh(c, r[1], r[0], offsetof(Blob, count));
+                refresh(c, r[2], r[0], offsetof(Blob, items));
+                return;
+        }
 
         typecheck(c, s, VALUE_ARRAY, fail);
         refresh(c, r[0], s.base, s.at + VOFF(array));
@@ -611,11 +852,12 @@ hold(BcLir *c, BcLoop *loop, i32 k)
 
         view(c, loop, k, loop->deopt);
 
-        c->held[loop->arrays[k]] = r;
+        c->held[loop->arrays[k]]  = r;
+        c->hkind[loop->arrays[k]] = loop->akind[k];
 }
 
 static LirReg const *
-held_array(BcLir const *c, i32 i)
+held_any(BcLir const *c, i32 i)
 {
         BcSlot const *s = &c->vs[i];
 
@@ -624,6 +866,32 @@ held_array(BcLir const *c, i32 i)
         }
 
         return c->held[(i32)s->bits];
+}
+
+static LirReg const *
+held_kind(BcLir const *c, i32 i, i32 kind)
+{
+        LirReg const *r = held_any(c, i);
+
+        return (r != NULL && c->hkind[(i32)c->vs[i].bits] == kind) ? r : NULL;
+}
+
+static LirReg const *
+held_array(BcLir const *c, i32 i)
+{
+        return held_kind(c, i, CLASS_ARRAY);
+}
+
+static LirReg const *
+held_blob(BcLir const *c, i32 i)
+{
+        return held_kind(c, i, CLASS_BLOB);
+}
+
+static LirReg const *
+held_string(BcLir const *c, i32 i)
+{
+        return held_kind(c, i, CLASS_STRING);
 }
 
 static void
@@ -670,10 +938,16 @@ loop_enter(BcLir *c, i32 off)
 }
 
 static void
+local_stubs(BcLir *c, i32 index);
+
+static void
 loop_leave(BcLir *c, i32 off)
 {
         while (c->nactive > 0 && c->loops[c->active[c->nactive - 1]].end < off) {
-                BcLoop const *loop = &c->loops[c->active[--c->nactive]];
+                i32           index = c->active[--c->nactive];
+                BcLoop const *loop  = &c->loops[index];
+
+                local_stubs(c, index);
 
                 for (i32 k = 0; k < loop->nowned; ++k) {
                         c->lreg[loop->owned[k]] = LIR_NONE;
@@ -724,10 +998,15 @@ loop_osr(BcLir *c, i32 off, i32 sp)
                 }
 
                 for (i32 k = 0; k < loop->nowned; ++k) {
+                        i32 slot = loop->owned[k];
+
                         if (live_at(loop, off) & loop->owned_bit[k]) {
-                                reload(c, loop->owned[k], loop->owned_reg[k], fail, false);
+                                reload(c, slot, loop->owned_reg[k], fail, false);
                         } else {
-                                retag(c, loop->owned[k]);
+                                retag(c, slot);
+                                if (loop->lazy && (loop->written & loop->escaping & loop->deferred & loop->owned_bit[k])) {
+                                        unbox_to(c, loop->owned_reg[k], lspot(c, slot), lreal(c, slot));
+                                }
                         }
                 }
         }
@@ -759,13 +1038,240 @@ loop_stubs(BcLir *c)
         }
 }
 
+static u8
+slot_bit(BcLoop const *loop, i32 slot)
+{
+        for (i32 k = 0; k < loop->nslots; ++k) {
+                if (loop->slots[k] == slot) {
+                        return 1 << k;
+                }
+        }
+
+        return 0;
+}
+
 static void
 writeback(BcLir *c, i32 slot)
 {
-        put(c, lspot(c, slot), c->lreg[slot], lreal(c, slot));
+        BcLoop const *owner = &c->loops[c->lowner[slot]];
+
+        if (!owner->lazy || !(owner->deferred & slot_bit(owner, slot))) {
+                put(c, lspot(c, slot), c->lreg[slot], lreal(c, slot));
+        }
 
         if (c->known_gen != NULL) {
                 c->known_gen[slot] = 0;
+        }
+}
+
+inline static bool
+lazy_loop(BcLoop const *loop)
+{
+        return loop->lazy && ((loop->nowned != 0) || loop->stack);
+}
+
+static bool
+lazy_pinned(BcLir const *c, i32 pos)
+{
+        for (i32 i = 0; i < c->nactive; ++i) {
+                BcLoop const *loop = &c->loops[c->active[i]];
+
+                if (lazy_loop(loop) && loop->stack && pos >= loop->sp - 2 && pos < loop->sp) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static bool
+in_range(BcLir const *c, i32 idx, i32 cont, u8 shift)
+{
+        BcSlot const *x    = &c->vs[idx];
+        BcSlot const *h    = &c->vs[cont];
+        i32           slot = (x->kind == VS_LOCAL) ? (i32)x->bits : x->src - 1;
+
+        if (slot < 0 || (x->kind != VS_LOCAL && x->off != 0) || h->kind != VS_LOCAL || getenv("TY_JIT_NO_RANGE") != NULL) {
+                return false;
+        }
+
+        for (i32 i = 0; i < c->nactive; ++i) {
+                BcLoop const *loop = &c->loops[c->active[i]];
+
+                if (loop->ivar == slot && loop->isrc == (i32)h->bits && loop->ishift == shift) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static void
+flush_pair(BcLir *c, BcLoop const *loop)
+{
+        for (i32 k = 0; loop->stack && k < 2; ++k) {
+                put(c, sspot(c, loop->sp - 2 + k), loop->sreg[k], false);
+        }
+}
+
+static void
+flush_loop(BcLir *c, BcLoop const *loop, u8 mask)
+{
+        for (i32 k = 0; k < loop->nowned; ++k) {
+                i32 slot = loop->owned[k];
+
+                if (loop->written & loop->deferred & mask & loop->owned_bit[k]) {
+                        put(c, lspot(c, slot), loop->owned_reg[k], lreal(c, slot));
+                }
+        }
+}
+
+static void
+flush_active(BcLir *c)
+{
+        for (i32 i = 0; i < c->nactive; ++i) {
+                BcLoop const *loop = &c->loops[c->active[i]];
+
+                if (lazy_loop(loop)) {
+                        flush_loop(c, loop, loop->escaping | live_at(loop, c->at));
+                        flush_pair(c, loop);
+                }
+        }
+}
+
+static void
+flush_around(BcLir *c, i32 off)
+{
+        for (i32 i = 0; i < c->nloops; ++i) {
+                BcLoop const *loop = &c->loops[i];
+
+                if (lazy_loop(loop) && inside(loop, off)) {
+                        flush_loop(c, loop, loop->escaping | live_at(loop, off));
+                        flush_pair(c, loop);
+                }
+        }
+}
+
+static LirLabel
+exit_edge(BcLir *c, i32 to)
+{
+        if (to < 0 || to >= c->size) {
+                return LIR_NONE;
+        }
+
+        LirLabel target = c->nodes[to].label;
+        bool     leaves = false;
+
+        for (i32 i = 0; i < c->nactive; ++i) {
+                BcLoop const *loop = &c->loops[c->active[i]];
+                leaves = leaves || (lazy_loop(loop) && !inside(loop, to));
+        }
+
+        if (target == LIR_NONE || !leaves) {
+                return target;
+        }
+
+        i32 inner = c->active[c->nactive - 1];
+
+        for (i32 i = 0; i < c->nexits; ++i) {
+                if (c->exits[i].to == to && c->exits[i].inner == inner) {
+                        return c->exits[i].stub;
+                }
+        }
+
+        if (c->nexits == c->cexits) {
+                c->ok = false;
+                return target;
+        }
+
+        LirLabel stub = newlabel(c);
+
+        c->exits[c->nexits++] = (BcExit) {
+                .stub   = stub,
+                .target = target,
+                .to     = to,
+                .inner  = inner
+        };
+
+        return stub;
+}
+
+static void
+exit_stub(BcLir *c, BcExit *e)
+{
+        i32 from = c->loops[e->inner].head;
+
+        e->done = true;
+        bind(c, e->stub);
+
+        for (i32 j = 0; j < c->nloops; ++j) {
+                BcLoop const *loop = &c->loops[j];
+
+                if (lazy_loop(loop) && inside(loop, from) && !inside(loop, e->to)) {
+                        flush_loop(c, loop, loop->escaping);
+                }
+        }
+
+        jump(c, e->target);
+}
+
+static void
+local_stubs(BcLir *c, i32 index)
+{
+        BcLoop const *loop = &c->loops[index];
+
+        if (!lazy_loop(loop)) {
+                return;
+        }
+
+        LirLabel skip = newlabel(c);
+
+        jump(c, skip);
+
+        for (i32 i = 0; i < c->nexits; ++i) {
+                if (!c->exits[i].done && c->exits[i].inner == index) {
+                        exit_stub(c, &c->exits[i]);
+                }
+        }
+
+        for (i32 off = loop->head; off <= loop->end; ++off) {
+                BcLirNode const *node = &c->nodes[off];
+
+                if (node->deopt != LIR_NONE && reached(node) && !c->stubbed[off]) {
+                        c->stubbed[off] = true;
+                        bind(c, node->deopt);
+                        flush_around(c, off);
+                        leave(c, JIT_PACK(JIT_DEOPT, off));
+                }
+        }
+
+        bind(c, skip);
+}
+
+static void
+exit_stubs(BcLir *c)
+{
+        for (i32 i = 0; i < c->nexits; ++i) {
+                BcExit *e = &c->exits[i];
+
+                if (e->done) {
+                        continue;
+                }
+
+                i32 from = c->loops[e->inner].head;
+
+                e->done = true;
+                bind(c, e->stub);
+
+                for (i32 j = 0; j < c->nloops; ++j) {
+                        BcLoop const *loop = &c->loops[j];
+
+                        if (lazy_loop(loop) && inside(loop, from) && !inside(loop, e->to)) {
+                                flush_loop(c, loop, loop->escaping);
+                        }
+                }
+
+                jump(c, e->target);
         }
 }
 
@@ -839,6 +1345,7 @@ loop_step(BcLir *c, i32 slot, u8 op)
         LirReg r    = c->lreg[slot];
         LirReg old  = post ? snap(c, slot) : LIR_NONE;
 
+        vs_disown(c, slot);
         vset(c, LIR_ADD, r, lir_r(r), lir_i(up ? 1 : -1));
         writeback(c, slot);
         vs_push(c, VS_INT, post ? old : snap(c, slot), 0);
@@ -857,6 +1364,7 @@ loop_mutate(BcLir *c, i32 slot, u8 op, bool real)
         LirReg r = c->lreg[slot];
         LirReg x = lnum(c, c->sp - 1, real);
 
+        vs_disown(c, slot);
         vset(c, mutop(op, real), r, lir_r(r), lir_r(x));
         writeback(c, slot);
 
@@ -912,6 +1420,7 @@ loop_lower(BcLir *c, BcLirNode const *node, char const *ip)
         switch (node->op) {
         case INSTR_LOAD_LOCAL:
                 vs_push(c, numkind(real), snap(c, slot), 0);
+                c->vs[c->sp - 1].src = slot + 1;
                 return true;
 
         case INSTR_ASSIGN_LOCAL:

@@ -521,7 +521,7 @@ shape(Lir *L, LirInst *in, u8 *use, LirClass *cls)
 
         case LF_POLL:
                 if (in->nargs == 4) {
-                        *use   = 0b111;
+                        *use   = (a[2].kind == LO_IMM) ? 0b011 : 0b111;
                         cls[0] = LIR_PTR;
                         cls[1] = LIR_PTR;
                         cls[2] = LIR_PTR;

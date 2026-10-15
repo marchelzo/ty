@@ -241,6 +241,48 @@ receiver_class(BcLir *c, BcLirNode const *node)
 }
 
 static bool
+string_byte(BcLir *c, BcLirNode const *node, BuiltinMethod *method, i64 packed)
+{
+        if (node->op != INSTR_CALL_METHOD || node->argc != 1 || node->member != M_ID("byte")) {
+                return false;
+        }
+
+        i32      text = c->sp - 1;
+        i32      at   = c->sp - 2;
+        LirLabel slow = newlabel(c);
+        LirLabel done = newlabel(c);
+
+        expect(c, c->ops, vat(text), VALUE_STRING, slow);
+        expect(c, c->ops, vat(at), VALUE_INTEGER, slow);
+
+        LirReg i = int_at(c, at);
+        LirReg n = ldx(c, LIR_LD_U32, LIR_I64, c->ops, vat(text) + VOFF(bytes));
+
+        jcc(c, LIR_UGE, lir_r(i), lir_r(n), slow);
+
+        LirReg p = lea(c, ldp(c, c->ops, vat(text) + VOFF(str)), i, 0);
+
+        put_scalar(c, at, VALUE_INTEGER, lir_r(ldx(c, LIR_LD_U8, LIR_I64, p, 0)));
+        jump(c, done);
+
+        bind(c, slow);
+        tycall(
+                c,
+                jit_rt_call_builtin_method,
+                LT_VOID,
+                preg(slot_of(c, at)),
+                preg(slot_of(c, text)),
+                pimm(method),
+                imm64(packed),
+                imm32(1)
+        );
+
+        bind(c, done);
+
+        return true;
+}
+
+static bool
 method_fast(BcLir *c, BcLirNode const *node)
 {
         if (
@@ -266,9 +308,14 @@ method_fast(BcLir *c, BcLirNode const *node)
                 return false;
         }
 
+        i64     packed = ((u64)(u32)vtype << 32) | (u32)node->member;
+
+        if (class->i == CLASS_STRING && string_byte(c, node, method, packed)) {
+                return true;
+        }
+
         LirReg  out    = slot_of(c, c->sp - explicit - node->argc);
         LirOpnd self   = explicit ? lir_r(slot_of(c, c->sp - 1)) : lir_i(0);
-        i64     packed = ((u64)(u32)vtype << 32) | (u32)node->member;
 
         tycall(
                 c,

@@ -12,6 +12,50 @@ static void *const BinaryHelpers[] = {
 };
 
 static void
+fast_bits(BcLir *c, u8 op)
+{
+        i32      left  = c->sp - 2;
+        i32      right = c->sp - 1;
+        LirLabel slow  = newlabel(c);
+        LirLabel done  = newlabel(c);
+        LirOp    lop;
+
+        switch (op) {
+        case INSTR_MOD:     lop = LIR_SREM; break;
+        case INSTR_BIT_AND: lop = LIR_AND;  break;
+        case INSTR_BIT_OR:  lop = LIR_OR;   break;
+        case INSTR_BIT_XOR: lop = LIR_XOR;  break;
+        case INSTR_SHL:     lop = LIR_SHL;  break;
+        default:            lop = LIR_SAR;  break;
+        }
+
+        unless(c, tag_of(c, left), VALUE_INTEGER, slow);
+        unless(c, tag_of(c, right), VALUE_INTEGER, slow);
+
+        LirReg a = int_at(c, left);
+        LirReg b = int_at(c, right);
+
+        if (lop == LIR_SREM) {
+                no_overflow_div(c, b, slow);
+        } else if (lop == LIR_SHL || lop == LIR_SAR) {
+                b = binop(c, LIR_AND, LIR_I64, lir_r(b), lir_i(63));
+        }
+
+        stq(c, c->ops, vat(left) + VOFF(z), lir_r(binr(c, lop, LIR_I64, a, b)));
+        jump(c, done);
+
+        bind(c, slow);
+
+        LirReg out = slot_of(c, left);
+        LirReg rhs = slot_of(c, right);
+
+        tycall(c, BinaryHelpers[op], LT_VOID, preg(out), preg(out), preg(rhs));
+
+        bind(c, done);
+        c->sp -= 1;
+}
+
+static void
 aggregate(Ty *ty, Value *top, i32 op)
 {
         ty->stack.count = top - ty->stack.items;
@@ -435,6 +479,15 @@ lower_misc(BcLir *c, BcLirNode const *node, char const *ip)
 
         case INSTR_DIV:
                 fast_div(c);
+                return;
+
+        case INSTR_MOD:
+        case INSTR_BIT_AND:
+        case INSTR_BIT_OR:
+        case INSTR_BIT_XOR:
+        case INSTR_SHL:
+        case INSTR_SHR:
+                fast_bits(c, op);
                 return;
 
         default:

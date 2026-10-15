@@ -624,6 +624,203 @@ check_constant_division(void)
 }
 
 static void
+check_folding(void)
+{
+        static LirOp const iops[] = {
+                LIR_ADD, LIR_SUB, LIR_MUL, LIR_AND, LIR_OR, LIR_XOR, LIR_SHL, LIR_SHR, LIR_SAR
+        };
+        static i64 const values[] = {
+                INT64_MIN, -7, -1, 0, 1, 2, 63, 64, 65, 12345, INT64_MAX
+        };
+        static double const reals[] = { -0.0, 0.0, 1.5, -3.25, 1e308, NAN, INFINITY };
+
+        for (u32 o = 0; o < countof(iops); ++o) {
+                for (u32 i = 0; i < countof(values); ++i) {
+                        for (u32 j = 0; j < countof(values); ++j) {
+                                Lir   *L = fn(LT_I64, LT_I64);
+                                LirReg a = lir_reg(L, LIR_I64);
+                                LirReg b = lir_reg(L, LIR_I64);
+                                LirReg t = lir_reg(L, LIR_I64);
+                                LirReg u = lir_reg(L, LIR_I64);
+                                LirReg v = lir_reg(L, LIR_I64);
+                                LirReg r = lir_reg(L, LIR_I64);
+
+                                put(L, LIR_LI, a, lir_i(values[i]));
+                                put(L, LIR_LI, b, lir_i(values[j]));
+                                put(L, iops[o], t, lir_r(a), lir_r(b));
+                                put(L, iops[o], u, lir_r(L->params[0]), lir_r(b));
+                                put(L, iops[o], v, lir_r(a), lir_r(L->params[0]));
+                                put(L, LIR_XOR, r, lir_r(t), lir_r(u));
+                                put(L, LIR_MUL, r, lir_r(r), lir_i(31));
+                                put(L, LIR_ADD, r, lir_r(r), lir_r(v));
+                                ret(L, r);
+
+                                for (u32 k = 0; k < countof(values); k += 3) {
+                                        LirScalar arg = S(i, values[k]);
+                                        agrees(L, &arg, 1);
+                                }
+
+                                lir_free(L);
+                        }
+                }
+        }
+
+        for (LirCC cc = LIR_EQ; cc <= LIR_UGE; ++cc) {
+                for (u32 i = 0; i < countof(values); i += 2) {
+                        for (u32 j = 0; j < countof(values); ++j) {
+                                Lir     *L    = fn(LT_I64, LT_I64);
+                                LirReg   a    = lir_reg(L, LIR_I64);
+                                LirReg   b    = lir_reg(L, LIR_I64);
+                                LirReg   r    = lir_reg(L, LIR_I64);
+                                LirReg   s    = lir_reg(L, LIR_I64);
+                                LirLabel skip = lir_label(L);
+
+                                put(L, LIR_LI, a, lir_i(values[i]));
+                                put(L, LIR_LI, b, lir_i(values[j]));
+                                put(L, LIR_MOV, r, lir_r(L->params[0]));
+                                put(L, LIR_SETCC, s, lir_cc(cc), lir_r(a), lir_r(b));
+                                put(L, LIR_BR, LIR_NONE, lir_cc(cc), lir_r(a), lir_r(b), lir_l(skip));
+                                put(L, LIR_ADD, r, lir_r(r), lir_i(100));
+                                here(L, skip);
+                                put(L, LIR_SHL, s, lir_r(s), lir_i(8));
+                                put(L, LIR_ADD, r, lir_r(r), lir_r(s));
+                                ret(L, r);
+
+                                LirScalar arg = S(i, 5);
+                                agrees(L, &arg, 1);
+                                lir_free(L);
+                        }
+                }
+        }
+
+        static LirOp const fops[] = { LIR_FADD, LIR_FSUB, LIR_FMUL, LIR_FDIV };
+
+        for (u32 o = 0; o < countof(fops); ++o) {
+                for (u32 i = 0; i < countof(reals); ++i) {
+                        for (u32 j = 0; j < countof(reals); ++j) {
+                                Lir     *L    = fn(LT_I64, LT_I64);
+                                LirReg   a    = lir_reg(L, LIR_F64);
+                                LirReg   b    = lir_reg(L, LIR_F64);
+                                LirReg   t    = lir_reg(L, LIR_F64);
+                                LirReg   bits = lir_reg(L, LIR_I64);
+                                LirReg   r    = lir_reg(L, LIR_I64);
+                                LirReg   s    = lir_reg(L, LIR_I64);
+                                LirLabel skip = lir_label(L);
+
+                                put(L, LIR_FLI, a, lir_f(reals[i]));
+                                put(L, LIR_FLI, b, lir_f(reals[j]));
+                                put(L, fops[o], t, lir_r(a), lir_r(b));
+                                put(L, LIR_BITCAST, bits, lir_r(t));
+                                put(L, LIR_MOV, r, lir_r(bits));
+                                put(L, LIR_FSETCC, s, lir_cc(LIR_FEQ + (i + j) % 7), lir_r(a), lir_r(b));
+                                put(L, LIR_FBR, LIR_NONE, lir_cc(LIR_FEQ + (i * 3 + j) % 7), lir_r(t), lir_r(a), lir_l(skip));
+                                put(L, LIR_XOR, r, lir_r(r), lir_i(0x5555));
+                                here(L, skip);
+                                put(L, LIR_ADD, r, lir_r(r), lir_r(s));
+                                ret(L, r);
+
+                                LirScalar arg = S(i, 0);
+                                agrees(L, &arg, 1);
+                                lir_free(L);
+                        }
+                }
+        }
+}
+
+static void
+check_diamonds(void)
+{
+        static i64 const values[] = { INT64_MIN, -7, -1, 0, 1, 2, 63, 12345, INT64_MAX };
+
+        for (LirCC cc = LIR_EQ; cc <= LIR_UGE; ++cc) {
+                for (u32 shared = 0; shared < 2; ++shared) {
+                        for (u32 i = 0; i < countof(values); ++i) {
+                                Lir     *L    = fn(LT_I64, LT_I64);
+                                LirReg   x    = lir_reg(L, LIR_I64);
+                                LirReg   t    = lir_reg(L, LIR_I64);
+                                LirReg   u    = lir_reg(L, LIR_I64);
+                                LirReg   v    = lir_reg(L, LIR_I64);
+                                LirReg   out  = lir_reg(L, LIR_I64);
+                                LirReg   leak = shared ? t : lir_reg(L, LIR_I64);
+                                LirLabel no   = lir_label(L);
+                                LirLabel join = lir_label(L);
+
+                                put(L, LIR_MOV, x, lir_r(L->params[0]));
+                                put(L, LIR_LI, out, lir_i(values[(i + 3) % countof(values)]));
+                                put(L, LIR_BR, LIR_NONE, lir_cc(cc), lir_r(x), lir_i(values[i] >> 40), lir_l(no));
+                                put(L, LIR_SAR, t, lir_r(x), lir_i(1));
+                                put(L, LIR_XOR, u, lir_r(t), lir_r(out));
+                                put(L, LIR_MOV, out, lir_r(u));
+                                put(L, LIR_JMP, LIR_NONE, lir_l(join));
+                                here(L, no);
+                                put(L, LIR_MUL, v, lir_r(x), lir_i(3));
+                                put(L, LIR_ADD, leak, lir_r(v), lir_i(1));
+                                put(L, LIR_MOV, out, lir_r(leak));
+                                here(L, join);
+                                put(L, LIR_ADD, out, lir_r(out), lir_r(shared ? t : x));
+                                ret(L, out);
+
+                                for (u32 k = 0; k < countof(values); ++k) {
+                                        LirScalar arg = S(i, values[k]);
+                                        agrees(L, &arg, 1);
+                                }
+
+                                lir_free(L);
+                        }
+                }
+        }
+}
+
+static void
+check_numbering(void)
+{
+        for (i64 limit = -3; limit < 12; limit += 5) {
+                Lir     *L    = fn(LT_I64, LT_I64);
+                LirReg   x    = lir_reg(L, LIR_I64);
+                LirReg   a    = lir_reg(L, LIR_I64);
+                LirReg   b    = lir_reg(L, LIR_I64);
+                LirReg   c    = lir_reg(L, LIR_I64);
+                LirReg   d    = lir_reg(L, LIR_I64);
+                LirReg   e    = lir_reg(L, LIR_I64);
+                LirReg   r    = lir_reg(L, LIR_I64);
+                LirLabel join = lir_label(L);
+
+                put(L, LIR_MOV, x, lir_r(L->params[0]));
+                put(L, LIR_MUL, a, lir_r(x), lir_i(7));
+                put(L, LIR_ADD, x, lir_r(x), lir_i(1));
+                put(L, LIR_MUL, b, lir_r(x), lir_i(7));
+                put(L, LIR_MUL, c, lir_r(x), lir_i(7));
+                put(L, LIR_SUB, r, lir_r(a), lir_r(b));
+                put(L, LIR_ADD, r, lir_r(r), lir_r(c));
+                LirReg   f    = lir_reg(L, LIR_I64);
+                LirReg   g    = lir_reg(L, LIR_I64);
+                LirLabel meet = lir_label(L);
+
+                put(L, LIR_BR, LIR_NONE, lir_cc(LIR_LT), lir_r(x), lir_i(limit), lir_l(join));
+                put(L, LIR_MUL, d, lir_r(x), lir_i(7));
+                put(L, LIR_ADD, x, lir_r(d), lir_i(3));
+                here(L, join);
+                put(L, LIR_MUL, e, lir_r(x), lir_i(7));
+                put(L, LIR_XOR, r, lir_r(r), lir_r(e));
+                put(L, LIR_LI, f, lir_i(0));
+                put(L, LIR_BR, LIR_NONE, lir_cc(LIR_GE), lir_r(x), lir_i(limit + 4), lir_l(meet));
+                put(L, LIR_MUL, f, lir_r(x), lir_i(11));
+                here(L, meet);
+                put(L, LIR_MUL, g, lir_r(x), lir_i(11));
+                put(L, LIR_ADD, r, lir_r(r), lir_r(g));
+                put(L, LIR_SUB, r, lir_r(r), lir_r(f));
+                ret(L, r);
+
+                for (i64 p = -4; p < 14; p += 3) {
+                        LirScalar arg = S(i, p);
+                        agrees(L, &arg, 1);
+                }
+
+                lir_free(L);
+        }
+}
+
+static void
 check_mutable_divisor(void)
 {
         Lir *L = fn(LT_I64, LT_I64);
@@ -707,6 +904,9 @@ main(void)
         check_raw_native();
         check_division_edges();
         check_constant_division();
+        check_folding();
+        check_diamonds();
+        check_numbering();
         check_mutable_divisor();
         check_distant_targets();
         check_fuzz();

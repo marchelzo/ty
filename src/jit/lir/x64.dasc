@@ -768,6 +768,74 @@ pick(dasm_State **Dst, u8 d, u8 a, u8 b, LirClass cls, u32 yes, u32 end)
 }
 
 static void
+cmov(dasm_State **Dst, LirCC cc, u8 d, u8 a, bool narrow)
+{
+        switch (cc) {
+        case LIR_EQ:
+                | WR cmove, d, a
+                break;
+        case LIR_NE:
+                | WR cmovne, d, a
+                break;
+        case LIR_LT:
+                | WR cmovl, d, a
+                break;
+        case LIR_LE:
+                | WR cmovle, d, a
+                break;
+        case LIR_GT:
+                | WR cmovg, d, a
+                break;
+        case LIR_GE:
+                | WR cmovge, d, a
+                break;
+        case LIR_ULT:
+                | WR cmovb, d, a
+                break;
+        case LIR_ULE:
+                | WR cmovbe, d, a
+                break;
+        case LIR_UGT:
+                | WR cmova, d, a
+                break;
+        default:
+                | WR cmovae, d, a
+                break;
+        }
+}
+
+static LirCC
+flip(LirCC cc)
+{
+        switch (cc) {
+        case LIR_EQ:  return LIR_NE;
+        case LIR_NE:  return LIR_EQ;
+        case LIR_LT:  return LIR_GE;
+        case LIR_GE:  return LIR_LT;
+        case LIR_LE:  return LIR_GT;
+        case LIR_GT:  return LIR_LE;
+        case LIR_ULT: return LIR_UGE;
+        case LIR_UGE: return LIR_ULT;
+        case LIR_ULE: return LIR_UGT;
+        default:      return LIR_ULE;
+        }
+}
+
+static void
+choose(dasm_State **Dst, u8 d, u8 a, u8 b, LirCC cc, LirClass cls)
+{
+        bool narrow = (cls == LIR_I32);
+
+        if (d == a) {
+                cmov(Dst, flip(cc), d, b, narrow);
+                return;
+        }
+
+        mov(Dst, d, b, cls, false, false);
+        cmov(Dst, cc, d, a, narrow);
+}
+
+static void
 setcc(dasm_State **Dst, u8 d, LirCC cc, u32 yes, u32 end)
 {
         branch(Dst, cc, yes);

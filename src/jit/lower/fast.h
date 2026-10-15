@@ -15,14 +15,34 @@ array_slot(BcLir *c, i32 container, i32 index, LirLabel slow)
         return elem(c, ldp(c, array, offsetof(Array, items)), i, 0);
 }
 
+static LirReg
+blob_slot(BcLir *c, i32 container, i32 index, LirLabel slow)
+{
+        expect(c, c->ops, vat(container), VALUE_BLOB, slow);
+        expect(c, c->ops, vat(index), VALUE_INTEGER, slow);
+
+        LirReg i     = ldq(c, c->ops, vat(index) + VOFF(z));
+        LirReg blob  = ldp(c, c->ops, vat(container) + VOFF(blob));
+
+        jcc(c, LIR_UGE, lir_r(i), lir_r(ldq(c, blob, offsetof(Blob, count))), slow);
+
+        return lea(c, ldp(c, blob, offsetof(Blob, items)), i, 0);
+}
+
 static void
 fast_subscript(BcLir *c)
 {
-        LirLabel slow = newlabel(c);
-        LirLabel done = newlabel(c);
-        LirReg   slot = array_slot(c, c->sp - 2, c->sp - 1, slow);
+        LirLabel slow  = newlabel(c);
+        LirLabel bytes = newlabel(c);
+        LirLabel done  = newlabel(c);
+        LirReg   slot  = array_slot(c, c->sp - 2, c->sp - 1, bytes);
 
         copy(c, c->ops, vat(c->sp - 2), slot, 0);
+        jump(c, done);
+
+        bind(c, bytes);
+        LirReg p = blob_slot(c, c->sp - 2, c->sp - 1, slow);
+        put_scalar(c, c->sp - 2, VALUE_INTEGER, lir_r(ldx(c, LIR_LD_U8, LIR_I64, p, 0)));
         jump(c, done);
 
         bind(c, slow);
@@ -35,11 +55,18 @@ fast_subscript(BcLir *c)
 static void
 fast_assign_subscript(BcLir *c)
 {
-        LirLabel slow = newlabel(c);
-        LirLabel done = newlabel(c);
-        LirReg   slot = array_slot(c, c->sp - 2, c->sp - 1, slow);
+        LirLabel slow  = newlabel(c);
+        LirLabel bytes = newlabel(c);
+        LirLabel done  = newlabel(c);
+        LirReg   slot  = array_slot(c, c->sp - 2, c->sp - 1, bytes);
 
         copy(c, slot, 0, c->ops, vat(c->sp - 3));
+        jump(c, done);
+
+        bind(c, bytes);
+        LirReg p = blob_slot(c, c->sp - 2, c->sp - 1, slow);
+        expect(c, c->ops, vat(c->sp - 3), VALUE_INTEGER, slow);
+        stb(c, p, 0, lir_r(int_at(c, c->sp - 3)));
         jump(c, done);
 
         bind(c, slow);
@@ -103,7 +130,12 @@ fusable_mutation(BcLir *c, BcLirNode const *node, bool assign)
         case INSTR_MUT_ADD:
         case INSTR_MUT_SUB:
         case INSTR_MUT_MUL:
-        case INSTR_MUT_DIV: return true;
+        case INSTR_MUT_DIV:
+        case INSTR_MUT_AND:
+        case INSTR_MUT_OR:
+        case INSTR_MUT_XOR:
+        case INSTR_MUT_SHL:
+        case INSTR_MUT_SHR: return true;
         default:            return false;
         }
 }
@@ -144,26 +176,40 @@ inline_mutation(
         }
 
         LirOp iop;
-        LirOp fop;
+        LirOp fop = LIR_NONE;
 
         switch (op) {
         case INSTR_MUT_ADD: iop = LIR_ADD; fop = LIR_FADD; break;
         case INSTR_MUT_SUB: iop = LIR_SUB; fop = LIR_FSUB; break;
-        default:            iop = LIR_MUL; fop = LIR_FMUL; break;
+        case INSTR_MUT_MUL: iop = LIR_MUL; fop = LIR_FMUL; break;
+        case INSTR_MUT_AND: iop = LIR_AND;                 break;
+        case INSTR_MUT_OR:  iop = LIR_OR;                  break;
+        case INSTR_MUT_XOR: iop = LIR_XOR;                 break;
+        case INSTR_MUT_SHL: iop = LIR_SHL;                 break;
+        default:            iop = LIR_SAR;                 break;
         }
 
-        LirLabel real = newlabel(c);
+        LirLabel real = (fop == LIR_NONE) ? slow : newlabel(c);
 
         unless(c, lt, VALUE_INTEGER, real);
         unless(c, rt, VALUE_INTEGER, real);
 
         LirReg a = ldq(c, base, at + VOFF(z));
         LirReg b = ldq(c, c->ops, rhs + VOFF(z));
+
+        if (iop == LIR_SHL || iop == LIR_SAR) {
+                b = binop(c, LIR_AND, LIR_I64, lir_r(b), lir_i(63));
+        }
+
         LirReg r = binop(c, iop, LIR_I64, lir_r(a), lir_r(b));
 
         stq(c, base, at + VOFF(z), lir_r(r));
         stq(c, c->ops, rhs + VOFF(z), lir_r(r));
         jump(c, done);
+
+        if (fop == LIR_NONE) {
+                return;
+        }
 
         bind(c, real);
         unless(c, lt, VALUE_REAL, slow);
@@ -174,9 +220,13 @@ inline_mutation(
 static bool
 fuse_non_nil(BcLir *c, BcLirNode const *next, i32 slot)
 {
-        LirLabel target = c->nodes[next->target].label;
+        if (next->op != INSTR_TRY_ASSIGN_NON_NIL) {
+                return false;
+        }
 
-        if (next->op != INSTR_TRY_ASSIGN_NON_NIL || target == LIR_NONE) {
+        LirLabel target = exit_edge(c, next->target);
+
+        if (target == LIR_NONE) {
                 return false;
         }
 
@@ -337,7 +387,7 @@ fast_loop(BcLir *c, BcLirNode const *node)
                 return false;
         }
 
-        LirLabel exit = c->nodes[check->target].label;
+        LirLabel exit = exit_edge(c, check->target);
         LirLabel slow = newlabel(c);
         LirLabel done = newlabel(c);
         i32      sp   = c->sp;

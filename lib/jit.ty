@@ -1018,6 +1018,10 @@ use Val = Reg | Int | Float
 
 let ASM_TYPES = %{it.name: it for TYPES}
 let KERNEL_TYPES = %{'Int': I64, 'Float': F64, 'Bool': BOOL}
+let VIEWS = %{
+    'f64': F64, 'f32': F32, 'i64': I64, 'i32': I32, 'u32': U32,
+    'i16': I16, 'u16': U16, 'i8': I8, 'u8': U8,
+}
 let TY_NAMES = %{I64.code: 'Int', F64.code: 'Float', BOOL.code: 'Bool'}
 let CONTAINERS = %{'Blob': 'blob', 'String': 'string'}
 let CONTAINER_TAGS = %{'blob': j.tag.BLOB, 'string': j.tag.STRING, 'ints': j.tag.ARRAY, 'floats': j.tag.ARRAY}
@@ -1146,12 +1150,73 @@ fn assigned-names(node: Any, out: Dict[String, Bool]) {
     }
 }
 
+fn unwrap(node: Any) -> Any {
+    match node {
+        asm-ast.At(x, _, _) => unwrap(x),
+        _ => node,
+    }
+}
+
+fn statements(node: Any) -> Array[Any] {
+    match unwrap(node) {
+        ty.Block(xs) => xs,
+        x => [x],
+    }
+}
+
+class Lin {
+    c: Int;
+    inv: Array[(Int, Any)];
+    ind: Dict[String, Int];
+
+    init(c: Int = 0, inv: Array[(Int, Any)] = [], ind: Dict[String, Int] = %{}) {
+        self.c = c
+        self.inv = inv
+        self.ind = ind
+    }
+
+    plus(other: Lin, sign: Int) -> Lin {
+        let ind = %{**self.ind}
+        for k, v in other.ind {
+            ind[k] = (ind[k] ?? 0) + sign * v
+        }
+        Lin(c + sign * other.c, [*inv, *[(sign * k, x) for (k, x) in other.inv]], ind)
+    }
+
+    times(n: Int) -> Lin {
+        Lin(c * n, [(k * n, x) for (k, x) in inv], %{name: v * n for name, v in ind})
+    }
+}
+
+fn writes(node: Any, out: Dict[String, Int]) {
+    fn bump(name: String) { out[name] = (out[name] ?? 0) + 1 }
+    match unwrap(node) {
+        ty.Block(xs) => for xs { writes(it, out) },
+        ty.Let(ty.Id(id), _) => bump(id.name),
+        ty.Assign(ty.Id(id), _) => bump(id.name),
+        ty.If(_, yes, no) => do { writes(yes, out); writes(no, out) },
+        ty.While(_, body) => writes(body, out),
+        ty.Each(e) => do {
+            for e.pattern {
+                if let $name = ast-name(it) { bump(name) }
+            }
+            writes(e.expr, out)
+        },
+        n => do {
+            if let (op, ty.Id(id), _) = operands(n) and op in MUTATE {
+                bump(id.name)
+            }
+        },
+    }
+}
+
 class Var {
     kind: String;
     reg: Reg;
     data: Reg;
     count: Reg;
     bound: String | nil;
+    elem: Type;
 
     init(kind: String, reg: Reg) {
         self.kind = kind
@@ -1159,6 +1224,36 @@ class Var {
         data = reg
         count = reg
         bound = nil
+        elem = U8
+    }
+}
+
+fn view-names(node: Any, out: Dict[String, Bool]) {
+    let walk = x -> view-names(x, out)
+    match unwrap(node) {
+        ty.MemberAccess(x, name) => do {
+            if VIEWS[name] != nil {
+                out[name] = true
+            }
+            walk(x)
+        },
+        ty.Block(xs) => xs.each(walk),
+        ty.Let(_, v) => walk(v),
+        ty.Assign(t, v) => do { walk(t); walk(v) },
+        ty.If(conds, yes, no) => do { conds.each(walk); walk(yes); if no != nil { walk(no) } },
+        ty.While(conds, body) => do { conds.each(walk); walk(body) },
+        ty.Each(e) => do { walk(e.iter); walk(e.expr) },
+        ty.Return(v) => if v != nil { walk(v) },
+        ty.Call(c) => c.args.each(a -> walk(argument(a))),
+        ty.MethodCall(m) => do { walk(m.object); m.args.each(a -> walk(argument(a))) },
+        ty.Subscript(x, i) => do { walk(x); walk(i) },
+        ty.Cond(c, a, b) => do { walk(c); walk(a); walk(b) },
+        ty.Neg(x) or ty.Not(x) or ty.Count(x) => walk(x),
+        ty.And(a, b) or ty.Or(a, b) => do { walk(a); walk(b) },
+        n => if let (_, a, b) = operands(n) {
+            walk(a)
+            walk(b)
+        },
     }
 }
 
@@ -1177,6 +1272,36 @@ class Fault {
 }
 
 let __tls::kernel-signatures: Dict[String, (Array[String], String)] = %{}
+let __tls::kernel-bodies: Dict[String, (Array[(String, String)], String, Any)] = %{}
+
+fn argument(arg: Any) -> Any {
+    match arg {
+        ty.Arg(a) => a.arg,
+        _         => arg,
+    }
+}
+
+fn weight(node: Any) -> Int {
+    let n = unwrap(node)
+    match n {
+        ty.Block(xs) => xs.map(weight).sum(0) + 1,
+        ty.Let(_, v) or ty.Assign(_, v) => weight(v) + 1,
+        ty.If(conds, yes, no) => conds.map(weight).sum(0) + weight(yes) + ((no == nil) ? 0 : weight(no)) + 1,
+        ty.While(conds, body) => conds.map(weight).sum(0) + weight(body) + 4,
+        ty.Each(e) => weight(e.expr) + 4,
+        ty.Return(v) => (v == nil) ? 1 : weight(v) + 1,
+        ty.Call(c) => c.args.map(a -> weight(argument(a))).sum(0) + 2,
+        ty.MethodCall(m) => m.args.map(a -> weight(argument(a))).sum(0) + weight(m.object) + 1,
+        ty.Subscript(x, i) => weight(x) + weight(i) + 1,
+        ty.Cond(c, a, b) => weight(c) + weight(a) + weight(b) + 1,
+        ty.Neg(x) or ty.Not(x) or ty.Count(x) => weight(x) + 1,
+        ty.And(a, b) or ty.Or(a, b) => weight(a) + weight(b) + 1,
+        _ => match operands(n) {
+            (_, a, b) => weight(a) + weight(b) + 1,
+            _         => 1,
+        },
+    }
+}
 
 class Lower {
     asm: Asm;
@@ -1189,6 +1314,9 @@ class Lower {
     __labels: Dict[String, Label];
     __faults: Array[Fault];
     __hole-ids: Dict[String, Int];
+    __proven: Array[Array[Var]];
+    __inline: Array[(Reg | nil, Label, Type)];
+    __views: Array[(Var, String, Var)];
 
     init(tool: String, name: String, params: Array[(String, String)],
          ret: String, mode: String | nil, known: Array[Any]) {
@@ -1201,6 +1329,9 @@ class Lower {
         __labels = %{}
         __faults = []
         __hole-ids = %{}
+        __proven = []
+        __inline = []
+        __views = []
         asm = Asm(name, params: [lir-type(k) for (_, k) in params], ret: lir-type(ret), mode: mode)
         for (pname, kind); i in params {
             bind-param(pname, kind, asm.params[i], i)
@@ -1257,8 +1388,40 @@ class Lower {
     }
 
     container(node: Any) -> Var | nil {
+        if let ty.MemberAccess(base, name) = unwrap(node) and VIEWS[name] != nil {
+            let $blob = container(base) or return nil
+            return view(blob, name)
+        }
         let v = lookup(ast-name(node) ?? return nil) ?? return nil
         v.kind == 'scalar' ? nil : v
+    }
+
+    view(blob: Var, name: String) -> Var {
+        if blob.kind != 'blob' {
+            fail("'.{name}' views apply to Blob parameters")
+        }
+        for (b, n, v) in __views {
+            if b == blob && n == name {
+                return v
+            }
+        }
+        fail("internal error: the '.{name}' view was not prepared")
+    }
+
+    prepare-views(body: Any, blobs: Array[Var]) {
+        let names = %{}
+        view-names(body, names)
+        for name, _ in names {
+            let type = VIEWS[name]!
+            let shift = [1, 2, 4, 8].search(type.size)!
+            for b in blobs {
+                let v = Var('view', b.reg)
+                v.data = b.data
+                v.count = asm.reg(I64, (shift == 0) ? b.count : asm.sar(b.count, shift))
+                v.elem = type
+                __views.push((b, name, v))
+            }
+        }
     }
 
     fault(kind: Int, value: Reg | nil, n: Reg | Int) -> Label {
@@ -1348,6 +1511,7 @@ class Lower {
     }
 
     function(body: Any) {
+        prepare-views(body, __scopes[0].values().filter(v -> v.kind == 'blob'))
         finish(safe && asm.result != VOID ? tail(body) : statement(body))
     }
 
@@ -1386,6 +1550,16 @@ class Lower {
     }
 
     return-value(node: Any) {
+        if #__inline > 0 {
+            let (out, end, rt) = __inline[-1]
+            if let $o = out {
+                o.set(implicit(expression(node, rt), rt))
+            } else if node != nil && node != ty.Nil {
+                expression(node)
+            }
+            asm.jmp(end)
+            return
+        }
         if node == nil || node == ty.Nil {
             asm.ret()
         } else if asm.result == VOID {
@@ -1562,11 +1736,223 @@ class Lower {
         let counter = asm.reg(I64, reg(implicit(expression(a), I64), I64))
         let limit = asm.reg(I64, reg(implicit(expression(b), I64), I64))
         let bound = range-bound(a, b, inclusive?, names[0], e.expr)
-        counted-loop(counter, limit, inclusive?, e, -> do {
+        let bind = -> do {
             let v = Var('scalar', asm.reg(I64, counter))
             v.bound = bound
             define(names[0], v)
-        })
+        }
+        let $plan = safe ? affine-plan(names[0], e) : nil or return counted-loop(counter, limit, inclusive?, e, bind)
+        let (fast, slow, after) = (asm.label(), asm.label(), asm.label())
+        affine-guard(plan, names[0], counter, limit, inclusive?, slow)
+        asm.bind(fast)
+        __proven.push(plan.0)
+        counted-loop(counter, limit, inclusive?, e, bind)
+        __proven.pop()
+        asm.jmp(after)
+        asm.bind(slow)
+        counted-loop(counter, limit, inclusive?, e, bind)
+        asm.bind(after)
+    }
+
+    scalar-int?(name: String) -> Bool {
+        let $v = lookup(name) or return false
+        v.kind == 'scalar' && v.reg.type == I64
+    }
+
+    invariant?(node: Any, local: Dict[String, Int]) -> Bool {
+        match unwrap(node) {
+            ty.Int(_) => true,
+            ty.Id(id) => local[id.name] == nil && scalar-int?(id.name),
+            ty.Count(x) => container(x) != nil,
+            ty.Neg(x) => invariant?(x, local),
+            ty.MethodCall(m) => m.method == 'size' && #m.args == 0 && container(m.object) != nil,
+            n => do {
+                let (op, a, b) = operands(n) ?? return false
+                op in ['Add', 'Sub', 'Mul', 'BitAnd', 'BitOr', 'Xor', 'Shl', 'Shr']
+                    && invariant?(a, local)
+                    && invariant?(b, local)
+            },
+        }
+    }
+
+    linear(node: Any, local: Dict[String, Int], inductions: Dict[String, Any]) -> Lin | nil {
+        let n = unwrap(node)
+        if let ty.Int(k) = n {
+            return Lin(c: k)
+        }
+        if let ty.Id(id) = n and inductions[id.name] != nil {
+            return Lin(ind: %{id.name: 1})
+        }
+        if invariant?(n, local) {
+            return Lin(inv: [(1, n)])
+        }
+        match n {
+            ty.Neg(x) => linear(x, local, inductions).?times(-1),
+            ty.Add(a, b) => do {
+                let $x = linear(a, local, inductions) or return nil
+                let $y = linear(b, local, inductions) or return nil
+                x.plus(y, 1)
+            },
+            ty.Sub(a, b) => do {
+                let $x = linear(a, local, inductions) or return nil
+                let $y = linear(b, local, inductions) or return nil
+                x.plus(y, -1)
+            },
+            ty.Mul(ty.Int(k), b) => linear(b, local, inductions).?times(k),
+            ty.Mul(a, ty.Int(k)) => linear(a, local, inductions).?times(k),
+            _ => nil,
+        }
+    }
+
+    accesses(node: Any, pos: Int, out: Array[(Var, Any, Int)]) -> Bool {
+        let n = unwrap(node)
+        let walk = x -> accesses(x, pos, out)
+        match n {
+            ty.Int(_) or ty.Float(_) or ty.Bool(_) or ty.Id(_) or ty.Break(_) or ty.Continue(_) => true,
+            ty.Subscript(x, i) => do {
+                if let $v = container(x) {
+                    out.push((v, i, pos))
+                    walk(i)
+                } else {
+                    false
+                }
+            },
+            ty.MethodCall(m) => do {
+                let args = [arg-node(it) for m.args]
+                if let $v = container(m.object) and m.method == 'byte' && #args == 1 {
+                    out.push((v, args[0], pos))
+                }
+                args.all?(walk)
+            },
+            ty.Call(c) => [arg-node(it) for c.args].all?(walk),
+            ty.Let(_, value) => container(value) == nil && walk(value),
+            ty.Assign(target, value) => walk(target) && walk(value),
+            ty.Block(xs) => xs.all?(walk),
+            ty.If(conds, yes, no) => conds.all?(walk) && walk(yes) && (no == nil || walk(no)),
+            ty.While(conds, body) => conds.all?(walk) && walk(body),
+            ty.Each(e) => walk(e.iter) && walk(e.expr)
+                       && (e.?`while` == nil || walk(e.`while`))
+                       && (e.?`if` == nil || walk(e.`if`)),
+            ty.Return(value) => value == nil || walk(value),
+            ty.Neg(x) or ty.Not(x) or ty.Count(x) or ty.UserOp('~', x) => walk(x),
+            ty.And(a, b) or ty.Or(a, b) => walk(a) && walk(b),
+            ty.Cond(c, a, b) => walk(c) && walk(a) && walk(b),
+            ty.MemberAccess(x, _) => walk(x),
+            _ => do {
+                let (_, a, b) = operands(n) ?? return false
+                walk(a) && walk(b)
+            },
+        }
+    }
+
+    step-at(steps: Dict[String, (Int, Int, Any)], name: String) -> Int {
+        match steps[name] {
+            (at, _, _) => at,
+            _          => -2,
+        }
+    }
+
+    affine-plan(vname: String, e: Any) -> (Array[Var], Array[(Var, Lin, Int)], Dict[String, (Int, Int, Any)]) | nil {
+        let body = statements(e.expr)
+        let local = %{}
+        writes(e.expr, local)
+        if local[vname] != nil {
+            return nil
+        }
+        local[vname] = 1
+        let inductions: Dict[String, Any] = %{vname: true}
+        let steps: Dict[String, (Int, Int, Any)] = %{}
+        for stmt; p in body {
+            if let (op, ty.Id(id), step) = operands(unwrap(stmt))
+            and (op == 'MutAdd' || op == 'MutSub')
+            and local[id.name] == 1
+            and scalar-int?(id.name)
+            and invariant?(step, local) {
+                steps[id.name] = (p, op == 'MutAdd' ? 1 : -1, step)
+                inductions[id.name] = true
+            }
+        }
+        let found = []
+        let guards = [e.?`while`, e.?`if`].filter(\_ != nil)
+        if !guards.all?(g -> accesses(g, -1, found)) {
+            return nil
+        }
+        for stmt; p in body {
+            if !accesses(stmt, p, found) {
+                return nil
+            }
+        }
+        let plan = []
+        let dirty = []
+        for (v, index, p) in found {
+            if let $lin = linear(index, local, inductions)
+            and lin.ind.keys().all?(k -> (k == vname) || (step-at(steps, k) != p)) {
+                plan.push((v, lin, p))
+            } else {
+                dirty.push(v)
+            }
+        }
+        let unique: Array[Var] = []
+        for (v, _, _) in plan {
+            if v not in dirty && v not in unique {
+                unique.push(v)
+            }
+        }
+        if #unique == 0 {
+            return nil
+        }
+        (unique, plan.filter(|(v, _, _)| -> v in unique), steps)
+    }
+
+    affine-guard(
+        plan: (Array[Var], Array[(Var, Lin, Int)], Dict[String, (Int, Int, Any)]),
+        vname: String, counter: Reg, limit: Reg, inclusive?: Bool, slow: Label
+    ) {
+        let (vars, accesses, steps) = plan
+        let n = asm.reg(I64, asm.sub(limit, counter))
+        if inclusive? {
+            n.set(asm.add(n, 1))
+        }
+        asm.br(LE, n, 0, slow)
+        asm.br(GT, n, 1 << 31, slow)
+        let last = asm.reg(I64, asm.sub(n, 1))
+        let groups: Dict[String, (Var, Lin, Int, Int, Int)] = %{}
+        for (v, lin, p) in accesses {
+            let phases = lin.ind.keys().sort().map(k -> (k == vname) ? '' : "{p > step-at(steps, k)}")
+            let key = "{vars.search(v)}|{lin.inv}|{lin.ind.list().sort()}|{phases}"
+            groups[key] = match groups[key] {
+                (_, _, _, lo, hi) => (v, lin, p, min(lo, lin.c), max(hi, lin.c)),
+                _                 => (v, lin, p, lin.c, lin.c),
+            }
+        }
+        for _, (v, lin, p, lo, hi) in groups {
+            let base = asm.reg(I64, 0)
+            let slope = asm.reg(I64, 0)
+            for (k, node) in lin.inv {
+                base.set(asm.add(base, asm.mul(reg(integer(expression(node)), I64), k)))
+            }
+            for name, coef in lin.ind {
+                if name == vname {
+                    base.set(asm.add(base, asm.mul(counter, coef)))
+                    slope.set(asm.add(slope, coef))
+                    continue
+                }
+                let (at, sign, step) = steps[name]!
+                let s = asm.reg(I64, asm.mul(reg(integer(expression(step)), I64), sign))
+                let start = (p > at) ? asm.add(lookup(name)!.reg, s) : lookup(name)!.reg
+                base.set(asm.add(base, asm.mul(start, coef)))
+                slope.set(asm.add(slope, asm.mul(s, coef)))
+            }
+            asm.br(GT, slope, 1 << 31, slow)
+            asm.br(LT, slope, -(1 << 31), slow)
+            let span = asm.mul(slope, last)
+            let low = asm.add(base, lo)
+            let high = asm.add(base, hi)
+            asm.br(LT, low, 0, slow)
+            asm.br(LT, asm.add(low, span), 0, slow)
+            asm.br(GE, high, v.count, slow)
+            asm.br(GE, asm.add(high, span), v.count, slow)
+        }
     }
 
     range-bound(a: Any, b: Any, inclusive?: Bool, vname: String, body: Any) -> String | nil {
@@ -1854,6 +2240,9 @@ class Lower {
         if let ty.Id(id) = index and let $iv = lookup(id.name) and iv.bound != nil and container(ty.Id(name: iv.bound)) == v {
             return iv.reg
         }
+        if __proven.any?(vs -> v in vs) {
+            return reg(integer(expression(index)), I64)
+        }
         let raw = reg(integer(expression(index)), I64)
         let i = asm.reg(I64, raw)
         let positive = asm.label()
@@ -1906,6 +2295,10 @@ class Lower {
     element-address(v: Var, i: Reg) -> Reg { asm.add(v.data, asm.shl(i, 5)) }
 
     load-element(v: Var, i: Reg) -> Val {
+        if v.kind == 'view' {
+            let raw = asm.load(Mem(v.data, i, v.elem.size, 0, v.elem))
+            return convert(raw, float-type?(v.elem) ? F64 : I64)
+        }
         if v.kind in ['blob', 'string'] {
             return convert(asm.load(Mem(v.data, i, 1, 0, U8)), I64)
         }
@@ -1928,6 +2321,10 @@ class Lower {
     }
 
     store-element(v: Var, i: Reg, value: Val) {
+        if v.kind == 'view' {
+            let wide = float-type?(v.elem) ? F64 : I64
+            return asm.store(Mem(v.data, i, v.elem.size, 0, v.elem), convert(reg(implicit(value, wide), wide), v.elem))
+        }
         if v.kind == 'blob' {
             return asm.store(Mem(v.data, i, 1, 0, U8), reg(implicit(value, I64), I64))
         }
@@ -2027,6 +2424,9 @@ class Lower {
         if let $f = LIBM[target] {
             return libm(f, [reg(implicit(integer(expression(it)), F64), F64) for args])
         }
+        if let $inlined = inline-call(name, args) {
+            return inlined
+        }
         let (params, ret) = (target :: Fn ? kernel-signature(target as Fn) : nil)
             ?? (name != asm.name ? kernel-signatures[name] : nil)
             ?? fail("cannot call '{name}' from a kernel")
@@ -2047,6 +2447,54 @@ class Lower {
         let types = [lir-type(it) for params]
         call-op(asm, 'CALL', Hole(#holes - 1, PTR, callee?: true), values, lir-type(ret),
                 types, true, true, 0, nil) ?? 0
+    }
+
+    inline-call(name: String, args: Array[Any]) -> Val | nil {
+        if name == asm.name || #__inline >= 3 || getenv('TY_KERNEL_NO_INLINE') != nil {
+            return nil
+        }
+        let $callee = kernel-bodies[name] or return nil
+        let (params, ret, body) = callee
+        if #args != #params || weight(body) > 80 {
+            return nil
+        }
+        let scope = %{}
+        for (node, (pname, kind)) in args.zip(params) {
+            if kind in ['blob', 'string', 'ints', 'floats'] {
+                let v = container(node) ?? fail("kernel argument must be a {kind} parameter")
+                if v.kind != kind {
+                    fail("expected a {kind} argument, found a {v.kind}")
+                }
+                let alias = Var(kind, v.reg)
+                alias.data = v.data
+                alias.count = v.count
+                scope[pname] = alias
+            } else {
+                let t = lir-type(kind)
+                scope[pname] = Var('scalar', asm.reg(t, reg(implicit(expression(node, t), t), t)))
+            }
+        }
+        prepare-views(body, scope.values().filter(v -> v.kind == 'blob'))
+        let rt = (ret == 'void') ? VOID : lir-type(ret)
+        let out = (rt == VOID) ? nil : asm.reg(rt)
+        let end = asm.label()
+        let saved = (__scopes, __loops, __proven)
+        __scopes = [scope]
+        __loops = []
+        __proven = []
+        __inline.push((out, end, rt))
+        let done? = (rt != VOID) ? tail(body) : statement(body)
+        if !done? {
+            if rt == VOID {
+                asm.jmp(end)
+            } else {
+                raise(4)
+            }
+        }
+        __inline.pop()
+        (__scopes, __loops, __proven) = saved
+        asm.bind(end)
+        out ?? 0
     }
 
     helper-call(helper: rt.Helper, args: Array[Any], op: String) -> Reg | nil {
@@ -2533,6 +2981,7 @@ fn expand-kernel() -> Any {
     let lower = Lower('kernel!', name, params, ret, nil, [])
     lower.function(fd.body)
     kernel-signatures[name] = ([k for (_, k) in params], ret)
+    kernel-bodies[name] = (params, ret, fd.body)
     ty.Let(ty.Id(name: name), expansion(lower, params, ret, lower.holes), public: public?)
 }
 

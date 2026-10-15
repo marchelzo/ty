@@ -1,0 +1,18 @@
+import os (write)
+
+fn mix(n: Int) -> Int {
+    let a = 1
+    let b = 0
+    for i in ..n {
+        a = (a * 31 + i) & 0xFFFFFFF
+        b = b ^ a
+    }
+    a + b
+}
+
+write(1, "ready\n")
+
+while true {
+    let got = mix(5000000)
+    write(1, (got == 217236289) ? "ok\n" : "bad {got}\n")
+}

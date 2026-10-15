@@ -883,7 +883,7 @@ jit_rt_div(Ty *ty, Value *result, Value *a, Value *b)
 {
         if (a->type == VALUE_INTEGER && b->type == VALUE_INTEGER) {
                 if (b->z == 0) ZeroDividePanic(ty);
-                *result = INTEGER(a->z / b->z);
+                *result = INTEGER(IntDiv(a->z, b->z));
                 return;
         }
 
@@ -901,7 +901,7 @@ jit_rt_mod(Ty *ty, Value *result, Value *a, Value *b)
 {
         if (a->type == VALUE_INTEGER && b->type == VALUE_INTEGER) {
                 if (b->z == 0) ZeroDividePanic(ty);
-                *result = INTEGER(a->z % b->z);
+                *result = INTEGER(IntMod(a->z, b->z));
                 return;
         }
 
