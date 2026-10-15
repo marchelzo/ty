@@ -1159,10 +1159,10 @@ safepoint(Emit *e, LirInst const *in, u32 pc, u32 fast, u32 end)
                 );
         }
 
-        bounds(e, pc);
         li(Dst, TMP0, (uptr)rt->interrupt);
         mem(Dst, false, TMP0, TMP0, 0, 4, false, false);
         brz(Dst, TMP0, false, true, fast);
+        bounds(e, pc);
 
         if (!phase(e, pc, LIR_MOVE_BEFORE, LIR_NONE, MV_SLOW)) {
                 return false;

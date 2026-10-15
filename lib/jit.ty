@@ -1664,7 +1664,7 @@ class Lower {
             if let $o = op {
                 rhs = combine(o, load-element(v, i), rhs)
             }
-            return store-element(v, i, rhs)
+            return store-element(v, i, rhs, op != nil)
         }
         let mem = memory(x, index)
         let rhs = expression(value, mem.type)
@@ -2244,6 +2244,10 @@ class Lower {
             return reg(integer(expression(index)), I64)
         }
         let raw = reg(integer(expression(index)), I64)
+        if natural?(index) {
+            asm.br(UGE, raw, v.count, fault(0, v.reg, raw))
+            return raw
+        }
         let i = asm.reg(I64, raw)
         let positive = asm.label()
         asm.br(GE, i, 0, positive)
@@ -2251,6 +2255,20 @@ class Lower {
         asm.bind(positive)
         asm.br(UGE, i, v.count, fault(0, v.reg, raw))
         i
+    }
+
+    natural?(x: Any) -> Bool {
+        match unwrap(x) {
+            ty.Int(k) => k >= 0,
+            ty.BitAnd(ty.Int(k), _) or ty.BitAnd(_, ty.Int(k)) => k >= 0,
+            ty.Subscript(c, _) => unsigned?(container(c)),
+            _ => false,
+        }
+    }
+
+    unsigned?(v: Var | nil) -> Bool {
+        let $c = v or return false
+        c.kind in ['blob', 'string'] || (c.kind == 'view' && c.elem in [U8, U16, U32])
     }
 
     subscript(x: Any, index: Any) -> Val {
@@ -2320,7 +2338,7 @@ class Lower {
         out
     }
 
-    store-element(v: Var, i: Reg, value: Val) {
+    store-element(v: Var, i: Reg, value: Val, tagged?: Bool = false) {
         if v.kind == 'view' {
             let wide = float-type?(v.elem) ? F64 : I64
             return asm.store(Mem(v.data, i, v.elem.size, 0, v.elem), convert(reg(implicit(value, wide), wide), v.elem))
@@ -2331,6 +2349,9 @@ class Lower {
         let float? = v.kind == 'floats'
         let type = float? ? F64 : I64
         let p = element-address(v, i)
+        if tagged? && !float? {
+            return asm.store(p.off(I64, 8), reg(implicit(value, I64), I64))
+        }
         asm.store(p.off(U64, 0), float? ? j.tag.FLOAT : j.tag.INT)
         asm.store(p.off(U64, 16), 0)
         asm.store(p.off(U64, 24), 0)
