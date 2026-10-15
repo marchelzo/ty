@@ -26,7 +26,7 @@
 #include "functions.h"
 #include "types2.h"
 #include "highlight.h"
-#include "lir.h"
+#include "jit/lir.h"
 
 static _Thread_local vec(Dict *) show_dicts;
 static _Thread_local vec(Set *) show_sets;
@@ -2210,16 +2210,34 @@ mark_method(Ty *ty, Value const *v)
         MarkNext(ty, v->this);
 }
 
+inline static bool
+sweeping(Ty const *ty)
+{
+        return ty->group->GCPhase == GC_PHASE_SWEEP;
+}
+
+static void
+mark_lir(Ty *ty, Lir *L)
+{
+        if (!MARKED(L)) {
+                MARK(L);
+                lir_mark(ty, L);
+        }
+}
+
 LirCode *
 lir_code_adopt(Ty *ty, LirCode *code)
 {
         LirCode *owned = gc_alloc_object_unchecked(ty, sizeof *owned, GC_JIT_CODE);
+
         *owned = *code;
         owned->gc_owned = true;
-        free(code);
-        if (ty->group->GCPhase == GC_PHASE_SWEEP) {
+        xmF(code);
+
+        if (sweeping(ty)) {
                 lir_code_mark(ty, owned);
         }
+
         return owned;
 }
 
@@ -2227,25 +2245,27 @@ Lir *
 lir_adopt(Ty *ty, Lir *L)
 {
         Lir *owned = gc_alloc_object_unchecked(ty, sizeof *owned, GC_LIR);
+
         *owned = *L;
-        free(L);
-        if (ty->group->GCPhase == GC_PHASE_SWEEP) {
+        xmF(L);
+
+        if (sweeping(ty)) {
                 MARK(owned);
                 lir_mark(ty, owned);
         }
+
         return owned;
 }
 
 void
 lir_mark(Ty *ty, Lir *L)
 {
-        for (u32 i = 0; i < L->nroots; ++i) {
-                value_mark(ty, &L->roots[i]);
-        }
-        for (u32 pc = 0; pc < L->ninsts; ++pc) {
-                LirInst const *in = &L->insts[pc];
+        vfor(L->roots, value_mark(ty, it));
+
+        for (u32 pc = 0; pc < vN(L->insts); ++pc) {
+                LirInst const *in = v_(L->insts, pc);
                 for (u32 i = 0; i < in->nargs; ++i) {
-                        if (in->args[i].kind == LIR_OPERAND_CODE) {
+                        if (in->args[i].kind == LO_CODE) {
                                 lir_code_mark(ty, in->args[i].code);
                         }
                 }
@@ -2255,19 +2275,20 @@ lir_mark(Ty *ty, Lir *L)
 void
 lir_code_mark(Ty *ty, LirCode *code)
 {
-        if (code == NULL) {
+        if (code == NULL || (code->gc_owned && MARKED(code))) {
                 return;
         }
+
         if (code->gc_owned) {
-                if (MARKED(code)) {
-                        return;
-                }
                 MARK(code);
         }
+
         for (u32 i = 0; i < code->nroots; ++i) {
                 value_mark(ty, &code->roots[i]);
         }
+
         lir_code_mark(ty, code->entry_code);
+
         if (code->lir != NULL) {
                 lir_mark(ty, code->lir);
         }
@@ -2323,18 +2344,9 @@ mark_pointer(Ty *ty, Value const *v)
                         mark_thread(ty, &thread);
                         return;
                 }
+                case GC_LIR: mark_lir(ty, v->gcptr); return;
+                case GC_JIT_CODE: lir_code_mark(ty, v->gcptr); return;
                 default: break;
-                }
-                if (ALLOC_OF(v->gcptr)->type == GC_LIR) {
-                        if (!MARKED(v->gcptr)) {
-                                MARK(v->gcptr);
-                                lir_mark(ty, v->gcptr);
-                        }
-                        return;
-                }
-                if (ALLOC_OF(v->gcptr)->type == GC_JIT_CODE) {
-                        lir_code_mark(ty, v->gcptr);
-                        return;
                 }
                 MARK(v->gcptr);
                 switch (ALLOC_OF(v->gcptr)->type) {

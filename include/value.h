@@ -9,7 +9,7 @@ typedef struct value Value;
 #include <string.h>
 
 #include "ty.h"
-#include "lir.h"
+#include "jit/lir.h"
 #include "ast.h"
 #include "vec.h"
 #include "object.h"

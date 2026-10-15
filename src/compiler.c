@@ -28,7 +28,7 @@
 #include "vm.h"
 #include "types2.h"
 #include "highlight.h"
-#include "jit.h"
+#include "jit/jit.h"
 #include "diag.h"
 #include "ty/debug.h"
 

@@ -1,0 +1,919 @@
+static Class *
+hint_class(BcLir *c, i32 offset);
+
+static i32
+prepare_call(Ty *ty, Value *out, Value *fn, i32 argc)
+{
+        Value  value = *fn;
+        usize  count = out - ty->stack.items + argc;
+        Value *argv  = ty->stack.items + count - argc;
+        i32    rc    = 1;
+
+        gP(&value);
+        ty->stack.count = count;
+
+        if (jit_linkable_global(&value, argc) && try_jit(ty, &value) != NULL) {
+                jit_fast_frame(ty, &value, NULL, argc);
+                STAT(global_jit_call_fast);
+        } else {
+                rc = jit_rt_call_trampoline(ty, argv, &value, argc);
+        }
+
+        gX();
+
+        return rc;
+}
+
+static bool
+enterable(Value const *fn, i32 argc)
+{
+        return (fn->type == VALUE_FUNCTION)
+            && (argc <= param_count_of(fn))
+            && (rest_idx_of(fn) == -1)
+            && (kwargs_idx_of(fn) == -1)
+            && !is_starred(fn)
+            && !is_overload(fn);
+}
+
+static bool
+roomy(Value const *fn, i32 argc)
+{
+        return enterable(fn, argc) && (fn->info[FUN_INFO_BOUND] - argc <= 32);
+}
+
+static Frame *
+push_frame(Ty *ty, Value const *fn, Value const *self, i32 argc)
+{
+        jit_fast_frame(ty, fn, self, argc);
+        vvL(ty->st->frames)->jit_code = jit_of(fn);
+
+        if (vN(ty->stack) + 256 > vC(ty->stack)) {
+                xvR(ty->stack, vN(ty->stack) + 256);
+        }
+
+        ty->st->exec_depth += 2;
+
+        return vvL(ty->st->frames);
+}
+
+[[gnu::always_inline]]
+inline static void
+push_result(Ty *ty, usize base, Value v)
+{
+        ty->stack.count = base;
+        xvP(ty->stack, v);
+}
+
+static Frame *
+call_enter(Ty *ty, Value *out, Value *fn, i32 argc)
+{
+        Value  value = *fn;
+        usize  count = out - ty->stack.items + argc;
+        Value *argv  = ty->stack.items + count - argc;
+        Frame *frame = NULL;
+
+        ty->stack.count = count;
+
+        if (value.type == VALUE_BUILTIN_FUNCTION) {
+                push_result(ty, count - argc, value.builtin_function(ty, argc, &NIL));
+                return NULL;
+        }
+
+        gP(&value);
+
+        if (value.type == VALUE_JIT_FUNCTION && value.jit_entry != NULL) {
+                Value result = NIL;
+                value.jit_entry(ty, &result, argv, argc);
+                push_result(ty, count - argc, result);
+        } else if (value.type == VALUE_CLASS && value.class > CLASS_PRIMITIVE) {
+                Value const *init = class_ctor(ty, value.class);
+                if (
+                        enterable(init, argc)
+                     && (argc > 0 || !expr_of(init)->inert)
+                     && (try_jit(ty, init) != NULL)
+                ) {
+                        Value callee = *init;
+                        Value object = RawObject(value.class);
+                        xvI(ty->stack, object, out - ty->stack.items);
+                        frame = push_frame(ty, &callee, &object, argc);
+                } else {
+                        DoCallEx(ty, &value, argc, &NIL, true);
+                }
+        } else if (jit_linkable_global(&value, argc) && try_jit(ty, &value) != NULL) {
+                frame = push_frame(ty, &value, NULL, argc);
+        } else {
+                DoCallEx(ty, &value, argc, &NIL, true);
+        }
+
+        gX();
+
+        return frame;
+}
+
+[[gnu::always_inline]]
+inline static Value const *
+method_of(Class *class, i32 member)
+{
+        u16 off = offset_of(class, member, false, OFF_METHOD);
+        return (off == OFF_NOT_FOUND) ? NULL : v_(class->methods.values, off & OFF_MASK);
+}
+
+static Frame *
+method_enter(Ty *ty, Value *top, i32 op, i32 member, i32 argc, char *kw_ip)
+{
+        bool  explicit = (op != INSTR_CALL_SELF_METHOD);
+        Value self     = explicit ? top[-1] : *vm_get_self(ty);
+
+        if (self.type == VALUE_OBJECT) {
+                Value const *method = method_of(class_get(ty, self.class), member);
+                Value        callee = (method != NULL) ? *method : NIL;
+                if (enterable(&callee, argc) && try_jit(ty, &callee) != NULL) {
+                        ty->stack.count = top - ty->stack.items - explicit;
+                        return push_frame(ty, &callee, &self, argc);
+                }
+        }
+
+        rt_method(ty, top, op, 0, member, argc, 0, kw_ip);
+
+        return NULL;
+}
+
+static void
+call_leave(Ty *ty, Value *out)
+{
+        Frame *frame = vvL(ty->st->frames);
+        Value *base  = ty->stack.items + frame->fp;
+        Value  v     = *vvL(ty->stack);
+
+        ty->ip = *vvL(ty->st->calls);
+        ty->st->calls.count -= 1;
+
+        if (base == out) {
+                ty->stack.count = frame->fp + 1;
+                *base = v;
+        } else {
+                ty->stack.count = frame->fp;
+        }
+
+        ty->st->frames.count -= 1;
+        ty->st->exec_depth   -= 2;
+}
+
+static LirReg
+enter_frame(BcLir *c, LirReg code, LirReg frame, LirReg argv, LirReg env)
+{
+        LirReg pc = addr(c, frame, offsetof(Frame, jit_pc));
+
+        return jcall(c, code, preg(c->ty), imm32(0), preg(argv), preg(env), preg(pc));
+}
+
+static void
+resume(BcLir *c, LirReg rc)
+{
+        tycall(c, vm_trampoline_resume, LT_VOID, reg32(rc));
+}
+
+static void
+native_invoke(BcLir *c, LirReg frame, LirReg out)
+{
+        LirLabel done     = newlabel(c);
+        LirLabel returned = newlabel(c);
+
+        jz(c, frame, done);
+
+        LirReg code = ldp(c, frame, offsetof(Frame, jit_code));
+        LirReg env  = ldp(c, frame, offsetof(Frame, f) + VOFF(env));
+        LirReg fp   = ldq(c, frame, offsetof(Frame, fp));
+        LirReg base = ldp(c, c->ty, offsetof(Ty, stack.items));
+        LirReg argv = elem(c, base, fp, 0);
+        LirReg rc   = enter_frame(c, code, frame, argv, env);
+
+        jcc(c, LIR_EQ, lir_r(rc), lir_i(JIT_RETURN), returned);
+        resume(c, rc);
+        jump(c, done);
+
+        bind(c, returned);
+        ccallf(c, call_leave, LT_VOID, CF_PURE, preg(c->ty), preg(out));
+
+        bind(c, done);
+}
+
+static void
+native_call(BcLir *c, LirOpnd *enter)
+{
+        LirReg frame = ccall(
+                c,
+                call_enter,
+                LT_PTR,
+                { LT_PTR, enter[0] },
+                { LT_PTR, enter[1] },
+                { LT_PTR, enter[2] },
+                { LT_I32, enter[3] }
+        );
+
+        native_invoke(c, frame, enter[1].reg);
+}
+
+static void
+sync_call(Ty *ty, Value *out, Value *fn, i32 argc)
+{
+        if (prepare_call(ty, out, fn, argc) != 0) {
+                vm_trampoline(ty);
+        }
+}
+
+static Class *
+self_class(BcLir const *c)
+{
+        return class_get(c->ctx, c->function->info[FUN_INFO_CLASS]);
+}
+
+static Class *
+receiver_class(BcLir *c, BcLirNode const *node)
+{
+        if (node->op == INSTR_CALL_SELF_METHOD && c->self_index >= 0) {
+                return self_class(c);
+        }
+
+        T2Type type = find_type_hint(&expr_of(c->function)->type_hints, node - c->nodes);
+
+        return (type == T2_TYPE_INVALID) ? NULL : expected_class_of(c->ctx, type);
+}
+
+static bool
+method_fast(BcLir *c, BcLirNode const *node)
+{
+        if (
+                (node->nkw != 0)
+             || (node->argc < 0)
+             || (node->member < 0)
+             || (node->op != INSTR_CALL_METHOD && node->op != INSTR_CALL_SELF_METHOD)
+        ) {
+                return false;
+        }
+
+        Class *class = receiver_class(c, node);
+
+        if (class == NULL) {
+                return false;
+        }
+
+        int            vtype;
+        BuiltinMethod *method   = jit_builtin_method(class, node->member, &vtype);
+        bool           explicit = (node->op == INSTR_CALL_METHOD);
+
+        if (method == NULL) {
+                return false;
+        }
+
+        LirReg  out    = slot_of(c, c->sp - explicit - node->argc);
+        LirOpnd self   = explicit ? lir_r(slot_of(c, c->sp - 1)) : lir_i(0);
+        i64     packed = ((u64)(u32)vtype << 32) | (u32)node->member;
+
+        tycall(
+                c,
+                jit_rt_call_builtin_method,
+                LT_VOID,
+                preg(out),
+                { LT_PTR, self },
+                pimm(method),
+                imm64(packed),
+                imm32(node->argc)
+        );
+
+        return true;
+}
+
+static LirReg
+guard_callee(BcLir *c, LirReg fn, Value const *callee, LirReg self, LirLabel miss)
+{
+        if (self != LIR_NONE) {
+                return pval(c, callee->info);
+        }
+
+        expect(c, fn, 0, VALUE_FUNCTION, miss);
+
+        LirReg info = ldp(c, fn, VOFF(info));
+        same_ptr(c, info, callee->info, miss);
+
+        return info;
+}
+
+typedef struct {
+        LirReg st;
+        LirReg nframes;
+        LirReg ncalls;
+} Depth;
+
+static Depth
+guard_depth(BcLir *c, LirLabel miss)
+{
+        LirReg st      = ldp(c, c->ty, offsetof(Ty, st));
+        LirReg nframes = ldq(c, st, offsetof(co_state, frames.count));
+
+        jcc(c, LIR_UGE, lir_r(nframes), lir_i(TY_MAX_CALL_DEPTH), miss);
+
+        LirReg fcap = ldq(c, st, offsetof(co_state, frames.capacity));
+
+        jcc(c, LIR_UGE, lir_r(nframes), lir_r(fcap), miss);
+
+        LirReg ncalls = ldq(c, st, offsetof(co_state, calls.count));
+        LirReg ccap   = ldq(c, st, offsetof(co_state, calls.capacity));
+
+        jcc(c, LIR_UGE, lir_r(ncalls), lir_r(ccap), miss);
+
+        return (Depth) { .st = st, .nframes = nframes, .ncalls = ncalls };
+}
+
+static void
+guard_stack(BcLir *c, LirReg fp, i32 bound, LirLabel miss)
+{
+        LirReg need = plus(c, fp, bound + 256);
+        LirReg scap = ldq(c, c->ty, offsetof(Ty, stack.capacity));
+
+        jcc(c, LIR_UGT, lir_r(need), lir_r(scap), miss);
+}
+
+static LirReg
+frame_index(BcLir *c, i32 out, LirReg *argv)
+{
+        LirReg items = ldp(c, c->ty, offsetof(Ty, stack.items));
+        LirReg args  = (*argv = slot_of(c, out));
+        LirReg raw   = unop(c, LIR_BITCAST, LIR_I64, lir_r(args));
+        LirReg base  = unop(c, LIR_BITCAST, LIR_I64, lir_r(items));
+        LirReg bytes = binop(c, LIR_SUB, LIR_I64, lir_r(raw), lir_r(base));
+
+        return binop(c, LIR_SHR, LIR_I64, lir_r(bytes), lir_i(5));
+}
+
+static void
+place_args(BcLir *c, LirReg args, Value const *callee, i32 argc, LirReg self)
+{
+        i32 bound = callee->info[FUN_INFO_BOUND];
+        i32 np    = param_count_of(callee);
+
+        if (self != LIR_NONE) {
+                LirLabel placed = newlabel(c);
+                jcc(c, LIR_EQ, lir_r(self), lir_r(addr(c, args, vat(np))), placed);
+                copy(c, args, vat(np), self, 0);
+                bind(c, placed);
+        }
+
+        for (i32 i = argc; i < bound; ++i) {
+                if (self == LIR_NONE || i != np) {
+                        stq(c, args, vat(i), lir_i(VALUE_NIL));
+                }
+        }
+}
+
+static LirReg
+push_native_frame(BcLir *c, Depth d, LirReg fn, LirReg code, LirReg fp)
+{
+        LirReg st      = d.st;
+        LirReg nframes = d.nframes;
+        LirReg ncalls  = d.ncalls;
+        LirReg frames  = ldp(c, st, offsetof(co_state, frames.items));
+        LirReg foff    = binop(c, LIR_MUL, LIR_I64, lir_r(nframes), lir_i(sizeof (Frame)));
+        LirReg frame   = lea(c, frames, foff, 0);
+        LirReg ip      = ldq(c, c->ty, offsetof(Ty, ip));
+
+#define F(field) offsetof(Frame, field)
+        stq(c, frame, F(fp), lir_r(fp));
+        stq(c, frame, F(ip), lir_r(ip));
+        copy(c, frame, F(f), fn, 0);
+        stb(c, frame, F(f) + VOFF(type), lir_i(VALUE_NATIVE_FUNCTION));
+        store(c, LIR_ST16, frame, F(f) + VOFF(tags), lir_i(0));
+        stw(c, frame, F(jit_resume), lir_i(0));
+        stq(c, frame, F(jit_pc), lir_i(0));
+        stq(c, frame, F(jit_code), lir_r(code));
+#undef F
+
+        LirReg calls = ldp(c, st, offsetof(co_state, calls.items));
+        LirReg coff  = binop(c, LIR_SHL, LIR_I64, lir_r(ncalls), lir_i(3));
+
+        stq(c, lea(c, calls, coff, 0), 0, lir_r(ip));
+        stq(c, st, offsetof(co_state, calls.count), lir_r(plus(c, ncalls, 1)));
+        stq(c, st, offsetof(co_state, frames.count), lir_r(plus(c, nframes, 1)));
+        stq(c, c->ty, offsetof(Ty, ip), lir_i((uptr)&JIT));
+        bumpw(c, st, offsetof(co_state, exec_depth), 2);
+
+        return frame;
+}
+
+static void
+pop_native_frame(BcLir *c, i32 out)
+{
+        LirReg st = ldp(c, c->ty, offsetof(Ty, st));
+
+        bumpw(c, st, offsetof(co_state, exec_depth), -2);
+        bump(c, st, offsetof(co_state, frames.count), -1);
+
+        LirReg ncalls = bump(c, st, offsetof(co_state, calls.count), -1);
+        LirReg calls  = ldp(c, st, offsetof(co_state, calls.items));
+        LirReg coff   = binop(c, LIR_SHL, LIR_I64, lir_r(ncalls), lir_i(3));
+        LirReg saved  = unop(c, LIR_LD_I64, LIR_I64, lir_m(calls, coff, 1, 0));
+
+        stq(c, c->ty, offsetof(Ty, ip), lir_r(saved));
+
+        LirReg items  = ldp(c, c->ty, offsetof(Ty, stack.items));
+        LirReg count  = ldq(c, c->ty, offsetof(Ty, stack.count));
+        LirReg result = elem(c, items, count, -(i32)sizeof (Value));
+
+        copy(c, c->ops, vat(out), result, 0);
+        count_at(c, out + 1);
+}
+
+static void
+inline_call(
+        BcLir *c,
+        LirReg fn,
+        Value const *callee,
+        i32 out,
+        i32 argc,
+        LirReg self,
+        LirLabel miss,
+        LirLabel done
+)
+{
+        if (c->compact) {
+                jump(c, miss);
+                return;
+        }
+
+        i32      bound  = callee->info[FUN_INFO_BOUND];
+        LirLabel finish = newlabel(c);
+        LirReg   info   = guard_callee(c, fn, callee, self, miss);
+        LirReg   code   = ldp(c, info, FUN_JIT);
+
+        jcc(c, LIR_ULT, lir_r(code), lir_i(JIT_PENDING), miss);
+
+        Depth  d  = guard_depth(c, miss);
+        LirReg args;
+        LirReg fp = frame_index(c, out, &args);
+
+        guard_stack(c, fp, bound, miss);
+        place_args(c, args, callee, argc, self);
+        stq(c, c->ty, offsetof(Ty, stack.count), lir_r(plus(c, fp, bound)));
+
+        LirReg frame = push_native_frame(c, d, fn, code, fp);
+        LirReg env   = ldp(c, frame, offsetof(Frame, f) + VOFF(env));
+        LirReg rc    = enter_frame(c, code, frame, args, env);
+
+        unless(c, rc, JIT_RETURN, finish);
+        pop_native_frame(c, out);
+        jump(c, done);
+
+        bind(c, finish);
+        resume(c, rc);
+        jump(c, done);
+}
+
+static bool
+inline_method(BcLir *c, BcLirNode const *node, LirLabel *done)
+{
+        bool explicit = (node->op == INSTR_CALL_METHOD);
+
+        if (
+                (node->nkw != 0)
+             || (node->argc < 0)
+             || (node->member < 0)
+             || (node->op != INSTR_CALL_METHOD && node->op != INSTR_CALL_SELF_METHOD)
+             || (!explicit && c->self_index < 0)
+        ) {
+                return false;
+        }
+
+        Class *class = explicit ? hint_class(c, node - c->nodes) : self_class(c);
+
+        if (class == NULL || class->i < CLASS_PRIMITIVE) {
+                return false;
+        }
+
+        Value const *method = method_of(class, node->member);
+
+        if (method == NULL || !roomy(method, node->argc)) {
+                return false;
+        }
+
+        LirLabel miss  = newlabel(c);
+        i32      first = c->sp - explicit - node->argc;
+        LirReg   self  = explicit
+                       ? slot_of(c, c->sp - 1)
+                       : addr(c, c->locals, vat(c->self_index));
+
+        guard_class(c, self, class->i, miss);
+        guard_epoch(c, miss);
+
+        LirReg fn = konst(c, method);
+
+        *done = newlabel(c);
+        i32 argc = node->argc;
+
+        try_plan(
+                c,
+                method,
+                TY_INLINE_METHOD,
+                argc,
+                first,
+                self,
+                class,
+                NULL,
+                first,
+                *done
+        );
+        inline_call(c, fn, method, first, argc, self, miss, *done);
+
+        bind(c, miss);
+
+        return true;
+}
+
+Value builtin_min(Ty *ty, int argc, Value *kwargs);
+Value builtin_max(Ty *ty, int argc, Value *kwargs);
+Value builtin_sin(Ty *ty, int argc, Value *kwargs);
+Value builtin_cos(Ty *ty, int argc, Value *kwargs);
+Value builtin_tan(Ty *ty, int argc, Value *kwargs);
+Value builtin_sqrt(Ty *ty, int argc, Value *kwargs);
+Value builtin_exp(Ty *ty, int argc, Value *kwargs);
+Value builtin_log(Ty *ty, int argc, Value *kwargs);
+Value builtin_atan(Ty *ty, int argc, Value *kwargs);
+
+static void
+call_builtin(Ty *ty, Value *out, BuiltinFunction *fn, i32 argc)
+{
+        usize count = out - ty->stack.items + argc;
+
+        ty->stack.count = count;
+        push_result(ty, count - argc, fn(ty, argc, &NIL));
+}
+
+static void *
+libm(BuiltinFunction *fn)
+{
+        static struct {
+                BuiltinFunction *builtin;
+                double         (*f)(double);
+        } const Libm[] = {
+                { builtin_sin,  sin  },
+                { builtin_cos,  cos  },
+                { builtin_tan,  tan  },
+                { builtin_sqrt, sqrt },
+                { builtin_exp,  exp  },
+                { builtin_log,  log  },
+                { builtin_atan, atan }
+        };
+
+        for (int i = 0; i < countof(Libm); ++i) {
+                if (Libm[i].builtin == fn) {
+                        return (void *)Libm[i].f;
+                }
+        }
+
+        return NULL;
+}
+
+static LirReg
+real_arg(BcLir *c, i32 slot, LirLabel slow)
+{
+        return as_real(c, tag_of(c, slot), c->ops, vat(slot), false, slow);
+}
+
+static void
+fbr(BcLir *c, LirCC cc, LirReg a, LirReg b, LirLabel target)
+{
+        veff(c, LIR_FBR, lir_cc(cc), lir_r(a), lir_r(b), lir_l(target));
+}
+
+static void
+extreme(BcLir *c, i32 out, bool max, LirLabel slow, LirLabel done)
+{
+        i32      a     = vat(out);
+        i32      b     = vat(out + 1);
+        LirLabel reals = newlabel(c);
+        LirLabel take  = newlabel(c);
+        LirReg   at    = tag_of(c, out);
+        LirReg   bt    = tag_of(c, out + 1);
+
+        unless(c, at, VALUE_INTEGER, reals);
+        unless(c, bt, VALUE_INTEGER, slow);
+
+        LirReg x = ldq(c, c->ops, a + VOFF(z));
+        LirReg y = ldq(c, c->ops, b + VOFF(z));
+
+        jcc(c, max ? LIR_GT : LIR_LT, lir_r(y), lir_r(x), take);
+        jump(c, done);
+
+        bind(c, reals);
+        unless(c, at, VALUE_REAL, slow);
+        unless(c, bt, VALUE_REAL, slow);
+
+        LirReg fx = ldf(c, c->ops, a + VOFF(real));
+        LirReg fy = ldf(c, c->ops, b + VOFF(real));
+
+        fbr(c, LIR_FNE, fx, fx, slow);
+        fbr(c, LIR_FNE, fy, fy, slow);
+        fbr(c, max ? LIR_FGT : LIR_FLT, fy, fx, take);
+        jump(c, done);
+
+        bind(c, take);
+        copy(c, c->ops, a, c->ops, b);
+        jump(c, done);
+}
+
+static bool
+builtin_call(
+        BcLir *c,
+        LirReg fn,
+        Value const *callee,
+        i32 out,
+        i32 argc,
+        LirLabel miss,
+        LirLabel done
+)
+{
+        BuiltinFunction *builtin = callee->builtin_function;
+        void            *f       = libm(builtin);
+        LirLabel         slow    = newlabel(c);
+
+        expect(c, fn, 0, VALUE_BUILTIN_FUNCTION, miss);
+        same_ptr(c, ldp(c, fn, VOFF(builtin_function)), builtin, miss);
+
+        if (f != NULL && argc == 1) {
+                LirReg x = real_arg(c, out, slow);
+                LirReg y = ccallf(c, f, LT_F64, CF_PURE, freg(x));
+                put_real(c, c->ops, vat(out), y);
+                jump(c, done);
+        } else if ((builtin == builtin_max || builtin == builtin_min) && argc == 2) {
+                extreme(c, out, builtin == builtin_max, slow, done);
+        }
+
+        bind(c, slow);
+        tycall(
+                c,
+                call_builtin,
+                LT_VOID,
+                preg(slot_of(c, out)),
+                pimm(builtin),
+                imm32(argc)
+        );
+        jump(c, done);
+
+        return true;
+}
+
+static bool
+kernel_scalar(LirType type, bool param)
+{
+        switch (type) {
+        case LT_VAL:  return param;
+        case LT_VOID: return !param;
+        case LT_REF:  return false;
+        default:      return type < LT_COUNT;
+        }
+}
+
+static bool
+kernel_ok(LirCode const *code, i32 argc)
+{
+        if (
+                (code == NULL)
+             || (code->body == NULL)
+             || (code->interp_state != NULL)
+             || code->release
+             || (code->nvslots != 0)
+             || (code->sig.nfixed != code->sig.nparams)
+             || ((i32)code->sig.nparams != argc)
+             || (argc > 8)
+             || !kernel_scalar(code->sig.ret, false)
+        ) {
+                return false;
+        }
+
+        for (u32 i = 0; i < code->sig.nparams; ++i) {
+                if (!kernel_scalar(code->sig.params[i], true)) {
+                        return false;
+                }
+        }
+
+        return true;
+}
+
+static LirReg
+kernel_ptr(BcLir *c, LirReg tag, i32 at, LirLabel slow)
+{
+        LirLabel blob  = newlabel(c);
+        LirLabel ready = newlabel(c);
+        LirReg   p     = lir_reg(c->L, LIR_PTR);
+
+        unless(c, tag, VALUE_PTR, blob);
+        vset(c, LIR_LD_I64, p, mref(c->ops, at + VOFF(ptr)));
+        jump(c, ready);
+
+        bind(c, blob);
+        unless(c, tag, VALUE_BLOB, slow);
+
+        LirReg b = ldp(c, c->ops, at + VOFF(blob));
+        vset(c, LIR_LD_I64, p, mref(b, offsetof(Blob, items)));
+
+        bind(c, ready);
+
+        return p;
+}
+
+static LirReg
+kernel_arg(BcLir *c, LirType type, i32 slot, LirLabel slow)
+{
+        i32 at = vat(slot);
+
+        switch (type) {
+        case LT_VAL:
+                return slot_of(c, slot);
+
+        case LT_F64:
+                return real_arg(c, slot, slow);
+
+        case LT_F32:
+                return unop(c, LIR_FTRUNC, LIR_F32, lir_r(real_arg(c, slot, slow)));
+
+        case LT_BOOL:
+                expect(c, c->ops, at, VALUE_BOOLEAN, slow);
+                return ldx(c, LIR_LD_U8, LIR_I64, c->ops, at + VOFF(boolean));
+
+        case LT_PTR:
+                return kernel_ptr(c, tag_of(c, slot), at, slow);
+
+        default:
+                expect(c, c->ops, at, VALUE_INTEGER, slow);
+                return ldq(c, c->ops, at + VOFF(z));
+        }
+}
+
+static void
+kernel_box(BcLir *c, i32 out, LirType type, LirReg value)
+{
+        i32 at = vat(out);
+
+        for (u32 i = 0; i < sizeof (Value); i += 8) {
+                stq(c, c->ops, at + i, lir_i(0));
+        }
+
+        switch (type) {
+        case LT_VOID:
+                stb(c, c->ops, at + VOFF(type), lir_i(VALUE_NIL));
+                break;
+
+        case LT_F32:
+                value = unop(c, LIR_FEXT, LIR_F64, lir_r(value));
+        case LT_F64:
+                stf(c, c->ops, at + VOFF(real), lir_r(value));
+                stb(c, c->ops, at + VOFF(type), lir_i(VALUE_REAL));
+                break;
+
+        case LT_BOOL:
+                stb(c, c->ops, at + VOFF(boolean), lir_r(value));
+                stb(c, c->ops, at + VOFF(type), lir_i(VALUE_BOOLEAN));
+                break;
+
+        case LT_PTR:
+                stq(c, c->ops, at + VOFF(ptr), lir_r(value));
+                stb(c, c->ops, at + VOFF(type), lir_i(VALUE_PTR));
+                break;
+
+        default:
+                stq(c, c->ops, at + VOFF(z), lir_r(value));
+                stb(c, c->ops, at + VOFF(type), lir_i(VALUE_INTEGER));
+                break;
+        }
+}
+
+static bool
+kernel_call(
+        BcLir *c,
+        LirReg fn,
+        Value const *callee,
+        i32 out,
+        i32 argc,
+        LirLabel miss,
+        LirLabel done
+)
+{
+        LirCode const *code = callee->jit_code;
+
+        if (c->compact || !kernel_ok(code, argc)) {
+                return false;
+        }
+
+        lir_const(c->L, callee);
+
+        expect(c, fn, 0, VALUE_JIT_FUNCTION, miss);
+        same_ptr(c, ldp(c, fn, VOFF(jit_code)), code, miss);
+
+        LirOpnd args[8];
+
+        for (i32 i = 0; i < argc; ++i) {
+                args[i] = lir_r(kernel_arg(c, code->sig.params[i], out + i, miss));
+        }
+
+        u32    flags  = (code->mode == LIR_MODE_DETACHED) ? CF_PURE : CF_VM;
+        LirReg result = call_target(
+                c,
+                lir_i((uptr)code->body),
+                code->sig.ret,
+                code->sig.params,
+                args,
+                argc,
+                flags
+        );
+
+        kernel_box(c, out, code->sig.ret, result);
+        jump(c, done);
+
+        return true;
+}
+
+static void
+raw_object(Ty *ty, Value *dst, i32 class)
+{
+        *dst = RawObject(class);
+}
+
+static void
+call_init(Ty *ty, Value *args, Value *init, Value *self, i32 argc)
+{
+        usize base   = args - ty->stack.items;
+        Value object = *self;
+        Value method = *init;
+
+        ty->stack.count = base + argc;
+        gP(&object);
+        vm_call_method(ty, &object, &method, argc);
+        gX();
+        ty->stack.count = base;
+}
+
+static bool
+inline_ctor(BcLir *c, LirReg fn, Value const *callee, i32 out, i32 argc, LirLabel *ready)
+{
+        if (callee->class <= CLASS_PRIMITIVE) {
+                return false;
+        }
+
+        Class       *class = class_get(c->ctx, callee->class);
+        Value const *init  = &class->init;
+
+        if (
+                !class->really_final
+             || !roomy(init, argc)
+             || (argc == 0 && expr_of(init)->inert)
+        ) {
+                return false;
+        }
+
+        LirLabel miss = newlabel(c);
+        LirLabel done = newlabel(c);
+
+        expect(c, fn, 0, VALUE_CLASS, miss);
+        unless(c, ldw(c, fn, VOFF(class)), class->i, miss);
+        guard_epoch(c, miss);
+
+        LirReg ctor = pval(c, init);
+        LirReg code = ldp(c, ldp(c, ctor, VOFF(info)), FUN_JIT);
+
+        jcc(c, LIR_ULT, lir_r(code), lir_i(JIT_PENDING), miss);
+
+        for (i32 i = argc; i-- > 0;) {
+                copy(c, c->ops, vat(out + i + 1), c->ops, vat(out + i));
+        }
+
+        count_at(c, out + argc + 1);
+        tycall(c, raw_object, LT_VOID, preg(slot_of(c, out)), imm32(class->i));
+
+        LirLabel failed   = newlabel(c);
+        LirLabel finished = newlabel(c);
+
+        inline_call(c, ctor, init, out + 1, argc, slot_of(c, out), failed, finished);
+
+        bind(c, failed);
+
+        LirReg args = slot_of(c, out + 1);
+        LirReg self = slot_of(c, out);
+
+        tycall(
+                c,
+                call_init,
+                LT_VOID,
+                preg(args),
+                preg(ctor),
+                preg(self),
+                imm32(argc)
+        );
+
+        bind(c, finished);
+        count_at(c, out + 1);
+        jump(c, done);
+
+        bind(c, miss);
+        *ready = done;
+
+        return true;
+}

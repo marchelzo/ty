@@ -1,4 +1,4 @@
-#include "jitmod.h"
+#include "jit/jitmod.h"
 
 static struct {
         char const *module;

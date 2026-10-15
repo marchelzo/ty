@@ -23,7 +23,7 @@
 #include "compiler.h"
 #include "dict.h"
 #include "gc.h"
-#include "jit.h"
+#include "jit/jit.h"
 #include "scope.h"
 #include "tags.h"
 #include "value.h"

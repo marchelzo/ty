@@ -3,10 +3,8 @@ _*
 vcpkg_installed/
 vcpkg/
 
-src/jit_arm64.h
-src/jit_x64.h
-src/lir_arm64.h
-src/lir_x64.h
+src/jit/lir/arm64.h
+src/jit/lir/x64.h
 include/ioctl_constants.h
 include/errno_constants.h
 include/keywords.h

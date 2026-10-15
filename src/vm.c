@@ -95,7 +95,7 @@
 #include "utf8.h"
 #include "xd.h"
 #include "value.h"
-#include "jit.h"
+#include "jit/jit.h"
 #include "vm.h"
 #include "ty/debug.h"
 #include "bundle.h"

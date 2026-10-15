@@ -16,7 +16,7 @@
 #include "chan.h"
 #include "queue.h"
 #include "screen.h"
-#include "lir.h"
+#include "jit/lir.h"
 
 static GCRootSet ImmortalSet;
 static TySpinLock ImmortalLock = TY_MUTEX_INIT;

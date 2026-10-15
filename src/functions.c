@@ -1,6 +1,6 @@
 #include "ast.h"
 #include "ty.h"
-#include "jit.h"
+#include "jit/jit.h"
 #ifdef _WIN32
 #include <winsock2.h> // must be included before <windows.h>
 #include <ws2tcpip.h>

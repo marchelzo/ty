@@ -121,25 +121,25 @@ PREV_SIG := $(shell cat $(BUILD_SIG_FILE) 2>/dev/null)
 
 ifneq ($(BUILD_SIG),$(PREV_SIG))
 $(shell rm -rf obj)
-$(shell mkdir -p obj obj/tyls obj/typrof obj/tytest)
+$(shell mkdir -p obj)
 $(shell echo '$(BUILD_SIG)' > $(BUILD_SIG_FILE))
 endif
+
+$(shell mkdir -p obj/jit/lir obj/tyls/jit/lir obj/typrof/jit/lir obj/tytest/jit/lir)
 
 # DynASM configuration
 LUAJIT := luajit
 DYNASM := $(LUAJIT) dynasm/dynasm.lua
 
 ifeq ($(shell uname -m),arm64)
-	LIR_DASC := src/lir_arm64.dasc
-	LIR_HDR  := src/lir_arm64.h
-	LIR_NATIVE_TEST := obj/lir-native-test obj/lir-entry-test
+	LIR_DASC := src/jit/lir/arm64.dasc
+	LIR_HDR  := src/jit/lir/arm64.h
 else
-	LIR_DASC := src/lir_x64.dasc
-	LIR_HDR  := src/lir_x64.h
-	LIR_NATIVE_TEST := obj/lir-native-test obj/lir-entry-test
+	LIR_DASC := src/jit/lir/x64.dasc
+	LIR_HDR  := src/jit/lir/x64.h
 endif
 
-SOURCES := $(wildcard src/*.c)
+SOURCES := $(wildcard src/*.c src/jit/*.c src/jit/lir/*.c)
 OBJECTS := $(patsubst src/%.c,obj/%.o,$(SOURCES))
 TYLS_OBJECTS := $(patsubst src/%.c,obj/tyls/%.o,$(SOURCES))
 TYPROF_OBJECTS := $(patsubst src/%.c,obj/typrof/%.o,$(SOURCES))
@@ -176,7 +176,7 @@ include/syscall_names.h: scripts/getsyscalls.sh
 	@sh $< > $@
 
 GEN_DIR     := include/gen
-GEN_SOURCES := src/functions.c src/ffi.c src/sqlite.c src/screen.c src/jitmod.c
+GEN_SOURCES := src/functions.c src/ffi.c src/sqlite.c src/screen.c src/jit/mod.c
 GEN_METHODS := src/str.c src/array.c src/dict.c src/blob.c src/heap.c src/queue.c src/set.c src/shared_queue.c
 GEN_HEADERS := $(GEN_DIR)/builtin_decls.h $(GEN_DIR)/builtin_table.h $(GEN_DIR)/builtin_method_src.h
 
@@ -202,7 +202,7 @@ obj/tyls/token.o: include/keywords.h include/optokens.h
 obj/typrof/token.o: include/keywords.h include/optokens.h
 obj/tytest/token.o: include/keywords.h include/optokens.h
 
-obj/lir_emit.o obj/tyls/lir_emit.o obj/typrof/lir_emit.o obj/tytest/lir_emit.o: $(LIR_HDR) src/lir_x64_target.h
+obj/jit/lir/emit.o obj/tyls/jit/lir/emit.o obj/typrof/jit/lir/emit.o obj/tytest/jit/lir/emit.o: $(LIR_HDR)
 
 ty: obj/ty-main.o $(OBJECTS) $(EXTERNAL)
 	@echo cc $@
@@ -294,41 +294,32 @@ obj/types2-core-test: tests/types2_core.c src/types2_core.c src/panic.c include/
 	@echo cc $@
 	@$(CC) $(CFLAGS) -o $@ tests/types2_core.c src/types2_core.c src/panic.c $(LDFLAGS)
 
-test-lir: obj/lir-core-test obj/lir-interp-test obj/lir-ra-test $(LIR_NATIVE_TEST)
-	./obj/lir-core-test
-	./obj/lir-interp-test
-	./obj/lir-ra-test
-ifneq ($(LIR_NATIVE_TEST),)
-	./obj/lir-native-test
-	./obj/lir-entry-test
-endif
+LIR_TESTS  := core interp ra native entry
+LIR_HEADER := include/jit/lir.h tests/jit/lir/test.h tests/jit/lir/scalar.h
+LIR_CORE   := $(addprefix obj/jit/lir/,lir.o check.o cfg.o wire.o entry.o) obj/panic.o
+LIR_NATIVE := $(addprefix obj/jit/lir/,interp.o ra.o norm.o emit.o finish.o) obj/jit/mem.o nsync/out/libnsync.a
 
-obj/lir-core-test: tests/lir_core.c obj/lir.o include/lir.h
+define LINK_TEST
 	@echo cc $@
-	@$(CC) $(CFLAGS) -o $@ tests/lir_core.c obj/lir.o $(LDFLAGS)
+	@$(CC) $(CFLAGS) -o $@ $< $(filter %.o %.a,$^) $(LDFLAGS)
+endef
 
-obj/lir-interp-test: tests/lir_interp.c obj/lir.o obj/lir_interp.o include/lir.h
-	@echo cc $@
-	@$(CC) $(CFLAGS) -o $@ tests/lir_interp.c obj/lir.o obj/lir_interp.o $(LDFLAGS)
-
-obj/lir-ra-test: tests/lir_ra.c obj/lir.o obj/lir_ra.o include/lir.h
-	@echo cc $@
-	@$(CC) $(CFLAGS) -o $@ tests/lir_ra.c obj/lir.o obj/lir_ra.o $(LDFLAGS)
-
-obj/lir-native-test: tests/lir_native.c tests/lir_interp.c obj/lir.o obj/lir_interp.o obj/lir_ra.o obj/lir_emit.o obj/jitmem.o include/lir.h nsync/out/libnsync.a
-	@echo cc $@
-	@$(CC) $(CFLAGS) -o $@ tests/lir_native.c obj/lir.o obj/lir_interp.o obj/lir_ra.o obj/lir_emit.o obj/jitmem.o nsync/out/libnsync.a $(LDFLAGS)
-
-obj/lir-entry-test: tests/lir_entry.c tests/lir_interp.c obj/lir.o obj/lir_interp.o obj/lir_ra.o obj/lir_emit.o obj/jitmem.o include/lir.h nsync/out/libnsync.a
-	@echo cc $@
-	@$(CC) $(CFLAGS) -o $@ tests/lir_entry.c obj/lir.o obj/lir_interp.o obj/lir_ra.o obj/lir_emit.o obj/jitmem.o nsync/out/libnsync.a $(LDFLAGS)
+test-lir: $(LIR_TESTS:%=obj/lir-%-test)
+	@set -e; for t in $^; do echo ./$$t; ./$$t; done
 
 test-jitmem: obj/jitmem-test
 	./obj/jitmem-test
 
-obj/jitmem-test: tests/jitmem.c obj/jitmem.o include/lir.h nsync/out/libnsync.a
-	@echo cc $@
-	@$(CC) $(CFLAGS) -o $@ tests/jitmem.c obj/jitmem.o nsync/out/libnsync.a $(LDFLAGS)
+obj/lir-%-test: tests/jit/lir/%.c $(LIR_HEADER) $(LIR_CORE)
+	$(LINK_TEST)
+
+obj/lir-interp-test: obj/jit/lir/interp.o
+obj/lir-ra-test:     obj/jit/lir/ra.o
+obj/lir-native-test: $(LIR_NATIVE)
+obj/lir-entry-test:  $(LIR_NATIVE)
+
+obj/jitmem-test: tests/jit/mem.c $(LIR_HEADER) obj/jit/mem.o obj/panic.o nsync/out/libnsync.a
+	$(LINK_TEST)
 
 LIB_DIRS = $(sort $(dir $(shell find lib -type f -name '*.ty')))
 LIB_HOME = $(or $(XDG_DATA_HOME),$(HOME)/.local/share)/ty/lib

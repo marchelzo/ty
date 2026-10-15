@@ -11,7 +11,7 @@
 #include "itable.h"
 #include "class.h"
 #include "ty.h"
-#include "jit.h"
+#include "jit/jit.h"
 #include "vm.h"
 #include "intern.h"
 #include "dict.h"

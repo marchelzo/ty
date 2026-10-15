@@ -12,7 +12,7 @@
 #include "value.h"
 #include "ty/thread.h"
 #include "log.h"
-#include "jit.h"
+#include "jit/jit.h"
 
 extern bool PrintResult;
 extern volatile sig_atomic_t JitInterruptFlag;
