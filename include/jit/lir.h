@@ -832,6 +832,9 @@ lir_parallel_moves(
 
 
 bool
+lir_optimize(Ty *ty, Lir *L);
+
+bool
 lir_interp_emit(LirCode *code, LirError *err);
 
 void

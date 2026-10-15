@@ -114,6 +114,7 @@ native(Ty *ty, Lir *L, LirCode *code, bool owned, LirTarget const *target, LirEr
         SCRATCH_SAVE();
 
         bool ok = (legal != NULL)
+               && lir_optimize(ty, legal)
                && lir_legalize(ty, legal, target, &cs, &ncs, err)
                && lir_cfg(ty, legal, &cfg, err)
                && lir_allocate(ty, legal, &cfg, target, cs, ncs, &alloc, err);

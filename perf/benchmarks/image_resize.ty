@@ -1,0 +1,24 @@
+import lib (bench)
+import jit (kernel!)
+
+kernel! fn resize(src: Blob, dst: Blob) {
+    for i in ..#dst {
+        let x = i % 1280
+        let y = i / 1280
+        dst[i] = src[(y * 3 / 2) * 1920 + x * 3 / 2]
+    }
+}
+
+let SOURCE = Blob([i % 251 for i in ..(1920 * 1080)])
+let OUTPUT = Blob([0 for ..(1280 * 720)])
+
+@bench('blob integer image kernel')
+fn image-resize(n: Int) {
+    for ..n {
+        resize(SOURCE, OUTPUT)
+        assert(OUTPUT[0] == SOURCE[0])
+        assert(OUTPUT[1279] == SOURCE[1918])
+        assert(OUTPUT[1280] == SOURCE[1920])
+        assert(OUTPUT[-1] == SOURCE[1078 * 1920 + 1918])
+    }
+}

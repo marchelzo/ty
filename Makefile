@@ -297,7 +297,7 @@ obj/types2-core-test: tests/types2_core.c src/types2_core.c src/panic.c include/
 LIR_TESTS  := core interp ra native entry
 LIR_HEADER := include/jit/lir.h tests/jit/lir/test.h tests/jit/lir/scalar.h
 LIR_CORE   := $(addprefix obj/jit/lir/,lir.o check.o cfg.o wire.o entry.o) obj/panic.o
-LIR_NATIVE := $(addprefix obj/jit/lir/,interp.o ra.o norm.o hoist.o emit.o finish.o) obj/jit/mem.o nsync/out/libnsync.a
+LIR_NATIVE := $(addprefix obj/jit/lir/,interp.o ra.o norm.o hoist.o opt.o emit.o finish.o) obj/jit/mem.o nsync/out/libnsync.a
 
 define LINK_TEST
 	@echo cc $@

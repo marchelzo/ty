@@ -541,6 +541,113 @@ check_division_edges(void)
 }
 
 static void
+check_constant_division(void)
+{
+        static LirOp const ops[] = { LIR_SDIV, LIR_UDIV, LIR_SREM, LIR_UREM };
+        u64 divisors[384] = { 0, 1, 2, 3, 5, 7, 10, 60, 255, 1000, 1280, 86400 };
+        u32 count = 12;
+        u64 seed = 0xb71e820c59a463fd;
+
+        for (u32 bit = 1; bit < 64; ++bit) {
+                u64 d = (u64)1 << bit;
+                divisors[count++] = d - 1;
+                divisors[count++] = d;
+                divisors[count++] = d + 1;
+                divisors[count++] = 0 - d - 1;
+                divisors[count++] = 0 - d + 1;
+        }
+
+        while (count < countof(divisors)) {
+                divisors[count++] = xorshift(&seed);
+        }
+
+        for (u32 wide = 0; wide < 2; ++wide) {
+                LirType type = wide ? LT_I64 : LT_I32;
+                LirClass cls = wide ? LIR_I64 : LIR_I32;
+                u64 high = wide ? (u64)1 << 63 : (u64)1 << 31;
+
+                for (u32 op = 0; op < countof(ops); ++op) {
+                        for (u32 i = 0; i < count; ++i) {
+                                Lir *L = fn(type, type);
+                                LirReg dst = lir_reg(L, cls);
+                                LirReg x = L->params[0];
+                                LirOpnd rhs = lir_i(divisors[i]);
+
+                                if (!wide) {
+                                        x = lir_reg(L, cls);
+                                        put(L, LIR_ZEXT32, x, lir_r(L->params[0]));
+                                }
+
+                                if ((i & 1) != 0) {
+                                        LirReg a = lir_reg(L, cls);
+                                        LirReg b = lir_reg(L, cls);
+                                        put(L, LIR_LI, a, rhs);
+                                        put(L, LIR_MOV, b, lir_r(a));
+                                        rhs = lir_r(b);
+                                }
+
+                                put(L, ops[op], dst, lir_r(x), rhs);
+                                ret(L, dst);
+
+                                LirCode *code = compile(L);
+                                u64 edges[] = {
+                                        0, 1, UINT64_MAX, high, high - 1, high + 1,
+                                        divisors[i] - 1, divisors[i], divisors[i] + 1,
+                                        0 - divisors[i], 2 * divisors[i] - 1,
+                                        2 * divisors[i], 2 * divisors[i] + 1
+                                };
+
+                                for (u32 j = 0; j < countof(edges) + 64; ++j) {
+                                        u64 bits = (j < countof(edges)) ? edges[j] : xorshift(&seed);
+                                        LirScalar arg = S(u, bits);
+                                        LirScalar want = reference(L, &arg, 1);
+                                        i64 got;
+
+                                        if (wide) {
+                                                got = ((i64 (*)(i64))code->body)(bits);
+                                        } else {
+                                                got = ((i32 (*)(i32))code->body)(bits);
+                                        }
+
+                                        if ((u64)got != want.u) {
+                                                fprintf(stderr, "%s i%u x=%" PRIx64 " d=%" PRIx64 "\n",
+                                                        LirOps[ops[op]].name, wide ? 64 : 32, bits, divisors[i]);
+                                        }
+                                        CHECK((u64)got == want.u);
+                                }
+
+                                lir_code_free(code);
+                                lir_free(L);
+                        }
+                }
+        }
+}
+
+static void
+check_mutable_divisor(void)
+{
+        Lir *L = fn(LT_I64, LT_I64);
+        LirReg d = lir_reg(L, LIR_I64);
+        LirReg q = lir_reg(L, LIR_I64);
+        LirReg sum = lir_reg(L, LIR_I64);
+        LirLabel loop = lir_label(L);
+
+        put(L, LIR_LI, d, lir_i(1));
+        put(L, LIR_LI, sum, lir_i(0));
+        here(L, loop);
+        put(L, LIR_SDIV, q, lir_r(L->params[0]), lir_r(d));
+        put(L, LIR_ADD, sum, lir_r(sum), lir_r(q));
+        put(L, LIR_ADD, d, lir_r(d), lir_i(1));
+        put(L, LIR_BR, LIR_NONE, lir_cc(LIR_LT), lir_r(d), lir_i(25), lir_l(loop));
+        ret(L, sum);
+
+        LirScalar arg = S(i, 12345);
+
+        agrees(L, &arg, 1);
+        lir_free(L);
+}
+
+static void
 check_distant_targets(void)
 {
         enum { PAD = 300000 };
@@ -599,6 +706,8 @@ main(void)
         check_cas_parameters();
         check_raw_native();
         check_division_edges();
+        check_constant_division();
+        check_mutable_divisor();
         check_distant_targets();
         check_fuzz();
 
