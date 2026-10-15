@@ -33,7 +33,12 @@ signed_quotient(Reduce *r, LirOpnd x, i64 d)
                 q = x;
         } else if ((magnitude & (magnitude - 1)) == 0) {
                 u32 shift = __builtin_ctzll(magnitude);
-                LirOpnd sign = emit(r, LIR_SAR, x, lir_i(r->bits - 1));
+                LirOpnd sign = x;
+
+                if (shift != 1) {
+                        sign = emit(r, LIR_SAR, x, lir_i(r->bits - 1));
+                }
+
                 LirOpnd bias = emit(r, LIR_SHR, sign, lir_i(r->bits - shift));
 
                 q = emit(r, LIR_ADD, x, bias);
