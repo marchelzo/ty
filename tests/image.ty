@@ -1,0 +1,124 @@
+import os
+import ink.image as im
+import ink.image.raster as raster
+import ink.image.glyphs (glyphs, PRESETS)
+
+const DIR = 'tests/fixtures/images'
+
+fn frames(pic: im.Picture) -> Blob {
+    let out = Blob()
+    for f in pic.frames {
+        out.push(f.rgba)
+    }
+    out
+}
+
+fn reference(name: String) -> Blob {
+    Blob(slurp("{DIR}/{name}.rgba") ?? throw RuntimeError("missing {name}.rgba"))
+}
+
+fn solid(w: Int, h: Int, paint: Function) -> im.Picture {
+    let rgba = raster.zeros(w * h * 4)
+    for y in ..h {
+        for x in ..w {
+            let (r, g, b, a) = paint(x, y)
+            let p = (y * w + x) * 4
+            rgba[p]     = r
+            rgba[p + 1] = g
+            rgba[p + 2] = b
+            rgba[p + 3] = a
+        }
+    }
+    im.Picture(w, h, [im.Frame(rgba)], 'raw')
+}
+
+pub fn decoders-match-reference-pixels() {
+    let names = os.listdir(DIR).filter(n -> !n.ends?('.rgba')).sort()
+    assert(#names == 18)
+    for name in names {
+        let pic = im.load("{DIR}/{name}")
+        assert(frames(pic) == reference(name), name)
+    }
+}
+
+pub fn animations-keep-timing-and-loop-count() {
+    let gif = im.load("{DIR}/gif-anim-d2.gif")
+    assert(#gif.frames == 6)
+    assert(gif.frames.map(&.delay) == [0.05, 0.06, 0.07, 0.08, 0.09, 0.1])
+    let png = im.load("{DIR}/apng-d1-b0.png")
+    assert(png.animated?)
+    assert(png.format == 'png')
+}
+
+pub fn bad-input-raises-image-errors() {
+    for data in [Blob('hello'), Blob(0x89, 'PNG\r\n\x1a\n'), Blob('GIF89a'), Blob('BM')] {
+        let r = try { im.decode(data); nil } catch e: im.ImageError { e.what }
+        assert(r != nil, "{data}")
+    }
+    let png = Blob(slurp("{DIR}/png-c6-d16-i-o-13x7.png") ?? '')
+    let r = try { im.decode(png[;#png - 30]); nil } catch e: im.ImageError { e.what }
+    assert(r != nil)
+}
+
+pub fn glyph-atoms-rebuild-every-mask() {
+    for name in ['blocks', 'sextant', 'braille', 'shade'] {
+        let g = glyphs(name, 12, 24)
+        let n = 12 * 24
+        for k in ..g.count {
+            for s in ..n {
+                let v = [g.basis[g.ids[t] * n + s] for t in g.offs[k]..g.offs[k + 1]].sum(0.0)
+                assert((v - g.masks[k * n + s]).abs < 1.0e-12, "{name} {g.chars[k]}")
+            }
+        }
+    }
+    assert(glyphs('braille', 12, 24).atoms == 8)
+    assert(glyphs('sextant', 12, 24).count == #(PRESETS['sextant'] ?? '').chars() + 1)
+}
+
+pub fn lanczos-weights-are-normalized() {
+    for (n, out) in [(100, 37), (37, 100), (5, 5), (3840, 1200)] {
+        let (starts, counts, weights, taps) = im.coefficients(n, out)
+        for o in ..out {
+            assert(starts[o] >= 0 && starts[o] + counts[o] <= n)
+            assert((weights[o * taps;o * taps + counts[o]].sum(0.0) - 1.0).abs < 1.0e-9)
+        }
+    }
+}
+
+pub fn text-fits-shape-and-color() {
+    let pic = solid(24, 48, (x, y) -> (y < 24) ? (255, 0, 0, 255) : (0, 0, 0, 0))
+    let c = im.cut(pic, pic.frames[0], false, false)
+    let lines = im.text(c, 1, 1, im.Options(chars='half', bg?=false))
+    assert(lines == ["\x1b[38;2;255;0;0m▀\x1b[0m"], lines)
+    let split = solid(48, 48, (x, y) -> (x < 24) ? (0, 0, 255, 255) : (0, 255, 0, 255))
+    let two = im.text(im.cut(split, split.frames[0], false, false), 1, 1, im.Options(chars='quad'))
+    assert('▌' in two[0] || '▐' in two[0])
+    assert('0;0;255' in two[0] && '0;255;0' in two[0])
+}
+
+pub fn keying-removes-a-flat-backdrop() {
+    let pic = solid(40, 40, (x, y) -> ((x - 20) ** 2 + (y - 20) ** 2 < 64) ? (200, 30, 30, 255) : (255, 255, 255, 255))
+    let keyed = im.key(pic.frames[0].rgba, 40, 40) ?? throw RuntimeError('backdrop not keyed')
+    assert(keyed[3] == 0)
+    assert(keyed[(20 * 40 + 20) * 4 + 3] == 255)
+    let c = im.cut(pic, pic.frames[0], true, true)
+    assert(c.w < 20 && c.h < 20)
+}
+
+pub fn fit-preserves-aspect() {
+    assert(im.fit(100, 100, cell=(10, 20)) == (10, 5))
+    assert(im.fit(100, 100, width=20, cell=(10, 20)) == (20, 10))
+    assert(im.fit(100, 100, height=20, cell=(10, 20)) == (40, 20))
+    assert(im.fit(1000, 100, max-w=50, cell=(10, 20)) == (50, 3))
+}
+
+pub fn kitty-placeholders() {
+    assert(#im.kitty.DIACRITICS == 297)
+    assert(im.kitty.DIACRITICS.all?(\_.width() == 0))
+    let lines = im.kitty.lines(0x123456, 3, 2)
+    assert(#lines == 2)
+    assert(lines.all?(\_.width() == 3))
+    assert(lines[1].starts?("\x1b[38;2;18;52;86m{chr(0x10EEEE)}{im.kitty.DIACRITICS[1]}{im.kitty.DIACRITICS[0]}"))
+    let escape = im.kitty.transmit(raster.zeros(64 * 64 * 4), 64, 64, 7, 3, 2)
+    assert(escape.starts?("\x1b_Ga=T,U=1,q=2,f=32,o=z,s=64,v=64,i=7,c=3,r=2,m=0;"))
+}

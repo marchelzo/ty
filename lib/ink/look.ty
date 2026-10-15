@@ -65,7 +65,8 @@ pub PARTS: Dict[String, (Array[String], Array[String])] = %{
     'TreeView':      (['frame', 'row', 'mark', 'guide', 'toggle', 'label', 'empty'], ['focused', 'selected', 'active', 'expanded']),
     'DatePicker':    (['header', 'weekday', 'day'], ['focused', 'today', 'selected']),
     'BarChart':      (['bar', 'axis', 'empty'], []),
-    'LinePlot':      (['series', 'axis', 'selection', 'empty'], [])
+    'LinePlot':      (['series', 'axis', 'selection', 'empty'], []),
+    'Image':         (['error'], [])
 }
 
 fn check-key(key: String, line: Int) {
@@ -467,5 +468,6 @@ pub DEFAULTS: Dict[String, Dict[String, _]] = %{
     'LinePlot::series':           %{'fg': 'primary'},
     'LinePlot::axis':             %{'fg': 'text-dim'},
     'LinePlot::selection':        %{'bg': 'bg-hover'},
-    'LinePlot::empty':            %{'fg': 'text-dim', 'content': 'no data'}
+    'LinePlot::empty':            %{'fg': 'text-dim', 'content': 'no data'},
+    'Image::error':               %{'fg': 'danger'}
 }

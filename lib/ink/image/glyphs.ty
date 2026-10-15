@@ -1,0 +1,360 @@
+import ffi as c (C!)
+import os
+import jit (kernel!)
+
+pub QUADS = %{ch: i for ch; i in ' ▘▝▀▖▌▞▛▗▚▐▜▄▙▟█'.chars()}
+const SHADES      = %{'░': 1, '▒': 2, '▓': 3}
+
+pub SEXTANTS = %{
+    chr(0x1FB00 + n - 1 - (n > 21 ? 1 : 0) - (n > 42 ? 1 : 0)): n
+    for n in 1..63 if n != 21 && n != 42
+}
+
+pub EIGHTHS = %{
+    **%{chr(0x2581 + i): (2, i + 1) for i in ..7},
+    **%{chr(0x2589 + i): (4, 7 - i) for i in ..7},
+    '▔': (3, 1),
+    '▕': (5, 1)
+}
+
+fn span(lo: Int, hi: Int) -> String {
+    [chr(i) for i in lo..hi].join('')
+}
+
+pub PRESETS = do {
+    let blocks = '▀▄▌▐█▖▗▘▝▚▞▙▛▜▟▁▂▃▅▆▇▉▊▋▍▎▏▔▕'
+    let sextant = "▌▐█{SEXTANTS.keys().join('')}"
+    let braille = span(0x2801, 0x2900)
+    let ascii = span(0x21, 0x7F)
+    let box = span(0x2500, 0x2580)
+    %{
+        'blocks':  blocks,
+        'half':    '▀▄█',
+        'quad':    '▀▄▌▐█▖▗▘▝▚▞▙▛▜▟',
+        'sextant': sextant,
+        'braille': braille,
+        'ascii':   ascii,
+        'ramp':    '.:-=+*#%@',
+        'shade':   '░▒▓█',
+        'box':     box,
+        'dots':    '.·•●o°\'`,',
+        'all':     [*blocks, *sextant, *braille].nub().join(''),
+        'glyphs':  [*ascii, *box, *braille].nub().join('')
+    }
+}
+
+fn bits(kind: Int, p: Int, n: Int) -> Array[(Int, Int)] {
+    [(kind, 1 << b) for b in ..n if ((p >> b) & 1) != 0]
+}
+
+fn pieces(kind: Int, p: Int) -> Array[(Int, Int)] {
+    match kind {
+        1 => bits(1, p, 4),
+        2 => [(9, r) for r in 8 - p..8],
+        3 => [(9, r) for r in ..p],
+        4 => [(10, c) for c in ..p],
+        5 => [(10, c) for c in 8 - p..8],
+        6 => bits(6, p, 6),
+        _ => bits(7, p, 8)
+    }
+}
+
+fn shape(ch: String) -> (Int, Int) | nil {
+    if let $q = QUADS[ch] {
+        return (1, q)
+    }
+    if let $e = EIGHTHS[ch] {
+        return e
+    }
+    if let $s = SEXTANTS[ch] {
+        return (6, s)
+    }
+    match ord(ch) {
+        b and 0x2800 <= b && b <= 0x28FF => (7, b - 0x2800),
+        _                                => nil
+    }
+}
+
+kernel! fn dot?(p: Int, u: Float, v: Float) -> Bool {
+    for d in ..8 {
+        if ((p >> d) & 1) == 0 {
+            continue
+        }
+        let dx = (d >= 3 && d != 6) ? 1 : 0
+        let dy = (d < 3) ? d : ((d < 6) ? d - 3 : 3)
+        let ex = u * 2.0 - float(dx) - 0.5
+        let ey = v * 4.0 - float(dy) - 0.5
+        if ex * ex + ey * ey < 0.14 {
+            return true
+        }
+    }
+    false
+}
+
+kernel! fn covered?(kind: Int, p: Int, u: Float, v: Float) -> Bool {
+    let right = (u >= 0.5) ? 1 : 0
+    if kind == 1 {
+        return ((p >> (right + ((v >= 0.5) ? 2 : 0))) & 1) == 1
+    }
+    if kind == 2 {
+        return v >= 1.0 - float(p) / 8.0
+    }
+    if kind == 3 {
+        return v < float(p) / 8.0
+    }
+    if kind == 4 {
+        return u < float(p) / 8.0
+    }
+    if kind == 5 {
+        return u >= 1.0 - float(p) / 8.0
+    }
+    if kind == 6 {
+        return ((p >> (right + 2 * min(int(v * 3.0), 2))) & 1) == 1
+    }
+    if kind == 9 {
+        return v >= float(p) / 8.0 && v < float(p + 1) / 8.0
+    }
+    if kind == 10 {
+        return u >= float(p) / 8.0 && u < float(p + 1) / 8.0
+    }
+    dot?(p, u, v)
+}
+
+kernel! fn geo-mask(kind: Int, p: Int, M: Array[Float], off: Int, sw: Int, sh: Int, ss: Int) {
+    let fw = float(sw * ss)
+    let fh = float(sh * ss)
+    let total = float(ss * ss)
+    for y in ..sh {
+        for x in ..sw {
+            let hits = 0
+            for j in ..ss {
+                let v = (float(y * ss + j) + 0.5) / fh
+                for i in ..ss {
+                    if covered?(kind, p, (float(x * ss + i) + 0.5) / fw, v) {
+                        hits += 1
+                    }
+                }
+            }
+            M[off + y * sw + x] = float(hits) / total
+        }
+    }
+}
+
+kernel! fn box-glyph(
+    bm: Blob, pitch: Int, bw: Int, bh: Int, left: Int, top: Int,
+    fw: Int, fh: Int, M: Array[Float], off: Int, sw: Int, sh: Int
+) {
+    let kx = float(fw) / float(sw)
+    let ky = float(fh) / float(sh)
+    for y in ..sh {
+        let t = float(y) * ky
+        let b = float(y + 1) * ky
+        for x in ..sw {
+            let l = float(x) * kx
+            let r = float(x + 1) * kx
+            let acc = 0.0
+            for cy in max(int(t), top)..min(int(b.ceil), top + bh) {
+                let wy = min(b, float(cy + 1)) - max(t, float(cy))
+                let row = (cy - top) * pitch - left
+                for cx in max(int(l), left)..min(int(r.ceil), left + bw) {
+                    acc += wy * (min(r, float(cx + 1)) - max(l, float(cx))) * float(bm[row + cx])
+                }
+            }
+            M[off + y * sw + x] = acc / (kx * ky * 255.0)
+        }
+    }
+}
+
+class Font {
+    __face:  Ptr[Any]
+    __load:  (Ptr[Any], Int, Int) -> Int
+    __index: (Ptr[Any], Int) -> Int
+    ascent:  Int
+    descent: Int
+    advance: Int
+
+    init(lib: Ptr[Any], path: String, px: Int) {
+        let init-ft = c.wrap(lib, 'FT_Init_FreeType', c.int, c.ptr)
+        let new-face = c.wrap(lib, 'FT_New_Face', c.int, c.ptr, c.ptr, c.long, c.ptr)
+        let set-size = c.wrap(lib, 'FT_Set_Pixel_Sizes', c.int, c.ptr, c.uint, c.uint)
+        __load  = c.wrap(lib, 'FT_Load_Char', c.int, c.ptr, c.ulong, c.int)
+        __index = c.wrap(lib, 'FT_Get_Char_Index', c.uint, c.ptr, c.ulong)
+        let out = c.box-auto(c.ptr)
+        if init-ft(out) != 0 || new-face(out[0], path.cstr(), 0, out) != 0 {
+            throw RuntimeError("FreeType could not open {path}")
+        }
+        __face = out[0]
+        set-size(__face, 0, px)
+        let size = c.load(c.ptr, __face + 160)
+        ascent  = c.load(c.i64, size + 48) >> 6
+        descent = -(c.load(c.i64, size + 56) >> 6)
+        advance = (__render(ord('M')) ?? throw RuntimeError("{path} has no 'M'")).0
+    }
+
+    __render(cp: Int) -> (Int, Blob, Int, Int, Int, Int, Int) | nil {
+        if __index(__face, cp) == 0 || __load(__face, cp, 4) != 0 {
+            return nil
+        }
+        let slot  = c.load(c.ptr, __face + 152)
+        let rows  = c.load(c.u32, slot + 152)
+        let width = c.load(c.u32, slot + 156)
+        let pitch = c.load(c.i32, slot + 160)
+        let adv   = (c.load(c.i64, slot + 128) + 32) >> 6
+        let bits  = (rows > 0 && pitch > 0) ? Blob().push(c.load(c.ptr, slot + 168), rows * pitch) : Blob()
+        (adv, bits, pitch, width, rows, c.load(c.i32, slot + 192), ascent - c.load(c.i32, slot + 196))
+    }
+
+    mask(ch: String, M: Array[Float], off: Int, sw: Int, sh: Int) -> Bool {
+        let (_, bits, pitch, bw, bh, left, top) = __render(ord(ch)) ?? return false
+        if #bits > 0 {
+            box-glyph(bits, pitch, bw, bh, left, top, advance, ascent + descent, M, off, sw, sh)
+        }
+        true
+    }
+}
+
+fn font-path() -> String | nil {
+    let child = try {
+        os.spawn(['fc-match', '-f', '%{file}', 'monospace'], stdout: os.SPAWN_PIPE, stderr: os.SPAWN_NULL)
+    } catch _: OSError {
+        return nil
+    }
+    let out = Blob()
+    while let $chunk = os.read(child.stdout, 4096) {
+        out.push(chunk)
+    }
+    os.close(child.stdout)
+    os.wait(child.pid)
+    let path = out.str!()
+    (#path > 0) ? path : nil
+}
+
+let __tls::font: Font | Bool = false
+
+fn open-font() -> Font | nil {
+    if font == true {
+        return nil
+    }
+    if let f: Font = font {
+        return f
+    }
+    font = true
+    let $lib  = c.open('freetype', [nil, 6]) or return nil
+    let $path = font-path() or return nil
+    font = (try { Font(lib, path, 96) }) ?? true
+    font :: Font ? font : nil
+}
+
+pub class Glyphs {
+    chars:  Array[String]
+    masks:  Array[Float]
+    stats:  Array[Float]
+    full?:  Array[Bool]
+    empty?: Array[Bool]
+    basis:  Array[Float]
+    offs:   Array[Int]
+    ids:    Array[Int]
+    w:      Int
+    h:      Int
+
+    __atoms: Dict[(Int, Int), Int] = %{}
+
+    init(alphabet: String, w: Int, h: Int) {
+        self.w = w
+        self.h = h
+        let n = w * h
+        chars = []
+        masks = []
+        basis = []
+        offs  = [0]
+        ids   = []
+        for ch in [' ', *alphabet.chars()].nub() if ch != "\n" {
+            let off = #masks
+            masks += [0.0 for ..n]
+            if !__draw(ch, off) {
+                masks.take!(off)
+                continue
+            }
+            chars.push(ch)
+            offs.push(#ids)
+        }
+        stats  = []
+        full?  = []
+        empty? = []
+        for i in ..#chars {
+            let m = masks[i * n;(i + 1) * n]
+            stats += [m.sum(0.0), m.map(x -> x * x).sum(0.0), structure(m)]
+            full?.push(m.all?(\_ > 0.999))
+            empty?.push(m.all?(\_ < 0.001))
+        }
+    }
+
+    count -> Int { #chars }
+
+    atoms -> Int { #basis / (w * h) }
+
+    __atom(kind: Int, p: Int) -> Int {
+        __atoms[(kind, p)] ?? do {
+            let id = atoms
+            basis += [0.0 for ..w * h]
+            geo-mask(kind, p, basis, id * w * h, w, h, 4)
+            __atoms[(kind, p)] = id
+        }
+    }
+
+    __own(off: Int) -> Bool {
+        ids.push(atoms)
+        basis += masks[off;off + w * h]
+        true
+    }
+
+    __draw(ch: String, off: Int) -> Bool {
+        if ch == ' ' {
+            return true
+        }
+        if let ($kind, $p) = shape(ch) {
+            geo-mask(kind, p, masks, off, w, h, 4)
+            for (k, q) in pieces(kind, p) {
+                ids.push(__atom(k, q))
+            }
+            return true
+        }
+        if let $f = open-font() {
+            return f.mask(ch, masks, off, w, h) && __own(off)
+        }
+        let $level = SHADES[ch] or return false
+        for i in off..off + w * h {
+            masks[i] = float(level) / 4.0
+        }
+        __own(off)
+    }
+
+    structure(m: Array[Float]) -> Float {
+        min(1.0, 4.0 * variance(coarse(m)))
+    }
+
+    coarse(m: Array[Float]) -> Array[Float] {
+        let bh = h / 4
+        let bw = w / 2
+        [
+            [m[y * w + x] for y in by * bh..(by + 1) * bh for x in bx * bw..(bx + 1) * bw].sum(0.0) / float(bh * bw)
+            for by in ..4 for bx in ..2
+        ]
+    }
+}
+
+fn variance(xs: Array[Float]) -> Float {
+    let mean = xs.sum(0.0) / float(#xs)
+    xs.map(x -> (x - mean) * (x - mean)).sum(0.0) / float(#xs)
+}
+
+let __tls::cache: Dict[String, Glyphs] = %{}
+
+pub fn alphabet(chars: String) -> String {
+    PRESETS[chars] ?? chars
+}
+
+pub fn glyphs(chars: String, w: Int, h: Int) -> Glyphs {
+    let key = "{w}x{h}:{chars}"
+    cache[key] ?? (cache[key] = Glyphs(alphabet(chars), w, h))
+}

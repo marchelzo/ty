@@ -1,0 +1,82 @@
+import ink
+import ink.image as im
+import ink.image.raster as raster
+
+const PLACEHOLDER = chr(0x10EEEE)
+
+fn picture(frames: Int = 1) -> im.Picture {
+    let w = 32
+    let h = 32
+    im.Picture(w, h, [
+        im.Frame(do {
+            let rgba = raster.zeros(w * h * 4)
+            for p in ..w * h {
+                rgba[p * 4]     = (p * 7 + f * 40) % 256
+                rgba[p * 4 + 1] = 128
+                rgba[p * 4 + 2] = (p / w) * 8
+                rgba[p * 4 + 3] = 255
+            }
+            rgba
+        }, 0.1)
+        for f in ..frames
+    ], 'raw')
+}
+
+class Frame < ink.Component {
+    src:      _
+    protocol: String | nil
+    width:    _
+
+    render() {
+        <ink.Box direction="column">
+            <im.Image src=src protocol=protocol width=width />
+            <ink.Text>caption</ink.Text>
+        </ink.Box>
+    }
+}
+
+pub fn kitty-renders-placeholders-and-uploads-once() {
+    let h = ink.TestHarness(Frame(src=picture(), protocol='kitty', width=6), cols=40, rows=20)
+    let rows = h.lines.filter(\_.contains?(PLACEHOLDER))
+    assert(#rows == 3)
+    assert(rows.all?(line -> line.count(PLACEHOLDER) == 6))
+    assert(#h.uploads == 1)
+    assert(h.uploads[0].starts?("\x1b_Ga=T,U=1,"))
+    assert(',c=6,r=3,' in h.uploads[0])
+    h.repaint()
+    assert(#h.uploads == 1)
+    h.assert-contains('caption')
+}
+
+pub fn text-mode-draws-colored-cells() {
+    let h = ink.TestHarness(Frame(src=picture(), protocol='text', width=8), cols=40, rows=20)
+    assert(#h.uploads == 0)
+    assert(h.lines[0].contains?("\x1b[38;2;") || h.lines[0].contains?("\x1b[48;2;"))
+    assert(h.line(4).strip() == 'caption')
+}
+
+pub fn animation-advances-and-reuploads() {
+    let h = ink.TestHarness(Frame(src=picture(3), protocol='kitty', width=4), cols=40, rows=20)
+    assert(#h.uploads == 1)
+    h.advance(0.11)
+    assert(#h.uploads == 2)
+    assert(h.uploads[0] != h.uploads[1])
+    h.advance(0.11)
+    h.advance(0.11)
+    assert(#h.uploads == 4)
+    assert(h.uploads[3] == h.uploads[0])
+}
+
+pub fn decode-errors-render-as-text() {
+    let h = ink.TestHarness(Frame(src='/nonexistent/image.png', protocol='text'), cols=60, rows=5)
+    h.assert-contains('cannot read file')
+    let g = ink.TestHarness(Frame(src=Blob('not an image'), protocol='text'), cols=60, rows=5)
+    g.assert-contains('unrecognized image format')
+}
+
+pub fn width-is-clamped-to-the-layout() {
+    let h = ink.TestHarness(Frame(src=picture(), protocol='kitty', width=100), cols=20, rows=40)
+    let rows = h.lines.filter(\_.contains?(PLACEHOLDER))
+    assert(rows.all?(line -> line.count(PLACEHOLDER) == 20))
+    assert(#rows == 10)
+}

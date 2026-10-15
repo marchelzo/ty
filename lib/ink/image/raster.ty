@@ -1,0 +1,607 @@
+import jit (kernel!)
+
+pub class ImageError < RuntimeError {}
+
+pub class Frame {
+    rgba:  Blob
+    delay: Float
+
+    init(rgba: Blob, delay: Float = 0.0) {
+        self.rgba  = rgba
+        self.delay = delay
+    }
+}
+
+pub class Picture {
+    width:  Int
+    height: Int
+    frames: Array[Frame]
+    format: String
+    loops:  Int
+
+    init(width: Int, height: Int, frames: Array[Frame], format: String, loops: Int = 0) {
+        self.width  = width
+        self.height = height
+        self.frames = frames
+        self.format = format
+        self.loops  = loops
+    }
+
+    animated? -> Bool { #frames > 1 }
+
+    __str__() -> String {
+        "Picture({format}, {width}x{height}, {#frames} frame{#frames == 1 ? '' : 's'})"
+    }
+}
+
+pub fn zeros(n: Int) -> Blob {
+    let b = Blob()
+    b.reserve(n)
+    b.fill()
+    b
+}
+
+pub fn rgb(packed: Int) -> (Int, Int, Int) {
+    ((packed >> 16) & 255, (packed >> 8) & 255, packed & 255)
+}
+
+fn decode-gamma(c: Float) -> Float {
+    (c <= 0.04045) ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+}
+
+fn encode-gamma(c: Float) -> Float {
+    255.0 * ((c <= 0.0031308) ? c * 12.92 : 1.055 * c ** (1.0 / 2.4) - 0.055)
+}
+
+pub LINEAR = [decode-gamma(float(i) / 255.0) for i in ..256]
+pub GAMMA  = [encode-gamma(float(i) / 4096.0) for i in 0...4096]
+
+kernel! fn to-srgb(v: Float, gamma: Array[Float]) -> Float {
+    let f = v.clamp(0.0, 1.0) * 4096.0
+    let i = min(int(f), 4095)
+    let t = f - float(i)
+    gamma[i] * (1.0 - t) + gamma[i + 1] * t
+}
+
+kernel! fn area(src: Blob, stride: Int, l: Float, r: Float, t: Float, b: Float, lin: Array[Float], acc: Array[Float]) {
+    let x0 = int(l)
+    let x1 = int(r.ceil)
+    let y0 = int(t)
+    let y1 = int(b.ceil)
+    let sr = 0.0
+    let sg = 0.0
+    let sb = 0.0
+    let sa = 0.0
+    let sw = 0.0
+    for y in y0..y1 {
+        let wy = min(b, float(y + 1)) - max(t, float(y))
+        let row = y * stride
+        for x in x0..x1 {
+            let w = wy * (min(r, float(x + 1)) - max(l, float(x)))
+            let p = (row + x) * 4
+            let wa = w * float(src[p + 3])
+            sr += wa * lin[src[p]]
+            sg += wa * lin[src[p + 1]]
+            sb += wa * lin[src[p + 2]]
+            sa += wa
+            sw += w
+        }
+    }
+    let k = (sw > 0.0) ? 1.0 / (sw * 255.0) : 0.0
+    acc[0] = sr * k
+    acc[1] = sg * k
+    acc[2] = sb * k
+    acc[3] = sa * k
+}
+
+kernel! fn span-lo(o: Int, scale: Float, half: Float, lo: Int) -> Float {
+    max(float(lo) + (float(o) + 0.5) * scale - half, float(lo))
+}
+
+kernel! fn span-hi(o: Int, scale: Float, half: Float, lo: Int, n: Int) -> Float {
+    min(float(lo) + (float(o) + 0.5) * scale + half, float(lo + n))
+}
+
+kernel! pub fn resample(
+    src: Blob, stride: Int, cx: Int, cy: Int, cw: Int, ch: Int,
+    dst: Blob, dw: Int, dh: Int,
+    lin: Array[Float], gamma: Array[Float], acc: Array[Float]
+) {
+    let fx = float(cw) / float(dw)
+    let fy = float(ch) / float(dh)
+    let hx = max(fx, 1.0) / 2.0
+    let hy = max(fy, 1.0) / 2.0
+    for oy in ..dh {
+        let t = span-lo(oy, fy, hy, cy)
+        let b = span-hi(oy, fy, hy, cy, ch)
+        for ox in ..dw {
+            area(src, stride, span-lo(ox, fx, hx, cx), span-hi(ox, fx, hx, cx, cw), t, b, lin, acc)
+            let p = (oy * dw + ox) * 4
+            let a = acc[3]
+            if a > 0.0 {
+                dst[p]     = int(to-srgb(acc[0] / a, gamma) + 0.5)
+                dst[p + 1] = int(to-srgb(acc[1] / a, gamma) + 0.5)
+                dst[p + 2] = int(to-srgb(acc[2] / a, gamma) + 0.5)
+                dst[p + 3] = int(a * 255.0 + 0.5)
+            } else {
+                dst[p]     = 0
+                dst[p + 1] = 0
+                dst[p + 2] = 0
+                dst[p + 3] = 0
+            }
+        }
+    }
+}
+
+kernel! pub fn alpha-box(src: Blob, w: Int, h: Int, floor: Int, out: Array[Int]) {
+    let x0 = w
+    let y0 = h
+    let x1 = 0
+    let y1 = 0
+    for y in ..h {
+        let row = y * w * 4 + 3
+        for x in ..w {
+            if src[row + x * 4] > floor {
+                x0 = min(x0, x)
+                x1 = max(x1, x + 1)
+                y0 = min(y0, y)
+                y1 = y + 1
+            }
+        }
+    }
+    out[0] = x0
+    out[1] = y0
+    out[2] = x1
+    out[3] = y1
+}
+
+kernel! fn dist(src: Blob, p: Int, r: Int, g: Int, b: Int) -> Float {
+    let dr = src[p] - r
+    let dg = src[p + 1] - g
+    let db = src[p + 2] - b
+    float(dr * dr + dg * dg + db * db).sqrt
+}
+
+kernel! pub fn border-histogram(src: Blob, w: Int, h: Int, hist: Array[Int]) -> Int {
+    let n = 0
+    for y in ..h {
+        let step = (y == 0 || y == h - 1) ? 1 : max(w - 1, 1)
+        let x = 0
+        while x < w {
+            let p = (y * w + x) * 4
+            hist[src[p]] += 1
+            hist[256 + src[p + 1]] += 1
+            hist[512 + src[p + 2]] += 1
+            n += 1
+            x += step
+        }
+    }
+    n
+}
+
+kernel! pub fn border-near(src: Blob, w: Int, h: Int, r: Int, g: Int, b: Int, t0: Float) -> Int {
+    let n = 0
+    for y in ..h {
+        let step = (y == 0 || y == h - 1) ? 1 : max(w - 1, 1)
+        let x = 0
+        while x < w {
+            if dist(src, (y * w + x) * 4, r, g, b) < t0 {
+                n += 1
+            }
+            x += step
+        }
+    }
+    n
+}
+
+kernel! fn push-seed(src: Blob, w: Int, i: Int, r: Int, g: Int, b: Int, t1: Float, mark: Blob, stack: Blob, sp: Int) -> Int {
+    if mark[i] != 0 || dist(src, i * 4, r, g, b) >= t1 {
+        return sp
+    }
+    mark[i] = 1
+    let q = sp * 4
+    stack[q]     = i & 255
+    stack[q + 1] = (i >> 8) & 255
+    stack[q + 2] = (i >> 16) & 255
+    stack[q + 3] = (i >> 24) & 255
+    sp + 1
+}
+
+kernel! pub fn flood-border(src: Blob, w: Int, h: Int, r: Int, g: Int, b: Int, t1: Float, mark: Blob, stack: Blob) -> Int {
+    let sp = 0
+    for x in ..w {
+        sp = push-seed(src, w, x, r, g, b, t1, mark, stack, sp)
+        sp = push-seed(src, w, (h - 1) * w + x, r, g, b, t1, mark, stack, sp)
+    }
+    for y in ..h {
+        sp = push-seed(src, w, y * w, r, g, b, t1, mark, stack, sp)
+        sp = push-seed(src, w, y * w + w - 1, r, g, b, t1, mark, stack, sp)
+    }
+    let filled = 0
+    while sp > 0 {
+        sp -= 1
+        let q = sp * 4
+        let i = stack[q] | (stack[q + 1] << 8) | (stack[q + 2] << 16) | (stack[q + 3] << 24)
+        let x = i % w
+        filled += 1
+        if x > 0 { sp = push-seed(src, w, i - 1, r, g, b, t1, mark, stack, sp) }
+        if x < w - 1 { sp = push-seed(src, w, i + 1, r, g, b, t1, mark, stack, sp) }
+        if i >= w { sp = push-seed(src, w, i - w, r, g, b, t1, mark, stack, sp) }
+        if i < (h - 1) * w { sp = push-seed(src, w, i + w, r, g, b, t1, mark, stack, sp) }
+    }
+    filled
+}
+
+kernel! pub fn unblend(src: Blob, n: Int, r: Int, g: Int, b: Int, t0: Float, t1: Float, mark: Blob) {
+    for i in ..n {
+        if mark[i] == 0 {
+            continue
+        }
+        let p = i * 4
+        let a = ((dist(src, p, r, g, b) - t0) / (t1 - t0)).clamp(0.0, 1.0)
+        let k = 1.0 / max(a, 0.000001)
+        let ia = 1.0 - a
+        src[p]     = int(((float(src[p]) - ia * float(r)) * k).clamp(0.0, 255.0) + 0.5)
+        src[p + 1] = int(((float(src[p + 1]) - ia * float(g)) * k).clamp(0.0, 255.0) + 0.5)
+        src[p + 2] = int(((float(src[p + 2]) - ia * float(b)) * k).clamp(0.0, 255.0) + 0.5)
+        src[p + 3] = int(float(src[p + 3]) * a + 0.5)
+    }
+}
+
+kernel! fn chan(spp: Float, sp: Float, smp: Float, a: Float, d: Float, s: Float, q: Float, n: Float) -> Float {
+    spp - 2.0 * a * sp - 2.0 * d * smp + n * a * a + 2.0 * s * a * d + q * d * d
+}
+
+kernel! fn flatness(st: Float, d0: Float, d1: Float, d2: Float) -> Float {
+    1.0 - st * min(1.0, (d0 * d0 + d1 * d1 + d2 * d2).sqrt / 64.0)
+}
+
+kernel! fn project(P: Array[Float], A: Array[Float], n: Int, basis: Array[Float], nb: Int, sums: Array[Float]) {
+    for b in ..nb {
+        let m0 = 0.0
+        let m1 = 0.0
+        let m2 = 0.0
+        let ma = 0.0
+        let base = b * n
+        for s in ..n {
+            let m = basis[base + s]
+            if m > 0.0 {
+                m0 += m * P[s * 3]
+                m1 += m * P[s * 3 + 1]
+                m2 += m * P[s * 3 + 2]
+                ma += m * A[s]
+            }
+        }
+        sums[b * 4]     = m0
+        sums[b * 4 + 1] = m1
+        sums[b * 4 + 2] = m2
+        sums[b * 4 + 3] = ma
+    }
+}
+
+kernel! pub fn fit-cell(
+    P: Array[Float], A: Array[Float], n: Int,
+    basis: Array[Float], nb: Int, offs: Array[Int], ids: Array[Int], sums: Array[Float],
+    G: Array[Float], k: Int, term: Array[Float], allow-bg: Bool, texture: Float,
+    out: Array[Float]
+) -> Int {
+    let t0 = term[0]
+    let t1 = term[1]
+    let t2 = term[2]
+    let sp0 = 0.0
+    let sp1 = 0.0
+    let sp2 = 0.0
+    let spp0 = 0.0
+    let spp1 = 0.0
+    let spp2 = 0.0
+    let sa = 0.0
+    let saa = 0.0
+    for s in ..n {
+        let p0 = P[s * 3]
+        let p1 = P[s * 3 + 1]
+        let p2 = P[s * 3 + 2]
+        let a = A[s]
+        sp0 += p0
+        sp1 += p1
+        sp2 += p2
+        spp0 += p0 * p0
+        spp1 += p1 * p1
+        spp2 += p2 * p2
+        sa += a
+        saa += a * a
+    }
+    let nf = float(n)
+    let tax = texture * 9.0 * 65025.0 * sa
+    let wa = 4.0 * 65025.0
+    let best0 = 0
+    let e0 = 1.0e300
+    let f00 = t0
+    let f01 = t1
+    let f02 = t2
+    let best1 = -1
+    let e1 = 1.0e300
+    let f10 = 0.0
+    let f11 = 0.0
+    let f12 = 0.0
+    let b10 = 0.0
+    let b11 = 0.0
+    let b12 = 0.0
+    project(P, A, n, basis, nb, sums)
+    for g in ..k {
+        let S = G[g * 3]
+        let Q = G[g * 3 + 1]
+        let st = G[g * 3 + 2]
+        let m0 = 0.0
+        let m1 = 0.0
+        let m2 = 0.0
+        let ma = 0.0
+        for t in offs[g]..offs[g + 1] {
+            let b = ids[t] * 4
+            m0 += sums[b]
+            m1 += sums[b + 1]
+            m2 += sums[b + 2]
+            ma += sums[b + 3]
+        }
+        let d0 = 0.0
+        let d1 = 0.0
+        let d2 = 0.0
+        if Q > 1.0e-9 {
+            d0 = (t0 + (m0 - S * t0) / Q).clamp(0.0, 255.0) - t0
+            d1 = (t1 + (m1 - S * t1) / Q).clamp(0.0, 255.0) - t1
+            d2 = (t2 + (m2 - S * t2) / Q).clamp(0.0, 255.0) - t2
+        }
+        let e = 3.0 * chan(spp0, sp0, m0, t0, d0, S, Q, nf)
+              + 4.0 * chan(spp1, sp1, m1, t1, d1, S, Q, nf)
+              + 2.0 * chan(spp2, sp2, m2, t2, d2, S, Q, nf)
+              + wa * (saa - 2.0 * ma + Q)
+              + tax * flatness(st, d0, d1, d2)
+        if e < e0 {
+            e0 = e
+            best0 = g
+            f00 = t0 + d0
+            f01 = t1 + d1
+            f02 = t2 + d2
+        }
+        if !allow-bg {
+            continue
+        }
+        let det = nf * Q - S * S
+        let a0 = sp0 / nf
+        let a1 = sp1 / nf
+        let a2 = sp2 / nf
+        d0 = 0.0
+        d1 = 0.0
+        d2 = 0.0
+        if det > 1.0e-6 * nf * nf {
+            a0 = (Q * sp0 - S * m0) / det
+            a1 = (Q * sp1 - S * m1) / det
+            a2 = (Q * sp2 - S * m2) / det
+            d0 = (nf * m0 - S * sp0) / det
+            d1 = (nf * m1 - S * sp1) / det
+            d2 = (nf * m2 - S * sp2) / det
+        }
+        let c0 = a0.clamp(0.0, 255.0)
+        let c1 = a1.clamp(0.0, 255.0)
+        let c2 = a2.clamp(0.0, 255.0)
+        d0 = (a0 + d0).clamp(0.0, 255.0) - c0
+        d1 = (a1 + d1).clamp(0.0, 255.0) - c1
+        d2 = (a2 + d2).clamp(0.0, 255.0) - c2
+        let e2 = 3.0 * chan(spp0, sp0, m0, c0, d0, S, Q, nf)
+               + 4.0 * chan(spp1, sp1, m1, c1, d1, S, Q, nf)
+               + 2.0 * chan(spp2, sp2, m2, c2, d2, S, Q, nf)
+               + wa * (saa - 2.0 * sa + nf)
+               + tax * flatness(st, d0, d1, d2)
+        if e2 < e1 {
+            e1 = e2
+            best1 = g
+            f10 = c0 + d0
+            f11 = c1 + d1
+            f12 = c2 + d2
+            b10 = c0
+            b11 = c1
+            b12 = c2
+        }
+    }
+    if best1 >= 0 && e1 < e0 {
+        out[0] = f10
+        out[1] = f11
+        out[2] = f12
+        out[3] = b10
+        out[4] = b11
+        out[5] = b12
+        out[6] = 1.0
+        return best1
+    }
+    out[0] = f00
+    out[1] = f01
+    out[2] = f02
+    out[6] = 0.0
+    best0
+}
+
+kernel! fn put16(dst: Blob, i: Int, v: Float) {
+    let q = int((v + 0.25) * 40000.0 + 0.5).clamp(0, 65535)
+    dst[i]     = q & 255
+    dst[i + 1] = q >> 8
+}
+
+kernel! fn get16(src: Blob, i: Int) -> Float {
+    float(src[i] | (src[i + 1] << 8)) / 40000.0 - 0.25
+}
+
+kernel! pub fn lanczos-rows(
+    src: Blob, stride: Int, cx: Int, cy: Int, ch: Int,
+    starts: Array[Int], counts: Array[Int], weights: Array[Float], taps: Int, gw: Int,
+    lin: Array[Float], tmp: Blob
+) {
+    for y in ..ch {
+        let row = (cy + y) * stride + cx
+        for gx in ..gw {
+            let r = 0.0
+            let g = 0.0
+            let b = 0.0
+            let a = 0.0
+            let p = (row + starts[gx]) * 4
+            let wk = gx * taps
+            for k in ..counts[gx] {
+                let wa = weights[wk + k] * float(src[p + 3])
+                r += wa * lin[src[p]]
+                g += wa * lin[src[p + 1]]
+                b += wa * lin[src[p + 2]]
+                a += wa
+                p += 4
+            }
+            let o = (y * gw + gx) * 8
+            put16(tmp, o, r / 255.0)
+            put16(tmp, o + 2, g / 255.0)
+            put16(tmp, o + 4, b / 255.0)
+            put16(tmp, o + 6, a / 255.0)
+        }
+    }
+}
+
+kernel! pub fn lanczos-cols(
+    tmp: Blob, gw: Int, starts: Array[Int], counts: Array[Int], weights: Array[Float], taps: Int, gh: Int, out: Blob
+) {
+    let step = gw * 8
+    for gy in ..gh {
+        let wk = gy * taps
+        let n = counts[gy]
+        let sum = 0.0
+        for k in ..n {
+            sum += weights[wk + k]
+        }
+        let bias = 0.25 * sum
+        for gx in ..gw {
+            let r = 0.0
+            let g = 0.0
+            let b = 0.0
+            let a = 0.0
+            let i = (starts[gy] * gw + gx) * 8
+            for k in ..n {
+                let w = weights[wk + k]
+                r += w * float(tmp[i] | (tmp[i + 1] << 8))
+                g += w * float(tmp[i + 2] | (tmp[i + 3] << 8))
+                b += w * float(tmp[i + 4] | (tmp[i + 5] << 8))
+                a += w * float(tmp[i + 6] | (tmp[i + 7] << 8))
+                i += step
+            }
+            let o = (gy * gw + gx) * 8
+            put16(out, o, r / 40000.0 - bias)
+            put16(out, o + 2, g / 40000.0 - bias)
+            put16(out, o + 4, b / 40000.0 - bias)
+            put16(out, o + 6, a / 40000.0 - bias)
+        }
+    }
+}
+
+kernel! fn sample-cell(
+    grid: Blob, gw: Int, col: Int, row: Int, sw: Int, sh: Int,
+    gamma: Array[Float], term: Array[Float], P: Array[Float], A: Array[Float]
+) {
+    for v in ..sh {
+        let base = (row * sh + v) * gw + col * sw
+        for u in ..sw {
+            let i = (base + u) * 8
+            let a = get16(grid, i + 6).clamp(0.0, 1.0)
+            let ia = 1.0 - a
+            let s = v * sw + u
+            P[s * 3]     = to-srgb(get16(grid, i).clamp(0.0, a) + ia * term[3], gamma)
+            P[s * 3 + 1] = to-srgb(get16(grid, i + 2).clamp(0.0, a) + ia * term[4], gamma)
+            P[s * 3 + 2] = to-srgb(get16(grid, i + 4).clamp(0.0, a) + ia * term[5], gamma)
+            A[s] = a
+        }
+    }
+}
+
+kernel! fn pack(r: Float, g: Float, b: Float) -> Int {
+    (int(r + 0.5).clamp(0, 255) << 16) | (int(g + 0.5).clamp(0, 255) << 8) | int(b + 0.5).clamp(0, 255)
+}
+
+kernel! pub fn fit-cells(
+    grid: Blob, cells: Array[Int], gamma: Array[Float], term: Array[Float],
+    basis: Array[Float], nb: Int, offs: Array[Int], ids: Array[Int],
+    G: Array[Float], k: Int, allow-bg: Bool, texture: Float,
+    P: Array[Float], A: Array[Float], sums: Array[Float], out: Array[Float],
+    idx: Array[Int], fgs: Array[Int], bgs: Array[Int]
+) {
+    let cols = cells[0]
+    let rows = cells[1]
+    let sw = cells[2]
+    let sh = cells[3]
+    let n = sw * sh
+    for row in ..rows {
+        for col in ..cols {
+            sample-cell(grid, cols * sw, col, row, sw, sh, gamma, term, P, A)
+            let i = row * cols + col
+            idx[i] = fit-cell(P, A, n, basis, nb, offs, ids, sums, G, k, term, allow-bg, texture, out)
+            fgs[i] = pack(out[0], out[1], out[2])
+            bgs[i] = (out[6] > 0.5) ? pack(out[3], out[4], out[5]) : -1
+        }
+    }
+}
+
+kernel! pub fn composite(dst: Blob, dw: Int, dh: Int, src: Blob, sw: Int, sh: Int, x0: Int, y0: Int, over: Bool) {
+    for y in max(0, -y0)..min(sh, dh - y0) {
+        for x in max(0, -x0)..min(sw, dw - x0) {
+            let s = (y * sw + x) * 4
+            let d = ((y0 + y) * dw + x0 + x) * 4
+            let sa = src[s + 3]
+            if !over || sa == 255 {
+                dst[d]     = src[s]
+                dst[d + 1] = src[s + 1]
+                dst[d + 2] = src[s + 2]
+                dst[d + 3] = sa
+            } else if sa > 0 {
+                let da = dst[d + 3] * (255 - sa)
+                let oa = sa * 255 + da
+                dst[d]     = (src[s] * sa * 255 + dst[d] * da + oa / 2) / oa
+                dst[d + 1] = (src[s + 1] * sa * 255 + dst[d + 1] * da + oa / 2) / oa
+                dst[d + 2] = (src[s + 2] * sa * 255 + dst[d + 2] * da + oa / 2) / oa
+                dst[d + 3] = (oa + 127) / 255
+            }
+        }
+    }
+}
+
+kernel! pub fn clear-rect(dst: Blob, dw: Int, dh: Int, x0: Int, y0: Int, w: Int, h: Int) {
+    for y in max(0, y0)..min(dh, y0 + h) {
+        for i in (y * dw + max(0, x0)) * 4..(y * dw + min(dw, x0 + w)) * 4 {
+            dst[i] = 0
+        }
+    }
+}
+
+kernel! pub fn box-reduce(
+    src: Blob, stride: Int, cx: Int, cy: Int, fx: Int, fy: Int,
+    dst: Blob, dw: Int, dh: Int, lin: Array[Float], gamma: Array[Float]
+) {
+    let n = float(fx * fy) * 255.0
+    for oy in ..dh {
+        for ox in ..dw {
+            let r = 0.0
+            let g = 0.0
+            let b = 0.0
+            let a = 0
+            for y in cy + oy * fy..cy + (oy + 1) * fy {
+                let p = (y * stride + cx + ox * fx) * 4
+                for x in ..fx {
+                    let w = float(src[p + 3])
+                    r += w * lin[src[p]]
+                    g += w * lin[src[p + 1]]
+                    b += w * lin[src[p + 2]]
+                    a += src[p + 3]
+                    p += 4
+                }
+            }
+            let o = (oy * dw + ox) * 4
+            if a > 0 {
+                let k = 255.0 / float(a)
+                dst[o]     = int(to-srgb(r * k / 255.0, gamma) + 0.5)
+                dst[o + 1] = int(to-srgb(g * k / 255.0, gamma) + 0.5)
+                dst[o + 2] = int(to-srgb(b * k / 255.0, gamma) + 0.5)
+            }
+            dst[o + 3] = int(float(a) * 255.0 / n + 0.5)
+        }
+    }
+}

@@ -1,0 +1,305 @@
+import zlib
+import jit (kernel!)
+import ink.image.raster (Picture, Frame, ImageError, zeros, composite, clear-rect)
+
+pub SIGNATURE = Blob(0x89, "PNG\r\n\x1a\n")
+
+const ADAM7 = [(0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4), (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2)]
+
+const CHANNELS = %{0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
+
+kernel! fn paeth(a: Int, b: Int, c: Int) -> Int {
+    let p = a + b - c
+    let pa = (p - a).abs
+    let pb = (p - b).abs
+    let pc = (p - c).abs
+    (pa <= pb && pa <= pc) ? a : ((pb <= pc) ? b : c)
+}
+
+kernel! fn unfilter(raw: Blob, start: Int, rows: Int, stride: Int, bpp: Int) -> Bool {
+    for y in ..rows {
+        let f = raw[start + y * (stride + 1)]
+        let p = start + y * (stride + 1) + 1
+        let q = p - stride - 1
+        if f == 0 {
+            continue
+        }
+        if f == 1 {
+            for x in bpp..stride {
+                raw[p + x] = raw[p + x] + raw[p + x - bpp]
+            }
+        } else if f == 2 {
+            if y > 0 {
+                for x in ..stride {
+                    raw[p + x] = raw[p + x] + raw[q + x]
+                }
+            }
+        } else if f == 3 {
+            for x in ..stride {
+                let a = (x >= bpp) ? raw[p + x - bpp] : 0
+                let b = (y > 0) ? raw[q + x] : 0
+                raw[p + x] = raw[p + x] + (a + b) / 2
+            }
+        } else if f == 4 {
+            for x in ..stride {
+                let a = (x >= bpp) ? raw[p + x - bpp] : 0
+                let b = (y > 0) ? raw[q + x] : 0
+                let c = (x >= bpp && y > 0) ? raw[q + x - bpp] : 0
+                raw[p + x] = raw[p + x] + paeth(a, b, c)
+            }
+        } else {
+            return false
+        }
+    }
+    true
+}
+
+kernel! fn sample(raw: Blob, row: Int, x: Int, c: Int, channels: Int, depth: Int) -> Int {
+    if depth == 8 {
+        return raw[row + x * channels + c]
+    }
+    if depth == 16 {
+        let i = row + (x * channels + c) * 2
+        return (raw[i] << 8) | raw[i + 1]
+    }
+    let bit = x * depth
+    (raw[row + (bit >> 3)] >> (8 - depth - (bit & 7))) & ((1 << depth) - 1)
+}
+
+kernel! fn expand(
+    raw: Blob, start: Int, pw: Int, ph: Int, stride: Int,
+    color: Int, depth: Int, channels: Int, pal: Blob, key: Array[Int],
+    dst: Blob, dw: Int, x0: Int, y0: Int, dx: Int, dy: Int
+) {
+    let top = (1 << depth) - 1
+    let shift = (depth == 16) ? 8 : 0
+    for y in ..ph {
+        let row = start + y * (stride + 1) + 1
+        let out = ((y0 + y * dy) * dw + x0) * 4
+        for x in ..pw {
+            let o = out + x * dx * 4
+            let v = sample(raw, row, x, 0, channels, depth)
+            if color == 3 {
+                let i = v * 4
+                dst[o]     = pal[i]
+                dst[o + 1] = pal[i + 1]
+                dst[o + 2] = pal[i + 2]
+                dst[o + 3] = pal[i + 3]
+            } else if color == 0 || color == 4 {
+                let g = (depth < 8) ? v * 255 / top : v >> shift
+                dst[o]     = g
+                dst[o + 1] = g
+                dst[o + 2] = g
+                if color == 4 {
+                    dst[o + 3] = sample(raw, row, x, 1, channels, depth) >> shift
+                } else {
+                    dst[o + 3] = (v == key[0]) ? 0 : 255
+                }
+            } else {
+                let g = sample(raw, row, x, 1, channels, depth)
+                let b = sample(raw, row, x, 2, channels, depth)
+                dst[o]     = v >> shift
+                dst[o + 1] = g >> shift
+                dst[o + 2] = b >> shift
+                if color == 6 {
+                    dst[o + 3] = sample(raw, row, x, 3, channels, depth) >> shift
+                } else {
+                    dst[o + 3] = (v == key[0] && g == key[1] && b == key[2]) ? 0 : 255
+                }
+            }
+        }
+    }
+}
+
+class Header {
+    width:      Int
+    height:     Int
+    depth:      Int
+    color:      Int
+    interlaced: Bool
+    channels:   Int
+    pal:        Blob
+    key:        Array[Int]
+
+    init(b: Blob) {
+        width      = u32(b, 0)
+        height     = u32(b, 4)
+        depth      = b[8]
+        color      = b[9]
+        interlaced = b[12] == 1
+        channels   = CHANNELS[color] ?? throw ImageError("PNG: bad color type {color}")
+        if depth not in [1, 2, 4, 8, 16] || (depth > 8 && color == 3) || (depth < 8 && color not in [0, 3]) {
+            throw ImageError("PNG: bad bit depth {depth} for color type {color}")
+        }
+        pal = zeros(1024)
+        for i in ..256 {
+            pal[i * 4 + 3] = 255
+        }
+        key = [-1, -1, -1]
+    }
+
+    palette(b: Blob) {
+        for i in ..min(#b / 3, 256) {
+            pal[i * 4]     = b[i * 3]
+            pal[i * 4 + 1] = b[i * 3 + 1]
+            pal[i * 4 + 2] = b[i * 3 + 2]
+        }
+    }
+
+    transparency(b: Blob) {
+        match color {
+            3 => for i in ..min(#b, 256) { pal[i * 4 + 3] = b[i] },
+            0 => key = [u16(b, 0), -1, -1],
+            2 => key = [u16(b, 0), u16(b, 2), u16(b, 4)],
+            _ => ()
+        }
+    }
+
+    stride(w: Int) -> Int { (w * channels * depth + 7) / 8 }
+
+    passes(w: Int, h: Int) -> Array[(Int, Int, Int, Int, Int, Int)] {
+        let layout = interlaced ? ADAM7 : [(0, 0, 1, 1)]
+        [
+            (x0, y0, dx, dy, (w - x0 + dx - 1) / dx, (h - y0 + dy - 1) / dy)
+            for (x0, y0, dx, dy) in layout
+        ].filter(|(_, _, _, _, pw, ph)| -> pw > 0 && ph > 0)
+    }
+
+    decode(data: Blob, w: Int, h: Int) -> Blob {
+        let passes = passes(w, h)
+        let size = passes.map(|(_, _, _, _, pw, ph)| -> ph * (stride(pw) + 1)).sum(0)
+        let raw = zlib.uncompress2(data, size + 1) ?? throw ImageError('PNG: bad zlib stream')
+        if #raw < size {
+            throw ImageError("PNG: image data is truncated ({#raw} of {size} bytes)")
+        }
+        let bpp = max(channels * depth / 8, 1)
+        let dst = zeros(w * h * 4)
+        let start = 0
+        for (x0, y0, dx, dy, pw, ph) in passes {
+            let stride = stride(pw)
+            if !unfilter(raw, start, ph, stride, bpp) {
+                throw ImageError('PNG: bad filter type')
+            }
+            expand(raw, start, pw, ph, stride, color, depth, channels, pal, key, dst, w, x0, y0, dx, dy)
+            start += ph * (stride + 1)
+        }
+        dst
+    }
+}
+
+class Control {
+    width:   Int
+    height:  Int
+    x:       Int
+    y:       Int
+    delay:   Float
+    dispose: Int
+    blend:   Int
+
+    init(b: Blob) {
+        width   = u32(b, 4)
+        height  = u32(b, 8)
+        x       = u32(b, 12)
+        y       = u32(b, 16)
+        let den = u16(b, 22)
+        delay   = float(u16(b, 20)) / float(den == 0 ? 100 : den)
+        dispose = b[24]
+        blend   = b[25]
+    }
+}
+
+fn u16(b: Blob, i: Int) -> Int { (b[i] << 8) | b[i + 1] }
+
+fn u32(b: Blob, i: Int) -> Int { (u16(b, i) << 16) | u16(b, i + 2) }
+
+fn chunks*(data: Blob) {
+    let i = #SIGNATURE
+    while i + 8 <= #data {
+        let n = u32(data, i)
+        let kind = data[i + 4;i + 8].str!()
+        if i + 12 + n > #data {
+            throw ImageError("PNG: chunk {kind} runs past the end of the file")
+        }
+        yield (kind, data[i + 8;i + 8 + n])
+        i += 12 + n
+    }
+}
+
+class Animation {
+    header:   Header
+    canvas:   Blob
+    frames:   Array[Frame]
+    control:  Control | nil
+    pending:  Blob
+
+    init(header: Header) {
+        self.header = header
+        canvas   = zeros(header.width * header.height * 4)
+        frames   = []
+        control  = nil
+        pending  = Blob()
+    }
+
+    begin(c: Control) {
+        flush()
+        control = c
+    }
+
+    flush() {
+        let $c = control or return
+        control = nil
+        if #pending == 0 {
+            return
+        }
+        let w = header.width
+        let h = header.height
+        let image = header.decode(pending, c.width, c.height)
+        pending = Blob()
+        let saved = (c.dispose == 2) ? Blob(canvas) : nil
+        composite(canvas, w, h, image, c.width, c.height, c.x, c.y, c.blend == 1)
+        frames.push(Frame(Blob(canvas), c.delay))
+        match c.dispose {
+            1 => clear-rect(canvas, w, h, c.x, c.y, c.width, c.height),
+            2 => canvas = saved ?? canvas,
+            _ => ()
+        }
+    }
+}
+
+pub fn decode(data: Blob) -> Picture {
+    if #data < 8 || data[;8] != SIGNATURE {
+        throw ImageError('PNG: bad signature')
+    }
+    let parts = [*chunks(data)]
+    let header = match parts {
+        [('IHDR', body), *_] => Header(body),
+        _                    => throw ImageError('PNG: missing IHDR')
+    }
+    let idat = Blob()
+    let anim: Animation | nil = nil
+    let loops = 0
+    for (kind, body) in parts[1;] {
+        match (kind, anim) {
+            ('PLTE', _)       => header.palette(body),
+            ('tRNS', _)       => header.transparency(body),
+            ('acTL', _)       => (anim, loops) = (Animation(header), u32(body, 4)),
+            ('fcTL', $a)      => a.begin(Control(body)),
+            ('fdAT', $a)      => a.pending.push(body[4;]),
+            ('IDAT', a)       => {
+                idat.push(body)
+                if a != nil && a.control != nil {
+                    a.pending.push(body)
+                }
+            },
+            ('IEND', _)       => break,
+            _                 => ()
+        }
+    }
+    if let $a = anim {
+        a.flush()
+        if #a.frames > 0 {
+            return Picture(header.width, header.height, a.frames, 'png', loops)
+        }
+    }
+    Picture(header.width, header.height, [Frame(header.decode(idat, header.width, header.height))], 'png')
+}

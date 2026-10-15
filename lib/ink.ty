@@ -32,6 +32,7 @@ let __tls::_overlays:   Array[Any]               = []
 let __tls::_prev-kitties: Array[Int] = []
 let __tls::_kitties:      Array[Int] = []
 let __tls::_kitty-images: Array[Any] = []
+let __tls::_kitty-uploads: Array[String] = []
 
 const DEFAULT_FPS = 60.0
 const IDLE_POLL   = 0.25
@@ -696,6 +697,22 @@ pub fn resolve-color-rgb(name: String) -> (Int, Int, Int) {
 
 fn kitty-delete(id: Int) -> String {
     "\x1b_Ga=d,q=2,d=i,i={id}\x1b\\"
+}
+
+pub fn kitty-upload(escape: String) {
+    _kitty-uploads.push(escape)
+}
+
+fn take-uploads() -> Array[String] {
+    let pending = _kitty-uploads
+    _kitty-uploads = []
+    pending
+}
+
+fn push-uploads() {
+    for take-uploads() {
+        _out.push(it)
+    }
 }
 
 
@@ -5084,6 +5101,7 @@ fn next-timer-deadline() -> Float | nil {
 
 fn paint-output(output: Output) {
     _out.clear()
+    push-uploads()
     for line in output.lines {
         _out.push(line)
         _out.push('\n')
@@ -5159,6 +5177,7 @@ fn paint-inline(output: Output, cols: Int) {
     _out.clear()
     _out.push("\x1b[?2026h\x1b[?7l\x1b[?25l")
     _out.push(title-escape())
+    push-uploads()
     _cursor = nil
     let lines = strip-cursor(composite-overlays(output.lines, cols))
     if _last-inline-height > 0 {
@@ -5247,6 +5266,7 @@ pub fn ink-log(*args) {
         match arg {
             (n: Node) or (n: Component) => {
                 let (output, _) = layout-node(n, _tio ? _tio.size().1 : 80)
+                push-uploads()
                 for line in output.lines {
                     _out.push("{line}\n")
                 }
@@ -5350,6 +5370,7 @@ fn anchor-log(args: Array[_]) {
     anchor-release()
     for arg in args {
         let lines = log-lines(arg, cols)
+        push-uploads()
         remember(arg, lines)
         for line in lines {
             _out.push("\x1b[2K{line}{RST}\r\n")
@@ -5390,6 +5411,7 @@ fn paint-anchored(output: Output, rows: Int, cols: Int) {
     _out.clear()
     _out.push("\x1b[?2026h\x1b[?7l\x1b[?25l")
     _out.push(title-escape())
+    push-uploads()
 
     if rows != _rows || cols != _cols {
         _rehome ?= 'reset'
@@ -5446,6 +5468,7 @@ let __tls::_screen-touched?: Bool = false
 fn paint-fullscreen(output: Output, rows: Int, cols: Int) {
     _out.clear()
     _out.push("\x1b[?2026h\x1b[?7l")
+    push-uploads()
     let old-kitties = _prev-kitties
     for id in old-kitties if id not in _kitties {
         _out.push(kitty-delete(id))
@@ -6003,6 +6026,7 @@ fn reset-runtime() {
     _prev-kitties       = []
     _kitties            = []
     _kitty-images       = []
+    _kitty-uploads      = []
     _pending-focus-type = nil
     _dragging?          = false
     _capture            = nil
@@ -6021,6 +6045,13 @@ pub fn render(root) {
 
 pub fn terminal-color(n: Int) -> (Int, Int, Int) | nil {
     _tio.?color(n)
+}
+
+pub fn background-rgb() -> (Int, Int, Int) | nil {
+    match __theme-colors['bg-global'] {
+        $bg and #bg > 0 => resolve-color-rgb(bg),
+        _               => terminal-color(11)
+    }
 }
 
 pub fn run(
@@ -6303,6 +6334,7 @@ pub fn run(
 
 pub class TestHarness {
     __cursor: (Int, Int, String) | nil = nil
+    __uploads: Array[String] = []
     __app: Component
     __tree: Element | nil
     __output: Output | nil
@@ -6359,6 +6391,7 @@ pub class TestHarness {
             }
         }
         let (out, t) = render-root(__app, __cols, __rows)
+        __uploads += take-uploads()
         _cursor = nil
         __output = Output(strip-cursor(composite-overlays(out.lines, __cols)), out.width)
         __cursor = _cursor
@@ -6366,6 +6399,8 @@ pub class TestHarness {
     }
 
     cursor -> (Int, Int, String) | nil { __cursor }
+
+    uploads -> Array[String] { __uploads }
 
     __dispatch(ev) {
         ev = layout-key(ev)

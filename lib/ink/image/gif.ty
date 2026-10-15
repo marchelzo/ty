@@ -1,0 +1,293 @@
+import jit (kernel!)
+import ink.image.raster (Picture, Frame, ImageError, zeros, clear-rect)
+
+kernel! fn unblock(src: Blob, i: Int, dst: Blob, out: Array[Int]) {
+    let o = 0
+    while i < #src {
+        let n = src[i]
+        i += 1
+        if n == 0 {
+            break
+        }
+        let end = min(i + n, #src)
+        while i < end {
+            dst[o] = src[i]
+            o += 1
+            i += 1
+        }
+    }
+    out[0] = i
+    out[1] = o
+}
+
+kernel! fn lzw(src: Blob, n: Int, dst: Blob, min-size: Int, prefix: Array[Int], suffix: Blob, stack: Blob) -> Int {
+    let clear = 1 << min-size
+    let size = min-size + 1
+    let mask = (1 << size) - 1
+    let next = clear + 2
+    let old = -1
+    let first = 0
+    let acc = 0
+    let bits = 0
+    let i = 0
+    let o = 0
+    for c in ..clear {
+        prefix[c] = -1
+        suffix[c] = c
+    }
+    while o < #dst {
+        while bits < size {
+            if i >= n {
+                return o
+            }
+            acc = acc | (src[i] << bits)
+            i += 1
+            bits += 8
+        }
+        let code = acc & mask
+        acc = acc >> size
+        bits -= size
+        if code == clear {
+            size = min-size + 1
+            mask = (1 << size) - 1
+            next = clear + 2
+            old = -1
+            continue
+        }
+        if code == clear + 1 {
+            break
+        }
+        if old < 0 {
+            if code > clear {
+                return o
+            }
+            dst[o] = code
+            o += 1
+            old = code
+            first = code
+            continue
+        }
+        let current = code
+        let sp = 0
+        if code >= next {
+            stack[0] = first
+            sp = 1
+            code = old
+        }
+        while code >= clear {
+            stack[sp] = suffix[code]
+            sp += 1
+            code = prefix[code]
+        }
+        first = code
+        stack[sp] = first
+        sp += 1
+        while sp > 0 && o < #dst {
+            sp -= 1
+            dst[o] = stack[sp]
+            o += 1
+        }
+        if next < 4096 {
+            prefix[next] = old
+            suffix[next] = first
+            next += 1
+            if next > mask && size < 12 {
+                size += 1
+                mask = (1 << size) - 1
+            }
+        }
+        old = current
+    }
+    o
+}
+
+kernel! fn interlaced-row(i: Int, h: Int) -> Int {
+    let a = (h + 7) / 8
+    let b = (h + 3) / 8
+    let c = (h + 1) / 4
+    if i < a {
+        return i * 8
+    }
+    if i < a + b {
+        return (i - a) * 8 + 4
+    }
+    if i < a + b + c {
+        return (i - a - b) * 4 + 2
+    }
+    (i - a - b - c) * 2 + 1
+}
+
+kernel! fn dst-pixel(canvas: Blob, d: Int, pal: Blob, c: Int) {
+    canvas[d]     = pal[c * 3]
+    canvas[d + 1] = pal[c * 3 + 1]
+    canvas[d + 2] = pal[c * 3 + 2]
+    canvas[d + 3] = 255
+}
+
+kernel! fn blit(
+    canvas: Blob, cw: Int, ch: Int, idx: Blob, count: Int,
+    fx: Int, fy: Int, fw: Int, fh: Int, pal: Blob, transparent: Int, interlaced: Bool
+) {
+    for i in ..fh {
+        let y = fy + (interlaced ? interlaced-row(i, fh) : i)
+        if y < 0 || y >= ch {
+            continue
+        }
+        for x in ..fw {
+            let s = i * fw + x
+            if s >= count {
+                return
+            }
+            let c = idx[s]
+            let tx = fx + x
+            if c == transparent || tx < 0 || tx >= cw {
+                continue
+            }
+            let d = (y * cw + tx) * 4
+            dst-pixel(canvas, d, pal, c)
+        }
+    }
+}
+
+class Reader {
+    data: Blob
+    i:    Int
+
+    init(data: Blob) {
+        self.data = data
+        i = 0
+    }
+
+    u8() -> Int {
+        if i >= #data {
+            throw ImageError('GIF: unexpected end of file')
+        }
+        i += 1
+        data[i - 1]
+    }
+
+    u16() -> Int { u8() | (u8() << 8) }
+
+    bytes(n: Int) -> Blob {
+        if i + n > #data {
+            throw ImageError('GIF: unexpected end of file')
+        }
+        i += n
+        data[i - n;i]
+    }
+
+    palette(flags: Int) -> Blob | nil {
+        ((flags & 0x80) != 0) ? bytes(3 * (2 << (flags & 7))) : nil
+    }
+
+    blocks() -> Blob {
+        let out = zeros(#data - i)
+        let pos = [0, 0]
+        unblock(data, i, out, pos)
+        i = pos[0]
+        out[;pos[1]]
+    }
+}
+
+class Decoder {
+    r:           Reader
+    width:       Int
+    height:      Int
+    canvas:      Blob
+    global:      Blob | nil
+    frames:      Array[Frame]
+    loops:       Int
+    delay:       Float
+    dispose:     Int
+    transparent: Int
+    prefix:      Array[Int]
+    suffix:      Blob
+    stack:       Blob
+
+    init(data: Blob) {
+        r = Reader(data)
+        let sig = r.bytes(6).str()
+        if sig != 'GIF87a' && sig != 'GIF89a' {
+            throw ImageError('GIF: bad signature')
+        }
+        width  = r.u16()
+        height = r.u16()
+        let flags = r.u8()
+        r.u16()
+        global      = r.palette(flags)
+        canvas      = zeros(width * height * 4)
+        frames      = []
+        loops       = 0
+        delay       = 0.1
+        dispose     = 0
+        transparent = -1
+        prefix      = [0 for ..4096]
+        suffix      = zeros(4096)
+        stack       = zeros(4097)
+    }
+
+    run() -> Picture {
+        while r.i < #r.data {
+            match r.u8() {
+                0x2C => image(),
+                0x21 => extension(r.u8()),
+                0x3B => break,
+                _    => break
+            }
+        }
+        if #frames == 0 {
+            throw ImageError('GIF: no image data')
+        }
+        Picture(width, height, frames, 'gif', loops)
+    }
+
+    extension(label: Int) {
+        let body = r.blocks()
+        match label {
+            0xF9 and #body >= 4 => {
+                dispose     = (body[0] >> 2) & 7
+                let cs      = body[1] | (body[2] << 8)
+                delay       = (cs < 2) ? 0.1 : float(cs) / 100.0
+                transparent = ((body[0] & 1) != 0) ? body[3] : -1
+            },
+            0xFF and body[;11].str() == 'NETSCAPE2.0' && #body >= 14 => {
+                loops = body[12] | (body[13] << 8)
+            },
+            _ => ()
+        }
+    }
+
+    image() {
+        let fx = r.u16()
+        let fy = r.u16()
+        let fw = r.u16()
+        let fh = r.u16()
+        let flags = r.u8()
+        let pal = r.palette(flags) ?? global ?? zeros(768)
+        if #pal < 768 {
+            pal.push(zeros(768 - #pal))
+        }
+        let min-size = r.u8()
+        if min-size < 1 || min-size > 11 {
+            throw ImageError("GIF: bad LZW code size {min-size}")
+        }
+        let packed = r.blocks()
+        let idx = zeros(fw * fh)
+        let count = lzw(packed, #packed, idx, min-size, prefix, suffix, stack)
+        let saved = (dispose == 3) ? Blob(canvas) : nil
+        blit(canvas, width, height, idx, count, fx, fy, fw, fh, pal, transparent, (flags & 0x40) != 0)
+        frames.push(Frame(Blob(canvas), delay))
+        match dispose {
+            2 => clear-rect(canvas, width, height, fx, fy, fw, fh),
+            3 => canvas = saved ?? canvas,
+            _ => ()
+        }
+        dispose     = 0
+        delay       = 0.1
+        transparent = -1
+    }
+}
+
+pub fn decode(data: Blob) -> Picture {
+    Decoder(data).run()
+}
