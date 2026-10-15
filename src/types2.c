@@ -28452,15 +28452,24 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
         return result;
 }
 
+static void
+observe_node(T2Checker *checker, Expr const *expr, u32 role, u32 visit)
+{
+        checker->role_visits[visit] += 1;
+        fold_shape(checker, expr);
+
+        if (!checker->restored || checker->log != NULL) {
+                (void)remember_node(checker, expr, expr->type, role);
+        }
+}
+
 static Expr *
 observe_expression(Expr *expr, Scope *scope, void *user)
 {
         T2Checker *checker = ((T2Walk *)user)->checker;
         (void)scope;
 
-        checker->role_visits[0] += 1;
-        fold_shape(checker, expr);
-        (void)remember_node(checker, expr, expr->type, T2_ROLE_EXPRESSION);
+        observe_node(checker, expr, T2_ROLE_EXPRESSION, 0);
 
         return expr;
 }
@@ -28471,9 +28480,7 @@ observe_type(Expr *expr, Scope *scope, void *user)
         T2Checker *checker = ((T2Walk *)user)->checker;
         (void)scope;
 
-        checker->role_visits[1] += 1;
-        fold_shape(checker, expr);
-        (void)remember_node(checker, expr, expr->type, T2_ROLE_TYPE);
+        observe_node(checker, expr, T2_ROLE_TYPE, 1);
 
         return expr;
 }
@@ -28484,9 +28491,7 @@ observe_pattern(Expr *expr, Scope *scope, void *user)
         T2Checker *checker = ((T2Walk *)user)->checker;
         (void)scope;
 
-        checker->role_visits[2] += 1;
-        fold_shape(checker, expr);
-        (void)remember_node(checker, expr, expr->type, T2_ROLE_PATTERN);
+        observe_node(checker, expr, T2_ROLE_PATTERN, 2);
 
         return expr;
 }
@@ -28498,9 +28503,7 @@ observe_lvalue(Expr *expr, bool declaration, Scope *scope, void *user)
         (void)declaration;
         (void)scope;
 
-        checker->role_visits[3] += 1;
-        fold_shape(checker, expr);
-        (void)remember_node(checker, expr, expr->type, T2_ROLE_LVALUE);
+        observe_node(checker, expr, T2_ROLE_LVALUE, 3);
 
         return expr;
 }
@@ -28511,9 +28514,7 @@ observe_statement(Stmt *stmt, Scope *scope, void *user)
         T2Checker *checker = ((T2Walk *)user)->checker;
         (void)scope;
 
-        checker->role_visits[4] += 1;
-        fold_shape(checker, (Expr const *)stmt);
-        (void)remember_node(checker, stmt, stmt->type, T2_ROLE_STATEMENT);
+        observe_node(checker, (Expr const *)stmt, T2_ROLE_STATEMENT, 4);
 
         return stmt;
 }
@@ -33230,20 +33231,22 @@ t2_checker_observe(
         }
 
         usize before = checker->node_count;
-        T2Walk walk  = { .checker = checker };
-        VisitorCtx visitor = visit_identity(ty);
-
-        visitor.user  = &walk;
-        visitor.e_pre = observe_expression;
-        visitor.t_pre = observe_type;
-        visitor.p_pre = observe_pattern;
-        visitor.l_pre = observe_lvalue;
-        visitor.s_pre = observe_statement;
-
         checker->hashing_shape = (checkpoint == T2_CHECKPOINT_DECLARATION)
                               || (checkpoint == T2_CHECKPOINT_CLASS_OPERATOR_DECLARATION);
 
-        (void)visit_statement(ty, (Stmt *)stmt, NULL, &visitor);
+        if (checker->hashing_shape || !checker->restored || checker->log != NULL) {
+                T2Walk walk = { .checker = checker };
+                VisitorCtx visitor = visit_identity(ty);
+
+                visitor.user  = &walk;
+                visitor.e_pre = observe_expression;
+                visitor.t_pre = observe_type;
+                visitor.p_pre = observe_pattern;
+                visitor.l_pre = observe_lvalue;
+                visitor.s_pre = observe_statement;
+
+                (void)visit_statement(ty, (Stmt *)stmt, NULL, &visitor);
+        }
         checker->hashing_shape = false;
 
         checker->ty = ty;
