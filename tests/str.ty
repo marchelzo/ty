@@ -115,6 +115,18 @@ pub fn split-string() {
     assert('a'.split(',') == ['a'])
 }
 
+pub fn split-literal-boundaries() {
+    assert(''.split(',') == [''])
+    assert('abc'.split('') == [])
+    assert('aaaaa'.split('aa') == ['', '', 'a'])
+    assert('abcab'.split('abcabc') == ['abcab'])
+    assert('abcabxabcabyabcab'.split('abcab') == ['', 'x', 'y', ''])
+    assert("a\0b\0".split("\0") == ['a', 'b', ''])
+    assert('α🍂β🍂'.split('🍂') == ['α', 'β', ''])
+    assert('a::::b'.split('::', 1) == ['a', '::b'])
+    assert('a,b,c'.split(',', -1) == ['a', 'b', 'c'])
+}
+
 pub fn split-regex() {
     assert('hello world'.split(/\s+/) == ['hello', 'world'])
     assert('a1b2c'.split(/\d/) == ['a', 'b', 'c'])

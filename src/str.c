@@ -43,12 +43,6 @@ x_x_x(u8 const *s, isize sz, isize ncp)
         return off;
 }
 
-inline static bool
-is_prefix(void const *big, isize blen, void const *little, isize slen)
-{
-        return (blen >= slen) && (memcmp(big, little, slen) == 0);
-}
-
 inline static Value
 mkmatch(Ty *ty, Value *s, usize *ovec, isize n, bool detailed)
 {
@@ -877,26 +871,25 @@ string_split(Ty *ty, Value *string, int argc, Value *kwargs)
                 u8 const *p = ss(pattern);
                 isize n = sN(pattern);
 
-                if (n == 0)
+                if (n == 0) {
                         goto End;
+                }
 
                 isize i = 0;
                 while (i < len) {
-                        Value str = STRING_VIEW(*string, i, 0);
+                        isize end = len;
 
-                        if (argc == 2 && result.array->count == ARG(1).z) {
-                                sN(str) = len - i;
-                                i = len;
-                        } else {
-                                while (i < len && !is_prefix(s + i, len - i, p, n)) {
-                                        sN(str) += 1;
-                                        i += 1;
+                        if (result.array->count != limit) {
+                                u8 const *match = mmmm(s + i, len - i, p, n);
+
+                                if (match != NULL) {
+                                        end = match - s;
                                 }
                         }
 
-                        vAp(result.array, str);
+                        vAp(result.array, STRING_VIEW(*string, i, end - i));
 
-                        i += n;
+                        i = end + n;
                 }
 
                 if (i == len) {
