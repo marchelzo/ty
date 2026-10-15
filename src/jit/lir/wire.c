@@ -290,12 +290,14 @@ lir_serialize(Ty *ty, Lir *L, LirBytes *bytes, LirError *err)
                 svP(w.holes, ((LirBinding) {0}));
         }
 
-        LirBinding root = { .operand = { .kind = LO_CONST } };
+        Value     *roots = stA(Value, vN(L->roots));
+        LirBinding root  = { .operand = { .kind = LO_CONST } };
 
-        vfor(L->roots, {
-                root.value = it;
+        for (u32 i = 0; i < vN(L->roots); ++i) {
+                roots[i]   = v__(L->roots, i);
+                root.value = &roots[i];
                 svP(w.holes, root);
-        });
+        }
 
         u32 v = version(L);
 

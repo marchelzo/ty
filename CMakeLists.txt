@@ -239,7 +239,7 @@ set(_gen_builtins_sources
   src/ffi.c
   src/sqlite.c
   src/screen.c
-  src/jitmod.c
+  src/jit/mod.c
 )
 set(_gen_builtins_methods
   src/str.c
@@ -314,11 +314,11 @@ add_subdirectory(unibilium)
 find_program(LUAJIT luajit)
 if(LUAJIT)
   if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
-    set(_lir_dasc ${PROJECT_SOURCE_DIR}/src/lir_arm64.dasc)
-    set(_lir_hdr  ${PROJECT_SOURCE_DIR}/src/lir_arm64.h)
+    set(_lir_dasc ${PROJECT_SOURCE_DIR}/src/jit/lir/arm64.dasc)
+    set(_lir_hdr  ${PROJECT_SOURCE_DIR}/src/jit/lir/arm64.h)
   else()
-    set(_lir_dasc ${PROJECT_SOURCE_DIR}/src/lir_x64.dasc)
-    set(_lir_hdr  ${PROJECT_SOURCE_DIR}/src/lir_x64.h)
+    set(_lir_dasc ${PROJECT_SOURCE_DIR}/src/jit/lir/x64.dasc)
+    set(_lir_hdr  ${PROJECT_SOURCE_DIR}/src/jit/lir/x64.h)
   endif()
 
   if(_lir_hdr)
@@ -338,6 +338,24 @@ endif()
 # ---
 #  target: ty
 # ---
+
+set(_lir_core
+  src/jit/lir/lir.c
+  src/jit/lir/check.c
+  src/jit/lir/cfg.c
+  src/jit/lir/wire.c
+  src/jit/lir/entry.c
+  src/panic.c
+)
+
+set(_lir_native
+  src/jit/lir/interp.c
+  src/jit/lir/ra.c
+  src/jit/lir/norm.c
+  src/jit/lir/emit.c
+  src/jit/lir/finish.c
+  src/jit/mem.c
+)
 
 set(_src_files
   src/alloc.c
@@ -362,13 +380,11 @@ set(_src_files
   src/intern.c
   src/itable.c
   src/inline.c
-  src/jit.c
-  src/jitmod.c
-  src/jitmem.c
-  src/lir.c
-  src/lir_emit.c
-  src/lir_interp.c
-  src/lir_ra.c
+  src/jit/jit.c
+  src/jit/lower.c
+  src/jit/mod.c
+  ${_lir_core}
+  ${_lir_native}
   src/json.c
   src/lex.c
   src/mod.c
@@ -477,7 +493,7 @@ if(BUILD_TESTING)
     list(APPEND _lir_tests native entry)
   endif()
   foreach(_lir_test IN LISTS _lir_tests)
-    add_executable(lir-${_lir_test}-test tests/lir_${_lir_test}.c src/lir.c)
+    add_executable(lir-${_lir_test}-test tests/jit/lir/${_lir_test}.c ${_lir_core})
     target_include_directories(lir-${_lir_test}-test PRIVATE include libco nsync/public)
     target_compile_definitions(lir-${_lir_test}-test PRIVATE PCRE2_CODE_UNIT_WIDTH=8 _GNU_SOURCE)
     target_compile_options(lir-${_lir_test}-test PRIVATE
@@ -495,28 +511,21 @@ if(BUILD_TESTING)
     )
     add_test(NAME lir-${_lir_test} COMMAND lir-${_lir_test}-test)
   endforeach()
-  target_sources(lir-interp-test PRIVATE src/lir_interp.c)
-  target_sources(lir-ra-test PRIVATE src/lir_ra.c)
-  if(TARGET lir-native-test)
-    target_sources(lir-native-test PRIVATE
-      src/lir_interp.c src/lir_ra.c src/lir_emit.c src/jitmem.c)
-    target_link_libraries(lir-native-test PRIVATE nsync)
-    if(TARGET GenerateLirHeader)
-      add_dependencies(lir-native-test GenerateLirHeader)
+  target_sources(lir-interp-test PRIVATE src/jit/lir/interp.c)
+  target_sources(lir-ra-test PRIVATE src/jit/lir/ra.c)
+  foreach(_lir_test IN ITEMS native entry)
+    if(TARGET lir-${_lir_test}-test)
+      target_sources(lir-${_lir_test}-test PRIVATE ${_lir_native})
+      target_link_libraries(lir-${_lir_test}-test PRIVATE nsync)
+      if(TARGET GenerateLirHeader)
+        add_dependencies(lir-${_lir_test}-test GenerateLirHeader)
+      endif()
     endif()
-  endif()
-  if(TARGET lir-entry-test)
-    target_sources(lir-entry-test PRIVATE
-      src/lir_interp.c src/lir_ra.c src/lir_emit.c src/jitmem.c)
-    target_link_libraries(lir-entry-test PRIVATE nsync)
-    if(TARGET GenerateLirHeader)
-      add_dependencies(lir-entry-test GenerateLirHeader)
-    endif()
-  endif()
-  add_executable(jitmem-test tests/jitmem.c src/jitmem.c)
-  target_include_directories(jitmem-test PRIVATE include nsync/public)
-  target_compile_definitions(jitmem-test PRIVATE _GNU_SOURCE)
-  target_link_libraries(jitmem-test PRIVATE nsync Threads::Threads)
+  endforeach()
+  add_executable(jitmem-test tests/jit/mem.c src/jit/mem.c src/panic.c)
+  target_include_directories(jitmem-test PRIVATE include libco nsync/public)
+  target_compile_definitions(jitmem-test PRIVATE PCRE2_CODE_UNIT_WIDTH=8 _GNU_SOURCE)
+  target_link_libraries(jitmem-test PRIVATE nsync PCRE2::8BIT Threads::Threads)
   add_test(NAME jitmem COMMAND jitmem-test)
 endif()
 

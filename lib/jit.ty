@@ -1335,7 +1335,7 @@ class Lower {
 
     common(a: Val, b: Val) -> Type {
         let types = [type-of(it) for [a, b] if it :: Reg]
-        if a :: Float || b :: Float {
+        if (a :: Float) || (b :: Float) {
             types.push(F64)
         }
         for [PTR, F64, F32] {
@@ -1343,7 +1343,7 @@ class Lower {
                 return it
             }
         }
-        let t = types[0] ?? I64
+        let t = (#types > 0) ? types[0] : I64
         t == BOOL ? I64 : t
     }
 
@@ -2518,7 +2518,7 @@ fn kernel-param(p: Any) -> (String, String) {
 }
 
 fn expand-kernel() -> Any {
-    let public? = jt.peek().?id == 'pub'
+    let public? = jt.peek().type == 'pub'
     if public? {
         jt.next()
     }
