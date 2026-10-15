@@ -8119,9 +8119,13 @@ Finally:
         avP(program, NULL);
         mod->prog = vv(program);
 
-        v00(mod->tokens);
-        avR(mod->tokens, vN(TOKENS));
-        avPv(mod->tokens, TOKENS);
+        if (vv(TOKENS) == v_(TokenBuffer, state.TokenBase)) {
+                v00(mod->tokens);
+                avR(mod->tokens, vN(TOKENS));
+                avPv(mod->tokens, TOKENS);
+        } else {
+                mod->tokens = TOKENS;
+        }
 
         mod->last = state.last;
 

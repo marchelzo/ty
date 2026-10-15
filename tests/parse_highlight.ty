@@ -57,6 +57,18 @@ pub fn empty-module() {
     assert(parse.highlight(mod) == '')
 }
 
+pub fn large-module-keeps-tokens() {
+    let source = ["let value-{i} = {i}" for i in ..16000].join('\n')
+    let mod = parsed(source)
+    let tokens = mod.tokens
+    let other = ["let other-{i} = '{i}'" for i in ..16000].join('\n')
+
+    assert(#tokens > 50000)
+    assert(#mod.ast == 16000)
+    assert(#parsed(other).ast == 16000)
+    assert(mod.tokens == tokens)
+}
+
 pub fn free-bindings() {
     let mod = parsed('fn f() { let x = 1; x }; x + x')
     assert(mod.free == ['x'])
