@@ -302,7 +302,11 @@ fast_target_subscript(BcLir *c, BcLirNode const *node)
 static void
 loop_slow(BcLir *c, BcLirNode const *check, i32 sp, LirLabel exit)
 {
+        u32 next = c->offset;
+
+        c->offset = check - c->nodes;
         tycall(c, jit_rt_loop_iter, LT_VOID, preg(slot_of(c, sp)));
+        c->offset = next;
 
         LirReg more = tycall(
                 c,

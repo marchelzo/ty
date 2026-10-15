@@ -7354,9 +7354,6 @@ NextInstruction:
 
                 CASE(JUMP)
                         READVALUE(n);
-                        if (n == 0) {
-                                zP("invalid jump offset: 0");
-                        }
                         IP += n;
                         if (n < 0) {
                                 vm_osr(ty);
