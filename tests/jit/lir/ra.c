@@ -24,33 +24,6 @@ static LirTarget const Mock = {
         .stack_align = 16
 };
 
-static bool
-overlap(LirInterval const *a, LirInterval const *b)
-{
-        for (u32 i = 0; i < a->nranges; ++i) {
-                for (u32 j = 0; j < b->nranges; ++j) {
-                        LirRange x = a->ranges[i];
-                        LirRange y = b->ranges[j];
-                        if (x.start < y.end && y.start < x.end) {
-                                return true;
-                        }
-                }
-        }
-
-        return false;
-}
-
-static bool
-rivals(Lir const *L, LirAlloc const *alloc, u32 i, u32 j)
-{
-        LirInterval const *a = &alloc->intervals[i];
-        LirInterval const *b = &alloc->intervals[j];
-
-        return (a->phys != LIR_PHYS_NONE)
-            && (a->phys == b->phys)
-            && (isfloat(v__(L->regs, i).cls) == isfloat(v__(L->regs, j).cls));
-}
-
 static LirAlloc
 allocate(Lir *L, LirTarget const *target, LirConstraint const *cs, u32 n)
 {
@@ -75,24 +48,48 @@ allocate(Lir *L, LirTarget const *target, LirConstraint const *cs, u32 n)
                 exit(1);
         }
 
+        ok = lir_check_alloc(ty, L, &cfg, target, &alloc, &err);
+        CHECK(ok);
+
+        if (!ok) {
+                fprintf(stderr, "%s\n", err.message);
+                lir_dump(L, stderr);
+                lir_dump_alloc(L, &alloc, stderr);
+        }
+
         CHECK(alloc.nintervals == vN(L->regs));
         CHECK(alloc.frame_size % target->stack_align == 0);
 
-        for (u32 i = 0; i < alloc.nintervals; ++i) {
-                LirInterval const *a = &alloc.intervals[i];
+        return alloc;
+}
 
-                if (a->spilled) {
-                        CHECK(a->phys == LIR_PHYS_NONE && a->spill < alloc.spill_size);
-                }
+static bool
+stacked(LirAlloc const *alloc, LirReg r)
+{
+        LirInterval const *i = &alloc->intervals[alloc->intervals[r].rep];
 
-                for (u32 j = 0; j < i; ++j) {
-                        if (rivals(L, &alloc, i, j)) {
-                                CHECK(!overlap(a, &alloc.intervals[j]));
-                        }
+        for (u32 k = 0; k < i->npieces; ++k) {
+                if (i->pieces[k].phys == LIR_PHYS_NONE) {
+                        return true;
                 }
         }
 
-        return alloc;
+        return false;
+}
+
+static u32
+count_moves(LirAlloc const *alloc, LirMovePhase phase, bool loads)
+{
+        u32 n = 0;
+
+        for (u32 i = 0; i < alloc->nmoves; ++i) {
+                LirMove const *m = &alloc->moves[i];
+                if (m->kind == LIR_MOVE_COPY && m->phase == phase) {
+                        n += !loads || (m->from_slot != LIR_NONE);
+                }
+        }
+
+        return n;
 }
 
 static void
@@ -121,41 +118,17 @@ check_pressure(void)
                         LirAlloc alloc   = allocate(L, &Mock, NULL, 0);
                         u32      spilled = 0;
 
-                        for (u32 i = 0; i < alloc.nintervals; ++i) {
-                                spilled += alloc.intervals[i].spilled;
+                        for (u32 i = 0; i < countof(types); ++i) {
+                                spilled += stacked(&alloc, L->params[i]);
                         }
 
-                        CHECK(spilled >= 44);
-                        CHECK(alloc.spill_size >= 44 * 8);
+                        CHECK(spilled >= 40);
+                        CHECK(alloc.spill_size >= 40 * 8);
+                        CHECK(!stacked(&alloc, acc));
                 }
 
                 lir_free(L);
         }
-}
-
-static void
-check_next_use(void)
-{
-        Lir      *L = fn(LT_I64, LT_I64, LT_I64);
-        LirReg    d = lir_reg(L, LIR_I64);
-        LirTarget t = Mock;
-
-        put(L, LIR_LI, d, lir_i(1));
-        put(L, LIR_ADD, d, lir_r(d), lir_r(L->params[0]));
-        put(L, LIR_ADD, d, lir_r(d), lir_r(L->params[1]));
-        ret(L, d);
-
-        t.gpr.available    = 3;
-        t.gpr.callee_saved = 0;
-
-        WITH_SCRATCH {
-                LirAlloc alloc = allocate(L, &t, NULL, 0);
-                CHECK(alloc.intervals[L->params[1]].spilled);
-                CHECK(!alloc.intervals[L->params[0]].spilled);
-                CHECK(!alloc.intervals[d].spilled);
-        }
-
-        lir_free(L);
 }
 
 static void
@@ -177,10 +150,15 @@ check_loops(void)
 
         WITH_SCRATCH {
                 LirAlloc alloc = allocate(L, &Mock, NULL, 0);
-                CHECK(alloc.intervals[i].nranges == 1);
-                CHECK(alloc.intervals[i].ranges[0].end >= 10);
-                CHECK(alloc.intervals[sum].ranges[0].end >= 11);
+                LirInterval const *x = &alloc.intervals[i];
+                LirInterval const *y = &alloc.intervals[sum];
+                CHECK(x->nranges == 2 && x->ranges[0].start == LIR_OUT(0));
+                CHECK(x->ranges[0].end == LIR_IN(3) + 1 && x->ranges[1].start == LIR_OUT(3));
+                CHECK(x->ranges[1].end == LIR_IN(5));
+                CHECK(y->ranges[y->nranges - 1].end > LIR_IN(5));
                 CHECK(alloc.intervals[dead].nranges == 0);
+                CHECK(alloc.nmoves == 0);
+                CHECK(!stacked(&alloc, i) && !stacked(&alloc, sum));
         }
 
         lir_free(L);
@@ -209,9 +187,9 @@ check_calls(void)
                                 CHECK(alloc.saved_gpr == 12);
                                 CHECK(alloc.nmoves == 0);
                         } else {
-                                CHECK(alloc.nmoves == 4);
-                                CHECK(alloc.intervals[0].call_save != LIR_NONE);
-                                CHECK(alloc.intervals[1].call_save != LIR_NONE);
+                                CHECK(stacked(&alloc, L->params[0]));
+                                CHECK(stacked(&alloc, L->params[1]));
+                                CHECK(count_moves(&alloc, LIR_MOVE_BEFORE, true) == 2);
                         }
                 }
 
@@ -230,7 +208,113 @@ check_calls(void)
         WITH_SCRATCH {
                 LirAlloc alloc = allocate(L, &t, NULL, 0);
                 CHECK(alloc.nmoves == 0);
-                CHECK(alloc.intervals[0].call_save == LIR_NONE);
+                CHECK(!stacked(&alloc, x));
+        }
+
+        lir_free(L);
+}
+
+static void
+check_loop_calls(void)
+{
+        Lir     *L   = fn(LT_I64, LT_I64);
+        LirReg   i   = lir_reg(L, LIR_I64);
+        LirReg   sum = lir_reg(L, LIR_I64);
+        LirLabel top = lir_label(L);
+        LirLabel end = lir_label(L);
+
+        put(L, LIR_LI, i, lir_i(0));
+        put(L, LIR_LI, sum, lir_i(0));
+        here(L, top);
+        put(L, LIR_BR, LIR_NONE, lir_cc(LIR_GE), lir_r(i), lir_r(L->params[0]), lir_l(end));
+        push(L, vcall(lir_i(1)));
+        put(L, LIR_ADD, sum, lir_r(sum), lir_r(i));
+        put(L, LIR_ADD, i, lir_r(i), lir_i(1));
+        put(L, LIR_JMP, LIR_NONE, lir_l(top));
+        here(L, end);
+        ret(L, sum);
+
+        WITH_SCRATCH {
+                LirAlloc alloc = allocate(L, &Mock, NULL, 0);
+                u8       pi    = lir_where(&alloc, i, LIR_IN(3)).phys;
+                u8       ps    = lir_where(&alloc, sum, LIR_IN(3)).phys;
+                CHECK(pi != LIR_PHYS_NONE && (Mock.gpr.callee_saved >> pi) & 1);
+                CHECK(ps != LIR_PHYS_NONE && (Mock.gpr.callee_saved >> ps) & 1);
+                CHECK(count_moves(&alloc, LIR_MOVE_BEFORE, false) <= 2);
+        }
+
+        lir_free(L);
+}
+
+static void
+check_remat(void)
+{
+        LirTarget t = Mock;
+        Lir      *L = fn(LT_I64, LT_I64);
+        LirReg    k = lir_reg(L, LIR_I64);
+        LirReg    d = lir_reg(L, LIR_I64);
+
+        t.gpr.callee_saved = 0;
+
+        put(L, LIR_LI, k, lir_i(12345));
+        push(L, vcall(lir_i(1)));
+        push(L, vcall(lir_i(1)));
+        put(L, LIR_ADD, d, lir_r(L->params[0]), lir_r(k));
+        ret(L, d);
+
+        WITH_SCRATCH {
+                LirAlloc alloc = allocate(L, &t, NULL, 0);
+                u32      remat = 0;
+
+                CHECK(alloc.intervals[k].remat == 0);
+                CHECK(alloc.intervals[k].spill == LIR_NONE);
+
+                for (u32 i = 0; i < alloc.nmoves; ++i) {
+                        remat += (alloc.moves[i].remat == 0);
+                }
+
+                CHECK(remat == 1);
+        }
+
+        lir_free(L);
+}
+
+static void
+check_coalesce(void)
+{
+        Lir   *L = fn(LT_I64, LT_I64);
+        LirReg a = lir_reg(L, LIR_I64);
+        LirReg b = lir_reg(L, LIR_I64);
+        LirReg c = lir_reg(L, LIR_I64);
+
+        put(L, LIR_ADD, a, lir_r(L->params[0]), lir_i(1));
+        put(L, LIR_MOV, b, lir_r(a));
+        put(L, LIR_MOV, c, lir_r(b));
+        put(L, LIR_ADD, c, lir_r(c), lir_i(2));
+        ret(L, c);
+
+        WITH_SCRATCH {
+                LirAlloc alloc = allocate(L, &Mock, NULL, 0);
+                CHECK(alloc.intervals[a].rep == alloc.intervals[b].rep);
+                CHECK(alloc.intervals[b].rep == alloc.intervals[c].rep);
+                CHECK(alloc.nmoves == 0);
+        }
+
+        lir_free(L);
+
+        L = fn(LT_I64, LT_I64);
+        a = lir_reg(L, LIR_I64);
+        b = lir_reg(L, LIR_I64);
+
+        put(L, LIR_ADD, a, lir_r(L->params[0]), lir_i(1));
+        put(L, LIR_MOV, b, lir_r(a));
+        put(L, LIR_ADD, a, lir_r(a), lir_i(1));
+        put(L, LIR_ADD, b, lir_r(b), lir_r(a));
+        ret(L, b);
+
+        WITH_SCRATCH {
+                LirAlloc alloc = allocate(L, &Mock, NULL, 0);
+                CHECK(alloc.intervals[a].rep != alloc.intervals[b].rep);
         }
 
         lir_free(L);
@@ -274,7 +358,7 @@ check_roots(void)
                         }
                 }
 
-                CHECK(roots == 48 && spilled >= 44);
+                CHECK(roots == 48 && spilled >= 40);
         }
 
         lir_free(L);
@@ -293,22 +377,16 @@ check_constraints(void)
         ret(L, e);
 
         LirConstraint cs[] = {
-                { .reg = L->params[0], .phys = 0,                 .tied = LIR_NONE },
-                { .reg = d,            .phys = 0, .output = true, .tied = LIR_NONE }
+                { .reg = L->params[0], .phys = 2,                 .tied = LIR_NONE },
+                { .reg = d,            .phys = 2, .output = true, .tied = LIR_NONE }
         };
 
         WITH_SCRATCH {
                 LirAlloc alloc = allocate(L, &Mock, cs, countof(cs));
-                u32      after = 0;
-
-                CHECK(alloc.intervals[L->params[0]].call_save != LIR_NONE);
                 CHECK(alloc.nconstraints == 2);
-
-                for (u32 i = 0; i < alloc.nmoves; ++i) {
-                        after += (alloc.moves[i].phase == LIR_MOVE_AFTER);
-                }
-
-                CHECK(after >= 2);
+                CHECK(lir_physical(&alloc, L->params[0], 0, false) == 2);
+                CHECK(lir_physical(&alloc, d, 0, true) == 2);
+                CHECK(lir_where(&alloc, L->params[0], LIR_IN(1)).phys != 2);
         }
 
         lir_free(L);
@@ -324,12 +402,67 @@ check_constraints(void)
 
         WITH_SCRATCH {
                 LirAlloc alloc = allocate(L, &Mock, NULL, 0);
-                CHECK(alloc.intervals[pin].phys == 3);
-                CHECK((alloc.saved_gpr & 8) != 0);
                 CHECK(alloc.frame_align == 64 && alloc.alloca_offsets[0] % 64 == 0);
         }
 
         lir_free(L);
+}
+
+static void
+check_branches(void)
+{
+        LirTarget t = Mock;
+        u64       seed = 0x2545f4914f6cdd1d;
+
+        t.gpr.callee_saved = 0;
+
+        for (u32 n = 0; n < 300; ++n) {
+                Lir     *L = fn(LT_I64, LT_I64, LT_I64, LT_I64);
+                LirReg   x = lir_reg(L, LIR_I64);
+                LirReg   y = lir_reg(L, LIR_I64);
+                LirLabel labels[6];
+
+                for (u32 k = 0; k < countof(labels); ++k) {
+                        labels[k] = lir_label(L);
+                }
+
+                put(L, LIR_LI, x, lir_i(1));
+                put(L, LIR_LI, y, lir_i(2));
+
+                for (u32 k = 0; k < countof(labels); ++k) {
+                        here(L, labels[k]);
+                        LirReg  v = (xorshift(&seed) & 1) ? x : y;
+                        LirReg  w = L->params[xorshift(&seed) % 3];
+                        LirOpnd a = lir_r(w);
+
+                        put(L, LIR_ADD, v, lir_r(v), lir_r(w));
+
+                        switch (xorshift(&seed) % 4) {
+                        case 0:
+                                push(L, call(lir_i(1), v, sig(LT_I64, T(LT_I64), 1), &a));
+                                break;
+                        case 1:
+                                put(L, LIR_BR, LIR_NONE, lir_cc(LIR_LT), lir_r(v), lir_r(w), lir_l(labels[xorshift(&seed) % countof(labels)]));
+                                break;
+                        case 2:
+                                put(L, LIR_BRZ, LIR_NONE, lir_r(w), lir_l(labels[xorshift(&seed) % countof(labels)]));
+                                break;
+                        default:
+                                put(L, LIR_ADD, w, lir_r(w), lir_i(-1));
+                                break;
+                        }
+                }
+
+                put(L, LIR_ADD, x, lir_r(x), lir_r(y));
+                ret(L, x);
+
+                WITH_SCRATCH {
+                        allocate(L, &t, NULL, 0);
+                        allocate(L, &Mock, NULL, 0);
+                }
+
+                lir_free(L);
+        }
 }
 
 static LirMove
@@ -341,6 +474,9 @@ move(u32 from, u32 to, LirClass cls)
                 .cls       = cls,
                 .from_slot = LIR_NONE,
                 .to_slot   = LIR_NONE,
+                .remat     = LIR_NONE,
+                .edge      = LIR_NONE,
+                .stub      = LIR_NONE,
                 .from_phys = from,
                 .to_phys   = to
         };
@@ -501,11 +637,14 @@ int
 main(void)
 {
         check_pressure();
-        check_next_use();
         check_loops();
         check_calls();
+        check_loop_calls();
+        check_remat();
+        check_coalesce();
         check_roots();
         check_constraints();
+        check_branches();
         check_parallel();
         check_random();
 

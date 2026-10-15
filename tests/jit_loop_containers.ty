@@ -1,0 +1,146 @@
+import os (..)
+
+fn total(xs: [Int]) -> Int {
+    let s = 0
+    let i = 0
+    while i < #xs {
+        s += xs[i]
+        i += 1
+    }
+    s
+}
+
+pub fn counted-loops-read-every-element() {
+    let xs = [k for k in ..500]
+    for _ in ..40 {
+        assert(total(xs) == 124750)
+    }
+    assert(total([]) == 0)
+}
+
+fn growing(xs: [Int]) -> Int {
+    let s = 0
+    let i = 0
+    while i < #xs {
+        if i < 300 {
+            xs.push(1)
+        }
+        s += xs[i]
+        i += 1
+    }
+    s
+}
+
+pub fn pushes-inside-the-loop-are-seen() {
+    for _ in ..40 {
+        let xs = [2 for ..10]
+        assert(growing(xs) == 20 + 300)
+        assert(#xs == 310)
+    }
+}
+
+fn helper-pops(xs: [Int]) {
+    xs.pop()
+    xs.pop()
+}
+
+fn shrinking(xs: [Int]) -> Int {
+    let s = 0
+    let i = 0
+    while i < #xs {
+        s += xs[i]
+        if i % 10 == 0 {
+            helper-pops(xs)
+        }
+        i += 1
+    }
+    s
+}
+
+pub fn callees-that-shrink-are-seen() {
+    for _ in ..40 {
+        let xs = [k for k in ..100]
+        let s = shrinking(xs)
+        assert(s == [k for k in ..#xs].sum(0))
+    }
+}
+
+fn doubled(xs: [Int]) {
+    for i in ..#xs {
+        xs[i] = xs[i] * 2
+    }
+}
+
+pub fn element-stores-keep-their-shape() {
+    for _ in ..40 {
+        let xs = [k for k in ..64]
+        doubled(xs)
+        assert(xs == [2 * k for k in ..64])
+    }
+}
+
+fn nested(rows: [[Int]]) -> Int {
+    let s = 0
+    for r in ..#rows {
+        let row = rows[r]
+        for c in ..#row {
+            s += row[c] * r
+        }
+    }
+    s
+}
+
+pub fn inner-arrays-are-rebound-each-outer-iteration() {
+    let rows = [[c for c in ..r] for r in ..20]
+    let want = [[c * r for c in ..r].sum(0) for r in ..20].sum(0)
+    for _ in ..40 {
+        assert(nested(rows) == want)
+    }
+}
+
+fn reassigned(xs: [Int], ys: [Int]) -> Int {
+    let s = 0
+    let a = xs
+    for i in ..8 {
+        s += a[i % #a]
+        a = (i % 2 == 0) ? ys : xs
+    }
+    s
+}
+
+pub fn reassigned-locals-are-not-held() {
+    let xs = [1, 2, 3]
+    let ys = [10, 20, 30, 40, 50]
+    for _ in ..40 {
+        assert(reassigned(xs, ys) == 1 + 20 + 3 + 40 + 2 + 10 + 1 + 30)
+    }
+}
+
+fn drain(xs: [Int], at: Int) -> (Int, Int) {
+    let s = 0
+    let i = 0
+    while i < #xs {
+        if i == at {
+            Thread.kill(SIGUSR1)
+        }
+        s += xs[i]
+        i += 1
+    }
+    (s, i)
+}
+
+pub fn signal-handlers-that-grow-are-seen() {
+    let xs = []
+    signal(SIGUSR1, fn () {
+        for _ in ..5000 {
+            xs.push(2)
+        }
+    })
+    for _ in ..30 {
+        xs = [1 for ..1000]
+        let (s, n) = drain(xs, 10)
+        assert(n == 6000)
+        assert(s == 1000 + 10000)
+    }
+    signal(SIGUSR1, SIG_DFL)
+}

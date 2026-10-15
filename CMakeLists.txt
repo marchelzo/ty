@@ -352,6 +352,7 @@ set(_lir_native
   src/jit/lir/interp.c
   src/jit/lir/ra.c
   src/jit/lir/norm.c
+  src/jit/lir/hoist.c
   src/jit/lir/emit.c
   src/jit/lir/finish.c
   src/jit/mem.c

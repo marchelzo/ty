@@ -417,6 +417,10 @@ stray_payload(LirInst const *in)
 {
         u32 flags = (in->op == LIR_POLL) ? (in->flags & ~LIR_CALL_SITE) : in->flags;
 
+        if (LirOps[in->op].form == LF_LD) {
+                flags &= ~LIR_REFRESH;
+        }
+
         bool sig = ((in->ncall_args | in->sig.nparams | in->sig.nfixed) != 0)
                 || (in->sig.ret != LT_VOID)
                 || in->sig.variadic

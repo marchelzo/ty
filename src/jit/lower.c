@@ -56,6 +56,9 @@ typedef struct bc_loop {
         i32      nowned;
         bool     stack;
         LirReg   sreg[2];
+        i32      arrays[4];
+        LirReg   areg[4][3];
+        i32      narrays;
 } BcLoop;
 
 typedef struct bc_lir {
@@ -103,6 +106,7 @@ typedef struct bc_lir {
         i32                   tuple_min;
         i32                  *local_class;
         T2Type               *local_type;
+        LirReg              **held;
         TypeHintVector const *hints;
 
         BcLoop               *loops;
@@ -203,6 +207,9 @@ state(BcLir *c, BcLirNode const *node, char const *ip);
 
 static bool
 loop_lower(BcLir *c, BcLirNode const *node, char const *ip);
+
+static LirReg const *
+held_array(BcLir const *c, i32 i);
 
 static LirReg
 loop_reg(BcLir const *c, i32 slot);

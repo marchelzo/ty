@@ -19,7 +19,7 @@ inside(BcLoop const *loop, i32 off)
 inline static bool
 promoted(BcLoop const *loop)
 {
-        return (loop->nslots != 0) || loop->stack;
+        return (loop->nslots != 0) || loop->stack || (loop->narrays != 0);
 }
 
 inline static i32
@@ -258,6 +258,97 @@ choose(BcLir const *c, BcLoop *loop, i32 *score)
 }
 
 static bool
+arrayish(BcLir const *c, i32 slot)
+{
+        if (
+                !local_ok(c, slot)
+             || (c->local_type == NULL)
+             || (slot == c->self_index)
+             || (c->local_type[slot] == T2_TYPE_INVALID)
+        ) {
+                return false;
+        }
+
+        Class *class = t2_class_of(c->ctx, c->local_type[slot]);
+
+        return (class != NULL) && (class->i == CLASS_ARRAY);
+}
+
+static bool
+indexes(u8 op)
+{
+        return (op == INSTR_SUBSCRIPT) || (op == INSTR_ASSIGN_SUBSCRIPT) || (op == INSTR_COUNT);
+}
+
+static void
+containers(BcLir const *c, BcLoop *loop, i32 *score)
+{
+        bool any = false;
+
+        memset(score, 0, c->bound * sizeof *score);
+
+        for (i32 off = loop->head; off <= loop->end; ++off) {
+                BcLirNode const *n = &c->nodes[off];
+
+                if (dead(n)) {
+                        continue;
+                }
+
+                if (is_call(n->op)) {
+                        loop->narrays = 0;
+                        return;
+                }
+
+                any = any || indexes(n->op);
+
+                if (!local_op(n->op)) {
+                        continue;
+                }
+
+                i32 slot = opslot(c, off);
+
+                if (!local_ok(c, slot)) {
+                        continue;
+                }
+
+                if (n->op != INSTR_LOAD_LOCAL) {
+                        score[slot] = -1;
+                } else if (score[slot] >= 0 && arrayish(c, slot)) {
+                        score[slot] += 1;
+                }
+        }
+
+        loop->narrays = 0;
+
+        if (getenv("TY_JIT_NO_HOLD") != NULL) {
+                return;
+        }
+
+
+        while (any && loop->narrays < (i32)countof(loop->arrays)) {
+                i32 best = -1;
+
+                for (i32 slot = 0; slot < c->bound; ++slot) {
+                        if (
+                                (score[slot] > 0)
+                             && (score[slot] * 32 >= loop->end - loop->head)
+                             && (best < 0 || score[slot] > score[best])
+                        ) {
+                                best = slot;
+                        }
+                }
+
+                if (best < 0) {
+                        break;
+                }
+
+                loop->arrays[loop->narrays++] = best;
+                score[best] = 0;
+
+        }
+}
+
+static bool
 counted(BcLir const *c, BcLoop const *loop)
 {
         BcLirNode const *head = &c->nodes[loop->head];
@@ -371,6 +462,7 @@ shape(BcLir *c, i32 i, i32 *score)
         loop->sp = head->sp;
 
         choose(c, loop, score);
+        containers(c, loop, score);
 
         loop->stack = counted(c, loop);
 
@@ -406,6 +498,7 @@ loop_plan(BcLir *c)
         }
 
         c->loops  = new(c, BcLoop, nloops);
+        c->held   = new(c, LirReg *, c->bound);
         c->lreg   = nones(c, LirReg, c->bound);
         c->spin   = nones(c, LirReg, c->max_sp + 8);
         c->active = new(c, i32, nloops);
@@ -484,6 +577,56 @@ own(BcLir *c, BcLoop *loop, i32 k)
 }
 
 static void
+refresh(BcLir *c, LirReg r, LirReg base, i32 disp)
+{
+        vset(c, LIR_LD_I64, r, mref(base, disp));
+        vvL(c->L->insts)->flags |= LIR_REFRESH;
+}
+
+static void
+view(BcLir *c, BcLoop const *loop, i32 k, LirLabel fail)
+{
+        Spot          s = lspot(c, loop->arrays[k]);
+        LirReg const *r = loop->areg[k];
+
+        typecheck(c, s, VALUE_ARRAY, fail);
+        refresh(c, r[0], s.base, s.at + VOFF(array));
+        refresh(c, r[1], r[0], offsetof(Array, count));
+        refresh(c, r[2], r[0], offsetof(Array, items));
+}
+
+static void
+hold(BcLir *c, BcLoop *loop, i32 k)
+{
+        LirReg *r = loop->areg[k];
+
+        if (c->held[loop->arrays[k]] != NULL) {
+                r[0] = LIR_NONE;
+                return;
+        }
+
+        r[0] = lir_reg(c->L, LIR_PTR);
+        r[1] = lir_reg(c->L, LIR_I64);
+        r[2] = lir_reg(c->L, LIR_PTR);
+
+        view(c, loop, k, loop->deopt);
+
+        c->held[loop->arrays[k]] = r;
+}
+
+static LirReg const *
+held_array(BcLir const *c, i32 i)
+{
+        BcSlot const *s = &c->vs[i];
+
+        if (s->kind != VS_LOCAL || c->held == NULL || !local_ok(c, (i32)s->bits)) {
+                return NULL;
+        }
+
+        return c->held[(i32)s->bits];
+}
+
+static void
 pin_pair(BcLir *c, BcLoop *loop)
 {
         for (i32 k = 0; k < 2; ++k) {
@@ -514,6 +657,10 @@ loop_enter(BcLir *c, i32 off)
                         own(c, loop, k);
                 }
 
+                for (i32 k = 0; k < loop->narrays; ++k) {
+                        hold(c, loop, k);
+                }
+
                 if (loop->stack) {
                         pin_pair(c, loop);
                 }
@@ -530,6 +677,12 @@ loop_leave(BcLir *c, i32 off)
 
                 for (i32 k = 0; k < loop->nowned; ++k) {
                         c->lreg[loop->owned[k]] = LIR_NONE;
+                }
+
+                for (i32 k = 0; k < loop->narrays; ++k) {
+                        if (loop->areg[k][0] != LIR_NONE) {
+                                c->held[loop->arrays[k]] = NULL;
+                        }
                 }
 
                 if (!loop->stack) {
@@ -551,12 +704,18 @@ loop_osr(BcLir *c, i32 off, i32 sp)
         for (i32 i = 0; i < c->nloops; ++i) {
                 BcLoop const *loop = &c->loops[i];
 
-                if ((loop->nowned == 0 && !loop->stack) || !inside(loop, off)) {
+                if ((loop->nowned == 0 && !loop->stack && loop->narrays == 0) || !inside(loop, off)) {
                         continue;
                 }
 
                 if (fail == LIR_NONE) {
                         fail = newlabel(c);
+                }
+
+                for (i32 k = 0; k < loop->narrays; ++k) {
+                        if (loop->areg[k][0] != LIR_NONE) {
+                                view(c, loop, k, fail);
+                        }
                 }
 
                 if (loop->stack) {

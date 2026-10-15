@@ -97,7 +97,8 @@ typedef enum lir_call_flags {
         LIR_NORETURN        = 1 << 3,
         LIR_CALL_SITE       = 1 << 4,
         LIR_READS_NO_LOCALS = 1 << 5,
-        LIR_WRITES_LOCALS   = 1 << 6
+        LIR_WRITES_LOCALS   = 1 << 6,
+        LIR_REFRESH         = 1 << 7
 } LirCallFlags;
 
 typedef struct lir_sig {
@@ -454,23 +455,40 @@ typedef struct lir_constraint {
         LirReg tied;
 } LirConstraint;
 
+#define LIR_IN(pc)  (4 * (u32)(pc))
+#define LIR_TMP(pc) (4 * (u32)(pc) + 1)
+#define LIR_OUT(pc) (4 * (u32)(pc) + 2)
+
 typedef struct lir_range {
         u32 start;
         u32 end;
 } LirRange;
 
+typedef struct lir_loc {
+        u32 slot;
+        u32 remat;
+        u8  phys;
+} LirLoc;
+
+typedef struct lir_piece {
+        u32 start;
+        u32 end;
+        u8  phys;
+} LirPiece;
+
 typedef struct lir_interval {
         LirReg    reg;
+        LirReg    rep;
         LirRange *ranges;
         u32       nranges;
-        u32      *uses;
-        u32       nuses;
+        LirPiece *pieces;
+        u32       npieces;
         u32       spill;
-        u32       call_save;
+        u32       remat;
         u32       root_slot;
         u8        phys;
-        bool      spilled;
         bool      crosses_call;
+        bool      stackish;
 } LirInterval;
 
 typedef enum lir_move_kind {
@@ -480,7 +498,12 @@ typedef enum lir_move_kind {
 
 typedef enum lir_move_phase {
         LIR_MOVE_BEFORE,
-        LIR_MOVE_AFTER
+        LIR_MOVE_PIN,
+        LIR_MOVE_AFTER,
+        LIR_MOVE_EDGE_IN,
+        LIR_MOVE_EDGE_OUT,
+        LIR_MOVE_STUB,
+        LIR_MOVE_PHASES
 } LirMovePhase;
 
 typedef struct lir_move {
@@ -491,11 +514,15 @@ typedef struct lir_move {
         LirReg       to;
         u32          from_slot;
         u32          to_slot;
+        u32          remat;
+        u32          edge;
+        u32          stub;
         u8           from_phys;
         u8           to_phys;
         LirClass     cls;
         bool         from_gpr;
         bool         to_gpr;
+        bool         slow;
 } LirMove;
 
 struct lir_alloc {
@@ -508,6 +535,7 @@ struct lir_alloc {
         u64            saved_fpr;
         LirMove       *moves;
         u32            nmoves;
+        u32            nstubs;
         u32            nvslots;
         u32           *alloca_offsets;
         LirConstraint *constraints;
@@ -773,13 +801,20 @@ lir_allocate(
 );
 
 bool
-lir_allocate_workspaces(
+lir_check_alloc(
         Ty *ty,
         Lir const *L,
+        LirCFG const *cfg,
         LirTarget const *target,
-        LirAlloc *alloc,
+        LirAlloc const *alloc,
         LirError *err
 );
+
+LirLoc
+lir_where(LirAlloc const *alloc, LirReg reg, u32 pos);
+
+void
+lir_dump_alloc(Lir const *L, LirAlloc const *alloc, FILE *out);
 
 u8
 lir_physical(LirAlloc const *alloc, LirReg reg, u32 op, bool output);

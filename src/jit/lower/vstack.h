@@ -458,6 +458,13 @@ subidx(BcLir *c, i32 i, LirLabel slow)
 static LirReg
 cell(BcLir *c, i32 i, LirReg idx, LirLabel slow)
 {
+        LirReg const *held = held_array(c, i);
+
+        if (held != NULL) {
+                jcc(c, LIR_UGE, lir_r(idx), lir_r(held[1]), slow);
+                return lea(c, held[2], vop(c, LIR_SHL, LIR_I64, lir_r(idx), lir_i(VALUE_SHIFT)), 0);
+        }
+
         Spot s = spot(c, i);
 
         typecheck(c, s, VALUE_ARRAY, slow);
@@ -504,6 +511,23 @@ typed_subscript(BcLir *c, bool real)
         vs_seal(c, failed);
         vs_pop(c, 2);
         vs_push(c, numkind(real), r, 0);
+}
+
+static bool
+vs_count(BcLir *c)
+{
+        LirReg const *held = held_array(c, c->sp - 1);
+
+        if (held == NULL) {
+                return false;
+        }
+
+        LirReg n = vop(c, LIR_MOV, LIR_I64, lir_r(held[1]));
+
+        vs_pop(c, 1);
+        vs_push(c, VS_INT, n, 0);
+
+        return true;
 }
 
 static bool
@@ -1159,6 +1183,7 @@ vs_lower(BcLir *c, BcLirNode const *node, char const *ip)
         case INSTR_ASSIGN_LOCAL:     return vs_assign_local(c, load_i32(ip + 1));
         case INSTR_TARGET_LOCAL:     return vs_mutate(c, node, ip);
         case INSTR_SUBSCRIPT:        return vs_subscript(c, node);
+        case INSTR_COUNT:            return vs_count(c);
         case INSTR_ASSIGN_SUBSCRIPT: return vs_assign_subscript(c, ip);
         case INSTR_POP:              return vs_drop(c);
         case INSTR_DUP:              return vs_dup(c);

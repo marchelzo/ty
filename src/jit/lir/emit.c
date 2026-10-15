@@ -109,14 +109,14 @@ typedef struct {
         u32 sites;
         u32 rebased;
         u32 stubs;
+        u32 edges;
 
         u32 nsites;
         u32 nentries;
 
         bool    context;
         bool    islands;
-        u8      ty_reg;
-        bool   *stackish;
+        LirReg  ty_vreg;
         ArgLoc *arguments;
         u32    *pointers;
         u32     npointers;
@@ -152,7 +152,39 @@ rcls(Emit const *e, LirReg r)
 inline static LirInterval const *
 ival(Emit const *e, LirReg r)
 {
-        return &e->alloc->intervals[r];
+        return &e->alloc->intervals[e->alloc->intervals[r].rep];
+}
+
+inline static LirLoc
+loc(Emit const *e, LirReg r, u32 pos)
+{
+        return lir_where(e->alloc, r, pos);
+}
+
+inline static bool
+covering(LirInterval const *i, u32 pos)
+{
+        if (
+                (i->nranges == 0)
+             || (pos < i->ranges[0].start)
+             || (pos >= i->ranges[i->nranges - 1].end)
+        ) {
+                return false;
+        }
+
+        u32 lo = 0;
+        u32 hi = i->nranges;
+
+        while (lo < hi) {
+                u32 mid = lo + (hi - lo) / 2;
+                if (i->ranges[mid].start <= pos) {
+                        lo = mid + 1;
+                } else {
+                        hi = mid;
+                }
+        }
+
+        return pos < i->ranges[lo - 1].end;
 }
 
 inline static u32
@@ -281,7 +313,7 @@ physical(Emit const *e, LirReg r, u32 pc, bool output)
                 }
         }
 
-        return ival(e, r)->phys;
+        return loc(e, r, output ? LIR_OUT(pc) : LIR_IN(pc)).phys;
 }
 
 static void
@@ -299,11 +331,124 @@ vslot(Emit *e, u8 d, u8 t, u32 index)
 }
 
 static void
+fetch(Emit *e, u8 d, LirLoc l, LirClass cls, bool gpr, u32 pos);
+
+static void
+reload(Emit *e, u8 d, LirInst const *in, bool gpr, u32 pos)
+{
+        LirMem             m    = in->args[0].mem;
+        LirInterval const *bi   = ival(e, m.base);
+        LirType            type = LirOps[in->op].type;
+        LirLoc             b    = covering(bi, pos)
+                                ? loc(e, m.base, pos)
+                                : (LirLoc) { LIR_NONE, bi->remat, LIR_PHYS_NONE };
+        u8                 base = b.phys;
+
+        if (base == LIR_PHYS_NONE) {
+                fetch(e, TMP1, b, LIR_PTR, true, pos);
+                base = TMP1;
+        }
+
+        mem(
+                Dst,
+                false,
+                d,
+                base,
+                m.disp,
+                lir_type_size(type),
+                type == LT_I8 || type == LT_I16 || type == LT_I32,
+                isfloat(lir_type_class(type)) && !gpr
+        );
+}
+
+static void
+materialize(Emit *e, u8 d, u32 def, bool gpr, u32 pos)
+{
+        LirInst const *in  = v_(e->L->insts, def);
+        LirClass       cls = rcls(e, in->dst);
+        LirOpnd        x   = in->args[0];
+
+        if (LirOps[in->op].form == LF_LD) {
+                reload(e, d, in, gpr, pos);
+                return;
+        }
+
+        switch (in->op) {
+        case LIR_LI:
+                li(Dst, d, (cls == LIR_I32) ? (u32)x.imm : (u64)x.imm);
+                break;
+
+        case LIR_FLI:
+                if (gpr) {
+                        li(Dst, d, fbits(e->L, in));
+                } else if (!e->islands) {
+                        fli(Dst, d, cls, e->literals + def);
+                } else {
+                        li(Dst, TMP0, fbits(e->L, in));
+                        mov(Dst, d, TMP0, cls, true, false);
+                }
+                break;
+
+        default:
+                li(Dst, d, (x.kind == LO_CONST)
+                        ? (uptr)&e->code->roots[x.index]
+                        : (uptr)refptr(&e->code->roots[x.index]));
+                break;
+        }
+}
+
+static void
+fetch(Emit *e, u8 d, LirLoc l, LirClass cls, bool gpr, u32 pos)
+{
+        bool f = isfloat(cls);
+
+        if (l.remat != LIR_NONE) {
+                materialize(e, d, l.remat, gpr || !f, pos);
+        } else if (l.slot != LIR_NONE) {
+                spill(e, false, d, l.slot, cls, f && !gpr);
+        } else {
+                mov(Dst, d, l.phys, cls, false, f && gpr);
+        }
+}
+
+static void
+put(Emit *e, u8 r, LirLoc l, LirClass cls)
+{
+        if (l.slot != LIR_NONE) {
+                spill(e, true, r, l.slot, cls, isfloat(cls));
+        } else if (l.phys != LIR_PHYS_NONE) {
+                mov(Dst, l.phys, r, cls, false, false);
+        }
+}
+
+static u32
+movepos(LirMove const *m)
+{
+        switch (m->phase) {
+        case LIR_MOVE_AFTER:
+                return LIR_OUT(m->op);
+
+        case LIR_MOVE_EDGE_IN:
+        case LIR_MOVE_EDGE_OUT:
+        case LIR_MOVE_STUB:
+                return LIR_IN(m->edge);
+
+        default:
+                return LIR_IN(m->op);
+        }
+}
+
+static void
 move(Emit *e, LirMove const *m)
 {
         bool f = isfloat(m->cls);
 
-        if (m->from_slot != LIR_NONE) {
+        if (m->remat != LIR_NONE && m->to_slot != LIR_NONE) {
+                materialize(e, TMP0, m->remat, true, movepos(m));
+                spill(e, true, TMP0, m->to_slot, m->cls, false);
+        } else if (m->remat != LIR_NONE) {
+                materialize(e, m->to_phys, m->remat, !f || m->to_gpr, movepos(m));
+        } else if (m->from_slot != LIR_NONE) {
                 spill(e, false, m->to_phys, m->from_slot, m->cls, f && !m->to_gpr);
         } else if (m->to_slot != LIR_NONE) {
                 spill(e, true, m->from_phys, m->to_slot, m->cls, f && !m->from_gpr);
@@ -319,7 +464,10 @@ rootmove(Emit *e, LirMove const *m)
 
         vslot(e, TMP0, TMP1, m->to_slot);
 
-        if (m->from_slot != LIR_NONE) {
+        if (m->remat != LIR_NONE) {
+                materialize(e, TMP1, m->remat, true, movepos(m));
+                src = TMP1;
+        } else if (m->from_slot != LIR_NONE) {
                 ld(Dst, TMP1, FRAME, slot(e, m->from_slot));
                 src = TMP1;
         }
@@ -355,28 +503,11 @@ shuffle(Emit *e, LirMove const *moves, u32 n)
 }
 
 static bool
-slow(LirMove const *m)
+phase(Emit *e, u32 pc, LirMovePhase when, u32 edge, int mode)
 {
-        if (m->kind == LIR_MOVE_ROOT) {
-                return true;
-        }
-
-        if (m->from != m->to) {
-                return false;
-        }
-
-        return (m->phase == LIR_MOVE_BEFORE)
-             ? (m->to_slot != LIR_NONE && m->from_phys != LIR_PHYS_NONE)
-             : (m->from_slot != LIR_NONE && m->to_phys != LIR_PHYS_NONE);
-}
-
-static bool
-phase(Emit *e, u32 pc, LirMovePhase when, int mode)
-{
-        u32 h = 2 * pc + when;
         u32 n = 0;
 
-        each(i, e->moves, h) {
+        each(i, e->moves, pc) {
                 n += 1;
         }
 
@@ -384,42 +515,79 @@ phase(Emit *e, u32 pc, LirMovePhase when, int mode)
                 return true;
         }
 
-        LirMove *moves = tmp(LirMove, n);
+        LirMove        *moves = tmp(LirMove, n);
+        LirMove const **roots = tmp(LirMove const *, n);
+        u32             nroot = 0;
 
         n = 0;
 
-        each(i, e->moves, h) {
+        each(i, e->moves, pc) {
                 LirMove const *m = &e->alloc->moves[i];
-                if (mode != MV_ALL && slow(m) != (mode == MV_SLOW)) {
+                if (
+                        (m->phase != when)
+                     || (edge != LIR_NONE && m->edge != edge)
+                     || (mode != MV_ALL && m->slow != (mode == MV_SLOW))
+                ) {
                         continue;
                 }
                 if (m->kind == LIR_MOVE_ROOT) {
-                        rootmove(e, m);
+                        roots[nroot++] = m;
                 } else {
                         moves[n++] = *m;
                 }
         }
 
-        return shuffle(e, moves, n);
+        if (!shuffle(e, moves, n)) {
+                return false;
+        }
+
+        for (u32 i = 0; i < nroot; ++i) {
+                rootmove(e, roots[i]);
+        }
+
+        return true;
+}
+
+static bool
+before(Emit *e, u32 pc, int mode)
+{
+        return phase(e, pc, LIR_MOVE_BEFORE, LIR_NONE, mode)
+            && phase(e, pc, LIR_MOVE_PIN, LIR_NONE, MV_ALL);
 }
 
 static bool
 after(Emit *e, u32 pc)
 {
-        return phase(e, pc, LIR_MOVE_AFTER, MV_ALL);
+        return phase(e, pc, LIR_MOVE_AFTER, LIR_NONE, MV_ALL);
+}
+
+static bool
+leave(Emit *e, u32 pc)
+{
+        return phase(e, pc, LIR_MOVE_EDGE_OUT, LIR_NONE, MV_ALL);
+}
+
+static u32
+dest(Emit *e, u32 pc, LirLabel label)
+{
+        u32 at = v__(e->L->labels, label).pos;
+
+        each(i, e->moves, pc) {
+                LirMove const *m = &e->alloc->moves[i];
+                if (m->phase == LIR_MOVE_STUB && m->edge == at) {
+                        return e->edges + m->stub;
+                }
+        }
+
+        return label;
 }
 
 static void
-home(Emit *e, LirReg r, u8 dest, LirType type)
+home(Emit *e, LirReg r, u32 pc, u8 dest, LirType type)
 {
-        LirInterval const *i   = ival(e, r);
-        LirClass           cls = rcls(e, r);
+        LirClass cls = rcls(e, r);
 
-        if (i->spilled) {
-                spill(e, false, dest, i->spill, cls, isfloat(cls));
-        } else {
-                mov(Dst, dest, i->phys, cls, false, false);
-        }
+        fetch(e, dest, loc(e, r, LIR_IN(pc)), cls, false, LIR_IN(pc));
 
         if (!isfloat(cls)) {
                 fit(Dst, dest, type);
@@ -427,7 +595,7 @@ home(Emit *e, LirReg r, u8 dest, LirType type)
 }
 
 static bool
-pass(Emit *e, LirInst const *in)
+pass(Emit *e, LirInst const *in, u32 pc)
 {
         ArgLoc  *args  = tmp(ArgLoc, in->ncall_args + 1);
         LirMove *moves = tmp(LirMove, in->ncall_args + 1);
@@ -436,48 +604,40 @@ pass(Emit *e, LirInst const *in)
         locate(e->target, &in->sig, args);
 
         for (u32 p = 0; p < in->ncall_args; ++p) {
-                LirReg             r    = in->call_args[p].reg;
-                LirType            type = in->sig.params[p];
-                LirInterval const *i    = ival(e, r);
-                LirClass           cls  = rcls(e, r);
+                LirReg   r    = in->call_args[p].reg;
+                LirType  type = in->sig.params[p];
+                LirClass cls  = rcls(e, r);
+                LirLoc   l    = loc(e, r, LIR_IN(pc));
+                bool     f    = isfloat(cls);
 
                 if (args[p].phys != LIR_PHYS_NONE) {
                         moves[n++] = (LirMove) {
+                                .op        = pc,
                                 .from      = r,
                                 .to        = r,
                                 .cls       = cls,
-                                .from_slot = i->spilled ? i->spill : LIR_NONE,
+                                .from_slot = l.slot,
+                                .remat     = l.remat,
                                 .to_slot   = LIR_NONE,
-                                .from_phys = i->phys,
+                                .from_phys = l.phys,
                                 .to_phys   = args[p].phys
                         };
                         continue;
                 }
 
-                u8 src = i->phys;
+                u8   src = l.phys;
+                bool fpr = f;
 
-                if (i->spilled && isfloat(cls)) {
-                        spill(e, false, TMP0, i->spill, cls, false);
+                if (l.phys == LIR_PHYS_NONE || (!f && type == LT_BOOL)) {
+                        fetch(e, TMP0, l, cls, true, LIR_IN(pc));
+                        if (!f) {
+                                fit(Dst, TMP0, type);
+                        }
                         src = TMP0;
-                } else if (i->spilled) {
-                        home(e, r, TMP0, type);
-                        src = TMP0;
-                } else if (type == LT_BOOL) {
-                        mov(Dst, TMP0, src, cls, false, false);
-                        fit(Dst, TMP0, LT_BOOL);
-                        src = TMP0;
+                        fpr = false;
                 }
 
-                mem(
-                        Dst,
-                        true,
-                        src,
-                        FRAME,
-                        args[p].stack,
-                        argsize(type),
-                        false,
-                        isfloat(cls) && !i->spilled
-                );
+                mem(Dst, true, src, FRAME, args[p].stack, argsize(type), false, fpr);
         }
 
         if (!shuffle(e, moves, n)) {
@@ -496,38 +656,16 @@ pass(Emit *e, LirInst const *in)
 static bool
 liveptr(Emit const *e, u32 r, u32 pc)
 {
-        LirInterval const *i   = ival(e, r);
-        LirInst const     *in  = v_(e->L->insts, pc);
-        u32                pos = 2 * pc + 1;
+        LirInst const *in = v_(e->L->insts, pc);
 
         if (
                 (rcls(e, r) != LIR_PTR)
-             || ((in->op == LIR_CALL) && (in->dst == r))
+             || ((in->op == LIR_CALL) && (in->dst != LIR_NONE) && (ival(e, in->dst)->reg == r))
         ) {
                 return false;
         }
 
-        if (
-                (i->nranges == 0)
-             || (pos < i->ranges[0].start)
-             || (pos >= i->ranges[i->nranges - 1].end)
-        ) {
-                return false;
-        }
-
-        u32 lo = 0;
-        u32 hi = i->nranges;
-
-        while (lo < hi) {
-                u32 mid = lo + (hi - lo) / 2;
-                if (i->ranges[mid].start <= pos) {
-                        lo = mid + 1;
-                } else {
-                        hi = mid;
-                }
-        }
-
-        return pos < i->ranges[lo - 1].end;
+        return covering(ival(e, r), LIR_OUT(pc));
 }
 
 static bool
@@ -545,7 +683,7 @@ anyptr(Emit const *e, u32 pc, bool heap)
 {
         for (u32 k = 0; k < e->npointers; ++k) {
                 u32 r = e->pointers[k];
-                if ((!heap || !e->stackish[r]) && liveptr(e, r, pc)) {
+                if ((!heap || !ival(e, r)->stackish) && liveptr(e, r, pc)) {
                         return true;
                 }
         }
@@ -565,90 +703,27 @@ unsure(Emit const *e, u32 pc)
         return anyptr(e, pc, true);
 }
 
-static void
-items(Emit *e, u8 d)
+static u8
+tyreg(Emit const *e, u32 pos)
 {
-        if (e->ty_reg != LIR_PHYS_NONE) {
-                ld(Dst, d, e->ty_reg, offsetof(Ty, stack.items));
+        if (e->ty_vreg == LIR_NONE || !covering(ival(e, e->ty_vreg), pos)) {
+                return LIR_PHYS_NONE;
+        }
+
+        return loc(e, e->ty_vreg, pos).phys;
+}
+
+static void
+items(Emit *e, u8 d, u32 pos)
+{
+        u8 t = tyreg(e, pos);
+
+        if (t != LIR_PHYS_NONE) {
+                ld(Dst, d, t, offsetof(Ty, stack.items));
         } else {
                 ld(Dst, d, FRAME, e->ty_slot);
                 ld(Dst, d, d, offsetof(Ty, stack.items));
         }
-}
-
-static bool
-derived(Lir const *L, bool const *stackish, LirInst const *in)
-{
-        LirOpnd const    *a = in->args;
-        LirRegInfo const *r = vv(L->regs);
-
-        switch (in->op) {
-        case LIR_LEA:
-                return (a[0].kind == LO_MEM)
-                    && stackish[a[0].mem.base]
-                    && (a[0].mem.index == LIR_NONE || r[a[0].mem.index].cls != LIR_PTR);
-
-        case LIR_MOV:
-                return (a[0].kind == LO_REG) && stackish[a[0].reg];
-
-        case LIR_ADD:
-        case LIR_SUB:
-                return (a[0].kind == LO_REG)
-                    && stackish[a[0].reg]
-                    && (
-                               (a[1].kind == LO_IMM)
-                            || (a[1].kind == LO_REG && r[a[1].reg].cls == LIR_I64)
-                       );
-
-        default:
-                return false;
-        }
-}
-
-static void
-classify(Emit *e)
-{
-        Lir const *L       = e->L;
-        bool      *s       = tmp(bool, vN(L->regs) + 1);
-        bool       changed = true;
-
-        for (u32 r = 0; r < vN(L->regs); ++r) {
-                LirRegInfo const *ri = v_(L->regs, r);
-                if (ri->pin != LIR_NONE) {
-                        s[r] = inmask(L->stack_pins, ri->pin);
-                } else {
-                        s[r] = (ri->cls == LIR_PTR) && (ri->param == LIR_NONE);
-                }
-        }
-
-        while (changed) {
-                changed = false;
-                for (u32 pc = 0; pc < vN(L->insts); ++pc) {
-                        LirInst const *in = v_(L->insts, pc);
-
-                        for (u32 j = 0; j < in->raw.nout; ++j) {
-                                u32 r = in->raw.out[j].reg;
-                                if (s[r] && v__(L->regs, r).pin == LIR_NONE) {
-                                        s[r]    = false;
-                                        changed = true;
-                                }
-                        }
-
-                        if (
-                                (in->dst == LIR_NONE)
-                             || !s[in->dst]
-                             || (v__(L->regs, in->dst).pin != LIR_NONE)
-                             || derived(L, s, in)
-                        ) {
-                                continue;
-                        }
-
-                        s[in->dst] = false;
-                        changed    = true;
-                }
-        }
-
-        e->stackish = s;
 }
 
 static void
@@ -658,13 +733,15 @@ bounds(Emit *e, u32 pc)
                 return;
         }
 
-        if (e->ty_reg == LIR_PHYS_NONE) {
+        u8 t = tyreg(e, LIR_IN(pc));
+
+        if (t == LIR_PHYS_NONE) {
                 stack_bounds(Dst, e->ty_slot, e->stack_base, e->stack_end);
                 return;
         }
 
-        ld(Dst, TMP0, e->ty_reg, offsetof(Ty, stack.capacity));
-        ld(Dst, TMP1, e->ty_reg, offsetof(Ty, stack.items));
+        ld(Dst, TMP0, t, offsetof(Ty, stack.capacity));
+        ld(Dst, TMP1, t, offsetof(Ty, stack.items));
         alui(Dst, LIR_SHL, TMP0, TMP0, 5, false);
         alu(Dst, LIR_ADD, TMP0, TMP0, TMP1, false);
         st(Dst, TMP0, FRAME, e->stack_end);
@@ -676,18 +753,18 @@ slide(Emit *e, u32 pc)
         for (u32 k = 0; k < e->npointers; ++k) {
                 u32 r = e->pointers[k];
 
-                if (!e->stackish[r] || !liveptr(e, r, pc)) {
+                if (!ival(e, r)->stackish || !liveptr(e, r, pc)) {
                         continue;
                 }
 
-                LirInterval const *i = ival(e, r);
+                LirLoc l = loc(e, r, LIR_OUT(pc));
 
-                if (i->spilled) {
-                        ld(Dst, TMP1, FRAME, slot(e, i->spill));
+                if (l.slot != LIR_NONE) {
+                        ld(Dst, TMP1, FRAME, slot(e, l.slot));
                         alu(Dst, LIR_ADD, TMP1, TMP1, TMP0, false);
-                        st(Dst, TMP1, FRAME, slot(e, i->spill));
-                } else {
-                        alu(Dst, LIR_ADD, i->phys, i->phys, TMP0, false);
+                        st(Dst, TMP1, FRAME, slot(e, l.slot));
+                } else if (l.phys != LIR_PHYS_NONE) {
+                        alu(Dst, LIR_ADD, l.phys, l.phys, TMP0, false);
                 }
         }
 }
@@ -698,22 +775,26 @@ chase(Emit *e, u32 pc)
         for (u32 k = 0; k < e->npointers; ++k) {
                 u32 r = e->pointers[k];
 
-                if (e->stackish[r] || !liveptr(e, r, pc)) {
+                if (ival(e, r)->stackish || !liveptr(e, r, pc)) {
                         continue;
                 }
 
-                LirInterval const *i = ival(e, r);
-                u8                 p = i->spilled ? TMP1 : i->phys;
+                LirLoc l = loc(e, r, LIR_OUT(pc));
+                u8     p = (l.slot != LIR_NONE) ? TMP1 : l.phys;
 
-                if (i->spilled) {
-                        ld(Dst, p, FRAME, slot(e, i->spill));
+                if (l.remat != LIR_NONE || p == LIR_PHYS_NONE) {
+                        continue;
+                }
+
+                if (l.slot != LIR_NONE) {
+                        ld(Dst, p, FRAME, slot(e, l.slot));
                 }
 
                 rebase_pointer(Dst, p, e->ty_slot, e->stack_base, e->stack_end);
 
-                if (i->spilled) {
+                if (l.slot != LIR_NONE) {
                         mov(Dst, TMP0, p, LIR_PTR, false, false);
-                        st(Dst, TMP0, FRAME, slot(e, i->spill));
+                        st(Dst, TMP0, FRAME, slot(e, l.slot));
                 }
         }
 }
@@ -723,13 +804,13 @@ rebase(Emit *e, u32 pc)
 {
         if (!rebases(e, pc)) {
                 if (e->context && shifts(e, pc)) {
-                        items(e, TMP0);
+                        items(e, TMP0, LIR_OUT(pc));
                         st(Dst, TMP0, FRAME, e->stack_base);
                 }
                 return;
         }
 
-        items(e, TMP0);
+        items(e, TMP0, LIR_OUT(pc));
         rebase_check(Dst, e->stack_base, e->stubs + pc);
         label(Dst, e->rebased + pc);
         cold(Dst);
@@ -739,7 +820,7 @@ rebase(Emit *e, u32 pc)
                 chase(e, pc);
                 rebase_delta(Dst, e->ty_slot, e->stack_base);
                 slide(e, pc);
-                items(e, TMP0);
+                items(e, TMP0, LIR_OUT(pc));
                 st(Dst, TMP0, FRAME, e->stack_base);
         } else {
                 st(Dst, TMP0, FRAME, e->stack_base);
@@ -807,7 +888,7 @@ invoke(Emit *e, LirInst const *in, u32 pc)
 
         switch (fn.kind) {
         case LO_REG:
-                home(e, fn.reg, TMP0, LT_PTR);
+                home(e, fn.reg, pc, TMP0, LT_PTR);
                 st(Dst, TMP0, FRAME, e->result);
                 break;
 
@@ -816,7 +897,7 @@ invoke(Emit *e, LirInst const *in, u32 pc)
         case LO_HELPER: where = (uptr)fn.helper->address;  break;
         }
 
-        if (!pass(e, in)) {
+        if (!pass(e, in, pc)) {
                 return false;
         }
 
@@ -852,13 +933,7 @@ invoke(Emit *e, LirInst const *in, u32 pc)
         }
 
         if (in->dst != LIR_NONE) {
-                LirInterval const *d   = ival(e, in->dst);
-                LirClass           cls = rcls(e, in->dst);
-                if (d->spilled) {
-                        spill(e, true, 0, d->spill, cls, isfloat(cls));
-                } else {
-                        mov(Dst, d->phys, 0, cls, false, false);
-                }
+                put(e, 0, loc(e, in->dst, LIR_OUT(pc)), rcls(e, in->dst));
         }
 
         if (
@@ -880,7 +955,16 @@ invoke(Emit *e, LirInst const *in, u32 pc)
 }
 
 static void
-receive(Emit *e)
+incoming(Emit *e, u8 d, u32 p, bool fpr)
+{
+        ArgLoc a = e->arguments[p];
+
+        ld(Dst, TMP1, FRAME, e->origin);
+        mem(Dst, false, d, TMP1, 16 + a.stack, argsize(a.type), false, fpr);
+}
+
+static bool
+spilled_params(Emit *e)
 {
         Lir const *L = e->L;
 
@@ -889,62 +973,156 @@ receive(Emit *e)
                 u32    size = (a.type == LT_F32) ? 4 : 8;
                 if (a.phys != LIR_PHYS_NONE) {
                         mem(Dst, true, a.phys, FRAME, pslot(e, p), size, false, a.fpr);
-                }
-        }
-
-        for (u32 p = 0; p < L->sig.nparams; ++p) {
-                ArgLoc a = e->arguments[p];
-                if (a.phys == LIR_PHYS_NONE) {
-                        ld(Dst, TMP0, FRAME, e->origin);
-                        mem(Dst, false, TMP0, TMP0, 16 + a.stack, argsize(a.type), false, false);
+                } else {
+                        incoming(e, TMP0, p, false);
                         st(Dst, TMP0, FRAME, pslot(e, p));
                 }
         }
 
-        if (e->context) {
-                if (L->ty_param != LIR_NONE && L->ty_param < L->sig.nparams) {
-                        ld(Dst, 0, FRAME, pslot(e, L->ty_param));
-                } else {
-                        li(Dst, TMP0, (uptr)lir_runtime()->current_ty);
-                        call(Dst, false, e->thunk, e->pc_slot);
+        li(Dst, TMP0, (uptr)lir_runtime()->current_ty);
+        call(Dst, false, e->thunk, e->pc_slot);
+        st(Dst, 0, FRAME, e->ty_slot);
+        ld(Dst, TMP0, 0, offsetof(Ty, stack.count));
+        st(Dst, TMP0, FRAME, e->top_slot);
+        ld(Dst, TMP0, 0, offsetof(Ty, stack.items));
+        st(Dst, TMP0, FRAME, e->stack_base);
+
+        for (u32 p = 0; p < L->sig.nparams; ++p) {
+                e->arguments[p].phys = LIR_PHYS_NONE;
+        }
+
+        return true;
+}
+
+static void
+context(Emit *e)
+{
+        Lir const *L = e->L;
+        ArgLoc     a = e->arguments[L->ty_param];
+        u8         t = a.phys;
+
+        if (t == LIR_PHYS_NONE) {
+                incoming(e, TMP0, L->ty_param, false);
+                t = TMP0;
+        }
+
+        st(Dst, t, FRAME, e->ty_slot);
+        ld(Dst, TMP1, t, offsetof(Ty, stack.count));
+        st(Dst, TMP1, FRAME, e->top_slot);
+        ld(Dst, TMP1, t, offsetof(Ty, stack.items));
+        st(Dst, TMP1, FRAME, e->stack_base);
+}
+
+static bool
+receive(Emit *e)
+{
+        Lir const *L       = e->L;
+        bool       typaram = (L->ty_param != LIR_NONE) && (L->ty_param < L->sig.nparams);
+        bool       saved   = e->context && !typaram;
+        LirMove   *moves   = tmp(LirMove, vN(L->regs) + 1);
+        bool      *done    = tmp(bool, vN(L->regs) + 1);
+        u32        n       = 0;
+
+        memset(done, 0, vN(L->regs) + 1);
+
+        if (saved) {
+                spilled_params(e);
+        } else if (e->context) {
+                context(e);
+        }
+
+        if (L->pc_param != LIR_NONE) {
+                ArgLoc a = e->arguments[L->pc_param];
+                u8     d = a.phys;
+                if (saved) {
+                        ld(Dst, TMP0, FRAME, pslot(e, L->pc_param));
+                        d = TMP0;
+                } else if (d == LIR_PHYS_NONE) {
+                        incoming(e, TMP0, L->pc_param, false);
+                        d = TMP0;
                 }
-                st(Dst, 0, FRAME, e->ty_slot);
-                ld(Dst, TMP0, 0, offsetof(Ty, stack.count));
-                st(Dst, TMP0, FRAME, e->top_slot);
-                ld(Dst, TMP0, 0, offsetof(Ty, stack.items));
-                st(Dst, TMP0, FRAME, e->stack_base);
+                addr(Dst, TMP1, FRAME, e->pc_slot);
+                st(Dst, TMP1, d, 0);
+        }
+
+        for (u32 p = 0; p < L->sig.nparams && !saved; ++p) {
+                ArgLoc a = e->arguments[p];
+                if (a.phys != LIR_PHYS_NONE && !a.fpr) {
+                        fit(Dst, a.phys, a.type);
+                }
         }
 
         for (u32 r = 0; r < vN(L->regs); ++r) {
-                LirRegInfo const  *ri   = v_(L->regs, r);
-                LirInterval const *i    = ival(e, r);
-                bool               idle = (i->nranges == 0) || (i->ranges[0].start != 0);
+                LirRegInfo const  *ri = v_(L->regs, r);
+                LirInterval const *i  = ival(e, r);
 
-                if (ri->param == LIR_NONE || (ri->pin == LIR_NONE && idle)) {
+                if (ri->param == LIR_NONE || done[i->reg] || !covering(i, 0)) {
                         continue;
                 }
 
-                u8   d    = i->spilled ? TMP0 : i->phys;
-                u32  size = (ri->cls == LIR_F32) ? 4 : 8;
-                bool f    = isfloat(ri->cls);
-                bool fpr  = f && !i->spilled;
+                LirLoc to = loc(e, r, 0);
+                ArgLoc a  = e->arguments[ri->param];
 
-                mem(Dst, false, d, FRAME, pslot(e, ri->param), size, false, fpr);
+                if (a.phys == LIR_PHYS_NONE || (to.phys == LIR_PHYS_NONE && to.slot == LIR_NONE)) {
+                        continue;
+                }
+
+                done[i->reg] = true;
+
+                moves[n++] = (LirMove) {
+                        .from      = r,
+                        .to        = r,
+                        .cls       = ri->cls,
+                        .from_slot = LIR_NONE,
+                        .to_slot   = to.slot,
+                        .remat     = LIR_NONE,
+                        .from_phys = a.phys,
+                        .to_phys   = to.phys
+                };
+        }
+
+        if (!shuffle(e, moves, n)) {
+                return false;
+        }
+
+        for (u32 r = 0; r < vN(L->regs); ++r) {
+                LirRegInfo const  *ri = v_(L->regs, r);
+                LirInterval const *i  = ival(e, r);
+
+                if (ri->param == LIR_NONE || done[i->reg] || !covering(i, 0)) {
+                        continue;
+                }
+
+                done[i->reg] = true;
+
+                LirLoc to   = loc(e, r, 0);
+                ArgLoc a    = e->arguments[ri->param];
+                bool   f    = isfloat(ri->cls);
+                u32    size = (ri->cls == LIR_F32) ? 4 : 8;
+
+                if (a.phys != LIR_PHYS_NONE || (to.phys == LIR_PHYS_NONE && to.slot == LIR_NONE)) {
+                        continue;
+                }
+
+                bool reg = (to.phys != LIR_PHYS_NONE);
+                u8   d   = reg ? to.phys : TMP0;
+
+                if (saved) {
+                        mem(Dst, false, d, FRAME, pslot(e, ri->param), size, false, f && reg);
+                } else {
+                        incoming(e, d, ri->param, f && reg);
+                }
 
                 if (!f) {
                         fit(Dst, d, L->sig.params[ri->param]);
                 }
 
-                if (i->spilled) {
-                        mem(Dst, true, d, FRAME, slot(e, i->spill), size, false, false);
+                if (to.slot != LIR_NONE) {
+                        mem(Dst, true, d, FRAME, slot(e, to.slot), size, false, false);
                 }
         }
 
-        if (L->pc_param != LIR_NONE) {
-                ld(Dst, TMP0, FRAME, pslot(e, L->pc_param));
-                addr(Dst, TMP1, FRAME, e->pc_slot);
-                st(Dst, TMP1, TMP0, 0);
-        }
+        return true;
 }
 
 static bool
@@ -969,7 +1147,7 @@ safepoint(Emit *e, LirInst const *in, u32 pc, u32 fast, u32 end)
         mem(Dst, false, TMP0, TMP0, 0, 4, false, false);
         brz(Dst, TMP0, false, true, fast);
 
-        if (!phase(e, pc, LIR_MOVE_BEFORE, MV_SLOW)) {
+        if (!phase(e, pc, LIR_MOVE_BEFORE, LIR_NONE, MV_SLOW)) {
                 return false;
         }
 
@@ -984,7 +1162,7 @@ safepoint(Emit *e, LirInst const *in, u32 pc, u32 fast, u32 end)
                         .call_args  = (LirOpnd *)in->args,
                         .ncall_args = 3
                 };
-                if (!pass(e, &x)) {
+                if (!pass(e, &x, pc)) {
                         return false;
                 }
         } else {
@@ -1003,17 +1181,17 @@ safepoint(Emit *e, LirInst const *in, u32 pc, u32 fast, u32 end)
         mov(Dst, TMP0, 0, LIR_I32, false, false);
         st(Dst, TMP0, FRAME, e->result);
 
-        if (!phase(e, pc, LIR_MOVE_AFTER, MV_SLOW)) {
+        if (!phase(e, pc, LIR_MOVE_AFTER, LIR_NONE, MV_SLOW)) {
                 return false;
         }
 
         rebase(e, pc);
         ld(Dst, TMP0, FRAME, e->result);
-        brz(Dst, TMP0, true, true, in->args[in->nargs - 1].label);
+        brz(Dst, TMP0, true, true, dest(e, pc, in->args[in->nargs - 1].label));
         label(Dst, fast);
         label(Dst, end);
 
-        return phase(e, pc, LIR_MOVE_AFTER, MV_FAST);
+        return phase(e, pc, LIR_MOVE_AFTER, LIR_NONE, MV_FAST);
 }
 
 static bool
@@ -1156,7 +1334,7 @@ insn(Emit *e, u32 pc)
                 if (!after(e, pc)) {
                         return false;
                 }
-                overflow(Dst, in->op, x[2].label);
+                overflow(Dst, in->op, dest(e, pc, x[2].label));
                 return true;
 
         case LF_FBINARY:
@@ -1198,7 +1376,7 @@ insn(Emit *e, u32 pc)
                 if (!after(e, pc)) {
                         return false;
                 }
-                branch(Dst, x[0].cc, x[3].label);
+                branch(Dst, x[0].cc, dest(e, pc, x[3].label));
                 return true;
 
         case LF_BRZ:
@@ -1206,11 +1384,11 @@ insn(Emit *e, u32 pc)
                 if (!after(e, pc)) {
                         return false;
                 }
-                branch(Dst, (in->op == LIR_BRNZ) ? LIR_NE : LIR_EQ, x[1].label);
+                branch(Dst, (in->op == LIR_BRNZ) ? LIR_NE : LIR_EQ, dest(e, pc, x[1].label));
                 return true;
 
         case LF_JMP:
-                if (!after(e, pc)) {
+                if (!after(e, pc) || !leave(e, pc)) {
                         return false;
                 }
                 jump(Dst, x[0].label);
@@ -1225,7 +1403,7 @@ insn(Emit *e, u32 pc)
                 if (rcls(e, x[0].reg) == LIR_I32) {
                         fit(Dst, TMP0, LT_U32);
                 }
-                jtab(Dst, TMP0, in->ntargets, x[1].label, e->literals + pc);
+                jtab(Dst, TMP0, in->ntargets, dest(e, pc, x[1].label), e->literals + pc);
                 if (e->islands) {
                         table(Dst, e->literals + pc, in->targets, in->ntargets);
                 }
@@ -1233,7 +1411,7 @@ insn(Emit *e, u32 pc)
 
         case LF_RET:
                 if (in->nargs != 0) {
-                        home(e, x[0].reg, 0, L->sig.ret);
+                        home(e, x[0].reg, pc, 0, L->sig.ret);
                 }
                 jump(Dst, e->epilogue);
                 return true;
@@ -1328,7 +1506,7 @@ prepare(Emit *e)
         u32             align = alloc->frame_align;
 
         e->labels      = chain(e->ty, n + 1, vN(L->labels) + 1);
-        e->moves       = chain(e->ty, 2 * n + 2, alloc->nmoves + 1);
+        e->moves       = chain(e->ty, n + 1, alloc->nmoves + 1);
         e->constraints = chain(e->ty, n + 1, alloc->nconstraints + 1);
         e->arguments   = tmp(ArgLoc, L->sig.nparams + 1);
         e->pointers    = tmp(u32, vN(L->regs) + 1);
@@ -1336,7 +1514,7 @@ prepare(Emit *e)
         for (u32 i = alloc->nmoves; i-- > 0;) {
                 LirMove const *m = &alloc->moves[i];
                 if (m->op < n) {
-                        hook(&e->moves, 2 * m->op + m->phase, i);
+                        hook(&e->moves, m->op, i);
                 }
         }
 
@@ -1350,28 +1528,31 @@ prepare(Emit *e)
                 hook(&e->labels, v__(L->labels, l).pos, l);
         }
 
-        for (u32 r = 0; r < vN(L->regs); ++r) {
-                LirRegInfo const  *ri = v_(L->regs, r);
-                LirInterval const *i  = &alloc->intervals[r];
+        bool *stable = tmp(bool, vN(L->regs) + 1);
 
-                if (inmask(L->stable_pins, ri->pin)) {
-                        if (
-                                (L->ty_param != LIR_NONE)
-                             && (ri->param == L->ty_param)
-                             && !i->spilled
-                             && (i->phys != LIR_PHYS_NONE)
-                        ) {
-                                e->ty_reg = i->phys;
-                        }
+        memset(stable, 0, vN(L->regs) + 1);
+
+        for (u32 r = 0; r < vN(L->regs); ++r) {
+                LirRegInfo const *ri = v_(L->regs, r);
+
+                if (!inmask(L->stable_pins, ri->pin)) {
                         continue;
                 }
 
-                if (ri->cls == LIR_PTR && i->crosses_call) {
-                        e->pointers[e->npointers++] = r;
+                stable[alloc->intervals[r].rep] = true;
+
+                if (L->ty_param != LIR_NONE && ri->param == L->ty_param) {
+                        e->ty_vreg = r;
                 }
         }
 
-        classify(e);
+        for (u32 r = 0; r < vN(L->regs); ++r) {
+                LirInterval const *i = &alloc->intervals[r];
+
+                if (i->rep == r && !stable[r] && rcls(e, r) == LIR_PTR && i->crosses_call) {
+                        e->pointers[e->npointers++] = r;
+                }
+        }
 
         e->incoming = locate(e->target, &L->sig, e->arguments);
 
@@ -1425,6 +1606,7 @@ prepare(Emit *e)
         e->sites    = e->literals + n;
         e->rebased  = e->sites + n;
         e->stubs    = e->rebased + n;
+        e->edges    = e->stubs + n;
 
         return true;
 }
@@ -1438,6 +1620,38 @@ marks(Emit *e, u32 pc)
 }
 
 static bool
+stubs(Emit *e)
+{
+        Lir const      *L     = e->L;
+        LirAlloc const *alloc = e->alloc;
+        u32             n     = vN(L->insts);
+        bool           *done  = tmp(bool, alloc->nstubs + 1);
+
+        memset(done, 0, alloc->nstubs + 1);
+
+        for (u32 pc = 0; pc < n; ++pc) {
+                each(i, e->moves, pc) {
+                        LirMove const *m = &alloc->moves[i];
+
+                        if (m->phase != LIR_MOVE_STUB || done[m->stub]) {
+                                continue;
+                        }
+
+                        done[m->stub] = true;
+                        label(Dst, e->edges + m->stub);
+
+                        if (!phase(e, pc, LIR_MOVE_STUB, m->edge, MV_ALL)) {
+                                return false;
+                        }
+
+                        jump(Dst, e->labels.head[m->edge]);
+                }
+        }
+
+        return true;
+}
+
+static bool
 assemble(Emit *e)
 {
         Lir const *L = e->L;
@@ -1445,19 +1659,25 @@ assemble(Emit *e)
 
         dasm_init(Dst, DASM_MAXSECTION);
         dasm_setupglobal(Dst, e->globals, 0);
-        dasm_growpc(Dst, vN(L->labels) + 6 * n + 4);
+        dasm_growpc(Dst, vN(L->labels) + 6 * n + 4 + e->alloc->nstubs);
         dasm_setup(Dst, lir_actions);
 
         prologue(Dst, e->frame, e->alloc->frame_align, e->origin);
         saveregs(e, true);
-        receive(e);
+
+        if (!receive(e)) {
+                return false;
+        }
 
         for (u32 pc = 0; pc < n; ++pc) {
-                int mode = (v__(L->insts, pc).op == LIR_POLL) ? MV_FAST : MV_ALL;
+                LirOp op   = v__(L->insts, pc).op;
+                int   mode = (op == LIR_POLL) ? MV_FAST : MV_ALL;
                 marks(e, pc);
                 if (
-                        !phase(e, pc, LIR_MOVE_BEFORE, mode)
+                        !phase(e, pc, LIR_MOVE_EDGE_IN, pc, MV_ALL)
+                     || !before(e, pc, mode)
                      || !insn(e, pc)
+                     || (op != LIR_JMP && !leave(e, pc))
                 ) {
                         return false;
                 }
@@ -1469,6 +1689,10 @@ assemble(Emit *e)
         epilogue(Dst, e->origin, false);
         thunk(Dst, e->thunk, e->pc_slot);
         cold(Dst);
+
+        if (!stubs(e)) {
+                return false;
+        }
 
         for (u32 pc = 0; pc < n && !e->islands; ++pc) {
                 LirInst const *in = v_(L->insts, pc);
@@ -1575,7 +1799,7 @@ publish(Emit *e, usize size)
                 if (in->op == LIR_SWITCH) {
                         uptr *table = (void *)(rw + dasm_getpclabel(Dst, e->literals + pc));
                         for (u32 i = 0; i < in->ntargets; ++i) {
-                                table[i] = (uptr)rx + dasm_getpclabel(Dst, in->targets[i]);
+                                table[i] = (uptr)rx + dasm_getpclabel(Dst, dest(e, pc, in->targets[i]));
                         }
                 }
 
@@ -1637,7 +1861,7 @@ emit(Ty *ty, Lir const *L, LirAlloc const *alloc, LirCode *code, LirError *err)
                 .target  = &Native,
                 .err     = err,
                 .context = alloc->nvslots > L->nvslots,
-                .ty_reg  = LIR_PHYS_NONE
+                .ty_vreg = LIR_NONE
         };
         usize size;
 

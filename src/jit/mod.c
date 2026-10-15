@@ -1104,16 +1104,8 @@ listing(Ty *ty, Lir const *L, LirAlloc const *alloc)
 
         lir_dump(L, f);
 
-        for (u32 r = 0; alloc != NULL && r < alloc->nintervals; ++r) {
-                LirInterval const *i  = &alloc->intervals[r];
-                LirClass           cls = v__(L->regs, r).cls;
-
-                if (i->spilled) {
-                        fprintf(f, "  r%u: spill+%u\n", r, i->spill);
-                } else {
-                        char bank = isfloat(cls) ? 'v' : 'x';
-                        fprintf(f, "  r%u: %c%u\n", r, bank, i->phys);
-                }
+        if (alloc != NULL) {
+                lir_dump_alloc(L, alloc, f);
         }
 
         fclose(f);
@@ -1139,8 +1131,7 @@ allocate(
         LirTarget const *target = lir_target();
 
         return lir_cfg(ty, L, cfg, err)
-            && lir_allocate(ty, L, cfg, target, cs, n, alloc, err)
-            && lir_allocate_workspaces(ty, L, target, alloc, err);
+            && lir_allocate(ty, L, cfg, target, cs, n, alloc, err);
 }
 
 static Value

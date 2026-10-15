@@ -856,7 +856,7 @@ check_inputs(void)
                 lir_free(decoded);
         }
 
-        bytes.items[4] = 3;
+        bytes.items[4] = 4;
         CHECK(decode(&bytes, &err) == NULL);
         bytes.items[4] = 1;
 

@@ -47,16 +47,7 @@ trace(Lir const *L, LirAlloc const *alloc, char const *stage)
                         alloc->frame_size,
                         alloc->nvslots
                 );
-                for (u32 r = 0; r < alloc->nintervals; ++r) {
-                        LirInterval const *i    = &alloc->intervals[r];
-                        LirClass           cls  = v__(L->regs, r).cls;
-                        char               bank = isfloat(cls) ? 'f' : 'g';
-                        if (i->spilled) {
-                                fprintf(stderr, "  r%u: spill+%u\n", r, i->spill);
-                        } else {
-                                fprintf(stderr, "  r%u: %c%u\n", r, bank, i->phys);
-                        }
-                }
+                lir_dump_alloc(L, alloc, stderr);
         }
 
         funlockfile(stderr);
@@ -125,8 +116,7 @@ native(Ty *ty, Lir *L, LirCode *code, bool owned, LirTarget const *target, LirEr
         bool ok = (legal != NULL)
                && lir_legalize(ty, legal, target, &cs, &ncs, err)
                && lir_cfg(ty, legal, &cfg, err)
-               && lir_allocate(ty, legal, &cfg, target, cs, ncs, &alloc, err)
-               && lir_allocate_workspaces(ty, legal, target, &alloc, err);
+               && lir_allocate(ty, legal, &cfg, target, cs, ncs, &alloc, err);
 
         if (ok) {
                 code->nvslots = alloc.nvslots;

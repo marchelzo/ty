@@ -50,6 +50,9 @@ lir_check_labels(Lir const *L, LirError *err);
 bool
 lir_resolve_mode(Lir *L, LirError *err);
 
+bool
+lir_hoist(Ty *ty, Lir *L, LirError *err);
+
 inline static bool
 iscall(LirInst const *in)
 {

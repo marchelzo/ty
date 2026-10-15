@@ -497,13 +497,13 @@ alu(dasm_State **Dst, LirOp op, u8 d, u8 a, u8 b, bool narrow)
                 if (d != b || d == a) {
                         mov(Dst, d, a, cls, false, false);
                         arith(Dst, op, d, b, narrow);
-                        return;
-                }
-                if (op != LIR_SUB) {
+                } else if (op == LIR_SUB) {
+                        | W1 neg, d
+                        arith(Dst, LIR_ADD, d, a, narrow);
+                } else {
                         arith(Dst, op, d, a, narrow);
-                        return;
                 }
-                break;
+                return;
         }
 
         mov(Dst, TMP0, a, cls, false, false);

@@ -220,6 +220,8 @@ put_inst(Writer *w, Lir const *L, LirInst const *in, u32 version)
                 put_uint(w, in->tag);
         } else if (in->op == LIR_ENTRY && version >= 2) {
                 put_uint(w, in->tag);
+        } else if (LirOps[in->op].form == LF_LD && version >= 3) {
+                put_uint(w, in->flags);
         } else if (in->op == LIR_SWITCH) {
                 put_uint(w, in->ntargets);
                 for (u32 i = 0; i < in->ntargets; ++i) {
@@ -233,17 +235,22 @@ put_inst(Writer *w, Lir const *L, LirInst const *in, u32 version)
 static u32
 version(Lir const *L)
 {
+        u32 v = 1;
+
         for (u32 pc = 0; pc < vN(L->insts); ++pc) {
                 LirInst const *in = v_(L->insts, pc);
+                if (LirOps[in->op].form == LF_LD && in->flags != 0) {
+                        return 3;
+                }
                 if (
                         (in->op == LIR_POLL && (in->flags != 0 || in->tag != 0))
                      || (in->op == LIR_ENTRY && in->tag != 0)
                 ) {
-                        return 2;
+                        v = 2;
                 }
         }
 
-        return 1;
+        return v;
 }
 
 static bool
@@ -603,6 +610,8 @@ get_inst(Reader *r, LirInst *in, u32 version, LirBinding const *holes, u32 nhole
                 in->tag   = get_u32(r);
         } else if (in->op == LIR_ENTRY && version >= 2) {
                 in->tag = get_u32(r);
+        } else if (LirOps[in->op].form == LF_LD && version >= 3) {
+                in->flags = get_u32(r) & LIR_REFRESH;
         } else if (in->op == LIR_SWITCH) {
                 in->ntargets = get_count(r);
                 in->targets  = xtA0(LirLabel, in->ntargets);
@@ -829,7 +838,7 @@ decode(Ty *ty, Reader *r, LirBinding const *holes, u32 nholes, LirError *err)
 
         u32 version = get_u32(r);
 
-        if (version != 1 && version != 2) {
+        if (version < 1 || version > 3) {
                 return garbage(NULL, err);
         }
 
