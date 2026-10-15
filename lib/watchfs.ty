@@ -111,16 +111,19 @@ pub class Watcher {
 
     __add-dir(dir: Path) {
         let ds = "{dir}"
-        if (ds in __paths) { return }
+        return if (ds in __paths)
         let fd = os.open(ds, os.O_RDONLY)
-        if fd == -1 { return }
+        return if fd == -1
         let entries = os.listdir(ds)
-        if entries == nil { os.close(fd); return }
+        if entries == nil {
+            os.close(fd)
+            return
+        }
         __kq.clear(fd, kqueue.EVFILT_VNODE, fflags=DIR_FFLAGS)
         __dir-fds[fd] = dir
         __paths << ds
-        for name in entries {
-            let p = dir / name
+        for entries {
+            let p = dir / it
             if __recursive && (p.dir?) {
                 __add-dir(p)
             } else {
@@ -131,9 +134,9 @@ pub class Watcher {
 
     __add-file(p: Path) {
         let ps = "{p}"
-        if (ps in __paths) { return }
+        return if (ps in __paths)
         let fd = os.open(ps, os.O_RDONLY)
-        if fd == -1 { return }
+        return if fd == -1
         __kq.clear(fd, kqueue.EVFILT_VNODE, fflags=VNODE_FFLAGS)
         __file-fds[fd] = p
         __paths << ps
@@ -157,8 +160,8 @@ pub class Watcher {
     }
 
     __rescan(dir: Path) {
-        for name in os.listdir("{dir}") ?? [] {
-            let p = dir / name
+        for os.listdir("{dir}") ?? [] {
+            let p = dir / it
             if "{p}" not in __paths {
                 __add(p)
                 yield Create(p)
@@ -206,9 +209,13 @@ pub class Watcher {
     }
 
     close() {
-        if __closed { return }
-        for fd in [*__file-fds.keys()] { os.close(fd) }
-        for fd in [*__dir-fds.keys()] { os.close(fd) }
+        return if __closed
+        for [*__file-fds.keys()] {
+            os.close(it)
+        }
+        for [*__dir-fds.keys()] {
+            os.close(it)
+        }
         __kq.close()
         __closed = true
     }

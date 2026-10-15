@@ -30,9 +30,7 @@ class AlarmState {
 let ALARM = AlarmState()
 
 fn on-alarm(sig: Int) {
-    if !ALARM.armed? {
-        return
-    }
+    return if !ALARM.armed?
     if thread.id() == ALARM.tid {
         ALARM.armed? = false
         throw TestTimeout(ALARM.secs)
@@ -165,17 +163,17 @@ fn invoke(c: TestCase, t: Test, secs: ?Float, fx: Resolver) -> Outcome {
     let stage = Stage()
     try {
         arm(secs)
-        for h in core.hooks('before-each') {
-            stage.what = "before-each hook {hook-name(h)} failed"
-            call-hook(h, t)
+        for core.hooks('before-each') {
+            stage.what = "before-each hook {hook-name(it)} failed"
+            call-hook(it, t)
         }
         let kws: Dict[String, Any] = %{}
         for k, v in c.kwargs {
             kws[k] = v
         }
-        for name in c.fixtures {
-            stage.what = "fixture `{kebab-name(name)}` failed"
-            kws[name] = fx.value(name, t)
+        for c.fixtures {
+            stage.what = "fixture `{kebab-name(it)}` failed"
+            kws[it] = fx.value(it, t)
         }
         stage.what = nil
         let pos: Array[Any] = c.wants-t? ? [t, *c.args] : c.args
@@ -200,12 +198,12 @@ fn invoke(c: TestCase, t: Test, secs: ?Float, fx: Resolver) -> Outcome {
 
 fn run-after-each(t: Test) -> ?(String, Event) {
     let first: ?(String, Event) = nil
-    for h in core.hooks('after-each').reverse() {
+    for core.hooks('after-each').reverse() {
         try {
-            call-hook(h, t)
+            call-hook(it, t)
         } catch e {
             let tr = ty.trace()
-            let why = "after-each hook {hook-name(h)} failed"
+            let why = "after-each hook {hook-name(it)} failed"
             first = first ?? (why, failure-of(e, tr))
         }
     }
@@ -589,12 +587,12 @@ class Run {
     finish-file(file: String) {
         let errors: Array[(String, Event)] = []
         let t = Test("{file}::(after-all)", '(after-all)', file, 0, seed)
-        for h in core.hooks('after-all') {
+        for core.hooks('after-all') {
             try {
-                call-hook(h, t)
+                call-hook(it, t)
             } catch e {
                 let tr = ty.trace()
-                let why = "after-all hook {hook-name(h)} failed"
+                let why = "after-all hook {hook-name(it)} failed"
                 errors.push((why, failure-of(e, tr)))
             }
         }
@@ -602,9 +600,7 @@ class Run {
             let why = 'file-scoped fixture teardown failed'
             errors.push((why, failure-of(e, tr)))
         }
-        if #errors == 0 {
-            return
-        }
+        return if #errors == 0
         let id = "{file}::(teardown)"
         sink.emit(events.test-start(id))
         let why = errors.map(&0).join('; ')
@@ -715,9 +711,9 @@ fn make-sink(o: Options, file-mode?: Bool) -> EventSink {
         return sink
     }
     let specs = (#o.reporters > 0) ? o.reporters : ['pretty']
-    for spec in specs {
+    for specs {
         sink.add(report.make(
-            spec,
+            it,
             mode: 'file',
             quiet?: o.quiet?,
             slowest: o.durations
@@ -732,7 +728,7 @@ fn seed-of(o: Options) -> Int {
     }
     match getenv('TY_TEST_SEED') {
         $s :: s.match?(/^\d+$/) => int(s),
-        _                     => rand(1, 1 << 30),
+        _                       => rand(1, 1 << 30),
     }
 }
 
@@ -841,11 +837,9 @@ pub fn run(argv: Array[String]) -> Int {
     let r = Run(o, sink, seed, capture)
 
     try {
-        for c in cases {
-            if r.stop?() {
-                break
-            }
-            r.run-case(c, file-skip)
+        for cases {
+            break if r.stop?()
+            r.run-case(it, file-skip)
         }
         capture.?begin()
         r.finish-file(col.file)

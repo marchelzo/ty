@@ -173,7 +173,7 @@ pub class MarkdownNode {
     if let $lang = info-string and #lang > 0 {
       "<code class=\"language-{lang}\">"
     } else {
-      "<code>"
+      '<code>'
     }
   }
 
@@ -192,8 +192,8 @@ pub class MarkdownNode {
       NodeType.Emph          => "<em>{render-children(renderers)}</em>",
       NodeType.Strong        => "<strong>{render-children(renderers)}</strong>",
       NodeType.Text          => escape-html(text ?? ''),
-      NodeType.SoftBreak     => "\n",
-      NodeType.LineBreak     => "<br>",
+      NodeType.SoftBreak     => '\n',
+      NodeType.LineBreak     => '<br>',
       NodeType.Heading       => "<h{heading-level}>{render-children(renderers)}</h{heading-level}>",
       NodeType.Link          => "<a href=\"{url}\">{render-children(renderers)}</a>",
       NodeType.Image         => "<img src=\"{url}\">",
@@ -203,7 +203,7 @@ pub class MarkdownNode {
       NodeType.CodeBlock     => "<pre>{code-tag}{escape-html(text ?? '')}</code></pre>",
       NodeType.HtmlBlock     => text ?? '',
       NodeType.HtmlInline    => text ?? '',
-      NodeType.ThematicBreak => "<hr>",
+      NodeType.ThematicBreak => '<hr>',
       NodeType.Paragraph     => "<p>{render-children(renderers)}</p>",
       NodeType.List          => (list-type == ListType.Bullet) ? "<ul>{render-children(renderers)}</ul>" : "<ol>{render-children(renderers)}</ol>",
       NodeType.Item          => "<li>{render-children(renderers)}</li>"

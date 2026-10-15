@@ -930,8 +930,8 @@ pub class Connection {
 
     result(sql: String, params: Array = [], named: Dict = %{}) -> Result {
         __extracted(sql, fn (ext, n) {
-            for i in 0..n - 1 {
-                __prepared(ext, i, &execute).close()
+            for 0..n - 1 {
+                __prepared(ext, it, &execute).close()
             }
             __prepared(ext, n - 1, \_.bind(params, named).execute())
         })
@@ -959,8 +959,8 @@ pub class Connection {
         __result.?close()
         let stmt = prepare(sql)
         try {
-            for row in rows {
-                stmt.bind(*bindings(row)).execute().close()
+            for rows {
+                stmt.bind(*bindings(it)).execute().close()
             }
         } finally {
             stmt.close()
@@ -1038,8 +1038,8 @@ pub class Connection {
         try {
             ok(state)
             for row in rows {
-                for x in [*row] {
-                    let v = value(x)
+                for [*row] {
+                    let v = value(it)
                     try {
                         ok(duckdb_append_value(app, v))
                     } finally {
@@ -1323,7 +1323,7 @@ pub class Relation {
     to-parquet = use write-parquet
 
     explain() -> String {
-        __con.sql("EXPLAIN {__sql}", *__params, **__named).fetchall().map(&1).join("\n")
+        __con.sql("EXPLAIN {__sql}", *__params, **__named).fetchall().map(&1).join('\n')
     }
 
     show(max-rows: Int = 20) {
@@ -1421,7 +1421,7 @@ fn table-box(names: Array, types: Array, chunks: Array, total: Int) -> String {
         lines.push("  {total} rows ({shown} shown)  {#names} columns")
     }
 
-    lines.join("\n")
+    lines.join('\n')
 }
 
 pub fn connect(database: String = ':memory:', read-only: Bool = false, config: Dict = %{}) -> Connection {

@@ -126,11 +126,7 @@ pub class Logger {
 
     log(level, msg) {
         if __level.level >= level {
-            let name = if #__stack == 0 {
-                __name
-            } else {
-                "{__name}[{__stack.join('.')}]"
-            }
+            let name = #__stack == 0 ? __name : "{__name}[{__stack.join('.')}]"
 
             let out = if __color {
                 __chalk"{(__prefix)(level, true)} [name]{name}[/]: {msg}\n"

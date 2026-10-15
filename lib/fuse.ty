@@ -447,9 +447,9 @@ class Bridge {
         __next    = 0
         __lock    = Mutex()
 
-        for name in SLOTS {
-            if let $op = ops.operation(name) {
-                __ops[name] = op
+        for SLOTS {
+            if let $op = ops.operation(it) {
+                __ops[it] = op
             }
         }
     }
@@ -606,8 +606,8 @@ class Bridge {
 
     listxattr(path: Ptr[_], buf: ?Ptr[_], size: Size) -> CInt {
         let names = Blob()
-        for name in __call('listxattr', c.str(path)) ?? [] {
-            names.push(name)
+        for __call('listxattr', c.str(path)) ?? [] {
+            names.push(it)
             names.push(0)
         }
         copy-out(names, buf, size)
@@ -624,8 +624,8 @@ class Bridge {
     readdir(path: Ptr[_], buf: Ptr[_], filler: Ptr[_], off: Off, fi: ?Ptr[_], flags: CInt) -> CInt {
         let st = c.new-auto(Stat.ctype())
 
-        for name in ['.', '..'] {
-            c.call(FILL_DIR, filler, buf, name.cstr(), nil, 0, 0)
+        for ['.', '..'] {
+            c.call(FILL_DIR, filler, buf, it.cstr(), nil, 0, 0)
         }
 
         for entry in __call('readdir', c.str(path), __handle(fi)) ?? [] {
@@ -634,9 +634,7 @@ class Bridge {
                 name: String          => (name, nil),
             }
 
-            if name == '.' || name == '..' {
-                continue
-            }
+            continue if name == '.' || name == '..'
 
             if attrs != nil {
                 fill-stat(st, attrs)
@@ -730,9 +728,9 @@ fn loop-config() -> Ptr[_] {
 fn option(key: String, value: _) -> String | nil {
     let key = key.sub(/[A-Z]/, m -> "_{m.lower()}")
     match value {
-        true        => key,
-        false, nil  => nil,
-        _           => "{key}={str(value).sub(/[\\,]/, m -> "\\{m}")}"
+        true       => key,
+        false, nil => nil,
+        _          => "{key}={str(value).sub(/[\\,]/, m -> "\\{m}")}"
     }
 }
 
@@ -795,12 +793,12 @@ pub class Fuse {
         let table    = c.new-auto(c.ptr, #closures)
         let args     = c.box-auto(FuseArgs.ctype(), (#strings, argv, 0))
 
-        for i in ..#strings {
-            argv[i] = strings[i]
+        for ..#strings {
+            argv[it] = strings[it]
         }
 
-        for i in ..#closures {
-            table[i] = closures[i]
+        for ..#closures {
+            table[it] = closures[it]
         }
 
         try {
@@ -831,7 +829,7 @@ pub class Fuse {
         fuse_unmount(__fuse)
 
         if rc < 0 {
-            throw OSError("fuse: event loop", -rc)
+            throw OSError('fuse: event loop', -rc)
         }
     }
 

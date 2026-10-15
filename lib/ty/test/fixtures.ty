@@ -146,9 +146,7 @@ fn finish-generator(fx: Fixture, g: Any) {
 pub fn wants(params: Array[String], have: Array[String]) -> Array[String] {
     let out: Array[String] = []
     for p; i in params {
-        if (i == 0 && p == 't') || p in have {
-            continue
-        }
+        continue if (i == 0 && p == 't') || p in have
         if core.fixture-for(p) != nil {
             out.push(p)
         }
@@ -162,12 +160,8 @@ pub fn missing(
     have:     Array[String]
 ) -> ?String {
     for p; i in params {
-        if i >= required {
-            break
-        }
-        if (i == 0 && p == 't') || p in have || core.fixture-for(p) != nil {
-            continue
-        }
+        break if i >= required
+        continue if (i == 0 && p == 't') || p in have || core.fixture-for(p) != nil
         return p
     }
     nil

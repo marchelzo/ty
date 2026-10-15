@@ -147,14 +147,12 @@ class Kernel {
         let events = os.POLLIN | (writing? ? os.POLLOUT : 0)
         match os.poll([(__fd, events), __process.stderr], 0.05) {
             Ok(_) or Err(errno.EINTR) => (),
-            Err(error) => throw os.OSError('poll Ty REPL', error)
+            Err(error)                => throw os.OSError('poll Ty REPL', error)
         }
     }
 
     close() {
-        if __closed? {
-            return
-        }
+        return if __closed?
         __closed? = true
         let result = os.kill(-__process.pid, os.SIGKILL)
         let error = result < 0 ? errno.get() : 0

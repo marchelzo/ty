@@ -175,23 +175,23 @@ pub fn parse(args: Array[String]) -> Options {
                 o.targets += args[i + 1;]
                 break
             },
-            '-k' or '--filter'     => o.filters.push(value(opt, inline)),
-            '--exclude'            => o.excludes.push(value(opt, inline)),
-            '--path-filter'        => o.path-filters.push(value(opt, inline)),
-            '--path-exclude'       => o.path-excludes.push(value(opt, inline)),
-            '--tracked-only'       => o.tracked-only? = flag(opt, inline),
-            '-t' or '--tags'       => o.tags = value(opt, inline),
-            '--all'                => o.all? = flag(opt, inline),
-            '--with'               => o.opted.push(value(opt, inline)),
-            '--list'               => o.list = inline ?? 'text',
-            '-x' or '--fail-fast'  => o.fail-fast? = flag(opt, inline),
-            '--max-fail'           => o.max-fail = integer(opt, value(opt, inline)),
-            '--retries'            => o.retries = integer(opt, value(opt, inline)),
-            '--repeat'             => o.repeat = integer(opt, value(opt, inline)),
+            '-k' or '--filter'         => o.filters.push(value(opt, inline)),
+            '--exclude'                => o.excludes.push(value(opt, inline)),
+            '--path-filter'            => o.path-filters.push(value(opt, inline)),
+            '--path-exclude'           => o.path-excludes.push(value(opt, inline)),
+            '--tracked-only'           => o.tracked-only? = flag(opt, inline),
+            '-t' or '--tags'           => o.tags = value(opt, inline),
+            '--all'                    => o.all? = flag(opt, inline),
+            '--with'                   => o.opted.push(value(opt, inline)),
+            '--list'                   => o.list = inline ?? 'text',
+            '-x' or '--fail-fast'      => o.fail-fast? = flag(opt, inline),
+            '--max-fail'               => o.max-fail = integer(opt, value(opt, inline)),
+            '--retries'                => o.retries = integer(opt, value(opt, inline)),
+            '--repeat'                 => o.repeat = integer(opt, value(opt, inline)),
             '--lf' or '--last-failed'  => o.last-failed? = flag(opt, inline),
             '--ff' or '--failed-first' => o.failed-first? = flag(opt, inline),
-            '--shard'              => o.shard = shard(value(opt, inline)),
-            '--durations'          => o.durations = integer(opt, value(opt, inline)),
+            '--shard'                  => o.shard = shard(value(opt, inline)),
+            '--durations'              => o.durations = integer(opt, value(opt, inline)),
             '--shuffle'            => do {
                 o.shuffle? = true
                 if let $s = inline {
@@ -310,19 +310,19 @@ fn update-last-failed(
     for k, v in old {
         out[k] = v
     }
-    for ev in tally.results {
-        let id = tally.id-of(ev)
-        if tally.failing?(ev) {
+    for tally.results {
+        let id = tally.id-of(it)
+        if tally.failing?(it) {
             out[id] = file-of-id(id)
         } else {
             out.remove(id)
         }
     }
-    for r in tally.rows {
-        if r.error != nil {
-            out[r.path] = r.path
+    for tally.rows {
+        if it.error != nil {
+            out[it.path] = it.path
         } else {
-            out.remove(r.path)
+            out.remove(it.path)
         }
     }
     out
@@ -370,11 +370,9 @@ fn apply-last-failed(
     if lf.active? {
         let picked = jobs.filter(j -> j.file in failed)
         for j; i in picked {
-            if lf.whole-file?(j.file) {
-                continue
-            }
+            continue if lf.whole-file?(j.file)
             let p = "{run-dir}/last-failed-{i}.ids"
-            write-text(p, lf.ids-in(j.file).join("\n"))
+            write-text(p, lf.ids-in(j.file).join('\n'))
             j.select-path = p
         }
         return picked
@@ -402,22 +400,18 @@ fn tracked-files() -> Dict[String, Bool] {
         throw UsageError('--tracked-only needs a git repository')
     }
     let root = os.realpath(os.getcwd()) ?? os.getcwd()
-    %{"{root}/{p}": true for p in r.stdout.split("\0") if p != ''}
+    %{"{root}/{p}": true for p in r.stdout.split('\0') if p != ''}
 }
 
 fn make-jobs(o: Options, plan: Plan, tags: ?TagExpr, seed: Int) -> Array[Job] {
     let jobs: Array[Job] = []
     let tracked = o.tracked-only? ? tracked-files() : nil
     for pf in plan.files {
-        if !path-selected?(o, pf.path) {
-            continue
-        }
+        continue if !path-selected?(o, pf.path)
         if let $t = tracked and !t[pf.abs] {
             continue
         }
-        if pf.script? && !script-selected?(o, pf, tags) {
-            continue
-        }
+        continue if pf.script? && !script-selected?(o, pf, tags)
         let j = Job(pf.path)
         j.ids          = pf.ids
         j.line         = pf.line
@@ -488,24 +482,20 @@ fn settings(o: Options, run-dir: String, seed: Int, n: Int) -> Settings {
 
 fn row-events(o: Options, plan: Plan) -> Array[(String, Event)] {
     let rows: Array[(String, Event)] = []
-    for c in plan.skips {
-        let p = "{discover.display(c.dir)}/"
-        if !path-selected?(o, p) {
-            continue
-        }
-        let source = c.source ?? dirconf.CONFIG
-        rows.push((p, events.file-skip(p, c.skip ?? 'skipped', source: source)))
+    for plan.skips {
+        let p = "{discover.display(it.dir)}/"
+        continue if !path-selected?(o, p)
+        let source = it.source ?? dirconf.CONFIG
+        rows.push((p, events.file-skip(p, it.skip ?? 'skipped', source: source)))
     }
-    for c in plan.errors {
-        let p = discover.display(c.file(c.source ?? dirconf.CONFIG))
-        if !path-selected?(o, p) {
-            continue
-        }
+    for plan.errors {
+        let p = discover.display(it.file(it.source ?? dirconf.CONFIG))
+        continue if !path-selected?(o, p)
         let ev = events.file-done(
             p,
-            c.status ?? events.status('exit', code: 1),
-            stdout-tail: c.stdout,
-            stderr-tail: c.stderr
+            it.status ?? events.status('exit', code: 1),
+            stdout-tail: it.stdout,
+            stderr-tail: it.stderr
         )
         rows.push((p, ev))
     }
@@ -530,9 +520,9 @@ fn make-sink(o: Options) -> EventSink {
         p   => EventSink.to-file(p),
     }
     let specs = (#o.reporters > 0) ? o.reporters : ['pretty']
-    for spec in specs {
+    for specs {
         sink.add(report.make(
-            spec,
+            it,
             color?: color-of(o),
             mode: 'suite',
             quiet?: o.quiet?,
@@ -616,7 +606,7 @@ fn list-run(o: Options, jobs: Array[Job], cfg: Settings) -> Int {
         eprint("ty --test: {get-str(it, 'file')}: could not be collected ({why})")
         let tail = (get-str(it, 'stderr_tail') ?? '').strip()
         if #tail > 0 {
-            eprint(tail.lines().map(l -> "    {l}").join("\n"))
+            eprint(tail.lines().map(l -> "    {l}").join('\n'))
         }
     }
 

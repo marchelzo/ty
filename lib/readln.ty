@@ -9,8 +9,8 @@ import time
 import chalk (chalk)
 import path (Path)
 
-let ERASE_LINE = "\x1b[2K"
-let ERASE_REST = "\x1b[0J"
+let ERASE_LINE = '\x1b[2K'
+let ERASE_REST = '\x1b[0J'
 
 let __tls::reader: ?InteractiveLineReader = nil
 
@@ -111,7 +111,7 @@ class CompletionCycler {
     }
 
     static __join(row: Array[String]) -> String {
-        row.join("\x1b[0m    ")
+        row.join('\x1b[0m    ')
     }
 
     __seek(ci: Int) -> (Int, Int) {
@@ -166,7 +166,7 @@ class CompletionCycler {
                 row[j] = str(chalk"[reverse]{row[j]}[/]")
             }
 
-            let line = row.join("\x1b[0m    ")
+            let line = row.join('\x1b[0m    ')
 
             off += line.width() / (__limits.cols + 1)
 
@@ -192,7 +192,7 @@ fn complete-file(before: String, after: String) -> CompletionAction {
     let parts = path-prefix.comb(/'/).split('/')
 
     let (dir, prefix) = match parts {
-        [prefix] => ('.', prefix),
+        [prefix]         => ('.', prefix),
         [*parts, prefix] => (parts.join('/'), prefix)
     }
 
@@ -270,10 +270,10 @@ fn fit-items(items: Array[CompletionLabel], W: Int) -> Array[Array[String]] {
     }
 
     let (ncol, ws) = (
-        for ncol in 1..#items {
-            let ws = widths(ncol + 1)
-            if ws.flat().sum(0) + 6 * ncol > W {
-                break (ncol, widths(ncol))
+        for 1..#items {
+            let ws = widths(it + 1)
+            if ws.flat().sum(0) + 6 * it > W {
+                break (it, widths(it))
             }
         }
     ) ?? (#items, widths(#items))
@@ -406,7 +406,7 @@ pub class InteractiveLineReader {
         let i: Int = 0
 
         fn get-before() {
-            line.slice(0, i).str() ?? ''
+            line[;i].str() ?? ''
         }
 
         fn get-after() {
@@ -423,12 +423,12 @@ pub class InteractiveLineReader {
             let (h, w) = __tio.size()
 
             let n = 0
-            for row in fit-items(cs, w) {
-                if let $s = select and s in n.range(0, #row - 1) {
-                    row[s - n] = str(chalk"[reverse]{row[s - n]}[/]")
+            for fit-items(cs, w) {
+                if let $s = select and s in n.range(0, #it - 1) {
+                    it[s - n] = str(chalk"[reverse]{it[s - n]}[/]")
                 }
-                print(row.join('    '))
-                n += #row
+                print(it.join('    '))
+                n += #it
             }
         }
 
@@ -484,11 +484,15 @@ pub class InteractiveLineReader {
         let last-yank-pos = nil
 
         fn kill(chars: Array[String]) {
-            if chars { __kill-ring.push(chars) }
+            if chars {
+                __kill-ring.push(chars)
+            }
         }
 
         fn h-match?(i) {
-            if #__history < i { return false }
+            if #__history < i {
+                return false
+            }
             let text = text-of(__history[-i].lines)
             return (
                 (h-prefix == nil || text.starts?(h-prefix))
@@ -522,7 +526,7 @@ pub class InteractiveLineReader {
             let nr0 = nr
             let count0 = #lines
 
-            let before = line.slice(0, i).str() ?? ''
+            let before = line[;i].str() ?? ''
             let all = line.str() ?? ''
 
             if not let $ev = __tio.next-event() {
@@ -605,7 +609,7 @@ pub class InteractiveLineReader {
                 },
 
                 '<C-l>' => {
-                    write(__tio.fd, "\x1b[2J\x1b[H")
+                    write(__tio.fd, '\x1b[2J\x1b[H')
                 },
 
                 '<C-p>' => {
@@ -718,10 +722,10 @@ pub class InteractiveLineReader {
                     let w1s = i
 
                     if w1s < w1e && w2s < w2e && w1e <= w2s {
-                        let word1 = line.slice(w1s, w1e - w1s)
-                        let word2 = line.slice(w2s, w2e - w2s)
-                        let mid = line.slice(w1e, w2s - w1e)
-                        line = [*line.slice(0, w1s), *word2, *mid, *word1, *line.slice(w2e)]
+                        let word1 = line[w1s;w1s + w1e - w1s]
+                        let word2 = line[w2s;w2s + w2e - w2s]
+                        let mid = line[w1e;w1e + w2s - w1e]
+                        line = [*line[;w1s], *word2, *mid, *word1, *line.slice(w2e)]
                         i = w1s + #word2 + #mid + #word1
                     } else {
                         i = save
@@ -767,9 +771,7 @@ pub class InteractiveLineReader {
 
                     while hi < #__history {
                         hi += 1
-                        if h-match?(hi) {
-                            break
-                        }
+                        break if h-match?(hi)
                     }
 
                     if hi < #__history && !h-match?(hi) {
@@ -947,14 +949,14 @@ pub class InteractiveLineReader {
     progress(work, prefix, width, effects=id, cleanup=false) {
         let pct = -1
 
-        for p in work {
-            let n = int(p.clamp(0.0, 1.0) * 100)
+        for work {
+            let n = int(it.clamp(0.0, 1.0) * 100)
             if n != pct {
                 __tio.report-status(term.status.WORKING, progress=(pct = n))
             }
 
             let w = width ?? (__tio.size().1 - 8).clamp(0, 70)
-            write(__tio.fd, "\r{prefix ?? ''}{effects(progress-string(p, w))} {p * 100:.1f}%%")
+            write(__tio.fd, "\r{prefix ?? ''}{effects(progress-string(it, w))} {it * 100:.1f}%%")
         }
 
         if cleanup {

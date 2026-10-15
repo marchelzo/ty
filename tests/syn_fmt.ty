@@ -1,0 +1,186 @@
+import syn
+import syn.fmt as sf
+import path (Path)
+import ty.test (Test)
+import support.process (run)
+
+let ROOT = Path(__file__).absolute.parent.parent
+
+let MESSY = '''// header
+fn f(  a,b ) {  // trailing
+    let x=[1,2,3]
+    let y = some-function-with-a-long-name(argument-number-one, argument-number-two, argument-number-three)
+
+
+
+    if x { print( "hi {a}" ) }
+    return a+b   
+}
+'''
+
+let CANONICAL = '''// header
+fn f(a, b) { // trailing
+    let x = [1, 2, 3]
+    let y = some-function-with-a-long-name(
+        argument-number-one,
+        argument-number-two,
+        argument-number-three
+    )
+
+    if x { print("hi {a}") }
+    return a + b
+}
+'''
+
+pub fn canonical-layout() {
+    let out = sf.canonical(MESSY)
+    assert(out == "{CANONICAL}\n", out)
+    assert(sf.canonical(out) == out)
+}
+
+pub fn tidy-preserves-style() {
+    let out = sf.tidy(MESSY)
+    assert('fn f(  a,b ) {' in out)
+    assert(!out.match?(/[ \t]\n/))
+    assert(!out.match?(/\n\n\n\n/))
+}
+
+pub fn doc-printer-breaks-groups() {
+    let d = sf.group(sf.concat([
+        sf.text('['),
+        sf.nest(2, sf.concat([sf.softline(), sf.text('aaaa'), sf.text(','), sf.line(), sf.text('bbbb')])),
+        sf.softline(),
+        sf.text(']'),
+    ]))
+    assert(sf.render(d, width=40) == '[aaaa, bbbb]')
+    assert(sf.render(d, width=8) == '[\n  aaaa,\n  bbbb\n]')
+}
+
+pub fn formatting-never-changes-programs() {
+    let files = [*(ROOT / 'lib' / 'syn').rglob('*.ty'), ROOT / 'lib' / 'syn.ty', ROOT / 'lib' / 'diff.ty', ROOT / 'lib' / 'path.ty']
+    for f in files {
+        let src = slurp(str(f)) ?? ''
+        let out = sf.canonical(src, path=str(f))
+        assert(sf.same-program?(syn.parse(src, path=str(f)), syn.parse(out, path=str(f))), str(f))
+        assert(sf.canonical(out, path=str(f)) == out, str(f))
+    }
+}
+
+pub fn cli-lint-and-fmt(t: Test) {
+    let file = t.tmp-dir() / 'demo.ty'
+    file.write("fn f(xs) \{\n    let n = xs.len()  \n    return nil\n\}\n")
+    let lint = run(['--lint', str(file)])
+    assert(lint.status == 1)
+    assert('len-call' in lint.stdout && 'return-nil' in lint.stdout, lint.stdout)
+    let fixed = run(['--lint', '--fix', str(file)])
+    assert(fixed.status == 0, fixed.stdout)
+    assert(slurp(str(file)) == "fn f(xs) \{\n    let n = #xs\n\}\n")
+    file.write("let x=[1,2]\n")
+    let check = run(['--fmt', '--check', str(file)])
+    assert(check.status == 1)
+    let out = run(['--fmt', str(file)])
+    assert(out.stdout == "let x = [1, 2]\n", out.stdout)
+    let write = run(['--fmt', '--write', str(file)])
+    assert(write.status == 0)
+    assert(slurp(str(file)) == "let x = [1, 2]\n")
+}
+
+fn keeps(src: String, deep: Bool = false) {
+    let out = sf.canonical(src, deep=deep)
+    assert(out == src, out)
+}
+
+fn becomes(src: String, want: String) {
+    let out = sf.canonical(src)
+    assert(out == want, out)
+    assert(sf.canonical(out) == out)
+}
+
+pub fn canonical-respects-house-style() {
+    keep-classes()
+    keep-layout()
+    keep-alignment()
+    keep-strings-and-literals()
+}
+
+fn keep-classes() {
+    keeps("
+class P : Q \{
+    init(a: Int) \{
+        __a = a
+    \}
+
+    init() \{
+        __a = 0
+    \}
+
+    ==(other: Any) -> Bool \{
+        match other \{
+            p: P => (__a == p.__a)
+                 && (__a > 0),
+            _    => false
+        \}
+    \}
+\}
+class Box[T] : Iterable[T] \{\}
+"[1;], deep=true)
+}
+
+fn keep-layout() {
+    keeps("
+fn f(xs: Array[Int], i: Int, j: Int) -> Bool \{
+    let r = xs[0..(i + 1)]
+    while (
+        (i < j)
+     && (xs[i] > 0)
+    ) \{
+        i += 1
+    \}
+    Thread(fn () \{
+        print(r)
+    \}).detach()
+    print(1, end='', sep=' ')
+    true
+\}
+"[1;])
+    becomes("print(1, end = '')\n", "print(1, end='')\n")
+}
+
+fn keep-alignment() {
+    keeps("
+let DAYS = %\{
+    'jan': 1,  'january': 1,
+    'feb': 2,  'february': 2
+\}
+pub SHORT        = 1
+pub MUCH_LONGER  = 2
+fn days(month: Int) -> Int \{
+    match month \{
+        1, 3, 5 => 31,
+        4, 6    => 30,
+
+        _       => 28
+    \}
+\}
+"[1;])
+}
+
+fn keep-strings-and-literals() {
+    keeps("
+let t = 1
+let ops = [
+    %\{
+        \"sql\": \"A \{t\}\"
+               \" B\",
+        \"op\": 'x'
+    \}
+]
+let P = [
+    syn$$[ $$x.sub($$re, '') $$],
+    1
+]
+operator . 2 left
+"[1;])
+    let pp = "let a = 1\n#|if false\nlet b = 2\n#|]\n"
+    assert(sf.canonical(pp) == pp, sf.canonical(pp))
+}

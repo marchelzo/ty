@@ -104,7 +104,7 @@ pub fn shell-quote(s: String) -> String {
 
 pub fn indent(s: String, n: Int) -> String {
     let sp = ' ' * n
-    s.split("\n").map(line -> (#line == 0) ? line : "{sp}{line}").join("\n")
+    s.split('\n').map(line -> (#line == 0) ? line : "{sp}{line}").join('\n')
 }
 
 pub fn display-name(id: String) -> String {
@@ -149,7 +149,7 @@ pub fn failing?(ev: Event, strict?: Bool = true) -> Bool {
 
 pub fn first-line(s: ?String) -> String {
     let $text = s or return ''
-    text.split("\n")[0] ?? ''
+    text.split('\n')[0] ?? ''
 }
 
 pub fn message-of(ev: Event) -> ?String {
@@ -189,7 +189,7 @@ pub fn kind(ev: Event, strict?: Bool = true) -> String {
 }
 
 pub fn lines-of(s: String) -> Array[String] {
-    let ls = s.split("\n")
+    let ls = s.split('\n')
     (#ls > 0 && ls[-1] == '') ? ls[;-1] : ls
 }
 
@@ -238,12 +238,12 @@ fn check-lines(ev: Event, color?: Bool, max-lines: Int) -> Array[String] {
         return []
     }
     let out: Array[String] = []
-    for fl in checks[1;] {
-        let at = "{get-str(fl, 'file') ?? '?'}:{get-int(fl, 'line') ?? 0}"
-        let body = assertion-lines(fl)
+    for checks[1;] {
+        let at = "{get-str(it, 'file') ?? '?'}:{get-int(it, 'line') ?? 0}"
+        let body = assertion-lines(it)
         out.push("{at}: {body[0] ?? ''}")
         out.push(*body[1;].map(\"  {_}"))
-        let (title, diff) = diff-lines(fl, color?, max-lines)
+        let (title, diff) = diff-lines(it, color?, max-lines)
         if #diff > 0 {
             out.push("  {title}", *diff.map(\"    {_}"))
         }
@@ -269,9 +269,9 @@ fn diff-line(line: String, color?: Bool) -> String {
         _   => 'dim',
     }
     match line[;2] {
-        '- ' or '+ ' => paint(line, style, color?),
+        '- ' or '+ '             => paint(line, style, color?),
         _ :: line.match?(/^  …/) => paint(line, 'dim', color?),
-        _ => line,
+        _                        => line,
     }
 }
 
@@ -280,13 +280,11 @@ fn diff-lines(f: Event, color?: Bool, max-lines: Int) -> (String, Array[String])
     let left = get-str(d, 'left') ?? 'left'
     let right = get-str(d, 'right') ?? 'right'
     let title = "diff (- {left}, + {right}):"
-    (title, clip(get-strs(d, 'lines').join("\n"), max-lines).map(\diff-line(_, color?)))
+    (title, clip(get-strs(d, 'lines').join('\n'), max-lines).map(\diff-line(_, color?)))
 }
 
 fn section(out: Array[String], title: String, body: Array[String], color?: Bool) {
-    if #body == 0 {
-        return
-    }
+    return if #body == 0
     out.push(paint("  {title}", 'dim', color?))
     for body {
         out.push("    {it}")
@@ -346,7 +344,7 @@ pub fn failure(
         out.push("  kept tmp dir: {tmp}")
     }
 
-    out.join("\n")
+    out.join('\n')
 }
 
 pub fn counts-line(counts: Dict[String, Int], color?: Bool = false) -> String {
@@ -453,5 +451,5 @@ pub fn summary(
     if #rerun > max-rerun {
         out.push(" rerun: … and {#rerun - max-rerun} more")
     }
-    out.join("\n")
+    out.join('\n')
 }

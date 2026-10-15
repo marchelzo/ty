@@ -234,7 +234,7 @@ class Parser {
             (true, Tables(ts)) => append-table(target, name, ts),
             (false, nil)       => target.put(name, Table(Explicit)),
             (false, t: Table)  => declare-table(t),
-            _                 => fail("table {name} is already defined"),
+            _                  => fail("table {name} is already defined"),
         }
     }
 
@@ -282,9 +282,7 @@ class Parser {
             nodes.push(value())
             trivia()
 
-            if eat(']') {
-                break
-            }
+            break if eat(']')
 
             expect(',')
             trivia()
@@ -306,9 +304,7 @@ class Parser {
             binding(table)
             space()
 
-            if eat('}') {
-                break
-            }
+            break if eat('}')
 
             expect(',')
             space()
@@ -434,17 +430,17 @@ class Parser {
         }
 
         match raw {
-            'true'               => true,
-            'false'              => false,
-            'inf', '+inf'        => inf,
-            '-inf'               => -inf,
+            'true'                => true,
+            'false'               => false,
+            'inf', '+inf'         => inf,
+            '-inf'                => -inf,
             'nan', '+nan', '-nan' => nan,
-            _ :: syntax.INTEGER  => integer(raw, 10),
-            _ :: syntax.HEX      => integer(raw[2;], 16),
-            _ :: syntax.OCTAL    => integer(raw[2;], 8),
-            _ :: syntax.BINARY   => integer(raw[2;], 2),
-            _ :: syntax.FLOAT    => Float(raw.comb('_')),
-            _                    => temporal(raw),
+            _ :: syntax.INTEGER   => integer(raw, 10),
+            _ :: syntax.HEX       => integer(raw[2;], 16),
+            _ :: syntax.OCTAL     => integer(raw[2;], 8),
+            _ :: syntax.BINARY    => integer(raw[2;], 2),
+            _ :: syntax.FLOAT     => Float(raw.comb('_')),
+            _                     => temporal(raw),
         }
     }
 
@@ -502,10 +498,10 @@ fn fits?(table, value) {
 
 fn entry-fits?(entry, value) {
     match (entry, value) {
-        (t: Table, _)          => fits?(t, value),
+        (t: Table, _)           => fits?(t, value),
         (Tables(ts), vs: Array) => #ts == #vs && ts.zip(vs).all?(|(t, v)| -> fits?(t, v)),
-        (Tables(_), _)         => false,
-        _                      => true,
+        (Tables(_), _)          => false,
+        _                       => true,
     }
 }
 

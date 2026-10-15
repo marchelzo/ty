@@ -41,9 +41,9 @@ pub class Path : PathLike {
 #|if __windows__
         let sep = '\\'
         let altsep = '/'
-        
+
         let path = path.sub(/\//, '\\')
-      
+
         let (drv, root, rel) = match path {
             /^([A-Za-z]:)([\\\/]?)(.*)$/ => ($1, $2, $3),
             /^(\\\\[^\\]+\\[^\\]+)([\\\/]?)(.*)$/ => ($1, $2, $3),
@@ -54,12 +54,12 @@ pub class Path : PathLike {
         let sep = '/'
         let (drv, root, rel) = match path {
             /^(\/)(.*)$/ => ('', $1, $2),
-            _ => ('', '', path)
+            _            => ('', '', path)
         }
 #|]
-        
+
         let parts = rel.split(sep).remove!('').remove!('.')
-        
+
         (drv, root, parts)
     }
 
@@ -131,11 +131,11 @@ pub class Path : PathLike {
         if !__parts {
             throw PathError({msg: 'path has no name', path: prelude::str(self)})
         }
-        
+
         if sep in name || name == '.' || !name {
             throw PathError({msg: 'invalid name', name})
         }
-        
+
         Path(__drv, __root, [*__parts[;-1], name])
     }
 
@@ -232,14 +232,14 @@ pub class Path : PathLike {
     resolve -> Path {
         match os.realpath(prelude::str(self)) {
             $p => Path(p),
-            _ => throw os.OSError('realpath()')
+            _  => throw os.OSError('realpath()')
         }
     }
 
     relative-to(other: String | Path) -> Path {
         let other-path = match other {
             p: Path => p,
-            s => Path(s)
+            s       => Path(s)
         }.absolute
 
         let self-abs = self.absolute
@@ -257,14 +257,14 @@ pub class Path : PathLike {
 
         let ups = ['..' for _ in 0..(#other-path.__parts - i)]
         let downs = self-abs.__parts[i;]
-        
+
         Path('', '', [*ups, *downs])
     }
 
     is-relative-to?(other: String | Path) -> Bool {
         let other-path = match other {
             p: Path => p,
-            s => Path(s)
+            s       => Path(s)
         }.absolute
 
         let self-abs = self.absolute
@@ -329,12 +329,10 @@ pub class Path : PathLike {
     mkdir(mode: Int = 0o755, parents: Bool = false, exist-ok: Bool = false) {
         if parents {
             let current = Path(__drv, __root, [])
-            
+
             for part; i in __parts {
                 current.__parts.push(part)
-                if os.mkdir("{current}", mode) == 0 {
-                    continue
-                }
+                continue if os.mkdir("{current}", mode) == 0
                 if errno.get() == errno.EEXIST {
                     continue if i + 1 < #__parts || exist-ok
                 }
@@ -366,9 +364,9 @@ pub class Path : PathLike {
     rename(target: String | Path) -> Path {
         let target-path = match target {
             p: Path => p,
-            s => Path(s)
+            s       => Path(s)
         }
-        
+
         if os.rename(prelude::str(self), prelude::str(target-path)) == -1 {
             throw os.OSError('rename()')
         }
@@ -398,7 +396,7 @@ pub class Path : PathLike {
             throw os.OSError('open()')
         }
         defer os.close(fd)
-        
+
         let now = time.now(time.CLOCK_REALTIME)
         if os.futimes(fd, now, now) == -1 {
             throw os.OSError('futimes()')
@@ -417,9 +415,9 @@ pub class Path : PathLike {
 
     copy(target: String | Path, follow-symlinks: Bool = true) -> Path {
         let target-path = (target :: String) ? Path(target) : target
-        
+
         fn copy-file(src: Path, dst: Path, follow-symlinks: Bool) {
-            let flags = if follow-symlinks { 0 } else { os.O_NOFOLLOW }
+            let flags = follow-symlinks ? 0 : os.O_NOFOLLOW
 
             let src-fd = os.open(prelude::str(src), os.O_RDONLY | flags)
             if src-fd == -1 {
@@ -427,14 +425,14 @@ pub class Path : PathLike {
             }
 
             defer os.close(src-fd)
-            
+
             let dst-fd = os.open(prelude::str(dst), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | flags, 0o666)
             if dst-fd == -1 {
                 throw os.OSError('open()')
             }
 
             defer os.close(dst-fd)
-           
+
             let buf = Blob()
             while true {
                 let n = os.read(src-fd, buf, 8192)
@@ -443,7 +441,7 @@ pub class Path : PathLike {
                 } else if n == 0 {
                     break
                 }
-                
+
                 let written = os.write(dst-fd, buf)
                 if written != n {
                     throw os.OSError('write()')
@@ -455,8 +453,8 @@ pub class Path : PathLike {
 
         if self.dir? {
             target-path.mkdir(parents=true, exist-ok=true)
-            for entry in self.ls() {
-                entry.copy(target-path / entry.name, follow-symlinks)
+            for self.ls() {
+                it.copy(target-path / it.name, follow-symlinks)
             }
         } else if self.file? || (self.symlink? && follow-symlinks) {
             copy-file(self, target-path, follow-symlinks)
@@ -524,7 +522,7 @@ pub class Path : PathLike {
 
             if part == '**' {
                 let results = []
-                
+
                 if !#rest {
                     results.push(base)
                 } else {
@@ -532,9 +530,9 @@ pub class Path : PathLike {
                 }
 
                 if base.dir? {
-                    for entry in base.ls() {
-                        if entry.dir? {
-                            results += glob-impl(entry, parts)
+                    for base.ls() {
+                        if it.dir? {
+                            results += glob-impl(it, parts)
                         }
                     }
                 }
@@ -548,12 +546,12 @@ pub class Path : PathLike {
                 return results
             }
 
-            for entry in base.ls() {
-                if match-part(entry.name, part) {
+            for base.ls() {
+                if match-part(it.name, part) {
                     if !#rest {
-                        results.push(entry)
-                    } else if entry.dir? {
-                        results += glob-impl(entry, rest)
+                        results.push(it)
+                    } else if it.dir? {
+                        results += glob-impl(it, rest)
                     }
                 }
             }

@@ -1,0 +1,272 @@
+import os
+import ty.syntax as tsx
+import ty.test (Test)
+import syn
+import syn.lint as lint
+import syn.refactor as rf
+import support.syn_rules as rules
+import support.process (run)
+
+let SOURCE = "
+import os (exit as quit)
+
+fn f(xs: Array[Int]) -> Int \{
+    print(1)
+    prelude.print(2)
+    let n = xs.filter(\\_ > 0).map(\\_ * 2)
+    #n
+\}
+
+fn g() \{
+    let print = x -> x
+    print(3)
+\}
+
+quit(0)
+os.exit(2)
+"[1;]
+
+fn texts(p: syn.Pattern, t: syn.Tree) -> Array[String] {
+    p.find-all(t).map(\_.node.text)
+}
+
+fn named(t: syn.Tree, text: String) -> Array[syn.Node] {
+    t.nodes.filter(n -> n.kind in ['Identifier', 'Param'] && (n.name-token.?text ?? n.text) == text)
+}
+
+fn semantic(src: String, path: String | nil = nil) -> syn.Tree {
+    syn.parse(src, path=path, semantic=true)
+}
+
+pub fn semantic-trees-carry-symbols-and-types() {
+    let t = semantic(SOURCE)
+    assert(t.semantic? && t.diagnostics == [])
+    let xs = named(t, 'xs')
+    assert(#xs == 2 && xs[0].kind == 'Param' && xs[0].def? && !xs[1].def?)
+    assert(xs[0].symbol.?id == xs[1].symbol.?id)
+    assert(xs[1].type-text == 'Array[Int]')
+    let n = named(t, 'n')
+    assert(t.refs(n[0]) == n && t.defs(n[0]) == [n[0]] && #t.uses(n[0]) == 1)
+    let quit = named(t, 'quit')[-1]
+    assert(quit.symbol.?module == 'os' && quit.symbol.?id == t.lookup('os.exit').?id)
+    assert(t.lookup('print').?module == 'prelude')
+    let local = named(t, 'print').filter(&.def?)
+    assert(#local == 1 && local[0].symbol.?id != t.lookup('print').?id)
+    let call = t.nodes.find(n -> n.kind == 'MethodCall' && n.text == 'os.exit(2)')
+    assert(call.?callee.?id == quit.symbol.?id)
+    let aliased = semantic("import os as o\no.exit(1)\n")
+    assert(aliased.nodes.find(\_.kind == 'MethodCall').?callee.?id == quit.symbol.?id)
+    assert(t.reprint() == SOURCE)
+}
+
+pub fn sugar-is-resolved-through-its-expansion() {
+    let t = semantic("let k = 3\nlet ys = [1].map(\\_ * k)\n")
+    let ks = named(t, 'k')
+    assert(#ks == 2 && ks[1].symbol.?id == ks[0].symbol.?id)
+    assert(ks[1].type-text == 'Int')
+}
+
+pub fn semantic-parses-report-errors-without-failing() {
+    let t = semantic("let q: String = 1\nlet z = nope\n", '/tmp/semantic-errors.ty')
+    assert(t.error == nil && t.semantic?)
+    let expected = /does not match|undefined variable: nope/
+    assert(t.diagnostics.map(\_.message.match?(expected)) == [true, true])
+    let broken = semantic("let a = (\n")
+    assert(broken.error != nil && !broken.semantic? && broken.reprint() == "let a = (\n")
+}
+
+pub fn names-in-patterns-are-hygienic() {
+    let t = semantic(SOURCE)
+    assert(texts(syn$$[ print($$a) $$], t) == ['print(1)', 'prelude.print(2)'])
+    assert(texts(syn$$[ print($$a) $$].with('spelling'), t) == ['print(1)', 'print(3)'])
+    assert(texts(syn$$[ os.exit($$c) $$], t) == ['quit(0)', 'os.exit(2)'])
+    let plain = syn.parse(SOURCE)
+    assert(texts(syn$$[ print($$a) $$], plain) == ['print(1)', 'print(3)'])
+    assert(texts(syn$$[ os.exit($$c) $$], plain) == ['os.exit(2)'])
+}
+
+pub fn pattern-names-resolve-where-the-rule-is-written() {
+    let t = semantic("import json\nlet a = json.encode(1)\nlet b = j.encode(2)\n")
+    assert(texts(rules.ENCODE, t) == ['json.encode(1)'])
+    assert(texts(syn.compile('j.encode($$x)'), t) == ['j.encode(2)'])
+}
+
+pub fn repeated-holes-compare-bindings() {
+    let src = "
+let x = 1
+let ys = [2]
+fn f(a: Int, b: Array[Int]) -> Int \{ a \}
+let r = f(x, [x for x in ys])
+let q = f(x, [x for z in ys])
+"
+    let p = syn$$[ f($$v, [$$v for $$w in $$s]) $$]
+    assert(texts(p, semantic(src)) == ['f(x, [x for z in ys])'])
+    assert(texts(p, syn.parse(src)) == ['f(x, [x for x in ys])', 'f(x, [x for z in ys])'])
+}
+
+pub fn type-holes-test-inferred-types() {
+    let src = "
+class Box \{ len() -> Int \{ 1 \} \}
+fn g(y) \{ y.len() \}
+let a = 'abc'.len()
+let b = [1, 2].len()
+let c = Box().len()
+"
+    let t = semantic(src)
+    let both = ["'abc'.len()", '[1, 2].len()']
+    assert(texts(syn$$[ $$(s : String).len() $$], t) == ["'abc'.len()"])
+    assert(texts(syn$$[ $$(s : Array[Int]).len() $$], t) == ['[1, 2].len()'])
+    assert(texts(syn$$[ $$(s : Array[_]).len() $$], t) == ['[1, 2].len()'])
+    assert(texts(syn$$[ $$(s : String | Array[_]).len() $$], t) == both)
+    assert(texts(syn$$[ $$(s :? String | Array[_]).len() $$], t) == ['y.len()', *both])
+    assert(texts(syn$$[ $$(s :: Call : Box).len() $$], t) == ['Box().len()'])
+    let sum = semantic("let q = 1 + 2\n")
+    assert(texts(syn$$[ $$(: Int) $$], sum) == ['q', '1 + 2', '1', '2'])
+    let plain = syn.parse(src)
+    assert(texts(syn$$[ $$(s : String).len() $$], plain) == [])
+    assert(#texts(syn$$[ $$(s :? String).len() $$], plain) == 4)
+    assert(texts(syn.compile('$$(x : NoSuchType)'), t) == [])
+    assert(#texts(syn.compile('$$(x :? NoSuchType)'), plain) > 0)
+    let bad = try { syn.compile('$$(x : 1 +)'); nil } catch e: ValueError { e.what }
+    assert(bad.?match?(/invalid type `1 \+`/) ?? false, bad)
+}
+
+pub fn node-type-queries() {
+    let t = semantic("let s = 'abc'\nlet n = [1]\n")
+    let s = named(t, 's')[0]
+    assert(s.of-type?('String') == true && s.of-type?('Int') == false)
+    assert(tsx.show-type(s.type-id) == 'String')
+    assert(t.nodes.find(\_.kind == 'String').?type-text == "'abc'")
+    assert(syn.parse("let s = 1\n").nodes[-1].of-type?('Int', gradual=true) == nil)
+}
+
+pub fn members-resolve-through-receiver-types() {
+    let src = "
+class Box \{ n: Int
+    len() -> Int \{ n \} \}
+let b = Box(1)
+let a = b.len()
+let c = b.n
+let e = 'x'.upper()
+fn g(y) \{ y.len() \}
+"[1;]
+    let t = semantic(src, '/tmp/members.ty')
+    let found: Array[(String, String | nil, String, Int)] = []
+    for n in t.nodes {
+        if let $m = n.member {
+            found.push((n.text, m.owner, m.kind, m.line))
+        }
+    }
+    assert(#found == 3, found)
+    assert(found[;2] == [('b.len()', 'Box', 'method', 2), ('b.n', 'Box', 'field', 1)], found)
+    let (text, owner, kind, _) = found[2]
+    assert((text, owner, kind) == ("'x'.upper()", 'String', 'method'), found)
+    assert(t.nodes.find(\_.text == 'b.len()').?member.?path == '/tmp/members.ty')
+}
+
+pub fn semantic-rules-need-semantic-trees() {
+    let src = "
+fn f(xs: Array[Int]) -> Int \{
+    let unused = 1
+    let print = 2
+    let q: String = 3
+    print + #xs
+\}
+"[1;]
+    let all = [*lint.SEMANTIC_RULES, *lint.DEFAULT_RULES]
+    assert(lint.check(syn.parse(src), all).map(&.rule) == [])
+    let ds = lint.check(semantic(src, '/tmp/semantic-rules.ty'), all)
+    let expected = [
+        ('unused-local', 2),
+        ('shadows-global', 3),
+        ('compile-error', 4),
+        ('unused-local', 4)
+    ]
+    assert(ds.map(d -> (d.rule, d.line)) == expected, ds.map(str))
+}
+
+fn fixed(src: String, rule: lint.Rule) -> String { lint.fix(src, [rule]).source }
+
+pub fn fixes-add-missing-imports() {
+    let encode = rules.TO_JSON
+    assert(
+        fixed("let a = 1\nlet s = str(a)\n", encode)
+     == "import json as j\n\nlet a = 1\nlet s = j.encode(a)\n"
+    )
+    assert(
+        fixed("import json as j\nlet s = str(2)\n", encode)
+     == "import json as j\nlet s = j.encode(2)\n"
+    )
+    assert(
+        fixed("import os\nlet s = str(2)\n", encode)
+     == "import os\nimport json as j\nlet s = j.encode(2)\n"
+    )
+}
+
+pub fn fixes-never-capture-names() {
+    let shadowed = lint.fix("let j = 5\nlet s = str(3)\n", [rules.TO_JSON])
+    assert(shadowed.source == "let j = 5\nlet s = str(3)\n" && shadowed.fixed == 0)
+    assert(shadowed.diagnostics.map(&.rule) == ['to-json'])
+    let taken = "import json\nlet s = str(2)\n"
+    assert(fixed(taken, rules.TO_JSON) == taken)
+
+    let plain = "fn f(a: Int, b: Int) -> Int \{ a + b \}\n"
+    let spilled = "fn f(a: Int, b: Int) -> Int \{ do \{ let tmp = a; tmp + b \} \}\n"
+    assert(fixed(plain, rules.SPILL) == spilled)
+
+    let clash = "fn f(a: Int, tmp: Int) -> Int \{ a + tmp \}\n"
+    let captured = lint.fix(clash, [rules.SPILL])
+    assert(captured.fixed == 0 && captured.source == clash)
+
+    let mixed = lint.fix(clash + plain.replace('fn f', 'fn g'), [rules.SPILL])
+    assert(mixed.fixed == 1 && 'let tmp = a; tmp + b' in mixed.source && 'a + tmp' in mixed.source)
+}
+
+pub fn rename-is-hygienic() {
+    let src = "
+let y = 10
+fn f(x: Int) -> Int \{
+    let k = x + 1
+    [k for _ in ..x].map(\\_ + x)
+    x + y
+\}
+let z = f(2)
+"[1;]
+    let t = semantic(src)
+    let x = rf.binding-at(t, src.bsearch('x: Int') ?? 0) ?? t.root
+    assert(rf.references(t, x).map(&.start) == [16, 45, 69, 81, 88])
+    assert(rf.rename(t, x, 'count') == src.replace(/\bx\b/, 'count'))
+    for name in ['y', 'k', '1bad'] {
+        let refused = try { rf.rename(t, x, name); false } catch _: rf.RefactorError { true }
+        assert(refused, name)
+    }
+    assert(rf.rename-at(src, src.bsearch('f(2)') ?? 0, 'go') == src.replace(/\bf\(/, 'go('))
+    let outside = try {
+        rf.rename(t, named(t, 'Int')[0], 'Q')
+        nil
+    } catch e: rf.RefactorError {
+        e.what
+    }
+    assert(outside.?match?(/defined in prelude/) ?? false, outside)
+}
+
+pub fn command-line-semantic-lint(t: Test) {
+    let file = t.tmp-dir() / 'semantic.ty'
+    file.write("fn f(xs: Array[Int]) -> Int \{\n    let unused = 1\n    #xs\n\}\n")
+    assert(run(['--lint', str(file)]).status == 0)
+    let out = run(['--lint', '--semantic', str(file)])
+    assert(out.status == 1 && 'unused-local' in out.stdout, out)
+}
+
+pub fn typed-holes-bind-in-match-arms() {
+    let t = semantic("let a = 'abc'.len()\nlet b = [1].len()\n")
+    let seen: Array[String] = []
+    for n in t.nodes {
+        match n {
+            syn$$[ $$(s : String).len() $$] => seen.push("string {s.text}"),
+            syn$$[ $$(xs : Array[_]).len() $$] => seen.push("array {xs.text}"),
+            _ => (),
+        }
+    }
+    assert(seen == ["string 'abc'", 'array [1]'], seen)
+}

@@ -23,9 +23,7 @@ fn __unpacked(fmt: String) -> _ {
         if count == 0 {
             count = 1
         }
-        if i >= #fmt {
-            break
-        }
+        break if i >= #fmt
 
         let ch = fmt[i]
         i += 1
@@ -62,7 +60,9 @@ fn fail(msg: String) {
 }
 
 fn next!(t) {
-    while peek().type == 'comment' { next() }
+    while peek().type == 'comment' {
+        next()
+    }
     if peek().type != t {
         fail("expected `{t}` but found: {peek()}")
     }
@@ -170,7 +170,7 @@ pub fn ffi-type(expr: _, coerce: Bool = false) -> _ {
                    : $$[ $$::(Float) $$]
         ),
 
-        c::ptr => coerce ? $$[ ?$$::(IntoPtr)[_] $$] : $$[ $$::(Ptr)[_] $$],
+        c::ptr  => coerce ? $$[ ?$$::(IntoPtr)[_] $$] : $$[ $$::(Ptr)[_] $$],
 
         c::void => ty.Nil
     }
@@ -184,10 +184,10 @@ pub fn wrap-var[a](lib, name, nFixed, rType, *aTypes) -> _ {
     return fn (*args: _) -> _ {
         let aTypes = aTypes.clone()
 
-        for i in nFixed..#args {
-            let (t, x) = args[i]
+        for nFixed..#args {
+            let (t, x) = args[it]
             aTypes.push(t)
-            args[i] = x
+            args[it] = x
         }
 
         let interface = get-cif(rType, *aTypes, nFixed=nFixed)
@@ -200,8 +200,8 @@ pub fn wrap-var[a](lib, name, nFixed, rType, *aTypes) -> _ {
 
 pub fn iter(type, p, n) {
     let size = c.size(type)
-    for i in ..n {
-        yield c.load(type, p + i*size)
+    for ..n {
+        yield c.load(type, p + it*size)
     }
 }
 
@@ -395,7 +395,9 @@ fn next-typedef(typedefs: Dict[String, AST]) {
 
 fn cfun() {
     let public = peek().type == 'pub'
-    if public { next() }
+    if public {
+        next()
+    }
 
     let (lib, prefix) = match (peek().type, peek(1)) {
         ('fn', _)               => (ty.Nil, ''),
@@ -496,7 +498,9 @@ fn cfun() {
             let j = peek(-1).end.byte
             let proto-string = source.bsplice(i, j).strip().comb(/^\(|\)$/)
 
-            if peek().type == ';' { next() }
+            if peek().type == ';' {
+                next()
+            }
 
             funs.push(
                 mkfdef(
@@ -539,8 +543,12 @@ fn strct() {
         let j = 0
 
         for (;;) {
-            while peek_(j).type == 'comment' { j += 1 }
-            if i == 0 { return peek_(j) }
+            while peek_(j).type == 'comment' {
+                j += 1
+            }
+            if i == 0 {
+                return peek_(j)
+            }
             i -= 1
             j += 1
         }
@@ -597,7 +605,7 @@ fn strct() {
                 ty.Call(func: ty.Value(c.struct), args: ts)
             },
             Union(((ut: _), _)) => ut,
-            {t, count: nil, *} => t,
+            {t, count: nil, *}  => t,
             (decl: _) => do {
                 let mkstruct = (t, n) -> c.struct(*[t for ..n])
                 $$[$${mkstruct}($$(decl.t), $$(decl.count))$$]
@@ -825,25 +833,25 @@ fn strct() {
 
     fn member-size(decl: _) -> _ {
         match decl {
-            Union(((ut: _), _))  => $$[$${c.size}($$ut)$$],
-            Struct((inner: _))   => inner.map(member-size).fold($$[0$$], (a, b) -> ty.Add(a, b)),
-            {t, count: nil, *}   => $$[$${c.size}($$t)$$],
-            (decl: _)            => $$[$${c.size}($$(decl.t)) * $$(decl.count)$$]
+            Union(((ut: _), _)) => $$[$${c.size}($$ut)$$],
+            Struct((inner: _))  => inner.map(member-size).fold($$[0$$], (a, b) -> ty.Add(a, b)),
+            {t, count: nil, *}  => $$[$${c.size}($$t)$$],
+            (decl: _)           => $$[$${c.size}($$(decl.t)) * $$(decl.count)$$]
         }
     }
 
     fn emit-decl(decl: _, i: Int, off: _) {
         match decl {
             Union(_, (decls: _)) => do {
-                for d in decls {
-                    emit-decl(d, i, off)
+                for decls {
+                    emit-decl(it, i, off)
                 }
             },
             Struct((inner: _)) => do {
                 let cur-off = off
-                for field in inner {
-                    emit-decl(field, i, cur-off)
-                    cur-off = ty.Add(cur-off, member-size(field))
+                for inner {
+                    emit-decl(it, i, cur-off)
+                    cur-off = ty.Add(cur-off, member-size(it))
                 }
             },
             {name, t, count} => do {
@@ -857,13 +865,13 @@ fn strct() {
             Union(((ut: _), (decls: _))) => do {
                 let i = #structArgs
                 structArgs.push(ty.Arg(arg: ut))
-                for decl in decls {
-                    emit-decl(decl, i, $$[0$$])
+                for decls {
+                    emit-decl(it, i, $$[0$$])
                 }
             },
             Struct((inner: _)) => do {
-                for field in inner {
-                    emit-top-level(field)
+                for inner {
+                    emit-top-level(it)
                 }
             },
             {name, t, count} => do {
@@ -872,8 +880,8 @@ fn strct() {
         }
     }
 
-    for member in members {
-        emit-top-level(member)
+    for members {
+        emit-top-level(it)
     }
 
     // FIXME
@@ -989,7 +997,7 @@ fn clos() {
             ty.Arg(arg: f)
         ]
     )
-    
+
     match name {
         nil => call,
         _   => ty.Let(ty.Id({name}), call)

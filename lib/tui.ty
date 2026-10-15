@@ -45,9 +45,9 @@ fn hex-to-rgb(hex: String) -> (Int, Int, Int) {
 }
 
 pub ns boxes {
-    pub double = ["╔", "╗", "╚", "╝", "═", "║", "╬", "╦", "╣", "╠", "╩"]
-    pub heavy  = ["┏", "┓", "┗", "┛", "━", "┃", "╋", "┳", "┫", "┣", "┻"]
-    pub round  = ["╭", "╮", "╰", "╯", "─", "│", "┼", "┬", "┤", "├", "┴"]
+    pub double = ['╔', '╗', '╚', '╝', '═', '║', '╬', '╦', '╣', '╠', '╩']
+    pub heavy  = ['┏', '┓', '┗', '┛', '━', '┃', '╋', '┳', '┫', '┣', '┻']
+    pub round  = ['╭', '╮', '╰', '╯', '─', '│', '┼', '┬', '┤', '├', '┴']
 }
 
 class Console {
@@ -57,49 +57,49 @@ class Console {
 
     height -> Int { rows }
     width -> Int { cols }
-    
+
     init(rows: Int, cols: Int) {
         self.rows = rows
         self.cols = cols
         self._msgs = []
     }
-    
+
     log(msg: String | Text) {
         _msgs.push(msg)
     }
-    
+
     decorate-line(line: Text) -> Text { line }
-    
+
     prepare-lines() -> Array[Text] {
         let lines = []
-        for msg in _msgs[-rows;] {
-            lines += (chalk"{msg}").wrap(cols)
+        for _msgs[-rows;] {
+            lines += (chalk"{it}").wrap(cols)
         }
         lines[-rows;].map(decorate-line)
     }
-    
+
     render(out: Blob = Blob(), y: Int, x: Int) {
         out.push("\x1b[{y};{x}H")
         render(out)
     }
-    
+
     render(out: Blob = Blob()) {
         let lines = prepare-lines()
-        
+
         for ..rows {
             out.push("\x1b[{cols}X\x1b[1B")
         }
         out.push("\x1b[{rows}A")
-        
+
         if #lines < rows {
             out.push("\x1b[{rows - #lines}B")
         }
-        
-        for line in lines {
-            let width = line.width()
-            out.push("{line}\x1b[{width}D\x1b[1B")
+
+        for lines {
+            let width = it.width()
+            out.push("{it}\x1b[{width}D\x1b[1B")
         }
-        
+
         out.push("\x1b[{rows}A")
         out
     }
@@ -109,7 +109,7 @@ class BoxConsole < Console {
     __head: Array[Text]
     __foot: Text
     __edge: Text
-    
+
     init(rows: Int, cols: Int, title: Text | String | nil = nil, style='bright bold yellow', box: Array[String] = boxes.heavy) {
         super(rows - (title == nil ? 2 : 4), cols - 2)
 
@@ -132,7 +132,7 @@ class BoxConsole < Console {
 
     height -> Int { rows + #__head + 1 }
     width -> Int { cols + 2 }
-    
+
     decorate-line(line: Text) -> Text {
         let w = line.width()
         let pad = cols - w
@@ -142,30 +142,30 @@ class BoxConsole < Console {
     render(out: Blob = Blob(), advance?: Bool = true) -> Blob {
         let lines = prepare-lines()
         let home = "\x1b[{width}D"
-        
+
         for ..height {
             out.push("\x1b[{width}X\x1b[1B")
         }
         out.push("\x1b[{height}A")
-        
-        for heading in __head {
-            out.push("{heading}{home}\x1b[1B")
+
+        for __head {
+            out.push("{it}{home}\x1b[1B")
         }
-        
-        for line in lines {
-            out.push("{line}{home}\x1b[1B")
+
+        for lines {
+            out.push("{it}{home}\x1b[1B")
         }
-        
+
         for (#lines).upto(rows) {
             out.push("{__edge}{'':{cols}}{__edge}{home}\x1b[1B")
         }
-        
+
         if advance? {
             out.push("{__foot}\n")
         } else {
             out.push("{__foot}{home}\x1b[{height}A")
         }
-        
+
         out
     }
 }
@@ -175,7 +175,7 @@ class ProgressBar {
     style: String
     fill-char: String
     empty-char: String
-    
+
     init(
         width: Int = 40,
         style: String = '#1eaba5',
@@ -183,11 +183,11 @@ class ProgressBar {
         empty-char: String = '━'
     ) {
         self.width = width
-        self.style = style  
+        self.style = style
         self.fill-char = fill-char
         self.empty-char = empty-char
     }
-    
+
     render(progress: Float) -> Text {
         let p = progress.clamp(0.0, 1.0)
         let filled = int(p * width)
@@ -203,7 +203,7 @@ class PulseAnimation {
     p1: (Float, Float)
     p2: (Float, Float)
     rate: Float
-    
+
     init(width: Int = 40, color1: String = '#ff8aa6', color2: String = '#d32773') {
         self.width = width
         self.color1 = hex-to-rgb(color1)
@@ -212,21 +212,21 @@ class PulseAnimation {
         self.p2 = (0.2, 0.9)
         self.rate = 1.0
     }
-    
+
     render(elapsed: Float) -> Text {
         let bar = Blob()
         let t = (rate * elapsed) % 1.0
-        
-        for i in ..width {
-            let x-norm = float(i) / width
+
+        for ..width {
+            let x-norm = float(it) / width
             let t-inv = bezier3-inv(p1, p2, t)
             let (_, y) = bezier3(p1, p2, t-inv)
             let x = y * width
-            let intensity = 1.0 / (1 + 0.01*(i - x)**2)
+            let intensity = 1.0 / (1 + 0.01*(it - x)**2)
             let (r, g, b) = rgb-blend(color1, color2, intensity)
             bar.push("[#{r:02x}{g:02x}{b:02x}]━[/]")
         }
-        
+
         chalk.text(bar.str!())
     }
 }
@@ -237,8 +237,8 @@ class TaskInfo {
     total: Int | nil
     start-time: Float
     _current: Atomic
-    
-    init(id: Int, desc: String = "", total: Int | nil = nil) {
+
+    init(id: Int, desc: String = '', total: Int | nil = nil) {
         self.id = id
         self.desc = desc
         self.total = total
@@ -253,11 +253,11 @@ class TaskInfo {
     update(n: Int = 1) {
         _current.fetch-add(n)
     }
-    
+
     progress() -> Float | nil {
         total ? (current / float(total)) : nil
     }
-    
+
     elapsed() -> Float {
         now() - start-time
     }
@@ -269,7 +269,7 @@ pub class Tqdm[T] : Iterable[T] {
     static _render-mutex: Mutex = Mutex()
     static _render-cv: CondVar = CondVar()
     static _print-queue: SharedQueue[String] = SharedQueue()
-    
+
     _iterable: Iterable[T]
     _total: Int | nil
     _desc: String
@@ -285,7 +285,7 @@ pub class Tqdm[T] : Iterable[T] {
     _stopping: Bool
     _finished: Bool
     _display-filled: Int
-    
+
     init(
         iterable: Iterable[T],
         desc: String = '',
@@ -319,31 +319,29 @@ pub class Tqdm[T] : Iterable[T] {
             }
         }
     }
-    
+
     static _render-loop() {
         let buf = Blob()
         let frame-time = 1.0 / FPS
 
         for (;;) {
             with _render-mutex {
-                if #_active-bars == 0 {
-                    continue
-                }
+                continue if #_active-bars == 0
 
                 let drop  = []
                 let keep  = []
 
                 let leave = Blob()
-                
-                buf.clear()
-                buf.push("\x1b[?25l")
 
-                for bar in _active-bars {
-                    buf.push("\r\x1b[0K\n")
+                buf.clear()
+                buf.push('\x1b[?25l')
+
+                for _active-bars {
+                    buf.push('\r\x1b[0K\n')
                 }
 
                 buf.push("\x1b[{#_active-bars}A")
-                
+
                 for bar in _active-bars {
                     with bar._mtx {
                         let line = "{bar._render-line()}\n"
@@ -387,17 +385,17 @@ pub class Tqdm[T] : Iterable[T] {
             sleep(frame-time)
         }
 
-        write(1, "\x1b[?25h")
+        write(1, '\x1b[?25h')
     }
-    
+
     _render-line() -> String {
         let elapsed = _task.elapsed()
         let parts = []
-        
+
         if #_desc > 0 {
             parts.push(chalk"[yellow]{_desc}[/]: ")
         }
-        
+
         if let $p = _task.progress() {
             let bar-w = _progress-bar.width
             let real-filled = int(p.clamp(0.0, 1.0) * bar-w)
@@ -431,19 +429,19 @@ pub class Tqdm[T] : Iterable[T] {
                 parts.push(chalk" {progress: <10}")
             }
         }
-        
+
         parts.push(chalk" [#5e5e5e]{elapsed:4.1}s[/]")
-        
+
         let line = parts.join()
-        
+
         let plain-len = #chalk.plain(line)
         if plain-len < _ncols {
             return "{line: <{plain-len}}"
         }
-        
+
         return line
     }
-    
+
     update(n: Int = 1) {
         _task.update(n)
     }
@@ -453,7 +451,7 @@ pub class Tqdm[T] : Iterable[T] {
             return _desc
         }
     }
-    
+
     label=(desc: String | Text) {
         let desc = "{desc}"
         with _mtx {
@@ -465,7 +463,7 @@ pub class Tqdm[T] : Iterable[T] {
     print(x: Any) {
         _print-queue.put("{x}")
     }
-    
+
     close() {
         with _mtx {
             _stopping = true
@@ -474,11 +472,11 @@ pub class Tqdm[T] : Iterable[T] {
             }
         }
     }
-    
+
     __iter__*() -> Generator[T] {
         defer close()
-        for item in _iterable {
-            yield item
+        for _iterable {
+            yield it
             update()
         }
     }

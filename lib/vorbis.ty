@@ -77,8 +77,8 @@ pub fn read(path: String | Path) -> OggAudio {
         let pcm = pcm_ptr[0].as(c.ptr)
 
         for i in ..n {
-            for ch in ..channels {
-                let chan = pcm[ch].as(c.float)
+            for ..channels {
+                let chan = pcm[it].as(c.float)
                 out[pos] = chan[i]
                 pos += 1
             }
@@ -101,8 +101,8 @@ pub fn read-mono(path: String | Path) -> OggAudio {
 
     for i in ..frames {
         let sum = 0.0
-        for ch in ..audio.channels {
-            sum += src[i * audio.channels + ch]
+        for ..audio.channels {
+            sum += src[i * audio.channels + it]
         }
         out[i] = sum / audio.channels
     }

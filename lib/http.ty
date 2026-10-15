@@ -258,7 +258,7 @@ pub class HttpServer {
         }
 
         __queue.close()
-        
+
         for __threads {
             it.join()
         }

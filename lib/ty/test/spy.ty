@@ -15,10 +15,7 @@ pub class Call {
     }
 
     __str__() -> String {
-        let named = [
-            "{kebab-name(k)}: {show(v)}"
-            for k, v in kwargs
-        ]
+        let named = ["{kebab-name(k)}: {show(v)}" for k, v in kwargs]
         "({[*args.map(show), *named].join(', ')})"
     }
 }
@@ -120,7 +117,7 @@ pub class Spy {
         match #calls {
             0 => "{name} was never called",
             n => "{name} was called {n} time{(n == 1) ? '' : 's'}:\n"
-                 "{calls.map(c -> "  {c}").join("\n")}",
+                 "{calls.map(c -> "  {c}").join('\n')}",
         }
     }
 

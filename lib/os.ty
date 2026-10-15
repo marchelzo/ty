@@ -161,15 +161,15 @@ pub class Signals : Iterable[Int] {
     contains?(sig: Int) -> Bool { sigismember(__set, sig) }
 
     add(*sigs) {
-        for sig in sigs {
-            sigaddset(__set, sig)
+        for sigs {
+            sigaddset(__set, it)
         }
         self
     }
 
     del(*sigs) {
-        for sig in sigs {
-            sigdelset(__set, sig)
+        for sigs {
+            sigdelset(__set, it)
         }
         self
     }
@@ -185,11 +185,11 @@ pub class Signals : Iterable[Int] {
     }
 
     flip() {
-        for sig in 1..NSIG {
-            if sig in self {
-                sigdelset(__set, sig)
+        for 1..NSIG {
+            if it in self {
+                sigdelset(__set, it)
             } else {
-                sigaddset(__set, sig)
+                sigaddset(__set, it)
             }
         }
         self
@@ -198,9 +198,9 @@ pub class Signals : Iterable[Int] {
     flipped -> Signals {
         let inverse = Signals()
 
-        for sig in 1..NSIG {
-            if sig not in self {
-                inverse.add(sig)
+        for 1..NSIG {
+            if it not in self {
+                inverse.add(it)
             }
         }
 
@@ -210,9 +210,9 @@ pub class Signals : Iterable[Int] {
     __str__() -> String {
         let names: Array[String] = []
 
-        for sig in 1..NSIG {
-            if sig in self {
-                names.push(signame(sig))
+        for 1..NSIG {
+            if it in self {
+                names.push(signame(it))
             }
         }
 
@@ -243,9 +243,7 @@ pub class Signals : Iterable[Int] {
         for (;;) {
             let set = pending.del(*flipped)
 
-            if #set == 0 {
-                break
-            }
+            break if #set == 0
 
             set.wait()
         }
@@ -254,8 +252,8 @@ pub class Signals : Iterable[Int] {
     #() -> Int {
         let count = 0
 
-        for sig in 1..NSIG {
-            if sig in self {
+        for 1..NSIG {
+            if it in self {
                 count += 1
             }
         }
@@ -264,9 +262,9 @@ pub class Signals : Iterable[Int] {
     }
 
     __iter__*() -> Generator[Int] {
-        for sig in 1..NSIG {
-            if sig in self {
-                yield sig
+        for 1..NSIG {
+            if it in self {
+                yield it
             }
         }
     }

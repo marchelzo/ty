@@ -359,7 +359,7 @@ Symbol const *QueryResult;
 Expr const *QueryExpr;
 Expr const *QueryCall;
 
-bool ProduceAnnotation = true;
+bool ProduceAnnotation = false;
 bool ForgiveDuplicateImports = false;
 usize GlobalCount = 0;
 
@@ -1572,18 +1572,6 @@ CompilerPushContext(Ty *ty, void const *ctx)
         return PushContext(ty, ctx);
 }
 
-static int
-eloc_cmp(void const *a_, void const *b_)
-{
-        struct eloc const *a = a_;
-        struct eloc const *b = b_;
-
-        if (a->p_start < b->p_start) return -1;
-        if (a->p_start > b->p_start) return  1;
-
-        return 0;
-}
-
 char *
 edbg(Ty *ty, Expr const *e)
 {
@@ -2270,24 +2258,65 @@ add_location(Ty *ty, Expr const *e, usize start_off, usize end_off)
 }
 
 static void
+sort_locations(struct eloc *locs, usize n)
+{
+        enum { BITS = 11, BUCKETS = 1 << BITS };
+        usize top = 0;
+        usize count[BUCKETS];
+        struct eloc *tmp;
+        struct eloc *src = locs;
+        struct eloc *dst;
+
+        for (usize i = 0; i < n; ++i) {
+                top = max(top, locs[i].start_off);
+        }
+
+        if (n < 2) {
+                return;
+        }
+
+        tmp = mrealloc(NULL, n * sizeof *tmp);
+        dst = tmp;
+
+        for (u32 shift = 0; shift == 0 || (top >> shift) != 0; shift += BITS) {
+                memset(count, 0, sizeof count);
+                for (usize i = 0; i < n; ++i) {
+                        count[(src[i].start_off >> shift) & (BUCKETS - 1)] += 1;
+                }
+                for (usize i = 0, sum = 0; i < BUCKETS; ++i) {
+                        usize c = count[i];
+                        count[i] = sum;
+                        sum += c;
+                }
+                for (usize i = 0; i < n; ++i) {
+                        dst[count[(src[i].start_off >> shift) & (BUCKETS - 1)]++] = src[i];
+                }
+                struct eloc *t = src;
+                src = dst;
+                dst = t;
+        }
+
+        if (src != locs) {
+                memcpy(locs, src, n * sizeof *locs);
+        }
+
+        ty_free(tmp);
+}
+
+static void
 add_location_info(Ty *ty)
 {
         if (vN(STATE.expression_locations) == 0) {
                 return;
         }
 
+        sort_locations(vv(STATE.expression_locations), vN(STATE.expression_locations));
+
         struct eloc *locs = vv(STATE.expression_locations);
         for (int i = 0; i < vN(STATE.expression_locations); ++i) {
                 locs[i].p_start = (uptr)(v_(STATE.code, locs[i].start_off));
                 locs[i].p_end = (uptr)(v_(STATE.code, locs[i].end_off));
         }
-
-        qsort(
-                vv(STATE.expression_locations),
-                vN(STATE.expression_locations),
-                sizeof (struct eloc),
-                eloc_cmp
-        );
 
         DebugLockLocations();
         xvP(location_lists, STATE.expression_locations);
@@ -12545,6 +12574,51 @@ xclone(Ty *ty, Expr *expr)
 }
 
 static Expr *
+synthesize_expr(Expr *e, Scope *scope, void *ctx)
+{
+        Location const *at = ctx;
+        e->start = e->end = *at;
+        e->synth = true;
+        return e;
+}
+
+static Stmt *
+synthesize_stmt(Stmt *s, Scope *scope, void *ctx)
+{
+        Location const *at = ctx;
+        s->start = s->end = *at;
+        s->synth = true;
+        return s;
+}
+
+static Expr *
+synthesize_lvalue(Expr *e, bool _, Scope *scope, void *ctx)
+{
+        return synthesize_expr(e, scope, ctx);
+}
+
+Stmt *
+CompilerSyntheticClone(Ty *ty, Stmt *s, Location at)
+{
+        Expr *wrapper = NewExpr(ty, EXPRESSION_STATEMENT);
+        wrapper->statement = s;
+
+        Expr *copy = xclone(ty, wrapper);
+
+        VisitorCtx visitor = visit_identity(ty);
+        visitor.e_pre = synthesize_expr;
+        visitor.p_pre = synthesize_expr;
+        visitor.t_pre = synthesize_expr;
+        visitor.l_pre = synthesize_lvalue;
+        visitor.s_pre = synthesize_stmt;
+        visitor.user  = &at;
+
+        copy = visit_expression(ty, copy, NULL, &visitor);
+
+        return copy->statement;
+}
+
+static Expr *
 xclone_expr(Expr *e, Scope *scope, void *ctx)
 {
         Ty *ty = (Ty *)ctx;
@@ -13385,10 +13459,20 @@ load_module_source(
 {
         CompileState save = STATE;
         Module *module    = NULL;
+        bool permanent    = (GetArenaAlloc(ty) != NULL);
+        Arena old;
+
+        if (permanent) {
+                old  = NewArenaNoGC(ty, 1 << 20);
+                name = sclonea(ty, name);
+        }
 
         if (TY_CATCH_ERROR()) {
                 AbandonModule(ty, module);
                 STATE = save;
+                if (permanent) {
+                        ty->arena = old;
+                }
                 TY_RETHROW();
         }
 
@@ -13408,6 +13492,10 @@ load_module_source(
         vm_exec(ty, module->code);
 
         TY_CATCH_END();
+
+        if (permanent) {
+                ty->arena = old;
+        }
 
         return module;
 }
@@ -13477,7 +13565,7 @@ import_module(Ty *ty, Stmt const *s)
          *
          * are both errors.
          */
-        bool forgive = HAVE_COMPILER_FLAG(FORGIVING);
+        bool forgive = HAVE_COMPILER_FLAG(FORGIVING) && HAVE_COMPILER_FLAG(IMPORT_ALL);
         bool forgive_dup = forgive || (
                 ForgiveDuplicateImports
              && (STATE.module != NULL)
@@ -13734,6 +13822,107 @@ compiler_lookup(Ty *ty, char const *module, char const *name)
         }
 
         return NULL;
+}
+
+static Scope *
+ImportedScope(Module const *home, char const *name)
+{
+        for (usize i = 0; i < vN(home->imports); ++i) {
+                struct import const *imp = v_(home->imports, i);
+                if (imp->name != NULL && s_eq(imp->name, name)) {
+                        return imp->mod->scope;
+                }
+        }
+
+        return NULL;
+}
+
+Symbol *
+compiler_lookup_path(Ty *ty, Module const *mod, char const **parts, int n)
+{
+        Module const *home = (mod != NULL) ? mod : GlobalModule;
+        Scope *scope = home->scope;
+        int i = 0;
+
+        if (n <= 0 || scope == NULL) {
+                return NULL;
+        }
+
+        for (int k = n - 1; k >= 1; --k) {
+                byte_vector name = {0};
+                for (int j = 0; j < k; ++j) {
+                        dump(&name, &"/%s"[!j], parts[j]);
+                }
+                Scope *imported = ImportedScope(home, vv(name));
+                xvF(name);
+                if (imported != NULL) {
+                        scope = imported;
+                        i = k;
+                        break;
+                }
+        }
+
+        Symbol *sym = NULL;
+
+        for (; i < n; ++i) {
+                sym = (scope == home->scope)
+                    ? scope_lookup(ty, scope, parts[i])
+                    : scope_local_lookup(ty, scope, parts[i]);
+                if (sym == NULL) {
+                        return NULL;
+                }
+                if (i + 1 < n) {
+                        if (!SymbolIsNamespace(sym)) {
+                                return NULL;
+                        }
+                        scope = sym->scope;
+                }
+        }
+
+        return sym;
+}
+
+T2Type
+compiler_resolve_type_text(Ty *ty, Module *mod, char const *text)
+{
+        Module *home = (mod != NULL) ? mod : GlobalModule;
+        CompileState state = STATE;
+        T2Type type = T2_TYPE_INVALID;
+
+        STATE = freshstate(ty, home);
+
+        for (usize i = 0; i < vN(home->imports); ++i) {
+                avP(STATE.imports, *v_(home->imports, i));
+        }
+
+        Scope *scope = scope_new(ty, "(syn)", home->scope, false);
+
+        EVAL_DEPTH += 1;
+
+        void *ctx = ContextList;
+
+        if (TY_CATCH_ERROR()) {
+                ContextList = ctx;
+                TY_CATCH_FAIL();
+                EVAL_DEPTH -= 1;
+                STATE = state;
+                return T2_TYPE_INVALID;
+        }
+
+        Expr *e = parse_type_source(ty, home, text);
+
+        WITH_CTX(TYPE) {
+                symbolize_expression(ty, scope, e);
+        }
+
+        type = t2_resolve(ty, e);
+
+        TY_CATCH_END();
+
+        EVAL_DEPTH -= 1;
+        STATE = state;
+
+        return type;
 }
 
 static Expr *
@@ -18468,6 +18657,18 @@ define_class(Ty *ty, Stmt *s)
                         if (copy->body != NULL) {
                                 avP(STATE.class_ops, def);
                         }
+
+                        if (HAVE_COMPILER_FLAG(FIDELITY) && STATE.module != NULL) {
+                                avP(
+                                        STATE.module->extras,
+                                        ((SyntaxExtra) {
+                                                .kind  = "ClassOperator",
+                                                .start = copy->start,
+                                                .end   = copy->end,
+                                                .node  = copy
+                                        })
+                                );
+                        }
                 } else {
                         m->class = class;
                         AddToClass(ty, m, class_add_method, 0);
@@ -18676,6 +18877,9 @@ define_macro(Ty *ty, Stmt *s, bool fun)
 {
         DefinePending(ty);
 
+        u32 flags = STATE.flags;
+        STATE.flags |= TYC_EMIT;
+
         symbolize_statement(ty, GetNamespace(ty, s->ns), s);
         s->target->symbol->flags &= ~SYM_TRANSIENT;
         s->target->symbol->doc = s->doc;
@@ -18710,7 +18914,8 @@ define_macro(Ty *ty, Stmt *s, bool fun)
 
         STATE.loops = loops;
         STATE.stack = stack;
-        STATE.code = code_save;
+        STATE.code  = code_save;
+        STATE.flags = flags;
 }
 
 bool
@@ -20973,6 +21178,18 @@ Module *
 TyCompileSource(Ty *ty, char const *source, Scope *global, u32 flags)
 {
         return CompileSource(ty, source, "(tmp)", "(tmp)", global, NULL, flags);
+}
+
+Module *
+TyCompileSourceAt(
+        Ty *ty,
+        char const *source,
+        char const *path,
+        Scope *global,
+        u32 flags
+)
+{
+        return CompileSource(ty, source, "(tmp)", path, global, NULL, flags);
 }
 
 Module *

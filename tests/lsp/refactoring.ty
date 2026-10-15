@@ -1,0 +1,49 @@
+import support.client (Workspace, Server, uri)
+
+let ws = Workspace()
+let server = Server(ws)
+
+onExit(fn () {
+    server.close()
+    ws.remove()
+})
+
+let SOURCE = "let y = 10\nfn f(x: Int) -> Int \{\n    let k = x + 1\n    k + x + y\n\}\n"
+
+fn at(file: _, line: Int, col: Int) -> _ {
+    {
+        textDocument: { uri: uri(file) },
+        position: { line, character: col }
+    }
+}
+
+pub fn references-cover-every-use() {
+    let file = ws.write('refs.ty', SOURCE)
+    server.open(file)
+    let refs = server.request('textDocument/references', {
+        *at(file, 1, 5),
+        context: { includeDeclaration: true }
+    })['result']
+    let spots = refs.map(r -> (r['range']['start']['line'], r['range']['start']['character']))
+    assert(spots == [(1, 5), (2, 12), (3, 8)], refs)
+    server.assert-healthy('references')
+}
+
+pub fn rename-rewrites-the-binding() {
+    let file = ws.write('rename.ty', SOURCE)
+    server.open(file)
+    let rsp = server.request('textDocument/rename', { *at(file, 2, 12), newName: 'count' })
+    let edits = rsp['result']['changes'][uri(file)]
+    assert(#edits == 1, rsp)
+    let renamed = SOURCE.replace(/\bx\b/, 'count')
+    assert(edits[0]['newText'] == renamed, edits)
+}
+
+pub fn rename-refuses-capture() {
+    let file = ws.write('capture.ty', SOURCE)
+    server.open(file)
+    let rsp = server.request('textDocument/rename', { *at(file, 1, 5), newName: 'y' })
+    assert(rsp['result'] == nil, rsp)
+    assert(rsp['error']['message'].match?(/unhygienic/), rsp)
+    server.assert-healthy('rename')
+}

@@ -294,9 +294,7 @@ pub fn collect(target: String, static?: Bool = false) -> Collection {
     for site in sites() {
         funcs.push(site.func)
 
-        if core.special?(site.func) {
-            continue
-        }
+        continue if core.special?(site.func)
 
         if !site.public? {
             let meta = core.meta-for(site.func)
@@ -326,9 +324,7 @@ pub fn collect(target: String, static?: Bool = false) -> Collection {
     }
 
     for f in core.meta-keys() {
-        if f in funcs {
-            continue
-        }
+        continue if f in funcs
         let names = decorator-names(core.meta-for(f) ?? Meta())
         c.warnings.push({
             code: 'metadata-on-non-test',

@@ -27,7 +27,9 @@ pub class Stream : Iter[String] {
             if let $f = stdio.fdopen(__fd, mode) {
                 __f = f
             } else {
-                if dup { os.close(__fd) }
+                if dup {
+                    os.close(__fd)
+                }
                 throw os.OSError('open()')
             }
 
@@ -269,8 +271,8 @@ pub function open(
     }
 
     match fd {
-        -1  => throw os.OSError('open()'),
-        _   => Stream(fd, mode, buffering)
+        -1 => throw os.OSError('open()'),
+        _  => Stream(fd, mode, buffering)
     }
 }
 

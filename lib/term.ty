@@ -214,144 +214,144 @@ pub ns keys {
 }
 
 let function-keys = %{
-    "27u":    keys.ESCAPE,
-    "13u":    keys.ENTER,
-    "9u":     keys.TAB,
-    "127u":   keys.BACKSPACE,
-    "2~":     keys.INSERT,
-    "3~":     keys.DELETE,
-    "1D":     keys.LEFT,
-    "1C":     keys.RIGHT,
-    "1A":     keys.UP,
-    "1B":     keys.DOWN,
-    "5~":     keys.PAGE_UP,
-    "6~":     keys.PAGE_DOWN,
-    "1H":     keys.HOME,
-    "1~":     keys.HOME,
-    "7~":     keys.HOME,
-    "1F":     keys.END,
-    "4~":     keys.END,
-    "8~":     keys.END,
-    "1Z":     keys.TAB,
-    "57358u": keys.CAPS_LOCK,
-    "57359u": keys.SCROLL_LOCK,
-    "57360u": keys.NUM_LOCK,
-    "57361u": keys.PRINT_SCREEN,
-    "57362u": keys.PAUSE,
-    "57363u": keys.MENU,
-    "1P":     keys.F1,
-    "11~":    keys.F1,
-    "1Q":     keys.F2,
-    "12~":    keys.F2,
-    "13~":    keys.F3,
-    "1S":     keys.F4,
-    "14~":    keys.F4,
-    "15~":    keys.F5,
-    "17~":    keys.F6,
-    "18~":    keys.F7,
-    "19~":    keys.F8,
-    "20~":    keys.F9,
-    "21~":    keys.F10,
-    "23~":    keys.F11,
-    "24~":    keys.F12,
-    "25~":    keys.F13,
-    "26~":    keys.F14,
-    "28~":    keys.F15,
-    "29~":    keys.MENU,
-    "31~":    keys.F17,
-    "32~":    keys.F18,
-    "33~":    keys.F19,
-    "34~":    keys.F20,
-    "57376u": keys.F13,
-    "57377u": keys.F14,
-    "57378u": keys.F15,
-    "57379u": keys.F16,
-    "57380u": keys.F17,
-    "57381u": keys.F18,
-    "57382u": keys.F19,
-    "57383u": keys.F20,
-    "57384u": keys.F21,
-    "57385u": keys.F22,
-    "57386u": keys.F23,
-    "57387u": keys.F24,
-    "57388u": keys.F25,
-    "57389u": keys.F26,
-    "57390u": keys.F27,
-    "57391u": keys.F28,
-    "57392u": keys.F29,
-    "57393u": keys.F30,
-    "57394u": keys.F31,
-    "57395u": keys.F32,
-    "57396u": keys.F33,
-    "57397u": keys.F34,
-    "57398u": keys.F35,
-    "57399u": keys.KP_0,
-    "57400u": keys.KP_1,
-    "57401u": keys.KP_2,
-    "57402u": keys.KP_3,
-    "57403u": keys.KP_4,
-    "57404u": keys.KP_5,
-    "57405u": keys.KP_6,
-    "57406u": keys.KP_7,
-    "57407u": keys.KP_8,
-    "57408u": keys.KP_9,
-    "57409u": keys.KP_DECIMAL,
-    "57410u": keys.KP_DIVIDE,
-    "57411u": keys.KP_MULTIPLY,
-    "57412u": keys.KP_SUBTRACT,
-    "57413u": keys.KP_ADD,
-    "57414u": keys.KP_ENTER,
-    "57415u": keys.KP_EQUAL,
-    "57416u": keys.KP_SEPARATOR,
-    "57417u": keys.KP_LEFT,
-    "57418u": keys.KP_RIGHT,
-    "57419u": keys.KP_UP,
-    "57420u": keys.KP_DOWN,
-    "57421u": keys.KP_PAGE_UP,
-    "57422u": keys.KP_PAGE_DOWN,
-    "57423u": keys.KP_HOME,
-    "57424u": keys.KP_END,
-    "57425u": keys.KP_INSERT,
-    "57426u": keys.KP_DELETE,
-    "1E":     keys.KP_BEGIN,
-    "1G":     keys.KP_BEGIN,
-    "57427~": keys.KP_BEGIN,
-    "57428u": keys.MEDIA_PLAY,
-    "57429u": keys.MEDIA_PAUSE,
-    "57430u": keys.MEDIA_PLAY_PAUSE,
-    "57431u": keys.MEDIA_REVERSE,
-    "57432u": keys.MEDIA_STOP,
-    "57433u": keys.MEDIA_FAST_FORWARD,
-    "57434u": keys.MEDIA_REWIND,
-    "57435u": keys.MEDIA_TRACK_NEXT,
-    "57436u": keys.MEDIA_TRACK_PREVIOUS,
-    "57437u": keys.MEDIA_RECORD,
-    "57438u": keys.LOWER_VOLUME,
-    "57439u": keys.RAISE_VOLUME,
-    "57440u": keys.MUTE_VOLUME,
-    "57441u": keys.LEFT_SHIFT,
-    "57442u": keys.LEFT_CONTROL,
-    "57443u": keys.LEFT_ALT,
-    "57444u": keys.LEFT_SUPER,
-    "57445u": keys.LEFT_HYPER,
-    "57446u": keys.LEFT_META,
-    "57447u": keys.RIGHT_SHIFT,
-    "57448u": keys.RIGHT_CONTROL,
-    "57449u": keys.RIGHT_ALT,
-    "57450u": keys.RIGHT_SUPER,
-    "57451u": keys.RIGHT_HYPER,
-    "57452u": keys.RIGHT_META,
-    "57453u": keys.ISO_LEVEL3_SHIFT,
-    "57454u": keys.ISO_LEVEL5_SHIFT
+    '27u':    keys.ESCAPE,
+    '13u':    keys.ENTER,
+    '9u':     keys.TAB,
+    '127u':   keys.BACKSPACE,
+    '2~':     keys.INSERT,
+    '3~':     keys.DELETE,
+    '1D':     keys.LEFT,
+    '1C':     keys.RIGHT,
+    '1A':     keys.UP,
+    '1B':     keys.DOWN,
+    '5~':     keys.PAGE_UP,
+    '6~':     keys.PAGE_DOWN,
+    '1H':     keys.HOME,
+    '1~':     keys.HOME,
+    '7~':     keys.HOME,
+    '1F':     keys.END,
+    '4~':     keys.END,
+    '8~':     keys.END,
+    '1Z':     keys.TAB,
+    '57358u': keys.CAPS_LOCK,
+    '57359u': keys.SCROLL_LOCK,
+    '57360u': keys.NUM_LOCK,
+    '57361u': keys.PRINT_SCREEN,
+    '57362u': keys.PAUSE,
+    '57363u': keys.MENU,
+    '1P':     keys.F1,
+    '11~':    keys.F1,
+    '1Q':     keys.F2,
+    '12~':    keys.F2,
+    '13~':    keys.F3,
+    '1S':     keys.F4,
+    '14~':    keys.F4,
+    '15~':    keys.F5,
+    '17~':    keys.F6,
+    '18~':    keys.F7,
+    '19~':    keys.F8,
+    '20~':    keys.F9,
+    '21~':    keys.F10,
+    '23~':    keys.F11,
+    '24~':    keys.F12,
+    '25~':    keys.F13,
+    '26~':    keys.F14,
+    '28~':    keys.F15,
+    '29~':    keys.MENU,
+    '31~':    keys.F17,
+    '32~':    keys.F18,
+    '33~':    keys.F19,
+    '34~':    keys.F20,
+    '57376u': keys.F13,
+    '57377u': keys.F14,
+    '57378u': keys.F15,
+    '57379u': keys.F16,
+    '57380u': keys.F17,
+    '57381u': keys.F18,
+    '57382u': keys.F19,
+    '57383u': keys.F20,
+    '57384u': keys.F21,
+    '57385u': keys.F22,
+    '57386u': keys.F23,
+    '57387u': keys.F24,
+    '57388u': keys.F25,
+    '57389u': keys.F26,
+    '57390u': keys.F27,
+    '57391u': keys.F28,
+    '57392u': keys.F29,
+    '57393u': keys.F30,
+    '57394u': keys.F31,
+    '57395u': keys.F32,
+    '57396u': keys.F33,
+    '57397u': keys.F34,
+    '57398u': keys.F35,
+    '57399u': keys.KP_0,
+    '57400u': keys.KP_1,
+    '57401u': keys.KP_2,
+    '57402u': keys.KP_3,
+    '57403u': keys.KP_4,
+    '57404u': keys.KP_5,
+    '57405u': keys.KP_6,
+    '57406u': keys.KP_7,
+    '57407u': keys.KP_8,
+    '57408u': keys.KP_9,
+    '57409u': keys.KP_DECIMAL,
+    '57410u': keys.KP_DIVIDE,
+    '57411u': keys.KP_MULTIPLY,
+    '57412u': keys.KP_SUBTRACT,
+    '57413u': keys.KP_ADD,
+    '57414u': keys.KP_ENTER,
+    '57415u': keys.KP_EQUAL,
+    '57416u': keys.KP_SEPARATOR,
+    '57417u': keys.KP_LEFT,
+    '57418u': keys.KP_RIGHT,
+    '57419u': keys.KP_UP,
+    '57420u': keys.KP_DOWN,
+    '57421u': keys.KP_PAGE_UP,
+    '57422u': keys.KP_PAGE_DOWN,
+    '57423u': keys.KP_HOME,
+    '57424u': keys.KP_END,
+    '57425u': keys.KP_INSERT,
+    '57426u': keys.KP_DELETE,
+    '1E':     keys.KP_BEGIN,
+    '1G':     keys.KP_BEGIN,
+    '57427~': keys.KP_BEGIN,
+    '57428u': keys.MEDIA_PLAY,
+    '57429u': keys.MEDIA_PAUSE,
+    '57430u': keys.MEDIA_PLAY_PAUSE,
+    '57431u': keys.MEDIA_REVERSE,
+    '57432u': keys.MEDIA_STOP,
+    '57433u': keys.MEDIA_FAST_FORWARD,
+    '57434u': keys.MEDIA_REWIND,
+    '57435u': keys.MEDIA_TRACK_NEXT,
+    '57436u': keys.MEDIA_TRACK_PREVIOUS,
+    '57437u': keys.MEDIA_RECORD,
+    '57438u': keys.LOWER_VOLUME,
+    '57439u': keys.RAISE_VOLUME,
+    '57440u': keys.MUTE_VOLUME,
+    '57441u': keys.LEFT_SHIFT,
+    '57442u': keys.LEFT_CONTROL,
+    '57443u': keys.LEFT_ALT,
+    '57444u': keys.LEFT_SUPER,
+    '57445u': keys.LEFT_HYPER,
+    '57446u': keys.LEFT_META,
+    '57447u': keys.RIGHT_SHIFT,
+    '57448u': keys.RIGHT_CONTROL,
+    '57449u': keys.RIGHT_ALT,
+    '57450u': keys.RIGHT_SUPER,
+    '57451u': keys.RIGHT_HYPER,
+    '57452u': keys.RIGHT_META,
+    '57453u': keys.ISO_LEVEL3_SHIFT,
+    '57454u': keys.ISO_LEVEL5_SHIFT
 }
 
-fn title(s: String) { s[;1].upper() + s[1;].lower() }
+fn title(s: String) { "{s[;1].upper()}{s[1;].lower()}" }
 
 fn nice-key-name(ev: event.KeyDetails) -> String {
     let mods = ev.mods
 
     let out = match ev {
-        {_key: $k, *} => do { mods &= ~mod.SHIFT; chr(k) },
+        {_key: $k, *}         => do { mods &= ~mod.SHIFT; chr(k) },
         {key: (k: String), *} => k.split('_').map(title).join(),
         {key: (k: Int),    *} => chr(k)
     }
@@ -386,8 +386,8 @@ pub ns status {
     pub const QUESTION   = 'question'
     pub const AUTH       = 'auth'
 
-    pub const PREFIX = "\x1b]7501;"
-    pub const SUFFIX = "\x1b\\"
+    pub const PREFIX = '\x1b]7501;'
+    pub const SUFFIX = '\x1b\\'
     pub const QUERY  = "{PREFIX}?{SUFFIX}"
 
     let STATE = /^(?:idle|working|done|blocked|error|clear)$/
@@ -464,14 +464,14 @@ fn yield-basic(ch: String, extra-mods: Int = 0) {
     let c = ord(ch)
 
     let (key, _key, _mods, text?) = match c {
-        0             => (32,             nil, mod.CTRL, false),
-        8             => (keys.BACKSPACE, c,   mod.CTRL, false),
-        9             => (keys.TAB,       c,   0,        false),
-        10 or 13      => (keys.ENTER,     c,   0,        false),
-        27            => (keys.ESCAPE,    c,   0,        false),
-        127           => (keys.BACKSPACE, c,   0,        false),
-        0..32         => (unctrl(c),      nil, mod.CTRL, false),
-        _             => (c,              nil, 0,        true)
+        0        => (32,             nil, mod.CTRL, false),
+        8        => (keys.BACKSPACE, c,   mod.CTRL, false),
+        9        => (keys.TAB,       c,   0,        false),
+        10 or 13 => (keys.ENTER,     c,   0,        false),
+        27       => (keys.ESCAPE,    c,   0,        false),
+        127      => (keys.BACKSPACE, c,   0,        false),
+        0..32    => (unctrl(c),      nil, mod.CTRL, false),
+        _        => (c,              nil, 0,        true)
     }
 
     let mods = (_mods | extra-mods)
@@ -530,8 +530,8 @@ let TI_KEYS = %{
 }
 
 ns ctlseq {
-    pub paste-start = "\x1b[200~"
-    pub paste-end   = "\x1b[201~"
+    pub paste-start = '\x1b[200~'
+    pub paste-end   = '\x1b[201~'
 
     const LOCKS = 0xc0
 
@@ -677,13 +677,13 @@ ns ctlseq {
 
         match c {
             0x1b => do {
-                yield-basic("\x1b")
+                yield-basic('\x1b')
                 i + 1
             },
 
             (0x5b or 0x4f) and rest > 2 => #buf,
 
-            0x80...0xff => #buf,
+            0x80...0xff                 => #buf,
 
             _ => do {
                 yield-basic(chr(c), mod.ALT)
@@ -1020,7 +1020,7 @@ pub class TermIO {
         let pointer = Blob()
 
         if __paste {
-            enter.push("\x1b[?2004h")
+            enter.push('\x1b[?2004h')
         }
         if let $n = modify-keys {
             enter.push("\x1b[>4;{n}m")
@@ -1029,26 +1029,26 @@ pub class TermIO {
             enter.push("\x1b[>{__kitty}u")
         }
         if focus {
-            enter.push("\x1b[?1004h")
+            enter.push('\x1b[?1004h')
         }
         if let $on = alt-scroll {
-            pointer.push(on ? "\x1b[?1007h" : "\x1b[?1007l")
+            pointer.push(on ? '\x1b[?1007h' : '\x1b[?1007l')
         }
         if __mouse {
-            pointer.push("\x1b[?1003h\x1b[?1006h")
-            exit.push("\x1b[?1006l\x1b[?1003l")
+            pointer.push('\x1b[?1003h\x1b[?1006h')
+            exit.push('\x1b[?1006l\x1b[?1003l')
         }
         if __kitty != 0 {
-            exit.push("\x1b[<1u")
+            exit.push('\x1b[<1u')
         }
         if modify-keys != nil {
-            exit.push("\x1b[>4m")
+            exit.push('\x1b[>4m')
         }
         if __paste {
-            exit.push("\x1b[?2004l")
+            exit.push('\x1b[?2004l')
         }
         if focus {
-            exit.push("\x1b[?1004l")
+            exit.push('\x1b[?1004l')
         }
 
         __enter   = enter.str!()
@@ -1067,7 +1067,7 @@ pub class TermIO {
     }
 
     start(settle: Float = 0.0) {
-        warn!("Main: request start")
+        warn!('Main: request start')
         write(__notif-w, 1)
         with __state.lock {
             while !__state.on {
@@ -1080,7 +1080,7 @@ pub class TermIO {
         if #__pointer > 0 {
             write(__fd, __pointer)
         }
-        warn!("Main: started")
+        warn!('Main: started')
     }
 
     color(n: Int) -> (Int, Int, Int) | nil {
@@ -1093,18 +1093,18 @@ pub class TermIO {
     background -> (Int, Int, Int) | nil { color(11) }
 
     stop() {
-        warn!("Main: request stop")
+        warn!('Main: request stop')
         write(__notif-w, 0)
         with __state.lock {
             while __state.on {
                 __state.cond.wait(__state.lock)
             }
         }
-        warn!("Main: stopped")
+        warn!('Main: stopped')
     }
 
     __start() {
-        warn!("Reader: start")
+        warn!('Reader: start')
         if (__saved-termios = tcgetattr(__fd)) == nil {
             throw OSError('tcgetattr()')
         }
@@ -1125,16 +1125,14 @@ pub class TermIO {
 
     __probe-status() {
         with __probe.lock {
-            if __probe.sent? {
-                return
-            }
+            return if __probe.sent?
             __probe.sent? = true
         }
         write(__fd, "\x1b]10;?\x1b\\\x1b]11;?\x1b\\{status.QUERY}\x1b[c")
     }
 
     __stop() {
-        warn!("Reader: stop")
+        warn!('Reader: stop')
         write(__fd, __exit)
         tcsetattr(__fd, TCSAFLUSH, __saved-termios)
         with __state.lock {
@@ -1155,7 +1153,7 @@ pub class TermIO {
 
         fn wait-for-resume() {
             for (;;) {
-                warn!("Reader: waiting for resume...")
+                warn!('Reader: waiting for resume...')
                 match poll([__notif-r], -1) {
                     Ok([(fd, ev)]) => {
                         if let $msg = read(fd, 512) and msg[-1] == 1 {
@@ -1167,11 +1165,11 @@ pub class TermIO {
                     _ => break
                 }
             }
-            warn!("Reader: resuming.")
+            warn!('Reader: resuming.')
         }
 
         fn more(ms: Int = -1) -> Bool {
-            warn!("Reader: polling...")
+            warn!('Reader: polling...')
 
             let fds = match poll([__notif-r, __fd], ms) {
                 Ok(fds) => fds,
@@ -1331,7 +1329,7 @@ pub class TermIO {
         let ^lock = __cursor.lock.lock()
 
         let t_0 = __cursor.t
-        write(__fd, "\x1b[6n")
+        write(__fd, '\x1b[6n')
 
         for (;;) {
             if let {$y, $x, (t: t != t_0), *} = __cursor {
@@ -1365,9 +1363,9 @@ pub class TermIO {
         let root = (opts['id'] ?? '').split('/')[0]
 
         match (state, root) {
-            ('clear', '')  => __status-roots.clear(),
-            ('clear', $r)  => __status-roots.remove(r),
-            (_, $r)        => __status-roots[r] = true
+            ('clear', '') => __status-roots.clear(),
+            ('clear', $r) => __status-roots.remove(r),
+            (_, $r)       => __status-roots[r] = true
         }
     }
 
@@ -1381,8 +1379,8 @@ pub class TermIO {
             return
         }
 
-        for root in __status-roots.keys() {
-            clear-status(id=root)
+        for __status-roots.keys() {
+            clear-status(id=it)
         }
     }
 
@@ -1419,9 +1417,7 @@ pub class TermIO {
 
             Some(ev) => {
                 __ev-queue.put(ev)
-                if ev == event.EOF {
-                    break
-                }
+                break if ev == event.EOF
             },
 
             None => sleep(0.5)
@@ -1460,11 +1456,11 @@ pub class TermIO {
 
         if do-close? {
             __clear-reported()
-            critical!("Closing TermIO...")
+            critical!('Closing TermIO...')
             os::close(__notif-w)
             __reader.join()
             os::close(__notif-r)
-            critical!("TermIO closed.")
+            critical!('TermIO closed.')
         }
     }
 }
@@ -1545,9 +1541,7 @@ if __module__ == 'main' {
                     event.Key(_key) as key => pp(event.Key({*_key, nice: key.nice-name()})),
                     _                      => pp(ev)
                 }
-                if ev == event.Text('q') {
-                    break
-                }
+                break if ev == event.Text('q')
             }
         }
 }

@@ -31,6 +31,8 @@ struct ns {
         bool pub;
         bool braced;
         Namespace *next;
+        Location start;
+        Location end;
 };
 
 typedef struct {
@@ -66,6 +68,8 @@ struct class_definition {
                         ExprVec s_fields;
 
                         MethodAliasVec aliases;
+
+                        ExprVec members;
                 };
                 Expr *type;
         };
@@ -81,6 +85,8 @@ struct condpart {
         i32 when;
         Expr *e;
         Expr *target;
+        Location start;
+        Location end;
 };
 
 typedef struct {
@@ -317,6 +323,7 @@ struct expression {
 
         u8 type;
         u8 dbg;
+        u8 synth;
 
         Location start;
         Location end;
@@ -522,6 +529,7 @@ struct statement {
 
         u8 type;
         u8 dbg;
+        u8 synth;
 
         Location start;
         Location end;

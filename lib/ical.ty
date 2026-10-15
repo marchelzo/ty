@@ -15,7 +15,7 @@ pub class ICalError < RuntimeError {
     init(message: String, line: ?Int = nil) {
         self.message = message
         self.line = line
-        super(if line == nil { message } else { "{message} (line {line})" })
+        super(line == nil ? message : "{message} (line {line})")
     }
 }
 
@@ -56,21 +56,23 @@ pub class DateTime {
     date -> PlainDate {
         match value {
             dt: PlainDateTime => dt.to-plain-date(),
-            d: PlainDate => d
+            d: PlainDate      => d
         }
     }
 
     date-time -> ?PlainDateTime {
         match value {
             dt: PlainDateTime => dt,
-            _ => nil
+            _                 => nil
         }
     }
 
     /* Only UTC values can be unambiguously converted without a timezone
      * database.  TZID and floating values intentionally remain wall time. */
     instant -> ?Instant {
-        if !utc? { return nil }
+        if !utc? {
+            return nil
+        }
         if let $dt = date-time {
             return Instant.from("{dt}Z")
         }
@@ -110,14 +112,19 @@ fn parse-basic-date-time(s: String) -> PlainDateTime {
 }
 
 pub fn parse-date-time(value: String, tzid: ?String = nil, value-type: ?String = nil) -> DateTime {
-    let kind = if let $kind = value-type { kind.upper() } else { nil }
+    let kind = match value-type {
+        $kind => kind.upper(),
+        _     => nil
+    }
     if kind == 'DATE' || (#value == 8 && value.search('T') == nil) {
         return DateTime(parse-basic-date(value))
     }
 
     let raw = value
     let utc = raw.ends?('Z') || raw.ends?('z')
-    if utc { raw = raw[;-1] }
+    if utc {
+        raw = raw[;-1]
+    }
     DateTime(parse-basic-date-time(raw.upper()), utc=utc, tzid=(utc ? nil : tzid))
 }
 
@@ -125,7 +132,9 @@ pub fn format-date-time(value: DateTime) -> String {
     match value.value {
         dt: PlainDateTime => {
             let out = "{dt.year:04}{dt.month:02}{dt.day:02}T{dt.hour:02}{dt.minute:02}{dt.second:02}"
-            if value.utc? { out += 'Z' }
+            if value.utc? {
+                out += 'Z'
+            }
             out
         },
         d: PlainDate => "{d.year:04}{d.month:02}{d.day:02}"
@@ -148,19 +157,21 @@ pub class UTCOffset {
         }
         let hours = parse-int(s[1;3], 'UTC offset hour')
         let minutes = parse-int(s[3;5], 'UTC offset minute')
-        let seconds = if #s == 7 { parse-int(s[5;7], 'UTC offset second') } else { 0 }
+        let seconds = #s == 7 ? parse-int(s[5;7], 'UTC offset second') : 0
         if hours > 23 || minutes > 59 || seconds > 59 {
             throw ICalError("invalid UTC-OFFSET value: '{s}'")
         }
         let total = hours * 3600 + minutes * 60 + seconds
-        UTCOffset(if s[0] == '-' { -total } else { total })
+        UTCOffset(s[0] == '-' ? -total : total)
     }
 
     __str__() -> String {
         let sign = seconds < 0 ? '-' : '+'
         let n = seconds < 0 ? -seconds : seconds
         let out = "{sign}{n / 3600:02}{(n % 3600) / 60:02}"
-        if n % 60 != 0 { out += "{n % 60:02}" }
+        if n % 60 != 0 {
+            out += "{n % 60:02}"
+        }
         out
     }
 }
@@ -178,7 +189,9 @@ pub class Period {
 
     static from(s: String) -> Period {
         let parts = s.split('/', 1)
-        if #parts != 2 { throw ICalError("invalid PERIOD value: '{s}'") }
+        if #parts != 2 {
+            throw ICalError("invalid PERIOD value: '{s}'")
+        }
         let start = parse-date-time(parts[0])
         let end: DateTime | Duration = if parts[1].starts?('P') || parts[1].starts?('-P') {
             Duration.from(parts[1])
@@ -206,9 +219,9 @@ pub fn unescape-text(s: String) -> String {
     for c in s {
         if escaped {
             match c {
-                'n', 'N' => out.push('\n'),
+                'n', 'N'       => out.push('\n'),
                 '\\', ',', ';' => out.push(c),
-                _ => { out.push('\\'); out.push(c) }
+                _              => { out.push('\\'); out.push(c) }
             }
             escaped = false
         } else if c == '\\' {
@@ -217,7 +230,9 @@ pub fn unescape-text(s: String) -> String {
             out.push(c)
         }
     }
-    if escaped { out.push('\\') }
+    if escaped {
+        out.push('\\')
+    }
     out.str!()
 }
 
@@ -248,13 +263,17 @@ fn split-unquoted(s: String, separator: String) -> Array[String] {
 }
 
 fn unquote-parameter(s: String) -> String {
-    if #s >= 2 && s.starts?('"') && s.ends?('"') { s[1;-1] } else { s }
+    if #s >= 2 && s.starts?('"') && s.ends?('"') {
+        s[1;-1]
+    } else {
+        s
+    }
 }
 
 fn quote-parameter(s: String) -> String {
     if s.search(':') != nil || s.search(';') != nil || s.search(',') != nil ||
        s.starts?(' ') || s.ends?(' ') {
-        return '"' + s + '"'
+        return "\"{s}\""
     }
     s
 }
@@ -276,7 +295,11 @@ pub class Property {
     }
 
     parameter-value(name: String) -> ?String {
-        if let $p = parameter(name) { p.value } else { nil }
+        if let $p = parameter(name) {
+            p.value
+        } else {
+            nil
+        }
     }
 
     set-parameter(name: String, values: String | Array[String]) -> Property {
@@ -298,9 +321,9 @@ pub class Property {
 
     boolean -> Bool {
         match value.upper() {
-            'TRUE' => true,
+            'TRUE'  => true,
             'FALSE' => false,
-            _ => throw ICalError("invalid BOOLEAN value: '{value}'")
+            _       => throw ICalError("invalid BOOLEAN value: '{value}'")
         }
     }
 
@@ -316,10 +339,10 @@ pub class Property {
 
     content-line -> String {
         let out = name
-        for p in parameters {
-            out += ";{p.name}=" + p.values.map(quote-parameter).join(',')
+        for parameters {
+            out += ";{it.name}={it.values.map(quote-parameter).join(',')}"
         }
-        out + ':' + value
+        "{out}:{value}"
     }
 }
 
@@ -330,13 +353,15 @@ pub class RecurrenceRule {
 
     init(freq: ?String = nil) {
         parts = %{}
-        if freq != nil { parts['FREQ'] = [freq.upper()] }
+        if freq != nil {
+            parts['FREQ'] = [freq.upper()]
+        }
     }
 
     static from(s: String) -> RecurrenceRule {
         let rule = RecurrenceRule()
-        for field in split-unquoted(s, ';') {
-            let pair = field.split('=', 1)
+        for split-unquoted(s, ';') {
+            let pair = it.split('=', 1)
             if #pair != 2 || #pair[0] == 0 {
                 throw ICalError("invalid RECUR value: '{s}'")
             }
@@ -360,9 +385,24 @@ pub class RecurrenceRule {
     }
 
     freq -> String { part('FREQ') ?? '' }
-    interval -> Int { if let $s = part('INTERVAL') { parse-int(s) } else { 1 } }
-    count -> ?Int { if let $s = part('COUNT') { parse-int(s) } else { nil } }
-    until -> ?DateTime { if let $s = part('UNTIL') { parse-date-time(s) } else { nil } }
+    interval -> Int {
+        match part('INTERVAL') {
+            $s => parse-int(s),
+            _  => 1
+        }
+    }
+    count -> ?Int {
+        match part('COUNT') {
+            $s => parse-int(s),
+            _  => nil
+        }
+    }
+    until -> ?DateTime {
+        match part('UNTIL') {
+            $s => parse-date-time(s),
+            _  => nil
+        }
+    }
     by-day -> Array[String] { values('BYDAY') }
     by-month -> Array[Int] { values('BYMONTH').map(s -> parse-int(s)) }
     by-month-day -> Array[Int] { values('BYMONTHDAY').map(s -> parse-int(s)) }
@@ -377,9 +417,11 @@ pub class RecurrenceRule {
     __str__() -> String {
         let fields: Array[String] = []
         /* FREQ is required and conventionally emitted first. */
-        if let $freq = parts['FREQ'] { fields.push('FREQ=' + freq.join(',')) }
+        if let $freq = parts['FREQ'] {
+            fields.push("FREQ={freq.join(',')}")
+        }
         for name, vals in parts if name != 'FREQ' {
-            fields.push(name + '=' + vals.join(','))
+            fields.push("{name}={vals.join(',')}")
         }
         fields.join(';')
     }
@@ -413,7 +455,8 @@ pub class Component {
 
     add(property: Property) -> Component { properties.push(property); self }
     add(name: String, value: String, parameters: Array[Parameter] = []) -> Component {
-        properties.push(Property(name, value, parameters)); self
+        properties.push(Property(name, value, parameters));
+        self
     }
     add(component: Component) -> Component { components.push(component); self }
 
@@ -434,27 +477,66 @@ pub class Component {
         self
     }
 
-    raw(name: String) -> ?String { if let $p = property(name) { p.value } else { nil } }
-    text(name: String) -> ?String { if let $p = property(name) { p.text } else { nil } }
-    integer(name: String) -> ?Int { if let $p = property(name) { p.integer } else { nil } }
-    date-time(name: String) -> ?DateTime { if let $p = property(name) { p.date-time } else { nil } }
-    duration(name: String) -> ?Duration { if let $p = property(name) { p.duration } else { nil } }
+    raw(name: String) -> ?String {
+        match property(name) {
+            $p => p.value,
+            _  => nil
+        }
+    }
+    text(name: String) -> ?String {
+        match property(name) {
+            $p => p.text,
+            _  => nil
+        }
+    }
+    integer(name: String) -> ?Int {
+        match property(name) {
+            $p => p.integer,
+            _  => nil
+        }
+    }
+    date-time(name: String) -> ?DateTime {
+        match property(name) {
+            $p => p.date-time,
+            _  => nil
+        }
+    }
+    duration(name: String) -> ?Duration {
+        match property(name) {
+            $p => p.duration,
+            _  => nil
+        }
+    }
     recurrence-rule(name: String = 'RRULE') -> ?RecurrenceRule {
-        if let $value = raw(name) { RecurrenceRule.from(value) } else { nil }
+        if let $value = raw(name) {
+            RecurrenceRule.from(value)
+        } else {
+            nil
+        }
     }
 
     date-time-list(name: String) -> Array[DateTime] {
         let result: Array[DateTime] = []
-        for p in all(name) { for value in p.date-times { result.push(value) } }
+        for p in all(name) {
+            for p.date-times {
+                result.push(it)
+            }
+        }
         result
     }
 
     set-text(name: String, value: ?String) -> Component {
-        if value == nil { remove(name) } else { set(name, escape-text(value)) }
+        if value == nil {
+            remove(name)
+        } else {
+            set(name, escape-text(value))
+        }
     }
 
     set-date-time(name: String, value: ?DateTime) -> Component {
-        if value == nil { return remove(name) }
+        if value == nil {
+            return remove(name)
+        }
         let parameters: Array[Parameter] = []
         if value.date? { parameters.push(Parameter('VALUE', ['DATE'])) }
         else if value.tzid != nil { parameters.push(Parameter('TZID', [value.tzid])) }
@@ -462,7 +544,7 @@ pub class Component {
     }
 
     uid -> ?String { raw('UID') }
-    uid=(value: ?String) { if value == nil { remove('UID') } else { set('UID', value) } }
+    uid=(value: ?String) { value == nil ? remove('UID') : set('UID', value) }
     summary -> ?String { text('SUMMARY') }
     summary=(value: ?String) { set-text('SUMMARY', value) }
     description -> ?String { text('DESCRIPTION') }
@@ -498,14 +580,18 @@ pub class Component {
     categories -> Array[String] {
         let result: Array[String] = []
         for p in all('CATEGORIES') {
-            for item in split-unquoted(p.value, ',') { result.push(unescape-text(item)) }
+            for split-unquoted(p.value, ',') {
+                result.push(unescape-text(it))
+            }
         }
         result
     }
 
     alarms -> Array[Alarm] {
         let result: Array[Alarm] = []
-        for c in components if c :: Alarm { result.push(c) }
+        for c in components if c :: Alarm {
+            result.push(c)
+        }
         result
     }
 
@@ -529,27 +615,37 @@ pub class Calendar < Component {
     display-name -> ?String { text('X-WR-CALNAME') }
     events -> Array[Event] {
         let result: Array[Event] = []
-        for c in components if c :: Event { result.push(c) }
+        for c in components if c :: Event {
+            result.push(c)
+        }
         result
     }
     todos -> Array[Todo] {
         let result: Array[Todo] = []
-        for c in components if c :: Todo { result.push(c) }
+        for c in components if c :: Todo {
+            result.push(c)
+        }
         result
     }
     journals -> Array[Journal] {
         let result: Array[Journal] = []
-        for c in components if c :: Journal { result.push(c) }
+        for c in components if c :: Journal {
+            result.push(c)
+        }
         result
     }
     timezones -> Array[TimeZone] {
         let result: Array[TimeZone] = []
-        for c in components if c :: TimeZone { result.push(c) }
+        for c in components if c :: TimeZone {
+            result.push(c)
+        }
         result
     }
     free-busy -> Array[FreeBusy] {
         let result: Array[FreeBusy] = []
-        for c in components if c :: FreeBusy { result.push(c) }
+        for c in components if c :: FreeBusy {
+            result.push(c)
+        }
         result
     }
 
@@ -558,7 +654,9 @@ pub class Calendar < Component {
      * cancelled exceptions. Times remain RFC wall times; timezone identifiers
      * are preserved but are not converted. */
     occurrences(start: PlainDate, end: PlainDate) -> Array[Occurrence] {
-        if (method ?? '').upper() == 'CANCEL' { return [] }
+        if (method ?? '').upper() == 'CANCEL' {
+            return []
+        }
         event-occurrences(events, start, end)
     }
 }
@@ -590,7 +688,9 @@ pub class Occurrence {
 }
 
 fn cancelled-event(event: Event) -> Bool {
-    if (event.status ?? '').upper() == 'CANCELLED' { return true }
+    if (event.status ?? '').upper() == 'CANCELLED' {
+        return true
+    }
     let title = (event.summary ?? '').lower().trim()
     title.starts?('canceled:') || title.starts?('cancelled:')
 }
@@ -603,28 +703,38 @@ fn weekday-number(name: String) -> Int {
 }
 
 fn matches-by-day(day: PlainDate, values: Array[String]) -> Bool {
-    if #values == 0 { return true }
+    if #values == 0 {
+        return true
+    }
     for value in values {
-        if #value < 2 { continue }
+        continue if #value < 2
         let weekday = weekday-number(value[-2;])
-        if weekday == 0 || day.day-of-week != weekday { continue }
+        continue if weekday == 0 || day.day-of-week != weekday
         let ordinal = (#value > 2) ? (int(value[;#value - 2], 10) ?? 0) : 0
-        if ordinal == 0 { return true }
+        if ordinal == 0 {
+            return true
+        }
         let actual = if ordinal > 0 {
             (day.day - 1) / 7 + 1
         } else {
             -((day.days-in-month - day.day) / 7 + 1)
         }
-        if actual == ordinal { return true }
+        if actual == ordinal {
+            return true
+        }
     }
     false
 }
 
 fn matches-month-day(day: PlainDate, values: Array[Int]) -> Bool {
-    if #values == 0 { return true }
-    for value in values {
-        let actual = value > 0 ? day.day : day.days-in-month + value + 1
-        if day.day == actual { return true }
+    if #values == 0 {
+        return true
+    }
+    for values {
+        let actual = it > 0 ? day.day : day.days-in-month + it + 1
+        if day.day == actual {
+            return true
+        }
     }
     false
 }
@@ -640,7 +750,9 @@ fn recurrence-date?(day: PlainDate, base: PlainDate, rule: RecurrenceRule) -> Bo
         'DAILY' => int(base.until(day).total('days')) % interval == 0,
         'WEEKLY' => {
             let week-start = weekday-number(rule.week-start)
-            if week-start == 0 { week-start = 1 }
+            if week-start == 0 {
+                week-start = 1
+            }
             let base-week = base.subtract(Duration(days=(base.day-of-week - week-start + 7) % 7))
             let day-week = day.subtract(Duration(days=(day.day-of-week - week-start + 7) % 7))
             let valid-week = (int(base-week.until(day-week).total('days')) / 7) % interval == 0
@@ -675,12 +787,14 @@ fn date-time-on(day: PlainDate, base: DateTime) -> DateTime {
 fn add-date-time(value: DateTime, duration: Duration) -> DateTime {
     match value.value {
         dt: PlainDateTime => DateTime(dt.add(duration), utc=value.utc?, tzid=value.tzid),
-        d: PlainDate => DateTime(d.add(duration))
+        d: PlainDate      => DateTime(d.add(duration))
     }
 }
 
 fn event-duration(event: Event) -> ?Duration {
-    if let $duration = event.duration('DURATION') { return duration }
+    if let $duration = event.duration('DURATION') {
+        return duration
+    }
     let $start = event.start or return nil
     let $end = event.end or return nil
     match (start.value, end.value) {
@@ -691,7 +805,7 @@ fn event-duration(event: Event) -> ?Duration {
 }
 
 fn recurrence-key(uid: String, value: DateTime) -> String {
-    uid + ':' + format-date-time(value)
+    "{uid}:{format-date-time(value)}"
 }
 
 fn in-date-range(value: DateTime, start: PlainDate, end: PlainDate) -> Bool {
@@ -700,22 +814,24 @@ fn in-date-range(value: DateTime, start: PlainDate, end: PlainDate) -> Bool {
 
 pub fn event-occurrences(events: Array[Event], start: PlainDate,
                          end: PlainDate) -> Array[Occurrence] {
-    if end < start { throw ValueError('occurrence range end precedes start') }
+    if end < start {
+        throw ValueError('occurrence range end precedes start')
+    }
     let masters: Dict[String, Event] = %{}
     let overrides: Dict[String, Event] = %{}
     let standalone: Array[Event] = []
 
-    for event in events {
-        let uid = event.uid ?? ''
-        if let $rid = event.recurrence-id {
-            overrides[recurrence-key(uid, rid)] = event
-        } else if event.rrule && uid != '' {
+    for events {
+        let uid = it.uid ?? ''
+        if let $rid = it.recurrence-id {
+            overrides[recurrence-key(uid, rid)] = it
+        } else if it.rrule && uid != '' {
             let master = masters[uid]
-            if !master || event.sequence >= master.sequence {
-                masters[uid] = event
+            if !master || it.sequence >= master.sequence {
+                masters[uid] = it
             }
         } else {
-            standalone.push(event)
+            standalone.push(it)
         }
     }
 
@@ -732,9 +848,9 @@ pub fn event-occurrences(events: Array[Event], start: PlainDate,
         while cursor <= end {
             if recurrence-date?(cursor, base.date, rule) {
                 let occurrence-start = date-time-on(cursor, base)
-                if until && occurrence-start.date > until.date { break }
+                break if until && occurrence-start.date > until.date
                 seen += 1
-                if rule.count && seen > rule.count { break }
+                break if rule.count && seen > rule.count
                 let key = recurrence-key(uid, occurrence-start)
                 emitted << key
                 if key not in exceptions {
@@ -752,25 +868,25 @@ pub fn event-occurrences(events: Array[Event], start: PlainDate,
             cursor = cursor.tomorrow
         }
 
-        for rdate in master.recurrence-dates {
-            let key = recurrence-key(uid, rdate)
-            if key in emitted || key in exceptions || !in-date-range(rdate, start, end) { continue }
+        for master.recurrence-dates {
+            let key = recurrence-key(uid, it)
+            continue if key in emitted || key in exceptions || !in-date-range(it, start, end)
             emitted << key
             if let $override = overrides[key] {
                 if !cancelled-event(override) && override.start && in-date-range(override.start, start, end) {
                     result.push(Occurrence(override, override.start, override.end, override.recurrence-id))
                 }
             } else if !cancelled-event(master) {
-                result.push(Occurrence(master, rdate,
-                    duration ? add-date-time(rdate, duration) : nil, rdate))
+                result.push(Occurrence(master, it,
+                    duration ? add-date-time(it, duration) : nil, it))
             }
         }
     }
 
-    for event in standalone {
-        let $event-start = event.start or continue
-        if !cancelled-event(event) && in-date-range(event-start, start, end) {
-            result.push(Occurrence(event, event-start, event.end, event.recurrence-id))
+    for standalone {
+        let $event-start = it.start or continue
+        if !cancelled-event(it) && in-date-range(event-start, start, end) {
+            result.push(Occurrence(it, event-start, it.end, it.recurrence-id))
         }
     }
     for key, override in overrides if key not in emitted {
@@ -789,24 +905,48 @@ pub class TimeZone < Component {
     tzid -> ?String { raw('TZID') }
     standards -> Array[Standard] {
         let result: Array[Standard] = []
-        for c in components if c :: Standard { result.push(c) }
+        for c in components if c :: Standard {
+            result.push(c)
+        }
         result
     }
     daylights -> Array[Daylight] {
         let result: Array[Daylight] = []
-        for c in components if c :: Daylight { result.push(c) }
+        for c in components if c :: Daylight {
+            result.push(c)
+        }
         result
     }
 }
 pub class Standard < Component {
     init() { super('STANDARD') }
-    offset-from -> ?UTCOffset { if let $p = property('TZOFFSETFROM') { p.utc-offset } else { nil } }
-    offset-to -> ?UTCOffset { if let $p = property('TZOFFSETTO') { p.utc-offset } else { nil } }
+    offset-from -> ?UTCOffset {
+        match property('TZOFFSETFROM') {
+            $p => p.utc-offset,
+            _  => nil
+        }
+    }
+    offset-to -> ?UTCOffset {
+        match property('TZOFFSETTO') {
+            $p => p.utc-offset,
+            _  => nil
+        }
+    }
 }
 pub class Daylight < Component {
     init() { super('DAYLIGHT') }
-    offset-from -> ?UTCOffset { if let $p = property('TZOFFSETFROM') { p.utc-offset } else { nil } }
-    offset-to -> ?UTCOffset { if let $p = property('TZOFFSETTO') { p.utc-offset } else { nil } }
+    offset-from -> ?UTCOffset {
+        match property('TZOFFSETFROM') {
+            $p => p.utc-offset,
+            _  => nil
+        }
+    }
+    offset-to -> ?UTCOffset {
+        match property('TZOFFSETTO') {
+            $p => p.utc-offset,
+            _  => nil
+        }
+    }
 }
 pub class Alarm < Component {
     init() { super('VALARM') }
@@ -817,15 +957,15 @@ pub class Alarm < Component {
 fn new-component(name: String) -> Component {
     match name.upper() {
         'VCALENDAR' => Calendar(false),
-        'VEVENT' => Event(),
-        'VTODO' => Todo(),
-        'VJOURNAL' => Journal(),
+        'VEVENT'    => Event(),
+        'VTODO'     => Todo(),
+        'VJOURNAL'  => Journal(),
         'VFREEBUSY' => FreeBusy(),
         'VTIMEZONE' => TimeZone(),
-        'STANDARD' => Standard(),
-        'DAYLIGHT' => Daylight(),
-        'VALARM' => Alarm(),
-        n => Component(n)
+        'STANDARD'  => Standard(),
+        'DAYLIGHT'  => Daylight(),
+        'VALARM'    => Alarm(),
+        n           => Component(n)
     }
 }
 
@@ -833,9 +973,13 @@ pub fn unfold(input: String) -> Array[String] {
     let result: Array[String] = []
     for physical in input.lines() {
         let line = physical
-        if line.ends?('\r') { line = line[;-1] }
+        if line.ends?('\r') {
+            line = line[;-1]
+        }
         if #line > 0 && (line[0] == ' ' || line[0] == '\t') {
-            if #result == 0 { throw ICalError('folded line has no preceding content line') }
+            if #result == 0 {
+                throw ICalError('folded line has no preceding content line')
+            }
             result[-1] += line[1;]
         } else if #line > 0 {
             result.push(line)
@@ -858,12 +1002,14 @@ pub fn parse-property(line: String) -> Property {
     let left = line[;colon]
     let value = line[colon + 1;]
     let fields = split-unquoted(left, ';')
-    if #fields[0] == 0 { throw ICalError('content line has an empty property name') }
+    if #fields[0] == 0 {
+        throw ICalError('content line has an empty property name')
+    }
     let parameters: Array[Parameter] = []
-    for field in fields[1;] {
-        let pair = split-unquoted(field, '=')
+    for fields[1;] {
+        let pair = split-unquoted(it, '=')
         if #pair < 2 || #pair[0] == 0 {
-            throw ICalError("invalid property parameter: '{field}'")
+            throw ICalError("invalid property parameter: '{it}'")
         }
         let parameter-value = pair[1;].join('=')
         parameters.push(Parameter(
@@ -885,7 +1031,7 @@ pub fn parse(input: String) -> Calendar {
         if p.name == 'BEGIN' {
             let component = new-component(p.value)
             if #stack > 0 { stack[-1].components.push(component) }
-            else { roots.push(component) }
+            else          { roots.push(component)                }
             stack.push(component)
         } else if p.name == 'END' {
             if #stack == 0 {
@@ -905,7 +1051,9 @@ pub fn parse(input: String) -> Calendar {
         }
     }
 
-    if #stack > 0 { throw ICalError("unclosed component: {stack[-1].name}") }
+    if #stack > 0 {
+        throw ICalError("unclosed component: {stack[-1].name}")
+    }
     if not let [calendar: Calendar] = roots {
         throw ICalError('input must contain exactly one VCALENDAR object')
     }
@@ -920,7 +1068,9 @@ pub fn read(path: String) -> Calendar {
 /* Fold at 75 octets as required by RFC 5545.  Ty strings use byte indexes;
  * back up over UTF-8 continuation bytes so a fold never splits a code point. */
 pub fn fold(line: String) -> String {
-    if #line <= 75 { return line }
+    if #line <= 75 {
+        return line
+    }
     let out = Blob()
     let part = Blob()
     let used = 0
@@ -928,7 +1078,9 @@ pub fn fold(line: String) -> String {
     for c in line {
         let limit = first ? 75 : 74
         if used + #c > limit {
-            if !first { out.push(' ') }
+            if !first {
+                out.push(' ')
+            }
             out.push(part.str!())
             out.push('\r\n')
             first = false
@@ -938,18 +1090,22 @@ pub fn fold(line: String) -> String {
         part.push(c)
         used += #c
     }
-    if !first { out.push(' ') }
+    if !first {
+        out.push(' ')
+    }
     out.push(part.str!())
     out.str!()
 }
 
 fn serialize-component(component: Component, out: Blob) {
     out.push("BEGIN:{component.name}\r\n")
-    for property in component.properties {
-        out.push(fold(property.content-line))
+    for component.properties {
+        out.push(fold(it.content-line))
         out.push('\r\n')
     }
-    for child in component.components { serialize-component(child, out) }
+    for component.components {
+        serialize-component(it, out)
+    }
     out.push("END:{component.name}\r\n")
 }
 

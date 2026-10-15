@@ -1,0 +1,18 @@
+import ty
+
+class Counter {
+    n: Int
+
+    init(n: Int) {
+        self.n = n
+    }
+
+    bump() -> Int {
+        self.n += 1
+        self.n
+    }
+}
+
+pub macro counted {
+    ty.Int(Counter(41).bump())
+}

@@ -1,0 +1,426 @@
+import jit (kernel!)
+import support.process (run)
+
+kernel! fn k-arith(a: Int, b: Int) -> Int {
+    let x = a * 3 - b
+    let y = (a & 255) | (b ^ 7)
+    let z = (a << 3) >> 2
+    x + y + z + (a / 7) + (b % 5) + -a + ~b
+}
+
+fn t-arith(a: Int, b: Int) -> Int {
+    let x = a * 3 - b
+    let y = (a & 255) | (b ^ 7)
+    let z = (a << 3) >> 2
+    x + y + z + (a / 7) + (b % 5) + -a + ~b
+}
+
+kernel! fn k-divs(a: Int, b: Int) -> Int {
+    a / b + a % b
+}
+
+fn t-divs(a: Int, b: Int) -> Int {
+    a / b + a % b
+}
+
+kernel! fn k-floats(x: Float, n: Int) -> Float {
+    let acc = 0.0
+    let i = 0
+    while i < n {
+        acc = acc * 0.5 + x / (i + 1)
+        if acc > 100.0 { acc -= 50.0 } else if acc < -100.0 { acc += 25 }
+        i += 1
+    }
+    acc + x % 3.0
+}
+
+fn t-floats(x: Float, n: Int) -> Float {
+    let acc = 0.0
+    let i = 0
+    while i < n {
+        acc = acc * 0.5 + x / (i + 1)
+        if acc > 100.0 { acc -= 50.0 } else if acc < -100.0 { acc += 25 }
+        i += 1
+    }
+    acc + x % 3.0
+}
+
+kernel! fn k-fdiv(x: Float, y: Float) -> Float {
+    x / y
+}
+
+fn t-fdiv(x: Float, y: Float) -> Float {
+    x / y
+}
+
+kernel! fn k-bools(a: Int, b: Int, f: Bool) -> Bool {
+    let p = a < b && !(a == 3) || f
+    let q = a >= b || f && b != 0
+    p == q || (a > 10 && b <= 2)
+}
+
+fn t-bools(a: Int, b: Int, f: Bool) -> Bool {
+    let p = a < b && !(a == 3) || f
+    let q = a >= b || f && b != 0
+    p == q || (a > 10 && b <= 2)
+}
+
+kernel! fn k-cond(a: Int) -> Int {
+    let s = 0
+    for i in ..a {
+        s += i % 3 == 0 ? i * 2 : -1
+        continue if i == 4
+        if i > 50 { break }
+    }
+    s
+}
+
+fn t-cond(a: Int) -> Int {
+    let s = 0
+    for i in ..a {
+        s += i % 3 == 0 ? i * 2 : -1
+        continue if i == 4
+        if i > 50 { break }
+    }
+    s
+}
+
+kernel! fn k-blobsum(b: Blob) -> Int {
+    let s = 0
+    for x in b { s += x }
+    for i in ..#b { s += b[i] * i }
+    s + b[-1]
+}
+
+fn t-blobsum(b: Blob) -> Int {
+    let s = 0
+    for x in b { s += x }
+    for i in ..#b { s += b[i] * i }
+    s + b[-1]
+}
+
+kernel! fn k-blobwrite(b: Blob, k: Int) -> Int {
+    for i in ..#b {
+        b[i] = b[i] + k
+    }
+    b[0] += 1
+    b[k] = 7
+    #b
+}
+
+fn t-blobwrite(b: Blob, k: Int) -> Int {
+    for i in ..#b {
+        b[i] = b[i] + k
+    }
+    b[0] += 1
+    b[k] = 7
+    #b
+}
+
+kernel! fn k-ints(xs: Array[Int], k: Int) -> Int {
+    let s = 0
+    for x; i in xs { s += x * i }
+    for i in ..#xs { xs[i] = xs[i] * 2 + k }
+    xs[k] -= 1
+    s + xs[0]
+}
+
+fn t-ints(xs: Array[Int], k: Int) -> Int {
+    let s = 0
+    for x; i in xs { s += x * i }
+    for i in ..#xs { xs[i] = xs[i] * 2 + k }
+    xs[k] -= 1
+    s + xs[0]
+}
+
+kernel! fn k-floatsum(xs: Array[Float], ys: Array[Float]) -> Float {
+    let acc = 0.0
+    for i in ..#xs {
+        acc += xs[i] * ys[i]
+        ys[i] = acc
+    }
+    acc
+}
+
+fn t-floatsum(xs: Array[Float], ys: Array[Float]) -> Float {
+    let acc = 0.0
+    for i in ..#xs {
+        acc += xs[i] * ys[i]
+        ys[i] = acc
+    }
+    acc
+}
+
+kernel! fn k-strbytes(s: String) -> Int {
+    let h = 5381
+    for i in ..s.size() {
+        h = (h * 33) ^ s.byte(i)
+    }
+    h + s.byte(-1)
+}
+
+fn t-strbytes(s: String) -> Int {
+    let h = 5381
+    for i in ..s.size() {
+        h = (h * 33) ^ s.byte(i)
+    }
+    h + s.byte(-1)
+}
+
+kernel! fn k-minmax(a: Int, b: Float) -> Float {
+    let m = max(a, 3, -2)
+    let n = min(b, 1.5)
+    let c = a.clamp(-5, 5)
+    float(m) + n + c + a.abs + b.abs + int(b) + b.floor + b.round + b.sqrt + a.float
+}
+
+fn t-minmax(a: Int, b: Float) -> Float {
+    let m = max(a, 3, -2)
+    let n = min(b, 1.5)
+    let c = a.clamp(-5, 5)
+    float(m) + n + c + a.abs + b.abs + int(b) + b.floor + b.round + b.sqrt + a.float
+}
+
+kernel! fn k-nested(n: Int) -> Int {
+    let total = 0
+    for i in ..n {
+        let j = 0
+        while j < i {
+            if (i + j) % 7 == 0 { j += 1; continue }
+            total += i * j
+            j += 1
+        }
+    }
+    total
+}
+
+fn t-nested(n: Int) -> Int {
+    let total = 0
+    for i in ..n {
+        let j = 0
+        while j < i {
+            if (i + j) % 7 == 0 { j += 1; continue }
+            total += i * j
+            j += 1
+        }
+    }
+    total
+}
+
+kernel! fn k-incl(a: Int, b: Int) -> Int {
+    let s = 0
+    for i in a...b { s = s * 3 + i }
+    for i in a..b if i % 2 == 0 { s -= i }
+    s
+}
+
+fn t-incl(a: Int, b: Int) -> Int {
+    let s = 0
+    for i in a...b { s = s * 3 + i }
+    for i in a..b if i % 2 == 0 { s -= i }
+    s
+}
+
+kernel! fn k-retvoid(xs: Array[Int]) -> nil {
+    for i in ..#xs {
+        if xs[i] < 0 { return }
+        xs[i] = xs[i] + 100
+    }
+}
+
+fn t-retvoid(xs: Array[Int]) -> nil {
+    for i in ..#xs {
+        if xs[i] < 0 { return }
+        xs[i] = xs[i] + 100
+    }
+}
+
+kernel! fn k-tailif(a: Int) -> Int {
+    if a < 0 {
+        -a
+    } else if a == 0 {
+        return 42
+    } else {
+        let t = a * 2
+        t + 1
+    }
+}
+
+fn t-tailif(a: Int) -> Int {
+    if a < 0 {
+        -a
+    } else if a == 0 {
+        return 42
+    } else {
+        let t = a * 2
+        t + 1
+    }
+}
+
+fn clone(x: _) -> _ {
+    match x {
+        b: Blob => Blob(b),
+        a: Array => [*a],
+        _ => x,
+    }
+}
+
+fn outcome(f: _, args: _) -> _ {
+    let xs = [clone(a) for a in args]
+    let r = try { f(*xs) } catch e { "error: {e}" }
+    (r, xs)
+}
+
+fn same(a: _, b: _) -> Bool {
+    if let x: Float = a and let y: Float = b {
+        return x == y || (x != x && y != y) || (x - y).abs < 1e-9 * (x.abs + 1.0)
+    }
+    if let (x, xs) = a and let (y, ys) = b {
+        return same(x, y) && same(xs, ys)
+    }
+    if let x: Array = a and let y: Array = b {
+        return #x == #y && [same(x[i], y[i]) for i in ..#x].all?()
+    }
+    if let x: String = a and let y: String = b and x.starts?('error') && y.starts?('error') {
+        return true
+    }
+    a == b
+}
+
+fn compare(name: String, k: _, t: _, args: _, failures: Array[String]) {
+    for _ in ..3 {
+        let a = outcome(k, args)
+        let b = outcome(t, args)
+        if !same(a, b) {
+            failures.push("{name}{args}: kernel={a} ty={b}")
+        }
+    }
+}
+
+kernel! fn at(xs: Array[Int], i: Int) -> Int { xs[i] }
+
+kernel! fn positive?(x: Int) -> Bool { x > 0 }
+
+kernel! fn square(x: Float) -> Float { x * x }
+
+kernel! fn norm(xs: Array[Float]) -> Float {
+    let s = 0.0
+    for x in xs { s += square(x) }
+    s.sqrt
+}
+
+kernel! fn pick(flag: Bool, a: Int, b: Int) -> Int { flag ? a : b }
+
+kernel! fn choose(x: Int) -> Int { pick(positive?(x), x, -x) }
+
+kernel! fn fill(b: Blob, v: Int) {
+    for i in ..#b { b[i] = v }
+}
+
+fn direct-calls() -> (Int, Int) {
+    let xs = [1, 2, 3]
+    let caught = 0
+    let s = 0
+    for i in ..2000 {
+        s += try { at(xs, i % 5) } catch _: IndexError { caught += 1; 0 }
+        if positive?(i - 1000) {
+            s += choose(i - 1500)
+        }
+    }
+    (caught, s)
+}
+
+pub fn kernels-called-from-jit-code() {
+    let expected = (800, 2400 + [(k - 1500).abs for k in 1001..2000].sum())
+    for _ in ..5 {
+        assert(direct-calls() == expected)
+    }
+}
+
+pub fn kernels-call-kernels() {
+    assert(norm([3.0, 4.0]) == 5.0)
+    assert(norm([3, 4]) == 5.0)
+    assert(choose(-7) == 7)
+    assert(choose(9) == 9)
+    let b = Blob('xxxx')
+    fill(b, 65)
+    assert(b.str!() == 'AAAA')
+}
+
+pub fn typed-arrays-reject-other-elements() {
+    let r = try { at([1, 2.5], 1) } catch e { str(e) }
+    assert('element 1 has the wrong type' in r)
+    let s = try { at('abc', 0) } catch e { str(e) }
+    assert('argument 1 has the wrong type' in s)
+}
+
+fn kernel-error(source: String) -> String {
+    let result = run(['-e', "import jit (kernel!)\n{source}"])
+    assert(result.status != 0)
+    result.stderr
+}
+
+pub fn kernel-compile-errors() {
+    assert('needs a type' in kernel-error('kernel! fn f(x) -> Int { x }'))
+    assert('conditions must be Bool' in kernel-error('kernel! fn f(x: Int) -> Int { if x { 1 } else { 2 } }'))
+    assert('not a kernel variable' in kernel-error('kernel! fn f(x: Int) -> Int { x + nope }'))
+    assert('use s.byte(i)' in kernel-error('kernel! fn f(s: String) -> Int { s[0] }'))
+    assert('expected Int but found Float' in kernel-error('kernel! fn f(x: Float) -> Int { let n = 0; n = x; n }'))
+}
+
+
+pub fn kernels-match-ty() {
+    let failures = []
+    for args in [(a, b) for a in [-100, -7, -1, 0, 1, 5, 99, 4611686018427387904] for b in [-9, -1, 1, 2, 13]] {
+        compare('arith', k-arith, t-arith, args, failures)
+    }
+    for args in [(a, b) for a in [-9223372036854775807 - 1, -7, 0, 7] for b in [-3, -1, 0, 1, 4]] {
+        compare('divs', k-divs, t-divs, args, failures)
+    }
+    for args in [(x, n) for x in [-3.5, 0.0, 1.25, 1e10] for n in [0, 1, 7, 40]] {
+        compare('floats', k-floats, t-floats, args, failures)
+    }
+    for args in [(x, y) for x in [1.5, -2.0] for y in [0.0, 2.0, -0.5]] {
+        compare('fdiv', k-fdiv, t-fdiv, args, failures)
+    }
+    for args in [(a, b, f) for a in [0, 3, 11] for b in [0, 2, 5] for f in [true, false]] {
+        compare('bools', k-bools, t-bools, args, failures)
+    }
+    for args in [(a,) for a in [0, 1, 5, 60, 100]] {
+        compare('cond', k-cond, t-cond, args, failures)
+    }
+    for args in [(Blob(s),) for s in ['a', 'hello world', 'xyz\x00\xff']] + [(Blob(),)] {
+        compare('blobsum', k-blobsum, t-blobsum, args, failures)
+    }
+    for args in [(Blob('abcdef'), k) for k in [0, 1, 300, 5, 6, -1, -6, -7]] {
+        compare('blobwrite', k-blobwrite, t-blobwrite, args, failures)
+    }
+    for args in [([1, 2, 3, 4], k) for k in [0, 3, -1, -4, 4, -5]] + [([1, 'x'], 0)] {
+        compare('ints', k-ints, t-ints, args, failures)
+    }
+    for args in [([1.0, 2.0, 3.0], [0.5, 0.25, 2.0]), ([1, 2], [3.5, 4]), ([1.0, 2.0], [1.0]), ([], [])] {
+        compare('floatsum', k-floatsum, t-floatsum, args, failures)
+    }
+    for args in [(s,) for s in ['a', 'hello', 'héllo wörld']] {
+        compare('strbytes', k-strbytes, t-strbytes, args, failures)
+    }
+    for args in [(a, b) for a in [-10, 0, 7] for b in [0.25, 2.75, 9.0]] {
+        compare('minmax', k-minmax, t-minmax, args, failures)
+    }
+    for args in [(n,) for n in [0, 1, 10, 50]] {
+        compare('nested', k-nested, t-nested, args, failures)
+    }
+    for args in [(a, b) for a in [-3, 0, 4] for b in [-1, 0, 6]] {
+        compare('incl', k-incl, t-incl, args, failures)
+    }
+    for args in [([1, 2, -1, 4],), ([5],)] {
+        compare('retvoid', k-retvoid, t-retvoid, args, failures)
+    }
+    for args in [(a,) for a in [-5, 0, 5]] {
+        compare('tailif', k-tailif, t-tailif, args, failures)
+    }
+    for failures {
+        print(it)
+    }
+    assert(#failures == 0)
+}

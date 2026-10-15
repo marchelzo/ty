@@ -1,0 +1,1005 @@
+import syn (Node, Tree, Token)
+import syn.lint as lint (Diag, Fix, Edit, Check, Rule, diag)
+
+let IND = '    '
+let LIMIT = 100
+let SOFT = 80
+
+let JUMPS = %['return', 'break', 'continue']
+
+let STATEMENTS = %[
+    'Definition', 'Return', 'Break', 'Continue', 'Throw', 'If', 'While', 'EachLoop', 'For',
+    'MatchStmt', 'Match', 'Block', 'Null', 'Conditional', 'Function', 'Assign', 'WhileMatch'
+]
+
+fn indent-of(n: Node) -> String {
+    let tree = n.tree
+    tree.text(tree.line-start(n.line), n.start).match(/^[ \t]*/) ?? ''
+}
+
+fn one-line?(n: Node) -> Bool { n.line == n.end-line }
+
+fn column(n: Node) -> Int { n.tree.display-col(n.start) - 1 }
+
+fn line-of(n: Node, t: Token) -> Int { n.tree.line-of(t.start) }
+
+fn commented?(n: Node) -> Bool {
+    let toks = n.tokens
+    toks[1;].any?(t -> t.leading.any?(&.comment?))
+ || toks[;-1].any?(t -> t.trailing.any?(&.comment?))
+}
+
+fn statement?(n: Node) -> Bool { n.parent.?kind in ['Block', 'Module'] }
+
+fn spread-statement?(n: Node) -> Bool {
+    let $p = n.parent or return false
+    p.kind == 'Module' || (p.kind == 'Block' && !one-line?(p))
+}
+
+fn starts-with?(n: Node, word: String) -> Bool { n.first-token.?text == word }
+
+fn inline-host(n: Node) -> Node | nil {
+    let p = n.parent
+    while p != nil && p.kind != 'Block' {
+        p = p.parent
+    }
+    let $b = p or return nil
+    (one-line?(b) && b.nodes.all?(one-line?) && !commented?(b)) ? b : nil
+}
+
+fn indent-for(n: Node) -> String {
+    (inline-host(n) == nil) ? indent-of(n) : "{indent-of(n)}{IND}"
+}
+
+fn hosted(n: Node, text: String) -> Fix | nil {
+    if '\n' not in text {
+        return change(n, text)
+    }
+    let $host = inline-host(n) or return fits?(text, column(n)) ? change(n, text) : nil
+    let tree = n.tree
+    let ind = indent-of(host)
+    let stmts = host.nodes.map(s -> (s.start <= n.start && n.end <= s.end)
+        ? "{tree.text(s.start, n.start)}{text}{tree.text(n.end, s.end)}"
+        : s.text
+    )
+    let body = stmts.map(s -> "{ind}{IND}{s}").join('\n')
+    let wanted = "\{\n{body}\n{ind}\}"
+    fits?(wanted, 0) ? change(host, wanted) : nil
+}
+
+fn token(n: Node, text: String) -> Token | nil { n.own.find(\_.text == text) }
+
+fn words(n: Node) -> Array[String] { n.own.map(&.text) }
+
+fn between(tree: Tree, a: Int, b: Int) -> String { tree.text(a, b).strip() }
+
+fn fits?(text: String, col: Int, limit: Int = LIMIT) -> Bool {
+    let lines = text.split('\n')
+    col + lines[0].width() <= limit && lines[1;].all?(\_.width() <= limit)
+}
+
+fn layout(start: Int, end: Int, text: String) -> Fix {
+    Fix([Edit(start, end, text)], layout=true)
+}
+
+fn change(n: Node, text: String) -> Fix { Fix([Edit(n.start, n.end, text)]) }
+
+fn change-range(start: Int, end: Int, text: String) -> Fix { Fix([Edit(start, end, text)]) }
+
+fn after-jump?(n: Node) -> Bool {
+    let $prev = n.tree.tokens.?[n.ftok - 1] or return false
+    prev.text in JUMPS
+}
+
+fn open-ended?(n: Node) -> Bool {
+    let $next = n.tree.tokens.?[n.ltok + 1] or return false
+    next.text.match?(/^(?:[(\[.?:+*\/%<>=&|^-]|and$|or$|in$|not$|is$)/)
+}
+
+fn self-contained?(n: Node) -> Bool { !after-jump?(n) && !open-ended?(n) }
+
+fn simple-body(b: Node) -> Array[String] | nil {
+    if b.kind == 'Null' {
+        return []
+    }
+    if b.kind != 'Block' || commented?(b) || !b.nodes.all?(one-line?) {
+        return nil
+    }
+    b.nodes.map(&.text)
+}
+
+fn braced(stmts: Array[String], ind: String) -> String {
+    let inner = (#stmts == 0) ? [';'] : stmts
+    let lines = inner.map(s -> "{ind}{IND}{s}").join('\n')
+    "\{\n{lines}\n{ind}\}"
+}
+
+fn jump(b: Node) -> String | nil {
+    if b.kind != 'Block' || #b.nodes != 1 {
+        return nil
+    }
+    let s = b.nodes[0]
+    (s.text in JUMPS && #s.nodes == 0) ? s.text : nil
+}
+
+fn plain-if?(n: Node) -> Bool {
+    n.kind == 'If'
+ && starts-with?(n, 'if')
+ && #n.nodes >= 2
+ && n.nodes[0].kind != 'Condition'
+}
+
+fn condition-text(n: Node) -> String {
+    let $kw = n.first-token or return ''
+    between(n.tree, kw.end, n.nodes[1].start)
+}
+
+fn postfix-jump(n: Node) -> Diag | nil {
+    one-line?(n) ? postfix-jump-anywhere(n) : nil
+}
+
+fn postfix-jump-anywhere(n: Node) -> Diag | nil {
+    if !plain-if?(n) || words(n) != ['if'] || !spread-statement?(n) || commented?(n) {
+        return nil
+    }
+    if !if-run(n).all?(k -> jump(k.nodes[1]) != nil) {
+        return nil
+    }
+    let $word = jump(n.nodes[1]) or return nil
+    if !self-contained?(n) {
+        return nil
+    }
+    let cond = n.nodes[0]
+    let text = "{word} if {cond.text}"
+    if !one-line?(cond) || !fits?(text, column(n)) {
+        return nil
+    }
+    diag(n, "use `{word} if …`", change(n, text))
+}
+
+fn expression-branch(b: Node) -> Node | nil {
+    if b.kind != 'Block' || #b.nodes != 1 || commented?(b) {
+        return nil
+    }
+    let e = b.nodes[0]
+    let assigns? = e.own.any?(\_.text.match?(/^(?:=|[-+*\/%&|^]=|<<=|>>=|\?\?=)$/))
+    (e.kind in STATEMENTS || assigns? || !one-line?(e)) ? nil : e
+}
+
+fn operand(n: Node) -> String {
+    (n.kind in ['Conditional', 'Function', 'Assign']) ? "({n.text})" : n.text
+}
+
+fn returned?(n: Node) -> Bool {
+    let $body = n.parent or return false
+    body.kind == 'Block'
+ && body.parent.?kind == 'Function'
+ && one-line?(body)
+ && #body.nodes == 1
+}
+
+fn value-if?(n: Node) -> Bool {
+    n.kind == 'If'
+ && starts-with?(n, 'if')
+ && (!statement?(n) || returned?(n))
+ && n.parent.?kind != 'If'
+ && words(n) == ['if', 'else']
+ && #n.nodes == 3
+ && !commented?(n)
+}
+
+fn if-expression(n: Node) -> Diag | nil {
+    if !value-if?(n) || open-ended?(n) {
+        return nil
+    }
+    if n.nodes[0].kind == 'Condition' || !one-line?(n.nodes[0]) {
+        return nil
+    }
+    let $a = expression-branch(n.nodes[1]) or return nil
+    let $b = expression-branch(n.nodes[2]) or return nil
+    let text = "{operand(n.nodes[0])} ? {operand(a)} : {operand(b)}"
+    if !fits?(text, column(n), SOFT) {
+        return nil
+    }
+    diag(n, 'use `c ? a : b` for a value-producing if/else', change(n, text))
+}
+
+fn if-let-match(n: Node) -> Diag | nil {
+    if !value-if?(n) || open-ended?(n) {
+        return nil
+    }
+    let c = n.nodes[0]
+    if c.kind != 'Condition' || c.form != 'let' || #c.nodes != 2 || !one-line?(c) {
+        return nil
+    }
+    let $a = expression-branch(n.nodes[1]) or return nil
+    let $b = expression-branch(n.nodes[2]) or return nil
+    let pat = c.nodes[0].text
+    let ind = indent-for(n)
+    let arms = [
+        "{ind}{IND}{pat} => {a.text},",
+        "{ind}{IND}{'_'.pad(pat.width())} => {b.text}"
+    ]
+    let text = "match {c.nodes[1].text} \{\n{arms.join('\n')}\n{ind}\}"
+    let $fix = hosted(n, text) or return nil
+    diag(n, 'use `match` instead of a value-producing if-let/else', fix)
+}
+
+fn flat(s: String) -> String { s.replace(/\s*\n\s*/, ' ') }
+
+class Compr {
+    elem: String
+    pat:  Node | nil
+    iter: Node
+    cond: Node | nil
+
+    init(elem: String, pat: Node | nil, iter: Node, cond: Node | nil) {
+        self.elem = elem
+        self.pat = pat
+        self.iter = iter
+        self.cond = cond
+    }
+
+    clauses -> Array[String] {
+        let head = match pat {
+            nil => "for {iter.text}",
+            p   => "for {flat(p.text)} in {iter.text}",
+        }
+        match cond {
+            nil => [head],
+            c   => [head, "if {c.text}"],
+        }
+    }
+}
+
+fn comprehension(n: Node) -> Compr | nil {
+    if n.kind not in ['ArrayCompr', 'DictCompr'] {
+        return nil
+    }
+    let clause = words(n).filter(\_ in ['for', 'in', 'if', 'where', 'while'])
+    let sugared? = clause[;2] != ['for', 'in']
+    let shape = sugared? ? clause[1;] : clause[2;]
+    if shape != [] && shape != ['if'] {
+        return nil
+    }
+    let $kw-for = token(n, 'for') or return nil
+    let rest = n.nodes.filter(k -> k.start > kw-for.start)
+    let want = (sugared? ? 1 : 2) + #shape
+    if #rest != want || (!sugared? && rest[0].kind != 'List') {
+        return nil
+    }
+    let elem = between(n.tree, n.first-token.?end ?? n.start, kw-for.start)
+    let cond = (#shape == 1) ? rest[-1] : nil
+    sugared? ? Compr(elem, nil, rest[0], cond) : Compr(elem, rest[0], rest[1], cond)
+}
+
+fn comprehension-layout(n: Node) -> Diag | nil {
+    if one-line?(n) || commented?(n) {
+        return nil
+    }
+    let $c = comprehension(n) or return nil
+    let lines = [c.elem, *c.clauses]
+    if lines.any?(\_.match?(/\n/)) {
+        return nil
+    }
+    let open = n.first-token.?text ?? '['
+    let close = n.last-token.?text ?? ']'
+    let ind = indent-of(n)
+    let inline = "{open}{lines.join(' ')}{close}"
+    let text = fits?(inline, column(n), SOFT)
+             ? inline
+             : [open, *lines.map(l -> "{ind}{IND}{l}"), "{ind}{close}"].join('\n')
+    if text == n.text {
+        return nil
+    }
+    diag(n, 'lay the comprehension out one clause per line', layout(n.start, n.end, text))
+}
+
+fn kwarg-spacing(n: Node) -> Diag | nil {
+    let $eq = token(n, '=') or return nil
+    let tree = n.tree
+    let prev = tree.tokens[eq.index - 1]
+    let $next = tree.tokens.?[eq.index + 1] or return nil
+    let gap = tree.text(prev.end, next.start)
+    if gap == '=' || gap.match?(/\n|\/\//) {
+        return nil
+    }
+    let col = tree.display-col(eq.start)
+    let peers = (n.parent.?nodes ?? []).filter(k -> k.kind == n.kind && k.line != n.line)
+    let eq-col = (k: Node) -> match token(k, '=') {
+        t: Token => tree.display-col(t.start),
+        _        => -1,
+    }
+    if peers.any?(k -> eq-col(k) == col) {
+        return nil
+    }
+    diag(n, 'no spaces around `=` in a named argument', layout(prev.end, next.start, '='))
+}
+
+fn statement-lines(n: Node) -> Array[Diag] {
+    if n.kind == 'Block' && one-line?(n) {
+        return []
+    }
+    let out: Array[Diag] = []
+    let tree = n.tree
+    for s; i in n.nodes[;-1] {
+        let next = n.nodes[i + 1]
+        let gap = tree.text(s.end, next.start)
+        continue if next.line != s.end-line || !gap.match?(/^[ \t]*;[ \t]*$/)
+        let semi = s.end + (gap.search(';') ?? 0) + 1
+        let fix = layout(semi, next.start, "\n{indent-of(n.nodes[0])}")
+        out.push(diag(next, 'one statement per line in a multi-line block', fix))
+    }
+    out
+}
+
+fn dangling-else(n: Node) -> Diag | nil {
+    if n.kind != 'If' || !starts-with?(n, 'if') || #n.nodes != 3 || commented?(n) {
+        return nil
+    }
+    let then = n.nodes[1]
+    let alt = n.nodes[2]
+    let $els = token(n, 'else') or return nil
+    if then.kind != 'Block' || one-line?(then) {
+        return nil
+    }
+    let dangling? = line-of(n, els) != then.end-line
+    let msg = dangling? ? '`else` belongs right after `}`' : 'expand the `else` of a multi-line `if`'
+    if alt.kind == 'If' && dangling? {
+        return diag(els, msg, layout(then.end, els.start, ' '))
+    }
+    if alt.kind == 'If' {
+        if !one-line?(alt) || commented?(alt) {
+            return nil
+        }
+        let $rest = expanded-if(alt) or return nil
+        let wanted = " else {rest}"
+        return diag(els, 'expand the `else if` of a multi-line `if`', change-range(then.end, alt.end, wanted))
+    }
+    let $stmts = simple-body(alt) or return nil
+    let wanted = " else {braced(stmts, indent-of(n))}"
+    if alt.kind == 'Null' || n.tree.text(then.end, alt.end) == wanted || !fits?(wanted, 0) {
+        return nil
+    }
+    diag(els, msg, layout(then.end, alt.end, wanted))
+}
+
+fn col-after(tree: Tree, t: Token) -> Int { tree.display-col(t.end) - 1 }
+
+fn align-if-else(n: Node) -> Diag | nil {
+    if !plain-if?(n) || #n.nodes != 3 || commented?(n) {
+        return nil
+    }
+    let tree = n.tree
+    let then = n.nodes[1]
+    let alt = n.nodes[2]
+    let $els = token(n, 'else') or return nil
+    if then.kind != 'Block' || alt.kind != 'Block' || !one-line?(then) || !one-line?(alt) {
+        return nil
+    }
+    if line-of(n, els) != then.end-line + 1 || alt.line != line-of(n, els) {
+        return nil
+    }
+    let gap = column(then) - col-after(tree, els)
+    if gap < 1 {
+        return nil
+    }
+    let close-a = tree.tokens[then.ltok]
+    let close-b = tree.tokens[alt.ltok]
+    let inner-a = tree.tokens[then.ltok - 1]
+    let inner-b = tree.tokens[alt.ltok - 1]
+    let end-a = col-after(tree, inner-a)
+    let end-b = col-after(tree, inner-b) + gap - (column(alt) - col-after(tree, els))
+    let target = max(end-a, end-b) + 1
+    let edits = [
+        Edit(els.end, alt.start, ' '.repeat(gap)),
+        Edit(inner-a.end, close-a.start, ' '.repeat(target - end-a)),
+        Edit(inner-b.end, close-b.start, ' '.repeat(target - end-b))
+    ]
+    let changed = edits.filter(e -> tree.text(e.start, e.end) != e.text)
+    if #changed == 0 || target + 1 > LIMIT {
+        return nil
+    }
+    diag(n, 'align the braces of a one-line if/else', Fix(changed, layout=true))
+}
+
+class Arm {
+    first: Token
+    arrow: Token
+    body:  Node
+
+    init(first: Token, arrow: Token, body: Node) {
+        self.first = first
+        self.arrow = arrow
+        self.body = body
+    }
+}
+
+fn arms(n: Node) -> Array[Arm] {
+    let tree = n.tree
+    let out: Array[Arm] = []
+    let $open = token(n, '{') or return out
+    let start = tree.tokens[open.index + 1]
+    for arrow in n.own.filter(\_.text == '=>') {
+        let $body = n.nodes.find(k -> k.start >= arrow.end) or break
+        out.push(Arm(start, arrow, body))
+        let $after = tree.tokens.?[body.ltok + 1] or break
+        start = (after.text == ',') ? (tree.tokens.?[after.index + 1] ?? after) : after
+    }
+    out
+}
+
+fn inline-arm?(tree: Tree, a: Arm) -> Bool {
+    let line = tree.line-of(a.first.start)
+    line == a.body.end-line && tree.text(tree.line-start(line), a.first.start).match?(/^\s*$/)
+}
+
+fn arm-groups(tree: Tree, rows: Array[Arm]) -> Array[Array[Arm]] {
+    let groups: Array[Array[Arm]] = []
+    for row in rows {
+        let joins? = match groups.?[-1].?[-1] {
+            nil  => false,
+            last => tree.text(last.body.end, row.first.start).match?(/^[ \t]*,?[ \t]*\n[ \t\n]*$/)
+                 && tree.display-col(row.first.start) == tree.display-col(last.first.start),
+        }
+        if joins? {
+            groups[-1].push(row)
+        } else {
+            groups.push([row])
+        }
+    }
+    groups.filter(\#_ >= 2)
+}
+
+fn pattern-end(tree: Tree, a: Arm) -> Int { col-after(tree, tree.tokens[a.arrow.index - 1]) }
+
+fn align-group(tree: Tree, g: Array[Arm]) -> Array[Edit] {
+    let ends = g.map(pattern-end@(tree, _))
+    let target = ends.max() ?? 0
+    if target - (ends.min() ?? 0) > 24 {
+        return []
+    }
+    let shift = (a: Arm) -> target - pattern-end(tree, a)
+    if g.any?(a -> tree.display-col(tree.tokens[a.body.ltok].end) + shift(a) > LIMIT) {
+        return []
+    }
+    let edits: Array[Edit] = []
+    for g {
+        let prev = tree.tokens[it.arrow.index - 1]
+        edits.push(Edit(prev.end, it.arrow.start, ' '.repeat(1 + target - pattern-end(tree, it))))
+    }
+    let blocks = g.filter(a -> a.body.kind == 'Block')
+    if #blocks < 2 || !g.all?(a -> a.body.kind in ['Block', 'Null']) {
+        return edits
+    }
+    let shift = (a: Arm) -> target + 1 - (tree.display-col(a.arrow.start) - 1)
+    let close = (a: Arm) -> col-after(tree, tree.tokens[a.body.ltok - 1]) + shift(a)
+    let widest = blocks.map(close).max() ?? 0
+    if widest + 3 > LIMIT {
+        return edits
+    }
+    for blocks {
+        let inner = tree.tokens[it.body.ltok - 1]
+        let closing = tree.tokens[it.body.ltok]
+        edits.push(Edit(inner.end, closing.start, ' '.repeat(1 + widest - close(it))))
+    }
+    edits
+}
+
+fn align-match-arms(n: Node) -> Diag | nil {
+    if commented?(n) {
+        return nil
+    }
+    let tree = n.tree
+    let rows = arms(n).filter(inline-arm?@(tree, _))
+    let edits = arm-groups(tree, rows).map(align-group@(tree, _)).flat()
+    let changed = edits.filter(e -> tree.text(e.start, e.end) != e.text)
+    if #changed == 0 {
+        return nil
+    }
+    diag(n, 'align the arms of the match', Fix(changed, layout=true))
+}
+
+fn expanded-if(n: Node) -> String | nil {
+    let ind = indent-of(n)
+    let $then = simple-body(n.nodes[1]) or return nil
+    let head = "if {condition-text(n)} {braced(then, ind)}"
+    if #n.nodes == 2 {
+        return head
+    }
+    let alt = n.nodes[2]
+    if alt.kind == 'If' && starts-with?(alt, 'if') {
+        let $rest = expanded-if(alt) or return nil
+        return "{head} else {rest}"
+    }
+    let $stmts = simple-body(alt) or return nil
+    "{head} else {braced(stmts, ind)}"
+}
+
+fn short-if?(n: Node) -> Bool {
+    plain-if?(n)
+ && words(n) == ['if']
+ && #n.nodes == 2
+ && n.nodes[1].kind == 'Block'
+ && one-line?(n)
+ && !commented?(n)
+}
+
+fn if-run(n: Node) -> Array[Node] {
+    let $p = n.parent or return [n]
+    if !short-if?(n) || !spread-statement?(n) {
+        return [n]
+    }
+    let sibs = p.nodes
+    let $i = sibs.search-by(k -> k.start == n.start && k.end == n.end) or return [n]
+    let near? = (a: Node, b: Node) -> short-if?(a)
+                                   && short-if?(b)
+                                   && b.line == a.line + 1
+                                   && column(a) == column(b)
+    let lo = i
+    while lo > 0 && near?(sibs[lo - 1], sibs[lo]) {
+        lo -= 1
+    }
+    let hi = i
+    while hi + 1 < #sibs && near?(sibs[hi], sibs[hi + 1]) {
+        hi += 1
+    }
+    sibs[lo;hi + 1]
+}
+
+fn run-head?(n: Node) -> Bool {
+    let run = if-run(n)
+    #run >= 2 && run[0] == n && !run.all?(k -> jump(k.nodes[1]) != nil)
+}
+
+fn align-inline-ifs(n: Node) -> Diag | nil {
+    if !run-head?(n) {
+        return nil
+    }
+    let tree = n.tree
+    let run = if-run(n)
+    let opens = run.map(k -> tree.tokens[k.nodes[1].ftok])
+    let heads = opens.map(o -> tree.tokens[o.index - 1])
+    let ends = heads.map(col-after@(tree, _))
+    let target = ends.max() ?? 0
+    if target - (ends.min() ?? 0) > 24 {
+        return nil
+    }
+    let edits: Array[Edit] = []
+    let closes: Array[Int] = []
+    for k; i in run {
+        let pad = 1 + target - ends[i]
+        let shift = pad - (opens[i].start - heads[i].end)
+        edits.push(Edit(heads[i].end, opens[i].start, ' '.repeat(pad)))
+        closes.push(col-after(tree, tree.tokens[k.nodes[1].ltok - 1]) + shift)
+    }
+    let widest = closes.max() ?? 0
+    if widest + 2 > LIMIT {
+        return nil
+    }
+    if widest - (closes.min() ?? 0) <= 24 {
+        for k; i in run {
+            let inner = tree.tokens[k.nodes[1].ltok - 1]
+            let closing = tree.tokens[k.nodes[1].ltok]
+            edits.push(Edit(inner.end, closing.start, ' '.repeat(1 + widest - closes[i])))
+        }
+    }
+    let changed = edits.filter(e -> tree.text(e.start, e.end) != e.text)
+    if #changed == 0 {
+        return nil
+    }
+    diag(n, 'align the braces of a run of one-line ifs', Fix(changed, layout=true))
+}
+
+fn inline-if(n: Node) -> Diag | nil {
+    if n.kind != 'If' || !starts-with?(n, 'if') || !spread-statement?(n) || !one-line?(n) {
+        return nil
+    }
+    if #if-run(n) >= 2 && !if-run(n).all?(k -> jump(k.nodes[1]) != nil) {
+        return nil
+    }
+    if commented?(n) {
+        return nil
+    }
+    if #n.nodes == 2 && n.nodes[0].kind != 'Condition' && jump(n.nodes[1]) != nil {
+        return nil
+    }
+    if if-expression(n) != nil || if-let-match(n) != nil {
+        return nil
+    }
+    let $text = expanded-if(n) or return nil
+    diag(n, 'put the body of the `if` on its own lines', change(n, text))
+}
+
+fn inline-loop(n: Node) -> Diag | nil {
+    if !spread-statement?(n) || !one-line?(n) || commented?(n) {
+        return nil
+    }
+    let body = n.nodes[-1]
+    let $stmts = simple-body(body) or return nil
+    let head = between(n.tree, n.start, body.start)
+    let word = n.first-token.?text ?? 'loop'
+    let text = "{head} {braced(stmts, indent-of(n))}"
+    diag(n, "put the body of the `{word}` on its own lines", change(n, text))
+}
+
+let IT_BINDERS = %['Function', 'Sugar', 'ArrayCompr', 'DictCompr', 'EachLoop', 'MatchStmt', 'Match']
+
+let LONG_LOOP = 12
+
+fn sugar-edits(n: Node) -> Array[Edit] | nil {
+    if n.kind != 'EachLoop' || #n.nodes != 3 {
+        return nil
+    }
+    let pat = n.nodes[0]
+    let body = n.nodes[2]
+    if pat.kind != 'List' || #pat.nodes != 1 || pat.nodes[0].kind != 'Identifier' {
+        return nil
+    }
+    let var = pat.nodes[0]
+    if var.text in ['it', '_'] || !var.def? || n.tokens.any?(\_.text == 'it') {
+        return nil
+    }
+    if body.end-line - body.line > LONG_LOOP {
+        return nil
+    }
+    let $kw-in = token(n, 'in') or return nil
+    if n.tree.text(kw-in.end, kw-in.end + 1) != ' ' {
+        return nil
+    }
+    let refs = n.tree.refs(var).filter(r -> r != var)
+    if refs.any?(r -> r.start < body.start || r.end > body.end || r.text != var.text) {
+        return nil
+    }
+    let binds? = (k: Node) -> k != n && k.kind in IT_BINDERS
+    if refs.any?(r -> r.inside?(binds?, stop=(k: Node) -> k == n)) {
+        return nil
+    }
+    [Edit(pat.start, kw-in.end + 1, ''), *refs.map(r -> Edit(r.start, r.end, 'it'))]
+}
+
+fn sugared-for(n: Node) -> Diag | nil {
+    let $edits = sugar-edits(n) or return nil
+    let outer? = (k: Node) -> k != n
+                           && k.kind == 'EachLoop'
+                           && (#k.nodes == 2 || sugar-edits(k) != nil)
+    if n.inside?(outer?) {
+        return nil
+    }
+    let var = n.nodes[0].nodes[0].text
+    diag(n, "iterate with the implicit `it` instead of `{var}`", Fix(edits))
+}
+
+let COMB = [
+    syn$$[ $$(s :? String).sub($$re, '') $$],
+    syn$$[ $$(s :? String).sub($$re, "") $$],
+    syn$$[ $$(s :? String).replace($$re, '') $$],
+    syn$$[ $$(s :? String).replace($$re, "") $$]
+]
+
+let COMBED = syn$$[ $$s.comb($$re) $$]
+
+fn use-comb(n: Node) -> Diag | nil {
+    for COMB {
+        if let $m = it.matches(n) {
+            return diag(n, 'use `.comb(…)` to delete matches', lint.rewrite(n, COMBED, m))
+        }
+    }
+    nil
+}
+
+fn it-members(n: Node) -> Array[Node] {
+    [m for m in [n, *n.descendants()] if m.kind == 'MemberAccess' && m.nodes.?[0].?text == 'it']
+}
+
+fn use-where(n: Node) -> Diag | nil {
+    if n.kind != 'ArrayCompr' || commented?(n) {
+        return nil
+    }
+    let $c = comprehension(n) or return nil
+    let $cond = c.cond or return nil
+    let $kw-for = token(n, 'for') or return nil
+    if c.pat != nil {
+        return nil
+    }
+    let elem = n.nodes.filter(k -> k.end <= kw-for.start)
+    let uses = [*elem.map(it-members).flat(), *it-members(cond)].filter(one-line?)
+    let repeated = uses.group-by(&.text).filter(\#_ >= 2)
+    if #repeated != 1 {
+        return nil
+    }
+    let same = repeated[0]
+    let name = same[0].text.comb(/^it\./)
+    let taken? = [n, *n.descendants()].any?(k -> k.kind == 'Identifier' && k.text == name)
+    if !name.match?(/^[a-z][\w-]*$/) || taken? {
+        return nil
+    }
+    let clause = " where {name} = {same[0].text}"
+    let line = n.tree.text(n.tree.line-start(cond.end-line), n.end).split('\n')[0]
+    if !fits?("{line}{clause}", 0) {
+        return nil
+    }
+    let edits = [*same.map(u -> Edit(u.start, u.end, name)), Edit(cond.end, cond.end, clause)]
+    diag(n, "bind `{same[0].text}` once with `where`", Fix(edits))
+}
+
+fn bare-if-argument(n: Node) -> Diag | nil {
+    if !value-if?(n) {
+        return nil
+    }
+    let $p = n.parent or return nil
+    if p.kind not in ['FunctionCall', 'MethodCall'] || p.nodes[0] == n {
+        return nil
+    }
+    diag(n, 'bind the if/else to a name instead of passing it as an argument')
+}
+
+fn conditional-test(n: Node) -> String | nil {
+    if n.kind != 'Definition' || #n.nodes != 2 || n.nodes[1].kind != 'Conditional' {
+        return nil
+    }
+    n.nodes[1].nodes[0].text
+}
+
+fn repeated-condition(n: Node) -> Array[Diag] {
+    let out: Array[Diag] = []
+    let run: Array[Node] = []
+    for [*n.nodes, n] {
+        let t = (it == n) ? nil : conditional-test(it)
+        if t != nil && #run > 0 && conditional-test(run[0]) == t {
+            run.push(it)
+            continue
+        }
+        if #run >= 3 {
+            let msg = "{#run} definitions test `{conditional-test(run[0])}`; branch once"
+            out.push(diag(run[0], msg))
+        }
+        run = (t == nil) ? [] : [it]
+    }
+    out
+}
+
+fn tagged?(n: Node) -> Bool {
+    let $p = n.parent or return !n.text.match?(/^["']/)
+    let concat? = p.kind == 'Sugar' && p.form == 'string-concat'
+    let markup? = p.kind == 'FunctionCall' && p.first-token.?text == '<'
+    !n.text.match?(/^["']/) || concat? || markup?
+}
+
+fn interpolated?(n: Node) -> Bool { n.own.any?(\_.text == '{') }
+
+fn single-body(body: String) -> String | nil {
+    let out: Array[String] = []
+    let cs = body.chars()
+    let i = 0
+    while i < #cs {
+        let c = cs[i]
+        if c == "'" {
+            return nil
+        }
+        if c != '\\' || i + 1 >= #cs {
+            out.push(c)
+            i += 1
+            continue
+        }
+        let next = cs[i + 1]
+        out.push((next in ['{', '}', '"']) ? next : "\\{next}")
+        i += 2
+    }
+    out.join('')
+}
+
+fn double-body(body: String) -> String {
+    let out: Array[String] = []
+    let cs = body.chars()
+    let i = 0
+    while i < #cs {
+        let c = cs[i]
+        if c == '\\' && i + 1 < #cs {
+            let next = cs[i + 1]
+            out.push((next == "'") ? "'" : "\\{next}")
+            i += 2
+            continue
+        }
+        out.push((c in ['{', '}', '"']) ? "\\{c}" : c)
+        i += 1
+    }
+    out.join('')
+}
+
+fn one-line-holes?(n: Node) -> Bool {
+    let tree = n.tree
+    let opens = n.own.filter(\_.text == '{')
+    let closes = n.own.filter(\_.text == '}')
+    #opens == #closes
+ && opens.zip(closes).all?(|(a, b)| -> tree.line-of(a.start) == tree.line-of(b.start))
+}
+
+fn leading-newline-slice(n: Node) -> Node | nil {
+    let $p = n.parent or return nil
+    let slice? = p.kind == 'Slice'
+              && p.nodes[0] == n
+              && #p.nodes == 2
+              && p.nodes[1].text == '1'
+              && words(p) == ['[', ';', ']']
+    slice? ? p : nil
+}
+
+fn triple-quoted(n: Node) -> Diag | nil {
+    let text = n.text
+    let double? = n.kind == 'SpecialString'
+    let delim = double? ? '"""' : "'''"
+    let body = text[1;-1]
+    if double? && (!one-line-holes?(n) || '"""' in body) {
+        return nil
+    }
+    if !double? && ('\\' in body || "'''" in body) {
+        return nil
+    }
+    let ind = indent-of(n)
+    let lines = body.split('\n')
+    let host = n
+    if let $slice = leading-newline-slice(n) and lines[0] == '' {
+        lines = lines[1;]
+        host = slice
+    }
+    let shifted = lines.map(l -> (l == '') ? '' : "{ind}{l}")
+    if shifted.zip(lines).any?(|(a, b)| -> a.width() > LIMIT && b.width() <= LIMIT) {
+        return nil
+    }
+    let wanted = "{delim}\n{shifted.join('\n')}\n{ind}{delim}"
+    diag(n, 'use a triple-quoted string for multi-line text', change(host, wanted))
+}
+
+fn wrong-string(n: Node) -> Diag | nil {
+    if tagged?(n) || n.text.match?(/^('''|""")/) {
+        return nil
+    }
+    if !one-line?(n) {
+        return triple-quoted(n)
+    }
+    let body = n.text[1;-1]
+    if n.kind == 'SpecialString' && !interpolated?(n) {
+        let $single = single-body(body) or return nil
+        let msg = 'use single quotes for a string without interpolation'
+        return diag(n, msg, change(n, "'{single}'"))
+    }
+    if n.kind == 'String' && "\\'" in body && !body.match?(/["{}]/) {
+        let msg = 'use double quotes instead of escaping single quotes'
+        return diag(n, msg, change(n, "\"{double-body(body)}\""))
+    }
+    nil
+}
+
+fn plus-operands(n: Node) -> Array[Node] {
+    if n.kind != 'Plus' || #n.nodes != 2 {
+        return [n]
+    }
+    [*plus-operands(n.nodes[0]), n.nodes[1]]
+}
+
+fn str-argument(n: Node) -> Node | nil {
+    if n.kind != 'FunctionCall' || #n.nodes != 2 || n.nodes[0].text != 'str' {
+        return nil
+    }
+    let arg = n.nodes[1]
+    (arg.kind in ['Kwarg', 'Spread', 'SplatArg']) ? nil : arg
+}
+
+fn interpolation-piece(n: Node) -> String | nil {
+    if !one-line?(n) {
+        return nil
+    }
+    if n.kind == 'String' && !tagged?(n) {
+        return double-body(n.text[1;-1])
+    }
+    if n.kind == 'SpecialString' && !tagged?(n) {
+        return n.text.match?(/^"""/) ? nil : n.text[1;-1]
+    }
+    let e = str-argument(n) ?? n
+    while e.kind == 'Paren' && #e.nodes == 1 {
+        e = e.nodes[0]
+    }
+    let t = e.text
+    if t.match?(/[{}]/) {
+        return nil
+    }
+    "\{{t}\}"
+}
+
+fn use-interpolation(n: Node) -> Diag | nil {
+    if n.kind != 'Plus' || n.parent.?kind == 'Plus' || !one-line?(n) || commented?(n) {
+        return nil
+    }
+    let ops = plus-operands(n)
+    if !ops.all?(o -> o.of-type?('String') == true) {
+        return nil
+    }
+    let pieces: Array[String] = []
+    for ops {
+        let $piece = interpolation-piece(it) or return nil
+        pieces.push(piece)
+    }
+    let text = "\"{pieces.join('')}\""
+    if !fits?(text, column(n)) {
+        return nil
+    }
+    diag(n, 'use interpolation instead of concatenating strings', change(n, text))
+}
+
+fn rule(
+    name: String,
+    check: Check,
+    severity: String = 'warning',
+    kinds: Array[String] | nil = nil,
+    doc: String = '',
+    semantic: Bool = false,
+    typed: Bool = false
+) -> Rule {
+    let guarded = (n: Node) -> n.inside?('Template') ? nil : check(n)
+    lint.rule(name, guarded, severity, kinds, doc, semantic, typed)
+}
+
+pub FIRST_PASS_RULES = [
+    rule(
+        'postfix-jump-multiline',
+        postfix-jump-anywhere,
+        kinds=['If'],
+        doc='`return if c` for a bare jump, even from a multi-line if'
+    ),
+]
+
+pub RULES = [
+    rule('postfix-jump', postfix-jump, kinds=['If'], doc='`return if c` for a bare jump'),
+    rule('if-expression', if-expression, kinds=['If'], doc='`c ? a : b` for a value if/else'),
+    rule('if-let-match', if-let-match, kinds=['If'], doc='`match` for a value if-let/else'),
+    rule(
+        'comprehension-layout',
+        comprehension-layout,
+        kinds=['ArrayCompr', 'DictCompr'],
+        doc='one clause per line'
+    ),
+    rule('kwarg-spacing', kwarg-spacing, kinds=['Kwarg'], doc='`name=value` in calls'),
+    rule(
+        'statement-lines',
+        statement-lines,
+        kinds=['Block', 'Module'],
+        doc='one statement per line'
+    ),
+    rule('dangling-else', dangling-else, kinds=['If'], doc='`} else {` after a multi-line if'),
+    rule('align-if-else', align-if-else, kinds=['If'], doc='aligned one-line if/else'),
+    rule('align-match-arms', align-match-arms, kinds=['MatchStmt', 'Match'], doc='aligned arms'),
+    rule('inline-if', inline-if, kinds=['If'], doc='no one-line if statements'),
+    rule('align-inline-ifs', align-inline-ifs, kinds=['If'], doc='aligned runs of one-line ifs'),
+    rule('inline-loop', inline-loop, kinds=['While', 'EachLoop'], doc='no one-line loops'),
+    rule('sugared-for', sugared-for, kinds=['EachLoop'], semantic=true, doc='`for xs { it }`'),
+    rule('use-comb', use-comb, kinds=['MethodCall'], doc='`.comb(re)` to delete matches', typed=true),
+    rule('use-where', use-where, kinds=['ArrayCompr'], doc='bind a repeated `it.f` with `where`'),
+    rule(
+        'wrong-string',
+        wrong-string,
+        kinds=['String', 'SpecialString'],
+        doc="'…' without interpolation, triple quotes for multi-line text"
+    ),
+    rule(
+        'use-interpolation',
+        use-interpolation,
+        kinds=['Plus'],
+        doc='"{a}{b}" instead of a + b on strings',
+        typed=true
+    ),
+    rule(
+        'bare-if-argument',
+        bare-if-argument,
+        severity='info',
+        kinds=['If'],
+        doc='if/else passed as an argument'
+    ),
+    rule(
+        'repeated-condition',
+        repeated-condition,
+        severity='info',
+        kinds=['Block', 'Module'],
+        doc='one test repeated across definitions'
+    ),
+]

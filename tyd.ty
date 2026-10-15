@@ -7,6 +7,9 @@ import sh (sh)
 import os (..)
 import log (..)
 import path (Path)
+import syn
+import syn.fmt as sf
+import syn.refactor as rf
 
 const TYD_LOGS_DIR     = Path(getenv('TYD_STATE_DIR') ?? "{Path.home()}/.local/state/tyd")
 const TYD_LOG_PATH     = TYD_LOGS_DIR / 'tyd.log'
@@ -29,6 +32,9 @@ let init = {
         definitionProvider: true,
         declarationProvider: true,
         hoverProvider: true,
+        documentFormattingProvider: true,
+        referencesProvider: true,
+        renameProvider: true,
         completionProvider: {
             triggerCharacters: ['.']
         },
@@ -235,6 +241,50 @@ fn hover-text(info: _) -> String {
     parts.join('\n\n')
 }
 
+fn byte-at(tree: syn.Tree, line: Int, col: Int) -> Int {
+    let last = tree.line-of(tree.source.size())
+    (line + 1 > last) ? tree.source.size() : tree.line-start(line + 1) + col
+}
+
+fn lsp-position(tree: syn.Tree, byte: Int) -> _ {
+    { line: tree.line-of(byte) - 1, character: tree.col-of(byte) - 1 }
+}
+
+fn name-range(tree: syn.Tree, n: syn.Node) -> _ {
+    let tok = (n.kind == 'Identifier') ? n.first-token : n.name-token
+    let start = tok.?start ?? n.start
+    let end = tok.?end ?? n.end
+    { start: lsp-position(tree, start), end: lsp-position(tree, end) }
+}
+
+fn whole-document(text: String) -> _ {
+    {
+        start: { line: 0, character: 0 },
+        end:   { line: #text.split('\n'), character: 0 }
+    }
+}
+
+fn references-at(path: String, line: Int, col: Int) -> Array[_] {
+    let text = store[path] ?? slurp(path) ?? ''
+    let tree = syn.parse(text, path=path, semantic=true)
+    let $target = rf.binding-at(tree, byte-at(tree, line, col)) or return []
+    rf.references(tree, target).map(n -> ({ uri: "file://{path}", range: name-range(tree, n) }))
+}
+
+fn rename-at(path: String, line: Int, col: Int, name: String) -> _ {
+    let text = store[path] ?? slurp(path) ?? ''
+    let tree = syn.parse(text, path=path, semantic=true)
+    let byte = byte-at(tree, line, col)
+    let renamed = try {
+        let $target = rf.binding-at(tree, byte) or throw rf.RefactorError('nothing to rename here')
+        rf.rename(tree, target, name)
+    } catch e: rf.RefactorError {
+        return { error: { code: -32803, message: e.what } }
+    }
+    let edit = { range: whole-document(text), newText: renamed }
+    { result: { changes: %{ "file://{path}": [edit] } } }
+}
+
 fn check[T](msg: T, file: String) -> T {
     fn send-dx(diagnostics) {
         send({
@@ -438,6 +488,62 @@ fn go() {
         },
 
         'textDocument/signatureHelp' as method => {
+        },
+
+        'textDocument/references' => {
+            if not let %{
+                'textDocument': %{
+                    'uri': &[7;] ~> $path,
+                },
+                'position': %{
+                    'line': int ~> line,
+                    'character': int ~> col
+                }
+            } = msg['params'] {
+                return
+            }
+
+            send({id, result: references-at(path, line, col)})
+        },
+
+        'textDocument/rename' => {
+            if not let %{
+                'textDocument': %{
+                    'uri': &[7;] ~> $path,
+                },
+                'position': %{
+                    'line': int ~> line,
+                    'character': int ~> col
+                },
+                'newName': $name
+            } = msg['params'] {
+                return
+            }
+
+            send({id, *rename-at(path, line, col, name)})
+        },
+
+        'textDocument/formatting' => {
+            if not let %{
+                'textDocument': %{
+                    'uri': &[7;] ~> $path,
+                }
+            } = msg['params'] {
+                return
+            }
+
+            let text = store[path] ?? slurp(path) ?? ''
+            let formatted = sf.canonical(text, path=path, deep=true)
+
+            let result = (formatted == text) ? [] : [{
+                range: {
+                    start: { line: 0, character: 0 },
+                    end:   { line: #text.split('\n'), character: 0 }
+                },
+                newText: formatted
+            }]
+
+            send({id, result})
         },
 
         'textDocument/semanticTokens/full' => {

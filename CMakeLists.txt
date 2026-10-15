@@ -240,6 +240,7 @@ set(_gen_builtins_sources
   src/sqlite.c
   src/screen.c
   src/jitmod.c
+  src/syntax.c
 )
 set(_gen_builtins_methods
   src/str.c
@@ -383,6 +384,7 @@ set(_src_files
   src/spawn.c
   src/sqlite.c
   src/str.c
+  src/syntax.c
   src/table.c
   src/tags.c
   src/title.c

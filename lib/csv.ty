@@ -186,8 +186,8 @@ pub fn parse(data: String | Blob, %opts) -> Array {
 pub fn str(rows: Iterable, %opts) -> String {
     let out = Blob()
 
-    for line in lines(rows, **opts) {
-        out.push(line)
+    for lines(rows, **opts) {
+        out.push(it)
     }
 
     out.str!()
@@ -196,8 +196,8 @@ pub fn str(rows: Iterable, %opts) -> String {
 pub fn write(rows: Iterable, dst: Source, %opts) {
     let (stream, own?) = attach(dst, 'w')
 
-    for line in lines(rows, **opts) {
-        stream.write(line)
+    for lines(rows, **opts) {
+        stream.write(it)
     }
 
     own? ? stream.close() : stream.flush()

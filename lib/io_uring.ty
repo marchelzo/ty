@@ -260,7 +260,7 @@ pub class IoUring {
         let head = read-u32(sq-ring, sq-head-off)
 
         if tail - head >= sq-entries {
-            throw "SQ ring full"
+            throw 'SQ ring full'
         }
 
         let idx = tail & sq-mask
@@ -283,7 +283,9 @@ pub class IoUring {
         let tail = read-u32(sq-ring, sq-tail-off)
         let head = read-u32(sq-ring, sq-head-off)
         let n = tail - head
-        if n == 0 { return 0 }
+        if n == 0 {
+            return 0
+        }
 
         let ret = sys_io_uring_enter(fd, n, 0, 0)
         if ret < 0 {
@@ -389,8 +391,8 @@ pub class IoUring {
         submit-and-wait(n)
         let completed = peek-cqes()
         advance-cq(#completed)
-        for cqe in completed {
-            yield cqe
+        for completed {
+            yield it
         }
     }
 
@@ -438,7 +440,7 @@ pub class IoUring {
         let sqe = __fresh-sqe()
         sqe.opcode = IORING_OP_ACCEPT
         sqe.fd = fd
-        if addr    { sqe.addr = int(addr) }
+        if addr    { sqe.addr = int(addr)    }
         if addrlen { sqe.off  = int(addrlen) }
         sqe.rw_flags = flags
         sqe.user_data = user

@@ -78,10 +78,10 @@ pub class Suggestion {
 
     static of(x: _) -> Suggestion {
         match x {
-            s: Suggestion       => s,
-            s: String           => Suggestion(s),
-            (label, s: String)  => Suggestion(s, label=label),
-            _                   => throw ValueError("not a suggestion: {x}")
+            s: Suggestion      => s,
+            s: String          => Suggestion(s),
+            (label, s: String) => Suggestion(s, label=label),
+            _                  => throw ValueError("not a suggestion: {x}")
         }
     }
 
@@ -195,17 +195,15 @@ pub class History {
 
     static of(x: _) -> History | nil {
         match x {
-            h: History       => h,
-            xs: Array        => History(xs),
-            f: String        => History(file=f),
-            _                => nil
+            h: History => h,
+            xs: Array  => History(xs),
+            f: String  => History(file=f),
+            _          => nil
         }
     }
 
     __load() {
-        if __loaded? {
-            return
-        }
+        return if __loaded?
         __loaded? = true
         if let $f = file and let p = Path(f) and p.file? {
             __disk = p.read-text().lines().filter(\#_ > 0)
@@ -229,9 +227,7 @@ pub class History {
 
     push(entry: String) {
         reset()
-        if #entry == 0 || all.?[-1] == entry {
-            return
-        }
+        return if #entry == 0 || all.?[-1] == entry
         entries.push(entry)
         if let Path $~> p = file {
             p.parent.mkdir(parents=true, exist-ok=true)
@@ -330,10 +326,10 @@ pub class Trigger {
                 (to - #w.chars(), gs.?[0] ?? w, gs)
             },
             f => match f(ed) {
-                nil or false => return nil,
-                true         => (at, '', []),
-                i: Int       => (i, ed.chars[i;at].join(), []),
-                q: String    => (at - #q.chars(), q, []),
+                nil or false        => return nil,
+                true                => (at, '', []),
+                i: Int              => (i, ed.chars[i;at].join(), []),
+                q: String           => (at - #q.chars(), q, []),
                 (i: Int, q: String) => (i, q, [])
             }
         }
@@ -738,9 +734,7 @@ pub class Editor {
     }
 
     refresh() {
-        if __busy? {
-            return
-        }
+        return if __busy?
         __busy? = true
         try {
             __refresh()
@@ -808,9 +802,7 @@ pub class Editor {
         let c = Completion(self, slot, from, to, query, groups)
         completion = c
         c.fetch()
-        if completion != c {
-            return
-        }
+        return if completion != c
         c.version = __version
         if c.cycle? && #c.items > 0 {
             c.move(1)
@@ -948,18 +940,14 @@ pub class Editor {
     }
 
     up() -> _ {
-        if multiline? && __vertical(-1) {
-            return
-        }
+        return if multiline? && __vertical(-1)
         let $h = history or return Ignored
         let $s = h.prev(text) or return
         quietly(-> set-text(s))
     }
 
     down() -> _ {
-        if multiline? && __vertical(1) {
-            return
-        }
+        return if multiline? && __vertical(1)
         let $h = history or return Ignored
         if !h.browsing? {
             return Ignored
@@ -969,9 +957,7 @@ pub class Editor {
     }
 
     delete-backward() -> _ {
-        if __cursor == 0 {
-            return
-        }
+        return if __cursor == 0
         replace(__cursor - 1, __cursor, '', 'delete')
     }
 
@@ -983,9 +969,7 @@ pub class Editor {
     }
 
     __kill(from: Int, to: Int, backward?: Bool = false) {
-        if from >= to {
-            return
-        }
+        return if from >= to
         let piece = __chars[from;to].join()
         match (__last, __kills) {
             ('kill', [*_, top]) => {
@@ -1044,9 +1028,7 @@ pub class Editor {
     }
 
     yank-pop() {
-        if __last != 'yank' || #__kills < 2 {
-            return
-        }
+        return if __last != 'yank' || #__kills < 2
         let (from, to) = __yank ?? return
         __kills.insert(0, __kills.pop())
         replace(from, to, __kills[-1], 'yank')
@@ -1054,9 +1036,7 @@ pub class Editor {
     }
 
     transpose-chars() {
-        if #__chars < 2 || __cursor == 0 {
-            return
-        }
+        return if #__chars < 2 || __cursor == 0
         let i = (__cursor >= #__chars) ? __cursor - 1 : __cursor
         let swapped = "{__chars[i]}{__chars[i - 1]}"
         replace(i - 1, i + 1, swapped, 'transpose')

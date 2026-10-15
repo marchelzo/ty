@@ -14,7 +14,9 @@ pub class Recorder {
         __temporary = __output.parent / ".{__output.name}.termrec-{os.getpid()}.mp4"
         __stopped = false
 
-        if __temporary.exists? { __temporary.unlink() }
+        if __temporary.exists? {
+            __temporary.unlink()
+        }
 
         let helper = cached-helper(source)
         let shell-pid = os.getppid()
@@ -33,12 +35,12 @@ pub class Recorder {
                 throw RuntimeError('termrec: interrupted while starting capture')
             }
             let events: [(Int, Int, Bool)] = []
-            if os.poll([(__process.stdout, os.POLLIN, true)], events, 0.25) > 0 { break }
+            break if os.poll([(__process.stdout, os.POLLIN, true)], events, 0.25) > 0
         }
 
         let response = os.read(__process.stdout, 6, all=true)
         os.close(__process.stdout)
-        if response.str() != "READY\n" {
+        if response.str() != 'READY\n' {
             let status = wait-for(__process.pid)
             cleanup()
             throw RuntimeError("termrec: capture failed to start (status {exit-code(status)})")
@@ -46,7 +48,9 @@ pub class Recorder {
     }
 
     stop!() -> Int {
-        if __stopped { return 0 }
+        if __stopped {
+            return 0
+        }
         __stopped = true
 
         os.kill(__process.pid, os.SIGINT)
@@ -64,7 +68,9 @@ pub class Recorder {
     }
 
     cleanup() {
-        if __temporary.exists? { __temporary.unlink() }
+        if __temporary.exists? {
+            __temporary.unlink()
+        }
     }
 }
 
@@ -72,12 +78,16 @@ fn cached-helper(source: Path) -> Path {
     let cache  = dirs.CACHE / 'ty'
     let helper = cache / 'termrec-helper'
     let fresh = helper.exists? && helper.stat.mtime >= source.stat.mtime
-    if fresh { return helper }
+    if fresh {
+        return helper
+    }
 
     cache.mkdir(parents: true, exist-ok: true)
 
     let candidate = Path("{helper}.{os.getpid()}")
-    if candidate.exists? { candidate.unlink() }
+    if candidate.exists? {
+        candidate.unlink()
+    }
 
     let compiler = os.spawn([
         '/usr/bin/xcrun', 'swiftc', '-parse-as-library', '-O',
@@ -90,12 +100,16 @@ fn cached-helper(source: Path) -> Path {
 
     let status = wait-for(compiler.pid)
     if exit-code(status) != 0 {
-        if candidate.exists? { candidate.unlink() }
+        if candidate.exists? {
+            candidate.unlink()
+        }
         throw RuntimeError("termrec: failed to build capture helper (status {exit-code(status)})")
     }
 
     if os.rename(str(candidate), str(helper)) != 0 {
-        if candidate.exists? { candidate.unlink() }
+        if candidate.exists? {
+            candidate.unlink()
+        }
         throw os.OSError('termrec: rename()')
     }
     helper
@@ -104,7 +118,9 @@ fn cached-helper(source: Path) -> Path {
 fn wait-for(pid: Int) -> Int {
     for (;;) {
         if let (waited, status) = os.wait(pid) {
-            if waited == pid { return status }
+            if waited == pid {
+                return status
+            }
         }
     }
 }

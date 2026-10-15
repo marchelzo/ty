@@ -1278,7 +1278,27 @@ rt_arg_type_error(Ty *ty, i32 index, i32 type, Value const *value)
         lir_runtime()->arg_type_error(ty, index, type, value);
 }
 
+static void
+rt_kernel_error(Ty *ty, i32 kind, Value const *v, i64 n)
+{
+        Value value;
+        switch (kind) {
+        case 0:
+                value = TAGGED(TAG_INDEX_ERR, *v, INTEGER(n));
+                vm_throw(ty, &value);
+        case 1:
+                ZeroDividePanic(ty);
+        case 2:
+                zP("kernel: argument %d has the wrong type: %s", (int)n + 1, VSC(v));
+        case 3:
+                zP("kernel: element %lld has the wrong type: %s", (long long)n, VSC(v));
+        default:
+                zP("kernel: reached the end of a function that must return a value");
+        }
+}
+
 static LirType const RT_TWO[] = { LIR_TYPE_PTR, LIR_TYPE_VAL };
+static LirType const RT_KERNEL_ERROR[] = { LIR_TYPE_PTR, LIR_TYPE_I32, LIR_TYPE_VAL, LIR_TYPE_I64 };
 static LirType const RT_THREE[] = { LIR_TYPE_PTR, LIR_TYPE_VAL, LIR_TYPE_VAL };
 static LirType const RT_FOUR[] = { LIR_TYPE_PTR, LIR_TYPE_VAL, LIR_TYPE_VAL, LIR_TYPE_VAL };
 static LirType const RT_FIVE[] = { LIR_TYPE_PTR, LIR_TYPE_VAL, LIR_TYPE_VAL, LIR_TYPE_VAL, LIR_TYPE_VAL };
@@ -1378,6 +1398,9 @@ static LirHelper const Helpers[] = {
         { .name = "arg-type-error", .address = rt_arg_type_error,
           .sig = { .ret = LIR_VOID, .params = RT_TYPE_ERROR, .nparams = 4, .nfixed = 4 },
           .flags = LIR_MAY_GC | LIR_MAY_THROW | LIR_NORETURN },
+        { .name = "kernel-error", .address = rt_kernel_error,
+          .sig = { .ret = LIR_VOID, .params = RT_KERNEL_ERROR, .nparams = 4, .nfixed = 4 },
+          .flags = LIR_MAY_GC | LIR_MAY_THROW | LIR_NORETURN },
 };
 
 static bool
@@ -1415,40 +1438,35 @@ builtin_jit_helpers(Ty *ty, int argc, Value *kwargs)
         return out;
 }
 
+#define JIT_LAYOUT_FIELD(name, offset) #name, INTEGER(offset),
+#define JIT_TAG_FIELD(name, value) #name, INTEGER(value),
+
 Value
 builtin_jit_layout(Ty *ty, int argc, Value *kwargs)
 {
         ASSERT_ARGC("jit._layout", 0);
-        static struct { char const *name; usize offset; } const offsets[] = {
-                { "VALUE_SIZE", sizeof (Value) },
-                { "OFF_TYPE", offsetof(Value, type) },
-                { "OFF_TAGS", offsetof(Value, tags) },
-                { "OFF_Z", offsetof(Value, z) },
-                { "OFF_REAL", offsetof(Value, real) },
-                { "OFF_BOOL", offsetof(Value, boolean) },
-                { "OFF_PTR", offsetof(Value, ptr) },
-                { "OFF_CLASS", offsetof(Value, class) },
-                { "OFF_OBJECT", offsetof(Value, object) },
-                { "OFF_STR", offsetof(Value, str) },
-                { "OFF_BYTES", offsetof(Value, bytes) },
-                { "OFF_COUNT", offsetof(Value, count) },
-                { "OFF_ITEMS", offsetof(Value, items) },
-                { "ARRAY_OFF_ITEMS", offsetof(Array, items) },
-                { "ARRAY_OFF_COUNT", offsetof(Array, count) },
-                { "ARRAY_OFF_CAPACITY", offsetof(Array, capacity) },
-                { "BLOB_OFF_ITEMS", offsetof(Blob, items) },
-                { "BLOB_OFF_COUNT", offsetof(Blob, count) },
-                { "BLOB_OFF_CAPACITY", offsetof(Blob, capacity) },
-                { "DICT_OFF_ITEMS", offsetof(Dict, items) },
-                { "DICT_OFF_COUNT", offsetof(Dict, count) },
-                { "DICT_OFF_CAPACITY", offsetof(Dict, size) },
-                { "OFF_SLOTS", offsetof(TyObject, slots) }
-        };
         GC_STOP();
-        Value out = DICT(dict_new(ty));
-        for (u32 i = 0; i < countof(offsets); ++i) {
-                dict_put_member(ty, out.dict, offsets[i].name, INTEGER(offsets[i].offset));
-        }
+        Value array = vTn(
+                "OFF_ITEMS", INTEGER(offsetof(Array, items)),
+                "OFF_COUNT", INTEGER(offsetof(Array, count)),
+                "OFF_CAPACITY", INTEGER(offsetof(Array, capacity))
+        );
+        Value blob = vTn(
+                "OFF_ITEMS", INTEGER(offsetof(Blob, items)),
+                "OFF_COUNT", INTEGER(offsetof(Blob, count)),
+                "OFF_CAPACITY", INTEGER(offsetof(Blob, capacity))
+        );
+        Value dict = vTn(
+                "OFF_ITEMS", INTEGER(offsetof(Dict, items)),
+                "OFF_COUNT", INTEGER(offsetof(Dict, count)),
+                "OFF_CAPACITY", INTEGER(offsetof(Dict, size))
+        );
+        Value out = vTn(
+                JIT_LAYOUT(JIT_LAYOUT_FIELD)
+                "Array", array,
+                "Blob", blob,
+                "Dict", dict
+        );
         GC_RESUME();
         return out;
 }
@@ -1457,59 +1475,8 @@ Value
 builtin_jit_tags(Ty *ty, int argc, Value *kwargs)
 {
         ASSERT_ARGC("jit._tags", 0);
-        static struct { char const *name; u8 tag; } const tags[] = {
-                { "ZERO", VALUE_ZERO },
-                { "INT", VALUE_INTEGER },
-                { "FLOAT", VALUE_REAL },
-                { "BOOL", VALUE_BOOLEAN },
-                { "NIL", VALUE_NIL },
-                { "STRING", VALUE_STRING },
-                { "ARRAY", VALUE_ARRAY },
-                { "DICT", VALUE_DICT },
-                { "SET", VALUE_SET },
-                { "HEAP", VALUE_HEAP },
-                { "BLOB", VALUE_BLOB },
-                { "TUPLE", VALUE_TUPLE },
-                { "OBJECT", VALUE_OBJECT },
-                { "PTR", VALUE_PTR },
-                { "REF", VALUE_REF },
-                { "FUNCTION", VALUE_FUNCTION },
-                { "BOUND_FUNCTION", VALUE_BOUND_FUNCTION },
-                { "STAR_FUNCTION", VALUE_STAR_FUNCTION },
-                { "FOREIGN_FUNCTION", VALUE_FOREIGN_FUNCTION },
-                { "JIT_FUNCTION", VALUE_JIT_FUNCTION },
-                { "NATIVE_FUNCTION", VALUE_NATIVE_FUNCTION },
-                { "BUILTIN_FUNCTION", VALUE_BUILTIN_FUNCTION },
-                { "METHOD", VALUE_METHOD },
-                { "BUILTIN_METHOD", VALUE_BUILTIN_METHOD },
-                { "CLASS", VALUE_CLASS },
-                { "GENERATOR", VALUE_GENERATOR },
-                { "GENERATOR_0", VALUE_GENERATOR_0 },
-                { "TAG", VALUE_TAG },
-                { "OPERATOR", VALUE_OPERATOR },
-                { "TYPE", VALUE_TYPE },
-                { "REGEX", VALUE_REGEX },
-                { "QUEUE", VALUE_QUEUE },
-                { "SHARED_QUEUE", VALUE_SHARED_QUEUE },
-                { "THREAD", VALUE_THREAD },
-                { "SENTINEL", VALUE_SENTINEL },
-                { "INDEX", VALUE_INDEX },
-                { "NONE", VALUE_NONE },
-                { "UNINITIALIZED", VALUE_UNINITIALIZED },
-                { "NAMESPACE", VALUE_NAMESPACE },
-                { "MODULE", VALUE_MODULE },
-                { "TRACE", VALUE_TRACE },
-                { "BREAK", VALUE_BREAK },
-                { "TOMBSTONE", VALUE_TOMBSTONE },
-                { "FUN_META", VALUE_FUN_META },
-                { "ANY", VALUE_ANY },
-                { "TAGGED", VALUE_TAGGED }
-        };
-        GC_STOP();
-        Value out = DICT(dict_new(ty));
-        for (u32 i = 0; i < countof(tags); ++i) {
-                dict_put_member(ty, out.dict, tags[i].name, INTEGER(tags[i].tag));
-        }
-        GC_RESUME();
-        return out;
+        return vTn(
+                JIT_TAGS(JIT_TAG_FIELD)
+                "TAGGED", INTEGER(VALUE_TAGGED)
+        );
 }

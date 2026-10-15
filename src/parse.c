@@ -21,6 +21,7 @@
 #include "vec.h"
 #include "vm.h"
 #include "diag.h"
+#include "syntax.h"
 
 #define BINARY_OPERATOR(name, t, prec, right_assoc)                        \
         static Expr *                                                      \
@@ -265,6 +266,13 @@ enum {
         LV_ANY
 };
 
+typedef struct {
+        Expr const *call;
+        Expr *module;
+        Expr *text;
+        StringVector names;
+} SynLiteral;
+
 typedef struct ParserState {
         TokenVector tokens;
         usize TokenBase;
@@ -303,6 +311,8 @@ typedef struct ParserState {
         int ForParen;
         bool ForInit;
         Expr *ForInitExpr;
+
+        vec(SynLiteral) SynLiterals;
 } ParserState;
 
 static ParserState state;
@@ -479,6 +489,12 @@ mkcall(Ty *ty, Expr *func);
 static Expr *
 mkpartial(Ty *ty, Expr *sugared);
 
+static void
+record_extra(Ty *ty, char const *kind, char const *form, Location start, Location end);
+
+static void
+record_sugar(Ty *ty, char const *form, Location start, Location end);
+
 #define gensym() ((gensym)(ty))
 char *
 (gensym)(Ty *ty)
@@ -497,6 +513,9 @@ mkexpr(Ty *ty)
         e->end = tok()->end;
         return e;
 }
+
+#define SYNTH(x, at) ((x)->start = (x)->end = (at), (x)->synth = true)
+#define SYNTHETIC(x) ((x)->synth = true)
 
 #define mkxpr(t) (mkxpr)(ty, EXPRESSION_##t)
 inline static Expr *
@@ -569,6 +588,9 @@ mkret(Ty *ty, Expr *value)
         Stmt *s = mkstmt(ty);
         s->type = STATEMENT_RETURN;
         s->ret = value;
+        s->start = value->start;
+        s->end = value->end;
+        SYNTHETIC(s);
         return s;
 }
 
@@ -578,12 +600,16 @@ mkdef(Ty *ty, Expr *lvalue, char *name)
         Expr *value = mkxpr(IDENTIFIER);
         value->identifier = name;
         value->module = NULL;
+        SYNTH(value, lvalue->end);
 
         Stmt *s = mkstmt(ty);
         s->type = STATEMENT_DEFINITION;
         s->pub = false;
         s->target = lvalue;
         s->value = value;
+        s->start = lvalue->start;
+        s->end = lvalue->end;
+        SYNTHETIC(s);
 
         return s;
 }
@@ -807,6 +833,7 @@ token_slow(Ty *ty, int i)
                 }
 
                 int save = TokenIndex;
+                Location end = TEnd;
 
                 switch (tokenx(i + 1)->keyword) {
                 case KEYWORD_IF:    skipx(i); pp_if(ty);    break;
@@ -815,6 +842,7 @@ token_slow(Ty *ty, int i)
                 }
 
                 TokenIndex = save;
+                TEnd = end;
         }
 End:
         PLOG(
@@ -1327,6 +1355,14 @@ PopNS(Ty *ty)
 }
 
 static void
+CloseNS(Ty *ty, Location end)
+{
+        CurrentNamespace->end = end;
+        record_extra(ty, "Namespace", NULL, CurrentNamespace->start, end);
+        PopNS(ty);
+}
+
+static void
 SetNamespace(Stmt *s, Namespace *ns)
 {
         if (!IsExpr(s)) {
@@ -1576,6 +1612,9 @@ iter_sugar(Ty *ty, Expr **target, Expr **iterable)
         avP((*iterable)->es, it);
 
         SWAP(Expr *, *target, *iterable);
+
+        SYNTH(it, (*iterable)->start);
+        SYNTH((*target), (*iterable)->start);
 }
 
 inline static bool
@@ -1749,6 +1788,7 @@ parse_decorators(Ty *ty, ExprVec *decs, ExprVec *macro_decs)
                 }
 
                 Expr *hole = mkxpr(PLACEHOLDER);
+                SYNTH(hole, f->end);
 
                 switch (f->type) {
                 case EXPRESSION_FUNCTION_CALL:
@@ -1972,6 +2012,7 @@ Expr *
 extend_string(Ty *ty, Expr *s)
 {
         Location first = s->start;
+        bool merged = false;
 
         while (
                 (
@@ -1996,6 +2037,14 @@ extend_string(Ty *ty, Expr *s)
                 }
 
                 merge_strings(ty, s, s2);
+
+                s->start = first;
+                s->end = s2->end;
+                merged = true;
+        }
+
+        if (merged) {
+                record_sugar(ty, "string-concat", s->start, s->end);
         }
 
         return s;
@@ -2320,16 +2369,20 @@ prefix_slash(Ty *ty)
 
         next();
 
+        Location slash = TEnd;
         Expr *body = parse_expr(ty, 1);
 
         Expr *nil = mkxpr(NIL);
         nil->start = start;
+        nil->end = slash;
 
         Expr *f = mkcall(ty, nil);
         avP(f->args, body);
         avP(f->fconds, NULL);
 
-        nil->end = f->end = TEnd;
+        f->end = TEnd;
+        SYNTHETIC(f);
+        SYNTHETIC(nil);
 
         return mkpartial(ty, f);
 }
@@ -2395,29 +2448,25 @@ template_pattern(Ty *ty, Expr *template)
         Expr *fun = mkxpr(IDENTIFIER);
         fun->identifier = "__ast_match__";
         fun->module = NULL;
-        fun->start = template->start;
-        fun->end = template->end;
+        SYNTH(fun, template->start);
 
         Value *pointer = amA(sizeof *pointer);
         *pointer = PTR(template);
 
         Expr *source = mkxpr(VALUE);
         source->v = pointer;
-        source->start = template->start;
-        source->end = template->end;
+        SYNTH(source, template->start);
 
         Expr *n = mkxpr(INTEGER);
         n->integer = (intmax_t)count;
-        n->start = template->start;
-        n->end = template->end;
+        SYNTH(n, template->start);
 
         char *param = gensym();
 
         Expr *subject = mkxpr(IDENTIFIER);
         subject->identifier = param;
         subject->module = NULL;
-        subject->start = template->start;
-        subject->end = template->end;
+        SYNTH(subject, template->start);
 
         Expr *call = mkcall(ty, fun);
         avP(call->args, source);
@@ -2426,11 +2475,10 @@ template_pattern(Ty *ty, Expr *template)
         avP(call->fconds, NULL);
         avP(call->args, subject);
         avP(call->fconds, NULL);
-        call->end = template->end;
+        SYNTH(call, template->start);
 
         Expr *matcher = mkfunc(ty);
-        matcher->start = template->start;
-        matcher->end = template->end;
+        SYNTH(matcher, template->start);
         avP(matcher->params, param);
         avP(matcher->constraints, NULL);
         avP(matcher->dflts, NULL);
@@ -2441,14 +2489,420 @@ template_pattern(Ty *ty, Expr *template)
         view->right = patternize(ty, bindings);
         view->start = template->start;
         view->end = template->end;
+        SYNTHETIC(view);
+        SYNTHETIC(bindings);
 
         return view;
+}
+
+
+
+inline static bool
+syn_idchar(int c)
+{
+        return (c & 0x80) || isalnum(c) || (c == '_');
+}
+
+static isize
+syn_skip_string(Ty *ty, isize i)
+{
+        int q = lex_look_byte(ty, i);
+
+        if (lex_look_byte(ty, i + 1) == q && lex_look_byte(ty, i + 2) == q) {
+                for (i += 3; lex_look_byte(ty, i) != '\0'; ++i) {
+                        if (
+                                (lex_look_byte(ty, i) == q)
+                             && (lex_look_byte(ty, i + 1) == q)
+                             && (lex_look_byte(ty, i + 2) == q)
+                        ) {
+                                return i + 3;
+                        }
+                }
+                return i;
+        }
+
+        int braces = 0;
+
+        for (i += 1; lex_look_byte(ty, i) != '\0'; ++i) {
+                int c = lex_look_byte(ty, i);
+                if (c == '\\') {
+                        i += 1;
+                } else if (q == '"' && c == '{') {
+                        braces += 1;
+                } else if (q == '"' && c == '}' && braces > 0) {
+                        braces -= 1;
+                } else if (braces > 0 && (c == '"' || c == '\'')) {
+                        i = syn_skip_string(ty, i) - 1;
+                } else if (c == q) {
+                        return i + 1;
+                }
+        }
+
+        return i;
+}
+
+static isize
+syn_body_length(Ty *ty)
+{
+        int depth = 0;
+
+        for (isize i = 0;;) {
+                int c = lex_look_byte(ty, i);
+                int c1 = lex_look_byte(ty, i + 1);
+                int c2 = lex_look_byte(ty, i + 2);
+
+                if (c == '\0') {
+                        return -1;
+                }
+
+                if (c == '$' && c1 == '$' && c2 == '[') {
+                        depth += 1;
+                        i += 3;
+                } else if (c == '$' && c1 == '$' && c2 == ']') {
+                        if (depth == 0) {
+                                return i;
+                        }
+                        depth -= 1;
+                        i += 3;
+                } else if (c == '$' && c1 == '$' && c2 == '<') {
+                        for (i += 3; lex_look_byte(ty, i) != '>'; ++i) {
+                                if (lex_look_byte(ty, i) == '\0') {
+                                        return -1;
+                                }
+                        }
+                        i += 1;
+                } else if (c == '"' || c == '\'') {
+                        i = syn_skip_string(ty, i);
+                } else if (c == '/' && c1 == '/') {
+                        while (lex_look_byte(ty, i) != '\n' && lex_look_byte(ty, i) != '\0') {
+                                i += 1;
+                        }
+                } else if (c == '/' && c1 == '*') {
+                        for (i += 2; lex_look_byte(ty, i) != '\0'; ++i) {
+                                if (
+                                        (lex_look_byte(ty, i) == '*')
+                                     && (lex_look_byte(ty, i + 1) == '/')
+                                ) {
+                                        i += 2;
+                                        break;
+                                }
+                        }
+                } else {
+                        i += 1;
+                }
+        }
+}
+
+static char *
+syn_name(Ty *ty, char const *s, usize *n)
+{
+        byte_vector name = {0};
+        usize i = 0;
+
+        while (syn_idchar(s[i]) || (s[i] == '-' && syn_idchar(s[i + 1]) && i > 0)) {
+                if (s[i] == '-') {
+                        avP(name, toupper((unsigned char)s[i + 1]));
+                        i += 2;
+                } else {
+                        avP(name, s[i]);
+                        i += 1;
+                }
+        }
+
+        if (s[i] == '?' || s[i] == '!') {
+                avP(name, s[i]);
+                i += 1;
+        }
+
+        avP(name, '\0');
+        *n = i;
+
+        return vv(name);
+}
+
+static void
+syn_add_name(Ty *ty, StringVector *names, char *name)
+{
+        if (name[0] == '\0' || strcmp(name, "_") == 0) {
+                return;
+        }
+
+        for (usize i = 0; i < vN(*names); ++i) {
+                if (strcmp(v__(*names, i), name) == 0) {
+                        return;
+                }
+        }
+
+        avP(*names, name);
+}
+
+static bool
+syn_gap_keyword(char const *name)
+{
+        static char const *keywords[] = { "_", "nl", "blank", "sp", "any" };
+
+        for (usize i = 0; i < countof(keywords); ++i) {
+                if (strcmp(keywords[i], name) == 0) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static void
+syn_scan_names(Ty *ty, char const *s, StringVector *names)
+{
+        usize n;
+
+        for (usize i = 0; s[i] != '\0'; ++i) {
+                if (s[i] != '$' || s[i + 1] != '$') {
+                        continue;
+                }
+
+                usize j = i + 2;
+
+                if (s[j] == '(' || s[j] == '<') {
+                        bool paren = (s[j] == '(');
+                        j += 1;
+                        while (s[j] == ' ' || s[j] == '\t') {
+                                j += 1;
+                        }
+                        if (!syn_idchar(s[j])) {
+                                continue;
+                        }
+                        char *name = syn_name(ty, s + j, &n);
+                        j += n;
+                        while (s[j] == ' ' || s[j] == '\t') {
+                                j += 1;
+                        }
+                        if (paren && s[j] == ':') {
+                                syn_add_name(ty, names, name);
+                        } else if (
+                                !paren
+                             && (s[j] == '>' || s[j] == '~')
+                             && !syn_gap_keyword(name)
+                        ) {
+                                syn_add_name(ty, names, name);
+                        }
+                } else if (syn_idchar(s[j])) {
+                        syn_add_name(ty, names, syn_name(ty, s + j, &n));
+                }
+        }
+}
+
+static Expr *
+syn_call(Ty *ty, Expr *module, char *method, Expr *text, Location start, Location end)
+{
+        Expr *call = mkxpr(METHOD_CALL);
+        call->object = module;
+        call->method = mkid(method);
+        SYNTH(call->method, start);
+        avP(call->method_args, text);
+        avP(call->mconds, NULL);
+
+        char const *home = (state.module == NULL) ? NULL
+                         : (state.module->path != NULL) ? state.module->path
+                         : state.module->name;
+
+        if (home != NULL) {
+                Expr *where = mkxpr(STRING);
+                where->string = (Bytes) { .data = home, .length = strlen(home) };
+                SYNTH(where, start);
+                avP(call->method_args, where);
+                avP(call->mconds, NULL);
+        }
+
+        call->start = start;
+        call->end = end;
+        return call;
+}
+
+static Expr *
+prefix_syn_literal(Ty *ty)
+{
+        Location start = tok()->start;
+
+        Expr *module = mkid(tok()->identifier);
+        module->module = tok()->module;
+        module->start = start;
+        module->end = tok()->end;
+
+        next();
+        next();
+
+        parse_sync_lex(ty);
+
+        isize n = syn_body_length(ty);
+        if (n < 0) {
+                die("unterminated syn$$[ literal");
+        }
+
+        Location body = lex_pos(ty);
+        byte_vector text = {0};
+        char b[128];
+
+        while (vN(text) < (usize)n) {
+                if (!lex_next_char(ty, b)) {
+                        break;
+                }
+                avPn(text, b, strlen(b));
+        }
+
+        for (int i = 0; i < 3; ++i) {
+                lex_next_char(ty, b);
+        }
+
+        Location end = lex_pos(ty);
+
+        Expr *str = mkxpr(STRING);
+        str->string = (Bytes) { .data = vv(text), .length = vN(text) };
+        str->start = body;
+        str->end = body;
+        avP(text, '\0');
+
+        SynLiteral lit = {
+                .module = module,
+                .text   = str
+        };
+
+        syn_scan_names(ty, vv(text), &lit.names);
+
+        Expr *call = syn_call(ty, module, "__pattern__", str, start, end);
+        lit.call = call;
+
+        if (state.module != NULL) {
+                avP(
+                        state.module->macros,
+                        ((MacroSpan) {
+                                .name  = "$$[",
+                                .start = start,
+                                .end   = end
+                        })
+                );
+        }
+
+        avP(state.SynLiterals, lit);
+
+        TEnd = end;
+
+        return call;
+}
+
+static Expr *
+syn_view_pattern(Ty *ty, Expr *e)
+{
+        for (usize i = 0; i < vN(state.SynLiterals); ++i) {
+                SynLiteral const *lit = v_(state.SynLiterals, i);
+                if (lit->call != e) {
+                        continue;
+                }
+
+                Expr *bindings = mkxpr(ARRAY);
+                SYNTH(bindings, e->end);
+
+                for (usize j = 0; j < vN(lit->names); ++j) {
+                        Expr *id = mkid(v__(lit->names, j));
+                        id->module = NULL;
+                        SYNTH(id, e->end);
+                        avP(bindings->elements, id);
+                        avP(bindings->aconds, NULL);
+                        avP(bindings->optional, false);
+                }
+
+                Expr *view = mkxpr(VIEW_PATTERN);
+                view->left = syn_call(ty, lit->module, "__matcher__", lit->text, e->start, e->end);
+                view->right = patternize(ty, bindings);
+                view->start = e->start;
+                view->end = e->end;
+
+                return view;
+        }
+
+        return NULL;
+}
+
+static void
+record_extra(Ty *ty, char const *kind, char const *form, Location start, Location end)
+{
+        if (
+                (state.module == NULL)
+             || (start.byte >= end.byte)
+             || !HAVE_COMPILER_FLAG(FIDELITY)
+        ) {
+                return;
+        }
+
+        avP(
+                state.module->extras,
+                ((SyntaxExtra) {
+                        .kind  = kind,
+                        .form  = form,
+                        .start = start,
+                        .end   = end
+                })
+        );
+}
+
+static void
+record_embedded(Ty *ty, char const *form, Location start, Location end, void const *node)
+{
+        usize n = (state.module == NULL) ? 0 : vN(state.module->extras);
+
+        record_extra(ty, "Embedded", form, start, end);
+
+        if (state.module != NULL && vN(state.module->extras) > n) {
+                vvL(state.module->extras)->node = node;
+        }
+}
+
+static void
+record_sugar(Ty *ty, char const *form, Location start, Location end)
+{
+        record_extra(ty, "Sugar", form, start, end);
+}
+
+static void
+record_macro(Ty *ty, Expr const *e, void const *expansion)
+{
+        Location end = token(-1)->end;
+
+        if (vN(TOKENS) <= TokenIndex) {
+                Location pos = lex_pos(ty);
+                if (pos.byte > end.byte) {
+                        end = pos;
+                }
+        }
+
+        if (end.byte > TEnd.byte) {
+                TEnd = end;
+        }
+
+        if (state.module != NULL) {
+                avP(
+                        state.module->macros,
+                        ((MacroSpan) {
+                                .name      = e->identifier,
+                                .start     = e->start,
+                                .end       = end,
+                                .expansion = expansion
+                        })
+                );
+        }
 }
 
 static Expr *
 prefix_identifier(Ty *ty)
 {
         expect(TOKEN_IDENTIFIER);
+
+        if (
+                (T1 == TOKEN_TEMPLATE_BEGIN)
+             && (token(1)->start.byte == tok()->end.byte)
+             && (CurrentTemplate == NULL)
+        ) {
+                return prefix_syn_literal(ty);
+        }
 
         int i_id = TokenIndex;
         Expr *e = mkexpr(ty);
@@ -2483,6 +2937,7 @@ prefix_identifier(Ty *ty)
                         SetNamespace((Stmt *)expanded, CurrentNamespace);
                         TY_CATCH_END();
                 }
+                record_macro(ty, e, expanded);
                 return expanded;
         }
 
@@ -2586,6 +3041,7 @@ parse_function_header(Ty *ty, Expr *e)
                 setctx(LEX_PREFIX);
 
                 bool special = false;
+                Location param = tok()->start;
 
                 if (T0 == TOKEN_STAR) {
                         next();
@@ -2616,6 +3072,8 @@ parse_function_header(Ty *ty, Expr *e)
                 } else {
                         avP(e->dflts, NULL);
                 }
+
+                record_extra(ty, "Param", NULL, param, TEnd);
 
                 if (T0 == ',') {
                         next();
@@ -2848,8 +3306,13 @@ opfunc(Ty *ty)
         unconsume('(');
         unconsume('(');
 
+        Location end = TEnd;
+
         Expr *e = parse_expr(ty, 0);
         e->start = start;
+        SYNTHETIC(e);
+
+        record_sugar(ty, "operator-function", start, end);
 
         return e;
 }
@@ -3075,8 +3538,20 @@ make_with(Ty *ty, Expr *e, StmtVec defs, Stmt *body)
         avP(s->statements, try);
         e->with.block = s;
 
-        try->start = e->start;
+        try->start = body->start;
         try->end = body->end;
+        SYNTHETIC(try);
+
+        SYNTH(try->try.finally, body->end);
+
+        s->start = e->start;
+        s->end = body->end;
+        SYNTHETIC(s);
+
+        for (usize i = 0; i < vN(defs); ++i) {
+                SYNTHETIC(v__(defs, i));
+                SYNTHETIC(v__(defs, i)->value);
+        }
 }
 
 static Expr *
@@ -3133,9 +3608,15 @@ prefix_with(Ty *ty)
                         Expr *t = mkxpr(IDENTIFIER);
                         t->identifier = gensym();
                         t->module = NULL;
+                        SYNTH(t, e->start);
                         def->target = t;
                         def->value->operand = e;
                 }
+
+                def->start = e->start;
+                def->end = def->value->operand->end;
+                def->value->start = def->value->operand->start;
+                def->value->end = def->value->operand->end;
 
                 avP(defs, def);
 
@@ -3149,6 +3630,8 @@ prefix_with(Ty *ty)
         make_with(ty, with, defs, parse_statement(ty, 0));
 
         with->end = TEnd;
+
+        record_sugar(ty, "with", with->start, with->end);
 
         return with;
 }
@@ -3239,8 +3722,14 @@ prefix_match(Ty *ty)
 
         consume_kw(MATCH);
 
+        Location kw = TEnd;
+
         e->subject = parse_expr(ty, -1);
         e->end = e->subject->end = TEnd;
+
+        if (id != NULL) {
+                SYNTH(e->subject, kw);
+        }
 
         SAVE_NA(false);
 
@@ -3250,6 +3739,7 @@ prefix_match(Ty *ty)
                 e->subject = mkexpr(ty);
                 e->subject->type = EXPRESSION_IDENTIFIER;
                 e->subject->identifier = id = gensym();
+                SYNTH(e->subject, kw);
                 avP(e->thens, parse_expr(ty, 0));
                 if (have_kw(ELSE)) {
                         next();
@@ -3293,6 +3783,8 @@ prefix_match(Ty *ty)
 End:
         LOAD_NA();
 
+        e->end = TEnd;
+
         if (vN(e->patterns) > vN(e->thens)) {
                 vN(e->patterns) = vN(e->thens);
         }
@@ -3305,7 +3797,12 @@ End:
                 f->body = mkstmt(ty);
                 f->body->type = STATEMENT_EXPRESSION;
                 f->body->expression = e;
+                f->start = f->body->start = e->start;
+                f->end   = f->body->end   = e->end;
+                SYNTHETIC(f);
+                SYNTHETIC(f->body);
                 e = f;
+                record_sugar(ty, "match-lambda", e->start, e->end);
         }
 
         return e;
@@ -3356,6 +3853,11 @@ gencompr(Ty *ty, Expr *e)
 
         g->end = TEnd;
 
+        g->body->start = e->start;
+        g->body->end = g->end;
+        g->body->each.body->start = g->body->each.body->expression->start = e->start;
+        g->body->each.body->end = g->body->each.body->expression->end = e->end;
+
         return g;
 }
 
@@ -3387,7 +3889,7 @@ try_parse_flag(Ty *ty, ExprVec *kwargs, StringVector *kws, ExprVec *kwconds)
 }
 
 static void
-next_arg(
+next_arg_(
         Ty *ty,
         ExprVec *args,
         ExprVec *conds,
@@ -3473,6 +3975,26 @@ next_arg(
 }
 
 static void
+next_arg(
+        Ty *ty,
+        ExprVec *args,
+        ExprVec *conds,
+        ExprVec *kwargs,
+        StringVector *kws,
+        ExprVec *kwconds
+)
+{
+        Location start = tok()->start;
+        usize n = vN(*kwargs);
+
+        next_arg_(ty, args, conds, kwargs, kws, kwconds);
+
+        if (vN(*kwargs) > n && vN(*kws) > n && strcmp(v__(*kws, n), "*") != 0) {
+                record_extra(ty, "Kwarg", NULL, start, TEnd);
+        }
+}
+
+static void
 parse_method_args(Ty *ty, Expr *e)
 {
         consume('(');
@@ -3549,15 +4071,24 @@ parse_method_call(Ty *ty, Expr *e)
                 return e;
         }
 
+        Token const *slash = token(-1);
+        Location start = slash->start;
+        Location end = slash->end;
+
         next();
         Expr *body = parse_expr(ty, 0);
         next();
 
         Expr *nil = mkxpr(NIL);
+        nil->start = start;
+        nil->end = end;
 
         Expr *f = mkcall(ty, nil);
         avP(f->args, body);
         avP(f->fconds, NULL);
+        f->end = TEnd;
+        SYNTHETIC(f);
+        SYNTHETIC(nil);
 
         avP(e->method_args, mkpartial(ty, f));
         avP(e->mconds, NULL);
@@ -3613,6 +4144,7 @@ prefix_parenthesis(Ty *ty)
                 next();
                 e = mkxpr(TUPLE);
                 e->start = start;
+                e->end = TEnd;
                 e->only_identifiers = true;
                 return e;
         }
@@ -3630,12 +4162,22 @@ prefix_parenthesis(Ty *ty)
                 Expr *t = mkxpr(IDENTIFIER);
                 t->identifier = v_0(e->params);
                 t->module = NULL;
+                SYNTH(t, tok()->start);
 
                 e->body = mkstmt(ty);
                 e->body->type = STATEMENT_EXPRESSION;
                 e->body->expression = get_infix_parser(ty)(ty, t);
+                e->body->start = e->body->expression->start;
+                e->body->end = e->body->expression->end;
 
                 consume(')');
+
+                e->start = start;
+                e->end = TEnd;
+                SYNTHETIC(e);
+                SYNTHETIC(e->body);
+
+                record_sugar(ty, "operator-section", start, TEnd);
 
                 return e;
         }
@@ -3789,6 +4331,19 @@ prefix_parenthesis(Ty *ty)
                         avP(list->tconds, NULL);
                         return list;
                 } else {
+                        if (state.module != NULL && start.byte < e->start.byte) {
+                                avP(
+                                        state.module->extras,
+                                        ((SyntaxExtra) {
+                                                .kind        = "Paren",
+                                                .start       = start,
+                                                .end         = TEnd,
+                                                .inner_start = e->start,
+                                                .inner_end   = e->end,
+                                                .inner       = true
+                                        })
+                                );
+                        }
                         e->start = start;
                         e->end = TEnd;
                         return e;
@@ -3966,6 +4521,7 @@ prefix_array(Ty *ty)
         }
 
         int in_type = EXPRESSION_IN;
+        Token lhs = *tok();
 
         if (T1 == TOKEN_KEYWORD) switch (K1) {
         case KEYWORD_IN:
@@ -3986,9 +4542,16 @@ prefix_array(Ty *ty)
                 f->body->expression->left->type = EXPRESSION_IDENTIFIER;
                 f->body->expression->left->identifier = f->params.items[0];
                 f->body->expression->left->module = NULL;
+                f->body->expression->left->start = lhs.start;
+                f->body->expression->left->end = lhs.end;
                 f->body->expression->right = e;
+                f->body->start = f->body->expression->start = lhs.start;
+                f->body->end = f->body->expression->end = e->end;
                 f->start = start;
                 f->end = TEnd;
+                SYNTHETIC(f);
+                SYNTHETIC(f->body);
+                record_sugar(ty, "in-section", start, TEnd);
                 return f;
         case KEYWORD_NOT:
                 next();
@@ -4239,6 +4802,7 @@ prefix_greater(Ty *ty)
         consume('>');
 
         e->target = assignment_lvalue(ty, parse_expr(ty, 0));
+        e->end = TEnd;
 
         return e;
 }
@@ -4246,10 +4810,13 @@ prefix_greater(Ty *ty)
 static Expr *
 prefix_carat(Ty *ty)
 {
+        Location start = tok()->start;
+
         consume('^');
 
         if (T0 == '$$' && CurrentTemplate != NULL) {
                 Expr *e = mkxpr(RESOURCE_BINDING);
+                e->start = start;
                 e->tagged = prefix_template_expr(ty);
                 e->end = TEnd;
                 return e;
@@ -4257,6 +4824,7 @@ prefix_carat(Ty *ty)
 
         Expr *id = prefix_identifier(ty);
         id->type = EXPRESSION_RESOURCE_BINDING;
+        id->start = start;
         return id;
 }
 
@@ -4357,6 +4925,7 @@ prefix_implicit_method(Ty *ty)
         Expr *o = mkxpr(IDENTIFIER);
         o->identifier = gensym();
         o->module = NULL;
+        SYNTH(o, start);
 
         if (T0 == TOKEN_INTEGER) {
                 imax k = tok()->integer;
@@ -4368,7 +4937,12 @@ prefix_implicit_method(Ty *ty)
         }
 
         if (T0 == '[') {
-                return implicit_subscript(ty, o);
+                Expr *f = implicit_subscript(ty, o);
+                f->start = start;
+                f->end = TEnd;
+                SYNTHETIC(f);
+                record_sugar(ty, "implicit-method", start, TEnd);
+                return f;
         }
 
         Expr *e = mkexpr(ty);
@@ -4378,6 +4952,7 @@ prefix_implicit_method(Ty *ty)
                                    : EXPRESSION_METHOD_CALL;
         e->member = parse_member(ty);
         e->object = o;
+        e->end = TEnd;
 
         TagTokenOf(ty, e->member, TT_FUNC);
 
@@ -4389,10 +4964,13 @@ prefix_implicit_method(Ty *ty)
         f->body = mkret(ty, e);
         f->start = start;
         f->end = TEnd;
+        SYNTHETIC(f);
 
         avP(f->params, o->identifier);
         avP(f->dflts, NULL);
         avP(f->constraints, NULL);
+
+        record_sugar(ty, "implicit-method", start, TEnd);
 
         return f;
 }
@@ -4400,6 +4978,8 @@ prefix_implicit_method(Ty *ty)
 static Expr *
 prefix_implicit_lambda(Ty *ty)
 {
+        Location start = tok()->start;
+
         consume('$');
         consume('{');
 
@@ -4410,9 +4990,16 @@ prefix_implicit_lambda(Ty *ty)
 
         Expr *f = mkfunc(ty);
         f->type = EXPRESSION_IMPLICIT_FUNCTION;
+        f->start = start;
+        f->end = TEnd;
+        SYNTHETIC(f);
         f->body = mkstmt(ty);
         f->body->type = STATEMENT_EXPRESSION;
         f->body->expression = e;
+        f->body->start = e->start;
+        f->body->end = e->end;
+
+        record_sugar(ty, "implicit-lambda", start, TEnd);
 
         return f;
 }
@@ -4663,6 +5250,7 @@ mkpartial(Ty *ty, Expr *sugared)
         Expr *fun = mkxpr(IDENTIFIER);
         fun->identifier = "__desugar_partial__";
         fun->module = "prelude";
+        SYNTH(fun, sugared->start);
 
         Expr *call = mkcall(ty, fun);
         avP(call->args, sugared);
@@ -4670,6 +5258,9 @@ mkpartial(Ty *ty, Expr *sugared)
 
         call->start = sugared->start;
         call->end = sugared->end;
+        SYNTHETIC(call);
+
+        record_sugar(ty, "partial", sugared->start, sugared->end);
 
         return call;
 }
@@ -4911,6 +5502,8 @@ infix_subscript(Ty *ty, Expr *left)
         Expr *e = mkexpr(ty);
         e->start = left->start;
 
+        Location bracket = tok()->start;
+
         consume('[');
 
         if (T0 == ']') {
@@ -4922,7 +5515,9 @@ infix_subscript(Ty *ty, Expr *left)
                 e->type = EXPRESSION_SUBSCRIPT;
                 e->container = mkid(xs);
                 e->subscript = mkid(i);
-                e->subscript->start = e->start;
+                SYNTH(e->container, bracket);
+                SYNTH(e->subscript, bracket);
+                e->start = bracket;
                 e->end = TEnd;
 
                 Expr *f = mkfunc(ty);
@@ -4930,19 +5525,29 @@ infix_subscript(Ty *ty, Expr *left)
                 avP(f->dflts, NULL);
                 avP(f->constraints, NULL);
                 f->body = mkret(ty, e);
-                f->start = left->start;
+                f->start = bracket;
                 f->end = TEnd;
 
                 Stmt *def = mkstmt(ty);
                 def->type = STATEMENT_DEFINITION;
                 def->pub = false;
                 def->target = mkid(xs);
+                SYNTH(def->target, left->start);
                 def->value = left;
+                def->start = left->start;
+                def->end = left->end;
 
                 Stmt *multi = mkstmt(ty);
                 multi->type = STATEMENT_MULTI;
                 avP(multi->statements, def);
                 avP(multi->statements, to_stmt(f));
+                multi->start = left->start;
+                multi->end = TEnd;
+                SYNTHETIC(multi);
+                SYNTHETIC(def);
+                SYNTHETIC(f);
+
+                record_sugar(ty, "subscript-section", left->start, TEnd);
 
                 return to_expr(multi);
         }
@@ -5151,12 +5756,15 @@ infix_arrow_function(Ty *ty, Expr *left)
             ) {
                 Expr *l = mkxpr(LIST);
                 avP(l->es, left);
+                l->start = left->start;
+                l->end = left->end;
                 left = l;
         } else {
                 left->type = EXPRESSION_LIST;
         }
 
         Stmt *body = mkstmtx(BLOCK);
+        body->start = left->start;
 
         for (int i = 0; i < left->es.count; ++i) {
                 Expr *p = left->es.items[i];
@@ -5190,7 +5798,12 @@ infix_arrow_function(Ty *ty, Expr *left)
                 e->body = body;
         }
 
-        e->end = TEnd;
+        e->end = body->end = TEnd;
+
+        if (vN(body->statements) > 1) {
+                SYNTHETIC(body);
+                record_sugar(ty, "destructuring-params", e->start, e->end);
+        }
 
         return e;
 }
@@ -5214,6 +5827,8 @@ infix_identifier(Ty *ty, Expr *left)
 
         call->start = left->start;
         call->end = right->end;
+
+        record_sugar(ty, "infix-call", call->start, call->end);
 
         return call;
 }
@@ -5287,22 +5902,34 @@ infix_at(Ty *ty, Expr *left)
 static Expr *
 infix_slash(Ty *ty, Expr *left)
 {
+        Location start = tok()->start;
+
         next();
+
+        Location end = TEnd;
+
         next();
 
         Expr *body = parse_expr(ty, 0);
 
         Expr *nil = mkxpr(NIL);
+        nil->start = start;
+        nil->end = end;
 
         Expr *f = mkcall(ty, nil);
         avP(f->args, body);
         avP(f->fconds, NULL);
 
         Expr *call = mkcall(ty, left);
-        avP(call->args, mkpartial(ty, f));
-        avP(call->fconds, NULL);
 
         next();
+
+        f->end = call->end = TEnd;
+        SYNTHETIC(f);
+        SYNTHETIC(nil);
+
+        avP(call->args, mkpartial(ty, f));
+        avP(call->fconds, NULL);
 
         return call;
 }
@@ -5326,6 +5953,7 @@ infix_conditional(Ty *ty, Expr *left)
                 consume(':');
                 e->then = parse_expr(ty, 2);
                 e->_else = mkxpr(NIL);
+                SYNTH(e->_else, TEnd);
         }
         LOAD_NC();
 
@@ -5821,6 +6449,11 @@ definition_lvalue(Ty *ty, Expr *e)
 static Expr *
 patternize(Ty *ty, Expr *e)
 {
+        Expr *syn = syn_view_pattern(ty, e);
+        if (syn != NULL) {
+                return syn;
+        }
+
         try_symbolize_application(ty, NULL, e);
 
         switch (e->type) {
@@ -6107,6 +6740,9 @@ parse_target_list_from(Ty *ty, Expr *target)
                 avP(e->es, target);
         }
 
+        e->start = v__(e->es, 0)->start;
+        e->end   = vvL(e->es)[0]->end;
+
         return e;
 }
 
@@ -6168,7 +6804,8 @@ parse_for_loop(Ty *ty)
                         init      = to_stmt(target);
                 } else if (have_index_header(ty)) {
                         int save = TokenIndex;
-                        skip(3);
+                        Expr *list = parse_target_list_from(ty, target);
+                        consume_kw(IN);
                         array = parse_expr(ty, 0);
                         if (T0 == ';') {
                                 seek(ty, save);
@@ -6177,10 +6814,7 @@ parse_for_loop(Ty *ty)
                                 have_init = true;
                                 init      = to_stmt(target);
                         } else {
-                                int end = TokenIndex;
-                                seek(ty, save);
-                                target = parse_target_list_from(ty, target);
-                                seek(ty, end);
+                                target = list;
                         }
                 } else if (T0 == ';') {
                         c_style   = true;
@@ -6230,16 +6864,33 @@ parse_for_loop(Ty *ty)
                         s->each._while = NULL;
                 }
 
+                Location brace = tok()->start;
+
                 if (match) {
+                        Expr *subject = amA(sizeof *subject);
+                        *subject = *v_0(s->each.target->es);
+                        SYNTH(subject, brace);
+
                         unconsume(TOKEN_EXPRESSION);
-                        tok()->e = v_0(s->each.target->es);
+                        tok()->e = subject;
 
                         unconsume(TOKEN_KEYWORD);
                         tok()->keyword = KEYWORD_MATCH;
                 }
 
+                bool implicit = (s->each.array != NULL)
+                             && (s->each.target != NULL)
+                             && (s->each.target->start.byte == s->each.target->end.byte);
+
                 s->each.body = parse_statement(ty, -1);
                 s->end = TEnd;
+
+                if (match) {
+                        s->each.body->start = brace;
+                        record_sugar(ty, "for-match", s->start, s->end);
+                } else if (implicit) {
+                        record_sugar(ty, "implicit-it", s->start, s->end);
+                }
 
                 return s;
         }
@@ -6268,10 +6919,9 @@ parse_for_loop(Ty *ty)
                 consume(')');
         }
 
-        s->end = TEnd;
-
         expect('{');
         s->for_loop.body = parse_statement(ty, -1);
+        s->end = TEnd;
 
         return s;
 }
@@ -6283,6 +6933,7 @@ parse_condpart(Ty *ty)
         p->e = NULL;
         p->target = NULL;
         p->def = false;
+        p->start = tok()->start;
 
         if (try_consume(KEYWORD_LET)) {
                 p->def = true;
@@ -6291,6 +6942,8 @@ parse_condpart(Ty *ty)
                 SAVE_NA(true);
                 p->e = parse_expr(ty, -1);
                 LOAD_NA();
+                p->end = TEnd;
+                record_extra(ty, "Condition", "let", p->start, p->end);
                 return p;
         }
 
@@ -6301,8 +6954,11 @@ parse_condpart(Ty *ty)
         if (try_consume('=')) {
                 p->target = e;
                 p->e = parse_expr(ty, -1);
+                p->end = TEnd;
+                record_extra(ty, "Condition", "match", p->start, p->end);
         } else {
                 p->e = e;
+                p->end = TEnd;
         }
 
         return p;
@@ -6320,6 +6976,8 @@ parse_condparts(Ty *ty, bool *negp)
         if (*negp && first->target == NULL) {
                 Expr *not = mkxpr(PREFIX_BANG);
                 not->operand = first->e;
+                not->start = first->e->start;
+                not->end = first->e->end;
                 first->e = not;
                 *negp = false;
         }
@@ -6333,6 +6991,7 @@ parse_condparts(Ty *ty, bool *negp)
 
                 next();
 
+                Location kw = tok()->start;
                 bool not = have_kw(NOT);
                 if (not) {
                         next();
@@ -6347,6 +7006,8 @@ parse_condparts(Ty *ty, bool *negp)
                 if (not && part->target == NULL) {
                         Expr *not = mkxpr(PREFIX_BANG);
                         not->operand = part->e;
+                        not->start = kw;
+                        not->end = part->e->end;
                         part->e = not;
                 }
 
@@ -6452,6 +7113,8 @@ parse_match_statement(Ty *ty)
         if (vN(s->match.patterns) > vN(s->match.statements)) {
                 vN(s->match.patterns) = vN(s->match.statements);
         }
+
+        s->end = TEnd;
 
         return s;
 }
@@ -6591,6 +7254,8 @@ parse_return_statement(Ty *ty)
                 s->ret = parse_expr(ty, 0);
         }
 
+        s->end = TEnd;
+
         s = try_conditional_from(ty, s);
 
         try_consume(';');
@@ -6658,10 +7323,14 @@ parse_defer_statement(Ty *ty)
 
         s->expression = mkfunc(ty);
         s->expression->body = parse_statement(ty, -1);
+        s->expression->start = s->expression->body->start;
+        s->expression->end = s->expression->body->end;
 
         if (T0 == ';') {
                 next();
         }
+
+        s->end = TEnd;
 
         return s;
 }
@@ -6688,6 +7357,8 @@ parse_break_statement(Ty *ty)
         } else {
                 s->expression = NULL;
         }
+
+        s->end = TEnd;
 
         s = try_conditional_from(ty, s);
 
@@ -6720,8 +7391,9 @@ parse_continue_statement(Ty *ty)
 static Stmt *
 parse_null_statement(Ty *ty)
 {
+        Stmt *s = mkstmtx(NULL);
         consume(';');
-        return mkstmtx(NULL);
+        return s;
 }
 
 inline static bool
@@ -6804,6 +7476,7 @@ parse_expr(Ty *ty, int prec)
         if (have_without_nl(ty, '"')) {
                 Expr *ss = prefix_ss(ty);
                 ss->lang = e;
+                ss->start = e->start;
                 e = ss;
         }
 
@@ -6847,6 +7520,9 @@ parse_block(Ty *ty)
                 goto End;
         }
         while (!try_consume('}')) {
+                if (try_consume(TOKEN_COMMENT)) {
+                        continue;
+                }
                 InList = true;
                 Stmt *s = parse_statement(ty, -1);
                 s->end = TEnd;
@@ -6860,6 +7536,36 @@ End:
         block->end = TEnd;
 
         return block;
+}
+
+static int
+by_member_start(void const *a, void const *b)
+{
+        Expr const *x = *(Expr const **)a;
+        Expr const *y = *(Expr const **)b;
+
+        if (x->start.byte != y->start.byte) {
+                return (x->start.byte < y->start.byte) ? -1 : 1;
+        }
+
+        return 0;
+}
+
+static void
+order_members(Ty *ty, ClassDefinition *cd)
+{
+        ExprVec const *groups[] = {
+                &cd->methods,   &cd->getters,   &cd->setters,   &cd->fields,
+                &cd->s_methods, &cd->s_getters, &cd->s_setters, &cd->s_fields
+        };
+
+        v00(cd->members);
+
+        for (usize g = 0; g < countof(groups); ++g) {
+                avPv(cd->members, *groups[g]);
+        }
+
+        qsort(vv(cd->members), vN(cd->members), sizeof (Expr *), by_member_start);
 }
 
 static Stmt *
@@ -7024,6 +7730,7 @@ parse_class_definition(Ty *ty)
         /* Hack to allow comma-separated tag declarations */
         if ((def->type == STATEMENT_TAG_DEFINITION) && (T0 == ',')) {
                 Stmt *tags = mkstmtx(MULTI);
+                tags->start = def->start;
                 avP(tags->statements, def);
                 while (try_consume(',')) {
                         expect(TOKEN_IDENTIFIER);
@@ -7031,6 +7738,7 @@ parse_class_definition(Ty *ty)
                         next();
                 }
                 try_consume(';');
+                tags->end = TEnd;
                 return tags;
         }
 
@@ -7069,6 +7777,7 @@ parse_class_definition(Ty *ty)
 
                 parse_decorators(ty, &decorators, &macro_decorators);
 
+                Location start = tok()->start;
                 bool     dbg = try_consume(KEYWORD_DBG);
                 bool _static = try_consume(KEYWORD_STATIC);
                 bool     jit = try_consume(KEYWORD_JIT);
@@ -7076,7 +7785,6 @@ parse_class_definition(Ty *ty)
                 // ================/ :) /===
                 setctx(LEX_NAME);
                 char *name = tok()->identifier;
-                Location start = tok()->start;
                 if (name == NULL) {
                         die("expected a class member but found %s", token_show(ty, tok()));
                 }
@@ -7135,6 +7843,7 @@ parse_class_definition(Ty *ty)
                                 field->constraint = parse_type(ty, 1);
                                 LOAD_NE();
                         }
+                        field->end = TEnd;
                         if (T0 == TOKEN_EQ) {
                                 field = infix_eq(ty, field);
                         }
@@ -7218,6 +7927,8 @@ parse_class_definition(Ty *ty)
                         init->name = "init";
                         init->body = mkstmt(ty);
                         init->body->type = STATEMENT_BLOCK;
+                        SYNTH(init, TEnd);
+                        SYNTH(init->body, TEnd);
                         avP(def->tag.methods, init);
                 }
 
@@ -7246,9 +7957,15 @@ parse_class_definition(Ty *ty)
                         stmt->type = STATEMENT_EXPRESSION;
                         stmt->expression = assignment;
 
+                        SYNTH(assignment, TEnd);
+                        SYNTH(assignment->target, TEnd);
+                        SYNTH(stmt, TEnd);
+
                         avI(init->body->statements, stmt, i);
                 }
         }
+
+        order_members(ty, &def->tag);
 
         def->end = TEnd;
 
@@ -7325,12 +8042,22 @@ parse_use(Ty *ty)
 
                 try_consume('=');
 
+                Location brace = tok()->start;
+
                 unconsume(TOKEN_KEYWORD);
                 tok()->keyword = KEYWORD_MATCH;
 
                 stmt->value = prefix_match(ty);
                 stmt->value->ftype = FT_PATTERN;;
                 stmt->value->name = stmt->target->identifier;
+                stmt->end = TEnd;
+
+                Expr *f = stmt->value;
+                if (f->type == EXPRESSION_FUNCTION) {
+                        Expr *m = f->body->expression;
+                        f->start = f->body->start = m->start = brace;
+                        SYNTH(m->subject, brace);
+                }
 
                 return stmt;
         }
@@ -7404,9 +8131,11 @@ parse_catch(Ty *ty)
                 if (multi == NULL) {
                         multi = mkstmt(ty);
                         multi->type = STATEMENT_MULTI;
+                        multi->start = body->start;
                         avP(multi->statements, body);
                 }
                 avP(multi->statements, parse_statement(ty, 0));
+                multi->end = TEnd;
         }
 
         try->try.s = (multi != NULL) ? multi : body;
@@ -7427,6 +8156,8 @@ parse_try(Ty *ty)
                 s->try.s = mkstmtx(IF);
                 s->try.s->_if.neg = true;
                 s->try.s->_if.parts = parse_condparts(ty, &(bool){false});
+                s->try.s->end = TEnd;
+                SYNTHETIC(s->try.s);
 
                 while (have_kw(CATCH)) {
                         next();
@@ -7440,18 +8171,29 @@ parse_try(Ty *ty)
 
                 if (try_consume(KEYWORD_ELSE)) {
                         _else = parse_statement(ty, -1);
+                        s->try.s->_if.then = _else;
+                        s->try.s->end = _else->end;
                 } else {
                         _else = mkstmt(ty);
                         _else->type = STATEMENT_NULL;
+                        SYNTH(_else, TEnd);
+                        s->try.s->_if.then = mkstmtx(NULL);
+                        s->try.s->_if.then->start = s->try.s->end;
+                        s->try.s->_if.then->end = s->try.s->end;
                 }
 
-                s->try.s->_if.then  = _else;
                 s->try.s->_if._else = NULL;
 
-                avP(s->try.patterns, mkid("_"));
-                avP(s->try.handlers, _else);
+                Expr *any = mkid("_");
+                SYNTH(any, TEnd);
+
+                avP(s->try.patterns, any);
+                avP(s->try.handlers, CompilerSyntheticClone(ty, _else, TEnd));
 
                 s->try.finally = NULL;
+                s->end = TEnd;
+
+                record_sugar(ty, "try-else", s->start, s->end);
 
                 return s;
         }
@@ -7474,8 +8216,12 @@ parse_try(Ty *ty)
         }
 
         if (vN(s->try.patterns) == 0 && s->try.finally == NULL) {
-                avP(s->try.patterns, mkid("_"));
-                avP(s->try.handlers, mkstmtx(NULL));
+                Expr *any = mkid("_");
+                Stmt *nop = mkstmtx(NULL);
+                SYNTH(any, TEnd);
+                SYNTH(nop, TEnd);
+                avP(s->try.patterns, any);
+                avP(s->try.handlers, nop);
         }
 
         s->end = TEnd;
@@ -7753,11 +8499,16 @@ parse_statement(Ty *ty, int prec)
 
         parse_decorators(ty, &decorators, &macro_decorators);
 
+        Location start = tok()->start;
         bool pub = try_consume(KEYWORD_PUB);
 
         InList = item;
 
         Stmt *stmt = _parse_statement(ty, prec);
+
+        if (pub) {
+                stmt->start = start;
+        }
 
         if (vN(decorators) > 0) {
                 if (stmt->type != STATEMENT_FUNCTION_DEFINITION) {
@@ -7979,12 +8730,14 @@ parse_module(Ty *ty, Module *mod)
                 while (have_kw(NAMESPACE) || have_kws(PUB, NAMESPACE)) {
                         lex_need_nl(ty, true);
 
+                        Location kw = tok()->start;
                         bool pub = have_kw(PUB) && (next(), true);
 
                         next();
 
                         expect(TOKEN_IDENTIFIER);
                         Namespace *ns = PushNS(ty, tok()->identifier, tok(), pub);
+                        ns->start = kw;
                         next();
 
                         while (T0 == '.') {
@@ -7992,6 +8745,7 @@ parse_module(Ty *ty, Module *mod)
                                 expect(TOKEN_IDENTIFIER);
                                 PushNS(ty, tok()->identifier, tok(), true);
                                 CurrentNamespace->braced = false;
+                                CurrentNamespace->start = kw;
                                 next();
                         }
 
@@ -8029,6 +8783,7 @@ parse_module(Ty *ty, Module *mod)
                         break;
                 }
 
+                Location start = tok()->start;
                 bool dbg = try_consume(KEYWORD_DBG);
                 bool pub = try_consume(KEYWORD_PUB);
                 if (pub) {
@@ -8066,6 +8821,10 @@ parse_module(Ty *ty, Module *mod)
 
                 s->end = TEnd;
 
+                if (pub || dbg) {
+                        s->start = start;
+                }
+
                 if (pub) {
                         MakePublic(ty, s);
                 }
@@ -8077,7 +8836,10 @@ parse_module(Ty *ty, Module *mod)
                 SetNamespace(s, CurrentNamespace);
 
                 u32 flags = mod->flags;
+                u32 cflags = TyCompilerState(ty)->flags;
+                TyCompilerState(ty)->flags &= ~TYC_FORGIVING;
                 if (TY_CATCH_ERROR()) {
+                        TyCompilerState(ty)->flags = cflags;
                         TY_SUPPRESS("top-level definition");
                         mod->flags = flags;
                         UnresolveExpr(ty, (Expr *)s);
@@ -8087,6 +8849,7 @@ parse_module(Ty *ty, Module *mod)
                 } else {
                         define_top(ty, s, doc);
                         TY_CATCH_END();
+                        TyCompilerState(ty)->flags = cflags;
                 }
 
                 avP(program, s);
@@ -8100,11 +8863,11 @@ parse_module(Ty *ty, Module *mod)
                                 (CurrentNamespace != NULL)
                              && !CurrentNamespace->braced
                         ) {
-                                PopNS(ty);
+                                CloseNS(ty, TEnd);
                         }
                         if (CurrentNamespace != NULL) {
-                                PopNS(ty);
                                 next();
+                                CloseNS(ty, TEnd);
                         }
                 }
         }
@@ -8116,12 +8879,21 @@ Finally:
         cs->pscope = scope;
         cs->scopes = scopes;
 
+        for (Namespace *ns = CurrentNamespace; ns != NULL; ns = ns->next) {
+                ns->end = TEnd;
+                record_extra(ty, "Namespace", NULL, ns->start, ns->end);
+        }
+
         avP(program, NULL);
         mod->prog = vv(program);
 
         v00(mod->tokens);
         avR(mod->tokens, vN(TOKENS));
         avPv(mod->tokens, TOKENS);
+
+        if (HAVE_COMPILER_FLAG(SNAPSHOT)) {
+                syntax_snapshot(ty, mod);
+        }
 
         mod->last = state.last;
 
@@ -8222,6 +8994,7 @@ struct value
 parse_get_type(Ty *ty, int prec, bool resolve, bool want_raw)
 {
         int save = TokenIndex;
+        Location embedded = tok()->start;
 
         SAVE_NI(false);
         SAVE_NE(false);
@@ -8234,6 +9007,7 @@ parse_get_type(Ty *ty, int prec, bool resolve, bool want_raw)
                 seek(ty, save);
         } else {
                 e = parse_type(ty, prec);
+                record_embedded(ty, "type", embedded, TEnd, e);
                 if (!resolve) {
                         v = CToTyExpr(ty, e);
                 } else {
@@ -8259,6 +9033,7 @@ Value
 parse_get_expr(Ty *ty, int prec, bool resolve, bool want_raw)
 {
         int save = TokenIndex;
+        Location embedded = tok()->start;
 
         SAVE_NI(false);
         SAVE_NE(false);
@@ -8273,6 +9048,7 @@ parse_get_expr(Ty *ty, int prec, bool resolve, bool want_raw)
                 TY_RETHROW();
         } else {
                 e = parse_expr(ty, prec);
+                record_embedded(ty, "expr", embedded, TEnd, e);
                 if (!resolve) {
                         v = CToTyExpr(ty, e);
                 } else {
@@ -8298,6 +9074,7 @@ Value
 parse_get_stmt(Ty *ty, int prec, bool want_raw)
 {
         int save = TokenIndex;
+        Location embedded = tok()->start;
 
         SAVE_NI(false);
         SAVE_NE(false);
@@ -8311,6 +9088,10 @@ parse_get_stmt(Ty *ty, int prec, bool want_raw)
                 TY_RETHROW();
         } else {
                 Stmt *s = parse_statement(ty, prec);
+                if (s->end.byte < TEnd.byte) {
+                        s->end = TEnd;
+                }
+                record_embedded(ty, "stmt", embedded, TEnd, s);
                 if (want_raw) {
                         v = vT(2);
                         v.items[0] = PTR(s);
@@ -8539,3 +9320,26 @@ TyParserTokens(Ty *ty)
 }
 
 /* vim: set sts=8 sw=8 expandtab: */
+
+bool
+parse_mark_region(Ty *ty, char const *kind, u32 start, u32 end)
+{
+        Module *mod = state.module;
+
+        if (mod == NULL || mod->source == NULL) {
+                return false;
+        }
+
+        usize n = strlen(mod->source);
+
+        if (start >= end || end > n) {
+                return false;
+        }
+
+        Location a = { .s = mod->source + start, .byte = start };
+        Location b = { .s = mod->source + end,   .byte = end   };
+
+        record_extra(ty, "Region", sclonea(ty, kind), a, b);
+
+        return true;
+}

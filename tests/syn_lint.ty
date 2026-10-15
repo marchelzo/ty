@@ -1,0 +1,46 @@
+import syn
+import syn.lint as lint
+
+let SRC = "fn f(xs) \{   \n    let n = xs.len()\n    let z = g().len() // ty: allow(len-call)\n    let ys = xs.slice(1, 2)\n    return nil\n\}\n"
+
+pub fn default-rules-report() {
+    let ds = lint.check(syn.parse(SRC), lint.DEFAULT_RULES)
+    assert(ds.map(d -> (d.rule, d.line)) == [
+        ('trailing-whitespace', 1),
+        ('len-call', 2),
+        ('slice-call', 4),
+        ('return-nil', 5),
+    ], ds.map(str))
+}
+
+pub fn safe-fixes-apply-until-fixpoint() {
+    let out = lint.fix(SRC, lint.DEFAULT_RULES)
+    assert(out.source == "fn f(xs) \{\n    let n = #xs\n    let z = g().len() // ty: allow(len-call)\n    let ys = xs.slice(1, 2)\n\}\n", out.source)
+    assert(out.diagnostics.map(&.rule) == ['slice-call'])
+    let both = lint.fix(SRC, lint.DEFAULT_RULES, unsafe?=true)
+    assert('xs[1;3]' in both.source)
+}
+
+pub fn custom-rules-and-suppression() {
+    let no-print = lint.rule('no-print', n -> match n {
+        syn$$[ print(*$$args) $$] and #args > 0 => lint.diag(n, 'no print', lint.replace(n, "log({args.map(&.text).join(', ')})")),
+        _ => nil,
+    })
+    let src = "print(1)\nprint(2) // ty: allow(no-print)\n// ty: allow-next-line(no-print)\nprint(3)\nprint()\n"
+    let ds = lint.check(syn.parse(src), [no-print])
+    assert(ds.map(&.line) == [1])
+    assert(lint.fix(src, [no-print]).source.lines()[0] == 'log(1)')
+}
+
+pub fn conflicting-edits-are-deferred() {
+    let (out, rejected) = lint.apply('abcdef', [lint.Edit(0, 3, 'X'), lint.Edit(2, 4, 'Y'), lint.Edit(5, 6, 'Z')])
+    assert(out == 'XdeZ')
+    assert(#rejected == 1)
+}
+
+pub fn deletes-take-separators() {
+    let t = syn.parse('f(a, b, c)')
+    let b = t.nodes.find(\_.text == 'b') ?? t.root
+    let (out, _) = lint.apply('f(a, b, c)', lint.delete(b).edits)
+    assert(out == 'f(a, c)')
+}

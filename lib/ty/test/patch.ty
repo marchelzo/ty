@@ -33,9 +33,7 @@ pub class Patch {
     }
 
     restore() {
-        if __restored? {
-            return
-        }
+        return if __restored?
         __restored? = true
         (__undo)()
     }
@@ -51,9 +49,9 @@ pub class Patch {
 
 fn simple-place?(e: Any) -> Bool {
     match e {
-        ty.Id(_)                  => true,
-        ty.MemberAccess(obj, _)   => simple-place?(obj),
-        _                         => false,
+        ty.Id(_)                => true,
+        ty.MemberAccess(obj, _) => simple-place?(obj),
+        _                       => false,
     }
 }
 

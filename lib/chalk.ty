@@ -79,10 +79,10 @@ use match RGB {
 fn fit(text: String, width: Int) -> String {
     let out = Blob()
     let used = 0
-    for c in text.chars() {
-        break if used + c.width() > width
-        out.push(c)
-        used += c.width()
+    for text.chars() {
+        break if used + it.width() > width
+        out.push(it)
+        used += it.width()
     }
     out.str!()
 }
@@ -260,19 +260,19 @@ fn record-of(attrs: String, start: _ = {}) -> _ {
             bg-bright: nil
         },
 
-        1 => props = {*props, bold: 'b' },
-        3 => props = {*props, italic: 'i' },
-        4 => props = {*props, underline: 'u' },
-        7 => props = {*props, reverse: 'reverse' },
+        1               => props = {*props, bold: 'b' },
+        3               => props = {*props, italic: 'i' },
+        4               => props = {*props, underline: 'u' },
+        7               => props = {*props, reverse: 'reverse' },
 
-        22 => props = {*props, bold: false },
-        23 => props = {*props, italic: false },
-        24 => props = {*props, underline: false },
-        27 => props = {*props, reverse: false },
+        22              => props = {*props, bold: false },
+        23              => props = {*props, italic: false },
+        24              => props = {*props, underline: false },
+        27              => props = {*props, reverse: false },
 
-        39 => props = {*props, fg-bright: nil, fg: false },
-        49 => props = {*props, bg-bright: nil, bg: false },
-        59 => props = {*props, uc: false },
+        39              => props = {*props, fg-bright: nil, fg: false },
+        49              => props = {*props, bg-bright: nil, bg: false },
+        59              => props = {*props, uc: false },
 
         fg ::  31...39  => props = {*props, fg: name(fg - 30)},
         fg ::  91...99  => props = {*props, bright: 'bright', fg: name(fg - 90)},
@@ -280,7 +280,7 @@ fn record-of(attrs: String, start: _ = {}) -> _ {
         bg ::  41...49  => props = {*props, bg: "bg-{name(bg - 40)}"},
         bg :: 101...109 => props = {*props, bg-bright: 'bg-bright', bg: "bg-{name(bg - 100)}"},
 
-        _ => ()
+        _               => ()
     }
 
     props
@@ -382,13 +382,13 @@ pub class Text {
                     soft? = false
                 }
                 for word in piece.matches(/\S+\s*|\s+/) {
-                    for chunk in chunks(word, width) {
-                        if chunk.width() > room && rows[-1] {
+                    for chunks(word, width) {
+                        if it.width() > room && rows[-1] {
                             rows.push([])
                             room  = width
                             soft? = true
                         }
-                        let chunk = (rows[-1] || !soft?) ? chunk : chunk.comb(/^\s+/)
+                        let chunk = (rows[-1] || !soft?) ? it : it.comb(/^\s+/)
                         rows[-1].push((style, chunk))
                         room -= chunk.width()
                     }
@@ -526,7 +526,7 @@ fn parse-style(style: String, chalk: Chalk) -> TermStyle | nil {
 
         /^link=(.+)$/ => ({link: $1}),
 
-        _ => nil
+        _             => nil
     }
 }
 
@@ -566,13 +566,13 @@ pub fn trans(a: TermStyle, b: TermStyle) -> String {
 
     for key, val in b if a[key] != val {
         match key {
-            'fg' or 'bg' or 'uc'       => attrs.push(val.join(';')),
-            'underline' :: val != nil  => attrs.push(val.join(':')),
-            'bold'      :: val != nil  => attrs.push(1),
-            'dim'       :: val != nil  => attrs.push(2),
-            'italic'    :: val != nil  => attrs.push(3),
-            'reverse'   :: val != nil  => attrs.push(7),
-            _                          => ()
+            'fg' or 'bg' or 'uc'      => attrs.push(val.join(';')),
+            'underline' :: val != nil => attrs.push(val.join(':')),
+            'bold'      :: val != nil => attrs.push(1),
+            'dim'       :: val != nil => attrs.push(2),
+            'italic'    :: val != nil => attrs.push(3),
+            'reverse'   :: val != nil => attrs.push(7),
+            _                         => ()
         }
     }
 
@@ -745,8 +745,8 @@ pub fn strip(text: String) -> String {
 }
 
 pub fn hue-to-rgb(p: Float, q: Float, t: Float) -> Float {
-  if t < 0.0 { t += 1.0 }
-  if t > 1.0 { t -= 1.0 }
+  if t < 0.0   { t += 1.0 }
+  if t > 1.0   { t -= 1.0 }
   if t < 1.0/6 { return p + (q - p) * 6 * t }
   if t < 1.0/2 { return q }
   if t < 2.0/3 { return p + (q - p) * (2.0/3.0 - t) * 6.0 }

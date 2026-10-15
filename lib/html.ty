@@ -19,13 +19,13 @@ fn xpath-literal(s: String) -> String {
     }
 
     let parts = s.split("'")
-    let out = ""
+    let out = ''
 
-    for i in ..#parts {
-        if i > 0 {
+    for ..#parts {
+        if it > 0 {
             out = "{out},\"'\","
         }
-        out = "{out}'{parts[i]}'"
+        out = "{out}'{parts[it]}'"
     }
 
     "concat({out})"
@@ -54,7 +54,9 @@ fn parse-simple-selector(simple: String) -> String {
     let preds = []
 
     fn skip-ws() {
-        while i < n && is-space(chars[i]) { i += 1 }
+        while i < n && is-space(chars[i]) {
+            i += 1
+        }
     }
 
     while i < n {
@@ -106,20 +108,28 @@ fn parse-simple-selector(simple: String) -> String {
                         buf += chars[i]
                         i += 1
                     }
-                    if i < n && chars[i] == quote { i += 1 }
+                    if i < n && chars[i] == quote {
+                        i += 1
+                    }
                     val = buf
                 } else {
                     let buf = ''
                     while i < n && chars[i] != ']' {
-                        if !is-space(chars[i]) { buf += chars[i] }
+                        if !is-space(chars[i]) {
+                            buf += chars[i]
+                        }
                         i += 1
                     }
                     val = buf
                 }
             }
 
-            while i < n && chars[i] != ']' { i += 1 }
-            if i < n && chars[i] == ']' { i += 1 }
+            while i < n && chars[i] != ']' {
+                i += 1
+            }
+            if i < n && chars[i] == ']' {
+                i += 1
+            }
 
             if val != nil {
                 let v = val ?? ''
@@ -166,7 +176,9 @@ fn tokenize-selector(selector: String) -> Array[(String, String)] {
 
         if quote != '' {
             buf += ch
-            if ch == quote { quote = '' }
+            if ch == quote {
+                quote = ''
+            }
             continue
         }
 
@@ -222,7 +234,9 @@ fn split-groups(selector: String) -> Array[String] {
 
         if quote != '' {
             buf += ch
-            if ch == quote { quote = '' }
+            if ch == quote {
+                quote = ''
+            }
             i += 1
             continue
         }
@@ -250,7 +264,9 @@ fn split-groups(selector: String) -> Array[String] {
 
         if ch == ',' && depth == 0 {
             let part = buf.strip()
-            if part != '' { out.push(part) }
+            if part != '' {
+                out.push(part)
+            }
             buf = ''
             i += 1
             continue
@@ -261,14 +277,18 @@ fn split-groups(selector: String) -> Array[String] {
     }
 
     let tail = buf.strip()
-    if tail != '' { out.push(tail) }
+    if tail != '' {
+        out.push(tail)
+    }
 
     out
 }
 
 fn css-to-xpath(selector: String) -> String {
     let s = selector.strip()
-    if s == '' { return '' }
+    if s == '' {
+        return ''
+    }
 
     if s.starts?('/') || s.starts?('./') {
         return s
@@ -282,16 +302,16 @@ fn css-to-xpath(selector: String) -> String {
         if (#tokens == 1) && group.match?(/>/) {
             let parts = group.split('>').map(\_.strip()).filter(\_ != '')
             tokens = []
-            for i in ..#parts {
-                tokens.push(((i == 0) ? ' ' : '>', parts[i]))
+            for ..#parts {
+                tokens.push(((it == 0) ? ' ' : '>', parts[it]))
             }
         }
         let xp = ''
 
-        for i in ..#tokens {
-            let (comb, simple) = tokens[i]
+        for ..#tokens {
+            let (comb, simple) = tokens[it]
             let seg = parse-simple-selector(simple)
-            let axis = if i == 0 {
+            let axis = if it == 0 {
                 '//'
             } else if comb == '>' {
                 '/'
@@ -301,7 +321,9 @@ fn css-to-xpath(selector: String) -> String {
             xp = "{xp}{axis}{seg}"
         }
 
-        if xp != '' { xpaths.push(xp) }
+        if xp != '' {
+            xpaths.push(xp)
+        }
     }
 
     xpaths.join(' | ')
@@ -336,16 +358,18 @@ fn node-text(node: xml.XMLNode) -> String {
 
 fn parse-fragment(markup: String) -> xml.Document {
     let buf = Blob()
-    buf.push("<root>")
+    buf.push('<root>')
     buf.push(markup)
-    buf.push("</root>")
+    buf.push('</root>')
     buf.push(0)
     xml.parse(buf, nil, nil, xml.XML_PARSE_NOBLANKS)
 }
 
 fn is-descendant(node: xml.XMLNode, ancestor: xml.XMLNode, include-self: Bool = false) -> Bool {
     for let cur = include-self ? node : node.parent; cur != nil; cur = cur.parent {
-        if cur == ancestor { return true }
+        if cur == ancestor {
+            return true
+        }
     }
     false
 }
@@ -378,7 +402,9 @@ pub class Selection : Iterable[Element] {
     }
 
     attr(name: String) -> String | nil {
-        if let $t = first() { t[name] }
+        if let $t = first() {
+            t[name]
+        }
     }
 
     text() -> String {
@@ -489,20 +515,26 @@ pub class Element : Iterable[Element] {
     }
 
     parent -> ?Element {
-        if let $p = __node.parent { Element(__doc, p) }
+        if let $p = __node.parent {
+            Element(__doc, p)
+        }
     }
 
     next -> ?Element {
-        if let $p = __node.next { Element(__doc, p) }
+        if let $p = __node.next {
+            Element(__doc, p)
+        }
     }
 
     prev -> ?Element {
-        if let $p = __node.prev { Element(__doc, p) }
+        if let $p = __node.prev {
+            Element(__doc, p)
+        }
     }
 
     children* -> Generator[Element] {
-        for child in __node.children {
-            yield Element(__doc, child)
+        for __node.children {
+            yield Element(__doc, it)
         }
     }
 
@@ -525,7 +557,9 @@ pub class Element : Iterable[Element] {
 
     clear() {
         let kids = [*__node.children]
-        for child in kids { child.unlink() }
+        for kids {
+            it.unlink()
+        }
     }
 
     append-html(markup: String) {
@@ -536,9 +570,7 @@ pub class Element : Iterable[Element] {
     }
 
     unwrap() {
-        if __node.parent == nil {
-            return
-        }
+        return if __node.parent == nil
 
         for [*__node.children] {
             __node.addPrevSibling(it)

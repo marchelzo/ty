@@ -15,13 +15,14 @@ enum { T2_TYPE_INVALID = 0 };
 typedef struct t2_index_entry {
         u64 key;
         u32 value;
-        bool used;
+        u32 stamp;
 } T2IndexEntry;
 
 typedef struct t2_index {
         T2IndexEntry *entries;
         usize count;
         usize capacity;
+        u32 generation;
 } T2Index;
 
 bool

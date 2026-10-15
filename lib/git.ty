@@ -460,14 +460,14 @@ fn check(code: Int, operation: String = '') -> Int {
     }
     let category = e.?category ?? 0
     let error = match code {
-        -3      => NotFoundError,
-        -4      => ExistsError,
-        -5      => AmbiguousError,
-        -13     => ConflictError,
-        -24     => ConflictError,
-        -23     => ConflictError,
-        -16     => AuthenticationError,
-        _       => GitError,
+        -3  => NotFoundError,
+        -4  => ExistsError,
+        -5  => AmbiguousError,
+        -13 => ConflictError,
+        -24 => ConflictError,
+        -23 => ConflictError,
+        -16 => AuthenticationError,
+        _   => GitError,
     }
     throw error(message, code, category, operation)
 }
@@ -949,15 +949,15 @@ pub class GitObject < Handle : Iterable[TreeEntry] {
 
     __iter__*() -> Generator[TreeEntry] {
         let ^tree = __tree('iterate')
-        for i in ..tree.size {
-            yield tree-entry(repo, raw.git_tree_entry_byindex(tree.handle, i))
+        for ..tree.size {
+            yield tree-entry(repo, raw.git_tree_entry_byindex(tree.handle, it))
         }
     }
 
     walk*(prefix: String = '') -> Generator[TreeEntry] {
-        for entry in self {
-            entry.path = "{prefix}{entry.path}"
-            walk-entry(entry)
+        for self {
+            it.path = "{prefix}{it.path}"
+            walk-entry(it)
         }
     }
 
@@ -1065,8 +1065,8 @@ fn walk-entry(entry: TreeEntry) -> nil {
         return
     }
 
-    for leaf in entry.object.walk("{entry.path}/") {
-        yield leaf
+    for entry.object.walk("{entry.path}/") {
+        yield it
     }
 }
 
@@ -1160,8 +1160,8 @@ pub class References : Iterable[Reference] {
     contains?(name: String) -> Bool { name in names }
 
     __iter__*() -> Generator[Reference] {
-        for name in names {
-            yield self[name]
+        for names {
+            yield self[it]
         }
     }
 
@@ -1216,8 +1216,8 @@ pub class History : Iterable[Commit] {
         let revisions = [__tip(), *__hide.map(r -> "^{__repo[r].id.hex}")]
         let listed = cli(__repo, 'log', ['rev-list', *flags, '--stdin'], input: revisions.join('\n'))
         let ids = listed.scan(/[0-9a-f]{40}/)
-        for hex in (__reverse && __limit != nil) ? ids[;__limit] : ids {
-            yield __repo.commit-at(Oid(hex))
+        for (__reverse && __limit != nil) ? ids[;__limit] : ids {
+            yield __repo.commit-at(Oid(it))
         }
     }
 
@@ -1236,8 +1236,8 @@ pub class History : Iterable[Commit] {
             check(__repo[__start].id.with-native(raw.git_revwalk_push@(p, _)))
         }
 
-        for revision in __hide {
-            check(__repo[revision].id.with-native(raw.git_revwalk_hide@(p, _)))
+        for __hide {
+            check(__repo[it].id.with-native(raw.git_revwalk_hide@(p, _)))
         }
 
         let oid = raw.GitOid(c.auto(c.new(raw.GitOid.ctype())))
@@ -1295,21 +1295,21 @@ pub class Index < Handle : Iterable[IndexEntry] {
     }
 
     __iter__*() -> Generator[IndexEntry] {
-        for i in ..size {
-            yield index-entry(raw.git_index_get_byindex(self.handle, i))
+        for ..size {
+            yield index-entry(raw.git_index_get_byindex(self.handle, it))
         }
     }
 
     add(*paths: String | Path) -> Index {
-        for path in paths {
-            check(raw.git_index_add_bypath(self.handle, z(str(path))), "stage {path}")
+        for paths {
+            check(raw.git_index_add_bypath(self.handle, z(str(it))), "stage {it}")
         }
         self
     }
 
     remove(*paths: String | Path) -> Index {
-        for path in paths {
-            check(raw.git_index_remove_bypath(self.handle, z(str(path))), "unstage {path}")
+        for paths {
+            check(raw.git_index_remove_bypath(self.handle, z(str(it))), "unstage {it}")
         }
         self
     }
@@ -1507,8 +1507,8 @@ pub class Diff < Handle : Iterable[Delta] {
     }
 
     __iter__*() -> Generator[Delta] {
-        for i in ..size {
-            yield self[i]
+        for ..size {
+            yield self[it]
         }
     }
 
@@ -1776,8 +1776,8 @@ pub class Remotes : Iterable[Remote] {
     }
 
     __iter__*() -> Generator[Remote] {
-        for name in names {
-            yield self[name]
+        for names {
+            yield self[it]
         }
     }
 
@@ -2228,7 +2228,7 @@ pub class Repository < Handle {
             'soft'  => 1,
             'mixed' => 2,
             'hard'  => 3,
-            _      => throw ValueError("unknown reset mode: {mode}"),
+            _       => throw ValueError("unknown reset mode: {mode}"),
         }
         let object = self[target]
         check(raw.git_reset(self.handle, object.handle, kind, nil), 'reset')

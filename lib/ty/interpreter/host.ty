@@ -24,8 +24,8 @@ pub fn on-finish(f: () -> Any) {
 }
 
 pub fn finish() {
-    for f in finishers {
-        f()
+    for finishers {
+        it()
     }
 }
 

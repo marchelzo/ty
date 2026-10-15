@@ -120,7 +120,7 @@ pub class Printer {
         let want = s.width()
         let have = max(0, __width - __col)
 
-        let off = __color ? "\x1b[0m" : ''
+        let off = __color ? '\x1b[0m' : ''
 
         fn put(x: String) {
             __out.push(str((__color && style) ? chalk"[{style}]{x}[/]" : x))
@@ -174,7 +174,10 @@ pub class Printer {
                 write(open, color, force)
                 nl(1)
                 for x; i in xs {
-                    if i > 0 { write(',', nil, force); nl() }
+                    if i > 0 {
+                        write(',', nil, force)
+                        nl()
+                    }
                     go(x, true, force)
                 }
                 nl(-1)
@@ -219,7 +222,10 @@ pub class Printer {
                 write(open, delim-style, force)
                 nl(1)
                 for k, v; i in m {
-                    if i > 0 { write(',', nil, force); nl() }
+                    if i > 0 {
+                        write(',', nil, force)
+                        nl()
+                    }
                     write-key(k, true, force)
                     write(eq, delim-style, force)
                     go(v, true, force)
@@ -257,7 +263,7 @@ pub class Printer {
             %t(x) => {
                 write("{t}(", __colors.t, force)
                 go(x, canPush, force)
-                write(")", __colors.t, force)
+                write(')', __colors.t, force)
             },
 
             t :: Tuple => {
@@ -291,11 +297,11 @@ pub class Printer {
 
             Object({__pretty__: $f}) => {
                 for match f() {
-                    Print(x) => { go(x, canPush, force)   },
+                    Print(x) => { go(x, canPush, force)    },
                     Raw(x)   => { write("{x}", nil, force) },
-                    Push     => { nl(1)                   },
-                    Pop      => { nl(-1)                  },
-                    Newline  => { nl()                    }
+                    Push     => { nl(1)                    },
+                    Pop      => { nl(-1)                   },
+                    Newline  => { nl()                     }
                 }
             },
 

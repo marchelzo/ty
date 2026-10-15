@@ -113,6 +113,7 @@ extern char **environ;
 #include "object.h"
 #include "class.h"
 #include "compiler.h"
+#include "diag.h"
 #include "operators.h"
 #include "types2.h"
 #include "title.h"
@@ -9827,8 +9828,8 @@ make_location(Ty *ty, Location const *loc)
         );
 }
 
-Value
-make_token(Ty *ty, Token const *t)
+static Value
+token_record(Ty *ty, Token const *t)
 {
         char const *type = NULL;
         char const *tag  = NULL;
@@ -9936,6 +9937,18 @@ make_token(Ty *ty, Token const *t)
         case TOKEN_STAR_EQ:         type = "*=";   break;
         case TOKEN_WTF:             type = "??";   break;
         case TOKEN_XOR_EQ:          type = "^=";   break;
+        case TOKEN_DICT_OPEN:       type = "%{";   break;
+        case TOKEN_SET_OPEN:        type = "%[";   break;
+        case TOKEN_MAYBE_EQ:        type = "?=";   break;
+        case TOKEN_ELVIS:           type = "?:";   break;
+        case TOKEN_DYN_REGEX:       type = "dyn-regex"; break;
+        case TOKEN_EXPRESSION:      type = "expr"; break;
+
+        case TOKEN_ERROR:
+        case TOKEN_UNTERMINATED_REGEX:
+        case TOKEN_INVALID_REGEX_FLAGS:
+                type = "error";
+                break;
 
         case TOKEN_TEMPLATE_BEGIN:
                 type = "$$[";
@@ -9981,24 +9994,46 @@ make_token(Ty *ty, Token const *t)
 
 #undef T
 
-        int tlen;
-        if (type == NULL) {
-                char const *charset = "[](){}<>;:.,?`~=!@#$%^&*/()-_~+|\"\\\n";
-                if ((type = strchr(charset, t->type)) == NULL) {
-                        tlen = 0;
-                } else {
-                        tlen = 1;
-                }
+        char c = t->type;
+        Value kind;
+        if (type != NULL) {
+                kind = xSs(type, strlen(type));
+        } else if (t->type > 0 && t->type < 0x80) {
+                kind = vSs(&c, 1);
         } else {
-                tlen = strlen(type);
+                kind = xSs("?", 1);
         }
 
         return vTn(
-                "type",   xSs(type, tlen),
+                "type",   kind,
                 "meta",   meta,
                 "start",  start,
                 "end",    end
         );
+}
+
+Value
+make_token(Ty *ty, Token const *t)
+{
+        Value token = token_record(ty, t);
+        bool hidden = (t->ctx == LEX_HIDDEN);
+
+        if ((!hidden && !t->pp) || token.type != VALUE_TUPLE) {
+                return token;
+        }
+
+        int n = token.count;
+        Value flagged = value_record(ty, n + 2);
+
+        memcpy(flagged.items, token.items, n * sizeof (Value));
+        memcpy(flagged.ids,   token.ids,   n * sizeof (i32));
+
+        flagged.items[n]     = BOOLEAN(hidden);
+        flagged.ids[n]       = M_ID("hidden");
+        flagged.items[n + 1] = BOOLEAN(t->pp);
+        flagged.ids[n + 1]   = M_ID("pp");
+
+        return flagged;
 }
 
 static Value
@@ -10655,8 +10690,29 @@ TY_BUILTIN_RAW(ty_mod_source)
         return vSsz(mod->source);
 }
 
+static void
+AddRecords(Ty *ty, Array *out, Value const *exc)
+{
+        if (exc->type == VALUE_NIL) {
+                return;
+        }
+
+        Value records = TyErrorRecords(ty, exc);
+
+        for (usize j = 0; j < vN(*records.array); ++j) {
+                Value const *record = v_(*records.array, j);
+                bool seen = false;
+                for (usize k = 0; !seen && k < vN(*out); ++k) {
+                        seen = value_test_equality(ty, v_(*out, k), record);
+                }
+                if (!seen) {
+                        vAp(out, *record);
+                }
+        }
+}
+
 static Value
-ParseSource(Ty *ty, Value input, Scope *scope, u32 flags)
+ParseSource(Ty *ty, Value input, Value path, Scope *scope, u32 flags, Value diagnostics)
 {
         Bytes bytes = (input.type == VALUE_STRING)
                     ? s_bytes(input)
@@ -10671,17 +10727,52 @@ ParseSource(Ty *ty, Value input, Scope *scope, u32 flags)
         memcpy(source + 1, bytes.data, bytes.length);
         source[bytes.length + 1] = '\0';
 
-        TYPES_OFF += 1;
+        bool typed = !(flags & TYC_NO_TYPES);
+        bool allow = AllowErrors;
+        u32 fatal = typed ? MOD_PARSE_ERR : (MOD_PARSE_ERR | MOD_COMPILE_ERR | MOD_TYPE_ERR);
 
-        Module *mod = TyCompileSource(
+        TYPES_OFF += !typed;
+        AllowErrors = allow || typed;
+
+        __typeof__(ty->sinks) sinks = ty->sinks;
+        ValueVector saved = ty->diags;
+        i32 depth = EVAL_DEPTH;
+
+        if (typed) {
+                v00(ty->sinks);
+                v00(ty->diags);
+                EVAL_DEPTH = 0;
+        }
+
+        Module *mod = TyCompileSourceAt(
                 ty,
                 source + 1,
+                (path.type == VALUE_STRING) ? sclonea(ty, TY_TMP_C_STR(path)) : "(tmp)",
                 scope,
                 flags
         );
         mod->arena = ty->arena;
 
-        if (mod->flags & (MOD_PARSE_ERR | MOD_COMPILE_ERR | MOD_TYPE_ERR)) {
+        AllowErrors = allow;
+
+        if (typed && diagnostics.type == VALUE_ARRAY) {
+                for (usize i = 0; i < vN(ty->diags); ++i) {
+                        AddRecords(ty, diagnostics.array, v_(ty->diags, i));
+                }
+                if (mod->flags & (MOD_COMPILE_ERR | MOD_TYPE_ERR)) {
+                        AddRecords(ty, diagnostics.array, &ty->error);
+                }
+        }
+
+        if (typed) {
+                xvF(ty->sinks);
+                xvF(ty->diags);
+                ty->sinks = sinks;
+                ty->diags = saved;
+                EVAL_DEPTH = depth;
+        }
+
+        if (mod->flags & fatal) {
                 Value last = NIL;
                 if (mod->last != NULL) {
                         last = PTR(mod->last);
@@ -10697,7 +10788,7 @@ ParseSource(Ty *ty, Value input, Scope *scope, u32 flags)
                 result = Ok(ty, MODULE(mod));
         }
 
-        TYPES_OFF -= 1;
+        TYPES_OFF -= !typed;
         ReleaseArena(old);
         GC_RESUME();
 
@@ -10708,14 +10799,18 @@ ParseSource(Ty *ty, Value input, Scope *scope, u32 flags)
 //     source: prelude.String | Blob,
 //     deep: prelude.Bool = false,
 //     resolve: prelude.Bool = false,
-//     scope: Ptr[_] = nil
+//     types: prelude.Bool = false,
+//     diagnostics: prelude.Array[_] | nil = nil,
+//     scope: Ptr[_] = nil,
+//     path: prelude.String | nil = nil
 // ) -> Err[ParseFailure] | Ok[Module]
 //
 // ty/parse.source(
 //     source: String | Blob,
 //     deep: Bool = false,
 //     resolve: Bool = false,
-//     scope: Ptr[_] = nil
+//     scope: Ptr[_] = nil,
+//     path: String | nil = nil
 // ) -> Err[ParseFailure] | Ok[Module]
 TY_BUILTIN_RAW(ty_parse)
 {
@@ -10723,17 +10818,35 @@ TY_BUILTIN_RAW(ty_parse)
 
         Value input = ARGx(0, VALUE_STRING, VALUE_BLOB);
         Value scope = KWARG("scope", PTR);
-        u32 flags = (
+        Value path  = KWARG("path", STRING, _NIL);
+        Value diags = KWARG("diagnostics", ARRAY, _NIL);
+        bool typed  = HAVE_FLAG("types");
+        u32 flags = typed ? (
+                TYC_RESOLVE
+              | TYC_FORGIVING
+              | TYC_TOKENS
+              | TYC_FIDELITY
+              | TYC_SNAPSHOT
+        ) : (
                 TYC_PARSE
               | TYC_IMPORT_ALL
               | TYC_FORGIVING
               | TYC_NO_TYPES
               | TYC_TOKENS
+              | TYC_FIDELITY
+              | TYC_SNAPSHOT
               | (TYC_SHALLOW * !HAVE_FLAG("deep"))
               | (TYC_RESOLVE * HAVE_FLAG("resolve"))
         );
 
-        return ParseSource(ty, input, IsMissing(scope) ? NULL : scope.ptr, flags);
+        return ParseSource(
+                ty,
+                input,
+                path,
+                IsMissing(scope) ? NULL : scope.ptr,
+                flags,
+                IsMissing(diags) ? NIL : diags
+        );
 }
 
 // ty.same?(a: prelude.Any, b: prelude.Any) -> prelude.Bool
@@ -11538,7 +11651,7 @@ TY_BUILTIN_RAW(parse_expr)
                       | TYC_TOKENS
                       | (TYC_RESOLVE * HAVE_FLAG("resolve"))
                 );
-                Value parsed = ParseSource(ty, ARG(0), parent, flags);
+                Value parsed = ParseSource(ty, ARG(0), NIL, parent, flags, NIL);
                 if (tags_first(ty, parsed.tags) == TAG_ERR) {
                         vmE(&parsed);
                 }

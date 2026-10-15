@@ -1,0 +1,109 @@
+import syn
+import syn.lint as lint (Diag, Rule)
+import syn.style as style
+import syn.fmt as sf
+import ty.mod as tmod
+import path (Path)
+
+pub STYLE_RULES = style.RULES
+
+pub ALL_RULES = [*lint.DEFAULT_RULES, *lint.SEMANTIC_RULES, *style.RULES]
+
+pub FIRST_PASS_RULES = style.FIRST_PASS_RULES
+
+pub class Result {
+    source:      String
+    fixed:       Int
+    passes:      Int
+    converged?:  Bool
+    diagnostics: Array[Diag]
+    error:       String | nil
+
+    init(
+        source: String,
+        fixed: Int,
+        passes: Int,
+        converged: Bool,
+        diagnostics: Array[Diag],
+        error: String | nil
+    ) {
+        self.source = source
+        self.fixed = fixed
+        self.passes = passes
+        self.converged? = converged
+        self.diagnostics = diagnostics
+        self.error = error
+    }
+}
+
+fn prelude?(path: String | nil) -> Bool {
+    let $p = path or return false
+    let home = [tmod.path(m) for m in tmod.list() if tmod.name(m) == 'prelude']
+    str(Path(p).absolute) in home
+}
+
+fn pass(
+    source: String,
+    path: String | nil,
+    plain: Array[Rule],
+    typed: Array[Rule],
+    format?: Bool,
+    observe: Function | nil
+) -> (String, Int) {
+    let a = lint.fix(
+        source,
+        plain,
+        path=path,
+        max-rounds=40,
+        semantic=false,
+        observe=observe
+    )
+    let b = (#typed == 0) ? a : lint.fix(
+        a.source,
+        typed,
+        path=path,
+        max-rounds=40,
+        semantic=true,
+        observe=observe
+    )
+    let fixed = (#typed == 0) ? a.fixed : a.fixed + b.fixed
+    return (b.source, fixed) if !format?
+    let out = sf.format(b.source, path=path, mode='tidy', deep=true)
+    if observe != nil && out != b.source {
+        observe(b.source, out)
+    }
+    (out, fixed)
+}
+
+pub fn run(
+    source: String,
+    path: String | nil = nil,
+    rules: Array[Rule] = ALL_RULES,
+    format: Bool = true,
+    max-passes: Int = 8,
+    observe: Function | nil = nil
+) -> Result {
+    let first = syn.parse(source, path=path, deep=true, resolve=true)
+    if let $err = first.error {
+        return Result(source, 0, 0, true, [], err)
+    }
+    let semantic? = !prelude?(path)
+    let plain = rules.filter(\!_.typed?)
+    let typed = semantic? ? rules.filter(&.typed?) : []
+    let current = source
+    let fixed = 0
+    let passes = 0
+    let converged? = false
+    while passes < max-passes {
+        let (next, n) = pass(current, path, plain, typed, format, observe)
+        passes += 1
+        fixed += n
+        if next == current {
+            converged? = true
+            break
+        }
+        current = next
+    }
+    let tree = syn.parse(current, path=path, deep=true, resolve=true, semantic=semantic?)
+    Result(current, fixed, passes, converged?, lint.check(tree, rules), nil)
+}

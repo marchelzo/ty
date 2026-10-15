@@ -391,21 +391,21 @@ pub fn render-file-error(
         if #body > 0 {
             out.push(render.paint("  {title}", 'dim', color?))
         }
-        for line in body {
-            out.push("    {line}")
+        for body {
+            out.push("    {it}")
         }
     }
-    out.join("\n")
+    out.join('\n')
 }
 
 fn warning-site(w: Event) -> String {
     let file = get-str(w, 'file')
     let line = get-int(w, 'line')
     match (get-str(w, 'id'), file, line) {
-        ($id, _, _)   => id,
-        (_, $f, $l)   => "{f}:{l}",
-        (_, $f, _)    => f,
-        _             => '(run)',
+        ($id, _, _) => id,
+        (_, $f, $l) => "{f}:{l}",
+        (_, $f, _)  => f,
+        _           => '(run)',
     }
 }
 
@@ -415,7 +415,7 @@ pub fn render-warnings(ws: Array[Event]) -> String {
         let code = get-str(it, 'code') ?? 'warning'
         out.push("  {warning-site(it)}: {code}: {get-str(it, 'message')}")
     }
-    out.join("\n")
+    out.join('\n')
 }
 
 pub fn render-tail(tally: Tally, color?: Bool = false, width: Int = 80) -> String {
@@ -437,7 +437,7 @@ pub fn render-tail(tally: Tally, color?: Bool = false, width: Int = 80) -> Strin
         blocks.push(render-warnings(tally.sorted-warnings()))
     }
     let summary = tally.summary(color?, width)
-    (#blocks == 0) ? "{summary}\n" : "\n{blocks.join("\n\n")}\n{summary}\n"
+    (#blocks == 0) ? "{summary}\n" : "\n{blocks.join('\n\n')}\n{summary}\n"
 }
 
 pub class Pretty < Reporter {
@@ -504,15 +504,13 @@ pub class Pretty < Reporter {
 
     clear-live() {
         if #__live > 0 {
-            __write("\r\x1b[K")
+            __write('\r\x1b[K')
             __live = ''
         }
     }
 
     header(ev: Event) {
-        if __tally.file-mode? {
-            return
-        }
+        return if __tally.file-mode?
         let info = get-event(ev, 'ty')
         let plat = [get-str(info, 'platform'), get-str(info, 'arch')].filter(\_ != nil)
         let jit? = (info ?? %{})['jit'] != false
@@ -527,9 +525,7 @@ pub class Pretty < Reporter {
     }
 
     collected(ev: Event) {
-        if !__tally.file-mode? {
-            return
-        }
+        return if !__tally.file-mode?
         for get-events(ev, 'tests') {
             let name = render.display-name(__tally.id-of(it))
             __name-w = max(__name-w, render.width(name))
@@ -545,9 +541,7 @@ pub class Pretty < Reporter {
             progress()
             return
         }
-        if __quiet? && render.outcome-of(ev) == 'pass' {
-            return
-        }
+        return if __quiet? && render.outcome-of(ev) == 'pass'
         out(test-line(ev))
     }
 
@@ -620,15 +614,11 @@ pub class Pretty < Reporter {
     }
 
     flush(all?: Bool = false) {
-        if __tally.file-mode? {
-            return
-        }
-        for r in __tally.rows {
-            if r.printed? {
-                continue
-            }
-            if r.done? || all? {
-                emit-row(r)
+        return if __tally.file-mode?
+        for __tally.rows {
+            continue if it.printed?
+            if it.done? || all? {
+                emit-row(it)
             } else if !__tty? {
                 break
             }
@@ -637,9 +627,7 @@ pub class Pretty < Reporter {
     }
 
     progress() {
-        if !__tty? || __tally.file-mode? {
-            return
-        }
+        return if !__tty? || __tally.file-mode?
         let running = __tally.rows.filter(r -> !r.done?).map(&.path)
         if #running == 0 {
             clear-live()
@@ -694,12 +682,10 @@ pub class Dot < Reporter {
 
     on(ev: Event) {
         __tally.on(ev)
-        if get-str(ev, 'ev') != 'test-end' {
-            return
-        }
+        return if get-str(ev, 'ev') != 'test-end'
         let outcome = render.outcome-of(ev)
         if __col >= __width {
-            __write("\n")
+            __write('\n')
             __col = 0
         }
         __write(render.paint(DOTS[outcome] ?? '?', outcome, __color?))
@@ -708,7 +694,7 @@ pub class Dot < Reporter {
 
     done() {
         if __col > 0 {
-            __write("\n")
+            __write('\n')
         }
         __write(render-tail(__tally, color?: __color?, width: __width))
     }

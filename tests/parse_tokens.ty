@@ -1,0 +1,52 @@
+import ty
+
+fn tokens(source: String) -> Array[Token] {
+    match ty.parse(source) {
+        Ok(mod) => mod.tokens,
+        Err(e)  => throw AssertionError(str(e.msg)),
+    }
+}
+
+fn kinds(source: String) -> Array[String] {
+    [it.type for tokens(source)]
+}
+
+pub fn every-token-kind-has-a-name() {
+    assert(kinds('let d = %{1: 2}') == ['let', 'id', '=', '%{', 'int', ':', 'int', '}'])
+    assert(kinds('let s = %[1]') == ['let', 'id', '=', '%[', 'int', ']'])
+    assert(kinds('x ?= 1') == ['id', '?=', 'int'])
+    assert('' not in kinds("let x = [1, 2, 3].map(\\_ * 2) ?? nil"))
+}
+
+pub fn directive-tokens-are-flagged() {
+    let ts = tokens("#|if 1 == 1\nlet x = 1\n#|]\nlet y = 2\n")
+    let hidden = [it for ts if it.?hidden ?? false]
+    let live = [it for ts if !(it.?hidden ?? false)]
+    assert(#hidden > 0)
+    assert(hidden.all?(\_.?pp ?? false))
+    assert([it.type for live] == ['let', 'id', '=', 'int', 'let', 'id', '=', 'int'])
+}
+
+pub fn byte-order-mark-is-skipped() {
+    let ts = tokens("\ufefflet x = 1")
+    assert(ts[0].type == 'let')
+    assert(ts[0].start.byte == 3)
+}
+
+pub fn doc-comments-in-function-bodies() {
+    let source = "fn f() \{\n    /// doc\n    let y = 1\n    /** more */\n    y\n    /// tail\n\}\n"
+    assert(ty.parse(source) :: Ok)
+}
+
+pub fn indexed-loop-over-escaped-string() {
+    let seen = []
+    for c; i in str("a\nb") {
+        seen.push((c, i))
+    }
+    assert(seen == [('a', 0), ('\n', 1), ('b', 2)])
+}
+
+pub fn directives-only-start-lines() {
+    assert(ty.parse('print("#|if 1")') :: Ok)
+    assert(kinds('let s = "#|if x"')[-1] == '"')
+}

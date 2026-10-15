@@ -1,0 +1,58 @@
+import ty
+import ty.lex as lex
+import ty.syntax
+import syn
+
+pub macro raw! {
+    while lex.peekc() in [' ', '\t'] {
+        lex.getc()
+    }
+    assert(lex.getc() == '{')
+    let start = lex.state().position.byte
+    let text = Blob()
+    while lex.peekc() not in ['}', nil] {
+        text.push(lex.getc())
+    }
+    let end = lex.state().position.byte
+    lex.getc()
+    ty.syntax.mark('raw-text', start, end)
+    ty.String(text.str())
+}
+
+pub macro table! {
+    while lex.peekc() in [' ', '\t'] {
+        lex.getc()
+    }
+    assert(lex.getc() == '{')
+    let start = lex.state().position.byte
+    let text = Blob()
+    while lex.peekc() not in ['}', nil] {
+        text.push(lex.getc())
+    }
+    let end = lex.state().position.byte
+    lex.getc()
+    ty.syntax.mark('table', start, end)
+    let rows = [
+        ty.ArrayItem(item: ty.String(line.strip()))
+        for line in text.str().split('\n')
+        if line.strip() != ''
+    ]
+    ty.Array(rows)
+}
+
+fn format-table(text: String, ctx: syn.RegionContext) -> String | nil {
+    let rows = [line.split('|').map(\_.strip()) for line in text.split('\n') if line.strip() != '']
+    if #rows == 0 {
+        return nil
+    }
+    let cols = rows.map(\#_).max() ?? 0
+    let widths = [rows.map(r -> (i < #r) ? r[i].size() : 0).max() ?? 0 for i in ..cols]
+    let pad = ctx.indent + '    '
+    let lines = [
+        pad + [cell + ' ' * (widths[i] - cell.size()) for cell; i in row].join(' | ').sub(/\s+$/, '')
+        for row in rows
+    ]
+    "\n{lines.join('\n')}\n{ctx.indent}"
+}
+
+syn.register-formatter('table', format-table)

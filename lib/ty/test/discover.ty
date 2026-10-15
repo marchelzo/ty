@@ -36,7 +36,7 @@ pub fn display(abs: String) -> String {
 }
 
 pub fn parent-of(p: String) -> String {
-    match p.sub(/\/[^\/]*$/, '') {
+    match p.comb(/\/[^\/]*$/) {
         '' => '/',
         d  => d,
     }
@@ -48,7 +48,7 @@ fn regular-file(p: String) -> ?String {
 }
 
 pub fn parse-target(raw: String) -> Target | String {
-    let p = match raw.sub(/\/+$/, '') {
+    let p = match raw.comb(/\/+$/) {
         '' => '/',
         s  => s,
     }
@@ -94,12 +94,12 @@ pub fn dir-name-ok?(name: String) -> Bool {
 fn listing(dir: String) -> (Array[String], Array[String]) {
     let files: Array[String] = []
     let dirs: Array[String] = []
-    for name in os.listdir(dir).sort() {
-        let p = Path("{dir}/{name}")
+    for os.listdir(dir).sort() {
+        let p = Path("{dir}/{it}")
         if p.dir? {
-            dirs.push(name)
+            dirs.push(it)
         } else if p.file? {
-            files.push(name)
+            files.push(it)
         }
     }
     (files, dirs)
@@ -159,14 +159,12 @@ pub class Planner {
 
     ensure(dirs: Array[String]) {
         let todo: Array[String] = []
-        for d in dirs {
-            if __confs[d] == nil && !(d in todo) {
-                todo.push(d)
+        for dirs {
+            if __confs[it] == nil && !(it in todo) {
+                todo.push(it)
             }
         }
-        if #todo == 0 {
-            return
-        }
+        return if #todo == 0
         for d, c in dirconf.probe(todo, self.cmd, __stop?) {
             __confs[d] = c
             for c.scripts {
@@ -264,11 +262,9 @@ pub class Planner {
 
     add(t: Target) {
         let dir = t.dir? ? t.abs : parent-of(t.abs)
-        for d in chain(dir) {
-            ensure([d])
-            if blocked?(eff-of(d), explicit?: true) {
-                return
-            }
+        for chain(dir) {
+            ensure([it])
+            return if blocked?(eff-of(it), explicit?: true)
         }
         if t.dir? {
             walk(t.abs)
@@ -286,8 +282,8 @@ pub class Planner {
             }
             ensure(frontier)
             let next: Array[String] = []
-            for d in frontier {
-                next += visit(d, top)
+            for frontier {
+                next += visit(it, top)
             }
             frontier = next
         }
@@ -303,9 +299,9 @@ pub class Planner {
             return []
         }
         let (files, dirs) = listing(d)
-        for f in files {
-            let abs = "{d}/{f}"
-            if test-name?(f) && !e.excluded?(abs) {
+        for files {
+            let abs = "{d}/{it}"
+            if test-name?(it) && !e.excluded?(abs) {
                 add-file(abs, e, nil)
             }
         }
@@ -316,9 +312,9 @@ pub class Planner {
             }
         }
         let subs: Array[String] = []
-        for name in dirs {
-            let abs = "{d}/{name}"
-            if dir-name-ok?(name) && !e.excluded?(abs) {
+        for dirs {
+            let abs = "{d}/{it}"
+            if dir-name-ok?(it) && !e.excluded?(abs) {
                 subs.push(abs)
             }
         }

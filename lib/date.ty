@@ -9,13 +9,17 @@ fn __days-in-month(year: Int, month: Int) -> Int {
     match month {
         1, 3, 5, 7, 8, 10, 12 => 31,
         4, 6, 9, 11           => 30,
-        2                     => if __is-leap-year(year) { 29 } else { 28 },
+        2                     => __is-leap-year(year) ? 29 : 28,
         _                     => throw ValueError("invalid month: {month}")
     }
 }
 
 fn __days-in-year(y: Int) -> Int {
-    if __is-leap-year(y) { 366 } else { 365 }
+    if __is-leap-year(y) {
+        366
+    } else {
+        365
+    }
 }
 
 fn __validate-date(year: Int, month: Int, day: Int) {
@@ -51,15 +55,15 @@ fn __date-to-epoch-days(year: Int, month: Int, day: Int) -> Int {
 /* Convert epoch days back to (year, month, day) */
 fn __epoch-days-to-date(z: Int) -> (Int, Int, Int) {
     let z = z + 719468
-    let era = (if z >= 0 { z } else { z - 146096 }) / 146097
+    let era = (z >= 0 ? z : z - 146096) / 146097
     let doe = z - era * 146097
     let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
     let y = yoe + era * 400
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
     let mp = (5 * doy + 2) / 153
     let d = doy - (153 * mp + 2) / 5 + 1
-    let m = mp + (if mp < 10 { 3 } else { -9 })
-    (y + (if m <= 2 { 1 } else { 0 }), m, d)
+    let m = mp + (mp < 10 ? 3 : -9)
+    (y + (m <= 2 ? 1 : 0), m, d)
 }
 
 fn __day-of-week(year: Int, month: Int, day: Int) -> Int {
@@ -73,7 +77,9 @@ fn __day-of-week(year: Int, month: Int, day: Int) -> Int {
 fn __day-of-year(year: Int, month: Int, day: Int) -> Int {
     let days = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
     let d = days[month - 1] + day
-    if month > 2 && __is-leap-year(year) { d += 1 }
+    if month > 2 && __is-leap-year(year) {
+        d += 1
+    }
     d
 }
 
@@ -97,15 +103,15 @@ fn __year-of-week(year: Int, month: Int, day: Int) -> Int {
     let week = (doy - dow + 10) / 7
     if week < 1 { year - 1 }
     else if week > __weeks-in-week-year(year) { year + 1 }
-    else { year }
+    else                                      { year     }
 }
 
 fn __pad2(n: Int) -> String { "{n:02}" }
 fn __pad3(n: Int) -> String { "{n:03}" }
 fn __pad4(n: Int) -> String {
     if n >= 0 && n <= 9999 { "{n:04}" }
-    else if n >= 0 { "+{n:06}" }
-    else { "-{(-n):06}" }
+    else if n >= 0 { "+{n:06}"    }
+    else           { "-{(-n):06}" }
 }
 
 fn __parse-int(s: String) -> Int {
@@ -129,18 +135,29 @@ fn __round-nanos(nanos: Int, unit-ns: Int, mode: String) -> Int {
         'halfExpand' => {
             let half = unit-ns / 2
             let rem = nanos % unit-ns
-            if rem < 0 { rem += unit-ns; nanos -= unit-ns }
-            if rem >= half { nanos - rem + unit-ns } else { nanos - rem }
+            if rem < 0 {
+                rem += unit-ns
+                nanos -= unit-ns
+            }
+            if rem >= half {
+                nanos - rem + unit-ns
+            } else {
+                nanos - rem
+            }
         },
         'ceil'  => {
             let rem = nanos % unit-ns
             if rem > 0 { nanos - rem + unit-ns }
             else if rem < 0 { nanos - rem }
-            else { nanos }
+            else            { nanos       }
         },
         'floor' => {
             let rem = nanos % unit-ns
-            if rem < 0 { nanos - rem - unit-ns } else { nanos - rem }
+            if rem < 0 {
+                nanos - rem - unit-ns
+            } else {
+                nanos - rem
+            }
         },
         'trunc' => {
             nanos - (nanos % unit-ns)
@@ -192,17 +209,19 @@ fn __parse-duration-string(s: String) -> Duration {
         match c {
             'Y', 'y' => { years = __parse-int(num-str) },
             'W', 'w' => { weeks = __parse-int(num-str) },
-            'D', 'd' => { days = __parse-int(num-str) },
+            'D', 'd' => { days = __parse-int(num-str)  },
             'H', 'h' => { hours = __parse-int(num-str) },
             'M', 'm' => {
                 if in-time { minutes = __parse-int(num-str) }
-                else { months = __parse-int(num-str) }
+                else       { months = __parse-int(num-str)  }
             },
             'S', 's' => {
                 if let $dot = num-str.search('.') {
                     seconds = __parse-int(num-str[;dot])
                     let frac = num-str[dot + 1;]
-                    while #frac < 9 { frac += '0' }
+                    while #frac < 9 {
+                        frac += '0'
+                    }
                     frac = frac[;9]
                     let frac-ns = __parse-int(frac)
                     milliseconds = frac-ns / 1000000
@@ -223,7 +242,11 @@ fn __parse-duration-string(s: String) -> Duration {
         milliseconds=milliseconds, microseconds=microseconds,
         nanoseconds=nanoseconds
     )
-    if neg { d.negated() } else { d }
+    if neg {
+        d.negated()
+    } else {
+        d
+    }
 }
 
 /* ============================================================================
@@ -278,7 +301,9 @@ fn __parse-time-part(s: String) -> (Int, Int, Int, Int) {
     if let $dot = str.search('.') {
         main = str[;dot]
         let frac-str = str[dot + 1;]
-        while #frac-str < 9 { frac-str += '0' }
+        while #frac-str < 9 {
+            frac-str += '0'
+        }
         frac-str = frac-str[;9]
         frac-ns = __parse-int(frac-str)
     }
@@ -289,8 +314,8 @@ fn __parse-time-part(s: String) -> (Int, Int, Int, Int) {
     if #parts >= 3 { second = __parse-int(parts[2].trim()) }
 
     /* Apply am/pm */
-    if is-pm && hour < 12 { hour += 12 }
-    if is-am && hour == 12 { hour = 0 }
+    if is-pm && hour < 12  { hour += 12 }
+    if is-am && hour == 12 { hour = 0   }
 
     (hour, minute, second == 60 ? 59 : second, frac-ns)
 }
@@ -312,8 +337,8 @@ pub fn parse(input: String) -> PlainDateTime {
         /* >1e12 → milliseconds, >1e15 → microseconds, >1e18 → nanoseconds */
         let nanos = if n.abs > 1000000000000000000 { n }
                     else if n.abs > 1000000000000000 { n * 1000 }
-                    else if n.abs > 1000000000000 { n * 1000000 }
-                    else { n * 1000000000 }
+                    else if n.abs > 1000000000000 { n * 1000000    }
+                    else                          { n * 1000000000 }
         return Instant(nanos).to-plain-date-time-utc()
     }
 
@@ -382,10 +407,10 @@ pub fn parse(input: String) -> PlainDateTime {
 
     /* ---- Strip leading day name: "Mon, ", "Monday ", etc. ---- */
     let stripped = s
-    for name in __day-names {
+    for __day-names {
         let lower = stripped.lower()
-        if lower.starts?(name) {
-            stripped = stripped[#name;].comb(/^[,\s]+/)
+        if lower.starts?(it) {
+            stripped = stripped[#it;].comb(/^[,\s]+/)
             break
         }
     }
@@ -482,10 +507,10 @@ pub class Duration {
         nanoseconds: Int = 0
     ) {
         let wanted-sign = 0
-        for value in [years, months, weeks, days, hours, minutes, seconds,
+        for [years, months, weeks, days, hours, minutes, seconds,
                       milliseconds, microseconds, nanoseconds] {
-            if value == 0 { continue }
-            let value-sign = value < 0 ? -1 : 1
+            continue if it == 0
+            let value-sign = it < 0 ? -1 : 1
             if wanted-sign == 0 { wanted-sign = value-sign }
             else if wanted-sign != value-sign {
                 throw ValueError('duration fields must have the same sign')
@@ -526,9 +551,9 @@ pub class Duration {
     }
 
     sign -> Int {
-        for v in [years, months, weeks, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds] {
-            if v > 0 { return 1 }
-            if v < 0 { return -1 }
+        for [years, months, weeks, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds] {
+            if it > 0 { return 1  }
+            if it < 0 { return -1 }
         }
         0
     }
@@ -614,7 +639,7 @@ pub class Duration {
         let rounded = __round-nanos(total, unit-ns, rounding-mode)
         /* Decompose back into fields */
         let neg = rounded < 0
-        let rem = if neg { -rounded } else { rounded }
+        let rem = neg ? -rounded : rounded
         let d = rem / 86400000000000;    rem = rem % 86400000000000
         let h = rem / 3600000000000;     rem = rem % 3600000000000
         let m = rem / 60000000000;       rem = rem % 60000000000
@@ -623,7 +648,11 @@ pub class Duration {
         let us = rem / 1000;             rem = rem % 1000
         let result = Duration(days=d, hours=h, minutes=m, seconds=s,
                               milliseconds=ms, microseconds=us, nanoseconds=rem)
-        if neg { result.negated() } else { result }
+        if neg {
+            result.negated()
+        } else {
+            result
+        }
     }
 
     with(
@@ -643,9 +672,11 @@ pub class Duration {
     }
 
     __str__() -> String {
-        if blank? { return 'PT0S' }
+        if blank? {
+            return 'PT0S'
+        }
 
-        let s = if sign < 0 { '-P' } else { 'P' }
+        let s = sign < 0 ? '-P' : 'P'
         let y = years.abs
         let mo = months.abs
         let w = weeks.abs
@@ -657,21 +688,23 @@ pub class Duration {
         let us = microseconds.abs
         let nano = nanoseconds.abs
 
-        if y != 0 { s += "{y}Y" }
+        if y != 0  { s += "{y}Y"  }
         if mo != 0 { s += "{mo}M" }
-        if w != 0 { s += "{w}W" }
-        if d != 0 { s += "{d}D" }
+        if w != 0  { s += "{w}W"  }
+        if d != 0  { s += "{d}D"  }
 
         if h != 0 || mi != 0 || sec != 0 || ms != 0 || us != 0 || nano != 0 {
             s += 'T'
-            if h != 0 { s += "{h}H" }
+            if h != 0  { s += "{h}H"  }
             if mi != 0 { s += "{mi}M" }
             if sec != 0 || ms != 0 || us != 0 || nano != 0 {
                 let frac = nano + us * 1000 + ms * 1000000
                 if frac != 0 {
                     let frac-str = "{frac:09}"
                     /* trim trailing zeros */
-                    while frac-str.ends?('0') { frac-str = frac-str[;-1] }
+                    while frac-str.ends?('0') {
+                        frac-str = frac-str[;-1]
+                    }
                     s += "{sec}.{frac-str}S"
                 } else {
                     s += "{sec}S"
@@ -696,7 +729,7 @@ fn *(n: Int, d: Duration) -> Duration {
 fn *(d: Duration, n: Int) -> Duration { n * d }
 fn *(x: Float, d: Duration) -> Duration {
     if d.years != 0 || d.months != 0 || d.weeks != 0 {
-        throw ValueError("cannot multiply calendar units (years/months/weeks) by Float")
+        throw ValueError('cannot multiply calendar units (years/months/weeks) by Float')
     }
     let nanos = Int(x * Float(d.total-nanoseconds))
     let neg = nanos < 0
@@ -772,7 +805,9 @@ pub class PlainDate {
         let d = day ?? self.day
         /* Clamp day to valid range */
         let max = __days-in-month(y, m)
-        if d > max { d = max }
+        if d > max {
+            d = max
+        }
         PlainDate(y, m, d)
     }
 
@@ -781,11 +816,17 @@ pub class PlainDate {
         let y = year + dur.years
         let m = month + dur.months
         /* Normalize month */
-        while m > 12 { m -= 12; y += 1 }
-        while m < 1 { m += 12; y -= 1 }
+        while m > 12 {
+            m -= 12
+            y += 1
+        }
+        while m < 1 {
+            m += 12
+            y -= 1
+        }
         /* Clamp day */
         let max = __days-in-month(y, m)
-        let d = if day > max { max } else { day }
+        let d = day > max ? max : day
         /* Add weeks and days */
         let total-days = dur.days + dur.weeks * 7
         let epoch = __date-to-epoch-days(y, m, d) + total-days
@@ -895,7 +936,13 @@ pub class PlainTime {
     static compare(a: PlainTime, b: PlainTime) -> Int {
         let an = a.total-nanos()
         let bn = b.total-nanos()
-        if an < bn { -1 } else if an > bn { 1 } else { 0 }
+        if an < bn {
+            -1
+        } else if an > bn {
+            1
+        } else {
+            0
+        }
     }
 
     static from(s: String) -> PlainTime {
@@ -907,7 +954,9 @@ pub class PlainTime {
             main = s[;dot]
             let frac-str = s[dot + 1;]
             /* Pad or truncate to 9 digits */
-            while #frac-str < 9 { frac-str += '0' }
+            while #frac-str < 9 {
+                frac-str += '0'
+            }
             frac-str = frac-str[;9]
             frac-ns = __parse-int(frac-str)
         }
@@ -919,7 +968,7 @@ pub class PlainTime {
 
         let h = __parse-int(parts[0])
         let m = __parse-int(parts[1])
-        let sec = if #parts == 3 { __parse-int(parts[2]) } else { 0 }
+        let sec = #parts == 3 ? __parse-int(parts[2]) : 0
 
         let ms = frac-ns / 1000000
         let us = (frac-ns % 1000000) / 1000
@@ -1003,7 +1052,9 @@ pub class PlainTime {
         let frac = nanosecond + microsecond * 1000 + millisecond * 1000000
         if frac != 0 {
             let fs = "{frac:09}"
-            while fs.ends?('0') { fs = fs[;-1] }
+            while fs.ends?('0') {
+                fs = fs[;-1]
+            }
             s += ".{fs}"
         }
         s
@@ -1015,7 +1066,10 @@ fn __time-from-nanos(nanos: Int) -> (PlainTime, Int) {
     let day-nanos = 86400000000000
     let days = nanos / day-nanos
     nanos = nanos % day-nanos
-    if nanos < 0 { nanos += day-nanos; days -= 1 }
+    if nanos < 0 {
+        nanos += day-nanos
+        days -= 1
+    }
 
     let h = nanos / 3600000000000;  nanos = nanos % 3600000000000
     let m = nanos / 60000000000;    nanos = nanos % 60000000000
@@ -1078,7 +1132,9 @@ pub class PlainDateTime {
 
     static from(s: String) -> PlainDateTime {
         let dt = s.split('T')
-        if #dt != 2 { throw ValueError("invalid PlainDateTime string: '{s}'") }
+        if #dt != 2 {
+            throw ValueError("invalid PlainDateTime string: '{s}'")
+        }
         let date = PlainDate.from(dt[0])
         let time = PlainTime.from(dt[1])
         PlainDateTime(date.year, date.month, date.day,
@@ -1114,7 +1170,9 @@ pub class PlainDateTime {
         let m = month ?? self.month
         let d = day ?? self.day
         let max = __days-in-month(y, m)
-        if d > max { d = max }
+        if d > max {
+            d = max
+        }
         PlainDateTime(
             y, m, d,
             hour ?? self.hour,
@@ -1158,7 +1216,10 @@ pub class PlainDateTime {
         let day-diff = __date-to-epoch-days(other.year, other.month, other.day) -
                        __date-to-epoch-days(year, month, day)
         let ns-diff = other.to-plain-time().total-nanos() - to-plain-time().total-nanos()
-        if ns-diff < 0 { day-diff -= 1; ns-diff += 86400000000000 }
+        if ns-diff < 0 {
+            day-diff -= 1
+            ns-diff += 86400000000000
+        }
         let h = ns-diff / 3600000000000;       ns-diff = ns-diff % 3600000000000
         let m = ns-diff / 60000000000;         ns-diff = ns-diff % 60000000000
         let s = ns-diff / 1000000000;          ns-diff = ns-diff % 1000000000
@@ -1184,21 +1245,25 @@ pub class PlainDateTime {
             let time-ns = to-plain-time().total-nanos()
             let half-day = 43200000000000
             let extra = match rounding-mode {
-                'halfExpand' => if time-ns >= half-day { 1 } else { 0 },
-                'ceil'       => if time-ns > 0 { 1 } else { 0 },
+                'halfExpand' => time-ns >= half-day ? 1 : 0,
+                'ceil'       => time-ns > 0 ? 1 : 0,
                 'floor'      => 0,
                 'trunc'      => 0,
                 _            => throw ValueError("invalid rounding mode: '{rounding-mode}'")
             }
             let date = to-plain-date()
-            if extra > 0 { date = date.add(Duration(days=1)) }
+            if extra > 0 {
+                date = date.add(Duration(days=1))
+            }
             return PlainDateTime(date.year, date.month, date.day)
         }
         let unit-ns = __unit-nanos(smallest-unit)
         let rounded = __round-nanos(to-plain-time().total-nanos(), unit-ns, rounding-mode)
         let (t, overflow) = __time-from-nanos(rounded)
         let date = to-plain-date()
-        if overflow != 0 { date = date.add(Duration(days=overflow)) }
+        if overflow != 0 {
+            date = date.add(Duration(days=overflow))
+        }
         PlainDateTime(date.year, date.month, date.day,
                       t.hour, t.minute, t.second, t.millisecond, t.microsecond, t.nanosecond)
     }
@@ -1242,7 +1307,9 @@ fn ==(a: PlainDateTime, b: PlainDateTime) -> Bool { a.equals(b) }
 fn <(a: PlainDateTime, b: PlainDateTime) -> Bool {
     let da = __date-to-epoch-days(a.year, a.month, a.day)
     let db = __date-to-epoch-days(b.year, b.month, b.day)
-    if da != db { return da < db }
+    if da != db {
+        return da < db
+    }
     a.to-plain-time().total-nanos() < b.to-plain-time().total-nanos()
 }
 
@@ -1266,7 +1333,7 @@ pub class Instant {
     static compare(a: Instant, b: Instant) -> Int {
         if a.__epoch-nanos < b.__epoch-nanos { -1 }
         else if a.__epoch-nanos > b.__epoch-nanos { 1 }
-        else { 0 }
+        else                                      { 0 }
     }
 
     static from(s: String) -> Instant {
@@ -1288,7 +1355,9 @@ pub class Instant {
                         let off-h = __parse-int(off-parts[0])
                         let off-m = __parse-int(off-parts[1])
                         offset-ns = (off-h * 3600 + off-m * 60) * 1000000000
-                        if sign-char == '-' { offset-ns = -offset-ns }
+                        if sign-char == '-' {
+                            offset-ns = -offset-ns
+                        }
                         str = str[;len - 6]
                     }
                 }
@@ -1325,7 +1394,7 @@ pub class Instant {
 
     add(dur: Duration) -> Instant {
         if dur.years != 0 || dur.months != 0 || dur.weeks != 0 || dur.days != 0 {
-            throw ValueError("cannot add date units (years/months/weeks/days) to Instant")
+            throw ValueError('cannot add date units (years/months/weeks/days) to Instant')
         }
         let delta = dur.days * 86400000000000 + dur.hours * 3600000000000 +
                     dur.minutes * 60000000000 + dur.seconds * 1000000000 +
@@ -1341,25 +1410,29 @@ pub class Instant {
     until(other: Instant, largest-unit: String = 'second') -> Duration {
         let diff = other.__epoch-nanos - __epoch-nanos
         let neg = diff < 0
-        if neg { diff = -diff }
+        if neg {
+            diff = -diff
+        }
 
         let h = 0
         let m = 0
         let s = 0
         match largest-unit {
-            'hour', 'hours' => { h = diff / 3600000000000; diff %= 3600000000000 },
-            'minute', 'minutes' => { m = diff / 60000000000; diff %= 60000000000 },
-            'second', 'seconds' => { s = diff / 1000000000; diff %= 1000000000 },
+            'hour', 'hours'     => { h = diff / 3600000000000; diff %= 3600000000000 },
+            'minute', 'minutes' => { m = diff / 60000000000; diff %= 60000000000     },
+            'second', 'seconds' => { s = diff / 1000000000; diff %= 1000000000       },
             'millisecond', 'milliseconds', 'microsecond', 'microseconds',
             'nanosecond', 'nanoseconds' => {},
             _ => throw ValueError("invalid largest unit for Instant difference: '{largest-unit}'")
         }
         if largest-unit == 'hour' || largest-unit == 'hours' {
-            m = diff / 60000000000; diff %= 60000000000
+            m = diff / 60000000000;
+            diff %= 60000000000
         }
         if largest-unit == 'hour' || largest-unit == 'hours'
         || largest-unit == 'minute' || largest-unit == 'minutes' {
-            s = diff / 1000000000; diff %= 1000000000
+            s = diff / 1000000000;
+            diff %= 1000000000
         }
         let ms = diff / 1000000;          diff = diff % 1000000
         let us = diff / 1000;             diff = diff % 1000
@@ -1367,7 +1440,11 @@ pub class Instant {
 
         let dur = Duration(hours=h, minutes=m, seconds=s,
                            milliseconds=ms, microseconds=us, nanoseconds=nano)
-        if neg { dur.negated() } else { dur }
+        if neg {
+            dur.negated()
+        } else {
+            dur
+        }
     }
 
     since(other: Instant, largest-unit: String = 'second') -> Duration {
@@ -1387,7 +1464,10 @@ pub class Instant {
         let total = __epoch-nanos
         let epoch-days = total / 86400000000000
         let rem = total % 86400000000000
-        if rem < 0 { rem += 86400000000000; epoch-days -= 1 }
+        if rem < 0 {
+            rem += 86400000000000
+            epoch-days -= 1
+        }
 
         let (y, m, d) = __epoch-days-to-date(epoch-days)
         let (t, _) = __time-from-nanos(rem)
@@ -1427,7 +1507,9 @@ fn __fixed-offset-seconds(zone: String) -> ?Int {
     if zone == 'UTC' || zone == 'Etc/UTC' || zone == 'GMT' || zone == 'Z' {
         return 0
     }
-    if #zone < 3 || (zone[0] != '+' && zone[0] != '-') { return nil }
+    if #zone < 3 || (zone[0] != '+' && zone[0] != '-') {
+        return nil
+    }
     let sign = zone[0] == '-' ? -1 : 1
     let body = zone[1;]
     let parts = body.split(':')
@@ -1435,28 +1517,40 @@ fn __fixed-offset-seconds(zone: String) -> ?Int {
     let m = 0
     let s = 0
     if #parts == 1 {
-        if #body != 2 && #body != 4 && #body != 6 { return nil }
+        if #body != 2 && #body != 4 && #body != 6 {
+            return nil
+        }
         h = int(body[;2], 10) ?? return nil
         if #body >= 4 { m = int(body[2;4], 10) ?? return nil }
         if #body == 6 { s = int(body[4;6], 10) ?? return nil }
     } else {
-        if #parts < 1 || #parts > 3 || #parts[0] != 2 { return nil }
+        if #parts < 1 || #parts > 3 || #parts[0] != 2 {
+            return nil
+        }
         h = int(parts[0], 10) ?? return nil
         if #parts >= 2 {
-            if #parts[1] != 2 { return nil }
+            if #parts[1] != 2 {
+                return nil
+            }
             m = int(parts[1], 10) ?? return nil
         }
         if #parts == 3 {
-            if #parts[2] != 2 { return nil }
+            if #parts[2] != 2 {
+                return nil
+            }
             s = int(parts[2], 10) ?? return nil
         }
     }
-    if h > 23 || m > 59 || s > 59 { return nil }
+    if h > 23 || m > 59 || s > 59 {
+        return nil
+    }
     sign * (h * 3600 + m * 60 + s)
 }
 
 fn __offset-seconds-at(epoch-seconds: Int, zone: String) -> Int {
-    if let $fixed = __fixed-offset-seconds(zone) { return fixed }
+    if let $fixed = __fixed-offset-seconds(zone) {
+        return fixed
+    }
     let tm = time.zonetime(epoch-seconds, zone)
         ?? throw ValueError("invalid or unavailable time zone: '{zone}'")
     tm.gmtoff ?? throw ValueError("time zone has no UTC offset: '{zone}'")
@@ -1502,12 +1596,14 @@ fn __resolve-zoned-seconds(dt: PlainDateTime, zone: String,
         return wall - fixed
     }
 
-    let offsets = [__offset-seconds-at(wall + shift, zone)
-                   for shift in [-172800, 0, 172800]].nub()
+    let offsets = [
+        __offset-seconds-at(wall + shift, zone)
+        for shift in [-172800, 0, 172800]
+    ].nub()
     let possible: [Int] = []
     let guesses: [Int] = []
-    for off in offsets {
-        let candidate = wall - off
+    for offsets {
+        let candidate = wall - it
         guesses.push(candidate)
         if candidate + __offset-seconds-at(candidate, zone) == wall {
             possible.push(candidate)
@@ -1548,43 +1644,55 @@ fn __format-offset(seconds: Int) -> String {
 fn __system-time-zone-id() -> String {
     if let $tz = getenv('TZ') {
         let tz = tz.starts?(':') ? tz[1;] : tz
-        if tz { return tz }
+        if tz {
+            return tz
+        }
     }
 #|if !__windows__
     try {
         let resolved = "{Path('/etc/localtime').resolve}"
-        if let $i = resolved.search('/zoneinfo/') { return resolved[i + 10;] }
+        if let $i = resolved.search('/zoneinfo/') {
+            return resolved[i + 10;]
+        }
     } catch _ {}
     try {
         let tz = Path('/etc/timezone').read-text().trim()
-        if tz { return tz }
+        if tz {
+            return tz
+        }
     } catch _ {}
 #|]
     'UTC'
 }
 
 fn __normalize-time-zone-id(zone: String) -> String {
-    if zone == 'UTC' || zone == 'Etc/UTC' || zone == 'GMT' || zone == 'Z' { return 'UTC' }
-    if let $fixed = __fixed-offset-seconds(zone) { return __format-offset(fixed) }
+    if zone == 'UTC' || zone == 'Etc/UTC' || zone == 'GMT' || zone == 'Z' {
+        return 'UTC'
+    }
+    if let $fixed = __fixed-offset-seconds(zone) {
+        return __format-offset(fixed)
+    }
 #|if !__windows__
     for root-name in ['/usr/share/zoneinfo', '/usr/share/lib/zoneinfo', '/var/db/timezone/zoneinfo'] {
         let current = Path(root-name)
-        if !current.dir? { continue }
+        continue if !current.dir?
         let actual: Array[String] = []
         let found = true
         for component in zone.split('/') {
             found = false
-            for entry in current.ls() {
-                if entry.name.lower() == component.lower() {
-                    actual.push(entry.name)
-                    current = entry
+            for current.ls() {
+                if it.name.lower() == component.lower() {
+                    actual.push(it.name)
+                    current = it
                     found = true
                     break
                 }
             }
-            if !found { break }
+            break if !found
         }
-        if found && current.file? { return actual.join('/') }
+        if found && current.file? {
+            return actual.join('/')
+        }
     }
 #|]
     zone
@@ -1596,13 +1704,15 @@ fn __linked-time-zone-id(zone: String) -> String {
 #|if !__windows__
     if __time-zone-links == nil {
         let links: Dict[String, String] = %{}
-        for name in ['/usr/share/zoneinfo/tzdata.zi', '/var/db/timezone/zoneinfo/tzdata.zi'] {
-            let file = Path(name)
-            if !file.exists? { continue }
+        for ['/usr/share/zoneinfo/tzdata.zi', '/var/db/timezone/zoneinfo/tzdata.zi'] {
+            let file = Path(it)
+            continue if !file.exists?
             for line in file.read-text().split('\n') {
-                if !line.starts?('L ') { continue }
+                continue if !line.starts?('L ')
                 let fields = line.split(/\s+/)
-                if #fields == 3 { links[fields[2]] = fields[1] }
+                if #fields == 3 {
+                    links[fields[2]] = fields[1]
+                }
             }
             break
         }
@@ -1617,12 +1727,16 @@ fn __linked-time-zone-id(zone: String) -> String {
 
 fn __time-zone-equivalence-key(zone: String) -> String {
     let normalized = __normalize-time-zone-id(zone)
-    if normalized == 'UTC' { return 'iana:UTC' }
-    if let $fixed = __fixed-offset-seconds(normalized) { return "offset:{fixed}" }
+    if normalized == 'UTC' {
+        return 'iana:UTC'
+    }
+    if let $fixed = __fixed-offset-seconds(normalized) {
+        return "offset:{fixed}"
+    }
 #|if !__windows__
     let linked = __linked-time-zone-id(normalized)
-    for root in ['/usr/share/zoneinfo', '/usr/share/lib/zoneinfo', '/var/db/timezone/zoneinfo'] {
-        let file = Path(root) / linked
+    for ['/usr/share/zoneinfo', '/usr/share/lib/zoneinfo', '/var/db/timezone/zoneinfo'] {
+        let file = Path(it) / linked
         if file.exists? {
             try { return "iana:{file.resolve}" } catch _ {}
         }
@@ -1644,12 +1758,16 @@ pub class ZonedDateTime {
     }
 
     static from(s: String, disambiguation: String = 'compatible', offset-option: String = 'reject') -> ZonedDateTime {
-        if !s.ends?(']') { throw ValueError("ZonedDateTime string requires a time zone: '{s}'") }
+        if !s.ends?(']') {
+            throw ValueError("ZonedDateTime string requires a time zone: '{s}'")
+        }
         let open = s.searchr('[') ?? throw ValueError("invalid ZonedDateTime string: '{s}'")
         let zone = s[open + 1;]
         zone = zone[;-1]
         let prefix = s[;open]
-        if !zone { throw ValueError("invalid ZonedDateTime string: '{s}'") }
+        if !zone {
+            throw ValueError("invalid ZonedDateTime string: '{s}'")
+        }
 
         if prefix.ends?('Z') || prefix.ends?('z') {
             return ZonedDateTime(Instant.from(prefix).epoch-nanoseconds, zone)
@@ -1668,12 +1786,16 @@ pub class ZonedDateTime {
             }
         }
         let dt = PlainDateTime.from(date-time)
-        if !has-offset { return __resolve-zoned-date-time(dt, zone, disambiguation) }
+        if !has-offset {
+            return __resolve-zoned-date-time(dt, zone, disambiguation)
+        }
         if offset-option != 'use' && offset-option != 'ignore'
         && offset-option != 'prefer' && offset-option != 'reject' {
             throw ValueError("invalid offset option: '{offset-option}'")
         }
-        if offset-option == 'ignore' { return __resolve-zoned-date-time(dt, zone, disambiguation) }
+        if offset-option == 'ignore' {
+            return __resolve-zoned-date-time(dt, zone, disambiguation)
+        }
         let wall = __date-to-epoch-days(dt.year, dt.month, dt.day) * 86400000000000
                  + dt.to-plain-time().total-nanos()
         let instant = wall - offset-seconds * 1000000000
@@ -1790,7 +1912,9 @@ fn __duration-nanoseconds-relative(dur: Duration, relative-to: PlainDate | Zoned
         },
         _ => {}
     }
-    if !has-calendar-units { return dur.total-nanoseconds }
+    if !has-calendar-units {
+        return dur.total-nanoseconds
+    }
     if relative-to == nil {
         throw ValueError('a relative date is required for years, months, or weeks')
     }
@@ -1830,7 +1954,9 @@ pub class PlainYearMonth {
 
     static from(s: String) -> PlainYearMonth {
         let parts = s.split('-')
-        if #parts != 2 { throw ValueError("invalid PlainYearMonth string: '{s}'") }
+        if #parts != 2 {
+            throw ValueError("invalid PlainYearMonth string: '{s}'")
+        }
         PlainYearMonth(__parse-int(parts[0]), __parse-int(parts[1]))
     }
 
@@ -1847,7 +1973,7 @@ pub class PlainYearMonth {
 
     add(dur: Duration) -> PlainYearMonth {
         let total = (year * 12 + (month - 1)) + dur.months + dur.years * 12
-        let y = if total >= 0 { total / 12 } else { (total - 11) / 12 }
+        let y = total >= 0 ? total / 12 : (total - 11) / 12
         let m = total - y * 12 + 1
         PlainYearMonth(y, m)
     }
@@ -1870,7 +1996,7 @@ pub class PlainYearMonth {
     }
 
     to-plain-date(day: Int = 1) -> PlainDate {
-        let d = if day > days-in-month { days-in-month } else { day }
+        let d = day > days-in-month ? days-in-month : day
         PlainDate(year, month, d)
     }
 
@@ -1882,7 +2008,9 @@ pub class PlainYearMonth {
 fn ==(a: PlainYearMonth, b: PlainYearMonth) -> Bool { a.equals(b) }
 
 fn <(a: PlainYearMonth, b: PlainYearMonth) -> Bool {
-    if a.year != b.year { return a.year < b.year }
+    if a.year != b.year {
+        return a.year < b.year
+    }
     a.month < b.month
 }
 
@@ -1914,9 +2042,13 @@ pub class PlainMonthDay {
     static from(s: String) -> PlainMonthDay {
         /* Parse --MM-DD */
         let str = s
-        if str.starts?('--') { str = str[2;] }
+        if str.starts?('--') {
+            str = str[2;]
+        }
         let parts = str.split('-')
-        if #parts != 2 { throw ValueError("invalid PlainMonthDay string: '{s}'") }
+        if #parts != 2 {
+            throw ValueError("invalid PlainMonthDay string: '{s}'")
+        }
         PlainMonthDay(__parse-int(parts[0]), __parse-int(parts[1]))
     }
 
@@ -1934,7 +2066,9 @@ pub class PlainMonthDay {
     to-plain-date(year: Int) -> PlainDate {
         let d = day
         let max = __days-in-month(year, month)
-        if d > max { d = max }
+        if d > max {
+            d = max
+        }
         PlainDate(year, month, d)
     }
 
@@ -2139,9 +2273,7 @@ fn __relative-parts*(start: RelativePoint, end: RelativePoint, largest: Int)
     let cursor = start.advance(months: months, days: days)
     let seconds = cursor.seconds-until(end)
     for (unit, divisor); i in [('hour', 3600), ('minute', 60), ('second', 1)] {
-        if largest > i + 4 {
-            continue
-        }
+        continue if largest > i + 4
         yield (seconds / divisor, unit)
         seconds %= divisor
     }
@@ -2168,9 +2300,11 @@ pub fn relative(value: RelativeDate, to: ?RelativeDate = nil, parts: Int = 1,
     let (target, origin) = __relative-points(value, reference, time-zone)
     let past? = target.compare(origin) < 0
     let (start, end) = past? ? (target, origin) : (origin, target)
-    let words = [__relative-phrase(n, unit)
-                 for (n, unit) in __relative-parts(start, end, largest)
-                 if n > 0]
+    let words = [
+        __relative-phrase(n, unit)
+        for (n, unit) in __relative-parts(start, end, largest)
+        if n > 0
+    ]
     if !words {
         return date-only? ? 'today' : 'now'
     }

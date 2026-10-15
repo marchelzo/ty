@@ -36,9 +36,9 @@ let FCGI_CANT_MPX_CONN      = 1;
 let FCGI_OVERLOADED         = 2;
 let FCGI_UNKNOWN_ROLE       = 3;
 
-let FCGI_MAX_CONNS  = "FCGI_MAX_CONNS";
-let FCGI_MAX_REQS   = "FCGI_MAX_REQS";
-let FCGI_MPXS_CONNS = "FCGI_MPXS_CONNS";
+let FCGI_MAX_CONNS  = 'FCGI_MAX_CONNS';
+let FCGI_MAX_REQS   = 'FCGI_MAX_REQS';
+let FCGI_MPXS_CONNS = 'FCGI_MPXS_CONNS';
 
 use RawRequest = (String, Dict[String, String], Int)
 
@@ -176,8 +176,8 @@ fn getLength(b: Blob) -> Int {
 fn decode(s) {
     s.sub('+', ' ')
      .sub(/%../, s -> chr(int(s.slice(1), 16)))
-     .sub("\r\n", "\n")
-     .sub("\r", "\n")
+     .sub('\r\n', '\n')
+     .sub('\r', '\n')
 }
 
 fn urlDecode(s: String) -> Dict[String, String] {
@@ -396,7 +396,7 @@ pub class FCGIApp {
                 Ok(fds) => {
                     for match fds {
                         (_, ev) and (ev & os.POLLIN) => {
-                            error!("Accepting connection!")
+                            error!('Accepting connection!')
                             let (conn, addr) = os.accept(__socket)
                             __clients.push((conn, FCGIParser(conn)))
                         },

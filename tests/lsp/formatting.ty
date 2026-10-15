@@ -1,0 +1,31 @@
+import support.client (Workspace, Server, uri)
+
+let ws = Workspace()
+let server = Server(ws)
+
+onExit(fn () {
+    server.close()
+    ws.remove()
+})
+
+pub fn formatting-returns-canonical-text() {
+    let file = ws.write('fmt.ty', "let x=[1,2]\nfn f(  a ) \{ a+1 \}\n")
+    server.open(file)
+    let edits = server.request('textDocument/formatting', {
+        textDocument: { uri: uri(file) },
+        options: { tabSize: 4, insertSpaces: true }
+    })['result']
+    assert(#edits == 1, edits)
+    assert(edits[0]['newText'] == "let x = [1, 2]\nfn f(a) \{ a + 1 \}\n", edits)
+    server.assert-healthy('formatting')
+}
+
+pub fn formatted-documents-need-no-edits() {
+    let file = ws.write('clean.ty', "let x = [1, 2]\n")
+    server.open(file)
+    let edits = server.request('textDocument/formatting', {
+        textDocument: { uri: uri(file) },
+        options: { tabSize: 4, insertSpaces: true }
+    })['result']
+    assert(edits == [], edits)
+}

@@ -94,7 +94,9 @@ pub class DBusError < RuntimeError {
 }
 
 fn check!(r: Int, ctx: String = '') {
-    if r < 0 { throw DBusError(r, ctx) }
+    if r < 0 {
+        throw DBusError(r, ctx)
+    }
     r
 }
 
@@ -266,7 +268,9 @@ pub class Bus {
 
     run(timeout-usec: Int = -1) {
         while true {
-            if !process() { wait(timeout-usec) }
+            if !process() {
+                wait(timeout-usec)
+            }
         }
     }
 
@@ -478,18 +482,18 @@ pub class Message {
 
     read-value(sig: String) {
         match sig {
-            's'     => read-string(),
-            'o'     => read-object-path(),
-            'b'     => read-bool(),
-            'i'     => read-i32(),
-            'u'     => read-u32(),
-            'x'     => read-i64(),
-            't'     => read-u64(),
-            'n'     => read-i16(),
-            'q'     => read-u16(),
-            'y'     => read-byte(),
-            'd'     => read-double(),
-            _       => nil
+            's' => read-string(),
+            'o' => read-object-path(),
+            'b' => read-bool(),
+            'i' => read-i32(),
+            'u' => read-u32(),
+            'x' => read-i64(),
+            't' => read-u64(),
+            'n' => read-i16(),
+            'q' => read-u16(),
+            'y' => read-byte(),
+            'd' => read-double(),
+            _   => nil
         }
     }
 

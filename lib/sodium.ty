@@ -1,7 +1,7 @@
 import ffi as c (C!)
 
 if not let $lib = c.open('sodium') {
-   throw "failed to load libsodium"
+   throw 'failed to load libsodium'
 }
 
 C! lib fn {
@@ -38,7 +38,7 @@ let default_alg = crypto_pwhash_alg_default()
 
 pub function hash(pass: String | Blob, buf: ?Blob) -> String | nil {
   let b = buf ?? c.alloc(str_bytes)
- 
+
   let h = match crypto_pwhash_str(
     b,
     pass, pass.size(),

@@ -78,7 +78,7 @@ class TagParser {
                 f
             },
             ')' or 'and' or 'or' => throw TagError("unexpected '{__toks[__i - 1]}'"),
-            'all' => (_ -> true),
+            'all'                => (_ -> true),
             name  => do {
                 __names.push(name)
                 tags -> name in tags

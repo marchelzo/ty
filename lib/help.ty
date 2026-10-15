@@ -228,7 +228,7 @@ class Index {
         match e.kind {
             'module' => '(modules)',
             'guide'  => '(tour)',
-            _        => e.qual.slice(0, max(#e.qual - #e.name - 1, 0))
+            _        => e.qual[;max(#e.qual - #e.name - 1, 0)]
         }
     }
 
@@ -322,7 +322,7 @@ fn indexing(i: Int, n: Int) {
     if ty.interactive {
         eprint(
             ink"\r[dim]indexing the standard library…[/] {i}/{n}",
-            end=(i == n) ? "\r\x1b[K" : ''
+            end=(i == n) ? '\r\x1b[K' : ''
         )
     }
 }
@@ -356,8 +356,8 @@ class Page {
     }
 
     block(text: String, indent: Int = 2) -> Page {
-        for line in text.split('\n') {
-            put(' ' * indent, line)
+        for text.split('\n') {
+            put(' ' * indent, it)
         }
         self
     }
@@ -414,10 +414,10 @@ fn split-top(s: String, sep: String) -> Array[String] {
     let start = 0
     for c; i in s.chars() {
         match c {
-            '(' or '[' or '{'            => depth += 1,
-            ')' or ']' or '}'            => depth -= 1,
+            '(' or '[' or '{' => depth += 1,
+            ')' or ']' or '}' => depth -= 1,
             _ and c == sep && depth == 0 => {
-                parts.push(s.slice(start, i - start).trim())
+                parts.push(s[start;start + i - start].trim())
                 start = i + 1
             },
             _                            => ()
@@ -443,7 +443,7 @@ fn wrap(sig: String, room: Int) -> String {
     let (open, close) = parameters(sig) or return sig
     let params = split-top(sig.slice(open + 1, close - open - 1), ',')
     [
-        "{sig.slice(0, open)}(",
+        "{sig[;open]}(",
         params.map(\"    {_}").join(',\n'),
         "){sig.slice(close + 1)}"
     ].join('\n')
@@ -462,7 +462,7 @@ fn returns(t: String) -> String | nil {
         match c {
             '(' or '[' or '{' => depth += 1,
             ')' or ']' or '}' => depth -= 1,
-            '-' and depth == 0 && t.slice(i, 2) == '->' => at = i,
+            '-' and depth == 0 && t[i;i + 2] == '->' => at = i,
             _ => ()
         }
     }
@@ -550,7 +550,7 @@ fn card(page: Page, e: Entry, source?: Bool = true, note: ?Line = nil) {
     }
     match annotation(e) {
         Undeclared => {
-            page.blank().put(ink"  [dim]inferred[/]  ", ansi((colored(e, wrapped?: true) ?? '').split('\n').join("\n            ")))
+            page.blank().put(ink"  [dim]inferred[/]  ", ansi((colored(e, wrapped?: true) ?? '').split('\n').join('\n            ')))
         },
         Unreturned(r) => {
             page.blank().put(ink"  [dim]returns   {r}  (inferred)[/]")
@@ -562,14 +562,14 @@ fn card(page: Page, e: Entry, source?: Bool = true, note: ?Line = nil) {
     }
     if let $doc = e.doc {
         page.blank()
-        for line in doc.split('\n') {
-            page.put('  ', line.starts?('    ') ? hl(line) : inline(line))
+        for doc.split('\n') {
+            page.put('  ', it.starts?('    ') ? hl(it) : inline(it))
         }
     }
     if source? && e.src {
-        for s in [e, *e.more] {
+        for [e, *e.more] {
             page.blank()
-            source-block(page, s)
+            source-block(page, it)
         }
     } else if let $loc = short-path(e.file) {
         page.blank().put(ink"  [dim]{(e.line != nil) ? "{loc}:{e.line}" : loc}[/]")
@@ -580,9 +580,9 @@ fn member-section(page: Page, title: String, members: Array[Entry]) {
     return if !members
     page.blank().put(ink"[head]{title}[/][dim]  ({#members})[/]")
     let room = page.cols - 4
-    for m in members.sort(by=sort-key) {
-        page.put('  ', summary(m, room))
-        if let $doc = first-line(m.doc) {
+    for members.sort(by=sort-key) {
+        page.put('  ', summary(it, room))
+        if let $doc = first-line(it.doc) {
             page.put('      ', (ink"[dim]{doc}[/]").clip(room - 4))
         }
     }
@@ -599,8 +599,8 @@ fn operator-section(page: Page, title: String, ops: Array[Entry]) {
     return if !ops
     let ops = ops.nub(&.decl).sort(by=e -> (e.name, e.decl ?? ''))
     page.blank().put(ink"[head]{title}[/][dim]  ({#ops})[/]")
-    for e in ops {
-        page.put('  ', operator-line(e, page.cols - 4))
+    for ops {
+        page.put('  ', operator-line(it, page.cols - 4))
     }
 }
 
@@ -610,8 +610,8 @@ fn operator-page(page: Page, op: String, ops: Array[Entry]) {
     for mod in modules.sort(by=m -> ((m == 'prelude') ? 0 : 1, m)) {
         let here = ops.filter(\_.mod == mod).nub(&.decl)
         page.blank().put(ink"[mod]{mod}[/]")
-        for e in here.sort(by=\(_.decl ?? '')) {
-            page.put('  ', operator-line(e, page.cols - 4, home?: false))
+        for here.sort(by=\(_.decl ?? '')) {
+            page.put('  ', operator-line(it, page.cols - 4, home?: false))
         }
     }
 }
@@ -623,8 +623,8 @@ fn class-page(page: Page, cls: Entry) {
     if ctors {
         let decls = ctors.map(\_.split('\n')).flat().nub()
         page.blank().put(ink"[head]Constructors[/]")
-        for decl in decls {
-            page.put('  ', ansi(hl(flat("{cls.name}{decl}"))).clip(page.cols - 4))
+        for decls {
+            page.put('  ', ansi(hl(flat("{cls.name}{it}"))).clip(page.cols - 4))
         }
     }
     let members = members.filter(\_.name != 'init')
@@ -653,8 +653,8 @@ fn superclass(cls: Entry) -> Entry | nil {
 fn grid(page: Page, names: Array[String]) {
     let w = (names.map(&width).max() ?? 0) + 2
     let per = max(1, (page.cols - 2) / w)
-    for row in names.groups-of(per) {
-        page.put('  ', row.map(\"{_:<{w}}").join().comb(/\s+$/))
+    for names.groups-of(per) {
+        page.put('  ', it.map(\"{_:<{w}}").join().comb(/\s+$/))
     }
 }
 
@@ -670,8 +670,8 @@ fn module-page(page: Page, m: Entry, note: ?Line = nil) {
             continue
         }
         let room = page.cols - 4
-        for e in xs {
-            page.put('  ', summary(e, room))
+        for xs {
+            page.put('  ', summary(it, room))
         }
     }
 }
@@ -717,9 +717,9 @@ fn value-page(page: Page, text: String, value: _, type: _) {
     let shown = kebab-text((try { pretty(value, width: page.cols - 4) }) ?? str(value))
     page.title(hl(text), ink"[kind]value[/]")
     page.blank()
-    page.put(ink"  [dim]value[/]  ", shown.split('\n').join("\n         "))
+    page.put(ink"  [dim]value[/]  ", shown.split('\n').join('\n         '))
     if let $t = type {
-        page.put(ink"  [dim]type[/]   ", kebab-text(types.show(t, color: !plain?(), width: page.cols - 12)).split('\n').join("\n         "))
+        page.put(ink"  [dim]type[/]   ", kebab-text(types.show(t, color: !plain?(), width: page.cols - 12)).split('\n').join('\n         '))
     }
     page.put(ink"  [dim]class[/]  [name]{class-name(class-of(value))}[/]")
     if let $cls = class-entry(class-of(value)) {
@@ -877,9 +877,9 @@ fn resolve(text: String) -> Answer | nil {
 
     let Some(value) = evaluate(text) or return parts ? nil : typed(ast)
     match by-value(value, text, ast) {
-        Some(v)  => Answer([], value: Some(v), type: infer(ast)),
-        []       => Answer([], value: Some(value), type: infer(ast)),
-        hits     => Answer(hits)
+        Some(v) => Answer([], value: Some(v), type: infer(ast)),
+        []      => Answer([], value: Some(value), type: infer(ast)),
+        hits    => Answer(hits)
     }
 }
 
@@ -1006,8 +1006,8 @@ fn tour-page(page: Page, ranked: Array[Entry]) {
     guide-page(page, ranked[;1])
     if #ranked > 1 {
         page.blank().put(ink"[head]More in the tour[/]")
-        for g in ranked[1;9] {
-            page.put(ink"  [dim]•[/] [prose]{g.qual}[/]")
+        for ranked[1;9] {
+            page.put(ink"  [dim]•[/] [prose]{it.qual}[/]")
         }
     }
 }
@@ -1044,9 +1044,9 @@ fn render(page: Page, answer: Answer, text: String = '') {
         _ => {
             let primary = entries.sort(by=sort-key)
             single(page, primary[0], note)
-            for e in primary[1;] {
+            for primary[1;] {
                 page.blank()
-                single(page, e, nil)
+                single(page, it, nil)
             }
         }
     }
@@ -1094,13 +1094,13 @@ fn overview(page: Page) {
     page.blank().put(ink"[head]Modules[/][dim]  ({#mods}; imported ones are bright)[/]")
     let w = (mods.map(&width).max() ?? 0) + 2
     let per = max(1, (page.cols - 2) / w)
-    for row in mods.groups-of(per) {
-        page.put('  ', *row.map(m -> ink[(m in imported) ? 'name' : 'dim']("{m:<{w}}")))
+    for mods.groups-of(per) {
+        page.put('  ', *it.map(m -> ink[(m in imported) ? 'name' : 'dim']("{m:<{w}}")))
     }
     let pages = lib().guides().map(\_.owner ?? '').nub()
     page.blank().put(ink"[head]The tour[/][dim]  (help <keyword> shows the relevant section)[/]")
-    for p in pages {
-        page.put(ink"  [dim]•[/] [prose]{p}[/]")
+    for pages {
+        page.put(ink"  [dim]•[/] [prose]{it}[/]")
     }
 }
 
@@ -1159,10 +1159,10 @@ fn value-reply(x: _) -> Reply {
 fn terminal(reply: Reply) -> Page {
     let page = Page()
     match reply {
-        Overview            => overview(page),
-        Tour(sections)      => tour-page(page, sections),
-        Operators(op, ops)  => operator-page(page, op, ops),
-        Found(found, text)  => render(page, found, text),
+        Overview           => overview(page),
+        Tour(sections)     => tour-page(page, sections),
+        Operators(op, ops) => operator-page(page, op, ops),
+        Found(found, text) => render(page, found, text),
         Listing(text, many) => {
             page.put(hl(text), ink"[dim] is defined in {#many} places:[/]")
             page.blank()
@@ -1216,10 +1216,10 @@ class Query {
         }
         for w in text.split(/\s+/) {
             match w {
-                /^kind:(.+)$/        => kinds.push($1),
-                /^(?:mod|in):(.+)$/  => mods.push(dotted($1)),
-                ''                   => (),
-                _                    => words.push(w)
+                /^kind:(.+)$/       => kinds.push($1),
+                /^(?:mod|in):(.+)$/ => mods.push(dotted($1)),
+                ''                  => (),
+                _                   => words.push(w)
             }
         }
         folded = words.map(fold)
@@ -1235,7 +1235,7 @@ fn name-score(q: String, key: String) -> Int | nil {
         _ and key == q         => 1000,
         _ and key.starts?(q)   => 800 - min(#key - #q, 100),
         _ and key.contains?(q) => 600 - min(#key - #q, 100),
-        _                     => subsequence(q, key)
+        _                      => subsequence(q, key)
     }
 }
 
@@ -1312,9 +1312,9 @@ fn score(q: Query, e: Entry) -> (Int, String | nil) | nil {
 fn search(text: String) -> Array[Hit] {
     let q = Query(text)
     let hits = []
-    for e in lib().entries {
-        if let (s, line) = score(q, e) {
-            hits.push((s, e, line))
+    for lib().entries {
+        if let (s, line) = score(q, it) {
+            hits.push((s, it, line))
         }
     }
     hits.sort!(by=|(s, e, _)| -> (-s, #e.qual))
@@ -1687,8 +1687,8 @@ fn md-overview() -> String {
 
 fn md-reply(reply: Reply) -> String {
     match reply {
-        Overview            => md-overview(),
-        Tour(sections)      => md-tour(sections),
+        Overview       => md-overview(),
+        Tour(sections) => md-tour(sections),
         Operators(op, ops)  => [
             "# Operator {code(op)}\n\n{#ops} definitions.\n",
             md-sections(ops.map(&.mod).nub().sort(by=m -> ((m == 'prelude') ? 0 : 1, m)).map(m -> (

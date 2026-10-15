@@ -105,7 +105,9 @@ pub class CookieJar : Iterable[Cookie] {
         ignore-expires: Bool = true
     ) {
         let output = filename == nil ? self.filename : "{filename}"
-        if output == nil { throw ValueError('a cookie filename is required') }
+        if output == nil {
+            throw ValueError('a cookie filename is required')
+        }
 
         let lines = [
             '# Netscape HTTP Cookie File',
@@ -117,7 +119,7 @@ pub class CookieJar : Iterable[Cookie] {
             continue if !ignore-discard && cookie.discard
             continue if !ignore-expires && cookie.is-expired(now)
             let domain = ('HttpOnly' in cookie.rest && cookie.rest['HttpOnly'])
-                ? '#HttpOnly_' + cookie.domain
+                ? "#HttpOnly_{cookie.domain}"
                 : cookie.domain
             lines.push([
                 domain,
@@ -129,7 +131,7 @@ pub class CookieJar : Iterable[Cookie] {
                 cookie.value
             ].join('\t'))
         }
-        Path(output).write(lines.join('\n') + '\n')
+        Path(output).write("{lines.join('\n')}\n")
         self.filename = output
     }
 
@@ -139,22 +141,24 @@ pub class CookieJar : Iterable[Cookie] {
         ignore-expires: Bool = true
     ) -> CookieJar {
         let input = filename == nil ? self.filename : "{filename}"
-        if input == nil { throw ValueError('a cookie filename is required') }
+        if input == nil {
+            throw ValueError('a cookie filename is required')
+        }
 
         let now = time.utc()
         for record in Path(input).read-text().split('\n') {
-            let raw = record.ends?('\r') ? record.slice(0, #record - 1) : record
+            let raw = record.ends?('\r') ? record[;#record - 1] : record
             let http-only = raw.starts?('#HttpOnly_')
             let line = http-only ? raw.slice(10) : raw
             continue if !line || line.starts?('#')
 
             let fields = line.split('\t')
-            if #fields != 7 { continue }
+            continue if #fields != 7
             let expiry = fields[4] ? try { float(fields[4]) } : nil
-            if fields[4] && expiry == nil { continue }
+            continue if fields[4] && expiry == nil
             let domain = fields[0]
             let include-subdomains = fields[1].upper() == 'TRUE'
-            if include-subdomains && !domain.starts?('.') { domain = '.' + domain }
+            if include-subdomains && !domain.starts?('.') { domain = ".{domain}"     }
             if !include-subdomains && domain.starts?('.') { domain = domain.slice(1) }
             let cookie = Cookie(
                 name=fields[5], value=fields[6], domain=domain, path=fields[2],
@@ -172,7 +176,9 @@ pub class CookieJar : Iterable[Cookie] {
 
     get-cookies-for-url(url: String) -> Array[Cookie] {
         let parts = url.match(/^(?:([A-Za-z][A-Za-z0-9+.-]*):\/\/)?([^\/:?#]+)(?::\d+)?([^?#]*)/)
-        if parts == nil { return [] }
+        if parts == nil {
+            return []
+        }
         let scheme = (parts[1] ?? 'http').lower()
         let host = parts[2].lower()
         let request-path = parts[3] || '/'
@@ -180,7 +186,9 @@ pub class CookieJar : Iterable[Cookie] {
 
         __cookies.filter(fn (cookie) {
             let domain = cookie.domain.lower()
-            if domain.starts?('.') { domain = domain.slice(1) }
+            if domain.starts?('.') {
+                domain = domain.slice(1)
+            }
             let domain-ok = host == domain || (cookie.domain.starts?('.') && host.ends?(".{domain}"))
             let path-ok = request-path == cookie.path || (
                 request-path.starts?(cookie.path)
@@ -199,8 +207,12 @@ pub class CookieJar : Iterable[Cookie] {
 fn merge-cookie-jars(jars: Array[CookieJar]) -> CookieJar {
     let output = CookieJar()
     for jar in jars {
-        for cookie in jar { output.set-cookie(cookie) }
-        if jar.filename != nil { output.filename = jar.filename }
+        for jar {
+            output.set-cookie(it)
+        }
+        if jar.filename != nil {
+            output.filename = jar.filename
+        }
     }
     output
 }
@@ -214,8 +226,10 @@ fn wsl?() -> Bool {
 }
 
 pub fn windows-path-to-wsl(path: String) -> Path | nil {
-    if #path < 3 || path.slice(1, 1) != ':' { return nil }
-    let drive = path.slice(0, 1).lower()
+    if #path < 3 || path[1;2] != ':' {
+        return nil
+    }
+    let drive = path[;1].lower()
     let rest = path.slice(2).replace('\\', '/')
     Path("/mnt/{drive}/{rest.comb(/^\/+|\/+$/)}")
 }
@@ -231,7 +245,9 @@ fn powershell(script: String, input: ?String = nil) -> String | nil {
 }
 
 fn windows-local-app-data() -> Path | nil {
-    if !wsl?() { return nil }
+    if !wsl?() {
+        return nil
+    }
     let $dir = powershell("[Environment]::GetFolderPath('LocalApplicationData')") or return nil
     windows-path-to-wsl(dir)
 }
@@ -248,7 +264,9 @@ fn profile-path(profile: String | Path | nil) -> Path {
         ? linux-root
         : windows-root / 'Google/Chrome/User Data'
 #|]
-    if profile == nil { return root }
+    if profile == nil {
+        return root
+    }
     let p = Path(profile)
     p.absolute? ? p : root / p
 }
@@ -256,11 +274,13 @@ fn profile-path(profile: String | Path | nil) -> Path {
 fn newest-cookie-db(root: Path) -> Path | nil {
     let newest: Path | nil = nil
     let newest-time: Float = -1.0
-    if !root.exists? { return nil }
-    for path in root.rglob('Cookies') {
-        let mtime = path.lstat.mtime
+    if !root.exists? {
+        return nil
+    }
+    for root.rglob('Cookies') {
+        let mtime = it.lstat.mtime
         if mtime > newest-time {
-            newest = path
+            newest = it
             newest-time = mtime
         }
     }
@@ -289,7 +309,9 @@ pub fn pbkdf2-sha1(
     iterations: Int,
     key-length: Int
 ) -> Blob {
-    if __crypto == nil { throw RuntimeError('libcrypto is required to decrypt Chrome cookies') }
+    if __crypto == nil {
+        throw RuntimeError('libcrypto is required to decrypt Chrome cookies')
+    }
     let out = Blob(*[0 for _ in ..key-length])
     if !PKCS5_PBKDF2_HMAC_SHA1(password, password.size(), salt, salt.size(), iterations, key-length, out) {
         throw RuntimeError('PBKDF2 failed')
@@ -298,9 +320,13 @@ pub fn pbkdf2-sha1(
 }
 
 fn aes-cbc-decrypt(ciphertext: Blob, key: Blob) -> Blob | nil {
-    if __crypto == nil { return nil }
+    if __crypto == nil {
+        return nil
+    }
     let ctx = EVP_CIPHER_CTX_new()
-    if !ctx { return nil }
+    if !ctx {
+        return nil
+    }
     defer EVP_CIPHER_CTX_free(ctx)
 
     let iv = Blob(*[32 for _ in ..16])
@@ -312,15 +338,19 @@ fn aes-cbc-decrypt(ciphertext: Blob, key: Blob) -> Blob | nil {
 
     if !EVP_DecryptInit_ex(ctx, EVP_aes_128_cbc(), nil, key, iv) { return nil }
     if !EVP_DecryptUpdate(ctx, out, n1, ciphertext, #ciphertext) { return nil }
-    if !EVP_DecryptFinal_ex(ctx, out.ptr() + n1[0], n2) { return nil }
+    if !EVP_DecryptFinal_ex(ctx, out.ptr() + n1[0], n2)          { return nil }
     out.slice(0, n1[0] + n2[0])
 }
 
 fn aes-gcm-decrypt(ciphertext: Blob, key: Blob) -> Blob | nil {
     /* Windows Chrome stores v10 payloads as nonce || ciphertext || tag. */
-    if __crypto == nil || #key != 32 || #ciphertext < 28 { return nil }
+    if __crypto == nil || #key != 32 || #ciphertext < 28 {
+        return nil
+    }
     let ctx = EVP_CIPHER_CTX_new()
-    if !ctx { return nil }
+    if !ctx {
+        return nil
+    }
     defer EVP_CIPHER_CTX_free(ctx)
 
     let nonce = ciphertext.slice(0, 12)
@@ -333,11 +363,11 @@ fn aes-gcm-decrypt(ciphertext: Blob, key: Blob) -> Blob | nil {
     defer c.free(n2)
 
     if !EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), nil, nil, nil) { return nil }
-    if !EVP_CIPHER_CTX_ctrl(ctx, 0x9, #nonce, nil) { return nil }
-    if !EVP_DecryptInit_ex(ctx, nil, nil, key, nonce) { return nil }
-    if !EVP_DecryptUpdate(ctx, out, n1, encrypted, #encrypted) { return nil }
-    if !EVP_CIPHER_CTX_ctrl(ctx, 0x11, #auth-tag, auth-tag) { return nil }
-    if !EVP_DecryptFinal_ex(ctx, out.ptr() + n1[0], n2) { return nil }
+    if !EVP_CIPHER_CTX_ctrl(ctx, 0x9, #nonce, nil)                { return nil }
+    if !EVP_DecryptInit_ex(ctx, nil, nil, key, nonce)             { return nil }
+    if !EVP_DecryptUpdate(ctx, out, n1, encrypted, #encrypted)    { return nil }
+    if !EVP_CIPHER_CTX_ctrl(ctx, 0x11, #auth-tag, auth-tag)       { return nil }
+    if !EVP_DecryptFinal_ex(ctx, out.ptr() + n1[0], n2)           { return nil }
     out.slice(0, n1[0] + n2[0])
 }
 
@@ -345,7 +375,9 @@ fn find-local-state(database: Path) -> Path | nil {
     let dir = database.parent
     while dir != dir.parent {
         let state = dir / 'Local State'
-        if state.exists? { return state }
+        if state.exists? {
+            return state
+        }
         dir = dir.parent
     }
     nil
@@ -355,7 +387,9 @@ fn windows-chrome-key(local-state: Path) -> Blob | nil {
     let state: _ = try { json.parse!(local-state.read-text()) } ?? return nil
     let encoded = try { state['os_crypt']['encrypted_key'] } ?? return nil
     let wrapped = try { base64.decode("{encoded}") } ?? return nil
-    if #wrapped < 6 || wrapped.slice(0, 5).str() != 'DPAPI' { return nil }
+    if #wrapped < 6 || wrapped.slice(0, 5).str() != 'DPAPI' {
+        return nil
+    }
 
     let script = [
         '$s=[Console]::In.ReadToEnd().Trim()',
@@ -421,7 +455,9 @@ pub class ChromeCookieDecryptor {
     key-available -> Bool { __key != nil || __windows-key != nil }
 
     decrypt(encrypted-value: Blob) -> String | nil {
-        if #encrypted-value < 3 { return nil }
+        if #encrypted-value < 3 {
+            return nil
+        }
         let version = encrypted-value.slice(0, 3).str!()
         if version == 'v20' {
             cookie-counts['v20'] += 1
@@ -448,7 +484,7 @@ pub class ChromeCookieDecryptor {
         let plain = match (__windows-key, __key) {
             (key: Blob, _) => aes-gcm-decrypt(payload, key),
             (_, key: Blob) => aes-cbc-decrypt(payload, key),
-            _ => nil
+            _              => nil
         }
         if plain == nil {
             decryption-failures += 1
@@ -462,7 +498,9 @@ pub class ChromeCookieDecryptor {
             plain = plain.slice(32)
         }
         let value = plain.str()
-        if value == nil { decryption-failures += 1 }
+        if value == nil {
+            decryption-failures += 1
+        }
         value
     }
 }
@@ -505,25 +543,29 @@ fn process-chrome-cookie(
 }
 
 pub fn chrome-expiry(value: Int | Float | nil) -> Float | nil {
-    if value == nil || value == 0 || value == 0.0 { return nil }
+    if value == nil || value == 0 || value == 0.0 {
+        return nil
+    }
     let expires = CHROME_EPOCH.add(Duration(microseconds=Int(value)))
     expires.epoch-nanoseconds / 1000000000.0
 }
 
 fn cookie-domain-query(domains: Array[String]) -> (String, Array[String]) {
-    if #domains == 0 { return ('', []) }
+    if #domains == 0 {
+        return ('', [])
+    }
     let clauses = []
     let values: Array[String] = []
-    for raw in domains {
-        let domain = raw.lower().trim()
+    for domains {
+        let domain = it.lower().trim()
         if domain.starts?('.') { domain = domain.slice(1) }
-        if domain == '' { continue }
+        if domain == ''        { continue                 }
         clauses.push('(lower(host_key) = ? OR lower(host_key) = ? OR lower(host_key) LIKE ?)')
         values.push(domain)
-        values.push('.' + domain)
-        values.push('%.' + domain)
+        values.push(".{domain}")
+        values.push("%.{domain}")
     }
-    (#clauses > 0) ? (' WHERE ' + clauses.join(' OR '), values) : ('', [])
+    (#clauses > 0) ? (" WHERE {clauses.join(' OR ')}", values) : ('', [])
 }
 
 pub fn extract-cookies-from-browser(
@@ -543,7 +585,9 @@ pub fn extract-cookies-from-browser(
     with tmpdir = Path.tempdir('ty-chrome-cookies') {
         let copy = db-path.copy(tmpdir / 'Cookies.sqlite')
         let wal = Path("{db-path}-wal")
-        if wal.exists? { wal.copy(Path("{copy}-wal")) }
+        if wal.exists? {
+            wal.copy(Path("{copy}-wal"))
+        }
         with db = SQLite("{copy}") {
             let meta-row: _ = db.fetchOne("SELECT value FROM meta WHERE key = 'version'", assoc=false)
             let meta-version = meta-row == nil ? 0 : int(meta-row[0])
@@ -575,8 +619,8 @@ pub fn extract-cookies-from-browser(
                 )
             }
             let jar = CookieJar()
-            for row in rows {
-                if let $cookie = process-chrome-cookie(decryptor, row) {
+            for rows {
+                if let $cookie = process-chrome-cookie(decryptor, it) {
                     jar.set-cookie(cookie)
                 }
             }
@@ -616,8 +660,8 @@ pub fn load-cookies(
         let jars: Array[CookieJar] = []
         if browser-specification != nil {
             match browser-specification {
-                name: String => jars.push(extract-cookies-from-browser(name)),
-                [name] => jars.push(extract-cookies-from-browser(name)),
+                name: String           => jars.push(extract-cookies-from-browser(name)),
+                [name]                 => jars.push(extract-cookies-from-browser(name)),
                 [name, profile, *rest] => jars.push(extract-cookies-from-browser(name, profile))
             }
         }

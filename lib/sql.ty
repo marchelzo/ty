@@ -57,10 +57,10 @@ fn _diff-table(cls: _, db: SQLite) {
 
     if !db.table?(table) {
         ops.push(%{
-            "op": 'create-table',
-            "table": table,
-            "sql": schema.sql,
-            "down": "DROP TABLE IF EXISTS {table}"
+            'op': 'create-table',
+            'table': table,
+            'sql': schema.sql,
+            'down': "DROP TABLE IF EXISTS {table}"
         })
         return ops
     }
@@ -72,12 +72,12 @@ fn _diff-table(cls: _, db: SQLite) {
     for col in desired {
         if col.name.lower() not in ex-lower {
             ops.push(%{
-                "op": 'add-column',
-                "table": table,
-                "column": col.name,
-                "sql": "ALTER TABLE {table}"
+                'op': 'add-column',
+                'table': table,
+                'column': col.name,
+                'sql': "ALTER TABLE {table}"
                        " ADD COLUMN {_col-def(col, dialect)}",
-                "down": "ALTER TABLE {table}"
+                'down': "ALTER TABLE {table}"
                         " DROP COLUMN {_quote(col.name)}"
             })
         }
@@ -88,12 +88,12 @@ fn _diff-table(cls: _, db: SQLite) {
         if name.lower() not in desired-lower {
             let col-info = existing[name]
             ops.push(%{
-                "op": 'drop-column',
-                "table": table,
-                "column": name,
-                "sql": "ALTER TABLE {table}"
+                'op': 'drop-column',
+                'table': table,
+                'column': name,
+                'sql': "ALTER TABLE {table}"
                        " DROP COLUMN {_quote(name)}",
-                "down": "ALTER TABLE {table}"
+                'down': "ALTER TABLE {table}"
                         " ADD COLUMN {_col-def-from-existing(table, name, col-info)}"
             })
         }
@@ -116,13 +116,13 @@ fn _diff-table(cls: _, db: SQLite) {
                     _ => nil
                 }
                 ops.push(%{
-                    "op": 'type-change',
-                    "table": table,
-                    "column": col.name,
-                    "from": ex.type,
-                    "to": col.sql-type,
-                    "sql": sql,
-                    "down": down
+                    'op': 'type-change',
+                    'table': table,
+                    'column': col.name,
+                    'from': ex.type,
+                    'to': col.sql-type,
+                    'sql': sql,
+                    'down': down
                 })
             }
         }
@@ -132,8 +132,8 @@ fn _diff-table(cls: _, db: SQLite) {
     let ex-idx-set = %{idx['columns'].sort().join(','):  idx['name'] for idx in ex-indexes}
     let desired-idx-set = %{}
     let desired-idxs: _ = schema.indexes
-    for idx in desired-idxs {
-        let sorted: _ = idx.sort()
+    for desired-idxs {
+        let sorted: _ = it.sort()
         let key = sorted.join(',')
         let suffix = sorted.join('_')
         let name = "idx_{table}_{suffix}"
@@ -144,12 +144,12 @@ fn _diff-table(cls: _, db: SQLite) {
         if key not in ex-idx-set {
             let col-list = key.split(',').map(_quote).join(', ')
             ops.push(%{
-                "op": 'create-index',
-                "table": table,
-                "index": name,
-                "sql": "CREATE INDEX IF NOT EXISTS {name}"
+                'op': 'create-index',
+                'table': table,
+                'index': name,
+                'sql': "CREATE INDEX IF NOT EXISTS {name}"
                        " ON {table} ({col-list})",
-                "down": "DROP INDEX IF EXISTS {name}"
+                'down': "DROP INDEX IF EXISTS {name}"
             })
         }
     }
@@ -158,11 +158,11 @@ fn _diff-table(cls: _, db: SQLite) {
         if key not in desired-idx-set {
             let col-list = key.split(',').map(_quote).join(', ')
             ops.push(%{
-                "op": 'drop-index',
-                "table": table,
-                "index": name,
-                "sql": "DROP INDEX IF EXISTS {name}",
-                "down": "CREATE INDEX IF NOT EXISTS {name}"
+                'op': 'drop-index',
+                'table': table,
+                'index': name,
+                'sql': "DROP INDEX IF EXISTS {name}",
+                'down': "CREATE INDEX IF NOT EXISTS {name}"
                         " ON {table} ({col-list})"
             })
         }
@@ -196,7 +196,9 @@ pub fn connect(
         /^psql:\/\//          => pg(dsn.sub(/^psql/, 'postgresql')),
         _                     => SQLite(dsn, full-mutex=full-mutex)
     }
-    if schema != nil { _load-schema(_db, schema) }
+    if schema != nil {
+        _load-schema(_db, schema)
+    }
     if sync {
         let tbls = with _tables-mu { [*_tables] }
         for tbls { _sync-table(it) }
@@ -273,18 +275,20 @@ fn _remove-migration(db: _, version: String) {
 
 fn _migration-files(dir: String) -> Array[Dict[String, _]] {
     let p = Path(dir)
-    if !p.exists? { return [] }
+    if !p.exists? {
+        return []
+    }
     let files = os.listdir(dir)
         .filter(\_ .match?(/^\d{14}_.*\.json$/))
         .sort()
     files.map(fn (f) {
-        let parts = f.sub(/\.json$/, '').split('_', n=2)
+        let parts = f.comb(/\.json$/).split('_', n=2)
         let content = io.open("{dir}/{f}").slurp()
         return %{
-            "version": parts[0],
-            "name": parts[1],
-            "file": f,
-            "ops": json.parse(content)
+            'version': parts[0],
+            'name': parts[1],
+            'file': f,
+            'ops': json.parse(content)
         }
     })
 }
@@ -292,13 +296,17 @@ fn _migration-files(dir: String) -> Array[Dict[String, _]] {
 pub fn generate(name: String, dir: String = 'migrations', db: SQLite | nil = nil) -> String | nil {
     let db = _resolve-db(db)
     let ops = diff(db)
-    if #ops == 0 { return nil }
+    if #ops == 0 {
+        return nil
+    }
 
     let p = Path(dir)
-    if !p.exists? { os.mkdir(dir) }
+    if !p.exists? {
+        os.mkdir(dir)
+    }
 
     let version = time.strftime('%Y%m%d%H%M%S')
-    let slug = name.lower().sub(/[^a-z0-9]+/, '_').sub(/^_|_$/, '')
+    let slug = name.lower().sub(/[^a-z0-9]+/, '_').comb(/^_|_$/)
     let filename = "{version}_{slug}.json"
     let filepath = "{dir}/{filename}"
 
@@ -320,8 +328,8 @@ pub fn up(dir: String = 'migrations', db: SQLite | nil = nil) -> Array[String] {
     for mig in pending {
         transaction(fn () {
             let ops: _ = mig['ops']
-            for op in ops {
-                if let $sql = op['sql'] {
+            for ops {
+                if let $sql = it['sql'] {
                     db.exec(sql)
                 }
             }
@@ -349,8 +357,8 @@ pub fn down(steps: Int = 1, dir: String = 'migrations', db: SQLite | nil = nil) 
         }
         transaction(fn () {
             let ops: _ = mig['ops']
-            for op in ops.reverse() {
-                if let $sql = op['down'] {
+            for ops.reverse() {
+                if let $sql = it['down'] {
                     db.exec(sql)
                 }
             }
@@ -376,9 +384,9 @@ pub fn migration-status(dir: String = 'migrations', db: SQLite | nil = nil) -> A
 
     all-migs.map(fn (mig) {
         return %{
-            "version":  mig['version'],
-            "name":     mig['name'],
-            "applied?": mig['version'] in applied-set
+            'version':  mig['version'],
+            'name':     mig['name'],
+            'applied?': mig['version'] in applied-set
         }
     })
 }
@@ -388,9 +396,9 @@ pub fn pending(dir: String = 'migrations', db: SQLite | nil = nil) -> Array[Dict
 }
 
 fn _create-indexes(db: _, table: String, indexes: Array[_]) {
-    for idx in indexes {
-        let cols: _ = idx.map(_quote).join(', ')
-        let name = "idx_{table}_{idx.sort().join('_')}"
+    for indexes {
+        let cols: _ = it.map(_quote).join(', ')
+        let name = "idx_{table}_{it.sort().join('_')}"
         db.exec(
             "CREATE INDEX IF NOT EXISTS {name}"
             " ON {table} ({cols})"
@@ -407,11 +415,11 @@ fn _existing-indexes(db: _, table: String) -> Array[Dict[String, _]] {
         table
     )
     let result = []
-    for row in rows {
-        let info = db.fetch-all("PRAGMA index_info('{row['name']}')")
+    for rows {
+        let info = db.fetch-all("PRAGMA index_info('{it['name']}')")
         result.push(%{
-            "name": row['name'],
-            "columns": info.sort(by=\_ ['seqno']).map(\_ ['name'])
+            'name': it['name'],
+            'columns': info.sort(by=\_ ['seqno']).map(\_ ['name'])
         })
     }
     return result
@@ -419,7 +427,7 @@ fn _existing-indexes(db: _, table: String) -> Array[Dict[String, _]] {
 
 fn _col-def-from-existing(table: String, name: String, info: _) -> String {
     let parts = [_quote(name), info.type]
-    if info.notnull { parts.push('NOT NULL') }
+    if info.notnull     { parts.push('NOT NULL')            }
     if info.dflt != nil { parts.push("DEFAULT {info.dflt}") }
     return parts.join(' ')
 }
@@ -625,7 +633,9 @@ pub class Query[T] : Iterable[T] {
     }
 
     `where`(cond: String = '', *ps) -> Query[T] {
-        if cond == '' { return self }
+        if cond == '' {
+            return self
+        }
         let new-cond = __cond
             ? "({__cond}) AND ({cond})"
             : cond
@@ -658,10 +668,10 @@ pub class Query[T] : Iterable[T] {
     }
 
     _eager-load!(rows: Array[_], instances: Array[_], db: SQLite) {
-        if #__incs == 0 || #rows == 0 {
-            return
+        return if #__incs == 0 || #rows == 0
+        for instances {
+            it.preloaded = %{}
         }
-        for inst in instances { inst.preloaded = %{} }
         for name in __incs {
             let $assoc = __assocs[name] or continue
             let fk-col       = assoc.fk-col
@@ -731,7 +741,7 @@ pub class Query[T] : Iterable[T] {
         rows(
             _select-sql(_quote(col)),
             *__params,
-            db = db
+            db=db
         ).map(\_.values()[0])
     }
 
@@ -758,7 +768,9 @@ pub class Query[T] : Iterable[T] {
         let db = _resolve-db(db)
         let sql = "SELECT sum({_quote(col)}) AS v"
                   " FROM {__tbl}"
-        if __cond != nil { sql = "{sql} WHERE {__cond}" }
+        if __cond != nil {
+            sql = "{sql} WHERE {__cond}"
+        }
         db.fetch-one(sql, *__params)!['v']
     }
 
@@ -766,7 +778,9 @@ pub class Query[T] : Iterable[T] {
         let db = _resolve-db(db)
         let sql = "SELECT avg({_quote(col)}) AS v"
                   " FROM {__tbl}"
-        if __cond != nil { sql = "{sql} WHERE {__cond}" }
+        if __cond != nil {
+            sql = "{sql} WHERE {__cond}"
+        }
         db.fetch-one(sql, *__params)!['v']
     }
 
@@ -774,7 +788,9 @@ pub class Query[T] : Iterable[T] {
         let db = _resolve-db(db)
         let sql = "SELECT min({_quote(col)}) AS v"
                   " FROM {__tbl}"
-        if __cond != nil { sql = "{sql} WHERE {__cond}" }
+        if __cond != nil {
+            sql = "{sql} WHERE {__cond}"
+        }
         db.fetch-one(sql, *__params)!['v']
     }
 
@@ -782,7 +798,9 @@ pub class Query[T] : Iterable[T] {
         let db = _resolve-db(db)
         let sql = "SELECT max({_quote(col)}) AS v"
                   " FROM {__tbl}"
-        if __cond != nil { sql = "{sql} WHERE {__cond}" }
+        if __cond != nil {
+            sql = "{sql} WHERE {__cond}"
+        }
         db.fetch-one(sql, *__params)!['v']
     }
 
@@ -790,9 +808,13 @@ pub class Query[T] : Iterable[T] {
         let db = _resolve-db(nil)
         let qc = _quote(col)
         let sql = "SELECT {qc}, {agg} FROM {__tbl}"
-        if __cond != nil { sql = "{sql} WHERE {__cond}" }
+        if __cond != nil {
+            sql = "{sql} WHERE {__cond}"
+        }
         sql = "{sql} GROUP BY {qc}"
-        if __ord != nil { sql = "{sql} ORDER BY {__ord}" }
+        if __ord != nil {
+            sql = "{sql} ORDER BY {__ord}"
+        }
         db.fetch-all(sql, *__params)
     }
 
@@ -816,13 +838,13 @@ fn _make-query[T](tbl: String, from-row: (Dict[String, _] -> T), assocs: Dict[St
 
 fn _build-assocs(specs: Array[Array[_]]) {
     let d = %{}
-    for s in specs {
-        let name = s[0]
+    for specs {
+        let name = it[0]
         d[name] = {
-            fk-col:   s[1],
-            ref-tbl:  s[2],
-            ref-pk:   s[3],
-            from-row: s[4]
+            fk-col:   it[1],
+            ref-tbl:  it[2],
+            ref-pk:   it[3],
+            from-row: it[4]
         }
     }
     d
@@ -868,7 +890,9 @@ pub class ValidationError < RuntimeError {
 }
 
 fn _add-err(errs: Dict, field: String, msg: String) {
-    if field not in errs { errs[field] = [] }
+    if field not in errs {
+        errs[field] = []
+    }
     errs[field].push(msg)
 }
 
@@ -971,13 +995,15 @@ pub macro table(def: _) {
 
     let valid-checks = []
     let new-getters  = []
-    for g in cls.getters {
-        let ty.Func($f) = g
+    for cls.getters {
+        let ty.Func($f) = it
         if f.name == 'validate' {
             let ty.Block($stmts) = f.body
-            for s in stmts { valid-checks.push(s) }
+            for s in stmts {
+                valid-checks.push(s)
+            }
         } else {
-            new-getters.push(g)
+            new-getters.push(it)
         }
     }
     cls.getters = new-getters
@@ -999,8 +1025,8 @@ pub macro table(def: _) {
                 ty.Id({name: $option, *}),
                 ty.Array($items)
             )) and option in ['primaryKey', 'primary_key'] => {
-                for item in items {
-                    let ty.ArrayItem($ai) = item
+                for items {
+                    let ty.ArrayItem($ai) = it
                     let ty.Id({name: $name, *}) = ai.item
                     primary-keys.push(name)
                 }
@@ -1207,8 +1233,8 @@ pub macro table(def: _) {
 
     let user-methods = cls.methods
     let has-method   = %[]
-    for m in user-methods {
-        let ty.Func($f) = m
+    for user-methods {
+        let ty.Func($f) = it
         has-method << f.name
     }
 
@@ -1234,9 +1260,9 @@ pub macro table(def: _) {
     let col-name-set = %[c.name for c in cols]
 
     let valid-stmts = [$$[ errors = %{} $$]]
-    for stmt in valid-checks {
+    for valid-checks {
         valid-stmts.push(
-            _make-check(stmt, col-name-set)
+            _make-check(it, col-name-set)
         )
     }
     if has-method('validate') {
@@ -1295,7 +1321,9 @@ pub macro table(def: _) {
     if has-method('beforeSave') {
         save-stmts.push(cb('beforeSave'))
     }
-    if has-updated-at { save-stmts.push(ts-updated) }
+    if has-updated-at {
+        save-stmts.push(ts-updated)
+    }
     if has-validations || has-method('validate') {
         save-stmts.push(validate-guard)
     }
@@ -1358,7 +1386,9 @@ pub macro table(def: _) {
         ($$::(_dialect)(db) == 'postgres') ? $$pg-del-sql-str : $$del-sql-str
     $$]
     let del-stmts = [db-resolve]
-    if has-method('beforeDelete') { del-stmts.push(cb('beforeDelete')) }
+    if has-method('beforeDelete') {
+        del-stmts.push(cb('beforeDelete'))
+    }
     del-stmts.push(ty.Call(
         func: $$[ db.exec $$],
         args: [
@@ -1366,7 +1396,9 @@ pub macro table(def: _) {
             *flds(pk-cols).map(\ty.Arg(arg: _))
         ]
     ))
-    if has-method('afterDelete') { del-stmts.push(cb('afterDelete')) }
+    if has-method('afterDelete') {
+        del-stmts.push(cb('afterDelete'))
+    }
     let del-body = ty.Block(del-stmts)
 
     let db-p = ty.Param(
@@ -1717,8 +1749,8 @@ pub macro table(def: _) {
     ]
 
     ty.walk(def, match {
-        ForeignKey(_)       => $$[ Int | nil $$],
-        UniqueType($inner)  => inner,
-        node                => node
+        ForeignKey(_)      => $$[ Int | nil $$],
+        UniqueType($inner) => inner,
+        node               => node
     })
 }

@@ -2034,6 +2034,7 @@ finish_ex(Lir *L, bool entry, bool interpreted, bool entry_thunk, u32 body_slots
                 code->sig = code->lir->sig;
         }
         code->mode = L->resolved_mode;
+        code->release = L->mode == LIR_MODE_DETACHED;
         code->nroots = L->nroots;
         code->roots = calloc((usize)L->nroots + 1, sizeof *code->roots);
         if (code->roots == NULL) {
@@ -2077,13 +2078,20 @@ finish_ex(Lir *L, bool entry, bool interpreted, bool entry_thunk, u32 body_slots
                         goto Error;
                 }
                 if (code->entry_code->nvslots != 0) {
-                        for (u32 pc = 0; pc < thunk->ninsts; ++pc) {
+                        bool patched = false;
+                        for (u32 pc = 0; pc < thunk->ninsts && !patched; ++pc) {
                                 LirInst *in = &thunk->insts[pc];
                                 if (in->op == LIR_CALL && in->args[0].kind == LIR_OPERAND_IMM
                                     && (uptr)in->args[0].imm == (uptr)lir_runtime()->reserve) {
                                         in->call_args[2] = lir_i((u64)code->nvslots + code->entry_code->nvslots);
-                                        break;
+                                        patched = true;
                                 }
+                        }
+                        if (!patched) {
+                                lir_free(thunk);
+                                emit_error(err, LIR_ERROR_MODE, LIR_NONE, (LirSpan) {0},
+                                           "entry thunk needs value slots");
+                                goto Error;
                         }
                         lir_code_free(code->entry_code);
                         code->entry_code = finish(thunk, false, interpreted, true, code->nvslots, err);

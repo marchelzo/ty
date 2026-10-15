@@ -83,13 +83,17 @@ pub class Inotify {
         __buf.clear()
         __off = 0
         let data = os.read(__fd, 4096)
-        if data == nil { return false }
+        if data == nil {
+            return false
+        }
         __buf = data
         return true
     }
 
     __next-event() -> Event | nil {
-        if __off + __evt_size > __buf.size() { return nil }
+        if __off + __evt_size > __buf.size() {
+            return nil
+        }
         let ev = InotifyEvent(__buf.ptr() + __off)
         __off += __evt_size
         let name = if ev.len > 0 {
@@ -106,11 +110,15 @@ pub class Inotify {
 
     events*(timeout: Float = -1.0) {
         // Yield any buffered events first
-        while let $ev = __next-event() { yield ev }
+        while let $ev = __next-event() {
+            yield ev
+        }
 
         while ready?(timeout) {
-            if !__fill() { break }
-            while let $ev = __next-event() { yield ev }
+            break if !__fill()
+            while let $ev = __next-event() {
+                yield ev
+            }
         }
     }
 

@@ -143,10 +143,10 @@ class PostgreSQLResult {
         let result = []
         for i in 0..ntuples {
             let row = %{}
-            for j in 0..ncols {
-                let raw = get-value(i, j)
-                row[names[j]] = (raw != nil)
-                    ? _parse-val(raw, oids[j])
+            for 0..ncols {
+                let raw = get-value(i, it)
+                row[names[it]] = (raw != nil)
+                    ? _parse-val(raw, oids[it])
                     : nil
             }
             result.push(row)
@@ -279,11 +279,11 @@ pub class PostgreSQL {
             table
         )
         let by-name = %{}
-        for r in rows {
-            by-name[r['column_name']] = {
-                type: r['data_type'],
-                notnull: r['is_nullable'] == 'NO',
-                dflt: r['column_default'],
+        for rows {
+            by-name[it['column_name']] = {
+                type: it['data_type'],
+                notnull: it['is_nullable'] == 'NO',
+                dflt: it['column_default'],
                 pk: false
             }
         }

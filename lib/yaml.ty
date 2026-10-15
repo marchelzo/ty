@@ -5,7 +5,7 @@ import math (inf, nan)
 import path (Path)
 
 if not let $libyaml = c.open('yaml') {
-    throw "yaml: failed to load libyaml"
+    throw 'yaml: failed to load libyaml'
 }
 
 enum! {
@@ -161,31 +161,37 @@ pub class YAMLError < RuntimeError {
 }
 
 fn event-scalar-value(ev: YamlEvent) -> String {
-    if ev.val == nil { return '' }
+    if ev.val == nil {
+        return ''
+    }
     c.str(ev.val, ev.len)
 }
 
 fn event-scalar-tag(ev: YamlEvent) -> ?String {
-    if ev.tg == nil { return nil }
+    if ev.tg == nil {
+        return nil
+    }
     c.str(ev.tg)
 }
 
 fn event-anchor(ev: YamlEvent) -> ?String {
-    if ev.anchor == nil { return nil }
+    if ev.anchor == nil {
+        return nil
+    }
     c.str(ev.anchor)
 }
 
 fn parser-error(parser: YamlParser) -> YAMLError {
     let problem = parser.problem
-    let msg = if problem != nil { c.str(problem) } else { 'unknown error' }
+    let msg = problem != nil ? c.str(problem) : 'unknown error'
     YAMLError(msg, Int(parser.pm_line), Int(parser.pm_col))
 }
 
 fn resolve-float(value: String) {
     let lower = value.lower()
-    if lower == '.inf' || lower == '+.inf' { return inf }
-    if lower == '-.inf' { return -inf }
-    if lower == '.nan' { return nan }
+    if lower == '.inf' || lower == '+.inf' { return inf  }
+    if lower == '-.inf'                    { return -inf }
+    if lower == '.nan'                     { return nan  }
     return Float(value)
 }
 
@@ -202,8 +208,8 @@ fn resolve-scalar(value: String, tg: ?String, style: Int) {
             'tag:yaml.org,2002:bool'  => value.lower() in ['true', 'yes', 'on'],
             'tag:yaml.org,2002:int'   => Int(value),
             'tag:yaml.org,2002:float' => resolve-float(value),
-            'tag:yaml.org,2002:str' => value,
-            _ => value
+            'tag:yaml.org,2002:str'   => value,
+            _                         => value
         }
     }
 
@@ -287,9 +293,7 @@ fn parse-value(parser: YamlParser, ev: YamlEvent, anchors: Dict[String, YAML]) -
             if yaml_parser_parse(p, e) != 1 {
                 throw parser-error(parser)
             }
-            if ev.tp == YAML_SEQUENCE_END_EVENT {
-                break
-            }
+            break if ev.tp == YAML_SEQUENCE_END_EVENT
             items.push(parse-value(parser, ev, anchors))
         }
 
@@ -307,9 +311,7 @@ fn parse-value(parser: YamlParser, ev: YamlEvent, anchors: Dict[String, YAML]) -
             if yaml_parser_parse(p, e) != 1 {
                 throw parser-error(parser)
             }
-            if ev.tp == YAML_MAPPING_END_EVENT {
-                break
-            }
+            break if ev.tp == YAML_MAPPING_END_EVENT
             let key = parse-key(parser, ev, anchors)
 
             if yaml_parser_parse(p, e) != 1 {
@@ -335,7 +337,6 @@ fn parse-value(parser: YamlParser, ev: YamlEvent, anchors: Dict[String, YAML]) -
         throw YAMLError("undefined alias: {anch}")
     }
 
-    return nil
 }
 
 fn parse-document(parser: YamlParser, ev: YamlEvent) -> Array[YAML] {
@@ -349,9 +350,7 @@ fn parse-document(parser: YamlParser, ev: YamlEvent) -> Array[YAML] {
             throw parser-error(parser)
         }
 
-        if ev.tp == YAML_STREAM_END_EVENT {
-            break
-        }
+        break if ev.tp == YAML_STREAM_END_EVENT
 
         if ev.tp == YAML_DOCUMENT_START_EVENT {
             if yaml_parser_parse(p, e) != 1 {
@@ -367,9 +366,7 @@ fn parse-document(parser: YamlParser, ev: YamlEvent) -> Array[YAML] {
                 if yaml_parser_parse(p, e) != 1 {
                     throw parser-error(parser)
                 }
-                if ev.tp == YAML_DOCUMENT_END_EVENT {
-                    break
-                }
+                break if ev.tp == YAML_DOCUMENT_END_EVENT
             }
         }
     }
@@ -472,8 +469,8 @@ fn emit-value(emitter, event, value: _, flow: Bool) {
     if value :: Float {
         let s = if value == inf { '.inf' }
                 else if value == -inf { '-.inf' }
-                else if value != value { '.nan' }
-                else { "{value}" }
+                else if value != value { '.nan'    }
+                else                   { "{value}" }
         emit-scalar(emitter, event, s)
         return
     }
@@ -497,18 +494,18 @@ fn emit-value(emitter, event, value: _, flow: Bool) {
         return
     }
     if value :: Array {
-        let style = if flow { YAML_FLOW_SEQUENCE_STYLE } else { YAML_ANY_SEQUENCE_STYLE }
+        let style = flow ? YAML_FLOW_SEQUENCE_STYLE : YAML_ANY_SEQUENCE_STYLE
         yaml_sequence_start_event_initialize(event.get(), nil, nil, 1, style)
         emit-event(emitter, event)
-        for item in value {
-            emit-value(emitter, event, item, flow)
+        for value {
+            emit-value(emitter, event, it, flow)
         }
         yaml_sequence_end_event_initialize(event.get())
         emit-event(emitter, event)
         return
     }
     if value :: Dict {
-        let style = if flow { YAML_FLOW_MAPPING_STYLE } else { YAML_ANY_MAPPING_STYLE }
+        let style = flow ? YAML_FLOW_MAPPING_STYLE : YAML_ANY_MAPPING_STYLE
         yaml_mapping_start_event_initialize(event.get(), nil, nil, 1, style)
         emit-event(emitter, event)
         for k, v in value {
@@ -546,7 +543,9 @@ fn do-emit(value, indent: Int = 2, width: Int = 80, flow: Bool = false, canonica
     yaml_emitter_set_indent(em, indent)
     yaml_emitter_set_width(em, width)
     yaml_emitter_set_unicode(em, 1)
-    if canonical { yaml_emitter_set_canonical(em, 1) }
+    if canonical {
+        yaml_emitter_set_canonical(em, 1)
+    }
 
     let event = YamlEvent()
     let ev = event.get()
@@ -603,12 +602,12 @@ fn do-emit-all(values: Array, indent: Int = 2, width: Int = 80, flow: Bool = fal
     yaml_stream_start_event_initialize(ev, YAML_UTF8_ENCODING)
     emit-event(emitter, event)
 
-    for value in values {
+    for values {
         // DOCUMENT_START (explicit for multi-doc)
         yaml_document_start_event_initialize(ev, nil, nil, nil, 0)
         emit-event(emitter, event)
 
-        emit-value(emitter, event, value, flow)
+        emit-value(emitter, event, it, flow)
 
         // DOCUMENT_END
         yaml_document_end_event_initialize(ev, 0)

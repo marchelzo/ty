@@ -74,6 +74,8 @@ enum {
         TYC_MUT_CONST       = (1 << 11),
         TYC_EXPRESSION      = (1 << 12),
         TYC_RESULT          = (1 << 13),
+        TYC_FIDELITY        = (1 << 14),
+        TYC_SNAPSHOT        = (1 << 15),
 
 #if defined(TY_LS)
         TYC_DEFAULT_FLAGS = (
@@ -121,6 +123,47 @@ struct import {
 
 typedef vec(struct import) import_vector;
 
+typedef struct {
+        char const *name;
+        Location start;
+        Location end;
+        void const *expansion;
+} MacroSpan;
+
+enum {
+        SYNTAX_PAREN     = -1,
+        SYNTAX_SUGAR     = -2,
+        SYNTAX_PARAM     = -3,
+        SYNTAX_KWARG     = -4,
+        SYNTAX_CONDITION = -5,
+        SYNTAX_NAMESPACE = -6,
+        SYNTAX_MACRO     = -7,
+        SYNTAX_PP_REGION = -8,
+        SYNTAX_EMBEDDED  = -9,
+        SYNTAX_REGION    = -10
+};
+
+typedef struct {
+        i32 kind;
+        u32 start;
+        u32 end;
+        i32 parent;
+        char const *form;
+        bool synth;
+        void *e;
+} SyntaxNode;
+
+typedef struct {
+        char const *kind;
+        char const *form;
+        Location start;
+        Location end;
+        Location inner_start;
+        Location inner_end;
+        bool inner;
+        void const *node;
+} SyntaxExtra;
+
 typedef struct module {
         char *code;
         Scope *scope;
@@ -134,6 +177,10 @@ typedef struct module {
         Arena arena;
         Location error;
         u64 flags;
+        vec(MacroSpan) macros;
+        vec(SyntaxExtra) extras;
+        vec(SyntaxNode) syntax;
+        bool has_syntax;
 } Module;
 
 typedef vec(struct eloc) location_vector;
@@ -335,6 +382,18 @@ compiler_compile_source(
 Module *
 TyCompileSource(Ty *ty, char const *source, Scope *scope, u32 flags);
 
+Stmt *
+CompilerSyntheticClone(Ty *ty, Stmt *s, Location at);
+
+Module *
+TyCompileSourceAt(
+        Ty *ty,
+        char const *source,
+        char const *path,
+        Scope *scope,
+        u32 flags
+);
+
 Module *
 TyCompileModule(
         Ty *ty,
@@ -364,6 +423,12 @@ compiler_symbol_count(Ty *ty);
 
 Symbol *
 compiler_lookup(Ty *ty, char const *module, char const *name);
+
+Symbol *
+compiler_lookup_path(Ty *ty, Module const *mod, char const **parts, int n);
+
+T2Type
+compiler_resolve_type_text(Ty *ty, Module *mod, char const *text);
 
 bool
 compiler_test_runner_failed(void);

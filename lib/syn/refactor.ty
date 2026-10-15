@@ -1,0 +1,95 @@
+import syn (Node, Tree, Symbol)
+import syn.lint as lint (Edit, Violation)
+
+pub class RefactorError < RuntimeError {
+    violations: Array[Violation]
+
+    init(message: String, violations: Array[Violation] = []) {
+        super(message)
+        self.violations = violations
+    }
+}
+
+let NAMED = %['Identifier', 'Param', 'ClassDefinition', 'TagDefinition']
+
+pub fn binding-at(tree: Tree, byte: Int) -> Node | nil {
+    let best: Node | nil = nil
+    for tree.nodes {
+        if it.kind in NAMED && it.sym-id >= 0 && it.start <= byte && byte <= it.end {
+            if best == nil || it.end - it.start < (best.?end ?? 0) - (best.?start ?? 0) {
+                best = it
+            }
+        }
+    }
+    best
+}
+
+pub fn references(tree: Tree, target: Node) -> Array[Node] {
+    tree.refs(target).filter(\_.kind in NAMED)
+}
+
+fn occurrence(n: Node) -> (Int, Int) | nil {
+    let $tok = (n.kind == 'Identifier') ? n.first-token : n.name-token or return nil
+    (tok.start, tok.end)
+}
+
+fn valid-name?(name: String) -> Bool {
+    name.match?(/^[\p{L}_][\p{L}\p{N}_]*(?:-[\p{L}\p{N}_]+)*[?!]?$/u)
+ && syn.parse("let {name} = 1\n").error == nil
+}
+
+fn name-of(n: Node) -> String { n.name-token.?text ?? n.text }
+
+pub fn rename(tree: Tree, target: Node, name: String) -> String {
+    let old = name-of(target)
+    if !tree.semantic? {
+        throw RefactorError('rename needs a semantic tree (syn.parse(..., semantic=true))')
+    }
+    if !valid-name?(name) {
+        throw RefactorError("`{name}` is not a valid name")
+    }
+    let $sym = target.symbol or throw RefactorError("`{old}` does not name a binding")
+    if !sym.here? {
+        throw RefactorError("`{old}` is defined in {sym.module ?? 'another module'}")
+    }
+    if sym.kind == 'member' {
+        throw RefactorError("renaming members is not supported: `{old}`")
+    }
+
+    let edits: Array[Edit] = []
+    for references(tree, target) {
+        if it.from-expansion? {
+            throw RefactorError("`{old}` is referenced from macro-generated code")
+        }
+        let $span = occurrence(it) or continue
+        let (a, b) = span
+        let e = Edit(a, b, name)
+        e.copies = [(0, a, b)]
+        edits.push(e)
+    }
+
+    let (source, rejected) = lint.apply(tree.source, edits)
+    if #rejected > 0 {
+        throw RefactorError("overlapping occurrences of `{old}`")
+    }
+
+    let new = syn.parse(source, path=tree.path, semantic=true)
+    if let $err = new.error {
+        throw RefactorError("renaming breaks parsing: {err}")
+    }
+    if #new.diagnostics > #tree.diagnostics {
+        throw RefactorError("renaming introduces an error: {new.diagnostics[-1].message}")
+    }
+    let bad = lint.hygiene(tree, new, edits)
+    if #bad > 0 {
+        let why = bad[0].message
+        throw RefactorError("renaming `{old}` to `{name}` is unhygienic: {why}", bad)
+    }
+    source
+}
+
+pub fn rename-at(source: String, byte: Int, name: String, path: String | nil = nil) -> String {
+    let tree = syn.parse(source, path=path, semantic=true)
+    let $target = binding-at(tree, byte) or throw RefactorError('nothing to rename here')
+    rename(tree, target, name)
+}
