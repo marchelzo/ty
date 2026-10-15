@@ -275,11 +275,9 @@ bc_try(BcLir *c, BcLirNode const *node)
                 LirLabel normal = lir_label(c->L);
                 bc_branch(c, LIR_EQ, lir_r(status), lir_i(0), normal);
                 bc_restore_locals(c);
-                bc_cache_reload(c);
                 bc_store(c, LIR_ST64, c->ty, offsetof(Ty, ip), lir_i((uptr)&JIT));
                 bc_jump(c, c->nodes[t->catch_to].label);
                 bc_bind(c, normal);
-                bc_cache_reload(c);
                 break;
         }
         case INSTR_CATCH:

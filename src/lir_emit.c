@@ -745,8 +745,28 @@ native_root_move(LirEmitContext *c, LirMove const *m)
         return true;
 }
 
+enum {
+        NATIVE_MOVES_ALL,
+        NATIVE_MOVES_SLOW,
+        NATIVE_MOVES_ALWAYS
+};
+
 static bool
-native_phase(LirEmitContext *c, u32 pc, LirMovePhase phase)
+native_slow_move(LirMove const *m)
+{
+        if (m->kind == LIR_MOVE_ROOT) {
+                return true;
+        }
+        if (m->from != m->to) {
+                return false;
+        }
+        return m->phase == LIR_MOVE_BEFORE
+             ? m->to_slot != LIR_NONE && m->from_phys != LIR_PHYS_NONE
+             : m->from_slot != LIR_NONE && m->to_phys != LIR_PHYS_NONE;
+}
+
+static bool
+native_phase_ex(LirEmitContext *c, u32 pc, LirMovePhase phase, int mode)
 {
         LirMove *moves;
         LirMove *ordered;
@@ -766,6 +786,9 @@ native_phase(LirEmitContext *c, u32 pc, LirMovePhase phase)
         n = 0;
         for (u32 i = first; i != LIR_NONE; i = c->phase_next[i]) {
                 LirMove const *m = &c->alloc->moves[i];
+                if (mode != NATIVE_MOVES_ALL && native_slow_move(m) != (mode == NATIVE_MOVES_SLOW)) {
+                        continue;
+                }
                 if (m->kind == LIR_MOVE_ROOT) {
                         native_root_move(c, m);
                         continue;
@@ -782,6 +805,12 @@ native_phase(LirEmitContext *c, u32 pc, LirMovePhase phase)
         }
         free(ordered);
         return true;
+}
+
+static bool
+native_phase(LirEmitContext *c, u32 pc, LirMovePhase phase)
+{
+        return native_phase_ex(c, pc, phase, NATIVE_MOVES_ALL);
 }
 
 static void
@@ -1286,6 +1315,9 @@ native_poll(LirEmitContext *c, LirInst const *in, u32 pc, u32 fast, u32 end)
         native_li(Dst, LIR_TMP0, (uptr)rt->interrupt);
         native_memory(Dst, false, LIR_TMP0, LIR_TMP0, 0, 4, false, false);
         native_zero_branch(Dst, LIR_TMP0, false, true, fast);
+        if (!native_phase_ex(c, pc, LIR_MOVE_BEFORE, NATIVE_MOVES_SLOW)) {
+                return false;
+        }
         if (in->nargs == 4) {
                 LirType types[] = { LIR_TYPE_PTR, LIR_TYPE_PTR, LIR_TYPE_PTR };
                 LirInst call = {
@@ -1306,18 +1338,16 @@ native_poll(LirEmitContext *c, LirInst const *in, u32 pc, u32 fast, u32 end)
                 native_label(Dst, c->sites + pc);
         }
         native_mov(Dst, LIR_TMP0, 0, LIR_I32, false, false);
-        native_jump(Dst, end);
-        native_label(Dst, fast);
-        native_li(Dst, LIR_TMP0, 0);
-        native_label(Dst, end);
         native_memory(Dst, true, LIR_TMP0, LIR_FRAME, c->result, 8, false, false);
-        if (!native_phase(c, pc, LIR_MOVE_AFTER)) {
+        if (!native_phase_ex(c, pc, LIR_MOVE_AFTER, NATIVE_MOVES_SLOW)) {
                 return false;
         }
         native_rebase_live(c, pc);
         native_memory(Dst, false, LIR_TMP0, LIR_FRAME, c->result, 8, false, false);
         native_zero_branch(Dst, LIR_TMP0, true, true, in->args[in->nargs - 1].label);
-        return true;
+        native_label(Dst, fast);
+        native_label(Dst, end);
+        return native_phase_ex(c, pc, LIR_MOVE_AFTER, NATIVE_MOVES_ALWAYS);
 }
 
 static u64
@@ -1729,7 +1759,11 @@ Emit:
                 if (pc == L->ninsts) {
                         break;
                 }
-                if (!native_phase(&c, pc, LIR_MOVE_BEFORE) || !native_instruction(&c, pc)) {
+                if (
+                        !native_phase_ex(&c, pc, LIR_MOVE_BEFORE,
+                                         L->insts[pc].op == LIR_POLL ? NATIVE_MOVES_ALWAYS : NATIVE_MOVES_ALL)
+                     || !native_instruction(&c, pc)
+                ) {
                         goto End;
                 }
         }

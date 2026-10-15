@@ -66,7 +66,7 @@ static void
 bc_vs_flush(BcLir *c, i32 i)
 {
         BcSlot *slot = &c->vs[i];
-        if (slot->kind == VS_MEM) {
+        if (slot->kind == VS_MEM || (bc_loop_pinned(c, i) && slot->kind == VS_INT && slot->r == c->spin[i])) {
                 return;
         }
         bc_vs_store(c, slot, c->ops, i * sizeof (Value));
@@ -736,9 +736,6 @@ bc_vs_mutate_local(BcLir *c, BcLirNode const *node, char const *ip)
         }
         i32 slot;
         memcpy(&slot, ip + 1, sizeof slot);
-        if (c->cache_at != NULL && c->cache_at[slot] >= 0) {
-                return false;
-        }
         i32 class = bc_vs_local_class(c, slot);
         BcSlot rhs = c->vs[c->sp - 1];
         bool ints = class == CLASS_INT && bc_vs_integral(rhs.kind);
@@ -809,6 +806,12 @@ bc_vs_lower(BcLir *c, BcLirNode const *node, char const *ip)
         if (c->vs == NULL || c->dynamic) {
                 return false;
         }
+        if (
+                (node->op == INSTR_LOAD_LOCAL || node->op == INSTR_ASSIGN_LOCAL || node->op == INSTR_TARGET_LOCAL)
+             && bc_loop_lower(c, node, ip)
+        ) {
+                return true;
+        }
         i32 slot;
         u64 bits;
         switch (node->op) {
@@ -835,9 +838,6 @@ bc_vs_lower(BcLir *c, BcLirNode const *node, char const *ip)
         case INSTR_LOAD_LOCAL: {
                 memcpy(&slot, ip + 1, sizeof slot);
                 i32 class = bc_vs_local_class(c, slot);
-                if (c->cache_at != NULL && c->cache_at[slot] >= 0) {
-                        return false;
-                }
                 BcSlot const *known = bc_vs_known(c, slot);
                 if (known != NULL) {
                         c->vs[c->sp] = *known;
@@ -870,7 +870,7 @@ bc_vs_lower(BcLir *c, BcLirNode const *node, char const *ip)
         case INSTR_ASSIGN_LOCAL: {
                 memcpy(&slot, ip + 1, sizeof slot);
                 BcSlot top = c->vs[c->sp - 1];
-                if (top.kind == VS_MEM || (c->cache_at != NULL && c->cache_at[slot] >= 0)) {
+                if (top.kind == VS_MEM) {
                         return false;
                 }
                 c->sp -= 1;
@@ -907,11 +907,33 @@ bc_vs_lower(BcLir *c, BcLirNode const *node, char const *ip)
                 c->vs[c->sp] = c->vs[c->sp - 1];
                 c->sp += 1;
                 return true;
+        case INSTR_DUP2_SWAP: {
+                BcSlot a = c->vs[c->sp - 1];
+                BcSlot b = c->vs[c->sp - 2];
+                if (!bc_vs_integral(a.kind) || !bc_vs_integral(b.kind)) {
+                        return false;
+                }
+                for (i32 k = 0; k < 2; ++k) {
+                        BcSlot v = k == 0 ? a : b;
+                        if (v.kind == VS_INT) {
+                                LirOpnd src = lir_r(v.r);
+                                v.r = bc_value(c, LIR_MOV, LIR_I64, &src, 1);
+                        }
+                        c->vs[c->sp++] = v;
+                }
+                return true;
+        }
         case INSTR_INC:
         case INSTR_DEC: {
                 BcSlot top = c->vs[c->sp - 1];
                 if (!bc_vs_integral(top.kind)) {
                         return false;
+                }
+                if (bc_loop_pinned(c, c->sp - 1) && top.kind == VS_INT && top.r == c->spin[c->sp - 1]) {
+                        LirOpnd step[] = { lir_r(top.r), lir_i(node->op == INSTR_INC ? 1 : -1) };
+                        c->ok = c->ok && lir_emit_to(c->L, LIR_ADD, top.r, step, countof(step));
+                        bc_store(c, LIR_ST64, c->ops, (c->sp - 1) * sizeof (Value) + offsetof(Value, z), lir_r(top.r));
+                        return true;
                 }
                 LirReg value = bc_vs_int(c, c->sp - 1);
                 LirOpnd args[] = { lir_r(value), lir_i(1) };

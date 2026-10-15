@@ -1,0 +1,200 @@
+fn sum-loop(n: Int) -> Int {
+    let s = 0
+    let i = 0
+    while i < n {
+        s += i * 2
+        i += 1
+    }
+    s
+}
+
+pub fn integer-locals-stay-correct() {
+    for _ in ..20 {
+        assert(sum-loop(5000) == 5000 * 4999)
+    }
+}
+
+fn float-loop(n: Int) -> Float {
+    let x = 1.0
+    let y = 0.5
+    let k = 0
+    while k < n {
+        x = x * 0.5 + y
+        y -= 0.25
+        x += k
+        k++
+    }
+    x + y
+}
+
+pub fn float-locals-stay-correct() {
+    let expected = float-loop(10)
+    for _ in ..20 {
+        assert(float-loop(10) == expected)
+        assert(float-loop(4000) > 0.0)
+    }
+}
+
+fn inner-reads-outer(xs: [_]) -> Int {
+    let total = 0
+    for i in ..#xs {
+        let j = 0
+        while j < 4 {
+            total += xs[i] * j + i
+            j += 1
+        }
+    }
+    total
+}
+
+pub fn deopt-in-inner-loop-resumes-with-outer-locals() {
+    let ints = [k for k in ..300]
+    let mixed: [_] = [k for k in ..300]
+    mixed[150] = 1.5
+    let expect = 448500
+    for _ in ..20 {
+        assert(inner-reads-outer(ints) == expect)
+        let r = try { inner-reads-outer(mixed) } catch _ { -1 }
+        assert(r != expect)
+    }
+}
+
+fn declared-inside(n: Int) -> Int {
+    let acc = 0
+    let k = 0
+    while k < n {
+        let t = k * 3
+        let u = t - 1
+        acc += t + u
+        k += 1
+    }
+    acc
+}
+
+pub fn locals-declared-in-the-loop() {
+    for _ in ..20 {
+        assert(declared-inside(3000) == [6 * k - 1 for k in ..3000].sum())
+    }
+}
+
+fn dynamic-into-typed(n: Int, xs: [_]) -> Int {
+    let acc: Int = 0
+    let k = 0
+    while k < n {
+        acc = acc + 1
+        acc = xs[k % #xs]
+        k += 1
+    }
+    acc
+}
+
+pub fn dynamic-values-into-typed-locals() {
+    for _ in ..20 {
+        assert(dynamic-into-typed(3000, [1, 2, 3]) == 3)
+    }
+}
+
+fn break-continue(n: Int) -> Int {
+    let total = 0
+    let i = 0
+    while i < n {
+        i += 1
+        if i % 3 == 0 {
+            continue
+        }
+        if i > n - 5 {
+            break
+        }
+        total += i
+    }
+    total + i
+}
+
+pub fn break-and-continue() {
+    let expected = do {
+        let t = 0
+        for i in 1...2995 if i % 3 != 0 { t += i }
+        t + 2996
+    }
+    for _ in ..20 {
+        assert(break-continue(3000) == expected)
+    }
+}
+
+fn distance(a: String, b: String) -> Int {
+    let d = [[0 for _ in ...#b] for _ in ...#a]
+    for i in ...#a { d[i][0] = i }
+    for j in ...#b { d[0][j] = j }
+    for i in ..#a {
+        for j in ..#b {
+            let cost = (a[i] == b[j]) ? 0 : 1
+            d[i + 1][j + 1] = ::min(d[i][j + 1] + 1, d[i + 1][j] + 1, d[i][j] + cost)
+            if i > 0 && j > 0 && a[i] == b[j - 1] && b[j] == a[i - 1] {
+                d[i + 1][j + 1] = ::min(d[i + 1][j + 1], d[i - 1][j - 1] + 1)
+            }
+        }
+    }
+    d[#a][#b]
+}
+
+pub fn nested-range-loops() {
+    let words = ['spawn', 'spwan', 'span', 'sp', 'xyz', 'spawned', 'path', 'os.rm', 'match', '']
+    for _ in ..200 {
+        assert([distance('spwan', w) for w in words] == [1, 0, 1, 3, 5, 3, 4, 5, 5, 5])
+        assert([distance(w, 'os.spawn') for w in words] == [3, 4, 4, 6, 8, 5, 6, 5, 8, 8])
+    }
+}
+
+fn range-sum(n: Int) -> Int {
+    let s = 0
+    for i in ..n {
+        s += i
+    }
+    s
+}
+
+fn range-control(n: Int) -> Int {
+    let s = 0
+    for i in ..n {
+        if i % 3 == 0 {
+            continue
+        }
+        if i > n - 3 {
+            break
+        }
+        i = i * 2
+        s += i
+    }
+    s
+}
+
+fn range-nested(n: Int) -> Int {
+    let s = 0
+    for i in ..n {
+        for j in ..i {
+            s += j
+        }
+    }
+    s
+}
+
+fn range-deopt(xs: [_]) -> Int {
+    let s = 0
+    for i in ..#xs {
+        s += xs[i] + i
+    }
+    s
+}
+
+pub fn range-loops() {
+    let control = [2 * i for i in ..2997 if i % 3 != 0].sum()
+    for _ in ..30 {
+        assert(range-sum(4000) == 4000 * 3999 / 2)
+        assert(range-control(3000) == control)
+        assert(range-nested(120) == [i * (i - 1) / 2 for i in ..120].sum())
+        assert(range-deopt([k for k in ..500]) == 2 * (500 * 499 / 2))
+    }
+    let mixed: [_] = [k for k in ..500]
+    mixed[250] = 0.5
+    assert(range-deopt(mixed) == 2 * (500 * 499 / 2) - 250 + 0.5)
+}

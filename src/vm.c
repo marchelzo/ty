@@ -1863,17 +1863,22 @@ vm_osr(Ty *ty)
                 return false;
         }
         uptr state = (uptr)jit_of(&fn);
-        if (!jit_pending((void *)state)) {
+        JitFn *jit;
+        if (state == 0) {
                 return false;
         }
-        if (state == JIT_UNSEEN) {
-                state = jit_eager() == 1 ? JIT_UNSEEN + 1 : JIT_UNSEEN + jit_budget(&fn);
+        if (jit_pending((void *)state)) {
+                if (state == JIT_UNSEEN) {
+                        state = jit_eager() == 1 ? JIT_UNSEEN + 1 : JIT_UNSEEN + jit_budget(&fn);
+                }
+                if (state > JIT_UNSEEN + 1) {
+                        set_jit_of(&fn, (void *)(state - 1));
+                        return false;
+                }
+                jit = try_jit_now(ty, &fn);
+        } else {
+                jit = (JitFn *)state;
         }
-        if (state > JIT_UNSEEN + 1) {
-                set_jit_of(&fn, (void *)(state - 1));
-                return false;
-        }
-        JitFn *jit = try_jit_now(ty, &fn);
         LirCode const *lc = jit == NULL ? NULL : jit_code_of(&fn);
         if (lc == NULL) {
                 return false;

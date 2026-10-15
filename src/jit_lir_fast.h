@@ -164,11 +164,6 @@ bc_inline_mutation(BcLir *c, u8 op, LirReg base, i32 offset, i32 value, LirLabel
 static bool
 bc_fast_target_local(BcLir *c, BcLirNode const *node, char const *ip)
 {
-        i32 target;
-        memcpy(&target, ip + 1, sizeof target);
-        if (c->cache_at != NULL && target >= 0 && target < c->bound && c->cache_at[target] >= 0) {
-                return false;
-        }
         if (
                 node->next < c->size
              && !c->dynamic
@@ -432,7 +427,11 @@ bc_fast_pattern(BcLir *c, BcLirNode const *node, char const *ip, bool *fused)
                 ) {
                         i32 slot;
                         memcpy(&slot, c->code + node->next + 1, sizeof slot);
-                        if (slot >= 0 && slot < c->bound && (c->cache_at == NULL || c->cache_at[slot] < 0)) {
+                        if (
+                                slot >= 0
+                             && slot < c->bound
+                             && bc_loop_reg(c, slot) == LIR_NONE
+                        ) {
                                 bc_value_copy(c, c->locals, slot * sizeof (Value), items, n * sizeof (Value));
                                 c->offset = next->next;
                                 c->tuple_off = next->next;
