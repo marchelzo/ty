@@ -116,6 +116,20 @@ fn last-send*() {
     yield r
 }
 
+fn single-values*() {
+    yield nil
+    yield None
+    yield Some(3)
+    yield (4, 5)
+}
+
+pub fn single-value-yield() {
+    assert([x for x in single-values()] == [nil, None, Some(3), (4, 5)])
+    assert([(x, i) for x; i in single-values()] == [
+        (nil, 0), (None, 1), (Some(3), 2), ((4, 5), 3)
+    ])
+}
+
 pub fn multi-value-yield() {
     let out = []
 

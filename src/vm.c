@@ -6449,21 +6449,26 @@ NoIter:
         }
 }
 
-static bool
-LoopCheck(Ty *ty, i32 z, char *jump)
+bool
+vm_jit_loop_check(Ty *ty, int z)
 {
-        imax k = top()[-3].z - 1;
-
         if (top()->type == VALUE_NONE) {
                 pop();
                 pop();
                 pop();
                 pop();
-
-                DOJUMP(jump);
-
                 return true;
         }
+
+        if (
+                (z == 1)
+             && (top()[-1].type == VALUE_SENTINEL)
+             && (top()->type != VALUE_SENTINEL)
+        ) {
+                return false;
+        }
+
+        imax k = top()[-3].z - 1;
 
         push(INTEGER(k));
 
@@ -6491,6 +6496,18 @@ LoopCheck(Ty *ty, i32 z, char *jump)
         }
 
         return false;
+}
+
+static bool
+LoopCheck(Ty *ty, i32 z, char *jump)
+{
+        if (!vm_jit_loop_check(ty, z)) {
+                return false;
+        }
+
+        DOJUMP(jump);
+
+        return true;
 }
 
 void
@@ -6528,41 +6545,6 @@ vm_iter_next(Ty *ty, Value *x)
         STACK.count = sentinel - vv(STACK);
 
         return true;
-}
-
-bool
-vm_jit_loop_check(Ty *ty, int z)
-{
-        imax k = top()[-3].z - 1;
-
-        if (top()->type == VALUE_NONE) {
-                pop();
-                pop();
-                pop();
-                pop();
-                return true;
-        }
-
-        push(INTEGER(k));
-
-        i32 i, j;
-        for (i = 0; top()[-i].type != VALUE_SENTINEL; ++i)
-                ;
-
-        while (i > z)
-                --i, pop();
-
-        while (i < z)
-                ++i, push(NIL);
-
-        Value v;
-        for (i = 0, j = z - 1; i < j; ++i, --j) {
-                v = top()[-i];
-                top()[-i] = top()[-j];
-                top()[-j] = v;
-        }
-
-        return false;
 }
 
 inline static void
