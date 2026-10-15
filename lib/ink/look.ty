@@ -198,7 +198,7 @@ pub fn parse(src: String) -> Dict[String, Dict[String, _]] {
         }
         let $m = src[i;].match(/^(\s*(?:#[^\n]*\n\s*)*)([^{}\s][^{}]*?)\s*\{((?:'[^'\n]*'|"[^"\n]*"|[^{}'"])*)\}/s) or do {
             let rest = src[i;]
-            if rest.match?(/^\s*(#[^\n]*\s*)*$/) { break }
+            break if rest.match?(/^\s*(#[^\n]*\s*)*$/)
             throw LookError("line {line}: expected 'key \{ prop: value; ... \}'")
         }
         line += #m[1].matches(/\n/)
@@ -207,8 +207,8 @@ pub fn parse(src: String) -> Dict[String, Dict[String, _]] {
         let body = m[3]
         let decl: Dict[String, _] = %{}
         let dl = key-line
-        for d in body.matches(/(?:'[^'\n]*'|"[^"\n]*"|[^;\n'"])*[;\n]?/).filter(bool) {
-            let t = d.sub(/[;\n]$/, '').trim()
+        for body.matches(/(?:'[^'\n]*'|"[^"\n]*"|[^;\n'"])*[;\n]?/).filter(bool) {
+            let t = it.comb(/[;\n]$/).trim()
             if #t > 0 {
                 let $kv = t.match(/^([\w-]+)\s*:\s*(.+)$/s)
                     or throw LookError("line {dl}: bad declaration '{t}'")
@@ -216,15 +216,15 @@ pub fn parse(src: String) -> Dict[String, Dict[String, _]] {
                     ? unquote(kv[2].trim())
                     : check-value(kv[1], unquote(kv[2].trim()), "line {dl}")
             }
-            dl += #d.matches(/\n/)
+            dl += #it.matches(/\n/)
         }
-        for k in keys {
-            if k == '@tokens' {
-                out[k] = %{**(out[k] ?? %{}), **decl}
+        for keys {
+            if it == '@tokens' {
+                out[it] = %{**(out[it] ?? %{}), **decl}
                 continue
             }
-            check-key(k, key-line)
-            out[k] = %{**(out[k] ?? %{}), **decl}
+            check-key(it, key-line)
+            out[it] = %{**(out[it] ?? %{}), **decl}
         }
         line += #m[0].matches(/\n/) - #m[1].matches(/\n/)
         i += #m[0]
@@ -234,7 +234,9 @@ pub fn parse(src: String) -> Dict[String, Dict[String, _]] {
 
 fn spec-of(d: Dict[String, _]) -> String | nil {
     let ps: Array[String] = []
-    if let $fg = d['fg'] { ps.push(fg) }
+    if let $fg = d['fg'] {
+        ps.push(fg)
+    }
     match d['bold'] {
         true  => ps.push('bold'),
         false => ps.push('no-bold'),
@@ -250,9 +252,11 @@ fn spec-of(d: Dict[String, _]) -> String | nil {
         false => ps.push('no-u'),
         _     => ()
     }
-    if d['dim'] == true { ps.push('dim') }
+    if d['dim'] == true     { ps.push('dim')     }
     if d['reverse'] == true { ps.push('reverse') }
-    if let $t = d['text'] { ps.push(t) }
+    if let $t = d['text'] {
+        ps.push(t)
+    }
     (#ps > 0) ? ps.join(' ') : nil
 }
 
@@ -306,11 +310,15 @@ pub class Looks {
         let d: Dict[String, _] = %{}
         for keys {
             if let $x = defs[it] {
-                for k, v in x { d[k] = v }
+                for k, v in x {
+                    d[k] = v
+                }
             }
             for m in active {
                 if let $x = defs["{m}|{it}"] {
-                    for k, v in x { d[k] = v }
+                    for k, v in x {
+                        d[k] = v
+                    }
                 }
             }
         }
@@ -325,7 +333,9 @@ pub class Looks {
 
     part(w: String, p: String, states: Array[String], variant: String | nil = nil) -> Dict[String, _] {
         let ck = "{w}|{variant}|{p}|{states}"
-        if let $hit = cache[ck] { return hit }
+        if let $hit = cache[ck] {
+            return hit
+        }
         let keys = ["{w}::{p}", *states.map(\"{w}::{p}:{_}")]
         if variant != nil {
             keys.push("{w}.{variant}::{p}")
@@ -348,7 +358,9 @@ pub class LookFile {
 
     poll() -> Dict[String, Dict[String, _]] | nil {
         let $st = stat(path) or return nil
-        if st.mtime == mtime { return nil }
+        if st.mtime == mtime {
+            return nil
+        }
         mtime = st.mtime
         try {
             let parsed = parse(slurp(path) ?? '')

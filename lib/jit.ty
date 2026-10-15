@@ -189,8 +189,8 @@ fn objdump(bytes: Blob) -> Array[(Int, String)] | nil {
     os.close(child.stdout)
     os.wait(child.pid)
     let lines = []
-    for line in out.str!().lines() {
-        if let [_, off, text] = /^\s*([0-9a-f]+):\t(?:[0-9a-f]{2} )+\s*\t(.*)$/(line) {
+    for out.str!().lines() {
+        if let [_, off, text] = /^\s*([0-9a-f]+):\t(?:[0-9a-f]{2} )+\s*\t(.*)$/(it) {
             lines.push((int("0x{off}"), text.replace(/\s+/, ' ')))
         }
     }
@@ -206,8 +206,7 @@ fn disassemble(p: Ptr[Any], bytes: Blob) -> Array[(Int, String)] {
         return lines
     }
     let xs = bytes.list()
-    [(i, xs[i;i+16].map(it -> "{it:02x}").join(' '))
-     for i in (0..#xs)[;;16]]
+    [(i, xs[i;i+16].map(it -> "{it:02x}").join(' ')) for i in (0..#xs)[;;16]]
 }
 
 pub class Code {
@@ -368,33 +367,33 @@ fn label-operand(asm: Asm, label: Label) -> Array[Any] {
 
 fn operand(asm: Asm, value: Any) -> Array[Any] {
     match value {
-        r: Reg => reg-operand(asm, r),
-        h: Hole => h.encode(),
-        l: Label => label-operand(asm, l),
-        m: Mem => m.encode(asm),
-        n: Int => [2, n],
-        f: Float => [3, f],
+        r: Reg      => reg-operand(asm, r),
+        h: Hole     => h.encode(),
+        l: Label    => label-operand(asm, l),
+        m: Mem      => m.encode(asm),
+        n: Int      => [2, n],
+        f: Float    => [3, f],
         p: Ptr[Any] => [2, p],
-        _ => [7, j._const(asm.handle, value, false)],
+        _           => [7, j._const(asm.handle, value, false)],
     }
 }
 
 fn target-operand(asm: Asm, target: Any) -> Array[Any] {
     match target {
-        r: Reg => reg-operand(asm, r),
-        h: Hole => h.encode(),
-        f: Fn => [9, f],
+        r: Reg       => reg-operand(asm, r),
+        h: Hole      => h.encode(),
+        f: Fn        => [9, f],
         h: rt.Helper => [10, h.handle],
-        _ => [2, target],
+        _            => [2, target],
     }
 }
 
 fn mode-code(mode: String | nil) -> Int {
     match mode {
-        nil => 0,
+        nil        => 0,
         'detached' => 1,
         'attached' => 2,
-        _ => throw Error("invalid mode: {mode}"),
+        _          => throw Error("invalid mode: {mode}"),
     }
 }
 
@@ -402,12 +401,12 @@ fn float?(reg: Reg) -> Bool { reg.type.cls in [2, 3] }
 
 fn scalar-type(value: Any) -> Type {
     match value {
-        r: Reg => r.type,
-        h: Hole => h.type,
-        _: Float => F64,
-        _: Int => I64,
+        r: Reg      => r.type,
+        h: Hole     => h.type,
+        _: Float    => F64,
+        _: Int      => I64,
         _: Ptr[Any] => PTR,
-        _ => VAL,
+        _           => VAL,
     }
 }
 
@@ -424,8 +423,10 @@ pub class Asm {
         result = ret
         span = (0, 0, 0)
         __handle = j._new(name, [it.code for params], ret.code, mode-code(mode))
-        self.params = [Reg(self, id, CLASSES[cls])
-                       for (id, cls) in j._params(__handle)]
+        self.params = [
+            Reg(self, id, CLASSES[cls])
+            for (id, cls) in j._params(__handle)
+        ]
     }
 
     handle -> Ptr[Any] { __handle }
@@ -756,8 +757,8 @@ fn x64-register(name: String) -> (Int, Bool) {
 fn physical-register(name: String) -> (Int, Bool) {
     match ARCH {
         'arm64' => arm64-register(name),
-        'x64' => x64-register(name),
-        _ => throw Error('raw instructions require a native target'),
+        'x64'   => x64-register(name),
+        _       => throw Error('raw instructions require a native target'),
     }
 }
 
@@ -781,7 +782,7 @@ fn raw-clobbers(names: Array[String]) -> (Int, Int) {
     for names {
         let (p, fp?) = physical-register(it)
         match fp? {
-            true => fp |= 1 << p,
+            true  => fp |= 1 << p,
             false => gp |= 1 << p,
         }
     }
@@ -790,40 +791,40 @@ fn raw-clobbers(names: Array[String]) -> (Int, Int) {
 
 fn unbox-layout(type-class: Class) -> (Int, Type, Int) {
     match type-class {
-        Int => (j.tag.INT, I64, layout.OFF_Z),
-        Float => (j.tag.FLOAT, F64, layout.OFF_REAL),
-        Bool => (j.tag.BOOL, U8, layout.OFF_BOOL),
-        Ptr => (j.tag.PTR, PTR, layout.OFF_PTR),
-        Blob => (j.tag.BLOB, REF, layout.OFF_PTR),
+        Int    => (j.tag.INT, I64, layout.OFF_Z),
+        Float  => (j.tag.FLOAT, F64, layout.OFF_REAL),
+        Bool   => (j.tag.BOOL, U8, layout.OFF_BOOL),
+        Ptr    => (j.tag.PTR, PTR, layout.OFF_PTR),
+        Blob   => (j.tag.BLOB, REF, layout.OFF_PTR),
         String => (j.tag.STRING, PTR, layout.OFF_STR),
-        Array => (j.tag.ARRAY, REF, layout.OFF_PTR),
-        _ => throw Error('unsupported unbox type'),
+        Array  => (j.tag.ARRAY, REF, layout.OFF_PTR),
+        _      => throw Error('unsupported unbox type'),
     }
 }
 
 fn box-layout(type-class: Class) -> (Int, Type, Int) {
     match type-class {
-        Int => (j.tag.INT, I64, layout.OFF_Z),
+        Int   => (j.tag.INT, I64, layout.OFF_Z),
         Float => (j.tag.FLOAT, F64, layout.OFF_REAL),
-        Bool => (j.tag.BOOL, U8, layout.OFF_BOOL),
-        Ptr => (j.tag.PTR, PTR, layout.OFF_PTR),
-        _ => throw Error('unsupported box type'),
+        Bool  => (j.tag.BOOL, U8, layout.OFF_BOOL),
+        Ptr   => (j.tag.PTR, PTR, layout.OFF_PTR),
+        _     => throw Error('unsupported box type'),
     }
 }
 
 fn load-op(type: Type) -> String {
     match type.code {
         8 or 12 or 13 or 14 => 'LD_I64',
-        11 => 'LD_U8',
-        _ => "LD_{type.name.upper()}",
+        11                  => 'LD_U8',
+        _                   => "LD_{type.name.upper()}",
     }
 }
 
 fn store-op(type: Type) -> String {
     match type.code {
-        9 => 'ST_F32',
+        9  => 'ST_F32',
         10 => 'ST_F64',
-        _ => "ST{type.size * 8}",
+        _  => "ST{type.size * 8}",
     }
 }
 
@@ -895,7 +896,7 @@ pub fn load(encoding: Encoding, holes: Array[Any] = []) -> Fn {
 fn hole-value(value: Any) -> Any {
     match value {
         h: rt.Helper => h.handle,
-        _ => value,
+        _            => value,
     }
 }
 
@@ -931,8 +932,10 @@ pub ns rt {
         }
     }
 
-    let HELPERS = %{name: Helper(name, handle, TYPES[r], [TYPES[it] for params], flags)
-                   for (name, handle, r, params, flags) in j._helpers()}
+    let HELPERS = %{
+        name: Helper(name, handle, TYPES[r], [TYPES[it] for params], flags)
+        for (name, handle, r, params, flags) in j._helpers()
+    }
 
     pub fn helper(name: String) -> Helper {
         HELPERS[name] ?? throw Error("unknown runtime helper: {name}")
@@ -1069,9 +1072,9 @@ fn declared-type(node: Any) -> String {
 
 fn element-kind(name: String) -> String {
     match name {
-        'Int' => 'ints',
+        'Int'   => 'ints',
         'Float' => 'floats',
-        _ => throw Error("unsupported array element type '{name}'"),
+        _       => throw Error("unsupported array element type '{name}'"),
     }
 }
 
@@ -1085,9 +1088,9 @@ fn unsigned-type?(type: Type) -> Bool { type.code in [2, 4, 6, 8, 11] }
 
 fn type-of(v: Val) -> Type {
     match v {
-        r: Reg => r.type,
+        r: Reg   => r.type,
         _: Float => F64,
-        _ => I64,
+        _        => I64,
     }
 }
 
@@ -1099,49 +1102,49 @@ fn ast-tag-name(node: Any) -> String {
 fn ast-name(node: Any) -> String | nil {
     match node {
         ty.Id(id) => id.name,
-        _ => nil,
+        _         => nil,
     }
 }
 
 fn operands(node: Any) -> (String, Any, Any) | nil {
     match node {
-        ty.Add(a, b) => ('Add', a, b),
-        ty.Sub(a, b) => ('Sub', a, b),
-        ty.Mul(a, b) => ('Mul', a, b),
-        ty.Div(a, b) => ('Div', a, b),
-        ty.Mod(a, b) => ('Mod', a, b),
+        ty.Add(a, b)    => ('Add', a, b),
+        ty.Sub(a, b)    => ('Sub', a, b),
+        ty.Mul(a, b)    => ('Mul', a, b),
+        ty.Div(a, b)    => ('Div', a, b),
+        ty.Mod(a, b)    => ('Mod', a, b),
         ty.BitAnd(a, b) => ('BitAnd', a, b),
-        ty.BitOr(a, b) => ('BitOr', a, b),
-        ty.Xor(a, b) => ('Xor', a, b),
-        ty.Shl(a, b) => ('Shl', a, b),
-        ty.Shr(a, b) => ('Shr', a, b),
-        ty.Eq(a, b) => ('Eq', a, b),
-        ty.NotEq(a, b) => ('NotEq', a, b),
-        ty.LT(a, b) => ('LT', a, b),
-        ty.LEQ(a, b) => ('LEQ', a, b),
-        ty.GT(a, b) => ('GT', a, b),
-        ty.GEQ(a, b) => ('GEQ', a, b),
+        ty.BitOr(a, b)  => ('BitOr', a, b),
+        ty.Xor(a, b)    => ('Xor', a, b),
+        ty.Shl(a, b)    => ('Shl', a, b),
+        ty.Shr(a, b)    => ('Shr', a, b),
+        ty.Eq(a, b)     => ('Eq', a, b),
+        ty.NotEq(a, b)  => ('NotEq', a, b),
+        ty.LT(a, b)     => ('LT', a, b),
+        ty.LEQ(a, b)    => ('LEQ', a, b),
+        ty.GT(a, b)     => ('GT', a, b),
+        ty.GEQ(a, b)    => ('GEQ', a, b),
         ty.MutAdd(a, b) => ('MutAdd', a, b),
         ty.MutSub(a, b) => ('MutSub', a, b),
         ty.MutMul(a, b) => ('MutMul', a, b),
         ty.MutDiv(a, b) => ('MutDiv', a, b),
         ty.MutMod(a, b) => ('MutMod', a, b),
         ty.MutAnd(a, b) => ('MutAnd', a, b),
-        ty.MutOr(a, b) => ('MutOr', a, b),
+        ty.MutOr(a, b)  => ('MutOr', a, b),
         ty.MutXor(a, b) => ('MutXor', a, b),
         ty.MutShl(a, b) => ('MutShl', a, b),
         ty.MutShr(a, b) => ('MutShr', a, b),
-        _ => nil,
+        _               => nil,
     }
 }
 
 fn assigned-names(node: Any, out: Dict[String, Bool]) {
     match node {
         ty.Assign(ty.Id(id), _) => out[id.name] = true,
-        ty.Block(xs) => for xs { assigned-names(it, out) },
-        ty.If(_, yes, no) => do { assigned-names(yes, out); assigned-names(no, out) },
-        ty.While(_, body) => assigned-names(body, out),
-        ty.Each(e) => assigned-names(e.expr, out),
+        ty.Block(xs)            => for xs { assigned-names(it, out) },
+        ty.If(_, yes, no)       => do { assigned-names(yes, out); assigned-names(no, out) },
+        ty.While(_, body)       => assigned-names(body, out),
+        ty.Each(e)              => assigned-names(e.expr, out),
         _ => do {
             if let (op, ty.Id(id), _) = operands(node) and op in MUTATE {
                 out[id.name] = true
@@ -1374,8 +1377,8 @@ class Lower {
     define(vname: String, v: Var) { __scopes[-1][vname] = v }
 
     lookup(vname: String) -> Var | nil {
-        for i in ..#__scopes {
-            if let $v = __scopes[-1 - i][vname] {
+        for ..#__scopes {
+            if let $v = __scopes[-1 - it][vname] {
                 return v
             }
         }
@@ -1539,7 +1542,7 @@ class Lower {
                 true
             },
             _ and statement?(node) => statement(node),
-            _ => do { return-value(node); true },
+            _                      => do { return-value(node); true },
         }
     }
 
@@ -1583,20 +1586,20 @@ class Lower {
     statement(node: Any) -> Bool {
         match node {
             asm-ast.At(x, start, end) => do { asm.span = (0, start, end); statement(x) },
-            ty.Block(xs) => block(xs),
-            ty.Let(target, value) => let-statement(target, value),
-            ty.Assign(target, value) => assign(target, nil, value),
-            ty.If([cond], yes, no) => if-statement(cond, yes, no),
-            ty.If(_, _, _) => fail('if-let and multiple conditions are not supported'),
-            ty.While([cond], body) => while-statement(cond, body),
-            ty.Each(e) => each-statement(e),
-            ty.Break(b) => exit-loop(false, b.depth),
-            ty.Continue(depth) => exit-loop(true, depth),
-            ty.Return(value) => do { return-value(value); true },
-            asm-ast.Goto(name) => do { asm.jmp(label(name)); true },
-            asm-ast.Label(name) => do { asm.bind(label(name)); false },
-            asm-ast.Raw(name, args) => raw(name, args),
-            _ => other-statement(node),
+            ty.Block(xs)              => block(xs),
+            ty.Let(target, value)     => let-statement(target, value),
+            ty.Assign(target, value)  => assign(target, nil, value),
+            ty.If([cond], yes, no)    => if-statement(cond, yes, no),
+            ty.If(_, _, _)            => fail('if-let and multiple conditions are not supported'),
+            ty.While([cond], body)    => while-statement(cond, body),
+            ty.Each(e)                => each-statement(e),
+            ty.Break(b)               => exit-loop(false, b.depth),
+            ty.Continue(depth)        => exit-loop(true, depth),
+            ty.Return(value)          => do { return-value(value); true },
+            asm-ast.Goto(name)        => do { asm.jmp(label(name)); true },
+            asm-ast.Label(name)       => do { asm.bind(label(name)); false },
+            asm-ast.Raw(name, args)   => raw(name, args),
+            _                         => other-statement(node),
         }
     }
 
@@ -1606,7 +1609,7 @@ class Lower {
         }
         match node {
             ty.Call(c) => call(c.func, [arg-node(it) for c.args], VOID),
-            _ => expression(node),
+            _          => expression(node),
         }
         false
     }
@@ -1649,7 +1652,7 @@ class Lower {
                 v.reg.set(implicit(rhs, v.reg.type))
             },
             ty.Subscript(x, index) => assign-element(x, index, op, value),
-            _ => fail("unsupported assignment target: {target}"),
+            _                      => fail("unsupported assignment target: {target}"),
         }
         false
     }
@@ -1719,12 +1722,14 @@ class Lower {
     }
 
     each-statement(e: Any) -> Bool {
-        let names = [ast-name(it) ?? (ast-tag-name(it) in ['MatchAny', 'Any'] ? '_' : fail('for loops bind plain names'))
-                     for e.pattern]
+        let names = [
+            ast-name(it) ?? (ast-tag-name(it) in ['MatchAny', 'Any'] ? '_' : fail('for loops bind plain names'))
+            for e.pattern
+        ]
         match e.iter {
-            ty.DotDot(a, b) => range-loop(names, a, b, false, e),
+            ty.DotDot(a, b)    => range-loop(names, a, b, false, e),
             ty.DotDotDot(a, b) => range-loop(names, a, b, true, e),
-            _ => element-loop(names, e),
+            _                  => element-loop(names, e),
         }
         false
     }
@@ -2054,12 +2059,12 @@ class Lower {
 
     known-type(value: Any, fallback: Type | nil) -> Type | nil {
         match value {
-            _: Float => F64,
-            _: Bool => BOOL,
-            _: Int => I64,
+            _: Float    => F64,
+            _: Bool     => BOOL,
+            _: Int      => I64,
             _: Ptr[Any] => PTR,
-            nil => fallback,
-            _ => safe ? nil : VAL,
+            nil         => fallback,
+            _           => safe ? nil : VAL,
         }
     }
 
@@ -2078,9 +2083,9 @@ class Lower {
 
     negate(v: Val) -> Val {
         match v {
-            n: Int => -n,
+            n: Int   => -n,
             x: Float => -x,
-            r: Reg => float-type?(r.type) ? asm.fneg(r) : asm.neg(reg(integer(r))),
+            r: Reg   => float-type?(r.type) ? asm.fneg(r) : asm.neg(reg(integer(r))),
         }
     }
 
@@ -2153,9 +2158,9 @@ class Lower {
 
     branch(node: Any, truth: Bool, target: Label) {
         match node {
-            ty.Not(x) => branch(x, !truth, target),
+            ty.Not(x)    => branch(x, !truth, target),
             ty.And(a, b) => logical(a, b, truth, !truth, target),
-            ty.Or(a, b) => logical(a, b, truth, truth, target),
+            ty.Or(a, b)  => logical(a, b, truth, truth, target),
             ty.Bool(b) => do {
                 if b == truth {
                     asm.jmp(target)
@@ -2224,7 +2229,7 @@ class Lower {
         asm.bind(other)
         let y = expression(b, out.type)
         if safe && type-of(y) != out.type && !(y :: Int && out.type == I64) {
-            fail("both branches of ?: must have the same type")
+            fail('both branches of ?: must have the same type')
         }
         out.set(convert(y, out.type))
         asm.bind(done)
@@ -2302,7 +2307,7 @@ class Lower {
     pointer?(node: Any) -> Bool {
         match node {
             ty.Id(id) => lookup(id.name).?reg.?type == PTR,
-            _ => false,
+            _         => false,
         }
     }
 
@@ -2411,9 +2416,9 @@ class Lower {
         let result = match func {
             ty.MemberAccess(ty.Id(id), name) and id.name == 'rt' && lookup('rt') == nil
                 => helper-call(rt.helper(name), args, 'CALL'),
-            asm-ast.Hole(i) => hole-call(i, args, expected, 'CALL'),
+            asm-ast.Hole(i)    => hole-call(i, args, expected, 'CALL'),
             ty.Id(id) and safe => builtin-call(id.name, func, args),
-            _ => fail('calls must target a {...} hole or an rt helper'),
+            _                  => fail('calls must target a {...} hole or an rt helper'),
         }
         result ?? (expected == VOID ? 0 : fail('void call used as a value'))
     }
@@ -2425,7 +2430,7 @@ class Lower {
                 float-type?(type-of(v)) ? asm.f2i(reg(v)) : integer(v)
             },
             ('float', 1) => implicit(integer(expression(args[0])), F64),
-            ('abs', 1) => member(args[0], 'abs'),
+            ('abs', 1)   => member(args[0], 'abs'),
             ('min' or 'max', n) and n >= 2 => do {
                 let acc = expression(args[0])
                 for args[1;] {
@@ -2529,9 +2534,12 @@ class Lower {
 
     hole-call(i: Int, args: Array[Any], expected: Type | nil, op: String) -> Reg | nil {
         let signature = known[i] == nil ? nil : j._sig(known[i])
-        let ret = signature == nil ? (expected ?? I64) : TYPES[signature[0]]
-        let values = signature == nil ? [reg(expression(it)) for args] : []
-        let types = signature == nil ? [it.type for values] : [TYPES[it] for signature[1]]
+        let (ret, values, types) = if signature == nil {
+            let regs = [reg(expression(it)) for args]
+            (expected ?? I64, regs, [it.type for regs])
+        } else {
+            (TYPES[signature[0]], [], [TYPES[it] for signature[1]])
+        }
         if #args != #types {
             fail('callee argument count does not match signature')
         }
@@ -2563,9 +2571,9 @@ class Lower {
         let values = args[(dst == nil ? 1 : 2);]
         let type = name == 'TAILCALL' ? asm.result : (dst.?reg.?type ?? VOID)
         let result = match target {
-            asm-ast.Hole(i) => hole-call(i, values, type, name),
+            asm-ast.Hole(i)       => hole-call(i, values, type, name),
             ty.MemberAccess(_, h) => helper-call(rt.helper(h), values, name),
-            _ => fail('call target must be a {...} hole or an rt helper'),
+            _                     => fail('call target must be a {...} hole or an rt helper'),
         }
         if let $v = dst {
             v.reg.set(result)
@@ -2591,8 +2599,8 @@ class Lower {
     raw-operand(node: Any) -> Array[Any] {
         match node {
             ty.Subscript(x, addr) => memory(x, addr).encode(asm),
-            ty.Int(n) => operand(asm, n),
-            ty.Float(x) => operand(asm, x),
+            ty.Int(n)             => operand(asm, n),
+            ty.Float(x)           => operand(asm, x),
             ty.Id(id) => do {
                 if let $cc = RAW_CC[id.name] {
                     return [6, cc]
@@ -2625,15 +2633,15 @@ fn kernel-signature(f: Fn) -> (Array[String], String) | nil {
 fn ty-type(kind: String) -> Any {
     match kind {
         'Float' or 'f32' or 'f64' => $$[: Float $$],
-        'Bool' or 'bool' => $$[: Bool $$],
-        'ptr' or 'ref' => $$[: Ptr[Any] $$],
-        'val' => ty.Any,
-        'blob' => $$[: Blob $$],
-        'string' => $$[: String $$],
-        'ints' => $$[: Array[Int] $$],
-        'floats' => $$[: Array[Float] $$],
-        'void' => ty.Nil,
-        _ => $$[: Int $$],
+        'Bool' or 'bool'          => $$[: Bool $$],
+        'ptr' or 'ref'            => $$[: Ptr[Any] $$],
+        'val'                     => ty.Any,
+        'blob'                    => $$[: Blob $$],
+        'string'                  => $$[: String $$],
+        'ints'                    => $$[: Array[Int] $$],
+        'floats'                  => $$[: Array[Float] $$],
+        'void'                    => ty.Nil,
+        _                         => $$[: Int $$],
     }
 }
 
@@ -2741,7 +2749,7 @@ class AsmParser {
         while let $ch = jl.peekc() and (word-char?(ch) || ch == '.' || (ch in ['+', '-'] && chars[-1] in ['e', 'E'] && !chars.contains?('x'))) {
             chars.push(jl.getc() as String)
         }
-        let digits = chars.join('').replace('_', '')
+        let digits = chars.join('').comb('_')
         (digits.starts?('0x') || !digits.match?(/[.eE]/)) ? int(digits) : float(digits)
     }
 
@@ -2784,7 +2792,9 @@ class AsmParser {
     }
 
     separators() {
-        while accept(';') { }
+        while accept(';') {
+            ;
+        }
     }
 
     hole() -> Any {
@@ -2826,12 +2836,12 @@ class AsmParser {
                 let no = !accept('else') ? nil : (peek().text == 'if' ? ty.Block([statement()]) : block())
                 ty.If([cond], yes, no)
             },
-            'while' => do { next(); let cond = expression(); ty.While([cond], block()) },
-            'loop' => do { next(); ty.While([ty.Bool(true)], block()) },
-            'break' => do { next(); ty.Break(value: nil, depth: 1) },
-            'continue' => do { next(); ty.Continue(1) },
-            'goto' => do { next(); asm-ast.Goto(next().text) },
-            'return' => do { next(); ty.Return(peek().text in [';', '}'] ? nil : expression()) },
+            'while'    => do { next(); let cond = expression(); ty.While([cond], block())        },
+            'loop'     => do { next(); ty.While([ty.Bool(true)], block())                        },
+            'break'    => do { next(); ty.Break(value: nil, depth: 1)                            },
+            'continue' => do { next(); ty.Continue(1)                                            },
+            'goto'     => do { next(); asm-ast.Goto(next().text)                                 },
+            'return'   => do { next(); ty.Return(peek().text in [';', '}'] ? nil : expression()) },
             '.' => do {
                 next()
                 let name = next().text.upper()
@@ -2882,10 +2892,10 @@ class AsmParser {
 
     binary(op: String, a: Any, b: Any) -> Any {
         match op {
-            '&&' => ty.And(a, b),
-            '||' => ty.Or(a, b),
+            '&&'                  => ty.And(a, b),
+            '||'                  => ty.Or(a, b),
             _ and op.starts?('u') => asm-ast.Unsigned(ASM_BINARY[op[1;]] as String, a, b),
-            _ => (ASM_NODES[ASM_BINARY[op] as String] as Any)(a, b),
+            _                     => (ASM_NODES[ASM_BINARY[op] as String] as Any)(a, b),
         }
     }
 
@@ -2893,14 +2903,14 @@ class AsmParser {
         let token = next()
         let value = match token.text {
             'number' => (token.value :: Float) ? ty.Float(token.value) : ty.Int(token.value),
-            '(' => do { let x = expression(); expect(')'); x },
-            '{' => hole(),
-            '-' => ty.Neg(primary()),
-            '+' => primary(),
-            '~' => ty.UserOp('~', primary()),
-            '!' => ty.Not(primary()),
-            'true' => ty.Int(1),
-            'false' => ty.Int(0),
+            '('      => do { let x = expression(); expect(')'); x },
+            '{'      => hole(),
+            '-'      => ty.Neg(primary()),
+            '+'      => primary(),
+            '~'      => ty.UserOp('~', primary()),
+            '!'      => ty.Not(primary()),
+            'true'   => ty.Int(1),
+            'false'  => ty.Int(0),
             'rt' => do {
                 expect('.')
                 let parts = [next().text]

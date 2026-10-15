@@ -626,7 +626,7 @@ pub fn from-mem(mem: Blob | String) -> Ptr[_] {
 
 pub class InitError < RuntimeError {
     what -> String {
-        "failed to initialize terminfo"
+        'failed to initialize terminfo'
     }
     init() {}
 }
@@ -668,30 +668,30 @@ pub class Term {
     }
 
     strs* -> Generator[(Int, String)] {
-        for cap in _strs {
-            if let $str = get_str(__term, cap) and str[0] != 0 {
-                yield (cap, c.str(str))
+        for _strs {
+            if let $str = get_str(__term, it) and str[0] != 0 {
+                yield (it, c.str(str))
             }
         }
     }
 
     ext-str(name: String) -> ?String {
-        for i in ..count_ext_str(__term) {
-            if c.str(get_ext_str_name(__term, i)) == name {
-                return get_ext_str(__term, i) ?> c::str
+        for ..count_ext_str(__term) {
+            if c.str(get_ext_str_name(__term, it)) == name {
+                return get_ext_str(__term, it) ?> c::str
             }
         }
     }
 
     bools* -> Generator[(Int, Bool)] {
-        for cap in _bools {
-            yield (cap, get_bool(__term, cap) != 0)
+        for _bools {
+            yield (it, get_bool(__term, it) != 0)
         }
     }
 
     nums* -> Generator[(Int, Int)] {
-        for cap in _nums {
-            yield (cap, get_num(__term, cap))
+        for _nums {
+            yield (it, get_num(__term, it))
         }
     }
 }

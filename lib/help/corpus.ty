@@ -158,7 +158,7 @@ fn doc-text(raw: ?String) -> String | nil {
     let $raw = raw or return nil
     let text = raw
         .lines()
-        .map(\_.sub(/^\s*(?:\/\*\*|\*\/|\*(?!\/)|\/\/\/)\s?/, ''))
+        .map(\_.comb(/^\s*(?:\/\*\*|\*\/|\*(?!\/)|\/\/\/)\s?/))
         .join('\n')
         .comb(/\s*\*\/\s*$/)
     let text = dedent(text).trim()
@@ -178,9 +178,9 @@ fn overloads(text: String) -> Array[String] {
     let out = []
     let pending = []
     let depth = 0
-    for line in text.split('\n') {
-        pending.push(line)
-        depth += bracket-depth(line)
+    for text.split('\n') {
+        pending.push(it)
+        depth += bracket-depth(it)
         if depth <= 0 {
             out.push(flat(pending.join('\n')))
             pending = []
@@ -220,8 +220,8 @@ class Source {
         let path = ty.mod.path(module)
         self.file    = path.starts?('/') ? path : nil
         let at = 0
-        for line in lines {
-            at += line.size() + 1
+        for lines {
+            at += it.size() + 1
             offsets.push(at)
         }
     }
@@ -274,9 +274,9 @@ class Body {
         let outer = #(source.lines[at - 1].match(/^ */) ?? '')
         self.first = at
         self.lines = []
-        for line in source.lines[at;] {
-            break if line.match?(/\S/) && #(line.match(/^ */) ?? '') <= outer
-            lines.push(line)
+        for source.lines[at;] {
+            break if it.match?(/\S/) && #(it.match(/^ */) ?? '') <= outer
+            lines.push(it)
         }
         self.text   = lines.join('\n')
         self.indent = lines.find(/^ +\S/).?match(/^ +/) ?? '    '
@@ -428,9 +428,9 @@ class Harvest {
         let line = here.text.bslice(0, i).count('\n')
         let depth = 0
         let rows = 0
-        for text in here.lines[line;line + MAX_SOURCE_LINES] {
+        for here.lines[line;line + MAX_SOURCE_LINES] {
             rows += 1
-            depth += bracket-depth(text)
+            depth += bracket-depth(it)
             break if depth <= 0
         }
         here.span(line, rows)
@@ -612,8 +612,8 @@ class Harvest {
         let $i = text.bsearch(spelling(name)) or return ('', nil)
         let rest = text.bslice(i)
         let cut = body-start(rest) ?? #rest
-        let decl = rest.slice(0, cut).trim().comb(/;$/)
-        let stop = here.at(line) + i + rest.slice(0, cut).trim().comb(/;$/).size()
+        let decl = rest[;cut].trim().comb(/;$/)
+        let stop = here.at(line) + i + rest[;cut].trim().comb(/;$/).size()
         let proto = decl.bslice(decl.bsearch(/[(\[]|\s*->/) ?? decl.size())
         (proto, here.paint(here.at(line) + i, stop))
     }
@@ -667,7 +667,7 @@ fn body-start(text: String) -> Int | nil {
         match c {
             '(' or '[' => depth += 1,
             ')' or ']' => depth -= 1,
-            '{' and depth == 0 && !text.slice(0, i).match?(/(->|[|,(:])\s*$/) => return i,
+            '{' and depth == 0 && !text[;i].match?(/(->|[|,(:])\s*$/) => return i,
             '{' => depth += 1,
             '}' => depth -= 1,
             _   => ()
@@ -687,9 +687,9 @@ pub fn module-file(name: String) -> Path | nil {
 pub fn library-modules() -> Dict[String, Path] {
     let found = %{}
     for dir in ty.path.map(Path).nub().filter(&.dir?) {
-        for file in scan(dir, dir) {
-            let name = str(file.relative-to(dir).with-suffix(''))
-            found[name] = found[name] ?? file
+        for scan(dir, dir) {
+            let name = str(it.relative-to(dir).with-suffix(''))
+            found[name] = found[name] ?? it
         }
     }
     found
@@ -760,9 +760,9 @@ fn worker() -> Path {
 
 fn dump(name: String, scratch: Path) -> Array[_] {
     let out = scratch / "{dotted(name)}.json"
-    for flags in [[], ['--static']] {
+    for [[], ['--static']] {
         let result = run(
-            [ty.executable, '--color=never', str(worker()), name, str(out), *flags],
+            [ty.executable, '--color=never', str(worker()), name, str(out), *it],
             timeout: 60
         )
         if result.fate == Success && out.exists? {
@@ -784,7 +784,9 @@ pub fn build(
     let entries = []
     for chunk; i in Future.iter(futures) {
         entries += chunk
-        if progress { progress(i + 1, #names) }
+        if progress {
+            progress(i + 1, #names)
+        }
     }
     pool.close()
     scratch.rmtree(quiet: true)

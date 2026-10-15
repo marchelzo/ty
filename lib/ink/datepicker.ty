@@ -25,7 +25,7 @@ pub class DatePicker < Component {
     focusable? -> Bool { true }
 
     __ensure-init() {
-        if __today { return }
+        return if __today
         let td = date.today()
         __today = td
         let v = value ?? td
@@ -51,8 +51,14 @@ pub class DatePicker < Component {
     }
 
     __set-month(y: Int, m: Int) {
-        while m < 1  { m += 12; y -= 1 }
-        while m > 12 { m -= 12; y += 1 }
+        while m < 1 {
+            m += 12
+            y -= 1
+        }
+        while m > 12 {
+            m -= 12
+            y += 1
+        }
         __year  = y
         __month = m
         __day   = __day.clamp(1, date.PlainDate(y, m, 1).daysInMonth)
@@ -60,18 +66,22 @@ pub class DatePicker < Component {
     }
 
     __fire-change() {
-        if on-change { on-change(__cursor-date()) }
+        if on-change {
+            on-change(__cursor-date())
+        }
     }
 
     __click(mx: Int, my: Int) {
         let row = my - layout-y - 2
         let col = (mx - layout-x) / 3
-        if row < 0 || col < 0 || col > 6 { return }
+        return if row < 0 || col < 0 || col > 6
         let d = row * 7 + col - __grid-offset + 1
-        if d < 1 || d > __grid-dim { return }
+        return if d < 1 || d > __grid-dim
         __day = d
         __fire-change()
-        if on-select { on-select(__cursor-date()) }
+        if on-select {
+            on-select(__cursor-date())
+        }
     }
 
     on-event(ev) {
@@ -114,7 +124,9 @@ pub class DatePicker < Component {
                 { __day = __dim(); __fire-change() },
 
             event.Key({key: 'ENTER', event: 1, *}) => {
-                if on-select { on-select(__cursor-date()) }
+                if on-select {
+                    on-select(__cursor-date())
+                }
             },
 
             event.MouseDown({x, y, *}) =>

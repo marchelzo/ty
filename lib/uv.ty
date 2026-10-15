@@ -123,25 +123,25 @@ enum! {
 
 #|if __apple__
 C! struct addrinfo {
-	int	ai_flags;	/* AI_PASSIVE, AI_CANONNAME, AI_NUMERICHOST */
-	int	ai_family;	/* PF_xxx */
-	int	ai_socktype;	/* SOCK_xxx */
-	int	ai_protocol;	/* 0 or IPPROTO_xxx for IPv4 and IPv6 */
-	socklen_t ai_addrlen;	/* length of ai_addr */
-	char	*ai_canonname;	/* canonical name for hostname */
-	struct	sockaddr *ai_addr;	/* binary address */
-	struct	addrinfo *ai_next;	/* next structure in linked list */
+    int    ai_flags;    /* AI_PASSIVE, AI_CANONNAME, AI_NUMERICHOST */
+    int    ai_family;    /* PF_xxx */
+    int    ai_socktype;    /* SOCK_xxx */
+    int    ai_protocol;    /* 0 or IPPROTO_xxx for IPv4 and IPv6 */
+    socklen_t ai_addrlen;    /* length of ai_addr */
+    char    *ai_canonname;    /* canonical name for hostname */
+    struct    sockaddr *ai_addr;    /* binary address */
+    struct    addrinfo *ai_next;    /* next structure in linked list */
 };
 #|else
 C! struct addrinfo {
-	int	ai_flags;	/* AI_PASSIVE, AI_CANONNAME, AI_NUMERICHOST */
-	int	ai_family;	/* PF_xxx */
-	int	ai_socktype;	/* SOCK_xxx */
-	int	ai_protocol;	/* 0 or IPPROTO_xxx for IPv4 and IPv6 */
-	socklen_t ai_addrlen;	/* length of ai_addr */
-	struct	sockaddr *ai_addr;	/* binary address */
-	char	*ai_canonname;	/* canonical name for hostname */
-	struct	addrinfo *ai_next;	/* next structure in linked list */
+    int    ai_flags;    /* AI_PASSIVE, AI_CANONNAME, AI_NUMERICHOST */
+    int    ai_family;    /* PF_xxx */
+    int    ai_socktype;    /* SOCK_xxx */
+    int    ai_protocol;    /* 0 or IPPROTO_xxx for IPv4 and IPv6 */
+    socklen_t ai_addrlen;    /* length of ai_addr */
+    struct    sockaddr *ai_addr;    /* binary address */
+    char    *ai_canonname;    /* canonical name for hostname */
+    struct    addrinfo *ai_next;    /* next structure in linked list */
 };
 #|]
 
@@ -308,13 +308,13 @@ pub class UVError < RuntimeError {
 
 pub class TimeoutError < RuntimeError {
     init() {
-        super("Operation timed out")
+        super('Operation timed out')
     }
 }
 
 pub class CanceledError < RuntimeError {
     init() {
-        super("Operation was canceled")
+        super('Operation was canceled')
     }
 }
 
@@ -730,7 +730,7 @@ pub class UV {
             events: c.int,
             status: c.int
         ) {
-            if status < 0 { return }
+            return if status < 0
             let watcher = __watching[handle]!
             if let $cb = watcher.on-event {
                 let name = (filename != nil) ? c.str(filename) : nil
@@ -1200,7 +1200,7 @@ pub fn getaddrinfo(
 
 pub fn race(fns: _, stagger: Int = 0) {
     if #fns == 0 { throw RuntimeError('race: empty') }
-    if #fns == 1 { return fns[0]() }
+    if #fns == 1 { return fns[0]()                   }
 
     let lp         = loop()
     let resume     = ty.coro()
@@ -1217,7 +1217,9 @@ pub fn race(fns: _, stagger: Int = 0) {
     fn settle() {
         if !settled? && (winner != nil || (pending == 0 && next-idx >= #fns)) {
             settled? = true
-            if awaiting? { resume() }
+            if awaiting? {
+                resume()
+            }
         }
     }
 
@@ -1257,7 +1259,9 @@ pub fn race(fns: _, stagger: Int = 0) {
     fn cleanup() {
         timer.stop()
         timer.close()
-        for coro in coros { coro(Cancel as nil) }
+        for coros {
+            it(Cancel as nil)
+        }
     }
 
     if !settled? {
@@ -1269,10 +1273,14 @@ pub fn race(fns: _, stagger: Int = 0) {
     timer.close()
 
     for coro; i in coros {
-        if i != winner-idx { coro(Cancel as nil) }
+        if i != winner-idx {
+            coro(Cancel as nil)
+        }
     }
 
-    if let $val = winner { return val }
+    if let $val = winner {
+        return val
+    }
 
     throw last-err ?? RuntimeError('race: all attempts failed')
 }
@@ -1281,11 +1289,11 @@ fn interleave-families(addrs) {
     let v6 = []
     let v4 = []
 
-    for addr in addrs {
-        if addr.family == os.AF_INET6 {
-            v6.push(addr)
+    for addrs {
+        if it.family == os.AF_INET6 {
+            v6.push(it)
         } else {
-            v4.push(addr)
+            v4.push(it)
         }
     }
 

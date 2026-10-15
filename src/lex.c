@@ -286,6 +286,18 @@ haveid(Ty *ty)
 }
 
 static bool
+at_line_start(Ty *ty)
+{
+        char const *p = SRC;
+
+        while (p > state.start && (p[-1] == ' ' || p[-1] == '\t')) {
+                p -= 1;
+        }
+
+        return (p == state.start) || (p[-1] == '\n');
+}
+
+static bool
 skipspace(Ty *ty)
 {
         bool nl = false;
@@ -296,12 +308,8 @@ skipspace(Ty *ty)
                 n += 1;
         }
 
-        if (SRC + n == END) {
-                SRC += n;
-        } else {
-                while (n --> 0) {
-                        nextchar(ty);
-                }
+        while (n --> 0) {
+                nextchar(ty);
         }
 
         nl &= state.need_nl;
@@ -1608,7 +1616,7 @@ Begin:
                         skiplinecomment(ty);
                         goto Begin;
                 }
-        } else if (C(0) == '#' && C(1) == '|') {
+        } else if (C(0) == '#' && C(1) == '|' && at_line_start(ty)) {
                 nextchar(ty);
                 nextchar(ty);
                 state.need_nl = true;
@@ -1791,6 +1799,11 @@ lex_init(Ty *ty, char const *file, char const *src)
                 .in_pp = false,
                 .ctx = LEX_PREFIX
         };
+
+        if (C(0) == 0xEF && C(1) == 0xBB && C(2) == 0xBF) {
+                SRC += 3;
+                state.loc.byte += 3;
+        }
 
         Start = state.loc;
 

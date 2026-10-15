@@ -56,4 +56,7 @@ parse_init(Ty *ty);
 void
 parse_reset(Ty *ty);
 
+bool
+parse_mark_region(Ty *ty, char const *kind, u32 start, u32 end);
+
 #endif

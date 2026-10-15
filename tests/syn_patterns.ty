@@ -1,0 +1,121 @@
+import syn
+
+let SRC = '''
+let a = xs.len()
+print(1, 2, 3)  // lint: ok
+print(x)
+if a == a { b }
+let z = f(g(h(1)))
+fn k(p, q) { p + q }
+'''
+
+fn tree() -> syn.Tree { syn.parse(SRC) }
+
+pub fn holes-bind-nodes() {
+    let ms = syn$$[ $$x.len() $$].find-all(tree())
+    assert(#ms == 1)
+    assert(ms[0]['x'].text == 'xs')
+}
+
+pub fn literals-work-as-match-patterns() {
+    let seen = []
+    for n in tree().walk() {
+        match n {
+            syn$$[ print(*$$args) $$<// $$why> $$] => seen.push(('commented', [a.text for a in args], why)),
+            syn$$[ print(*$$args) $$]            => seen.push(('plain', [a.text for a in args], nil)),
+            syn$$[ $$v == $$v $$]                 => seen.push(('same', [v.text], nil)),
+            _ => (),
+        }
+    }
+    assert(seen == [
+        ('commented', ['1', '2', '3'], 'lint: ok'),
+        ('plain', ['x'], nil),
+        ('same', ['a'], nil),
+    ], seen)
+}
+
+pub fn deep-typed-and-alternative-holes() {
+    let t = tree()
+    let deep = syn$$[ f($$(.. h($$k) ..)) $$].find-all(t)
+    assert(deep.map(\_['k'].text) == ['1'])
+    let calls = syn$$[ $$(c :: Call) $$].find-all(t).map(\_['c'].text)
+    assert('f(g(h(1)))' in calls && 'h(1)' in calls)
+    let alts = syn$$[ $$(xs.len() or g($$_)) $$].find-all(t).map(\_.node.text)
+    assert(alts == ['xs.len()', 'g(h(1))'], alts)
+}
+
+pub fn token-holes-and-focus() {
+    let t = tree()
+    let fns = syn$$[ fn $$name($$a, $$b) { $$a + $$b } $$].find-all(t)
+    assert(#fns == 1)
+    assert(fns[0]['name'].text == 'k')
+    let rhs = syn$$[ let z = $$^(f($$_)) $$].find-all(t)
+    assert(rhs.map(\_.node.kind) == ['FunctionCall'])
+}
+
+pub fn gap-holes-constrain-trivia() {
+    let t = syn.parse("let a = 1\nlet b = 2\n\nlet c = 3\n")
+    let tight = syn$$[; let $$x = $$_ $$<nl> let $$y = $$_ $$].find-all(t)
+    assert(tight.map(|m| -> (m['x'].text, m['y'].text)) == [('a', 'b')])
+    let spaced = syn$$[; let $$x = $$_ $$<blank> let $$y = $$_ $$].find-all(t)
+    assert(spaced.map(|m| -> (m['x'].text, m['y'].text)) == [('b', 'c')])
+}
+
+pub fn statement-sequences() {
+    let t = syn.parse("fn f() \{\n    let r = g()\n    return r\n\}\n")
+    let ms = syn$$[; let $$v = $$e
+                     return $$v $$].find-all(t)
+    assert(#ms == 1)
+    assert(ms[0]['e'].text == 'g()')
+}
+
+pub fn templates-render() {
+    let t = tree()
+    let m = syn$$[ print(*$$args) $$].matches(t.nodes.find(\_.text == 'print(x)') ?? t.root)
+    assert(m != nil)
+    assert(syn$$[ log.debug(*$$args) $$].render(m ?? %{}) == 'log.debug(x)')
+    let plus = syn.parse('a + b').root.nodes[0]
+    assert(syn$$[ $$x.abs $$].render(%{'x': plus}) == '(a + b).abs')
+}
+
+pub fn cst-mode-compares-layout() {
+    let t = syn.parse("f(1,2)\nf(1, 2)\n")
+    let any = syn.compile('f(1, 2)')
+    let exact = any.with('cst')
+    assert(#any.find-all(t) == 2)
+    assert(#exact.find-all(t) == 1)
+}
+
+pub fn type-patterns-and-regex-gaps() {
+    let t = syn.parse("fn f(x: Array[Int], y: String | nil) -> Dict[String, Int] \{ x \}\nlet a = 1 // keep: yes\n")
+    assert(syn$$[: Array[$$e] $$].find-all(t).map(\_['e'].text) == ['Int'])
+    assert(syn$$[: $$u | nil $$].find-all(t).map(\_['u'].text) == ['String'])
+    let kept = syn$$[ let $$v = $$_ $$<c ~ /keep/> $$].find-all(t)
+    assert(kept.map(m -> (m['v'].text, m['c'])) == [('a', ' // keep: yes\n')])
+}
+
+pub fn parens-are-transparent() {
+    let t = syn.parse('let a = (f(x)).len()\nlet b = f(x).len()\n')
+    assert(#syn$$[ f($$y).len() $$].find-all(t) == 2)
+    assert(syn$$[ $$(c :: Call).len() $$].find-all(t).map(\_['c'].text) == ['(f(x))', 'f(x)'])
+}
+
+pub fn gaps-bind-text-and-test-comments() {
+    let t = syn.parse("let a = 1 // keep: yes\nlet b = 2 // drop\nlet c = 3   \n")
+    let comments = syn$$[ let $$v = $$_ $$<// $$why> $$].find-all(t).map(m -> (m['v'].text, m['why']))
+    assert(comments == [('a', 'keep: yes'), ('b', 'drop')], comments)
+    let kept = syn$$[ let $$v = $$_ $$<// /^keep/> $$].find-all(t).map(\_['v'].text)
+    assert(kept == ['a'])
+    let exact = syn$$[ let $$v = $$_ $$<// drop> $$].find-all(t).map(\_['v'].text)
+    assert(exact == ['b'])
+    let spaced = syn$$[ let $$v = $$_ $$<g ~ /^ {3}\n/> $$].find-all(t).map(m -> (m['v'].text, m['g']))
+    assert(spaced == [('c', '   \n')], spaced)
+    let both = syn$$[; let $$x = $$_ $$<gap> let $$y = $$_ $$].find-all(t).map(m -> m['gap'])
+    assert(both == [' // keep: yes\n', ' // drop\n'], both)
+}
+
+pub fn typed-holes-accept-sugar-forms() {
+    let t = syn.parse('let f = &.name\nlet g = h(1)\n')
+    let ms = syn$$[ let $$v = $$(e :: implicit-method) $$].find-all(t)
+    assert(ms.map(m -> m['v'].text) == ['f'])
+}

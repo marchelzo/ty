@@ -619,7 +619,9 @@ pub fn keychain-credential(
     let service-name = cfstr(service)
     defer CFRelease(service-name)
     let account-name = account == nil ? nil : cfstr(account)
-    if account-name != nil { defer CFRelease(account-name) }
+    if account-name != nil {
+        defer CFRelease(account-name)
+    }
 
     let key-count = account == nil ? 4 : 5
     let keys = c.auto(c.new(c.ptr, key-count))
@@ -654,12 +656,16 @@ pub fn keychain-credential(
 
     let references = c.auto(c.box(c.ptr, nil))
     let status = SecItemCopyMatching(reference-query, references)
-    if status != 0 || references[0] == nil { return nil }
+    if status != 0 || references[0] == nil {
+        return nil
+    }
     defer CFRelease(references[0])
 
     let reference = references[0]
     if CFGetTypeID(references[0]) == CFArrayGetTypeID() {
-        if CFArrayGetCount(references[0]) == 0 { return nil }
+        if CFArrayGetCount(references[0]) == 0 {
+            return nil
+        }
         reference = CFArrayGetValueAtIndex(references[0], 0)
     }
 
@@ -678,7 +684,9 @@ pub fn keychain-credential(
 
     let result = c.auto(c.box(c.ptr, nil))
     status = SecItemCopyMatching(data-query, result)
-    if status != 0 || result[0] == nil { return nil }
+    if status != 0 || result[0] == nil {
+        return nil
+    }
     defer CFRelease(result[0])
 
     Blob(c.as_str(CFDataGetBytePtr(result[0]), CFDataGetLength(result[0])))
@@ -944,7 +952,9 @@ pub ns display {
         let count = c.auto(c.box(c.u32))
         CGGetActiveDisplayList(0, nil, count)
         let n: Int = count[0]
-        if n == 0 { return [] }
+        if n == 0 {
+            return []
+        }
         let ids = c.auto(c.new(c.u32, n))
         CGGetActiveDisplayList(n, ids, count)
         [ids[i] for i in ..n]
@@ -956,7 +966,9 @@ pub fn window-list(
     relative-to: Int = cg.kNullWindowID
 ) -> Array[Dict[String, _]] {
     let arr = CGWindowListCopyWindowInfo(options, relative-to)
-    if arr == nil { return [] }
+    if arr == nil {
+        return []
+    }
     defer CFRelease(arr)
 
     let key-names = [
@@ -971,13 +983,13 @@ pub fn window-list(
     ]
 
     let cf-keys = key-names.map(cfstr)
-    defer for k in cf-keys { CFRelease(k) }
+    defer for cf-keys { CFRelease(it) }
 
     let n = CFArrayGetCount(arr)
     let result = []
 
-    for i in ..n {
-        let dict = CFArrayGetValueAtIndex(arr, i)
+    for ..n {
+        let dict = CFArrayGetValueAtIndex(arr, it)
         let entry = %{}
         for name; j in key-names {
             if let $val = CFDictionaryGetValue(dict, cf-keys[j]) {
@@ -1472,7 +1484,9 @@ pub class AudioQueue {
 
     start!() {
         if !__started {
-            for buf in __buffers { __refill(buf) }
+            for __buffers {
+                __refill(it)
+            }
             __started = true
         }
         let err = AudioQueueStart(__queue, nil)
@@ -1564,7 +1578,7 @@ pub class AudioOutput {
 
         let comp = AudioComponentFindNext(nil, desc)
         if comp == nil {
-            throw RuntimeError("AudioComponentFindNext: no default output component")
+            throw RuntimeError('AudioComponentFindNext: no default output component')
         }
 
         let unit-out = c.auto(c.box(c.ptr))
@@ -1738,9 +1752,7 @@ pub fn clipboard-image() -> ?ClipboardImage {
     for item-index in 1..count-out[0] + 1 {
         let item-out = c.auto(c.box(c.u32))
 
-        if PasteboardGetItemIdentifier(pb, item-index, item-out) != 0 {
-            continue
-        }
+        continue if PasteboardGetItemIdentifier(pb, item-index, item-out) != 0
 
         for format in formats {
             let flavor = cfstr(format.type)
@@ -1813,7 +1825,9 @@ pub use DirectoryEntry = {
 pub fn bulk-directory-entries(path: String, buffer-size: Int = 262144)
         -> Array[DirectoryEntry] {
     let fd = os.open(path, os.O_RDONLY)
-    if fd == -1 { return [] }
+    if fd == -1 {
+        return []
+    }
     defer os.close(fd)
 
     // Common: name, device, vnode type, mtime, owner, mode, flags, file ID.
@@ -1839,18 +1853,24 @@ pub fn bulk-directory-entries(path: String, buffer-size: Int = 262144)
         // PACK_INVAL_ATTRS reserves all requested fields at fixed offsets.
         // The returned masks still determine which values may be used.
         let count = getattrlistbulk(fd, attrs.get(), buf, cap, 0x8)
-        if count < 0 { return [] }
-        if count == 0 { break }
+        if count < 0  { return [] }
+        if count == 0 { break     }
         let off = 0
         for _ in ..count {
-            if off + 4 > cap { return [] }
+            if off + 4 > cap {
+                return []
+            }
             let record = buf + off
             let length = c.load(c.u32, record)
-            if length < 76 || off + length > cap { return [] }
+            if length < 76 || off + length > cap {
+                return []
+            }
             let returned-common = c.load(c.u32, record + 4)
             let returned-dir = c.load(c.u32, record + 12)
             let returned-file = c.load(c.u32, record + 16)
-            if (returned-common & 1) == 0 { return [] }
+            if (returned-common & 1) == 0 {
+                return []
+            }
             let name-off = c.load(c.i32, record + 24)
             let name-len = c.load(c.u32, record + 28)
             let vnode-type = c.load(c.u32, record + 36)

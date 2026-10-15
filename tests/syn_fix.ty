@@ -1,0 +1,58 @@
+import ty.test (Test)
+import syn.fix as fixer
+import support.process (run)
+
+let MESSY = "
+fn f(xs: Array[Int], t: Int | nil) -> Int \{
+    if t == nil \{ return 0 \}
+    let n = xs.len()
+
+
+    let s = if n > 0 \{ 'some' \} else \{ 'none' \}
+    for x in xs \{ print(x, s, sep = ' ') \}
+    n
+\}
+"[1;]
+
+let TIDY = "
+fn f(xs: Array[Int], t: Int | nil) -> Int \{
+    if t == nil \{
+        return 0
+    \}
+    let n = #xs
+
+
+    let s = n > 0 ? 'some' : 'none'
+    for xs \{
+        print(it, s, sep=' ')
+    \}
+    n
+\}
+"[1;]
+
+pub fn fixes-everything-at-once() {
+    let out = fixer.run(MESSY)
+    assert(out.source == TIDY, out.source)
+    assert(out.converged? && out.diagnostics.all?(\_.severity == 'info'))
+    assert(fixer.run(TIDY).source == TIDY)
+}
+
+pub fn opting-out() {
+    let rules = fixer.ALL_RULES.filter(\_ not in fixer.STYLE_RULES)
+    let out = fixer.run(MESSY, rules=rules, format=false)
+    assert('if t == nil \{ return 0 \}\n' in out.source, out.source)
+    assert('for x in xs \{ print(x, s, sep = \' \') \}' in out.source, out.source)
+    assert('#xs' in out.source)
+}
+
+pub fn command-line(t: Test) {
+    let file = t.tmp-dir() / 'messy.ty'
+    file.write(MESSY)
+    assert(run(['--fix', '--check', str(file)]).status == 1)
+    assert(slurp(str(file)) == MESSY)
+    let fixed = run(['--fix', str(file)])
+    assert(fixed.status == 0, fixed)
+    assert(slurp(str(file)) == TIDY)
+    let again = run(['--fix', '--check', str(file)])
+    assert(again.status == 0 && again.stdout == '', again)
+}

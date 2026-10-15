@@ -52,7 +52,7 @@ pub class INIFile {
 
         match section.settings.find(match ({name, *}) => name == key) {
             $setting => { setting.value = value },
-            _ => section.settings.push({name: key, value, comments: []})
+            _        => section.settings.push({name: key, value, comments: []})
         }
     }
 
@@ -82,7 +82,7 @@ pub class INIFile {
         let out = Blob()
 
         if __update? {
-            out.push("#UPDATE-FILE\n")
+            out.push('#UPDATE-FILE\n')
         }
 
         for {name, settings}; i in __sections {
@@ -91,8 +91,8 @@ pub class INIFile {
             }
             out.push("[{name}]\n")
             for {name, value, comments} in settings {
-                for comment in comments {
-                    out.push("{comment}\n")
+                for comments {
+                    out.push("{it}\n")
                 }
                 out.push("{name} = {value}\n")
             }
@@ -200,7 +200,9 @@ pub fn str(d: Dict[String | nil, Dict[String, String]]) {
     }
 
     for name, settings in d if (name != nil) && (#settings > 0) {
-        if #b > 0 { b.push('\n') }
+        if #b > 0 {
+            b.push('\n')
+        }
         b.push("[{name}]\n")
         for k, v in settings {
             b.push("{k} = {v}\n")

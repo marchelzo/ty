@@ -2,7 +2,7 @@ import ty
 import ffi as c (C!, wrap)
 
 if not let $lib = c.dlopen('libtermkey.so.1') ?? c.dlopen('looibtermkey.dylib') {
-	throw 'Failed to open libtermkey.so'
+    throw 'Failed to open libtermkey.so'
 }
 
 let TERMKEY_VERSION_MAJOR = 0
@@ -116,10 +116,10 @@ let TERMKEY_FORMAT_URWID = (TERMKEY_FORMAT_LONGMOD | TERMKEY_FORMAT_ALTISMETA | 
 
 
 pub TermKeyKey = c.struct(
-	c.int,
-	c.long,
-	c.int,
-	c.struct(*[c.char for _ in ..7])
+    c.int,
+    c.long,
+    c.int,
+    c.struct(*[c.char for _ in ..7])
 )
 
 pub termkey_new = wrap(lib, 'termkey_new', c.ptr, c.int, c.int)
@@ -131,11 +131,11 @@ C! pub lib function termkey_start(c.ptr) -> c.int
 C! pub lib function termkey_stop(c.ptr) -> c.int
 
 pub function termkey_keytype(key) {
-	c.member(TermKeyKey, key, 0)
+    c.member(TermKeyKey, key, 0)
 }
 
 pub function termkey_keymod(key) {
-	c.member(TermKeyKey, key, 2)
+    c.member(TermKeyKey, key, 2)
 }
 
 pub function termkey_waitkey(tk, k) {

@@ -1,0 +1,401 @@
+import os
+import ty
+import ty.mod as tmod
+import path (Path)
+import syn
+import syn.lint as lint
+import syn.fmt as sf
+import syn.fix as fixer
+import diff
+import sh
+
+let LINT_HELP = '''usage: ty --lint [OPTIONS] [PATH...]
+
+Lint Ty sources. Directories are searched recursively for *.ty files.
+
+options:
+    --fix            apply safe fixes in place
+    --unsafe         also apply unsafe fixes (with --fix)
+    --rules FILE     load rules from FILE (a module exporting `RULES`)
+    --select A,B     only run the named rules
+    --ignore A,B     skip the named rules
+    --list           list available rules and exit
+    --semantic       also run rules that need name resolution and types
+    --shallow        do not run imports while parsing
+    --help           show this message
+'''
+
+let FMT_HELP = '''usage: ty --fmt [OPTIONS] [PATH...]
+
+Format Ty sources. Without --write or --check, prints the result.
+
+options:
+    --write          rewrite files in place
+    --check          exit with status 1 if any file would change
+    --diff           print a unified diff instead of the result
+    --tidy           style-preserving mode (only whitespace hygiene)
+    --shallow        do not run imports while parsing (macro regions stay verbatim)
+    --width N        target line width (default 80)
+    --indent N       indentation width (default 4)
+    --help           show this message
+'''
+
+let FIX_HELP = '''usage: ty --fix [OPTIONS] [PATH...]
+
+Fix everything that can be fixed safely, then tidy the layout, until nothing
+changes. Runs every lint rule, including the semantic and style rules; prints
+the problems that are left. Directories are searched recursively.
+
+options:
+    --check          change nothing; exit with status 1 if any file would change
+    --diff           change nothing; print a unified diff of what would change
+    --ignore A,B     skip the named rules
+    --rules FILE     also run the rules in FILE (a module exporting `RULES`)
+    --no-style       skip the style rules
+    --first-pass     also run the rules meant for a one-time sweep of old code
+                     (e.g. multi-line `if c { return }` → `return if c`)
+    --no-fmt         skip the formatter
+    --help           show this message
+'''
+
+fn collect(paths: Array[String]) -> Array[String] {
+    let out: Array[String] = []
+    for paths {
+        let path = Path(it)
+        if path.dir? {
+            out += [str(f) for f in path.rglob('*.ty')].sort()
+        } else {
+            out.push(it)
+        }
+    }
+    out
+}
+
+fn split-list(s: String) -> Array[String] {
+    s.split(/\s*,\s*/).filter(\_ != '')
+}
+
+fn load-rules(file: String) -> Array[lint.Rule] {
+    let source = slurp(file) ?? throw ValueError("cannot read rules file {file}")
+    let mod = tmod.compile("{source}\nRULES\n", path=str(Path(file).absolute))
+    match tmod.eval(mod) {
+        rules: Array => [r for r in rules if r :: lint.Rule],
+        _            => throw ValueError("{file} does not define RULES"),
+    }
+}
+
+fn lint-main(args: Array[String]) -> Int {
+    let paths: Array[String] = []
+    let fix? = false
+    let unsafe? = false
+    let rules = lint.DEFAULT_RULES
+    let select: Array[String] | nil = nil
+    let ignore: Array[String] = []
+    let deep? = true
+    let i = 0
+    while i < #args {
+        match args[i] {
+            '--help' => do {
+                print(LINT_HELP)
+                return 0
+            },
+            '--fix'      => fix? = true,
+            '--unsafe'   => unsafe? = true,
+            '--shallow'  => deep? = false,
+            '--semantic' => rules = [*rules, *lint.SEMANTIC_RULES],
+            '--rules'   => do {
+                i += 1
+                rules = [*rules, *load-rules(args[i])]
+            },
+            '--select'  => do {
+                i += 1
+                select = split-list(args[i])
+            },
+            '--ignore'  => do {
+                i += 1
+                ignore = split-list(args[i])
+            },
+            '--list'    => do {
+                for rules {
+                    let note = it.semantic? ? ' (semantic)' : ''
+                    print("{it.name:-22} {it.severity:-8} {it.doc}{note}")
+                }
+                return 0
+            },
+            a => paths.push(a),
+        }
+        i += 1
+    }
+
+    let active = [
+        r
+        for r in rules
+        if (select == nil || r.name in select) && r.name not in ignore
+    ]
+    let semantic? = lint.semantic?(active)
+
+    let total = 0
+    let fixed = 0
+    for f in collect((#paths == 0) ? ['.'] : paths) {
+        let source = slurp(f) ?? do {
+            eprint("ty --lint: cannot read {f}")
+            continue
+        }
+        if fix? {
+            let outcome = lint.fix(
+                source,
+                active,
+                path=f,
+                unsafe?=unsafe?,
+                semantic=semantic?,
+                deep=deep?
+            )
+            if outcome.source != source {
+                Path(f).write(outcome.source)
+            }
+            fixed += outcome.fixed
+            for outcome.diagnostics {
+                print(it)
+                total += (it.severity == 'info') ? 0 : 1
+            }
+        } else {
+            let tree = syn.parse(source, path=f, deep=deep?, resolve=deep?, semantic=semantic?)
+            if let $err = tree.error {
+                eprint("{f}: parse error: {err.lines()[0] ?? err}")
+                total += 1
+                continue
+            }
+            for lint.check(tree, active) {
+                print(it)
+                total += (it.severity == 'info') ? 0 : 1
+            }
+        }
+    }
+
+    if fixed > 0 {
+        eprint("fixed {fixed} problem(s)")
+    }
+
+    (total > 0) ? 1 : 0
+}
+
+fn fmt-main(args: Array[String]) -> Int {
+    let paths: Array[String] = []
+    let write? = false
+    let check? = false
+    let diff? = false
+    let mode = 'canonical'
+    let opts = sf.Options()
+    let deep? = true
+    let i = 0
+    while i < #args {
+        match args[i] {
+            '--help'   => do {
+                print(FMT_HELP)
+                return 0
+            },
+            '--write'   => write? = true,
+            '--check'   => check? = true,
+            '--diff'    => diff? = true,
+            '--tidy'    => mode = 'tidy',
+            '--shallow' => deep? = false,
+            '--width'  => do {
+                i += 1
+                opts.width = int(args[i]) ?? 80
+            },
+            '--indent' => do {
+                i += 1
+                opts.indent = int(args[i]) ?? 4
+            },
+            a => paths.push(a),
+        }
+        i += 1
+    }
+
+    let changed = 0
+    for collect((#paths == 0) ? ['.'] : paths) {
+        let source = slurp(it) ?? do {
+            eprint("ty --fmt: cannot read {it}")
+            continue
+        }
+        let out = sf.format(source, path=it, mode=mode, opts=opts, deep=deep?)
+        continue if out == source
+        changed += 1
+        if check? {
+            print("{it}: would reformat")
+        } else if diff? {
+            print("--- {it}\n+++ {it} (formatted)")
+            print(diff.unified(diff.edits(source.lines(), out.lines())).join('\n'))
+        } else if write? {
+            Path(it).write(out)
+            print("formatted {it}")
+        } else {
+            print(out, end='')
+        }
+    }
+
+    (check? && changed > 0) ? 1 : 0
+}
+
+fn fix-main(args: Array[String]) -> Int {
+    let paths: Array[String] = []
+    let flags: Array[String] = []
+    let check? = false
+    let diff? = false
+    let format? = true
+    let child? = false
+    let rules = fixer.ALL_RULES
+    let ignore: Array[String] = []
+    let i = 0
+    while i < #args {
+        let arg = args[i]
+        if arg.match?(/^--/) && arg != '--child' {
+            flags.push(arg)
+            if arg in ['--ignore', '--rules'] && i + 1 < #args {
+                flags.push(args[i + 1])
+            }
+        }
+        match args[i] {
+            '--help'       => do {
+                print(FIX_HELP)
+                return 0
+            },
+            '--child'      => child? = true,
+            '--check'      => check? = true,
+            '--diff'       => diff? = true,
+            '--no-fmt'     => format? = false,
+            '--no-style'   => rules = rules.filter(\_ not in fixer.STYLE_RULES),
+            '--first-pass' => rules = [*rules, *fixer.FIRST_PASS_RULES],
+            '--ignore'     => do {
+                i += 1
+                ignore = split-list(args[i])
+            },
+            '--rules'      => do {
+                i += 1
+                rules = [*rules, *load-rules(args[i])]
+            },
+            a              => paths.push(a),
+        }
+        i += 1
+    }
+
+    let files = collect((#paths == 0) ? ['.'] : paths)
+    if #files > 1 {
+        return fix-in-children(files, flags)
+    }
+
+    let active = rules.filter(\_.name not in ignore)
+    let changed = 0
+    let remaining = 0
+    let fixed = 0
+    for f in files {
+        let $source = slurp(f) or do {
+            eprint("ty --fix: cannot read {f}")
+            continue
+        }
+        let out = fixer.run(source, path=f, rules=active, format=format?)
+        if let $err = out.error {
+            eprint("{f}: parse error: {err.lines()[0] ?? err}")
+            remaining += 1
+            continue
+        }
+        if !out.converged? {
+            eprint("{f}: fixes did not settle after {out.passes} passes")
+        }
+        for out.diagnostics {
+            if it.severity != 'info' {
+                print(it)
+                remaining += 1
+            }
+        }
+        continue if out.source == source
+        changed += 1
+        fixed += out.fixed
+        if check? {
+            print("{f}: would change")
+        } else if diff? {
+            print("--- {f}\n+++ {f} (fixed)")
+            print(diff.unified(diff.edits(source.lines(), out.source.lines())).join('\n'))
+        } else {
+            Path(f).write(out.source)
+            eprint("fixed {f}")
+        }
+    }
+
+    if child? {
+        eprint("##fixes {fixed}")
+    } else if changed > 0 && !check? && !diff? {
+        eprint("{changed} file(s) changed, {fixed} fix(es)")
+    }
+
+    match (check?, changed > 0, remaining > 0) {
+        (true, true, _) => 1,
+        (_, _, true)    => 1,
+        _               => 0,
+    }
+}
+
+fn fix-in-children(files: Array[String], flags: Array[String]) -> Int {
+    let results: Array[sh.CmdResult | nil] = files.map(_ -> nil)
+    let lock = Mutex()
+    let next = 0
+    let work = fn () {
+        while true {
+            let i = with lock {
+                let k = next
+                next += 1
+                k
+            }
+            break if i >= #files
+            results[i] = sh.run([ty.executable, '--fix', '--child', *flags, files[i]])
+        }
+    }
+    let workers = [Thread(work) for ..max(1, min(os.ncpu(), #files))]
+    for workers {
+        it.join()
+    }
+
+    let status = 0
+    let changed = 0
+    let fixed = 0
+    for r; i in results {
+        let $out = r or do {
+            eprint("ty --fix: {files[i]}: no result")
+            status = 2
+            continue
+        }
+        print(out.stdout, end='')
+        for line in out.stderr.lines() {
+            match line {
+                /^##fixes (\d+)$/ => fixed += int($1) ?? 0,
+                /^fixed /          => do {
+                    changed += 1
+                    eprint(line)
+                },
+                _ => eprint(line),
+            }
+        }
+        status = max(status, match out.fate {
+            sh.Exit(n) => n,
+            _          => 2,
+        })
+    }
+    if changed > 0 && !('--check' in flags) && !('--diff' in flags) {
+        eprint("{changed} file(s) changed, {fixed} fix(es)")
+    }
+    status
+}
+
+pub fn main(mode: String) {
+    let args = argv[1;]
+    let status = match mode {
+        'lint' => lint-main(args),
+        'fmt'  => fmt-main(args),
+        'fix'  => fix-main(args),
+        _      => do {
+            eprint("unknown tool mode: {mode}")
+            2
+        },
+    }
+    os.exit(status)
+}

@@ -64,7 +64,6 @@ let SDL_PRESSED = 1
 let SDL_RELEASED = 0
 
 
-
 let SDL_SCANCODE_UNKNOWN = 0
 
 /**

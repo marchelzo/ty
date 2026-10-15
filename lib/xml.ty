@@ -2,7 +2,7 @@ import ffi as c (C!)
 import ptr
 
 if not let $libxml = c.open(['xml2', 'xml2-2']) {
-    throw RuntimeError("failed to load libxml2")
+    throw RuntimeError('failed to load libxml2')
 }
 
 tag XMLError;
@@ -149,7 +149,7 @@ pub const XML_SCHEMA_WHITESPACE_UNKNOWN = 0
 pub const XML_SCHEMA_WHITESPACE_PRESERVE = 1
 pub const XML_SCHEMA_WHITESPACE_REPLACE = 2
 pub const XML_SCHEMA_WHITESPACE_COLLAPSE = 3
-pub const XML_DEFAULT_VERSION = "1.0"
+pub const XML_DEFAULT_VERSION = '1.0'
 pub const XML_PARSER_EOF = -1
 pub const XML_PARSER_START = 0
 pub const XML_PARSER_MISC = XML_PARSER_START + 1
@@ -241,7 +241,7 @@ pub const XML_BUFFER_ALLOC_IMMUTABLE = XML_BUFFER_ALLOC_EXACT + 1
 pub const XML_BUFFER_ALLOC_IO = XML_BUFFER_ALLOC_IMMUTABLE + 1
 pub const XML_BUFFER_ALLOC_HYBRID = XML_BUFFER_ALLOC_IO + 1
 pub const XML_BUFFER_ALLOC_BOUNDED = XML_BUFFER_ALLOC_HYBRID + 1
-pub const XML_XML_ID = "xml:id"
+pub const XML_XML_ID = 'xml:id'
 pub const XML_ELEMENT_NODE = 1
 pub const XML_ATTRIBUTE_NODE = 2
 pub const XML_TEXT_NODE = 3
@@ -357,16 +357,16 @@ pub const XML_SCHEMAS_ERR_FACET = XML_SCHEMAS_ERR_VALUE + 1
 pub const XML_SCHEMAS_ERR_ = XML_SCHEMAS_ERR_FACET + 1
 pub const XML_SCHEMAS_ERR_XXX = XML_SCHEMAS_ERR_ + 1
 pub const XML_SCHEMA_VAL_VC_I_CREATE = 1<<0
-pub const LIBXML_DOTTED_VERSION = "2.9.10"
+pub const LIBXML_DOTTED_VERSION = '2.9.10'
 pub const LIBXML_VERSION = 20910
-pub const LIBXML_VERSION_STRING = "20910"
-pub const LIBXML_VERSION_EXTRA = ""
-pub const LIBXML_MODULE_EXTENSION = ".so" 
+pub const LIBXML_VERSION_STRING = '20910'
+pub const LIBXML_VERSION_EXTRA = ''
+pub const LIBXML_MODULE_EXTENSION = '.so'
 pub const XML_C14N_1_0 = 0
 pub const XML_C14N_EXCLUSIVE_1_0 = 1
 pub const XML_C14N_1_1 = 2     /* C14N 1.1 spec */
 pub const XML_MODULE_LAZY = 1
-pub const XML_MODULE_LOCAL = 2		/* local binding */
+pub const XML_MODULE_LOCAL = 2        /* local binding */
 pub const XML_SCHEMAS_UNKNOWN = 0
 pub const XML_SCHEMAS_STRING = 1
 pub const XML_SCHEMAS_NORMSTRING = 2
@@ -550,19 +550,19 @@ pub const XML_CTXT_FINISH_DTD_1 = 0xabcd1235
 pub const XML_PATTERN_DEFAULT = 0
 pub const XML_PATTERN_XPATH = 1<<0
 pub const XML_PATTERN_XSSEL = 1<<1
-pub const XML_PATTERN_XSFIELD = 1<<2	/* XPath subset for schema field */
+pub const XML_PATTERN_XSFIELD = 1<<2    /* XPath subset for schema field */
 pub const XML_SCHEMATRON_OUT_QUIET = 1 << 0
 pub const XML_SCHEMATRON_OUT_TEXT = 1 << 1
 pub const XML_SCHEMATRON_OUT_XML = 1 << 2
 pub const XML_SCHEMATRON_OUT_ERROR = 1 << 3
 pub const XML_SCHEMATRON_OUT_FILE = 1 << 8
 pub const XML_SCHEMATRON_OUT_BUFFER = 1 << 9
-pub const XML_SCHEMATRON_OUT_IO = 1 << 10	/* output to I/O mechanism */
-pub const XINCLUDE_PARSE_XML = "xml"
+pub const XML_SCHEMATRON_OUT_IO = 1 << 10    /* output to I/O mechanism */
+pub const XINCLUDE_PARSE_XML = 'xml'
 pub const XML_ERR_NONE = 0
 pub const XML_ERR_WARNING = 1
 pub const XML_ERR_ERROR = 2
-pub const XML_ERR_FATAL = 3		/* A fatal error */
+pub const XML_ERR_FATAL = 3        /* A fatal error */
 pub const XML_FROM_NONE = 0
 pub const XML_FROM_PARSER = XML_FROM_NONE + 1
 pub const XML_FROM_TREE = XML_FROM_PARSER + 1
@@ -1364,8 +1364,8 @@ C! struct CXMLNodeSet {
 function iter-node-set*(nodes: _) -> Generator[XMLNode] {
     let nodes = CXMLNodeSet(nodes)
     let table = ptr.typed(nodes.nodeTab, c.ptr)
-    for i in ..nodes.nodeNr {
-        yield XMLNode(table[i])
+    for ..nodes.nodeNr {
+        yield XMLNode(table[it])
     }
 }
 
@@ -1417,9 +1417,9 @@ class XMLAttr < CXMLAttr {
 }
 
 C! struct CXMLValidCtxt {
-    void *userData;			/* user specific data block */
-    xmlValidityErrorFunc error;		/* the callback in case of errors */
-    xmlValidityWarningFunc warning;	/* the callback in case of warning */
+    void *userData;            /* user specific data block */
+    xmlValidityErrorFunc error;        /* the callback in case of errors */
+    xmlValidityWarningFunc warning;    /* the callback in case of warning */
 
     /* Node analysis stack used when validating within entities */
     xmlNodePtr         node;          /* Current parsed Node */
@@ -1610,15 +1610,15 @@ C! struct CXMLNode {
 }
 
 C! struct CXMLDoc {
-    void           *_private;	/* application data */
+    void           *_private;    /* application data */
     int  type;       /* XML_DOCUMENT_NODE, must be second ! */
-    char           *name;	/* name/filename/URI of the document */
-    struct _xmlNode *children;	/* the document tree */
-    struct _xmlNode *last;	/* last child link */
-    struct _xmlNode *parent;	/* child->parent link */
-    struct _xmlNode *next;	/* next sibling link  */
-    struct _xmlNode *prev;	/* previous sibling link  */
-    struct _xmlDoc  *doc;	/* autoreference to itself */
+    char           *name;    /* name/filename/URI of the document */
+    struct _xmlNode *children;    /* the document tree */
+    struct _xmlNode *last;    /* last child link */
+    struct _xmlNode *parent;    /* child->parent link */
+    struct _xmlNode *next;    /* next sibling link  */
+    struct _xmlNode *prev;    /* previous sibling link  */
+    struct _xmlDoc  *doc;    /* autoreference to itself */
 
     /* End of common part */
     int             compression;/* level of zlib compression */
@@ -1628,62 +1628,62 @@ C! struct CXMLDoc {
 				    -1 if there is no XML declaration
 				    -2 if there is an XML declaration, but no
 					standalone attribute was specified */
-    struct _xmlDtd  *intSubset;	/* the document internal subset */
-    struct _xmlDtd  *extSubset;	/* the document external subset */
-    struct _xmlNs   *oldNs;	/* Global namespace, the old way */
-    const xmlChar  *version;	/* the XML version string */
+    struct _xmlDtd  *intSubset;    /* the document internal subset */
+    struct _xmlDtd  *extSubset;    /* the document external subset */
+    struct _xmlNs   *oldNs;    /* Global namespace, the old way */
+    const xmlChar  *version;    /* the XML version string */
     const xmlChar  *encoding;   /* external initial encoding, if any */
     void           *ids;        /* Hash table for ID attributes if any */
     void           *refs;       /* Hash table for IDREFs attributes if any */
-    const xmlChar  *URL;	/* The URI for that document */
+    const xmlChar  *URL;    /* The URI for that document */
     int             charset;    /* Internal flag for charset handling,
 				   actually an xmlCharEncoding */
     struct _xmlDict *dict;      /* dict used to allocate names or NULL */
-    void           *psvi;	/* for type/PSVI information */
-    int             parseFlags;	/* set of xmlParserOption used to parse the
+    void           *psvi;    /* for type/PSVI information */
+    int             parseFlags;    /* set of xmlParserOption used to parse the
 				   document */
-    int             properties;	/* set of xmlDocProperties for this document
+    int             properties;    /* set of xmlDocProperties for this document
 				   set at the end of parsing */
 };
 
 C! struct CXMLXPathContext {
-    xmlDoc *doc;			/* The current document */
-    xmlNode *node;			/* The current node */
+    xmlDoc *doc;            /* The current document */
+    xmlNode *node;            /* The current node */
 
-    int nb_variables_unused;		/* unused (hash table) */
-    int max_variables_unused;		/* unused (hash table) */
-    xmlHashTable *varHash;		/* Hash table of defined variables */
+    int nb_variables_unused;        /* unused (hash table) */
+    int max_variables_unused;        /* unused (hash table) */
+    xmlHashTable *varHash;        /* Hash table of defined variables */
 
-    int nb_types;			/* number of defined types */
-    int max_types;			/* max number of types */
-    xmlXPathType *types;		/* Array of defined types */
+    int nb_types;            /* number of defined types */
+    int max_types;            /* max number of types */
+    xmlXPathType *types;        /* Array of defined types */
 
-    int nb_funcs_unused;		/* unused (hash table) */
-    int max_funcs_unused;		/* unused (hash table) */
-    xmlHashTable *funcHash;		/* Hash table of defined funcs */
+    int nb_funcs_unused;        /* unused (hash table) */
+    int max_funcs_unused;        /* unused (hash table) */
+    xmlHashTable *funcHash;        /* Hash table of defined funcs */
 
-    int nb_axis;			/* number of defined axis */
-    int max_axis;			/* max number of axis */
-    xmlXPathAxis *axis;		/* Array of defined axis */
+    int nb_axis;            /* number of defined axis */
+    int max_axis;            /* max number of axis */
+    xmlXPathAxis *axis;        /* Array of defined axis */
 
     /* the namespace nodes of the context node */
-    xmlNs **namespaces;		/* Array of namespaces */
-    int nsNr;				/* number of namespace in scope */
-    void *user;				/* function to free */
+    xmlNs **namespaces;        /* Array of namespaces */
+    int nsNr;                /* number of namespace in scope */
+    void *user;                /* function to free */
 
     /* extra variables */
-    int contextSize;			/* the context size */
-    int proximityPosition;		/* the proximity position */
+    int contextSize;            /* the context size */
+    int proximityPosition;        /* the proximity position */
 
     /* extra stuff for XPointer */
-    int xptr;				/* is this an XPointer context? */
-    xmlNode *here;			/* for here() */
-    xmlNode *origin;			/* for origin() */
+    int xptr;                /* is this an XPointer context? */
+    xmlNode *here;            /* for here() */
+    xmlNode *origin;            /* for origin() */
 
     /* the set of namespace declarations in scope for the expression */
-    xmlHashTable *nsHash;		/* The namespaces hash table */
+    xmlHashTable *nsHash;        /* The namespaces hash table */
     xmlXPathVariableLookupFunc varLookupFunc;/* variable lookup func */
-    void *varLookupData;		/* variable lookup data */
+    void *varLookupData;        /* variable lookup data */
 
     /* Possibility to link in an extra item */
     void *extra;                        /* needed for XSLT */
@@ -1694,22 +1694,22 @@ C! struct CXMLXPathContext {
 
     /* function lookup function and data */
     xmlXPathFuncLookupFunc funcLookupFunc;/* function lookup func */
-    void *funcLookupData;		/* function lookup data */
+    void *funcLookupData;        /* function lookup data */
 
     /* temporary namespace lists kept for walking the namespace axis */
-    xmlNs **tmpNsList;		/* Array of namespaces */
-    int tmpNsNr;			/* number of namespaces in scope */
+    xmlNs **tmpNsList;        /* Array of namespaces */
+    int tmpNsNr;            /* number of namespaces in scope */
 
     /* error reporting mechanism */
     void *userData;                     /* user specific data block */
     xmlStructuredErrorFunc error;       /* the callback in case of errors */
-    xmlError lastError;			/* the last error */
-    xmlNode *debugNode;		/* the source node XSLT */
+    xmlError lastError;            /* the last error */
+    xmlNode *debugNode;        /* the source node XSLT */
 
     /* dictionary */
-    xmlDict *dict;			/* dictionary if any */
+    xmlDict *dict;            /* dictionary if any */
 
-    int flags;				/* flags to control compilation */
+    int flags;                /* flags to control compilation */
 
     /* Cache for reusal of XPath objects */
     void *cache;
@@ -1727,20 +1727,20 @@ C! struct CXMLXPathContext {
  * an xmlXPathContext, and the stack of objects.
  */
 C! struct CXMLXPathParserContext {
-    const xmlChar *cur;			/* the current char being parsed */
-    const xmlChar *base;			/* the full expression */
+    const xmlChar *cur;            /* the current char being parsed */
+    const xmlChar *base;            /* the full expression */
 
-    int error;				/* error code */
+    int error;                /* error code */
 
-    xmlXPathContext *context;	/* the evaluation context */
-    xmlXPathObject *value;	/* the current value */
-    int valueNr;	/* number of values stacked */
-    int valueMax;	/* max number of values stacked */
-    xmlXPathObject **valueTab;	/* stack of values */
+    xmlXPathContext *context;    /* the evaluation context */
+    xmlXPathObject *value;    /* the current value */
+    int valueNr;    /* number of values stacked */
+    int valueMax;    /* max number of values stacked */
+    xmlXPathObject **valueTab;    /* stack of values */
 
-    xmlXPathCompExpr *comp;		/* the precompiled expression */
-    int xptr;				/* it this an XPointer expression */
-    xmlNode *        ancestor;	/* used for walking preceding axis */
+    xmlXPathCompExpr *comp;        /* the precompiled expression */
+    int xptr;                /* it this an XPointer expression */
+    xmlNode *        ancestor;    /* used for walking preceding axis */
 
     int              valueFrame;        /* used to limit Pop on the stack */
 };
@@ -1889,7 +1889,7 @@ pub xmlFree = c::wrap(libxml, 'xmlFree', c.void, c.ptr, func-ptr?=true)
 
 pub class XMLAttrSet {
     __node: CXMLNode
-    
+
     init(node: CXMLNode) {
         __node = node
     }
@@ -2029,8 +2029,8 @@ pub class XMLNode : Iterable[XMLNode] {
         let buf = xmlBufferCreate()
         defer xmlBufferFree(buf)
         let x = __node.doc
-        for child in self {
-            xmlNodeDump(buf, __node.doc, child.ptr, 0, 0)
+        for self {
+            xmlNodeDump(buf, __node.doc, it.ptr, 0, 0)
         }
         return c.str(xmlBufferContent(buf))
     }
@@ -2180,7 +2180,7 @@ pub class Document : IntoPtr[_] {
 
 pub class Schema {
     __schema: _
-    
+
     init(schema: _) {
         __schema = schema
     }
@@ -2197,7 +2197,7 @@ pub class Schema {
 
         let errors = []
         let warnings = []
-        
+
         C! closure onWarn(ctx: c.ptr, msg: c.ptr) {
             warnings.push(c.str(msg))
         }
@@ -2257,7 +2257,7 @@ pub fn xml(parts: Array[Any]) -> Document {
             holes.push(node)
             //node.unlink()
         },
-        
+
         (x, *) => {
             buf.push("{x}")
         }
@@ -2276,15 +2276,15 @@ pub fn xml(parts: Array[Any]) -> Document {
             return holes[i]
         }
 
-        for child in (node.children ?? []) {
-            child.swap(go(child))
+        for (node.children ?? []) {
+            it.swap(go(it))
         }
 
         node
     }
 
-    for child in doc.children {
-        child.swap(go(child))
+    for doc.children {
+        it.swap(go(it))
     }
 
     doc

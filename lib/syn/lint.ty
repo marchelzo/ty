@@ -1,0 +1,814 @@
+import json
+import syn (Node, Tree, Token, Trivia, Pattern, Match, Symbol, Copy)
+
+pub tag Safe, Unsafe, Display;
+
+pub use Safety = Safe | Unsafe | Display
+
+pub class Edit {
+    start:   Int
+    end:     Int
+    text:    String
+    copies:  Array[Copy]
+    expects: Dict[String, Symbol]
+
+    init(start: Int, end: Int, text: String) {
+        self.start = start
+        self.end = end
+        self.text = text
+        self.copies = []
+        self.expects = %{}
+    }
+
+    delta -> Int { text.size() - (end - start) }
+
+    __str__() -> String { "Edit({start}..{end}, {json.encode(text)})" }
+}
+
+pub class Fix {
+    edits:   Array[Edit]
+    safety:  Safety
+    layout?: Bool
+
+    init(edits: Array[Edit], safety: Safety = Safe, layout: Bool = false) {
+        self.edits = edits
+        self.safety = safety
+        self.layout? = layout
+    }
+
+    safe? -> Bool { safety == Safe }
+}
+
+pub class Diag {
+    rule:     String
+    severity: String
+    message:  String
+    start:    Int
+    end:      Int
+    line:     Int
+    col:      Int
+    fix:      Fix | nil
+    path:     String | nil
+    node:     Node | nil
+
+    init(start: Int, end: Int, message: String, fix: Fix | nil = nil) {
+        self.rule = ''
+        self.severity = 'warning'
+        self.message = message
+        self.start = start
+        self.end = end
+        self.line = 0
+        self.col = 0
+        self.fix = fix
+        self.path = nil
+        self.node = nil
+    }
+
+    __str__() -> String {
+        let fixable = match fix {
+            nil           => '',
+            f and f.safe? => ' [fix]',
+            _             => ' [unsafe fix]',
+        }
+        "{path ?? '(source)'}:{line}:{col}: {severity}: {message} [{rule}]{fixable}"
+    }
+}
+
+pub use Check = Node -> Diag | Array[Diag] | nil
+
+pub class Rule {
+    name:      String
+    severity:  String
+    check:     Check
+    kinds:     Array[String] | nil
+    doc:       String
+    semantic?: Bool
+    typed?:    Bool
+
+    init(
+        name: String,
+        check: Check,
+        severity: String = 'warning',
+        kinds: Array[String] | nil = nil,
+        doc: String = '',
+        semantic: Bool = false,
+        typed: Bool = false
+    ) {
+        self.name = name
+        self.check = check
+        self.severity = severity
+        self.kinds = kinds
+        self.doc = doc
+        self.semantic? = semantic
+        self.typed? = typed || semantic
+    }
+
+    wants?(n: Node) -> Bool {
+        let $ks = kinds or return true
+        ks.any?(k -> n.is?(k))
+    }
+}
+
+pub fn rule(
+    name: String,
+    check: Check,
+    severity: String = 'warning',
+    kinds: Array[String] | nil = nil,
+    doc: String = '',
+    semantic: Bool = false,
+    typed: Bool = false
+) -> Rule {
+    Rule(name, check, severity, kinds, doc, semantic, typed)
+}
+
+pub fn semantic?(rules: Array[Rule]) -> Bool { rules.any?(&.typed?) }
+
+pub fn diag(n: Node | Token | Trivia, message: String, fix: Fix | nil = nil) -> Diag {
+    let d = Diag(n.start, n.end, message, fix)
+    d.node = match n {
+        node: Node => node,
+        tok: Token => tok.owner,
+        _          => nil,
+    }
+    d
+}
+
+pub fn replace(n: Node | Token | Trivia, text: String, safety: Safety = Safe) -> Fix {
+    let lost = (n :: Node) ? n.tokens[1;].map(\_.leading).flat().filter(&.comment?) : []
+    let kept = lost.all?(\_.text in text)
+    Fix([Edit(n.start, n.end, text)], kept ? safety : Unsafe)
+}
+
+pub fn rewrite(
+    n: Node,
+    template: Pattern,
+    m: Match | Dict[String, Any],
+    safety: Safety = Safe
+) -> Fix {
+    let indent = n.tree.text(n.tree.line-start(n.line), n.start).match(/^\s*/) ?? ''
+    let r = template.traced(m, indent=indent)
+    let f = replace(n, r.text, safety)
+    for f.edits {
+        it.copies = r.copies.map(|(off, a, b)| -> (off, a, b))
+        it.expects = r.anchored
+    }
+    f
+}
+
+pub fn delete(n: Node, safety: Safety = Safe) -> Fix {
+    let tree = n.tree
+    let $first = n.first-token or return Fix([], Display)
+    let $last = n.last-token or return Fix([], Display)
+    let next = (last.index + 1 < #tree.tokens) ? tree.tokens[last.index + 1] : nil
+    let prev = (first.index > 0) ? tree.tokens[first.index - 1] : nil
+
+    if next != nil && next.text == ',' {
+        let pad = next.trailing.filter(\_.kind == 'space').map(t -> t.end - t.start).sum() ?? 0
+        return Fix([Edit(n.start, next.end + pad, '')], safety)
+    }
+    if prev != nil && prev.text == ',' {
+        return Fix([Edit(prev.start, n.end, '')], safety)
+    }
+
+    let own-line = first.leading.all?(\_.kind in ['space', 'newline'])
+                && (
+                       prev == nil
+                    || prev.trailing.any?(&.newline?)
+                    || #first.leading > 0 && first.leading.any?(&.newline?)
+                   )
+                && last.trailing.any?(&.newline?)
+    if own-line {
+        let start = tree.line-start(n.line)
+        let end = last.trailing[-1].end
+        return Fix([Edit(start, end, '')], safety)
+    }
+
+    Fix([Edit(n.start, n.end, '')], safety)
+}
+
+fn suppressed(tree: Tree) -> Dict[Int, Array[String]] {
+    let out: Dict[Int, Array[String]] = %{}
+    let add = fn (line: Int, names: Array[String]) {
+        out[line] = (out[line] ?? []) + names
+    }
+    for tok in [*tree.tokens, tree.eof] {
+        for piece in [*tok.leading, *tok.trailing] {
+            continue if !piece.comment?
+            let directive = /\bty:\s*allow(-file|-next-line)?\(([^)]*)\)/
+            if let [_, kind, list] = piece.text.match(directive) {
+                let names = list.split(/\s*,\s*/).filter(\_ != '')
+                let line = tree.line-of(piece.start)
+                match kind {
+                    '-file'      => add(0, names),
+                    '-next-line' => add(line + 1, names),
+                    _ => do {
+                        add(line, names)
+                        if piece in tok.leading && tok.kind != 'eof' {
+                            add(tree.line-of(tok.start), names)
+                        }
+                    },
+                }
+            }
+        }
+    }
+    out
+}
+
+fn allowed?(sup: Dict[Int, Array[String]], d: Diag) -> Bool {
+    let names = [*(sup[0] ?? []), *(sup[d.line] ?? [])]
+    d.rule in names || 'all' in names
+}
+
+pub fn check(tree: Tree, rules: Array[Rule]) -> Array[Diag] {
+    let out: Array[Diag] = []
+    let sup = suppressed(tree)
+    let active = [r for r in rules if tree.semantic? || !r.semantic?]
+    for n in tree.walk() {
+        for r in active {
+            continue if !r.wants?(n)
+            let found = match r.check(n) {
+                nil       => [],
+                d: Diag   => [d],
+                ds: Array => ds,
+            }
+            for found {
+                it.rule = r.name
+                it.severity = r.severity
+                it.line = tree.line-of(it.start)
+                it.col = tree.col-of(it.start)
+                it.path = tree.path
+                let owner = it.node ?? tree.node-at(it.start)
+                if owner.from-expansion? and let $f = it.fix {
+                    it.fix = Fix(f.edits, Display, f.layout?)
+                }
+                if !allowed?(sup, it) {
+                    out.push(it)
+                }
+            }
+        }
+    }
+    out.sort!(by=d -> (d.start, d.rule))
+    let seen: Dict[String, Bool] = %{}
+    [
+        d for d in out
+        if do {
+            let key = "{d.start}:{d.end}:{d.rule}:{d.message}"
+            let fresh = key not in seen
+            seen[key] = true
+            fresh
+        }
+    ]
+}
+
+fn collides?(e: Edit, edge: Int, chosen: Array[Edit]) -> Bool {
+    if e.start < edge {
+        return true
+    }
+    e.start == edge
+ && #chosen > 0
+ && chosen[-1].start == chosen[-1].end
+ && e.start == e.end
+}
+
+fn choose(edits: Array[Edit]) -> (Array[Edit], Array[Edit]) {
+    let chosen: Array[Edit] = []
+    let rejected: Array[Edit] = []
+    let edge = -1
+    for edits.sort(by=e -> (e.start, e.end)) {
+        if collides?(it, edge, chosen) {
+            rejected.push(it)
+        } else {
+            chosen.push(it)
+            edge = it.end
+        }
+    }
+    (chosen, rejected)
+}
+
+fn splice(source: String, chosen: Array[Edit]) -> String {
+    let out = Blob()
+    let pos = 0
+    for chosen {
+        out.push(source.bsplice(pos, it.start))
+        out.push(it.text)
+        pos = it.end
+    }
+    out.push(source.bslice(pos))
+    out.str()
+}
+
+pub fn apply(source: String, edits: Array[Edit]) -> (String, Array[Edit]) {
+    let (chosen, rejected) = choose(edits)
+    (splice(source, chosen), rejected)
+}
+
+pub fn map-position(edits: Array[Edit], pos: Int) -> Int | nil {
+    let delta = 0
+    for e in edits {
+        break if pos < e.start
+        if pos < e.end {
+            for (off, a, b) in e.copies {
+                if a <= pos && pos < b {
+                    return e.start + delta + off + (pos - a)
+                }
+            }
+            return nil
+        }
+        delta += e.delta
+    }
+    pos + delta
+}
+
+fn binding-key(tree: Tree, id: Int, edits: Array[Edit] | nil) -> String {
+    let $s = tree.symbol(id) or return '?'
+    if !s.here? {
+        return "ext:{id}"
+    }
+    let defs = tree.defs(id)
+    if #defs == 0 {
+        return "local:{s.name}"
+    }
+    let $pos = (edits == nil) ? defs[0].start : map-position(edits ?? [], defs[0].start)
+        or return "gone:{s.name}"
+    "def:{pos}"
+}
+
+let NAMED = %['Identifier', 'Param', 'ClassDefinition', 'TagDefinition']
+
+fn node-key(start: Int, n: Node) -> String { "{start}:{n.end - n.start}:{n.kind}" }
+
+fn generated?(tree: Tree, n: Node) -> Bool {
+    n.text == '_' || (tree.symbol(n.sym-id).?name ?? '').match?(/^#/)
+}
+
+fn named-nodes(tree: Tree) -> Dict[String, Node] {
+    let out: Dict[String, Node] = %{}
+    for tree.nodes {
+        if it.kind in NAMED && !it.synth {
+            out[node-key(it.start, it)] = it
+        }
+    }
+    out
+}
+
+fn owner(edits: Array[Edit], pos: Int) -> Edit | nil {
+    edits.find(e -> e.start <= pos && pos < e.end)
+}
+
+fn new-range(edits: Array[Edit], e: Edit) -> (Int, Int) {
+    let delta = edits.filter(x -> x.end <= e.start && x != e).map(&.delta).sum() ?? 0
+    (e.start + delta, e.start + delta + e.text.size())
+}
+
+fn copied?(e: Edit, off: Int) -> Bool {
+    e.copies.any?(|(o, a, b)| -> o <= off && off < o + (b - a))
+}
+
+fn callee-text(n: Node) -> String | nil {
+    let $base = n.nodes.?[0] or return nil
+    let $dot = n.own.search-by(\_.text == '.') or return nil
+    let $name = n.own.?[dot + 1] or return nil
+    "{base.text}.{name.text}"
+}
+
+pub class Violation {
+    edit:    Edit | nil
+    node:    Node
+    message: String
+    missing: Symbol | nil
+
+    init(edit: Edit | nil, node: Node, message: String, missing: Symbol | nil = nil) {
+        self.edit = edit
+        self.node = node
+        self.message = message
+        self.missing = missing
+    }
+
+    __str__() -> String { "Violation({message} at {node})" }
+}
+
+fn expectation(n: Node, e: Edit) -> (Symbol, Int) | nil {
+    if n.kind in ['Identifier', 'MemberAccess'] and let $want = e.expects[n.text] {
+        return (want, n.sym-id)
+    }
+    if n.kind == 'MethodCall' and let $text = callee-text(n) and let $want = e.expects[text] {
+        return (want, n.callee-id)
+    }
+    nil
+}
+
+pub fn hygiene(old: Tree, new: Tree, edits: Array[Edit]) -> Array[Violation] {
+    let sorted = edits.sort(by=&.start)
+    let named = named-nodes(new)
+    let out: Array[Violation] = []
+
+    for old.nodes {
+        continue if it.sym-id < 0 || it.synth || it.kind not in NAMED || generated?(old, it)
+        let $pos = map-position(sorted, it.start) or continue
+        let $m = named[node-key(pos, it)] or continue
+        let before = binding-key(old, it.sym-id, sorted)
+        let after = (m.sym-id < 0) ? 'unbound' : binding-key(new, m.sym-id, nil)
+        if before != after {
+            let msg = "`{m.text}` would refer to a different binding"
+            out.push(Violation(owner(sorted, it.start), m, msg))
+        }
+    }
+
+    for e in sorted {
+        continue if #e.expects == 0
+        let (lo, hi) = new-range(sorted, e)
+        for new.nodes {
+            continue if it.start < lo || it.end > hi || copied?(e, it.start - lo)
+            let $hit = expectation(it, e) or continue
+            let (want, got) = hit
+            if got != want.id {
+                let missing = (got < 0) ? want : nil
+                let msg = "`{it.text}` does not refer to {want.qualified} here"
+                out.push(Violation(e, it, msg, missing))
+            }
+        }
+    }
+
+    out
+}
+
+pub class Outcome {
+    source:      String
+    diagnostics: Array[Diag]
+    fixed:       Int
+    rounds:      Int
+
+    init(source: String, diagnostics: Array[Diag], fixed: Int, rounds: Int) {
+        self.source = source
+        self.diagnostics = diagnostics
+        self.fixed = fixed
+        self.rounds = rounds
+    }
+}
+
+fn import-edit(tree: Tree, key: String, sym: Symbol) -> Edit | nil {
+    let $module = sym.module or return nil
+    if sym.here? || module == 'prelude' {
+        return nil
+    }
+    let parts = key.split('.')
+    let dotted = module.replace('/', '.')
+    let line = match parts {
+        [name] => "import {dotted} ({name})",
+        _      => do {
+            let alias = parts[;-1].join('.')
+            (alias == dotted || alias == module) ? "import {alias}" : "import {dotted} as {alias}"
+        },
+    }
+    let imports = tree.root.nodes.filter(\_.kind == 'Import')
+    if #imports > 0 {
+        return Edit(imports[-1].end, imports[-1].end, "\n{line}")
+    }
+    let at = tree.root.nodes.?[0].?start ?? 0
+    Edit(at, at, "{line}\n\n")
+}
+
+fn missing-imports(tree: Tree, bad: Array[Violation]) -> Array[Edit] | nil {
+    let out: Array[Edit] = []
+    let seen: Dict[String, Bool] = %{}
+    for bad {
+        let $sym = it.missing or return nil
+        let $e = it.edit or return nil
+        let $key = e.expects.keys().find(k -> e.expects[k] == sym) or return nil
+        let $imp = import-edit(tree, key, sym) or return nil
+        if !seen[imp.text] {
+            seen[imp.text] = true
+            out.push(imp)
+        }
+    }
+    out
+}
+
+class Step {
+    source: String
+    fixes:  Array[Fix]
+
+    init(source: String, fixes: Array[Fix]) {
+        self.source = source
+        self.fixes = fixes
+    }
+
+    count -> Int { #fixes }
+}
+
+class Fixer {
+    path:      String | nil
+    semantic?: Bool
+    deep?:     Bool
+
+    init(path: String | nil, semantic: Bool, deep: Bool) {
+        self.path = path
+        self.semantic? = semantic
+        self.deep? = deep
+    }
+
+    parse(source: String) -> Tree {
+        syn.parse(source, path=path, deep=deep?, resolve=deep?, semantic=semantic?)
+    }
+
+    attempt(tree: Tree, fixes: Array[Fix]) -> String | nil {
+        let edits = fixes.map(&.edits).flat()
+        let (chosen, rejected) = choose(edits)
+        if #rejected > 0 {
+            return nil
+        }
+        let next = splice(tree.source, chosen)
+        let new = parse(next)
+        if new.error != nil {
+            return nil
+        }
+        if fixes.all?(&.layout?) && new.tokens.map(&.text) != tree.tokens.map(&.text) {
+            return nil
+        }
+        if !tree.semantic? || !new.semantic? {
+            return next
+        }
+        let bad = hygiene(tree, new, chosen)
+        if #bad == 0 && #new.diagnostics <= #tree.diagnostics {
+            return next
+        }
+        let $imports = missing-imports(tree, bad) or return nil
+        if #imports == 0 {
+            return nil
+        }
+        let all = [*chosen, *imports]
+        let (chosen2, rejected2) = choose(all)
+        if #rejected2 > 0 {
+            return nil
+        }
+        let retry = splice(tree.source, chosen2)
+        let again = parse(retry)
+        let clean? = again.error == nil && #again.diagnostics <= #tree.diagnostics
+        (clean? && #hygiene(tree, again, chosen2) == 0) ? retry : nil
+    }
+
+    step(tree: Tree, fixes: Array[Fix]) -> Step | nil {
+        let (chosen, _) = choose(fixes.map(&.edits).flat())
+        let kept = fixes.filter(f -> f.edits.all?(e -> e in chosen))
+        if let $next = attempt(tree, kept) {
+            return Step(next, kept)
+        }
+        let accepted = settle(tree, [], kept)
+        return nil if #accepted == 0
+        let $done = attempt(tree, accepted) or return nil
+        Step(done, accepted)
+    }
+
+    settle(tree: Tree, base: Array[Fix], fixes: Array[Fix]) -> Array[Fix] {
+        return [] if #fixes == 0
+        return fixes if attempt(tree, [*base, *fixes]) != nil
+        return [] if #fixes == 1
+        let half = #fixes / 2
+        let left = settle(tree, base, fixes[;half])
+        let right = settle(tree, [*base, *left], fixes[half;])
+        [*left, *right]
+    }
+}
+
+fn applicable(d: Diag, unsafe?: Bool) -> Fix | nil {
+    let $f = d.fix or return nil
+    let ok? = f.safe? || (unsafe? && f.safety == Unsafe)
+    (ok? && #f.edits > 0) ? f : nil
+}
+
+pub fn fix(
+    source: String,
+    rules: Array[Rule],
+    path: String | nil = nil,
+    unsafe?: Bool = false,
+    max-rounds: Int = 10,
+    semantic: Bool | nil = nil,
+    deep: Bool = true,
+    observe: Function | nil = nil
+) -> Outcome {
+    let fixer = Fixer(path, semantic ?? semantic?(rules), deep)
+    let fixed = 0
+    let rounds = 0
+    let current = source
+    while rounds < max-rounds {
+        let tree = fixer.parse(current)
+        break if tree.error != nil
+        let fixes: Array[Fix] = []
+        let diags: Array[Diag] = []
+        for check(tree, rules) {
+            if let $f = applicable(it, unsafe?) {
+                fixes.push(f)
+                diags.push(it)
+            }
+        }
+        break if #fixes == 0
+        let $step = fixer.step(tree, fixes) or break
+        if step.source == current {
+            break
+        }
+        if observe != nil {
+            observe(current, [d for d in diags if d.fix in step.fixes])
+        }
+        current = step.source
+        fixed += step.count
+        rounds += 1
+    }
+    let final = fixer.parse(current)
+    Outcome(current, check(final, rules), fixed, rounds)
+}
+
+let LEN_CALL = syn$$[ $$(x :? String | Array[_] | Dict[_, _] | Blob).len() $$]
+let LEN_FIX = syn$$[ #$$x $$]
+let SLICE_CALL = syn$$[ $$x.slice($$i, $$n) $$]
+let NOT_NIL_RETURN = syn$$[; if $$x != nil { return $$x } $$]
+
+fn trailing-whitespace(n: Node) -> Array[Diag] {
+    if n.kind != 'Module' {
+        return []
+    }
+    let out: Array[Diag] = []
+    let tree = n.tree
+    for tok in [*tree.tokens, tree.eof] {
+        for pieces in [tok.leading, tok.trailing] {
+            for p; i in pieces {
+                let next = (i + 1 < #pieces) ? pieces[i + 1] : nil
+                let at-eof = next == nil && tok.kind == 'eof' && pieces == tok.leading
+                if p.kind == 'space' && (at-eof || next != nil && next.newline?) {
+                    out.push(diag(p, 'trailing whitespace', Fix([Edit(p.start, p.end, '')])))
+                }
+            }
+        }
+    }
+    out
+}
+
+fn todo-comments(n: Node) -> Array[Diag] {
+    if n.kind != 'Module' {
+        return []
+    }
+    [
+        diag(c, "unresolved {c.text.match(/TODO|FIXME|XXX/) ?? 'TODO'} comment")
+        for c in n.tree.comments
+        if c.text.match?(/\b(TODO|FIXME|XXX)\b/)
+    ]
+}
+
+fn len-call(n: Node) -> Diag | nil {
+    let $m = LEN_CALL.matches(n) or return nil
+    diag(n, 'use # instead of .len()', rewrite(n, LEN_FIX, m))
+}
+
+let SLICEABLE = syn$$[ $$(x : String | Array[_]).slice($$i, $$n) $$]
+
+fn slice-bounds(i: Node, k: Node) -> String | nil {
+    let start = int(i.text)
+    let count = int(k.text)
+    match (start, count) {
+        (0, _)                       => ";{k.text}",
+        ($a, $b)                     => "{a};{a + b}",
+        _ and i.kind == 'Identifier' => "{i.text};{i.text} + {k.text}",
+        _                            => nil,
+    }
+}
+
+fn slice-call(n: Node) -> Diag | nil {
+    let $m = SLICE_CALL.matches(n) or return nil
+    let x = m['x'].text
+    let msg = 'use x[i;j] slicing instead of .slice()'
+    let $bounds = slice-bounds(m['i'], m['n']) or return diag(n, msg)
+    let safety = SLICEABLE.matches?(n) ? Safe : Unsafe
+    diag(n, msg, replace(n, "{x}[{bounds}]", safety))
+}
+
+fn self-compare(n: Node) -> Diag | nil {
+    let ops = n.nodes
+    if n.kind != 'DblEq' || #ops != 2 || !ops[0].same?(ops[1]) {
+        return nil
+    }
+    let impure = [*ops[0].walk()].any?(\_.kind in ['FunctionCall', 'MethodCall', 'DynMethodCall'])
+    impure ? nil : diag(n, 'expression is compared with itself')
+}
+
+fn redundant-return-nil(n: Node) -> Diag | nil {
+    if n.kind != 'Return' || n.text.strip() != 'return nil' {
+        return nil
+    }
+    let $block = n.parent or return nil
+    let fun = block.parent
+    if block.kind == 'Block' && fun != nil && fun.kind == 'Function' && block.nodes[-1] == n {
+        return diag(n, 'redundant `return nil` at the end of a function', delete(n))
+    }
+    nil
+}
+
+fn nil-check-return(n: Node) -> Diag | nil {
+    let $m = NOT_NIL_RETURN.matches(n) or return nil
+    let x = m['x']
+    if x :: Node {
+        let msg = "use `{x.text} or return ...`, `??`, or pattern matching instead of a nil check"
+        return diag(n, msg)
+    }
+    nil
+}
+
+fn single-line-if-else(n: Node) -> Diag | nil {
+    if n.kind != 'If' || n.line != n.end-line || !n.own.any?(\_.text == 'else') {
+        return nil
+    }
+    if n.parent.?kind == 'If' || n.inside?('Template') {
+        return nil
+    }
+    diag(n, 'single-line if/else; use `a ? b : c` or `??`')
+}
+
+fn unused-local(n: Node) -> Diag | nil {
+    if !n.def? || n.kind != 'Identifier' || n.parent.?kind != 'Definition' {
+        return nil
+    }
+    let $s = n.symbol or return nil
+    if s.global? || s.kind != 'variable' || s.name.match?(/^_/) || #n.tree.uses(s) > 0 {
+        return nil
+    }
+    diag(n, "`{n.text}` is assigned but never used")
+}
+
+fn shadows-global(n: Node) -> Diag | nil {
+    if !n.def? || n.kind not in ['Identifier', 'Param'] {
+        return nil
+    }
+    let $s = n.symbol or return nil
+    if s.global? {
+        return nil
+    }
+    let name = n.name-token.?text ?? n.text
+    let $outer = n.tree.lookup(name) or return nil
+    if outer.id == s.id || outer.here? {
+        return nil
+    }
+    diag(n, "`{name}` shadows {outer.qualified}")
+}
+
+fn diagnostic-span(tree: Tree, loc: Any) -> Int {
+    let line = loc.line
+    (line < 1 || line > tree.line-of(tree.source.size())) ? 0 : tree.line-start(line) + loc.col - 1
+}
+
+fn compile-errors(n: Node) -> Array[Diag] {
+    if n.kind != 'Module' {
+        return []
+    }
+    let tree = n.tree
+    let out: Array[Diag] = []
+    for tree.diagnostics {
+        let trace: Array[Any] = it.trace
+        let $loc = trace.find(t -> t.file == tree.path) or continue
+        let start = diagnostic-span(tree, loc.start)
+        let end = max(start, diagnostic-span(tree, loc.end))
+        let message = str(it.message).comb(/^\w*Error: /).comb(/\s*\[[\w-]+\]$/)
+        out.push(Diag(start, end, message))
+    }
+    out
+}
+
+pub SEMANTIC_RULES = [
+    rule(
+        'unused-local',
+        unused-local,
+        kinds=['Identifier'],
+        semantic=true,
+        doc='let binding that is never read'
+    ),
+    rule(
+        'shadows-global',
+        shadows-global,
+        severity='info',
+        kinds=['Identifier', 'Param'],
+        semantic=true,
+        doc='local name hides a global'
+    ),
+    rule(
+        'compile-error',
+        compile-errors,
+        severity='error',
+        kinds=['Module'],
+        semantic=true,
+        doc='name resolution and type errors'
+    ),
+]
+
+pub DEFAULT_RULES = [
+    rule('len-call', len-call, kinds=['MethodCall'], doc='prefer #x over x.len()', typed=true),
+    rule(
+        'slice-call',
+        slice-call,
+        kinds=['MethodCall'],
+        doc='prefer x[i;j] over x.slice(i, n)',
+        typed=true
+    ),
+    rule('self-compare', self-compare, kinds=['DblEq'], doc='x == x without side effects'),
+    rule('return-nil', redundant-return-nil, kinds=['Return'], doc='return nil ending a function'),
+    rule('nil-check-return', nil-check-return, kinds=['If'], doc='if x != nil { return x }'),
+    rule('single-line-if-else', single-line-if-else, kinds=['If'], doc='if/else on one line'),
+    rule('trailing-whitespace', trailing-whitespace, kinds=['Module'], doc='spaces at end of line'),
+    rule('todo', todo-comments, severity='info', kinds=['Module'], doc='TODO/FIXME/XXX comments'),
+]

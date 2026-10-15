@@ -6,7 +6,7 @@ import log (..)
 import jit (kernel!)
 
 kernel! fn raster-px(buf: Blob, pw: Int, ph: Int, x: Int, y: Int, rgb: Int, a: Int) {
-    if x < 0 || x >= pw || y < 0 || y >= ph { return }
+    return if x < 0 || x >= pw || y < 0 || y >= ph
     let r = (rgb >> 16) & 255
     let g = (rgb >> 8) & 255
     let b = rgb & 255
@@ -78,7 +78,7 @@ kernel! fn raster-line(buf: Blob, pw: Int, ph: Int, ax: Float, ay: Float, bx: Fl
 
 kernel! fn raster-series(buf: Blob, pw: Int, ph: Int, s: Array[Float], lo: Float, range: Float, rgb: Int, fill: Bool) {
     let n = #s
-    if n < 2 { return }
+    return if n < 2
     let span = float(max(pw - 1, 1))
     for px in ..pw - 1 {
         let t0 = float(px) / span * float(n - 1)
@@ -93,7 +93,7 @@ kernel! fn raster-series(buf: Blob, pw: Int, ph: Int, s: Array[Float], lo: Float
         let py1 = (1.0 - (v1 - lo) / range) * float(ph - 1)
         raster-line(buf, pw, ph, float(px), py0, float(px + 1), py1, rgb)
     }
-    if !fill { return }
+    return if !fill
     let r = (rgb >> 16) & 255
     let g = (rgb >> 8) & 255
     let b = rgb & 255
@@ -126,7 +126,7 @@ fn kitty-next-id() -> Int {
 fn kitty-transmit(buf: Blob, pw: Int, ph: Int, cols: Int, rows: Int, id: Int = 0) -> String {
     debug!("kitty-transmit: {pw}x{ph} id={id} buf={#buf}")
     let out = Blob()
-    let id-part = (id > 0) ? ",i={id}" : ""
+    let id-part = (id > 0) ? ",i={id}" : ''
     let hdr = "\x1b_Ga=T,q=2,f=32,s={pw},v={ph},c={cols},r={rows}{id-part}"
     let i = 0
 
@@ -204,27 +204,35 @@ pub class BarChart < Component {
                 buf.push("{dim}{"{yl:>{yw}}"}{RST}")
             }
 
-            for i in ..#vs {
-                if i > 0 && g > 0 { buf.push(' ' * g) }
-                let norm = (vs[i] - lo) / range
+            for ..#vs {
+                if it > 0 && g > 0 {
+                    buf.push(' ' * g)
+                }
+                let norm = (vs[it] - lo) / range
                 let fill = norm - rb
                 let span = rt - rb
                 let ch = if fill >= span     { ticks[7] }
                     else if fill > 0.0       { ticks[int(fill / span * 7.0).clamp(0, 6)] }
-                    else                     { ' ' }
-                buf.push("{color-table[i]}{ch * bw}{RST}")
+                    else                     { ' '                                       }
+                buf.push("{color-table[it]}{ch * bw}{RST}")
             }
             let s = buf.str!()
-            if row == 0 { line-w = s.width() }
+            if row == 0 {
+                line-w = s.width()
+            }
             lines.push(s)
         }
 
         if lbls {
             let buf = Blob()
-            if ya? { buf.push(' ' * yw) }
-            for i in ..#vs {
-                if i > 0 && g > 0 { buf.push(' ' * g) }
-                let l = (i < #lbls) ? lbls[i] : ''
+            if ya? {
+                buf.push(' ' * yw)
+            }
+            for ..#vs {
+                if it > 0 && g > 0 {
+                    buf.push(' ' * g)
+                }
+                let l = (it < #lbls) ? lbls[it] : ''
                 buf.push("{dim}{"{l:^{bw}}"[;bw]}{RST}")
             }
             lines.push(buf.str!())
@@ -232,10 +240,14 @@ pub class BarChart < Component {
 
         if show-vals? ?? false {
             let buf = Blob()
-            if ya? { buf.push(' ' * yw) }
-            for i in ..#vs {
-                if i > 0 && g > 0 { buf.push(' ' * g) }
-                let v = fmt(vs[i])
+            if ya? {
+                buf.push(' ' * yw)
+            }
+            for ..#vs {
+                if it > 0 && g > 0 {
+                    buf.push(' ' * g)
+                }
+                let v = fmt(vs[it])
                 buf.push("{dim}{"{v:^{bw}}"[;bw]}{RST}")
             }
             lines.push(buf.str!())
@@ -304,14 +316,18 @@ pub class LinePlot < Component {
     __bin(ts: Array[Int], vs: Array[Float], vt0: Int, vt1: Int, n: Int) -> (Array[Float], Float, Float) {
         let lo-i = do {
             let i = 0
-            while i < #ts && ts[i] < vt0 { i += 1 }
+            while i < #ts && ts[i] < vt0 {
+                i += 1
+            }
             i
         }
 
         let end = min(#ts, #vs)
         let hi-i = do {
             let i = lo-i
-            while i < end && ts[i] <= vt1 { i += 1 }
+            while i < end && ts[i] <= vt1 {
+                i += 1
+            }
             i
         }
 
@@ -322,9 +338,9 @@ pub class LinePlot < Component {
 
         let dlo = 1.0e308
         let dhi = -1.0e308
-        for i in lo-i..hi-i {
-            if vs[i] < dlo { dlo = vs[i] }
-            if vs[i] > dhi { dhi = vs[i] }
+        for lo-i..hi-i {
+            if vs[it] < dlo { dlo = vs[it] }
+            if vs[it] > dhi { dhi = vs[it] }
         }
 
         let result = if sample-count <= n {
@@ -333,9 +349,9 @@ pub class LinePlot < Component {
             let span = max(float(vt1 - vt0), 1.0)
             let bins   = [0.0 for ..n]
             let counts = [0 for ..n]
-            for i in lo-i..hi-i {
-                let bi = int((ts[i] - vt0) / span * n).clamp(0, n - 1)
-                bins[bi]   += vs[i]
+            for lo-i..hi-i {
+                let bi = int((ts[it] - vt0) / span * n).clamp(0, n - 1)
+                bins[bi]   += vs[it]
                 counts[bi] += 1
             }
             [(counts[i] > 0) ? bins[i] / counts[i] : bins[i] for i in ..n]
@@ -347,7 +363,7 @@ pub class LinePlot < Component {
     __commit-zoom() {
         let dx = (__drag-x1 - __drag-x0).abs
         let dy = (__drag-y1 - __drag-y0).abs
-        if dx < 2 && dy < 2 { return }
+        return if dx < 2 && dy < 2
 
         if dx >= dy {
             let x0 = min(__drag-x0, __drag-x1) - __yw
@@ -466,13 +482,18 @@ pub class LinePlot < Component {
         fmt: Function, do-fill: Bool
     ) {
         let (cell-w, cell-h) = term.cell-size()
-        if cell-w == 0 || cell-h == 0 { cell-w = 8; cell-h = 16 }
+        if cell-w == 0 || cell-h == 0 {
+            cell-w = 8
+            cell-h = 16
+        }
 
         let ya? = y-axis? ?? true
         let yw = ya? ? max(fmt(lo).width(), fmt(hi).width(), 1) + 1 : 0
         let dim = fg-sgr(spec-of-part(part('LinePlot', 'axis', [], variant)))
 
-        if range == 0.0 || range != range { range = 1.0 }
+        if range == 0.0 || range != range {
+            range = 1.0
+        }
         let pw = min(cw * cell-w, 1120)
         let ph = min(h * cell-h, 560)
 
@@ -480,10 +501,10 @@ pub class LinePlot < Component {
         buf.reserve(pw * ph * 4)
         buf.fill()
 
-        for si in ..#all-series {
-            let c = (clrs && si < #clrs) ? clrs[si] : clr
+        for ..#all-series {
+            let c = (clrs && it < #clrs) ? clrs[it] : clr
             let (r, g, b) = resolve-color-rgb(c)
-            raster-series(buf, pw, ph, all-series[si], lo, range, (r << 16) | (g << 8) | b, do-fill)
+            raster-series(buf, pw, ph, all-series[it], lo, range, (r << 16) | (g << 8) | b, do-fill)
         }
 
         let img-escape = kitty-transmit(buf, pw, ph, cw, h, id=kitty-id)
@@ -504,7 +525,9 @@ pub class LinePlot < Component {
         fmt: Function, do-fill: Bool,
         xl-str: String | nil = nil, xr-str: String | nil = nil
     ) -> Node {
-        if range == 0.0 || range != range { range = 1.0 }
+        if range == 0.0 || range != range {
+            range = 1.0
+        }
         let ya? = y-axis? ?? true
         let yw = ya? ? max(fmt(lo).width(), fmt(hi).width(), 1) + 1 : 0
         let dim = fg-sgr(spec-of-part(part('LinePlot', 'axis', [], variant)))
@@ -519,7 +542,7 @@ pub class LinePlot < Component {
 
         for si in ..#all-series {
             let s = all-series[si]
-            if #s < 2 { continue }
+            continue if #s < 2
             let steps = max(dot-w - 1, 1)
 
             for dx in ..dot-w {
@@ -532,9 +555,9 @@ pub class LinePlot < Component {
                 let cd = dx % 2
 
                 if do-fill {
-                    for fy in ..dy + 1 {
-                        let cy = h - 1 - fy / 4
-                        let cr = fy % 4
+                    for ..dy + 1 {
+                        let cy = h - 1 - it / 4
+                        let cr = it % 4
                         let ci = cy * cw + cx
                         bits[ci]  |= (1 << dot-bits[cr * 2 + cd])
                         owner[ci] = si
@@ -550,8 +573,8 @@ pub class LinePlot < Component {
         }
 
         let color-table = []
-        for si in ..#all-series {
-            let c = (clrs && si < #clrs) ? clrs[si] : clr
+        for ..#all-series {
+            let c = (clrs && it < #clrs) ? clrs[it] : clr
             color-table.push(fg-sgr(c))
         }
         let default-fg = fg-sgr(clr)
@@ -606,10 +629,14 @@ pub class LinePlot < Component {
                 }
                 buf.push(chr(0x2800 + bits[ci]))
             }
-            if #cur-sgr > 0 || cur-bg { buf.push(RST) }
+            if #cur-sgr > 0 || cur-bg {
+                buf.push(RST)
+            }
 
             let s = buf.str!()
-            if row == 0 { line-w = s.width() }
+            if row == 0 {
+                line-w = s.width()
+            }
             lines.push(s)
         }
 
@@ -642,7 +669,11 @@ pub class LinePlot < Component {
         let yw-est = if let $ywo = y-width { ywo }
             else if ya? && min-val != nil && max-val != nil {
                 max(fmt(float(min-val)).width(), fmt(float(max-val)).width(), 1) + 1
-            } else if ya? { 6 } else { 0 }
+            } else if ya? {
+                6
+            } else {
+                0
+            }
         let total-w-est = int(width ?? 40)
         let cw-est = max(total-w-est - yw-est, 4)
 
@@ -677,7 +708,7 @@ pub class LinePlot < Component {
 
         let yw = if let $ywo = y-width { ywo }
             else if ya? { max(fmt(lo).width(), fmt(hi).width(), 1) + 1 }
-            else { 0 }
+            else        { 0                                            }
         let max-len = all-series.map(s -> #s).max() ?? 0
         let avail-w = (layout-max-w > 0 && layout-max-w < INF) ? layout-max-w : 80
         let total-w = int(width ?? min(max(max-len / 2 + yw, 10), avail-w))
@@ -698,13 +729,15 @@ pub class LinePlot < Component {
             __render-kitty(all-series, h, cw, lo, hi, range, clr, clrs, fmt, do-fill)
             __cached-img-key = img-key
         }
-        if kitty-entry != nil { kitty-entry.x-off = yw }
+        if kitty-entry != nil {
+            kitty-entry.x-off = yw
+        }
 
         let dim = fg-sgr(spec-of-part(part('LinePlot', 'axis', [], variant)))
         let line-w = total-w
 
-        let xl-label = if raw? && time-format != nil { time-format(eff-t0) } else { x-lo }
-        let xr-label = if raw? && time-format != nil { time-format(eff-t1) } else { x-hi }
+        let xl-label = raw? && time-format != nil ? time-format(eff-t0) : x-lo
+        let xr-label = raw? && time-format != nil ? time-format(eff-t1) : x-hi
 
         let coord-text = if __drag? {
             let ddx = (__drag-x1 - __drag-x0).abs
@@ -742,7 +775,7 @@ pub class LinePlot < Component {
                     let tv = eff-t0 + int(frac * float(eff-t1 - eff-t0))
                     time-format(tv)
                 } else if x-format { x-format(frac) }
-                  else { "{frac:.2f}" }
+                  else             { "{frac:.2f}"   }
                 let yv = fmt(all-series[0][di])
                 "({xv}, {yv})"
             }
@@ -794,7 +827,9 @@ pub class LinePlot < Component {
                 } else {
                     lines.push(y-hi-s)
                 }
-                for row in 1..(h - 1) { lines.push(sel-row(row)) }
+                for 1..(h - 1) {
+                    lines.push(sel-row(it))
+                }
                 lines.push(y-lo-s)
             } else {
                 if let $ct = coord-text and ct.width() < cw {
@@ -804,7 +839,9 @@ pub class LinePlot < Component {
                 } else {
                     lines.push('')
                 }
-                for row in 1..h { lines.push(sel-row(row)) }
+                for 1..h {
+                    lines.push(sel-row(it))
+                }
             }
 
             if (xl-label ?? xr-label) != nil {

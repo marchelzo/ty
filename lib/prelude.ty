@@ -27,10 +27,12 @@ use TokenLocation = {
 }
 
 use Token = TokenData & {
-    type:  String,
-    start: TokenLocation,
-    end:   TokenLocation,
-    ?meta: String | nil
+    type:    String,
+    start:   TokenLocation,
+    end:     TokenLocation,
+    ?meta:   String | nil,
+    ?hidden: Bool,
+    ?pp:     Bool
 }
 
 use Subscript[T, U] = { `[]`: T -> U };
@@ -59,7 +61,7 @@ fn __param-name(p: _) -> String | nil {
 fn __unshiftable(p: _) -> nil {
     match p {
         ty.RecordEntry(_) => nil,
-        _                 => throw "a required positional-only parameter cannot follow an omitted parameter",
+        _                 => throw 'a required positional-only parameter cannot follow an omitted parameter',
     }
 }
 
@@ -461,7 +463,10 @@ class Function : Iter {
     }
 
     iter*(x) {
-        while true { yield x; x = self(x) }
+        while true {
+            yield x
+            x = self(x)
+        }
     }
 
     __match__(x) {
@@ -833,7 +838,9 @@ class Array[T] : Iterable[T] {
     }
 
     argmax[U](f: T -> U) -> ?Int where (U > U): Bool {
-        if #self == 0 { return nil }
+        if #self == 0 {
+            return nil
+        }
 
         let i, max = 0, f(self[0])
 
@@ -852,7 +859,9 @@ class Array[T] : Iterable[T] {
     }
 
     argmin[U](f: T -> U) -> ?Int where (U < U): Bool {
-        if #self == 0 { return nil }
+        if #self == 0 {
+            return nil
+        }
 
         let i, min = 0, f(self[0])
 
@@ -1628,11 +1637,15 @@ class Int : IntoPtr[_] {
     }
 
     __count__*() -> Generator[Int] {
-        while true { yield self++ }
+        while true {
+            yield self++
+        }
     }
 
     __iter__*() -> Generator[Int] {
-        while true { yield self++ }
+        while true {
+            yield self++
+        }
     }
 
     __ptr__() -> Ptr[_] {
@@ -2287,12 +2300,12 @@ class JSONError < RuntimeError {
     what -> String {
         let seen   = __input.bslice(0, __offset)
         let rest   = __input.bslice(__offset)
-        let before = seen.bslice((seen.bsearchr("\n") ?? -1) + 1).replace("\t", " ")
-        let after  = rest.bslice(0, rest.bsearch("\n") ?? rest.size()).replace("\t", " ")
+        let before = seen.bslice((seen.bsearchr('\n') ?? -1) + 1).replace('\t', ' ')
+        let after  = rest.bslice(0, rest.bsearch('\n') ?? rest.size()).replace('\t', ' ')
         let left   = (#before > 40) ? "...{before[-37;]}" : before
         let right  = (#after > 40) ? "{after[;37]}..." : after
         let token  = (rest == '') ? 'end of input' : show(rest[0])
-        let spot   = "line {seen.count("\n") + 1}, column {#before + 1}"
+        let spot   = "line {seen.count('\n') + 1}, column {#before + 1}"
         let why = match __reason {
             $reason => "{reason} (found {token})",
             _       => "unexpected {token}"
@@ -3176,7 +3189,9 @@ trait Iter[T] < Iterable[T] {
         let n = 0
 
         for x in self {
-            if pred(x) { n += 1 }
+            if pred(x) {
+                n += 1
+            }
         }
 
         return n
@@ -3187,10 +3202,14 @@ trait Iter[T] < Iterable[T] {
 
         if x :: (Function | Regex) {
             for y in self {
-                if x(y) { n += 1 }
+                if x(y) {
+                    n += 1
+                }
             }
         } else for y in self {
-            if x == y { n += 1 }
+            if x == y {
+                n += 1
+            }
         }
 
         return n
@@ -3244,7 +3263,9 @@ trait Iter[T] < Iterable[T] {
     }
 
     drop(n: Int) {
-        for _ in ..n { __next__() }
+        for _ in ..n {
+            __next__()
+        }
         return self
     }
 
@@ -3411,7 +3432,9 @@ trait Iter[T] < Iterable[T] {
         let i = 1
 
         while i != n {
-            for x in xs { yield x }
+            for x in xs {
+                yield x
+            }
             i += 1
         }
     }
@@ -3454,7 +3477,9 @@ trait Iter[T] < Iterable[T] {
 
     all?(pred: (T -> Any) = id) {
         for x in self {
-            if x !:: pred { return false }
+            if x !:: pred {
+                return false
+            }
         }
         true
     }
@@ -3601,11 +3626,11 @@ fn _egcd(a: Int, b: Int) -> (Int, Int, Int) {
 
 fn _progression(f: Int, d: Int, n: Int) -> Range {
     match (n, d) {
-        (0, _)            => Range(f, f),
-        (_, 1)            => Range(f, f + n),
-        (_, -1)           => Range(f + 1, f - n + 1),
-        (_, d) and d > 0  => StepRange(f, f + (n - 1) * d + 1, d),
-        _                 => StepRange(f + 1, f + (n - 1) * d, -d)
+        (0, _)           => Range(f, f),
+        (_, 1)           => Range(f, f + n),
+        (_, -1)          => Range(f + 1, f - n + 1),
+        (_, d) and d > 0 => StepRange(f, f + (n - 1) * d + 1, d),
+        _                => StepRange(f + 1, f + (n - 1) * d, -d)
     }
 }
 
@@ -4564,9 +4589,13 @@ macro modify! {
 
 macro enum! {
     fn next-value(last: AST) -> (AST, AST) | nil {
-        while lex.peek().type == 'comment' { lex.next() }
+        while lex.peek().type == 'comment' {
+            lex.next()
+        }
 
-        if lex.peek().type != 'id' { return nil }
+        if lex.peek().type != 'id' {
+            return nil
+        }
 
         let name = parse.expr(99)
 
@@ -4753,7 +4782,7 @@ class AnyOf {
     init(*xs)    { __xs = xs }
     __match__(x) { x in __xs }
     __str__() {
-        ["{it}" for __xs].join(", ")
+        ["{it}" for __xs].join(', ')
     }
 }
 
@@ -4825,25 +4854,25 @@ macro __walk! {
                 optional: entry.?optional
             ),
 
-            ty.Add(a, b) => ty.Add(walk(a, f), walk(b, f)),
-            ty.Mul(a, b) => ty.Mul(walk(a, f), walk(b, f)),
-            ty.Div(a, b) => ty.Div(walk(a, f), walk(b, f)),
-            ty.Sub(a, b) => ty.Sub(walk(a, f), walk(b, f)),
-            ty.Mod(a, b) => ty.Mod(walk(a, f), walk(b, f)),
-            ty.LT(a, b)  => ty.LT(walk(a, f), walk(b, f)),
-            ty.LEQ(a, b) => ty.LEQ(walk(a, f), walk(b, f)),
-            ty.GT(a, b)  => ty.GT(walk(a, f), walk(b, f)),
-            ty.GEQ(a, b) => ty.GEQ(walk(a, f), walk(b, f)),
-            ty.Cmp(a, b) => ty.Cmp(walk(a, f), walk(b, f)),
+            ty.Add(a, b)       => ty.Add(walk(a, f), walk(b, f)),
+            ty.Mul(a, b)       => ty.Mul(walk(a, f), walk(b, f)),
+            ty.Div(a, b)       => ty.Div(walk(a, f), walk(b, f)),
+            ty.Sub(a, b)       => ty.Sub(walk(a, f), walk(b, f)),
+            ty.Mod(a, b)       => ty.Mod(walk(a, f), walk(b, f)),
+            ty.LT(a, b)        => ty.LT(walk(a, f), walk(b, f)),
+            ty.LEQ(a, b)       => ty.LEQ(walk(a, f), walk(b, f)),
+            ty.GT(a, b)        => ty.GT(walk(a, f), walk(b, f)),
+            ty.GEQ(a, b)       => ty.GEQ(walk(a, f), walk(b, f)),
+            ty.Cmp(a, b)       => ty.Cmp(walk(a, f), walk(b, f)),
 
-            ty.Xor(a, b) => ty.Xor(walk(a, f), walk(b, f)),
-            ty.BitAnd(a, b) => ty.BitAnd(walk(a, f), walk(b, f)),
-            ty.BitOr(a, b)  => ty.BitOr(walk(a, f), walk(b, f)),
-            ty.Shl(a, b)    => ty.Shl(walk(a, f), walk(b, f)),
-            ty.Shr(a, b)    => ty.Shr(walk(a, f), walk(b, f)),
+            ty.Xor(a, b)       => ty.Xor(walk(a, f), walk(b, f)),
+            ty.BitAnd(a, b)    => ty.BitAnd(walk(a, f), walk(b, f)),
+            ty.BitOr(a, b)     => ty.BitOr(walk(a, f), walk(b, f)),
+            ty.Shl(a, b)       => ty.Shl(walk(a, f), walk(b, f)),
+            ty.Shr(a, b)       => ty.Shr(walk(a, f), walk(b, f)),
 
-            ty.In(   a, b) => ty.In(   walk(a, f), walk(b, f)),
-            ty.NotIn(a, b) => ty.NotIn(walk(a, f), walk(b, f)),
+            ty.In(   a, b)     => ty.In(   walk(a, f), walk(b, f)),
+            ty.NotIn(a, b)     => ty.NotIn(walk(a, f), walk(b, f)),
 
             ty.DotDot(   a, b) => ty.DotDot(   walk(a, f), walk(b, f)),
             ty.DotDotDot(a, b) => ty.DotDotDot(walk(a, f), walk(b, f)),
@@ -4937,9 +4966,9 @@ macro __walk! {
 
             ty.Yield(values) => ty.Yield([walk(v, f) for v in values]),
 
-            ty.Block(block) => ty.Block([walk(s, f) for s in block]),
+            ty.Block(block)  => ty.Block([walk(s, f) for s in block]),
 
-            ty.Multi(multi) => ty.Multi([walk(s, f) for s in multi]),
+            ty.Multi(multi)  => ty.Multi([walk(s, f) for s in multi]),
 
             ty.While(conds, body) => ty.While(
                 [walk(c, f) for c in conds],
@@ -4973,9 +5002,9 @@ macro __walk! {
 
             ty.Defer(func) => ty.Defer(walk(func, f)),
 
-            ty.Eval(code) => ty.Eval(walk(code, f)),
+            ty.Eval(code)  => ty.Eval(walk(code, f)),
 
-            ty.Throw(x) => ty.Throw(walk(x, f)),
+            ty.Throw(x)    => ty.Throw(walk(x, f)),
 
             ty.Try({body, catches, always}) => ty.Try(
                 body: walk(body, f),
@@ -5033,17 +5062,17 @@ macro __walk! {
             ty.Spread(spread) => ty.Spread(walk(spread, f)),
             ty.Splat (splat)  => ty.Splat (walk(splat, f)),
 
-            ty.Count(xs) => ty.Count(walk(xs, f)),
+            ty.Count(xs)      => ty.Count(walk(xs, f)),
 
-            ty.Question(xs) => ty.Question(walk(xs, f)),
+            ty.Question(xs)   => ty.Question(walk(xs, f)),
 
-            ty.Not(x) => ty.Not(walk(x, f)),
-            ty.Neg(x) => ty.Neg(walk(x, f)),
+            ty.Not(x)         => ty.Not(walk(x, f)),
+            ty.Neg(x)         => ty.Neg(walk(x, f)),
 
-            ty.PreInc (x) => ty.PreInc (walk(x, f)),
-            ty.PostInc(x) => ty.PostInc(walk(x, f)),
-            ty.PreDec (x) => ty.PreDec (walk(x, f)),
-            ty.PostDec(x) => ty.PostDec(walk(x, f)),
+            ty.PreInc (x)     => ty.PreInc (walk(x, f)),
+            ty.PostInc(x)     => ty.PostInc(walk(x, f)),
+            ty.PreDec (x)     => ty.PreDec (walk(x, f)),
+            ty.PostDec(x)     => ty.PostDec(walk(x, f)),
 
             ty.Let(target, x) => ty.Let(
                 walk(target, f),
@@ -5202,7 +5231,7 @@ macro __desugar_partial__(call: _) {
 
         let params: Array[_Param] = params.map!(id -> ty.Param({name: id}))
 
-        if _argv   != nil { params.push(ty.Gather(_argv)) }
+        if _argv   != nil { params.push(ty.Gather(_argv))   }
         if _kwargs != nil { params.push(ty.Kwargs(_kwargs)) }
 
         ty.Func({params, body: go(reducedArgs, mkcall, d - 1)})
@@ -5388,9 +5417,7 @@ fn __assertion-error(
 
     for label; i in site.labels {
         let (present?, value) = __assertion-operand(values[i], site.maybe[i])
-        if !present? {
-            continue
-        }
+        continue if !present?
         kept.push(value)
         let $s = label or continue
         let v = show(value)

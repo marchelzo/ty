@@ -1,0 +1,24 @@
+import json as j
+import syn
+import syn.lint as lint
+
+pub ENCODE = syn$$[ j.encode($$x) $$]
+
+fn to-json(n: syn.Node) -> lint.Diag | nil {
+    let $m = syn$$[ str($$x) $$].matches(n) or return nil
+    lint.diag(n, 'encode as json', lint.rewrite(n, ENCODE, m))
+}
+
+pub TO_JSON = lint.rule('to-json', to-json, kinds=['Call'], semantic=true)
+
+let SPILLED = syn$$[ do { let tmp = $$a; tmp + $$b } $$]
+
+fn spill(n: syn.Node) -> lint.Diag | nil {
+    let $m = syn$$[ $$a + $$b $$].matches(n) or return nil
+    if m['a'].text == 'tmp' {
+        return nil
+    }
+    lint.diag(n, 'spill the left operand', lint.rewrite(n, SPILLED, m))
+}
+
+pub SPILL = lint.rule('spill', spill, kinds=['Plus'], semantic=true)

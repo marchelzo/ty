@@ -174,8 +174,8 @@ pub class SQLite {
     }
 
     run(sql: String) {
-        for stmt in sql.split(';') {
-            let stmt = stmt.trim()
+        for sql.split(';') {
+            let stmt = it.trim()
             if stmt != '' {
                 exec(stmt)
             }
@@ -238,12 +238,12 @@ pub class SQLite {
             assoc=true
         )
         let by-name = %{}
-        for r in rows {
-            by-name[r['name']] = {
-                type: r['type'],
-                notnull: r['notnull'] == 1,
-                dflt: r['dflt_value'],
-                pk: r['pk'] == 1
+        for rows {
+            by-name[it['name']] = {
+                type: it['type'],
+                notnull: it['notnull'] == 1,
+                dflt: it['dflt_value'],
+                pk: it['pk'] == 1
             }
         }
         by-name
@@ -262,7 +262,7 @@ pub class SQLite {
         if __path {
             "SQLite({__path})"
         } else {
-            "SQLite(:memory:)"
+            'SQLite(:memory:)'
         }
     }
 

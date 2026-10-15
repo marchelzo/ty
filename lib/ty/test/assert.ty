@@ -192,7 +192,7 @@ pub macro check(condition, message) {
 }
 
 fn indented(src: String) -> String {
-    src.strip().lines().map(l -> "    {l}").join("\n")
+    src.strip().lines().map(l -> "    {l}").join('\n')
 }
 
 pub fn assert-compile-error(

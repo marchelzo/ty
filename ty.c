@@ -53,6 +53,8 @@ static bool help_imported = false;
 static char const *SourceFile;
 
 static int    TestArgIndex = -1;
+static int    ToolArgIndex = -1;
+static char const *ToolMode;
 static bool   TestSuite;
 static bool   SawEvalOption;
 static char **TestRunnerArgs;
@@ -141,6 +143,9 @@ usage(void)
                 "                    (- is interpreted as stdout, and @ is interpreted as stderr)         \0"
                 "    --test [FILE | TARGET...] [OPTS]   Run tests: top-level pub functions in test files. \0"
                 "                                       `ty --test --help` lists runner options.          \0"
+                "    --lint [OPTS] [PATH...]            Lint Ty sources (`ty --lint --help` for options)  \0"
+                "    --fmt [OPTS] [PATH...]             Format Ty sources (`ty --fmt --help` for options) \0"
+                "    --fix [OPTS] [PATH...]             Fix and tidy Ty sources (`ty --fix --help`)       \0"
 #ifdef TY_BUNDLER
                 "    --bundle[=OUT] SCRIPT                                                                \0"
                 "                  Write a standalone executable OUT (default: SCRIPT without .ty) that   \0"
@@ -549,6 +554,18 @@ ProcessArgs(char *argv[], bool first)
                 if (s_eq(argv[argi], "--help")) {
                         usage();
                         exit(0);
+                }
+
+                if (
+                        s_eq(argv[argi], "--lint")
+                     || s_eq(argv[argi], "--fmt")
+                     || s_eq(argv[argi], "--fix")
+                ) {
+                        ToolMode = argv[argi] + 2;
+                        if (first) {
+                                ToolArgIndex = argi;
+                        }
+                        break;
                 }
 
                 if (s_eq(argv[argi], "--test")) {
@@ -1228,8 +1245,9 @@ main(int argc, char **argv)
         }
 #endif
 
-        bool ok = RunningTests ? vm_init(ty, TestProgramArgc, TestProgramArgs)
-                               : vm_init(ty, argc - nopt, argv + nopt);
+        bool ok = RunningTests       ? vm_init(ty, TestProgramArgc, TestProgramArgs)
+                : (ToolMode != NULL) ? vm_init(ty, argc - ToolArgIndex, argv + ToolArgIndex)
+                :                      vm_init(ty, argc - nopt, argv + nopt);
 
         if (!ok) {
                 DyingOfError = true;
@@ -1241,6 +1259,20 @@ main(int argc, char **argv)
 
         if (RunningTests) {
                 RunTestMode();
+        }
+
+        if (ToolMode != NULL) {
+                char tool[128];
+                ty_snprintf(tool, sizeof tool, "import syn.cli\nsyn.cli.main('%s')\n", ToolMode);
+                static char name[32];
+                ty_snprintf(name, sizeof name, "(ty --%s)", ToolMode);
+                SourceFile = name;
+                if (!vm_execute(ty, tool, SourceFile)) {
+                        DyingOfError = true;
+                        fprintf(stderr, "%s\n", TyError(ty));
+                        exit(67);
+                }
+                return 0;
         }
 
         if (argv[0] == NULL && stdin_is_tty()) {

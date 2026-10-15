@@ -119,7 +119,7 @@ GetArenaAlloc(Ty *ty)
 static void
 ImmortalizeArena(Ty *ty, Arena *a)
 {
-        if (a == NULL) {
+        if (a == NULL || a->immortal) {
                 return;
         }
 

@@ -41,14 +41,19 @@ fn __env-dict(xs: Array[String]) -> Dict[String, String] {
 fn __bytes(s: Blob) -> Array[String] {
     let out = []
     let word = Blob()
-    for byte in s {
-        if byte == 0 {
-            if word { out.push(word.str!()); word.clear() }
+    for s {
+        if it == 0 {
+            if word {
+                out.push(word.str!())
+                word.clear()
+            }
         } else {
-            word.push(byte)
+            word.push(it)
         }
     }
-    if word { out.push(word.str!()) }
+    if word {
+        out.push(word.str!())
+    }
     out
 }
 
@@ -137,7 +142,9 @@ pub class Process {
     __pid: Int
 
     init(pid: Int) {
-        if pid <= 0 { throw ValueError("invalid pid: {pid}") }
+        if pid <= 0 {
+            throw ValueError("invalid pid: {pid}")
+        }
         __pid = pid
     }
 
@@ -204,7 +211,9 @@ pub class Process {
     }
 
     signal(sig: Int) {
-        if os.kill(__pid, sig) == -1 { throw os.OSError("kill({__pid})") }
+        if os.kill(__pid, sig) == -1 {
+            throw os.OSError("kill({__pid})")
+        }
         self
     }
 
@@ -218,13 +227,13 @@ pub class Process {
 
     read(addr: Int, size: Int) -> Blob {
         if addr < 0 || size < 0 { throw ValueError('negative address or size') }
-        if size == 0 { return Blob() }
+        if size == 0            { return Blob() }
         __proc-read(__pid, addr, size)
     }
 
     write(addr: Int, data: String | Blob) -> Int {
         if addr < 0 { throw ValueError('negative address') }
-        if !data { return 0 }
+        if !data    { return 0 }
         __proc-write(__pid, addr, data)
     }
 
@@ -253,7 +262,9 @@ pub class Map {
         if lo < 0 || hi < lo || offset < 0 || inode < 0 {
             throw ValueError('invalid map range or offset')
         }
-        if #perms != 4 { throw ValueError("invalid map permissions: {perms}") }
+        if #perms != 4 {
+            throw ValueError("invalid map permissions: {perms}")
+        }
         self.process = process
         self.lo = lo
         self.hi = hi
@@ -282,7 +293,9 @@ pub class Map {
     }
 
     write(offset: Int, data: String | Blob) -> Int {
-        if offset < 0 || offset + #data > hi - lo { throw ValueError('write outside map') }
+        if offset < 0 || offset + #data > hi - lo {
+            throw ValueError('write outside map')
+        }
         process.write(lo + offset, data)
     }
 
@@ -330,7 +343,9 @@ pub class Task {
     tid:     Int
 
     init(process: Process, tid: Int) {
-        if tid <= 0 { throw ValueError("invalid task id: {tid}") }
+        if tid <= 0 {
+            throw ValueError("invalid task id: {tid}")
+        }
         self.process = process
         self.tid = tid
     }
@@ -410,7 +425,9 @@ pub fn find*(
 }
 
 pub fn first(name: String | Regex) -> Process | nil {
-    for p in find(name=name) { return p }
+    for find(name=name) {
+        return it
+    }
 }
 
 pub fn named(name: String | Regex) -> Array[Process] {
@@ -423,23 +440,25 @@ pub fn owned(uid: Int = os.getuid()) -> Array[Process] {
 
 pub fn children(parent: Int | Process, recursive: Bool = false) -> Array[Process] {
     let pid = (parent :: Process) ? parent.pid : parent
-    if !recursive { return [*find(parent=pid)] }
+    if !recursive {
+        return [*find(parent=pid)]
+    }
 
     let by-parent = %{}
-    for p in find() {
+    for find() {
         try {
-            let ppid = p.ppid
-            (by-parent[ppid] ?? (by-parent[ppid] = [])).push(p)
+            let ppid = it.ppid
+            (by-parent[ppid] ?? (by-parent[ppid] = [])).push(it)
         } catch _: OSError { }
     }
 
     let out = []
     let seen = %[pid]
     fn collect(id: Int) {
-        for p in by-parent[id] ?? [] {
-            continue if !seen.insert(p.pid)
-            out.push(p)
-            collect(p.pid)
+        for by-parent[id] ?? [] {
+            continue if !seen.insert(it.pid)
+            out.push(it)
+            collect(it.pid)
         }
     }
     collect(pid)
@@ -842,7 +861,9 @@ use ProcInfo = ProcBsdInfo
 
 fn __pidinfo[T](pid: Int, flavor: Int, info: T, arg: Int = 0) -> T where T: ProcInfo {
     let n = proc_pidinfo(pid, flavor, arg, info, #info)
-    if n != #info { throw os.OSError("proc_pidinfo({pid})") }
+    if n != #info {
+        throw os.OSError("proc_pidinfo({pid})")
+    }
     info
 }
 
@@ -920,21 +941,31 @@ fn __proc-strings(pid: Int) {
 
     let argc = c.load(c.int, buf)
     let off = c.size(c.int)
-    while off < n && c.load(c.u8, buf + off) != 0 { off += 1 }
-    while off < n && c.load(c.u8, buf + off) == 0 { off += 1 }
+    while off < n && c.load(c.u8, buf + off) != 0 {
+        off += 1
+    }
+    while off < n && c.load(c.u8, buf + off) == 0 {
+        off += 1
+    }
 
     fn take-string() {
         let start = off
-        while off < n && c.load(c.u8, buf + off) != 0 { off += 1 }
+        while off < n && c.load(c.u8, buf + off) != 0 {
+            off += 1
+        }
         let s = c.str(buf + start, off - start)
         off += 1
         s
     }
 
     let args = [take-string() for _ in ..argc if off < n]
-    while off < n && c.load(c.u8, buf + off) == 0 { off += 1 }
+    while off < n && c.load(c.u8, buf + off) == 0 {
+        off += 1
+    }
     let env = []
-    while off < n && c.load(c.u8, buf + off) != 0 { env.push(take-string()) }
+    while off < n && c.load(c.u8, buf + off) != 0 {
+        env.push(take-string())
+    }
     (args, env)
 }
 
@@ -977,7 +1008,9 @@ fn __proc-fds(p: Process) {
     let buf = c.alloc(cap * stride)
     defer c.free(buf)
     let bytes = proc_pidinfo(p.pid, PROC_PIDLISTFDS, 0, buf, cap * stride)
-    if bytes < 0 { throw os.OSError("proc_pidinfo({p.pid}, LISTFDS)") }
+    if bytes < 0 {
+        throw os.OSError("proc_pidinfo({p.pid}, LISTFDS)")
+    }
     [Fd(p, ProcFdInfo(typed(buf, c.u8) + i * stride).fd) for i in ..(bytes / stride)]
 }
 
@@ -1039,12 +1072,14 @@ fn __proc-mounts(p: Process) {
     let pp = c.box(c.ptr)
     defer c.free(pp)
     let n = getmntinfo(pp, 2)
-    if n <= 0 { throw os.OSError('getmntinfo()') }
+    if n <= 0 {
+        throw os.OSError('getmntinfo()')
+    }
     let base = c.load(c.ptr, pp)
     let stride = c.size(DarwinStatfs_C)
     let mounts = []
-    for i in ..n {
-        let s = DarwinStatfs(typed(base, c.u8) + i * stride)
+    for ..n {
+        let s = DarwinStatfs(typed(base, c.u8) + it * stride)
         mounts.push(Mount(
             nil, nil, '', '/', c.str(s.point()), c.str(s.fs_name()),
             c.str(s.source()), __mount-options(s.flags)
@@ -1059,7 +1094,9 @@ fn __proc-tasks(p: Process) {
     let buf = c.alloc(cap * stride)
     defer c.free(buf)
     let bytes = proc_pidinfo(p.pid, PROC_PIDLISTTHREADS, 0, buf, cap * stride)
-    if bytes < 0 { throw os.OSError("proc_pidinfo({p.pid}, LISTTHREADS)") }
+    if bytes < 0 {
+        throw os.OSError("proc_pidinfo({p.pid}, LISTTHREADS)")
+    }
     [Task(p, c.load(c.u64, buf + i * stride)) for i in ..(bytes / stride)]
 }
 
@@ -1081,7 +1118,9 @@ fn __mach-task(pid: Int) -> Int {
     let port = c.box(c.u32, 0)
     defer c.free(port)
     let kr = task_for_pid(__self-task(), pid, port)
-    if kr != 0 { throw ProcessError('task_for_pid', pid, kr) }
+    if kr != 0 {
+        throw ProcessError('task_for_pid', pid, kr)
+    }
     port[0]
 }
 
@@ -1093,7 +1132,9 @@ fn __proc-read(pid: Int, addr: Int, size: Int) -> Blob {
     defer c.free(buf)
     defer c.free(got)
     let kr = mach_vm_read_overwrite(task, addr, size, int(buf), got)
-    if kr != 0 { throw ProcessError('mach_vm_read_overwrite', pid, kr) }
+    if kr != 0 {
+        throw ProcessError('mach_vm_read_overwrite', pid, kr)
+    }
     Blob(c.as_str(buf, got[0]))
 }
 
@@ -1101,7 +1142,9 @@ fn __proc-write(pid: Int, addr: Int, data: String | Blob) -> Int {
     let task = __mach-task(pid)
     defer mach_port_deallocate(__self-task(), task)
     let kr = mach_vm_write(task, addr, int(data.ptr()), #data)
-    if kr != 0 { throw ProcessError('mach_vm_write', pid, kr) }
+    if kr != 0 {
+        throw ProcessError('mach_vm_write', pid, kr)
+    }
     #data
 }
 #|]

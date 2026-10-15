@@ -1,0 +1,1755 @@
+import ty
+import json
+import ty.syntax as tsx
+import path (Path)
+
+pub class Trivia {
+    kind:  String
+    start: Int
+    end:   Int
+    text:  String
+
+    init(kind: String, start: Int, end: Int, text: String) {
+        self.kind = kind
+        self.start = start
+        self.end = end
+        self.text = text
+    }
+
+    comment? -> Bool { kind in ['comment', 'doc', 'block'] }
+    newline? -> Bool { kind == 'newline' }
+
+    __str__() -> String { "Trivia({kind}, {json.encode(text)})" }
+}
+
+pub class Token {
+    kind:     String
+    start:    Int
+    end:      Int
+    text:     String
+    index:    Int
+    owner:    Node | nil
+    leading:  Array[Trivia]
+    trailing: Array[Trivia]
+
+    init(kind: String, start: Int, end: Int, text: String, index: Int) {
+        self.kind = kind
+        self.start = start
+        self.end = end
+        self.text = text
+        self.index = index
+        self.owner = nil
+        self.leading = []
+        self.trailing = []
+    }
+
+    punct? -> Bool { text in PUNCT }
+
+    __str__() -> String { "Token({kind}, {json.encode(text)})" }
+}
+
+pub class Symbol {
+    id:        Int
+    name:      String
+    kind:      String
+    module:    String | nil
+    path:      String | nil
+    line:      Int
+    col:       Int
+    byte:      Int
+    here?:     Bool
+    global?:   Bool
+    public?:   Bool
+    builtin?:  Bool
+    captured?: Bool
+    const?:    Bool
+    type-id:   Int
+    doc:       String | nil
+
+    init(r: Any) {
+        self.id = r.id
+        self.name = r.name
+        self.kind = r.kind
+        self.module = r.module
+        self.path = r.path
+        self.line = r.line
+        self.col = r.col
+        self.byte = r.byte
+        self.here? = r.here
+        self.global? = r.global
+        self.public? = r.public
+        self.builtin? = r.builtin
+        self.captured? = r.captured
+        self.const? = r.const
+        self.type-id = r.type
+        self.doc = r.doc
+    }
+
+    type -> Any { tsx.type-value(type-id) }
+
+    type-text -> String { tsx.show-type(type-id) }
+
+    qualified -> String { (module == nil) ? name : "{module}.{name}" }
+
+    __str__() -> String { "Symbol({qualified}, {kind})" }
+}
+
+pub class Member {
+    name:    String
+    kind:    String
+    owner:   String | nil
+    path:    String | nil
+    line:    Int
+    col:     Int
+    byte:    Int
+    type-id: Int
+    doc:     String | nil
+
+    init(r: Any) {
+        self.name = r.name
+        self.kind = r.kind
+        self.owner = r.owner
+        self.path = r.path
+        self.line = r.line
+        self.col = r.col
+        self.byte = r.byte
+        self.type-id = r.type
+        self.doc = r.doc
+    }
+
+    type-text -> String { tsx.show-type(type-id) }
+
+    __str__() -> String { "Member({owner ?? '?'}.{name}, {kind})" }
+}
+
+pub class Node {
+    tree:      Tree
+    kind:      String
+    form:      String | nil
+    start:     Int
+    end:       Int
+    index:     Int
+    parent:    Node | nil
+    nodes:     Array[Node]
+    core:      Array[Node]
+    synth:     Bool
+    own:       Array[Token]
+    ftok:      Int
+    ltok:      Int
+    sym-id:    Int
+    callee-id: Int
+    type-id:   Int
+    def?:      Bool
+
+    init(tree: Tree, kind: String, start: Int, end: Int, index: Int) {
+        self.tree = tree
+        self.kind = kind
+        self.form = nil
+        self.start = start
+        self.end = end
+        self.index = index
+        self.parent = nil
+        self.nodes = []
+        self.core = []
+        self.synth = false
+        self.own = []
+        self.ftok = -1
+        self.ltok = -2
+        self.sym-id = -1
+        self.callee-id = -1
+        self.type-id = -1
+        self.def? = false
+    }
+
+    symbol -> Symbol | nil { tree.symbol(unwrapped.sym-id) }
+
+    callee -> Symbol | nil { tree.symbol(unwrapped.callee-id) }
+
+    type -> Any { tsx.type-value(unwrapped.type-id) }
+
+    type-text -> String | nil {
+        let t = unwrapped.type-id
+        (t < 0) ? nil : tsx.show-type(t)
+    }
+
+    of-type?(t: String, gradual: Bool = false) -> Bool | nil {
+        let have = unwrapped.type-id
+        let $want = tsx.resolve-type(t, tree.module) or return nil
+        if have < 0 {
+            return gradual ? nil : false
+        }
+        tsx.subtype?(have, want, gradual)
+    }
+
+    refs -> Array[Node] { tree.refs(self) }
+
+    member -> Member | nil {
+        let n = unwrapped
+        if n.kind not in ['MemberAccess', 'MethodCall'] || #n.nodes == 0 {
+            return nil
+        }
+        let $name = member-name(n) or return nil
+        let $r = tsx.member(n.nodes[0].unwrapped.type-id, mangle(name), tree.module) or return nil
+        Member(r)
+    }
+
+    name-token -> Token | nil { own.find(\_.kind == 'id') }
+
+    text -> String { tree.source.bsplice(start, end) }
+
+    tokens -> Array[Token] { tree.tokens[ftok;ltok + 1] }
+
+    first-token -> Token | nil { (ftok >= 0) ? tree.tokens[ftok] : nil }
+    last-token -> Token | nil { (ltok >= 0) ? tree.tokens[ltok] : nil }
+
+    children -> Array[Node | Token] {
+        let out: Array[Node | Token] = [*nodes, *own]
+        out.sort!(by=\_.start)
+        out
+    }
+
+    leading -> Array[Trivia] { first-token.?leading ?? [] }
+    trailing -> Array[Trivia] { last-token.?trailing ?? [] }
+
+    comments -> Array[Trivia] { leading.filter(&.comment?) }
+    trailing-comment -> Trivia | nil { trailing.find(&.comment?) }
+
+    doc -> String | nil {
+        let docs = leading.filter(\_.kind == 'doc')
+        (#docs == 0) ? nil : docs.map(\_.text.comb(/^\/\/\/ ?|^\/\*\*|\*\/$/)).join('\n')
+    }
+
+    line -> Int { tree.line-of(start) }
+    col -> Int { tree.col-of(start) }
+    end-line -> Int { tree.line-of(max(start, end - 1)) }
+
+    is?(k: String) -> Bool { kind-matches?(kind, k) || kind == 'Sugar' && form == k }
+
+    sugar? -> Bool { kind == 'Sugar' }
+
+    from-expansion? -> Bool {
+        if synth {
+            return true
+        }
+        let n: Node | nil = self
+        while let $m = n {
+            match m.kind {
+                'Embedded'                    => return false,
+                'MacroInvocation' or 'Region' => return true,
+                _                             => (),
+            }
+            n = m.parent
+        }
+        false
+    }
+
+    macro -> Node | nil {
+        let n: Node | nil = self
+        while let $m = n {
+            if m.kind == 'MacroInvocation' {
+                return m
+            }
+            n = m.parent
+        }
+        nil
+    }
+
+    region -> String | nil {
+        let n: Node | nil = self
+        while let $m = n {
+            match m.kind {
+                'Region'   => return m.form,
+                'Embedded' => return nil,
+                _          => (),
+            }
+            n = m.parent
+        }
+        nil
+    }
+
+    unwrapped -> Node {
+        let n = self
+        while n.kind == 'Paren' && #n.nodes == 1 {
+            n = n.nodes[0]
+        }
+        n
+    }
+
+    ancestors*() -> Generator[Node] {
+        let p = parent
+        while let $n = p {
+            yield n
+            p = n.parent
+        }
+    }
+
+    walk*() -> Generator[Node] {
+        let stack = [self]
+        while #stack > 0 {
+            let n = stack.pop()
+            yield n
+            for n.nodes[;;-1] {
+                stack.push(it)
+            }
+        }
+    }
+
+    descendants*() -> Generator[Node] {
+        for nodes {
+            for it.walk() {
+                yield it
+            }
+        }
+    }
+
+    siblings -> Array[Node] { parent.?nodes ?? [self] }
+    position -> Int { siblings.search(self) ?? 0 }
+    prev -> Node | nil { (position > 0) ? siblings[position - 1] : nil }
+    next -> Node | nil { (position + 1 < #siblings) ? siblings[position + 1] : nil }
+
+    inside?(test: Any, stop: Any = nil) -> Bool {
+        for ancestors() {
+            if satisfies?(it, test) {
+                return true
+            }
+            if stop != nil && satisfies?(it, stop) {
+                return false
+            }
+        }
+        false
+    }
+
+    has?(test: Any, stop: Any = nil) -> Bool {
+        let stack: Array[Node] = [*nodes]
+        while #stack > 0 {
+            let n = stack.pop()
+            if satisfies?(n, test) {
+                return true
+            }
+            if stop == nil || !satisfies?(n, stop) {
+                stack += n.nodes
+            }
+        }
+        false
+    }
+
+    follows?(test: Any) -> Bool { siblings[;position].any?(satisfies?@(_, test)) }
+    precedes?(test: Any) -> Bool { siblings[position + 1;].any?(satisfies?@(_, test)) }
+
+    same?(other: Node) -> Bool { fingerprint(self) == fingerprint(other) }
+
+    __str__() -> String { "Node({kind}, {line}:{col})" }
+}
+
+pub class Tree {
+    source:      String
+    path:        String | nil
+    root:        Node
+    nodes:       Array[Node]
+    every:       Array[Node]
+    tokens:      Array[Token]
+    eof:         Token
+    macros:      Array[{name: String, start: Int, end: Int}]
+    error:       String | nil
+    packed:      Any
+    module:      Module | nil
+    semantic?:   Bool
+    diagnostics: Array[Any]
+    symbols:     Dict[Int, Symbol]
+    packs:       Dict[String, (Any, Array[Any])]
+    __by-id:     Dict[Int, Array[Node]] | nil
+    __lines:     Array[Int]
+
+    init(source: String, path: String | nil, error: String | nil) {
+        self.source = source
+        self.path = path
+        self.error = error
+        self.packed = nil
+        self.module = nil
+        self.semantic? = false
+        self.diagnostics = []
+        self.symbols = %{}
+        self.packs = %{}
+        self.__by-id = nil
+        self.root = Node(self, 'Module', 0, source.size(), 0)
+        self.nodes = [root]
+        self.every = [root]
+        self.tokens = []
+        self.eof = Token('eof', source.size(), source.size(), '', 0)
+        self.macros = []
+        let starts = [0]
+        for c; i in source.bytes() {
+            if c == 10 {
+                starts.push(i + 1)
+            }
+        }
+        __lines = starts
+    }
+
+    line-of(byte: Int) -> Int {
+        let lo = 0
+        let hi = #__lines - 1
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2
+            if __lines[mid] <= byte {
+                lo = mid
+            } else {
+                hi = mid - 1
+            }
+        }
+        lo + 1
+    }
+
+    col-of(byte: Int) -> Int {
+        byte - __lines[line-of(byte) - 1] + 1
+    }
+
+    display-col(byte: Int) -> Int {
+        text(__lines[line-of(byte) - 1], byte).width() + 1
+    }
+
+    line-start(line: Int) -> Int { __lines[line - 1] }
+
+    text(start: Int, end: Int) -> String { source.bsplice(start, end) }
+
+    walk*() -> Generator[Node] {
+        for root.walk() {
+            yield it
+        }
+    }
+
+    trivia -> Array[Trivia] {
+        let out: Array[Trivia] = []
+        for tokens {
+            out += it.leading
+            out += it.trailing
+        }
+        out + eof.leading
+    }
+
+    comments -> Array[Trivia] { trivia.filter(&.comment?) }
+
+    node-at(byte: Int) -> Node {
+        let n = root
+        while let $c = n.nodes.find(c -> c.start <= byte && byte < c.end) {
+            n = c
+        }
+        n
+    }
+
+    symbol(id: Int) -> Symbol | nil { (id < 0) ? nil : symbols[id] }
+
+    refs(target: Node | Symbol | Int, synth: Bool = false) -> Array[Node] {
+        let id = match target {
+            n: Node   => n.unwrapped.sym-id,
+            s: Symbol => s.id,
+            i: Int    => i,
+        }
+        if id < 0 {
+            return []
+        }
+        let all = by-id()[id] ?? []
+        synth ? all : all.filter(\!_.synth)
+    }
+
+    by-id() -> Dict[Int, Array[Node]] {
+        if let $index = __by-id {
+            return index
+        }
+        let index: Dict[Int, Array[Node]] = %{}
+        for every {
+            if it.sym-id >= 0 {
+                (index[it.sym-id] ?? (index[it.sym-id] = [])).push(it)
+            }
+        }
+        __by-id = index
+    }
+
+    uses(target: Node | Symbol | Int) -> Array[Node] {
+        refs(target, synth=true).filter(\!_.def?)
+    }
+
+    defs(target: Node | Symbol | Int) -> Array[Node] { refs(target).filter(&.def?) }
+
+    lookup(name: String) -> Symbol | nil {
+        let $r = tsx.lookup(module, name.split('.').map(mangle)) or return nil
+        symbols[r.id] ?? Symbol(r)
+    }
+
+    reprint() -> String {
+        let out = Blob()
+        for tokens {
+            for t in it.leading {
+                out.push(t.text)
+            }
+            out.push(it.text)
+            for t in it.trailing {
+                out.push(t.text)
+            }
+        }
+        for eof.leading {
+            out.push(it.text)
+        }
+        out.str()
+    }
+}
+
+pub PUNCT = %[',', ';', '(', ')']
+
+let EXPR_KINDS: Dict[String, String] = %{}
+let KINDS = tsx.kinds()
+let STMT_COLLISIONS = [k for k in KINDS.statements if k in KINDS.expressions]
+
+let ALIASES = %{
+    'Call':     'FunctionCall',
+    'Id':       'Identifier',
+    'Ident':    'Identifier',
+    'Int':      'Integer',
+    'Str':      'String',
+    'Fn':       'Function',
+    'Lambda':   'Function',
+    'Method':   'MethodCall',
+    'Member':   'MemberAccess',
+    'Let':      'Definition',
+    'FnDef':    'FunctionDefinition',
+    'Class':    'ClassDefinition',
+    'Tuple':    'Tuple',
+    'Record':   'Tuple',
+    'Lit':      'Literal',
+}
+
+let LITERALS = %['Integer', 'Real', 'String', 'SpecialString', 'Boolean', 'Nil', 'Regex']
+
+pub fn kind-name(raw: String, stmt: Bool) -> String {
+    if raw.match?(/[a-z]/) {
+        return raw
+    }
+    let name = raw.lower().split('_').map(w -> "{w[0].upper()}{w[1;]}").join('')
+    (stmt && raw in STMT_COLLISIONS) ? "{name}Stmt" : name
+}
+
+pub fn kind-matches?(kind: String, want: String) -> Bool {
+    let w = ALIASES[want] ?? (want.match?(/^[A-Z_]+$/) ? kind-name(want, false) : want)
+    match w {
+        'Literal' => kind in LITERALS,
+        'Any'     => true,
+        _         => kind == w || kind == "{w}Stmt",
+    }
+}
+
+fn satisfies?(n: Node, test: Any) -> Bool {
+    match test {
+        k: String  => n.is?(k),
+        p: Pattern => p.matches?(n),
+        f          => !!f(n),
+    }
+}
+
+fn fingerprint(n: Node) -> String {
+    let parts = Blob()
+    fn go(m: Node) {
+        if m.kind == 'Paren' && #m.nodes == 1 {
+            return go(m.nodes[0])
+        }
+        parts.push('(')
+        parts.push(m.kind)
+        for m.children {
+            match it {
+                t: Token => do {
+                    if !t.punct? {
+                        parts.push(' ')
+                        parts.push(t.text)
+                    }
+                },
+                c: Node => go(c),
+            }
+        }
+        parts.push(')')
+    }
+    go(n)
+    parts.str()
+}
+
+let TRIVIA_RE = [
+    ('newline',   /^\r?\n/),
+    ('space',     /^[ \t\f\r]+/),
+    ('doc',       /^\/\/\/[^\n]*/),
+    ('comment',   /^\/\/[^\n]*/),
+    ('directive', /^#\|[^\n]*/),
+    ('shebang',   /^#![^\n]*/),
+    ('bom',       /^\x{feff}/u),
+]
+
+fn block-comment-length(text: String) -> Int {
+    let depth = 0
+    let i = 0
+    let n = text.size()
+    while i < n {
+        if text.bslice(i, 2) == '/*' {
+            depth += 1
+            i += 2
+        } else if text.bslice(i, 2) == '*/' {
+            depth -= 1
+            i += 2
+            if depth == 0 {
+                return i
+            }
+        } else {
+            i += 1
+        }
+    }
+    n
+}
+
+pub fn lex-trivia(source: String, start: Int, end: Int) -> Array[Trivia] {
+    let out: Array[Trivia] = []
+    let text = source.bsplice(start, end)
+    let off = start
+    while text.size() > 0 {
+        let (kind, n) = trivia-piece(text)
+        out.push(Trivia(kind, off, off + n, text.bslice(0, n)))
+        off += n
+        text = text.bslice(n)
+    }
+    out
+}
+
+fn trivia-piece(text: String) -> (String, Int) {
+    if text.bslice(0, 2) == '/*' {
+        let n = block-comment-length(text)
+        return (text.bslice(0, 3) == '/**' && n > 4 ? 'doc' : 'block', n)
+    }
+    for (kind, re) in TRIVIA_RE {
+        if let $m = text.match(re) {
+            return (kind, m.size())
+        }
+    }
+    let raw = text.match(/^[^\s\/#]+/) ?? text.match(/^./s) ?? text
+    ('raw', raw.size())
+}
+
+fn live-tokens(mod: Module, source: String) -> Array[Token] {
+    let out: Array[Token] = []
+    let edge = 0
+    for mod.tokens {
+        let kind = it.type
+        if (
+            (it.?hidden ?? false)
+         || kind in ['comment', '\\n', 'pp']
+         || it.start.byte >= it.end.byte
+         || it.start.byte < edge
+        ) {
+            continue
+        }
+        let text = source.bsplice(it.start.byte, it.end.byte)
+        out.push(Token(kind, it.start.byte, it.end.byte, text, #out))
+        edge = it.end.byte
+    }
+    out
+}
+
+fn attach-trivia(tree: Tree) {
+    let prev: Token | nil = nil
+    let pos = 0
+    for [*tree.tokens, tree.eof] {
+        let pieces = lex-trivia(tree.source, pos, it.start)
+        let split = 0
+        if let $p = prev {
+            let nl = pieces.search-by(\_.kind == 'newline')
+            split = (nl == nil) ? #pieces : nl + 1
+            p.trailing = pieces[;split]
+        }
+        it.leading = pieces[split;]
+        prev = it
+        pos = it.end
+    }
+}
+
+fn assign-tokens(tree: Tree) {
+    let stack: Array[Node] = [tree.root]
+    let order: Array[Node] = tree.nodes[1;]
+    let k = 0
+    for tok in tree.tokens {
+        while k < #order && order[k].start <= tok.start {
+            let n = order[k]
+            while #stack > 1 && stack[-1].end <= n.start {
+                stack.pop()
+            }
+            stack.push(n)
+            k += 1
+        }
+        while #stack > 1 && stack[-1].end <= tok.start {
+            stack.pop()
+        }
+        let owner = stack[-1]
+        tok.owner = owner
+        owner.own.push(tok)
+        for stack {
+            if it.ftok < 0 {
+                it.ftok = tok.index
+            }
+            it.ltok = tok.index
+        }
+    }
+}
+
+fn build-nodes(tree: Tree, mod: Module) {
+    let made: Array[Node] = []
+    let sem = tree.semantic? ? tsx.semantics(mod) : nil
+    if let $info = sem {
+        for info.symbols {
+            tree.symbols[it.id] = Symbol(it)
+        }
+    }
+    for r; i in tsx.nodes(mod) {
+        let n = Node(tree, kind-name(r.kind, r.stmt), r.start, r.end, -1)
+        n.form = r.form
+        n.synth = r.synth
+        if let $info = sem {
+            n.sym-id = info.ref[i]
+            n.callee-id = info.callee[i]
+            n.type-id = info.type[i]
+            n.def? = info.def[i]
+        }
+        let owner = (r.parent < 0) ? tree.root : made[r.parent]
+        while owner.synth {
+            owner = owner.parent ?? tree.root
+        }
+        n.parent = owner
+        if n.synth {
+            owner.core.push(n)
+        } else {
+            n.index = #tree.nodes
+            owner.nodes.push(n)
+            tree.nodes.push(n)
+        }
+        made.push(n)
+    }
+    tree.every += made
+}
+
+fn add-error-node(tree: Tree, at: Int) {
+    let edge = tree.root.nodes.map(&.end).max() ?? 0
+    let first = tree.tokens.find(\_.start >= edge)
+    let start = min(first.?start ?? at, at)
+    let end = tree.source.size()
+    return if start >= end
+    let n = Node(tree, 'ParseError', start, end, #tree.nodes)
+    n.parent = tree.root
+    tree.root.nodes.push(n)
+    tree.nodes.push(n)
+}
+
+pub fn from-module(
+    mod: Module,
+    source: String,
+    path: String | nil = nil,
+    error: String | nil = nil,
+    error-at: Int | nil = nil,
+    semantic: Bool = false,
+    diagnostics: Array[Any] = []
+) -> Tree {
+    let tree = Tree(source, path, error)
+    tree.module = mod
+    tree.semantic? = semantic
+    tree.diagnostics = diagnostics
+    tree.macros = tsx.macros(mod)
+    build-nodes(tree, mod)
+    tree.tokens = live-tokens(mod, source)
+    if let $at = error-at {
+        add-error-node(tree, at)
+    }
+    tree.eof.index = #tree.tokens
+    attach-trivia(tree)
+    assign-tokens(tree)
+    tree
+}
+
+pub fn parse(
+    source: String,
+    path: String | nil = nil,
+    deep: Bool = false,
+    resolve: Bool = false,
+    semantic: Bool = false
+) -> Tree {
+    let file = (path == nil) ? nil : str(Path(path).absolute)
+    let diags: Array[Any] = []
+    if semantic {
+        let typed = ty.parse(source, path=file, types=true, diagnostics=diags)
+        if let Ok(mod) = typed and !diags.any?(\str(_.message).match?(/^(Parse|Syntax)Error/)) {
+            return from-module(mod, source, file, semantic=true, diagnostics=diags)
+        }
+    }
+    let plain = ty.parse(source, path=file, deep=deep || semantic, resolve=resolve || semantic)
+    match plain {
+        Ok(mod) => from-module(mod, source, file, diagnostics=diags),
+        Err(e)  => do {
+            let loc: _ = e.location
+            from-module(e.module, source, file, str(e.msg), loc.byte, diagnostics=diags)
+        },
+    }
+}
+
+pub fn parse-file(
+    file: String,
+    deep: Bool = true,
+    resolve: Bool = true,
+    semantic: Bool = false
+) -> Tree {
+    let source = slurp(file) ?? throw ValueError("cannot read {file}")
+    parse(source, path=file, deep=deep, resolve=resolve, semantic=semantic)
+}
+
+pub class Hole {
+    name:     String | nil
+    kinds:    Array[String]
+    type:     String | nil
+    gradual?: Bool
+    deep:     Pattern | nil
+    alts:     Array[Pattern]
+
+    init(name: String | nil) {
+        self.name = name
+        self.kinds = []
+        self.type = nil
+        self.gradual? = false
+        self.deep = nil
+        self.alts = []
+    }
+}
+
+pub class Gap {
+    spec:   String
+    pos:    Int
+    before: Token | nil
+    after:  Token | nil
+
+    init(spec: String, pos: Int) {
+        self.spec = spec
+        self.pos = pos
+        self.before = nil
+        self.after = nil
+    }
+}
+
+pub class Match {
+    node:  Node
+    binds: Dict[String, Any]
+
+    init(node: Node, binds: Dict[String, Any]) {
+        self.node = node
+        self.binds = binds
+    }
+
+    [](name: String) -> Any { binds[name] }
+
+    __str__() -> String { "Match({node}, {binds})" }
+}
+
+fn ident-char?(c: String) -> Bool { c.match?(/^[\p{L}\p{N}_]$/u) || c.size() > 1 }
+
+fn hole-name(text: String, i: Int) -> (String, Int) {
+    let out = Blob()
+    let j = i
+    let n = text.size()
+    while j < n {
+        let c = text.bslice(j, 1)
+        if ident-char?(c) {
+            out.push(c)
+            j += 1
+        } else if c == '-' && j > i && j + 1 < n && ident-char?(text.bslice(j + 1, 1)) {
+            out.push(text.bslice(j + 1, 1).upper())
+            j += 2
+        } else {
+            break
+        }
+    }
+    if j < n && text.bslice(j, 1) in ['?', '!'] {
+        out.push(text.bslice(j, 1))
+        j += 1
+    }
+    (out.str(), j)
+}
+
+let GAP_KEYWORDS = %['_', 'nl', 'blank', 'sp', 'any']
+
+pub fn hole-names(text: String) -> Array[String] {
+    let names: Array[String] = []
+    let add = fn (name: String) {
+        if name != '' && name != '_' && name not in names {
+            names.push(name)
+        }
+    }
+    let n = text.size()
+    let i = 0
+    while i + 1 < n {
+        if text.bslice(i, 2) != '$$' {
+            i += 1
+            continue
+        }
+        let j = i + 2
+        let c = text.bslice(j, 1)
+        if c == '(' || c == '<' {
+            j += 1
+            while text.bslice(j, 1) in [' ', '\t'] {
+                j += 1
+            }
+            if j < n && ident-char?(text.bslice(j, 1)) {
+                let (name, k) = hole-name(text, j)
+                j = k
+                while text.bslice(j, 1) in [' ', '\t'] {
+                    j += 1
+                }
+                if c == '(' && text.bslice(j, 1) == ':' {
+                    add(name)
+                } else if c == '<' && text.bslice(j, 1) in ['>', '~'] && name not in GAP_KEYWORDS {
+                    add(name)
+                }
+            }
+        } else if j < n && ident-char?(text.bslice(j, 1)) {
+            add(hole-name(text, j).0)
+        }
+        i += 1
+    }
+    names
+}
+
+fn closing(text: String, i: Int, open: String, close: String) -> Int {
+    let depth = 0
+    let n = text.size()
+    let j = i
+    while j < n {
+        let c = text.bslice(j, 1)
+        if c == '"' || c == "'" {
+            j += 1
+            while j < n && text.bslice(j, 1) != c {
+                j += (text.bslice(j, 1) == '\\') ? 2 : 1
+            }
+        } else if c == open {
+            depth += 1
+        } else if c == close {
+            depth -= 1
+            if depth == 0 {
+                return j
+            }
+        }
+        j += 1
+    }
+    throw ValueError("unbalanced '{open}' in syn pattern: {text}")
+}
+
+fn split-alternatives(text: String) -> Array[String] {
+    let parts: Array[String] = []
+    let depth = 0
+    let last = 0
+    let n = text.size()
+    let i = 0
+    while i < n {
+        let c = text.bslice(i, 1)
+        if c in ['(', '[', '{'] {
+            depth += 1
+        } else if c in [')', ']', '}'] {
+            depth -= 1
+        } else if depth == 0 && text.bslice(i, 4) == ' or ' {
+            parts.push(text.bsplice(last, i))
+            last = i + 4
+            i += 3
+        }
+        i += 1
+    }
+    parts.push(text.bsplice(last, n))
+    parts
+}
+
+class Rewriter {
+    holes: Dict[String, Hole]
+    gaps:  Array[Gap]
+    focus: (Int, Int) | nil
+    count: Int
+    mode:  String
+    scope: Module | String | nil
+
+    init(mode: String, scope: Module | String | nil) {
+        self.holes = %{}
+        self.gaps = []
+        self.focus = nil
+        self.count = 0
+        self.mode = mode
+        self.scope = scope
+    }
+
+    placeholder(hole: Hole) -> String {
+        let id = "__synh{count}__"
+        count += 1
+        holes[id] = hole
+        id
+    }
+
+    rewrite(text: String, out: Blob) {
+        let n = text.size()
+        let i = 0
+        while i < n {
+            if text.bslice(i, 2) != '$$' {
+                out.push(text.bslice(i, 1))
+                i += 1
+                continue
+            }
+            let c = text.bslice(i + 2, 1)
+            if c == '<' {
+                let j = closing-gap(text, i + 3)
+                gaps.push(Gap(text.bsplice(i + 3, j).strip(), out.size()))
+                i = j + 1
+            } else if c == '^' && text.bslice(i + 3, 1) == '(' {
+                let j = closing(text, i + 3, '(', ')')
+                let start = out.size()
+                rewrite(text.bsplice(i + 4, j), out)
+                focus = (start, out.size())
+                i = j + 1
+            } else if c == '(' {
+                let j = closing(text, i + 2, '(', ')')
+                out.push(placeholder(complex-hole(text.bsplice(i + 3, j))))
+                i = j + 1
+            } else if i + 2 < n && ident-char?(c) {
+                let (name, j) = hole-name(text, i + 2)
+                out.push(placeholder(Hole((name == '_') ? nil : name)))
+                i = j
+            } else {
+                out.push('$$')
+                i += 2
+            }
+        }
+    }
+
+    complex-hole(inner: String) -> Hole {
+        if let $h = typed-hole(inner) {
+            return h
+        }
+        if let [_, sub] = inner.match(/^\s*\.\.\s*(.*?)\s*\.\.\s*$/s) {
+            let h = Hole(nil)
+            h.deep = compile(sub, scope, mode)
+            return h
+        }
+        let h = Hole(nil)
+        h.alts = split-alternatives(inner).map(compile@(_, scope, mode))
+        h
+    }
+}
+
+fn typed-hole(inner: String) -> Hole | nil {
+    let $m = inner.match(
+        /^\s*([\p{L}\p{N}_?!-]+)?\s*(?:::\s*([^:]+?))?\s*(?:(:\??)(?!:)\s*(.+?))?\s*$/su
+    ) or return nil
+    let [_, name, kinds, colon, type, *] = [*m, nil, nil, nil, nil].map(g -> (g == '') ? nil : g)
+    if kinds == nil && type == nil {
+        return nil
+    }
+    let h = Hole((name == nil) ? nil : hole-name(name ?? '', 0).0)
+    if let $ks = kinds {
+        h.kinds = ks.split(/\s*(?:\||\bor\b)\s*/)
+    }
+    h.type = type
+    h.gradual? = colon == ':?'
+    h
+}
+
+fn closing-gap(text: String, i: Int) -> Int {
+    let j = i
+    while j < text.size() && text.bslice(j, 1) != '>' {
+        j += 1
+    }
+    j
+}
+
+pub class Pattern {
+    text:   String
+    sort:   String
+    code:   String
+    tree:   Tree
+    roots:  Array[Node]
+    holes:  Dict[String, Hole]
+    gaps:   Array[Gap]
+    names:  Array[String]
+    mode:   String
+    scope:  Module | String | nil
+    cpack:  Any
+    csubs:  Array[Any]
+    late?:  Bool
+
+    init(text: String, mode: String = 'smart', scope: Module | String | nil = nil) {
+        self.text = text
+        self.mode = mode
+        self.scope = scope
+        self.names = hole-names(text)
+
+        let body = text.strip()
+        self.sort = match body.bslice(0, 1) {
+            ':' => 'type',
+            ';' => 'stmt',
+            _   => 'expr',
+        }
+        if sort != 'expr' {
+            body = body.bslice(1)
+        }
+
+        let rw = Rewriter(mode, scope)
+        let out = Blob()
+        let prefix = (sort == 'type') ? 'let __syn_type__: ' : ''
+        out.push(prefix)
+        rw.rewrite(body, out)
+        let type-end = out.size()
+        if sort == 'type' {
+            out.push(' = nil')
+        }
+
+        self.code = out.str()
+        self.holes = rw.holes
+        self.gaps = rw.gaps
+        self.tree = parse(code)
+
+        if let $err = tree.error {
+            throw ValueError("invalid syn pattern {json.encode(text)}: {err}")
+        }
+
+        self.roots = match (rw.focus, sort) {
+            ((a, b), _) => [
+                outermost(tree, a, b)
+             ?? throw ValueError("syn focus does not select a node: {text}")
+            ],
+            (_, 'type') => [
+                outermost(tree, prefix.size(), type-end)
+             ?? throw ValueError("invalid syn type pattern: {text}")
+            ],
+            _           => tree.root.nodes,
+        }
+
+        for gaps {
+            it.before = tree.tokens.filter(\_.end <= it.pos)[-1]
+            it.after = tree.tokens.find(\_.start >= it.pos)
+        }
+
+        let subs: Array[Any] = []
+        self.cpack = pack-pattern(self, names, subs, nil)
+        self.csubs = subs
+        let at = PACKED_FIELDS.search('tyhole') ?? 0
+        self.late? = [cpack, *subs].any?(r -> r[at].any?(\_ == -2))
+    }
+
+
+    hole-of(n: Node) -> Hole | nil {
+        (#n.nodes == 0 && #n.own == 1) ? holes[n.own[0].text] : nil
+    }
+
+    seq-hole(n: Node) -> Hole | nil {
+        if n.kind in ['Spread', 'MatchRest'] && #n.nodes == 1 {
+            return hole-of(n.nodes[0])
+        }
+        if n.kind == 'MatchRest' && #n.own == 2 {
+            return holes[n.own[1].text]
+        }
+        nil
+    }
+
+    matches(n: Node | Tree) -> Match | nil {
+        let node = (n :: Tree) ? n.root : n
+        let m = Matcher(self)
+        m.root(node) ? Match(node, m.binds) : nil
+    }
+
+    matches?(n: Node) -> Bool { matches(n) != nil }
+
+    bindings(n: Any) -> Array[Any] | nil {
+        if !(n :: Node) {
+            return nil
+        }
+        let m = Matcher(self)
+        m.root(n) ? [m.binds[it] for names] : nil
+    }
+
+    find*(scope: Node | Tree) -> Generator[Match] {
+        let top = (scope :: Tree) ? scope.root : scope
+        for top.walk() {
+            let m = Matcher(self)
+            let start = 0
+            while m.root(it, start) {
+                yield Match(it, m.binds)
+                break if m.pos < 0
+                start = m.pos + 1
+            }
+        }
+    }
+
+    find-all(scope: Node | Tree) -> Array[Match] { [*find(scope)] }
+
+    with(mode: String) -> Pattern { compile(text, scope, mode) }
+
+    packs(tree: Tree) -> (Any, Array[Any]) {
+        if !late? || tree.module == nil {
+            return (cpack, csubs)
+        }
+        let key = "{mode}\x00{scope ?? ''}\x00{text}"
+        if let $hit = tree.packs[key] {
+            return hit
+        }
+        let subs: Array[Any] = []
+        let main = pack-pattern(self, names, subs, tree.module)
+        tree.packs[key] = (main, subs)
+    }
+
+    render(binds: Dict[String, Any] | Match, indent: String = '') -> String {
+        traced(binds, indent).text
+    }
+
+    traced(binds: Dict[String, Any] | Match, indent: String = '') -> Rendered {
+        let b = (binds :: Match) ? binds.binds : binds
+        let body = text.strip()
+        if sort != 'expr' {
+            body = body.bslice(1).strip()
+        }
+        let copies: Array[Copy] = []
+        let out = render-template(body, b, indent, copies, 0)
+        Rendered(out, copies, anchored())
+    }
+
+    anchored() -> Dict[String, Symbol] {
+        let out: Dict[String, Symbol] = %{}
+        if mode == 'spelling' {
+            return out
+        }
+        for n in tree.nodes {
+            for [dotted-path(self, n), callee-path(self, n)] {
+                if let $p = it and let $r = tsx.lookup(scope, p.map(mangle)) {
+                    out[p.join('.')] = Symbol(r)
+                }
+            }
+        }
+        out
+    }
+
+    __str__() -> String { "syn$$[{text}$$]" }
+}
+
+fn outermost(tree: Tree, a: Int, b: Int) -> Node | nil {
+    let s = tree.source
+    while a < b && s.bslice(a, 1).match?(/\s/) {
+        a += 1
+    }
+    while b > a && s.bslice(b - 1, 1).match?(/\s/) {
+        b -= 1
+    }
+    tree.nodes.find(n -> n.start == a && n.end == b)
+}
+
+pub class Matcher {
+    pat:   Pattern
+    binds: Dict[String, Any]
+    pos:   Int
+
+    init(pat: Pattern) {
+        self.pat = pat
+        self.binds = %{}
+        self.pos = -1
+    }
+
+    root(s: Node, start: Int = 0) -> Bool {
+        let tree = s.tree
+        if #pat.roots == 1 && !admissible?(pat, s) {
+            return false
+        }
+        let $r = tsx.unify(
+            *pat.packs(tree),
+            packed(tree),
+            tree.source,
+            s.index,
+            start,
+            #pat.names,
+            intern('Paren')
+        ) or return false
+        let (bs, _, at) = r
+        pos = at
+        binds = %{}
+        for b; i in bs {
+            if let (kind, a, x, c) = b {
+                binds[pat.names[i]] = match kind {
+                    1 => tree.nodes[a],
+                    2 => tree.nodes[c].nodes[a;x],
+                    3 => tree.tokens[a],
+                    _ => tree.source.bsplice(a, x),
+                }
+            }
+        }
+        true
+    }
+}
+
+let CALLS = %['FunctionCall', 'MethodCall']
+let REFS = %['Identifier', 'MemberAccess']
+
+fn cross-form?(p: Node, s: Node) -> Bool {
+    (p.kind in CALLS && s.kind in CALLS) || (p.kind in REFS && s.kind in REFS)
+}
+
+fn admissible?(pat: Pattern, s: Node) -> Bool {
+    let r0 = pat.roots[0]
+    if let $h = pat.hole-of(r0) {
+        return #h.kinds == 0 || h.kinds.any?(k -> s.is?(k) || s.unwrapped.is?(k))
+    }
+    if s.tree.semantic? && pat.mode != 'spelling' && cross-form?(r0, s) {
+        return true
+    }
+    r0.kind == 'Paren' || s.kind == 'Paren' || (r0.kind == s.kind && r0.form == s.form)
+}
+
+let BINARY = %[
+    'Plus', 'Minus', 'Star', 'Div', 'Percent', 'And', 'Or', 'Wtf', 'Lt', 'Leq', 'Gt', 'Geq',
+    'DblEq', 'NotEq', 'Cmp', 'BitAnd', 'BitOr', 'Xor', 'Shl', 'Shr', 'In', 'NotIn',
+    'Conditional', 'CheckMatch', 'DotDot', 'DotDotDot', 'UserOp', 'KwAnd', 'KwOr'
+]
+
+fn needs-parens?(n: Node, before: String, after: String) -> Bool {
+    if n.kind not in BINARY && n.kind != 'Function' {
+        return false
+    }
+    let b = before.match(/(\S)\s*$/).?[1] ?? ''
+    let a = after.match(/^\s*(\S)/).?[1] ?? ''
+    (a in ['.', '[', '(']) || b.match?(/[-+*\/%<>=&|^!?:#~]/) || a.match?(/[-+*\/%<>=&|^?:]/)
+}
+
+fn value-text(v: Any, before: String, after: String) -> String {
+    match v {
+        n: Node => do {
+            let t = n.text
+            needs-parens?(n, before, after) ? "({t})" : t
+        },
+        t: Token => t.text,
+        xs: Array => do {
+            if #xs == 0 {
+                return ''
+            }
+            let nodes = xs.filter(\_ :: Node)
+            if #nodes == #xs && #nodes > 0 {
+                let first = nodes[0]
+                let last = nodes[-1]
+                first.tree.text(first.start, last.end)
+            } else {
+                xs.map(value-text@(_, '', '')).join(', ')
+            }
+        },
+        s: String => s,
+        nil       => '',
+        x         => str(x),
+    }
+}
+
+fn render-gap(spec: String, binds: Dict[String, Any]) -> String {
+    match spec {
+        '' or 'any' or '_'      => '',
+        'sp'                    => ' ',
+        'nl'                    => '\n',
+        'blank' or 'blank+'     => '\n\n',
+        /^\/\/\s*\$\$(.+)$/     => "  // {binds[hole-name($1, 0).0] ?? ''}",
+        /^\/\/(.*)$/            => "  //{$1}",
+        /^([\p{L}\p{N}_?!-]+)/u => str(binds[hole-name($1, 0).0] ?? ''),
+        _                       => '',
+    }
+}
+
+pub use Copy = (Int, Int, Int)
+
+pub class Rendered {
+    text:     String
+    copies:   Array[Copy]
+    anchored: Dict[String, Symbol]
+
+    init(text: String, copies: Array[Copy], anchored: Dict[String, Symbol]) {
+        self.text = text
+        self.copies = copies
+        self.anchored = anchored
+    }
+}
+
+fn value-source(v: Any) -> (Int, Int) | nil {
+    match v {
+        n: Node  => (n.start, n.end),
+        t: Token => (t.start, t.end),
+        xs: Array => do {
+            let nodes = xs.filter(\_ :: Node)
+            (#nodes > 0 && #nodes == #xs) ? (nodes[0].start, nodes[-1].end) : nil
+        },
+        _ => nil,
+    }
+}
+
+fn traced-value(
+    v: Any,
+    out: Blob,
+    after: String,
+    copies: Array[Copy],
+    base: Int
+) {
+    let t = value-text(v, out.str(), after)
+    if let (a, b) = value-source(v) {
+        let shift = (t.size() == b - a + 2 && t.bslice(0, 1) == '(') ? 1 : 0
+        copies.push((base + out.size() + shift, a, b))
+    }
+    out.push(t)
+}
+
+fn indent-copies(result: String, indent: String, copies: Array[Copy], first: Int) {
+    for first..#copies {
+        let (off, a, b) = copies[it]
+        let lines = #result.bslice(0, off).split('\n') - 1
+        copies[it] = (off + lines * indent.size(), a, b)
+    }
+}
+
+fn render-template(
+    text: String,
+    binds: Dict[String, Any],
+    indent: String,
+    copies: Array[Copy] = [],
+    base: Int = 0
+) -> String {
+    let first = #copies
+    let out = Blob()
+    let n = text.size()
+    let i = 0
+    while i < n {
+        if text.bslice(i, 2) != '$$' {
+            out.push(text.bslice(i, 1))
+            i += 1
+            continue
+        }
+        let c = text.bslice(i + 2, 1)
+        if c == '<' {
+            let j = closing-gap(text, i + 3)
+            out.push(render-gap(text.bsplice(i + 3, j).strip(), binds))
+            i = j + 1
+        } else if c == '^' && text.bslice(i + 3, 1) == '(' {
+            let j = closing(text, i + 3, '(', ')')
+            let at = base + out.size()
+            out.push(render-template(text.bsplice(i + 4, j), binds, '', copies, at))
+            i = j + 1
+        } else if c == '(' {
+            let j = closing(text, i + 2, '(', ')')
+            let inner = text.bsplice(i + 3, j)
+            let name = inner.match(/^\s*([\p{L}\p{N}_?!-]+)\s*:/u).?[1]
+            let v = (name == nil) ? nil : binds[hole-name(name ?? '', 0).0]
+            traced-value(v, out, text.bslice(j + 1), copies, base)
+            i = j + 1
+        } else if ident-char?(c) {
+            let (name, j) = hole-name(text, i + 2)
+            let prev = out.str()
+            if prev.match?(/\*$/) && binds[name] :: Array {
+                out = Blob()
+                out.push(prev.bslice(0, prev.size() - 1))
+            }
+            traced-value(binds[name], out, text.bslice(j), copies, base)
+            i = j
+        } else {
+            out.push('$$')
+            i += 2
+        }
+    }
+    let result = out.str()
+    if indent == '' {
+        return result
+    }
+    indent-copies(result, indent, copies, first)
+    result.split('\n').join("\n{indent}")
+}
+
+let __tls::cache: Dict[String, Pattern] = %{}
+
+let __tls::interned: Dict[String, Int] = %{}
+
+fn intern(s: String) -> Int {
+    interned[s] ?? (interned[s] = #interned)
+}
+
+let EXTRA_KINDS = [
+    'Paren', 'Sugar', 'Param', 'Kwarg', 'Condition', 'Namespace', 'Embedded', 'Region',
+    'PpRegion', 'MacroInvocation', 'ParseError', 'Module'
+]
+
+let ALL_KINDS = [
+    *[kind-name(k, false) for k in KINDS.expressions],
+    *[kind-name(k, true) for k in KINDS.statements],
+    *EXTRA_KINDS
+].uniq()
+
+fn pack-tree(tree: Tree) -> Dict[String, Array[Any]] {
+    let kind: Array[Any] = []
+    let form: Array[Any] = []
+    let kstart: Array[Any] = []
+    let kcount: Array[Any] = []
+    let kids: Array[Any] = []
+    let ostart: Array[Any] = []
+    let ocount: Array[Any] = []
+    let own: Array[Any] = []
+    let ftok: Array[Any] = []
+    let ltok: Array[Any] = []
+    for tree.nodes {
+        kind.push(intern(it.kind))
+        form.push((it.form == nil) ? -1 : intern(it.form ?? ''))
+        kstart.push(#kids)
+        kcount.push(#it.nodes)
+        kids += it.nodes.map(&.index)
+        ostart.push(#own)
+        ocount.push(#it.own)
+        own += it.own.map(&.index)
+        ftok.push(it.ftok)
+        ltok.push(max(it.ltok, -1))
+    }
+    %{
+        'kind': kind, 'form': form, 'kstart': kstart, 'kcount': kcount, 'kids': kids,
+        'ostart': ostart, 'ocount': ocount, 'own': own,
+        'text': tree.tokens.map(\intern(_.text)), 'punct': tree.tokens.map(\_.punct? ? 1 : 0),
+        'ftok': ftok, 'ltok': ltok, **trivia-arrays(tree),
+        'ref': tree.nodes.map(&.sym-id), 'callee': tree.nodes.map(&.callee-id),
+        'ty': tree.nodes.map(&.type-id), 'sem': [tree.semantic? ? 1 : 0]
+    }
+}
+
+fn trivia-arrays(tree: Tree) -> Dict[String, Array[Any]] {
+    let lnum: Array[Any] = []
+    let tnum: Array[Any] = []
+    let lnl: Array[Any] = []
+    let tnl: Array[Any] = []
+    let lcm: Array[Any] = []
+    let tcm: Array[Any] = []
+    let lspc: Array[Any] = []
+    let tspc: Array[Any] = []
+    for tree.tokens {
+        let (ln, lnew, lcom, lsp) = trivia-counts(it.leading)
+        let (tn, tnew, tcom, tsp) = trivia-counts(it.trailing)
+        lnum.push(ln)
+        lnl.push(lnew)
+        lcm.push(lcom)
+        lspc.push(lsp)
+        tnum.push(tn)
+        tnl.push(tnew)
+        tcm.push(tcom)
+        tspc.push(tsp)
+    }
+    %{
+        'lnum': lnum, 'tnum': tnum, 'lnl': lnl, 'tnl': tnl,
+        'lcm': lcm, 'tcm': tcm, 'lspc': lspc, 'tspc': tspc,
+        'tstart': tree.tokens.map(&.start),
+        'tend': tree.tokens.map(&.end),
+        'llen': tree.tokens.map(t -> t.leading.map(p -> p.end - p.start).sum() ?? 0),
+        'tlen': tree.tokens.map(t -> t.trailing.map(p -> p.end - p.start).sum() ?? 0)
+    }
+}
+
+fn packed(tree: Tree) -> Any {
+    tree.packed ?? (tree.packed = record(pack-tree(tree)))
+}
+
+let PACKED_FIELDS: Array[String] = [
+    'kind', 'form', 'kstart', 'kcount', 'kids', 'ostart', 'ocount', 'own',
+    'text', 'punct', 'ftok', 'ltok', 'hole', 'seq', 'tokhole', 'kinds',
+    'deep', 'alts', 'gaps', 'roots', 'slotmap', 'mode',
+    'lnum', 'tnum', 'lnl', 'tnl', 'lcm', 'tcm', 'lspc', 'tspc',
+    'tstart', 'tend', 'llen', 'tlen', 'ref', 'callee', 'ty', 'tyhole', 'tymode', 'sem'
+]
+
+fn trivia-counts(ts: Array[Trivia]) -> (Int, Int, Int, Int) {
+    let nl = 0
+    let cm = 0
+    let sp = 0
+    for ts {
+        if it.newline? {
+            nl += 1
+        } else if it.comment? {
+            cm += 1
+        } else if it.kind == 'space' {
+            sp += 1
+        }
+    }
+    (#ts, nl, cm, sp)
+}
+
+fn record(d: Dict[String, Array[Any]]) -> Array[Array[Any]] {
+    [d[it] ?? [] for PACKED_FIELDS]
+}
+
+fn slot-of(names: Array[String], h: Hole) -> Int {
+    let $name = h.name or return -2
+    names.search(name) ?? -2
+}
+
+fn gap-slot(pat: Pattern, name: String) -> Int {
+    (name == '') ? -2 : (pat.names.search(hole-name(name, 0).0) ?? -2)
+}
+
+fn gap-entry(pat: Pattern, g: Gap) -> Array[Any] {
+    let b = g.before.?index ?? -1
+    let a = g.after.?index ?? -1
+    let (code, slot, extra) = match g.spec {
+        '' or 'any'         => (0, -2, nil),
+        '_'                 => (1, -2, nil),
+        'sp'                => (2, -2, nil),
+        'nl'                => (3, -2, nil),
+        'blank' or 'blank+' => (4, -2, nil),
+        /^\/\/(.*)$/ => match $1.strip() {
+            ''                   => (7, -2, nil),
+            /^\$\$(.+)$/         => (8, gap-slot(pat, $1), nil),
+            /^\/(.*)\/([a-z]*)$/ => (9, -2, regex($1, $2)),
+            body                 => (10, -2, body),
+        },
+        /^([\p{L}\p{N}_?!-]*)\s*~\s*\/(.*)\/([a-z]*)$/u => (6, gap-slot(pat, $1), regex($2, $3)),
+        /^[\p{L}\p{N}_?!-]+$/u => (5, gap-slot(pat, g.spec), nil),
+        _ => throw ValueError("unknown syn gap hole: $$<{g.spec}>"),
+    }
+    [b, a, code, slot, extra]
+}
+
+fn pack-sub(sub: Pattern, names: Array[String], subs: Array[Any], home: Module | nil) -> Int {
+    subs.push(pack-pattern(sub, names, subs, home))
+    #subs - 1
+}
+
+fn pack-pattern(pat: Pattern, names: Array[String], subs: Array[Any], home: Module | nil) -> Any {
+    let d = pack-tree(pat.tree)
+    let hole: Array[Any] = []
+    let seq: Array[Any] = []
+    let kinds: Array[Any] = []
+    let deep: Array[Any] = []
+    let alts: Array[Any] = []
+    for pat.tree.nodes {
+        let h = pat.hole-of(it)
+        hole.push((h == nil) ? -1 : slot-of(pat.names, h ?? Hole(nil)))
+        let q = pat.seq-hole(it)
+        seq.push((q == nil) ? -1 : slot-of(pat.names, q ?? Hole(nil)))
+        let ks = h.?kinds ?? []
+        kinds.push([
+            *[intern(k) for k in ALL_KINDS if ks.any?(kind-matches?@(k, _))],
+            *ks.map(intern)
+        ])
+        deep.push((h.?deep == nil) ? -1 : pack-sub(h.?deep ?? pat, names, subs, home))
+        alts.push([pack-sub(a, names, subs, home) for a in h.?alts ?? []])
+    }
+    d['hole'] = hole
+    d['seq'] = seq
+    d['kinds'] = kinds
+    d['deep'] = deep
+    d['alts'] = alts
+    d['tokhole'] = [
+        (pat.holes[t.text] == nil) ? -1 : slot-of(pat.names, pat.holes[t.text] ?? Hole(nil))
+        for t in pat.tree.tokens
+    ]
+    d['gaps'] = [gap-entry(pat, g) for g in pat.gaps]
+    d['roots'] = pat.roots.map(&.index)
+    d['slotmap'] = pat.names.map(k -> names.search(k) ?? -2)
+    d['mode'] = [(pat.mode == 'cst') ? 1 : 0]
+    let (refs, callees) = anchors(pat)
+    d['ref'] = refs
+    d['callee'] = callees
+    d['tyhole'] = pat.tree.nodes.map(n -> hole-type(pat, n, home))
+    d['tymode'] = pat.tree.nodes.map(n -> (pat.hole-of(n).?gradual? ?? false) ? 2 : 1)
+    record(d)
+}
+
+fn hole-type(pat: Pattern, n: Node, home: Module | nil) -> Int {
+    let $h = pat.hole-of(n) or return -1
+    let $t = h.type or return -1
+    if let $id = tsx.resolve-type(t, pat.scope) {
+        return id
+    }
+    if syn-type-error(t) {
+        throw ValueError("invalid type `{t}` in syn pattern: {pat.text}")
+    }
+    (home == nil) ? -2 : (tsx.resolve-type(t, home) ?? -3)
+}
+
+fn syn-type-error(t: String) -> Bool { parse("let __syn_type__: {t} = nil\n").error != nil }
+
+fn member-name(n: Node) -> String | nil {
+    let toks = n.own
+    for t; i in toks {
+        if t.text == '.' && i + 1 < #toks {
+            return toks[i + 1].text
+        }
+    }
+    nil
+}
+
+fn dotted-path(pat: Pattern, n: Node) -> Array[String] | nil {
+    match n.kind {
+        'Identifier' => (#n.own == 1 && pat.holes[n.own[0].text] == nil) ? [n.own[0].text] : nil,
+        'MemberAccess' => do {
+            let $base = (#n.nodes == 1) ? dotted-path(pat, n.nodes[0]) : nil or return nil
+            let $name = member-name(n) or return nil
+            [*base, name]
+        },
+        _ => nil,
+    }
+}
+
+pub fn mangle(name: String) -> String { hole-name(name, 0).0 }
+
+fn anchor(pat: Pattern, path: Array[String] | nil) -> Int {
+    let $p = path or return -1
+    tsx.lookup(pat.scope, p.map(mangle)).?id ?? -1
+}
+
+fn callee-path(pat: Pattern, n: Node) -> Array[String] | nil {
+    if #n.nodes == 0 {
+        return nil
+    }
+    match n.kind {
+        'FunctionCall' => dotted-path(pat, n.nodes[0]),
+        'MethodCall'   => do {
+            let $base = dotted-path(pat, n.nodes[0]) or return nil
+            let $name = member-name(n) or return nil
+            [*base, name]
+        },
+        _ => nil,
+    }
+}
+
+fn anchors(pat: Pattern) -> (Array[Any], Array[Any]) {
+    if pat.mode == 'spelling' {
+        let none: Array[Any] = pat.tree.nodes.map(_ -> -1)
+        return (none, none)
+    }
+    let refs: Array[Any] = pat.tree.nodes.map(n -> anchor(pat, dotted-path(pat, n)))
+    let callees: Array[Any] = pat.tree.nodes.map(n -> anchor(pat, callee-path(pat, n)))
+    (refs, callees)
+}
+
+pub fn compile(
+    text: String,
+    scope: Module | String | nil = nil,
+    mode: String = 'smart'
+) -> Pattern {
+    let key = "{mode}\x00{scope ?? ''}\x00{text}"
+    cache[key] ?? (cache[key] = Pattern(text, mode, scope))
+}
+
+pub fn __pattern__(text: String, scope: String | nil = nil) -> Pattern { compile(text, scope) }
+
+pub fn __matcher__(text: String, scope: String | nil = nil) -> Function {
+    let p = compile(text, scope)
+    p.bindings
+}
+
+pub use RegionContext = {
+    kind:   String,
+    node:   Node,
+    column: Int,
+    indent: String,
+    width:  Int
+}
+
+pub use RegionFormatter = (String, RegionContext) -> String | nil
+
+let REGION_FORMATTERS: Dict[String, RegionFormatter] = %{}
+
+pub fn register-formatter(kind: String, f: RegionFormatter) {
+    REGION_FORMATTERS[kind] = f
+}
+
+pub fn region-formatter(kind: String) -> RegionFormatter | nil {
+    REGION_FORMATTERS[kind]
+}

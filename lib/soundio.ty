@@ -728,8 +728,8 @@ pub class Context {
 
     connect(backend: Int | nil = nil) {
         let err = match backend {
-            nil    => soundio_connect(__ptr),
-            $b     => soundio_connect_backend(__ptr, b)
+            nil => soundio_connect(__ptr),
+            $b  => soundio_connect_backend(__ptr, b)
         }
         check('soundio_connect', err)
     }

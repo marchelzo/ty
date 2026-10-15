@@ -93,7 +93,7 @@ pub fn pattern-matches?(dir: String, pat: String, file: String) -> Bool {
         return false
     }
     let rel = file[#dir + 1;]
-    let p = pat.sub(/^\.\//, '').sub(/\/+$/, '')
+    let p = pat.comb(/^\.\//).comb(/\/+$/)
     let re = glob-regex(p)
     if rel.match?(re) {
         return true
@@ -153,11 +153,9 @@ fn parse-marker(line: String) -> ?Dict[String, Any] {
 
 fn markers(text: String) -> Array[Dict[String, Any]] {
     let out: Array[Dict[String, Any]] = []
-    for line in text.lines() {
-        if !line.match?(/^\s*\{"ty_test_dir"/) {
-            continue
-        }
-        if let $m = parse-marker(line.strip()) {
+    for text.lines() {
+        continue if !it.match?(/^\s*\{"ty_test_dir"/)
+        if let $m = parse-marker(it.strip()) {
             out.push(m)
         }
     }
@@ -211,9 +209,7 @@ class Probe {
 
 fn fail(p: Probe, why: String, st: Event) {
     let c = p.conf
-    if c.error != nil {
-        return
-    }
+    return if c.error != nil
     c.error  = why
     c.source = p.name
     c.status = st
@@ -245,7 +241,7 @@ fn interpret(p: Probe, timeout: Float) {
             if c.skip == nil {
                 let reason = match skip-marker {
                     [s: String, *] => s,
-                    _ => first-line(out) ?? first-line(err) ?? 'requirements not met',
+                    _              => first-line(out) ?? first-line(err) ?? 'requirements not met',
                 }
                 c.skip   = reason
                 c.source = p.name
@@ -266,9 +262,9 @@ pub fn probe(
 ) -> Dict[String, DirConf] {
     let out: Dict[String, DirConf] = %{}
     let running: Array[Probe] = []
-    for d in dirs {
-        let c = DirConf(d)
-        out[d] = c
+    for dirs {
+        let c = DirConf(it)
+        out[it] = c
         let f = c.file(CONFIG)
         if Path(f).file? {
             running.push(Probe(c, CONFIG, Proc([*cmd, f])))
@@ -291,24 +287,24 @@ pub fn probe(
         let hits: Array[(Int, Int)] = []
         os.poll(fds, hits, sched.TICK)
         for (fd, _) in hits {
-            for p in running {
-                if p.proc.owns?(fd) {
-                    p.proc.ready(fd)
+            for running {
+                if it.proc.owns?(fd) {
+                    it.proc.ready(fd)
                     break
                 }
             }
         }
         let late? = time.now() >= deadline
-        for p in [*running] {
-            if late? && !p.proc.exited? {
-                p.timed-out? = true
-                p.proc.kill(os.SIGKILL)
-                p.proc.reap-blocking()
+        for [*running] {
+            if late? && !it.proc.exited? {
+                it.timed-out? = true
+                it.proc.kill(os.SIGKILL)
+                it.proc.reap-blocking()
             }
-            if p.proc.reap() {
-                p.proc.drain()
-                interpret(p, timeout)
-                p.done? = true
+            if it.proc.reap() {
+                it.proc.drain()
+                interpret(it, timeout)
+                it.done? = true
             }
         }
         running = running.filter(p -> !p.done?)

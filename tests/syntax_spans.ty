@@ -1,0 +1,70 @@
+import ty
+import ty.syntax
+import path (Path)
+
+let ROOT = Path(__file__).absolute.parent.parent
+
+fn violations(source: String, file: String) -> Array[String] {
+    let $mod = match ty.parse(source, path=file) {
+        Ok(mod) => mod,
+        Err(_)  => nil,
+    } or return []
+
+    [
+        "{file}:{v.line}: {v.check} {v.kind} {source[v.start;v.end].lines()[0] ?? ''}"
+        for v in ty.syntax.check(mod)
+    ]
+}
+
+fn snippet(source: String) -> Array[String] {
+    match ty.parse(source) {
+        Ok(_)  => violations(source, str(ROOT / 'snippet.ty')),
+        Err(e) => throw AssertionError("{source}: {e.msg}"),
+    }
+}
+
+pub fn corpus-spans-nest() {
+    let files = [*(ROOT / 'lib').rglob('*.ty'), *(ROOT / 'tests').rglob('*.ty')]
+    let bad = [v for f in files for v in violations(slurp(str(f)) ?? '', str(f))]
+    assert(#files > 100)
+    assert(bad == [], bad[;20].join('\n'))
+}
+
+pub fn desugared-forms-nest() {
+    let forms = [
+        'let f = match { 1 => 2, _ => 3 }',
+        'let g = match x { 1 => 2 }',
+        'for match xs { (a, b) => print(a, b) }',
+        'for xs { print(it) }',
+        'let ys = [y for y in xs]',
+        'let h = \\_ + _',
+        'let k = f@(1, _)',
+        'let m = &.name',
+        'let n = &len()',
+        'let o = &[0]',
+        'let p = ${ it + 1 }',
+        'let q = (+ 1)',
+        'let r = xs[]',
+        'let s = [_ in xs]',
+        'let t = |(a, b)| -> a + b',
+        'let u = x ?: y',
+        'with f = open(p) { f.read() }',
+        "let v = 'a' \"b\"",
+        'let w = try g() else nil',
+        'let z = (x for x in xs)',
+        'pub X = 1',
+        'tag A, B, C;',
+        'fn f(x) { x or return nil }',
+        'if not x { y }',
+        'for (;;) { break }',
+        'class C { x: Int | nil; @d m() { } }',
+        '@d fn f() { }',
+        'use match P { 1 => 2 }',
+        'let a = $$[ $$x + 1 $$]',
+        "fn f() \{\n    catch _: E \{ return 0 \}\n    g()\n    h()\n\}",
+    ]
+
+    for form in forms {
+        assert(snippet(form) == [], form)
+    }
+}

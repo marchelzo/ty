@@ -1,0 +1,145 @@
+import syn
+import ty
+import ty.syntax
+import path (Path)
+
+let ROOT = Path(__file__).absolute.parent.parent
+
+fn lossless?(file: String) -> Bool {
+    let src = slurp(file) ?? ''
+    syn.parse(src, path=file).reprint() == src
+}
+
+pub fn round-trips-every-source() {
+    let files = [*(ROOT / 'lib').rglob('*.ty'), *(ROOT / 'tests').rglob('*.ty')]
+    let bad = [str(f) for f in files if !lossless?(str(f))]
+    assert(#files > 100)
+    assert(bad == [], bad[;10].join('\n'))
+}
+
+pub fn tokens-carry-trivia() {
+    let t = syn.parse("// head\nlet x = 1  // tail\n\n/* block */ let y = 2\n")
+    let let1 = t.tokens[0]
+    assert(let1.text == 'let')
+    assert(let1.leading.map(&.kind) == ['comment', 'newline'])
+    let one = t.tokens[3]
+    assert(one.text == '1')
+    assert(one.trailing.map(&.kind) == ['space', 'comment', 'newline'])
+    let let2 = t.tokens[4]
+    assert(let2.leading.map(&.kind) == ['newline', 'block', 'space'])
+    assert(t.comments.map(&.text) == ['// head', '// tail', '/* block */'])
+}
+
+pub fn nodes-nest-and-own-tokens() {
+    let t = syn.parse('fn f(x) { return x.len() + 1 }')
+    let kinds = [n.kind for n in t.walk()]
+    assert(kinds == [
+        'Module', 'FunctionDefinition', 'Function', 'Identifier', 'Param', 'Block',
+        'Return', 'Plus', 'MethodCall', 'Identifier', 'Integer'
+    ], kinds)
+    let call = t.nodes.find(\_.kind == 'MethodCall') ?? t.root
+    assert(call.text == 'x.len()')
+    assert(call.own.map(&.text) == ['.', 'len', '(', ')'])
+    assert(call.inside?('Function'))
+    assert(call.inside?('Return', stop='Block'))
+    assert(!call.inside?('Function', stop='Return'))
+    assert(t.root.has?('Plus'))
+    assert(call.line == 1 && call.col == 18)
+}
+
+pub fn doc-and-trailing-comments() {
+    let t = syn.parse("/// Adds one.\nfn inc(x) \{ x + 1 \}  // cheap\n")
+    let def = t.root.nodes[0]
+    assert(def.doc == 'Adds one.')
+    assert(def.trailing-comment.?text == '// cheap')
+}
+
+pub fn directives-and-macros-stay-verbatim() {
+    let src = "#|if 1 == 2\nlet dead = 1\n#|else\nlet live = 2\n#|]\n"
+    let t = syn.parse(src)
+    assert(t.reprint() == src)
+    assert(t.tokens.map(&.text) == ['let', 'live', '=', '2'])
+    assert(t.trivia.any?(\_.kind == 'directive'))
+}
+
+pub fn parse-errors-are-lossless() {
+    let src = "let x = (1 +\nlet y = 2 // after\n"
+    let t = syn.parse(src)
+    assert(t.error != nil)
+    assert(t.reprint() == src)
+}
+
+pub fn macro-invocations-become-nodes() {
+    let src = "import jit (kernel!)\nkernel! fn twice(x: Int) -> Int \{ x * 2 \}\n"
+    let t = syn.parse(src, deep=true)
+    let m = t.nodes.find(\_.kind == 'MacroInvocation')
+    assert(m != nil)
+    assert((m.?text ?? '').match?(/^kernel! fn twice/))
+    assert(t.reprint() == src)
+}
+
+fn forms(src: String) -> Array[(String, String)] {
+    [(n.form ?? '', n.text) for n in syn.parse(src).walk() if n.kind == 'Sugar']
+}
+
+pub fn sugar-nodes-record-surface-forms() {
+    assert(forms('let f = &.name') == [('implicit-method', '&.name')])
+    assert(forms('let g = \\_ + 1') == [('partial', '\\_ + 1')])
+    assert(forms('let h = match { 1 => 2 }') == [('match-lambda', 'match { 1 => 2 }')])
+    assert(forms('let k = ${ it + 1 }') == [('implicit-lambda', '${ it + 1 }')])
+    assert(forms('let s = (+ 1)') == [('operator-section', '(+ 1)')])
+    assert(forms("let t = 'a' 'b'") == [('string-concat', "'a' 'b'")])
+    assert(forms('for xs { print(it) }') == [('implicit-it', 'for xs { print(it) }')])
+    assert(forms('with f = open(p) { f }') == [('with', 'with f = open(p) { f }')])
+    let n = syn.parse('let f = &.name').nodes.find(\_.kind == 'Sugar') ?? syn.parse('').root
+    assert(n.is?('implicit-method'))
+}
+
+pub fn parens-params-and-kwargs-are-nodes() {
+    let t = syn.parse('fn h(x: Int = 1, *ys) { k((a + b) * 2, z=3) }')
+    let kinds = [(n.kind, n.text) for n in t.walk() if n.kind in ['Param', 'Kwarg', 'Paren']]
+    assert(kinds == [
+        ('Param', 'x: Int = 1'),
+        ('Param', '*ys'),
+        ('Paren', '(a + b)'),
+        ('Kwarg', 'z=3'),
+    ], kinds)
+    let paren = t.nodes.find(\_.kind == 'Paren') ?? t.root
+    assert(paren.own.map(&.text) == ['(', ')'])
+    assert(paren.nodes[0].text == 'a + b')
+}
+
+pub fn directive-regions-and-error-tails() {
+    let t = syn.parse("#|if 1 == 1\nlet q = 1\n#|]\nlet broken = (\n")
+    let pp = t.nodes.find(\_.kind == 'PpRegion')
+    assert(pp.?text == "#|if 1 == 1\nlet q = 1\n#|]")
+    let err = t.nodes.find(\_.kind == 'ParseError')
+    assert(err.?text == "let broken = (\n")
+    assert(t.reprint() == t.source)
+}
+
+pub fn synthetic-nodes-are-flagged-and-hidden() {
+    let src = 'let f = &.name\nlet g = \\_ + 1\nwith h = open(p) { h }\n'
+    let mod = match ty.parse(src) {
+        Ok(m)  => m,
+        Err(e) => throw AssertionError(str(e.msg)),
+    }
+    let synth = [n.kind for n in ty.syntax.walk(mod) if n.synth]
+    assert('FUNCTION' in synth && 'RETURN' in synth && 'MULTI' in synth, synth)
+    let kinds = [n.kind for n in syn.parse(src).walk()]
+    assert('Return' not in kinds && 'Multi' not in kinds && 'Try' not in kinds, kinds)
+    assert('Sugar' in kinds && 'MemberAccess' in kinds)
+}
+
+pub fn namespaces-conditions-and-member-order() {
+    let src = "namespace geo \{\n    class P \{\n        y: Int\n        m() \{ 1 \}\n        static s() \{ 2 \}\n        x: Int\n    \}\n\}\nif let [a] = xs and b \{ a \}\n"
+    let t = syn.parse(src)
+    assert(t.nodes.find(\_.kind == 'Namespace').?text == "namespace geo \{\n    class P \{\n        y: Int\n        m() \{ 1 \}\n        static s() \{ 2 \}\n        x: Int\n    \}\n\}")
+    assert(t.nodes.find(\_.kind == 'Condition').?text == 'let [a] = xs')
+    let mod = match ty.parse(src) {
+        Ok(m)  => m,
+        Err(e) => throw AssertionError(str(e.msg)),
+    }
+    let members = ty.syntax.members(mod)[0].map(m -> src.bsplice(m.start, m.end))
+    assert(members == ['y: Int', 'm() { 1 }', 'static s() { 2 }', 'x: Int'], members)
+}

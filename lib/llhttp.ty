@@ -196,7 +196,7 @@ pub const HTTP_STATUS_NETWORK_READ_TIMEOUT = 598
 pub const HTTP_STATUS_NETWORK_CONNECT_TIMEOUT = 599
 
 if not let $llhttp = c.open('llhttp') {
-    throw "failed to load llhttp shared library"
+    throw 'failed to load llhttp shared library'
 }
 
 const llhttp_cb      = c.ptr
@@ -436,15 +436,15 @@ fn multipart*(boundary: String) {
             ;
         }
     }
-    
+
     yield MultipartData(form, files)
 }
 
 pub fn urldecode(s: String) -> String {
     s.sub('+', ' ')
      .sub(/%[[:xdigit:]]{2}/, \chr(int(_[1;], 16)))
-     .sub("\r\n", "\n")
-     .sub("\r", "\n")
+     .sub('\r\n', '\n')
+     .sub('\r', '\n')
 }
 
 pub fn decode-query(query: String) -> Dict[String, String | Array[String | nil] | nil] {
@@ -483,8 +483,8 @@ pub class HttpRequest {
 
     begin() {
         (url, params) = match url.split('?', 1) {
-            [path]          => (path, params),
-            [path, query]   => (path, params + decode-query(query))
+            [path]        => (path, params),
+            [path, query] => (path, params + decode-query(query))
         }
         if headers['Content-Type'] == 'application/x-www-form-urlencoded' {
             if body != nil {
@@ -500,7 +500,7 @@ pub class HttpRequest {
 
 ns states {
     const STARTED      = 0
-    const HAVE_HEADERS = 1 
+    const HAVE_HEADERS = 1
     const WAIT_BODY    = 2
     const MULTIPART    = 3
     const FINISHED     = 4

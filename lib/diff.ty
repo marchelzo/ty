@@ -24,11 +24,11 @@ fn forward(a: Array[String], b: Array[String]) -> Array[Array[Int]] {
     let off = max + 1
     let v = [0 for _ in ..(2 * max + 3)]
     let trace: Array[Array[Int]] = []
-    for d in ..(max + 1) {
+    for ..(max + 1) {
         trace.push([*v])
-        let k = -d
-        while k <= d {
-            let x0 = down?(v, off, k, d) ? v[off + k + 1] : v[off + k - 1] + 1
+        let k = -it
+        while k <= it {
+            let x0 = down?(v, off, k, it) ? v[off + k + 1] : v[off + k - 1] + 1
             let (x, y) = snake(a, b, x0, x0 - k)
             v[off + k] = x
             if x >= #a && y >= #b {
@@ -89,8 +89,8 @@ pub fn unified(es: Array[Edit], context: Int = 3) -> Array[String] {
     }
     let keep = %{}
     for i in changed {
-        for j in max(0, i - context)..min(#es, i + context + 1) {
-            keep[j] = true
+        for max(0, i - context)..min(#es, i + context + 1) {
+            keep[it] = true
         }
     }
     let out: Array[String] = []
@@ -186,14 +186,14 @@ pub class Walk {
     }
 
     arrays(path: String, a: Array[Any], b: Array[Any], depth: Int) {
-        for i in ..min(#a, #b) {
-            visit(index-path(path, i), a[i], b[i], depth + 1)
+        for ..min(#a, #b) {
+            visit(index-path(path, it), a[it], b[it], depth + 1)
         }
-        for i in #b..#a {
-            note(index-path(path, i), "only on the left: {show(a[i])}")
+        for #b..#a {
+            note(index-path(path, it), "only on the left: {show(a[it])}")
         }
-        for i in #a..#b {
-            note(index-path(path, i), "only on the right: {show(b[i])}")
+        for #a..#b {
+            note(index-path(path, it), "only on the right: {show(b[it])}")
         }
     }
 
@@ -220,9 +220,7 @@ pub class Walk {
     }
 
     visit(path: String, a: Any, b: Any, depth: Int = 0) {
-        if full? || a == b {
-            return
-        }
+        return if full? || a == b
         if depth > 32 {
             differ(path, a, b)
             return
@@ -270,17 +268,17 @@ pub fn explain(
     context: Int = 3
 ) -> Array[String] {
     match (a, b) {
-        (x: String, y: String) and ("\n" in x || "\n" in y) => do {
+        (x: String, y: String) and ('\n' in x || '\n' in y) => do {
             line-diff(x, y, context)
         },
-        (x: String, y: String) => caret(x, y, width: width),
-        (_: String, _) or (_, _: String) => [],
+        (x: String, y: String)                  => caret(x, y, width: width),
+        (_: String, _) or (_, _: String)        => [],
         _ :: !structured?(a) || !structured?(b) => [],
         _ => do {
             let found = paths(a, b)
             let ra = render(a, width)
             let rb = render(b, width)
-            if !("\n" in ra) && !("\n" in rb) {
+            if !('\n' in ra) && !('\n' in rb) {
                 return found
             }
             [*found, '', *line-diff(ra, rb, context)]

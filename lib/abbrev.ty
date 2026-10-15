@@ -61,8 +61,8 @@ fn detailed(found: String | [String] | RegexMatch, text: String) -> RegexMatch {
 fn split(text: String, boundary: Regex) -> [String] {
     let parts: [String] = []
     let offset = 0
-    for found in text.matches(boundary) {
-        let result = detailed(found, text)
+    for text.matches(boundary) {
+        let result = detailed(it, text)
         let start = result.pre.size()
         parts.push(text.bslice(offset, start - offset))
         parts.push(result[0])
@@ -123,9 +123,7 @@ class Builder {
         for word; i in chunks[;;2] {
             let component = part(group, word, preserve-leaf && i * 2 == leaf)
             parts.push(component)
-            if i * 2 + 1 == #chunks {
-                break
-            }
+            break if i * 2 + 1 == #chunks
 
             let separator = chunks[i * 2 + 1]
             parts.push(separator)
@@ -151,16 +149,16 @@ fn distinguish(group: Components, policy: (String, Int) -> Int) -> nil {
         a.length = max(a.length, length)
         b.length = max(b.length, length)
     }
-    for part in parts {
-        part.extend(policy)
+    for parts {
+        it.extend(policy)
     }
 }
 
 fn finish(entries: [Entry]) -> [String] {
     while true {
         let groups: DefaultDict[String, [Entry]] = %{*: []}
-        for entry in entries {
-            groups[entry.short].push(entry)
+        for entries {
+            groups[it.short].push(it)
         }
         let collisions = groups.values()
             .filter(group -> #group.map(&.text).nub() > 1)
@@ -168,8 +166,8 @@ fn finish(entries: [Entry]) -> [String] {
             return entries.map(&.short)
         }
 
-        for group in collisions {
-            group.each(&keep)
+        for collisions {
+            it.each(&keep)
         }
     }
 }

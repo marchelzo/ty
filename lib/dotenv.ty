@@ -38,10 +38,10 @@ fn parse-binding(s) {
 fn parse-value(raw) {
     let s = raw.strip()
     match s {
-        /^"(.*)"$/  => unescape($1),
-        /^'(.*)'$/  => $1,
-        /^`(.*)`$/  => $1,
-        _           => s.sub(/\s+#.*$/, '')
+        /^"(.*)"$/ => unescape($1),
+        /^'(.*)'$/ => $1,
+        /^`(.*)`$/ => $1,
+        _          => s.comb(/\s+#.*$/)
     }
 }
 
@@ -86,10 +86,10 @@ pub fn string(vars: Dict[String, String]) -> String {
     let b = Blob()
     for k, v in vars {
         b.push(match v {
-            /\n/ or /"/  => "{k}=\"{escape(v)}\"",
-            /'/          => "{k}=\"{v}\"",
-            /\s/ or /#/  => "{k}='{v}'",
-            _            => "{k}={v}"
+            /\n/ or /"/ => "{k}=\"{escape(v)}\"",
+            /'/         => "{k}=\"{v}\"",
+            /\s/ or /#/ => "{k}='{v}'",
+            _           => "{k}={v}"
         })
         b.push('\n')
     }

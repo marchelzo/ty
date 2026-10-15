@@ -193,7 +193,7 @@ pub fn sh(
 }
 
 pub fn ls(d: String, flags: String = '') -> Array[String] {
-    sh("ls '{d}' {flags}").stdout.split("\n")
+    sh("ls '{d}' {flags}").stdout.split('\n')
 }
 
 pub fn expand(s: String) -> String {

@@ -44,7 +44,7 @@ pub fn pretty-code(
     line: Int,
     col: Int
 ) -> (Array[String], Int, Int) {
-    let source = (lines.map(&join).unlines() ?? '') + '\n'
+    let source = "{lines.map(&join).unlines() ?? ''}\n"
     let styled = parse.highlight(
         match ty.parse(source) {
             Ok(module)       => module,
@@ -136,8 +136,9 @@ pub fn tab-complete(before: String, after: String) -> CompletionAction {
         let mod-paths = [Path(dir).glob('*.ty') for dir in ty.path].flat()
         let mod-names = mod-paths.map(\_.stem).sort!().uniq!()
         return CycleCompletions([
-            (chalk"[bright yellow]{mod}[/]", (space ? '' : ' ') + mod[#prefix;])
-            for mod in mod-names if mod.starts?(prefix)
+            (chalk"[bright yellow]{mod}[/]", "{space ? '' : ' '}{mod[#prefix;]}")
+            for mod in mod-names
+            if mod.starts?(prefix)
         ])
     }
 

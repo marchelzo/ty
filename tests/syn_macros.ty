@@ -1,0 +1,102 @@
+import syn
+import syn.lint as lint
+import syn.fmt as sf
+import ty.test (Test)
+import path (Path)
+import support.process (run)
+import ty
+import ty.syntax
+
+let RAW = "import support.syn_macros (raw!)\nlet s = raw! \{ hello world \}\nlet t = 1\n"
+let KERNEL = "import jit (kernel!)\nkernel! fn twice(x: Int) -> Int \{ x * 2 \}\nlet y = 3\n"
+
+fn find(t: syn.Tree, kind: String) -> syn.Node {
+    t.nodes.find(\_.kind == kind) ?? throw AssertionError("no {kind} node")
+}
+
+pub fn macros-mark-their-own-regions() {
+    let t = syn.parse(RAW, path=__file__, deep=true)
+    assert(t.reprint() == RAW)
+    let region = find(t, 'Region')
+    assert(region.form == 'raw-text')
+    assert(region.text == ' hello world ')
+    assert(region.from-expansion?)
+    assert(region.region == 'raw-text')
+    assert(region.macro.?form == 'raw!')
+    let plain = t.nodes.find(\_.text == 'let t = 1') ?? t.root
+    assert(plain.kind == 'Definition' && !plain.from-expansion? && plain.region == nil)
+}
+
+pub fn mark-is-ignored-outside-a-parse() {
+    assert(!ty.syntax.mark('nothing', 0, 1))
+}
+
+pub fn embedded-ty-is-not-an-expansion() {
+    let t = syn.parse(KERNEL, deep=true)
+    let inv = find(t, 'MacroInvocation')
+    assert(inv.form == 'kernel!' && inv.from-expansion?)
+    assert(#inv.core > 0 && inv.core.all?(&.from-expansion?))
+    let emb = find(t, 'Embedded')
+    assert(emb.form == 'stmt' && emb.text == 'fn twice(x: Int) -> Int { x * 2 }')
+    assert(!emb.from-expansion?)
+    let star = find(t, 'Star')
+    assert(star.text == 'x * 2' && !star.from-expansion? && star.macro == inv)
+    assert(!find(t, 'Definition').from-expansion?)
+}
+
+pub fn fixes-inside-expansions-are-not-applied() {
+    let ints = lint.rule('ints', n -> n.kind == 'Integer' ? lint.diag(n, 'int', lint.replace(n, '0')) : nil)
+    let invocations = lint.rule('macros', n -> n.kind == 'MacroInvocation' ? lint.diag(n, 'macro', lint.replace(n, '')) : nil)
+    let ds = lint.check(syn.parse(KERNEL, deep=true), [ints, invocations])
+    let safety = ds.map(d -> (d.rule, d.fix.?safety))
+    assert(safety == [('macros', lint.Display), ('ints', lint.Safe), ('ints', lint.Safe)], safety)
+}
+
+pub fn asm-escapes-are-embedded() {
+    let src = "import jit as j (asm!)\nlet k = 2.0\nlet f = asm! scale(p: ptr, n: i64) \{\n    i: i64 = 0\n    while i < n \{\n        f64[p + i*8] = f64[p + i*8] * \{k + 1.0\}\n        i += 1\n    \}\n\}\n"
+    let t = syn.parse(src, deep=true)
+    assert(t.error == nil, t.error)
+    assert(t.reprint() == src)
+    let inv = find(t, 'MacroInvocation')
+    assert(inv.form == 'asm!' && inv.text.match?(/^asm! scale/) && inv.text.match?(/\}$/))
+    let emb = t.nodes.filter(\_.kind == 'Embedded')
+    assert(emb.map(&.text) == ['k + 1.0'], emb.map(&.text))
+    assert(emb.all?(e -> !e.from-expansion? && e.macro == inv))
+    assert(t.tokens.filter(\_.owner == inv).all?(\_.owner.from-expansion?))
+}
+
+let TABLE = "import support.syn_macros (table!, raw!)\nlet t = table! \{\n  name|age\n    alice | 30\n  bob|7\n\}\nlet r = raw! \{  keep   me  \}\nlet x=[1,2]\n"
+
+let ALIGNED = "let t = table! \{\n    name  | age\n    alice | 30\n    bob   | 7\n\}\n"
+
+pub fn macros-format-their-own-regions() {
+    let canon = sf.canonical(TABLE, path=__file__, deep=true)
+    assert(ALIGNED in canon, canon)
+    assert('let x = [1, 2]' in canon)
+    assert('raw! {  keep   me  }' in canon)
+    let tidy = sf.tidy(TABLE, path=__file__, deep=true)
+    assert(ALIGNED in tidy && 'let x=[1,2]' in tidy, tidy)
+    assert(sf.canonical(canon, path=__file__, deep=true) == canon)
+}
+
+pub fn region-formatters-cannot-change-the-program() {
+    syn.register-formatter('raw-text', (text, ctx) -> "\} let evil = 1 \{")
+    let out = sf.canonical(TABLE, path=__file__, deep=true)
+    syn.register-formatter('raw-text', (text, ctx) -> nil)
+    assert('evil' not in out)
+    assert('raw! {  keep   me  }' in out)
+}
+
+pub fn shallow-formatting-leaves-regions-alone() {
+    let canon = sf.canonical(TABLE, path=__file__)
+    assert(ALIGNED not in canon)
+}
+
+pub fn cli-formats-macro-regions(t: Test) {
+    let file = Path(__file__).absolute.parent / "fmt-region-demo.txt"
+    file.write(TABLE)
+    defer file.unlink(missing-ok: true)
+    let out = run(['--fmt', str(file)])
+    assert(out.status == 0)
+    assert(ALIGNED in out.stdout, out.stdout)
+}

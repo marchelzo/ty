@@ -1,0 +1,982 @@
+import json
+import syn (Node, Tree, Token, Trivia)
+import syn.lint as lint
+import syn.style as style
+
+pub class Doc {
+    kind:  String
+    text:  String
+    parts: Array[Doc]
+    extra: Int
+
+    init(kind: String, text: String = '', parts: Array[Doc] = [], extra: Int = 0) {
+        self.kind = kind
+        self.text = text
+        self.parts = parts
+        self.extra = extra
+    }
+
+    __str__() -> String {
+        match kind {
+            'text'   => json.encode(text),
+            'concat' => "[{parts.map(str).join(' ')}]",
+            _        => "{kind}({parts.map(str).join(' ')})",
+        }
+    }
+}
+
+pub fn text(s: String) -> Doc { Doc('text', s) }
+pub fn line() -> Doc { Doc('line') }
+pub fn softline() -> Doc { Doc('soft') }
+pub fn hardline(extra: Int = 0) -> Doc { Doc('hard', extra=extra) }
+pub fn group(d: Doc) -> Doc { Doc('group', parts=[d]) }
+pub fn nest(n: Int, d: Doc) -> Doc { Doc('nest', parts=[d], extra=n) }
+pub fn concat(ds: Array[Doc]) -> Doc { Doc('concat', parts=ds) }
+pub fn verbatim(s: String) -> Doc { Doc('verbatim', s) }
+pub fn align(d: Doc) -> Doc { Doc('align', parts=[d]) }
+
+fn hard?(d: Doc) -> Bool {
+    match d.kind {
+        'hard'     => true,
+        'text'     => '\n' in d.text,
+        'verbatim' => '\n' in d.text,
+        _          => d.parts.any?(hard?),
+    }
+}
+
+fn last-line-width(s: String) -> Int { s.split('\n')[-1].width() }
+
+fn fits?(width: Int, stack: Array[(Int, Bool, Doc)], top: (Int, Bool, Doc)) -> Bool {
+    let rest = width
+    let local: Array[(Int, Bool, Doc)] = [top]
+    let k = #stack
+    while rest >= 0 {
+        let item = if #local > 0 {
+            local.pop()
+        } else if k > 0 {
+            k -= 1
+            stack[k]
+        } else {
+            return true
+        }
+        let (ind, flat, d) = item
+        match d.kind {
+            'text' or 'verbatim' => do {
+                if '\n' in d.text {
+                    return true
+                }
+                rest -= d.text.width()
+            },
+            'line' => do {
+                if !flat {
+                    return true
+                }
+                rest -= 1
+            },
+            'soft' => do {
+                if !flat {
+                    return true
+                }
+            },
+            'hard'  => return true,
+            'group' => local.push((ind, flat, d.parts[0])),
+            'nest'  => local.push((ind + d.extra, flat, d.parts[0])),
+            'align' => local.push((width - rest, flat, d.parts[0])),
+            'concat' => do {
+                for d.parts[;;-1] {
+                    local.push((ind, flat, it))
+                }
+            },
+            _ => (),
+        }
+    }
+    false
+}
+
+pub fn render(doc: Doc, width: Int = 80) -> String {
+    let out = Blob()
+    let col = 0
+    let stack: Array[(Int, Bool, Doc)] = [(0, false, doc)]
+    while #stack > 0 {
+        let (ind, flat, d) = stack.pop()
+        match d.kind {
+            'text' => do {
+                out.push(d.text)
+                col = ('\n' in d.text) ? last-line-width(d.text) : col + d.text.width()
+            },
+            'verbatim' => do {
+                out.push(d.text)
+                col = ('\n' in d.text) ? last-line-width(d.text) : col + d.text.width()
+            },
+            'line' or 'soft' or 'hard' => do {
+                if flat && d.kind != 'hard' {
+                    if d.kind == 'line' {
+                        out.push(' ')
+                        col += 1
+                    }
+                } else {
+                    let n = ind + d.extra
+                    out.push('\n')
+                    out.push(' ' * n)
+                    col = n
+                }
+            },
+            'group' => do {
+                let inner = d.parts[0]
+                let limit = (d.extra > 0) ? d.extra : width
+                let flat? = flat || (!hard?(inner) && fits?(limit - col, stack, (ind, true, inner)))
+                stack.push((ind, flat?, inner))
+            },
+            'nest'  => stack.push((ind + d.extra, flat, d.parts[0])),
+            'align' => stack.push((col, flat, d.parts[0])),
+            'concat' => do {
+                for d.parts[;;-1] {
+                    stack.push((ind, flat, it))
+                }
+            },
+            _ => (),
+        }
+    }
+    out.str().sub(/[ \t]+\n/, '\n')
+}
+
+pub class Options {
+    width:       Int
+    indent:      Int
+    blank-lines: Int
+
+    init(width: Int = 80, indent: Int = 4, blank-lines: Int = 1) {
+        self.width = width
+        self.indent = indent
+        self.blank-lines = blank-lines
+    }
+}
+
+let LIMIT = 100
+
+let OPENERS = %{'(': ')', '[': ']', '{': '}', '%{': '}', '%[': ']'}
+
+let VERBATIM = %[
+    'SpecialString', 'String', 'Regex', 'DynRegex', 'Template', 'TemplateHole',
+    'MacroInvocation', 'Tyx', 'TyxElement', 'TyxFragment', 'TyxText'
+]
+
+let BLOCKISH = %['Block', 'ClassDefinition', 'TagDefinition', 'Module', 'Namespace']
+
+let CONTAINERS = %[
+    'Module', 'Block', 'ClassDefinition', 'TagDefinition', 'Match', 'MatchStmt',
+    'Array', 'Tuple', 'Dict', 'Set', 'FunctionCall', 'MethodCall', 'MultiFunction',
+    'PpRegion', 'Namespace'
+]
+
+let BINARY_TOKENS = %[
+    '+', '-', '*', '/', '%', '==', '!=', '<', '>', '<=', '>=', '<=>', '&&', '||', '??',
+    '&', '|', '^', '<<', '>>', '=', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=',
+    '<<=', '>>=', '?=', '->', '=>', '~>', '::', '..', '...', 'and', 'or', 'in', 'not', '?:'
+]
+
+let ASSIGNISH = %[
+    '=', '=>', '->', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '<<=', '>>=', '?=', '~>'
+]
+
+let NO_SPACE_AFTER = %['(', '[', '%{', '%[', '.', '.?', '@', '\\', '$$', '$$[', '#', '...']
+let NO_SPACE_BEFORE = %[',', ';', ')', ']', '.', '.?']
+
+pub class Printer {
+    tree:    Tree
+    opts:    Options
+    pairs:   Dict[Int, Int]
+    vend:    Dict[Int, Int]
+    strings: Dict[Int, Bool]
+    columns: Dict[Int, Array[String]]
+
+    init(tree: Tree, opts: Options) {
+        self.tree = tree
+        self.opts = opts
+        self.pairs = %{}
+        self.vend = %{}
+        self.strings = %{}
+        self.columns = %{}
+        for tree.tokens {
+            let line = tree.line-of(it.start)
+            let cols = columns[line] ?? (columns[line] = [])
+            cols.push("s{tree.col-of(it.start)}")
+            cols.push("e{tree.col-of(it.end)}")
+        }
+        verbatim-regions()
+        pair-brackets()
+    }
+
+    keep-verbatim(start: Int, end: Int) {
+        let prev = vend[start]
+        if prev == nil || prev < end {
+            vend[start] = end
+        }
+    }
+
+    string-regions() {
+        for tree.walk() {
+            if it.kind in ['String', 'SpecialString'] && it.ftok >= 0 {
+                strings[it.ftok] = true
+            }
+        }
+        let stack: Array[String] = []
+        let start = -1
+        for t; k in tree.tokens {
+            let top = stack.?[-1]
+            if top == 'str' {
+                if t.kind == '"' {
+                    stack.pop()
+                    if #stack == 0 {
+                        keep-verbatim(start, k)
+                        strings[start] = true
+                    }
+                } else if t.text == '{' {
+                    stack.push('interp')
+                }
+            } else if t.kind == '"' {
+                if #stack == 0 {
+                    start = k
+                }
+                stack.push('str')
+            } else if top != nil && t.text in ['{', '%{'] {
+                stack.push('brace')
+            } else if top != nil && t.text == '}' {
+                stack.pop()
+            }
+        }
+    }
+
+    verbatim-regions() {
+        for tree.walk() {
+            if it.kind in VERBATIM && it.ftok >= 0 {
+                keep-verbatim(it.ftok, it.ltok)
+            }
+        }
+        string-regions()
+        let k = 0
+        let toks = tree.tokens
+        while k < #toks {
+            if let $e = vend[k] {
+                for (k + 1)..(e + 1) {
+                    vend.remove(it)
+                }
+                k = e + 1
+            } else {
+                k += 1
+            }
+        }
+    }
+
+    pair-brackets() {
+        let stack: Array[Int] = []
+        let toks = tree.tokens
+        let k = 0
+        while k < #toks {
+            if let $e = vend[k] {
+                k = e + 1
+                continue
+            }
+            let t = toks[k].text
+            if t in OPENERS {
+                stack.push(k)
+            } else if t in [')', ']', '}'] && #stack > 0 {
+                let o = stack.pop()
+                if OPENERS[toks[o].text] == t {
+                    pairs[o] = k
+                }
+            }
+            k += 1
+        }
+    }
+
+    infix?(t: Token) -> Bool {
+        if t.text in ASSIGNISH {
+            return !setter?(t)
+        }
+        if t.text not in BINARY_TOKENS {
+            return false
+        }
+        let $o = t.owner or return false
+        o.kind in BINARY_KINDS
+            && o.nodes.any?(\_.end <= t.start)
+            && o.nodes.any?(\_.start >= t.end)
+    }
+
+    setter?(t: Token) -> Bool {
+        let toks = tree.tokens
+        let i = t.index
+        t.text == '='
+            && i > 0
+            && i + 1 < #toks
+            && toks[i - 1].end == t.start
+            && toks[i + 1].text == '('
+    }
+
+    unary?(t: Token) -> Bool {
+        let $o = t.owner or return false
+        o.kind not in BINARY_KINDS && o.ftok == t.index
+    }
+
+    class-header?(t: Token) -> Bool {
+        let $o = t.owner or return false
+        if o.kind not in ['ClassDefinition', 'TagDefinition'] {
+            return false
+        }
+        let body = o.own.find(\_.text == '{')
+        t in o.own && (body == nil || t.start < (body.?start ?? 0))
+    }
+
+    padded-gap(a: Token, b: Token, fallback: Doc) -> Doc {
+        let gap = tree.text(a.end, b.start)
+        (gap.match?(/^ {2,}$/) && aligned?(b)) ? text(gap) : fallback
+    }
+
+    aligned?(b: Token) -> Bool {
+        let line = tree.line-of(b.start)
+        let near = [*(columns[line - 1] ?? []), *(columns[line + 1] ?? [])]
+        ("s{tree.col-of(b.start)}" in near) || ("e{tree.col-of(b.end)}" in near)
+    }
+
+    space(a: Token, b: Token) -> String {
+        let gap = tree.text(a.end, b.start)
+        if gap.match?(/^ {2,}$/) && b.text not in NO_SPACE_BEFORE && aligned?(b) {
+            return gap
+        }
+        let s = spacing(a, b)
+        let orig = (a.end < b.start) ? ' ' : ''
+        (s == '' && orig == ' ' && glue-risk?(a.text, b.text)) ? ' ' : s
+    }
+
+    spacing(a: Token, b: Token) -> String {
+        let at = a.text
+        let bt = b.text
+        let orig = (a.end < b.start) ? ' ' : ''
+        if at == 'operator' || tree.tokens.?[a.index - 1].?text == 'operator' {
+            return ' '
+        }
+        if (bt == '.' && b.owner.?kind == 'UserOp') || (at == '.' && a.owner.?kind == 'UserOp') {
+            return ' '
+        }
+        if bt in NO_SPACE_BEFORE || at in NO_SPACE_AFTER {
+            return ''
+        }
+        if (bt == '=' && b.owner.?kind == 'Kwarg') || (at == '=' && a.owner.?kind == 'Kwarg') {
+            return ''
+        }
+        if (bt == '=' && b.owner.?kind == 'Param') || (at == '=' && a.owner.?kind == 'Param') {
+            return orig
+        }
+        if at == '$' && bt == '{' {
+            return ''
+        }
+        if at in ['..', '...'] || bt in ['..', '...'] {
+            return orig
+        }
+        if bt in ['(', '['] {
+            if b.owner.?kind == 'Import' {
+                return ' '
+            }
+            if a.kind in ['id', 'string', '"', 'regex'] || at in [')', ']', '}'] {
+                return ''
+            }
+            return (infix?(a) || at.match?(/^[a-z]+$/) && a.kind != 'id') ? ' ' : orig
+        }
+        if bt == ':' {
+            let header? = class-header?(b)
+            return (b.owner.?kind == 'Conditional' || header?) ? ' ' : ''
+        }
+        if at == ':' {
+            return ' '
+        }
+        if at in ['-', '+', '*', '~', '&', '!', '*'] && unary?(a) {
+            return ''
+        }
+        if at in ['..', '...'] || bt in ['..', '...'] {
+            return orig
+        }
+        if infix?(a) || infix?(b) {
+            return ' '
+        }
+        if at in BINARY_TOKENS || bt in BINARY_TOKENS {
+            return orig
+        }
+        if at.match?(/^[a-z]+$/) && a.kind != 'id' {
+            return ' '
+        }
+        orig
+    }
+
+    gap(a: Token, b: Token, inside-block: Bool) -> Doc {
+        let pieces = [*a.trailing, *b.leading]
+        if pieces.any?(\_.kind in ['raw', 'directive', 'shebang', 'bom']) {
+            return verbatim(pieces.map(&.text).join(''))
+        }
+        let parts: Array[Doc] = []
+        let newlines = 0
+        let pending = 0
+        let wrote-comment = false
+        for pieces {
+            match it.kind {
+                'newline' => do {
+                    newlines += 1
+                    pending += 1
+                },
+                'comment' or 'doc' => do {
+                    if newlines == 0 && !wrote-comment {
+                        parts.push(text(" {it.text}"))
+                    } else {
+                        parts.push(breaks(pending, a, b))
+                        parts.push(text(it.text))
+                    }
+                    pending = 0
+                    wrote-comment = true
+                },
+                'block' => do {
+                    if pending > 0 {
+                        parts.push(breaks(pending, a, b))
+                        pending = 0
+                    } else {
+                        parts.push(text(' '))
+                    }
+                    parts.push(text(it.text))
+                    wrote-comment = true
+                },
+                _ => (),
+            }
+        }
+        if newlines == 0 && !wrote-comment {
+            return text(space(a, b))
+        }
+        if pending > 0 || wrote-comment && pieces.any?(\_.kind in ['comment', 'doc']) {
+            parts.push(breaks(max(pending, 1), a, b))
+        } else if wrote-comment {
+            parts.push(text(' '))
+        }
+        concat(parts)
+    }
+
+    breaks(n: Int, a: Token, b: Token) -> Doc {
+        let extra = continuation?(a, b) ? continued-offset(a, b) : 0
+        let blank = min(max(n - 1, 0), opts.blank-lines)
+        concat([*[Doc('hard-blank') for _ in ..blank], hardline(extra)])
+    }
+
+    indent-at(byte: Int) -> Int {
+        let line = tree.line-start(tree.line-of(byte))
+        #(tree.text(line, byte).match(/^[ \t]*/) ?? '')
+    }
+
+    nest-base(b: Token) -> Int {
+        let toks = tree.tokens
+        let best = -1
+        for o, c in pairs {
+            if o < b.index && c > b.index && o > best {
+                best = o
+            }
+        }
+        return 0 if best < 0
+        let open = toks[best]
+        let first = toks[best + 1]
+        let fresh? = tree.line-of(first.start) != tree.line-of(open.start)
+        fresh? ? indent-at(first.start) : indent-at(open.start) + opts.indent
+    }
+
+    continued-offset(a: Token, b: Token) -> Int {
+        tree.col-of(b.start) - 1 - nest-base(b)
+    }
+
+    continuation?(a: Token, b: Token) -> Bool {
+        if a.text in [',', ';', '{', '(', '['] || b.text in ['}', ')', ']'] {
+            return false
+        }
+        let $x = a.owner or return false
+        let $y = b.owner or return false
+        let ancestors = %[*[n.index for n in x.ancestors()], x.index]
+        let lca = y
+        while lca.index not in ancestors {
+            lca = lca.parent ?? return false
+        }
+        lca.kind not in CONTAINERS
+    }
+
+    seq(i: Int, j: Int, inside-block: Bool) -> Doc {
+        let toks = tree.tokens
+        let parts: Array[Doc] = []
+        let k = i
+        let prev: Token | nil = nil
+        while k < j {
+            let t = toks[k]
+            if let $p = prev {
+                parts.push(gap(p, t, inside-block))
+            }
+            if let $e = vend[k] {
+                parts.push(strings[k] ? string-run(k, e) : verbatim(tree.text(t.start, toks[e].end)))
+                prev = toks[e]
+                k = e + 1
+            } else if let $m = pairs[k] and m < j {
+                parts.push(bracket(k, m))
+                prev = toks[m]
+                k = m + 1
+            } else {
+                parts.push(text(t.text))
+                prev = t
+                k += 1
+            }
+        }
+        concat(parts)
+    }
+
+    string-run(k: Int, e: Int) -> Doc {
+        let toks = tree.tokens
+        let base = tree.col-of(toks[k].start)
+        let parts: Array[Doc] = [verbatim(toks[k].text)]
+        for (k + 1)..(e + 1) {
+            let gap = tree.text(toks[it - 1].end, toks[it].start)
+            if gap.match?(/^[ \t]*\n\s*$/) {
+                parts.push(hardline(tree.col-of(toks[it].start) - base))
+            } else {
+                parts.push(verbatim(gap))
+            }
+            parts.push(verbatim(toks[it].text))
+        }
+        align(concat(parts))
+    }
+
+    bracket(o: Int, c: Int) -> Doc {
+        let toks = tree.tokens
+        let open = toks[o]
+        let close = toks[c]
+        if c == o + 1 {
+            return concat([text(open.text), inner-gap(open, close), text(close.text)])
+        }
+        let first = toks[o + 1]
+        let last = toks[c - 1]
+        let block = open.text == '{' && open.owner.?kind in BLOCKISH
+        if block {
+            let multiline = tree.text(open.end, close.start).match?(/\n/)
+            let body = seq(o + 1, c, true)
+            if multiline {
+                return concat([
+                    text(open.text),
+                    nest(opts.indent, concat([lead(open, first), body])),
+                    trail(last, close),
+                    text(close.text)
+                ])
+            }
+            return group(concat([
+                text(open.text),
+                nest(opts.indent, concat([line(), body])),
+                padded-gap(last, close, line()),
+                text(close.text)
+            ]))
+        }
+        let arms? = open.text == '{' && open.owner.?kind in ['Match', 'MatchStmt']
+        let spaced? = open.text in ['{', '%{'] && open.end < first.start
+        let pad = (arms? || spaced?) ? line() : softline()
+        let rows? = tree.line-of(first.start) != tree.line-of(open.start)
+        let seps = separators(o + 1, c, arms?)
+        if !rows? && !arms? && hugs?(o, c, seps) {
+            return concat([text(open.text), items(o + 1, c, seps, true), text(close.text)])
+        }
+        let body = concat([
+            text(open.text),
+            nest(opts.indent, concat([lead(open, first, pad), items(o + 1, c, seps, rows?)])),
+            trail(last, close, pad),
+            text(close.text)
+        ])
+        (#seps == 0) ? Doc('group', parts=[body], extra=LIMIT) : group(body)
+    }
+
+    hugs?(o: Int, c: Int, seps: Array[Int]) -> Bool {
+        let toks = tree.tokens
+        let start = (#seps == 0) ? o + 1 : seps[-1] + 1
+        if start >= c || tree.line-of(toks[c].start) == tree.line-of(toks[o].start) {
+            return false
+        }
+        let firsts = [o + 1, *seps.map(\_ + 1)]
+        let rest-flat? = firsts[;-1].all?(k -> tree.line-of(toks[k].start) == tree.line-of(toks[o].start))
+        let last = toks[start]
+        let closer = toks[c - 1]
+        rest-flat?
+     && tree.line-of(last.start) == tree.line-of(toks[o].start)
+     && tree.line-of(closer.start) == tree.line-of(toks[c].start)
+     && closer.text in ['}', ']', ')']
+    }
+
+    separators(i: Int, j: Int, arms?: Bool) -> Array[Int] {
+        let toks = tree.tokens
+        let out: Array[Int] = []
+        let in-body? = false
+        let k = i
+        while k < j {
+            if let $e = vend[k] {
+                k = e + 1
+                continue
+            }
+            if let $m = pairs[k] and m < j {
+                k = m + 1
+                continue
+            }
+            let t = toks[k].text
+            if t == '=>' {
+                in-body? = true
+            } else if t == ',' && (!arms? || in-body?) {
+                out.push(k)
+                in-body? = false
+            }
+            k += 1
+        }
+        out
+    }
+
+    lead(open: Token, first: Token, pad: Doc = softline()) -> Doc {
+        let pieces = [*open.trailing, *first.leading]
+        if pieces.any?(\_.kind in ['raw', 'directive']) {
+            return verbatim(pieces.map(&.text).join(''))
+        }
+        let comments = pieces.filter(&.comment?)
+        if #comments == 0 {
+            return pieces.any?(&.newline?) ? hardline() : pad
+        }
+        let parts: Array[Doc] = []
+        for comments {
+            if it in open.trailing && it.kind != 'block' {
+                parts.push(text(" {it.text}"))
+            } else {
+                parts.push(hardline())
+                parts.push(text(it.text))
+            }
+        }
+        parts.push(hardline())
+        concat(parts)
+    }
+
+    trail(last: Token, close: Token, pad: Doc = softline()) -> Doc {
+        let pieces = [*last.trailing, *close.leading]
+        if pieces.any?(\_.kind in ['raw', 'directive']) {
+            return verbatim(pieces.map(&.text).join(''))
+        }
+        let comments = pieces.filter(&.comment?)
+        if #comments == 0 {
+            return pieces.any?(&.newline?) ? hardline() : pad
+        }
+        let parts: Array[Doc] = []
+        for comments {
+            if it in last.trailing && it.kind != 'block' {
+                parts.push(text(" {it.text}"))
+            } else {
+                parts.push(nest(opts.indent, concat([hardline(), text(it.text)])))
+            }
+        }
+        parts.push(hardline())
+        concat(parts)
+    }
+
+    inner-gap(open: Token, close: Token) -> Doc {
+        let pieces = [*open.trailing, *close.leading]
+        if pieces.any?(\_.kind in ['raw', 'directive']) || pieces.any?(&.comment?) {
+            return verbatim(pieces.map(&.text).join(''))
+        }
+        text('')
+    }
+
+    items(i: Int, j: Int, seps: Array[Int], rows?: Bool) -> Doc {
+        let toks = tree.tokens
+        let parts: Array[Doc] = []
+        let start = i
+        for seps {
+            if it > start {
+                parts.push(seq(start, it, false))
+            }
+            if it > i {
+                parts.push(before-comma(toks[it - 1], toks[it]))
+            }
+            parts.push(text(','))
+            if it + 1 < j {
+                parts.push(after-comma(toks[it], toks[it + 1], rows?))
+            }
+            start = it + 1
+        }
+        if start < j {
+            parts.push(seq(start, j, false))
+        }
+        concat(parts)
+    }
+
+    before-comma(prev: Token, comma: Token) -> Doc {
+        let pieces = [*prev.trailing, *comma.leading]
+        if pieces.any?(\_.kind in ['raw', 'directive']) || pieces.any?(&.comment?) {
+            return verbatim(pieces.map(&.text).join(''))
+        }
+        text('')
+    }
+
+    after-comma(comma: Token, next: Token, rows?: Bool) -> Doc {
+        let pieces = [*comma.trailing, *next.leading]
+        if pieces.any?(\_.kind in ['raw', 'directive']) {
+            return verbatim(pieces.map(&.text).join(''))
+        }
+        let comments = pieces.filter(&.comment?)
+        if #comments == 0 {
+            let newlines = #pieces.filter(&.newline?)
+            if newlines >= 2 {
+                return concat([Doc('hard-blank'), hardline()])
+            }
+            if rows? {
+                return (newlines == 1) ? hardline() : text(space(comma, next))
+            }
+            let gap = tree.text(comma.end, next.start)
+            if newlines == 0 && gap.match?(/^ {2,}$/) && aligned?(next) {
+                return text(gap)
+            }
+            return line()
+        }
+        let parts: Array[Doc] = []
+        for comments {
+            if it in comma.trailing && it.kind != 'block' {
+                parts.push(text(" {it.text}"))
+            } else {
+                parts.push(hardline())
+                parts.push(text(it.text))
+            }
+        }
+        parts.push(hardline())
+        concat(parts)
+    }
+
+    document() -> Doc {
+        let toks = tree.tokens
+        let parts: Array[Doc] = []
+        if #toks == 0 {
+            return verbatim(tree.source)
+        }
+        let first = toks[0]
+        for first.leading {
+            match it.kind {
+                'comment' or 'doc' or 'block' => do {
+                    parts.push(text(it.text))
+                    parts.push(hardline())
+                },
+                'shebang' or 'raw' or 'directive' or 'bom' => do {
+                    parts.push(verbatim(it.text))
+                    parts.push(hardline())
+                },
+                _ => (),
+            }
+        }
+        parts.push(seq(0, #toks, true))
+        let last = toks[-1]
+        let tail = [*last.trailing, *tree.eof.leading]
+        if tail.any?(\_.kind in ['raw', 'directive']) {
+            parts.push(verbatim(tail.map(&.text).join('').comb(/\s+$/)))
+            parts.push(hardline())
+            return concat(parts)
+        }
+        for p in tail {
+            match p.kind {
+                'comment' or 'doc' or 'block' => do {
+                    let inline? = p in last.trailing
+                               && !tail[;tail.search(p) ?? 0].any?(&.newline?)
+                    parts.push(inline? ? text(" {p.text}") : concat([hardline(), text(p.text)]))
+                },
+                'raw' or 'directive' => parts.push(verbatim(p.text)),
+                _                    => (),
+            }
+        }
+        parts.push(hardline())
+        concat(parts)
+    }
+}
+
+fn glue-risk?(a: String, b: String) -> Bool {
+    let x = a.bslice(a.size() - 1)
+    let y = b.bslice(0, 1)
+    let word = /^[\p{L}\p{N}_?!`]$/u
+    (x.match?(word) && (y.match?(word) || y in ['$', '"', "'", '@', '-']))
+        || (x.match?(/^[-+*\/%<>=&|^~:.!?#$@]$/) && y.match?(/^[-+*\/%<>=&|^~:.!?#$@]$/))
+}
+
+let BINARY_KINDS = %[
+    'Plus', 'Minus', 'Star', 'Div', 'Percent', 'And', 'Or', 'Wtf', 'Lt', 'Leq', 'Gt', 'Geq',
+    'DblEq', 'NotEq', 'Cmp', 'BitAnd', 'BitOr', 'Xor', 'Shl', 'Shr', 'In', 'NotIn',
+    'Conditional', 'CheckMatch', 'DotDot', 'DotDotDot', 'UserOp', 'KwAnd', 'KwOr'
+]
+
+fn signature(tree: Tree) -> String {
+    let parts = Blob()
+    for tree.tokens {
+        parts.push(it.text)
+        parts.push('\x00')
+    }
+    parts.push('|')
+    for tree.walk() {
+        parts.push(it.kind)
+        parts.push(',')
+    }
+    parts.str()
+}
+
+pub fn same-program?(a: Tree, b: Tree) -> Bool {
+    a.error == nil && b.error == nil && signature(a) == signature(b)
+}
+
+fn render-doc(d: Doc, opts: Options) -> String {
+    let s = render(d, opts.width)
+    s.sub(/\n[ \t]*(?=\n)/, '\n')
+}
+
+fn parse-for(source: String, path: String | nil, deep: Bool) -> Tree {
+    syn.parse(source, path=path, deep=deep, resolve=deep)
+}
+
+pub fn layout(
+    source: String,
+    path: String | nil = nil,
+    opts: Options = Options(),
+    deep: Bool = false
+) -> String | nil {
+    let tree = parse-for(source, path, deep)
+    if tree.error != nil {
+        return nil
+    }
+    let doc = Printer(tree, opts).document()
+    render-doc(fix-blanks(doc), opts)
+}
+
+fn canonical-pass(
+    source: String,
+    path: String | nil,
+    opts: Options,
+    deep: Bool
+) -> String | nil {
+    let $out = layout(source, path=path, opts=opts, deep=deep) or return nil
+    let tree = parse-for(source, path, deep)
+    let again = parse-for(out, path, deep)
+    if !same-program?(tree, again) {
+        return nil
+    }
+    lint.fix(out, ALIGNMENT, path=path, deep=deep, semantic=false).source
+}
+
+pub fn canonical(
+    source: String,
+    path: String | nil = nil,
+    opts: Options = Options(),
+    deep: Bool = false
+) -> String {
+    let $out = canonical-pass(source, path, opts, deep)
+        or return tidy(source, path=path, deep=deep, width=opts.width)
+    for ..4 {
+        let next = canonical-pass(out, path, opts, deep) ?? out
+        break if next == out
+        out = next
+    }
+    format-regions(out, path=path, deep=deep, width=opts.width)
+}
+
+let ALIGNMENT = style.RULES.filter(\_.name in ['align-match-arms', 'align-if-else', 'dangling-else'])
+
+fn region-kinds(tree: Tree) -> Array[String] {
+    [n.form ?? '' for n in tree.walk() if n.kind == 'Region']
+}
+
+pub fn format-regions(
+    source: String,
+    path: String | nil = nil,
+    deep: Bool = false,
+    width: Int = 80
+) -> String {
+    let tree = parse-for(source, path, deep)
+    if tree.error != nil {
+        return source
+    }
+    let edits: Array[(Int, Int, String)] = []
+    for tree.walk() {
+        continue if it.kind != 'Region'
+        let $f = syn.region-formatter(it.form ?? '') or continue
+        let indent = tree.text(tree.line-start(it.line), it.start).match(/^[ \t]*/) ?? ''
+        let ctx = {kind: it.form ?? '', node: it, column: it.col, indent: indent, width: width}
+        if let $text = f(it.text, ctx) and text != it.text {
+            edits.push((it.start, it.end, text))
+        }
+    }
+    if #edits == 0 {
+        return source
+    }
+    let out = Blob()
+    let pos = 0
+    for (a, b, text) in edits.sort(by=\_[0]) {
+        continue if a < pos
+        out.push(source.bsplice(pos, a))
+        out.push(text)
+        pos = b
+    }
+    out.push(source.bslice(pos))
+    let result = out.str()
+    let again = parse-for(result, path, deep)
+    (same-program?(tree, again) && region-kinds(tree) == region-kinds(again)) ? result : source
+}
+
+fn fix-blanks(d: Doc) -> Doc {
+    match d.kind {
+        'hard-blank' => Doc('text', '\n'),
+        'text' or 'verbatim' or 'line' or 'soft' or 'hard' => d,
+        _ => Doc(d.kind, d.text, d.parts.map(fix-blanks), d.extra),
+    }
+}
+
+pub fn tidy(
+    source: String,
+    path: String | nil = nil,
+    blank-lines: Int = 2,
+    tab-width: Int = 4,
+    deep: Bool = false,
+    width: Int = 80
+) -> String {
+    let tree = parse-for(source, path, deep)
+    let out = Blob()
+    let toks = [*tree.tokens, tree.eof]
+    let blanks = 0
+    for tok in toks {
+        for [*tok.leading] {
+            out.push(tidy-piece(it, blanks, blank-lines, tab-width))
+            blanks = it.newline? ? blanks + 1 : (it.kind == 'space' ? blanks : 0)
+        }
+        if tok.kind != 'eof' {
+            out.push(tok.text)
+            blanks = 0
+        }
+        for tok.trailing {
+            out.push(tidy-piece(it, blanks, blank-lines, tab-width))
+            blanks = it.newline? ? blanks + 1 : (it.kind == 'space' ? blanks : 0)
+        }
+    }
+    let s = out.str().comb(/[ \t]+(?=\n)/).sub(/\r\n/, '\n')
+    let s = s.sub(/\n{3,}/, '\n' * (blank-lines + 1))
+    let s = s.comb(/[ \t]+$/)
+    let s = s.match?(/\n$/) || s == '' ? s : "{s}\n"
+    let again = parse-for(s, path, deep)
+    let kept = (tree.error == nil && same-program?(tree, again)) ? s : source
+    format-regions(kept, path=path, deep=deep, width=width)
+}
+
+fn tidy-piece(p: Trivia, blanks: Int, blank-lines: Int, tab-width: Int) -> String {
+    match p.kind {
+        'space' => p.text.sub(/\t/, ' ' * tab-width),
+        _       => p.text,
+    }
+}
+
+pub fn format(
+    source: String,
+    path: String | nil = nil,
+    mode: String = 'canonical',
+    opts: Options = Options(),
+    deep: Bool = false
+) -> String {
+    match mode {
+        'tidy' => tidy(source, path=path, deep=deep, width=opts.width),
+        _      => canonical(source, path=path, opts=opts, deep=deep),
+    }
+}

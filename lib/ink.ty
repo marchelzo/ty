@@ -108,10 +108,10 @@ fn sync-status(tio: term.TermIO, app: Component) {
         want[id] = rec
     }
 
-    for id in _status-sent.keys() {
-        if !want.contains?(id) {
-            tio.clear-status(id)
-            _status-sent.remove(id)
+    for _status-sent.keys() {
+        if !want.contains?(it) {
+            tio.clear-status(it)
+            _status-sent.remove(it)
         }
     }
 
@@ -456,8 +456,8 @@ class LookOps {
         pcts    = []
         texts   = []
         for (field, ps, ls) in SIDES {
-            for k in ls {
-                if let $v = d[k] {
+            for ls {
+                if let $v = d[it] {
                     sides.push((field, ps, v))
                     break
                 }
@@ -492,8 +492,8 @@ const SIDES: Array[(String, Array[String], Array[String])] = [
 ]
 
 fn set-any?(props: Dict[String, _], keys: Array[String]) -> Bool {
-    for k in keys {
-        if props[k] != nil {
+    for keys {
+        if props[it] != nil {
             return true
         }
     }
@@ -570,8 +570,10 @@ pub fn provide(key, value) {
 }
 
 pub fn context(key, default = nil) {
-    for frame in _ctx-stack[;;-1] {
-        if let $v = frame[key] { return v }
+    for _ctx-stack[;;-1] {
+        if let $v = it[key] {
+            return v
+        }
     }
     default
 }
@@ -583,9 +585,9 @@ pub fn focus(comp: Component) {
 let __tls::_pending-focus-type: Any = nil
 
 pub fn focus-by-type(cls) {
-    for comp in _focusables {
-        if comp :: cls {
-            set-focus(comp)
+    for _focusables {
+        if it :: cls {
+            set-focus(it)
             _pending-focus-type = nil
             return
         }
@@ -599,13 +601,11 @@ pub fn unfocus() {
 
 pub fn cycle-focus(reverse?: Bool = false) {
     let n = #_focusables
-    if n == 0 {
-        return
-    }
+    return if n == 0
     let idx = _focusables.search(_focused)
     let next = match (idx, reverse?) {
-        (nil, false) => 0,
-        (nil, true)  => n - 1,
+        (nil, false)    => 0,
+        (nil, true)     => n - 1,
         (i: Int, false) => (i + 1) % n,
         (i: Int, true)  => (i - 1 + n) % n
     }
@@ -641,8 +641,8 @@ fn bg-from-sgr(sgr: String) -> String {
     }
 }
 
-pub RST = "\x1b[0m"
-let BG_RST = "\x1b[49m"
+pub RST = '\x1b[0m'
+let BG_RST = '\x1b[49m'
 
 pub fn resolve-bg-sgr(color: String) -> String {
     if let $c = _bg-cache[color] {
@@ -848,21 +848,21 @@ pub class Node {
         let sides: _ = nil
         for k, v in props if k in NODE_KEYS {
             match k {
-                'direction'   => direction = v ?? 'column',
-                'gap'         => gap = int(v ?? 0),
-                'rowGap'      => rgap = v,
-                'columnGap'   => cgap = v,
-                'flex'        => flex = v,
-                'shrink'      => shrink = v,
-                'basis'       => basis = __size('basis', v),
-                'alignSelf'   => self-align = v,
-                'width'       => width = __size('width', v),
-                'height'      => height = __size('height', v),
-                'minWidth'    => minw = __size('minw', v),
-                'maxWidth'    => maxw = __size('maxw', v),
-                'minHeight'   => minh = __size('minh', v),
-                'maxHeight'   => maxh = __size('maxh', v),
-                'flexWrap'    => fwrap? = v == 'wrap',
+                'direction' => direction = v ?? 'column',
+                'gap'       => gap = int(v ?? 0),
+                'rowGap'    => rgap = v,
+                'columnGap' => cgap = v,
+                'flex'      => flex = v,
+                'shrink'    => shrink = v,
+                'basis'     => basis = __size('basis', v),
+                'alignSelf' => self-align = v,
+                'width'     => width = __size('width', v),
+                'height'    => height = __size('height', v),
+                'minWidth'  => minw = __size('minw', v),
+                'maxWidth'  => maxw = __size('maxw', v),
+                'minHeight' => minh = __size('minh', v),
+                'maxHeight' => maxh = __size('maxh', v),
+                'flexWrap'  => fwrap? = v == 'wrap',
                 'display'     => do {
                     hidden?   = v == 'none'
                     table?    = v == 'table'
@@ -1059,23 +1059,25 @@ pub class Component {
     adopt(other: Component) {
         let was-dirty = dirty?
         let new-children = other.children
-        if children != new-children { dirty? = true }
+        if children != new-children {
+            dirty? = true
+        }
         children = new-children
         let changed-props = []
-        for name in __prop-names {
-            if !(name in other.__prop-names) {
-                self.{name} = other.{name}
+        for __prop-names {
+            if !(it in other.__prop-names) {
+                self.{it} = other.{it}
                 dirty? = true
             }
         }
         __prop-names = other.__prop-names
-        for name in other.__prop-names {
-            let new-val = other.{name}
-            if !dirty? && !(new-val :: Function) && self.{name} != new-val {
+        for other.__prop-names {
+            let new-val = other.{it}
+            if !dirty? && !(new-val :: Function) && self.{it} != new-val {
                 dirty? = true
-                changed-props.push(name)
+                changed-props.push(it)
             }
-            self.{name} = new-val
+            self.{it} = new-val
         }
         if volatile? {
             dirty? = true
@@ -1104,9 +1106,7 @@ pub class Component {
         mount()
     }
     unmount!() {
-        if !mounted? {
-            return
-        }
+        return if !mounted?
         debug!("unmount {type(self)}")
         mounted? = false
         alive? = false
@@ -1118,7 +1118,9 @@ pub class Component {
             t.cancel()
             n += 1
         }
-        if n > 0 { debug!("  canceled {n} timer(s)") }
+        if n > 0 {
+            debug!("  canceled {n} timer(s)")
+        }
         unmount()
     }
 }
@@ -1456,8 +1458,8 @@ pub class EditView {
         let styles = [base] * n
         let extra = (highlight != nil) ? highlight(editor.text) : []
         for (from, to, spec) in editor.spans() + extra {
-            for i in max(from, 0)..min(to, n) {
-                styles[i] = "{styles[i]} {spec}"
+            for max(from, 0)..min(to, n) {
+                styles[it] = "{styles[it]} {spec}"
             }
         }
         styles
@@ -1728,9 +1730,7 @@ pub class TextInput < Component {
     }
 
     __sync() {
-        if editor != nil || __own == nil {
-            return
-        }
+        return if editor != nil || __own == nil
         __own.triggers = __triggers()
         __own.keymap   = __keys()
     }
@@ -1752,11 +1752,11 @@ pub class TextInput < Component {
     __fallback(ev) -> _ {
         let $name = (ev :: event.Key) ? key-name(ev) : nil or return Ignored
         match name {
-            /Enter$/                    => __submit(),
-            'Esc'                       => unfocus(),
-            'Tab'                       => true,
-            'C-x' and on-edit != nil    => __external(),
-            _                           => Ignored
+            /Enter$/                 => __submit(),
+            'Esc'                    => unfocus(),
+            'Tab'                    => true,
+            'C-x' and on-edit != nil => __external(),
+            _                        => Ignored
         }
     }
 
@@ -1782,13 +1782,13 @@ pub class TextInput < Component {
 
         if let $tio = _tio {
             tio.stop()
-            write(1, "\x1b[?25h\x1b[?1049l")
+            write(1, '\x1b[?25h\x1b[?1049l')
             try {
                 let cmd = (getenv('EDITOR') ?? 'vi').split(/\s+/).filter(\_ != '')
                 let ed = spawn([*cmd, tmp])
                 wait(ed.pid)
             } finally {
-                write(1, _inline? ? "\x1b[?25l" : "\x1b[?1049h\x1b[?25l")
+                write(1, _inline? ? '\x1b[?25l' : '\x1b[?1049h\x1b[?25l')
                 tio.start()
                 invalidate-screen()
             }
@@ -2017,7 +2017,9 @@ pub class Select < Component {
     }
 
     __emit() {
-        if on-change { on-change(__sel) }
+        if on-change {
+            on-change(__sel)
+        }
     }
 
     __move(to: Int, n: Int) {
@@ -2133,7 +2135,9 @@ pub class Checkbox < Component {
             or event.Text('x')
             or event.MouseDown({button: 0, *}) => {
                 __on = !__on
-                if on-change { on-change(__on) }
+                if on-change {
+                    on-change(__on)
+                }
             },
             _ => Ignored
         }
@@ -2183,7 +2187,9 @@ pub class Slider < Component {
     __mx -> Float { float(max-val ?? 1.0) }
 
     __emit() {
-        if on-change { on-change(__val) }
+        if on-change {
+            on-change(__val)
+        }
     }
 
     __jump(click-x: Int) {
@@ -2318,12 +2324,16 @@ pub class RangeSelector < Component {
     __mx -> Float { float(max-val ?? 1.0) }
 
     __emit() {
-        if on-change { on-change(__lo, __hi) }
+        if on-change {
+            on-change(__lo, __hi)
+        }
     }
 
     __emit-set() {
         __emit()
-        if on-set { on-set(__lo, __hi) }
+        if on-set {
+            on-set(__lo, __hi)
+        }
     }
 
     __jump(click-x: Int) {
@@ -2376,7 +2386,9 @@ pub class RangeSelector < Component {
             event.MouseUp({x, *}) and __dragging? => {
                 __dragging? = false
                 __jump(int(x) - 1)
-                if on-set { on-set(__lo, __hi) }
+                if on-set {
+                    on-set(__lo, __hi)
+                }
             },
 
             _ => Ignored
@@ -2489,7 +2501,9 @@ pub class TrackBar < Component {
     __spds -> Array[Float] { speeds ?? [-8.0, -4.0, -2.0, -1.0, -0.5, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0] }
 
     __emit(v: Float) {
-        if on-change { on-change(v.clamp(__mn, __mx)) }
+        if on-change {
+            on-change(v.clamp(__mn, __mx))
+        }
     }
 
     __seek(click-x: Int) {
@@ -2501,24 +2515,31 @@ pub class TrackBar < Component {
     }
 
     __cycle-speed(dir: Int) {
-        if !on-speed { return }
+        return if !on-speed
         let sp = __spds
-        if #sp == 0 { return }
+        return if #sp == 0
         let cur = __spd
         let idx = 0
         let best = (cur - sp[0]).abs
-        for i in 1..#sp {
-            let d = (cur - sp[i]).abs
-            if d < best { idx = i; best = d }
+        for 1..#sp {
+            let d = (cur - sp[it]).abs
+            if d < best {
+                idx = it
+                best = d
+            }
         }
         on-speed(sp[(idx + dir).clamp(0, #sp - 1)])
     }
 
     __toggle() {
         if playing? ?? false {
-            if on-pause { on-pause() }
+            if on-pause {
+                on-pause()
+            }
         } else {
-            if on-play { on-play() }
+            if on-play {
+                on-play()
+            }
         }
     }
 
@@ -2536,10 +2557,10 @@ pub class TrackBar < Component {
 
             event.Key({key: 'HOME', event: 1, *}) => __emit(__mn),
 
-            event.Key({key: 'END', event: 1, *}) => __emit(__mx),
+            event.Key({key: 'END', event: 1, *})  => __emit(__mx),
 
-            event.Text('[') => __cycle-speed(-1),
-            event.Text(']') => __cycle-speed(1),
+            event.Text('[')                       => __cycle-speed(-1),
+            event.Text(']')                       => __cycle-speed(1),
 
             event.MouseMove({x, *}) and __dragging? =>
                 __seek(x - 1),
@@ -2641,7 +2662,6 @@ pub class TrackBar < Component {
         </Box>
     }
 }
-
 
 
 pub class ScrollView < Component {
@@ -2806,12 +2826,18 @@ pub class TreeView < Component {
     }
 
     __parent-idx(idx: Int) -> Int | nil {
-        if idx <= 0 || idx >= #__visible { return nil }
+        if idx <= 0 || idx >= #__visible {
+            return nil
+        }
         let target = __visible[idx].depth - 1
-        if target < 0 { return nil }
+        if target < 0 {
+            return nil
+        }
         let i = idx - 1
         while i >= 0 {
-            if __visible[i].depth == target { return i }
+            if __visible[i].depth == target {
+                return i
+            }
             i -= 1
         }
         nil
@@ -2831,7 +2857,9 @@ pub class TreeView < Component {
         // over the navigation behavior without reimplementing tree flattening.
         if on-key {
             let handled = on-key(ev, __cursor-node)
-            if handled != nil { return handled }
+            if handled != nil {
+                return handled
+            }
         }
 
         fn move-to(idx: Int) {
@@ -2872,7 +2900,7 @@ pub class TreeView < Component {
             event.Key({key: 'ENTER', event: 1, *}) => {
                 if let $node = __cursor-node {
                     if __can-expand?(node) { __toggle!(node) }
-                    if on-select { on-select(node) }
+                    if on-select           { on-select(node) }
                 }
             },
 
@@ -2927,10 +2955,10 @@ pub class TreeView < Component {
         let guide-str = ''
         if guides? && depth > 0 {
             let buf = Blob()
-            for i in ..depth {
-                buf.push((i == depth - 1)
-                    ? (lasts[i] ? '└─ ' : '├─ ')
-                    : (lasts[i] ? '   ' : '│  '))
+            for ..depth {
+                buf.push((it == depth - 1)
+                    ? (lasts[it] ? '└─ ' : '├─ ')
+                    : (lasts[it] ? '   ' : '│  '))
             }
             guide-str = buf.str!()
         } else if depth > 0 {
@@ -2992,9 +3020,9 @@ pub class TreeView < Component {
         let cur-bg = cursor-bg ? resolve(cursor-bg, 'selection') : nil
         let g-clr = guide-color ?? spec-of-part(part('TreeView', 'guide', fs, variant))
         let h = __viewport()
-        if __cursor >= #__visible { __cursor = max(#__visible - 1, 0) }
-        if __cursor < __scroll { __scroll = __cursor }
-        if __cursor >= __scroll + h { __scroll = __cursor - h + 1 }
+        if __cursor >= #__visible   { __cursor = max(#__visible - 1, 0) }
+        if __cursor < __scroll      { __scroll = __cursor               }
+        if __cursor >= __scroll + h { __scroll = __cursor - h + 1       }
         __scroll = __scroll.clamp(0, max(#__visible - h, 0))
 
         let rows: Array[Any] = [
@@ -3081,9 +3109,11 @@ pub class Element {
     }
 
     hit(px: Int, py: Int) -> Array[Element] | nil {
-        if !contains?(px, py) { return nil }
-        for child in children[;;-1] {
-            if let $path = child.hit(px, py) {
+        if !contains?(px, py) {
+            return nil
+        }
+        for children[;;-1] {
+            if let $path = it.hit(px, py) {
                 path.push(self)
                 return path
             }
@@ -3093,9 +3123,11 @@ pub class Element {
 
     focusables() -> Array[Element] {
         let out = []
-        if focusable? { out.push(self) }
-        for child in children {
-            out += child.focusables()
+        if focusable? {
+            out.push(self)
+        }
+        for children {
+            out += it.focusables()
         }
         out
     }
@@ -3142,12 +3174,12 @@ fn build-markup(children) -> String {
 }
 
 fn styled-lines(rendered: String) -> Array[String] {
-    if !rendered.contains?('\n') || !rendered.contains?("\x1b") {
+    if !rendered.contains?('\n') || !rendered.contains?('\x1b') {
         return rendered.lines() ?? [rendered]
     }
 
     let ls = rendered.ansi-lines()
-    if #ls > 1 && ls[-1].width() == 0 && rendered.comb(/\x1b\[[0-9;:]*m/).ends?("\n") {
+    if #ls > 1 && ls[-1].width() == 0 && rendered.comb(/\x1b\[[0-9;:]*m/).ends?('\n') {
         ls.pop()
     }
     ls
@@ -3167,15 +3199,14 @@ fn layout-text(
     }
 
     let spec = match (_inh-spec, node.style) {
-        (nil, s)     => s,
-        (i, nil)     => i,
-        (i, s)       => "{i} {s}"
+        (nil, s) => s,
+        (i, nil) => i,
+        (i, s)   => "{i} {s}"
     }
 
-    let rendered = if let $s = spec {
-        chalk.render("[{s}]{markup}[/]")
-    } else {
-        chalk.render(markup)
+    let rendered = match spec {
+        $s => chalk.render("[{s}]{markup}[/]"),
+        _  => chalk.render(markup)
     }
     if node.pcts != nil {
         resolve-pcts(node, max-w, max-h)
@@ -3238,7 +3269,7 @@ fn trailing-bg(line: String) -> String | nil {
     let bg: String | nil = nil
     let last: String | nil = nil
     for tok in line.matches(/\x1b\[[0-9;:]*m|[^\x1b]+/) {
-        if !tok.starts?("\x1b") {
+        if !tok.starts?('\x1b') {
             last = bg
             continue
         }
@@ -3357,10 +3388,10 @@ fn pre-wrap(line: String, w: Int) -> Array[String] {
     }
 
     for tok in line.matches(/\x1b\[[0-9;:]*m|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\X/u) {
-        if tok.starts?("\x1b") {
+        if tok.starts?('\x1b') {
             if tok.match?(/^\x1b\[0?m$/) {
                 sgr = []
-            } else if tok.starts?("\x1b[") {
+            } else if tok.starts?('\x1b[') {
                 sgr.push(tok)
             }
             cur.push((tok, 0))
@@ -3433,8 +3464,8 @@ fn shift-element(el: Element, dx: Int, dy: Int) {
         c.layout-x += dx
         c.layout-y += dy
     }
-    for child in el.children {
-        shift-element(child, dx, dy)
+    for el.children {
+        shift-element(it, dx, dy)
     }
 }
 
@@ -3460,21 +3491,21 @@ fn compute-gaps(
     }
 
     match justify {
-        'center' => [extra / 2] + [gap for ..n - 1],
-        'end'    => [extra] + [gap for ..n - 1],
+        'center'        => [extra / 2] + [gap for ..n - 1],
+        'end'           => [extra] + [gap for ..n - 1],
         'space-between' => (n == 1) ? [0] : ([0] + spread(n - 1)),
         'space-around' => do {
             let unit = free / n
             [unit / 2] + [unit for ..n - 1]
         },
         'space-evenly' => spread(n + 1)[;n],
-        _ => [0] + [gap for ..n - 1]
+        _              => [0] + [gap for ..n - 1]
     }
 }
 
 fn apply-bg(lines: Array[String], bg: String) -> Array[String] {
     let on = resolve-bg-sgr(bg)
-    let off = "\x1b[49m"
+    let off = '\x1b[49m'
     lines.map(line ->
         "{on}{line.sub(/\x1b\[(?:(?:[0-9:]*;)*(?:0|49)(?:;[0-9:]*)*)?m/, sgr -> "{sgr}{on}")}{off}"
     )
@@ -3482,8 +3513,10 @@ fn apply-bg(lines: Array[String], bg: String) -> Array[String] {
 
 fn apply-forced-fg(lines: Array[String], fg: String) -> Array[String] {
     let on = fg-sgr(fg)
-    if #on == 0 { return lines }
-    let off = "\x1b[39m"
+    if #on == 0 {
+        return lines
+    }
+    let off = '\x1b[39m'
     // Selection is an interaction state, so its foreground must win over
     // semantic colors emitted anywhere below it. Re-assert it after every SGR
     // sequence while leaving attributes such as bold and reverse intact.
@@ -3513,12 +3546,14 @@ fn apply-border(
     }
 
     out.push(styled-line("{tl}{hbar}{tr}"))
-    for line in lines {
+    for lines {
         _buf.clear()
         _buf.push(vl)
-        _buf.push(line)
-        let fill = w - line.width()
-        if fill > 0 { _buf.push(' ' * fill) }
+        _buf.push(it)
+        let fill = w - it.width()
+        if fill > 0 {
+            _buf.push(' ' * fill)
+        }
         _buf.push(vr)
         out.push(_buf.str!())
     }
@@ -3678,9 +3713,7 @@ fn size-node(r: Any, w: Any, h: Any) -> Any {
 
 fn sync-interval(inst: Component) {
     let iv = inst.interval
-    if iv == inst.ink-interval-period && (iv == nil || inst.ink-interval-timer != nil) {
-        return
-    }
+    return if iv == inst.ink-interval-period && (iv == nil || inst.ink-interval-timer != nil)
     inst.ink-interval-timer.?cancel()
     inst.ink-interval-timer = nil
     inst.ink-interval-period = iv
@@ -3699,11 +3732,11 @@ fn apply-sides(lines: Array[String], w: Int, t: Int, r: Int, b: Int, l: Int) -> 
     let lpad    = ' ' * l
     let out     = [blank for ..t]
 
-    for line in lines {
+    for lines {
         _buf.clear()
         _buf.push(lpad)
-        _buf.push(line)
-        let fill = total-w - l - line.width()
+        _buf.push(it)
+        let fill = total-w - l - it.width()
         if fill > 0 {
             _buf.push(' ' * fill)
         }
@@ -4184,9 +4217,7 @@ fn layout-box(
                     fresh = true
                 }
             }
-            if !fresh {
-                break
-            }
+            break if !fresh
             flow.place(lines)
         }
     }
@@ -4298,9 +4329,7 @@ fn layout-simple(
     let flexes: Array[Int] = []
     for c; i in node.children {
         if c != nil && c != false {
-            if (c :: Node) && c.hidden? {
-                continue
-            }
+            continue if (c :: Node) && c.hidden?
             let cp = "{path}.{child-key(c, i)}"
             let f = match c {
                 n: Node      => simple?(n) ? (n.flex ?? 0) : -1,
@@ -4503,13 +4532,13 @@ fn layout-simple(
                 _        => 0
             }
             if off == 0 && b.width == w {
-                for ln in b.lines {
-                    out.push(ln)
+                for b.lines {
+                    out.push(it)
                 }
             } else {
                 let lead = ' ' * off
-                for ln in b.lines {
-                    out.push(((off > 0) ? "{lead}{ln}" : ln).fit(w))
+                for b.lines {
+                    out.push(((off > 0) ? "{lead}{it}" : it).fit(w))
                 }
             }
             y += b.height
@@ -4544,7 +4573,8 @@ fn layout-table(node: Node, max-w: Int, path: String, ox: Int, oy: Int) -> (Outp
         let rpath = "{path}.{child-key(r, i)}"
         let cells = [
             (c, "{rpath}.{child-key(c, j)}")
-            for c; j in r.children if c != nil && c != false && !((c :: Node) && c.hidden?)
+            for c; j in r.children
+            if c != nil && c != false && !((c :: Node) && c.hidden?)
         ]
         rows.push((r, rpath, cells))
     }
@@ -4683,8 +4713,8 @@ fn layout-columns(node: Node, max-w: Int, path: String, ox: Int, oy: Int) -> (Ou
     }
 
     let (per, widths) = layout(1)
-    for k in (1..n + 1).list().reverse() {
-        let (p, ws) = layout(k)
+    for (1..n + 1).list().reverse() {
+        let (p, ws) = layout(it)
         if ws.map(c -> c.1).sum(0) + gap * (#ws - 1) <= avail {
             (per, widths) = (p, ws)
             break
@@ -4728,9 +4758,9 @@ fn layout-columns(node: Node, max-w: Int, path: String, ox: Int, oy: Int) -> (Ou
     }
 
     let full = (node.width != nil && avail < INF) ? max(w, avail) : w
-    for r in ..per {
-        let ln = segs[r].join(' ' * gap)
-        lines[r] = pad-line(ln, ln.width(), full)
+    for ..per {
+        let ln = segs[it].join(' ' * gap)
+        lines[it] = pad-line(ln, ln.width(), full)
     }
 
     _inh-spec = pinh
@@ -4924,13 +4954,13 @@ let __tls::_screen-h: Int = INF
 fn drop-cols(line: String, n: Int) -> String {
     let out = Blob()
     let col = 0
-    for tok in line.matches(/\x1b\[[0-9;:]*m|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\X/u) {
-        if tok.match?(/^\x1b/) {
-            out.push(tok)
+    for line.matches(/\x1b\[[0-9;:]*m|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\X/u) {
+        if it.match?(/^\x1b/) {
+            out.push(it)
         } else if col >= n {
-            out.push(tok)
+            out.push(it)
         } else {
-            col += tok.width()
+            col += it.width()
             if col > n {
                 out.push(' ' * (col - n))
             }
@@ -4947,9 +4977,7 @@ fn composite-overlays(lines: Array[String], width: Int, base: Array[String] = []
     for ov in _overlays {
         for piece; i in ov.output.lines {
             let row: Int = ov.y + i + #base
-            if row < 0 {
-                continue
-            }
+            continue if row < 0
             while #out <= row {
                 out.push(' ' * width)
             }
@@ -4968,8 +4996,8 @@ fn index-ids(el: Element) {
     if let $id = el.props['id'] {
         _ids[id] = el
     }
-    for c in el.children {
-        index-ids(c)
+    for el.children {
+        index-ids(it)
     }
 }
 
@@ -5035,8 +5063,8 @@ fn render-tree(root, max-w: Int, max-h: Int = INF) -> (Output, Element) {
     _ids = %{}
     if _ids-used? {
         index-ids(result.1)
-        for ov in _overlays {
-            index-ids(ov.el)
+        for _overlays {
+            index-ids(it.el)
         }
     }
     let unmounted = 0
@@ -5102,8 +5130,8 @@ fn next-timer-deadline() -> Float | nil {
 fn paint-output(output: Output) {
     _out.clear()
     push-uploads()
-    for line in output.lines {
-        _out.push(line)
+    for output.lines {
+        _out.push(it)
         _out.push('\n')
     }
     write(1, _out)
@@ -5126,7 +5154,7 @@ pub fn set-title(title: String | nil) {
 }
 
 fn strip-cursor(lines: Array[String], dx: Int = 0, dy: Int = 0) -> Array[String] {
-    if !lines.any?(\_.contains?("\x1b]7777;")) {
+    if !lines.any?(\_.contains?('\x1b]7777;')) {
         return lines
     }
     [unmark(line, row, dx, dy) for line; row in lines]
@@ -5137,14 +5165,14 @@ fn unmark(line: String, row: Int, dx: Int, dy: Int) -> String {
     if _cursor == nil and let [_, shape] = line[at;].match(CURSOR_MARK) {
         _cursor = (row + dy, line[;at].width() + dx, shape)
     }
-    line.sub(CURSOR_MARK, '')
+    line.comb(CURSOR_MARK)
 }
 
 fn title-escape() -> String {
     if _title == _title-sent {
         return ''
     }
-    let push = (_title-sent == nil) ? "\x1b[22;0t" : ''
+    let push = (_title-sent == nil) ? '\x1b[22;0t' : ''
     _title-sent = _title ?? ''
     "{push}\x1b]0;{_title ?? ''}\x07"
 }
@@ -5160,10 +5188,10 @@ fn cursor-shape-escape(shape: String) -> String {
 fn release-terminal-state() -> String {
     let out = Blob()
     if _shape-sent != nil {
-        out.push("\x1b[0 q")
+        out.push('\x1b[0 q')
     }
     if _title-sent != nil {
-        out.push("\x1b[23;0t")
+        out.push('\x1b[23;0t')
     }
     _shape-sent  = nil
     _title-sent  = nil
@@ -5175,7 +5203,7 @@ fn release-terminal-state() -> String {
 
 fn paint-inline(output: Output, cols: Int) {
     _out.clear()
-    _out.push("\x1b[?2026h\x1b[?7l\x1b[?25l")
+    _out.push('\x1b[?2026h\x1b[?7l\x1b[?25l')
     _out.push(title-escape())
     push-uploads()
     _cursor = nil
@@ -5183,14 +5211,14 @@ fn paint-inline(output: Output, cols: Int) {
     if _last-inline-height > 0 {
         _out.push("\x1b[{_last-inline-height}A\r")
     }
-    _out.push("\x1b[0J")
+    _out.push('\x1b[0J')
     let bg = _bg-global-sgr
-    let bg-off = (#bg > 0) ? "\x1b[49m" : ''
-    for line in lines {
+    let bg-off = (#bg > 0) ? '\x1b[49m' : ''
+    for lines {
         if #bg > 0 {
-            _out.push("{bg}{restore-global-bg(line, bg)}{bg-off}\n")
+            _out.push("{bg}{restore-global-bg(it, bg)}{bg-off}\n")
         } else {
-            _out.push("{line}\n")
+            _out.push("{it}\n")
         }
     }
     _last-inline-height = #lines
@@ -5201,10 +5229,10 @@ fn paint-inline(output: Output, cols: Int) {
         if col > 0 {
             _out.push("\x1b[{col}C")
         }
-        _out.push("\x1b[?25h")
+        _out.push('\x1b[?25h')
         _last-inline-height = row
     }
-    _out.push("\x1b[?7h\x1b[?2026l")
+    _out.push('\x1b[?7h\x1b[?2026l')
     write(1, _out)
 }
 
@@ -5212,7 +5240,9 @@ pub fn ink-write(*args) {
     if _anchored? {
         _out.clear()
         anchor-release()
-        for arg in args { _out.push("{arg}") }
+        for args {
+            _out.push("{it}")
+        }
         write(1, _out)
         if args.any?(a -> #"{a}" > 0) {
             _rehome = 'push'
@@ -5223,8 +5253,10 @@ pub fn ink-write(*args) {
     if _last-inline-height > 0 {
         _out.push("\x1b[{_last-inline-height}A\r")
     }
-    _out.push("\x1b[0J")
-    for arg in args { _out.push("{arg}") }
+    _out.push('\x1b[0J')
+    for args {
+        _out.push("{it}")
+    }
     _last-inline-height = 0
     _last-output = nil
     write(1, _out)
@@ -5232,12 +5264,12 @@ pub fn ink-write(*args) {
 
 pub fn ink-clear() {
     if !_anchored? {
-        ink-write("\x1b[2J\x1b[H")
+        ink-write('\x1b[2J\x1b[H')
         return
     }
     _out.clear()
     anchor-release()
-    _out.push("\x1b[{_rows};1H{"\n" * _top}")
+    _out.push("\x1b[{_rows};1H{'\n' * _top}")
     write(1, _out)
     _tail   = []
     _logged = []
@@ -5261,14 +5293,14 @@ pub fn ink-log(*args) {
     if _last-inline-height > 0 {
         _out.push("\x1b[{_last-inline-height}A\r")
     }
-    _out.push("\x1b[0J")
+    _out.push('\x1b[0J')
     for arg in args {
         match arg {
             (n: Node) or (n: Component) => {
                 let (output, _) = layout-node(n, _tio ? _tio.size().1 : 80)
                 push-uploads()
-                for line in output.lines {
-                    _out.push("{line}\n")
+                for output.lines {
+                    _out.push("{it}\n")
                 }
             },
             _ => _out.push("{arg}\n")
@@ -5292,14 +5324,14 @@ let __tls::_rehome:  String | nil                 = nil
 fn log-lines(arg: _, cols: Int) -> Array[String] {
     match arg {
         (n: Node) or (n: Component) => layout-node(n, cols).0.lines,
-        _                           => "{arg}".split("\n")
+        _                           => "{arg}".split('\n')
     }
 }
 
 fn remember(arg: _, lines: Array[String]) {
     _logged.push((arg, #lines))
-    for line in lines {
-        _tail.push(line)
+    for lines {
+        _tail.push(it)
     }
     let cap = max(2 * _rows, 256)
     let drop = 0
@@ -5318,8 +5350,8 @@ fn relayout(cols: Int) {
     let entries = _logged.map(\_.0)
     _logged = []
     _tail   = []
-    for e in entries {
-        remember(e, log-lines(e, cols))
+    for entries {
+        remember(it, log-lines(it, cols))
     }
 }
 
@@ -5328,14 +5360,12 @@ fn anchor-row(r: Int) -> String {
 }
 
 fn anchor-release() {
-    if _rows == 0 {
-        return
-    }
+    return if _rows == 0
     let start = max(min(_top, _rows - _owned), 0)
     if start < _top {
         _out.push("\x1b[{start + 1};1H")
-        for r in start.._top {
-            _out.push("\x1b[2K{anchor-row(r)}{RST}\r\n")
+        for start.._top {
+            _out.push("\x1b[2K{anchor-row(it)}{RST}\r\n")
         }
     }
     _out.push("\x1b[{_top + 1};1H\x1b[0J")
@@ -5363,15 +5393,15 @@ fn anchor-log(args: Array[_]) {
     }
     let cols = _cols
     _out.clear()
-    _out.push("\x1b[?2026h\x1b[?7l\x1b[?25l")
+    _out.push('\x1b[?2026h\x1b[?7l\x1b[?25l')
     if _rehome != nil {
         rehome(_rows, _cols, #_live)
     }
     anchor-release()
-    for arg in args {
-        let lines = log-lines(arg, cols)
+    for args {
+        let lines = log-lines(it, cols)
         push-uploads()
-        remember(arg, lines)
+        remember(it, lines)
         for line in lines {
             _out.push("\x1b[2K{line}{RST}\r\n")
         }
@@ -5379,28 +5409,28 @@ fn anchor-log(args: Array[_]) {
     }
     let room = _rows - #_live
     if _top > room {
-        _out.push("\x1b[{_rows};1H{"\n" * (_top - room)}")
+        _out.push("\x1b[{_rows};1H{'\n' * (_top - room)}")
         _top = room
     }
     anchor-show(_live, room)
     _owned = #_live
     anchor-cursor()
-    _out.push("\x1b[?7h\x1b[?2026l")
+    _out.push('\x1b[?7h\x1b[?2026l')
     write(1, _out)
 }
 
 fn rehome(rows: Int, cols: Int, h: Int) {
     if _rehome == 'push' {
-        _out.push("\r{"\n" * (rows - 1)}")
+        _out.push("\r{'\n' * (rows - 1)}")
         _top = 0
     } else {
-        _out.push((_rehome == 'reset') ? "\x1b[H\x1b[2J" : "\r{"\n" * (rows - 1)}\x1b[H")
+        _out.push((_rehome == 'reset') ? '\x1b[H\x1b[2J' : "\r{'\n' * (rows - 1)}\x1b[H")
         if cols != _cols {
             relayout(cols)
         }
         _top = min(#_tail, max(rows - h, 0), rows - 1)
-        for line in _tail[#_tail - _top;] {
-            _out.push("\x1b[2K{line}{RST}\r\n")
+        for _tail[#_tail - _top;] {
+            _out.push("\x1b[2K{it}{RST}\r\n")
         }
     }
     _rehome = nil
@@ -5409,7 +5439,7 @@ fn rehome(rows: Int, cols: Int, h: Int) {
 
 fn paint-anchored(output: Output, rows: Int, cols: Int) {
     _out.clear()
-    _out.push("\x1b[?2026h\x1b[?7l\x1b[?25l")
+    _out.push('\x1b[?2026h\x1b[?7l\x1b[?25l')
     _out.push(title-escape())
     push-uploads()
 
@@ -5425,8 +5455,8 @@ fn paint-anchored(output: Output, rows: Int, cols: Int) {
     _cols = cols
 
     let lift = 0
-    for ov in _overlays {
-        lift = max(lift, -ov.y)
+    for _overlays {
+        lift = max(lift, -it.y)
     }
     lift = min(lift, rows - h)
     let base = [anchor-row(rows - h - lift + i) for i in ..lift]
@@ -5452,7 +5482,7 @@ fn paint-anchored(output: Output, rows: Int, cols: Int) {
         _spot = (row - over - lift, col, shape)
     }
     anchor-cursor()
-    _out.push("\x1b[?7h\x1b[?2026l")
+    _out.push('\x1b[?7h\x1b[?2026l')
     write(1, _out)
 }
 
@@ -5467,7 +5497,7 @@ let __tls::_screen-touched?: Bool = false
 
 fn paint-fullscreen(output: Output, rows: Int, cols: Int) {
     _out.clear()
-    _out.push("\x1b[?2026h\x1b[?7l")
+    _out.push('\x1b[?2026h\x1b[?7l')
     push-uploads()
     let old-kitties = _prev-kitties
     for id in old-kitties if id not in _kitties {
@@ -5493,28 +5523,28 @@ fn paint-fullscreen(output: Output, rows: Int, cols: Int) {
             _out.push(cursor-shape-escape(shape))
             _out.push("\x1b[{row + 1};{col + 1}H")
             if _cursor-shown == nil {
-                _out.push("\x1b[?25h")
+                _out.push('\x1b[?25h')
             }
         },
         nil => {
             if _cursor-shown != nil {
-                _out.push("\x1b[?25l")
+                _out.push('\x1b[?25l')
             }
         }
     }
     _cursor-shown = _cursor
-    for ki in _kitty-images {
-        if ki.fresh? || ki.id not in old-kitties {
-            if ki.id in old-kitties {
-                _out.push(kitty-delete(ki.id))
+    for _kitty-images {
+        if it.fresh? || it.id not in old-kitties {
+            if it.id in old-kitties {
+                _out.push(kitty-delete(it.id))
             }
-            _out.push("\x1b[{ki.oy + 1};{ki.ox + 1}H")
-            _out.push(ki.escape)
+            _out.push("\x1b[{it.oy + 1};{it.ox + 1}H")
+            _out.push(it.escape)
         }
     }
     _prev-kitties = _kitties
     _kitties = []
-    _out.push("\x1b[?7h\x1b[?2026l")
+    _out.push('\x1b[?7h\x1b[?2026l')
     write(1, _out)
 }
 
@@ -5528,8 +5558,8 @@ fn paint-debug-borders(tree: Element, rows: Int) {
     fn find-deepest(el: Element) -> Element | nil {
         if mx < el.x || mx >= el.x + el.w { return nil }
         if my < el.y || my >= el.y + el.h { return nil }
-        for child in el.children[;;-1] {
-            let $found = find-deepest(child) or continue
+        for el.children[;;-1] {
+            let $found = find-deepest(it) or continue
             return found
         }
         el
@@ -5538,17 +5568,16 @@ fn paint-debug-borders(tree: Element, rows: Int) {
     let $target = find-deepest(tree) or return
 
     fn draw-el(el: Element, color: String) {
-        if el.w == 0 || el.h == 0 { return }
+        return if el.w == 0 || el.h == 0
         let c = color
         let x = el.x + 1
         let y = el.y + 1
         let w = el.w
         let h = el.h
 
-        let name = if let $comp = el.component {
-            "{type(comp)}".comb(/^<class |>$/)
-        } else {
-            ''
+        let name = match el.component {
+            $comp => "{type(comp)}".comb(/^<class |>$/),
+            _     => ''
         }
 
         for row in ..h if y + row >= 1 && y + row <= rows {
@@ -5567,11 +5596,15 @@ fn paint-debug-borders(tree: Element, rows: Int) {
 
         if y >= 1 && y <= rows {
             _out.push("\x1b[{y};{x}H{c}┌{RST}")
-            if w > 1 { _out.push("\x1b[{y};{x + w - 1}H{c}┐{RST}") }
+            if w > 1 {
+                _out.push("\x1b[{y};{x + w - 1}H{c}┐{RST}")
+            }
         }
         if h >= 2 && y + h - 1 <= rows {
             _out.push("\x1b[{y + h - 1};{x}H{c}└{RST}")
-            if w > 1 { _out.push("\x1b[{y + h - 1};{x + w - 1}H{c}┘{RST}") }
+            if w > 1 {
+                _out.push("\x1b[{y + h - 1};{x + w - 1}H{c}┘{RST}")
+            }
         }
 
         let label = "{name} {w}×{h} @ ({el.x},{el.y})"
@@ -5581,7 +5614,7 @@ fn paint-debug-borders(tree: Element, rows: Int) {
     }
 
     _out.clear()
-    draw-el(target, "\x1b[93m")
+    draw-el(target, '\x1b[93m')
     write(1, _out)
 }
 
@@ -5625,8 +5658,8 @@ fn mouse-xy(ev) -> (Int, Int) | nil {
 }
 
 fn hit-path(tree: Element, x: Int, y: Int) -> Array[Element] {
-    for ov in _overlays[;;-1] {
-        if let $path = ov.el.hit(x, y) {
+    for _overlays[;;-1] {
+        if let $path = it.el.hit(x, y) {
             return path
         }
     }
@@ -5635,8 +5668,8 @@ fn hit-path(tree: Element, x: Int, y: Int) -> Array[Element] {
 
 fn path-components(path: Array[Element]) -> Array[Component] {
     let comps: Array[Component] = []
-    for el in path {
-        if let $c = el.component {
+    for path {
+        if let $c = it.component {
             comps.push(c)
         }
     }
@@ -5647,8 +5680,8 @@ fn component-chain(el: Element, target: Component) -> Array[Component] | nil {
     if el.component == target {
         return [target]
     }
-    for child in el.children {
-        if let $chain = component-chain(child, target) {
+    for el.children {
+        if let $chain = component-chain(it, target) {
             if let $c = el.component {
                 chain.push(c)
             }
@@ -5660,11 +5693,9 @@ fn component-chain(el: Element, target: Component) -> Array[Component] | nil {
 
 fn call-prop-handlers(path: Array[Element], ev: InkEvent, name: String, app: Component) -> Bool {
     let handled? = false
-    for el in path {
-        if ev.stopped? {
-            break
-        }
-        if let $handler = el.props[name] {
+    for path {
+        break if ev.stopped?
+        if let $handler = it.props[name] {
             handler(ev)
             handled? = true
         }
@@ -5699,9 +5730,7 @@ fn bubble(comps: Array[Component], ev) -> Exit | Bool {
 }
 
 fn set-focus(c: Component | nil) {
-    if _focused == c {
-        return
-    }
+    return if _focused == c
     debug!("focus -> {type(c)}")
     _focused.?focus!(false)
     _focused = c
@@ -5879,16 +5908,14 @@ fn dev-target(req: Dict[String, Any]) -> Component {
 }
 
 fn field-key(name: String) -> String {
-    name.sub(/\$\d+$/, '').sub(/^_+/, '').sub(/-(\w)/, m -> m[1].upper())
+    name.comb(/\$\d+$/).comb(/^_+/).sub(/-(\w)/, m -> m[1].upper())
 }
 
 fn dev-fields(c: Component) -> Dict[String, Any] {
     let fields: Dict[String, Any] = %{}
     for name, v in members(c) {
-        let base = name.sub(/\$\d+$/, '')
-        if base in DEV_SKIP || base == '_propNames' || !plain-value?(v) {
-            continue
-        }
+        let base = name.comb(/\$\d+$/)
+        continue if base in DEV_SKIP || base == '_propNames' || !plain-value?(v)
         fields[base] = v
     }
     fields
@@ -5946,8 +5973,8 @@ fn dev-exec(req: Dict[String, Any]) -> Any {
             true
         },
         'text' => do {
-            for ch in (req['text'] ?? '').chars() {
-                _event-queue.put(event.Text(ch))
+            for (req['text'] ?? '').chars() {
+                _event-queue.put(event.Text(it))
             }
             true
         },
@@ -5997,9 +6024,9 @@ pub fn serve(path: String) {
             Thread(fn () {
                 let reader = io.LineReader(conn)
                 while reader.fill() {
-                    for line in reader {
-                        if #line.trim() > 0 {
-                            write(conn, "{dev-request(line)}\n")
+                    for reader {
+                        if #it.trim() > 0 {
+                            write(conn, "{dev-request(it)}\n")
                         }
                     }
                 }
@@ -6081,13 +6108,13 @@ pub fn run(
     fn enter-screen() {
         _out.clear()
         if fullscreen {
-            _out.push("\x1b[?1049h\x1b[?25l")
+            _out.push('\x1b[?1049h\x1b[?25l')
             if #_bg-global-sgr > 0 {
                 _out.push(_bg-global-sgr)
-                _out.push("\x1b[2J")
+                _out.push('\x1b[2J')
             }
         } else {
-            _out.push("\x1b[?25l")
+            _out.push('\x1b[?25l')
             _last-inline-height = 0
         }
         _alt?      = false
@@ -6134,7 +6161,7 @@ pub fn run(
         tio.stop()
         let restore = release-terminal-state()
         if _alt? {
-            write(1, "\x1b[?1049l")
+            write(1, '\x1b[?1049l')
             _alt? = false
         }
         if fullscreen {
@@ -6157,9 +6184,9 @@ pub fn run(
             set-title(title)
         }
         if fullscreen {
-            write(1, "\x1b[?1049h\x1b[?25l")
+            write(1, '\x1b[?1049h\x1b[?25l')
         } else {
-            write(1, "\x1b[?25l")
+            write(1, '\x1b[?25l')
         }
         if _anchored? {
             _rehome = 'reprint'
@@ -6186,15 +6213,15 @@ pub fn run(
         }
         _out.clear()
         if fullscreen {
-            _out.push("\x1b[?25h\x1b[?1049l")
+            _out.push('\x1b[?25h\x1b[?1049l')
         } else if _anchored? {
             anchor-release()
-            _out.push("\x1b[?25h")
+            _out.push('\x1b[?25h')
         } else {
             if _last-inline-height < (_last-output.?height ?? 0) {
                 _out.push("\x1b[{(_last-output.?height ?? 0) - _last-inline-height}B")
             }
-            _out.push("\r\x1b[?25h\n")
+            _out.push('\r\x1b[?25h\n')
         }
         _out.push(release-terminal-state())
         write(1, _out)
@@ -6210,12 +6237,12 @@ pub fn run(
             invalidate-screen()
             return
         }
-        write(1, "\x1b[?1049l")
+        write(1, '\x1b[?1049l')
         _alt? = false
         let held = _held
         _held = []
-        for args in held {
-            ink-log(*args)
+        for held {
+            ink-log(*it)
         }
     }
 
@@ -6259,7 +6286,7 @@ pub fn run(
                 _rehome = 'reset'
             } else {
                 _last-inline-height = 0
-                _out.push("\x1b[2J\x1b[H")
+                _out.push('\x1b[2J\x1b[H')
             }
             write(1, _out)
             dirty = true
@@ -6317,9 +6344,7 @@ pub fn run(
             } else {
                 break break if handle(ev)
             }
-            if dirty && now() - last-paint >= frame {
-                break
-            }
+            break if dirty && now() - last-paint >= frame
         }
 
         if process-timers() {
@@ -6355,7 +6380,9 @@ pub class TestHarness {
         set-theme(__theme-colors)
 
         if app :: Component {
-            if !app.mounted? { app.mount!() }
+            if !app.mounted? {
+                app.mount!()
+            }
         }
 
         repaint()
@@ -6412,15 +6439,19 @@ pub class TestHarness {
 
     send(ev) {
         let r = __dispatch(ev)
-        if r == Exit { return Exit }
+        if r == Exit {
+            return Exit
+        }
         process-timers()
         repaint()
     }
 
     send-text(s: String) {
-        for ch in s.chars() {
-            let r = __dispatch(event.Text(ch))
-            if r == Exit { return Exit }
+        for s.chars() {
+            let r = __dispatch(event.Text(it))
+            if r == Exit {
+                return Exit
+            }
         }
         process-timers()
         repaint()
@@ -6449,7 +6480,9 @@ pub class TestHarness {
 
     find(cls) {
         for path, comp in _fibers {
-            if comp :: cls { return comp }
+            if comp :: cls {
+                return comp
+            }
         }
         nil
     }
@@ -6457,7 +6490,9 @@ pub class TestHarness {
     find-all(cls) -> Array[Component] {
         let result: Array[Component] = []
         for path, comp in _fibers {
-            if comp :: cls { result.push(comp) }
+            if comp :: cls {
+                result.push(comp)
+            }
         }
         result
     }

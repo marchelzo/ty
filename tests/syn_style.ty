@@ -1,0 +1,366 @@
+import syn
+import syn.lint as lint
+import syn.style as style
+import ty.test (Test)
+import support.process (run)
+
+fn tidy(src: String) -> String { lint.fix(src, style.RULES, max-rounds=40).source }
+
+fn rules-hit(src: String) -> Array[String] {
+    lint.check(syn.parse(src, semantic=true), style.RULES).map(&.rule).uniq()
+}
+
+fn same(before: String, after: String) {
+    let got = tidy(before)
+    assert(got == after, got)
+    assert(tidy(after) == after)
+}
+
+pub fn bare-jumps-become-postfix() {
+    same(
+        "fn f(t: Int | nil) \{\n    if !t \{ return \}\n    print(t)\n\}\n",
+        "fn f(t: Int | nil) \{\n    return if !t\n    print(t)\n\}\n"
+    )
+    same(
+        "for x in [1] \{\n    if x > 0 \{ continue \}\n\}\n",
+        "for [1] \{\n    continue if it > 0\n\}\n"
+    )
+}
+
+pub fn value-ifs-become-conditionals() {
+    same(
+        "fn f(secure: Bool) -> String \{\n    let s = if secure \{ 'TRUE' \} else \{\n        'FALSE'\n    \}\n    s\n\}\n",
+        "fn f(secure: Bool) -> String \{\n    let s = secure ? 'TRUE' : 'FALSE'\n    s\n\}\n"
+    )
+}
+
+pub fn if-let-values-become-match() {
+    same(
+        "
+fn f(c: (String, Int) | nil) -> String \{
+    let name = if let ($n, _) = c \{
+        n
+    \} else \{
+        'none'
+    \}
+    name
+\}
+"[1;],
+        "
+fn f(c: (String, Int) | nil) -> String \{
+    let name = match c \{
+        ($n, _) => n,
+        _       => 'none'
+    \}
+    name
+\}
+"[1;]
+    )
+}
+
+pub fn comprehensions-keep-their-clauses-together() {
+    same(
+        "
+fn f(xs: Array[(Int, String)], wanted: String) -> Array[String] \{
+    [
+        cookie for _,
+        cookie in xs if cookie.size() > 0 && cookie.match?(/^\\w+$/) && cookie != wanted
+    ]
+\}
+"[1;],
+        "
+fn f(xs: Array[(Int, String)], wanted: String) -> Array[String] \{
+    [
+        cookie
+        for _, cookie in xs
+        if cookie.size() > 0 && cookie.match?(/^\\w+$/) && cookie != wanted
+    ]
+\}
+"[1;]
+    )
+}
+
+pub fn named-arguments-have-no-spaces() {
+    same("print(1, end = '', sep = ' ')\n", "print(1, end='', sep=' ')\n")
+}
+
+pub fn statements-get-their-own-lines() {
+    same(
+        "fn f(xs: Array[Int]) -> Array[Int] \{\n    xs.push(\n        1\n    ); xs\n\}\n",
+        "fn f(xs: Array[Int]) -> Array[Int] \{\n    xs.push(\n        1\n    );\n    xs\n\}\n"
+    )
+}
+
+pub fn else-follows-the-closing-brace() {
+    let expanded = "
+fn f(t: Int) -> Float \{
+    if t > 0 \{
+        1.0 / (t as Float)
+    \} else \{
+        0.0
+    \}
+\}
+"[1;]
+    same(
+        "
+fn f(t: Int) -> Float \{
+    if t > 0 \{
+        1.0 / (t as Float)
+    \}
+        else \{
+            0.0
+        \}
+\}
+"[1;],
+        expanded
+    )
+    same(expanded.replace(/\}\s*else \{\s*0.0\s*\}/, '} else { 0.0 }'), expanded)
+}
+
+pub fn match-arms-line-up() {
+    same(
+        "
+fn f(field: String, value: String) \{
+    let data = []
+    match field \{
+        'data' => \{ data.push(value) \},
+        'event' => \{ print(value) \},
+        _ => \{\}
+    \}
+\}
+"[1;],
+        "
+fn f(field: String, value: String) \{
+    let data = []
+    match field \{
+        'data'  => \{ data.push(value) \},
+        'event' => \{ print(value)     \},
+        _       => \{\}
+    \}
+\}
+"[1;]
+    )
+}
+
+pub fn one-line-if-else-lines-up() {
+    same(
+        "fn f(h: _, v: Int) \{\n    if h :: Int \{ print(h, v) \}\n    else \{ print(v) \}\n\}\n",
+        "fn f(h: _, v: Int) \{\n    if h :: Int \{ print(h, v) \}\n    else        \{ print(v)    \}\n\}\n"
+    )
+}
+
+pub fn one-line-statements-are-expanded() {
+    same(
+        "fn f(r: Int) \{\n    if r != 0 \{ throw ValueError('bad') \}\n\}\n",
+        "fn f(r: Int) \{\n    if r != 0 \{\n        throw ValueError('bad')\n    \}\n\}\n"
+    )
+    same(
+        "fn f(s: _) \{\n    while s.poll(10) \{\}\n\}\n",
+        "fn f(s: _) \{\n    while s.poll(10) \{\n        ;\n    \}\n\}\n"
+    )
+    same(
+        "fn f(xs: Array[Int]) \{\n    for x in xs \{ print(x) \}\n\}\n",
+        "fn f(xs: Array[Int]) \{\n    for xs \{\n        print(it)\n    \}\n\}\n"
+    )
+}
+
+pub fn sugared-loops-never-capture() {
+    let kept = "
+fn f(xs: Array[Int]) \{
+    for x in xs \{
+        let g = -> x
+        print(g())
+    \}
+    for y in xs \{
+        print([y for xs])
+    \}
+    for it in xs \{
+        print(it)
+    \}
+\}
+"[1;]
+    same(kept, kept)
+}
+
+pub fn comb-and-where() {
+    same("fn f(l: String) -> String \{ l.sub(/^\\* ?/, '') \}\n", "fn f(l: String) -> String \{ l.comb(/^\\* ?/) \}\n")
+    same(
+        "fn f(xs: Array[_]) -> Array[String] \{\n    [str(it.long) for xs if it.long != nil]\n\}\n",
+        "fn f(xs: Array[_]) -> Array[String] \{\n    [str(long) for xs if long != nil where long = it.long]\n\}\n"
+    )
+}
+
+pub fn advice-without-fixes() {
+    let bare = "fn f(a: _, b: String) -> String \{\n    str(if a != nil \{\n        a ? 'x' : 'y'\n    \} else \{\n        b\n    \})\n\}\n"
+    assert(rules-hit(bare) == ['bare-if-argument'])
+    let repeated = "fn f(s: _) -> _ \{\n    let a = s == nil ? 1 : 2\n    let b = s == nil ? 3 : 4\n    let c = s == nil ? 5 : 6\n    (a, b, c)\n\}\n"
+    assert(rules-hit(repeated) == ['repeated-condition'])
+}
+
+pub fn rewrites-never-merge-with-neighbours() {
+    let jumps = "
+fn f(xs: Array[Int]) \{
+    while true \{
+        let $x = xs.pop() or break
+        if x == 0 \{ break \}
+    \}
+\}
+"[1;]
+    assert(!tidy(jumps).match?(/^\s*break if/m), tidy(jumps))
+    let continued = "
+fn f(c: Bool) -> Int \{
+    let n = if c \{ 1 \} else \{ 2 \}
+    -n
+\}
+"[1;]
+    assert('?' not in tidy(continued), tidy(continued))
+}
+
+pub fn templates-are-left-alone() {
+    let src = "let q = $$[ if a \{ b \} else \{ c \} $$]\n"
+    same(src, src)
+}
+
+pub fn rules-load-from-the-command-line(t: Test) {
+    let file = t.tmp-dir() / 'jumps.ty'
+    file.write("fn f(t: Int | nil) \{\n    if !t \{ return \}\n    print(t)\n\}\n")
+    let args = ['--lint', '--rules', 'lib/syn/style.ty', '--select', 'postfix-jump']
+    let out = run([*args, str(file)])
+    assert(out.status == 1 && 'postfix-jump' in out.stdout, out)
+    assert(run([*args, '--fix', str(file)]).status == 0)
+    assert(slurp(str(file)) == "fn f(t: Int | nil) \{\n    return if !t\n    print(t)\n\}\n")
+}
+
+pub fn alignment-counts-display-columns() {
+    same(
+        "fn f(c: String) -> Int \{\n    match c \{\n        '…' => 1,\n        'ab' => 2,\n        _ => 3\n    \}\n\}\n",
+        "fn f(c: String) -> Int \{\n    match c \{\n        '…'  => 1,\n        'ab' => 2,\n        _    => 3\n    \}\n\}\n"
+    )
+}
+
+pub fn breaking-inside-a-one-line-block-expands-it() {
+    same(
+        "
+class C \{
+    part(s: String) -> String | nil \{ s \}
+    interval -> Int \{ if let $s = part('I') \{ int(s) \} else \{ 1 \} \}
+\}
+"[1;],
+        "
+class C \{
+    part(s: String) -> String | nil \{ s \}
+    interval -> Int \{
+        match part('I') \{
+            $s => int(s),
+            _  => 1
+        \}
+    \}
+\}
+"[1;]
+    )
+}
+
+pub fn conditionals-keep-to-the-soft-limit() {
+    let src = "
+fn f(focusable: Bool, tree: Array[Int], focused: Int) -> Array[Int] \{
+    let chain = if focusable \{
+        tree.filter(x -> x != focused).map(x -> x * 2) ?? [focused]
+    \} else \{
+        []
+    \}
+    chain
+\}
+"[1;]
+    same(src, src)
+}
+
+pub fn runs-of-one-line-ifs-stay-and-line-up() {
+    same(
+        "
+fn f(p: Float, q: Float, t: Float) -> Float \{
+    if t < 0.0 \{ t += 1.0 \}
+    if t > 1.0 \{ t -= 1.0 \}
+    if t < 0.5 \{ return q \}
+    p
+\}
+"[1;],
+        "
+fn f(p: Float, q: Float, t: Float) -> Float \{
+    if t < 0.0 \{ t += 1.0 \}
+    if t > 1.0 \{ t -= 1.0 \}
+    if t < 0.5 \{ return q \}
+    p
+\}
+"[1;]
+    )
+    same(
+        "fn f(a: Bool, bb: Bool) \{\n    if a \{ print(1) \}\n    if bb \{ print(22) \}\n\}\n",
+        "fn f(a: Bool, bb: Bool) \{\n    if a  \{ print(1)  \}\n    if bb \{ print(22) \}\n\}\n"
+    )
+}
+
+pub fn aligned-named-arguments-are-kept() {
+    let src = "f(\n    tbl      = 1,\n    from-row = 2\n)\n"
+    same(src, src)
+}
+
+pub fn sugared-loops-stay-short-and-unnested() {
+    let long = "fn f(xs: Array[Int]) \{\n    for x in xs \{\n{'        print(x)\n' * 13}    \}\n\}\n"
+    same(long, long)
+    same(
+        "
+fn f(xs: Array[Int]) \{
+    for x in xs \{
+        print(x)
+        for y in xs \{
+            print(y)
+        \}
+    \}
+\}
+"[1;],
+        "
+fn f(xs: Array[Int]) \{
+    for xs \{
+        print(it)
+        for y in xs \{
+            print(y)
+        \}
+    \}
+\}
+"[1;]
+    )
+}
+
+pub fn multi-line-jumps-wait-for-a-first-pass() {
+    let src = "fn f(t: Int | nil) \{\n    if !t \{\n        return\n    \}\n    print(t)\n\}\n"
+    same(src, src)
+    let swept = lint.fix(src, [*style.RULES, *style.FIRST_PASS_RULES], max-rounds=40).source
+    assert(swept == "fn f(t: Int | nil) \{\n    return if !t\n    print(t)\n\}\n", swept)
+}
+
+pub fn strings-take-the-plainest-quotes() {
+    same(
+        "let a = \"plain\"\nlet b = \"it's\"\nlet c = \"\\\{ \\\"q\\\"\"\nlet d = 'don\\'t'\n",
+        "let a = 'plain'\nlet b = \"it's\"\nlet c = '\{ \"q\"'\nlet d = \"don't\"\n"
+    )
+}
+
+pub fn multi-line-strings-use-triple-quotes() {
+    let src = "fn f(a: String) -> String \{\n    let s = \"\nx \{a\}\n  y\n\"[1;]\n    let r = 'p\nq'\n    \"\{s\}\{r\}\"\n\}\n"
+    let want = "fn f(a: String) -> String \{\n    let s = \"\"\"\n    x \{a\}\n      y\n\n    \"\"\"\n    let r = '''\n    p\n    q\n    '''\n    \"\{s\}\{r\}\"\n\}\n"
+    same(src, want)
+}
+
+pub fn concatenation-becomes-interpolation() {
+    same(
+        "fn f(a: String, n: Int, x: String | nil) -> String \{\n    a + ' and ' + str(n) + (x ?? '') + \"q\{a\}\" + '\{'\n\}\n",
+        "fn f(a: String, n: Int, x: String | nil) -> String \{\n    \"\{a\} and \{n\}\{x ?? ''\}q\{a\}\\\{\"\n\}\n"
+    )
+    let numbers = "fn f(a: Int) -> Int \{\n    a + 1 + 2\n\}\n"
+    same(numbers, numbers)
+}
+
+pub fn markup-attributes-keep-double-quotes() {
+    let src = "import ink (..)\nlet t = <Text style=\"bold\">hi</Text>\n"
+    same(src, src)
+}

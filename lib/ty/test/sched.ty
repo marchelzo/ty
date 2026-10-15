@@ -39,9 +39,7 @@ pub fn read-from(file: String, offset: Int) -> String {
     os.lseek(fd, offset, os.SEEK_SET)
     let buf = Blob()
     while os.read(fd, buf, 65536) > 0 {
-        if #buf > 4 * TAIL_LIMIT {
-            break
-        }
+        break if #buf > 4 * TAIL_LIMIT
     }
     os.close(fd)
     buf.str()
@@ -124,9 +122,7 @@ pub class Proc {
         let rounds = 0
         while #__fds > 0 && rounds < 64 {
             let hits: Array[(Int, Int)] = []
-            if os.poll(fds(), hits, 0) <= 0 {
-                break
-            }
+            break if os.poll(fds(), hits, 0) <= 0
             for (fd, _) in hits {
                 ready(fd)
             }
@@ -160,9 +156,7 @@ pub class Proc {
     }
 
     reap-blocking() {
-        if self.status != nil {
-            return
-        }
+        return if self.status != nil
         if let $r = os.wait4(self.pid, 0) {
             take(r)
         }
@@ -322,15 +316,13 @@ pub class Sched {
             check-interrupt()
             check-fail()
             fill()
-            if #__live == 0 && (self.stopping != nil || #self.queue == 0) {
-                break
-            }
+            break if #__live == 0 && (self.stopping != nil || #self.queue == 0)
             wait()
             service()
         }
-        for job in self.queue {
-            if job.attempt > 0 {
-                job-done(job, events.status('killed', phase: 'interrupt'))
+        for self.queue {
+            if it.attempt > 0 {
+                job-done(it, events.status('killed', phase: 'interrupt'))
             }
         }
         if self.stopping == nil {
@@ -348,9 +340,7 @@ pub class Sched {
 
     check-interrupt() {
         let n = __interrupts()
-        if n == 0 {
-            return
-        }
+        return if n == 0
         if self.stopping != 'interrupt' {
             self.stopping = 'interrupt'
             __term-at = time.now() + TERM_GRACE
@@ -374,9 +364,7 @@ pub class Sched {
             return
         }
         __dirty? = false
-        if __failures() < limit {
-            return
-        }
+        return if __failures() < limit
         self.stopping = 'fail-fast'
         for __live {
             it.kill-reason = 'stop'
@@ -488,8 +476,8 @@ pub class Sched {
 
     next-deadline() -> ?Float {
         let soonest = __term-at
-        for w in __live {
-            let $d = w.deadline or continue
+        for __live {
+            let $d = it.deadline or continue
             soonest = min(d, soonest ?? d)
         }
         soonest
@@ -507,9 +495,9 @@ pub class Sched {
         let hits: Array[(Int, Int)] = []
         os.poll(fds, hits, timeout)
         for (fd, _) in hits {
-            for w in __live {
-                if w.proc.owns?(fd) {
-                    w.proc.ready(fd)
+            for __live {
+                if it.proc.owns?(fd) {
+                    it.proc.ready(fd)
                     break
                 }
             }
@@ -517,14 +505,14 @@ pub class Sched {
     }
 
     service() {
-        for w in [*__live] {
-            pump(w)
-            if w.proc.reap() {
-                w.proc.drain()
-                pump(w, final?: true)
-                finish(w)
+        for [*__live] {
+            pump(it)
+            if it.proc.reap() {
+                it.proc.drain()
+                pump(it, final?: true)
+                finish(it)
             } else {
-                check-deadline(w)
+                check-deadline(it)
             }
         }
     }
@@ -560,9 +548,7 @@ pub class Sched {
     on-collect(w: Live, ev: Event) {
         let job = w.job
         w.collected? = true
-        if job.script? {
-            return
-        }
+        return if job.script?
         let ids: Array[String] = []
         for get-events(ev, 'tests') {
             let id = get-str(it, 'id') ?? ''
@@ -616,9 +602,7 @@ pub class Sched {
         if !(w.job.rc in [nil, 0, 5]) {
             self.bad-rc += 1
         }
-        if w.job.script? {
-            return
-        }
+        return if w.job.script?
         w.phase    = 'teardown'
         w.deadline = time.now() + TEARDOWN_TIMEOUT
         emit(ev)
@@ -665,9 +649,9 @@ pub class Sched {
             ),
             $r :: r.match?(/^timeout-/) => do {
                 let phase = match w.phase {
-                    'between' => 'test',
+                    'between'                => 'test',
                     'load' and w.job.script? => 'test',
-                    ph => ph,
+                    ph                       => ph,
                 }
                 events.status('timeout', signal: 'SIGKILL', phase: phase)
             },
@@ -695,9 +679,7 @@ pub class Sched {
         }
         if let $open = w.open {
             synth-death(w, open)
-            if respawn?(w) {
-                return
-            }
+            return if respawn?(w)
         } else if w.collected? && !w.ended? {
             let why = (w.kill-reason == 'timeout-between')
                     ? "worker stalled for {load-limit(job)}s between tests"
@@ -713,7 +695,7 @@ pub class Sched {
             return false
         }
         if job.attempt - 1 < self.cfg.max-respawns && self.stopping == nil {
-            write(job.skip-path, "{job.finished.keys().join("\n")}\n")
+            write(job.skip-path, "{job.finished.keys().join('\n')}\n")
             self.queue.insert(0, job)
             return true
         }
@@ -728,9 +710,9 @@ pub class Sched {
     }
 
     not-run(w: Live, why: String) {
-        for id in w.job.remaining() {
-            w.job.finished[id] = true
-            let ev = events.test-end(id, 'error', reason: "not run ({why})")
+        for w.job.remaining() {
+            w.job.finished[it] = true
+            let ev = events.test-end(it, 'error', reason: "not run ({why})")
             ev['worker'] = w.slot
             emit(ev)
         }
@@ -794,9 +776,9 @@ pub class Sched {
                 output: output,
                 signal: signal-name(sig)
             ),
-            (_, _, 0)    => events.test-end(id, 'pass', dur: dur),
-            (_, _, 77)   => events.test-end(id, 'skip', reason: first[0] ?? 'exit status 77'),
-            (_, _, c)    => events.test-end(id, 'exit', dur: dur, output: output, code: c),
+            (_, _, 0)  => events.test-end(id, 'pass', dur: dur),
+            (_, _, 77) => events.test-end(id, 'skip', reason: first[0] ?? 'exit status 77'),
+            (_, _, c)  => events.test-end(id, 'exit', dur: dur, output: output, code: c),
         }
         ev['worker'] = w.slot
         job.finished[id] = true

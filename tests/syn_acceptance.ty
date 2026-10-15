@@ -1,0 +1,133 @@
+import ty
+import ty.syntax
+import ty.mod as tmod
+import ty.test (Test)
+import path (Path)
+import syn
+import syn.lint as lint
+import syn.fmt as sf
+import support.process (run)
+
+let ROOT = Path(__file__).absolute.parent.parent
+
+fn module(source: String, deep: Bool = false) -> Module {
+    match ty.parse(source, deep=deep) {
+        Ok(m)  => m,
+        Err(e) => throw AssertionError(str(e.msg)),
+    }
+}
+
+fn corpus() -> Array[String] {
+    [str(f) for f in [*(ROOT / 'lib').rglob('*.ty'), *(ROOT / 'tests').rglob('*.ty')]]
+}
+
+pub fn phase0-parser-hygiene() {
+    let toks = module("let d = %\{1: 2\}\n#|if 1 == 1\nlet x = 1\n#|]\n").tokens
+    assert('' not in toks.map(&.type))
+    assert(toks.any?(\_.?hidden ?? false) && toks.any?(\_.?pp ?? false))
+    assert(module("﻿let x = 1").tokens[0].start.byte == 3)
+    assert(ty.parse('print("#|if 1")') :: Ok)
+    assert(ty.parse("fn f() \{\n    /// doc\n    1\n\}\n") :: Ok)
+    let seen = []
+    for c; i in str("a\nb") {
+        seen.push(i)
+    }
+    assert(seen == [0, 1, 2])
+    let src = "import support.deep_parse (counted)\nlet x = counted\n"
+    for _ in ..2 {
+        assert(ty.parse(src, deep=true, path=__file__) :: Ok)
+        ty.gc()
+    }
+    assert(ty.parse("import ty\nmacro m!(e) \{ ty.Array([ty.ArrayItem(item: e)]) \}\nlet v = m!(2)\n", deep=true, resolve=true) :: Ok)
+}
+
+pub fn phase1-spans-nest-everywhere() {
+    let bad = []
+    for f in corpus() {
+        let source = slurp(f) ?? ''
+        if let Ok(m) = ty.parse(source, path=f) {
+            bad += [v for v in ty.syntax.check(m)]
+        }
+    }
+    assert(bad == [], bad[;5])
+}
+
+pub fn phase2-fidelity-mode() {
+    let src = "namespace n \{\n    class C \{\n        y: Int\n        m(x: Int = 1) \{ k((a + b), z=1) \}\n        static s() \{ 1 \}\n    \}\n\}\nlet f = &.name\nif let [q] = xs \{ q \}\n#|if 1 == 1\nlet w = 1\n#|]\n"
+    let m = module(src)
+    let raw = ty.syntax.nodes(m)
+    let kinds = %[*raw.map(&.kind)]
+    for k in ['Namespace', 'Paren', 'Sugar', 'Param', 'Kwarg', 'Condition', 'PpRegion'] {
+        assert(k in kinds, k)
+    }
+    assert(raw.any?(&.synth))
+    assert([n.kind for n in ty.syntax.walk(m) if n.synth].any?(\_ == 'FUNCTION'))
+    let members = ty.syntax.members(m)
+    assert(#members == 0 || members.all?(ms -> ms == ms.sort(by=&.start)))
+    let t = syn.parse(src)
+    let sugar = t.nodes.find(\_.kind == 'Sugar') ?? t.root
+    assert(sugar.form == 'implicit-method' && #sugar.core > 0 && sugar.core.all?(&.synth))
+    assert(t.walk().all?(\!_.synth))
+    let paren = t.nodes.find(\_.kind == 'Paren') ?? t.root
+    assert(paren.own.map(&.text) == ['(', ')'] && paren.nodes[0].text == 'a + b')
+    let broken = syn.parse("let a = 1\nlet b = (\n")
+    assert(broken.nodes[-1].kind == 'ParseError' && broken.reprint() == broken.source)
+    let expanded = syn.parse("import jit (kernel!)\nkernel! fn k(x: Int) -> Int \{ x \}\n", deep=true)
+    assert(expanded.nodes.any?(\_.kind == 'MacroInvocation'))
+    assert(ty.parse('let a = 1') :: Ok)
+}
+
+pub fn phase3-lossless-tree() {
+    let bad = [f for f in corpus() if do {
+        let source = slurp(f) ?? ''
+        syn.parse(source, path=f).reprint() != source
+    }]
+    assert(bad == [], bad[;5])
+}
+
+pub fn phase4-patterns-run-in-c() {
+    let t = syn.parse("let a = xs.len() // why\nprint(1, 2)\nif a == a \{ b \}\nlet z = f(g(h(1)))\nlet p = 1\n\nlet q = 2\nlet r = &.name\n")
+    let found = fn (p: syn.Pattern) -> Int { #p.find-all(t) }
+    assert(found(syn$$[ $$x.len() $$]) == 1)
+    assert(found(syn$$[ print(*$$args) $$]) == 1)
+    assert(found(syn$$[ $$v == $$v $$]) == 1)
+    assert(found(syn$$[ $$(c :: Call) $$]) == 4)
+    assert(found(syn$$[ f($$(.. h($$k) ..)) $$]) == 1)
+    assert(found(syn$$[ $$(xs.len() or g($$_)) $$]) == 2)
+    assert(found(syn$$[ let $$v = $$_ $$<// $$c> $$]) == 1)
+    assert(found(syn$$[; let $$a = $$_ $$<blank> let $$b = $$_ $$]) == 1)
+    assert(found(syn$$[ $$(e :: implicit-method) $$]) == 1)
+    assert(found(syn.compile('print(1, 2)').with('cst')) == 1)
+    assert(found(syn$$[: Array[$$t] $$]) == 0)
+    assert(syn$$[ log(*$$args) $$].render(syn$$[ print(*$$args) $$].find-all(t)[0]) == 'log(1, 2)')
+}
+
+pub fn phase5-lint-and-fixes() {
+    let src = "fn f(xs) \{  \n    let n = xs.len()\n    let m = g().len() // ty: allow(len-call)\n    return nil\n\}\n"
+    let ds = lint.check(syn.parse(src), lint.DEFAULT_RULES)
+    assert(ds.map(&.rule) == ['trailing-whitespace', 'len-call', 'return-nil'], ds.map(str))
+    let out = lint.fix(src, lint.DEFAULT_RULES)
+    assert(out.diagnostics == [] && 'let n = #xs' in out.source && 'return nil' not in out.source)
+}
+
+pub fn phase6-formatters() {
+    let messy = "let x=[1,2]\nfn f(  a ) \{ a+1 \}   \n"
+    let canon = sf.canonical(messy)
+    assert(canon == "let x = [1, 2]\nfn f(a) \{ a + 1 \}\n", canon)
+    assert(sf.canonical(canon) == canon)
+    assert(sf.tidy(messy) == "let x=[1,2]\nfn f(  a ) \{ a+1 \}\n")
+    assert(sf.same-program?(syn.parse(messy), syn.parse(canon)))
+}
+
+pub fn command-line-tools(t: Test) {
+    let file = t.tmp-dir() / 'e2e.ty'
+    file.write("fn f(xs) \{\n    let n = xs.len()\n    return nil\n\}\n")
+    assert(run(['--lint', str(file)]).status == 1)
+    assert(run(['--lint', '--fix', str(file)]).status == 0)
+    assert(slurp(str(file)) == "fn f(xs) \{\n    let n = #xs\n\}\n")
+    file.write("let x=[1,2]\n")
+    assert(run(['--fmt', '--check', str(file)]).status == 1)
+    assert(run(['--fmt', '--write', str(file)]).status == 0)
+    assert(slurp(str(file)) == "let x = [1, 2]\n")
+    assert(run(['--fmt', '--check', str(file)]).status == 0)
+}

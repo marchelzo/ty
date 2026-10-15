@@ -1,0 +1,18 @@
+import ty
+
+let SOURCE = "import support.deep_parse (counted)\nlet x = counted\n"
+
+pub fn imports-outlive-the-parse() {
+    for _ in ..3 {
+        assert(ty.parse(SOURCE, deep=true, path=__file__) :: Ok)
+        ty.gc()
+    }
+}
+
+pub fn parsed-macros-get-frame-slots() {
+    let source = "import ty\nmacro pair!(e) \{ ty.Array([ty.ArrayItem(item: e), ty.ArrayItem(item: e)]) \}\nlet x = pair!(7)\n"
+    for resolve? in [false, true] {
+        let result = ty.parse(source, deep=true, resolve=resolve?)
+        assert(result :: Ok)
+    }
+}

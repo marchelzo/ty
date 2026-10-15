@@ -16,7 +16,7 @@ fn lisp(s) {
 
 fn camel(name: String) -> String {
     let [first, *rest] = name.split('-')
-    rest.map!(s -> s[0].upper() + s[1;].lower())
+    rest.map!(s -> "{s[0].upper()}{s[1;].lower()}")
     [first, *rest].join()
 }
 
@@ -59,7 +59,7 @@ fn _cleanDoc(doc: String | nil) {
     lines = lines.map(&[leading;])
 
     if lines.filter(\_).all?(\_.match?(/^\*/)) {
-        lines = lines.map(l -> l ? l.sub(/^\* ?/, '') : l)
+        lines = lines.map(l -> l ? l.comb(/^\* ?/) : l)
     }
 
     lines.join('\n')
@@ -73,7 +73,9 @@ let boolish = %{
 }
 
 fn _coerceVal(constraint, val) {
-    if constraint == Bool { return !!val }
+    if constraint == Bool {
+        return !!val
+    }
     if constraint == Int {
         return val :: Int ? val : int("{val}")
     }
@@ -173,12 +175,14 @@ fn _doParse(cls: _, argv, config) -> _ {
 
     for spec in specs {
         byName[spec.name] = spec
-        if spec.long != nil { byName[spec.long] = spec }
+        if spec.long != nil {
+            byName[spec.long] = spec
+        }
         if spec.pos {
             positionals.push(spec)
         } else {
             if spec.short != nil { byShort[spec.short] = spec }
-            if spec.long != nil  { byLong[spec.long] = spec }
+            if spec.long != nil  { byLong[spec.long] = spec   }
             if let $aliases = spec.aliases {
                 byLong += %{it: spec for aliases}
             }
@@ -189,17 +193,17 @@ fn _doParse(cls: _, argv, config) -> _ {
     let explicit: _ = %[]
     let posArgs:  _ = []
 
-    for spec in specs {
-        if spec.default != nil {
-            result[spec.name] = ty.eval(spec.default.val)
-        } else if spec.count {
-            result[spec.name] = 0
-        } else if spec.constraint == Bool {
-            result[spec.name] = false
-        } else if spec.repeat {
-            result[spec.name] = []
-        } else if let [_] = spec.constraint {
-            result[spec.name] = []
+    for specs {
+        if it.default != nil {
+            result[it.name] = ty.eval(it.default.val)
+        } else if it.count {
+            result[it.name] = 0
+        } else if it.constraint == Bool {
+            result[it.name] = false
+        } else if it.repeat {
+            result[it.name] = []
+        } else if let [_] = it.constraint {
+            result[it.name] = []
         }
     }
 
@@ -255,7 +259,10 @@ fn _doParse(cls: _, argv, config) -> _ {
         }
 
         if result == nil && c != Bool {
-            let typeName = if let ($n, _, _) = doc(c) { n } else { str(c) }
+            let typeName = match doc(c) {
+                ($n, _, _) => n,
+                _          => str(c)
+            }
             die("Invalid value '{val}' for {optName}: expected {typeName}")
         }
 
@@ -327,12 +334,12 @@ fn _doParse(cls: _, argv, config) -> _ {
             usage += ' <COMMAND>'
         }
 
-        for spec in positionals {
-            let label = (spec.long ?? lisp(spec.name)).upper().sub('-', '_')
-            if spec.repeat {
-                usage += ((spec.required || (spec.?min ?? 0) > 0) ? " <{label}>..." : " [{label}]...")
+        for positionals {
+            let label = (it.long ?? lisp(it.name)).upper().sub('-', '_')
+            if it.repeat {
+                usage += ((it.required || (it.?min ?? 0) > 0) ? " <{label}>..." : " [{label}]...")
             } else {
-                usage += (spec.required ? " <{label}>" : " [{label}]")
+                usage += (it.required ? " <{label}>" : " [{label}]")
             }
         }
 
@@ -347,17 +354,24 @@ fn _doParse(cls: _, argv, config) -> _ {
             let typeMap = %{}
             for spec in visibleOpts {
                 flagMap[spec.name] = match (spec.short, spec.long) {
-                    (nil, $l)  => "    --{l}",
-                    ($s, nil)  => "-{s}",
-                    ($s, $l)   => "-{s}, --{l}"
+                    (nil, $l) => "    --{l}",
+                    ($s, nil) => "-{s}",
+                    ($s, $l)  => "-{s}, --{l}"
                 }
 
                 if spec.constraint != Bool && !spec.count {
                     typeMap[spec.name] = if spec.placeholder != nil {
                         spec.placeholder
                     } else {
-                        let c = if let [inner] = spec.constraint { inner } else { spec.constraint }
-                        if let ($name, _, _) = doc(c) { name } else { str(c) }
+                        let c = match spec.constraint {
+                            [inner] => inner,
+                            _       => spec.constraint
+                        }
+                        if let ($name, _, _) = doc(c) {
+                            name
+                        } else {
+                            str(c)
+                        }
                     }
                 }
             }
@@ -366,16 +380,18 @@ fn _doParse(cls: _, argv, config) -> _ {
             if version != nil {
                 allLefts.push('    --version')
             }
-            for spec in visibleOpts {
-                let s = flagMap[spec.name]!
-                if typeMap[spec.name] != nil { s += " <{typeMap[spec.name]}>" }
+            for visibleOpts {
+                let s = flagMap[it.name]!
+                if typeMap[it.name] != nil {
+                    s += " <{typeMap[it.name]}>"
+                }
                 allLefts.push(s)
             }
             let w = allLefts.map(&len).max() ?? 0
 
             let groups = []
-            for spec in visibleOpts {
-                if let {$group, *} = spec and group not in groups {
+            for visibleOpts {
+                if let {$group, *} = it and group not in groups {
                     groups.push(group)
                 }
             }
@@ -409,8 +425,8 @@ fn _doParse(cls: _, argv, config) -> _ {
                     }
 
                     let metaStr = ''
-                    for mp in metaParts {
-                        metaStr = metaStr ? "{metaStr} {mp}" : "{mp}"
+                    for metaParts {
+                        metaStr = metaStr ? "{metaStr} {it}" : "{it}"
                     }
 
                     let helpLines = (spec.help ?? '').lines()
@@ -423,8 +439,8 @@ fn _doParse(cls: _, argv, config) -> _ {
                     } else {
                         print(chalk"  {left}{pad}  {firstLine}")
                         print('')
-                        for hl in helpLines.slice(1) {
-                            print(hl ? "{expandedIndent}{chalk.text(hl)}" : '')
+                        for helpLines.slice(1) {
+                            print(it ? "{expandedIndent}{chalk.text(it)}" : '')
                         }
                         if metaStr {
                             print("{expandedIndent}{metaStr}")
@@ -499,7 +515,9 @@ fn _doParse(cls: _, argv, config) -> _ {
                     if let (_, $ds, _) = doc(subcls) {
                         let cleaned = _cleanDoc(ds)
                         cleaned ? cleaned.lines()[0] : ''
-                    } else { '' }
+                    } else {
+                        ''
+                    }
                 }
                 cmdEntries.push((name, summary))
             }
@@ -520,8 +538,8 @@ fn _doParse(cls: _, argv, config) -> _ {
 
     let fixed = 0
 
-    for spec in positionals {
-        break if spec.repeat
+    for positionals {
+        break if it.repeat
         fixed += 1
     }
 
@@ -601,7 +619,11 @@ fn _doParse(cls: _, argv, config) -> _ {
                         }
                     } else if val == '' {
                         let isArray = spec.repeat
-                        if !isArray { if let [_] = spec.constraint { isArray = true } }
+                        if !isArray {
+                            if let [_] = spec.constraint {
+                                isArray = true
+                            }
+                        }
                         if isArray {
                             result[spec.name] = []
                             explicit << spec.name
@@ -743,13 +765,11 @@ fn _doParse(cls: _, argv, config) -> _ {
         let optName = opt(spec.long ? "--{spec.long}" : "-{spec.short}")
         for other in spec.conflicts {
             if other in explicit {
-                let otherSpec = specs.find(s -> s.name == other)
-                let otherName = opt(if otherSpec != nil {
-                    otherSpec.long ? "--{otherSpec.long}" : "-{otherSpec.short}"
-                } else {
-                    other
-                })
-                die("{optName} cannot be used with {otherName}")
+                let otherName = match specs.find(s -> s.name == other) {
+                    nil => other,
+                    s   => s.long ? "--{s.long}" : "-{s.short}",
+                }
+                die("{optName} cannot be used with {opt(otherName)}")
             }
         }
     }
@@ -758,20 +778,18 @@ fn _doParse(cls: _, argv, config) -> _ {
         let optName = opt(spec.long ? "--{spec.long}" : "-{spec.short}")
         for other in spec.requires {
             if other not in explicit {
-                let otherSpec = specs.find(s -> s.name == other)
-                let otherName = opt(if otherSpec != nil {
-                    otherSpec.long ? "--{otherSpec.long}" : "-{otherSpec.short}"
-                } else {
-                    other
-                })
-                die("{optName} requires {otherName}")
+                let otherName = match specs.find(s -> s.name == other) {
+                    nil => other,
+                    s   => s.long ? "--{s.long}" : "-{s.short}",
+                }
+                die("{optName} requires {opt(otherName)}")
             }
         }
     }
 
     let fields = %{}
-    for spec in specs {
-        fields[spec.name] = result[spec.name]
+    for specs {
+        fields[it.name] = result[it.name]
     }
 
     if subcmdName != nil {
@@ -791,10 +809,14 @@ fn _doParse(cls: _, argv, config) -> _ {
 fn _optWords(specs: _, version: _) -> _ {
     let words = []
     for spec in specs if !spec.pos {
-        if spec.long != nil { words.push('--' + spec.long) }
+        if spec.long != nil {
+            words.push('--' + spec.long)
+        }
     }
     words.push('--help')
-    if version != nil { words.push('--version') }
+    if version != nil {
+        words.push('--version')
+    }
     words.join(' ')
 }
 
@@ -810,7 +832,7 @@ fn _choiceSpecs(specs: _) -> _ {
     let result = []
     for spec in specs if !spec.pos && spec.check != nil && spec.check.pred :: Array {
         let flags = []
-        if spec.long != nil { flags.push('--' + spec.long) }
+        if spec.long != nil  { flags.push('--' + spec.long) }
         if spec.short != nil { flags.push('-' + spec.short) }
         result.push({flags: flags.join('|'), vals: spec.check.pred.join(' ')})
     }
@@ -1019,11 +1041,15 @@ fn _zshComplete(specs: _, cmds: _, version: _, prog: _) -> _ {
     let cmdNames = [n for n, _ in cmds]
 
     let argSpecs = []
-    for spec in opts { argSpecs += _zshArgSpec(spec, version, cmdNames) }
+    for opts {
+        argSpecs += _zshArgSpec(it, version, cmdNames)
+    }
     argSpecs.push("'--help[Show help]'")
-    if version != nil { argSpecs.push("'--version[Show version]'") }
+    if version != nil {
+        argSpecs.push("'--version[Show version]'")
+    }
     if #cmdNames > 0 {
-        argSpecs.push("'1:command:(" + cmdNames.join(' ') + ")'")
+        argSpecs.push("'1:command:({cmdNames.join(' ')})'")
         argSpecs.push("'*::arg:->args'")
     } else {
         for (i, spec) in poss.enumerate() {
@@ -1039,9 +1065,13 @@ fn _zshComplete(specs: _, cmds: _, version: _, prog: _) -> _ {
         let subOpts = ss.filter(\!_.pos)
         let subPoss = ss.filter(&.pos)
         let subArgSpecs = []
-        for spec in subOpts { subArgSpecs += _zshArgSpec(spec, sv, []) }
+        for subOpts {
+            subArgSpecs += _zshArgSpec(it, sv, [])
+        }
         subArgSpecs.push("'--help[Show help]'")
-        if sv != nil { subArgSpecs.push("'--version[Show version]'") }
+        if sv != nil {
+            subArgSpecs.push("'--version[Show version]'")
+        }
         for (i, spec) in subPoss.enumerate() {
             subArgSpecs.push(_zshPosArgSpec(spec, i + 1))
         }
@@ -1058,7 +1088,9 @@ fn _fishComplete(specs: _, cmds: _, version: _, prog: _) -> _ {
     let cond = hasCmds ? " -n '__fish_use_subcommand'" : ''
 
     let opts = []
-    for spec in specs.filter(\!_.pos) { opts.push(_fishOpt(spec)) }
+    for specs.filter(\!_.pos) {
+        opts.push(_fishOpt(it))
+    }
 
     let posArgs = []
     for spec in specs if spec.pos && spec.check != nil && spec.check.pred :: Array {
@@ -1072,7 +1104,9 @@ fn _fishComplete(specs: _, cmds: _, version: _, prog: _) -> _ {
         let ss: _ = cc.info()
         let sv: _ = cc.version()
         let subOpts = []
-        for spec in ss.filter(\!_.pos) { subOpts.push(_fishOpt(spec)) }
+        for ss.filter(\!_.pos) {
+            subOpts.push(_fishOpt(it))
+        }
         let subPosArgs = []
         for spec in ss if spec.pos && spec.check != nil && spec.check.pred :: Array {
             let desc = chalk.text((spec.help ?? '').lines()[0] ?? '').plain.sub("'", "\\'")
@@ -1197,7 +1231,9 @@ pub macro clap! {
             let parser = expr(999, resolve: true)
 
             cmds[sub] = parser
-            if help != nil { cmdHelps[sub] = help }
+            if help != nil {
+                cmdHelps[sub] = help
+            }
 
             continue
         }
@@ -1342,7 +1378,10 @@ pub macro clap! {
         } else if arg.constraint == Bool {
             fieldType = ce
         } else if arg.repeat {
-            fieldType = if let [_] = arg.constraint { ce } else { $$[ [$$ce] $$] }
+            fieldType = match arg.constraint {
+                [_] => ce,
+                _   => $$[ [$$ce] $$]
+            }
         } else if let [_] = arg.constraint {
             fieldType = ce
         } else if arg.required || arg.default != nil {

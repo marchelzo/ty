@@ -219,8 +219,7 @@ lookup(
         bool same_function = (sym->scope->function == s->function);
 
         bool do_capture = !already_outlives_us
-                       && !same_function
-                       && HAVE_COMPILER_FLAG(EMIT);
+                       && !same_function;
 
         if (do_capture) {
                 scope_capture(ty, (Scope *)s, sym);
