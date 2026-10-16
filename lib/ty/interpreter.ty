@@ -1,3 +1,4 @@
+import base64
 import errno
 import json
 import os
@@ -43,22 +44,33 @@ fn retry?(error: Int) -> Bool {
 
 class Kernel {
     __fd: Int
-    __process: os.ProcessDescriptor
+    __pid: Int
+    __stderr: Int
     __pending: Blob = Blob()
     __buffer:  Blob = Blob()
     __closed?: Bool = false
 
-    init(wrap: Array[String] = []) {
+    init(wrap: Array[String] = [], adopt: _ = nil) {
+        if let $state = adopt {
+            __fd     = state.fd
+            __pid    = state.pid
+            __stderr = state.stderr
+            __pending.push(base64.decode(state.pending))
+            check(os.fcntl(__fd, os.F_SETFD, os.FD_CLOEXEC), 'fcntl')
+            check(os.fcntl(__stderr, os.F_SETFD, os.FD_CLOEXEC), 'fcntl')
+            return
+        }
         let (parent, child) = os.socketpair(os.AF_UNIX, os.SOCK_STREAM, 0)
         defer os.close(child)
         __fd = parent
+        __stderr = -1
         try {
             check(os.fcntl(child, os.F_SETFD, os.FD_CLOEXEC), 'fcntl')
             nonblocking(parent)
 #|if __apple__
             check(os.fcntl(parent, os.F_SETNOSIGPIPE, 1), 'fcntl')
 #|]
-            __process = os.spawn(
+            let process = os.spawn(
                 [
                     *wrap,
                     ty.executable,
@@ -72,24 +84,32 @@ class Kernel {
                 stderr=os.SPAWN_PIPE,
                 detach=true
             )
+            __pid    = process.pid
+            __stderr = process.stderr
         } catch error {
             os.close(parent)
             throw error
         }
         try {
-            nonblocking(__process.stderr)
+            nonblocking(__stderr)
         } catch error {
             close()
             throw error
         }
     }
 
+    handoff() -> _ {
+        check(os.fcntl(__fd, os.F_SETFD, 0), 'fcntl')
+        check(os.fcntl(__stderr, os.F_SETFD, 0), 'fcntl')
+        return {fd: __fd, pid: __pid, stderr: __stderr, pending: base64.encode(__pending)}
+    }
+
     pid -> Int {
-        __process.pid
+        __pid
     }
 
     interrupt() {
-        os.kill(__process.pid, os.SIGUSR2)
+        os.kill(__pid, os.SIGUSR2)
     }
 
     write(data: Blob) {
@@ -112,7 +132,7 @@ class Kernel {
     output(target: Blob) -> Bool {
         let truncated? = false
         for ..32 {
-            break if read(__process.stderr) <= 0
+            break if read(__stderr) <= 0
             let remaining = max(0, OUTPUT_LIMIT - #target)
             truncated? = truncated? || #__buffer > remaining
             __buffer.clear(min(remaining, #__buffer))
@@ -145,7 +165,7 @@ class Kernel {
 
     poll(writing?: Bool) {
         let events = os.POLLIN | (writing? ? os.POLLOUT : 0)
-        match os.poll([(__fd, events), __process.stderr], 0.05) {
+        match os.poll([(__fd, events), __stderr], 0.05) {
             Ok(_) or Err(errno.EINTR) => (),
             Err(error)                => throw os.OSError('poll Ty REPL', error)
         }
@@ -154,11 +174,11 @@ class Kernel {
     close() {
         return if __closed?
         __closed? = true
-        let result = os.kill(-__process.pid, os.SIGKILL)
+        let result = os.kill(-__pid, os.SIGKILL)
         let error = result < 0 ? errno.get() : 0
         os.close(__fd)
-        os.close(__process.stderr)
-        os.wait(__process.pid)
+        os.close(__stderr)
+        os.wait(__pid)
         if error != 0 && error != errno.ESRCH && error != errno.EPERM {
             throw os.OSError('stop Ty REPL', error)
         }
@@ -185,6 +205,27 @@ class Cell {
             stopping = why
             deadline = now(CLOCK_MONOTONIC) + GRACE
         }
+    }
+
+    handoff() -> _ {
+        return {
+            id, began, stopping, deadline, nudged,
+            request: base64.encode(request),
+            output: base64.encode(output),
+            truncated: truncated?
+        }
+    }
+
+    static adopt(state: _) -> Cell {
+        let cell = Cell(state.id, '')
+        cell.request = base64.decode(state.request)
+        cell.output = base64.decode(state.output)
+        cell.truncated? = state.truncated
+        cell.began = state.began
+        cell.stopping = state.stopping
+        cell.deadline = state.deadline
+        cell.nudged = state.nudged
+        cell
     }
 }
 
@@ -220,6 +261,16 @@ pub class Repl {
 
     partial -> String {
         __cell.?output.?str() ?? ''
+    }
+
+    handoff() -> _ {
+        return {kernel: __kernel.?handoff(), cell: __cell.?handoff(), next: __next}
+    }
+
+    adopt(state: _) {
+        __kernel = state.?kernel ? Kernel(adopt=state.kernel) : nil
+        __cell = (state.?cell && __kernel) ? Cell.adopt(state.cell) : nil
+        __next = state.?next ?? 0
     }
 
     respond(call: Call) -> Blob {

@@ -48,6 +48,29 @@ fn _settleShorts(parser: String, args: Array[_]) -> Array[_] {
     })
 }
 
+fn _printEntry(left: _, w: Int, help: String | nil, meta: String) {
+    let pad   = ' '.repeat(w - left.width())
+    let lines = (help ?? '').lines()
+    let first = lines[0] ?? ''
+
+    if #lines > 1 {
+        print(chalk"  {left}{pad}  {chalk.text(first)}")
+        print()
+        for lines[1;].drop-while!(`!`) {
+            print(it ? "{' '.repeat(12)}{chalk.text(it)}" : '')
+        }
+        if meta {
+            print("{' '.repeat(12)}{meta}")
+        }
+        print()
+    } else if first || meta {
+        let suffix = meta ? " {meta}" : ''
+        print(chalk"  {left}{pad}  {chalk.text(first)}{suffix}")
+    } else {
+        print(chalk"  {left}")
+    }
+}
+
 fn _cleanDoc(doc: String | nil) {
     if doc == nil {
         return nil
@@ -164,6 +187,7 @@ fn _doParse(cls: _, argv, config) -> _ {
     let specs: Array[OptionSpec] = cls.info()
     let cmds = cls.cmds()
     let cmdDescs: _ = cls.cmdHelps()
+    let cmdGroups: _ = cls.cmdGroups()
     let version = cls.version()
 
     let description = if let (_, $ds, _) = doc(cls) { _cleanDoc(ds) }
@@ -396,9 +420,6 @@ fn _doParse(cls: _, argv, config) -> _ {
                 }
             }
 
-            let compactIndent = ' '.repeat(w + 4)
-            let expandedIndent = ' '.repeat(12)
-
             fn printOpts(opts: Array[OptionSpec]) {
                 for spec in opts {
                     let flag = flagMap[spec.name]
@@ -424,29 +445,7 @@ fn _doParse(cls: _, argv, config) -> _ {
                         metaParts.push(chalk"[dim](range: [cyan]{spec.check.src}[/cyan])[/]")
                     }
 
-                    let metaStr = ''
-                    for metaParts {
-                        metaStr = metaStr ? "{metaStr} {it}" : "{it}"
-                    }
-
-                    let helpLines = (spec.help ?? '').lines()
-                    let firstLine = chalk.text(helpLines[0] ?? '')
-
-                    let pad = ' '.repeat(w - left.width())
-                    if #helpLines <= 1 {
-                        let suffix = metaStr ? " {metaStr}" : ''
-                        print(chalk"  {left}{pad}  {firstLine}{suffix}")
-                    } else {
-                        print(chalk"  {left}{pad}  {firstLine}")
-                        print('')
-                        for helpLines.slice(1) {
-                            print(it ? "{expandedIndent}{chalk.text(it)}" : '')
-                        }
-                        if metaStr {
-                            print("{expandedIndent}{metaStr}")
-                        }
-                        print('')
-                    }
+                    _printEntry(left, w, spec.help, metaParts.join(' '))
                 }
             }
 
@@ -503,36 +502,30 @@ fn _doParse(cls: _, argv, config) -> _ {
             print()
         }
 
+        fn cmdSummary(name: String) -> String {
+            if let $help = cmdDescs[name] {
+                return help
+            }
+
+            let (_, $ds, _) = doc(ty.eval(cmds[name])) or return ''
+            (_cleanDoc(ds) ?? '').lines()[0] ?? ''
+        }
+
         if #cmds > 0 {
-            print(chalk"[b bright green]Commands:[/]")
+            let entries  = [(name, cmdSummary(name)) for name, _ in cmds]
+            let cw       = entries.map(\#_[0]).max() ?? 0
+            let sections = [
+                (g ?? 'Commands', entries.filter(|(name, _)| -> cmdGroups[name] == g))
+                for g in [nil, *cmdGroups.values().uniq()]
+            ]
 
-            let cmdEntries = []
-            for name, _ in cmds {
-                let summary = if cmdDescs[name] != nil {
-                    cmdDescs[name]
-                } else {
-                    let subcls: _ = ty.eval(cmds[name])
-                    if let (_, $ds, _) = doc(subcls) {
-                        let cleaned = _cleanDoc(ds)
-                        cleaned ? cleaned.lines()[0] : ''
-                    } else {
-                        ''
-                    }
+            for (title, members) in sections if #members > 0 {
+                print(chalk"[b bright green]{title}:[/]")
+                for (name, summary) in members {
+                    _printEntry(chalk"[b cyan]{name}[/]", cw, summary, '')
                 }
-                cmdEntries.push((name, summary))
+                print()
             }
-
-            let cw = cmdEntries.map(\#_[0]).max() ?? 0
-
-            for (name, summary) in cmdEntries {
-                if summary {
-                    print(chalk"  [b cyan]{name.rpad(cw)}[/]  {chalk.text(summary)}")
-                } else {
-                    print(chalk"  [b cyan]{name}[/]")
-                }
-            }
-
-            print()
         }
     }
 
@@ -1178,6 +1171,7 @@ pub macro clap! {
     let args = []
     let cmds = %{}
     let cmdHelps = %{}
+    let cmdGroups = %{}
 
     let group = nil
 
@@ -1233,6 +1227,9 @@ pub macro clap! {
             cmds[sub] = parser
             if help != nil {
                 cmdHelps[sub] = help
+            }
+            if group != nil {
+                cmdGroups[sub] = group
             }
 
             continue
@@ -1424,6 +1421,7 @@ pub macro clap! {
 
     let getCmds     = ty.Func(name: 'cmds',     body: ty.Value(cmds))
     let getCmdHelps = ty.Func(name: 'cmdHelps', body: ty.Value(cmdHelps))
+    let getCmdGroups = ty.Func(name: 'cmdGroups', body: ty.Value(cmdGroups))
     let info        = ty.Func(name: 'info',     body: _infoBody(args))
     let version     = ty.Func(name: 'version',  body: ty.Value(version))
 
@@ -1439,7 +1437,7 @@ pub macro clap! {
     let cls = ty.Class(
         name: name,
         fields: classFields,
-        static-methods: [info, getCmds, getCmdHelps, version, parseFn, completionsFn]
+        static-methods: [info, getCmds, getCmdHelps, getCmdGroups, version, parseFn, completionsFn]
     )
 
     __types["{mod}.{lisp(name)}"] = clsType

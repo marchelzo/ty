@@ -11,13 +11,33 @@ clap! Args {
     cmd init: Init
 }
 
-fn forked(f) {
+/// Remove build artifacts
+clap! Clean {
+    all: Bool
+}
+
+clap! Grouped {
+    /// Initialize a project
+    ///
+    /// Writes a default config
+    /// and an empty src directory.
+    cmd init: Init
+
+    group 'Maintenance' {
+        cmd clean: Clean
+
+        /// Prune caches
+        cmd prune: Clean
+    }
+}
+
+fn forked(f, fd = 2) {
     let (r, w) = os.pipe()
     let pid = os.fork()
 
     if pid == 0 {
         os.close(r)
-        os.dup2(w, 2)
+        os.dup2(w, fd)
         os.close(w)
         f()
         os.exit(0)
@@ -41,4 +61,34 @@ pub fn clap-subcommand() {
         assert(#rest == 0)
     })
     assert(code == 0, "exit {code}: {err}")
+}
+
+pub fn clap-subcommand-groups() {
+    let (code, err) = forked(fn () {
+        let (opts, _) = Grouped.parse(['prog', 'prune', '--all'])
+        assert(opts.cmd :: Clean)
+        assert(opts.cmd.all)
+    })
+    assert(code == 0, "exit {code}: {err}")
+}
+
+pub fn clap-subcommand-help() {
+    let (code, out) = forked(-> Grouped.parse(['prog', '--help']), 1)
+    assert(code == 0)
+
+    let text = out.comb(/\e\[[0-9;]*m/)
+    let want = [
+        'Commands:',
+        '  init   Initialize a project',
+        '',
+        '            Writes a default config',
+        '            and an empty src directory.',
+        '',
+        '',
+        'Maintenance:',
+        '  clean  Remove build artifacts',
+        '  prune  Prune caches',
+    ].join('\n')
+
+    assert(want in text, text)
 }
