@@ -146,7 +146,7 @@ touch(BcLir const *c, BcLoop const *loop, i32 off, bool *def)
 static u8
 live_at(BcLoop const *loop, i32 off)
 {
-        return inside(loop, off) ? loop->live[off - loop->head] : 0;
+        return (loop->live != NULL && inside(loop, off)) ? loop->live[off - loop->head] : 0;
 }
 
 static void
