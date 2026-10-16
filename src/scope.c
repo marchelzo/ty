@@ -7,6 +7,7 @@
 #include "log.h"
 #include "ty.h"
 #include "xd.h"
+#include "vm.h"
 
 static i64 SYMBOL;
 
@@ -505,6 +506,10 @@ scope_add_i(Ty *ty, Scope *scope, char const *id, int idx)
         }
 
         sym->i = idx;
+
+        if (TY_IS_INITIALIZED && compiler_is_global_scope(owner)) {
+                vm_global_added(ty, sym);
+        }
 
         return sym;
 }

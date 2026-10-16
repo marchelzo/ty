@@ -430,7 +430,7 @@ push_native_frame(BcLir *c, Depth d, LirReg fn, LirReg code, LirReg fp)
         copy(c, frame, F(f), fn, 0);
         stb(c, frame, F(f) + VOFF(type), lir_i(VALUE_NATIVE_FUNCTION));
         store(c, LIR_ST16, frame, F(f) + VOFF(tags), lir_i(0));
-        stw(c, frame, F(jit_resume), lir_i(0));
+        stq(c, frame, F(jit_resume), lir_i(0));
         stq(c, frame, F(jit_pc), lir_i(0));
         stq(c, frame, F(jit_code), lir_r(code));
 #undef F
@@ -850,10 +850,10 @@ kernel_call(
                 return false;
         }
 
-        lir_const(c->L, callee);
-
         expect(c, fn, 0, VALUE_JIT_FUNCTION, miss);
-        same_ptr(c, ldp(c, fn, VOFF(jit_code)), code, miss);
+
+        LirReg live = ldp(c, fn, VOFF(jit_code));
+        jcc(c, LIR_NE, lir_r(ldq(c, live, offsetof(LirCode, serial))), lir_i((i64)code->serial), miss);
 
         LirOpnd args[8];
 

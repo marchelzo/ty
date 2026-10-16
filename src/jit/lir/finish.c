@@ -1,4 +1,5 @@
 #include <regex.h>
+#include <stdatomic.h>
 
 #include "ty.h"
 #include "jit/lir.h"
@@ -53,10 +54,14 @@ trace(Lir const *L, LirAlloc const *alloc, char const *stage)
         funlockfile(stderr);
 }
 
+static _Atomic u64 Serial;
+
 static LirCode *
 shell(Lir *L, Plan p, LirError *err)
 {
         LirCode *code = xtA0(LirCode, 1);
+
+        code->serial = atomic_fetch_add(&Serial, 1) + 1;
 
         code->entry_thunk      = p.thunk;
         code->entry_body_slots = p.slots;

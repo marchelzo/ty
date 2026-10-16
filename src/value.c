@@ -2171,10 +2171,9 @@ mark_function(Ty *ty, Value const *v)
         int n = v->info[FUN_INFO_CAPTURES]
               + ((v->type & ~VALUE_TAGGED) == VALUE_BOUND_FUNCTION);
 
-        lir_code_mark(ty, jit_code_of(v));
-
         if (from_eval(v)) {
                 MARK(v->info);
+                lir_code_mark(ty, jit_code_of(v));
         }
 
         if (has_meta(v)) {
@@ -2288,6 +2287,7 @@ lir_code_mark(Ty *ty, LirCode *code)
         }
 
         lir_code_mark(ty, code->entry_code);
+        lir_code_mark(ty, code->previous);
 
         if (code->lir != NULL) {
                 lir_mark(ty, code->lir);
@@ -2386,7 +2386,7 @@ _value_mark_xd(Ty *ty, Value const *v)
         if (src != NULL && src->arena != NULL) {
                 MARK(src->arena);
                 if (src->mod != NULL) {
-                        MarkArena(&src->mod->arena);
+                        MarkArena(ty, &src->mod->arena);
                 }
         }
 
@@ -2437,7 +2437,7 @@ _value_mark_xd(Ty *ty, Value const *v)
         case VALUE_QUEUE:            queue_mark(ty, v->queue);                                         break;
         case VALUE_SHARED_QUEUE:     shared_queue_mark(ty, v->shared_queue);                           break;
         case VALUE_PTR:              mark_pointer(ty, v);                                              break;
-        case VALUE_MODULE:           MarkArena(&v->mod->arena);                                        break;
+        case VALUE_MODULE:           MarkArena(ty, &v->mod->arena);                                        break;
         case VALUE_TRACE:            mark_trace(ty, v->ptr);                                           break;
         case VALUE_REGEX:            if (v->regex->gc) MARK(v->regex);                                 break;
         default:                                                                                       break;

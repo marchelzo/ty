@@ -64,13 +64,13 @@ NewArenaNoGC(Ty *ty, usize cap)
 }
 
 void
-MarkArena(Arena *a)
+MarkArena(Ty *ty, Arena *a)
 {
         if (a == NULL || !a->gc) {
                 return;
         }
 
-        MarkArena(NextArena(a));
+        MarkArena(ty, NextArena(a));
 
         MARK(a->base);
 }

@@ -27,7 +27,7 @@ NextArena(Arena const *a)
 }
 
 void
-MarkArena(Arena *a);
+MarkArena(Ty *ty, Arena *a);
 
 void
 FreeArena(Arena *a);

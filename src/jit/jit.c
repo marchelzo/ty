@@ -1961,19 +1961,6 @@ jit_builtin_method(Class *cls, int member_id, int *value_type)
 }
 
 
-void
-jit_note_deopt(Value const *f)
-{
-        LirCode *code = jit_code_of(f);
-        _Atomic i16 *flags = (void *)flags_of(f);
-        if (code == NULL || ++code->deopts < 16 || (atomic_load(flags) & FF_JIT_NOSPEC)) {
-                return;
-        }
-        atomic_fetch_or(flags, FF_JIT_NOSPEC);
-        atomic_fetch_and(flags, (i16)~FF_JIT_FIRST);
-        set_jit_of(f, (void *)(uptr)(JIT_UNSEEN + 1));
-}
-
 int
 jit_tier(void)
 {
@@ -1985,16 +1972,57 @@ jit_tier(void)
         return tier;
 }
 
-void
-jit_tier_up(Value const *f)
+JitFn *
+jit_promote(Ty *ty, Value const *f)
 {
-        _Atomic i16 *flags = (void *)flags_of(f);
-        if (atomic_load(flags) & FF_JIT_TIER2) {
-                return;
+        _Atomic i16 *flags   = (void *)flags_of(f);
+        i16          flags0  = atomic_load(flags);
+        void        *current = jit_of(f);
+
+        if (current == NULL || jit_pending(current)) {
+                return NULL;
         }
-        atomic_fetch_or(flags, FF_JIT_TIER2);
-        atomic_fetch_and(flags, (i16)~FF_JIT_FIRST);
-        set_jit_of(f, (void *)(uptr)(JIT_UNSEEN + 1));
+
+        if (
+                (flags0 & FF_JIT_TIER2)
+             || DebugJitOff
+             || !atomic_compare_exchange_strong(flags, &flags0, flags0 | FF_JIT_TIER2)
+        ) {
+                return current;
+        }
+
+        JitFn *next = jit_compile(ty, f);
+
+        if (next == NULL) {
+                return current;
+        }
+
+        set_jit_of(f, next);
+
+        return next;
+}
+
+JitFn *
+jit_despecialize(Ty *ty, Value const *f)
+{
+        _Atomic i16 *flags  = (void *)flags_of(f);
+        i16          flags0 = atomic_load(flags);
+
+        if (
+                (flags0 & FF_JIT_NOSPEC)
+             || DebugJitOff
+             || !atomic_compare_exchange_strong(flags, &flags0, flags0 | FF_JIT_NOSPEC)
+        ) {
+                return NULL;
+        }
+
+        JitFn *next = jit_compile(ty, f);
+
+        if (next != NULL) {
+                set_jit_of(f, next);
+        }
+
+        return next;
 }
 
 int

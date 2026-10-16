@@ -33,6 +33,7 @@ typedef struct bc_lir_node {
         u32         resume_id;
         LirLabel    osr;
         u32         osr_id;
+        LirLabel    tierup;
 } BcLirNode;
 
 typedef struct bc_slot {
@@ -117,6 +118,7 @@ typedef struct bc_lir {
         LirReg                ops;
         LirReg                base_index;
         LirLabel              deopt;
+        LirLabel              tierup;
 
         i32                   sp;
         i32                   bound;
@@ -511,15 +513,13 @@ safepoint(BcLir *c, LirLabel deopt)
 }
 
 static void
-tier_hot(i32 *count, i32 *info)
+tier_hot(i32 *count)
 {
-        Value f = { .type = VALUE_FUNCTION, .info = info };
         *count = INT32_MAX;
-        jit_tier_up(&f);
 }
 
 static void
-tier_check(BcLir *c, LirLabel deopt)
+tier_check(BcLir *c, LirLabel exit)
 {
         LirLabel cold = newlabel(c);
         LirReg   p    = pval(c, c->tier);
@@ -534,17 +534,15 @@ tier_check(BcLir *c, LirLabel deopt)
                 tier_hot,
                 LT_VOID,
                 LIR_READS_NO_LOCALS,
-                preg(p),
-                pimm(c->function->info)
+                preg(p)
         );
 
-        if (deopt != LIR_NONE) {
-                sync_sp(c);
-                jump(c, deopt);
-        }
+        sync_sp(c);
+        jump(c, exit);
 
         bind(c, cold);
 }
+
 
 typedef struct {
         i32 *at;
@@ -1086,7 +1084,8 @@ decode(BcLir *c, Value const *f)
                         .outer    = owner,
                         .label    = LIR_NONE,
                         .deopt    = LIR_NONE,
-                        .resume   = LIR_NONE
+                        .resume   = LIR_NONE,
+                        .tierup   = LIR_NONE
                 };
 
                 if (node->op == INSTR_TRY) {
@@ -1633,7 +1632,8 @@ control(BcLir *c, BcLirNode const *node)
         if (node->deopt != LIR_NONE) {
                 safepoint(c, node->deopt);
                 if (c->tier != NULL && node->op == INSTR_JUMP && to->osr_id != 0) {
-                        tier_check(c, node->deopt);
+                        ((BcLirNode *)node)->tierup = newlabel(c);
+                        tier_check(c, node->tierup);
                 }
         }
 
@@ -2236,6 +2236,18 @@ yield(BcLir *c, BcLirNode const *node)
 #include "lower/fast.h"
 #include "lower/inline.h"
 #include "lower/vstack.h"
+static void
+tierup_stub(BcLir *c, i32 off)
+{
+        BcLirNode const *node = &c->nodes[off];
+
+        if (node->tierup != LIR_NONE) {
+                bind(c, node->tierup);
+                flush_around(c, off);
+                leave(c, JIT_PACK(JIT_OSR, node->target + 1));
+        }
+}
+
 #include "lower/loop.h"
 #include "lower/ops.h"
 #include "lower/pattern.h"
@@ -2498,9 +2510,10 @@ prologue(BcLir *c)
         poll(c, c->ops, lir_i((uptr)&entry), c->deopt);
 
         if (c->compact && jit_tier() != 1) {
-                c->tier  = alloc0(sizeof *c->tier);
-                *c->tier = (jit_tier() == 3) ? 3 : JIT_TIER_BUDGET;
-                tier_check(c, LIR_NONE);
+                c->tier   = alloc0(sizeof *c->tier);
+                *c->tier  = (jit_tier() == 3) ? 3 : JIT_TIER_BUDGET;
+                c->tierup = newlabel(c);
+                tier_check(c, c->tierup);
         }
 }
 
@@ -3075,6 +3088,11 @@ epilogue(BcLir *c)
         bind(c, c->deopt);
         leave(c, JIT_PACK(JIT_DEOPT, 0));
 
+        if (c->tier != NULL) {
+                bind(c, c->tierup);
+                leave(c, JIT_PACK(JIT_OSR, 0));
+        }
+
         for (i32 off = 0; off < c->size; ++off) {
                 BcLirNode const *node = &c->nodes[off];
 
@@ -3082,6 +3100,7 @@ epilogue(BcLir *c)
                         bind(c, node->deopt);
                         flush_around(c, off);
                         leave(c, JIT_PACK(JIT_DEOPT, off));
+                        tierup_stub(c, off);
                 }
         }
 }
@@ -3170,13 +3189,12 @@ publish(Ty *ty, Value const *f, BcLir const *c, LirCode *code, u64 begin)
 
         jit_perf_map(code->body, code->size, name_of(f), source);
 
-        code = lir_code_adopt(ty, code);
-        set_jit_code_of(f, code);
-
-        if (!from_eval(f)) {
-                Value root = { .type = VALUE_PTR, .ptr = code, .gcptr = code };
-                gc_immortalize(ty, &root);
+        if (from_eval(f)) {
+                code           = lir_code_adopt(ty, code);
+                code->previous = jit_code_of(f);
         }
+
+        set_jit_code_of(f, code);
 
         return code;
 }

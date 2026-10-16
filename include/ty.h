@@ -100,7 +100,7 @@ struct alloc {
         union {
                 struct {
                         u8 type;
-                        atomic_bool mark;
+                        atomic_uchar mark;
                         atomic_uint_least16_t hard;
                         u32 size;
                 };
@@ -446,6 +446,7 @@ struct frame {
         char const *ip;
         Value f;
         i32 jit_resume;
+        i32 deopts;
         uptr const *jit_pc;
         void const *jit_code;
 };
@@ -486,6 +487,10 @@ enum {
 
 typedef struct thread_group {
         TySpinLock Lock;
+
+        u8                   id;
+        bool                 dead;
+        struct thread_group *parent;
 
         vec(Ty *) TyList;
 
@@ -706,6 +711,8 @@ typedef struct ty {
 
         AllocList allocs;
         ThreadGroup *group;
+        u8           gc_owner;
+        Value       *result;
         TyThreadState *blocked;
         TySpinLock *lock;
         bool locked;
@@ -867,6 +874,16 @@ extern bool AllowErrors;
 extern bool InteractiveSession;
 
 
+#define GC_OWNER_MAX 127
+
+inline static void
+gc_mark_alloc(struct alloc *a, u8 owner)
+{
+        if (atomic_load_explicit(&a->mark, memory_order_relaxed) == owner) {
+                atomic_store_explicit(&a->mark, owner | 1, memory_order_relaxed);
+        }
+}
+
 #if !defined(TY_RELEASE)
 extern volatile bool GC_EVERY_ALLOC;
 #endif
@@ -875,11 +892,7 @@ extern volatile bool GC_EVERY_ALLOC;
 extern _Thread_local u64 ThisReached;
 extern _Thread_local u64 TotalReached;
 #define MARK(v) do {                        \
-        atomic_store_explicit(              \
-                &(ALLOC_OF(v))->mark,       \
-                true,                       \
-                memory_order_relaxed        \
-        );                                  \
+        gc_mark_alloc(ALLOC_OF(v), ty->gc_owner); \
         ThisReached += ALLOC_OF(v)->size;  \
         TotalReached += ALLOC_OF(v)->size; \
 } while (0)
@@ -896,20 +909,16 @@ extern _Thread_local u64 TotalReached;
 #define LOG_REACHED(...) XxLOG(__VA_ARGS__)
 #else
 #define MARK(v) do {                     \
-        atomic_store_explicit(           \
-                &(ALLOC_OF(v))->mark,    \
-                true,                    \
-                memory_order_relaxed     \
-        );                               \
+        gc_mark_alloc(ALLOC_OF(v), ty->gc_owner); \
 } while (0)
 #define ADD_REACHED(n)
 #define RESET_REACHED()
 #define RESET_TOTAL_REACHED()
 #define LOG_REACHED(...)
 #endif
-#define MARKED(v) atomic_load_explicit(  \
-        &(ALLOC_OF(v))->mark,            \
-        memory_order_relaxed             \
+#define MARKED(v) (                                                     \
+        atomic_load_explicit(&(ALLOC_OF(v))->mark, memory_order_relaxed) \
+     != ty->gc_owner                                                    \
 )
 
 #if defined(TY_GC_STATS)

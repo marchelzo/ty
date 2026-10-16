@@ -142,7 +142,7 @@ gc_alloc(Ty *ty, usize n)
 
         a->size = n;
         a->type = GC_ANY;
-        atomic_init(&a->mark, false);
+        atomic_init(&a->mark, ty->gc_owner);
         atomic_init(&a->hard, 0);
 
         return a->data;
@@ -162,6 +162,7 @@ gc_alloc0(Ty *ty, usize n)
 
         a->size = n;
         a->type = GC_ANY;
+        atomic_init(&a->mark, ty->gc_owner);
 
         return a->data;
 }
@@ -179,7 +180,7 @@ gc_alloc_unchecked(Ty *ty, usize n)
 
         a->size = n;
         a->type = GC_ANY;
-        atomic_init(&a->mark, false);
+        atomic_init(&a->mark, ty->gc_owner);
         atomic_init(&a->hard, 0);
 
         return a->data;
@@ -198,6 +199,7 @@ gc_alloc0_unchecked(Ty *ty, usize n)
 
         a->size = n;
         a->type = GC_ANY;
+        atomic_init(&a->mark, ty->gc_owner);
 
         return a->data;
 }
@@ -218,8 +220,9 @@ gc_alloc_object(Ty *ty, usize n, char type)
                 panic("Out of memory!");
         }
 
-        atomic_init(&a->mark, false);
+        atomic_init(&a->mark, ty->gc_owner);
         atomic_init(&a->hard, 0);
+        atomic_init(&a->mark, ty->gc_owner);
         a->type = type;
         a->size = n;
 
@@ -243,8 +246,9 @@ gc_alloc_object_unchecked(Ty *ty, usize n, char type)
                 panic("Out of memory!");
         }
 
-        atomic_init(&a->mark, false);
+        atomic_init(&a->mark, ty->gc_owner);
         atomic_init(&a->hard, 0);
+        atomic_init(&a->mark, ty->gc_owner);
         a->type = type;
         a->size = n;
 
@@ -269,6 +273,7 @@ gc_alloc_object0(Ty *ty, usize n, char type)
                 panic("Out of memory!");
         }
 
+        atomic_init(&a->mark, ty->gc_owner);
         a->type = type;
         a->size = n;
 
@@ -292,6 +297,7 @@ gc_alloc_object0_unchecked(Ty *ty, usize n, char type)
                 panic("Out of memory!");
         }
 
+        atomic_init(&a->mark, ty->gc_owner);
         a->type = type;
         a->size = n;
 

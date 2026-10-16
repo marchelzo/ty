@@ -426,6 +426,10 @@ typedef struct {
 
 static ThreadGroup MainGroup;
 
+
+static TySpinLock GroupIdLock;
+static bool       GroupIdUsed[GC_OWNER_MAX + 1] = { [0] = true, [1] = true };
+
 static _Thread_local Ty *co_ty;
 
 static _Thread_local Ty *MyTy;
@@ -499,6 +503,8 @@ InitializeTy(Ty *ty, ThreadGroup *group)
         ty->locked = true;
         ty->blocked = alloc0(sizeof *ty->blocked);
         ty->group = group;
+
+        ty->gc_owner = ((group == &MainGroup) ? 1 : group->id) << 1;
 
         xvR(STACK, 4096);
 }
@@ -576,9 +582,11 @@ Forget(Ty *ty, Value *v, AllocList *allocs)
 }
 
 static ThreadGroup *
-InitThreadGroup(ThreadGroup *group)
+InitThreadGroup(ThreadGroup *group, u8 id, ThreadGroup *parent)
 {
         m0(*group);
+        group->id     = id;
+        group->parent = parent;
         TySpinLockInit(&group->Lock);
         TySpinLockInit(&group->GCLock);
         TySpinLockInit(&group->DLock);
@@ -588,10 +596,67 @@ InitThreadGroup(ThreadGroup *group)
         return group;
 }
 
-inline static ThreadGroup *
-NewThreadGroup(void)
+static u8
+TakeGroupId(void)
 {
-        return InitThreadGroup(mrealloc(NULL, (sizeof (ThreadGroup))));
+        u8 id = 0;
+
+        TySpinLockLock(&GroupIdLock);
+        for (u8 i = 2; i <= GC_OWNER_MAX; ++i) {
+                if (!GroupIdUsed[i]) {
+                        GroupIdUsed[i] = true;
+                        id = i;
+                        break;
+                }
+        }
+        TySpinLockUnlock(&GroupIdLock);
+
+        return id;
+}
+
+static void
+ReleaseGroupId(u8 id)
+{
+        TySpinLockLock(&GroupIdLock);
+        GroupIdUsed[id] = false;
+        TySpinLockUnlock(&GroupIdLock);
+}
+
+inline static ThreadGroup *
+NewThreadGroup(ThreadGroup *parent)
+{
+        u8 id = TakeGroupId();
+
+        if (id == 0) {
+                return NULL;
+        }
+
+        return InitThreadGroup(mrealloc(NULL, (sizeof (ThreadGroup))), id, parent);
+}
+
+static void
+BequeathAllocs(ThreadGroup *group)
+{
+        ThreadGroup *heir = group->parent;
+
+        while (heir->dead) {
+                heir = heir->parent;
+        }
+
+        u8 bits = heir->id << 1;
+
+        TySpinLockLock(&heir->GCLock);
+        TySpinLockLock(&heir->DLock);
+
+        for (usize i = 0; i < vN(group->DeadAllocs); ++i) {
+                atomic_store_explicit(&v__(group->DeadAllocs, i)->mark, bits, memory_order_relaxed);
+        }
+
+        xvPv(heir->DeadAllocs, group->DeadAllocs);
+        heir->DeadUsed += group->DeadUsed;
+
+        TySpinLockUnlock(&heir->DLock);
+        TySpinLockUnlock(&heir->GCLock);
 }
 
 inline static int
@@ -650,7 +715,7 @@ MarkPendingFFIAutoValues(Ty *marker, Ty *owner)
 {
         for (usize i = 0; i < vN(owner->allocs); ++i) {
                 struct alloc *a = v__(owner->allocs, i);
-                if (a->type == GC_FFI_AUTO && !a->mark && a->hard == 0) {
+                if (a->type == GC_FFI_AUTO && !(a->mark & 1) && a->hard == 0) {
                         Value *values = (Value *)a->data;
                         value_mark(marker, &values[0]);
                         value_mark(marker, &values[1]);
@@ -878,6 +943,44 @@ DoGC(Ty *ty)
 #undef BOOL_
 #undef POINTER
 //============================================================================================
+
+enum { GLOBALS_MAX = 1 << 20 };
+
+static void
+ReserveGlobals(void)
+{
+        usize size = GLOBALS_MAX * sizeof (Value);
+
+#ifdef _WIN32
+        void *p = VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        if (p == NULL) {
+                panic("cannot reserve the global table");
+        }
+#else
+        void *p = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+        if (p == MAP_FAILED) {
+                panic("cannot reserve the global table");
+        }
+#endif
+
+        Globals.items    = p;
+        Globals.count    = 0;
+        Globals.capacity = GLOBALS_MAX;
+}
+
+void
+vm_global_added(Ty *ty, Symbol const *sym)
+{
+        if (UNLIKELY(sym->i >= GLOBALS_MAX - 1)) {
+                panic("too many globals (at most %d)", GLOBALS_MAX - 1);
+        }
+
+        while (vN(Globals) <= sym->i) {
+                xvP(Globals, NIL);
+        }
+
+        *v_(Globals, sym->i) = IsTopLevel(sym) ? UNINITIALIZED(sym) : NIL;
+}
 
 inline static void
 PopulateGlobals(Ty *ty)
@@ -1718,6 +1821,8 @@ co_yield_value(Ty *ty)
 
 static _Thread_local isize DeoptTryBase = -1;
 
+enum { REENTRIES = 4 };
+
 static void
 DeoptFrame(Ty *ty, char *ip)
 {
@@ -1762,6 +1867,78 @@ xjit(Ty *ty, isize depth, JitFn *func, i32 resume_idx, Value *args, Value **env)
         --EXEC_DEPTH;
 
         return xjit_finish(ty, depth, rc);
+}
+
+__attribute__((noinline, cold))
+static void
+NoteDeopt(Ty *ty, Frame const *top)
+{
+        Value          fn = top->f;
+        LirCode const *lc = jit_code_of(&fn);
+
+        fn.type = VALUE_FUNCTION;
+
+        if (
+                (lc != NULL)
+             && (lc->body == (void *)frame_jit(top))
+             && (__atomic_add_fetch((u32 *)&lc->deopts, 1, __ATOMIC_RELAXED) == JIT_DEOPT_LIMIT)
+        ) {
+                jit_despecialize(ty, &fn);
+        }
+}
+
+static bool
+TierFrame(Ty *ty, isize depth, i32 resume)
+{
+        Frame *frame = v_(FRAMES, depth);
+        Value  fn    = frame->f;
+        isize  k     = vN(TRY_STACK);
+
+        fn.type = VALUE_FUNCTION;
+
+        if (k > 0 && v__(TRY_STACK, k - 1)->fs >= vN(FRAMES)) {
+                return false;
+        }
+
+        JitFn *jit = jit_promote(ty, &fn);
+
+        if (jit == NULL) {
+                return false;
+        }
+
+        i32 entry = 0;
+
+        if (resume > 0) {
+                LirCode const *lc     = jit_code_of(&fn);
+                u32            offset = resume - 1;
+
+                if (lc == NULL || lc->body != (void *)jit) {
+                        return false;
+                }
+
+                entry = -1;
+
+                for (u32 i = 0; i < lc->nosr; ++i) {
+                        if (lc->osr[2 * i] == offset) {
+                                entry = lc->osr[2 * i + 1];
+                                break;
+                        }
+                }
+
+                if (entry < 0) {
+                        return false;
+                }
+        }
+
+        xjit(ty, depth, jit, entry, v_(STACK, frame->fp), frame->f.env);
+
+        while (vN(FRAMES) > depth) {
+                isize  i   = vN(FRAMES) - 1;
+                Frame *top = vvL(FRAMES);
+                xjit(ty, i, frame_jit(top), top->jit_resume, v_(STACK, top->fp), top->f.env);
+        }
+
+        return true;
 }
 
 inline static i32
@@ -1814,9 +1991,17 @@ JitReturn:
                 break;
 
         case JIT_DEOPT:
-                jit_note_deopt(&top->f);
+                NoteDeopt(ty, top);
                 top->jit_resume = 0;
+                top->deopts += 1;
                 DeoptFrame(ty, (char *)code_of(&top->f) + next_resume);
+                break;
+
+        case JIT_OSR:
+                top->jit_resume = 0;
+                if (!TierFrame(ty, depth, next_resume)) {
+                        DeoptFrame(ty, (char *)code_of(&top->f) + (next_resume > 0 ? next_resume - 1 : 0));
+                }
                 break;
         }
 
@@ -1855,7 +2040,7 @@ vm_osr(Ty *ty)
         }
         Frame *frame = vvL(FRAMES);
         Value fn = frame->f;
-        if (fn.type != VALUE_FUNCTION || DebugJitOff) {
+        if (fn.type != VALUE_FUNCTION || DebugJitOff || frame->deopts >= REENTRIES) {
                 return false;
         }
         char const *code = code_of(&fn);
@@ -2408,6 +2593,12 @@ NewThread(Ty *ty, Thread *t, Value *call, Value *name, bool isolated)
 {
         atomic_bool created = false;
         Value thread = THREAD(t);
+        ThreadGroup *group = isolated ? NewThreadGroup(ty->group) : ty->group;
+
+        if (group == NULL) {
+                zP("too many isolated thread groups (at most %d at once)", GC_OWNER_MAX - 1);
+        }
+
         NewThreadCtx *ctx = mrealloc(NULL, sizeof *ctx);
 
         *ctx = (NewThreadCtx) {
@@ -2416,7 +2607,7 @@ NewThread(Ty *ty, Thread *t, Value *call, Value *name, bool isolated)
                 .name = name,
                 .created = &created,
                 .t = t,
-                .group = isolated ? NewThreadGroup() : ty->group,
+                .group = group,
                 .isolated = isolated
         };
 
@@ -2499,6 +2690,15 @@ CleanupThread(void *ctx)
 
         TySpinLockUnlock(&ty->group->Lock);
 
+        if (group_remaining == 0 && ty->group != &MainGroup) {
+                LockTy();
+                if (ty->result != NULL) {
+                        value_mark(ty, ty->result);
+                }
+                GCSweep(ty, &ty->group->DeadAllocs, &ty->group->DeadUsed);
+                UnlockTy();
+        }
+
         for (int i = 0; i < vC(THROW_STACK); ++i) {
                 ThrowCtx *ctx = v__(THROW_STACK, i);
                 xvF(*ctx);
@@ -2550,8 +2750,11 @@ CleanupThread(void *ctx)
         TyValueCleanup();
         TyFunctionsCleanup();
 
-        if (group_remaining == 0) {
+        if (group_remaining == 0 && ty->group != &MainGroup) {
                 GCLOG("Cleaning up group %p", (void*)ty->group);
+                BequeathAllocs(ty->group);
+                ReleaseGroupId(ty->group->id);
+                ty->group->dead = true;
                 TySpinLockDestroy(&ty->group->Lock);
                 TySpinLockDestroy(&ty->group->GCLock);
                 TySpinLockDestroy(&ty->group->DLock);
@@ -2563,7 +2766,6 @@ CleanupThread(void *ctx)
                 xvF(ty->group->ThreadStates);
                 xvF(ty->group->DeadAllocs);
                 xmF(ty->group->GCBlockedThreads);
-                xmF(ty->group);
         }
 
         GCLOG("Finished cleaning up on thread: %llu -- releasing threads lock", TID);
@@ -2703,6 +2905,8 @@ vm_run_thread(void *p)
         xmF(ctx);
         t->ctx = NULL;
         mF(call);
+
+        ty->result = &t->v;
 
 #ifndef _WIN32
         pthread_cleanup_pop(1);
@@ -7182,7 +7386,9 @@ vm_exec(Ty *ty, char *code)
 
         struct try *_try;
 
-        PopulateGlobals(ty);
+        if (UNLIKELY(!TY_IS_INITIALIZED)) {
+                PopulateGlobals(ty);
+        }
 
 #ifdef TY_PROFILER
         char *StartIPLocal = LastIP;
@@ -10371,7 +10577,9 @@ vm_init(Ty *ty, int ac, char **av)
         signal(SIGUSR2, FlipGC_EVERY_ALLOC);
 #endif
 
-        InitThreadGroup(&MainGroup);
+        ReserveGlobals();
+        InitThreadGroup(&MainGroup, 1, NULL);
+        TySpinLockInit(&GroupIdLock);
         InitializeTY(&xD, ty);
         TyDiagInit();
 
@@ -10492,6 +10700,7 @@ vm_init(Ty *ty, int ac, char **av)
 #endif
 
         TY_FINISH_LOADING();
+        PopulateGlobals(ty);
         TY_IS_INITIALIZED = true;
 
         return true;
@@ -10528,6 +10737,7 @@ vm_reset(Ty *ty)
         compiler_load_builtin_modules(ty);
         sqlite_load(ty);
         TY_FINISH_LOADING();
+        PopulateGlobals(ty);
         TY_IS_INITIALIZED = true;
         GC_RESUME();
 
@@ -12732,7 +12942,11 @@ GetMyTy(void)
 {
         if (UNLIKELY(MyTy == NULL)) {
                 Ty *ty = mrealloc(NULL, sizeof *ty);
-                InitializeTy(ty, NewThreadGroup());
+                ThreadGroup *group = NewThreadGroup(&MainGroup);
+                if (group == NULL) {
+                        panic("too many isolated thread groups (at most %d)", GC_OWNER_MAX - 1);
+                }
+                InitializeTy(ty, group);
                 AddThread(ty, TyThreadSelf());
                 ty->flags |= TY_F_FOREIGN;
                 ty->id = NextThreadId();

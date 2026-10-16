@@ -40,6 +40,9 @@ vm_take_lock_raw(Ty *ty);
 bool
 vm_reset(Ty *ty);
 
+void
+vm_global_added(Ty *ty, Symbol const *sym);
+
 noreturn void
 vm_panic_ex(Ty *ty, char const *fmt, ...);
 

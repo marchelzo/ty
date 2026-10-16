@@ -460,6 +460,9 @@ compiler_find_next_line(Ty *ty, char const *ip);
 bool
 compiler_has_module(Ty *ty, char const *path);
 
+bool
+compiler_is_global_scope(Scope const *scope);
+
 usize
 compiler_global_count(Ty *ty);
 

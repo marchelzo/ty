@@ -14510,6 +14510,12 @@ compiler_has_module(Ty *ty, char const *name)
         return false;
 }
 
+bool
+compiler_is_global_scope(Scope const *scope)
+{
+        return scope == GlobalScope;
+}
+
 usize
 compiler_global_count(Ty *ty)
 {

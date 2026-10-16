@@ -1242,6 +1242,7 @@ local_stubs(BcLir *c, i32 index)
                         bind(c, node->deopt);
                         flush_around(c, off);
                         leave(c, JIT_PACK(JIT_DEOPT, off));
+                        tierup_stub(c, off);
                 }
         }
 

@@ -582,10 +582,12 @@ struct lir_code {
         LirCode      *entry_code;
         void         *interp_state;
         u32           entry_body_slots;
-        u32           deopts;
         u32          *osr;
         u32           nosr;
         i32          *tier;
+        u64           serial;
+        u32           deopts;
+        LirCode      *previous;
         bool          entry_thunk;
         bool          gc_owned;
         bool          release;

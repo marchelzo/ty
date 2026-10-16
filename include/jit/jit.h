@@ -26,7 +26,8 @@ enum {
         JIT_YIELD,
         JIT_YIELD_SOME,
         JIT_YIELD_NONE,
-        JIT_DEOPT
+        JIT_DEOPT,
+        JIT_OSR
 };
 
 typedef struct {
@@ -82,11 +83,14 @@ jit_pinned_loop(Value const *f);
 int
 jit_tier(void);
 
-void
-jit_tier_up(Value const *f);
+JitFn *
+jit_promote(Ty *ty, Value const *f);
 
-void
-jit_note_deopt(Value const *f);
+JitFn *
+jit_despecialize(Ty *ty, Value const *f);
+
+enum { JIT_DEOPT_LIMIT = 16 };
+
 
 inline static uptr
 jit_budget(Value const *f)

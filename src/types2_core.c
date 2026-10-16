@@ -13005,6 +13005,27 @@ t2_solver_upper_bound(T2Solver *solver, T2Type meta)
         return v__(solver->metas, id - 1).upper;
 }
 
+static T2Type
+open_inflow(T2Solver *solver, u32 id, T2Type lower)
+{
+        for (usize i = 0; i < vN(solver->edges) && lower != T2_TYPE_INVALID; ++i) {
+                u32 sub = find_root(solver, v__(solver->edges, i).subtype);
+                u32 sup = find_root(solver, v__(solver->edges, i).supertype);
+
+                if (sup != id || sub == id) {
+                        continue;
+                }
+
+                T2Meta const *node = v_(solver->metas, sub - 1);
+
+                if (node->solution == T2_TYPE_INVALID && !node->retired) {
+                        lower = t2_join(solver->universe, lower, meta_type(solver, sub));
+                }
+        }
+
+        return lower;
+}
+
 T2Type
 t2_solver_solution(
         T2Solver            *solver,
@@ -13047,6 +13068,13 @@ t2_solver_solution(
 
         if (preference == T2_PREFER_SOLUTION_ONLY) {
                 return meta;
+        }
+
+        if (v__(solver->metas, id - 1).variable_kind == T2_VARIABLE_WEAK) {
+                lower = open_inflow(solver, id, lower);
+                if (lower == T2_TYPE_INVALID) {
+                        return T2_TYPE_INVALID;
+                }
         }
 
         if (preference == T2_PREFER_KNOWN_VALUE) {

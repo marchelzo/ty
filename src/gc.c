@@ -186,11 +186,11 @@ GCForget(Ty *ty, AllocList *allocs, isize *used)
 {
         for (usize i = 0; i < vN(*allocs); ++i) {
                 if (
-                        A_LOAD(&v__(*allocs, i)->mark)
+                        (A_LOAD(&v__(*allocs, i)->mark) & 1)
                      || (A_LOAD(&v__(*allocs, i)->hard) != 0)
                 ) {
                         *used -= min(v__(*allocs, i)->size, *used);
-                        A_STORE(&v__(*allocs, i)->mark, false);
+                        A_STORE(&v__(*allocs, i)->mark, A_LOAD(&v__(*allocs, i)->mark) & ~1);
                         SWAP(struct alloc *, v__(*allocs, i), v_L(*allocs));
                         vvX(*allocs);
                 }
@@ -206,14 +206,14 @@ GCSweepTy(Ty *ty)
         for (int i = 0; i < vN(ty->allocs); ++i) {
                 struct alloc *a = v__(ty->allocs, i);
                 if (
-                        !A_LOAD(&a->mark)
+                        !(A_LOAD(&a->mark) & 1)
                      && (A_LOAD(&a->hard) == 0)
                 ) {
                         ty->memory_used -= min(a->size, ty->memory_used);
                         collect(ty, a);
                         ty_free(a);
                 } else {
-                        A_STORE(&a->mark, false);
+                        A_STORE(&a->mark, A_LOAD(&a->mark) & ~1);
                         *v_(ty->allocs, n++) = a;
                 }
         }
@@ -230,14 +230,14 @@ GCSweep(Ty *ty, AllocList *allocs, isize *used)
         GC_STOP();
         for (int i = 0; i < vN(*allocs); ++i) {
                 if (
-                        !A_LOAD(&v__(*allocs, i)->mark)
+                        !(A_LOAD(&v__(*allocs, i)->mark) & 1)
                      && (A_LOAD(&v__(*allocs, i)->hard) == 0)
                 ) {
                         *used -= min(v__(*allocs, i)->size, *used);
                         collect(ty, v__(*allocs, i));
                         ty_free(v__(*allocs, i));
                 } else {
-                        A_STORE(&v__(*allocs, i)->mark, false);
+                        A_STORE(&v__(*allocs, i)->mark, A_LOAD(&v__(*allocs, i)->mark) & ~1);
                         *v_(*allocs, n++) = v__(*allocs, i);
                 }
         }
