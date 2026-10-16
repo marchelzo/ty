@@ -1,0 +1,212 @@
+import os
+import chalk (chalk)
+import clap (clap!)
+import path (Path)
+import ty
+
+/**
+ * Profile a ty program with perf and attribute samples to JIT-compiled functions.
+ *
+ * Without --func, lists the JIT functions that received the most samples.
+ * With --func, prints the hottest machine instructions of that function.
+ *
+ *     ty tools/jitannot.ty -- perf/benchmarks/nbody.ty --ty-perf-bench 20 0 1
+ *     ty tools/jitannot.ty -f advance -- perf/benchmarks/nbody.ty --ty-perf-bench 20 0 1
+ */
+clap! JitAnnot {
+    /// JIT function to annotate
+    func: String, short: 'f'
+
+    /// Number of functions or instructions to show
+    top: Int, short: 'n', default: 30, check: 1..10000
+
+    /// Sampling frequency passed to perf record
+    freq: Int, short: 'F', default: 4999, check: 1..100000
+
+    /// ty executable to profile (default: this one)
+    ty: String, short: None
+
+    /// Disassembly context (instructions shown around each hot instruction)
+    context: Int, short: 'C', default: 0, check: 0..100
+}
+
+use MapEntry = {start: Int, size: Int, name: String}
+
+fn capture(argv: [String]) -> String {
+    let child = os.spawn(argv, stdout=os.SPAWN_PIPE, stderr=os.SPAWN_NULL)
+    let out = Blob()
+    while let $chunk = os.read(child.stdout, 65536) { out.push(chunk) }
+    os.close(child.stdout)
+    let (_, status) = os.wait(child.pid)!
+    if !os.WIFEXITED(status) || os.WEXITSTATUS(status) != 0 {
+        throw RuntimeError("command failed: {argv.join(' ')}")
+    }
+    out.str!()
+}
+
+fn run(argv: [String]) {
+    let child = os.spawn(argv)
+    let (_, status) = os.wait(child.pid)!
+    if !os.WIFEXITED(status) {
+        throw RuntimeError("command killed by signal {os.WTERMSIG(status)}: {argv.join(' ')}")
+    }
+}
+
+fn load-map(pid: Int) -> [MapEntry] {
+    let file = Path("/tmp/perf-{pid}.map")
+    if !file.file? {
+        return []
+    }
+    let entries: [MapEntry] = []
+    for line in file.read-text().lines() {
+        let words = line.words()
+        if #words == 3 {
+            entries.push({start: Int("0x{words[0]}"), size: Int("0x{words[1]}"), name: words[2].starts?("jit:") ? words[2].slice(4) : words[2]})
+        }
+    }
+    entries.sort(by: \_.start)
+}
+
+fn find-entry(entries: [MapEntry], ip: Int) -> MapEntry | nil {
+    let lo = 0
+    let hi = #entries
+    while lo < hi {
+        let mid = (lo + hi) / 2
+        if entries[mid].start <= ip {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    if lo == 0 {
+        return nil
+    }
+    let e = entries[lo - 1]
+    (ip < e.start + e.size) ? e : nil
+}
+
+fn disassemble(bin: Path) -> [(Int, String)] {
+    let arch = capture(['uname', '-m']).trim()
+    let machine = (arch == 'aarch64' || arch == 'arm64') ? 'aarch64' : 'i386:x86-64'
+    let argv = ['objdump', '-D', '-b', 'binary', "-m{machine}", '--no-show-raw-insn', "{bin}"]
+    if machine != 'aarch64' {
+        argv.push('-M')
+        argv.push('intel')
+    }
+    let out: [(Int, String)] = []
+    for line in capture(argv).lines() {
+        let parts = line.trim().split(':', 1)
+        if #parts == 2 && #parts[0] > 0 && parts[0].all?(c -> c in '0123456789abcdef') {
+            out.push((Int("0x{parts[0]}"), parts[1].trim()))
+        }
+    }
+    out
+}
+
+fn annotate(entry: MapEntry, ips: Dict[Int, Int], dump: Path, top: Int, context: Int) {
+    let total = ips.values().sum() ?? 0
+    print(chalk"[bold]jit:{entry.name}[/] [dim]@ {entry.start:#x}, {entry.size} bytes, {total} samples[/]")
+    let suffix = "@{entry.start:x}.bin"
+    let bin = dump.ls().find(p -> str(p).ends?(suffix)) ?? (dump / "{entry.name}{suffix}")
+    if !bin.file? {
+        print(chalk"[yellow]no dump at {bin}[/]")
+        return
+    }
+    let code = disassemble(bin)
+    let hot = ips.items().sort(by: \-_.1).take(top).map(\_.0)
+    let show: Dict[Int, Bool] = %{}
+    for (i, (off, _)) in code.enumerate() {
+        if hot.any?(h -> h == off) {
+            for j in max(0, i - context)..min(#code, i + context + 1) {
+                show[j] = true
+            }
+        }
+    }
+    let last = -1
+    for i in show.keys().list().sort() {
+        if last >= 0 && i != last + 1 {
+            print(chalk"[dim]        ...[/]")
+        }
+        let (off, text) = code[i]
+        let n = ips[off] ?? 0
+        let pct = n * 100.0 / max(total, 1)
+        if n > 0 {
+            print(chalk"{pct:>6.2f}%  [cyan]{off:>5x}[/]  {text}")
+        } else {
+            print(chalk"[dim]         {off:>5x}  {text}[/]")
+        }
+        last = i
+    }
+}
+
+fn report(opts: JitAnnot, rest: [String], dump: Path) -> Int {
+    let data = dump / 'perf.data'
+    run([
+        'perf', 'record', '-q', '--all-user', '-F', "{opts.freq}", '-o', "{data}", '--',
+        'env', 'TY_JIT_PERF_MAP=1', "TY_JIT_BIN={dump}", opts.ty ?? ty.executable, *rest
+    ])
+
+    let samples: Dict[Int, Int] = %{}
+    let pid = 0
+    let total = 0
+    for line in capture(['perf', 'script', '-i', "{data}", '-F', 'pid,ip']).lines() {
+        let words = line.words()
+        if #words == 2 && #words[1] < 16 {
+            pid = Int(words[0])
+            let ip = Int("0x{words[1]}")
+            samples[ip] = (samples[ip] ?? 0) + 1
+            total += 1
+        }
+    }
+    let entries = load-map(pid)
+    Path("/tmp/perf-{pid}.map").unlink()
+
+    let by-entry: Dict[Int, Dict[Int, Int]] = %{}
+    let jit-total = 0
+    for (ip, n) in samples {
+        if let $e = find-entry(entries, ip) {
+            let offsets = by-entry[e.start] ?? (by-entry[e.start] = %{})
+            offsets[ip - e.start] = (offsets[ip - e.start] ?? 0) + n
+            jit-total += n
+        }
+    }
+
+    if let $name = opts.func {
+        let matched = entries.filter(e -> e.name == name && by-entry[e.start] != nil)
+        if #matched == 0 {
+            print(chalk"[red]no samples in jit:{name}[/]")
+            return 1
+        }
+        for e in matched {
+            annotate(e, by-entry[e.start]!, dump, opts.top, opts.context)
+            print()
+        }
+        return 0
+    }
+
+    let starts = %{e.start: e for e in entries}
+    let pct = jit-total * 100.0 / max(total, 1)
+    print(chalk"[dim]{total} samples, {jit-total} ({pct:.1f}%) in JIT code[/]")
+    let ranked = by-entry.items()
+        .map(item -> (starts[item.0]!, item.1.values().sum() ?? 0))
+        .sort(by: \-_.1)
+        .take(opts.top)
+    for (e, n) in ranked {
+        print(chalk"{n * 100.0 / max(total, 1):>6.2f}%  {n:>7}  jit:{e.name} [dim]@ {e.start:#x}[/]")
+    }
+    0
+}
+
+fn main() {
+    let (opts, rest) = JitAnnot.parse(os.argv)
+    if #rest == 0 {
+        print("usage: ty tools/jitannot.ty [-f FUNC] [-n N] -- PROGRAM [ARGS...]")
+        os.exit(2)
+    }
+    let status = with dump = Path.tempdir('jitannot') {
+        report(opts, rest, dump)
+    }
+    os.exit(status)
+}
+
+main()
