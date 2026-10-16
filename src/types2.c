@@ -4909,8 +4909,12 @@ constrain_gradually(
         T2TypeKind target_kind = t2_type_kind(checker->universe, target);
         if (
                 (relation == T2_RELATION_NO)
-             && (source_kind == T2_TYPE_NOMINAL)
-             && (target_kind == T2_TYPE_NOMINAL)
+             && (source_kind == target_kind)
+             && (
+                        (source_kind == T2_TYPE_NOMINAL)
+                     || (source_kind == T2_TYPE_TUPLE)
+                     || (source_kind == T2_TYPE_RECORD)
+                )
         ) {
                 T2Type actual_type = t2_solver_zonk(
                         checker->solver,
@@ -8199,17 +8203,6 @@ callable_top_parameter(T2Checker *checker, T2Type parameter)
 }
 
 static void
-settle_callable_slot(T2Checker *checker, T2Type value, T2Type slot)
-{
-        if (
-                callable_top_parameter(checker, slot)
-             && callable_headed(checker, value)
-        ) {
-                default_dynamic_callable_metas(checker, value, 0);
-        }
-}
-
-static void
 default_dynamic_callbacks(T2Checker *checker, T2Type type, unsigned depth)
 {
         if (depth > 64 || checker->failed) {
@@ -8229,6 +8222,142 @@ default_dynamic_callbacks(T2Checker *checker, T2Type type, unsigned depth)
                         depth + 1
                 );
         }
+}
+
+static bool
+dynamic_slot(T2Checker *checker, T2Type slot)
+{
+        T2Type head = resolved_type_head(checker, slot, T2_PREFER_UPPER_BOUND);
+        switch (t2_type_kind(checker->universe, head)) {
+        case T2_TYPE_DYNAMIC:
+        case T2_TYPE_ANY:
+                return true;
+        case T2_TYPE_UNION:
+        {
+                bool dynamic = false;
+                for (usize i = 0; i < t2_type_arity(checker->universe, head); ++i) {
+                        T2Type arm = t2_type_child(checker->universe, head, i);
+                        if (t2_type_kind(checker->universe, arm) == T2_TYPE_NIL) {
+                                continue;
+                        }
+                        if (!dynamic_slot(checker, arm)) {
+                                return false;
+                        }
+                        dynamic = true;
+                }
+                return dynamic;
+        }
+        default:
+                return false;
+        }
+}
+
+static bool
+same_shape(T2Checker *checker, T2Type a, T2Type b)
+{
+        T2Universe *u = checker->universe;
+
+        if (
+                (t2_type_kind(u, a) != t2_type_kind(u, b))
+             || (t2_type_arity(u, a) != t2_type_arity(u, b))
+        ) {
+                return false;
+        }
+
+        switch (t2_type_kind(u, a)) {
+        case T2_TYPE_TUPLE:
+                return true;
+
+        case T2_TYPE_NOMINAL:
+        {
+                T2Nominal *x = nominal_from_type(checker, a);
+                T2Nominal *y = nominal_from_type(checker, b);
+                return (x != NULL)
+                    && (y != NULL)
+                    && (x->class_id == y->class_id);
+        }
+
+        default:
+                return false;
+        }
+}
+
+static void
+settle_callable_slot_x(T2Checker *checker, T2Type value, T2Type slot, unsigned depth)
+{
+        if (depth > 64 || checker->failed) {
+                return;
+        }
+
+        if (dynamic_slot(checker, slot)) {
+                default_dynamic_callbacks(checker, value, 0);
+                return;
+        }
+
+        if (callable_top_parameter(checker, slot)) {
+                if (callable_headed(checker, value)) {
+                        default_dynamic_callable_metas(checker, value, 0);
+                }
+                return;
+        }
+
+        T2Universe *u = checker->universe;
+        T2Type target = t2_recursive_unfold(
+                u,
+                resolved_type_head(checker, slot, T2_PREFER_UPPER_BOUND)
+        );
+        T2Type source = t2_recursive_unfold(
+                u,
+                resolved_type_head(checker, value, T2_PREFER_LOWER_BOUND)
+        );
+        switch (t2_type_kind(u, target)) {
+        case T2_TYPE_UNION:
+                for (usize i = 0; i < t2_type_arity(u, target); ++i) {
+                        settle_callable_slot_x(
+                                checker,
+                                value,
+                                t2_type_child(u, target, i),
+                                depth + 1
+                        );
+                }
+                break;
+
+        case T2_TYPE_RECORD:
+                if (t2_type_kind(u, source) != T2_TYPE_RECORD) {
+                        break;
+                }
+                for (usize i = 0; i < t2_record_field_count(u, target); ++i) {
+                        T2FieldSpec field;
+                        if (!t2_record_field(u, target, i, &field)) {
+                                continue;
+                        }
+                        T2Type item = t2_record_field_type(u, source, field.name, NULL, NULL);
+                        if (item != T2_TYPE_INVALID) {
+                                settle_callable_slot_x(checker, item, field.type, depth + 1);
+                        }
+                }
+                break;
+
+        default:
+                if (!same_shape(checker, source, target)) {
+                        break;
+                }
+                for (usize i = 0; i < t2_type_arity(u, target); ++i) {
+                        settle_callable_slot_x(
+                                checker,
+                                t2_type_child(u, source, i),
+                                t2_type_child(u, target, i),
+                                depth + 1
+                        );
+                }
+                break;
+        }
+}
+
+static void
+settle_callable_slot(T2Checker *checker, T2Type value, T2Type slot)
+{
+        settle_callable_slot_x(checker, value, slot, 0);
 }
 
 static bool
@@ -14683,7 +14812,7 @@ contextual_fresh_literal_x(
                                                 item,
                                                 wanted
                                         )
-                                     || constrain_type_maybe_diagnose(
+                                     || write_slot(
                                                 checker,
                                                 item,
                                                 actual,
@@ -14751,7 +14880,7 @@ contextual_fresh_literal_x(
                                         (element == T2_TYPE_INVALID)
                                      || (t2_type_kind(checker->universe, element)
                                       == T2_TYPE_ERROR)
-                                     || !constrain_type_maybe_diagnose(
+                                     || !write_slot(
                                              checker,
                                              item,
                                              element,
@@ -14768,7 +14897,7 @@ contextual_fresh_literal_x(
                         T2Type actual = infer_expression(checker, item);
                         if (
                                 !contextual_fresh_literal(checker, item, wanted)
-                             && !constrain_type_maybe_diagnose(
+                             && !write_slot(
                                      checker,
                                      item,
                                      actual,
@@ -14807,7 +14936,7 @@ contextual_fresh_literal_x(
                                                 &spread_key,
                                                 &spread_value
                                         )
-                                     || !constrain_type_maybe_diagnose(
+                                     || !write_slot(
                                              checker,
                                              key_expression,
                                              spread_key,
@@ -14816,7 +14945,7 @@ contextual_fresh_literal_x(
                                              "contextual-dictionary-spread-key",
                                              "spread key must satisfy the contextual dictionary type"
                                         )
-                                     || !constrain_type_maybe_diagnose(
+                                     || !write_slot(
                                              checker,
                                              key_expression,
                                              spread_value,
@@ -14832,7 +14961,7 @@ contextual_fresh_literal_x(
                         }
                         Expr const *value_expression = v__(expression->values, i);
                         if (
-                                !constrain_type_maybe_diagnose(
+                                !write_slot(
                                         checker,
                                         key_expression,
                                         infer_expression(checker, key_expression),
@@ -14854,7 +14983,7 @@ contextual_fresh_literal_x(
                                         value_expression,
                                         wanted_value
                                 )
-                             && !constrain_type_maybe_diagnose(
+                             && !write_slot(
                                      checker,
                                      value_expression,
                                      actual_value,
@@ -14877,7 +15006,7 @@ contextual_fresh_literal_x(
                         if (
                                 (default_value == T2_TYPE_INVALID)
                              || (t2_type_kind(checker->universe, default_value) == T2_TYPE_ERROR)
-                             || !constrain_type_maybe_diagnose(
+                             || !write_slot(
                                         checker,
                                         expression->dflt,
                                         default_value,

@@ -1,0 +1,97 @@
+import clap (clap!)
+import os
+import path
+
+const MODES  = ['fast', 'slow']
+const LEVELS = 1..5
+
+fn even?(n) { n % 2 == 0 }
+
+clap! Args {
+    mode: String, check: MODES
+    level: Int, check: LEVELS
+    port: Int, check: even?
+    name: String
+    tags: [String]
+    verbose: Int, count: true
+    color: Bool
+}
+
+fn forked(f) {
+    let (r, w) = os.pipe()
+    let pid = os.fork()
+
+    if pid == 0 {
+        os.close(r)
+        os.dup2(w, 2)
+        os.close(w)
+        f()
+        os.exit(0)
+    }
+
+    os.close(w)
+    let err = slurp(r)
+    os.close(r)
+    let (_, status) = os.wait(pid)!
+    ((status >> 8) & 0xFF, err)
+}
+
+pub fn clap-check-module-constants() {
+    let (opts, _) = Args.parse(['prog', '--mode', 'slow', '--level', '2', '--port', '80'])
+    assert(opts.mode == 'slow')
+    assert(opts.level == 2)
+    assert(opts.port == 80)
+}
+
+pub fn clap-check-module-constant-rejects() {
+    for argv in [['--mode', 'warp'], ['--level', '9'], ['--port', '81']] {
+        let (code, err) = forked(-> Args.parse(['prog', *argv]))
+        assert(code == 1, "{argv}: exit {code}: {err}")
+        assert(err.match?(/Invalid value/), err)
+    }
+}
+
+pub fn clap-check-module-constant-help() {
+    let (code, err) = forked(fn () {
+        os.dup2(2, 1)
+        Args.parse(['prog', '--help'])
+    })
+    assert(code == 0, err)
+    assert(err.match?(/fast.*slow/), err)
+}
+
+pub fn clap-toml-config() {
+    with dir = path.tempdir() {
+        let file = dir / 'args.toml'
+        file.write("name = \"toml\"\nlevel = 3\ntags = [\"a\", \"b\"]\nverbose = 2\ncolor = true\n")
+        let (opts, _) = Args.parse(['prog', '-v'], config: file)
+        assert(opts.name == 'toml')
+        assert(opts.level == 3)
+        assert(opts.tags == ['a', 'b'])
+        assert(opts.verbose == 3)
+        assert(opts.color)
+    }
+}
+
+pub fn clap-config-layering() {
+    with dir = path.tempdir() {
+        let base  = dir / 'base.toml'
+        let local = dir / 'local.yaml'
+        base.write("name = \"base\"\nlevel = 1\n")
+        local.write("level: 4\ntags: solo\n")
+        let (opts, _) = Args.parse(['prog'], config: [base, dir / 'missing.toml', local])
+        assert(opts.name == 'base')
+        assert(opts.level == 4)
+        assert(opts.tags == ['solo'])
+    }
+}
+
+pub fn clap-bad-config-dies() {
+    with dir = path.tempdir() {
+        let file = dir / 'bad.toml'
+        file.write('name = \n')
+        let (code, err) = forked(-> Args.parse(['prog'], config: file))
+        assert(code == 1, "exit {code}: {err}")
+        assert(err.match?(/can't read config/), err)
+    }
+}

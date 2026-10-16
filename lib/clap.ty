@@ -5,7 +5,7 @@ import ty.parse (expr, stmt, show as sourceOf)
 import os
 import chalk (chalk)
 import path (Path)
-import yaml
+import toml
 import ety
 
 fn lisp(s) {
@@ -86,6 +86,52 @@ fn _coerceVal(constraint, val) {
     val
 }
 
+let __yaml = nil
+
+fn _loadYaml() {
+    try {
+        Ok(Module('yaml').parse-file)
+    } catch e {
+        Err("YAML support is unavailable ({e})")
+    }
+}
+
+fn _yaml(path: Path) {
+    match __yaml = __yaml ?? _loadYaml() {
+        Ok(parse) => Ok(parse(path)),
+        err       => err
+    }
+}
+
+fn _readConfig(path: Path) {
+    try {
+        match path.suffix.lower() {
+            '.toml' => Ok(toml.load(path).data),
+            _       => _yaml(path)
+        }
+    } catch e: RuntimeError {
+        Err(e.what)
+    }
+}
+
+let _many = match {
+    xs: Array => xs,
+    x         => [x]
+}
+
+fn _applyConfig(result: Dict, byName: Dict, data: Dict) {
+    for key, val in data {
+        let $spec = byName[key] or continue
+
+        result[spec.name] = match spec {
+            {constraint: [inner], *}       => _many(val).map(_coerceVal@(inner, _)),
+            {repeat: true, $constraint, *} => _many(val).map(_coerceVal@(constraint, _)),
+            {count: true, *}               => val :: Int ? val : int("{val}") ?? 0,
+            {$constraint, *}               => _coerceVal(constraint, val)
+        }
+    }
+}
+
 use OptionSpec = {
     name: String,
     short: String | nil,
@@ -157,37 +203,18 @@ fn _doParse(cls: _, argv, config) -> _ {
         }
     }
 
-    if config != nil {
-        let paths = config :: Array ? config : [config]
-        for p in paths {
-            let fp = Path(p)
-            if fp.exists? {
-                let data: _ = yaml.parse-file(fp)
-                if data :: Dict {
-                    for key, val in data {
-                        if let $spec = byName[key] {
-                            let isArray = spec.repeat
-                            if !isArray { if let [_] = spec.constraint { isArray = true } }
-                            if isArray {
-                                let inner = if let [ic] = spec.constraint { ic } else { spec.constraint }
-                                let arr = val :: Array ? val : [val]
-                                result[spec.name] = arr.map(v -> _coerceVal(inner, v))
-                            } else if spec.count {
-                                result[spec.name] = val :: Int ? val : int("{val}") ?? 0
-                            } else {
-                                result[spec.name] = _coerceVal(spec.constraint, val)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     fn die(msg) {
         eprint(chalk"[b red]error[/]: {msg}")
         eprint("Try '{argv[0]} --help' for more information.")
         os.exit(1)
+    }
+
+    for path in _many(config ?? []).map(Path) if path.exists? {
+        match _readConfig(path) {
+            Ok(data) :: (data :: Dict) => _applyConfig(result, byName, data),
+            Ok(_)                      => (),
+            Err(e)                     => die("can't read config {path}: {e}")
+        }
     }
 
     fn opt(name) {
@@ -1071,6 +1098,24 @@ fn _completions(cls, shell, progName) -> _ {
     }
 }
 
+fn _withChecks(args: Array[_], *preds: _) -> Array[_] {
+    [
+        arg.check ? {*arg, check: {*arg.check, pred}} : arg
+        for (arg, pred) in args.zip(preds)
+    ]
+}
+
+fn _infoBody(args: Array[_]) -> AST {
+    let specs = [arg.check ? {*arg, check: {src: arg.check.src}} : arg for arg in args]
+    ty.Call(
+        func: $$[ $$::(_withChecks) $$],
+        args: [
+            ty.Arg(arg: ty.Value(specs)),
+            *(ty.Arg(arg: arg.check.?pred ?? $$[ nil $$]) for arg in args)
+        ]
+    )
+}
+
 const __types = %{}
 
 pub macro clap! {
@@ -1235,7 +1280,7 @@ pub macro clap! {
                 'check' => {
                     next()
                     let checkExpr = expr(1)
-                    check = {pred: ty.eval(checkExpr), src: sourceOf(checkExpr)}
+                    check = {pred: checkExpr, src: sourceOf(checkExpr)}
                 },
 
                 'hidden' => {
@@ -1340,7 +1385,7 @@ pub macro clap! {
 
     let getCmds     = ty.Func(name: 'cmds',     body: ty.Value(cmds))
     let getCmdHelps = ty.Func(name: 'cmdHelps', body: ty.Value(cmdHelps))
-    let info        = ty.Func(name: 'info',     body: ty.Value(args))
+    let info        = ty.Func(name: 'info',     body: _infoBody(args))
     let version     = ty.Func(name: 'version',  body: ty.Value(version))
 
     let defaultProgName = lisp(name)

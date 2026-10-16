@@ -1,0 +1,48 @@
+import ty
+import ty.test.assert (assert-throws)
+
+const EVEN = 'fn even?(n) { n % 2 == 0 }\n'
+
+const SETTLED = [
+    'let x: _ = [even?]',
+    'let x: ?_ = [even?]',
+    'let x: Array[_] = [even?]',
+    'let x: Array[Any] = [even?]',
+    'let x: Array[Function] = [even?]',
+    'let x: Array[Array[_]] = [[even?]]',
+    'let x: Array[_] = [nil, *[even?]]',
+    'let x: (Int, _) = (1, even?)',
+    'let x: {f: _} = {f: even?}',
+    'let x: Dict[String, _] = %{"a": even?}',
+    'fn g(xs: Array[_]) { xs }; g([nil, even?])',
+    'fn g(r: {f: _}) { r }; g({f: even?})',
+]
+
+pub fn test-callables-settle-under-nested-dynamic() {
+    for src in SETTLED {
+        ty.eval("{EVEN}{src}")
+    }
+}
+
+pub fn test-settled-callable-stays-callable() {
+    let src = "{EVEN}let x: Array[_] = [even?]\nx[0](4)"
+    assert(ty.eval(src) == true)
+}
+
+pub fn test-concrete-slots-still-check() {
+    assert-throws(
+        ty.eval("{EVEN}let x: Array[(String) -> Bool] = [even?]"),
+        CompileError,
+        /\[assignment-type\]/
+    )
+    assert-throws(
+        ty.eval("{EVEN}let x: Array[Array[(String) -> Bool]] = [[even?]]"),
+        CompileError,
+        /\[assignment-type\]/
+    )
+    assert-throws(
+        ty.eval("{EVEN}let x: Dict[Int, _] = %\{'a': even?\}"),
+        CompileError,
+        /\[assignment-type\]/
+    )
+}

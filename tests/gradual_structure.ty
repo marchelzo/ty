@@ -1,0 +1,34 @@
+import ty
+import ty.test.assert (assert-throws)
+
+const REJECTED = [
+    "let x: (Int, _) = ('one', 1)",
+    "let x: (Int, _) = ('one', nil)",
+    "let x: ((Int, _), _) = (('one', 1), 2)",
+    "let x: Array[(Int, _)] = [('one', 1)]",
+    "let x: ?(Int, _) = ('one', 1)",
+    "let x: \{a: Int, f: _\} = \{a: 'one', f: 1\}",
+    "let x: \{a: Int, f: _\} = \{f: 1\}",
+    "fn f(p: (Int, _)) \{ p \}; f(('one', 1))",
+]
+
+const ACCEPTED = [
+    "let x: (Int, _) = (1, 'one')",
+    "let x: (_, _) = ('one', 1)",
+    "let x: ?(Int, _) = (1, 'one')",
+    "let x: \{a: Int, f: _\} = \{a: 1, f: 'one'\}",
+    "fn f(p: (Int, _)) \{ p \}; f((1, 'one'))",
+    "let d: _ = 'one'; let x: (Int, String) = (d, d)",
+]
+
+pub fn test-dynamic-siblings-are-still-checked() {
+    for src in REJECTED {
+        assert-throws(ty.eval(src), CompileError, /\[(assignment-type|bad-call)\]/)
+    }
+}
+
+pub fn test-dynamic-positions-accept-anything() {
+    for src in ACCEPTED {
+        ty.eval(src)
+    }
+}
