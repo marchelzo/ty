@@ -424,6 +424,11 @@ static Stmt *
 parse_match_statement(Ty *ty);
 
 static Stmt *
+parse_match_cond(Ty *ty, bool expr);
+
+#define have_match_cond(ty) (have_kws(MATCH, IF) || have_kws(MATCH, WHILE))
+
+static Stmt *
 parse_if(Ty *ty);
 
 static Stmt *
@@ -3709,6 +3714,13 @@ static Expr *
 prefix_match(Ty *ty)
 {
         char *id = NULL;
+
+        if (have_match_cond(ty)) {
+                Expr *e = mkxpr(STATEMENT);
+                e->statement = parse_match_cond(ty, have_kws(MATCH, IF));
+                e->end = e->statement->end;
+                return e;
+        }
 
         if (T1 == '{') {
                 Token kw = *tok();
@@ -7119,6 +7131,103 @@ parse_match_statement(Ty *ty)
         return s;
 }
 
+inline static bool
+have_wildcard_arm(Ty *ty)
+{
+        return (T0 == TOKEN_IDENTIFIER)
+            && (tok()->module == NULL)
+            && s_eq(tok()->identifier, "_")
+            && (T1 == TOKEN_FAT_ARROW);
+}
+
+static Stmt *
+parse_match_cond_arm(Ty *ty, bool expr)
+{
+        consume(TOKEN_FAT_ARROW);
+        return expr ? to_stmt(parse_expr(ty, 0)) : parse_statement(ty, 0);
+}
+
+static Stmt *
+parse_match_cond(Ty *ty, bool expr)
+{
+        Location start = tok()->start;
+        Stmt *chain = NULL;
+        Stmt **tail = &chain;
+        Stmt *arm;
+        bool loop;
+
+        consume_kw(MATCH);
+
+        loop = have_kw(WHILE);
+        next();
+
+        consume('{');
+        SAVE_NA(false);
+
+        while (T0 != '}') {
+                if (have_wildcard_arm(ty)) {
+                        next();
+                        *tail = parse_match_cond_arm(ty, expr);
+                        try_consume(',');
+                        goto Done;
+                }
+
+                arm = mkstmtx(IF);
+                arm->_if.neg   = try_consume(KEYWORD_NOT);
+                arm->_if.parts = parse_condparts(ty, &arm->_if.neg);
+                arm->_if.then  = parse_match_cond_arm(ty, expr);
+                arm->_if._else = NULL;
+
+                *tail = arm;
+                tail  = &arm->_if._else;
+
+                try_consume(',');
+        }
+
+        if (loop) {
+                *tail = mkstmtx(BREAK);
+                (*tail)->depth      = 1;
+                (*tail)->expression = NULL;
+                SYNTH(*tail, TEnd);
+        }
+
+Done:
+        LOAD_NA();
+        consume('}');
+
+        if (chain == NULL) {
+                chain = mkstmtx(NULL);
+        }
+
+        for (arm = chain; arm != NULL && arm->type == STATEMENT_IF; arm = arm->_if._else) {
+                arm->end = TEnd;
+        }
+
+        if (loop) {
+                struct condpart *forever = amA(sizeof *forever);
+                *forever = (struct condpart) {
+                        .e     = mkxpr(BOOLEAN),
+                        .start = start,
+                        .end   = start
+                };
+                forever->e->boolean = true;
+                SYNTH(forever->e, start);
+
+                arm = mkstmtx(WHILE);
+                vec_init(arm->_while.parts);
+                avP(arm->_while.parts, forever);
+                arm->_while.block = chain;
+                chain = arm;
+        }
+
+        chain->start = start;
+        chain->end   = TEnd;
+
+        record_sugar(ty, loop ? "match-while" : "match-if", start, TEnd);
+
+        return chain;
+}
+
 static Stmt *
 parse_function_definition(Ty *ty)
 {
@@ -8397,7 +8506,9 @@ Keyword:
         case KEYWORD_FUNCTION: return parse_function_definition(ty);
         case KEYWORD_MACRO:    return parse_function_definition(ty);
         case KEYWORD_OPERATOR: return parse_operator_directive(ty);
-        case KEYWORD_MATCH:    return parse_match_statement(ty);
+        case KEYWORD_MATCH:    return have_match_cond(ty)
+                                    ? parse_match_cond(ty, false)
+                                    : parse_match_statement(ty);
         case KEYWORD_RETURN:   return parse_return_statement(ty);
         case KEYWORD_DEFER:    return parse_defer_statement(ty);
         case KEYWORD_LET:      return parse_let_definition(ty);
