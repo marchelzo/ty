@@ -5,6 +5,8 @@ pub tag Safe, Unsafe, Display;
 
 pub use Safety = Safe | Unsafe | Display
 
+pub LIMIT = 100
+
 pub class Edit {
     start:   Int
     end:     Int
@@ -29,11 +31,13 @@ pub class Fix {
     edits:   Array[Edit]
     safety:  Safety
     layout?: Bool
+    limit:   Int
 
     init(edits: Array[Edit], safety: Safety = Safe, layout: Bool = false) {
         self.edits = edits
         self.safety = safety
         self.layout? = layout
+        self.limit = LIMIT
     }
 
     safe? -> Bool { safety == Safe }
@@ -188,6 +192,9 @@ pub fn delete(n: Node, safety: Safety = Safe) -> Fix {
 
 fn suppressed(tree: Tree) -> Dict[Int, Array[String]] {
     let out: Dict[Int, Array[String]] = %{}
+    if !tree.source.match?(/\bty:\s*allow/) {
+        return out
+    }
     let add = fn (line: Int, names: Array[String]) {
         out[line] = (out[line] ?? []) + names
     }
@@ -220,12 +227,39 @@ fn allowed?(sup: Dict[Int, Array[String]], d: Diag) -> Bool {
 }
 
 pub fn check(tree: Tree, rules: Array[Rule]) -> Array[Diag] {
-    let out: Array[Diag] = []
-    let sup = suppressed(tree)
     let active = [r for r in rules if tree.semantic? || !r.semantic?]
+    let done: Dict[Rule, Array[Diag]] = tree.memo['lint.check'] ?? (tree.memo['lint.check'] = %{})
+    let todo = [r for r in active if r not in done]
+    if #todo > 0 {
+        run-rules(tree, todo, done)
+    }
+    let out: Array[Diag] = []
+    for active {
+        out += done[it] ?? []
+    }
+    out.sort!(by=d -> (d.start, d.rule))
+    let seen: Dict[String, Bool] = %{}
+    [
+        d for d in out
+        if do {
+            let key = "{d.start}:{d.end}:{d.rule}:{d.message}"
+            let fresh = key not in seen
+            seen[key] = true
+            fresh
+        }
+    ]
+}
+
+fn run-rules(tree: Tree, rules: Array[Rule], done: Dict[Rule, Array[Diag]]) {
+    let sup = suppressed(tree)
+    for rules {
+        done[it] = []
+    }
+    let table: Dict[String, Array[Rule]] = %{}
     for n in tree.walk() {
-        for r in active {
-            continue if !r.wants?(n)
+        let key = (n.kind == 'Sugar') ? "Sugar:{n.form}" : n.kind
+        let wanted = table[key] ?? (table[key] = rules.filter(\_.wants?(n)))
+        for r in wanted {
             let found = match r.check(n) {
                 nil       => [],
                 d: Diag   => [d],
@@ -242,22 +276,126 @@ pub fn check(tree: Tree, rules: Array[Rule]) -> Array[Diag] {
                     it.fix = Fix(f.edits, Display, f.layout?)
                 }
                 if !allowed?(sup, it) {
-                    out.push(it)
+                    (done[r] ?? []).push(it)
                 }
             }
         }
     }
-    out.sort!(by=d -> (d.start, d.rule))
-    let seen: Dict[String, Bool] = %{}
-    [
-        d for d in out
-        if do {
-            let key = "{d.start}:{d.end}:{d.rule}:{d.message}"
-            let fresh = key not in seen
-            seen[key] = true
-            fresh
+}
+
+fn first-token-from(tree: Tree, byte: Int) -> Int {
+    let lo = 0
+    let hi = #tree.tokens
+    while lo < hi {
+        let mid = (lo + hi) / 2
+        if tree.tokens[mid].end < byte {
+            lo = mid + 1
+        } else {
+            hi = mid
         }
-    ]
+    }
+    lo
+}
+
+fn comments-kept?(tree: Tree, e: Edit) -> Bool {
+    let i = first-token-from(tree, e.start)
+    while i <= #tree.tokens {
+        let tok = (i < #tree.tokens) ? tree.tokens[i] : tree.eof
+        for p in [*tok.leading, *tok.trailing] {
+            if p.comment? && e.start <= p.start && p.end <= e.end && p.text.strip() not in e.text {
+                return false
+            }
+        }
+        break if tok.start > e.end
+        i += 1
+    }
+    true
+}
+
+fn line-end(tree: Tree, line: Int) -> Int {
+    tree.source.bsearch('\n', tree.line-start(line)) ?? tree.source.size()
+}
+
+fn fits?(tree: Tree, edits: Array[Edit], limit: Int, strict: Bool) -> Bool {
+    let sorted = edits.sort(by=e -> (e.start, e.end))
+    let first = tree.line-start(tree.line-of(sorted[0].start))
+    let last = line-end(tree, tree.line-of(max(sorted[-1].start, sorted[-1].end)))
+    let old = tree.source.bsplice(first, last)
+    let out = Blob()
+    let pos = first
+    for sorted {
+        out.push(tree.source.bsplice(pos, it.start))
+        out.push(it.text)
+        pos = it.end
+    }
+    if !strict {
+        out.push(tree.source.bsplice(pos, last))
+    }
+    let widths = out.str().split('\n').map(&width)
+    let worst = widths.max() ?? 0
+    worst <= limit || (!strict && worst <= (old.split('\n').map(&width).max() ?? 0))
+}
+
+pub fn admissible(tree: Tree, f: Fix) -> Fix | nil {
+    let edits = f.edits.filter(e -> tree.source.bsplice(e.start, e.end) != e.text)
+    if #edits == 0 {
+        return nil
+    }
+    if !edits.all?(comments-kept?@(tree, _)) || !fits?(tree, edits, f.limit, f.limit < LIMIT) {
+        return nil
+    }
+    if #edits == #f.edits {
+        return f
+    }
+    let g = Fix(edits, f.safety, f.layout?)
+    g.limit = f.limit
+    g
+}
+
+fn preserved?(old: Tree, new: Tree, edits: Array[Edit]) -> Bool {
+    let sorted = edits.sort(by=e -> (e.start, e.end))
+    let prefix = [0]
+    for sorted {
+        prefix.push(prefix[-1] + it.delta)
+    }
+    let have: Dict[String, Bool] = %{}
+    for new.nodes {
+        if !it.synth {
+            have["{it.start}:{it.end}:{it.kind}"] = true
+        }
+    }
+    for n in old.nodes {
+        continue if n.synth || n.kind == 'Module'
+        let lo = 0
+        let hi = #sorted
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if sorted[mid].end <= n.start {
+                lo = mid + 1
+            } else {
+                hi = mid
+            }
+        }
+        let k = lo
+        let j = k
+        let straddles = false
+        while j < #sorted && sorted[j].start < n.end {
+            let e = sorted[j]
+            let same? = e.start == n.start && e.end == n.end
+            if same? || e.start < n.start || e.end > n.end {
+                straddles = true
+                break
+            }
+            j += 1
+        }
+        continue if straddles
+        let start = n.start + prefix[k]
+        let end = n.end + prefix[j]
+        if !have["{start}:{end}:{n.kind}"] {
+            return false
+        }
+    }
+    true
 }
 
 fn collides?(e: Edit, edge: Int, chosen: Array[Edit]) -> Bool {
@@ -519,7 +657,7 @@ class Fixer {
         }
         let next = splice(tree.source, chosen)
         let new = parse(next)
-        if new.error != nil {
+        if new.error != nil || !preserved?(tree, new, chosen) {
             return nil
         }
         if fixes.all?(&.layout?) && new.tokens.map(&.text) != tree.tokens.map(&.text) {
@@ -529,7 +667,9 @@ class Fixer {
             return next
         }
         let bad = hygiene(tree, new, chosen)
-        if #bad == 0 && #new.diagnostics <= #tree.diagnostics {
+        let n = #new.diagnostics
+        let quiet? = -> n == 0 || n <= #syn.baseline-diagnostics(tree)
+        if #bad == 0 && quiet?() {
             return next
         }
         let $imports = missing-imports(tree, bad) or return nil
@@ -543,7 +683,9 @@ class Fixer {
         }
         let retry = splice(tree.source, chosen2)
         let again = parse(retry)
-        let clean? = again.error == nil && #again.diagnostics <= #tree.diagnostics
+        let clean? = again.error == nil && (
+            #again.diagnostics == 0 || #again.diagnostics <= #syn.baseline-diagnostics(tree)
+        )
         (clean? && #hygiene(tree, again, chosen2) == 0) ? retry : nil
     }
 
@@ -570,10 +712,31 @@ class Fixer {
     }
 }
 
-fn applicable(d: Diag, unsafe?: Bool) -> Fix | nil {
+fn applicable(tree: Tree, d: Diag, unsafe?: Bool) -> Fix | nil {
     let $f = d.fix or return nil
     let ok? = f.safe? || (unsafe? && f.safety == Unsafe)
-    (ok? && #f.edits > 0) ? f : nil
+    (ok? && #f.edits > 0) ? admissible(tree, f) : nil
+}
+
+pub fn fixes-for(tree: Tree, rules: Array[Rule], unsafe?: Bool = false) -> Array[Fix] {
+    let out: Array[Fix] = []
+    for check(tree, rules) {
+        if let $f = applicable(tree, it, unsafe?) {
+            out.push(f)
+        }
+    }
+    out
+}
+
+pub fn apply-step(
+    tree: Tree,
+    fixes: Array[Fix],
+    path: String | nil,
+    semantic: Bool,
+    deep: Bool = true
+) -> (String, Int) | nil {
+    let $step = Fixer(path, semantic, deep).step(tree, fixes) or return nil
+    (step.source, step.count)
 }
 
 pub fn fix(
@@ -590,22 +753,25 @@ pub fn fix(
     let fixed = 0
     let rounds = 0
     let current = source
+    let seen: Dict[String, Bool] = %{source: true}
     while rounds < max-rounds {
         let tree = fixer.parse(current)
         break if tree.error != nil
         let fixes: Array[Fix] = []
         let diags: Array[Diag] = []
         for check(tree, rules) {
-            if let $f = applicable(it, unsafe?) {
+            if let $f = applicable(tree, it, unsafe?) {
+                it.fix = f
                 fixes.push(f)
                 diags.push(it)
             }
         }
         break if #fixes == 0
         let $step = fixer.step(tree, fixes) or break
-        if step.source == current {
+        if step.source == current || seen[step.source] {
             break
         }
+        seen[step.source] = true
         if observe != nil {
             observe(current, [d for d in diags if d.fix in step.fixes])
         }
@@ -628,6 +794,9 @@ fn trailing-whitespace(n: Node) -> Array[Diag] {
     }
     let out: Array[Diag] = []
     let tree = n.tree
+    if !tree.source.match?(/[ \t\f\r](\n|$)/) {
+        return out
+    }
     for tok in [*tree.tokens, tree.eof] {
         for pieces in [tok.leading, tok.trailing] {
             for p; i in pieces {
@@ -643,7 +812,7 @@ fn trailing-whitespace(n: Node) -> Array[Diag] {
 }
 
 fn todo-comments(n: Node) -> Array[Diag] {
-    if n.kind != 'Module' {
+    if n.kind != 'Module' || !n.tree.source.match?(/\b(TODO|FIXME|XXX)\b/) {
         return []
     }
     [

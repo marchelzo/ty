@@ -1,0 +1,199 @@
+import syn
+import syn.lint as lint
+import syn.rules (rules!, RuleSet)
+
+fn shout(n: syn.Node) -> String | nil { n.text.match?(/^'[a-z]+'$/) ? n.text.upper() : nil }
+
+fn short?(n: syn.Node) -> Bool { #n.text <= 3 }
+
+fn padding(n: syn.Node) -> String { 'a' * 100 }
+
+let SET: RuleSet = rules! {
+let small = Integer & short?
+
+@shout@
+kinds: String
+$$s: oneline
+$$t = shout($$s)
+message: shout $$s
+@@
+- $$s
++ $$t
+
+@jump@
+$$c: oneline !Condition
+$$j: 'return' | 'break' | 'continue'
+$$p: statement !pair.R
+message: use `$$j if …`
+@@
+- if $$c { $$j }@$$p
++ $$j if $$c
+
+@pair@ match
+$$R: run 2.., statement, contiguous, samecol
+@@
+* $$+R(if $$c { $$b })
+
+@expand@
+$$p: statement oneline !jump.p !pair.R
+$$B: simple
+message: expand
+@@
+  while $$c
+- $$<ws>{ *$$s }@$$B
++ $$<sp>{
++     $$s
++ }
+  @$$p
+
+@rename@ semantic
+$$x: identifier def !('it' | '_')
+message: use it
+@@
+- for $$x in $$xs {
++ for $$xs {
+  <...
+- $$x
++ it
+  ...> when !inside (Function | ImplicitFunction)
+  }
+
+@iso swap@
+@@
+$$a.first($$b) => $$a.head($$b)
+
+@first@
+message: prefer `take`
+@@
+- $$a.first($$n)
++ $$a.take($$n)
+
+@quotes@
+message: no empty strings
+@@
+- $$a + ''
++ $$a
+
+@tiny@
+$$n: small
+message: tiny $$n
+@@
+* f($$n)
+
+@runs@ info
+$$R: run 3.., same($$c)
+message: three tests of `$$c`
+@@
+* $$+R(let $$_ = $$c ? $$_ : $$_)
+
+@arms@ format
+$$A: run 2.., oneline first-on-line, adjacent, samecol
+message: align arms
+@@
+  match $$_ { $$+A($$P => $$B) }
+  align '=>' after $$P in $$A spread <= 24
+
+@layout@ layout
+kinds: ArrayCompr
+$$C: multiline
+message: lay out
+@@
+  $$C
+  group $$C break-before('for', 'if') soft
+
+@lost@
+message: drops a comment
+@@
+- g($$a, $$b)
++ g($$b)
+
+@wide@
+$$pad = padding($$a)
+message: too wide
+@@
+- wide($$a)
++ wide($$a, $$pad)
+
+@flip@
+message: flip
+@@
+- flip(1)
++ flip(2)
+
+@flop@
+message: flop
+@@
+- flip(2)
++ flip(1)
+
+@hosted@
+message: host
+@@
+- choose($$a)
++ match $$a {
++     1 => 2,
++     _ => 3
++ }
+}
+
+fn fix(src: String, names: Array[String]) -> String {
+    lint.fix(src, SET.named(names), max-rounds=20).source
+}
+
+fn hits(src: String, names: Array[String]) -> Array[String] {
+    lint.check(syn.parse(src, semantic=true), SET.named(names)).map(&.message)
+}
+
+pub fn the-macro-loads-rules-and-their-functions() {
+    assert(SET.named(['shout', 'jump']).map(&.name) == ['shout', 'jump'])
+    assert('pair' not in SET.rules.map(&.name))
+    assert(fix("let a = 'hey'\n", ['shout']) == "let a = 'HEY'\n")
+    assert(fix("let a = 'Hey'\n", ['shout']) == "let a = 'Hey'\n")
+}
+
+pub fn constraints-and-positions() {
+    let src = 'fn f(x) {\n    if x { return }\n    g(x)\n}\n'
+    assert(fix(src, ['jump']) == 'fn f(x) {\n    return if x\n    g(x)\n}\n')
+    let pair = 'fn f(x) {\n    if x { return }\n    if !x { return }\n}\n'
+    assert(fix(pair, ['jump']) == pair)
+    assert(hits('f(12)\nf(1234)\n', ['tiny']) == ['tiny 12'])
+}
+
+pub fn plus-lines-follow-the-layout() {
+    let src = 'fn f(s) {\n    while s.poll() { a(); b() }\n}\n'
+    let out = 'fn f(s) {\n    while s.poll() {\n        a()\n        b()\n    }\n}\n'
+    assert(fix(src, ['expand']) == out)
+    let inline = 'fn f(a) { let x = choose(a); x }\n'
+    let hosted = "fn f(a) \{\n    let x = match a \{\n"
+                 "        1 => 2,\n        _ => 3\n    \}\n    x\n\}\n"
+    assert(fix(inline, ['hosted']) == hosted)
+}
+
+pub fn nests-rename-one-binding() {
+    let src = 'fn f(xs) {\n    for x in xs {\n        print(x)\n    }\n}\n'
+    assert(fix(src, ['rename']) == 'fn f(xs) {\n    for xs {\n        print(it)\n    }\n}\n')
+    let captured = 'fn f(xs) {\n    for x in xs {\n        let g = -> x\n    }\n}\n'
+    assert(fix(captured, ['rename']) == captured)
+}
+
+pub fn isomorphisms-widen-patterns() {
+    assert(fix('let a = xs.head(2)\n', ['first']) == 'let a = xs.take(2)\n')
+    assert(fix('let a = b + ""\n', ['quotes']) == 'let a = b\n')
+}
+
+pub fn runs-and-format-directives() {
+    let src = 'let a = s ? 1 : 2\nlet b = s ? 3 : 4\nlet c = s ? 5 : 6\n'
+    assert(hits(src, ['runs']) == ['three tests of `s`'])
+    let arms = 'match v {\n    1 => 2,\n    100 => 3\n}\n'
+    assert(fix(arms, ['arms']) == 'match v {\n    1   => 2,\n    100 => 3\n}\n')
+    let compr = 'let ys = [x\n    for xs if x]\n'
+    assert(fix(compr, ['layout']) == 'let ys = [x for xs if x]\n')
+}
+
+pub fn the-engine-guards-every-fix() {
+    let commented = 'g(1, // keep\n  2)\n'
+    assert(fix(commented, ['lost']) == commented)
+    assert(fix('g(1, 2)\n', ['lost']) == 'g(2)\n')
+    assert(fix('wide(1)\n', ['wide']) == 'wide(1)\n')
+    assert(fix('flip(1)\n', ['flip', 'flop']) in ['flip(1)\n', 'flip(2)\n'])
+}

@@ -1,3 +1,4 @@
+import ty
 import syn
 import syn.lint as lint (Diag, Rule)
 import syn.style as style
@@ -36,7 +37,7 @@ pub class Result {
     }
 }
 
-fn prelude?(path: String | nil) -> Bool {
+pub fn prelude?(path: String | nil) -> Bool {
     let $p = path or return false
     let home = [tmod.path(m) for m in tmod.list() if tmod.name(m) == 'prelude']
     str(Path(p).absolute) in home
@@ -105,5 +106,23 @@ pub fn run(
         current = next
     }
     let tree = syn.parse(current, path=path, deep=true, resolve=true, semantic=semantic?)
+    if semantic? {
+        let plain-tree = syn.parse(current, path=path, deep=true, resolve=true)
+        share-checks(plain-tree, tree)
+    }
     Result(current, fixed, passes, converged?, lint.check(tree, rules), nil)
+}
+
+fn share-checks(from: syn.Tree, into: syn.Tree) {
+    if from.module == nil || !ty.same?(from.module, into.module) {
+        return
+    }
+    let key = 'lint.check'
+    let $done = from.memo[key] or return
+    let have: Dict[Rule, Array[Diag]] = into.memo[key] ?? (into.memo[key] = %{})
+    for r, ds in done {
+        if r not in have {
+            have[r] = ds
+        }
+    }
 }

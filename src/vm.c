@@ -1710,7 +1710,19 @@ xjit_finish(Ty *ty, isize depth, i32 rc);
 inline static JitFn *
 frame_jit(Frame const *frame)
 {
-        return frame->jit_code != NULL ? (JitFn *)frame->jit_code : jit_of(&frame->f);
+        if (frame->jit_code != NULL && !jit_pending(frame->jit_code)) {
+                return (JitFn *)frame->jit_code;
+        }
+
+        void *jit = jit_of(&frame->f);
+
+        if (jit != NULL && !jit_pending(jit)) {
+                return jit;
+        }
+
+        LirCode const *code = jit_code_of(&frame->f);
+
+        return (code != NULL) ? (JitFn *)code->body : NULL;
 }
 
 inline static i32

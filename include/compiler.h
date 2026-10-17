@@ -829,6 +829,9 @@ compiler_type_function(Ty *ty, Symbol const *sym);
 Value
 compiler_template_pattern(Ty *ty, Expr *e);
 
+void
+compiler_set_import_fidelity(bool on);
+
 #endif
 
 /* vim: set sw=8 sts=8 expandtab: */

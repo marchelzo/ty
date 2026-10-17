@@ -6,8 +6,8 @@ import syn
 import syn.lint as lint
 import syn.fmt as sf
 import syn.fix as fixer
+import json
 import diff
-import sh
 
 let LINT_HELP = '''usage: ty --lint [OPTIONS] [PATH...]
 
@@ -237,30 +237,207 @@ fn fmt-main(args: Array[String]) -> Int {
     (check? && changed > 0) ? 1 : 0
 }
 
+class FileResult {
+    out:       Array[String]
+    err:       Array[String]
+    changed?:  Bool
+    fixed:     Int
+    remaining: Int
+
+    init() {
+        self.out = []
+        self.err = []
+        self.changed? = false
+        self.fixed = 0
+        self.remaining = 0
+    }
+}
+
+class FixMode {
+    rules:   Array[lint.Rule]
+    check?:  Bool
+    diff?:   Bool
+    format?: Bool
+
+    init(rules: Array[lint.Rule], check: Bool, diff: Bool, format: Bool) {
+        self.rules = rules
+        self.check? = check
+        self.diff? = diff
+        self.format? = format
+    }
+}
+
+fn fix-file(f: String, mode: FixMode) -> FileResult {
+    let r = FileResult()
+    let $source = slurp(f) or do {
+        r.err.push("ty --fix: cannot read {f}")
+        r.remaining += 1
+        return r
+    }
+    let out = fixer.run(source, path=f, rules=mode.rules, format=mode.format?)
+    if let $err = out.error {
+        let line = err.lines().find(\_.match?(/^\w*Error:/)) ?? err.lines()[0] ?? err
+        r.err.push("{f}: parse error: {line}")
+        r.remaining += 1
+        return r
+    }
+    if !out.converged? {
+        r.err.push("{f}: fixes did not settle after {out.passes} passes")
+    }
+    for out.diagnostics {
+        if it.severity != 'info' {
+            r.out.push(str(it))
+            r.remaining += 1
+        }
+    }
+    return r if out.source == source
+    r.changed? = true
+    r.fixed = out.fixed
+    if mode.check? {
+        r.out.push("{f}: would change")
+    } else if mode.diff? {
+        r.out.push("--- {f}\n+++ {f} (fixed)")
+        r.out.push(diff.unified(diff.edits(source.lines(), out.source.lines())).join('\n'))
+    } else {
+        Path(f).write(out.source)
+        r.err.push("fixed {f}")
+    }
+    r
+}
+
+fn preload(files: Array[String]) {
+    let seen: Dict[String, Bool] = %{}
+    for files {
+        let $source = slurp(it) or continue
+        for [_, name] in source.matches(/^(?:pub\s+)?import\s+([\w.\/-]+)/m) {
+            let m = name.replace('.', '/')
+            continue if seen[m]
+            seen[m] = true
+            try {
+                tmod.load(m)
+            } catch _ {
+            }
+        }
+    }
+    for tmod.list() {
+        syn.adopt(it)
+    }
+}
+
+fn preparse(f: String) {
+    let $source = slurp(f) or return
+    return if syn.adoptable?(source, f)
+    try {
+        syn.preparse(source, f, false)
+        if !fixer.prelude?(f) {
+            syn.preparse(source, f, true)
+        }
+    } catch _ {
+    }
+}
+
+fn prepare(files: Array[String]) {
+    preload(files)
+    for files {
+        preparse(it)
+    }
+}
+
+fn encode(r: FileResult) -> String {
+    json.encode({
+        out: r.out,
+        err: r.err,
+        changed: r.changed?,
+        fixed: r.fixed,
+        remaining: r.remaining
+    })
+}
+
+fn decode(text: String) -> FileResult {
+    let d: Dict[String, _] = json.parse(text)
+    let r = FileResult()
+    r.out = [str(it) for d['out'] ?? []]
+    r.err = [str(it) for d['err'] ?? []]
+    r.changed? = d['changed'] == true
+    r.fixed = int(d['fixed']) ?? 0
+    r.remaining = int(d['remaining']) ?? 0
+    r
+}
+
+fn child(files: Array[String], mode: FixMode, queue: Int, dir: String) {
+    while let $rec = os.read(queue, 8) {
+        break if #rec < 8
+        let i = int(rec.str().strip()) ?? break
+        let r = try {
+            fix-file(files[i], mode)
+        } catch e {
+            let fail = FileResult()
+            fail.err.push("{files[i]}: {e}")
+            fail.remaining += 1
+            fail
+        }
+        Path("{dir}/{i}.json").write(encode(r))
+    }
+    os.exit(0)
+}
+
+fn fix-all(files: Array[String], mode: FixMode) -> Array[FileResult] {
+    syn.derive-plain(true)
+    prepare(files)
+    if #files == 1 {
+        return [fix-file(files[0], mode)]
+    }
+    let sizes = files.map(f -> os.stat(f).?size ?? 0)
+    let order = [i for i in ..#files].sort(by=\-sizes[_])
+    let (r, w) = os.pipe()
+    for order {
+        os.write(w, "{it:7}\n")
+    }
+    os.close(w)
+    let dir = os.mkdtemp() ?? throw os.OSError('mkdtemp()')
+    let n = max(1, min(os.ncpu(), #files))
+    let pids: Array[Int] = []
+    for ..n {
+        let pid = os.fork() ?? throw os.OSError('fork()')
+        if pid == 0 {
+            child(files, mode, r, dir)
+        }
+        pids.push(pid)
+    }
+    os.close(r)
+    for pids {
+        os.wait(it)
+    }
+    let results: Array[FileResult] = []
+    for f; i in files {
+        let $text = slurp("{dir}/{i}.json") or do {
+            let lost = FileResult()
+            lost.err.push("ty --fix: {f}: no result")
+            lost.remaining += 1
+            results.push(lost)
+            continue
+        }
+        results.push(decode(text))
+        os.unlink("{dir}/{i}.json")
+    }
+    os.rmdir(dir)
+    results
+}
+
 fn fix-main(args: Array[String]) -> Int {
     let paths: Array[String] = []
-    let flags: Array[String] = []
     let check? = false
     let diff? = false
     let format? = true
-    let child? = false
     let rules = fixer.ALL_RULES
     let ignore: Array[String] = []
     let i = 0
     while i < #args {
-        let arg = args[i]
-        if arg.match?(/^--/) && arg != '--child' {
-            flags.push(arg)
-            if arg in ['--ignore', '--rules'] && i + 1 < #args {
-                flags.push(args[i + 1])
-            }
-        }
         match args[i] {
             '--help'       => do {
                 print(FIX_HELP)
                 return 0
             },
-            '--child'      => child? = true,
             '--check'      => check? = true,
             '--diff'       => diff? = true,
             '--no-fmt'     => format? = false,
@@ -280,51 +457,23 @@ fn fix-main(args: Array[String]) -> Int {
     }
 
     let files = collect((#paths == 0) ? ['.'] : paths)
-    if #files > 1 {
-        return fix-in-children(files, flags)
-    }
-
-    let active = rules.filter(\_.name not in ignore)
+    let mode = FixMode(rules.filter(\_.name not in ignore), check?, diff?, format?)
     let changed = 0
     let remaining = 0
     let fixed = 0
-    for f in files {
-        let $source = slurp(f) or do {
-            eprint("ty --fix: cannot read {f}")
-            continue
+    for fix-all(files, mode) {
+        for line in it.out {
+            print(line)
         }
-        let out = fixer.run(source, path=f, rules=active, format=format?)
-        if let $err = out.error {
-            eprint("{f}: parse error: {err.lines()[0] ?? err}")
-            remaining += 1
-            continue
+        for line in it.err {
+            eprint(line)
         }
-        if !out.converged? {
-            eprint("{f}: fixes did not settle after {out.passes} passes")
-        }
-        for out.diagnostics {
-            if it.severity != 'info' {
-                print(it)
-                remaining += 1
-            }
-        }
-        continue if out.source == source
-        changed += 1
-        fixed += out.fixed
-        if check? {
-            print("{f}: would change")
-        } else if diff? {
-            print("--- {f}\n+++ {f} (fixed)")
-            print(diff.unified(diff.edits(source.lines(), out.source.lines())).join('\n'))
-        } else {
-            Path(f).write(out.source)
-            eprint("fixed {f}")
-        }
+        changed += it.changed? ? 1 : 0
+        fixed += it.fixed
+        remaining += it.remaining
     }
 
-    if child? {
-        eprint("##fixes {fixed}")
-    } else if changed > 0 && !check? && !diff? {
+    if changed > 0 && !check? && !diff? {
         eprint("{changed} file(s) changed, {fixed} fix(es)")
     }
 
@@ -333,57 +482,6 @@ fn fix-main(args: Array[String]) -> Int {
         (_, _, true)    => 1,
         _               => 0,
     }
-}
-
-fn fix-in-children(files: Array[String], flags: Array[String]) -> Int {
-    let results: Array[sh.CmdResult | nil] = files.map(_ -> nil)
-    let lock = Mutex()
-    let next = 0
-    let work = fn () {
-        while true {
-            let i = with lock {
-                let k = next
-                next += 1
-                k
-            }
-            break if i >= #files
-            results[i] = sh.run([ty.executable, '--fix', '--child', *flags, files[i]])
-        }
-    }
-    let workers = [Thread(work) for ..max(1, min(os.ncpu(), #files))]
-    for workers {
-        it.join()
-    }
-
-    let status = 0
-    let changed = 0
-    let fixed = 0
-    for r; i in results {
-        let $out = r or do {
-            eprint("ty --fix: {files[i]}: no result")
-            status = 2
-            continue
-        }
-        print(out.stdout, end='')
-        for line in out.stderr.lines() {
-            match line {
-                /^##fixes (\d+)$/ => fixed += int($1) ?? 0,
-                /^fixed /          => do {
-                    changed += 1
-                    eprint(line)
-                },
-                _ => eprint(line),
-            }
-        }
-        status = max(status, match out.fate {
-            sh.Exit(n) => n,
-            _          => 2,
-        })
-    }
-    if changed > 0 && !('--check' in flags) && !('--diff' in flags) {
-        eprint("{changed} file(s) changed, {fixed} fix(es)")
-    }
-    status
 }
 
 pub fn main(mode: String) {

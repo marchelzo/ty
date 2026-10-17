@@ -1,6 +1,7 @@
 import ty
 import json
 import ty.syntax as tsx
+import ty.mod as tmod
 import path (Path)
 
 pub class Trivia {
@@ -16,7 +17,7 @@ pub class Trivia {
         self.text = text
     }
 
-    comment? -> Bool { kind in ['comment', 'doc', 'block'] }
+    comment? -> Bool { kind == 'comment' || kind == 'doc' || kind == 'block' }
     newline? -> Bool { kind == 'newline' }
 
     __str__() -> String { "Trivia({kind}, {json.encode(text)})" }
@@ -174,7 +175,7 @@ pub class Node {
 
     of-type?(t: String, gradual: Bool = false) -> Bool | nil {
         let have = unwrapped.type-id
-        let $want = tsx.resolve-type(t, tree.module) or return nil
+        let $want = resolve-type(t, tree.module) or return nil
         if have < 0 {
             return gradual ? nil : false
         }
@@ -283,15 +284,22 @@ pub class Node {
         }
     }
 
-    walk*() -> Generator[Node] {
+    walk() -> Array[Node] {
+        if parent == nil && index == 0 {
+            return tree.nodes
+        }
+        let out: Array[Node] = []
         let stack = [self]
         while #stack > 0 {
             let n = stack.pop()
-            yield n
-            for n.nodes[;;-1] {
-                stack.push(it)
+            out.push(n)
+            let i = #n.nodes - 1
+            while i >= 0 {
+                stack.push(n.nodes[i])
+                i -= 1
             }
         }
+        out
     }
 
     descendants*() -> Generator[Node] {
@@ -357,8 +365,11 @@ pub class Tree {
     diagnostics: Array[Any]
     symbols:     Dict[Int, Symbol]
     packs:       Dict[String, (Any, Array[Any])]
+    adopted?:    Bool
+    error-at:    Int | nil
+    memo:        Dict[String, Any]
     __by-id:     Dict[Int, Array[Node]] | nil
-    __lines:     Array[Int]
+    line-starts: Array[Int]
 
     init(source: String, path: String | nil, error: String | nil) {
         self.source = source
@@ -370,6 +381,9 @@ pub class Tree {
         self.diagnostics = []
         self.symbols = %{}
         self.packs = %{}
+        self.memo = %{}
+        self.adopted? = false
+        self.error-at = nil
         self.__by-id = nil
         self.root = Node(self, 'Module', 0, source.size(), 0)
         self.nodes = [root]
@@ -377,46 +391,27 @@ pub class Tree {
         self.tokens = []
         self.eof = Token('eof', source.size(), source.size(), '', 0)
         self.macros = []
-        let starts = [0]
-        for c; i in source.bytes() {
-            if c == 10 {
-                starts.push(i + 1)
-            }
-        }
-        __lines = starts
+        self.line-starts = [0]
     }
 
     line-of(byte: Int) -> Int {
-        let lo = 0
-        let hi = #__lines - 1
-        while lo < hi {
-            let mid = (lo + hi + 1) / 2
-            if __lines[mid] <= byte {
-                lo = mid
-            } else {
-                hi = mid - 1
-            }
-        }
-        lo + 1
+        let i = line-starts.bsearch?(byte)
+        (i < #line-starts && line-starts[i] == byte) ? i + 1 : i
     }
 
     col-of(byte: Int) -> Int {
-        byte - __lines[line-of(byte) - 1] + 1
+        byte - line-starts[line-of(byte) - 1] + 1
     }
 
     display-col(byte: Int) -> Int {
-        text(__lines[line-of(byte) - 1], byte).width() + 1
+        text(line-starts[line-of(byte) - 1], byte).width() + 1
     }
 
-    line-start(line: Int) -> Int { __lines[line - 1] }
+    line-start(line: Int) -> Int { line-starts[line - 1] }
 
     text(start: Int, end: Int) -> String { source.bsplice(start, end) }
 
-    walk*() -> Generator[Node] {
-        for root.walk() {
-            yield it
-        }
-    }
+    walk() -> Array[Node] { nodes }
 
     trivia -> Array[Trivia] {
         let out: Array[Trivia] = []
@@ -431,7 +426,7 @@ pub class Tree {
 
     node-at(byte: Int) -> Node {
         let n = root
-        while let $c = n.nodes.find(c -> c.start <= byte && byte < c.end) {
+        while let $c = child-at(n, byte) {
             n = c
         }
         n
@@ -528,13 +523,42 @@ pub fn kind-name(raw: String, stmt: Bool) -> String {
     (stmt && raw in STMT_COLLISIONS) ? "{name}Stmt" : name
 }
 
+let __tls::WANTS: Dict[String, String] = %{}
+
 pub fn kind-matches?(kind: String, want: String) -> Bool {
-    let w = ALIASES[want] ?? (want.match?(/^[A-Z_]+$/) ? kind-name(want, false) : want)
+    let w = WANTS[want] ?? (WANTS[want] = canonical-want(want))
     match w {
         'Literal' => kind in LITERALS,
         'Any'     => true,
         _         => kind == w || kind == "{w}Stmt",
     }
+}
+
+fn child-at(n: Node, byte: Int) -> Node | nil {
+    let ks = n.nodes
+    let lo = 0
+    let hi = #ks
+    while lo < hi {
+        let mid = (lo + hi) / 2
+        if ks[mid].start <= byte {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    let i = lo - 1
+    while i >= 0 {
+        let c = ks[i]
+        if byte < c.end {
+            return c
+        }
+        i -= 1
+    }
+    nil
+}
+
+fn canonical-want(want: String) -> String {
+    ALIASES[want] ?? (want.match?(/^[A-Z_]+$/) ? kind-name(want, false) : want)
 }
 
 fn satisfies?(n: Node, test: Any) -> Bool {
@@ -628,118 +652,6 @@ fn trivia-piece(text: String) -> (String, Int) {
     ('raw', raw.size())
 }
 
-fn live-tokens(mod: Module, source: String) -> Array[Token] {
-    let out: Array[Token] = []
-    let edge = 0
-    for mod.tokens {
-        let kind = it.type
-        if (
-            (it.?hidden ?? false)
-         || kind in ['comment', '\\n', 'pp']
-         || it.start.byte >= it.end.byte
-         || it.start.byte < edge
-        ) {
-            continue
-        }
-        let text = source.bsplice(it.start.byte, it.end.byte)
-        out.push(Token(kind, it.start.byte, it.end.byte, text, #out))
-        edge = it.end.byte
-    }
-    out
-}
-
-fn attach-trivia(tree: Tree) {
-    let prev: Token | nil = nil
-    let pos = 0
-    for [*tree.tokens, tree.eof] {
-        let pieces = lex-trivia(tree.source, pos, it.start)
-        let split = 0
-        if let $p = prev {
-            let nl = pieces.search-by(\_.kind == 'newline')
-            split = (nl == nil) ? #pieces : nl + 1
-            p.trailing = pieces[;split]
-        }
-        it.leading = pieces[split;]
-        prev = it
-        pos = it.end
-    }
-}
-
-fn assign-tokens(tree: Tree) {
-    let stack: Array[Node] = [tree.root]
-    let order: Array[Node] = tree.nodes[1;]
-    let k = 0
-    for tok in tree.tokens {
-        while k < #order && order[k].start <= tok.start {
-            let n = order[k]
-            while #stack > 1 && stack[-1].end <= n.start {
-                stack.pop()
-            }
-            stack.push(n)
-            k += 1
-        }
-        while #stack > 1 && stack[-1].end <= tok.start {
-            stack.pop()
-        }
-        let owner = stack[-1]
-        tok.owner = owner
-        owner.own.push(tok)
-        for stack {
-            if it.ftok < 0 {
-                it.ftok = tok.index
-            }
-            it.ltok = tok.index
-        }
-    }
-}
-
-fn build-nodes(tree: Tree, mod: Module) {
-    let made: Array[Node] = []
-    let sem = tree.semantic? ? tsx.semantics(mod) : nil
-    if let $info = sem {
-        for info.symbols {
-            tree.symbols[it.id] = Symbol(it)
-        }
-    }
-    for r; i in tsx.nodes(mod) {
-        let n = Node(tree, kind-name(r.kind, r.stmt), r.start, r.end, -1)
-        n.form = r.form
-        n.synth = r.synth
-        if let $info = sem {
-            n.sym-id = info.ref[i]
-            n.callee-id = info.callee[i]
-            n.type-id = info.type[i]
-            n.def? = info.def[i]
-        }
-        let owner = (r.parent < 0) ? tree.root : made[r.parent]
-        while owner.synth {
-            owner = owner.parent ?? tree.root
-        }
-        n.parent = owner
-        if n.synth {
-            owner.core.push(n)
-        } else {
-            n.index = #tree.nodes
-            owner.nodes.push(n)
-            tree.nodes.push(n)
-        }
-        made.push(n)
-    }
-    tree.every += made
-}
-
-fn add-error-node(tree: Tree, at: Int) {
-    let edge = tree.root.nodes.map(&.end).max() ?? 0
-    let first = tree.tokens.find(\_.start >= edge)
-    let start = min(first.?start ?? at, at)
-    let end = tree.source.size()
-    return if start >= end
-    let n = Node(tree, 'ParseError', start, end, #tree.nodes)
-    n.parent = tree.root
-    tree.root.nodes.push(n)
-    tree.nodes.push(n)
-}
-
 pub fn from-module(
     mod: Module,
     source: String,
@@ -751,19 +663,21 @@ pub fn from-module(
 ) -> Tree {
     let tree = Tree(source, path, error)
     tree.module = mod
+    tree.error-at = error-at
     tree.semantic? = semantic
     tree.diagnostics = diagnostics
     tree.macros = tsx.macros(mod)
-    build-nodes(tree, mod)
-    tree.tokens = live-tokens(mod, source)
-    if let $at = error-at {
-        add-error-node(tree, at)
+    let classes = (Node, Token, Trivia, Symbol)
+    let built = tsx.tree(mod, source, tree, classes, semantic, error-at, path == nil)
+    for s: Symbol in built.symbols {
+        tree.symbols[s.id] = s
     }
-    tree.eof.index = #tree.tokens
-    attach-trivia(tree)
-    assign-tokens(tree)
+    tree.line-starts = built.lines
+    tree.packed = built.packed
     tree
 }
+
+let __tls::PARSED: Array[(String, String, Tree)] = []
 
 pub fn parse(
     source: String,
@@ -772,22 +686,170 @@ pub fn parse(
     resolve: Bool = false,
     semantic: Bool = false
 ) -> Tree {
-    let file = (path == nil) ? nil : str(Path(path).absolute)
+    let key = "{path ?? ''}\0{deep}{resolve}{semantic}"
+    for (k, src, tree) in PARSED {
+        if k == key && src == source {
+            return tree
+        }
+    }
+    let tree = adopted(source, path, semantic)
+            ?? compile-tree(source, path, deep, resolve, semantic)
+    PARSED.insert(0, (key, source, tree))
+    if #PARSED > 6 {
+        PARSED.pop()
+    }
+    tree
+}
+
+fn compile-tree(
+    source: String,
+    path: String | nil,
+    deep: Bool,
+    resolve: Bool,
+    semantic: Bool
+) -> Tree {
+    parse-uncached(source, path, deep, resolve, semantic)
+}
+
+let RESOLVED: Dict[String, Int | nil] = %{}
+
+fn resolve-type(t: String, scope: Module | String | nil) -> Int | nil {
+    let key = "{t}\0{(scope :: Module) ? tmod.path(scope) : (scope ?? '')}"
+    if key in RESOLVED {
+        return RESOLVED[key]
+    }
+    RESOLVED[key] = tsx.resolve-type(t, scope)
+}
+
+pub use Spec = (Module, String | nil, Int | nil, Bool, Array[Any], Bool)
+
+let ADOPTED: Dict[String, Module] = %{}
+let PREPARSED: Dict[String, (String, Spec)] = %{}
+
+pub fn adopt(mod: Module) {
+    ADOPTED[tmod.path(mod)] = mod
+}
+
+pub fn adoptable?(source: String, path: String) -> Bool {
+    let $mod = ADOPTED[absolute(path)] or return false
+    tmod.source(mod) == source
+}
+
+pub fn preparse(source: String, path: String, semantic: Bool) {
+    let file = absolute(path)
+    PREPARSED["{file}\0{semantic}"] = (source, compile-spec(source, file, true, true, semantic))
+}
+
+pub fn known-spec(source: String, path: String, semantic: Bool) -> Spec | nil {
+    let file = absolute(path)
+    if let (src, spec) = PREPARSED["{file}\0{semantic}"] and src == source {
+        return spec
+    }
+    let $mod = ADOPTED[file] or return nil
+    (tmod.source(mod) == source) ? (mod, nil, nil, semantic, [], true) : nil
+}
+
+let __tls::ABSOLUTE: Dict[String, String] = %{}
+
+fn absolute(path: String) -> String {
+    ABSOLUTE[path] ?? (ABSOLUTE[path] = str(Path(path).absolute))
+}
+
+pub fn tree-of(spec: Spec, source: String, path: String | nil) -> Tree {
+    let (mod, error, at, semantic, diags, adopted) = spec
+    let file = (path == nil) ? nil : absolute(path)
+    let tree = from-module(mod, source, file, error, at, semantic, diags)
+    tree.adopted? = adopted
+    tree
+}
+
+fn adopted(source: String, path: String | nil, semantic: Bool) -> Tree | nil {
+    let $p = path or return nil
+    let $spec = known-spec(source, p, semantic) or return nil
+    tree-of(spec, source, p)
+}
+
+pub fn baseline-diagnostics(tree: Tree) -> Array[Any] {
+    if !tree.adopted? {
+        return tree.diagnostics
+    }
+    let key = 'baseline-diagnostics'
+    if let $done = tree.memo[key] {
+        return done
+    }
+    let fresh = compile-tree(tree.source, tree.path, true, true, tree.semantic?)
+    tree.memo[key] = fresh.diagnostics
+}
+
+let DERIVED: Dict[String, (String, Spec)] = %{}
+let __tls::derive?: Bool = false
+
+pub fn derive-plain(on: Bool) {
+    derive? = on
+    if !on {
+        DERIVED.clear()
+    }
+}
+
+fn compile-spec(
+    source: String,
+    path: String | nil,
+    deep: Bool,
+    resolve: Bool,
+    semantic: Bool
+) -> Spec {
+    if !derive? || path == nil {
+        return compile-spec-x(source, path, deep, resolve, semantic)
+    }
+    let file = absolute(path ?? '')
+    let sem = match DERIVED[file] {
+        (src, spec) and src == source => spec,
+        _ => do {
+            let spec = compile-spec-x(source, path, true, true, true)
+            DERIVED[file] = (source, spec)
+            spec
+        },
+    }
+    let (mod, error, at, ok, diags, adopted) = sem
+    if semantic || !ok {
+        return semantic ? sem : compile-spec-x(source, path, deep, resolve, false)
+    }
+    (mod, error, at, false, [], adopted)
+}
+
+fn compile-spec-x(
+    source: String,
+    path: String | nil,
+    deep: Bool,
+    resolve: Bool,
+    semantic: Bool
+) -> Spec {
+    let file = (path == nil) ? nil : absolute(path)
     let diags: Array[Any] = []
     if semantic {
         let typed = ty.parse(source, path=file, types=true, diagnostics=diags)
         if let Ok(mod) = typed and !diags.any?(\str(_.message).match?(/^(Parse|Syntax)Error/)) {
-            return from-module(mod, source, file, semantic=true, diagnostics=diags)
+            return (mod, nil, nil, true, diags, false)
         }
     }
     let plain = ty.parse(source, path=file, deep=deep || semantic, resolve=resolve || semantic)
     match plain {
-        Ok(mod) => from-module(mod, source, file, diagnostics=diags),
+        Ok(mod) => (mod, nil, nil, false, diags, false),
         Err(e)  => do {
             let loc: _ = e.location
-            from-module(e.module, source, file, str(e.msg), loc.byte, diagnostics=diags)
+            (e.module, str(e.msg), loc.byte, false, diags, false)
         },
     }
+}
+
+fn parse-uncached(
+    source: String,
+    path: String | nil,
+    deep: Bool,
+    resolve: Bool,
+    semantic: Bool
+) -> Tree {
+    tree-of(compile-spec(source, path, deep, resolve, semantic), source, path)
 }
 
 pub fn parse-file(
@@ -807,6 +869,7 @@ pub class Hole {
     gradual?: Bool
     deep:     Pattern | nil
     alts:     Array[Pattern]
+    wrapped?: Bool
 
     init(name: String | nil) {
         self.name = name
@@ -815,6 +878,7 @@ pub class Hole {
         self.gradual? = false
         self.deep = nil
         self.alts = []
+        self.wrapped? = false
     }
 }
 
@@ -833,12 +897,21 @@ pub class Gap {
 }
 
 pub class Match {
-    node:  Node
-    binds: Dict[String, Any]
+    node:    Node
+    binds:   Dict[String, Any]
+    tokmap:  Array[Int]
+    lastmap: Array[Int]
 
-    init(node: Node, binds: Dict[String, Any]) {
+    init(
+        node: Node,
+        binds: Dict[String, Any],
+        tokmap: Array[Int] = [],
+        lastmap: Array[Int] = []
+    ) {
         self.node = node
         self.binds = binds
+        self.tokmap = tokmap
+        self.lastmap = lastmap
     }
 
     [](name: String) -> Any { binds[name] }
@@ -871,7 +944,7 @@ fn hole-name(text: String, i: Int) -> (String, Int) {
     (out.str(), j)
 }
 
-let GAP_KEYWORDS = %['_', 'nl', 'blank', 'sp', 'any']
+let GAP_KEYWORDS = %['_', 'nl', 'blank', 'sp', 'ws', 'any']
 
 pub fn hole-names(text: String) -> Array[String] {
     let names: Array[String] = []
@@ -964,6 +1037,7 @@ fn split-alternatives(text: String) -> Array[String] {
 class Rewriter {
     holes: Dict[String, Hole]
     gaps:  Array[Gap]
+    marks: Dict[String, Int]
     focus: (Int, Int) | nil
     count: Int
     mode:  String
@@ -972,6 +1046,7 @@ class Rewriter {
     init(mode: String, scope: Module | String | nil) {
         self.holes = %{}
         self.gaps = []
+        self.marks = %{}
         self.focus = nil
         self.count = 0
         self.mode = mode
@@ -999,6 +1074,10 @@ class Rewriter {
                 let j = closing-gap(text, i + 3)
                 gaps.push(Gap(text.bsplice(i + 3, j).strip(), out.size()))
                 i = j + 1
+            } else if c == '@' {
+                let (name, j) = hole-name(text, i + 3)
+                marks[name] = out.size()
+                i = (text.bslice(j, 1) == '@') ? j + 1 : j
             } else if c == '^' && text.bslice(i + 3, 1) == '(' {
                 let j = closing(text, i + 3, '(', ')')
                 let start = out.size()
@@ -1011,7 +1090,13 @@ class Rewriter {
                 i = j + 1
             } else if i + 2 < n && ident-char?(c) {
                 let (name, j) = hole-name(text, i + 2)
-                out.push(placeholder(Hole((name == '_') ? nil : name)))
+                let h = Hole((name == '_') ? nil : name)
+                if out.str().match?(/\belse\s*$/) {
+                    h.wrapped? = true
+                    out.push("if {placeholder(h)} \{\}")
+                } else {
+                    out.push(placeholder(h))
+                }
                 i = j
             } else {
                 out.push('$$')
@@ -1068,12 +1153,14 @@ pub class Pattern {
     roots:  Array[Node]
     holes:  Dict[String, Hole]
     gaps:   Array[Gap]
+    marks:  Dict[String, Int]
     names:  Array[String]
     mode:   String
     scope:  Module | String | nil
     cpack:  Any
     csubs:  Array[Any]
     late?:  Bool
+    root:   Hole | nil
 
     init(text: String, mode: String = 'smart', scope: Module | String | nil = nil) {
         self.text = text
@@ -1104,6 +1191,7 @@ pub class Pattern {
         self.code = out.str()
         self.holes = rw.holes
         self.gaps = rw.gaps
+        self.marks = rw.marks
         self.tree = parse(code)
 
         if let $err = tree.error {
@@ -1132,11 +1220,25 @@ pub class Pattern {
         self.csubs = subs
         let at = PACKED_FIELDS.search('tyhole') ?? 0
         self.late? = [cpack, *subs].any?(r -> r[at].any?(\_ == -2))
+        self.root = (#roots == 1) ? hole-of(roots[0]) : nil
     }
+
+    admits?(s: Node) -> Bool { #roots != 1 || admissible?(self, s) }
 
 
     hole-of(n: Node) -> Hole | nil {
-        (#n.nodes == 0 && #n.own == 1) ? holes[n.own[0].text] : nil
+        if #n.nodes == 0 && #n.own == 1 {
+            return holes[n.own[0].text]
+        }
+        if n.kind != 'If' || #n.nodes != 2 {
+            return nil
+        }
+        if n.nodes[1].kind not in ['Block', 'Null'] || #n.nodes[1].nodes > 0 {
+            return nil
+        }
+        let k = n.nodes[0]
+        let $h = (#k.nodes == 0 && #k.own == 1) ? holes[k.own[0].text] : nil or return nil
+        h.wrapped? ? h : nil
     }
 
     seq-hole(n: Node) -> Hole | nil {
@@ -1151,14 +1253,17 @@ pub class Pattern {
 
     matches(n: Node | Tree) -> Match | nil {
         let node = (n :: Tree) ? n.root : n
+        if !admits?(node) {
+            return nil
+        }
         let m = Matcher(self)
-        m.root(node) ? Match(node, m.binds) : nil
+        m.root(node) ? Match(node, m.binds, m.tokmap, m.lastmap) : nil
     }
 
     matches?(n: Node) -> Bool { matches(n) != nil }
 
     bindings(n: Any) -> Array[Any] | nil {
-        if !(n :: Node) {
+        if !(n :: Node) || !admits?(n) {
             return nil
         }
         let m = Matcher(self)
@@ -1168,10 +1273,11 @@ pub class Pattern {
     find*(scope: Node | Tree) -> Generator[Match] {
         let top = (scope :: Tree) ? scope.root : scope
         for top.walk() {
+            continue if !admits?(it)
             let m = Matcher(self)
             let start = 0
             while m.root(it, start) {
-                yield Match(it, m.binds)
+                yield Match(it, m.binds, m.tokmap, m.lastmap)
                 break if m.pos < 0
                 start = m.pos + 1
             }
@@ -1240,14 +1346,18 @@ fn outermost(tree: Tree, a: Int, b: Int) -> Node | nil {
 }
 
 pub class Matcher {
-    pat:   Pattern
-    binds: Dict[String, Any]
-    pos:   Int
+    pat:     Pattern
+    binds:   Dict[String, Any]
+    pos:     Int
+    tokmap:  Array[Int]
+    lastmap: Array[Int]
 
     init(pat: Pattern) {
         self.pat = pat
         self.binds = %{}
         self.pos = -1
+        self.tokmap = []
+        self.lastmap = []
     }
 
     root(s: Node, start: Int = 0) -> Bool {
@@ -1264,8 +1374,10 @@ pub class Matcher {
             #pat.names,
             intern('Paren')
         ) or return false
-        let (bs, _, at) = r
+        let (bs, tm, at, lm) = r
         pos = at
+        tokmap = tm
+        lastmap = lm
         binds = %{}
         for b; i in bs {
             if let (kind, a, x, c) = b {
@@ -1290,7 +1402,7 @@ fn cross-form?(p: Node, s: Node) -> Bool {
 
 fn admissible?(pat: Pattern, s: Node) -> Bool {
     let r0 = pat.roots[0]
-    if let $h = pat.hole-of(r0) {
+    if let $h = pat.root {
         return #h.kinds == 0 || h.kinds.any?(k -> s.is?(k) || s.unwrapped.is?(k))
     }
     if s.tree.semantic? && pat.mode != 'spelling' && cross-form?(r0, s) {
@@ -1306,7 +1418,7 @@ let BINARY = %[
 ]
 
 fn needs-parens?(n: Node, before: String, after: String) -> Bool {
-    if n.kind not in BINARY && n.kind != 'Function' {
+    if n.kind not in BINARY && n.kind not in ['Function', 'Assign'] {
         return false
     }
     let b = before.match(/(\S)\s*$/).?[1] ?? ''
@@ -1342,7 +1454,7 @@ fn value-text(v: Any, before: String, after: String) -> String {
 
 fn render-gap(spec: String, binds: Dict[String, Any]) -> String {
     match spec {
-        '' or 'any' or '_'      => '',
+        '' or 'any' or '_' or 'ws' => '',
         'sp'                    => ' ',
         'nl'                    => '\n',
         'blank' or 'blank+'     => '\n\n',
@@ -1352,6 +1464,12 @@ fn render-gap(spec: String, binds: Dict[String, Any]) -> String {
         _                       => '',
     }
 }
+
+pub fn hole-text(v: Any, before: String = '', after: String = '') -> String {
+    value-text(v, before, after)
+}
+
+pub fn gap-text(spec: String, binds: Dict[String, Any]) -> String { render-gap(spec, binds) }
 
 pub use Copy = (Int, Int, Int)
 
@@ -1460,11 +1578,7 @@ fn render-template(
 
 let __tls::cache: Dict[String, Pattern] = %{}
 
-let __tls::interned: Dict[String, Int] = %{}
-
-fn intern(s: String) -> Int {
-    interned[s] ?? (interned[s] = #interned)
-}
+fn intern(s: String) -> Int { tsx.intern(s) }
 
 let EXTRA_KINDS = [
     'Paren', 'Sugar', 'Param', 'Kwarg', 'Condition', 'Namespace', 'Embedded', 'Region',
@@ -1478,72 +1592,11 @@ let ALL_KINDS = [
 ].uniq()
 
 fn pack-tree(tree: Tree) -> Dict[String, Array[Any]] {
-    let kind: Array[Any] = []
-    let form: Array[Any] = []
-    let kstart: Array[Any] = []
-    let kcount: Array[Any] = []
-    let kids: Array[Any] = []
-    let ostart: Array[Any] = []
-    let ocount: Array[Any] = []
-    let own: Array[Any] = []
-    let ftok: Array[Any] = []
-    let ltok: Array[Any] = []
-    for tree.nodes {
-        kind.push(intern(it.kind))
-        form.push((it.form == nil) ? -1 : intern(it.form ?? ''))
-        kstart.push(#kids)
-        kcount.push(#it.nodes)
-        kids += it.nodes.map(&.index)
-        ostart.push(#own)
-        ocount.push(#it.own)
-        own += it.own.map(&.index)
-        ftok.push(it.ftok)
-        ltok.push(max(it.ltok, -1))
-    }
-    %{
-        'kind': kind, 'form': form, 'kstart': kstart, 'kcount': kcount, 'kids': kids,
-        'ostart': ostart, 'ocount': ocount, 'own': own,
-        'text': tree.tokens.map(\intern(_.text)), 'punct': tree.tokens.map(\_.punct? ? 1 : 0),
-        'ftok': ftok, 'ltok': ltok, **trivia-arrays(tree),
-        'ref': tree.nodes.map(&.sym-id), 'callee': tree.nodes.map(&.callee-id),
-        'ty': tree.nodes.map(&.type-id), 'sem': [tree.semantic? ? 1 : 0]
-    }
+    let packed: Array[Array[Any]] = tree.packed
+    %{PACKED_FIELDS[i]: packed[i] for i in ..#PACKED_FIELDS}
 }
 
-fn trivia-arrays(tree: Tree) -> Dict[String, Array[Any]] {
-    let lnum: Array[Any] = []
-    let tnum: Array[Any] = []
-    let lnl: Array[Any] = []
-    let tnl: Array[Any] = []
-    let lcm: Array[Any] = []
-    let tcm: Array[Any] = []
-    let lspc: Array[Any] = []
-    let tspc: Array[Any] = []
-    for tree.tokens {
-        let (ln, lnew, lcom, lsp) = trivia-counts(it.leading)
-        let (tn, tnew, tcom, tsp) = trivia-counts(it.trailing)
-        lnum.push(ln)
-        lnl.push(lnew)
-        lcm.push(lcom)
-        lspc.push(lsp)
-        tnum.push(tn)
-        tnl.push(tnew)
-        tcm.push(tcom)
-        tspc.push(tsp)
-    }
-    %{
-        'lnum': lnum, 'tnum': tnum, 'lnl': lnl, 'tnl': tnl,
-        'lcm': lcm, 'tcm': tcm, 'lspc': lspc, 'tspc': tspc,
-        'tstart': tree.tokens.map(&.start),
-        'tend': tree.tokens.map(&.end),
-        'llen': tree.tokens.map(t -> t.leading.map(p -> p.end - p.start).sum() ?? 0),
-        'tlen': tree.tokens.map(t -> t.trailing.map(p -> p.end - p.start).sum() ?? 0)
-    }
-}
-
-fn packed(tree: Tree) -> Any {
-    tree.packed ?? (tree.packed = record(pack-tree(tree)))
-}
+fn packed(tree: Tree) -> Any { tree.packed }
 
 let PACKED_FIELDS: Array[String] = [
     'kind', 'form', 'kstart', 'kcount', 'kids', 'ostart', 'ocount', 'own',
@@ -1552,22 +1605,6 @@ let PACKED_FIELDS: Array[String] = [
     'lnum', 'tnum', 'lnl', 'tnl', 'lcm', 'tcm', 'lspc', 'tspc',
     'tstart', 'tend', 'llen', 'tlen', 'ref', 'callee', 'ty', 'tyhole', 'tymode', 'sem'
 ]
-
-fn trivia-counts(ts: Array[Trivia]) -> (Int, Int, Int, Int) {
-    let nl = 0
-    let cm = 0
-    let sp = 0
-    for ts {
-        if it.newline? {
-            nl += 1
-        } else if it.comment? {
-            cm += 1
-        } else if it.kind == 'space' {
-            sp += 1
-        }
-    }
-    (#ts, nl, cm, sp)
-}
 
 fn record(d: Dict[String, Array[Any]]) -> Array[Array[Any]] {
     [d[it] ?? [] for PACKED_FIELDS]
@@ -1588,6 +1625,7 @@ fn gap-entry(pat: Pattern, g: Gap) -> Array[Any] {
     let (code, slot, extra) = match g.spec {
         '' or 'any'         => (0, -2, nil),
         '_'                 => (1, -2, nil),
+        'ws'                => (6, -2, regex('^[ \\t]*$', '')),
         'sp'                => (2, -2, nil),
         'nl'                => (3, -2, nil),
         'blank' or 'blank+' => (4, -2, nil),
@@ -1653,13 +1691,13 @@ fn pack-pattern(pat: Pattern, names: Array[String], subs: Array[Any], home: Modu
 fn hole-type(pat: Pattern, n: Node, home: Module | nil) -> Int {
     let $h = pat.hole-of(n) or return -1
     let $t = h.type or return -1
-    if let $id = tsx.resolve-type(t, pat.scope) {
+    if let $id = resolve-type(t, pat.scope) {
         return id
     }
     if syn-type-error(t) {
         throw ValueError("invalid type `{t}` in syn pattern: {pat.text}")
     }
-    (home == nil) ? -2 : (tsx.resolve-type(t, home) ?? -3)
+    (home == nil) ? -2 : (resolve-type(t, home) ?? -3)
 }
 
 fn syn-type-error(t: String) -> Bool { parse("let __syn_type__: {t} = nil\n").error != nil }

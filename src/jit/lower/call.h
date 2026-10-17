@@ -42,10 +42,10 @@ roomy(Value const *fn, i32 argc)
 }
 
 static Frame *
-push_frame(Ty *ty, Value const *fn, Value const *self, i32 argc)
+push_frame(Ty *ty, Value const *fn, Value const *self, i32 argc, void *code)
 {
         jit_fast_frame(ty, fn, self, argc);
-        vvL(ty->st->frames)->jit_code = jit_of(fn);
+        vvL(ty->st->frames)->jit_code = code;
 
         if (vN(ty->stack) + 256 > vC(ty->stack)) {
                 xvR(ty->stack, vN(ty->stack) + 256);
@@ -71,6 +71,7 @@ call_enter(Ty *ty, Value *out, Value *fn, i32 argc)
         usize  count = out - ty->stack.items + argc;
         Value *argv  = ty->stack.items + count - argc;
         Frame *frame = NULL;
+        JitFn *jit   = NULL;
 
         ty->stack.count = count;
 
@@ -87,20 +88,20 @@ call_enter(Ty *ty, Value *out, Value *fn, i32 argc)
                 push_result(ty, count - argc, result);
         } else if (value.type == VALUE_CLASS && value.class > CLASS_PRIMITIVE) {
                 Value const *init = class_ctor(ty, value.class);
-                if (
+                JitFn *code = (
                         enterable(init, argc)
                      && (argc > 0 || !expr_of(init)->inert)
-                     && (try_jit(ty, init) != NULL)
-                ) {
+                ) ? try_jit(ty, init) : NULL;
+                if (code != NULL) {
                         Value callee = *init;
                         Value object = RawObject(value.class);
                         xvI(ty->stack, object, out - ty->stack.items);
-                        frame = push_frame(ty, &callee, &object, argc);
+                        frame = push_frame(ty, &callee, &object, argc, code);
                 } else {
                         DoCallEx(ty, &value, argc, &NIL, true);
                 }
-        } else if (jit_linkable_global(&value, argc) && try_jit(ty, &value) != NULL) {
-                frame = push_frame(ty, &value, NULL, argc);
+        } else if (jit_linkable_global(&value, argc) && (jit = try_jit(ty, &value)) != NULL) {
+                frame = push_frame(ty, &value, NULL, argc, jit);
         } else {
                 DoCallEx(ty, &value, argc, &NIL, true);
         }
@@ -127,9 +128,10 @@ method_enter(Ty *ty, Value *top, i32 op, i32 member, i32 argc, char *kw_ip)
         if (self.type == VALUE_OBJECT) {
                 Value const *method = method_of(class_get(ty, self.class), member);
                 Value        callee = (method != NULL) ? *method : NIL;
-                if (enterable(&callee, argc) && try_jit(ty, &callee) != NULL) {
+                JitFn       *code   = enterable(&callee, argc) ? try_jit(ty, &callee) : NULL;
+                if (code != NULL) {
                         ty->stack.count = top - ty->stack.items - explicit;
-                        return push_frame(ty, &callee, &self, argc);
+                        return push_frame(ty, &callee, &self, argc, code);
                 }
         }
 

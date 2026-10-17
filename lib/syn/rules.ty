@@ -1,0 +1,2382 @@
+import json
+import ty
+import ty.lex as lex
+import ty.syntax
+import syn (Node, Tree, Token, Pattern, Match)
+import syn.lint as lint (Diag, Fix, Edit, Rule)
+
+let IND = '    '
+
+pub LIMIT = 100
+pub SOFT = 80
+
+let STATEMENTS = %[
+    'Definition', 'Return', 'Break', 'Continue', 'Throw', 'If', 'While', 'EachLoop', 'For',
+    'MatchStmt', 'Match', 'Block', 'Null', 'Conditional', 'Function', 'Assign', 'WhileMatch'
+]
+
+let ASSIGNMENTS = %['=', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '<<=', '>>=', '??=']
+
+let CALLS = %['FunctionCall', 'MethodCall']
+
+let REFS = %['Identifier', 'MemberAccess']
+
+let NAME = '[\\p{L}\\p{N}_?!-]+'
+
+let AGGREGATES = %['all', 'any', 'count']
+
+let RELATIONS = %['contiguous', 'adjacent', 'samecol', 'same']
+
+let ADJACENT = /^[ \t]*,?[ \t]*\n[ \t\n]*$/
+
+let GROUP = regex(['^group\\s+\\$\\$(', NAME, ')\\s+break-before\\(([^)]*)\\)(.*)$'].join(''), 'u')
+
+let ARM_RUN = regex(
+    ['^match\\s+\\$\\$', NAME, '\\s*\\{\\s*\\$\\$\\+(', NAME, ')\\((.*)\\)\\s*\\}$'].join(''),
+    'su'
+)
+
+let COMPUTED = regex(
+    ['^\\s*\\$\\$(', NAME, ')\\s*=\\s*([\\p{L}_][\\p{L}\\p{N}_?!-]*)\\((.*)\\)\\s*$'].join(''),
+    'u'
+)
+
+let DECL = regex(
+    ['^\\s*(\\$\\$', NAME, '(?:\\s*,\\s*\\$\\$', NAME, ')*)\\s*:(.*)$'].join(''),
+    'u'
+)
+
+let OP_BEFORE = regex(
+    [
+        '(=>|->|\\?\\?|\\|\\||&&|==|!=|<=>|<=|>=|<<|>>|\\.\\.\\.|\\.\\.|::',
+        '|[-+*/%<>?:|^&!#=]|\\band|\\bor|\\bin)\\s*$'
+    ].join('')
+)
+
+let OP_AFTER = regex(
+    [
+        '^\\s*(\\?\\?|\\|\\||&&|==|!=|<=>|<=|>=|<<|>>|\\.\\.\\.|\\.\\.|::',
+        '|[-+*/%<>?:|^&=.\\[(]|and\\b|or\\b|in\\b)'
+    ].join('')
+)
+
+fn first-on-line?(tree: Tree, t: Token) -> Bool {
+    let start = tree.line-start(tree.line-of(t.start))
+    tree.text(start, t.start).match?(/^\s*$/)
+}
+
+fn overlaps?(a: (Int, Int), b: (Int, Int)) -> Bool {
+    (a.0 < b.1 && b.0 < a.1) || (a.0 == b.0 && a.1 == b.1)
+}
+
+let KEYWORDS = %[
+    'in', 'inside', 'has', 'lines', 'kids', 'child', 'run', 'all', 'any', 'count', 'contiguous',
+    'adjacent', 'samecol', 'same', 'type', 'maybe', 'form'
+]
+
+pub class RunElem {
+    node:  Node | nil
+    binds: Dict[String, Any]
+    first: Token
+    last:  Token
+
+    init(node: Node | nil, binds: Dict[String, Any], first: Token, last: Token) {
+        self.node = node
+        self.binds = binds
+        self.first = first
+        self.last = last
+    }
+
+    start -> Int { first.start }
+
+    end -> Int { last.end }
+
+    __str__() -> String { "RunElem({start}..{end})" }
+}
+
+pub class Ctx {
+    tree:  Tree
+    set:   RuleSet
+    rule:  String
+    binds: Dict[String, Any]
+    stop:  Node | nil
+    base?: Bool
+
+    init(tree: Tree, set: RuleSet, rule: String, binds: Dict[String, Any], base: Bool) {
+        self.tree = tree
+        self.set = set
+        self.rule = rule
+        self.binds = binds
+        self.stop = nil
+        self.base? = base
+    }
+}
+
+pub use Pred = (Any, Ctx) -> Bool
+
+use Rel = (RunElem, RunElem, Ctx) -> Bool
+
+use Agg = (Array[RunElem], Ctx) -> Bool
+
+fn first-tok(v: Any) -> Token | nil {
+    match v {
+        n: Node    => n.first-token,
+        t: Token   => t,
+        e: RunElem => e.first,
+        xs: Array  => (#xs == 0) ? nil : first-tok(xs[0]),
+        _          => nil,
+    }
+}
+
+fn last-tok(v: Any) -> Token | nil {
+    match v {
+        n: Node    => n.last-token,
+        t: Token   => t,
+        e: RunElem => e.last,
+        xs: Array  => (#xs == 0) ? nil : last-tok(xs[-1]),
+        _          => nil,
+    }
+}
+
+fn span-of(v: Any) -> (Int, Int) | nil {
+    match v {
+        n: Node    => (n.start, n.end),
+        t: Token   => (t.start, t.end),
+        e: RunElem => (e.start, e.end),
+        xs: Array  => do {
+            if #xs == 0 {
+                return nil
+            }
+            let $a = span-of(xs[0]) or return nil
+            let $b = span-of(xs[-1]) or return nil
+            (a.0, b.1)
+        },
+        _ => nil,
+    }
+}
+
+fn node-of(v: Any) -> Node | nil {
+    match v {
+        n: Node    => n,
+        t: Token   => t.owner,
+        e: RunElem => e.node,
+        _          => nil,
+    }
+}
+
+fn text-of(v: Any, tree: Tree) -> String {
+    match v {
+        s: String => s,
+        nil       => '',
+        _         => do {
+            let $sp = span-of(v) or return str(v)
+            tree.text(sp.0, sp.1)
+        },
+    }
+}
+
+fn line-span(v: Any, tree: Tree) -> (Int, Int) | nil {
+    let $sp = span-of(v) or return nil
+    (tree.line-of(sp.0), tree.line-of(max(sp.0, sp.1 - 1)))
+}
+
+fn oneline?(v: Any, tree: Tree) -> Bool {
+    let $ls = line-span(v, tree) or return true
+    ls.0 == ls.1
+}
+
+fn bare?(v: Any, tree: Tree) -> Bool {
+    let $a = first-tok(v) or return true
+    let $b = last-tok(v) or return true
+    let toks = tree.tokens[a.index;b.index + 1]
+    !toks[1;].any?(t -> t.leading.any?(&.comment?))
+ && !toks[;-1].any?(t -> t.trailing.any?(&.comment?))
+}
+
+fn spread?(n: Node) -> Bool {
+    let $p = n.parent or return false
+    p.kind == 'Module' || (p.kind == 'Block' && p.line != p.end-line)
+}
+
+fn simple-body?(v: Any, tree: Tree) -> Bool {
+    let $n = node-of(v) or return false
+    n.kind == 'Null' || (n.kind == 'Block' && bare?(n, tree) && n.nodes.all?(oneline?@(_, tree)))
+}
+
+fn value?(v: Any) -> Bool {
+    let $n = node-of(v) or return false
+    n.kind not in STATEMENTS && !n.own.any?(\_.text in ASSIGNMENTS)
+}
+
+fn indent-at(tree: Tree, byte: Int) -> String {
+    let line = tree.line-of(byte)
+    tree.text(tree.line-start(line), byte).match(/^[ \t]*/) ?? ''
+}
+
+fn aligned?(v: Any, word: String, tree: Tree) -> Bool {
+    let $n = node-of(v) or return false
+    let col = (k: Node) -> match k.own.find(\_.text == word) {
+        t: Token => tree.display-col(t.start),
+        _        => -1,
+    }
+    let mine = col(n)
+    let peers = (n.parent.?nodes ?? []).filter(k -> k.kind == n.kind && k.line != n.line)
+    mine >= 0 && peers.any?(k -> col(k) == mine)
+}
+
+fn ancestors-until(n: Node, stop: Node | nil) -> Array[Node] {
+    let out: Array[Node] = []
+    let p = n.parent
+    while p != nil && p != stop {
+        out.push(p ?? n)
+        p = p.?parent
+    }
+    out
+}
+
+fn compare(op: String, a: Int, b: Int) -> Bool {
+    match op {
+        '<=' => a <= b,
+        '>=' => a >= b,
+        '<'  => a < b,
+        '>'  => a > b,
+        '==' => a == b,
+        '!=' => a != b,
+        _    => false,
+    }
+}
+
+fn pos-key(v: Any) -> String | nil {
+    let $sp = span-of(v) or return nil
+    "{sp.0}:{sp.1}:{node-of(v).?kind ?? ''}"
+}
+
+pub class CTok {
+    kind:  String
+    text:  String
+    extra: String
+
+    init(kind: String, text: String, extra: String = '') {
+        self.kind = kind
+        self.text = text
+        self.extra = extra
+    }
+
+    __str__() -> String { "{kind}:{text}" }
+}
+
+let CTOKENS = [
+    ('space', /^(\s+)/),
+    ('hole', /^\$\$([\p{L}\p{N}_?!-]+)/u),
+    ('re', /^\/((?:[^\/\\\n]|\\.)*)\/([a-zA-Z]*)/),
+    ('str', /^'((?:[^'\\]|\\.)*)'/),
+    ('pat', /^`([^`]*)`/),
+    ('num', /^(\d+)/),
+    ('raw', /^(type|maybe)\(((?:[^()]|\([^()]*\))*)\)/),
+    ('id', /^([\p{L}_][\p{L}\p{N}_?!-]*(?:\.[\p{L}_][\p{L}\p{N}_?!-]*)?)/u),
+    ('op', /^(\.\.|<=|>=|==|!=|=~|[()<>,|&!:])/)
+]
+
+pub fn lex-expr(src: String) -> Array[CTok] {
+    let out: Array[CTok] = []
+    let i = 0
+    let n = src.size()
+    while i < n {
+        let rest = src.bslice(i)
+        let found = false
+        for (kind, re) in CTOKENS {
+            if let [whole, a, *more] = rest.match(re) {
+                i += whole.size()
+                found = true
+                match kind {
+                    'space' => (),
+                    'str'   => out.push(CTok(kind, a.sub(/\\(.)/, m -> m[1]))),
+                    're'    => out.push(CTok(kind, a, more.?[0] ?? '')),
+                    'raw'   => out.push(CTok(kind, a, more.?[0] ?? '')),
+                    'hole'  => out.push(CTok(kind, syn.mangle(a))),
+                    _       => out.push(CTok(kind, a)),
+                }
+                break
+            }
+        }
+        if !found {
+            throw ValueError("syn rules: cannot read constraint at {json.encode(rest)}")
+        }
+    }
+    out.push(CTok('end', ''))
+    out
+}
+
+pub class Term {
+    kind: String
+    pred: Pred | nil
+    rel:  Rel | nil
+    agg:  Agg | nil
+    lo:   Int
+    hi:   Int | nil
+
+    init(kind: String) {
+        self.kind = kind
+        self.pred = nil
+        self.rel = nil
+        self.agg = nil
+        self.lo = 2
+        self.hi = nil
+    }
+}
+
+pub class CParser {
+    toks:  Array[CTok]
+    i:     Int
+    set:   RuleSet
+    refs:  Array[String]
+
+    init(src: String, set: RuleSet) {
+        self.toks = lex-expr(src)
+        self.i = 0
+        self.set = set
+        self.refs = []
+    }
+
+    peek -> CTok { toks[i] }
+
+    next() -> CTok {
+        let t = toks[i]
+        if t.kind != 'end' {
+            i += 1
+        }
+        t
+    }
+
+    at?(text: String) -> Bool { toks[i].kind == 'op' && toks[i].text == text }
+
+    word?(text: String) -> Bool { toks[i].kind == 'id' && toks[i].text == text }
+
+    accept(text: String) -> Bool {
+        if at?(text) {
+            i += 1
+            return true
+        }
+        false
+    }
+
+    expect(text: String) {
+        if !accept(text) {
+            throw ValueError("syn rules: expected `{text}` but found `{peek.text}`")
+        }
+    }
+
+    terms() -> Array[Term] {
+        let out: Array[Term] = []
+        while peek.kind != 'end' {
+            out.push(term())
+            break if !accept(',')
+        }
+        if peek.kind != 'end' {
+            throw ValueError("syn rules: unexpected `{peek.text}` in constraint")
+        }
+        out
+    }
+
+    term() -> Term {
+        if word?('run') {
+            next()
+            let t = Term('bounds')
+            if peek.kind == 'num' {
+                t.lo = int(next().text) ?? 2
+                expect('..')
+                t.hi = (peek.kind == 'num') ? int(next().text) : nil
+            }
+            return t
+        }
+        let ahead = toks[i + 1]
+        let negated? = at?('!') && ahead.kind == 'id' && ahead.text in AGGREGATES
+        if negated? {
+            next()
+        }
+        if peek.kind == 'id' && peek.text in ['all', 'any', 'count'] {
+            let f = aggregate()
+            let t = Term('agg')
+            t.agg = negated? ? ((es, c) -> !f(es, c)) : f
+            return t
+        }
+        if peek.kind == 'id' && peek.text in ['contiguous', 'adjacent', 'samecol', 'same'] {
+            let t = Term('rel')
+            t.rel = relation()
+            return t
+        }
+        let t = Term('pred')
+        t.pred = expr()
+        t
+    }
+
+    aggregate() -> Agg {
+        let word = next().text
+        expect('(')
+        let hole: String | nil = nil
+        if peek.kind == 'hole' && toks[i + 1].text == ':' {
+            hole = next().text
+            next()
+        }
+        let pick = (e: RunElem) -> (hole == nil) ? e : e.binds[hole ?? '']
+        let p = expr()
+        expect(')')
+        let test = (e: RunElem, c: Ctx) -> p(pick(e), c)
+        match word {
+            'all' => (es, c) -> es.all?(test@(_, c)),
+            'any' => (es, c) -> es.any?(test@(_, c)),
+            _     => do {
+                let op = next().text
+                let n = int(next().text) ?? 0
+                (es, c) -> compare(op, #es.filter(test@(_, c)), n)
+            },
+        }
+    }
+
+    relation() -> Rel {
+        let word = next().text
+        match word {
+            'contiguous' => (a, b, c) -> c.tree.line-of(b.start) == c.tree.line-of(a.end) + 1,
+            'adjacent'   => (a, b, c) -> c.tree.text(a.end, b.start).match?(ADJACENT),
+            'samecol'    => (a, b, c) -> c.tree.display-col(a.start) == c.tree.display-col(b.start),
+            _            => do {
+                expect('(')
+                let h = next().text
+                expect(')')
+                (a, b, c) -> match (a.binds[h], b.binds[h]) {
+                    (x: Node, y: Node) => x.same?(y),
+                    (x, y)             => text-of(x, c.tree) == text-of(y, c.tree),
+                }
+            },
+        }
+    }
+
+    expr() -> Pred {
+        let alts = [conj()]
+        while accept('|') {
+            alts.push(conj())
+        }
+        (#alts == 1) ? alts[0] : ((v, c) -> alts.any?(f -> f(v, c)))
+    }
+
+    starts-prim? -> Bool {
+        let w = peek.text
+        if peek.kind == 'id' && (w in AGGREGATES || w in RELATIONS || w == 'run') {
+            return false
+        }
+        peek.kind in ['id', 'str', 're', 'pat', 'raw'] || at?('!') || at?('(') || at?('=~')
+    }
+
+    conj() -> Pred {
+        let parts = [unary()]
+        while accept('&') || starts-prim? {
+            parts.push(unary())
+        }
+        (#parts == 1) ? parts[0] : ((v, c) -> parts.all?(f -> f(v, c)))
+    }
+
+    unary() -> Pred {
+        if accept('!') {
+            let p = unary()
+            return (v, c) -> !p(v, c)
+        }
+        prim()
+    }
+
+    args() -> Array[Any] {
+        let out: Array[Any] = []
+        if !accept('(') {
+            return out
+        }
+        while !at?(')') {
+            let t = next()
+            out.push(match t.kind {
+                'num' => int(t.text),
+                're'  => regex(t.text, t.extra),
+                _     => t.text,
+            })
+            break if !accept(',')
+        }
+        expect(')')
+        out
+    }
+
+    prim() -> Pred {
+        let t = next()
+        match t.kind {
+            'op' and t.text == '(' => do {
+                let p = expr()
+                expect(')')
+                p
+            },
+            'op' and t.text == '=~' => do {
+                let r = next()
+                let re = regex(r.text, r.extra)
+                (v, c) -> text-of(v, c.tree).match?(re)
+            },
+            'str' => (v, c) -> text-of(v, c.tree) == t.text,
+            're'  => do {
+                let re = regex(t.text, t.extra)
+                (v, c) -> text-of(v, c.tree).match?(re)
+            },
+            'pat' => do {
+                let p = syn.compile(t.text, set.module)
+                (v, c) -> match node-of(v) {
+                    n: Node => p.matches?(n),
+                    _       => false,
+                }
+            },
+            'raw' => do {
+                let gradual? = t.text == 'maybe'
+                let want = t.extra
+                (v, c) -> match node-of(v) {
+                    n: Node => n.of-type?(want, gradual?) ?? gradual?,
+                    _       => false,
+                }
+            },
+            'id' => named(t.text),
+            _    => throw ValueError("syn rules: unexpected `{t.text}` in constraint"),
+        }
+    }
+
+    named(w: String) -> Pred {
+        match w {
+            'in' => do {
+                let p = prim()
+                (v, c) -> match node-of(v) {
+                    n: Node and n.parent != nil => p(n.parent, c),
+                    _                           => false,
+                }
+            },
+            'inside' => do {
+                let p = prim()
+                (v, c) -> match node-of(v) {
+                    n: Node => ancestors-until(n, c.stop).any?(a -> p(a, c)),
+                    _       => false,
+                }
+            },
+            'has' => do {
+                let p = prim()
+                (v, c) -> match node-of(v) {
+                    n: Node => [*n.descendants()].any?(d -> p(d, c)),
+                    _       => false,
+                }
+            },
+            'child' => do {
+                expect('(')
+                let k = int(next().text) ?? 0
+                expect(',')
+                let p = expr()
+                expect(')')
+                (v, c) -> match node-of(v) {
+                    n: Node and k < #n.nodes => p(n.nodes[k], c),
+                    _                        => false,
+                }
+            },
+            'form' => do {
+                let [name] = args()
+                (v, c) -> node-of(v).?form == name
+            },
+            'kids' => do {
+                let op = next().text
+                let k = int(next().text) ?? 0
+                (v, c) -> compare(op, #(node-of(v).?nodes ?? []), k)
+            },
+            'lines' => do {
+                let op = next().text
+                let k = int(next().text) ?? 0
+                (v, c) -> match line-span(v, c.tree) {
+                    (a, b) => compare(op, b - a + 1, k),
+                    _      => false,
+                }
+            },
+            'mentions' => do {
+                let [w] = args()
+                (v, c) -> match (first-tok(v), last-tok(v)) {
+                    (a: Token, b: Token) => c.tree.tokens[a.index;b.index + 1].any?(\_.text == w),
+                    _                    => false,
+                }
+            },
+            'aligned' => do {
+                let [word] = args()
+                (v, c) -> aligned?(v, word, c.tree)
+            },
+            'first-on-line' => (v, c) -> match first-tok(v) {
+                t: Token => first-on-line?(c.tree, t),
+                _        => false,
+            },
+            'oneline'   => (v, c) -> oneline?(v, c.tree),
+            'multiline' => (v, c) -> !oneline?(v, c.tree),
+            'bare'      => (v, c) -> bare?(v, c.tree),
+            'statement' => (v, c) -> node-of(v) != nil && spread?(node-of(v) ?? c.tree.root),
+            'value'     => (v, c) -> value?(v),
+            'simple'    => (v, c) -> simple-body?(v, c.tree),
+            'local'     => (v, c) -> !(node-of(v).?symbol.?global? ?? true),
+            'def'       => (v, c) -> node-of(v).?def? ?? false,
+            'identifier' => (v, c) -> match v {
+                t: Token => t.kind == 'id',
+                n: Node  => n.kind == 'Identifier',
+                _        => false,
+            },
+            'string'     => (v, c) -> node-of(v).?kind in ['String', 'SpecialString'],
+            'expr' or 'stmt' or 'node' or 'pattern' or 'position' or 'token' => (v, c) -> v != nil,
+            /\./ => do {
+                let [rule, hole] = w.split('.')
+                refs.push(rule)
+                let name = syn.mangle(hole)
+                (v, c) -> match pos-key(v) {
+                    k: String => k in c.set.spans(c, rule, name),
+                    _         => false,
+                }
+            },
+            /^[A-Z]/ => (v, c) -> node-of(v).?is?(w) ?? false,
+            _ => do {
+                if let $p = set.lets[w] {
+                    return (v, c) -> p(v, c)
+                }
+                let extra = args()
+                let $f = set.funcs[w] or throw ValueError("syn rules: unknown predicate `{w}`")
+                (v, c) -> do {
+                    let r = f(v, *extra)
+                    r != nil && r != false
+                }
+            },
+        }
+    }
+}
+
+pub class Computed {
+    name: String
+    func: String
+    args: Array[CTok]
+
+    init(name: String, func: String, args: Array[CTok]) {
+        self.name = name
+        self.func = func
+        self.args = args
+    }
+}
+
+pub class Chunk {
+    index:  Int
+    insert: Bool
+    plus:   Array[String]
+
+    init(index: Int, insert: Bool) {
+        self.index = index
+        self.insert = insert
+        self.plus = []
+    }
+}
+
+pub class EditBlock {
+    hole: String
+    plus: Array[String]
+
+    init(hole: String) {
+        self.hole = hole
+        self.plus = []
+    }
+}
+
+pub class Nest {
+    hole:    String | nil
+    minus:   Array[String]
+    plus:    Array[String]
+    whens:   Array[Pred]
+    pattern: Pattern | nil
+
+    init(hole: String | nil) {
+        self.hole = hole
+        self.minus = []
+        self.plus = []
+        self.whens = []
+        self.pattern = nil
+    }
+}
+
+pub class Align {
+    token:  String
+    mode:   String
+    kind:   String | nil
+    at:     String | nil
+    holes:  Array[String]
+    within: String | nil
+    spread: Int | nil
+    whens:  Array[Agg]
+
+    init(token: String, mode: String) {
+        self.token = token
+        self.mode = mode
+        self.kind = nil
+        self.at = nil
+        self.holes = []
+        self.within = nil
+        self.spread = nil
+        self.whens = []
+    }
+}
+
+pub class Group {
+    hole:   String
+    breaks: Array[String]
+    limit:  Int
+
+    init(hole: String, breaks: Array[String], limit: Int) {
+        self.hole = hole
+        self.breaks = breaks
+        self.limit = limit
+    }
+}
+
+pub class RunSpec {
+    name:  String
+    sub:   Pattern | nil
+    arms:  (String, String) | nil
+    marks: Array[String]
+
+    init(name: String, sub: Pattern | nil, arms: (String, String) | nil, marks: Array[String]) {
+        self.name = name
+        self.sub = sub
+        self.arms = arms
+        self.marks = marks
+    }
+}
+
+pub class Alt {
+    text:    String
+    pattern: Pattern | nil
+    run:     RunSpec | nil
+    chunks:  Array[Chunk]
+    blocks:  Array[EditBlock]
+    nests:   Array[Nest]
+    whens:   Array[Pred]
+    aligns:  Array[Align]
+    groups:  Array[Group]
+    marks:   Array[String]
+    star?:   Bool
+
+    init() {
+        self.text = ''
+        self.pattern = nil
+        self.run = nil
+        self.chunks = []
+        self.blocks = []
+        self.nests = []
+        self.whens = []
+        self.aligns = []
+        self.groups = []
+        self.marks = []
+        self.star? = false
+    }
+
+    edits? -> Bool { #chunks + #blocks + #nests + #aligns + #groups > 0 }
+}
+
+pub class RunDecl {
+    lo:    Int
+    hi:    Int | nil
+    elem:  Array[Pred]
+    rels:  Array[Rel]
+    aggs:  Array[Agg]
+
+    init() {
+        self.lo = 2
+        self.hi = nil
+        self.elem = []
+        self.rels = []
+        self.aggs = []
+    }
+}
+
+pub class SRule {
+    name:      String
+    index:     Int
+    flags:     Array[String]
+    severity:  String
+    limit:     Int
+    message:   String
+    doc:       String
+    kinds:     Array[String] | nil
+    decls:     Dict[String, Array[Pred]]
+    runs:      Dict[String, RunDecl]
+    computed:  Array[Computed]
+    whens:     Array[Pred]
+    alts:      Array[Alt]
+    disabled:  Array[String]
+
+    init(name: String, index: Int) {
+        self.name = name
+        self.index = index
+        self.flags = []
+        self.severity = 'warning'
+        self.limit = LIMIT
+        self.message = name
+        self.doc = ''
+        self.kinds = nil
+        self.decls = %{}
+        self.runs = %{}
+        self.computed = []
+        self.whens = []
+        self.alts = []
+        self.disabled = []
+    }
+
+    flag?(f: String) -> Bool { f in flags }
+
+    layout? -> Bool { flag?('layout') || flag?('format') }
+
+    probe? -> Bool { flag?('match') }
+
+    typed? -> Bool { flag?('typed') || flag?('semantic') }
+}
+
+pub class Iso {
+    name:  String
+    left:  String
+    right: String
+
+    init(name: String, left: String, right: String) {
+        self.name = name
+        self.left = left
+        self.right = right
+    }
+}
+
+pub class Hit {
+    rule:    SRule
+    node:    Node
+    binds:   Dict[String, Any]
+    fix:     Fix | nil
+    message: String
+    key:     String
+
+    init(rule: SRule, node: Node, binds: Dict[String, Any], fix: Fix | nil, message: String) {
+        self.rule = rule
+        self.node = node
+        self.binds = binds
+        self.fix = fix
+        self.message = message
+        self.key = "{node.start}:{node.end}:{node.kind}"
+    }
+
+    spans(hole: String) -> Array[String] {
+        let vs = match binds[hole] {
+            xs: Array => xs,
+            nil       => [],
+            v         => [v],
+        }
+        [pos-key(v) ?? '' for v in vs if pos-key(v) != nil]
+    }
+}
+
+let __tls::sets: Int = 0
+
+pub class RuleSet {
+    id:     Int
+    module: String | nil
+    funcs:  Dict[String, Function]
+    lets:   Dict[String, Pred]
+    srules: Array[SRule]
+    isos:   Array[Iso]
+    __lint: Array[Rule] | nil
+
+    init(module: String | nil, funcs: Dict[String, Function]) {
+        sets += 1
+        self.id = sets
+        self.module = module
+        self.funcs = funcs
+        self.lets = %{}
+        self.srules = []
+        self.isos = []
+        self.__lint = nil
+    }
+
+    named(names: Array[String]) -> Array[Rule] { lint-rules().filter(\_.name in names) }
+
+    rules -> Array[Rule] {
+        let optional = srules.filter(\_.flag?('optional')).map(&.name)
+        lint-rules().filter(\_.name not in optional)
+    }
+
+    lint-rules() -> Array[Rule] {
+        if let $done = __lint {
+            return done
+        }
+        let names: Array[String] = []
+        for srules {
+            if !it.probe? && it.name not in names {
+                names.push(it.name)
+            }
+        }
+        let out = names.map(name -> do {
+            let group = srules.filter(\_.name == name)
+            let head = group[0]
+            lint.rule(
+                name,
+                n -> (n.kind == 'Module') ? diagnostics(n.tree, group) : nil,
+                severity=head.severity,
+                kinds=['Module'],
+                doc=head.doc,
+                semantic=group.any?(\_.flag?('semantic')),
+                typed=group.any?(&.typed?)
+            )
+        })
+        __lint = out
+        out
+    }
+
+    diagnostics(tree: Tree, group: Array[SRule]) -> Array[Diag] {
+        let out: Array[Diag] = []
+        for r in group {
+            let taken: Array[(Int, Int)] = []
+            for hits(tree, r, false) {
+                let spans = it.fix.?edits.?map(e -> (e.start, e.end)) ?? []
+                let clash? = spans.any?(|(a, b)| -> taken.any?(overlaps?@((a, b), _)))
+                continue if clash?
+                taken += spans
+                out.push(lint.diag(it.node, it.message, it.fix))
+            }
+        }
+        out
+    }
+
+    spans(c: Ctx, rule: String, hole: String) -> Dict[String, Bool] {
+        let base? = rule == c.rule
+        if base? && c.base? {
+            return %{}
+        }
+        let key = "spans:{id}:{rule}:{hole}:{base?}"
+        if let $done = c.tree.memo[key] {
+            return done
+        }
+        c.tree.memo[key] = %{}
+        let out: Dict[String, Bool] = %{}
+        for r in srules.filter(\_.name == rule) {
+            for h in hits(c.tree, r, base?) {
+                for h.spans(hole) {
+                    out[it] = true
+                }
+            }
+        }
+        c.tree.memo[key] = out
+        out
+    }
+
+    hits(tree: Tree, r: SRule, base: Bool) -> Array[Hit] {
+        let key = "hits:{id}:{r.index}:{base}"
+        if let $done = tree.memo[key] {
+            return done
+        }
+        tree.memo[key] = []
+        let out = collect(tree, self, r, base)
+        tree.memo[key] = out
+        out
+    }
+}
+
+class Header {
+    name:  String
+    words: Array[String]
+    decls: Array[String]
+    body:  Array[String]
+
+    init(name: String, words: Array[String]) {
+        self.name = name
+        self.words = words
+        self.decls = []
+        self.body = []
+    }
+}
+
+fn split-blocks(text: String) -> (Array[String], Array[Header]) {
+    let lets: Array[String] = []
+    let blocks: Array[Header] = []
+    let in-body? = false
+    for line in text.split('\n') {
+        if let [_, name, rest] = line.match(/^@([^@\s]+(?:\s+[^@\s]+)?)@(.*)$/) {
+            let words = rest.strip().split(/\s+/).filter(\_ != '')
+            blocks.push(Header(name, words))
+            in-body? = false
+            continue
+        }
+        if #blocks == 0 || line.match?(/^let\s/) {
+            if line.strip() != '' {
+                lets.push(line)
+            }
+            continue
+        }
+        if line.match?(/^@@\s*$/) {
+            in-body? = true
+            continue
+        }
+        if in-body? {
+            blocks[-1].body.push(line)
+        } else if line.strip() != '' {
+            blocks[-1].decls.push(line)
+        }
+    }
+    (lets, blocks)
+}
+
+class Disj {
+    alts: Array[Array[Any]]
+
+    init() {
+        self.alts = [[]]
+    }
+}
+
+fn parse-disjunctions(lines: Array[String]) -> Array[Array[String]] {
+    let stack: Array[Array[Any]] = [[]]
+    let opened: Array[Disj] = []
+    for line in lines {
+        match line.strip-right() {
+            '(' => do {
+                let d = Disj()
+                stack[-1].push(d)
+                opened.push(d)
+                stack.push(d.alts[0])
+            },
+            '|' => do {
+                stack.pop()
+                let d = opened[-1]
+                d.alts.push([])
+                stack.push(d.alts[-1])
+            },
+            /^\)(.*)$/ => do {
+                stack.pop()
+                opened.pop()
+                if $1.strip() != '' {
+                    stack[-1].push(" {$1.strip()}")
+                }
+            },
+            _ => stack[-1].push(line),
+        }
+    }
+    expand(stack[0])
+}
+
+fn expand(items: Array[Any]) -> Array[Array[String]] {
+    let outs: Array[Array[String]] = [[]]
+    for item in items {
+        outs = match item {
+            s: String => outs.map(o -> [*o, s]),
+            d: Disj   => [
+                [*o, *x]
+                for o in outs
+                for alt in d.alts
+                for x in expand(alt)
+            ],
+            _ => outs,
+        }
+    }
+    outs
+}
+
+fn marker(line: String) -> String { (line == '') ? ' ' : line.bslice(0, 1) }
+
+fn content(line: String) -> String { (line == '') ? '' : line.bslice(1) }
+
+fn positions(text: String) -> (String, Array[String]) {
+    let names: Array[String] = []
+    let out = text.sub(/@\$\$([\p{L}\p{N}_?!-]+)/u, m -> do {
+        names.push(syn.mangle(m[1]))
+        "$$@{m[1]}@"
+    })
+    (out, names)
+}
+
+fn directive?(line: String) -> Bool {
+    let m = marker(line)
+    let body = (m in ['-', '+', '*', ' ']) ? content(line).strip() : line.strip()
+    body.match?(/^(when|align|group)\b/) && (m == ' ' || m not in ['-', '+', '*'])
+}
+
+fn directive-text(line: String) -> String {
+    (marker(line) == ' ') ? content(line).strip() : line.strip()
+}
+
+fn single-hole(text: String) -> String | nil {
+    text.strip().match(/^\*?\$\$([\p{L}\p{N}_?!-]+)$/u).?[1]
+}
+
+class AltBuilder {
+    set:     RuleSet
+    rule:    SRule
+    alt:     Alt
+    lines:   Array[String]
+    state:   String
+    chunk:   Chunk | nil
+    block:   EditBlock | nil
+    nest:    Nest | nil
+
+    init(set: RuleSet, rule: SRule) {
+        self.set = set
+        self.rule = rule
+        self.alt = Alt()
+        self.lines = []
+        self.state = 'context'
+        self.chunk = nil
+        self.block = nil
+        self.nest = nil
+    }
+
+    close-minus() {
+        if state == 'minus' {
+            let c = chunk ?? Chunk(0, false)
+            lines[-1] = "{lines[-1]}$$@__me{c.index}@"
+            state = 'plus-after-minus'
+        }
+    }
+
+    bound?(name: String) -> Bool {
+        let joined = lines.join('\n')
+        let plain = regex("\\$\\$(\\(\\s*)?{name}\\b")
+        joined.match?(plain) || joined.match?(regex("\\$\\$@{name}\\b"))
+    }
+
+    feed(line: String) {
+        if let $n = nest {
+            feed-nest(n, line)
+            return
+        }
+        if directive?(line) {
+            close-minus()
+            directive(directive-text(line))
+            return
+        }
+        let m = marker(line)
+        let (text, names) = positions(content(line))
+        alt.marks += names.filter(\_ not in alt.marks)
+        if let $nm = text.strip().match(/^<\.\.\.(?:\s+in\s+\$\$([\p{L}\p{N}_?!-]+))?$/u) {
+            let over = match nm {
+                [_, o: String] and o != '' => o,
+                _                          => nil,
+            }
+            close-minus()
+            let n = Nest((over == nil) ? "__nest{#alt.nests}" : syn.mangle(over ?? ''))
+            alt.nests.push(n)
+            if over == nil {
+                lines.push("*$$__nest{#alt.nests - 1}")
+            }
+            nest = n
+            state = 'context'
+            return
+        }
+        match m {
+            '-' => do {
+                if let $h = single-hole(text) and bound?(h) && state != 'minus' {
+                    block = EditBlock(syn.mangle(h))
+                    alt.blocks.push(block ?? EditBlock(h))
+                    state = 'block'
+                    return
+                }
+                if state != 'minus' {
+                    let c = Chunk(#alt.chunks, false)
+                    alt.chunks.push(c)
+                    chunk = c
+                    let lead = text.match(/^\s*/) ?? ''
+                    lines.push("{lead}$$@__ms{c.index}@{text.bslice(lead.size()).strip-right()}")
+                    state = 'minus'
+                } else {
+                    lines.push(text.strip-right())
+                }
+            },
+            '+' => do {
+                close-minus()
+                match (state, block, chunk) {
+                    ('block', b: EditBlock, _)        => b.plus.push(text),
+                    ('plus-after-minus', _, c: Chunk) => c.plus.push(text),
+                    _                                   => do {
+                        let c = Chunk(#alt.chunks, true)
+                        alt.chunks.push(c)
+                        chunk = c
+                        lines.push("$$@__ms{c.index}@$$@__me{c.index}@")
+                        c.plus.push(text)
+                        state = 'plus-after-minus'
+                    },
+                }
+            },
+            _ => do {
+                close-minus()
+                if m == '*' {
+                    alt.star? = true
+                }
+                if state == 'block' && text.strip() == '' {
+                    return
+                }
+                state = 'context'
+                lines.push(text)
+            },
+        }
+    }
+
+    feed-nest(n: Nest, line: String) {
+        let text = content(line)
+        if let [_, rest] = text.strip().match(/^\.\.\.>(.*)$/) {
+            nest = nil
+            if let [_, w] = rest.strip().match(/^when\s+(.*)$/) {
+                n.whens += terms(w)
+            }
+            return
+        }
+        match marker(line) {
+            '-' => n.minus.push(text),
+            '+' => n.plus.push(text),
+            _   => do {
+                if let [_, w] = text.strip().match(/^when\s+(.*)$/) {
+                    n.whens += terms(w)
+                }
+            },
+        }
+    }
+
+    terms(src: String) -> Array[Pred] {
+        CParser(src, set).terms().filter(\_.kind == 'pred').map(t -> t.pred ?? ((v, c) -> true))
+    }
+
+    directive(text: String) {
+        if let [_, w] = text.match(/^when\s+(.*)$/) {
+            alt.whens += terms(w)
+            return
+        }
+        if let [_, tok, mode, rest] = text.match(/^align\s+'([^']*)'\s+(of|after)\s+(.*)$/) {
+            alt.aligns.push(align(tok, mode, rest))
+            return
+        }
+        if let [_, h, words, rest] = text.match(GROUP) {
+            let breaks = words.split(',').map(\_.strip().comb(/^'|'$/))
+            let limit = ('soft' in rest) ? SOFT : rule.limit
+            alt.groups.push(Group(syn.mangle(h), breaks, limit))
+            return
+        }
+        throw ValueError("syn rules: cannot read directive `{text}` in @{rule.name}@")
+    }
+
+    align(tok: String, mode: String, rest: String) -> Align {
+        let a = Align(tok, mode)
+        let [targets, *opts] = rest.split(/\s+when\s+/)
+        let head = targets
+        if let [_, list] = head.match(/^\(([^)]*)\)/) {
+            a.holes = list.split(',').map(h -> syn.mangle(h.strip().comb(/^\$\$/)))
+        } else if let [_, h] = head.match(/^\$\$([\p{L}\p{N}_?!-]+)/u) {
+            a.holes = [syn.mangle(h)]
+        }
+        if let [_, k] = head.match(/^\$\$[\p{L}\p{N}_?!-]+\s*:\s*([A-Z]\w*)/u) {
+            a.kind = k
+        }
+        if let [_, w] = head.match(/\sin\s+\$\$([\p{L}\p{N}_?!-]+)/u) {
+            a.within = syn.mangle(w)
+        }
+        if let [_, w] = head.match(/\sat\s+\$\$([\p{L}\p{N}_?!-]+)/u) {
+            a.at = syn.mangle(w)
+        }
+        if let [_, n] = head.match(/spread\s*<=\s*(\d+)/) {
+            a.spread = int(n)
+        }
+        for opts {
+            for t in CParser(it, set).terms() {
+                if let $g = t.agg {
+                    a.whens.push(g)
+                }
+            }
+        }
+        a
+    }
+
+    finish() -> Alt {
+        close-minus()
+        let text = lines.join('\n')
+        alt.text = text
+        let body = text.strip()
+        if let [_, name, sub] = body.match(/^\$\$\+([\p{L}\p{N}_?!-]+)\((.*)\)$/su) {
+            alt.run = run-spec(syn.mangle(name), sub, false)
+            return alt
+        }
+        if let [_, name, sub] = body.match(ARM_RUN) {
+            alt.run = run-spec(syn.mangle(name), sub, true)
+            return alt
+        }
+        alt.pattern = syn.compile(text, set.module)
+        for alt.nests {
+            let minus = it.minus.join('\n').strip()
+            if minus != '' && single-hole(minus) == nil {
+                it.pattern = syn.compile(minus, set.module)
+            }
+        }
+        alt
+    }
+
+    run-spec(name: String, sub: String, arms?: Bool) -> RunSpec {
+        if !arms? {
+            let p = syn.compile(sub, set.module)
+            return RunSpec(name, p, nil, p.marks.keys())
+        }
+        let $m = sub.match(/^\s*\$\$([\p{L}\p{N}_?!-]+)\s*=>\s*\$\$([\p{L}\p{N}_?!-]+)\s*$/u)
+            or throw ValueError('syn rules: a run over match arms must look like `$$P => $$B`')
+        RunSpec(name, nil, (syn.mangle(m[1]), syn.mangle(m[2])), [])
+    }
+}
+
+fn parse-decl(r: SRule, set: RuleSet, line: String) {
+    if let [_, key, rest] = line.match(/^\s*(message|doc|when|kinds|disable)\s*:\s*(.*)$/) {
+        match key {
+            'message' => r.message = rest.strip(),
+            'doc'     => r.doc = rest.strip(),
+            'kinds'   => r.kinds = rest.split(',').map(\_.strip()),
+            'disable' => r.disabled = rest.split(',').map(\_.strip()),
+            _         => r.whens += CParser(rest, set).terms().map(t -> t.pred ?? ((v, c) -> true)),
+        }
+        return
+    }
+    if let [_, name, func, args] = line.match(COMPUTED) {
+        let toks = lex-expr(args).filter(t -> t.kind != 'end' && !(t.kind == 'op' && t.text == ','))
+        r.computed.push(Computed(syn.mangle(name), func, toks))
+        return
+    }
+    if let [_, names, rest] = line.match(DECL) {
+        let holes = names.split(',').map(h -> syn.mangle(h.strip().comb(/^\$\$/)))
+        let terms = CParser(rest, set).terms()
+        for h in holes {
+            if terms.any?(t -> t.kind in ['bounds', 'rel', 'agg']) {
+                let d = r.runs[h] ?? (r.runs[h] = RunDecl())
+                for t in terms {
+                    match t.kind {
+                        'bounds' => do {
+                            d.lo = t.lo
+                            d.hi = t.hi
+                        },
+                        'rel' => d.rels.push(t.rel ?? ((a, b, c) -> true)),
+                        'agg' => d.aggs.push(t.agg ?? ((es, c) -> true)),
+                        _     => d.elem.push(t.pred ?? ((v, c) -> true)),
+                    }
+                }
+            } else {
+                r.decls[h] = [*(r.decls[h] ?? []), *terms.map(t -> t.pred ?? ((v, c) -> true))]
+            }
+        }
+        return
+    }
+    throw ValueError("syn rules: cannot read declaration `{line.strip()}` in @{r.name}@")
+}
+
+fn apply-flags(r: SRule, words: Array[String]) {
+    for w in words {
+        match w {
+            'info' or 'warning' or 'error' => r.severity = w,
+            'soft'                         => r.limit = SOFT,
+            /^limit=(\d+)$/                => r.limit = int($1) ?? LIMIT,
+            _                              => r.flags.push(w),
+        }
+    }
+}
+
+fn swap-quotes(text: String) -> Array[String] {
+    let lits = text.matches(/'[^'"\\{}$\n]*'|"[^'"\\{}$\n]*"/)
+    let out = [text]
+    for s in lits[;3] {
+        let other = (s.bslice(0, 1) == "'") ? "\"{s[1;-1]}\"" : "'{s[1;-1]}'"
+        out = [*out, *out.map(t -> t.replace(s, other))]
+    }
+    out.uniq()
+}
+
+fn iso-variants(set: RuleSet, r: SRule, text: String) -> Array[String] {
+    let out = [text]
+    for iso in set.isos {
+        continue if iso.name in r.disabled
+        let more: Array[String] = []
+        for out {
+            if let $v = iso-apply(iso, it) {
+                more.push(v)
+            }
+        }
+        out += more
+    }
+    if 'quotes' not in r.disabled {
+        out = out.map(swap-quotes).flat()
+    }
+    out.uniq()
+}
+
+pub ISO_HOLE = [
+    '(\\$\\$', NAME, '|\\$\\$\\([^)]*\\)|[\\p{L}_][\\p{L}\\p{N}_?!-]*|\'[^\']*\'|"[^"]*")'
+].join('')
+
+pub fn iso-apply(iso: Iso, text: String) -> String | nil {
+    let re-text = Blob()
+    let i = 0
+    let n = iso.left.size()
+    let order: Array[String] = []
+    while i < n {
+        if iso.left.bslice(i, 2) == '$$' {
+            let name = iso.left.bslice(i).match(/^\$\$([\p{L}\p{N}_?!-]+)/u).?[1] ?? ''
+            re-text.push(ISO_HOLE)
+            order.push(name)
+            i += 2 + name.size()
+        } else {
+            let c = iso.left.bslice(i, 1)
+            if c.match?(/\s/) {
+                re-text.push('\\s*')
+            } else {
+                if c.match?(/[.*+?()\[\]{}|^$\\\/]/) {
+                    re-text.push('\\')
+                }
+                re-text.push(c)
+            }
+            i += 1
+        }
+    }
+    let re = regex(re-text.str(), 'u')
+    let $m = text.match(re) or return nil
+    let found = (m :: String) ? [m] : m
+    let whole = found[0]
+    let binds: Dict[String, String] = %{}
+    for name; k in order {
+        let got: String = found[k + 1] ?? ''
+        if let $prev = binds[name] and prev != got {
+            return nil
+        }
+        binds[name] = got
+    }
+    let right = iso.right.sub(/\$\$([\p{L}\p{N}_?!-]+)/u, m -> binds[m[1]] ?? m[0])
+    text.replace(whole, right)
+}
+
+pub fn load(text: String, module: String | nil, funcs: Dict[String, Function]) -> RuleSet {
+    let set = RuleSet(module, funcs)
+    let (lets, blocks) = split-blocks(text)
+    for lets {
+        if let [_, name, rest] = it.match(/^let\s+([\p{L}_][\p{L}\p{N}_?!-]*)\s*=\s*(.*)$/u) {
+            set.lets[name] = CParser(rest, set).expr()
+        }
+    }
+    for b; i in blocks {
+        if let [_, name] = b.name.match(/^iso\s+(\S+)$/) {
+            for b.body {
+                if let [_, l, op, rr] = it.match(/^\s*(.*?)\s+(<=>|=>)\s+(.*?)\s*$/) {
+                    set.isos.push(Iso(name, l, rr))
+                    if op == '<=>' {
+                        set.isos.push(Iso(name, rr, l))
+                    }
+                }
+            }
+            continue
+        }
+        let r = SRule(b.name, i)
+        apply-flags(r, b.words)
+        for b.decls {
+            parse-decl(r, set, it)
+        }
+        set.srules.push(r)
+    }
+    for b; i in blocks {
+        continue if b.name.match?(/^iso\s/)
+        let r = set.srules.find(\_.index == i) ?? throw ValueError('syn rules: lost rule')
+        for lines in parse-disjunctions(b.body) {
+            let builder = AltBuilder(set, r)
+            for lines {
+                builder.feed(it)
+            }
+            let alt = builder.finish()
+            if alt.pattern == nil {
+                r.alts.push(alt)
+                continue
+            }
+            for iso-variants(set, r, alt.text) {
+                if it == alt.text {
+                    r.alts.push(alt)
+                    continue
+                }
+                r.alts.push(with-pattern(alt, it, set))
+            }
+        }
+    }
+    set
+}
+
+fn with-pattern(alt: Alt, text: String, set: RuleSet) -> Alt {
+    let out = Alt()
+    out.text = text
+    out.pattern = syn.compile(text, set.module)
+    out.chunks = alt.chunks
+    out.blocks = alt.blocks
+    out.nests = alt.nests
+    out.whens = alt.whens
+    out.aligns = alt.aligns
+    out.groups = alt.groups
+    out.marks = alt.marks
+    out.star? = alt.star?
+    out
+}
+
+fn candidates(tree: Tree, kinds: Array[String] | nil) -> Array[Node] {
+    let $ks = kinds or return tree.nodes
+    let key = 'by-kind'
+    let index: Dict[String, Array[Node]] = tree.memo[key] ?? do {
+        let d: Dict[String, Array[Node]] = %{}
+        for tree.nodes {
+            (d[it.kind] ?? (d[it.kind] = [])).push(it)
+        }
+        tree.memo[key] = d
+        d
+    }
+    let wanted = "by-kind:{ks.join(',')}"
+    if let $done = tree.memo[wanted] {
+        return done
+    }
+    let out: Array[Node] = []
+    for k in ks {
+        for index.keys() {
+            if syn.kind-matches?(it, k) {
+                out += index[it] ?? []
+            }
+        }
+    }
+    out.sort!(by=&.index)
+    tree.memo[wanted] = out
+}
+
+fn root-kinds(r: SRule, alt: Alt) -> Array[String] | nil {
+    if let $ks = r.kinds {
+        return ks
+    }
+    let $p = alt.pattern or return nil
+    if #p.roots != 1 {
+        return nil
+    }
+    let root = p.roots[0]
+    if let $h = p.hole-of(root) {
+        return (#h.kinds == 0) ? nil : h.kinds
+    }
+    match root.kind {
+        k and k in CALLS => [*CALLS],
+        k and k in REFS  => [*REFS],
+        'Paren'          => nil,
+        k                => [k, 'Paren'],
+    }
+}
+
+fn collect(tree: Tree, set: RuleSet, r: SRule, base: Bool) -> Array[Hit] {
+    let found: Dict[String, Hit] = %{}
+    let order: Array[String] = []
+    let add = fn (h: Hit) {
+        if h.key not in found {
+            found[h.key] = h
+            order.push(h.key)
+        }
+    }
+    for alt in r.alts {
+        if let $spec = alt.run {
+            for run-hits(tree, set, r, alt, spec, base) {
+                add(it)
+            }
+            continue
+        }
+        let $p = alt.pattern or continue
+        if #p.roots == 1 {
+            for candidates(tree, root-kinds(r, alt)) {
+                if let $m = p.matches(it) and let $h = attempt(tree, set, r, alt, m, base) {
+                    add(h)
+                }
+            }
+        } else {
+            for p.find(tree) {
+                if let $h = attempt(tree, set, r, alt, it, base) {
+                    add(h)
+                }
+            }
+        }
+    }
+    let out: Array[Hit] = [found[k] ?? throw ValueError('lost hit') for k in order]
+    out.sort!(by=h -> h.node.start)
+    out
+}
+
+fn src-start(tree: Tree, p: Pattern, m: Match, i: Int) -> Int | nil {
+    let t = m.tokmap.?[i] ?? -1
+    if t >= 0 {
+        return tree.tokens[t].start
+    }
+    let $h = p.holes[p.tree.tokens[i].text] or return nil
+    let $name = h.name or return nil
+    span-of(m.binds[name]).?[0]
+}
+
+fn src-end(tree: Tree, p: Pattern, m: Match, i: Int) -> Int | nil {
+    let t = m.lastmap.?[i] ?? -1
+    if t >= 0 {
+        return tree.tokens[t].end
+    }
+    let $h = p.holes[p.tree.tokens[i].text] or return nil
+    let $name = h.name or return nil
+    span-of(m.binds[name]).?[1]
+}
+
+fn trim-mark(p: Pattern, off: Int) -> Int {
+    let o = off
+    while o > 0 && p.code.bslice(o - 1, 1).match?(/\s/) {
+        o -= 1
+    }
+    o
+}
+
+fn locate(tree: Tree, p: Pattern, m: Match, off: Int, end?: Bool) -> Int | nil {
+    let toks = p.tree.tokens
+    let gap? = p.gaps.any?(\_.pos == off)
+    let before = [i for t; i in toks if t.end <= off]
+    let after = [i for t; i in toks if t.start >= off]
+    let from-left = fn () -> Int | nil {
+        for before[;;-1] {
+            if let $e = src-end(tree, p, m, it) {
+                return e
+            }
+        }
+        nil
+    }
+    let from-right = fn () -> Int | nil {
+        for after {
+            if let $s = src-start(tree, p, m, it) {
+                return s
+            }
+        }
+        nil
+    }
+    if end? {
+        return gap? ? (from-right() ?? from-left()) : (from-left() ?? from-right())
+    }
+    gap? ? (from-left() ?? from-right()) : (from-right() ?? from-left())
+}
+
+fn mark-nodes(tree: Tree, p: Pattern, m: Match, off: Int) -> Array[Any] {
+    let o = trim-mark(p, off)
+    let cands = p.tree.nodes.filter(n -> n.end == o && n.kind != 'Module' && n.ftok >= 0)
+    let out: Array[Any] = []
+    for pn in cands.sort(by=&.start) {
+        if let $h = p.hole-of(pn) and let $name = h.name {
+            out.push(m.binds[name])
+            continue
+        }
+        let $a = src-start(tree, p, m, pn.ftok) or continue
+        let $b = src-end(tree, p, m, pn.ltok) or continue
+        let exact: Array[Node] = []
+        let cur: Node | nil = tree.node-at(a)
+        while let $c = cur {
+            if c.start == a && c.end == b {
+                exact.push(c)
+            }
+            break if c.start < a || c.end > b
+            cur = c.parent
+        }
+        if let $hit = exact.find(\_.kind == pn.kind) ?? exact.?[-1] and hit not in out {
+            out.push(hit)
+        }
+    }
+    out
+}
+
+pub fn mark-node(tree: Tree, p: Pattern, m: Match, off: Int, ok: Function | nil = nil) -> Any {
+    let cands = mark-nodes(tree, p, m, off)
+    if let $f = ok {
+        if let $hit = cands.find(c -> f(c)) {
+            return hit
+        }
+    }
+    cands.?[0]
+}
+
+fn attempt(tree: Tree, set: RuleSet, r: SRule, alt: Alt, m: Match, base: Bool) -> Hit | nil {
+    let $p = alt.pattern or return nil
+    let binds: Dict[String, Any] = %{**m.binds}
+    let ctx = Ctx(tree, set, r.name, binds, base)
+    for alt.marks {
+        let $off = p.marks[it] or return nil
+        let preds = r.decls[it] ?? []
+        let $v = mark-node(tree, p, m, off, c -> preds.all?(f -> f(c, ctx))) or return nil
+        binds[it] = v
+    }
+    finish(tree, set, r, alt, m.node, binds, ctx, [m, p])
+}
+
+fn decls-ok?(r: SRule, binds: Dict[String, Any], ctx: Ctx, only: Array[String] | nil) -> Bool {
+    for h, preds in r.decls {
+        continue if only != nil && h not in (only ?? [])
+        continue if h not in binds
+        let v = binds[h]
+        if !preds.all?(f -> f(v, ctx)) {
+            return false
+        }
+    }
+    true
+}
+
+fn computed-ok?(r: SRule, set: RuleSet, binds: Dict[String, Any], ctx: Ctx) -> Bool {
+    for c in r.computed {
+        let $f = set.funcs[c.func] or throw ValueError("syn rules: unknown function `{c.func}`")
+        let args = c.args.map(t -> match t.kind {
+            'hole' => binds[t.text],
+            'num'  => int(t.text),
+            _      => t.text,
+        })
+        let v = f(*args)
+        if v == nil {
+            return false
+        }
+        binds[c.name] = v
+        if !decls-ok?(r, binds, ctx, [c.name]) {
+            return false
+        }
+    }
+    true
+}
+
+fn finish(
+    tree: Tree,
+    set: RuleSet,
+    r: SRule,
+    alt: Alt,
+    root: Node,
+    binds: Dict[String, Any],
+    ctx: Ctx,
+    found: Array[Any]
+) -> Hit | nil {
+    if !decls-ok?(r, binds, ctx, nil) {
+        return nil
+    }
+    if !computed-ok?(r, set, binds, ctx) {
+        return nil
+    }
+    let anchor = (#found == 0) ? root : (binds[alt.marks.?[0] ?? ''] ?? root)
+    if ![*r.whens, *alt.whens].all?(f -> f(root, ctx)) {
+        return nil
+    }
+    let $edits = build-edits(tree, set, r, alt, root, binds, ctx, found) or return nil
+    let node = node-of(anchor) ?? root
+    if node.inside?('Template') || root.inside?('Template') {
+        return nil
+    }
+    let message = render-message(r.message, binds, tree)
+    if !alt.edits? {
+        return Hit(r, node, binds, nil, message)
+    }
+    let fix = Fix(edits, layout=r.layout?)
+    fix.limit = r.limit
+    let $ok = lint.admissible(tree, fix) or return nil
+    Hit(r, node, binds, ok, message)
+}
+
+pub fn build-edits(
+    tree: Tree,
+    set: RuleSet,
+    r: SRule,
+    alt: Alt,
+    root: Node,
+    binds: Dict[String, Any],
+    ctx: Ctx,
+    found: Array[Any]
+) -> Array[Edit] | nil {
+    let edits: Array[Edit] = []
+    if #found == 2 {
+        let [m, p] = found
+        for alt.chunks {
+            let ms = p.marks["__ms{it.index}"] ?? 0
+            let me = p.marks["__me{it.index}"] ?? 0
+            let $a = locate(tree, p, m, ms, it.insert) or return nil
+            let $b = it.insert ? a : locate(tree, p, m, me, true) or return nil
+            edits.push(Edit(a, b, render-plus(it.plus, binds, indent-at(tree, a), tree)))
+        }
+    }
+    for alt.blocks {
+        let $sp = span-of(binds[it.hole]) or return nil
+        edits.push(Edit(sp.0, sp.1, render-plus(it.plus, binds, indent-at(tree, sp.0), tree)))
+    }
+    for alt.nests {
+        let $more = nest-edits(tree, set, it, root, binds, ctx) or return nil
+        edits += more
+    }
+    for alt.groups {
+        if let $e = group-edit(tree, it, binds) {
+            edits.push(e)
+        }
+    }
+    if #alt.aligns > 0 {
+        edits += align-edits(tree, alt.aligns, ctx, r.limit)
+    }
+    if !r.layout? && #edits == 1 && '\n' in edits[0].text {
+        if let $hosted = host(tree, alt, edits[0], binds) {
+            return [hosted]
+        }
+    }
+    edits
+}
+
+fn render-message(text: String, binds: Dict[String, Any], tree: Tree) -> String {
+    text.sub(/\$\$([\p{L}\p{N}_?!-]+)/u, m -> do {
+        let v = binds[syn.mangle(m[1])]
+        text-of(v, tree).replace(/\s*\n\s*/, ' ')
+    })
+}
+
+fn string-lines(n: Node) -> Array[Int] {
+    let out: Array[Int] = []
+    let tree = n.tree
+    for n.tokens {
+        if '\n' in it.text {
+            let a = tree.line-of(it.start)
+            let b = tree.line-of(it.end)
+            out += [*((a + 1)..(b + 1))]
+        }
+    }
+    out
+}
+
+fn reindent(v: Any, ind: String, tree: Tree) -> String | nil {
+    let $sp = span-of(v) or return nil
+    let text = tree.text(sp.0, sp.1)
+    if '\n' not in text {
+        return nil
+    }
+    let old = indent-at(tree, sp.0)
+    if old == ind {
+        return text
+    }
+    let first = tree.line-of(sp.0)
+    let keep = match v {
+        n: Node   => string-lines(n),
+        xs: Array => xs.filter(\_ :: Node).map(string-lines).flat(),
+        _         => [],
+    }
+    let lines = text.split('\n')
+    let out = [lines[0]]
+    for line; k in lines[1;] {
+        if first + k + 1 in keep {
+            out.push(line)
+        } else if line.strip() == '' {
+            out.push('')
+        } else if line.bslice(0, old.size()) == old {
+            out.push("{ind}{line.bslice(old.size())}")
+        } else {
+            out.push(line)
+        }
+    }
+    out.join('\n')
+}
+
+let PREC = %{
+    'Assign': 0, 'Function': 0, 'Conditional': 1, 'Wtf': 2, 'Or': 3, 'KwOr': 3, 'And': 4,
+    'KwAnd': 4, 'UserOp': 5, 'DblEq': 6, 'NotEq': 6, 'Lt': 6, 'Leq': 6, 'Gt': 6, 'Geq': 6,
+    'Cmp': 6, 'In': 6, 'NotIn': 6, 'CheckMatch': 6, 'BitOr': 7, 'Xor': 8, 'BitAnd': 9,
+    'Shl': 10, 'Shr': 10, 'DotDot': 11, 'DotDotDot': 11, 'Plus': 12, 'Minus': 12,
+    'Star': 13, 'Div': 13, 'Percent': 13
+}
+
+let OP_PREC = %{
+    '?': 1, ':': 1, '??': 2, '||': 3, 'or': 3, '&&': 4, 'and': 4, '==': 6, '!=': 6, '<': 6,
+    '<=': 6, '>': 6, '>=': 6, '<=>': 6, 'in': 6, '::': 6, '|': 7, '^': 8, '&': 9, '<<': 10,
+    '>>': 10, '..': 11, '...': 11, '+': 12, '-': 12, '*': 13, '/': 13, '%': 13, '!': 14,
+    '#': 14, '=': 0
+}
+
+fn op-before(text: String) -> String | nil {
+    text.match(OP_BEFORE).?[1]
+}
+
+fn op-after(text: String) -> String | nil {
+    text.match(OP_AFTER).?[1]
+}
+
+fn paren?(n: Node, before: String, after: String) -> Bool {
+    let $mine = PREC[n.kind] or return false
+    let a = op-after(after)
+    if a in ['.', '[', '('] {
+        return true
+    }
+    let b = op-before(before)
+    let left = OP_PREC[b ?? ''] ?? -1
+    let right = OP_PREC[a ?? ''] ?? -1
+    mine < left || mine < right || (mine == left && mine <= 1) || (mine == right && mine <= 1)
+     || (mine == left && b in ['-', '/', '%', '..', '...'])
+}
+
+fn hole-text(v: Any, before: String, after: String) -> String {
+    match v {
+        n: Node => paren?(n, before, after) ? "({n.text})" : n.text,
+        _       => syn.hole-text(v, before, after),
+    }
+}
+
+fn render-line(text: String, binds: Dict[String, Any], ind: String, tree: Tree) -> String {
+    let out = Blob()
+    let n = text.size()
+    let i = 0
+    while i < n {
+        if text.bslice(i, 2) != '$$' {
+            out.push(text.bslice(i, 1))
+            i += 1
+            continue
+        }
+        if let [whole, spec] = text.bslice(i).match(/^\$\$<([^>]*)>/) {
+            out.push((spec.strip() == 'nl') ? "\n{ind}" : syn.gap-text(spec.strip(), binds))
+            i += whole.size()
+            continue
+        }
+        let $mm = text.bslice(i + 2).match(/^([\p{L}\p{N}_?!-]+)/u) or do {
+            out.push('$$')
+            i += 2
+            continue
+        }
+        let name = mm[1]
+        let v = binds[syn.mangle(name)]
+        let after = text.bslice(i + 2 + name.size())
+        let prev = out.str()
+        if prev.match?(/\*$/) && v :: Array {
+            out = Blob()
+            out.push(prev.bslice(0, prev.size() - 1))
+        }
+        out.push(reindent(v, ind, tree) ?? hole-text(v, out.str(), after))
+        i += 2 + name.size()
+    }
+    out.str()
+}
+
+fn render-plus(lines: Array[String], binds: Dict[String, Any], base: String, tree: Tree) -> String {
+    if #lines == 0 {
+        return ''
+    }
+    let leads = lines.filter(\_.strip() != '').map(l -> l.size() - l.strip-left().size())
+    let common = leads.min() ?? 0
+    let out: Array[String] = []
+    for line in lines {
+        if line.strip() == '' {
+            out.push('')
+            continue
+        }
+        let lead = line.size() - line.strip-left().size()
+        let rel = ' ' * (lead - common)
+        let body = line.bslice(lead)
+        if let $h = single-hole(body) and let xs: Array = binds[syn.mangle(h)] {
+            for xs {
+                let text = reindent(it, "{base}{rel}", tree) ?? text-of(it, tree)
+                out.push((#out == 0) ? text : "{base}{rel}{text}")
+            }
+            continue
+        }
+        let text = render-line(body, binds, "{base}{rel}", tree)
+        out.push((#out == 0) ? text : "{base}{rel}{text}")
+    }
+    out.join('\n')
+}
+
+fn host(tree: Tree, alt: Alt, e: Edit, binds: Dict[String, Any]) -> Edit | nil {
+    let n = tree.node-at(e.start)
+    let p = n.parent
+    while p != nil && p.?kind != 'Block' {
+        p = p.?parent
+    }
+    let $b = p or return nil
+    if !oneline?(b, tree) || !b.nodes.all?(oneline?@(_, tree)) || !bare?(b, tree) {
+        return nil
+    }
+    if !(b.start < e.start && e.end < b.end) {
+        return nil
+    }
+    let ind = indent-at(tree, b.start)
+    let inner = "{ind}{IND}"
+    let chunk = alt.chunks.find(c -> !c.insert) ?? alt.chunks.?[0]
+    let plus = (chunk != nil) ? (chunk.?plus ?? []) : (alt.blocks.?[0].?plus ?? [])
+    let text = render-plus(plus, binds, inner, tree)
+    let stmts = b.nodes.map(s -> (s.start <= e.start && e.end <= s.end)
+        ? "{tree.text(s.start, e.start)}{text}{tree.text(e.end, s.end)}".comb(/[\s;]+$/)
+        : s.text.comb(/[\s;]+$/)
+    )
+    let body = stmts.map(s -> "{inner}{s}").join('\n')
+    Edit(b.start, b.end, "\{\n{body}\n{ind}\}")
+}
+
+fn nest-edits(
+    tree: Tree,
+    set: RuleSet,
+    n: Nest,
+    root: Node,
+    binds: Dict[String, Any],
+    ctx: Ctx
+) -> Array[Edit] | nil {
+    let region = match n.hole {
+        nil => [root],
+        h   => match binds[h] {
+            xs: Array => xs.filter(\_ :: Node),
+            x: Node   => [x],
+            _         => [root],
+        },
+    }
+    if #region == 0 {
+        return []
+    }
+    let lo = region[0].start
+    let hi = region[-1].end
+    let inside? = (k: Node) -> lo <= k.start && k.end <= hi
+    let hits: Array[Node] = []
+    if let $h = single-hole(n.minus.join('\n')) {
+        let target = binds[syn.mangle(h)]
+        let $t = node-of(target) or return nil
+        if tree.semantic? && t.sym-id >= 0 && t.kind == 'Identifier' {
+            let refs = tree.refs(t).filter(k -> k != t)
+            if refs.any?(k -> !inside?(k) || k.text != t.text) {
+                return nil
+            }
+            hits = refs
+        } else {
+            hits = region.map(x -> [x, *x.descendants()]).flat().filter(k -> k.same?(t))
+        }
+    } else if let $p = n.pattern {
+        for x in region {
+            for p.find(x) {
+                hits.push(it.node)
+            }
+        }
+    }
+    let inner = Ctx(tree, set, ctx.rule, binds, ctx.base?)
+    inner.stop = root
+    if !hits.all?(k -> n.whens.all?(f -> f(k, inner))) {
+        return nil
+    }
+    let outer: Array[Node] = []
+    for k in hits.sort(by=&.start) {
+        if !outer.any?(o -> o.start <= k.start && k.end <= o.end) {
+            outer.push(k)
+        }
+    }
+    outer.map(k -> do {
+        let local: Dict[String, Any] = %{**binds}
+        if let $h = single-hole(n.minus.join('\n')) {
+            local[syn.mangle(h)] = k
+        }
+        Edit(k.start, k.end, render-plus(n.plus, local, indent-at(tree, k.start), tree))
+    })
+}
+
+fn flat-text(tree: Tree, a: Int, b: Int) -> String {
+    let out = Blob()
+    let pos = a
+    let i = first-tok-at(tree, a)
+    let prev = ''
+    while i < #tree.tokens && tree.tokens[i].end <= b {
+        let t = tree.tokens[i]
+        let gap = tree.text(pos, t.start)
+        let soft? = prev == ',' && gap.match?(/^\s*$/)
+        out.push((soft? && '\n' in gap) ? ' ' : gap)
+        out.push(t.text)
+        prev = t.text
+        pos = t.end
+        i += 1
+    }
+    out.str().strip()
+}
+
+fn first-tok-at(tree: Tree, byte: Int) -> Int {
+    let lo = 0
+    let hi = #tree.tokens
+    while lo < hi {
+        let mid = (lo + hi) / 2
+        if tree.tokens[mid].start < byte {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    lo
+}
+
+fn group-edit(tree: Tree, g: Group, binds: Dict[String, Any]) -> Edit | nil {
+    let $n = node-of(binds[g.hole]) or return nil
+    let $open = n.first-token or return nil
+    let $close = n.last-token or return nil
+    let breaks = n.own.filter(t -> t.text in g.breaks && t != open && t != close)
+    let edges = [open.end, *breaks.map(&.start), close.start]
+    let segs = [flat-text(tree, edges[k], edges[k + 1]) for k in ..(#edges - 1)]
+    if segs.any?(\'\n' in _) {
+        return nil
+    }
+    let flat = "{open.text}{segs.join(' ')}{close.text}"
+    let col = tree.display-col(n.start) - 1
+    if col + flat.width() <= g.limit {
+        return Edit(n.start, n.end, flat)
+    }
+    let ind = indent-at(tree, n.start)
+    let lines = [open.text, *segs.map(s -> "{ind}{IND}{s}"), "{ind}{close.text}"]
+    Edit(n.start, n.end, lines.join('\n'))
+}
+
+fn align-rows(a: Align, binds: Dict[String, Any]) -> Array[Any] {
+    let rows = match a.within {
+        $w => [e.binds[a.holes[0]] for e in (binds[w] ?? [])],
+        _  => a.holes.map(h -> binds[h])
+    }
+    let $k = a.kind or return rows
+    rows.filter(v -> node-of(v).?is?(k) ?? false)
+}
+
+fn align-token(tree: Tree, a: Align, v: Any) -> Token | nil {
+    let $n = node-of(v) or return nil
+    if a.mode == 'after' {
+        let $l = n.last-token or return nil
+        let $t = tree.tokens.?[l.index + 1] or return nil
+        return (t.text == a.token) ? t : nil
+    }
+    if n.first-token.?text == a.token {
+        return n.first-token
+    }
+    if n.last-token.?text == a.token {
+        return n.last-token
+    }
+    n.own.find(\_.text == a.token)
+}
+
+class Shifts {
+    by-line: Dict[Int, Array[(Int, Int)]]
+
+    init() {
+        self.by-line = %{}
+    }
+
+    col(tree: Tree, byte: Int) -> Int {
+        let line = tree.line-of(byte)
+        let extra = (by-line[line] ?? []).filter(|(p, _)| -> p <= byte).map(&1).sum() ?? 0
+        tree.display-col(byte) - 1 + extra
+    }
+
+    add(tree: Tree, at: Int, delta: Int) {
+        let line = tree.line-of(at)
+        (by-line[line] ?? (by-line[line] = [])).push((at, delta))
+    }
+}
+
+fn align-edits(tree: Tree, aligns: Array[Align], ctx: Ctx, limit: Int) -> Array[Edit] {
+    let binds = ctx.binds
+    let shifts = Shifts()
+    let edits: Array[Edit] = []
+    for a in aligns {
+        if let $w = a.within and let elems: Array = binds[w] {
+            break if !a.whens.all?(f -> f(elems, ctx))
+        }
+        let pairs: Array[(Token, Token)] = []
+        for align-rows(a, binds) {
+            let $t = align-token(tree, a, it) or continue
+            let prev = tree.tokens[t.index - 1]
+            continue if tree.line-of(prev.end) != tree.line-of(t.start)
+            pairs.push((prev, t))
+        }
+        break if #pairs < 2
+        let ends = pairs.map(|(p, _)| -> shifts.col(tree, p.end))
+        let target = ends.max() ?? 0
+        if let $s = a.spread and target - (ends.min() ?? 0) > s {
+            break
+        }
+        if let $h = a.at and let $t = align-token(tree, a, binds[h]) {
+            target = shifts.col(tree, t.start) - 1
+            break if ends.any?(\_ >= target + 1)
+        }
+        for (p, t); k in pairs {
+            let pad = 1 + target - ends[k]
+            edits.push(Edit(p.end, t.start, ' ' * pad))
+            shifts.add(tree, t.start, pad - (tree.display-col(t.start) - tree.display-col(p.end)))
+        }
+    }
+    for line, moves in shifts.by-line {
+        let width = tree.text(tree.line-start(line), line-end(tree, line)).width()
+        if width + (moves.map(&1).sum() ?? 0) > limit {
+            return []
+        }
+    }
+    edits
+}
+
+fn line-end(tree: Tree, line: Int) -> Int {
+    tree.source.bsearch('\n', tree.line-start(line)) ?? tree.source.size()
+}
+
+fn run-elems(
+    tree: Tree,
+    set: RuleSet,
+    decls: Dict[String, Array[Pred]],
+    container: Node,
+    spec: RunSpec
+) -> Array[RunElem | nil] {
+    if let (pn, bn) = spec.arms {
+        let arrows = container.own.filter(\_.text == '=>')
+        let kids = container.nodes
+        let skip = #kids - 2 * #arrows
+        if skip not in [0, 1] {
+            return []
+        }
+        return [
+            do {
+                let p = kids[skip + 2 * k]
+                let b = kids[skip + 1 + 2 * k]
+                match (p.first-token, b.last-token) {
+                    (f: Token, l: Token) => RunElem(b, %{pn: p, bn: b}, f, l),
+                    _                    => nil,
+                }
+            }
+            for k in ..#arrows
+        ]
+    }
+    let $sub = spec.sub or return []
+    container.nodes.map(s -> do {
+        let $m = sub.matches(s) or return nil
+        let binds: Dict[String, Any] = %{**m.binds}
+        for spec.marks {
+            let preds = decls[it] ?? []
+            let ctx = Ctx(tree, set, '', binds, false)
+            let ok = (c: Any) -> preds.all?(f -> f(c, ctx))
+            if let $off = sub.marks[it] and let $v = mark-node(tree, sub, m, off, ok) {
+                binds[it] = v
+            }
+        }
+        match (s.first-token, s.last-token) {
+            (f: Token, l: Token) => RunElem(s, binds, f, l),
+            _                    => nil,
+        }
+    })
+}
+
+fn run-hits(tree: Tree, set: RuleSet, r: SRule, alt: Alt, spec: RunSpec, base: Bool) -> Array[Hit] {
+    let decl = r.runs[spec.name] ?? RunDecl()
+    let kinds = (spec.arms != nil) ? ['Match', 'MatchStmt'] : ['Block', 'Module']
+    let out: Array[Hit] = []
+    for container in candidates(tree, kinds) {
+        let elems = run-elems(tree, set, r.decls, container, spec)
+        let ok = elems.map(e -> do {
+            let $x = e or return nil
+            let ctx = Ctx(tree, set, r.name, x.binds, base)
+            if !decls-ok?(r, x.binds, ctx, nil) || !decl.elem.all?(f -> f(x, ctx)) {
+                return nil
+            }
+            x
+        })
+        let groups: Array[Array[RunElem]] = []
+        let cur: Array[RunElem] = []
+        for e in ok {
+            match e {
+                nil => do {
+                    groups.push(cur)
+                    cur = []
+                },
+                x => do {
+                    let ctx = Ctx(tree, set, r.name, x.binds, base)
+                    if #cur > 0 && !decl.rels.all?(f -> f(cur[-1], x, ctx)) {
+                        groups.push(cur)
+                        cur = []
+                    }
+                    cur.push(x)
+                },
+            }
+        }
+        groups.push(cur)
+        for g in groups {
+            continue if #g < decl.lo || (decl.hi != nil && #g > (decl.hi ?? 0))
+            let binds: Dict[String, Any] = %{**g[0].binds, spec.name: g}
+            let ctx = Ctx(tree, set, r.name, binds, base)
+            continue if !decl.aggs.all?(f -> f(g, ctx))
+            if let $h = finish(tree, set, r, alt, container, binds, ctx, []) {
+                h.key = "{h.key}:{g[0].start}"
+                h.node = g[0].node ?? container
+                out.push(h)
+            }
+        }
+    }
+    out
+}
+
+let BUILTINS = %[
+    'oneline', 'multiline', 'bare', 'statement', 'value', 'simple', 'local', 'def',
+    'identifier', 'string', 'expr', 'stmt', 'node', 'pattern', 'position', 'token',
+    'mentions', 'aligned', 'first-on-line'
+]
+
+fn reader-names(text: String) -> Array[String] {
+    let (lets, blocks) = split-blocks(text)
+    let defined = lets.map(l -> l.match(/^let\s+([\p{L}_][\p{L}\p{N}_?!-]*)/u).?[1] ?? '')
+    let sources: Array[String] = lets.map(l -> l.comb(/^let\s+[^=]*=/))
+    for b in blocks {
+        for b.decls {
+            if let [_, _, func, args] = it.match(COMPUTED) {
+                sources.push("{func}({args})")
+            } else if let [_, rest] = it.match(/^\s*(?:\$\$[^:]*|when)\s*:(.*)$/) {
+                sources.push(rest)
+            }
+        }
+        for b.body {
+            if let [_, w] = it.strip().match(/^(?:\.\.\.>\s*)?when\s+(.*)$/) {
+                sources.push(w)
+            }
+        }
+    }
+    let out: Array[String] = []
+    for sources {
+        let toks = try { lex-expr(it) } catch _: ValueError { [] }
+        for t; i in toks {
+            continue if t.kind != 'id' || '.' in t.text || t.text.match?(/^[A-Z]/)
+            continue if t.text in KEYWORDS || t.text in BUILTINS || t.text in defined
+            continue if i > 0 && toks[i - 1].kind == 'op' && toks[i - 1].text == '..'
+            if t.text not in out {
+                out.push(t.text)
+            }
+        }
+    }
+    out
+}
+
+pub macro rules! {
+    while lex.peekc() in [' ', '\t'] {
+        lex.getc()
+    }
+    if lex.getc() != '{' {
+        throw SyntaxError('rules!: expected `{`')
+    }
+    let start = lex.state().position.byte
+    let text = Blob()
+    let fresh? = false
+    while true {
+        let c = lex.peekc()
+        break if c == nil
+        break if c == '}' && fresh?
+        lex.getc()
+        text.push(c)
+        fresh? = c == '\n'
+    }
+    let end = lex.state().position.byte
+    lex.getc()
+    ty.syntax.mark('syn-rules', start, end)
+    let src = text.str()
+    let items = [
+        ty.DictItem((ty.String(name), ty.Id(name: syn.mangle(name))))
+        for name in reader-names(src)
+    ]
+    ty.Call(
+        func: ty.Value(load),
+        args: [
+            ty.Arg(arg: ty.String(src)),
+            ty.Arg(arg: $$[ __module__ $$]),
+            ty.Arg(arg: ty.Dict(items: items))
+        ]
+    )
+}
+
+fn format-rules(text: String, ctx: syn.RegionContext) -> String | nil {
+    let lines = text.split('\n').map(\_.strip-right())
+    let out: Array[String] = []
+    for lines {
+        if it.match?(/^@[^@]/) && #out > 0 && out[-1] != '' && !out[-1].match?(/^\{?$/) {
+            out.push('')
+        }
+        if it == '' && #out > 0 && out[-1] == '' {
+            continue
+        }
+        out.push(it)
+    }
+    out.join('\n')
+}
+
+syn.register-formatter('syn-rules', format-rules)

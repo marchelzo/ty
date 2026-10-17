@@ -1,7 +1,12 @@
 typedef struct {
-        i32 const *ids;
-        i32        index;
+        _Atomic u64 word;
 } RecordCache;
+
+enum {
+        RECORD_INDEX_SHIFT = 48
+};
+
+#define RECORD_IDS_MASK ((((u64)1) << RECORD_INDEX_SHIFT) - 1)
 
 static Value *
 record_slot(Value *value, i32 member, RecordCache *cache)
@@ -12,8 +17,14 @@ record_slot(Value *value, i32 member, RecordCache *cache)
 
         for (i32 i = 0; i < value->count; ++i) {
                 if (value->ids[i] == member) {
-                        cache->ids   = value->ids;
-                        cache->index = i;
+                        u64 ids = (uptr)value->ids;
+                        if ((ids & ~RECORD_IDS_MASK) == 0 && i < (1 << (64 - RECORD_INDEX_SHIFT))) {
+                                atomic_store_explicit(
+                                        &cache->word,
+                                        ids | ((u64)i << RECORD_INDEX_SHIFT),
+                                        memory_order_relaxed
+                                );
+                        }
                         return &value->items[i];
                 }
         }
@@ -39,11 +50,12 @@ record_path(
 
         LirReg ids    = ldp(c, value, VOFF(ids));
         LirReg cached = pval(c, cache);
-        LirReg seen   = ldp(c, cached, offsetof(RecordCache, ids));
+        LirReg word   = ldp(c, cached, offsetof(RecordCache, word));
+        LirReg seen   = binop(c, LIR_AND, LIR_I64, lir_r(word), lir_i(RECORD_IDS_MASK));
 
         jcc(c, LIR_NE, lir_r(ids), lir_r(seen), miss);
 
-        LirReg index = ldw(c, cached, offsetof(RecordCache, index));
+        LirReg index = binop(c, LIR_SHR, LIR_I64, lir_r(word), lir_i(RECORD_INDEX_SHIFT));
         LirReg items = ldp(c, value, VOFF(items));
         LirReg shift = binop(c, LIR_SHL, LIR_I64, lir_r(index), lir_i(5));
 

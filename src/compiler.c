@@ -394,6 +394,7 @@ static vec(Expr const *) source_map;
 static u32 source_map_hole;
 static JumpGroup PreludeAssertionOffsets;
 static Module *MainModule;
+static u32 ImportFlags;
 
 char const *TestFilePath;
 
@@ -13481,6 +13482,7 @@ load_module_source(
 
         module = NewModule(ty, name, path, source, scope);
         STATE = freshstate(ty, module);
+        STATE.flags |= ImportFlags;
 
 #ifdef TY_PROFILER
         int prof_mod = prof_module_begin(name, path, source);
@@ -13784,6 +13786,7 @@ compiler_load_prelude(Ty *ty)
 
         GlobalModule->path = path;
         GlobalModule->source = source;
+        STATE.flags |= ImportFlags;
 
         Stmt **prog = compile(ty, source);
 
@@ -19037,7 +19040,7 @@ compiler_symbolize_expression(Ty *ty, Expr *e, Scope *scope)
 
         if (TY_CATCH_ERROR()) {
                 ContextList = ctx;
-                TY_CATCH_FAIL();
+                TySetError(ty, TyCatchDetail(ty, NULL), NIL);
                 EVAL_DEPTH -= 1;
                 STATE = state;
                 return false;
@@ -21432,6 +21435,12 @@ TyCompileSourceAt(
 )
 {
         return CompileSource(ty, source, "(tmp)", path, global, NULL, flags);
+}
+
+void
+compiler_set_import_fidelity(bool on)
+{
+        ImportFlags = on ? (TYC_FIDELITY | TYC_SNAPSHOT) : 0;
 }
 
 Module *

@@ -1,3 +1,4 @@
+import ty
 import json
 import syn (Node, Tree, Token, Trivia)
 import syn.lint as lint
@@ -817,8 +818,15 @@ fn signature(tree: Tree) -> String {
     parts.str()
 }
 
+fn signature-of(tree: Tree) -> String {
+    tree.memo['signature'] ?? (tree.memo['signature'] = signature(tree))
+}
+
 pub fn same-program?(a: Tree, b: Tree) -> Bool {
-    a.error == nil && b.error == nil && signature(a) == signature(b)
+    if a.error != nil || b.error != nil {
+        return false
+    }
+    ty.same?(a, b) || signature-of(a) == signature-of(b)
 }
 
 fn render-doc(d: Doc, opts: Options) -> String {

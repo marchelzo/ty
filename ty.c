@@ -1288,6 +1288,8 @@ main(int argc, char **argv)
         }
 #endif
 
+        compiler_set_import_fidelity(ToolMode != NULL && s_eq(ToolMode, "fix"));
+
         bool ok = RunningTests       ? vm_init(ty, TestProgramArgc, TestProgramArgs)
                 : (ToolMode != NULL) ? vm_init(ty, argc - ToolArgIndex, argv + ToolArgIndex)
                 :                      vm_init(ty, argc - nopt, argv + nopt);

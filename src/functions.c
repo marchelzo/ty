@@ -9828,81 +9828,17 @@ make_location(Ty *ty, Location const *loc)
         );
 }
 
-static Value
-token_record(Ty *ty, Token const *t)
+char const *
+token_type_name(Token const *t)
 {
         char const *type = NULL;
-        char const *tag  = NULL;
 
-        Value start = make_location(ty, &t->start);
-        Value end = make_location(ty, &t->end);
-
-        switch (t->tag) {
-        case TT_FIELD:     tag = "field";     break;
-        case TT_TYPE:      tag = "type";      break;
-        case TT_MACRO:     tag = "macro";     break;
-        case TT_MEMBER:    tag = "member";    break;
-        case TT_FUNC:      tag = "func";      break;
-        case TT_MODULE:    tag = "module";    break;
-        case TT_KEYWORD:   tag = "keyword";   break;
-        case TT_PARAM:     tag = "param";     break;
-        case TT_PUNCT:     tag = "punct";     break;
-        case TT_CALL:      tag = "call";      break;
-        case TT_OPERATOR:  tag = "operator";  break;
-        default:                              break;
-        }
-
-        Value meta = (tag == NULL) ? NIL : xSz(tag);
-
-#define T(name) (STRING_NOGC(#name, strlen(#name)))
         switch (t->type) {
-        case TOKEN_IDENTIFIER:
-                return vTn(
-                        "type",   T(id),
-                        "meta",   meta,
-                        "start",  start,
-                        "end",    end,
-                        "id",     vSsz(t->identifier),
-                        "module", (t->module == NULL) ? NIL : vSsz(t->module)
-                );
-
-        case TOKEN_INTEGER:
-                return vTn(
-                        "type",   T(int),
-                        "meta",   meta,
-                        "start",  start,
-                        "end",    end,
-                        "int",    INTEGER(t->integer)
-                );
-
-        case TOKEN_REAL:
-                return vTn(
-                        "type",   T(float),
-                        "meta",   meta,
-                        "start",  start,
-                        "end",    end,
-                        "float",  REAL(t->real)
-                );
-
-        case TOKEN_STRING:
-                return vTn(
-                        "type",   T(string),
-                        "start",  start,
-                        "end",    end,
-                        "str",    vSs(t->string.data, t->string.length)
-                );
-
-        case TOKEN_COMMENT:
-                return vTn(
-                        "type",    T(comment),
-                        "start",   start,
-                        "end",     end,
-                        "comment", vSsz(t->comment)
-                );
-
-        case TOKEN_END:
-                return NIL;
-
+        case TOKEN_IDENTIFIER: return "id";
+        case TOKEN_INTEGER:    return "int";
+        case TOKEN_REAL:       return "float";
+        case TOKEN_STRING:     return "string";
+        case TOKEN_COMMENT:    return "comment";
         case TOKEN_AND:             type = "&&";   break;
         case TOKEN_AND_EQ:          type = "&=";   break;
         case TOKEN_ARROW:           type = "->";   break;
@@ -9989,6 +9925,89 @@ token_record(Ty *ty, Token const *t)
 
         case TOKEN_USER_OP:
                 type = intern(&xD.b_ops, t->operator)->name;
+                break;
+        }
+
+        return type;
+}
+
+static Value
+token_record(Ty *ty, Token const *t)
+{
+        char const *type = NULL;
+        char const *tag  = NULL;
+
+        Value start = make_location(ty, &t->start);
+        Value end = make_location(ty, &t->end);
+
+        switch (t->tag) {
+        case TT_FIELD:     tag = "field";     break;
+        case TT_TYPE:      tag = "type";      break;
+        case TT_MACRO:     tag = "macro";     break;
+        case TT_MEMBER:    tag = "member";    break;
+        case TT_FUNC:      tag = "func";      break;
+        case TT_MODULE:    tag = "module";    break;
+        case TT_KEYWORD:   tag = "keyword";   break;
+        case TT_PARAM:     tag = "param";     break;
+        case TT_PUNCT:     tag = "punct";     break;
+        case TT_CALL:      tag = "call";      break;
+        case TT_OPERATOR:  tag = "operator";  break;
+        default:                              break;
+        }
+
+        Value meta = (tag == NULL) ? NIL : xSz(tag);
+
+#define T(name) (STRING_NOGC(#name, strlen(#name)))
+        switch (t->type) {
+        case TOKEN_IDENTIFIER:
+                return vTn(
+                        "type",   T(id),
+                        "meta",   meta,
+                        "start",  start,
+                        "end",    end,
+                        "id",     vSsz(t->identifier),
+                        "module", (t->module == NULL) ? NIL : vSsz(t->module)
+                );
+
+        case TOKEN_INTEGER:
+                return vTn(
+                        "type",   T(int),
+                        "meta",   meta,
+                        "start",  start,
+                        "end",    end,
+                        "int",    INTEGER(t->integer)
+                );
+
+        case TOKEN_REAL:
+                return vTn(
+                        "type",   T(float),
+                        "meta",   meta,
+                        "start",  start,
+                        "end",    end,
+                        "float",  REAL(t->real)
+                );
+
+        case TOKEN_STRING:
+                return vTn(
+                        "type",   T(string),
+                        "start",  start,
+                        "end",    end,
+                        "str",    vSs(t->string.data, t->string.length)
+                );
+
+        case TOKEN_COMMENT:
+                return vTn(
+                        "type",    T(comment),
+                        "start",   start,
+                        "end",     end,
+                        "comment", vSsz(t->comment)
+                );
+
+        case TOKEN_END:
+                return NIL;
+
+        default:
+                type = token_type_name(t);
                 break;
         }
 
@@ -10516,6 +10535,16 @@ TY_BUILTIN_RAW(ty_mod_eval)
         return result;
 }
 
+// ty/mod.fidelity(on: Bool) -> nil
+TY_BUILTIN_RAW(ty_mod_fidelity)
+{
+        ASSERT_ARGC("ty.mod.fidelity()", 1);
+
+        compiler_set_import_fidelity(ARGx(0, VALUE_BOOLEAN).boolean);
+
+        return NIL;
+}
+
 // ty/mod.list() -> Array[Module]
 TY_BUILTIN_RAW(ty_mod_list)
 {
@@ -10866,6 +10895,7 @@ TY_BUILTIN_RAW(ty_same)
         case VALUE_ARRAY:  return BOOLEAN(a.array  == b.array);
         case VALUE_DICT:   return BOOLEAN(a.dict   == b.dict);
         case VALUE_BLOB:   return BOOLEAN(a.blob   == b.blob);
+        case VALUE_MODULE: return BOOLEAN(a.mod    == b.mod);
         default:           return BOOLEAN(value_test_equality(ty, &a, &b));
         }
 }

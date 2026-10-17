@@ -555,6 +555,8 @@ class Array[T] : Iterable[T] {
     rotate!(n: Int = 1) -> Array[T];
     search(x: T) -> Int | nil;
     search-by(predicate: T -> Any) -> Int | nil;
+    bsearch(x: T) -> Int | nil;
+    bsearch?(x: T) -> Int;
     searchr(x: T) -> Int | nil;
     searchr-by(predicate: T -> Any) -> Int | nil;
     find(pred: T -> Any) -> T | nil;

@@ -1,7 +1,7 @@
 import syn
 import syn.fmt as sf
 import path (Path)
-import ty.test (Test)
+import ty.test (Test, timeout)
 import support.process (run)
 
 let ROOT = Path(__file__).absolute.parent.parent
@@ -56,13 +56,16 @@ pub fn doc-printer-breaks-groups() {
     assert(sf.render(d, width=8) == '[\n  aaaa,\n  bbbb\n]')
 }
 
+@timeout(60)
 pub fn formatting-never-changes-programs() {
     let files = [*(ROOT / 'lib' / 'syn').rglob('*.ty'), ROOT / 'lib' / 'syn.ty', ROOT / 'lib' / 'diff.ty', ROOT / 'lib' / 'path.ty']
     for f in files {
         let src = slurp(str(f)) ?? ''
-        let out = sf.canonical(src, path=str(f))
-        assert(sf.same-program?(syn.parse(src, path=str(f)), syn.parse(out, path=str(f))), str(f))
-        assert(sf.canonical(out, path=str(f)) == out, str(f))
+        let out = sf.canonical(src, path=str(f), deep=true)
+        let before = syn.parse(src, path=str(f), deep=true)
+        let after = syn.parse(out, path=str(f), deep=true)
+        assert(sf.same-program?(before, after), str(f))
+        assert(sf.canonical(out, path=str(f), deep=true) == out, str(f))
     }
 }
 

@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include <pcre2.h>
+#include <pthread.h>
 
 #include "ty.h"
 #include "ast.h"
@@ -17,6 +18,7 @@
 #include "types2.h"
 #include "types2_core.h"
 #include "class.h"
+#include "intern.h"
 
 #define X(t) #t
 static char const *ExprKinds[] = { TY_EXPRESSION_TYPES };
@@ -960,7 +962,13 @@ syntax_snapshot(Ty *ty, Module *mod)
         for (isize k = 0; k < vN(mod->extras); ++k) {
                 SyntaxExtra const *x = v_(mod->extras, k);
                 i32 kind = extra_kind(x->kind);
-                if (kind == 0 || x->end.byte > c.n || x->start.byte >= x->end.byte) {
+                if (
+                        (kind == 0)
+                     || (x->start.s < mod->source)
+                     || (x->start.s > mod->source + c.n)
+                     || (x->end.byte > c.n)
+                     || (x->start.byte >= x->end.byte)
+                ) {
                         continue;
                 }
                 SyntaxNode s = {
@@ -1753,7 +1761,13 @@ gap_ok(SynMatch *m, Value const *g)
                 return false;
         }
 
-        if (a >= 0 && b >= 0 && b + 1 != a) {
+        bool spans = (a >= 0 && b >= 0 && b + 1 != a);
+
+        if (spans && code != GAP_REGEX && code != GAP_BIND) {
+                return false;
+        }
+
+        if (spans && a < b) {
                 return false;
         }
 
@@ -2185,9 +2199,11 @@ TY_BUILTIN_RAW(ty_syntax_unify)
         if (ok) {
                 Array *binds = vA();
                 Array *tokmap = vA();
+                Array *lastmap = vA();
 
                 gP(&ARRAY(binds));
                 gP(&ARRAY(tokmap));
+                gP(&ARRAY(lastmap));
 
                 for (i64 i = 0; i < slots; ++i) {
                         SynBind const *b = v_(m.binds, i);
@@ -2203,13 +2219,16 @@ TY_BUILTIN_RAW(ty_syntax_unify)
 
                 for (usize i = 0; i < vN(m.tokmap); ++i) {
                         vAp(tokmap, INTEGER(v__(m.tokmap, i)));
+                        vAp(lastmap, INTEGER(v__(m.lastmap, i)));
                 }
 
-                result = vT(3);
+                result = vT(4);
                 result.items[0] = ARRAY(binds);
                 result.items[1] = ARRAY(tokmap);
                 result.items[2] = INTEGER(pos);
+                result.items[3] = ARRAY(lastmap);
 
+                gX();
                 gX();
                 gX();
         }
@@ -2580,41 +2599,24 @@ resolved_twin(Resolved const *r, SyntaxNode const *node, bool want_symbol)
         return NULL;
 }
 
-// ty/syntax.semantics(mod: Module) -> {
-//     ref: Array[Int],
-//     callee: Array[Int],
-//     type: Array[Int],
-//     def: Array[Bool],
-//     symbols: Array[_]
-// }
-TY_BUILTIN_RAW(ty_syntax_semantics)
+typedef struct {
+        vec(i64) ref;
+        vec(i64) callee;
+        vec(i64) type;
+        vec(bool) def;
+} SemInfo;
+
+typedef vec(Symbol const *) SymVec;
+
+static void
+collect_semantics(Ty *ty, Module *mod, SemInfo *info, SymVec *symbols)
 {
-        ASSERT_ARGC("ty.syntax.semantics()", 1);
-
-        Module *mod = ARGx(0, VALUE_MODULE).mod;
-
-        if (!mod->has_syntax) {
-                syntax_snapshot(ty, mod);
-        }
-
-        isize n = vN(mod->syntax);
-
-        Array *refs    = vA();
-        Array *callees = vA();
-        Array *types   = vA();
-        Array *defs    = vA();
-        Array *symbols = vA();
-
-        GC_STOP();
-
-        vec(Symbol const *) seen = {0};
-
-        SCRATCH_SAVE();
-
+        PtrSet seen = {0};
         Resolved resolved = {0};
+
         collect_resolved(ty, mod, &resolved);
 
-        for (isize i = 0; i < n; ++i) {
+        for (isize i = 0; i < vN(mod->syntax); ++i) {
                 SyntaxNode const *node = v_(mod->syntax, i);
                 Symbol *ref = NULL;
                 Symbol *callee = NULL;
@@ -2658,10 +2660,10 @@ TY_BUILTIN_RAW(ty_syntax_semantics)
                         }
                 }
 
-                vAp(refs,    INTEGER(symbol_id(ref)));
-                vAp(callees, INTEGER(symbol_id(callee)));
-                vAp(types,   INTEGER((t == T2_TYPE_INVALID) ? -1 : (i64)t));
-                vAp(defs,    BOOLEAN(def));
+                xvP(info->ref,    symbol_id(ref));
+                xvP(info->callee, symbol_id(callee));
+                xvP(info->type,   (t == T2_TYPE_INVALID) ? -1 : (i64)t);
+                xvP(info->def,    def);
 
                 Symbol const *both[] = { ref, callee };
 
@@ -2670,22 +2672,70 @@ TY_BUILTIN_RAW(ty_syntax_semantics)
                         if (symbol_id(sym) < 0) {
                                 continue;
                         }
-                        bool known = false;
-                        for (usize j = 0; j < vN(seen); ++j) {
-                                if (v__(seen, j)->symbol == sym->symbol) {
-                                        known = true;
-                                        break;
-                                }
-                        }
-                        if (!known) {
-                                xvP(seen, sym);
-                                vAp(symbols, symbol_record(ty, sym, mod));
+                        void *key = (void *)(((uptr)sym->symbol + 1) << 4);
+                        if (!pset_has(&seen, key)) {
+                                pset_add(ty, &seen, key);
+                                xvP(*symbols, sym);
                         }
                 }
         }
 
-        xvF(seen);
         xvF(resolved.all);
+}
+
+static void
+free_semantics(SemInfo *info)
+{
+        xvF(info->ref);
+        xvF(info->callee);
+        xvF(info->type);
+        xvF(info->def);
+}
+
+// ty/syntax.semantics(mod: Module) -> {
+//     ref: Array[Int],
+//     callee: Array[Int],
+//     type: Array[Int],
+//     def: Array[Bool],
+//     symbols: Array[_]
+// }
+TY_BUILTIN_RAW(ty_syntax_semantics)
+{
+        ASSERT_ARGC("ty.syntax.semantics()", 1);
+
+        Module *mod = ARGx(0, VALUE_MODULE).mod;
+
+        if (!mod->has_syntax) {
+                syntax_snapshot(ty, mod);
+        }
+
+        Array *refs    = vA();
+        Array *callees = vA();
+        Array *types   = vA();
+        Array *defs    = vA();
+        Array *symbols = vA();
+
+        GC_STOP();
+        SCRATCH_SAVE();
+
+        SemInfo info = {0};
+        SymVec syms = {0};
+        collect_semantics(ty, mod, &info, &syms);
+
+        for (usize i = 0; i < vN(syms); ++i) {
+                vAp(symbols, symbol_record(ty, v__(syms, i), mod));
+        }
+
+        xvF(syms);
+
+        for (usize i = 0; i < vN(info.ref); ++i) {
+                vAp(refs,    INTEGER(v__(info.ref, i)));
+                vAp(callees, INTEGER(v__(info.callee, i)));
+                vAp(types,   INTEGER(v__(info.type, i)));
+                vAp(defs,    BOOLEAN(v__(info.def, i)));
+        }
+
+        free_semantics(&info);
 
         SCRATCH_RESTORE();
 
@@ -2697,6 +2747,967 @@ TY_BUILTIN_RAW(ty_syntax_semantics)
                 "symbols", ARRAY(symbols)
         );
 
+        GC_RESUME();
+
+        return result;
+}
+
+enum {
+        TRIVIA_NEWLINE,
+        TRIVIA_SPACE,
+        TRIVIA_DOC,
+        TRIVIA_COMMENT,
+        TRIVIA_BLOCK,
+        TRIVIA_DIRECTIVE,
+        TRIVIA_SHEBANG,
+        TRIVIA_BOM,
+        TRIVIA_RAW
+};
+
+static char const *TriviaKinds[] = {
+        "newline",
+        "space",
+        "doc",
+        "comment",
+        "block",
+        "directive",
+        "shebang",
+        "bom",
+        "raw"
+};
+
+enum {
+        NODE_TREE,
+        NODE_KIND,
+        NODE_FORM,
+        NODE_START,
+        NODE_END,
+        NODE_INDEX,
+        NODE_PARENT,
+        NODE_NODES,
+        NODE_CORE,
+        NODE_SYNTH,
+        NODE_OWN,
+        NODE_FTOK,
+        NODE_LTOK,
+        NODE_SYM,
+        NODE_CALLEE,
+        NODE_TYPE,
+        NODE_DEF,
+        NODE_SLOTS
+};
+
+static char const *NodeFields[] = {
+        "tree", "kind", "form", "start", "end", "index", "parent", "nodes", "core",
+        "synth", "own", "ftok", "ltok", "symId", "calleeId", "typeId", "def?"
+};
+
+enum {
+        TOKEN_KIND,
+        TOKEN_START,
+        TOKEN_END_,
+        TOKEN_TEXT,
+        TOKEN_INDEX,
+        TOKEN_OWNER,
+        TOKEN_LEADING,
+        TOKEN_TRAILING,
+        TOKEN_SLOTS
+};
+
+static char const *TokenFields[] = {
+        "kind", "start", "end", "text", "index", "owner", "leading", "trailing"
+};
+
+enum {
+        TRIVIA_KIND,
+        TRIVIA_START,
+        TRIVIA_END,
+        TRIVIA_TEXT,
+        TRIVIA_SLOTS
+};
+
+static char const *TriviaFields[] = { "kind", "start", "end", "text" };
+
+enum {
+        TREE_ROOT,
+        TREE_NODES,
+        TREE_EVERY,
+        TREE_TOKENS,
+        TREE_EOF,
+        TREE_LINES,
+        TREE_SLOTS
+};
+
+enum {
+        SF_ID,
+        SF_NAME,
+        SF_KIND,
+        SF_MODULE,
+        SF_PATH,
+        SF_LINE,
+        SF_COL,
+        SF_BYTE,
+        SF_HERE,
+        SF_GLOBAL,
+        SF_PUBLIC,
+        SF_BUILTIN,
+        SF_CAPTURED,
+        SF_CONST,
+        SF_TYPE,
+        SF_DOC,
+        SF_SLOTS
+};
+
+static char const *SymbolFields[] = {
+        "id", "name", "kind", "module", "path", "line", "col", "byte", "here?", "global?",
+        "public?", "builtin?", "captured?", "const?", "typeId", "doc"
+};
+
+static char const *TreeFields[] = { "root", "nodes", "every", "tokens", "eof", "lineStarts" };
+
+typedef struct {
+        int class;
+        u16 slots[NODE_SLOTS > SF_SLOTS ? NODE_SLOTS : SF_SLOTS];
+} SynLayout;
+
+static pthread_mutex_t SynLock = PTHREAD_MUTEX_INITIALIZER;
+static InternSet SynInterned;
+static vec(SynLayout *) SynLayouts;
+static char *SynKindNames[STATEMENT_TYPE_START + countof(StmtKinds) + 12];
+
+static u16 const *
+syn_layout(Ty *ty, int class, char const **names, usize n)
+{
+        for (usize i = 0; i < vN(SynLayouts); ++i) {
+                if (v__(SynLayouts, i)->class == class) {
+                        return v__(SynLayouts, i)->slots;
+                }
+        }
+
+        class_ctor(ty, class);
+
+        Class *c = class_get(ty, class);
+        SynLayout *layout = mrealloc(NULL, sizeof *layout);
+        layout->class = class;
+
+        for (usize i = 0; i < n; ++i) {
+                i32 id = M_ID(names[i]);
+                u16 off = OFF_NOT_FOUND;
+                if (id < vN(c->offsets_r)) {
+                        off = v__(c->offsets_r, id);
+                }
+                if (off == OFF_NOT_FOUND || (off >> OFF_SHIFT) != OFF_FIELD) {
+                        pthread_mutex_unlock(&SynLock);
+                        zP("ty.syntax.tree(): class %s has no field `%s`", c->name, names[i]);
+                }
+                layout->slots[i] = off & OFF_MASK;
+        }
+
+        xvP(SynLayouts, layout);
+
+        return layout->slots;
+}
+
+static char const *
+syn_kind_name(i32 kind)
+{
+        usize i = kind - SYNTAX_REGION;
+        if (SynKindNames[i] != NULL) {
+                return SynKindNames[i];
+        }
+
+        char const *raw = syntax_kind_name(kind);
+        bool lower = false;
+
+        for (char const *p = raw; *p != '\0'; ++p) {
+                lower |= (*p >= 'a' && *p <= 'z');
+        }
+
+        byte_vector name = {0};
+
+        if (lower) {
+                xvPn(name, raw, strlen(raw));
+        } else {
+                bool start = true;
+                for (char const *p = raw; *p != '\0'; ++p) {
+                        if (*p == '_') {
+                                start = true;
+                                continue;
+                        }
+                        char c = (*p >= 'A' && *p <= 'Z') ? (*p - 'A' + 'a') : *p;
+                        if (start && c >= 'a' && c <= 'z') {
+                                c = c - 'a' + 'A';
+                        }
+                        xvP(name, c);
+                        start = false;
+                }
+        }
+
+        if (kind > STATEMENT_TYPE_START) {
+                for (usize k = 0; k < countof(ExprKinds); ++k) {
+                        if (strcmp(ExprKinds[k], raw) == 0) {
+                                xvPn(name, "Stmt", 4);
+                                break;
+                        }
+                }
+        }
+
+        xvP(name, '\0');
+        SynKindNames[i] = vv(name);
+
+        return SynKindNames[i];
+}
+
+static pthread_rwlock_t SynInternLock = PTHREAD_RWLOCK_INITIALIZER;
+
+static i64
+syn_find(char const *s, usize n)
+{
+        u64 hash = XXH3_64bits(s, n);
+        InternBucket const *bucket = &SynInterned.set[hash & (INTERN_TABLE_SIZE - 1)];
+
+        for (usize i = 0; i < vN(*bucket); ++i) {
+                InternEntry const *e = v_(*bucket, i);
+                if (
+                        (e->id >= 0)
+                     && (e->hash == hash)
+                     && (e->length == n)
+                     && (memcmp(e->name, s, n) == 0)
+                ) {
+                        return e->id;
+                }
+        }
+
+        return -1;
+}
+
+typedef struct {
+        char const *s;
+        usize n;
+        u64 hash;
+        i64 id;
+} LocalId;
+
+typedef struct {
+        LocalId *slots;
+        usize cap;
+        usize count;
+} LocalIds;
+
+static i64
+local_id(LocalIds *ids, char const *s, usize n)
+{
+        if (2 * (ids->count + 1) > ids->cap) {
+                LocalIds old = *ids;
+                ids->cap = (old.cap == 0) ? 256 : 2 * old.cap;
+                ids->slots = mrealloc(NULL, ids->cap * sizeof *ids->slots);
+                memset(ids->slots, 0, ids->cap * sizeof *ids->slots);
+                ids->count = 0;
+                for (usize i = 0; i < old.cap; ++i) {
+                        LocalId const *x = &old.slots[i];
+                        if (x->s != NULL) {
+                                usize h = x->hash & (ids->cap - 1);
+                                while (ids->slots[h].s != NULL) {
+                                        h = (h + 1) & (ids->cap - 1);
+                                }
+                                ids->slots[h] = *x;
+                                ids->count += 1;
+                        }
+                }
+                xmF(old.slots);
+        }
+
+        u64 hash = XXH3_64bits(s, n);
+        usize h = hash & (ids->cap - 1);
+
+        while (ids->slots[h].s != NULL) {
+                LocalId const *x = &ids->slots[h];
+                if (x->hash == hash && x->n == n && memcmp(x->s, s, n) == 0) {
+                        return x->id;
+                }
+                h = (h + 1) & (ids->cap - 1);
+        }
+
+        i64 id = -2 - (i64)ids->count;
+        ids->slots[h] = (LocalId) { .s = (s == NULL) ? "" : s, .n = n, .hash = hash, .id = id };
+        ids->count += 1;
+
+        return id;
+}
+
+static i64
+syn_text_id(LocalIds *ids, char const *s, usize n)
+{
+        if (ids == NULL) {
+                return intern_n(&SynInterned, s, n)->id;
+        }
+
+        i64 id = syn_find(s, n);
+
+        return (id >= 0) ? id : local_id(ids, s, n);
+}
+
+// ty/syntax.intern(s: String) -> Int
+TY_BUILTIN_RAW(ty_syntax_intern)
+{
+        ASSERT_ARGC("ty.syntax.intern()", 1);
+
+        Value s = ARGx(0, VALUE_STRING);
+        char const *p = (char const *)ss(s);
+
+        pthread_rwlock_rdlock(&SynInternLock);
+        i64 id = syn_find(p, sN(s));
+        pthread_rwlock_unlock(&SynInternLock);
+
+        if (id < 0) {
+                pthread_rwlock_wrlock(&SynInternLock);
+                id = intern_n(&SynInterned, p, sN(s))->id;
+                pthread_rwlock_unlock(&SynInternLock);
+        }
+
+        return INTEGER(id);
+}
+
+static isize
+block_comment_length(char const *s, isize n)
+{
+        isize depth = 0;
+        isize i = 0;
+
+        while (i < n) {
+                if (i + 1 < n && s[i] == '/' && s[i + 1] == '*') {
+                        depth += 1;
+                        i += 2;
+                } else if (i + 1 < n && s[i] == '*' && s[i + 1] == '/') {
+                        depth -= 1;
+                        i += 2;
+                        if (depth == 0) {
+                                return i;
+                        }
+                } else {
+                        i += 1;
+                }
+        }
+
+        return n;
+}
+
+inline static bool
+line_space(char c)
+{
+        return c == ' ' || c == '\t' || c == '\f' || c == '\r';
+}
+
+inline static bool
+raw_byte(u8 c)
+{
+        return !(c == ' ' || (c >= '\t' && c <= '\r') || c == '/' || c == '#');
+}
+
+static isize
+until_newline(char const *s, isize n)
+{
+        isize i = 0;
+        while (i < n && s[i] != '\n') {
+                i += 1;
+        }
+        return i;
+}
+
+static isize
+trivia_piece(char const *s, isize n, int *kind)
+{
+        if (n >= 2 && s[0] == '/' && s[1] == '*') {
+                isize k = block_comment_length(s, n);
+                *kind = (n >= 3 && s[2] == '*' && k > 4) ? TRIVIA_DOC : TRIVIA_BLOCK;
+                return k;
+        }
+
+        if (s[0] == '\n') {
+                *kind = TRIVIA_NEWLINE;
+                return 1;
+        }
+
+        if (n >= 2 && s[0] == '\r' && s[1] == '\n') {
+                *kind = TRIVIA_NEWLINE;
+                return 2;
+        }
+
+        if (line_space(s[0])) {
+                isize i = 1;
+                while (i < n && line_space(s[i])) {
+                        i += 1;
+                }
+                *kind = TRIVIA_SPACE;
+                return i;
+        }
+
+        if (n >= 3 && s[0] == '/' && s[1] == '/' && s[2] == '/') {
+                *kind = TRIVIA_DOC;
+                return until_newline(s, n);
+        }
+
+        if (n >= 2 && s[0] == '/' && s[1] == '/') {
+                *kind = TRIVIA_COMMENT;
+                return until_newline(s, n);
+        }
+
+        if (n >= 2 && s[0] == '#' && s[1] == '|') {
+                *kind = TRIVIA_DIRECTIVE;
+                return until_newline(s, n);
+        }
+
+        if (n >= 2 && s[0] == '#' && s[1] == '!') {
+                *kind = TRIVIA_SHEBANG;
+                return until_newline(s, n);
+        }
+
+        if (n >= 3 && (u8)s[0] == 0xEF && (u8)s[1] == 0xBB && (u8)s[2] == 0xBF) {
+                *kind = TRIVIA_BOM;
+                return 3;
+        }
+
+        *kind = TRIVIA_RAW;
+
+        isize i = 0;
+        while (i < n && raw_byte(s[i])) {
+                i += 1;
+        }
+
+        if (i > 0) {
+                return i;
+        }
+
+        i = 1;
+        while (i < n && ((u8)s[i] & 0xC0) == 0x80) {
+                i += 1;
+        }
+
+        return i;
+}
+
+typedef vec(int) KindVec;
+
+typedef struct {
+        Ty *ty;
+        Value source;
+        Value tree;
+        int classes[4];
+        u16 const *nl;
+        u16 const *tl;
+        u16 const *vl;
+        vec(Value) nodes;
+        vec(Value) toks;
+} SynBuild;
+
+#define SLOT(o, layout, i) ((o).object->slots[(layout)[(i)]])
+
+static Value
+new_node(SynBuild *b, Value kind, i64 start, i64 end, i64 index)
+{
+        Ty *ty = b->ty;
+        Value n = RawObject(b->classes[0]);
+
+        SLOT(n, b->nl, NODE_TREE)   = b->tree;
+        SLOT(n, b->nl, NODE_KIND)   = kind;
+        SLOT(n, b->nl, NODE_FORM)   = NIL;
+        SLOT(n, b->nl, NODE_START)  = INTEGER(start);
+        SLOT(n, b->nl, NODE_END)    = INTEGER(end);
+        SLOT(n, b->nl, NODE_INDEX)  = INTEGER(index);
+        SLOT(n, b->nl, NODE_PARENT) = NIL;
+        SLOT(n, b->nl, NODE_NODES)  = ARRAY(vA());
+        SLOT(n, b->nl, NODE_CORE)   = ARRAY(vA());
+        SLOT(n, b->nl, NODE_SYNTH)  = BOOLEAN(false);
+        SLOT(n, b->nl, NODE_OWN)    = ARRAY(vA());
+        SLOT(n, b->nl, NODE_FTOK)   = INTEGER(-1);
+        SLOT(n, b->nl, NODE_LTOK)   = INTEGER(-2);
+        SLOT(n, b->nl, NODE_SYM)    = INTEGER(-1);
+        SLOT(n, b->nl, NODE_CALLEE) = INTEGER(-1);
+        SLOT(n, b->nl, NODE_TYPE)   = INTEGER(-1);
+        SLOT(n, b->nl, NODE_DEF)    = BOOLEAN(false);
+
+        return n;
+}
+
+static Value
+new_token(SynBuild *b, Value kind, i64 start, i64 end, i64 index)
+{
+        Ty *ty = b->ty;
+        Value t = RawObject(b->classes[1]);
+
+        SLOT(t, b->tl, TOKEN_KIND)     = kind;
+        SLOT(t, b->tl, TOKEN_START)    = INTEGER(start);
+        SLOT(t, b->tl, TOKEN_END_)     = INTEGER(end);
+        SLOT(t, b->tl, TOKEN_TEXT)     = STRING_VIEW(b->source, start, end - start);
+        SLOT(t, b->tl, TOKEN_INDEX)    = INTEGER(index);
+        SLOT(t, b->tl, TOKEN_OWNER)    = NIL;
+        SLOT(t, b->tl, TOKEN_LEADING)  = ARRAY(vA());
+        SLOT(t, b->tl, TOKEN_TRAILING) = ARRAY(vA());
+
+        return t;
+}
+
+inline static i64
+nint(SynBuild const *b, Value n, int field)
+{
+        return SLOT(n, b->nl, field).z;
+}
+
+static void
+lex_trivia_into(SynBuild *b, i64 start, i64 end, Array *out, KindVec *kinds)
+{
+        Ty *ty = b->ty;
+        char const *src = (char const *)ss(b->source);
+
+        while (start < end) {
+                int kind;
+                isize n = trivia_piece(src + start, end - start, &kind);
+                Value t = RawObject(b->classes[2]);
+                SLOT(t, b->vl, TRIVIA_KIND)  = xSz(TriviaKinds[kind]);
+                SLOT(t, b->vl, TRIVIA_START) = INTEGER(start);
+                SLOT(t, b->vl, TRIVIA_END)   = INTEGER(start + n);
+                SLOT(t, b->vl, TRIVIA_TEXT)  = STRING_VIEW(b->source, start, n);
+                vAp(out, t);
+                xvP(*kinds, kind);
+                start += n;
+        }
+}
+
+static Array *
+int_array(Ty *ty, i64 const *xs, usize n)
+{
+        Array *a = value_array_new_sized(ty, n);
+        for (usize i = 0; i < n; ++i) {
+                v__(*a, i) = INTEGER(xs[i]);
+        }
+        vN(*a) = n;
+        return a;
+}
+
+typedef vec(i64) IntVec;
+
+// ty/syntax.tree(
+//     mod: Module,
+//     source: String,
+//     tree: _,
+//     classes: _,
+//     semantic: Bool,
+//     error: Int | nil,
+//     intern: Bool
+// ) -> {lines: Array[Int], packed: Array[Array[Int]], symbols: Array[_]}
+TY_BUILTIN_RAW(ty_syntax_tree)
+{
+        ASSERT_ARGC("ty.syntax.tree()", 7);
+
+        Module *mod    = ARGx(0, VALUE_MODULE).mod;
+        Value source   = ARGx(1, VALUE_STRING);
+        Value tree     = ARGx(2, VALUE_OBJECT);
+        Value classes  = ARGx(3, VALUE_TUPLE);
+        bool semantic  = ARGx(4, VALUE_BOOLEAN).boolean;
+        Value error_at = ARG(5);
+        bool intern    = ARGx(6, VALUE_BOOLEAN).boolean;
+
+        if (classes.count != 4) {
+                zP("ty.syntax.tree(): expected (Node, Token, Trivia, Symbol)");
+        }
+
+        if (!mod->has_syntax) {
+                syntax_snapshot(ty, mod);
+        }
+
+        SynBuild b = { .ty = ty, .source = source, .tree = tree };
+
+        for (int i = 0; i < 4; ++i) {
+                if (classes.items[i].type != VALUE_CLASS) {
+                        zP("ty.syntax.tree(): expected a class");
+                }
+                b.classes[i] = classes.items[i].class;
+        }
+
+        pthread_mutex_lock(&SynLock);
+        b.nl = syn_layout(ty, b.classes[0], NodeFields, NODE_SLOTS);
+        b.tl = syn_layout(ty, b.classes[1], TokenFields, TOKEN_SLOTS);
+        b.vl = syn_layout(ty, b.classes[2], TriviaFields, TRIVIA_SLOTS);
+        u16 const *sl = syn_layout(ty, b.classes[3], SymbolFields, SF_SLOTS);
+        u16 const *rl = syn_layout(ty, tree.object->class->i, TreeFields, TREE_SLOTS);
+        for (isize i = 0; i < vN(mod->syntax); ++i) {
+                syn_kind_name(v_(mod->syntax, i)->kind);
+        }
+        pthread_mutex_unlock(&SynLock);
+
+        GC_STOP();
+        SCRATCH_SAVE();
+
+        char const *src = (char const *)ss(source);
+        i64 size = sN(source);
+
+        Array *symbols = vA();
+        SemInfo info = {0};
+        SymVec syms = {0};
+
+        if (semantic) {
+                collect_semantics(ty, mod, &info, &syms);
+        }
+
+        for (usize i = 0; i < vN(syms); ++i) {
+                Symbol const *sym = v__(syms, i);
+                Module const *home = sym->mod;
+                Value o = RawObject(b.classes[3]);
+                SLOT(o, sl, SF_ID)       = INTEGER(sym->symbol);
+                SLOT(o, sl, SF_NAME)     = xSz(sym->identifier);
+                SLOT(o, sl, SF_KIND)     = xSz(symbol_kind(sym));
+                SLOT(o, sl, SF_MODULE)   = (home == NULL || home->name == NULL) ? NIL : xSz(home->name);
+                SLOT(o, sl, SF_PATH)     = (home == NULL || home->path == NULL) ? NIL : xSz(home->path);
+                SLOT(o, sl, SF_LINE)     = INTEGER(sym->loc.line + 1);
+                SLOT(o, sl, SF_COL)      = INTEGER(sym->loc.col + 1);
+                SLOT(o, sl, SF_BYTE)     = INTEGER(sym->loc.byte);
+                SLOT(o, sl, SF_HERE)     = BOOLEAN(home == mod);
+                SLOT(o, sl, SF_GLOBAL)   = BOOLEAN(SymbolIsGlobal(sym));
+                SLOT(o, sl, SF_PUBLIC)   = BOOLEAN(SymbolIsPublic(sym));
+                SLOT(o, sl, SF_BUILTIN)  = BOOLEAN(SymbolIsBuiltin(sym));
+                SLOT(o, sl, SF_CAPTURED) = BOOLEAN(SymbolIsCaptured(sym));
+                SLOT(o, sl, SF_CONST)    = BOOLEAN(SymbolIsConst(sym));
+                SLOT(o, sl, SF_TYPE)     = INTEGER((sym->type == T2_TYPE_INVALID) ? -1 : (i64)sym->type);
+                SLOT(o, sl, SF_DOC)      = (sym->doc == NULL) ? NIL : xSz(sym->doc);
+                vAp(symbols, o);
+        }
+
+        xvF(syms);
+
+        Value root = new_node(&b, xSz("Module"), 0, size, 0);
+        Array *nodes = vA();
+        Array *every = vA();
+
+        vAp(nodes, root);
+        vAp(every, root);
+
+        isize nsyn = vN(mod->syntax);
+        vec(i32) owners = {0};
+
+        for (isize i = 0; i < nsyn; ++i) {
+                SyntaxNode const *r = v_(mod->syntax, i);
+                Value n = new_node(&b, xSz(SynKindNames[r->kind - SYNTAX_REGION]), r->start, r->end, -1);
+
+                if (r->form != NULL) {
+                        SLOT(n, b.nl, NODE_FORM) = vSsz(r->form);
+                }
+                SLOT(n, b.nl, NODE_SYNTH) = BOOLEAN(r->synth);
+
+                if (semantic) {
+                        SLOT(n, b.nl, NODE_SYM)    = INTEGER(v__(info.ref, i));
+                        SLOT(n, b.nl, NODE_CALLEE) = INTEGER(v__(info.callee, i));
+                        SLOT(n, b.nl, NODE_TYPE)   = INTEGER(v__(info.type, i));
+                        SLOT(n, b.nl, NODE_DEF)    = BOOLEAN(v__(info.def, i));
+                }
+
+                i32 owner = r->parent;
+                while (owner >= 0 && v_(mod->syntax, owner)->synth) {
+                        owner = v__(owners, owner);
+                }
+                xvP(owners, owner);
+
+                Value parent = (owner < 0) ? root : v__(b.nodes, owner);
+                SLOT(n, b.nl, NODE_PARENT) = parent;
+
+                if (r->synth) {
+                        vAp(SLOT(parent, b.nl, NODE_CORE).array, n);
+                } else {
+                        SLOT(n, b.nl, NODE_INDEX) = INTEGER(vN(*nodes));
+                        vAp(SLOT(parent, b.nl, NODE_NODES).array, n);
+                        vAp(nodes, n);
+                }
+
+                xvP(b.nodes, n);
+                vAp(every, n);
+        }
+
+        xvF(owners);
+
+        Array *tokens = vA();
+        i64 edge = 0;
+
+        for (isize i = 0; i < vN(mod->tokens); ++i) {
+                Token const *t = v_(mod->tokens, i);
+                if (t->ctx == LEX_FAKE || t->ctx == LEX_HIDDEN || t->type == TOKEN_END) {
+                        continue;
+                }
+                if (
+                        (t->type == TOKEN_COMMENT)
+                     || (t->type == TOKEN_NEWLINE)
+                     || (t->type == TOKEN_DIRECTIVE)
+                     || (t->start.byte >= t->end.byte)
+                     || ((i64)t->start.byte < edge)
+                     || ((i64)t->end.byte > size)
+                ) {
+                        continue;
+                }
+                char const *name = token_type_name(t);
+                Value kind;
+                if (name != NULL) {
+                        kind = xSz(name);
+                } else if (t->type > 0 && t->type < 0x80) {
+                        kind = STRING_VIEW(source, t->start.byte, 1);
+                        if (src[t->start.byte] != t->type) {
+                                char c = t->type;
+                                kind = vSs(&c, 1);
+                        }
+                } else {
+                        kind = xSz("?");
+                }
+                Value tok = new_token(&b, kind, t->start.byte, t->end.byte, vN(*tokens));
+                vAp(tokens, tok);
+                edge = t->end.byte;
+        }
+
+        if (error_at.type == VALUE_INTEGER) {
+                i64 edge = 0;
+                Array *top = SLOT(root, b.nl, NODE_NODES).array;
+                for (usize i = 0; i < vN(*top); ++i) {
+                        edge = max(edge, nint(&b, v__(*top, i), NODE_END));
+                }
+                i64 start = error_at.z;
+                for (usize i = 0; i < vN(*tokens); ++i) {
+                        i64 ts = SLOT(v__(*tokens, i), b.tl, TOKEN_START).z;
+                        if (ts >= edge) {
+                                start = min(ts, start);
+                                break;
+                        }
+                }
+                if (start < size) {
+                        Value n = new_node(&b, xSz("ParseError"), start, size, vN(*nodes));
+                        SLOT(n, b.nl, NODE_PARENT) = root;
+                        vAp(top, n);
+                        vAp(nodes, n);
+                }
+        }
+
+        Value eof = new_token(&b, xSz("eof"), size, size, vN(*tokens));
+
+        usize ntok = vN(*tokens);
+        KindVec kinds = {0};
+        IntVec counts[8] = {0};
+        IntVec *lnum = &counts[0], *lnl = &counts[1], *lcm = &counts[2], *lspc = &counts[3];
+        IntVec *tnum = &counts[4], *tnl = &counts[5], *tcm = &counts[6], *tspc = &counts[7];
+        i64 pos = 0;
+
+        for (usize i = 0; i <= ntok; ++i) {
+                Value tok = (i < ntok) ? v__(*tokens, i) : eof;
+                i64 start = SLOT(tok, b.tl, TOKEN_START).z;
+                Array *pieces = vA();
+                v0(kinds);
+                lex_trivia_into(&b, pos, max(pos, start), pieces, &kinds);
+                usize split = 0;
+                if (i > 0) {
+                        split = vN(*pieces);
+                        for (usize k = 0; k < vN(kinds); ++k) {
+                                if (v__(kinds, k) == TRIVIA_NEWLINE) {
+                                        split = k + 1;
+                                        break;
+                                }
+                        }
+                        Value prev = v__(*tokens, i - 1);
+                        Array *trailing = SLOT(prev, b.tl, TOKEN_TRAILING).array;
+                        i64 nl = 0, cm = 0, sp = 0;
+                        for (usize k = 0; k < split; ++k) {
+                                vAp(trailing, v__(*pieces, k));
+                                int kind = v__(kinds, k);
+                                nl += (kind == TRIVIA_NEWLINE);
+                                cm += (kind == TRIVIA_COMMENT || kind == TRIVIA_DOC || kind == TRIVIA_BLOCK);
+                                sp += (kind == TRIVIA_SPACE);
+                        }
+                        xvP(*tnum, split);
+                        xvP(*tnl, nl);
+                        xvP(*tcm, cm);
+                        xvP(*tspc, sp);
+                }
+                Array *leading = SLOT(tok, b.tl, TOKEN_LEADING).array;
+                i64 nl = 0, cm = 0, sp = 0;
+                for (usize k = split; k < vN(*pieces); ++k) {
+                        vAp(leading, v__(*pieces, k));
+                        int kind = v__(kinds, k);
+                        nl += (kind == TRIVIA_NEWLINE);
+                        cm += (kind == TRIVIA_COMMENT || kind == TRIVIA_DOC || kind == TRIVIA_BLOCK);
+                        sp += (kind == TRIVIA_SPACE);
+                }
+                if (i < ntok) {
+                        xvP(*lnum, vN(*pieces) - split);
+                        xvP(*lnl, nl);
+                        xvP(*lcm, cm);
+                        xvP(*lspc, sp);
+                }
+                pos = SLOT(tok, b.tl, TOKEN_END_).z;
+        }
+
+        xvF(kinds);
+
+        vec(Value) stack = {0};
+        usize k = 1;
+        xvP(stack, root);
+
+        for (usize i = 0; i < ntok; ++i) {
+                Value tok = v__(*tokens, i);
+                i64 ts = SLOT(tok, b.tl, TOKEN_START).z;
+                while (k < vN(*nodes) && nint(&b, v__(*nodes, k), NODE_START) <= ts) {
+                        Value n = v__(*nodes, k);
+                        i64 ns = nint(&b, n, NODE_START);
+                        while (vN(stack) > 1 && nint(&b, *vvL(stack), NODE_END) <= ns) {
+                                vN(stack) -= 1;
+                        }
+                        xvP(stack, n);
+                        k += 1;
+                }
+                while (vN(stack) > 1 && nint(&b, *vvL(stack), NODE_END) <= ts) {
+                        vN(stack) -= 1;
+                }
+                Value owner = *vvL(stack);
+                SLOT(tok, b.tl, TOKEN_OWNER) = owner;
+                vAp(SLOT(owner, b.nl, NODE_OWN).array, tok);
+                for (usize j = 0; j < vN(stack); ++j) {
+                        Value n = v__(stack, j);
+                        if (nint(&b, n, NODE_FTOK) < 0) {
+                                SLOT(n, b.nl, NODE_FTOK) = INTEGER(i);
+                        }
+                        SLOT(n, b.nl, NODE_LTOK) = INTEGER(i);
+                }
+        }
+
+        xvF(stack);
+
+        SLOT(tree, rl, TREE_ROOT)   = root;
+        SLOT(tree, rl, TREE_NODES)  = ARRAY(nodes);
+        SLOT(tree, rl, TREE_EVERY)  = ARRAY(every);
+        SLOT(tree, rl, TREE_TOKENS) = ARRAY(tokens);
+        SLOT(tree, rl, TREE_EOF)    = eof;
+
+        Array *lines = vA();
+        vAp(lines, INTEGER(0));
+        for (i64 i = 0; i < size; ++i) {
+                if (src[i] == '\n') {
+                        vAp(lines, INTEGER(i + 1));
+                }
+        }
+        SLOT(tree, rl, TREE_LINES) = ARRAY(lines);
+
+        usize nn = vN(*nodes);
+        IntVec kind = {0}, form = {0}, kstart = {0}, kcount = {0}, kids = {0};
+        IntVec ostart = {0}, ocount = {0}, own = {0}, ftok = {0}, ltok = {0};
+        IntVec text = {0}, punct = {0}, tstart = {0}, tend = {0}, llen = {0}, tlen = {0};
+        IntVec ref = {0}, callee = {0}, type = {0};
+
+        LocalIds local = {0};
+        LocalIds *ids = intern ? NULL : &local;
+
+        if (intern) {
+                pthread_rwlock_wrlock(&SynInternLock);
+        } else {
+                pthread_rwlock_rdlock(&SynInternLock);
+        }
+
+        for (usize i = 0; i < nn; ++i) {
+                Value n = v__(*nodes, i);
+                Value kv = SLOT(n, b.nl, NODE_KIND);
+                Value fv = SLOT(n, b.nl, NODE_FORM);
+                Array *ks = SLOT(n, b.nl, NODE_NODES).array;
+                Array *os = SLOT(n, b.nl, NODE_OWN).array;
+                xvP(kind, syn_text_id(ids, (char const *)ss(kv), sN(kv)));
+                xvP(form, (fv.type == VALUE_STRING) ? syn_text_id(ids, (char const *)ss(fv), sN(fv)) : -1);
+                xvP(kstart, vN(kids));
+                xvP(kcount, vN(*ks));
+                for (usize j = 0; j < vN(*ks); ++j) {
+                        xvP(kids, nint(&b, v__(*ks, j), NODE_INDEX));
+                }
+                xvP(ostart, vN(own));
+                xvP(ocount, vN(*os));
+                for (usize j = 0; j < vN(*os); ++j) {
+                        xvP(own, SLOT(v__(*os, j), b.tl, TOKEN_INDEX).z);
+                }
+                xvP(ftok, nint(&b, n, NODE_FTOK));
+                xvP(ltok, max(nint(&b, n, NODE_LTOK), -1));
+                xvP(ref, nint(&b, n, NODE_SYM));
+                xvP(callee, nint(&b, n, NODE_CALLEE));
+                xvP(type, nint(&b, n, NODE_TYPE));
+        }
+
+        for (usize i = 0; i < ntok; ++i) {
+                Value tok = v__(*tokens, i);
+                Value tv = SLOT(tok, b.tl, TOKEN_TEXT);
+                char const *s = (char const *)ss(tv);
+                usize n = sN(tv);
+                xvP(text, syn_text_id(ids, s, n));
+                xvP(punct, n == 1 && (*s == ',' || *s == ';' || *s == '(' || *s == ')'));
+                i64 ts = SLOT(tok, b.tl, TOKEN_START).z;
+                i64 te = SLOT(tok, b.tl, TOKEN_END_).z;
+                Array *lead = SLOT(tok, b.tl, TOKEN_LEADING).array;
+                Array *trail = SLOT(tok, b.tl, TOKEN_TRAILING).array;
+                xvP(tstart, ts);
+                xvP(tend, te);
+                xvP(llen, (vN(*lead) == 0) ? 0 : ts - SLOT(v__(*lead, 0), b.vl, TRIVIA_START).z);
+                xvP(tlen, (vN(*trail) == 0) ? 0 : SLOT(*vvL(*trail), b.vl, TRIVIA_END).z - te);
+        }
+
+        pthread_rwlock_unlock(&SynInternLock);
+        xmF(local.slots);
+
+        Value packed = ARRAY(value_array_new_sized(ty, PACKED_FIELDS));
+        Packed fields = {
+                .kind   = int_array(ty, vv(kind), vN(kind)),
+                .form   = int_array(ty, vv(form), vN(form)),
+                .kstart = int_array(ty, vv(kstart), vN(kstart)),
+                .kcount = int_array(ty, vv(kcount), vN(kcount)),
+                .kids   = int_array(ty, vv(kids), vN(kids)),
+                .ostart = int_array(ty, vv(ostart), vN(ostart)),
+                .ocount = int_array(ty, vv(ocount), vN(ocount)),
+                .own    = int_array(ty, vv(own), vN(own)),
+                .text   = int_array(ty, vv(text), vN(text)),
+                .punct  = int_array(ty, vv(punct), vN(punct)),
+                .ftok   = int_array(ty, vv(ftok), vN(ftok)),
+                .ltok   = int_array(ty, vv(ltok), vN(ltok)),
+                .lnum   = int_array(ty, vv(*lnum), vN(*lnum)),
+                .tnum   = int_array(ty, vv(*tnum), vN(*tnum)),
+                .lnl    = int_array(ty, vv(*lnl), vN(*lnl)),
+                .tnl    = int_array(ty, vv(*tnl), vN(*tnl)),
+                .lcm    = int_array(ty, vv(*lcm), vN(*lcm)),
+                .tcm    = int_array(ty, vv(*tcm), vN(*tcm)),
+                .lspc   = int_array(ty, vv(*lspc), vN(*lspc)),
+                .tspc   = int_array(ty, vv(*tspc), vN(*tspc)),
+                .tstart = int_array(ty, vv(tstart), vN(tstart)),
+                .tend   = int_array(ty, vv(tend), vN(tend)),
+                .llen   = int_array(ty, vv(llen), vN(llen)),
+                .tlen   = int_array(ty, vv(tlen), vN(tlen)),
+                .ref    = int_array(ty, vv(ref), vN(ref)),
+                .callee = int_array(ty, vv(callee), vN(callee)),
+                .ty     = int_array(ty, vv(type), vN(type))
+        };
+        i64 sem = semantic;
+        fields.sem = int_array(ty, &sem, 1);
+
+        Array **slots = (Array **)&fields;
+        for (usize i = 0; i < PACKED_FIELDS; ++i) {
+                v__(*packed.array, i) = ARRAY((slots[i] == NULL) ? vA() : slots[i]);
+        }
+        vN(*packed.array) = PACKED_FIELDS;
+
+        IntVec *all[] = {
+                &kind, &form, &kstart, &kcount, &kids, &ostart, &ocount, &own, &ftok,
+                &ltok, &text, &punct, &tstart, &tend, &llen, &tlen, &ref, &callee, &type
+        };
+        for (usize i = 0; i < countof(all); ++i) {
+                xvF(*all[i]);
+        }
+        for (usize i = 0; i < countof(counts); ++i) {
+                xvF(counts[i]);
+        }
+
+        free_semantics(&info);
+        xvF(b.nodes);
+
+        Value result = vTn(
+                "lines",   ARRAY(lines),
+                "packed",  packed,
+                "symbols", ARRAY(symbols)
+        );
+
+        SCRATCH_RESTORE();
         GC_RESUME();
 
         return result;

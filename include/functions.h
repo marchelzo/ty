@@ -17,4 +17,7 @@ Value builtin_work_queue(Ty *ty, int argc, Value *kwargs);
 
 u64 NextThreadId();
 
+char const *
+token_type_name(struct token const *t);
+
 #endif
