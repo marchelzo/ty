@@ -1747,6 +1747,9 @@ NoteDeopt(Ty *ty, Frame const *top)
              && (lc->body == (void *)frame_jit(top))
              && (__atomic_add_fetch((u32 *)&lc->deopts, 1, __ATOMIC_RELAXED) == JIT_DEOPT_LIMIT)
         ) {
+#ifdef TY_PROFILER
+                prof_jit_despecialize(&fn, JIT_DEOPT_LIMIT);
+#endif
                 jit_despecialize(ty, &fn);
         }
 }
@@ -1856,7 +1859,7 @@ JitReturn:
 
         case JIT_DEOPT:
 #ifdef TY_PROFILER
-                prof_jit_deopt(&top->f, next_resume);
+                prof_jit_deopt(ty, top, next_resume);
 #endif
                 TY_PROBE_IF(jit__deopt, name_of(&top->f), (long)next_resume);
                 NoteDeopt(ty, top);

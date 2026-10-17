@@ -639,7 +639,12 @@ typedef struct source_gutter {
         void *ctx;
         void (*draw)(void *ctx, byte_vector *out, int line);
         bool (*marked)(void *ctx, int line);
+        char const *shade;
+        int strip;
 } SourceGutter;
+
+int
+ModuleSourceIndent(Module const *mod, int line0, int line1);
 
 void
 WriteModuleSourceLines(

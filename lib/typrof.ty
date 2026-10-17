@@ -3,13 +3,17 @@ import math
 import os
 import ty
 import ty.parse as parse
-import chalk (chalk)
-import ink (Component, Box, Raw, TreeView, run, focus)
+import chalk (chalk, hsl-hex, hash-hsl)
+import ink (Component, Box, Raw, TreeView, Ignored, run, focus)
+import ink.chart (LinePlot)
 import term (event, mod)
+import capstone
 
 pub const DEFAULT_PATH = 'typrof.data'
 
 const SELECTED = '#343842'
+const SHADE    = '#2b2f38'
+const ACCENT   = '#e5c07b'
 const BLOCKS   = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
 const KIB      = 1024
 const MIB      = 1024 * 1024
@@ -74,7 +78,39 @@ pub fn fmt-ns(t: Int | Float) -> String {
 }
 
 fn col(label: String, w: Int) -> String {
-    label.fit(w, 1)
+    dim(label.fit(w, 1))
+}
+
+fn sorted-col(label: String, w: Int, active?: Bool, desc?: Bool) -> String {
+    if !active? {
+        return col(label, w)
+    }
+    let text = "{label}{desc? ? '▼' : '▲'}".fit(w, 1)
+    "{chalk"[b {ACCENT}]{text}[/]"}"
+}
+
+fn toggle(key: String, options: Array[String], active: String) -> String {
+    let parts = options.map(o -> (o == active) ? "{chalk"[b {ACCENT}]{o}[/]"}" : dim(o))
+    "{chalk"[cyan]{key}[/]"} {parts.join(dim(' · '))}"
+}
+
+fn spread(left: String, right: String, w: Int) -> String {
+    let gap = w - left.width() - right.width() - 1
+    (gap >= 2) ? "{left}{' ' * gap}{right}" : left
+}
+
+class Spot {
+    file: String
+    line: Int
+    func: _
+    notes: Array[String]
+
+    init(file: String, line: Int, func: _ = nil, notes: Array[String] = []) {
+        self.file = file
+        self.line = line
+        self.func = func
+        self.notes = notes
+    }
 }
 
 pub class Source {
@@ -132,10 +168,12 @@ pub class TreeNode {
     total: Int
     own: Int
     kids: Dict[Int, TreeNode]
+    up: TreeNode | nil
 
-    init(func: Int, path: String) {
+    init(func: Int, path: String, up: TreeNode | nil = nil) {
         self.func = func
         self.path = path
+        self.up = up
         total = 0
         own = 0
         kids = %{}
@@ -145,7 +183,7 @@ pub class TreeNode {
         if let $k = kids[f] {
             return k
         }
-        let k = TreeNode(f, "{path}/{f}")
+        let k = TreeNode(f, "{path}/{f}", self)
         kids[f] = k
         k
     }
@@ -186,6 +224,20 @@ pub class Profile {
         }
         for f; i in funcs {
             f['id'] = i
+        }
+        let stats = data['jit_stats'] ?? %{}
+        for r in [*(stats['sites'] ?? []), *(stats['compiled'] ?? [])] {
+            r['file'] = display(r['file'] ?? '')
+        }
+    }
+
+    display(path: String) -> String {
+        let cwd = "{data['cwd'] ?? ''}/"
+        let home = "{os.getenv('HOME') ?? ''}/"
+        match () {
+            _ and cwd != '/' && path.starts?(cwd)   => path[#cwd;],
+            _ and home != '/' && path.starts?(home) => "~/{path[#home;]}",
+            _                                       => path
         }
     }
 
@@ -257,6 +309,43 @@ pub class Profile {
         root
     }
 
+    func-named(name: String, file: String) -> _ {
+        for f in funcs {
+            if f['name'] == name && f['file'] == file {
+                return f
+            }
+        }
+        nil
+    }
+
+    compiled-for(f: _) -> _ {
+        let best = nil
+        for r in (data['jit_stats'] ?? %{})['compiled'] ?? [] {
+            let label = r['class'] ? "{r['class']}.{r['name']}" : r['name']
+            if label == f['name'] && r['file'] == f['file'] && r['code'] {
+                if best == nil || (r['samples'] ?? 0) > (best['samples'] ?? 0) {
+                    best = r
+                }
+            }
+        }
+        if best != nil {
+            best['label'] = f['name']
+        }
+        best
+    }
+
+    hottest(f: _) -> Int {
+        let best = 0
+        let line = f['line']
+        for l in lines {
+            if l['func'] == f['id'] && l['self'] > best {
+                best = l['self']
+                line = l['line']
+            }
+        }
+        line
+    }
+
     edges(func: Int) -> (Array[_], Array[_]) {
         let callers = []
         let callees = []
@@ -293,6 +382,10 @@ class Screen {
     refresh() { }
     widget(h: Int) -> Component | nil { nil }
     key(app: App, k: String) -> Bool { false }
+    preview -> Spot | nil { nil }
+    previews? -> Bool { false }
+    min-width -> Int { 0 }
+    tree-view -> TreeView | nil { nil }
 
     move(n: Int) {
         sel = (sel + n).clamp(0, max(count - 1, 0))
@@ -303,7 +396,7 @@ class Screen {
         let room = head ? h - 1 : h
         sel = sel.clamp(0, max(count - 1, 0))
         top = top.clamp(sel - room + 1, sel).clamp(0, max(count - room, 0))
-        let out = head ? [dim(head).fit(w)] : []
+        let out = head ? [head.fit(w)] : []
         let at = (count > 0) ? #out + sel - top : -1
         for i in top..min(top + room, count) {
             out.push(row(i, w).fit(w))
@@ -326,16 +419,28 @@ fn jit-label(jit: String) -> String {
     }
 }
 
+fn cycle(options: Array[String], at: String) -> String {
+    for o; i in options {
+        if o == at {
+            return options[(i + 1) % #options]
+        }
+    }
+    options[0]
+}
+
 class Functions < Screen {
     prof: Profile
     rows: Array[_]
     sort: String
+    desc?: Bool
     name-w: Int
+    most-calls: Int
 
     init(prof: Profile) {
         super('Functions')
         self.prof = prof
         sort = 'self'
+        desc? = true
         refresh()
     }
 
@@ -343,23 +448,26 @@ class Functions < Screen {
         let key = sort
         rows = prof.funcs
             .filter(f -> f[key] > 0 && matches?(f['name'], f['file'], filter))
-            .sort!(by=\_[key], desc=true)
+            .sort!(by=\_[key], desc=desc?)
         name-w = (rows[;200].map(\_['name'].width()).max() ?? 8).clamp(8, 48)
+        most-calls = max(prof.funcs.map(\_['calls']).max() ?? 1, 1)
     }
 
     count -> Int { #rows }
 
-    hint -> String { "s sort by {sort}" }
+    hint -> String { 's sort · S reverse · d disassembly' }
+
+    previews? -> Bool { true }
 
     header(w: Int) -> String {
         [
-            col('self', 6),
-            col('total', 6),
-            col('calls', 8),
-            col('alloc', 9),
-            'JIT'.fit(8),
-            'function'.fit(name-w),
-            'location'
+            sorted-col('self', 6, sort == 'self', desc?),
+            sorted-col('total', 6, sort == 'total', desc?),
+            sorted-col('calls', 8, sort == 'calls', desc?),
+            sorted-col('alloc', 9, sort == 'alloc_total', desc?),
+            dim('JIT'.fit(8)),
+            dim('function'.fit(name-w)),
+            dim('location')
         ].join(' ')
     }
 
@@ -369,12 +477,20 @@ class Functions < Screen {
         [
             prof.share(f['self']),
             prof.share(f['total']),
-            calls.fit(8, 1),
+            (f['calls'] > 0) ? hot(f['calls'] / float(most-calls), calls.fit(8, 1)) : ' ' * 8,
             prof.alloc-share(f['alloc_total']),
             jit-label(f['jit']),
             bold(f['name'].fit(name-w)),
             place(f['file'], f['line'])
         ].join(' ')
+    }
+
+    preview -> Spot | nil {
+        if #rows == 0 {
+            return nil
+        }
+        let f = rows[sel]
+        Spot(f['file'], prof.hottest(f), f)
     }
 
     open(app: App) {
@@ -385,14 +501,16 @@ class Functions < Screen {
     }
 
     key(app: App, k: String) -> Bool {
-        if k != 's' {
-            return false
-        }
-        sort = match sort {
-            'self'  => 'total',
-            'total' => 'calls',
-            'calls' => 'alloc_total',
-            _       => 'self'
+        match k {
+            's' => sort = cycle(['self', 'total', 'calls', 'alloc_total'], sort),
+            'S' => desc? = !desc?,
+            'd' => {
+                if #rows > 0 and let $r = prof.compiled-for(rows[sel]) {
+                    app.push(Disasm(prof, r))
+                }
+                return true
+            },
+            _   => return false
         }
         refresh()
         true
@@ -403,11 +521,13 @@ class Lines < Screen {
     prof: Profile
     rows: Array[_]
     sort: String
+    desc?: Bool
 
     init(prof: Profile, sort: String = 'self', title: String = 'Lines') {
         super(title)
         self.prof = prof
         self.sort = sort
+        desc? = true
         refresh()
     }
 
@@ -415,28 +535,46 @@ class Lines < Screen {
         let key = sort
         rows = prof.lines
             .filter(l -> l[key] > 0 && matches?(l['text'] ?? '', l['file'], filter))
-            .sort!(by=\_[key], desc=true)
+            .sort!(by=\_[key], desc=desc?)
     }
 
     count -> Int { #rows }
 
-    hint -> String { "s sort by {sort}" }
+    hint -> String { 's sort · S reverse' }
+
+    previews? -> Bool { true }
 
     header(w: Int) -> String {
-        [col('self', 6), col('total', 6), col('alloc', 9), 'location'.fit(28), 'source'].join(' ')
+        let alloc = (sort == 'retained') ? 'retained' : 'alloc'
+        [
+            sorted-col('self', 6, sort == 'self', desc?),
+            sorted-col('total', 6, sort == 'total', desc?),
+            sorted-col(alloc, 9, sort == 'alloc' || sort == 'retained', desc?),
+            dim('location'.fit(28)),
+            dim('source')
+        ].join(' ')
     }
 
     row(i: Int, w: Int) -> String {
         let l = rows[i]
         let src = prof.source(l['file'])
         let text = (src != nil) ? src.line(l['line']) : (l['text'] ?? '')
+        let bytes = (sort == 'retained') ? l['retained'] : l['alloc']
         [
             prof.share(l['self']),
             prof.share(l['total']),
-            prof.alloc-share(l['alloc']),
+            prof.alloc-share(bytes),
             place(l['file'], l['line']).fit(28),
             text.strip()
         ].join(' ')
+    }
+
+    preview -> Spot | nil {
+        if #rows == 0 {
+            return nil
+        }
+        let l = rows[sel]
+        Spot(l['file'], l['line'], prof.funcs[l['func']])
     }
 
     open(app: App) {
@@ -446,14 +584,10 @@ class Lines < Screen {
     }
 
     key(app: App, k: String) -> Bool {
-        if k != 's' {
-            return false
-        }
-        sort = match sort {
-            'self'  => 'total',
-            'total' => 'alloc',
-            'alloc' => 'retained',
-            _       => 'self'
+        match k {
+            's' => sort = cycle(['self', 'total', 'alloc', 'retained'], sort),
+            'S' => desc? = !desc?,
+            _   => return false
         }
         refresh()
         true
@@ -471,13 +605,17 @@ class Tree < Screen {
     root: TreeNode
     rebuilds: Int
     tree: CallTree
+    cursor: TreeNode | nil
+    poke: Function
 
-    init(prof: Profile, push: Function) {
+    init(prof: Profile, push: Function, poke: Function) {
         super('Call tree')
         self.prof = prof
+        self.poke = poke
         inverted? = false
         kind = 'time'
         rebuilds = 0
+        cursor = nil
         root = prof.tree()
         tree = CallTree(
             root: root,
@@ -489,6 +627,7 @@ class Tree < Screen {
             show-root?: false,
             cursor-bg: SELECTED,
             revision: 0,
+            on-cursor: node -> moved(node),
             on-key: (ev, node) -> match ev {
                 event.Key({key: 'ENTER', event: 1, *}) and node != nil => push(source(node)),
                 _                                                      => nil
@@ -496,18 +635,39 @@ class Tree < Screen {
         )
     }
 
-    hint -> String {
-        "i {inverted? ? 'callers' : 'callees'} · a {kind} · ←/→ fold · z zoom"
-    }
+    hint -> String { '←/→ fold · z zoom' }
+
+    previews? -> Bool { true }
+
+    tree-view -> TreeView | nil { tree }
 
     header(w: Int) -> String {
         let label = inverted? ? 'function ← callers' : 'function → callees'
-        [col('total', 6), col('self', 6), '  ', label].join(' ')
+        let left = [col('total', 6), col('self', 6), '  ', dim(label)].join(' ')
+        let modes = [
+            toggle('i', ['callees', 'callers'], inverted? ? 'callers' : 'callees'),
+            toggle('a', ['time', 'alloc'], kind)
+        ]
+        spread(left, modes.join('   '), w)
     }
 
     widget(h: Int) -> Component | nil {
         tree.height = h
         tree
+    }
+
+    moved(node: TreeNode | nil) {
+        cursor = node
+        poke()
+    }
+
+    preview -> Spot | nil {
+        let $node = cursor ?? root.sorted[0] or return nil
+        if node.func < 0 {
+            return nil
+        }
+        let f = prof.funcs[node.func]
+        Spot(f['file'], prof.hottest(f), f)
     }
 
     rebuild() {
@@ -516,6 +676,7 @@ class Tree < Screen {
         tree.root = root
         tree.expanded = hot-path(root)
         tree.revision = rebuilds
+        cursor = nil
     }
 
     kids(node: TreeNode) -> Array[TreeNode] {
@@ -566,6 +727,322 @@ class Tree < Screen {
     }
 }
 
+class FlameGraph < Component {
+    prof: Profile
+    root: TreeNode
+    zoom: TreeNode
+    cur: TreeNode
+    hover: TreeNode | nil
+    height: Int
+    query: String
+    by-name?: Bool
+    bytes?: Bool
+    on-open: Function
+    boxes: Array[(TreeNode, Int, Int, Int)]
+    top: Int
+
+    init(prof: Profile, root: TreeNode, on-open: Function) {
+        super()
+        self.prof = prof
+        self.on-open = on-open
+        height = 10
+        query = ''
+        by-name? = false
+        bytes? = false
+        boxes = []
+        top = 0
+        reset(root)
+    }
+
+    reset(root: TreeNode) {
+        self.root = root
+        zoom = root
+        cur = root
+        hover = nil
+        top = 0
+        invalidate!()
+    }
+
+    focusable? -> Bool { true }
+
+    handles-tab? -> Bool { true }
+
+    wants-hover? -> Bool { true }
+
+    name(node: TreeNode) -> String {
+        (node.func < 0) ? 'all' : prof.funcs[node.func]['name']
+    }
+
+    match?(node: TreeNode) -> Bool {
+        if node.func < 0 {
+            return false
+        }
+        let f = prof.funcs[node.func]
+        matches?(f['name'], f['file'], query)
+    }
+
+    depth(node: TreeNode) -> Int {
+        let d = 0
+        let at = node.up
+        while at != nil {
+            d += 1
+            at = at.up
+        }
+        d
+    }
+
+    layout(w: Int) {
+        boxes = []
+        let chain = []
+        let at = zoom.up
+        while at != nil {
+            chain.push(at)
+            at = at.up
+        }
+        for node; d in chain.reverse() {
+            boxes.push((node, d, 0, w))
+        }
+        let scale = w / float(max(zoom.total, 1))
+        fn place(node: TreeNode, d: Int, x: Float) {
+            let a = int(x + 0.5)
+            let b = int(x + node.total * scale + 0.5)
+            if b - a < 1 {
+                return
+            }
+            boxes.push((node, d, a, b))
+            let at = x
+            for k in node.sorted {
+                place(k, d + 1, at)
+                at += k.total * scale
+            }
+        }
+        place(zoom, #chain, 0.0)
+    }
+
+    color(node: TreeNode) -> String {
+        if by-name? {
+            return hsl-hex(*hash-hsl(name(node), h: (0.0, 0.13), s: (0.65, 0.95), l: (0.5, 0.65)))
+        }
+        heat(node.own / float(max(node.total, 1)))
+    }
+
+    cell(node: TreeNode, width: Int, below?: Bool) -> String {
+        let gap = (width >= 3) ? 1 : 0
+        let text = " {name(node)}".fit(width - gap)
+        let pad = ' ' * gap
+        let style = match () {
+            _ and node.path == cur.path  => '#000000 bg-#e8ecff b',
+            _ and below?                 => '#9a9a9a bg-#3a3d44',
+            _ and query && !match?(node) => '#7a7a7a bg-#2a2c31',
+            _ and query                  => '#000000 bg-#ff6fd8 b',
+            _                            => "#141414 bg-{color(node)}"
+        }
+        "{chalk"[{style}]{text}[/]"}{pad}"
+    }
+
+    info(w: Int) -> String {
+        let node = hover ?? cur
+        let share = (root.total > 0) ? node.total / float(root.total) : 0.0
+        let own = (root.total > 0) ? node.own / float(root.total) : 0.0
+        let parts = [bold(name(node))]
+        if node.func >= 0 {
+            let f = prof.funcs[node.func]
+            parts.push(place(f['file'], f['line']))
+        }
+        let amount = bytes? ? fmt-bytes(node.total) : prof.qty(node.total)
+        parts.push("total {hot(share, "{100 * share:.1f}%")} {dim(amount)}")
+        parts.push("self {hot(own, "{100 * own:.1f}%")}")
+        if query {
+            let hit = matched(root)
+            let p = hit / float(max(root.total, 1))
+            parts.push("matched {hot(p, "{100 * p:.1f}%")}")
+        }
+        parts.join(dim(' · ')).fit(w)
+    }
+
+    matched(node: TreeNode) -> Int {
+        if match?(node) {
+            return node.total
+        }
+        let n = 0
+        for k in node.kids.values() {
+            n += matched(k)
+        }
+        n
+    }
+
+    render() -> ink::Node {
+        let w = max(layout-max-w, 20)
+        let rows = max(height - 1, 1)
+        layout(w)
+        let d = depth(cur)
+        top = top.clamp(d - rows + 1, d).clamp(0, max(d, 0))
+        let lines = []
+        for r in top..top + rows {
+            let line = ''
+            let x = 0
+            for (node, bd, a, b) in boxes {
+                if bd != r {
+                    continue
+                }
+                line += ' ' * (a - x)
+                line += cell(node, b - a, node.path != zoom.path && depth(node) < depth(zoom))
+                x = b
+            }
+            lines.push(line + ' ' * max(w - x, 0))
+        }
+        lines.push(info(w))
+        Raw(lines, w)
+    }
+
+    at(x: Int, y: Int) -> TreeNode | nil {
+        let r = y + top
+        for (node, d, a, b) in boxes {
+            if d == r && x >= a && x < b {
+                return node
+            }
+        }
+        nil
+    }
+
+    row(node: TreeNode) -> Array[(TreeNode, Int, Int, Int)] {
+        let d = depth(node)
+        boxes.filter(\_.1 == d)
+    }
+
+    step(n: Int) {
+        let row = row(cur)
+        for bx; i in row {
+            if bx.0.path == cur.path {
+                cur = row[(i + n).clamp(0, #row - 1)].0
+                return
+            }
+        }
+    }
+
+    descend() {
+        for (node, d, a, b) in boxes {
+            if node.path == "{cur.path}/{node.func}" {
+                cur = node
+                return
+            }
+        }
+    }
+
+    zoom-in(node: TreeNode) {
+        zoom = node
+        cur = node
+    }
+
+    zoom-out() -> Bool {
+        let $up = zoom.up or return false
+        cur = zoom
+        zoom = up
+        true
+    }
+
+    on-key(k: String) -> Bool {
+        match k {
+            'LEFT' or 'h'           => step(-1),
+            'RIGHT' or 'l'          => step(1),
+            'UP' or 'k'             => cur = cur.up ?? cur,
+            'DOWN' or 'j'           => descend(),
+            'ENTER'                 => zoom-in(cur),
+            'BACKSPACE' or 'ESCAPE' => return zoom-out(),
+            'o' and cur.func >= 0   => on-open(cur),
+            _                       => return false
+        }
+        true
+    }
+
+    point(x: Int, y: Int) -> Bool {
+        hover = at(x - 1 - layout-x, y - 1 - layout-y)
+        true
+    }
+
+    click(x: Int, y: Int) {
+        let $node = at(x - 1 - layout-x, y - 1 - layout-y) or return
+        if node.path == cur.path {
+            zoom-in(node)
+        } else {
+            cur = node
+        }
+    }
+
+    on-event(ev) {
+        if !(ev :: event.MouseMove) {
+            hover = nil
+        }
+        let handled? = match ev {
+            event.Key({key: $k, event: (1 or 2), *}) => (k :: String) && on-key(k),
+            event.Text($t)                           => on-key(t),
+            event.MouseDown({button: 0, x, y, *})    => click(int(x), int(y)) ?? true,
+            event.MouseDown({button: 2, *})          => zoom-out(),
+            event.MouseMove({x, y, *})               => point(int(x), int(y)),
+            _                                        => false
+        }
+        if !handled? {
+            return Ignored
+        }
+        invalidate!()
+    }
+}
+
+class Flame < Screen {
+    prof: Profile
+    inverted?: Bool
+    kind: String
+    graph: FlameGraph
+
+    init(prof: Profile, push: Function) {
+        super('Flame graph')
+        self.prof = prof
+        inverted? = false
+        kind = 'time'
+        graph = FlameGraph(prof, prof.tree(), node -> do {
+            let f = prof.funcs[node.func]
+            push(SourceView(prof, f['file'], f['line'], f))
+        })
+    }
+
+    hint -> String { '⏎ zoom · ⌫ out · o source' }
+
+    header(w: Int) -> String {
+        let modes = [
+            toggle('i', ['callees', 'callers'], inverted? ? 'callers' : 'callees'),
+            toggle('a', ['time', 'alloc'], kind),
+            toggle('c', ['self share', 'function'], graph.by-name? ? 'function' : 'self share')
+        ]
+        let what = dim("width: {(kind == 'time') ? 'time' : 'bytes allocated'}")
+        spread(what, modes.join('   '), w)
+    }
+
+    widget(h: Int) -> Component | nil {
+        if graph.height != h || graph.query != filter {
+            graph.height = h
+            graph.query = filter
+            graph.invalidate!()
+        }
+        graph
+    }
+
+    key(app: App, k: String) -> Bool {
+        if k == 'c' {
+            graph.by-name? = !graph.by-name?
+            graph.invalidate!()
+            return true
+        }
+        match k {
+            'i' => inverted? = !inverted?,
+            'a' => kind = (kind == 'time') ? 'alloc' : 'time',
+            _   => return false
+        }
+        graph.bytes? = kind == 'alloc'
+        graph.reset(prof.tree(inverted?: inverted?, kind: kind))
+        true
+    }
+}
+
 class Natives < Screen {
     prof: Profile
     rows: Array[_]
@@ -579,7 +1056,7 @@ class Natives < Screen {
     count -> Int { #rows }
 
     header(w: Int) -> String {
-        [col('self', 6), col('time', 9), 'C function'].join(' ')
+        [col('self', 6), col('time', 9), dim('C function')].join(' ')
     }
 
     row(i: Int, w: Int) -> String {
@@ -664,18 +1141,21 @@ class Summary < Page {
         }
     }
 
-    memory(out: Array[String]) {
+    memory(out: Array[String], w: Int) {
         let d = prof.data
         let g = d['gc'] ?? %{'count': 0}
         if g['count'] > 0 {
             out.push('')
+            let wall = float(max(d['wall_ns'], 1))
+            let rss = float(max(d['max_rss'] ?? 0, 1))
             out.push([
-                "{bold('GC')}  {g['count']} collections",
-                "{fmt-ns(g['pause_ns'])} paused",
-                "longest {fmt-ns(g['max_ns'])}",
+                "{bold('GC')}  {g['count']} {(g['count'] == 1) ? 'collection' : 'collections'}",
+                "{hot(g['pause_ns'] / wall, fmt-ns(g['pause_ns']))} paused",
+                "longest {hot(g['max_ns'] / wall, fmt-ns(g['max_ns']))}",
                 "{fmt-bytes(g['freed'])} reclaimed",
-                "peak heap {fmt-bytes(g['peak'])}"
+                "peak heap {hot(g['peak'] / rss, fmt-bytes(g['peak']))}"
             ].join(' · '))
+            heap(out, w)
         }
         if prof.alloc-total > 0 {
             let sampled = "{fmt-bytes(prof.alloc-total)} sampled"
@@ -684,8 +1164,45 @@ class Summary < Page {
             out.push("{bold('Allocation')}  {sampled}, {every}")
             if d['retained'] > 0 {
                 let when = d['retained_exact'] ? 'after the last GC' : 'at exit (no GC ran)'
-                out.push("  {fmt-bytes(d['retained'])} retained {when}")
+                let rss = float(max(d['max_rss'] ?? 0, 1))
+                out.push("  {hot(d['retained'] / rss, fmt-bytes(d['retained']))} retained {when}")
             }
+        }
+    }
+
+    heap(out: Array[String], w: Int) {
+        let points: Array[Array[Int]] = prof.data['heap'] ?? []
+        let span = max(prof.data['timeline_ns'] ?? 0, points.map(\_[0]).max() ?? 0, 1)
+        if #points < 2 {
+            return
+        }
+        let n = max(min(w - 14, 120), 10) * 2
+        let bins = [-1 for ..n]
+        for [t, bytes] in points {
+            let i: Int = int(t * n / span).clamp(0, n - 1)
+            bins[i] = max(bins[i], bytes)
+        }
+        let series = []
+        let last = points[0][1]
+        for b in bins {
+            last = (b >= 0) ? b : last
+            series.push(float(last))
+        }
+        let plot = LinePlot(
+            data: series,
+            width: n / 2 + 12,
+            height: 5,
+            fill?: true,
+            kitty?: false,
+            color: '#5fafd7',
+            min-val: 0.0,
+            format: fmt-bytes,
+            x-lo: '0s',
+            x-hi: fmt-ns(span)
+        )
+        out.push("  {dim('Heap after each collection')}")
+        for line in plot.render().props['lines'] {
+            out.push("  {chalk.plain? ? line.comb(/\e\[[\d;]*m/) : line}")
         }
     }
 
@@ -695,11 +1212,16 @@ class Summary < Page {
             return
         }
         out.push('')
-        out.push("{bold('Imports')}  {dim('self time, excluding nested imports')}")
+        let wall = float(max(prof.data['wall_ns'], 1))
         let ms = mods.map(m -> (m, m['total_ns'] - m['child_ns'])).sort!(by=\_.1, desc=true)
+        let all = ms.map(\_.1).sum() ?? 0
+        let share = hot(all / wall, "{100 * all / wall:.1f}%")
+        let note = "{hot(all / wall, fmt-ns(all))} in all ({share} of the run)"
+        out.push("{bold('Imports')}  {note}, {dim('self time, excluding nested imports')}")
         for (m, own) in ms[;12] {
-            let detail = "{m['lines']} lines, compile+check {fmt-ns(m['compile_ns'])}"
-            out.push("  {fmt-ns(own).fit(9, 1)}  {m['name'].fit(20)} {dim(detail)}")
+            let compile = hot(m['compile_ns'] / wall, fmt-ns(m['compile_ns']))
+            let detail = "{dim("{m['lines']} lines, compile+check")} {compile}"
+            out.push("  {hot(own / wall, fmt-ns(own).fit(9, 1))}  {m['name'].fit(20)} {detail}")
         }
     }
 
@@ -725,101 +1247,70 @@ class Summary < Page {
         let out = ["{bold(d['target'])}  {dim(d['argv'].join(' '))}", facts.join(' · '), '']
         categories(out)
         timeline(out, w)
-        memory(out)
+        memory(out, w)
         imports(out)
         threads(out)
         text = out.map(\_.fit(w))
     }
 }
 
-class Jit < Page {
+fn pct(frac: Float) -> String {
+    hot(frac, "{100 * frac:5.1f}%")
+}
+
+fn bar(frac: Float, w: Int) -> String {
+    let n = frac * w
+    let full = int(n)
+    let rest = int((n - full) * 8)
+    let tail = (rest > 0 && full < w) ? BLOCKS[rest - 1] : ''
+    hot(frac, "{'█' * full}{tail}")
+}
+
+fn type-label(t: Array[_]) -> String {
+    (t[1] != '') ? "{t[0]}, {t[1]}" : t[0]
+}
+
+fn type-mix(types: Array[_], limit: Int = 3) -> String {
+    let all = float(max(types.map(\_[2]).sum() ?? 0, 1))
+    types
+        .sort(by=\_[2], desc=true)[;limit]
+        .map(t -> "{type-label(t)} {100 * t[2] / all:.0f}%")
+        .join(dim(' · '))
+}
+
+class JitOverview < Page {
     prof: Profile
     stats: _
 
     init(prof: Profile) {
-        super('JIT')
+        super('Overview')
         self.prof = prof
         stats = prof.data['jit_stats'] ?? %{}
     }
 
-    compiled(out: Array[String]) {
-        let fns = stats['compiled'] ?? []
-        if #fns == 0 {
-            return
-        }
-        let total-ns = max(stats['compile_ns'], 1)
-        let total-native = max(stats['native_bytes'], 1)
-        let ratio = (r: _) -> r['native'] / float(max(r['bc'], 1))
-        let lo = math.log(fns.map(ratio).min() ?? 1.0)
-        let hi = math.log(fns.map(ratio).max() ?? 1.0)
-        let spread = (r: _) -> (hi > lo) ? (math.log(ratio(r)) - lo) / (hi - lo) : 0.0
-        let facts = [
-            "{#fns} functions",
-            "{fmt-ns(stats['compile_ns'])} compiling",
-            "{fmt-bytes(stats['native_bytes'])} native code"
-        ]
-        out.push("{bold('Compiled functions')}  {dim(facts.join(' · '))}")
-        let head = [col('compile', 9), col('native', 10), col('bytecode', 10), col('ratio', 6)]
-        out.push(dim([*head, 'function'].join(' ')))
-        for r in fns[;40] {
-            let name = r['class'] ? "{r['class']}.{r['name']}" : r['name']
-            let tier = (r['tier'] == 2) ? dim(' tier2') : ''
-            out.push([
-                hot(r['ns'] / float(total-ns), fmt-ns(r['ns']).fit(9, 1)),
-                hot(r['native'] / float(total-native), fmt-bytes(r['native']).fit(10, 1)),
-                fmt-bytes(r['bc']).fit(10, 1),
-                hot(spread(r), "{ratio(r):5.1f}x"),
-                "{bold(name)}{tier}"
-            ].join(' '))
-        }
-        if #fns > 40 {
-            out.push(dim("{#fns - 40} more"))
-        }
-    }
-
-    bailouts(out: Array[String]) {
-        let declined = prof.funcs.filter(\_['decline']).sort!(by=\_['total'], desc=true)
-        let deopts = prof.funcs.filter(\_['deopts'] > 0).sort!(by=\_['deopts'], desc=true)
-        if #declined > 0 {
-            out.push('')
-            out.push(bold('Not compiled'))
-            for f in declined[;20] {
-                let at = (f['decline_line'] > 0) ? place(f['file'], f['decline_line']) : ''
-                out.push("  {prof.share(f['total'])}  {bold(f['name'])}  {f['decline']}  {at}")
-            }
-        }
-        if #deopts > 0 {
-            let most = deopts[0]['deopts']
-            out.push('')
-            out.push(bold('Deoptimizations'))
-            for f in deopts[;20] {
-                let n = hot(f['deopts'] / float(most), fmt-count(f['deopts']).fit(8, 1))
-                let at = (f['deopt_line'] > 0) ? place(f['file'], f['deopt_line']) : ''
-                out.push("  {n}  {bold(f['name'])}  {at}")
-            }
-        }
-    }
-
     paths(out: Array[String]) {
         let rows = stats['paths'] ?? []
-        out.push('')
         if #rows == 0 {
-            out.push("{bold('Fast and slow paths')}  {dim('not counted; record with --jit-stats')}")
+            out.push("{bold('Fast paths')}  {dim('not counted (recorded with --no-jit-stats)')}")
             return
         }
-        out.push(bold('Fast and slow paths'))
-        out.push(dim([col('', 18), col('fast', 12), col('slow', 12), col('fast %', 7)].join(' ')))
+        out.push(bold('Fast paths'))
+        let head = [col('', 36), col('inline hits', 12), col('misses', 12), col('miss rate', 10)]
+        out.push(head.join(' '))
         for r in rows {
-            let all = r['fast'] + r['slow']
-            let miss = r['slow'] / float(max(all, 1))
-            let fast = 100.0 * r['fast'] / max(all, 1)
-            out.push([
-                "  {r['op'].fit(16)}",
-                fmt-count(r['fast']).fit(12, 1),
-                hot(miss, fmt-count(r['slow']).fit(12, 1)),
-                hot(miss, "{fast:6.1f}%"),
-                hot(miss, '█' * int(fast / 5))
-            ].join(' '))
+            let miss = r['slow']
+            let line = if let $fast = r['fast'] {
+                let rate = miss / float(max(fast + miss, 1))
+                [
+                    fmt-count(fast).fit(12, 1),
+                    hot(rate, fmt-count(miss).fit(12, 1)),
+                    pct(rate).fit(10, 1),
+                    bar(rate, 20)
+                ]
+            } else {
+                [dim('not counted'.fit(12, 1)), fmt-count(miss).fit(12, 1), ' ' * 10]
+            }
+            out.push(["  {r['op'].fit(34)}", *line].join(' '))
         }
     }
 
@@ -828,49 +1319,734 @@ class Jit < Page {
         if #rows == 0 {
             return
         }
-        let most = rows.map(\_['sites']).max() ?? 1
+        let most = float(max(rows.map(\_['sites']).max() ?? 1, 1))
         out.push('')
         out.push(bold('Optimizations applied'))
-        out.push(dim([col('sites', 10), col('units', 10), 'plan'].join(' ')))
-        for r in rows.sort!(by=\_['sites'], desc=true) {
-            let sites = hot(r['sites'] / float(most), fmt-count(r['sites']).fit(10, 1))
+        out.push([col('sites', 10), col('units', 10), dim('optimization')].join(' '))
+        for r in rows.sort(by=\_['sites'], desc=true) {
+            let sites = hot(r['sites'] / most, fmt-count(r['sites']).fit(10, 1))
             out.push([sites, fmt-count(r['units']).fit(10, 1), r['name']].join(' '))
         }
     }
 
-    slow-sites(out: Array[String]) {
-        let rows = stats['slow_sites'] ?? []
-        if #rows == 0 {
-            return
-        }
-        let most = rows[0]['hits']
-        out.push('')
-        out.push(bold('Slow-path sites'))
-        for r in rows[;30] {
-            let seen = r['types'].map(\_.1).sum()
-            let types = r['types']
-                .map(t -> "{t.0} {100.0 * t.1 / max(seen, 1):.0f}%")
-                .join(', ')
-            out.push([
-                hot(r['hits'] / float(most), fmt-count(r['hits']).fit(10, 1)),
-                r['kind'].fit(18),
-                place(r['file'], r['line']),
-                dim(types)
-            ].join(' '))
-        }
-    }
-
     build(w: Int) {
+        let fns = stats['compiled'] ?? []
+        let wall = float(max(prof.data['wall_ns'], 1))
+        let deopts = prof.data['jit_deopts'] ?? []
+        let despec = prof.data['jit_despecialized'] ?? []
         let out = []
-        compiled(out)
-        bailouts(out)
+        if #fns > 0 {
+            let spent = stats['compile_ns']
+            let share = hot(spent / wall, "{100 * spent / wall:.1f}%")
+            let n = deopts.map(\_['n']).sum() ?? 0
+            out.push([
+                "{bold("{#fns}")} functions compiled",
+                "{hot(spent / wall, fmt-ns(spent))} compiling ({share} of the run)",
+                "{fmt-bytes(stats['native_bytes'])} native code"
+            ].join(dim(' · ')))
+            out.push([
+                "{bold("{#deopts}")} deopt sites, {fmt-count(n)} deopts",
+                "{bold("{#despec}")} recompiled without speculation",
+                "{bold("{#prof.funcs.filter(\_['decline'])}")} not compiled"
+            ].join(dim(' · ')))
+            out.push('')
+        }
         paths(out)
         plans(out)
-        slow-sites(out)
         if #out == 0 {
             out.push(dim('No JIT data in this profile.'))
         }
         text = out.map(\_.fit(w))
+    }
+}
+
+class JitMisses < Screen {
+    prof: Profile
+    all: Array[_]
+    rows: Array[_]
+    sort: String
+    desc?: Bool
+    most: Float
+
+    init(prof: Profile) {
+        super('Fast-path misses')
+        self.prof = prof
+        all = ((prof.data['jit_stats'] ?? %{})['sites'] ?? []).filter(\_['miss'] > 0)
+        most = float(max(all.map(\_['miss']).max() ?? 1, 1))
+        sort = 'miss'
+        desc? = true
+        refresh()
+    }
+
+    rate(r: _) -> Float {
+        r['inline'] ? r['miss'] / float(max(r['fast'] + r['miss'], 1)) : -1.0
+    }
+
+    refresh() {
+        let key = (sort == 'rate') ? rate : (r -> r[sort])
+        rows = all
+            .filter(r -> matches?(r['func'], r['file'], filter) || matches?(r['kind'], '', filter))
+            .sort!(by=key, desc=desc?)
+    }
+
+    count -> Int { #rows }
+
+    hint -> String { 's sort · S reverse' }
+
+    previews? -> Bool { true }
+
+    header(w: Int) -> String {
+        [
+            sorted-col('misses', 9, sort == 'miss', desc?),
+            sorted-col('rate', 7, sort == 'rate', desc?),
+            dim('kind'.fit(17)),
+            dim('location'.fit(26)),
+            dim('function'.fit(20)),
+            dim('operand types')
+        ].join(' ')
+    }
+
+    row(i: Int, w: Int) -> String {
+        let r = rows[i]
+        let rt = rate(r)
+        [
+            hot(r['miss'] / most, fmt-count(r['miss']).fit(9, 1)),
+            (rt >= 0) ? pct(rt).fit(7, 1) : dim('—'.fit(7, 1)),
+            r['kind'].fit(17),
+            "{place(r['file'], r['line'])}{dim(":{r['col']}")}".fit(26),
+            bold(r['func'].fit(20)),
+            dim(type-mix(r['types']))
+        ].join(' ')
+    }
+
+    preview -> Spot | nil {
+        if #rows == 0 {
+            return nil
+        }
+        let r = rows[sel]
+        let rt = rate(r)
+        let counts = if rt >= 0 {
+            [
+                "{fmt-count(r['fast'])} inline hits",
+                "{fmt-count(r['miss'])} misses",
+                "{100 * rt:.1f}% miss rate"
+            ].join(' · ')
+        } else {
+            "{fmt-count(r['miss'])} calls into the generic path"
+        }
+        let notes = ["{bold(r['kind'])} at column {r['col']}  {dim(counts)}"]
+        let all = float(max(r['types'].map(\_[2]).sum() ?? 0, 1))
+        for t in r['types'].sort(by=\_[2], desc=true)[;6] {
+            let frac = t[2] / all
+            notes.push("  {type-label(t).fit(18)} {pct(frac)} {bar(frac, 16)}")
+        }
+        Spot(r['file'], r['line'], prof.func-named(r['func'], r['file']), notes)
+    }
+
+    open(app: App) {
+        if #rows > 0 {
+            let r = rows[sel]
+            app.push(SourceView(prof, r['file'], r['line'], nil))
+        }
+    }
+
+    key(app: App, k: String) -> Bool {
+        match k {
+            's' => sort = cycle(['miss', 'rate', 'fast'], sort),
+            'S' => desc? = !desc?,
+            _   => return false
+        }
+        refresh()
+        true
+    }
+}
+
+class JitDeopts < Screen {
+    prof: Profile
+    all: Array[_]
+    rows: Array[_]
+    despec: Dict[String, _]
+    most: Float
+
+    init(prof: Profile) {
+        super('Deoptimizations')
+        self.prof = prof
+        all = (prof.data['jit_deopts'] ?? []).sort(by=\_['n'], desc=true)
+        most = float(max(all.map(\_['n']).max() ?? 1, 1))
+        despec = %{}
+        for d in prof.data['jit_despecialized'] ?? [] {
+            despec[d['func']] = d
+        }
+        refresh()
+    }
+
+    refresh() {
+        rows = all.filter(
+            d -> matches?(d['func'], d['file'], filter) || matches?(d['why'], '', filter)
+        )
+    }
+
+    count -> Int { #rows }
+
+    previews? -> Bool { true }
+
+    header(w: Int) -> String {
+        [
+            sorted-col('deopts', 8, true, true),
+            dim('reason'.fit(20)),
+            dim('location'.fit(26)),
+            dim('function'.fit(20)),
+            dim('details')
+        ].join(' ')
+    }
+
+    row(i: Int, w: Int) -> String {
+        let d = rows[i]
+        let notes = d['notes'].sort(by=\_[1], desc=true).map(\_[0])
+        let mark = despec[d['func']] ? chalk"[{ACCENT}]↺[/]" : ' '
+        [
+            hot(d['n'] / most, fmt-count(d['n']).fit(8, 1)),
+            d['why'].fit(20),
+            place(d['file'], d['line']).fit(26),
+            "{bold(d['func'].fit(18))} {mark}",
+            dim(d['guard'] || notes.join(' · '))
+        ].join(' ')
+    }
+
+    preview -> Spot | nil {
+        if #rows == 0 {
+            return nil
+        }
+        let d = rows[sel]
+        let wall = float(max(prof.data['wall_ns'], 1))
+        let when = if d['n'] > 1 {
+            "{fmt-ns(d['first'])} – {fmt-ns(d['last'])}"
+        } else {
+            "at {fmt-ns(d['first'])}"
+        }
+        let times = hot(d['n'] / most, "{fmt-count(d['n'])} deopts")
+        let notes = ["{bold(d['why'])}  {times} {dim(when)}"]
+        if let $guard = d['guard'] {
+            notes.push("  {guard}")
+        }
+        let total = float(max(d['notes'].map(\_[1]).sum() ?? 0, 1))
+        for [text, n] in d['notes'].sort(by=\_[1], desc=true) {
+            notes.push("  {dim(text.fit(28))} {fmt-count(n).fit(7, 1)} {bar(n / total, 12)}")
+        }
+        if let [shot, *_] = d['shots'] ?? [] {
+            let vars = shot['vars'].filter(\_[3] == 'local')[;8]
+            let nw = (vars.map(\_[0].width()).max() ?? 4).clamp(4, 12)
+            for [name, type, value, _] in vars {
+                notes.push("  {bold(name.fit(nw))} {chalk"[cyan]{type.fit(8)}[/]"} {value}")
+            }
+        }
+        if let $x = despec[d['func']] {
+            let at = hot(x['at'] / wall, fmt-ns(x['at']))
+            let mark = chalk"[{ACCENT}]↺[/]"
+            notes.push("{mark} recompiled without speculation at {at}, after {x['deopts']} deopts")
+        }
+        Spot(d['file'], d['line'], prof.func-named(d['func'], d['file']), notes)
+    }
+
+    hint -> String { '⏎ details' }
+
+    open(app: App) {
+        if #rows > 0 {
+            app.push(DeoptView(prof, rows[sel]))
+        }
+    }
+}
+
+class JitCompiled < Screen {
+    prof: Profile
+    all: Array[_]
+    rows: Array[_]
+    sort: String
+    desc?: Bool
+    total-ns: Float
+    total-native: Float
+    lo: Float
+    hi: Float
+
+    init(prof: Profile) {
+        super('Compiled')
+        self.prof = prof
+        let stats = prof.data['jit_stats'] ?? %{}
+        all = stats['compiled'] ?? []
+        for r in all {
+            r['label'] = r['class'] ? "{r['class']}.{r['name']}" : r['name']
+            r['ratio'] = r['native'] / float(max(r['bc'], 1))
+        }
+        total-ns = float(max(stats['compile_ns'] ?? 1, 1))
+        total-native = float(max(stats['native_bytes'] ?? 1, 1))
+        lo = math.log(all.map(\_['ratio']).min() ?? 1.0)
+        hi = math.log(all.map(\_['ratio']).max() ?? 1.0)
+        for r in all {
+            r['samples'] = r['samples'] ?? 0
+        }
+        sort = (all.map(\_['samples']).sum() ?? 0) > 0 ? 'samples' : 'ns'
+        desc? = true
+        refresh()
+    }
+
+    refresh() {
+        let key = sort
+        rows = all
+            .filter(r -> matches?(r['label'], r['file'], filter))
+            .sort!(by=\_[key], desc=desc?)
+    }
+
+    count -> Int { #rows }
+
+    hint -> String { 's sort · S reverse · ⏎ disassembly' }
+
+    previews? -> Bool { true }
+
+    header(w: Int) -> String {
+        [
+            sorted-col('self', 6, sort == 'samples', desc?),
+            sorted-col('compile', 9, sort == 'ns', desc?),
+            sorted-col('native', 10, sort == 'native', desc?),
+            sorted-col('bytecode', 10, sort == 'bc', desc?),
+            sorted-col('ratio', 7, sort == 'ratio', desc?),
+            dim('tier'),
+            dim('function')
+        ].join(' ')
+    }
+
+    row(i: Int, w: Int) -> String {
+        let r = rows[i]
+        let spread = (hi > lo) ? (math.log(r['ratio']) - lo) / (hi - lo) : 0.0
+        let n = float(max(prof.data['samples'], 1))
+        [
+            (r['samples'] > 0) ? hot(r['samples'] / n, "{100 * r['samples'] / n:5.1f}%") : ' ' * 6,
+            hot(r['ns'] / total-ns, fmt-ns(r['ns']).fit(9, 1)),
+            hot(r['native'] / total-native, fmt-bytes(r['native']).fit(10, 1)),
+            fmt-bytes(r['bc']).fit(10, 1),
+            hot(spread, "{r['ratio']:6.1f}x"),
+            dim("{r['tier']}".fit(4, 1)),
+            bold(r['label'])
+        ].join(' ')
+    }
+
+    preview -> Spot | nil {
+        if #rows == 0 {
+            return nil
+        }
+        let r = rows[sel]
+        let f = prof.func-named(r['label'], r['file'])
+        let sizes = "{fmt-bytes(r['bc'])} bytecode → {fmt-bytes(r['native'])} native"
+        let notes = ["tier {r['tier']} · {sizes}"]
+        if !r['code'] {
+            notes.push(dim('machine code not recorded'))
+        }
+        Spot(r['file'], f ? prof.hottest(f) : r['line'], f, notes)
+    }
+
+    open(app: App) {
+        if #rows > 0 {
+            let r = rows[sel]
+            if r['code'] {
+                app.push(Disasm(prof, r))
+            } else {
+                let f = prof.func-named(r['label'], r['file'])
+                app.push(SourceView(prof, r['file'], r['line'], f))
+            }
+        }
+    }
+
+    key(app: App, k: String) -> Bool {
+        match k {
+            's' => sort = cycle(['samples', 'ns', 'native', 'bc', 'ratio'], sort),
+            'S' => desc? = !desc?,
+            _   => return false
+        }
+        refresh()
+        true
+    }
+}
+
+class JitDeclined < Screen {
+    prof: Profile
+    rows: Array[_]
+
+    init(prof: Profile) {
+        super('Not compiled')
+        self.prof = prof
+        refresh()
+    }
+
+    refresh() {
+        rows = prof.funcs
+            .filter(f -> f['decline'] && matches?(f['name'], f['file'], filter))
+            .sort!(by=\_['total'], desc=true)
+    }
+
+    count -> Int { #rows }
+
+    previews? -> Bool { true }
+
+    header(w: Int) -> String {
+        [sorted-col('total', 6, true, true), dim('function'.fit(24)), dim('reason')].join(' ')
+    }
+
+    row(i: Int, w: Int) -> String {
+        let f = rows[i]
+        [prof.share(f['total']), bold(f['name'].fit(24)), f['decline']].join(' ')
+    }
+
+    preview -> Spot | nil {
+        if #rows == 0 {
+            return nil
+        }
+        let f = rows[sel]
+        let line = (f['decline_line'] > 0) ? f['decline_line'] : f['line']
+        let why = "Not compiled: {f['decline']}"
+        Spot(f['file'], line, f, [why])
+    }
+
+    open(app: App) {
+        if #rows > 0 {
+            let f = rows[sel]
+            app.push(SourceView(prof, f['file'], f['line'], f))
+        }
+    }
+}
+
+fn mnemonic(text: String) -> (String, String) {
+    let parts = text.split(' ', 1)
+    (parts[0], (#parts > 1) ? parts[1] : '')
+}
+
+fn floor-index(xs: Array[Int], x: Int) -> Int {
+    let lo = 0
+    let hi = #xs
+    while lo < hi {
+        let mid = (lo + hi) / 2
+        if xs[mid] <= x {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    max(lo - 1, 0)
+}
+
+fn branch?(op: String) -> Bool {
+    op.starts?('j') || op == 'call' || op.starts?('b') || op == 'ret'
+}
+
+class Disasm < Screen {
+    prof: Profile
+    rec: _
+    rows: Array[_]
+    samples: Int
+    most: Float
+    func: _
+
+    init(prof: Profile, rec: _) {
+        super("{rec['label']} (native)")
+        self.prof = prof
+        self.rec = rec
+        func = prof.func-named(rec['label'], rec['file'])
+        samples = rec['samples'] ?? 0
+        rows = []
+        let $hex = rec['code'] or return
+        let bytes = hex.unhex() ?? Blob()
+        let size: Int = rec['literal'] ?? #bytes
+        let base = int(rec['base'])
+        let syms = %{}
+        for [addr, name] in rec['syms'] ?? [] {
+            syms[int(addr)] = name
+        }
+        let insns = capstone.disassemble(bytes[;size])
+        let hits: Array[Int] = [0 for insns]
+        let starts = insns.map(\_.0)
+        for [pc, n] in rec['hits'] ?? [] {
+            hits[floor-index(starts, pc)] += n
+        }
+        most = float(max(hits.max() ?? 1, 1))
+        let sites = (rec['sites'] ?? []).sort(by=\_[0])
+        let si = 0
+        let line: Int = rec['line']
+        let last = -1
+        let block = 0
+        let best = 0
+        let best-hits = 0
+        for (off, text); i in insns {
+            while si < #sites && sites[si][0] <= off {
+                line = sites[si][1]
+                si += 1
+            }
+            if line != last {
+                block = #rows
+                rows.push(%{'kind': 'src', 'line': line, 'hits': 0})
+                last = line
+            }
+            rows[block]['hits'] += hits[i]
+            let (op, args) = mnemonic(text)
+            if hits[i] > best-hits {
+                best = #rows
+                best-hits = hits[i]
+            }
+            rows.push(%{
+                'kind': 'insn',
+                'off': off,
+                'op': op,
+                'args': args,
+                'hits': hits[i],
+                'line': line,
+                'note': annotate(op, args, off, base, syms)
+            })
+        }
+        if size < #bytes {
+            rows.push(%{'kind': 'data', 'off': size, 'line': line, 'hits': 0,
+                        'text': "literal pool · {fmt-bytes(#bytes - size)}"})
+        }
+        sel = best
+        top = max(sel - 8, 0)
+    }
+
+    annotate(op: String, args: String, off: Int, base: Int, syms: Dict[Int, String]) -> String {
+        let notes = []
+        for m in args.matches(/0x[0-9a-f]+/) {
+            let v = int(m)
+            if let $name = syms[v] ?? (branch?(op) ? syms[base + v] : nil) {
+                notes.push(name)
+            } else if branch?(op) && v < base {
+                notes.push((v > off) ? '↓' : '↑')
+            }
+        }
+        notes.join(' ')
+    }
+
+    count -> Int { #rows }
+
+    hint -> String { 'n/N next/previous hot instruction' }
+
+    previews? -> Bool { true }
+
+    header(w: Int) -> String {
+        let share = (prof.data['samples'] > 0) ? samples / float(prof.data['samples']) : 0.0
+        let info = [
+            "{fmt-count(samples)} samples ({100 * share:.1f}% of the run)",
+            "{fmt-bytes(rec['native'])} native",
+            "tier {rec['tier']}"
+        ].join(dim(' · '))
+        "{col('self', 6)} {col('offset', 6)}  {dim('instruction')}    {info}"
+    }
+
+    share(n: Int) -> String {
+        (n > 0 && samples > 0) ? hot(n / most, "{100.0 * n / samples:5.1f}%") : ' ' * 6
+    }
+
+    row(i: Int, w: Int) -> String {
+        let r = rows[i]
+        match r['kind'] {
+            'src' => {
+                let src = prof.source(rec['file'])
+                let text = (src != nil && r['line'] > 0) ? src.line(r['line']).strip() : ''
+                let num = "{chalk"[{ACCENT}]{r['line']}[/]"}"
+                let mark = if r['hits'] > 0 && samples > 0 {
+                    dim("{100.0 * r['hits'] / samples:5.1f}%")
+                } else {
+                    ' ' * 6
+                }
+                "{mark} {dim('──────')}  {num} {dim('│')} {text}"
+            },
+            'data' => "{' ' * 6} {dim("{r['off']:06x}")}  {dim(r['text'])}",
+            _ => {
+                let op = r['op']
+                let opc = match op {
+                    _ and op == 'call' || op.starts?('bl')   => "{chalk"[yellow]{op.fit(7)}[/]"}",
+                    _ and op == 'ret'                        => "{chalk"[magenta]{op.fit(7)}[/]"}",
+                    _ and op.starts?('j') || op.starts?('b') => "{chalk"[cyan]{op.fit(7)}[/]"}",
+                    _                                         => op.fit(7)
+                }
+                let note = r['note'] ? "  {dim("; {r['note']}")}" : ''
+                "{share(r['hits'])} {dim("{r['off']:06x}")}  {opc} {r['args']}{note}"
+            }
+        }
+    }
+
+    preview -> Spot | nil {
+        if #rows == 0 {
+            return nil
+        }
+        let r = rows[sel]
+        let line = (r['line'] > 0) ? r['line'] : rec['line']
+        Spot(rec['file'], line, func)
+    }
+
+    open(app: App) {
+        if #rows > 0 {
+            let line = (rows[sel]['line'] > 0) ? rows[sel]['line'] : rec['line']
+            app.push(SourceView(prof, rec['file'], line, func))
+        }
+    }
+
+    jump(dir: Int) {
+        let i = sel + dir
+        while i >= 0 && i < #rows {
+            if rows[i]['kind'] == 'insn' && rows[i]['hits'] > 0 {
+                sel = i
+                return
+            }
+            i += dir
+        }
+    }
+
+    key(app: App, k: String) -> Bool {
+        match k {
+            'n' => jump(1),
+            'N' => jump(-1),
+            _   => return false
+        }
+        true
+    }
+}
+
+class DeoptView < Screen {
+    prof: Profile
+    d: _
+    rows: Array[(String, Spot | nil)]
+
+    init(prof: Profile, d: _) {
+        super("{d['func']} deopt")
+        self.prof = prof
+        self.d = d
+        rows = []
+        let here = Spot(d['file'], d['line'], prof.func-named(d['func'], d['file']))
+        let when = if d['n'] > 1 {
+            "{fmt-ns(d['first'])} – {fmt-ns(d['last'])}"
+        } else {
+            "at {fmt-ns(d['first'])}"
+        }
+        rows.push(("{bold(d['why'])}  {fmt-count(d['n'])} deopts  {dim(when)}", here))
+        if let $guard = d['guard'] {
+            rows.push(('', nil))
+            rows.push(("{chalk"[b {ACCENT}]Assumption[/]"}", here))
+            for line in guard.wrap(72).lines() {
+                rows.push(("  {line}", here))
+            }
+        }
+        if #d['notes'] > 0 {
+            let notes = d['notes'].sort(by=\_[1], desc=true).map(n -> "{n[0]} ×{n[1]}")
+            rows.push(("  {dim(notes.join(' · '))}", here))
+        }
+        let shots = d['shots'] ?? []
+        for shot; k in shots {
+            rows.push(('', nil))
+            let times = (shot['count'] > 1) ? " · seen {shot['count']}×" : ''
+            let label = "{chalk"[b {ACCENT}]Snapshot {k + 1} of {#shots}[/]"}"
+            rows.push(("{label}{dim(" · at {fmt-ns(shot['t'])}{times}")}", nil))
+            rows.push((dim('  call stack'), nil))
+            for [func, file, line]; j in shot['stack'] {
+                let mark = (j == 0) ? "{chalk"[{ACCENT}]▶[/]"}" : ' '
+                let spot = Spot(file, line, prof.func-named(func, file))
+                rows.push(("  {mark} {bold(func.fit(28))} {place(file, line)}", spot))
+            }
+            let vars = shot['vars']
+            if #vars > 0 {
+                rows.push((dim('  values'), nil))
+                let nw = (vars.map(\_[0].width()).max() ?? 4).clamp(4, 16)
+                for [name, type, value, kind] in vars {
+                    let label = (kind == 'stack') ? dim(name.fit(nw)) : bold(name.fit(nw))
+                    rows.push(("    {label} {chalk"[cyan]{type.fit(10)}[/]"} {value}", here))
+                }
+            }
+        }
+        sel = 0
+    }
+
+    count -> Int { #rows }
+
+    previews? -> Bool { true }
+
+    hint -> String { '⏎ open frame' }
+
+    row(i: Int, w: Int) -> String { rows[i].0 }
+
+    preview -> Spot | nil {
+        if #rows == 0 {
+            return nil
+        }
+        rows[sel].1 ?? Spot(d['file'], d['line'], prof.func-named(d['func'], d['file']))
+    }
+
+    open(app: App) {
+        if let $spot = (#rows > 0) ? rows[sel].1 : nil {
+            app.push(SourceView(prof, spot.file, spot.line, spot.func))
+        }
+    }
+}
+
+class Jit < Screen {
+    views: Array[Screen]
+    at: Int
+
+    init(prof: Profile) {
+        super('JIT')
+        views = [
+            JitOverview(prof),
+            JitMisses(prof),
+            JitDeopts(prof),
+            JitCompiled(prof),
+            JitDeclined(prof)
+        ]
+        at = 0
+    }
+
+    cur -> Screen { views[at] }
+
+    strip -> String {
+        let labels = []
+        for v; i in views {
+            let n = (i > 0) ? " {v.count}" : ''
+            labels.push((i == at) ? "{chalk"[b {ACCENT}]{v.title}{n}[/]"}" : dim("{v.title}{n}"))
+        }
+        "{chalk"[cyan]←/→[/]"} {labels.join('   ')}"
+    }
+
+    count -> Int { cur.count }
+
+    hint -> String { cur.hint }
+
+    header(w: Int) -> String { cur.header(w) }
+
+    min-width -> Int { strip.width() }
+
+    row(i: Int, w: Int) -> String { cur.row(i, w) }
+
+    previews? -> Bool { cur.previews? }
+
+    preview -> Spot | nil { cur.preview }
+
+    refresh() {
+        for v in views {
+            v.filter = filter
+            v.refresh()
+            v.sel = 0
+            v.top = 0
+        }
+    }
+
+    move(n: Int) { cur.move(n) }
+
+    open(app: App) { cur.open(app) }
+
+    key(app: App, k: String) -> Bool {
+        match k {
+            'LEFT'  => at = (at + #views - 1) % #views,
+            'RIGHT' => at = (at + 1) % #views,
+            _       => return cur.key(app, k)
+        }
+        true
+    }
+
+    view(w: Int, h: Int) -> (Array[String], Int) {
+        let (rows, sel) = cur.view(w, h - 2)
+        ([strip.fit(w), '', *rows], (sel >= 0) ? sel + 2 : -1)
     }
 }
 
@@ -913,7 +2089,18 @@ class SourceView < Screen {
 
     header(w: Int) -> String {
         let alloc = (prof.alloc-total > 0) ? [col('alloc', 9)] : []
-        [col('self', 6), col('total', 6), *alloc, "{' ' * 7}{file}"].join(' ')
+        [col('self', 6), col('total', 6), *alloc, dim("{' ' * 7}{file}")].join(' ')
+    }
+
+    brief(i: Int, w: Int) -> String {
+        let n = i + 1
+        let l = prof.at(file, n)
+        let num = str(n).fit(5, 1)
+        [
+            l ? prof.share(l['self']) : ' ' * 6,
+            in-func?(n) ? num : dim(num),
+            "{dim('│')} {src.line(n)}"
+        ].join(' ').fit(w)
     }
 
     in-func?(n: Int) -> Bool {
@@ -976,7 +2163,7 @@ class Edges < Screen {
 
     count -> Int { #rows }
 
-    header(w: Int) -> String { [col('share', 6), ' ', 'function'].join(' ') }
+    header(w: Int) -> String { [col('share', 6), ' ', dim('function')].join(' ') }
 
     row(i: Int, w: Int) -> String {
         let (dir, f, weight) = rows[i]
@@ -1003,6 +2190,9 @@ pub class App < Component {
     stack: Array[Screen]
     editing?: Bool
     page: Int
+    previews: Dict[String, SourceView]
+    pane?: Bool
+    widths: Dict[String, Int]
 
     init(prof: Profile) {
         super()
@@ -1010,7 +2200,8 @@ pub class App < Component {
         tabs = [
             Functions(prof),
             Lines(prof),
-            Tree(prof, s -> push(s)),
+            Tree(prof, s -> push(s), () -> invalidate!()),
+            Flame(prof, s -> push(s)),
             Lines(prof, sort: 'alloc', title: 'Allocations'),
             Natives(prof),
             Jit(prof),
@@ -1020,6 +2211,9 @@ pub class App < Component {
         stack = []
         editing? = false
         page = 10
+        previews = %{}
+        pane? = true
+        widths = %{}
     }
 
     screen -> Screen { (#stack > 0) ? stack[-1] : tabs[tab] }
@@ -1062,41 +2256,109 @@ pub class App < Component {
         let filter = (editing? || s.filter) ? "/{s.filter}{editing? ? '▏' : ''}  " : ''
         let keys = [
             '↑↓ move',
-            '⏎ open',
+            *('⏎' in s.hint ? [] : ['⏎ open']),
             '⌫ back',
             'tab view',
             '/ filter',
+            *(s.previews? ? [pane? ? 'e hide preview' : 'e preview'] : []),
             *(s.hint ? [s.hint] : []),
             'q quit'
         ]
         "{filter}{dim(keys.join(' · '))}"
     }
 
+    pane(spot: Spot | nil, w: Int, h: Int) -> ink::Node {
+        let $spot = spot or return Raw([dim(' nothing selected')], w)
+        let key = "{spot.file}:{spot.func ? spot.func['id'] : -1}"
+        let view = previews[key] ?? SourceView(prof, spot.file, spot.line, spot.func)
+        previews[key] = view
+        let name = spot.func ? bold(spot.func['name']) : ''
+        let head = [" {name} {place(spot.file, spot.line)}".fit(w)]
+        for note in spot.notes {
+            for line in " {note}".wrap(w - 1, indent: '   ', first: '').lines() {
+                head.push(line.fit(w))
+            }
+        }
+        head.push(' ' * w)
+        let room = max(h - #head, 1)
+        let n = view.count
+        let at = (spot.line - 1).clamp(0, max(n - 1, 0))
+        let top = (at - room / 3).clamp(0, max(n - room, 0))
+        let before = [view.brief(i, w) for i in top..at]
+        let after = [view.brief(i, w) for i in at + 1..min(top + room, n)]
+        let pad = [' ' * w for ..max(room - #before - 1 - #after, 0)]
+        if prof.source(spot.file) == nil {
+            return Raw([*head, dim(' source not recorded').fit(w), *[' ' * w for ..room - 1]], w)
+        }
+        Box(
+            Raw([*head, *before], w),
+            Box(Raw([view.brief(at, w)], w), bg: SHADE),
+            Raw([*after, *pad], w),
+            direction: 'column'
+        )
+    }
+
+    body(s: Screen, w: Int, h: Int) -> ink::Node {
+        if let $widget = s.widget(h - 1) {
+            return Box(Raw([s.header(w).fit(w)], w), widget, direction: 'column', width: w)
+        }
+        let (rows, at) = s.view(w, h)
+        let pad = [' ' * w for ..max(h - #rows, 0)]
+        if at < 0 || at >= #rows {
+            return Raw([*rows, *pad], w)
+        }
+        Box(
+            Raw(rows[;at], w),
+            Box(Raw([rows[at]], w), bg: SELECTED),
+            Raw([*rows[at + 1;], *pad], w),
+            direction: 'column',
+            width: w
+        )
+    }
+
+    natural(s: Screen, h: Int) -> Int {
+        let head = s.header(4096)
+        let key = "{tab}/{#stack}/{s.title}/{s.filter}/{s.count}/{head}"
+        let w = widths[key] ?? do {
+            let most = max(head.width(), s.min-width)
+            for i in ..min(s.count, 300) {
+                most = max(most, s.row(i, 4096).width())
+            }
+            widths[key] = most
+        }
+        for i in s.top..min(s.top + h, s.count) {
+            w = max(w, s.row(i, 4096).width())
+        }
+        w
+    }
+
     render() -> ink::Node {
         let W = max(layout-max-w, 40)
         let H = max(layout-max-h, 8)
         let head = ["{bold('typrof')} {dim(prof.title)}".fit(W), tab-line.fit(W), crumbs.fit(W)]
-        page = max(H - 5, 1)
-        if let $w = screen.widget(H - 5) {
-            return Box(
-                Raw([*head, dim(screen.header(W)).fit(W)], W),
-                w,
-                Raw([status-line.fit(W)], W),
-                direction: 'column'
-            )
-        }
-        let (body, at) = screen.view(W, H - 4)
-        let pad = [' ' * W for ..max(H - 4 - #body, 0)]
-        let rows = if at >= 0 && at < #body {
-            [
-                Raw([*head, *body[;at]], W),
-                Box(Raw([body[at]], W), bg: SELECTED),
-                Raw([*body[at + 1;], *pad, status-line.fit(W)], W)
-            ]
+        let s = screen
+        let h = H - 4
+        page = max(h - 1, 1)
+        let split? = W >= 120 && s.previews? && pane?
+        let L = if !split? {
+            W
+        } else if s.tree-view != nil {
+            W - (W * 2 / 5).clamp(48, 100) - 1
         } else {
-            [Raw([*head, *body, *pad, status-line.fit(W)], W)]
+            (natural(s, h) + 4).clamp(40, W - max(48, W * 2 / 5) - 1)
         }
-        Box(*rows, direction: 'column')
+        let R = split? ? W - L - 1 : 0
+        if let $tree = s.tree-view {
+            tree.width = L
+        }
+        let main = body(s, L, h)
+        let middle = if split? {
+            let bar = [dim('│') for ..h]
+            Box(main, Raw(bar, 1), pane(s.preview, R, h), direction: 'row')
+        } else {
+            main
+        }
+        Box(Raw(head, W), middle, Raw([status-line.fit(W)], W), direction: 'column')
     }
 
     back() {
@@ -1133,8 +2395,12 @@ pub class App < Component {
             'k'       => s.move(-1),
             'g'       => s.move(-s.count),
             'G'       => s.move(s.count),
-            '/'       => editing? = true,
-            /^[1-7]$/ => switch(int(t) - 1),
+            '/'       => {
+                editing? = true
+                focus(self)
+            },
+            'e'       => pane? = !pane?,
+            /^[1-8]$/ => switch(int(t) - 1),
             _         => ()
         }
     }
@@ -1142,11 +2408,15 @@ pub class App < Component {
     on-edit-key(k: Int | String) {
         let s = screen
         match k {
-            'ENTER'     => editing? = false,
+            'ENTER'     => {
+                editing? = false
+                refocus()
+            },
             'ESCAPE'    => {
                 editing? = false
                 s.filter = ''
                 refilter(s)
+                refocus()
             },
             'BACKSPACE' => {
                 s.filter = s.filter[;-1]
@@ -1196,7 +2466,7 @@ pub class App < Component {
 }
 
 pub fn stdio(prof: Profile, w: Int = 120) {
-    for page in [Summary(prof), Jit(prof)] {
+    for page in [Summary(prof), JitOverview(prof)] {
         page.build(w)
         for line in page.text {
             print(line.comb(/ +$/))
@@ -1207,7 +2477,11 @@ pub fn stdio(prof: Profile, w: Int = 120) {
         Functions(prof),
         Lines(prof),
         Lines(prof, sort: 'alloc', title: 'Allocations'),
-        Natives(prof)
+        Natives(prof),
+        JitMisses(prof),
+        JitDeopts(prof),
+        JitCompiled(prof),
+        JitDeclined(prof)
     ]
     for s in sections {
         if s.count == 0 {
@@ -1215,7 +2489,7 @@ pub fn stdio(prof: Profile, w: Int = 120) {
         }
         print('')
         print(bold(s.title))
-        print(dim(s.header(w)))
+        print(s.header(w).fit(w).comb(/ +$/))
         for i in ..min(s.count, 50) {
             print(s.row(i, w).fit(w).comb(/ +$/))
         }

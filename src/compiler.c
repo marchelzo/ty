@@ -19879,10 +19879,15 @@ WriteSourceLine(
         SourceGutter const *gutter
 )
 {
-        char const *arrow = in_range ? ">" : " ";
+        bool        shaded = (gutter != NULL) && (gutter->shade != NULL) && ColorOutput;
+        char const *arrow  = (in_range && !shaded) ? ">" : " ";
 
         if (gutter != NULL) {
                 gutter->draw(gutter->ctx, out, line);
+        }
+
+        if (shaded) {
+                in_range = false;
         }
 
         if (span_start != NULL) {
@@ -20056,6 +20061,84 @@ WriteSourceWindow(
         SCRATCH_RESTORE();
 }
 
+static void
+ShadeLine(byte_vector *out, char const *s, usize n, char const *bg, int cols)
+{
+        char const *end = s + n;
+
+        dump(out, "%s", bg);
+
+        while (s < end) {
+                usize skip = 0;
+
+                if (end - s >= 4 && memcmp(s, "\x1b[0m", 4) == 0) {
+                        skip = 4;
+                } else if (end - s >= 3 && memcmp(s, "\x1b[m", 3) == 0) {
+                        skip = 3;
+                }
+
+                if (skip > 0) {
+                        dump(out, "%s%s", TERM(0), bg);
+                        s += skip;
+                } else {
+                        xvP(*out, *s++);
+                }
+        }
+
+        for (int w = term_width(end - n, n); w < cols; ++w) {
+                xvP(*out, ' ');
+        }
+
+        dump(out, "%s", TERM(0));
+}
+
+static char const *
+ModuleLineStart(Module const *mod, int line)
+{
+        char const *start = mod->source;
+
+        for (int i = 0; i < line; ++i) {
+                start = strchr(start, '\n');
+                if (start == NULL) {
+                        return NULL;
+                }
+                start += 1;
+        }
+
+        return start;
+}
+
+int
+ModuleSourceIndent(Module const *mod, int line0, int line1)
+{
+        int indent = -1;
+
+        if (mod == NULL || mod->source == NULL) {
+                return 0;
+        }
+
+        char const *start = ModuleLineStart(mod, line0);
+
+        for (int line = line0; start != NULL && line <= line1 && *start != '\0'; ++line) {
+                int n = 0;
+
+                while (start[n] == ' ' || start[n] == '\t') {
+                        n += 1;
+                }
+
+                if (start[n] != '\n' && start[n] != '\0' && (indent < 0 || n < indent)) {
+                        indent = n;
+                }
+
+                start = strchr(start, '\n');
+                if (start != NULL) {
+                        start += 1;
+                }
+        }
+
+        return (indent < 0) ? 0 : indent;
+}
+
 void
 WriteModuleSourceLines(
         Ty *ty,
@@ -20085,15 +20168,13 @@ WriteModuleSourceLines(
                 view.tokens = &NoTokens;
         }
 
-        char const *start = mod->source;
+        char const *start = ModuleLineStart(mod, line0);
 
-        for (int line = 0; line < line0; ++line) {
-                start = strchr(start, '\n');
-                if (start == NULL) {
-                        return;
-                }
-                start += 1;
+        if (start == NULL) {
+                return;
         }
+
+        int strip = (gutter != NULL) ? gutter->strip : 0;
 
         byte_vector tmp = {0};
 
@@ -20106,14 +20187,24 @@ WriteModuleSourceLines(
                         line_end = start + strlen(start);
                 }
 
+                bool marked = (gutter != NULL)
+                           && (gutter->marked != NULL)
+                           && gutter->marked(gutter->ctx, line);
+
+                char const *text = start;
+
+                while (text < line_end && text - start < strip && (*text == ' ' || *text == '\t')) {
+                        text += 1;
+                }
+
                 WriteSourceLine(
                         ty,
                         &tmp,
                         &view,
-                        start,
+                        text,
                         line_end,
                         line,
-                        (gutter != NULL) && (gutter->marked != NULL) && gutter->marked(gutter->ctx, line),
+                        marked,
                         NULL,
                         NULL,
                         NULL,
@@ -20121,7 +20212,14 @@ WriteModuleSourceLines(
                 );
 
                 vN(tmp) = term_fit_cols(vv(tmp), vN(tmp), cols);
-                dump(out, "%s%s\n", vv(tmp), TERM(0));
+
+                if (marked && ColorOutput && gutter->shade != NULL) {
+                        ShadeLine(out, vv(tmp), vN(tmp), gutter->shade, cols);
+                        dump(out, "\n");
+                } else {
+                        dump(out, "%s%s\n", vv(tmp), TERM(0));
+                }
+
                 v0(tmp);
 
                 start = (*line_end == '\n') ? line_end + 1 : line_end;

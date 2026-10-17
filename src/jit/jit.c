@@ -277,7 +277,7 @@ jit_frame_ip(Frame const *frame, char const *ip)
 
 #ifdef TY_PROFILER
 JitStats jit_stats;
-bool JitStatsOn;
+bool JitStatsOn = true;
 
 typedef enum {
         JIT_OPT_INLINE_GETTER,
@@ -361,49 +361,6 @@ static char const *jit_opt_names[JIT_OPT_COUNT] = {
 static _Atomic u64 jit_opt_sites[JIT_OPT_COUNT];
 static _Atomic u64 jit_opt_units[JIT_OPT_COUNT];
 
-enum {
-        SLOW_MEMBER_ACCESS,
-        SLOW_MEMBER_SET,
-        SLOW_SELF_MEMBER_READ,
-        SLOW_SELF_MEMBER_WRITE,
-        SLOW_CALL_METHOD,
-        SLOW_JEQ,
-        SLOW_JCMP,
-        SLOW_ARITH,
-        SLOW_KIND_COUNT
-};
-
-static char const *slow_kind_names[] = {
-        [SLOW_MEMBER_ACCESS]     = "member_access",
-        [SLOW_MEMBER_SET]        = "member_set",
-        [SLOW_SELF_MEMBER_READ]  = "self_member_read",
-        [SLOW_SELF_MEMBER_WRITE] = "self_member_write",
-        [SLOW_CALL_METHOD]       = "call_method",
-        [SLOW_JEQ]               = "eq/ne",
-        [SLOW_JCMP]              = "cmp",
-        [SLOW_ARITH]             = "arith",
-};
-
-#define SLOW_TABLE_SIZE  4096
-#define SLOW_MAX_TYPES   16
-#define SLOW_PROBE_LIMIT 16
-
-_Static_assert(SLOW_TABLE_SIZE > 0 && (SLOW_TABLE_SIZE & (SLOW_TABLE_SIZE - 1)) == 0,
-               "SLOW_TABLE_SIZE must be a power of two");
-
-typedef struct {
-        char const *ip;
-        u8 kind;
-        _Atomic u64 count;
-        struct {
-                i32 class_id;
-                _Atomic u64 count;
-        } types[SLOW_MAX_TYPES];
-} SlowPathSite;
-
-static SlowPathSite slow_table[SLOW_TABLE_SIZE];
-
-
 static vec(JitCompileRecord) jit_compile_log = {0};
 static u64 jit_total_compile_ns = 0;
 static usize jit_total_native_bytes = 0;
@@ -417,6 +374,229 @@ jit_log_compile(JitCompileRecord rec)
         jit_total_native_bytes += rec.native_size;
         xvP(jit_compile_log, rec);
         TySpinLockUnlock(&JitLogMutex);
+}
+
+static vec(JitImageRec *) Images;
+
+JitImageRec *
+jit_image_record(LirCode const *code, char const *bc, char const *name)
+{
+        JitImageRec *img = calloc(1, sizeof *img);
+
+        if (img == NULL || code->body == NULL) {
+                free(img);
+                return NULL;
+        }
+
+        img->lo      = (uptr)code->body;
+        img->size    = (u32)code->size;
+        img->literal = (code->literal_pool != NULL)
+                     ? (u32)((char const *)code->literal_pool - (char const *)code->body)
+                     : (u32)code->size;
+        img->bytes   = malloc(code->size);
+        img->sites   = malloc((code->nsites + 1) * sizeof *img->sites);
+        img->nsites  = code->nsites;
+        img->bc      = bc;
+        img->name    = name;
+
+        memcpy(img->bytes, code->body, code->size);
+        memcpy(img->sites, code->sites, code->nsites * sizeof *img->sites);
+
+        TySpinLockLock(&JitLogMutex);
+
+        usize lo = 0;
+        usize hi = vN(Images);
+
+        while (lo < hi) {
+                usize mid = lo + (hi - lo) / 2;
+                if (v__(Images, mid)->lo < img->lo) {
+                        lo = mid + 1;
+                } else {
+                        hi = mid;
+                }
+        }
+
+        while (lo > 0 && v__(Images, lo - 1)->lo + v__(Images, lo - 1)->size > img->lo) {
+                lo -= 1;
+                v__(Images, lo) = NULL;
+        }
+
+        usize end = lo;
+
+        while (
+                (end < vN(Images))
+             && (v__(Images, end) == NULL || v__(Images, end)->lo < img->lo + img->size)
+        ) {
+                end += 1;
+        }
+
+        if (end > lo) {
+                memmove(v_(Images, lo), v_(Images, end), (vN(Images) - end) * sizeof (JitImageRec *));
+                vN(Images) -= end - lo;
+        }
+
+        vec_nogc_insert(Images, img, lo);
+
+        TySpinLockUnlock(&JitLogMutex);
+
+        return img;
+}
+
+void
+jit_code_hit(uptr rip)
+{
+        TySpinLockLock(&JitLogMutex);
+
+        usize lo = 0;
+        usize hi = vN(Images);
+
+        while (lo < hi) {
+                usize mid = lo + (hi - lo) / 2;
+                if (v__(Images, mid)->lo <= rip) {
+                        lo = mid + 1;
+                } else {
+                        hi = mid;
+                }
+        }
+
+        if (lo > 0) {
+                JitImageRec *img = v__(Images, lo - 1);
+                if (rip < img->lo + img->size) {
+                        if (img->hits == NULL) {
+                                img->hits = calloc(img->size, sizeof *img->hits);
+                        }
+                        if (img->hits != NULL) {
+                                img->hits[rip - img->lo] += 1;
+                        }
+                        img->samples += 1;
+                }
+        }
+
+        TySpinLockUnlock(&JitLogMutex);
+}
+
+static char const *
+image_name(uptr addr)
+{
+        usize lo = 0;
+        usize hi = vN(Images);
+
+        while (lo < hi) {
+                usize mid = lo + (hi - lo) / 2;
+                if (v__(Images, mid)->lo <= addr) {
+                        lo = mid + 1;
+                } else {
+                        hi = mid;
+                }
+        }
+
+        if (lo > 0 && addr == v__(Images, lo - 1)->lo) {
+                return v__(Images, lo - 1)->name;
+        }
+
+        return NULL;
+}
+
+static void
+json_str(FILE *f, char const *s);
+
+static void
+image_sym(FILE *f, uptr *seen, int *nseen, uptr addr)
+{
+        if (*nseen >= 512) {
+                return;
+        }
+
+        for (int i = 0; i < *nseen; ++i) {
+                if (seen[i] == addr) {
+                        return;
+                }
+        }
+
+        char const *name = image_name(addr);
+
+        if (name == NULL) {
+                name = prof_symbolize(addr);
+        }
+
+        if (name == NULL) {
+                return;
+        }
+
+        fprintf(f, "%s[\"0x%llx\",", (*nseen > 0) ? "," : "", (unsigned long long)addr);
+        json_str(f, name);
+        fputc(']', f);
+
+        seen[(*nseen)++] = addr;
+}
+
+static void
+image_json(Ty *ty, FILE *f, JitImageRec const *img, bool code)
+{
+        fprintf(f, ",\"samples\":%llu", (unsigned long long)img->samples);
+
+        if (!code) {
+                return;
+        }
+
+        fprintf(f, ",\"base\":\"0x%llx\",\"literal\":%u,\"code\":\"", (unsigned long long)img->lo, img->literal);
+
+        for (u32 i = 0; i < img->size; ++i) {
+                fprintf(f, "%02x", img->bytes[i]);
+        }
+
+        fputs("\",\"sites\":[", f);
+
+        int last = -1;
+        bool first = true;
+
+        for (u32 i = 0; i < img->nsites; ++i) {
+                if (img->sites[i].tag == 0) {
+                        continue;
+                }
+                Expr const *e = compiler_find_expr(ty, img->bc + img->sites[i].tag);
+                int line = (e != NULL) ? (int)e->start.line + 1 : 0;
+                if (line == 0 || line == last) {
+                        continue;
+                }
+                fprintf(f, "%s[%u,%d]", first ? "" : ",", img->sites[i].pc, line);
+                last = line;
+                first = false;
+        }
+
+        fputs("],\"hits\":[", f);
+
+        first = true;
+
+        for (u32 i = 0; img->hits != NULL && i < img->size; ++i) {
+                if (img->hits[i] != 0) {
+                        fprintf(f, "%s[%u,%u]", first ? "" : ",", i, img->hits[i]);
+                        first = false;
+                }
+        }
+
+        fputs("],\"syms\":[", f);
+
+        uptr seen[512];
+        int nseen = 0;
+
+        for (u32 i = 0; i + 8 <= img->literal; ++i) {
+                u64 imm;
+                memcpy(&imm, img->bytes + i, sizeof imm);
+                if (imm > 0x10000 && (imm >> 48) == 0) {
+                        image_sym(f, seen, &nseen, (uptr)imm);
+                }
+        }
+
+        for (u32 i = 0; i + 5 <= img->literal; ++i) {
+                if (img->bytes[i] == 0xE8 || img->bytes[i] == 0xE9) {
+                        i32 rel;
+                        memcpy(&rel, img->bytes + i + 1, sizeof rel);
+                        image_sym(f, seen, &nseen, img->lo + i + 5 + (iptr)rel);
+                }
+        }
+
+        fputc(']', f);
 }
 
 JitCompileRecord const *
@@ -434,76 +614,274 @@ jit_compile_cmp(void const *a, void const *b)
         return (tb > ta) - (tb < ta);
 }
 
-static inline void
-slow_record_type(SlowPathSite *s, int class_id)
+static char const *site_kind_names[] = {
+        [SITE_MEMBER]     = "member access",
+        [SITE_MEMBER_SET] = "member assignment",
+        [SITE_METHOD]     = "method call",
+        [SITE_ARITH]      = "arithmetic",
+        [SITE_COMPARE]    = "comparison",
+};
+
+#define SITE_TABLE_SIZE 8192
+#define SITE_TYPES      8
+#define SITE_PROBES     32
+
+typedef struct {
+        char const *ip;
+        u8          kind;
+        bool        inl;
+        u64        *fast;
+        _Atomic u64 miss;
+        struct {
+                i32         a;
+                i32         b;
+                _Atomic u64 n;
+        } types[SITE_TYPES];
+} JitSite;
+
+typedef struct {
+        void const *ra;
+        u8          kind;
+        JitSite    *site;
+} JitSiteRef;
+
+static JitSite    site_table[SITE_TABLE_SIZE];
+static u64        site_fast[SITE_TABLE_SIZE];
+static int        site_nfast;
+
+static JitSite *
+site_lookup(Ty *ty, void const *ra, int kind);
+static JitSiteRef site_refs[SITE_TABLE_SIZE];
+static TySpinLock SiteLock;
+
+inline static void
+bump(_Atomic u64 *n)
 {
-
-        int empty = -1;
-        u64 min_count = UINT64_MAX;
-        int min_idx = 0;
-
-        for (int i = 0; i < SLOW_MAX_TYPES; ++i) {
-                u64 c = s->types[i].count;
-                if (c == 0) {
-                        if (empty < 0) empty = i;
-                        continue;
-                }
-                if (s->types[i].class_id == class_id) {
-                        ++s->types[i].count;
-                        return;
-                }
-                if (c < min_count) {
-                        min_count = c;
-                        min_idx = i;
-                }
-        }
-
-        if (empty >= 0) {
-                s->types[empty].class_id = class_id;
-                s->types[empty].count = 1;
-        } else {
-
-                s->types[min_idx].class_id = class_id;
-                s->types[min_idx].count = 1;
-        }
+        atomic_store_explicit(n, atomic_load_explicit(n, memory_order_relaxed) + 1, memory_order_relaxed);
 }
 
-static void
-slow_record(Ty *ty, char const *ip, int kind, Value const *v1, Value const *v2)
+inline static uptr
+site_hash(void const *p, int kind)
 {
-        (void)ty;
-        uptr h = (((uptr)ip >> 2) * 2654435761u) & (SLOW_TABLE_SIZE - 1);
+        return (((uptr)p >> 1) * 2654435761u + (uptr)kind * 40503u) & (SITE_TABLE_SIZE - 1);
+}
 
-        for (int i = 0; i < SLOW_PROBE_LIMIT; ++i) {
-                SlowPathSite *s = &slow_table[(h + i) & (SLOW_TABLE_SIZE - 1)];
+static JitSite *
+site_at(char const *ip, int kind)
+{
+        uptr     h    = site_hash(ip, kind);
+        JitSite *site = NULL;
 
-                if (s->ip == ip && s->kind == (u8)kind) {
-                        ++s->count;
-                        if (v1) slow_record_type(s, ClassOf(v1));
-                        if (v2) slow_record_type(s, ClassOf(v2));
-                        return;
+        TySpinLockLock(&SiteLock);
+
+        for (int i = 0; i < SITE_PROBES; ++i) {
+                JitSite *s = &site_table[(h + i) & (SITE_TABLE_SIZE - 1)];
+
+                if (s->ip == ip && s->kind == kind) {
+                        site = s;
+                        break;
                 }
 
                 if (s->ip == NULL) {
-                        s->ip = ip;
-                        s->kind = (u8)kind;
-                        s->count = 1;
-                        if (v1) slow_record_type(s, ClassOf(v1));
-                        if (v2) slow_record_type(s, ClassOf(v2));
-                        return;
+                        s->kind = kind;
+                        s->ip   = ip;
+                        site    = s;
+                        break;
                 }
         }
 
+        TySpinLockUnlock(&SiteLock);
+
+        return site;
 }
 
-static _Thread_local char const *jit_stats_call_ip;
+static _Thread_local struct {
+        void const *ra;
+        u8          kind;
+        JitSite    *site;
+} site_cache[64];
+
+static JitSite *
+site_of(Ty *ty, void const *ra, int kind)
+{
+        uptr c = (((uptr)ra >> 2) ^ (uptr)kind) & 63;
+
+        if (site_cache[c].ra == ra && site_cache[c].kind == kind) {
+                return site_cache[c].site;
+        }
+
+        JitSite *site = site_lookup(ty, ra, kind);
+
+        site_cache[c].ra   = ra;
+        site_cache[c].kind = kind;
+        site_cache[c].site = site;
+
+        return site;
+}
+
+static JitSite *
+site_lookup(Ty *ty, void const *ra, int kind)
+{
+        uptr h = site_hash(ra, kind);
+
+        for (int i = 0; i < SITE_PROBES; ++i) {
+                JitSiteRef *r   = &site_refs[(h + i) & (SITE_TABLE_SIZE - 1)];
+                void const *key = __atomic_load_n(&r->ra, __ATOMIC_ACQUIRE);
+
+                if (key == NULL) {
+                        break;
+                }
+
+                if (key == ra && r->kind == kind) {
+                        return r->site;
+                }
+        }
+
+        char const *ip   = prof_jit_ip(ty, ra);
+        JitSite    *site = (ip != NULL) ? site_at(ip, kind) : NULL;
+
+        if (site == NULL) {
+                return NULL;
+        }
+
+        TySpinLockLock(&SiteLock);
+
+        for (int i = 0; i < SITE_PROBES; ++i) {
+                JitSiteRef *r = &site_refs[(h + i) & (SITE_TABLE_SIZE - 1)];
+
+                if (r->ra == ra && r->kind == kind) {
+                        break;
+                }
+
+                if (r->ra == NULL) {
+                        r->kind = kind;
+                        r->site = site;
+                        __atomic_store_n(&r->ra, ra, __ATOMIC_RELEASE);
+                        break;
+                }
+        }
+
+        TySpinLockUnlock(&SiteLock);
+
+        return site;
+}
+
+static void
+site_type(JitSite *s, i32 a, i32 b)
+{
+        int slot = 0;
+        u64 low  = UINT64_MAX;
+
+        for (int i = 0; i < SITE_TYPES; ++i) {
+                u64 n = s->types[i].n;
+
+                if (n > 0 && s->types[i].a == a && s->types[i].b == b) {
+                        bump(&s->types[i].n);
+                        return;
+                }
+
+                if (n < low) {
+                        low  = n;
+                        slot = i;
+                }
+        }
+
+        s->types[slot].a = a;
+        s->types[slot].b = b;
+        s->types[slot].n = 1;
+}
+
+void
+jit_site_miss(Ty *ty, void const *ra, int kind, Value const *a, Value const *b)
+{
+        if (!JitStatsOn) {
+                return;
+        }
+
+        JitSite *s = site_of(ty, ra, kind);
+
+        if (s == NULL) {
+                return;
+        }
+
+        u64 n = s->miss;
+
+        atomic_store_explicit(&s->miss, n + 1, memory_order_relaxed);
+
+        if (n < 64 || (n & 7) == 0) {
+                site_type(s, (a != NULL) ? ClassOf(a) : -1, (b != NULL) ? ClassOf(b) : -1);
+        }
+}
+
+static vec(char *) Guards;
+static TySpinLock GuardLock;
+
+u32
+jit_guard(char const *text)
+{
+        TySpinLockLock(&GuardLock);
+        xvP(Guards, strdup(text));
+        u32 id = vN(Guards);
+        TySpinLockUnlock(&GuardLock);
+
+        return id;
+}
+
+char const *
+jit_guard_text(u32 id)
+{
+        char const *text = NULL;
+
+        TySpinLockLock(&GuardLock);
+        if (id > 0 && id <= vN(Guards)) {
+                text = v__(Guards, id - 1);
+        }
+        TySpinLockUnlock(&GuardLock);
+
+        return text;
+}
+
+u64 *
+jit_site_fast_base(void)
+{
+        return site_fast;
+}
+
+u64 *
+jit_site_fast(char const *ip, int kind)
+{
+        JitSite *s = site_at(ip, kind);
+
+        if (s == NULL) {
+                return NULL;
+        }
+
+        TySpinLockLock(&SiteLock);
+
+        if (s->fast == NULL && site_nfast < SITE_TABLE_SIZE) {
+                s->fast = &site_fast[site_nfast++];
+        }
+
+        s->inl = (s->fast != NULL);
+
+        TySpinLockUnlock(&SiteLock);
+
+        return s->fast;
+}
 
 static int
-slow_cmp(void const *a, void const *b)
+site_cmp(void const *a, void const *b)
 {
-        u64 ca = ((SlowPathSite const *)a)->count;
-        u64 cb = ((SlowPathSite const *)b)->count;
-        return (cb > ca) - (cb < ca);
+        JitSite const *x = a;
+        JitSite const *y = b;
+        u64 mx = x->miss;
+        u64 my = y->miss;
+        if (mx != my) {
+                return (my > mx) - (my < mx);
+        }
+        u64 fx = (x->fast != NULL) ? *x->fast : 0;
+        u64 fy = (y->fast != NULL) ? *y->fast : 0;
+        return (fy > fx) - (fy < fx);
 }
 
 static void
@@ -526,7 +904,7 @@ json_str(FILE *f, char const *s)
 }
 
 static bool
-json_path(FILE *f, bool first, char const *op, u64 fast, u64 slow)
+json_path(FILE *f, bool first, char const *op, u64 fast, u64 slow, bool counted)
 {
         if (fast + slow == 0) {
                 return first;
@@ -534,7 +912,14 @@ json_path(FILE *f, bool first, char const *op, u64 fast, u64 slow)
 
         fprintf(f, "%s{\"op\":", first ? "" : ",");
         json_str(f, op);
-        fprintf(f, ",\"fast\":%llu,\"slow\":%llu}", (unsigned long long)fast, (unsigned long long)slow);
+
+        if (counted) {
+                fprintf(f, ",\"fast\":%llu", (unsigned long long)fast);
+        } else {
+                fputs(",\"fast\":null", f);
+        }
+
+        fprintf(f, ",\"slow\":%llu}", (unsigned long long)slow);
 
         return false;
 }
@@ -553,20 +938,34 @@ jit_stats_json(Ty *ty, FILE *f)
                 jit_total_native_bytes
         );
 
+        usize budget = 1u << 20;
+
         for (usize i = 0; i < vN(jit_compile_log); ++i) {
                 JitCompileRecord const *r = v_(jit_compile_log, i);
                 fprintf(f, "%s{\"class\":", (i > 0) ? "," : "");
                 json_str(f, r->class_name);
                 fputs(",\"name\":", f);
                 json_str(f, r->name);
+                Expr const *e = r->expr;
+                fputs(",\"file\":", f);
+                json_str(f, (e != NULL && e->mod != NULL && e->mod->path != NULL) ? e->mod->path : "");
+                fprintf(f, ",\"line\":%d", (e != NULL) ? (int)e->start.line + 1 : 0);
                 fprintf(
                         f,
-                        ",\"bc\":%d,\"native\":%zu,\"ns\":%llu,\"tier\":%d}",
+                        ",\"bc\":%d,\"native\":%zu,\"ns\":%llu,\"tier\":%d",
                         r->bc_code_size,
                         r->native_size,
                         (unsigned long long)r->compile_time_ns,
                         r->compact ? 1 : 2
                 );
+                if (r->image != NULL) {
+                        bool code = (r->image->samples > 0) || (r->image->size <= budget);
+                        if (code) {
+                                budget -= min(budget, (usize)r->image->size);
+                        }
+                        image_json(ty, f, r->image, code);
+                }
+                fputc('}', f);
         }
 
         TySpinLockUnlock(&JitLogMutex);
@@ -590,70 +989,76 @@ jit_stats_json(Ty *ty, FILE *f)
                 first = false;
         }
 
-        u64 slow[SLOW_KIND_COUNT] = {0};
+        u64 fast[SITE_KIND_COUNT] = {0};
+        u64 miss[SITE_KIND_COUNT] = {0};
+        u64 slow[SITE_KIND_COUNT] = {0};
+        JitSite *sorted = malloc(SITE_TABLE_SIZE * sizeof *sorted);
+        int n = 0;
 
-        for (int i = 0; i < SLOW_TABLE_SIZE; ++i) {
-                if (slow_table[i].ip != NULL && slow_table[i].count > 0) {
-                        slow[slow_table[i].kind] += slow_table[i].count;
+        for (int i = 0; i < SITE_TABLE_SIZE; ++i) {
+                JitSite const *site = &site_table[i];
+                u64 hits = (site->fast != NULL) ? *site->fast : 0;
+                if (site->ip != NULL && (hits + site->miss) > 0) {
+                        fast[site->kind] += hits;
+                        if (site->inl) {
+                                miss[site->kind] += site->miss;
+                        } else {
+                                slow[site->kind] += site->miss;
+                        }
+                        sorted[n++] = *site;
                 }
         }
-
-        slow[SLOW_MEMBER_ACCESS] += jit_stats.member_slow;
-        slow[SLOW_MEMBER_SET]    += jit_stats.member_set_slow;
-        slow[SLOW_CALL_METHOD]   += jit_stats.call_method_slow;
-        slow[SLOW_ARITH]         += jit_stats.arith_slow;
 
         JitStats const *st = &jit_stats;
 
         fputs("],\"paths\":[", f);
 
         first = true;
-        first = json_path(f, first, "member access",      st->member_fast,            slow[SLOW_MEMBER_ACCESS]);
-        first = json_path(f, first, "member set",         st->member_set_fast,        slow[SLOW_MEMBER_SET]);
-        first = json_path(f, first, "self member read",   st->self_member_read_fast,  slow[SLOW_SELF_MEMBER_READ]);
-        first = json_path(f, first, "self member write",  st->self_member_write_fast, slow[SLOW_SELF_MEMBER_WRITE]);
-        first = json_path(f, first, "method call",        st->call_method_baked + st->call_method_builtin, slow[SLOW_CALL_METHOD]);
-        first = json_path(f, first, "eq/ne",              st->jeq_int + st->jeq_str + st->jeq_nil, slow[SLOW_JEQ]);
-        first = json_path(f, first, "compare",            st->jcmp_int,               slow[SLOW_JCMP]);
-        first = json_path(f, first, "arithmetic",         st->arith_int + st->arith_float, slow[SLOW_ARITH]);
-        first = json_path(f, first, "direct sin/cos",     st->direct_math_fast,       st->direct_math_slow);
-        first = json_path(f, first, "direct max",         st->direct_max_fast,        st->direct_max_slow);
-        first = json_path(f, first, "simple constructor", st->simple_ctor_fast,       st->simple_ctor_slow);
-        first = json_path(f, first, "linked global call", st->linked_global_fast,     st->linked_global_slow);
-        first = json_path(f, first, "global JIT call",    st->global_jit_call_fast,   st->global_jit_call_slow);
-        first = json_path(f, first, "self call",          st->self_call_fast,         st->self_call_slow);
-        first = json_path(f, first, "self tail loop",     st->self_tail_fast,         st->self_tail_slow);
-        first = json_path(f, first, "numeric pow",        st->numeric_pow_fast,       st->numeric_pow_slow);
+        first = json_path(f, first, "member access",     fast[SITE_MEMBER],     miss[SITE_MEMBER],     true);
+        first = json_path(f, first, "member access (no inline path)", 0,       slow[SITE_MEMBER],     false);
+        first = json_path(f, first, "member assignment", fast[SITE_MEMBER_SET], miss[SITE_MEMBER_SET], true);
+        first = json_path(f, first, "member assignment (no inline path)", 0,   slow[SITE_MEMBER_SET], false);
+        first = json_path(f, first, "method call",       st->call_method_baked + st->call_method_builtin, slow[SITE_METHOD] + miss[SITE_METHOD], true);
+        first = json_path(f, first, "arithmetic",        0,                     slow[SITE_ARITH] + miss[SITE_ARITH],     false);
+        first = json_path(f, first, "comparison",        0,                     slow[SITE_COMPARE] + miss[SITE_COMPARE], false);
 
-        SlowPathSite *sorted = malloc(SLOW_TABLE_SIZE * sizeof *sorted);
-        int n = 0;
+        qsort(sorted, n, sizeof sorted[0], site_cmp);
 
-        for (int i = 0; i < SLOW_TABLE_SIZE; ++i) {
-                if (slow_table[i].ip != NULL && slow_table[i].count > 0) {
-                        sorted[n++] = slow_table[i];
-                }
-        }
+        fputs("],\"sites\":[", f);
 
-        qsort(sorted, n, sizeof sorted[0], slow_cmp);
-
-        fputs("],\"slow_sites\":[", f);
-
-        for (int i = 0; i < n && i < 50; ++i) {
-                SlowPathSite const *site = &sorted[i];
+        for (int i = 0; i < n && i < 500; ++i) {
+                JitSite const *site = &sorted[i];
                 Expr const *e = compiler_find_expr(ty, site->ip);
+                Expr const *fe = compiler_find_func(ty, site->ip);
                 fprintf(f, "%s{\"kind\":", (i > 0) ? "," : "");
-                json_str(f, slow_kind_names[site->kind]);
-                fprintf(f, ",\"hits\":%llu,\"file\":", (unsigned long long)site->count);
+                json_str(f, site_kind_names[site->kind]);
+                fprintf(
+                        f,
+                        ",\"fast\":%llu,\"miss\":%llu,\"inline\":%s,\"file\":",
+                        (unsigned long long)((site->fast != NULL) ? *site->fast : 0),
+                        (unsigned long long)site->miss,
+                        site->inl ? "true" : "false"
+                );
                 json_str(f, (e != NULL && e->mod != NULL) ? e->mod->path : "");
-                fprintf(f, ",\"line\":%d,\"types\":[", (e != NULL) ? (int)e->start.line + 1 : 0);
+                fprintf(f, ",\"line\":%d,\"col\":%d,\"func\":", (e != NULL) ? (int)e->start.line + 1 : 0, (e != NULL) ? (int)e->start.col + 1 : 0);
+                if (fe != NULL && fe->name != NULL && fe->class != NULL) {
+                        char name[256];
+                        snprintf(name, sizeof name, "%s.%s", fe->class->name, fe->name);
+                        json_str(f, name);
+                } else {
+                        json_str(f, (fe != NULL && fe->name != NULL) ? fe->name : "");
+                }
+                fputs(",\"types\":[", f);
                 bool tfirst = true;
-                for (int j = 0; j < SLOW_MAX_TYPES; ++j) {
-                        if (site->types[j].count == 0) {
+                for (int j = 0; j < SITE_TYPES; ++j) {
+                        if (site->types[j].n == 0) {
                                 continue;
                         }
-                        fprintf(f, "%s[", tfirst ? "" : ",");
-                        json_str(f, class_name(ty, site->types[j].class_id));
-                        fprintf(f, ",%llu]", (unsigned long long)site->types[j].count);
+                        fputs(tfirst ? "[" : ",[", f);
+                        json_str(f, (site->types[j].a >= 0) ? class_name(ty, site->types[j].a) : "");
+                        fputc(',', f);
+                        json_str(f, (site->types[j].b >= 0) ? class_name(ty, site->types[j].b) : "");
+                        fprintf(f, ",%llu]", (unsigned long long)site->types[j].n);
                         tfirst = false;
                 }
                 fputs("]}", f);
@@ -667,31 +1072,31 @@ jit_stats_json(Ty *ty, FILE *f)
 void
 jit_slow_sites(JitSlowSiteFn *fn, void *ctx)
 {
-        for (int i = 0; i < SLOW_TABLE_SIZE; ++i) {
-                SlowPathSite const *s = &slow_table[i];
-                i32 classes[SLOW_MAX_TYPES];
-                u64 counts[SLOW_MAX_TYPES];
+        for (int i = 0; i < SITE_TABLE_SIZE; ++i) {
+                JitSite const *s = &site_table[i];
+                i32 classes[SITE_TYPES];
+                u64 counts[SITE_TYPES];
                 int n = 0;
 
-                if (s->ip == NULL || s->count == 0) {
+                if (s->ip == NULL || s->miss == 0) {
                         continue;
                 }
 
-                for (int j = 0; j < SLOW_MAX_TYPES; ++j) {
-                        if (s->types[j].count > 0) {
-                                classes[n] = s->types[j].class_id;
-                                counts[n] = s->types[j].count;
+                for (int j = 0; j < SITE_TYPES; ++j) {
+                        if (s->types[j].n > 0 && s->types[j].a >= 0) {
+                                classes[n] = s->types[j].a;
+                                counts[n] = s->types[j].n;
                                 n += 1;
                         }
                 }
 
-                fn(ctx, s->ip, slow_kind_names[s->kind], s->count, classes, counts, n);
+                fn(ctx, s->ip, site_kind_names[s->kind], s->miss, classes, counts, n);
         }
 }
 
-#define SLOW_RECORD(...) slow_record(__VA_ARGS__)
+#define SITE_MISS(kind, a, b) jit_site_miss(ty, __builtin_return_address(0), (kind), (a), (b))
 #else
-#define SLOW_RECORD(...) ((void)0)
+#define SITE_MISS(kind, a, b) ((void)0)
 #endif
 
 #define TOP_OF_STACK(v) (vN(STACK) = ((v) - vv(STACK)) + 1)
@@ -705,6 +1110,7 @@ jit_rt_add(Ty *ty, Value *result, Value *a, Value *b)
         }
 
         STAT(arith_slow);
+        SITE_MISS(SITE_ARITH, a, b);
 
         ptrdiff_t idx = result - vv(STACK);
         vN(STACK) = idx + 2;
@@ -722,6 +1128,7 @@ jit_rt_sub(Ty *ty, Value *result, Value *a, Value *b)
         }
 
         STAT(arith_slow);
+        SITE_MISS(SITE_ARITH, a, b);
 
         ptrdiff_t idx = result - vv(STACK);
         vN(STACK) = idx + 2;
@@ -739,6 +1146,7 @@ jit_rt_mul(Ty *ty, Value *result, Value *a, Value *b)
         }
 
         STAT(arith_slow);
+        SITE_MISS(SITE_ARITH, a, b);
 
         ptrdiff_t idx = result - vv(STACK);
         vN(STACK) = idx + 2;
@@ -757,6 +1165,7 @@ jit_rt_div(Ty *ty, Value *result, Value *a, Value *b)
         }
 
         STAT(arith_slow);
+        SITE_MISS(SITE_ARITH, a, b);
 
         ptrdiff_t idx = result - vv(STACK);
         vN(STACK) = idx + 2;
@@ -775,6 +1184,7 @@ jit_rt_mod(Ty *ty, Value *result, Value *a, Value *b)
         }
 
         STAT(arith_slow);
+        SITE_MISS(SITE_ARITH, a, b);
 
         ptrdiff_t idx = result - vv(STACK);
         vN(STACK) = idx + 2;
@@ -809,6 +1219,8 @@ jit_rt_eq(Ty *ty, Value *result, Value *a, Value *b)
                 return;
         }
 
+        SITE_MISS(SITE_COMPARE, a, b);
+
         ptrdiff_t idx = result - vv(STACK);
         vN(STACK) = idx + 2;
 
@@ -823,6 +1235,8 @@ jit_rt_ne(Ty *ty, Value *result, Value *a, Value *b)
                 *result = BOOLEAN(a->type != b->type);
                 return;
         }
+
+        SITE_MISS(SITE_COMPARE, a, b);
 
         ptrdiff_t idx = result - vv(STACK);
         vN(STACK) = idx + 2;
@@ -839,6 +1253,8 @@ jit_rt_lt(Ty *ty, Value *result, Value *a, Value *b)
                 return;
         }
 
+        SITE_MISS(SITE_COMPARE, a, b);
+
         ptrdiff_t idx = result - vv(STACK);
         vN(STACK) = idx + 2;
 
@@ -852,6 +1268,8 @@ jit_rt_le(Ty *ty, Value *result, Value *a, Value *b)
                 *result = BOOLEAN(a->z <= b->z);
                 return;
         }
+
+        SITE_MISS(SITE_COMPARE, a, b);
 
         ptrdiff_t idx = result - vv(STACK);
         vN(STACK) = idx + 2;
@@ -867,6 +1285,8 @@ jit_rt_gt(Ty *ty, Value *result, Value *a, Value *b)
                 return;
         }
 
+        SITE_MISS(SITE_COMPARE, a, b);
+
         ptrdiff_t idx = result - vv(STACK);
         vN(STACK) = idx + 2;
 
@@ -880,6 +1300,8 @@ jit_rt_ge(Ty *ty, Value *result, Value *a, Value *b)
                 *result = BOOLEAN(a->z >= b->z);
                 return;
         }
+
+        SITE_MISS(SITE_COMPARE, a, b);
 
         ptrdiff_t idx = result - vv(STACK);
         vN(STACK) = idx + 2;
@@ -928,6 +1350,8 @@ jit_rt_member(Ty *ty, Value *result, Value *obj, int member_id)
                 obj = vm_get_self(ty);
                 v_L(STACK) = *obj;
         }
+
+        SITE_MISS(SITE_MEMBER, obj, NULL);
 
         if (obj->type == VALUE_OBJECT) {
                 Class *cls = class_get(ty, obj->class);
@@ -1665,7 +2089,7 @@ jit_rt_call_builtin_method(Ty *ty, Value *result, Value *self,
                 gX();
         } else {
                 STAT(call_method_slow);
-                SLOW_RECORD(ty, jit_stats_call_ip, SLOW_CALL_METHOD, &_self, NULL);
+                SITE_MISS(SITE_METHOD, &_self, NULL);
                 jit_rt_call_method(ty, result, &_self, member_id, argc);
         }
 }
@@ -1758,7 +2182,10 @@ find_type_hint(TypeHintVector const *hints, iptr off)
                 isize m = (lo + hi) / 2;
                 TypeHint *hint = v_(*hints, m);
                 if (hint->pc == off) {
-                        return hint->type;
+                        while (m + 1 < vN(*hints) && v_(*hints, m + 1)->pc == off) {
+                                m += 1;
+                        }
+                        return v_(*hints, m)->type;
                 } else if (hint->pc < off) {
                         lo = m + 1;
                 } else {

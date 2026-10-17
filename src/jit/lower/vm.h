@@ -42,6 +42,7 @@ misc(BcLir *c, BcLirNode const *node, char const *ip)
         switch (node->op) {
         case INSTR_TRAP_TY:
                 flush_active(c);
+                deopt_why(c, JIT_WHY_TRAP, 0);
                 leave(c, JIT_PACK(JIT_DEOPT, ip - c->code));
                 return;
 

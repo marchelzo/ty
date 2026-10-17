@@ -91,6 +91,15 @@ jit_despecialize(Ty *ty, Value const *f);
 
 enum { JIT_DEOPT_LIMIT = 16 };
 
+enum {
+        JIT_WHY_UNKNOWN,
+        JIT_WHY_LOOP_ENTRY,
+        JIT_WHY_LOOP_TYPE,
+        JIT_WHY_NUMERIC,
+        JIT_WHY_POLL,
+        JIT_WHY_TRAP
+};
+
 
 inline static uptr
 jit_budget(Value const *f)

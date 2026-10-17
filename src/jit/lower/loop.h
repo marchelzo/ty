@@ -970,10 +970,57 @@ loop_leave(BcLir *c, i32 off)
         }
 }
 
+static u64
+pack_slots(BcLir const *c, i32 const *slots, i32 n)
+{
+        u64 packed = 0;
+
+        for (i32 i = 0; i < n && i < 4; ++i) {
+                u64 e = (u64)(slots[i] + 1) & 0x7FFF;
+
+                if (lreal(c, slots[i])) {
+                        e |= 0x8000;
+                }
+
+                packed |= e << (16 * i);
+        }
+
+        return packed;
+}
+
+#ifdef TY_PROFILER
+static void
+loop_guard(BcLir *c, BcLoop const *loop, char const *what)
+{
+        char buf[384];
+        int n = 0;
+
+        for (i32 k = 0; k < loop->nowned && n < (int)sizeof buf - 64; ++k) {
+                n += snprintf(
+                        buf + n,
+                        sizeof buf - n,
+                        "%s`%s`: %s",
+                        (k > 0) ? ", " : "",
+                        slot_label(c, loop->owned[k]),
+                        lreal(c, loop->owned[k]) ? "Float" : "Int"
+                );
+        }
+
+        if (loop->narrays > 0 && n < (int)sizeof buf - 64) {
+                n += snprintf(buf + n, sizeof buf - n, "%s%d packed array view(s)", (n > 0) ? ", " : "", loop->narrays);
+        }
+
+        guard_note(c, "%s (unboxed: %s)", what, (n > 0) ? buf : "nothing");
+}
+#else
+#define loop_guard(...) ((void)0)
+#endif
+
 static void
 loop_osr(BcLir *c, i32 off, i32 sp)
 {
-        LirLabel fail = LIR_NONE;
+        LirLabel fail  = LIR_NONE;
+        u64      slots = 0;
 
         for (i32 i = 0; i < c->nloops; ++i) {
                 BcLoop const *loop = &c->loops[i];
@@ -983,7 +1030,9 @@ loop_osr(BcLir *c, i32 off, i32 sp)
                 }
 
                 if (fail == LIR_NONE) {
-                        fail = newlabel(c);
+                        fail  = newlabel(c);
+                        slots = pack_slots(c, loop->owned, loop->nowned);
+                        loop_guard(c, loop, "entering the compiled loop requires its locals to have their loop types");
                 }
 
                 for (i32 k = 0; k < loop->narrays; ++k) {
@@ -1020,6 +1069,7 @@ loop_osr(BcLir *c, i32 off, i32 sp)
         jump(c, go);
         bind(c, fail);
         count_at(c, sp);
+        deopt_why(c, JIT_WHY_LOOP_ENTRY, slots);
         bail(c, off);
         bind(c, go);
 }
@@ -1033,6 +1083,8 @@ loop_stubs(BcLir *c)
                 if (promoted(loop)) {
                         bind(c, loop->deopt);
                         count_at(c, loop->sp);
+                        loop_guard(c, loop, "a local the loop keeps unboxed changed type");
+                        deopt_why(c, JIT_WHY_LOOP_TYPE, pack_slots(c, loop->owned, loop->nowned));
                         bail(c, loop->head);
                 }
         }
@@ -1133,7 +1185,11 @@ flush_active(BcLir *c)
                 BcLoop const *loop = &c->loops[c->active[i]];
 
                 if (lazy_loop(loop)) {
+#ifdef TY_PROFILER
+                        flush_loop(c, loop, 0xFF);
+#else
                         flush_loop(c, loop, loop->escaping | live_at(loop, c->at));
+#endif
                         flush_pair(c, loop);
                 }
         }
@@ -1241,6 +1297,7 @@ local_stubs(BcLir *c, i32 index)
                         c->stubbed[off] = true;
                         bind(c, node->deopt);
                         flush_around(c, off);
+                        deopt_why(c, JIT_WHY_POLL, 0);
                         leave(c, JIT_PACK(JIT_DEOPT, off));
                         tierup_stub(c, off);
                 }
@@ -1298,6 +1355,7 @@ lnum(BcLir *c, i32 i, bool real)
 
         Spot s = spot(c, i);
 
+        guard_note(c, "assumed %s is %s inside the compiled loop", operand_label(c, i), NUM_LABEL(real));
         assume(c, s, numtag(real));
 
         return unbox(c, s, real);
@@ -1327,6 +1385,13 @@ store_top(BcLir *c, i32 slot, bool real)
         }
 
         if (!accepts(top, real, true)) {
+                guard_note(
+                        c,
+                        "`%s` is kept unboxed as %s in this loop, but the value assigned here is %s",
+                        slot_label(c, slot),
+                        NUM_LABEL(real),
+                        kind_label(top->kind)
+                );
                 vs_deopt(c);
                 return;
         }
@@ -1358,6 +1423,13 @@ static bool
 loop_mutate(BcLir *c, i32 slot, u8 op, bool real)
 {
         if (!accepts(&c->vs[c->sp - 1], real, false)) {
+                guard_note(
+                        c,
+                        "`%s` is kept unboxed as %s in this loop, but it is updated with %s",
+                        slot_label(c, slot),
+                        NUM_LABEL(real),
+                        kind_label(c->vs[c->sp - 1].kind)
+                );
                 vs_deopt(c);
                 return true;
         }
@@ -1381,6 +1453,7 @@ loop_target(BcLir *c, BcLirNode const *node, i32 slot, bool real)
         BcLirNode const *next = next_of(c, node);
 
         if (!ok) {
+                guard_note(c, "`%s` is kept unboxed as %s in this loop, but this assignment can't stay unboxed", slot_label(c, slot), NUM_LABEL(real));
                 vs_deopt(c);
         }
 

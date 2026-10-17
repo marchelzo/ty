@@ -11,6 +11,7 @@ TY_USDT_PROBES
 #include <math.h>
 #include <pthread.h>
 #include <signal.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -283,12 +284,41 @@ typedef struct {
         char const *code;
 } JitDecline;
 
+#define DEOPT_NOTES  6
+#define DEOPT_SHOTS  6
+#define SHOT_FRAMES 24
+
+typedef struct {
+        u64 t;
+        u64 hash;
+        u64 count;
+        u32 nframes;
+        u64 ips[SHOT_FRAMES];
+        char *vars;
+} DeoptShot;
+
 typedef struct {
         Expr const *expr;
         char const *code;
         i32 off;
+        i32 why;
+        u32 guard;
         u64 n;
+        u64 first;
+        u64 last;
+        struct {
+                char text[96];
+                u64  n;
+        } notes[DEOPT_NOTES];
+        u32 nshots;
+        DeoptShot shots[DEOPT_SHOTS];
 } DeoptSite;
+
+typedef struct {
+        Expr const *expr;
+        u64 at;
+        u32 deopts;
+} Despec;
 
 _Thread_local u8 volatile ProfState;
 _Thread_local u64 ProfPending;
@@ -378,6 +408,7 @@ static struct {
 static TySpinLock  JitLock;
 static vec(JitDecline) Declines;
 static vec(DeoptSite)   Deopts;
+static vec(Despec)      Despecs;
 
 static char const *ProfTarget;
 static bool Attached;
@@ -531,8 +562,7 @@ prof_usage(FILE *out)
                 "    --alloc=SIZE       Record an allocation stack once per SIZE bytes allocated\n"
                 "                       (default: 512K)\n"
                 "    --no-alloc         Don't sample allocations\n"
-                "    --jit-stats        Count fast and slow paths in JIT-compiled code. Compiled code\n"
-                "                       runs slower with the counters in place\n"
+                "    --no-jit-stats     Don't count fast and slow paths in JIT-compiled code\n"
                 "    --follow-children  Also profile child processes started by the program. Each one\n"
                 "                       records to typrof.PID.data and prints no summary\n"
                 "\n"
@@ -764,8 +794,8 @@ prof_option(char **argv, int argi)
         }
 
 #ifdef TY_PROFILER
-        if (strcmp(arg, "--jit-stats") == 0) {
-                JitStatsOn = true;
+        if (strcmp(arg, "--no-jit-stats") == 0) {
+                JitStatsOn = false;
                 return 1;
         }
 #endif
@@ -918,11 +948,17 @@ JitIP(Frame const *frame, uptr rip, bool leaf)
                 return bc + 1;
         }
 
-        i64 best = -1;
-        u32 tag = 1;
+        i64 best  = -1;
+        u32 tag   = 1;
+        i64 first = INT64_MAX;
+        u32 head  = 0;
 
         for (u32 i = 0; i < img->nsites; ++i) {
                 i64 spc = sites[i].pc;
+                if (sites[i].tag != 0 && spc < first) {
+                        first = spc;
+                        head  = sites[i].tag;
+                }
                 if (spc > (i64)pc) {
                         continue;
                 }
@@ -932,7 +968,16 @@ JitIP(Frame const *frame, uptr rip, bool leaf)
                 }
         }
 
-        return bc + ((tag == 0) ? 1 : tag);
+        if (best >= 0 && tag != 0) {
+                return bc + tag;
+        }
+
+        if (frame->jit_resume > 0 && frame->jit_resume <= (i32)img->nresume) {
+                u32 const *resumes = (void const *)(sites + img->nsites);
+                return bc + resumes[frame->jit_resume - 1];
+        }
+
+        return bc + ((head == 0) ? 1 : head);
 }
 
 static char const *
@@ -974,6 +1019,8 @@ Walk(Ty *ty, uptr rip, u64 *out, u64 *mask)
                         if (n < 64) {
                                 *mask |= 1ULL << n;
                         }
+                } else if (frame != NULL && frame->jit_resume > 0) {
+                        ip = JitIP(frame, 0, false);
                 }
 
                 out[n++] = (uptr)ip;
@@ -1172,29 +1219,423 @@ prof_jit_decline(Value const *f, char const *why, i32 off)
         TySpinLockUnlock(&JitLock);
 }
 
-void
-prof_jit_deopt(Value const *f, i32 off)
+static void
+DeoptNote(DeoptSite *d, char const *text)
 {
+        int slot = 0;
+        u64 low  = UINT64_MAX;
+
+        for (int i = 0; i < DEOPT_NOTES; ++i) {
+                if (d->notes[i].n > 0 && strcmp(d->notes[i].text, text) == 0) {
+                        d->notes[i].n += 1;
+                        return;
+                }
+                if (d->notes[i].n < low) {
+                        low  = d->notes[i].n;
+                        slot = i;
+                }
+        }
+
+        snprintf(d->notes[slot].text, sizeof d->notes[slot].text, "%s", text);
+        d->notes[slot].n = 1;
+}
+
+static char const *
+SlotName(Expr const *fe, int slot)
+{
+        if (
+                (fe == NULL)
+             || (fe->scope == NULL)
+             || (slot < 0)
+             || (slot >= vN(fe->scope->owned))
+             || (v__(fe->scope->owned, slot) == NULL)
+        ) {
+                return NULL;
+        }
+
+        return v__(fe->scope->owned, slot)->identifier;
+}
+
+static void
+DeoptNotes(Ty *ty, Frame const *frame, DeoptSite *d, i32 why, u64 slots)
+{
+        Expr const *fe = FunExpr(&frame->f);
+        char text[96];
+        bool any = false;
+
+        for (int i = 0; i < 4; ++i) {
+                u32 e = (slots >> (16 * i)) & 0xFFFF;
+                int slot = (int)(e & 0x7FFF) - 1;
+                bool real = (e & 0x8000) != 0;
+
+                if (slot < 0 || frame->fp + slot >= vN(STACK)) {
+                        continue;
+                }
+
+                Value const *v = v_(STACK, frame->fp + slot);
+                int want = real ? CLASS_FLOAT : CLASS_INT;
+
+                if (ClassOf(v) == want) {
+                        continue;
+                }
+
+                char const *name = SlotName(fe, slot);
+
+                snprintf(
+                        text,
+                        sizeof text,
+                        "%s: %s → %s",
+                        (name != NULL) ? name : "?",
+                        real ? "Float" : "Int",
+                        class_name(ty, ClassOf(v))
+                );
+
+                DeoptNote(d, text);
+                any = true;
+        }
+
+        if (!any && d->off >= 0) {
+                char const *op = GetInstructionName((u8)d->code[d->off]);
+                char lower[64];
+                int n = 0;
+
+                if (strncmp(op, "INSTR_", 6) == 0) {
+                        op += 6;
+                }
+
+                for (; op[n] != '\0' && n < (int)sizeof lower - 1; ++n) {
+                        lower[n] = (op[n] == '_') ? ' ' : (char)tolower((u8)op[n]);
+                }
+
+                lower[n] = '\0';
+
+                snprintf(text, sizeof text, "at %s", lower);
+                DeoptNote(d, text);
+        }
+}
+
+static void
+JsonStr(FILE *f, char const *s);
+
+static char const *
+GuardText(u32 guard)
+{
+#ifdef TY_PROFILER
+        char const *text = jit_guard_text(guard);
+        return (text != NULL) ? text : "";
+#else
+        return "";
+#endif
+}
+
+static int
+Brief(Ty *ty, Value const *v, char *out, int cap, int depth)
+{
+        Value x = *v;
+        char *s = NULL;
+        int n = 0;
+
+        for (int i = 0; i < 64 && x.type == VALUE_REF && x.ref != NULL; ++i) {
+                x = *x.ref;
+        }
+
+        if (cap <= 4) {
+                return 0;
+        }
+
+        if (x.type == VALUE_OBJECT && depth == 0 && x.object->nslot > 0) {
+                Class const *class = x.object->class;
+                n += snprintf(out + n, cap - n, "%s{", class_name(ty, x.class));
+                for (u32 i = 0; i < x.object->nslot && i < vN(class->fields.ids) && n < cap - 8; ++i) {
+                        n += snprintf(out + n, cap - n, "%s%s: ", (i > 0) ? ", " : "", M_NAME(v__(class->fields.ids, i)));
+                        if (n < cap - 8) {
+                                n += Brief(ty, &x.object->slots[i], out + n, cap - n - 4, depth + 1);
+                        }
+                }
+                n = min(n, cap - 2);
+                out[n++] = '}';
+                out[n] = '\0';
+                return n;
+        }
+
+        if (TY_CATCH_ERROR()) {
+                (void)TY_CATCH();
+                s = NULL;
+        } else {
+                s = value_show(ty, &x, TY_SHOW_BASIC | TY_SHOW_REPR | TY_SHOW_ABBREV);
+                TY_CATCH_END();
+        }
+
+        for (char const *p = (s != NULL) ? s : "<unprintable>"; *p != '\0'; ++p) {
+                if (*p == '\x1b') {
+                        while (p[1] != '\0' && *p != 'm') {
+                                p += 1;
+                        }
+                        continue;
+                }
+                if (n >= cap - 4) {
+                        memcpy(out + n, "...", 3);
+                        n += 3;
+                        break;
+                }
+                out[n++] = *p;
+        }
+
+        out[n] = '\0';
+
+        if (s != NULL) {
+                ty_free(s);
+        }
+
+        return n;
+}
+
+static void
+ShotValue(Ty *ty, FILE *f, char const *name, char const *where, Value const *v)
+{
+        Value x = *v;
+        char text[192];
+
+        for (int i = 0; i < 64 && x.type == VALUE_REF && x.ref != NULL; ++i) {
+                x = *x.ref;
+        }
+
+        fputc('[', f);
+        JsonStr(f, name);
+        fputc(',', f);
+
+        if (x.type == VALUE_UNINITIALIZED || x.type == VALUE_ZERO) {
+                fputs("\"\",\"<unset>\",", f);
+        } else {
+                Brief(ty, &x, text, sizeof text, 0);
+                JsonStr(f, (x.type == VALUE_NIL) ? "nil" : class_name(ty, ClassOf(&x)));
+                fputc(',', f);
+                JsonStr(f, text);
+                fputc(',', f);
+        }
+
+        JsonStr(f, where);
+        fputc(']', f);
+}
+
+static char *
+ShotVars(Ty *ty, Frame const *frame)
+{
+        Expr const *fe = FunExpr(&frame->f);
+        i32 bound = frame->f.info[FUN_INFO_BOUND];
+        usize top = vN(STACK);
+        char *out = NULL;
+        size_t len = 0;
+        FILE *f = open_memstream(&out, &len);
+        bool first = true;
+        char name[32];
+
+        if (f == NULL) {
+                return NULL;
+        }
+
+        fputc('[', f);
+
+        for (i32 slot = 0; slot < bound && slot < 32 && frame->fp + slot < top; ++slot) {
+                char const *id = SlotName(fe, slot);
+                if (id == NULL) {
+                        snprintf(name, sizeof name, "$%d", slot);
+                        id = name;
+                }
+                if (!first) {
+                        fputc(',', f);
+                }
+                ShotValue(ty, f, id, "local", v_(STACK, frame->fp + slot));
+                first = false;
+        }
+
+        usize base = frame->fp + (usize)max(bound, 0);
+
+        for (usize i = top, k = 0; i > base && k < 6; --i, ++k) {
+                snprintf(name, sizeof name, (k == 0) ? "top" : "top-%zu", k);
+                if (!first) {
+                        fputc(',', f);
+                }
+                ShotValue(ty, f, name, "stack", v_(STACK, i - 1));
+                first = false;
+        }
+
+        fputc(']', f);
+        fclose(f);
+
+        return out;
+}
+
+void
+prof_jit_deopt(Ty *ty, Frame const *frame, i32 off)
+{
+#ifdef TY_PROFILER
+        i32 why   = ty->jit_why;
+        u64 slots = ty->jit_why_slots;
+        u32 guard = ty->jit_guard;
+
+        ty->jit_why       = JIT_WHY_UNKNOWN;
+        ty->jit_why_slots = 0;
+        ty->jit_guard     = 0;
+#else
+        i32 why   = JIT_WHY_UNKNOWN;
+        u64 slots = 0;
+        u32 guard = 0;
+#endif
+
         if (!Started) {
                 return;
         }
 
+        Value const *f = &frame->f;
         Expr const *e = FunExpr(f);
+        u64 now = NowNs() - StartWall;
+        u64 ips[MAX_FRAMES];
+        u64 mask;
+        int nips = Walk(ty, 0, ips, &mask);
+        u64 hash = 0;
+        isize at = -1;
+        isize shot = -1;
+
+        if (nips > 0) {
+                ips[0] = (uptr)(code_of(f) + off);
+        }
+
+        for (int i = 0; i < nips && i < SHOT_FRAMES; ++i) {
+                hash = Mix(hash, ips[i]);
+        }
 
         TySpinLockLock(&JitLock);
 
         for (usize i = 0; i < vN(Deopts); ++i) {
                 DeoptSite *d = v_(Deopts, i);
-                if (d->expr == e && d->off == off && d->code == code_of(f)) {
-                        d->n += 1;
-                        TySpinLockUnlock(&JitLock);
-                        return;
+                if (
+                        (d->expr == e)
+                     && (d->off == off)
+                     && (d->code == code_of(f))
+                     && (d->why == why)
+                     && ((d->guard == guard) || (strcmp(GuardText(d->guard), GuardText(guard)) == 0))
+                ) {
+                        at = (isize)i;
+                        break;
                 }
         }
 
-        xvP(Deopts, ((DeoptSite) { .expr = e, .code = code_of(f), .off = off, .n = 1 }));
+        if (at < 0) {
+                xvP(
+                        Deopts,
+                        ((DeoptSite) {
+                                .expr  = e,
+                                .code  = code_of(f),
+                                .off   = off,
+                                .why   = why,
+                                .guard = guard,
+                                .first = now
+                        })
+                );
+                at = (isize)vN(Deopts) - 1;
+        }
+
+        DeoptSite *site = v_(Deopts, at);
+
+        site->n   += 1;
+        site->last = now;
+
+        DeoptNotes(ty, frame, site, why, slots);
+
+        if (site->nshots < DEOPT_SHOTS) {
+                DeoptShot *s = &site->shots[site->nshots];
+                shot = site->nshots++;
+                s->t       = now;
+                s->hash    = hash;
+                s->count   = 1;
+                s->nframes = (u32)min(nips, SHOT_FRAMES);
+                s->vars    = NULL;
+                memcpy(s->ips, ips, s->nframes * sizeof ips[0]);
+        }
 
         TySpinLockUnlock(&JitLock);
+
+        if (shot < 0) {
+                return;
+        }
+
+        char *vars = ShotVars(ty, frame);
+
+        TySpinLockLock(&JitLock);
+
+        site = v_(Deopts, at);
+
+        for (isize k = 0; k < shot; ++k) {
+                DeoptShot *s = &site->shots[k];
+                if (
+                        (s->hash == hash)
+                     && (s->vars != NULL)
+                     && (vars != NULL)
+                     && (strcmp(s->vars, vars) == 0)
+                     && (shot == (isize)site->nshots - 1)
+                ) {
+                        s->count += 1;
+                        site->nshots -= 1;
+                        free(vars);
+                        vars = NULL;
+                        break;
+                }
+        }
+
+        if (vars != NULL) {
+                site->shots[shot].vars = vars;
+        }
+
+        TySpinLockUnlock(&JitLock);
+}
+
+void
+prof_jit_despecialize(Value const *f, u32 deopts)
+{
+        if (!Started) {
+                return;
+        }
+
+        TySpinLockLock(&JitLock);
+        xvP(Despecs, ((Despec) { .expr = FunExpr(f), .at = NowNs() - StartWall, .deopts = deopts }));
+        TySpinLockUnlock(&JitLock);
+}
+
+char const *
+prof_symbolize(uptr addr)
+{
+        if (addr >= ExeLo && addr < ExeHi) {
+                usize lo = 0;
+                usize hi = NSyms;
+                while (lo < hi) {
+                        usize mid = lo + (hi - lo) / 2;
+                        if (Syms[mid].lo < addr) {
+                                lo = mid + 1;
+                        } else {
+                                hi = mid;
+                        }
+                }
+                return (lo < NSyms && Syms[lo].lo == addr) ? Syms[lo].name : NULL;
+        }
+
+        Dl_info dl;
+
+        if (dladdr((void *)addr, &dl) != 0 && dl.dli_sname != NULL && (uptr)dl.dli_saddr == addr) {
+                return dl.dli_sname;
+        }
+
+        return NULL;
+}
+
+char const *
+prof_jit_ip(Ty *ty, void const *ra)
+{
+        if (ty->st == NULL || vN(ty->st->frames) == 0) {
+                return NULL;
+        }
+
+        return JitIP(vvL(ty->st->frames), (uptr)ra - 1, true);
 }
 
 static void
@@ -1393,6 +1834,12 @@ DrainRing(Ring *r)
                 u32 sym = (kind == PK_THROW) ? (u32)rip
                         : (kind == PK_ALLOC) ? (u32)(rip & 0xFF)
                         : ResolveRip(rip);
+
+#ifdef TY_PROFILER
+                if (sym == SYM_JIT && (kind == PK_CPU || kind == PK_EVENT || kind == PK_WALL)) {
+                        jit_code_hit(rip);
+                }
+#endif
 
                 u32 id = Insert(kind, state, sym, thread, mask, frames, n, weight, t);
 
@@ -1884,6 +2331,16 @@ SiteOf(u64 ip)
         Module const *mod = (expr != NULL) ? expr->mod : v_(M.funcs, func)->mod;
         u32 line = (expr != NULL) ? expr->start.line : (fexpr != NULL) ? fexpr->start.line : 0;
 
+        if (
+                (fexpr != NULL)
+             && (expr != NULL)
+             && (expr->mod == fexpr->mod)
+             && (line < fexpr->start.line || line > fexpr->end.line)
+        ) {
+                expr = fexpr;
+                line = fexpr->start.line;
+        }
+
         M.site_tab[j] = vN(M.sites);
 
         xvP(M.sites, ((Site) {
@@ -2092,7 +2549,8 @@ OnSlowSite(void *ctx, char const *ip, char const *kind, u64 count, i32 const *cl
 
         Expr const *fe = compiler_find_func(M.ty, ip);
         u32 func = FuncOf(fe, e);
-        Line *l = v_(M.lines, LineOf(e->mod, e->start.line, func, e));
+        u32 li = LineOf(e->mod, e->start.line, func, e);
+        Line *l = v_(M.lines, li);
 
         l->slow += count;
 
@@ -2107,7 +2565,7 @@ OnSlowSite(void *ctx, char const *ip, char const *kind, u64 count, i32 const *cl
         }
 
         byte_vector b = {0};
-        dump(&b, "%s, %llu slow-path hits", kind, (unsigned long long)count);
+        dump(&b, "%s missed the fast path %llu times", kind, (unsigned long long)count);
 
         for (int i = 0; i < n && i < 4; ++i) {
                 int best = i;
@@ -2119,7 +2577,7 @@ OnSlowSite(void *ctx, char const *ip, char const *kind, u64 count, i32 const *cl
                 dump(
                         &b,
                         "%s%s %.0f%%",
-                        (i == 0) ? "; operand classes: " : ", ",
+                        (i == 0) ? " (" : ", ",
                         class_name(M.ty, classes[best]),
                         (total > 0) ? 100.0 * counts[best] / total : 0.0
                 );
@@ -2131,6 +2589,10 @@ OnSlowSite(void *ctx, char const *ip, char const *kind, u64 count, i32 const *cl
                         ((i32 *)classes)[best] = tc;
                         ((u64 *)counts)[best] = tn;
                 }
+        }
+
+        if (n > 0) {
+                xvP(b, ')');
         }
 
         xvP(b, '\0');
@@ -3137,6 +3599,18 @@ SummaryHotLines(void)
 
         Heading("Hot lines", NULL);
 
+        typedef struct {
+                int hot;
+                u32 lines[16];
+                u32 a[16];
+                u32 b[16];
+                int n;
+                int nr;
+                bool alloc;
+        } Block;
+
+        Block blocks[16];
+        int nb = 0;
         bool done[16] = {0};
         byte_vector buf = {0};
 
@@ -3145,34 +3619,86 @@ SummaryHotLines(void)
                         continue;
                 }
 
-                u32 func = hot[i]->func;
-                Func const *f = v_(M.funcs, func);
-                u32 lines[16];
-                int n = 0;
-                bool alloc = false;
+                Block *bl = &blocks[nb++];
+                Func const *f = v_(M.funcs, hot[i]->func);
+
+                bl->hot   = i;
+                bl->n     = 0;
+                bl->nr    = 0;
+                bl->alloc = false;
 
                 for (int j = i; j < nhot; ++j) {
-                        if (hot[j]->func == func && hot[j]->mod == hot[i]->mod) {
+                        if (hot[j]->func == hot[i]->func && hot[j]->mod == hot[i]->mod) {
                                 done[j] = true;
-                                lines[n++] = hot[j]->line;
+                                bl->lines[bl->n++] = hot[j]->line;
                         }
                 }
 
-                qsort(lines, n, sizeof lines[0], ByU32);
+                qsort(bl->lines, bl->n, sizeof bl->lines[0], ByU32);
 
                 u32 lo = (f->fexpr != NULL) ? f->line0 : 0;
                 u32 hi = (f->fexpr != NULL) ? f->line1 : UINT32_MAX;
 
-                for (u32 ln = (lines[0] > lo) ? lines[0] - 1 : lo; ln <= lines[n - 1] + 1 && ln <= hi; ++ln) {
-                        Line const *l = FindLine(hot[i]->mod, ln);
-                        if (l != NULL && l->alloc > 0) {
-                                alloc = true;
+                if (bl->lines[0] < lo) {
+                        lo = bl->lines[0];
+                }
+
+                if (bl->lines[bl->n - 1] > hi) {
+                        hi = bl->lines[bl->n - 1];
+                }
+
+                for (int k = 0; k < bl->n; ++k) {
+                        u32 a = (bl->lines[k] > lo + 1) ? bl->lines[k] - 2 : lo;
+                        u32 b = bl->lines[k] + 2;
+
+                        while (k + 1 < bl->n && bl->lines[k + 1] <= b + 3) {
+                                k += 1;
+                                b = bl->lines[k] + 2;
                         }
+
+                        if (b > hi) {
+                                b = hi;
+                        }
+
+                        bl->a[bl->nr] = a;
+                        bl->b[bl->nr] = b;
+                        bl->nr += 1;
+
+                        for (u32 ln = a; ln <= b; ++ln) {
+                                Line const *l = FindLine(hot[i]->mod, ln);
+                                if (l != NULL && l->alloc > 0 && M.alloc_total > 0) {
+                                        bl->alloc = true;
+                                }
+                        }
+                }
+        }
+
+        int order[16];
+        int no = 0;
+
+        for (int pass = 0; pass < 2; ++pass) {
+                for (int i = 0; i < nb; ++i) {
+                        if (blocks[i].alloc == (pass == 1)) {
+                                order[no++] = i;
+                        }
+                }
+        }
+
+        for (int i = 0; i < nb; ++i) {
+                Block const *bl = &blocks[order[i]];
+                bool alloc = bl->alloc;
+                Line const *h = hot[bl->hot];
+                Func const *f = v_(M.funcs, h->func);
+                int strip = INT_MAX;
+
+                for (int r = 0; r < bl->nr; ++r) {
+                        int in = ModuleSourceIndent(h->mod, bl->a[r], bl->b[r]);
+                        strip = (in < strip) ? in : strip;
                 }
 
                 Gutter g = {
-                        .func  = func,
-                        .alloc = alloc && (M.alloc_total > 0),
+                        .func  = h->func,
+                        .alloc = alloc,
                         .hot   = hot,
                         .nhot  = nhot
                 };
@@ -3181,44 +3707,34 @@ SummaryHotLines(void)
                         .width  = alloc ? 18 : 8,
                         .ctx    = &g,
                         .draw   = DrawGutter,
-                        .marked = MarkedLine
+                        .marked = MarkedLine,
+                        .shade  = ColorProfile ? C(48;2;46;50;60) : NULL,
+                        .strip  = strip
                 };
 
                 v0(buf);
 
-                Expr const *head = (hot[i]->expr != NULL) ? hot[i]->expr : f->fexpr;
-
                 fputc('\n', Out);
 
-                if (head != NULL && head->mod != NULL && head->mod->path != NULL) {
-                        WriteExpressionSourceHeading(ty, &buf, Cols, head);
-                } else {
-                        dump(&buf, "%s%s%s\n", C(1), f->name, C(0));
-                }
+                dump(
+                        &buf,
+                        "%s    self%s%s  %s%s  %s%s%s\n",
+                        C(90),
+                        alloc ? "     alloc" : "",
+                        C(0),
+                        f->name,
+                        C(0),
+                        C(90),
+                        f->path,
+                        C(0)
+                );
 
-                dump(&buf, "%s   self%s%s\n", C(90), g.alloc ? "      alloc" : "", C(0));
-
-                for (int k = 0; k < n;) {
-                        bool first = (k == 0);
-                        u32 a = (lines[k] > lo + 1) ? lines[k] - 2 : lo;
-                        u32 b = lines[k] + 2;
-
-                        while (k + 1 < n && lines[k + 1] <= b + 3) {
-                                k += 1;
-                                b = lines[k] + 2;
-                        }
-
-                        if (b > hi) {
-                                b = hi;
-                        }
-
-                        if (!first) {
+                for (int r = 0; r < bl->nr; ++r) {
+                        if (r > 0) {
                                 dump(&buf, "%*s%s⋮%s\n", sg.width + 6, "", C(90), C(0));
                         }
 
-                        WriteModuleSourceLines(ty, &buf, Cols, hot[i]->mod, a, b, &sg);
-
-                        k += 1;
+                        WriteModuleSourceLines(ty, &buf, Cols, h->mod, bl->a[r], bl->b[r], &sg);
                 }
 
                 fwrite(vv(buf), 1, vN(buf), Out);
@@ -3552,6 +4068,119 @@ JsonStr(FILE *f, char const *s)
         }
 
         fputc('"', f);
+}
+
+static char const *
+DeoptWhy(i32 why)
+{
+        switch (why) {
+        case JIT_WHY_LOOP_ENTRY: return "loop entry";
+        case JIT_WHY_LOOP_TYPE:  return "loop variable type";
+        case JIT_WHY_NUMERIC:    return "numeric speculation";
+        case JIT_WHY_POLL:       return "interrupt";
+        case JIT_WHY_TRAP:       return "trap";
+        }
+        return "unknown";
+}
+
+static void
+JsonFuncName(FILE *f, Expr const *fe)
+{
+        char name[256];
+
+        if (fe != NULL && fe->name != NULL && fe->class != NULL) {
+                snprintf(name, sizeof name, "%s.%s", fe->class->name, fe->name);
+        } else {
+                snprintf(name, sizeof name, "%s", (fe != NULL && fe->name != NULL) ? fe->name : "<anonymous>");
+        }
+
+        JsonStr(f, name);
+}
+
+static void
+ExportDeopts(FILE *f)
+{
+        TySpinLockLock(&JitLock);
+
+        fputs(",\"jit_deopts\":[", f);
+
+        for (usize i = 0; i < vN(Deopts); ++i) {
+                DeoptSite const *d = v_(Deopts, i);
+                Expr const *e = compiler_find_expr(M.ty, d->code + d->off);
+
+                fprintf(f, "%s{\"func\":", (i > 0) ? "," : "");
+                JsonFuncName(f, d->expr);
+                fputs(",\"file\":", f);
+                JsonStr(f, (e != NULL && e->mod != NULL && e->mod->path != NULL) ? DisplayPath(e->mod->path) : "");
+                fprintf(f, ",\"line\":%d,\"why\":", (e != NULL) ? (int)e->start.line + 1 : 0);
+                JsonStr(f, DeoptWhy(d->why));
+                fputs(",\"guard\":", f);
+                JsonStr(f, GuardText(d->guard));
+                fputs(",\"shots\":[", f);
+
+                for (u32 k = 0; k < d->nshots; ++k) {
+                        DeoptShot const *s = &d->shots[k];
+                        fprintf(
+                                f,
+                                "%s{\"t\":%llu,\"count\":%llu,\"stack\":[",
+                                (k > 0) ? "," : "",
+                                (unsigned long long)s->t,
+                                (unsigned long long)s->count
+                        );
+                        for (u32 j = 0; j < s->nframes; ++j) {
+                                char const *ip = (char const *)(uptr)s->ips[j];
+                                Expr const *se = compiler_find_expr(M.ty, ip);
+                                Expr const *sf = compiler_find_func(M.ty, ip);
+                                fputs((j > 0) ? ",[" : "[", f);
+                                JsonFuncName(f, sf);
+                                fputc(',', f);
+                                JsonStr(
+                                        f,
+                                        (se != NULL && se->mod != NULL && se->mod->path != NULL)
+                                        ? DisplayPath(se->mod->path)
+                                        : ""
+                                );
+                                fprintf(f, ",%d]", (se != NULL) ? (int)se->start.line + 1 : 0);
+                        }
+                        fprintf(f, "],\"vars\":%s}", (s->vars != NULL) ? s->vars : "[]");
+                }
+
+                fputc(']', f);
+                fprintf(
+                        f,
+                        ",\"n\":%llu,\"first\":%llu,\"last\":%llu,\"notes\":[",
+                        (unsigned long long)d->n,
+                        (unsigned long long)d->first,
+                        (unsigned long long)d->last
+                );
+
+                bool first = true;
+
+                for (int k = 0; k < DEOPT_NOTES; ++k) {
+                        if (d->notes[k].n == 0) {
+                                continue;
+                        }
+                        fputs(first ? "[" : ",[", f);
+                        JsonStr(f, d->notes[k].text);
+                        fprintf(f, ",%llu]", (unsigned long long)d->notes[k].n);
+                        first = false;
+                }
+
+                fputs("]}", f);
+        }
+
+        fputs("],\"jit_despecialized\":[", f);
+
+        for (usize i = 0; i < vN(Despecs); ++i) {
+                Despec const *d = v_(Despecs, i);
+                fprintf(f, "%s{\"func\":", (i > 0) ? "," : "");
+                JsonFuncName(f, d->expr);
+                fprintf(f, ",\"at\":%llu,\"deopts\":%u}", (unsigned long long)d->at, d->deopts);
+        }
+
+        fputc(']', f);
+
+        TySpinLockUnlock(&JitLock);
 }
 
 static void
@@ -4104,6 +4733,8 @@ ExportJson(FILE *f)
                 jit_stats_json(M.ty, f);
         }
 #endif
+
+        ExportDeopts(f);
 
         fprintf(f, "}\n");
 }

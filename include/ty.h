@@ -764,6 +764,12 @@ typedef struct ty {
 
         struct ty_debug_thread *dbg;
         TY *ty;
+
+#ifdef TY_PROFILER
+        i32 jit_why;
+        u64 jit_why_slots;
+        u32 jit_guard;
+#endif
 } Ty;
 
 typedef struct {

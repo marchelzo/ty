@@ -365,12 +365,6 @@ konst(BcLir *c, Value const *v)
 }
 
 inline static void
-xinc(BcLir *c, void const *counter)
-{
-        vop(c, LIR_XADD, LIR_I64, mref(pval(c, counter), 0), lir_i(1));
-}
-
-inline static void
 mov(BcLir *c, LirReg d, LirReg s)
 {
         vset(c, LIR_MOV, d, lir_r(s));
@@ -425,9 +419,69 @@ stq(BcLir *c, LirReg base, i32 disp, LirOpnd v)
 }
 
 inline static void
+xinc(BcLir *c, void const *counter)
+{
+        LirReg p = pval(c, counter);
+        stq(c, p, 0, lir_r(binop(c, LIR_ADD, LIR_I64, lir_r(ldq(c, p, 0)), lir_i(1))));
+}
+
+inline static void
 stw(BcLir *c, LirReg base, i32 disp, LirOpnd v)
 {
         store(c, LIR_ST32, base, disp, v);
+}
+
+#ifdef TY_PROFILER
+static void
+guard_note(BcLir *c, char const *fmt, ...)
+{
+        char buf[512];
+        va_list ap;
+
+        va_start(ap, fmt);
+        vsnprintf(buf, sizeof buf, fmt, ap);
+        va_end(ap);
+
+        c->guard = jit_guard(buf);
+}
+#else
+#define guard_note(...) ((void)0)
+#endif
+
+inline static void
+deopt_why(BcLir *c, i32 why, u64 slots)
+{
+#ifdef TY_PROFILER
+        stw(c, c->ty, offsetof(Ty, jit_why), lir_i(why));
+        stq(c, c->ty, offsetof(Ty, jit_why_slots), lir_i(slots));
+        stw(c, c->ty, offsetof(Ty, jit_guard), lir_i(c->guard));
+        c->guard = 0;
+#endif
+}
+
+inline static void
+miss_site(BcLir *c)
+{
+#ifdef TY_PROFILER
+        if (JitStatsOn) {
+                effect(c, LIR_SITE, (LirOpnd[]) { lir_i(c->at + 1) }, 1);
+        }
+#endif
+}
+
+inline static void
+count_fast(BcLir *c, int kind)
+{
+#ifdef TY_PROFILER
+        if (JitStatsOn) {
+                u64 *n = jit_site_fast(c->code + c->at + 1, kind);
+                if (n != NULL) {
+                        LirReg base = pval(c, jit_site_fast_base());
+                        i32    disp = (i32)((n - jit_site_fast_base()) * sizeof *n);
+                        stq(c, base, disp, lir_r(binop(c, LIR_ADD, LIR_I64, lir_r(ldq(c, base, disp)), lir_i(1))));
+                }
+        }
+#endif
 }
 
 inline static void

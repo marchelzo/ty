@@ -153,7 +153,16 @@ void
 prof_jit_decline(Value const *f, char const *why, i32 off);
 
 void
-prof_jit_deopt(Value const *f, i32 off);
+prof_jit_deopt(Ty *ty, Frame const *frame, i32 off);
+
+void
+prof_jit_despecialize(Value const *f, u32 deopts);
+
+char const *
+prof_jit_ip(Ty *ty, void const *ra);
+
+char const *
+prof_symbolize(uptr addr);
 
 void
 prof_throw(Ty *ty, char const *ip);

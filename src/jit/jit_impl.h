@@ -4,6 +4,15 @@
 #include "ty.h"
 #include "jit/jit.h"
 
+enum {
+        SITE_MEMBER,
+        SITE_MEMBER_SET,
+        SITE_METHOD,
+        SITE_ARITH,
+        SITE_COMPARE,
+        SITE_KIND_COUNT
+};
+
 #ifdef TY_PROFILER
 typedef struct {
         _Atomic u64 member_fast;
@@ -45,14 +54,34 @@ typedef struct {
 } JitStats;
 
 typedef struct {
-        char const *name;
-        char const *class_name;
-        Expr const *expr;
-        usize       native_size;
-        u64         compile_time_ns;
-        int         bc_code_size;
-        bool        compact;
+        uptr          lo;
+        u32           size;
+        u32           literal;
+        u8           *bytes;
+        LirSite      *sites;
+        u32           nsites;
+        char const   *bc;
+        char const   *name;
+        u32          *hits;
+        u64           samples;
+} JitImageRec;
+
+typedef struct {
+        char const  *name;
+        char const  *class_name;
+        Expr const  *expr;
+        usize        native_size;
+        u64          compile_time_ns;
+        int          bc_code_size;
+        bool         compact;
+        JitImageRec *image;
 } JitCompileRecord;
+
+JitImageRec *
+jit_image_record(LirCode const *code, char const *bc, char const *name);
+
+void
+jit_code_hit(uptr rip);
 
 extern JitStats jit_stats;
 
@@ -70,9 +99,32 @@ jit_slow_sites(JitSlowSiteFn *fn, void *ctx);
 void
 jit_stats_json(Ty *ty, FILE *f);
 
+void
+jit_site_miss(Ty *ty, void const *ra, int kind, Value const *a, Value const *b);
+
+u64 *
+jit_site_fast(char const *ip, int kind);
+
+u64 *
+jit_site_fast_base(void);
+
+u32
+jit_guard(char const *text);
+
+char const *
+jit_guard_text(u32 id);
+
 extern bool JitStatsOn;
 
-#define STAT(name) (JitStatsOn ? (void)++jit_stats.name : (void)0)
+#define STAT(name) (                                                                     \
+        JitStatsOn                                                                        \
+      ? atomic_store_explicit(                                                            \
+                &jit_stats.name,                                                          \
+                atomic_load_explicit(&jit_stats.name, memory_order_relaxed) + 1,          \
+                memory_order_relaxed                                                      \
+        )                                                                                 \
+      : (void)0                                                                           \
+)
 #else
 #define STAT(name) ((void)0)
 #endif

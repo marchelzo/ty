@@ -113,6 +113,7 @@ typedef struct bc_lir {
 #ifdef TY_PROFILER
         Expr const           *prof_expr;
         i32                   prof_line;
+        u32                   guard;
 #endif
         i32                   skip_extra;
 
@@ -413,6 +414,7 @@ numeric(BcLir *c, u8 op)
 
         jump(c, end);
         bind(c, slow);
+        miss_site(c);
 
         LirReg out = slot_of(c, lhs);
         LirReg arg = slot_of(c, rhs);
@@ -1596,6 +1598,7 @@ compare_branch(BcLir *c, BcLirNode const *node, u8 op)
         }
 
         bind(c, slow);
+        miss_site(c);
 
         LirReg out = slot_of(c, lhs);
         LirReg arg = slot_of(c, rhs);
@@ -1968,6 +1971,7 @@ tail_self(BcLir *c, BcLirNode const *node, LirReg fn)
         bind(c, deopt);
         sync_sp(c);
         flush_active(c);
+        deopt_why(c, JIT_WHY_POLL, 0);
         leave(c, JIT_PACK(JIT_DEOPT, c->at));
 
         bind(c, go);
@@ -2419,6 +2423,24 @@ plan_osr(BcLir *c)
 }
 
 static void
+number_entries(BcLir *c)
+{
+        u32 id = 0;
+
+        for (i32 off = 0; off < c->size; ++off) {
+                BcLirNode *node = &c->nodes[off];
+
+                if (node->osr_id != 0) {
+                        node->osr_id = ++id;
+                }
+
+                if (node->resume_id != 0) {
+                        node->resume_id = ++id;
+                }
+        }
+}
+
+static void
 plan_nodes(BcLir *c)
 {
         for (i32 off = 0; off < c->size; ++off) {
@@ -2430,6 +2452,8 @@ plan_nodes(BcLir *c)
         if (!c->dynamic && getenv("TY_JIT_NO_OSR") == NULL) {
                 plan_osr(c);
         }
+
+        number_entries(c);
 }
 
 static void
@@ -3123,6 +3147,7 @@ epilogue(BcLir *c)
         loop_stubs(c);
 
         bind(c, c->deopt);
+        deopt_why(c, JIT_WHY_POLL, 0);
         leave(c, JIT_PACK(JIT_DEOPT, 0));
 
         if (c->tier != NULL) {
@@ -3136,6 +3161,7 @@ epilogue(BcLir *c)
                 if (node->deopt != LIR_NONE && reached(node) && !(c->stubbed != NULL && c->stubbed[off])) {
                         bind(c, node->deopt);
                         flush_around(c, off);
+                        deopt_why(c, JIT_WHY_POLL, 0);
                         leave(c, JIT_PACK(JIT_DEOPT, off));
                         tierup_stub(c, off);
                 }
@@ -3231,7 +3257,8 @@ publish(Ty *ty, Value const *f, BcLir const *c, LirCode *code, u64 begin)
                 .native_size     = code->size,
                 .compile_time_ns = elapsed,
                 .bc_code_size    = c->size,
-                .compact         = c->compact
+                .compact         = c->compact,
+                .image           = jit_image_record(code, code_of(f), name_of(f))
         });
 #endif
 

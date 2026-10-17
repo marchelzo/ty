@@ -31,6 +31,61 @@ typedef struct {
         i32    at;
 } Spot;
 
+#ifdef TY_PROFILER
+static char const *
+slot_label(BcLir const *c, i32 slot)
+{
+        Expr const *e = !from_eval(c->function) ? expr_of(c->function) : NULL;
+
+        if (
+                (e != NULL)
+             && (e->scope != NULL)
+             && (slot >= 0)
+             && (slot < vN(e->scope->owned))
+             && (v__(e->scope->owned, slot) != NULL)
+        ) {
+                return v__(e->scope->owned, slot)->identifier;
+        }
+
+        return "?";
+}
+
+static char const *
+kind_label(u8 kind)
+{
+        switch (kind) {
+        case VS_INT:
+        case VS_CINT:  return "an Int";
+        case VS_REAL:
+        case VS_CREAL: return "a Float";
+        case VS_BOOL:
+        case VS_CBOOL: return "a Bool";
+        case VS_CNIL:  return "nil";
+        }
+
+        return "a boxed value";
+}
+
+static char const *
+operand_label(BcLir const *c, i32 i)
+{
+        static _Thread_local char buf[128];
+        BcSlot const *s = &c->vs[i];
+
+        if (s->kind == VS_LOCAL) {
+                snprintf(buf, sizeof buf, "`%s`", slot_label(c, (i32)s->bits));
+        } else if (s->src > 0) {
+                snprintf(buf, sizeof buf, "`%s`", slot_label(c, s->src - 1));
+        } else {
+                snprintf(buf, sizeof buf, "the operand");
+        }
+
+        return buf;
+}
+#endif
+
+#define NUM_LABEL(real) ((real) ? "a Float" : "an Int")
+
 typedef struct {
         u8    how;
         LirOp iop;
@@ -389,6 +444,7 @@ vs_deopt(BcLir *c)
 
         sync_sp(c);
         flush_active(c);
+        deopt_why(c, JIT_WHY_NUMERIC, 0);
         bail(c, c->at);
 }
 
@@ -782,6 +838,8 @@ hinted_class(BcLir const *c, BcLirNode const *node)
 static void
 typed_subscript(BcLir *c, bool real)
 {
+        guard_note(c, "assumed the Array holds %s elements and the index is an in-bounds Int", real ? "Float" : "Int");
+
         LirLabel failed = vs_guard(c);
         LirReg   i      = subidx(c, c->sp - 1, failed);
         Spot     e      = { cell(c, c->sp - 2, i, failed, true), 0 };
@@ -825,6 +883,7 @@ vs_subscript(BcLir *c, BcLirNode const *node)
         i32 holder = container_class(c, c->sp - 2);
 
         if (holder == CLASS_BLOB && c->speculate) {
+                guard_note(c, "assumed the Blob index is an in-bounds Int");
                 LirLabel failed = vs_guard(c);
                 LirReg   i      = subidx(c, c->sp - 1, failed);
                 LirReg   p      = byte_cell(c, c->sp - 2, i, failed, true);
@@ -908,6 +967,7 @@ vs_assign_subscript(BcLir *c, char const *ip)
         }
 
         if (container_class(c, c->sp - 2) == CLASS_BLOB && c->speculate && bytelike(value.kind)) {
+                guard_note(c, "assumed the Blob index is an in-bounds Int and the stored value is a byte");
                 LirLabel failed = vs_guard(c);
                 LirReg   i      = subidx(c, c->sp - 1, failed);
                 LirReg   p      = byte_cell(c, c->sp - 2, i, failed, true);
@@ -1143,6 +1203,12 @@ checked_divisor(BcLir *c, bool real)
         if (!c->speculate) {
                 return false;
         }
+
+        guard_note(
+                c,
+                real ? "assumed divisor %s is not 0.0" : "assumed divisor %s is neither 0 nor -1",
+                operand_label(c, c->sp - 1)
+        );
 
         LirLabel failed = vs_guard(c);
         LirReg   d      = vreg(c, c->sp - 1);
@@ -1395,6 +1461,7 @@ vs_mutate(BcLir *c, BcLirNode const *node, char const *ip)
         }
 
         if (known == NULL) {
+                guard_note(c, "assumed `%s` holds %s before updating it in place", slot_label(c, slot), NUM_LABEL(real));
                 assume(c, s, numtag(real));
         }
 
@@ -1455,6 +1522,8 @@ vs_mutate_cell(BcLir *c, BcLirNode const *node)
 
         c->offset    = next->next;
         c->skip_next = true;
+
+        guard_note(c, "assumed the Array element being updated holds %s and the index is in bounds", NUM_LABEL(real));
 
         LirLabel failed = vs_guard(c);
         LirReg   i      = subidx(c, c->sp - 1, failed);
@@ -1681,6 +1750,8 @@ vs_view(BcLir *c, BcLirNode const *node, char const *ip)
 
         push_view_index(c, ix);
 
+        guard_note(c, "assumed the index into this packed Blob view is an in-bounds Int");
+
         LirLabel failed = vs_guard(c);
         LirReg   i      = subidx(c, c->sp - 1, failed);
         LirReg   p      = packed_cell(c, pk, c->sp - 2, i, failed);
@@ -1714,6 +1785,8 @@ vs_string_byte(BcLir *c, BcLirNode const *node)
         ) {
                 return false;
         }
+
+        guard_note(c, "assumed the receiver of `byte` is a String and the index is in range");
 
         LirLabel      failed = vs_guard(c);
         LirReg        i      = subidx(c, c->sp - 2, failed);
@@ -1928,6 +2001,12 @@ vs_call_global(BcLir *c, BcLirNode const *node)
                 return false;
         }
 
+        guard_note(
+                c,
+                "inlined `%s`: assumed the global still refers to it and its arguments are numeric",
+                name_of(callee)
+        );
+
         LirLabel failed = vs_guard(c);
 
         guard_self(c, global_addr(c, node->global), callee, failed);
@@ -1972,6 +2051,7 @@ vs_load_local(BcLir *c, BcLirNode const *node, i32 slot)
         bool real = (class == CLASS_FLOAT);
         Spot s    = lspot(c, slot);
 
+        guard_note(c, "assumed `%s` holds %s (its static type)", slot_label(c, slot), NUM_LABEL(real));
         assume(c, s, numtag(real));
         vs_push(c, numkind(real), unbox(c, s, real), 0);
         c->vs[c->sp - 1].src = slot + 1;
@@ -2245,9 +2325,18 @@ vs_carry(BcLir *c, BcJoin *join, i32 i)
         }
 
         if (!boxed(s.kind)) {
+                guard_note(
+                        c,
+                        "the branches merge expecting %s (from the static type), but this branch "
+                        "always produces %s, so it deopts every time it runs",
+                        NUM_LABEL(real),
+                        kind_label(s.kind)
+                );
                 vs_deopt(c);
                 return;
         }
+
+        guard_note(c, "the branches merge expecting %s (from the static type), so %s is checked and unboxed here", NUM_LABEL(real), operand_label(c, i));
 
         LirLabel failed = vs_guard(c);
         Spot     at     = spot(c, i);

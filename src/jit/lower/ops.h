@@ -114,6 +114,10 @@ target_member(Ty *ty, Value *top, i32 member, bool self)
 
         Value obj = self ? *vm_get_self(ty) : ty->stack.items[--ty->stack.count];
 
+#ifdef TY_PROFILER
+        jit_site_miss(ty, __builtin_return_address(0), SITE_MEMBER_SET, &obj, NULL);
+#endif
+
         vm_jit_target_member(ty, &obj, member);
 }
 
@@ -127,11 +131,7 @@ target_subscript(Ty *ty, Value *top)
 static void
 count_member_set(BcLir *c)
 {
-#ifdef TY_PROFILER
-        if (JitStatsOn) {
-                xinc(c, &jit_stats.member_set_fast);
-        }
-#endif
+        count_fast(c, SITE_MEMBER_SET);
 }
 
 static void
@@ -179,6 +179,7 @@ member_assign(BcLir *c, BcLirNode const *node, char const *ip)
         jump(c, done);
 
         bind(c, slow);
+        miss_site(c);
 
         LirReg top = slot_of(c, c->sp);
 

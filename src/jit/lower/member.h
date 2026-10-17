@@ -334,11 +334,7 @@ fast_member(
 
         copy(c, out, 0, slot, 0);
 
-#ifdef TY_PROFILER
-        if (JitStatsOn) {
-                xinc(c, &jit_stats.member_fast);
-        }
-#endif
+        count_fast(c, SITE_MEMBER);
 
         jump(c, done);
 }
@@ -357,6 +353,7 @@ lower_member(BcLir *c, i32 member, bool self)
         }
 
         bind(c, slow);
+        miss_site(c);
         tycall(
                 c,
                 jit_rt_member,

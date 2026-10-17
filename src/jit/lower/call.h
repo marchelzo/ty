@@ -266,6 +266,7 @@ string_byte(BcLir *c, BcLirNode const *node, BuiltinMethod *method, i64 packed)
         jump(c, done);
 
         bind(c, slow);
+        miss_site(c);
         tycall(
                 c,
                 jit_rt_call_builtin_method,
@@ -317,6 +318,7 @@ method_fast(BcLir *c, BcLirNode const *node)
         LirReg  out    = slot_of(c, c->sp - explicit - node->argc);
         LirOpnd self   = explicit ? lir_r(slot_of(c, c->sp - 1)) : lir_i(0);
 
+        miss_site(c);
         tycall(
                 c,
                 jit_rt_call_builtin_method,

@@ -1307,15 +1307,16 @@ main(int argc, char **argv)
         if (ToolMode != NULL) {
                 char tool[128];
                 static char name[32];
+                tool[0] = '\0';
                 if (s_eq(ToolMode, "report")) {
-                        ty_snprintf(tool, sizeof tool, "import typrof\ntyprof.main()\n");
+                        ty_snprintf(tool + 1, sizeof tool - 1, "import typrof\ntyprof.main()\n");
                         ty_snprintf(name, sizeof name, "(typrof report)");
                 } else {
-                        ty_snprintf(tool, sizeof tool, "import syn.cli\nsyn.cli.main('%s')\n", ToolMode);
+                        ty_snprintf(tool + 1, sizeof tool - 1, "import syn.cli\nsyn.cli.main('%s')\n", ToolMode);
                         ty_snprintf(name, sizeof name, "(ty --%s)", ToolMode);
                 }
                 SourceFile = name;
-                if (!vm_execute(ty, tool, SourceFile)) {
+                if (!vm_execute(ty, tool + 1, SourceFile)) {
                         DyingOfError = true;
                         fprintf(stderr, "%s\n", TyError(ty));
                         exit(67);
