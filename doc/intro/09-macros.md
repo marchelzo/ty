@@ -98,7 +98,7 @@ The macro destructures the function definition with `let ty.FuncDef(f) = def`, i
 
 ## Reader macros
 
-Reader macros take control of the parser and consume tokens directly using `ty.token.next()` and `ty.token.peek()`, parse sub-expressions with `ty.parse.expr()` and `ty.parse.stmt()`, or operate on the raw byte stream using `ty.lex.getc()` and `ty.lex.peek()`.
+Reader macros take control of the parser and consume tokens directly using `ty.token.next()` and `ty.token.peek()`, parse sub-expressions with `ty.parse.expr()` and `ty.parse.stmt()`, or operate on the raw byte stream using `ty.lex.getc()` and `ty.lex.peekc()`.
 
 ```ty
 import ty.parse (expr, show)

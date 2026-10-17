@@ -11,7 +11,7 @@ Several language constructs in Ty support pattern matching, which allows you to 
 
 Let's go through the different kinds of patterns and how they work in these contexts.
 
-## The not-nil pattten
+## The not-nil pattern
 
 `$var` matches any non-nil value and binds it to `var`:
 

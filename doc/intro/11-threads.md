@@ -81,7 +81,7 @@ print(xs.sort())
 
 ## SharedQueue
 
-A thread-safe blocking queue. `take()` blocks until an item is available. `close()` signals that no more items will be added; workers blocking on `take()` will unblock.
+A thread-safe blocking queue. `take()` blocks until an item is available. `close()` signals that no more items will be added; workers blocking on `take()` will unblock with a `CanceledError`.
 
 ```ty
 let q = SharedQueue()

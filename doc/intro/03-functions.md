@@ -95,7 +95,7 @@ Lambdas are expressed with the infix `->` operator and work like you'd expect:
 pp([1, 2, 3].map(x -> {x, sq: x * x}))
 ```
 
-Any expression can be preceeded by `\` to produce a lambda whose parameters are derived from the holes denoted by `_` in the expression. Longer strings of `_` can be used like de Bruijn indices to refer to parameters further out:
+Any expression can be preceded by `\` to produce a lambda whose parameters are derived from the holes denoted by `_` in the expression. Longer strings of `_` can be used like de Bruijn indices to refer to parameters further out:
 
 ```ty
 let add = (\_ + _)

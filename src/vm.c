@@ -6233,7 +6233,7 @@ DoDictLiteral(Ty *ty, i32 n, Value const *dflt)
         GC_RESUME();
 
         vN(STACK) -= n;
-        xpush(val);
+        push(val);
 }
 
 void

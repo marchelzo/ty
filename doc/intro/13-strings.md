@@ -4,7 +4,7 @@
 
 ### Single-quoted strings
 
-Single-quoted strings are for plain literals without any interpolation. They support the following limited set of escape sequences:
+Single-quoted strings are for plain literals without any interpolation. They support the same escape sequences as double-quoted strings, including:
 
  - `\\` for a literal backslash
  - `\'` for a literal single quote
@@ -37,7 +37,7 @@ The leading whitespace common to all lines (matching the closing `'''`'s indent)
 
 ### Double-quoted strings (interpolated)
 
-Double-quoted strings support `{expr}` interpolation and some extra escape sequences (`\x1b`, `\u{1F600}`, etc.):
+Double-quoted strings support `{expr}` interpolation and escape sequences such as `\x1b`, `\u00e9` and `\U0001F600`:
 
 ```ty
 let name = 'Ty'

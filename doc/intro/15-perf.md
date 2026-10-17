@@ -3,7 +3,7 @@
 ## Ok but is it blazingly fast??
 
 No. The bytecode interpreter is generally slower than CPython or YARV. The JIT compiler
-is a bit faster, and often gets us firmly with the Python/Ruby performance range, but it's fairly
+is a bit faster, and often gets us firmly within the Python/Ruby performance range, but it's fairly
 simplistic and of course doesn't come close to the performance of a mature JIT like V8 or LuaJIT.
 
 
@@ -70,7 +70,7 @@ These results should be taken with a massive grain of salt as many of the progra
 
 ## Profiling Ty programs with `typrof`
 
-Ty ships with an additional binary called `typrof` that can be used to profile Ty programs. Simply run `typrof <program>` to get a report of how much time was spent in each function. The default is to sample on every single instruction which can be very slow. You can pass `-F <Hz>` to sample at a particular frequency instead, which is usually more than sufficient for getting a good profile. Below is an example of its output.
+Ty ships with an additional binary called `typrof` that can be used to profile Ty programs. Simply run `typrof <program>` to get a report of how much time was spent in each function. By default it samples at 999 Hz; pass `-F <Hz>` to choose a different frequency, or `--count[=N]` to sample every Nth bytecode op deterministically (this disables the JIT). Below is an example of its output.
 
 ![typrof output](./typrof.png)
 ![typrof jit summary](./typrof_jit.png)

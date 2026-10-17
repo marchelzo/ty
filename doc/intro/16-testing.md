@@ -74,7 +74,6 @@ Output written by a test is captured and shown only if the test fails. Failures 
 tests/demo.ty:14: assertion failed
     assert(total == 10)
       total: 9
-      (sum of 1..4)
 ```
 
 - **Comparisons** (`==`, `!=`, `<`, `in`, `::` and so on) show each operand that isn't a literal.
@@ -259,16 +258,16 @@ A `Spy` records its calls:
 ```ty
 import ty.test (Spy, spy, stub, spy-method)
 
-let s = spy(billing.charge)          # calls through to the real function
+let s = spy(billing.charge)          // calls through to the real function
 patch(billing.charge, s)
 billing.pay(5)
 s.assert-called-with(5)
 assert(s.count == 1)
 
-let fetch = Spy().returns('{}')     # the same value on every call
-let rolls = Spy().returns-each(1, 6) # these values, then an error
+let fetch = Spy().returns('{}')     // the same value on every call
+let rolls = Spy().returns-each(1, 6) // these values, then an error
 let fail = Spy().throws(TimeoutError())
-let m = spy-method(Client, 'fetch')  # records (self, args...) and calls through
+let m = spy-method(Client, 'fetch')  // records (self, args...) and calls through
 ```
 
 | Member | Meaning |
