@@ -26,6 +26,7 @@
 #include "xd.h"
 #include "value.h"
 #include "vm.h"
+#include "prof.h"
 #include "types2.h"
 #include "highlight.h"
 #include "jit/jit.h"
@@ -7205,6 +7206,9 @@ emit_function(Ty *ty, Expr const *e)
         }
 
         EP(NULL);
+#ifdef TY_PROFILER
+        EP(NULL);
+#endif
 
         LOG("COMPILING FUNCTION: %s", scope_name(ty, e->scope));
 
@@ -13479,6 +13483,14 @@ load_module_source(
         module = NewModule(ty, name, path, source, scope);
         STATE = freshstate(ty, module);
 
+#ifdef TY_PROFILER
+        int prof_mod = prof_module_begin(name, path, source);
+#endif
+#ifdef TY_HAVE_USDT
+        u64 probe_t0 = TY_PROBING(import__done) ? TyMonotonicTime() : 0;
+#endif
+        TY_PROBE_IF(import__start, name, path);
+
         Stmt **prog = compile(ty, source);
 
         if (scope == NULL) {
@@ -13488,8 +13500,21 @@ load_module_source(
         PatchModule(ty, module, prog);
         STATE = save;
 
+#ifdef TY_PROFILER
+        prof_module_compiled(prof_mod);
+#endif
+
         class_finalize_all(ty);
         vm_exec(ty, module->code);
+
+#ifdef TY_PROFILER
+        prof_module_done(prof_mod);
+#endif
+#ifdef TY_HAVE_USDT
+        if (TY_PROBING(import__done)) {
+                TY_PROBE(import__done, name, path, (unsigned long)(TyMonotonicTime() - probe_t0));
+        }
+#endif
 
         TY_CATCH_END();
 
@@ -19593,7 +19618,7 @@ static void
         char const *theme
 )
 {
-        if (ColorStderr) {
+        if (ColorOutput) {
                 syntax_highlight(
                         ty,
                         out,
@@ -19840,6 +19865,53 @@ WriteExpressionSourceHeading(Ty *ty, byte_vector *out, int cols, Expr const *e)
 }
 
 static void
+WriteSourceLine(
+        Ty *ty,
+        byte_vector *out,
+        SourceView const *view,
+        char const *line_start,
+        char const *line_end,
+        int line,
+        bool in_range,
+        char const *span_start,
+        char const *span_end,
+        char const *under,
+        SourceGutter const *gutter
+)
+{
+        char const *arrow = in_range ? ">" : " ";
+
+        if (gutter != NULL) {
+                gutter->draw(gutter->ctx, out, line);
+        }
+
+        if (span_start != NULL) {
+                sxdf(
+                        out,
+                        "%s %s%4d%s | ",
+                        TERM(91),
+                        arrow,
+                        line + 1,
+                        TERM(0)
+                );
+
+                hl(out, view, line_start, span_start, NULL);
+                hl(out, view, span_start, span_end,   under);
+                hl(out, view, span_end,   line_end,   NULL);
+        } else {
+                sxdf(
+                        out,
+                        "%s %s%4d%s | ",
+                        in_range ? TERM(91) : "",
+                        arrow,
+                        line + 1,
+                        TERM(0)
+                );
+                hl(out, view, line_start, line_end, NULL);
+        }
+}
+
+static void
 WriteSourceWindow(
         Ty *ty,
         byte_vector *out,
@@ -19913,44 +19985,31 @@ WriteSourceWindow(
                 bool in_range = (line >= e->start.line)
                              && (line <= stop.line);
 
-                char const *arrow = in_range ? ">" : " ";
+                bool single = (line == e->start.line) && (line == stop.line);
 
-                if (line == e->start.line && line == stop.line) {
-                        int before = e->start.s - line_start;
-                        int length = stop.s     - e->start.s;
-                        sxdf(
-                                &tmp,
-                                "%s %s%4d%s | ",
-                                TERM(91),
-                                arrow,
-                                line + 1,
-                                TERM(0)
-                        );
+                WriteSourceLine(
+                        ty,
+                        &tmp,
+                        &view,
+                        line_start,
+                        line_end,
+                        line,
+                        in_range,
+                        single ? e->start.s : NULL,
+                        single ? stop.s     : NULL,
+                        under,
+                        NULL
+                );
 
-                        hl(&tmp, &view, line_start, e->start.s, NULL);
-                        hl(&tmp, &view, e->start.s, stop.s,     under);
-                        hl(&tmp, &view, stop.s,     line_end,   NULL);
-
-                        if (!ColorStderr) {
-                                dump(out, "%s\n", vv(tmp));
-                                v0(tmp);
-                                sxdf(&tmp, "%*s", 9 + before, "");
-                                for (int i = 0; i < max(length, 1); ++i) {
-                                        svP(tmp, '^');
-                                }
-                                svP(tmp, '\0');
-                                vN(tmp) -= 1;
+                if (single && !ColorOutput) {
+                        dump(out, "%s\n", vv(tmp));
+                        v0(tmp);
+                        sxdf(&tmp, "%*s", 9 + (int)(e->start.s - line_start), "");
+                        for (int i = 0; i < max(stop.s - e->start.s, 1); ++i) {
+                                svP(tmp, '^');
                         }
-                } else {
-                        sxdf(
-                                &tmp,
-                                "%s %s%4d%s | ",
-                                in_range ? TERM(91) : "",
-                                arrow,
-                                line + 1,
-                                TERM(0)
-                        );
-                        hl(&tmp, &view, line_start, line_end, NULL);
+                        svP(tmp, '\0');
+                        vN(tmp) -= 1;
                 }
 
                 vN(tmp) = term_fit_cols(vv(tmp), vN(tmp), cols);
@@ -19992,6 +20051,80 @@ WriteSourceWindow(
 
         if (expansion != NULL) {
                 WriteExpansionNote(ty, out, cols, expansion);
+        }
+
+        SCRATCH_RESTORE();
+}
+
+void
+WriteModuleSourceLines(
+        Ty *ty,
+        byte_vector *out,
+        int cols,
+        Module const *mod,
+        int line0,
+        int line1,
+        SourceGutter const *gutter
+)
+{
+        static TokenVector NoTokens = {0};
+
+        if (mod == NULL || mod->source == NULL || line1 < line0) {
+                return;
+        }
+
+        SourceView view = {
+                .base   = mod->source,
+                .tokens = &mod->tokens
+        };
+
+        if (
+                (vN(mod->tokens) == 0)
+             || (v_(mod->tokens, 0)->start.s != mod->source + v_(mod->tokens, 0)->start.byte)
+        ) {
+                view.tokens = &NoTokens;
+        }
+
+        char const *start = mod->source;
+
+        for (int line = 0; line < line0; ++line) {
+                start = strchr(start, '\n');
+                if (start == NULL) {
+                        return;
+                }
+                start += 1;
+        }
+
+        byte_vector tmp = {0};
+
+        SCRATCH_SAVE();
+
+        for (int line = line0; line <= line1 && *start != '\0'; ++line) {
+                char const *line_end = strchr(start, '\n');
+
+                if (line_end == NULL) {
+                        line_end = start + strlen(start);
+                }
+
+                WriteSourceLine(
+                        ty,
+                        &tmp,
+                        &view,
+                        start,
+                        line_end,
+                        line,
+                        (gutter != NULL) && (gutter->marked != NULL) && gutter->marked(gutter->ctx, line),
+                        NULL,
+                        NULL,
+                        NULL,
+                        gutter
+                );
+
+                vN(tmp) = term_fit_cols(vv(tmp), vN(tmp), cols);
+                dump(out, "%s%s\n", vv(tmp), TERM(0));
+                v0(tmp);
+
+                start = (*line_end == '\n') ? line_end + 1 : line_end;
         }
 
         SCRATCH_RESTORE();

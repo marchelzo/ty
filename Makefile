@@ -38,6 +38,10 @@ ifndef DEBUG
 	LDFLAGS += -lmimalloc
 endif
 
+ifdef USDT
+        CFLAGS += -DTY_USDT
+endif
+
 ifdef JEMALLOC
 	LDFLAGS += -L$(shell jemalloc-config --libdir)
 	LDFLAGS += -Wl,-rpath,$(shell jemalloc-config --libdir)
@@ -126,6 +130,7 @@ $(shell echo '$(BUILD_SIG)' > $(BUILD_SIG_FILE))
 endif
 
 $(shell mkdir -p obj/jit/lir obj/tyls/jit/lir obj/typrof/jit/lir obj/tytest/jit/lir)
+$(shell mkdir -p obj/prof obj/tyls/prof obj/typrof/prof obj/tytest/prof)
 
 # DynASM configuration
 LUAJIT := luajit
@@ -139,7 +144,13 @@ else
 	LIR_HDR  := src/jit/lir/x64.h
 endif
 
-SOURCES := $(wildcard src/*.c src/jit/*.c src/jit/lir/*.c)
+ifeq ($(shell uname -s),Darwin)
+	PROF_OS := darwin
+else
+	PROF_OS := linux
+endif
+
+SOURCES := $(wildcard src/*.c src/jit/*.c src/jit/lir/*.c) src/prof/$(PROF_OS).c
 OBJECTS := $(patsubst src/%.c,obj/%.o,$(SOURCES))
 TYLS_OBJECTS := $(patsubst src/%.c,obj/tyls/%.o,$(SOURCES))
 TYPROF_OBJECTS := $(patsubst src/%.c,obj/typrof/%.o,$(SOURCES))
@@ -202,6 +213,7 @@ obj/tyls/token.o: include/keywords.h include/optokens.h
 obj/typrof/token.o: include/keywords.h include/optokens.h
 obj/tytest/token.o: include/keywords.h include/optokens.h
 
+obj/prof_html.o obj/tyls/prof_html.o obj/typrof/prof_html.o obj/tytest/prof_html.o: src/prof.html
 obj/jit/lir/emit.o obj/tyls/jit/lir/emit.o obj/typrof/jit/lir/emit.o obj/tytest/jit/lir/emit.o: $(LIR_HDR)
 
 ty: obj/ty-main.o $(OBJECTS) $(EXTERNAL)

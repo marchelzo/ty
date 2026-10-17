@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 
 #include "vm.h"
+#include "prof.h"
 #include "gc.h"
 #include "value.h"
 #include "sqlite.h"
@@ -116,7 +117,7 @@ extern FILE *DisassemblyOut;
 #if defined(TY_PROFILER)
 extern u64 ProfileSampleInterval;
 extern FILE *ProfileOut;
-bool ColorProfile;
+extern bool ColorProfile;
 #endif
 
 static char **
@@ -158,10 +159,14 @@ usage(void)
                 "                  Also include file or directory PATH verbatim (repeatable)              \0"
 #endif
 #ifdef TY_PROFILER
-                "    -F FREQ       Set profiler sampling frequency in Hz (default: every instruction)     \0"
-                "    -o FILE       Write profile data to FILE instead of stdout                           \0"
-                "                    (- is interpreted as stdout, and @ is interpreted as stderr)         \0"
-                "    --wall        Profile based on wall time instead of CPU time                         \0"
+                "    -F HZ         Samples per second per thread (default: 999)                           \0"
+                "    -o FILE       Record the profile to FILE (default: typrof.data)                      \0"
+                "    --cpu         Sample on-CPU time (default)                                           \0"
+                "    --wall        Sample wall-clock time, including time spent blocked                   \0"
+                "    --event=E[:N] Sample every Nth perf event E (cycles, instructions, cache-misses, ...) \0"
+                "    --count[=N]   Sample every Nth bytecode op. Deterministic; disables the JIT          \0"
+                "    --no-summary  Don't print a summary when the program exits                           \0"
+                "    --help-prof   Print all profiler options and commands                                \0"
 #endif
                 "    --color=WHEN  Explicitly control when to use colored output. WHEN can be set         \0"
                 "                  to 'always', 'never', or 'auto' (default: 'auto')                      \0"
@@ -553,6 +558,10 @@ ProcessArgs(char *argv[], bool first)
 
                 if (s_eq(argv[argi], "--help")) {
                         usage();
+#ifdef TY_HAVE_USDT
+                        putchar('\n');
+                        prof_usdt_usage(stdout);
+#endif
                         exit(0);
                 }
 
@@ -618,10 +627,13 @@ ProcessArgs(char *argv[], bool first)
                 }
 
 #ifdef TY_PROFILER
-                extern bool UseWallTime;
-                if (s_eq(argv[argi], "--wall")) {
-                        UseWallTime = true;
-                } else
+                {
+                        int used = prof_option(argv, argi);
+                        if (used > 0) {
+                                argi += used - 1;
+                                goto NextOption;
+                        }
+                }
 #endif
 
                 if (argv[argi][1] != '-') {
@@ -741,9 +753,9 @@ ProcessArgs(char *argv[], bool first)
                                                         fprintf(stderr, "Missing argument for -o\n");
                                                         exit(1);
                                                 }
-                                                ProfileOut = OpenOutputFile(argv[++argi]);
+                                                prof_set_output(argv[++argi]);
                                         } else {
-                                                ProfileOut = OpenOutputFile(opt + 1);
+                                                prof_set_output(opt + 1);
                                                 while (opt[1] != '\0') {
                                                         ++opt;
                                                 }
@@ -785,6 +797,9 @@ NextOption:
                 if (SourceFile == NULL || s_eq(SourceFile, "-"))  {
                         SourceFile = "/dev/stdin";
                 }
+#ifdef TY_HAVE_SAMPLER
+                prof_set_target(SourceFile);
+#endif
         }
 
         return argi;
@@ -1182,6 +1197,34 @@ main(int argc, char **argv)
         TyArgc = argc;
         TyArgv = argv;
 
+#if defined(TY_PROFILER)
+        for (int i = 1; i < argc; ++i) {
+                if (s_eq(argv[i], "--diff")) {
+                        ColorProfile = isatty(1);
+                        for (int j = 1; j < argc; ++j) {
+                                if (s_eq(argv[j], "--color=never")) {
+                                        ColorProfile = false;
+                                } else if (s_eq(argv[j], "--color=always")) {
+                                        ColorProfile = true;
+                                }
+                        }
+                        return prof_diff_main(argc, argv);
+                }
+                if (s_eq(argv[i], "--attach")) {
+                        return prof_attach_main(argc, argv);
+                }
+                if (i == 1 && s_eq(argv[i], "report")) {
+                        ToolMode = "report";
+                        ToolArgIndex = 1;
+                        prof_inhibit();
+                        break;
+                }
+                if (argv[i][0] != '-') {
+                        break;
+                }
+        }
+#endif
+
 #if defined(TY_PROFILE_TYPES) && 1
         atexit(xxx);
 #endif
@@ -1263,9 +1306,14 @@ main(int argc, char **argv)
 
         if (ToolMode != NULL) {
                 char tool[128];
-                ty_snprintf(tool, sizeof tool, "import syn.cli\nsyn.cli.main('%s')\n", ToolMode);
                 static char name[32];
-                ty_snprintf(name, sizeof name, "(ty --%s)", ToolMode);
+                if (s_eq(ToolMode, "report")) {
+                        ty_snprintf(tool, sizeof tool, "import typrof\ntyprof.main()\n");
+                        ty_snprintf(name, sizeof name, "(typrof report)");
+                } else {
+                        ty_snprintf(tool, sizeof tool, "import syn.cli\nsyn.cli.main('%s')\n", ToolMode);
+                        ty_snprintf(name, sizeof name, "(ty --%s)", ToolMode);
+                }
                 SourceFile = name;
                 if (!vm_execute(ty, tool, SourceFile)) {
                         DyingOfError = true;

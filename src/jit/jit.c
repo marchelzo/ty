@@ -277,6 +277,7 @@ jit_frame_ip(Frame const *frame, char const *ip)
 
 #ifdef TY_PROFILER
 JitStats jit_stats;
+bool JitStatsOn;
 
 typedef enum {
         JIT_OPT_INLINE_GETTER,
@@ -418,6 +419,13 @@ jit_log_compile(JitCompileRecord rec)
         TySpinLockUnlock(&JitLogMutex);
 }
 
+JitCompileRecord const *
+jit_compile_records(usize *n)
+{
+        *n = vN(jit_compile_log);
+        return vv(jit_compile_log);
+}
+
 static int
 jit_compile_cmp(void const *a, void const *b)
 {
@@ -499,324 +507,185 @@ slow_cmp(void const *a, void const *b)
 }
 
 static void
-fmt_size(char *buf, usize sz, usize bytes)
+json_str(FILE *f, char const *s)
 {
-        if (bytes >= 1024 * 1024)
-                snprintf(buf, sz, "%.1f MB", bytes / (1024.0 * 1024.0));
-        else if (bytes >= 1024)
-                snprintf(buf, sz, "%.1f KB", bytes / 1024.0);
-        else
-                snprintf(buf, sz, "%zu B", bytes);
+        fputc('"', f);
+
+        for (; s != NULL && *s != '\0'; ++s) {
+                u8 c = *s;
+                if (c == '"' || c == '\\') {
+                        fprintf(f, "\\%c", c);
+                } else if (c < 0x20 || c == '<') {
+                        fprintf(f, "\\u%04x", c);
+                } else {
+                        fputc(c, f);
+                }
+        }
+
+        fputc('"', f);
 }
 
-static void
-fmt_time(char *buf, usize sz, u64 ns)
+static bool
+json_path(FILE *f, bool first, char const *op, u64 fast, u64 slow)
 {
-        if (ns >= 1000000000ULL)
-                snprintf(buf, sz, "%.2f s", ns / 1e9);
-        else if (ns >= 1000000ULL)
-                snprintf(buf, sz, "%.2f ms", ns / 1e6);
-        else if (ns >= 1000ULL)
-                snprintf(buf, sz, "%.1f us", ns / 1e3);
-        else
-                snprintf(buf, sz, "%llu ns", (unsigned long long)ns);
-}
+        if (fast + slow == 0) {
+                return first;
+        }
 
-static void
-pct_bar(FILE *out, double pct, int width)
-{
-        char const *color;
+        fprintf(f, "%s{\"op\":", first ? "" : ",");
+        json_str(f, op);
+        fprintf(f, ",\"fast\":%llu,\"slow\":%llu}", (unsigned long long)fast, (unsigned long long)slow);
 
-        if (pct >= 99.0)      color = PTERM(92);
-        else if (pct >= 95.0) color = PTERM(32);
-        else if (pct >= 80.0) color = PTERM(93);
-        else if (pct >= 50.0) color = PTERM(33);
-        else                  color = PTERM(91);
-
-        int filled = (int)(pct / 100.0 * width + 0.5);
-        if (filled > width) filled = width;
-
-        fprintf(out, "%s", color);
-        for (int i = 0; i < filled; ++i) fputc('|', out);
-        fprintf(out, "%s", PTERM(0));
-        for (int i = filled; i < width; ++i) fputc(' ', out);
-}
-
-static void
-fast_path_row(FILE *out, char const *label, u64 fast, u64 slow)
-{
-        u64 total = fast + slow;
-        if (total == 0) return;
-        double pct = 100.0 * fast / total;
-
-        fprintf(out, "   %-20s %12llu  %12llu   %s%5.1f%%%s  ",
-                label,
-                (unsigned long long)fast,
-                (unsigned long long)slow,
-                pct >= 95.0 ? PTERM(92) : pct >= 80.0 ? PTERM(93) : PTERM(91),
-                pct,
-                PTERM(0));
-        pct_bar(out, pct, 20);
-        fputc('\n', out);
+        return false;
 }
 
 void
-jit_stats_report(Ty *ty, FILE *out)
+jit_stats_json(Ty *ty, FILE *f)
 {
-
         TySpinLockLock(&JitLogMutex);
-        int ncompiled = vN(jit_compile_log);
 
-        if (ncompiled > 0) {
-                char time_buf[32], size_buf[32];
-                fmt_time(time_buf, sizeof time_buf, jit_total_compile_ns);
-                fmt_size(size_buf, sizeof size_buf, jit_total_native_bytes);
+        qsort(vv(jit_compile_log), vN(jit_compile_log), sizeof (JitCompileRecord), jit_compile_cmp);
 
-                fprintf(out, "%s======= JIT summary =======%s\n\n",
-                        PTERM(95), PTERM(0));
+        fprintf(
+                f,
+                "{\"compile_ns\":%llu,\"native_bytes\":%zu,\"compiled\":[",
+                (unsigned long long)jit_total_compile_ns,
+                jit_total_native_bytes
+        );
 
-                fprintf(out, "   Compiled: %s%d%s functions  (%s%s%s compile time, %s%s%s native code)\n\n",
-                        PTERM(1), ncompiled, PTERM(0),
-                        PTERM(93), time_buf, PTERM(0),
-                        PTERM(93), size_buf, PTERM(0));
-
-                qsort(vv(jit_compile_log), ncompiled,
-                      sizeof(JitCompileRecord), jit_compile_cmp);
-
-                fprintf(out, "   %s%-4s  %-36s %8s  %8s  %5s  %9s%s\n",
-                        PTERM(90),
-                        "#", "Function", "BC", "Native", "Ratio", "Compile",
-                        PTERM(0));
-
-                int show = ncompiled < 20 ? ncompiled : 20;
-                for (int i = 0; i < show; ++i) {
-                        JitCompileRecord *r = &vv(jit_compile_log)[i];
-                        char tbuf[32], nbuf[32], bbuf[32];
-                        fmt_time(tbuf, sizeof tbuf, r->compile_time_ns);
-                        fmt_size(nbuf, sizeof nbuf, r->native_size);
-                        fmt_size(bbuf, sizeof bbuf, r->bc_code_size);
-
-                        double ratio = r->bc_code_size > 0
-                                ? (double)r->native_size / r->bc_code_size
-                                : 0.0;
-
-                        char fname[48];
-                        if (r->class_name[0])
-                                snprintf(fname, sizeof fname, "%s.%s", r->class_name, r->name);
-                        else
-                                snprintf(fname, sizeof fname, "%s", r->name);
-
-                        fprintf(out, "   %s%-4d%s  %s%-36s%s %8s  %8s  %s%4.1fx%s  %9s\n",
-                                PTERM(90), i + 1, PTERM(0),
-                                PTERM(34), fname, PTERM(0),
-                                bbuf, nbuf,
-                                ratio > 6.0 ? PTERM(91) : ratio > 3.0 ? PTERM(93) : PTERM(92),
-                                ratio, PTERM(0),
-                                tbuf);
-                }
-
-                if (ncompiled > show) {
-                        fprintf(out, "   %s... and %d more%s\n", PTERM(90), ncompiled - show, PTERM(0));
-                }
-
-                fputc('\n', out);
+        for (usize i = 0; i < vN(jit_compile_log); ++i) {
+                JitCompileRecord const *r = v_(jit_compile_log, i);
+                fprintf(f, "%s{\"class\":", (i > 0) ? "," : "");
+                json_str(f, r->class_name);
+                fputs(",\"name\":", f);
+                json_str(f, r->name);
+                fprintf(
+                        f,
+                        ",\"bc\":%d,\"native\":%zu,\"ns\":%llu,\"tier\":%d}",
+                        r->bc_code_size,
+                        r->native_size,
+                        (unsigned long long)r->compile_time_ns,
+                        r->compact ? 1 : 2
+                );
         }
 
         TySpinLockUnlock(&JitLogMutex);
 
-        bool have_optimizations = false;
+        fputs("],\"plans\":[", f);
+
+        bool first = true;
+
         for (int i = 0; i < JIT_OPT_COUNT; ++i) {
-                have_optimizations |= jit_opt_sites[i] != 0;
-        }
-        if (have_optimizations) {
-                fprintf(out, "%s======= JIT optimizations =======%s\n\n",
-                        PTERM(95), PTERM(0));
-                fprintf(out, "   %s%-32s %12s  %12s%s\n",
-                        PTERM(90), "Plan", "Sites", "Units", PTERM(0));
-                for (int i = 0; i < JIT_OPT_COUNT; ++i) {
-                        if (jit_opt_sites[i] == 0) {
-                                continue;
-                        }
-                        fprintf(out, "   %-32s %12llu  %12llu\n",
-                                jit_opt_names[i],
-                                (unsigned long long)jit_opt_sites[i],
-                                (unsigned long long)jit_opt_units[i]);
+                if (jit_opt_sites[i] == 0) {
+                        continue;
                 }
-                fputc('\n', out);
+                fprintf(f, "%s{\"name\":", first ? "" : ",");
+                json_str(f, jit_opt_names[i]);
+                fprintf(
+                        f,
+                        ",\"sites\":%llu,\"units\":%llu}",
+                        (unsigned long long)jit_opt_sites[i],
+                        (unsigned long long)jit_opt_units[i]
+                );
+                first = false;
         }
 
-        u64 slow_totals[SLOW_KIND_COUNT] = {0};
+        u64 slow[SLOW_KIND_COUNT] = {0};
+
         for (int i = 0; i < SLOW_TABLE_SIZE; ++i) {
                 if (slow_table[i].ip != NULL && slow_table[i].count > 0) {
-                        slow_totals[slow_table[i].kind] += slow_table[i].count;
+                        slow[slow_table[i].kind] += slow_table[i].count;
                 }
         }
 
-        slow_totals[SLOW_MEMBER_ACCESS] += jit_stats.member_slow;
-        slow_totals[SLOW_MEMBER_SET]    += jit_stats.member_set_slow;
-        slow_totals[SLOW_CALL_METHOD]   += jit_stats.call_method_slow;
+        slow[SLOW_MEMBER_ACCESS] += jit_stats.member_slow;
+        slow[SLOW_MEMBER_SET]    += jit_stats.member_set_slow;
+        slow[SLOW_CALL_METHOD]   += jit_stats.call_method_slow;
+        slow[SLOW_ARITH]         += jit_stats.arith_slow;
 
-        slow_totals[SLOW_ARITH] += jit_stats.arith_slow;
+        JitStats const *st = &jit_stats;
 
-        u64 total_fast = jit_stats.member_fast + jit_stats.member_set_fast
-                       + jit_stats.self_member_read_fast + jit_stats.self_member_write_fast
-                       + jit_stats.call_method_baked + jit_stats.call_method_builtin
-                       + jit_stats.jeq_int + jit_stats.jeq_str + jit_stats.jeq_nil
-                       + jit_stats.jcmp_int
-                       + jit_stats.arith_int + jit_stats.arith_float
-                       + jit_stats.direct_math_fast + jit_stats.direct_max_fast
-                       + jit_stats.simple_ctor_fast + jit_stats.linked_global_fast
-                       + jit_stats.global_jit_call_fast + jit_stats.self_call_fast
-                       + jit_stats.self_tail_fast + jit_stats.numeric_pow_fast;
-        u64 total_slow = 0;
-        for (int i = 0; i < SLOW_KIND_COUNT; ++i) total_slow += slow_totals[i];
-        total_slow += jit_stats.direct_math_slow + jit_stats.direct_max_slow
-                    + jit_stats.simple_ctor_slow + jit_stats.linked_global_slow
-                    + jit_stats.global_jit_call_slow + jit_stats.self_call_slow
-                    + jit_stats.self_tail_slow + jit_stats.numeric_pow_slow;
+        fputs("],\"paths\":[", f);
 
-        if (total_fast + total_slow > 0) {
-                fprintf(out, "%s======= JIT fast paths =======%s\n\n",
-                        PTERM(95), PTERM(0));
+        first = true;
+        first = json_path(f, first, "member access",      st->member_fast,            slow[SLOW_MEMBER_ACCESS]);
+        first = json_path(f, first, "member set",         st->member_set_fast,        slow[SLOW_MEMBER_SET]);
+        first = json_path(f, first, "self member read",   st->self_member_read_fast,  slow[SLOW_SELF_MEMBER_READ]);
+        first = json_path(f, first, "self member write",  st->self_member_write_fast, slow[SLOW_SELF_MEMBER_WRITE]);
+        first = json_path(f, first, "method call",        st->call_method_baked + st->call_method_builtin, slow[SLOW_CALL_METHOD]);
+        first = json_path(f, first, "eq/ne",              st->jeq_int + st->jeq_str + st->jeq_nil, slow[SLOW_JEQ]);
+        first = json_path(f, first, "compare",            st->jcmp_int,               slow[SLOW_JCMP]);
+        first = json_path(f, first, "arithmetic",         st->arith_int + st->arith_float, slow[SLOW_ARITH]);
+        first = json_path(f, first, "direct sin/cos",     st->direct_math_fast,       st->direct_math_slow);
+        first = json_path(f, first, "direct max",         st->direct_max_fast,        st->direct_max_slow);
+        first = json_path(f, first, "simple constructor", st->simple_ctor_fast,       st->simple_ctor_slow);
+        first = json_path(f, first, "linked global call", st->linked_global_fast,     st->linked_global_slow);
+        first = json_path(f, first, "global JIT call",    st->global_jit_call_fast,   st->global_jit_call_slow);
+        first = json_path(f, first, "self call",          st->self_call_fast,         st->self_call_slow);
+        first = json_path(f, first, "self tail loop",     st->self_tail_fast,         st->self_tail_slow);
+        first = json_path(f, first, "numeric pow",        st->numeric_pow_fast,       st->numeric_pow_slow);
 
-                fprintf(out, "   %s%-20s %12s  %12s   %6s%s\n",
-                        PTERM(90),
-                        "Operation", "Fast", "Slow", "Fast %",
-                        PTERM(0));
-
-                fast_path_row(out, "member_access",     jit_stats.member_fast,            slow_totals[SLOW_MEMBER_ACCESS]);
-                fast_path_row(out, "member_set",         jit_stats.member_set_fast,         slow_totals[SLOW_MEMBER_SET]);
-                fast_path_row(out, "self_member_read",   jit_stats.self_member_read_fast,   slow_totals[SLOW_SELF_MEMBER_READ]);
-                fast_path_row(out, "self_member_write",  jit_stats.self_member_write_fast,  slow_totals[SLOW_SELF_MEMBER_WRITE]);
-
-                u64 cm_fast = jit_stats.call_method_baked + jit_stats.call_method_builtin;
-                u64 cm_slow = slow_totals[SLOW_CALL_METHOD];
-                if (cm_fast + cm_slow > 0) {
-                        double pct = 100.0 * cm_fast / (cm_fast + cm_slow);
-                        fprintf(out, "   %-20s %s%12llu%s  %12llu   %s%5.1f%%%s  ",
-                                "call_method",
-                                PTERM(34),
-                                (unsigned long long)cm_fast,
-                                PTERM(0),
-                                (unsigned long long)cm_slow,
-                                pct >= 95.0 ? PTERM(92) : pct >= 80.0 ? PTERM(93) : PTERM(91),
-                                pct,
-                                PTERM(0));
-                        pct_bar(out, pct, 20);
-                        fprintf(out, "\n      %sbaked=%llu  builtin=%llu%s\n",
-                                PTERM(90),
-                                (unsigned long long)jit_stats.call_method_baked,
-                                (unsigned long long)jit_stats.call_method_builtin,
-                                PTERM(0));
-                }
-
-                fast_path_row(out, "eq/ne", jit_stats.jeq_int + jit_stats.jeq_str + jit_stats.jeq_nil, slow_totals[SLOW_JEQ]);
-                if (jit_stats.jeq_int + jit_stats.jeq_str + jit_stats.jeq_nil + slow_totals[SLOW_JEQ] > 0) {
-                        fprintf(out, "      %sint=%llu  str=%llu  nil=%llu%s\n",
-                                PTERM(90),
-                                (unsigned long long)jit_stats.jeq_int,
-                                (unsigned long long)jit_stats.jeq_str,
-                                (unsigned long long)jit_stats.jeq_nil,
-                                PTERM(0));
-                }
-
-                fast_path_row(out, "cmp", jit_stats.jcmp_int, slow_totals[SLOW_JCMP]);
-
-                u64 arith_fast = jit_stats.arith_int + jit_stats.arith_float;
-                fast_path_row(out, "arith", arith_fast, slow_totals[SLOW_ARITH]);
-                if (arith_fast + slow_totals[SLOW_ARITH] > 0) {
-                        fprintf(out, "      %sint=%llu  float=%llu%s\n",
-                                PTERM(90),
-                                (unsigned long long)jit_stats.arith_int,
-                                (unsigned long long)jit_stats.arith_float,
-                                PTERM(0));
-                }
-
-                fast_path_row(out, "direct sin/cos",
-                              jit_stats.direct_math_fast,
-                              jit_stats.direct_math_slow);
-                fast_path_row(out, "direct max", jit_stats.direct_max_fast,
-                              jit_stats.direct_max_slow);
-                fast_path_row(out, "simple constructor",
-                              jit_stats.simple_ctor_fast,
-                              jit_stats.simple_ctor_slow);
-                fast_path_row(out, "linked global call",
-                              jit_stats.linked_global_fast,
-                              jit_stats.linked_global_slow);
-                fast_path_row(out, "global JIT call",
-                              jit_stats.global_jit_call_fast,
-                              jit_stats.global_jit_call_slow);
-                fast_path_row(out, "self call", jit_stats.self_call_fast,
-                              jit_stats.self_call_slow);
-                fast_path_row(out, "self tail loop",
-                              jit_stats.self_tail_fast,
-                              jit_stats.self_tail_slow);
-                fast_path_row(out, "numeric pow",
-                              jit_stats.numeric_pow_fast,
-                              jit_stats.numeric_pow_slow);
-
-                fputc('\n', out);
-        }
-
-        SlowPathSite sorted[SLOW_TABLE_SIZE];
+        SlowPathSite *sorted = malloc(SLOW_TABLE_SIZE * sizeof *sorted);
         int n = 0;
+
         for (int i = 0; i < SLOW_TABLE_SIZE; ++i) {
                 if (slow_table[i].ip != NULL && slow_table[i].count > 0) {
                         sorted[n++] = slow_table[i];
                 }
         }
 
-        if (n > 0) {
-                qsort(sorted, n, sizeof sorted[0], slow_cmp);
+        qsort(sorted, n, sizeof sorted[0], slow_cmp);
 
-                int show = n < 20 ? n : 20;
+        fputs("],\"slow_sites\":[", f);
 
-                fprintf(out, "%s======= top slow-path sites =======%s\n\n",
-                        PTERM(95), PTERM(0));
-
-                for (int i = 0; i < show; ++i) {
-                        SlowPathSite *s = &sorted[i];
-                        Expr const *e = compiler_find_expr(ty, s->ip);
-
-                        fprintf(out, "   %s%2d.%s  [%s%-18s%s] %s%8llu%s hits",
-                                PTERM(90), i + 1, PTERM(0),
-                                PTERM(34), slow_kind_names[s->kind], PTERM(0),
-                                PTERM(1), (unsigned long long)s->count, PTERM(0));
-
-                        if (e && e->mod && e->mod->path) {
-                                fprintf(out, "  %s%s:%u:%u%s",
-                                        PTERM(94),
-                                        e->mod->path,
-                                        e->start.line + 1,
-                                        e->start.col + 1,
-                                        PTERM(0));
+        for (int i = 0; i < n && i < 50; ++i) {
+                SlowPathSite const *site = &sorted[i];
+                Expr const *e = compiler_find_expr(ty, site->ip);
+                fprintf(f, "%s{\"kind\":", (i > 0) ? "," : "");
+                json_str(f, slow_kind_names[site->kind]);
+                fprintf(f, ",\"hits\":%llu,\"file\":", (unsigned long long)site->count);
+                json_str(f, (e != NULL && e->mod != NULL) ? e->mod->path : "");
+                fprintf(f, ",\"line\":%d,\"types\":[", (e != NULL) ? (int)e->start.line + 1 : 0);
+                bool tfirst = true;
+                for (int j = 0; j < SLOW_MAX_TYPES; ++j) {
+                        if (site->types[j].count == 0) {
+                                continue;
                         }
+                        fprintf(f, "%s[", tfirst ? "" : ",");
+                        json_str(f, class_name(ty, site->types[j].class_id));
+                        fprintf(f, ",%llu]", (unsigned long long)site->types[j].count);
+                        tfirst = false;
+                }
+                fputs("]}", f);
+        }
 
-                        fputc('\n', out);
+        free(sorted);
 
-                        bool has_types = false;
-                        for (int j = 0; j < SLOW_MAX_TYPES; ++j) {
-                                if (s->types[j].count > 0) { has_types = true; break; }
-                        }
+        fputs("]}", f);
+}
 
-                        if (has_types) {
-                                fprintf(out, "       %stypes:%s ", PTERM(90), PTERM(0));
-                                bool first = true;
-                                for (int j = 0; j < SLOW_MAX_TYPES; ++j) {
-                                        if (s->types[j].count == 0) continue;
-                                        if (!first) fprintf(out, ", ");
-                                        first = false;
-                                        fprintf(out, "%s%s%s=%llu",
-                                                PTERM(93),
-                                                class_name(ty, s->types[j].class_id),
-                                                PTERM(0),
-                                                (unsigned long long)s->types[j].count);
-                                }
-                                fputc('\n', out);
+void
+jit_slow_sites(JitSlowSiteFn *fn, void *ctx)
+{
+        for (int i = 0; i < SLOW_TABLE_SIZE; ++i) {
+                SlowPathSite const *s = &slow_table[i];
+                i32 classes[SLOW_MAX_TYPES];
+                u64 counts[SLOW_MAX_TYPES];
+                int n = 0;
+
+                if (s->ip == NULL || s->count == 0) {
+                        continue;
+                }
+
+                for (int j = 0; j < SLOW_MAX_TYPES; ++j) {
+                        if (s->types[j].count > 0) {
+                                classes[n] = s->types[j].class_id;
+                                counts[n] = s->types[j].count;
+                                n += 1;
                         }
                 }
 
-                fputc('\n', out);
+                fn(ctx, s->ip, slow_kind_names[s->kind], s->count, classes, counts, n);
         }
 }
 

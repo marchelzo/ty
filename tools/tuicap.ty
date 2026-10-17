@@ -1217,7 +1217,7 @@ class Pen {
         let used = match (p, rest) {
             ([_, _, *], _)   => 0,
             (_, [[5, *], *]) => 2,
-            _                => 5
+            _                => 4
         }
         let spec  = (used == 0) ? p[1;] : rest[;used].map(&[0])
         let color = color(n - 8, spec)

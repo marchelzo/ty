@@ -1488,6 +1488,25 @@ set_jit_code_of(Value const *f, void *code)
         memcpy((char *)f->info + FUN_JIT_CODE, &code, sizeof code);
 }
 
+#ifdef TY_PROFILER
+void
+prof_first_call(int *info);
+
+static inline void
+count_call(Value const *f)
+{
+        u64 n;
+        memcpy(&n, (char const *)f->info + FUN_CALLS, sizeof n);
+        if (UNLIKELY(n == 0)) {
+                prof_first_call(f->info);
+        }
+        n += 1;
+        memcpy((char *)f->info + FUN_CALLS, &n, sizeof n);
+}
+#else
+#define count_call(f) ((void)0)
+#endif
+
 static inline bool
 from_eval(Value const *f)
 {

@@ -335,7 +335,9 @@ fast_member(
         copy(c, out, 0, slot, 0);
 
 #ifdef TY_PROFILER
-        xinc(c, &jit_stats.member_fast);
+        if (JitStatsOn) {
+                xinc(c, &jit_stats.member_fast);
+        }
 #endif
 
         jump(c, done);

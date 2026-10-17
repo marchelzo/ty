@@ -210,6 +210,7 @@ GCSweepTy(Ty *ty)
                      && (A_LOAD(&a->hard) == 0)
                 ) {
                         ty->memory_used -= min(a->size, ty->memory_used);
+                        PROF_FREE(a);
                         collect(ty, a);
                         ty_free(a);
                 } else {
@@ -234,6 +235,7 @@ GCSweep(Ty *ty, AllocList *allocs, isize *used)
                      && (A_LOAD(&v__(*allocs, i)->hard) == 0)
                 ) {
                         *used -= min(v__(*allocs, i)->size, *used);
+                        PROF_FREE(v__(*allocs, i));
                         collect(ty, v__(*allocs, i));
                         ty_free(v__(*allocs, i));
                 } else {

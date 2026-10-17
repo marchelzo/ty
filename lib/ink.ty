@@ -2728,6 +2728,8 @@ pub class TreeView < Component {
     key:           Function | nil
     expandable:    Function | nil
     icon:          Function | nil
+    gutter:        Function | nil
+    expanded:      Array[String] | nil
     on-select:     Function | nil
     on-cursor:     Function | nil
     // Called before built-in key handling. Returning a non-nil value consumes
@@ -2984,6 +2986,7 @@ pub class TreeView < Component {
 
         <Box direction="row" bg=row-bg look=part('TreeView', 'row', sts, variant)>
             <Text>
+                <Text>{gutter ? gutter(row.node) : ''}</Text>
                 <Text style=mark-clr>{mark}</Text>
                 <Text style=g-clr>{guide-str}</Text>
                 <Text style=lbl-clr>{exp-str}{lbl}</Text>
@@ -2997,6 +3000,9 @@ pub class TreeView < Component {
             __root-stack = []
             __cursor = 0
             __prev-root = root
+            if expanded != nil {
+                __expanded = %[*expanded]
+            }
             __invalidate-flat!()
         }
 

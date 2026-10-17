@@ -51,6 +51,7 @@ typedef struct {
         usize       native_size;
         u64         compile_time_ns;
         int         bc_code_size;
+        bool        compact;
 } JitCompileRecord;
 
 extern JitStats jit_stats;
@@ -58,7 +59,20 @@ extern JitStats jit_stats;
 void
 jit_log_compile(JitCompileRecord rec);
 
-#define STAT(name) (++jit_stats.name)
+JitCompileRecord const *
+jit_compile_records(usize *n);
+
+typedef void JitSlowSiteFn(void *ctx, char const *ip, char const *kind, u64 count, i32 const *classes, u64 const *counts, int n);
+
+void
+jit_slow_sites(JitSlowSiteFn *fn, void *ctx);
+
+void
+jit_stats_json(Ty *ty, FILE *f);
+
+extern bool JitStatsOn;
+
+#define STAT(name) (JitStatsOn ? (void)++jit_stats.name : (void)0)
 #else
 #define STAT(name) ((void)0)
 #endif

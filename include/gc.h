@@ -12,6 +12,7 @@
 #include "vec.h"
 #include "log.h"
 #include "alloc.h"
+#include "prof.h"
 
 void
 DoGC(Ty *ty);
@@ -41,6 +42,12 @@ HoldingLock(Ty *ty);
 #else
 #define AddToTotalBytes(n) 0
 #endif
+
+#define NoteAlloc(n, type) do {                                   \
+        AddToTotalBytes(n);                                       \
+        PROF_ALLOC(ty, (n), (type));                              \
+        TY_PROBE_IF(alloc, (unsigned long)(n), (int)(type));      \
+} while (0)
 
 
 #define resize(ptr, n) ((ptr) = gc_resize(ty, (ptr), (n)))
@@ -98,7 +105,7 @@ gc_resize_unchecked(Ty *ty, void *p, usize n) {
         }
 
         MemoryUsed += n;
-        AddToTotalBytes(n);
+        NoteAlloc((a != NULL && a->size < n) ? n - a->size : (a == NULL) ? n : 0, (a != NULL) ? a->type : GC_ANY);
 
         a = ty_realloc(a, sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
@@ -132,7 +139,7 @@ inline static void *
 gc_alloc(Ty *ty, usize n)
 {
         MemoryUsed += n;
-        AddToTotalBytes(n);
+        NoteAlloc(n, GC_ANY);
         CheckUsed(ty);
 
         struct alloc *a = ty_malloc(sizeof *a + n);
@@ -152,7 +159,7 @@ inline static void *
 gc_alloc0(Ty *ty, usize n)
 {
         MemoryUsed += n;
-        AddToTotalBytes(n);
+        NoteAlloc(n, GC_ANY);
         CheckUsed(ty);
 
         struct alloc *a = ty_calloc(1, sizeof *a + n);
@@ -171,7 +178,7 @@ inline static void *
 gc_alloc_unchecked(Ty *ty, usize n)
 {
         MemoryUsed += n;
-        AddToTotalBytes(n);
+        NoteAlloc(n, GC_ANY);
 
         struct alloc *a = ty_malloc(sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
@@ -190,7 +197,7 @@ inline static void *
 gc_alloc0_unchecked(Ty *ty, usize n)
 {
         MemoryUsed += n;
-        AddToTotalBytes(n);
+        NoteAlloc(n, GC_ANY);
 
         struct alloc *a = ty_calloc(1, sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
@@ -212,7 +219,7 @@ gc_alloc_object(Ty *ty, usize n, char type)
         }
 
         MemoryUsed += n;
-        AddToTotalBytes(n);
+        NoteAlloc(n, type);
         CheckUsed(ty);
 
         struct alloc *a = ty_malloc(sizeof *a + n);
@@ -227,6 +234,7 @@ gc_alloc_object(Ty *ty, usize n, char type)
         a->size = n;
 
         AddAlloc(ty, a);
+        PROF_BIND(ty, a);
 
         return a->data;
 }
@@ -239,7 +247,7 @@ gc_alloc_object_unchecked(Ty *ty, usize n, char type)
         }
 
         MemoryUsed += n;
-        AddToTotalBytes(n);
+        NoteAlloc(n, type);
 
         struct alloc *a = ty_malloc(sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
@@ -253,6 +261,7 @@ gc_alloc_object_unchecked(Ty *ty, usize n, char type)
         a->size = n;
 
         AddAlloc(ty, a);
+        PROF_BIND(ty, a);
 
         return a->data;
 }
@@ -265,7 +274,7 @@ gc_alloc_object0(Ty *ty, usize n, char type)
         }
 
         MemoryUsed += n;
-        AddToTotalBytes(n);
+        NoteAlloc(n, type);
         CheckUsed(ty);
 
         struct alloc *a = ty_calloc(1, sizeof *a + n);
@@ -278,6 +287,7 @@ gc_alloc_object0(Ty *ty, usize n, char type)
         a->size = n;
 
         AddAlloc(ty, a);
+        PROF_BIND(ty, a);
 
         return a->data;
 }
@@ -290,7 +300,7 @@ gc_alloc_object0_unchecked(Ty *ty, usize n, char type)
         }
 
         MemoryUsed += n;
-        AddToTotalBytes(n);
+        NoteAlloc(n, type);
 
         struct alloc *a = ty_calloc(1, sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
@@ -302,6 +312,7 @@ gc_alloc_object0_unchecked(Ty *ty, usize n, char type)
         a->size = n;
 
         AddAlloc(ty, a);
+        PROF_BIND(ty, a);
 
         return a->data;
 }
@@ -354,7 +365,7 @@ gc_resize(Ty *ty, void *p, usize n) {
         }
 
         MemoryUsed += n;
-        AddToTotalBytes(n);
+        NoteAlloc((a != NULL && a->size < n) ? n - a->size : (a == NULL) ? n : 0, (a != NULL) ? a->type : GC_ANY);
 
         CheckUsed(ty);
 

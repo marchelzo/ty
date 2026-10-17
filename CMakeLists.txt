@@ -12,6 +12,7 @@ option(BUILD_PROFILER "Build the typrof executable for profiling" OFF)
 option(USE_SYSTEM_DEPS "Use system-installed libraries instead of vcpkg (e.g. FreeBSD ports)" OFF)
 option(TY_MULTICALL "Build ty, tyls, tytest and typrof into a single ty executable" OFF)
 option(TY_EMBED_LIB "Embed lib/*.ty in the executable" OFF)
+option(TY_USDT "Compile USDT (SystemTap/bpftrace) probes into every executable; typrof always has them" OFF)
 
 include(CTest)
 
@@ -412,11 +413,33 @@ set(_src_files
   src/util.c
   src/value.c
   src/vm.c
+  src/prof.c
+  src/prof_html.c
   src/width.c
+)
+
+if(APPLE)
+  list(APPEND _src_files src/prof/darwin.c)
+else()
+  list(APPEND _src_files src/prof/linux.c)
+endif()
+
+set_source_files_properties(src/prof_html.c PROPERTIES
+  COMPILE_DEFINITIONS TY_PROF_HTML="${PROJECT_SOURCE_DIR}/src/prof.html"
+  OBJECT_DEPENDS ${PROJECT_SOURCE_DIR}/src/prof.html
 )
 
 set(_tgt_ty_interface "${PROJECT_NAME}_Objects")
 add_library(${_tgt_ty_interface} INTERFACE)
+
+if(TY_USDT)
+  include(CheckIncludeFile)
+  check_include_file(sys/sdt.h TY_HAVE_SYS_SDT_H)
+  if(NOT TY_HAVE_SYS_SDT_H)
+    message(FATAL_ERROR "TY_USDT=ON needs <sys/sdt.h> (install systemtap-sdt-dev / systemtap-sdt-devel)")
+  endif()
+  target_compile_definitions(${_tgt_ty_interface} INTERFACE TY_USDT)
+endif()
 
 set(_tgt_ty_interface_version_info "${_tgt_ty_interface}_VersionInfo")
 if(EXISTS "${PROJECT_SOURCE_DIR}/.git")

@@ -634,6 +634,24 @@ WriteExpressionSourceContext(
         StringVector const *notes
 );
 
+typedef struct source_gutter {
+        int width;
+        void *ctx;
+        void (*draw)(void *ctx, byte_vector *out, int line);
+        bool (*marked)(void *ctx, int line);
+} SourceGutter;
+
+void
+WriteModuleSourceLines(
+        Ty *ty,
+        byte_vector *out,
+        int cols,
+        Module const *mod,
+        int line0,
+        int line1,
+        SourceGutter const *gutter
+);
+
 void
 WriteExpressionSourceWindow(
         Ty *ty,

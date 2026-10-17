@@ -4,6 +4,7 @@
 #endif
 
 #include "ty.h"
+#include "prof.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -227,184 +228,6 @@ static u64 GCMaxHeap    = 0;
 static u64 GCRunCount   = 0;
 #endif
 
-#ifdef TY_PROFILER
-static void
-ProfileReport(Ty *ty);
-
-bool UseWallTime = false;
-FILE *ProfileOut = NULL;
-
-static char throw = INSTR_THROW;
-
-inline static u64 TyThreadWallTime()
-{
-#ifdef _WIN32
-        LARGE_INTEGER counter;
-        LARGE_INTEGER frequency;
-        QueryPerformanceCounter(&counter);
-        QueryPerformanceFrequency(&frequency);
-        return (u64)(counter.QuadPart * 1000000000ULL / frequency.QuadPart);
-#else
-        struct timespec t;
-        clock_gettime(CLOCK_MONOTONIC, &t);
-        return 1000000000ULL * t.tv_sec + t.tv_nsec;
-#endif
-}
-
-inline static u64
-TyThreadTime(void)
-{
-        return UseWallTime ? TyThreadWallTime() : TyThreadCPUTime();
-}
-
-typedef struct profile_entry {
-        int64_t count;
-        void *ctx;
-} ProfileEntry;
-
-char const *GC_ENTRY = "(Garbage Collection)";
-
-static int
-CompareProfileEntriesByWeight(void const *a_, void const *b_)
-{
-        ProfileEntry const *a = a_;
-        ProfileEntry const *b = b_;
-
-        if (a->count > b->count)
-                return -1;
-
-        if (a->count < b->count)
-                return 1;
-
-        return 0;
-}
-
-static int
-CompareProfileEntriesByLocation(void const *a_, void const *b_)
-{
-        ProfileEntry const *a = a_;
-        ProfileEntry const *b = b_;
-
-        char const *aIp = a->ctx;
-        char const *bIp = b->ctx;
-
-        //printf("Instruction(%lu) = %s\n", (uptr)aIp, InstructionNames[(uint8_t)((char *)a->ctx)[0]]);
-        Expr const *aExpr = compiler_find_expr(&vvv, a->ctx);
-
-        //printf("Instruction(%lu) = %s\n", (uptr)bIp, InstructionNames[(uint8_t)((char *)b->ctx)[0]]);
-        Expr const *bExpr = compiler_find_expr(&vvv, b->ctx);
-
-        if (aExpr == bExpr) return 0;
-        if (aExpr == NULL) return -1;
-        if (bExpr == NULL) return  1;
-
-        uptr aPtr = (uptr)aExpr;
-        uptr bPtr = (uptr)bExpr;
-
-        if (aPtr < bPtr) return -1;
-        if (aPtr > bPtr) return  1;
-
-        return 0;
-}
-
-static _Thread_local char *LastIP;
-static _Thread_local u64 LastThreadTime;
-static _Thread_local u64 LastThreadGCTime;
-static TySpinLock ProfileMutex;
-static Dict *Samples;
-static Dict *FuncSamples;
-istat prof;
-
-static bool WantReport = false;
-static int64_t LastReportRequest;
-
-u64 ProfileSampleInterval = 0;
-static _Thread_local i32 ProfileCountdown = 0;
-static _Thread_local i32 ProfileCalibrate = 100;
-
-/*
- * Records a sample for `prev_ip` (the instruction whose time we're measuring),
- * then sets LastIP = `next_ip` (the instruction about to execute).
- *
- * `prev_ip == NULL` => skip recording (used by vm_exec for synthetic IPs).
- *
- * Returns true if the slow path ran (sample was considered), false if
- * the countdown fast-path returned early.
- */
-inline static bool
-profiler_tick(Ty *ty, char const *prev_ip, char const *next_ip)
-{
-        if (Samples == NULL) return false;
-
-        if (ProfileSampleInterval > 0 && --ProfileCountdown > 0) {
-                return false;
-        }
-
-        GC_STOP();
-
-        u64 now = TyThreadTime();
-
-        if (LastThreadGCTime > 0) {
-                if (ProfileSampleInterval == 0) {
-                        Value *count = dict_put_key_if_not_exists(
-                                ty,
-                                FuncSamples,
-                                PTR((void *)GC_ENTRY)
-                        );
-                        if (count->type == VALUE_NIL) {
-                                *count = INTEGER(LastThreadGCTime);
-                        } else {
-                                count->z += LastThreadGCTime;
-                        }
-                }
-                LastThreadGCTime = 0;
-        }
-
-        if (prev_ip != NULL && LastThreadTime != 0) {
-                u64 dt = now - LastThreadTime;
-
-                TySpinLockLock(&ProfileMutex);
-
-                istat_add(&prof, prev_ip, dt);
-
-                Value *count = dict_put_key_if_not_exists(ty, Samples, PTR(prev_ip));
-                if (count->type == VALUE_NIL) {
-                        *count = INTEGER(dt);
-                } else {
-                        count->z += dt;
-                }
-
-                int *func = (ty->st->frames.count > 0) ? ActiveFun(ty)->info : NULL;
-                count = dict_put_key_if_not_exists(ty, FuncSamples, PTR(func));
-                if (count->type == VALUE_NIL) {
-                        *count = INTEGER(dt);
-                } else {
-                        count->z += dt;
-                }
-
-                TySpinLockUnlock(&ProfileMutex);
-
-                if (ProfileSampleInterval > 0 && dt > 0) {
-                        i32 cal = (i32)((u64)ProfileCalibrate * ProfileSampleInterval / dt);
-                        ProfileCalibrate = (cal < 1) ? 1 : (cal > 1000000) ? 1000000 : cal;
-                }
-        }
-
-        LastIP = (char *)next_ip;
-        LastThreadTime = now;
-        ProfileCountdown = ProfileCalibrate;
-
-        GC_RESUME();
-
-        return true;
-}
-
-void
-jit_profiler_tick(Ty *ty, char const *ip)
-{
-        profiler_tick(ty, LastIP, ip);
-}
-#endif
 
 #if !defined(TY_RELEASE)
 volatile bool GC_EVERY_ALLOC = false;
@@ -726,14 +549,31 @@ MarkPendingFFIAutoValues(Ty *marker, Ty *owner)
 inline static void
 TakeLockRaw(Ty *ty);
 
+#ifdef TY_HAVE_USDT
+__attribute__((noinline, cold))
+static void
+ProbeFunction(Ty *ty, Value const *f, bool entry)
+{
+        Expr const *e = from_eval(f) ? NULL : expr_of(f);
+        char const *file = (e != NULL && e->mod != NULL && e->mod->path != NULL) ? e->mod->path : "";
+        char const *name = name_of(f);
+        int line = (e != NULL) ? (int)e->start.line + 1 : 0;
+        int depth = vN(FRAMES);
+
+        if (entry) {
+                TY_PROBE(function__entry, file, name, line, depth);
+        } else {
+                TY_PROBE(function__return, file, name, line, depth);
+        }
+}
+#endif
+
 static void
 WaitGC(Ty *ty)
 {
         GCLOG("Waiting for GC");
 
-#ifdef TY_PROFILER
-        u64 start = TyThreadTime();
-#endif
+        PROF_ENTER(PS_GC_WAIT);
 
         ReleaseLock(ty, false);
         int phase = WaitForGCPhase(ty, GC_PHASE_MARK | GC_PHASE_DONE);
@@ -741,9 +581,7 @@ WaitGC(Ty *ty)
 
         if (phase == GC_PHASE_DONE) {
                 GCLOG("Finished waiting: %llu", TID);
-#ifdef TY_PROFILER
-                LastThreadGCTime = TyThreadTime() - start;
-#endif
+                PROF_LEAVE();
                 return;
         }
 
@@ -757,9 +595,7 @@ WaitGC(Ty *ty)
 
         WaitForGCPhase(ty, GC_PHASE_DONE | GC_PHASE_NONE);
 
-#ifdef TY_PROFILER
-        LastThreadGCTime = TyThreadTime() - start;
-#endif
+        PROF_LEAVE();
 
         dont_printf("Thread %-3llu: %lluus\n", TID, (TyThreadTime() - start) / 1000);
 }
@@ -778,9 +614,18 @@ DoGC(Ty *ty)
                 return;
         }
 
-#if defined(TY_PROFILER) || defined(TY_GC_STATS)
+        PROF_ENTER(PS_GC);
+
+#if defined(TY_GC_STATS)
         u64 start = TyMonotonicTime();
         u64 heap  = MemoryUsed;
+#endif
+
+        TY_PROBE_IF(gc__start, (unsigned long)MemoryUsed);
+
+#if defined(TY_HAVE_USDT) || defined(TY_HAVE_SAMPLER)
+        u64 probe_t0 = TyMonotonicTime();
+        u64 probe_heap = MemoryUsed;
 #endif
 
         CO_LOG("GC", TERM(91), "========== Starting GC on thread %llu ============", TID);
@@ -907,19 +752,31 @@ DoGC(Ty *ty)
 
         GCLOG("Unlocked ThreadsLock and GCLock on thread %llu", TID);
 
-#if defined(TY_GC_STATS) || defined(TY_PROFILER)
-        u64 end = TyMonotonicTime();
-#endif
-
 #if defined(TY_GC_STATS)
+        u64 end = TyMonotonicTime();
         GCTimeTotal += end - start;
         GCTimeWait += mark - start;
         GCTimeMark += sweep - mark;
         GCTimeSweep += end - sweep;
         GCRunCount += 1;
-#elif defined(TY_PROFILER)
-        LastThreadGCTime = end - start;
 #endif
+
+#ifdef TY_HAVE_SAMPLER
+        prof_gc_done(probe_heap, MemoryUsed, TyMonotonicTime() - probe_t0);
+#endif
+
+#ifdef TY_HAVE_USDT
+        if (TY_PROBING(gc__done)) {
+                TY_PROBE(
+                        gc__done,
+                        (unsigned long)probe_heap,
+                        (unsigned long)MemoryUsed,
+                        (unsigned long)(TyMonotonicTime() - probe_t0)
+                );
+        }
+#endif
+
+        PROF_LEAVE();
 
         dont_printf("Thread %-3llu: %.6fs\n", TID, (t1 - t0) / 1.0e9);
 }
@@ -1485,6 +1342,13 @@ HandlePendingSignals(Ty *ty)
                         continue;
                 }
 
+#ifdef TY_HAVE_SAMPLER
+                if (sig == prof_attach_signal() && sig != 0) {
+                        prof_attach_toggle(ty);
+                        continue;
+                }
+#endif
+
                 pthread_rwlock_rdlock(&SignalLock);
                 Value fn = SignalHandlers[sig];
                 pthread_rwlock_unlock(&SignalLock);
@@ -1991,6 +1855,10 @@ JitReturn:
                 break;
 
         case JIT_DEOPT:
+#ifdef TY_PROFILER
+                prof_jit_deopt(&top->f, next_resume);
+#endif
+                TY_PROBE_IF(jit__deopt, name_of(&top->f), (long)next_resume);
                 NoteDeopt(ty, top);
                 top->jit_resume = 0;
                 top->deopts += 1;
@@ -2231,6 +2099,12 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs
         xvP(FRAMES, FRAME(fp, *f, IP));
         xvP(CALLS, whence);
 
+#ifdef TY_HAVE_USDT
+        if (TY_PROBING(function__entry)) {
+                ProbeFunction(ty, f, true);
+        }
+#endif
+
         // Fill in kwargs (overwriting positional args)
         if (UNLIKELY(!IsNil(kwargs))) {
                 char const *name = ((char *)f->info) + FUN_PARAM_NAMES;
@@ -2256,6 +2130,8 @@ SetupGenerator(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const
         GC_STOP();
 
         Value v = GENERATOR(NewGenerator(ty, *f));
+
+        count_call(f);
 
         xvPn(v.gen->st->stack, topN(argc), argc);
         vN(STACK) -= argc;
@@ -2301,6 +2177,8 @@ call(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs)
                 return false;
         }
 
+        count_call(f);
+
         IP = code_of(f);
 
         return true;
@@ -2318,6 +2196,7 @@ call6t(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwarg
         }
 
         xcall(ty, f, pSelf, argc, pKwargs, whence);
+        count_call(f);
         IP = code_of(f);
 }
 
@@ -2657,6 +2536,12 @@ CleanupThread(void *ctx)
 
         GCLOG("Cleaning up thread: %zu bytes in use. DeadUsed = %zu", MemoryUsed, ty->group->DeadUsed);
 
+#ifdef TY_HAVE_SAMPLER
+        prof_thread_stop(ty);
+#else
+        TY_PROBE_IF(thread__stop, (long)ty->id);
+#endif
+
         DebugThreadExit(ty);
 
         TySpinLockLock(&ty->group->DLock);
@@ -2871,6 +2756,12 @@ vm_run_thread(void *p)
         ty->group = ctx->group;
 
         AddThread(ty, t->t);
+
+#ifdef TY_HAVE_SAMPLER
+        prof_thread_start(ty);
+#else
+        TY_PROBE_IF(thread__start, (long)ty->id, 0L);
+#endif
 
         gP(&call[0]);
 
@@ -3164,6 +3055,22 @@ TY_INSTR_INLINE static void
 DoThrow(Ty *ty)
 {
         ty->exc = CurrentThrowCtx(ty)->exc;
+
+#ifdef TY_PROFILER
+        prof_throw(ty, IP);
+#endif
+
+#ifdef TY_HAVE_USDT
+        if (TY_PROBING(throw)) {
+                Expr const *where = compiler_find_expr(ty, jit_frame_ip(vN(FRAMES) > 0 ? vvL(FRAMES) : NULL, IP) - 1);
+                TY_PROBE(
+                        throw,
+                        (ty->exc.type == VALUE_OBJECT) ? class_name(ty, ty->exc.class) : "(value)",
+                        (where != NULL && where->mod != NULL) ? where->mod->path : "",
+                        (where != NULL) ? (int)where->start.line + 1 : 0
+                );
+        }
+#endif
 
         if (UNLIKELY(TraceThrows)) {
                 TraceThrow(ty);
@@ -7390,10 +7297,6 @@ vm_exec(Ty *ty, char *code)
                 PopulateGlobals(ty);
         }
 
-#ifdef TY_PROFILER
-        char *StartIPLocal = LastIP;
-#endif
-
         EXEC_DEPTH += 1;
         LOG("vm_exec(): ==> %d", EXEC_DEPTH);
 
@@ -7416,28 +7319,9 @@ vm_exec(Ty *ty, char *code)
 NextInstruction:
                 CheckFlags(ty);
 #ifdef TY_PROFILER
-                {
-                        char *prev = LastIP;
-
-                        if (
-                                (prev == StartIPLocal)
-                             || (prev != NULL && *prev == INSTR_HALT)
-                             || (prev == next_fix)
-                             || (prev == iter_fix)
-                             || (prev == next_fix + 1)
-                             || (prev == iter_fix + 1)
-                             || (prev == &throw)
-                        ) {
-                                prev = NULL;
-                        }
-
-                        if (profiler_tick(ty, prev, IP) && WantReport) {
-                                TySpinLockLock(&ProfileMutex);
-                                ProfileReport(ty);
-                                TySpinLockUnlock(&ProfileMutex);
-                                WantReport = false;
-                        }
-                }
+                PROF_OP(ty, IP);
+                PROF_POLL(ty);
+                atomic_signal_fence(memory_order_seq_cst);
 #endif
                 //XXLOG("stack=%zu, instruction = %s", vN(STACK), GetInstructionName(*IP));
 
@@ -9406,6 +9290,7 @@ BinaryOp:
                         }
 
                         STACK.count = vvL(FRAMES)->fp + n;
+                        count_call(ActiveFun(ty));
                         IP = code_of(ActiveFun(ty));
                         break;
 
@@ -9523,6 +9408,11 @@ BinaryOp:
 RETURN:
                 CASE(RETURN)
                         CO_LOG("RETURN", TERM(91), "<-- %sreturn%s from %s: %s", TERM(93), TERM(0), VSC(ActiveFun(ty)), VSC(top()));
+#ifdef TY_HAVE_USDT
+                        if (TY_PROBING(function__return)) {
+                                ProbeFunction(ty, &vvL(FRAMES)->f, false);
+                        }
+#endif
                         n = vXx(FRAMES).fp;
                         STACK.items[n] = peek();
                         STACK.count = n + 1;
@@ -9551,7 +9441,9 @@ RunExitHooks(void)
         int id = NAMES.exit_hooks;
 
 #if defined(TY_PROFILER)
-        ProfileReport(ty);
+        prof_report(ty);
+#elif defined(TY_HAVE_SAMPLER)
+        prof_attach_exit(ty);
 #endif
 
         if (
@@ -10034,324 +9926,6 @@ vm_execute_file(Ty *ty, char const *path)
         return success;
 }
 
-#if defined(TY_PROFILER)
-inline static int
-ilerp(int lo, int hi, float a, float x, float b)
-{
-        if (x < a || x > b)
-                return -1;
-
-        float p = (x - a) / (b - a);
-
-        return lo + p * (hi - lo);
-}
-
-void
-color_sequence(float p, char *out)
-{
-        int r, g, b;
-
-        if ((r = ilerp(0, 100, 0.0, p, 0.1)) != -1) {
-                g = ilerp(255, 225, 0.0, p, 0.1);
-                b = 65;
-        } else if ((r = ilerp(130, 180, 0.1, p, 0.3)) != -1) {
-                g = ilerp(200, 120, 0.1, p, 0.3);
-                b = 40;
-        } else if ((r = ilerp(180, 235, 0.3, p, 0.65)) != -1) {
-                r += 20;
-                g = ilerp(120, 60, 0.3, p, 0.65);
-                b = 60;
-        } else {
-                r = 255;
-                g = ilerp(50, 20, 0.65, p, 1.0);
-                b = 60;
-        }
-
-        sprintf(out, "\033[38;2;%d;%d;%dm", r, g, b);
-}
-
-static void
-ProfileReport(Ty *ty)
-{
-        vec(ProfileEntry) profile = {0};
-        vec(ProfileEntry) func_profile = {0};
-
-        char color_buffer[64] = {0};
-        double total_ticks = 0.0;
-        char const *min_pct = getenv("TY_PROFILE_MIN_PCT");
-        double min_share = (min_pct != NULL) ? atof(min_pct) / 100.0 : 0.01;
-
-        dfor(Samples, {
-                ProfileEntry entry = ((ProfileEntry) {
-                        .ctx = key->ptr,
-                        .count = val->z
-                });
-                xvP(profile, entry);
-                total_ticks += entry.count;
-        });
-
-        dfor(FuncSamples, {
-                ProfileEntry entry = ((ProfileEntry) {
-                        .ctx = key->ptr,
-                        .count = val->z
-                });
-                xvP(func_profile, entry);
-        });
-
-        qsort(func_profile.items, func_profile.count, sizeof (ProfileEntry), CompareProfileEntriesByWeight);
-
-        fprintf(ProfileOut, "%s======= profile by function =======%s\n\n", PTERM(95), PTERM(0));
-        for (int i = 0; i < func_profile.count; ++i) {
-                ProfileEntry *entry = &func_profile.items[i];
-
-                if (entry->count / total_ticks < min_share) {
-                        break;
-                }
-
-                if (*PTERM(0)) {
-                        color_sequence(entry->count / total_ticks, color_buffer);
-                }
-
-                if (entry->ctx == NULL) {
-                        fprintf(
-                                ProfileOut,
-                                "   %s%5.1f%%  %-14lld  %s%s(top)%s\n",
-                                color_buffer,
-                                entry->count / total_ticks * 100.0,
-                                (long long)entry->count,
-                                PTERM(92),
-                                PTERM(1),
-                                PTERM(0)
-                        );
-                } else if (entry->ctx == GC_ENTRY) {
-                        fprintf(
-                                ProfileOut,
-                                "   %s%5.1f%%  %-14lld  %s%s%s%s\n",
-                                color_buffer,
-                                entry->count / total_ticks * 100.0,
-                                (long long)entry->count,
-                                PTERM(93),
-                                PTERM(1),
-                                GC_ENTRY,
-                                PTERM(0)
-                        );
-                } else {
-                        Value f = FUNCTION();
-                        f.info = entry->ctx;
-                        char *f_string = VSC(&f);
-                        fprintf(
-                                ProfileOut,
-                                "   %s%5.1f%%  %-14lld  %s\n",
-                                color_buffer,
-                                entry->count / total_ticks * 100.0,
-                                (long long)entry->count,
-                                f_string
-                        );
-                        xmF(f_string);
-                }
-        }
-
-        byte_vector prog_text = {0};
-
-        for (int i = 0; i < func_profile.count; ++i) {
-                ProfileEntry *entry = &func_profile.items[i];
-
-                if (entry->count / total_ticks < 0.01) {
-                        break;
-                }
-
-                if (entry->ctx == NULL || entry->ctx == GC_ENTRY) {
-                        continue;
-                }
-
-                Value f = FUNCTION();
-                f.info = entry->ctx;
-
-                if (class_of(&f) == -1) {
-                        dump(
-                                &prog_text,
-                                "%s==== %s%s%s%s by instruction %s====%s\n",
-                                PTERM(92),
-                                PTERM(34),
-                                name_of(&f),
-                                proto_of(&f),
-                                PTERM(95),
-                                PTERM(92),
-                                PTERM(0)
-                        );
-                } else {
-                        dump(
-                                &prog_text,
-                                "%s==== %s%s.%s%s%s by instruction %s====%s\n",
-                                PTERM(92),
-                                PTERM(34),
-                                class_name(ty, class_of(&f)),
-                                name_of(&f),
-                                proto_of(&f),
-                                PTERM(95),
-                                PTERM(92),
-                                PTERM(0)
-                        );
-                }
-
-                void const *code = code_of(&f);
-                usize       size = code_size_of(&f);
-
-                DumpProgram(
-                        ty,
-                        &prog_text,
-                        TyCompilerState(ty)->module->name,
-                        code,
-                        code + size,
-                        false
-                );
-
-                dump(&prog_text, "\n");
-        }
-
-        fwrite(prog_text.items, 1, prog_text.count, ProfileOut);
-        fputc('\n', ProfileOut);
-
-#if 0
-        qsort(profile.items, profile.count, sizeof (ProfileEntry), CompareProfileEntriesByLocation);
-
-        int n = 1;
-        for (int i = 1; i < profile.count; ++i) {
-                if (compiler_find_expr(ty, profile.items[n - 1].ctx) == compiler_find_expr(ty, profile.items[i].ctx)) {
-                        profile.items[n - 1].count += profile.items[i].count;
-                } else {
-                        profile.items[n++] = profile.items[i];
-                }
-        }
-
-        if (profile.count > 0)
-                profile.count = n;
-
-        qsort(profile.items, profile.count, sizeof (ProfileEntry), CompareProfileEntriesByWeight);
-
-        fprintf(ProfileOut, "\n\n%s===== profile by expression =====%s\n\n", PTERM(95), PTERM(0));
-        u64 reported_ticks = 0;
-        for (int i = 0; i < profile.count; ++i) {
-                ProfileEntry *entry = profile.items + i;
-                Expr const *expr = compiler_find_expr(ty, entry->ctx);
-
-                if (*PTERM(0)) {
-                        color_sequence(entry->count / total_ticks, color_buffer);
-                }
-
-                if (expr == NULL) {
-                        fprintf(
-                                ProfileOut,
-                                "   %s%5.1f%%  %-13lld %s%16s %s%18s%6s%s  |  %s<no source available>%s %llu : %s\n",
-                                color_buffer,
-                                entry->count / total_ticks * 100.0,
-                                entry->count,
-                                PTERM(95),
-                                "",
-                                PTERM(91),
-                                "(unknown)",
-                                "",
-                                PTERM(92),
-                                PTERM(91),
-                                PTERM(0),
-                                (uptr)entry->ctx,
-                                ""
-                        );
-                        fprintf(ProfileOut, "   &halt = %lu\n", (uptr)&halt);
-                        fprintf(ProfileOut, "   &IP = %lu\n", (uptr)&IP);
-                        fprintf(
-                                ProfileOut,
-                                "   %s%5.1f%%  %-13lld %s%16s %s%18s%6s%s  |  %s<no source available>%s %llu : %s\n",
-                                color_buffer,
-                                entry->count / total_ticks * 100.0,
-                                entry->count,
-                                PTERM(95),
-                                "",
-                                PTERM(91),
-                                "(unknown)",
-                                "",
-                                PTERM(92),
-                                PTERM(91),
-                                PTERM(0),
-                                (uptr)entry->ctx,
-                                GetInstructionName(*(uint8_t const *)entry->ctx)
-                        );
-                        continue;
-                }
-
-                char const *etype = ExpressionTypeName(expr);
-
-                if ((reported_ticks += entry->count) / total_ticks > 0.90 && i > 18) {
-                        break;
-                }
-
-                char const *filename = strrchr(expr->mod->path, '/');
-                Location start = expr->start;
-                Location end = expr->end;
-
-                if (filename == NULL) {
-                        filename = expr->filename;
-                } else {
-                        filename += 1;
-                }
-
-                int name_len = strlen(filename);
-                char name_buffer[32];
-
-                if (name_len > 18) {
-                        sprintf(name_buffer, "..%s", filename + (name_len - 18) + 2);
-                } else {
-                        strcpy(name_buffer, filename);
-                }
-
-                char code_buffer[1024];
-                colorize_code(PTERM(93), PTERM(0), &start, &end, code_buffer, sizeof code_buffer);
-
-                fprintf(
-                        ProfileOut,
-                        "   %s%5.1f%%  %-13lld %s%16s %s%18s%s:%s%-5d%s  |  %s\n",
-                        color_buffer,
-                        entry->count / total_ticks * 100.0,
-                        entry->count,
-                        PTERM(95),
-                        etype,
-                        PTERM(93),
-                        name_buffer,
-                        PTERM(0),
-                        PTERM(94),
-                        start.line + 1,
-                        PTERM(92),
-                        code_buffer
-                );
-        }
-
-        fputc('\n', ProfileOut);
-
-        byte_vector prog_text = {0};
-        DumpProgram(ty, &prog_text, filename, NULL, NULL, true);
-        fwrite(prog_text.items, 1, prog_text.count, ProfileOut);
-        fputc('\n', ProfileOut);
-
-#endif
-
-        jit_stats_report(ty, ProfileOut);
-
-        fputc('\n', ProfileOut);
-}
-
-static void
-ProfilerSIGINT(int _)
-{
-        int64_t now = TyThreadWallTime();
-
-        if (LastReportRequest > 0 && now - LastReportRequest < 3000000000LL) {
-                exit(0);
-        }
-
-        LastReportRequest = now;
-        WantReport = true;
-}
-#endif
 
 #ifdef TY_CATCH_SIGSEGV
 static void
@@ -10565,10 +10139,6 @@ RunTestHarness(Ty *ty, char **args, int n)
 bool
 vm_init(Ty *ty, int ac, char **av)
 {
-#if defined(TY_PROFILER)
-        void (*handler)(int) = signal(SIGINT, ProfilerSIGINT);
-#endif
-
 #if defined(TY_CATCH_SIGSEGV)
         signal(SIGSEGV, cringe);
 #endif
@@ -10691,12 +10261,10 @@ vm_init(Ty *ty, int ac, char **av)
         GC_RESUME();
         TY_CATCH_END();
 
-#ifdef TY_PROFILER
-        Samples = dict_new(ty);
-        NOGC(Samples);
-        FuncSamples = dict_new(ty);
-        NOGC(FuncSamples);
-        TySpinLockInit(&ProfileMutex);
+#if defined(TY_PROFILER)
+        prof_start(ty);
+#elif defined(TY_HAVE_SAMPLER)
+        prof_attach_init(ty);
 #endif
 
         TY_FINISH_LOADING();

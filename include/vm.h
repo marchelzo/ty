@@ -549,9 +549,6 @@ co_colored(Ty *ty);
 extern bool DyingOfError;
 
 #ifdef TY_PROFILER
-void
-jit_profiler_tick(Ty *ty, char const *ip);
-
 extern u64 ProfileSampleInterval;
 #endif
 

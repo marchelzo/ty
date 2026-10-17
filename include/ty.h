@@ -279,7 +279,12 @@ enum {
         FUN_EXPR        = FUN_NAME        + sizeof (uptr),
         FUN_JIT         = FUN_EXPR        + sizeof (uptr),
         FUN_JIT_CODE    = FUN_JIT         + sizeof (uptr),
+#ifdef TY_PROFILER
+        FUN_CALLS       = FUN_JIT_CODE    + sizeof (uptr),
+        FUN_PARAM_NAMES = FUN_CALLS       + sizeof (uptr)
+#else
         FUN_PARAM_NAMES = FUN_JIT_CODE    + sizeof (uptr)
+#endif
 };
 
 enum {

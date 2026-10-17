@@ -128,7 +128,9 @@ static void
 count_member_set(BcLir *c)
 {
 #ifdef TY_PROFILER
-        xinc(c, &jit_stats.member_set_fast);
+        if (JitStatsOn) {
+                xinc(c, &jit_stats.member_set_fast);
+        }
 #endif
 }
 
@@ -136,8 +138,7 @@ static void
 tick(BcLir *c, char const *ip)
 {
 #ifdef TY_PROFILER
-        sync_sp(c);
-        tycall(c, jit_profiler_tick, LT_VOID, pimm(ip));
+        effect(c, LIR_SITE, (LirOpnd[]) { lir_i(ip - c->code + 1) }, 1);
 #endif
 }
 
