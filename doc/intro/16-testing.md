@@ -282,9 +282,7 @@ let m = spy-method(Client, 'fetch')  // records (self, args...) and calls throug
 
 ### How tests run
 
-`ty --test` hands over to `tytest`, a build of the interpreter with testing support compiled in. `make test` builds it, and it is installed next to `ty`. The `ty` binary itself has none of this support, so ordinary programs pay nothing for it.
-
-Under `tytest`, the test file passed to `--test` is still type-checked, but its type errors are not reported, and its constants and functions can be reassigned. Modules it imports are checked as usual. Patching a builtin turns off the JIT's direct call to that builtin, and patching a constructor turns off the JIT's inlined constructor for that class.
+Under `ty --test`, the test file passed to `--test` is still type-checked, but its type errors are not reported, and its constants and functions can be reassigned. Modules it imports are checked as usual. Patching a builtin turns off the JIT's direct call to that builtin, and patching a constructor turns off the JIT's inlined constructor for that class.
 
 ## Metadata
 

@@ -31,7 +31,6 @@ typedef struct {
         i32    at;
 } Spot;
 
-#ifdef TY_PROFILER
 static char const *
 slot_label(BcLir const *c, i32 slot)
 {
@@ -82,7 +81,6 @@ operand_label(BcLir const *c, i32 i)
 
         return buf;
 }
-#endif
 
 #define NUM_LABEL(real) ((real) ? "a Float" : "an Int")
 

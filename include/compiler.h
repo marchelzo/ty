@@ -77,21 +77,12 @@ enum {
         TYC_FIDELITY        = (1 << 14),
         TYC_SNAPSHOT        = (1 << 15),
 
-#if defined(TY_LS)
         TYC_DEFAULT_FLAGS = (
                 TYC_RESOLVE
               | TYC_EMIT
               | TYC_TOKENS
               | TYC_ZFOLD
         )
-#else
-        TYC_DEFAULT_FLAGS = (
-                TYC_RESOLVE
-              | TYC_EMIT
-              | TYC_TOKENS
-              | TYC_ZFOLD
-        )
-#endif
 };
 
 typedef struct eloc {
@@ -818,10 +809,8 @@ CompilerFreeVars(Ty *ty, Expr const *expr, Scope *scope);
 
 #define EDBG(e) ((edbg)(ty, (e)))
 
-#ifdef TY_LS
 void
 CompilerLoadModuleByPath(Ty *ty, char const *path);
-#endif
 
 Value
 compiler_type_function(Ty *ty, Symbol const *sym);

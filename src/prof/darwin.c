@@ -87,7 +87,7 @@ TickLoop(void *_)
 {
         u64 next = MonoNs();
 
-        pthread_setname_np("typrof-tick");
+        pthread_setname_np("ty-prof-tick");
 
         pthread_mutex_lock(&TickLock);
 

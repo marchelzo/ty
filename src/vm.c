@@ -1381,19 +1381,24 @@ CheckPendingSignals(Ty *ty)
 
 __attribute__((always_inline))
 inline static void
-CheckFlags(Ty *ty)
+CheckFlags(Ty *ty, char const *ip)
 {
         bool signaled = TakePendingSignals();
 
-        if (UNLIKELY(GC_IS_WAITING | signaled | (DebugInterrupt != 0))) {
+        if (UNLIKELY(GC_IS_WAITING | signaled | (VmPoll.any != 0))) {
                 if (GC_IS_WAITING & (ty->GC_OFF_COUNT == 0)) {
                         WaitGC(ty);
                 }
                 if (UNLIKELY(signaled)) {
                         HandlePendingSignals(ty);
                 }
-                if (UNLIKELY(DebugInterrupt)) {
+                if (UNLIKELY(VmPoll.debug)) {
                         DebugSafepoint(ty);
+                }
+                if (VmPoll.prof && ip != NULL) {
+                        PROF_OP(ty, ip);
+                        PROF_POLL(ty);
+                        atomic_signal_fence(memory_order_seq_cst);
                 }
         }
 }
@@ -1759,9 +1764,9 @@ NoteDeopt(Ty *ty, Frame const *top)
              && (lc->body == (void *)frame_jit(top))
              && (__atomic_add_fetch((u32 *)&lc->deopts, 1, __ATOMIC_RELAXED) == JIT_DEOPT_LIMIT)
         ) {
-#ifdef TY_PROFILER
-                prof_jit_despecialize(&fn, JIT_DEOPT_LIMIT);
-#endif
+                if (ProfMode) {
+                        prof_jit_despecialize(&fn, JIT_DEOPT_LIMIT);
+                }
                 jit_despecialize(ty, &fn);
         }
 }
@@ -1870,9 +1875,9 @@ JitReturn:
                 break;
 
         case JIT_DEOPT:
-#ifdef TY_PROFILER
-                prof_jit_deopt(ty, top, next_resume);
-#endif
+                if (ProfMode) {
+                        prof_jit_deopt(ty, top, next_resume);
+                }
                 TY_PROBE_IF(jit__deopt, name_of(&top->f), (long)next_resume);
                 NoteDeopt(ty, top);
                 top->jit_resume = 0;
@@ -2909,7 +2914,7 @@ vm_jit_handle_interrupt(Ty *ty, Value *top, JitDeopt const *info)
 void
 vm_check_flags(Ty *ty)
 {
-        CheckFlags(ty);
+        CheckFlags(ty, NULL);
 }
 
 static void
@@ -3071,9 +3076,9 @@ DoThrow(Ty *ty)
 {
         ty->exc = CurrentThrowCtx(ty)->exc;
 
-#ifdef TY_PROFILER
-        prof_throw(ty, IP);
-#endif
+        if (ProfMode) {
+                prof_throw(ty, IP);
+        }
 
 #ifdef TY_HAVE_USDT
         if (TY_PROBING(throw)) {
@@ -3166,7 +3171,7 @@ RaiseException(Ty *ty)
                 PutMember(exc, NAMES._cause, prev->exc);
         }
         ctx->exc = exc;
-        if (UNLIKELY(DebugInterrupt | DebugJitOff)) {
+        if (UNLIKELY(VmPoll.debug | DebugJitOff)) {
                 DebugOnThrow(ty);
         }
         DoThrow(ty);
@@ -7402,12 +7407,7 @@ vm_exec(Ty *ty, char *code)
 
         for (;;) {
 NextInstruction:
-                CheckFlags(ty);
-#ifdef TY_PROFILER
-                PROF_OP(ty, IP);
-                PROF_POLL(ty);
-                atomic_signal_fence(memory_order_seq_cst);
-#endif
+                CheckFlags(ty, IP);
                 //XXLOG("stack=%zu, instruction = %s", vN(STACK), GetInstructionName(*IP));
 
                 switch ((u8)*IP++) {
@@ -9498,10 +9498,12 @@ RunExitHooks(void)
         Ty *ty = MyTy;
         int id = NAMES.exit_hooks;
 
-#if defined(TY_PROFILER)
-        prof_report(ty);
-#elif defined(TY_HAVE_SAMPLER)
-        prof_attach_exit(ty);
+#if defined(TY_HAVE_SAMPLER)
+        if (ProfMode) {
+                prof_report(ty);
+        } else {
+                prof_attach_exit(ty);
+        }
 #endif
 
         if (
@@ -10319,10 +10321,12 @@ vm_init(Ty *ty, int ac, char **av)
         GC_RESUME();
         TY_CATCH_END();
 
-#if defined(TY_PROFILER)
-        prof_start(ty);
-#elif defined(TY_HAVE_SAMPLER)
-        prof_attach_init(ty);
+#if defined(TY_HAVE_SAMPLER)
+        if (ProfMode) {
+                prof_start(ty);
+        } else if (!LangServer) {
+                prof_attach_init(ty);
+        }
 #endif
 
         TY_FINISH_LOADING();
@@ -10478,7 +10482,7 @@ vm_throw(Ty *ty, Value const *v)
 {
         ThrowCtx *ctx = PushThrowCtx(ty);
         ctx->exc = *v;
-        if (UNLIKELY(DebugInterrupt | DebugJitOff)) {
+        if (UNLIKELY(VmPoll.debug | DebugJitOff)) {
                 DebugOnThrow(ty);
         }
         DoThrow(ty);

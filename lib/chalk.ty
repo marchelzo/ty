@@ -117,8 +117,10 @@ fn assemble(spans: Array[(TermStyle, String)]) -> String {
     parse(out.str!())
 }
 
+const ESCAPES = %{'[': '\\[', '\\': '\\\\'}
+
 pub fn escape(text: String) -> String {
-    text.sub(/\[|\\/, %{'[': '\\[', '\\': '\\\\'}[])
+    text.sub(/\[|\\/, ESCAPES[])
 }
 
 fn enables-of(trans: _) -> String {

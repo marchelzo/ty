@@ -29,7 +29,7 @@
 #include "value.h"
 #include "vm.h"
 
-volatile sig_atomic_t DebugInterrupt;
+volatile VmPollWord VmPoll;
 volatile sig_atomic_t DebugJitOff;
 
 enum {
@@ -1223,7 +1223,7 @@ AnyStepping(void);
 static void
 RecomputeInterrupt(void)
 {
-        DebugInterrupt = D.stopped || (D.rearms > 0) || AnyStepping();
+        VmPoll.debug = D.stopped || (D.rearms > 0) || AnyStepping();
 }
 
 static void
@@ -1249,7 +1249,7 @@ DisarmLocked(TyDebugThread *d, char *ip)
         d->rearm = ip;
         D.rearms += 1;
 
-        DebugInterrupt = 1;
+        VmPoll.debug = 1;
 }
 
 void
@@ -1750,7 +1750,7 @@ StopWorld(
                 xvP(D.hits, ids[i]);
         }
 
-        DebugInterrupt   = 1;
+        VmPoll.debug     = 1;
         JitInterruptFlag = 1;
 
         PostEvent((DebugEvent) { .kind = EV_STOP });
@@ -4000,7 +4000,7 @@ ReqPause(Ty *ty, Json const *req, Json const *args)
 
                 v0(D.hits);
 
-                DebugInterrupt   = 1;
+                VmPoll.debug     = 1;
                 JitInterruptFlag = 1;
 
                 PostEvent((DebugEvent) { .kind = EV_STOP });
@@ -4674,7 +4674,7 @@ AfterFork(void)
         D.client = -1;
         D.exc_filters = 0;
         D.rearms = 0;
-        DebugInterrupt = 0;
+        VmPoll.debug = 0;
         DebugJitOff = 0;
 
         close(D.wake[0]);
@@ -4690,11 +4690,11 @@ AfterFork(void)
 void
 DebugInit(Ty *ty)
 {
-#if defined(TY_LS)
-        return;
-#endif
-
         char const *off = getenv("TY_NO_ATTACH");
+
+        if (LangServer) {
+                return;
+        }
 
         if (off != NULL && off[0] != '\0' && strcmp(off, "0") != 0) {
                 return;
@@ -4802,7 +4802,7 @@ DebugWaitForClient(Ty *ty)
 
 #else
 
-volatile sig_atomic_t DebugInterrupt;
+volatile VmPollWord VmPoll;
 volatile sig_atomic_t DebugJitOff;
 
 void DebugInit(Ty *ty) {}

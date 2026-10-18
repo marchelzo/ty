@@ -68,9 +68,9 @@ These results should be taken with a massive grain of salt as many of the progra
 </div>
 
 
-## Profiling Ty programs with `typrof`
+## Profiling Ty programs
 
-Ty ships with an additional binary called `typrof` that can be used to profile Ty programs. Simply run `typrof <program>` to get a report of how much time was spent in each function. By default it samples at 999 Hz; pass `-F <Hz>` to choose a different frequency, or `--count[=N]` to sample every Nth bytecode op deterministically (this disables the JIT). Below is an example of its output.
+Run `ty --prof <program>` to get a report of how much time was spent in each function. By default it samples on-CPU time at 999 Hz; pass `--prof-hz=<Hz>` to choose a different frequency, `--prof=wall` to sample wall-clock time, or `--prof=count[:N]` to sample every Nth bytecode op deterministically (this disables the JIT). The profile is recorded to `ty-prof.data`; browse it with `ty --prof-report`, or compare two with `ty --prof-diff`. `ty --help` lists the rest of the `--prof-*` options. Below is an example of its output.
 
-![typrof output](./typrof.png)
-![typrof jit summary](./typrof_jit.png)
+![profiler output](./prof.png)
+![profiler jit summary](./prof_jit.png)

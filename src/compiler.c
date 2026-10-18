@@ -35,13 +35,8 @@
 
 #define TY_DEBUG_STACK_BOOKKEEPING 0
 
-#if defined(TY_LS)
  #include "json.h"
-#endif
-
-#if defined(TY_PROFILER)
  #include "istat.h"
-#endif
 
 #if 0
 #define DT(e, ...) do {                     \
@@ -222,11 +217,7 @@ enum {
 #define RUNTIME_CONSTRAINTS 0
 #define CHECK_INIT() do { if (RUNTIME_CONSTRAINTS) { INSN(CHECK_INIT); } } while (0)
 
-#if defined(TY_PROFILER) || 1
 #define KEEP_LOCATION(e) true
-#else
-#define KEEP_LOCATION(e) ((e)->type > EXPRESSION_KEEP_LOC)
-#endif
 
 #if 0
   #define INSTR_SAVE_STACK_POS INSTR_SAVE_STACK_POS), Ei32(__LINE__
@@ -401,12 +392,9 @@ char const *TestFilePath;
 inline static bool
 InTestModule(Ty *ty)
 {
-#ifdef TY_TEST
-        return (STATE.module != NULL) && (STATE.module->flags & MOD_TESTS);
-#else
-        (void)ty;
-        return false;
-#endif
+        return RunningTests
+            && (STATE.module != NULL)
+            && (STATE.module->flags & MOD_TESTS);
 }
 static bool TestRunnerFailed;
 static Module *GlobalModule;
@@ -4039,11 +4027,9 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, u32 flags)
                                         TERM(39)
                                 );
                         }
-#ifdef TY_TEST
-                        if (!proto && SymbolIsConst(target->symbol)) {
+                        if (RunningTests && !proto && SymbolIsConst(target->symbol)) {
                                 target->symbol->flags &= ~SYM_CONST;
                         }
-#endif
                 }
                 if (target->type == EXPRESSION_RESOURCE_BINDING) {
                         STATE.resources += 1;
@@ -7207,9 +7193,7 @@ emit_function(Ty *ty, Expr const *e)
         }
 
         EP(NULL);
-#ifdef TY_PROFILER
         EP(NULL);
-#endif
 
         LOG("COMPILING FUNCTION: %s", scope_name(ty, e->scope));
 
@@ -10277,9 +10261,9 @@ emit_for_each(Ty *ty, Stmt const *s, bool want_result)
 
                 INSN(LOOP_ITER);
 
-#ifndef TY_PROFILER
-                add_location(ty, s->each.array, start.off, vN(STATE.code));
-#endif
+                if (!ProfMode) {
+                        add_location(ty, s->each.array, start.off, vN(STATE.code));
+                }
 
                 PLACEHOLDER_JUMP(LOOP_CHECK, done);
                 Ei32(vN(s->each.target->es));
@@ -10527,10 +10511,9 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
                         }
                 }
 
-#ifndef TY_PROFILER
-                // Don't need location info, can't fail here
-                return;
-#endif
+                if (!ProfMode) {
+                        return;
+                }
         }
 
         add_location(ty, target, start, vN(STATE.code));
@@ -11938,21 +11921,6 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
         RestoreContext(ty, ctx);
 
         add_location(ty, (Expr *)s, start, vN(STATE.code));
-
-#if 0 && defined(TY_PROFILER)
-        if (
-                (s->type != STATEMENT_BLOCK)
-             && (s->type != STATEMENT_MULTI)
-             && (s->type != STATEMENT_EXPRESSION || !want_result)
-        ) {
-                Expr *e = NewExpr(ty, EXPRESSION_STATEMENT);
-                e->start = s->start;
-                e->end = s->end;
-                e->mod = STATE.module;
-                e->statement = s;
-                add_location(ty, e, start, vN(STATE.code));
-        }
-#endif
 
         return returns;
 }
@@ -13484,9 +13452,7 @@ load_module_source(
         STATE = freshstate(ty, module);
         STATE.flags |= ImportFlags;
 
-#ifdef TY_PROFILER
-        int prof_mod = prof_module_begin(name, path, source);
-#endif
+        int prof_mod = ProfMode ? prof_module_begin(name, path, source) : -1;
 #ifdef TY_HAVE_USDT
         u64 probe_t0 = TY_PROBING(import__done) ? TyMonotonicTime() : 0;
 #endif
@@ -13501,16 +13467,12 @@ load_module_source(
         PatchModule(ty, module, prog);
         STATE = save;
 
-#ifdef TY_PROFILER
         prof_module_compiled(prof_mod);
-#endif
 
         class_finalize_all(ty);
         vm_exec(ty, module->code);
 
-#ifdef TY_PROFILER
         prof_module_done(prof_mod);
-#endif
 #ifdef TY_HAVE_USDT
         if (TY_PROBING(import__done)) {
                 TY_PROBE(import__done, name, path, (unsigned long)(TyMonotonicTime() - probe_t0));
@@ -13768,7 +13730,9 @@ char *
 compiler_load_prelude(Ty *ty)
 {
         if (TY_CATCH_ERROR()) {
-#if !defined(TY_LS)
+                if (LangServer) {
+                        TY_RETHROW();
+                }
                 TY_CATCH_FAIL();
                 fprintf(
                         stderr,
@@ -13776,9 +13740,6 @@ compiler_load_prelude(Ty *ty)
                         TyError(ty)
                 );
                 exit(1);
-#else
-                TY_RETHROW();
-#endif
         }
 
         char const *path;
@@ -14207,8 +14168,9 @@ compiler_compile_source(
         dont_printf("mod:      %s\n", STATE.module_name);
         dont_printf("mod_path: %s\n", STATE.module_path);
 
-#ifdef TY_LS
-        Scope *user_scope = scope_new(ty, module_name, STATE.global, false);
+        Scope *user_scope = LangServer
+                          ? scope_new(ty, module_name, STATE.global, false)
+                          : STATE.global;
 
         Module *module = STATE.module = NewModule(
                 ty,
@@ -14217,15 +14179,6 @@ compiler_compile_source(
                 source,
                 user_scope
         );
-#else
-        Module *module = STATE.module = NewModule(
-                ty,
-                module_name,
-                module_path,
-                source,
-                STATE.global
-        );
-#endif
 
         if (MainModule == NULL) {
                 MainModule = module;
@@ -14242,11 +14195,11 @@ compiler_compile_source(
         i64 symbol = scope_get_symbol(ty);
         CompileState save = STATE;
 
-#ifdef TY_LS
-        STATE.global = user_scope;
-        STATE.pscope = user_scope;
-        STATE.fscope = user_scope;
-#endif
+        if (LangServer) {
+                STATE.global = user_scope;
+                STATE.pscope = user_scope;
+                STATE.fscope = user_scope;
+        }
 
         if (TY_CATCH_ERROR()) {
                 scope_set_symbol(ty, symbol);
@@ -14264,9 +14217,9 @@ compiler_compile_source(
 
         v00(STATE.code);
 
-#ifdef TY_LS
-        STATE = save;
-#endif
+        if (LangServer) {
+                STATE = save;
+        }
 
         return module;
 }
@@ -20527,37 +20480,6 @@ DumpProgram(
                         dont_printf("            %s%s:%s\n", TERM(95), caption + 1, TERM(0));
                 }
 
-#ifdef TY_PROFILER
-                extern istat prof;
-                extern FILE *ProfileOut;
-
-                void
-                color_sequence(float p, char *out);
-
-                char color_buffer[64] = {0};
-                istat_entry *stat = istat_lookup(&prof, c);
-
-                i64 max_ticks, total_ticks;
-                istat_count(&prof, &max_ticks, &total_ticks);
-
-                if (*TERM(0)) {
-                        color_sequence(stat == NULL ? 0.0 : 0.75 * stat->t / (double)max_ticks, color_buffer);
-                }
-
-                bool exact = (stat == NULL) || stat->n < 1000000;
-
-                dump(
-                        out,
-                        "%s%7td%s            %s%5.2f%% %6d%s  %8dK %s%s%s",
-                        TERM(94), pc, TERM(0),
-                        color_buffer,
-                        (stat == NULL) ? 0 : 100.0 * stat->t / (double)total_ticks,
-                        (stat == NULL) ? 0 : exact ? stat->n : stat->n / 1000,
-                        exact ? " " : "K",
-                        (stat == NULL) ? 0 : stat->t / 1000,
-                        TERM(93), GetInstructionName(*c), TERM(0)
-                );
-#else
                 if (DebugScan && c == ty->ip) {
                         for (int i = 0; i < countof(DebugHistory); ++i) {
                                 if (DebugHistory[i] != 0) {
@@ -20590,7 +20512,6 @@ DumpProgram(
                                 TERM(93), GetInstructionName(*c), TERM(0)
                         );
                 }
-#endif
 
                 dont_printf(
                         "%s%7td%s            %s%s%s      %ju\n",
@@ -21472,12 +21393,10 @@ TyCompileModule(
         );
 
         if (mod->flags & (MOD_PARSE_ERR | MOD_COMPILE_ERR | MOD_TYPE_ERR)) {
-#ifdef TY_LS
-                if (mod->prog != NULL) {
+                if (LangServer && mod->prog != NULL) {
                         mod->arena = ty->arena;
                         xvP(modules, mod);
                 }
-#endif
                 return NULL;
         }
 
@@ -21811,8 +21730,6 @@ CompilerResetState(Ty *ty)
         v0(STATE.imports);
 }
 
-#ifdef TY_LS
-
 void
 CompilerLoadModuleByPath(Ty *ty, char const *path)
 {
@@ -21837,7 +21754,6 @@ CompilerLoadModuleByPath(Ty *ty, char const *path)
         load_module_source(ty, module_name, S2(path), source, NULL);
 }
 
-#endif
 
 inline static Value
 SymbolToCompletionItem(Ty *ty, Symbol const *sym, i32 depth)

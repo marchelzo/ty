@@ -279,12 +279,8 @@ enum {
         FUN_EXPR        = FUN_NAME        + sizeof (uptr),
         FUN_JIT         = FUN_EXPR        + sizeof (uptr),
         FUN_JIT_CODE    = FUN_JIT         + sizeof (uptr),
-#ifdef TY_PROFILER
         FUN_CALLS       = FUN_JIT_CODE    + sizeof (uptr),
         FUN_PARAM_NAMES = FUN_CALLS       + sizeof (uptr)
-#else
-        FUN_PARAM_NAMES = FUN_JIT_CODE    + sizeof (uptr)
-#endif
 };
 
 enum {
@@ -430,9 +426,7 @@ struct class {
 
         Value finalizer;
         Value init;
-#ifdef TY_TEST
         bool init_patched;
-#endif
 
         TyObject *proto;
         u16Vector empty;
@@ -765,11 +759,9 @@ typedef struct ty {
         struct ty_debug_thread *dbg;
         TY *ty;
 
-#ifdef TY_PROFILER
         i32 jit_why;
         u64 jit_why_slots;
         u32 jit_guard;
-#endif
 } Ty;
 
 typedef struct {
@@ -876,6 +868,8 @@ extern bool ColorOutput;
 extern char const *COLOR_MODE_NAMES[TY_COLOR_MODE_COUNT];
 
 extern bool RunningTests;
+extern bool ProfMode;
+extern bool LangServer;
 extern char const *TestFilePath;
 extern bool CheckTypes;
 extern bool DetailedExceptions;

@@ -275,9 +275,8 @@ jit_frame_ip(Frame const *frame, char const *ip)
         return bc + 1;
 }
 
-#ifdef TY_PROFILER
 JitStats jit_stats;
-bool JitStatsOn = true;
+bool JitStatsOn = false;
 
 typedef enum {
         JIT_OPT_INLINE_GETTER,
@@ -1094,10 +1093,7 @@ jit_slow_sites(JitSlowSiteFn *fn, void *ctx)
         }
 }
 
-#define SITE_MISS(kind, a, b) jit_site_miss(ty, __builtin_return_address(0), (kind), (a), (b))
-#else
-#define SITE_MISS(kind, a, b) ((void)0)
-#endif
+#define SITE_MISS(kind, a, b) (UNLIKELY(JitStatsOn) ? jit_site_miss(ty, __builtin_return_address(0), (kind), (a), (b)) : (void)0)
 
 #define TOP_OF_STACK(v) (vN(STACK) = ((v) - vv(STACK)) + 1)
 
@@ -2092,11 +2088,6 @@ jit_rt_concat_strings(Ty *ty, Value *result, Value *base, int n)
         *v_(STACK, result_idx) = *vvL(STACK);
 }
 
-
-#ifdef TY_PROFILER
-
-#endif
-
 Class *
 expected_class_of(Ty *ty, T2Type t)
 {
@@ -2307,9 +2298,7 @@ jit_init(Ty *ty)
 {
         (void)ty;
         lir_set_runtime(&LirVM);
-#ifdef TY_PROFILER
         TySpinLockInit(&JitLogMutex);
-#endif
 }
 
 void

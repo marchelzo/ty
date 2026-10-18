@@ -3,12 +3,8 @@
 
 #include "ty.h"
 
-#if (defined(__linux__) || defined(__APPLE__)) && !defined(TY_LS)
+#if defined(__linux__) || defined(__APPLE__)
  #define TY_HAVE_SAMPLER 1
-#endif
-
-#if defined(TY_PROFILER) && !defined(TY_USDT)
- #define TY_USDT 1
 #endif
 
 #if defined(TY_USDT) && defined(__linux__) && __has_include(<sys/sdt.h>)
@@ -135,19 +131,16 @@ color_sequence(float p, char *out);
 extern _Atomic bool ProfWantReport;
 
 int
-prof_option(char **argv, int argi);
+prof_option(char const *arg);
+
+void
+prof_setup(void);
 
 void
 prof_usage(FILE *out);
 
 void
 prof_usdt_usage(FILE *out);
-
-void
-prof_set_output(char const *path);
-
-void
-prof_inhibit(void);
 
 void
 prof_jit_decline(Value const *f, char const *why, i32 off);
@@ -182,7 +175,7 @@ prof_attach_main(int argc, char **argv);
 void
 prof_attach_exit(Ty *ty);
 
-#ifdef TY_PROFILER
+#ifdef TY_HAVE_SAMPLER
 
 #define PROF_ALLOC(ty, n, t) do {                                    \
         if (UNLIKELY((ProfAllocLeft -= (i64)(n)) < 0)) {             \
@@ -220,12 +213,12 @@ prof_attach_exit(Ty *ty);
 #else
 
 #define PROF_ALLOC(ty, n, t) ((void)0)
-#define PROF_BIND(ty, a) ((void)0)
-#define PROF_FREE(a) ((void)0)
-#define PROF_OP(ty, ip) ((void)0)
-#define PROF_POLL(ty) ((void)0)
-#define PROF_ENTER(s) ((void)0)
-#define PROF_LEAVE() ((void)0)
+#define PROF_BIND(ty, a)     ((void)0)
+#define PROF_FREE(a)         ((void)0)
+#define PROF_OP(ty, ip)      ((void)0)
+#define PROF_POLL(ty)        ((void)0)
+#define PROF_ENTER(s)        ((void)0)
+#define PROF_LEAVE()         ((void)0)
 
 #endif
 

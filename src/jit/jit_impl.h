@@ -13,7 +13,6 @@ enum {
         SITE_KIND_COUNT
 };
 
-#ifdef TY_PROFILER
 typedef struct {
         _Atomic u64 member_fast;
         _Atomic u64 member_slow;
@@ -117,7 +116,7 @@ jit_guard_text(u32 id);
 extern bool JitStatsOn;
 
 #define STAT(name) (                                                                     \
-        JitStatsOn                                                                        \
+        UNLIKELY(JitStatsOn)                                                              \
       ? atomic_store_explicit(                                                            \
                 &jit_stats.name,                                                          \
                 atomic_load_explicit(&jit_stats.name, memory_order_relaxed) + 1,          \
@@ -125,9 +124,6 @@ extern bool JitStatsOn;
         )                                                                                 \
       : (void)0                                                                           \
 )
-#else
-#define STAT(name) ((void)0)
-#endif
 
 void
 jit_perf_map(void *code, usize size, char const *name, Expr const *expr);

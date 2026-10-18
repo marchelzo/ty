@@ -29,7 +29,7 @@
 #if 0
   #define LSLOG(fmt, ...) fprintf(        \
         stderr,                           \
-        "[tyls] " fmt "\n" __VA_OPT__(,)  \
+        "[ty --ls] " fmt "\n" __VA_OPT__(,)  \
         __VA_ARGS__                       \
   )
 #else
@@ -88,32 +88,9 @@ static bool              LastOk;
 
 static bool              Compiled;
 
-TY xD;
-Ty *ty;
-Ty vvv;
+bool LangServer;
 
-int EnableLogging = 0;
-
-usize TotalBytesAllocated = 0;
-
-int  ColorMode = TY_COLOR_NEVER;
-bool ColorStdout;
-bool ColorStderr;
-bool ColorOutput;
-
-char const *COLOR_MODE_NAMES[] = {
-        [TY_COLOR_AUTO]   = "auto",
-        [TY_COLOR_ALWAYS] = "always",
-        [TY_COLOR_NEVER]  = "never"
-};
-
-bool RunningTests = false;
-bool CheckTypes = true;
-bool DetailedExceptions = true;
-bool CompileOnly = true;
-bool AllowErrors = false;
-bool NoJIT = true;
-bool InteractiveSession = false;
+static Ty *ty;
 
 enum {
         LS_COMPILE,
@@ -446,13 +423,13 @@ ReportDeath(char const *who, int status)
         if (WIFSIGNALED(status)) {
                 fprintf(
                         stderr,
-                        "tyls: %s died: %s (%d)\n",
+                        "ty --ls: %s died: %s (%d)\n",
                         who,
                         SigName(WTERMSIG(status)),
                         WTERMSIG(status)
                 );
         } else if (WIFEXITED(status) && (WEXITSTATUS(status) != 0)) {
-                fprintf(stderr, "tyls: %s exited with status %d\n", who, WEXITSTATUS(status));
+                fprintf(stderr, "ty --ls: %s exited with status %d\n", who, WEXITSTATUS(status));
         }
 
         fflush(stderr);
@@ -586,7 +563,7 @@ Spawn(Kid *k, int role)
         int from[2];
 
         if ((pipe(to) != 0) || (pipe(from) != 0)) {
-                fprintf(stderr, "tyls: pipe(): %s\n", strerror(errno));
+                fprintf(stderr, "ty --ls: pipe(): %s\n", strerror(errno));
                 Die(1);
         }
 
@@ -596,7 +573,7 @@ Spawn(Kid *k, int role)
         pid_t pid = fork();
 
         if (pid < 0) {
-                fprintf(stderr, "tyls: fork(): %s\n", strerror(errno));
+                fprintf(stderr, "ty --ls: fork(): %s\n", strerror(errno));
                 Die(1);
         }
 
@@ -653,7 +630,7 @@ StartDeps(char const *file)
         int n = ThreadCount();
 
         if (n != 1) {
-                fprintf(stderr, "tyls: root process has %d threads; refusing to fork\n", n);
+                fprintf(stderr, "ty --ls: root process has %d threads; refusing to fork\n", n);
                 Die(1);
         }
 
@@ -735,7 +712,7 @@ RouteRoot(Ty *ty, Value *req)
                 ReportDeath("dependency process", status);
 
                 if (!IsNoDeps(path)) {
-                        fprintf(stderr, "tyls: no longer caching dependencies of %s\n", path);
+                        fprintf(stderr, "ty --ls: no longer caching dependencies of %s\n", path);
                         fflush(stderr);
                         xvP(NoDepsFiles, S2(path));
                 }
@@ -815,7 +792,7 @@ LoadDeps(Ty *ty)
                 TY_CATCH_FAIL();
                 fprintf(
                         stderr,
-                        "tyls: failed to load dependencies of %s: %s\n",
+                        "ty --ls: failed to load dependencies of %s: %s\n",
                         DepsFile,
                         TyError(ty)
                 );
@@ -872,7 +849,7 @@ RouteDeps(Ty *ty, Value *req)
         if (n != 1) {
                 fprintf(
                         stderr,
-                        "tyls: dependencies of %s left %d threads running\n",
+                        "ty --ls: dependencies of %s left %d threads running\n",
                         DepsFile,
                         n
                 );
@@ -1074,9 +1051,15 @@ Done:
 }
 
 int
-main(int argc, char *argv[])
+ls_main(Ty *vm, char **argv)
 {
-        ty = &vvv;
+        ty = vm;
+
+        LangServer         = true;
+        CompileOnly        = true;
+        NoJIT              = true;
+        DetailedExceptions = true;
+        ColorMode          = TY_COLOR_NEVER;
 
         if (!vm_init(ty, 0, argv)) {
                 exit(1);

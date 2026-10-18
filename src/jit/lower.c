@@ -110,11 +110,9 @@ typedef struct bc_lir {
         bool                  compact;
         bool                  speculate;
         bool                  skip_next;
-#ifdef TY_PROFILER
         Expr const           *prof_expr;
         i32                   prof_line;
         u32                   guard;
-#endif
         i32                   skip_extra;
 
         LirReg                ty;
@@ -276,10 +274,8 @@ loop_pinned(BcLir const *c, i32 pos);
 
 #include "lower/build.h"
 
-#ifdef TY_PROFILER
 static void
 count_entry(BcLir *c);
-#endif
 
 static void
 local_load(BcLir *c, i32 slot)
@@ -1921,10 +1917,13 @@ inlinable(BcLir const *c, Value const *callee, i32 argc)
             && (callee->info[FUN_INFO_BOUND] - argc <= 32);
 }
 
-#ifdef TY_PROFILER
 static void
 count_entry(BcLir *c)
 {
+        if (!ProfMode) {
+                return;
+        }
+
         Value const *f = c->function;
         void *slot = (char *)f->info + FUN_CALLS;
         LirReg p = pval(c, slot);
@@ -1934,7 +1933,6 @@ count_entry(BcLir *c)
         prof_first_call(f->info);
         store(c, LIR_ST64, p, 0, lir_r(m));
 }
-#endif
 
 static void
 tail_self(BcLir *c, BcLirNode const *node, LirReg fn)
@@ -1974,9 +1972,7 @@ tail_self(BcLir *c, BcLirNode const *node, LirReg fn)
         leave(c, JIT_PACK(JIT_DEOPT, c->at));
 
         bind(c, go);
-#ifdef TY_PROFILER
         count_entry(c);
-#endif
         restart(c, c->sp - 1 - node->argc, node->argc, node->argc);
 
         bind(c, miss);
@@ -2554,9 +2550,7 @@ prologue(BcLir *c)
 
         bind(c, normal);
 
-#ifdef TY_PROFILER
         count_entry(c);
-#endif
 
         if (c->max_sp > 240) {
                 tycall(c, reserve, LT_VOID, preg(c->ops), imm32(c->max_sp));
@@ -3007,6 +3001,19 @@ reset_slots(BcLir *c, BcLirNode const *node, i32 off)
 }
 
 static void
+prof_site(BcLir *c, BcLirNode const *node, char const *ip, i32 off)
+{
+        Expr const *at = compiler_find_expr(c->ctx, ip);
+        i32 line = (at != NULL) ? (i32)at->start.line : -1;
+
+        if (node->label != LIR_NONE || line != c->prof_line || c->prof_expr == NULL) {
+                effect(c, LIR_SITE, (LirOpnd[]) { lir_i(off + 1) }, 1);
+                c->prof_line = line;
+                c->prof_expr = at;
+        }
+}
+
+static void
 enter_node(BcLir *c, BcLirNode const *node, char const *ip)
 {
         i32 off = ip - c->code;
@@ -3048,15 +3055,9 @@ enter_node(BcLir *c, BcLirNode const *node, char const *ip)
         c->offset = StepInstruction(ip) - c->code;
         c->at     = off;
 
-#ifdef TY_PROFILER
-        Expr const *at = compiler_find_expr(c->ctx, ip);
-        i32 line = (at != NULL) ? (i32)at->start.line : -1;
-        if (node->label != LIR_NONE || line != c->prof_line || c->prof_expr == NULL) {
-                effect(c, LIR_SITE, (LirOpnd[]) { lir_i(off + 1) }, 1);
-                c->prof_line = line;
-                c->prof_expr = at;
+        if (ProfMode) {
+                prof_site(c, node, ip, off);
         }
-#endif
 }
 
 static bool
@@ -3209,13 +3210,11 @@ static bool
 admit(BcLir *c, Value const *f)
 {
         if (!graph(c, f)) {
-#ifdef TY_PROFILER
-                {
+                if (ProfMode) {
                         char why[128];
                         snprintf(why, sizeof why, "unsupported bytecode op %s", GetInstructionName(c->code[c->offset]));
                         prof_jit_decline(f, why, c->offset);
                 }
-#endif
                 TY_PROBE_IF(jit__decline, name_of(f), GetInstructionName(c->code[c->offset]), (int)c->offset);
                 AUDIT(
                         "lir cfg decline %s off=%u op=%s\n",
@@ -3227,9 +3226,9 @@ admit(BcLir *c, Value const *f)
         }
 
         if (c->dynamic && c->size > 4096) {
-#ifdef TY_PROFILER
-                prof_jit_decline(f, "large dynamic stack", -1);
-#endif
+                if (ProfMode) {
+                        prof_jit_decline(f, "large dynamic stack", -1);
+                }
                 TY_PROBE_IF(jit__decline, name_of(f), "large dynamic stack", -1);
                 AUDIT("lir decline %s reason=large dynamic stack\n", name_of(f));
                 return false;
@@ -3238,10 +3237,9 @@ admit(BcLir *c, Value const *f)
         return true;
 }
 
-static LirCode *
-publish(Ty *ty, Value const *f, BcLir const *c, LirCode *code, u64 begin)
+static void
+log_compile(Value const *f, BcLir const *c, LirCode *code, u64 begin)
 {
-#ifdef TY_PROFILER
         Expr const *expr    = !from_eval(f) ? expr_of(f) : NULL;
         char const *cls     = (expr != NULL && expr->class != NULL)
                             ? expr->class->name
@@ -3258,7 +3256,14 @@ publish(Ty *ty, Value const *f, BcLir const *c, LirCode *code, u64 begin)
                 .compact         = c->compact,
                 .image           = jit_image_record(code, code_of(f), name_of(f))
         });
-#endif
+}
+
+static LirCode *
+publish(Ty *ty, Value const *f, BcLir const *c, LirCode *code, u64 begin)
+{
+        if (ProfMode) {
+                log_compile(f, c, code, begin);
+        }
 
 #ifdef TY_HAVE_USDT
         if (TY_PROBING(jit__compile)) {
@@ -3337,9 +3342,9 @@ compile(Ty *ty, Value const *f, u64 begin)
         if (code == NULL) {
                 xmF(osr);
                 xmF(c.tier);
-#ifdef TY_PROFILER
-                prof_jit_decline(f, err.message, -1);
-#endif
+                if (ProfMode) {
+                        prof_jit_decline(f, err.message, -1);
+                }
                 TY_PROBE_IF(jit__decline, name_of(f), err.message, -1);
                 AUDIT("lir decline %s op=%u reason=%s\n", name_of(f), err.op, err.message);
                 return NULL;
@@ -3374,11 +3379,7 @@ jit_lower(Ty *ty, Value const *f)
                 return NULL;
         }
 
-#ifdef TY_PROFILER
-        u64 begin = TyMonotonicTime();
-#else
-        u64 begin = (jit_audit_level() >= 2 || TY_PROBING(jit__compile)) ? TyMonotonicTime() : 0;
-#endif
+        u64 begin = (ProfMode || jit_audit_level() >= 2 || TY_PROBING(jit__compile)) ? TyMonotonicTime() : 0;
 
         PROF_ENTER(PS_JIT_COMPILE);
 

@@ -8,7 +8,7 @@
 #include "gc.h"
 #include "ty.h"
 
-#if defined(TY_DEBUG_NAMES) || !defined(TY_RELEASE) || defined(TY_LS) || 1
+#if defined(TY_DEBUG_NAMES) || !defined(TY_RELEASE) || 1
  #define TY_NAMED_SCOPES 1
  char const *
  scope_name(Ty *ty, Scope const *s);

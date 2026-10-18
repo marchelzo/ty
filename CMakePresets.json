@@ -162,9 +162,8 @@
             "name": "gcc-single",
             "inherits": "gcc",
             "displayName": "GCC - amd64 - Release - Single Binary",
-            "description": "Using GCC; ty, tyls, tytest, typrof and lib/ in one executable",
+            "description": "Using GCC; ty and lib/ in one executable",
             "cacheVariables": {
-                "TY_MULTICALL": true,
                 "TY_EMBED_LIB": true
             }
         },
@@ -172,9 +171,8 @@
             "name": "gcc-ninja-single",
             "inherits": "gcc-ninja",
             "displayName": "GCC - amd64 - Release - Single Binary",
-            "description": "Using GCC with Ninja; ty, tyls, tytest, typrof and lib/ in one executable",
+            "description": "Using GCC with Ninja; ty and lib/ in one executable",
             "cacheVariables": {
-                "TY_MULTICALL": true,
                 "TY_EMBED_LIB": true
             }
         },
@@ -182,9 +180,8 @@
             "name": "clang-osx-single",
             "inherits": "clang-osx",
             "displayName": "Clang - amd64 - Release - Single Binary",
-            "description": "Using Clang on MacOS; ty, tyls, tytest, typrof and lib/ in one executable",
+            "description": "Using Clang on MacOS; ty and lib/ in one executable",
             "cacheVariables": {
-                "TY_MULTICALL": true,
                 "TY_EMBED_LIB": true
             }
         },
@@ -192,9 +189,8 @@
             "name": "clang-freebsd-single",
             "inherits": "clang-freebsd",
             "displayName": "Clang - amd64 - Release - Single Binary",
-            "description": "Using base system Clang on FreeBSD; ty, tyls, tytest, typrof and lib/ in one executable",
+            "description": "Using base system Clang on FreeBSD; ty and lib/ in one executable",
             "cacheVariables": {
-                "TY_MULTICALL": true,
                 "TY_EMBED_LIB": true
             }
         }

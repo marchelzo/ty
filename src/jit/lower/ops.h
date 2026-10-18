@@ -114,9 +114,9 @@ target_member(Ty *ty, Value *top, i32 member, bool self)
 
         Value obj = self ? *vm_get_self(ty) : ty->stack.items[--ty->stack.count];
 
-#ifdef TY_PROFILER
-        jit_site_miss(ty, __builtin_return_address(0), SITE_MEMBER_SET, &obj, NULL);
-#endif
+        if (UNLIKELY(JitStatsOn)) {
+                jit_site_miss(ty, __builtin_return_address(0), SITE_MEMBER_SET, &obj, NULL);
+        }
 
         vm_jit_target_member(ty, &obj, member);
 }
@@ -137,9 +137,9 @@ count_member_set(BcLir *c)
 static void
 tick(BcLir *c, char const *ip)
 {
-#ifdef TY_PROFILER
-        effect(c, LIR_SITE, (LirOpnd[]) { lir_i(ip - c->code + 1) }, 1);
-#endif
+        if (ProfMode) {
+                effect(c, LIR_SITE, (LirOpnd[]) { lir_i(ip - c->code + 1) }, 1);
+        }
 }
 
 static bool

@@ -58,7 +58,15 @@ typedef struct {
         isize nslot;
 } DebugFrame;
 
-extern volatile sig_atomic_t DebugInterrupt;
+typedef union {
+        struct {
+                sig_atomic_t debug;
+                sig_atomic_t prof;
+        };
+        u64 any;
+} VmPollWord;
+
+extern volatile VmPollWord VmPoll;
 extern volatile sig_atomic_t DebugJitOff;
 
 void
@@ -138,7 +146,7 @@ DebugOnLock(Ty *ty)
                 return;
         }
 
-        if (UNLIKELY(DebugInterrupt | DebugJitOff)) {
+        if (UNLIKELY(VmPoll.debug | DebugJitOff)) {
                 DebugReacquire(ty);
         } else {
                 ty->dbg->state = DBG_RUNNING;

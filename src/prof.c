@@ -4,6 +4,8 @@
 TY_USDT_PROBES
 #undef X
 
+bool ProfMode;
+
 #ifdef TY_HAVE_SAMPLER
 
 #include <dlfcn.h>
@@ -26,6 +28,7 @@ TY_USDT_PROBES
 #include "value.h"
 #include "compiler.h"
 #include "class.h"
+#include "ty/debug.h"
 #include "gc.h"
 #include "istat.h"
 #include "xd.h"
@@ -341,7 +344,6 @@ static _Atomic u32 NThreads;
 static _Atomic bool Running;
 static _Atomic bool Stopping;
 static bool Started;
-static bool Inhibited;
 static bool Reported;
 _Atomic bool ProfWantReport;
 
@@ -351,13 +353,15 @@ static u64         Period;
 static u64         AllocEvery   = 512 * 1024;
 static u64         OpsEvery     = 97;
 static char const *EventName    = "cycles";
+static char const *EventSpec;
+static bool        JitCounts    = true;
 static u64         EventPeriod;
 static int         TopN         = 8;
 static double      MinPct       = 2.0;
 static int         HotLines     = 6;
 static double      HotMinPct    = 2.0;
 static bool        Quiet;
-static char const *DataPath     = "typrof.data";
+static char const *DataPath     = "ty-prof.data";
 static u64         DataSize;
 static int         Cols         = 100;
 static time_t      StartUnix;
@@ -520,22 +524,26 @@ EventUsage(void)
         static char buf[1024];
         char const *const *names = prof_os_events();
         usize n = 0;
-        int col = 0;
+        int col = 37;
 
         if (names == NULL || names[0] == NULL) {
                 return "";
         }
 
-        n += snprintf(buf + n, sizeof buf - n, "    --event=E[:N]      Every Nth occurrence of perf event E:");
-        col = 57;
+        n += snprintf(
+                buf + n,
+                sizeof buf - n,
+                "                          EVENT[:N]  Every Nth occurrence of perf event EVENT:\n"
+                "                                    "
+        );
 
         for (int i = 0; names[i] != NULL && n < sizeof buf; ++i) {
                 char const *sep = (names[i + 1] == NULL) ? " or " : (i > 0) ? ", " : " ";
                 int len = strlen(sep) + strlen(names[i]);
-                if (col + len > 88) {
-                        n += snprintf(buf + n, sizeof buf - n, "%s\n                      ", (i > 0 && names[i + 1] != NULL) ? "," : "");
+                if (col + len > 92) {
+                        n += snprintf(buf + n, sizeof buf - n, "%s\n                                    ", (i > 0 && names[i + 1] != NULL) ? "," : "");
                         sep = (names[i + 1] == NULL) ? " or " : " ";
-                        col = 22;
+                        col = 37;
                 }
                 n += snprintf(buf + n, sizeof buf - n, "%s%s", sep, names[i]);
                 col += len;
@@ -553,60 +561,47 @@ prof_usage(FILE *out)
 {
         fprintf(
                 out,
-                "usage: typrof [options] script [args]\n"
-                "       typrof report [FILE]\n"
-                "       typrof --diff OLD NEW\n"
-                "       typrof --attach PID [options]\n"
-                "\n"
-                "Runs a Ty program under the sampling profiler, records the profile to typrof.data\n"
-                "and prints a summary when the program exits. All ty options are also accepted.\n"
-                "\n"
-                "What to sample (default: --cpu):\n"
-                "    --cpu              On-CPU time of every thread\n"
-                "    --wall             Wall-clock time, including time spent blocked on I/O, sleeping\n"
-                "                       or waiting for locks\n"
+                "Profiling:\n"
+                "    --prof[=MODE]       Run the program under the sampling profiler, record the profile\n"
+                "                        to ty-prof.data and print a summary when it exits. MODE is:\n"
+                "                          cpu        On-CPU time of every thread (default)\n"
+                "                          wall       Wall-clock time, including time spent blocked on\n"
+                "                                     I/O, sleeping or waiting for locks\n"
+                "                          count[:N]  Every Nth executed bytecode op (default: 97).\n"
+                "                                     Deterministic; disables the JIT\n"
                 "%s"
-                "    --count[=N]        Every Nth executed bytecode op (default: 97). Deterministic:\n"
-                "                       the same input always gives the same profile. Disables the JIT\n"
-                "    -F HZ              Samples per second for --cpu and --wall (default: 999)\n"
-                "    --alloc=SIZE       Record an allocation stack once per SIZE bytes allocated\n"
-                "                       (default: 512K)\n"
-                "    --no-alloc         Don't sample allocations\n"
-                "    --no-jit-stats     Don't count fast and slow paths in JIT-compiled code\n"
-                "    --follow-children  Also profile child processes started by the program. Each one\n"
-                "                       records to typrof.PID.data and prints no summary\n"
+                "    --prof-hz=HZ        Samples per second per thread for cpu and wall (default: 999)\n"
+                "    --prof-alloc=SIZE   Record an allocation stack once per SIZE bytes allocated\n"
+                "                        (default: 512K; off disables allocation sampling)\n"
+                "    --prof-jit-stats=off\n"
+                "                        Don't count fast and slow paths in JIT-compiled code\n"
+                "    --prof-follow       Also profile child processes started by the program. Each one\n"
+                "                        records to ty-prof.PID.data and prints no summary\n"
+                "    --prof-out=FILE     Record the profile to FILE (default: ty-prof.data). An existing\n"
+                "                        FILE is renamed to FILE.old\n"
+                "    --prof-summary=FILE Write the summary to FILE (- is stdout, @ is stderr, off prints\n"
+                "                        no summary; default: stdout)\n"
+                "    --prof-top=N        List at most N functions in the summary (default: 8)\n"
+                "    --prof-min-pct=P    Leave functions below P%% self time out of the summary\n"
+                "                        (default: 2)\n"
+                "    --prof-export=FILE  Also write the profile to FILE, in the format given by its\n"
+                "                        extension: .html (interactive page), .speedscope.json\n"
+                "                        (speedscope, Firefox Profiler), .folded (flamegraph.pl,\n"
+                "                        inferno) or .json (same as the recorded profile). Repeatable\n"
+                "    --prof-report [FILE] [--stdio | --tui]\n"
+                "                        Browse a recorded profile (default: ty-prof.data)\n"
+                "    --prof-diff OLD NEW Compare two recorded profiles\n"
+                "    --prof-attach PID [SECONDS]\n"
+                "                        Profile a running ty process for SECONDS (default: 10), then\n"
+                "                        record and summarize it like a normal run. Accepts --prof=cpu,\n"
+                "                        --prof=wall, --prof=EVENT, --prof-hz, --prof-out, --prof-summary\n"
+                "                        and --prof-export. Set TY_ATTACH=0 in a process's environment\n"
+                "                        to refuse\n"
                 "\n"
-                "Output:\n"
-                "    -o FILE            Record the profile to FILE (default: typrof.data). An existing\n"
-                "                       FILE is renamed to FILE.old\n"
-                "    --summary=FILE     Write the summary to FILE (- is interpreted as stdout, and @ is\n"
-                "                       interpreted as stderr; default: stdout)\n"
-                "    --no-summary       Don't print a summary\n"
-                "    --top=N            List at most N functions in the summary (default: 8)\n"
-                "    --min-pct=P        Leave functions below P%% self time out of the summary\n"
-                "                       (default: 2)\n"
-                "    --export=FILE      Also write the profile to FILE, in the format given by its\n"
-                "                       extension: .html (interactive page), .speedscope.json\n"
-                "                       (speedscope, Firefox Profiler), .folded (flamegraph.pl,\n"
-                "                       inferno) or .json (same as the recorded profile). Repeatable\n"
-                "\n"
-                "Commands:\n"
-                "    report [FILE]      Browse a recorded profile in the terminal (default: typrof.data)\n"
-                "    --diff OLD NEW     Compare two recorded profiles\n"
-                "    --attach PID       Profile a running ty process for a while (-d SECONDS, default:\n"
-                "                       10), then record and summarize it like a normal run. Accepts\n"
-                "                       --wall, --event, -F, -o, --summary and --export. Set TY_ATTACH=0\n"
-                "                       in a process's environment to refuse\n"
-                "\n"
-                "While the program runs, Ctrl-C prints a summary of the profile so far. A second\n"
-                "Ctrl-C within 3 seconds exits.\n",
+                "Every --prof-* option implies --prof. While a profiled program runs, Ctrl-C prints a\n"
+                "summary of the profile so far, and a second Ctrl-C within 3 seconds exits.\n",
                 EventUsage()
         );
-
-#ifdef TY_HAVE_USDT
-        fputc('\n', out);
-        prof_usdt_usage(out);
-#endif
 }
 
 #ifdef TY_HAVE_USDT
@@ -721,123 +716,163 @@ SetEvent(char const *spec)
         }
 
         EventName   = event;
+        EventSpec   = spec;
         EventPeriod = (EventPeriod == 0) ? 1 : EventPeriod;
         Mode        = PK_EVENT;
 
         return true;
 }
 
-int
-prof_option(char **argv, int argi)
+static bool
+SetMode(char const *mode)
 {
-        char const *arg = argv[argi];
+        if (*mode == '\0' || strcmp(mode, "cpu") == 0) {
+                Mode = PK_CPU;
+                return true;
+        }
+
+        if (strcmp(mode, "wall") == 0) {
+                Mode        = PK_WALL;
+                UseWallTime = true;
+                return true;
+        }
+
+        if (strncmp(mode, "count", 5) == 0 && (mode[5] == '\0' || mode[5] == ':')) {
+                Mode         = PK_OPS;
+                NoJIT        = true;
+                ProfCountOps = true;
+                return (mode[5] == '\0')
+                    || (ParseSize(mode + 6, &OpsEvery) && OpsEvery > 0);
+        }
+
+        return SetEvent(mode);
+}
+
+static noreturn void
+BadValue(char const *arg)
+{
+        fprintf(stderr, "ty: bad value for %s\n", arg);
+        exit(1);
+}
+
+static char const *
+ProfArg(char const *arg, char const *name)
+{
+        char const *v = OptArg(arg, name);
+
+        if (v != NULL && *v == '\0') {
+                fprintf(stderr, "ty: %s needs a value (%s=...)\n", name, name);
+                exit(1);
+        }
+
+        return v;
+}
+
+int
+prof_option(char const *arg)
+{
         char const *v;
 
-        if (strcmp(arg, "--cpu") == 0) {
-                Mode = PK_CPU;
-                return 1;
+        if (strncmp(arg, "--prof", 6) != 0) {
+                return 0;
         }
 
-        if (strcmp(arg, "--wall") == 0) {
-                Mode = PK_WALL;
-                UseWallTime = true;
-                return 1;
-        }
+        ProfMode = true;
 
-        if ((v = OptArg(arg, "--event")) != NULL) {
-                if (!SetEvent(v)) {
-                        fprintf(stderr, "typrof: unknown event or period: %s\n", v);
-                        exit(1);
+        if ((v = OptArg(arg, "--prof")) != NULL) {
+                if (!SetMode(v)) {
+                        BadValue(arg);
                 }
-                return 1;
-        }
-
-        if ((v = OptArg(arg, "--count")) != NULL) {
-                Mode = PK_OPS;
-                NoJIT = true;
-                ProfCountOps = true;
-                if (*v != '\0' && (!ParseSize(v, &OpsEvery) || OpsEvery == 0)) {
-                        fprintf(stderr, "typrof: bad --count period: %s\n", v);
-                        exit(1);
+        } else if ((v = ProfArg(arg, "--prof-hz")) != NULL) {
+                char *end;
+                long hz = strtol(v, &end, 10);
+                if (*end != '\0' || hz <= 0) {
+                        BadValue(arg);
                 }
-                return 1;
-        }
-
-        if ((v = OptArg(arg, "--alloc")) != NULL) {
-                if (*v != '\0' && (!ParseSize(v, &AllocEvery) || AllocEvery == 0)) {
-                        fprintf(stderr, "typrof: bad --alloc size: %s\n", v);
-                        exit(1);
+                ProfileSampleInterval = 1000000000ULL / (u64)hz;
+        } else if ((v = ProfArg(arg, "--prof-alloc")) != NULL) {
+                if (strcmp(v, "off") == 0) {
+                        AllocEvery = 0;
+                } else if (!ParseSize(v, &AllocEvery) || AllocEvery == 0) {
+                        BadValue(arg);
                 }
-                return 1;
-        }
-
-        if (strcmp(arg, "--no-alloc") == 0) {
-                AllocEvery = 0;
-                return 1;
-        }
-
-        if ((v = OptArg(arg, "--export")) != NULL) {
-                if (*v == '\0') {
-                        v = argv[argi + 1];
-                        if (v == NULL || !AddExport(v)) {
-                                fprintf(stderr, "typrof: --export needs FILE.{html,json,speedscope.json,folded}\n");
-                                exit(1);
-                        }
-                        return 2;
+        } else if ((v = ProfArg(arg, "--prof-jit-stats")) != NULL) {
+                if (strcmp(v, "on") != 0 && strcmp(v, "off") != 0) {
+                        BadValue(arg);
                 }
-                if (!AddExport(v)) {
-                        fprintf(stderr, "typrof: unknown export format: %s\n", v);
-                        exit(1);
-                }
-                return 1;
-        }
-
-        if ((v = OptArg(arg, "--top")) != NULL && *v != '\0') {
-                TopN = atoi(v);
-                TopN = (TopN < 1) ? 1 : TopN;
-                return 1;
-        }
-
-        if ((v = OptArg(arg, "--min-pct")) != NULL && *v != '\0') {
-                MinPct = atof(v);
-                return 1;
-        }
-
-#ifdef TY_PROFILER
-        if (strcmp(arg, "--no-jit-stats") == 0) {
-                JitStatsOn = false;
-                return 1;
-        }
-#endif
-
-        if (strcmp(arg, "--follow-children") == 0) {
+                JitCounts = (strcmp(v, "on") == 0);
+        } else if (strcmp(arg, "--prof-follow") == 0) {
                 FollowChildren = true;
-                return 1;
-        }
-
-        if (strcmp(arg, "--no-summary") == 0) {
-                Quiet = true;
-                return 1;
-        }
-
-        if ((v = OptArg(arg, "--summary")) != NULL && *v != '\0') {
-                if (strcmp(v, "-") == 0) {
+        } else if ((v = ProfArg(arg, "--prof-out")) != NULL) {
+                DataPath = v;
+        } else if ((v = ProfArg(arg, "--prof-summary")) != NULL) {
+                if (strcmp(v, "off") == 0) {
+                        Quiet = true;
+                } else if (strcmp(v, "-") == 0) {
                         ProfileOut = stdout;
                 } else if (strcmp(v, "@") == 0) {
                         ProfileOut = stderr;
                 } else if ((ProfileOut = fopen(v, "w")) == NULL) {
-                        fprintf(stderr, "typrof: cannot write %s: %s\n", v, strerror(errno));
+                        fprintf(stderr, "ty: cannot write %s: %s\n", v, strerror(errno));
                         exit(1);
                 }
-                return 1;
+        } else if ((v = ProfArg(arg, "--prof-top")) != NULL) {
+                TopN = atoi(v);
+                TopN = (TopN < 1) ? 1 : TopN;
+        } else if ((v = ProfArg(arg, "--prof-min-pct")) != NULL) {
+                MinPct = atof(v);
+        } else if ((v = ProfArg(arg, "--prof-export")) != NULL) {
+                if (!AddExport(v)) {
+                        fprintf(stderr, "ty: --prof-export needs FILE.{html,json,speedscope.json,folded}\n");
+                        exit(1);
+                }
+        } else {
+                return 0;
         }
 
-        if (strcmp(arg, "--help-prof") == 0) {
-                prof_usage(stdout);
-                exit(0);
+        return 1;
+}
+
+static bool
+ColorFor(FILE *f)
+{
+        switch (ColorMode) {
+        case TY_COLOR_ALWAYS: return true;
+        case TY_COLOR_NEVER:  return false;
+        default:              return isatty(fileno(f));
+        }
+}
+
+static bool
+ColorOption(char const *arg)
+{
+        char const *v = OptArg(arg, "--color");
+
+        if (v == NULL || *v == '\0') {
+                return false;
         }
 
-        return 0;
+        if (strcmp(v, "always") == 0) {
+                ColorMode = TY_COLOR_ALWAYS;
+        } else if (strcmp(v, "never") == 0) {
+                ColorMode = TY_COLOR_NEVER;
+        } else {
+                ColorMode = TY_COLOR_AUTO;
+        }
+
+        return true;
+}
+
+void
+prof_setup(void)
+{
+        ProfMode = ProfMode || (getenv("TY_PROF_FOLLOW") != NULL);
+
+        if (ProfMode) {
+                ProfileOut   = (ProfileOut != NULL) ? ProfileOut : stdout;
+                ColorProfile = ColorFor(ProfileOut);
+                JitStatsOn   = JitCounts;
+        }
 }
 
 static u32
@@ -1330,12 +1365,8 @@ JsonStr(FILE *f, char const *s);
 static char const *
 GuardText(u32 guard)
 {
-#ifdef TY_PROFILER
         char const *text = jit_guard_text(guard);
         return (text != NULL) ? text : "";
-#else
-        return "";
-#endif
 }
 
 static int
@@ -1479,7 +1510,6 @@ ShotVars(Ty *ty, Frame const *frame)
 void
 prof_jit_deopt(Ty *ty, Frame const *frame, i32 off)
 {
-#ifdef TY_PROFILER
         i32 why   = ty->jit_why;
         u64 slots = ty->jit_why_slots;
         u32 guard = ty->jit_guard;
@@ -1487,11 +1517,6 @@ prof_jit_deopt(Ty *ty, Frame const *frame, i32 off)
         ty->jit_why       = JIT_WHY_UNKNOWN;
         ty->jit_why_slots = 0;
         ty->jit_guard     = 0;
-#else
-        i32 why   = JIT_WHY_UNKNOWN;
-        u64 slots = 0;
-        u32 guard = 0;
-#endif
 
         if (!Started) {
                 return;
@@ -1698,10 +1723,10 @@ prof_thread_start(Ty *ty)
         Threads[slot] = pt;
         MyProf = pt;
 
-#ifdef TY_PROFILER
-        ProfAllocLeft = (AllocEvery > 0) ? (i64)AllocEvery / 2 + (i64)(random() % AllocEvery) : INT64_MAX;
-        ProfOpsLeft   = (Mode == PK_OPS) ? (i64)OpsEvery - 1 : INT64_MAX;
-#endif
+        if (ProfMode) {
+                ProfAllocLeft = (AllocEvery > 0) ? (i64)AllocEvery / 2 + (i64)(random() % AllocEvery) : INT64_MAX;
+                ProfOpsLeft   = (Mode == PK_OPS) ? (i64)OpsEvery - 1 : INT64_MAX;
+        }
 
         if (atomic_load(&Running)) {
                 prof_os_arm(pt, Mode, (Mode == PK_EVENT) ? EventPeriod : Period);
@@ -1845,11 +1870,9 @@ DrainRing(Ring *r)
                         : (kind == PK_ALLOC) ? (u32)(rip & 0xFF)
                         : ResolveRip(rip);
 
-#ifdef TY_PROFILER
                 if (sym == SYM_JIT && (kind == PK_CPU || kind == PK_EVENT || kind == PK_WALL)) {
                         jit_code_hit(rip);
                 }
-#endif
 
                 u32 id = Insert(kind, state, sym, thread, mask, frames, n, weight, t);
 
@@ -1991,6 +2014,7 @@ StartRun(Ty *ty)
 
         Started = true;
         atomic_store(&Stopping, false);
+        VmPoll.prof = ProfMode;
 
         u32 n = atomic_load(&NThreads);
 
@@ -2020,13 +2044,13 @@ StartRun(Ty *ty)
 void
 prof_start(Ty *ty)
 {
-        if (Started || Inhibited) {
+        if (Started) {
                 return;
         }
 
-        char const *parent = getenv("TYPROF_ACTIVE");
+        char const *parent = getenv("TY_PROF_ACTIVE");
 
-        FollowChildren = FollowChildren || (getenv("TYPROF_FOLLOW") != NULL);
+        FollowChildren = FollowChildren || (getenv("TY_PROF_FOLLOW") != NULL);
 
         if (parent != NULL && !FollowChildren) {
                 return;
@@ -2034,16 +2058,16 @@ prof_start(Ty *ty)
 
         if (parent != NULL) {
                 static char path[64];
-                snprintf(path, sizeof path, "typrof.%d.data", (int)getpid());
+                snprintf(path, sizeof path, "ty-prof.%d.data", (int)getpid());
                 DataPath = path;
                 Quiet = true;
                 vN(Exports) = 0;
         }
 
-        setenv("TYPROF_ACTIVE", "1", 1);
+        setenv("TY_PROF_ACTIVE", "1", 1);
 
         if (FollowChildren) {
-                setenv("TYPROF_FOLLOW", "1", 1);
+                setenv("TY_PROF_FOLLOW", "1", 1);
         }
 
         if (ProfileOut == NULL) {
@@ -2530,7 +2554,6 @@ AttachJit(void)
 
         TySpinLockUnlock(&JitLock);
 
-#ifdef TY_PROFILER
         usize n;
         JitCompileRecord const *log = jit_compile_records(&n);
 
@@ -2545,7 +2568,6 @@ AttachJit(void)
                         }
                 }
         }
-#endif
 }
 
 static void
@@ -2855,17 +2877,13 @@ BuildModel(Ty *ty)
         free(fstack);
         free(lstack);
 
-#ifdef TY_PROFILER
         if (!NoJIT) {
                 jit_slow_sites(OnSlowSite, NULL);
         }
-#endif
 
         AttachRetained();
 
-#ifdef TY_PROFILER
         AttachCalls();
-#endif
 
         AttachJit();
 }
@@ -3369,7 +3387,7 @@ SummaryHeader(void)
 
         FmtCount(n, sizeof n, M.count);
 
-        fprintf(Out, "%s%styprof%s %s%s%s", C(1), C(96), C(0), C(1), (ProfTarget != NULL) ? ProfTarget : "", C(0));
+        fprintf(Out, "%s%sprofile%s %s%s%s", C(1), C(96), C(0), C(1), (ProfTarget != NULL) ? ProfTarget : "", C(0));
 
         if (Attached) {
                 fprintf(Out, " %s(pid %d)%s", C(33), (int)getpid(), C(0));
@@ -4006,7 +4024,7 @@ SummaryFooter(void)
 
         fprintf(
                 Out,
-                "\n%sRecorded %s%s%s (%s). Run %styprof report%s to explore it.%s\n",
+                "\n%sRecorded %s%s%s (%s). Run %sty --prof-report%s to explore it.%s\n",
                 C(90),
                 C(0),
                 DataPath,
@@ -4295,7 +4313,7 @@ ExportSpeedscope(FILE *f)
                 }
         }
 
-        fprintf(f, "{\"$schema\":\"https://www.speedscope.app/file-format-schema.json\",\"exporter\":\"typrof\",");
+        fprintf(f, "{\"$schema\":\"https://www.speedscope.app/file-format-schema.json\",\"exporter\":\"ty\",");
         fprintf(f, "\"name\":");
         JsonStr(f, (ProfTarget != NULL) ? ProfTarget : "ty");
         fprintf(f, ",\"activeProfileIndex\":0,\"shared\":{\"frames\":[");
@@ -4390,7 +4408,7 @@ ExportJson(FILE *f)
         struct rusage ru;
         getrusage(RUSAGE_SELF, &ru);
 
-        fprintf(f, "{\"typrof\":2,\"time\":%lld,\"argv\":[", (long long)StartUnix);
+        fprintf(f, "{\"ty-prof\":2,\"time\":%lld,\"argv\":[", (long long)StartUnix);
 
         for (int i = 0; i < TyArgc; ++i) {
                 fprintf(f, "%s", (i > 0) ? "," : "");
@@ -4737,12 +4755,10 @@ ExportJson(FILE *f)
         }
         fputc('}', f);
 
-#ifdef TY_PROFILER
         if (!NoJIT) {
                 fprintf(f, ",\"jit_stats\":");
                 jit_stats_json(M.ty, f);
         }
-#endif
 
         ExportDeopts(f);
 
@@ -4783,7 +4799,7 @@ RecordTo(char const *path)
         FILE *f = fopen(path, "w");
 
         if (f == NULL) {
-                fprintf(stderr, "typrof: cannot write %s: %s\n", path, strerror(errno));
+                fprintf(stderr, "ty: cannot write %s: %s\n", path, strerror(errno));
                 return false;
         }
 
@@ -4810,7 +4826,7 @@ Exporting(void)
                 FILE *f = fopen(e->path, "w");
 
                 if (f == NULL) {
-                        fprintf(stderr, "typrof: cannot write %s: %s\n", e->path, strerror(errno));
+                        fprintf(stderr, "ty: cannot write %s: %s\n", e->path, strerror(errno));
                         continue;
                 }
 
@@ -4827,7 +4843,7 @@ Exporting(void)
                 fclose(f);
 
                 if (!Attached) {
-                        fprintf(stderr, "typrof: wrote %s\n", e->path);
+                        fprintf(stderr, "ty: wrote %s\n", e->path);
                 }
         }
 }
@@ -4864,7 +4880,7 @@ prof_report(Ty *ty)
         StopSampling();
 
         if (ProfTarget == NULL) {
-                ProfTarget = getenv("TYPROF_TARGET");
+                ProfTarget = getenv("TY_PROF_TARGET");
         }
 
         BuildModel(ty);
@@ -5071,7 +5087,7 @@ JLoad(char const *path)
         FILE *f = fopen(path, "r");
 
         if (f == NULL) {
-                fprintf(stderr, "typrof: cannot read %s: %s\n", path, strerror(errno));
+                fprintf(stderr, "ty: cannot read %s: %s\n", path, strerror(errno));
                 exit(1);
         }
 
@@ -5089,8 +5105,8 @@ JLoad(char const *path)
         char const *p = vv(b);
         Jv *v = JParse(&p);
 
-        if (v->type != 'o' || JGet(v, "typrof")->type != 'd') {
-                fprintf(stderr, "typrof: %s is not a typrof JSON export\n", path);
+        if (v->type != 'o' || JGet(v, "ty-prof")->type != 'd') {
+                fprintf(stderr, "ty: %s is not a ty profile\n", path);
                 exit(1);
         }
 
@@ -5238,14 +5254,14 @@ Diff(char const *pa, char const *pb)
         Out = out;
 
         if (na == 0 || nb == 0) {
-                fprintf(stderr, "typrof: %s has no samples\n", (na == 0) ? pa : pb);
+                fprintf(stderr, "ty: %s has no samples\n", (na == 0) ? pa : pb);
                 exit(1);
         }
 
         QtyOf(qa, sizeof qa, ta, unit);
         QtyOf(qb, sizeof qb, tb, unit);
 
-        fprintf(out, "%s%styprof diff%s  %s → %s\n", C(1), C(96), C(0), pa, pb);
+        fprintf(out, "%s%sprofile diff%s  %s → %s\n", C(1), C(96), C(0), pa, pb);
 
         if (strcmp(JStr(A, "mode"), JStr(B, "mode")) != 0 || strcmp(JStr(A, "unit"), unit) != 0) {
                 fprintf(out, "%swarning: profiles use different modes (%s vs %s); comparing shares only%s\n", C(93), JStr(A, "mode"), JStr(B, "mode"), C(0));
@@ -5410,33 +5426,28 @@ prof_diff_main(int argc, char **argv)
         int n = 0;
 
         for (int i = 1; i < argc; ++i) {
-                if (strcmp(argv[i], "--diff") == 0) {
+                if (ColorOption(argv[i]) || prof_option(argv[i])) {
                         continue;
                 }
-                if (strncmp(argv[i], "--color=", 8) == 0) {
-                        continue;
+                if (argv[i][0] == '-' || n == 2) {
+                        n = -1;
+                        break;
                 }
-                if (strncmp(argv[i], "--top=", 6) == 0) {
-                        TopN = atoi(argv[i] + 6);
-                        continue;
-                }
-                if (n < 2) {
-                        paths[n++] = argv[i];
-                }
+                paths[n++] = argv[i];
         }
 
         if (n != 2) {
-                fprintf(stderr, "usage: typrof --diff BEFORE.json AFTER.json\n");
+                fprintf(stderr, "usage: ty --prof-diff OLD NEW [--prof-top=N]\n");
                 return 1;
         }
 
-        ProfileOut = stdout;
+        ProfileOut   = stdout;
+        ColorProfile = ColorFor(stdout);
         Diff(paths[0], paths[1]);
 
         return 0;
 }
 
-#ifdef TY_PROFILER
 void
 prof_first_call(int *info)
 {
@@ -5505,7 +5516,6 @@ AttachCalls(void)
         pthread_mutex_unlock(&InfoLock);
 }
 
-#endif
 
 static void
 LiveGrow(void)
@@ -5705,15 +5715,15 @@ ReadAttachRequest(void)
         char path[128];
         char line[1024];
 
-        snprintf(path, sizeof path, "/tmp/typrof-attach-%d.req", (int)getpid());
-        snprintf(AttachPrefix, sizeof AttachPrefix, "/tmp/typrof-%d-%llu", (int)getpid(), (unsigned long long)(NowNs() / 1000000));
+        snprintf(path, sizeof path, "/tmp/ty-prof-attach-%d.req", (int)getpid());
+        snprintf(AttachPrefix, sizeof AttachPrefix, "/tmp/ty-prof-%d-%llu", (int)getpid(), (unsigned long long)(NowNs() / 1000000));
 
         Mode = PK_CPU;
         ProfileSampleInterval = 0;
         Hz = 999;
         AttachColor = false;
         AttachCols = 0;
-        snprintf(AttachRecord, sizeof AttachRecord, "typrof.data");
+        snprintf(AttachRecord, sizeof AttachRecord, "ty-prof.data");
 
         for (usize i = 0; i < vN(Exports); ++i) {
                 free((char *)v_(Exports, i)->path);
@@ -5848,6 +5858,7 @@ prof_attach_toggle(Ty *ty)
 
         ResetRun();
         Started = false;
+        VmPoll.prof = 0;
 }
 
 void
@@ -5878,78 +5889,58 @@ prof_attach_main(int argc, char **argv)
 {
         pid_t pid = 0;
         double secs = 10.0;
-        char const *mode = NULL;
-        char const *event = NULL;
-        long hz = 0;
-        int color = isatty(1);
-        vec(char const *) exports = {0};
+        int npos = 0;
 
         ProfileOut = stdout;
 
         for (int i = 1; i < argc; ++i) {
                 char const *a = argv[i];
-                char const *v;
-                if (strcmp(a, "--attach") == 0) {
+                if (ColorOption(a)) {
                         continue;
-                } else if (strcmp(a, "--wall") == 0) {
-                        mode = "wall";
-                } else if ((v = OptArg(a, "--event")) != NULL && *v != '\0') {
-                        event = v;
-                } else if (strcmp(a, "-d") == 0 && i + 1 < argc) {
-                        secs = atof(argv[++i]);
-                } else if (strncmp(a, "--duration=", 11) == 0) {
-                        secs = atof(a + 11);
-                } else if (strcmp(a, "-F") == 0 && i + 1 < argc) {
-                        hz = atol(argv[++i]);
-                } else if (strcmp(a, "-o") == 0 && i + 1 < argc) {
-                        DataPath = argv[++i];
-                } else if ((v = OptArg(a, "--export")) != NULL && *v != '\0') {
-                        xvP(exports, v);
-                } else if (strcmp(a, "--color=always") == 0) {
-                        color = 1;
-                } else if (strcmp(a, "--color=never") == 0) {
-                        color = 0;
-                } else if (strncmp(a, "--color=", 8) == 0) {
+                }
+                if (prof_option(a)) {
                         continue;
-                } else if (strncmp(a, "--summary", 9) == 0 || strcmp(a, "--no-summary") == 0) {
-                        int used = prof_option(argv, i);
-                        i += (used > 0) ? used - 1 : 0;
-                } else if (a[0] != '-' && pid == 0) {
+                }
+                if (a[0] == '-' || npos == 2) {
+                        fprintf(stderr, "ty --prof-attach: unexpected argument %s\n", a);
+                        return 2;
+                }
+                if (npos++ == 0) {
                         pid = (pid_t)atol(a);
                 } else {
-                        fprintf(stderr, "typrof --attach: unknown argument %s\n", a);
-                        return 2;
+                        secs = atof(a);
                 }
         }
 
-        if (pid <= 0) {
+        if (pid <= 0 || secs <= 0 || Mode == PK_OPS) {
                 fprintf(
                         stderr,
-                        "usage: typrof --attach PID [-d SECONDS] [--wall | --event=E[:N]] [-F HZ] [-o FILE]\n"
-                        "                           [--summary=FILE | --no-summary] [--export=FILE]...\n"
+                        "usage: ty --prof-attach PID [SECONDS] [--prof=cpu|wall|EVENT] [--prof-hz=HZ]\n"
+                        "                             [--prof-out=FILE] [--prof-summary=FILE]\n"
+                        "                             [--prof-export=FILE]...\n"
                 );
                 return 2;
         }
 
         char req[128];
         char prefix[256];
-        snprintf(req, sizeof req, "/tmp/typrof-attach-%d.req", (int)pid);
-        snprintf(prefix, sizeof prefix, "/tmp/typrof-%d-attach-%d", (int)pid, (int)getpid());
+        snprintf(req, sizeof req, "/tmp/ty-prof-attach-%d.req", (int)pid);
+        snprintf(prefix, sizeof prefix, "/tmp/ty-prof-%d-attach-%d", (int)pid, (int)getpid());
 
         FILE *f = fopen(req, "w");
         if (f == NULL) {
-                fprintf(stderr, "typrof: cannot write %s: %s\n", req, strerror(errno));
+                fprintf(stderr, "ty: cannot write %s: %s\n", req, strerror(errno));
                 return 1;
         }
         fprintf(f, "prefix=%s\n", prefix);
-        if (mode != NULL) {
-                fprintf(f, "mode=%s\n", mode);
+        if (Mode == PK_WALL) {
+                fprintf(f, "mode=wall\n");
         }
-        if (event != NULL) {
-                fprintf(f, "event=%s\n", event);
+        if (Mode == PK_EVENT) {
+                fprintf(f, "event=%s\n", EventSpec);
         }
-        if (hz > 0) {
-                fprintf(f, "hz=%ld\n", hz);
+        if (ProfileSampleInterval > 0) {
+                fprintf(f, "hz=%llu\n", (unsigned long long)(1000000000ULL / ProfileSampleInterval));
         }
         {
                 int rows;
@@ -5958,11 +5949,11 @@ prof_attach_main(int argc, char **argv)
                         fprintf(f, "cols=%d\n", cols);
                 }
         }
-        fprintf(f, "color=%d\n", (ProfileOut == stdout) && color);
+        fprintf(f, "color=%d\n", ColorFor(ProfileOut));
         fprintf(f, "record=%s\n", DataPath);
-        for (usize i = 0; i < vN(exports); ++i) {
+        for (usize i = 0; i < vN(Exports); ++i) {
                 char cwd[4096];
-                char const *e = v__(exports, i);
+                char const *e = v_(Exports, i)->path;
                 if (e[0] == '/' || getcwd(cwd, sizeof cwd) == NULL) {
                         fprintf(f, "export=%s\n", e);
                 } else {
@@ -5972,13 +5963,13 @@ prof_attach_main(int argc, char **argv)
         fclose(f);
 
         if (kill(pid, prof_os_attach_signal()) != 0) {
-                fprintf(stderr, "typrof: cannot signal %d: %s\n", (int)pid, strerror(errno));
+                fprintf(stderr, "ty: cannot signal %d: %s\n", (int)pid, strerror(errno));
                 unlink(req);
                 return 1;
         }
 
         signal(SIGINT, OnAttachInterrupt);
-        fprintf(stderr, "typrof: sampling pid %d for %.1fs (Ctrl-C to stop early)...\n", (int)pid, secs);
+        fprintf(stderr, "ty: sampling pid %d for %.1fs (Ctrl-C to stop early)...\n", (int)pid, secs);
 
         u64 until = NowNs() + (u64)(secs * 1e9);
         while (NowNs() < until && !atomic_load(&AttachStopEarly)) {
@@ -6008,7 +5999,7 @@ prof_attach_main(int argc, char **argv)
         if (!FileExists(done)) {
                 fprintf(
                         stderr,
-                        "typrof: no report from %d. It reads the request the next time it runs Ty code; "
+                        "ty: no report from %d. It reads the request the next time it runs Ty code; "
                         "a process blocked in a long system call answers once it wakes up.\n",
                         (int)pid
                 );
@@ -6043,7 +6034,7 @@ prof_attach_main(int argc, char **argv)
         }
 
         if (in != NULL && dst == NULL) {
-                fprintf(stderr, "typrof: cannot write %s: %s\n", DataPath, strerror(errno));
+                fprintf(stderr, "ty: cannot write %s: %s\n", DataPath, strerror(errno));
         }
 
         if (in != NULL) {
@@ -6080,17 +6071,18 @@ prof_set_target(char const *path)
         ProfTarget = path;
 }
 
-void
-prof_set_output(char const *path)
-{
-        DataPath = path;
-}
+#else
 
-void
-prof_inhibit(void)
-{
-        Inhibited = true;
-}
+void prof_first_call(int *info) {}
+void prof_throw(Ty *ty, char const *ip) {}
+void prof_jit_decline(Value const *f, char const *why, i32 off) {}
+void prof_jit_deopt(Ty *ty, Frame const *frame, i32 off) {}
+void prof_jit_despecialize(Value const *f, u32 deopts) {}
+char const *prof_symbolize(uptr addr) { return NULL; }
+char const *prof_jit_ip(Ty *ty, void const *ra) { return NULL; }
+int prof_module_begin(char const *name, char const *path, char const *source) { return -1; }
+void prof_module_compiled(int id) {}
+void prof_module_done(int id) {}
 
 #endif
 

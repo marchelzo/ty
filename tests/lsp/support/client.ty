@@ -58,7 +58,7 @@ pub class Server {
         self.__versions = %{}
         self.__inbox = SharedQueue()
 
-        let ls = getenv('TY_LS_CMD') ?? str(Path(ty.executable).parent / 'tyls')
+        let ls = getenv('TY_LS_CMD') ?? "{ty.executable} --ls"
 
         setenv('TY_LS_CMD', ls)
         setenv('TYD_STATE_DIR', str(state))

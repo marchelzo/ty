@@ -1,4 +1,4 @@
-#if (defined(__linux__) || defined(__APPLE__)) && !defined(TY_LS)
+#if defined(__linux__) || defined(__APPLE__)
 
 #if defined(__has_embed)
 #if __has_embed("prof.html")

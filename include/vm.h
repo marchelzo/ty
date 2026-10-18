@@ -551,9 +551,7 @@ co_colored(Ty *ty);
 
 extern bool DyingOfError;
 
-#ifdef TY_PROFILER
 extern u64 ProfileSampleInterval;
-#endif
 
 #endif
 /* vim: set sts=8 sw=8 expandtab: */

@@ -52,8 +52,9 @@ pub tag Exit;
 pub tag Wake;
 tag Suspend;
 tag Call;
+tag Handover;
 
-use InkEventInternal = Exit | Wake | Suspend | Call[Function] | event.Event
+use InkEventInternal = Exit | Wake | Suspend | Call[Function] | Handover[Function] | event.Event
 
 let _event-queue: SharedQueue[InkEventInternal] = SharedQueue()
 let _tio: term.TermIO | nil = nil
@@ -64,6 +65,10 @@ pub fn suspend() {
 
 pub fn post(f: Function) {
     _event-queue.put(Call(f))
+}
+
+pub fn hand-over(f: Function) {
+    _event-queue.put(Handover(f))
 }
 
 pub fn quit() {
@@ -6163,7 +6168,7 @@ pub fn run(
     signal(os.SIGTSTP, suspend)
     defer signal(os.SIGTSTP, on-suspend)
 
-    fn suspend-terminal() {
+    fn suspend-terminal(during: Function | nil = nil) {
         tio.stop()
         let restore = release-terminal-state()
         if _alt? {
@@ -6181,9 +6186,13 @@ pub fn run(
             ink-write("\x1b[0m\x1b[?25h{restore}")
         }
 
-        signal(os.SIGTSTP, os.SIG_DFL)
-        os.kill(0, os.SIGTSTP)
-        signal(os.SIGTSTP, suspend)
+        if during != nil {
+            during()
+        } else {
+            signal(os.SIGTSTP, os.SIG_DFL)
+            os.kill(0, os.SIGTSTP)
+            signal(os.SIGTSTP, suspend)
+        }
 
         tio.start()
         if title != nil {
@@ -6280,6 +6289,13 @@ pub fn run(
 
         if ev == Suspend {
             suspend-terminal()
+            return false
+        }
+
+        if let Handover($f) = ev {
+            suspend-terminal(f)
+            invalidate-screen()
+            dirty = true
             return false
         }
 

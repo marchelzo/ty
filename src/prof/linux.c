@@ -245,7 +245,7 @@ ArmEvent(ProfThread *pt, u64 period)
         if (fd < 0) {
                 fprintf(
                         stderr,
-                        "typrof: perf_event_open(%s): %s (check /proc/sys/kernel/perf_event_paranoid)\n",
+                        "ty: perf_event_open(%s): %s (check /proc/sys/kernel/perf_event_paranoid)\n",
                         Events[Event].name,
                         strerror(errno)
                 );

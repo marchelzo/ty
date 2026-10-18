@@ -393,9 +393,7 @@ struct t2_checker {
         char const       *argument_failure_parameter;
         char const       *argument_parameter;
         unsigned          muted;
-#ifdef TY_TEST
         unsigned          unsafe;
-#endif
         unsigned          recording;
         vec(T2DefaultType) default_types;
         vec(void const *) touched;
@@ -19360,7 +19358,6 @@ known_nil_type(T2Checker *checker)
         return result;
 }
 
-#ifdef TY_TEST
 static T2Type
 infer_unsafe_assignment(T2Checker *checker, Expr const *expression)
 {
@@ -19377,7 +19374,6 @@ infer_unsafe_assignment(T2Checker *checker, Expr const *expression)
 
         return value;
 }
-#endif
 
 static T2Type
 infer_expression(T2Checker *checker, Expr const *source)
@@ -20773,7 +20769,6 @@ infer_expression(T2Checker *checker, Expr const *source)
         case EXPRESSION_EQ:
         case EXPRESSION_MAYBE_EQ:
         {
-#ifdef TY_TEST
                 if (
                         (checker->unsafe > 0)
                      && (expression->type == EXPRESSION_EQ)
@@ -20782,7 +20777,6 @@ infer_expression(T2Checker *checker, Expr const *source)
                         result = infer_unsafe_assignment(checker, expression);
                         break;
                 }
-#endif
                 T2SolverMark assignment = t2_solver_mark(checker->solver);
                 bool list_target = is_value_list_target(expression->target);
                 T2Type expected  = (!list_target && fresh_literal_expression(expression->value))
@@ -21337,15 +21331,11 @@ infer_expression(T2Checker *checker, Expr const *source)
                 break;
         case EXPRESSION_UNSAFE:
         case EXPRESSION_EVAL:
-#ifdef TY_TEST
-                checker->unsafe += (expression->type == EXPRESSION_UNSAFE);
-#endif
+                checker->unsafe += RunningTests && (expression->type == EXPRESSION_UNSAFE);
                 if (expression->operand != NULL) {
                         (void)infer_expression(checker, expression->operand);
                 }
-#ifdef TY_TEST
-                checker->unsafe -= (expression->type == EXPRESSION_UNSAFE);
-#endif
+                checker->unsafe -= RunningTests && (expression->type == EXPRESSION_UNSAFE);
                 defer_node(checker, T2_DEFER_UNSAFE_EVAL, expression, NULL);
                 result = t2_primitive(checker->universe, T2_TYPE_DYNAMIC);
                 break;
@@ -31305,13 +31295,9 @@ build_identity(void)
                 identity = XXH3_64bits(stamp, strlen(stamp));
         }
 
-#if defined(TY_TEST)
-        identity = HashCombine(identity, hash64z("tytest"));
-#elif defined(TY_PROFILER)
-        identity = HashCombine(identity, hash64z("typrof"));
-#elif defined(TY_LS)
-        identity = HashCombine(identity, hash64z("tyls"));
-#endif
+        if (LangServer) {
+                identity = HashCombine(identity, hash64z("ls"));
+        }
 
         if (identity == 0) {
                 identity = 1;
@@ -34153,13 +34139,9 @@ t2_checker_will_restore(T2Checker const *checker)
 static bool
 lenient_unit(T2Checker const *checker)
 {
-#ifdef TY_TEST
-        return (checker->module != NULL)
+        return RunningTests
+            && (checker->module != NULL)
             && (checker->module->flags & MOD_TESTS);
-#else
-        (void)checker;
-        return false;
-#endif
 }
 
 void

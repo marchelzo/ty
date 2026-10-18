@@ -4,7 +4,7 @@ import os (..)
 import path (Path)
 import ty
 
-let tyls-cmd = getenv('TY_LS_CMD') ?? str(Path(ty.executable).parent / 'tyls')
+let tyls-cmd = getenv('TY_LS_CMD').?words() ?? [ty.executable, '--ls']
 
 let dir = Path('/tmp') / "tyls-diagnostics-{getpid()}"
 dir.mkdir(parents=true, exist-ok=true)
@@ -23,7 +23,7 @@ for name, source in files {
     (dir / name).write(source)
 }
 
-let tyls = spawn([tyls-cmd], stdin=SPAWN_PIPE, stdout=SPAWN_PIPE, stderr=SPAWN_NULL, chdir=str(dir))
+let tyls = spawn(tyls-cmd, stdin=SPAWN_PIPE, stdout=SPAWN_PIPE, stderr=SPAWN_NULL, chdir=str(dir))
 
 let tyls-in  = io.open(tyls.stdin, 'w')
 let tyls-out = io.open(tyls.stdout, 'r')

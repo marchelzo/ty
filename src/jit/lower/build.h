@@ -431,9 +431,8 @@ stw(BcLir *c, LirReg base, i32 disp, LirOpnd v)
         store(c, LIR_ST32, base, disp, v);
 }
 
-#ifdef TY_PROFILER
 static void
-guard_note(BcLir *c, char const *fmt, ...)
+GuardNote(BcLir *c, char const *fmt, ...)
 {
         char buf[512];
         va_list ap;
@@ -444,35 +443,31 @@ guard_note(BcLir *c, char const *fmt, ...)
 
         c->guard = jit_guard(buf);
 }
-#else
-#define guard_note(...) ((void)0)
-#endif
+
+#define guard_note(c, ...) (ProfMode ? GuardNote((c), __VA_ARGS__) : (void)0)
 
 inline static void
 deopt_why(BcLir *c, i32 why, u64 slots)
 {
-#ifdef TY_PROFILER
-        stw(c, c->ty, offsetof(Ty, jit_why), lir_i(why));
-        stq(c, c->ty, offsetof(Ty, jit_why_slots), lir_i(slots));
-        stw(c, c->ty, offsetof(Ty, jit_guard), lir_i(c->guard));
-        c->guard = 0;
-#endif
+        if (ProfMode) {
+                stw(c, c->ty, offsetof(Ty, jit_why), lir_i(why));
+                stq(c, c->ty, offsetof(Ty, jit_why_slots), lir_i(slots));
+                stw(c, c->ty, offsetof(Ty, jit_guard), lir_i(c->guard));
+                c->guard = 0;
+        }
 }
 
 inline static void
 miss_site(BcLir *c)
 {
-#ifdef TY_PROFILER
         if (JitStatsOn) {
                 effect(c, LIR_SITE, (LirOpnd[]) { lir_i(c->at + 1) }, 1);
         }
-#endif
 }
 
 inline static void
 count_fast(BcLir *c, int kind)
 {
-#ifdef TY_PROFILER
         if (JitStatsOn) {
                 u64 *n = jit_site_fast(c->code + c->at + 1, kind);
                 if (n != NULL) {
@@ -481,7 +476,6 @@ count_fast(BcLir *c, int kind)
                         stq(c, base, disp, lir_r(binop(c, LIR_ADD, LIR_I64, lir_r(ldq(c, base, disp)), lir_i(1))));
                 }
         }
-#endif
 }
 
 inline static void

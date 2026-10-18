@@ -118,7 +118,7 @@ NPROC := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 MAKEFLAGS += -j$(NPROC)
 
 # --- Auto-rebuild on config change ---
-BUILD_SIG := DEBUG=$(DEBUG)|LOG=$(LOG)|RELEASE=$(RELEASE)|TDEBUG=$(TDEBUG)|UNSAFE=$(UNSAFE)|LTO=$(LTO)|JEMALLOC=$(JEMALLOC)|TY_PROFILER=$(TY_PROFILER)|DEBUG_NAMES=$(DEBUG_NAMES)|PROFILE_TYPES=$(PROFILE_TYPES)|WITHOUT_OS=$(WITHOUT_OS)|GENPROF=$(GENPROF)|USEPROF=$(USEPROF)
+BUILD_SIG := DEBUG=$(DEBUG)|LOG=$(LOG)|RELEASE=$(RELEASE)|TDEBUG=$(TDEBUG)|UNSAFE=$(UNSAFE)|LTO=$(LTO)|JEMALLOC=$(JEMALLOC)|DEBUG_NAMES=$(DEBUG_NAMES)|PROFILE_TYPES=$(PROFILE_TYPES)|WITHOUT_OS=$(WITHOUT_OS)|GENPROF=$(GENPROF)|USEPROF=$(USEPROF)
 BUILD_SIG_FILE := obj/.build_sig
 
 PREV_SIG := $(shell cat $(BUILD_SIG_FILE) 2>/dev/null)
@@ -129,8 +129,7 @@ $(shell mkdir -p obj)
 $(shell echo '$(BUILD_SIG)' > $(BUILD_SIG_FILE))
 endif
 
-$(shell mkdir -p obj/jit/lir obj/tyls/jit/lir obj/typrof/jit/lir obj/tytest/jit/lir)
-$(shell mkdir -p obj/prof obj/tyls/prof obj/typrof/prof obj/tytest/prof)
+$(shell mkdir -p obj/jit/lir obj/prof)
 
 # DynASM configuration
 LUAJIT := luajit
@@ -152,17 +151,11 @@ endif
 
 SOURCES := $(wildcard src/*.c src/jit/*.c src/jit/lir/*.c) src/prof/$(PROF_OS).c
 OBJECTS := $(patsubst src/%.c,obj/%.o,$(SOURCES))
-TYLS_OBJECTS := $(patsubst src/%.c,obj/tyls/%.o,$(SOURCES))
-TYPROF_OBJECTS := $(patsubst src/%.c,obj/typrof/%.o,$(SOURCES))
-TYTEST_OBJECTS := $(patsubst src/%.c,obj/tytest/%.o,$(SOURCES))
 EXTERNAL := obj/libco.o obj/dtoa.o libmd/libmd.a nsync/out/libnsync.a
 ASSEMBLY := $(patsubst %.c,%.s,$(SOURCES))
 .DEFAULT_GOAL := all
 .PHONY: all clean test test-types2 test-lir test-jitmem install freebsd-plist
-DEPFILES := $(OBJECTS:.o=.d) $(TYLS_OBJECTS:.o=.d) $(TYPROF_OBJECTS:.o=.d) \
-            $(TYTEST_OBJECTS:.o=.d) \
-            obj/ty-main.d obj/tyls-main.d obj/typrof-main.d obj/tytest-main.d \
-            obj/libco.d obj/dtoa.d
+DEPFILES := $(OBJECTS:.o=.d) obj/ty-main.d obj/libco.d obj/dtoa.d
 
 -include $(DEPFILES)
 
@@ -204,49 +197,21 @@ $(GEN_DIR)/.stamp: tools/tybi $(GEN_SOURCES) $(GEN_METHODS)
 $(GEN_HEADERS): $(GEN_DIR)/.stamp
 	@test -f $@
 
-$(OBJECTS) $(TYLS_OBJECTS) $(TYPROF_OBJECTS) $(TYTEST_OBJECTS): | $(GEN_HEADERS)
-obj/ty-main.o obj/tyls-main.o obj/typrof-main.o obj/tytest-main.o: | $(GEN_HEADERS)
+$(OBJECTS) obj/ty-main.o: | $(GEN_HEADERS)
 
 obj/token.o: include/keywords.h include/optokens.h
-obj/functions.o obj/tyls/functions.o obj/typrof/functions.o obj/tytest/functions.o: include/syscall_names.h
-obj/tyls/token.o: include/keywords.h include/optokens.h
-obj/typrof/token.o: include/keywords.h include/optokens.h
-obj/tytest/token.o: include/keywords.h include/optokens.h
+obj/functions.o: include/syscall_names.h
 
-obj/prof_html.o obj/tyls/prof_html.o obj/typrof/prof_html.o obj/tytest/prof_html.o: src/prof.html
-obj/jit/lir/emit.o obj/tyls/jit/lir/emit.o obj/typrof/jit/lir/emit.o obj/tytest/jit/lir/emit.o: $(LIR_HDR)
+obj/prof_html.o: src/prof.html
+obj/jit/lir/emit.o: $(LIR_HDR)
 
 ty: obj/ty-main.o $(OBJECTS) $(EXTERNAL)
 	@echo cc $@
 	@$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-tyls: obj/tyls-main.o $(TYLS_OBJECTS) $(EXTERNAL)
-	@echo cc $@
-	@$(CC) $(CFLAGS) -DTY_LS -o $@ $^ $(LDFLAGS)
-
-typrof: obj/typrof-main.o $(TYPROF_OBJECTS) $(EXTERNAL)
-	@echo cc $@
-	@$(CC) $(CFLAGS) -DTY_PROFILER -o $@ $^ $(LDFLAGS)
-
-tytest: obj/tytest-main.o $(TYTEST_OBJECTS) $(EXTERNAL)
-	@echo cc $@
-	@$(CC) $(CFLAGS) -DTY_TEST -o $@ $^ $(LDFLAGS)
-
 obj/ty-main.o: ty.c
 	@echo cc $<
 	@$(CC) $(CFLAGS) -MMD -MP -MF obj/ty-main.d -c -o $@ $<
-
-obj/tyls-main.o: tyls.c
-	@echo cc $<
-	@$(CC) $(CFLAGS) -DTY_LS -MMD -MP -MF obj/tyls-main.d -c -o $@ $<
-
-obj/typrof-main.o: ty.c
-	@echo cc $<
-	@$(CC) $(CFLAGS) -DTY_PROFILER -MMD -MP -MF obj/typrof-main.d -c -o $@ $<
-
-obj/tytest-main.o: ty.c
-	@echo cc $<
-	@$(CC) $(CFLAGS) -DTY_TEST -MMD -MP -MF obj/tytest-main.d -c -o $@ $<
 
 asm: $(ASSEMBLY)
 
@@ -270,32 +235,14 @@ obj/%.o: src/%.c
 	@echo cc $<
 	@$(CC) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c -o $@ -DFILENAME=$(patsubst src/%.c,%,$<) $<
 
-obj/tyls/%.o: src/%.c
-	@echo cc $<
-	@$(CC) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c -o $@ -DTY_LS -DFILENAME=$(patsubst src/%.c,%,$<) $<
-
-obj/typrof/%.o: src/%.c
-	@echo cc $<
-	@$(CC) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c -o $@ -DTY_PROFILER -DFILENAME=$(patsubst src/%.c,%,$<) $<
-
-obj/tytest:
-	@mkdir -p $@
-
-$(TYTEST_OBJECTS) obj/tytest-main.o: | obj/tytest
-
-obj/tytest/%.o: src/%.c
-	@echo cc $<
-	@$(CC) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c -o $@ -DTY_TEST -DFILENAME=$(patsubst src/%.c,%,$<) $<
-
-
 clean:
-	rm -rf $(PROG) *.gcda $(OBJECTS) $(TYLS_OBJECTS) $(TYPROF_OBJECTS) $(TYTEST_OBJECTS) obj/libco.o obj/dtoa.o include/keywords.h include/optokens.h $(GEN_DIR) tools/tybi $(BUILD_SIG_FILE) $(DEPFILES) obj/ty-main.o obj/tyls-main.o obj/typrof-main.o obj/tytest-main.o obj/types2-core-test obj/lir-core-test obj/lir-interp-test obj/lir-ra-test obj/lir-native-test obj/lir-entry-test obj/jitmem-test tytest
+	rm -rf $(PROG) *.gcda $(OBJECTS) obj/libco.o obj/dtoa.o include/keywords.h include/optokens.h $(GEN_DIR) tools/tybi $(BUILD_SIG_FILE) $(DEPFILES) obj/ty-main.o obj/types2-core-test obj/lir-core-test obj/lir-interp-test obj/lir-ra-test obj/lir-native-test obj/lir-entry-test obj/jitmem-test
 
-test: ty tyls tytest test-types2 test-lir test-jitmem test-jit
+test: ty test-types2 test-lir test-jitmem test-jit
 	TY_TEST_NATIVE=1 ./ty --test tests/runner/smoke.ty
 	./ty --test tests --strict $(TEST_ARGS)
 
-test-jit: ty tytest
+test-jit: ty
 	TY_JIT_EAGER=1 ./ty --test tests --strict $(TEST_ARGS)
 	TY_JIT_EAGER=2 TY_JIT_TIER=3 ./ty --test tests --strict $(TEST_ARGS)
 
@@ -342,12 +289,12 @@ define install-lib-dir
 
 endef
 
-install: $(PROG) tytest
-	sudo install -m755 -s $(PROG) tytest $(DESTDIR)$(PREFIX)$(bindir)
+install: $(PROG)
+	sudo install -m755 -s $(PROG) $(DESTDIR)$(PREFIX)$(bindir)
 	$(foreach d,$(LIB_DIRS),$(call install-lib-dir,$(d)))
 
 freebsd-plist:
-	{ printf 'bin/ty\nbin/tyls\nbin/tytest\n'; \
+	{ printf 'bin/ty\n'; \
 	  git ls-files 'lib/*.ty' \
 	  | sed 's|^lib/|%%TYMODDIR%%/|' \
 	  | LC_ALL=C sort; } > freebsd/pkg-plist

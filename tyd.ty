@@ -7,6 +7,7 @@ import sh (sh)
 import os (..)
 import log (..)
 import path (Path)
+import ty
 import syn
 import syn.fmt as sf
 import syn.refactor as rf
@@ -75,7 +76,7 @@ let err-fd = match open("{TYLS_ERR_PATH}", O_WRONLY | O_TRUNC | O_CREAT, 0644) {
     fd => fd
 }
 
-let TY_LS_CMD = getenv('TY_LS_CMD').?words() ?? ['tyls']
+let TY_LS_CMD = getenv('TY_LS_CMD').?words() ?? [ty.executable, '--ls']
 
 let TYLS_TIMEOUT = float(getenv('TYLS_TIMEOUT') ?? '0.35')
 

@@ -33,7 +33,7 @@
 #include "title.h"
 #include "ty/debug.h"
 
-#if defined(TY_EMBED_LIB) && !defined(TY_TEST) && !defined(TY_PROFILER)
+#if defined(TY_EMBED_LIB)
 #define TY_BUNDLER
 #include "bundle.h"
 #endif
@@ -114,11 +114,10 @@ static int BundleScanFd = -1;
 extern bool ProduceAnnotation;
 extern FILE *DisassemblyOut;
 
-#if defined(TY_PROFILER)
-extern u64 ProfileSampleInterval;
-extern FILE *ProfileOut;
 extern bool ColorProfile;
-#endif
+
+int
+ls_main(Ty *vm, char **argv);
 
 static char **
 complete(char const *s, int start, int end);
@@ -126,60 +125,85 @@ complete(char const *s, int start, int end);
 static void
 usage(void)
 {
-        char *u = (char[]) {
-                "usage: ty [options] [script [args]]                                                      \0"
-                "Available options are:                                                                   \0"
-                "    -b            Basic mode: no batteries included. Only has an effect when ty is       \0"
-                "                  running as a REPL or when the program was specified using -e           \0"
-                "    -c            Exit after compilation without executing the program                   \0"
-                "    -e EXPR       Evaluate and print EXPR                                                \0"
-                "    -f FILE       Interpret FILE before continuing. This differs from -M in that *all*   \0"
-                "                  top-level symbols from FILE will be visible, not just public ones      \0"
-                "    -j            Disable JIT                                                            \0"
-                "    -m MODULE     Import module MODULE before continuing                                 \0"
-                "    -M MODULE     Like -m, but uses an unqualified import: import MODULE (..)            \0"
-                "    -p            Print the value of the last-evaluated expression before exiting        \0"
-                "    -q            Ignore constraints on function parameters and return values            \0"
-                "    -S FILE       Write the program's annotated disassembly to FILE                      \0"
-                "                    (- is interpreted as stdout, and @ is interpreted as stderr)         \0"
-                "    --test [FILE | TARGET...] [OPTS]   Run tests: top-level pub functions in test files. \0"
-                "                                       `ty --test --help` lists runner options.          \0"
-                "    --lint [OPTS] [PATH...]            Lint Ty sources (`ty --lint --help` for options)  \0"
-                "    --fmt [OPTS] [PATH...]             Format Ty sources (`ty --fmt --help` for options) \0"
-                "    --fix [OPTS] [PATH...]             Fix and tidy Ty sources (`ty --fix --help`)       \0"
+        fputs(
+                "usage: ty [options] [script [args]]\n"
+                "       ty --test [FILE | TARGET...] [options]\n"
+                "       ty --lint | --fmt | --fix [options] [PATH...]\n"
+                "       ty --ls\n"
+#ifdef TY_HAVE_SAMPLER
+                "       ty --prof-report [FILE]\n"
+                "       ty --prof-diff OLD NEW\n"
+                "       ty --prof-attach PID [SECONDS] [options]\n"
+#endif
+                "\n"
+                "Options:\n"
+                "    -b                  Basic mode: no batteries included. Only has an effect when ty is\n"
+                "                        running as a REPL or when the program was specified using -e\n"
+                "    -c                  Exit after compilation without executing the program\n"
+                "    -e EXPR             Evaluate and print EXPR\n"
+                "    -f FILE             Interpret FILE before continuing. This differs from -M in that\n"
+                "                        *all* top-level symbols from FILE will be visible, not just\n"
+                "                        public ones\n"
+                "    -j                  Disable JIT\n"
+                "    -m MODULE           Import module MODULE before continuing\n"
+                "    -M MODULE           Like -m, but uses an unqualified import: import MODULE (..)\n"
+                "    -p                  Print the value of the last-evaluated expression before exiting\n"
+                "    -q                  Ignore constraints on function parameters and return values\n"
+                "    -S FILE             Write the program's annotated disassembly to FILE\n"
+                "                        (- is interpreted as stdout, and @ is interpreted as stderr)\n"
+                "    --color=WHEN        Explicitly control when to use colored output. WHEN can be set\n"
+                "                        to 'always', 'never', or 'auto' (default: 'auto')\n"
+                "    --highlight[=THEME] Print syntax-highlighted source and exit. Available themes:\n"
+                "                        gruvbox, gruvbox-material, github-light, github-dark, monokai,\n"
+                "                        one-dark, catppuccin, dracula, nord, solarized, tokyonight,\n"
+                "                        rose-pine\n"
 #ifdef TY_BUNDLER
-                "    --bundle[=OUT] SCRIPT                                                                \0"
-                "                  Write a standalone executable OUT (default: SCRIPT without .ty) that   \0"
-                "                  runs SCRIPT; ty options given alongside --bundle are kept              \0"
-                "    --bundle-native=LIB                                                                  \0"
-                "                  Also include native library LIB in the bundle (repeatable)             \0"
-                "    --bundle-script=SCRIPT                                                               \0"
-                "                  Also include SCRIPT and everything it imports (repeatable)             \0"
-                "    --bundle-file=PATH                                                                   \0"
-                "                  Also include file or directory PATH verbatim (repeatable)              \0"
+                "    --bundle[=OUT] SCRIPT\n"
+                "                        Write a standalone executable OUT (default: SCRIPT without .ty)\n"
+                "                        that runs SCRIPT; ty options given alongside --bundle are kept\n"
+                "    --bundle-native=LIB Also include native library LIB in the bundle (repeatable)\n"
+                "    --bundle-script=SCRIPT\n"
+                "                        Also include SCRIPT and everything it imports (repeatable)\n"
+                "    --bundle-file=PATH  Also include file or directory PATH verbatim (repeatable)\n"
 #endif
-#ifdef TY_PROFILER
-                "    -F HZ         Samples per second per thread (default: 999)                           \0"
-                "    -o FILE       Record the profile to FILE (default: typrof.data)                      \0"
-                "    --cpu         Sample on-CPU time (default)                                           \0"
-                "    --wall        Sample wall-clock time, including time spent blocked                   \0"
-                "    --event=E[:N] Sample every Nth perf event E (cycles, instructions, cache-misses, ...) \0"
-                "    --count[=N]   Sample every Nth bytecode op. Deterministic; disables the JIT          \0"
-                "    --no-summary  Don't print a summary when the program exits                           \0"
-                "    --help-prof   Print all profiler options and commands                                \0"
+                "    --version           Print ty version information and exit\n"
+                "    --help              Print this help message and exit\n"
+                "    --                  Stop handling options\n"
+                "\n"
+                "Tools:\n"
+                "    --test [FILE | TARGET...] [OPTS]\n"
+                "                        Run tests: top-level pub functions in test files\n"
+                "                        (`ty --test --help` lists runner options)\n"
+                "    --lint [OPTS] [PATH...]\n"
+                "                        Lint Ty sources (`ty --lint --help` for options)\n"
+                "    --fmt [OPTS] [PATH...]\n"
+                "                        Format Ty sources (`ty --fmt --help` for options)\n"
+                "    --fix [OPTS] [PATH...]\n"
+                "                        Fix and tidy Ty sources (`ty --fix --help` for options)\n"
+                "    --ls                Run the language server, reading requests from stdin and\n"
+                "                        writing responses to stdout\n",
+                stdout
+        );
+#ifdef TY_HAVE_SAMPLER
+        putchar('\n');
+        prof_usage(stdout);
 #endif
-                "    --color=WHEN  Explicitly control when to use colored output. WHEN can be set         \0"
-                "                  to 'always', 'never', or 'auto' (default: 'auto')                      \0"
-                "    --highlight[=THEME]                                                                  \0"
-                "                  Print syntax-highlighted source and exit. Available themes:            \0"
-                "                  gruvbox, gruvbox-material, github-light, github-dark, monokai,         \0"
-                "                  one-dark, catppuccin, dracula, nord, solarized, tokyonight, rose-pine  \0"
-                "    --            Stop handling options                                                  \0"
-                "    --version     Print ty version information and exit                                  \0"
-                "    --help        Print this help message and exit                                       \0"
-        };
+#ifdef TY_HAVE_USDT
+        putchar('\n');
+        prof_usdt_usage(stdout);
+#endif
+}
 
-        do do putchar(*u++); while (u[u[-1] = strspn(u, " ")]); while (putchar('\n'), 1[u += u[-1]] && ++u);
+static int
+ArgCount(char **argv)
+{
+        int n = 0;
+
+        while (argv[n] != NULL) {
+                n += 1;
+        }
+
+        return n;
 }
 
 static bool
@@ -558,10 +582,6 @@ ProcessArgs(char *argv[], bool first)
 
                 if (s_eq(argv[argi], "--help")) {
                         usage();
-#ifdef TY_HAVE_USDT
-                        putchar('\n');
-                        prof_usdt_usage(stdout);
-#endif
                         exit(0);
                 }
 
@@ -575,6 +595,35 @@ ProcessArgs(char *argv[], bool first)
                                 ToolArgIndex = argi;
                         }
                         break;
+                }
+
+#ifdef TY_HAVE_SAMPLER
+                if (s_eq(argv[argi], "--prof-report")) {
+                        ToolMode = "prof-report";
+                        if (first) {
+                                ToolArgIndex = argi;
+                        }
+                        break;
+                }
+
+                if (s_eq(argv[argi], "--prof-diff")) {
+                        exit(prof_diff_main(ArgCount(argv + argi), argv + argi));
+                }
+
+                if (s_eq(argv[argi], "--prof-attach")) {
+                        exit(prof_attach_main(ArgCount(argv + argi), argv + argi));
+                }
+
+                if (s_eq_n(argv[argi], "--prof", 6)) {
+                        if (first && !prof_option(argv[argi])) {
+                                goto BadOption;
+                        }
+                        goto NextOption;
+                }
+#endif
+
+                if (s_eq(argv[argi], "--ls")) {
+                        exit(ls_main(ty, argv));
                 }
 
                 if (s_eq(argv[argi], "--test")) {
@@ -625,16 +674,6 @@ ProcessArgs(char *argv[], bool first)
                         else                           { goto BadOption;              }
                         goto NextOption;
                 }
-
-#ifdef TY_PROFILER
-                {
-                        int used = prof_option(argv, argi);
-                        if (used > 0) {
-                                argi += used - 1;
-                                goto NextOption;
-                        }
-                }
-#endif
 
                 if (argv[argi][1] != '-') {
                         if (argv[argi][1] == ':') {
@@ -720,49 +759,6 @@ ProcessArgs(char *argv[], bool first)
 
                                         goto NextOption;
                                 }
-#if defined(TY_PROFILER)
-                                case 'F':
-                                {
-                                        char const *arg;
-                                        if (opt[1] != '\0') {
-                                                arg = opt + 1;
-                                                while (opt[1] != '\0') {
-                                                        ++opt;
-                                                }
-                                        } else if (argv[argi + 1] != NULL) {
-                                                arg = argv[++argi];
-                                        } else {
-                                                fprintf(stderr, "Missing argument for -F\n");
-                                                exit(1);
-                                        }
-                                        char *end;
-                                        long freq = strtol(arg, &end, 10);
-                                        if (*end != '\0' || freq < 0) {
-                                                fprintf(stderr, "Invalid frequency for -F: %s\n", arg);
-                                                exit(1);
-                                        }
-                                        if (freq > 0) {
-                                                ProfileSampleInterval = 1000000000ULL / (u64)freq;
-                                        }
-                                        goto NextOption;
-                                }
-
-                                case 'o':
-                                        if (opt[1] == '\0') {
-                                                if (argv[argi + 1] == NULL) {
-                                                        fprintf(stderr, "Missing argument for -o\n");
-                                                        exit(1);
-                                                }
-                                                prof_set_output(argv[++argi]);
-                                        } else {
-                                                prof_set_output(opt + 1);
-                                                while (opt[1] != '\0') {
-                                                        ++opt;
-                                                }
-                                        }
-                                        break;
-#endif
-
                                 case 'S':
                                         if (opt[1] == '\0') {
                                                 if (argv[argi + 1] == NULL) {
@@ -971,49 +967,6 @@ ClassifyTestArgs(int argc, char **argv)
         TestSuite  = true;
 }
 
-#if !defined(TY_TEST) && !defined(TY_PROFILER)
-#if defined(TY_MULTICALL)
-int
-tytest_main(int argc, char **argv);
-#endif
-
-static noreturn void
-ExecTestBinary(int argc, char **argv)
-{
-        char path[4096];
-        char const *env = getenv("TY_TEST_BINARY");
-
-#if defined(TY_MULTICALL)
-        if (env == NULL || *env == '\0') {
-                argv[0] = "tytest";
-                exit(tytest_main(argc, argv));
-        }
-#endif
-
-        if (env != NULL && *env != '\0') {
-                snprintf(path, sizeof path, "%s", env);
-        } else if (executable_path(path, sizeof path)) {
-                char *slash = strrchr(path, '/');
-                usize dir = (slash == NULL) ? 0 : (usize)(slash - path + 1);
-                snprintf(path + dir, sizeof path - dir, "tytest");
-        } else {
-                snprintf(path, sizeof path, "tytest");
-        }
-
-        argv[0] = path;
-        execv(path, argv);
-
-        fprintf(
-                stderr,
-                "ty --test: cannot run %s: %s (build it with `make tytest`)\n",
-                path,
-                strerror(errno)
-        );
-
-        exit(2);
-}
-#endif
-
 #ifdef TY_BUNDLER
 static char **
 BundleArgv(int *argc, char **argv)
@@ -1197,48 +1150,18 @@ main(int argc, char **argv)
         TyArgc = argc;
         TyArgv = argv;
 
-#if defined(TY_PROFILER)
-        for (int i = 1; i < argc; ++i) {
-                if (s_eq(argv[i], "--diff")) {
-                        ColorProfile = isatty(1);
-                        for (int j = 1; j < argc; ++j) {
-                                if (s_eq(argv[j], "--color=never")) {
-                                        ColorProfile = false;
-                                } else if (s_eq(argv[j], "--color=always")) {
-                                        ColorProfile = true;
-                                }
-                        }
-                        return prof_diff_main(argc, argv);
-                }
-                if (s_eq(argv[i], "--attach")) {
-                        return prof_attach_main(argc, argv);
-                }
-                if (i == 1 && s_eq(argv[i], "report")) {
-                        ToolMode = "report";
-                        ToolArgIndex = 1;
-                        prof_inhibit();
-                        break;
-                }
-                if (argv[i][0] != '-') {
-                        break;
-                }
-        }
-#endif
-
 #if defined(TY_PROFILE_TYPES) && 1
         atexit(xxx);
 #endif
 
         int nopt = (argc == 0) ? 0 : ProcessArgs(argv, true);
 
+#ifdef TY_HAVE_SAMPLER
+        prof_setup();
+#endif
+
         ProduceAnnotation = (getenv("TY_ANNOTATE") != NULL)
                          || ((nopt >= argc) && stdin_is_tty());
-
-#if !defined(TY_TEST) && !defined(TY_PROFILER)
-        if (RunningTests) {
-                ExecTestBinary(argc, argv);
-        }
-#endif
 
         if (RunningTests) {
                 ClassifyTestArgs(argc, argv);
@@ -1250,21 +1173,7 @@ main(int argc, char **argv)
         case TY_COLOR_NEVER:  ColorStdout = false;     ColorStderr = false;     break;
         }
 
-#if defined(TY_PROFILER)
-        if (ProfileOut == NULL) {
-                ProfileOut = stdout;
-        }
-
-        switch (ColorMode) {
-        case TY_COLOR_AUTO:   ColorProfile = isatty(fileno(ProfileOut)); break;
-        case TY_COLOR_ALWAYS: ColorProfile = true;                       break;
-        case TY_COLOR_NEVER:  ColorProfile = false;                      break;
-        }
-
-        ColorOutput = ColorProfile;
-#else
-        ColorOutput = ColorStderr;
-#endif
+        ColorOutput = ProfMode ? ColorProfile : ColorStderr;
 
 #ifdef TY_BUNDLER
         if (BundleRunning && nopt < argc) {
@@ -1310,13 +1219,12 @@ main(int argc, char **argv)
                 char tool[128];
                 static char name[32];
                 tool[0] = '\0';
-                if (s_eq(ToolMode, "report")) {
-                        ty_snprintf(tool + 1, sizeof tool - 1, "import typrof\ntyprof.main()\n");
-                        ty_snprintf(name, sizeof name, "(typrof report)");
+                if (s_eq(ToolMode, "prof-report")) {
+                        ty_snprintf(tool + 1, sizeof tool - 1, "import prof\nprof.main()\n");
                 } else {
                         ty_snprintf(tool + 1, sizeof tool - 1, "import syn.cli\nsyn.cli.main('%s')\n", ToolMode);
-                        ty_snprintf(name, sizeof name, "(ty --%s)", ToolMode);
                 }
+                ty_snprintf(name, sizeof name, "(ty --%s)", ToolMode);
                 SourceFile = name;
                 if (!vm_execute(ty, tool + 1, SourceFile)) {
                         DyingOfError = true;

@@ -9074,9 +9074,7 @@ TY_BUILTIN_RAW(ty_set_class_slot)
 
         if (t == &c->methods && e->id == NAMES.init) {
                 c->init = f;
-#ifdef TY_TEST
                 c->init_patched = true;
-#endif
         }
 
         class_refresh_offsets(ty, c->i);

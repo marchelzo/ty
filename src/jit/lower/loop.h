@@ -988,12 +988,15 @@ pack_slots(BcLir const *c, i32 const *slots, i32 n)
         return packed;
 }
 
-#ifdef TY_PROFILER
 static void
 loop_guard(BcLir *c, BcLoop const *loop, char const *what)
 {
         char buf[384];
         int n = 0;
+
+        if (!ProfMode) {
+                return;
+        }
 
         for (i32 k = 0; k < loop->nowned && n < (int)sizeof buf - 64; ++k) {
                 n += snprintf(
@@ -1012,9 +1015,6 @@ loop_guard(BcLir *c, BcLoop const *loop, char const *what)
 
         guard_note(c, "%s (unboxed: %s)", what, (n > 0) ? buf : "nothing");
 }
-#else
-#define loop_guard(...) ((void)0)
-#endif
 
 static void
 loop_osr(BcLir *c, i32 off, i32 sp)
@@ -1185,11 +1185,7 @@ flush_active(BcLir *c)
                 BcLoop const *loop = &c->loops[c->active[i]];
 
                 if (lazy_loop(loop)) {
-#ifdef TY_PROFILER
-                        flush_loop(c, loop, 0xFF);
-#else
-                        flush_loop(c, loop, loop->escaping | live_at(loop, c->at));
-#endif
+                        flush_loop(c, loop, ProfMode ? 0xFF : loop->escaping | live_at(loop, c->at));
                         flush_pair(c, loop);
                 }
         }

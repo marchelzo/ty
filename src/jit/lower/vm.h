@@ -222,9 +222,7 @@ tail_call(BcLir *c, BcLirNode const *node)
 {
         safepoint(c, node->deopt);
 
-#ifdef TY_PROFILER
         count_entry(c);
-#endif
 
         if (
                 !c->dynamic

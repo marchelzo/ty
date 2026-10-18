@@ -56,11 +56,9 @@ jit_compile(Ty *ty, Value const *func);
 void
 jit_free(Ty *ty);
 
-#ifdef TY_PROFILER
 // Print JIT stats report (compilation info, fast/slow paths, top slow sites)
 void
 jit_stats_report(Ty *ty, FILE *out);
-#endif
 
 enum {
         JIT_UNSEEN    = 0xFA57,

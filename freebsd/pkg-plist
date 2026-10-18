@@ -1,6 +1,4 @@
 bin/ty
-bin/tyls
-bin/tytest
 %%TYMODDIR%%/abbrev.ty
 %%TYMODDIR%%/apple.ty
 %%TYMODDIR%%/apple/screencapture.ty

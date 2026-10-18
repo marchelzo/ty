@@ -9,7 +9,7 @@ import ink.chart (LinePlot)
 import term (event, mod)
 import capstone
 
-pub const DEFAULT_PATH = 'typrof.data'
+pub const DEFAULT_PATH = 'ty-prof.data'
 
 const SELECTED = '#343842'
 const SHADE    = '#2b2f38'
@@ -2335,7 +2335,7 @@ pub class App < Component {
     render() -> ink::Node {
         let W = max(layout-max-w, 40)
         let H = max(layout-max-h, 8)
-        let head = ["{bold('typrof')} {dim(prof.title)}".fit(W), tab-line.fit(W), crumbs.fit(W)]
+        let head = ["{bold('profile')} {dim(prof.title)}".fit(W), tab-line.fit(W), crumbs.fit(W)]
         let s = screen
         let h = H - 4
         page = max(h - 1, 1)
@@ -2501,11 +2501,11 @@ pub fn main(args: Array[String] = argv[1;]) {
     let stdio? = !os.isatty(1)
     for a in args {
         match a {
-            'report' or '-i' or /^--color=/ => (),
+            /^--color=/                     => (),
             '--stdio'                       => stdio? = true,
             '--tui'                         => stdio? = false,
             /^-/                            => {
-                eprint("typrof report: unknown option {a}")
+                eprint("ty --prof-report: unknown option {a}")
                 os.exit(2)
             },
             _                               => path = a
@@ -2514,11 +2514,11 @@ pub fn main(args: Array[String] = argv[1;]) {
     let prof = try {
         Profile(path)
     } catch e {
-        eprint("typrof report: {path}: {e}")
+        eprint("ty --prof-report: {path}: {e}")
         os.exit(1)
     }
     if stdio? {
         return stdio(prof)
     }
-    run(App(prof), title: "typrof {prof.data['target']}")
+    run(App(prof), title: "profile {prof.data['target']}")
 }
