@@ -223,6 +223,9 @@ vm_global(Ty *ty, int i);
 void
 vm_to_string(Ty *ty, Value *v);
 
+void
+vm_concat_strings(Ty *ty, int n);
+
 Value
 vm_make_range(Ty *ty, Value const *a, Value const *b, bool inclusive);
 

@@ -1,0 +1,10 @@
+fn annotated(name) {
+    $$[ let $$name: $$:Int = 1 $$]
+}
+
+print(annotated('a'))
+
+match $$[ let z: $$:Int = 1 $$] {
+    $$[ let $$n: $$:t = $$v $$] => print(n, t, v),
+    _                           => print('no match')
+}

@@ -1823,56 +1823,6 @@ jit_rt_incrange(Ty *ty, Value *result, Value *a, Value *b)
         *v_(STACK, idx) = val;
 }
 
-// TO_STRING: convert value to string
-static bool
-jit_default_str(Ty *ty, int class_id)
-{
-        Value const *mine = class_lookup_method_i(ty, class_id, NAMES._str_);
-        Value const *root = class_lookup_method_i(ty, CLASS_OBJECT, NAMES._str_);
-        return (mine != NULL)
-            && (root != NULL)
-            && (mine->type == VALUE_FUNCTION)
-            && (root->type == VALUE_FUNCTION)
-            && (mine->info == root->info);
-}
-
-void
-jit_rt_to_string(Ty *ty, Value *val)
-{
-        if (val->type == VALUE_STRING) {
-                return;
-        }
-
-        if (UNLIKELY(val->type == VALUE_PTR)) {
-                char *show = VSC(val);
-                *val = STRING_NOGC(show, strlen(show));
-                return;
-        }
-
-        if (val->type == VALUE_NIL) {
-                return;
-        }
-
-        if (
-                (
-                        (val->type == VALUE_INTEGER)
-                     || (val->type == VALUE_REAL)
-                     || (val->type == VALUE_BOOLEAN)
-                )
-             && jit_default_str(ty, ClassOf(val))
-        ) {
-                ptrdiff_t idx = (val - vv(STACK));
-                vN(STACK) = idx + 1;
-                Value str = value_vshow(ty, val, 0);
-                *v_(STACK, idx) = str;
-                return;
-        }
-
-        ptrdiff_t idx = (val - vv(STACK));
-        vN(STACK) = idx + 1;
-        CallMethod(ty, NAMES._str_, 0, 0, false, true);
-}
-
 void
 jit_rt_catch(Ty *ty)
 {
@@ -2135,30 +2085,11 @@ void
 jit_rt_concat_strings(Ty *ty, Value *result, Value *base, int n)
 {
         ptrdiff_t result_idx = result - vv(STACK);
-        ptrdiff_t base_idx = base - vv(STACK);
 
-        vN(STACK) = base_idx + n;
+        vN(STACK) = (base - vv(STACK)) + n;
+        vm_concat_strings(ty, n);
 
-        usize total = 0;
-        for (int i = 0; i < n; ++i) {
-                Value *v = v_(STACK, base_idx + i);
-                if (v->type == VALUE_NIL) {
-                        *v = STRING_EMPTY;
-                } else if (v->type != VALUE_STRING) {
-                        *v = value_vshow(ty, v, 0);
-                }
-                total += sN(*v);
-        }
-        char *str = uAo(total, GC_STRING);
-        usize k = 0;
-        for (int i = 0; i < n; ++i) {
-                Value *v = v_(STACK, base_idx + i);
-                if (sN(*v) > 0) {
-                        memcpy(str + k, ss(*v), sN(*v));
-                        k += sN(*v);
-                }
-        }
-        *v_(STACK, result_idx) = STRING(str, total);
+        *v_(STACK, result_idx) = *vvL(STACK);
 }
 
 

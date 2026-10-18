@@ -1,0 +1,8 @@
+class V {
+    v: Int
+    ==(o) { v == o.v }
+    w: Array[Int] = []
+    +(o) { V(v: v + o.v) }
+}
+
+print(V(v: 1) == V(v: 1), V(v: 1) == V(v: 2), (V(v: 1) + V(v: 2)).v)

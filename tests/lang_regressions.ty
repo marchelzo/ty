@@ -2,6 +2,7 @@ import chalk (chalk)
 import os
 import ty
 import ty.test (xfail)
+import support.process (FIXTURES, run)
 
 fn eval(src: String) -> Any {
     ty.eval(src)
@@ -33,4 +34,38 @@ pub fn rest-only-lambda-is-variadic() {
 pub fn optional-inside-tuple-type() {
     let src = 'do { fn f(s: String) -> (String, ?String) { (s, nil) }; f("x") }'
     assert(eval(src) == ('x', nil))
+}
+
+fn fixture-output(name: String, env: Dict[String, String] = %{}) -> [String] {
+    let result = run([str(FIXTURES / 'lang' / "{name}.ty")], env=env)
+    assert(result.status == 0, result.stderr)
+    result.stdout.lines()
+}
+
+pub fn subtag-inherits-tag-methods() {
+    assert(fixture-output('tag-super-methods') == ['shape 2', 'shape 1', '4, 0, 0'])
+}
+
+pub fn annotated-template-holes() {
+    assert(fixture-output('template-annotated-hole') == [
+        "Let(Id(name: 'a', module: nil, constraint: Type(<class Int>)), Int(1))",
+        'z, <class Int>, Int(1)',
+    ])
+}
+
+pub fn operator-directive-on-first-line() {
+    assert(fixture-output('operator-directive-first-line') == ['321'])
+}
+
+pub fn top-level-nonlinear-patterns() {
+    assert(fixture-output('top-level-nonlinear') == ['distinct', 'pair 1', '5'])
+}
+
+pub fn field-before-operator-method() {
+    assert(fixture-output('field-then-operator-method') == ['true, false, 3'])
+}
+
+pub fn jit-nil-interpolates-as-empty() {
+    let out = fixture-output('jit-nil-interpolation', env=%{'TY_JIT_EAGER': '1'})
+    assert(out == ['match 3', 'bad '])
 }

@@ -1,0 +1,4 @@
+operator <+> 6 left
+let x = 3
+fn <+>(a, b) { a * 10 + b }
+print(x <+> 2 <+> 1)

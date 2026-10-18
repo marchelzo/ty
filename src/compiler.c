@@ -4171,7 +4171,7 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                         !s_eq(e->identifier, "_")
                      && (
                                 (existing != NULL && SymbolIsConst(existing) && xisupper(e->identifier[0]))
-                             || (existing != NULL && (existing->scope == scope) && !ScopeIsTop(scope))
+                             || (existing != NULL && (existing->scope == scope) && (scope != ScopeTop(scope)))
                              || (e->module != NULL)
                         )
                 ) {
@@ -7603,7 +7603,6 @@ emit_special_string(Ty *ty, Expr const *e)
 
                 if (fmt == NULL) {
                         EE(ex);
-                        INSN(TO_STRING);
                 } else {
                         EE(fmt);
 
@@ -7626,7 +7625,7 @@ emit_special_string(Ty *ty, Expr const *e)
                 }
         }
 
-        if (n > 1) {
+        if (n > 1 || vN(e->expressions) > 0) {
                 INSN(CONCAT_STRINGS);
                 Ei32(n);
                 STK(-n + 1);
@@ -11693,7 +11692,7 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 }
                 INSN(DEFINE_TAG);
                 Ei32(s->tag.symbol);
-                Ei32(-1);
+                Ei32((s->tag.super != NULL) ? unfurl(s->tag.super)->symbol->tag : -1);
                 Ei32(vN(s->tag.methods));
                 Ei32(vN(s->tag.s_methods));
                 Ei32(vN(s->tag.getters));
@@ -14795,6 +14794,34 @@ function_type_params(Ty *ty, Expr const *left, u32 flags)
 static Expr *
 function_type_input(Ty *ty, Value const *params);
 
+static Value
+AnnotatedHole(Ty *ty, Value name, Value constraint)
+{
+        Value module = NIL;
+
+        if (TryUnwrap(&name, TyId)) {
+                module = *t_(&name, "module");
+                name   = *t_(&name, "name");
+        }
+
+        if (
+                (name.type != VALUE_STRING)
+             && !((name.type & VALUE_TAGGED) && tags_first(ty, name.tags) == TyHole)
+        ) {
+                fail(
+                        "annotated template hole filled with non-name: %s",
+                        VSC(&name)
+                );
+        }
+
+        return TAGGED_RECORD(
+                TyId,
+                "name",       name,
+                "module",     module,
+                "constraint", constraint
+        );
+}
+
 Value
 tyexpr(Ty *ty, Expr const *e, u32 flags)
 {
@@ -15660,6 +15687,9 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                         v = *vm_get(ty, e->hole.i);
                 } else {
                         v = TAG(TyNil);
+                }
+                if (e->hole.constraint != NULL) {
+                        v = AnnotatedHole(ty, v, go(e->hole.constraint));
                 }
                 break;
 
@@ -18160,44 +18190,21 @@ define_tag(Ty *ty, Stmt *s)
         s->tag.symbol = sym->tag;
         s->tag.var = sym;
 
+        Class *class = class_get(ty, class_new(ty, s));
+        tags_set_class(ty, sym->tag, class);
+
         if (s->tag.super != NULL) {
                 symbolize_expression(ty, s->tag.scope, s->tag.super);
-#if 0
-                Type *t0 = type_resolve(ty, s->tag.super);
-
+                Expr const *super = unfurl(s->tag.super);
                 if (
-                        (t0 == NULL)
-                     || (
-                                (t0->type != TYPE_TAG)
-                             && (t0->type != TYPE_OBJECT)
-                        )
+                        (super->type != EXPRESSION_IDENTIFIER)
+                     || (super->symbol == NULL)
+                     || !SymbolIsTag(super->symbol)
                 ) {
-                        fail(
-                                "tag declared as extension of non-tag %s",
-                                type_show(ty, t0)
-                        );
+                        PushContext(ty, s->tag.super);
+                        fail("tag declared as extension of non-tag");
                 }
-
-                Class *super = t0->class;
-
-                class_set_super(ty, s->tag.symbol, super->i);
-
-                for (int i = 0; i < vN(s->tag.methods); ++i) {
-                        Expr *m = v__(s->tag.methods, i);
-                        if (m->return_type == NULL) {
-                                Value *v = class_method(ty, super->i, m->name);
-                                if (v != NULL && v->type == VALUE_PTR) {
-                                        m->return_type = ((Expr *)v->ptr)->return_type;
-                                }
-                        }
-                }
-
-                tags_set_class(ty, sym->tag, super);
-                sym->type = type_tag(ty, super, sym->tag);
-#endif
-        } else {
-                Class *class = class_get(ty, class_new(ty, s));
-                tags_set_class(ty, sym->tag, class);
+                class_set_super(ty, class->i, SymbolClassID(ty, super->symbol));
         }
 
         ExprVec *members[] = {
@@ -18206,7 +18213,6 @@ define_tag(Ty *ty, Stmt *s)
                 &s->tag.getters,
                 &s->tag.s_getters
         };
-        Class *class = tags_get_class(ty, sym->tag);
         for (int i = 0; i < countof(members); ++i) {
                 for (int j = 0; j < vN(*members[i]); ++j) {
                         v__(*members[i], j)->class = class;
@@ -20939,7 +20945,6 @@ DumpProgram(
                         break;
                 CASE(NIL)
                         break;
-                CASE(TO_STRING)
                 CASE(TO_REGEX)
                         break;
                 CASE(YIELD)

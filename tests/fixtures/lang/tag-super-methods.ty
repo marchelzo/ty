@@ -1,0 +1,14 @@
+tag Shape {
+    describe() { "shape {self}" }
+    area() { 0 }
+}
+
+tag Square < Shape {
+    area() { 4 }
+}
+
+tag Point < Shape;
+
+print(Square(2).describe())
+print(Point(1).describe())
+print(Square(2).area(), Point(1).area(), Shape(1).area())

@@ -305,9 +305,6 @@ void
 jit_rt_incrange(Ty *ty, Value *result, Value *a, Value *b);
 
 void
-jit_rt_to_string(Ty *ty, Value *val);
-
-void
 jit_rt_catch(Ty *ty);
 
 void

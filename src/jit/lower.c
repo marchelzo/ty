@@ -641,7 +641,6 @@ static BcEffect const Effects[256] = {
         [INSTR_NOT]                  = FX(1, 0),
         [INSTR_INC]                  = FX(1, 0),
         [INSTR_DEC]                  = FX(1, 0),
-        [INSTR_TO_STRING]            = FX(1, 0),
         [INSTR_COUNT]                = FX(1, 0),
         [INSTR_CLASS_OF]             = FX(1, 0),
         [INSTR_TAG_PUSH]             = FX(1, 0),
@@ -2755,7 +2754,6 @@ lower_op(BcLir *c, BcLirNode const *node, char const *ip)
         case INSTR_NOT:
         case INSTR_INC:
         case INSTR_DEC:
-        case INSTR_TO_STRING:
         case INSTR_COUNT:
         case INSTR_CLASS_OF:
         case INSTR_DIV:

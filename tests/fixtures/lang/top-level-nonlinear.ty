@@ -1,0 +1,13 @@
+let x = 5
+
+match [1, 2] {
+    [x, x] => print("pair {x}"),
+    _      => print('distinct')
+}
+
+match [1, 1] {
+    [x, x] => print("pair {x}"),
+    _      => print('distinct')
+}
+
+print(x)

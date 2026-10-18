@@ -1045,7 +1045,6 @@ extern usize TotalBytesAllocated;
         X(SELF),                  \
         X(TAG),                   \
         X(CLASS),                 \
-        X(TO_STRING),             \
         X(CONCAT_STRINGS),        \
         X(TO_REGEX),              \
         X(COMPILE_REGEX),         \
@@ -1831,6 +1830,7 @@ TyStrLen(Value const *str)
 #define sxdf(...) ((sxdf)(ty, __VA_ARGS__))
 #define vsxdf(...) ((scvdump)(ty, __VA_ARGS__))
 #define sfmt(...) ((sfmt)(ty, __VA_ARGS__))
+#define vfmt(...) ((STRING_FORMAT)(ty, __VA_ARGS__))
 
 #define XPRINT_CTX(fmt, ...) do { \
         Expr const *expr   = compiler_find_expr(ty, ty->ip - 1);                                  \

@@ -386,11 +386,11 @@ tags_copy_methods(Ty *ty, int dst, int src)
 {
         struct itable *dt = &tables.items[dst - 1];
         struct itable const *st = &tables.items[src - 1];
-        itable_copy(ty, dt, st);
+        itable_copy_weak(ty, dt, st);
 
         dt = &statics.items[dst - 1];
         st = &statics.items[src - 1];
-        itable_copy(ty, dt, st);
+        itable_copy_weak(ty, dt, st);
 }
 
 Value *

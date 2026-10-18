@@ -437,6 +437,7 @@ struct expression {
                 struct {
                         int i;
                         Expr *expr;
+                        Expr *constraint;
                 } hole;
                 struct {
                         Expr *subject;

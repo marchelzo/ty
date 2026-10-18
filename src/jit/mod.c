@@ -526,7 +526,7 @@ rt_to_string(Ty *ty, Value *out, Value const *a)
         gP(&v);
 
         if (v.type == VALUE_PTR) {
-                v = vSsz(VSC(&v));
+                v = value_vshow_color(ty, &v, 0);
         } else if (v.type != VALUE_STRING && v.type != VALUE_NIL) {
                 vm_push(ty, &v);
                 CallMethod(ty, NAMES._str_, 0, 0, false, true);

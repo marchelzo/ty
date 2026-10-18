@@ -307,6 +307,7 @@ typedef struct ParserState {
         bool NoPipe;
         bool NoLG;
         bool TypeContext;
+        bool InField;
 
         int ForParen;
         bool ForInit;
@@ -363,6 +364,7 @@ static Expr NullExpr = {
 #define ParseDepth        (state.depth)
 #define TokenIndex        (state.TokenIndex)
 #define TypeContext       (state.TypeContext)
+#define InField           (state.InField)
 #define ForParen          (state.ForParen)
 #define ForInit           (state.ForInit)
 #define ForInitExpr       (state.ForInitExpr)
@@ -389,6 +391,7 @@ static enum {
 #define SAVE_NP(b) bool NPSave = NoPipe; NoPipe = (b);
 #define SAVE_NA(b) bool NASave = NoAndOr; NoAndOr = (b);
 #define SAVE_TC(b) bool TCSave = TypeContext; TypeContext = (b);
+#define SAVE_FD(b) bool FDSave = InField; InField = (b);
 #define SAVE_LC(b) 0 // bool LCSave = LValueContext; LValueContext = (b);
 
 #define LOAD_NE() NoEquals = NESave;
@@ -397,6 +400,7 @@ static enum {
 #define LOAD_NP() NoPipe = NPSave;
 #define LOAD_NA() NoAndOr = NASave;
 #define LOAD_TC() TypeContext = TCSave;
+#define LOAD_FD() InField = FDSave;
 #define LOAD_LC() 0 // LValueContext = LCSave;
 
 noreturn void
@@ -4727,8 +4731,15 @@ prefix_template_expr(Ty *ty)
                 e->hole.expr = parse_expr(ty, 99);
                 avP(*exprs, e);
         } else {
+                SAVE_NC(true);
                 avP(*holes, parse_expr(ty, 99));
                 avP(*ctxs, CTX_EXPR);
+                LOAD_NC();
+                if (!NoConstraint && try_consume(':', TT_PUNCT)) {
+                        SAVE_NA(true);
+                        e->hole.constraint = parse_type(ty, 0);
+                        LOAD_NA();
+                }
         }
 
         e->end = TEnd;
@@ -7516,6 +7527,21 @@ should_split(Ty *ty)
         case '(':
         case '[':
                 return true;
+
+        case TOKEN_DBL_EQ:
+        case TOKEN_NOT_EQ:
+        case TOKEN_CMP:
+        case TOKEN_GEQ:
+        case TOKEN_LEQ:
+        case TOKEN_PLUS:
+        case TOKEN_MINUS:
+        case TOKEN_STAR:
+        case TOKEN_DIV:
+        case TOKEN_PERCENT:
+        case TOKEN_USER_OP:
+                return InField
+                    && (T1 == '(')
+                    && (token(1)->start.s == tok()->end.s);
         }
 
         return false;
@@ -7714,12 +7740,6 @@ parse_method(
         }
 }
 
-typedef struct {
-        char *name;
-        Expr *constraint;
-        Expr *dflt;
-} FuncParam;
-
 static Stmt *
 parse_class_definition(Ty *ty)
 {
@@ -7752,75 +7772,6 @@ parse_class_definition(Ty *ty)
 
         if (T0 == '[') {
                 parse_type_params(ty, &def->class.type_params);
-        }
-
-        /*
-         * Allow some optional parameters here that will implicitly become
-         * parameters of the init() method which are immediately assigned
-         * to instance variables of the same name.
-         *
-         * e.g.
-         *      class Foo(name: String, xs) {
-         *              init() {
-         *                      assert @name == name
-         *                      assert @xs == xs
-         *              }
-         *      }
-         *
-         * is equivalent to
-         *
-         *      class Foo {
-         *              init(name: String, xs) {
-         *                      @name = name
-         *                      @xs = xs
-         *                      assert @name == name
-         *                      assert @xs == xs
-         *              }
-         *      }
-         */
-        Expr *init = NULL;
-        vec(FuncParam) init_params = {0};
-
-        if (def->type == STATEMENT_CLASS_DEFINITION && try_consume('(')) {
-                while (!try_consume(')')) {
-                        FuncParam param;
-                        Location start;
-                        Location end;
-
-                        expect(TOKEN_IDENTIFIER);
-                        param.name = tok()->identifier;
-                        start = tok()->start;
-                        end   = tok()->end;
-                        next();
-
-                        param.constraint = try_consume(':', TT_PUNCT)
-                                         ? parse_expr(ty, 0)
-                                         : NULL;
-
-                        param.dflt = try_consume('=')
-                                   ? parse_expr(ty, 0)
-                                   : NULL;
-
-                        if (T0 != ')') {
-                                consume(',');
-                        }
-
-                        Expr *field = mkid(param.name);
-                        field->start = start;
-                        field->end = end;
-                        field->constraint = param.constraint;
-
-                        if (param.dflt != NULL) {
-                                Expr *eql = mkxpr(EQ);
-                                eql->start = start;
-                                eql->target = field;
-                                eql->value = param.dflt;
-                                field = eql;
-                        }
-
-                        avP(init_params, param);
-                        avP(def->tag.fields, field);
-                }
         }
 
         SAVE_NC(true);
@@ -7947,6 +7898,7 @@ parse_class_definition(Ty *ty)
                 ) {
                         Expr *field = mkid(name);
                         field->start = start;
+                        SAVE_FD(true);
                         if (try_consume(':', TT_PUNCT)) {
                                 SAVE_NE(true);
                                 field->constraint = parse_type(ty, 1);
@@ -7956,6 +7908,7 @@ parse_class_definition(Ty *ty)
                         if (T0 == TOKEN_EQ) {
                                 field = infix_eq(ty, field);
                         }
+                        LOAD_FD();
                         if (
                                 (field->type != EXPRESSION_IDENTIFIER)
                              && (field->type != EXPRESSION_EQ)
@@ -8017,61 +7970,10 @@ parse_class_definition(Ty *ty)
                                 else              { avP(def->tag.methods, meth); }
                         }
 
-                        if (
-                                !(getter | setter | _static)
-                             && (strcmp(name, "init") == 0)
-                        ) {
-                                init = *vvL(def->tag.methods);
-                        }
-
                         TagTokenOf(ty, meth, TT_FUNC);
                 }
 
                 SCRATCH_RESTORE();
-        }
-
-        if (vN(init_params) > 0) {
-                if (init == NULL) {
-                        init = mkfunc(ty);
-                        init->name = "init";
-                        init->body = mkstmt(ty);
-                        init->body->type = STATEMENT_BLOCK;
-                        SYNTH(init, TEnd);
-                        SYNTH(init->body, TEnd);
-                        avP(def->tag.methods, init);
-                }
-
-                if (init->body->type != STATEMENT_BLOCK) {
-                        EStart = init->start;
-                        EEnd = init->end;
-                        die("non-block init() body with implicit classs parameters");
-                }
-
-                for (int i = 0; i < vN(init_params); ++i) {
-                        FuncParam *param = v_(init_params, i);
-
-                        avI(init->params,      param->name,       i);
-                        avI(init->constraints, param->constraint, i);
-                        avI(init->dflts,       param->dflt,       i);
-
-                        Expr *member = mkid(param->name);
-
-                        Expr *assignment = mkxpr(EQ);
-                        assignment->target = mkxpr(MEMBER_ACCESS);
-                        assignment->target->object = mkid("self");
-                        assignment->target->member = member;
-                        assignment->value = member;
-
-                        Stmt *stmt = mkstmt(ty);
-                        stmt->type = STATEMENT_EXPRESSION;
-                        stmt->expression = assignment;
-
-                        SYNTH(assignment, TEnd);
-                        SYNTH(assignment->target, TEnd);
-                        SYNTH(stmt, TEnd);
-
-                        avI(init->body->statements, stmt, i);
-                }
         }
 
         order_members(ty, &def->tag);
@@ -8870,7 +8772,7 @@ parse_module(Ty *ty, Module *mod)
                         }
                 }
 
-                lex_need_nl(ty, false);
+                lex_need_nl(ty, have_kw(OPERATOR));
 
                 while (T0 == TOKEN_COMMENT) {
                         doc = tok()->comment;

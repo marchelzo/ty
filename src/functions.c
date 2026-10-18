@@ -11191,6 +11191,17 @@ ast_match(Ty *ty, Value const *t, Value const *s, Value *bindings, imax count, i
                 return ast_match_union(ty, t, s, bindings, count, depth);
         }
 
+        if (ast_tag(ty, t) == TyType && ast_tag(ty, s) == TyType) {
+                Value inner = unwrap(ty, t);
+                if (ast_hole(ty, &inner, &hole)) {
+                        if (hole < 0 || hole >= count) {
+                                return false;
+                        }
+                        bindings[hole] = unwrap(ty, s);
+                        return true;
+                }
+        }
+
         if (t->tags != s->tags) {
                 return false;
         }

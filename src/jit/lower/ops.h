@@ -453,10 +453,6 @@ lower_misc(BcLir *c, BcLirNode const *node, char const *ip)
                 fast_step(c, op == INSTR_INC);
                 return;
 
-        case INSTR_TO_STRING:
-                tycall(c, jit_rt_to_string, LT_VOID, preg(last));
-                return;
-
         case INSTR_SUBSCRIPT:
                 fast_subscript(c);
                 return;

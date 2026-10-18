@@ -4751,6 +4751,76 @@ QuietFailure:
         }
 }
 
+static bool
+DefaultStr(Ty *ty, int class)
+{
+        Value const *mine = class_lookup_method_i(ty, class, NAMES._str_);
+        Value const *root = class_lookup_method_i(ty, CLASS_OBJECT, NAMES._str_);
+
+        return (mine != NULL)
+            && (root != NULL)
+            && (mine->type == VALUE_FUNCTION)
+            && (root->type == VALUE_FUNCTION)
+            && (mine->info == root->info);
+}
+
+void
+vm_to_string(Ty *ty, Value *v)
+{
+        switch (v->type) {
+        case VALUE_STRING:
+                return;
+
+        case VALUE_NIL:
+                *v = STRING_EMPTY;
+                return;
+
+        case VALUE_PTR:
+                *v = value_vshow_color(ty, v, 0);
+                return;
+
+        case VALUE_INTEGER:
+        case VALUE_REAL:
+        case VALUE_BOOLEAN:
+                if (DefaultStr(ty, ClassOf(v))) {
+                        *v = value_vshow(ty, v, 0);
+                        return;
+                }
+        }
+
+        vm_push(ty, v);
+        CallMethod(ty, NAMES._str_, 0, 0, false, true);
+        *v = *vm_pop(ty);
+}
+
+void
+vm_concat_strings(Ty *ty, int n)
+{
+        usize base = vN(STACK) - n;
+        usize k = 0;
+
+        for (usize i = base; i < base + n; ++i) {
+                Value v = v__(STACK, i);
+                vm_to_string(ty, &v);
+                *v_(STACK, i) = v;
+                k += sN(v);
+        }
+
+        char *str = value_string_alloc(ty, k);
+
+        k = 0;
+        for (usize i = base; i < base + n; ++i) {
+                Value const *v = v_(STACK, i);
+                if (sN(*v) > 0) {
+                        memcpy(str + k, ss(*v), sN(*v));
+                        k += sN(*v);
+                }
+        }
+
+        vN(STACK) = base;
+        xvP(STACK, STRING(str, k));
+}
+
 void
 DoYield(Ty *ty)
 {
@@ -8335,26 +8405,13 @@ TargetMember:
                         push(NIL);
                         break;
 
-                CASE(TO_STRING)
-                        if (top()->type == VALUE_STRING || top()->type == VALUE_NIL) {
-                                break;
-                        }
-                        if (UNLIKELY(top()->type == VALUE_PTR)) {
-                                char *s = VSC(top());
-                                put(STRING_NOGC(s, strlen(s)));
-                        } else {
-                                CallMethod(ty, NAMES._str_, 0, 0, false, false);
-                        }
-                        break;
-
                 CASE(TO_REGEX)
                         if (top()->type == VALUE_REGEX) {
                                 put(vSsz(top()->regex->pattern));
                                 break;
                         }
                         if (UNLIKELY(top()->type == VALUE_PTR)) {
-                                char *s = VSC(top());
-                                put(STRING_NOGC(s, strlen(s)));
+                                put(value_vshow_color(ty, top(), 0));
                         } else if (top()->type != VALUE_NIL) {
                                 CallMethod(ty, NAMES._str_, 0, 0, false, false);
                         }
@@ -8625,21 +8682,7 @@ TargetMember:
 
                 CASE(CONCAT_STRINGS)
                         READVALUE(n);
-                        k = 0;
-                        for (i = vN(STACK) - n; i < vN(STACK); ++i) {
-                                k += sN(v__(STACK, i));
-                        }
-                        str = value_string_alloc(ty, k);
-                        v = STRING(str, k);
-                        k = 0;
-                        for (i = vN(STACK) - n; i < vN(STACK); ++i) {
-                                if (sN(v__(STACK, i)) > 0) {
-                                        memcpy(str + k, ss(v__(STACK, i)), sN(v__(STACK, i)));
-                                        k += sN(v__(STACK, i));
-                                }
-                        }
-                        STACK.count -= n;
-                        vPx(STACK, v);
+                        vm_concat_strings(ty, n);
                         break;
 
                 CASE(COMPILE_REGEX)
@@ -11239,7 +11282,6 @@ StepInstruction(char const *ip)
                 break;
         CASE(NIL)
                 break;
-        CASE(TO_STRING)
         CASE(TO_REGEX)
                 break;
         CASE(YIELD)
@@ -12164,8 +12206,7 @@ vm_jit_misc(Ty *ty, int op, int n, void *data)
                         break;
                 }
                 if (top()->type == VALUE_PTR) {
-                        char *s = VSC(top());
-                        put(STRING_NOGC(s, strlen(s)));
+                        put(value_vshow_color(ty, top(), 0));
                 } else if (top()->type != VALUE_NIL) {
                         CallMethod(ty, NAMES._str_, 0, 0, false, true);
                 }
