@@ -1956,7 +1956,7 @@ TestEquality(Ty *ty, Value const *v1, Value const *v2, Cycles *cs)
                 return (v1->info == v2->info);
 
         case PAIR_OF(VALUE_JIT_FUNCTION):
-                return v1->jit_code == v2->jit_code;
+                return (v1->jit_code == v2->jit_code);
 
         case PAIR_OF(VALUE_BUILTIN_FUNCTION):
                 return (v1->builtin_function == v2->builtin_function);
@@ -1964,6 +1964,9 @@ TestEquality(Ty *ty, Value const *v1, Value const *v2, Cycles *cs)
         case PAIR_OF(VALUE_BUILTIN_METHOD):
                 return (v1->builtin_method == v2->builtin_method)
                     && (v1->this == v2->this);
+
+        case PAIR_OF(VALUE_GENERATOR):
+                return (v1->gen == v2->gen);
 
         case PAIR_OF(VALUE_REGEX):
                 return v1->regex == v2->regex;
