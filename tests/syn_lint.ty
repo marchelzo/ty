@@ -44,3 +44,14 @@ pub fn deletes-take-separators() {
     let (out, _) = lint.apply('f(a, b, c)', lint.delete(b).edits)
     assert(out == 'f(a, c)')
 }
+
+let SHADOW = "class Task \{\n    gen: Int\n    other: Int\n\n    init(gen: Int, x: Int) \{\n        gen = gen\n        x = x\n        other = other\n        let f = fn (gen) \{ gen = gen \}\n    \}\n\}\n\nfn free(gen) \{ gen = gen \}\n"
+
+pub fn shadowed-field-assign-is-an-error() {
+    let ds = lint.check(syn.parse(SHADOW), lint.DEFAULT_RULES)
+                 .filter(\_.rule == 'shadowed-field-assign')
+    assert(ds.map(d -> (d.line, d.severity)) == [(6, 'error')], ds.map(str))
+    assert(lint.fix(SHADOW, lint.DEFAULT_RULES).source == SHADOW)
+    let fixed = lint.fix(SHADOW, lint.DEFAULT_RULES, unsafe?=true).source
+    assert('        self.gen = gen\n' in fixed, fixed)
+}

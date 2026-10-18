@@ -25,6 +25,43 @@
             }
         },
         {
+            "name": "local",
+            "hidden": true,
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_EXPORT_COMPILE_COMMANDS": true
+            }
+        },
+        {
+            "name": "dev",
+            "inherits": "local",
+            "displayName": "Development (-g -O1)",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_C_FLAGS_RELWITHDEBINFO": "-g -O1 -fno-omit-frame-pointer"
+            }
+        },
+        {
+            "name": "debug",
+            "inherits": "local",
+            "displayName": "Debug (-g -Og, ASan)",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_C_FLAGS_DEBUG": "-g -Og -fno-omit-frame-pointer",
+                "TY_ASAN": true
+            }
+        },
+        {
+            "name": "release",
+            "inherits": "local",
+            "displayName": "Release (-O3, LTO, native CPU)",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_C_FLAGS_RELEASE": "-O3 -DNDEBUG",
+                "TY_NATIVE": true
+            }
+        },
+        {
             "name": "base-windows",
             "hidden": true,
             "inherits": "base",
@@ -49,7 +86,8 @@
                 "VCPKG_CMAKE_SYSTEM_NAME": "Darwin",
                 "VCPKG_TARGET_ARCHITECTURE": "arm64",
                 "VCPKG_OSX_ARCHITECTURES": "arm64",
-                "VCPKG_CRT_LINKAGE": "dynamic"
+                "VCPKG_CRT_LINKAGE": "dynamic",
+                "TY_NATIVE": true
             }
         },
         {

@@ -858,6 +858,36 @@ fn self-compare(n: Node) -> Diag | nil {
     impure ? nil : diag(n, 'expression is compared with itself')
 }
 
+fn enclosing-function(n: Node) -> Node | nil {
+    for n.ancestors() {
+        return it if it.kind == 'Function'
+    }
+}
+
+fn names-in(n: Node, kind: String, name: String) -> Bool {
+    n.nodes.any?(c -> c.kind == kind && c.name-token.?text == name)
+}
+
+fn shadowed-field-assign(n: Node) -> Diag | nil {
+    if not let [lhs, rhs] = n.nodes {
+        return nil
+    }
+    if lhs.kind != 'Identifier' || rhs.kind != 'Identifier' || lhs.text != rhs.text {
+        return nil
+    }
+    let name = lhs.text
+    let $fun = enclosing-function(n) or return nil
+    let $cls = fun.parent or return nil
+    if cls.kind != 'ClassDefinition' {
+        return nil
+    }
+    if !names-in(fun, 'Param', name) || !names-in(cls, 'Identifier', name) {
+        return nil
+    }
+    let msg = "parameter `{name}` is assigned to itself, so field `{name}` is never set"
+    diag(n, msg, Fix([Edit(lhs.start, lhs.end, "self.{name}")], Unsafe))
+}
+
 fn redundant-return-nil(n: Node) -> Diag | nil {
     if n.kind != 'Return' || n.text.strip() != 'return nil' {
         return nil
@@ -975,6 +1005,13 @@ pub DEFAULT_RULES = [
         typed=true
     ),
     rule('self-compare', self-compare, kinds=['DblEq'], doc='x == x without side effects'),
+    rule(
+        'shadowed-field-assign',
+        shadowed-field-assign,
+        severity='error',
+        kinds=['Eq'],
+        doc='x = x in a method whose parameter x shadows field x'
+    ),
     rule('return-nil', redundant-return-nil, kinds=['Return'], doc='return nil ending a function'),
     rule('nil-check-return', nil-check-return, kinds=['If'], doc='if x != nil { return x }'),
     rule('single-line-if-else', single-line-if-else, kinds=['If'], doc='if/else on one line'),

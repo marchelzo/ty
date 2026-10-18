@@ -1,303 +1,70 @@
-CFLAGS += -std=c2x
-CFLAGS += -Wall
-CFLAGS += -Iinclude
-CFLAGS += -Ilibco
-CFLAGS += -Idtoa
-CFLAGS += -Ilibmd/include
-CFLAGS += -isystem/usr/local/include
-CFLAGS += $(shell pkg-config --cflags libffi)
-CFLAGS += $(shell pcre2-config --cflags)
-CFLAGS += -Wno-switch
-CFLAGS += -Wno-unused-value
-CFLAGS += -Wno-unused-function
-CFLAGS += -Wno-empty-body
-CFLAGS += -D_GNU_SOURCE
-CFLAGS += -DPCRE2_CODE_UNIT_WIDTH=8
-CFLAGS += -DCURL_STATICLIB -DPCRE2_CODE_UNIT_WIDTH=8 -DPCRE2_STATIC -DUTF8PROC_STATIC -D_GNU_SOURCE
-CFLAGS += -fno-omit-frame-pointer
-
-ifeq ($(shell uname -m),arm64)
-	CFLAGS += -isystem/opt/homebrew/include
-	LDFLAGS += -L/opt/homebrew/lib
-	LDFLAGS += -Wl,-rpath,/opt/homebrew/lib
+MODE := dev
+ifdef DEBUG
+	MODE := debug
 endif
-
-LDFLAGS += -lm
-LDFLAGS += -lcurses
-LDFLAGS += -L/usr/local/lib
-LDFLAGS += -lpthread
-
-LDFLAGS += -lutf8proc
-LDFLAGS += -lsqlite3
-LDFLAGS += -lxxhash
-LDFLAGS += -ldl
-LDFLAGS += -lffi
-LDFLAGS += $(shell pcre2-config --libs8)
-
-ifndef DEBUG
-	LDFLAGS += -lmimalloc
-endif
-
-ifdef USDT
-        CFLAGS += -DTY_USDT
-endif
-
-ifdef JEMALLOC
-	LDFLAGS += -L$(shell jemalloc-config --libdir)
-	LDFLAGS += -Wl,-rpath,$(shell jemalloc-config --libdir)
-	LDFLAGS += -ljemalloc $(shell jemalloc-config --libs)
-endif
-
-ifdef DEBUG_NAMES
-	CFLAGS += -DTY_DEBUG_NAMES
-endif
-
-ifdef PROFILE_TYPES
-	CFLAGS += -DTY_PROFILE_TYPES
-endif
-
-TEST_ARGS ?=
-
-PROG := ty
-PREFIX ?= /usr/local
-
-bindir := /bin
-
-ifndef LOG
-	CFLAGS += -DTY_NO_LOG
-endif
-
 ifdef RELEASE
-	CFLAGS += -O3
-	CFLAGS += -DTY_RELEASE
-	CFLAGS += -mcpu=native
-	CFLAGS += -mtune=native
-	CFLAGS += -flto
-else ifdef DEBUG
-	CFLAGS += -O0
-	CFLAGS += -fno-omit-frame-pointer
-	CFLAGS += -fno-sanitize=nonnull-attribute
-	CFLAGS += -fsanitize=address
-	CFLAGS += -mllvm --asan-stack=0
-	CFLAGS += -fno-sanitize-address-use-after-scope
-	CFLAGS += -g3
-else ifdef TDEBUG
-	CFLAGS += -O0
-	CFLAGS += -fsanitize=thread
-	CFLAGS += -ggdb3
-else ifndef LOG
-	CFLAGS += -Og
-	CFLAGS += -g
-	CFLAGS += -DTY_RELEASE
-else
-	CFLAGS += -O1
+	MODE := release
 endif
 
-ifdef GENPROF
-	CFLAGS += -fprofile-generate
-endif
+BUILD      := _build/$(MODE)
+TOOLS      := _build/tools.mk
+VCPKG      := _vcpkg/vcpkg
+VCPKG_REPO := https://github.com/microsoft/vcpkg.git
+VCPKG_REV  := 5d57f5a0a5469a23e005fc79a7c1814ab4fc967e
+LOG_OPT    := $(if $(LOG),ON,OFF)
+TEST_ARGS  ?=
 
-ifdef USEPROF
-	CFLAGS += -fprofile-use
-endif
+LEGACY := obj tools/tybi include/gen include/keywords.h include/optokens.h \
+          include/syscall_names.h include/ioctl_constants.h \
+          include/errno_constants.h nsync/out
 
-ifdef LTO
-	CFLAGS += -flto
-	CFLAGS += -fomit-frame-pointer
-	CFLAGS += -fwhole-program
-endif
-
-ifdef WITHOUT_OS
-	CFLAGS += -DTY_WITHOUT_OS
-endif
-
-CFLAGS += -Insync/public
-
-# --- Default to ncpu parallel jobs ---
-NPROC := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
-MAKEFLAGS += -j$(NPROC)
-
-# --- Auto-rebuild on config change ---
-BUILD_SIG := DEBUG=$(DEBUG)|LOG=$(LOG)|RELEASE=$(RELEASE)|TDEBUG=$(TDEBUG)|UNSAFE=$(UNSAFE)|LTO=$(LTO)|JEMALLOC=$(JEMALLOC)|DEBUG_NAMES=$(DEBUG_NAMES)|PROFILE_TYPES=$(PROFILE_TYPES)|WITHOUT_OS=$(WITHOUT_OS)|GENPROF=$(GENPROF)|USEPROF=$(USEPROF)
-BUILD_SIG_FILE := obj/.build_sig
-
-PREV_SIG := $(shell cat $(BUILD_SIG_FILE) 2>/dev/null)
-
-ifneq ($(BUILD_SIG),$(PREV_SIG))
-$(shell rm -rf obj)
-$(shell mkdir -p obj)
-$(shell echo '$(BUILD_SIG)' > $(BUILD_SIG_FILE))
-endif
-
-$(shell mkdir -p obj/jit/lir obj/prof)
-
-# DynASM configuration
-LUAJIT := luajit
-DYNASM := $(LUAJIT) dynasm/dynasm.lua
-
-ifeq ($(shell uname -m),arm64)
-	LIR_DASC := src/jit/lir/arm64.dasc
-	LIR_HDR  := src/jit/lir/arm64.h
-else
-	LIR_DASC := src/jit/lir/x64.dasc
-	LIR_HDR  := src/jit/lir/x64.h
-endif
-
-ifeq ($(shell uname -s),Darwin)
-	PROF_OS := darwin
-else
-	PROF_OS := linux
-endif
-
-SOURCES := $(wildcard src/*.c src/jit/*.c src/jit/lir/*.c) src/prof/$(PROF_OS).c
-OBJECTS := $(patsubst src/%.c,obj/%.o,$(SOURCES))
-EXTERNAL := obj/libco.o obj/dtoa.o libmd/libmd.a nsync/out/libnsync.a
-ASSEMBLY := $(patsubst %.c,%.s,$(SOURCES))
 .DEFAULT_GOAL := all
-.PHONY: all clean test test-types2 test-lir test-jitmem install freebsd-plist
-DEPFILES := $(OBJECTS:.o=.d) obj/ty-main.d obj/libco.d obj/dtoa.d
+.PHONY: all test clean freebsd-plist FORCE
 
--include $(DEPFILES)
-
-all: $(PROG)
-
-ifneq ($(LIR_HDR),)
-$(LIR_HDR): $(LIR_DASC) dynasm/dasm_arm64.lua dynasm/dasm_x86.lua dynasm/dynasm.lua
-	@echo dynasm $<
-	@$(DYNASM) -o $@ $<
+ifneq ($(filter-out clean freebsd-plist,$(or $(MAKECMDGOALS),all)),)
+-include $(TOOLS)
 endif
 
-include/keywords.h: src/keywords.gperf
-	@echo gperf $<
-	@gperf $< > $@
+CTEST := $(dir $(CMAKE))ctest
 
-include/optokens.h: src/optokens.gperf
-	@echo gperf $<
-	@gperf $< > $@
+all: $(BUILD)/build.ninja
+	@$(NINJA) -C $(BUILD) ty
+	@cp $(BUILD)/ty ty.tmp && mv ty.tmp ty
+	@ln -sf $(BUILD)/compile_commands.json compile_commands.json
 
-include/syscall_names.h: scripts/getsyscalls.sh
-	@echo sh $<
-	@sh $< > $@
-
-GEN_DIR     := include/gen
-GEN_SOURCES := src/functions.c src/ffi.c src/sqlite.c src/screen.c src/jit/mod.c src/syntax.c
-GEN_METHODS := src/str.c src/array.c src/dict.c src/blob.c src/heap.c src/queue.c src/set.c src/shared_queue.c
-GEN_HEADERS := $(GEN_DIR)/builtin_decls.h $(GEN_DIR)/builtin_table.h $(GEN_DIR)/builtin_method_src.h
-
-tools/tybi: tools/tybi.c
-	@echo cc $@
-	@$(CC) -std=c11 -O1 -o $@ $<
-
-$(GEN_DIR)/.stamp: tools/tybi $(GEN_SOURCES) $(GEN_METHODS)
-	@echo tybi $(GEN_SOURCES) -m $(GEN_METHODS)
-	@mkdir -p $(GEN_DIR)
-	@tools/tybi $(GEN_DIR) $(GEN_SOURCES) -m $(GEN_METHODS)
-	@touch $@
-
-$(GEN_HEADERS): $(GEN_DIR)/.stamp
-	@test -f $@
-
-$(OBJECTS) obj/ty-main.o: | $(GEN_HEADERS)
-
-obj/token.o: include/keywords.h include/optokens.h
-obj/functions.o: include/syscall_names.h
-
-obj/prof_html.o: src/prof.html
-obj/jit/lir/emit.o: $(LIR_HDR)
-
-ty: obj/ty-main.o $(OBJECTS) $(EXTERNAL)
-	@echo cc $@
-	@$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-
-obj/ty-main.o: ty.c
-	@echo cc $<
-	@$(CC) $(CFLAGS) -MMD -MP -MF obj/ty-main.d -c -o $@ $<
-
-asm: $(ASSEMBLY)
-
-%.s: src/%.c
-	@echo cc $<
-	$(CC) $(CFLAGS) -S -o asm/$@ -DFILENAME=$(patsubst %.c,%,$<) $<
-
-obj/libco.o: libco/libco.c
-	$(CC) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c -o $@ -DLIBCO_MP $<
-
-obj/dtoa.o: dtoa/SwiftDtoa.c
-	$(CC) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c -o $@ $<
-
-nsync/out/libnsync.a: nsync/CMakeLists.txt
-	@echo cmake nsync
-	@rm -rf nsync/out
-	@CC="$(CC)" cmake -S nsync -B nsync/out -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-w >/dev/null
-	@MAKEFLAGS= cmake --build nsync/out --target nsync --parallel $(NPROC) >/dev/null
-
-obj/%.o: src/%.c
-	@echo cc $<
-	@$(CC) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c -o $@ -DFILENAME=$(patsubst src/%.c,%,$<) $<
-
-clean:
-	rm -rf $(PROG) *.gcda $(OBJECTS) obj/libco.o obj/dtoa.o include/keywords.h include/optokens.h $(GEN_DIR) tools/tybi $(BUILD_SIG_FILE) $(DEPFILES) obj/ty-main.o obj/types2-core-test obj/lir-core-test obj/lir-interp-test obj/lir-ra-test obj/lir-native-test obj/lir-entry-test obj/jitmem-test
-
-test: ty test-types2 test-lir test-jitmem test-jit
+test: all
+	@$(NINJA) -C $(BUILD)
+	$(CTEST) --test-dir $(BUILD) --output-on-failure
 	TY_TEST_NATIVE=1 ./ty --test tests/runner/smoke.ty
 	./ty --test tests --strict $(TEST_ARGS)
-
-test-jit: ty
 	TY_JIT_EAGER=1 ./ty --test tests --strict $(TEST_ARGS)
 	TY_JIT_EAGER=2 TY_JIT_TIER=3 ./ty --test tests --strict $(TEST_ARGS)
 
-test-types2: obj/types2-core-test
-	./obj/types2-core-test
+$(VCPKG):
+	@test -d _vcpkg/.git || git init -q _vcpkg
+	git -C _vcpkg fetch -q --depth 1 $(VCPKG_REPO) $(VCPKG_REV)
+	@git -C _vcpkg checkout -q $(VCPKG_REV)
+	_vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
-obj/types2-core-test: tests/types2_core.c src/types2_core.c src/panic.c include/types2_core.h
-	@echo cc $@
-	@$(CC) $(CFLAGS) -o $@ tests/types2_core.c src/types2_core.c src/panic.c $(LDFLAGS)
+$(TOOLS): | $(VCPKG)
+	@mkdir -p $(@D)
+	@cmake=$$($(VCPKG) fetch cmake --x-stderr-status) \
+	 && ninja=$$($(VCPKG) fetch ninja --x-stderr-status) \
+	 && printf 'CMAKE := %s\nNINJA := %s\n' "$$cmake" "$$ninja" > $@
 
-LIR_TESTS  := core interp ra native entry
-LIR_HEADER := include/jit/lir.h tests/jit/lir/test.h tests/jit/lir/scalar.h
-LIR_CORE   := $(addprefix obj/jit/lir/,lir.o check.o cfg.o wire.o entry.o) obj/panic.o
-LIR_NATIVE := $(addprefix obj/jit/lir/,interp.o ra.o norm.o hoist.o opt.o emit.o finish.o) obj/jit/mem.o nsync/out/libnsync.a
+$(BUILD)/.config: FORCE
+	@mkdir -p $(@D)
+	@echo 'LOG=$(LOG_OPT)' | cmp -s - $@ || echo 'LOG=$(LOG_OPT)' > $@
 
-define LINK_TEST
-	@echo cc $@
-	@$(CC) $(CFLAGS) -o $@ $< $(filter %.o %.a,$^) $(LDFLAGS)
-endef
+$(BUILD)/build.ninja: $(BUILD)/.config | $(TOOLS)
+	$(CMAKE) --preset $(MODE) -DCMAKE_MAKE_PROGRAM=$(NINJA) -DTY_LOG=$(LOG_OPT)
+	@touch $@
 
-test-lir: $(LIR_TESTS:%=obj/lir-%-test)
-	@set -e; for t in $^; do echo ./$$t; ./$$t; done
-
-test-jitmem: obj/jitmem-test
-	./obj/jitmem-test
-
-obj/lir-%-test: tests/jit/lir/%.c $(LIR_HEADER) $(LIR_CORE)
-	$(LINK_TEST)
-
-obj/lir-interp-test: obj/jit/lir/interp.o
-obj/lir-ra-test:     obj/jit/lir/ra.o
-obj/lir-native-test: $(LIR_NATIVE)
-obj/lir-entry-test:  $(LIR_NATIVE)
-
-obj/jitmem-test: tests/jit/mem.c $(LIR_HEADER) obj/jit/mem.o obj/panic.o nsync/out/libnsync.a
-	$(LINK_TEST)
-
-LIB_DIRS = $(sort $(dir $(shell find lib -type f -name '*.ty')))
-LIB_HOME = $(or $(XDG_DATA_HOME),$(HOME)/.local/share)/ty/lib
-
-define install-lib-dir
-	install -d $(LIB_HOME)/$(patsubst lib/%,%,$(1))
-	install -m644 $(1)*.ty $(LIB_HOME)/$(patsubst lib/%,%,$(1))
-
-endef
-
-install: $(PROG)
-	sudo install -m755 -s $(PROG) $(DESTDIR)$(PREFIX)$(bindir)
-	$(foreach d,$(LIB_DIRS),$(call install-lib-dir,$(d)))
+clean:
+	rm -rf _build/dev _build/debug _build/release ty compile_commands.json $(LEGACY)
 
 freebsd-plist:
 	{ printf 'bin/ty\n'; \
 	  git ls-files 'lib/*.ty' \
 	  | sed 's|^lib/|%%TYMODDIR%%/|' \
 	  | LC_ALL=C sort; } > freebsd/pkg-plist
-
-based: $(SOURCES)
-	cat $^ | gcc-13 $(CFLAGS) -c -x c -o $@ -

@@ -10,7 +10,20 @@ include(cmake/VersionInfoTarget.cmake)
 
 option(USE_SYSTEM_DEPS "Use system-installed libraries instead of vcpkg (e.g. FreeBSD ports)" OFF)
 option(TY_EMBED_LIB "Embed lib/*.ty in the executable" OFF)
-option(TY_USDT "Compile USDT (SystemTap/bpftrace) probes into the executables" OFF)
+option(TY_LOG "Compile in debug logging" OFF)
+option(TY_ASAN "Build with AddressSanitizer" OFF)
+option(TY_NATIVE "Tune for the build machine's CPU (-mcpu=native / -march=native)" OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  option(TY_USDT "Compile USDT (SystemTap/bpftrace) probes into the executables" ON)
+else()
+  option(TY_USDT "Compile USDT (SystemTap/bpftrace) probes into the executables" OFF)
+endif()
+find_program(TY_MOLD NAMES ld64.mold mold)
+if(TY_MOLD)
+  option(TY_USE_MOLD "Link with mold" ON)
+else()
+  option(TY_USE_MOLD "Link with mold" OFF)
+endif()
 
 include(CTest)
 
@@ -51,11 +64,38 @@ set(CMAKE_C_STANDARD 23)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
-# Enable LTO globally so vendored libs (libco, dtoa, etc.) also participate
+# Enable LTO for release builds so vendored libs (libco, dtoa, etc.) also participate
 include(CheckIPOSupported)
 check_ipo_supported(RESULT _lto_supported OUTPUT _lto_error)
-if(_lto_supported)
+if(_lto_supported AND CMAKE_BUILD_TYPE STREQUAL "Release")
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+endif()
+
+if(TY_NATIVE)
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
+    add_compile_options(-mcpu=native)
+  else()
+    add_compile_options(-march=native)
+  endif()
+endif()
+
+if(TY_ASAN)
+  add_compile_options(-fsanitize=address -fno-sanitize-address-use-after-scope)
+  if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+    add_compile_options("SHELL:--param asan-stack=0")
+  else()
+    add_compile_options("SHELL:-mllvm -asan-stack=0")
+  endif()
+  add_link_options(-fsanitize=address)
+endif()
+
+if(TY_USE_MOLD)
+  include(CheckLinkerFlag)
+  check_linker_flag(C "-fuse-ld=mold" _mold_supported)
+  if(NOT _mold_supported)
+    message(FATAL_ERROR "TY_USE_MOLD: ${CMAKE_C_COMPILER} cannot link with -fuse-ld=mold")
+  endif()
+  add_link_options(-fuse-ld=mold)
 endif()
 
 # ---
@@ -231,6 +271,10 @@ endif()
 add_executable(tybi)
 target_sources(tybi PRIVATE tools/tybi.c)
 set_target_properties(tybi PROPERTIES C_STANDARD 11)
+if(TY_ASAN)
+  target_compile_options(tybi PRIVATE -fno-sanitize=all)
+  target_link_options(tybi PRIVATE -fno-sanitize=all)
+endif()
 
 set(_gen_builtins_dir ${_autogen_dir}/include/gen)
 set(_gen_builtins_sources
@@ -311,29 +355,30 @@ add_subdirectory(unibilium)
 #  DynASM JIT code generation
 # ---
 
-find_program(LUAJIT luajit)
-if(LUAJIT)
-  if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
-    set(_lir_dasc ${PROJECT_SOURCE_DIR}/src/jit/lir/arm64.dasc)
-    set(_lir_hdr  ${PROJECT_SOURCE_DIR}/src/jit/lir/arm64.h)
-  else()
-    set(_lir_dasc ${PROJECT_SOURCE_DIR}/src/jit/lir/x64.dasc)
-    set(_lir_hdr  ${PROJECT_SOURCE_DIR}/src/jit/lir/x64.h)
-  endif()
-
-  if(_lir_hdr)
-    add_custom_command(
-      OUTPUT ${_lir_hdr}
-      COMMAND ${LUAJIT} ${PROJECT_SOURCE_DIR}/dynasm/dynasm.lua
-        -o ${_lir_hdr} ${_lir_dasc}
-      DEPENDS ${_lir_dasc} ${PROJECT_SOURCE_DIR}/dynasm/dasm_x86.lua dynasm/dasm_arm64.lua dynasm/dynasm.lua
-      VERBATIM
-    )
-    add_custom_target(GenerateLirHeader DEPENDS ${_lir_hdr})
-  endif()
-else()
-  message(WARNING "luajit not found -- JIT headers will not be regenerated")
+add_executable(minilua dynasm/minilua.c)
+target_compile_options(minilua PRIVATE $<$<NOT:$<C_COMPILER_ID:MSVC>>:-w;-fno-sanitize=all>)
+target_link_libraries(minilua PRIVATE $<$<NOT:$<BOOL:${WIN32}>>:m>)
+set_target_properties(minilua PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+if(TY_ASAN)
+  target_link_options(minilua PRIVATE -fno-sanitize=all)
 endif()
+
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
+  set(_lir_dasc ${PROJECT_SOURCE_DIR}/src/jit/lir/arm64.dasc)
+  set(_lir_hdr  ${PROJECT_SOURCE_DIR}/src/jit/lir/arm64.h)
+else()
+  set(_lir_dasc ${PROJECT_SOURCE_DIR}/src/jit/lir/x64.dasc)
+  set(_lir_hdr  ${PROJECT_SOURCE_DIR}/src/jit/lir/x64.h)
+endif()
+
+add_custom_command(
+  OUTPUT ${_lir_hdr}
+  COMMAND $<TARGET_FILE:minilua> ${PROJECT_SOURCE_DIR}/dynasm/dynasm.lua
+    -o ${_lir_hdr} ${_lir_dasc}
+  DEPENDS minilua ${_lir_dasc} ${PROJECT_SOURCE_DIR}/dynasm/dasm_x86.lua dynasm/dasm_arm64.lua dynasm/dynasm.lua
+  VERBATIM
+)
+add_custom_target(GenerateLirHeader DEPENDS ${_lir_hdr})
 
 # ---
 #  target: ty
@@ -435,7 +480,7 @@ if(TY_USDT)
   include(CheckIncludeFile)
   check_include_file(sys/sdt.h TY_HAVE_SYS_SDT_H)
   if(NOT TY_HAVE_SYS_SDT_H)
-    message(FATAL_ERROR "TY_USDT=ON needs <sys/sdt.h> (install systemtap-sdt-dev / systemtap-sdt-devel)")
+    message(WARNING "TY_USDT=ON but <sys/sdt.h> is missing (install systemtap-sdt-dev / systemtap-sdt-devel); building without probes")
   endif()
   target_compile_definitions(${_tgt_ty_interface} INTERFACE TY_USDT)
 endif()
@@ -468,7 +513,6 @@ target_compile_options(${_tgt_ty_interface}
       -Wno-multichar
       -Wno-trigraphs
       -pipe
-      -flto
     >
     $<$<C_COMPILER_ID:AppleClang>:
       -Wall
@@ -484,7 +528,6 @@ target_compile_options(${_tgt_ty_interface}
       -Wno-shorten-64-to-32
       -Wno-cast-qual
       -Wno-declaration-after-statement
-      -mcpu=native
       -ferror-limit=3
     >
     $<$<C_COMPILER_ID:Clang>:
@@ -553,6 +596,14 @@ if(BUILD_TESTING)
   target_compile_definitions(jitmem-test PRIVATE PCRE2_CODE_UNIT_WIDTH=8 _GNU_SOURCE)
   target_link_libraries(jitmem-test PRIVATE nsync PCRE2::8BIT Threads::Threads)
   add_test(NAME jitmem COMMAND jitmem-test)
+  add_executable(types2-core-test tests/types2_core.c src/types2_core.c src/panic.c)
+  target_include_directories(types2-core-test PRIVATE include libco nsync/public)
+  target_compile_definitions(types2-core-test PRIVATE PCRE2_CODE_UNIT_WIDTH=8 _GNU_SOURCE)
+  target_link_libraries(types2-core-test PRIVATE
+    unofficial::libffi::libffi PCRE2::8BIT xxHash::xxhash Threads::Threads
+    $<$<NOT:$<BOOL:${WIN32}>>:m>
+  )
+  add_test(NAME types2-core COMMAND types2-core-test)
 endif()
 
 set(_tgt_ty_link "${PROJECT_NAME}_Link")
@@ -565,7 +616,7 @@ target_link_libraries(${_tgt_ty_link}
     ${_tgt_errnoconstants_h}
     Threads::Threads # pthreads (or equivalent)
     libco
-    mimalloc-static
+    $<$<NOT:$<CONFIG:Debug>>:mimalloc-static>
     xxHash::xxhash
     utf8proc::utf8proc
     PCRE2::8BIT
@@ -589,6 +640,7 @@ if(APPLE)
   target_link_libraries(${_tgt_ty_link} INTERFACE
     -Wl,-force_load,$<TARGET_FILE:unibilium>
   )
+  add_dependencies(${_tgt_ty_link} unibilium)
   target_link_options(${_tgt_ty_link} INTERFACE -Wl,-export_dynamic)
 else()
   target_link_libraries(${_tgt_ty_link} INTERFACE
@@ -652,7 +704,7 @@ target_compile_definitions(${_tgt_ty_interface}
   INTERFACE
     $<$<C_COMPILER_ID:GNU>:_GNU_SOURCE>
     $<$<NOT:$<CONFIG:Debug>>:TY_RELEASE>
-    $<$<NOT:$<CONFIG:Debug>>:TY_NO_LOG>
+    $<$<NOT:$<BOOL:${TY_LOG}>>:TY_NO_LOG>
     TY_HAVE_VERSION_INFO
     PCRE2_CODE_UNIT_WIDTH=8
     XXH_INLINE_ALL
