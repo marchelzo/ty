@@ -21,7 +21,8 @@
                 "VCPKG_VERBOSE": false,
                 "VCPKG_INSTALL_OPTIONS": "--no-print-usage",
                 "VCPKG_INSTALLED_DIR": "${sourceDir}/_vcpkg_installed",
-                "CMAKE_BUILD_TYPE": "Release"
+                "CMAKE_BUILD_TYPE": "Release",
+                "TY_NATIVE": false
             }
         },
         {
@@ -54,12 +55,28 @@
         {
             "name": "release",
             "inherits": "local",
-            "displayName": "Release (-O3, LTO, native CPU)",
+            "displayName": "Release (-O3, LTO)",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_C_FLAGS_RELEASE": "-O3 -DNDEBUG",
-                "TY_NATIVE": true
+                "CMAKE_C_FLAGS_RELEASE": "-O3 -DNDEBUG"
             }
+        },
+        {
+            "name": "optimized",
+            "inherits": "local",
+            "displayName": "Optimized (-O3, full LTO, native CPU, PGO)",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_C_FLAGS_RELEASE": "-O3 -DNDEBUG",
+                "TY_NATIVE": true,
+                "TY_LTO_FULL": true
+            }
+        },
+        {
+            "name": "optimized-instrumented",
+            "inherits": "optimized",
+            "displayName": "Optimized, PGO-instrumented (training build)"
         },
         {
             "name": "base-windows",
@@ -86,8 +103,7 @@
                 "VCPKG_CMAKE_SYSTEM_NAME": "Darwin",
                 "VCPKG_TARGET_ARCHITECTURE": "arm64",
                 "VCPKG_OSX_ARCHITECTURES": "arm64",
-                "VCPKG_CRT_LINKAGE": "dynamic",
-                "TY_NATIVE": true
+                "VCPKG_CRT_LINKAGE": "dynamic"
             }
         },
         {

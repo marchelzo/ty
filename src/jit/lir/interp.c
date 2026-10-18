@@ -648,7 +648,7 @@ call(LirMachine *m, LirInst const *in, u32 pc, LirScalar *out)
 }
 
 static bool
-poll(LirMachine *m, LirInst const *in, u32 pc, bool *deopt)
+safepoint(LirMachine *m, LirInst const *in, u32 pc, bool *deopt)
 {
         LirRuntime const *rt   = lir_runtime();
         Ty               *ty   = m->ty;
@@ -880,7 +880,7 @@ run(LirMachine *m, u32 pc)
                         break;
 
                 case LF_POLL:
-                        if (!poll(m, in, pc, &branch)) {
+                        if (!safepoint(m, in, pc, &branch)) {
                                 return false;
                         }
                         target = in->args[in->nargs - 1].label;
@@ -908,7 +908,7 @@ run(LirMachine *m, u32 pc)
                         (next <= pc)
                      && (m->mode == LIR_MODE_ATTACHED)
                      && (in->op != LIR_POLL)
-                     && !poll(m, NULL, pc, &deopt)
+                     && !safepoint(m, NULL, pc, &deopt)
                 ) {
                         return false;
                 }

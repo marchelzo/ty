@@ -1465,7 +1465,7 @@ global_slot(SynMatch const *m, i64 slot)
 }
 
 static bool
-bind(SynMatch *m, i64 slot, SynBind b)
+mbind(SynMatch *m, i64 slot, SynBind b)
 {
         slot = global_slot(m, slot);
 
@@ -1797,18 +1797,18 @@ gap_ok(SynMatch *m, Value const *g)
                 return nl >= 2;
 
         case GAP_BIND:
-                return bind(m, slot, (SynBind) { 4, lo, hi, 0 });
+                return mbind(m, slot, (SynBind) { 4, lo, hi, 0 });
 
         case GAP_REGEX:
                 return regex_ok(m, extra, text, n)
-                    && bind(m, slot, (SynBind) { 4, lo, hi, 0 });
+                    && mbind(m, slot, (SynBind) { 4, lo, hi, 0 });
 
         case GAP_COMMENT:
                 return comment_body(text, n, &ca, &cb);
 
         case GAP_COMMENT_BIND:
                 return comment_body(text, n, &ca, &cb)
-                    && bind(m, slot, (SynBind) { 4, lo + ca, lo + cb, 0 });
+                    && mbind(m, slot, (SynBind) { 4, lo + ca, lo + cb, 0 });
 
         case GAP_COMMENT_REGEX:
                 return comment_body(text, n, &ca, &cb)
@@ -1903,7 +1903,7 @@ match_hole(SynMatch *m, i64 p, i64 s)
                 }
         }
 
-        return bind(m, at(P->hole, p), (SynBind) { 1, s, 0, 0 });
+        return mbind(m, at(P->hole, p), (SynBind) { 1, s, 0, 0 });
 }
 
 static bool
@@ -1977,7 +1977,7 @@ match_node(SynMatch *m, i64 p, i64 s)
                 i64 st = at(S->own, j);
                 i64 th = at(P->tokhole, pt);
                 if (th != -1) {
-                        if (!bind(m, th, (SynBind) { 3, st, 0, 0 })) {
+                        if (!mbind(m, th, (SynBind) { 3, st, 0, 0 })) {
                                 return false;
                         }
                 } else if (at(P->text, pt) != at(S->text, st)) {
@@ -2036,7 +2036,7 @@ match_seq(SynMatch *m, i64 pp, i64 i, i64 sp, i64 j, bool prefix)
                 for (i64 k = j; k <= ns; ++k) {
                         SynMark mk = mark(m);
                         if (
-                                bind(m, slot, (SynBind) { 2, j, k, sp })
+                                mbind(m, slot, (SynBind) { 2, j, k, sp })
                              && match_seq(m, pp, i + 1, sp, k, prefix)
                         ) {
                                 return true;

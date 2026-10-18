@@ -51,11 +51,7 @@ fix(u32 pc, LirReg reg, u8 phys, bool output, bool fpr)
         };
 }
 
-#if defined(__aarch64__)
-#include "arm64.h"
-#else
-#include "x64.h"
-#endif
+#include "lir_dasm.h"
 
 #define Dst (&e->dasm)
 #define tmp(T, n) ((T *)AllocateScratch(e->ty, (usize)(n) * sizeof (T)))

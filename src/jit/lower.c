@@ -467,7 +467,7 @@ resync(BcLir *c, BcLirNode const *node)
 }
 
 static void
-poll(BcLir *c, LirReg top, LirOpnd info, LirLabel deopt)
+emit_poll(BcLir *c, LirReg top, LirOpnd info, LirLabel deopt)
 {
         LirInst in = {
                 .op    = LIR_POLL,
@@ -517,7 +517,7 @@ static void
 safepoint(BcLir *c, LirLabel deopt)
 {
         LirOpnd info = deopt_info(c);
-        poll(c, slot_of(c, c->sp), info, deopt);
+        emit_poll(c, slot_of(c, c->sp), info, deopt);
 }
 
 static void
@@ -2556,7 +2556,7 @@ prologue(BcLir *c)
                 tycall(c, reserve, LT_VOID, preg(c->ops), imm32(c->max_sp));
         }
 
-        poll(c, c->ops, lir_i((uptr)&entry), c->deopt);
+        emit_poll(c, c->ops, lir_i((uptr)&entry), c->deopt);
 
         if (c->compact && jit_tier() != 1) {
                 c->tier   = alloc0(sizeof *c->tier);
