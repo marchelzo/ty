@@ -2,7 +2,7 @@ import git
 import os
 import path (Path)
 
-const URL = os.getenv('TY_GIT_AUTH_URL')!
+const URL = getenv('TY_GIT_AUTH_URL')!
 const AUTH = git.Credentials.password('ty', 'secret')
 
 pub fn authenticated-push-clone-and-fetch() {

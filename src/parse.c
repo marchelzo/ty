@@ -8075,7 +8075,8 @@ parse_use(Ty *ty)
 
         if (have_typedef(ty)) {
                 stmt->type = STATEMENT_TYPE_DEFINITION;
-                stmt->class.name = tok()->identifier;
+                stmt->class.name   = tok()->identifier;
+                stmt->class.module = tok()->module;
                 next();
                 if (T0 == '[') {
                         parse_type_params(ty, &stmt->class.type_params);

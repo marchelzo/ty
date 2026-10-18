@@ -169,6 +169,14 @@ array_pop(Ty *ty, Value *array, int argc, Value *kwargs)
 }
 
 static Value
+array_clear(Ty *ty, Value *array, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("Array.clear()", 0);
+        vN(*array->array) = 0;
+        return *array;
+}
+
+static Value
 array_swap(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Array.swap()", 2);
@@ -637,6 +645,10 @@ array_sort(Ty *ty, Value *array, int argc, Value *kwargs)
 
         if (i < 0) {
                 i += vN(*xs);
+        }
+
+        if (argc == 1) {
+                n = vN(*xs) - i;
         }
 
         if (n < 0 || i < 0 || i + n > vN(*xs)) {
@@ -2317,6 +2329,7 @@ DEFINE_METHOD_TABLE(
         { .name = "bsearch",           .func = array_bsearch_strict          },
         { .name = "bsearch?",          .func = array_bsearch                 },
         { .name = "choice",            .func = array_choice                  },
+        { .name = "clear",             .func = array_clear                   },
         { .name = "clone",             .func = array_clone                   },
         { .name = "compact",           .func = array_compact_no_mut          },
         { .name = "compact!",          .func = array_compact                 },

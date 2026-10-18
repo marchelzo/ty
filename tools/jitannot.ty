@@ -198,7 +198,7 @@ fn report(opts: JitAnnot, rest: [String], dump: Path) -> Int {
 }
 
 fn main() {
-    let (opts, rest) = JitAnnot.parse(os.argv)
+    let (opts, rest) = JitAnnot.parse(argv)
     if #rest == 0 {
         print("usage: ty tools/jitannot.ty [-f FUNC] [-n N] -- PROGRAM [ARGS...]")
         os.exit(2)

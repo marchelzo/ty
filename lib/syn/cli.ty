@@ -394,11 +394,11 @@ fn fix-all(files: Array[String], mode: FixMode) -> Array[FileResult] {
         os.write(w, "{it:7}\n")
     }
     os.close(w)
-    let dir = os.mkdtemp() ?? throw os.OSError('mkdtemp()')
+    let dir = os.mkdtemp() ?? throw OSError('mkdtemp()')
     let n = max(1, min(os.ncpu(), #files))
     let pids: Array[Int] = []
     for ..n {
-        let pid = os.fork() ?? throw os.OSError('fork()')
+        let pid = os.fork() ?? throw OSError('fork()')
         if pid == 0 {
             child(files, mode, r, dir)
         }

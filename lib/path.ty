@@ -232,7 +232,7 @@ pub class Path : PathLike {
     resolve -> Path {
         match os.realpath(prelude::str(self)) {
             $p => Path(p),
-            _  => throw os.OSError('realpath()')
+            _  => throw OSError('realpath()')
         }
     }
 
@@ -286,16 +286,16 @@ pub class Path : PathLike {
     readlink -> Path {
         match os.readlink("{self}") {
             $target => Path(target),
-            _       => throw os.OSError('readlink()')
+            _       => throw OSError('readlink()')
         }
     }
 
     stat -> os.Stat {
-        os.stat("{self}") ?? throw os.OSError('stat()')
+        os.stat("{self}") ?? throw OSError('stat()')
     }
 
     lstat -> os.Stat {
-        os.lstat("{self}") ?? throw os.OSError('lstat()')
+        os.lstat("{self}") ?? throw OSError('lstat()')
     }
 
     open(how: String = 'r') -> io.Stream {
@@ -336,12 +336,12 @@ pub class Path : PathLike {
                 if errno.get() == errno.EEXIST {
                     continue if i + 1 < #__parts || exist-ok
                 }
-                throw os.OSError('mkdir()')
+                throw OSError('mkdir()')
             }
         } else {
             if os.mkdir("{self}", mode) == -1 {
                 if !exist-ok || errno.get() != errno.EEXIST {
-                    throw os.OSError('mkdir()')
+                    throw OSError('mkdir()')
                 }
             }
         }
@@ -349,14 +349,14 @@ pub class Path : PathLike {
 
     rmdir() {
         if os.rmdir(prelude::str(self)) == -1 {
-            throw os.OSError('rmdir()')
+            throw OSError('rmdir()')
         }
     }
 
     unlink(missing-ok: Bool = false) {
         if os.unlink(prelude::str(self)) == -1 {
             if !missing-ok || errno.get() != errno.ENOENT {
-                throw os.OSError('unlink()')
+                throw OSError('unlink()')
             }
         }
     }
@@ -368,7 +368,7 @@ pub class Path : PathLike {
         }
 
         if os.rename(prelude::str(self), prelude::str(target-path)) == -1 {
-            throw os.OSError('rename()')
+            throw OSError('rename()')
         }
 
         target-path
@@ -378,7 +378,7 @@ pub class Path : PathLike {
         let target-path = (target :: String) ? Path(target) : target
 
         if os.link(prelude::str(self), prelude::str(target-path)) == -1 {
-            throw os.OSError('link()')
+            throw OSError('link()')
         }
 
         target-path
@@ -386,26 +386,26 @@ pub class Path : PathLike {
 
     chmod(mode: Int) {
         if os.chmod(prelude::str(self), mode) == -1 {
-            throw os.OSError('chmod()')
+            throw OSError('chmod()')
         }
     }
 
     touch(mode: Int = 0o644) {
         let fd = os.open(prelude::str(self), os.O_CREAT | os.O_WRONLY, mode)
         if fd == -1 {
-            throw os.OSError('open()')
+            throw OSError('open()')
         }
         defer os.close(fd)
 
         let now = time.now(time.CLOCK_REALTIME)
         if os.futimes(fd, now, now) == -1 {
-            throw os.OSError('futimes()')
+            throw OSError('futimes()')
         }
     }
 
     chdir() {
         if os.chdir(prelude::str(self)) == -1 {
-            throw os.OSError('chdir()')
+            throw OSError('chdir()')
         }
     }
 
@@ -421,14 +421,14 @@ pub class Path : PathLike {
 
             let src-fd = os.open(prelude::str(src), os.O_RDONLY | flags)
             if src-fd == -1 {
-                throw os.OSError('open()')
+                throw OSError('open()')
             }
 
             defer os.close(src-fd)
 
             let dst-fd = os.open(prelude::str(dst), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | flags, 0o666)
             if dst-fd == -1 {
-                throw os.OSError('open()')
+                throw OSError('open()')
             }
 
             defer os.close(dst-fd)
@@ -437,14 +437,14 @@ pub class Path : PathLike {
             while true {
                 let n = os.read(src-fd, buf, 8192)
                 if n == -1 {
-                    throw os.OSError('read()')
+                    throw OSError('read()')
                 } else if n == 0 {
                     break
                 }
 
                 let written = os.write(dst-fd, buf)
                 if written != n {
-                    throw os.OSError('write()')
+                    throw OSError('write()')
                 }
 
                 buf.clear()
@@ -461,7 +461,7 @@ pub class Path : PathLike {
         } else if self.symlink? && !follow-symlinks {
             let link-target = self.readlink
             if os.symlink(prelude::str(link-target), prelude::str(target-path)) == -1 {
-                throw os.OSError('symlink()')
+                throw OSError('symlink()')
             }
         } else {
             throw PathError({msg: 'source does not exist', path: prelude::str(self)})
@@ -595,7 +595,7 @@ pub class Path : PathLike {
     }
 
     mkdtemp(prefix: String = 'tmp') -> Path {
-        let $path = os.mkdtemp(self / prefix) or throw os.OSError('mkdtemp()')
+        let $path = os.mkdtemp(self / prefix) or throw OSError('mkdtemp()')
         Path(path)
     }
 
@@ -612,11 +612,11 @@ pub class Path : PathLike {
             }
 
             if errno.get() != errno.EEXIST {
-                throw os.OSError('mktemp()')
+                throw OSError('mktemp()')
             }
         }
 
-        throw os.OSError('mktemp()', errno.EEXIST)
+        throw OSError('mktemp()', errno.EEXIST)
     }
 
     tempdir(prefix: String = 'tmp') -> TempDir {

@@ -8,7 +8,7 @@ C! lib fn {
     int git_libgit2_opts(int option, ...);
 }
 
-const ROOT = Path(os.getenv('TY_GIT_OWNERSHIP_ROOT')!)
+const ROOT = Path(getenv('TY_GIT_OWNERSHIP_ROOT')!)
 const USER = 65533
 
 let (major, minor, patch) = git.version()

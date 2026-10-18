@@ -29,7 +29,7 @@ pub use Result = {
 
 fn check(result: Int, operation: String) {
     if result < 0 {
-        throw os.OSError(operation)
+        throw OSError(operation)
     }
 }
 
@@ -115,7 +115,7 @@ class Kernel {
     write(data: Blob) {
         let count = os.sendto(__fd, data, SEND_FLAGS)
         if count < 0 && !retry?(errno.get()) {
-            throw os.OSError('write Ty REPL')
+            throw OSError('write Ty REPL')
         }
         data.clear(0, max(0, count))
     }
@@ -124,7 +124,7 @@ class Kernel {
         __buffer.clear()
         let count = os.read(fd, __buffer, 65536)
         if count < 0 && !retry?(errno.get()) {
-            throw os.OSError('read Ty REPL')
+            throw OSError('read Ty REPL')
         }
         count
     }
@@ -167,7 +167,7 @@ class Kernel {
         let events = os.POLLIN | (writing? ? os.POLLOUT : 0)
         match os.poll([(__fd, events), __stderr], 0.05) {
             Ok(_) or Err(errno.EINTR) => (),
-            Err(error)                => throw os.OSError('poll Ty REPL', error)
+            Err(error)                => throw OSError('poll Ty REPL', error)
         }
     }
 
@@ -180,7 +180,7 @@ class Kernel {
         os.close(__stderr)
         os.wait(__pid)
         if error != 0 && error != errno.ESRCH && error != errno.EPERM {
-            throw os.OSError('stop Ty REPL', error)
+            throw OSError('stop Ty REPL', error)
         }
     }
 }

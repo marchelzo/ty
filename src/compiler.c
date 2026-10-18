@@ -2479,6 +2479,10 @@ TryResolveIdentifier(Ty *ty, Expr *expr)
                 flags |= SCOPE_EXPLICIT;
         }
 
+        if (scope != SCOPE) {
+                flags |= SCOPE_QUALIFIED;
+        }
+
         return ScopeLookupEx(scope, expr->identifier, flags);
 }
 
@@ -2720,7 +2724,8 @@ ResolveIdentifier(Ty *ty, Expr const *expr)
         if (expr->module != NULL) {
                 flags |= SCOPE_EXPLICIT;
                 if (*expr->module != '\0') {
-                        scope = get_import_scope(ty, expr->module);
+                        flags |= SCOPE_QUALIFIED;
+                        scope  = get_import_scope(ty, expr->module);
                 }
         } else {
                 scope = SCOPE;
@@ -3016,7 +3021,7 @@ resolve_name(Ty *ty, Scope const *scope, StringVector const *parts, void **out)
 {
         for (int i = 0; i < vN(*parts); ++i) {
                 char const *part = v__(*parts, i);
-                Symbol *sym = scope_lookup(ty, scope, part);
+                Symbol *sym = scope_xlookup(ty, scope, part, (i > 0) ? SCOPE_QUALIFIED : 0);
                 if (sym == NULL) {
                         if (
                                 (i > 0)
@@ -3125,7 +3130,7 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e, bool st
                 return e;
         }
 
-        sym = scope_lookup(ty, left->scope, id);
+        sym = scope_xlookup(ty, left->scope, id, SCOPE_QUALIFIED);
         if (sym == NULL) {
                 if (!strict) return NULL;
                 STATE.end = e->end;
@@ -5051,7 +5056,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 if (e->module != NULL) {
                         Scope *mod_scope = search_import_scope(ty, e->module);
                         e->boolean = (mod_scope != NULL)
-                                  && (scope_lookup(ty, mod_scope, e->identifier) != NULL);
+                                  && (scope_xlookup(ty, mod_scope, e->identifier, SCOPE_QUALIFIED) != NULL);
                 } else {
                         e->boolean = (scope_lookup(ty, scope, e->identifier) != NULL);
                 }
@@ -5061,7 +5066,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 if (e->module != NULL) {
                         Module *mod = GetModule(ty, e->module);
                         if (mod != NULL && mod->scope != NULL) {
-                                e->symbol = scope_lookup(ty, mod->scope, e->identifier);
+                                e->symbol = scope_xlookup(ty, mod->scope, e->identifier, SCOPE_QUALIFIED);
                         }
                 } else {
                         e->symbol = scope_lookup(ty, scope, e->identifier);
@@ -18275,7 +18280,9 @@ define_type(Ty *ty, Stmt *s, Scope *scope)
 {
         DefinePending(ty);
 
-        if (scope == NULL) {
+        if (s->class.module != NULL && *s->class.module != '\0') {
+                scope = get_import_scope(ty, s->class.module);
+        } else if (scope == NULL) {
                 scope = GetNamespace(ty, s->ns);
         }
 
@@ -18956,7 +18963,7 @@ IsMacroName(Ty *ty, char const *mod, char const *name)
         } else {
                 Scope *scope = search_import_scope(ty, mod);
                 sym = (scope != NULL)
-                    ? ScopeLookupEx(scope, name, SCOPE_EXPLICIT)
+                    ? ScopeLookupEx(scope, name, SCOPE_EXPLICIT | SCOPE_QUALIFIED)
                     : NULL;
         }
 

@@ -82,7 +82,7 @@ let __tls::capstone: Capstone | Bool | nil = nil
 
 fn objdump(bytes: Blob, base: Int) -> Array[(Int, String)] | nil {
     let machine = arm64?() ? ['-maarch64'] : ['-mi386:x86-64', '-M', 'intel']
-    let file = "{os.getenv('TMPDIR') ?? '/tmp'}/ty-dis-{os.getpid()}.bin"
+    let file = "{getenv('TMPDIR') ?? '/tmp'}/ty-dis-{os.getpid()}.bin"
     let fd = os.open(file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     if fd < 0 {
         return nil

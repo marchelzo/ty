@@ -1,0 +1,88 @@
+pub fn array-methods-are-declared() {
+    let xs = [3, 1, 2]
+    let r: Int | nil = xs.findr(\_ > 1)
+    let s: String = xs.foldr('', (x, acc) -> "{acc}{x}")
+    let t: Array[String] = xs.scan('', (acc, x) -> "{acc}{x}")
+    let u: Int | nil = xs.max-by(\-_)
+    let v: Array[Int] = xs.clone().sort-on(\-_)
+    let w: Array[Int | String] = xs.intersperse('x')
+    assert((r, s, t, u, v, w) == (2, '213', ['', '3', '31', '312'], 1, [3, 2, 1], [3, 'x', 1, 'x', 2]))
+}
+
+pub fn next-permutation-sorts-the-suffix() {
+    assert([1, 2, 3].next-permutation() == [1, 3, 2])
+    assert([1, 3, 2].next-permutation() == [2, 1, 3])
+    assert([3, 2, 1].next-permutation() == nil)
+    assert([5, 4, 3, 2, 1].sort(2) == [5, 4, 1, 2, 3])
+}
+
+pub fn dict-methods-are-declared() {
+    let d = %{1: 'a', 2: 'b'}
+    let r: String | nil = d.remove(1)
+    let s: String = d.get-or-put-with(5, k -> "{k}")
+    assert((r, s, d.remove(7)) == ('a', '5', nil))
+    assert(#d.clear() == 0)
+}
+
+pub fn string-and-blob-methods-are-declared() {
+    let s = 'héllo'
+    let a: Int = s.char-count()
+    let b: String | nil = s.char(1)
+    let c: Array[Int] = s.search-all('l')
+    let d: String = s.lpad(7, '.')
+    assert((a, b, c, d) == (5, 'é', [3, 4], '..héllo'))
+
+    let blob = Blob().push(1).push('ab')
+    let h: String = blob.hex()
+    let g: Int = blob.get(1)
+    assert((h, g) == ('016162', 0x61))
+}
+
+pub fn dict-compound-operators-mutate-in-place() {
+    let d = %{1: 2, 3: 4, 5: 6}
+    let alias = d
+    let r: Dict[Int, Int] = (d += %{7: 8})
+    d -= %{1: nil}
+    d -= %[7]
+    d &= %{3: 'ignored', 5: nil, 9: nil}
+    assert(alias == %{3: 4, 5: 6}, alias)
+    d &= %[5]
+    assert(alias == %{5: 6} && r == alias, alias)
+}
+
+pub fn dict-compound-add-rejects-other-value-types() {
+    try {
+        __eval__('do { let d: Dict[Int, Int] = %{1: 2}; let o: Dict[Int, String] = %{3: "x"}; d += o }')
+        assert(false)
+    } catch ex: CompileError {
+        assert('no registered operator' in ex.message, ex.message)
+    }
+}
+
+fn rejects-append(source: String) -> Bool {
+    try {
+        __eval__(source)
+        false
+    } catch ex: CompileError {
+        'appended elements must fit' in ex.message
+    }
+}
+
+pub fn array-compound-add-checks-literal-elements() {
+    assert(rejects-append('do { let xs: Array[Int] = [1]; xs += ["s"] }'))
+    assert(rejects-append('do { let xs: Array[Int] = [1]; let ys = ["s"]; xs += ys }'))
+
+    let xs: Array[Int | String] = [1]
+    xs += ['s']
+    let ys = [1]
+    ys += ['s']
+    assert(xs == ys)
+}
+
+pub fn member-compound-operators-still-apply() {
+    let n = Atomic(1)
+    n += 2
+    let s = Sync(1)
+    s += 2
+    assert((n.load(), s + 0) == (3, 3))
+}

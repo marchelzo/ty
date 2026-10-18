@@ -266,6 +266,11 @@ fn -[K, V](a: Dict[K, V], b: Dict[K, Any]) -> Dict[K, V];
 fn &[K, V](a: Dict[K, V], b: Dict[K, Any]) -> Dict[K, V];
 fn -[K, V, U](a: Dict[K, V], b: Set[U]) -> Dict[K, V];
 fn &[K, V, U](a: Dict[K, V], b: Set[U]) -> Dict[K, V];
+fn +=[K, V](a: Dict[K, V], b: Dict[K, V]) -> Dict[K, V];
+fn -=[K, V](a: Dict[K, V], b: Dict[K, Any]) -> Dict[K, V];
+fn -=[K, V, U](a: Dict[K, V], b: Set[U]) -> Dict[K, V];
+fn &=[K, V](a: Dict[K, V], b: Dict[K, Any]) -> Dict[K, V];
+fn &=[K, V, U](a: Dict[K, V], b: Set[U]) -> Dict[K, V];
 
 fn |[T, U](a: Set[T], b: Set[U]) -> Set[T | U];
 fn &[T, U](a: Set[T], b: Set[U]) -> Set[T];
@@ -521,7 +526,9 @@ class Array[T] : Iterable[T] {
         }
     }
 
+    clear() -> Array[T];
     clone() -> Array[T];
+    consume-while(source: () -> T, predicate: T -> Any) -> Array[T];
     count(x: T) -> Int;
     count-by(predicate: T -> Any) -> Int;
     drop!(n: Int) -> Array[T];
@@ -538,12 +545,26 @@ class Array[T] : Iterable[T] {
     filter(pred: T -> Any) -> Array[T];
     group() -> Array[Array[T]];
     group[U](f: T -> U) -> Array[Array[T]];
+    group!() -> Array[Array[T]];
+    group![U](f: T -> U) -> Array[Array[T]];
+    group-by![U](f: T -> U) -> Array[Array[T]];
     groups-of(n: Int, keepShort: Bool = true) -> Array[Array[T]];
+    groups-of!(n: Int, keepShort: Bool = true) -> Array[Array[T]];
+    intersperse[U](sep: U) -> Array[T | U];
+    intersperse![U](sep: U) -> Array[T | U];
     insert(i: Int, *xs: T) -> nil;
     join(sep: String = '') -> String;
     len() -> Int;
     map![U](f: T -> U) -> Array[U];
     map[U](f: T -> U) -> Array[U];
+    min-by(key: T -> Any) -> T | nil;
+    min-by(cmp: (T, T) -> Any) -> T | nil;
+    max-by(key: T -> Any) -> T | nil;
+    max-by(cmp: (T, T) -> Any) -> T | nil;
+    next-permutation() -> Array[T] | nil;
+    next-permutation!() -> Array[T] | nil;
+    partition!(pred: T -> Any) -> Array[T];
+    ptr() -> Ptr[Any];
     push(x: T) -> nil;
     pop(i: ?Int) -> T;
     remove!(x: Any) -> Array[T];
@@ -560,6 +581,17 @@ class Array[T] : Iterable[T] {
     searchr(x: T) -> Int | nil;
     searchr-by(predicate: T -> Any) -> Int | nil;
     find(pred: T -> Any) -> T | nil;
+    findr(pred: T -> Any) -> T | nil;
+    foldr(f: (T, T) -> T) -> T;
+    foldr[U](x: U, f: (T, U) -> U) -> U;
+    scan(f: (T, T) -> T) -> Array[T];
+    scan[U](x: U, f: (U, T) -> U) -> Array[U];
+    scan!(f: (T, T) -> T) -> Array[T];
+    scan![U](x: U, f: (U, T) -> U) -> Array[U];
+    scanr(f: (T, T) -> T) -> Array[T];
+    scanr[U](x: U, f: (T, U) -> U) -> Array[U];
+    scanr!(f: (T, T) -> T) -> Array[T];
+    scanr![U](x: U, f: (T, U) -> U) -> Array[U];
     shuffle!() -> Array[T];
     shuffle() -> Array[T];
     sort!(by: T -> Any, desc: Bool = false) -> Array[T];
@@ -577,17 +609,24 @@ class Array[T] : Iterable[T] {
     sort[U](by: T -> U, desc: Bool = false) -> Array[T] where (U <=> U): Int;
     sort(desc: Bool = false) -> Array[T] where (T <=> T): Int;
     sort(by: ?(T -> Any), cmp: ?((T, T) -> Any), desc: Bool = false) -> Array[T];
+    sort-by(cmp: (T, T) -> Any) -> Array[T];
+    sort-by!(cmp: (T, T) -> Any) -> Array[T];
+    sort-on(key: T -> Any) -> Array[T];
+    sort-on!(key: T -> Any) -> Array[T];
     slice(i: Int | nil, j: Int | nil, k: Int | nil) -> Array[T];
+    slice!(i: Int, n: ?Int) -> Array[T];
     splice(i: Int = 0, n: Int = #self) -> Array[T];
     split(i: Int) -> (Array[T], Array[T]);
     sum() -> T | nil where (T + T): T;
     sum(zero: T) -> T;
+    swap(i: Int, j: Int) -> Array[T];
     take!(n: Int) -> Array[T];
     take(n: Int) -> Array[T];
     take-while!(predicate: T -> Any) -> Array[T];
     take-while(predicate: T -> Any) -> Array[T];
     tally() -> Dict[T, Int];
     tally[U](key: T -> U) -> Dict[U, Int];
+    tuple() -> _;
     uniq!(f: ?(T -> Any)) -> Array[T];
     uniq(f: ?(T -> Any)) -> Array[T];
     nub!(f: ?(T -> Any)) -> Array[T];
@@ -597,6 +636,8 @@ class Array[T] : Iterable[T] {
 
     window[U](n: Int, f: (*T) -> U) -> Array[U];
     window(n: Int) -> Array[Array[T]];
+    window![U](n: Int, f: (*T) -> U) -> Array[U];
+    window!(n: Int) -> Array[Array[T]];
 
     zip[...U, R](
         *ys: ...Iterable[U],
@@ -605,6 +646,13 @@ class Array[T] : Iterable[T] {
         fill: Any = nil
     ) -> Array[R];
     zip[...U](*ys: ...Iterable[U], longest: Bool = false, fill: Any = nil) -> Array[(T, U)];
+    zip![...U, R](
+        *ys: ...Iterable[U],
+        f: (T, U) -> R,
+        longest: Bool = false,
+        fill: Any = nil
+    ) -> Array[R];
+    zip![...U](*ys: ...Iterable[U], longest: Bool = false, fill: Any = nil) -> Array[(T, U)];
 
     zip-with[...U, R](
         f: (T, U) -> R,
@@ -1116,6 +1164,13 @@ class Dict[K, V] : Iterable[(K, V)] {
     default(f: nil | (K -> V)) -> Dict[K, V];
 
     clone() -> Dict[K, V];
+    clear() -> Dict[K, V];
+
+    put(*keys: K) -> Dict[K, V];
+    remove(key: K) -> V | nil;
+    get-or-put-with(key: K, f: K -> V) -> V;
+
+    ptr() -> Ptr[Any];
 
     keys()   -> Array[K];
     values() -> Array[V];
@@ -1125,6 +1180,9 @@ class Dict[K, V] : Iterable[(K, V)] {
     subtract(other: Dict[K, V], callback: ?((V, V) -> Any)) -> Dict[K, V];
     subtract[U](keys: Set[U]) -> Dict[K, V];
     intersect[U](keys: Set[U]) -> Dict[K, V];
+    intersect(other: Dict[K, Any]) -> Dict[K, V];
+    intersect[U](other: Dict[K, U], combine: (V, U) -> V) -> Dict[K, V];
+    diff(other: Dict[K, V]) -> Dict[K, V];
 
     pop(i: ?Int) -> (K, V);
 
@@ -1257,6 +1315,7 @@ class Set[T] : Iterable[T] {
     remove(x: Any) -> Bool;
     pop(i: ?Int) -> T;
     clear() -> Set[T];
+    ptr() -> Ptr[Any];
 
     update(*xs: Iterable[T]) -> Set[T];
     intersect(xs: Iterable[Any]) -> Set[T];
@@ -1337,8 +1396,22 @@ class String : Iterable[String], IntoPtr[Int], PathLike {
     split(pattern: RegexV, n: ?Int) -> [RegexMatch | String];
     split(pattern: String | Regex, n: ?Int) -> [String];
 
-    pad(n: Int, ch: String = ' ');
-    rpad(n: Int, ch: String = ' ');
+    pad(n: Int, ch: String = ' ') -> String;
+    rpad(n: Int, ch: String = ' ') -> String;
+    lpad(n: Int, ch: String = ' ') -> String;
+
+    comb?(pattern: String | Regex) -> String | nil;
+
+    char(i: Int) -> String | nil;
+    byte(i: Int) -> Int | nil;
+    char-count() -> Int;
+
+    clone() -> String;
+    ptr() -> Ptr[Int];
+
+    chalk(styles: ?Dict[String, Any]) -> String;
+    plain() -> String;
+    unchalk() -> String;
 
     bytes() -> [Int];
     chars() -> [String];
@@ -1390,6 +1463,7 @@ class String : Iterable[String], IntoPtr[Int], PathLike {
 
     search(pattern: String | Regex, off: ?Int) -> Int | nil;
     searchr(pattern: String | Regex, off: ?Int) -> Int | nil;
+    search-all(pattern: String | Regex, off: ?Int) -> Array[Int];
 
     bsearch(pattern: String | Regex, off: ?Int) -> Int | nil;
     bsearchr(pattern: String | Regex, off: ?Int) -> Int | nil;
@@ -1889,6 +1963,20 @@ class Blob : Iterable[Int], IntoPtr[Int], PathLike {
     }
 
     ptr() -> Ptr[Int];
+
+    hex() -> String;
+
+    push(x: Int | String | Blob) -> Blob;
+    push(i: Int, x: Int | String | Blob) -> Blob;
+    push(p: Ptr[Any], n: Int) -> Blob;
+    push(i: Int, p: Ptr[Any], n: Int) -> Blob;
+
+    get(i: Int) -> Int;
+
+    xor(key: Blob) -> Blob;
+    xor(key: Int, width: Int) -> Blob;
+
+    shrink() -> nil;
 
     searchr(s: String) -> Int | nil {
         for let off = size() - 1; off >= 0; --off {
@@ -4208,7 +4296,7 @@ class Sync[T] {
         }
     }
 
-    +=(y) {
+    +=[A](y: A) where (T + A): T {
         with __mtx {
             __x += y
         }
@@ -4226,7 +4314,7 @@ class Sync[T] {
         }
     }
 
-    -=(y) {
+    -=[A](y: A) where (T - A): T {
         with __mtx {
             __x -= y
         }

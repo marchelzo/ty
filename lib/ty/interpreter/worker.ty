@@ -72,7 +72,7 @@ pub fn run() {
     os.fcntl(output.fd, os.F_SETFD, os.FD_CLOEXEC)
     let fd = os.open('/dev/null', os.O_RDONLY)
     if fd < 0 || os.dup2(fd, 0) < 0 || os.dup2(2, 1) < 0 {
-        throw os.OSError('redirect REPL streams')
+        throw OSError('redirect REPL streams')
     }
     os.close(fd)
     stdio.setvbuf(stdio.stdout, stdio._IOLBF)

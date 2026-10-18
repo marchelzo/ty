@@ -30,7 +30,7 @@ pub class Stream : Iter[String] {
                 if dup {
                     os.close(__fd)
                 }
-                throw os.OSError('open()')
+                throw OSError('open()')
             }
 
             if buffering != nil {
@@ -50,7 +50,7 @@ pub class Stream : Iter[String] {
         __f = nil
         __fd = -1
         if err {
-            throw os.OSError('close()', err)
+            throw OSError('close()', err)
         }
     }
 
@@ -82,7 +82,7 @@ pub class Stream : Iter[String] {
 
     rewind() {
         if stdio.fseek(__f, 0, stdio.SEEK_SET) == -1 {
-            throw os.OSError('rewind()')
+            throw OSError('rewind()')
         }
     }
 
@@ -208,7 +208,7 @@ pub class LineReader : Iter[String] {
         if n == 0 {
             __eof? = true
         } else if n < 0 && !__transient?(errno.get()) {
-            throw os.OSError('read()')
+            throw OSError('read()')
         }
 
         n > 0
@@ -271,14 +271,14 @@ pub function open(
     }
 
     match fd {
-        -1 => throw os.OSError('open()'),
+        -1 => throw OSError('open()'),
         _  => Stream(fd, mode, buffering)
     }
 }
 
 pub function tmpfile() {
     if not let $f = stdio.tmpfile() {
-        throw os.OSError('tmpfile()')
+        throw OSError('tmpfile()')
     } else {
         Stream(f)
     }

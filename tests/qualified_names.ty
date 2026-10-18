@@ -1,0 +1,29 @@
+import os
+import time
+
+fn rejects(source: String) -> Bool {
+    try {
+        __eval__(source)
+        false
+    } catch ex: CompileError {
+        'undefined variable' in ex.message
+    }
+}
+
+pub fn module-does-not-leak-prelude() {
+    assert(rejects('os.max(1, 2)'))
+    assert(rejects('os.Array'))
+    assert(rejects('os.OSError'))
+    assert(rejects('match 1 { os.Some(x) => x }'))
+}
+
+pub fn module-members-still-resolve() {
+    assert(os.getpid() > 0)
+    assert(prelude.max(1, 2) == 2)
+}
+
+pub fn qualified-type-aliases-live-in-their-module() {
+    let t: time.Tm = time.localtime()
+    assert(t.year > 100)
+    assert(rejects('Tm'))
+}

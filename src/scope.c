@@ -202,6 +202,14 @@ lookup(
                 return sym;
         }
 
+        if (
+                (flags & SCOPE_QUALIFIED)
+             && (s->parent != NULL)
+             && (s->parent->parent == NULL)
+        ) {
+                return NULL;
+        }
+
         sym = lookup(ty, s->parent, id, flags & ~SCOPE_LOCAL);
 
         if (sym == NULL) {

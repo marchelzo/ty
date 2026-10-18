@@ -51,6 +51,7 @@ struct class_definition {
         bool is_trait;
         bool redpilled;
         char *name;
+        char const *module;
         char const *doc;
         Location loc;
         Expr *super;

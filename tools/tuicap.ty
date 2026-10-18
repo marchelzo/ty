@@ -3037,7 +3037,7 @@ class Tracer {
 
     init(tty: String) {
         let lib   = shim()
-        let prior = os.getenv('DYLD_INSERT_LIBRARIES')
+        let prior = getenv('DYLD_INSERT_LIBRARIES')
         __dir   = Path.tmp().mkdtemp('tuicap')
         __sock  = net.listen('unix', str(__dir / 'sock'))
         __peers = %{}
@@ -3156,7 +3156,7 @@ class Tracer {
         }
         let sudo = os.spawn(['sudo', '-n', 'true'], stdin: os.SPAWN_NULL, stdout: os.SPAWN_NULL, stderr: os.SPAWN_NULL)
         if let (_, status) = os.wait(sudo.pid) and status == 0 {
-            let lib = os.getenv('TY_LIBRARY_PATH') ?? "{Path(ty.executable).parent}/lib"
+            let lib = getenv('TY_LIBRARY_PATH') ?? "{Path(ty.executable).parent}/lib"
             return ['sudo', '-n', 'env', "TY_LIBRARY_PATH={lib}", ty.executable]
         }
         if let $st = os.stat('/usr/bin/tyxx') and st.uid == 0 && (st.mode & 0o4000) != 0 {
@@ -3660,7 +3660,7 @@ class Capture {
             'argv':        __argv,
             'pid':         __pid,
             'cwd':         os.getcwd(),
-            'term':        os.getenv('TERM'),
+            'term':        getenv('TERM'),
             'started':     __started,
             'duration_us': __tl.us(),
             'size':        %{'cols': __tl.frames[0]['size'][0], 'rows': __tl.frames[0]['size'][1]},

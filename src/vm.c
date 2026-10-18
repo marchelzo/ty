@@ -5559,6 +5559,10 @@ DoMutAnd(Ty *ty, bool exec)
                         SetRetain(ty, vp->set, top()->set);
                         *top() = *vp;
                         break;
+                case PAIR_OF(VALUE_DICT):
+                        dict_intersect(ty, vp, 1, NULL);
+                        *top() = *vp;
+                        break;
                 case PACK_TYPES(VALUE_DICT, VALUE_SET):
                         DictKeepKeys(ty, vp->dict, top()->set);
                         *top() = *vp;

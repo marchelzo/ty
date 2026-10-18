@@ -28,7 +28,8 @@
         X(ACTIVE,      Active,     6)  \
         X(FUNCTION,    Function,   7)  \
         X(MODULE,      Module,     8)  \
-        X(RELOADING,   Reloading,  9)
+        X(RELOADING,   Reloading,  9)  \
+        X(QUALIFIED,   Qualified, 10)
 
 
 #define X(f, _, i) SCOPE_##f = (1 << i),

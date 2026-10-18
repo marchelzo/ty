@@ -62,7 +62,7 @@ pub class Recorder {
 
         if os.rename(str(__temporary), str(__output)) != 0 {
             cleanup()
-            throw os.OSError('termrec: rename()')
+            throw OSError('termrec: rename()')
         }
         return 0
     }
@@ -110,7 +110,7 @@ fn cached-helper(source: Path) -> Path {
         if candidate.exists? {
             candidate.unlink()
         }
-        throw os.OSError('termrec: rename()')
+        throw OSError('termrec: rename()')
     }
     helper
 }

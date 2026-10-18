@@ -931,7 +931,7 @@ fn strct() {
                     func: ty.Value(c.struct),
                     args: structArgs
                 ),
-                $$[ c::CType[$$(ty.Id({name: structName}))] $$]
+                $$[ $$::(CType)[$$(ty.Id({name: structName}))] $$]
             )
         ),
         ty.Class(
@@ -1032,7 +1032,7 @@ const SONAME_ROOTS = ['/usr/local/lib', '/usr/lib64', '/lib64', '/usr/lib', '/li
 fn entries(dir: String) -> Array[String] {
     try {
         os.listdir(dir) ?? []
-    } catch _: os.OSError {
+    } catch _: OSError {
         []
     }
 }

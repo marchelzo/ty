@@ -13,7 +13,7 @@ C! fn {
 }
 
 fn __must(x, what: String) {
-    x ?? throw os.OSError(what)
+    x ?? throw OSError(what)
 }
 
 fn __int(s: String) -> Int {
@@ -212,7 +212,7 @@ pub class Process {
 
     signal(sig: Int) {
         if os.kill(__pid, sig) == -1 {
-            throw os.OSError("kill({__pid})")
+            throw OSError("kill({__pid})")
         }
         self
     }
@@ -657,17 +657,17 @@ fn __task-info(pid: Int, tid: Int) {
 
 fn __proc-read(pid: Int, addr: Int, size: Int) -> Blob {
     let fd = os.open("{__proc-file(pid, 'mem')}", os.O_RDONLY)
-    if fd == -1 { throw os.OSError("open(/proc/{pid}/mem)") }
+    if fd == -1 { throw OSError("open(/proc/{pid}/mem)") }
     defer os.close(fd)
     __must(os.pread(fd, size, addr), "pread(/proc/{pid}/mem)")
 }
 
 fn __proc-write(pid: Int, addr: Int, data: String | Blob) -> Int {
     let fd = os.open("{__proc-file(pid, 'mem')}", os.O_WRONLY)
-    if fd == -1 { throw os.OSError("open(/proc/{pid}/mem)") }
+    if fd == -1 { throw OSError("open(/proc/{pid}/mem)") }
     defer os.close(fd)
     let n = os.pwrite(fd, data, addr)
-    if n == -1 { throw os.OSError("pwrite(/proc/{pid}/mem)") }
+    if n == -1 { throw OSError("pwrite(/proc/{pid}/mem)") }
     n
 }
 #|else if __apple__
@@ -862,7 +862,7 @@ use ProcInfo = ProcBsdInfo
 fn __pidinfo[T](pid: Int, flavor: Int, info: T, arg: Int = 0) -> T where T: ProcInfo {
     let n = proc_pidinfo(pid, flavor, arg, info, #info)
     if n != #info {
-        throw os.OSError("proc_pidinfo({pid})")
+        throw OSError("proc_pidinfo({pid})")
     }
     info
 }
@@ -929,14 +929,14 @@ fn __proc-strings(pid: Int) {
     defer c.free(size)
 
     if sysctl(mib, 3, nil, size, nil, 0) == -1 {
-        throw os.OSError("sysctl(KERN_PROCARGS2, {pid})")
+        throw OSError("sysctl(KERN_PROCARGS2, {pid})")
     }
 
     let n = size[0]
     let buf = c.alloc(n)
     defer c.free(buf)
     if sysctl(mib, 3, buf, size, nil, 0) == -1 {
-        throw os.OSError("sysctl(KERN_PROCARGS2, {pid})")
+        throw OSError("sysctl(KERN_PROCARGS2, {pid})")
     }
 
     let argc = c.load(c.int, buf)
@@ -1009,7 +1009,7 @@ fn __proc-fds(p: Process) {
     defer c.free(buf)
     let bytes = proc_pidinfo(p.pid, PROC_PIDLISTFDS, 0, buf, cap * stride)
     if bytes < 0 {
-        throw os.OSError("proc_pidinfo({p.pid}, LISTFDS)")
+        throw OSError("proc_pidinfo({p.pid}, LISTFDS)")
     }
     [Fd(p, ProcFdInfo(typed(buf, c.u8) + i * stride).fd) for i in ..(bytes / stride)]
 }
@@ -1073,7 +1073,7 @@ fn __proc-mounts(p: Process) {
     defer c.free(pp)
     let n = getmntinfo(pp, 2)
     if n <= 0 {
-        throw os.OSError('getmntinfo()')
+        throw OSError('getmntinfo()')
     }
     let base = c.load(c.ptr, pp)
     let stride = c.size(DarwinStatfs_C)
@@ -1095,7 +1095,7 @@ fn __proc-tasks(p: Process) {
     defer c.free(buf)
     let bytes = proc_pidinfo(p.pid, PROC_PIDLISTTHREADS, 0, buf, cap * stride)
     if bytes < 0 {
-        throw os.OSError("proc_pidinfo({p.pid}, LISTTHREADS)")
+        throw OSError("proc_pidinfo({p.pid}, LISTTHREADS)")
     }
     [Task(p, c.load(c.u64, buf + i * stride)) for i in ..(bytes / stride)]
 }
