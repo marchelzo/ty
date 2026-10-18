@@ -6132,7 +6132,11 @@ os_rusage_value(Ty *ty, struct rusage const *usage)
         return vTn(
                 "utime",    REAL(usage->ru_utime.tv_sec + usage->ru_utime.tv_usec / 1.0e6),
                 "stime",    REAL(usage->ru_stime.tv_sec + usage->ru_stime.tv_usec / 1.0e6),
+#ifdef __APPLE__
+                "maxrss",   INTEGER(usage->ru_maxrss / 1024),
+#else
                 "maxrss",   INTEGER(usage->ru_maxrss),
+#endif
                 "ixrss",    INTEGER(usage->ru_ixrss),
                 "idrss",    INTEGER(usage->ru_idrss),
                 "isrss",    INTEGER(usage->ru_isrss),

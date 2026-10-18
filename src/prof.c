@@ -468,6 +468,16 @@ NowNs(void)
 }
 
 inline static u64
+MaxRssBytes(struct rusage const *ru)
+{
+#ifdef __APPLE__
+        return (u64)ru->ru_maxrss;
+#else
+        return (u64)ru->ru_maxrss * 1024;
+#endif
+}
+
+inline static u64
 Mix(u64 h, u64 x)
 {
         h ^= x + 0x9E3779B97F4A7C15ULL + (h << 6) + (h >> 2);
@@ -3380,7 +3390,7 @@ SummaryHeader(void)
                 n,
                 wall,
                 cpu,
-                ru.ru_maxrss / 1024.0
+                MaxRssBytes(&ru) / 1048576.0
         );
 
         if (nt > 1) {
@@ -4395,7 +4405,7 @@ ExportJson(FILE *f)
                 (int)getpid(),
                 Attached ? "true" : "false",
                 (unsigned long long)(RunCpuSeconds() * 1e9),
-                (unsigned long long)ru.ru_maxrss * 1024,
+                (unsigned long long)MaxRssBytes(&ru),
                 M.retained_exact ? "true" : "false"
         );
 

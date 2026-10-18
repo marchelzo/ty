@@ -154,6 +154,27 @@ C! struct uv_metrics_t {
   uint64_t* reserved[13];
 };
 
+C! struct uv_rusage_t {
+    long ru_utime_sec;
+    long ru_utime_usec;
+    long ru_stime_sec;
+    long ru_stime_usec;
+    uint64_t ru_maxrss;
+    uint64_t ru_ixrss;
+    uint64_t ru_idrss;
+    uint64_t ru_isrss;
+    uint64_t ru_minflt;
+    uint64_t ru_majflt;
+    uint64_t ru_nswap;
+    uint64_t ru_inblock;
+    uint64_t ru_oublock;
+    uint64_t ru_msgsnd;
+    uint64_t ru_msgrcv;
+    uint64_t ru_nsignals;
+    uint64_t ru_nvcsw;
+    uint64_t ru_nivcsw;
+};
+
 C! struct uv_buf_t {
     char *base;
     size_t len;
@@ -269,6 +290,8 @@ C! libuv fn {
 
     int uv_metrics_info(uv_loop_t* loop, uv_metrics_t* metrics);
     uint64_t uv_metrics_idle_time(uv_loop_t* loop);
+
+    int uv_getrusage(uv_rusage_t* rusage);
 
     void uv_close(uv_handle_t *handle, uv_close_cb close_cb);
 
@@ -1174,6 +1197,29 @@ pub fn loop() {
 
 pub fn now() {
     loop().now()
+}
+
+pub fn getrusage() -> os.RUsage {
+    let ru = uv_rusage_t()
+    uv_getrusage(ru)
+    return {
+        utime:    ru.ru_utime_sec + ru.ru_utime_usec / 1.0e6,
+        stime:    ru.ru_stime_sec + ru.ru_stime_usec / 1.0e6,
+        maxrss:   ru.ru_maxrss,
+        ixrss:    ru.ru_ixrss,
+        idrss:    ru.ru_idrss,
+        isrss:    ru.ru_isrss,
+        minflt:   ru.ru_minflt,
+        majflt:   ru.ru_majflt,
+        nswap:    ru.ru_nswap,
+        inblock:  ru.ru_inblock,
+        oublock:  ru.ru_oublock,
+        msgsnd:   ru.ru_msgsnd,
+        msgrcv:   ru.ru_msgrcv,
+        nsignals: ru.ru_nsignals,
+        nvcsw:    ru.ru_nvcsw,
+        nivcsw:   ru.ru_nivcsw
+    }
 }
 
 pub fn run(func: _) {
