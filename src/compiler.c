@@ -18110,6 +18110,14 @@ AddClassTraits(Ty *ty, ClassDefinition const *def)
 {
         for (int i = 0; i < vN(def->traits); ++i) {
                 int t = ResolveClassSpec(ty, v__(def->traits, i));
+                if (t >= 0 && !class_is_trait(ty, t)) {
+                        PushContext(ty, v__(def->traits, i));
+                        fail(
+                                "%s%s%s is a class, not a trait: to inherit from it, write %sclass %s < %s%s",
+                                TERM(95;1), class_name(ty, t), TERM(0),
+                                TERM(95;1), class_name(ty, def->symbol), class_name(ty, t), TERM(0)
+                        );
+                }
                 class_implement_trait(ty, def->symbol, t);
         }
 }

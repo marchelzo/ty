@@ -2961,6 +2961,25 @@ DoDrop(Ty *ty)
         vXx(DROP_STACK);
 }
 
+inline static Value *
+SuperMember(Ty *ty, Value *f, int class, i32 z, char const *kind)
+{
+        if (f == NULL) {
+                zP(
+                        "super: %s%s%s has no %s %s'%s'%s",
+                        TERM(97),
+                        class_name(ty, class),
+                        TERM(39),
+                        kind,
+                        TERM(34),
+                        KebabName(ty, M_NAME(z)),
+                        TERM(39)
+                );
+        }
+
+        return f;
+}
+
 inline static struct try *
 GetCurrentTry(Ty *ty)
 {
@@ -9203,7 +9222,7 @@ BinaryOp:
                         } else {
                                 i = FastReadOffset(ty, &OBJECT(top()->object, n), z);
                                 if (i == OFF_NOT_FOUND) {
-                                        vp = class_lookup_method_i(ty, n, z);
+                                        vp = SuperMember(ty, class_lookup_method_i(ty, n, z), n, z, "method");
                                         *top() = BindMethod(ty, vp, top());
                                 } else {
                                         switch (i >> OFF_SHIFT) {
@@ -9235,7 +9254,7 @@ BinaryOp:
                         } else {
                                 i = FastReadOffset(ty, &OBJECT(top()->object, n), z);
                                 if (i == OFF_NOT_FOUND) {
-                                        vp = class_lookup_getter_i(ty, n, z);
+                                        vp = SuperMember(ty, class_lookup_getter_i(ty, n, z), n, z, "getter");
                                         *top() = BindMethod(ty, vp, top());
                                 } else {
                                         switch (i >> OFF_SHIFT) {
@@ -9267,7 +9286,7 @@ BinaryOp:
                         } else {
                                 i = FastWriteOffset(ty, &OBJECT(top()->object, n), z);
                                 if (i == OFF_NOT_FOUND) {
-                                        vp = class_lookup_setter_i(ty, n, z);
+                                        vp = SuperMember(ty, class_lookup_setter_i(ty, n, z), n, z, "setter");
                                         *top() = BindMethod(ty, vp, top());
                                 } else {
                                         switch (i >> OFF_SHIFT) {
@@ -9293,7 +9312,7 @@ BinaryOp:
                 CASE(BIND_STATIC)
                         READVALUE(n);
                         READVALUE(z);
-                        vp = class_lookup_s_method_i(ty, n, z);
+                        vp = SuperMember(ty, class_lookup_s_method_i(ty, n, z), n, z, "static method");
                         push(*vp);
                         break;
 
@@ -12477,7 +12496,7 @@ vm_jit_binding(Ty *ty, int op, int n, int z, void *info)
                 value = BindMethod(ty, &value, &CLASS(n));
                 break;
         case INSTR_BIND_STATIC:
-                f = class_lookup_s_method_i(ty, n, z);
+                f = SuperMember(ty, class_lookup_s_method_i(ty, n, z), n, z, "static method");
                 push(*f);
                 return;
         case INSTR_SELF_STATIC_ACCESS:
@@ -12499,9 +12518,9 @@ vm_jit_binding(Ty *ty, int op, int n, int z, void *info)
                 }
                 if (offset == OFF_NOT_FOUND) {
                         switch (op) {
-                        case INSTR_BIND_INSTANCE: f = class_lookup_method_i(ty, class, z); break;
-                        case INSTR_BIND_GETTER:   f = class_lookup_getter_i(ty, class, z); break;
-                        default:                 f = class_lookup_setter_i(ty, class, z); break;
+                        case INSTR_BIND_INSTANCE: f = SuperMember(ty, class_lookup_method_i(ty, class, z), class, z, "method"); break;
+                        case INSTR_BIND_GETTER:   f = SuperMember(ty, class_lookup_getter_i(ty, class, z), class, z, "getter"); break;
+                        default:                 f = SuperMember(ty, class_lookup_setter_i(ty, class, z), class, z, "setter"); break;
                         }
                 } else {
                         int kind = offset >> OFF_SHIFT;

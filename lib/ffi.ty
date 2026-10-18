@@ -1004,6 +1004,41 @@ fn clos() {
     }
 }
 
+/**
+ * Declare C functions, structs, and callbacks using C syntax.
+ *
+ * By convention the module is imported as `import ffi as c (C!)`. The macro
+ * must be named in the import list; `import ffi as c` alone leaves `C!`
+ * undefined, and `C! fn { ... }` then fails to parse.
+ *
+ * ```
+ * import ffi as c (C!)
+ *
+ * if not let $uv = c.open('uv') {
+ *     throw RuntimeError('libuv not found')
+ * }
+ *
+ * // Bind each prototype to a Ty function of the same name, looked up in
+ * // `uv` (omit the library to search the process). `C! pub uv fn` exports
+ * // them, and `C! uv 'uv_' fn` binds `run` to the symbol `uv_run`.
+ * C! uv fn {
+ *     int uv_loop_init(void *loop);
+ *     int uv_run(void *loop, int mode);
+ * }
+ *
+ * // Define a class whose instances own the C memory of the struct:
+ * // `Point(x: 1, y: 2)`, `p.x`, and `p.get()` for a pointer to it.
+ * C! struct Point {
+ *     int x;
+ *     int y;
+ * }
+ *
+ * // Wrap a Ty function as a C function pointer with the given signature.
+ * C! closure on-timer(handle: c.ptr) -> c.void {
+ *     print('tick')
+ * }
+ * ```
+ */
 pub macro C! {
     if 'fn' in [peek(it).?type for ..8] {
         cfun()

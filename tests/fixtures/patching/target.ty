@@ -22,7 +22,7 @@ pub class Base {
     }
 }
 
-pub class Client : Base {
+pub class Client < Base {
     v: Int = 1
 
     init(v: Int = 1) {
