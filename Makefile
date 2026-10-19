@@ -21,7 +21,7 @@ PGO_BUILD     := _build/optimized-instrumented
 PGO_RAW       := $(PGO_BUILD)/profiles
 PGO_PROFDATA  := $(PGO_BUILD)/ty.profdata
 LLVM_PROFDATA ?= $(shell xcrun -f llvm-profdata 2>/dev/null || command -v llvm-profdata)
-LLVM_BOLT     ?= llvm-bolt
+LLVM_BOLT     ?= $(or $(realpath $(shell command -v llvm-bolt)),llvm-bolt)
 MERGE_FDATA   ?= merge-fdata
 BOLT_FLAGS    ?= -reorder-blocks=ext-tsp -reorder-functions=cdsort \
                  -split-functions -split-all-cold -split-eh -icf=1 \

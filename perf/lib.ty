@@ -115,28 +115,28 @@ const CALIBRATE_MODE = '--ty-perf-calibrate'
 const BENCH_MODE = '--ty-perf-bench'
 
 fn benchmark-program(name: String, categories: String, f) {
-    if #os.argv < 2 { return }
+    if #argv < 2 { return }
 
     let tags = categories.words().nub().sort()
-    match os.argv[1] {
+    match argv[1] {
         INFO_MODE => {
             print(json.encode(%{'name': name, 'tags': tags}))
             os.exit(0)
         },
         CALIBRATE_MODE => {
-            if #os.argv != 3 {
+            if #argv != 3 {
                 throw ValueError("{CALIBRATE_MODE} requires TARGET-SECONDS")
             }
-            print(json.encode(calibrate(f, Float(os.argv[2]))))
+            print(json.encode(calibrate(f, Float(argv[2]))))
             os.exit(0)
         },
         BENCH_MODE => {
-            if #os.argv != 5 {
+            if #argv != 5 {
                 throw ValueError("{BENCH_MODE} requires ITERATIONS WARMUP ROUNDS")
             }
-            let iters = Int(os.argv[2])
-            let warmup = Int(os.argv[3])
-            let rounds = Int(os.argv[4])
+            let iters = Int(argv[2])
+            let warmup = Int(argv[3])
+            let rounds = Int(argv[4])
             for ..warmup { f(1) }
             let times: [Float] = []
             for ..rounds {

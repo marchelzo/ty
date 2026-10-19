@@ -739,7 +739,7 @@ endif()
 
 target_compile_definitions(${_tgt_ty_interface}
   INTERFACE
-    $<$<C_COMPILER_ID:GNU>:_GNU_SOURCE>
+    $<$<OR:$<C_COMPILER_ID:GNU>,$<PLATFORM_ID:Linux>>:_GNU_SOURCE>
     $<$<NOT:$<CONFIG:Debug>>:TY_RELEASE>
     $<$<NOT:$<BOOL:${TY_LOG}>>:TY_NO_LOG>
     TY_HAVE_VERSION_INFO
