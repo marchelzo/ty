@@ -138,7 +138,7 @@ encode(Ty *ty, Value const *v, str *out)
 
         case VALUE_INTEGER:
                 xvR(*out, out->count + 64);
-                out->count += snprintf(out->items + out->count, 64, "%"PRIiMAX, v->z);
+                out->count += ty_snprintf(out->items + out->count, 64, "%"PRIiMAX, v->z);
                 break;
 
         case VALUE_REAL:
@@ -274,7 +274,7 @@ encode(Ty *ty, Value const *v, str *out)
                                 xvPn(*out, name, strlen(name));
                         } else {
                                 char b[32];
-                                snprintf(b, sizeof b - 1, "%d", i);
+                                ty_snprintf(b, sizeof b - 1, "%d", i);
                                 xvPn(*out, b, strlen(b));
                         }
                         xvP(*out, '"');
@@ -296,7 +296,7 @@ encode(Ty *ty, Value const *v, str *out)
                 xvP(*out, '"');
                 for (int i = 0; i < v->blob->count; ++i) {
                         char b[3];
-                        snprintf(b, sizeof b, "%.2X", (unsigned)v->blob->items[i]);
+                        ty_snprintf(b, sizeof b, "%.2X", (unsigned)v->blob->items[i]);
                         xvP(*out, '\\');
                         xvP(*out, 'x');
                         xvP(*out, b[0]);

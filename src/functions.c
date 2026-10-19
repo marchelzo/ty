@@ -1584,7 +1584,7 @@ MissingArgument:
                                 default: BadFmt(ty, start, nspec, &arg);
                                 }
 
-                                snprintf(
+                                ty_snprintf(
                                         tmp,
                                         TY_TMP_N,
                                         scratch,
@@ -9306,7 +9306,7 @@ fdoc(Ty *ty, Value const *f)
 
         Value n;
         if (f->info[6] != -1) {
-                snprintf(name_buf, sizeof name_buf, "%s.%s", class_name(ty, f->info[6]), name);
+                ty_snprintf(name_buf, sizeof name_buf, "%s.%s", class_name(ty, f->info[6]), name);
                 n = vSs(name_buf, strlen(name_buf));
         } else if (name != NULL) {
                 n = vSs(name, strlen(name));
@@ -10107,7 +10107,7 @@ TY_BUILTIN_RAW(ty_disassemble)
                 end = NULL;
 
                 if (mod == NULL || mod->code == NULL) {
-                        snprintf(tmp, TY_TMP_N, "%s", TyError(ty));
+                        ty_snprintf(tmp, TY_TMP_N, "%s", TyError(ty));
                         bP("%s", tmp);
                 }
 
@@ -10124,7 +10124,7 @@ TY_BUILTIN_RAW(ty_disassemble)
         }
         case VALUE_FUNCTION:
                 if (class_of(&what) != -1) {
-                        snprintf(
+                        ty_snprintf(
                                 tmp,
                                 TY_TMP_N,
                                 "%s.%s%s",
@@ -10133,7 +10133,7 @@ TY_BUILTIN_RAW(ty_disassemble)
                                 proto_of(&what)
                         );
                 } else {
-                        snprintf(
+                        ty_snprintf(
                                 tmp,
                                 TY_TMP_N,
                                 "%s%s",

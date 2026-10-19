@@ -239,7 +239,7 @@ search_dirs(List *out)
                 if (v.type != VALUE_STRING) {
                         continue;
                 }
-                snprintf(dir, sizeof dir, "%.*s", (int)sN(v), ss(v));
+                ty_snprintf(dir, sizeof dir, "%.*s", (int)sN(v), ss(v));
                 lput(out, dir);
         }
 }
@@ -248,9 +248,9 @@ static char const *
 lib_rel(List const *dirs, char const *path, char const *name, char *buf, usize cap)
 {
         for (int i = 0; i < dirs->n; ++i) {
-                snprintf(buf, cap, "%s/%s.ty", dirs->items[i], name);
+                ty_snprintf(buf, cap, "%s/%s.ty", dirs->items[i], name);
                 if (strcmp(buf, path) == 0) {
-                        snprintf(buf, cap, "lib/%s.ty", name);
+                        ty_snprintf(buf, cap, "lib/%s.ty", name);
                         return buf;
                 }
         }
@@ -331,7 +331,7 @@ add_data(List *app, char const *path)
                 if (e->d_name[0] == '.') {
                         continue;
                 }
-                snprintf(sub, sizeof sub, "%s/%s", real, e->d_name);
+                ty_snprintf(sub, sizeof sub, "%s/%s", real, e->d_name);
                 if (!add_data(app, sub)) {
                         closedir(d);
                         return false;
@@ -350,7 +350,7 @@ place_app(List *app, Files *files, char *entry, usize cap)
         char root[PATH_MAX];
         struct stat st;
 
-        snprintf(root, sizeof root, "%s", app->items[0]);
+        ty_snprintf(root, sizeof root, "%s", app->items[0]);
         parent(root);
 
         for (int i = 1; i < app->n; ++i) {
@@ -361,13 +361,13 @@ place_app(List *app, Files *files, char *entry, usize cap)
 
         for (int i = 0; i < app->n; ++i) {
                 u32 mode = (stat(app->items[i], &st) == 0) ? (st.st_mode & 0777) : 0644;
-                snprintf(rel, sizeof rel, "app/%s", under(app->items[i], root));
+                ty_snprintf(rel, sizeof rel, "app/%s", under(app->items[i], root));
                 if (!fput(files, rel, app->items[i], mode)) {
                         fprintf(stderr, "ty --bundle: conflicting files for %s\n", rel);
                         return false;
                 }
                 if (i == 0) {
-                        snprintf(entry, cap, "%s", rel);
+                        ty_snprintf(entry, cap, "%s", rel);
                 }
         }
 
@@ -385,7 +385,7 @@ add_packages(Ty *ty, List *app)
                 if (r == NULL) {
                         continue;
                 }
-                snprintf(real, sizeof real, "%s/__pkg__.ty", r);
+                ty_snprintf(real, sizeof real, "%s/__pkg__.ty", r);
                 if (regular(real) && !lhas(app, real)) {
                         lput(app, real);
                 }
@@ -403,9 +403,9 @@ add_native(Files *files, List *origs, char const *name, char const *real)
                 }
         }
 
-        snprintf(rel, sizeof rel, "native/%s", base(name));
+        ty_snprintf(rel, sizeof rel, "native/%s", base(name));
         for (int k = 1; !fput(files, rel, real, 0755); ++k) {
-                snprintf(rel, sizeof rel, "native/%d-%s", k, base(name));
+                ty_snprintf(rel, sizeof rel, "native/%d-%s", k, base(name));
         }
 
         lput(origs, name);
@@ -609,7 +609,7 @@ scan(BundleSpec const *spec, char const *script, Files *files, List *app, List *
         }
 
         fcntl(p[0], F_SETFD, FD_CLOEXEC);
-        snprintf(opt, sizeof opt, "--bundle-scan=%d", p[1]);
+        ty_snprintf(opt, sizeof opt, "--bundle-scan=%d", p[1]);
 
         char **argv = malloc((spec->nflags + 4) * sizeof *argv);
 
@@ -981,7 +981,7 @@ write_bundle(char const *out, Buf const *payload)
         t.hash   = XXH3_64bits(payload->data, payload->n);
         t.flags  = TY_BUNDLE_RUN;
 
-        snprintf(tmp, sizeof tmp, "%s.tmp.%ld", out, (long)getpid());
+        ty_snprintf(tmp, sizeof tmp, "%s.tmp.%ld", out, (long)getpid());
 
         fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0755);
         if (fd < 0) {

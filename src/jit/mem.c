@@ -537,12 +537,12 @@ jm_perf(void *rx, usize size, char const *name)
         char path[64];
 
 #define LINE "%lx %zx %.*s\n", (unsigned long)(uptr)rx, size, len, name
-        int  n = snprintf(NULL, 0, LINE);
+        int  n = ty_snprintf(NULL, 0, LINE);
         char line[n + 1];
-        snprintf(line, sizeof line, LINE);
+        ty_snprintf(line, sizeof line, LINE);
 #undef LINE
 
-        snprintf(path, sizeof path, "/tmp/perf-%ld.map", (long)getpid());
+        ty_snprintf(path, sizeof path, "/tmp/perf-%ld.map", (long)getpid());
 
         lock();
 

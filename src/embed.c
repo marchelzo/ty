@@ -117,7 +117,7 @@ bundle_put_file(char const *dir, char const *rel, void const *data, usize n, u32
         char tmp[PATH_MAX];
         int k;
 
-        k = snprintf(path, sizeof path, "%s/%s", dir, rel);
+        k = ty_snprintf(path, sizeof path, "%s/%s", dir, rel);
         if (k < 0 || (size_t)k >= sizeof path) {
                 return false;
         }
@@ -131,7 +131,7 @@ bundle_put_file(char const *dir, char const *rel, void const *data, usize n, u32
                 return false;
         }
 
-        k = snprintf(tmp, sizeof tmp, "%s.%ld", path, (long)getpid());
+        k = ty_snprintf(tmp, sizeof tmp, "%s.%ld", path, (long)getpid());
         if (k < 0 || (size_t)k >= sizeof tmp) {
                 return false;
         }
@@ -159,9 +159,9 @@ cache_root(char *out, usize cap)
         int n;
 
         if (xdg != NULL && *xdg != '\0') {
-                n = snprintf(out, cap, "%s/ty", xdg);
+                n = ty_snprintf(out, cap, "%s/ty", xdg);
         } else if (home != NULL && *home != '\0') {
-                n = snprintf(out, cap, "%s/.cache/ty", home);
+                n = ty_snprintf(out, cap, "%s/.cache/ty", home);
         } else {
                 return false;
         }
@@ -173,7 +173,7 @@ static bool
 stamped(char const *dir)
 {
         char stamp[PATH_MAX];
-        int n = snprintf(stamp, sizeof stamp, "%s/.complete", dir);
+        int n = ty_snprintf(stamp, sizeof stamp, "%s/.complete", dir);
 
         return (n >= 0)
             && ((size_t)n < sizeof stamp)
@@ -196,7 +196,7 @@ embedded_lib_dir(char *out, usize cap)
                 return false;
         }
 
-        n = snprintf(out, cap, "%s/embedded/%s/lib", root, TyEmbeddedLibHash);
+        n = ty_snprintf(out, cap, "%s/embedded/%s/lib", root, TyEmbeddedLibHash);
         if (n < 0 || (size_t)n >= cap) {
                 return false;
         }
@@ -427,7 +427,7 @@ read_manifest(void)
 {
         char path[PATH_MAX];
 
-        snprintf(path, sizeof path, "%s/.manifest", B.dir);
+        ty_snprintf(path, sizeof path, "%s/.manifest", B.dir);
 
         char *text = slurp_text(path);
         if (text == NULL) {
@@ -442,7 +442,7 @@ read_manifest(void)
                 *a++ = '\0';
 
                 if (strcmp(line, "entry") == 0) {
-                        snprintf(B.entry, sizeof B.entry, "%s/%s", B.dir, a);
+                        ty_snprintf(B.entry, sizeof B.entry, "%s/%s", B.dir, a);
                 } else if (strcmp(line, "flag") == 0) {
                         B.args = realloc(B.args, (B.nargs + 1) * sizeof *B.args);
                         B.args[B.nargs++] = strdup(a);
@@ -481,13 +481,13 @@ install_ty(char const *self)
         char bin[PATH_MAX];
         usize n;
 
-        snprintf(B.ty, sizeof B.ty, "%s/bin/ty", B.dir);
+        ty_snprintf(B.ty, sizeof B.ty, "%s/bin/ty", B.dir);
 
         if (access(B.ty, X_OK) == 0) {
                 return true;
         }
 
-        snprintf(bin, sizeof bin, "%s/bin", B.dir);
+        ty_snprintf(bin, sizeof bin, "%s/bin", B.dir);
 
         if (mkdirs(bin) && link(self, B.ty) == 0) {
                 return true;
@@ -525,7 +525,7 @@ bundle_init(void)
                 return;
         }
 
-        snprintf(B.self, sizeof B.self, "%s", self);
+        ty_snprintf(B.self, sizeof B.self, "%s", self);
 
         fd = open(self, O_RDONLY | O_CLOEXEC);
         if (fd < 0) {
@@ -545,7 +545,7 @@ bundle_init(void)
                 goto Done;
         }
 
-        snprintf(B.dir, sizeof B.dir, "%s/bundles/%016llx", root, (unsigned long long)t.hash);
+        ty_snprintf(B.dir, sizeof B.dir, "%s/bundles/%016llx", root, (unsigned long long)t.hash);
 
         if (!stamped(B.dir) && !unpack(fd, &t)) {
                 goto Done;

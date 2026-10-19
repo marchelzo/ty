@@ -276,11 +276,6 @@ typedef struct {
 } Stack;
 
 typedef struct {
-        char const *path;
-        char const *fmt;
-} Export;
-
-typedef struct {
         Expr const *expr;
         char const *why;
         i32 off;
@@ -369,7 +364,6 @@ static char        AttachRecord[1024];
 static bool        AttachColor;
 static int         AttachCols;
 static bool        FollowChildren;
-static vec(Export) Exports;
 
 static _Atomic u64 HandlerNs;
 static _Atomic u64 Dropped;
@@ -530,7 +524,7 @@ EventUsage(void)
                 return "";
         }
 
-        n += snprintf(
+        n += ty_snprintf(
                 buf + n,
                 sizeof buf - n,
                 "                          EVENT[:N]  Every Nth occurrence of perf event EVENT:\n"
@@ -541,16 +535,16 @@ EventUsage(void)
                 char const *sep = (names[i + 1] == NULL) ? " or " : (i > 0) ? ", " : " ";
                 int len = strlen(sep) + strlen(names[i]);
                 if (col + len > 92) {
-                        n += snprintf(buf + n, sizeof buf - n, "%s\n                                    ", (i > 0 && names[i + 1] != NULL) ? "," : "");
+                        n += ty_snprintf(buf + n, sizeof buf - n, "%s\n                                    ", (i > 0 && names[i + 1] != NULL) ? "," : "");
                         sep = (names[i + 1] == NULL) ? " or " : " ";
                         col = 37;
                 }
-                n += snprintf(buf + n, sizeof buf - n, "%s%s", sep, names[i]);
+                n += ty_snprintf(buf + n, sizeof buf - n, "%s%s", sep, names[i]);
                 col += len;
         }
 
         if (n < sizeof buf) {
-                snprintf(buf + n, sizeof buf - n, "\n");
+                ty_snprintf(buf + n, sizeof buf - n, "\n");
         }
 
         return buf;
@@ -584,19 +578,14 @@ prof_usage(FILE *out)
                 "    --prof-top=N        List at most N functions in the summary (default: 8)\n"
                 "    --prof-min-pct=P    Leave functions below P%% self time out of the summary\n"
                 "                        (default: 2)\n"
-                "    --prof-export=FILE  Also write the profile to FILE, in the format given by its\n"
-                "                        extension: .speedscope.json\n"
-                "                        (speedscope, Firefox Profiler), .folded (flamegraph.pl,\n"
-                "                        inferno) or .json (same as the recorded profile). Repeatable\n"
                 "    --prof-report [FILE] [--stdio | --tui]\n"
                 "                        Browse a recorded profile (default: ty-prof.data)\n"
                 "    --prof-diff OLD NEW Compare two recorded profiles\n"
                 "    --prof-attach PID [SECONDS]\n"
                 "                        Profile a running ty process for SECONDS (default: 10), then\n"
                 "                        record and summarize it like a normal run. Accepts --prof=cpu,\n"
-                "                        --prof=wall, --prof=EVENT, --prof-out, --prof-summary\n"
-                "                        and --prof-export. Set TY_ATTACH=0 in a process's environment\n"
-                "                        to refuse\n"
+                "                        --prof=wall, --prof=EVENT, --prof-out and --prof-summary.\n"
+                "                        Set TY_ATTACH=0 in a process's environment to refuse\n"
                 "\n"
                 "Every --prof-* option implies --prof. While a profiled program runs, Ctrl-C prints a\n"
                 "summary of the profile so far, and a second Ctrl-C within 3 seconds exits.\n",
@@ -637,37 +626,6 @@ prof_usdt_usage(FILE *out)
         );
 }
 #endif
-
-static bool
-AddExport(char const *path)
-{
-        char const *fmt;
-        usize n = strlen(path);
-
-        #define ENDS(s) (n >= sizeof (s) - 1 && strcmp(path + n - (sizeof (s) - 1), (s)) == 0)
-
-        if (ENDS(".speedscope.json")) {
-                fmt = "speedscope";
-        } else if (ENDS(".json")) {
-                fmt = "json";
-        } else if (ENDS(".folded") || ENDS(".collapsed") || ENDS(".txt")) {
-                fmt = "folded";
-        } else {
-                return false;
-        }
-
-        #undef ENDS
-
-        for (usize i = 0; i < vN(Exports); ++i) {
-                if (strcmp(v_(Exports, i)->path, path) == 0) {
-                        return true;
-                }
-        }
-
-        xvP(Exports, ((Export) { .path = path, .fmt = fmt }));
-
-        return true;
-}
 
 static char const *
 OptArg(char const *arg, char const *name)
@@ -847,11 +805,6 @@ prof_option(char const *arg)
                 TopN = (TopN < 1) ? 1 : TopN;
         } else if ((v = ProfArg(arg, "--prof-min-pct")) != NULL) {
                 MinPct = atof(v);
-        } else if ((v = ProfArg(arg, "--prof-export")) != NULL) {
-                if (!AddExport(v)) {
-                        fprintf(stderr, "ty: --prof-export needs FILE.{json,speedscope.json,folded}\n");
-                        exit(1);
-                }
         } else {
                 return 0;
         }
@@ -979,7 +932,7 @@ ResolveRip(uptr rip)
         } else {
                 char const *base = strrchr(dl.dli_fname, '/');
                 char buf[256];
-                snprintf(buf, sizeof buf, "[%s]", (base != NULL) ? base + 1 : dl.dli_fname);
+                ty_snprintf(buf, sizeof buf, "[%s]", (base != NULL) ? base + 1 : dl.dli_fname);
                 id = InternName(buf);
         }
 
@@ -1307,7 +1260,7 @@ DeoptNote(DeoptSite *d, char const *text)
                 }
         }
 
-        snprintf(d->notes[slot].text, sizeof d->notes[slot].text, "%s", text);
+        ty_snprintf(d->notes[slot].text, sizeof d->notes[slot].text, "%s", text);
         d->notes[slot].n = 1;
 }
 
@@ -1352,7 +1305,7 @@ DeoptNotes(Ty *ty, Frame const *frame, DeoptSite *d, i32 why, u64 slots)
 
                 char const *name = SlotName(fe, slot);
 
-                snprintf(
+                ty_snprintf(
                         text,
                         sizeof text,
                         "%s: %s → %s",
@@ -1380,7 +1333,7 @@ DeoptNotes(Ty *ty, Frame const *frame, DeoptSite *d, i32 why, u64 slots)
 
                 lower[n] = '\0';
 
-                snprintf(text, sizeof text, "at %s", lower);
+                ty_snprintf(text, sizeof text, "at %s", lower);
                 DeoptNote(d, text);
         }
 }
@@ -1412,9 +1365,9 @@ Brief(Ty *ty, Value const *v, char *out, int cap, int depth)
 
         if (x.type == VALUE_OBJECT && depth == 0 && x.object->nslot > 0) {
                 Class const *class = x.object->class;
-                n += snprintf(out + n, cap - n, "%s{", class_name(ty, x.class));
+                n += ty_snprintf(out + n, cap - n, "%s{", class_name(ty, x.class));
                 for (u32 i = 0; i < x.object->nslot && i < vN(class->fields.ids) && n < cap - 8; ++i) {
-                        n += snprintf(out + n, cap - n, "%s%s: ", (i > 0) ? ", " : "", M_NAME(v__(class->fields.ids, i)));
+                        n += ty_snprintf(out + n, cap - n, "%s%s: ", (i > 0) ? ", " : "", M_NAME(v__(class->fields.ids, i)));
                         if (n < cap - 8) {
                                 n += Brief(ty, &x.object->slots[i], out + n, cap - n - 4, depth + 1);
                         }
@@ -1506,7 +1459,7 @@ ShotVars(Ty *ty, Frame const *frame)
         for (i32 slot = 0; slot < bound && slot < 32 && frame->fp + slot < top; ++slot) {
                 char const *id = SlotName(fe, slot);
                 if (id == NULL) {
-                        snprintf(name, sizeof name, "$%d", slot);
+                        ty_snprintf(name, sizeof name, "$%d", slot);
                         id = name;
                 }
                 if (!first) {
@@ -1519,7 +1472,7 @@ ShotVars(Ty *ty, Frame const *frame)
         usize base = frame->fp + (usize)max(bound, 0);
 
         for (usize i = top, k = 0; i > base && k < 6; --i, ++k) {
-                snprintf(name, sizeof name, (k == 0) ? "top" : "top-%zu", k);
+                ty_snprintf(name, sizeof name, (k == 0) ? "top" : "top-%zu", k);
                 if (!first) {
                         fputc(',', f);
                 }
@@ -2101,10 +2054,9 @@ prof_start(Ty *ty)
 
         if (parent != NULL) {
                 static char path[64];
-                snprintf(path, sizeof path, "ty-prof.%d.data", (int)getpid());
+                ty_snprintf(path, sizeof path, "ty-prof.%d.data", (int)getpid());
                 DataPath = path;
                 Quiet = true;
-                vN(Exports) = 0;
         }
 
         setenv("TY_PROF_ACTIVE", "1", 1);
@@ -2301,7 +2253,7 @@ FuncOf(Expr const *fexpr, Expr const *expr)
                 char const *qn = QualifiedName(fexpr);
                 if (strcmp(qn, "(error)") == 0) {
                         char buf[256];
-                        snprintf(
+                        ty_snprintf(
                                 buf,
                                 sizeof buf,
                                 "(%s:%s:%u)",
@@ -2322,7 +2274,7 @@ FuncOf(Expr const *fexpr, Expr const *expr)
                 }
         } else if (mod != NULL) {
                 char buf[512];
-                snprintf(buf, sizeof buf, "<%s>", (mod->name != NULL) ? mod->name : "module");
+                ty_snprintf(buf, sizeof buf, "<%s>", (mod->name != NULL) ? mod->name : "module");
                 f.name = strdup(buf);
                 f.line0 = 0;
                 f.line1 = UINT32_MAX;
@@ -2962,23 +2914,23 @@ FmtQty(char *buf, usize n, u64 w)
         case PK_CPU:
         case PK_WALL:
                 if (w >= 1000000000ULL) {
-                        snprintf(buf, n, "%.2fs", w / 1e9);
+                        ty_snprintf(buf, n, "%.2fs", w / 1e9);
                 } else if (w >= 1000000ULL) {
-                        snprintf(buf, n, "%.1fms", w / 1e6);
+                        ty_snprintf(buf, n, "%.1fms", w / 1e6);
                 } else {
-                        snprintf(buf, n, "%.0fus", w / 1e3);
+                        ty_snprintf(buf, n, "%.0fus", w / 1e3);
                 }
                 break;
 
         default:
                 if (w >= 1000000000ULL) {
-                        snprintf(buf, n, "%.2fG", w / 1e9);
+                        ty_snprintf(buf, n, "%.2fG", w / 1e9);
                 } else if (w >= 1000000ULL) {
-                        snprintf(buf, n, "%.1fM", w / 1e6);
+                        ty_snprintf(buf, n, "%.1fM", w / 1e6);
                 } else if (w >= 1000ULL) {
-                        snprintf(buf, n, "%.1fK", w / 1e3);
+                        ty_snprintf(buf, n, "%.1fK", w / 1e3);
                 } else {
-                        snprintf(buf, n, "%llu", (unsigned long long)w);
+                        ty_snprintf(buf, n, "%llu", (unsigned long long)w);
                 }
                 break;
         }
@@ -2988,13 +2940,13 @@ static void
 FmtBytes(char *buf, usize n, u64 b)
 {
         if (b >= (1ULL << 30)) {
-                snprintf(buf, n, "%.2f GiB", b / (double)(1ULL << 30));
+                ty_snprintf(buf, n, "%.2f GiB", b / (double)(1ULL << 30));
         } else if (b >= (1ULL << 20)) {
-                snprintf(buf, n, "%.1f MiB", b / (double)(1ULL << 20));
+                ty_snprintf(buf, n, "%.1f MiB", b / (double)(1ULL << 20));
         } else if (b >= (1ULL << 10)) {
-                snprintf(buf, n, "%.1f KiB", b / (double)(1ULL << 10));
+                ty_snprintf(buf, n, "%.1f KiB", b / (double)(1ULL << 10));
         } else {
-                snprintf(buf, n, "%llu B", (unsigned long long)b);
+                ty_snprintf(buf, n, "%llu B", (unsigned long long)b);
         }
 }
 
@@ -3090,13 +3042,13 @@ static void
 FmtCount(char *buf, usize n, u64 c)
 {
         if (c >= 10000000000ULL) {
-                snprintf(buf, n, "%.1fG", c / 1e9);
+                ty_snprintf(buf, n, "%.1fG", c / 1e9);
         } else if (c >= 10000000ULL) {
-                snprintf(buf, n, "%.1fM", c / 1e6);
+                ty_snprintf(buf, n, "%.1fM", c / 1e6);
         } else if (c >= 100000ULL) {
-                snprintf(buf, n, "%.0fK", c / 1e3);
+                ty_snprintf(buf, n, "%.0fK", c / 1e3);
         } else {
-                snprintf(buf, n, "%llu", (unsigned long long)c);
+                ty_snprintf(buf, n, "%llu", (unsigned long long)c);
         }
 }
 
@@ -3104,13 +3056,13 @@ static void
 FmtNs(char *buf, usize n, u64 ns)
 {
         if (ns >= 10000000000ULL) {
-                snprintf(buf, n, "%.1fs", ns / 1e9);
+                ty_snprintf(buf, n, "%.1fs", ns / 1e9);
         } else if (ns >= 1000000000ULL) {
-                snprintf(buf, n, "%.2fs", ns / 1e9);
+                ty_snprintf(buf, n, "%.2fs", ns / 1e9);
         } else if (ns >= 1000000ULL) {
-                snprintf(buf, n, "%.1fms", ns / 1e6);
+                ty_snprintf(buf, n, "%.1fms", ns / 1e6);
         } else {
-                snprintf(buf, n, "%.0fµs", ns / 1e3);
+                ty_snprintf(buf, n, "%.0fµs", ns / 1e3);
         }
 }
 
@@ -3400,7 +3352,7 @@ static void
 PutLoc(Func const *f, u32 line, int width)
 {
         char loc[512];
-        snprintf(loc, sizeof loc, "%s:%u", f->path, line + 1);
+        ty_snprintf(loc, sizeof loc, "%s:%u", f->path, line + 1);
         fprintf(Out, "%s%-*s%s", C(36), width, loc, C(0));
 }
 
@@ -3837,7 +3789,7 @@ SummaryAllocs(void)
         FmtBytes(total, sizeof total, M.alloc_total);
 
         char note[64];
-        snprintf(note, sizeof note, "%s sampled", total);
+        ty_snprintf(note, sizeof note, "%s sampled", total);
 
         Heading("Allocation", note);
 
@@ -3878,7 +3830,7 @@ SummaryRetained(void)
         char note[96];
 
         FmtBytes(total, sizeof total, M.retained);
-        snprintf(note, sizeof note, "%s live after the last GC", total);
+        ty_snprintf(note, sizeof note, "%s live after the last GC", total);
 
         Heading("Retained heap", note);
 
@@ -4160,9 +4112,9 @@ JsonFuncName(FILE *f, Expr const *fe)
         char name[256];
 
         if (fe != NULL && fe->name != NULL && fe->class != NULL) {
-                snprintf(name, sizeof name, "%s.%s", fe->class->name, fe->name);
+                ty_snprintf(name, sizeof name, "%s.%s", fe->class->name, fe->name);
         } else {
-                snprintf(name, sizeof name, "%s", (fe != NULL && fe->name != NULL) ? fe->name : "<anonymous>");
+                ty_snprintf(name, sizeof name, "%s", (fe != NULL && fe->name != NULL) ? fe->name : "<anonymous>");
         }
 
         JsonStr(f, name);
@@ -4272,7 +4224,7 @@ LeafExtra(Stack const *s)
                 return "[GC]";
         case CAT_BLOCKED:
                 if (s->sym >= SYM_FIRST) {
-                        snprintf(buf, sizeof buf, "[blocked] %s", SymName(s->sym));
+                        ty_snprintf(buf, sizeof buf, "[blocked] %s", SymName(s->sym));
                         return buf;
                 }
                 return "[blocked]";
@@ -4282,167 +4234,11 @@ LeafExtra(Stack const *s)
                 return "[JIT compile]";
         case CAT_NATIVE:
         case CAT_JIT_RT:
-                snprintf(buf, sizeof buf, "[native] %s", SymName(s->sym));
+                ty_snprintf(buf, sizeof buf, "[native] %s", SymName(s->sym));
                 return buf;
         }
 
         return NULL;
-}
-
-static void
-ExportFolded(FILE *f)
-{
-        for (usize i = 0; i < vN(Stacks); ++i) {
-                Stack const *s = v_(Stacks, i);
-                u64 const *frames = v_(Keys, s->off);
-
-                if (!IsTimeKind(s->kind)) {
-                        continue;
-                }
-
-                for (int k = (int)s->n - 1; k >= 0; --k) {
-                        Site const *site = SiteOf(frames[k]);
-                        Func const *fn = v_(M.funcs, site->func);
-                        for (char const *c = fn->name; *c != '\0'; ++c) {
-                                fputc((*c == ';' || *c == ' ') ? '_' : *c, f);
-                        }
-                        if (k > 0) {
-                                fputc(';', f);
-                        }
-                }
-
-                char const *extra = LeafExtra(s);
-
-                if (extra != NULL) {
-                        if (s->n > 0) {
-                                fputc(';', f);
-                        }
-                        for (char const *c = extra; *c != '\0'; ++c) {
-                                fputc((*c == ';' || *c == ' ') ? '_' : *c, f);
-                        }
-                }
-
-                fprintf(f, " %llu\n", (unsigned long long)((Mode == PK_CPU || Mode == PK_WALL) ? s->weight / 1000 : s->weight));
-        }
-}
-
-typedef vec(char const *) NameVec;
-
-static u32
-ExtraFrame(char const *name, NameVec *extras)
-{
-        for (usize i = 0; i < vN(*extras); ++i) {
-                if (strcmp(v__(*extras, i), name) == 0) {
-                        return i;
-                }
-        }
-
-        xvP(*extras, strdup(name));
-
-        return vN(*extras) - 1;
-}
-
-static void
-ExportSpeedscope(FILE *f)
-{
-        NameVec extras = {0};
-        u32 nf = vN(M.funcs);
-
-        for (usize i = 0; i < vN(Stacks); ++i) {
-                Stack const *s = v_(Stacks, i);
-                char const *extra = IsTimeKind(s->kind) ? LeafExtra(s) : NULL;
-                if (extra != NULL) {
-                        ExtraFrame(extra, &extras);
-                }
-        }
-
-        fprintf(f, "{\"$schema\":\"https://www.speedscope.app/file-format-schema.json\",\"exporter\":\"ty\",");
-        fprintf(f, "\"name\":");
-        JsonStr(f, (ProfTarget != NULL) ? ProfTarget : "ty");
-        fprintf(f, ",\"activeProfileIndex\":0,\"shared\":{\"frames\":[");
-
-        for (u32 i = 0; i < nf; ++i) {
-                Func const *fn = v_(M.funcs, i);
-                fprintf(f, "%s{\"name\":", (i > 0) ? "," : "");
-                JsonStr(f, fn->name);
-                fprintf(f, ",\"file\":");
-                JsonStr(f, fn->path);
-                fprintf(f, ",\"line\":%u}", fn->line0 + 1);
-        }
-
-        for (usize i = 0; i < vN(extras); ++i) {
-                fprintf(f, ",{\"name\":");
-                JsonStr(f, v__(extras, i));
-                fprintf(f, "}");
-        }
-
-        char const *unit = (Mode == PK_CPU || Mode == PK_WALL) ? "nanoseconds" : "none";
-
-        for (int pass = 0; pass < 2; ++pass) {
-                u64 total = 0;
-
-                for (usize i = 0; i < vN(Stacks); ++i) {
-                        Stack const *s = v_(Stacks, i);
-                        if ((pass == 0) ? IsTimeKind(s->kind) : (s->kind == PK_ALLOC)) {
-                                total += s->weight;
-                        }
-                }
-
-                if (pass == 1 && total == 0) {
-                        break;
-                }
-
-                fprintf(
-                        f,
-                        "%s{\"type\":\"sampled\",\"name\":\"%s\",\"unit\":\"%s\",\"startValue\":0,\"endValue\":%llu,\"samples\":[",
-                        (pass == 0) ? "]},\"profiles\":[" : ",",
-                        (pass == 0) ? Unit() : "allocated bytes",
-                        (pass == 0) ? unit : "bytes",
-                        (unsigned long long)total
-                );
-
-                bool first = true;
-
-                for (usize i = 0; i < vN(Stacks); ++i) {
-                        Stack const *s = v_(Stacks, i);
-                        u64 const *frames = v_(Keys, s->off);
-
-                        if ((pass == 0) ? !IsTimeKind(s->kind) : (s->kind != PK_ALLOC)) {
-                                continue;
-                        }
-
-                        fprintf(f, "%s[", first ? "" : ",");
-                        first = false;
-
-                        for (int k = (int)s->n - 1; k >= 0; --k) {
-                                fprintf(f, "%u%s", SiteOf(frames[k])->func, (k > 0) ? "," : "");
-                        }
-
-                        char const *extra = (pass == 0) ? LeafExtra(s) : NULL;
-
-                        if (extra != NULL) {
-                                fprintf(f, "%s%u", (s->n > 0) ? "," : "", nf + ExtraFrame(extra, &extras));
-                        }
-
-                        fputc(']', f);
-                }
-
-                fprintf(f, "],\"weights\":[");
-                first = true;
-
-                for (usize i = 0; i < vN(Stacks); ++i) {
-                        Stack const *s = v_(Stacks, i);
-                        if ((pass == 0) ? !IsTimeKind(s->kind) : (s->kind != PK_ALLOC)) {
-                                continue;
-                        }
-                        fprintf(f, "%s%llu", first ? "" : ",", (unsigned long long)s->weight);
-                        first = false;
-                }
-
-                fprintf(f, "]}");
-        }
-
-        fprintf(f, "]}\n");
 }
 
 static void
@@ -4818,7 +4614,7 @@ RecordTo(char const *path)
                 (stat(path, &st) == 0)
              && S_ISREG(st.st_mode)
              && (st.st_size > 0)
-             && (snprintf(old, sizeof old, "%s.old", path) < (int)sizeof old)
+             && (ty_snprintf(old, sizeof old, "%s.old", path) < (int)sizeof old)
         ) {
                 rename(path, old);
         }
@@ -4842,34 +4638,6 @@ RecordData(void)
 {
         if (DataPath != NULL && !RecordTo(DataPath)) {
                 DataPath = NULL;
-        }
-}
-
-static void
-Exporting(void)
-{
-        for (usize i = 0; i < vN(Exports); ++i) {
-                Export const *e = v_(Exports, i);
-                FILE *f = fopen(e->path, "w");
-
-                if (f == NULL) {
-                        fprintf(stderr, "ty: cannot write %s: %s\n", e->path, strerror(errno));
-                        continue;
-                }
-
-                if (strcmp(e->fmt, "folded") == 0) {
-                        ExportFolded(f);
-                } else if (strcmp(e->fmt, "speedscope") == 0) {
-                        ExportSpeedscope(f);
-                } else if (strcmp(e->fmt, "json") == 0) {
-                        ExportJson(f);
-                }
-
-                fclose(f);
-
-                if (!Attached) {
-                        fprintf(stderr, "ty: wrote %s\n", e->path);
-                }
         }
 }
 
@@ -4914,8 +4682,6 @@ prof_report(Ty *ty)
         if (!Quiet) {
                 Summary();
         }
-
-        Exporting();
 }
 
 void
@@ -5196,12 +4962,12 @@ QtyOf(char *buf, usize n, double w, char const *unit)
 {
         if (strcmp(unit, "ns") == 0) {
                 if (fabs(w) >= 1e9) {
-                        snprintf(buf, n, "%.2fs", w / 1e9);
+                        ty_snprintf(buf, n, "%.2fs", w / 1e9);
                 } else {
-                        snprintf(buf, n, "%.1fms", w / 1e6);
+                        ty_snprintf(buf, n, "%.1fms", w / 1e6);
                 }
         } else {
-                snprintf(buf, n, "%.3g", w);
+                ty_snprintf(buf, n, "%.3g", w);
         }
 }
 
@@ -5740,21 +5506,15 @@ ReadAttachRequest(void)
         char path[128];
         char line[1024];
 
-        snprintf(path, sizeof path, "/tmp/ty-prof-attach-%d.req", (int)getpid());
-        snprintf(AttachPrefix, sizeof AttachPrefix, "/tmp/ty-prof-%d-%llu", (int)getpid(), (unsigned long long)(NowNs() / 1000000));
+        ty_snprintf(path, sizeof path, "/tmp/ty-prof-attach-%d.req", (int)getpid());
+        ty_snprintf(AttachPrefix, sizeof AttachPrefix, "/tmp/ty-prof-%d-%llu", (int)getpid(), (unsigned long long)(NowNs() / 1000000));
 
         Mode = PK_CPU;
         ProfileSampleInterval = 0;
         Hz = 999;
         AttachColor = false;
         AttachCols = 0;
-        snprintf(AttachRecord, sizeof AttachRecord, "ty-prof.data");
-
-        for (usize i = 0; i < vN(Exports); ++i) {
-                free((char *)v_(Exports, i)->path);
-        }
-
-        vN(Exports) = 0;
+        ty_snprintf(AttachRecord, sizeof AttachRecord, "ty-prof.data");
 
         FILE *f = fopen(path, "r");
 
@@ -5771,15 +5531,13 @@ ReadAttachRequest(void)
                 } else if (strncmp(line, "hz=", 3) == 0 && atoll(line + 3) > 0) {
                         ProfileSampleInterval = 1000000000ULL / (u64)atoll(line + 3);
                 } else if (strncmp(line, "prefix=", 7) == 0) {
-                        snprintf(AttachPrefix, sizeof AttachPrefix, "%s", line + 7);
+                        ty_snprintf(AttachPrefix, sizeof AttachPrefix, "%s", line + 7);
                 } else if (strncmp(line, "record=", 7) == 0) {
-                        snprintf(AttachRecord, sizeof AttachRecord, "%s", line + 7);
+                        ty_snprintf(AttachRecord, sizeof AttachRecord, "%s", line + 7);
                 } else if (strncmp(line, "color=", 6) == 0) {
                         AttachColor = atoi(line + 6) != 0;
                 } else if (strncmp(line, "cols=", 5) == 0) {
                         AttachCols = atoi(line + 5);
-                } else if (strncmp(line, "export=", 7) == 0) {
-                        AddExport(strdup(line + 7));
                 }
         }
 
@@ -5812,7 +5570,7 @@ static void
 WriteAs(char const *ext, void (*fn)(FILE *))
 {
         char path[640];
-        snprintf(path, sizeof path, "%s%s", AttachPrefix, ext);
+        ty_snprintf(path, sizeof path, "%s%s", AttachPrefix, ext);
 
         FILE *f = fopen(path, "w");
 
@@ -5827,7 +5585,7 @@ AttachWrite(void)
 {
         char path[640];
 
-        snprintf(path, sizeof path, "%s.data", AttachPrefix);
+        ty_snprintf(path, sizeof path, "%s.data", AttachPrefix);
 
         FILE *f = fopen(path, "w");
 
@@ -5840,7 +5598,7 @@ AttachWrite(void)
                 DataPath = NULL;
         }
 
-        snprintf(path, sizeof path, "%s.txt", AttachPrefix);
+        ty_snprintf(path, sizeof path, "%s.txt", AttachPrefix);
 
         if ((f = fopen(path, "w")) != NULL) {
                 FILE *saved = ProfileOut;
@@ -5852,8 +5610,6 @@ AttachWrite(void)
                 ColorProfile = color;
                 fclose(f);
         }
-
-        Exporting();
 }
 
 static void
@@ -5942,15 +5698,14 @@ prof_attach_main(int argc, char **argv)
                         stderr,
                         "usage: ty --prof-attach PID [SECONDS] [--prof=cpu[:HZ]|wall[:HZ]|EVENT]\n"
                         "                             [--prof-out=FILE] [--prof-summary=FILE]\n"
-                        "                             [--prof-export=FILE]...\n"
                 );
                 return 2;
         }
 
         char req[128];
         char prefix[256];
-        snprintf(req, sizeof req, "/tmp/ty-prof-attach-%d.req", (int)pid);
-        snprintf(prefix, sizeof prefix, "/tmp/ty-prof-%d-attach-%d", (int)pid, (int)getpid());
+        ty_snprintf(req, sizeof req, "/tmp/ty-prof-attach-%d.req", (int)pid);
+        ty_snprintf(prefix, sizeof prefix, "/tmp/ty-prof-%d-attach-%d", (int)pid, (int)getpid());
 
         FILE *f = fopen(req, "w");
         if (f == NULL) {
@@ -5976,15 +5731,6 @@ prof_attach_main(int argc, char **argv)
         }
         fprintf(f, "color=%d\n", ColorFor(ProfileOut));
         fprintf(f, "record=%s\n", DataPath);
-        for (usize i = 0; i < vN(Exports); ++i) {
-                char cwd[4096];
-                char const *e = v_(Exports, i)->path;
-                if (e[0] == '/' || getcwd(cwd, sizeof cwd) == NULL) {
-                        fprintf(f, "export=%s\n", e);
-                } else {
-                        fprintf(f, "export=%s/%s\n", cwd, e);
-                }
-        }
         fclose(f);
 
         if (kill(pid, prof_os_attach_signal()) != 0) {
@@ -6008,7 +5754,7 @@ prof_attach_main(int argc, char **argv)
         kill(pid, prof_os_attach_signal());
 
         char done[300];
-        snprintf(done, sizeof done, "%s.done", prefix);
+        ty_snprintf(done, sizeof done, "%s.done", prefix);
 
         u64 deadline = NowNs() + 60000000000ULL;
         while (!FileExists(done) && NowNs() < deadline) {
@@ -6036,7 +5782,7 @@ prof_attach_main(int argc, char **argv)
         char buf[65536];
         usize n;
 
-        snprintf(from, sizeof from, "%s.data", prefix);
+        ty_snprintf(from, sizeof from, "%s.data", prefix);
 
         FILE *in = fopen(from, "r");
         struct stat st;
@@ -6047,7 +5793,7 @@ prof_attach_main(int argc, char **argv)
              && (stat(DataPath, &st) == 0)
              && S_ISREG(st.st_mode)
              && (st.st_size > 0)
-             && (snprintf(old, sizeof old, "%s.old", DataPath) < (int)sizeof old)
+             && (ty_snprintf(old, sizeof old, "%s.old", DataPath) < (int)sizeof old)
         ) {
                 rename(DataPath, old);
         }
@@ -6072,7 +5818,7 @@ prof_attach_main(int argc, char **argv)
 
         unlink(from);
 
-        snprintf(from, sizeof from, "%s.txt", prefix);
+        ty_snprintf(from, sizeof from, "%s.txt", prefix);
 
         in = fopen(from, "r");
 

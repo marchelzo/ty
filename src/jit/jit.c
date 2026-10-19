@@ -191,7 +191,7 @@ jit_dump_code(void const *code, usize size, char const *dir, char const *name)
 {
         char path[4096];
 
-        snprintf(path, sizeof path, "%s/%s@%lx.bin", dir, name, (unsigned long)(uptr)code);
+        ty_snprintf(path, sizeof path, "%s/%s@%lx.bin", dir, name, (unsigned long)(uptr)code);
 
         FILE *out = fopen(path, "wb");
 
@@ -216,7 +216,7 @@ jit_perf_map(void *code, usize size, char const *name, Expr const *expr)
         char const *cls = (expr != NULL && expr->class != NULL) ? expr->class->name : "";
         char        qualified[strlen(mod) + strlen(cls) + strlen(name) + 3];
 
-        snprintf(
+        ty_snprintf(
                 qualified,
                 sizeof qualified,
                 "%s%s%s%s%s",
@@ -1169,7 +1169,7 @@ jit_stats_json(Ty *ty, FILE *f)
                 fprintf(f, ",\"line\":%d,\"col\":%d,\"func\":", (e != NULL) ? (int)e->start.line + 1 : 0, (e != NULL) ? (int)e->start.col + 1 : 0);
                 if (fe != NULL && fe->name != NULL && fe->class != NULL) {
                         char name[256];
-                        snprintf(name, sizeof name, "%s.%s", fe->class->name, fe->name);
+                        ty_snprintf(name, sizeof name, "%s.%s", fe->class->name, fe->name);
                         json_str(f, name);
                 } else {
                         json_str(f, (fe != NULL && fe->name != NULL) ? fe->name : "");

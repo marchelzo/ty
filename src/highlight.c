@@ -378,14 +378,14 @@ build_palette(char const *hexes[SC_COUNT])
                 hex_to_rgb(hexes[i], &r, &g, &b);
 
                 if (i == SC_TYPE) {
-                        snprintf(
+                        ty_snprintf(
                                 palette_buf[i],
                                 sizeof palette_buf[i],
                                 "\x1b[1;38;2;%d;%d;%dm",
                                 r, g, b
                         );
                 } else {
-                        snprintf(
+                        ty_snprintf(
                                 palette_buf[i],
                                 sizeof palette_buf[i],
                                 "\x1b[38;2;%d;%d;%dm",

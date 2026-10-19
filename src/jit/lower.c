@@ -3301,7 +3301,7 @@ static bool
 admit(BcLir *c, Value const *f, char *why, usize n)
 {
         if (!graph(c, f)) {
-                snprintf(why, n, "unsupported bytecode op %s", GetInstructionName(c->code[c->offset]));
+                ty_snprintf(why, n, "unsupported bytecode op %s", GetInstructionName(c->code[c->offset]));
                 if (ProfMode) {
                         prof_jit_decline(f, why, c->offset);
                 }
@@ -3316,7 +3316,7 @@ admit(BcLir *c, Value const *f, char *why, usize n)
         }
 
         if (c->dynamic && c->size > 4096) {
-                snprintf(why, n, "large dynamic stack");
+                ty_snprintf(why, n, "large dynamic stack");
                 if (ProfMode) {
                         prof_jit_decline(f, "large dynamic stack", -1);
                 }
@@ -3406,7 +3406,7 @@ build(Ty *ty, Value const *f, bool compact, bool install, u64 begin, JitNotes *n
         };
 
         if (c.L == NULL) {
-                snprintf(why, nwhy, "%s", err.message);
+                ty_snprintf(why, nwhy, "%s", err.message);
                 return NULL;
         }
 
@@ -3443,7 +3443,7 @@ build(Ty *ty, Value const *f, bool compact, bool install, u64 begin, JitNotes *n
         if (code == NULL) {
                 xmF(osr);
                 xmF(c.tier);
-                snprintf(why, nwhy, "%s", c.ok ? err.message : "lowering failed");
+                ty_snprintf(why, nwhy, "%s", c.ok ? err.message : "lowering failed");
                 if (ProfMode) {
                         prof_jit_decline(f, err.message, -1);
                 }
@@ -3501,7 +3501,7 @@ JitImageRec *
 jit_inspect(Ty *ty, Value const *f, bool compact, char *why, usize n)
 {
         if (lir_target() == NULL) {
-                snprintf(why, n, "no native JIT target on this platform");
+                ty_snprintf(why, n, "no native JIT target on this platform");
                 return NULL;
         }
 

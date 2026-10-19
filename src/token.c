@@ -101,14 +101,14 @@ token_show_type(Ty *ty, int type)
 
         default:
                 if (type > KEYWORD_TYPE_MIN) {
-                        snprintf(
+                        ty_snprintf(
                                 token_show_buffer,
                                 512,
                                 "keyword '%s'",
                                 keyword_show(type)
                         );
                 } else {
-                        snprintf(
+                        ty_snprintf(
                                 token_show_buffer,
                                 512,
                                 "token '%c'",
@@ -127,17 +127,17 @@ token_show(Ty *ty, Token const *t)
         {
                 Value str = xSs(t->string.data, t->string.length);
                 char *shown = value_show(ty, &str, 0);
-                snprintf(token_show_buffer, sizeof token_show_buffer, "string %s", shown);
+                ty_snprintf(token_show_buffer, sizeof token_show_buffer, "string %s", shown);
                 ty_free(shown);
                 break;
         }
-        case TOKEN_IDENTIFIER: snprintf(token_show_buffer, 512, "identifier '%s'", t->identifier);         break;
-        case TOKEN_REGEX:      snprintf(token_show_buffer, 512, "regex /%s/", t->regex->pattern);          break;
-        case TOKEN_INTEGER:    snprintf(token_show_buffer, 512, "integer '%"PRIiMAX"'", t->integer);       break;
-        case TOKEN_REAL:       snprintf(token_show_buffer, 512, "real '%f'", t->real);                     break;
-        case TOKEN_KEYWORD:    snprintf(token_show_buffer, 512, "keyword '%s'", keyword_show(t->keyword)); break;
-        case TOKEN_USER_OP:    snprintf(token_show_buffer, 512, "operator '%s'", t->identifier);           break;
-        default:               snprintf(token_show_buffer, 512, "%s", token_show_type(ty, t->type));       break;
+        case TOKEN_IDENTIFIER: ty_snprintf(token_show_buffer, 512, "identifier '%s'", t->identifier);         break;
+        case TOKEN_REGEX:      ty_snprintf(token_show_buffer, 512, "regex /%s/", t->regex->pattern);          break;
+        case TOKEN_INTEGER:    ty_snprintf(token_show_buffer, 512, "integer '%"PRIiMAX"'", t->integer);       break;
+        case TOKEN_REAL:       ty_snprintf(token_show_buffer, 512, "real '%f'", t->real);                     break;
+        case TOKEN_KEYWORD:    ty_snprintf(token_show_buffer, 512, "keyword '%s'", keyword_show(t->keyword)); break;
+        case TOKEN_USER_OP:    ty_snprintf(token_show_buffer, 512, "operator '%s'", t->identifier);           break;
+        default:               ty_snprintf(token_show_buffer, 512, "%s", token_show_type(ty, t->type));       break;
         }
 
         return sclonea(ty, token_show_buffer);
