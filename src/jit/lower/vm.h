@@ -162,13 +162,12 @@ state(BcLir *c, BcLirNode const *node, char const *ip)
                 c->sp -= (op == INSTR_TARGET_DYN_MEMBER) ? 2 : 0;
                 return;
 
-        case INSTR_MAYBE_ASSIGN:
         case INSTR_PRE_INC:
         case INSTR_POST_INC:
         case INSTR_PRE_DEC:
         case INSTR_POST_DEC:
                 tycall(c, vm_jit_mutation, LT_VOID, imm32(op));
-                c->sp += (op != INSTR_MAYBE_ASSIGN);
+                c->sp += 1;
                 return;
 
         case INSTR_PUSH_DEFER_GROUP:

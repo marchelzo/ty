@@ -7810,18 +7810,6 @@ TargetMember:
                         DoAssign(ty);
                         break;
 
-                CASE(MAYBE_ASSIGN)
-                        vp = poptarget();
-                        if (UNLIKELY(((uptr)vp & PMASK3) != 0)) {
-                                zP("?= needs a target that can hold nil");
-                        }
-                        if (vp->type == VALUE_NIL) {
-                                *vp = peek();
-                        } else {
-                                *top() = *vp;
-                        }
-                        break;
-
                 CASE(TAG_PUSH)
                         READVALUE(tag);
                         top()->tags = tags_push(ty, top()->tags, tag);
@@ -11122,8 +11110,6 @@ StepInstruction(char const *ip)
                 break;
         CASE(ASSIGN)
                 break;
-        CASE(MAYBE_ASSIGN)
-                break;
         CASE(TAG_PUSH)
                 SKIPVALUE(tag);
                 break;
@@ -12402,18 +12388,6 @@ vm_jit_scope(Ty *ty, int op)
 void
 vm_jit_mutation(Ty *ty, int op)
 {
-        if (op == INSTR_MAYBE_ASSIGN) {
-                Value *target = poptarget();
-                if (((uptr)target & PMASK3) != 0) {
-                        zP("?= needs a target that can hold nil");
-                }
-                if (target->type == VALUE_NIL) {
-                        *target = peek();
-                } else {
-                        *top() = *target;
-                }
-                return;
-        }
         if (SpecialTarget(ty)) {
                 char const *name = op == INSTR_POST_DEC ? "post-decrement" : "pre-increment";
                 if (op == INSTR_PRE_DEC) {

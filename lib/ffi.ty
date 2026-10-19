@@ -1014,16 +1014,16 @@ fn clos() {
  * ```
  * import ffi as c (C!)
  *
- * if not let $uv = c.open('uv') {
- *     throw RuntimeError('libuv not found')
+ * if not let $z = c.open('z') {
+ *     throw RuntimeError('zlib not found')
  * }
  *
  * // Bind each prototype to a Ty function of the same name, looked up in
- * // `uv` (omit the library to search the process). `C! pub uv fn` exports
- * // them, and `C! uv 'uv_' fn` binds `run` to the symbol `uv_run`.
- * C! uv fn {
- *     int uv_loop_init(void *loop);
- *     int uv_run(void *loop, int mode);
+ * // `z` (omit the library to search the process). `C! pub z fn` exports
+ * // them, and `C! z 'z_' fn` binds `name` to the symbol `z_name`.
+ * C! z fn {
+ *     char const *zlibVersion(void);
+ *     unsigned long crc32(unsigned long crc, char const *buf, unsigned len);
  * }
  *
  * // Define a class whose instances own the C memory of the struct:
@@ -1034,8 +1034,8 @@ fn clos() {
  * }
  *
  * // Wrap a Ty function as a C function pointer with the given signature.
- * C! closure on-timer(handle: c.ptr) -> c.void {
- *     print('tick')
+ * C! closure compare(a: c.ptr, b: c.ptr) -> c.int {
+ *     c.load(c.int, a) - c.load(c.int, b)
  * }
  * ```
  */

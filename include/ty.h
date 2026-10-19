@@ -1013,7 +1013,6 @@ extern usize TotalBytesAllocated;
         X(INC),                   \
         X(DEC),                   \
         X(ASSIGN),                \
-        X(MAYBE_ASSIGN),          \
         X(ASSIGN_LOCAL),          \
         X(ASSIGN_GLOBAL),         \
         X(ASSIGN_SUBSCRIPT),      \

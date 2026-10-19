@@ -607,7 +607,6 @@ static BcEffect const Effects[256] = {
         [INSTR_MUT_SHL]              = FX(1, 0),
         [INSTR_MUT_SHR]              = FX(1, 0),
         [INSTR_ASSIGN]               = FX(1, 0),
-        [INSTR_MAYBE_ASSIGN]         = FX(1, 0),
         [INSTR_DECORATE]             = FX(1, 0),
         [INSTR_INTO_METHOD]          = FX(1, 0),
         [INSTR_BIND_CLASS]           = FX(1, 0),
@@ -2659,7 +2658,6 @@ lower_op(BcLir *c, BcLirNode const *node, char const *ip)
         case INSTR_BIND_STATIC:
         case INSTR_SELF_STATIC_ACCESS:
         case INSTR_STATIC_MEMBER_ACCESS:
-        case INSTR_MAYBE_ASSIGN:
         case INSTR_DECORATE:
         case INSTR_INTO_METHOD:
         case INSTR_BIND_CLASS:

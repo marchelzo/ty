@@ -453,10 +453,10 @@ static bool
 emit_expr(Ty *ty, Expr const *e, bool need_loc);
 
 static void
-emit_assignment(Ty *ty, Expr *target, Expr const *e, bool maybe, bool def);
+emit_assignment(Ty *ty, Expr *target, Expr const *e, bool def);
 
 static void
-emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def);
+emit_assignment2(Ty *ty, Expr *target, bool def);
 
 static bool
 emit_case(
@@ -8523,7 +8523,7 @@ emit_xcase(
         for (int i = 0; i < vN(STATE.match_assignments); ++i) {
                 Expr *e = *v_(STATE.match_assignments, i);
                 emit_load(ty, e->tmp, STATE.fscope);
-                emit_assignment2(ty, e->target, false, false);
+                emit_assignment2(ty, e->target, false);
                 INSN(POP);
         }
 
@@ -8588,7 +8588,7 @@ emit_expr_xcase(Ty *ty, Expr const *pattern, Expr const *e, bool skip_tag)
         for (int i = 0; i < vN(STATE.match_assignments); ++i) {
                 Expr *e = *v_(STATE.match_assignments, i);
                 emit_load(ty, e->tmp, STATE.fscope);
-                emit_assignment2(ty, e->target, false, false);
+                emit_assignment2(ty, e->target, false);
                 INSN(POP);
         }
 
@@ -9241,7 +9241,7 @@ emit_match_stmt_group(Ty *ty, Stmt const *stmt, PatternGroup *grp, bool keep, bo
                 switch (kind) {
                 case PAT_WILDCARD:
                         if (patterns[i]->type != EXPRESSION_MATCH_ANY) {
-                                emit_assignment2(ty, patterns[i], false, true);
+                                emit_assignment2(ty, patterns[i], true);
                         }
                         INSN(POP);
                         returns &= ES(thens[i], keep);
@@ -9499,7 +9499,7 @@ emit_if_not(Ty *ty, Stmt const *s, bool want_result)
         for (int i = 0; i < vN(STATE.match_assignments); ++i) {
                 Expr *e = v__(STATE.match_assignments, i);
                 emit_load(ty, e->tmp, STATE.fscope);
-                emit_assignment2(ty, e->target, false, false);
+                emit_assignment2(ty, e->target, false);
                 INSN(POP);
         }
 
@@ -9615,7 +9615,7 @@ emit_if(Ty *ty, Stmt const *s, bool want_result)
         for (int i = 0; i < vN(STATE.match_assignments); ++i) {
                 Expr *e = *v_(STATE.match_assignments, i);
                 emit_load(ty, e->tmp, STATE.fscope);
-                emit_assignment2(ty, e->target, false, false);
+                emit_assignment2(ty, e->target, false);
                 INSN(POP);
         }
 
@@ -9671,7 +9671,7 @@ emit_match_expr_group(Ty *ty, Expr const *expr, PatternGroup *grp, bool last)
                 switch (kind) {
                 case PAT_WILDCARD:
                         if (patterns[i]->type != EXPRESSION_MATCH_ANY) {
-                                emit_assignment2(ty, patterns[i], false, true);
+                                emit_assignment2(ty, patterns[i], true);
                         }
                         INSN(POP);
                         returns &= EE(thens[i]);
@@ -10171,7 +10171,7 @@ BeginRangeLoop(
         case 3: end = (PLACEHOLDER_JUMP)(ty, INSTR_JLT); break;
         }
 
-        emit_assignment2(ty, target, false, true);
+        emit_assignment2(ty, target, true);
 
         return (RangeLoop) {
                 .start     = start,
@@ -10351,10 +10351,8 @@ emit_for_each(Ty *ty, Stmt const *s, bool want_result)
 }
 
 static void
-emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
+emit_assignment2(Ty *ty, Expr *target, bool def)
 {
-        char instr = maybe ? INSTR_MAYBE_ASSIGN : INSTR_ASSIGN;
-
         usize start = vN(STATE.code);
 
         bool after = false;
@@ -10392,7 +10390,7 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
                                         Ei32(i);
                                 }
                                 Eu1(!v__(target->optional, i));
-                                emit_assignment2(ty, v__(target->elements, i), maybe, def);
+                                emit_assignment2(ty, v__(target->elements, i), def);
                                 INSN(POP);
                         }
                 }
@@ -10403,7 +10401,7 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
                         INSN(DUP);
                         EE(v__(target->keys, i));
                         INSN(SUBSCRIPT);
-                        emit_assignment2(ty, v__(target->values, i), maybe, def);
+                        emit_assignment2(ty, v__(target->values, i), def);
                         INSN(POP);
                 }
                 break;
@@ -10411,13 +10409,13 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
         case EXPRESSION_TAG_APPLICATION:
                 INSN(UNTAG_OR_DIE);
                 Ei32(tag_app_tag(target));
-                emit_assignment2(ty, target->tagged, maybe, def);
+                emit_assignment2(ty, target->tagged, def);
                 break;
 
         case EXPRESSION_TAG_PATTERN:
                 emit_target(ty, target, def);
                 INSN(STEAL_TAG);
-                emit_assignment2(ty, target->tagged, maybe, def);
+                emit_assignment2(ty, target->tagged, def);
                 break;
 
         case EXPRESSION_VIEW_PATTERN:
@@ -10425,7 +10423,7 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
                 EE(target->left);
                 ECALL(1, 0);
                 add_location(ty, target->left, start, vN(STATE.code));
-                emit_assignment2(ty, target->right, maybe, def);
+                emit_assignment2(ty, target->right, def);
                 INSN(POP);
                 break;
 
@@ -10436,14 +10434,14 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
                 add_location(ty, target->left, start, vN(STATE.code));
                 INSN(THROW_IF_NIL);
                 add_location(ty, target, vN(STATE.code) - 1, vN(STATE.code));
-                emit_assignment2(ty, target->right, maybe, def);
+                emit_assignment2(ty, target->right, def);
                 INSN(POP);
                 break;
 
         case EXPRESSION_MATCH_NOT_NIL:
                 INSN(THROW_IF_NIL);
                 emit_target(ty, target, def);
-                (emit_instr)(ty, instr);
+                INSN(ASSIGN);
                 break;
 
         case EXPRESSION_TUPLE:
@@ -10465,23 +10463,18 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
                                 INSN(PUSH_TUPLE_MEMBER);
                                 Eu1(v__(target->required, i));
                                 Ei32(M_ID(v__(target->names, i)));
-                                emit_assignment2(ty, v__(target->es, i), maybe, def);
+                                emit_assignment2(ty, v__(target->es, i), def);
                                 INSN(POP);
                         } else {
                                 INSN(PUSH_TUPLE_ELEM);
                                 Ei32(i);
-                                emit_assignment2(ty, v__(target->es, i), maybe, def);
+                                emit_assignment2(ty, v__(target->es, i), def);
                                 INSN(POP);
                         }
                 }
                 break;
 
         case EXPRESSION_SUBSCRIPT:
-                if (maybe) {
-                        emit_target(ty, target, def);
-                        INSN(MAYBE_ASSIGN);
-                        break;
-                }
                 EE(target->container);
                 if (target->subscript->type == EXPRESSION_LIST) {
                         vfor(target->subscript->es, EE(*it));
@@ -10498,7 +10491,7 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
 
         default:
                 emit_target(ty, target, def);
-                INSNx(instr);
+                INSN(ASSIGN);
                 if (
                         (target->type == EXPRESSION_IDENTIFIER)
                      && (target->constraint != NULL)
@@ -10525,7 +10518,7 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
 }
 
 static void
-emit_assignment(Ty *ty, Expr *target, Expr const *e, bool maybe, bool def)
+emit_assignment(Ty *ty, Expr *target, Expr const *e, bool def)
 {
         if (target->has_resources) {
                 INSN(PUSH_DROP_GROUP);
@@ -10538,7 +10531,7 @@ emit_assignment(Ty *ty, Expr *target, Expr const *e, bool maybe, bool def)
                 Ei32(vN(target->es));
                 STK(vN(target->es) - 2);
                 for (int i = 0; i < vN(target->es); ++i) {
-                        emit_assignment2(ty, v__(target->es, i), maybe, def);
+                        emit_assignment2(ty, v__(target->es, i), def);
                         if (i + 1 == vN(target->es)) {
                                 INSN(SWAP);
                         }
@@ -10546,8 +10539,145 @@ emit_assignment(Ty *ty, Expr *target, Expr const *e, bool maybe, bool def)
                 }
         } else {
                 EE(e);
-                emit_assignment2(ty, target, maybe, def);
+                emit_assignment2(ty, target, def);
         }
+}
+
+static void
+emit_drop_under(Ty *ty, int n)
+{
+        for (int i = 0; i < n; ++i) {
+                INSN(SWAP);
+                INSN(POP);
+        }
+}
+
+static void
+emit_push_nth(Ty *ty, int nth, int count)
+{
+        for (int i = 0; i < count; ++i) {
+                INSN(PUSH_NTH);
+                Ei32(nth);
+                STK(1);
+        }
+}
+
+static void
+emit_maybe_assignment(Ty *ty, Expr *target, Expr const *e)
+{
+        JumpPlaceholder done;
+        JumpPlaceholder fresh;
+        usize start = vN(STATE.code);
+        int n;
+
+        switch (target->type) {
+        case EXPRESSION_IDENTIFIER:
+                EE(target);
+                INSN(DUP);
+                fresh = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF_NIL);
+                done  = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP);
+                PATCH_JUMP(fresh);
+                INSN(POP);
+                EE(e);
+                emit_assignment2(ty, target, false);
+                break;
+
+        case EXPRESSION_MEMBER_ACCESS:
+        case EXPRESSION_SELF_ACCESS:
+                EE(target->object);
+                INSN(DUP);
+                INSN(TRY_MEMBER_ACCESS);
+                EM(target->member->identifier);
+                INSN(DUP);
+                fresh = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF_NIL);
+                WITH_FORKED_STACK {
+                        emit_drop_under(ty, 1);
+                        done = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP);
+                }
+                PATCH_JUMP(fresh);
+                INSN(POP);
+                EE(e);
+                emit_push_nth(ty, 1, 1);
+                INSN(TARGET_MEMBER);
+                EM(target->member->identifier);
+                INSN(ASSIGN);
+                emit_drop_under(ty, 1);
+                break;
+
+        case EXPRESSION_DYN_MEMBER_ACCESS:
+        case EXPRESSION_SUBSCRIPT:
+                if (
+                        (target->type == EXPRESSION_SUBSCRIPT)
+                     && (target->subscript->type == EXPRESSION_LIST)
+                ) {
+                        goto MultiSubscript;
+                }
+                if (target->type == EXPRESSION_SUBSCRIPT) {
+                        EE(target->container);
+                        EE(target->subscript);
+                        emit_push_nth(ty, 1, 2);
+                        INSN(SUBSCRIPT);
+                } else {
+                        EE(target->object);
+                        EE(target->member);
+                        emit_push_nth(ty, 1, 2);
+                        INSN(TRY_GET_MEMBER);
+                        STK(-1);
+                }
+                INSN(DUP);
+                fresh = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF_NIL);
+                WITH_FORKED_STACK {
+                        INSN(DROP2);
+                        STK(-2);
+                        done = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP);
+                }
+                PATCH_JUMP(fresh);
+                INSN(POP);
+                EE(e);
+                emit_push_nth(ty, 2, 2);
+                if (target->type == EXPRESSION_SUBSCRIPT) {
+                        INSN(TARGET_SUBSCRIPT);
+                } else {
+                        INSN(TARGET_DYN_MEMBER);
+                        STK(-2);
+                }
+                INSN(ASSIGN);
+                INSN(DROP2);
+                STK(-2);
+                break;
+
+        MultiSubscript:
+                n = vN(target->subscript->es);
+                EE(target->container);
+                vfor(target->subscript->es, EE(*it));
+                emit_push_nth(ty, n - 1, n);
+                emit_push_nth(ty, 2 * n, 1);
+                EMCALL(NAMES.subscript, n);
+                INSN(DUP);
+                fresh = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF_NIL);
+                WITH_FORKED_STACK {
+                        emit_drop_under(ty, n + 1);
+                        done = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP);
+                }
+                PATCH_JUMP(fresh);
+                INSN(POP);
+                EE(e);
+                emit_push_nth(ty, n + 1, n + 1);
+                INSN(ASSIGN_SUBSCRIPT);
+                Eu8(n);
+                STK(-n - 1);
+                emit_drop_under(ty, n + 1);
+                break;
+
+        default:
+                PushContext(ty, target);
+                fail("%s?=%s takes a single variable, member, or subscript, not a pattern", TERM(1), TERM(0));
+        }
+
+        PATCH_JUMP(done);
+        PEEPHOLE_BARRIER();
+
+        add_location(ty, target, start, vN(STATE.code));
 }
 
 static void
@@ -10803,11 +10933,11 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
 
         case EXPRESSION_EQ:
-                emit_assignment(ty, e->target, e->value, false, false);
+                emit_assignment(ty, e->target, e->value, false);
                 break;
 
         case EXPRESSION_MAYBE_EQ:
-                emit_assignment(ty, e->target, e->value, true, false);
+                emit_maybe_assignment(ty, e->target, e->value);
                 break;
 
         case EXPRESSION_INTEGER:
@@ -11646,7 +11776,7 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                         ) {
                                 WITH_STATE(code, ((byte_vector) {0})) {
                                         EE(s->value);
-                                        emit_assignment2(ty, s->target, false, true);
+                                        emit_assignment2(ty, s->target, true);
                                         INSN(POP);
                                         INSN(HALT);
                                         while (vN(xD.tls0) <= s->target->symbol->i) {
@@ -11660,7 +11790,7 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                              || SymbolIsGlobal(s->target->symbol)
                              || (get_loop(ty, 0) != NULL)
                         ) {
-                                emit_assignment(ty, s->target, s->value, false, true);
+                                emit_assignment(ty, s->target, s->value, true);
                                 INSN(POP);
                         }
                 }
@@ -20622,8 +20752,6 @@ DumpProgram(
                         break;
                 CASE(ASSIGN_SUBSCRIPT)
                         READVALUE(n8);
-                        break;
-                CASE(MAYBE_ASSIGN)
                         break;
                 CASE(TAG_PUSH)
                         READVALUE(tag);
