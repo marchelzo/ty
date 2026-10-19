@@ -1,0 +1,43 @@
+import ty
+
+macro roundtrip(e) { e }
+
+macro bump(e) {
+    __walk!(e, match {
+        ty.Int(1) => ty.Int(100),
+        x         => x
+    })
+}
+
+let ys = [Some(1), None, Some(3)]
+
+pub fn if-let-filters-and-binds() {
+    assert([x for ys if let Some(x) = it] == [1, 3])
+    assert([x * 10 for y in ys if let Some(x) = y and x > 1] == [30])
+}
+
+pub fn if-let-in-range-loops() {
+    assert([x * i for i in ..3 if let Some(x) = ys[i]] == [0, 6])
+}
+
+pub fn if-let-in-sets-and-dicts() {
+    assert(%{x for ys if let Some(x) = it} == %{1, 3})
+    assert(%{x: x * 2 for ys if let Some(x) = it} == %{1: 2, 3: 6})
+}
+
+pub fn if-let-binds-for-later-parts() {
+    assert([(x, z) for ys if let Some(x) = it for z in ..x if z != 1] == [(1, 0), (3, 0), (3, 2)])
+}
+
+pub fn if-let-narrows() {
+    let f = (x: Int) -> x + 1
+    let pairs: Array[(Int, String | nil)] = [(1, 'a'), (2, nil), (3, 'c')]
+    assert([f(x) for ys if let Some(x) = it] == [2, 4])
+    assert([s.upper() for p in pairs if let (_, $s) = p] == ['A', 'C'])
+}
+
+pub fn if-let-survives-macros() {
+    assert(roundtrip([x for ys if let Some(x) = it and x > 1]) == [3])
+    assert(roundtrip(%{x: 0 for ys if let Some(x) = it}) == %{1: 0, 3: 0})
+    assert(bump([x for ys if let Some(x) = it and x != 1]) == [1, 3])
+}

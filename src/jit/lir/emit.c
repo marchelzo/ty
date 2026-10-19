@@ -100,6 +100,7 @@ typedef struct {
         u32 frame;
 
         u32 epilogue;
+        u32 hot_ret;
         u32 thunk;
         u32 literals;
         u32 sites;
@@ -579,6 +580,20 @@ dest(Emit *e, u32 pc, LirLabel label)
         return label;
 }
 
+static i64
+fitted(i64 k, LirType type)
+{
+        switch (type) {
+        case LT_I8:  return (i8)k;
+        case LT_U8:  return (u8)k;
+        case LT_I16: return (i16)k;
+        case LT_U16: return (u16)k;
+        case LT_I32: return (i32)k;
+        case LT_U32: return (u32)k;
+        default:     return k;
+        }
+}
+
 static void
 home(Emit *e, LirReg r, u32 pc, u8 dest, LirType type)
 {
@@ -996,8 +1011,10 @@ spilled_params(Emit *e)
         li(Dst, TMP0, (uptr)lir_runtime()->current_ty);
         call(Dst, false, e->thunk, e->pc_slot);
         st(Dst, 0, FRAME, e->ty_slot);
-        ld(Dst, TMP0, 0, offsetof(Ty, stack.count));
-        st(Dst, TMP0, FRAME, e->top_slot);
+        if (e->code->nvslots != 0) {
+                ld(Dst, TMP0, 0, offsetof(Ty, stack.count));
+                st(Dst, TMP0, FRAME, e->top_slot);
+        }
         ld(Dst, TMP0, 0, offsetof(Ty, stack.items));
         st(Dst, TMP0, FRAME, e->stack_base);
 
@@ -1021,8 +1038,10 @@ context(Emit *e)
         }
 
         st(Dst, t, FRAME, e->ty_slot);
-        ld(Dst, TMP1, t, offsetof(Ty, stack.count));
-        st(Dst, TMP1, FRAME, e->top_slot);
+        if (e->code->nvslots != 0) {
+                ld(Dst, TMP1, t, offsetof(Ty, stack.count));
+                st(Dst, TMP1, FRAME, e->top_slot);
+        }
         ld(Dst, TMP1, t, offsetof(Ty, stack.items));
         st(Dst, TMP1, FRAME, e->stack_base);
 }
@@ -1059,9 +1078,20 @@ receive(Emit *e)
                 st(Dst, TMP1, d, 0);
         }
 
+        bool *live = tmp(bool, L->sig.nparams + 1);
+
+        memset(live, 0, L->sig.nparams + 1);
+
+        for (u32 r = 0; r < vN(L->regs); ++r) {
+                u32 p = v__(L->regs, r).param;
+                if (p != LIR_NONE && p < L->sig.nparams && covering(ival(e, r), 0)) {
+                        live[p] = true;
+                }
+        }
+
         for (u32 p = 0; p < L->sig.nparams && !saved; ++p) {
                 ArgLoc a = e->arguments[p];
-                if (a.phys != LIR_PHYS_NONE && !a.fpr) {
+                if (a.phys != LIR_PHYS_NONE && !a.fpr && live[p]) {
                         fit(Dst, a.phys, a.type);
                 }
         }
@@ -1430,10 +1460,14 @@ insn(Emit *e, u32 pc)
                 return true;
 
         case LF_RET:
-                if (in->nargs != 0) {
+                if (in->nargs != 0 && x[0].kind == LO_IMM) {
+                        li(Dst, 0, (u64)fitted(x[0].imm, L->sig.ret));
+                } else if (in->nargs != 0) {
                         home(e, x[0].reg, pc, 0, L->sig.ret);
                 }
-                jump(Dst, e->epilogue);
+                if (pc != e->hot_ret) {
+                        jump(Dst, e->epilogue);
+                }
                 return true;
 
         case LF_CALL:
@@ -1682,6 +1716,44 @@ stubs(Emit *e)
         return true;
 }
 
+static u32
+hot_return(Emit *e)
+{
+        Lir const *L    = e->L;
+        u32        n    = vN(L->insts);
+        u8        *kind = tmp(u8, n + 1);
+        bool       cold = false;
+        u32        last = LIR_NONE;
+
+        memset(kind, 0, n + 1);
+
+        for (u32 i = 0; i < vN(L->labels); ++i) {
+                LirLabelInfo l = v__(L->labels, i);
+                if (l.pos < n) {
+                        kind[l.pos] |= l.cold ? 2 : 1;
+                }
+        }
+
+        for (u32 pc = 0; pc < n; ++pc) {
+                if (kind[pc] != 0) {
+                        cold = !(kind[pc] & 1);
+                }
+                if (!cold && v__(L->insts, pc).op == LIR_RET) {
+                        last = pc;
+                }
+        }
+
+        return last;
+}
+
+static void
+finale(Emit *e)
+{
+        label(Dst, e->epilogue);
+        saveregs(e, false);
+        epilogue(Dst, e->origin, false);
+}
+
 static bool
 assemble(Emit *e)
 {
@@ -1700,6 +1772,8 @@ assemble(Emit *e)
                 return false;
         }
 
+        e->hot_ret = hot_return(e);
+
         for (u32 pc = 0; pc < n; ++pc) {
                 LirOp op   = v__(L->insts, pc).op;
                 int   mode = (op == LIR_POLL) ? MV_FAST : MV_ALL;
@@ -1714,12 +1788,17 @@ assemble(Emit *e)
                 ) {
                         return false;
                 }
+                if (pc == e->hot_ret) {
+                        finale(e);
+                }
         }
 
         marks(e, n);
-        label(Dst, e->epilogue);
-        saveregs(e, false);
-        epilogue(Dst, e->origin, false);
+
+        if (e->hot_ret == LIR_NONE) {
+                finale(e);
+        }
+
         thunk(Dst, e->thunk, e->pc_slot);
         cold(Dst);
 

@@ -995,7 +995,7 @@ macro _ComprPart = {
     pattern: [AST],
     iter: AST,
     ?`while`: AST,
-    ?`if`: AST,
+    ?`if`: [AST],
     ?`where`: AST
 }
 
@@ -4884,7 +4884,7 @@ macro __walk! {
             pattern: [walk(p, f) for p in part.pattern],
             iter: walk(part.iter, f),
             `while`: walk(part.?`while`, f),
-            `if`: walk(part.?`if`, f),
+            `if`: [walk(cond, f) for cond in part.?`if` ?? []],
             `where`: walk(part.?`where`, f)
         })
     }

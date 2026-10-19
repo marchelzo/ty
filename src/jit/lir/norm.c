@@ -489,7 +489,7 @@ shape(Lir *L, LirInst *in, u8 *use, LirClass *cls)
         }
 
         case LF_RET:
-                if (in->nargs != 0) {
+                if (in->nargs != 0 && a[0].kind != LO_IMM) {
                         *use   = 0b1;
                         cls[0] = classof(L, a[0], lir_type_class(L->sig.ret));
                 }

@@ -873,6 +873,129 @@ prune(Ty *ty, Lir *L)
         SCRATCH_RESTORE();
 }
 
+static u32
+cold_end(Lir const *L, bool const *hot, u32 pc, u32 n)
+{
+        for (u32 to = pc; to < n; ++to) {
+                if (to > pc && hot[to]) {
+                        return to;
+                }
+                if (ends(v_(L->insts, to))) {
+                        return to + 1;
+                }
+        }
+
+        return LIR_NONE;
+}
+
+static LirLabel
+label_at(Lir const *L, u32 pos)
+{
+        for (u32 i = 0; i < vN(L->labels); ++i) {
+                if (v__(L->labels, i).pos == pos) {
+                        return i;
+                }
+        }
+
+        return LIR_NONE;
+}
+
+static void
+sink(Ty *ty, Lir *L)
+{
+        u32 n = vN(L->insts);
+
+        if (n == 0 || getenv("TY_LIR_NO_SINK") != NULL) {
+                return;
+        }
+
+        SCRATCH_SAVE();
+
+        bool     *hot   = stA0(bool, n + 1);
+        bool     *cold  = stA0(bool, n + 1);
+        bool     *moved = stA0(bool, n);
+        LirLabel *exit  = stA(LirLabel, n);
+        u32      *at    = stA(u32, n + 1);
+        bool      any   = false;
+
+        for (u32 i = 0; i < vN(L->labels); ++i) {
+                LirLabelInfo l = v__(L->labels, i);
+                if (l.pos == n) {
+                        goto Done;
+                }
+                if (l.pos != LIR_NONE) {
+                        *(l.cold ? &cold[l.pos] : &hot[l.pos]) = true;
+                }
+        }
+
+        for (u32 pc = 1; pc < n; ++pc) {
+                if (!cold[pc] || hot[pc] || !ends(v_(L->insts, pc - 1))) {
+                        continue;
+                }
+
+                u32 end = cold_end(L, hot, pc, n);
+
+                if (end == LIR_NONE) {
+                        continue;
+                }
+
+                LirLabel out = ends(v_(L->insts, end - 1)) ? LIR_NONE : label_at(L, end);
+
+                if (out == LIR_NONE && !ends(v_(L->insts, end - 1))) {
+                        continue;
+                }
+
+                for (u32 i = pc; i < end; ++i) {
+                        moved[i] = true;
+                        exit[i]  = (i + 1 == end) ? out : LIR_NONE;
+                }
+
+                any = true;
+                pc  = end - 1;
+        }
+
+        if (!any) {
+                goto Done;
+        }
+
+        LirInst *old = vv(L->insts);
+
+        v00(L->insts);
+
+        for (u32 pass = 0; pass < 2; ++pass) {
+                for (u32 pc = 0; pc < n; ++pc) {
+                        if (moved[pc] != (pass == 1)) {
+                                continue;
+                        }
+                        at[pc] = vN(L->insts);
+                        lir_emit_owned(L, &old[pc]);
+                        if (moved[pc] && exit[pc] != LIR_NONE) {
+                                xvP(L->insts, ((LirInst) {
+                                        .op     = LIR_JMP,
+                                        .dst    = LIR_NONE,
+                                        .args   = { lir_l(exit[pc]) },
+                                        .nargs  = 1,
+                                        .origin = old[pc].origin
+                                }));
+                        }
+                }
+        }
+
+        at[n] = vN(L->insts);
+
+        for (u32 i = 0; i < vN(L->labels); ++i) {
+                LirLabelInfo *l = v_(L->labels, i);
+                if (l->pos != LIR_NONE) {
+                        l->pos = at[l->pos];
+                }
+        }
+
+        xmF(old);
+
+Done:
+        SCRATCH_RESTORE();
+}
+
 typedef struct {
         u32 *refs;
         u32 *marks;
@@ -1098,6 +1221,7 @@ lir_optimize(Ty *ty, Lir *L)
 {
         ty = lir_scratch(ty);
 
+        sink(ty, L);
         prune(ty, L);
         diamonds(ty, L);
         fold(ty, L);

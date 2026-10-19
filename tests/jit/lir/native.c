@@ -772,6 +772,57 @@ check_diamonds(void)
 }
 
 static void
+check_sinking(void)
+{
+        static i64 const values[] = { INT64_MIN, -7, -1, 0, 1, 99, 100, 101, 12345 };
+
+        Lir     *L    = fn(LT_I64, LT_I64);
+        LirReg   x    = lir_reg(L, LIR_I64);
+        LirReg   out  = lir_reg(L, LIR_I64);
+        LirReg   neg  = lir_reg(L, LIR_I64);
+        LirLabel low  = lir_label(L);
+        LirLabel high = lir_label(L);
+        LirLabel join = lir_label(L);
+        LirError err  = {0};
+
+        lir_cold(L, low);
+        lir_cold(L, high);
+
+        put(L, LIR_MOV, x, lir_r(L->params[0]));
+        put(L, LIR_BR, LIR_NONE, lir_cc(LIR_LT), lir_r(x), lir_i(0), lir_l(low));
+        put(L, LIR_BR, LIR_NONE, lir_cc(LIR_GT), lir_r(x), lir_i(100), lir_l(high));
+        put(L, LIR_ADD, out, lir_r(x), lir_i(5));
+        put(L, LIR_JMP, LIR_NONE, lir_l(join));
+        here(L, high);
+        put(L, LIR_SUB, out, lir_r(x), lir_i(100));
+        here(L, join);
+        put(L, LIR_ADD, out, lir_r(out), lir_i(1));
+        ret(L, out);
+        here(L, low);
+        put(L, LIR_MUL, neg, lir_r(x), lir_i(-2));
+        ret(L, neg);
+
+        Lir *D = lir_clone(L, &err);
+
+        CHECK(D != NULL && lir_optimize(NULL, D));
+
+        if (D != NULL) {
+                CHECK(v__(D->labels, join).pos < v__(D->labels, high).pos);
+                CHECK(v__(D->labels, join).pos < v__(D->labels, low).pos);
+                CHECK(v__(D->insts, v__(D->labels, high).pos - 1).op == LIR_RET);
+                CHECK(lir_validate(ty, D, &err));
+                lir_free(D);
+        }
+
+        for (u32 i = 0; i < countof(values); ++i) {
+                LirScalar arg = S(i, values[i]);
+                agrees(L, &arg, 1);
+        }
+
+        lir_free(L);
+}
+
+static void
 check_numbering(void)
 {
         for (i64 limit = -3; limit < 12; limit += 5) {
@@ -906,6 +957,7 @@ main(void)
         check_constant_division();
         check_folding();
         check_diamonds();
+        check_sinking();
         check_numbering();
         check_mutable_divisor();
         check_distant_targets();

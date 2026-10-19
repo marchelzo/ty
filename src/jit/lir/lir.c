@@ -326,6 +326,14 @@ lir_entry(Lir *L, LirLabel label)
         return lir_emit_to(L, LIR_ENTRY, LIR_NONE, (LirOpnd[]) { lir_l(label) }, 1);
 }
 
+void
+lir_cold(Lir *L, LirLabel label)
+{
+        if (!broken(L) && label < vN(L->labels)) {
+                v_(L->labels, label)->cold = true;
+        }
+}
+
 LirReg
 lir_vslot(Lir *L)
 {

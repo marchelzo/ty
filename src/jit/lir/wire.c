@@ -237,6 +237,12 @@ version(Lir const *L)
 {
         u32 v = 1;
 
+        for (u32 i = 0; i < vN(L->labels); ++i) {
+                if (v__(L->labels, i).cold) {
+                        return 4;
+                }
+        }
+
         for (u32 pc = 0; pc < vN(L->insts); ++pc) {
                 LirInst const *in = v_(L->insts, pc);
                 if (LirOps[in->op].form == LF_LD && in->flags != 0) {
@@ -327,7 +333,7 @@ lir_serialize(Ty *ty, Lir *L, LirBytes *bytes, LirError *err)
         put_uint(&w, vN(L->labels));
         vfor(L->labels, {
                 put_uint(&w, it->pos);
-                put_uint(&w, it->entry);
+                put_uint(&w, it->entry | (it->cold << 1));
         });
 
         put_uint(&w, vN(L->roots));
@@ -680,10 +686,11 @@ get_labels(Reader *r, Lir *L)
         for (u32 i = 0; i < n; ++i) {
                 LirLabelInfo *l = v_(L->labels, i);
                 u32 pos   = get_u32(r);
-                u32 entry = get_u32(r);
-                r->ok    &= (entry <= 1);
+                u32 bits  = get_u32(r);
+                r->ok    &= (bits <= 3);
                 l->pos    = pos;
-                l->entry  = entry;
+                l->entry  = bits & 1;
+                l->cold   = bits >> 1;
         }
 }
 
@@ -838,7 +845,7 @@ decode(Ty *ty, Reader *r, LirBinding const *holes, u32 nholes, LirError *err)
 
         u32 version = get_u32(r);
 
-        if (version < 1 || version > 3) {
+        if (version < 1 || version > 4) {
                 return garbage(NULL, err);
         }
 

@@ -4775,6 +4775,27 @@ TryResolveExpr(Ty *ty, Scope *scope, Expr *e)
         return ok;
 }
 
+static Scope *
+symbolize_compr_part(Ty *ty, Scope *scope, ComprPart const *part, char const *name)
+{
+        symbolize_expression(ty, scope, part->iter);
+
+        scope = scope_new(ty, name, scope, false);
+
+        symbolize_lvalue(ty, scope, part->pattern, LV_DECL);
+        symbolize_statement(ty, scope, part->where);
+        symbolize_expression(ty, scope, part->_while);
+
+        for (int i = 0; i < vN(part->_if); ++i) {
+                struct condpart *p = v__(part->_if, i);
+                fix_part(ty, p, scope);
+                symbolize_expression(ty, scope, p->e);
+                symbolize_pattern(ty, scope, p->target, NULL, p->def);
+        }
+
+        return scope;
+}
+
 static void
 symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 {
@@ -5395,13 +5416,12 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 subscope = scope;
 
                 for (usize i = 0; i < vN(e->compr); ++i) {
-                        ComprPart const *part = v_(e->compr, i);
-                        symbolize_expression(ty, subscope, part->iter);
-                        subscope = scope_new(ty, "(array compr)", subscope, false);
-                        symbolize_lvalue(ty, subscope, part->pattern, LV_DECL);
-                        symbolize_statement(ty, subscope, part->where);
-                        symbolize_expression(ty, subscope, part->_while);
-                        symbolize_expression(ty, subscope, part->_if);
+                        subscope = symbolize_compr_part(
+                                ty,
+                                subscope,
+                                v_(e->compr, i),
+                                "(array compr)"
+                        );
                 }
 
                 for (usize i = 0; i < vN(e->elements); ++i) {
@@ -5425,13 +5445,12 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 subscope = scope;
 
                 for (usize i = 0; i < vN(e->dcompr); ++i) {
-                        ComprPart const *part = v_(e->dcompr, i);
-                        symbolize_expression(ty, subscope, part->iter);
-                        subscope = scope_new(ty, "(dict compr)", subscope, false);
-                        symbolize_lvalue(ty, subscope, part->pattern, LV_DECL);
-                        symbolize_statement(ty, subscope, part->where);
-                        symbolize_expression(ty, subscope, part->_while);
-                        symbolize_expression(ty, subscope, part->_if);
+                        subscope = symbolize_compr_part(
+                                ty,
+                                subscope,
+                                v_(e->dcompr, i),
+                                "(dict compr)"
+                        );
                 }
 
                 for (usize i = 0; i < vN(e->keys); ++i) {
@@ -9849,6 +9868,65 @@ PopComprehensionState(Ty *ty, ComprStateStack *stack)
         end_loop(ty);
 }
 
+static JumpPlaceholder
+EmitComprFilter(Ty *ty, condpart_vector const *parts)
+{
+        offset_vector successes = STATE.match_successes;
+        JumpGroup fails         = STATE.match_fails;
+        ExprVec assignments     = STATE.match_assignments;
+        JumpPlaceholder skip;
+
+        v00(STATE.match_successes);
+        InitJumpGroup(&STATE.match_fails);
+        v00(STATE.match_assignments);
+
+        bool simple = is_simple_condition(parts);
+
+        for (int i = 0; i < vN(*parts); ++i) {
+                struct condpart *p = v__(*parts, i);
+                if (p->target != NULL && p->target->has_resources) {
+                        fail("resource bindings are not allowed in comprehension conditions");
+                }
+                WITH_STACK() {
+                        if (simple) {
+                                fail_match_if_not(ty, p->e);
+                        } else {
+                                INSN(SAVE_STACK_POS);
+                                if (p->target == NULL) {
+                                        fail_match_if_not(ty, p->e);
+                                } else {
+                                        emit_part_match(ty, p);
+                                }
+                                INSN(POP_STACK_POS);
+                        }
+                }
+        }
+
+        for (int i = 0; i < vN(STATE.match_assignments); ++i) {
+                Expr *e = v__(STATE.match_assignments, i);
+                emit_load(ty, e->tmp, STATE.fscope);
+                emit_assignment2(ty, e->target, false);
+                INSN(POP);
+        }
+
+        PLACEHOLDER_JUMP(JUMP, matched);
+
+        PATCH_FAILS {
+                if (!simple) {
+                        INSN(POP_STACK_POS);
+                }
+                skip = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP);
+        }
+
+        PATCH_JUMP(matched);
+
+        STATE.match_successes   = successes;
+        STATE.match_fails       = fails;
+        STATE.match_assignments = assignments;
+
+        return skip;
+}
+
 static void
 BeginComprehensionLoop(
         Ty *ty,
@@ -9863,7 +9941,12 @@ BeginComprehensionLoop(
 
                 ES(part->where, false);
 
-                CheckRangeLoop(ty, &loop, part->_while, part->_if);
+                CheckRangeLoop(ty, &loop, part->_while, NULL);
+
+                if (vN(part->_if) > 0) {
+                        loop.skips = true;
+                        loop.skip  = EmitComprFilter(ty, &part->_if);
+                }
 
                 svP(*stack, ((ComprState) {
                         .loop = loop,
@@ -9910,26 +9993,24 @@ BeginComprehensionLoop(
                         state->stop = (PLACEHOLDER_JUMP_IF_NOT)(ty, part->_while);
                 }
 
-                JumpPlaceholder cond_fail;
-                if (part->_if != NULL) {
-                        cond_fail = (PLACEHOLDER_JUMP_IF_NOT)(ty, part->_if);
-                }
-
                 PLACEHOLDER_JUMP(JUMP, match);
 
                 PATCH_FAILS {
                         INSN(BAD_MATCH);
                 }
 
-                if (part->_if != NULL) {
-                        PATCH_JUMP(cond_fail);
+                PATCH_JUMP(match);
+
+                if (vN(part->_if) > 0) {
+                        JumpPlaceholder skip = EmitComprFilter(ty, &part->_if);
+                        PLACEHOLDER_JUMP(JUMP, keep);
+                        PATCH_JUMP(skip);
                         if (part->pattern->has_resources) {
                                 INSN(DROP);
                         }
                         JUMP(state->start);
+                        PATCH_JUMP(keep);
                 }
-
-                PATCH_JUMP(match);
         }
 }
 
@@ -10192,20 +10273,20 @@ CheckRangeLoop(
 )
 {
         if (_while != NULL) {
-                loop->_while = _while;
-                loop->exit = (PLACEHOLDER_JUMP_IF_NOT)(ty, _while);
+                loop->exits = true;
+                loop->exit  = (PLACEHOLDER_JUMP_IF_NOT)(ty, _while);
         }
 
         if (_if != NULL) {
-                loop->_if = _if;
-                loop->skip = (PLACEHOLDER_JUMP_IF_NOT)(ty, _if);
+                loop->skips = true;
+                loop->skip  = (PLACEHOLDER_JUMP_IF_NOT)(ty, _if);
         }
 }
 
 static void
 EndRangeLoop(Ty *ty, RangeLoop *loop)
 {
-        if (loop->_if != NULL) {
+        if (loop->skips) {
                 PATCH_JUMP(loop->skip);
         }
 
@@ -10216,7 +10297,7 @@ EndRangeLoop(Ty *ty, RangeLoop *loop)
 
         JUMP(loop->begin);
 
-        if (loop->_while != NULL) {
+        if (loop->exits) {
                 PATCH_JUMP(loop->exit);
         }
 
@@ -14800,6 +14881,12 @@ typarts(Ty *ty, condpart_vector const *parts, u32 flags)
         return v;
 }
 
+static Value
+tycond(Ty *ty, condpart_vector const *parts, u32 flags)
+{
+        return (vN(*parts) == 0) ? NIL : typarts(ty, parts, flags);
+}
+
 inline static Value
 tyaitem(Ty *ty, Expr const *e, int i, u32 flags)
 {
@@ -15085,7 +15172,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                                 "pattern", go(v_(e->compr, i)->pattern),
                                 "iter",    go(v_(e->compr, i)->iter),
                                 "while",   go(v_(e->compr, i)->_while),
-                                "if",      go(v_(e->compr, i)->_if),
+                                "if",      tycond(ty, &v_(e->compr, i)->_if, flags),
                                 "where",   go(v_(e->compr, i)->where)
                         );
                         vAp(avParts, part);
@@ -15120,7 +15207,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                                 "pattern", go(v_(e->dcompr, i)->pattern),
                                 "iter",    go(v_(e->dcompr, i)->iter),
                                 "while",   go(v_(e->dcompr, i)->_while),
-                                "if",      go(v_(e->dcompr, i)->_if),
+                                "if",      tycond(ty, &v_(e->dcompr, i)->_if, flags),
                                 "where",   go(v_(e->dcompr, i)->where)
                         );
                         vAp(avParts, part);
@@ -16108,6 +16195,26 @@ cparts(Ty *ty, Value *v)
                 }
                 avP(parts, cp);
         }
+
+        return parts;
+}
+
+static condpart_vector
+ccond(Ty *ty, Value *v)
+{
+        if (v == NULL || v->type == VALUE_NIL) {
+                return (condpart_vector){0};
+        }
+
+        if (v->type == VALUE_ARRAY) {
+                return cparts(ty, v);
+        }
+
+        struct condpart *part = amA0(sizeof *part);
+        part->e = cexpr(ty, v);
+
+        condpart_vector parts = {0};
+        avP(parts, part);
 
         return parts;
 }
@@ -17203,7 +17310,7 @@ cexpr(Ty *ty, Value *v)
                                 .pattern = cexpr(ty, pattern),
                                 .iter    = cexpr(ty, iter),
                                 ._while  = cexpr(ty, _while),
-                                ._if     = cexpr(ty, cond),
+                                ._if     = ccond(ty, cond),
                                 .where   = (where == NULL) ? NULL : cstmt(ty, where)
                         }));
                 }
@@ -17248,7 +17355,7 @@ cexpr(Ty *ty, Value *v)
                                 .pattern = cexpr(ty, pattern),
                                 .iter    = cexpr(ty, iter),
                                 ._while  = cexpr(ty, _while),
-                                ._if     = cexpr(ty, cond),
+                                ._if     = ccond(ty, cond),
                                 .where   = (where == NULL) ? NULL : cstmt(ty, where)
                         }));
                 }

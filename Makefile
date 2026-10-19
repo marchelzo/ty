@@ -44,12 +44,18 @@ ifeq ($(MODE),optimized)
 	endif
 endif
 
+ifdef TRAIN
+define pgo-train
+-TY=$(abspath $(1)) $(SHELL) -c "$$TRAIN" >$(2)/train.log 2>&1
+endef
+else
 define pgo-train
 -$(1) --test tests >$(2)/train.log 2>&1
 -$(1) bench/richards.ty >>$(2)/train.log 2>&1
 -$(1) -j bench/richards.ty >>$(2)/train.log 2>&1
 -$(1) perf/run.ty >>$(2)/train.log 2>&1
 endef
+endif
 
 LEGACY := obj tools/tybi include/gen include/keywords.h include/optokens.h \
           include/syscall_names.h include/ioctl_constants.h \
@@ -103,6 +109,7 @@ test: all
 	./ty --test tests --strict $(TEST_ARGS)
 	TY_JIT_EAGER=1 ./ty --test tests --strict $(TEST_ARGS)
 	TY_JIT_EAGER=2 TY_JIT_TIER=3 ./ty --test tests --strict $(TEST_ARGS)
+	TY_JIT_EAGER=2 TY_JIT_TIER=3 TY_JIT_VALIDATE=1 ./ty --test tests --strict $(TEST_ARGS)
 
 $(VCPKG):
 	@test -d _vcpkg/.git || git init -q _vcpkg

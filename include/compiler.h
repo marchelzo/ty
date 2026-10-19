@@ -210,8 +210,8 @@ typedef struct {
         Expr *start;
         Expr *stop;
 
-        Expr *_if;
-        Expr *_while;
+        bool skips;
+        bool exits;
 
         JumpLabel begin;
         JumpLabel next;

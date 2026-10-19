@@ -121,6 +121,7 @@ typedef struct bc_lir {
         LirReg                fp;
         LirReg                ops;
         LirReg                base_index;
+        u32                   entry_poll;
         LirLabel              deopt;
         LirLabel              tierup;
 
@@ -139,6 +140,8 @@ typedef struct bc_lir {
         BcSlot               *vs;
         BcSlot               *known;
         u32                  *known_gen;
+        LirReg               *proven;
+        u32                  *proven_gen;
         u32                   gen;
         BcFact                facts[8];
         i32                   nfacts;
@@ -436,6 +439,34 @@ static void
 base_slot(BcLir *c)
 {
         stack_index(c, c->ops, c->base_index);
+}
+
+static void
+bad_base(Ty *ty, i64 count, i64 base)
+{
+        zP("jit: entered with stack.count = %lld but the operand stack starts at %lld", (long long)count, (long long)base);
+}
+
+static void
+entry_base(BcLir *c)
+{
+        vset(c, LIR_LD_I64, c->base_index, mref(c->ty, offsetof(Ty, stack.count)));
+}
+
+static void
+check_base(BcLir *c)
+{
+        if (c->base_index == LIR_NONE || getenv("TY_JIT_VALIDATE") == NULL) {
+                return;
+        }
+
+        LirLabel ok   = newlabel(c);
+        LirReg   base = lir_reg(c->L, LIR_I64);
+
+        stack_index(c, c->ops, base);
+        jcc(c, LIR_EQ, lir_r(base), lir_r(c->base_index), ok);
+        ccallf(c, bad_base, LT_VOID, LIR_NORETURN, preg(c->ty), { LT_I64, lir_r(c->base_index) }, { LT_I64, lir_r(base) });
+        bind(c, ok);
 }
 
 static void
@@ -2360,7 +2391,7 @@ plan_node(BcLir *c, i32 off)
 
         if (node->branch) {
                 if (node->target <= off) {
-                        node->deopt = newlabel(c);
+                        node->deopt = coldlabel(c);
                 }
                 mark_label(c, node->target);
         }
@@ -2536,10 +2567,10 @@ prologue(BcLir *c)
 
         if (!c->dynamic) {
                 c->base_index = lir_reg(c->L, LIR_I64);
-                base_slot(c);
+                entry_base(c);
         }
 
-        c->deopt = newlabel(c);
+        c->deopt = coldlabel(c);
 
         LirLabel normal = newlabel(c);
 
@@ -2549,18 +2580,20 @@ prologue(BcLir *c)
 
         bind(c, normal);
 
+        check_base(c);
         count_entry(c);
 
         if (c->max_sp > 240) {
                 tycall(c, reserve, LT_VOID, preg(c->ops), imm32(c->max_sp));
         }
 
+        c->entry_poll = vN(c->L->insts);
         emit_poll(c, c->ops, lir_i((uptr)&entry), c->deopt);
 
         if (c->compact && jit_tier() != 1) {
                 c->tier   = alloc0(sizeof *c->tier);
                 *c->tier  = (jit_tier() == 3) ? 3 : JIT_TIER_BUDGET;
-                c->tierup = newlabel(c);
+                c->tierup = coldlabel(c);
                 tier_check(c, c->tierup);
         }
 }
@@ -3119,6 +3152,60 @@ entry_point(BcLir *c, LirLabel label, u32 tag)
         }
 }
 
+static bool
+bounded(BcLir const *c)
+{
+        Lir const *L = c->L;
+
+        for (i32 off = 0; off < c->size; ++off) {
+                BcLirNode const *node = &c->nodes[off];
+                if (decoded(node) && node->branch && node->target <= off) {
+                        return false;
+                }
+        }
+
+        for (u32 pc = 0; pc < vN(L->insts); ++pc) {
+                LirOp op = v__(L->insts, pc).op;
+                if (
+                        (pc != c->entry_poll)
+                     && (op == LIR_CALL || op == LIR_TAILCALL || op == LIR_POLL)
+                ) {
+                        return false;
+                }
+        }
+
+        return true;
+}
+
+static void
+unpoll(BcLir *c)
+{
+        Lir *L  = c->L;
+        u32  at = c->entry_poll;
+
+        if (
+                !c->ok
+             || (at >= vN(L->insts))
+             || (v__(L->insts, at).op != LIR_POLL)
+             || !bounded(c)
+             || (getenv("TY_JIT_ENTRY_POLL") != NULL)
+        ) {
+                return;
+        }
+
+        memmove(v_(L->insts, at), v_(L->insts, at + 1), (vN(L->insts) - at - 1) * sizeof (LirInst));
+        vN(L->insts) -= 1;
+
+        for (u32 i = 0; i < vN(L->labels); ++i) {
+                LirLabelInfo *l = v_(L->labels, i);
+                if (l->pos != LIR_NONE && l->pos > at) {
+                        l->pos -= 1;
+                }
+        }
+
+        c->entry_poll = LIR_NONE;
+}
+
 static void
 epilogue(BcLir *c)
 {
@@ -3339,6 +3426,7 @@ build(Ty *ty, Value const *f, bool compact, bool install, u64 begin, JitNotes *n
 
         lower_all(&c);
         epilogue(&c);
+        unpoll(&c);
 
         u32      ninsts = vN(c.L->insts);
         u32      nregs  = vN(c.L->regs);

@@ -660,7 +660,7 @@ shape(BcLir *c, i32 i, i32 *score)
         ranged(c, loop);
 
         if (promoted(loop)) {
-                loop->deopt = newlabel(c);
+                loop->deopt = coldlabel(c);
         }
 }
 

@@ -249,3 +249,13 @@ pub fn class-constraint-narrowing-stays-sound() {
     assert(result.status != 0)
     assert('[union-method-coverage]' in result.stderr, result.stderr)
 }
+
+pub fn refine-comprehension-conditions() {
+    let xs: Array[Int | nil] = [1, nil, 3]
+    let f = (x: Int) -> x * 10
+
+    assert([f(y) for x in xs if y where y = x] == [10, 30])
+    assert([f(x) for x in xs if x] == [10, 30])
+    assert(%{f(x) for x in xs if x != nil} == %{10, 30})
+    assert(%{x: f(x) for x in xs if x != nil} == %{1: 10, 3: 30})
+}

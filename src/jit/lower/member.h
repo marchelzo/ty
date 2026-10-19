@@ -48,9 +48,9 @@ record_path(
 
         expect(c, value, 0, VALUE_TUPLE, other);
 
-        LirReg ids    = ldp(c, value, VOFF(ids));
+        LirReg ids    = ldq(c, value, VOFF(ids));
         LirReg cached = pval(c, cache);
-        LirReg word   = ldp(c, cached, offsetof(RecordCache, word));
+        LirReg word   = ldq(c, cached, offsetof(RecordCache, word));
         LirReg seen   = binop(c, LIR_AND, LIR_I64, lir_r(word), lir_i(RECORD_IDS_MASK));
 
         jcc(c, LIR_NE, lir_r(ids), lir_r(seen), miss);

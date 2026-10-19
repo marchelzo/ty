@@ -34,6 +34,7 @@ pub fn desugared-forms-nest() {
     let forms = [
         'let f = match { 1 => 2, _ => 3 }',
         'let g = match x { 1 => 2 }',
+        'let e = f(match Some(i) => i else 0)',
         'for match xs { (a, b) => print(a, b) }',
         'for xs { print(it) }',
         'let ys = [y for y in xs]',

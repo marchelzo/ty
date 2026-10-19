@@ -323,7 +323,9 @@ visit_comprehension(Ty *ty, Comprehension *parts, Scope *scope, VisitorCtx *ctxt
                 VL(true, part->pattern);
                 VS(part->where);
                 V(part->_while);
-                V(part->_if);
+                for (usize j = 0; j < vN(part->_if); ++j) {
+                        visit_part(ty, v__(part->_if, j), scope, ctxt);
+                }
         }
 
         return scope;

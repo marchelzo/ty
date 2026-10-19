@@ -7,7 +7,8 @@ enum {
         VS_CREAL,
         VS_CBOOL,
         VS_LOCAL,
-        VS_CNIL
+        VS_CNIL,
+        VS_CELL
 };
 
 enum {
@@ -207,7 +208,7 @@ isconst(u8 kind)
 inline static bool
 boxed(u8 kind)
 {
-        return (kind == VS_MEM) || (kind == VS_LOCAL);
+        return (kind == VS_MEM) || (kind == VS_LOCAL) || (kind == VS_CELL);
 }
 
 inline static bool
@@ -300,10 +301,21 @@ sspot(BcLir const *c, i32 i)
 }
 
 static Spot
+home(BcLir const *c, BcSlot const *s)
+{
+        return (s->kind == VS_CELL) ? (Spot) { s->r, (i32)s->bits } : lspot(c, (i32)s->bits);
+}
+
+static Spot
 spot(BcLir const *c, i32 i)
 {
         BcSlot const *s = &c->vs[i];
-        return (s->kind == VS_LOCAL) ? lspot(c, (i32)s->bits) : sspot(c, i);
+
+        switch (s->kind) {
+        case VS_LOCAL:
+        case VS_CELL:  return home(c, s);
+        default:       return sspot(c, i);
+        }
 }
 
 static LirReg
@@ -339,8 +351,9 @@ put(BcLir *c, Spot s, LirReg r, bool real)
 static void
 box(BcLir *c, BcSlot const *s, Spot to)
 {
-        if (s->kind == VS_LOCAL) {
-                copy(c, to.base, to.at, c->locals, vat((i32)s->bits));
+        if (s->kind == VS_LOCAL || s->kind == VS_CELL) {
+                Spot from = home(c, s);
+                copy(c, to.base, to.at, from.base, from.at);
                 return;
         }
 
@@ -386,6 +399,16 @@ static void
 vs_flush_all(BcLir *c)
 {
         vs_flush_below(c, c->sp);
+}
+
+static void
+vs_settle(BcLir *c, i32 n)
+{
+        for (i32 i = 0; i < n; ++i) {
+                if (c->vs[i].kind == VS_CELL) {
+                        vs_flush(c, i);
+                }
+        }
 }
 
 static void
@@ -449,7 +472,7 @@ vs_deopt(BcLir *c)
 static LirLabel
 vs_guard(BcLir *c)
 {
-        return newlabel(c);
+        return coldlabel(c);
 }
 
 static void
@@ -549,6 +572,10 @@ vs_disown(BcLir *c, i32 slot)
                 if (c->known[i].src == slot + 1) {
                         c->known[i].src = 0;
                 }
+        }
+
+        if (c->proven_gen != NULL && local_ok(c, slot)) {
+                c->proven_gen[slot] = 0;
         }
 }
 
@@ -901,6 +928,8 @@ vs_subscript(BcLir *c, BcLirNode const *node)
                 return true;
         }
 
+        vs_settle(c, c->sp - 2);
+
         LirLabel slow = newlabel(c);
         LirLabel done = newlabel(c);
         LirReg   i    = subidx(c, c->sp - 1, slow);
@@ -977,6 +1006,8 @@ vs_assign_subscript(BcLir *c, char const *ip)
 
                 return true;
         }
+
+        vs_settle(c, c->sp - 3);
 
         LirLabel slow  = newlabel(c);
         LirLabel done  = newlabel(c);
@@ -1066,6 +1097,7 @@ chains(u8 op)
         case INSTR_TARGET_LOCAL:
         case INSTR_SUBSCRIPT:
         case INSTR_ASSIGN_SUBSCRIPT:
+        case INSTR_SELF_MEMBER_ACCESS:
                 return true;
 
         default:
@@ -1106,6 +1138,8 @@ vs_plan(BcLir *c, Ty *ty, Value const *f)
         c->local_type  = new(c, T2Type, c->bound);
         c->known       = new(c, BcSlot, c->bound);
         c->known_gen   = new(c, u32, c->bound);
+        c->proven      = new(c, LirReg, c->bound);
+        c->proven_gen  = new(c, u32, c->bound);
         c->gen         = 1;
 
         if (expr == NULL || expr->scope == NULL) {
@@ -1769,6 +1803,94 @@ vs_view(BcLir *c, BcLirNode const *node, char const *ip)
         return true;
 }
 
+static LirReg
+vs_object(BcLir *c, i32 i, i32 slot, Class const *class)
+{
+        Spot s      = (i < 0) ? lspot(c, slot) : spot(c, i);
+        bool cached = local_ok(c, slot) && (c->proven_gen != NULL);
+
+        if (cached && c->proven_gen[slot] == c->gen) {
+                return c->proven[slot];
+        }
+
+        guard_note(
+                c,
+                "assumed %s is a %s (its static type)",
+                (i < 0) ? "`self`" : operand_label(c, i),
+                class_name(c->ctx, class->i)
+        );
+
+        LirLabel failed = vs_guard(c);
+
+        typecheck(c, s, VALUE_OBJECT, failed);
+        unless(c, ldw(c, s.base, s.at + VOFF(class)), class->i, failed);
+        vs_seal(c, failed);
+
+        LirReg object = ldp(c, s.base, s.at + VOFF(object));
+
+        if (cached) {
+                c->proven[slot]     = object;
+                c->proven_gen[slot] = c->gen;
+        }
+
+        return object;
+}
+
+static i32
+receiver_slot(BcLir const *c, bool self, i32 i)
+{
+        if (self) {
+                return c->self_index;
+        }
+
+        return (c->vs[i].kind == VS_LOCAL) ? (i32)c->vs[i].bits : -1;
+}
+
+static bool
+vs_member(BcLir *c, BcLirNode const *node, char const *ip)
+{
+        bool   self   = (node->op == INSTR_SELF_MEMBER_ACCESS);
+        i32    member = load_i32(ip + 1);
+        i32    i      = self ? -1 : c->sp - 1;
+        Class *class  = self ? self_class(c) : hint_class(c, c->at);
+
+        if (!c->speculate || class == NULL || class->i < CLASS_PRIMITIVE) {
+                return false;
+        }
+
+        if (self ? !local_ok(c, c->self_index) : !boxed(c->vs[i].kind)) {
+                return false;
+        }
+
+        u16 field = offset_of(class, member, false, OFF_FIELD);
+
+        if (field == OFF_NOT_FOUND) {
+                return false;
+        }
+
+        LirReg object = vs_object(c, i, receiver_slot(c, self, i), class);
+        Spot   cell   = { object, offsetof(TyObject, slots) + vat(field & OFF_MASK) };
+        i32    want   = numeric_next(c, node) ? hinted_class(c, node) : -1;
+        BcSlot out    = { .kind = VS_CELL, .r = object, .bits = (u64)cell.at };
+
+        if (want == CLASS_INT || want == CLASS_FLOAT) {
+                bool real = (want == CLASS_FLOAT);
+                guard_note(c, "assumed this field holds %s (its static type)", NUM_LABEL(real));
+                assume(c, cell, numtag(real));
+                out = (BcSlot) { .kind = numkind(real), .r = unbox(c, cell, real) };
+        }
+
+        count_fast(c, SITE_MEMBER);
+
+        if (!self) {
+                vs_pop(c, 1);
+        }
+
+        c->vs[c->sp++] = out;
+
+        return true;
+}
+
 static bool
 vs_string_byte(BcLir *c, BcLirNode const *node)
 {
@@ -2275,12 +2397,12 @@ join_plan(BcLir *c)
                         continue;
                 }
 
-                i32  class = exact_class(find_type_hint(c->hints, to));
-                bool keep  = false;
+                i32  fallback = default_class(c, to);
+                i32  class    = exact_class(find_type_hint(c->hints, to));
+                bool keep     = (fallback >= 0);
 
                 if (class < 0) {
-                        class = default_class(c, to);
-                        keep  = (class >= 0);
+                        class = fallback;
                 }
 
                 if (class < 0 || !join_eligible(c, to)) {
@@ -2308,7 +2430,7 @@ vs_join_at(BcLir *c, i32 to)
 }
 
 static void
-vs_carry(BcLir *c, BcJoin *join, i32 i)
+vs_carry_tagged(BcLir *c, BcJoin *join, i32 i, LirReg tag)
 {
         bool   real = (join->kind == VS_REAL);
         BcSlot s    = c->vs[i];
@@ -2339,9 +2461,20 @@ vs_carry(BcLir *c, BcJoin *join, i32 i)
         LirLabel failed = vs_guard(c);
         Spot     at     = spot(c, i);
 
-        typecheck(c, at, numtag(real), failed);
+        if (tag == LIR_NONE) {
+                typecheck(c, at, numtag(real), failed);
+        } else {
+                jcc(c, LIR_NE, lir_r(tag), lir_i(numtag(real)), failed);
+        }
+
         unbox_to(c, join->r, at, real);
         vs_seal(c, failed);
+}
+
+static void
+vs_carry(BcLir *c, BcJoin *join, i32 i)
+{
+        vs_carry_tagged(c, join, i, LIR_NONE);
 }
 
 static void
@@ -2386,16 +2519,18 @@ vs_join_wtf(BcLir *c, BcLirNode const *node)
         }
 
         LirLabel none = newlabel(c);
+        LirReg   tag  = LIR_NONE;
 
         if (!join->keep) {
                 vs_flush_below(c, c->sp - 1);
         }
 
         if (boxed(top.kind)) {
-                jcc(c, LIR_EQ, lir_r(ldtag(c, spot(c, c->sp - 1))), lir_i(VALUE_NIL), none);
+                tag = ldtag(c, spot(c, c->sp - 1));
+                jcc(c, LIR_EQ, lir_r(tag), lir_i(VALUE_NIL), none);
         }
 
-        vs_carry(c, join, c->sp - 1);
+        vs_carry_tagged(c, join, c->sp - 1, tag);
         jump(c, dest(c, node));
         bind(c, none);
         vs_pop(c, 1);
@@ -2417,29 +2552,30 @@ vs_lower(BcLir *c, BcLirNode const *node, char const *ip)
         }
 
         switch (op) {
-        case INSTR_INT8:             return vs_const(c, VS_CINT, (u64)(i64)(i8)ip[1]);
-        case INSTR_INTEGER:          return vs_const(c, VS_CINT, peek(u64, ip + 1));
-        case INSTR_REAL:             return vs_const(c, VS_CREAL, peek(u64, ip + 1));
-        case INSTR_TRUE:             return vs_const(c, VS_CBOOL, 1);
-        case INSTR_FALSE:            return vs_const(c, VS_CBOOL, 0);
-        case INSTR_NIL:              return vs_const(c, VS_CNIL, 0);
-        case INSTR_LOAD_LOCAL:       return vs_load_local(c, node, load_i32(ip + 1));
-        case INSTR_ASSIGN_LOCAL:     return vs_assign_local(c, load_i32(ip + 1));
-        case INSTR_TARGET_LOCAL:     return vs_mutate(c, node, ip);
-        case INSTR_SUBSCRIPT:        return vs_subscript(c, node);
-        case INSTR_COUNT:            return vs_count(c);
-        case INSTR_ASSIGN_SUBSCRIPT: return vs_assign_subscript(c, ip);
-        case INSTR_TARGET_SUBSCRIPT: return vs_mutate_cell(c, node);
-        case INSTR_CALL_GLOBAL:      return vs_call_global(c, node);
-        case INSTR_MEMBER_ACCESS:    return vs_view(c, node, ip);
-        case INSTR_CALL_METHOD:      return vs_string_byte(c, node);
-        case INSTR_POP:              return vs_drop(c);
-        case INSTR_DUP:              return vs_dup(c);
-        case INSTR_DUP2_SWAP:        return vs_dup2_swap(c);
-        case INSTR_INC:              return vs_step(c, true);
-        case INSTR_DEC:              return vs_step(c, false);
-        case INSTR_NEG:              return vs_negate(c);
-        case INSTR_UNARY_OP:         return vs_unary(c, ip);
+        case INSTR_INT8:               return vs_const(c, VS_CINT, (u64)(i64)(i8)ip[1]);
+        case INSTR_INTEGER:            return vs_const(c, VS_CINT, peek(u64, ip + 1));
+        case INSTR_REAL:               return vs_const(c, VS_CREAL, peek(u64, ip + 1));
+        case INSTR_TRUE:               return vs_const(c, VS_CBOOL, 1);
+        case INSTR_FALSE:              return vs_const(c, VS_CBOOL, 0);
+        case INSTR_NIL:                return vs_const(c, VS_CNIL, 0);
+        case INSTR_LOAD_LOCAL:         return vs_load_local(c, node, load_i32(ip + 1));
+        case INSTR_ASSIGN_LOCAL:       return vs_assign_local(c, load_i32(ip + 1));
+        case INSTR_TARGET_LOCAL:       return vs_mutate(c, node, ip);
+        case INSTR_SUBSCRIPT:          return vs_subscript(c, node);
+        case INSTR_COUNT:              return vs_count(c);
+        case INSTR_ASSIGN_SUBSCRIPT:   return vs_assign_subscript(c, ip);
+        case INSTR_TARGET_SUBSCRIPT:   return vs_mutate_cell(c, node);
+        case INSTR_CALL_GLOBAL:        return vs_call_global(c, node);
+        case INSTR_MEMBER_ACCESS:      return vs_view(c, node, ip) || vs_member(c, node, ip);
+        case INSTR_SELF_MEMBER_ACCESS: return vs_member(c, node, ip);
+        case INSTR_CALL_METHOD:        return vs_string_byte(c, node);
+        case INSTR_POP:                return vs_drop(c);
+        case INSTR_DUP:                return vs_dup(c);
+        case INSTR_DUP2_SWAP:          return vs_dup2_swap(c);
+        case INSTR_INC:                return vs_step(c, true);
+        case INSTR_DEC:                return vs_step(c, false);
+        case INSTR_NEG:                return vs_negate(c);
+        case INSTR_UNARY_OP:           return vs_unary(c, ip);
 
         case INSTR_ADD:
         case INSTR_SUB:

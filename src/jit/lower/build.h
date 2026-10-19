@@ -130,6 +130,14 @@ newlabel(BcLir *c)
         return lir_label(c->L);
 }
 
+static LirLabel
+coldlabel(BcLir *c)
+{
+        LirLabel label = newlabel(c);
+        lir_cold(c->L, label);
+        return label;
+}
+
 static void
 bind(BcLir *c, LirLabel label)
 {

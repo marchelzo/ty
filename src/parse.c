@@ -1909,8 +1909,8 @@ parse_comprehension(Ty *ty, Comprehension *comp)
                             : NULL;
 
                 part._if = try_consume(KEYWORD_IF)
-                          ? parse_expr(ty, 0)
-                          : NULL;
+                         ? parse_condparts(ty, &(bool){false})
+                         : (condpart_vector){0};
 
                 part.where = (K0 == KEYWORD_WHERE)
                            ? parse_let_definition(ty)
@@ -3758,9 +3758,11 @@ prefix_match(Ty *ty)
                 SYNTH(e->subject, kw);
                 avP(e->thens, parse_expr(ty, 0));
                 if (have_kw(ELSE)) {
+                        Location at = tok()->start;
                         next();
                         Expr *alt = parse_expr(ty, 0);
                         Expr *any = mkid("it");
+                        SYNTH(any, at);
                         avP(e->patterns, any);
                         avP(e->thens, alt);
                 }

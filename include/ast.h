@@ -90,17 +90,18 @@ struct condpart {
         Location end;
 };
 
+typedef vec(struct condpart *) condpart_vector;
+
 typedef struct {
         Expr *pattern;
         Expr *iter;
-        Expr *_if;
+        condpart_vector _if;
         Expr *_while;
         Stmt *where;
 } ComprPart;
 
 typedef vec(ComprPart) Comprehension;
 
-typedef vec(struct condpart *) condpart_vector;
 
 #define TY_STATEMENT_TYPES        \
         X(FOR_LOOP),              \

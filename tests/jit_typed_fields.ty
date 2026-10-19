@@ -1,0 +1,76 @@
+class Box {
+    w: Int
+    h: Int
+    scale: Int | nil
+
+    area() -> Int {
+        w * h * (scale ?? 1)
+    }
+}
+
+class WideBox < Box {
+    pad: Int
+}
+
+class Meddler {
+    box: Box
+
+    [](i: Int) -> Int {
+        box.scale = 100
+        i
+    }
+}
+
+fn area(b: Box) -> Int {
+    b.w * b.h * (b.scale ?? 1)
+}
+
+fn scale-then-index(b: Box, m: Meddler) {
+    [b.scale, m[1]]
+}
+
+fn bump(b: Box) -> Int {
+    let w = b.w
+    b.w = w + 1
+    b.w + w
+}
+
+pub fn typed-field-arithmetic() {
+    for i in ..1000 {
+        let scale = (i % 2 == 0) ? nil : 3
+        let b     = Box(w: i, h: 2, scale: scale)
+        assert(area(b) == i * 2 * (scale ?? 1))
+        assert(b.area() == area(b))
+    }
+}
+
+pub fn typed-field-subclass-receiver() {
+    for ..1000 {
+        assert(area(Box(w: 2, h: 5, scale: 7)) == 70)
+    }
+
+    let wide = WideBox(w: 2, h: 5, scale: nil, pad: 9)
+
+    assert(area(wide) == 10)
+    assert(wide.area() == 10)
+}
+
+pub fn typed-field-read-before-meddling-subscript() {
+    let b = Box(w: 1, h: 1, scale: 3)
+    let m = Meddler(box: b)
+
+    for ..1000 {
+        b.scale = 3
+        assert(scale-then-index(b, m) == [3, 1])
+    }
+}
+
+pub fn typed-field-reread-after-store() {
+    let b = Box(w: 1, h: 1, scale: nil)
+
+    for ..1000 {
+        b.w = 1
+        assert(bump(b) == 3)
+        assert(b.w == 2)
+    }
+}

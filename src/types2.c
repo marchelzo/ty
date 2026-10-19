@@ -16385,6 +16385,19 @@ apply_condpart_refinements(
         }
 }
 
+static void
+infer_condparts(T2Checker *checker, condpart_vector const *parts)
+{
+        for (int i = 0; i < vN(*parts); ++i) {
+                struct condpart const *part = v__(*parts, i);
+                T2Type condition            = infer_expression(checker, part->e);
+                apply_condpart_refinements(checker, part, condition, true);
+                if (part->target != NULL) {
+                        (void)infer_refutable_pattern(checker, part->target, condition);
+                }
+        }
+}
+
 static bool
 active_function(T2Checker const *checker, Expr const *function)
 {
@@ -18946,6 +18959,7 @@ infer_expression(T2Checker *checker, Expr const *source)
         {
                 int class_id       = sequence_literal_class(expression);
                 usize binding_mark = vN(checker->bindings);
+                T2Type *saved      = snapshot_refinements(checker, binding_mark);
                 for (int i = 0; i < vN(expression->compr); ++i) {
                         ComprPart const *part = v_(expression->compr, i);
                         T2Type collection     = infer_expression(checker, part->iter);
@@ -18957,7 +18971,8 @@ infer_expression(T2Checker *checker, Expr const *source)
                         );
                         (void)infer_statement(checker, part->where);
                         (void)infer_expression(checker, part->_while);
-                        (void)infer_expression(checker, part->_if);
+                        apply_condition_refinements(checker, part->_while, true);
+                        infer_condparts(checker, &part->_if);
                 }
                 T2Type element = t2_primitive(checker->universe, T2_TYPE_NEVER);
                 for (int i = 0; i < vN(expression->elements); ++i) {
@@ -18978,11 +18993,8 @@ infer_expression(T2Checker *checker, Expr const *source)
                         }
                 }
                 element = array_element_slot(checker, element, expression);
-                for (usize i = binding_mark; i < vN(checker->bindings); ++i) {
-                        if (!v__(checker->bindings, i).persistent) {
-                                v__(checker->bindings, i).active = false;
-                        }
-                }
+                restore_refinements(checker, saved, binding_mark);
+                ty_free(saved);
                 result = nominal_application(
                         checker,
                         class_id,
@@ -19122,6 +19134,7 @@ infer_expression(T2Checker *checker, Expr const *source)
         case EXPRESSION_DICT_COMPR:
         {
                 usize binding_mark = vN(checker->bindings);
+                T2Type *saved      = snapshot_refinements(checker, binding_mark);
                 for (int i = 0; i < vN(expression->dcompr); ++i) {
                         ComprPart const *part = v_(expression->dcompr, i);
                         T2Type collection     = infer_expression(checker, part->iter);
@@ -19133,7 +19146,8 @@ infer_expression(T2Checker *checker, Expr const *source)
                         );
                         (void)infer_statement(checker, part->where);
                         (void)infer_expression(checker, part->_while);
-                        (void)infer_expression(checker, part->_if);
+                        apply_condition_refinements(checker, part->_while, true);
+                        infer_condparts(checker, &part->_if);
                 }
                 T2Type key   = t2_primitive(checker->universe, T2_TYPE_NEVER);
                 T2Type value = t2_primitive(checker->universe, T2_TYPE_NEVER);
@@ -19211,11 +19225,8 @@ infer_expression(T2Checker *checker, Expr const *source)
                                 (produced == T2_TYPE_INVALID) ? fallback : produced
                         );
                 }
-                for (usize i = binding_mark; i < vN(checker->bindings); ++i) {
-                        if (!v__(checker->bindings, i).persistent) {
-                                v__(checker->bindings, i).active = false;
-                        }
-                }
+                restore_refinements(checker, saved, binding_mark);
+                ty_free(saved);
                 result = nominal_application(
                         checker,
                         CLASS_DICT,
