@@ -48,6 +48,7 @@ define pgo-train
 -$(1) --test tests >$(2)/train.log 2>&1
 -$(1) bench/richards.ty >>$(2)/train.log 2>&1
 -$(1) -j bench/richards.ty >>$(2)/train.log 2>&1
+-$(1) perf/run.ty >>$(2)/train.log 2>&1
 endef
 
 LEGACY := obj tools/tybi include/gen include/keywords.h include/optokens.h \
