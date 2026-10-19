@@ -1,0 +1,729 @@
+import syn (Node, Tree, Token, Trivia)
+import syn.lint as lint (Rule, Diag, Fix, Edit)
+import syn.rules (rules!, RuleSet)
+
+pub PARAGRAPH    = 12
+pub SOFT_WIDTH   = 80
+pub HARD_WIDTH   = 100
+pub CHAIN        = 3
+pub STRING_TESTS = 4
+pub NUMBER_USES  = 3
+pub CLONE_TOKENS = 40
+pub CLONE_LINES  = 4
+pub CLONE_SPAN   = 12
+
+let STRING  = %['String', 'SpecialString']
+let LITERAL = %[*STRING, 'Integer', 'Real', 'Nil', 'Boolean', 'Regex']
+let MACRO   = %['MacroInvocation', 'Region']
+let TABLE   = %[*STRING, *MACRO, 'Array', 'Dict', 'Tuple', 'Set']
+let ORDER   = %['Lt', 'Leq', 'Gt', 'Geq']
+let LOGIC   = %['And', 'Or', 'PrefixBang', 'Paren']
+let HOLDERS = %['Module', 'Block', 'ClassDefinition']
+
+fn bucket[T](xs: Array[T], key: T -> String, at: T -> Int) -> Array[Array[T]] {
+    xs.sort(by=x -> (key(x), at(x))).group-by(key)
+}
+
+fn line-diag(tree: Tree, line: Int, message: String) -> Diag {
+    let start = tree.line-start(line)
+    let end   = tree.source.bsearch('\n', start) ?? tree.source.size()
+    let at    = start + (tree.text(start, end).search(/\S/) ?? 0)
+    let d     = Diag(at, end, message)
+    d.node = tree.node-at(at)
+    d
+}
+
+fn span-of(a: Int, b: Int) -> String {
+    (a == b) ? "line {a}" : "lines {a}–{b}"
+}
+
+fn top-level?(n: Node) -> Bool { !n.inside?('Function') }
+
+fn literal?(n: Node) -> Bool {
+    let n = n.unwrapped
+    n.kind in LITERAL || n.kind == 'PrefixMinus' && n.nodes[0].kind in LITERAL
+}
+
+fn field?(n: Node) -> Bool {
+    n.kind == 'Identifier'
+ && n.parent.?kind == 'ClassDefinition'
+ && n.own.any?(\_.text == ':')
+}
+
+fn arm-body(m: Node, arrow: Token) -> Node | nil {
+    m.nodes.find(\_.start > arrow.start)
+}
+
+fn arm-lines(m: Node) -> Array[Int] {
+    let tree = m.tree
+    [
+        tree.line-of(a.start)
+        for a in m.own
+        if a.text == '=>' && arm-body(m, a).?end-line == tree.line-of(a.start)
+    ]
+}
+
+fn inner-lines(n: Node) -> Array[Int] {
+    [it for (n.line + 1)..(n.end-line + 1)]
+}
+
+fn data-of(n: Node) -> Array[Int] {
+    match n.kind {
+        k and k in TABLE                       => inner-lines(n),
+        'Match' or 'MatchStmt'                 => arm-lines(n),
+        'Definition' and literal?(n.nodes[-1]) => top-level?(n) ? [n.line] : [],
+        'Param'                                => [n.line],
+        _ and field?(n)                        => [n.line],
+        _                                      => [],
+    }
+}
+
+fn data-lines(tree: Tree) -> Dict[Int, Bool] {
+    if let $done = tree.memo['slop:data'] {
+        return done
+    }
+    let out = %{line: true for n in tree.walk() for line in data-of(n)}
+    tree.memo['slop:data'] = out
+    out
+}
+
+fn stretches(lines: Array[String]) -> Array[(Int, Int)] {
+    let out: Array[(Int, Int)] = []
+    let start: Int | nil = nil
+
+    for text; i in [*lines, ''] {
+        match (text.match?(/\S/), start) {
+            (true, nil) => start = i + 1,
+            (false, $s) => do {
+                out.push((s, i))
+                start = nil
+            },
+            _ => (),
+        }
+    }
+    out
+}
+
+fn dense-paragraphs(n: Node) -> Array[Diag] {
+    let tree  = n.tree
+    let data  = data-lines(tree)
+    let sizes = stretches(tree.source.split('\n'))
+        .map(|(a, b)| -> (a, #[it for a...b if !data[it]]))
+    [
+        line-diag(tree, a, "{k} lines without a blank line; split them up")
+        for (a, k) in sizes
+        if k >= PARAGRAPH
+    ]
+}
+
+fn wide-lines(lo: Int, hi: Int | nil) -> (Node -> Array[Diag]) {
+    return fn (n: Node) -> Array[Diag] {
+        let tree = n.tree
+        [
+            line-diag(tree, i + 1, "line is {w} columns (keep it within {lo})")
+            for w; i in tree.source.split('\n').map(&width)
+            if w > lo && (hi == nil || w <= hi)
+        ]
+    }
+}
+
+fn prose?(c: Trivia) -> Bool {
+    c.kind in ['comment', 'block'] && !c.text.match?(/^\/\/\s*ty:\s*allow/)
+}
+
+fn comments(n: Node) -> Array[Diag] {
+    [
+        lint.diag(c, 'comment; say it in code or delete it')
+        for c in n.tree.comments
+        if prose?(c)
+    ]
+}
+
+fn magnitude(n: Node) -> Int | Float | nil {
+    let text = n.text.comb('_')
+    match n.kind {
+        _ and text.match?(/^0[xXbBoO]/) => nil,
+        'Integer'                       => int(text),
+        'Real'                          => float(text),
+        _                               => nil,
+    }
+}
+
+fn named?(n: Node) -> Bool {
+    [*n.ancestors()].any?(d -> d.kind == 'Definition' && top-level?(d))
+}
+
+fn magic?(n: Node) -> Bool {
+    let $v = magnitude(n) or return false
+    abs(v) >= 100
+ && !named?(n)
+ && !n.inside?(\_.kind in ['Array', 'Dict', 'Set'])
+ && !n.from-expansion?
+}
+
+fn magic-numbers(n: Node) -> Array[Diag] {
+    [
+        lint.diag(g[0], "`{g[0].text}` appears {#g} times; give it a name")
+        for g in bucket(n.tree.walk().filter(magic?), &.text, &.start)
+        if #g >= NUMBER_USES
+    ]
+}
+
+fn word?(n: Node) -> Bool {
+    n.kind in STRING && n.text.match?(/^(['"])[A-Za-z][\w-]{2,}\1$/)
+}
+
+fn followed-by?(n: Node, text: String) -> Bool {
+    n.tree.tokens[n.ltok + 1].?text == text
+}
+
+fn membership?(xs: Node) -> Bool {
+    let $p = xs.parent or return false
+    p.kind in ['In', 'NotIn'] && p.nodes[-1] == xs
+}
+
+fn tested?(n: Node) -> Bool {
+    let $p = n.parent or return false
+    match p.kind {
+        'DblEq' or 'NotEq'     => !p.nodes.all?(literal?),
+        'ChoicePattern'        => true,
+        'Match' or 'MatchStmt' => followed-by?(n, '=>'),
+        'Array'                => membership?(p),
+        _                      => false,
+    }
+}
+
+fn string-tests(n: Node) -> Array[Diag] {
+    let sites = n.tree.walk().filter(s -> word?(s) && tested?(s))
+                             .filter(\!_.from-expansion?)
+    [
+        lint.diag(g[0], "{g[0].text} is tested in {#g} places; make it a tag")
+        for g in bucket(sites, \_.text[1;-1], &.start)
+        if #g >= STRING_TESTS
+    ]
+}
+
+fn char?(n: Node) -> Bool {
+    n.kind in STRING && n.text.match?(/^(['"])(?:[^\\]|\\.)\1$/u)
+}
+
+fn char-order?(n: Node) -> Bool { n.kind in ORDER && n.nodes.any?(char?) }
+
+fn char-test?(n: Node) -> Bool { [n, *n.descendants()].any?(char-order?) }
+
+fn char-ranges(n: Node) -> Diag | nil {
+    return nil if n.parent.?kind in LOGIC || !char-test?(n)
+    return nil if n.siblings[;n.position].any?(char-test?)
+    lint.diag(n, 'character range tested by comparison; use a regex')
+}
+
+fn bound?(x: Node) -> Bool {
+    x.kind == 'Lt' && x.nodes[1].unwrapped.kind == 'PrefixHash'
+}
+
+fn bounds-of(c: Node) -> Array[(String, String)] {
+    [
+        (x.nodes[0].text, x.nodes[1].unwrapped.nodes[0].text)
+        for x in [c, *c.descendants()]
+        if bound?(x)
+    ]
+}
+
+fn subscripts-of(b: Node) -> Array[(String, String)] {
+    [
+        (x.nodes[1].text, x.nodes[0].text)
+        for x in b.descendants()
+        if x.kind == 'Subscript' && #x.nodes == 2
+    ]
+}
+
+fn index-scan(n: Node) -> Diag | nil {
+    return nil if #n.nodes != 2
+    let subs = subscripts-of(n.nodes[1])
+    let $hit = bounds-of(n.nodes[0]).find(\_ in subs) or return nil
+    let (i, s) = hit
+    lint.diag(n, "`{s}` indexed by hand with `{i}`; use a regex or `for …; {i}`")
+}
+
+fn empty-string?(n: Node) -> Bool { n.kind in STRING && n.text in ["''", '""'] }
+
+fn starts-empty?(d: Node, name: String) -> Bool {
+    d.kind == 'Definition' && d.nodes[0].text == name && empty-string?(d.nodes[-1])
+}
+
+fn string-accumulate(n: Node) -> Diag | nil {
+    return nil if #n.nodes != 2 || n.nodes[0].kind != 'Identifier'
+    let scope = [*n.ancestors()].find(\_.kind == 'Function') ?? n.tree.root
+    let name  = n.nodes[0].text
+    let rhs   = n.nodes[1]
+    let empty? = [*scope.descendants()].any?(starts-empty?@(_, name))
+    return nil if !(char?(rhs) || word?(rhs) || empty?)
+    lint.diag(n, "string `{name}` built with `+=`; use a Blob or interpolation")
+}
+
+fn constant?(n: Node) -> Bool {
+    let n = n.unwrapped
+    match n.kind {
+        'Identifier'   => n.text.match?(/^[A-Z]/),
+        'MemberAccess' => (n.own[-1].?text ?? '').match?(/^[A-Z]/),
+        _              => literal?(n),
+    }
+}
+
+fn compared(c: Node) -> String | nil {
+    match (constant?(c.nodes[0]), constant?(c.nodes[1])) {
+        (false, true) => c.nodes[0].text,
+        (true, false) => c.nodes[1].text,
+        _             => nil,
+    }
+}
+
+fn shared(a: String | nil, b: String | nil) -> String | nil {
+    (a == b) ? a : nil
+}
+
+fn subject(c: Node) -> String | nil {
+    let c = c.unwrapped
+    let pair = c.nodes[;2]
+    match c.kind {
+        k and k in ['DblEq', 'NotEq', *ORDER]       => compared(c),
+        'CheckMatch' or 'In' or 'NotIn'             => pair[0].text,
+        'MethodCall' and c.own[1].?text == 'match?' => pair[0].text,
+        'Or'                                        => shared(*pair.map(subject)),
+        _                                           => nil,
+    }
+}
+
+fn chain(n: Node) -> Array[Node] {
+    let tail = n.nodes[-1]
+    let more = (#n.nodes == 3 && tail.kind == 'If') ? chain(tail) : []
+    [n.nodes[0], *more]
+}
+
+fn returns?(b: Node) -> Bool { #b.nodes > 0 && b.nodes[-1].kind == 'Return' }
+
+fn guard?(n: Node) -> Bool {
+    n.kind == 'If' && #n.nodes == 2 && returns?(n.nodes[1])
+}
+
+fn tests-of(n: Node) -> Array[Node] {
+    let links = chain(n)
+    return links if #links > 1
+    return [] if !guard?(n)
+    let rest = n.siblings[n.position + 1;].take-while(guard?)
+    [n.nodes[0], *rest.map(\_.nodes[0])]
+}
+
+fn continues-run?(n: Node, s: String) -> Bool {
+    return false if n.position == 0
+    let prev = n.siblings[n.position - 1]
+    guard?(prev) && subject(prev.nodes[0]) == s
+}
+
+fn if-chain(n: Node) -> Diag | nil {
+    return nil if n.parent.?kind == 'If' || n.nodes[0].kind == 'Condition'
+    let tests = tests-of(n)
+    return nil if #tests < CHAIN
+    let $s = subject(tests[0]) or return nil
+    let k = #tests.take-while(\subject(_) == s)
+    return nil if k < CHAIN || continues-run?(n, s)
+    lint.diag(n, "`{s}` is tested {k} times in a row; use `match`")
+}
+
+fn param-name(p: Node) -> String | nil {
+    return nil if p.text.match?(/^[*%]/)
+    p.own.find(\_.kind == 'id').?text
+}
+
+fn after(p: Node, token: String) -> Node | nil {
+    let $t = p.own.find(\_.text == token) or return nil
+    p.nodes.find(\_.start > t.start)
+}
+
+fn param-default(p: Node) -> Node | nil { after(p, '=') }
+
+fn param-type(p: Node) -> Node | nil { after(p, ':') }
+
+fn assigned(s: Node) -> String | nil {
+    return nil if s.kind != 'Eq' || #s.nodes != 2
+    let (target, value) = (s.nodes[0], s.nodes[1])
+    let self? = target.kind == 'MemberAccess' && target.nodes[0].text == 'self'
+    let name  = target.own[-1].?text
+    (self? && value.kind == 'Identifier' && value.text == name) ? name : nil
+}
+
+fn field-default(c: Node, f: Node) -> Node | nil {
+    let $next = c.nodes.find(\_.start >= f.end) or return nil
+    let between? = (t: Token) -> t.start >= f.end && t.end <= next.start
+    c.own.any?(t -> t.text == '=' && between?(t)) ? next : nil
+}
+
+fn method-name(f: Node) -> String | nil {
+    (f.kind == 'Function') ? f.own[0].?text : nil
+}
+
+fn compatible?(have: Node | nil, want: Node | nil) -> Bool {
+    want == nil || have == nil || have.text == want.text
+}
+
+fn declared-type(f: Node) -> String | nil {
+    (#f.nodes > 0) ? f.nodes[0].text : nil
+}
+
+fn param-fits?(c: Node, p: Node, f: Node) -> Bool {
+    param-type(p).?text in [nil, declared-type(f)]
+ && compatible?(field-default(c, f), param-default(p))
+}
+
+fn moved-default(c: Node, p: Node, f: Node) -> Array[Edit] {
+    let $want = param-default(p) or return []
+    (field-default(c, f) == nil) ? [Edit(f.end, f.end, " = {want.text}")] : []
+}
+
+fn blank-line?(tree: Tree, line: Int) -> Bool {
+    return false if line < 1
+    !tree.text(tree.line-start(line), tree.line-start(line + 1)).match?(/\S/)
+}
+
+fn removal(init: Node) -> Array[Edit] {
+    let tree  = init.tree
+    let edits = lint.delete(init).edits
+    return edits if !blank-line?(tree, init.line - 1)
+    let from = tree.line-start(init.line - 1)
+    edits.map(e -> Edit(min(e.start, from), e.end, e.text))
+}
+
+fn init-fix(c: Node, init: Node, fields: Array[Node]) -> Fix | nil {
+    let params = init.nodes.filter(\_.kind == 'Param')
+    let names  = params.map(param-name)
+    let k      = #params
+    let $body  = init.nodes.find(\_.kind == 'Block') or return nil
+    let copied = body.nodes.map(assigned)
+
+    return nil if nil in names || nil in copied
+    return nil if #fields < k || fields[;k].map(\_.own[0].text) != names
+    return nil if fields[k;].any?(\field-default(c, _) == nil)
+    return nil if copied.sort() != names.sort()
+
+    let pairs = params.zip(fields[;k])
+    return nil if !pairs.all?(|(p, f)| -> param-fits?(c, p, f))
+
+    let moved = [e for (p, f) in pairs for e in moved-default(c, p, f)]
+    Fix([*moved, *removal(init)])
+}
+
+fn default-init(c: Node) -> Diag | nil {
+    return nil if c.own.any?(\_.text in ['<', ':'])
+    let inits = c.nodes.filter(\method-name(_) == 'init')
+    return nil if #inits != 1
+    let $fix = init-fix(c, inits[0], c.nodes.filter(field?)) or return nil
+    lint.diag(inits[0], 'init only copies its parameters into fields; drop it', fix)
+}
+
+fn normal(tokens: Array[Token]) -> String {
+    let names: Dict[String, Int] = %{}
+    tokens.map(t -> match t.kind {
+        'string'         => 'S',
+        'int' or 'float' => 'N',
+        'id'             => "${names[t.text] ?? (names[t.text] = #names)}",
+        _                => t.text,
+    }).join(' ')
+}
+
+fn literal-share(tokens: Array[Token]) -> Float {
+    let lits = tokens.filter(\_.kind in ['string', 'int', 'float'])
+    #lits / float(max(#tokens, 1))
+}
+
+use Unit = {key: String, start: Int, end: Int, first: Int, last: Int, size: Int}
+
+fn unit(stmts: Array[Node], keys: Array[String], i: Int, j: Int) -> Array[Unit] {
+    let (a, b) = (stmts[i], stmts[j])
+    let toks   = a.tree.tokens[a.ftok;b.ltok + 1]
+    let same?  = keys[i;j + 1].all?(\_ == keys[i])
+
+    return [] if #toks < CLONE_TOKENS || b.end-line - a.line + 1 < CLONE_LINES
+    return [] if (j > i && same?) || literal-share(toks) > 0.5
+
+    [{
+        key:   keys[i;j + 1].join('\n'),
+        start: a.start,
+        end:   b.end,
+        first: a.line,
+        last:  b.end-line,
+        size:  #toks
+    }]
+}
+
+fn bodiless?(s: Node) -> Bool {
+    s.kind in ['FunctionDefinition', 'OperatorDefinition', 'Function'] && !s.has?('Block')
+}
+
+fn table?(s: Node) -> Bool {
+    s.kind == 'Definition' && s.nodes[-1].kind in ['Array', 'Dict', 'Set', 'Tuple']
+}
+
+fn statement?(holder: Node, s: Node) -> Bool {
+    let class? = holder.kind == 'ClassDefinition'
+    (!class? || s.kind == 'Function')
+ && s.ftok >= 0
+ && !s.from-expansion?
+ && !bodiless?(s)
+ && !table?(s)
+}
+
+fn units-of(holder: Node) -> Array[Unit] {
+    let stmts = holder.nodes.filter(statement?@(holder, _))
+    let keys  = stmts.map(s -> normal(s.tokens))
+    let spans = [
+        (i, j)
+        for i in ..#stmts
+        for j in i..min(i + CLONE_SPAN, #stmts)
+    ]
+    [u for (i, j) in spans for u in unit(stmts, keys, i, j)]
+}
+
+fn disjoint(units: Array[Unit]) -> Array[Unit] {
+    let out: Array[Unit] = []
+    for units.sort(by=&.start) {
+        if #out == 0 || it.start >= out[-1].end {
+            out.push(it)
+        }
+    }
+    out
+}
+
+fn covered?(u: Unit, taken: Array[Unit]) -> Bool {
+    taken.any?(t -> t.start <= u.start && u.end <= t.end)
+}
+
+fn clone-groups(tree: Tree) -> Array[Array[Unit]] {
+    let units = [u for h in tree.walk().filter(\_.kind in HOLDERS) for u in units-of(h)]
+    bucket(units, &.key, &.start).map(disjoint).filter(\#_ >= 2)
+}
+
+fn clone-diag(tree: Tree, u: Unit, others: Array[Unit]) -> Diag {
+    let here   = span-of(u.first, u.last)
+    let places = others.map(o -> span-of(o.first, o.last)).join(', ')
+    let d      = Diag(u.start, u.end, "{here} repeated at {places}; factor it out")
+    d.node = tree.node-at(u.start)
+    d
+}
+
+fn duplicate-code(n: Node) -> Array[Diag] {
+    let tree = n.tree
+    let taken: Array[Unit] = []
+    let out: Array[Diag] = []
+
+    for g in clone-groups(tree).sort(by=g -> -g[0].size) {
+        let fresh = g.filter(u -> !covered?(u, taken))
+        out += [clone-diag(tree, u, g.filter(\_ != u)) for u in fresh]
+        taken += g
+    }
+
+    out
+}
+
+fn mentions?(n: Node, name: String) -> Bool {
+    [n, *n.descendants()].any?(d -> d.kind == 'Identifier' && d.text == name)
+}
+
+fn fresh(xs: Node, *rest: Node) -> String | nil {
+    rest.any?(mentions?@(_, xs.text)) ? nil : xs.text
+}
+
+fn binder(x: Node) -> String { "${x.text}" }
+
+fn uses(x: Node, body: Array[Node]) -> String | nil {
+    body.any?(mentions?@(_, x.text)) ? binder(x) : nil
+}
+
+pub SET: RuleSet = rules! {
+let pure = Identifier | MemberAccess & !has (FunctionCall | MethodCall)
+let jumpy = has (Return | Break | Continue | Yield)
+
+@use-coalesce@
+$$x: pure
+message: use `$$x ?? …`
+doc: `x ?? y` instead of testing for nil
+@@
+(
+- $$x != nil ? $$x : $$y
++ $$x ?? $$y
+|
+- $$x == nil ? $$y : $$x
++ $$x ?? $$y
+)
+
+@nil-guard@ unsafe
+$$x: identifier
+$$p: statement
+$$d = binder($$x)
+message: bind it: `let $$d = $$x or return …`
+doc: `let $x = x or return` instead of a nil check
+@@
+(
+- if $$x == nil { return $$r }@$$p
++ let $$d = $$x or return $$r
+|
+- if $$x == nil { return }@$$p
++ let $$d = $$x or return
+)
+
+@nil-test@ info
+$$x: identifier
+$$d = uses($$x, $$b)
+message: bind it: `if let $$d = $$x`
+doc: `if let $x = x` instead of `if x != nil`
+@@
+(
+* if $$x != nil { *$$b }
+|
+* if $$x != nil { *$$b } else $$E
+)
+
+@push-loop@ report
+$$xs: identifier
+$$e: oneline !jumpy
+$$ok = fresh($$xs, $$e, $$ys)
+message: build `$$xs` with a comprehension
+doc: a comprehension instead of pushing in a loop
+@@
+- let $$xs = []@$$at
+- for $$x in $$ys {
+-     $$xs.push($$e)
+- }
++ let $$xs = [$$e for $$x in $$ys]
+
+@push-loop@ report
+$$xs: identifier
+$$e: oneline !jumpy
+$$ok = fresh($$xs, $$e, $$ys)
+message: build `$$xs` with a comprehension
+@@
+- let $$xs: $$T = []@$$at
+- for $$x in $$ys {
+-     $$xs.push($$e)
+- }
++ let $$xs: $$T = [$$e for $$x in $$ys]
+
+@push-loop@ report
+$$xs: identifier
+$$e: oneline !jumpy
+$$ok = fresh($$xs, $$e, $$ys)
+message: build `$$xs` with a comprehension
+@@
+- let $$xs = []@$$at
+- for $$ys {
+-     $$xs.push($$e)
+- }
++ let $$xs = [$$e for $$ys]
+
+@push-loop@ report
+$$xs: identifier
+$$e: oneline !jumpy
+$$c: !jumpy !Condition
+$$ok = fresh($$xs, $$e, $$ys, $$c)
+message: build `$$xs` with a comprehension
+@@
+- let $$xs = []@$$at
+- for $$x in $$ys {
+-     if $$c {
+-         $$xs.push($$e)
+-     }
+- }
++ let $$xs = [$$e for $$x in $$ys if $$c]
+
+@push-loop@ report
+$$xs: identifier
+$$e: oneline !jumpy
+$$c: !jumpy !Condition
+$$ok = fresh($$xs, $$e, $$ys, $$c)
+message: build `$$xs` with a comprehension
+@@
+- let $$xs = []@$$at
+- for $$x in $$ys if $$c {
+-     $$xs.push($$e)
+- }
++ let $$xs = [$$e for $$x in $$ys if $$c]
+
+@dict-loop@ report
+$$d: identifier
+$$k, $$v: oneline !jumpy
+$$ok = fresh($$d, $$k, $$v, $$ys)
+message: build `$$d` with a dict comprehension
+doc: a dict comprehension instead of filling a dict in a loop
+@@
+- let $$d = %{}@$$at
+- for $$x in $$ys {
+-     $$d[$$k] = $$v
+- }
++ let $$d = %{$$k: $$v for $$x in $$ys}
+}
+
+pub RULES: Array[Rule] = [
+    *SET.rules,
+    lint.rule(
+        'dense-paragraph',
+        dense-paragraphs,
+        kinds=['Module'],
+        doc="{PARAGRAPH}+ lines of code without a blank line"
+    ),
+    lint.rule('if-chain', if-chain, kinds=['If'], doc="{CHAIN}+ tests of one value"),
+    lint.rule('duplicate-code', duplicate-code, kinds=['Module'], doc='repeated code'),
+    lint.rule(
+        'default-init',
+        default-init,
+        kinds=['ClassDefinition'],
+        doc='init that only copies'
+    ),
+    lint.rule('comment', comments, kinds=['Module'], doc='comments that are not docs'),
+    lint.rule(
+        'line-length',
+        wide-lines(HARD_WIDTH, nil),
+        kinds=['Module'],
+        doc="lines over {HARD_WIDTH} columns"
+    ),
+    lint.rule(
+        'soft-line-length',
+        wide-lines(SOFT_WIDTH, HARD_WIDTH),
+        severity='info',
+        kinds=['Module'],
+        doc="lines over {SOFT_WIDTH} columns"
+    ),
+    lint.rule(
+        'magic-number',
+        magic-numbers,
+        severity='info',
+        kinds=['Module'],
+        doc='repeated unnamed numbers'
+    ),
+    lint.rule(
+        'stringly-typed',
+        string-tests,
+        severity='info',
+        kinds=['Module'],
+        doc='a string tested in many places'
+    ),
+    lint.rule(
+        'char-range',
+        char-ranges,
+        severity='info',
+        kinds=[*ORDER, 'And', 'Or'],
+        doc='character ranges by comparison'
+    ),
+    lint.rule(
+        'index-scan',
+        index-scan,
+        severity='info',
+        kinds=['While'],
+        doc='hand-indexed scan'
+    ),
+    lint.rule(
+        'string-accumulate',
+        string-accumulate,
+        severity='info',
+        kinds=['PlusEq'],
+        doc='strings built with +='
+    ),
+]

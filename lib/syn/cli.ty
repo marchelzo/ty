@@ -6,6 +6,7 @@ import syn
 import syn.lint as lint
 import syn.fmt as sf
 import syn.fix as fixer
+import syn.slop as slop
 import json
 import diff
 
@@ -21,6 +22,7 @@ options:
     --ignore A,B     skip the named rules
     --list           list available rules and exit
     --semantic       also run rules that need name resolution and types
+    --slop           also run the slop rules (syn.slop: density, clones, idioms)
     --shallow        do not run imports while parsing
     --help           show this message
 '''
@@ -103,6 +105,7 @@ fn lint-main(args: Array[String]) -> Int {
             '--unsafe'   => unsafe? = true,
             '--shallow'  => deep? = false,
             '--semantic' => rules = [*rules, *lint.SEMANTIC_RULES],
+            '--slop'     => rules = [*rules, *slop.RULES],
             '--rules'   => do {
                 i += 1
                 rules = [*rules, *load-rules(args[i])]

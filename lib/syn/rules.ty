@@ -1760,10 +1760,31 @@ fn finish(
     if !alt.edits? {
         return Hit(r, node, binds, nil, message)
     }
-    let fix = Fix(edits, layout=r.layout?)
+    let safety = r.flag?('unsafe') ? lint.Unsafe : lint.Safe
+    let fix = Fix(edits, safety, layout=r.layout?)
     fix.limit = r.limit
-    let $ok = lint.admissible(tree, fix) or return nil
+    let ok = lint.admissible(tree, fix)
+    return nil if ok == nil && !r.flag?('report')
     Hit(r, node, binds, ok, message)
+}
+
+fn parens-at(tree: Tree, byte: Int) -> Array[Node] {
+    let n = tree.node-at(byte)
+    [p for p in [n, *n.ancestors()] if p.kind == 'Paren']
+}
+
+fn unparen(tree: Tree, a: Int, b: Int) -> (Int, Int) {
+    for parens-at(tree, a) {
+        if it.start < a && it.end < b && tree.text(it.start, a).match?(/^(\(\s*)+$/) {
+            a = it.start
+        }
+    }
+    for parens-at(tree, max(b - 1, a)) {
+        if a < it.start && b < it.end && tree.text(b, it.end).match?(/^(\s*\))+$/) {
+            b = it.end
+        }
+    }
+    (a, b)
 }
 
 pub fn build-edits(
@@ -1784,6 +1805,7 @@ pub fn build-edits(
             let me = p.marks["__me{it.index}"] ?? 0
             let $a = locate(tree, p, m, ms, it.insert) or return nil
             let $b = it.insert ? a : locate(tree, p, m, me, true) or return nil
+            let (a, b) = it.insert ? (a, b) : unparen(tree, a, b)
             edits.push(Edit(a, b, render-plus(it.plus, binds, indent-at(tree, a), tree)))
         }
     }
