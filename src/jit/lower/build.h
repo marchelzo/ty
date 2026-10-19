@@ -444,12 +444,12 @@ GuardNote(BcLir *c, char const *fmt, ...)
         c->guard = jit_guard(buf);
 }
 
-#define guard_note(c, ...) (ProfMode ? GuardNote((c), __VA_ARGS__) : (void)0)
+#define guard_note(c, ...) (JIT_DETAIL ? GuardNote((c), __VA_ARGS__) : (void)0)
 
 inline static void
 deopt_why(BcLir *c, i32 why, u64 slots)
 {
-        if (ProfMode) {
+        if (JIT_DETAIL) {
                 stw(c, c->ty, offsetof(Ty, jit_why), lir_i(why));
                 stq(c, c->ty, offsetof(Ty, jit_why_slots), lir_i(slots));
                 stw(c, c->ty, offsetof(Ty, jit_guard), lir_i(c->guard));

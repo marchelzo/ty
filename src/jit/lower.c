@@ -3050,8 +3050,9 @@ enter_node(BcLir *c, BcLirNode const *node, char const *ip)
                 dynamic_ops(c);
         }
 
-        c->offset = StepInstruction(ip) - c->code;
-        c->at     = off;
+        c->offset    = StepInstruction(ip) - c->code;
+        c->at        = off;
+        c->L->origin = off + 1;
 
         if (ProfMode) {
                 prof_site(c, node, ip, off);
@@ -3140,6 +3141,8 @@ epilogue(BcLir *c)
                 }
         }
 
+        c->L->origin = 0;
+
         exit_stubs(c);
         loop_stubs(c);
 
@@ -3156,6 +3159,7 @@ epilogue(BcLir *c)
                 BcLirNode const *node = &c->nodes[off];
 
                 if (node->deopt != LIR_NONE && reached(node) && !(c->stubbed != NULL && c->stubbed[off])) {
+                        c->L->origin = off + 1;
                         bind(c, node->deopt);
                         flush_around(c, off);
                         deopt_why(c, JIT_WHY_POLL, 0);
@@ -3163,6 +3167,8 @@ epilogue(BcLir *c)
                         tierup_stub(c, off);
                 }
         }
+
+        c->L->origin = 0;
 }
 
 static u32 *
@@ -3205,12 +3211,11 @@ is_compact(Value const *f)
 } while (0)
 
 static bool
-admit(BcLir *c, Value const *f)
+admit(BcLir *c, Value const *f, char *why, usize n)
 {
         if (!graph(c, f)) {
+                snprintf(why, n, "unsupported bytecode op %s", GetInstructionName(c->code[c->offset]));
                 if (ProfMode) {
-                        char why[128];
-                        snprintf(why, sizeof why, "unsupported bytecode op %s", GetInstructionName(c->code[c->offset]));
                         prof_jit_decline(f, why, c->offset);
                 }
                 TY_PROBE_IF(jit__decline, name_of(f), GetInstructionName(c->code[c->offset]), (int)c->offset);
@@ -3224,6 +3229,7 @@ admit(BcLir *c, Value const *f)
         }
 
         if (c->dynamic && c->size > 4096) {
+                snprintf(why, n, "large dynamic stack");
                 if (ProfMode) {
                         prof_jit_decline(f, "large dynamic stack", -1);
                 }
@@ -3236,7 +3242,7 @@ admit(BcLir *c, Value const *f)
 }
 
 static void
-log_compile(Value const *f, BcLir const *c, LirCode *code, u64 begin)
+log_compile(Value const *f, BcLir const *c, LirCode *code, u64 begin, JitNotes notes)
 {
         Expr const *expr    = !from_eval(f) ? expr_of(f) : NULL;
         char const *cls     = (expr != NULL && expr->class != NULL)
@@ -3252,15 +3258,15 @@ log_compile(Value const *f, BcLir const *c, LirCode *code, u64 begin)
                 .compile_time_ns = elapsed,
                 .bc_code_size    = c->size,
                 .compact         = c->compact,
-                .image           = jit_image_record(code, code_of(f), name_of(f))
+                .image           = jit_image_record(code, code_of(f), name_of(f), notes)
         });
 }
 
 static LirCode *
-publish(Ty *ty, Value const *f, BcLir const *c, LirCode *code, u64 begin)
+publish(Ty *ty, Value const *f, BcLir const *c, LirCode *code, u64 begin, JitNotes notes)
 {
         if (ProfMode) {
-                log_compile(f, c, code, begin);
+                log_compile(f, c, code, begin, notes);
         }
 
 #ifdef TY_HAVE_USDT
@@ -3292,8 +3298,10 @@ publish(Ty *ty, Value const *f, BcLir const *c, LirCode *code, u64 begin)
         return code;
 }
 
-static JitFn *
-compile(Ty *ty, Value const *f, u64 begin)
+#include "lower/detail.h"
+
+static LirCode *
+build(Ty *ty, Value const *f, bool compact, bool install, u64 begin, JitNotes *notes, char *why, usize nwhy)
 {
         LirType  types[] = { LT_PTR, LT_I32, LT_PTR, LT_PTR, LT_PTR };
         LirSig   sig     = { .ret = LT_I32, .params = types, .nparams = 5, .nfixed = 5 };
@@ -3307,17 +3315,20 @@ compile(Ty *ty, Value const *f, u64 begin)
                 .bound      = f->info[FUN_INFO_BOUND],
                 .self_index = method ? f->info[FUN_INFO_PARAM_COUNT] : -1,
                 .tuple_off  = -1,
-                .compact    = is_compact(f)
+                .compact    = compact
         };
 
         if (c.L == NULL) {
+                snprintf(why, nwhy, "%s", err.message);
                 return NULL;
         }
 
-        if (!admit(&c, f)) {
+        if (!admit(&c, f, why, nwhy)) {
                 lir_free(c.L);
                 return NULL;
         }
+
+        c.L->detail = (notes != NULL);
 
         plan_nodes(&c);
         prologue(&c);
@@ -3335,11 +3346,16 @@ compile(Ty *ty, Value const *f, u64 begin)
         u32     *osr    = osr_table(&c, &nosr);
         LirCode *code   = c.ok ? lir_finish_owned(ty, c.L, &err) : NULL;
 
+        if (code != NULL && notes != NULL) {
+                *notes = describe(&c, code);
+        }
+
         lir_free(c.L);
 
         if (code == NULL) {
                 xmF(osr);
                 xmF(c.tier);
+                snprintf(why, nwhy, "%s", c.ok ? err.message : "lowering failed");
                 if (ProfMode) {
                         prof_jit_decline(f, err.message, -1);
                 }
@@ -3365,10 +3381,63 @@ compile(Ty *ty, Value const *f, u64 begin)
         code->nosr = nosr;
         code->tier = c.tier;
 
-        return publish(ty, f, &c, code, begin)->body;
+        if (!install) {
+                return code;
+        }
+
+        return publish(ty, f, &c, code, begin, (notes != NULL) ? *notes : (JitNotes) {0});
+}
+
+static JitFn *
+compile(Ty *ty, Value const *f, u64 begin)
+{
+        JitNotes notes = {0};
+        char     why[256];
+        LirCode *code  = build(
+                ty,
+                f,
+                is_compact(f),
+                true,
+                begin,
+                ProfMode ? &notes : NULL,
+                why,
+                sizeof why
+        );
+
+        return (code != NULL) ? code->body : NULL;
 }
 
 #undef AUDIT
+
+JitImageRec *
+jit_inspect(Ty *ty, Value const *f, bool compact, char *why, usize n)
+{
+        if (lir_target() == NULL) {
+                snprintf(why, n, "no native JIT target on this platform");
+                return NULL;
+        }
+
+        JitNotes notes = {0};
+        bool     was   = JitDetail;
+
+        JitDetail = true;
+
+        SCRATCH_SAVE();
+        LirCode *code = build(ty, f, compact, false, 0, &notes, why, n);
+        SCRATCH_RESTORE();
+
+        JitDetail = was;
+
+        if (code == NULL) {
+                return NULL;
+        }
+
+        JitImageRec *img = jit_image_new(code, code_of(f), name_of(f), notes);
+
+        lir_code_free(code);
+
+        return img;
+}
 
 JitFn *
 jit_lower(Ty *ty, Value const *f)

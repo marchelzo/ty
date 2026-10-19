@@ -392,6 +392,10 @@ lir_emit(Lir *L, LirInst const *inst)
 
         LirInst *in = xvP(L->insts, *inst);
 
+        if (in->origin == 0) {
+                in->origin = L->origin;
+        }
+
 #define DUP(p, n) in->p = dupn(inst->p, inst->n);
         INST_PAYLOAD(DUP)
 #undef DUP
@@ -426,7 +430,7 @@ lir_emit_to(Lir *L, LirOp op, LirReg dst, LirOpnd const *args, u32 nargs)
                 return reject(L, LE_OPERAND, "invalid operand count");
         }
 
-        LirInst *in = xvP(L->insts, ((LirInst) { .op = op, .dst = dst }));
+        LirInst *in = xvP(L->insts, ((LirInst) { .op = op, .dst = dst, .origin = L->origin }));
 
         in->nargs = nargs;
 

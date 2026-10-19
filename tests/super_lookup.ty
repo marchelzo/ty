@@ -1,0 +1,40 @@
+import ty
+import sh
+import path (Path)
+import ty.test.assert (assert-throws)
+
+const ORPHAN = '''
+    class Base {
+        init(n: Int) {}
+        static make() {}
+    }
+    class Orphan {
+        init() { super(1) }
+        static make() { super() }
+    }
+    for f in [-> Orphan(), -> Orphan.make()] {
+        try { f() } catch e { print(e.what) }
+    }
+'''
+
+fn unchecked(source: String) -> String {
+    let dir  = Path('/tmp').mkdtemp('super-lookup-')
+    let file = dir / 'script.ty'
+    file.write(source)
+    defer dir.rmtree(quiet: true)
+
+    setenv('TY_TYPES2', 'off')
+    defer setenv('TY_TYPES2', '')
+
+    sh.run([ty.executable, str(file)], timeout=30).stdout.trim()
+}
+
+pub fn a-class-is-not-a-trait() {
+    let e = assert-throws(ty.eval('class Base {}; class Timer : Base {}'), CompileError)
+    assert(e.what.match?(/is a class, not a trait/))
+}
+
+pub fn super-without-a-superclass-is-an-error() {
+    let out = unchecked(ORPHAN)
+    assert(out == "super: Object has no method 'init'\nsuper: Object has no static method 'make'", out)
+}

@@ -1,0 +1,246 @@
+import ty
+import capstone
+import chalk (chalk)
+
+pub tag Src, Op, Insn, Data
+
+pub use Line  = {line: Int, hits: Int}
+pub use Head  = {bc: Int, text: String, line: Int, hits: Int}
+pub use Instr = {
+    off: Int,
+    op: String,
+    args: String,
+    hits: Int,
+    line: Int,
+    bc: Int,
+    role: String,
+    section: String,
+    sym: String,
+    note: String | nil
+}
+pub use Pool  = {off: Int, size: Int, line: Int}
+pub use Row   = Src[Line] | Op[Head] | Insn[Instr] | Data[Pool]
+
+pub ROLES = %{
+    'code':     (' ', nil),
+    'prologue': (' ', 'dim'),
+    'epilogue': (' ', 'dim'),
+    'thunk':    (' ', 'dim'),
+    'moves':    ('⇄', 'blue'),
+    'guard':    ('◆', 'yellow'),
+    'slow':     ('·', 'dim'),
+    'deopt':    ('✗', 'red'),
+    'tierup':   ('↑', 'magenta'),
+    'poll':     ('⏸', 'cyan'),
+    'entry':    ('→', 'green'),
+    'edge':     ('⇢', 'blue'),
+    'rebase':   ('⟲', 'dim'),
+    'data':     (' ', 'dim')
+}
+
+const SECTIONS = %{
+    'prologue': 'prologue',
+    'epilogue': 'epilogue',
+    'thunk':    'call thunk',
+    'edge':     'edge moves',
+    'rebase':   'stack rebase',
+    'data':     'literal pool'
+}
+
+const LEGEND = ['guard', 'slow', 'deopt', 'moves', 'edge', 'poll', 'entry', 'tierup']
+
+const LEGEND_NAMES = %{
+    'guard':  'fast-path guard',
+    'slow':   'slow path',
+    'deopt':  'deopt exit',
+    'moves':  'register moves',
+    'edge':   'edge moves',
+    'poll':   'safepoint',
+    'entry':  'resume entry',
+    'tierup': 'tier-up exit'
+}
+
+pub fn floor-index(xs: Array[Int], x: Int) -> Int {
+    let lo = 0
+    let hi = #xs
+    while lo < hi {
+        let mid = (lo + hi) / 2
+        if xs[mid] <= x {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    max(lo - 1, 0)
+}
+
+fn mnemonic(text: String) -> (String, String) {
+    let parts = text.split(' ', 1)
+    (parts[0], (#parts > 1) ? parts[1] : '')
+}
+
+pub fn branch?(op: String) -> Bool {
+    op.starts?('j') || op == 'call' || op.starts?('b') || op == 'ret'
+}
+
+fn targets(op: String, args: String, off: Int, base: Int, syms: Dict[Int, String]) -> String {
+    let notes = []
+    for m in args.matches(/0x[0-9a-f]+/) {
+        let v = int(m)
+        if let $name = syms[v] ?? (branch?(op) ? syms[base + v] : nil) {
+            notes.push(name)
+        } else if branch?(op) && v < base {
+            notes.push((v > off) ? '↓' : '↑')
+        }
+    }
+    notes.join(' ')
+}
+
+fn section(role: String) -> String {
+    SECTIONS[role] ?? ''
+}
+
+fn lines-at(rec: _, starts: Array[Int]) -> Array[Int] {
+    let sites = (rec['sites'] ?? []).sort(by=\_[0])
+    let line: Int = rec['line']
+    let si = 0
+    starts.map(off -> do {
+        while si < #sites && sites[si][0] <= off {
+            line = sites[si][1]
+            si += 1
+        }
+        line
+    })
+}
+
+pub fn rows(rec: _) -> Array[Row] {
+    let $hex = rec['code'] or return []
+    let bytes = hex.unhex() ?? Blob()
+    let size: Int = rec['literal'] ?? #bytes
+    let base = int(rec['base'])
+    let syms = %{int(addr): name for [addr, name] in rec['syms'] ?? []}
+    let insns = capstone.disassemble(bytes[;size])
+    let starts = insns.map(&0)
+    let hits = [0 for insns]
+    for [pc, n] in rec['hits'] ?? [] {
+        hits[floor-index(starts, pc)] += n
+    }
+    let lines = lines-at(rec, starts)
+    let notes = rec['notes'] ?? []
+    let ops = %{bc: op for [_, bc, op, _, _] in notes if op != nil}
+    let marks = notes.map(&0)
+    let last = -1
+    let xs = []
+    for (off, text); i in insns {
+        let k = (#notes > 0) ? floor-index(marks, off) : -1
+        let [_, bc, _, role, note] = (k >= 0) ? notes[k] : [0, -1, nil, 'code', nil]
+        let (op, args) = mnemonic(text)
+        xs.push({
+            off,
+            op,
+            args,
+            hits: hits[i],
+            line: lines[i],
+            bc,
+            role,
+            section: section(role),
+            sym: targets(op, args, off, base, syms),
+            note: (k != last) ? note : nil
+        })
+        last = k
+    }
+    let out = []
+    for block in xs.group(&.line) {
+        out.push(Src({line: block[0].line, hits: block.map(&.hits).sum(0)}))
+        for run in block.group(x -> (x.bc, x.section)) {
+            let {bc, section, line, *} = run[0]
+            if bc >= 0 || section != '' {
+                let text = [ops[bc] ?? '', section].filter(\_ != '').join(' · ')
+                out.push(Op({bc, text, line, hits: run.map(&.hits).sum(0)}))
+            }
+            out += run.map(Insn)
+        }
+    }
+    if size < #bytes {
+        out.push(Data({off: size, size: #bytes - size, line: lines[-1] ?? rec['line']}))
+    }
+    out
+}
+
+pub fn line-of(row: Row) -> Int {
+    match row {
+        Src(r) or Op(r) or Insn(r) or Data(r) => r.line
+    }
+}
+
+pub fn badge(role: String) -> String {
+    let (mark, style) = ROLES[role] ?? (' ', nil)
+    (style == nil || mark == ' ') ? mark : "{chalk"[{style}]{mark}[/]"}"
+}
+
+pub fn mnemonic-style(op: String) -> String | nil {
+    match op {
+        _ and op == 'call' || op.starts?('bl')   => 'yellow',
+        _ and op == 'ret'                        => 'magenta',
+        _ and op.starts?('j') || op.starts?('b') => 'cyan',
+        _                                        => nil
+    }
+}
+
+pub fn insn-text(i: Instr) -> String {
+    let style = (i.role in ['slow', 'deopt', 'prologue', 'epilogue', 'thunk', 'rebase']) ? 'dim' : mnemonic-style(i.op)
+    let op = (style != nil) ? "{chalk"[{style}]{i.op.fit(7)}[/]"}" : i.op.fit(7)
+    let args = (i.role in ['slow', 'deopt']) ? "{chalk"[dim]{i.args}[/]"}" : i.args
+    let notes = [
+        (i.note != nil && i.role == 'guard') ? "guard {i.note}" : i.note,
+        (i.sym != '') ? i.sym : nil
+    ].filter(\_ != nil)
+    let tail = (#notes > 0) ? "  {chalk"[dim]; {notes.join(' · ')}[/]"}" : ''
+    "{op} {args}{tail}"
+}
+
+pub fn op-text(o: Head) -> String {
+    let bc = (o.bc >= 0) ? "{o.bc:>5} " : '      '
+    "{chalk"[dim]┄[/] [dim]{bc}[/][#d79921]{o.text}[/]"}"
+}
+
+fn source-lines(file: String) -> Array[String] {
+    ((try { slurp(file) }) ?? '').lines()
+}
+
+fn fmt-size(n: Int) -> String {
+    (n >= 1024) ? "{n / 1024.0:.1f} KiB" : "{n} B"
+}
+
+pub fn legend() -> String {
+    LEGEND.map(r -> "{badge(r)} {LEGEND_NAMES[r]}").join('  ')
+}
+
+pub fn render(rec: _) -> String {
+    let src = source-lines(rec['file'] ?? '')
+    let name = ((rec['class'] ?? '') != '') ? "{rec['class']}.{rec['name']}" : rec['name']
+    let info = [
+        "tier {rec['tier']}",
+        "{fmt-size(rec['native'])} native from {fmt-size(rec['bc'])} bytecode",
+        "{rec['file']}:{rec['line']}"
+    ]
+    let out = [
+        "{chalk"[b]{name}[/]"}  {chalk"[dim]{info.join(' · ')}[/]"}",
+        "{chalk"[dim]{legend()}[/]"}"
+    ]
+    for match rows(rec) {
+        Src(s) => {
+            let text = (s.line > 0 && s.line <= #src) ? src[s.line - 1].strip() : ''
+            out.push('')
+            out.push("{chalk"[dim]────[/] [#83a598]{s.line:>4}[/] [dim]│[/]"} {text}")
+        },
+        Op(o)   => out.push("        {op-text(o)}"),
+        Insn(i) => out.push("{badge(i.role)} {chalk"[dim]{i.off:06x}[/]"}  {insn-text(i)}"),
+        Data(d) => out.push("  {chalk"[dim]{d.off:06x}  literal pool · {fmt-size(d.size)}[/]"}")
+    }
+    out.join('\n')
+}
+
+pub fn show(f: _, tier: Int = 2) -> String {
+    render(ty.jit-image(f, tier))
+}

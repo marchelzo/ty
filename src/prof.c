@@ -1637,9 +1637,30 @@ prof_jit_despecialize(Value const *f, u32 deopts)
         TySpinLockUnlock(&JitLock);
 }
 
+static void
+LoadExeSymbols(void)
+{
+        static atomic_bool once;
+
+        if (atomic_exchange(&once, true)) {
+                return;
+        }
+
+        Syms = prof_os_exe_symbols(&NSyms);
+
+        if (NSyms > 0) {
+                ExeLo = Syms[0].lo;
+                ExeHi = Syms[NSyms - 1].hi;
+        }
+}
+
 char const *
 prof_symbolize(uptr addr)
 {
+        if (Syms == NULL) {
+                LoadExeSymbols();
+        }
+
         if (addr >= ExeLo && addr < ExeHi) {
                 usize lo = 0;
                 usize hi = NSyms;
@@ -1994,11 +2015,7 @@ StartRun(Ty *ty)
         if (!once) {
                 once = true;
                 TySpinLockInit(&JitLock);
-                Syms = prof_os_exe_symbols(&NSyms);
-                if (NSyms > 0) {
-                        ExeLo = Syms[0].lo;
-                        ExeHi = Syms[NSyms - 1].hi;
-                }
+                LoadExeSymbols();
                 xvP(SymNames, "(none)");
                 xvP(SymNames, "[jit]");
                 prof_os_init(OnSample);

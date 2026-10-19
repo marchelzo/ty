@@ -7,7 +7,7 @@ import chalk (chalk, hsl-hex, hash-hsl)
 import ink (Component, Box, Raw, TreeView, Ignored, run, focus)
 import ink.chart (LinePlot)
 import term (event, mod)
-import capstone
+import ty.jit as jit (Src, Op, Insn, Data)
 
 pub const DEFAULT_PATH = 'ty-prof.data'
 
@@ -410,9 +410,9 @@ fn matches?(name: String, file: String, filter: String) -> Bool {
     !f || f in name.lower() || f in file.lower()
 }
 
-fn jit-label(jit: String) -> String {
-    let label = jit.fit(8)
-    match jit {
+fn jit-label(kind: String) -> String {
+    let label = kind.fit(8)
+    match kind {
         'declined'         => "{chalk"[red]{label}[/]"}",
         'tier1' or 'tier2' => "{chalk"[green]{label}[/]"}",
         _                  => dim(label)
@@ -1713,33 +1713,10 @@ class JitDeclined < Screen {
     }
 }
 
-fn mnemonic(text: String) -> (String, String) {
-    let parts = text.split(' ', 1)
-    (parts[0], (#parts > 1) ? parts[1] : '')
-}
-
-fn floor-index(xs: Array[Int], x: Int) -> Int {
-    let lo = 0
-    let hi = #xs
-    while lo < hi {
-        let mid = (lo + hi) / 2
-        if xs[mid] <= x {
-            lo = mid + 1
-        } else {
-            hi = mid
-        }
-    }
-    max(lo - 1, 0)
-}
-
-fn branch?(op: String) -> Bool {
-    op.starts?('j') || op == 'call' || op.starts?('b') || op == 'ret'
-}
-
 class Disasm < Screen {
     prof: Profile
     rec: _
-    rows: Array[_]
+    rows: Array[jit.Row]
     samples: Int
     most: Float
     func: _
@@ -1750,74 +1727,11 @@ class Disasm < Screen {
         self.rec = rec
         func = prof.func-named(rec['label'], rec['file'])
         samples = rec['samples'] ?? 0
-        rows = []
-        let $hex = rec['code'] or return
-        let bytes = hex.unhex() ?? Blob()
-        let size: Int = rec['literal'] ?? #bytes
-        let base = int(rec['base'])
-        let syms = %{}
-        for [addr, name] in rec['syms'] ?? [] {
-            syms[int(addr)] = name
-        }
-        let insns = capstone.disassemble(bytes[;size])
-        let hits: Array[Int] = [0 for insns]
-        let starts = insns.map(\_.0)
-        for [pc, n] in rec['hits'] ?? [] {
-            hits[floor-index(starts, pc)] += n
-        }
+        rows = jit.rows(rec)
+        let hits = rows.map(match Insn(i) => i.hits else 0)
         most = float(max(hits.max() ?? 1, 1))
-        let sites = (rec['sites'] ?? []).sort(by=\_[0])
-        let si = 0
-        let line: Int = rec['line']
-        let last = -1
-        let block = 0
-        let best = 0
-        let best-hits = 0
-        for (off, text); i in insns {
-            while si < #sites && sites[si][0] <= off {
-                line = sites[si][1]
-                si += 1
-            }
-            if line != last {
-                block = #rows
-                rows.push(%{'kind': 'src', 'line': line, 'hits': 0})
-                last = line
-            }
-            rows[block]['hits'] += hits[i]
-            let (op, args) = mnemonic(text)
-            if hits[i] > best-hits {
-                best = #rows
-                best-hits = hits[i]
-            }
-            rows.push(%{
-                'kind': 'insn',
-                'off': off,
-                'op': op,
-                'args': args,
-                'hits': hits[i],
-                'line': line,
-                'note': annotate(op, args, off, base, syms)
-            })
-        }
-        if size < #bytes {
-            rows.push(%{'kind': 'data', 'off': size, 'line': line, 'hits': 0,
-                        'text': "literal pool · {fmt-bytes(#bytes - size)}"})
-        }
-        sel = best
+        sel = ((hits.max() ?? 0) > 0) ? (hits.argmax() ?? 0) : 0
         top = max(sel - 8, 0)
-    }
-
-    annotate(op: String, args: String, off: Int, base: Int, syms: Dict[Int, String]) -> String {
-        let notes = []
-        for m in args.matches(/0x[0-9a-f]+/) {
-            let v = int(m)
-            if let $name = syms[v] ?? (branch?(op) ? syms[base + v] : nil) {
-                notes.push(name)
-            } else if branch?(op) && v < base {
-                notes.push((v > off) ? '↓' : '↑')
-            }
-        }
-        notes.join(' ')
     }
 
     count -> Int { #rows }
@@ -1833,7 +1747,7 @@ class Disasm < Screen {
             "{fmt-bytes(rec['native'])} native",
             "tier {rec['tier']}"
         ].join(dim(' · '))
-        "{col('self', 6)} {col('offset', 6)}  {dim('instruction')}    {info}"
+        "{col('self', 6)}   {col('offset', 6)}  {dim('instruction')}    {info}"
     }
 
     share(n: Int) -> String {
@@ -1841,54 +1755,39 @@ class Disasm < Screen {
     }
 
     row(i: Int, w: Int) -> String {
-        let r = rows[i]
-        match r['kind'] {
-            'src' => {
+        match rows[i] {
+            Src(s) => {
                 let src = prof.source(rec['file'])
-                let text = (src != nil && r['line'] > 0) ? src.line(r['line']).strip() : ''
-                let num = "{chalk"[{ACCENT}]{r['line']}[/]"}"
-                let mark = if r['hits'] > 0 && samples > 0 {
-                    dim("{100.0 * r['hits'] / samples:5.1f}%")
-                } else {
-                    ' ' * 6
-                }
-                "{mark} {dim('──────')}  {num} {dim('│')} {text}"
+                let text = (src != nil && s.line > 0) ? src.line(s.line).strip() : ''
+                let num = "{chalk"[{ACCENT}]{s.line}[/]"}"
+                let mark = (s.hits > 0 && samples > 0) ? dim("{100.0 * s.hits / samples:5.1f}%") : ' ' * 6
+                "{mark}   {dim('──────')}  {num} {dim('│')} {text}"
             },
-            'data' => "{' ' * 6} {dim("{r['off']:06x}")}  {dim(r['text'])}",
-            _ => {
-                let op = r['op']
-                let opc = match op {
-                    _ and op == 'call' || op.starts?('bl')   => "{chalk"[yellow]{op.fit(7)}[/]"}",
-                    _ and op == 'ret'                        => "{chalk"[magenta]{op.fit(7)}[/]"}",
-                    _ and op.starts?('j') || op.starts?('b') => "{chalk"[cyan]{op.fit(7)}[/]"}",
-                    _                                         => op.fit(7)
-                }
-                let note = r['note'] ? "  {dim("; {r['note']}")}" : ''
-                "{share(r['hits'])} {dim("{r['off']:06x}")}  {opc} {r['args']}{note}"
-            }
+            Op(o)   => "{' ' * 6}   {' ' * 6}  {jit.op-text(o)}",
+            Data(d) => "{' ' * 6}   {dim("{d.off:06x}")}  {dim("literal pool · {fmt-bytes(d.size)}")}",
+            Insn(x) => "{share(x.hits)} {jit.badge(x.role)} {dim("{x.off:06x}")}  {jit.insn-text(x)}"
         }
     }
 
+    line-at(i: Int) -> Int {
+        let line = jit.line-of(rows[i])
+        (line > 0) ? line : rec['line']
+    }
+
     preview -> Spot | nil {
-        if #rows == 0 {
-            return nil
-        }
-        let r = rows[sel]
-        let line = (r['line'] > 0) ? r['line'] : rec['line']
-        Spot(rec['file'], line, func)
+        (#rows > 0) ? Spot(rec['file'], line-at(sel), func) : nil
     }
 
     open(app: App) {
         if #rows > 0 {
-            let line = (rows[sel]['line'] > 0) ? rows[sel]['line'] : rec['line']
-            app.push(SourceView(prof, rec['file'], line, func))
+            app.push(SourceView(prof, rec['file'], line-at(sel), func))
         }
     }
 
     jump(dir: Int) {
         let i = sel + dir
         while i >= 0 && i < #rows {
-            if rows[i]['kind'] == 'insn' && rows[i]['hits'] > 0 {
+            if let Insn(x) = rows[i] and x.hits > 0 {
                 sel = i
                 return
             }

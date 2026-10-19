@@ -338,6 +338,7 @@ typedef struct lir_inst {
         u8        nargs;
         u32       flags;
         u32       tag;
+        u32       origin;
         LirSpan   span;
         LirSig    sig;
         LirOpnd  *call_args;
@@ -420,7 +421,9 @@ struct lir {
         u32               ty_param;
         u8                stable_pins;
         bool              trusted;
+        bool              detail;
         u8                stack_pins;
+        u32               origin;
         LirError          error;
 };
 
@@ -547,6 +550,23 @@ typedef struct lir_site {
         u32 tag;
 } LirSite;
 
+typedef enum lir_mark_kind {
+        LIR_MARK_PROLOGUE,
+        LIR_MARK_MOVES,
+        LIR_MARK_INST,
+        LIR_MARK_EPILOGUE,
+        LIR_MARK_THUNK,
+        LIR_MARK_EDGE,
+        LIR_MARK_REBASE,
+        LIR_MARK_DATA
+} LirMarkKind;
+
+typedef struct lir_mark {
+        u32 off;
+        u32 pc;
+        u8  kind;
+} LirMark;
+
 typedef struct lir_image {
         u32 size;
         u32 table;
@@ -572,6 +592,8 @@ struct lir_code {
         u32           nroots;
         LirSite      *sites;
         u32           nsites;
+        LirMark      *marks;
+        u32           nmarks;
         LirEntryInfo *entries;
         u32           nentries;
         char         *name;

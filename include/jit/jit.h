@@ -52,6 +52,9 @@ jit_init(Ty *ty);
 JitFn *
 jit_compile(Ty *ty, Value const *func);
 
+char *
+jit_inspect_json(Ty *ty, Value const *func, bool compact, char *why, usize n);
+
 // Free JIT resources
 void
 jit_free(Ty *ty);

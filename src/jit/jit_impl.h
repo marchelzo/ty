@@ -52,6 +52,36 @@ typedef struct {
         _Atomic u64 numeric_pow_slow;
 } JitStats;
 
+enum {
+        JIT_ROLE_CODE,
+        JIT_ROLE_PROLOGUE,
+        JIT_ROLE_MOVES,
+        JIT_ROLE_GUARD,
+        JIT_ROLE_SLOW,
+        JIT_ROLE_DEOPT,
+        JIT_ROLE_TIERUP,
+        JIT_ROLE_POLL,
+        JIT_ROLE_ENTRY,
+        JIT_ROLE_EDGE,
+        JIT_ROLE_REBASE,
+        JIT_ROLE_EPILOGUE,
+        JIT_ROLE_THUNK,
+        JIT_ROLE_DATA
+};
+
+typedef struct {
+        u32 off;
+        u32 bc;
+        u32 note;
+        u8  role;
+} JitNote;
+
+typedef struct {
+        JitNote *notes;
+        u32      n;
+        char    *text;
+} JitNotes;
+
 typedef struct {
         uptr          lo;
         u32           size;
@@ -59,6 +89,7 @@ typedef struct {
         u8           *bytes;
         LirSite      *sites;
         u32           nsites;
+        JitNotes      notes;
         char const   *bc;
         char const   *name;
         u32          *hits;
@@ -76,8 +107,24 @@ typedef struct {
         JitImageRec *image;
 } JitCompileRecord;
 
+extern bool JitDetail;
+
+#define JIT_DETAIL (ProfMode || JitDetail)
+
 JitImageRec *
-jit_image_record(LirCode const *code, char const *bc, char const *name);
+jit_image_new(LirCode const *code, char const *bc, char const *name, JitNotes notes);
+
+JitImageRec *
+jit_image_record(LirCode const *code, char const *bc, char const *name, JitNotes notes);
+
+void
+jit_image_free(JitImageRec *img);
+
+void
+jit_record_json(Ty *ty, FILE *f, JitCompileRecord const *r, bool code);
+
+JitImageRec *
+jit_inspect(Ty *ty, Value const *f, bool compact, char *why, usize n);
 
 void
 jit_code_hit(uptr rip);

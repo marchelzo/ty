@@ -377,13 +377,17 @@ jit_log_compile(JitCompileRecord rec)
 
 static vec(JitImageRec *) Images;
 
+bool JitDetail;
+
 JitImageRec *
-jit_image_record(LirCode const *code, char const *bc, char const *name)
+jit_image_new(LirCode const *code, char const *bc, char const *name, JitNotes notes)
 {
         JitImageRec *img = calloc(1, sizeof *img);
 
         if (img == NULL || code->body == NULL) {
                 free(img);
+                free(notes.notes);
+                free(notes.text);
                 return NULL;
         }
 
@@ -395,11 +399,37 @@ jit_image_record(LirCode const *code, char const *bc, char const *name)
         img->bytes   = malloc(code->size);
         img->sites   = malloc((code->nsites + 1) * sizeof *img->sites);
         img->nsites  = code->nsites;
+        img->notes   = notes;
         img->bc      = bc;
         img->name    = name;
 
         memcpy(img->bytes, code->body, code->size);
         memcpy(img->sites, code->sites, code->nsites * sizeof *img->sites);
+
+        return img;
+}
+
+void
+jit_image_free(JitImageRec *img)
+{
+        if (img != NULL) {
+                free(img->bytes);
+                free(img->sites);
+                free(img->hits);
+                free(img->notes.notes);
+                free(img->notes.text);
+                free(img);
+        }
+}
+
+JitImageRec *
+jit_image_record(LirCode const *code, char const *bc, char const *name, JitNotes notes)
+{
+        JitImageRec *img = jit_image_new(code, bc, name, notes);
+
+        if (img == NULL) {
+                return NULL;
+        }
 
         TySpinLockLock(&JitLogMutex);
 
@@ -529,6 +559,30 @@ image_sym(FILE *f, uptr *seen, int *nseen, uptr addr)
         seen[(*nseen)++] = addr;
 }
 
+static char const *const RoleNames[] = {
+        [JIT_ROLE_CODE]     = "code",
+        [JIT_ROLE_PROLOGUE] = "prologue",
+        [JIT_ROLE_MOVES]    = "moves",
+        [JIT_ROLE_GUARD]    = "guard",
+        [JIT_ROLE_SLOW]     = "slow",
+        [JIT_ROLE_DEOPT]    = "deopt",
+        [JIT_ROLE_TIERUP]   = "tierup",
+        [JIT_ROLE_POLL]     = "poll",
+        [JIT_ROLE_ENTRY]    = "entry",
+        [JIT_ROLE_EDGE]     = "edge",
+        [JIT_ROLE_REBASE]   = "rebase",
+        [JIT_ROLE_EPILOGUE] = "epilogue",
+        [JIT_ROLE_THUNK]    = "thunk",
+        [JIT_ROLE_DATA]     = "data"
+};
+
+static int
+bc_line(Ty *ty, JitImageRec const *img, u32 tag, bool exact)
+{
+        Expr const *e = (tag != 0) ? compiler_find_expr(ty, img->bc + tag - exact) : NULL;
+        return (e != NULL) ? (int)e->start.line + 1 : 0;
+}
+
 static void
 image_json(Ty *ty, FILE *f, JitImageRec const *img, bool code)
 {
@@ -548,20 +602,48 @@ image_json(Ty *ty, FILE *f, JitImageRec const *img, bool code)
 
         int last = -1;
         bool first = true;
+        bool noted = (img->notes.n > 0);
+        u32 nsites = noted ? img->notes.n : img->nsites;
 
-        for (u32 i = 0; i < img->nsites; ++i) {
-                if (img->sites[i].tag == 0) {
-                        continue;
-                }
-                Expr const *e = compiler_find_expr(ty, img->bc + img->sites[i].tag);
-                int line = (e != NULL) ? (int)e->start.line + 1 : 0;
+        for (u32 i = 0; i < nsites; ++i) {
+                u32 pc   = noted ? img->notes.notes[i].off : img->sites[i].pc;
+                u32 tag  = noted ? img->notes.notes[i].bc : img->sites[i].tag;
+                int line = bc_line(ty, img, tag, noted);
                 if (line == 0 || line == last) {
                         continue;
                 }
-                fprintf(f, "%s[%u,%d]", first ? "" : ",", img->sites[i].pc, line);
+                fprintf(f, "%s[%u,%d]", first ? "" : ",", pc, line);
                 last = line;
                 first = false;
         }
+
+        fputs("],\"notes\":[", f);
+
+        byte_vector op = {0};
+        u32 bc = 0;
+
+        for (u32 i = 0; i < img->notes.n; ++i) {
+                JitNote const *n = &img->notes.notes[i];
+                fprintf(f, "%s[%u,%d,", (i > 0) ? "," : "", n->off, (int)n->bc - 1);
+                if (n->bc != 0 && n->bc != bc) {
+                        v0(op);
+                        json_str(f, DumpInstruction(ty, &op, img->bc + n->bc - 1));
+                } else {
+                        fputs("null", f);
+                }
+                fputc(',', f);
+                json_str(f, RoleNames[n->role]);
+                fputc(',', f);
+                if (n->note != 0) {
+                        json_str(f, img->notes.text + n->note);
+                } else {
+                        fputs("null", f);
+                }
+                fputc(']', f);
+                bc = (n->bc != 0) ? n->bc : bc;
+        }
+
+        xvF(op);
 
         fputs("],\"hits\":[", f);
 
@@ -596,6 +678,66 @@ image_json(Ty *ty, FILE *f, JitImageRec const *img, bool code)
         }
 
         fputc(']', f);
+}
+
+void
+jit_record_json(Ty *ty, FILE *f, JitCompileRecord const *r, bool code)
+{
+        Expr const *e = r->expr;
+
+        fputs("{\"class\":", f);
+        json_str(f, r->class_name);
+        fputs(",\"name\":", f);
+        json_str(f, r->name);
+        fputs(",\"file\":", f);
+        json_str(f, (e != NULL && e->mod != NULL && e->mod->path != NULL) ? e->mod->path : "");
+        fprintf(f, ",\"line\":%d", (e != NULL) ? (int)e->start.line + 1 : 0);
+        fprintf(
+                f,
+                ",\"bc\":%d,\"native\":%zu,\"ns\":%llu,\"tier\":%d",
+                r->bc_code_size,
+                r->native_size,
+                (unsigned long long)r->compile_time_ns,
+                r->compact ? 1 : 2
+        );
+
+        if (r->image != NULL) {
+                image_json(ty, f, r->image, code);
+        }
+
+        fputc('}', f);
+}
+
+char *
+jit_inspect_json(Ty *ty, Value const *func, bool compact, char *why, usize n)
+{
+        JitImageRec *img = jit_inspect(ty, func, compact, why, n);
+
+        if (img == NULL) {
+                return NULL;
+        }
+
+        Expr const *expr = !from_eval(func) ? expr_of(func) : NULL;
+        char       *out  = NULL;
+        usize       len  = 0;
+        FILE       *f    = open_memstream(&out, &len);
+
+        if (f != NULL) {
+                jit_record_json(ty, f, &(JitCompileRecord) {
+                        .name         = name_of(func),
+                        .class_name   = (expr != NULL && expr->class != NULL) ? expr->class->name : "",
+                        .expr         = expr,
+                        .native_size  = img->size,
+                        .bc_code_size = code_size_of(func),
+                        .compact      = compact,
+                        .image        = img
+                }, true);
+                fclose(f);
+        }
+
+        jit_image_free(img);
+
+        return out;
 }
 
 JitCompileRecord const *
@@ -941,30 +1083,15 @@ jit_stats_json(Ty *ty, FILE *f)
 
         for (usize i = 0; i < vN(jit_compile_log); ++i) {
                 JitCompileRecord const *r = v_(jit_compile_log, i);
-                fprintf(f, "%s{\"class\":", (i > 0) ? "," : "");
-                json_str(f, r->class_name);
-                fputs(",\"name\":", f);
-                json_str(f, r->name);
-                Expr const *e = r->expr;
-                fputs(",\"file\":", f);
-                json_str(f, (e != NULL && e->mod != NULL && e->mod->path != NULL) ? e->mod->path : "");
-                fprintf(f, ",\"line\":%d", (e != NULL) ? (int)e->start.line + 1 : 0);
-                fprintf(
-                        f,
-                        ",\"bc\":%d,\"native\":%zu,\"ns\":%llu,\"tier\":%d",
-                        r->bc_code_size,
-                        r->native_size,
-                        (unsigned long long)r->compile_time_ns,
-                        r->compact ? 1 : 2
-                );
-                if (r->image != NULL) {
-                        bool code = (r->image->samples > 0) || (r->image->size <= budget);
-                        if (code) {
-                                budget -= min(budget, (usize)r->image->size);
-                        }
-                        image_json(ty, f, r->image, code);
+                bool code = (r->image != NULL)
+                         && ((r->image->samples > 0) || (r->image->size <= budget));
+                if (code) {
+                        budget -= min(budget, (usize)r->image->size);
                 }
-                fputc('}', f);
+                if (i > 0) {
+                        fputc(',', f);
+                }
+                jit_record_json(ty, f, r, code);
         }
 
         TySpinLockUnlock(&JitLogMutex);

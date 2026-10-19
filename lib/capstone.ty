@@ -1,8 +1,6 @@
 import ffi as c
 import os
-import jit as j
-
-pub ARCH = j._arch()
+import ty
 
 class Capstone {
     __version: Int;
@@ -66,7 +64,7 @@ class Capstone {
 }
 
 fn arm64?() -> Bool {
-    ARCH == 'arm64'
+    ty.arch == 'aarch64'
 }
 
 fn open-capstone() -> Capstone | nil {

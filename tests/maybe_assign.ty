@@ -1,0 +1,99 @@
+import ty
+import sh
+
+pub fn right-side-runs-only-for-nil() {
+    let calls: Array[Int] = []
+    fn rhs(v: Int) -> Int { calls.push(v); v }
+
+    let x: Int | nil = nil
+    assert((x ?= rhs(1)) == 1)
+    assert((x ?= rhs(2)) == 1)
+    assert(x == 1)
+    assert(calls == [1])
+}
+
+pub fn subscript-target-is-evaluated-once() {
+    let order: Array[String] = []
+    fn note[T](what: String, v: T) -> T { order.push(what); v }
+
+    let groups: Dict[String, Array[Int]] = %{}
+    (note('dict', groups)[note('key', 'a')] ?= note('new', [])).push(1)
+    (note('dict', groups)[note('key', 'a')] ?= note('new', [])).push(2)
+
+    assert(groups == %{'a': [1, 2]})
+    assert(order == ['dict', 'key', 'new', 'dict', 'key'])
+}
+
+pub fn member-target-is-evaluated-once() {
+    class Box {
+        value: Int | nil = nil
+    }
+
+    let order: Array[String] = []
+    fn note[T](what: String, v: T) -> T { order.push(what); v }
+
+    let box = Box()
+    assert((note('box', box).value ?= note('new', 3)) == 3)
+    assert((note('box', box).value ?= note('new', 4)) == 3)
+    assert(order == ['box', 'new', 'box'])
+}
+
+pub fn lazy-field-cache() {
+    class Lazy {
+        loads = 0
+        __data: Array[Int] | nil = nil
+
+        data -> Array[Int] {
+            __data ?= load()
+        }
+
+        load() -> Array[Int] {
+            loads += 1
+            [loads]
+        }
+    }
+
+    let lazy = Lazy()
+    assert(lazy.data == [1])
+    assert(lazy.data == [1])
+    assert(lazy.loads == 1)
+}
+
+pub fn dynamic-member-target-is-evaluated-once() {
+    let order: Array[String] = []
+    fn note[T](what: String, v: T) -> T { order.push(what); v }
+
+    let box: _ = {value: nil}
+    assert((box.{note('name', 'value')} ?= note('new', 3)) == 3)
+    assert((box.{note('name', 'value')} ?= note('new', 4)) == 3)
+    assert(order == ['name', 'new', 'name'])
+}
+
+pub fn multi-index-target-is-evaluated-once() {
+    let order: Array[String] = []
+    fn note[T](what: String, v: T) -> T { order.push(what); v }
+
+    class Grid {
+        cells: Dict[(Int, Int), Int] = %{}
+        [](i: Int, j: Int) -> Int | nil { cells[(i, j)] }
+        []=(i: Int, j: Int, v: Int) { cells[(i, j)] = v }
+    }
+
+    let grid = Grid()
+    assert((note('grid', grid)[note('i', 1), note('j', 2)] ?= note('new', 5)) == 5)
+    assert((note('grid', grid)[note('i', 1), note('j', 2)] ?= note('new', 6)) == 5)
+    assert(grid.cells == %{(1, 2): 5})
+    assert(order == ['grid', 'i', 'j', 'new', 'grid', 'i', 'j'])
+}
+
+pub fn patterns-are-rejected() {
+    for source in [
+        'let p = nil; [p] ?= [1]',
+        'let (a, b) = (nil, nil); (a, b) ?= (1, 2)',
+        'let a = nil; let b = nil; a, b ?= 1, 2'
+    ] {
+        let result = sh.run([ty.executable, '-e', source], timeout=30)
+        assert(!result.ok?, source)
+        assert(result.stderr.match?(/\?= takes a single variable, member, or subscript, not a pattern/), result.stderr)
+    }
+}

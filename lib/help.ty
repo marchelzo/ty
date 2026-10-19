@@ -1085,6 +1085,7 @@ fn overview(page: Page) {
         ('grep kind:class mod:os …', 'filter by kind or module'),
         (':t <expr>',       'show the static type of an expression'),
         ('dis <expr>',      'disassemble'),
+        ('jit <expr>[, tier]', 'JIT-compile (tier 2 by default) and show annotated machine code'),
         (':s <file>  :r <module>  :!<cmd>', 'source a file, reload a module, run a shell command')
     ] {
         page.put(ink"  [name]{cmd:<34}[/][prose]{what}[/]")

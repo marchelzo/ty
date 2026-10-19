@@ -771,6 +771,9 @@ DumpProgram(
         bool incl_sub_fns
 );
 
+char const *
+DumpInstruction(Ty *ty, byte_vector *out, char const *ip);
+
 inline static bool
 ModuleIsReloading(Module const *mod)
 {

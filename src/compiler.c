@@ -20512,6 +20512,38 @@ NextCaption(ProgramAnnotation *annotation, char const *pc)
 }
 
 char const *
+DumpInstruction(Ty *ty, byte_vector *out, char const *ip)
+{
+        byte_vector text  = {0};
+        bool        color = ColorOutput;
+
+        ColorOutput = false;
+        DumpProgram(ty, &text, "", ip, StepInstruction(ip), false);
+        ColorOutput = color;
+
+        xvP(text, '\0');
+
+        char const *line = strchr(vv(text), '\n');
+
+        line  = (line != NULL) ? line + 1 : vv(text);
+        line += strspn(line, " ");
+        line += strspn(line, "-0123456789");
+        line += strspn(line, " ");
+
+        char const *end = line + strcspn(line, "\n");
+
+        while (end > line && end[-1] == ' ') {
+                end -= 1;
+        }
+
+        xvPn(*out, line, end - line);
+        xvP(*out, '\0');
+        xvF(text);
+
+        return vv(*out);
+}
+
+char const *
 DumpProgram(
         Ty *ty,
         byte_vector *out,

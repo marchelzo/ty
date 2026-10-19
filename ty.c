@@ -50,6 +50,7 @@ static char buffer[8192];
 
 static char const *print_function = "print";
 static bool help_imported = false;
+static bool jit_imported = false;
 
 static char const *SourceFile;
 
@@ -324,6 +325,14 @@ execln(Ty *ty, char *line)
 
                 goto End;
 #endif
+        } else if (s_eq_n(line, "jit ", 4)) {
+                dump(&buffer, "%sprint(__jit.show(%s));", jit_imported ? "" : "import ty.jit as __jit\n", line + 4);
+                if (repl_exec(ty, v_(buffer, 1))) {
+                        jit_imported = true;
+                        goto End;
+                } else {
+                        goto Bad;
+                }
         } else if (s_eq_n(line, "dis ", 4)) {
                 dump(&buffer, "print(ty.disassemble(%s));", line + 4);
                 if (repl_exec(ty, v_(buffer, 1))) {

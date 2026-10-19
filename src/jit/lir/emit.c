@@ -106,6 +106,7 @@ typedef struct {
         u32 rebased;
         u32 stubs;
         u32 edges;
+        u32 spots;
 
         u32 nsites;
         u32 nentries;
@@ -1626,6 +1627,17 @@ prepare(Emit *e)
         e->rebased  = e->sites + n;
         e->stubs    = e->rebased + n;
         e->edges    = e->stubs + n;
+        e->spots    = e->edges + alloc->nstubs;
+
+        return true;
+}
+
+static bool
+spot(Emit *e, u32 i)
+{
+        if (e->L->detail) {
+                label(Dst, e->spots + i);
+        }
 
         return true;
 }
@@ -1678,7 +1690,7 @@ assemble(Emit *e)
 
         dasm_init(Dst, DASM_MAXSECTION);
         dasm_setupglobal(Dst, e->globals, 0);
-        dasm_growpc(Dst, vN(L->labels) + 6 * n + 4 + e->alloc->nstubs);
+        dasm_growpc(Dst, vN(L->labels) + (L->detail ? 8 : 6) * n + 4 + e->alloc->nstubs);
         dasm_setup(Dst, lir_actions);
 
         prologue(Dst, e->frame, e->alloc->frame_align, e->origin);
@@ -1692,9 +1704,11 @@ assemble(Emit *e)
                 LirOp op   = v__(L->insts, pc).op;
                 int   mode = (op == LIR_POLL) ? MV_FAST : MV_ALL;
                 marks(e, pc);
+                spot(e, 2 * pc);
                 if (
                         !phase(e, pc, LIR_MOVE_EDGE_IN, pc, MV_ALL)
                      || !before(e, pc, mode)
+                     || !spot(e, 2 * pc + 1)
                      || !insn(e, pc)
                      || (op != LIR_JMP && !leave(e, pc))
                 ) {
@@ -1762,6 +1776,77 @@ site(Emit *e, LirInst const *in, u32 pc)
                 .pc  = dasm_getpclabel(Dst, e->sites + pc),
                 .tag = (in->op == LIR_SITE) ? in->args[0].imm : in->tag
         };
+}
+
+static void
+mark(Emit *e, u32 label, u32 pc, LirMarkKind kind)
+{
+        int off = dasm_getpclabel(Dst, label);
+
+        if (off >= 0) {
+                e->code->marks[e->code->nmarks++] = (LirMark) {
+                        .off  = (u32)off,
+                        .pc   = pc,
+                        .kind = kind
+                };
+        }
+}
+
+static int
+by_offset(void const *a, void const *b)
+{
+        LirMark const *x = a;
+        LirMark const *y = b;
+
+        if (x->off != y->off) {
+                return (x->off > y->off) - (x->off < y->off);
+        }
+
+        if (x->pc != y->pc) {
+                return (x->pc > y->pc) - (x->pc < y->pc);
+        }
+
+        return (x->kind == LIR_MARK_INST) - (y->kind == LIR_MARK_INST);
+}
+
+static void
+record(Emit *e)
+{
+        LirCode *code = e->code;
+        u32      n    = vN(e->L->insts);
+
+        code->marks  = xtA0(LirMark, 4 * n + e->alloc->nstubs + 4);
+        code->nmarks = 0;
+
+        code->marks[code->nmarks++] = (LirMark) { .pc = LIR_NONE, .kind = LIR_MARK_PROLOGUE };
+
+        for (u32 pc = 0; pc < n; ++pc) {
+                mark(e, e->spots + 2 * pc, pc, LIR_MARK_MOVES);
+                mark(e, e->spots + 2 * pc + 1, pc, LIR_MARK_INST);
+                if (rebases(e, pc)) {
+                        mark(e, e->stubs + pc, pc, LIR_MARK_REBASE);
+                }
+        }
+
+        mark(e, e->epilogue, LIR_NONE, LIR_MARK_EPILOGUE);
+        mark(e, e->thunk, LIR_NONE, LIR_MARK_THUNK);
+
+        for (u32 i = 0; i < e->alloc->nmoves; ++i) {
+                LirMove const *m = &e->alloc->moves[i];
+                if (m->phase == LIR_MOVE_STUB) {
+                        mark(e, e->edges + m->stub, m->op, LIR_MARK_EDGE);
+                }
+        }
+
+        if (code->literal_pool != NULL) {
+                code->marks[code->nmarks++] = (LirMark) {
+                        .off  = (u32)((u8 *)code->literal_pool - (u8 *)code->body),
+                        .pc   = LIR_NONE,
+                        .kind = LIR_MARK_DATA
+                };
+        }
+
+        qsort(code->marks, code->nmarks, sizeof *code->marks, by_offset);
 }
 
 static bool
@@ -1862,6 +1947,10 @@ publish(Emit *e, usize size)
                         code->literal_size = size - at;
                         break;
                 }
+        }
+
+        if (L->detail) {
+                record(e);
         }
 
         jm_perf(code->body, code->size, code->name);

@@ -282,6 +282,7 @@ lir_code_destroy(LirCode *code)
         lir_free(code->lir);
         xmF(code->roots);
         xmF(code->sites);
+        xmF(code->marks);
         xmF(code->entries);
         xmF(code->name);
         xmF(code->osr);

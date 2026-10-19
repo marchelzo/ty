@@ -1,0 +1,50 @@
+import ty
+import ty.jit as jit (Src, Op, Insn)
+
+fn countdown(n) {
+    let s = 0
+    for i in ..n {
+        s += i * 2
+    }
+    s
+}
+
+fn notes-of(rec) {
+    rec['notes'].map(n -> {op: n[2], role: n[3], note: n[4] ?? ''})
+}
+
+pub fn jit-image-describes-native-code() {
+    for _ in ..200 {
+        countdown(100)
+    }
+
+    let rec = ty.jit-image(countdown)
+    let notes = notes-of(rec)
+
+    assert(rec['name'] == 'countdown')
+    assert(rec['tier'] == 2)
+    assert(#rec['code'] == 2 * rec['native'])
+    assert(notes.any?(\_.op == 'MUL'))
+    assert(notes.any?(\_.role == 'prologue'))
+    assert(notes.any?(\_.role == 'epilogue'))
+    assert(notes.any?(n -> n.role == 'guard' && n.note.starts?('Int → deopt')))
+    assert(notes.any?(n -> n.role == 'deopt' && n.note.starts?('resume at')))
+    assert([1, 2, 3].all?(k -> (rec['line'] + k) in rec['sites'].map(&1)))
+    assert(ty.jit-image(countdown, 1)['tier'] == 1)
+}
+
+pub fn jit-rows-group-by-line-and-op() {
+    let rows = jit.rows(ty.jit-image(countdown))
+    let ops = rows.filter(Op).map(match { Op(o) => o.text, _ => '' })
+
+    assert(rows[0] :: Src)
+    assert(ops[0] == 'prologue')
+    assert(ops.any?(\_ == 'MUL'))
+    assert(rows.any?(match { Insn(i) => i.role == 'guard' && i.note != nil, _ => false }))
+    assert(jit.show(countdown).match?(/┄\s+\d+ MUL/))
+}
+
+pub fn jit-image-rejects-non-functions() {
+    let msg = try { ty.jit-image(42); '' } catch e { str(e) }
+    assert(msg.match?(/expected a function/))
+}

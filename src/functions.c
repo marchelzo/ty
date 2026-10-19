@@ -10161,6 +10161,46 @@ TY_BUILTIN_RAW(ty_disassemble)
         return result;
 }
 
+// ty.jit-image(f: _, tier: prelude.Int = 2) -> _
+TY_BUILTIN_RAW(ty_jit_image)
+{
+        ASSERT_ARGC("ty.jit-image()", 1, 2);
+
+        Value f    = ARG(0);
+        imax  tier = (argc == 2) ? INT_ARG(1) : 2;
+        char  why[256];
+
+        switch (f.type) {
+        case VALUE_GENERATOR: f = f.gen->f;   break;
+        case VALUE_METHOD:    f = *f.method; break;
+        default:                             break;
+        }
+
+        if (f.type != VALUE_FUNCTION) {
+                bP("expected a function but got %s", VSC(&ARG(0)));
+        }
+
+        if (tier != 1 && tier != 2) {
+                bP("tier must be 1 or 2, not %"PRIiMAX, tier);
+        }
+
+        char *json = jit_inspect_json(ty, &f, tier == 1, why, sizeof why);
+
+        if (json == NULL) {
+                bP("%s was not compiled: %s", name_of(&f), why);
+        }
+
+        Value text = vSsz(json);
+
+        free(json);
+
+        vmP(&text);
+        Value image = json_parse(ty, &text);
+        vmX();
+
+        return image;
+}
+
 // ty.coro() -> _
 TY_BUILTIN_RAW(ty_coro)
 {
