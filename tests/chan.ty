@@ -67,3 +67,12 @@ pub fn chan() {
     assert(bound-result.recv() == Some(worker.value))
     bound-thread.join()
 }
+
+pub fn string-views-keep-their-own-bytes() {
+    let ch = Channel()
+    let text = 'alpha\nbeta\ngamma\n' * 2
+    Thread(isolated=true, fn () {
+        ch.send(text.lines())
+    }).join()
+    assert(ch.recv() == Some(['alpha', 'beta', 'gamma', 'alpha', 'beta', 'gamma']))
+}

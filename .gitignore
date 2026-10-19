@@ -23,6 +23,8 @@ compile_commands.json
 
 *.log
 *.err
+*.data
+*.old
 
 .*
 !.gitignore

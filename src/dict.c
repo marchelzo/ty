@@ -74,6 +74,28 @@ dict_has_value(Ty *ty, Dict *d, Value *key)
         return ht_lookup(ty, d, key) != HT_NONE;
 }
 
+Dict *
+dict_new_sized(Ty *ty, usize n)
+{
+        Dict *d = dict_new(ty);
+        usize size = HT_INITIAL_SIZE;
+
+        if (n == 0) {
+                return d;
+        }
+
+        while (3 * size <= 4 * n) {
+                size *= 2;
+        }
+
+        NOGC(d);
+        d->items = mA0(size * sizeof (DictItem));
+        d->size  = size;
+        OKGC(d);
+
+        return d;
+}
+
 void
 dict_put_value(Ty *ty, Dict *d, Value key, Value value)
 {

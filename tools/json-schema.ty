@@ -1,0 +1,712 @@
+import json
+import os
+import clap (clap!)
+import path (Path)
+
+/**
+ * Print Ty class definitions for JSON data or a JSON Schema.
+ *
+ * Data can be one JSON document or JSON lines; every document is a sample of the
+ * root type. Objects that carry a string tag such as `type` become tagged unions,
+ * and objects with unrelated key sets become untagged unions.
+ *
+ *     ty tools/json-schema.ty bench/_data/lex.schema.json
+ *     ty tools/json-schema.ty -n TranscriptEntry bench/_data/transcript.jsonl
+ *     curl -s https://example.com/api | ty tools/json-schema.ty -n Response
+ */
+clap! JsonSchema {
+    /// Name of the root type (default: the schema title or the input file name)
+    name: String, short: 'n'
+
+    /// Treat the input as a JSON Schema
+    schema: Bool, short: None
+
+    /// Treat the input as JSON data, even if it looks like a JSON Schema
+    data: Bool, short: None
+
+    /// Emit records instead of classes, keeping optional fields as `?name: T`
+    records: Bool, short: 'r'
+
+    /// Give every inferred tagged union a final catch-all alternative
+    open: Bool, short: None
+
+    /// Infer literal unions for strings with at most N distinct values
+    enums: Int, short: 'e', default: 0, check: 0..1000
+
+    /// JSON, JSON lines or JSON Schema files (default: stdin)
+    files: [String], pos: true, repeat: true
+}
+
+let RESERVED = %{
+    'Any', 'Array', 'Blob', 'Bool', 'Channel', 'Class', 'Dict', 'Dynamic', 'Err',
+    'Error', 'Float', 'Function', 'Generator', 'Heap', 'Int', 'Iter', 'Iterator',
+    'None', 'Object', 'Ok', 'Path', 'Ptr', 'Queue', 'Range', 'Regex', 'Set', 'Some',
+    'String', 'Thread', 'Tuple', 'Type'
+}
+
+let TAG-KEYS = ['type', 'kind', 'tag', 'event', 'op', 'action', 'object']
+
+fn pascal(s: String) -> String {
+    let parts = s.split(/[^A-Za-z0-9]+/).filter(p -> p != '')
+    let name = parts.map(p -> p[0].upper() + p[1;]).join()
+    if name == '' {
+        return 'Value'
+    }
+    if (/^[0-9]/)(name) {
+        return "V{name}"
+    }
+    name
+}
+
+fn singular(name: String) -> String {
+    let one = match name {
+        /ies$/              => name[;-3] + 'y',
+        /(ss|us|is)$/       => name,
+        /(sses|xes|ches)$/  => name[;-2],
+        /s$/                => name[;-1],
+        _                   => name
+    }
+    (one == name) ? "{name}Item" : one
+}
+
+fn field-name?(key: String) -> Bool {
+    (/^[A-Za-z][A-Za-z0-9_]*$/)(key) != nil && key != 'static'
+}
+
+fn quote(s: String) -> String {
+    let body = s.replace('\\', '\\\\')
+                .replace("'", "\\'")
+                .replace("\n", '\\n')
+                .replace("\r", '\\r')
+                .replace("\t", '\\t')
+    "'{body}'"
+}
+
+fn literal(v: Any) -> String {
+    match v {
+        nil       => 'nil',
+        _: Bool   => "{v}",
+        _: Int    => "{v}",
+        _: Float  => 'Float',
+        _: String => quote(v),
+        _         => 'Any'
+    }
+}
+
+fn union(parts: [String]) -> String {
+    let seen = %{}
+    let out = []
+    for p in parts {
+        if p == 'Any' {
+            return 'Any'
+        }
+        if !seen[p] {
+            seen[p] = true
+            out.push(p)
+        }
+    }
+    if #out == 0 {
+        return 'Any'
+    }
+    out.join(' | ')
+}
+
+fn alternatives(type: String) -> [String] {
+    let parts = []
+    let depth = 0
+    let quoted = false
+    let start = 0
+    let i = 0
+    while i < #type {
+        let c = type[i]
+        if quoted {
+            if c == '\\' {
+                i += 1
+            } else if c == "'" {
+                quoted = false
+            }
+        } else if c == "'" {
+            quoted = true
+        } else if c == '[' || c == '(' || c == '{' {
+            depth += 1
+        } else if c == ']' || c == ')' || c == '}' {
+            depth -= 1
+        } else if depth == 0 && type[i;i + 3] == ' | ' {
+            parts.push(type[start;i])
+            start = i + 3
+            i += 2
+        }
+        i += 1
+    }
+    parts.push(type[start;])
+    parts
+}
+
+fn wrap(lead: String, type: String) -> String {
+    let alts = alternatives(type)
+    if #lead + #type <= 100 || #alts < 2 {
+        return lead + type
+    }
+    let pad = ' ' * (#lead - 2)
+    let lines = []
+    let line = lead + alts[0]
+    for alt in alts[1;] {
+        if #line + 3 + #alt > 100 {
+            lines.push(line)
+            line = "{pad}| {alt}"
+        } else {
+            line = "{line} | {alt}"
+        }
+    }
+    lines.push(line)
+    lines.join('\n')
+}
+
+class Gen {
+    out: [String]
+    bodies: Dict[String, String]
+    used: Dict[String, Bool]
+    records: Bool
+    open: Bool
+    enums: Int
+
+    init(records: Bool, open: Bool, enums: Int) {
+        self.out = []
+        self.bodies = %{}
+        self.used = %{}
+        self.records = records
+        self.open = open
+        self.enums = enums
+    }
+
+    fresh(base: String) -> String {
+        let name = (base in RESERVED) ? "{base}Data" : base
+        let n = 2
+        let candidate = name
+        while used[candidate] {
+            candidate = "{name}{n}"
+            n += 1
+        }
+        used[candidate] = true
+        candidate
+    }
+
+    alias(base: String, type: String) -> String {
+        let key = "use:{type}"
+        if let $name = bodies[key] {
+            return name
+        }
+        let name = fresh(base)
+        bodies[key] = name
+        out.push(wrap("use {name} = ", type))
+        name
+    }
+
+    literals(hint: String, values: [String]) -> String {
+        let type = union(values)
+        (#values >= 5) ? alias("{hint}Kind", type) : type
+    }
+
+    define(base: String, fields: [(String, String, Bool)]) -> String {
+        let kept = []
+        let dropped = []
+        for (key, type, optional) in fields {
+            if !field-name?(key) {
+                dropped.push("{json.encode(key)} (not a usable field name)")
+            } else if optional && !records {
+                dropped.push("{key} (optional)")
+            } else {
+                kept.push((key, type, optional))
+            }
+        }
+
+        let body = if records {
+            let items = kept.map(f -> "{f.2 ? '?' : ''}{f.0}: {f.1}")
+            let line = '{' + items.join(', ') + '}'
+            if #line <= 80 {
+                line
+            } else {
+                let lines = kept.map(f -> wrap("    {f.2 ? '?' : ''}{f.0}: ", f.1))
+                '{\n' + lines.join(',\n') + '\n}'
+            }
+        } else {
+            kept.map(f -> wrap("    {f.0}: ", f.1)).join('\n')
+        }
+
+        if let $name = bodies[body] {
+            return name
+        }
+
+        let name = fresh(base)
+        bodies[body] = name
+
+        if records {
+            out.push("use {name} = {body}")
+        } else if body == '' {
+            out.push("class {name} " + '{}')
+        } else {
+            out.push("class {name} " + '{\n' + body + '\n}')
+        }
+
+        for d in dropped {
+            eprint("json-schema: {name}: left out {d}; json.parse still keeps such keys as extra members")
+        }
+
+        name
+    }
+}
+
+use Obj = Dict[String, Any]
+use Group = (String, [Obj])
+
+fn group-by(objs: [Obj], key: Obj -> String) -> [Group] {
+    let index: Dict[String, Int] = %{}
+    let groups: [Group] = []
+    for o in objs {
+        let k = key(o)
+        let i = index[k] ?? -1
+        if i < 0 {
+            i = #groups
+            index[k] = i
+            groups.push((k, []))
+        }
+        groups[i].1.push(o)
+    }
+    groups
+}
+
+fn key-set(objs: [Obj]) -> String {
+    let keys: Dict[String, Bool] = %{}
+    for o in objs {
+        for k, _ in o {
+            keys[k] = true
+        }
+    }
+    keys.keys().sort().join(',')
+}
+
+fn tag-of(objs: [Obj]) -> String | nil {
+    if #objs < 2 {
+        return nil
+    }
+
+    let candidates: [(String, Int)] = []
+
+    for key, _ in objs[0] {
+        if !objs.all?(o -> o[key] :: String) {
+            continue
+        }
+        let groups = group-by(objs, o -> "{o[key]}")
+        let n = #groups
+        if n < 2 || n > 32 || n > max(2, #objs / 2) {
+            continue
+        }
+        let shapes: Dict[String, Bool] = %{}
+        for g in groups {
+            shapes[key-set(g.1)] = true
+        }
+        if #shapes >= 2 {
+            candidates.push((key, n))
+        }
+    }
+
+    if #candidates == 0 {
+        return nil
+    }
+
+    for preferred in TAG-KEYS {
+        for c in candidates {
+            if c.0 == preferred {
+                return c.0
+            }
+        }
+    }
+
+    candidates.sort(by: c -> c.1)[0].0
+}
+
+fn clusters(objs: [Obj]) -> [[Obj]] | nil {
+    let groups = group-by(objs, o -> o.keys().join(','))
+
+    if #groups < 2 || #groups > 8 {
+        return nil
+    }
+
+    let all: Dict[String, Bool] = %{}
+    let common: [String] = groups[0].1[0].keys()
+    for g in groups {
+        let keys = g.1[0].keys()
+        for k in keys {
+            all[k] = true
+        }
+        common = common.filter(k -> k in keys)
+    }
+
+    if 2 * #common > #all {
+        return nil
+    }
+
+    let ranked = groups.enumerate().sort(cmp: fn (a: (Int, Group), b: (Int, Group)) -> Int {
+        let d = #b.1.1[0] - #a.1.1[0]
+        (d != 0) ? d : a.0 - b.0
+    })
+
+    ranked.map(r -> r.1.1)
+}
+
+fn infer(gen: Gen, hint: String, values: [Any]) -> String {
+    let objs = []
+    let elems = []
+    let arrays = false
+    let strings = %{}
+    let nstrings = 0
+    let ints = false
+    let floats = false
+    let bools = false
+    let nils = false
+
+    for v in values {
+        match v {
+            nil          => { nils = true },
+            _: Bool      => { bools = true },
+            _: Int       => { ints = true },
+            _: Float     => { floats = true },
+            _: String    => {
+                nstrings += 1
+                if #strings <= gen.enums {
+                    strings[v] = true
+                }
+            },
+            _: Array     => {
+                arrays = true
+                elems += v
+            },
+            _: Dict      => { objs.push(v) },
+            _            => ()
+        }
+    }
+
+    let parts = []
+
+    if #objs > 0 {
+        parts.push(object-type(gen, hint, objs))
+    }
+
+    if arrays {
+        parts.push((#elems == 0) ? 'Array[Any]' : "Array[{infer(gen, singular(hint), elems)}]")
+    }
+
+    if nstrings > 0 {
+        if gen.enums > 0 && #strings <= gen.enums && nstrings >= 2 * #strings {
+            parts.push(gen.literals(hint, strings.keys().map(quote)))
+        } else {
+            parts.push('String')
+        }
+    }
+
+    if floats {
+        parts.push('Float')
+    } else if ints {
+        parts.push('Int')
+    }
+
+    if bools {
+        parts.push('Bool')
+    }
+
+    if nils {
+        parts.push('nil')
+    }
+
+    union(parts)
+}
+
+fn dropped?(gen: Gen, key: String, optional: Bool) -> Bool {
+    !field-name?(key) || (optional && !gen.records)
+}
+
+fn fields-of(gen: Gen, objs: [Obj], tagged: String | nil, value: String) -> [(String, String, Bool)] {
+    let order = []
+    let seen = %{}
+    for o in objs {
+        for k, _ in o {
+            if !seen[k] {
+                seen[k] = true
+                order.push(k)
+            }
+        }
+    }
+
+    order.map(fn (key) {
+        let values = []
+        for o in objs {
+            if key in o {
+                values.push(o[key])
+            }
+        }
+        let optional = #values < #objs
+        let type = if key == tagged {
+            quote(value)
+        } else if dropped?(gen, key, optional) {
+            'Any'
+        } else {
+            infer(gen, pascal(key), values)
+        }
+        (key, type, optional)
+    })
+}
+
+fn object-type(gen: Gen, hint: String, objs: [Obj]) -> String {
+    let keys = %{}
+    let usable = 0
+    for o in objs {
+        for k, _ in o {
+            if !keys[k] {
+                keys[k] = true
+                usable += field-name?(k) ? 1 : 0
+            }
+        }
+    }
+
+    if #keys > 64 || 2 * usable < #keys {
+        let values = []
+        for o in objs {
+            for _, v in o {
+                values.push(v)
+            }
+        }
+        return "Dict[String, {infer(gen, singular(hint), values)}]"
+    }
+
+    if let $tagged = tag-of(objs) {
+        let names = group-by(objs, o -> "{o[tagged]}").map(fn (g: Group) -> String {
+            let base = pascal(g.0)
+            let name = base.ends?(hint) ? base : base + hint
+            gen.define(name, fields-of(gen, g.1, tagged, g.0))
+        })
+        if gen.open {
+            names.push(gen.define("Other{pascal(tagged)}", [(tagged, 'String', false)]))
+        }
+        return union(names)
+    }
+
+    if let $groups = clusters(objs) {
+        let names = []
+        for group; i in groups {
+            let base = hint
+            for k in group[0].keys() {
+                let shared = false
+                for other; j in groups {
+                    if j != i && k in other[0] {
+                        shared = true
+                    }
+                }
+                if !shared && pascal(k) != hint {
+                    base = pascal(k) + hint
+                    break
+                }
+            }
+            names.push(gen.define(base, fields-of(gen, group, nil, '')))
+        }
+        return union(names)
+    }
+
+    gen.define(hint, fields-of(gen, objs, nil, ''))
+}
+
+class SchemaGen {
+    gen: Gen
+    defs: Dict[String, Any]
+    done: Dict[String, String]
+    renames: Dict[String, String]
+
+    init(gen: Gen, root: Dict[String, Any]) {
+        self.gen = gen
+        self.defs = root['$defs'] ?? root['definitions'] ?? %{}
+        self.done = %{}
+        self.renames = %{}
+    }
+
+    resolve(ref: String) -> String {
+        let name = ref.split('/')[-1]
+        if let $type = done[name] {
+            return type
+        }
+        let def = defs[name] ?? throw RuntimeError("json-schema: unresolved $ref {ref}")
+        let hint = renames[name] ?? pascal((def :: Dict) ? def['title'] ?? name : name)
+        done[name] = hint
+        let type = convert(def, hint, true)
+        let result = if type == hint || (/^[A-Za-z0-9_]+$/)(type) {
+            type
+        } else {
+            gen.alias(hint, type)
+        }
+        done[name] = result
+        result
+    }
+
+    object(s: Dict[String, Any], hint: String) -> String {
+        let props = s['properties'] ?? %{}
+        let required = %{}
+        for r in s['required'] ?? [] {
+            required[r] = true
+        }
+        if #props == 0 {
+            let extra = s['additionalProperties']
+            let value = (extra :: Dict) ? convert(extra, singular(hint)) : 'Any'
+            return "Dict[String, {value}]"
+        }
+        let fields = []
+        for key, sub in props {
+            let optional = !required[key]
+            let type = dropped?(gen, key, optional) ? 'Any' : convert(sub, pascal(key))
+            fields.push((key, type, optional))
+        }
+        gen.define(hint, fields)
+    }
+
+    one(s: Dict[String, Any], type: String, hint: String) -> String {
+        match type {
+            'integer' => 'Int',
+            'number'  => 'Float',
+            'boolean' => 'Bool',
+            'null'    => 'nil',
+            'string'  => (s['format'] == 'boolean') ? "'true' | 'false'" : 'String',
+            'object'  => object(s, hint),
+            'array'   => {
+                let items = s['items']
+                match items {
+                    _: Array => "({items.map(x -> convert(x, singular(hint))).join(', ')})",
+                    _: Dict  => "Array[{convert(items, singular(hint))}]",
+                    _        => 'Array[Any]'
+                }
+            },
+            _         => 'Any'
+        }
+    }
+
+    convert(s: Any, hint: String, top: Bool = false) -> String {
+        if s == true || s == nil {
+            return 'Any'
+        }
+        if !(s :: Dict) {
+            return 'Any'
+        }
+        if let $ref = s['$ref'] {
+            return resolve(ref)
+        }
+        if 'const' in s {
+            return literal(s['const'])
+        }
+        if let $values = s['enum'] {
+            return top ? union(values.map(literal)) : gen.literals(hint, values.map(literal))
+        }
+        if let $alts = s['anyOf'] ?? s['oneOf'] {
+            return union(alts.map(a -> convert(a, hint)))
+        }
+        if let $all = s['allOf'] {
+            if #all == 1 {
+                return convert(all[0], hint)
+            }
+            let props: Dict[String, Any] = %{}
+            let required: [Any] = []
+            for part in all {
+                let p = (part :: Dict && part['$ref'] != nil) ? defs[part['$ref'].split('/')[-1]] : part
+                if p :: Dict {
+                    for k, v in p['properties'] ?? %{} {
+                        props[k] = v
+                    }
+                    required += p['required'] ?? []
+                }
+            }
+            return object(%{'type': 'object', 'properties': props, 'required': required}, hint)
+        }
+        match s['type'] {
+            _: String => one(s, s['type'], hint),
+            _: Array  => union(s['type'].map(t -> one(s, t, hint))),
+            _         => ('properties' in s) ? object(s, hint) : 'Any'
+        }
+    }
+}
+
+fn schema?(doc: Any) -> Bool {
+    (doc :: Dict) && (
+        ('$schema' in doc)
+     || ('$defs' in doc)
+     || ('definitions' in doc && '$ref' in doc)
+     || (doc['type'] == 'object' && doc['properties'] :: Dict)
+    )
+}
+
+fn documents(name: String, text: String) -> [Any] {
+    try {
+        return [json.parse(text)]
+    } catch _: JSONError {
+        ;
+    }
+
+    let docs = []
+    for line; i in text.lines() {
+        if line.strip() == '' {
+            continue
+        }
+        try {
+            docs.push(json.parse(line))
+        } catch e: JSONError {
+            eprint("json-schema: {name}:{i + 1}: {e.what.lines()[0]}")
+            os.exit(1)
+        }
+    }
+    docs
+}
+
+fn main() {
+    let (opts, _) = JsonSchema.parse(argv)
+    let files = opts.files ?? []
+    let docs = []
+
+    if #files == 0 {
+        docs += documents('<stdin>', slurp())
+    }
+
+    for file in files {
+        let text = slurp(file)
+        if text == nil {
+            eprint("json-schema: cannot read {file}")
+            os.exit(1)
+        }
+        docs += documents(file, text)
+    }
+
+    if #docs == 0 {
+        eprint('json-schema: no JSON documents in the input')
+        os.exit(1)
+    }
+
+    let gen = Gen(opts.records, opts.open, opts.enums)
+    let stem = (#files > 0) ? pascal(Path(files[0]).stem) : 'Root'
+    let use-schema = opts.schema || (!opts.data && #docs == 1 && schema?(docs[0]))
+
+    let (root, type) = if use-schema {
+        let doc = docs[0]
+        let sg = SchemaGen(gen, doc)
+        let name = opts.name ?? pascal(doc['title'] ?? stem)
+        if let $ref = doc['$ref'] {
+            if opts.name != nil {
+                sg.renames[ref.split('/')[-1]] = opts.name
+            }
+        }
+        (name, sg.convert(doc, name))
+    } else {
+        let name = opts.name ?? stem
+        (name, infer(gen, name, docs))
+    }
+
+    if !gen.used[type] {
+        gen.alias(root, type)
+    }
+
+    print(gen.out.join('\n\n'))
+}
+
+main()

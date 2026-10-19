@@ -244,3 +244,10 @@ field must be present, including fields with defaults or nullable types; default
 are not used for missing keys. Missing fields and incompatible values throw
 `JSONError`. Extra JSON keys are retained as dynamic fields. The schema form of
 `json.parse!` has the same behavior, and both functions accept strings or blobs.
+
+When the schema is a union of classes or records, the first alternative that accepts
+the object wins. Alternatives with a field the object lacks are ruled out without
+being tried, and a field typed as a string literal (such as `type: 'call'`) selects
+the matching alternatives directly, so tagging alternatives this way makes dispatch
+cheapest. Strings in the result share memory with a `String` input instead of
+copying it.

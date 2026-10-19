@@ -16,6 +16,9 @@ dict_xnew(Ty *ty)
         return uAo0(sizeof (Dict), GC_DICT);
 }
 
+Dict *
+dict_new_sized(Ty *ty, usize n);
+
 Value *
 dict_get_value(Ty *ty, Dict *obj, Value *key);
 

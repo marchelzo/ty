@@ -1,0 +1,186 @@
+import json
+
+class Point {
+    x: Int
+    y: Int = 0
+
+    init() { throw AssertionError('JSON must not call init') }
+    sum() -> Int { x + y }
+}
+
+class Box[T] {
+    value: T
+}
+
+class NamedPoint < Point {
+    name: String
+}
+
+class IntBox < Box[Int] {}
+
+class Node {
+    value: Int
+    next: Node | nil
+}
+
+class Defaulted {
+    n: Int = 7
+}
+
+use PointAlias = Point
+use PointBox = Box[Point]
+use Points = Array[Point]
+use Envelope = {point: Point}
+use Either = Point | String
+
+class Text { type: 'text'; text: String }
+class Call { type: 'call'; name: String; args: Array[Int] }
+class Other { type: String }
+
+class Square { side: Int }
+class Rect { width: Int; height: Int }
+class Shape { kind: String }
+
+use Event = Text | Call | Other
+use Events = Array[Event]
+use Shapes = Array[Square | Rect | Shape]
+use Tag = 'IDENT' | 'NUMBER' | '{' | ''
+use Tags = Array[Tag | Int]
+use Floats = Array[Float]
+use Ints = Array[Int | Float]
+use Tree = {value: Int, kids: Array[Tree]}
+use Mixed = Array[Point | Array[Int] | nil | Bool]
+
+fn rejects(f: () -> Any) {
+    try {
+        f()
+    } catch _: JSONError {
+        return
+    }
+    throw AssertionError('expected JSONError')
+}
+
+pub fn class-schema() {
+    let point = json.parse(Point, '{"x": 1, "y": 2}')
+    assert(point :: Point)
+    assert(point.x == 1 && point.y == 2)
+    assert(point.sum() == 3)
+    assert(json.encode(point) == '{"x":1,"y":2}')
+    assert(json.parse(PointAlias, '{"x": 3, "y": 4}') :: Point)
+    assert(json.parse!(Point, '{"x": 1, "y": 2}').sum() == 3)
+    assert(json.parse(Point, Blob().push('{"x": 1, "y": 2}')).sum() == 3)
+}
+
+pub fn nested-class-schemas() {
+    let box = json.parse(PointBox, '{"value":{"x":3,"y":4}}')
+    assert(box :: Box)
+    assert(box.value :: Point)
+    assert(box.value.sum() == 7)
+    assert(json.parse(Points, '[{"x":1,"y":2}]')[0] :: Point)
+    assert(json.parse(Envelope, '{"point":{"x":1,"y":2}}').point :: Point)
+    assert(json.parse(Either, '"hello"') == 'hello')
+    assert(json.parse(Either, '{"x":1,"y":2}') :: Point)
+}
+
+pub fn inherited-fields() {
+    let point = json.parse(NamedPoint, '{"name":"origin","x":0,"y":0}')
+    assert(point :: NamedPoint)
+    assert(point.name == 'origin')
+    assert(point.sum() == 0)
+    rejects(-> json.parse(NamedPoint, '{"name":"origin"}'))
+    rejects(-> json.parse(NamedPoint, '{"name":"origin","x":"bad","y":0}'))
+}
+
+pub fn schema-validation() {
+    rejects(-> json.parse(Point, '{"x":"wrong","y":2}'))
+    rejects(-> json.parse(Point, '{"x":1}'))
+    rejects(-> json.parse(Point, '42'))
+    rejects(-> json.parse(Point, 'null'))
+    rejects(-> json.parse(Point, '{"x":1,"y":2} trailing'))
+    rejects(-> json.parse(PointBox, '{"value":{"x":"wrong","y":2}}'))
+    rejects(-> json.parse(Defaulted, '{}'))
+    rejects(-> json.parse(Defaulted, '{"n":"wrong"}'))
+    assert(json.parse(Defaulted, '{"n":3}').n == 3)
+}
+
+pub fn extra-and-duplicate-fields() {
+    let point = json.parse(Point, '{"x":1,"y":2,"extra":true,"x":3}')
+    assert(point.sum() == 5)
+    assert(json.encode(point) == '{"x":3,"y":2,"extra":true}')
+}
+
+
+pub fn recursive-and-inherited-generic-fields() {
+    let node = json.parse(Node, '{"value":1,"next":{"value":2,"next":null}}')
+    assert(node :: Node)
+    assert(node.next :: Node)
+    rejects(-> json.parse(Node, '{"value":1,"next":{"value":"bad","next":null}}'))
+    assert(json.parse(IntBox, '{"value":3}').value == 3)
+    rejects(-> json.parse(IntBox, '{"value":"bad"}'))
+}
+
+pub fn tagged-unions() {
+    let events = json.parse(Events, '[{"type":"call","name":"f","args":[1]},{"name":"g","type":"call","args":[]},{"type":"text","text":"hi"},{"type":"idle"}]')
+    assert(events[0] :: Call)
+    assert(events[0].args == [1])
+    assert(events[1] :: Call)
+    assert(events[1].name == 'g')
+    assert(events[2] :: Text)
+    assert(events[2].text == 'hi')
+    assert(events[3] :: Other)
+    assert(events[3].type == 'idle')
+    assert(json.parse(Event, '{"type":"text","name":"f","args":[]}') :: Other)
+    assert(json.parse(Event, '{"type":"\\u0074ext","text":"t"}') :: Text)
+    rejects(-> json.parse(Event, '{"kind":"text"}'))
+}
+
+pub fn untagged-unions-pick-the-first-match() {
+    let shapes = json.parse(Shapes, '[{"side":2},{"height":3,"width":4},{"kind":"blob"},{"side":1,"width":2,"height":3}]')
+    assert(shapes[0] :: Square)
+    assert(shapes[1] :: Rect)
+    assert(shapes[1].width == 4)
+    assert(shapes[2] :: Shape)
+    assert(shapes[3] :: Square)
+    rejects(-> json.parse(Shapes, '[{"width":1}]'))
+    rejects(-> json.parse(Shapes, '[{"side":"x"}]'))
+}
+
+pub fn literal-unions() {
+    assert(json.parse(Tags, '["IDENT", 3, "{", ""]') == ['IDENT', 3, '{', ''])
+    assert(json.parse(Tags, '["\\u0049DENT"]') == ['IDENT'])
+    rejects(-> json.parse(Tags, '["IDENTX"]'))
+    rejects(-> json.parse(Tags, '[true]'))
+}
+
+pub fn number-coercion() {
+    let floats = json.parse(Floats, '[1, 2.5, -0.0]')
+    assert(floats[0] :: Float)
+    assert(floats[1] == 2.5)
+    assert(floats[2] :: Float)
+    let ints = json.parse(Ints, '[1, 2.5]')
+    assert(ints[0] :: Int)
+    assert(ints[1] :: Float)
+    assert(json.parse('[0.1, 1.3, 2.23125, 123456.789012345, 1e300, -5]') == [0.1, 1.3, 2.23125, 123456.789012345, 1e300, -5])
+}
+
+pub fn recursive-and-mixed-shapes() {
+    let tree = json.parse(Tree, '{"value":1,"kids":[{"value":2,"kids":[]},{"value":3,"kids":[{"value":4,"kids":[]}]}]}')
+    assert(tree.kids[1].kids[0].value == 4)
+    let mixed = json.parse(Mixed, '[{"x":1,"y":2},[1,2],null,true,[]]')
+    assert(mixed[0] :: Point)
+    assert(mixed[1] == [1, 2])
+    assert(mixed[2] == nil)
+    assert(mixed[3] == true)
+    assert(mixed[4] == [])
+    rejects(-> json.parse(Mixed, '[{"x":1}]'))
+}
+
+pub fn strings-and-whitespace() {
+    let point = json.parse(NamedPoint, '{ "name" : "a\\"b\\u00e9\\ud83d\\ude00" , "x" : 1 , "y" : 2 }')
+    assert(point.name == 'a"bé😀')
+    assert(json.parse('{"k\\u0065y": [ ], "e": { }}') == %{'key': [], 'e': %{}})
+    assert(json.parse(Point, Blob().push('{"x":1,"y":2,"note":"\\n"}')).sum() == 3)
+    let long = 'x' * 5000
+    assert(json.parse(Event, '{"type":"text","text":"' + long + '"}').text == long)
+    assert(json.parse(Shapes, '[{"kind":"' + long + '","side":"' + long + '"}]')[0].kind == long)
+}

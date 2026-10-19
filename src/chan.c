@@ -60,7 +60,6 @@ ident(Value const *v)
         case VALUE_BLOB:    return (iptr)v->blob;
         case VALUE_QUEUE:   return (iptr)v->queue;
         case VALUE_TUPLE:   return (iptr)v->items;
-        case VALUE_STRING:  return (iptr)v->str0;
         default:            return -1;
         }
 }
