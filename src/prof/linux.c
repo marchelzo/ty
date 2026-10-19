@@ -190,12 +190,61 @@ OsOf(ProfThread *pt)
         return pt->os;
 }
 
+static int
+OpenPerf(ProfThread *pt, u32 type, u64 config, u64 period, bool kernel)
+{
+        struct perf_event_attr a = {0};
+        int fd;
+
+        a.size           = sizeof a;
+        a.type           = type;
+        a.config         = config;
+        a.sample_period  = period;
+        a.disabled       = 1;
+        a.exclude_kernel = !kernel;
+        a.exclude_hv     = 1;
+        a.wakeup_events  = 1;
+
+        fd = syscall(SYS_perf_event_open, &a, (pid_t)pt->tid, -1, -1, PERF_FLAG_FD_CLOEXEC);
+
+        if (fd < 0) {
+                a.exclude_kernel = 1;
+                a.exclude_guest  = 1;
+                fd = syscall(SYS_perf_event_open, &a, (pid_t)pt->tid, -1, -1, PERF_FLAG_FD_CLOEXEC);
+        }
+
+        return fd;
+}
+
+static void
+StartPerf(ProfThread *pt, int fd)
+{
+        struct f_owner_ex owner = { .type = F_OWNER_TID, .pid = (pid_t)pt->tid };
+
+        fcntl(fd, F_SETFL, O_ASYNC);
+        fcntl(fd, F_SETSIG, SIGPROF);
+        fcntl(fd, F_SETOWN_EX, &owner);
+
+        OsOf(pt)->perf_fd = fd;
+
+        ioctl(fd, PERF_EVENT_IOC_RESET, 0);
+        ioctl(fd, PERF_EVENT_IOC_REFRESH, 1);
+}
+
 static void
 ArmTimer(ProfThread *pt, u64 period)
 {
         LinuxThread *lt = OsOf(pt);
         struct sigevent sev = {0};
         clockid_t clock;
+        int fd;
+
+        fd = OpenPerf(pt, PERF_TYPE_SOFTWARE, PERF_COUNT_SW_TASK_CLOCK, period, true);
+
+        if (fd >= 0) {
+                StartPerf(pt, fd);
+                return;
+        }
 
         sev.sigev_notify = SIGEV_THREAD_ID;
         sev.sigev_signo = SIGPROF;
@@ -218,29 +267,13 @@ ArmTimer(ProfThread *pt, u64 period)
 static void
 ArmEvent(ProfThread *pt, u64 period)
 {
-        LinuxThread *lt = OsOf(pt);
-        struct perf_event_attr a = {0};
+        int fd;
 
         if (Event < 0) {
                 return;
         }
 
-        a.size = sizeof a;
-        a.type = Events[Event].type;
-        a.config = Events[Event].config;
-        a.sample_period = period;
-        a.disabled = 1;
-        a.exclude_kernel = 1;
-        a.exclude_hv = 1;
-        a.wakeup_events = 1;
-
-        int fd = syscall(SYS_perf_event_open, &a, (pid_t)pt->tid, -1, -1, PERF_FLAG_FD_CLOEXEC);
-
-        if (fd < 0) {
-                a.exclude_kernel = 1;
-                a.exclude_guest = 1;
-                fd = syscall(SYS_perf_event_open, &a, (pid_t)pt->tid, -1, -1, PERF_FLAG_FD_CLOEXEC);
-        }
+        fd = OpenPerf(pt, Events[Event].type, Events[Event].config, period, false);
 
         if (fd < 0) {
                 fprintf(
@@ -252,16 +285,7 @@ ArmEvent(ProfThread *pt, u64 period)
                 exit(1);
         }
 
-        struct f_owner_ex owner = { .type = F_OWNER_TID, .pid = (pid_t)pt->tid };
-
-        fcntl(fd, F_SETFL, O_ASYNC);
-        fcntl(fd, F_SETSIG, SIGPROF);
-        fcntl(fd, F_SETOWN_EX, &owner);
-
-        lt->perf_fd = fd;
-
-        ioctl(fd, PERF_EVENT_IOC_RESET, 0);
-        ioctl(fd, PERF_EVENT_IOC_REFRESH, 1);
+        StartPerf(pt, fd);
 }
 
 void

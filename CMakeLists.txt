@@ -495,7 +495,6 @@ set(_src_files
   src/value.c
   src/vm.c
   src/prof.c
-  src/prof_html.c
   src/width.c
 )
 
@@ -504,11 +503,6 @@ if(APPLE)
 else()
   list(APPEND _src_files src/prof/linux.c)
 endif()
-
-set_source_files_properties(src/prof_html.c PROPERTIES
-  COMPILE_DEFINITIONS TY_PROF_HTML="${PROJECT_SOURCE_DIR}/src/prof.html"
-  OBJECT_DEPENDS ${PROJECT_SOURCE_DIR}/src/prof.html
-)
 
 set(_tgt_ty_interface "${PROJECT_NAME}_Objects")
 add_library(${_tgt_ty_interface} INTERFACE)

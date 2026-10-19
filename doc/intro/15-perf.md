@@ -70,7 +70,7 @@ These results should be taken with a massive grain of salt as many of the progra
 
 ## Profiling Ty programs
 
-Run `ty --prof <program>` to get a report of how much time was spent in each function. By default it samples on-CPU time at 999 Hz; pass `--prof-hz=<Hz>` to choose a different frequency, `--prof=wall` to sample wall-clock time, or `--prof=count[:N]` to sample every Nth bytecode op deterministically (this disables the JIT). The profile is recorded to `ty-prof.data`; browse it with `ty --prof-report`, or compare two with `ty --prof-diff`. `ty --help` lists the rest of the `--prof-*` options. Below is an example of its output.
+Run `ty --prof <program>` to get a report of how much time was spent in each function. By default it samples on-CPU time at 999 Hz; pass `--prof=cpu:<Hz>` to choose a different frequency, `--prof=wall[:<Hz>]` to sample wall-clock time, or `--prof=count[:N]` to sample every Nth bytecode op deterministically (this disables the JIT). The profile is recorded to `ty-prof.data`; browse it with `ty --prof-report`, or compare two with `ty --prof-diff`. `ty --help` lists the rest of the `--prof-*` options. Below is an example of its output.
 
 ![profiler output](./prof.png)
 ![profiler jit summary](./prof_jit.png)

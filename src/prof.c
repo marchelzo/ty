@@ -564,13 +564,13 @@ prof_usage(FILE *out)
                 "Profiling:\n"
                 "    --prof[=MODE]       Run the program under the sampling profiler, record the profile\n"
                 "                        to ty-prof.data and print a summary when it exits. MODE is:\n"
-                "                          cpu        On-CPU time of every thread (default)\n"
-                "                          wall       Wall-clock time, including time spent blocked on\n"
+                "                          cpu[:HZ]   On-CPU time of every thread, sampled HZ times per\n"
+                "                                     second per thread (default; HZ defaults to 999)\n"
+                "                          wall[:HZ]  Wall-clock time, including time spent blocked on\n"
                 "                                     I/O, sleeping or waiting for locks\n"
                 "                          count[:N]  Every Nth executed bytecode op (default: 97).\n"
                 "                                     Deterministic; disables the JIT\n"
                 "%s"
-                "    --prof-hz=HZ        Samples per second per thread for cpu and wall (default: 999)\n"
                 "    --prof-alloc=SIZE   Record an allocation stack once per SIZE bytes allocated\n"
                 "                        (default: 512K; off disables allocation sampling)\n"
                 "    --prof-jit-stats=off\n"
@@ -585,7 +585,7 @@ prof_usage(FILE *out)
                 "    --prof-min-pct=P    Leave functions below P%% self time out of the summary\n"
                 "                        (default: 2)\n"
                 "    --prof-export=FILE  Also write the profile to FILE, in the format given by its\n"
-                "                        extension: .html (interactive page), .speedscope.json\n"
+                "                        extension: .speedscope.json\n"
                 "                        (speedscope, Firefox Profiler), .folded (flamegraph.pl,\n"
                 "                        inferno) or .json (same as the recorded profile). Repeatable\n"
                 "    --prof-report [FILE] [--stdio | --tui]\n"
@@ -594,7 +594,7 @@ prof_usage(FILE *out)
                 "    --prof-attach PID [SECONDS]\n"
                 "                        Profile a running ty process for SECONDS (default: 10), then\n"
                 "                        record and summarize it like a normal run. Accepts --prof=cpu,\n"
-                "                        --prof=wall, --prof=EVENT, --prof-hz, --prof-out, --prof-summary\n"
+                "                        --prof=wall, --prof=EVENT, --prof-out, --prof-summary\n"
                 "                        and --prof-export. Set TY_ATTACH=0 in a process's environment\n"
                 "                        to refuse\n"
                 "\n"
@@ -650,8 +650,6 @@ AddExport(char const *path)
                 fmt = "speedscope";
         } else if (ENDS(".json")) {
                 fmt = "json";
-        } else if (ENDS(".html") || ENDS(".htm")) {
-                fmt = "html";
         } else if (ENDS(".folded") || ENDS(".collapsed") || ENDS(".txt")) {
                 fmt = "folded";
         } else {
@@ -724,17 +722,52 @@ SetEvent(char const *spec)
 }
 
 static bool
+SetHz(char const *s)
+{
+        char *end;
+        long hz;
+
+        if (*s == '\0') {
+                return true;
+        }
+
+        if (*s == ':') {
+                ++s;
+        }
+
+        hz = strtol(s, &end, 10);
+
+        if (end == s || *end != '\0' || hz <= 0) {
+                return false;
+        }
+
+        ProfileSampleInterval = 1000000000ULL / (u64)hz;
+
+        return true;
+}
+
+static bool
 SetMode(char const *mode)
 {
-        if (*mode == '\0' || strcmp(mode, "cpu") == 0) {
+        if (*mode == '\0') {
                 Mode = PK_CPU;
                 return true;
         }
 
-        if (strcmp(mode, "wall") == 0) {
+        if (*mode >= '0' && *mode <= '9') {
+                Mode = PK_CPU;
+                return SetHz(mode);
+        }
+
+        if (strncmp(mode, "cpu", 3) == 0 && (mode[3] == '\0' || mode[3] == ':')) {
+                Mode = PK_CPU;
+                return SetHz(mode + 3);
+        }
+
+        if (strncmp(mode, "wall", 4) == 0 && (mode[4] == '\0' || mode[4] == ':')) {
                 Mode        = PK_WALL;
                 UseWallTime = true;
-                return true;
+                return SetHz(mode + 4);
         }
 
         if (strncmp(mode, "count", 5) == 0 && (mode[5] == '\0' || mode[5] == ':')) {
@@ -783,13 +816,6 @@ prof_option(char const *arg)
                 if (!SetMode(v)) {
                         BadValue(arg);
                 }
-        } else if ((v = ProfArg(arg, "--prof-hz")) != NULL) {
-                char *end;
-                long hz = strtol(v, &end, 10);
-                if (*end != '\0' || hz <= 0) {
-                        BadValue(arg);
-                }
-                ProfileSampleInterval = 1000000000ULL / (u64)hz;
         } else if ((v = ProfArg(arg, "--prof-alloc")) != NULL) {
                 if (strcmp(v, "off") == 0) {
                         AllocEvery = 0;
@@ -823,7 +849,7 @@ prof_option(char const *arg)
                 MinPct = atof(v);
         } else if ((v = ProfArg(arg, "--prof-export")) != NULL) {
                 if (!AddExport(v)) {
-                        fprintf(stderr, "ty: --prof-export needs FILE.{html,json,speedscope.json,folded}\n");
+                        fprintf(stderr, "ty: --prof-export needs FILE.{json,speedscope.json,folded}\n");
                         exit(1);
                 }
         } else {
@@ -4782,22 +4808,6 @@ ExportJson(FILE *f)
         fprintf(f, "}\n");
 }
 
-extern char const TyprofHtml[];
-
-static void
-ExportHtml(FILE *f)
-{
-        char const *mark = strstr(TyprofHtml, "/*DATA*/");
-
-        if (mark == NULL) {
-                return;
-        }
-
-        fwrite(TyprofHtml, 1, mark - TyprofHtml, f);
-        ExportJson(f);
-        fputs(mark + strlen("/*DATA*/"), f);
-}
-
 static bool
 RecordTo(char const *path)
 {
@@ -4853,8 +4863,6 @@ Exporting(void)
                         ExportSpeedscope(f);
                 } else if (strcmp(e->fmt, "json") == 0) {
                         ExportJson(f);
-                } else if (strcmp(e->fmt, "html") == 0) {
-                        ExportHtml(f);
                 }
 
                 fclose(f);
@@ -5932,7 +5940,7 @@ prof_attach_main(int argc, char **argv)
         if (pid <= 0 || secs <= 0 || Mode == PK_OPS) {
                 fprintf(
                         stderr,
-                        "usage: ty --prof-attach PID [SECONDS] [--prof=cpu|wall|EVENT] [--prof-hz=HZ]\n"
+                        "usage: ty --prof-attach PID [SECONDS] [--prof=cpu[:HZ]|wall[:HZ]|EVENT]\n"
                         "                             [--prof-out=FILE] [--prof-summary=FILE]\n"
                         "                             [--prof-export=FILE]...\n"
                 );
