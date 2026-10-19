@@ -2034,9 +2034,12 @@ TY_BUILTIN_RAW(json_parse)
         ASSERT_ARGC_RANGE("json.parse()", 1, 2);
 
         if (argc == 2) {
-                Value tv = ARGx(0, VALUE_TYPE);
+                Value tv = ARGx(0, VALUE_TYPE, VALUE_CLASS);
                 Value jv = ARGx(1, VALUE_STRING, VALUE_BLOB);
-                return json_parse_typed(ty, as_type(&tv), &jv);
+                T2Type schema = tv.type == VALUE_CLASS
+                              ? t2_object_type(ty, class_get(ty, tv.class))
+                              : as_type(&tv);
+                return json_parse_typed(ty, schema, &jv);
         }
 
         Value jv = ARGx(0, VALUE_STRING, VALUE_BLOB);
@@ -2051,9 +2054,12 @@ TY_BUILTIN_RAW(json_parse_xD)
         ASSERT_ARGC_RANGE("json.parse!()", 1, 2);
 
         if (argc == 2) {
-                Value tv = ARGx(0, VALUE_TYPE);
+                Value tv = ARGx(0, VALUE_TYPE, VALUE_CLASS);
                 Value jv = ARGx(1, VALUE_STRING, VALUE_BLOB);
-                return json_parse_typed(ty, as_type(&tv), &jv);
+                T2Type schema = tv.type == VALUE_CLASS
+                              ? t2_object_type(ty, class_get(ty, tv.class))
+                              : as_type(&tv);
+                return json_parse_typed(ty, schema, &jv);
         }
 
         Value jv = ARGx(0, VALUE_STRING, VALUE_BLOB);

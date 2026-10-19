@@ -853,6 +853,89 @@ typed_union(Ty *ty, T2Type t0)
         FAIL;
 }
 
+static T2Type
+object_field_type(Ty *ty, T2Type receiver, Class *c, int id)
+{
+        for (; c != NULL && c->def != NULL; c = c->super) {
+                ClassDefinition const *def = &c->def->class;
+                for (u32 i = 0; i < vN(def->fields); ++i) {
+                        Expr const *field = v__(def->fields, i);
+                        if (field->type == EXPRESSION_EQ) {
+                                field = field->target;
+                        }
+                        if (field->type == EXPRESSION_IDENTIFIER && M_ID(field->identifier) == id) {
+                                return t2_member_type(ty, receiver, field->_type);
+                        }
+                }
+                if (def->super != NULL) {
+                        receiver = t2_member_type(ty, receiver, t2_resolve_in_class(ty, c, def->super));
+                }
+        }
+        return T2_TYPE_INVALID;
+}
+
+/* Deserialize fields without invoking user constructors or setters. As with
+ * records, every declared field is required and extra keys are retained. */
+static Value
+typed_object(Ty *ty, T2Type t0, int class)
+{
+        expect('{');
+
+        Class *c = class_get(ty, class);
+        class_ctor(ty, class);
+
+        SCRATCH_SAVE();
+        Value object = OBJECT(class_new_instance(ty, class), class);
+        vec(bool) seen = {0};
+        for (u32 i = 0; i < object.object->nslot; ++i) {
+                svP(seen, false);
+        }
+
+        while (peek() != '\0' && peek() != '}') {
+                space();
+                Value key = string(ty);
+                space();
+                expect(':');
+
+                int id = M_ID(TY_TMP_C_STR(key));
+                int slot = -1;
+                for (u32 i = 0; i < vN(c->fields.ids); ++i) {
+                        if (v__(c->fields.ids, i) == id) {
+                                slot = i;
+                                break;
+                        }
+                }
+
+                T2Type field_type = slot < 0 ? T2_TYPE_INVALID : object_field_type(ty, t0, c, id);
+                Value val = field_type == T2_TYPE_INVALID ? value(ty) : typed_value(ty, field_type);
+                if (slot >= 0) {
+                        object.object->slots[slot] = val;
+                        v__(seen, slot) = true;
+                } else {
+                        if (object.object->dynamic == NULL) {
+                                object.object->dynamic = mA0(sizeof (struct itable));
+                        }
+                        itable_add(ty, object.object->dynamic, id, val);
+                }
+
+                space();
+                if (peek() != '}') {
+                        expect(',');
+                }
+        }
+
+        char const *close = json;
+        expect('}');
+        for (u32 i = 0; i < vN(seen); ++i) {
+                if (!v__(seen, i)) {
+                        Fail(close);
+                }
+        }
+        object.object->init = true;
+        SCRATCH_RESTORE();
+        return object;
+}
+
 static Value
 typed_nominal(Ty *ty, T2Type t0)
 {
@@ -868,7 +951,11 @@ typed_nominal(Ty *ty, T2Type t0)
         case CLASS_ARRAY:  return typed_array(ty, t2_type_child(universe, t0, 0));
         case CLASS_DICT:   return typed_dict(ty, t2_type_child(universe, t0, 1));
         case CLASS_SET:    return typed_set(ty, t2_type_child(universe, t0, 0));
-        default:           return value(ty);
+        default:
+                if (class >= 0 && class_get(ty, class)->def != NULL && !class_get(ty, class)->is_trait) {
+                        return typed_object(ty, t0, class);
+                }
+                return value(ty);
         }
 }
 

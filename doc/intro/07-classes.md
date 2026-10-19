@@ -215,3 +215,32 @@ class Temperature {
 print(Temperature.from-celsius(100.0))
 print(Temperature.from-fahrenheit(212.0))
 ```
+
+## Parsing JSON into instances
+
+Pass a class as the schema to `json.parse` to deserialize a JSON object into an instance:
+
+```ty
+import json
+
+class Position {
+    x: Int
+    y: Int
+
+    sum() -> Int { x + y }
+}
+
+let position = json.parse(Position, '{"x": 3, "y": 4}')
+assert(position :: Position)
+assert(position.sum() == 7)
+```
+
+Parsing validates declared field types, including inherited fields and nested class
+schemas. Type aliases such as `use Positions = Array[Position]` and generic class
+aliases such as `use BoxedPosition = Box[Position]` also work as schemas.
+
+Fields are populated directly without calling `init` or setters. Every declared
+field must be present, including fields with defaults or nullable types; defaults
+are not used for missing keys. Missing fields and incompatible values throw
+`JSONError`. Extra JSON keys are retained as dynamic fields. The schema form of
+`json.parse!` has the same behavior, and both functions accept strings or blobs.
