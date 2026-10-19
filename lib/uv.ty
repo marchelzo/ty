@@ -1355,7 +1355,12 @@ fn interleave-families(addrs) {
     result
 }
 
-pub fn dial(host: String, service: Int | String, family: Int = os.AF_UNSPEC, stagger: Int = 250) -> UVSocket {
+pub fn dial(
+    host: String,
+    service: Int | String,
+    family: Int = os.AF_UNSPEC,
+    stagger: Int = 250
+) -> UVSocket {
     let addrs = match loop().getaddrinfo(host, service, family, os.SOCK_STREAM) {
         Ok(addrs) => interleave-families(addrs),
         Err(e)    => throw UVError('getaddrinfo()', e)
@@ -1377,7 +1382,11 @@ pub fn dial(host: String, service: Int | String, family: Int = os.AF_UNSPEC, sta
     }), stagger)
 }
 
-pub fn server(addr: String, port: Int | String, family: Int = os.AF_UNSPEC) -> UVSocket {
+pub fn server(
+    addr: String,
+    port: Int | String,
+    family: Int = os.AF_UNSPEC
+) -> UVSocket {
     let addr = match loop().getaddrinfo(addr, port, family, os.SOCK_STREAM) {
         Ok([addr, *]) => addr.addr,
         Err(e)        => throw UVError('getaddrinfo()', e)
