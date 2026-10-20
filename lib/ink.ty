@@ -735,7 +735,7 @@ fn resolve-border(style) {
             'double' => border-style.double,
             'round'  => border-style.round,
             'bold'   => border-style.bold,
-            _        => border-style.round
+            _        => border-style.single
         },
         (a: Array) => a,
         _          => nil
