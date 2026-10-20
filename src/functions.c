@@ -4633,9 +4633,9 @@ TY_BUILTIN_RAW(os_spawn)
 #define X0(x) svP(x0, x)
 #define X1(x) svP(x1, x)
 
-#define P(x, u) do {                                  \
+#define P(x, u) do {                                    \
         if (CloexecPipe(x)) { X0(x[u 0]); X1(x[u 1]); } \
-        else              { goto Fail;              } \
+        else                { goto Fail;              } \
 } while (0)
 /* ------------------------------------------------------------------------- */
         TyMutexLock(&SpawnLock);
