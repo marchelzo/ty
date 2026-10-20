@@ -1,0 +1,92 @@
+import ty
+import ty.parse as parse
+
+pub fn wildcards() {
+    assert('foobar.c'.glob?('foo*.c'))
+    assert(!'foo/bar.c'.glob?('foo*.c'))
+    assert('a.h'.glob?('?.h'))
+    assert('é.txt'.glob?('?.txt'))
+    assert('.hidden'.glob?('*'))
+    assert(!'a/q/b'.glob?('a**b'))
+}
+
+pub fn starstar() {
+    assert('x'.glob?('**/x'))
+    assert('a/b/x'.glob?('**/x'))
+    assert('a/x'.glob?('a/**/x'))
+    assert('a/b/c/x'.glob?('a/**/x'))
+    assert(!'ab/x'.glob?('a/**/x'))
+    assert('a/b/c'.glob?('a/**'))
+    assert(!'a/b/c/x'.match?(glob('a/**/x', starstar?=false)))
+}
+
+pub fn classes() {
+    assert('b.c'.glob?('[a-c].[ch]'))
+    assert('b'.glob?('[!a]'))
+    assert(!'/'.glob?('[!a]'))
+    assert(']'.glob?('[]]'))
+    assert('['.glob?('['))
+    assert('Z9'.glob?('[[:upper:]][[:digit:]]'))
+}
+
+pub fn braces() {
+    assert('b.c'.glob?('*.{c,h}'))
+    assert('b.hpp'.glob?('*.{c,h{,pp}}'))
+    assert(!'b.o'.glob?('*.{c,h}'))
+    assert('{x'.glob?('{x'))
+}
+
+pub fn escapes() {
+    assert('*lit'.glob?('\\*lit'))
+    assert(!'xlit'.glob?('\\*lit'))
+    assert('x+(y)|$.c'.glob?('x+(y)|$.c'))
+}
+
+pub fn separators() {
+    assert('a/x/b'.match?(glob('a*b', sep='')))
+    assert('a\\b'.match?(glob('*', sep='/')))
+    assert(!'a\\b'.match?(glob('*', sep='\\')))
+}
+
+pub fn regex-values() {
+    let re = glob('*.[ch]')
+    assert(['x.c', 'y.h', 'z.o'].filter(re) == ['x.c', 'y.h'])
+    assert('main.c'.glob?(re))
+    assert('main.h' :: re)
+}
+
+fn kind(f) {
+    match f {
+        glob'*.c'       => 'c',
+        glob'*.{h,hpp}' => 'header',
+        _               => nil,
+    }
+}
+
+pub fn literals() {
+    let re = glob'src/**/*.{c,h}'
+    assert('src/jit/lir.c' :: re)
+    assert(!('src/jit/lir.o' :: re))
+    assert(re.source == glob('src/**/*.{c,h}').source)
+    assert(kind('x.c') == 'c')
+    assert(kind('y.hpp') == 'header')
+    assert(kind('z') == nil)
+    assert('it''s' == 'its')
+}
+
+pub fn literal-ast() {
+    let ty.LangLiteral(_, text) = parse.expr("glob'*.c'") or assert(false)
+    assert(text == '*.c')
+    assert('x.h' :: ty.eval(ty.LangLiteral(ty.Id(name: 'glob'), '*.h')))
+}
+
+pub fn case-insensitive() {
+    assert('IMG_0042.JPG' :: iglob'*.jpg')
+    assert(!('IMG_0042.JPG' :: glob'*.jpg'))
+    assert('ÉTÉ.TXT' :: iglob'été.{txt,md}')
+    assert(!('A/B.C' :: iglob'a*.c'))
+    assert('Src/Main.C'.match?(iglob('src/**/*.c')))
+    assert('README.MD'.iglob?('readme.{md,txt}'))
+    assert(!'README.MD'.glob?('readme.{md,txt}'))
+    assert(!'docs/README.MD'.iglob?('*.md'))
+}

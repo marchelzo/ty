@@ -19403,6 +19403,7 @@ infer_expression(T2Checker *checker, Expr const *source)
                 break;
         }
         case EXPRESSION_COMPILE_TIME:
+        case EXPRESSION_LANG_LITERAL:
                 defer_node(checker, T2_DEFER_COMPILE_TIME, expression, NULL);
                 result = t2_primitive(checker->universe, T2_TYPE_DYNAMIC);
                 break;

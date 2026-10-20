@@ -2651,6 +2651,7 @@ CleanupThread(void *ctx)
         pcre2_match_data_free(ty->pcre2.match);
         pcre2_match_context_free(ty->pcre2.ctx);
         pcre2_jit_stack_free(ty->pcre2.stack);
+        GlobCacheFree(ty);
 
         TyValueCleanup();
         TyFunctionsCleanup();

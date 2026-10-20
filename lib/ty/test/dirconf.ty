@@ -68,33 +68,13 @@ pub class Effective {
     }
 }
 
-fn glob-regex(pat: String) -> Regex {
-    let out = Blob()
-    let i = 0
-    while i < #pat {
-        let c = pat[i]
-        match c {
-            '*' and pat[i + 1;1] == '*' => do {
-                out.push('.*')
-                i += 1
-            },
-            '*' => out.push('[^/]*'),
-            '?' => out.push('[^/]'),
-            _ :: c.match?(/[\\.+()\[\]{}^$|]/) => out.push("\\{c}"),
-            _ => out.push(c),
-        }
-        i += 1
-    }
-    regex("^{out.str()}$")
-}
-
 pub fn pattern-matches?(dir: String, pat: String, file: String) -> Bool {
     if file[;#dir + 1] != "{dir}/" {
         return false
     }
     let rel = file[#dir + 1;]
     let p = pat.comb(/^\.\//).comb(/\/+$/)
-    let re = glob-regex(p)
+    let re = glob(p)
     if rel.match?(re) {
         return true
     }

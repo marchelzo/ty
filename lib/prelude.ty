@@ -1087,6 +1087,7 @@ macro __define_ast! {
        | ty.Each[{iter: AST, pattern: AST, expr: AST, ?`if`: AST, ?`while`: AST}]
        | ty.SpecialString[Array[String | AST | (AST, String | nil, Int | nil, AST)]]
        | ty.LangString[(AST, Array[String | AST | (AST, String | nil, Int | nil, AST)])]
+       | ty.LangLiteral[(AST, String)]
        | ty.Spread[AST]
        | ty.Splat[AST]
        | ty.Block[Array[AST]]
@@ -1459,6 +1460,8 @@ class String : Iterable[String], IntoPtr[Int], PathLike {
     match(pattern: Regex) -> String | Array[String] | nil;
 
     match?(pattern: Regex) -> Bool;
+    glob?(pattern: String | Regex) -> Bool;
+    iglob?(pattern: String) -> Bool;
     count(pattern: String | Regex) -> Int;
 
     search(pattern: String | Regex, off: ?Int) -> Int | nil;
@@ -2052,6 +2055,9 @@ class Bool {
 class Regex[N] < Function {
     source -> String;
     init(x) { regex(x) }
+    static glob(pattern: String, sep: String = '/', starstar?: Bool = true) -> Regex {
+        ::glob(pattern, sep=sep, starstar?=starstar?)
+    }
     __call__(s: String) -> String | Array[String | nil] | nil;
     ~=(s) { s.match(self) }
     test(s) { s.match?(self) }
@@ -5185,6 +5191,8 @@ macro __walk! {
                     e              => walk(e, f),
                 })
             ),
+
+            ty.LangLiteral(lang, s) => ty.LangLiteral(walk(lang, f), s),
 
             ty.LangString(lang, parts) => ty.LangString(
                 walk(lang, f),

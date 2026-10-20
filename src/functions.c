@@ -1753,6 +1753,347 @@ Error:;
         zP("regex(): PCRE2: %s", msg);
 }
 
+inline static void
+GlobLit(Ty *ty, byte_vector *re, u8 c)
+{
+        if (c != '\0' && contains("\\^$.|?*+()[]{}-", c)) {
+                svP(*re, '\\');
+        }
+
+        svP(*re, c);
+}
+
+inline static void
+GlobAny(Ty *ty, byte_vector *re, int sep)
+{
+        if (sep < 0) {
+                svP(*re, '.');
+        } else {
+                svPn(*re, "[^", 2);
+                GlobLit(ty, re, sep);
+                svP(*re, ']');
+        }
+}
+
+static bool
+GlobBraced(char const *p, usize n, usize i)
+{
+        int depth = 0;
+
+        for (; i < n; ++i) {
+                switch (p[i]) {
+                case '\\': i     += 1; break;
+                case '{':  depth += 1; break;
+                case '}':
+                        if (--depth == 0) {
+                                return true;
+                        }
+                        break;
+                }
+        }
+
+        return false;
+}
+
+static usize
+GlobClass(Ty *ty, byte_vector *re, char const *p, usize n, usize i, int sep)
+{
+        usize j = i + 1;
+        bool neg = (j < n) && (p[j] == '!' || p[j] == '^');
+        char const *colon;
+        usize k;
+
+        j += neg;
+        k  = j + (j < n && p[j] == ']');
+
+        while (k < n && p[k] != ']') {
+                if (p[k] == '\\') {
+                        k += 1;
+                } else if (
+                        (k + 1 < n)
+                     && (p[k] == '[')
+                     && (p[k + 1] == ':')
+                     && (colon = memmem(p + k + 2, n - k - 2, ":]", 2)) != NULL
+                ) {
+                        k = colon + 1 - p;
+                }
+                k += 1;
+        }
+
+        if (k >= n) {
+                return 0;
+        }
+
+        svP(*re, '[');
+
+        if (neg) {
+                svP(*re, '^');
+                if (sep >= 0) {
+                        GlobLit(ty, re, sep);
+                }
+        }
+
+        for (usize m = j; m < k; ++m) {
+                switch (p[m]) {
+                case '\\':
+                        if (m + 1 < k) {
+                                m += 1;
+                        }
+                        GlobLit(ty, re, p[m]);
+                        break;
+
+                case '-':
+                        svP(*re, '-');
+                        break;
+
+                case '[':
+                        if (
+                                (m + 1 < k)
+                             && (p[m + 1] == ':')
+                             && (colon = memmem(p + m + 2, k - m - 2, ":]", 2)) != NULL
+                        ) {
+                                svPn(*re, p + m, colon + 2 - (p + m));
+                                m = colon + 1 - p;
+                                break;
+                        }
+
+                default:
+                        GlobLit(ty, re, p[m]);
+                }
+        }
+
+        svP(*re, ']');
+
+        return k + 1;
+}
+
+static void
+GlobRegex(Ty *ty, byte_vector *re, char const *p, usize n, int sep, bool starstar)
+{
+        int depth = 0;
+        usize k;
+
+        svPn(*re, "(?s)\\A", 6);
+
+        for (usize i = 0; i < n; ++i) {
+                switch (p[i]) {
+                case '*':
+                        k = i;
+                        while (i + 1 < n && p[i + 1] == '*') {
+                                i += 1;
+                        }
+                        if (
+                                starstar
+                             && (sep >= 0)
+                             && (i > k)
+                             && (k == 0 || p[k - 1] == sep)
+                             && (i + 1 == n || p[i + 1] == sep)
+                        ) {
+                                if (i + 1 == n) {
+                                        svPn(*re, ".*", 2);
+                                } else {
+                                        svPn(*re, "(?:.*", 5);
+                                        GlobLit(ty, re, sep);
+                                        svPn(*re, ")?", 2);
+                                        i += 1;
+                                }
+                        } else {
+                                GlobAny(ty, re, sep);
+                                svP(*re, '*');
+                        }
+                        break;
+
+                case '?':
+                        GlobAny(ty, re, sep);
+                        break;
+
+                case '[':
+                        if ((k = GlobClass(ty, re, p, n, i, sep)) == 0) {
+                                GlobLit(ty, re, '[');
+                        } else {
+                                i = k - 1;
+                        }
+                        break;
+
+                case '{':
+                        if (GlobBraced(p, n, i)) {
+                                svPn(*re, "(?:", 3);
+                                depth += 1;
+                        } else {
+                                GlobLit(ty, re, '{');
+                        }
+                        break;
+
+                case ',':
+                        if (depth > 0) {
+                                svP(*re, '|');
+                        } else {
+                                GlobLit(ty, re, ',');
+                        }
+                        break;
+
+                case '}':
+                        if (depth > 0) {
+                                svP(*re, ')');
+                                depth -= 1;
+                        } else {
+                                GlobLit(ty, re, '}');
+                        }
+                        break;
+
+                case '\\':
+                        i += (i + 1 < n);
+                        GlobLit(ty, re, p[i]);
+                        break;
+
+                default:
+                        GlobLit(ty, re, p[i]);
+                }
+        }
+
+        svPn(*re, "\\z", sizeof "\\z");
+}
+
+static pcre2_code *
+GlobCompile(Ty *ty, char const *p, usize n, int sep, bool starstar, u32 options, char **src)
+{
+        byte_vector re = {0};
+        pcre2_code *code;
+        int err;
+        usize off;
+
+        SCRATCH_SAVE();
+
+        GlobRegex(ty, &re, p, n, sep, starstar);
+
+        code = pcre2_compile(
+                (PCRE2_SPTR)vv(re),
+                vN(re) - 1,
+                PCRE2_UTF | PCRE2_MATCH_INVALID_UTF | options,
+                &err,
+                &off,
+                NULL
+        );
+
+        if (code == NULL) {
+                goto Error;
+        }
+
+        if ((err = pcre2_jit_compile(code, PCRE2_JIT_COMPLETE)) < 0) {
+                pcre2_code_free(code);
+                goto Error;
+        }
+
+        if (src != NULL) {
+                *src = S2(vv(re));
+        }
+
+        SCRATCH_RESTORE();
+
+        return code;
+
+Error:;
+        void *msg = smA(4096);
+        pcre2_get_error_message(err, msg, 4096);
+        zP("glob(): bad pattern '%.*s': PCRE2: %s", (int)n, p, (char *)msg);
+}
+
+pcre2_code *
+GlobCached(Ty *ty, char const *p, usize n, u32 options)
+{
+        u64 h = XXH3_64bits_withSeed(p, n, options);
+        typeof (ty->pcre2.glob[0]) *g = &ty->pcre2.glob[h % TY_GLOB_CACHE_N];
+
+        if (
+                (g->re != NULL)
+             && (g->h == h)
+             && (g->n == n)
+             && (g->options == options)
+             && memcmp(g->pat, p, n) == 0
+        ) {
+                return g->re;
+        }
+
+        pcre2_code *code = GlobCompile(ty, p, n, '/', true, options, NULL);
+
+        if (g->re != NULL) {
+                pcre2_code_free(g->re);
+                ty_free(g->pat);
+        }
+
+        g->h       = h;
+        g->n       = n;
+        g->options = options;
+        g->pat     = ty_malloc(n + 1);
+        g->re      = code;
+
+        memcpy(g->pat, p, n);
+
+        return code;
+}
+
+void
+GlobCacheFree(Ty *ty)
+{
+        for (int i = 0; i < TY_GLOB_CACHE_N; ++i) {
+                if (ty->pcre2.glob[i].re != NULL) {
+                        pcre2_code_free(ty->pcre2.glob[i].re);
+                        ty_free(ty->pcre2.glob[i].pat);
+                }
+        }
+}
+
+static Value
+DoGlob(Ty *ty, int argc, Value *kwargs, char const *_name__, u32 options)
+{
+        CHECK_ARGC(1, 2, 3);
+
+        Value pattern  = ARGx(0, VALUE_STRING);
+        Value sep      = TRY_ARG(1, "sep", STRING);
+        Value starstar = TRY_ARG(2, "starstar?", BOOLEAN);
+
+        if (sep.type != VALUE_STRING) {
+                sep = STRING_NOGC("/", 1);
+        }
+
+        if (sN(sep) > 1 || (sN(sep) == 1 && ss(sep)[0] >= 0x80)) {
+                zP("%s: separator must be one ASCII character or empty: %s", _name__, VSC(&sep));
+        }
+
+        char *src;
+        pcre2_code *code = GlobCompile(
+                ty,
+                (char const *)ss(pattern),
+                sN(pattern),
+                (sN(sep) == 1) ? ss(sep)[0] : -1,
+                (starstar.type != VALUE_BOOLEAN) || starstar.boolean,
+                options,
+                &src
+        );
+
+        Regex *re = mAo(sizeof (Regex), GC_REGEX);
+        re->pcre2    = code;
+        re->pattern  = src;
+        re->detailed = false;
+        re->gc       = true;
+
+        pcre2_pattern_info(code, PCRE2_INFO_CAPTURECOUNT, &re->ncap);
+
+        return REGEX(re);
+}
+
+// glob(pattern: String, sep: String = '/', starstar?: Bool = true) -> Regex
+TY_BUILTIN_RAW(glob)
+{
+        return DoGlob(ty, argc, kwargs, "glob()", 0);
+}
+
+// iglob(pattern: String, sep: String = '/', starstar?: Bool = true) -> Regex
+TY_BUILTIN_RAW(iglob)
+{
+        return DoGlob(ty, argc, kwargs, "iglob()", PCRE2_CASELESS);
+}
+
 // regex(pattern: String, flags: String = '') -> Regex & RegexV
 TY_BUILTIN_RAW(regex)
 {

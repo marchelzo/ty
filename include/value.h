@@ -147,6 +147,7 @@ enum {
         X(String)               \
         X(SpecialString)        \
         X(LangString)           \
+        X(LangLiteral)          \
         X(Int)                  \
         X(Bool)                 \
         X(Float)                \

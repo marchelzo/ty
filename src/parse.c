@@ -7617,6 +7617,15 @@ parse_expr(Ty *ty, int prec)
                 e = ss;
         }
 
+        if (T0 == TOKEN_STRING && tok()->start.s == TEnd.s) {
+                Expr *lit = mkxpr(LANG_LITERAL);
+                lit->start    = e->start;
+                lit->lit.lang = e;
+                lit->lit.text = tok()->string;
+                consume(TOKEN_STRING);
+                e = lit;
+        }
+
 End:
         PLOG(
                 "parse_expr(): => %s%s%s : %s%.*s%s",

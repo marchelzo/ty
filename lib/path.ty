@@ -497,21 +497,10 @@ pub class Path : PathLike {
     }
 
     match(pattern: String) -> Bool {
-        let re = pattern.sub(/\*\*\//, '.*/')
-                        .sub(/\*/, '[^/]*')
-                        .sub(/\?/, '[^/]')
-                        .sub(/\./, '\\.')
-        prelude::str(self) :: regex("^{re}$")
+        prelude::str(self).glob?(pattern)
     }
 
     glob(pattern: String) -> Array[Path] {
-        fn match-part(text: String, pattern: String) -> Bool {
-            let re = pattern.sub(/\*/, '[^/]*')
-                            .sub(/\?/, '[^/]')
-                            .sub(/\./, '\\.')
-            text :: regex("^{re}$")
-        }
-
         fn glob-impl(base: Path, parts: [String]) -> [Path] {
             if !#parts {
                 return [base]
@@ -547,7 +536,7 @@ pub class Path : PathLike {
             }
 
             for base.ls() {
-                if match-part(it.name, part) {
+                if it.name.glob?(part) {
                     if !#rest {
                         results.push(it)
                     } else if it.dir? {

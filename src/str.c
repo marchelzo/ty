@@ -1285,6 +1285,45 @@ string_is_match(Ty *ty, Value *string, int argc, Value *kwargs)
         return BOOLEAN(rc > -1);
 }
 
+static Value
+string_glob(Ty *ty, Value *string, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("String.glob?()", 1);
+
+        Value pattern = ARGx(0, VALUE_STRING, VALUE_REGEX);
+        pcre2_code *re = (pattern.type == VALUE_REGEX)
+                       ? pattern.regex->pcre2
+                       : GlobCached(ty, (char const *)ss(pattern), sN(pattern), 0);
+
+        isize rc = ty_re_match(re, (PCRE2_SPTR)ss(*string), sN(*string), 0);
+        if (UNLIKELY(rc < -2)) {
+                ty_re_panic(rc);
+        }
+
+        return BOOLEAN(rc > -1);
+}
+
+static Value
+string_iglob(Ty *ty, Value *string, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("String.iglob?()", 1);
+
+        Value pattern = ARGx(0, VALUE_STRING);
+        pcre2_code *re = GlobCached(
+                ty,
+                (char const *)ss(pattern),
+                sN(pattern),
+                PCRE2_CASELESS
+        );
+
+        isize rc = ty_re_match(re, (PCRE2_SPTR)ss(*string), sN(*string), 0);
+        if (UNLIKELY(rc < -2)) {
+                ty_re_panic(rc);
+        }
+
+        return BOOLEAN(rc > -1);
+}
+
 Value
 string_match(Ty *ty, Value *string, int argc, Value *kwargs)
 {
@@ -3597,6 +3636,8 @@ DEFINE_METHOD_TABLE(
         { .name = "charCount", .func = string_grapheme_count   },
         { .name = "escape",    .func = string_escape           },
         { .name = "fit",       .func = string_fit              },
+        { .name = "glob?",     .func = string_glob             },
+        { .name = "iglob?",    .func = string_iglob            },
         { .name = "len",       .func = string_length           },
         { .name = "lines",     .func = string_lines            },
         { .name = "lower",     .func = string_lower            },

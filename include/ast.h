@@ -158,6 +158,7 @@ typedef vec(ComprPart) Comprehension;
         X(TAG),                                                                       \
         X(CONDITIONAL),                                                               \
         X(COMPILE_TIME),                                                              \
+        X(LANG_LITERAL),                                                              \
         X(EQ),                                                                        \
         X(MAYBE_EQ),                                                                  \
         X(TICK),                                                                      \
@@ -370,6 +371,10 @@ struct expression {
                     Expr *m;
                     Expr *e;
                 } macro;
+                struct {
+                        Expr *lang;
+                        Bytes text;
+                } lit;
                 struct {
                         StmtVec defs;
                         Stmt *block;

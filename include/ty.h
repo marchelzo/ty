@@ -25,6 +25,7 @@
 
 #define TY_MAX_CALL_DEPTH (1UL << 10)
 #define TY_TMP_BUF_COUNT 3
+#define TY_GLOB_CACHE_N  32
 
 #if defined(TY_RELEASE)
  #define CO_STACK_SIZE (1UL << 22)
@@ -733,6 +734,13 @@ typedef struct ty {
                 pcre2_match_context *ctx;
                 pcre2_jit_stack *stack;
                 pcre2_match_data *match;
+                struct {
+                        u64 h;
+                        usize n;
+                        u32 options;
+                        char *pat;
+                        pcre2_code *re;
+                } glob[TY_GLOB_CACHE_N];
         } pcre2;
 
         Arena arena;

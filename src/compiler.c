@@ -440,6 +440,9 @@ symbolize_pattern(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def);
 static void
 symbolize_expression(Ty *ty, Scope *scope, Expr *e);
 
+static void
+LangLiteral(Ty *ty, Expr *e);
+
 static bool
 emit_statement(Ty *ty, Stmt const *s, bool want_result);
 
@@ -4312,6 +4315,12 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                 symbolize_pattern_(ty, scope, e->left, reuse, def);
                 symbolize_expression(ty, scope, e->right);
                 break;
+        case EXPRESSION_LANG_LITERAL:
+                LangLiteral(ty, e);
+                if (e->type == EXPRESSION_REGEX) {
+                        add_captures(ty, e, scope);
+                }
+                break;
         case EXPRESSION_REGEX:
                 add_captures(ty, e, scope);
                 break;
@@ -4405,6 +4414,46 @@ comptime(Ty *ty, Scope *scope, Expr *e)
 
         STATE.mstart = mstart;
         STATE.mend = mend;
+}
+
+static void
+LangLiteral(Ty *ty, Expr *e)
+{
+        Expr *call = NewExpr(ty, EXPRESSION_FUNCTION_CALL);
+        Expr *text = NewExpr(ty, EXPRESSION_STRING);
+        Value *v   = xmA(sizeof *v);
+
+        text->start  = e->start;
+        text->end    = e->end;
+        text->string = e->lit.text;
+
+        call->start    = e->start;
+        call->end      = e->end;
+        call->function = e->lit.lang;
+
+        avP(call->args, text);
+        avP(call->fconds, NULL);
+
+        if (!tyeval(ty, call, v, NULL)) {
+                Value err = TyWrapError(
+                        ty,
+                        *v,
+                        NIL,
+                        e,
+                        "evaluating compile-time string literal"
+                );
+                vm_throw(ty, &err);
+        }
+
+        gc_immortalize(ty, v);
+
+        if (v->type == VALUE_REGEX) {
+                e->type  = EXPRESSION_REGEX;
+                e->regex = v->regex;
+        } else {
+                e->type = EXPRESSION_VALUE;
+                e->v    = v;
+        }
 }
 
 void
@@ -4555,6 +4604,10 @@ TryResolveExpr(Ty *ty, Scope *scope, Expr *e)
 
         case EXPRESSION_COMPILE_TIME:
                 ok &= TryResolveExpr(ty, scope, e->operand);
+                break;
+
+        case EXPRESSION_LANG_LITERAL:
+                ok &= TryResolveExpr(ty, scope, e->lit.lang);
                 break;
 
         case EXPRESSION_SPECIAL_STRING:
@@ -4958,6 +5011,10 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
         case EXPRESSION_COMPILE_TIME:
                 comptime(ty, scope, e);
+                break;
+
+        case EXPRESSION_LANG_LITERAL:
+                LangLiteral(ty, e);
                 break;
 
         case EXPRESSION_CAST:
@@ -15615,6 +15672,14 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 }
                 break;
 
+        case EXPRESSION_LANG_LITERAL:
+                v = TAGGED(
+                        TyLangLiteral,
+                        go(e->lit.lang),
+                        vSs(e->lit.text.data, e->lit.text.length)
+                );
+                break;
+
         case EXPRESSION_UNARY_OP:
                 v = TAGGED(
                         TyUserOp,
@@ -16974,6 +17039,12 @@ cexpr(Ty *ty, Value *v)
         case TyString:
                 e->type = EXPRESSION_STRING;
                 e->string = BYTES(mkcstr(v), sN(*v));
+                break;
+
+        case TyLangLiteral:
+                e->type     = EXPRESSION_LANG_LITERAL;
+                e->lit.lang = cexpr(ty, tget_nn(v, 0));
+                e->lit.text = BYTES(mkcstr(tget_nn(v, 1)), sN(*tget_nn(v, 1)));
                 break;
 
         case TyLangString:

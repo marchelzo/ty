@@ -799,6 +799,10 @@ visit_children(Ty *ty, Expr *e, Scope *scope, VisitorCtx *ctxt, bool type)
                 VX(e->operand);
                 break;
 
+        case EXPRESSION_LANG_LITERAL:
+                V(e->lit.lang);
+                break;
+
         case EXPRESSION_SPECIAL_STRING:
                 V(e->lang);
                 for (usize i = 0; i < vN(e->fmts); ++i) {

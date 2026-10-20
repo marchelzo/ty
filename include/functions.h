@@ -9,6 +9,12 @@ void TyFunctionsInit(Ty *ty);
 
 Value builtin_regexv(Ty *ty, int argc, Value *kwargs);
 Value builtin_regex_escape(Ty *ty, int argc, Value *kwargs);
+
+pcre2_code *
+GlobCached(Ty *ty, char const *p, usize n, u32 options);
+
+void
+GlobCacheFree(Ty *ty);
 Value builtin_array(Ty *ty, int argc, Value *kwargs);
 Value builtin_dict(Ty *ty, int argc, Value *kwargs);
 Value builtin_queue(Ty *ty, int argc, Value *kwargs);
