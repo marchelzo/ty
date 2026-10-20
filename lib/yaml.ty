@@ -261,6 +261,44 @@ fn resolve-scalar(value: String, tg: ?String, style: Int) {
     value
 }
 
+pub class Mark {
+    from:  Int
+    to:    Int
+    line:  Int
+    style: Int
+
+    init(ev: YamlEvent) {
+        from  = Int(ev.sm_idx)
+        to    = Int(ev.em_idx)
+        line  = Int(ev.sm_line)
+        style = ev.sty
+    }
+
+    plain?  -> Bool { style == YAML_PLAIN_SCALAR_STYLE }
+    quoted? -> Bool { style == YAML_SINGLE_QUOTED_SCALAR_STYLE || style == YAML_DOUBLE_QUOTED_SCALAR_STYLE }
+    block?  -> Bool { style == YAML_LITERAL_SCALAR_STYLE || style == YAML_FOLDED_SCALAR_STYLE }
+}
+
+pub class Marks {
+    values: Dict[Array, Mark] = %{}
+    keys:   Dict[Array, Mark] = %{}
+    nodes:  Dict[Array, Mark] = %{}
+    tags:   Dict[String, Array] = %{}
+    links:  Dict[Array, Array] = %{}
+
+    anchor(name: String | nil, path: Array) {
+        if name != nil {
+            tags[name] = path
+        }
+    }
+
+    link(path: Array, name: String) {
+        if let $target = tags[name] {
+            links[path] = target
+        }
+    }
+}
+
 fn parse-key(parser: YamlParser, ev: YamlEvent, anchors: Dict[String, YAML]) -> String {
     if ev.tp == YAML_SCALAR_EVENT {
         return event-scalar-value(ev)
@@ -269,7 +307,13 @@ fn parse-key(parser: YamlParser, ev: YamlEvent, anchors: Dict[String, YAML]) -> 
     return "{parse-value(parser, ev, anchors)}"
 }
 
-fn parse-value(parser: YamlParser, ev: YamlEvent, anchors: Dict[String, YAML]) -> YAML {
+fn parse-value(
+    parser: YamlParser,
+    ev: YamlEvent,
+    anchors: Dict[String, YAML],
+    marks: Marks | nil = nil,
+    path: Array = []
+) -> YAML {
     let typ = ev.tp
     let p = parser.get()
     let e = ev.get()
@@ -282,19 +326,31 @@ fn parse-value(parser: YamlParser, ev: YamlEvent, anchors: Dict[String, YAML]) -
         if let $anch = event-anchor(ev) {
             anchors[anch] = result
         }
+        if marks != nil {
+            marks.values[path] = Mark(ev)
+            marks.anchor(event-anchor(ev), path)
+        }
         return result
     }
+
 
     if typ == YAML_SEQUENCE_START_EVENT {
         let anch = event-anchor(ev)
         let items = []
+        let mark = (marks != nil) ? Mark(ev) : nil
+        marks.?anchor(anch, path)
 
         while true {
             if yaml_parser_parse(p, e) != 1 {
                 throw parser-error(parser)
             }
             break if ev.tp == YAML_SEQUENCE_END_EVENT
-            items.push(parse-value(parser, ev, anchors))
+            items.push(parse-value(parser, ev, anchors, marks, (marks != nil) ? [*path, #items] : path))
+        }
+
+        if let $m = mark and marks != nil {
+            m.to = Int(ev.em_idx)
+            marks.nodes[path] = m
         }
 
         if let $a = anch {
@@ -306,19 +362,32 @@ fn parse-value(parser: YamlParser, ev: YamlEvent, anchors: Dict[String, YAML]) -
     if typ == YAML_MAPPING_START_EVENT {
         let anch = event-anchor(ev)
         let map = %{}
+        let mark = (marks != nil) ? Mark(ev) : nil
+        marks.?anchor(anch, path)
 
         while true {
             if yaml_parser_parse(p, e) != 1 {
                 throw parser-error(parser)
             }
             break if ev.tp == YAML_MAPPING_END_EVENT
+            let key-mark = (marks != nil) ? Mark(ev) : nil
             let key = parse-key(parser, ev, anchors)
+            let sub = path
+            if let $mk = key-mark and marks != nil {
+                sub = [*path, key]
+                marks.keys[sub] = mk
+            }
 
             if yaml_parser_parse(p, e) != 1 {
                 throw parser-error(parser)
             }
-            let val = parse-value(parser, ev, anchors)
+            let val = parse-value(parser, ev, anchors, marks, sub)
             map[key] = val
+        }
+
+        if let $m = mark and marks != nil {
+            m.to = Int(ev.em_idx)
+            marks.nodes[path] = m
         }
 
         if let $a = anch {
@@ -331,6 +400,7 @@ fn parse-value(parser: YamlParser, ev: YamlEvent, anchors: Dict[String, YAML]) -
         let anch = event-anchor(ev)
         if let $a = anch {
             if let $val = anchors[a] {
+                marks.?link(path, a)
                 return val
             }
         }
@@ -339,7 +409,7 @@ fn parse-value(parser: YamlParser, ev: YamlEvent, anchors: Dict[String, YAML]) -
 
 }
 
-fn parse-document(parser: YamlParser, ev: YamlEvent) -> Array[YAML] {
+fn parse-document(parser: YamlParser, ev: YamlEvent, marks: Marks | nil = nil) -> Array[YAML] {
     let anchors: Dict[String, YAML] = %{}
     let results: Array[YAML] = []
     let p = parser.get()
@@ -360,7 +430,7 @@ fn parse-document(parser: YamlParser, ev: YamlEvent) -> Array[YAML] {
                 results.push(nil)
                 continue
             }
-            results.push(parse-value(parser, ev, anchors))
+            results.push(parse-value(parser, ev, anchors, marks))
             // consume DOCUMENT_END
             while true {
                 if yaml_parser_parse(p, e) != 1 {
@@ -382,15 +452,20 @@ fn init-parser(input: String) {
         throw YAMLError('failed to initialize parser')
     }
 
-    yaml_parser_set_input_string(p, input.cstr(), input.size())
+    let buf = input.cstr()
+    yaml_parser_set_input_string(p, buf, input.size())
     yaml_parser_set_encoding(p, YAML_UTF8_ENCODING)
 
-    parser
+    (parser, buf)
 }
 
-fn do-parse(input: String) -> YAML {
-    let parser = init-parser(input)
-    defer yaml_parser_delete(parser.get())
+fn release-parser(parser: YamlParser, buf: _) {
+    yaml_parser_delete(parser.get())
+}
+
+fn do-parse(input: String, marks: Marks | nil = nil) -> YAML {
+    let (parser, buf) = init-parser(input)
+    defer release-parser(parser, buf)
 
     let ev = YamlEvent()
     let p = parser.get()
@@ -403,7 +478,7 @@ fn do-parse(input: String) -> YAML {
         throw YAMLError('expected stream start')
     }
 
-    let results = parse-document(parser, ev)
+    let results = parse-document(parser, ev, marks)
 
     match results {
         []    => nil,
@@ -413,8 +488,8 @@ fn do-parse(input: String) -> YAML {
 }
 
 fn do-parse-all(input: String) -> Array[YAML] {
-    let parser = init-parser(input)
-    defer yaml_parser_delete(parser.get())
+    let (parser, buf) = init-parser(input)
+    defer release-parser(parser, buf)
 
     let ev = YamlEvent()
     let p = parser.get()
@@ -624,6 +699,11 @@ fn do-emit-all(values: Array, indent: Int = 2, width: Int = 80, flow: Bool = fal
 /// Parse a YAML string into a Ty value.
 pub fn parse(input: String) -> YAML {
     do-parse(input)
+}
+
+pub fn parse-marked(input: String) -> (YAML, Marks) {
+    let marks = Marks()
+    (do-parse(input, marks), marks)
 }
 
 /// Parse a YAML string containing multiple documents.

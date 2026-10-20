@@ -1,0 +1,1252 @@
+import ink (..)
+import term (event)
+import os
+import path (Path)
+import ink.form.codec as codec (Sheet, CodecError, thaw, same?, dig, has?)
+import ink.form.schema (..)
+
+fn plant(data: _, p: Array, v: _) {
+    let c = data
+    for k; i in p[;-1] {
+        if dig(c, [k]) == nil {
+            c[k] = (p[i + 1] :: Int) ? [] : %{}
+        }
+        c = c[k]
+    }
+    match (c, p[-1]) {
+        (xs: Array, j: Int) and j == #xs => xs.push(v),
+        _                                => c[p[-1]] = v
+    }
+}
+
+fn slot-in(d: Dict, k: _, v: _, at: Int) {
+    let pairs = d.items()
+    d.clear()
+    for (kk, x); i in pairs {
+        if i == at {
+            d[k] = v
+        }
+        d[kk] = x
+    }
+    if k not in d {
+        d[k] = v
+    }
+}
+
+fn wedge(data: _, p: Array, v: _, at: Int | nil = nil) {
+    let up = p[;-1]
+    if !has?(data, up) {
+        plant(data, up, (p[-1] :: Int) ? [] : %{})
+    }
+    match (dig(data, up), p[-1]) {
+        (xs: Array, i: Int)        => xs.insert(i, v),
+        (d: Dict, k) and at != nil => slot-in(d, k, v, at),
+        _                          => plant(data, p, v)
+    }
+}
+
+fn pluck(data: _, p: Array) {
+    match (dig(data, p[;-1]), p[-1]) {
+        (d: Dict, k)        => d.remove(k),
+        (xs: Array, i: Int) => xs.pop(i),
+        _                   => ()
+    }
+}
+
+fn mtime-of(file: String | nil) -> Float | nil {
+    (file != nil) ? os.stat(file).?mtime : nil
+}
+
+pub class FormModel {
+    src:     String | nil
+    format:  String | nil
+    schema:  Schema
+    sheet:   Sheet | nil
+    data:    _
+    base:    _
+    error:   String | nil
+    rev:     Int
+    mtime:   Float | nil
+
+    __undo:  Array[(_, Array)]
+    __redo:  Array[(_, Array)]
+    __root:  Field | nil
+    __built: Int
+
+    init(
+        src: String | nil = nil,
+        data: _ = nil,
+        format: String | nil = nil,
+        schema: _ = nil,
+        hints: Dict[String, Dict[String, _]] = %{}
+    ) {
+        self.src    = src
+        self.format = format
+        error       = nil
+        rev         = 0
+        mtime       = nil
+        __undo      = []
+        __redo      = []
+        __root      = nil
+        __built     = -1
+        sheet       = nil
+        self.data   = %{}
+        base        = %{}
+        self.schema = Schema(%{}, %{'$schema': %{'hidden': true}, **hints})
+        load(data)
+        let found = schema ?? discover()
+        try {
+            self.schema.root = Schema.load(found)
+        } catch e {
+            error = "schema: {e}"
+        }
+    }
+
+    discover() -> String | nil {
+        let $file = src or return nil
+        let dir = Path(file).parent
+        if let $s = dig(data, ['$schema']) and s :: String and !s.match?(/^\w+:\/\//) {
+            let p = s.starts?('/') ? Path(s) : dir / s
+            if p.exists? {
+                return "{p}"
+            }
+        }
+        let stem = Path(file).stem.comb(/^\./)
+        let $hit = [dir / "{stem}.schema.json", Path("{file}.schema.json")].find(&.exists?) or return nil
+        "{hit}"
+    }
+
+    load(seed: _ = nil) {
+        error = nil
+        if let $file = src {
+            let $c = (format != nil) ? codec.codec(format) : codec.sniff(file) or do {
+                error = "don't know how to read {Path(file).name}"
+                return
+            }
+            let sh = if !Path(file).exists? {
+                Sheet(c, '', thaw(seed ?? %{}))
+            } else {
+                try {
+                    codec.load(file, c.name)
+                } catch e: CodecError {
+                    error = "{e}".comb(/^CodecError: /)
+                    return
+                }
+            }
+            sheet = sh
+            mtime = mtime-of(file)
+            data = thaw(sh.data)
+        } else {
+            data = thaw(seed ?? %{})
+        }
+        base = thaw(data)
+        __undo = []
+        __redo = []
+        rev += 1
+    }
+
+    root -> Field {
+        if __built != rev || __root == nil {
+            __root  = schema.build(data, sheet.?notes ?? %{})
+            __built = rev
+        }
+        (__root)!
+    }
+
+    name -> String {
+        (src != nil) ? Path(src).name : 'settings'
+    }
+
+    kind -> String | nil {
+        sheet.?codec.?name
+    }
+
+    value(f: Field) -> _ {
+        f.present? ? dig(data, f.path) : f.default
+    }
+
+    saved(p: Array) -> _ {
+        dig(base, p)
+    }
+
+    changed?(p: Array) -> Bool {
+        has?(data, p) != has?(base, p) || !same?(dig(data, p), dig(base, p))
+    }
+
+    dirty? -> Bool {
+        !same?(data, base)
+    }
+
+    issues -> Array[(Field, String)] {
+        [(f, msg) for f in root.walk() if let $msg = check(f, value(f))]
+    }
+
+    issue(f: Field) -> String | nil {
+        check(f, value(f))
+    }
+
+    edit(p: Array, f: Function) {
+        __undo.push((thaw(data), p))
+        __redo = []
+        f()
+        __mirror(p)
+        rev += 1
+    }
+
+    __mirror(p: Array) {
+        let $sh = sheet or return
+        let (root, _) = sh.link-of(p) ?? return
+        if !has?(data, root) {
+            return
+        }
+        let v = dig(data, root)
+        for twin in sh.twins(p) if twin != root && has?(data, twin) {
+            plant(data, twin, thaw(v))
+        }
+    }
+
+    shared-with(p: Array) -> Array | nil {
+        let (_, anchor) = sheet.?link-of(p) ?? return nil
+        anchor
+    }
+
+    set(p: Array, v: _) {
+        if has?(data, p) && same?(dig(data, p), v) {
+            return
+        }
+        edit(p, -> plant(data, p, v))
+    }
+
+    unset(p: Array) {
+        if has?(data, p) {
+            edit(p, -> pluck(data, p))
+        }
+    }
+
+    revert(p: Array) {
+        match has?(base, p) {
+            true  => set(p, thaw(dig(base, p))),
+            false => unset(p)
+        }
+    }
+
+    add(list: Field, at: Int | nil = nil) -> Array {
+        let xs = dig(data, list.path)
+        let n = (xs :: Array) ? #xs : 0
+        let item = schema.fresh(list, data)
+        let p = [*list.path, (at ?? n).clamp(0, n)]
+        edit(p, -> wedge(data, p, item))
+        p
+    }
+
+    put(group: Field, key: String, v: _, at: Int | nil = nil) -> Array {
+        let p = [*group.path, key]
+        edit(p, -> wedge(data, p, v, at))
+        p
+    }
+
+    move(p: Array, d: Int) -> Array | nil {
+        let $xs = dig(data, p[;-1]) or return nil
+        let i = p[-1]
+        if !(xs :: Array) || !(i :: Int) || i + d < 0 || i + d >= #xs {
+            return nil
+        }
+        let q = [*p[;-1], i + d]
+        edit(q, -> do {
+            let x = xs[i]
+            xs[i] = xs[i + d]
+            xs[i + d] = x
+        })
+        q
+    }
+
+    undo() -> Array | nil {
+        let (snap, p) = __undo.pop() ?? return nil
+        __redo.push((thaw(data), p))
+        data = snap
+        rev += 1
+        p
+    }
+
+    redo() -> Array | nil {
+        let (snap, p) = __redo.pop() ?? return nil
+        __undo.push((thaw(data), p))
+        data = snap
+        rev += 1
+        p
+    }
+
+    stale? -> Bool {
+        src != nil && mtime-of(src) != mtime
+    }
+
+    save() -> String | nil {
+        let bad = issues
+        if #bad > 0 {
+            let (f, msg) = bad[0]
+            return "{f.path.join('.')}: {msg}"
+        }
+        if let $file = src and let $sh = sheet {
+            let text = sh.encode(data)
+            try {
+                codec.save(file, text)
+                sheet = sh.codec.decode(text)
+            } catch e {
+                return "{e}"
+            }
+            mtime = mtime-of(file)
+        }
+        base = thaw(data)
+        rev += 1
+        nil
+    }
+}
+
+const HINTS = %{
+    'flag':   [('space', 'toggle')],
+    'choice': [('←→', 'cycle'), ('⏎', 'pick')],
+    'number': [('←→', 'adjust'), ('⏎', 'edit')],
+    'text':   [('⏎', 'edit'), ('e', '$EDITOR')],
+    'group':  [('⏎', 'fold')],
+    'list':   [('⏎', 'fold')],
+    'edit':   [('⏎', 'apply'), ('esc', 'cancel'), ('tab', 'next')],
+    'prompt': [('⏎', 'add'), ('esc', 'cancel')],
+    'pick':   [('↑↓', 'choose'), ('⏎', 'apply'), ('esc', 'cancel')],
+    'find':   [('⏎', 'keep'), ('esc', 'clear')]
+}
+
+pub class Form < Component {
+    variant:    String | nil
+    cls:        String | nil
+    src:        String | nil
+    data:       _
+    format:     String | nil
+    schema:     _
+    fields:     Dict[String, Dict[String, _]] | nil
+    model:      FormModel | nil
+    title:      String | nil
+    width:      Int | nil
+    height:     Int | nil
+    readonly?:  Bool | nil
+    autosave?:  Bool | nil
+    on-change:  Function | nil
+    on-save:    Function | nil
+    on-key:     Function | nil
+
+    __own:      FormModel | nil = nil
+    __rows:     Array[_] = []
+    __cursor:   Int = 0
+    __scroll:   Int = 0
+    __at:       Array | nil = nil
+    __adding:   (Array, Int, Bool) | nil = nil
+    __folded:   Set[Array] = %[]
+    __reveal:   Set[Array] = %[]
+    __edit:     Editor | nil = nil
+    __view:     EditView | nil = nil
+    __err:      String | nil = nil
+    __pick:     Int | nil = nil
+    __find:     Editor | nil = nil
+    __finding?: Bool = false
+    __flash:    (String, Bool) | nil = nil
+    __body-y:   Int = 0
+    __seen:     _ = nil
+
+    focusable? -> Bool { true }
+
+    handles-tab? -> Bool { __edit != nil || __finding? }
+
+    stale? -> Bool { __state() != __seen }
+
+    __state() -> _ {
+        let m = state
+        (m.rev, __edit.?version, __edit.?cursor, __find.?version, __find.?cursor)
+    }
+
+    state -> FormModel {
+        model ?? __own ?? (__own = FormModel(src, data, format, schema, fields ?? %{}))
+    }
+
+    mount() {
+        every(1.0, -> __poll())
+    }
+
+    __poll() {
+        let m = state
+        if !m.stale? {
+            return
+        }
+        if m.dirty? {
+            m.mtime = mtime-of(m.src)
+            __say("{m.name} changed on disk", false)
+        } else {
+            m.load()
+            __say("reloaded {m.name}", true)
+        }
+        invalidate!()
+    }
+
+    __say(msg: String, ok?: Bool) {
+        __flash = (msg, ok?)
+        after(3.0, -> __unsay(msg, ok?))
+    }
+
+    __unsay(msg: String, ok?: Bool) {
+        if __flash == (msg, ok?) {
+            __flash = nil
+        }
+    }
+
+    __locked?(f: Field | nil = nil) -> Bool {
+        (readonly? ?? false) || (f.?readonly? ?? false)
+    }
+
+    __p(name: String, sts: Array[String] = []) -> Dict[String, _] {
+        part('Form', name, sts, variant)
+    }
+
+    __spec(name: String, sts: Array[String] = []) -> String | nil {
+        spec-of-part(__p(name, sts))
+    }
+
+    __glyph(name: String, sts: Array[String] = [], dflt: String = '') -> String {
+        __p(name, sts)['content'] ?? dflt
+    }
+
+    __query() -> String {
+        __find.?text ?? ''
+    }
+
+    __flatten() -> Array[_] {
+        let m = state
+        let q = __query()
+        let rows: Array[_] = []
+
+        fn hit?(f: Field) -> Bool {
+            fuzzy-hits(q, f.path.map(str).join('.')) != nil
+        }
+
+        fn keep?(f: Field) -> Bool {
+            !f.hidden? && (#q == 0 || hit?(f) || f.kids.any?(keep?))
+        }
+
+        fn walk(f: Field, depth: Int) {
+            for k in f.kids if keep?(k) {
+                rows.push({f: k, depth: depth})
+                if k.container? && (#q > 0 || k.path not in __folded) {
+                    walk(k, depth + 1)
+                }
+            }
+        }
+
+        walk(m.root, 0)
+        rows
+    }
+
+    rows -> Array[_] { __rows }
+    current -> Field | nil { __field }
+    cursor -> Int { __cursor }
+
+    __row -> _ {
+        __rows.?[__cursor]
+    }
+
+    __field -> Field | nil {
+        __row.?f
+    }
+
+    __sync() {
+        __rows = __flatten()
+        if let $at = __at {
+            let i = __rows.search-by(r -> r.f.path == at)
+            if i != nil {
+                __cursor = i
+            }
+        }
+        __cursor = __cursor.clamp(0, max(#__rows - 1, 0))
+        __remember()
+    }
+
+    __remember() {
+        __at = match __row {
+            nil => nil,
+            r   => r.f.path
+        }
+    }
+
+    __go(i: Int) {
+        __cursor = i.clamp(0, max(#__rows - 1, 0))
+        __remember()
+    }
+
+    __focus-path(p: Array | nil) {
+        if p != nil {
+            __at = p
+            __sync()
+        }
+    }
+
+    __changed(p: Array) {
+        let m = state
+        __sync()
+        if let $f = on-change {
+            f(p, dig(m.data, p), m)
+        }
+        if autosave? ?? false {
+            __save()
+        }
+    }
+
+    __set(f: Field, v: _) {
+        if __locked?(f) {
+            return
+        }
+        state.set(f.path, v)
+        __changed(f.path)
+    }
+
+    __save() {
+        match state.save() {
+            nil => __saved(),
+            err => __say(err, false)
+        }
+    }
+
+    __saved() {
+        let m = state
+        __say("saved {m.name}", true)
+        if let $cb = on-save {
+            cb(m.data)
+        }
+    }
+
+    __nudge(f: Field, d: Int) {
+        let m = state
+        let v = m.value(f)
+        match f.kind {
+            Flag => __set(f, !(v ?? false)),
+            Choice => __cycle(f, v, d),
+            Whole => do {
+                let n = (v ?? f.lo ?? 0) + d * int(f.step)
+                __set(f, __clamp(f, n))
+            },
+            Real => do {
+                let x = float(v ?? f.lo ?? 0.0) + float(d) * float(f.step)
+                __set(f, __clamp(f, float("{x:.10g}")))
+            },
+            _ => ()
+        }
+    }
+
+    __cycle(f: Field, v: _, d: Int) {
+        let cs = f.choices ?? []
+        if #cs == 0 {
+            return
+        }
+        let i = cs.search-by(\_ == v) ?? -d
+        __set(f, cs[(i + d + #cs) % #cs])
+    }
+
+    static __clamp(f: Field, n: Int | Float) -> Int | Float {
+        let lo = f.lo
+        let hi = f.hi
+        if lo != nil && n < lo {
+            return lo
+        }
+        if hi != nil && n > hi {
+            return hi
+        }
+        n
+    }
+
+    __begin(f: Field) {
+        if __locked?(f) {
+            return
+        }
+        let v = state.value(f)
+        let seed = match v {
+            nil       => '',
+            s: String => s,
+            _         => display(v)
+        }
+        __edit = Editor(text=seed, multiline?=f.multiline?)
+        __view = EditView((__edit)!)
+        __err  = nil
+    }
+
+    __commit() -> Bool {
+        let $ed = __edit or return true
+        let $f = __field or return true
+        let (v, err) = parse-input(f, ed.text)
+        let msg = err ?? check(f, v)
+        if msg != nil {
+            __err = msg
+            return false
+        }
+        __edit = nil
+        __err  = nil
+        __set(f, v)
+        true
+    }
+
+    __cancel() {
+        __edit   = nil
+        __err    = nil
+        __adding = nil
+    }
+
+    __activate() {
+        let $r = __row or return
+        let f = r.f
+        match f.kind {
+            Group or Items => __fold(f),
+            Flag           => __nudge(f, 1),
+            Choice         => __pick = (f.choices ?? []).search-by(\_ == state.value(f)) ?? 0,
+            _              => __begin(f)
+        }
+    }
+
+    __fold(f: Field) {
+        __folded ^= %[f.path]
+        __sync()
+    }
+
+    __insert(below?: Bool) {
+        if __locked?() {
+            return
+        }
+        let $f = __field or return __into(state.root)
+        let opened? = f.container? && f.path not in __folded
+        if below? && opened? && !((f.key :: Int) && f.kind == Group) {
+            return __into(f)
+        }
+        let $parent = __parent(f) or return
+        let i = parent.kids.search-by(\_.path == f.path) ?? #parent.kids
+        let at = below? ? i + 1 : i
+        match parent.kind {
+            Items             => __new-item(parent, at),
+            Group and parent.open? => __prompt-key(parent, at, !below?),
+            _                 => __say("{parent.label} has a fixed set of keys", false)
+        }
+    }
+
+    __into(f: Field) {
+        match f.kind {
+            Items             => __new-item(f, 0),
+            Group and f.open? => __prompt-key(f, 0, false),
+            _                 => __say("{f.label} has a fixed set of keys", false)
+        }
+    }
+
+    __new-item(list: Field, at: Int) {
+        __folded.remove(list.path)
+        let p = state.add(list, at)
+        __changed(p)
+        __focus-path(p)
+        if let $f = __field and !f.container? {
+            __begin(f)
+        }
+    }
+
+    __prompt-key(group: Field, at: Int, above?: Bool) {
+        __folded.remove(group.path)
+        __edit   = Editor(text='')
+        __view   = EditView((__edit)!)
+        __err    = nil
+        __adding = (group.path, at, above?)
+    }
+
+    __parent(f: Field) -> Field | nil {
+        let up = f.path[;-1]
+        __rows.find(r -> r.f.path == up).?f ?? ((#up == 0) ? state.root : nil)
+    }
+
+    __insertable?(f: Field | nil) -> Bool {
+        let $p = (f != nil) ? __parent((f)!) : state.root or return false
+        __open?(p) || (f != nil && __open?((f)!))
+    }
+
+    static __open?(f: Field) -> Bool {
+        f.kind == Items || (f.kind == Group && f.open?)
+    }
+
+    __remove(f: Field) {
+        let m = state
+        let $parent = __parent(f) or return
+        if __locked?(f) || !f.present? {
+            return
+        }
+        if (f.key :: Int) || parent.open? || f.spec['required?'] == false {
+            m.unset(f.path)
+            __changed(f.path)
+        } else {
+            __say("{f.label} is required", false)
+        }
+    }
+
+    __external(f: Field) {
+        if !__locked?(f) {
+            hand-over(-> __run-editor(f, "{state.value(f) ?? ''}"))
+        }
+    }
+
+    __run-editor(f: Field, seed: String) {
+        let (fd, tmp) = os.mktemp(Path.tmp() / 'ink-form') ?? return
+        os.write(fd, seed)
+        os.close(fd)
+        let cmd = (getenv('VISUAL') ?? getenv('EDITOR') ?? 'vi').split(/\s+/).filter(bool)
+        os.wait(os.spawn([*cmd, tmp]).pid)
+        let out = (slurp(tmp) ?? '').comb(/\n$/)
+        os.unlink(tmp)
+        __set(f, out)
+        invalidate!()
+    }
+
+    __key(ev: _) -> String | nil {
+        match ev {
+            event.Key({event: 1 or 2, *}) => match key-name(ev) {
+                k and #k == 1 => nil,
+                k             => k
+            },
+            event.Text($s) => s,
+            _              => nil
+        }
+    }
+
+    __on-edit(ev: _) -> _ {
+        let $ed = __edit or return Ignored
+        let name = __key(ev)
+        if __adding != nil {
+            return __on-new-key(ev, ed, name)
+        }
+        match name {
+            'Enter' => __commit(),
+            'Esc'   => __cancel(),
+            ('Tab' or 'Down') and !ed.multiline?  => __commit-and-go(1),
+            ('S-Tab' or 'Up') and !ed.multiline? => __commit-and-go(-1),
+            _ => {
+                ed.handle(ev)
+                __err = nil
+            }
+        }
+        true
+    }
+
+    __commit-and-go(d: Int) {
+        if __commit() {
+            __go(__cursor + d)
+        }
+    }
+
+    __on-new-key(ev: _, ed: Editor, name: String | nil) -> _ {
+        match name {
+            'Esc' => {
+                __cancel()
+                __sync()
+            },
+            'Enter' => __adopt-key(ed.text),
+            _ => ed.handle(ev)
+        }
+        true
+    }
+
+    __adopt-key(text: String) {
+        let (gp, at, _) = __adding ?? return
+        let $g = state.root.walk().find(\_.path == gp) or return
+        let (key, raw) = match text.match(/^\s*([^=:\s][^=:]*?)\s*[=:]\s*(.*)$/) {
+            [_, k: String, v] => (k, v),
+            _                 => (text.strip(), nil)
+        }
+        if #key == 0 {
+            __err = 'type key = value'
+            return
+        }
+        if key in (dig(state.data, g.path) ?? %{}) {
+            __err = "{key} already exists"
+            return
+        }
+        let v = (raw != nil) ? codec.guess(raw.strip(), loose?: false) : ''
+        __cancel()
+        let p = state.put(g, key, v, at)
+        __changed(p)
+        __focus-path(p)
+    }
+
+    __on-pick(ev: _) -> _ {
+        let $f = __field or return Ignored
+        let cs = f.choices ?? []
+        let i = __pick ?? 0
+        match __key(ev) {
+            'Up' or 'k'        => __pick = (i - 1 + #cs) % max(#cs, 1),
+            'Down' or 'j'      => __pick = (i + 1) % max(#cs, 1),
+            'Enter' or ' '     => {
+                __pick = nil
+                __set(f, cs[i])
+            },
+            'Esc' or 'q'       => __pick = nil,
+            _                  => ()
+        }
+        true
+    }
+
+    __on-find(ev: _) -> _ {
+        let $ed = __find or return Ignored
+        match __key(ev) {
+            'Esc' => {
+                __find = nil
+                __finding? = false
+            },
+            'Enter' or 'Tab' or 'Down' => __finding? = false,
+            _ => ed.handle(ev)
+        }
+        __sync()
+        true
+    }
+
+    __on-mouse(ev: _) -> _ {
+        match ev {
+            event.ScrollUp(_)   => __go(__cursor - 1),
+            event.ScrollDown(_) => __go(__cursor + 1),
+            event.MouseDown({y, button: 0, *}) => __click(__scroll + int(y) - 1 - __body-y),
+            _ => return Ignored
+        }
+        true
+    }
+
+    __click(i: Int) {
+        if i < 0 || i >= #__rows {
+            return
+        }
+        let again? = i == __cursor
+        __go(i)
+        if again? {
+            __activate()
+        }
+    }
+
+    on-event(ev: _) -> _ {
+        let m = state
+        if let $f = on-key and let $r = f(ev, __field) {
+            return r
+        }
+        if __edit != nil {
+            return __on-edit(ev)
+        }
+        if __pick != nil {
+            return __on-pick(ev)
+        }
+        if __finding? {
+            return __on-find(ev)
+        }
+        if (ev :: event.ScrollUp) || (ev :: event.ScrollDown) || (ev :: event.MouseDown) {
+            return __on-mouse(ev)
+        }
+        let $name = __key(ev) or return Ignored
+        let f = __field
+        let h = __viewport()
+        match name {
+            'Up' or 'k'               => __go(__cursor - 1),
+            'Down' or 'j'             => __go(__cursor + 1),
+            'PageUp'                  => __go(__cursor - h),
+            'PageDown'                => __go(__cursor + h),
+            'Home' or 'g'             => __go(0),
+            'End' or 'G'              => __go(#__rows - 1),
+            'Enter'                   => __activate(),
+            ' '                       => __space(),
+            'Left' or 'h'             => __left(),
+            'Right' or 'l'            => __right(),
+            'C-s'                     => __save(),
+            'u' or 'C-z'              => __focus-path(m.undo()),
+            'U' or 'C-r' or 'C-S-z'   => __focus-path(m.redo()),
+            'R' and f != nil          => {
+                m.revert(f.path)
+                __changed(f.path)
+            },
+            'o'                       => __insert(true),
+            'O'                       => __insert(false),
+            ('d' or 'Delete') and f != nil => __remove(f),
+            ('K' or 'S-Up') and f != nil => __focus-path(m.move(f.path, -1)),
+            ('J' or 'S-Down') and f != nil => __focus-path(m.move(f.path, 1)),
+            'e' and f != nil && f.kind == Str => __external(f),
+            'v' and f != nil && f.secret? => __reveal ^= %[f.path],
+            '/'                       => {
+                __find = __find ?? Editor()
+                __finding? = true
+            },
+            _                         => return Ignored
+        }
+        true
+    }
+
+    __space() {
+        let $r = __row or return
+        match r.f.kind {
+            Flag or Choice         => __nudge(r.f, 1),
+            Group or Items         => __fold(r.f),
+            _                      => __activate()
+        }
+    }
+
+    __left() {
+        let $f = __field or return
+        match f.kind {
+            Flag or Choice or Whole or Real => __nudge(f, -1),
+            (Group or Items) and f.path not in __folded => __fold(f),
+            _ => __climb(f)
+        }
+    }
+
+    __climb(f: Field) {
+        if let $p = __parent(f) and #p.path > 0 {
+            __focus-path(p.path)
+        }
+    }
+
+    __right() {
+        let $f = __field or return
+        match f.kind {
+            Flag or Choice or Whole or Real => __nudge(f, 1),
+            (Group or Items) and f.path in __folded => __fold(f),
+            _ => ()
+        }
+    }
+
+    __width() -> Int {
+        let w = width ?? layout-fw ?? layout-max-w
+        (w < INF) ? w : 80
+    }
+
+    __viewport() -> Int {
+        let total = height ?? layout-fh ?? ((layout-max-h < INF) ? layout-max-h : nil)
+        let chrome = 4 + ((__find != nil) ? 1 : 0)
+        match total {
+            nil => min(#__rows + ((__pick != nil) ? #(__field.?choices ?? []) : 0), 18).clamp(3, INF),
+            t   => max(t - chrome, 3)
+        }
+    }
+
+    __header(w: Int) -> Node {
+        let m = state
+        let bits: Array[Node] = [<Text style=__spec('title')>{title ?? m.name}</Text>]
+        if let $k = m.kind {
+            bits.push(<Text style=__spec('badge')>{"  {k}"}</Text>)
+        }
+        if m.dirty? {
+            bits.push(<Text style=__spec('dirty')>{"  {__glyph('dirty', [], '●')} modified"}</Text>)
+        }
+        let n = #m.issues
+        if n > 0 {
+            bits.push(<Text style=__spec('issues')>{"  {n} issue{(n == 1) ? '' : 's'}"}</Text>)
+        }
+        if let (msg, ok?) = __flash {
+            bits.push(<Text style=__spec('flash', ok? ? ['ok'] : ['error'])>{"  {msg}"}</Text>)
+        }
+        <Text wrap="truncate">{bits}</Text>
+    }
+
+    __filter-line(w: Int) -> Node {
+        let ed = (__find)!
+        let lead = __glyph('filter', [], '/ ')
+        let lines = EditView(ed).lines(
+            max(w - lead.width(), 1),
+            focused?=focused? && __finding?,
+            text=__spec('value') ?? '',
+            placeholder='filter'
+        )
+        <Text><Text style=__spec('filter')>{lead}</Text>{lines[0]}</Text>
+    }
+
+    __label-width(w: Int) -> Int {
+        let widest = __rows.map(r -> 2 * r.depth + 2 + r.f.label.width()).max() ?? 8
+        min(widest + 2, max(w * 2 / 5, 12))
+    }
+
+    __gauge(f: Field, v: Int | Float, room: Int) -> Array[Node] {
+        let (lo, hi) = (f.lo, f.hi)
+        if lo == nil || hi == nil || room < 16 || float(hi) <= float(lo) {
+            return []
+        }
+        let cells = min(room - 10, 12)
+        let pct = ((float(v) - float(lo)) / (float(hi) - float(lo))).clamp(0.0, 1.0)
+        let fill = int(pct * float(cells) + 0.5)
+        [
+            <Text style=__spec('gauge-fill')>{"  {__glyph('gauge-fill', [], '━') * fill}"}</Text>,
+            <Text style=__spec('gauge-track')>{__glyph('gauge-track', [], '─') * (cells - fill)}</Text>
+        ]
+    }
+
+    __cell(f: Field, v: _, sts: Array[String], room: Int) -> Array[Node] {
+        let m = state
+        if !f.present? && !f.container? {
+            let d = f.default
+            let txt = (d != nil) ? "{display(d)} (default)" : '—'
+            return [<Text style=__spec('unset', sts)>{txt}</Text>]
+        }
+        match (f.kind, v) {
+            (Group, d: Dict) => [<Text style=__spec('count', sts)>{"\{{#d}\}"}</Text>],
+            (Items, xs: Array) => [<Text style=__spec('count', sts)>{"[{#xs}]"}</Text>],
+            (Group or Items, _) => [<Text style=__spec('count', sts)>{'—'}</Text>],
+            (_, nil) => [<Text style=__spec('null', sts)>{__glyph('null', sts, 'null')}</Text>],
+            (Flag, b: Bool) => do {
+                let p = b ? 'on' : 'off'
+                [<Text style=__spec(p, sts)>{"{__glyph(p, sts, b ? '●' : '○')} {display(b)}"}</Text>]
+            },
+            (Choice, _) => do {
+                let active? = 'active' in sts
+                let lt = active? ? '‹ ' : ''
+                let gt = active? ? ' ›' : ''
+                [
+                    <Text style=__spec('arrow', sts)>{lt}</Text>,
+                    <Text style=__spec('choice', sts)>{display(v)}</Text>,
+                    <Text style=__spec('arrow', sts)>{gt}</Text>
+                ]
+            },
+            (Whole or Real, n: Int | Float) => [
+                <Text style=__spec('number', sts)>{display(n)}</Text>,
+                *__gauge(f, n, room)
+            ],
+            (_, s: String) and f.secret? && f.path not in __reveal => do {
+                [<Text style=__spec('secret', sts)>{__glyph('secret', sts, '•') * min(max(#s, 6), 16)}</Text>]
+            },
+            (_, s: String) and f.color?(s) => [
+                <Text style=s>{__glyph('swatch', sts, '██')}</Text>,
+                <Text style=__spec('value', sts)>{" {s}"}</Text>
+            ],
+            (_, s: String) => do {
+                let lines = s.split('\n')
+                let more = (#lines > 1) ? " ⏎ +{#lines - 1}" : ''
+                let shown = (#s == 0) ? '""' : lines[0]
+                [
+                    <Text style=__spec((#s == 0) ? 'null' : 'value', sts)>{shown}</Text>,
+                    <Text style=__spec('count', sts)>{more}</Text>
+                ]
+            },
+            _ => [<Text style=__spec('value', sts)>{display(v)}</Text>]
+        }
+    }
+
+    __editing-cell(room: Int, sts: Array[String]) -> Array[Node] {
+        let ed = (__edit)!
+        let view = __view ?? (__view = EditView(ed))
+        let mask = (__field.?secret? ?? false) ? '•' : nil
+        let lines = view.lines(
+            max(room, 4),
+            focused?=focused?,
+            text=__spec('value', [*sts, 'editing']) ?? '',
+            placeholder=(__adding != nil) ? 'key = value' : '',
+            mask=mask
+        )
+        [<Text>{lines[0]}</Text>]
+    }
+
+    __crumbs(f: Field) -> String {
+        let named = %{r.f.path: r.f.label for r in __rows}
+        (1..#f.path + 1).map(n -> named[f.path[;n]] ?? "{f.path[n - 1]}").join(' › ')
+    }
+
+    __new-key-line(r: _, w: Int) -> Node {
+        let into? = r != nil && __adding.?[0] == r.f.path
+        let depth = (r == nil) ? 0 : into? ? r.depth + 1 : r.depth
+        let sts = ['focused', 'selected', 'active']
+        let lead = "{__glyph('cursor', sts, '  ')}{'  ' * depth}"
+        let cell = __editing-cell(max(w - lead.width() - 4, 8), sts)
+        <Box direction="row" look=__p('row', sts)>
+            <Text wrap="truncate">
+                <Text style=__spec('cursor', sts)>{lead}</Text>
+                <Text style=__spec('add', sts)>{__glyph('add', sts, '+ ')}</Text>
+                {cell}
+            </Text>
+        </Box>
+    }
+
+    __draw(r: _, i: Int, lw: Int, w: Int) -> Node {
+        let m = state
+        let f = r.f
+        let sel? = i == __cursor
+        let sts: Array[String] = [
+            *(focused? ? ['focused'] : []),
+            *(sel? ? ['selected'] : []),
+            *((sel? && focused?) ? ['active'] : [])
+        ]
+        let mark = <Text style=__spec('cursor', sts)>{__glyph('cursor', sts, '  ')}</Text>
+        let indent = '  ' * r.depth
+        let fold = f.container?
+            ? __glyph('toggle', (f.path in __folded) ? [*sts, 'folded'] : sts, (f.path in __folded) ? '▸ ' : '▾ ')
+            : '  '
+        let lp = f.container? ? 'group' : 'label'
+        let label = f.label
+        let pad = ' ' * max(lw - 2 * r.depth - 2 - label.width(), 1)
+        let v = m.value(f)
+        let room = max(w - lw - 2 - 4, 4)
+        let editing? = sel? && __edit != nil && __adding == nil
+        let cell = editing? ? __editing-cell(room, sts) : __cell(f, v, sts, room)
+        let tail: Array[Node] = []
+        if editing? {
+            ()
+        } else if let $err = m.issue(f) {
+            tail.push(<Text style=__spec('error', sts)>{"  {__glyph('error', sts, '✗')} {err}"}</Text>)
+        } else if m.changed?(f.path) && f.present? {
+            tail.push(<Text style=__spec('modified', sts)>{" {__glyph('modified', sts, '●')}"}</Text>)
+        }
+        let q = __query()
+        let hits = (#q > 0) ? (fuzzy-hits(q, label).?[1] ?? []) : []
+        let lbl = (#hits > 0) ? __highlight(label, hits, lp, sts) : [<Text style=__spec(lp, sts)>{label}</Text>]
+        <Box direction="row" look=__p('row', sts)>
+            <Text wrap="truncate">
+                {mark}
+                <Text style=__spec('toggle', sts)>{indent}{fold}</Text>
+                {lbl}
+                {pad}
+                {cell}
+                {tail}
+            </Text>
+        </Box>
+    }
+
+    __highlight(label: String, hits: Array[Int], lp: String, sts: Array[String]) -> Array[Node] {
+        let on = %[*hits]
+        let base = __spec(lp, sts) ?? ''
+        let lit = "{base} {__spec('match', sts) ?? ''}"
+        [<Text style=((i in on) ? lit : base)>{c}</Text> for c; i in label.chars()]
+    }
+
+    __picker(f: Field, lw: Int) -> Array[Node] {
+        let cur = state.value(f)
+        [
+            do {
+                let sts = (i == __pick) ? ['selected', 'active'] : []
+                let mark = __glyph('cursor', sts, '  ')
+                let now = same?(c, cur) ? ' ●' : ''
+                <Text wrap="truncate">
+                    {' ' * lw}
+                    <Text style=__spec('picker', sts)>{"{mark}{display(c)}"}</Text>
+                    <Text style=__spec('count')>{now}</Text>
+                </Text>
+            }
+            for c; i in f.choices ?? []
+        ]
+    }
+
+    __footer(w: Int) -> Array[Node] {
+        let m = state
+        let f = __field
+        let crumbs = (f != nil) ? __crumbs((f)!) : ''
+        let shared = (f != nil) ? m.shared-with((f)!.path) : nil
+        let summary = match (f.?summary, shared) {
+            (s, $a) => [*((s != nil) ? [s] : []), "shared via &{a.map(str).join('.')}"].join(' · '),
+            (s, _)  => s
+        }
+        let top = <Text wrap="truncate">
+            <Text style=__spec('crumb')>{crumbs}</Text>
+            <Text style=__spec('summary')>{(summary != nil) ? "  {summary}" : ''}</Text>
+        </Text>
+        let help = match (__err ?? m.error, f.?help) {
+            ($e, _) => <Text wrap="truncate" style=__spec('error')>{"{__glyph('error', [], '✗')} {e}"}</Text>,
+            (_, $h) => <Text wrap="truncate" style=__spec('help')>{h.split('\n').join(' ')}</Text>,
+            _       => <Text>{' '}</Text>
+        }
+        [top, help, __hints(w)]
+    }
+
+    __mode() -> String {
+        if __adding != nil {
+            return 'prompt'
+        }
+        if __edit != nil {
+            return 'edit'
+        }
+        if __pick != nil {
+            return 'pick'
+        }
+        if __finding? {
+            return 'find'
+        }
+        let $r = __row or return 'group'
+        match r.f.kind {
+            Flag          => 'flag',
+            Choice        => 'choice',
+            Whole or Real => 'number',
+            Str or Blank  => 'text',
+            Items         => 'list',
+            Group         => 'group'
+        }
+    }
+
+    __hints(w: Int) -> Node {
+        let mode = __mode()
+        let global = match mode {
+            'edit' or 'pick' or 'find' or 'prompt' => [],
+            _ => [('u', 'undo'), ('/', 'find'), ('^S', 'save')]
+        }
+        let reveal = (mode == 'text' && (__field.?secret? ?? false)) ? [('v', 'reveal')] : []
+        let plain? = mode not in ['edit', 'pick', 'find', 'prompt']
+        let insert = (plain? && __insertable?(__field)) ? [('o/O', 'insert')] : []
+        let pairs = [*(HINTS[mode] ?? []), *reveal, *insert, *global]
+        let ks = __spec('key')
+        let ds = __spec('hint')
+        <Text wrap="truncate">
+            {[
+                <Text><Text style=ks>{k}</Text><Text style=ds>{" {d}   "}</Text></Text>
+                for (k, d) in pairs
+            ]}
+        </Text>
+    }
+
+    render() -> Node {
+        let m = state
+        __seen = __state()
+        __sync()
+        let w = __width()
+        let h = __viewport()
+        let lw = __label-width(w)
+        let f = __field
+
+        let lines: Array[Node] = []
+        let at = 0
+        let prompt = __adding.?[2]
+        for r; i in __rows {
+            if i == __cursor && prompt == true {
+                lines.push(__new-key-line(r, w))
+            }
+            if i == __cursor {
+                at = #lines
+            }
+            lines.push(__draw(r, i, lw, w))
+            if i == __cursor && __pick != nil && f != nil {
+                lines += __picker((f)!, lw)
+            }
+            if i == __cursor && prompt == false {
+                lines.push(__new-key-line(r, w))
+            }
+        }
+        if #__rows == 0 && prompt != nil {
+            lines.push(__new-key-line(nil, w))
+        }
+        if prompt == true {
+            at = max(at - 1, 0)
+        }
+        let span = (__pick != nil) ? 1 + #(f.?choices ?? []) : (__adding != nil) ? 2 : 1
+        if at < __scroll {
+            __scroll = at
+        }
+        if at + span > __scroll + h {
+            __scroll = at + span - h
+        }
+        __scroll = __scroll.clamp(0, max(#lines - h, 0))
+        let shown = lines[__scroll;__scroll + h]
+        if #lines == 0 {
+            shown = [<Text style=__spec('unset')>{(m.error != nil) ? '' : '  (empty)'}</Text>]
+        }
+        while #shown < h && height != nil {
+            shown.push(<Text>{' '}</Text>)
+        }
+
+        __body-y = layout-y + 1 + ((__find != nil) ? 1 : 0)
+
+        <Box direction="column" look=__p('frame', focused? ? ['focused'] : []) cls=cls width=w>
+            {__header(w)}
+            {(__find != nil) && __filter-line(w)}
+            {shown}
+            {__footer(w)}
+        </Box>
+    }
+}

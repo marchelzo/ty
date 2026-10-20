@@ -1,0 +1,46 @@
+import ink (..)
+import ink.form (Form, FormModel)
+import os
+
+class Settings < Component {
+    model:  FormModel
+    armed?: Bool = false
+
+    render() -> Node {
+        <Box direction="column" pad-x=1>
+            <Form model=model />
+            {armed? && <Text style="warning">unsaved changes: ^S saves, q again discards</Text>}
+        </Box>
+    }
+
+    mount() {
+        focus-by-type(Form)
+    }
+
+    on-event(ev) {
+        match ev {
+            event.Text('q') or event.Key({key: 'ESCAPE', event: 1, *}) => do {
+                if model.dirty? && !armed? {
+                    armed? = true
+                } else {
+                    quit()
+                }
+            },
+            _ => Ignored
+        }
+    }
+}
+
+fn main() {
+    let args = argv[1;]
+    let at = args.search('--schema')
+    let schema = (at != nil) ? args.?[at + 1] : nil
+    let files = [a for a; i in args if !a.starts?('--') && (at == nil || i != at + 1)]
+    let $src = files.?[0] or do {
+        eprint('usage: ty tools/settings.ty FILE [--schema SCHEMA.json]')
+        os.exit(2)
+    }
+    run(Settings(model=FormModel(src, schema=schema)), fullscreen=true, title=src)
+}
+
+main()

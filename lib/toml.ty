@@ -56,11 +56,13 @@ class Table {
     value: Dict
     entries: Dict
     kind: Any
+    head: Int
 
     init(kind = Implicit) {
         value     = %{}
         entries   = %{}
         self.kind = kind
+        head      = -1
     }
 
     put(key, entry) {
@@ -78,6 +80,7 @@ class Node {
     end: Int
     value: Any
     layout: Any
+    key: Int = -1
 }
 
 class Parser {
@@ -207,6 +210,7 @@ class Parser {
     }
 
     binding(table) {
+        let at = __pos
         let parts = key()
         expect('=')
         space()
@@ -217,10 +221,13 @@ class Parser {
             fail("duplicate key {name}")
         }
 
-        target.put(name, value())
+        let node = value()
+        node.key = at
+        target.put(name, node)
     }
 
     header(root) {
+        let at = __pos
         expect('[')
         let many? = eat('[')
         space()
@@ -229,13 +236,15 @@ class Parser {
         let target = parent(root, parts, true)
         let name = parts[-1]
 
-        match (many?, target.entries[name]) {
+        let table = match (many?, target.entries[name]) {
             (true, nil)        => tables-last(target.put(name, Tables([Table(Explicit)]))),
             (true, Tables(ts)) => append-table(target, name, ts),
             (false, nil)       => target.put(name, Table(Explicit)),
             (false, t: Table)  => declare-table(t),
             _                  => fail("table {name} is already defined"),
         }
+        table.head = at
+        table
     }
 
     append-table(target, name, tables) {
@@ -638,6 +647,53 @@ fn encode(value) {
     }
 }
 
+pub class Spans {
+    values:   Dict[Array, (Int, Int)] = %{}
+    bindings: Dict[Array, (Int, Int)] = %{}
+    headers:  Dict[Array, Int]        = %{}
+    inline:   Dict[Array, (Int, Int)] = %{}
+
+    table(t, path: Array) {
+        if t.head >= 0 {
+            headers[path] = t.head
+        }
+        for k, entry in t.entries {
+            self.entry(entry, [*path, k])
+        }
+    }
+
+    entry(e, path: Array) {
+        match e {
+            t: Table   => table(t, path),
+            Tables(ts) => for t; i in ts { table(t, [*path, i]) },
+            n: Node    => do {
+                if n.key >= 0 {
+                    bindings[path] = (n.key, n.end)
+                }
+                node(n, path)
+            },
+        }
+    }
+
+    node(n, path: Array) {
+        match n.layout {
+            Items(nodes) => do {
+                inline[path] = (n.start, n.end)
+                for x; i in nodes {
+                    node(x, [*path, i])
+                }
+            },
+            Fields(t) => do {
+                inline[path] = (n.start, n.end)
+                for k, x in t.entries {
+                    entry(x, [*path, k])
+                }
+            },
+            _ => values[path] = (n.start, n.end),
+        }
+    }
+}
+
 pub class Document {
     __source: String
     __root: Table
@@ -648,6 +704,12 @@ pub class Document {
     }
 
     data -> Dict { __root.value }
+
+    spans() -> Spans {
+        let s = Spans()
+        s.table(__root, [])
+        s
+    }
     [](key) { data[key] }
     []=(key, value) { data[key] = value }
     #() -> Int { #data }

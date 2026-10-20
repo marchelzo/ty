@@ -1,0 +1,412 @@
+import json
+import path (Path)
+import ink.form.codec (guess, dig, has?)
+
+pub tag Flag, Whole, Real, Str, Choice, Group, Items, Blank;
+
+pub use Kind = Flag | Whole | Real | Str | Choice | Group | Items | Blank
+
+const SECRET = /pass(?:word|wd|phrase)?|secret|token|api[-_.]?key|private[-_.]?key|credential|auth/i
+const COLOR  = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/
+
+pub class Field {
+    path:      Array
+    kind:      Kind
+    label:     String
+    help:      String | nil
+    spec:      Dict[String, _]
+    present?:  Bool
+    kids:      Array[Field]
+
+    init(path: Array, kind: Kind, spec: Dict[String, _], present?: Bool, help: String | nil) {
+        self.path     = path
+        self.kind     = kind
+        self.spec     = spec
+        self.present? = present?
+        self.help     = help
+        label         = spec['title'] ?? "{path.?[-1] ?? 'root'}"
+        kids          = []
+    }
+
+    key -> _ { path.?[-1] }
+
+    choices -> Array | nil { spec['enum'] }
+    lo -> Int | Float | nil { spec['minimum'] ?? spec['exclusiveMinimum'] }
+    hi -> Int | Float | nil { spec['maximum'] ?? spec['exclusiveMaximum'] }
+    default -> _ { spec['default'] }
+    format -> String | nil { spec['format'] }
+
+    step -> Int | Float {
+        spec['multipleOf'] ?? match (kind, lo, hi) {
+            (Real, lo: Int | Float, hi: Int | Float) => (float(hi) - float(lo)) / 100.0,
+            (Real, _, _)                             => 0.1,
+            _                                        => 1
+        }
+    }
+
+    secret? -> Bool {
+        spec['secret'] ?? (spec['writeOnly'] == true || format == 'password' || (kind == Str && "{key}".match?(SECRET)))
+    }
+
+    hidden?   -> Bool { spec['hidden'] == true }
+    readonly? -> Bool { spec['readOnly'] == true || spec['readonly'] == true }
+    open?     -> Bool { kind == Items || spec['additionalProperties'] != false && spec['fixed'] != true }
+    container? -> Bool { kind == Group || kind == Items }
+
+    multiline? -> Bool {
+        spec['multiline'] ?? false
+    }
+
+    color?(v: _) -> Bool {
+        format == 'color' || ((v :: String) && v.match?(COLOR))
+    }
+
+    summary -> String | nil {
+        let bits: Array[String] = []
+        match (kind, lo, hi) {
+            (Whole, $a, $b) => bits.push("integer {a}–{b}"),
+            (Whole, $a, _)  => bits.push("integer ≥ {a}"),
+            (Whole, _, $b)  => bits.push("integer ≤ {b}"),
+            (Real, $a, $b)  => bits.push("number {a}–{b}"),
+            (Real, $a, _)   => bits.push("number ≥ {a}"),
+            (Real, _, $b)   => bits.push("number ≤ {b}"),
+            _               => ()
+        }
+        if let $cs = choices {
+            bits.push("one of {cs.map(display).join(', ')}")
+        }
+        if let $p = spec['pattern'] {
+            bits.push("matches /{p}/")
+        }
+        if let $f = format and f != 'password' && f != 'color' {
+            bits.push(f)
+        }
+        if !present? and let $d = default {
+            bits.push("default {display(d)}")
+        }
+        (#bits > 0) ? bits.join(' · ') : nil
+    }
+
+    walk*() {
+        yield self
+        for k in kids {
+            for f in k.walk() {
+                yield f
+            }
+        }
+    }
+}
+
+pub fn display(v: _) -> String {
+    match v {
+        nil       => 'null',
+        true      => 'true',
+        false     => 'false',
+        s: String => s,
+        x: Float  => do {
+            let s = "{x}"
+            s.match?(/[.eEn]/) ? s : "{s}.0"
+        },
+        d: Dict   => "\{{#d} keys\}",
+        xs: Array => "[{#xs} items]",
+        _         => "{v}"
+    }
+}
+
+pub fn kind-of(v: _) -> Kind {
+    match v {
+        _: Bool   => Flag,
+        _: Int    => Whole,
+        _: Float  => Real,
+        _: String => Str,
+        _: Dict   => Group,
+        _: Array  => Items,
+        _         => Blank
+    }
+}
+
+fn kind-for(spec: Dict[String, _], v: _) -> Kind {
+    if spec['enum'] != nil {
+        return Choice
+    }
+    let types = match spec['type'] {
+        ts: Array  => ts.filter(\_ != 'null'),
+        t: String  => [t],
+        _          => []
+    }
+    let vk = kind-of(v)
+    let fits = types.map(match {
+        'boolean' => Flag,
+        'integer' => Whole,
+        'number'  => (vk == Whole) ? Whole : Real,
+        'string'  => Str,
+        'object'  => Group,
+        'array'   => Items,
+        _         => Blank
+    })
+    match fits {
+        []                      => (spec['properties'] != nil) ? Group : (spec['items'] != nil) ? Items : vk,
+        ks and vk != Blank && vk in ks => vk,
+        [k, *_]                 => k
+    }
+}
+
+pub class Schema {
+    root:  Dict[String, _]
+    hints: Dict[String, Dict[String, _]]
+
+    init(root: Dict[String, _] = %{}, hints: Dict[String, Dict[String, _]] = %{}) {
+        self.root  = root
+        self.hints = hints
+    }
+
+    static load(src: _) -> Dict[String, _] {
+        match src {
+            nil       => %{},
+            d: Dict   => d,
+            s: String => json.parse(Path(s).read-text() ?? throw ValueError("cannot read schema {s}")),
+            p: Path   => load("{p}"),
+            _         => throw ValueError("bad schema {src}")
+        }
+    }
+
+    deref(spec: Dict[String, _]) -> Dict[String, _] {
+        let seen = 0
+        while let $ref = spec['$ref'] and ref :: String and seen < 32 {
+            let target = ref.comb(/^#\/?/).split('/').filter(bool).map(\_.replace('~1', '/').replace('~0', '~'))
+            let rest = %{k: v for k, v in spec if k != '$ref'}
+            spec = %{**(dig(root, target) ?? %{}), **rest}
+            seen += 1
+        }
+        if let $all = spec['allOf'] {
+            let merged = %{k: v for k, v in spec if k != 'allOf'}
+            for part in all.map(deref) {
+                let props = %{**(merged['properties'] ?? %{}), **(part['properties'] ?? %{})}
+                merged = %{**part, **merged, 'properties': props}
+            }
+            spec = merged
+        }
+        spec
+    }
+
+    pick(spec: Dict[String, _], v: _) -> Dict[String, _] {
+        let $alts = spec['oneOf'] ?? spec['anyOf'] or return spec
+        let options = alts.map(deref)
+        let vk = kind-of(v)
+        let hit = options.find(o -> o['type'] != 'null' && kind-for(o, v) == vk && vk != Blank)
+            ?? options.find(o -> o['type'] != 'null')
+            ?? %{}
+        %{**%{k: x for k, x in spec if k != 'oneOf' && k != 'anyOf'}, **hit}
+    }
+
+    static dotted(p: Array) -> String {
+        p.map(k -> (k :: Int) ? '*' : "{k}").join('.')
+    }
+
+    child(spec: Dict[String, _], k: _) -> Dict[String, _] {
+        let sub = match k {
+            _: Int => spec['items'] ?? %{},
+            _      => spec['properties'].?[k] ?? match spec['additionalProperties'] {
+                d: Dict => d,
+                _       => %{}
+            }
+        }
+        deref(sub)
+    }
+
+    at(spec: Dict[String, _], p: Array, v: _) -> Dict[String, _] {
+        let s = pick(deref(spec), v)
+        match hints[dotted(p)] {
+            nil => s,
+            h   => %{**s, **h}
+        }
+    }
+
+    build(data: _, notes: Dict[Array, String] = %{}) -> Field {
+        node(data, at(root, [], data), [], true, notes)
+    }
+
+    node(v: _, spec: Dict[String, _], p: Array, present?: Bool, notes: Dict[Array, String]) -> Field {
+        let shown = present? ? v : spec['default']
+        let f = Field(p, kind-for(spec, shown), spec, present?, hints[dotted(p)].?['description'] ?? notes[p] ?? spec['description'])
+        let required = spec['required'] ?? []
+        match (f.kind, shown) {
+            (Group, d: Dict) => {
+                for k, x in d {
+                    let s = at(child(spec, k), [*p, k], x)
+                    let req = (spec['properties'].?[k] != nil) ? %{'required?': k in required} : %{}
+                    f.kids.push(node(x, %{**s, **req}, [*p, k], present?, notes))
+                }
+                for k, sub in spec['properties'] ?? %{} if !(k in d) {
+                    let s = at(child(spec, k), [*p, k], nil)
+                    f.kids.push(node(nil, %{**s, 'required?': k in required}, [*p, k], false, notes))
+                }
+            },
+            (Group, _) => {
+                for k, sub in spec['properties'] ?? %{} {
+                    let s = at(child(spec, k), [*p, k], nil)
+                    f.kids.push(node(nil, %{**s, 'required?': k in required}, [*p, k], false, notes))
+                }
+            },
+            (Items, xs: Array) => {
+                for x; i in xs {
+                    let s = at(child(spec, i), [*p, i], x)
+                    let kid = node(x, s, [*p, i], present?, notes)
+                    kid.label = item-label(x, i, s)
+                    f.kids.push(kid)
+                }
+            },
+            _ => ()
+        }
+        f
+    }
+
+    static item-label(x: _, i: Int, spec: Dict[String, _]) -> String {
+        let named = match x {
+            d: Dict => ['name', 'id', 'title', 'key', 'label'].map(\d[_]).find(\_ :: String | Int),
+            _       => nil
+        }
+        (named != nil) ? "{named}" : spec['title'] ?? "#{i + 1}"
+    }
+
+    blank(spec: Dict[String, _]) -> _ {
+        if let $d = spec['default'] {
+            return d
+        }
+        if let [first, *_] = spec['enum'] {
+            return first
+        }
+        match kind-for(spec, nil) {
+            Flag  => false,
+            Whole => spec['minimum'] ?? 0,
+            Real  => float(spec['minimum'] ?? 0.0),
+            Str   => '',
+            Group => %{
+                k: blank(at(child(spec, k), [], nil))
+                for k in spec['required'] ?? []
+            },
+            Items => [],
+            _     => nil
+        }
+    }
+
+    fresh(list: Field, data: _) -> _ {
+        let xs = dig(data, list.path) ?? []
+        let spec = child(list.spec, #xs)
+        if spec != %{} {
+            return blank(spec)
+        }
+        match xs {
+            [*_, last] => match last {
+                d: Dict   => %{k: zero(x) for k, x in d},
+                xs: Array => [],
+                x         => zero(x)
+            },
+            _ => ''
+        }
+    }
+
+    static zero(v: _) -> _ {
+        match v {
+            _: Bool   => false,
+            _: Int    => 0,
+            _: Float  => 0.0,
+            _: String => '',
+            d: Dict   => %{k: zero(x) for k, x in d},
+            _: Array  => [],
+            _         => nil
+        }
+    }
+}
+
+const NUMERIC = [
+    ('minimum',          (v, n) -> v < n,  n -> "must be ≥ {n}"),
+    ('maximum',          (v, n) -> v > n,  n -> "must be ≤ {n}"),
+    ('exclusiveMinimum', (v, n) -> v <= n, n -> "must be > {n}"),
+    ('exclusiveMaximum', (v, n) -> v >= n, n -> "must be < {n}")
+]
+
+const TEXTUAL = [
+    ('minLength', (v, n) -> #v < n,                  n -> "needs at least {n} characters"),
+    ('maxLength', (v, n) -> #v > n,                  n -> "at most {n} characters"),
+    ('pattern',   (v, p) -> !v.match?(regex(p)),     p -> "must match /{p}/")
+]
+
+const LISTED = [
+    ('minItems', (v, n) -> #v < n, n -> "needs at least {n} items"),
+    ('maxItems', (v, n) -> #v > n, n -> "at most {n} items")
+]
+
+pub fn check(f: Field, v: _) -> String | nil {
+    let spec = f.spec
+    if v == nil {
+        return (spec['required?'] == true && !f.present?) ? 'required' : nil
+    }
+    let wrong = match (f.kind, v) {
+        (Flag, _: Bool)                  => false,
+        (Whole, _: Int)                  => false,
+        (Real, _: Int | Float)           => false,
+        (Str, _: String)                 => false,
+        (Group, _: Dict)                 => false,
+        (Items, _: Array)                => false,
+        (Choice, _) or (Blank, _)        => false,
+        _                                => true
+    }
+    if wrong {
+        return "expected {name-of(f.kind)}"
+    }
+    if let $cs = f.choices and !cs.any?(\_ == v) {
+        return "must be one of {cs.map(display).join(', ')}"
+    }
+    let rules = match v {
+        _: Int | Float => NUMERIC,
+        _: String      => TEXTUAL,
+        _: Array       => LISTED,
+        _              => []
+    }
+    for (k, bad?, say) in rules {
+        if let $n = spec[k] and bad?(v, n) {
+            return say(n)
+        }
+    }
+    nil
+}
+
+pub fn name-of(k: Kind) -> String {
+    match k {
+        Flag   => 'true/false',
+        Whole  => 'an integer',
+        Real   => 'a number',
+        Str    => 'text',
+        Choice => 'a choice',
+        Group  => 'a table',
+        Items  => 'a list',
+        Blank  => 'a value'
+    }
+}
+
+pub fn parse-input(f: Field, s: String) -> (_, String | nil) {
+    match f.kind {
+        Whole => match int(s.strip().comb('_')) {
+            nil => (nil, 'not an integer'),
+            n   => (n, nil)
+        },
+        Real => match float(s.strip().comb('_')) {
+            nil => (nil, 'not a number'),
+            x   => (x, nil)
+        },
+        Flag => match guess(s.strip().lower(), loose?: true) {
+            b: Bool => (b, nil),
+            _       => (nil, 'expected true or false')
+        },
+        Choice => do {
+            let cs = f.choices ?? []
+            match cs.find(c -> display(c) == s.strip()) {
+                nil => (nil, "must be one of {cs.map(display).join(', ')}"),
+                c   => (c, nil)
+            }
+        },
+        Str    => (s, nil),
+        _      => (guess(s.strip(), loose?: false), nil)
+    }
+}

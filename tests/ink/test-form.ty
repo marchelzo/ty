@@ -1,0 +1,470 @@
+import ink
+import os
+import path (Path)
+import ink.form (Form, FormModel)
+import ink.form.codec as codec
+import ink.form.schema (Schema, Flag, Whole, Real, Str, Choice, Group, Items, check, parse-input)
+
+const TOML = """# Window title
+title = "Demo"   # inline
+
+[server]
+# Address to bind
+host = "0.0.0.0"
+port = 8080 # TCP port
+tls = false
+
+[[users]]
+name = "ann"
+admin = true
+
+[[users]]
+name = "bob"
+admin = false
+"""
+
+const YAML = """# Top title
+title: Demo
+server:
+  # Address to bind
+  host: '0.0.0.0'
+  port: 8080   # TCP port
+  tags: [web, api]
+users:
+  - name: ann
+    admin: true
+level: info
+"""
+
+const INI = """; global
+name = demo
+
+[server]
+; Address to bind
+host = 0.0.0.0
+port = 8080
+debug = yes
+"""
+
+const ENV = """# Database URL
+DATABASE_URL="postgres://localhost/db"
+PORT=8080 # port
+DEBUG=true
+"""
+
+const XML = """<?xml version="1.0"?>
+<config>
+  <!-- Application title -->
+  <title>Demo &amp; co</title>
+  <server host="0.0.0.0" port="8080">
+    <tls>false</tls>
+  </server>
+  <plugin>a</plugin>
+  <plugin>b</plugin>
+</config>
+"""
+
+const SCHEMA = %{
+    'type': 'object',
+    'properties': %{
+        'title': %{'type': 'string', 'description': 'Window title'},
+        'server': %{
+            'type': 'object',
+            'properties': %{
+                'host':    %{'type': 'string'},
+                'port':    %{'type': 'integer', 'minimum': 1, 'maximum': 65535},
+                'tls':     %{'type': 'boolean'},
+                'workers': %{'type': 'integer', 'default': 4}
+            }
+        },
+        'level': %{'enum': ['debug', 'info', 'warn', 'error'], 'default': 'info'},
+        'users': %{'type': 'array', 'items': %{'$ref': '#/$defs/user'}}
+    },
+    '$defs': %{
+        'user': %{
+            'type': 'object',
+            'properties': %{'name': %{'type': 'string'}, 'admin': %{'type': 'boolean'}},
+            'required': ['name']
+        }
+    }
+}
+
+let dir = Path('/tmp').mkdtemp('ink-form-')
+
+fn put(name: String, text: String) -> String {
+    let p = "{dir}/{name}"
+    Path(p).write(text)
+    p
+}
+
+fn sheet(name: String, text: String) -> codec.Sheet {
+    codec.load(put(name, text))
+}
+
+fn edited(name: String, text: String, f: Function) -> String {
+    let sh = sheet(name, text)
+    let d = codec.thaw(sh.data)
+    f(d)
+    let out = sh.encode(d)
+    assert(codec.same?(sh.codec.decode(out).data, d))
+    out
+}
+
+class FormApp < ink.Component {
+    src:    String | nil = nil
+    data:   _ = nil
+    schema: _ = nil
+    saved:  _ = nil
+    seen:   Array = []
+
+    render() {
+        <ink.Box>
+            <Form
+                src=src
+                data=data
+                schema=schema
+                height=20
+                on-save=(d -> do { saved = d })
+                on-change=((p, v, _) -> do { seen.push((p, v)) })
+            />
+        </ink.Box>
+    }
+}
+
+fn harness(app: FormApp) -> (ink.TestHarness, Form) {
+    let h = ink.TestHarness(app, cols=72, rows=24, color?: false)
+    let f = h.find(Form)!
+    h.focus!(f)
+    (h, f)
+}
+
+fn seek(h: ink.TestHarness, f: Form, hit?: Function) {
+    h.home()
+    for _ in ..64 {
+        if hit?(f.rows[f.cursor]) {
+            return
+        }
+        h.down()
+    }
+    throw 'no such row'
+}
+
+fn go(h: ink.TestHarness, f: Form, label: String) {
+    seek(h, f, r -> r.f.label == label)
+}
+
+pub fn toml-scalars-patch-in-place() {
+    let out = edited('a.toml', TOML, d -> do {
+        d['server']['port'] = 9090
+        d['users'][1]['admin'] = true
+    })
+    assert(out == TOML.replace('port = 8080', 'port = 9090').replace('admin = false', 'admin = true'))
+}
+
+pub fn toml-structural-edits-keep-comments() {
+    let out = edited('b.toml', TOML, d -> do {
+        d['server']['workers'] = 4
+        d['level'] = 'warn'
+        d['users'].push(%{'name': 'cy', 'admin': false})
+        d['extra'] = %{'a': 1}
+    })
+    assert(out.contains?('# Window title\ntitle = "Demo"   # inline\nlevel = "warn"\n'))
+    assert(out.contains?('port = 8080 # TCP port\ntls = false\nworkers = 4\n'))
+    assert(out.contains?('[[users]]\nname = "cy"\nadmin = false\n'))
+    assert(out.ends?('\n[extra]\na = 1\n'))
+}
+
+pub fn toml-removals-take-their-comments() {
+    let out = edited('c.toml', TOML, d -> do {
+        d['server'].remove('host')
+        d['users'].pop(0)
+    })
+    assert(!out.contains?('Address to bind'))
+    assert(!out.contains?('ann'))
+    assert(out.contains?('[[users]]\nname = "bob"'))
+}
+
+pub fn yaml-patches-scalars-and-blocks() {
+    let out = edited('a.yaml', YAML, d -> do {
+        d['server']['port'] = 9090
+        d['server']['host'] = "it's"
+        d['server']['tags'].push('x')
+        d['server']['workers'] = 4
+        d['users'].push(%{'name': 'bob', 'admin': false})
+        d.remove('level')
+    })
+    assert(out.contains?("  # Address to bind\n  host: 'it''s'\n  port: 9090   # TCP port\n"))
+    assert(out.contains?('  tags: [web, api, x]\n  workers: 4\n'))
+    assert(out.contains?('  - name: bob\n    admin: false\n'))
+    assert(!out.contains?('level'))
+}
+
+pub fn ini-and-env-keep-layout() {
+    let ini = edited('a.ini', INI, d -> do {
+        d['server']['port'] = 9090
+        d['server']['debug'] = false
+        d['server']['workers'] = 2
+        d['log'] = %{'level': 'info'}
+    })
+    assert(ini.contains?('; Address to bind\nhost = 0.0.0.0\nport = 9090\ndebug = no\nworkers = 2\n'))
+    assert(ini.ends?('\n[log]\nlevel = info\n'))
+
+    let env = edited('.env', ENV, d -> do {
+        d['DATABASE_URL'] = 'x y'
+        d['NEW_VAR'] = 'hello world'
+        d.remove('PORT')
+    })
+    assert(env == '# Database URL\nDATABASE_URL="x y"\nDEBUG=true\nNEW_VAR="hello world"\n')
+}
+
+pub fn xml-maps-attributes-and-repeats() {
+    let sh = sheet('a.xml', XML)
+    assert(sh.data['title'] == 'Demo & co')
+    assert(sh.data['server']['port'] == 8080)
+    assert(sh.data['plugin'] == ['a', 'b'])
+    assert(sh.notes[['title']] == 'Application title')
+    let out = edited('b.xml', XML, d -> do {
+        d['server']['port'] = 9090
+        d['server']['timeout'] = 30
+        d['plugin'].push('c')
+        d['title'] = 'A < B'
+    })
+    assert(out.contains?('<title>A &lt; B</title>'))
+    assert(out.contains?('port="9090"'))
+    assert(out.contains?('    <tls>false</tls>\n    <timeout>30</timeout>\n'))
+    assert(out.contains?('  <plugin>b</plugin>\n  <plugin>c</plugin>\n'))
+}
+
+pub fn json-keeps-indent() {
+    let src = '{\n    "a": 1,\n    "b": {"c": [1, 2]}\n}\n'
+    let out = edited('a.json', src, d -> do { d['d'] = true })
+    assert(out == '{\n    "a": 1,\n    "b": {\n        "c": [\n            1,\n            2\n        ]\n    },\n    "d": true\n}\n')
+}
+
+pub fn comments-become-help() {
+    let sh = sheet('n.toml', TOML)
+    assert(sh.notes[['title']] == 'Window title')
+    assert(sh.notes[['server', 'port']] == 'TCP port')
+    assert(sheet('n.yaml', YAML).notes[['server', 'host']] == 'Address to bind')
+    assert(sheet('n.ini', INI).notes[['server', 'host']] == 'Address to bind')
+    assert(sheet('.n.env', ENV).notes[['PORT']] == 'port')
+}
+
+pub fn schema-infers-and-refines() {
+    let sh = sheet('s.toml', TOML)
+    let root = Schema(SCHEMA).build(sh.data, sh.notes)
+    let by = %{f.path: f for f in root.walk()}
+    assert(by[['server', 'port']].kind == Whole)
+    assert(by[['server', 'port']].summary == 'integer 1–65535')
+    assert(by[['server', 'tls']].kind == Flag)
+    assert(!by[['server', 'workers']].present?)
+    assert(by[['server', 'workers']].default == 4)
+    assert(by[['level']].kind == Choice)
+    assert(by[['users', 0]].label == 'ann')
+    assert(by[['users']].kind == Items)
+    assert(check(by[['server', 'port']], 70000) == 'must be ≤ 65535')
+    assert(check(by[['server', 'port']], 'x') == 'expected an integer')
+    assert(parse-input(by[['server', 'port']], '1_000') == (1000, nil))
+    assert(parse-input(by[['level']], 'loud').1 != nil)
+}
+
+pub fn schema-free-inference() {
+    let root = Schema().build(%{'api_token': 'abc', 'ratio': 0.5, 'color': '#ff8800', 'tags': ['a']})
+    let by = %{f.path: f for f in root.walk()}
+    assert(by[['api_token']].secret?)
+    assert(by[['ratio']].kind == Real)
+    assert(by[['color']].color?('#ff8800'))
+    assert(by[['tags', 0]].kind == Str)
+}
+
+pub fn model-tracks-dirty-undo-and-revert() {
+    let m = FormModel(put('m.toml', TOML))
+    assert(!m.dirty?)
+    m.set(['server', 'port'], 1)
+    m.set(['title'], 'X')
+    assert(m.dirty?)
+    assert(m.changed?(['server', 'port']))
+    m.undo()
+    assert(dig-title(m) == 'Demo')
+    m.redo()
+    assert(dig-title(m) == 'X')
+    m.revert(['title'])
+    m.revert(['server', 'port'])
+    assert(!m.dirty?)
+}
+
+fn dig-title(m: FormModel) -> _ {
+    codec.dig(m.data, ['title'])
+}
+
+pub fn renders-rows-and-help() {
+    let (h, _) = harness(FormApp(src=put('r.toml', TOML), schema=SCHEMA))
+    h.assert-contains('title')
+    h.assert-contains('8080')
+    h.assert-contains('4 \\(default\\)')
+    h.assert-contains('Window title')
+}
+
+pub fn toggles-nudges-and-saves() {
+    let file = put('t.toml', TOML)
+    let app = FormApp(src=file, schema=SCHEMA)
+    let (h, f) = harness(app)
+    go(h, f, 'port')
+    h.right()
+    h.right()
+    go(h, f, 'tls')
+    h.send-text(' ')
+    h.assert-contains('modified')
+    h.send-key('s', ink.CTRL)
+    let text = slurp(file)
+    assert(text.contains?('port = 8082 # TCP port'))
+    assert(text.contains?('tls = true'))
+    assert(text.contains?('# Address to bind'))
+    assert(app.saved != nil)
+    assert(!f.state.dirty?)
+}
+
+pub fn inline-edit-validates() {
+    let (h, f) = harness(FormApp(src=put('e.toml', TOML), schema=SCHEMA))
+    go(h, f, 'port')
+    h.enter()
+    for _ in ..4 {
+        h.backspace()
+    }
+    h.send-text('99999')
+    h.enter()
+    h.assert-contains('must be ≤ 65535')
+    assert(codec.dig(f.state.data, ['server', 'port']) == 8080)
+    h.backspace()
+    h.enter()
+    assert(codec.dig(f.state.data, ['server', 'port']) == 9999)
+}
+
+pub fn choice-picker() {
+    let (h, f) = harness(FormApp(src=put('p.toml', TOML), schema=SCHEMA))
+    go(h, f, 'level')
+    h.enter()
+    h.assert-contains('debug')
+    h.down()
+    h.enter()
+    assert(codec.dig(f.state.data, ['level']) == 'warn')
+    h.left()
+    assert(codec.dig(f.state.data, ['level']) == 'info')
+}
+
+pub fn list-insert-and-remove() {
+    let (h, f) = harness(FormApp(src=put('l.toml', TOML), schema=SCHEMA))
+    let names = -> codec.dig(f.state.data, ['users']).map(\_['name'])
+    go(h, f, 'bob')
+    h.send-text('o')
+    assert(names() == ['ann', 'bob', ''])
+    h.send-text('u')
+    go(h, f, 'ann')
+    h.send-text('O')
+    assert(names() == ['', 'ann', 'bob'])
+    h.send-text('u')
+    go(h, f, 'users')
+    h.send-text('o')
+    assert(names() == ['', 'ann', 'bob'])
+    h.send-text('u')
+    go(h, f, 'bob')
+    h.send-text('d')
+    assert(names() == ['ann'])
+}
+
+pub fn scalar-list-insert-edits-new-item() {
+    let (h, f) = harness(FormApp(data=%{'paths': ['/a', '/c']}))
+    go(h, f, '#1')
+    h.send-text('o')
+    h.send-text('/b')
+    h.enter()
+    assert(codec.dig(f.state.data, ['paths']) == ['/a', '/b', '/c'])
+}
+
+pub fn key-insert-lands-in-place() {
+    let file = put('k.yaml', "server:\n  host: x\n  # the port\n  port: 1\n")
+    let (h, f) = harness(FormApp(src=file))
+    go(h, f, 'host')
+    h.send-text('o')
+    h.send-text('proto = h2')
+    h.enter()
+    assert(f.state.data['server'].keys() == ['host', 'proto', 'port'])
+    go(h, f, 'host')
+    h.send-text('O')
+    h.send-text('scheme = https')
+    h.enter()
+    h.send-key('s', ink.CTRL)
+    assert(slurp(file) == "server:\n  scheme: https\n  host: x\n  proto: h2\n  # the port\n  port: 1\n")
+}
+
+pub fn filter-narrows-rows() {
+    let (h, f) = harness(FormApp(data=%{'alpha': 1, 'beta': %{'gamma': true}, 'delta': 'x'}))
+    h.send-text('/')
+    h.send-text('gam')
+    h.assert-contains('gamma')
+    assert(!h.plain-text.contains?('alpha'))
+    h.esc()
+    h.assert-contains('alpha')
+}
+
+pub fn data-mode-adds-keys() {
+    let app = FormApp(data=%{'name': 'x', 'opts': %{'a': 1}})
+    let (h, f) = harness(app)
+    go(h, f, 'opts')
+    h.send-text('o')
+    h.send-text('b = true')
+    h.enter()
+    assert(codec.dig(f.state.data, ['opts', 'b']) == true)
+    h.send-key('s', ink.CTRL)
+    assert(app.saved['opts']['b'] == true)
+    assert(app.seen.any?(|(p, _)| -> p == ['opts', 'b']))
+}
+
+pub fn every-format-loads-in-a-form() {
+    for (name, text) in [('f.toml', TOML), ('f.yaml', YAML), ('f.ini', INI), ('.f.env', ENV), ('f.xml', XML), ('f.json', '{"a": 1}')] {
+        let (h, f) = harness(FormApp(src=put(name, text)))
+        assert(f.state.error == nil)
+        assert(#f.rows > 0)
+    }
+}
+
+pub fn reloads-when-file-changes() {
+    let file = put('w.toml', TOML)
+    let m = FormModel(file)
+    assert(!m.stale?)
+    Path(file).write(TOML.replace('8080', '7070'))
+    m.mtime = (m.mtime ?? 0.0) - 1.0
+    assert(m.stale?)
+    m.load()
+    assert(codec.dig(m.data, ['server', 'port']) == 7070)
+    assert(!m.dirty?)
+}
+
+class ReadOnlyApp < ink.Component {
+    render() {
+        <ink.Box><Form data=%{'a': true, 'b': 'x'} readonly?=true height=10 /></ink.Box>
+    }
+}
+
+pub fn readonly-ignores-edits() {
+    let h = ink.TestHarness(ReadOnlyApp(), cols=40, rows=12, color?: false)
+    let f = h.find(Form)!
+    h.focus!(f)
+    h.send-text(' ')
+    h.down()
+    h.enter()
+    h.send-text('zzz')
+    h.enter()
+    assert(!f.state.dirty?)
+}
+
+pub fn yaml-anchors-survive-edits() {
+    let file = put('anchors.yml', "# shared\n.files: &files\n  - a\n  - b\njob:\n  changes: *files\n  x: 1\n")
+    let m = FormModel(file)
+    m.set(['job', 'changes', 1], 'z')
+    assert(codec.dig(m.data, ['.files', 1]) == 'z')
+    assert(m.shared-with(['job', 'changes', 1]) == ['.files'])
+    m.set(['job', 'x'], 2)
+    assert(m.save() == nil)
+    assert(slurp(file) == "# shared\n.files: &files\n  - a\n  - z\njob:\n  changes: *files\n  x: 2\n")
+}

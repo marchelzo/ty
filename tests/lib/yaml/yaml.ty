@@ -448,3 +448,21 @@ pub fn test-parse-complex-k8s-deployment() {
     assert(tolerations[0]['key'] == 'dedicated')
     assert(tolerations[0]['effect'] == 'NoSchedule')
 }
+
+pub fn test-parse-marked-survives-gc() {
+    let src = (0..3000).map(i -> "key{i}: value {i} # note\n").join('')
+    for _ in ..3 {
+        let (v, m) = parse-marked(src)
+        assert(#v == 3000)
+        assert(#m.values == 3000)
+        let mk = m.values[['key2999']]
+        assert(src.bslice(mk.from, mk.to - mk.from) == 'value 2999')
+    }
+}
+
+pub fn test-parse-marked-links-aliases() {
+    let (v, m) = parse-marked(".base: &base\n  a: 1\njob:\n  <<: *base\n  list: &l [x]\nother: *l\n")
+    assert(v['job']['<<'] == %{'a': 1})
+    assert(m.links[['job', '<<']] == ['.base'])
+    assert(m.links[['other']] == ['job', 'list'])
+}

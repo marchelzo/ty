@@ -1,0 +1,1180 @@
+import json
+import yaml
+import toml
+import os
+import path (Path)
+
+pub use Spot = (Int, Int)
+
+pub class CodecError < RuntimeError {
+    init(msg: String) {
+        super(msg)
+    }
+}
+
+pub class Entry {
+    lead: Int
+    from: Int
+    to:   Int
+
+    init(lead: Int, from: Int, to: Int) {
+        self.lead = lead
+        self.from = from
+        self.to   = to
+    }
+}
+
+pub class Body {
+    indent: String
+    at:     Int
+    end:    Int
+    flow:   Spot | nil
+
+    init(indent: String, at: Int, end: Int | nil = nil, flow: Spot | nil = nil) {
+        self.indent = indent
+        self.at     = at
+        self.end    = end ?? at
+        self.flow   = flow
+    }
+}
+
+pub class Sheet {
+    codec:   Codec
+    source:  String
+    data:    _
+    spots:   Dict[Array, Spot]
+    notes:   Dict[Array, String]
+    entries: Dict[Array, Entry]
+    bodies:  Dict[Array, Body]
+    links:   Dict[Array, Array]
+    state:   _
+
+    init(
+        codec: Codec,
+        source: String,
+        data: _,
+        spots: Dict[Array, Spot] = %{},
+        notes: Dict[Array, String] = %{},
+        entries: Dict[Array, Entry] = %{},
+        bodies: Dict[Array, Body] = %{},
+        state: _ = nil
+    ) {
+        self.codec   = codec
+        self.source  = source
+        self.data    = data
+        self.spots   = spots
+        self.notes   = notes
+        self.entries = entries
+        self.bodies  = bodies
+        self.state   = state
+        links        = %{}
+    }
+
+    link-of(p: Array) -> (Array, Array) | nil {
+        for alias, anchor in links if p[;#alias] == alias {
+            return (alias, anchor)
+        }
+        for alias, anchor in links if p[;#anchor] == anchor {
+            return (anchor, anchor)
+        }
+        nil
+    }
+
+    twins(p: Array) -> Array[Array] {
+        let (_, anchor) = link-of(p) ?? return []
+        [anchor, *[alias for alias, a in links if a == anchor]]
+    }
+
+    encode(data: _) -> String {
+        codec.encode(self, data)
+    }
+}
+
+pub fn thaw(v: _) -> _ {
+    match v {
+        d: Dict   => %{k: thaw(x) for k, x in d},
+        xs: Array => xs.map(thaw),
+        _         => v
+    }
+}
+
+pub fn same?(a: _, b: _) -> Bool {
+    match (a, b) {
+        (x: Dict, y: Dict)   => #x == #y && x.keys().all?(k -> k in y && same?(x[k], y[k])),
+        (x: Array, y: Array) => #x == #y && x.zip(y, f=same?).all?(\_),
+        (x: Float, y: Float) => x == y || (x != x && y != y),
+        (x: Dict, _) or (x: Array, _) or (_, x: Dict) or (_, x: Array) => false,
+        _                    => type(a) == type(b) && a == b
+    }
+}
+
+pub fn dig(v: _, path: Array) -> _ {
+    for k in path {
+        v = match (v, k) {
+            (d: Dict, _)        => d[k],
+            (xs: Array, i: Int) => (i >= 0 && i < #xs) ? xs[i] : nil,
+            _                   => nil
+        }
+    }
+    v
+}
+
+pub fn has?(v: _, path: Array) -> Bool {
+    if #path == 0 {
+        return true
+    }
+    match (dig(v, path[;-1]), path[-1]) {
+        (d: Dict, k)        => k in d,
+        (xs: Array, i: Int) => i >= 0 && i < #xs,
+        _                   => false
+    }
+}
+
+fn splice(src: String, edits: Array) -> String {
+    let sheet-size = src.size()
+    let out = Blob()
+    let at = 0
+    for (from, to, text) in edits.sort(by=e -> e[0] * (sheet-size + 1) + e[1]) {
+        if from < at {
+            throw CodecError('overlapping edits')
+        }
+        out.push(src.bslice(at, from - at))
+        out.push(text)
+        at = to
+    }
+    out.push(src.bslice(at))
+    out.str!()
+}
+
+class Lines {
+    src:    String
+    starts: Array[Int]
+    rows:   Array[String]
+
+    init(src: String) {
+        self.src = src
+        rows     = src.split('\n')
+        starts   = [0]
+        let at = 0
+        for r in rows {
+            at += r.size() + 1
+            starts.push(at)
+        }
+    }
+
+    line(byte: Int) -> Int {
+        let (lo, hi) = (0, #rows - 1)
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2
+            if starts[mid] <= byte {
+                lo = mid
+            } else {
+                hi = mid - 1
+            }
+        }
+        lo
+    }
+
+    start(byte: Int) -> Int {
+        starts[line(byte)]
+    }
+
+    stop(byte: Int) -> Int {
+        min(starts[line(byte) + 1], src.size())
+    }
+
+    col(byte: Int) -> Int {
+        byte - start(byte)
+    }
+
+    text(byte: Int) -> String {
+        rows[line(byte)]
+    }
+
+    before(byte: Int) -> String {
+        src.bslice(start(byte), col(byte))
+    }
+
+    lead(from: Int, comment: Regex) -> Int {
+        let i = line(from)
+        while i > 0 && rows[i - 1].match?(comment) {
+            i -= 1
+        }
+        starts[i]
+    }
+
+    alone?(from: Int, to: Int) -> Bool {
+        before(from).match?(/^\s*$/) && src.bslice(to, stop(to - 1) - to).match?(/^\s*$/)
+    }
+}
+
+fn harvest(lines: Array[String], anchors: Dict[Array, Int], lead: Regex, tail: Dict[Array, String | nil] = %{}) -> Dict[Array, String] {
+    let notes: Dict[Array, String] = %{}
+    for p, ln in anchors {
+        let above: Array[String] = []
+        let i = ln - 1
+        while i >= 0 and let [_, $c] = lead(lines[i]) {
+            above.insert(0, c.strip-right())
+            i -= 1
+        }
+        let text = above.join('\n').strip()
+        if #text > 0 {
+            notes[p] = text
+        } else if let $t = tail[p] {
+            notes[p] = t
+        }
+    }
+    notes
+}
+
+pub fn guess(s: String, loose?: Bool = false) -> _ {
+    match s {
+        /^(?:true|True|TRUE)$/                           => true,
+        /^(?:false|False|FALSE)$/                        => false,
+        /^(?:yes|Yes|YES|on|On|ON)$/ and loose?          => true,
+        /^(?:no|No|NO|off|Off|OFF)$/ and loose?          => false,
+        /^[+-]?(?:0|[1-9][0-9]*)$/                       => int(s),
+        /^[+-]?(?:0|[1-9][0-9]*)?\.[0-9]+(?:[eE][+-]?[0-9]+)?$/ => float(s),
+        _                                                => s
+    }
+}
+
+const SPELLINGS = [
+    ('true', 'false'), ('yes', 'no'), ('on', 'off'),
+    ('True', 'False'), ('Yes', 'No'), ('On', 'Off'),
+    ('TRUE', 'FALSE'), ('YES', 'NO'), ('ON', 'OFF')
+]
+
+fn spell(b: Bool, raw: String) -> String {
+    let (t, f) = SPELLINGS.find(|(t, f)| -> raw == t || raw == f) ?? ('true', 'false')
+    b ? t : f
+}
+
+fn number(v: Int | Float) -> String {
+    match v {
+        x: Int => "{x}",
+        x      => do {
+            let s = "{x}"
+            s.match?(/[.eEn]/) ? s : "{s}.0"
+        }
+    }
+}
+
+fn kept(x: Array, y: Array) -> Array[Int] | nil {
+    let gone: Array[Int] = []
+    let j = 0
+    for v; i in x {
+        if j < #y && same?(v, y[j]) {
+            j += 1
+        } else {
+            gone.push(i)
+        }
+    }
+    (j == #y) ? gone : nil
+}
+
+pub class Codec {
+    name -> String;
+    exts -> Array[String];
+    decode(src: String) -> Sheet;
+    dump(sheet: Sheet, data: _) -> String;
+
+    scalar(v: _, raw: String) -> String | nil { nil }
+    entry(sheet: Sheet, p: Array, k: _, v: _, indent: String) -> String | nil { nil }
+    flow(v: _) -> String | nil { nil }
+
+    slot(sheet: Sheet, p: Array, k: _, v: _, body: Body) -> Int {
+        body.at
+    }
+
+    before(sheet: Sheet, p: Array, k: _, v: _, next: Array) -> Int | nil {
+        sheet.entries[next].?lead
+    }
+
+    encode(sheet: Sheet, data: _) -> String {
+        patch(sheet, data) ?? dump(sheet, data)
+    }
+
+    patch(sheet: Sheet, data: _) -> String | nil {
+        let edits = []
+        if !diff(sheet, sheet.data, data, [], edits) {
+            return nil
+        }
+        if #edits == 0 {
+            return sheet.source
+        }
+        let out = try { splice(sheet.source, edits) } catch _: CodecError { return nil }
+        let back = try { decode(out).data } catch _ { return nil }
+        same?(back, data) ? out : nil
+    }
+
+    restyle(sheet: Sheet, p: Array, v: _, edits: Array) -> Bool {
+        let $body = sheet.bodies[p] or return false
+        let (from, to) = body.flow ?? return false
+        let $text = flow(v) or return false
+        edits.push((from, to, text))
+        true
+    }
+
+    drop(sheet: Sheet, p: Array, edits: Array) -> Bool {
+        let $e = sheet.entries[p] or return false
+        edits.push((e.lead, e.to, ''))
+        true
+    }
+
+    grow(sheet: Sheet, p: Array, items: Array, edits: Array) -> Bool {
+        if #items == 0 {
+            return true
+        }
+        let $body = sheet.bodies[p] or return false
+        let at: Dict[Int, Blob] = %{}
+        for (k, v, next) in items {
+            let $text = entry(sheet, p, k, v, body.indent) or return false
+            let wedge = (next != nil) ? before(sheet, p, k, v, [*p, next]) : nil
+            let n = wedge ?? slot(sheet, p, k, v, body)
+            if wedge != nil && text.starts?('\n') {
+                text = "{text[1;]}\n"
+            }
+            let buf = at[n] ?? (at[n] = Blob())
+            if #buf == 0 && n > 0 && n == sheet.source.size() && !sheet.source.ends?('\n') {
+                buf.push('\n')
+            }
+            buf.push(text)
+        }
+        for n, buf in at {
+            edits.push((n, n, buf.str!()))
+        }
+        true
+    }
+
+    diff(sheet: Sheet, a: _, b: _, p: Array, edits: Array) -> Bool {
+        if p in sheet.links {
+            return true
+        }
+        match (a, b) {
+            (x: Dict, y: Dict)   => diff-dict(sheet, x, y, p, edits),
+            (x: Array, y: Array) => diff-list(sheet, x, y, p, edits),
+            (x: Dict, _) or (x: Array, _) or (_, x: Dict) or (_, x: Array) => false,
+            _                    => same?(a, b) || diff-scalar(sheet, b, p, edits)
+        }
+    }
+
+    diff-dict(sheet: Sheet, x: Dict, y: Dict, p: Array, edits: Array) -> Bool {
+        let gone = x.keys().filter(\_ not in y)
+        let new  = y.keys().filter(\_ not in x)
+        if #gone + #new > 0 && sheet.bodies[p].?flow != nil {
+            return restyle(sheet, p, y, edits)
+        }
+        x.keys().filter(\_ in y) == y.keys().filter(\_ in x)
+            && gone.all?(k -> drop(sheet, [*p, k], edits))
+            && x.keys().filter(\_ in y).all?(k -> diff(sheet, x[k], y[k], [*p, k], edits))
+            && grow(sheet, p, new.map(k -> (k, y[k], follower(x, y, k))), edits)
+    }
+
+    static follower(x: Dict, y: Dict, k: _) -> _ {
+        let ks = y.keys()
+        ks[ks.search(k)! + 1;].find(\_ in x)
+    }
+
+    diff-list(sheet: Sheet, x: Array, y: Array, p: Array, edits: Array) -> Bool {
+        if #x != #y && sheet.bodies[p].?flow != nil {
+            return restyle(sheet, p, y, edits)
+        }
+        if #y < #x {
+            let $gone = kept(x, y) or return false
+            return gone.all?(i -> drop(sheet, [*p, i], edits))
+        }
+        if #y > #x and let $new = kept(y, x) {
+            return grow(sheet, p, new.map(i -> (i, y[i], successor(new, i, #x))), edits)
+        }
+        (..#x).all?(i -> diff(sheet, x[i], y[i], [*p, i], edits))
+            && grow(sheet, p, [(i, y[i], nil) for i in #x..#y], edits)
+    }
+
+    static successor(new: Array[Int], i: Int, n: Int) -> Int | nil {
+        let j = i - #new.filter(\_ < i)
+        (j < n) ? j : nil
+    }
+
+    diff-scalar(sheet: Sheet, v: _, p: Array, edits: Array) -> Bool {
+        let (from, to) = sheet.spots[p] ?? return false
+        let $text = scalar(v, sheet.source.bslice(from, to - from)) or return false
+        edits.push((from, to, text))
+        true
+    }
+}
+
+fn bare(k: String) -> String {
+    k.match?(/^[A-Za-z0-9_-]+$/) ? k : json.encode(k)
+}
+
+class Toml < Codec {
+    name -> String { 'toml' }
+    exts -> Array[String] { ['toml'] }
+
+    static keys(s: String) -> Array[String] {
+        s.matches(/"(?:[^"\\]|\\.)*"|'[^']*'|[^.\s"']+/).map(match {
+            k: /^"/    => json.parse(k),
+            /^'(.*)'$/ => $1,
+            k          => k
+        })
+    }
+
+    static notes(src: String) -> Dict[Array, String] {
+        let lines = src.split('\n')
+        let anchors: Dict[Array, Int] = %{}
+        let tails: Dict[Array, String | nil] = %{}
+        let counts: Dict[Array, Int] = %{}
+        let header = []
+        for line; ln in lines {
+            match line {
+                /^\s*\[\[\s*([^\]]+?)\s*\]\]/ => {
+                    let ks = keys($1)
+                    let i = counts[ks] = (counts[ks] ?? -1) + 1
+                    header = [*ks, i]
+                    anchors[ks] = anchors[ks] ?? ln
+                    anchors[header] = ln
+                },
+                /^\s*\[\s*([^\]]+?)\s*\]/ => {
+                    header = keys($1)
+                    anchors[header] = ln
+                },
+                /^\s*((?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_.\- ])+?)\s*=/ => {
+                    let p = [*header, *keys($1)]
+                    anchors[p] = ln
+                    tails[p] = line.match(/=\s*(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^#"'])*#\s?(.*)$/).?[1].?strip()
+                },
+                _ => ()
+            }
+        }
+        harvest(lines, anchors, /^\s*#\s?(.*)$/, tails)
+    }
+
+    decode(src: String) -> Sheet {
+        let doc = try { toml.parse(src) } catch e: toml.ParseError { throw CodecError("{e}") }
+        let sp = doc.spans()
+        let ls = Lines(src)
+        let hash = /^\s*#/
+        let entries: Dict[Array, Entry] = %{}
+        let bodies: Dict[Array, Body] = %{}
+
+        fn inline?(p: Array) -> Bool {
+            (1..#p).any?(n -> p[;n] in sp.inline)
+        }
+
+        let heads = sp.headers.items().sort(by=\_[1])
+        for (p, at); i in heads {
+            let from = ls.start(at)
+            let to = (i + 1 < #heads) ? ls.lead(ls.start(heads[i + 1][1]), hash) : src.size()
+            entries[p] = Entry(ls.lead(from, hash), from, to)
+            bodies[p] = Body('', ls.stop(at), to)
+        }
+
+        let first = (#heads > 0) ? ls.lead(ls.start(heads[0][1]), hash) : src.size()
+        let root = Body('', 0, src.size())
+        bodies[[]] = root
+        for p, (k, e) in sp.bindings if !inline?(p) {
+            let from = ls.start(k)
+            let to = ls.stop(max(e - 1, k))
+            entries[p] = Entry(ls.lead(from, hash), from, to)
+            if let $b = bodies[p[;-1]] and to > b.at {
+                b.at = to
+            }
+        }
+        if root.at == 0 && first > 0 && #heads > 0 {
+            root.at = first
+        }
+        for p, s in sp.inline {
+            bodies[p] = Body('', s[1], s[1], s)
+        }
+        for p, _ in sp.headers if p[-1] :: Int {
+            let list = p[;-1]
+            let e = entries[p]!
+            let seen = bodies[list].?at ?? -1
+            if seen < e.to {
+                bodies[list] = Body('', e.to, e.to)
+            }
+        }
+        Sheet(self, src, doc.data, sp.values, notes(src), entries, bodies, state=%[*sp.headers.keys()])
+    }
+
+    static encode-value(v: _) -> String {
+        toml.dump(%{'_': v}).comb(/^_ = /).strip()
+    }
+
+    static table?(v: _) -> Bool {
+        (v :: Dict) || ((v :: Array) && #v > 0 && v.all?(x -> x :: Dict))
+    }
+
+    static section(path: Array[String], d: Dict, many?: Bool = false) -> String {
+        let out = Blob()
+        let name = path.map(bare).join('.')
+        out.push(many? ? "\n[[{name}]]\n" : "\n[{name}]\n")
+        for k, v in d if !table?(v) {
+            out.push("{bare(k)} = {encode-value(v)}\n")
+        }
+        for k, v in d if table?(v) {
+            out.push(tables([*path, k], v))
+        }
+        out.str!()
+    }
+
+    static tables(path: Array[String], v: _) -> String {
+        match v {
+            d: Dict   => section(path, d),
+            xs: Array => xs.map(\section(path, _, many?: true)).join(''),
+            _         => ''
+        }
+    }
+
+    scalar(v: _, raw: String) -> String | nil {
+        match v {
+            s: String and raw.starts?("'") && !s.match?(/['\n]/) => "'{s}'",
+            _ => encode-value(v)
+        }
+    }
+
+    flow(v: _) -> String | nil {
+        encode-value(v)
+    }
+
+    entry(sheet: Sheet, p: Array, k: _, v: _, indent: String) -> String | nil {
+        match (k, v) {
+            (_: Int, d: Dict)  => section(p, d, many?: true),
+            (_: Int, _)        => nil,
+            (_, _) and table?(v) => tables([*p, k], v),
+            _                  => "{bare(k)} = {encode-value(v)}\n"
+        }
+    }
+
+    slot(sheet: Sheet, p: Array, k: _, v: _, body: Body) -> Int {
+        table?(v) ? body.end : body.at
+    }
+
+    before(sheet: Sheet, p: Array, k: _, v: _, next: Array) -> Int | nil {
+        let safe? = (k :: Int) || !(table?(v) || next in sheet.state || table?(dig(sheet.data, next)))
+        safe? ? sheet.entries[next].?lead : nil
+    }
+
+    dump(sheet: Sheet, data: _) -> String {
+        let out = Blob()
+        for k, v in data if !table?(v) {
+            out.push("{bare(k)} = {encode-value(v)}\n")
+        }
+        for k, v in data if table?(v) {
+            out.push(tables([k], v))
+        }
+        out.str!().strip-left()
+    }
+}
+
+class Json < Codec {
+    name -> String { 'json' }
+    exts -> Array[String] { ['json'] }
+
+    decode(src: String) -> Sheet {
+        let data = try { json.parse(src) } catch e: JSONError { throw CodecError(e.what) }
+        let indent = (src.match(/\n([ \t]+)\S/) ?? [nil, '  '])[1]
+        Sheet(self, src, data, state=indent)
+    }
+
+    static pretty(v: _, ind: String, at: String = '') -> String {
+        let deeper = "{at}{ind}"
+        match v {
+            d: Dict and #d > 0 => do {
+                let body = d.items().map(|(k, x)| -> "{deeper}{json.encode(k)}: {pretty(x, ind, deeper)}").join(',\n')
+                "\{\n{body}\n{at}\}"
+            },
+            xs: Array and #xs > 0 => do {
+                "[\n{xs.map(\"{deeper}{pretty(_, ind, deeper)}").join(',\n')}\n{at}]"
+            },
+            _ => json.encode(v)
+        }
+    }
+
+    dump(sheet: Sheet, data: _) -> String {
+        "{pretty(data, sheet.state ?? '  ')}\n"
+    }
+}
+
+class Yaml < Codec {
+    name -> String { 'yaml' }
+    exts -> Array[String] { ['yaml', 'yml'] }
+
+    decode(src: String) -> Sheet {
+        let (data, marks) = try { yaml.parse-marked(src) } catch e: yaml.YAMLError { throw CodecError("{e}") }
+        let ls = Lines(src)
+        let hash = /^\s*#/
+        let spots: Dict[Array, Spot] = %{}
+        let tails: Dict[Array, String] = %{}
+        let firsts: Dict[Array, Int] = %{}
+        let lasts: Dict[Array, Int] = %{}
+
+        fn bump(p: Array, from: Int, to: Int) {
+            for n in 0..#p + 1 {
+                let q = p[;n]
+                firsts[q] = min(firsts[q] ?? from, from)
+                lasts[q] = max(lasts[q] ?? to, to)
+            }
+        }
+
+        fn flow?(p: Array) -> Bool {
+            (0..#p + 1).any?(n -> do {
+                let m = marks.nodes[p[;n]]
+                m != nil && src.bslice(m.from, 1).match?(/^[\[{]/)
+            })
+        }
+
+        for p, m in marks.values {
+            if !m.block? {
+                spots[p] = (m.from, m.to)
+            }
+            bump(p, m.from, m.to)
+            if let [_, $c] = ls.text(m.to).bslice(ls.col(m.to)).match(/^\s*#\s?(.*)$/) {
+                tails[p] = c.strip()
+            }
+        }
+        for p, m in marks.keys {
+            bump(p, m.from, m.to)
+        }
+        for p, m in marks.nodes if src.bslice(m.from, 1).match?(/^[\[{]/) {
+            bump(p, m.from, m.to)
+        }
+
+        let entries: Dict[Array, Entry] = %{}
+        let bodies: Dict[Array, Body] = %{}
+        for p, from in firsts if #p > 0 && !flow?(p[;-1]) {
+            let start = (p[-1] :: Int) ? from : (marks.keys[p].?from ?? from)
+            let to = lasts[p]!
+            if !ls.before(start).match?((p[-1] :: Int) ? /^\s*(?:-\s+)*$/ : /^\s*$/) {
+                continue
+            }
+            let row = ls.start(start)
+            entries[p] = Entry(ls.lead(row, hash), row, ls.stop(max(to - 1, start)))
+        }
+        for p, m in marks.nodes {
+            if src.bslice(m.from, 1).match?(/^[\[{]/) {
+                bodies[p] = Body('', m.to, m.to, (m.from, m.to))
+                continue
+            }
+            let kids = [e for q, e in entries if #q == #p + 1 && q[;-1] == p]
+            if #kids == 0 {
+                continue
+            }
+            let at = kids.map(&.to).max()!
+            let first = firsts[[*p, (dig(data, p) :: Array) ? 0 : dig(data, p).keys()[0]]]!
+            let indent = match dig(data, p) {
+                _: Array => (ls.before(first).match(/^(\s*)-\s+$/) ?? [nil, nil])[1],
+                _        => ' ' * ls.col(first)
+            }
+            if indent != nil {
+                bodies[p] = Body(indent, at)
+            }
+        }
+
+        let anchors = %{p: m.line for p, m in marks.keys}
+        let s = Sheet(self, src, data ?? %{}, spots, harvest(ls.rows, anchors, /^\s*#\s?(.*)$/, tails), entries, bodies)
+        s.links = marks.links
+        s
+    }
+
+    static plain?(s: String) -> Bool {
+        #s > 0 && !s.match?(/^\s|\s$|[\n:#]/) && (try { yaml.parse("k: {s}") } catch _ { nil }) == %{'k': s}
+    }
+
+    scalar(v: _, raw: String) -> String | nil {
+        match v {
+            nil       => raw.match?(/^(?:~|null|Null|NULL)?$/) ? raw : 'null',
+            b: Bool   => b ? 'true' : 'false',
+            n: Int    => number(n),
+            n: Float  => number(n),
+            s: String => match raw {
+                /^'/ and !s.match?(/\n/) => "'{s.replace("'", "''")}'",
+                /^"/                     => json.encode(s),
+                _                        => plain?(s) ? s : json.encode(s)
+            },
+            _ => nil
+        }
+    }
+
+    flow(v: _) -> String | nil {
+        match v {
+            xs: Array => "[{xs.map(\flow(_) ?? 'null').join(', ')}]",
+            d: Dict   => "\{{d.items().map(|(k, x)| -> "{scalar(k, '')}: {flow(x)}").join(', ')}\}",
+            s: String => plain?(s) && !s.match?(/[,\[\]{}]/) ? s : json.encode(s),
+            _         => scalar(v, '')
+        }
+    }
+
+    entry(sheet: Sheet, p: Array, k: _, v: _, indent: String) -> String | nil {
+        let text = (k :: Int) ? yaml.dump([v]) : yaml.dump(%{k: v})
+        text.split('\n').filter(bool).map(\"{indent}{_}\n").join('')
+    }
+
+    dump(sheet: Sheet, data: _) -> String {
+        yaml.dump(data)
+    }
+}
+
+fn unquote(s: String) -> (String, String) {
+    match s {
+        /^"((?:[^"\\]|\\.)*)"/ => ((try { json.parse("\"{$1}\"") }) ?? $1, '"'),
+        /^'([^']*)'/           => ($1, "'"),
+        _                      => (s, '')
+    }
+}
+
+fn requote(s: String, q: String, strict?: Bool = false) -> String {
+    match q {
+        '"'                    => json.encode(s),
+        "'" and !s.match?(/'/) => "'{s}'",
+        _ and s.match?(/^\s|\s$|[#;"']/) || #s == 0 || (strict? && s.match?(/\s/)) => json.encode(s),
+        _                      => s
+    }
+}
+
+fn plain-scalar(v: _, raw: String, strict?: Bool = false) -> String | nil {
+    let (_, q) = unquote(raw)
+    match v {
+        b: Bool   => spell(b, raw),
+        n: Int    => number(n),
+        n: Float  => number(n),
+        s: String => s.match?(/\n/) ? nil : requote(s, q, strict?),
+        _         => nil
+    }
+}
+
+fn plain-text(v: _, strict?: Bool = false) -> String {
+    plain-scalar(v, '', strict?) ?? json.encode(v)
+}
+
+class Ini < Codec {
+    name -> String { 'ini' }
+    exts -> Array[String] { ['ini', 'cfg', 'conf', 'properties'] }
+
+    decode(src: String) -> Sheet {
+        let data: Dict[String, _] = %{}
+        let spots: Dict[Array, Spot] = %{}
+        let anchors: Dict[Array, Int] = %{}
+        let entries: Dict[Array, Entry] = %{}
+        let ls = Lines(src)
+        let hash = /^\s*[#;]/
+        let bodies: Dict[Array, Body] = %{[]: Body('', 0, src.size())}
+        let section: Array = []
+        let heads: Array[(Array, Int)] = []
+        for line; ln in ls.rows {
+            let start = ls.starts[ln]
+            match line {
+                /^\s*(?:[#;].*)?$/ => (),
+                /^\s*\[\s*([^\]]+?)\s*\]\s*$/ => {
+                    section = [$1]
+                    data[$1] = data[$1] ?? %{}
+                    anchors[section] = ln
+                    heads.push((section, start))
+                    bodies[section] = Body('', ls.stop(start), src.size())
+                },
+                /^(\s*([^=:\s][^=:]*?)\s*[=:]\s*)(.*?)\s*$/ => {
+                    let (k, lead, raw) = ($2, $1, $3)
+                    let (txt, q) = unquote(raw)
+                    let p = [*section, k]
+                    let into = (#section > 0) ? data[section[0]] : data
+                    into[k] = (q == '') ? guess(txt, loose?: true) : txt
+                    let from = start + lead.size()
+                    spots[p] = (from, from + raw.size())
+                    anchors[p] = ln
+                    entries[p] = Entry(ls.lead(start, hash), start, ls.stop(start))
+                    bodies[section]!.at = ls.stop(start)
+                },
+                _ => throw CodecError("ini: line {ln + 1}: cannot parse '{line}'")
+            }
+        }
+        for (p, at); i in heads {
+            let to = (i + 1 < #heads) ? ls.lead(heads[i + 1][1], hash) : src.size()
+            entries[p] = Entry(ls.lead(at, hash), at, to)
+            bodies[p]!.end = to
+        }
+        if #heads > 0 && bodies[[]]!.at == 0 {
+            bodies[[]]!.at = ls.lead(heads[0][1], hash)
+        }
+        Sheet(self, src, data, spots, harvest(ls.rows, anchors, /^\s*[#;]\s?(.*)$/), entries, bodies)
+    }
+
+    scalar(v: _, raw: String) -> String | nil {
+        plain-scalar(v, raw)
+    }
+
+    entry(sheet: Sheet, p: Array, k: _, v: _, indent: String) -> String | nil {
+        match v {
+            d: Dict and #p == 0 => "\n[{k}]\n{d.items().map(|(kk, x)| -> "{kk} = {plain-text(x)}\n").join('')}",
+            _: Dict or _: Array => nil,
+            _                   => "{k} = {plain-text(v)}\n"
+        }
+    }
+
+    slot(sheet: Sheet, p: Array, k: _, v: _, body: Body) -> Int {
+        (v :: Dict) ? sheet.source.size() : body.at
+    }
+
+    before(sheet: Sheet, p: Array, k: _, v: _, next: Array) -> Int | nil {
+        ((v :: Dict) || (dig(sheet.data, next) :: Dict)) ? nil : sheet.entries[next].?lead
+    }
+
+    dump(sheet: Sheet, data: _) -> String {
+        let out = Blob()
+        for k, v in data if !(v :: Dict) {
+            out.push("{k} = {plain-text(v)}\n")
+        }
+        for k, d in data if d :: Dict {
+            if #out > 0 {
+                out.push('\n')
+            }
+            out.push("[{k}]\n")
+            for kk, v in d {
+                out.push("{kk} = {plain-text(v)}\n")
+            }
+        }
+        out.str!()
+    }
+}
+
+class Env < Codec {
+    name -> String { 'env' }
+    exts -> Array[String] { ['env'] }
+
+    decode(src: String) -> Sheet {
+        let data: Dict[String, _] = %{}
+        let spots: Dict[Array, Spot] = %{}
+        let anchors: Dict[Array, Int] = %{}
+        let tails: Dict[Array, String | nil] = %{}
+        let entries: Dict[Array, Entry] = %{}
+        let ls = Lines(src)
+        let hash = /^\s*#/
+        let body = Body('', src.size())
+        for line; ln in ls.rows {
+            let start = ls.starts[ln]
+            match line {
+                /^\s*(?:#.*)?$/ => (),
+                /^(\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_.]*)\s*=\s*)("(?:[^"\\]|\\.)*"|'[^']*'|[^#]*?)(\s+#\s?(.*))?\s*$/ => {
+                    let (lead, k, raw) = ($1, $2, $3)
+                    let (txt, q) = unquote(raw)
+                    data[k] = (q == '') ? guess(txt) : txt
+                    let from = start + lead.size()
+                    spots[[k]] = (from, from + raw.size())
+                    anchors[[k]] = ln
+                    entries[[k]] = Entry(ls.lead(start, hash), start, ls.stop(start))
+                    body.at = ls.stop(start)
+                    tails[[k]] = $5.?strip()
+                },
+                _ => throw CodecError(".env: line {ln + 1}: cannot parse '{line}'")
+            }
+        }
+        let notes = harvest(ls.rows, anchors, /^\s*#\s?(.*)$/, tails)
+        Sheet(self, src, data, spots, notes, entries, %{[]: body})
+    }
+
+    scalar(v: _, raw: String) -> String | nil {
+        plain-scalar(v, raw, strict?: true)
+    }
+
+    entry(sheet: Sheet, p: Array, k: _, v: _, indent: String) -> String | nil {
+        (v :: Dict | Array) ? nil : "{k}={plain-text(v, strict?: true)}\n"
+    }
+
+    dump(sheet: Sheet, data: _) -> String {
+        data.items().map(|(k, v)| -> "{k}={plain-text(v, strict?: true)}\n").join('')
+    }
+}
+
+class XmlNode {
+    name:  String
+    attrs: Array[(String, String, Spot)]
+    kids:  Array[XmlNode]
+    text:  String
+    span:  Spot | nil
+    note:  String | nil
+    line:  Int
+    from:  Int
+    to:    Int
+
+    init(name: String, line: Int, from: Int) {
+        self.name = name
+        self.line = line
+        self.from = from
+        to        = from
+        attrs     = []
+        kids      = []
+        text      = ''
+        span      = nil
+        note      = nil
+    }
+}
+
+const ENTITIES = %{'lt': '<', 'gt': '>', 'amp': '&', 'quot': '"', 'apos': "'"}
+
+fn unescape-xml(s: String) -> String {
+    s.sub(/&(#x[0-9a-fA-F]+|#[0-9]+|\w+);/, m -> match m[1] {
+        /^#x(.*)/ => chr(int($1, 16)),
+        /^#(.*)/  => chr(int($1)),
+        e         => ENTITIES[e] ?? m[0]
+    })
+}
+
+fn escape-xml(s: String, attr?: Bool = false) -> String {
+    let t = s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    attr? ? t.replace('"', '&quot;') : t
+}
+
+class XmlReader {
+    src:  String
+    pos:  Int
+    ls:    Lines
+    note: String | nil
+
+    init(src: String) {
+        self.src = src
+        pos      = 0
+        ls        = Lines(src)
+        note     = nil
+    }
+
+    fail(msg: String) {
+        throw CodecError("xml: line {ls.line(pos) + 1}: {msg}")
+    }
+
+    rest -> String { src.bslice(pos) }
+
+    take(re: Regex) -> Array | nil {
+        let m = match rest.match(re) {
+            nil       => return nil,
+            s: String => [s],
+            xs        => xs
+        }
+        pos += m[0].size()
+        m
+    }
+
+    misc() {
+        while true {
+            take(/^\s+/)
+            if let [_, $c] = take(/^<!--(.*?)-->/s) {
+                note = c.strip()
+            } else if !take(/^<\?.*?\?>/s) && !take(/^<!DOCTYPE[^>\[]*(?:\[.*?\])?\s*>/s) {
+                break
+            }
+        }
+    }
+
+    element() -> XmlNode {
+        let el = XmlNode('', ls.line(pos), pos)
+        let [_, name] = take(/^<([\w:.\-]+)/) ?? fail('expected an element')
+        el.name = name
+        el.note = note
+        note = nil
+        while let [_, k, q] = take(/^\s+([\w:.\-]+)\s*=\s*(["'])/) {
+            let from = pos
+            let [v] = take(regex("^[^{q}]*")) ?? fail('unterminated attribute')
+            el.attrs.push((k, unescape-xml(v), (from, from + v.size())))
+            take(regex("^{q}"))
+        }
+        take(/^\s+/)
+        if take(/^\/>/) {
+            el.to = pos
+            return el
+        }
+        take(/^>/) ?? fail("malformed <{name}>")
+        let buf = Blob()
+        let from = pos
+        let to = pos
+        let raw? = true
+        while true {
+            if let [t] = take(/^[^<]+/) {
+                buf.push(unescape-xml(t))
+                to = pos
+            } else if let [_, c] = take(/^<!\[CDATA\[(.*?)\]\]>/s) {
+                buf.push(c)
+                raw? = false
+                to = pos
+            } else if let [_, c] = take(/^<!--(.*?)-->/s) {
+                note = c.strip()
+            } else if take(/^<\?.*?\?>/s) {
+                ()
+            } else if take(regex("^</{name}\\s*>")) {
+                break
+            } else if rest.match?(/^<[\w:.\-]/) {
+                el.kids.push(element())
+                raw? = false
+            } else {
+                fail("unclosed <{name}>")
+            }
+        }
+        el.to = pos
+        el.text = buf.str!()
+        if raw? && #el.kids == 0 {
+            let body = src.bslice(from, to - from)
+            let core = body.strip()
+            let off  = body.size() - body.strip-left().size()
+            el.span = (from + off, from + off + core.size())
+        }
+        el
+    }
+}
+
+class Xml < Codec {
+    name -> String { 'xml' }
+    exts -> Array[String] { ['xml', 'plist', 'config', 'csproj'] }
+
+    static value(el: XmlNode, p: Array, s: Sheet, ls: Lines, attrs: Set[Array]) -> _ {
+        if let $n = el.note {
+            s.notes[p] = n
+        }
+        if #p > 0 && ls.alone?(el.from, el.to) {
+            let row = ls.start(el.from)
+            s.entries[p] = Entry(ls.lead(row, /^\s*<!--.*-->\s*$/), row, ls.stop(el.to - 1))
+        }
+        if #el.kids == 0 && #el.attrs == 0 {
+            if let $sp = el.span {
+                s.spots[p] = sp
+            }
+            return guess(el.text.strip())
+        }
+        let d: Dict[String, _] = %{}
+        let names = %[k.name for k in el.kids]
+        for (k, v, sp) in el.attrs {
+            let key = (k in names) ? "@{k}" : k
+            d[key] = guess(v)
+            s.spots[[*p, key]] = sp
+            attrs.insert([*p, key])
+        }
+        let counts = %{*: 0}
+        for k in el.kids {
+            counts[k.name] += 1
+        }
+        let seen = %{*: 0}
+        for k in el.kids {
+            if counts[k.name] > 1 {
+                let i = seen[k.name]
+                seen[k.name] += 1
+                d[k.name] = d[k.name] ?? []
+                d[k.name].push(value(k, [*p, k.name, i], s, ls, attrs))
+                s.bodies[[*p, k.name]] = Body(ls.before(k.from), ls.stop(k.to - 1))
+            } else {
+                d[k.name] = value(k, [*p, k.name], s, ls, attrs)
+            }
+        }
+        if let [*_, last] = el.kids and ls.alone?(last.from, last.to) {
+            s.bodies[p] = Body(ls.before(el.kids[0].from), ls.stop(last.to - 1))
+        }
+        d
+    }
+
+    decode(src: String) -> Sheet {
+        let r = XmlReader(src)
+        r.misc()
+        let root = r.element()
+        let attrs: Set[Array] = %[]
+        let s = Sheet(self, src, nil, state=(root.name, attrs))
+        let data = value(root, [], s, r.ls, attrs)
+        s.data = (data :: Dict) ? data : %{}
+        s
+    }
+
+    scalar(v: _, raw: String) -> String | nil {
+        match v {
+            b: Bool   => spell(b, raw),
+            n: Int    => number(n),
+            n: Float  => number(n),
+            s: String => escape-xml(s, attr?: true),
+            nil       => '',
+            _         => nil
+        }
+    }
+
+    static text(v: _) -> String {
+        match v {
+            b: Bool  => b ? 'true' : 'false',
+            n: Int   => number(n),
+            n: Float => number(n),
+            nil      => '',
+            s        => escape-xml("{s}")
+        }
+    }
+
+    static emit(out: Blob, name: String, v: _, p: Array, attrs: Set[Array], at: String, step: String = '  ') {
+        match v {
+            xs: Array => {
+                for x; i in xs {
+                    emit(out, name, x, [*p, i], attrs, at, step)
+                }
+            },
+            d: Dict => {
+                let own? = (k, x) -> [*p, k] in attrs && !(x :: Dict | Array)
+                let head = d.items().filter(|(k, x)| -> own?(k, x)).map(|(k, x)| -> " {k.comb(/^@/)}=\"{escape-xml(text(x), attr?: true)}\"").join('')
+                let rest = d.items().filter(|(k, x)| -> !own?(k, x))
+                if #rest == 0 {
+                    out.push("{at}<{name}{head}/>\n")
+                    return
+                }
+                out.push("{at}<{name}{head}>\n")
+                for (k, x) in rest {
+                    emit(out, k, x, [*p, k], attrs, "{at}{step}", step)
+                }
+                out.push("{at}</{name}>\n")
+            },
+            _ => out.push("{at}<{name}>{text(v)}</{name}>\n")
+        }
+    }
+
+    entry(sheet: Sheet, p: Array, k: _, v: _, indent: String) -> String | nil {
+        let (_, attrs) = sheet.state
+        let out = Blob()
+        match k {
+            _: Int => emit(out, "{p[-1]}", v, [*p, k], attrs, indent),
+            _      => emit(out, "{k}", v, [*p, k], attrs, indent)
+        }
+        out.str!()
+    }
+
+    dump(sheet: Sheet, data: _) -> String {
+        let (root, attrs) = sheet.state ?? ('config', %[])
+        let out = Blob()
+        if let $decl = sheet.source.match(/^<\?xml.*?\?>/s) {
+            out.push("{decl}\n")
+        }
+        emit(out, root, data, [], attrs, '')
+        out.str!()
+    }
+}
+
+let codecs: Array[Codec] = [Toml(), Json(), Yaml(), Ini(), Env(), Xml()]
+
+pub fn register(c: Codec) {
+    codecs.insert(0, c)
+}
+
+pub fn codec(name: String) -> Codec | nil {
+    codecs.find(c -> c.name == name || name in c.exts)
+}
+
+pub fn sniff(file: String) -> Codec | nil {
+    let base = Path(file).name
+    if base.match?(/^\.env(\.|$)|\.env$/) {
+        return codec('env')
+    }
+    let ext = base.match(/\.([^.]+)$/).?[1] ?? ''
+    codec(ext.lower())
+}
+
+pub fn load(file: String, format: String | nil = nil) -> Sheet {
+    let $c = ((format != nil) ? codec(format) : sniff(file)) or throw CodecError("don't know how to read {file}")
+    let src = Path(file).read-text() ?? throw CodecError("cannot read {file}")
+    c.decode(src)
+}
+
+pub fn save(file: String, text: String) {
+    let tmp = "{file}.{os.getpid()}.tmp"
+    Path(tmp).write(text)
+    if os.rename(tmp, file) != 0 {
+        os.unlink(tmp)
+        throw CodecError("cannot write {file}")
+    }
+}
