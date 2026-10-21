@@ -635,6 +635,7 @@ struct try {
         bool executing;
         bool need_trace;
         bool native;
+        bool clean;
 
         u8 state;
 

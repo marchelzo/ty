@@ -170,13 +170,11 @@ state(BcLir *c, BcLirNode const *node, char const *ip)
                 c->sp += 1;
                 return;
 
-        case INSTR_PUSH_DEFER_GROUP:
-                return;
-
         case INSTR_DROP:
         case INSTR_DISCARD_DROP_GROUP:
         case INSTR_PUSH_DROP_GROUP:
         case INSTR_PUSH_DROP:
+        case INSTR_PUSH_DEFER_GROUP:
         case INSTR_DEFER:
         case INSTR_CLEANUP:
         case INSTR_ENTER:

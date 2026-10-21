@@ -2339,8 +2339,9 @@ inline static TryState *
 begin_try(Ty *ty)
 {
         return avP(STATE.tries, ((TryState) {
-                .t = ++t,
-                .ctx = TRY_TRY
+                .t         = ++t,
+                .ctx       = TRY_TRY,
+                .resources = STATE.resources
         }));
 }
 
@@ -7833,15 +7834,30 @@ emit_implicit_tail_body(Ty *ty, Stmt const *body)
         return true;
 }
 
+static int
+emit_drops(Ty *ty, int live, int keep)
+{
+        while (live > keep) {
+                INSN(DROP);
+                live -= 1;
+        }
+
+        return live;
+}
+
 static void
 emit_loop_unwind(Ty *ty, LoopState const *loop)
 {
+        int live = STATE.resources;
+
         for (int i = 0;; ++i) {
                 TryState *_try = get_try(ty, i);
 
                 if (_try == NULL || _try->t <= loop->t) {
                         break;
                 }
+
+                live = emit_drops(ty, live, _try->resources);
 
                 switch (_try->ctx) {
                 case TRY_CATCH:
@@ -7856,21 +7872,24 @@ emit_loop_unwind(Ty *ty, LoopState const *loop)
                         break;
                 }
         }
+
+        emit_drops(ty, live, loop->resources);
 }
 
 static void
 emit_return_unwind(Ty *ty)
 {
+        int live = STATE.resources;
+
         for (int i = 0; get_try(ty, i) != NULL; ++i) {
+                live = emit_drops(ty, live, get_try(ty, i)->resources);
                 if (get_try(ty, i)->ctx == TRY_CATCH) {
                         INSN(CATCH);
                 }
                 INSN(FINALLY);
         }
 
-        for (int i = STATE.function_resources; i < STATE.resources; ++i) {
-                INSN(DROP);
-        }
+        emit_drops(ty, live, STATE.function_resources);
 }
 
 static void
@@ -8541,10 +8560,30 @@ emit_try_match(Ty *ty, Expr const *pattern, bool skip_tag)
 }
 
 static bool
+emit_arm(Ty *ty, Stmt const *s, bool want_result)
+{
+        int  resources = STATE.resources;
+        bool returns   = emit_statement(ty, s, want_result);
+
+        if (!returns) {
+                emit_drops(ty, STATE.resources, resources);
+        }
+
+        STATE.resources = resources;
+
+        return returns;
+}
+
+static bool
 emit_catch(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool want_result)
 {
         JumpGroup fails_save = STATE.match_fails;
         InitJumpGroup(&STATE.match_fails);
+
+        if (pattern->has_resources) {
+                INSN(PUSH_DROP_GROUP);
+                STATE.resources += 1;
+        }
 
         WITH_STACK() {
                 INSN(SAVE_STACK_POS);
@@ -8559,15 +8598,24 @@ emit_catch(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool wa
         bool returns = false;
 
         if (s != NULL) {
-                returns = emit_statement(ty, s, want_result);
+                returns = emit_arm(ty, s, want_result);
         } else if (want_result) {
                 INSN(NIL);
+        }
+
+        if (pattern->has_resources) {
+                INSN(DROP);
         }
 
         MATCH_SUCCESS();
 
         PATCH_FAILS {
                 INSN(POP_STACK_POS);
+        }
+
+        if (pattern->has_resources) {
+                INSN(DISCARD_DROP_GROUP);
+                STATE.resources -= 1;
         }
 
         STATE.match_fails = fails_save;
@@ -8605,7 +8653,7 @@ emit_xcase(
 
         bool returns;
         if (s != NULL) {
-                returns = emit_statement(ty, s, want_result);
+                returns = emit_arm(ty, s, want_result);
         } else if (want_result) {
                 INSN(NIL);
                 returns = false;
@@ -8634,6 +8682,11 @@ emit_case(
 {
         bool returns;
 
+        if (pattern->has_resources) {
+                INSN(PUSH_DROP_GROUP);
+                STATE.resources += 1;
+        }
+
         WITH_MATCH_FAILS() {
                 if (!no_unwind) {
                         INSN(SAVE_STACK_POS);
@@ -8647,6 +8700,11 @@ emit_case(
                 if (!no_unwind) {
                         INSN(POP_STACK_POS);
                 }
+        }
+
+        if (pattern->has_resources) {
+                INSN(DISCARD_DROP_GROUP);
+                STATE.resources -= 1;
         }
 
         return returns;
@@ -8941,7 +8999,7 @@ emit_tag_group_stmt(Ty *ty, Stmt const *s, bool want_result, int start, int coun
                                 PEEPHOLE_BARRIER();
                                 emit_alias_assignments(ty, pattern);
                                 INSN(POP);
-                                returns &= ES(then, want_result);
+                                returns &= emit_arm(ty, then, want_result);
                                 MATCH_SUCCESS();
                         } else {
                                 returns &= emit_case(ty, pattern, NULL, then, want_result, false);
@@ -9136,7 +9194,7 @@ emit_str_group_stmt(Ty *ty, Stmt const *s, bool want_result, int start, int coun
 
                 WITH_FORKED_STACK {
                         INSN(POP);
-                        returns &= ES(then, want_result);
+                        returns &= emit_arm(ty, then, want_result);
                         MATCH_SUCCESS();
                 }
         }
@@ -9320,7 +9378,7 @@ emit_match_stmt_group(Ty *ty, Stmt const *stmt, PatternGroup *grp, bool keep, bo
                                 emit_assignment2(ty, patterns[i], true);
                         }
                         INSN(POP);
-                        returns &= ES(thens[i], keep);
+                        returns &= emit_arm(ty, thens[i], keep);
                         MATCH_SUCCESS();
                         break;
 
@@ -9602,11 +9660,6 @@ emit_if_not(Ty *ty, Stmt const *s, bool want_result)
         returns &= emit_statement(ty, s->_if.then, want_result);
 
         PATCH_JUMP(done);
-
-        if (has_resources) {
-                INSN(DROP);
-                STATE.resources -= 1;
-        }
 
         STATE.stack             = stack;
         STATE.match_successes   = successes_save;
@@ -12144,10 +12197,6 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
 
                 emit_loop_unwind(ty, loop);
 
-                for (int i = loop->resources; i < STATE.resources; ++i) {
-                        INSN(DROP);
-                }
-
                 INSN(JUMP);
                 avP(loop->breaks, vN(STATE.code));
                 Ei32(0);
@@ -12163,10 +12212,6 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 UnwindStack(ty, loop->stack, 0);
 
                 emit_loop_unwind(ty, loop);
-
-                for (int i = loop->resources; i < STATE.resources; ++i) {
-                        INSN(DROP);
-                }
 
                 INSN(JUMP);
                 avP(loop->continues, vN(STATE.code));
@@ -21160,6 +21205,7 @@ DumpProgram(
                         break;
                 CASE(POP)
                 CASE(POP2)
+                CASE(DROP2)
                         break;
                 CASE(UNPOP)
                         break;

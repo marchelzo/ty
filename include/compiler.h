@@ -225,6 +225,7 @@ typedef struct try_state {
         u32 t;
         u8 ctx;
         bool need_trace;
+        int resources;
 } TryState;
 
 typedef vec(LoopState) LoopStates;

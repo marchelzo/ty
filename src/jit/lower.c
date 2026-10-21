@@ -1104,7 +1104,8 @@ decode_operands(BcLir *c, Value const *f, BcLirNode *node, i32 off)
 static bool
 decode(BcLir *c, Value const *f)
 {
-        i32 owner = -1;
+        i32 owner  = -1;
+        i32 unwind = -1;
 
         for (i32 off = 0; off < c->size;) {
                 BcLirNode *node = &c->nodes[off];
@@ -1124,6 +1125,22 @@ decode(BcLir *c, Value const *f)
                         .resume   = LIR_NONE,
                         .tierup   = LIR_NONE
                 };
+
+                switch (node->op) {
+                case INSTR_CATCH:
+                case INSTR_FINALLY:
+                case INSTR_POP_TRY:
+                        node->owner = (unwind >= 0) ? unwind : owner;
+                        if (node->op != INSTR_CATCH && node->owner >= 0) {
+                                unwind = c->nodes[node->owner].outer;
+                        }
+                        break;
+                case INSTR_DROP:
+                        break;
+                default:
+                        unwind = -1;
+                        break;
+                }
 
                 if (node->op == INSTR_TRY) {
                         decode_try(c, node, off);

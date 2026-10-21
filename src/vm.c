@@ -2455,6 +2455,24 @@ PopThrowCtx(Ty *ty)
         return vXx(THROW_STACK);
 }
 
+inline static void
+DropPendingThrow(Ty *ty)
+{
+        usize     n = vN(THROW_STACK);
+        ThrowCtx *old;
+
+        if (n < 2) {
+                return;
+        }
+
+        old = v__(THROW_STACK, n - 2);
+
+        v__(THROW_STACK, n - 2) = v__(THROW_STACK, n - 1);
+        v__(THROW_STACK, n - 1) = old;
+
+        vN(THROW_STACK) -= 1;
+}
+
 u64
 TyThreadId(Ty *ty)
 {
@@ -2980,10 +2998,13 @@ TY_INSTR_INLINE
 static void
 DoDrop(Ty *ty)
 {
-        Value group = *vvL(DROP_STACK);
+        Array *group = vvL(DROP_STACK)->array;
 
-        for (int i = vN(*group.array) - 1; i >= 0; --i) {
-                xdrop(ty, v_(*group.array, i));
+        while (vN(*group) > 0) {
+                Value v = vXx(*group);
+                gP(&v);
+                xdrop(ty, &v);
+                gX();
         }
 
         vXx(DROP_STACK);
@@ -3012,6 +3033,18 @@ inline static struct try *
 GetCurrentTry(Ty *ty)
 {
         return *vvL(TRY_STACK);
+}
+
+inline static struct try *
+GetDeferTry(Ty *ty)
+{
+        for (usize i = vN(TRY_STACK); i > 0; --i) {
+                if (v__(TRY_STACK, i - 1)->clean) {
+                        return v__(TRY_STACK, i - 1);
+                }
+        }
+
+        zP("no active defer group");
 }
 
 inline static noreturn void
@@ -3071,6 +3104,7 @@ PushTry(Ty *ty)
         t->ss     = SaveScratch(ty);
         t->state  = TRY_TRY;
         t->native = false;
+        t->clean  = false;
         v0(t->defer);
 
         return t;
@@ -3185,17 +3219,16 @@ DoThrow(Ty *ty)
                                 ////////////////////////////////////////////////
 
                         case TRY_CATCH:
+                                DropPendingThrow(ty);
                                 t->state = TRY_THROW;
                                 t->end = NULL;
                                 IP = t->finally;
                                 return;
 
                         case TRY_THROW:
-                                XXX(
-                                        "an exception was thrown while handling another exception: %s%s%s",
-                                        TERM(31), VSC(&ty->exc), TERM(39)
-                                );
-                                abort();
+                                vXx(TRY_STACK);
+                                DropPendingThrow(ty);
+                                continue;
                         }
                 }
                 if (UNLIKELY(!co_abort(ty))) {
@@ -8111,10 +8144,11 @@ TargetMember:
                         break;
 
                 CASE(PUSH_DEFER_GROUP)
+                        GetCurrentTry(ty)->clean = true;
                         break;
 
                 CASE(DEFER)
-                        _try = GetCurrentTry(ty);
+                        _try = GetDeferTry(ty);
                         xvP(_try->defer, pop());
                         break;
 
@@ -12381,8 +12415,11 @@ vm_jit_scope(Ty *ty, int op)
                 }
                 uvP(*vvL(DROP_STACK)->array, peek());
                 break;
+        case INSTR_PUSH_DEFER_GROUP:
+                GetCurrentTry(ty)->clean = true;
+                break;
         case INSTR_DEFER:
-                xvP(GetCurrentTry(ty)->defer, pop());
+                xvP(GetDeferTry(ty)->defer, pop());
                 break;
         case INSTR_CLEANUP: {
                 struct try *t = GetCurrentTry(ty);
