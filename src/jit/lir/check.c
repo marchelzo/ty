@@ -6,7 +6,8 @@ static u32 const CallFlags = LIR_MAY_GC
                            | LIR_NORETURN
                            | LIR_CALL_SITE
                            | LIR_READS_NO_LOCALS
-                           | LIR_WRITES_LOCALS;
+                           | LIR_WRITES_LOCALS
+                           | LIR_FAST_PATH;
 
 static char const *const Why[] = {
         [LE_RETURN]    = "return does not match signature",

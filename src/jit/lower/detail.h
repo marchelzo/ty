@@ -160,6 +160,9 @@ follow(Detail const *d, LirLabel l, u32 bc, int hops, bool rejoin)
 
                 case LIR_CALL:
                 case LIR_TAILCALL:
+                        if (in->flags & LIR_FAST_PATH) {
+                                break;
+                        }
                         if (in->origin != bc) {
                                 return (Dest) { .to = flow };
                         }

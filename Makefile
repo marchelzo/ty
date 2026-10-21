@@ -15,6 +15,7 @@ VCPKG      := _vcpkg/vcpkg
 VCPKG_REPO := https://github.com/microsoft/vcpkg.git
 VCPKG_REV  := 5d57f5a0a5469a23e005fc79a7c1814ab4fc967e
 LOG_OPT    := $(if $(LOG),ON,OFF)
+BUNDLER_OPT := $(if $(filter 1,$(BUNDLER)),ON,OFF)
 TEST_ARGS  ?=
 
 PGO_BUILD     := _build/optimized-instrumented
@@ -33,7 +34,7 @@ endif
 
 OUT        := $(BUILD)/ty
 CMAKE_ARGS :=
-CONFIG      = $(strip LOG=$(LOG_OPT) $(CMAKE_ARGS))
+CONFIG      = $(strip LOG=$(LOG_OPT) BUNDLER=$(BUNDLER_OPT) $(CMAKE_ARGS))
 ifeq ($(MODE),optimized)
 	CMAKE_ARGS := -DTY_PGO_USE=$(abspath $(PGO_PROFDATA))
 	ifeq ($(BOLT),1)
@@ -128,7 +129,7 @@ _build/%/.config: FORCE
 	@echo '$(CONFIG)' | cmp -s - $@ || echo '$(CONFIG)' > $@
 
 _build/%/build.ninja: _build/%/.config CMakePresets.json | $(TOOLS)
-	$(CMAKE) --preset $* -DCMAKE_MAKE_PROGRAM=$(NINJA) -DTY_LOG=$(LOG_OPT) $(CMAKE_ARGS)
+	$(CMAKE) --preset $* -DCMAKE_MAKE_PROGRAM=$(NINJA) -DTY_LOG=$(LOG_OPT) -DTY_EMBED_LIB=$(BUNDLER_OPT) $(CMAKE_ARGS)
 	@touch $@
 
 clean:

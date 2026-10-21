@@ -54,6 +54,9 @@ mod_root(Ty *ty, char const *path)
 
         if (root == NULL) {
                 root = (vN(paths) > 0) ? v_0(paths) : "/";
+                if (vN(paths) > 1) {
+                        vN(paths) = 1;
+                }
         }
 
         for (int i = 0; i < vN(paths); ++i) {

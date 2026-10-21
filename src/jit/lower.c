@@ -365,14 +365,63 @@ promote_pair(BcLir *c, LirReg at, LirReg bt, LirLabel slow, LirReg *a, LirReg *b
 }
 
 static void
+same_scalar(BcLir *c, LirCC cc, LirReg dst, LirReg at, LirReg bt, LirLabel slow)
+{
+        i32      lhs  = c->sp - 2;
+        i32      rhs  = c->sp - 1;
+        LirLabel text = newlabel(c);
+        LirLabel same = newlabel(c);
+        LirLabel diff = newlabel(c);
+        LirLabel done = newlabel(c);
+
+        jcc(c, LIR_NE, lir_r(at), lir_r(bt), slow);
+        jcc(c, LIR_EQ, lir_r(at), lir_i(VALUE_STRING), text);
+        unless(c, at, VALUE_BOOLEAN, slow);
+
+        LirReg a = ldx(c, LIR_LD_U8, LIR_I64, c->ops, vat(lhs) + VOFF(boolean));
+        LirReg b = ldx(c, LIR_LD_U8, LIR_I64, c->ops, vat(rhs) + VOFF(boolean));
+
+        vset(c, LIR_SETCC, dst, lir_cc(cc), lir_r(a), lir_r(b));
+        jump(c, done);
+
+        bind(c, text);
+
+        LirReg n = ldx(c, LIR_LD_U32, LIR_I64, c->ops, vat(lhs) + VOFF(bytes));
+        LirReg m = ldx(c, LIR_LD_U32, LIR_I64, c->ops, vat(rhs) + VOFF(bytes));
+
+        jcc(c, LIR_NE, lir_r(n), lir_r(m), diff);
+
+        LirReg p = ldp(c, c->ops, vat(lhs) + VOFF(str));
+        LirReg q = ldp(c, c->ops, vat(rhs) + VOFF(str));
+
+        jcc(c, LIR_EQ, lir_r(p), lir_r(q), same);
+
+        LirReg r = ccallf(c, memcmp, LT_I32, CF_PURE | LIR_FAST_PATH, preg(p), preg(q), { LT_I64, lir_r(n) });
+
+        vset(c, LIR_SETCC, dst, lir_cc(cc), lir_r(r), lir_i(0));
+        jump(c, done);
+
+        bind(c, same);
+        vset(c, LIR_LI, dst, lir_i(cc == LIR_EQ));
+        jump(c, done);
+
+        bind(c, diff);
+        vset(c, LIR_LI, dst, lir_i(cc != LIR_EQ));
+
+        bind(c, done);
+}
+
+static void
 numeric(BcLir *c, u8 op)
 {
         BcBoxed const *ar     = &BoxedOps[op];
         bool           cmp    = (ar->iop == LIR_SETCC);
+        bool           eq     = (op == INSTR_EQ) || (op == INSTR_NEQ);
         i32            lhs    = c->sp - 2;
         i32            rhs    = c->sp - 1;
         LirLabel       floats = newlabel(c);
         LirLabel       slow   = newlabel(c);
+        LirLabel       other  = eq ? newlabel(c) : slow;
         LirLabel       end    = newlabel(c);
         LirReg         at     = tag_of(c, lhs);
         LirReg         bt     = tag_of(c, rhs);
@@ -393,8 +442,8 @@ numeric(BcLir *c, u8 op)
         jump(c, end);
         bind(c, floats);
 
-        if (c->compact || op == INSTR_EQ || op == INSTR_NEQ) {
-                unless(c, at, VALUE_REAL, slow);
+        if (c->compact || eq) {
+                unless(c, at, VALUE_REAL, other);
                 unless(c, bt, VALUE_REAL, slow);
                 a = real_at(c, lhs);
                 b = real_at(c, rhs);
@@ -412,6 +461,15 @@ numeric(BcLir *c, u8 op)
         }
 
         jump(c, end);
+
+        if (eq) {
+                d = lir_reg(c->L, LIR_I64);
+                bind(c, other);
+                same_scalar(c, ar->icc, d, at, bt, slow);
+                put_scalar(c, lhs, VALUE_BOOLEAN, lir_r(d));
+                jump(c, end);
+        }
+
         bind(c, slow);
         miss_site(c);
 
@@ -1609,6 +1667,7 @@ compare_branch(BcLir *c, BcLirNode const *node, u8 op)
         LirLabel       nil    = eq ? newlabel(c) : LIR_NONE;
         LirLabel       floats = newlabel(c);
         LirLabel       slow   = newlabel(c);
+        LirLabel       other  = eq ? newlabel(c) : slow;
         LirLabel       done   = newlabel(c);
         LirReg         result = lir_reg(c->L, LIR_I64);
         LirReg         at     = tag_of(c, lhs);
@@ -1629,7 +1688,7 @@ compare_branch(BcLir *c, BcLirNode const *node, u8 op)
         jump(c, done);
 
         bind(c, floats);
-        unless(c, at, VALUE_REAL, slow);
+        unless(c, at, VALUE_REAL, other);
         unless(c, bt, VALUE_REAL, slow);
         a = real_at(c, lhs);
         b = real_at(c, rhs);
@@ -1639,6 +1698,10 @@ compare_branch(BcLir *c, BcLirNode const *node, u8 op)
         if (eq) {
                 bind(c, nil);
                 vset(c, LIR_SETCC, result, lir_cc(ar->icc), lir_r(at), lir_r(bt));
+                jump(c, done);
+
+                bind(c, other);
+                same_scalar(c, ar->icc, result, at, bt, slow);
                 jump(c, done);
         }
 

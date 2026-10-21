@@ -1154,8 +1154,8 @@ jit_stats_json(Ty *ty, FILE *f)
 
         for (int i = 0; i < n && i < 500; ++i) {
                 JitSite const *site = &sorted[i];
-                Expr const *e = compiler_find_expr(ty, site->ip);
-                Expr const *fe = compiler_find_func(ty, site->ip);
+                Expr const *e = compiler_find_expr(ty, site->ip - 1);
+                Expr const *fe = compiler_find_func(ty, site->ip - 1);
                 fprintf(f, "%s{\"kind\":", (i > 0) ? "," : "");
                 json_str(f, site_kind_names[site->kind]);
                 fprintf(

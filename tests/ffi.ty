@@ -32,3 +32,39 @@ pub fn sorting() {
     }
     assert(check(1 << 12))
 }
+
+C! struct Holder {
+    int x;
+};
+
+pub fn integer-fields-take-addresses() {
+    let p = c.new-auto(c.u64)
+    let b = Blob('xyz')
+    let h = Holder(x: 1)
+
+    c.store(c.u64, p, b)
+    assert(c.load(c.u64, p) == int(b.ptr()))
+
+    c.store(c.u64, p, h)
+    assert(c.load(c.u64, p) == int(h.get()))
+
+    c.store(c.u64, p, 'abc')
+    assert(c.load(c.u64, p) != 0)
+
+    c.store(c.u64, p, nil)
+    assert(c.load(c.u64, p) == 0)
+
+    c.store(c.i32, p, true)
+    assert(c.load(c.i32, p) == 1)
+
+    c.store(c.i32, p, 3.9)
+    assert(c.load(c.i32, p) == 3)
+
+    let err = try {
+        c.store(c.u64, p, %{})
+        nil
+    } catch e {
+        e
+    }
+    assert("{err}".match?(/non-addressable/))
+}

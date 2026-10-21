@@ -38,8 +38,20 @@ char const *const DirNames[DIR_COUNT] = {
 #undef X
 };
 
-static char const    *Dirs[DIR_COUNT];
-static pthread_once_t Once = PTHREAD_ONCE_INIT;
+static char const     *Dirs[DIR_COUNT];
+static bool            Ready = false;
+static pthread_mutex_t Lock  = PTHREAD_MUTEX_INITIALIZER;
+
+static char const *const Vars[] = {
+        HOME_VAR,
+        USER_VAR,
+        "TMPDIR",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "PUBLIC",
+};
 
 static char *
 Join(char const *dir, char const *sub, usize n)
@@ -330,8 +342,45 @@ dirs_tmp(usize *n)
 char const *
 dirs_get(int which)
 {
-        pthread_once(&Once, Init);
-        return Dirs[which];
+        char const *dir;
+
+        pthread_mutex_lock(&Lock);
+
+        if (!Ready) {
+                Init();
+                Ready = true;
+        }
+
+        dir = Dirs[which];
+
+        pthread_mutex_unlock(&Lock);
+
+        return dir;
+}
+
+bool
+dirs_affected(char const *var)
+{
+        if (strncmp(var, "XDG_", 4) == 0) {
+                return true;
+        }
+
+        for (usize i = 0; i < countof(Vars); ++i) {
+                if (strcmp(var, Vars[i]) == 0) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+void
+dirs_reload(void)
+{
+        pthread_mutex_lock(&Lock);
+        Init();
+        Ready = true;
+        pthread_mutex_unlock(&Lock);
 }
 
 bool

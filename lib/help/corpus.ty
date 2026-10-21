@@ -14,8 +14,7 @@ pub const VERSION = 6
 const TYPE_WIDTH = 78
 const MAX_SOURCE_LINES = 120
 const SKIP_MODULES = %{'main', 'help/dump'}
-const SKIP_DIRS = %{'bin': true, 'lib': true, 'test': true, 'tests': true}
-const SNIPPET = ['src', 'hsrc', 'lang', 'file', 'line']
+const SKIP_DIRS = %{'bin', 'lib', 'test', 'tests'}
 
 pub class Snippet {
     src:  ?String
@@ -25,11 +24,10 @@ pub class Snippet {
     line: ?Int
 
     init(d: Dict[String, _]) {
-        src  = d['src']
-        hsrc = d['hsrc']
-        lang = d['lang'] ?? 'ty'
-        file = d['file']
-        line = d['line']
+        for k, _ in Snippet.__fields__ {
+            self.{k} = d[k]
+        }
+        lang ?= 'ty'
     }
 }
 
@@ -56,26 +54,11 @@ pub class Entry {
     key:   String
 
     init(d: Dict[String, _]) {
-        name  = d['name']
-        qual  = d['qual']
-        mod   = d['mod']
-        owner = d['owner']
-        kind  = d['kind']
-        type  = d['type']
-        ctype = d['ctype']
-        wtype = d['wtype']
-        decl  = d['decl']
-        hdecl = d['hdecl']
-        doc   = d['doc']
-        src   = d['src']
-        hsrc  = d['hsrc']
-        lang  = d['lang']
-        file  = d['file']
-        line  = d['line']
-        lhs   = d['lhs']
-        rhs   = d['rhs']
-        more  = (d['more'] ?? []).map(Snippet)
-        key   = fold(name)
+        for k, _ in Entry.__fields__ {
+            self.{k} = d[k]
+        }
+        more = (more ?? []).map(Snippet)
+        key  = fold(name)
     }
 }
 
@@ -193,16 +176,15 @@ fn overloads(text: String) -> Array[String] {
     out.filter(\_ != '')
 }
 
-fn spelling-pattern(name: String) -> String {
+fn spelling-pattern(name: String) -> Regex {
     name.chars().map(match {
-        /[A-Z]/ => "(?:{$0}|-{$0.lower()})",
-        /\w/    => $0,
-        c       => "\\{c}"
-    }).join()
+        /[A-Z]/ => /(?:${$0}|-${$0.lower()})/,
+        c       => /${c}/
+    }).fold(/(?:)/, (r, c) -> /${r}${c}/)
 }
 
 fn spelling(name: String) -> Regex {
-    regex(['(?<![\\w-])', spelling-pattern(name), '(?![\\w?!-])'].join())
+    /(?<![\w-])${spelling-pattern(name)}(?![\w?!-])/
 }
 
 class Source {
@@ -399,7 +381,7 @@ class Harvest {
         }
         origin['decl']  = joined(arms.map(&['proto']))
         origin['hdecl'] = joined(arms.map(&['hdecl']))
-        origin['more']  = rest.map(arm -> %{k: arm[k] for k in SNIPPET})
+        origin['more']  = rest.map(arm -> %{k: arm[k] for k, _ in Snippet.__fields__})
         origin
     }
 
@@ -420,11 +402,8 @@ class Harvest {
     }
 
     statement(name: String) -> Dict[String, _] {
-        let pattern = regex([
-            '(?m)^[ \\t]*(?:pub\\s+)?(?:use|type|tag|const|let|macro|ns|class|fn|trait)\\b[^\\n]*?',
-            spelling(name).source
-        ].join())
-        let $i = here.text.bsearch(pattern) or return %{}
+        let intro = /^[ \t]*(?:pub\s+)?(?:use|type|tag|const|let|macro|ns|class|fn|trait)\b[^\n]*?/
+        let $i = here.text.bsearch(/${intro}${spelling(name)}/m) or return %{}
         let line = here.text.bslice(0, i).count('\n')
         let depth = 0
         let rows = 0
@@ -594,12 +573,8 @@ class Harvest {
 
     declared(name: String, kind: String, body: Body) -> Array[(String, String | nil)] {
         return [] if !body.text.contains?(kebab(name)) && !body.text.contains?(name)
-        let head = regex([
-            "^{body.indent}",
-            (kind == 'static') ? 'static\\s+' : '(?!static\\s)',
-            spelling-pattern(name),
-            '(?=\\s*[(\\[]|\\s*->|\\s*;?\\s*$)'
-        ].join())
+        let modifier = (kind == 'static') ? /static\s+/ : /(?!static\s)/
+        let head = /^${body.indent}${modifier}${spelling-pattern(name)}(?=\s*[(\[]|\s*->|\s*;?\s*$)/
         let found = []
         for line; i in body.lines if head.test(line) && bracket-depth(line) == 0 {
             found.push(decl-line(body.first + i, name))
@@ -613,7 +588,7 @@ class Harvest {
         let rest = text.bslice(i)
         let cut = body-start(rest) ?? #rest
         let decl = rest[;cut].trim().comb(/;$/)
-        let stop = here.at(line) + i + rest[;cut].trim().comb(/;$/).size()
+        let stop = here.at(line) + i + decl.size()
         let proto = decl.bslice(decl.bsearch(/[(\[]|\s*->/) ?? decl.size())
         (proto, here.paint(here.at(line) + i, stop))
     }
@@ -685,22 +660,24 @@ pub fn module-file(name: String) -> Path | nil {
 }
 
 pub fn library-modules() -> Dict[String, Path] {
-    let found = %{}
-    for dir in ty.path.map(Path).nub().filter(&.dir?) {
-        for scan(dir, dir) {
-            let name = str(it.relative-to(dir).with-suffix(''))
-            found[name] = found[name] ?? it
-        }
+    %{
+        str(name): file
+        for root in ty.path.map(Path).nub().filter(&.dir?).reverse()
+        for (name, file) in modules-under(root)
     }
-    found
 }
 
-fn scan(root: Path, dir: Path) -> Array[Path] {
-    let files = dir.glob('*.ty')
-    for sub in dir.ls() if sub.dir? && sub.name.match?(/^[A-Za-z_]\w*$/) && sub.name not in SKIP_DIRS {
-        files += scan(root, sub)
+fn modules-under(root: Path) -> Array[(Path, Path)] {
+    root.rglob('*.ty')
+        .map(file -> (file.relative-to(root).with-suffix(''), file))
+        .filter(|(name, _)| -> importable?(name))
+}
+
+fn importable?(name: Path) -> Bool {
+    match name.parts {
+        [top, _, *] and top in SKIP_DIRS => false,
+        [*dirs, _]                       => dirs.all?(/^[A-Za-z_]\w*$/)
     }
-    files
 }
 
 pub fn builtin-modules() -> Array[String] {

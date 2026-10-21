@@ -3,6 +3,7 @@ import os
 import path (Path)
 import sh
 import ty
+import ty.test (Test)
 
 const PROBE = 'import dirs; for [dirs.HOME, dirs.CACHE, dirs.STATE, dirs.RUNTIME] { print(it) }'
 
@@ -46,4 +47,38 @@ pub fn relative-xdg-values-are-ignored() {
 pub fn runtime-falls-back-to-tmpdir() {
     let [_, _, _, runtime] = probe()
     assert(runtime == os.tmpdir())
+}
+
+fn following(t: Test, env: Dict[String, ?String]) -> [String] {
+    for k in [k for k, _ in __env if k.match?(/^XDG_\w+$/)] {
+        t.unsetenv(k)
+    }
+    for k, v in env {
+        match v {
+            nil => t.unsetenv(k),
+            _   => t.setenv(k, v)
+        }
+    }
+    [dirs.HOME, dirs.CACHE, dirs.STATE, dirs.RUNTIME].map(str)
+}
+
+pub fn setenv-moves-them-like-a-fresh-process(t: Test) {
+    let env = %{'HOME': '/h', 'XDG_CACHE_HOME': '/x/cache', 'XDG_STATE_HOME': nil}
+    assert(following(t, env) == probe(%{'HOME': '/h', 'XDG_CACHE_HOME': '/x/cache'}))
+}
+
+pub fn unsetenv-falls-back(t: Test) {
+    t.setenv('XDG_CACHE_HOME', '/x/cache')
+    let env = %{'HOME': '/h', 'XDG_CACHE_HOME': nil, 'XDG_STATE_HOME': nil}
+    assert(following(t, env) == probe(%{'HOME': '/h'}))
+}
+
+pub fn cleanup-puts-them-back(t: Test) {
+    let old = dirs.CACHE
+    t.step('moved', () -> do {
+        t.setenv('XDG_CACHE_HOME', '/elsewhere')
+        assert(dirs.CACHE == '/elsewhere')
+    })
+    t.pop-cleanup()!()
+    assert(dirs.CACHE == old)
 }

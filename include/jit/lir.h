@@ -98,7 +98,8 @@ typedef enum lir_call_flags {
         LIR_CALL_SITE       = 1 << 4,
         LIR_READS_NO_LOCALS = 1 << 5,
         LIR_WRITES_LOCALS   = 1 << 6,
-        LIR_REFRESH         = 1 << 7
+        LIR_REFRESH         = 1 << 7,
+        LIR_FAST_PATH       = 1 << 8
 } LirCallFlags;
 
 typedef struct lir_sig {

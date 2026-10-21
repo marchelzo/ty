@@ -28,6 +28,9 @@ NilStackRange(Ty *ty, usize i, usize n)
 bool
 vm_init(Ty *ty, int ac, char **av);
 
+void
+vm_reload_dirs(Ty *ty);
+
 Ty *
 vm_new_debug_ty(void);
 

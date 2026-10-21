@@ -44,16 +44,6 @@ float_from(Value const *v)
         return (v->type == VALUE_INTEGER) ? v->z : v->real;
 }
 
-inline static imax
-int_from(Value const *v)
-{
-        switch (v->type) {
-        case VALUE_INTEGER: return v->z;
-        case VALUE_PTR:     return (iptr)v->ptr;
-        default:            return v->real;
-        }
-}
-
 bool
 ptr_from_ty(Ty *ty, Value const *v, void **out)
 {
@@ -112,44 +102,56 @@ ptr_from(Ty *ty, Value const *v)
         return p;
 }
 
+inline static imax
+int_from(Ty *ty, Value const *v)
+{
+        switch (v->type) {
+        case VALUE_INTEGER: return v->z;
+        case VALUE_REAL:    return v->real;
+        case VALUE_BOOLEAN: return v->boolean;
+        case VALUE_PTR:     return (iptr)v->ptr;
+        default:            return (imax)(iptr)ptr_from(ty, v);
+        }
+}
+
 static void
 xstore(Ty *ty, ffi_type *t, void *p, Value const *v)
 {
         switch (t->type) {
         case FFI_TYPE_INT:
-                *(_Atomic int *)p = int_from(v);
+                *(_Atomic int *)p = int_from(ty, v);
                 break;
 
         case FFI_TYPE_UINT8:
-                *(_Atomic u8 *)p = int_from(v);
+                *(_Atomic u8 *)p = int_from(ty, v);
                 break;
 
         case FFI_TYPE_UINT16:
-                *(_Atomic u16 *)p = int_from(v);
+                *(_Atomic u16 *)p = int_from(ty, v);
                 break;
 
         case FFI_TYPE_UINT32:
-                *(_Atomic u32 *)p = int_from(v);
+                *(_Atomic u32 *)p = int_from(ty, v);
                 break;
 
         case FFI_TYPE_UINT64:
-                *(_Atomic u64 *)p = int_from(v);
+                *(_Atomic u64 *)p = int_from(ty, v);
                 break;
 
         case FFI_TYPE_SINT8:
-                *(_Atomic i8 *)p = int_from(v);
+                *(_Atomic i8 *)p = int_from(ty, v);
                 break;
 
         case FFI_TYPE_SINT16:
-                *(_Atomic i16 *)p = int_from(v);
+                *(_Atomic i16 *)p = int_from(ty, v);
                 break;
 
         case FFI_TYPE_SINT32:
-                *(_Atomic i32 *)p = int_from(v);
+                *(_Atomic i32 *)p = int_from(ty, v);
                 break;
 
         case FFI_TYPE_SINT64:
-                *(_Atomic i64 *)p = int_from(v);
+                *(_Atomic i64 *)p = int_from(ty, v);
                 break;
 
         case FFI_TYPE_POINTER:
@@ -169,39 +171,39 @@ store(Ty *ty, ffi_type *t, void *p, Value const *v)
 
         switch (t->type) {
         case FFI_TYPE_INT:
-                *(int *)p = int_from(v);
+                *(int *)p = int_from(ty, v);
                 break;
 
         case FFI_TYPE_UINT8:
-                *(u8 *)p = int_from(v);
+                *(u8 *)p = int_from(ty, v);
                 break;
 
         case FFI_TYPE_UINT16:
-                *(u16 *)p = int_from(v);
+                *(u16 *)p = int_from(ty, v);
                 break;
 
         case FFI_TYPE_UINT32:
-                *(u32 *)p = int_from(v);
+                *(u32 *)p = int_from(ty, v);
                 break;
 
         case FFI_TYPE_UINT64:
-                *(u64 *)p = int_from(v);
+                *(u64 *)p = int_from(ty, v);
                 break;
 
         case FFI_TYPE_SINT8:
-                *(i8 *)p = int_from(v);
+                *(i8 *)p = int_from(ty, v);
                 break;
 
         case FFI_TYPE_SINT16:
-                *(i16 *)p = int_from(v);
+                *(i16 *)p = int_from(ty, v);
                 break;
 
         case FFI_TYPE_SINT32:
-                *(i32 *)p = int_from(v);
+                *(i32 *)p = int_from(ty, v);
                 break;
 
         case FFI_TYPE_SINT64:
-                *(i64 *)p = int_from(v);
+                *(i64 *)p = int_from(ty, v);
                 break;
 
         case FFI_TYPE_FLOAT:
@@ -1458,7 +1460,7 @@ TY_BUILTIN_RAW(ffi_pack)
                                 break;
 
                         default:
-                                _z = (u64)int_from(&v);
+                                _z = (u64)int_from(ty, &v);
                                 if (big) {
                                         for (int k = size - 1; k >= 0; --k) {
                                                 buf[off + k] = _z & 0xff;

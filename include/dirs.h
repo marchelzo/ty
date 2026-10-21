@@ -40,6 +40,12 @@ char const *
 dirs_tmp(usize *n);
 
 bool
+dirs_affected(char const *var);
+
+void
+dirs_reload(void);
+
+bool
 dirs_path(char *out, usize n, int which, char const *fmt, ...);
 
 #endif

@@ -1,4 +1,12 @@
-import io_uring (IoUring, CQE, IORING_OP_NOP)
+import io_uring (
+    IoUring,
+    IoUringError,
+    CQE,
+    IOSQE_IO_LINK,
+    IORING_SETUP_SQPOLL,
+    IORING_FSYNC_DATASYNC
+)
+import errno
 import ffi as c (C!)
 import os
 
@@ -167,23 +175,25 @@ pub fn test-peek-empty() {
     ring.close()
 }
 
-pub fn test-sq-full() {
+pub fn test-sq-full-submits() {
     let ring = IoUring(entries: 4)
+    let total = ring.sq-entries * 3 + 1
 
-    for _ in ..ring.sq-entries {
-        ring.prep-nop()
+    for i in ..total {
+        ring.prep-nop(user: i)
     }
 
-    let threw? = false
-    try {
-        ring.prep-nop()
-    } catch _ {
-        threw? = true
-    }
-    assert(threw?)
+    ring.submit()
 
-    ring.submit-and-wait(ring.sq-entries)
-    ring.advance-cq(ring.sq-entries)
+    let got = []
+    while #got < total {
+        ring.wait(1)
+        ring.each-cqe(|user, res, flags| -> got.push(user))
+    }
+
+    assert(#got == total)
+    assert(%[*got] == Set(..total))
+
     ring.close()
 }
 
@@ -229,6 +239,311 @@ pub fn test-file-read-at-offset() {
     c.free(buf)
     os.close(fd2)
     os.unlink(name)
+    ring.close()
+}
+pub fn test-error-message() {
+    let e = IoUringError(errno.EBUSY, 'SQ ring full')
+    assert(e.code == errno.EBUSY)
+    assert(e.what == "SQ ring full: {errno.str(errno.EBUSY)}")
+}
+
+pub fn test-ring-reuse-past-capacity() {
+    let ring = IoUring(entries: 4)
+    let got = []
+
+    for round in ..10 {
+        for i in ..ring.sq-entries {
+            ring.prep-nop(user: round * 100 + i)
+        }
+        ring.submit-and-wait(ring.sq-entries)
+        ring.each-cqe(|user, res, flags| -> got.push(user))
+    }
+
+    assert(#got == 10 * ring.sq-entries)
+    assert(%[*got] == %[r * 100 + i for r in ..10 for i in ..ring.sq-entries])
+
+    ring.close()
+}
+
+pub fn test-each-cqe-throwing-callback-consumes-once() {
+    let ring = IoUring(entries: 8)
+
+    for i in ..4 {
+        ring.prep-nop(user: i)
+    }
+    ring.submit-and-wait(4)
+
+    let seen = []
+    try {
+        ring.each-cqe(fn (user, res, flags) {
+            seen.push(user)
+            if #seen == 2 {
+                throw RuntimeError('stop')
+            }
+        })
+    } catch _: RuntimeError {
+    }
+
+    assert(#seen == 2)
+
+    let rest = []
+    ring.each-cqe(|user, res, flags| -> rest.push(user))
+
+    assert(#rest == 2)
+    assert(%[*seen, *rest] == Set(..4))
+
+    ring.close()
+}
+
+pub fn test-close-twice() {
+    let ring = IoUring(entries: 4)
+    ring.close()
+    ring.close()
+    assert(ring.fd == -1)
+}
+
+pub fn test-cq-size() {
+    let ring = IoUring(entries: 4, cq-size: 64)
+    assert(ring.cq-entries == 64)
+    ring.close()
+}
+
+pub fn test-wait-timeout() {
+    let ring = IoUring(entries: 4)
+
+    ring.wait(1, timeout: 0.01)
+    assert(#ring.peek-cqes() == 0)
+    assert(ring.wait-cqe(timeout: 0.01) == nil)
+
+    ring.close()
+}
+
+pub fn test-timeout-op() {
+    let ring = IoUring(entries: 4)
+
+    ring.prep-timeout(0.01, user: 7)
+    ring.submit()
+
+    let cqe = ring.wait-cqe()
+    assert(cqe.user == 7)
+    assert(cqe.res == -errno.ETIME)
+
+    ring.prep-nop(user: 0)
+    ring.prep-timeout(0.06, user: 1)
+    ring.prep-timeout(0.02, user: 2)
+    ring.submit()
+
+    let order = [ring.wait-cqe().user for _ in ..3]
+    assert(order == [0, 2, 1])
+
+    ring.close()
+}
+
+pub fn test-cancel() {
+    let ring = IoUring(entries: 4)
+
+    ring.prep-timeout(10, user: 1)
+    ring.submit()
+
+    ring.prep-cancel(1, user: 2)
+    ring.submit-and-wait(2)
+
+    let res = %{cqe.user: cqe.res for cqe in ring.peek-cqes()}
+    ring.advance-cq(#res)
+
+    assert(res[1] == -errno.ECANCELED)
+    assert(res[2] == 0)
+
+    ring.close()
+}
+
+pub fn test-link-timeout() {
+    let (r, w) = os.pipe()
+    let ring = IoUring(entries: 4)
+    let buf = c.alloc(8)
+
+    ring.prep-read(r, buf, 8, user: 1, sqe-flags: IOSQE_IO_LINK)
+    ring.prep-link-timeout(0.01, user: 2)
+    ring.submit-and-wait(2)
+
+    let res = %{cqe.user: cqe.res for cqe in ring.peek-cqes()}
+    ring.advance-cq(#res)
+
+    assert(res[1] == -errno.ECANCELED)
+    assert(res[2] in [-errno.ETIME, -errno.EALREADY])
+
+    c.free(buf)
+    os.close(r)
+    os.close(w)
+    ring.close()
+}
+
+pub fn test-poll-add() {
+    let (r, w) = os.pipe()
+    let ring = IoUring(entries: 4)
+
+    ring.prep-poll-add(r, os.POLLIN, user: 5)
+    ring.submit()
+    os.write(w, 'x')
+
+    let cqe = ring.wait-cqe()
+    assert(cqe.user == 5)
+    assert((cqe.res & os.POLLIN) != 0)
+
+    os.close(r)
+    os.close(w)
+    ring.close()
+}
+
+pub fn test-readv-writev() {
+    let (r, w) = os.pipe()
+    let ring = IoUring(entries: 4)
+    let iov-t = c.struct(c.ptr, c.u64)
+
+    let (a, b) = (c.alloc(3), c.alloc(4))
+    memcpy(a, 'foo', 3)
+    memcpy(b, 'barz', 4)
+
+    let wiov = c.new(iov-t, 2)
+    c.store(iov-t, wiov, (a, 3))
+    c.store(iov-t, wiov + 1, (b, 4))
+
+    ring.prep-writev(w, wiov, 2, user: 1)
+    ring.submit-and-wait(1)
+    assert(ring.wait-cqe().res == 7)
+
+    let (x, y) = (c.alloc(4), c.alloc(3))
+    let riov = c.new(iov-t, 2)
+    c.store(iov-t, riov, (x, 4))
+    c.store(iov-t, riov + 1, (y, 3))
+
+    ring.prep-readv(r, riov, 2, user: 2)
+    ring.submit-and-wait(1)
+    assert(ring.wait-cqe().res == 7)
+    assert(c.str(x, 4) == 'foob')
+    assert(c.str(y, 3) == 'arz')
+
+    for p in [a, b, x, y, wiov, riov] {
+        c.free(p)
+    }
+    os.close(r)
+    os.close(w)
+    ring.close()
+}
+
+pub fn test-fsync() {
+    let (fd, name) = os.mktemp('uring_fsync')
+    let ring = IoUring(entries: 4)
+
+    os.write(fd, 'data')
+    ring.prep-fsync(fd, IORING_FSYNC_DATASYNC, user: 3)
+    ring.submit()
+
+    let cqe = ring.wait-cqe()
+    assert(cqe.user == 3)
+    assert(cqe.res == 0)
+
+    os.close(fd)
+    os.unlink(name)
+    ring.close()
+}
+
+pub fn test-socket-send-recv() {
+    let (a, b) = os.socketpair(os.AF_UNIX, os.SOCK_STREAM, 0)
+    let ring = IoUring(entries: 4)
+    let msg = 'ping'
+    let sbuf = c.alloc(#msg)
+    let rbuf = c.alloc(16)
+    memcpy(sbuf, msg, #msg)
+
+    ring.prep-send(a, sbuf, #msg, user: 1)
+    ring.prep-recv(b, rbuf, 16, user: 2)
+    ring.submit-and-wait(2)
+
+    let res = %{cqe.user: cqe.res for cqe in ring.peek-cqes()}
+    ring.advance-cq(#res)
+
+    assert(res[1] == #msg)
+    assert(res[2] == #msg)
+    assert(c.str(rbuf, #msg) == msg)
+
+    ring.prep-socket(os.AF_UNIX, os.SOCK_STREAM, user: 3)
+    ring.submit()
+    let sock = ring.wait-cqe()
+    assert(sock.user == 3)
+    assert(sock.res >= 0)
+
+    c.free(sbuf)
+    c.free(rbuf)
+    for fd in [a, b, sock.res] {
+        os.close(fd)
+    }
+    ring.close()
+}
+
+pub fn test-blob-and-string-buffers() {
+    let (r, w) = os.pipe()
+    let ring = IoUring(entries: 4)
+    let out = Blob('blob-data')
+    let msg = 'str-data'
+    let rbuf = Blob.zeros(32)
+
+    ring.prep-write(w, out, #out, user: 1)
+    ring.submit-and-wait(1)
+    assert(ring.wait-cqe().res == #out)
+
+    ring.prep-write(w, msg, #msg, user: 2)
+    ring.submit-and-wait(1)
+    assert(ring.wait-cqe().res == #msg)
+
+    ring.prep-read(r, rbuf, 32, user: 3)
+    ring.submit-and-wait(1)
+    let n = ring.wait-cqe().res
+    assert(rbuf.str(0, n) == 'blob-datastr-data')
+
+    os.close(r)
+    os.close(w)
+    ring.close()
+}
+
+pub fn test-each-cqe-batches() {
+    let ring = IoUring(entries: 256, cq-size: 512)
+
+    for i in ..200 {
+        ring.prep-nop(user: i)
+    }
+    ring.submit-and-wait(200)
+
+    let seen = []
+    try {
+        ring.each-cqe(fn (user, res, flags) {
+            seen.push(user)
+            if #seen == 100 {
+                throw RuntimeError('stop')
+            }
+        })
+    } catch _: RuntimeError {
+    }
+    assert(#seen == 100)
+
+    let rest = []
+    assert(ring.each-cqe(|user, res, flags| -> rest.push(user)) == 100)
+    assert(%[*seen, *rest] == Set(..200))
+
+    ring.close()
+}
+
+pub fn test-sqpoll() {
+    let ring = IoUring(entries: 4, flags: IORING_SETUP_SQPOLL, sq-idle-ms: 1)
+
+    for round in ..3 {
+        ring.prep-nop(user: round)
+        ring.submit()
+        let cqe = ring.wait-cqe()
+        assert(cqe.user == round)
+        os.sleep(0.05)
+    }
+
     ring.close()
 }
 #|]

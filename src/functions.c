@@ -2398,6 +2398,10 @@ TY_BUILTIN_RAW(setenv)
 #else
         setenv(key, val, 1);
 #endif
+        if (dirs_affected(key)) {
+                vm_reload_dirs(ty);
+        }
+
         return NIL;
 }
 
@@ -2413,6 +2417,10 @@ TY_BUILTIN_RAW(unsetenv)
 #else
         unsetenv(key);
 #endif
+        if (dirs_affected(key)) {
+                vm_reload_dirs(ty);
+        }
+
         return NIL;
 }
 

@@ -182,6 +182,9 @@ static char pop_ret[]  = { INSTR_POP, INSTR_RETURN_PRESERVE_CTX };
 InternedNames NAMES;
 ValueVector Globals;
 
+static int  DirSlots[DIR_COUNT];
+static bool DirsBound = false;
+
 Value LOTS_OF_NILS[2048];
 /* ========================================================================== */
 
@@ -958,8 +961,11 @@ add_builtins(Ty *ty, int ac, char **av)
                 char const *dir = dirs_get(i);
                 Symbol *sym = compiler_introduce_symbol(ty, "dirs", DirNames[i], "String", false);
                 sym->flags |= SYM_CONST;
+                DirSlots[i] = vN(Globals);
                 xvP(Globals, vSsz(dir));
         }
+
+        DirsBound = true;
 
         Dict *env = dict_new(ty);
 
@@ -10462,6 +10468,20 @@ RunTestHarness(Ty *ty, char **args, int n)
         }
 
         return rc;
+}
+
+void
+vm_reload_dirs(Ty *ty)
+{
+        dirs_reload();
+
+        if (!DirsBound) {
+                return;
+        }
+
+        for (int i = 0; i < DIR_COUNT; ++i) {
+                *v_(Globals, DirSlots[i]) = vSsz(dirs_get(i));
+        }
 }
 
 bool

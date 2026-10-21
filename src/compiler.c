@@ -539,6 +539,9 @@ static void
 DefinePending(Ty *ty);
 
 static void
+SeedConst(Ty *ty, Symbol const *sym, Expr *value);
+
+static void
 AddClassTraits(Ty *ty, ClassDefinition const *def);
 
 static void
@@ -6071,20 +6074,9 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 );
                 if (
                         (s->target->type == EXPRESSION_IDENTIFIER)
-                     && (s->value->type  == EXPRESSION_IDENTIFIER)
-                     && IsTopLevel(s->value->symbol)
                      && SymbolIsConst(s->target->symbol)
                 ) {
-                        u32 i = s->target->symbol->i;
-                        u32 j = s->value->symbol->i;
-                        while (vN(Globals) <= i) {
-                                Symbol *sym = v__(
-                                        GlobalScope->owned,
-                                        vN(Globals)
-                                );
-                                xvP(Globals, UNINITIALIZED(sym));
-                        }
-                        *v_(Globals, i) = v__(Globals, j);
+                        SeedConst(ty, s->target->symbol, s->value);
                 }
                 break;
 
@@ -10873,6 +10865,160 @@ emit_non_nil_expr(Ty *ty, Expr const *e, bool none)
         PATCH_JUMP(good);
 }
 
+static Expr const *
+PlainSignature(Expr const *f)
+{
+        if (
+                (f == NULL)
+             || (f->type != EXPRESSION_FUNCTION && f->type != EXPRESSION_GENERATOR)
+             || !HasBody(f)
+             || (f->overload != NULL)
+             || (vN(f->decorators) > 0)
+             || (f->rest != -1)
+             || (f->ikwargs != -1)
+        ) {
+                return NULL;
+        }
+
+        return f;
+}
+
+static Expr const *
+StaticCallee(Symbol const *sym)
+{
+        return (
+                (sym != NULL)
+             && SymbolIsConst(sym)
+             && !(sym->flags & SYM_BUILTIN)
+        ) ? PlainSignature(sym->expr) : NULL;
+}
+
+static Expr const *
+StaticMethod(Ty *ty, Expr const *method)
+{
+        if (
+                (STATE.class == NULL)
+             || !IsPrivateMember(method->identifier)
+             || (MemberAccessType(ty, method->symbol, STATE.fscope) != SELF_FROM_SELF)
+        ) {
+                return NULL;
+        }
+
+        ExprVec const *ms    = &STATE.class->def->class.methods;
+        Expr const    *found = NULL;
+
+        for (usize i = 0; i < vN(*ms); ++i) {
+                Expr const *m = v__(*ms, i);
+                if (m->name != NULL && s_eq(m->name, method->identifier)) {
+                        if (found != NULL) {
+                                return NULL;
+                        }
+                        found = m;
+                }
+        }
+
+        return PlainSignature(found);
+}
+
+static bool
+IsInert(Expr const *e)
+{
+        switch (e->type) {
+        case EXPRESSION_IDENTIFIER:
+        case EXPRESSION_INTEGER:
+        case EXPRESSION_REAL:
+        case EXPRESSION_BOOLEAN:
+        case EXPRESSION_STRING:
+        case EXPRESSION_NIL:
+                return true;
+
+        default:
+                return false;
+        }
+}
+
+static bool
+PositionalKwargs(
+        Ty *ty,
+        Expr const *f,
+        ExprVec const *args,
+        ExprVec const *conds,
+        StringVector const *kws,
+        ExprVec const *kwargs,
+        ExprVec const *kwconds,
+        ExprVec *out
+)
+{
+        if (
+                (f == NULL)
+             || (vN(*kws) == 0)
+             || any_variadic(vv(*args), vv(*conds), vN(*args))
+        ) {
+                return false;
+        }
+
+        usize np    = vN(f->params);
+        usize na    = vN(*args);
+        isize last  = -1;
+        bool  inert = true;
+        bool  order = true;
+
+        for (usize i = 0; i < na; ++i) {
+                if (is_placeholder(v__(*args, i))) {
+                        return false;
+                }
+        }
+
+        Expr **slots = amA0(np * sizeof *slots);
+
+        for (usize i = 0; i < vN(*kws); ++i) {
+                isize j = -1;
+
+                for (usize k = na; k < np; ++k) {
+                        if (s_eq(v__(f->params, k), v__(*kws, i))) {
+                                j = k;
+                                break;
+                        }
+                }
+
+                if (
+                        (j < 0)
+                     || (slots[j] != NULL)
+                     || ((kwconds != NULL) && (v__(*kwconds, i) != NULL))
+                ) {
+                        return false;
+                }
+
+                slots[j] = v__(*kwargs, i);
+                inert &= IsInert(slots[j]);
+                order &= (j > last);
+                last   = j;
+        }
+
+        if (!inert && !order) {
+                return false;
+        }
+
+        isize end = 0;
+        for (usize k = na; k < np; ++k) {
+                if (slots[k] != NULL) {
+                        end = k + 1;
+                }
+        }
+
+        v00(*out);
+
+        for (usize i = 0; i < na; ++i) {
+                avP(*out, v__(*args, i));
+        }
+
+        for (isize k = na; k < end; ++k) {
+                avP(*out, (slots[k] != NULL) ? slots[k] : NewExpr(ty, EXPRESSION_NIL));
+        }
+
+        return true;
+}
+
 static void
 EmitMethodCall(
         Ty *ty,
@@ -10887,6 +11033,42 @@ EmitMethodCall(
         bool strict
 )
 {
+        ExprVec positional = {0};
+        ExprVec nulls      = {0};
+
+        if (
+                (object == NULL)
+             && !dyn
+             && (vN(*kws) > 0)
+             && PositionalKwargs(
+                        ty,
+                        StaticMethod(ty, method),
+                        args,
+                        conds,
+                        kws,
+                        kwargs,
+                        kwconds,
+                        &positional
+                )
+        ) {
+                for (usize i = 0; i < vN(positional); ++i) {
+                        avP(nulls, NULL);
+                }
+                EmitMethodCall(
+                        ty,
+                        NULL,
+                        method,
+                        false,
+                        &positional,
+                        &nulls,
+                        &(StringVector){0},
+                        &(ExprVec){0},
+                        NULL,
+                        strict
+                );
+                return;
+        }
+
         bool variadic = any_variadic(vv(*args), vv(*conds), vN(*args));
 
         if (variadic) {
@@ -10966,6 +11148,35 @@ EmitMethodCall(
 static void
 EmitFunctionCall(Ty *ty, Expr const *e)
 {
+        ExprVec positional = {0};
+
+        if (
+                (vN(e->kws) > 0)
+             && (e->function->type == EXPRESSION_IDENTIFIER)
+             && PositionalKwargs(
+                        ty,
+                        StaticCallee(e->function->symbol),
+                        &e->args,
+                        &e->fconds,
+                        &e->kws,
+                        &e->kwargs,
+                        &e->fkwconds,
+                        &positional
+                )
+        ) {
+                Expr call = *e;
+                call.args     = positional;
+                call.fconds   = (ExprVec){0};
+                call.kwargs   = (ExprVec){0};
+                call.fkwconds = (ExprVec){0};
+                call.kws      = (StringVector){0};
+                for (usize i = 0; i < vN(positional); ++i) {
+                        avP(call.fconds, NULL);
+                }
+                EmitFunctionCall(ty, &call);
+                return;
+        }
+
         bool variadic = is_variadic(e);
 
         if (variadic) {
@@ -12689,6 +12900,59 @@ zfold(Expr *e, Scope *scope, void *ctx)
         e->type = EXPRESSION_INTEGER;
 
         return e;
+}
+
+static void
+SeedGlobal(Ty *ty, Symbol const *sym, Value v)
+{
+        while (vN(Globals) <= sym->i) {
+                Symbol *g = v__(GlobalScope->owned, vN(Globals));
+                xvP(Globals, UNINITIALIZED(g));
+        }
+
+        *v_(Globals, sym->i) = v;
+}
+
+static bool
+LiteralValue(Ty *ty, Expr const *e, Value *out)
+{
+        switch (e->type) {
+        case EXPRESSION_INTEGER: *out = INTEGER(e->integer);                   return true;
+        case EXPRESSION_REAL:    *out = REAL(e->real);                         return true;
+        case EXPRESSION_BOOLEAN: *out = BOOLEAN(e->boolean);                   return true;
+        case EXPRESSION_STRING:  *out = vSs(e->string.data, e->string.length); return true;
+        default:                                                               return false;
+        }
+}
+
+static void
+SeedConst(Ty *ty, Symbol const *sym, Expr *value)
+{
+        Value v;
+
+        if (
+                (value->type == EXPRESSION_IDENTIFIER)
+             && (value->symbol != NULL)
+             && IsTopLevel(value->symbol)
+        ) {
+                SeedGlobal(ty, sym, v__(Globals, value->symbol->i));
+                return;
+        }
+
+        if (!IsTopLevel(sym)) {
+                return;
+        }
+
+        if (HAVE_COMPILER_FLAG(ZFOLD)) {
+                VisitorCtx visitor = visit_identity(ty);
+                visitor.e_post = zfold;
+                visitor.t_post = zfold;
+                value = visit_expression(ty, value, NULL, &visitor);
+        }
+
+        if (LiteralValue(ty, value, &v)) {
+                SeedGlobal(ty, sym, v);
+        }
 }
 
 static Stmt *

@@ -304,6 +304,49 @@ kernel! fn literals(x: Float) -> Float {
     x * a + float(b) + 1.5 / 0.5
 }
 
+const K_BASE  = 1000
+const K_SHIFT = 1 << 4
+const K_WORD  = 'héllo'
+
+kernel! fn k-const-int(x: Int) -> Int {
+    (x << K_SHIFT) + K_BASE
+}
+
+kernel! fn k-word-eq?(b: Blob) -> Bool {
+    if #b != K_WORD.size() {
+        return false
+    }
+    for i in ..#b {
+        if b[i] != K_WORD.byte(i) {
+            return false
+        }
+    }
+    true
+}
+
+kernel! fn k-word-sum(w: String) -> Int {
+    let n = 0
+    for i in ..w.size() {
+        n += w.byte(i)
+    }
+    n
+}
+
+kernel! fn k-const-calls(b: Blob) -> Int {
+    (k-word-eq?(b) ? 1 : 0) + k-word-sum(K_WORD)
+}
+
+pub fn kernels-see-module-constants() {
+    let bytes = Blob(K_WORD)
+    let sum = [K_WORD.byte(i) for i in ..K_WORD.size()].sum()
+    assert(k-const-int(3) == (3 << 16) + 1000)
+    assert(k-word-eq?(bytes))
+    assert(!k-word-eq?(Blob('hello')))
+    assert(k-word-sum(K_WORD) == sum)
+    assert(k-const-calls(bytes) == sum + 1)
+    assert(k-const-calls(Blob('x')) == sum)
+}
+
 pub fn literal-only-arithmetic() {
     assert(literals(2.0) == 35.0)
 }

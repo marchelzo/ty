@@ -1117,15 +1117,12 @@ class Var {
     }
 }
 
-fn view-names(node: Any, out: Dict[String, Bool]) {
-    let walk = x -> view-names(x, out)
-    match unwrap(node) {
-        ty.MemberAccess(x, name) => do {
-            if VIEWS[name] != nil {
-                out[name] = true
-            }
-            walk(x)
-        },
+fn each-node(node: Any, visit: Any -> _) {
+    let walk = x -> each-node(x, visit)
+    let n = unwrap(node)
+    visit(n)
+    match n {
+        ty.MemberAccess(x, _) => walk(x),
         ty.Block(xs) => xs.each(walk),
         ty.Let(_, v) => walk(v),
         ty.Assign(t, v) => do { walk(t); walk(v) },
@@ -1144,6 +1141,16 @@ fn view-names(node: Any, out: Dict[String, Bool]) {
             walk(b)
         },
     }
+}
+
+fn view-names(node: Any, out: Dict[String, Bool]) {
+    each-node(node, match ty.MemberAccess(_, name) and VIEWS[name] != nil => out[name] = true else nil)
+}
+
+fn id-nodes(node: Any) -> Dict[String, Any] {
+    let out = %{}
+    each-node(node, match ty.Id(id) => out[id.name] = ty.Id(id) else nil)
+    out
 }
 
 class Fault {
@@ -1241,23 +1248,52 @@ class Lower {
     }
 
     bind-param(pname: String, kind: String, r: Reg, i: Int) {
-        let v = Var(kind, r)
         if let $wanted = CONTAINER_TAGS[kind] {
             let bad = fault(2, r, i)
             asm.br(NE, asm.load(r.off(U8, layout.OFF_TYPE)), wanted, bad)
-            if kind == 'string' {
-                v.data = asm.load(r.off(PTR, layout.OFF_STR))
-                v.count = asm.zext32(asm.load(r.off(U32, layout.OFF_BYTES)))
-            } else {
-                let object = asm.load(r.off(PTR, layout.OFF_PTR))
-                let offsets = kind == 'blob' ? layout.Blob : layout.Array
-                v.data = asm.load(object.off(PTR, offsets.OFF_ITEMS))
-                v.count = asm.load(object.off(I64, offsets.OFF_COUNT))
-            }
+            define(pname, container-var(kind, r))
         } else {
-            v = Var('scalar', Reg(asm, r.id, lir-type(kind)))
+            define(pname, Var('scalar', Reg(asm, r.id, lir-type(kind))))
         }
-        define(pname, v)
+    }
+
+    container-var(kind: String, r: Reg) -> Var {
+        let v = Var(kind, r)
+        if kind == 'string' {
+            v.data = asm.load(r.off(PTR, layout.OFF_STR))
+            v.count = asm.zext32(asm.load(r.off(U32, layout.OFF_BYTES)))
+        } else {
+            let object = asm.load(r.off(PTR, layout.OFF_PTR))
+            let offsets = kind == 'blob' ? layout.Blob : layout.Array
+            v.data = asm.load(object.off(PTR, offsets.OFF_ITEMS))
+            v.count = asm.load(object.off(I64, offsets.OFF_COUNT))
+        }
+        v
+    }
+
+    constant-kind(value: Any) -> String | nil {
+        match value {
+            _: String => 'string',
+            _: Blob   => 'blob',
+            _         => nil,
+        }
+    }
+
+    constants(body: Any, bound: Dict[String, Var]) -> Dict[String, Var] {
+        let out = %{}
+        for name, node in id-nodes(body) {
+            if name in bound || !safe {
+                continue
+            }
+            if let $kind = constant-kind(j._static-value(node)) {
+                if name not in __hole-ids {
+                    holes.push(node)
+                    __hole-ids[name] = #holes - 1
+                }
+                out[name] = container-var(kind, asm.reg(VAL, Hole(__hole-ids[name] as Int, VAL)))
+            }
+        }
+        out
     }
 
     define(vname: String, v: Var) { __scopes[-1][vname] = v }
@@ -1400,6 +1436,7 @@ class Lower {
     }
 
     function(body: Any) {
+        __scopes[0].update(constants(body, __scopes[0]))
         prepare-views(body, __scopes[0].values().filter(v -> v.kind == 'blob'))
         finish(safe && asm.result != VOID ? tail(body) : statement(body))
     }
@@ -2386,6 +2423,7 @@ class Lower {
                 scope[pname] = Var('scalar', asm.reg(t, reg(implicit(expression(node, t), t), t)))
             }
         }
+        scope.update(constants(body, scope))
         prepare-views(body, scope.values().filter(v -> v.kind == 'blob'))
         let rt = (ret == 'void') ? VOID : lir-type(ret)
         let out = (rt == VOID) ? nil : asm.reg(rt)

@@ -2577,13 +2577,13 @@ AttachJit(void)
 static void
 OnSlowSite(void *ctx, char const *ip, char const *kind, u64 count, i32 const *classes, u64 const *counts, int n)
 {
-        Expr const *e = compiler_find_expr(M.ty, ip);
+        Expr const *e = compiler_find_expr(M.ty, ip - 1);
 
         if (e == NULL || e->mod == NULL) {
                 return;
         }
 
-        Expr const *fe = compiler_find_func(M.ty, ip);
+        Expr const *fe = compiler_find_func(M.ty, ip - 1);
         u32 func = FuncOf(fe, e);
         u32 li = LineOf(e->mod, e->start.line, func, e);
         Line *l = v_(M.lines, li);
