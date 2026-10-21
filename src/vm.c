@@ -854,6 +854,33 @@ PopulateGlobals(Ty *ty)
 }
 
 static void
+AddSearchDirs(Ty *ty, char const *dirs)
+{
+#ifdef _WIN32
+        char const *sep = ";";
+#else
+        char const *sep = ":";
+#endif
+        char dir[PATH_MAX + 1];
+        char real[PATH_MAX + 1];
+
+        for (char const *p = dirs; *p != '\0'; p += (p[0] != '\0')) {
+                usize n = strcspn(p, sep);
+                if (
+                        (n > 0)
+                     && (n < sizeof dir)
+                ) {
+                        memcpy(dir, p, n);
+                        dir[n] = '\0';
+                        if (realpath(dir, real) != NULL) {
+                                vAp(v_(Globals, NAMES.path)->array, vSzz(real));
+                        }
+                }
+                p += n;
+        }
+}
+
+static void
 add_builtins(Ty *ty, int ac, char **av)
 {
         GC_STOP();
@@ -1013,14 +1040,14 @@ add_builtins(Ty *ty, int ac, char **av)
                         add(path);
                 }
                 if (env_path != NULL) {
-                        add(env_path);
+                        AddSearchDirs(ty, env_path);
                 }
                 goto SearchPathReady;
         }
 #endif
 
         if (env_path != NULL) {
-                add(env_path);
+                AddSearchDirs(ty, env_path);
         }
 
         char const *home = getenv("HOME");
