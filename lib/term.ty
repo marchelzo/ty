@@ -1119,6 +1119,7 @@ pub class TermIO {
         copy.lflag &= ~ECHONL
         copy.iflag |= IGNBRK
         copy.iflag &= ~ICRNL
+        copy.iflag &= ~IXON
         tcsetattr(__fd, TCSAFLUSH, copy)
         write(__fd, __enter)
         __probe-status()
