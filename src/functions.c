@@ -9801,6 +9801,22 @@ TY_BUILTIN_RAW(ty_gc)
         return NIL;
 }
 
+// ty.close-generator(g: _) -> nil
+TY_BUILTIN_RAW(ty_close_generator)
+{
+        ASSERT_ARGC("ty.close-generator()", 1);
+
+        Value g = ARG(0);
+
+        if (g.type != VALUE_GENERATOR) {
+                bP("expected a generator but got: %s", VSC(&g));
+        }
+
+        vm_close_generator(ty, g.gen);
+
+        return NIL;
+}
+
 // ty.bt() -> prelude.Array[(Function, prelude.String, prelude.String | nil, prelude.Int | nil, prelude.Int | nil)]
 TY_BUILTIN_RAW(ty_bt)
 {

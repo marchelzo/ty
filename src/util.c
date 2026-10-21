@@ -33,7 +33,6 @@
  #define S_ISLNK(m) 0
 #endif
 
-#define STB_SPRINTF_IMPLEMENTATION
 #define FFC_IMPL
 
 #include "panic.h"

@@ -1,0 +1,64 @@
+fn trail(f: (Array) -> _) -> Array {
+    let log = []
+    log.push(f(log))
+    log
+}
+
+fn falls-through(log) {
+    try {
+        defer log.push("deferred")
+        log.push("body")
+    } catch _ {
+        log.push("caught")
+    }
+    log.push("after")
+    "done"
+}
+
+fn throws(log) {
+    try {
+        defer log.push("deferred")
+        throw "boom"
+    } catch _ {
+        log.push("caught")
+    }
+    "done"
+}
+
+fn returns(log) {
+    try {
+        defer log.push("deferred")
+        return "early"
+    } catch _ {
+    }
+    "late"
+}
+
+fn returns-past-defer(log) {
+    defer log.push("outer")
+    try {
+        try {
+            return "early"
+        } finally {
+            log.push("inner")
+        }
+    } catch _ {
+    }
+    "late"
+}
+
+pub fn defer-in-try-runs-on-fall-through() {
+    assert(trail(falls-through) == ["body", "after", "deferred", "done"])
+}
+
+pub fn defer-in-try-runs-after-catch() {
+    assert(trail(throws) == ["caught", "deferred", "done"])
+}
+
+pub fn defer-in-try-runs-on-return() {
+    assert(trail(returns) == ["deferred", "early"])
+}
+
+pub fn return-from-nested-try-runs-function-defers() {
+    assert(trail(returns-past-defer) == ["inner", "outer", "early"])
+}

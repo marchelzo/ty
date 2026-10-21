@@ -2133,6 +2133,10 @@ class Generator[T, S] : Iter[T] {
         self(arg if arg != nil)
     }
 
+    close() {
+        ty.close-generator(self)
+    }
+
     static [](T) {
         x -> (x :: Generator)
     }

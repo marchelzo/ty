@@ -1645,6 +1645,50 @@ co_up(Ty *ty, co_state *st)
         return gen->ip;
 }
 
+static void
+DoDrop(Ty *ty);
+
+static ThrowCtx *
+PopThrowCtx(Ty *ty);
+
+inline static bool
+IsCloseSignal(Value const *exc)
+{
+        return (exc->type == VALUE_GENERATOR) && exc->gen->closing;
+}
+
+static noreturn void
+co_finish_close(Ty *ty)
+{
+        Generator *gen = vv(STACK)->gen;
+
+        PopThrowCtx(ty);
+
+        while (vN(DROP_STACK) > 0) {
+                DoDrop(ty);
+        }
+
+        ty->st->stack = STACK;
+        SWAP(co_state *, gen->st, ty->st);
+        STACK = ty->st->stack;
+
+        vN(STACK) = vXx(FRAMES).fp;
+        IP = vXx(CALLS);
+
+        put(None);
+
+        xvP(ty->co_states, gen->st);
+        gen->st = NULL;
+
+        cothread_t co = gen->co;
+        gen->co = NULL;
+
+        xvP(CO_THREADS, co_active());
+        co_switch(co);
+
+        UNREACHABLE();
+}
+
 static bool
 co_abort(Ty *ty)
 {
@@ -1670,6 +1714,12 @@ co_abort(Ty *ty)
 
         return true;
 }
+
+static _Thread_local Generator *ClosingGenerator;
+
+__attribute__((noinline, cold))
+static void
+MaybeRaiseClose(Ty *ty);
 
 static bool
 co_yield_value(Ty *ty)
@@ -1711,6 +1761,10 @@ co_yield_value(Ty *ty)
         co_switch(co);
 
         CO_LOG("co_yield()", TERM(92;1), "resume with: %s", VSC(top()));
+
+        if (UNLIKELY(ClosingGenerator != NULL)) {
+                MaybeRaiseClose(ty);
+        }
 
         return true;
 }
@@ -2987,6 +3041,10 @@ xdrop(Ty *ty, Value const *v)
                         vm_call_method(ty, v, f, 0);
                 }
                 break;
+
+        case VALUE_GENERATOR:
+                vm_close_generator(ty, v->gen);
+                break;
         }
 }
 
@@ -3196,6 +3254,8 @@ DoThrow(Ty *ty)
                                         DoDrop(ty);
                                 }
 
+                                bool closing = IsCloseSignal(&ty->exc) && !t->native;
+
                                 EXEC_DEPTH    = t->ed;
                                 vN(STACK)     = t->sp;
                                 vN(SP_STACK)  = t->nsp;
@@ -3212,6 +3272,12 @@ DoThrow(Ty *ty)
 
                                 push(SENTINEL);
                                 push(ty->exc);
+
+                                if (closing) {
+                                        IP     = t->finally;
+                                        t->end = NULL;
+                                        longjmp(t->jb, 2);
+                                }
 
                                 t->state = TRY_CATCH;
 
@@ -3230,6 +3296,9 @@ DoThrow(Ty *ty)
                                 DropPendingThrow(ty);
                                 continue;
                         }
+                }
+                if (IsCloseSignal(&ty->exc)) {
+                        co_finish_close(ty);
                 }
                 if (UNLIKELY(!co_abort(ty))) {
                         UNREACHABLE("DoThrow(): no handler at top level");
@@ -3255,6 +3324,73 @@ RaiseException(Ty *ty)
                 DebugOnThrow(ty);
         }
         DoThrow(ty);
+}
+
+__attribute__((noinline, cold))
+static void
+MaybeRaiseClose(Ty *ty)
+{
+        Generator *gen = vv(STACK)->gen;
+
+        if (gen == ClosingGenerator) {
+                ClosingGenerator = NULL;
+                vm_throw(ty, &GENERATOR(gen));
+        }
+}
+
+static void
+DiscardGenerator(Ty *ty, Generator *gen)
+{
+        co_state *st = gen->st;
+        gen->st = NULL;
+
+        while (vN(st->to_drop) > 0) {
+                Array *group = vvL(st->to_drop)->array;
+                while (vN(*group) > 0) {
+                        Value v = vXx(*group);
+                        gP(&v);
+                        xdrop(ty, &v);
+                        gX();
+                }
+                vXx(st->to_drop);
+        }
+
+        xvP(ty->co_states, st);
+}
+
+void
+vm_close_generator(Ty *ty, Generator *gen)
+{
+        if (gen->st == NULL || gen->closing) {
+                return;
+        }
+
+        if (UNLIKELY(!GeneratorIsSuspended(gen))) {
+                zP("attempt to close an active generator");
+        }
+
+        if (gen->ip != code_of(&gen->f) && gen->co != NULL) {
+                Value v = GENERATOR(gen);
+                gen->closing     = true;
+                ClosingGenerator = gen;
+                gP(&v);
+                call_co(ty, &v, 0);
+                pop();
+                gX();
+                if (UNLIKELY(gen->st != NULL)) {
+                        if (
+                                (vN(THROW_STACK) > 0)
+                             && IsCloseSignal(&CurrentThrowCtx(ty)->exc)
+                        ) {
+                                PopThrowCtx(ty);
+                        }
+                        DiscardGenerator(ty, gen);
+                        zP("generator yielded while being closed");
+                }
+                return;
+        }
+
+        DiscardGenerator(ty, gen);
 }
 
 static void

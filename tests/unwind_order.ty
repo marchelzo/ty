@@ -1,0 +1,168 @@
+import ty
+
+let log = []
+
+class R {
+    k: String
+    init(k) {
+        self.k = k
+    }
+    __drop__() {
+        log.push("~{k}")
+    }
+}
+
+class Bad {
+    __drop__() {
+        log.push("~bad")
+        throw "drop"
+    }
+}
+
+fn trail(f) -> Array {
+    log = []
+    log.push(f())
+    log
+}
+
+fn return-from-nested-tries() {
+    let ^a = R("a")
+    try {
+        let ^b = R("b")
+        try {
+            let ^c = R("c")
+            return "ret"
+        } finally {
+            log.push("fi")
+        }
+    } finally {
+        log.push("fo")
+    }
+}
+
+fn break-and-continue-through-finally() {
+    for i in ..2 {
+        try {
+            let ^r = R("r{i}")
+            if i == 0 { continue }
+            break
+        } finally {
+            log.push("f{i}")
+        }
+    }
+    "ok"
+}
+
+fn return-past-defer() {
+    defer log.push("d")
+    let ^r = R("r")
+    return "ret"
+}
+
+fn statement-match-arm() {
+    for i in ..2 {
+        match R("m{i}") {
+            ^m => {
+                if i == 0 { continue }
+                return m.k
+            }
+        }
+    }
+}
+
+fn if-not-let-binding() {
+    if not let Some(^r) = Some(R("n")) {
+        return "none"
+    }
+    log.push(r.k)
+    "ok"
+}
+
+fn let-as-arm-body() {
+    match R("q") {
+        ^q => let ^r = R("x")
+    }
+    log.push("after")
+    "ok"
+}
+
+fn catch-resource() {
+    try {
+        throw R("t")
+    } catch ^e {
+        log.push("caught {e.k}")
+    }
+    "ok"
+}
+
+fn throwing-drop() {
+    try {
+        let ^b = Bad()
+        log.push("body")
+    } catch e {
+        log.push("caught {e}")
+    }
+    "ok"
+}
+
+fn throw-in-finally-replaces() {
+    try {
+        try {
+            throw "a"
+        } finally {
+            throw "b"
+        }
+    } catch e {
+        log.push("caught {e}")
+    }
+    "ok"
+}
+
+fn throw-in-catch-handler() {
+    try {
+        try {
+            throw "a"
+        } catch _ {
+            throw "b"
+        }
+    } catch e {
+        log.push("caught {e}")
+    }
+    "ok"
+}
+
+pub fn unwinding-drops-before-each-finally() {
+    assert(trail(return-from-nested-tries) == ["~c", "fi", "~b", "fo", "~a", "ret"])
+    assert(trail(break-and-continue-through-finally) == ["~r0", "f0", "~r1", "f1", "ok"])
+}
+
+pub fn return-drops-before-defers() {
+    assert(trail(return-past-defer) == ["~r", "d", "ret"])
+}
+
+pub fn resources-in-match-statement-arms() {
+    assert(trail(statement-match-arm) == ["~m0", "~m1", "m1"])
+    assert(trail(let-as-arm-body) == ["~x", "~q", "after", "ok"])
+}
+
+pub fn if-not-let-resource-lives-to-end-of-block() {
+    assert(trail(if-not-let-binding) == ["n", "~n", "ok"])
+}
+
+pub fn catch-pattern-resources() {
+    assert(trail(catch-resource) == ["caught t", "~t", "ok"])
+}
+
+pub fn throwing-drop-is-catchable() {
+    assert(trail(throwing-drop) == ["body", "~bad", "caught drop", "ok"])
+}
+
+pub fn throw-while-unwinding-replaces-exception() {
+    assert(trail(throw-in-finally-replaces) == ["caught b", "ok"])
+    assert(ty.trace() == nil)
+}
+
+pub fn throw-from-catch-handler-pops-its-context() {
+    assert(trail(throw-in-catch-handler) == ["caught b", "ok"])
+    assert(ty.trace() == nil)
+}

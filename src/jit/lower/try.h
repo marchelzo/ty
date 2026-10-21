@@ -270,7 +270,8 @@ label_at(BcLir const *c, i32 off)
 static void
 lower_try(BcLir *c, BcLirNode const *t)
 {
-        LirLabel normal = newlabel(c);
+        LirLabel normal  = newlabel(c);
+        LirLabel closing = newlabel(c);
         LirReg   top    = slot_of(c, c->sp);
         LirReg   env    = tycall(
                 c,
@@ -286,7 +287,15 @@ lower_try(BcLir *c, BcLirNode const *t)
         jz(c, status, normal);
         restore_locals(c);
         stq(c, c->ty, offsetof(Ty, ip), lir_i((uptr)&JIT));
+        if (t->finally_to >= 0) {
+                jcc(c, LIR_EQ, lir_r(status), lir_i(2), closing);
+        }
         jump(c, label_at(c, t->catch_to));
+
+        if (t->finally_to >= 0) {
+                bind(c, closing);
+                jump(c, label_at(c, t->finally_to));
+        }
 
         bind(c, normal);
 }

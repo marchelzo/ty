@@ -1,0 +1,161 @@
+import ty
+
+let log = []
+
+class R {
+    k: String
+    init(k) {
+        self.k = k
+    }
+    __drop__() {
+        log.push("~{k}")
+    }
+}
+
+fn trail(f) -> Array {
+    log = []
+    f()
+    log
+}
+
+fn guarded*() {
+    defer log.push("defer")
+    let ^r = R("r")
+    try {
+        yield 1
+        yield 2
+    } catch _ {
+        log.push("caught")
+    } finally {
+        log.push("finally")
+    }
+    log.push("after")
+}
+
+fn inner(x) {
+    let ^r = R("in{x}")
+    try {
+        yield x
+    } catch _ {
+        log.push("caught {x}")
+    } finally {
+        log.push("finally {x}")
+    }
+}
+
+fn delegating*() {
+    try {
+        inner(1)
+        [2].each(inner)
+    } finally {
+        log.push("outer")
+    }
+}
+
+fn in-handler*() {
+    try {
+        throw "x"
+    } catch _ {
+        yield 1
+        log.push("resumed")
+    } finally {
+        log.push("finally")
+    }
+}
+
+fn stubborn*() {
+    try {
+        yield 1
+    } finally {
+        yield 2
+    }
+}
+
+fn failing*() {
+    try {
+        yield 1
+    } finally {
+        throw "finally"
+    }
+}
+
+fn owner*() {
+    let ^g = guarded()
+    try {
+        yield g()
+    } finally {
+        log.push("owner")
+    }
+}
+
+let current: Generator[_, _] | nil = nil
+
+fn selfish*() {
+    yield 1
+    current.?close()
+}
+
+fn close-after(f: () -> Generator[_, _], n: Int) -> Generator[_, _] {
+    let g = f()
+    for _ in ..n {
+        g()
+    }
+    g.close()
+    g
+}
+
+pub fn close-runs-finally-defer-and-drops-but-not-catch() {
+    assert(trail(() -> close-after(guarded, 1)) == ["finally", "~r", "defer"])
+}
+
+pub fn closing-idle-generators-is-cheap() {
+    assert(trail(() -> close-after(guarded, 0)) == [])
+    let g = close-after(guarded, 1)
+    assert(g() == None)
+    g.close()
+    assert(g() == None)
+}
+
+pub fn close-unwinds-nested-calls() {
+    assert(trail(() -> close-after(delegating, 1)) == ["finally 1", "~in1", "outer"])
+    assert(trail(() -> close-after(delegating, 2)) == ["finally 1", "~in1", "finally 2", "~in2", "outer"])
+}
+
+pub fn close-abandons-a-running-catch-handler() {
+    assert(trail(() -> close-after(in-handler, 1)) == ["finally"])
+    assert(ty.trace() == nil)
+}
+
+pub fn yielding-while-closing-is-an-error() {
+    let msg = try { close-after(stubborn, 1); nil } catch e { "{e}" }
+    assert(msg.match?(/yielded while being closed/))
+}
+
+pub fn throwing-while-closing-propagates() {
+    let msg = try { close-after(failing, 1); nil } catch e { e }
+    assert(msg == "finally")
+    assert(ty.trace() == nil)
+}
+
+pub fn resource-bindings-close-generators() {
+    let f = fn () {
+        let ^g = guarded()
+        g()
+        log.push("body")
+    }
+    assert(trail(f) == ["body", "finally", "~r", "defer"])
+    assert(trail(() -> close-after(owner, 1)) == ["owner", "finally", "~r", "defer"])
+}
+
+pub fn closing-a-running-generator-fails() {
+    current = selfish()
+    current.?__call__()
+    let msg = try { current.?__call__(); nil } catch e { "{e}" }
+    assert(msg.match?(/active generator/))
+}
+
+pub fn close-works-once-hot() {
+    for _ in ..500 {
+        assert(trail(() -> close-after(delegating, 1)) == ["finally 1", "~in1", "outer"])
+    }
+}

@@ -428,6 +428,7 @@ set(_lir_core
   src/jit/lir/wire.c
   src/jit/lir/entry.c
   src/panic.c
+  src/stbsp.c
 )
 
 set(_lir_native
@@ -622,7 +623,7 @@ if(BUILD_TESTING)
       endif()
     endif()
   endforeach()
-  add_executable(jitmem-test tests/jit/mem.c src/jit/mem.c src/panic.c)
+  add_executable(jitmem-test tests/jit/mem.c src/jit/mem.c src/panic.c src/stbsp.c)
   target_include_directories(jitmem-test PRIVATE include libco nsync/public)
   target_compile_definitions(jitmem-test PRIVATE PCRE2_CODE_UNIT_WIDTH=8 _GNU_SOURCE)
   target_link_libraries(jitmem-test PRIVATE nsync PCRE2::8BIT Threads::Threads)

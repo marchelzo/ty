@@ -1257,6 +1257,9 @@ flow_special(BcLir *c, BcQueue *q, i32 at, i32 *sp, i32 *taken)
                         return FLOW_FAIL;
                 }
                 restore_sentinel(c, node);
+                if (node->finally_to >= 0 && !edge(c, q, node->finally_to, *sp + 1)) {
+                        return FLOW_FAIL;
+                }
                 return FLOW_FALL;
 
         case INSTR_SAVE_STACK_POS:

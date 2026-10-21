@@ -469,6 +469,7 @@ struct generator {
         cothread_t co;
         co_state *st;
         Value f;
+        bool closing;
 };
 
 #ifdef _WIN32

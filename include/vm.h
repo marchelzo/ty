@@ -337,6 +337,9 @@ IntShr(imax a, imax b)
 struct try *
 vm_push_try(Ty *ty);
 
+void
+vm_close_generator(Ty *ty, Generator *gen);
+
 Value
 vm_catch(Ty *ty);
 

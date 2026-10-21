@@ -106,7 +106,7 @@ test: all
 	@$(NINJA) -C $(BUILD)
 	$(CTEST) --test-dir $(BUILD) --output-on-failure
 	TY_TEST_NATIVE=1 ./ty --test tests/runner/smoke.ty
-	./ty --test tests --strict $(TEST_ARGS)
+	./ty --test --all tests --strict $(TEST_ARGS)
 	TY_JIT_EAGER=1 ./ty --test tests --strict $(TEST_ARGS)
 	TY_JIT_EAGER=2 TY_JIT_TIER=3 ./ty --test tests --strict $(TEST_ARGS)
 	TY_JIT_EAGER=2 TY_JIT_TIER=3 TY_JIT_VALIDATE=1 ./ty --test tests --strict $(TEST_ARGS)
