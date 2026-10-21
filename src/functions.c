@@ -1,4 +1,5 @@
 #include "ast.h"
+#include "dirs.h"
 #include "ty.h"
 #include "jit/jit.h"
 #ifdef _WIN32
@@ -2974,36 +2975,13 @@ make_temp_dir(char *template)
 #endif
 }
 
-static char const *
-tmpdir(Ty *ty, usize *n)
-{
-#ifdef _WIN32
-        char const *seps = "/\\";
-        char *buf = TY_TMP();
-        DWORD w = GetTempPathA(TY_TMP_N, buf);
-        char const *dir = (w == 0 || w >= TY_TMP_N) ? "." : buf;
-#else
-        char const *seps = "/";
-        char const *dir = getenv("TMPDIR");
-        if (dir == NULL || *dir == '\0') {
-                dir = "/tmp";
-        }
-#endif
-        *n = strlen(dir);
-        while (*n > 1 && strchr(seps, dir[*n - 1]) != NULL) {
-                *n -= 1;
-        }
-
-        return dir;
-}
-
 // os.tmpdir() -> String
 TY_BUILTIN_RAW(os_tmpdir)
 {
         ASSERT_ARGC("os.tmpdir()", 0);
 
         usize n;
-        char const *dir = tmpdir(ty, &n);
+        char const *dir = dirs_tmp(&n);
 
         return vSs(dir, n);
 }
@@ -3027,7 +3005,7 @@ xmktemplate(Ty *ty, char const *_name__, int argc)
         usize n;
 
         if (argc == 0 || ARG(0).type == VALUE_NIL) {
-                p = tmpdir(ty, &n);
+                p = dirs_tmp(&n);
                 return mktemplate(ty, "%.*s/tmp.XXXXXX", p, n);
         }
 

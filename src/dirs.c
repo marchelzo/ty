@@ -15,12 +15,21 @@
 
 #include "dirs.h"
 
-#ifdef _WIN32
-#define SEP      "\\"
-#define HOME_VAR "USERPROFILE"
+#if defined(_WIN32)
+#define SEP       "\\"
+#define HOME_VAR  "USERPROFILE"
+#define USER_VAR  "USERNAME"
+#define HOME_ROOT "C:\\Users\\"
+#elif defined(__APPLE__)
+#define SEP       "/"
+#define HOME_VAR  "HOME"
+#define USER_VAR  "USER"
+#define HOME_ROOT "/Users/"
 #else
-#define SEP      "/"
-#define HOME_VAR "HOME"
+#define SEP       "/"
+#define HOME_VAR  "HOME"
+#define USER_VAR  "USER"
+#define HOME_ROOT "/home/"
 #endif
 
 char const *const DirNames[DIR_COUNT] = {
@@ -66,6 +75,15 @@ absolute(char const *p)
 }
 
 static char const *
+Temp(void)
+{
+        usize       n;
+        char const *dir = dirs_tmp(&n);
+
+        return strndup(dir, n);
+}
+
+static char const *
 Xdg(char const *var, char const *dir, char const *sub)
 {
         char const *p = getenv(var);
@@ -75,21 +93,35 @@ Xdg(char const *var, char const *dir, char const *sub)
              :                              NULL;
 }
 
+inline static bool
+set(char const *s)
+{
+        return (s != NULL) && (*s != '\0');
+}
+
+static char const *
+Runtime(void)
+{
+        char const *dir = Xdg("XDG_RUNTIME_DIR", NULL, NULL);
+        return (dir != NULL) ? dir : Temp();
+}
+
 static char const *
 Home(void)
 {
         char const *home = getenv(HOME_VAR);
+        char const *user = getenv(USER_VAR);
+        char        buf[4096];
 
-        if (home != NULL && *home != '\0') {
+        if (set(home)) {
                 return strdup(home);
         }
 
 #ifdef _WIN32
         char const *drive = getenv("HOMEDRIVE");
         char const *path  = getenv("HOMEPATH");
-        char        buf[MAX_PATH];
 
-        if (drive != NULL && path != NULL) {
+        if (set(drive) && set(path)) {
                 snprintf(buf, sizeof buf, "%s%s", drive, path);
                 return strdup(buf);
         }
@@ -100,19 +132,21 @@ Home(void)
 #else
         struct passwd  pw;
         struct passwd *res = NULL;
-        char           buf[4096];
 
         if (
                 (getpwuid_r(getuid(), &pw, buf, sizeof buf, &res) == 0)
              && (res != NULL)
-             && (res->pw_dir != NULL)
-             && (*res->pw_dir != '\0')
+             && set(res->pw_dir)
         ) {
                 return strdup(res->pw_dir);
         }
+
+        user = set(user) ? user : getlogin();
 #endif
 
-        return NULL;
+        snprintf(buf, sizeof buf, HOME_ROOT "%s", set(user) ? user : "nobody");
+
+        return strdup(buf);
 }
 
 #if !defined(_WIN32) && !defined(__APPLE__)
@@ -156,6 +190,8 @@ UserDir(char const *line)
                 ) {
                         continue;
                 }
+
+                free((char *)Dirs[UserDirs[i].dir]);
 
                 if (strncmp(v, "$HOME", 5) == 0 && (v[5] == '/' || v + 5 == end)) {
                         v += 5 + (v[5] == '/');
@@ -204,15 +240,19 @@ Init(void)
         D(DATA)         = D(CONFIG);
         D(DATA_LOCAL)   = D(CACHE);
         D(PREFERENCES)  = D(CONFIG);
+        D(EXECUTABLES)  = Sub(D(HOME), ".local\\bin");
+        D(RUNTIME)      = Temp();
+        D(STATE)        = D(DATA_LOCAL);
 
-        D(AUDIO)        = Sub(D(HOME), "Music");
-        D(DESKTOP)      = Sub(D(HOME), "Desktop");
-        D(DOCUMENTS)    = Sub(D(HOME), "Documents");
-        D(DOWNLOADS)    = Sub(D(HOME), "Downloads");
-        D(PICTURES)     = Sub(D(HOME), "Pictures");
-        D(PUBLIC)       = Xdg("PUBLIC", NULL, NULL);
+        D(AUDIO)        = Sub(D(HOME),  "Music");
+        D(DESKTOP)      = Sub(D(HOME),  "Desktop");
+        D(DOCUMENTS)    = Sub(D(HOME),  "Documents");
+        D(DOWNLOADS)    = Sub(D(HOME),  "Downloads");
+        D(FONTS)        = Sub(D(CACHE), "Microsoft\\Windows\\Fonts");
+        D(PICTURES)     = Sub(D(HOME),  "Pictures");
+        D(PUBLIC)       = Xdg("PUBLIC", D(HOME), "Public");
         D(TEMPLATES)    = Sub(D(CONFIG), "Microsoft\\Windows\\Templates");
-        D(VIDEOS)       = Sub(D(HOME), "Videos");
+        D(VIDEOS)       = Sub(D(HOME),  "Videos");
 #elif defined(__APPLE__)
         char *lib = Sub(D(HOME), "Library");
 
@@ -222,9 +262,9 @@ Init(void)
         D(DATA)         = Xdg("XDG_DATA_HOME",   lib, "Application Support");
         D(DATA_LOCAL)   = D(DATA);
         D(PREFERENCES)  = Sub(lib, "Preferences");
-        D(EXECUTABLES)  = Xdg("XDG_BIN_HOME",    NULL, NULL);
-        D(RUNTIME)      = Xdg("XDG_RUNTIME_DIR", NULL, NULL);
-        D(STATE)        = Xdg("XDG_STATE_HOME",  NULL, NULL);
+        D(EXECUTABLES)  = Xdg("XDG_BIN_HOME",    D(HOME), ".local/bin");
+        D(RUNTIME)      = Runtime();
+        D(STATE)        = Xdg("XDG_STATE_HOME",  lib,     "Application Support");
 
         D(AUDIO)        = Sub(D(HOME), "Music");
         D(DESKTOP)      = Sub(D(HOME), "Desktop");
@@ -233,6 +273,7 @@ Init(void)
         D(FONTS)        = Sub(lib,     "Fonts");
         D(PICTURES)     = Sub(D(HOME), "Pictures");
         D(PUBLIC)       = Sub(D(HOME), "Public");
+        D(TEMPLATES)    = Sub(D(HOME), "Templates");
         D(VIDEOS)       = Sub(D(HOME), "Movies");
 
         free(lib);
@@ -244,15 +285,46 @@ Init(void)
         D(DATA_LOCAL)   = D(DATA);
         D(PREFERENCES)  = D(CONFIG);
         D(EXECUTABLES)  = Xdg("XDG_BIN_HOME",    D(HOME), ".local/bin");
-        D(RUNTIME)      = Xdg("XDG_RUNTIME_DIR", NULL,    NULL);
+        D(RUNTIME)      = Runtime();
         D(STATE)        = Xdg("XDG_STATE_HOME",  D(HOME), ".local/state");
         D(FONTS)        = Sub(D(DATA), "fonts");
+
+        D(AUDIO)        = Sub(D(HOME), "Music");
+        D(DESKTOP)      = Sub(D(HOME), "Desktop");
+        D(DOCUMENTS)    = Sub(D(HOME), "Documents");
+        D(DOWNLOADS)    = Sub(D(HOME), "Downloads");
+        D(PICTURES)     = Sub(D(HOME), "Pictures");
+        D(PUBLIC)       = Sub(D(HOME), "Public");
+        D(TEMPLATES)    = Sub(D(HOME), "Templates");
+        D(VIDEOS)       = Sub(D(HOME), "Videos");
 
         ReadUserDirs();
 #endif
 /* ------------------------------------------------------------------------- */
 #undef D
 /* ========================================================================= */
+}
+
+char const *
+dirs_tmp(usize *n)
+{
+#ifdef _WIN32
+        static _Thread_local char buf[MAX_PATH + 1];
+        DWORD       w    = GetTempPathA(sizeof buf, buf);
+        char const *dir  = (w == 0 || w >= sizeof buf) ? "." : buf;
+        char const *seps = "/\\";
+#else
+        char const *dir  = set(getenv("TMPDIR")) ? getenv("TMPDIR") : "/tmp";
+        char const *seps = "/";
+#endif
+
+        *n = strlen(dir);
+
+        while (*n > 1 && strchr(seps, dir[*n - 1]) != NULL) {
+                *n -= 1;
+        }
+
+        return dir;
 }
 
 char const *

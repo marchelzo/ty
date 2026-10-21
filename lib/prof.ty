@@ -234,7 +234,7 @@ pub class Profile {
 
     display(path: String) -> String {
         let cwd = "{data['cwd'] ?? ''}/"
-        let home = "{dirs.HOME ?? ''}/"
+        let home = "{dirs.HOME}/"
         match () {
             _ and cwd != '/' && path.starts?(cwd)   => path[#cwd;],
             _ and home != '/' && path.starts?(home) => "~/{path[#home;]}",

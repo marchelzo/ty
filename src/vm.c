@@ -956,9 +956,9 @@ add_builtins(Ty *ty, int ac, char **av)
 
         for (int i = 0; i < DIR_COUNT; ++i) {
                 char const *dir = dirs_get(i);
-                Symbol *sym = compiler_introduce_symbol(ty, "dirs", DirNames[i], "String | nil", false);
+                Symbol *sym = compiler_introduce_symbol(ty, "dirs", DirNames[i], "String", false);
                 sym->flags |= SYM_CONST;
-                xvP(Globals, (dir != NULL) ? vSsz(dir) : NIL);
+                xvP(Globals, vSsz(dir));
         }
 
         Dict *env = dict_new(ty);

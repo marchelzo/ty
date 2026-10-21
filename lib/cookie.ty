@@ -253,13 +253,12 @@ fn windows-local-app-data() -> Path | nil {
 }
 
 fn profile-path(profile: String | Path | nil) -> Path {
-    let no-home = () -> throw CookieLoadError('could not determine the home directory')
 #|if __windows__
-    let root = Path(dirs.DATA_LOCAL ?? no-home()) / 'Google/Chrome/User Data'
+    let root = Path(dirs.DATA_LOCAL) / 'Google/Chrome/User Data'
 #|else if __apple__
-    let root = Path(dirs.HOME ?? no-home()) / 'Library/Application Support/Google/Chrome'
+    let root = Path(dirs.HOME) / 'Library/Application Support/Google/Chrome'
 #|else
-    let linux-root = Path(dirs.CONFIG ?? no-home()) / 'google-chrome'
+    let linux-root = Path(dirs.CONFIG) / 'google-chrome'
     let windows-root = windows-local-app-data()
     let root = windows-root == nil
         ? linux-root

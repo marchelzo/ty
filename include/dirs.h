@@ -36,6 +36,9 @@ extern char const *const DirNames[DIR_COUNT];
 char const *
 dirs_get(int which);
 
+char const *
+dirs_tmp(usize *n);
+
 bool
 dirs_path(char *out, usize n, int which, char const *fmt, ...);
 

@@ -745,7 +745,7 @@ pub fn guides() -> Array[_] {
 }
 
 pub fn cache-file() -> Path {
-    Path(dirs.CACHE ?? os.tmpdir()) / 'ty' / 'help-index.json'
+    Path(dirs.CACHE) / 'ty' / 'help-index.json'
 }
 
 pub fn stamp() -> String {

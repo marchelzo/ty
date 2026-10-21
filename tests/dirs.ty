@@ -1,9 +1,10 @@
 import dirs
+import os
 import path (Path)
 import sh
 import ty
 
-const PROBE = 'import dirs; print(dirs.HOME); print(dirs.CACHE); print(dirs.STATE)'
+const PROBE = 'import dirs; for [dirs.HOME, dirs.CACHE, dirs.STATE, dirs.RUNTIME] { print(it) }'
 
 fn probe(env: Dict[String, String] = %{}) -> [String] {
     let base = %{k: v for k, v in __env if !k.match?(/^(HOME|XDG_\w+)$/)}
@@ -40,4 +41,9 @@ pub fn xdg-overrides-are-honored() {
 pub fn relative-xdg-values-are-ignored() {
     let [home, cache, *] = probe(%{'XDG_CACHE_HOME': 'relative/cache'})
     assert(cache.starts?("{home}/"))
+}
+
+pub fn runtime-falls-back-to-tmpdir() {
+    let [_, _, _, runtime] = probe()
+    assert(runtime == os.tmpdir())
 }

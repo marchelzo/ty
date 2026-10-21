@@ -577,7 +577,7 @@ pub class Path : PathLike {
     }
 
     static home() -> Path {
-        Path(dirs.HOME ?? '.')
+        Path(dirs.HOME)
     }
 
     mkdtemp(prefix: String = 'tmp') -> Path {

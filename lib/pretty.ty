@@ -15,8 +15,7 @@ pub tag Newline;
 pub tag Raw;
 
 fn _load-colors() {
-    let $config = dirs.CONFIG or return nil
-    let $conf = slurp("{config}/ty/colors.json") or return nil
+    let $conf = slurp("{dirs.CONFIG}/ty/colors.json") or return nil
     json.parse!(conf)
 }
 

@@ -170,16 +170,11 @@ pub fn tab-complete(before: String, after: String) -> CompletionAction {
     return CycleCompletions(type-completions(types.infer(subject), prefix))
 }
 
-fn history-path() -> String | nil {
-    let $dir = dirs.STATE ?? dirs.DATA_LOCAL or return nil
-    "{dir}/ty/history"
-}
-
 if ty.interactive {
     _readln = InteractiveLineReader(
         prompt=() -> chalk"[#d3a2ff b]>>[/] ",
         complete=tab-complete,
         render=pretty-code,
-        history-file=history-path()
+        history-file="{dirs.STATE}/ty/history"
     ).readln
 }
