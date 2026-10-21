@@ -125,6 +125,9 @@ void
 vm_do_signal(int, siginfo_t *, void *);
 #endif
 
+void
+vm_attach_request(void);
+
 bool
 vm_execute(Ty *ty, char const *source, char const *file);
 

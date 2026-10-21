@@ -2,38 +2,77 @@
 
 #ifdef TY_HAVE_SAMPLER
 
+#include <dispatch/dispatch.h>
 #include <errno.h>
+#include <libproc.h>
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
 #include <mach-o/nlist.h>
 #include <mach/mach.h>
+#include <notify.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ucontext.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "platform.h"
+
+#ifndef PROC_PIDTHREADCOUNTS
+#define PROC_PIDTHREADCOUNTS 34
+#endif
+
+#define EVENT_POLL_NS 1000000ULL
 
 typedef struct DarwinThread DarwinThread;
 
 struct DarwinThread {
-        ProfThread *pt;
-        mach_port_t port;
-        u64 last;
-        _Atomic u64 ticks;
-        bool armed;
+        ProfThread   *pt;
+        mach_port_t   port;
+        u64           last;
+        bool          armed;
         DarwinThread *next;
 };
+
+typedef struct {
+        u64 instructions;
+        u64 cycles;
+        u64 user;
+        u64 system;
+        u64 energy;
+} PmcLevel;
+
+typedef struct {
+        u16      n;
+        u16      _0;
+        u32      _1;
+        PmcLevel level[8];
+} Pmc;
+
+static struct {
+        char const *name;
+        usize       field;
+        u64         period;
+} const Events[] = {
+        { "cycles",       offsetof(PmcLevel, cycles),       2000000 },
+        { "instructions", offsetof(PmcLevel, instructions), 4000000 },
+};
+
+static char const *EventNames[countof(Events) + 1];
+static int         Event = -1;
 
 static pthread_mutex_t TickLock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  TickCond = PTHREAD_COND_INITIALIZER;
 static DarwinThread   *Armed;
 static pthread_t       Ticker;
 static bool            HaveTicker;
-static u64             TickPeriod;
-
-static char const *EventNames[] = { NULL };
+static int             TickMode;
+static u64             TickEvery;
+static u64             TickPoll;
+static ProfRemote     *Remote;
+static void          (*AttachFn)(void);
 
 static int
 SymCmp(void const *a_, void const *b_)
@@ -64,21 +103,90 @@ ThreadCpuNs(mach_port_t port, u64 *out)
         return true;
 }
 
+static bool
+ThreadEvents(u64 tid, u64 *out)
+{
+        Pmc pmc = {0};
+        int n   = proc_pidinfo(getpid(), PROC_PIDTHREADCOUNTS, tid, &pmc, sizeof pmc);
+
+        if (Event < 0 || n < (int)offsetof(Pmc, level)) {
+                return false;
+        }
+
+        *out = 0;
+
+        for (u16 i = 0; i < pmc.n && i < countof(pmc.level); ++i) {
+                *out += *(u64 const *)((u8 const *)&pmc.level[i] + Events[Event].field);
+        }
+
+        return true;
+}
+
+static bool
+Count(DarwinThread const *dt, u64 *out)
+{
+        return (TickMode == PK_CPU) ? ThreadCpuNs(dt->port, out)
+             :                        ThreadEvents(dt->pt->tid, out);
+}
+
+static bool
+ThreadPc(mach_port_t port, uptr *pc)
+{
+#if defined(__aarch64__)
+        arm_thread_state64_t   ss;
+        mach_msg_type_number_t n = ARM_THREAD_STATE64_COUNT;
+
+        if (thread_get_state(port, ARM_THREAD_STATE64, (thread_state_t)&ss, &n) != KERN_SUCCESS) {
+                return false;
+        }
+
+        *pc = arm_thread_state64_get_pc(ss);
+#elif defined(__x86_64__)
+        x86_thread_state64_t   ss;
+        mach_msg_type_number_t n = x86_THREAD_STATE64_COUNT;
+
+        if (thread_get_state(port, x86_THREAD_STATE64, (thread_state_t)&ss, &n) != KERN_SUCCESS) {
+                return false;
+        }
+
+        *pc = ss.__rip;
+#else
+        *pc = 0;
+#endif
+
+        return true;
+}
+
+static void
+Probe(ProfThread *pt, mach_port_t port, u64 weight)
+{
+        uptr pc;
+
+        if (Remote == NULL || thread_suspend(port) != KERN_SUCCESS) {
+                return;
+        }
+
+        if (ThreadPc(port, &pc)) {
+                Remote(pt, pc, weight);
+        }
+
+        thread_resume(port);
+}
+
 static void
 Tick(void)
 {
         for (DarwinThread *dt = Armed; dt != NULL; dt = dt->next) {
-                u64 cpu;
+                u64 now;
 
-                if (!ThreadCpuNs(dt->port, &cpu) || cpu < dt->last + TickPeriod) {
+                if (!Count(dt, &now) || now < dt->last + TickEvery) {
                         continue;
                 }
 
-                u64 n = (cpu - dt->last) / TickPeriod;
+                u64 n = (now - dt->last) / TickEvery;
 
-                dt->last += n * TickPeriod;
-                atomic_fetch_add_explicit(&dt->ticks, n, memory_order_relaxed);
-                pthread_kill(dt->pt->self, SIGPROF);
+                dt->last += n * TickEvery;
+                Probe(dt->pt, dt->port, n * TickEvery);
         }
 }
 
@@ -99,7 +207,7 @@ TickLoop(void *_)
 
                 Tick();
 
-                next += TickPeriod;
+                next += TickPoll;
 
                 pthread_mutex_unlock(&TickLock);
                 prof_os_sleep_until(next);
@@ -108,14 +216,9 @@ TickLoop(void *_)
 }
 
 void
-prof_os_init(ProfHandler *handler)
+prof_os_init(ProfHandler *handler, ProfRemote *remote)
 {
-        struct sigaction sa = {0};
-
-        sa.sa_sigaction = handler;
-        sa.sa_flags = SA_SIGINFO | SA_RESTART;
-        sigemptyset(&sa.sa_mask);
-        sigaction(SIGPROF, &sa, NULL);
+        Remote = remote;
 }
 
 static void
@@ -237,12 +340,35 @@ prof_os_tid(void)
 char const *const *
 prof_os_events(void)
 {
+        for (usize i = 0; i < countof(Events); ++i) {
+                EventNames[i] = Events[i].name;
+        }
+
         return EventNames;
 }
 
 char const *
 prof_os_event(char const *name, u64 *period)
 {
+        u64 probe;
+
+        for (usize i = 0; i < countof(Events); ++i) {
+                if (strcmp(Events[i].name, name) != 0) {
+                        continue;
+                }
+
+                Event = i;
+
+                if (!ThreadEvents(prof_os_tid(), &probe)) {
+                        Event = -1;
+                        return NULL;
+                }
+
+                *period = Events[i].period;
+
+                return Events[i].name;
+        }
+
         return NULL;
 }
 
@@ -263,7 +389,7 @@ prof_os_arm(ProfThread *pt, int mode, u64 period)
 {
         DarwinThread *dt;
 
-        if (mode != PK_CPU) {
+        if (mode != PK_CPU && mode != PK_EVENT) {
                 return;
         }
 
@@ -275,18 +401,18 @@ prof_os_arm(ProfThread *pt, int mode, u64 period)
                 goto Unlock;
         }
 
-        dt->port = pthread_mach_thread_np(pt->self);
+        dt->port  = pthread_mach_thread_np(pt->self);
+        TickMode  = mode;
+        TickEvery = period;
+        TickPoll  = (mode == PK_CPU) ? period : EVENT_POLL_NS;
 
-        if (!ThreadCpuNs(dt->port, &dt->last)) {
+        if (!Count(dt, &dt->last)) {
                 goto Unlock;
         }
 
-        TickPeriod = period;
-        dt->armed  = true;
-        dt->next   = Armed;
-        Armed      = dt;
-
-        atomic_store_explicit(&dt->ticks, 0, memory_order_relaxed);
+        dt->armed = true;
+        dt->next  = Armed;
+        Armed     = dt;
 
         if (!HaveTicker) {
                 HaveTicker = pthread_create(&Ticker, NULL, TickLoop, NULL) == 0;
@@ -326,15 +452,6 @@ prof_os_disarm(ProfThread *pt)
 u64
 prof_os_weight(ProfThread *pt, u64 weight)
 {
-        DarwinThread *dt = pt->os;
-
-        if (dt != NULL) {
-                u64 n = atomic_exchange_explicit(&dt->ticks, 0, memory_order_relaxed);
-                if (n > 1) {
-                        weight *= n;
-                }
-        }
-
         return weight;
 }
 
@@ -362,9 +479,9 @@ prof_os_context_pc(void *uc_)
 }
 
 void
-prof_os_kick(ProfThread *pt)
+prof_os_kick(ProfThread *pt, u64 weight)
 {
-        pthread_kill(pt->self, SIGPROF);
+        Probe(pt, pthread_mach_thread_np(pt->self), weight);
 }
 
 void
@@ -387,10 +504,52 @@ prof_os_sleep_until(u64 ns)
         }
 }
 
-int
-prof_os_attach_signal(void)
+static void
+AttachName(char *buf, usize n, pid_t pid)
 {
-        return SIGUSR1;
+        snprintf(buf, n, "org.ty.prof-attach.%d", (int)pid);
+}
+
+static void
+Listen(void *_)
+{
+        char name[64];
+        int  token;
+
+        AttachName(name, sizeof name, getpid());
+
+        notify_register_dispatch(
+                name,
+                &token,
+                dispatch_get_global_queue(QOS_CLASS_UTILITY, 0),
+                ^(int _) { AttachFn(); }
+        );
+}
+
+void
+prof_os_attach_listen(void (*fn)(void))
+{
+        AttachFn = fn;
+        dispatch_async_f(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), NULL, Listen);
+}
+
+int
+prof_os_attach_poke(pid_t pid)
+{
+        char name[64];
+
+        if (kill(pid, 0) != 0) {
+                return -1;
+        }
+
+        AttachName(name, sizeof name, pid);
+
+        if (notify_post(name) != NOTIFY_STATUS_OK) {
+                errno = EIO;
+                return -1;
+        }
+
+        return 0;
 }
 
 #endif

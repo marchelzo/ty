@@ -1,0 +1,43 @@
+import dirs
+import path (Path)
+import sh
+import ty
+
+const PROBE = 'import dirs; print(dirs.HOME); print(dirs.CACHE); print(dirs.STATE)'
+
+fn probe(env: Dict[String, String] = %{}) -> [String] {
+    let base = %{k: v for k, v in __env if !k.match?(/^(HOME|XDG_\w+)$/)}
+    let result = sh.run(
+        [ty.executable, '-e', PROBE],
+        env=%{**base, **env},
+        timeout=30
+    )
+    assert(result.stderr == '', result.stderr)
+    result.stdout.lines()
+}
+
+pub fn home-matches-path-home() {
+    assert(dirs.HOME :: String)
+    assert(str(Path.home()) == dirs.HOME)
+}
+
+pub fn home-falls-back-without-env() {
+    let [home, cache, *] = probe()
+    assert(home.starts?('/'))
+    assert(cache.starts?("{home}/"))
+}
+
+pub fn xdg-overrides-are-honored() {
+    let [_, cache, state, *] = probe(%{
+        'TY_TYPES2_CACHE': '0',
+        'XDG_CACHE_HOME': '/tmp/ty-dirs-cache',
+        'XDG_STATE_HOME': '/tmp/ty-dirs-state'
+    })
+    assert(cache == '/tmp/ty-dirs-cache')
+    assert(state == '/tmp/ty-dirs-state')
+}
+
+pub fn relative-xdg-values-are-ignored() {
+    let [home, cache, *] = probe(%{'XDG_CACHE_HOME': 'relative/cache'})
+    assert(cache.starts?("{home}/"))
+}

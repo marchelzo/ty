@@ -1,0 +1,37 @@
+pub fn binary-units() {
+    assert("{0:h}" == '0')
+    assert("{1023:h}" == '1023')
+    assert("{1024:h}" == '1.0K')
+    assert("{1126:h}" == '1.1K')
+    assert("{10189:h}" == '10K')
+    assert("{1048575:h}" == '1.0M')
+    assert("{123456789:h}" == '118M')
+    assert("{1.5e9:h}" == '1.4G')
+}
+
+pub fn si-units() {
+    assert("{999:H}" == '999')
+    assert("{1023:H}" == '1.1k')
+    assert("{999999:H}" == '1.0M')
+    assert("{123456789:H}" == '124M')
+}
+
+pub fn precision-and-flags() {
+    assert("{123456789:.2h}" == '117.74M')
+    assert("{1048575:.0h}" == '1M')
+    assert("{-5000:h}" == '-4.9K')
+    assert("{5000:+h}" == '+4.9K')
+    assert("[{4096:>6h}]" == '[  4.0K]')
+    assert("[{4096:<6h}]" == '[4.0K  ]')
+    assert(fmt('%5h', 81920) == '  80K')
+}
+
+pub fn alt-adds-explicit-suffix() {
+    assert("{512:#h}" == '512B')
+    assert("{1536:#h}" == '1.5KiB')
+    assert("{123456789:#h}" == '118MiB')
+    assert("{512:#H}" == '512B')
+    assert("{1536:#H}" == '1.6kB')
+    assert("{123456789:#.1H}" == '123.5MB')
+    assert("[{1536:>#8h}]" == '[  1.5KiB]')
+}

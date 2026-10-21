@@ -19,6 +19,7 @@
 #include "ty.h"
 #include "xd.h"
 #include "bundle.h"
+#include "dirs.h"
 
 struct embedded_file {
         char const *path;
@@ -151,22 +152,10 @@ bundle_put_file(char const *dir, char const *rel, void const *data, usize n, u32
         return true;
 }
 
-static bool
+inline static bool
 cache_root(char *out, usize cap)
 {
-        char const *xdg  = getenv("XDG_CACHE_HOME");
-        char const *home = getenv("HOME");
-        int n;
-
-        if (xdg != NULL && *xdg != '\0') {
-                n = ty_snprintf(out, cap, "%s/ty", xdg);
-        } else if (home != NULL && *home != '\0') {
-                n = ty_snprintf(out, cap, "%s/.cache/ty", home);
-        } else {
-                return false;
-        }
-
-        return (n >= 0) && ((size_t)n < cap);
+        return dirs_path(out, cap, DIR_CACHE, "ty");
 }
 
 static bool
@@ -541,7 +530,7 @@ bundle_init(void)
         B.flags = t.flags;
 
         if (!cache_root(root, sizeof root)) {
-                B.error = "no cache directory (set HOME or XDG_CACHE_HOME)";
+                B.error = "no cache directory (the home directory could not be determined)";
                 goto Done;
         }
 

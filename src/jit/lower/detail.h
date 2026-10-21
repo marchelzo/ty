@@ -68,27 +68,38 @@ def_of(Detail const *d, u32 pc, LirOpnd x, u32 *where)
         return NULL;
 }
 
+static bool
+imm_of(Detail const *d, u32 pc, LirOpnd x, i64 *out)
+{
+        u32 at;
+
+        if (x.kind == LO_IMM) {
+                *out = x.imm;
+                return true;
+        }
+
+        LirInst const *def = def_of(d, pc, x, &at);
+
+        if (def == NULL || def->op != LIR_LI || def->args[0].kind != LO_IMM) {
+                return false;
+        }
+
+        *out = def->args[0].imm;
+
+        return true;
+}
+
 static i64
 status_of(Detail const *d, u32 pc)
 {
         LirInst const *in = inst(d, pc);
-        u32            at;
+        i64            status;
 
         if (in->op != LIR_RET || in->nargs == 0) {
                 return -1;
         }
 
-        if (in->args[0].kind == LO_IMM) {
-                return in->args[0].imm;
-        }
-
-        LirInst const *def = def_of(d, pc, in->args[0], &at);
-
-        if (def == NULL || def->op != LIR_LI || def->args[0].kind != LO_IMM) {
-                return -1;
-        }
-
-        return def->args[0].imm;
+        return imm_of(d, pc, in->args[0], &status) ? status : -1;
 }
 
 inline static i32
@@ -209,10 +220,11 @@ check_text(Detail const *d, u32 pc, u32 *load, char *buf, usize size)
         LirOpnd        m    = x;
         LirOp          op   = LIR_LD_U8;
         char const    *what = NULL;
+        i64            imm;
 
         *load = LIR_NONE;
 
-        if (k.kind != LO_IMM || (cc != LIR_EQ && cc != LIR_NE)) {
+        if ((cc != LIR_EQ && cc != LIR_NE) || !imm_of(d, pc, k, &imm)) {
                 return NULL;
         }
 
@@ -226,9 +238,9 @@ check_text(Detail const *d, u32 pc, u32 *load, char *buf, usize size)
         }
 
         if (op == LIR_LD_U8 && field_at(m, offsetof(Value, type))) {
-                what = TypeName(d->c->ctx, (int)k.imm);
+                what = TypeName(d->c->ctx, (int)imm);
         } else if (op == LIR_LD_I32 && field_at(m, offsetof(Value, class))) {
-                what = class_name(d->c->ctx, (int)k.imm);
+                what = class_name(d->c->ctx, (int)imm);
         }
 
         if (what == NULL) {
@@ -305,9 +317,9 @@ guard(Detail *d, u32 pc)
                 (to.why != NULL) ? to.why : ""
         );
 
-        if (load != LIR_NONE && load + 1 == pc) {
-                d->role[load] = JIT_ROLE_GUARD;
-                d->note[load] = d->note[pc];
+        for (u32 i = load; load != LIR_NONE && i < pc && load + 2 >= pc; ++i) {
+                d->role[i] = JIT_ROLE_GUARD;
+                d->note[i] = d->note[pc];
         }
 }
 

@@ -80,6 +80,7 @@
 #include "compiler.h"
 #include "diag.h"
 #include "dict.h"
+#include "dirs.h"
 #include "set.h"
 #include "heap.h"
 #include "functions.h"
@@ -265,6 +266,7 @@ ValueVector                  SignalGCRoots;
 static Value                 SignalHandlers[NSIG];
 static volatile u8           SignalStates[NSIG];
 static volatile sig_atomic_t AnySignalPending;
+static volatile u8           AttachPending;
 volatile sig_atomic_t        JitInterruptFlag;
 static pthread_rwlock_t      SignalLock = PTHREAD_RWLOCK_INITIALIZER;
 
@@ -274,6 +276,14 @@ vm_do_signal(int sig, siginfo_t *info, void *ctx)
         SignalStates[sig] = 1;
         AnySignalPending  = 1;
         JitInterruptFlag  = 1;
+}
+
+void
+vm_attach_request(void)
+{
+        AttachPending    = 1;
+        AnySignalPending = 1;
+        JitInterruptFlag = 1;
 }
 // =====================================================================
 
@@ -944,6 +954,13 @@ add_builtins(Ty *ty, int ac, char **av)
         compiler_introduce_symbol(ty, NULL, "argv", "Array[String]", false);
         xvP(Globals, ARRAY(args));
 
+        for (int i = 0; i < DIR_COUNT; ++i) {
+                char const *dir = dirs_get(i);
+                Symbol *sym = compiler_introduce_symbol(ty, "dirs", DirNames[i], "String | nil", false);
+                sym->flags |= SYM_CONST;
+                xvP(Globals, (dir != NULL) ? vSsz(dir) : NIL);
+        }
+
         Dict *env = dict_new(ty);
 
         extern char **environ;
@@ -1050,17 +1067,7 @@ add_builtins(Ty *ty, int ac, char **av)
                 AddSearchDirs(ty, env_path);
         }
 
-        char const *home = getenv("HOME");
-        if (home == NULL) {
-                home = getenv("USERPROFILE");
-        }
-
-        char const *xdg_data = getenv("XDG_DATA_HOME");
-        if (xdg_data != NULL) {
-                ty_snprintf(path, sizeof path, "%s/ty/lib", xdg_data);
-                add(path);
-        } else if (home != NULL) {
-                ty_snprintf(path, sizeof path, "%s/.local/share/ty/lib", home);
+        if (dirs_path(path, sizeof path, DIR_DATA, "ty/lib")) {
                 add(path);
         }
 
@@ -1376,17 +1383,16 @@ HandlePendingSignals(Ty *ty)
 {
         GC_STOP();
 
+#ifdef TY_HAVE_SAMPLER
+        if (__sync_bool_compare_and_swap(&AttachPending, 1, 0)) {
+                prof_attach_toggle(ty);
+        }
+#endif
+
         for (int sig = 0; sig < NSIG; sig++) {
                 if (!__sync_bool_compare_and_swap(&SignalStates[sig], 1, 0)) {
                         continue;
                 }
-
-#ifdef TY_HAVE_SAMPLER
-                if (sig == prof_attach_signal() && sig != 0) {
-                        prof_attach_toggle(ty);
-                        continue;
-                }
-#endif
 
                 pthread_rwlock_rdlock(&SignalLock);
                 Value fn = SignalHandlers[sig];

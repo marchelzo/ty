@@ -160,9 +160,6 @@ prof_symbolize(uptr addr);
 void
 prof_throw(Ty *ty, char const *ip);
 
-int
-prof_attach_signal(void);
-
 void
 prof_attach_init(Ty *ty);
 

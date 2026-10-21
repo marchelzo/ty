@@ -68,7 +68,7 @@ FindBias(struct dl_phdr_info *info, usize size, void *data)
 }
 
 void
-prof_os_init(ProfHandler *handler)
+prof_os_init(ProfHandler *handler, ProfRemote *remote)
 {
         struct sigaction sa = {0};
 
@@ -362,7 +362,7 @@ prof_os_context_pc(void *uc_)
 }
 
 void
-prof_os_kick(ProfThread *pt)
+prof_os_kick(ProfThread *pt, u64 weight)
 {
         syscall(SYS_tgkill, getpid(), (pid_t)pt->tid, SIGPROF);
 }
@@ -378,10 +378,30 @@ prof_os_sleep_until(u64 ns)
         clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, NULL);
 }
 
-int
-prof_os_attach_signal(void)
+static void (*AttachFn)(void);
+
+static void
+OnAttachSignal(int sig)
 {
-        return SIGRTMIN + 7;
+        AttachFn();
+}
+
+void
+prof_os_attach_listen(void (*fn)(void))
+{
+        struct sigaction sa = {0};
+
+        AttachFn      = fn;
+        sa.sa_handler = OnAttachSignal;
+        sa.sa_flags   = SA_RESTART;
+        sigemptyset(&sa.sa_mask);
+        sigaction(SIGRTMIN + 7, &sa, NULL);
+}
+
+int
+prof_os_attach_poke(pid_t pid)
+{
+        return kill(pid, SIGRTMIN + 7);
 }
 
 #endif

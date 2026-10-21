@@ -1219,7 +1219,7 @@ pub macro table(def: _) {
 
     fn fld-expr(c: _) {
         let id = ty.Id(name: c.name)
-        (c.date != nil) ? $$[ "{$$id}" $$] : id
+        (c.date != nil) ? $$[ ($$id == nil) ? nil : "{$$id}" $$] : id
     }
 
     fn flds(cs: _) { [fld-expr(it) for cs] }

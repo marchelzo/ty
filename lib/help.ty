@@ -163,12 +163,12 @@ fn inline(text: String) -> Text {
 
 fn short-path(file: ?String) -> String | nil {
     let $file = file or return nil
-    let home = str(dirs.HOME)
+    let home = dirs.HOME ?? ''
     let lib = ty.path.find(dir -> file.starts?("{dir}/"))
     match file {
-        _ and lib != nil         => "{Path(lib).name}/{file.slice(#lib + 1)}",
-        _ and file.starts?(home) => "~{file.slice(#home)}",
-        _                        => file
+        _ and lib != nil                            => "{Path(lib).name}/{file.slice(#lib + 1)}",
+        _ and home != '' && file.starts?("{home}/") => "~{file.slice(#home)}",
+        _                                           => file
     }
 }
 

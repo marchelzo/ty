@@ -32,6 +32,7 @@
 #include "types2_core.h"
 #include "value.h"
 #include "diag.h"
+#include "dirs.h"
 #include "intern.h"
 
 enum {
@@ -30659,33 +30660,7 @@ cache_directory(char *buffer, usize size)
                 return n < (int)size;
         }
 
-        char const *xdg  = getenv("XDG_CACHE_HOME");
-        char const *home = getenv("HOME");
-        u64 identity     = build_identity();
-        if (xdg != NULL && *xdg != '\0') {
-                int n = ty_snprintf(
-                        buffer,
-                        size,
-                        "%s/ty/types/%016" PRIx64,
-                        xdg,
-                        identity
-                );
-                return n < (int)size;
-        }
-
-        if (home == NULL || *home == '\0') {
-                return false;
-        }
-
-        int n = ty_snprintf(
-                buffer,
-                size,
-                "%s/.cache/ty/types/%016" PRIx64,
-                home,
-                identity
-        );
-
-        return n < (int)size;
+        return dirs_path(buffer, size, DIR_CACHE, "ty/types/%016" PRIx64, build_identity());
 }
 
 static bool

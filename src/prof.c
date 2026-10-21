@@ -35,6 +35,7 @@ bool ProfMode;
 #include "jit/jit.h"
 #include "jit/lir.h"
 #include "dict.h"
+#include "dirs.h"
 #include "token.h"
 #include "highlight.h"
 #include "title.h"
@@ -1121,39 +1122,47 @@ StateOf(ProfThread *pt)
 }
 
 static void
-OnSample(int sig, siginfo_t *si, void *uc)
+Sample(ProfThread *pt, uptr rip, u64 weight)
 {
-        ProfThread *pt = MyProf;
-        int saved = errno;
+        u64 t0 = NowNs();
 
-        if (pt == NULL || !atomic_load_explicit(&Running, memory_order_relaxed)) {
-                errno = saved;
+        if (!atomic_load_explicit(&Running, memory_order_relaxed)) {
                 return;
         }
 
         if (pt->busy) {
                 atomic_fetch_add_explicit(&Busy, 1, memory_order_relaxed);
-        } else {
-                u64 t0 = NowNs();
-                u64 weight = (Mode == PK_EVENT) ? EventPeriod : Period;
-                uptr rip = prof_os_context_pc(uc);
-
-                if (Mode == PK_CPU) {
-                        weight = prof_os_weight(pt, weight);
-                }
-
-                pt->busy = 1;
-                atomic_signal_fence(memory_order_seq_cst);
-
-                Record(pt, &pt->ring[0], Mode, StateOf(pt), weight, rip, 0, t0);
-                TY_PROBE_IF(sample, Mode, rip);
-
-                atomic_signal_fence(memory_order_seq_cst);
-                pt->busy = 0;
-
-                atomic_fetch_add_explicit(&HandlerNs, NowNs() - t0, memory_order_relaxed);
+                return;
         }
 
+        pt->busy = 1;
+        atomic_signal_fence(memory_order_seq_cst);
+
+        Record(pt, &pt->ring[0], Mode, StateOf(pt), weight, rip, 0, t0);
+        TY_PROBE_IF(sample, Mode, rip);
+
+        atomic_signal_fence(memory_order_seq_cst);
+        pt->busy = 0;
+
+        atomic_fetch_add_explicit(&HandlerNs, NowNs() - t0, memory_order_relaxed);
+}
+
+static void
+OnSample(int sig, siginfo_t *si, void *uc)
+{
+        ProfThread *pt = MyProf;
+        int saved = errno;
+
+        if (pt == NULL) {
+                errno = saved;
+                return;
+        }
+
+        u64 weight = (Mode == PK_EVENT) ? EventPeriod
+                   : (Mode == PK_CPU)   ? prof_os_weight(pt, Period)
+                   :                      Period;
+
+        Sample(pt, prof_os_context_pc(uc), weight);
         prof_os_sampled(pt);
 
         errno = saved;
@@ -1945,7 +1954,7 @@ WallLoop(void *_)
                         }
 
                         if (pt->ty->locked || !TySpinLockTryLock(pt->ty->lock)) {
-                                prof_os_kick(pt);
+                                prof_os_kick(pt, Period);
                                 continue;
                         }
 
@@ -1997,7 +2006,7 @@ StartRun(Ty *ty)
                 LoadExeSymbols();
                 xvP(SymNames, "(none)");
                 xvP(SymNames, "[jit]");
-                prof_os_init(OnSample);
+                prof_os_init(OnSample, Sample);
         }
 
         StartWall = NowNs();
@@ -2210,7 +2219,7 @@ static char const *
 DisplayPath(char const *path)
 {
         usize cl = strlen(M.cwd);
-        char const *home = getenv("HOME");
+        char const *home = dirs_get(DIR_HOME);
         usize hl = (home != NULL) ? strlen(home) : 0;
 
         if (cl > 0 && strncmp(path, M.cwd, cl) == 0 && path[cl] == '/') {
@@ -5468,16 +5477,22 @@ prof_gc_done(u64 before, u64 after, u64 ns)
         GcStats.peak = (before > GcStats.peak) ? before : GcStats.peak;
 }
 
-extern void
-vm_do_signal(int sig, siginfo_t *info, void *ctx);
-
-static int  AttachSig;
+static char AttachReq[128];
 static char AttachPrefix[512];
 
-int
-prof_attach_signal(void)
+static void
+OnAttachPoke(void)
 {
-        return AttachSig;
+        struct stat st;
+
+        if (
+                !atomic_load(&Running)
+             && (stat(AttachReq, &st) != 0 || st.st_uid != getuid())
+        ) {
+                return;
+        }
+
+        vm_attach_request();
 }
 
 void
@@ -5489,24 +5504,17 @@ prof_attach_init(Ty *ty)
                 return;
         }
 
-        struct sigaction sa = {0};
-        sa.sa_sigaction = vm_do_signal;
-        sa.sa_flags = SA_SIGINFO | SA_RESTART;
-        sigemptyset(&sa.sa_mask);
-
-        AttachSig = prof_os_attach_signal();
-        sigaction(AttachSig, &sa, NULL);
-
+        ty_snprintf(AttachReq, sizeof AttachReq, "/tmp/ty-prof-attach-%d.req", (int)getpid());
+        prof_os_attach_listen(OnAttachPoke);
         prof_thread_start(ty);
 }
 
 static void
 ReadAttachRequest(void)
 {
-        char path[128];
+        char const *path = AttachReq;
         char line[1024];
 
-        ty_snprintf(path, sizeof path, "/tmp/ty-prof-attach-%d.req", (int)getpid());
         ty_snprintf(AttachPrefix, sizeof AttachPrefix, "/tmp/ty-prof-%d-%llu", (int)getpid(), (unsigned long long)(NowNs() / 1000000));
 
         Mode = PK_CPU;
@@ -5733,7 +5741,7 @@ prof_attach_main(int argc, char **argv)
         fprintf(f, "record=%s\n", DataPath);
         fclose(f);
 
-        if (kill(pid, prof_os_attach_signal()) != 0) {
+        if (prof_os_attach_poke(pid) != 0) {
                 fprintf(stderr, "ty: cannot signal %d: %s\n", (int)pid, strerror(errno));
                 unlink(req);
                 return 1;
@@ -5751,7 +5759,7 @@ prof_attach_main(int argc, char **argv)
                 }
         }
 
-        kill(pid, prof_os_attach_signal());
+        prof_os_attach_poke(pid);
 
         char done[300];
         ty_snprintf(done, sizeof done, "%s.done", prefix);

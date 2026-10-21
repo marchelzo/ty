@@ -7,6 +7,7 @@ import clap (clap!)
 import errno
 import hash
 import ioctls (TIOCSCTTY, TIOCGWINSZ, TIOCSWINSZ)
+import dirs
 import json
 import os
 import path (Path)
@@ -3002,7 +3003,7 @@ const SHIM_FLAGS = ['-dynamiclib', '-O2', '-arch', 'x86_64', '-arch', 'arm64', '
 
 fn shim() -> String {
     let id  = hash.sha256("{SHIM_FLAGS}{SHIM}").hexdigest()[;16]
-    let dir = Path.home() / 'Library' / 'Caches' / 'tuicap'
+    let dir = Path(dirs.CACHE ?? os.tmpdir()) / 'tuicap'
     let lib = dir / "shim-{id}.dylib"
     if lib.exists? {
         return str(lib)

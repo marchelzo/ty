@@ -456,6 +456,7 @@ set(_src_files
   src/queue.c
   src/debug.c
   src/dict.c
+  src/dirs.c
   src/set.c
   src/heap.c
   src/ffi.c
@@ -662,6 +663,7 @@ target_link_libraries(${_tgt_ty_link}
     $<$<NOT:$<BOOL:${WIN32}>>:m>
     $<$<BOOL:${WIN32}>:ws2_32> # winsock2
     $<$<BOOL:${WIN32}>:Shlwapi.lib>
+    $<$<BOOL:${WIN32}>:shell32>
 )
 
 target_link_libraries(${_tgt_ty_link} INTERFACE nsync)

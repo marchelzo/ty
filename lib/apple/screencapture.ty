@@ -75,7 +75,7 @@ pub class Recorder {
 }
 
 fn cached-helper(source: Path) -> Path {
-    let cache  = dirs.CACHE / 'ty'
+    let cache  = Path(dirs.CACHE ?? os.tmpdir()) / 'ty'
     let helper = cache / 'termrec-helper'
     let fresh = helper.exists? && helper.stat.mtime >= source.stat.mtime
     if fresh {

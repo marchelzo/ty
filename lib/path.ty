@@ -1,3 +1,4 @@
+import dirs
 import errno
 import io
 import os
@@ -576,11 +577,7 @@ pub class Path : PathLike {
     }
 
     static home() -> Path {
-#|if __windows__
-        Path(getenv('USERPROFILE') ?? getenv('HOMEPATH') ?? '.')
-#|else
-        Path(getenv('HOME') ?? '.')
-#|]
+        Path(dirs.HOME ?? '.')
     }
 
     mkdtemp(prefix: String = 'tmp') -> Path {

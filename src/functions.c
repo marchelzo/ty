@@ -1295,6 +1295,66 @@ AddThousandsSep(char *s, int c)
         ((char *)memcpy(s, b, i))[i] = '\0';
 }
 
+static int
+HumanSize(char *out, usize n, double x, struct fspec const *spec, double k)
+{
+        bool const si   = (k == 1000.0);
+        int  const prec = (spec->prec[0] == '.') ? atoi(&spec->prec[1]) : -1;
+        char const *units = si ? "kMGTPEZYRQ" : "KMGTPEZYRQ";
+        int  const nu     = strlen(units);
+        double a = fabs(x);
+        double d = 1.0;
+        double r;
+        int u = 0;
+        int p;
+
+        while (u < nu && a / d >= k) {
+                d *= k;
+                u += 1;
+        }
+
+        for (;;) {
+                p = (u    == 0) ? 0
+                  : (prec >= 0) ? prec
+                  :               1;
+
+                r = ceil(a * pow(10.0, p) / d) / pow(10.0, p);
+
+                if (prec < 0 && p == 1 && r >= 10.0) {
+                        p = 0;
+                        r = ceil(a / d);
+                }
+
+                if (u == nu || r < k) {
+                        break;
+                }
+
+                d *= k;
+                u += 1;
+        }
+
+        char const *sgn = (x < 0.0)   ? "-"
+                        : spec->sign  ? "+"
+                        : spec->blank ? " "
+                        :               "";
+
+        char const *sfx = !spec->alt     ? ""
+                        : (u == 0 || si) ? "B"
+                        :                  "iB";
+
+        return ty_snprintf(
+                out,
+                n,
+                "%s%.*f%.*s%s",
+                sgn,
+                p,
+                r,
+                (u > 0),
+                &units[max(u - 1, 0)],
+                sfx
+        );
+}
+
 // fmt(str: String, *args: _)
 TY_BUILTIN_RAW(fmt)
 {
@@ -1522,6 +1582,17 @@ MissingArgument:
                                 if (tmp[len - 1] == ' ') {
                                         tmp[--len] = '\0';
                                 }
+                                break;
+
+                        case 'h':
+                        case 'H':
+                                HumanSize(
+                                        tmp,
+                                        TY_TMP_N,
+                                        float_from(ty, &arg, start, nspec),
+                                        &spec,
+                                        (t == 'h') ? 1024.0 : 1000.0
+                                );
                                 break;
 
                         case 's':

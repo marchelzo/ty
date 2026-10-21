@@ -4,6 +4,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <stdatomic.h>
+#include <sys/types.h>
 
 #include "ty.h"
 
@@ -34,9 +35,10 @@ typedef struct {
 } ExeSym;
 
 typedef void ProfHandler(int sig, siginfo_t *si, void *uc);
+typedef void ProfRemote(ProfThread *pt, uptr pc, u64 weight);
 
 void
-prof_os_init(ProfHandler *handler);
+prof_os_init(ProfHandler *handler, ProfRemote *remote);
 
 ExeSym *
 prof_os_exe_symbols(usize *n);
@@ -66,13 +68,16 @@ uptr
 prof_os_context_pc(void *uc);
 
 void
-prof_os_kick(ProfThread *pt);
+prof_os_kick(ProfThread *pt, u64 weight);
 
 void
 prof_os_sleep_until(u64 ns);
 
+void
+prof_os_attach_listen(void (*fn)(void));
+
 int
-prof_os_attach_signal(void);
+prof_os_attach_poke(pid_t pid);
 
 #endif
 
