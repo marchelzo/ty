@@ -2272,10 +2272,30 @@ capture(BcLir *c, char const *ip)
 static void
 function_literal(BcLir *c, char const *ip, u8 op)
 {
-        LirReg top    = slot_of(c, c->sp);
-        void  *helper = (op == INSTR_FUNCTION) ? jit_rt_function : jit_rt_generator;
+        void *helper = (op == INSTR_FUNCTION) ? jit_rt_function : jit_rt_generator;
+        i32   n      = ncaptures(c, ip - c->code);
 
-        tycall(c, helper, LT_VOID, preg(top), pimm(ip + 1));
+        for (i32 i = 0; i < n; ++i) {
+                i32 slot = capture_slot(c, ip - c->code, i);
+
+                if (slot < 0) {
+                        continue;
+                }
+
+                if (loop_reg(c, slot) != LIR_NONE) {
+                        c->ok = false;
+                        return;
+                }
+
+                if (c->vs != NULL) {
+                        vs_release(c, slot);
+                        vs_remember(c, slot, NULL);
+                }
+        }
+
+        LirReg top = slot_of(c, c->sp);
+
+        tycall(c, helper, LT_VOID, preg(top), pimm(ip + 1), preg(c->locals), preg(c->env));
 }
 
 static void
@@ -2913,6 +2933,7 @@ lower_op(BcLir *c, BcLirNode const *node, char const *ip)
                 return false;
 
         case INSTR_TARGET_LOCAL:
+                vs_expose_pinned(c, c->sp - 1);
                 if (fast_target_local(c, node, ip)) {
                         return true;
                 }

@@ -338,7 +338,7 @@ pub class Looks {
     }
 
     part(w: String, p: String, states: Array[String], variant: String | nil = nil) -> Dict[String, _] {
-        let ck = "{w}|{variant}|{p}|{states}"
+        let ck = "{w}|{variant}|{p}|{states.join(',')}"
         if let $hit = cache[ck] {
             return hit
         }

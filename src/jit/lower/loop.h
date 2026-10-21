@@ -119,6 +119,20 @@ falls(u8 op)
 }
 
 static u8
+captured_bits(BcLir const *c, BcLoop const *loop, i32 off)
+{
+        u8 bits = 0;
+
+        for (i32 k = 0; k < loop->nslots; ++k) {
+                if (captures(c, off, loop->slots[k])) {
+                        bits |= 1 << k;
+                }
+        }
+
+        return bits;
+}
+
+static u8
 touch(BcLir const *c, BcLoop const *loop, i32 off, bool *def)
 {
         BcLirNode const *n = &c->nodes[off];
@@ -126,7 +140,7 @@ touch(BcLir const *c, BcLoop const *loop, i32 off, bool *def)
         *def = false;
 
         if (!local_op(n->op)) {
-                return 0;
+                return captured_bits(c, loop, off);
         }
 
         i32 slot = opslot(c, off);
@@ -197,7 +211,13 @@ writers(BcLir const *c, BcLoop const *loop)
         for (i32 off = loop->head; off <= loop->end; ++off) {
                 BcLirNode const *n = &c->nodes[off];
 
-                if (dead(n) || (n->op != INSTR_ASSIGN_LOCAL && n->op != INSTR_TARGET_LOCAL)) {
+                if (dead(n)) {
+                        continue;
+                }
+
+                bits |= captured_bits(c, loop, off);
+
+                if (n->op != INSTR_ASSIGN_LOCAL && n->op != INSTR_TARGET_LOCAL) {
                         continue;
                 }
 
@@ -221,7 +241,13 @@ escapers(BcLir const *c, BcLoop const *loop)
         for (i32 off = 0; off < c->size; ++off) {
                 BcLirNode const *n = &c->nodes[off];
 
-                if (dead(n) || inside(loop, off) || !local_op(n->op)) {
+                if (dead(n) || inside(loop, off)) {
+                        continue;
+                }
+
+                bits |= captured_bits(c, loop, off);
+
+                if (!local_op(n->op)) {
                         continue;
                 }
 
@@ -245,7 +271,13 @@ written_within(BcLir const *c, BcLoop const *loop, BcLoop const *region)
         for (i32 off = region->head; off <= region->end; ++off) {
                 BcLirNode const *n = &c->nodes[off];
 
-                if (dead(n) || (n->op != INSTR_ASSIGN_LOCAL && n->op != INSTR_TARGET_LOCAL)) {
+                if (dead(n)) {
+                        continue;
+                }
+
+                bits |= captured_bits(c, loop, off);
+
+                if (n->op != INSTR_ASSIGN_LOCAL && n->op != INSTR_TARGET_LOCAL) {
                         continue;
                 }
 
@@ -282,6 +314,20 @@ busiest(BcLir const *c, i32 const *score)
 }
 
 static void
+exclude_captures(BcLir const *c, i32 off, i32 *score)
+{
+        i32 n = ncaptures(c, off);
+
+        for (i32 i = 0; i < n; ++i) {
+                i32 slot = capture_slot(c, off, i);
+
+                if (local_ok(c, slot)) {
+                        score[slot] = -1;
+                }
+        }
+}
+
+static void
 choose(BcLir const *c, BcLoop *loop, i32 *score)
 {
         memset(score, 0, c->bound * sizeof *score);
@@ -289,7 +335,13 @@ choose(BcLir const *c, BcLoop *loop, i32 *score)
         for (i32 off = loop->head; off <= loop->end; ++off) {
                 BcLirNode const *n = &c->nodes[off];
 
-                if (dead(n) || !local_op(n->op)) {
+                if (dead(n)) {
+                        continue;
+                }
+
+                exclude_captures(c, off, score);
+
+                if (!local_op(n->op)) {
                         continue;
                 }
 
@@ -393,6 +445,8 @@ containers(BcLir const *c, BcLoop *loop, i32 *score)
                 }
 
                 any = any || bytes || indexes(n->op);
+
+                exclude_captures(c, off, score);
 
                 if (!local_op(n->op)) {
                         continue;
@@ -560,6 +614,10 @@ writes_of(BcLir const *c, BcLoop const *loop, i32 slot)
                      && (node->op == INSTR_TARGET_LOCAL || node->op == INSTR_ASSIGN_LOCAL)
                      && (opslot(c, off) == slot)
                 ) {
+                        n += 1;
+                }
+
+                if (!dead(node) && captures(c, off, slot)) {
                         n += 1;
                 }
         }

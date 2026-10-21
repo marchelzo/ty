@@ -3377,64 +3377,77 @@ fn ellipsize(line: String, room: Int, tail: String, force?: Bool = false) -> Str
 }
 
 fn pre-wrap(line: String, w: Int) -> Array[String] {
-    if line.width() <= w {
+    if line.size() <= w || line.width() <= w {
         return [line]
     }
 
     let out: Array[String] = []
-    let cur: Array[(String, Int)] = []
+    let cur = Blob()
     let sgr: Array[String] = []
+    let lead: ?String = nil
     let col = 0
-    let gap: Int | nil = nil
+    let gap = -1
+    let gap-col = 0
 
-    fn flush(cells: Array[(String, Int)]) {
-        let b = Blob()
-        for (t, _) in cells {
-            b.push(t)
-        }
-        if #sgr > 0 {
-            b.push(RST)
-        }
-        out.push(b.str!())
+    fn flush(n: Int) {
+        out.push((#sgr > 0) ? "{cur.str!(0, n)}{RST}" : cur.str!(0, n))
     }
 
-    for tok in line.matches(/\x1b\[[0-9;:]*m|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\X/u) {
-        if tok.starts?('\x1b') {
-            if tok.match?(/^\x1b\[0?m$/) {
-                sgr = []
-            } else if tok.starts?('\x1b[') {
-                sgr.push(tok)
-            }
-            cur.push((tok, 0))
-            continue
-        }
-        let tw = tok.width()
+    fn place(piece: String | Int, tw: Int, space?: Bool) {
         if col + tw > w && col > 0 {
-            let lead = sgr.map(t -> (t, 0))
-            if let $g = gap and tok != ' ' {
-                flush(cur[;g])
-                let rest = cur[g + 1;]
-                cur = [*lead, *rest]
-                col = rest.map(c -> c.1).sum(0)
+            lead ?= sgr.join('')
+            if gap >= 0 && !space? {
+                flush(gap)
+                cur.clear(0, gap + 1)
+                cur.push(0, lead)
+                col -= gap-col + 1
             } else {
-                flush(cur)
-                cur = lead
+                flush(#cur)
+                cur.clear()
+                cur.push(lead)
                 col = 0
-                if tok == ' ' {
-                    gap = nil
-                    continue
+                if space? {
+                    gap = -1
+                    return
                 }
             }
-            gap = nil
+            gap = -1
         }
-        if tok == ' ' && col > 0 {
-            gap = #cur
+        if space? && col > 0 {
+            gap     = #cur
+            gap-col = col
         }
-        cur.push((tok, tw))
+        cur.push(piece)
         col += tw
     }
 
-    flush(cur)
+    for tok in line.matches(/\x1b\[[0-9;:]*m|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|[\x20-\x7e]+(?![^\x00-\x7f])|\X/u) {
+        let b = tok.byte(0)!
+        if b == 0x1b {
+            if tok == '\x1b[0m' || tok == '\x1b[m' {
+                sgr  = []
+                lead = nil
+            } else if tok.byte(1) == 0x5b {
+                sgr.push(tok)
+                lead = nil
+            }
+            cur.push(tok)
+        } else if b >= 0x20 && b < 0x7f && (tok.byte(tok.size() - 1)!) < 0x80 {
+            for i in ..tok.size() {
+                let c = tok.byte(i)!
+                if c == 0x20 || col >= w {
+                    place(c, 1, c == 0x20)
+                } else {
+                    cur.push(c)
+                    col += 1
+                }
+            }
+        } else {
+            place(tok, tok.width(), tok == ' ')
+        }
+    }
+
+    flush(#cur)
     out
 }
 

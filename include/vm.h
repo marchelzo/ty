@@ -82,6 +82,20 @@ CallMethod(Ty *ty, int m_id, int n, int nkw, bool b, bool exec);
 void
 DoYield(Ty *ty);
 
+extern _Thread_local Generator *InterruptedGenerator;
+
+void
+vm_interrupt(Ty *ty);
+
+[[gnu::always_inline]]
+inline static void
+CheckInterrupt(Ty *ty)
+{
+        if (UNLIKELY(InterruptedGenerator != NULL)) {
+                vm_interrupt(ty);
+        }
+}
+
 void
 DoTargetSubscript(Ty *ty);
 
@@ -341,6 +355,9 @@ void
 vm_close_generator(Ty *ty, Generator *gen);
 
 Value
+vm_raise_generator(Ty *ty, Generator *gen, Value const *exc);
+
+Value
 vm_catch(Ty *ty);
 
 void
@@ -407,10 +424,10 @@ bool
 vm_jit_record_rest(Ty *ty, Value *tos, Value *target, i32 const *excluded_ids);
 
 char *
-DoFunction(Ty *ty, char const *ip);
+DoFunction(Ty *ty, char const *ip, Value *locals, Value **env);
 
 char *
-DoGenerator(Ty *ty, char const *ip);
+DoGenerator(Ty *ty, char const *ip, Value *locals, Value **env);
 
 void
 DoDictLiteral(Ty *ty, i32 n, Value const *dflt);

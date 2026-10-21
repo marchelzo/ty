@@ -384,6 +384,14 @@ vs_flush(BcLir *c, i32 i)
 }
 
 static void
+vs_expose_pinned(BcLir *c, i32 i)
+{
+        if (c->vs != NULL && i >= 0 && vs_pinned(c, i) && lazy_pinned(c, i)) {
+                put(c, sspot(c, i), c->vs[i].r, false);
+        }
+}
+
+static void
 vs_flush_below(BcLir *c, i32 n)
 {
         if (c->vs == NULL) {
@@ -666,6 +674,8 @@ offsets_ahead(BcLir const *c, i32 cont, i32 base, i32 *lo, i32 *hi)
                                 (n->op == INSTR_TARGET_LOCAL || n->op == INSTR_ASSIGN_LOCAL)
                              && (opslot(c, p) == cont || opslot(c, p) == base)
                         )
+                     || captures(c, p, cont)
+                     || captures(c, p, base)
                 ) {
                         return;
                 }

@@ -1,0 +1,425 @@
+import uv
+import os
+import json
+import sh
+import ty
+import path (Path)
+import _wire as w
+
+let HERE = Path(__file__).absolute.parent
+
+fn scratch(f: String -> _) -> _ {
+    let dir = os.mkdtemp('/tmp/ty-uv-stress-')
+    try {
+        f(dir)
+    } finally {
+        sh.run(['rm', '-rf', dir])
+    }
+}
+
+fn drain(fd: Int) -> String {
+    let pipe = uv.pipe(fd)
+    defer pipe.close()
+    pipe.read-all()
+}
+
+class Hub {
+    __srv:   uv.UVSocket
+    __peers: Int
+    __conns: Dict[Int, uv.UVSocket] = %{}
+    routed:  Int = 0
+    retired: Int = 0
+
+    init(peers: Int) {
+        __peers = peers
+        __srv   = uv.server('127.0.0.1', 0)
+        __srv.on-connection = self.serve
+        __srv.listen()
+    }
+
+    port -> Int {
+        w.port-of(__srv)
+    }
+
+    close() {
+        __srv.close()
+    }
+
+    serve(server: uv.UVSocket) {
+        let client = server.accept()
+        let [_, id] = (client.read-line() ?? '').strip().split(' ')
+        let id = int(id)
+
+        __conns[id] = client
+        if #__conns == __peers {
+            for __conns.values() {
+                it.write("GO\n")
+            }
+        }
+
+        for line in client.lines() {
+            if line == "BYE\n" {
+                break
+            }
+            let [_, dst, rest] = line.split(' ', 2)
+            __conns[int(dst)]!.write("FROM {id} {rest}")
+            routed += 1
+        }
+
+        retired += 1
+        client.shutdown()
+        client.close()
+    }
+}
+
+fn check-log(log: String, me: Int, peers: Int, rounds: Int) {
+    let next = %{*: 0}
+    for line in log.lines() {
+        let [src, seq, len] = line.split(' ').map(int)
+        assert(seq == next[src])
+        assert(len == #w.payload(src, me, seq))
+        next[src] += 1
+    }
+    assert(next == %{src: rounds for src in ..peers if src != me})
+}
+
+pub fn test-processes-gossip-through-a-hub() {
+    let peers  = 4 + 2 * w.SCALE
+    let rounds = 30 * w.SCALE
+    let peer   = "{HERE / '_peer.ty'}"
+
+    scratch(fn (dir) {
+        let hub: ?Hub = nil
+        let procs     = []
+        let outputs = []
+
+        uv.run(fn () {
+            let gc = uv.spawn(w.churn-gc, 13)
+            hub = Hub(peers)
+            procs = [
+                os.spawn(
+                    [ty.executable, peer, "{hub.port}", "{i}", "{peers}", "{rounds}", dir],
+                    stdout=os.SPAWN_PIPE
+                )
+                for i in ..peers
+            ]
+            outputs = uv.gather(procs.map(p -> (-> drain(p.stdout))))
+            hub.close()
+            gc.close()
+            w.quiesce()
+        })
+
+        for p in procs {
+            match os.wait(p.pid) {
+                (_, status) => assert(os.WIFEXITED(status) && os.WEXITSTATUS(status) == 0),
+                nil         => throw RuntimeError("lost peer {p.pid}"),
+            }
+        }
+
+        let $hub = hub or throw RuntimeError('the hub never started')
+        assert(hub.routed == peers * (peers - 1) * rounds)
+        assert(hub.retired == peers)
+
+        for out in outputs {
+            let r = json.parse(out)
+            assert(r['sent'] == (peers - 1) * rounds)
+            assert(r['received'] == (peers - 1) * rounds)
+            assert(r['rest'] == '')
+            check-log(slurp("{dir}/peer-{r['id']}.log"), r['id'], peers, rounds)
+        }
+    })
+}
+
+fn echo(server: uv.UVSocket, report: DefaultDict[String, Int]) {
+    let client = server.accept()
+    try {
+        while let $frame = w.recv-frame(client) {
+            w.send-frame(client, frame)
+            report['served'] += 1
+        }
+    } catch _: uv.UVError {
+        report['broken'] += 1
+    } catch e: RuntimeError {
+        if !"{e}".match?(/short frame/) {
+            throw e
+        }
+        report['torn'] += 1
+    } finally {
+        client.close()
+    }
+}
+
+fn frame-size() -> Int {
+    match rand(20) {
+        0          => rand(200000, 1000000),
+        1 or 2 or 3 => rand(4000, 70000),
+        _          => rand(1, 300),
+    }
+}
+
+fn chatter(port: Int, trips: Int, report: DefaultDict[String, Int]) {
+    let sock = uv.dial('127.0.0.1', port)
+    defer sock.close()
+    let budget = (rand(5) == 0) ? rand(1, 60) : 120000
+    try {
+        with uv.timeout(budget) {
+            for ..trips {
+                let data = w.blob-of(rand(1000), frame-size())
+                w.send-frame(sock, data)
+                assert(w.recv-frame(sock) == data)
+                report['echoed'] += 1
+                report['bytes']  += #data
+            }
+        }
+        report['completed'] += 1
+    } catch _: uv.TimeoutError {
+        report['canceled'] += 1
+    }
+}
+
+fn node(i: Int, conns: Int, trips: Int, up: Channel, down: Channel) -> DefaultDict[String, Int] {
+    srand(1009 * i + 17)
+    let report = %{*: 0}
+    uv.run(fn () {
+        let gc  = uv.spawn(w.churn-gc, 11)
+        let srv = uv.server('127.0.0.1', 0)
+        srv.on-connection = server -> echo(server, report)
+        srv.listen()
+
+        up.send(('up', i, w.port-of(srv)))
+        let others = w.poll(down)
+
+        uv.gather([
+            (-> chatter(port, trips, report))
+            for port in others
+            for _ in ..conns
+        ])
+
+        up.send(('done', i, 0))
+        w.poll(down)
+
+        srv.close()
+        gc.close()
+        w.quiesce()
+    })
+    report
+}
+
+fn recv!(ch: Channel) -> _ {
+    match ch.recv(60000) {
+        Some(x) => x,
+        None    => throw RuntimeError('timed out waiting for a node'),
+    }
+}
+
+pub fn test-threads-host-loops-that-talk-to-each-other() {
+    let n     = 3 + w.SCALE
+    let conns = 3 * w.SCALE
+    let trips = 12
+    let up    = Channel()
+    let downs = [Channel() for _ in ..n]
+
+    let threads = [Thread(node, i, conns, trips, up, downs[i]) for i in ..n]
+
+    let ports = %{}
+    for ..n {
+        let (_, i, port) = recv!(up)
+        ports[i] = port
+    }
+    for down; i in downs {
+        down.send([port for (j, port) in ports if j != i])
+    }
+
+    for ..n {
+        recv!(up)
+    }
+    for down in downs {
+        down.send('stop')
+    }
+
+    let reports = threads.map(&join)
+    for r in reports {
+        assert(r :: Dict, "{r}")
+    }
+
+    let sum = key -> reports.map(&[key]).sum() ?? 0
+    assert(sum('completed') + sum('canceled') == n * (n - 1) * conns)
+    assert(sum('completed') > 0)
+    assert(sum('served') >= sum('echoed'))
+}
+
+fn cuts(size: Int) -> Array[(Int, Int)] {
+    let marks = [0]
+    while marks[-1] < size {
+        marks.push(min(size, marks[-1] + rand(1, 20000)))
+    }
+    [(marks[k], marks[k + 1]) for k in ..#marks - 1]
+}
+
+fn scribble-one(dir: String, name: String) -> String | nil {
+    let size  = (rand(10) == 0) ? rand(100000, 400000) : rand(0, 5000)
+    let data  = w.blob-of(rand(1000000), size)
+    let tmp   = "{dir}/{name}.tmp"
+    let final = "{dir}/{name}"
+
+    let fd = uv.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    for (i, j) in cuts(size).shuffle() {
+        assert(uv.write(fd, data[i;j], i) == j - i)
+    }
+    uv.close(fd)
+
+    uv.rename(tmp, final)
+    assert(uv.slurp(final) == data)
+
+    if rand(3) == 0 {
+        uv.unlink(final)
+        return nil
+    }
+
+    name
+}
+
+fn scribble(dir: String, prefix: String, files: Int) -> Array[String] {
+    let names = []
+    for batch in ..4 {
+        names += uv.gather([
+            (-> scribble-one(dir, "{prefix}-{batch}-{i}"))
+            for i in ..files / 4
+        ])
+    }
+    names.filter(\_ != nil)
+}
+
+pub fn test-filesystem-churn-under-a-watcher() {
+    let files = 120 * w.SCALE
+
+    scratch(fn (dir) {
+        let side = "{dir}/side"
+        os.mkdir(side)
+
+        let helper = Thread(fn () {
+            srand(4242)
+            let kept: Array[String] = []
+            uv.run(fn () {
+                kept = scribble(side, 't', files)
+                w.quiesce()
+            })
+            kept
+        })
+
+        let seen = %{}
+        let kept: Array[String] = []
+
+        uv.run(fn () {
+            let gc      = uv.spawn(w.churn-gc, 9)
+            let watcher = uv.loop().fs-event()
+            watcher.on-event = fn (name, _) {
+                seen[name] = true
+            }
+            watcher.start(dir)
+
+            kept = scribble(dir, 'm', files)
+            uv.sleep(50)
+
+            watcher.stop()
+            watcher.close()
+            gc.close()
+            w.quiesce()
+        })
+
+        let side-kept = helper.join()
+
+        assert(side-kept :: Array, "{side-kept}")
+        assert(#kept > 0 && #side-kept > 0)
+        assert(os.listdir(dir).filter(\_ != 'side').sort() == kept.sort())
+        assert(os.listdir(side).sort() == side-kept.sort())
+        assert(kept.all?(seen.contains?))
+    })
+}
+
+fn dribble(server: uv.UVSocket) {
+    let client = server.accept()
+    try {
+        while true {
+            client.write('x' * rand(1, 100))
+            uv.sleep(rand(0, 3))
+        }
+    } catch _: uv.UVError {
+    } finally {
+        client.close()
+    }
+}
+
+fn hold-socket(port: Int) {
+    let sock = uv.dial('127.0.0.1', port)
+    defer sock.close()
+    sock.read(10000000)
+}
+
+fn victim-op(port: Int, big: String) -> _ {
+    match rand(7) {
+        0 => uv.sleep(rand(0, 40)),
+        1 => #uv.slurp(big),
+        2 => hold-socket(port),
+        3 => uv.getaddrinfo('localhost', port),
+        4 => uv.race([-> uv.sleep(rand(0, 20)), -> hold-socket(port), -> #uv.slurp(big)]),
+        5 => uv.gather([-> uv.sleep(rand(0, 20)), -> hold-socket(port)]),
+        _ => uv.gather([-> #uv.slurp(big), -> uv.sleep(rand(0, 5))]),
+    }
+}
+
+fn victim(port: Int, big: String, outcomes: DefaultDict[String, Int]) {
+    try {
+        with uv.timeout(rand(1, 30)) {
+            victim-op(port, big)
+        }
+        outcomes['finished'] += 1
+    } catch _: uv.TimeoutError {
+        outcomes['timed-out'] += 1
+    } catch _: uv.CanceledError {
+        outcomes['canceled'] += 1
+    } finally {
+        outcomes['unwound'] += 1
+    }
+}
+
+pub fn test-cancellation-storm-leaves-nothing-behind() {
+    let rounds = 25 * w.SCALE
+    let wave   = 40
+
+    scratch(fn (dir) {
+        let big      = "{dir}/big"
+        let outcomes = %{*: 0}
+
+        uv.run(fn () {
+            uv.spit(big, w.blob-of(1, 3000000))
+
+            let gc  = uv.spawn(w.churn-gc, 5)
+            let srv = uv.server('127.0.0.1', 0)
+            srv.on-connection = dribble
+            srv.listen()
+            let port = w.port-of(srv)
+
+            for ..rounds {
+                let tasks = [uv.spawn(victim, port, big, outcomes) for _ in ..wave]
+                uv.sleep(rand(0, 15))
+                for task in tasks {
+                    match rand(4) {
+                        0 => uv.cancel(task),
+                        1 => task.close(),
+                        _ => nil,
+                    }
+                }
+            }
+
+            uv.sleep(100)
+            srv.close()
+            gc.close()
+            w.quiesce()
+        })
+
+        assert(outcomes['unwound'] == rounds * wave, "{outcomes}")
+        assert(outcomes['finished'] > 0 && outcomes['timed-out'] > 0 && outcomes['canceled'] > 0, "{outcomes}")
+        assert(#uv.loop().handles() == 0 && uv.loop().pending == 0)
+    })
+}

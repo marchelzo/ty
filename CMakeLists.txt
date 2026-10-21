@@ -499,6 +499,8 @@ set(_src_files
   src/width.c
 )
 
+set_source_files_properties(src/vm.c PROPERTIES COMPILE_OPTIONS -U_FORTIFY_SOURCE)
+
 if(APPLE)
   list(APPEND _src_files src/prof/darwin.c)
 else()

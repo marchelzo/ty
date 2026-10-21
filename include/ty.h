@@ -251,6 +251,16 @@ enum {
 };
 
 enum {
+        CAP_LOCAL,
+        CAP_CAPTURED,
+        CAP_BOUND
+};
+
+#define CAP_ENTRY(k, i) (((u32)(k) << 30) | (u32)(i))
+#define CAP_KIND(x)     ((u32)(x) >> 30)
+#define CAP_INDEX(x)    ((i32)((x) & 0x3FFFFFFF))
+
+enum {
         FF_HIDDEN    = (1 << 0),
         FF_FROM_EVAL = (1 << 1),
         FF_DECORATED = (1 << 2),

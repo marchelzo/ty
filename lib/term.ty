@@ -2,7 +2,7 @@ import os (..)
 import termios (..)
 import ioctls (TIOCGWINSZ)
 import unibilium as unibi
-import errno
+import errno (ENOTTY, EINTR)
 import ffi as c (C!)
 import ty
 import base64
@@ -971,7 +971,7 @@ pub class TermIO {
     ) {
         __fd = fd ?? open(terminal-path(), O_RDWR)
         if !isatty(__fd) {
-            throw OSError('TermIO()', errno.ENOTTY)
+            throw OSError('TermIO()', ENOTTY)
         }
 
         __esc-delay = int(esc-delay * 1.0e6)
@@ -1176,9 +1176,10 @@ pub class TermIO {
         fn more(ms: Int = -1) -> Bool {
             warn!('Reader: polling...')
 
-            let fds = match poll([__notif-r, __fd], ms) {
-                Ok(fds) => fds,
-                err     => throw err
+            let fds: _ = while match poll([__notif-r, __fd], ms) {
+                Ok(fds)    => break fds,
+                Err(EINTR) => continue,
+                Err(ec)    => throw OSError('poll()', ec)
             }
 
             let stop? = false

@@ -144,3 +144,190 @@ pub fn test-connection-refused() {
         assert(threw?)
     })
 }
+
+pub fn test-timeout-interrupts-the-body() {
+    uv.run(fn () {
+        let start   = uv.now()
+        let caught? = false
+        try {
+            with uv.timeout(20) {
+                uv.sleep(1000)
+            }
+        } catch _: uv.TimeoutError {
+            caught? = true
+        }
+        assert(caught?)
+        assert(uv.now() - start < 500)
+    })
+}
+
+pub fn test-timeout-is-disarmed-on-exit() {
+    let start = nil
+    uv.run(fn () {
+        start = uv.now()
+        with uv.timeout(30) {
+            uv.sleep(5)
+        }
+        uv.sleep(60)
+    })
+    assert(uv.now() - start < 500)
+}
+
+pub fn test-timeout-cleans-up-the-interrupted-operation() {
+    let start = nil
+    uv.run(fn () {
+        start = uv.now()
+        try {
+            with uv.timeout(10) {
+                uv.sleep(5000)
+            }
+        } catch _: uv.TimeoutError {
+        }
+    })
+    assert(uv.now() - start < 500)
+}
+
+pub fn test-race-losers-cannot-swallow-cancellation() {
+    uv.run(fn () {
+        let zombie? = false
+        let cleaned? = false
+        let result = uv.race([
+            fn () { uv.sleep(5); 'fast' },
+            fn () {
+                for ..3 {
+                    try {
+                        uv.sleep(30)
+                        zombie? = true
+                        return 'slow'
+                    } catch _ {
+                    }
+                }
+            },
+            fn () {
+                try {
+                    uv.sleep(30)
+                } finally {
+                    cleaned? = true
+                }
+            },
+        ])
+        uv.sleep(100)
+        assert(result == 'fast')
+        assert(!zombie?)
+        assert(cleaned?)
+    })
+}
+
+pub fn test-spawn-returns-a-cancelable-task() {
+    uv.run(fn () {
+        let caught? = false
+        let task = uv.spawn(fn () {
+            try {
+                uv.sleep(5000)
+            } catch _: uv.CanceledError {
+                caught? = true
+            }
+        })
+        uv.cancel(task)
+        assert(caught?)
+    })
+}
+
+pub fn test-closing-a-task-runs-its-cleanup() {
+    let start = nil
+    let cleaned? = false
+    uv.run(fn () {
+        start = uv.now()
+        let task = uv.spawn(fn () {
+            try {
+                uv.sleep(5000)
+            } catch _ {
+                cleaned? = nil
+            } finally {
+                cleaned? = (cleaned? != nil)
+            }
+        })
+        task.close()
+    })
+    assert(cleaned?)
+    assert(uv.now() - start < 500)
+}
+
+pub fn test-run-closes-stranded-tasks() {
+    let cleaned? = false
+    uv.run(fn () {
+        uv.spawn(fn () {
+            try {
+                uv.sleep(5000)
+            } finally {
+                cleaned? = true
+            }
+        })
+        uv.stop()
+    })
+    assert(cleaned?)
+}
+
+pub fn test-timeout-closes-a-pending-race() {
+    uv.run(fn () {
+        let losers = []
+        let caught? = false
+        try {
+            with uv.timeout(20) {
+                uv.race([
+                    fn () { try { uv.sleep(5000) } finally { losers.push('a') } },
+                    fn () { try { uv.sleep(5000) } finally { losers.push('b') } },
+                ])
+            }
+        } catch _: uv.TimeoutError {
+            caught? = true
+        }
+        assert(caught?)
+        assert(losers.sort() == ['a', 'b'])
+    })
+}
+
+pub fn test-stop-closes-blocked-connections() {
+    let closed = 0
+    uv.run(fn () {
+        let srv = uv.server('127.0.0.1', 0)
+        srv.on-connection = fn (server) {
+            let client = server.accept()
+            try {
+                client.read(5)
+            } finally {
+                closed += 1
+                client.close()
+            }
+            nil
+        }
+        srv.listen()
+        let (_, port) = os.getnameinfo(srv.address, os.NI_NUMERICHOST | os.NI_NUMERICSERV)
+        let socks = [uv.dial('127.0.0.1', port), uv.dial('127.0.0.1', port)]
+        uv.sleep(20)
+        srv.close()
+        uv.stop()
+    })
+    assert(closed == 2)
+}
+
+pub fn test-cancel-after-finish-is-a-noop() {
+    uv.run(fn () {
+        let task = uv.spawn(fn () { 'done' })
+        uv.cancel(task)
+    })
+}
+
+pub fn test-timeout-interrupts-a-bare-yield() {
+    uv.run(fn () {
+        let caught? = false
+        try {
+            with uv.timeout(10) {
+                yield nil
+            }
+        } catch _: uv.TimeoutError {
+            caught? = true
+        }
+        assert(caught?)
+    })
+}

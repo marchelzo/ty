@@ -192,6 +192,49 @@ opslot(BcLir const *c, i32 off)
         return load_i32(c->code + off + 1);
 }
 
+inline static i32
+ncaptures(BcLir const *c, i32 off)
+{
+        u8 op = (u8)c->code[off];
+
+        if (op != INSTR_FUNCTION && op != INSTR_GENERATOR) {
+                return 0;
+        }
+
+        return load_u16(c->code + off + 1);
+}
+
+inline static i32
+capture_slot(BcLir const *c, i32 off, i32 i)
+{
+        u32 cap = load_u32(c->code + off + 1 + sizeof (u16) + i * sizeof (u32));
+
+        return (CAP_KIND(cap) == CAP_LOCAL) ? CAP_INDEX(cap) : -1;
+}
+
+static bool
+captures(BcLir const *c, i32 off, i32 slot)
+{
+        i32 n = ncaptures(c, off);
+
+        for (i32 i = 0; i < n; ++i) {
+                if (capture_slot(c, off, i) == slot) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static LirReg
+loop_reg(BcLir const *c, i32 slot);
+
+static void
+vs_release(BcLir *c, i32 slot);
+
+static void
+vs_remember(BcLir *c, i32 slot, BcSlot const *v);
+
 static bool
 in_range(BcLir const *c, i32 idx, i32 cont, u8 shift);
 

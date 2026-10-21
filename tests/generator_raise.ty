@@ -1,0 +1,111 @@
+import ty
+import ty.coro
+
+let log = []
+
+class R {
+    k: String
+    init(k) {
+        self.k = k
+    }
+    __drop__() {
+        log.push("~{k}")
+    }
+}
+
+fn trail(f) -> Array {
+    log = []
+    let r = try { f() } catch e { "raised {e}" }
+    log.push(r)
+    log
+}
+
+fn catcher*() {
+    try {
+        yield 1
+    } catch e {
+        log.push("caught {e}")
+        yield 2
+    }
+    yield 3
+}
+
+fn ignorer*() {
+    defer log.push("defer")
+    try {
+        yield 1
+    } finally {
+        log.push("finally")
+    }
+}
+
+fn inner() {
+    try {
+        yield 'inner'
+    } catch e: String {
+        log.push("inner caught {e}")
+        yield 'recovered'
+    }
+}
+
+fn delegating*() {
+    inner()
+    yield 'after'
+}
+
+fn holding*() {
+    let ^r = R("r")
+    yield 1
+}
+
+let current: Generator[_, _] | nil = nil
+
+fn selfish*() {
+    yield 1
+    current.?raise('self')
+}
+
+pub fn raise-is-catchable-and-the-generator-continues() {
+    let g = catcher()
+    assert(trail(() -> [g(), g.raise('boom'), g(), g()]) == ['caught boom', [Some(1), Some(2), Some(3), None]])
+    assert(ty.trace() == nil)
+}
+
+pub fn uncaught-raise-unwinds-and-propagates() {
+    let g = ignorer()
+    g()
+    assert(trail(() -> g.raise('boom')) == ['finally', 'defer', 'raised boom'])
+}
+
+pub fn raise-reaches-yields-in-nested-calls() {
+    let g = delegating()
+    g()
+    assert(trail(() -> [g.raise('x'), g()]) == ['inner caught x', [Some('recovered'), Some('after')]])
+}
+
+pub fn raise-into-idle-generators-raises-in-the-caller() {
+    assert(trail(() -> catcher().raise('early')) == ['raised early'])
+    let g = catcher()
+    g.close()
+    assert(trail(() -> g.raise('late')) == ['raised late'])
+}
+
+pub fn raise-without-handlers-still-drops() {
+    let g = holding()
+    g()
+    assert(trail(() -> g.raise('p')) == ['~r', 'raised p'])
+    assert(g() == None)
+}
+
+pub fn raise-into-a-running-generator-fails() {
+    current = selfish()
+    current.?__call__()
+    let msg = try { current.?__call__(); nil } catch e { "{e}" }
+    assert(msg.match?(/active generator/))
+}
+
+pub fn raise-via-ty-coro() {
+    let g = catcher()
+    g()
+    assert(trail(() -> ty.coro.raise(g, 'direct')) == ['caught direct', Some(2)])
+}

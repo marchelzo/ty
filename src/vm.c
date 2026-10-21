@@ -1320,6 +1320,18 @@ local(Ty *ty, int i)
 }
 
 inline static Value *
+FrameLocals(Ty *ty)
+{
+        return (vN(FRAMES) > 0) ? local(ty, 0) : NULL;
+}
+
+inline static Value **
+FrameEnv(Ty *ty)
+{
+        return (vN(FRAMES) > 0) ? ActiveFun(ty)->env : NULL;
+}
+
+inline static Value *
 (poptarget)(Ty *ty)
 {
         return vXx(TARGETS).t;
@@ -1715,11 +1727,7 @@ co_abort(Ty *ty)
         return true;
 }
 
-static _Thread_local Generator *ClosingGenerator;
-
-__attribute__((noinline, cold))
-static void
-MaybeRaiseClose(Ty *ty);
+_Thread_local Generator *InterruptedGenerator;
 
 static bool
 co_yield_value(Ty *ty)
@@ -1761,10 +1769,6 @@ co_yield_value(Ty *ty)
         co_switch(co);
 
         CO_LOG("co_yield()", TERM(92;1), "resume with: %s", VSC(top()));
-
-        if (UNLIKELY(ClosingGenerator != NULL)) {
-                MaybeRaiseClose(ty);
-        }
 
         return true;
 }
@@ -1936,12 +1940,14 @@ JitReturn:
                 top->jit_resume = next_resume;
                 v_L(STACK) = Some(v_L(STACK));
                 DoYield(ty);
+                CheckInterrupt(ty);
                 break;
 
         case JIT_YIELD:
                 CO_LOG("jit_yield", TERM(91;1), "yielding: %s", VSC(vvL(STACK)));
                 top->jit_resume = next_resume;
                 DoYield(ty);
+                CheckInterrupt(ty);
                 break;
 
         case JIT_YIELD_NONE:
@@ -1953,6 +1959,7 @@ JitReturn:
                 push(None);
                 CO_LOG("jit_yield_none", TERM(91;1), "yielding: %s", VSC(vvL(STACK)));
                 DoYield(ty);
+                CheckInterrupt(ty);
                 break;
 
         case JIT_DEOPT:
@@ -3048,12 +3055,7 @@ xdrop(Ty *ty, Value const *v)
         }
 }
 
-#ifndef TY_RELEASE
-__attribute__((noinline))
-#else
-TY_INSTR_INLINE
-#endif
-static void
+inline static void
 DoDrop(Ty *ty)
 {
         Array *group = vvL(DROP_STACK)->array;
@@ -3327,15 +3329,23 @@ RaiseException(Ty *ty)
 }
 
 __attribute__((noinline, cold))
-static void
-MaybeRaiseClose(Ty *ty)
+void
+vm_interrupt(Ty *ty)
 {
         Generator *gen = vv(STACK)->gen;
 
-        if (gen == ClosingGenerator) {
-                ClosingGenerator = NULL;
+        if (gen != InterruptedGenerator) {
+                return;
+        }
+
+        InterruptedGenerator = NULL;
+
+        if (gen->closing) {
                 vm_throw(ty, &GENERATOR(gen));
         }
+
+        Value exc = pop();
+        vm_throw(ty, &exc);
 }
 
 static void
@@ -3372,7 +3382,7 @@ vm_close_generator(Ty *ty, Generator *gen)
         if (gen->ip != code_of(&gen->f) && gen->co != NULL) {
                 Value v = GENERATOR(gen);
                 gen->closing     = true;
-                ClosingGenerator = gen;
+                InterruptedGenerator = gen;
                 gP(&v);
                 call_co(ty, &v, 0);
                 pop();
@@ -3391,6 +3401,42 @@ vm_close_generator(Ty *ty, Generator *gen)
         }
 
         DiscardGenerator(ty, gen);
+}
+
+Value
+vm_raise_generator(Ty *ty, Generator *gen, Value const *exc)
+{
+        Value e = *exc;
+        Value v = GENERATOR(gen);
+
+        if (UNLIKELY(gen->closing)) {
+                zP("attempt to raise into a closing generator");
+        }
+
+        if (gen->st == NULL) {
+                vm_throw(ty, &e);
+        }
+
+        if (UNLIKELY(!GeneratorIsSuspended(gen))) {
+                zP("attempt to raise into an active generator");
+        }
+
+        gP(&e);
+        gP(&v);
+
+        if (gen->ip == code_of(&gen->f) || gen->co == NULL) {
+                DiscardGenerator(ty, gen);
+                vm_throw(ty, &e);
+        }
+
+        push(e);
+        InterruptedGenerator = gen;
+        call_co(ty, &v, 1);
+
+        gX();
+        gX();
+
+        return pop();
 }
 
 static void
@@ -7342,83 +7388,87 @@ Strict:
 }
 
 char *
-DoFunction(Ty *ty, char const *ip)
+DoFunction(Ty *ty, char const *ip, Value *locals, Value **env)
 {
         Value v = {0};
 
         v.type = VALUE_FUNCTION;
 
-        int n = load_i32(ip);
-        ip += sizeof (i32);
+        u16 ncaps = load_u16(ip);
+        ip += sizeof ncaps;
+
+        char const *caps = ip;
+        ip += ncaps * sizeof (u32);
 
         ip = ALIGNED_FOR(i64, ip);
 
         v.info = (i32 *)ip;
 
-        int hs   = v.info[FUN_INFO_HEADER_SIZE];
-        int size = v.info[FUN_INFO_CODE_SIZE];
-        int nEnv = v.info[FUN_INFO_CAPTURES];
+        int  hs   = v.info[FUN_INFO_HEADER_SIZE];
+        int  size = v.info[FUN_INFO_CODE_SIZE];
+        int  nEnv = v.info[FUN_INFO_CAPTURES];
+        bool eval = from_eval(&v);
 
-        int ncaps = (n > 0) ? nEnv - n : nEnv;
-
-        if (from_eval(&v)) {
-                v.info = mAo(hs + size, GC_ANY);
+        if (eval) {
+                v.info = uAo(hs + size, GC_ANY);
                 memcpy(v.info, ip, hs + size);
-                NOGC(v.info);
         }
 
-        ip += size + hs;
+        ip += (hs + size);
 
         if (nEnv > 0) {
                 LOG("Allocating ENV for %d caps", nEnv);
-                v.env = mAo0(nEnv * sizeof (Value *), GC_ENV);
+                v.env = uAo0(nEnv * sizeof (Value *), GC_ENV);
         } else {
                 v.env = NULL;
         }
 
-        GC_STOP();
-
         for (int i = 0; i < ncaps; ++i) {
-                bool b = *ip++;
-                int j = load_i32(ip);
-                ip += sizeof (i32);
-                Value *p = poptarget();
-                if (b) {
-                        if (p->type == VALUE_REF) {
-                                /* This variable was already captured, just refer to the same object */
-                                v.env[j] = p->ptr;
-                        } else {
-                                // TODO: figure out if this is getting freed too early
-                                Value *new = mAo(sizeof (Value), GC_VALUE);
-                                *new = *p;
-                                *p = REF(new);
-                                v.env[j] = new;
+                u32 cap = load_u32(caps + i * sizeof (u32));
+                Value *p;
+
+                switch (CAP_KIND(cap)) {
+                case CAP_LOCAL:
+                        p = &locals[CAP_INDEX(cap)];
+                        if (p->type != VALUE_REF) {
+                                Value *box = uAo(sizeof (Value), GC_VALUE);
+                                *box = *p;
+                                *p = REF(box);
                         }
-                } else {
-                        v.env[j] = p;
+                        v.env[i] = p->ptr;
+                        break;
+
+                case CAP_CAPTURED:
+                        v.env[i] = env[CAP_INDEX(cap)];
+                        break;
                 }
         }
 
-        if (!NoJIT && !DebugJitOff && !from_eval(&v) && expr_of(&v)->must_jit) {
+        push(v);
+
+        if (nEnv > 0 || eval) {
+                CheckUsed(ty);
+        }
+
+        if (UNLIKELY(
+                expr_of(&v)->must_jit
+             && ((uptr)jit_of(&v) == JIT_UNSEEN)
+             && !NoJIT
+             && !DebugJitOff
+             && !eval
+        )) {
                 if (UNLIKELY(try_jit_now(ty, &v) == NULL)) {
                         zP("failed to JIT compile function %s", SHOW(&v));
                 }
         }
 
-        if (from_eval(&v)) {
-                OKGC(v.info);
-        }
-
-        push(v);
-        GC_RESUME();
-
         return (char *)ip;
 }
 
 char *
-DoGenerator(Ty *ty, char const *ip)
+DoGenerator(Ty *ty, char const *ip, Value *locals, Value **env)
 {
-        char *end = DoFunction(ty, ip);
+        char *end = DoFunction(ty, ip, locals, env);
         Generator *gen = NewGenerator(ty, peek());
         xvPn(gen->st->stack, LOTS_OF_NILS, gen->f.info[FUN_INFO_BOUND]);
         xvP(gen->st->frames, FRAME(1, gen->f, IP));
@@ -8642,12 +8692,14 @@ TargetMember:
                 CASE(YIELD)
                         DoYield(ty);
                         ty = MyTy;
+                        CheckInterrupt(ty);
                         break;
 
                 CASE(YIELD_NONE)
                         if (vN(FRAMES) == 1) {
                                 push(None);
                                 DoYield(ty);
+                                CheckInterrupt(ty);
                         } else {
                                 push(NIL);
                                 goto RETURN;
@@ -8657,6 +8709,7 @@ TargetMember:
                 CASE(YIELD_SOME)
                         put(Some(peek()));
                         DoYield(ty);
+                        CheckInterrupt(ty);
                         break;
 
                 CASE(TYPE)
@@ -9382,11 +9435,11 @@ BinaryOp:
                 }
 
                 CASE(FUNCTION)
-                        IP = DoFunction(ty, IP);
+                        IP = DoFunction(ty, IP, FrameLocals(ty), FrameEnv(ty));
                         break;
 
                 CASE(GENERATOR)
-                        IP = DoGenerator(ty, IP);
+                        IP = DoGenerator(ty, IP, FrameLocals(ty), FrameEnv(ty));
                         break;
 
                 CASE(PATCH_ENV)
@@ -11703,24 +11756,15 @@ StepInstruction(char const *ip)
         CASE(FUNCTION)
         CASE(GENERATOR)
         {
-                READVALUE(n);
+                u16 ncaps;
+                READVALUE(ncaps);
 
+                ip += ncaps * sizeof (u32);
                 ip = ALIGNED_FOR(i64, ip);
 
                 i32 *info = (i32 *) ip;
 
-                int hs = info[0];
-                int size  = info[1];
-                int nEnv = info[2];
-
-                int ncaps = (n > 0) ? nEnv - n : nEnv;
-
-                ip += hs + size;
-
-                for (int i = 0; i < ncaps; ++i) {
-                        SKIPVALUE(b);
-                        SKIPVALUE(j);
-                }
+                ip += info[0] + info[1];
 
                 break;
         }

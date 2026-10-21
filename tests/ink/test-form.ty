@@ -468,3 +468,66 @@ pub fn yaml-anchors-survive-edits() {
     assert(m.save() == nil)
     assert(slurp(file) == "# shared\n.files: &files\n  - a\n  - z\njob:\n  changes: *files\n  x: 2\n")
 }
+
+pub fn undo-and-redo-with-no-history-do-nothing() {
+    let m = FormModel(put('u.toml', TOML))
+    assert(m.undo() == nil)
+    assert(m.redo() == nil)
+    assert(!m.dirty?)
+}
+
+let row-renders = 0
+
+class CountingForm < Form {
+    row-node(f: _, depth: Int, sel?: Bool, lw: Int, w: Int) -> ink.Node {
+        row-renders += 1
+        super(f, depth, sel?, lw, w)
+    }
+}
+
+class CountingApp < ink.Component {
+    model: FormModel
+
+    render() -> ink.Node {
+        <ink.Box>
+            <CountingForm model=model height=20 />
+        </ink.Box>
+    }
+}
+
+pub fn cursor-moves-only-redraw-the-rows-they-touch() {
+    let m = FormModel(data=%{'items': ["item {i}" for i in ..500]})
+    let h = ink.TestHarness(CountingApp(model=m), cols=72, rows=24, color?: false)
+    h.focus!(h.find(Form)!)
+    let before = row-renders
+    for ..100 {
+        h.down()
+    }
+    let per-move = float(row-renders - before) / 100.0
+    assert(per-move <= 3.0, "{per-move} row renders per cursor move")
+    h.assert-contains('item 99')
+}
+
+pub fn z-centers-the-cursor-line() {
+    let m = FormModel(data=%{'items': ["item {i}" for i in ..500]})
+    let h = ink.TestHarness(CountingApp(model=m), cols=72, rows=24, color?: false)
+    let f = h.find(Form)!
+    h.focus!(f)
+    for ..60 {
+        h.down()
+    }
+    let at = (lines -> lines.search-by(\_.match?(/item 59\b/)))
+    let bottom = at(h.lines)
+    h.send-text('z')
+    let middle = at(h.lines)
+    assert(bottom != nil && middle != nil && middle < bottom)
+    assert(h.lines[middle - 7].match?(/item 52\b/), "{h.lines}")
+    assert(h.lines[middle + 8].match?(/item 67\b/), "{h.lines}")
+    for ..5 {
+        h.send-text('z')
+        assert(at(h.lines) == middle)
+    }
+    h.home()
+    h.send-text('z')
+    assert(h.lines.any?(\_.match?(/item 0\b/)))
+}

@@ -72,6 +72,18 @@ load_i32(void const *p)
         return *(i32 const *)memcpy(&(i32){0}, p, sizeof (i32));
 }
 
+static inline u32
+load_u32(void const *p)
+{
+        return *(u32 const *)memcpy(&(u32){0}, p, sizeof (u32));
+}
+
+static inline u16
+load_u16(void const *p)
+{
+        return *(u16 const *)memcpy(&(u16){0}, p, sizeof (u16));
+}
+
 static inline umax
 zmaxu(umax a, umax b)
 {

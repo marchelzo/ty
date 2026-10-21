@@ -7169,28 +7169,9 @@ emit_function(Ty *ty, Expr const *e)
         int     *cap_indices = vv(e->scope->cap_indices);
         int      ncaps       = vN(e->scope->captured);
         int      bound       = vN(e->scope->owned);
-        int      bound_caps  = 0;
 
-        for (int i = ncaps - 1; i >= 0; --i) {
-                if (caps[i]->scope->function == e->scope) {
-                        bound_caps += 1;
-                } else if (cap_indices[i] == -1) {
-                        /*
-                         * Don't call emit_tgt because despite these being captured,
-                         * we need to use TARGET_LOCAL to avoid following the reference.
-                         */
-                        annotate("%s", caps[i]->identifier);
-                        INSN(TARGET_LOCAL);
-                        Ei32(caps[i]->i);
-                } else {
-                        // FIXME: should just use same allocated variable
-                        annotate("%s", caps[i]->identifier);
-                        INSN(TARGET_CAPTURED);
-                        Ei32(cap_indices[i]);
-#ifndef TY_NO_LOG
-                        ESTR(caps[i]->identifier);
-#endif
-                }
+        if (ncaps > UINT16_MAX) {
+                fail("too many captured variables");
         }
 
         if (e->type == EXPRESSION_GENERATOR) {
@@ -7198,7 +7179,19 @@ emit_function(Ty *ty, Expr const *e)
         } else {
                 INSN(FUNCTION);
         }
-        Ei32(bound_caps);
+
+        Ei16(ncaps);
+
+        for (int i = 0; i < ncaps; ++i) {
+                if (caps[i]->scope->function == e->scope) {
+                        Ei32(CAP_ENTRY(CAP_BOUND, 0));
+                } else if (cap_indices[i] == -1) {
+                        Ei32(CAP_ENTRY(CAP_LOCAL, caps[i]->i));
+                } else {
+                        Ei32(CAP_ENTRY(CAP_CAPTURED, cap_indices[i]));
+                }
+        }
+
         while (!IS_ALIGNED_FOR(i64, vZ(STATE.code))) {
                 avP(STATE.code, 0);
         }
@@ -7474,18 +7467,10 @@ emit_function(Ty *ty, Expr const *e)
         int self_cap = -1;
 
         for (int i = 0; i < ncaps; ++i) {
-                if (caps[i]->scope->function == e->scope) {
-                        continue;
-                }
-                if (caps[i] == e->fn_symbol) {
+                if (caps[i]->scope->function != e->scope && caps[i] == e->fn_symbol) {
                         LOG("Function '%s' self-captures at i=%d", fun_name, i);
                         self_cap = i;
                 }
-                bool local = (caps[i]->scope->function == fs_save);
-                LOG("local(%s, %s): %d", fun_name, caps[i]->identifier, local);
-                LOG("  fscope(%s) = %p, fs_save = %p", caps[i]->identifier, caps[i]->scope->function, fs_save);
-                Eu1(local);
-                Ei32(i);
         }
 
         for (usize i = 0; i < vN(e->type_hints); ++i) {
@@ -21493,8 +21478,22 @@ DumpProgram(
                 CASE(GENERATOR)
                 {
                         Value v = {0};
+                        u16   ncaps;
 
-                        READVALUE_(n);
+                        READVALUE_(ncaps);
+
+                        for (int i = 0; i < ncaps; ++i) {
+                                u32 cap = load_u32(c);
+                                c += sizeof cap;
+                                if (DebugScan) {
+                                        continue;
+                                }
+                                switch (CAP_KIND(cap)) {
+                                case CAP_LOCAL:    dump(out, " %sL%d%s", TERM(32), CAP_INDEX(cap), TERM(0)); break;
+                                case CAP_CAPTURED: dump(out, " %sC%d%s", TERM(32), CAP_INDEX(cap), TERM(0)); break;
+                                default:           dump(out, " %sB%s",   TERM(32), TERM(0));                 break;
+                                }
+                        }
 
                         c = ALIGNED_FOR(i64, c);
 
@@ -21502,9 +21501,6 @@ DumpProgram(
 
                         int hs    = v.info[FUN_INFO_HEADER_SIZE];
                         int size  = v.info[FUN_INFO_CODE_SIZE];
-                        int nEnv  = v.info[FUN_INFO_CAPTURES];
-
-                        int ncaps = (n > 0) ? nEnv - n : nEnv;
 
                         LOG("Header size: %d", hs);
                         LOG("Code size: %d", size);
@@ -21535,11 +21531,6 @@ DumpProgram(
                                         c + hs + size,
                                         incl_sub_fns
                                 );
-                        }
-
-                        for (int i = 0; i < ncaps; ++i) {
-                                READVALUE_(b);
-                                READVALUE_(j);
                         }
 
                         break;

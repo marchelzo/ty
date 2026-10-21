@@ -1,0 +1,8 @@
+import ffi as c
+import ty.test.config (configure, skip-dir)
+
+if c.open('uv') == nil {
+    skip-dir('libuv is not installed', opt-in: 'stress')
+}
+
+configure(opt-in: 'stress', serial: true, timeout: 600.0)

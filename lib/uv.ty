@@ -2,9 +2,14 @@ import errno
 import ffi as c (C!)
 import os
 import ty
+import ty.coro as co
 import stdio
 
 let libuv = c.open('uv')
+
+if os.signal(os.SIGPIPE) == nil {
+    os.signal(os.SIGPIPE, 1)
+}
 
 const uv_file        = c.int
 const uv_fs_type     = c.int
@@ -204,6 +209,9 @@ C! libuv fn {
     int uv_fs_open(uv_loop_t *loop, uv_fs_t *req, const char *path, int flags, int mode, uv_fs_cb cb);
     int uv_fs_close(uv_loop_t *loop, uv_fs_t *req, uv_file file, uv_fs_cb cb);
     int uv_fs_read(uv_loop_t *loop, uv_fs_t *req, uv_file file, const uv_buf_t *bufs, unsigned int nbufs, int64_t offset, uv_fs_cb cb);
+    int uv_fs_write(uv_loop_t *loop, uv_fs_t *req, uv_file file, const uv_buf_t *bufs, unsigned int nbufs, int64_t offset, uv_fs_cb cb);
+    int uv_fs_unlink(uv_loop_t *loop, uv_fs_t *req, const char *path, uv_fs_cb cb);
+    int uv_fs_rename(uv_loop_t *loop, uv_fs_t *req, const char *path, const char *new_path, uv_fs_cb cb);
     uv_fs_type uv_fs_get_type(const uv_fs_t*);
     ssize_t uv_fs_get_result(const uv_fs_t*);
     int uv_fs_get_system_error(const uv_fs_t*);
@@ -315,6 +323,8 @@ C! libuv fn {
                  uv_write_cb cb);
 
     int uv_pipe(uv_file *fds, int read_flags, int write_flags);
+    int uv_pipe_init(uv_loop_t *loop, uv_pipe_t *handle, int ipc);
+    int uv_pipe_open(uv_pipe_t *handle, uv_file file);
     int uv_socketpair(int type, int protocol, uv_os_sock_t *socket_vector, int flags0, int flags1);
 
     int uv_fs_event_init(uv_loop_t* loop, uv_fs_event_t* handle);
@@ -341,10 +351,7 @@ pub class CanceledError < RuntimeError {
     }
 }
 
-tag Cancel;
-tag QuietCancel;
 tag Running;
-tag Step;
 
 fn fileno(hnd) {
     let fd = static!(c.box(c.int))
@@ -352,38 +359,63 @@ fn fileno(hnd) {
     (err == 0) ? fd[0] : -1
 }
 
-fn _spawn*(func: _, args: _, kwargs: _) {
-    func(*args, **kwargs)
+let __tls::thread-tasks: ?Set[Generator[_, _]] = nil
+
+fn live-tasks() -> Set[Generator[_, _]] {
+    thread-tasks ?? (thread-tasks = Set())
 }
 
-pub fn spawn(func: _, *args: _, %kwargs: _) {
-    let coro = _spawn(func, args, kwargs)
-    coro()
+let __tls::thread-failure: ?Some[_] = nil
+
+fn fail(e: _) {
+    thread-failure ?= Some(e)
+    stop()
+}
+
+fn _spawn*(func: _, args: _, kwargs: _) {
+    let me = co.this()
+    live-tasks().insert(me)
+    try {
+        func(*args, **kwargs)
+    } catch _: CanceledError {
+    } catch e {
+        fail(e)
+    } finally {
+        live-tasks().remove(me)
+    }
+}
+
+pub fn spawn(func: _, *args: _, %kwargs: _) -> Generator[_, _] {
+    let task = _spawn(func, args, kwargs)
+    task()
+    task
 }
 
 fn nop() {}
 
-pub fn cancel(coro: Generator[_, _]) {
-   coro(Cancel)
+pub fn cancel(task: Generator[_, _]) {
+    if live-tasks().contains?(task) {
+        task.raise(CanceledError())
+    }
 }
 
 fn suspend(cleanup: _) {
-    match (yield Running) {
-        Cancel => do {
+    let resumed? = false
+    try {
+        let val = yield Running
+        resumed? = true
+        return val
+    } finally {
+        if !resumed? {
             cleanup()
-            throw CanceledError()
-        },
+        }
+    }
+}
 
-        QuietCancel => do {
-            cleanup()
-            yield nil
-        },
-
-        Step => do {
-            yield Running
-        },
-
-        val => val
+fn reap() {
+    let me = co.this()
+    for task in live-tasks().to-array() if task != me {
+        task.close()
     }
 }
 
@@ -416,10 +448,10 @@ pub class UVHandle {
 }
 
 pub class UVTimer < UVHandle {
-    __fire_cb: (() -> nil) | nil
+    __fire_cb: (() -> _) | nil
 
 
-    on-fire=(cb: () -> nil) {
+    on-fire=(cb: () -> _) {
         __fire_cb = cb
     }
 
@@ -444,11 +476,11 @@ pub class UVTimer < UVHandle {
 }
 
 pub class UVStream < UVHandle {
-    __read_cb:  (String -> nil) | nil
-    __eof_cb:   (()     -> nil) | nil
-    __close_cb: (()     -> nil) | nil
+    __read_cb:  (String -> _) | nil
+    __eof_cb:   (()     -> _) | nil
+    __close_cb: (()     -> _) | nil
 
-    on-read=(cb: (String -> nil) | nil) {
+    on-read=(cb: (String -> _) | nil) {
         if cb == nil {
             loop.read-stop(self)
             __read_cb = nil
@@ -458,11 +490,11 @@ pub class UVStream < UVHandle {
         }
     }
 
-    on-eof=(cb: (() -> nil) | nil) {
+    on-eof=(cb: (() -> _) | nil) {
         __eof_cb = cb
     }
 
-    on-close=(cb: (() -> nil) | nil) {
+    on-close=(cb: (() -> _) | nil) {
         __close_cb = cb
     }
 
@@ -478,30 +510,66 @@ pub class UVStream < UVHandle {
         __close_cb
     }
 
-    read(n: Int) -> String {
-        let buf = Blob()
-        let resume = ty.coro()
+    __inbox: Blob = Blob()
+    __eof?:  Bool = false
 
-        fn cleanup() {
-            self.on-read  = nil
-            self.on-eof   = nil
-            self.on-close = nil
+    eof? -> Bool {
+        __eof? && #__inbox == 0
+    }
+
+    __fill(enough?: Blob -> Bool) {
+        if __eof? || enough?(__inbox) {
+            return
         }
 
-        self.on-close = resume
-        self.on-eof   = resume
-        self.on-read  = fn (data) {
-            //dbg(data)
-            buf.push(data)
-            if #buf >= n {
+        let resume = co.this()
+
+        fn cleanup() {
+            self.on-read = nil
+            self.on-eof  = nil
+        }
+
+        self.on-eof  = fn () {
+            __eof? = true
+            cleanup()
+            resume()
+        }
+        self.on-read = fn (data) {
+            __inbox.push(data)
+            if enough?(__inbox) {
                 cleanup()
                 resume()
             }
         }
 
         suspend(cleanup)
+    }
 
-        buf.str!()
+    __take(n: Int) -> String {
+        __inbox.splice(0, min(n, #__inbox)).str!()
+    }
+
+    read(n: Int) -> String {
+        __fill(b -> #b >= n)
+        __take(n)
+    }
+
+    read-line() -> String | nil {
+        __fill(b -> b.search('\n') != nil)
+        match (__inbox.search('\n'), #__inbox) {
+            (nil,    0) => nil,
+            (nil,    n) => __take(n),
+            (i: Int, _) => __take(i + 1),
+        }
+    }
+
+    lines() -> UVLines {
+        UVLines(self)
+    }
+
+    read-all() -> String {
+        __fill(_ -> false)
+        __take(#__inbox)
     }
 
     write(data: String | Blob) {
@@ -513,9 +581,24 @@ pub class UVStream < UVHandle {
     }
 }
 
+pub class UVLines : Iter[String] {
+    __stream: UVStream
+
+    init(stream: UVStream) {
+        __stream = stream
+    }
+
+    __next__() -> Some[String] | None {
+        match __stream.read-line() {
+            $line => Some(line),
+            nil   => None,
+        }
+    }
+}
+
 pub class UVSocket < UVStream {
     __address: Blob | nil
-    __connection_cb: (UVSocket -> nil) | nil
+    __connection_cb: (UVSocket -> _) | nil
 
     connect(addr: Blob) {
         loop.connect(self, addr)
@@ -555,7 +638,7 @@ pub class UVSocket < UVStream {
         }
     }
 
-    on-connection=(cb: (UVSocket -> nil) | nil) {
+    on-connection=(cb: (UVSocket -> _) | nil) {
         __connection_cb = cb
     }
 
@@ -607,7 +690,7 @@ pub class UV {
     __listening:     Dict[Ptr, UVSocket]
     __ticking:       Dict[Ptr, UVTimer]
     __watching:      Dict[Ptr, UVFSEvent]
-    __pending:       Dict[Ptr, Generator[_, _]]
+    __pending:       Dict[Ptr, _]
     __on_close:      Ptr
     __on_connect:    Ptr
     __on_connection: Ptr
@@ -677,7 +760,7 @@ pub class UV {
             if status == 0 {
                 spawn(sock.on-connection, sock)
             } else {
-                throw UVError('on_connection', status)
+                fail(UVError('on_connection', status))
             }
         }
 
@@ -687,7 +770,7 @@ pub class UV {
         ) {
             let $cb = __pending.remove(req) or return
             if status != 0 {
-                cb(Err(-status))
+                cb(Err(status))
             } else {
                 cb(Ok(()))
             }
@@ -697,6 +780,7 @@ pub class UV {
             __reading.remove(hnd)
             __listening.remove(hnd)
             __watching.remove(hnd)
+            __ticking.remove(hnd)
             _free-hnd(hnd)
         }
 
@@ -708,17 +792,18 @@ pub class UV {
             let stream = __reading[handle]!
             let buf    = uv_buf_t(buf)
 
+            let data = (nread > 0) ? c.str(buf.base, nread) : nil
+            c.free(buf.base)
             if nread < 0 {
-                c.free(buf.base)
-                spawn(stream.on-eof)
                 let err = uv_read_stop(handle)
                 if err != 0 {
-                    throw UVError('uv_read_stop()', err)
+                    fail(UVError('uv_read_stop()', err))
                 }
                 __reading.remove(handle)
-            } else if nread > 0 {
-                let data = c.str(buf.base, nread)
-                c.free(buf.base)
+                if let $cb = stream.on-eof {
+                    spawn(cb)
+                }
+            } else if data != nil {
                 spawn(stream.on-read, data)
             }
         }
@@ -729,21 +814,19 @@ pub class UV {
         ) {
             let $cb = __pending.remove(req) or return
             if status != 0 {
-                cb(Err(-status))
+                cb(Err(status))
             } else {
                 cb(Ok(()))
             }
         }
 
-        C! closure on_fs(
-            req: c.ptr,
-            status: c.int
-        ) {
+        C! closure on_fs(req: c.ptr) {
             let $cb = __pending.remove(req) or return
-            if status < 0 {
-                cb(Err(-status))
+            let res = uv_fs_get_result(req)
+            if res < 0 {
+                cb(Err(res))
             } else {
-                cb(Ok(uv_fs_get_result(req)))
+                cb(Ok(res))
             }
         }
 
@@ -828,22 +911,59 @@ pub class UV {
         }
     }
 
+    _await(req: Ptr, release: () -> _, start: () -> Int, finish: _ = id) -> _ {
+        __pending[req] = co.this()
+        let err = start()
+        let res = Err(err)
+        if err == 0 {
+            let settled? = false
+            try {
+                res = yield Running
+                settled? = true
+            } finally {
+                if !settled? {
+                    __pending[req] = (_ -> release())
+                    uv_cancel(req)
+                }
+            }
+        } else {
+            __pending.remove(req)
+        }
+        defer release()
+        finish(res)
+    }
+
+    _ok(what: String, finish: _ = id) -> _ {
+        return match {
+            Ok(x)  => finish(x),
+            Err(e) => throw UVError(what, e),
+        }
+    }
+
+    _fs(what: String, start: Ptr -> Int, finish: Int -> _ = id, *bufs: Ptr) -> _ {
+        let req = _req(UV_FS)
+        _await(
+            req,
+            fn () {
+                uv_fs_req_cleanup(req)
+                _free-req(req)
+                for bufs {
+                    c.free(it)
+                }
+            },
+            -> start(req),
+            _ok(what, finish)
+        )
+    }
+
     shutdown(stream: UVStream) {
         let req = _req(UV_SHUTDOWN)
-        defer _free-req(req)
-        __pending[req] = ty.coro()
-        let err = uv_shutdown(req, stream.handle, __on_shutdown)
-        if err != 0 {
-            __pending.remove(req)
-            throw UVError('uv_shutdown()', err)
-        }
-        let cleanup = fn () {
-            uv_cancel(req)
-            __pending.remove(req)
-        }
-        if let Err(err) = suspend(cleanup) {
-            throw UVError('uv_shutdown()', err)
-        }
+        _await(
+            req,
+            -> _free-req(req),
+            -> uv_shutdown(req, stream.handle, __on_shutdown),
+            _ok('uv_shutdown()')
+        )
     }
 
     tcp-socket() {
@@ -859,20 +979,12 @@ pub class UV {
 
     connect(sock: UVSocket, addr: Blob) {
         let req = _req(UV_CONNECT)
-        defer _free-req(req)
-        __pending[req] = ty.coro()
-        let err = uv_tcp_connect(req, sock.handle, addr, __on_connect)
-        if err != 0 {
-            __pending.remove(req)
-            throw UVError('uv_tcp_connect()', err)
-        }
-        let cleanup = fn () {
-            uv_cancel(req)
-            __pending.remove(req)
-        }
-        if let Err(e) = suspend(cleanup) {
-            throw UVError('uv_tcp_connect()', e)
-        }
+        _await(
+            req,
+            -> _free-req(req),
+            -> uv_tcp_connect(req, sock.handle, addr, __on_connect),
+            _ok('uv_tcp_connect()')
+        )
     }
 
     bind(sock: UVSocket, addr: Blob, flags: Int = 0) {
@@ -907,74 +1019,60 @@ pub class UV {
     }
 
     fs-open(path: Any, flags: Int = os.O_RDONLY, mode: Int = 0) -> Int {
-        let req = _req(UV_FS)
-        defer {
-            uv_fs_req_cleanup(req)
-            _free-req(req)
-        }
-        __pending[req] = ty.coro()
-        let err = uv_fs_open(__loop, req, "{path}".cstr(), flags, mode, __on_fs)
-        if err != 0 {
-            __pending.remove(req)
-            throw UVError('uv_fs_open()', err)
-        }
-        let cleanup = fn () {
-            uv_cancel(req)
-            __pending.remove(req)
-        }
-        match suspend(cleanup) {
-            Ok(fd) => {
-                fd
-            },
-            Err(e) => {
-                throw UVError('uv_fs_open()', e)
-            }
-        }
+        _fs('uv_fs_open()', uv_fs_open@(__loop, _, "{path}".cstr(), flags, mode, __on_fs))
     }
 
     fs-close(file: Int) {
         let req = _req(UV_FS)
-        defer {
-            uv_fs_req_cleanup(req)
-            _free-req(req)
-        }
-        __pending[req] = ty.coro()
-        let err = uv_fs_close(__loop, req, file, __on_fs)
-        if err != 0 {
-            __pending.remove(req)
+        let err = uv_fs_close(__loop, req, file, nil)
+        uv_fs_req_cleanup(req)
+        _free-req(req)
+        if err < 0 {
             throw UVError('uv_fs_close()', err)
         }
-        suspend(nop)
     }
 
     fs-read(file: Int, n: Int, off: Int = 0) -> String | nil {
-        let req  = _req(UV_FS)
         let data = c.alloc(n)
         let buf  = uv_buf_init(data, n)
-        defer {
-            c.free(buf)
-            c.free(data)
-            uv_fs_req_cleanup(req)
-            _free-req(req)
-        }
-        __pending[req] = ty.coro()
-        let err = uv_fs_read(__loop, req, file, buf, 1, off, __on_fs)
+        _fs(
+            'uv_fs_read()',
+            uv_fs_read@(__loop, _, file, buf, 1, off, __on_fs),
+            nread -> (nread > 0) ?: c.str(data, nread),
+            buf,
+            data
+        )
+    }
+
+    fs-write(file: Int, data: String | Blob, off: Int = -1) -> Int {
+        let n    = data.size()
+        let copy = c.memcpy(c.alloc(n), data, n)
+        let buf  = uv_buf_init(copy, n)
+        _fs('uv_fs_write()', uv_fs_write@(__loop, _, file, buf, 1, off, __on_fs), id, buf, copy)
+    }
+
+    fs-unlink(path: Any) {
+        _fs('uv_fs_unlink()', uv_fs_unlink@(__loop, _, "{path}".cstr(), __on_fs))
+    }
+
+    fs-rename(from: Any, to: Any) {
+        _fs('uv_fs_rename()', uv_fs_rename@(__loop, _, "{from}".cstr(), "{to}".cstr(), __on_fs))
+    }
+
+    pipe(fd: Int) -> UVPipe {
+        let hnd = _hnd(UV_NAMED_PIPE)
+        let err = uv_pipe_init(__loop, hnd, 0)
         if err != 0 {
-            __pending.remove(req)
-            throw UVError('uv_fs_read()', err)
+            _free-hnd(hnd)
+            throw UVError('uv_pipe_init()', err)
         }
-        let cleanup = fn () {
-            uv_cancel(req)
-            __pending.remove(req)
+        let pipe = UVPipe(self, hnd)
+        err = uv_pipe_open(hnd, fd)
+        if err != 0 {
+            pipe.close()
+            throw UVError('uv_pipe_open()', err)
         }
-        match suspend(cleanup) {
-            Ok(nread) => {
-                (nread > 0) ?: c.str(buf.base, nread)
-            },
-            Err(e) => {
-                throw UVError('uv_fs_read()', e)
-            }
-        }
+        pipe
     }
 
     timer() -> UVTimer {
@@ -1018,7 +1116,7 @@ pub class UV {
         defer {
             timer.close()
         }
-        let resume = ty.coro()
+        let resume = co.this()
         let fired = false
         timer.on-fire = fn () {
             fired = true
@@ -1071,21 +1169,12 @@ pub class UV {
             ai_socktype=socktype,
             ai_protocol=protocol
         )
-        defer {
-            c.free(hints)
-            _free-req(req)
-        }
-        __pending[req] = ty.coro()
-        let err = uv_getaddrinfo(__loop, req, __on_gai, host.cstr(), "{service}".cstr(), hints)
-        if err != 0 {
-            __pending.remove(req)
-            throw UVError('uv_getaddrinfo()', err)
-        }
-        let cleanup = fn () {
-            uv_cancel(req)
-            __pending.remove(req)
-        }
-        suspend(cleanup)
+        defer c.free(hints)
+        _await(
+            req,
+            -> _free-req(req),
+            -> uv_getaddrinfo(__loop, req, __on_gai, host.cstr(), "{service}".cstr(), hints)
+        )
     }
 
     read-start(stream: UVStream) {
@@ -1113,27 +1202,20 @@ pub class UV {
         stream: UVStream,
         data: String | Blob
     ) {
-        let req = _req(UV_WRITE)
-        let buf = uv_buf_init(data, data.size())
-        defer {
-            c.free(buf)
-            _free-req(req)
-        }
-        __pending[req] = ty.coro()
-        let err = uv_write(
+        let req  = _req(UV_WRITE)
+        let n    = data.size()
+        let copy = c.memcpy(c.alloc(n), data, n)
+        let buf  = uv_buf_init(copy, n)
+        _await(
             req,
-            stream.handle,
-            buf,
-            1,
-            __on_write
+            fn () {
+                c.free(buf)
+                c.free(copy)
+                _free-req(req)
+            },
+            -> uv_write(req, stream.handle, buf, 1, __on_write),
+            _ok('uv_write()')
         )
-        if err != 0 {
-            __pending.remove(req)
-            throw UVError('uv_write()', err)
-        }
-        if let Err(err) = suspend(uv_cancel@(req)) {
-            throw UVError('uv_write()', err)
-        }
     }
 
     now() -> Int {
@@ -1166,19 +1248,29 @@ pub class UV {
         }
     }
 
-    debug() {
+    handles() -> Dict[String, Int] {
         let counts = %{*: 0}
 
         C! closure tally(hnd: c.ptr, arg: c.ptr) {
-            counts[c.str(uv_handle_type_name(uv_handle_get_type(hnd)))] += 1
+            if !uv_is_closing(hnd) {
+                counts[c.str(uv_handle_type_name(uv_handle_get_type(hnd)))] += 1
+            }
         }
 
         uv_walk(__loop, tally, nil)
 
         c.free-closure(tally)
 
+        counts
+    }
+
+    pending -> Int {
+        #__pending
+    }
+
+    debug() {
         pp({
-            counts,
+            counts: handles(),
             reading: #__reading,
             listening: #__listening,
             ticking: #__ticking,
@@ -1223,11 +1315,26 @@ pub fn getrusage() -> os.RUsage {
 }
 
 pub fn run(func: _) {
-    if func != nil {
-        let coro = generator { func() }
-        coro()
+    let lp = loop()
+
+    if func == nil {
+        return lp.run()
     }
-    loop().run()
+
+    thread-failure = nil
+
+    try {
+        spawn(func)
+        lp.run()
+    } finally {
+        reap()
+        lp.run-nowait()
+    }
+
+    if let Some(e) = thread-failure {
+        thread-failure = nil
+        throw e
+    }
 }
 
 pub fn stop() {
@@ -1249,7 +1356,7 @@ pub fn race(fns: _, stagger: Int = 0) {
     if #fns == 1 { return fns[0]()                   }
 
     let lp         = loop()
-    let resume     = ty.coro()
+    let resume     = co.this()
     let winner     = nil
     let winner-idx = -1
     let last-err   = nil
@@ -1281,7 +1388,6 @@ pub fn race(fns: _, stagger: Int = 0) {
                         winner = val
                         winner-idx = my-idx
                     }
-                } catch e: CanceledError {
                 } catch e {
                     last-err = e
                     launch-next()
@@ -1306,7 +1412,7 @@ pub fn race(fns: _, stagger: Int = 0) {
         timer.stop()
         timer.close()
         for coros {
-            it(Cancel as nil)
+            it.close()
         }
     }
 
@@ -1318,10 +1424,8 @@ pub fn race(fns: _, stagger: Int = 0) {
     timer.stop()
     timer.close()
 
-    for coro; i in coros {
-        if i != winner-idx {
-            coro(Cancel as nil)
-        }
+    for coro; i in coros if i != winner-idx {
+        coro.close()
     }
 
     if let $val = winner {
@@ -1329,6 +1433,59 @@ pub fn race(fns: _, stagger: Int = 0) {
     }
 
     throw last-err ?? RuntimeError('race: all attempts failed')
+}
+
+pub fn gather(fns: _) -> Array {
+    let resume   = co.this()
+    let results  = fns.map(_ -> nil)
+    let done     = fns.map(_ -> false)
+    let left     = #fns
+    let failure  = None
+    let waiting? = false
+    let tasks    = []
+
+    fn finish(i: Int) {
+        done[i] = true
+        left   -= 1
+        if waiting? && (left == 0 || failure != None) {
+            waiting? = false
+            resume()
+        }
+    }
+
+    fn stragglers() {
+        waiting? = false
+        for task; i in tasks if !done[i] {
+            task.close()
+        }
+    }
+
+    for f; i in fns {
+        tasks.push(spawn(fn () {
+            try {
+                results[i] = f()
+            } catch e {
+                if failure == None {
+                    failure = Some(e)
+                }
+            } finally {
+                finish(i)
+            }
+        }))
+    }
+
+    if left > 0 && failure == None {
+        waiting? = true
+        suspend(stragglers)
+    }
+
+    stragglers()
+
+    if let Some(e) = failure {
+        throw e
+    }
+
+    results
 }
 
 fn interleave-families(addrs) {
@@ -1371,13 +1528,16 @@ pub fn dial(
     }
 
     race(addrs.map(addr -> fn () {
-        let sock = loop().tcp-socket()
+        let sock      = loop().tcp-socket()
+        let connected? = false
         try {
             sock.connect(addr.addr)
+            connected? = true
             sock
-        } catch e {
-            sock.close()
-            throw e
+        } finally {
+            if !connected? {
+                sock.close()
+            }
         }
     }), stagger)
 }
@@ -1429,6 +1589,22 @@ pub fn close(file: Int) {
     loop().fs-close(file)
 }
 
+pub fn write(file: Int, data: String | Blob, off: Int = -1) -> Int {
+    loop().fs-write(file, data, off)
+}
+
+pub fn unlink(path: Any) {
+    loop().fs-unlink(path)
+}
+
+pub fn rename(from: Any, to: Any) {
+    loop().fs-rename(from, to)
+}
+
+pub fn pipe(fd: Int) -> UVPipe {
+    loop().pipe(fd)
+}
+
 pub fn slurp(file: Int) -> String {
     let buf = Blob()
     let off = 0
@@ -1447,23 +1623,45 @@ pub fn slurp(path: Any) -> String {
     slurp(fd)
 }
 
+pub fn spit(path: Any, data: String | Blob) {
+    let fd = open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    defer close(fd)
+    let blob = Blob(data)
+    let off  = 0
+    while off < #blob {
+        off += write(fd, blob.slice(off), off)
+    }
+}
+
 pub class UVDeadline {
-    __coro: _
+    __msec:  Int
+    __timer: UVTimer | nil
 
     init(msec: Int) {
-        __coro = generator {
-            loop().sleep(msec)
-            throw TimeoutError()
-        }
+        __msec  = msec
+        __timer = nil
     }
 
     __enter__() {
-        (__coro)()
+        let task  = co.this() ?? throw RuntimeError('uv.timeout() used outside of a task')
+        let timer = loop().timer()
+
+        timer.on-fire = fn () {
+            timer.stop()
+            task.raise(TimeoutError())
+        }
+
+        timer.start(__msec)
+        __timer = timer
+
         self
     }
 
     __drop__() {
-        (__coro)(QuietCancel)
+        let $timer = __timer or return
+        __timer = nil
+        timer.stop()
+        timer.close()
     }
 }
 

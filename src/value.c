@@ -596,6 +596,7 @@ HashImpl(Ty *ty, Value const *val, Cycles *cs)
         case VALUE_BLOB:              return XXH3_64bits(vv(*val->blob), vN(*val->blob));
         case VALUE_SET:               return set_hash(val->set);
         case VALUE_HEAP:              return ptr_hash(val->heap);
+        case VALUE_GENERATOR:         return ptr_hash(val->gen);
         case VALUE_OBJECT:            return obj_hash(ty, val);
         case VALUE_METHOD:            return HashCombine(ptr_hash(val->method), ptr_hash(val->this));
         case VALUE_BUILTIN_METHOD:    return HashCombine(ptr_hash(val->builtin_method), ptr_hash(val->this));

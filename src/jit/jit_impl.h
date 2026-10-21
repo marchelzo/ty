@@ -254,10 +254,10 @@ i32
 jit_rt_match_string(Value const *v, i32 table_size, char const *table);
 
 void
-jit_rt_function(Ty *ty, Value *top, char const *ip);
+jit_rt_function(Ty *ty, Value *top, char const *ip, Value *locals, Value **env);
 
 void
-jit_rt_generator(Ty *ty, Value *top, char const *ip);
+jit_rt_generator(Ty *ty, Value *top, char const *ip, Value *locals, Value **env);
 
 void
 jit_rt_patch_env(Ty *ty, Value *top, int n);

@@ -160,10 +160,8 @@ clap! Perf v1 {
 
 let COMMANDS = ['run', 'list', 'history', 'show', 'compare', 'trend', 'check', 'status']
 
-// Preserve the old `run.ty [options] [filter]` spelling while making the
-// documented interface properly command-oriented.
 fn normalized-argv() -> [String] {
-    let args = os.argv
+    let args = argv
     if #args == 1 { return [args[0], 'run'] }
     if args[1] == '--list' { return [args[0], 'list', *args.slice(2)] }
     if args[1] in ['-h', '--help', '--version', '--completions'] { return args }

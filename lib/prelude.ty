@@ -9,6 +9,7 @@ import stdio
 import thread
 import time
 import ty
+import ty.coro
 import ty.mod
 import ty.parse as parse
 import ty.token as lex
@@ -2134,7 +2135,11 @@ class Generator[T, S] : Iter[T] {
     }
 
     close() {
-        ty.close-generator(self)
+        ty.coro.close(self)
+    }
+
+    raise(exc: _) -> Some[T] | None {
+        ty.coro.raise(self, exc)
     }
 
     static [](T) {

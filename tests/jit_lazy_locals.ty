@@ -199,6 +199,23 @@ pub fn array-cells-mutate-in-place() {
     assert(try { tally(Blob(9), [0, 0]); nil } catch _: IndexError { 'oob' } == 'oob')
 }
 
+fn captured-counters(n: Int) -> Array[Int] {
+    let out = []
+    for b in ..n {
+        for _ in ..1 {
+            let g = -> b
+            out.push(g())
+        }
+    }
+    out
+}
+
+pub fn lazy-counters-reach-captures-in-inner-loops() {
+    for round in ..300 {
+        assert(captured-counters(4) == [0, 1, 2, 3], "round {round}")
+    }
+}
+
 pub fn lazy-counters-survive-deopts() {
     for round in ..3000 {
         assert(counted([1, 2, 3, 4]) == 6, "round {round}")

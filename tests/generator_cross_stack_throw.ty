@@ -1,0 +1,33 @@
+fn thrower*() {
+    try {
+        yield 1
+    } finally {
+    }
+    throw 'boom'
+}
+
+fn catcher*(g) {
+    try {
+        yield 0
+        g()
+    } catch e {
+        yield "caught {e}"
+    }
+}
+
+pub fn throws-reach-catchers-on-any-coroutine-stack() {
+    let pairs = []
+    for i in ..50 {
+        let t = thrower()
+        let c = catcher(t)
+        if i % 2 == 0 {
+            c()
+            t()
+        } else {
+            t()
+            c()
+        }
+        pairs.push(c)
+    }
+    assert(pairs.reverse().map(c -> c()) == [Some('caught boom')] * 50)
+}

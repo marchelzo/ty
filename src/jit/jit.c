@@ -1681,17 +1681,17 @@ jit_rt_match_string(Value const *v, i32 table_size, char const *table)
 }
 
 void
-jit_rt_function(Ty *ty, Value *top, char const *ip)
+jit_rt_function(Ty *ty, Value *top, char const *ip, Value *locals, Value **env)
 {
         vN(STACK) = top - vv(STACK);
-        (void)DoFunction(ty, ip);
+        (void)DoFunction(ty, ip, locals, env);
 }
 
 void
-jit_rt_generator(Ty *ty, Value *top, char const *ip)
+jit_rt_generator(Ty *ty, Value *top, char const *ip, Value *locals, Value **env)
 {
         vN(STACK) = top - vv(STACK);
-        (void)DoGenerator(ty, ip);
+        (void)DoGenerator(ty, ip, locals, env);
 }
 
 void
@@ -2172,6 +2172,7 @@ jit_rt_yield(Ty *ty, Value *top)
 {
         vN(STACK) = top - vv(STACK);
         DoYield(ty);
+        CheckInterrupt(ty);
         return vvL(ty->st->frames)->fp;
 }
 
@@ -2181,6 +2182,7 @@ jit_rt_yield_some(Ty *ty, Value *top)
         vN(STACK) = top - vv(STACK);
         v_L(STACK) = Some(v_L(STACK));
         DoYield(ty);
+        CheckInterrupt(ty);
         return vvL(ty->st->frames)->fp;
 }
 
@@ -2194,6 +2196,7 @@ jit_rt_yield_none(Ty *ty, Value *top)
         }
         xvP(STACK, None);
         DoYield(ty);
+        CheckInterrupt(ty);
         return vvL(ty->st->frames)->fp;
 }
 

@@ -9801,10 +9801,10 @@ TY_BUILTIN_RAW(ty_gc)
         return NIL;
 }
 
-// ty.close-generator(g: _) -> nil
-TY_BUILTIN_RAW(ty_close_generator)
+// ty/coro.close(g: _) -> nil
+TY_BUILTIN_RAW(ty_coro_close)
 {
-        ASSERT_ARGC("ty.close-generator()", 1);
+        ASSERT_ARGC("ty.coro.close()", 1);
 
         Value g = ARG(0);
 
@@ -10558,8 +10558,22 @@ TY_BUILTIN_RAW(ty_jit_image)
         return image;
 }
 
-// ty.coro() -> _
-TY_BUILTIN_RAW(ty_coro)
+// ty/coro.raise(g: _, exc: _) -> _
+TY_BUILTIN_RAW(ty_coro_raise)
+{
+        ASSERT_ARGC("ty.coro.raise()", 2);
+
+        Value g = ARG(0);
+
+        if (g.type != VALUE_GENERATOR) {
+                bP("expected a generator but got: %s", VSC(&g));
+        }
+
+        return vm_raise_generator(ty, g.gen, &ARG(1));
+}
+
+// ty/coro.this() -> _
+TY_BUILTIN_RAW(ty_coro_this)
 {
         return TyActiveGenerator(ty);
 }

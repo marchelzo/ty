@@ -73,6 +73,11 @@ pub class FormModel {
     __root:  Field | nil
     __built: Int
 
+    __dirty-at:  Int = -1
+    __dirty:     Bool = false
+    __issues-at: Int = -1
+    __issues:    Array[(Field, String)] = []
+
     init(
         src: String | nil = nil,
         data: _ = nil,
@@ -174,11 +179,19 @@ pub class FormModel {
     }
 
     dirty? -> Bool {
-        !same?(data, base)
+        if __dirty-at != rev {
+            __dirty    = !same?(data, base)
+            __dirty-at = rev
+        }
+        __dirty
     }
 
     issues -> Array[(Field, String)] {
-        [(f, msg) for f in root.walk() if let $msg = check(f, value(f))]
+        if __issues-at != rev {
+            __issues    = [(f, msg) for f in root.walk() if let $msg = check(f, value(f))]
+            __issues-at = rev
+        }
+        __issues
     }
 
     issue(f: Field) -> String | nil {
@@ -261,7 +274,7 @@ pub class FormModel {
     }
 
     undo() -> Array | nil {
-        let (snap, p) = __undo.pop() ?? return nil
+        let Some((snap, p)) = __undo.try-pop() or return nil
         __redo.push((thaw(data), p))
         data = snap
         rev += 1
@@ -269,7 +282,7 @@ pub class FormModel {
     }
 
     redo() -> Array | nil {
-        let (snap, p) = __redo.pop() ?? return nil
+        let Some((snap, p)) = __redo.try-pop() or return nil
         __undo.push((thaw(data), p))
         data = snap
         rev += 1
@@ -337,9 +350,14 @@ pub class Form < Component {
     __rows:     Array[_] = []
     __cursor:   Int = 0
     __scroll:   Int = 0
+    __center?:  Bool = false
     __at:       Array | nil = nil
     __adding:   (Array, Int, Bool) | nil = nil
     __folded:   Set[Array] = %[]
+    __folds:    Int = 0
+    __shape:    _ = nil
+    __widest:   Int = 8
+    __labels:   Dict[Array, String] = %{}
     __reveal:   Set[Array] = %[]
     __edit:     Editor | nil = nil
     __view:     EditView | nil = nil
@@ -455,7 +473,14 @@ pub class Form < Component {
     }
 
     __sync() {
-        __rows = __flatten()
+        let m = state
+        let shape = (m, m.rev, __query(), __folds)
+        if shape != __shape {
+            __rows   = __flatten()
+            __shape  = shape
+            __widest = __rows.map(r -> 2 * r.depth + 2 + r.f.label.width()).max() ?? 8
+            __labels = %{r.f.path: r.f.label for r in __rows}
+        }
         if let $at = __at {
             let i = __rows.search-by(r -> r.f.path == at)
             if i != nil {
@@ -607,6 +632,7 @@ pub class Form < Component {
 
     __fold(f: Field) {
         __folded ^= %[f.path]
+        __folds += 1
         __sync()
     }
 
@@ -639,6 +665,7 @@ pub class Form < Component {
 
     __new-item(list: Field, at: Int) {
         __folded.remove(list.path)
+        __folds += 1
         let p = state.add(list, at)
         __changed(p)
         __focus-path(p)
@@ -649,6 +676,7 @@ pub class Form < Component {
 
     __prompt-key(group: Field, at: Int, above?: Bool) {
         __folded.remove(group.path)
+        __folds += 1
         __edit   = Editor(text='')
         __view   = EditView((__edit)!)
         __err    = nil
@@ -850,6 +878,7 @@ pub class Form < Component {
             'PageDown'                => __go(__cursor + h),
             'Home' or 'g'             => __go(0),
             'End' or 'G'              => __go(#__rows - 1),
+            'z'                       => __center? = true,
             'Enter'                   => __activate(),
             ' '                       => __space(),
             'Left' or 'h'             => __left(),
@@ -956,8 +985,7 @@ pub class Form < Component {
     }
 
     __label-width(w: Int) -> Int {
-        let widest = __rows.map(r -> 2 * r.depth + 2 + r.f.label.width()).max() ?? 8
-        min(widest + 2, max(w * 2 / 5, 12))
+        min(__widest + 2, max(w * 2 / 5, 12))
     }
 
     __gauge(f: Field, v: Int | Float, room: Int) -> Array[Node] {
@@ -1039,8 +1067,7 @@ pub class Form < Component {
     }
 
     __crumbs(f: Field) -> String {
-        let named = %{r.f.path: r.f.label for r in __rows}
-        (1..#f.path + 1).map(n -> named[f.path[;n]] ?? "{f.path[n - 1]}").join(' › ')
+        (1..#f.path + 1).map(n -> __labels[f.path[;n]] ?? "{f.path[n - 1]}").join(' › ')
     }
 
     __new-key-line(r: _, w: Int) -> Node {
@@ -1058,23 +1085,21 @@ pub class Form < Component {
         </Box>
     }
 
-    __draw(r: _, i: Int, lw: Int, w: Int) -> Node {
+    row-node(f: Field, depth: Int, sel?: Bool, lw: Int, w: Int) -> Node {
         let m = state
-        let f = r.f
-        let sel? = i == __cursor
         let sts: Array[String] = [
             *(focused? ? ['focused'] : []),
             *(sel? ? ['selected'] : []),
             *((sel? && focused?) ? ['active'] : [])
         ]
         let mark = <Text style=__spec('cursor', sts)>{__glyph('cursor', sts, '  ')}</Text>
-        let indent = '  ' * r.depth
+        let indent = '  ' * depth
         let fold = f.container?
             ? __glyph('toggle', (f.path in __folded) ? [*sts, 'folded'] : sts, (f.path in __folded) ? '▸ ' : '▾ ')
             : '  '
         let lp = f.container? ? 'group' : 'label'
         let label = f.label
-        let pad = ' ' * max(lw - 2 * r.depth - 2 - label.width(), 1)
+        let pad = ' ' * max(lw - 2 * depth - 2 - label.width(), 1)
         let v = m.value(f)
         let room = max(w - lw - 2 - 4, 4)
         let editing? = sel? && __edit != nil && __adding == nil
@@ -1100,6 +1125,36 @@ pub class Form < Component {
                 {tail}
             </Text>
         </Box>
+    }
+
+    __line(k: Int, c: Int, before: Array[Node], after: Array[Node], lw: Int, w: Int) -> Node | Component {
+        if #__rows == 0 {
+            return before[k]
+        }
+        match k - c {
+            d and d < 0                    => __row-at(k, c, lw, w),
+            d and d < #before              => before[d],
+            d and d == #before             => __row-at(c, c, lw, w),
+            d and d <= #before + #after    => after[d - #before - 1],
+            _                              => __row-at(k - #before - #after, c, lw, w),
+        }
+    }
+
+    __row-at(i: Int, c: Int, lw: Int, w: Int) -> FormRow {
+        let r    = __rows[i]
+        let f    = r.f
+        let sel? = i == c
+        let ed   = (sel? && __edit != nil && __adding == nil) ? (__edit.?version, __edit.?cursor) : nil
+        FormRow(
+            key=f.path.map(str).join('\x1f'),
+            form=self,
+            field=f,
+            depth=r.depth,
+            sel?=sel?,
+            lw=lw,
+            cols=w,
+            sig=(state.rev, focused?, f.path in __folded, f.path in __reveal, ed, __query())
+        )
     }
 
     __highlight(label: String, hits: Array[Int], lp: String, sts: Array[String]) -> Array[Node] {
@@ -1200,40 +1255,43 @@ pub class Form < Component {
         let lw = __label-width(w)
         let f = __field
 
-        let lines: Array[Node] = []
-        let at = 0
         let prompt = __adding.?[2]
-        for r; i in __rows {
-            if i == __cursor && prompt == true {
-                lines.push(__new-key-line(r, w))
+        let c      = __cursor
+        let n      = #__rows
+        let before: Array[Node] = []
+        let after:  Array[Node] = []
+        if n == 0 && prompt != nil {
+            before.push(__new-key-line(nil, w))
+        } else if n > 0 {
+            if prompt == true {
+                before.push(__new-key-line(__row, w))
             }
-            if i == __cursor {
-                at = #lines
+            if __pick != nil && f != nil {
+                after += __picker((f)!, lw)
             }
-            lines.push(__draw(r, i, lw, w))
-            if i == __cursor && __pick != nil && f != nil {
-                lines += __picker((f)!, lw)
-            }
-            if i == __cursor && prompt == false {
-                lines.push(__new-key-line(r, w))
+            if prompt == false {
+                after.push(__new-key-line(__row, w))
             }
         }
-        if #__rows == 0 && prompt != nil {
-            lines.push(__new-key-line(nil, w))
-        }
+        let total = n + #before + #after
+        let at = (n > 0) ? c + #before : 0
         if prompt == true {
             at = max(at - 1, 0)
         }
         let span = (__pick != nil) ? 1 + #(f.?choices ?? []) : (__adding != nil) ? 2 : 1
+        if __center? {
+            __center? = false
+            __scroll  = at - (h - span) / 2
+        }
         if at < __scroll {
             __scroll = at
         }
         if at + span > __scroll + h {
             __scroll = at + span - h
         }
-        __scroll = __scroll.clamp(0, max(#lines - h, 0))
-        let shown = lines[__scroll;__scroll + h]
-        if #lines == 0 {
+        __scroll = __scroll.clamp(0, max(total - h, 0))
+        let shown = [__line(k, c, before, after, lw, w) for k in __scroll..min(__scroll + h, total)]
+        if total == 0 {
             shown = [<Text style=__spec('unset')>{(m.error != nil) ? '' : '  (empty)'}</Text>]
         }
         while #shown < h && height != nil {
@@ -1248,5 +1306,20 @@ pub class Form < Component {
             {shown}
             {__footer(w)}
         </Box>
+    }
+}
+
+class FormRow < Component {
+    key:   String
+    form:  Form
+    field: Field
+    depth: Int
+    sel?:  Bool
+    lw:    Int
+    cols:  Int
+    sig:   _
+
+    render() -> Node {
+        form.row-node(field, depth, sel?, lw, cols)
     }
 }
