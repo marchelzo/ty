@@ -191,3 +191,13 @@ pub fn test-cookie-identity-has-case-insensitive-domain() {
     assert(#jar == 1)
     assert(jar.get-cookie-header('http://www.example.com/') == 'name=new')
 }
+
+#|if __linux__
+pub fn test-chrome-v11-decryption() {
+    let encrypted = Blob('v11')
+    encrypted.push('3994698d937ebeda791bcdbffe7d43a3'.unhex()!)
+    let decryptor = get-cookie-decryptor(password='test', meta-version=23)
+    assert(decryptor.decrypt(encrypted) == 'hello')
+    assert(decryptor.decryption-failures == 0)
+}
+#|]

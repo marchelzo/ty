@@ -5099,16 +5099,17 @@ ClassLookup:
 
         if (
                 (vp == NULL)
-             && (value.type == VALUE_OBJECT)
-             && (vp = class_lookup_method_i(ty, value.class, NAMES.method_missing)) != NULL
+             && ((value.type == VALUE_OBJECT) || (value.type == VALUE_MODULE))
+             && (vp = class_lookup_method_i(ty, ClassOf(&value), NAMES.method_missing)) != NULL
         ) {
                 method = M_NAME(i);
                 v = pop();
                 push(NIL);
-                memmove(top() - (n - 1), top() - n, n * sizeof (Value));
-                top()[-n++] = STRING_NOGC(method, strlen(method));
+                memmove(top() - (n + nkw - 1), top() - (n + nkw), (n + nkw) * sizeof (Value));
+                top()[-(n + nkw)] = STRING_NOGC(method, strlen(method));
                 push(v);
                 self = &value;
+                n += 1;
         } else if (
                 (vp == NULL)
              && (value.type == VALUE_OBJECT)

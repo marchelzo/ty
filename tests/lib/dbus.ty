@@ -1,0 +1,55 @@
+import dbus.core (Message, Variant, DBusError)
+import ffi as c (C!)
+
+let lib = c.open('systemd', [0])
+
+C! lib fn {
+    int sd_bus_open_user(void **bus);
+    void *sd_bus_unref(void *bus);
+    int sd_bus_message_new_method_call(
+        void *bus, void **msg, const char *dest,
+        const char *path, const char *iface, const char *member
+    );
+    int sd_bus_message_seal(void *msg, uint64_t cookie, uint64_t timeout);
+    int sd_bus_message_rewind(void *msg, int complete);
+}
+
+fn round-trip(sig, *args) {
+    let bus = c.box-auto(c.ptr)
+    let p   = c.box-auto(c.ptr)
+    assert(sd_bus_open_user(bus) >= 0)
+    defer sd_bus_unref(bus[0])
+    assert(sd_bus_message_new_method_call(bus[0], p, 'org.example.Test', '/test', 'org.example.Test', 'Test') >= 0)
+    let msg = Message(p[0]).append(sig, *args)
+    assert(msg.signature() == sig)
+    assert(sd_bus_message_seal(msg.ptr, 1, 0) >= 0)
+    assert(sd_bus_message_rewind(msg.ptr, 1) >= 0)
+    msg
+}
+
+pub fn test-secret-service-messages() {
+    let open = round-trip('sv', 'plain', Variant(('s', '')))
+    assert(open.read-string() == 'plain')
+    assert(open.read-variant() == '')
+    let search = round-trip('a{ss}', %{'application': 'chrome'})
+    assert(search.read-string-dict() == %{'application': 'chrome'})
+    let unlock = round-trip('ao', ['/item'])
+    assert(unlock.read-array('o') == ['/item'])
+    let payload = ('/session', Blob(), Blob(0, 128, 255), 'text/plain')
+    assert(round-trip('(oayays)', payload).read-value('(oayays)') == payload)
+}
+
+pub fn test-multiple-values() {
+    let msg = round-trip('sv', 'plain', Variant(('ao', ['/a'])))
+    assert(msg.read-values('sv') == ('plain', ['/a']))
+}
+
+pub fn test-signature-mismatch() {
+    assert(try { round-trip('ss', 'one') } catch e: DBusError { e.code } == -22)
+    assert(try { round-trip('(s', 'one') } catch e: DBusError { e.code } == -22)
+}
+
+pub fn test-nested-containers() {
+    let msg = round-trip('a{sv}', %{'paths': Variant(('ao', ['/one', '/two']))})
+    assert(msg.read-dict('s', 'v') == %{'paths': ['/one', '/two']})
+}

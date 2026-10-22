@@ -421,9 +421,66 @@ fn mac-safe-storage-key() -> Blob | nil {
 }
 #|]
 
+#|if __linux__
+const SECRETS         = 'org.freedesktop.secrets'
+const SECRETS_ROOT    = '/org/freedesktop/secrets'
+const SECRETS_SERVICE = 'org.freedesktop.Secret.Service'
+const SECRETS_SESSION = 'org.freedesktop.Secret.Session'
+const SECRETS_ITEM    = 'org.freedesktop.Secret.Item'
+
+pub fn chrome-safe-storage-password(application: String = 'chrome') -> Blob | nil {
+    try {
+        let dbus    = Module('dbus')
+        let bus     = dbus.session()
+        let service = bus.call@(SECRETS, SECRETS_ROOT, SECRETS_SERVICE, *)
+
+        let (_, session) = service('OpenSession', 'sv', 'plain', dbus.variant('s', ''))
+            .read-values('vo')
+
+        defer bus.call(SECRETS, session, SECRETS_SESSION, 'Close')
+
+        let (unlocked, locked) = service('SearchItems', 'a{ss}', %{'application': application})
+            .read-values('aoao')
+
+        let $item = (unlocked + locked).first() or return nil
+
+        let (available, _) = service('Unlock', 'ao', [item])
+            .read-values('aoo')
+
+        if item not in available {
+            return nil
+        }
+
+        let (_, _, secret, _) = bus.call(SECRETS, item, SECRETS_ITEM, 'GetSecret', 'o', session)
+            .read-value('(oayays)')
+
+        secret
+    } catch _: RuntimeError {
+        nil
+    }
+}
+
+let __linux-key-lock = Mutex()
+let __linux-safe-storage-checked = false
+let __linux-safe-storage-key: Blob | nil = nil
+
+fn linux-safe-storage-key() -> Blob | nil {
+    with __linux-key-lock {
+        if __linux-safe-storage-checked {
+            return __linux-safe-storage-key
+        }
+        __linux-safe-storage-checked = true
+        let password = chrome-safe-storage-password() ?? return nil
+        __linux-safe-storage-key = pbkdf2-sha1(password, 'saltysalt', 1, 16)
+        __linux-safe-storage-key
+    }
+}
+#|]
+
 pub class ChromeCookieDecryptor {
     meta-version: Int
     __key: Blob | nil
+    __v11-key: Blob | nil
     __windows-key: Blob | nil
     cookie-counts: DefaultDict[String, Int]
     decryption-failures: Int
@@ -435,6 +492,7 @@ pub class ChromeCookieDecryptor {
     ) {
         self.meta-version = meta-version
         __windows-key = windows-key
+        __v11-key = nil
         cookie-counts = %{'v10': 0, 'v11': 0, 'v20': 0, 'other': 0, *: 0}
         decryption-failures = 0
         if windows-key != nil {
@@ -447,12 +505,24 @@ pub class ChromeCookieDecryptor {
         __key = password == nil
             ? nil
             : pbkdf2-sha1(password, 'saltysalt', 1003, 16)
+#|else if __linux__
+        __key     = pbkdf2-sha1(password ?? 'peanuts', 'saltysalt', 1, 16)
+        __v11-key = (password == nil) ? nil : __key
 #|else
         __key = pbkdf2-sha1(password ?? 'peanuts', 'saltysalt', 1, 16)
 #|]
     }
 
     key-available -> Bool { __key != nil || __windows-key != nil }
+
+    __key-for(version: String) -> Blob | nil {
+#|if __linux__
+        if version == 'v11' {
+            return __v11-key ?= linux-safe-storage-key()
+        }
+#|]
+        __key
+    }
 
     decrypt(encrypted-value: Blob) -> String | nil {
         if #encrypted-value < 3 {
@@ -481,7 +551,7 @@ pub class ChromeCookieDecryptor {
         }
 #|]
         let payload = encrypted-value.slice(3)
-        let plain = match (__windows-key, __key) {
+        let plain = match (__windows-key, __key-for(version)) {
             (key: Blob, _) => aes-gcm-decrypt(payload, key),
             (_, key: Blob) => aes-cbc-decrypt(payload, key),
             _              => nil

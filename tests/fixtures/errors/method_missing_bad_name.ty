@@ -1,0 +1,5 @@
+class Steps {
+    __method_missing__(name: 'up' | 'down', n: Int) -> Int { n }
+}
+
+Steps().sideways(1)

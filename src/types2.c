@@ -7005,21 +7005,22 @@ infer_arguments(
         ExprVec const *argv,
         T2Type         callee,
         T2Type        *arguments,
+        usize          first,
         usize          argument_count
 )
 {
-        for (usize i = 0; i < argument_count; ++i) {
-                Expr const *argument = v__(*argv, i);
+        for (usize i = first; i < argument_count; ++i) {
+                Expr const *argument = v__(*argv, i - first);
                 arguments[i] = lambda_expression((argument == NULL) ? NULL : unfurl(argument))
                              ? T2_TYPE_INVALID
                              : infer_expression(checker, argument);
         }
 
-        for (usize i = 0; i < argument_count; ++i) {
+        for (usize i = first; i < argument_count; ++i) {
                 if (arguments[i] == T2_TYPE_INVALID) {
                         arguments[i] = infer_argument(
                                 checker,
-                                v__(*argv, i),
+                                v__(*argv, i - first),
                                 callee,
                                 i,
                                 arguments,
@@ -12655,6 +12656,55 @@ infer_method_type(
 }
 
 static T2Type
+method_missing_handler(
+        T2Checker  *checker,
+        T2Type      object,
+        char const *name,
+        Expr const *site
+)
+{
+        object = resolved_operation_type(
+                checker,
+                object,
+                T2_PREFER_KNOWN_VALUE
+        );
+        if (t2_type_kind(checker->universe, object) != T2_TYPE_NOMINAL) {
+                return T2_TYPE_INVALID;
+        }
+
+        T2Nominal *nominal = nominal_from_type(checker, object);
+        if (
+                (nominal == NULL)
+             || (nominal->class_id < 0)
+             || (nominal->tag_id > 0)
+        ) {
+                return T2_TYPE_INVALID;
+        }
+
+        int class_id = nominal->class_id;
+        (void)ensure_class_interface(checker, class_id);
+
+        if (
+                (find_member(checker, class_id, name, T2_MEMBER_METHOD, false) != NULL)
+             || (find_member(checker, class_id, name, T2_MEMBER_GETTER, false) != NULL)
+             || (find_member(checker, class_id, name, T2_MEMBER_FIELD,  false) != NULL)
+        ) {
+                return T2_TYPE_INVALID;
+        }
+
+        T2Member *handler = find_member(
+                checker,
+                class_id,
+                "__method_missing__",
+                T2_MEMBER_METHOD,
+                false
+        );
+
+        return (handler == NULL) ? T2_TYPE_INVALID
+                                 : instantiate_method(checker, handler, object, site, true);
+}
+
+static T2Type
 infer_membership_type(
         T2Checker  *checker,
         T2Type      item,
@@ -13115,7 +13165,7 @@ infer_index_access(T2Checker *checker, Expr const *site, T2Type value)
                 site,
                 true
         );
-        infer_arguments(checker, &indices->es, method, arguments, vN(indices->es));
+        infer_arguments(checker, &indices->es, method, arguments, 0, vN(indices->es));
         if (writing) {
                 arguments[count - 1] = value;
         }
@@ -19475,7 +19525,7 @@ infer_expression(T2Checker *checker, Expr const *source)
                 T2Type *keyword_arguments = xtA(*keyword_arguments, keyword_count);
                 T2SolverMark argument_scope = t2_solver_mark(checker->solver);
                 T2Type       hint_callee    = peek_callee_type(checker, expression->function);
-                infer_arguments(checker, &expression->args, hint_callee, arguments, positional_count);
+                infer_arguments(checker, &expression->args, hint_callee, arguments, 0, positional_count);
                 for (usize i = 0; i < keyword_count; ++i) {
                         keyword_arguments[i] = infer_keyword_argument(
                                 checker,
@@ -19881,11 +19931,14 @@ infer_expression(T2Checker *checker, Expr const *source)
         }
         case EXPRESSION_METHOD_CALL:
         {
-                T2Type object = infer_receiver(checker, expression->object);
-                T2Type method = infer_method_type(
+                char const *name = expression->method->identifier;
+                T2Type object  = infer_receiver(checker, expression->object);
+                T2Type handler = method_missing_handler(checker, object, name, expression);
+                usize  first   = (handler != T2_TYPE_INVALID);
+                T2Type method  = first ? handler : infer_method_type(
                         checker,
                         object,
-                        expression->method->identifier,
+                        name,
                         expression->maybe,
                         expression,
                         true
@@ -19913,12 +19966,15 @@ infer_expression(T2Checker *checker, Expr const *source)
                                 );
                         }
                 }
-                usize count   = vN(expression->method_args);
+                usize count   = vN(expression->method_args) + first;
                 usize kwcount = vN(expression->method_kwargs);
                 T2Type *arguments = xtA(*arguments, count);
                 T2Type *kwargs = xtA(*kwargs, kwcount);
                 T2SolverMark argument_scope = t2_solver_mark(checker->solver);
-                infer_arguments(checker, &expression->method_args, method, arguments, count);
+                if (first) {
+                        arguments[0] = t2_literal_string(checker->universe, name);
+                }
+                infer_arguments(checker, &expression->method_args, method, arguments, first, count);
                 for (usize i = 0; i < kwcount; ++i) {
                         kwargs[i] = infer_keyword_argument(
                                 checker,
@@ -19942,8 +19998,8 @@ infer_expression(T2Checker *checker, Expr const *source)
                         default_dynamic_callback_arguments(
                                 checker,
                                 &expression->method_args,
-                                arguments,
-                                count
+                                arguments + first,
+                                count - first
                         );
                         default_dynamic_callback_arguments(
                                 checker,
@@ -19953,12 +20009,15 @@ infer_expression(T2Checker *checker, Expr const *source)
                         );
                 }
                 T2TypeList expanded_arguments = {0};
+                if (first) {
+                        xvP(expanded_arguments, arguments[0]);
+                }
                 if (
                         !expand_fixed_tuple_call_splats(
                                 checker,
                                 &expression->method_args,
-                                arguments,
-                                count,
+                                arguments + first,
+                                count - first,
                                 &expanded_arguments
                         )
                 ) {

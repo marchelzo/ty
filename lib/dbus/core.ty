@@ -11,6 +11,16 @@ C! lib fn {
     int sd_bus_default_user(void **bus);
     void *sd_bus_flush_close_unref(void *bus);
 
+    int sd_bus_message_new_method_call(
+        void *bus, void **msg, const char *dest,
+        const char *path, const char *iface, const char *member
+    );
+    int sd_bus_message_append(void *msg, const char *types, ...);
+    int sd_bus_message_open_container(void *msg, char type, const char *contents);
+    int sd_bus_message_close_container(void *msg);
+    int sd_bus_call(void *bus, void *msg, uint64_t usec, void *error, void **reply);
+    int sd_bus_message_read_array(void *msg, char type, const void **ptr, size_t *size);
+
     int sd_bus_call_method(
         void *bus,
         const char *destination,
@@ -100,11 +110,15 @@ fn check!(r: Int, ctx: String = '') {
     r
 }
 
-pub __tls::_system-bus  = connect('system')
-pub __tls::_session-bus = connect('user')
+pub __tls::_system-bus  = nil
+pub __tls::_session-bus = nil
 
 pub fn default-bus(kind: String = 'system') -> Bus {
-    (kind == 'system') ? _system-bus : _session-bus
+    match kind {
+        'system' => _system-bus  ?= connect(kind),
+        'user'   => _session-bus ?= connect(kind),
+        _        => throw DBusError(-22, "bad bus type: {kind}")
+    }
 }
 
 pub fn connect(kind: String = 'system') {
@@ -119,24 +133,54 @@ pub fn connect(kind: String = 'system') {
 
 fn _type-arg(ch: String, v: _) -> _ {
     match ch {
-        's', 'o', 'g' => (c.ptr, v.cstr()),
-        'b'           => (c.int, v ? 1 : 0),
-        'i'           => (c.i32, v),
-        'u'           => (c.u32, v),
-        'x'           => (c.i64, v),
-        't'           => (c.u64, v),
-        'n'           => (c.i16, v),
-        'q'           => (c.u16, v),
-        'y'           => (c.u8, v),
-        'd'           => (c.double, v),
-        'h'           => (c.int, v),
-        _             => (c.ptr, v)
+        's', 'o', 'g'      => (c.ptr, v.cstr()),
+        'b'                => (c.int, v ? 1 : 0),
+        'i'                => (c.i32, v),
+        'u'                => (c.u32, v),
+        'x'                => (c.i64, v),
+        't'                => (c.u64, v),
+        'n', 'q', 'y', 'h' => (c.int, v),
+        'd'                => (c.double, v),
+        _                  => (c.ptr, v)
     }
 }
 
-fn _type-args(sig: String, args: Array) {
-    [_type-arg(sig[i], args[i]) for i in 0..#sig]
+fn _require(ok: Bool, context: String) {
+    if !ok {
+        throw DBusError(-22, context)
+    }
 }
+
+fn _sig-end(sig: String, i: Int = 0) -> Int {
+    match sig.char(i) {
+        'a' => _sig-end(sig, i + 1),
+        '(' => _sig-close(sig, i + 1, ')'),
+        '{' => _sig-close(sig, i + 1, '}'),
+        nil => throw DBusError(-22, "incomplete signature: {sig}"),
+        _   => i + 1
+    }
+}
+
+fn _sig-close(sig: String, i: Int, end: String) -> Int {
+    match (sig.char(i), end) {
+        (e, e)   => i + 1,
+        (nil, _) => throw DBusError(-22, "unterminated signature: {sig}"),
+        _        => _sig-close(sig, _sig-end(sig, i), end)
+    }
+}
+
+fn _sig-split(sig: String) -> Array[String] {
+    let types = []
+    let i = 0
+    while i < #sig {
+        let j = _sig-end(sig, i)
+        types.push(sig[i;j])
+        i = j
+    }
+    types
+}
+
+pub tag Variant {}
 
 pub class Bus {
     __bus: _
@@ -154,21 +198,20 @@ pub class Bus {
         iface: String, method: String,
         sig: String = '', *args
     ) -> Message {
+        let pm = c.box-auto(c.ptr)
         let pr = c.box-auto(c.ptr)
-        let typed-args = _type-args(sig, args)
 
         check!(
-            if sig != '' {
-                sd_bus_call_method(
-                    __bus, dest, path, iface, method,
-                    nil, pr, sig, *typed-args
-                )
-            } else {
-                sd_bus_call_method(
-                    __bus, dest, path, iface, method,
-                    nil, pr, nil
-                )
-            },
+            sd_bus_message_new_method_call(
+                __bus, pm, dest, path, iface, method
+            ),
+            "{iface}.{method}"
+        )
+
+        let msg = Message(pm[0]).append(sig, *args)
+
+        check!(
+            sd_bus_call(__bus, msg.ptr, 0, nil, pr),
             "{iface}.{method}"
         )
 
@@ -308,6 +351,89 @@ pub class Message {
         }
     }
 
+    append(sig: String, *args) -> Message {
+        let types = _sig-split(sig)
+        _require(#types == #args, "expected {#types} arguments for '{sig}'")
+        for t, arg in types.zip(args) {
+            __append-value(t, arg)
+        }
+        self
+    }
+
+    __open(kind: String, sig: String) {
+        check!(
+            sd_bus_message_open_container(__msg, ord(kind), sig.cstr()),
+            "open '{kind}' container"
+        )
+    }
+
+    __close(kind: String) {
+        check!(
+            sd_bus_message_close_container(__msg),
+            "close '{kind}' container"
+        )
+    }
+
+    __append-value(sig: String, value) {
+        match sig {
+            /^[sogbiuxtnqydh]$/ => __append-basic(sig, value),
+            'v'                 => __append-variant(value),
+            /^a\{(.*)\}$/       => __append-dict($1, value),
+            /^a(.+)$/           => __append-array($1, value),
+            /^\((.*)\)$/        => __append-struct($1, value),
+            _                   => throw DBusError(-22, "unsupported signature: {sig}")
+        }
+    }
+
+    __append-basic(sig: String, value) {
+        check!(
+            sd_bus_message_append(__msg, sig.cstr(), _type-arg(sig, value)),
+            "append '{sig}'"
+        )
+    }
+
+    __append-variant(variant) {
+        let Variant((sig, value)) = variant or throw DBusError(-22, "not a Variant: {variant}")
+        _require(_sig-end(sig) == #sig, "invalid variant signature: {sig}")
+        __open('v', sig)
+        __append-value(sig, value)
+        __close('v')
+    }
+
+    __append-array(sig: String, values) {
+        __open('a', sig)
+        for value in values {
+            __append-value(sig, value)
+        }
+        __close('a')
+    }
+
+    __append-dict(sig: String, entries) {
+        __open('a', "\{{sig}\}")
+        for key, value in entries {
+            __open('e', sig)
+            append(sig, key, value)
+            __close('e')
+        }
+        __close('a')
+    }
+
+    __append-struct(sig: String, fields) {
+        __open('r', sig)
+        append(sig, *fields)
+        __close('r')
+    }
+
+    read-blob() -> Blob {
+        let p = c.box-auto(c.ptr)
+        let n = c.box-auto(c.u64)
+        check!(
+            sd_bus_message_read_array(__msg, 0x79, p, n),
+            'read byte array'
+        )
+        n[0] == 0 ? Blob() : c.blob(p[0], n[0])
+    }
+
     signature() -> String {
         c.str(sd_bus_message_get_signature(__msg, 1))
     }
@@ -425,7 +551,7 @@ pub class Message {
     enter-array(sig: String = '') -> Message {
         check!(
             sd_bus_message_enter_container(
-                __msg, 0x61, sig
+                __msg, 0x61, sig.cstr()
             ),
             'enter array'
         )
@@ -435,7 +561,7 @@ pub class Message {
     enter-struct(sig: String = '') -> Message {
         check!(
             sd_bus_message_enter_container(
-                __msg, 0x72, sig
+                __msg, 0x72, sig.cstr()
             ),
             'enter struct'
         )
@@ -445,7 +571,7 @@ pub class Message {
     enter-variant(sig: String = '') -> Message {
         check!(
             sd_bus_message_enter_container(
-                __msg, 0x76, sig
+                __msg, 0x76, sig.cstr()
             ),
             'enter variant'
         )
@@ -455,7 +581,7 @@ pub class Message {
     enter-dict-entry(sig: String = '') -> Message {
         check!(
             sd_bus_message_enter_container(
-                __msg, 0x65, sig
+                __msg, 0x65, sig.cstr()
             ),
             'enter dict-entry'
         )
@@ -482,19 +608,35 @@ pub class Message {
 
     read-value(sig: String) {
         match sig {
-            's' => read-string(),
-            'o' => read-object-path(),
-            'b' => read-bool(),
-            'i' => read-i32(),
-            'u' => read-u32(),
-            'x' => read-i64(),
-            't' => read-u64(),
-            'n' => read-i16(),
-            'q' => read-u16(),
-            'y' => read-byte(),
-            'd' => read-double(),
-            _   => nil
+            's'           => read-string(),
+            'o'           => read-object-path(),
+            'b'           => read-bool(),
+            'i'           => read-i32(),
+            'u'           => read-u32(),
+            'x'           => read-i64(),
+            't'           => read-u64(),
+            'n'           => read-i16(),
+            'q'           => read-u16(),
+            'y'           => read-byte(),
+            'd'           => read-double(),
+            'v'           => read-variant(),
+            'ay'          => read-blob(),
+            /^a\{(.*)\}$/ => read-dict(*_sig-split($1)),
+            /^a(.+)$/     => read-array($1),
+            /^\((.*)\)$/  => __read-struct($1),
+            _             => throw DBusError(-22, "unsupported signature: {sig}")
         }
+    }
+
+    read-values(sig: String) -> Tuple {
+        tuple(*[read-value(t) for t in _sig-split(sig)])
+    }
+
+    __read-struct(sig: String) -> Tuple {
+        enter-struct(sig)
+        let fields = read-values(sig)
+        exit-container()
+        fields
     }
 
     read-array(element-sig: String) -> Array {
@@ -516,10 +658,11 @@ pub class Message {
     ) -> Dict {
         let d = %{}
         let sig = "{key-sig}{val-sig}"
-        enter-array(sig)
+        enter-array("\{{sig}\}")
         while !at-end?() {
             enter-dict-entry(sig)
-            d[read-value(key-sig)] = read-value(val-sig)
+            let (k, v) = read-values(sig)
+            d[k] = v
             exit-container()
         }
         exit-container()

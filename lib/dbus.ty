@@ -9,7 +9,7 @@ const BASIC_READER = %{
     'u': 'readU32',      'x': 'readI64',
     't': 'readU64',      'n': 'readI16',
     'q': 'readU16',      'y': 'readByte',
-    'd': 'readDouble',
+    'd': 'readDouble',   'v': 'readVariant',
 }
 
 const BASIC_TYPE = %{
@@ -634,3 +634,5 @@ pub macro dbus(def: AST, bus-kind = nil) {
 
 pub fn system()  { default-bus('system') }
 pub fn session() { default-bus('user')   }
+
+pub fn variant(sig: String, value) { Variant((sig, value)) }

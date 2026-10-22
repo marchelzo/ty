@@ -38,3 +38,48 @@ pub fn computed-member-names() {
 
     assert(box.?{'value\0tail'} == nil)
 }
+
+class MethodMissingEcho {
+    __method_missing__(name, *args, %kwargs) {
+        (name, args, kwargs)
+    }
+}
+
+pub fn method-missing-receives-keyword-arguments() {
+    let echo = MethodMissingEcho()
+    assert(echo.foo(1, 2, x=3) == ('foo', [1, 2], %{'x': 3}))
+    assert(echo.bar(x=3)       == ('bar', [],     %{'x': 3}))
+    assert(echo.baz()          == ('baz', [],     %{}))
+}
+
+pub fn module-functions-are-callable-as-methods() {
+    let json = Module('json')
+    assert(json.encode([1, 2]) == '[1,2]')
+    assert(json.parse('{"a": [1]}') == %{'a': [1]})
+    assert(try { json.nope() } catch e: RuntimeError { str(e) }.contains?("module 'json' has no member 'nope'"))
+}
+
+class MethodMissingTyped {
+    count: Int
+
+    init() {
+        count = 0
+    }
+
+    real() -> String {
+        'real'
+    }
+
+    __method_missing__(name: 'up' | 'down', step: Int -> Int) -> Int {
+        step(name == 'up' ? 1 : -1)
+    }
+}
+
+pub fn method-missing-calls-are-checked-against-the-handler() {
+    let m = MethodMissingTyped()
+    let up: Int = m.up(\_ * 10)
+    assert(up == 10)
+    assert(m.down(x -> x - 1) == -2)
+    assert(m.real() == 'real')
+    assert(str(typeof(m.up(\_))) == 'Int')
+}

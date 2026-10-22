@@ -2187,6 +2187,10 @@ class Module {
             throw RuntimeError("module '{self.name}' has no member '{name}'")
         }
     }
+
+    __method_missing__(name, *args, %kwargs) {
+        __missing__(name)(*args, **kwargs)
+    }
 }
 
 class Tag < Function {
