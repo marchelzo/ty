@@ -275,8 +275,8 @@ pub class IoUring {
             )
         }
 
-        __sqes = c.blob(__map(sq-entries * SQE_SIZE, IORING_OFF_SQES), sq-entries * SQE_SIZE)
-        __cqes = c.blob(cq + params.cq_off_cqes, cq-entries * CQE_SIZE)
+        __sqes = c.unsafe-blob(__map(sq-entries * SQE_SIZE, IORING_OFF_SQES), sq-entries * SQE_SIZE)
+        __cqes = c.unsafe-blob(cq + params.cq_off_cqes, cq-entries * CQE_SIZE)
 
         __sq-head-p  = sq + params.sq_off_head
         __sq-tail-p  = sq + params.sq_off_tail

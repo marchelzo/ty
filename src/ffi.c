@@ -954,10 +954,25 @@ TY_BUILTIN_RAW(ffi_dlopen)
         return (p == NULL) ? NIL : PTR(p);
 }
 
-// ffi.blob(ptr: Ptr[_], size: Int) -> Blob
+// ffi.blob(src: IntoPtr[_], size: Int) -> Blob
 TY_BUILTIN_RAW(ffi_blob)
 {
         ASSERT_ARGC("ffi.blob()", 2);
+
+        Value arg = ARG(0);
+        void *mem = ptr_from(ty, &arg);
+        usize n = INT_ARG(1);
+
+        Blob *b = value_blob_new(ty);
+        uvPn(*b, mem, n);
+
+        return BLOB(b);
+}
+
+// ffi.unsafe-blob(ptr: Ptr[_], size: Int) -> Blob
+TY_BUILTIN_RAW(ffi_unsafe_blob)
+{
+        ASSERT_ARGC("ffi.unsafe-blob()", 2);
 
         void *mem = ARGx(0, VALUE_PTR).ptr;
         usize n = INT_ARG(1);
