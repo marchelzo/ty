@@ -192,13 +192,13 @@ fn baseline(
     benchmark: String,
     window: Int,
 ) -> Baseline | nil {
-    // Preserve the existing cross-benchmark baseline window exactly.
     let rows = sql-rows(
         """
         SELECT m.median_seconds
           FROM measurements AS m
           JOIN runs AS r ON r.id = m.run_id
-         WHERE r.runner = 'ty' AND r.mode = ? AND r.branch = ?
+         WHERE m.benchmark = ?
+           AND r.runner = 'ty' AND r.mode = ? AND r.branch = ?
            AND r.build_config = ? AND r.machine_id = ? AND r.suite_hash = ?
            AND COALESCE(r.manual_eligible, r.auto_eligible) = 1
            AND COALESCE(m.manual_valid, m.auto_valid) = 1
@@ -211,6 +211,7 @@ fn baseline(
            ), 0)
          ORDER BY r.id DESC LIMIT ?
         """,
+        benchmark,
         mode, meta.branch, meta.build, meta.machineId, meta.suite,
         mode, meta.branch, meta.build, meta.machineId, meta.suite,
         window
