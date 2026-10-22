@@ -1,0 +1,3614 @@
+/**
+ * HTTP client: HTTP/1.1 and HTTP/2 (ALPN, or prior knowledge over
+ * cleartext), TLS via `ssl`, connection pooling with keep-alive, automatic
+ * gzip/deflate/br/zstd decoding, cookies, redirects, auth (basic, bearer,
+ * digest), retries, proxies (HTTP CONNECT, SOCKS5), streaming uploads and
+ * downloads, Server-Sent Events, and pretty-printed output.
+ *
+ * ```
+ * import http.client as client
+ *
+ * let r = client.get('https://httpbin.org/get', params: {q: 'ty'})
+ * r.status-code              // 200
+ * r.json()['args']           // %{'q': 'ty'}
+ * r.show()                   // colored status line, headers and JSON body
+ *
+ * let c = client.Client(base-url: 'https://api.example.com', headers: {authorization: 'Bearer ...'})
+ * c.post('/items', json: {name: 'x'}).raise-for-status()
+ *
+ * with r = c.stream('GET', '/big.tar.zst') {
+ *     for chunk in r.bytes() { ... }
+ * }
+ *
+ * for ev in c.events('/feed') {
+ *     print(ev.event, ev.json())
+ * }
+ * ```
+ *
+ * The API follows HTTPX: `Client` holds configuration and a connection pool
+ * and is safe to share between threads; HTTP/2 connections are multiplexed
+ * across them. The names follow the server (`import http`): requests and
+ * responses have `header(name)`, `headers`, `content-type`, `json()`,
+ * `cookies`, `read(max)` and `read-all()`, errors derive from the same
+ * classes, and `Headers`, `URL`, cookies, codecs, SSE and multipart encoding
+ * are the server's own modules.
+ *
+ * Called from an `http.Server` handler, requests run on the server's
+ * blocking pool so the event loop keeps serving other connections.
+ */
+import os
+import errno
+import time
+import json
+import log
+import ssl
+import ffi as c (C!)
+import path (Path)
+import base64 as b64
+import http.core as core
+import http.codec as codec
+import http.wire as wire (ResponseHead, NeedMore, Invalid, Dechunker)
+import http.status (status-name)
+import http.display as display
+
+pub import http.url (URL, InvalidURL)
+pub import http.headers (Headers)
+pub import http.cookies (CookieJar, Cookie)
+pub import http.form (FilePart, encode-multipart, urlencode, percent-decode)
+pub import http.sse as sse (Event)
+
+pub const VERSION    = '1.0'
+pub const USER_AGENT = "ty-http/{VERSION}"
+
+C! fn {
+    long send(int fd, void const *buf, uint64_t n, int flags);
+    long recv(int fd, void *buf, uint64_t n, int flags);
+}
+
+let sys-send = send
+let sys-recv = recv
+
+const SEND_FLAGS  = __apple__ ? 0 : (__bsd__ ? 0x20000 : 0x4000)
+const SO_ERROR    = (__apple__ || __bsd__) ? 0x1007 : 4
+const IPPROTO_TCP = 6
+const TCP_NODELAY = 1
+const RECV_CHUNK  = 64 * 1024
+const FILE_CHUNK  = 256 * 1024
+const MAX_HEAD    = 256 * 1024
+
+const IDEMPOTENT_METHODS = ['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE', 'TRACE']
+const IDEMPOTENT = %{*IDEMPOTENT_METHODS}
+const REDIRECTS  = %{301, 302, 303, 307, 308}
+
+
+/// Base class of every error raised while sending a request.
+pub class RequestError < RuntimeError {
+    request: _
+
+    init(what: String, request: _ = nil) {
+        self.request = request
+        super(what)
+    }
+}
+
+/// The request could not be delivered or the response could not be read.
+pub class TransportError < RequestError {}
+
+pub class TimeoutError < TransportError {}
+pub class ConnectTimeout < TimeoutError {}
+pub class ReadTimeout < TimeoutError {}
+pub class WriteTimeout < TimeoutError {}
+pub class PoolTimeout < TimeoutError {}
+
+pub class NetworkError < TransportError {}
+pub class ConnectError < NetworkError {}
+pub class ReadError < NetworkError {}
+pub class WriteError < NetworkError {}
+
+/// The peer violated HTTP (malformed response, reset stream, ...).
+pub class ProtocolError < TransportError {}
+pub class ProxyError < TransportError {}
+pub class UnsupportedProtocol < TransportError {}
+
+pub class TooManyRedirects < RequestError {}
+pub class DecodingError < RequestError {}
+
+/// Raised by `Response.raise-for-status()` for 4xx and 5xx responses.
+pub class HttpStatusError < RequestError {
+    response:    _
+    status-code: Int
+
+    init(what: String, request: _, response: _) {
+        self.response    = response
+        self.status-code = response.status-code
+        super(what, request)
+    }
+}
+
+/// The response body was already consumed by a streaming read.
+pub class StreamConsumed < RuntimeError {
+    init() {
+        super('http: the response body was already read as a stream')
+    }
+}
+
+
+fn seconds(x: _) -> Float | nil {
+    match x {
+        nil, false => nil,
+        n: Int     => float(n),
+        f: Float   => f,
+        other      => throw ValueError("http: invalid timeout: {other}")
+    }
+}
+
+/// Timeouts in seconds; `nil`/`false` disables one. `read` and `write`
+/// bound each wait for the network, not the whole transfer; `pool` bounds
+/// waiting for a free connection.
+///
+/// ```
+/// Timeout(10)                         // every phase 10s
+/// Timeout(10, connect: 2)
+/// Timeout(connect: 2, read: false)    // no read timeout
+/// ```
+pub class Timeout {
+    connect: Float | nil
+    read:    Float | nil
+    write:   Float | nil
+    pool:    Float | nil
+
+    init(all: _ = 5.0, connect: _ = nil, read: _ = nil, write: _ = nil, pool: _ = nil) {
+        let base = seconds(all)
+        self.connect = (connect == nil) ? base : seconds(connect)
+        self.read    = (read == nil) ? base : seconds(read)
+        self.write   = (write == nil) ? base : seconds(write)
+        self.pool    = (pool == nil) ? base : seconds(pool)
+    }
+
+    static of(x: _, fallback: Timeout | nil = nil) -> Timeout {
+        match x {
+            t: Timeout       => t,
+            nil              => fallback ?? Timeout(),
+            false            => Timeout(false),
+            n: Int | Float   => Timeout(n),
+            r                => Timeout(
+                r.?all ?? (fallback ?? Timeout()).read,
+                connect: r.?connect,
+                read: r.?read,
+                write: r.?write,
+                pool: r.?pool
+            )
+        }
+    }
+
+    __str__() -> String {
+        "Timeout(connect: {connect}, read: {read}, write: {write}, pool: {pool})"
+    }
+}
+
+/// Connection pool limits. `keepalive-expiry` closes idle connections
+/// after that many seconds.
+pub class Limits {
+    max-connections:  Int
+    max-keepalive:    Int
+    keepalive-expiry: Float
+
+    init(max-connections: Int = 100, max-keepalive: Int = 20, keepalive-expiry: Int | Float = 5.0) {
+        self.max-connections  = max-connections
+        self.max-keepalive    = max-keepalive
+        self.keepalive-expiry = float(keepalive-expiry)
+    }
+}
+
+/// Retry policy for failed connections and for responses with a retryable
+/// status. Only idempotent methods are retried after a response (or a
+/// request that may have reached the server); `Retry-After` is honored.
+pub class Retry {
+    total:       Int
+    backoff:     Float
+    max-backoff: Float
+    statuses:    Array[Int]
+    methods:     Array[String]
+    retry-after: Bool
+
+    init(
+        total: Int = 3,
+        backoff: Int | Float = 0.5,
+        max-backoff: Int | Float = 30.0,
+        statuses: Array[Int] = [429, 502, 503, 504],
+        methods: Array[String] = IDEMPOTENT_METHODS,
+        retry-after: Bool = true
+    ) {
+        self.total       = total
+        self.backoff     = float(backoff)
+        self.max-backoff = float(max-backoff)
+        self.statuses    = statuses
+        self.methods     = methods.map(&upper)
+        self.retry-after = retry-after
+    }
+
+    static of(x: _) -> Retry | nil {
+        match x {
+            nil, false, 0 => nil,
+            r: Retry      => r,
+            n: Int        => Retry(total: n),
+            true          => Retry()
+        }
+    }
+
+    delay(attempt: Int, rsp: _ = nil) -> Float {
+        if retry-after && rsp != nil {
+            if let $ra = rsp.header('retry-after') {
+                if ra.match?(/^\d+$/) {
+                    return min(float(int(ra, 10)), max-backoff)
+                }
+                if let $t = wire-date(ra) {
+                    return max(0.0, min(float(t) - time.utc(), max-backoff))
+                }
+            }
+        }
+        min(backoff * float(1 << min(attempt, 20)) * (0.5 + rand()), max-backoff)
+    }
+}
+
+fn wire-date(s: String) -> Int | nil {
+    try {
+        time.time(time.strptime(s, '%a, %d %b %Y %H:%M:%S GMT'), utc: true)
+    } catch _ {
+        nil
+    }
+}
+
+fn nap(secs: Float) {
+    if secs <= 0.0 {
+        return
+    }
+    if core.task() != nil && core.loop() != nil {
+        core.loop().sleep(secs)
+    } else {
+        os.sleep(secs)
+    }
+}
+
+fn deadline(t: Float | nil) -> Float | nil {
+    (t == nil) ? nil : time.now() + t
+}
+
+fn left(d: Float | nil) -> Float | nil {
+    (d == nil) ? nil : max(0.0, d - time.now())
+}
+
+/// Waits until `fd` is ready for `events`; false when `until` passes.
+fn wait-fd(fd: Int, events: Int, until: Float | nil) -> Bool {
+    while true {
+        let t = left(until)
+        if t != nil && t <= 0.0 {
+            return false
+        }
+        match os.poll([(fd, events)], t) {
+            Ok([]) => {
+                if until != nil {
+                    return false
+                }
+            },
+            Ok(_) => return true,
+            Err(e) => {
+                if e != errno.EINTR {
+                    throw OSError('http: poll')
+                }
+            }
+        }
+    }
+    false
+}
+
+
+fn body-of(x: _) -> Blob | nil {
+    match x {
+        nil       => nil,
+        b: Blob   => b,
+        s: String => Blob(s)
+    }
+}
+
+/// An outgoing request. `content` is a Blob when the body is in memory;
+/// `stream` holds an iterable of String/Blob chunks or a `Path` otherwise.
+pub class Request {
+    method:     String
+    url:        URL
+    headers:    Headers
+    content:    Blob | nil
+    stream:     _
+    extensions: Dict[String, _]
+
+    init(
+        method: String,
+        url: String | URL,
+        headers: _ = nil,
+        content: _ = nil,
+        stream: _ = nil,
+        extensions: Dict[String, _] = %{}
+    ) {
+        self.method     = method.upper()
+        self.url        = (url :: URL) ? url : URL(url)
+        self.headers    = Headers(headers)
+        self.content    = body-of(content)
+        self.stream     = stream
+        self.extensions = extensions
+    }
+
+    header(name: String) -> String | nil {
+        headers[name]
+    }
+
+    content-type -> String | nil {
+        headers['content-type']
+    }
+
+    /// Whether the body can be sent again (for redirects and retries).
+    replayable? -> Bool {
+        stream == nil || (stream :: Path)
+    }
+
+    /// The whole body (reading a streamed body consumes it).
+    read() -> Blob {
+        if let $b = content {
+            return b
+        }
+        let out = Blob()
+        match stream {
+            nil     => {},
+            p: Path => out.push(p.read-bytes()),
+            it      => {
+                for chunk in it {
+                    out.push((chunk :: Blob) ? chunk : str(chunk))
+                }
+                content = out
+                stream = nil
+            }
+        }
+        out
+    }
+
+    copy() -> Request {
+        let r = Request(method, URL(url), headers.copy(), content, stream, %{k: v for k, v in extensions})
+        r
+    }
+
+    /// Renders the request like `Response.show` does.
+    pretty(body: Bool = true, color: Bool | nil = nil, limit: Int | nil = 8192) -> String {
+        let col = color ?? display.color?()
+        let version = extensions['http-version'] ?? 'HTTP/1.1'
+        let hs = [('Host', url.authority), *headers.items().filter(p -> p.0.lower() != 'host')]
+        let data = match stream {
+            nil => content,
+            _   => Blob('<streamed body>')
+        }
+        display.message(display.request-line(method, url.target, version, col), hs, data, content-type, col, limit, body)
+    }
+
+    show(%kwargs) {
+        print(pretty(**kwargs))
+    }
+
+    __str__() -> String {
+        "<Request [{method} {url}]>"
+    }
+}
+
+/// A received response. Unless the request was made with `stream: true`
+/// (or through `Client.stream`), the body has already been read and the
+/// connection returned to the pool.
+pub class Response {
+    status-code:  Int
+    reason:       String
+    headers:      Headers
+    http-version: String
+    url:          URL
+    request:      Request | nil
+    history:      Array[Response]
+    elapsed:      Float
+    extensions:   Dict[String, _]
+
+    __body:     _
+    __content:  Blob | nil
+    __decoder:  codec.Decoder | nil
+    __started?: Bool
+    __closed?:  Bool
+    __pend:     Blob
+    __off:      Int
+    __limit:    Int | nil
+    __start:    Float
+    __on-close: Array[_]
+    __cookies:  Dict[String, String] | nil
+
+    init(
+        status-code: Int = 200,
+        headers: _ = nil,
+        content: _ = nil,
+        text: String | nil = nil,
+        json: _ = nil,
+        http-version: String = 'HTTP/1.1',
+        reason: String | nil = nil,
+        url: String | URL | nil = nil,
+        request: Request | nil = nil,
+        stream: _ = nil
+    ) {
+        self.status-code  = status-code
+        self.reason       = reason ?? status-name(status-code)
+        self.headers      = Headers(headers)
+        self.http-version = http-version
+        self.request      = request
+        self.url          = match url {
+            nil       => (request == nil) ? URL() : request.url,
+            u: URL    => u,
+            s: String => URL(s)
+        }
+        history      = []
+        elapsed      = 0.0
+        extensions   = %{}
+        __body       = stream
+        __content    = nil
+        __decoder    = nil
+        __started?   = false
+        __closed?    = false
+        __pend       = Blob()
+        __off        = 0
+        __limit      = nil
+        __start      = time.now()
+        __on-close   = []
+        __cookies    = nil
+
+        if json != nil {
+            __content = Blob(json::encode(json))
+            self.headers.setdefault('Content-Type', 'application/json')
+        } else if text != nil {
+            __content = Blob(text)
+            self.headers.setdefault('Content-Type', 'text/plain; charset=utf-8')
+        } else if content != nil {
+            __content = body-of(content)
+        }
+        if __content != nil {
+            __closed? = true
+        }
+    }
+
+    /// Wires a transport body stream (an object with `read() -> Blob | nil`
+    /// and `close()`) into the response; content decoding happens here.
+    attach(body: _, decode: Bool = true, limit: Int | nil = nil) -> Response {
+        __body = body
+        __limit = limit
+        __closed? = false
+        if decode {
+            try {
+                __decoder = codec.decoder-for(headers['content-encoding'], limit)
+            } catch e: codec.CodecError {
+                __decoder = nil
+            }
+        }
+        self
+    }
+
+    on-close(f: () -> _) {
+        __on-close.push(f)
+    }
+
+    /// The transport's body stream (nil once closed or fully in memory).
+    body-stream -> _ {
+        __body
+    }
+
+    /// Decodes Content-Encoding from here on (the transport attaches raw
+    /// bodies); `limit` caps the decoded size.
+    enable-decoding(limit: Int | nil = nil) {
+        __limit = limit
+        let $ce = headers['content-encoding'] or return
+        if __started? || __decoder != nil {
+            return
+        }
+        if let $raw = __content {
+            try {
+                __content = codec.decode(ce, raw, limit)
+            } catch e: codec.CodecError {
+                throw DecodingError(str(e), request)
+            }
+            return
+        }
+        __decoder = try {
+            codec.decoder-for(ce, limit)
+        } catch e: codec.CodecError {
+            nil
+        }
+    }
+
+    header(name: String) -> String | nil {
+        headers[name]
+    }
+
+    content-type -> String | nil {
+        headers['content-type']
+    }
+
+    /// The charset parameter of Content-Type, if any.
+    encoding -> String | nil {
+        match (content-type ?? '').match(/charset\s*=\s*"?([^";\s]+)/i) {
+            [_, cs] => cs.lower(),
+            _       => nil
+        }
+    }
+
+    reason-phrase -> String {
+        reason
+    }
+
+    ok? -> Bool {
+        status-code >= 200 && status-code < 300
+    }
+
+    success? -> Bool {
+        ok?
+    }
+
+    informational? -> Bool {
+        status-code >= 100 && status-code < 200
+    }
+
+    redirect? -> Bool {
+        REDIRECTS.contains?(status-code) && headers['location'] != nil
+    }
+
+    client-error? -> Bool {
+        status-code >= 400 && status-code < 500
+    }
+
+    server-error? -> Bool {
+        status-code >= 500 && status-code < 600
+    }
+
+    error? -> Bool {
+        status-code >= 400
+    }
+
+    /// The redirect target, resolved against the request URL.
+    next-url -> URL | nil {
+        match headers['location'] {
+            nil => nil,
+            loc => url.join(loc)
+        }
+    }
+
+    /// Throws `HttpStatusError` for 4xx/5xx responses; returns self otherwise.
+    raise-for-status() -> Response {
+        if status-code >= 400 {
+            let kind = (status-code < 500) ? 'Client error' : 'Server error'
+            throw HttpStatusError("{kind} '{status-code} {reason}' for url '{url}'", request, self)
+        }
+        self
+    }
+
+    closed? -> Bool {
+        __closed?
+    }
+
+    /// Whether the body has been fully read into memory.
+    read? -> Bool {
+        __content != nil
+    }
+
+    __raw-chunk() -> Blob | nil {
+        if __closed? || __body == nil {
+            return nil
+        }
+        let chunk = try {
+            __body.read()
+        } catch e {
+            close()
+            throw e
+        }
+        if chunk == nil {
+            close()
+        }
+        chunk
+    }
+
+    __decoded-chunk() -> Blob | nil {
+        while true {
+            let $raw = __raw-chunk() or do {
+                if let $d = __decoder {
+                    __decoder = nil
+                    let tail = try {
+                        d.finish()
+                    } catch e: codec.CodecError {
+                        throw DecodingError(str(e), request)
+                    }
+                    if #tail > 0 {
+                        return tail
+                    }
+                }
+                return nil
+            }
+            match __decoder {
+                nil => {
+                    if __limit != nil && #raw > 0 {
+                        __limit -= #raw
+                        if __limit < 0 {
+                            close()
+                            throw DecodingError('http: response body exceeds the size limit', request)
+                        }
+                    }
+                    return raw
+                },
+                d => {
+                    let out = try {
+                        d.feed(raw)
+                    } catch e: codec.CodecError {
+                        d.close()
+                        __decoder = nil
+                        close()
+                        throw DecodingError(str(e), request)
+                    }
+                    if #out > 0 {
+                        return out
+                    }
+                }
+            }
+        }
+        nil
+    }
+
+    /// Reads the next chunk of the decoded body (at most `max` bytes when
+    /// the body is already in memory); nil at the end. Mirrors the server's
+    /// `Request.read`.
+    read(max: Int = 65536) -> Blob | nil {
+        __started? = true
+        if let $b = __content {
+            if __off >= #b {
+                return nil
+            }
+            let n = min(max, #b - __off)
+            let out = b.slice(__off, n)
+            __off += n
+            return out
+        }
+        if #__pend == 0 {
+            let $chunk = __decoded-chunk() or return nil
+            __pend = chunk
+        }
+        if #__pend <= max {
+            let out = __pend
+            __pend = Blob()
+            return out
+        }
+        let out = __pend.slice(0, max)
+        __pend.clear(0, max)
+        out
+    }
+
+    /// Reads the rest of the decoded body. Before any `read()` this is the
+    /// whole body (cached, see `content`); after partial reads it is what
+    /// remains, as with the server's `Request.read-all`.
+    read-all() -> Blob {
+        if !__started? {
+            if let $b = __content {
+                return b
+            }
+            let out = Blob()
+            while let $chunk = __decoded-chunk() {
+                out.push(chunk)
+            }
+            __content = out
+            return out
+        }
+        if let $b = __content {
+            let rest = b.slice(__off, #b - __off)
+            __off = #b
+            return rest
+        }
+        let rest = __pend
+        __pend = Blob()
+        while let $chunk = __decoded-chunk() {
+            rest.push(chunk)
+        }
+        rest
+    }
+
+    /// The whole decoded body (read into memory and cached).
+    content -> Blob {
+        if let $b = __content {
+            return b
+        }
+        if __started? {
+            throw StreamConsumed()
+        }
+        read-all()
+    }
+
+    /// The body as text, like the server's `Request.body` (`content` has
+    /// the bytes).
+    body -> String {
+        text
+    }
+
+    text -> String {
+        let b = content
+        match encoding {
+            'iso-8859-1', 'latin-1', 'latin1', 'windows-1252', 'cp1252', 'us-ascii', 'ascii' => latin1(b),
+            _ => b.str(lossy: true)
+        }
+    }
+
+    json() -> _ {
+        let t = text
+        try {
+            json::parse(t)
+        } catch e {
+            throw DecodingError("http: response body is not JSON: {e}", request)
+        }
+    }
+
+    /// Decoded body chunks as they arrive (exactly `size` bytes each,
+    /// except the last, when `size` is given).
+    bytes(size: Int | nil = nil) -> Chunks {
+        if let $b = __content {
+            let i = [0]
+            return Chunks(fn () {
+                if i[0] >= #b {
+                    return nil
+                }
+                let n = min(size ?? #b, #b - i[0])
+                let out = b.slice(i[0], n)
+                i[0] += n
+                out
+            })
+        }
+        if __started? {
+            throw StreamConsumed()
+        }
+        __started? = true
+        if size == nil {
+            return Chunks(-> __decoded-chunk())
+        }
+        let pend = Blob()
+        Chunks(fn () {
+            while #pend < size {
+                let $chunk = __decoded-chunk() or break
+                pend.push(chunk)
+            }
+            if #pend == 0 {
+                return nil
+            }
+            let n = min(size, #pend)
+            let out = pend.slice(0, n)
+            pend.clear(0, n)
+            out
+        })
+    }
+
+    /// Undecoded body chunks (as sent on the wire, minus framing).
+    raw() -> Chunks {
+        if let $b = __content {
+            let done = [false]
+            return Chunks(fn () {
+                if done[0] {
+                    return nil
+                }
+                done[0] = true
+                b
+            })
+        }
+        if __started? {
+            throw StreamConsumed()
+        }
+        __started? = true
+        Chunks(-> __raw-chunk())
+    }
+
+    /// Text chunks; multi-byte UTF-8 sequences are never split.
+    text-chunks() -> Chunks {
+        let src = bytes()
+        let pend = Blob()
+        Chunks(fn () {
+            while true {
+                let $chunk = src.next() or do {
+                    if #pend == 0 {
+                        return nil
+                    }
+                    let tail = pend.str(lossy: true)
+                    pend.clear()
+                    return tail
+                }
+                pend.push(chunk)
+                let cut = utf8-boundary(pend)
+                if cut > 0 {
+                    let out = pend.str(0, cut, lossy: true)
+                    pend.clear(0, cut)
+                    return out
+                }
+            }
+            nil
+        })
+    }
+
+    /// Lines of text without their terminators (`\n` or `\r\n`).
+    lines() -> Chunks {
+        let src = text-chunks()
+        let queue = []
+        let pend = ['']
+        let done = [false]
+        Chunks(fn () {
+            while #queue == 0 {
+                if done[0] {
+                    return nil
+                }
+                match src.next() {
+                    nil => {
+                        done[0] = true
+                        if pend[0] != '' {
+                            queue.push(pend[0])
+                            pend[0] = ''
+                        }
+                    },
+                    chunk => {
+                        let parts = (pend[0] + chunk).split(/\r?\n/)
+                        for i in ..(#parts - 1) {
+                            queue.push(parts[i])
+                        }
+                        pend[0] = parts[-1]
+                    }
+                }
+            }
+            queue.pop(0)
+        })
+    }
+
+    /// Server-Sent Events from a text/event-stream body.
+    events() -> Chunks {
+        let src = bytes()
+        let p = sse.Parser()
+        let queue = []
+        let done = [false]
+        Chunks(fn () {
+            while #queue == 0 {
+                if done[0] {
+                    return nil
+                }
+                match src.next() {
+                    nil => {
+                        done[0] = true
+                        queue += p.finish()
+                    },
+                    chunk => {
+                        queue += p.feed(chunk)
+                    }
+                }
+            }
+            queue.pop(0)
+        })
+    }
+
+    /// Streams the body to `path` (decoded unless `decode: false`), returning
+    /// the number of bytes written.
+    save(path: String | Path, decode: Bool = true, progress: _ = nil) -> Int {
+        let fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        if fd < 0 {
+            throw OSError("http: cannot open {path}")
+        }
+        let total = (try { int(headers['content-length'] ?? '', 10) })
+        let n = 0
+        let bar = progress-bar(progress, total, str(path))
+        try {
+            for chunk in (decode ? bytes() : raw()) {
+                if os.write(fd, chunk, all: true) < 0 {
+                    throw OSError("http: write to {path} failed")
+                }
+                n += #chunk
+                bar(n, false)
+            }
+            bar(n, true)
+        } finally {
+            os.close(fd)
+            close()
+        }
+        n
+    }
+
+    /// Parsed Link headers: rel → {url, *params}.
+    links -> Dict[String, Dict[String, String]] {
+        let out = %{}
+        for value in headers.all('link') {
+            for part in value.split(/,\s*(?=<)/) {
+                let $m = part.match(/^\s*<([^>]*)>(.*)$/) or continue
+                let entry = %{'url': str(url.join(m[1]))}
+                for p in m[2].split(';') {
+                    if let [_, k, v] = p.match(/^\s*([^=\s]+)\s*=\s*"?([^"]*)"?\s*$/) {
+                        entry[k.lower()] = v
+                    }
+                }
+                out[str(entry['rel'] ?? entry['url'])] = entry
+            }
+        }
+        out
+    }
+
+    /// Cookies set by this response (name → value).
+    cookies -> Dict[String, String] {
+        __cookies ?? (__cookies = do {
+            let jar = CookieJar()
+            jar.extract(headers, url)
+            jar.dict()
+        })
+    }
+
+    cookie(name: String) -> String | nil {
+        cookies[name]
+    }
+
+    /// Releases the connection without reading the rest of the body.
+    close() {
+        if __closed? {
+            return
+        }
+        __closed? = true
+        if let $d = __decoder {
+            d.close()
+        }
+        if let $b = __body {
+            __body = nil
+            try {
+                b.close()
+            } catch e {
+                log::debug!("http: closing response body: {e}")
+            }
+        }
+        if elapsed == 0.0 {
+            elapsed = time.now() - __start
+        }
+        let fs = __on-close
+        __on-close = []
+        for f in fs {
+            f()
+        }
+    }
+
+    __drop__() {
+        close()
+    }
+
+    /// Renders status line, headers and (formatted, highlighted) body.
+    pretty(body: Bool = true, headers: Bool = true, color: Bool | nil = nil, limit: Int | nil = 8192) -> String {
+        let col = color ?? display.color?()
+        let start = display.status-line(http-version, status-code, reason, col)
+        let hs = headers ? self.headers.items() : []
+        let data = (body && (__content != nil || !__started?)) ? read-all() : nil
+        display.message(start, hs, data, content-type, col, limit, body)
+    }
+
+    /// Prints `pretty(...)`; with `history: true` redirects are shown first.
+    show(history: Bool = false, request: Bool = false, %kwargs) {
+        if history {
+            for r in self.history {
+                print(r.pretty(body: false, **kwargs))
+                print('')
+            }
+        }
+        if request {
+            if let $req = self.request {
+                print(req.pretty(**kwargs))
+                print('')
+            }
+        }
+        print(pretty(**kwargs))
+    }
+
+    __str__() -> String {
+        "<Response [{status-code} {reason}]>"
+    }
+}
+
+fn utf8-boundary(b: Blob) -> Int {
+    let n = #b
+    let k = 1
+    while k <= min(3, n) {
+        let x = b[n - k]
+        if (x & 0xC0) == 0x80 {
+            k += 1
+            continue
+        }
+        if x >= 0xC0 {
+            let need = (x >= 0xF0) ? 4 : ((x >= 0xE0) ? 3 : 2)
+            if need > k {
+                return n - k
+            }
+        }
+        break
+    }
+    n
+}
+
+/// A lazy sequence produced by a `next()` function (nil ends it). Response
+/// streams use these instead of generators so that they can be iterated
+/// inside `http.Server` handlers, whose tasks are themselves coroutines.
+pub class Chunks : Iter[_] {
+    __f:     () -> _
+    __close: (() -> _) | nil
+    __done?: Bool
+
+    init(f: () -> _, close: (() -> _) | nil = nil) {
+        __f     = f
+        __close = close
+        __done? = false
+    }
+
+    close() {
+        __done? = true
+        if let $f = __close {
+            __close = nil
+            f()
+        }
+    }
+
+    __drop__() {
+        close()
+    }
+
+    next() -> _ {
+        if __done? {
+            return nil
+        }
+        match (__f)() {
+            nil => {
+                __done? = true
+                nil
+            },
+            x => x
+        }
+    }
+
+    __next__() -> _ {
+        match next() {
+            nil => None,
+            x   => Some(x)
+        }
+    }
+
+    __iter__() -> Chunks {
+        self
+    }
+}
+
+class EventState {
+    rsp:       Response | nil
+    src:       _
+    parser:    _
+    queue:     Array[_]
+    last-id:   String | nil
+    delay:     Float
+    failures:  Int
+    finished?: Bool
+
+    init(delay: Float) {
+        rsp       = nil
+        src       = nil
+        parser    = nil
+        queue     = []
+        last-id   = nil
+        self.delay = delay
+        failures  = 0
+        finished? = false
+    }
+
+    close() {
+        if let $r = rsp {
+            rsp = nil
+            r.close()
+        }
+    }
+}
+
+fn latin1(b: Blob) -> String {
+    let high = false
+    for x in b {
+        if x >= 0x80 {
+            high = true
+            break
+        }
+    }
+    if !high {
+        return b.str!()
+    }
+    let out = Blob()
+    for x in b {
+        if x < 0x80 {
+            out.push(x)
+        } else {
+            out.push(0xC0 | (x >> 6))
+            out.push(0x80 | (x & 0x3F))
+        }
+    }
+    out.str!()
+}
+
+fn progress-bar(spec: _, total: Int | nil, label: String) -> (Int, Bool) -> _ {
+    match spec {
+        nil, false => (_, _) -> nil,
+        f: Function => (n, done) -> f(n, total),
+        _ => do {
+            let last = [0.0]
+            let started = time.now()
+            let tty? = os.isatty(2)
+            return fn (n: Int, done: Bool) {
+                let now = time.now()
+                if !done && now - last[0] < 0.1 {
+                    return
+                }
+                last[0] = now
+                let rate = float(n) / max(now - started, 0.001)
+                let human = fn (x: Float) -> String {
+                    if x >= 1073741824.0 { return "{x / 1073741824.0:.1f}G" }
+                    if x >= 1048576.0 { return "{x / 1048576.0:.1f}M" }
+                    if x >= 1024.0 { return "{x / 1024.0:.1f}K" }
+                    "{int(x)}B"
+                }
+                let line = match total {
+                    nil => "{label}  {human(float(n))}  {human(rate)}/s",
+                    t   => do {
+                        let frac = (t == 0) ? 1.0 : min(1.0, float(n) / float(t))
+                        let width = 30
+                        let fill = int(frac * float(width))
+                        "{label}  [{'█' * fill}{'·' * (width - fill)}] {int(frac * 100.0):3}%  {human(float(n))}/{human(float(t))}  {human(rate)}/s"
+                    }
+                }
+                if tty? {
+                    os.write(2, "\r\x1b[2K{line}{done ? '\n' : ''}")
+                } else if done {
+                    os.write(2, "{line}\n")
+                }
+            }
+        }
+    }
+}
+
+
+/// Basic authentication (RFC 7617).
+pub class BasicAuth {
+    username: String
+    password: String
+
+    init(username: String, password: String) {
+        self.username = username
+        self.password = password
+    }
+
+    apply(req: Request) -> Request {
+        req.headers['Authorization'] = "Basic {base64(Blob("{username}:{password}"))}"
+        req
+    }
+
+    retry(req: Request, rsp: Response) -> Request | nil {
+        nil
+    }
+}
+
+/// `Authorization: Bearer <token>`.
+pub class BearerAuth {
+    token: String
+
+    init(token: String) {
+        self.token = token
+    }
+
+    apply(req: Request) -> Request {
+        req.headers['Authorization'] = "Bearer {token}"
+        req
+    }
+
+    retry(req: Request, rsp: Response) -> Request | nil {
+        nil
+    }
+}
+
+fn base64(b: Blob) -> String {
+    b64.encode(b)
+}
+
+fn digest-hash(algorithm: String, s: String) -> String {
+    match algorithm.upper().sub(/-SESS$/, '') {
+        'MD5'                => md5(s),
+        'SHA-256', 'SHA256'  => sha256(s),
+        other                => throw RequestError("http: unsupported digest algorithm {other}")
+    }
+}
+
+fn parse-challenge(header: String) -> Dict[String, String] {
+    let out = %{}
+    for m in header.matches(/(\w+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^,\s]+))/v) {
+        out[str(m[1]).lower()] = m[2] ?? m[3] ?? ''
+    }
+    out
+}
+
+/// Digest authentication (RFC 7616): MD5, SHA-256 and their -sess
+/// variants, qop=auth. The first request goes out without credentials and
+/// is repeated once the server's challenge arrives.
+pub class DigestAuth {
+    username: String
+    password: String
+
+    __challenge: Dict[String, String] | nil
+    __count:     Int
+    __lock:      Mutex
+
+    init(username: String, password: String) {
+        self.username = username
+        self.password = password
+        __challenge   = nil
+        __count       = 0
+        __lock        = Mutex()
+    }
+
+    __header(req: Request, ch: Dict[String, String]) -> String {
+        let realm = ch['realm'] ?? ''
+        let nonce = ch['nonce'] ?? ''
+        let algorithm = ch['algorithm'] ?? 'MD5'
+        let qops = (ch['qop'] ?? '').split(',').map(\_.strip())
+        let qop = qops.contains?('auth') ? 'auth' : nil
+        let n = do {
+            let ^_ = __lock.lock()
+            __count += 1
+            __count
+        }
+        let nc = "{n:08x}"
+        let cnonce = ssl.random-bytes(8).hex()
+        let uri = req.url.target
+
+        let ha1 = digest-hash(algorithm, "{username}:{realm}:{password}")
+        if algorithm.upper().ends?('-SESS') {
+            ha1 = digest-hash(algorithm, "{ha1}:{nonce}:{cnonce}")
+        }
+        let ha2 = digest-hash(algorithm, "{req.method}:{uri}")
+        let response = match qop {
+            nil => digest-hash(algorithm, "{ha1}:{nonce}:{ha2}"),
+            q   => digest-hash(algorithm, "{ha1}:{nonce}:{nc}:{cnonce}:{q}:{ha2}")
+        }
+
+        let parts = [
+            "username=\"{username}\"",
+            "realm=\"{realm}\"",
+            "nonce=\"{nonce}\"",
+            "uri=\"{uri}\"",
+            "response=\"{response}\"",
+            "algorithm={algorithm}"
+        ]
+        if let $opaque = ch['opaque'] {
+            parts.push("opaque=\"{opaque}\"")
+        }
+        if qop != nil {
+            parts.push("qop={qop}")
+            parts.push("nc={nc}")
+            parts.push("cnonce=\"{cnonce}\"")
+        }
+        "Digest {parts.join(', ')}"
+    }
+
+    apply(req: Request) -> Request {
+        if let $ch = __challenge {
+            req.headers['Authorization'] = __header(req, ch)
+        }
+        req
+    }
+
+    retry(req: Request, rsp: Response) -> Request | nil {
+        if rsp.status-code != 401 {
+            return nil
+        }
+        let $www = rsp.headers.all('www-authenticate').find(\_.lower().starts?('digest')) or return nil
+        let ch = parse-challenge(www.slice(6))
+        let stale? = (ch['stale'] ?? '').lower() == 'true'
+        if req.headers['authorization'] != nil && !stale? {
+            return nil
+        }
+        __challenge = ch
+        let again = req.copy()
+        again.headers['Authorization'] = __header(again, ch)
+        again
+    }
+}
+
+/// Wraps a plain function `f(req) -> req` as an auth.
+class FunctionAuth {
+    f: _
+
+    init(f: _) {
+        self.f = f
+    }
+
+    apply(req: Request) -> Request {
+        f(req) ?? req
+    }
+
+    retry(req: Request, rsp: Response) -> Request | nil {
+        nil
+    }
+}
+
+fn auth-of(x: _) -> _ {
+    match x {
+        nil, false         => nil,
+        (user, pass)       => BasicAuth(str(user), str(pass)),
+        {username, password} => BasicAuth(username, password),
+        token: String      => BearerAuth(token),
+        f: Function        => FunctionAuth(f),
+        a                  => a
+    }
+}
+
+
+fn tcp-connect(host: String, port: Int, until: Float | nil, local: String | nil) -> Int {
+    let addrs = match os.getaddrinfo(host, port, 0, os.SOCK_STREAM, 0) {
+        Ok(xs) => xs,
+        Err(e) => throw ConnectError("http: cannot resolve {host}: {os.gai_strerror(e)}")
+    }
+
+    let first = (#addrs > 0) ? addrs[0].family : os.AF_INET
+    let primary = addrs.filter(\_.family == first)
+    let secondary = addrs.filter(\_.family != first)
+    let ordered = []
+    for i in ..max(#primary, #secondary) {
+        if i < #primary {
+            ordered.push(primary[i])
+        }
+        if i < #secondary {
+            ordered.push(secondary[i])
+        }
+    }
+
+    let pending = []
+    let last = 'no addresses'
+
+    fn finish(keep: Int | nil) {
+        for (fd, _) in pending {
+            if fd != keep {
+                os.close(fd)
+            }
+        }
+    }
+
+    let k = 0
+    while k < #ordered || #pending > 0 {
+        if k < #ordered {
+            let a = ordered[k]
+            k += 1
+            let fd = os.socket(a.family, os.SOCK_STREAM, 0)
+            if fd < 0 {
+                last = 'socket() failed'
+                continue
+            }
+            os.fcntl(fd, os.F_SETFL, os.fcntl(fd, os.F_GETFL) | os.O_NONBLOCK)
+            if local != nil {
+                if let Ok([la, *]) = os.getaddrinfo(local, 0, a.family, os.SOCK_STREAM, 0) {
+                    os.bind(fd, la)
+                }
+            }
+            let rc = os.connect(fd, a)
+            if rc == 0 {
+                finish(nil)
+                return fd
+            }
+            let e = errno.get()
+            if e != errno.EINPROGRESS && e != errno.EINTR {
+                last = errno.str(e)
+                os.close(fd)
+                continue
+            }
+            pending.push((fd, a))
+        }
+
+        let stagger = (k < #ordered) ? 0.25 : nil
+        let t = left(until)
+        if t != nil && t <= 0.0 {
+            finish(nil)
+            throw ConnectTimeout("http: connection to {host}:{port} timed out")
+        }
+        let wait = t
+        if stagger != nil && (wait == nil || stagger < wait) {
+            wait = stagger
+        }
+        let polled = os.poll([(fd, os.POLLOUT) for (fd, _) in pending], wait)
+        if let Err(e) = polled {
+            if e == errno.EINTR {
+                continue
+            }
+            finish(nil)
+            throw ConnectError('http: poll failed while connecting')
+        }
+        let ready = match polled {
+            Ok(rs) => rs,
+            _      => []
+        }
+        for (fd, _) in ready {
+            let err = os.getsockopt(fd, os.SOL_SOCKET, SO_ERROR) ?? 0
+            if err == 0 {
+                finish(fd)
+                return fd
+            }
+            last = errno.str(err)
+            os.close(fd)
+            pending = pending.filter(p -> p.0 != fd)
+        }
+        if #pending == 0 && k >= #ordered {
+            break
+        }
+        if stagger == nil && #ready == 0 && until != nil && left(until) == 0.0 {
+            finish(nil)
+            throw ConnectTimeout("http: connection to {host}:{port} timed out")
+        }
+    }
+
+    throw ConnectError("http: cannot connect to {host}:{port}: {last}")
+}
+
+/// A connected socket, optionally wrapped in TLS. Reads and writes honor
+/// deadlines; the descriptor is non-blocking.
+pub class Socket {
+    fd:    Int
+    tls:   ssl.Session | nil
+    host:  String
+    port:  Int
+    lower: Socket | nil
+
+    __tls-lock: Mutex
+
+    __in:    Blob
+    __out:   Blob
+    __plain: Blob
+    __eof?:  Bool
+
+    init(fd: Int, host: String, port: Int) {
+        self.fd   = fd
+        self.host = host
+        self.port = port
+        tls       = nil
+        lower     = nil
+        __tls-lock = Mutex()
+        __in      = Blob.zeros(RECV_CHUNK)
+        __plain   = Blob.zeros(RECV_CHUNK * 4)
+        __out     = Blob()
+        __eof?    = false
+#|if __apple__
+        os.setsockopt(fd, 0xFFFF, 0x1022, 1)
+#|]
+    }
+
+    static tcp(host: String, port: Int, until: Float | nil, local: String | nil = nil) -> Socket {
+        let fd = tcp-connect(host, port, until, local)
+        os.setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, 1)
+        Socket(fd, host, port)
+    }
+
+    /// A socket whose bytes travel inside `s` (TLS within a TLS tunnel).
+    static over(s: Socket) -> Socket {
+        let x = Socket(s.fd, s.host, s.port)
+        x.lower = s
+        x
+    }
+
+    static unix(path: String, until: Float | nil) -> Socket {
+        let fd = os.socket(os.AF_UNIX, os.SOCK_STREAM, 0)
+        if fd < 0 {
+            throw ConnectError('http: socket() failed')
+        }
+        if os.connect(fd, {family: os.AF_UNIX, path: path}) != 0 {
+            let e = errno.str(errno.get())
+            os.close(fd)
+            throw ConnectError("http: cannot connect to {path}: {e}")
+        }
+        os.fcntl(fd, os.F_SETFL, os.fcntl(fd, os.F_GETFL) | os.O_NONBLOCK)
+        Socket(fd, path, 0)
+    }
+
+    alpn -> String | nil {
+        (tls == nil) ? nil : tls.alpn
+    }
+
+    closed? -> Bool {
+        fd < 0
+    }
+
+    start-tls(ctx: ssl.Context, server-name: String, until: Float | nil) {
+        let s = ssl.Session(ctx, server-name)
+        tls = s
+        try {
+            while true {
+                let done? = s.handshake()
+                __flush(until, ConnectTimeout)
+                if done? {
+                    return
+                }
+                let $raw = recv-raw(until, ConnectTimeout) or throw ConnectError("http: {server-name} closed the connection during the TLS handshake")
+                s.feed(raw)
+            }
+        } catch e: ssl.CertificateError {
+            throw ConnectError("http: TLS certificate verification failed for {server-name}: {e}")
+        } catch e: ssl.SSLError {
+            throw ConnectError("http: TLS handshake with {server-name} failed: {e}")
+        }
+    }
+
+    /// Ciphertext (or plaintext without TLS) straight from the socket.
+    recv-raw(until: Float | nil, timeout-class: _ = ReadTimeout) -> Blob | nil {
+        if __eof? {
+            return nil
+        }
+        if let $l = lower {
+            let got = try {
+                l.recv(until)
+            } catch e: ReadTimeout {
+                throw timeout-class(str(e))
+            }
+            if got == nil {
+                __eof? = true
+            }
+            return got
+        }
+        while true {
+            let n = sys-recv(fd, __in, RECV_CHUNK, 0)
+            if n > 0 {
+                return __in.slice(0, n)
+            }
+            if n == 0 {
+                __eof? = true
+                return nil
+            }
+            let e = errno.get()
+            if e == errno.EAGAIN || e == errno.EWOULDBLOCK {
+                if !wait-fd(fd, os.POLLIN, until) {
+                    throw timeout-class("http: timed out reading from {host}")
+                }
+                continue
+            }
+            if e == errno.EINTR {
+                continue
+            }
+            if e == errno.ECONNRESET {
+                __eof? = true
+                throw ReadError("http: connection reset by {host}")
+            }
+            throw ReadError("http: recv from {host}: {errno.str(e)}")
+        }
+        nil
+    }
+
+    /// Feeds ciphertext to TLS and returns the plaintext it yields
+    /// (possibly empty); nil once TLS has closed.
+    decrypt(raw: Blob | nil, until: Float | nil = nil) -> Blob | nil {
+        let $s = tls or return raw
+        if raw == nil {
+            s.feed-eof()
+        } else {
+            s.feed(raw)
+        }
+        let out = __tls-read(s)
+        while out != nil && #out == #__plain {
+            match __tls-read(s) {
+                nil  => break,
+                more => out.push(more)
+            }
+        }
+        if s.pending > 0 {
+            __out.clear()
+            s.drain(__out)
+            __send-raw(__out, until, WriteTimeout)
+        }
+        if out == nil || (raw == nil && #out == 0) {
+            return nil
+        }
+        out
+    }
+
+    /// Decrypted bytes available now: empty when TLS needs more input, nil
+    /// once the peer has closed.
+    __tls-read(s: ssl.Session) -> Blob | nil {
+        let k = try {
+            s.read-into(__plain, 0, #__plain)
+        } catch e: ssl.SSLError {
+            throw ReadError("http: TLS error from {host}: {e}")
+        }
+        (k < 0) ? nil : __plain.slice(0, k)
+    }
+
+    /// The next plaintext chunk; nil at end of stream. One thread may read
+    /// while others `send`: the TLS state is only touched under a lock, and
+    /// the wait for the network happens outside it.
+    recv(until: Float | nil) -> Blob | nil {
+        let $s = tls or return recv-raw(until)
+        while true {
+            let out = do {
+                let ^_ = __tls-lock.lock()
+                let got = __tls-read(s)
+                if s.pending > 0 {
+                    __flush(until, WriteTimeout)
+                }
+                got
+            }
+            let $data = out or return nil
+            if #data > 0 {
+                return data
+            }
+            let raw = recv-raw(until)
+            let ^_ = __tls-lock.lock()
+            if raw == nil {
+                s.feed-eof()
+                let tail = (try { __tls-read(s) }) ?? nil
+                return (tail != nil && #tail > 0) ? tail : nil
+            }
+            s.feed(raw)
+        }
+        nil
+    }
+
+    __flush(until: Float | nil, timeout-class: _) {
+        let $s = tls or return
+        __out.clear()
+        s.drain(__out)
+        __send-raw(__out, until, timeout-class)
+        __out.clear()
+    }
+
+    __send-raw(data: Blob, until: Float | nil, timeout-class: _) {
+        if let $l = lower {
+            return l.send(data, until)
+        }
+        let off = 0
+        while off < #data {
+            let n = sys-send(fd, data.ptr() + off, #data - off, SEND_FLAGS)
+            if n >= 0 {
+                off += n
+                continue
+            }
+            let e = errno.get()
+            if e == errno.EAGAIN || e == errno.EWOULDBLOCK {
+                if !wait-fd(fd, os.POLLOUT, until) {
+                    throw timeout-class("http: timed out writing to {host}")
+                }
+                continue
+            }
+            if e == errno.EINTR {
+                continue
+            }
+            throw WriteError("http: send to {host}: {errno.str(e)}")
+        }
+    }
+
+    send(data: String | Blob, until: Float | nil) {
+        let b = (data :: Blob) ? data : Blob(data)
+        let $s = tls or return __send-raw(b, until, WriteTimeout)
+        let ^_ = __tls-lock.lock()
+        let off = 0
+        while off < #b {
+            let n = try {
+                s.write(b, off, #b - off)
+            } catch e: ssl.SSLError {
+                throw WriteError("http: TLS error writing to {host}: {e}")
+            }
+            off += n
+            __flush(until, WriteTimeout)
+            if n == 0 && off < #b {
+                let $raw = recv-raw(until) or throw WriteError("http: {host} closed the connection")
+                s.feed(raw)
+            }
+        }
+    }
+
+    /// True when an idle connection has been closed (or sent unexpected
+    /// data) by the peer.
+    stale?() -> Bool {
+        if fd < 0 || __eof? {
+            return true
+        }
+        if let $l = lower {
+            return l.stale?()
+        }
+        match os.poll([(fd, os.POLLIN)], 0) {
+            Ok([]) => false,
+            _      => true
+        }
+    }
+
+    close() {
+        if fd < 0 {
+            return
+        }
+        if let $l = lower {
+            if let $s = tls {
+                try {
+                    s.shutdown()
+                    __out.clear()
+                    s.drain(__out)
+                    l.send(__out, deadline(1.0))
+                } catch _ {
+                }
+            }
+            fd = -1
+            return l.close()
+        }
+        if let $s = tls {
+            try {
+                s.shutdown()
+                __out.clear()
+                s.drain(__out)
+                sys-send(fd, __out, #__out, SEND_FLAGS)
+            } catch _ {
+            }
+        }
+        os.close(fd)
+        fd = -1
+    }
+}
+
+
+/// A reused connection that the server had already closed; the request
+/// never reached it and is retried transparently.
+pub class StaleConnection < ReadError {}
+
+
+fn head-bytes(req: Request, target: String, extra: Array[(String, String)]) -> Blob {
+    let out = Blob()
+    out.push("{req.method} {target} HTTP/1.1\r\n")
+    if req.headers['host'] == nil {
+        out.push("Host: {req.url.authority}\r\n")
+    }
+    for (k, v) in req.headers {
+        out.push("{k}: {v}\r\n")
+    }
+    for (k, v) in extra {
+        out.push("{k}: {v}\r\n")
+    }
+    out.push('\r\n')
+    out
+}
+
+pub fn stream-chunks*(src: _) {
+    match src {
+        p: Path => {
+            let fd = os.open(str(p), os.O_RDONLY)
+            if fd < 0 {
+                throw OSError("http: cannot open {p}")
+            }
+            try {
+                let buf = Blob()
+                while true {
+                    buf.clear()
+                    let n = os.read(fd, buf, FILE_CHUNK)
+                    if n == nil || n <= 0 {
+                        break
+                    }
+                    yield Blob(buf)
+                }
+            } finally {
+                os.close(fd)
+            }
+        },
+        it => {
+            for chunk in it {
+                let b = (chunk :: Blob) ? chunk : Blob(str(chunk))
+                if #b > 0 {
+                    yield b
+                }
+            }
+        }
+    }
+}
+
+fn stream-length(src: _) -> Int | nil {
+    match src {
+        p: Path => match os.stat(str(p)) {
+            nil => nil,
+            st  => st.size
+        },
+        _ => nil
+    }
+}
+
+class H1Body {
+    conn:      H1Conn
+    mode:      Int
+    remaining: Int
+    dech:      Dechunker | nil
+    done?:     Bool
+    reuse?:    Bool
+    until:     _
+
+    init(conn: H1Conn, mode: Int, length: Int, reuse?: Bool) {
+        self.conn   = conn
+        self.mode   = mode
+        remaining   = length
+        dech        = (mode == 1) ? Dechunker() : nil
+        done?       = mode == 0 || (mode == 2 && length == 0)
+        self.reuse? = reuse?
+        if done? {
+            conn.finished(reuse?)
+        }
+    }
+
+    read() -> Blob | nil {
+        if done? {
+            return nil
+        }
+        while true {
+            let c = conn
+            let avail = #c.buf - c.pos
+            if avail > 0 {
+                match mode {
+                    1 => {
+                        let out = Blob()
+                        let $d = dech or throw ProtocolError('http: missing chunk decoder')
+                        let n = d.feed(c.buf, c.pos, #c.buf, out)
+                        if n < 0 {
+                            __fail()
+                            throw ProtocolError('http: malformed chunked response body')
+                        }
+                        c.consume(n)
+                        if d.done? {
+                            done? = true
+                            conn.finished(reuse?)
+                        }
+                        if #out > 0 || done? {
+                            return (#out > 0) ? out : nil
+                        }
+                    },
+                    2 => {
+                        let n = min(avail, remaining)
+                        let out = c.buf.slice(c.pos, n)
+                        c.consume(n)
+                        remaining -= n
+                        if remaining == 0 {
+                            done? = true
+                            conn.finished(reuse?)
+                        }
+                        return out
+                    },
+                    _ => {
+                        let out = c.buf.slice(c.pos, avail)
+                        c.consume(avail)
+                        return out
+                    }
+                }
+            }
+            let got = try {
+                c.fill()
+            } catch e {
+                __fail()
+                throw e
+            }
+            if !got {
+                if mode == 3 {
+                    done? = true
+                    conn.finished(false)
+                    return nil
+                }
+                __fail()
+                throw ReadError("http: {c.sock.host} closed the connection before the response body was complete")
+            }
+        }
+        nil
+    }
+
+    __fail() {
+        done? = true
+        conn.finished(false)
+    }
+
+    close() {
+        if !done? {
+            done? = true
+            if mode == 2 && remaining <= 16384 && #conn.buf - conn.pos >= remaining {
+                conn.consume(remaining)
+                conn.finished(reuse?)
+            } else {
+                conn.finished(false)
+            }
+        }
+    }
+}
+
+/// One HTTP/1.1 connection. Not shared: the pool hands it to one request
+/// at a time.
+pub class H1Conn {
+    sock:      Socket
+    key:       String
+    pool:      _
+    buf:       Blob
+    pos:       Int
+    marks:     Array[Int]
+    requests:  Int
+    idle-since: Float
+    closed?:   Bool
+    forward?:  Bool
+    timeout:   Timeout
+    got?:      Bool
+
+    init(sock: Socket, key: String, pool: _, forward?: Bool = false) {
+        self.sock     = sock
+        self.key      = key
+        self.pool     = pool
+        self.forward? = forward?
+        buf           = Blob()
+        pos           = 0
+        marks         = wire.marks(256)
+        requests      = 0
+        idle-since    = time.now()
+        closed?       = false
+        timeout       = Timeout()
+        got?          = false
+    }
+
+    http2? -> Bool {
+        false
+    }
+
+    protocol -> String {
+        'HTTP/1.1'
+    }
+
+    consume(n: Int) {
+        pos += n
+        if pos >= #buf {
+            buf.clear()
+            pos = 0
+        } else if pos > 65536 && pos * 2 > #buf {
+            buf.clear(0, pos)
+            pos = 0
+        }
+    }
+
+    fill() -> Bool {
+        let $chunk = sock.recv(deadline(timeout.read)) or return false
+        buf.push(chunk)
+        got? = true
+        true
+    }
+
+    reusable? -> Bool {
+        !closed? && !sock.stale?()
+    }
+
+    finished(reuse?: Bool) {
+        let clean? = reuse? && !closed? && pos >= #buf
+        if pool != nil {
+            pool.release(self, clean?)
+        } else if !reuse? {
+            close()
+        }
+    }
+
+    close() {
+        if !closed? {
+            closed? = true
+            sock.close()
+        }
+    }
+
+    /// Sends `req` and reads the response head. Returns
+    /// `(status, reason, headers, version, body)`.
+    exchange(req: Request, t: Timeout, extra: Array[(String, String)] = []) -> _ {
+        timeout = t
+        requests += 1
+        got? = false
+        try {
+            __exchange(req, t, extra)
+        } catch e: TransportError {
+            if requests > 1 && !got? && !(e :: TimeoutError) && !(e :: StaleConnection) {
+                close()
+                throw StaleConnection("http: kept-alive connection to {sock.host} failed: {e}")
+            }
+            throw e
+        }
+    }
+
+    __exchange(req: Request, t: Timeout, extra: Array[(String, String)]) -> _ {
+        let target = forward? ? str(req.url.without-credentials()) : req.url.target
+        let wd = -> deadline(t.write)
+
+        let framing = []
+        let body = req.content
+        let streamed = req.stream
+
+        if streamed != nil {
+            let n = stream-length(streamed)
+            if req.headers['content-length'] != nil {
+                n = nil
+            } else if n == nil {
+                framing.push(('Transfer-Encoding', 'chunked'))
+            }
+            if n != nil {
+                framing.push(('Content-Length', str(n)))
+            }
+        } else if body != nil {
+            if req.headers['content-length'] == nil {
+                framing.push(('Content-Length', str(#body)))
+            }
+        } else if req.method == 'POST' || req.method == 'PUT' || req.method == 'PATCH' {
+            framing.push(('Content-Length', '0'))
+        }
+
+        let head = head-bytes(req, target, extra + framing)
+        if body != nil && #body <= 65536 {
+            head.push(body)
+            body = nil
+        }
+        sock.send(head, wd())
+        if body != nil {
+            sock.send(body, wd())
+        }
+        if streamed != nil {
+            let chunked? = framing.any?(p -> p.0 == 'Transfer-Encoding')
+            for chunk in stream-chunks(streamed) {
+                if chunked? {
+                    sock.send(Blob("{#chunk:x}\r\n").push(chunk).push('\r\n'), wd())
+                } else {
+                    sock.send(chunk, wd())
+                }
+            }
+            if chunked? {
+                sock.send('0\r\n\r\n', wd())
+            }
+        }
+
+        let h = read-head()
+        let status = h.status
+        let no-body? = req.method == 'HEAD' || status == 204 || status == 304 || (status >= 100 && status < 200)
+        let reuse? = h.reusable? && !(req.header('connection') ?? '').lower().contains?('close')
+        let body-stream = if status == 101 {
+            H1Body(self, 0, 0, false)
+        } else if no-body? {
+            H1Body(self, 0, 0, reuse?)
+        } else if h.chunked? {
+            H1Body(self, 1, 0, reuse?)
+        } else if h.length >= 0 {
+            H1Body(self, 2, h.length, reuse?)
+        } else {
+            H1Body(self, 3, 0, false)
+        }
+        (status, h.reason, h.headers, "HTTP/1.{h.minor}", body-stream)
+    }
+
+    read-head() -> ResponseHead {
+        while true {
+            match wire.parse-response(buf, pos, #buf, marks, MAX_HEAD) {
+                h: ResponseHead => {
+                    consume(h.size)
+                    if h.status >= 100 && h.status < 200 && h.status != 101 {
+                        continue
+                    }
+                    return h
+                },
+                NeedMore(_, _) => {
+                    if !fill() {
+                        throw (requests > 1 && #buf == 0)
+                            ? StaleConnection("http: {sock.host} closed the kept-alive connection")
+                            : ProtocolError("http: {sock.host} closed the connection without sending a response")
+                    }
+                },
+                Invalid(code) => {
+                    close()
+                    throw ProtocolError("http: invalid response from {sock.host} ({status-name(code)})")
+                }
+            }
+        }
+        throw ProtocolError('http: unreachable')
+    }
+}
+
+
+/// Keeps idle HTTP/1.1 connections and shared HTTP/2 connections per
+/// origin, bounded by `Limits`.
+pub class Pool {
+    limits: Limits
+
+    __lock:    Mutex
+    __cv:      CondVar
+    __idle:    Dict[String, Array[H1Conn]]
+    __h2:      Dict[String, Array[_]]
+    __total:   Int
+    __probing: Dict[String, Bool]
+    __proto:   Dict[String, String]
+    __closed?: Bool
+
+    init(limits: Limits) {
+        self.limits = limits
+        __lock    = Mutex()
+        __cv      = CondVar()
+        __idle    = %{}
+        __h2      = %{}
+        __total   = 0
+        __probing = %{}
+        __proto   = %{}
+        __closed? = false
+    }
+
+    connections -> Int {
+        let ^_ = __lock.lock()
+        __total
+    }
+
+    idle-connections -> Int {
+        let ^_ = __lock.lock()
+        __idle.values().map(\#_).sum(0)
+    }
+
+    __usable-h2(key: String) -> _ {
+        let conns = __h2[key] ?? return nil
+        let live = []
+        for conn in conns {
+            if conn.usable? {
+                live.push(conn)
+            } else if conn.idle? {
+                __total -= 1
+                conn.close()
+            } else {
+                live.push(conn)
+            }
+        }
+        __h2[key] = live
+        let best = nil
+        for conn in live {
+            if conn.usable? && (best == nil || conn.active < best.active) {
+                best = conn
+            }
+        }
+        best
+    }
+
+    __evict-one() -> Bool {
+        for k, conns in __idle {
+            if #conns > 0 {
+                let conn = conns.pop(0)
+                __total -= 1
+                conn.close()
+                return true
+            }
+        }
+        false
+    }
+
+    /// Returns a connection for `key`, reusing an idle or multiplexed one
+    /// when possible and calling `open()` otherwise.
+    acquire(key: String, open: () -> _, until: Float | nil, h2?: Bool) -> _ {
+        let ^_ = __lock.lock()
+        while true {
+            if __closed? {
+                throw TransportError('http: the client has been closed')
+            }
+
+            if let $conn = __usable-h2(key) {
+                conn.reserve()
+                return conn
+            }
+
+            let idle = __idle[key] ?? []
+            while #idle > 0 {
+                let conn = idle.pop()
+                if time.now() - conn.idle-since > limits.keepalive-expiry || !conn.reusable? {
+                    __total -= 1
+                    conn.close()
+                    continue
+                }
+                return conn
+            }
+
+            if h2? && __probing[key] != nil {
+                if !__cv.wait(__lock, left(until) ?? 3600.0) && until != nil && left(until) == 0.0 {
+                    throw PoolTimeout("http: timed out waiting for a connection to {key}")
+                }
+                continue
+            }
+
+            if __total < limits.max-connections || __evict-one() {
+                __total += 1
+                let probe? = h2? && __proto[key] == nil
+                if probe? {
+                    __probing[key] = true
+                }
+                __lock.unlock()
+                let conn = try {
+                    open()
+                } catch e {
+                    __lock.lock()
+                    __total -= 1
+                    if probe? {
+                        __probing.remove(key)
+                    }
+                    __cv.broadcast()
+                    throw e
+                }
+                __lock.lock()
+                if probe? {
+                    __probing.remove(key)
+                }
+                __proto[key] = conn.protocol
+                if conn.http2? {
+                    let list = __h2[key] ?? (__h2[key] = [])
+                    list.push(conn)
+                    conn.reserve()
+                }
+                __cv.broadcast()
+                return conn
+            }
+
+            if !__cv.wait(__lock, left(until) ?? 3600.0) && until != nil && left(until) == 0.0 {
+                throw PoolTimeout("http: timed out waiting for a free connection (max-connections: {limits.max-connections})")
+            }
+        }
+        nil
+    }
+
+    release(conn: _, reuse?: Bool) {
+        let ^_ = __lock.lock()
+        if __closed? {
+            if !conn.http2? || conn.idle? {
+                conn.close()
+            }
+            return
+        }
+        if conn.http2? {
+            conn.unreserve()
+            if !conn.usable? && conn.idle? {
+                __h2[conn.key] = (__h2[conn.key] ?? []).filter(\_ != conn)
+                __total -= 1
+                conn.close()
+            }
+            __cv.broadcast()
+            return
+        }
+        let idle = __idle[conn.key] ?? (__idle[conn.key] = [])
+        let count = __idle.values().map(\#_).sum(0)
+        if reuse? && !__closed? && count < limits.max-keepalive {
+            conn.idle-since = time.now()
+            idle.push(conn)
+        } else {
+            __total -= 1
+            conn.close()
+        }
+        __cv.broadcast()
+    }
+
+    /// Drops a connection that failed or was closed by the peer.
+    discard(conn: _) {
+        let ^_ = __lock.lock()
+        if __closed? {
+            conn.close()
+            return
+        }
+        if conn.http2? {
+            let list = __h2[conn.key] ?? []
+            if list.contains?(conn) {
+                __h2[conn.key] = list.filter(\_ != conn)
+                __total -= 1
+            }
+        } else {
+            __total -= 1
+        }
+        conn.close()
+        __cv.broadcast()
+    }
+
+    close() {
+        let ^_ = __lock.lock()
+        __closed? = true
+        for _, conns in __idle {
+            for conn in conns {
+                conn.close()
+            }
+        }
+        for _, conns in __h2 {
+            for conn in conns {
+                conn.close()
+            }
+        }
+        __idle = %{}
+        __h2 = %{}
+        __total = 0
+        __cv.broadcast()
+    }
+}
+
+
+fn no-proxy?(host: String, port: Int | nil, rules: String | nil) -> Bool {
+    let $text = rules or return false
+    for rule in text.split(',').map(\_.strip().lower()) {
+        if rule == '' {
+            continue
+        }
+        if rule == '*' {
+            return true
+        }
+        let r = rule.sub(/^\*?\./, '')
+        let (rh, rp) = match r.match(/^(.*):(\d+)$/) {
+            [_, h, p] => (h, int(p, 10)),
+            _         => (r, nil)
+        }
+        if rp != nil && rp != port {
+            continue
+        }
+        if host == rh || host.ends?(".{rh}") {
+            return true
+        }
+    }
+    false
+}
+
+fn env-proxy(scheme: String) -> String | nil {
+    let names = (scheme == 'https' || scheme == 'wss')
+        ? ['HTTPS_PROXY', 'https_proxy', 'ALL_PROXY', 'all_proxy']
+        : ['HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy']
+    for n in names {
+        if let $v = getenv(n) {
+            if v != '' {
+                return v
+            }
+        }
+    }
+    nil
+}
+
+fn proxy-auth(proxy: URL) -> String | nil {
+    match proxy.username {
+        nil => nil,
+        u   => "Basic {base64(Blob("{form-decode(u)}:{form-decode(proxy.password ?? '')}"))}"
+    }
+}
+
+fn form-decode(s: String) -> String {
+    percent-decode(s)
+}
+
+
+/// The default transport: pooled TCP/TLS connections speaking HTTP/1.1 or
+/// HTTP/2, with proxy support.
+pub class HTTPTransport {
+    http1:          Bool
+    http2:          Bool
+    verify:         _
+    cert:           _
+    retries:        Int
+    proxy:          URL | nil
+    trust-env:      Bool
+    uds:            String | nil
+    local-address:  String | nil
+    pool:           Pool
+
+    __ctx:     ssl.Context | nil
+    __ctx-h1:  ssl.Context | nil
+    __lock:    Mutex
+    __h2:      _
+    __h2-err:  String | nil
+
+    init(
+        http1: Bool = true,
+        http2: Bool = true,
+        verify: _ = true,
+        cert: _ = nil,
+        retries: Int = 0,
+        proxy: String | URL | nil = nil,
+        trust-env: Bool = true,
+        uds: String | nil = nil,
+        local-address: String | nil = nil,
+        limits: Limits = Limits()
+    ) {
+        if !http1 && !http2 {
+            throw ValueError('http: at least one of http1 and http2 must be enabled')
+        }
+        self.http1         = http1
+        self.http2         = http2
+        self.verify        = verify
+        self.cert          = cert
+        self.retries       = retries
+        self.proxy         = match proxy { nil => nil, u: URL => u, s => URL(s) }
+        self.trust-env     = trust-env
+        self.uds           = uds
+        self.local-address = local-address
+        pool               = Pool(limits)
+        __ctx              = nil
+        __ctx-h1           = nil
+        __lock             = Mutex()
+        __h2               = nil
+        __h2-err           = nil
+    }
+
+    __h2-module() -> _ {
+        if !http2 {
+            return nil
+        }
+        let ^_ = __lock.lock()
+        if __h2 == nil && __h2-err == nil {
+            match core.optional-module('http/h2client', 'connect') {
+                Ok(f)  => __h2 = f,
+                Err(e) => {
+                    __h2-err = e
+                    log::warn!("HTTP/2 disabled: {e}")
+                }
+            }
+        }
+        __h2
+    }
+
+    __context(h2: Bool) -> ssl.Context {
+        let ^_ = __lock.lock()
+        if h2 {
+            __ctx ?? (__ctx = __make-context(http1 ? ['h2', 'http/1.1'] : ['h2']))
+        } else {
+            __ctx-h1 ?? (__ctx-h1 = __make-context(['http/1.1']))
+        }
+    }
+
+    __make-context(alpn: Array[String]) -> ssl.Context {
+        let (certfile, keyfile) = match cert {
+            nil          => (nil, nil),
+            (c, k)       => (c, k),
+            one: String  => (one, nil)
+        }
+        match verify {
+            ctx: ssl.Context => ctx,
+            false            => ssl.Context(verify: false, alpn: alpn, cert: certfile, key: keyfile),
+            true             => ssl.Context(alpn: alpn, cert: certfile, key: keyfile, ca: __env-ca()),
+            ca: String       => ssl.Context(alpn: alpn, cert: certfile, key: keyfile, ca: ca)
+        }
+    }
+
+    __env-ca() -> String | nil {
+        if !trust-env {
+            return nil
+        }
+        for n in ['SSL_CERT_FILE', 'REQUESTS_CA_BUNDLE', 'CURL_CA_BUNDLE'] {
+            if let $v = getenv(n) {
+                if v != '' && os.stat(v) != nil {
+                    return v
+                }
+            }
+        }
+        nil
+    }
+
+    proxy-for(url: URL) -> URL | nil {
+        if uds != nil {
+            return nil
+        }
+        if let $p = proxy {
+            return p
+        }
+        if !trust-env {
+            return nil
+        }
+        if no-proxy?(url.host ?? '', url.effective-port, getenv('NO_PROXY') ?? getenv('no_proxy')) {
+            return nil
+        }
+        match env-proxy(url.scheme ?? 'http') {
+            nil => nil,
+            s   => URL(s.contains?('://') ? s : "http://{s}")
+        }
+    }
+
+    __key(url: URL, proxy: URL | nil) -> String {
+        let base = "{url.scheme}://{url.host-literal}:{url.effective-port}"
+        match (proxy, uds) {
+            (nil, nil) => base,
+            (nil, u)   => "{base}@unix:{u}",
+            (p, _)     => "{base}@{p}"
+        }
+    }
+
+    __open(url: URL, proxy: URL | nil, key: String, t: Timeout) -> _ {
+        let until = deadline(t.connect)
+        let host = url.host ?? throw UnsupportedProtocol("http: URL has no host: {url}")
+        let port = url.effective-port ?? throw UnsupportedProtocol("http: URL has no port: {url}")
+        let https? = url.scheme == 'https'
+
+        let sock = __dial(url, proxy, host, port, until)
+        let forward? = proxy != nil && !https? && (proxy.scheme == 'http' || proxy.scheme == 'https')
+
+        try {
+            let h2 = __h2-module()
+            if https? {
+                sock.start-tls(__context(h2 != nil), host, until)
+                if sock.alpn == 'h2' && h2 != nil {
+                    return h2(sock, key, self, t)
+                }
+                if !http1 {
+                    throw UnsupportedProtocol("http: {host} does not support HTTP/2 and http1 is disabled")
+                }
+            } else if !http1 && h2 != nil && !forward? {
+                return h2(sock, key, self, t)
+            }
+            H1Conn(sock, key, pool, forward?)
+        } catch e {
+            sock.close()
+            throw e
+        }
+    }
+
+    __dial(url: URL, proxy: URL | nil, host: String, port: Int, until: Float | nil) -> Socket {
+        if let $path = uds {
+            return Socket.unix(path, until)
+        }
+        let $p = proxy or return Socket.tcp(host, port, until, local-address)
+        let https? = url.scheme == 'https'
+        match p.scheme {
+            'http', 'https' => {
+                let s = Socket.tcp(p.host ?? '', p.effective-port ?? 8080, until, local-address)
+                try {
+                    if p.scheme == 'https' {
+                        s.start-tls(__context(false), p.host ?? '', until)
+                    }
+                    if https? {
+                        __connect-tunnel(s, p, host, port, until)
+                        if p.scheme == 'https' {
+                            return Socket.over(s)
+                        }
+                    }
+                } catch e {
+                    s.close()
+                    throw e
+                }
+                s
+            },
+            'socks5', 'socks5h' => {
+                let s = Socket.tcp(p.host ?? '', p.effective-port ?? 1080, until, local-address)
+                try {
+                    __socks5(s, p, host, port, until)
+                } catch e {
+                    s.close()
+                    throw e
+                }
+                s
+            },
+            other => throw ProxyError("http: unsupported proxy scheme: {other}")
+        }
+    }
+
+    __connect-tunnel(s: Socket, p: URL, host: String, port: Int, until: Float | nil) {
+        let target = host.contains?(':') ? "[{host}]:{port}" : "{host}:{port}"
+        let head = ["CONNECT {target} HTTP/1.1", "Host: {target}", "User-Agent: {USER_AGENT}"]
+        if let $auth = proxy-auth(p) {
+            head.push("Proxy-Authorization: {auth}")
+        }
+        s.send(head.join('\r\n') + '\r\n\r\n', until)
+        let conn = H1Conn(s, '', nil)
+        conn.timeout = Timeout(false, read: left(until) ?? false)
+        let h = try {
+            conn.read-head()
+        } catch e: TransportError {
+            throw ProxyError("http: proxy CONNECT failed: {e}")
+        }
+        if h.status < 200 || h.status >= 300 {
+            throw ProxyError("http: proxy refused CONNECT to {target}: {h.status} {h.reason}")
+        }
+    }
+
+    __socks5(s: Socket, p: URL, host: String, port: Int, until: Float | nil) {
+        let user = p.username
+        s.send((user == nil) ? Blob(5, 1, 0) : Blob(5, 2, 0, 2), until)
+        let reply = __read-exact(s, 2, until)
+        if reply[0] != 5 || reply[1] == 0xFF {
+            throw ProxyError('http: SOCKS5 proxy rejected every authentication method')
+        }
+        if reply[1] == 2 {
+            let u = Blob(form-decode(user ?? ''))
+            let pw = Blob(form-decode(p.password ?? ''))
+            let msg = Blob(1, #u)
+            msg.push(u)
+            msg.push(#pw)
+            msg.push(pw)
+            s.send(msg, until)
+            let ok = __read-exact(s, 2, until)
+            if ok[1] != 0 {
+                throw ProxyError('http: SOCKS5 authentication failed')
+            }
+        }
+        let req = Blob(5, 1, 0)
+        let local? = p.scheme == 'socks5'
+        let ip4 = host.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/)
+        if ip4 != nil {
+            req.push(1)
+            for i in 1..5 {
+                req.push(int(ip4[i], 10))
+            }
+        } else if local? {
+            match os.getaddrinfo(host, port, os.AF_INET, os.SOCK_STREAM, 0) {
+                Ok([a, *]) => {
+                    req.push(1)
+                    req.push(a.address.slice(4, 4))
+                },
+                _ => throw ConnectError("http: cannot resolve {host}")
+            }
+        } else {
+            let h = Blob(host)
+            req.push(3)
+            req.push(#h)
+            req.push(h)
+        }
+        req.push(port >> 8)
+        req.push(port & 0xFF)
+        s.send(req, until)
+        let reply = Blob()
+        __fill-to(s, reply, 5, until)
+        if reply[0] != 5 {
+            throw ProxyError('http: SOCKS5 proxy sent an invalid reply')
+        }
+        if reply[1] != 0 {
+            let why = ['succeeded', 'general failure', 'not allowed by ruleset', 'network unreachable', 'host unreachable', 'connection refused', 'TTL expired', 'command not supported', 'address type not supported']
+            throw ProxyError("http: SOCKS5 proxy: {(reply[1] < #why) ? why[reply[1]] : "error {reply[1]}"}")
+        }
+        let total = match reply[3] {
+            1 => 10,
+            4 => 22,
+            3 => 7 + reply[4],
+            _ => throw ProxyError('http: SOCKS5 proxy sent an invalid reply')
+        }
+        __fill-to(s, reply, total, until)
+        if #reply > total {
+            throw ProxyError('http: SOCKS5 proxy sent unexpected data')
+        }
+    }
+
+    __fill-to(s: Socket, buf: Blob, n: Int, until: Float | nil) {
+        while #buf < n {
+            let $chunk = s.recv(until) or throw ProxyError('http: proxy closed the connection')
+            buf.push(chunk)
+        }
+    }
+
+    __read-exact(s: Socket, n: Int, until: Float | nil) -> Blob {
+        let out = Blob()
+        while #out < n {
+            let $chunk = s.recv(until) or throw ProxyError('http: proxy closed the connection')
+            out.push(chunk)
+        }
+        if #out > n {
+            throw ProxyError('http: proxy sent unexpected data')
+        }
+        out
+    }
+
+    /// Sends `req` and returns a streaming `Response`.
+    handle(req: Request, t: Timeout) -> Response {
+        let url = req.url
+        match url.scheme {
+            'http', 'https' => {},
+            nil             => throw UnsupportedProtocol("http: URL has no scheme: {url}"),
+            other           => throw UnsupportedProtocol("http: unsupported URL scheme '{other}'")
+        }
+        if url.host == nil || url.host == '' {
+            throw UnsupportedProtocol("http: URL has no host: {url}")
+        }
+
+        let proxy = proxy-for(url)
+        let key = __key(url, proxy)
+        let extra = []
+        if proxy != nil && url.scheme == 'http' && proxy.scheme != 'socks5' && proxy.scheme != 'socks5h' {
+            if let $auth = proxy-auth(proxy) {
+                extra.push(('Proxy-Authorization', auth))
+            }
+        }
+        let h2? = http2 && url.scheme == 'https' || (!http1 && http2)
+
+        let attempt = 0
+        while true {
+            let conn = nil
+            let reused? = false
+            try {
+                conn = pool.acquire(key, -> __open(url, proxy, key, t), deadline(t.pool), h2?)
+                reused? = conn.requests > (conn.http2? ? 1 : 0)
+                let (status, reason, headers, version, body) = conn.exchange(req, t, extra)
+                let rsp = Response(status, headers, http-version: version, reason: reason, url: url, request: req)
+                rsp.attach(body, decode: false)
+                return rsp
+            } catch e {
+                if let $cn = conn {
+                    if cn.http2? {
+                        pool.release(cn, false)
+                    } else {
+                        pool.discard(cn)
+                    }
+                }
+                match e {
+                    _: StaleConnection and req.replayable? && attempt < 3 => {
+                        attempt += 1
+                        continue
+                    },
+                    _: ConnectError and attempt < retries => {
+                        attempt += 1
+                        nap(min(0.5 * float(1 << attempt), 8.0))
+                        continue
+                    },
+                    _: ReadError and reused? && req.replayable? && IDEMPOTENT.contains?(req.method) && attempt < max(retries, 1) => {
+                        attempt += 1
+                        continue
+                    },
+                    _ => {}
+                }
+                if (e :: RequestError) && e.request == nil {
+                    e.request = req
+                }
+                throw e
+            }
+        }
+        nil
+    }
+
+    close() {
+        pool.close()
+    }
+}
+
+class MemoryBody {
+    data: Blob | nil
+
+    init(data: Blob) {
+        self.data = data
+    }
+
+    read() -> Blob | nil {
+        let d = data
+        data = nil
+        d
+    }
+
+    close() {
+        data = nil
+    }
+}
+
+/// A transport that answers requests by calling `handler(req)`, for tests.
+/// The handler returns a `Response`, an Int status, a String/Blob body, a
+/// `(status, body)` / `(status, headers, body)` tuple, or a JSON-able value.
+pub class MockTransport {
+    handler: _
+
+    init(handler: _) {
+        self.handler = handler
+    }
+
+    handle(req: Request, t: Timeout) -> Response {
+        let rsp = match handler(req) {
+            r: Response              => r,
+            n: Int                   => Response(n),
+            s: String                => Response(200, text: s),
+            b: Blob                  => Response(200, content: b),
+            (code: Int, hs, body)    => Response(code, hs, content: (body :: String | Blob) ? body : json::encode(body)),
+            (code: Int, body)        => (body :: String | Blob) ? Response(code, content: body) : Response(code, json: body),
+            other                    => Response(200, json: other)
+        }
+        rsp.request = req
+        rsp.url = req.url
+        if rsp.headers['content-encoding'] != nil && rsp.read? {
+            let raw = rsp.read-all()
+            let fresh = Response(rsp.status-code, rsp.headers, http-version: rsp.http-version, reason: rsp.reason, url: req.url, request: req)
+            fresh.attach(MemoryBody(raw), decode: false)
+            return fresh
+        }
+        rsp
+    }
+
+    close() {
+    }
+}
+
+
+fn in-server-task?() -> Bool {
+    core.task() != nil && core.loop() != nil
+}
+
+fn offload(f: () -> _) -> _ {
+    if in-server-task?() {
+        core.loop().blocking(f)
+    } else {
+        f()
+    }
+}
+
+class LoopBody {
+    inner: _
+
+    init(inner: _) {
+        self.inner = inner
+    }
+
+    read() -> Blob | nil {
+        offload(-> inner.read())
+    }
+
+    close() {
+        inner.close()
+    }
+}
+
+/// Whether credentials may follow a redirect from `a` to `b`: same
+/// origin, or an http → https upgrade of the same host on default ports.
+fn safe-redirect?(a: URL, b: URL) -> Bool {
+    if a.same-origin?(b) {
+        return true
+    }
+    a.scheme == 'http'
+ && b.scheme == 'https'
+ && a.host == b.host
+ && (a.port == nil || a.port == 80)
+ && (b.port == nil || b.port == 443)
+}
+
+fn merge-params(url: URL, params: _) -> URL {
+    (params == nil) ? url : url.with(params: params)
+}
+
+fn hooks-of(x: _) -> Dict[String, Array[_]] {
+    let out = %{'request': [], 'response': []}
+    match x {
+        nil => {},
+        d: Dict => for k, v in d { out[k] = (v :: Array) ? [*v] : [v] },
+        r       => for k, v in members(r) { out[k] = (v :: Array) ? [*v] : [v] }
+    }
+    out
+}
+
+fn trace-default(kind: String, x: _) {
+    let col = display.color?(2)
+    match kind {
+        'request' => {
+            let text = x.pretty(body: x.content != nil, color: col, limit: 2048)
+            os.write(2, text.split('\n').map(l -> "> {l}").join('\n') + '\n')
+        },
+        'response' => {
+            let start = display.status-line(x.http-version, x.status-code, x.reason, col)
+            let lines = [start, *display.header-lines(x.headers.items(), col)]
+            os.write(2, lines.map(l -> "< {l}").join('\n') + '\n\n')
+        },
+        _ => {}
+    }
+}
+
+fn trace-printer(spec: _) -> _ {
+    match spec {
+        nil, false  => nil,
+        f: Function => f,
+        _           => trace-default
+    }
+}
+
+/// An HTTP client with shared configuration and a connection pool.
+///
+/// Keywords:
+/// - `base-url`: prefix for relative request URLs
+/// - `headers`, `params`, `cookies`, `auth`: defaults merged into every request
+/// - `timeout`: seconds or a `Timeout` (default 5s per phase)
+/// - `follow-redirects` (default true), `max-redirects` (20)
+/// - `http1`, `http2` (both on; HTTP/2 is negotiated with ALPN, or used with
+///   prior knowledge over cleartext when `http1: false`)
+/// - `verify`: true, false, a CA bundle path/PEM, or an `ssl.Context`
+/// - `cert`: client certificate path, or `(cert, key)`
+/// - `proxy`: `http://`, `https://`, `socks5://` or `socks5h://` URL (HTTPS
+///   targets are tunneled with CONNECT); with `trust-env`
+///   (default true) HTTP(S)_PROXY, ALL_PROXY, NO_PROXY and SSL_CERT_FILE apply
+/// - `limits`: `Limits`; `retries`: connection retries; `retry`: a `Retry`
+///   policy (or Int/true) for retryable responses
+/// - `uds`: Unix socket path; `local-address`: source address
+/// - `transport`: replaces the network (see `MockTransport`); `mounts`:
+///   Dict of URL prefix → transport
+/// - `event-hooks`: `{request: [f], response: [g]}`
+/// - `compress`: compress request bodies ('gzip', 'zstd', 'br')
+/// - `decode`: decode Content-Encoding (default true)
+/// - `max-response-size`: refuse bodies larger than this many bytes
+/// - `raise-for-status`: throw `HttpStatusError` for 4xx/5xx automatically
+/// - `trace`: print requests/responses to stderr (true) or call `f(kind, x)`
+pub class Client {
+    base-url:          URL | nil
+    headers:           Headers
+    params:            _
+    cookies:           CookieJar
+    auth:              _
+    timeout:           Timeout
+    follow-redirects:  Bool
+    max-redirects:     Int
+    event-hooks:       Dict[String, Array[_]]
+    transport:         _
+    mounts:            Dict[String, _]
+    retry:             Retry | nil
+    compress:          String | nil
+    decode:            Bool
+    max-response-size: Int | nil
+    raise-for-status:  Bool
+    trace:             _
+
+    __closed?: Bool
+
+    init(
+        base-url: String | URL | nil = nil,
+        headers: _ = nil,
+        params: _ = nil,
+        cookies: _ = nil,
+        auth: _ = nil,
+        timeout: _ = 5.0,
+        follow-redirects: Bool = true,
+        max-redirects: Int = 20,
+        http1: Bool = true,
+        http2: Bool = true,
+        verify: _ = true,
+        cert: _ = nil,
+        proxy: String | URL | nil = nil,
+        trust-env: Bool = true,
+        limits: Limits = Limits(),
+        retries: Int = 0,
+        retry: _ = nil,
+        uds: String | nil = nil,
+        local-address: String | nil = nil,
+        transport: _ = nil,
+        mounts: Dict[String, _] | nil = nil,
+        event-hooks: _ = nil,
+        user-agent: String = USER_AGENT,
+        compress: String | nil = nil,
+        decode: Bool = true,
+        max-response-size: Int | nil = nil,
+        raise-for-status: Bool = false,
+        trace: _ = false
+    ) {
+        self.base-url = match base-url {
+            nil       => nil,
+            ''        => nil,
+            u: URL    => u,
+            s: String => URL(s.ends?('/') ? s : "{s}/")
+        }
+        self.headers = Headers([
+            ('User-Agent', user-agent),
+            ('Accept', '*/*'),
+            ('Accept-Encoding', decode ? codec.accept-encoding() : 'identity')
+        ])
+        self.headers.update(headers)
+        self.params            = params
+        self.cookies           = match cookies { jar: CookieJar => jar, other => CookieJar(other) }
+        self.auth              = auth-of(auth)
+        self.timeout           = Timeout.of(timeout)
+        self.follow-redirects  = follow-redirects
+        self.max-redirects     = max-redirects
+        self.event-hooks       = hooks-of(event-hooks)
+        self.retry             = Retry.of(retry)
+        self.compress          = compress
+        self.decode            = decode
+        self.max-response-size = max-response-size
+        self.raise-for-status  = raise-for-status
+        self.trace             = trace-printer(trace)
+        self.mounts            = mounts ?? %{}
+        self.transport         = transport ?? HTTPTransport(
+            http1: http1,
+            http2: http2,
+            verify: verify,
+            cert: cert,
+            retries: retries,
+            proxy: proxy,
+            trust-env: trust-env,
+            uds: uds,
+            local-address: local-address,
+            limits: limits
+        )
+        __closed? = false
+
+        if compress != nil && !codec.encodable?(compress) {
+            throw ValueError("http: cannot compress request bodies with {compress}")
+        }
+    }
+
+    closed? -> Bool {
+        __closed?
+    }
+
+    __url(url: String | URL) -> URL {
+        let u = (url :: URL) ? url : URL(url)
+        match base-url {
+            nil => u,
+            b   => do {
+                if u.absolute? {
+                    u
+                } else {
+                    let s = str(u)
+                    b.join(s.starts?('/') ? s.slice(1) : s)
+                }
+            }
+        }
+    }
+
+    /// Builds a `Request` with the client's defaults merged in.
+    build-request(
+        method: String,
+        url: String | URL,
+        content: _ = nil,
+        data: _ = nil,
+        files: _ = nil,
+        json: _ = nil,
+        params: _ = nil,
+        headers: _ = nil,
+        cookies: _ = nil,
+        compress: String | nil = nil,
+        extensions: Dict[String, _] | nil = nil
+    ) -> Request {
+        let u = merge-params(merge-params(__url(url), self.params), params)
+        let hs = self.headers.copy()
+        hs.update(headers)
+
+        let body: Blob | nil = nil
+        let stream = nil
+
+        if json != nil {
+            body = Blob(json::encode(json))
+            hs.setdefault('Content-Type', 'application/json')
+        } else if files != nil {
+            let (b, ctype) = encode-multipart(data, files)
+            body = b
+            hs.set('Content-Type', ctype)
+        } else if data != nil {
+            match data {
+                s: String => body = Blob(s),
+                b: Blob   => body = b,
+                d         => {
+                    body = Blob(form-encode(d))
+                    hs.setdefault('Content-Type', 'application/x-www-form-urlencoded')
+                }
+            }
+        }
+
+        match content {
+            nil       => {},
+            s: String => body = Blob(s),
+            b: Blob   => body = b,
+            other     => stream = other
+        }
+
+        let enc = compress ?? self.compress
+        if enc != nil && enc != 'identity' && hs['content-encoding'] == nil {
+            if body != nil {
+                body = codec.encode(enc, body)
+                hs.set('Content-Encoding', enc)
+            } else if stream != nil {
+                stream = compress-stream(stream, enc)
+                hs.set('Content-Encoding', enc)
+            }
+        }
+
+        let req = Request(method, u, hs, body, stream, extensions ?? %{})
+
+        if cookies != nil {
+            let jar = CookieJar(cookies)
+            if let $line = jar.header-for(u) ?? match cookies { d: Dict => d.list().map(p -> "{p.0}={p.1}").join('; '), _ => nil } {
+                req.extensions['cookies'] = line
+            }
+        }
+
+        req
+    }
+
+    __transport-for(url: URL) -> _ {
+        let s = str(url)
+        let best = nil
+        let best-len = -1
+        for prefix, t in mounts {
+            if s.starts?(prefix) && prefix.size() > best-len {
+                best = t
+                best-len = prefix.size()
+            }
+        }
+        best ?? transport
+    }
+
+    __send-once(req: Request, t: Timeout) -> Response {
+        if req.headers['cookie'] == nil {
+            let parts = [cookies.header-for(req.url), req.extensions['cookies']].filter(\_ != nil)
+            if #parts > 0 {
+                req.headers['Cookie'] = parts.join('; ')
+            }
+        }
+
+        for f in event-hooks['request'] ?? [] {
+            f(req)
+        }
+        if let $tr = trace {
+            tr('request', req)
+        }
+
+        let started = time.now()
+        let tp = __transport-for(req.url)
+        let rsp = offload(-> tp.handle(req, t))
+        if in-server-task?() && rsp.body-stream != nil {
+            rsp.attach(LoopBody(rsp.body-stream), decode: false)
+        }
+        if decode {
+            rsp.enable-decoding(max-response-size)
+        }
+        rsp.request = req
+        req.extensions['http-version'] = rsp.http-version
+        rsp.elapsed = time.now() - started
+        rsp.on-close(fn () { rsp.elapsed = time.now() - started })
+
+        cookies.extract(rsp.headers, req.url)
+
+        if let $tr = trace {
+            tr('response', rsp)
+        }
+        for f in event-hooks['response'] ?? [] {
+            f(rsp)
+        }
+        rsp
+    }
+
+    __redirect(req: Request, rsp: Response) -> Request | nil {
+        let $next = rsp.next-url or return nil
+        let method = match rsp.status-code {
+            303 => (req.method == 'HEAD') ? 'HEAD' : 'GET',
+            301, 302 => (req.method == 'POST') ? 'GET' : req.method,
+            _ => req.method
+        }
+
+        if next.scheme != 'http' && next.scheme != 'https' {
+            return nil
+        }
+
+        if next.fragment == nil && req.url.fragment != nil {
+            next.fragment = req.url.fragment
+        }
+
+        let hs = req.headers.copy()
+        let keep-body? = method == req.method && (rsp.status-code == 307 || rsp.status-code == 308)
+        if !keep-body? {
+            for h in ['content-length', 'content-type', 'content-encoding', 'transfer-encoding'] {
+                hs.remove(h)
+            }
+        } else if !req.replayable? {
+            return nil
+        }
+
+        if !safe-redirect?(req.url, next) {
+            hs.remove('authorization')
+            hs.remove('proxy-authorization')
+        }
+        hs.remove('cookie')
+        hs.remove('host')
+
+        let ext = %{k: v for k, v in req.extensions}
+        if !next.same-origin?(req.url) {
+            ext.remove('cookies')
+        }
+
+        Request(method, next, hs, keep-body? ? req.content : nil, keep-body? ? req.stream : nil, ext)
+    }
+
+    /// Sends a prepared `Request`. With `stream: true` the body is left
+    /// unread: iterate it and `close()` the response (or use `with`).
+    send(
+        req: Request,
+        stream: Bool = false,
+        auth: _ = nil,
+        follow-redirects: Bool | nil = nil,
+        timeout: _ = nil
+    ) -> Response {
+        if __closed? {
+            throw TransportError('http: the client has been closed', req)
+        }
+
+        let t = Timeout.of(timeout, self.timeout)
+        let follow = follow-redirects ?? self.follow-redirects
+        let a = match auth { nil => self.auth, false => nil, x => auth-of(x) }
+        let history = []
+        let current = req
+
+        if current.url.username != nil && a == nil {
+            a = BasicAuth(form-decode(current.url.username ?? ''), form-decode(current.url.password ?? ''))
+            current.url = current.url.without-credentials()
+        }
+
+        while true {
+            if let $au = a {
+                current = au.apply(current)
+            }
+
+            let rsp = __send-with-retry(current, t)
+
+            if let $au = a {
+                if let $again = au.retry(current, rsp) {
+                    rsp.close()
+                    current = again
+                    rsp = __send-with-retry(current, t)
+                }
+            }
+
+            if follow && rsp.redirect? {
+                if let $next = __redirect(current, rsp) {
+                    if #history >= max-redirects {
+                        rsp.close()
+                        throw TooManyRedirects("http: exceeded {max-redirects} redirects", current)
+                    }
+                    __drain(rsp)
+                    history.push(rsp)
+                    if !safe-redirect?(current.url, next.url) {
+                        a = nil
+                    }
+                    current = next
+                    continue
+                }
+            }
+
+            rsp.history = history
+            if !stream {
+                try {
+                    rsp.read-all()
+                } finally {
+                    rsp.close()
+                }
+            }
+            if raise-for-status {
+                rsp.raise-for-status()
+            }
+            return rsp
+        }
+        nil
+    }
+
+    __drain(rsp: Response) {
+        try {
+            let n = 0
+            while let $chunk = rsp.read() {
+                n += #chunk
+                if n > (1 << 20) {
+                    break
+                }
+            }
+        } catch _ {
+        }
+        rsp.close()
+    }
+
+    __send-with-retry(req: Request, t: Timeout) -> Response {
+        let $policy = retry or return __send-once(req, t)
+        let attempt = 0
+        while true {
+            let rsp = try {
+                __send-once(req, t)
+            } catch e: TransportError {
+                let retryable? = (e :: ConnectError) || (e :: ConnectTimeout) || (policy.methods.contains?(req.method) && req.replayable?)
+                if attempt >= policy.total || !retryable? {
+                    throw e
+                }
+                nap(policy.delay(attempt))
+                attempt += 1
+                continue
+            }
+            if (
+                attempt < policy.total
+             && policy.statuses.contains?(rsp.status-code)
+             && policy.methods.contains?(req.method)
+             && req.replayable?
+            ) {
+                let wait = policy.delay(attempt, rsp)
+                __drain(rsp)
+                nap(wait)
+                attempt += 1
+                continue
+            }
+            return rsp
+        }
+        nil
+    }
+
+    /// Sends a request; see `build-request` for the body keywords
+    /// (`content`, `data`, `files`, `json`) and `send` for the rest.
+    request(
+        method: String,
+        url: String | URL,
+        content: _ = nil,
+        data: _ = nil,
+        files: _ = nil,
+        json: _ = nil,
+        params: _ = nil,
+        headers: _ = nil,
+        cookies: _ = nil,
+        auth: _ = nil,
+        timeout: _ = nil,
+        follow-redirects: Bool | nil = nil,
+        stream: Bool = false,
+        compress: String | nil = nil,
+        extensions: Dict[String, _] | nil = nil
+    ) -> Response {
+        let req = build-request(
+            method,
+            url,
+            content: content,
+            data: data,
+            files: files,
+            json: json,
+            params: params,
+            headers: headers,
+            cookies: cookies,
+            compress: compress,
+            extensions: extensions
+        )
+        send(req, stream: stream, auth: auth, follow-redirects: follow-redirects, timeout: timeout)
+    }
+
+    get(url: String | URL, %kwargs) -> Response     { request('GET', url, **kwargs) }
+    head(url: String | URL, %kwargs) -> Response    { request('HEAD', url, **kwargs) }
+    options(url: String | URL, %kwargs) -> Response { request('OPTIONS', url, **kwargs) }
+    post(url: String | URL, %kwargs) -> Response    { request('POST', url, **kwargs) }
+    put(url: String | URL, %kwargs) -> Response     { request('PUT', url, **kwargs) }
+    patch(url: String | URL, %kwargs) -> Response   { request('PATCH', url, **kwargs) }
+    delete(url: String | URL, %kwargs) -> Response  { request('DELETE', url, **kwargs) }
+
+    /// Like `request` with `stream: true`; use with `with` so the response
+    /// is closed: `with r = c.stream('GET', url) { for b in r.bytes() { ... } }`.
+    stream(method: String, url: String | URL, %kwargs) -> Response {
+        request(method, url, stream: true, **kwargs)
+    }
+
+    /// Downloads `url` to `path` (default: the URL's last path segment),
+    /// with an optional progress bar on stderr (`progress: true`) or callback
+    /// `f(bytes, total)`. Returns the path.
+    download(url: String | URL, path: String | Path | nil = nil, progress: _ = nil, %kwargs) -> Path {
+        let rsp = request('GET', url, stream: true, **kwargs)
+        try {
+            rsp.raise-for-status()
+            let name = path ?? do {
+                let seg = rsp.url.path.split('/')[-1]
+                (seg == '') ? 'index.html' : form-decode(seg)
+            }
+            rsp.save(name, progress: progress)
+            Path(str(name))
+        } finally {
+            rsp.close()
+        }
+    }
+
+    /// Server-Sent Events from `url`, reconnecting (with Last-Event-ID) when
+    /// the stream ends or fails, until `reconnect: false` or `max-retries`
+    /// consecutive failures. `close()` the iterator when stopping early
+    /// (or use it with `with`).
+    events(url: String | URL, reconnect: Bool = true, max-retries: Int | nil = nil, retry-delay: Int | Float = 3.0, %kwargs) -> Chunks {
+        let hs = Headers(kwargs['headers'])
+        hs.set('Accept', 'text/event-stream')
+        hs.set('Cache-Control', 'no-cache')
+        let opts = %{k: v for k, v in kwargs if k != 'headers'}
+        if opts['timeout'] == nil {
+            opts['timeout'] = Timeout(self.timeout.connect ?? 5.0, read: false)
+        }
+
+        let st = EventState(float(retry-delay))
+
+        let fail = fn (e: _) {
+            st.close()
+            st.failures += 1
+            if !reconnect || (max-retries != nil && st.failures > max-retries) {
+                st.finished? = true
+                throw e
+            }
+            nap(st.delay)
+        }
+
+        let next = fn () {
+            while true {
+                if #st.queue > 0 {
+                    let ev = st.queue.pop(0)
+                    st.last-id = ev.id
+                    if let $r = ev.retry {
+                        st.delay = float(r) / 1000.0
+                    }
+                    return ev
+                }
+                if st.finished? {
+                    return nil
+                }
+                if st.rsp == nil {
+                    if let $id = st.last-id {
+                        hs.set('Last-Event-ID', id)
+                    }
+                    let rsp = try {
+                        request('GET', url, stream: true, headers: hs, **opts)
+                    } catch e: TransportError {
+                        fail(e)
+                        continue
+                    }
+                    st.rsp = rsp
+                    if rsp.status-code == 204 {
+                        st.close()
+                        st.finished? = true
+                        return nil
+                    }
+                    try {
+                        rsp.raise-for-status()
+                        if !(rsp.content-type ?? '').lower().starts?('text/event-stream') {
+                            throw ProtocolError("http: expected text/event-stream, got {rsp.content-type}", rsp.request)
+                        }
+                    } catch e {
+                        st.close()
+                        st.finished? = true
+                        throw e
+                    }
+                    st.parser = sse.Parser(st.last-id)
+                    st.src = rsp.bytes()
+                }
+                let chunk = try {
+                    st.src.next()
+                } catch e: TransportError {
+                    fail(e)
+                    continue
+                }
+                if chunk == nil {
+                    st.close()
+                    if !reconnect {
+                        st.finished? = true
+                        return nil
+                    }
+                    nap(st.delay)
+                    continue
+                }
+                let evs = st.parser.feed(chunk)
+                if #evs > 0 {
+                    st.failures = 0
+                    st.queue += evs
+                }
+            }
+            nil
+        }
+
+        Chunks(next, -> st.close())
+    }
+
+    /// Runs requests concurrently on `workers` threads (HTTP/2 connections
+    /// are shared, so this multiplexes). Each item is a URL, a `Request`, or
+    /// a record/Dict of `request` arguments (`{method, url, ...}`). Returns
+    /// responses in order; failed items hold their exception unless
+    /// `raise: true`.
+    parallel(items: Array[_], workers: Int = 8, raise: Bool = false) -> Array[_] {
+        let results = [nil] * #items
+        let next = Atomic(0)
+        let work = fn () {
+            while true {
+                let i = next.fetch-add(1)
+                if i >= #items {
+                    break
+                }
+                results[i] = try {
+                    match items[i] {
+                        u: String | URL => get(u),
+                        r: Request      => send(r),
+                        d: Dict         => request(d['method'] ?? 'GET', d['url'], **%{k: v for k, v in d if k != 'method' && k != 'url'}),
+                        r               => do {
+                            let d = members(r)
+                            request(d['method'] ?? 'GET', d['url'], **%{k: v for k, v in d if k != 'method' && k != 'url'})
+                        }
+                    }
+                } catch e {
+                    e
+                }
+            }
+        }
+        let ts = [Thread(work) for _ in ..min(workers, max(#items, 1))]
+        for t in ts {
+            t.join()
+        }
+        if raise {
+            for r in results {
+                if !(r :: Response) {
+                    throw r
+                }
+            }
+        }
+        results
+    }
+
+    /// Closes pooled connections; the client cannot be used afterwards.
+    close() {
+        if !__closed? {
+            __closed? = true
+            transport.close()
+            for _, t in mounts {
+                t.close()
+            }
+        }
+    }
+
+    __drop__() {
+        close()
+    }
+
+    __str__() -> String {
+        "<Client{(base-url == nil) ? '' : " {base-url}"}>"
+    }
+}
+
+fn form-encode(d: _) -> String {
+    let pairs = match d {
+        x: Dict  => x.list(),
+        a: Array => a,
+        r        => members(r).list()
+    }
+    let out = []
+    for (k, v) in pairs {
+        for one in ((v :: Array) ? v : [v]) {
+            let s = match one {
+                nil   => '',
+                true  => 'true',
+                false => 'false',
+                x     => str(x)
+            }
+            out.push("{urlencode(str(k))}={urlencode(s)}")
+        }
+    }
+    out.join('&')
+}
+
+fn compress-stream*(src: _, coding: String) {
+    let e = codec.encoder(coding)
+    try {
+        for chunk in stream-chunks(src) {
+            let out = e.write(chunk)
+            if #out > 0 {
+                yield out
+            }
+        }
+        yield e.finish()
+    } catch err {
+        e.close()
+        throw err
+    }
+}
+
+
+let default-lock = Mutex()
+let default-client: Client | nil = nil
+
+const CLIENT_OPTIONS = %{
+    'baseUrl', 'verify', 'cert', 'http1', 'http2', 'proxy', 'trustEnv', 'limits',
+    'retries', 'uds', 'localAddress', 'transport', 'mounts', 'eventHooks',
+    'userAgent', 'decode', 'maxResponseSize', 'raiseForStatus', 'trace', 'retry'
+}
+
+fn shared() -> Client {
+    let ^_ = default-lock.lock()
+    default-client ?? (default-client = Client())
+}
+
+/// Sends one request. Request keywords are those of `Client.request`;
+/// client keywords (`verify`, `http2`, `proxy`, `trace`, ...) create a
+/// one-off client, otherwise a shared pooled client is used.
+pub fn request(method: String, url: String | URL, %kwargs) -> Response {
+    let client-opts = %{k: v for k, v in kwargs if CLIENT_OPTIONS.contains?(k)}
+    let req-opts = %{k: v for k, v in kwargs if !CLIENT_OPTIONS.contains?(k)}
+    if #client-opts == 0 {
+        return shared().request(method, url, **req-opts)
+    }
+    let c = Client(**client-opts)
+    let rsp = try {
+        c.request(method, url, **req-opts)
+    } catch e {
+        c.close()
+        throw e
+    }
+    if rsp.closed? || rsp.read? {
+        c.close()
+    } else {
+        rsp.on-close(-> c.close())
+    }
+    rsp
+}
+
+pub fn get(url: String | URL, %kwargs) -> Response     { request('GET', url, **kwargs) }
+pub fn head(url: String | URL, %kwargs) -> Response    { request('HEAD', url, **kwargs) }
+pub fn options(url: String | URL, %kwargs) -> Response { request('OPTIONS', url, **kwargs) }
+pub fn post(url: String | URL, %kwargs) -> Response    { request('POST', url, **kwargs) }
+pub fn put(url: String | URL, %kwargs) -> Response     { request('PUT', url, **kwargs) }
+pub fn patch(url: String | URL, %kwargs) -> Response   { request('PATCH', url, **kwargs) }
+pub fn delete(url: String | URL, %kwargs) -> Response  { request('DELETE', url, **kwargs) }
+
+pub fn stream(method: String, url: String | URL, %kwargs) -> Response {
+    request(method, url, stream: true, **kwargs)
+}
+
+pub fn download(url: String | URL, path: String | Path | nil = nil, %kwargs) -> Path {
+    shared().download(url, path, **kwargs)
+}
+
+pub fn events(url: String | URL, %kwargs) -> _ {
+    shared().events(url, **kwargs)
+}

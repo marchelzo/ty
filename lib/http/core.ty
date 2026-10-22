@@ -3,6 +3,10 @@ import json
 import log
 import http.status (status-name)
 import time
+import ty.mod as tymod
+
+pub import http.cookies (parse-cookies, http-date, format-set-cookie)
+pub import http.sse (event-chunk)
 
 pub class HttpError < RuntimeError {
     status: Int
@@ -148,6 +152,44 @@ pub class Config {
     }
 }
 
+let optional-lock = Mutex()
+let optional: Dict[String, _] = %{}
+let loader: SharedQueue[_] | nil = nil
+
+fn load-forever(q: SharedQueue[_]) {
+    while true {
+        let (name, member, reply) = q.take()
+        let found = try {
+            Ok(tymod.lookup(tymod.load(name), member))
+        } catch e {
+            Err(str(e))
+        }
+        reply.put(found)
+    }
+}
+
+/// Loads `member` of the module `name` at runtime (once per process), for
+/// features whose native libraries may be missing. Returns Ok(value) or
+/// Err(reason). Modules are compiled on one long-lived loader thread: code
+/// compiled on a thread that later exits would be freed with it.
+pub fn optional-module(name: String, member: String) -> _ {
+    let ^_ = optional-lock.lock()
+    if let $found = optional[name] {
+        return found
+    }
+    let q = loader ?? do {
+        let fresh = SharedQueue()
+        Thread(load-forever, fresh).detach()
+        loader = fresh
+        fresh
+    }
+    let reply = SharedQueue()
+    q.put((name, member, reply))
+    let found = reply.take()
+    optional[name] = found
+    found
+}
+
 pub tag Suspend;
 pub tag Raise;
 
@@ -250,34 +292,6 @@ pub const MODE_BUFFERED  = 0
 pub const MODE_STREAMING = 1
 pub const MODE_DONE      = 2
 
-pub fn http-date(t: Int | Float) -> String {
-    time.strftime('%a, %d %b %Y %H:%M:%S GMT', time.gmtime(int(t)))
-}
-
-const COOKIE_NAME  = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
-const COOKIE_VALUE = /^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]*$/
-const COOKIE_ATTR  = /^[^;\x00-\x1F\x7F]*$/
-
-pub fn parse-cookies(header: String | nil) -> Dict[String, String] {
-    let out = %{}
-    let $h = header or return out
-    for part in h.split(';') {
-        let kv = part.split('=', 1)
-        if #kv != 2 {
-            continue
-        }
-        let k = kv[0].strip()
-        let v = kv[1].strip()
-        if v.size() >= 2 && v.starts?('"') && v.ends?('"') {
-            v = v[1;-1]
-        }
-        if k.size() > 0 && out[k] == nil {
-            out[k] = v
-        }
-    }
-    out
-}
-
 let file-sender: _ = nil
 
 pub fn set-file-sender(f: _) {
@@ -291,14 +305,18 @@ pub class Response {
     content-type:  String | nil
     stream-length: Int | nil
 
-    __x:     _
-    __mode:  Int
-    __hooks: Array[_]
+    __x:         _
+    __encoder:   _
+    __mode:      Int
+    __hooks:     Array[_]
+    __streaming: Bool
 
     init(x: _) {
         __x           = x
         __mode        = MODE_BUFFERED
         __hooks       = []
+        __streaming   = false
+        __encoder     = nil
         status-code   = 200
         headers       = %{}
         body          = Blob()
@@ -345,49 +363,20 @@ pub class Response {
         same-site: String | Bool = 'Lax',
         partitioned: Bool = false
     ) -> Response {
-        if !name.match?(COOKIE_NAME) {
-            throw ValueError("http: invalid cookie name: {name}")
-        }
-        if !value.match?(COOKIE_VALUE) {
-            throw ValueError("http: invalid cookie value for {name} (use only cookie-octets; encode it first)")
-        }
-        let parts = ["{name}={value}"]
-        if max-age != nil {
-            parts.push("Max-Age={max-age}")
-        }
-        if expires != nil {
-            parts.push("Expires={http-date(expires)}")
-        }
-        for (attr, v) in [('Path', path), ('Domain', domain)] {
-            if v :: String {
-                if !v.match?(COOKIE_ATTR) {
-                    throw ValueError("http: invalid cookie {attr}: {v}")
-                }
-                parts.push("{attr}={v}")
-            }
-        }
-        let ss = (same-site :: String) ? same-site.lower() : nil
-        let sec = secure ?? (ss == 'none' || partitioned || (__x != nil && __x.request.scheme == 'https'))
-        if ss == 'none' && !sec {
-            throw ValueError('http: SameSite=None cookies must be Secure')
-        }
-        if sec {
-            parts.push('Secure')
-        }
-        if http-only {
-            parts.push('HttpOnly')
-        }
-        match ss {
-            nil      => {},
-            'lax'    => parts.push('SameSite=Lax'),
-            'strict' => parts.push('SameSite=Strict'),
-            'none'   => parts.push('SameSite=None'),
-            other    => throw ValueError("http: invalid SameSite: {same-site}")
-        }
-        if partitioned {
-            parts.push('Partitioned')
-        }
-        add-header('Set-Cookie', parts.join('; '))
+        let https? = __x != nil && __x.request.scheme == 'https'
+        let cookie = format-set-cookie(
+            name,
+            value,
+            max-age: max-age,
+            expires: expires,
+            path: path,
+            domain: domain,
+            secure: secure ?? (https? ? true : nil),
+            http-only: http-only,
+            same-site: same-site,
+            partitioned: partitioned
+        )
+        add-header('Set-Cookie', cookie)
         self
     }
 
@@ -406,6 +395,18 @@ pub class Response {
 
     exchange -> _ {
         __x
+    }
+
+    /// Compresses a streamed body with `e` (an `http.codec` Encoder); set
+    /// from an `on-headers` hook together with Content-Encoding.
+    compress-with(e: _) {
+        __encoder = e
+    }
+
+    /// True once the response has switched to a streamed body (also
+    /// inside `on-headers` hooks).
+    streaming? -> Bool {
+        __streaming
     }
 
     mode -> Int {
@@ -522,9 +523,13 @@ pub class Response {
     stream(length: Int | nil = nil) -> BodyWriter {
         if __mode == MODE_BUFFERED {
             stream-length = length
+            __streaming = true
             __fire()
             __mode = MODE_STREAMING
             __x.start(self)
+            if let $e = __encoder {
+                __x.writer().encoder = e
+            }
         }
         __x.writer()
     }
@@ -534,6 +539,7 @@ pub class Response {
             content-type = 'text/event-stream'
             header('Cache-Control', 'no-cache')
             header('X-Accel-Buffering', 'no')
+            __streaming = true
             __fire()
             __mode = MODE_STREAMING
             __x.start(self)
@@ -564,13 +570,15 @@ pub class Response {
 /// elsewhere never block, and a peer whose backlog exceeds
 /// `max-write-buffer` is disconnected.
 pub class BodyWriter {
-    bytes: Int
+    bytes:   Int
+    encoder: _
 
     __x: _
 
     init(x: _) {
-        __x   = x
-        bytes = 0
+        __x     = x
+        bytes   = 0
+        encoder = nil
     }
 
     closed? -> Bool {
@@ -600,6 +608,13 @@ pub class BodyWriter {
             return false
         }
 
+        if let $e = encoder {
+            chunk = e.write(chunk, flush: true)
+            if chunk.size() == 0 {
+                return true
+            }
+        }
+
         bytes += chunk.size()
         __x.send(chunk)
 
@@ -626,8 +641,20 @@ pub class BodyWriter {
     end() {
         let loop = __x.loop
         if !on-loop?(loop) {
-            loop.post(-> __x.end())
+            loop.post(-> end())
             return
+        }
+        if let $e = encoder {
+            encoder = nil
+            if __x.closed? {
+                e.close()
+            } else {
+                let tail = e.finish()
+                if #tail > 0 {
+                    bytes += #tail
+                    __x.send(tail)
+                }
+            }
         }
         __x.end()
     }
@@ -650,38 +677,6 @@ pub class BodyWriter {
         }
         __x.on-close(f)
     }
-}
-
-pub fn event-chunk(data: _, event: ?String = nil, id: _ = nil, retry: ?Int = nil) -> String {
-    let out = []
-
-    if event != nil {
-        out.push("event: {event.sub(/[\r\n]/, ' ')}\n")
-    }
-
-    if id != nil {
-        out.push("id: {str(id).sub(/[\r\n]/, ' ')}\n")
-    }
-
-    if retry != nil {
-        out.push("retry: {retry}\n")
-    }
-
-    let text = match data {
-        nil       => nil,
-        s: String => s,
-        b: Blob   => b.str!(),
-        x         => json::encode(x)
-    }
-
-    if text != nil {
-        for line in text.split(/\r\n|\r|\n/) {
-            out.push("data: {line}\n")
-        }
-    }
-
-    out.push('\n')
-    out.join('')
 }
 
 /// Server-Sent Events stream (text/event-stream). Thread-safe like

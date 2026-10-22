@@ -1,48 +1,6 @@
-import ffi as c (C!)
+import http.codec as codec (CodecError)
 
-if not let $libz = c.open('z', versions: [1, nil], env: 'TY_LIBZ') {
-    throw RuntimeError('http.deflate: failed to load zlib')
-}
-
-C! struct ZStream {
-    void *next_in;
-    unsigned avail_in;
-    unsigned long total_in;
-    void *next_out;
-    unsigned avail_out;
-    unsigned long total_out;
-    char const *msg;
-    void *state;
-    void *zalloc;
-    void *zfree;
-    void *opaque;
-    int data_type;
-    unsigned long adler;
-    unsigned long reserved;
-}
-
-C! libz fn {
-    char const *zlibVersion(void);
-    int deflateInit2_(void *strm, int level, int method, int windowBits, int memLevel, int strategy, char const *version, int size);
-    int deflate(void *strm, int flush);
-    int deflateReset(void *strm);
-    int deflateEnd(void *strm);
-    int inflateInit2_(void *strm, int windowBits, char const *version, int size);
-    int inflate(void *strm, int flush);
-    int inflateReset(void *strm);
-    int inflateEnd(void *strm);
-}
-
-const Z_OK         = 0
-const Z_STREAM_END = 1
-const Z_BUF_ERROR  = -5
-const Z_SYNC_FLUSH = 2
-const Z_DEFLATED   = 8
-
-const TAIL  = Blob(0x00, 0x00, 0xFF, 0xFF)
-const CHUNK = 16384
-
-let VERSION = zlibVersion()
+const TAIL = Blob(0x00, 0x00, 0xFF, 0xFF)
 
 pub class DeflateError < RuntimeError {
     too-big?: Bool
@@ -56,101 +14,57 @@ pub class DeflateError < RuntimeError {
 /// Per-connection permessage-deflate state (RFC 7692) negotiated with
 /// no_context_takeover in both directions, so each message is independent.
 pub class PerMessage {
-    __def:  ZStream | nil
-    __inf:  ZStream | nil
-    __out:  Blob
-    level:  Int
+    level: Int
+
+    __def: codec.Encoder | nil
+    __inf: codec.Decoder | nil
 
     init(level: Int = 6) {
         self.level = level
         __def = nil
         __inf = nil
-        __out = Blob.zeros(CHUNK)
-    }
-
-    __deflater() -> ZStream {
-        if let $z = __def {
-            deflateReset(z.get())
-            return z
-        }
-        let z = ZStream()
-        if deflateInit2_(z.get(), level, Z_DEFLATED, -15, 8, 0, VERSION, c.size(ZStream_C)) != Z_OK {
-            throw DeflateError('deflateInit2 failed')
-        }
-        __def = z
-        z
-    }
-
-    __inflater() -> ZStream {
-        if let $z = __inf {
-            inflateReset(z.get())
-            return z
-        }
-        let z = ZStream()
-        if inflateInit2_(z.get(), -15, VERSION, c.size(ZStream_C)) != Z_OK {
-            throw DeflateError('inflateInit2 failed')
-        }
-        __inf = z
-        z
     }
 
     compress(data: String | Blob) -> Blob {
-        let input = (data :: Blob) ? data : Blob(data)
-        let z = __deflater()
-        let out = Blob()
-        z.next_in = input.ptr()
-        z.avail_in = #input
-        while true {
-            z.next_out = __out.ptr()
-            z.avail_out = CHUNK
-            let rc = deflate(z.get(), Z_SYNC_FLUSH)
-            if rc != Z_OK && rc != Z_BUF_ERROR {
-                throw DeflateError("deflate failed ({rc})")
-            }
-            out.push(__out.slice(0, CHUNK - z.avail_out))
-            if z.avail_out != 0 {
-                break
-            }
+        let e = match __def {
+            nil => (__def = codec.encoder('raw-deflate', level)),
+            e   => do { e.reset(); e }
         }
-        if #out >= 4 && out[#out - 4] == 0 && out[#out - 3] == 0 && out[#out - 2] == 0xFF && out[#out - 1] == 0xFF {
-            out.clear(#out - 4)
+        let out = try {
+            e.write(data, flush: true)
+        } catch err: CodecError {
+            throw DeflateError(str(err))
+        }
+        let n = #out
+        if n >= 4 && out[n - 4] == 0 && out[n - 3] == 0 && out[n - 2] == 0xFF && out[n - 1] == 0xFF {
+            out.clear(n - 4)
         }
         out
     }
 
     decompress(data: Blob, limit: Int) -> Blob {
+        let d = match __inf {
+            nil => (__inf = codec.decoder('raw-deflate', limit)!),
+            d   => do { d.reset(); d }
+        }
+        d.limit = limit
         let input = Blob(data)
         input.push(TAIL)
-        let z = __inflater()
-        let out = Blob()
-        z.next_in = input.ptr()
-        z.avail_in = #input
-        while true {
-            z.next_out = __out.ptr()
-            z.avail_out = CHUNK
-            let rc = inflate(z.get(), Z_SYNC_FLUSH)
-            if rc != Z_OK && rc != Z_BUF_ERROR && rc != Z_STREAM_END {
-                throw DeflateError("inflate failed ({rc})")
-            }
-            out.push(__out.slice(0, CHUNK - z.avail_out))
-            if #out > limit {
-                throw DeflateError('message too big', true)
-            }
-            if z.avail_out != 0 || rc == Z_STREAM_END {
-                break
-            }
+        try {
+            d.feed(input)
+        } catch err: CodecError {
+            throw DeflateError(str(err), err.too-big?)
         }
-        out
     }
 
     close() {
-        if let $z = __def {
-            deflateEnd(z.get())
+        if let $e = __def {
             __def = nil
+            e.close()
         }
-        if let $z = __inf {
-            inflateEnd(z.get())
+        if let $d = __inf {
             __inf = nil
+            d.close()
         }
     }
 }

@@ -60,6 +60,20 @@
  * well-formed X-Request-Id is reused unless `trust-request-id: false`).
  *
  * Every limit and timeout is a keyword argument of `Server` (see `Config`).
+ *
+ * The client side lives in `http.client` and is re-exported here:
+ *
+ * ```
+ * let r = http.get('https://example.com/api', params: {q: 'ty'})
+ * r.raise-for-status().json()
+ * r.show()
+ *
+ * let c = http.Client(base-url: srv.url, http2: true)
+ * c.post('/items', json: {name: 'x'})
+ * ```
+ *
+ * Both sides share the wire parser, HTTP/2 bindings, content codings
+ * (`http.codec`), cookies, SSE, multipart encoding, `Headers` and `URL`.
  */
 pub import http.core as core (
     Config,
@@ -89,6 +103,37 @@ pub import http.files as files (send-file, StaticFiles, mime-of)
 pub import http.session (Sessions, Session, MemoryStore, sign, unsign)
 pub import http.metrics as metrics-mod (Metrics)
 
+pub import http.client as client (
+    Client,
+    Timeout,
+    Limits,
+    Retry,
+    BasicAuth,
+    BearerAuth,
+    DigestAuth,
+    MockTransport,
+    HttpStatusError,
+    RequestError,
+    TransportError,
+    ConnectError,
+    ReadTimeout,
+    ConnectTimeout,
+    get,
+    head,
+    options,
+    post,
+    put,
+    patch,
+    delete,
+    stream,
+    download,
+    events
+)
+pub import http.headers (Headers)
+pub import http.url (URL)
+pub import http.cookies (CookieJar, Cookie)
+pub import http.codec as codec
+
 import http.loop (Loop, Conn, default-backend, make-backend)
 import http.h1 (H1)
 import os hiding (sleep, spawn)
@@ -106,29 +151,24 @@ const OVERLOADED = 'HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain
 
 const REQUEST_ID = /^[A-Za-z0-9._:\-]{1,128}$/
 
-let optional-lock = Mutex()
-let optional: Dict[String, _] = %{}
-
-fn optional-module(name: String, member: String) -> _ {
-    let ^_ = optional-lock.lock()
-    match optional[name] {
-        nil => {
-            let found = try {
-                Ok(ty.mod.lookup(ty.mod.load(name), member))
-            } catch e {
-                Err(str(e))
-            }
-            optional[name] = found
-            found
-        },
-        found => found
-    }
+fn compressible-type?(ctype: String) -> Bool {
+    let t = ctype.split(';')[0].strip().lower()
+    t.starts?('text/')
+ || t.ends?('+json')
+ || t.ends?('+xml')
+ || t == 'application/json'
+ || t == 'application/javascript'
+ || t == 'application/xml'
+ || t == 'application/wasm'
+ || t == 'application/x-ndjson'
+ || t == 'image/svg+xml'
 }
 
+let probe-lock = Mutex()
 let uring-probe: Ok[nil] | Err[String] | nil = nil
 
 fn probe-uring() -> Ok[nil] | Err[String] {
-    let ^_ = optional-lock.lock()
+    let ^_ = probe-lock.lock()
     uring-probe ?? (uring-probe = try {
         let b = make-backend('io_uring', 8, nil)
         b.close()
@@ -239,8 +279,9 @@ fn route-args(a: _, b: _) -> (String, _) {
 }
 
 /// An HTTP server. Positional arguments are `(host, port)`, `(port)`, or an
-/// already-bound listening socket; keywords are `Config` options plus
-/// `tls`, which takes an `ssl.Context` or `{cert, key}` (PEM text or paths).
+/// already-bound listening socket (also `sock: fd`, e.g. a Unix socket);
+/// keywords are `Config` options plus `tls`, which takes an `ssl.Context`
+/// or `{cert, key}` (PEM text or paths).
 pub class Server {
     config: Config
     tls:    ssl.Context | nil
@@ -269,6 +310,7 @@ pub class Server {
         *args,
         tls: ssl.Context | {cert: String | Blob, key: String | Blob} | nil = nil,
         config: Config | nil = nil,
+        sock: Int | nil = nil,
         %kwargs: Any
     ) {
         self.config  = config ?? Config(**kwargs)
@@ -291,7 +333,7 @@ pub class Server {
         __log-mtx    = Mutex()
 
         if self.config.h2 {
-            match optional-module('http/h2', 'session') {
+            match core.optional-module('http/h2', 'session') {
                 Ok(f)  => __h2 = f,
                 Err(e) => log::warn!("HTTP/2 disabled: {e}")
             }
@@ -299,7 +341,7 @@ pub class Server {
 
         if self.config.backend == 'auto' && default-backend() == 'io_uring' {
             if let Err(why) = probe-uring() {
-                match optional-module('http/kqueue', 'Backend') {
+                match core.optional-module('http/kqueue', 'Backend') {
                     Ok(f) => {
                         log::warn!("io_uring unavailable ({why}); using kqueue via libkqueue")
                         self.config.backend = 'kqueue'
@@ -310,7 +352,7 @@ pub class Server {
         }
 
         if backend == 'kqueue' {
-            match optional-module('http/kqueue', 'Backend') {
+            match core.optional-module('http/kqueue', 'Backend') {
                 Ok(f)  => __backend = f,
                 Err(e) => throw RuntimeError("http: kqueue backend unavailable: {e}")
             }
@@ -320,6 +362,10 @@ pub class Server {
             nil              => nil,
             ctx: ssl.Context => ctx,
             {cert, key}      => ssl.Context.server(cert, key, alpn: (__h2 != nil) ? ['h2', 'http/1.1'] : ['http/1.1'])
+        }
+
+        if sock != nil {
+            args = [sock, nil]
         }
 
         match args {
@@ -475,6 +521,58 @@ pub class Server {
         route('GET', (p == '') ? '/' : p, (req, rsp) -> sf.serve(req, rsp, ''))
         route('GET', "{p}/<path:.*>", (req, rsp, path) -> sf.serve(req, rsp, path))
         sf
+    }
+
+    /// Compresses responses with the best coding the client accepts
+    /// (`Accept-Encoding`) out of `codings`, when the Content-Type is textual
+    /// (or matches `types`): buffered bodies of at least `min-size` bytes,
+    /// and streamed bodies without a declared length (each write is flushed,
+    /// so streaming stays incremental). Event streams, ranges, and bodies
+    /// that already carry a Content-Encoding are sent as they are.
+    compression(
+        codings: Array[String] = ['zstd', 'br', 'gzip'],
+        min-size: Int = 1024,
+        level: Int | nil = nil,
+        types: (String) -> Bool | nil = nil
+    ) -> _ {
+        let usable = codings.filter(codec.encodable?)
+        let compressible? = types ?? compressible-type?
+        self.use(fn (req, rsp, next) {
+            let accept = req.header('accept-encoding')
+            if accept != nil && req.method != 'HEAD' {
+                rsp.on-headers(fn (r) {
+                    if r.header('content-encoding') != nil {
+                        return
+                    }
+                    if r.streaming? {
+                        let ctype = r.content-type ?? ''
+                        if r.stream-length != nil || ctype.starts?('text/event-stream') || !compressible?(ctype) {
+                            return
+                        }
+                        r.add-header('Vary', 'Accept-Encoding')
+                        let $coding = codec.negotiate(accept, usable) or return
+                        r.header('Content-Encoding', coding)
+                        r.compress-with(codec.encoder(coding, level))
+                        return
+                    }
+                    let code = r.status-code
+                    if code < 200 || code == 204 || code == 304 || code == 206 || #r.body < min-size {
+                        return
+                    }
+                    if !compressible?(r.content-type ?? '') {
+                        return
+                    }
+                    r.add-header('Vary', 'Accept-Encoding')
+                    let $coding = codec.negotiate(accept, usable) or return
+                    r.body = codec.encode(coding, r.body, level)
+                    r.header('Content-Encoding', coding)
+                    if let $etag = r.header('etag') {
+                        r.header('ETag', etag.sub(/"$/, "-{coding}\""))
+                    }
+                })
+            }
+            next()
+        })
     }
 
     /// Adds a health endpoint: 200 "ok", or 503 while draining or when
@@ -960,9 +1058,12 @@ pub class Server {
 
 core.set-file-sender(files.send-file)
 
-pub HttpServer   = Server
-pub HttpResponse = Response
-pub HttpRequest  = Request
+pub HttpServer     = Server
+pub HttpResponse   = Response
+pub HttpRequest    = Request
+pub HttpClient     = Client
+pub ClientRequest  = client.Request
+pub ClientResponse = client.Response
 
 /// Suspends the current handler for `seconds` without blocking its loop.
 pub fn sleep(seconds: Int | Float) {

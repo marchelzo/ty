@@ -16,6 +16,7 @@
 #include "intern.h"
 #include "dict.h"
 #include "set.h"
+#include "ty/thread.h"
 
 static vec(Class *) classes;
 
@@ -39,6 +40,27 @@ finalize(Ty *ty, Class *c);
 
 static void
 really_finalize(Ty *ty, Class *c);
+
+static TySpinLock FinalizeLock = TY_MUTEX_INIT;
+static _Thread_local int FinalizeDepth;
+
+inline static void
+FinalizeEnter(Ty *ty)
+{
+        if (FinalizeDepth++ == 0) {
+                UnlockTy();
+                TySpinLockLock(&FinalizeLock);
+                LockTy();
+        }
+}
+
+inline static void
+FinalizeLeave(void)
+{
+        if (--FinalizeDepth == 0) {
+                TySpinLockUnlock(&FinalizeLock);
+        }
+}
 
 static char const *BuiltinClassNames[] = {
         [CLASS_ARRAY]           = "Array",
@@ -343,10 +365,14 @@ class_ctor(Ty *ty, int class)
         Class *c = C(class);
 
         if (UNLIKELY(!c->really_final)) {
+                FinalizeEnter(ty);
                 if (!c->final) {
                         finalize(ty, c);
                 }
-                really_finalize(ty, c);
+                if (!c->really_final) {
+                        really_finalize(ty, c);
+                }
+                FinalizeLeave();
         }
 
         return &c->init;
@@ -866,15 +892,23 @@ class_doc(Ty *ty, int class)
 void
 class_finalize_all(Ty *ty)
 {
+        class_finalize_from(ty, 0);
+}
+
+void
+class_finalize_from(Ty *ty, int first)
+{
+        FinalizeEnter(ty);
         for (int i = 0; i < vN(classes); ++i) {
                 Class *c = C(i);
-                if  (c->final && !c->really_final) {
+                if  (c->final && !c->really_final && i >= first) {
                         really_finalize(ty, c);
                 }
                 if (!c->final) {
                         finalize(ty, c);
                 }
         }
+        FinalizeLeave();
 }
 
 Expr *

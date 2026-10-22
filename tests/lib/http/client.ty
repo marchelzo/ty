@@ -1,0 +1,1304 @@
+import http
+import http.client as client (Client, Timeout, Limits, Retry, MockTransport, Response, Request)
+import http.codec as codec
+import http.cookies (CookieJar)
+import ssl
+import os
+import net
+import time
+import errno
+import json
+import base64
+import path (Path)
+import _client (serve, write-file, xread)
+
+os.signal(os.SIGPIPE, os.SIG_IGN)
+
+let (CERT, KEY) = ssl.self-signed()
+let CA = "/tmp/ty-http-client-ca-{os.getpid()}.pem"
+write-file(CA, CERT)
+
+fn routes(srv: http.Server) {
+    srv.get('/', (req, rsp) -> rsp.plain("v{req.version.major} {req.header('user-agent') ?? '-'}"))
+    srv.get('/headers', (req, rsp) -> rsp.json(req.headers))
+    srv.get('/query', (req, rsp) -> rsp.json(req.params))
+    srv.post('/echo', fn (req, rsp) {
+        rsp.json({
+            body: req.body,
+            ctype: req.content-type,
+            params: req.params,
+            encoding: req.header('content-encoding'),
+            length: req.header('content-length'),
+            chunked: req.header('transfer-encoding')
+        })
+    })
+    srv.put('/echo', (req, rsp) -> rsp.plain(req.body ?? ''))
+    srv.post('/upload', fn (req, rsp) {
+        let files = %{k: {name: f.name, type: f.type, size: #slurp(str(f.path))} for k, f in req.files}
+        rsp.json({files, params: req.params})
+    })
+    srv.post('/sha', stream: true, fn (req, rsp) {
+        let n = 0
+        let digest = []
+        while let $chunk = req.read() {
+            n += #chunk
+        }
+        rsp.plain(str(n))
+    })
+    srv.get('/status/<code>', (req, rsp, code) -> rsp.error(int(code, 10), "status {code}"))
+    srv.get('/redirect/<n>', fn (req, rsp, n) {
+        let k = int(n, 10)
+        rsp.redirect((k <= 1) ? '/' : "/redirect/{k - 1}")
+    })
+    srv.post('/see-other', (req, rsp) -> rsp.redirect('/method', 303))
+    srv.post('/found', (req, rsp) -> rsp.redirect('/method', 302))
+    srv.post('/temporary', (req, rsp) -> rsp.redirect('/echo', 307))
+    srv.route('GET', '/method', (req, rsp) -> rsp.plain("{req.method} {req.body ?? ''}"))
+    srv.route('POST', '/method', (req, rsp) -> rsp.plain("{req.method} {req.body ?? ''}"))
+    srv.get('/loop', (req, rsp) -> rsp.redirect('/loop'))
+    srv.get('/set-cookie', (req, rsp) -> rsp.set-cookie('sid', 'abc123').set-cookie('theme', 'dark', path: '/prefs').plain('ok'))
+    srv.get('/cookies', (req, rsp) -> rsp.json(req.cookies))
+    srv.get('/prefs/cookies', (req, rsp) -> rsp.json(req.cookies))
+    srv.get('/big', (req, rsp) -> rsp.plain('z' * 3000000))
+    srv.get('/text', (req, rsp) -> rsp.plain(('The quick brown fox jumps over the lazy dog. ' * 200) + 'ünïcödé ✓'))
+    srv.get('/stream', fn (req, rsp) {
+        let w = rsp.stream()
+        for i in ..5 {
+            w.write("line {i}\n")
+            http.sleep(0.01)
+        }
+    })
+    srv.get('/slow', fn (req, rsp) {
+        http.sleep(1.0)
+        rsp.plain('late')
+    })
+    srv.get('/drip', fn (req, rsp) {
+        let w = rsp.stream()
+        for i in ..3 {
+            w.write('.')
+            http.sleep(0.6)
+        }
+    })
+    srv.get('/events', fn (req, rsp) {
+        let es = rsp.events()
+        let start = int(req.header('last-event-id') ?? '-1', 10) + 1
+        for i in start..(start + 2) {
+            es.send({n: i}, event: 'tick', id: i)
+        }
+    })
+    srv.get('/basic', fn (req, rsp) {
+        if req.header('authorization') == "Basic {base64.encode('user:pass')}" {
+            rsp.plain('welcome')
+        } else {
+            rsp.header('WWW-Authenticate', 'Basic realm="t"')
+            rsp.error(401)
+        }
+    })
+    srv.get('/bearer', (req, rsp) -> rsp.plain(req.header('authorization') ?? 'none'))
+    srv.get('/digest', fn (req, rsp) {
+        let auth = req.header('authorization') ?? ''
+        if !auth.starts?('Digest ') {
+            rsp.header('WWW-Authenticate', 'Digest realm="ty", qop="auth", nonce="n0nce", opaque="op", algorithm=MD5')
+            return rsp.error(401)
+        }
+        let p = %{}
+        for m in auth.slice(7).matches(/(\w+)=(?:"([^"]*)"|([^,\s]+))/v) {
+            p[m[1]] = m[2] ?? m[3] ?? ''
+        }
+        let ha1 = md5("user:ty:pass")
+        let ha2 = md5("GET:{p['uri']}")
+        let want = md5("{ha1}:{p['nonce']}:{p['nc']}:{p['cnonce']}:{p['qop']}:{ha2}")
+        if p['response'] == want && p['opaque'] == 'op' {
+            rsp.plain('digest ok')
+        } else {
+            rsp.error(403)
+        }
+    })
+    srv.get('/flaky', fn (req, rsp) {
+        let n = int(req.params['n'] ?? '0', 10)
+        if FLAKY.fetch-add(1) % 3 < 2 {
+            rsp.header('Retry-After', '0')
+            return rsp.error(503)
+        }
+        rsp.plain('recovered')
+    })
+    srv.get('/proxy-self', fn (req, rsp) {
+        let r = http.get("{req.header('x-origin')}/")
+        rsp.plain("inner: {r.text}")
+    })
+}
+
+let FLAKY = Atomic(0)
+
+
+fn tls() -> _ {
+    {cert: CERT, key: KEY}
+}
+
+pub fn basic-get() {
+    serve(routes, fn (srv) {
+        let r = http.get("{srv.url}/")
+        assert(r.status-code == 200)
+        assert(r.ok?)
+        assert(r.reason == 'OK')
+        assert(r.http-version == 'HTTP/1.1')
+        assert(r.text == "v1 {client.USER_AGENT}")
+        assert(r.header('CONTENT-TYPE') == 'text/plain; charset=utf-8')
+        assert(r.headers['content-length'] == str(#r.content))
+        assert(r.elapsed > 0.0)
+        assert(str(r) == '<Response [200 OK]>')
+        assert(r.url == "{srv.url}/")
+    })
+}
+
+pub fn base-url-params-and-headers() {
+    serve(routes, fn (srv) {
+        let c = Client(base-url: "{srv.url}/", params: {a: 1}, headers: {x-token: 'secret'})
+        let q = c.get('query', params: {b: 'two words', c: [1, 2]}).json()
+        assert(q['a'] == '1')
+        assert(q['b'] == 'two words')
+        assert(q['c'] == ['1', '2'])
+        let h = c.get('/headers', headers: {x-extra: 'yes'}).json()
+        assert(h['x-token'] == 'secret' || h['X-Token'] == 'secret')
+        assert((h['x-extra'] ?? h['X-Extra']) == 'yes')
+        assert((h['accept-encoding'] ?? h['Accept-Encoding']).contains?('gzip'))
+        c.close()
+    })
+}
+
+pub fn request-bodies() {
+    serve(routes, fn (srv) {
+        let c = Client(base-url: srv.url)
+
+        let j = c.post('/echo', json: {name: 'ty', list: [1, 2]}).json()
+        assert(j['ctype'] == 'application/json')
+        assert(j['body'] == '{"name":"ty","list":[1,2]}')
+
+        let f = c.post('/echo', data: {name: 'a b', tags: ['x', 'y']}).json()
+        assert(f['ctype'] == 'application/x-www-form-urlencoded')
+        assert(f['body'] == 'name=a%20b&tags=x&tags=y')
+
+        let raw = c.post('/echo', content: 'raw bytes', headers: {content-type: 'text/plain'}).json()
+        assert(raw['body'] == 'raw bytes')
+        assert(raw['length'] == '9')
+
+        fn gen*() {
+            for i in ..4 {
+                yield "part{i};"
+            }
+        }
+        let s = c.post('/echo', content: gen()).json()
+        assert(s['body'] == 'part0;part1;part2;part3;')
+        assert(s['chunked'] == 'chunked')
+
+        let z = c.post('/echo', content: 'squeeze me ' * 100, compress: 'gzip').json()
+        assert(z['encoding'] == 'gzip')
+        assert(z['length'] == str(#codec.encode('gzip', 'squeeze me ' * 100)))
+
+        assert(c.put('/echo', content: 'put body').text == 'put body')
+        c.close()
+    })
+}
+
+pub fn multipart-uploads() {
+    serve(routes, fn (srv) {
+        let file = "/tmp/ty-http-client-upload-{os.getpid()}.txt"
+        write-file(file, 'file contents\n' * 100)
+        let r = http.post("{srv.url}/upload", data: {title: 'report'}, files: {
+            doc: Path(file),
+            raw: ('data.bin', Blob(1, 2, 3), 'application/octet-stream'),
+            note: ('note.txt', 'hello')
+        }).json()
+        assert(r['params']['title'] == 'report')
+        assert(r['files']['doc']['size'] == 1400)
+        assert(r['files']['doc']['name'] == Path(file).name)
+        assert(r['files']['raw']['type'] == 'application/octet-stream')
+        assert(r['files']['note']['type'] == 'text/plain; charset=utf-8')
+        os.unlink(file)
+    })
+}
+
+pub fn streamed-uploads() {
+    serve(routes, fn (srv) {
+        let file = "/tmp/ty-http-client-stream-{os.getpid()}.bin"
+        write-file(file, 'q' * 1500000)
+        assert(http.post("{srv.url}/sha", content: Path(file)).text == '1500000')
+        fn chunks*() {
+            for ..100 {
+                yield Blob.zeros(10000)
+            }
+        }
+        assert(http.post("{srv.url}/sha", content: chunks()).text == '1000000')
+        os.unlink(file)
+    })
+}
+
+pub fn content-decoding() {
+    serve(fn (srv) {
+        routes(srv)
+        srv.compression(min-size: 100)
+    }, fn (srv) {
+        let c = Client(base-url: srv.url)
+        let plain = c.get('/text', headers: {accept-encoding: 'identity'})
+        assert(plain.header('content-encoding') == nil)
+        for coding in codec.available().filter(\_ != 'deflate') {
+            let r = c.get('/text', headers: {accept-encoding: coding})
+            assert(r.header('content-encoding') == coding)
+            assert(r.text == plain.text)
+            assert(r.header('vary') == 'Accept-Encoding')
+        }
+        let best = c.get('/text')
+        assert(best.header('content-encoding') == codec.available()[0])
+        assert(best.text == plain.text)
+
+        let raw = Client(base-url: srv.url, decode: false)
+        let r = raw.get('/text', headers: {accept-encoding: 'gzip'})
+        assert(r.header('content-encoding') == 'gzip')
+        assert(codec.decode('gzip', r.content).str!() == plain.text)
+        raw.close()
+
+        let small = c.get('/')
+        assert(small.header('content-encoding') == nil)
+        c.close()
+    })
+}
+
+pub fn redirects() {
+    serve(routes, fn (srv) {
+        let c = Client(base-url: srv.url)
+        let r = c.get('/redirect/3')
+        assert(r.status-code == 200)
+        assert(#r.history == 3)
+        assert(r.history.all?(\_.status-code == 302))
+        assert(str(r.url) == "{srv.url}/")
+
+        assert(c.post('/see-other', content: 'x').text == 'GET ')
+        assert(c.post('/found', content: 'x').text == 'GET ')
+        let t = c.post('/temporary', content: 'kept').json()
+        assert(t['body'] == 'kept')
+
+        let n = c.get('/redirect/2', follow-redirects: false)
+        assert(n.status-code == 302)
+        assert(n.redirect?)
+        assert(str(n.next-url) == "{srv.url}/redirect/1")
+
+        let capped = Client(base-url: srv.url, max-redirects: 5)
+        let failed = try {
+            capped.get('/loop')
+            false
+        } catch e: client.TooManyRedirects {
+            true
+        }
+        assert(failed)
+        capped.close()
+        c.close()
+    })
+}
+
+pub fn cross-origin-redirect-drops-credentials() {
+    serve(routes, fn (other) {
+        serve(fn (srv) {
+            srv.get('/away', (req, rsp) -> rsp.redirect("{other.url.sub('127.0.0.1', 'localhost')}/bearer"))
+        }, fn (srv) {
+            let r = http.get("{srv.url}/away", headers: {authorization: 'Bearer secret'})
+            assert(r.text == 'none')
+            assert(#r.history == 1)
+        })
+    })
+}
+
+pub fn cookies() {
+    serve(routes, fn (srv) {
+        let c = Client(base-url: srv.url)
+        let r = c.get('/set-cookie')
+        assert(r.cookies['sid'] == 'abc123')
+        assert(c.cookies['sid'] == 'abc123')
+        assert(c.get('/cookies').json() == %{'sid': 'abc123'})
+        let prefs = c.get('/prefs/cookies').json()
+        assert(prefs['theme'] == 'dark' && prefs['sid'] == 'abc123')
+        assert(c.get('/cookies', cookies: {extra: 'one'}).json()['extra'] == 'one')
+
+        let file = "/tmp/ty-http-client-cookies-{os.getpid()}.txt"
+        c.cookies.save(file, sessions: true)
+        let jar = CookieJar().load(file)
+        assert(jar['sid'] == 'abc123')
+        let c2 = Client(base-url: srv.url, cookies: jar)
+        assert(c2.get('/cookies').json()['sid'] == 'abc123')
+        os.unlink(file)
+        c2.close()
+        c.close()
+    })
+}
+
+pub fn streaming-responses() {
+    serve(routes, fn (srv) {
+        let c = Client(base-url: srv.url)
+        with r = c.stream('GET', '/stream') {
+            assert(!r.read?)
+            assert([*r.lines()] == ['line 0', 'line 1', 'line 2', 'line 3', 'line 4'])
+        }
+        with r = c.stream('GET', '/big') {
+            let total = 0
+            let sizes = []
+            for chunk in r.bytes(size: 1000000) {
+                total += #chunk
+                sizes.push(#chunk)
+            }
+            assert(total == 3000000)
+            assert(sizes == [1000000, 1000000, 1000000])
+        }
+        let r = c.stream('GET', '/text')
+        let s = [*r.text-chunks()].join('')
+        assert(s.ends?('ünïcödé ✓'))
+        assert(r.closed?)
+
+        let consumed = c.stream('GET', '/big')
+        consumed.read()
+        let threw = try { consumed.content; false } catch _: client.StreamConsumed { true }
+        assert(threw)
+        consumed.close()
+
+        let file = "/tmp/ty-http-client-dl-{os.getpid()}.txt"
+        let p = c.download('/big', file)
+        assert(os.stat(str(p)).size == 3000000)
+        os.unlink(file)
+        assert(c.transport.pool.connections <= 2)
+        c.close()
+    })
+}
+
+pub fn server-sent-events() {
+    serve(routes, fn (srv) {
+        let c = Client(base-url: srv.url)
+        let got = []
+        for ev in c.events('/events') {
+            got.push((ev.event, ev.id, ev.json()['n']))
+            if #got == 4 {
+                break
+            }
+        }
+        assert(got == [('tick', '0', 0), ('tick', '1', 1), ('tick', '2', 2), ('tick', '3', 3)])
+        let once = [*c.events('/events', reconnect: false)]
+        assert(#once == 2)
+        assert([*c.get('/events').events()].map(\_.data) == ['{"n":0}', '{"n":1}'])
+        c.close()
+    })
+}
+
+pub fn keep-alive-pooling() {
+    serve(routes, fn (srv) {
+        let c = Client(base-url: srv.url)
+        for ..20 {
+            assert(c.get('/').ok?)
+        }
+        assert(c.transport.pool.connections == 1)
+        assert(srv.active-connections <= 1)
+
+        let limited = Client(base-url: srv.url, limits: Limits(max-connections: 2))
+        let rs = limited.parallel(['/slow'] * 4, workers: 4)
+        assert(rs.all?(r -> (r :: Response) && r.text == 'late'))
+        assert(limited.transport.pool.connections <= 2)
+        limited.close()
+        c.close()
+    }, threads: 2)
+}
+
+pub fn stale-keep-alive-is-retried() {
+    serve(routes, fn (srv) {
+        let c = Client(base-url: srv.url, limits: Limits(keepalive-expiry: 30))
+        assert(c.get('/').ok?)
+        os.sleep(0.6)
+        assert(c.get('/').ok?)
+        assert(c.post('/echo', content: 'again').json()['body'] == 'again')
+        c.close()
+    }, idle-timeout: 0.3)
+}
+
+pub fn timeouts-and-errors() {
+    serve(routes, fn (srv) {
+        let c = Client(base-url: srv.url)
+        let t0 = time.now()
+        let kind = try {
+            c.get('/slow', timeout: 0.2)
+            'none'
+        } catch e: client.ReadTimeout {
+            'read'
+        }
+        assert(kind == 'read')
+        assert(time.now() - t0 < 0.9)
+
+        assert(c.get('/drip', timeout: Timeout(1.0, read: 2.0)).text == '...')
+        let dripped = try {
+            c.get('/drip', timeout: Timeout(1.0, read: 0.3))
+            false
+        } catch e: client.ReadTimeout {
+            true
+        }
+        assert(dripped)
+
+        let r = c.get('/status/404')
+        assert(r.status-code == 404)
+        assert(r.client-error?)
+        let err = try {
+            r.raise-for-status()
+            nil
+        } catch e: client.HttpStatusError {
+            e
+        }
+        assert(err != nil && err.status-code == 404 && err.response == r)
+        assert(c.get('/status/503').server-error?)
+
+        let strict = Client(base-url: srv.url, raise-for-status: true)
+        let raised = try { strict.get('/status/500'); false } catch _: client.HttpStatusError { true }
+        assert(raised)
+        strict.close()
+
+        let fd = net.listen('tcp', '127.0.0.1:0')
+        let port = int(os.getnameinfo(os.getsockname(fd), os.NI_NUMERICSERV).1, 10)
+        os.close(fd)
+        let refused = try { http.get("http://127.0.0.1:{port}/"); false } catch _: client.ConnectError { true }
+        assert(refused)
+
+        let bad = try { http.get('ftp://example.com/'); false } catch _: client.UnsupportedProtocol { true }
+        assert(bad)
+        c.close()
+    })
+}
+
+pub fn pool-timeout() {
+    serve(routes, fn (srv) {
+        let c = Client(base-url: srv.url, limits: Limits(max-connections: 1), timeout: Timeout(5, pool: 0.2))
+        let held = c.stream('GET', '/stream')
+        let waited = try {
+            c.get('/')
+            false
+        } catch _: client.PoolTimeout {
+            true
+        }
+        assert(waited)
+        held.close()
+        assert(c.get('/').ok?)
+        c.close()
+    })
+}
+
+pub fn tls-and-http2() {
+    serve(routes, fn (srv) {
+        let c = Client(base-url: srv.url, verify: CA)
+        let r = c.get('/')
+        assert(r.http-version == 'HTTP/2')
+        assert(r.text.starts?('v2 '))
+        assert(#c.get('/big').content == 3000000)
+        assert(c.post('/echo', json: {x: 1}).json()['body'] == '{"x":1}')
+        let big = 'u' * 2000000
+        assert(c.post('/sha', content: big).text == '2000000')
+        fn gen*() {
+            for ..50 {
+                yield Blob.zeros(20000)
+            }
+        }
+        assert(c.post('/sha', content: gen()).text == '1000000')
+
+        let rs = c.parallel(['/slow'] * 6, workers: 6)
+        assert(rs.all?(x -> (x :: Response) && x.text == 'late'))
+        assert(c.transport.pool.connections == 1)
+
+        with s = c.stream('GET', '/big') {
+            let first = s.read()
+            assert(#first > 0)
+        }
+        assert(c.get('/').ok?)
+
+        let h1 = Client(base-url: srv.url, verify: CA, http2: false)
+        assert(h1.get('/').http-version == 'HTTP/1.1')
+        h1.close()
+
+        let unverified = try { http.get("{srv.url}/"); false } catch e: client.ConnectError { str(e).contains?('certificate') }
+        assert(unverified)
+        assert(http.get("{srv.url}/", verify: false).ok?)
+
+        let named = Client(base-url: srv.url.sub('127.0.0.1', 'localhost'), verify: CA)
+        assert(named.get('/').ok?)
+        named.close()
+        c.close()
+    }, tls: tls(), threads: 2)
+}
+
+pub fn http2-prior-knowledge() {
+    serve(routes, fn (srv) {
+        let c = Client(base-url: srv.url, http1: false)
+        let r = c.get('/')
+        assert(r.http-version == 'HTTP/2')
+        assert(r.text.starts?('v2 '))
+        assert([*c.stream('GET', '/stream').lines()] == ['line 0', 'line 1', 'line 2', 'line 3', 'line 4'])
+        c.close()
+    })
+}
+
+pub fn authentication() {
+    serve(routes, fn (srv) {
+        let c = Client(base-url: srv.url)
+        assert(c.get('/basic').status-code == 401)
+        assert(c.get('/basic', auth: ('user', 'pass')).text == 'welcome')
+        assert(http.get(srv.url.sub('http://', 'http://user:pass@') + '/basic').text == 'welcome')
+        assert(c.get('/bearer', auth: client.BearerAuth('tok')).text == 'Bearer tok')
+        assert(c.get('/digest', auth: client.DigestAuth('user', 'pass')).text == 'digest ok')
+        assert(c.get('/digest', auth: client.DigestAuth('user', 'wrong')).status-code == 403)
+        let custom = c.get('/bearer', auth: fn (req) { req.headers['Authorization'] = 'Custom 1'; req })
+        assert(custom.text == 'Custom 1')
+        c.close()
+    })
+}
+
+pub fn retry-policy() {
+    serve(routes, fn (srv) {
+        FLAKY.store(0)
+        let c = Client(base-url: srv.url, retry: Retry(total: 3, backoff: 0.01))
+        let r = c.get('/flaky')
+        assert(r.text == 'recovered')
+        FLAKY.store(0)
+        let none = Client(base-url: srv.url)
+        assert(none.get('/flaky').status-code == 503)
+        none.close()
+        c.close()
+    })
+}
+
+pub fn calls-from-server-handlers() {
+    serve(routes, fn (srv) {
+        let r = http.get("{srv.url}/proxy-self", headers: {x-origin: srv.url})
+        assert(r.text == "inner: v1 {client.USER_AGENT}")
+    }, threads: 1)
+}
+
+pub fn unix-sockets() {
+    let sock = "/tmp/ty-http-client-{os.getpid()}.sock"
+    os.unlink(sock)
+    let fd = net.listen('unix', sock)
+    let srv = http.Server(sock: fd)
+    routes(srv)
+    let t = Thread(srv.run)
+    try {
+        os.sleep(0.05)
+        let c = Client(uds: sock)
+        assert(c.get('http://localhost/').text.starts?('v1'))
+        c.close()
+    } finally {
+        srv.stop()
+        t.join()
+        os.close(fd)
+        os.unlink(sock)
+    }
+}
+
+pub fn mock-transport-and-hooks() {
+    let seen = []
+    let mock = MockTransport(fn (req) {
+        match req.url.path {
+            '/json' => %{'ok': true, 'method': req.method},
+            '/text' => (201, 'created'),
+            '/gz'   => Response(200, {content-encoding: 'gzip'}, content: codec.encode('gzip', 'zipped')),
+            _       => 404
+        }
+    })
+    let c = Client(base-url: 'https://api.test', transport: mock, event-hooks: {
+        request: [req -> seen.push("> {req.method} {req.url.path}")],
+        response: [rsp -> seen.push("< {rsp.status-code}")]
+    })
+    assert(c.get('/json').json() == %{'ok': true, 'method': 'GET'})
+    let t = c.post('/text')
+    assert(t.status-code == 201 && t.text == 'created')
+    assert(c.get('/gz').text == 'zipped')
+    assert(c.get('/nope').status-code == 404)
+    assert(seen == ['> GET /json', '< 200', '> POST /text', '< 201', '> GET /gz', '< 200', '> GET /nope', '< 404'])
+    c.close()
+}
+
+pub fn pretty-output() {
+    serve(routes, fn (srv) {
+        let r = http.post("{srv.url}/echo", json: {a: [1, 2]})
+        let text = r.pretty(color: false)
+        assert(text.starts?('HTTP/1.1 200 OK\n'))
+        assert(text.contains?('content-type: application/json') || text.contains?('Content-Type: application/json'))
+        assert(text.contains?('{\n  "body": "{\\"a\\":[1,2]}",'))
+        let colored = r.pretty(color: true)
+        assert(colored.contains?('\x1b['))
+        let req = r.request.pretty(color: false)
+        assert(req.starts?('POST /echo HTTP/1.1\nHost: 127.0.0.1:'))
+        assert(req.ends?('{\n  "a": [\n    1,\n    2\n  ]\n}'))
+        let bin = Response(200, {content-type: 'application/octet-stream'}, content: Blob(0, 1, 2)).pretty(color: false)
+        assert(bin.contains?('binary data not shown: 3 bytes'))
+    })
+}
+
+pub fn server-request-pretty() {
+    let req = http.Request('POST', '/x?y=1', {major: 1, minor: 1}, 'a=1&b=2', headers: %{'content-type': 'application/x-www-form-urlencoded'}, content-type: 'application/x-www-form-urlencoded')
+    let text = req.pretty(color: false)
+    assert(text.starts?('POST /x?y=1 HTTP/1.1\n'))
+    assert(text.ends?('a=1\nb=2'))
+}
+
+pub fn url-and-headers() {
+    let u = http.URL('https://example.com/a/b?x=1')
+    assert(str(u.join('../c')) == 'https://example.com/c')
+    assert(str(u.join('//other.org/z')) == 'https://other.org/z')
+    assert(u.with(params: {y: [2, 3]}).query == 'x=1&y=2&y=3')
+    assert(str(http.URL('http://bücher.example/ä b')) == 'http://xn--bcher-kva.example/%C3%A4%20b')
+    let h = http.Headers({accept: 'a'})
+    h.add('Set-Cookie', '1')
+    h.add('set-cookie', '2')
+    assert(h['ACCEPT'] == 'a' && h.all('set-cookie') == ['1', '2'] && #h == 3)
+}
+
+fn pipe(a: Int, b: Int) {
+    let buf = Blob()
+    while true {
+        let ready = match os.poll([(a, os.POLLIN), (b, os.POLLIN)], 5.0) {
+            Ok(rs) => rs,
+            _      => []
+        }
+        if #ready == 0 {
+            return
+        }
+        for (fd, _) in ready {
+            buf.clear()
+            let n = xread(fd, buf, 65536)
+            if n == nil || n <= 0 {
+                return
+            }
+            os.write((fd == a) ? b : a, buf, all=true)
+        }
+    }
+}
+
+fn read-head(fd: Int) -> (String, Blob) {
+    let buf = Blob()
+    while buf.search('\r\n\r\n') == nil {
+        let n = xread(fd, buf, 4096)
+        if n == nil || n <= 0 {
+            break
+        }
+    }
+    let i = buf.search('\r\n\r\n') ?? #buf
+    let head = buf.str!(0, i)
+    buf.clear(0, min(i + 4, #buf))
+    (head, buf)
+}
+
+class TestProxy {
+    fd:   Int
+    port: Int
+    seen: Array[String]
+    auth: Array[String]
+    lock: Mutex
+
+    init(socks?: Bool = false) {
+        fd   = net.listen('tcp', '127.0.0.1:0')
+        port = int(os.getnameinfo(os.getsockname(fd), os.NI_NUMERICSERV).1, 10)
+        seen = []
+        auth = []
+        lock = Mutex()
+        let t = Thread(socks? ? __socks-loop : __http-loop)
+        t.detach()
+    }
+
+    __note(line: String, a: String | nil) {
+        let ^_ = lock.lock()
+        seen.push(line)
+        if a != nil {
+            auth.push(a)
+        }
+    }
+
+    __http-loop() {
+        while true {
+            let (c, _) = os.accept(fd)
+            if c < 0 {
+                return
+            }
+            Thread(-> __http(c)).detach()
+        }
+    }
+
+    __http(c: Int) {
+        let (head, rest) = read-head(c)
+        let lines = head.split('\r\n')
+        let first = lines[0]
+        let pa = lines.find(\_.lower().starts?('proxy-authorization:'))
+        __note(first, pa)
+        let [method, target, _] = first.split(' ')
+        if method == 'CONNECT' {
+            let up = net.dial('tcp', target)
+            os.write(c, 'HTTP/1.1 200 Connection established\r\n\r\n', all=true)
+            pipe(c, up)
+            os.close(up)
+        } else {
+            let $m = target.match(/^http:\/\/([^\/]+)(\/.*)$/) or return os.close(c)
+            let up = net.dial('tcp', m[1])
+            let kept = lines.drop(1).filter(l -> !l.lower().starts?('proxy-'))
+            os.write(up, "{method} {m[2]} HTTP/1.1\r\n{kept.join('\r\n')}\r\nConnection: close\r\n\r\n", all=true)
+            os.write(up, rest, all=true)
+            pipe(c, up)
+            os.close(up)
+        }
+        os.close(c)
+    }
+
+    __socks-loop() {
+        while true {
+            let (c, _) = os.accept(fd)
+            if c < 0 {
+                return
+            }
+            Thread(-> __socks(c)).detach()
+        }
+    }
+
+    __need(c: Int, buf: Blob, n: Int) {
+        while #buf < n {
+            let k = xread(c, buf, n - #buf)
+            if k == nil || k <= 0 {
+                throw 'eof'
+            }
+        }
+    }
+
+    __socks(c: Int) {
+        let b = Blob()
+        __need(c, b, 2)
+        __need(c, b, 2 + b[1])
+        let methods = [*b.slice(2, b[1])]
+        if methods.contains?(2) {
+            os.write(c, Blob(5, 2), all=true)
+            let a = Blob()
+            __need(c, a, 2)
+            __need(c, a, 2 + a[1] + 1)
+            let ulen = a[1]
+            __need(c, a, 3 + ulen + a[2 + ulen])
+            __note('auth', "{a.str!(2, ulen)}:{a.str!(3 + ulen, a[2 + ulen])}")
+            os.write(c, Blob(1, 0), all=true)
+        } else {
+            os.write(c, Blob(5, 0), all=true)
+        }
+        let r = Blob()
+        __need(c, r, 5)
+        let host = match r[3] {
+            1 => do {
+                __need(c, r, 10)
+                "{r[4]}.{r[5]}.{r[6]}.{r[7]}"
+            },
+            3 => do {
+                __need(c, r, 5 + r[4] + 2)
+                r.str!(5, r[4])
+            }
+        }
+        let pend = (r[3] == 1) ? 8 : 5 + r[4]
+        let port = (r[pend] << 8) | r[pend + 1]
+        __note("socks {host}:{port}", nil)
+        let up = net.dial('tcp', "{(host == 'localhost') ? '127.0.0.1' : host}:{port}")
+        os.write(c, Blob(5, 0, 0, 1, 127, 0, 0, 1, 0, 0), all=true)
+        pipe(c, up)
+        os.close(up)
+        os.close(c)
+    }
+
+    close() {
+        os.close(fd)
+    }
+}
+
+pub fn http-proxy-forward-and-connect() {
+    let proxy = TestProxy()
+    serve(routes, fn (srv) {
+        let c = Client(proxy: "http://user:secret@127.0.0.1:{proxy.port}", trust-env: false)
+        assert(c.get("{srv.url}/query", params: {via: 'proxy'}).json() == %{'via': 'proxy'})
+        assert(proxy.seen[-1] == "GET {srv.url}/query?via=proxy HTTP/1.1")
+        assert(proxy.auth[-1].contains?(base64.encode('user:secret')))
+        c.close()
+    })
+    serve(routes, fn (srv) {
+        let c = Client(proxy: "http://127.0.0.1:{proxy.port}", verify: CA, trust-env: false)
+        let r = c.get("{srv.url}/")
+        assert(r.ok? && r.http-version == 'HTTP/2')
+        assert(proxy.seen[-1] == "CONNECT {srv.url.sub('https://', '')} HTTP/1.1")
+        c.close()
+    }, tls: tls())
+    proxy.close()
+}
+
+pub fn socks5-proxy() {
+    let proxy = TestProxy(socks?: true)
+    serve(routes, fn (srv) {
+        let c = Client(proxy: "socks5h://127.0.0.1:{proxy.port}", trust-env: false)
+        assert(c.get("{srv.url.sub('127.0.0.1', 'localhost')}/").ok?)
+        assert(proxy.seen[-1] == "socks localhost:{srv.port}")
+        c.close()
+        let a = Client(proxy: "socks5://bob:pw@127.0.0.1:{proxy.port}", trust-env: false)
+        assert(a.get("{srv.url}/").ok?)
+        assert(proxy.auth[-1] == 'bob:pw')
+        assert(proxy.seen[-1] == "socks 127.0.0.1:{srv.port}")
+        a.close()
+    })
+    proxy.close()
+}
+
+pub fn proxy-environment() {
+    let proxy = TestProxy()
+    serve(routes, fn (srv) {
+        setenv('HTTP_PROXY', "http://127.0.0.1:{proxy.port}")
+        setenv('NO_PROXY', '')
+        try {
+            let c = Client()
+            assert(c.get("{srv.url}/").ok?)
+            assert(proxy.seen[-1].starts?('GET http://127.0.0.1'))
+            c.close()
+            setenv('NO_PROXY', '127.0.0.1')
+            let n = #proxy.seen
+            let d = Client()
+            assert(d.get("{srv.url}/").ok?)
+            assert(#proxy.seen == n)
+            d.close()
+            let e = Client(trust-env: false)
+            setenv('NO_PROXY', '')
+            assert(e.get("{srv.url}/").ok?)
+            assert(#proxy.seen == n)
+            e.close()
+        } finally {
+            unsetenv('HTTP_PROXY')
+            unsetenv('NO_PROXY')
+        }
+    })
+    proxy.close()
+}
+
+class Canned {
+    fd:   Int
+    port: Int
+
+    init(reply: String | Blob, close?: Bool = true) {
+        fd   = net.listen('tcp', '127.0.0.1:0')
+        port = int(os.getnameinfo(os.getsockname(fd), os.NI_NUMERICSERV).1, 10)
+        let me = self
+        Thread(fn () {
+            while true {
+                let (c, _) = os.accept(me.fd)
+                if c < 0 {
+                    return
+                }
+                read-head(c)
+                os.write(c, reply, all=true)
+                if close? {
+                    os.close(c)
+                }
+            }
+        }).detach()
+    }
+
+    url -> String {
+        "http://127.0.0.1:{port}"
+    }
+
+    close() {
+        os.close(fd)
+    }
+}
+
+fn canned(reply: String, f: _) {
+    let s = Canned(reply)
+    try {
+        f(s.url)
+    } finally {
+        s.close()
+    }
+}
+
+pub fn legacy-and-malformed-responses() {
+    canned('HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\nuntil close', url -> assert(http.get(url).text == 'until close'))
+    canned('HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok', url -> assert(http.get(url).text == 'ok'))
+    canned('HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n2;ext=1\r\nde\r\n0\r\nX-Trailer: t\r\n\r\n', url -> assert(http.get(url).text == 'abcde'))
+    canned('HTTP/1.1 204 No Content\r\n\r\n', url -> assert(http.get(url).content == Blob()))
+    canned('HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nshort', fn (url) {
+        let threw = try { http.get(url); false } catch _: client.ReadError { true }
+        assert(threw)
+    })
+    canned('SSH-2.0-OpenSSH\r\n\r\n', fn (url) {
+        let threw = try { http.get(url); false } catch _: client.ProtocolError { true }
+        assert(threw)
+    })
+    canned('HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 5\r\n\r\nnope!', fn (url) {
+        let threw = try { http.get(url); false } catch _: client.DecodingError { true }
+        assert(threw)
+    })
+    canned("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", fn (url) {
+        let r = http.get(url, max-response-size: 1000)
+        assert(r.text == 'ok')
+    })
+    canned("HTTP/1.1 200 OK\r\nContent-Length: 5000\r\n\r\n{'x' * 5000}", fn (url) {
+        let threw = try { http.get(url, max-response-size: 1000); false } catch _: client.DecodingError { true }
+        assert(threw)
+    })
+}
+
+pub fn http2-many-threads() {
+    serve(routes, fn (srv) {
+        let c = Client(base-url: srv.url, verify: CA)
+        let rs = c.parallel(['/big'] * 16 + ['/slow'] * 4 + ['/stream'] * 4, workers: 24)
+        assert(rs.all?(r -> (r :: Response) && r.ok?))
+        assert(rs.take(16).all?(r -> #r.content == 3000000))
+        assert(c.transport.pool.connections == 1)
+        c.close()
+    }, tls: tls(), threads: 4)
+}
+
+pub fn http2-timeouts-and-shutdown() {
+    serve(routes, fn (srv) {
+        let c = Client(base-url: srv.url, verify: CA)
+        let timed-out = try { c.get('/slow', timeout: 0.2); false } catch _: client.ReadTimeout { true }
+        assert(timed-out)
+        assert(c.get('/').ok?)
+        c.close()
+    }, tls: tls())
+
+    let srv = http.Server('127.0.0.1', 0, tls: tls(), shutdown-timeout: 0.2)
+    routes(srv)
+    let t = Thread(srv.run)
+    os.sleep(0.1)
+    let c = Client(base-url: srv.url, verify: CA)
+    let r = c.stream('GET', '/drip')
+    Thread(fn () { os.sleep(0.2); srv.stop() }).detach()
+    let failed = try {
+        r.read-all()
+        false
+    } catch _: client.TransportError {
+        true
+    }
+    t.join()
+    srv.close()
+    assert(failed || r.closed?)
+    c.close()
+}
+
+pub fn streaming-inside-server-handlers() {
+    serve(fn (srv) {
+        routes(srv)
+        srv.get('/relay', fn (req, rsp) {
+            let w = rsp.stream()
+            with up = http.stream('GET', "{req.header('x-origin')}/stream") {
+                for line in up.lines() {
+                    w.write("relayed {line}\n")
+                }
+            }
+        })
+    }, fn (srv) {
+        let r = http.get("{srv.url}/relay", headers: {x-origin: srv.url})
+        assert(r.text == 'relayed line 0\nrelayed line 1\nrelayed line 2\nrelayed line 3\nrelayed line 4\n')
+    }, threads: 1)
+}
+
+pub fn mutual-tls() {
+    let (ccert, ckey) = ssl.self-signed(cn: 'client')
+    let ctx = ssl.Context.server(CERT, KEY, ca: ccert, verify: true, alpn: ['h2', 'http/1.1'])
+    serve(fn (srv) {
+        srv.get('/', (req, rsp) -> rsp.plain('mtls ok'))
+    }, fn (srv) {
+        let c = Client(verify: CA, cert: (ccert, ckey))
+        assert(c.get("{srv.url}/").text == 'mtls ok')
+        c.close()
+        let refused = try {
+            http.get("{srv.url}/", verify: CA)
+            false
+        } catch _: client.TransportError {
+            true
+        }
+        assert(refused)
+    }, tls: ctx)
+}
+
+pub fn compression-of-streams() {
+    serve(fn (srv) {
+        routes(srv)
+        srv.compression(min-size: 10)
+    }, fn (srv) {
+        for coding in codec.available().filter(\_ != 'deflate') {
+            let r = http.get("{srv.url}/stream", headers: {accept-encoding: coding})
+            assert(r.header('content-encoding') == coding)
+            assert(r.text == 'line 0\nline 1\nline 2\nline 3\nline 4\n')
+        }
+        with r = http.stream('GET', "{srv.url}/drip", headers: {accept-encoding: 'gzip'}, timeout: 5) {
+            assert(r.header('content-encoding') == 'gzip')
+            let t0 = time.now()
+            let first = r.read()
+            assert(first == Blob('.'))
+            assert(time.now() - t0 < 0.5)
+            assert(r.read-all() == Blob('..'))
+        }
+        let es = http.get("{srv.url}/events", headers: {accept-encoding: 'gzip'})
+        assert(es.header('content-encoding') == nil)
+        let h = http.head("{srv.url}/text", headers: {accept-encoding: 'gzip'})
+        assert(h.header('content-encoding') == nil)
+    })
+}
+
+pub fn http2-flow-control-survives-abandoned-streams() {
+    serve(routes, fn (srv) {
+        let c = Client(base-url: srv.url, verify: CA)
+        for ..12 {
+            let a = c.stream('GET', '/big')
+            let b = c.stream('GET', '/big')
+            assert(#b.read-all() == 3000000)
+            assert(#a.read-all() == 3000000)
+        }
+        for ..12 {
+            let s = c.stream('GET', '/big')
+            s.read()
+            s.close()
+        }
+        for ..12 {
+            let timed-out = try { c.get('/slow', timeout: 0.05); false } catch _: client.ReadTimeout { true }
+            assert(timed-out)
+        }
+        assert(#c.get('/big').content == 3000000)
+        assert(c.transport.pool.connections == 1)
+        c.close()
+    }, tls: tls(), threads: 2)
+}
+
+pub fn http2-early-response-to-upload() {
+    serve(fn (srv) {
+        routes(srv)
+        srv.post('/deny', (req, rsp) -> rsp.error(401))
+    }, fn (srv) {
+        let c = Client(base-url: srv.url, verify: CA)
+        fn huge*() {
+            for ..400 {
+                yield Blob.zeros(50000)
+            }
+        }
+        for ..3 {
+            let t0 = time.now()
+            assert(c.post('/deny', content: huge()).status-code == 413)
+            assert(time.now() - t0 < 2.0)
+        }
+        assert(c.get('/').ok?)
+        c.close()
+    }, tls: tls(), max-body-size: 1000)
+}
+
+pub fn extra-bytes-are-not-reused() {
+    let s = Canned('HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nfirstHTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\nsmuggled', close?: false)
+    let c = Client(base-url: s.url, timeout: 2)
+    assert(c.get('/a').text == 'first')
+    assert(c.get('/b').text == 'first')
+    c.close()
+    s.close()
+}
+
+pub fn upgrade-responses-close-the-connection() {
+    serve(fn (srv) {
+        routes(srv)
+        srv.ws('/echo', fn (sock, req) {
+            while let $m = sock.recv() {
+                sock.send(m)
+            }
+        })
+    }, fn (srv) {
+        let c = Client(base-url: srv.url)
+        let r = c.get('/echo', headers: %{
+            'Connection': 'Upgrade',
+            'Upgrade': 'websocket',
+            'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==',
+            'Sec-WebSocket-Version': '13'
+        })
+        assert(r.status-code == 101)
+        assert(c.transport.pool.connections == 0)
+        assert(c.get('/').ok?)
+        c.close()
+    })
+}
+
+pub fn connect-retries-and-redirect-credentials() {
+    let fd = net.listen('tcp', '127.0.0.1:0')
+    let port = int(os.getnameinfo(os.getsockname(fd), os.NI_NUMERICSERV).1, 10)
+    os.close(fd)
+    let t0 = time.now()
+    let err = try {
+        Client(retries: 1).get("http://127.0.0.1:{port}/")
+        nil
+    } catch e: client.ConnectError {
+        e
+    }
+    assert(err != nil && err.request != nil)
+    assert(time.now() - t0 >= 0.9)
+
+    let seen = []
+    let mock = MockTransport(fn (req) {
+        seen.push((str(req.url), req.header('authorization'), req.header('cookie')))
+        match str(req.url) {
+            'https://a.example/start' => Response(302, {location: 'http://a.example/plain'}),
+            'http://a.example/plain'  => Response(302, {location: 'https://evil.example/x'}),
+            _                         => 200
+        }
+    })
+    let c = Client(transport: mock)
+    c.get('https://a.example/start', auth: ('user', 'secret'), cookies: {session: 'abc'})
+    assert(seen[0].1 != nil && seen[0].2 == 'session=abc')
+    assert(seen[1].1 == nil && seen[1].2 == nil)
+    assert(seen[2].1 == nil && seen[2].2 == nil)
+    seen.clear()
+    c.get('http://a.example/plain2', auth: ('user', 'secret'))
+    c.close()
+}
+
+class TlsProxy {
+    fd:   Int
+    port: Int
+    seen: Array[String]
+    ctx:  ssl.Context
+
+    init() {
+        fd   = net.listen('tcp', '127.0.0.1:0')
+        port = int(os.getnameinfo(os.getsockname(fd), os.NI_NUMERICSERV).1, 10)
+        seen = []
+        ctx  = ssl.Context.server(CERT, KEY)
+        let me = self
+        Thread(fn () {
+            while true {
+                let (c, _) = os.accept(me.fd)
+                if c < 0 {
+                    return
+                }
+                Thread(-> me.handle(c)).detach()
+            }
+        }).detach()
+    }
+
+    handle(c: Int) {
+        try {
+            let st = ctx.wrap(c).handshake()
+            let buf = Blob()
+            while buf.search('\r\n\r\n') == nil {
+                let $chunk = st.read(1 << 20) or return os.close(c)
+                buf.push(chunk)
+            }
+            let i = buf.search('\r\n\r\n')!
+            let first = buf.str!(0, i).split('\r\n')[0]
+            seen.push(first)
+            let target = first.split(' ')[1]
+            let up = net.dial('tcp', target)
+            st.write('HTTP/1.1 200 Connection established\r\n\r\n')
+            let rest = buf.slice(i + 4, #buf - i - 4)
+            if #rest > 0 {
+                os.write(up, rest, all=true)
+            }
+            let tmp = Blob()
+            while true {
+                let ready = match os.poll([(c, os.POLLIN), (up, os.POLLIN)], 5.0) {
+                    Ok(rs) => rs,
+                    _      => []
+                }
+                if #ready == 0 {
+                    break
+                }
+                let done = false
+                for (f, _) in ready {
+                    if f == c {
+                        match st.read(1 << 20) {
+                            nil  => done = true,
+                            data => os.write(up, data, all=true)
+                        }
+                    } else {
+                        tmp.clear()
+                        let n = xread(up, tmp, 65536)
+                        if n == nil || n <= 0 {
+                            done = true
+                        } else {
+                            st.write(tmp)
+                        }
+                    }
+                }
+                if done {
+                    break
+                }
+            }
+            os.close(up)
+        } catch _ {
+        }
+        os.close(c)
+    }
+
+    close() {
+        os.close(fd)
+    }
+}
+
+pub fn https-through-https-proxy() {
+    let proxy = TlsProxy()
+    serve(routes, fn (srv) {
+        let c = Client(proxy: "https://127.0.0.1:{proxy.port}", verify: CA, trust-env: false)
+        let r = c.get("{srv.url}/query", params: {x: 1})
+        assert(r.json() == %{'x': '1'})
+        assert(r.http-version == 'HTTP/2')
+        assert(#c.get("{srv.url}/big").content == 3000000)
+        assert(c.post("{srv.url}/echo", json: {a: 1}).json()['body'] == '{"a":1}')
+        let rs = c.parallel(["{srv.url}/big"] * 6 + ["{srv.url}/slow"] * 4, workers: 10)
+        assert(rs.all?(x -> (x :: Response) && x.ok?))
+        assert(rs.take(6).all?(x -> #x.content == 3000000))
+        assert(c.transport.pool.connections == 1)
+        assert(proxy.seen[0] == "CONNECT {srv.url.sub('https://', '')} HTTP/1.1")
+        c.close()
+    }, tls: tls())
+    proxy.close()
+}
+
+pub fn closing-the-client-with-responses-in-flight() {
+    serve(routes, fn (srv) {
+        let c = Client(base-url: srv.url)
+        let r = c.stream('GET', '/big')
+        r.read()
+        c.close()
+        r.close()
+        assert(c.transport.pool.connections == 0)
+        let refused = try { c.get('/'); false } catch _: client.TransportError { true }
+        assert(refused)
+    })
+    serve(routes, fn (srv) {
+        let c = Client(base-url: srv.url, verify: CA)
+        let r = c.stream('GET', '/big')
+        r.read()
+        c.close()
+        r.close()
+        assert(c.transport.pool.connections == 0)
+    }, tls: tls())
+}
+
+pub fn server-and-client-share-conventions() {
+    serve(fn (srv) {
+        srv.post('/mirror', fn (req, rsp) {
+            assert(req.headers :: http.Headers)
+            assert(req.headers['X-CASE'] == req.header('x-case'))
+            assert(req.http-version == 'HTTP/1.1')
+            rsp.set-cookie('k', 'v')
+            rsp.header('X-Case', req.header('x-case'))
+            rsp.json({
+                body: req.body,
+                json: req.json(),
+                ctype: req.content-type,
+                cookie: req.cookie('c'),
+                head: req.read(2)
+            })
+        })
+    }, fn (srv) {
+        let r = http.post("{srv.url}/mirror", json: {a: 1}, headers: {x-case: 'Yes'}, cookies: {c: 'z'})
+        assert(r.headers :: http.Headers)
+        assert(r.header('x-case') == 'Yes' && r.headers['X-CASE'] == 'Yes')
+        assert(r.http-version == 'HTTP/1.1')
+        assert(r.cookie('k') == 'v' && r.cookies['k'] == 'v')
+        assert(r.content-type == 'application/json')
+        let j = r.json()
+        assert(j['body'] == '{"a":1}' && j['json'] == %{'a': 1} && j['ctype'] == 'application/json' && j['cookie'] == 'z')
+        assert(r.read(5) == Blob('{"bod'))
+        assert(r.read-all().str!().ends?('}'))
+        assert(r.body.starts?('{"body"'))
+        assert(json.encode(http.Headers(%{'a': '1'})) == '{"a":"1"}')
+    })
+}

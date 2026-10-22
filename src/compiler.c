@@ -14253,7 +14253,7 @@ load_module_source(
 {
         CompileState save = STATE;
         Module *module    = NULL;
-        bool permanent    = (GetArenaAlloc(ty) != NULL);
+        bool permanent    = (GetArenaAlloc(ty) != NULL) || (ty->arena.base == NULL);
         Arena old;
 
         if (permanent) {
@@ -14274,7 +14274,8 @@ load_module_source(
         STATE = freshstate(ty, module);
         STATE.flags |= ImportFlags;
 
-        int prof_mod = ProfMode ? prof_module_begin(name, path, source) : -1;
+        int prof_mod    = ProfMode ? prof_module_begin(name, path, source) : -1;
+        int first_class = class_count(ty);
 #ifdef TY_HAVE_USDT
         u64 probe_t0 = TY_PROBING(import__done) ? TyMonotonicTime() : 0;
 #endif
@@ -14291,7 +14292,7 @@ load_module_source(
 
         prof_module_compiled(prof_mod);
 
-        class_finalize_all(ty);
+        class_finalize_from(ty, first_class);
         vm_exec(ty, module->code);
 
         prof_module_done(prof_mod);

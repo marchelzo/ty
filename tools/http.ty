@@ -1,0 +1,211 @@
+import http.client as client (Client, Timeout)
+import http.display as display
+import json
+import os
+import path (Path)
+
+const USAGE = '''usage: ty tools/http.ty [OPTIONS] [METHOD] URL [ITEM...]
+
+items:
+  Header:value      request header
+  name==value       query parameter
+  field=value       JSON string field (form field with --form)
+  field:=json       raw JSON field
+  field@path        file upload (multipart)
+
+options:
+  -v, --verbose     print the request too
+  -h, --headers     print only the response headers
+  -b, --body        print only the response body
+  -f, --form        send fields as a form instead of JSON
+  -d, --download    save the body to a file (-o FILE), with a progress bar
+  -o, --output F    file for --download
+  -S, --stream      print the body as it arrives (lines / server-sent events)
+  -k, --insecure    skip TLS verification
+  -a, --auth U:P    basic auth (--bearer TOKEN for a bearer token)
+  --http1           disable HTTP/2
+  --h2c             HTTP/2 with prior knowledge (cleartext)
+  --timeout SECS    timeout per phase (default 30)
+  --no-follow       do not follow redirects
+  --history         print intermediate redirect responses
+  --compress C      compress the request body (gzip, zstd, br)
+  --proxy URL       use a proxy (http://, socks5://, socks5h://)
+  --raw             do not decode Content-Encoding
+'''
+
+const METHODS = %{'GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'}
+
+fn die(msg: String) {
+    eprint(msg)
+    os.exit(2)
+}
+
+fn main() {
+    let args = argv[1;]
+    let opts = %{
+        'verbose': false, 'headers': false, 'body': false, 'form': false,
+        'download': false, 'stream': false, 'insecure': false, 'http1': false,
+        'h2c': false, 'follow': true, 'history': false, 'raw': false
+    }
+    let values = %{}
+    let rest = []
+
+    let i = 0
+    while i < #args {
+        let a = args[i]
+        let value = fn () {
+            i += 1
+            (i < #args) ? args[i] : die("{a} needs a value")
+        }
+        match a {
+            '-v', '--verbose'  => opts['verbose'] = true,
+            '-h', '--headers'  => opts['headers'] = true,
+            '-b', '--body'     => opts['body'] = true,
+            '-f', '--form'     => opts['form'] = true,
+            '-d', '--download' => opts['download'] = true,
+            '-S', '--stream'   => opts['stream'] = true,
+            '-k', '--insecure' => opts['insecure'] = true,
+            '--http1'          => opts['http1'] = true,
+            '--h2c'            => opts['h2c'] = true,
+            '--no-follow'      => opts['follow'] = false,
+            '--history'        => opts['history'] = true,
+            '--raw'            => opts['raw'] = true,
+            '-o', '--output'   => values['output'] = value(),
+            '-a', '--auth'     => values['auth'] = value(),
+            '--bearer'         => values['bearer'] = value(),
+            '--timeout'        => values['timeout'] = value(),
+            '--compress'       => values['compress'] = value(),
+            '--proxy'          => values['proxy'] = value(),
+            '--help'           => {
+                print(USAGE)
+                os.exit(0)
+            },
+            _ => rest.push(a)
+        }
+        i += 1
+    }
+
+    if #rest == 0 {
+        die(USAGE)
+    }
+
+    let method = METHODS.contains?(rest[0].upper()) && #rest > 1 ? rest.pop(0).upper() : nil
+    let url = rest.pop(0)
+    if !url.contains?('://') {
+        url = (url.starts?(':') ? "http://localhost{url}" : "http://{url}")
+    }
+
+    let headers = []
+    let params = []
+    let fields = %{}
+    let files = %{}
+
+    for item in rest {
+        match item {
+            /^([^:=@]+):=(.*)$/s => fields[$1] = json.parse($2),
+            /^([^:=@]+)==(.*)$/s => params.push(($1, $2)),
+            /^([^:=@]+)=(.*)$/s  => fields[$1] = $2,
+            /^([^:=@]+)@(.*)$/s  => files[$1] = Path($2),
+            /^([^:=@\s]+):(.*)$/s => headers.push(($1, $2.strip())),
+            other => die("cannot parse item: {other}")
+        }
+    }
+
+    let m = method ?? ((#fields > 0 || #files > 0) ? 'POST' : 'GET')
+
+    let c = Client(
+        http1: (opts['h2c'] != true),
+        http2: (opts['http1'] != true),
+        verify: (opts['insecure'] != true),
+        timeout: Timeout(float(values['timeout'] ?? '30')),
+        follow-redirects: (opts['follow'] == true),
+        proxy: values['proxy'],
+        decode: (opts['raw'] != true),
+        trace: false
+    )
+
+    let auth = match (values['auth'], values['bearer']) {
+        (nil, nil) => nil,
+        (nil, t)   => client.BearerAuth(t),
+        (ua, _)    => do {
+            let (u, p) = match ua.search(':') {
+                nil => (ua, ''),
+                k   => (ua.slice(0, k), ua.slice(k + 1))
+            }
+            (u, p)
+        }
+    }
+
+    let body: Dict[String, _] = %{}
+    if #files > 0 {
+        body['data'] = fields
+        body['files'] = files
+    } else if #fields > 0 {
+        body[(opts['form'] == true) ? 'data' : 'json'] = fields
+    }
+
+    let streaming? = (opts['stream'] == true) || (opts['download'] == true)
+    let color = display.color?()
+
+    let rsp = try {
+        c.request(
+            m,
+            url,
+            params: (#params > 0) ? params : nil,
+            headers: headers,
+            auth: auth,
+            stream: streaming?,
+            compress: values['compress'],
+            **body
+        )
+    } catch e: client.RequestError {
+        eprint(display.status-line('ERROR', 0, str(e), color))
+        os.exit(1)
+    }
+
+    if (opts['verbose'] == true) {
+        print(rsp.request.pretty(color: color))
+        print('')
+    }
+
+    if (opts['history'] == true) {
+        for r in rsp.history {
+            print(r.pretty(body: false, color: color))
+            print('')
+        }
+    }
+
+    if (opts['download'] == true) {
+        let name = values['output'] ?? do {
+            let seg = rsp.url.path.split('/')[-1]
+            (seg == '') ? 'index.html' : seg
+        }
+        print(rsp.pretty(body: false, color: color))
+        let n = rsp.save(name, progress: true)
+        eprint("saved {n} bytes to {name}")
+    } else if (opts['stream'] == true) {
+        print(rsp.pretty(body: false, color: color))
+        print('')
+        if (rsp.content-type ?? '').starts?('text/event-stream') {
+            for ev in rsp.events() {
+                let data = (try { display.pretty-json(json.parse(ev.data), color, indent: 0) }) ?? ev.data
+                print("{ev.event}{(ev.id == nil) ? '' : " #{ev.id}"}: {data}")
+            }
+        } else {
+            for line in rsp.lines() {
+                print(line)
+            }
+        }
+    } else if (opts['headers'] == true) {
+        print(rsp.pretty(body: false, color: color))
+    } else if (opts['body'] == true) {
+        print(display.body(rsp.content, rsp.content-type, color, nil))
+    } else {
+        print(rsp.pretty(color: color, limit: nil))
+    }
+
+    c.close()
+    os.exit(rsp.error? ? 4 : 0)
+}
+
+main()

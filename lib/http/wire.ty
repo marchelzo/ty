@@ -1,6 +1,8 @@
 import jit (kernel!)
 import json
 import http.core (parse-cookies)
+import http.headers (Headers)
+import http.display as display
 import http.form (
     HttpHeaders,
     HttpVersion,
@@ -34,6 +36,9 @@ const F_KEEP_ALIVE = 4
 const F_CONTINUE   = 8
 const F_HOST       = 16
 const F_UPGRADE    = 32
+const F_CODED      = 64
+
+const PREFIX = 'HTTP/'
 
 const M_OFF = 0
 const M_LEN = 1
@@ -99,58 +104,8 @@ kernel! fn decimal(b: Blob, off: Int, len: Int, cls: Blob) -> Int {
     n
 }
 
-kernel! fn scan-head(b: Blob, start: Int, end: Int, cls: Blob, out: Array[Int]) -> Int {
-    let i = start
-    while i < end && (b[i] == 13 || b[i] == 10) {
-        i += 1
-    }
-
-    let m = i
-    while i < end && (cls[b[i]] & TCHAR) != 0 {
-        i += 1
-    }
-    if i == end {
-        return 0
-    }
-    if i == m || b[i] != 32 {
-        return E_REQUEST_LINE
-    }
-    out[M_OFF] = m
-    out[M_LEN] = i - m
-    i += 1
-
-    let t = i
-    while i < end && (cls[b[i]] & VCHAR) != 0 {
-        i += 1
-    }
-    if i == end {
-        return 0
-    }
-    if i == t || b[i] != 32 {
-        return E_REQUEST_LINE
-    }
-    out[T_OFF] = t
-    out[T_LEN] = i - t
-    i += 1
-
-    if end - i < 10 {
-        return 0
-    }
-    if b[i] != 72 || b[i + 1] != 84 || b[i + 2] != 84 || b[i + 3] != 80 || b[i + 4] != 47 {
-        return E_REQUEST_LINE
-    }
-    if (cls[b[i + 5]] & DIGIT) == 0 || b[i + 6] != 46 || (cls[b[i + 7]] & DIGIT) == 0 {
-        return E_REQUEST_LINE
-    }
-    if b[i + 8] != 13 || b[i + 9] != 10 {
-        return E_REQUEST_LINE
-    }
-    if b[i + 5] != 49 {
-        return E_VERSION
-    }
-    out[MINOR] = b[i + 7] - 48
-    i += 10
-
+kernel! fn scan-fields(b: Blob, start: Int, at: Int, end: Int, cls: Blob, out: Array[Int], resp?: Bool) -> Int {
+    let i = at
     let n = 0
     let length = -1
     let fl = 0
@@ -166,7 +121,11 @@ kernel! fn scan-head(b: Blob, start: Int, end: Int, cls: Blob, out: Array[Int]) 
                 return E_HEADER
             }
             if (fl & F_CHUNKED) != 0 && length >= 0 {
-                return E_LENGTH
+                if !resp? {
+                    return E_LENGTH
+                }
+                length = -1
+                fl = fl | F_CLOSE
             }
             out[NHEAD] = n
             out[CLEN] = length
@@ -224,10 +183,15 @@ kernel! fn scan-head(b: Blob, start: Int, end: Int, cls: Blob, out: Array[Int]) 
             }
             length = x
         } else if klen == 17 && lower-eq?(b, k, klen, TRANSFER_ENCODING, cls) {
-            if (fl & F_CHUNKED) != 0 || !lower-eq?(b, v, vlen, CHUNKED, cls) {
+            if lower-eq?(b, v, vlen, CHUNKED, cls) && (fl & F_CHUNKED) == 0 {
+                fl = fl | F_CHUNKED
+            } else if !resp? {
                 return E_FRAMING
+            } else if vlen > 7 && lower-eq?(b, e - 7, 7, CHUNKED, cls) && (b[e - 8] == 44 || b[e - 8] == 32) {
+                fl = fl | F_CHUNKED | F_CODED
+            } else {
+                fl = (fl & ~F_CHUNKED) | F_CODED | F_CLOSE
             }
-            fl = fl | F_CHUNKED
         } else if klen == 10 && lower-eq?(b, k, klen, CONNECTION, cls) {
             if lower-eq?(b, v, vlen, CLOSE, cls) {
                 fl = fl | F_CLOSE
@@ -250,6 +214,119 @@ kernel! fn scan-head(b: Blob, start: Int, end: Int, cls: Blob, out: Array[Int]) 
     }
 
     0
+}
+
+kernel! fn scan-head(b: Blob, start: Int, end: Int, cls: Blob, out: Array[Int]) -> Int {
+    let i = start
+    while i < end && (b[i] == 13 || b[i] == 10) {
+        i += 1
+    }
+
+    let m = i
+    while i < end && (cls[b[i]] & TCHAR) != 0 {
+        i += 1
+    }
+    if i == end {
+        return 0
+    }
+    if i == m || b[i] != 32 {
+        return E_REQUEST_LINE
+    }
+    out[M_OFF] = m
+    out[M_LEN] = i - m
+    i += 1
+
+    let t = i
+    while i < end && (cls[b[i]] & VCHAR) != 0 {
+        i += 1
+    }
+    if i == end {
+        return 0
+    }
+    if i == t || b[i] != 32 {
+        return E_REQUEST_LINE
+    }
+    out[T_OFF] = t
+    out[T_LEN] = i - t
+    i += 1
+
+    if end - i < 10 {
+        return 0
+    }
+    if b[i] != 72 || b[i + 1] != 84 || b[i + 2] != 84 || b[i + 3] != 80 || b[i + 4] != 47 {
+        return E_REQUEST_LINE
+    }
+    if (cls[b[i + 5]] & DIGIT) == 0 || b[i + 6] != 46 || (cls[b[i + 7]] & DIGIT) == 0 {
+        return E_REQUEST_LINE
+    }
+    if b[i + 8] != 13 || b[i + 9] != 10 {
+        return E_REQUEST_LINE
+    }
+    if b[i + 5] != 49 {
+        return E_VERSION
+    }
+    out[MINOR] = b[i + 7] - 48
+    i += 10
+
+    scan-fields(b, start, i, end, cls, out, false)
+}
+
+kernel! fn scan-status(b: Blob, start: Int, end: Int, cls: Blob, out: Array[Int]) -> Int {
+    let i = start
+
+    if end - i < 12 {
+        for k in ..min(5, end - i) {
+            if b[i + k] != PREFIX.byte(k) {
+                return E_REQUEST_LINE
+            }
+        }
+        return 0
+    }
+    if b[i] != 72 || b[i + 1] != 84 || b[i + 2] != 84 || b[i + 3] != 80 || b[i + 4] != 47 {
+        return E_REQUEST_LINE
+    }
+    if (cls[b[i + 5]] & DIGIT) == 0 || b[i + 6] != 46 || (cls[b[i + 7]] & DIGIT) == 0 || b[i + 8] != 32 {
+        return E_REQUEST_LINE
+    }
+    if b[i + 5] != 49 {
+        return E_VERSION
+    }
+    out[MINOR] = b[i + 7] - 48
+    i += 9
+
+    let code = 0
+    for k in ..3 {
+        let c = b[i + k]
+        if (cls[c] & DIGIT) == 0 {
+            return E_REQUEST_LINE
+        }
+        code = code * 10 + c - 48
+    }
+    i += 3
+    out[M_OFF] = code
+    out[M_LEN] = 0
+
+    if i < end && b[i] == 32 {
+        i += 1
+    }
+    let r = i
+    while i < end && b[i] != 13 {
+        if (cls[b[i]] & FIELD) == 0 {
+            return E_REQUEST_LINE
+        }
+        i += 1
+    }
+    if end - i < 2 {
+        return 0
+    }
+    if b[i + 1] != 10 {
+        return E_REQUEST_LINE
+    }
+    out[T_OFF] = r
+    out[T_LEN] = i - r
+    i += 2
+
+    scan-fields(b, start, i, end, cls, out, true)
 }
 
 kernel! fn dechunk(b: Blob, start: Int, end: Int, cls: Blob, dst: Blob, out: Array[Int]) -> Int {
@@ -373,6 +450,7 @@ pub class Request {
     __ctype:   String | nil
     __query:   String | nil
     __headers: HttpHeaders | nil
+    __hview:   Headers | nil
     __params:  Dict[String, String | [String | nil] | nil] | nil
     __valid?:  Bool
     __queue:   _
@@ -404,6 +482,7 @@ pub class Request {
         __head       = head
         __base       = base
         __headers    = headers
+        __hview      = nil
         __ctype      = content-type
         __queue      = nil
         __served?    = false
@@ -475,15 +554,27 @@ pub class Request {
     }
 
     host? -> Bool {
-        (__head == nil) ? (headers['host'] != nil) : (__flags & F_HOST) != 0
+        (__head == nil) ? (__header-dict()['host'] != nil) : (__flags & F_HOST) != 0
     }
 
     upgrade? -> Bool {
-        (__head == nil) ? (headers['upgrade'] != nil) : (__flags & F_UPGRADE) != 0
+        (__head == nil) ? (__header-dict()['upgrade'] != nil) : (__flags & F_UPGRADE) != 0
     }
 
-    headers -> HttpHeaders {
+    /// The request headers (case-insensitive lookups, repeated fields kept),
+    /// the same `Headers` type the client uses.
+    headers -> Headers {
+        __hview ?? (__hview = Headers(__header-dict()))
+    }
+
+    __header-dict() -> HttpHeaders {
         __headers ?? (__headers = __decode-headers())
+    }
+
+    /// 'HTTP/1.0', 'HTTP/1.1' or 'HTTP/2', like the client's
+    /// `Response.http-version`.
+    http-version -> String {
+        (version.major == 2) ? 'HTTP/2' : "HTTP/1.{version.minor}"
     }
 
     header(name: String) -> String | nil {
@@ -491,7 +582,7 @@ pub class Request {
 
         if __head == nil || __headers != nil {
             let found = nil
-            for k, v in headers {
+            for k, v in __header-dict() {
                 if k.lower() == want {
                     let s = (v :: String) ? v : v.join(', ')
                     found = (found == nil) ? s : "{found}, {s}"
@@ -577,6 +668,17 @@ pub class Request {
 
     cookie(name: String) -> String | nil {
         cookies[name]
+    }
+
+    /// Renders the request (start line, headers, formatted body) like the
+    /// client's `Response.pretty`.
+    pretty(body: Bool = true, color: Bool | nil = nil, limit: Int | nil = 8192) -> String {
+        let col = color ?? display.color?()
+        display.message(display.request-line(method, target, http-version, col), headers.items(), self.body, content-type, col, limit, body)
+    }
+
+    show(%kwargs) {
+        print(pretty(**kwargs))
     }
 
     attach-body(queue: _) {
@@ -818,4 +920,83 @@ pub class Dechunker {
         }
         i - start
     }
+}
+
+/// A parsed HTTP/1.x response head. `length` is -1 when the body is
+/// delimited by chunking or by the connection closing.
+pub class ResponseHead {
+    status:      Int
+    reason:      String
+    minor:       Int
+    headers:     Headers
+    size:        Int
+    length:      Int
+    chunked?:    Bool
+    close?:      Bool
+    keep-alive?: Bool
+    coded?:      Bool
+
+    init(
+        status: Int,
+        reason: String,
+        minor: Int,
+        headers: Headers,
+        size: Int,
+        length: Int,
+        flags: Int
+    ) {
+        self.status  = status
+        self.reason  = reason
+        self.minor   = minor
+        self.headers = headers
+        self.size    = size
+        self.length  = length
+        chunked?     = (flags & F_CHUNKED) != 0
+        close?       = (flags & F_CLOSE) != 0
+        keep-alive?  = (flags & F_KEEP_ALIVE) != 0
+        coded?       = (flags & F_CODED) != 0
+    }
+
+    /// Whether the connection may carry another request afterwards.
+    reusable? -> Bool {
+        if close? || coded? {
+            return false
+        }
+        (minor == 0) ? keep-alive? : true
+    }
+}
+
+/// Parses a response head from `buf[start..end]`: a `ResponseHead`,
+/// `NeedMore((nil, false))`, or `Invalid(code)` (code is an HTTP status
+/// describing the defect).
+pub fn parse-response(buf: Blob, start: Int, end: Int, marks: Array[Int], max-head: Int = MAX_HEAD) -> ResponseHead | ParseResult {
+    let hlen = scan-status(buf, start, end, CLASSES, marks)
+
+    if hlen < 0 {
+        return Invalid(status-of(hlen))
+    }
+
+    if hlen == 0 {
+        return (end - start >= max-head) ? Invalid(431) : NeedMore(nil, false)
+    }
+
+    if hlen > max-head {
+        return Invalid(431)
+    }
+
+    let pairs = []
+    for i in ..marks[NHEAD] {
+        let o = HEAD + i * 4
+        pairs.push((buf.str!(marks[o], marks[o + 1]), buf.str!(marks[o + 2], marks[o + 3])))
+    }
+
+    ResponseHead(
+        marks[M_OFF],
+        buf.str(marks[T_OFF], marks[T_LEN], lossy: true),
+        marks[MINOR],
+        Headers.raw(pairs),
+        hlen,
+        marks[CLEN],
+        marks[FLAGS]
+    )
 }

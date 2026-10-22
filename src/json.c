@@ -218,7 +218,7 @@ encode(Ty *ty, Value const *v, str *out)
 
                 if (vp != NULL) {
                         Value method = METHOD(NAMES.json, vp, v);
-                        Value s = vm_eval_function(ty, NULL, &method, NULL);
+                        Value s = vm_eval_function(ty, &method, NULL);
                         if (s.type == VALUE_STRING) {
                                 gP(&s);
                                 xvPn(*out, ss(s), sN(s));

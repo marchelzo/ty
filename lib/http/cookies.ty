@@ -1,0 +1,553 @@
+/**
+ * Cookies (RFC 6265): `Cookie` header parsing and `Set-Cookie` formatting
+ * for the server, and `CookieJar`, the client's cookie store.
+ */
+import time
+import path (Path)
+import http.url (URL)
+
+const COOKIE_NAME  = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
+const COOKIE_VALUE = /^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]*$/
+const COOKIE_ATTR  = /^[^;\x00-\x1F\x7F]*$/
+
+const MONTHS = %{'jan': 0, 'feb': 1, 'mar': 2, 'apr': 3, 'may': 4, 'jun': 5, 'jul': 6, 'aug': 7, 'sep': 8, 'oct': 9, 'nov': 10, 'dec': 11}
+
+const MAX_COOKIES_PER_DOMAIN = 180
+const MAX_COOKIES            = 3000
+
+/// Parses a request `Cookie` header into a name → value Dict (first
+/// occurrence wins, surrounding quotes are removed).
+pub fn parse-cookies(header: String | nil) -> Dict[String, String] {
+    let out = %{}
+    let $h = header or return out
+    for part in h.split(';') {
+        let kv = part.split('=', 1)
+        if #kv != 2 {
+            continue
+        }
+        let k = kv[0].strip()
+        let v = kv[1].strip()
+        if v.size() >= 2 && v.starts?('"') && v.ends?('"') {
+            v = v[1;-1]
+        }
+        if k.size() > 0 && out[k] == nil {
+            out[k] = v
+        }
+    }
+    out
+}
+
+pub fn http-date(t: Int | Float) -> String {
+    time.strftime('%a, %d %b %Y %H:%M:%S GMT', time.gmtime(int(t)))
+}
+
+/// Formats a `Set-Cookie` value. Throws ValueError for names, values or
+/// attributes that cannot be sent safely; `secure: nil` means "Secure when
+/// required" (SameSite=None or Partitioned).
+pub fn format-set-cookie(
+    name: String,
+    value: String,
+    max-age: Int | nil = nil,
+    expires: Int | Float | nil = nil,
+    path: String | Bool = '/',
+    domain: String | nil = nil,
+    secure: Bool | nil = nil,
+    http-only: Bool = true,
+    same-site: String | Bool = 'Lax',
+    partitioned: Bool = false
+) -> String {
+    if !name.match?(COOKIE_NAME) {
+        throw ValueError("http: invalid cookie name: {name}")
+    }
+    if !value.match?(COOKIE_VALUE) {
+        throw ValueError("http: invalid cookie value for {name} (use only cookie-octets; encode it first)")
+    }
+    let parts = ["{name}={value}"]
+    if max-age != nil {
+        parts.push("Max-Age={max-age}")
+    }
+    if expires != nil {
+        parts.push("Expires={http-date(expires)}")
+    }
+    for (attr, v) in [('Path', path), ('Domain', domain)] {
+        if v :: String {
+            if !v.match?(COOKIE_ATTR) {
+                throw ValueError("http: invalid cookie {attr}: {v}")
+            }
+            parts.push("{attr}={v}")
+        }
+    }
+    let ss = (same-site :: String) ? same-site.lower() : nil
+    let sec = secure ?? (ss == 'none' || partitioned)
+    if ss == 'none' && !sec {
+        throw ValueError('http: SameSite=None cookies must be Secure')
+    }
+    if sec {
+        parts.push('Secure')
+    }
+    if http-only {
+        parts.push('HttpOnly')
+    }
+    match ss {
+        nil      => {},
+        'lax'    => parts.push('SameSite=Lax'),
+        'strict' => parts.push('SameSite=Strict'),
+        'none'   => parts.push('SameSite=None'),
+        other    => throw ValueError("http: invalid SameSite: {same-site}")
+    }
+    if partitioned {
+        parts.push('Partitioned')
+    }
+    parts.join('; ')
+}
+
+/// RFC 6265 section 5.1.1 cookie-date parsing; nil when unparseable.
+pub fn parse-cookie-date(s: String) -> Int | nil {
+    let hour = nil
+    let minute = nil
+    let second = nil
+    let day = nil
+    let month = nil
+    let year = nil
+
+    for token in s.split(/[\x09\x20-\x2F\x3B-\x40\x5B-\x60\x7B-\x7E]+/) {
+        if token == '' {
+            continue
+        }
+        if hour == nil {
+            if let [_, h, m, sec] = token.match(/^(\d{1,2}):(\d{1,2}):(\d{1,2})/) {
+                hour = int(h, 10)
+                minute = int(m, 10)
+                second = int(sec, 10)
+                continue
+            }
+        }
+        if day == nil {
+            if let $d = token.match(/^\d{1,2}(?!\d)/) {
+                day = int(d, 10)
+                continue
+            }
+        }
+        if month == nil {
+            if let $mon = MONTHS[token.slice(0, 3).lower()] {
+                month = mon
+                continue
+            }
+        }
+        if year == nil {
+            if let $y = token.match(/^\d{2,4}(?!\d)/) {
+                year = int(y, 10)
+                continue
+            }
+        }
+    }
+
+    let $y = year or return nil
+    let $d = day or return nil
+    let $mon = month or return nil
+    let $h = hour or return nil
+
+    if y >= 70 && y <= 99 {
+        y += 1900
+    } else if y < 70 {
+        y += 2000
+    }
+
+    if d < 1 || d > 31 || y < 1601 || h > 23 || (minute ?? 0) > 59 || (second ?? 0) > 59 {
+        return nil
+    }
+
+    time.time({sec: second ?? 0, min: minute ?? 0, hour: h, mday: d, mon: mon, year: y - 1900}, utc: true)
+}
+
+pub class Cookie {
+    name:        String
+    value:       String
+    domain:      String
+    path:        String
+    expires:     Float | nil
+    secure?:     Bool
+    http-only?:  Bool
+    host-only?:  Bool
+    same-site:   String | nil
+    created:     Float
+
+    init(
+        name: String,
+        value: String,
+        domain: String = '',
+        path: String = '/',
+        expires: Int | Float | nil = nil,
+        secure: Bool = false,
+        http-only: Bool = false,
+        host-only: Bool = true,
+        same-site: String | nil = nil
+    ) {
+        self.name       = name
+        self.value      = value
+        self.domain     = domain.lower().sub(/^\./, '')
+        self.path       = path
+        self.expires    = (expires == nil) ? nil : float(expires)
+        self.secure?    = secure
+        self.http-only? = http-only
+        self.host-only? = host-only
+        self.same-site  = same-site
+        created         = time.utc()
+    }
+
+    expired?(now: Float = time.utc()) -> Bool {
+        expires != nil && expires <= now
+    }
+
+    session? -> Bool {
+        expires == nil
+    }
+
+    matches?(url: URL) -> Bool {
+        let host = url.host ?? ''
+        let domain-ok = host-only? ? host == domain : domain-match?(host, domain)
+        domain-ok && path-match?(url.path || '/', path) && (!secure? || url.secure? || host == 'localhost' || host == '127.0.0.1')
+    }
+
+    __str__() -> String {
+        "{name}={value}"
+    }
+
+    __repr__() -> String {
+        "Cookie({name}={value}; domain={domain}; path={path})"
+    }
+}
+
+fn ip?(host: String) -> Bool {
+    host.contains?(':') || host.match?(/^\d+\.\d+\.\d+\.\d+$/)
+}
+
+pub fn domain-match?(host: String, domain: String) -> Bool {
+    host == domain || (host.ends?(".{domain}") && !ip?(host))
+}
+
+pub fn path-match?(request: String, cookie: String) -> Bool {
+    request == cookie
+ || (request.starts?(cookie) && (cookie.ends?('/') || request.slice(cookie.size(), 1) == '/'))
+}
+
+fn default-path(url: URL) -> String {
+    let p = url.path
+    if !p.starts?('/') {
+        return '/'
+    }
+    match p.search(/\/[^\/]*$/) {
+        nil => '/',
+        0   => '/',
+        i   => p.slice(0, i)
+    }
+}
+
+/// Parses one `Set-Cookie` value received for `url` (RFC 6265 section 5.2
+/// and 5.3); nil when the cookie must be ignored.
+pub fn parse-set-cookie(header: String, url: URL, now: Float = time.utc()) -> Cookie | nil {
+    let parts = header.split(';')
+    let pair = parts[0]
+    let $eq = pair.search('=') or return nil
+    let name = pair.slice(0, eq).strip()
+    let value = pair.slice(eq + 1).strip()
+
+    if name == '' || name.size() + value.size() > 4096 {
+        return nil
+    }
+
+    if value.size() >= 2 && value.starts?('"') && value.ends?('"') {
+        value = value.slice(1, value.size() - 2)
+    }
+
+    let expires = nil
+    let max-age = nil
+    let domain = nil
+    let path = nil
+    let secure = false
+    let http-only = false
+    let same-site = nil
+
+    for attr in parts.drop(1) {
+        let (k, v) = match attr.search('=') {
+            nil => (attr.strip().lower(), ''),
+            i   => (attr.slice(0, i).strip().lower(), attr.slice(i + 1).strip())
+        }
+        match k {
+            'expires' => {
+                expires = parse-cookie-date(v) ?? expires
+            },
+            'max-age' => {
+                if v.match?(/^-?\d+$/) {
+                    max-age = int(v, 10)
+                }
+            },
+            'domain' => {
+                if v != '' {
+                    domain = v.sub(/^\./, '').lower()
+                }
+            },
+            'path' => {
+                path = v.starts?('/') ? v : nil
+            },
+            'secure'   => secure = true,
+            'httponly' => http-only = true,
+            'samesite' => same-site = v.lower(),
+            _          => {}
+        }
+    }
+
+    let host = url.host ?? ''
+    let host-only = true
+
+    if let $d = domain {
+        if !domain-match?(host, d) || !d.contains?('.') && d != 'localhost' {
+            return nil
+        }
+        host-only = false
+    } else {
+        domain = host
+    }
+
+    if secure && !url.secure? && host != 'localhost' && host != '127.0.0.1' {
+        return nil
+    }
+
+    if (name.starts?('__Secure-') || name.starts?('__Host-')) && !secure {
+        return nil
+    }
+    if name.starts?('__Host-') && (!host-only || path != '/') {
+        return nil
+    }
+
+    let expiry = match max-age {
+        nil => (expires == nil) ? nil : float(expires),
+        n   => (n <= 0) ? 0.0 : now + float(n)
+    }
+
+    Cookie(
+        name,
+        value,
+        domain: domain ?? host,
+        path: path ?? default-path(url),
+        expires: expiry,
+        secure: secure,
+        http-only: http-only,
+        host-only: host-only,
+        same-site: same-site
+    )
+}
+
+/// The client's cookie store. Thread-safe; shared by every request a
+/// `Client` makes. Persists in the Netscape cookies.txt format (curl,
+/// wget, browsers' export tools).
+///
+/// ```
+/// let jar = CookieJar()
+/// jar.set('session', 'abc', domain: 'example.com')
+/// jar['session']                          // 'abc'
+/// jar.header-for(URL('https://example.com/x'))   // 'session=abc'
+/// jar.save('cookies.txt')
+/// ```
+pub class CookieJar {
+    __cookies: Array[Cookie]
+    __lock:    Mutex
+
+    init(src: _ = nil) {
+        __cookies = []
+        __lock    = Mutex()
+        match src {
+            nil           => {},
+            jar: CookieJar => for ck in jar.cookies() { __store(ck) },
+            d: Dict       => for k, v in d { set(str(k), str(v)) },
+            xs: Array     => for ck in xs { __store(ck) },
+            r             => for k, v in members(r) { set(k, str(v)) }
+        }
+    }
+
+    __store(ck: Cookie) {
+        __cookies = [old for old in __cookies if !(old.name == ck.name && old.domain == ck.domain && old.path == ck.path)]
+        if !ck.expired?() {
+            __cookies.push(ck)
+        }
+        if #__cookies > MAX_COOKIES {
+            __cookies = __cookies.drop(#__cookies - MAX_COOKIES)
+        }
+        let same = __cookies.filter(\_.domain == ck.domain)
+        if #same > MAX_COOKIES_PER_DOMAIN {
+            let victim = same[0]
+            __cookies = __cookies.filter(\_ != victim)
+        }
+    }
+
+    /// Sets a cookie directly. Without `domain` it matches every host.
+    set(name: String, value: String, domain: String = '', path: String = '/', %kwargs) -> Cookie {
+        let ck = Cookie(name, value, domain: domain, path: path, host-only: domain != '', **kwargs)
+        let ^_ = __lock.lock()
+        __store(ck)
+        ck
+    }
+
+    add(ck: Cookie) -> Cookie {
+        let ^_ = __lock.lock()
+        __store(ck)
+        ck
+    }
+
+    /// The value of the first cookie named `name` (optionally restricted to
+    /// `domain`/`path`).
+    get(name: String, domain: String | nil = nil, path: String | nil = nil) -> String | nil {
+        let ^_ = __lock.lock()
+        let now = time.utc()
+        for ck in __cookies {
+            if ck.name == name && !ck.expired?(now) && (domain == nil || ck.domain == domain.lower()) && (path == nil || ck.path == path) {
+                return ck.value
+            }
+        }
+        nil
+    }
+
+    [](name: String) -> String | nil {
+        get(name)
+    }
+
+    []=(name: String, value: String) -> String {
+        set(name, value)
+        value
+    }
+
+    remove(name: String, domain: String | nil = nil, path: String | nil = nil) {
+        let ^_ = __lock.lock()
+        __cookies = [ck for ck in __cookies if !(ck.name == name && (domain == nil || ck.domain == domain.lower()) && (path == nil || ck.path == path))]
+    }
+
+    clear(domain: String | nil = nil) {
+        let ^_ = __lock.lock()
+        __cookies = (domain == nil) ? [] : [ck for ck in __cookies if ck.domain != domain.lower()]
+    }
+
+    /// Drops session cookies (those without an expiry).
+    clear-session() {
+        let ^_ = __lock.lock()
+        __cookies = [ck for ck in __cookies if !ck.session?]
+    }
+
+    cookies() -> Array[Cookie] {
+        let ^_ = __lock.lock()
+        let now = time.utc()
+        __cookies = [ck for ck in __cookies if !ck.expired?(now)]
+        [*__cookies]
+    }
+
+    /// Cookies to send to `url`, longest path first (RFC 6265 section 5.4).
+    for-url(url: URL | String) -> Array[Cookie] {
+        let u = (url :: URL) ? url : URL(url)
+        let now = time.utc()
+        let ^_ = __lock.lock()
+        let out = [ck for ck in __cookies if !ck.expired?(now) && (ck.domain == '' || ck.matches?(u))]
+        out.sort!(cmp: fn (a, b) {
+            if a.path.size() != b.path.size() {
+                return b.path.size() - a.path.size()
+            }
+            (a.created < b.created) ? -1 : ((a.created > b.created) ? 1 : 0)
+        })
+        out
+    }
+
+    /// The `Cookie` header value for `url`, or nil.
+    header-for(url: URL | String) -> String | nil {
+        let cs = for-url(url)
+        (#cs == 0) ? nil : cs.map(str).join('; ')
+    }
+
+    /// Stores every `Set-Cookie` in `headers` received from `url`.
+    extract(headers: _, url: URL | String) {
+        let u = (url :: URL) ? url : URL(url)
+        let values = match headers {
+            xs: Array => xs,
+            h         => h.all('set-cookie')
+        }
+        let now = time.utc()
+        for v in values {
+            if let $ck = parse-set-cookie(v, u, now) {
+                let ^_ = __lock.lock()
+                if ck.expired?(now) {
+                    __cookies = [old for old in __cookies if !(old.name == ck.name && old.domain == ck.domain && old.path == ck.path)]
+                } else {
+                    __store(ck)
+                }
+            }
+        }
+    }
+
+    dict() -> Dict[String, String] {
+        %{ck.name: ck.value for ck in cookies()}
+    }
+
+    __iter__*() {
+        for ck in cookies() {
+            yield ck
+        }
+    }
+
+    #() -> Int {
+        #cookies()
+    }
+
+    contains?(name: String) -> Bool {
+        get(name) != nil
+    }
+
+    /// Writes the jar in Netscape cookies.txt format.
+    save(path: String, sessions: Bool = false) {
+        let lines = ['# Netscape HTTP Cookie File', '']
+        for ck in cookies() {
+            if ck.session? && !sessions {
+                continue
+            }
+            let domain = ck.host-only? ? ck.domain : ".{ck.domain}"
+            lines.push([
+                ck.http-only? ? "#HttpOnly_{domain}" : domain,
+                ck.host-only? ? 'FALSE' : 'TRUE',
+                ck.path,
+                ck.secure? ? 'TRUE' : 'FALSE',
+                str(int(ck.expires ?? 0.0)),
+                ck.name,
+                ck.value
+            ].join('\t'))
+        }
+        Path(path).write(lines.join('\n') + '\n')
+    }
+
+    /// Loads cookies from a Netscape cookies.txt file.
+    load(path: String) -> CookieJar {
+        let $text = slurp(path) or throw OSError("http: cannot read cookie file {path}")
+        for raw in text.split(/\r?\n/) {
+            let http-only = raw.starts?('#HttpOnly_')
+            let line = http-only ? raw.slice(10) : raw
+            if line == '' || line.starts?('#') {
+                continue
+            }
+            let f = line.split('\t')
+            if #f != 7 {
+                continue
+            }
+            let exp = (try { int(f[4], 10) }) ?? 0
+            add(Cookie(
+                f[5],
+                f[6],
+                domain: f[0],
+                path: f[2],
+                expires: (exp == 0) ? nil : exp,
+                secure: f[3].upper() == 'TRUE',
+                http-only: http-only,
+                host-only: f[1].upper() != 'TRUE'
+            ))
+        }
+        self
+    }
+
+    __str__() -> String {
+        "<CookieJar {cookies().map(c -> "{c.name}={c.value}").join(', ')}>"
+    }
+}

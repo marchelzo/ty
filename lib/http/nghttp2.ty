@@ -1,0 +1,249 @@
+/**
+ * libnghttp2 bindings shared by the HTTP/2 server (`http.h2`) and client
+ * (`http.client`): FFI declarations, constants, frame accessors, header
+ * list packing, and a callback table that forwards to a handler object.
+ */
+import ffi as c (C!)
+
+#|if __apple__
+const LIBRARIES = [
+    '/opt/homebrew/opt/libnghttp2/lib/libnghttp2.14.dylib',
+    '/usr/local/opt/libnghttp2/lib/libnghttp2.14.dylib',
+    '/opt/homebrew/lib/libnghttp2.14.dylib',
+    'nghttp2'
+]
+#|else
+const LIBRARIES = ['nghttp2']
+#|]
+
+if not let $libnghttp2 = c.open(LIBRARIES, versions: [14, nil], env: 'TY_LIBNGHTTP2') {
+    throw RuntimeError('http: failed to load libnghttp2')
+}
+
+C! pub libnghttp2 fn {
+    int nghttp2_session_callbacks_new(void *out);
+    void nghttp2_session_callbacks_del(void *cbs);
+    void nghttp2_session_callbacks_set_on_begin_headers_callback(void *cbs, void *cb);
+    void nghttp2_session_callbacks_set_on_header_callback(void *cbs, void *cb);
+    void nghttp2_session_callbacks_set_on_frame_recv_callback(void *cbs, void *cb);
+    void nghttp2_session_callbacks_set_on_data_chunk_recv_callback(void *cbs, void *cb);
+    void nghttp2_session_callbacks_set_on_stream_close_callback(void *cbs, void *cb);
+    int nghttp2_option_new(void *out);
+    void nghttp2_option_del(void *opt);
+    void nghttp2_option_set_max_settings(void *opt, uint64_t n);
+    void nghttp2_option_set_no_auto_window_update(void *opt, int val);
+    void nghttp2_option_set_peer_max_concurrent_streams(void *opt, uint32_t val);
+    int nghttp2_session_server_new2(void *out, void *cbs, void *user, void *opt);
+    int nghttp2_session_client_new2(void *out, void *cbs, void *user, void *opt);
+    void nghttp2_session_del(void *session);
+    long nghttp2_session_mem_recv(void *session, void const *data, uint64_t len);
+    long nghttp2_session_mem_send(void *session, void *out);
+    int nghttp2_submit_settings(void *session, uint8_t flags, void const *iv, uint64_t niv);
+    int nghttp2_submit_response(void *session, int32_t id, void const *nva, uint64_t nvlen, void const *prd);
+    int32_t nghttp2_submit_request(void *session, void const *pri, void const *nva, uint64_t nvlen, void const *prd, void *data);
+    int nghttp2_submit_rst_stream(void *session, uint8_t flags, int32_t id, uint32_t code);
+    int nghttp2_submit_goaway(void *session, uint8_t flags, int32_t last, uint32_t code, void const *data, uint64_t len);
+    int nghttp2_submit_ping(void *session, uint8_t flags, void const *data);
+    int nghttp2_session_resume_data(void *session, int32_t id);
+    int nghttp2_session_consume(void *session, int32_t id, uint64_t size);
+    int nghttp2_session_consume_connection(void *session, uint64_t size);
+    int nghttp2_session_want_read(void *session);
+    int nghttp2_session_want_write(void *session);
+    int32_t nghttp2_session_get_last_proc_stream_id(void *session);
+    uint32_t nghttp2_session_get_remote_settings(void *session, int id);
+    int nghttp2_session_set_local_window_size(void *session, uint8_t flags, int32_t id, int32_t size);
+    char const *nghttp2_strerror(int code);
+    char const *nghttp2_http2_strerror(uint32_t code);
+}
+
+C! pub fn {
+    void *memcpy(void *dst, void const *src, uint64_t n);
+}
+
+pub const NGHTTP2_DATA          = 0x0
+pub const NGHTTP2_HEADERS       = 0x1
+pub const NGHTTP2_RST_STREAM    = 0x3
+pub const NGHTTP2_SETTINGS      = 0x4
+pub const NGHTTP2_PUSH_PROMISE  = 0x5
+pub const NGHTTP2_PING          = 0x6
+pub const NGHTTP2_GOAWAY        = 0x7
+
+pub const NGHTTP2_FLAG_END_STREAM = 0x1
+pub const NGHTTP2_FLAG_ACK        = 0x1
+pub const NGHTTP2_DATA_FLAG_EOF   = 0x1
+
+pub const NGHTTP2_HCAT_REQUEST       = 0
+pub const NGHTTP2_HCAT_RESPONSE      = 1
+pub const NGHTTP2_HCAT_PUSH_RESPONSE = 2
+pub const NGHTTP2_HCAT_HEADERS       = 3
+
+pub const NGHTTP2_NO_ERROR        = 0x0
+pub const NGHTTP2_PROTOCOL_ERROR  = 0x1
+pub const NGHTTP2_INTERNAL_ERROR  = 0x2
+pub const NGHTTP2_REFUSED_STREAM  = 0x7
+pub const NGHTTP2_CANCEL          = 0x8
+
+pub const NGHTTP2_ERR_DEFERRED                  = -508
+pub const NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE = -521
+pub const NGHTTP2_ERR_CALLBACK_FAILURE          = -902
+
+pub const SETTINGS_HEADER_TABLE_SIZE      = 1
+pub const SETTINGS_ENABLE_PUSH            = 2
+pub const SETTINGS_MAX_CONCURRENT_STREAMS = 3
+pub const SETTINGS_INITIAL_WINDOW_SIZE    = 4
+pub const SETTINGS_MAX_FRAME_SIZE         = 5
+pub const SETTINGS_MAX_HEADER_LIST_SIZE   = 6
+
+pub const NV_SIZE = 40
+
+pub const BODILESS = %{204, 304}
+
+/// Connection-specific fields that HTTP/2 forbids (RFC 9113 section 8.2.2).
+pub const HOP_BY_HOP = %{'connection', 'transfer-encoding', 'keep-alive', 'upgrade', 'proxy-connection', 'te', 'host'}
+
+pub fn frame-length(f: Ptr) -> Int { c.load(c.u64, f) }
+pub fn frame-id(f: Ptr) -> Int     { c.load(c.i32, f + 8) }
+pub fn frame-type(f: Ptr) -> Int   { c.load(c.u8, f + 12) }
+pub fn frame-flags(f: Ptr) -> Int  { c.load(c.u8, f + 13) }
+pub fn frame-cat(f: Ptr) -> Int    { c.load(c.i32, f + 56) }
+
+/// GOAWAY: (last stream id, error code); RST_STREAM: error code at the same offset.
+pub fn goaway-last(f: Ptr) -> Int  { c.load(c.i32, f + 16) }
+pub fn frame-error(f: Ptr) -> Int  { c.load(c.u32, (frame-type(f) == NGHTTP2_GOAWAY) ? f + 20 : f + 16) }
+
+pub fn error-name(code: Int) -> String {
+    c.str(nghttp2_http2_strerror(code))
+}
+
+pub fn strerror(code: Int) -> String {
+    c.str(nghttp2_strerror(code))
+}
+
+/// Packs `(name, value)` pairs into an `nghttp2_nv` array. Returns the array,
+/// its length, and the string storage the array points into (keep both
+/// alive until nghttp2 has copied them).
+pub fn nv-list(pairs: Array[(String, String)]) -> (Blob, Int, Blob) {
+    let strs = Blob()
+    let offs = []
+    for (k, v) in pairs {
+        let ko = #strs
+        strs.push(k)
+        let vo = #strs
+        strs.push(v)
+        offs.push((ko, k.size(), vo, v.size()))
+    }
+    strs.push(0)
+
+    let nva = Blob.zeros(NV_SIZE * max(#pairs, 1))
+    let base = int(strs.ptr())
+    for (ko, kn, vo, vn); i in offs {
+        c.pack(nva.ptr() + i * NV_SIZE, '=QQQQB7x', base + ko, base + vo, kn, vn, 0)
+    }
+
+    (nva, #pairs, strs)
+}
+
+/// A SETTINGS payload from `(id, value)` pairs.
+pub fn settings(pairs: Array[(Int, Int)]) -> (Blob, Int) {
+    let iv = Blob()
+    for (id, v) in pairs {
+        c.pack(iv, '=iI', id, v)
+    }
+    (iv, #pairs)
+}
+
+/// Session callbacks that forward to the object `dispatch(user)` returns,
+/// which implements `cb-begin(frame)`, `cb-header(frame, name, namelen,
+/// value, valuelen)`, `cb-frame(frame)`, `cb-chunk(id, data, len)`,
+/// `cb-close(id, code)` and `cb-read(id, buf, length, flags)`.
+pub class Callbacks {
+    cbs:  Ptr
+    read: Ptr
+    keep: Array[Ptr]
+
+    init(dispatch: (Ptr | nil) -> _) {
+        C! closure on-begin(session: c.ptr, frame: c.ptr, user: c.ptr) -> c.int {
+            match dispatch(user) {
+                nil => 0,
+                h   => h.cb-begin(frame)
+            }
+        }
+
+        C! closure on-header(
+            session: c.ptr,
+            frame: c.ptr,
+            name: c.ptr,
+            namelen: c.u64,
+            value: c.ptr,
+            valuelen: c.u64,
+            flags: c.u8,
+            user: c.ptr
+        ) -> c.int {
+            match dispatch(user) {
+                nil => 0,
+                h   => h.cb-header(frame, name, namelen, value, valuelen)
+            }
+        }
+
+        C! closure on-frame(session: c.ptr, frame: c.ptr, user: c.ptr) -> c.int {
+            match dispatch(user) {
+                nil => 0,
+                h   => h.cb-frame(frame)
+            }
+        }
+
+        C! closure on-chunk(
+            session: c.ptr,
+            flags: c.u8,
+            id: c.i32,
+            data: c.ptr,
+            len: c.u64,
+            user: c.ptr
+        ) -> c.int {
+            match dispatch(user) {
+                nil => 0,
+                h   => h.cb-chunk(id, data, len)
+            }
+        }
+
+        C! closure on-close(session: c.ptr, id: c.i32, code: c.u32, user: c.ptr) -> c.int {
+            match dispatch(user) {
+                nil => 0,
+                h   => h.cb-close(id, code)
+            }
+        }
+
+        C! closure on-read(
+            session: c.ptr,
+            id: c.i32,
+            buf: c.ptr,
+            length: c.u64,
+            flags: c.ptr,
+            source: c.ptr,
+            user: c.ptr
+        ) -> c.long {
+            match dispatch(user) {
+                nil => NGHTTP2_ERR_CALLBACK_FAILURE,
+                h   => h.cb-read(id, buf, length, flags)
+            }
+        }
+
+        let out = c.new-auto(c.ptr)
+        nghttp2_session_callbacks_new(out)
+        cbs = c.load(c.ptr, out)
+
+        nghttp2_session_callbacks_set_on_begin_headers_callback(cbs, on-begin)
+        nghttp2_session_callbacks_set_on_header_callback(cbs, on-header)
+        nghttp2_session_callbacks_set_on_frame_recv_callback(cbs, on-frame)
+        nghttp2_session_callbacks_set_on_data_chunk_recv_callback(cbs, on-chunk)
+        nghttp2_session_callbacks_set_on_stream_close_callback(cbs, on-close)
+
+        read = on-read
+        keep = [on-begin, on-header, on-frame, on-chunk, on-close, on-read]
+    }
+
+    /// An `nghttp2_data_provider` for stream `id` that reads through `cb-read`.
+    provider(id: Int) -> Blob {
+        c.pack(Blob(), '=qQ', id, int(read))
+    }
+}

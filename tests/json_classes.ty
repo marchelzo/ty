@@ -184,3 +184,26 @@ pub fn strings-and-whitespace() {
     assert(json.parse(Event, '{"type":"text","text":"' + long + '"}').text == long)
     assert(json.parse(Shapes, '[{"kind":"' + long + '","side":"' + long + '"}]')[0].kind == long)
 }
+
+class Custom {
+    items: Array[Int]
+
+    init(items: Array[Int]) {
+        self.items = items
+    }
+
+    __json__() -> _ {
+        %{'n': #items, 'items': items}
+    }
+}
+
+class Raw {
+    __json__() -> String {
+        '"raw"'
+    }
+}
+
+pub fn json-method-hook() {
+    assert(json.encode(Custom([1, 2])) == '{"n":2,"items":[1,2]}')
+    assert(json.encode([Raw(), %{'c': Custom([])}]) == '["raw",{"c":{"n":0,"items":[]}}]')
+}

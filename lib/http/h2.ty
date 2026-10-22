@@ -1,4 +1,4 @@
-import ffi as c (C!)
+import ffi as c
 import log
 import http.core (
     BodyWriter,
@@ -13,82 +13,7 @@ import http.core (
 )
 import http.wire (Request)
 import http.loop (Conn, READ)
-
-#|if __apple__
-const LIBRARIES = [
-    '/opt/homebrew/opt/libnghttp2/lib/libnghttp2.14.dylib',
-    '/usr/local/opt/libnghttp2/lib/libnghttp2.14.dylib',
-    '/opt/homebrew/lib/libnghttp2.14.dylib',
-    'nghttp2'
-]
-#|else
-const LIBRARIES = ['nghttp2']
-#|]
-
-if not let $libnghttp2 = c.open(LIBRARIES, versions: [14, nil], env: 'TY_LIBNGHTTP2') {
-    throw RuntimeError('http.h2: failed to load libnghttp2')
-}
-
-C! libnghttp2 fn {
-    int nghttp2_session_callbacks_new(void *out);
-    void nghttp2_session_callbacks_del(void *cbs);
-    void nghttp2_session_callbacks_set_on_begin_headers_callback(void *cbs, void *cb);
-    void nghttp2_session_callbacks_set_on_header_callback(void *cbs, void *cb);
-    void nghttp2_session_callbacks_set_on_frame_recv_callback(void *cbs, void *cb);
-    void nghttp2_session_callbacks_set_on_data_chunk_recv_callback(void *cbs, void *cb);
-    void nghttp2_session_callbacks_set_on_stream_close_callback(void *cbs, void *cb);
-    int nghttp2_option_new(void *out);
-    void nghttp2_option_del(void *opt);
-    void nghttp2_option_set_max_settings(void *opt, uint64_t n);
-    int nghttp2_session_server_new2(void *out, void *cbs, void *user, void *opt);
-    void nghttp2_session_del(void *session);
-    long nghttp2_session_mem_recv(void *session, void const *data, uint64_t len);
-    long nghttp2_session_mem_send(void *session, void *out);
-    int nghttp2_submit_settings(void *session, uint8_t flags, void const *iv, uint64_t niv);
-    int nghttp2_submit_response(void *session, int32_t id, void const *nva, uint64_t nvlen, void const *prd);
-    int nghttp2_submit_rst_stream(void *session, uint8_t flags, int32_t id, uint32_t code);
-    int nghttp2_submit_goaway(void *session, uint8_t flags, int32_t last, uint32_t code, void const *data, uint64_t len);
-    int nghttp2_session_resume_data(void *session, int32_t id);
-    int nghttp2_session_want_read(void *session);
-    int nghttp2_session_want_write(void *session);
-    int32_t nghttp2_session_get_last_proc_stream_id(void *session);
-    int nghttp2_session_set_local_window_size(void *session, uint8_t flags, int32_t id, int32_t size);
-    char const *nghttp2_strerror(int code);
-}
-
-C! fn {
-    void *memcpy(void *dst, void const *src, uint64_t n);
-}
-
-const NGHTTP2_DATA    = 0x0
-const NGHTTP2_HEADERS = 0x1
-
-const NGHTTP2_FLAG_END_STREAM = 0x1
-const NGHTTP2_DATA_FLAG_EOF   = 0x1
-const NGHTTP2_HCAT_REQUEST    = 0
-
-const NGHTTP2_NO_ERROR       = 0x0
-const NGHTTP2_PROTOCOL_ERROR = 0x1
-const NGHTTP2_INTERNAL_ERROR = 0x2
-const NGHTTP2_CANCEL         = 0x8
-
-const NGHTTP2_ERR_DEFERRED                  = -508
-const NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE = -521
-const NGHTTP2_ERR_CALLBACK_FAILURE          = -902
-
-const SETTINGS_MAX_CONCURRENT_STREAMS = 3
-const SETTINGS_INITIAL_WINDOW_SIZE    = 4
-const SETTINGS_MAX_FRAME_SIZE         = 5
-const SETTINGS_MAX_HEADER_LIST_SIZE   = 6
-
-const NV_SIZE = 40
-
-const BODILESS = %{204, 304}
-
-fn frame-id(f: Ptr) -> Int    { c.load(c.i32, f + 8) }
-fn frame-type(f: Ptr) -> Int  { c.load(c.u8, f + 12) }
-fn frame-flags(f: Ptr) -> Int { c.load(c.u8, f + 13) }
-fn frame-cat(f: Ptr) -> Int   { c.load(c.i32, f + 56) }
+import http.nghttp2 (..)
 
 fn session-of(user: Ptr | nil) -> H2 | nil {
     let $l = this-loop() or return nil
@@ -98,97 +23,10 @@ fn session-of(user: Ptr | nil) -> H2 | nil {
     }
 }
 
-class Callbacks {
-    cbs:  Ptr
-    read: Ptr
-    keep: Array[Ptr]
-
-    init() {
-        C! closure on-begin(session: c.ptr, frame: c.ptr, user: c.ptr) -> c.int {
-            match session-of(user) {
-                nil => 0,
-                h   => h.cb-begin(frame)
-            }
-        }
-
-        C! closure on-header(
-            session: c.ptr,
-            frame: c.ptr,
-            name: c.ptr,
-            namelen: c.u64,
-            value: c.ptr,
-            valuelen: c.u64,
-            flags: c.u8,
-            user: c.ptr
-        ) -> c.int {
-            match session-of(user) {
-                nil => 0,
-                h   => h.cb-header(frame, name, namelen, value, valuelen)
-            }
-        }
-
-        C! closure on-frame(session: c.ptr, frame: c.ptr, user: c.ptr) -> c.int {
-            match session-of(user) {
-                nil => 0,
-                h   => h.cb-frame(frame)
-            }
-        }
-
-        C! closure on-chunk(
-            session: c.ptr,
-            flags: c.u8,
-            id: c.i32,
-            data: c.ptr,
-            len: c.u64,
-            user: c.ptr
-        ) -> c.int {
-            match session-of(user) {
-                nil => 0,
-                h   => h.cb-chunk(id, data, len)
-            }
-        }
-
-        C! closure on-close(session: c.ptr, id: c.i32, code: c.u32, user: c.ptr) -> c.int {
-            match session-of(user) {
-                nil => 0,
-                h   => h.cb-close(id, code)
-            }
-        }
-
-        C! closure on-read(
-            session: c.ptr,
-            id: c.i32,
-            buf: c.ptr,
-            length: c.u64,
-            flags: c.ptr,
-            source: c.ptr,
-            user: c.ptr
-        ) -> c.long {
-            match session-of(user) {
-                nil => NGHTTP2_ERR_CALLBACK_FAILURE,
-                h   => h.cb-read(id, buf, length, flags)
-            }
-        }
-
-        let out = c.new-auto(c.ptr)
-        nghttp2_session_callbacks_new(out)
-        cbs = c.load(c.ptr, out)
-
-        nghttp2_session_callbacks_set_on_begin_headers_callback(cbs, on-begin)
-        nghttp2_session_callbacks_set_on_header_callback(cbs, on-header)
-        nghttp2_session_callbacks_set_on_frame_recv_callback(cbs, on-frame)
-        nghttp2_session_callbacks_set_on_data_chunk_recv_callback(cbs, on-chunk)
-        nghttp2_session_callbacks_set_on_stream_close_callback(cbs, on-close)
-
-        read = on-read
-        keep = [on-begin, on-header, on-frame, on-chunk, on-close, on-read]
-    }
-}
-
 let __tls::cb-cache: Callbacks | nil = nil
 
 fn callbacks() -> Callbacks {
-    cb-cache ?? (cb-cache = Callbacks())
+    cb-cache ?? (cb-cache = Callbacks(session-of))
 }
 
 class Stream {
@@ -252,11 +90,8 @@ fn header-list(rsp: Response | nil, status: Int, length: Int | nil, date: String
         }
         for k, v in r.headers {
             let name = k.lower()
-            match name {
-                'connection', 'transfer-encoding', 'keep-alive', 'upgrade', 'content-length', 'date', 'proxy-connection' => {
-                    continue
-                },
-                _ => {}
+            if HOP_BY_HOP.contains?(name) || name == 'content-length' || name == 'date' {
+                continue
             }
             match v {
                 s: String => pairs.push((name, s)),
@@ -269,24 +104,7 @@ fn header-list(rsp: Response | nil, status: Int, length: Int | nil, date: String
         pairs.push(('content-length', str(length)))
     }
 
-    let strs = Blob()
-    let offs = []
-    for (k, v) in pairs {
-        offs.push((#strs, k.size(), 0, 0))
-        strs.push(k)
-        let o = #strs
-        strs.push(v)
-        offs[-1] = (offs[-1].0, k.size(), o, v.size())
-    }
-    strs.push(0)
-
-    let nva = Blob.zeros(NV_SIZE * #pairs)
-    let base = int(strs.ptr())
-    for (ko, kn, vo, vn); i in offs {
-        c.pack(nva.ptr() + i * NV_SIZE, '=QQQQB7x', base + ko, base + vo, kn, vn, 0)
-    }
-
-    (nva, #pairs, strs)
+    nv-list(pairs)
 }
 
 pub class H2Exchange {
@@ -477,7 +295,7 @@ pub class H2 {
         nghttp2_option_del(option)
 
         if rc != 0 {
-            throw RuntimeError("http.h2: nghttp2_session_server_new2: {c.str(nghttp2_strerror(rc))}")
+            throw RuntimeError("http.h2: nghttp2_session_server_new2: {strerror(rc)}")
         }
 
         __session = c.load(c.ptr, out)
@@ -520,7 +338,7 @@ pub class H2 {
         while conn.buffered < high {
             let n = nghttp2_session_mem_send(s, __out)
             if n < 0 {
-                log::debug!("h2: mem_send failed: {c.str(nghttp2_strerror(n))}")
+                log::debug!("h2: mem_send failed: {strerror(n)}")
                 return conn.close()
             }
             if n == 0 {
@@ -769,14 +587,14 @@ pub class H2 {
         let (nva, n, strs) = header-list(rsp, status, length, conn.loop.date, conn.config.server-name)
 
         let prd = if body? {
-            let p = c.pack(Blob(), '=qQ', st.id, int(callbacks().read))
+            let p = callbacks().provider(st.id)
             st.prd = p
             p
         }
 
         let rc = nghttp2_submit_response(__session, st.id, nva, n, prd)
         if rc != 0 {
-            log::debug!("h2: submit_response failed: {c.str(nghttp2_strerror(rc))}")
+            log::debug!("h2: submit_response failed: {strerror(rc)}")
             return reset(st, NGHTTP2_INTERNAL_ERROR)
         }
 
@@ -808,7 +626,7 @@ pub class H2 {
         if conn.available > 0 {
             let n = nghttp2_session_mem_recv(s, conn.buf.ptr() + conn.head, conn.available)
             if n < 0 {
-                log::debug!("h2: mem_recv failed: {c.str(nghttp2_strerror(n))}")
+                log::debug!("h2: mem_recv failed: {strerror(n)}")
                 __pump()
                 return conn.close-after-flush()
             }

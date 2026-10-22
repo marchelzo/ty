@@ -231,6 +231,9 @@ class_setters(Ty *ty, int class);
 void
 class_finalize_all(Ty *ty);
 
+void
+class_finalize_from(Ty *ty, int first);
+
 Expr *
 FieldIdentifier(Expr const *field);
 

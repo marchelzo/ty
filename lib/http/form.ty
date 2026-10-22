@@ -1,4 +1,52 @@
 import path (Path)
+import ssl
+
+pub const MIME: Dict[String, String] = %{
+    'html':  'text/html; charset=utf-8',
+    'htm':   'text/html; charset=utf-8',
+    'css':   'text/css; charset=utf-8',
+    'js':    'text/javascript; charset=utf-8',
+    'mjs':   'text/javascript; charset=utf-8',
+    'json':  'application/json',
+    'map':   'application/json',
+    'xml':   'application/xml',
+    'txt':   'text/plain; charset=utf-8',
+    'md':    'text/markdown; charset=utf-8',
+    'csv':   'text/csv; charset=utf-8',
+    'svg':   'image/svg+xml',
+    'png':   'image/png',
+    'jpg':   'image/jpeg',
+    'jpeg':  'image/jpeg',
+    'gif':   'image/gif',
+    'webp':  'image/webp',
+    'avif':  'image/avif',
+    'ico':   'image/x-icon',
+    'bmp':   'image/bmp',
+    'woff':  'font/woff',
+    'woff2': 'font/woff2',
+    'ttf':   'font/ttf',
+    'otf':   'font/otf',
+    'wasm':  'application/wasm',
+    'pdf':   'application/pdf',
+    'zip':   'application/zip',
+    'gz':    'application/gzip',
+    'tar':   'application/x-tar',
+    'mp3':   'audio/mpeg',
+    'ogg':   'audio/ogg',
+    'wav':   'audio/wav',
+    'mp4':   'video/mp4',
+    'webm':  'video/webm',
+    'webmanifest': 'application/manifest+json'
+}
+
+pub fn mime-of(path: String) -> String {
+    let base = path.split('/')[-1]
+    match base.searchr('.') {
+        nil => 'application/octet-stream',
+        i   => MIME[base.slice(i + 1).lower()] ?? 'application/octet-stream'
+    }
+}
+
 
 pub use HttpHeaders = Dict[String, String | [String]]
 pub use HttpStatus  = {code: Int, text: String}
@@ -183,4 +231,94 @@ pub fn percent-decode(s: String) -> String {
         i += 1
     }
     out.str!()
+}
+
+fn quote-param(s: String) -> String {
+    s.sub(/["\\\r\n]/, c -> (c == '"') ? '%22' : ((c == '\\') ? '\\\\' : ' '))
+}
+
+pub fn multipart-boundary() -> String {
+    "ty-{ssl.random-bytes(16).hex()}"
+}
+
+/// One file part of a multipart/form-data body. `content` is a String,
+/// Blob or `Path` (read when the body is encoded).
+pub class FilePart {
+    filename:     String
+    content:      String | Blob | Path
+    content-type: String
+    headers:      Dict[String, String]
+
+    init(content: String | Blob | Path, filename: String | nil = nil, content-type: String | nil = nil, headers: Dict[String, String] = %{}) {
+        self.content      = content
+        self.filename     = filename ?? match content {
+            p: Path => p.name,
+            _       => 'file'
+        }
+        self.content-type = content-type ?? mime-of(self.filename)
+        self.headers      = headers
+    }
+
+    /// Accepts the shapes `files:` takes: a FilePart, a Path, a
+    /// `(filename, content)` / `(filename, content, type)` tuple, or a
+    /// record `{filename, content, content-type}`.
+    static of(x: _) -> FilePart {
+        match x {
+            f: FilePart          => f,
+            p: Path              => FilePart(p),
+            (name, data)         => FilePart(data, name),
+            (name, data, type)   => FilePart(data, name, type),
+            {content, *rest}     => FilePart(content, rest.?filename, rest.?content-type),
+            data: String | Blob  => FilePart(data),
+            other                => throw ValueError("http: cannot use {other} as a file part")
+        }
+    }
+
+    bytes() -> Blob {
+        match content {
+            p: Path   => p.read-bytes(),
+            b: Blob   => b,
+            s: String => Blob(s)
+        }
+    }
+}
+
+/// Encodes `fields` (name → value or array of values) and `files`
+/// (name → anything `FilePart.of` accepts, or an array of them) as
+/// multipart/form-data. Returns the body and its Content-Type.
+pub fn encode-multipart(fields: _ = nil, files: _ = nil, boundary: String = multipart-boundary()) -> (Blob, String) {
+    let out = Blob()
+    let pairs = fn (x: _) -> Array {
+        match x {
+            nil      => [],
+            d: Dict  => d.list(),
+            a: Array => a,
+            r        => members(r).list()
+        }
+    }
+
+    for (k, v) in pairs(fields) {
+        for one in ((v :: Array) ? v : [v]) {
+            out.push("--{boundary}\r\nContent-Disposition: form-data; name=\"{quote-param(str(k))}\"\r\n\r\n")
+            out.push((one :: Blob) ? one : str(one))
+            out.push('\r\n')
+        }
+    }
+
+    for (k, v) in pairs(files) {
+        for one in ((v :: Array) ? v : [v]) {
+            let f = FilePart.of(one)
+            out.push("--{boundary}\r\nContent-Disposition: form-data; name=\"{quote-param(str(k))}\"; filename=\"{quote-param(f.filename)}\"\r\n")
+            out.push("Content-Type: {f.content-type}\r\n")
+            for hk, hv in f.headers {
+                out.push("{hk}: {hv}\r\n")
+            }
+            out.push('\r\n')
+            out.push(f.bytes())
+            out.push('\r\n')
+        }
+    }
+
+    out.push("--{boundary}--\r\n")
+    (out, "multipart/form-data; boundary={boundary}")
 }

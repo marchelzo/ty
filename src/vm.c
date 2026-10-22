@@ -338,7 +338,8 @@ InitializeTy(Ty *ty, ThreadGroup *group)
         TySpinLockLock(ty->lock);
         ty->locked = true;
         ty->blocked = alloc0(sizeof *ty->blocked);
-        ty->group = group;
+        ty->group   = group;
+        ty->ty      = &xD;
 
         ty->gc_owner = ((group == &MainGroup) ? 1 : group->id) << 1;
 

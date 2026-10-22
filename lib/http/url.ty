@@ -1,0 +1,466 @@
+import http.form (decode-query, urlencode, percent-decode)
+
+const DEFAULT_PORTS = %{'http': 80, 'https': 443, 'ws': 80, 'wss': 443}
+
+const SPLIT = /^(?:([A-Za-z][A-Za-z0-9+.\-]*):)?(?:\/\/([^\/?#]*))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/sv
+
+const PATH_UNSAFE     = /%(?![0-9A-Fa-f]{2})|[^A-Za-z0-9\-._~!$&'()*+,;=:@\/%]/
+const QUERY_UNSAFE    = /%(?![0-9A-Fa-f]{2})|[^A-Za-z0-9\-._~!$&'()*+,;=:@\/?%]/
+const USERINFO_UNSAFE = /[^A-Za-z0-9\-._~!$&'()*+,;=%]/
+
+pub class InvalidURL < ValueError {
+    init(what: String) {
+        super("http: invalid URL: {what}")
+    }
+}
+
+fn escape-bytes(c: String) -> String {
+    [*Blob(c)].map(b -> "%{b:02X}").join('')
+}
+
+pub fn quote(s: String, unsafe: RegexV | Regex = PATH_UNSAFE) -> String {
+    s.sub(unsafe, escape-bytes)
+}
+
+const BASE         = 36
+const TMIN         = 1
+const TMAX         = 26
+const SKEW         = 38
+const DAMP         = 700
+const INITIAL_BIAS = 72
+const INITIAL_N    = 128
+
+fn adapt(delta: Int, points: Int, first?: Bool) -> Int {
+    let d = first? ? delta / DAMP : delta / 2
+    d += d / points
+    let k = 0
+    while d > ((BASE - TMIN) * TMAX) / 2 {
+        d /= BASE - TMIN
+        k += BASE
+    }
+    k + (((BASE - TMIN + 1) * d) / (d + SKEW))
+}
+
+fn digit(d: Int) -> String {
+    chr((d < 26) ? d + 97 : d + 22)
+}
+
+/// RFC 3492 Punycode encoding of one label (without the `xn--` prefix).
+pub fn punycode(label: String) -> String {
+    let cps: Array[Int] = [ord(c) for c in label.chars()]
+    let out = [chr(c) for c in cps if c < 128]
+    let b = #out
+    let h = b
+    let n = INITIAL_N
+    let delta = 0
+    let bias = INITIAL_BIAS
+
+    if b > 0 {
+        out.push('-')
+    }
+
+    while h < #cps {
+        let m = cps.filter(\_ >= n).min() ?? n
+        delta += (m - n) * (h + 1)
+        n = m
+        for c in cps {
+            if c < n {
+                delta += 1
+            }
+            if c == n {
+                let q = delta
+                let k = BASE
+                while true {
+                    let t = (k <= bias) ? TMIN : ((k >= bias + TMAX) ? TMAX : k - bias)
+                    if q < t {
+                        break
+                    }
+                    out.push(digit(t + (q - t) % (BASE - t)))
+                    q = (q - t) / (BASE - t)
+                    k += BASE
+                }
+                out.push(digit(q))
+                bias = adapt(delta, h + 1, h == b)
+                delta = 0
+                h += 1
+            }
+        }
+        delta += 1
+        n += 1
+    }
+
+    out.join('')
+}
+
+pub fn idna(host: String) -> String {
+    if host.match?(/^[\x00-\x7F]*$/) {
+        return host.lower()
+    }
+    host.lower().split('.').map(fn (label) {
+        label.match?(/^[\x00-\x7F]*$/) ? label : "xn--{punycode(label)}"
+    }).join('.')
+}
+
+fn remove-dots(path: String) -> String {
+    if !path.contains?('.') {
+        return path
+    }
+    let input = path.split('/')
+    let out = []
+    for seg; i in input {
+        let last? = i == #input - 1
+        match seg {
+            '.' => {
+                if last? {
+                    out.push('')
+                }
+            },
+            '..' => {
+                if #out > 1 || (#out == 1 && out[0] != '') {
+                    out.pop()
+                }
+                if last? {
+                    out.push('')
+                }
+            },
+            _ => out.push(seg)
+        }
+    }
+    let s = out.join('/')
+    (path.starts?('/') && !s.starts?('/')) ? "/{s}" : s
+}
+
+fn merge(base: URL, path: String) -> String {
+    if base.host != nil && base.path == '' {
+        return "/{path}"
+    }
+    match base.path.search(/\/[^\/]*$/) {
+        nil => path,
+        i   => base.path.slice(0, i + 1) + path
+    }
+}
+
+fn encode-params(params: _) -> String {
+    let pairs = match params {
+        s: String => return s,
+        d: Dict   => d.list(),
+        xs: Array => xs,
+        r         => members(r).list()
+    }
+    let out = []
+    for (k, v) in pairs {
+        match v {
+            nil => out.push(urlencode(str(k))),
+            vs: Array => for x in vs { out.push("{urlencode(str(k))}={urlencode(str(x))}") },
+            true  => out.push("{urlencode(str(k))}=true"),
+            false => out.push("{urlencode(str(k))}=false"),
+            x     => out.push("{urlencode(str(k))}={urlencode(str(x))}")
+        }
+    }
+    out.join('&')
+}
+
+/// A parsed absolute or relative URL (RFC 3986). Hosts are lower-cased and
+/// IDNA-encoded, and characters that are not valid in a component are
+/// percent-encoded; existing `%XX` escapes are kept as they are.
+///
+/// ```
+/// let u = URL('https://example.com/a/b?x=1')
+/// u.join('../c').str()            // https://example.com/c
+/// u.with(params: {y: 2}).query    // x=1&y=2
+/// ```
+pub class URL {
+    scheme:   String | nil
+    username: String | nil
+    password: String | nil
+    host:     String | nil
+    port:     Int | nil
+    path:     String
+    query:    String | nil
+    fragment: String | nil
+
+    init(
+        url: String | URL = '',
+        scheme: String | nil = nil,
+        host: String | nil = nil,
+        port: Int | nil = nil,
+        path: String | nil = nil,
+        query: String | nil = nil,
+        params: _ = nil,
+        fragment: String | nil = nil,
+        username: String | nil = nil,
+        password: String | nil = nil
+    ) {
+        match url {
+            u: URL => {
+                self.scheme   = u.scheme
+                self.username = u.username
+                self.password = u.password
+                self.host     = u.host
+                self.port     = u.port
+                self.path     = u.path
+                self.query    = u.query
+                self.fragment = u.fragment
+            },
+            s: String => __parse(s)
+        }
+
+        if scheme != nil {
+            self.scheme = scheme.lower()
+        }
+        if host != nil {
+            self.host = idna(host.sub(/^\[|\]$/, ''))
+        }
+        if port != nil {
+            self.port = port
+        }
+        if path != nil {
+            self.path = quote(path)
+        }
+        if query != nil {
+            self.query = quote(query, QUERY_UNSAFE)
+        }
+        if fragment != nil {
+            self.fragment = quote(fragment, QUERY_UNSAFE)
+        }
+        if username != nil {
+            self.username = quote(username, USERINFO_UNSAFE)
+        }
+        if password != nil {
+            self.password = quote(password, USERINFO_UNSAFE)
+        }
+        if params != nil {
+            let extra = encode-params(params)
+            if extra != '' {
+                self.query = (self.query == nil || self.query == '') ? extra : "{self.query}&{extra}"
+            }
+        }
+        if self.host != nil && self.path == '' && self.scheme != nil && DEFAULT_PORTS[self.scheme] != nil {
+            self.path = '/'
+        }
+    }
+
+    __parse(s: String) {
+        let text = s.strip()
+        let $found = text.match(SPLIT) or throw InvalidURL(s)
+        let m = found.groups + [nil] * (6 - #found.groups)
+
+        let sch  = m[1]
+        let auth = m[2]
+        let pth  = m[3]
+        let q    = m[4]
+        let frag = m[5]
+
+        scheme   = (sch == nil) ? nil : sch.lower()
+        username = nil
+        password = nil
+        host     = nil
+        port     = nil
+        path     = (pth == nil) ? '' : quote(pth)
+        query    = (q == nil) ? nil : quote(q, QUERY_UNSAFE)
+        fragment = (frag == nil) ? nil : quote(frag, QUERY_UNSAFE)
+
+        let $authority = auth or return
+
+        let hostport = match authority.search(/@[^@]*$/) {
+            nil => authority,
+            i   => do {
+                let userinfo = authority.slice(0, i)
+                match userinfo.search(':') {
+                    nil => username = quote(userinfo, USERINFO_UNSAFE),
+                    j   => {
+                        username = quote(userinfo.slice(0, j), USERINFO_UNSAFE)
+                        password = quote(userinfo.slice(j + 1), USERINFO_UNSAFE)
+                    }
+                }
+                authority.slice(i + 1)
+            }
+        }
+
+        if hostport.starts?('[') {
+            let $close = hostport.search(']') or throw InvalidURL(s)
+            host = hostport.slice(1, close - 1).lower()
+            let rest = hostport.slice(close + 1)
+            if rest != '' {
+                if !rest.match?(/^:\d*$/) {
+                    throw InvalidURL(s)
+                }
+                port = (rest == ':') ? nil : int(rest.slice(1), 10)
+            }
+        } else {
+            match hostport.search(/:[^:]*$/) {
+                nil => host = idna(percent-decode(hostport)),
+                i   => {
+                    let p = hostport.slice(i + 1)
+                    if !p.match?(/^\d*$/) {
+                        throw InvalidURL(s)
+                    }
+                    host = idna(percent-decode(hostport.slice(0, i)))
+                    port = (p == '') ? nil : int(p, 10)
+                }
+            }
+        }
+
+        if host != nil && host.match?(/[\x00-\x20#\/<>?@\[\\\]^|]/) {
+            throw InvalidURL(s)
+        }
+
+        if port != nil && (port < 0 || port > 65535) {
+            throw InvalidURL(s)
+        }
+    }
+
+    absolute? -> Bool {
+        scheme != nil && host != nil
+    }
+
+    relative? -> Bool {
+        !absolute?
+    }
+
+    secure? -> Bool {
+        scheme == 'https' || scheme == 'wss'
+    }
+
+    default-port -> Int | nil {
+        DEFAULT_PORTS[scheme ?? '']
+    }
+
+    /// The explicit port, or the scheme's default.
+    effective-port -> Int | nil {
+        port ?? default-port
+    }
+
+    /// Host with brackets around IPv6 literals.
+    host-literal -> String {
+        let h = host ?? ''
+        h.contains?(':') ? "[{h}]" : h
+    }
+
+    /// Host plus the port when it is not the scheme's default (the Host header).
+    authority -> String {
+        (port == nil || port == default-port) ? host-literal : "{host-literal}:{port}"
+    }
+
+    origin -> String {
+        "{scheme}://{authority}"
+    }
+
+    /// Path and query, as sent in a request line.
+    target -> String {
+        let p = (path == '') ? '/' : path
+        (query == nil) ? p : "{p}?{query}"
+    }
+
+    userinfo -> String | nil {
+        match (username, password) {
+            (nil, _)  => nil,
+            (u, nil)  => u,
+            (u, p)    => "{u}:{p}"
+        }
+    }
+
+    /// Decoded query parameters.
+    params -> Dict[String, _] {
+        (query == nil || query == '') ? %{} : decode-query(query)
+    }
+
+    /// Resolves `ref` against this URL (RFC 3986 section 5.2).
+    join(ref: String | URL) -> URL {
+        let r = (ref :: URL) ? ref : URL(ref)
+
+        let t = URL()
+
+
+        if r.scheme != nil {
+            t.scheme   = r.scheme
+            t.__authority-from(r)
+            t.path     = remove-dots(r.path)
+            t.query    = r.query
+        } else {
+            if r.host != nil {
+                t.__authority-from(r)
+                t.path  = remove-dots(r.path)
+                t.query = r.query
+            } else {
+                if r.path == '' {
+                    t.path  = path
+                    t.query = r.query ?? query
+                } else {
+                    t.path  = r.path.starts?('/') ? remove-dots(r.path) : remove-dots(merge(self, r.path))
+                    t.query = r.query
+                }
+                t.__authority-from(self)
+            }
+            t.scheme = scheme
+        }
+
+        t.fragment = r.fragment
+
+        if t.host != nil && t.path == '' {
+            t.path = '/'
+        }
+
+        t
+    }
+
+    __authority-from(u: URL) {
+        username = u.username
+        password = u.password
+        host     = u.host
+        port     = u.port
+    }
+
+    /// A copy with the given components replaced; `params` are appended to
+    /// the query.
+    with(%kwargs) -> URL {
+        URL(self, **kwargs)
+    }
+
+    /// A copy without user info or fragment.
+    without-credentials() -> URL {
+        let u = URL(self)
+        u.username = nil
+        u.password = nil
+        u.fragment = nil
+        u
+    }
+
+    same-origin?(other: URL) -> Bool {
+        scheme == other.scheme && host == other.host && effective-port == other.effective-port
+    }
+
+    __str__() -> String {
+        let out = []
+        if scheme != nil {
+            out.push("{scheme}:")
+        }
+        if host != nil {
+            out.push('//')
+            if let $ui = userinfo {
+                out.push("{ui}@")
+            }
+            out.push(authority)
+        }
+        out.push(path)
+        if query != nil {
+            out.push("?{query}")
+        }
+        if fragment != nil {
+            out.push("#{fragment}")
+        }
+        out.join('')
+    }
+
+    __repr__() -> String {
+        "URL('{self}')"
+    }
+
+    ==(other: _) -> Bool {
+        match other {
+            u: URL    => str(self) == str(u),
+            s: String => str(self) == s,
+            _         => false
+        }
+    }
+}

@@ -1,0 +1,217 @@
+/**
+ * Terminal rendering of HTTP messages (HTTPie-style): colored start lines
+ * and headers, pretty-printed and highlighted JSON, decoded forms, and
+ * summaries for binary bodies. Used by `Response.show()` on the client and
+ * `Request.show()` on the server.
+ *
+ * Color is on when stdout is a terminal and `NO_COLOR` is unset; force it
+ * with `color: true | false`.
+ */
+import os
+import json
+import chalk (chalk, escape)
+import http.form (decode-query)
+import http.status (status-name)
+
+/// Chalk styles for each element; reassign entries to restyle output.
+pub THEME = %{
+    'method':   '#7daea3 bold',
+    'url':      '#d4be98',
+    'version':  '#928374',
+    'ok':       '#a9b665 bold',
+    'redirect': '#d8a657 bold',
+    'client':   '#e78a4e bold',
+    'server':   '#ea6962 bold',
+    'name':     '#7daea3',
+    'value':    '#d4be98',
+    'key':      '#7daea3 bold',
+    'str':      '#a9b665',
+    'num':      '#d3869b',
+    'lit':      '#d8a657',
+    'punct':    '#928374',
+    'dim':      '#928374'
+}
+
+pub fn color?(fd: Int = 1) -> Bool {
+    getenv('NO_COLOR') == nil && getenv('TERM') != 'dumb' && os.isatty(fd)
+}
+
+class Paint {
+    on: Bool
+
+    init(on: Bool) {
+        self.on = on
+    }
+
+    __call__(style: String, s: String) -> String {
+        on ? "[{THEME[style] ?? style}]{escape(s)}[/]" : s
+    }
+
+    render(markup: String) -> String {
+        on ? chalk.render(markup, plain: false) : markup
+    }
+}
+
+fn status-style(code: Int) -> String {
+    if code < 300 {
+        'ok'
+    } else if code < 400 {
+        'redirect'
+    } else if code < 500 {
+        'client'
+    } else {
+        'server'
+    }
+}
+
+pub fn request-line(method: String, target: String, version: String, color: Bool) -> String {
+    let p = Paint(color)
+    p.render("{p('method', method)} {p('url', target)} {p('version', version)}")
+}
+
+pub fn status-line(version: String, status: Int, reason: String | nil, color: Bool) -> String {
+    let p = Paint(color)
+    let r = (reason == nil || reason == '') ? status-name(status) : reason
+    p.render("{p('version', version)} {p(status-style(status), "{status} {r}")}")
+}
+
+/// `pairs` are `(name, value)` tuples (anything iterable that yields them).
+pub fn header-lines(pairs: _, color: Bool) -> Array[String] {
+    let p = Paint(color)
+    [ p.render("{p('name', name)}{p('punct', ':')} {p('value', value)}") for (name, value) in pairs ]
+}
+
+fn json-string(s: String) -> String {
+    json.encode(s)
+}
+
+fn json-lines(x: _, p: Paint, indent: Int, depth: Int, out: Array[String], prefix: String, suffix: String) {
+    let pad = ' ' * (indent * depth)
+    match x {
+        d: Dict => {
+            if #d == 0 {
+                out.push("{pad}{prefix}{p('punct', '{}')}{suffix}")
+                return
+            }
+            out.push("{pad}{prefix}{p('punct', '{')}")
+            let n = #d
+            for k, v; i in d {
+                let comma = (i < n - 1) ? p('punct', ',') : ''
+                json-lines(v, p, indent, depth + 1, out, "{p('key', json-string(str(k)))}{p('punct', ':')} ", comma)
+            }
+            out.push("{pad}{p('punct', '}')}{suffix}")
+        },
+        a: Array => {
+            if #a == 0 {
+                out.push("{pad}{prefix}{p('punct', '[]')}{suffix}")
+                return
+            }
+            out.push("{pad}{prefix}{p('punct', '[')}")
+            for v; i in a {
+                let comma = (i < #a - 1) ? p('punct', ',') : ''
+                json-lines(v, p, indent, depth + 1, out, '', comma)
+            }
+            out.push("{pad}{p('punct', ']')}{suffix}")
+        },
+        s: String     => out.push("{pad}{prefix}{p('str', json-string(s))}{suffix}"),
+        n: Int | Float => out.push("{pad}{prefix}{p('num', json.encode(n))}{suffix}"),
+        true          => out.push("{pad}{prefix}{p('lit', 'true')}{suffix}"),
+        false         => out.push("{pad}{prefix}{p('lit', 'false')}{suffix}"),
+        nil           => out.push("{pad}{prefix}{p('lit', 'null')}{suffix}"),
+        other         => out.push("{pad}{prefix}{p('str', json-string(str(other)))}{suffix}")
+    }
+}
+
+/// Pretty-prints a JSON value with syntax highlighting.
+pub fn pretty-json(x: _, color: Bool = color?(), indent: Int = 2) -> String {
+    let out = []
+    let p = Paint(color)
+    json-lines(x, p, indent, 0, out, '', '')
+    p.render(out.join('\n'))
+}
+
+fn json-type?(ctype: String) -> Bool {
+    let t = ctype.split(';')[0].strip().lower()
+    t == 'application/json' || t.ends?('+json') || t == 'text/json' || t == 'application/x-ndjson'
+}
+
+fn text-type?(ctype: String) -> Bool {
+    let t = ctype.split(';')[0].strip().lower()
+    t.starts?('text/')
+ || t.ends?('+xml')
+ || t == 'application/xml'
+ || t == 'application/javascript'
+ || t == 'application/x-www-form-urlencoded'
+ || t == 'application/graphql'
+ || t == 'image/svg+xml'
+}
+
+fn printable?(b: Blob) -> Bool {
+    let n = min(#b, 1024)
+    let bad = 0
+    for i in ..n {
+        let c = b[i]
+        if c == 0 || (c < 32 && c != 9 && c != 10 && c != 13) {
+            bad += 1
+        }
+    }
+    bad == 0
+}
+
+fn clip(text: String, limit: Int | nil, p: Paint) -> String {
+    match limit {
+        nil => text,
+        n and text.size() <= n => text,
+        n => text.slice(0, n) + '\n' + p.render(p('dim', "… {text.size() - n} more characters"))
+    }
+}
+
+/// Renders a body for display, formatting it by content type. `limit`
+/// caps the number of characters shown (nil for no limit).
+pub fn body(data: Blob | String | nil, content-type: String | nil, color: Bool = color?(), limit: Int | nil = 8192) -> String {
+    let p = Paint(color)
+    let b = match data {
+        nil       => return '',
+        s: String => Blob(s),
+        b: Blob   => b
+    }
+    if #b == 0 {
+        return ''
+    }
+    let ctype = content-type ?? ''
+
+    if json-type?(ctype) || (ctype == '' && (b[0] == 123 || b[0] == 91)) {
+        let text = b.str(lossy: true)
+        if ctype.contains?('ndjson') {
+            let lines = text.split('\n').filter(\_ != '')
+            let parsed = lines.map(l -> (try { pretty-json(json.parse(l), color, indent: 0).sub('\n', ' ') }) ?? l)
+            return clip(parsed.join('\n'), limit, p)
+        }
+        if let $v = (try { json.parse(text) }) {
+            return clip(pretty-json(v, color), limit, p)
+        }
+        return clip(text, limit, p)
+    }
+
+    if ctype.lower().starts?('application/x-www-form-urlencoded') {
+        let q = decode-query(b.str(lossy: true))
+        return clip(p.render([ "{p('key', k)}{p('punct', '=')}{p('str', str(v))}" for k, v in q ].join('\n')), limit, p)
+    }
+
+    if text-type?(ctype) || (ctype == '' && printable?(b)) {
+        return clip(b.str(lossy: true), limit, p)
+    }
+
+    p.render(p('dim', "[binary data not shown: {#b} bytes{(ctype == '') ? '' : ", {ctype}"}]"))
+}
+
+/// A full message: start line, headers, a blank line, and the body.
+pub fn message(start: String, headers: _, data: Blob | String | nil, content-type: String | nil, color: Bool, limit: Int | nil = 8192, body?: Bool = true) -> String {
+    let lines = [start, *header-lines(headers, color)]
+    let text = body? ? body(data, content-type, color, limit) : ''
+    if text != '' {
+        lines.push('')
+        lines.push(text)
+    }
+    lines.join('\n')
+}

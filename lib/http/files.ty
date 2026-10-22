@@ -3,43 +3,7 @@ import time
 import http.core (Response, HttpError, http-date, this-loop)
 import http.wire (Request)
 
-pub const MIME: Dict[String, String] = %{
-    'html':  'text/html; charset=utf-8',
-    'htm':   'text/html; charset=utf-8',
-    'css':   'text/css; charset=utf-8',
-    'js':    'text/javascript; charset=utf-8',
-    'mjs':   'text/javascript; charset=utf-8',
-    'json':  'application/json',
-    'map':   'application/json',
-    'xml':   'application/xml',
-    'txt':   'text/plain; charset=utf-8',
-    'md':    'text/markdown; charset=utf-8',
-    'csv':   'text/csv; charset=utf-8',
-    'svg':   'image/svg+xml',
-    'png':   'image/png',
-    'jpg':   'image/jpeg',
-    'jpeg':  'image/jpeg',
-    'gif':   'image/gif',
-    'webp':  'image/webp',
-    'avif':  'image/avif',
-    'ico':   'image/x-icon',
-    'bmp':   'image/bmp',
-    'woff':  'font/woff',
-    'woff2': 'font/woff2',
-    'ttf':   'font/ttf',
-    'otf':   'font/otf',
-    'wasm':  'application/wasm',
-    'pdf':   'application/pdf',
-    'zip':   'application/zip',
-    'gz':    'application/gzip',
-    'tar':   'application/x-tar',
-    'mp3':   'audio/mpeg',
-    'ogg':   'audio/ogg',
-    'wav':   'audio/wav',
-    'mp4':   'video/mp4',
-    'webm':  'video/webm',
-    'webmanifest': 'application/manifest+json'
-}
+pub import http.form (MIME, mime-of)
 
 const S_IFMT  = 0o170000
 const S_IFREG = 0o100000
@@ -47,14 +11,6 @@ const S_IFDIR = 0o040000
 
 const INLINE_MAX = 64 * 1024
 const CHUNK      = 256 * 1024
-
-pub fn mime-of(path: String) -> String {
-    let base = path.split('/')[-1]
-    match base.searchr('.') {
-        nil => 'application/octet-stream',
-        i   => MIME[base.slice(i + 1).lower()] ?? 'application/octet-stream'
-    }
-}
 
 fn regular?(st: _) -> Bool {
     (st.mode & S_IFMT) == S_IFREG

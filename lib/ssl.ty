@@ -88,6 +88,7 @@ C! libssl fn {
     void SSL_set_bio(void *ssl, void *rbio, void *wbio);
     int SSL_set_fd(void *ssl, int fd);
     int SSL_set1_host(void *ssl, char const *host);
+    void *SSL_get0_param(void *ssl);
     void *SSL_set_SSL_CTX(void *ssl, void *ctx);
     int SSL_do_handshake(void *ssl);
     int SSL_is_init_finished(void *ssl);
@@ -107,6 +108,7 @@ C! libssl fn {
 }
 
 C! libcrypto fn {
+    int X509_VERIFY_PARAM_set1_ip_asc(void *param, char const *ip);
     void *BIO_s_mem(void);
     void *BIO_new(void *type);
     void *BIO_new_mem_buf(void const *buf, int len);
@@ -558,8 +560,12 @@ fn new-ssl(ctx: Context, host: ?String) -> Ptr {
     } else {
         SSL_set_connect_state(ssl)
         if host != nil {
-            SSL_ctrl(ssl, SSL_CTRL_SET_TLSEXT_HOSTNAME, TLSEXT_NAMETYPE_host_name, host.cstr())
-            SSL_set1_host(ssl, host.cstr())
+            if host.contains?(':') || host.match?(/^\d+\.\d+\.\d+\.\d+$/) {
+                X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(ssl), host.cstr())
+            } else {
+                SSL_ctrl(ssl, SSL_CTRL_SET_TLSEXT_HOSTNAME, TLSEXT_NAMETYPE_host_name, host.cstr())
+                SSL_set1_host(ssl, host.cstr())
+            }
         }
     }
 

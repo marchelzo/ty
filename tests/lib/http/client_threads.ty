@@ -1,0 +1,24 @@
+import http
+import http.client as client (Client, Response)
+import ssl
+import os
+import _client (serve, write-file)
+
+let (CERT, KEY) = ssl.self-signed()
+let CA = "/tmp/ty-http-client-threads-ca-{os.getpid()}.pem"
+write-file(CA, CERT)
+
+pub fn first-http2-use-on-worker-threads() {
+    serve(fn (srv) {
+        srv.get('/', (req, rsp) -> rsp.plain('x' * 1000))
+    }, fn (srv) {
+        let c = Client(base-url: srv.url, verify: CA)
+        let rs = c.parallel(['/'] * 8, workers: 8)
+        assert(rs.all?(r -> (r :: Response) && r.http-version == 'HTTP/2'))
+        for ..1500 {
+            assert(#c.get('/').content == 1000)
+            let junk = [Blob.zeros(1000) for ..20]
+        }
+        c.close()
+    }, tls: {cert: CERT, key: KEY}, threads: 2)
+}

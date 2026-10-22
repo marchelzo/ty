@@ -582,6 +582,7 @@ pub class Loop {
     __accepting: Bool
     __stopping:  Bool
     __done:      Bool
+    __stale?:    Bool
     __closed?:   Bool
     __files:     Dict[Int, (Task | nil, Blob)]
     __file-seq:  Int
@@ -612,6 +613,7 @@ pub class Loop {
         __accepting  = false
         __stopping   = false
         __done       = false
+        __stale?     = false
         __closed?    = false
         __files      = %{}
         __file-seq   = 0
@@ -856,6 +858,10 @@ pub class Loop {
     }
 
     __dispatch(user: Int, res: Int, flags: Int) {
+        if __stale? {
+            __stale? = false
+            now = time.now()
+        }
         let slot = user >> OP_BITS
         match user & OP_MASK {
             OP_RECV => {
@@ -1013,6 +1019,7 @@ pub class Loop {
 
         try {
             while !__done {
+                __stale? = true
                 backend.wait(__next-timeout(), __dispatch)
                 now = time.now()
                 __tick-date()

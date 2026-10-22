@@ -1,0 +1,263 @@
+fn header-safe!(s: String) -> String {
+    if s.contains?('\r') || s.contains?('\n') || s.contains?('\x00') {
+        throw ValueError("http: invalid character in header: {s.slice(0, 64)}")
+    }
+    s
+}
+
+fn kebab(name: String) -> String {
+    name.sub(/[a-z0-9][A-Z]/, m -> "{m[0]}-{m[1].lower()}")
+}
+
+/// Ordered, case-insensitive, multi-valued HTTP headers. Names keep the
+/// spelling they were added with; lookups ignore case.
+///
+/// ```
+/// let h = Headers(%{'Accept': 'text/html'})
+/// h.add('Set-Cookie', 'a=1')
+/// h.add('set-cookie', 'b=2')
+/// h['accept']             // 'text/html'
+/// h.all('Set-Cookie')     // ['a=1', 'b=2']
+/// ```
+///
+/// Anything accepted by the constructor (a Dict, a record, an array of
+/// pairs, or another Headers) can be passed wherever headers are expected.
+pub class Headers {
+    __items: Array[(String, String)]
+
+    init(src: _ = nil) {
+        __items = []
+        if src != nil {
+            update(src)
+        }
+    }
+
+    /// Wraps already-validated pairs without copying or checking them.
+    static raw(pairs: Array[(String, String)]) -> Headers {
+        let h = Headers()
+        h.__items = pairs
+        h
+    }
+
+    static of(src: _) -> Headers {
+        match src {
+            h: Headers => h,
+            _          => Headers(src)
+        }
+    }
+
+    __index(name: String) -> Int | nil {
+        let want = name.lower()
+        for (k, _); i in __items {
+            if k.lower() == want {
+                return i
+            }
+        }
+        nil
+    }
+
+    /// The value of `name`; repeated fields are joined with `, `.
+    [](name: String) -> String | nil {
+        get(name)
+    }
+
+    []=(name: String, value: _) -> _ {
+        set(name, value)
+        value
+    }
+
+    get(name: String, default: String | nil = nil) -> String | nil {
+        let want = name.lower()
+        let found = nil
+        for (k, v) in __items {
+            if k.lower() == want {
+                found = (found == nil) ? v : "{found}, {v}"
+            }
+        }
+        found ?? default
+    }
+
+    /// The first value of `name`.
+    first(name: String) -> String | nil {
+        match __index(name) {
+            nil => nil,
+            i   => __items[i].1
+        }
+    }
+
+    /// Every value of `name`, in order.
+    all(name: String) -> Array[String] {
+        let want = name.lower()
+        [v for (k, v) in __items if k.lower() == want]
+    }
+
+    /// Replaces every field named `name` with one field. `nil` removes it;
+    /// an Array sets one field per element.
+    set(name: String, value: _) -> Headers {
+        let want = name.lower()
+        match __index(name) {
+            nil => {
+                if value != nil {
+                    __push(name, value)
+                }
+            },
+            i => {
+                let k = __items[i].0
+                __items = [p for p; j in __items if j < i || p.0.lower() != want]
+                if value != nil {
+                    let tail = __items.splice(i, #__items - i)
+                    __push(k, value)
+                    __items += tail
+                }
+            }
+        }
+        self
+    }
+
+    /// Sets `name` only when it is absent.
+    setdefault(name: String, value: _) -> Headers {
+        if !contains?(name) {
+            __push(name, value)
+        }
+        self
+    }
+
+    add(name: String, value: _) -> Headers {
+        __push(name, value)
+        self
+    }
+
+    __push(name: String, value: _) {
+        match value {
+            vs: Array => for v in vs { __items.push((header-safe!(name), header-safe!(str(v)))) },
+            v         => __items.push((header-safe!(name), header-safe!(str(v))))
+        }
+    }
+
+    remove(name: String) -> Headers {
+        let want = name.lower()
+        __items = [p for p in __items if p.0.lower() != want]
+        self
+    }
+
+    contains?(name: String) -> Bool {
+        __index(name) != nil
+    }
+
+    /// Merges `other`, replacing fields that it names.
+    update(other: _) -> Headers {
+        let pairs = match other {
+            nil        => [],
+            h: Headers => h.items(),
+            d: Dict    => d.list(),
+            xs: Array  => xs,
+            r          => members(r).list().map(p -> (kebab(p.0), p.1))
+        }
+        let seen = %{}
+        for (k, v) in pairs {
+            let key = str(k)
+            if seen[key.lower()] == nil {
+                seen[key.lower()] = true
+                remove(key)
+            }
+            if v != nil {
+                __push(key, v)
+            }
+        }
+        self
+    }
+
+    /// Adds every field of `other`, keeping existing ones.
+    extend(other: _) -> Headers {
+        for (k, v) in Headers.of(other).items() {
+            __items.push((k, v))
+        }
+        self
+    }
+
+    copy() -> Headers {
+        let h = Headers()
+        h.__items = [*__items]
+        h
+    }
+
+    items() -> Array[(String, String)] {
+        [*__items]
+    }
+
+    names() -> Array[String] {
+        let seen = %{}
+        let out = []
+        for (k, _) in __items {
+            if seen[k.lower()] == nil {
+                seen[k.lower()] = true
+                out.push(k)
+            }
+        }
+        out
+    }
+
+    /// Lower-cased `Dict` with repeated fields as arrays (the server's
+    /// `HttpHeaders` shape).
+    dict() -> Dict[String, String | Array[String]] {
+        let out = %{}
+        for (k, v) in __items {
+            let name = k.lower()
+            match out[name] {
+                nil               => out[name] = v,
+                vs: Array[String] => vs.push(v),
+                one               => out[name] = [one, v]
+            }
+        }
+        out
+    }
+
+    keys() -> Array[String] {
+        names()
+    }
+
+    values() -> Array[String] {
+        [v for (_, v) in __items]
+    }
+
+    __json__() -> _ {
+        let out = %{}
+        for (k, v) in __items {
+            match out[k] {
+                nil               => out[k] = v,
+                vs: Array[String] => vs.push(v),
+                one               => out[k] = [one, v]
+            }
+        }
+        out
+    }
+
+    __iter__*() {
+        for p in __items {
+            yield p
+        }
+    }
+
+    #() -> Int {
+        #__items
+    }
+
+    empty? -> Bool {
+        #__items == 0
+    }
+
+    ==(other: _) -> Bool {
+        match other {
+            h: Headers => __items.map(p -> (p.0.lower(), p.1)) == h.items().map(p -> (p.0.lower(), p.1)),
+            _          => false
+        }
+    }
+
+    __str__() -> String {
+        __items.map(p -> "{p.0}: {p.1}").join('\r\n')
+    }
+
+    __repr__() -> String {
+        "Headers({__items})"
+    }
+}
