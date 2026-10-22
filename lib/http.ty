@@ -341,7 +341,7 @@ pub class Server {
         if self.config.h2 {
             match core.optional-module('http/h2', 'session') {
                 Ok(f)  => __h2 = f,
-                Err(e) => log::warn!("HTTP/2 disabled", err: e)
+                Err(e) => log::warn!("HTTP/2 disabled", reason: e)
             }
         }
 

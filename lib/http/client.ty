@@ -971,7 +971,7 @@ pub class Response {
             try {
                 b.close()
             } catch e {
-                log::debug!("http: closing response body: {e}")
+                log::debug!("error closing response body", err: e)
             }
         }
         if elapsed == 0.0 {
@@ -2445,7 +2445,7 @@ pub class HTTPTransport {
                 Ok(f)  => __h2 = f,
                 Err(e) => {
                     __h2-err = e
-                    log::warn!("HTTP/2 disabled: {e}")
+                    log::warn!("HTTP/2 disabled", reason: e, @once)
                 }
             }
         }
