@@ -1,0 +1,48 @@
+class Knob {
+    v: Int
+
+    init(v) {
+        self.v = v
+    }
+
+    __repr__() { "Knob({v})" }
+    __str__()  { "knob" }
+}
+
+pub fn fmt-repr-uses-show() {
+    let k = Knob(7)
+    assert(fmt('%?', k) == show(k, color=false))
+    assert(fmt('%?', 'hi') == "'hi'")
+    assert(fmt('%? %?', 42, 1.5) == '42 1.5')
+    assert(fmt('%?', [1, 'x', k]) == "[1, 'x', Knob(7)]")
+}
+
+pub fn fmt-repr-pads-and-clips() {
+    let k = Knob(7)
+    assert(fmt('[%10?]', k) == '[   Knob(7)]')
+    assert(fmt('[%-10?]', k) == '[Knob(7)   ]')
+    assert(fmt('[%.3?]', 'hello') == "['he]")
+    assert(fmt('[%*?]', 6, 'x') == "[   'x']")
+}
+
+pub fn interpolated-repr() {
+    let k = Knob(7)
+    let n = 10
+    let s = 'hi'
+    let d = %{'k': k}
+    assert("{k} {k:?}" == 'knob Knob(7)')
+    assert("{s:?} {42:?} {1.5:?}" == "'hi' 42 1.5")
+    assert("{[k]:?} {d:?}" == "[Knob(7)] {show(d, color=false)}")
+    assert("[{k:>10?}]" == '[   Knob(7)]')
+    assert("[{s:^6?}]" == "[ 'hi' ]")
+    assert("[{k:<{n}?}]" == '[Knob(7)   ]')
+}
+
+pub fn interpolated-repr-of-nil() {
+    let x = nil
+    let n = 6
+    assert("{nil:?}" == 'nil')
+    assert("[{x:>5?}]" == '[  nil]')
+    assert("[{x:<{n}?}]" == '[nil   ]')
+    assert("{[x, 1]:?}" == '[nil, 1]')
+}
