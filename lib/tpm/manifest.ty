@@ -3,6 +3,7 @@ import toml
 import path (Path)
 import tpm.core (TpmError, fail, real)
 import tpm.semver (Version, Req, SemverError)
+import tpm.platform as plat
 
 pub const FILE = 'ty.toml'
 
@@ -11,19 +12,10 @@ const NAME = /^[a-z][a-z0-9_]*$/
 pub class Dep {
     alias:   String
     package: String
-    req:     Req | nil
-    path:    Path | nil
-    git:     String | nil
-    rev:     String | nil
-
-    init(alias: String, package: String, req: Req | nil = nil, path: Path | nil = nil, git: String | nil = nil, rev: String | nil = nil) {
-        self.alias   = alias
-        self.package = package
-        self.req     = req
-        self.path    = path
-        self.git     = git
-        self.rev     = rev
-    }
+    req:     Req | nil = nil
+    path:    Path | nil = nil
+    git:     String | nil = nil
+    rev:     String | nil = nil
 
     kind -> String {
         (path != nil) ? 'path' : (git != nil) ? 'git' : 'registry'
@@ -44,12 +36,6 @@ pub class Native {
     name:    String
     lib:     String
     system?: Bool
-
-    init(name: String, lib: String, system?: Bool) {
-        self.name    = name
-        self.lib     = lib
-        self.system? = system?
-    }
 }
 
 pub class Manifest {
@@ -57,27 +43,13 @@ pub class Manifest {
     file:        Path
     name:        String
     version:     Version
-    description: String | nil
-    roots:       Array[String]
-    deps:        Array[Dep]
-    natives:     Array[Native]
-    exclude:     Array[String]
-    system-libs: Array[String]
-    registry:    String | nil
-
-    init(dir: Path, file: Path, name: String, version: Version) {
-        self.dir         = dir
-        self.file        = file
-        self.name        = name
-        self.version     = version
-        self.description = nil
-        self.roots       = ['.']
-        self.deps        = []
-        self.natives     = []
-        self.exclude     = []
-        self.system-libs = []
-        self.registry    = nil
-    }
+    description: String | nil = nil
+    roots:       Array[String] = ['.']
+    deps:        Array[Dep] = []
+    natives:     Array[Native] = []
+    exclude:     Array[String] = []
+    system-libs: Array[String] = []
+    registry:    String | nil = nil
 
     root-dirs -> Array[Path] {
         roots.map(r -> real(dir / r))
@@ -85,6 +57,13 @@ pub class Manifest {
 
     bundled -> Array[Native] {
         natives.filter(\!_.system?)
+    }
+
+    /// Where the package keeps its own builds of its bundled libraries.
+    native-dirs -> Array[Path] {
+        let here = plat.host()
+        let arch = (here == nil) ? 'unsupported' : "{here.os}-{here.arch}"
+        [dir / 'native' / arch, dir / 'native']
     }
 
     /// The module path stem for `import NAME` of this package: `<root>/NAME`, taken from the
@@ -103,24 +82,42 @@ pub fn native-key(lib: String) -> String {
     ffi.library-key(lib)
 }
 
+const SHARED = /\.so(\.[0-9.]+)?$|\.dylib$/
+
+/// The shared library named `lib` in the first of `dirs` that has one.
+pub fn find-library(dirs: Array[Path], lib: String) -> Path | nil {
+    let key = native-key(lib)
+    for d in dirs if d.dir? {
+        let hits = d.ls().filter(f -> f.name.match?(SHARED) && native-key(f.name) == key)
+        if #hits > 0 {
+            return real(hits.sort(by=\#_.name)[0])
+        }
+    }
+}
+
 pub class ManifestError < TpmError {
     init(file: Path, what: String) {
         super("{file}: {what}")
     }
 }
 
+const BAD_NAME = 'use lowercase letters, digits and `_`'
+const SYSTEM_TABLE = '`{ system = "NAME" }`'
+
 fn string-list(m: Path, what: String, v: _) -> Array[String] {
     match v {
-        nil                => [],
-        s: String          => [s],
-        xs: Array[String]  => xs,
-        _                  => throw ManifestError(m, "{what} must be a string or an array of strings")
+        nil               => [],
+        s: String         => [s],
+        xs: Array[String] => xs,
+        _                 => throw ManifestError(m, "{what} must be a string or array of strings")
     }
 }
 
 fn dependency(m: Path, dir: Path, alias: String, v: _) -> Dep {
+    let bad = what -> ManifestError(m, "[dependencies] {alias}: {what}")
+
     if !alias.match?(NAME) {
-        throw ManifestError(m, "invalid dependency name `{alias}` (use lowercase letters, digits and `_`)")
+        throw ManifestError(m, "invalid dependency name `{alias}` ({BAD_NAME})")
     }
 
     let req = fn (s: _) {
@@ -128,50 +125,58 @@ fn dependency(m: Path, dir: Path, alias: String, v: _) -> Dep {
             return nil
         }
         if !(s :: String) {
-            throw ManifestError(m, "[dependencies] {alias}: `version` must be a string")
+            throw bad('`version` must be a string')
         }
         try {
             Req.parse(s)
         } catch e: SemverError {
-            throw ManifestError(m, "[dependencies] {alias}: {e.what}")
+            throw bad(e.what)
         }
     }
 
-    match v {
-        s: String => Dep(alias, alias, req: req(s)),
-        d: Dict   => do {
-            let package = d['package'] ?? alias
-            if !(package :: String) || !package.match?(NAME) {
-                throw ManifestError(m, "[dependencies] {alias}: invalid package name `{package}`")
-            }
-            for key in d.keys() {
-                if !(key in ['version', 'path', 'git', 'rev', 'package']) {
-                    throw ManifestError(m, "[dependencies] {alias}: unknown key `{key}`")
-                }
-            }
-            let sources = ['version', 'path', 'git'].filter(\d[_] != nil)
-            if #sources != 1 {
-                throw ManifestError(m, "[dependencies] {alias}: give exactly one of `version`, `path` or `git`")
-            }
-            if d['rev'] != nil && d['git'] == nil {
-                throw ManifestError(m, "[dependencies] {alias}: `rev` needs `git`")
-            }
-            match sources[0] {
-                'path' => Dep(alias, package, path: real(dir / str(d['path']))),
-                'git'  => Dep(alias, package, git: str(d['git']), rev: d['rev'] && str(d['rev'])),
-                _      => Dep(alias, package, req: req(d['version']))
-            }
-        },
-        _ => throw ManifestError(m, "[dependencies] {alias}: expected a version string or a table")
+    if let s: String = v {
+        return Dep(alias, alias, req: req(s))
+    }
+
+    if !(v :: Dict) {
+        throw bad('expected a version string or a table')
+    }
+
+    let package = v['package'] ?? alias
+    if !(package :: String) || !package.match?(NAME) {
+        throw bad("invalid package name `{package}`")
+    }
+
+    for key in v.keys() if !(key in ['version', 'path', 'git', 'rev', 'package']) {
+        throw bad("unknown key `{key}`")
+    }
+
+    let sources = ['version', 'path', 'git'].filter(\v[_] != nil)
+    if #sources != 1 {
+        throw bad('give exactly one of `version`, `path` or `git`')
+    }
+
+    if v['rev'] != nil && v['git'] == nil {
+        throw bad('`rev` needs `git`')
+    }
+
+    match sources[0] {
+        'path' => Dep(alias, package, path: real(dir / str(v['path']))),
+        'git'  => Dep(alias, package, git: str(v['git']), rev: v['rev'] && str(v['rev'])),
+        _      => Dep(alias, package, req: req(v['version']))
     }
 }
 
 fn native(m: Path, name: String, v: _) -> Native {
     match v {
-        s: String => Native(native-key(name), s, false),
+        s: String                         => Native(native-key(name), s, false),
         d: Dict and d['system'] :: String => Native(native-key(name), d['system'], true),
-        _ => throw ManifestError(m, "[native] {name}: expected a library name or " + '`{ system = "NAME" }`')
+        _ => throw ManifestError(m, "[native] {name}: expected a library name or {SYSTEM_TABLE}")
     }
+}
+
+fn default-name(dir: Path) -> String {
+    dir.name.lower().sub(/[^a-z0-9_]/, '_').sub(/^([^a-z])/, \"x{_}")
 }
 
 pub fn parse(source: String, file: Path) -> Manifest {
@@ -181,9 +186,7 @@ pub fn parse(source: String, file: Path) -> Manifest {
         throw ManifestError(file, e.what)
     }
 
-    let dir = real(file.parent)
-    let pkg = doc['package'] ?? %{}
-    let tbl = fn (key: String) {
+    let table = fn (key: String) {
         let t = doc[key] ?? %{}
         if !(t :: Dict) {
             throw ManifestError(file, "[{key}] must be a table")
@@ -191,9 +194,13 @@ pub fn parse(source: String, file: Path) -> Manifest {
         t
     }
 
-    let name = pkg['name'] ?? dir.name.lower().sub(/[^a-z0-9_]/, '_').sub(/^([^a-z])/, \"x{_}")
+    let dir = real(file.parent)
+    let pkg = table('package')
+    let tpm = table('tpm')
+    let name = pkg['name'] ?? default-name(dir)
+
     if !(name :: String) || !name.match?(NAME) {
-        throw ManifestError(file, "invalid package name `{name}` (use lowercase letters, digits and `_`)")
+        throw ManifestError(file, "invalid package name `{name}` ({BAD_NAME})")
     }
 
     let version = try {
@@ -202,33 +209,25 @@ pub fn parse(source: String, file: Path) -> Manifest {
         throw ManifestError(file, e.what)
     }
 
-    let m = Manifest(dir, file, name, version)
+    let roots = string-list(file, '[package] roots', pkg['roots'])
 
-    m.description = pkg['description'] && str(pkg['description'])
-    m.roots       = string-list(file, '[package] roots', pkg['roots'])
-    m.exclude     = string-list(file, '[package] exclude', pkg['exclude'])
-    m.system-libs = string-list(file, '[build] system-libs', tbl('build')['system-libs'])
-    m.registry    = tbl('tpm')['registry'] && str(tbl('tpm')['registry'])
-
-    if #m.roots == 0 {
-        m.roots = ['.']
+    for r in roots if r.starts?('/') || '..' in r.split('/') {
+        throw ManifestError(file, "[package] roots must stay inside the package: `{r}`")
     }
 
-    for r in m.roots {
-        if r.starts?('/') || '..' in r.split('/') {
-            throw ManifestError(file, "[package] roots must stay inside the package: `{r}`")
-        }
-    }
-
-    for alias, v in tbl('dependencies') {
-        m.deps.push(dependency(file, dir, alias, v))
-    }
-
-    for key, v in tbl('native') {
-        m.natives.push(native(file, key, v))
-    }
-
-    m
+    Manifest(
+        dir:         dir,
+        file:        file,
+        name:        name,
+        version:     version,
+        description: pkg['description'] && str(pkg['description']),
+        roots:       (#roots == 0) ? ['.'] : roots,
+        deps:        [dependency(file, dir, alias, v) for alias, v in table('dependencies')],
+        natives:     [native(file, key, v) for key, v in table('native')],
+        exclude:     string-list(file, '[package] exclude', pkg['exclude']),
+        system-libs: string-list(file, '[build] system-libs', table('build')['system-libs']),
+        registry:    tpm['registry'] && str(tpm['registry'])
+    )
 }
 
 pub fn load(dir: Path | String) -> Manifest {

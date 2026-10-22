@@ -9,12 +9,6 @@ pub class Platform {
     arch:    String
     version: Array[Int]
 
-    init(os: String, arch: String, version: Array[Int]) {
-        self.os      = os
-        self.arch    = arch
-        self.version = version
-    }
-
     static parse(s: String) -> Platform | nil {
         let m = TAG(s) ?? return nil
         let [_, os, arch, version] = m.groups
@@ -55,7 +49,7 @@ fn detect() -> Platform | nil {
 
 const HOST = detect()
 
-/// The host as a platform tag. It is nil where native artifacts are unsupported (musl, Windows, ...).
+/// The host as a platform tag; nil where native artifacts are unsupported (musl, Windows, ...).
 pub fn host() -> Platform | nil {
     HOST
 }
@@ -64,7 +58,7 @@ pub fn host-tag() -> String {
     str(host() ?? 'unsupported')
 }
 
-/// Picks the artifact platform to install on `here`: the newest compatible native build, else `any`.
+/// The artifact platform to install on `here`: the newest compatible native build, else `any`.
 pub fn best(tags: Array[String], here: Platform | nil = host()) -> String | nil {
     let native = tags.filter(fn (t) {
         match [Platform.parse(t), here] {

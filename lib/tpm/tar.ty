@@ -1,19 +1,11 @@
-pub class TarError < RuntimeError {
-    init(what: String) {
-        super("tpm: {what}")
-    }
-}
+import tpm.core (TpmError)
+
+pub class TarError < TpmError {}
 
 pub class Entry {
     name: String
     data: Blob
-    mode: Int
-
-    init(name: String, data: Blob, mode: Int = 0o644) {
-        self.name = name
-        self.data = data
-        self.mode = mode
-    }
+    mode: Int = 0o644
 }
 
 fn field(s: String | Blob, n: Int) -> Blob {

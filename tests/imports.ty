@@ -148,7 +148,7 @@ pub fn manifests-are-checked(t: Test) {
         'main.ty':    'import x'
     })
     let err = fails(root, 'main.ty')
-    assert(err.contains?('[package] roots must be a string or an array of strings'), err)
+    assert(err.contains?('[package] roots must be a string or array of strings'), err)
     assert(err.contains?('`tpm sync` failed'), err)
 }
 

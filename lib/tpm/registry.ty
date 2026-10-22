@@ -2,7 +2,7 @@ import ty.mod as tymod
 import json
 import os
 import path (Path)
-import tpm.core (TpmError, fail, warn, cache-root, sha256, sha256-file, write-atomic, real)
+import tpm.core (TpmError, warn, cache-root, sha256, sha256-file, write-atomic, real)
 import tpm.semver (Version, Req)
 import tpm.manifest (Dep)
 
@@ -10,16 +10,6 @@ pub class Artifact {
     platform: String
     url:      String
     sha256:   String
-
-    init(platform: String, url: String, sha256: String) {
-        self.platform = platform
-        self.url      = url
-        self.sha256   = sha256
-    }
-
-    json() -> Dict[String, String] {
-        %{'platform': platform, 'url': url, 'sha256': sha256}
-    }
 }
 
 pub class Entry {
@@ -28,20 +18,15 @@ pub class Entry {
     deps:      Array[Dep]
     natives:   Array[String]
     artifacts: Array[Artifact]
-    yanked?:   Bool
-
-    init(name: String, version: Version, deps: Array[Dep], natives: Array[String], artifacts: Array[Artifact], yanked?: Bool = false) {
-        self.name      = name
-        self.version   = version
-        self.deps      = deps
-        self.natives   = natives
-        self.artifacts = artifacts
-        self.yanked?   = yanked?
-    }
+    yanked?:   Bool = false
 }
 
 fn bad-index(url: String, what: String) {
     throw TpmError("{url}: malformed registry index: {what}")
+}
+
+fn absolute(base: String, file: String) -> String {
+    file.match?(/^[a-z][a-z0-9+.\-]*:\/\//) ? file : "{base}/{file}"
 }
 
 fn entry(url: String, base: String, line: String) -> Entry {
@@ -50,42 +35,46 @@ fn entry(url: String, base: String, line: String) -> Entry {
     } catch _ {
         bad-index(url, 'invalid JSON')
     }
+
     if !(d :: Dict) || !(d['name'] :: String) || !(d['version'] :: String) {
         bad-index(url, 'each line needs a name and a version')
     }
-    let deps = [
-        Dep(dep['name'], dep['package'] ?? dep['name'], req: Req.parse(dep['req'] ?? '*'))
-        for dep in d['deps'] ?? []
-    ]
-    let artifacts = [
-        Artifact(a['platform'], absolute(base, a['url'] ?? a['file']), a['sha256'])
-        for a in d['artifacts'] ?? []
-    ]
-    let natives = match d['natives'] {
-        names: Array => names,
-        table: Dict  => table.keys(),
-        _            => []
+
+    Entry(
+        name:      d['name'],
+        version:   Version.parse(d['version']),
+        deps:      [
+            Dep(dep['name'], dep['package'] ?? dep['name'], req: Req.parse(dep['req'] ?? '*'))
+            for dep in d['deps'] ?? []
+        ],
+        natives:   d['natives'] ?? [],
+        artifacts: [
+            Artifact(a['platform'], absolute(base, a['url']), a['sha256'])
+            for a in d['artifacts'] ?? []
+        ],
+        yanked?:   d['yanked'] ?? false
+    )
+}
+
+/// GETs `url` with the HTTP client, which is loaded only when a remote registry is used.
+fn fetch(url: String, timeout: Float) -> _ {
+    let client = tymod.load('http/client')
+    let get = client.get
+    try {
+        get(url, timeout: timeout, follow-redirects: true)
+    } catch e: client.RequestError {
+        throw TpmError("{url}: {e.what}")
     }
-    Entry(d['name'], Version.parse(d['version']), deps, natives, artifacts, d['yanked'] ?? false)
-}
-
-fn absolute(base: String, file: String) -> String {
-    file.match?(/^[a-z][a-z0-9+.\-]*:\/\//) ? file : "{base}/{file}"
-}
-
-fn http() -> _ {
-    tymod.load('http/client')
 }
 
 pub class Registry {
     url:     String
-    offline: Bool
-    __index: Dict[String, Array[Entry]]
+    offline: Bool = false
+    __index: Dict[String, Array[Entry]] = %{}
 
     init(url: String, offline: Bool = false) {
         self.url     = url.comb(/\/+$/)
         self.offline = offline
-        self.__index = %{}
     }
 
     /// `url` may be a plain path (relative to `base`), a file:// URL or an http(s):// URL.
@@ -116,26 +105,23 @@ pub class Registry {
             return cached.file? ? cached.read-text() : nil
         }
 
-        let client = http()
-        let get = client.get
         let r = try {
-            get("{url}/{rel}", timeout: 30.0)
-        } catch e: client.RequestError {
-            if cached.file? {
-                warn("{url}: {e.what}; using the cached index")
-                return cached.read-text()
+            fetch("{url}/{rel}", 30.0)
+        } catch e: TpmError {
+            if !cached.file? {
+                throw e
             }
-            throw TpmError("{url}/{rel}: {e.what}")
+            warn("{e.what}; using the cached index")
+            return cached.read-text()
         }
 
         match r.status-code {
-            200 => do {
-                let text = r.text
-                write-atomic(cached, text)
-                text
+            200        => do {
+                write-atomic(cached, r.text)
+                r.text
             },
             404 or 410 => nil,
-            code => throw TpmError("{url}/{rel}: HTTP {code}")
+            code       => throw TpmError("{url}/{rel}: HTTP {code}")
         }
     }
 
@@ -143,16 +129,14 @@ pub class Registry {
         if let $known = __index[name] {
             return known
         }
-        let text = __read("index/{name}") ?? ''
+        let index = "{url}/index/{name}"
         let found = [
-            entry("{url}/index/{name}", url, line)
-            for line in text.lines()
+            entry(index, url, line)
+            for line in (__read("index/{name}") ?? '').lines()
             if line.trim() != ''
         ]
-        for e in found {
-            if e.name != name {
-                bad-index("{url}/index/{name}", "found an entry for `{e.name}`")
-            }
+        for e in found if e.name != name {
+            bad-index(index, "found an entry for `{e.name}`")
         }
         __index[name] = found
         found
@@ -172,13 +156,7 @@ pub class Registry {
         } else if offline {
             throw TpmError("{art.url}: not in the cache, and --offline was given")
         } else {
-            let client = http()
-            let get = client.get
-            let r = try {
-                get(art.url, timeout: 300.0, follow-redirects: true)
-            } catch e: client.RequestError {
-                throw TpmError("{art.url}: {e.what}")
-            }
+            let r = fetch(art.url, 300.0)
             if r.status-code != 200 {
                 throw TpmError("{art.url}: HTTP {r.status-code}")
             }

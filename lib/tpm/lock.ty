@@ -14,24 +14,15 @@ pub class Locked {
     natives:   Array[String]
     artifacts: Array[Artifact]
 
-    init(name: String, version: String, source: String, deps: Array[String], natives: Array[String], artifacts: Array[Artifact]) {
-        self.name      = name
-        self.version   = version
-        self.source    = source
-        self.deps      = deps
-        self.natives   = natives
-        self.artifacts = artifacts
-    }
-
     /// `(kind, location, commit)` from `root`, `path+DIR`, `git+URL#COMMIT` or `registry+URL`.
     origin -> (String, String, String | nil) {
         match source {
-            'root' => ('root', '', nil),
+            'root'                  => ('root', '', nil),
             s and s.starts?('git+') => do {
                 let [url, ?commit] = s.comb(/^git\+/).split('#')
                 ('git', url, commit)
             },
-            s => do {
+            s                       => do {
                 let [kind, *rest] = s.split('+')
                 (kind, rest.join('+'), nil)
             }
@@ -42,11 +33,6 @@ pub class Locked {
 pub class Lock {
     inputs:   String | nil
     packages: Dict[String, Locked]
-
-    init(inputs: String | nil, packages: Dict[String, Locked]) {
-        self.inputs   = inputs
-        self.packages = packages
-    }
 }
 
 fn q(s: String) -> String {

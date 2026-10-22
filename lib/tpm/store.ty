@@ -2,11 +2,15 @@ import os
 import json
 import http.codec as codec
 import path (Path)
-import tpm.core (TpmError, fail, note, cache-root, sha256, real, read-json, write-json, tool, which?)
+import tpm.core (
+    TpmError, fail, note, cache-root, sha256, real, read-json, write-json, tool, which?
+)
 import tpm.tar as tar
 import tpm.registry (Registry, Artifact)
 
 pub const META = 'tpm.json'
+
+const HEADS = '+refs/heads/*:refs/heads/*'
 
 pub fn store-dir() -> Path {
     cache-root() / 'store'
@@ -79,7 +83,8 @@ pub fn fetch(registry: Registry, name: String, version: String, art: Artifact) -
 
     let meta = read-json(dest / META)
     if meta['name'] != name || meta['version'] != version {
-        throw TpmError("{art.url}: archive holds {meta['name']} {meta['version']}, expected {name} {version}")
+        let holds = "{meta['name']} {meta['version']}"
+        throw TpmError("{art.url}: archive holds {holds}, expected {name} {version}")
     }
 
     dest
@@ -92,13 +97,17 @@ fn git(argv: Array[String], what: String, chdir: String | nil = nil) -> String {
     tool(['git', *argv], what, chdir: chdir).trim()
 }
 
+fn git-in(db: Path, what: String, *args: String) -> String {
+    git(['--git-dir', str(db), *args], what)
+}
+
 fn git-db(url: String) -> Path {
     cache-root() / 'git' / 'db' / sha256(url).slice(0, 16)
 }
 
 fn has-commit?(db: Path, commit: String) -> Bool {
     try {
-        git(['--git-dir', str(db), 'cat-file', '-e', commit + '^{commit}'], 'git')
+        git-in(db, 'git', 'cat-file', '-e', commit + '^{commit}')
         true
     } catch _: TpmError {
         false
@@ -107,9 +116,15 @@ fn has-commit?(db: Path, commit: String) -> Bool {
 
 /// Resolves `rev` (or the default branch) of `url` to a commit, preferring `locked` when the
 /// repository still has it, and returns `(commit, checkout-dir)`.
-pub fn checkout(url: String, rev: String | nil, locked: String | nil, offline: Bool) -> (String, Path) {
+pub fn checkout(
+    url: String,
+    rev: String | nil,
+    locked: String | nil,
+    offline: Bool
+) -> (String, Path) {
     let db = git-db(url)
     let what = "fetching {url}"
+    let head = rev ?? 'HEAD'
 
     if !db.dir? {
         if offline {
@@ -120,12 +135,12 @@ pub fn checkout(url: String, rev: String | nil, locked: String | nil, offline: B
         git(['clone', '--bare', '--quiet', url, str(db)], what)
     } else if (locked == nil || !has-commit?(db, locked)) && !offline {
         note('Fetching', url)
-        git(['--git-dir', str(db), 'fetch', '--quiet', '--force', '--tags', 'origin', '+refs/heads/*:refs/heads/*'], what)
+        git-in(db, what, 'fetch', '--quiet', '--force', '--tags', 'origin', HEADS)
     }
 
     let commit = (locked != nil && has-commit?(db, locked))
                ? locked
-               : git(['--git-dir', str(db), 'rev-parse', '--verify', (rev ?? 'HEAD') + '^{commit}'], "resolving {url}#{rev ?? 'HEAD'}")
+               : git-in(db, "resolving {url}#{head}", 'rev-parse', '--verify', head + '^{commit}')
 
     let dir = cache-root() / 'git' / 'checkouts' / sha256(url).slice(0, 16) / commit
     if !dir.dir? {

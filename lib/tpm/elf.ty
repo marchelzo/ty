@@ -1,10 +1,11 @@
 import ffi as c
 import os
 import path (Path)
+import tpm.core (TpmError)
 
-pub class ElfError < RuntimeError {
+pub class ElfError < TpmError {
     init(path: String, what: String) {
-        super("tpm: {path}: {what}")
+        super("{path}: {what}")
     }
 }
 
@@ -25,21 +26,11 @@ pub const EM_AARCH64 = 183
 pub class Elf {
     path:     String
     machine:  Int
-    soname:   String | nil
-    needed:   Array[String]
-    runpath:  String | nil
-    rpath:    String | nil
-    requires: Array[(String, String)]
-
-    init(path: String, machine: Int) {
-        self.path     = path
-        self.machine  = machine
-        self.soname   = nil
-        self.needed   = []
-        self.runpath  = nil
-        self.rpath    = nil
-        self.requires = []
-    }
+    soname:   String | nil = nil
+    needed:   Array[String] = []
+    runpath:  String | nil = nil
+    rpath:    String | nil = nil
+    requires: Array[(String, String)] = []
 
     /// The newest GLIBC_x.y symbol version this object needs, as `[x, y, z]`.
     glibc -> Array[Int] | nil {

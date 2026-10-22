@@ -120,7 +120,7 @@ pub fn manifest-mistakes-are-reported(t: Test) {
         ('[dependencies]\nx = { version = "1", tag = "a" }',  'unknown key `tag`'),
         ('[dependencies]\nx = "^q"',                      'invalid version requirement'),
         ('[package]\nroots = ["../x"]',                   'roots must stay inside the package'),
-        ('[package]\nroots = 42',                         'roots must be a string or an array of strings'),
+        ('[package]\nroots = 42',                         'roots must be a string or array of strings'),
         ('[native]\nx = 4',                               'expected a library name'),
         ('[package\nname = 1',                            'TOML'),
     ]

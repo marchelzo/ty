@@ -1,5 +1,5 @@
 import path (Path)
-import tpm.core (TpmError, fail, note, sha256, real)
+import tpm.core (TpmError, SET_REGISTRY, fail, sha256)
 import tpm.semver (Version, Req)
 import tpm.manifest as man (Manifest, Dep)
 import tpm.registry (Registry, Entry, Artifact)
@@ -10,40 +10,27 @@ pub class Pkg {
     name:      String
     version:   Version
     source:    String
-    manifest:  Manifest | nil
-    url:       String | nil
-    commit:    String | nil
-    deps:      Array[Dep]
-    natives:   Array[String]
-    artifacts: Array[Artifact]
-
-    init(name: String, version: Version, source: String) {
-        self.name      = name
-        self.version   = version
-        self.source    = source
-        self.manifest  = nil
-        self.url       = nil
-        self.commit    = nil
-        self.deps      = []
-        self.natives   = []
-        self.artifacts = []
-    }
+    manifest:  Manifest | nil = nil
+    url:       String | nil = nil
+    commit:    String | nil = nil
+    deps:      Array[Dep] = []
+    natives:   Array[String] = []
+    artifacts: Array[Artifact] = []
 
     static of(m: Manifest, source: String) -> Pkg {
-        let p = Pkg(m.name, m.version, source)
-        p.manifest = m
-        p.deps     = m.deps
-        p.natives  = m.bundled.map(\_.name)
-        p
+        Pkg(m.name, m.version, source, manifest: m, deps: m.deps, natives: m.bundled.map(\_.name))
     }
 
     static from(e: Entry, url: String) -> Pkg {
-        let p = Pkg(e.name, e.version, 'registry')
-        p.url       = url
-        p.deps      = e.deps
-        p.natives   = e.natives
-        p.artifacts = e.artifacts
-        p
+        Pkg(
+            e.name,
+            e.version,
+            'registry',
+            url:       url,
+            deps:      e.deps,
+            natives:   e.natives,
+            artifacts: e.artifacts
+        )
     }
 
     dir -> Path | nil {
@@ -60,29 +47,16 @@ pub class Pkg {
     }
 
     locked(root: Path) -> Locked {
-        Locked(
-            name,
-            str(version),
-            source-id(root),
-            deps.map(d -> (d.alias == d.package) ? d.alias : "{d.alias}={d.package}"),
-            natives,
-            artifacts
-        )
+        let edges = deps.map(d -> (d.alias == d.package) ? d.alias : "{d.alias}={d.package}")
+        Locked(name, str(version), source-id(root), edges, natives, artifacts)
     }
 }
 
 pub class Options {
-    offline: Bool
-    upgrade: Bool
-    only:    Array[String]
-    frozen:  Bool
-
-    init(offline: Bool = false, upgrade: Bool = false, only: Array[String] = [], frozen: Bool = false) {
-        self.offline = offline
-        self.upgrade = upgrade
-        self.only    = only
-        self.frozen  = frozen
-    }
+    offline: Bool = false
+    upgrade: Bool = false
+    only:    Array[String] = []
+    frozen:  Bool = false
 
     upgrade?(name: String) -> Bool {
         upgrade || name in only
@@ -94,13 +68,6 @@ pub class Resolution {
     packages: Dict[String, Pkg]
     inputs:   String
     reused:   Bool
-
-    init(root: Pkg, packages: Dict[String, Pkg], inputs: String, reused: Bool) {
-        self.root     = root
-        self.packages = packages
-        self.inputs   = inputs
-        self.reused   = reused
-    }
 
     /// The package that `dep` (declared by any package) resolved to.
     target(dep: Dep) -> Pkg {
@@ -135,15 +102,47 @@ fn locked-commit(lock: Lock | nil, d: Dep) -> String | nil {
     if lock == nil {
         return nil
     }
-    match lock.packages[d.package] {
-        $l => do {
-            let (kind, url, commit) = l.origin
-            (kind == 'git' && url == d.git) ? commit : nil
-        },
-        _ => nil
-    }
+    let l = lock.packages[d.package] ?? return nil
+    let (kind, url, commit) = l.origin
+    (kind == 'git' && url == d.git) ? commit : nil
 }
 
+fn path-package(d: Dep) -> (Pkg, String) {
+    let dir = (d.path)!
+    if !(dir / man.FILE).file? {
+        throw TpmError("no {man.FILE} in {dir}")
+    }
+    (Pkg.of(man.load(dir), 'path'), str(dir))
+}
+
+fn git-package(d: Dep, lock: Lock | nil, opts: Options) -> (Pkg, String) {
+    let url = (d.git)!
+    let locked = opts.upgrade?(d.package) ? nil : locked-commit(lock, d)
+    let (commit, dir) = store.checkout(url, d.rev, locked, opts.offline)
+    if !(dir / man.FILE).file? {
+        throw TpmError("{url} has no {man.FILE}")
+    }
+    let p = Pkg.of(man.load(dir), 'git')
+    p.url    = url
+    p.commit = commit
+    (p, "{url}#{commit}")
+}
+
+/// The path or git package that `d` (declared by `m`) names.
+fn source-package(m: Manifest, d: Dep, lock: Lock | nil, opts: Options) -> Pkg {
+    let context = "{m.file}: [dependencies] {d.alias}"
+    let (p, origin) = try {
+        (d.kind == 'path') ? path-package(d) : git-package(d, lock, opts)
+    } catch e: TpmError {
+        throw TpmError("{context}: {e.what}")
+    }
+    if p.name != d.package {
+        throw TpmError("{context}: {origin} is package `{p.name}`, not `{d.package}`")
+    }
+    p
+}
+
+/// The root package plus every path and git package reachable through path/git edges.
 fn collect-sources(root: Manifest, lock: Lock | nil, opts: Options) -> Dict[String, Pkg] {
     let found = %{root.name: Pkg.of(root, 'root')}
     let queue = [root]
@@ -151,33 +150,11 @@ fn collect-sources(root: Manifest, lock: Lock | nil, opts: Options) -> Dict[Stri
     while #queue > 0 {
         let m = queue.pop(0)
         for d in m.deps if d.kind != 'registry' {
-            let (p, what) = match d.kind {
-                'path' => do {
-                    if !((d.path)! / man.FILE).file? {
-                        fail("{m.file}: [dependencies] {d.alias}: no {man.FILE} in {d.path}")
-                    }
-                    (Pkg.of(man.load((d.path)!), 'path'), "{d.path}")
-                },
-                _ => do {
-                    let (commit, dir) = store.checkout((d.git)!, d.rev, opts.upgrade?(d.package) ? nil : locked-commit(lock, d), opts.offline)
-                    if !(dir / man.FILE).file? {
-                        fail("{m.file}: [dependencies] {d.alias}: {d.git} has no {man.FILE}")
-                    }
-                    let p = Pkg.of(man.load(dir), 'git')
-                    p.url    = d.git
-                    p.commit = commit
-                    (p, "{d.git}#{commit}")
-                }
-            }
-
-            if p.name != d.package {
-                fail("{m.file}: [dependencies] {d.alias}: {what} is package `{p.name}`, not `{d.package}`")
-            }
-
+            let p = source-package(m, d, lock, opts)
             match found[p.name] {
                 $other and other.dir == p.dir => (),
                 $other => fail("package `{p.name}` comes from two places: {other.dir} and {p.dir}"),
-                _ => do {
+                _      => do {
                     found[p.name] = p
                     queue.push((p.manifest)!)
                 }
@@ -192,31 +169,17 @@ class Want {
     package: String
     req:     Req
     by:      String
-
-    init(package: String, req: Req, by: String) {
-        self.package = package
-        self.req     = req
-        self.by      = by
-    }
 }
 
 class Solver {
     registry: Registry
     sources:  Dict[String, Pkg]
     prefer:   Dict[String, Version]
-    selected: Dict[String, Entry]
-    chosen:   Dict[String, String]
-    failure:  (Int, String)
+    selected: Dict[String, Entry] = %{}
+    chosen:   Dict[String, String] = %{}
+    failure:  (Int, String) = (-1, 'no solution')
 
-    init(registry: Registry, sources: Dict[String, Pkg], prefer: Dict[String, Version]) {
-        self.registry = registry
-        self.sources  = sources
-        self.prefer   = prefer
-        self.selected = %{}
-        self.chosen   = %{}
-        self.failure  = (-1, 'no solution')
-    }
-
+    /// Records `what` if it is the deepest failure so far, so the error names the real conflict.
     fail-at(what: String) -> Bool {
         if #selected >= failure.0 {
             failure = (#selected, what)
@@ -226,10 +189,8 @@ class Solver {
 
     candidates(w: Want) -> Array[Entry] {
         let preferred = prefer[w.package]
-        let all = registry.entries(w.package)
-        let ok = all.filter(e -> w.req.matches?(e.version) && (!e.yanked? || e.version == preferred))
-                    .sort(by=\_.version)
-                    .reverse()
+        let usable? = e -> w.req.matches?(e.version) && (!e.yanked? || e.version == preferred)
+        let ok = registry.entries(w.package).filter(usable?).sort(by=\_.version).reverse()
         match ok.find(\_.version == preferred) {
             $e => [e, *ok.filter(\_ != e)],
             _  => ok
@@ -243,17 +204,21 @@ class Solver {
 
         let w = pending[0]
         let rest = pending[1;]
+        let wanted = "`{w.by}` requires {w.package} {w.req}"
 
         if let $fixed = sources[w.package] {
             if !w.req.matches?(fixed.version) {
-                return fail-at("`{w.by}` requires {w.package} {w.req}, but {w.package} is a {fixed.source} package at {fixed.version}")
+                let what = "{fixed.source} package at {fixed.version}"
+                return fail-at("{wanted}, but {w.package} is a {what}")
             }
             return solve(rest)
         }
 
         if let $picked = selected[w.package] {
             if !w.req.matches?(picked.version) {
-                return fail-at("`{w.by}` requires {w.package} {w.req}, but {w.package} {picked.version} was already chosen for `{chosen[w.package]}`")
+                let by = chosen[w.package]
+                let what = "{w.package} {picked.version} was already chosen for `{by}`"
+                return fail-at("{wanted}, but {what}")
             }
             return solve(rest)
         }
@@ -261,8 +226,11 @@ class Solver {
         let options = candidates(w)
         if #options == 0 {
             let known = registry.entries(w.package).map(\str(_.version))
-            let have = (#known == 0) ? "{w.package} is not in the registry" : "available: {known.join(', ')}"
-            return fail-at("no version of {w.package} matches {w.req} (required by `{w.by}`); {have}")
+            let have = (#known == 0) ? "{w.package} is not in the registry"
+                     :                 "available: {known.join(', ')}"
+            return fail-at(
+                "no version of {w.package} matches {w.req} (required by `{w.by}`); {have}"
+            )
         }
 
         for e in options {
@@ -282,49 +250,57 @@ class Solver {
 
 fn wants(sources: Dict[String, Pkg]) -> Array[Want] {
     [
-        Want(d.package, (d.req)!, "{p.name}")
+        Want(d.package, (d.req)!, p.name)
         for p in sources.values().sort(by=\_.name)
         for d in p.deps
         if d.kind == 'registry'
     ]
 }
 
+fn locked-package(name: String, l: Locked, url: String) -> Pkg {
+    let version = Version.parse(l.version)
+    let deps = l.deps.map(fn (s) {
+        let [alias, ?package] = s.split('=')
+        Dep(alias, package ?? alias, req: Req.exact(version))
+    })
+    Pkg(name, version, 'registry', url: url, deps: deps, natives: l.natives, artifacts: l.artifacts)
+}
+
+/// The registry packages of `lock`, if it still covers every package and edge of `sources`.
 fn from-lock(lock: Lock, sources: Dict[String, Pkg]) -> Dict[String, Pkg] | nil {
     let out = %{}
+
     for name, l in lock.packages {
         let (kind, url, _) = l.origin
-        if kind != 'registry' {
-            if sources[name] == nil {
-                return nil
-            }
-            continue
-        }
-        let p = Pkg(name, Version.parse(l.version), 'registry')
-        p.url       = url
-        p.natives   = l.natives
-        p.artifacts = l.artifacts
-        p.deps      = l.deps.map(fn (s) {
-            let [alias, ?package] = s.split('=')
-            Dep(alias, package ?? alias, req: Req.exact(p.version))
-        })
-        out[name] = p
-    }
-    for name, p in sources {
-        if lock.packages[name] == nil {
+        if kind == 'registry' {
+            out[name] = locked-package(name, l, url)
+        } else if sources[name] == nil {
             return nil
         }
     }
+
+    for name in sources.keys() if lock.packages[name] == nil {
+        return nil
+    }
+
     for p in [*sources.values(), *out.values()] {
         for d in p.deps if sources[d.package] == nil && out[d.package] == nil {
             return nil
         }
     }
+
     out
 }
 
-pub fn resolve(root: Manifest, registry: Registry | nil, lock: Lock | nil, opts: Options) -> Resolution {
+pub fn resolve(
+    root: Manifest,
+    registry: Registry | nil,
+    lock: Lock | nil,
+    opts: Options
+) -> Resolution {
     let sources = collect-sources(root, lock, opts)
     let inputs = fingerprint(sources, root.dir)
+    let top = sources[root.name]!
 
     for name, p in sources if name != root.name {
         for d in p.deps if d.package == root.name {
@@ -334,7 +310,7 @@ pub fn resolve(root: Manifest, registry: Registry | nil, lock: Lock | nil, opts:
 
     if lock != nil && lock.inputs == inputs && !opts.upgrade && #opts.only == 0 {
         if let $locked = from-lock(lock, sources) {
-            return Resolution(sources[root.name]!, sources + locked, inputs, true)
+            return Resolution(top, sources + locked, inputs, true)
         }
     }
 
@@ -343,27 +319,26 @@ pub fn resolve(root: Manifest, registry: Registry | nil, lock: Lock | nil, opts:
     }
 
     let pending = wants(sources)
-    if #pending > 0 && registry == nil {
-        fail("{root.file}: registry dependencies need a registry; set [tpm] registry or TPM_REGISTRY")
+    if #pending == 0 {
+        return Resolution(top, sources, inputs, false)
     }
 
-    let prefer = %{}
-    if lock != nil {
-        for name, l in lock.packages if !opts.upgrade?(name) {
-            prefer[name] = Version.parse(l.version)
-        }
+    if registry == nil {
+        fail("{root.file}: registry dependencies need a registry; {SET_REGISTRY}")
     }
 
-    let picked = %{}
-    if #pending > 0 {
-        let solver = Solver((registry)!, sources, prefer)
-        if !solver.solve(pending) {
-            fail("cannot resolve dependencies: {solver.failure.1}")
-        }
-        for name, e in solver.selected {
-            picked[name] = Pkg.from(e, (registry)!.url)
-        }
+    let prefer = %{
+        name: Version.parse(l.version)
+        for name, l in (lock == nil) ? %{} : lock.packages
+        if !opts.upgrade?(name)
     }
 
-    Resolution(sources[root.name]!, sources + picked, inputs, false)
+    let solver = Solver((registry)!, sources, prefer)
+    if !solver.solve(pending) {
+        fail("cannot resolve dependencies: {solver.failure.1}")
+    }
+
+    let picked = %{name: Pkg.from(e, (registry)!.url) for name, e in solver.selected}
+
+    Resolution(top, sources + picked, inputs, false)
 }

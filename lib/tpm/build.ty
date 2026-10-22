@@ -45,7 +45,11 @@ fn package-files(m: Manifest) -> Array[String] {
         }
         for name in names {
             let rel = (#parts == 0) ? name : "{parts.join('/')}/{name}"
-            if (#parts == 0 && name in SKIP_TOP) || name.starts?('.') || excludes.any?(re -> rel.match?(re)) {
+            if (
+                (#parts == 0 && name in SKIP_TOP)
+             || name.starts?('.')
+             || excludes.any?(re -> rel.match?(re))
+            ) {
                 continue
             }
             files.push(rel)
@@ -86,24 +90,17 @@ fn ldconfig() -> Dict[String, String] {
 class Vendor {
     dirs:    Array[Path]
     system:  Array[String]
-    known:   Dict[String, String] | nil
-    files:   Dict[String, Path]
-    objects: Dict[String, elf.Elf]
-
-    init(dirs: Array[Path], system: Array[String]) {
-        self.dirs    = dirs
-        self.system  = system
-        self.known   = nil
-        self.files   = %{}
-        self.objects = %{}
-    }
+    known:   Dict[String, String] | nil = nil
+    files:   Dict[String, Path] = %{}
+    objects: Dict[String, elf.Elf] = %{}
 
     system?(soname: String) -> Bool {
         soname in SYSTEM_SONAMES || soname in system
     }
 
     find(soname: String, from: elf.Elf) -> Path {
-        let search = [*dirs.map(str), *from.search, *(getenv('LD_LIBRARY_PATH') ?? '').split(':').filter(\_ != ''), *LINUX_DIRS]
+        let env = (getenv('LD_LIBRARY_PATH') ?? '').split(':').filter(\_ != '')
+        let search = [*dirs.map(str), *from.search, *env, *LINUX_DIRS]
         for d in search {
             let p = Path(d) / soname
             if p.file? {
@@ -144,19 +141,17 @@ fn hashed-name(soname: String, data: Blob) -> String {
 }
 
 fn locate-native(n: Native, dirs: Array[Path]) -> Path {
-    let key = native-key(n.lib)
-    for d in dirs if d.dir? {
-        let hits = d.ls().filter(f -> f.name.match?(/\.so(\.[0-9.]+)?$|\.dylib$/) && native-key(f.name) == key)
-        if #hits > 0 {
-            return real(hits.sort(by=\#_.name)[0])
-        }
-    }
-    fail("[native] {n.name}: no lib{key} shared library in {dirs.map(str).join(', ')}")
+    man.find-library(dirs, n.lib) ?? fail(
+        "[native] {n.name}: no lib{native-key(n.lib)} shared library in {dirs.map(str).join(', ')}"
+    )
 }
 
 fn vendor-linux(m: Manifest, dirs: Array[Path], stage: Path) -> (String, Dict[String, String]) {
     if !which?('patchelf') {
-        fail("building packages with native libraries needs patchelf (https://github.com/NixOS/patchelf)")
+        fail(
+            'building packages with native libraries needs patchelf '
+            '(https://github.com/NixOS/patchelf)'
+        )
     }
 
     let v = Vendor(dirs, m.system-libs)
@@ -242,7 +237,10 @@ fn vendor-macos(m: Manifest, dirs: Array[Path], stage: Path) -> (String, Dict[St
             }
             let name = Path(dep).name
             let local = dirs.map(\_ / name).find(\_.file?)
-            queue.push(real(local ?? (dep.starts?('/') ? Path(dep) : fail("{file} needs {dep}, which was not found"))))
+            if local == nil && !dep.starts?('/') {
+                fail("{file} needs {dep}, which was not found")
+            }
+            queue.push(real(local ?? Path(dep)))
         }
     }
 
@@ -293,12 +291,14 @@ pub fn meta(m: Manifest, platform: String, natives: Dict[String, String]) -> Dic
 /// Builds `dist/<name>-<version>-<platform>.tar.gz` for `m` and returns its path and metadata.
 pub fn build(m: Manifest, native-dirs: Array[Path], out: Path) -> (Path, Dict) {
     for d in m.deps if d.kind != 'registry' {
-        fail("{m.file}: {d.kind} dependency `{d.alias}` cannot be published; depend on a registry version instead")
+        fail(
+            "{m.file}: {d.kind} dependency `{d.alias}` cannot be published; "
+            "depend on a registry version instead"
+        )
     }
 
     let here = plat.host()
-    let arch = (here == nil) ? 'unsupported' : "{here.os}-{here.arch}"
-    let dirs = (#native-dirs > 0) ? native-dirs.map(real) : [m.dir / 'native' / arch, m.dir / 'native']
+    let dirs = (#native-dirs > 0) ? native-dirs.map(real) : m.native-dirs
 
     let stage = Path(os.mkdtemp(str(Path.tmp() / 'tpm-build')))
     let result = nil
@@ -310,16 +310,25 @@ pub fn build(m: Manifest, native-dirs: Array[Path], out: Path) -> (Path, Dict) {
     (result)!
 }
 
-fn assemble(m: Manifest, dirs: Array[Path], here: Platform | nil, stage: Path, out: Path) -> (Path, Dict) {
+fn assemble(
+    m: Manifest,
+    dirs: Array[Path],
+    here: Platform | nil,
+    stage: Path,
+    out: Path
+) -> (Path, Dict) {
     let (platform, natives) = match [#m.bundled, here.?os] {
         [0, _]       => ('any', %{}),
         [_, 'linux'] => vendor-linux(m, dirs, stage),
         [_, 'macos'] => vendor-macos(m, dirs, stage),
-        _            => fail("packages with native libraries can only be built on Linux (glibc) or macOS")
+        _            => fail('native libraries can only be bundled on Linux (glibc) or macOS')
     }
 
     let info = meta(m, platform, natives)
-    let entries = [tar.Entry(rel, (m.dir / rel).read-bytes(), (m.dir / rel).stat.mode) for rel in package-files(m)]
+    let entries = [
+        tar.Entry(rel, (m.dir / rel).read-bytes(), (m.dir / rel).stat.mode)
+        for rel in package-files(m)
+    ]
     entries.push(tar.Entry(man.FILE, (m.dir / man.FILE).read-bytes()))
     entries.push(tar.Entry(store.META, Blob(json.encode(info) + '\n')))
     if (stage / 'native').dir? {

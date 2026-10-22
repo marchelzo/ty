@@ -5,17 +5,16 @@ import json
 import path (Path)
 import sh (run)
 
-pub class TpmError < RuntimeError {
-    init(what: String) {
-        super(what)
-    }
-}
+pub class TpmError < RuntimeError {}
+
+pub const SET_REGISTRY = 'set [tpm] registry or TPM_REGISTRY'
 
 pub fn fail(what: String) -> _ {
     throw TpmError(what)
 }
 
-const COLOR = getenv('NO_COLOR') == nil && (ty.color == 'always' || (ty.color == 'auto' && os.isatty(2)))
+const COLOR = getenv('NO_COLOR') == nil
+           && (ty.color == 'always' || (ty.color == 'auto' && os.isatty(2)))
 
 pub __tls::quiet?: Bool = false
 
@@ -27,6 +26,10 @@ pub fn note(verb: String, what: String) {
     if !quiet? {
         eprint("{paint('1;32', "{verb:>12}")} {what}")
     }
+}
+
+pub fn count(n: Int, what: String) -> String {
+    "{n} {what}{(n == 1) ? '' : 's'}"
 }
 
 pub fn warn(what: String) {
