@@ -1512,7 +1512,11 @@ fn emit-site(site: Site, func: _, msg: _, *vals: _) {
     }
     let extra = []
     if site.every != nil {
+#|if __linux__
         let now = tm.now(tm.CLOCK_MONOTONIC_COARSE)
+#|else
+        let now = tm.now(tm.CLOCK_MONOTONIC)
+#|]
         if now < site.next {
             site.skipped += 1
             return

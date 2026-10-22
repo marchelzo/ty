@@ -1,3 +1,5 @@
+import procs
+
 fn body*(x) { yield x + 1 }
 
 fn yielder*(n) {
@@ -7,8 +9,7 @@ fn yielder*(n) {
 }
 
 fn rss-kb() -> Int {
-    let status = slurp('/proc/self/status')
-    int(status.match(/VmRSS:\s+(\d+)/)[1])
+    procs.this().memory.rss / 1024
 }
 
 pub fn finished-generators-release-their-state() {

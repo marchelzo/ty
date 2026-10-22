@@ -4737,7 +4737,7 @@ GetNamespace(Ty *ty, Namespace const *ns)
         }
 
         Scope *scope = GetNamespace(ty, ns->next);
-        Symbol *sym = scope_lookup(ty, scope, ns->id);
+        Symbol *sym = scope_xlookup(ty, scope, ns->id, SCOPE_PERMISSIVE);
 
         if (sym == NULL) {
                 sym = scope_new_namespace(ty, ns->id, scope);

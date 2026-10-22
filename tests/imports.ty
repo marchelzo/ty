@@ -3,7 +3,7 @@ import path (Path)
 import support.process (run)
 
 fn tree(t: Test, files: Dict[String, String]) -> Path {
-    let root = t.tmp-dir()
+    let root = t.tmp-dir().resolve
     for name, text in files {
         let file = root / name
         file.parent.mkdir(parents: true, exist-ok: true)
