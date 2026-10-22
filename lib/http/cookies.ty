@@ -441,6 +441,9 @@ pub class CookieJar {
 
     /// Cookies to send to `url`, longest path first (RFC 6265 section 5.4).
     for-url(url: URL | String) -> Array[Cookie] {
+        if #__cookies == 0 {
+            return []
+        }
         let u = (url :: URL) ? url : URL(url)
         let now = time.utc()
         let ^_ = __lock.lock()

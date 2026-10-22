@@ -146,25 +146,39 @@ pub class Headers {
 
     /// Merges `other`, replacing fields that it names.
     update(other: _) -> Headers {
-        let pairs = match other {
-            nil        => [],
-            h: Headers => h.items(),
-            d: Dict    => d.list(),
-            xs: Array  => xs,
-            r          => members(r).list().map(p -> (kebab(p.0), p.1))
+        let fresh = match other {
+            nil        => return self,
+            h: Headers => h.__items,
+            d: Dict    => __checked(d.list()),
+            xs: Array  => __checked(xs),
+            r          => __checked(members(r).list().map(p -> (kebab(p.0), p.1)))
         }
-        let seen = %{}
-        for (k, v) in pairs {
-            let key = str(k)
-            if seen[key.lower()] == nil {
-                seen[key.lower()] = true
-                remove(key)
-            }
-            if v != nil {
-                __push(key, v)
-            }
+        if #fresh == 0 {
+            return self
         }
+        if #__items == 0 {
+            __items = [p for p in fresh if p.1 != nil]
+            return self
+        }
+        let names = %{}
+        for (k, _) in fresh {
+            names[k.lower()] = true
+        }
+        __items = [p for p in __items if names[p.0.lower()] == nil] + [p for p in fresh if p.1 != nil]
         self
+    }
+
+    __checked(pairs: Array) -> Array[(String, _)] {
+        let out = []
+        for (k, v) in pairs {
+            let key = header-safe!(str(k))
+            match v {
+                nil       => out.push((key, nil)),
+                vs: Array => for x in vs { out.push((key, header-safe!(str(x)))) },
+                x         => out.push((key, header-safe!(str(x))))
+            }
+        }
+        out
     }
 
     /// Adds every field of `other`, keeping existing ones.

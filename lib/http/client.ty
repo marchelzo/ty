@@ -188,15 +188,29 @@ pub class Timeout {
 
 /// Connection pool limits. `keepalive-expiry` closes idle connections
 /// after that many seconds.
+///
+/// `http2-connections` lets requests to one origin spread over up to that
+/// many HTTP/2 connections: another is opened only while every existing
+/// one is busy. RFC 9113 asks clients to keep one connection per origin,
+/// so the default is 1; raising it trades that for parallelism when many
+/// threads share a client (each connection is driven by one thread at a
+/// time).
 pub class Limits {
-    max-connections:  Int
-    max-keepalive:    Int
-    keepalive-expiry: Float
+    max-connections:   Int
+    max-keepalive:     Int
+    keepalive-expiry:  Float
+    http2-connections: Int
 
-    init(max-connections: Int = 100, max-keepalive: Int = 20, keepalive-expiry: Int | Float = 5.0) {
-        self.max-connections  = max-connections
-        self.max-keepalive    = max-keepalive
-        self.keepalive-expiry = float(keepalive-expiry)
+    init(
+        max-connections: Int = 100,
+        max-keepalive: Int = 20,
+        keepalive-expiry: Int | Float = 5.0,
+        http2-connections: Int = 1
+    ) {
+        self.max-connections   = max-connections
+        self.max-keepalive     = max-keepalive
+        self.keepalive-expiry  = float(keepalive-expiry)
+        self.http2-connections = max(1, http2-connections)
     }
 }
 
@@ -331,7 +345,7 @@ pub class Request {
     ) {
         self.method     = method.upper()
         self.url        = (url :: URL) ? url : URL(url)
-        self.headers    = Headers(headers)
+        self.headers    = (headers :: Headers) ? headers : Headers(headers)
         self.content    = body-of(content)
         self.stream     = stream
         self.extensions = extensions
@@ -436,7 +450,7 @@ pub class Response {
     ) {
         self.status-code  = status-code
         self.reason       = reason ?? status-name(status-code)
-        self.headers      = Headers(headers)
+        self.headers      = (headers :: Headers) ? headers : Headers(headers)
         self.http-version = http-version
         self.request      = request
         self.url          = match url {
@@ -1757,7 +1771,7 @@ fn head-bytes(req: Request, target: String, extra: Array[(String, String)]) -> B
     if req.headers['host'] == nil {
         out.push("Host: {req.url.authority}\r\n")
     }
-    for (k, v) in req.headers {
+    for (k, v) in req.headers.items() {
         out.push("{k}: {v}\r\n")
     }
     for (k, v) in extra {
@@ -2181,8 +2195,14 @@ pub class Pool {
             }
 
             if let $conn = __usable-h2(key) {
-                conn.reserve()
-                return conn
+                let spread? = conn.active > 0
+                           && #(__h2[key] ?? []) < limits.http2-connections
+                           && __probing[key] == nil
+                           && __total < limits.max-connections
+                if !spread? {
+                    conn.reserve()
+                    return conn
+                }
             }
 
             let idle = __idle[key] ?? []
@@ -2205,7 +2225,7 @@ pub class Pool {
 
             if __total < limits.max-connections || __evict-one() {
                 __total += 1
-                let probe? = h2? && __proto[key] == nil
+                let probe? = h2? && (__proto[key] == nil || __proto[key] == 'HTTP/2')
                 if probe? {
                     __probing[key] = true
                 }
@@ -3112,7 +3132,7 @@ pub class Client {
 
         let started = time.now()
         let tp = __transport-for(req.url)
-        let rsp = offload(-> tp.handle(req, t))
+        let rsp = in-server-task?() ? offload(-> tp.handle(req, t)) : tp.handle(req, t)
         if in-server-task?() && rsp.body-stream != nil {
             rsp.attach(LoopBody(rsp.body-stream), decode: false)
         }

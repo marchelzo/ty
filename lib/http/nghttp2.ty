@@ -124,20 +124,20 @@ pub fn strerror(code: Int) -> String {
 /// alive until nghttp2 has copied them).
 pub fn nv-list(pairs: Array[(String, String)]) -> (Blob, Int, Blob) {
     let strs = Blob()
-    let offs = []
     for (k, v) in pairs {
-        let ko = #strs
         strs.push(k)
-        let vo = #strs
         strs.push(v)
-        offs.push((ko, k.size(), vo, v.size()))
     }
     strs.push(0)
 
     let nva = Blob.zeros(NV_SIZE * max(#pairs, 1))
     let base = int(strs.ptr())
-    for (ko, kn, vo, vn); i in offs {
-        c.pack(nva.ptr() + i * NV_SIZE, '=QQQQB7x', base + ko, base + vo, kn, vn, 0)
+    let off = 0
+    for (k, v); i in pairs {
+        let kn = k.size()
+        let vn = v.size()
+        c.pack(nva.ptr() + i * NV_SIZE, '=QQQQB7x', base + off, base + off + kn, kn, vn, 0)
+        off += kn + vn
     }
 
     (nva, #pairs, strs)

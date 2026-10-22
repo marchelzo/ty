@@ -30,6 +30,7 @@ const CONNECTION_WINDOW = 32 * 1024 * 1024
 const UPLOAD_HIGH       = 1024 * 1024
 
 let __tls::current: H2Conn | nil = nil
+let __tls::sleeper: CondVar = CondVar()
 
 let callbacks = Callbacks(_ -> current)
 
@@ -55,6 +56,7 @@ class H2Stream {
     pos:       Int
     eof?:      Bool
     deferred?: Bool
+    touched?:  Bool
     keep:      _
 
     init() {
@@ -71,6 +73,7 @@ class H2Stream {
         pos       = 0
         eof?      = false
         deferred? = false
+        touched?  = false
         keep      = nil
     }
 
@@ -129,13 +132,14 @@ pub class H2Conn {
 
     __session:  Ptr | nil
     __lock:     Mutex
-    __cv:       CondVar
+    __sleepers: Array[(CondVar, H2Stream)]
     __streams:  Dict[Int, H2Stream]
     __reading?: Bool
     __dead?:    Bool
     __goaway?:  Bool
     __error:    _
     __out:      Ptr
+    __pend:     Blob
 
     init(sock: Socket, key: String, transport: _, t: Timeout) {
         self.sock      = sock
@@ -146,13 +150,14 @@ pub class H2Conn {
         idle-since     = time.now()
         max-streams    = 100
         __lock         = Mutex()
-        __cv           = CondVar()
+        __sleepers     = []
         __streams      = %{}
         __reading?     = false
         __dead?        = false
         __goaway?      = false
         __error        = nil
         __out          = c.new-auto(c.ptr)
+        __pend         = Blob()
 
         let opt = c.new-auto(c.ptr)
         nghttp2_option_new(opt)
@@ -235,15 +240,38 @@ pub class H2Conn {
                 st.error = e
             }
         }
-        __cv.broadcast()
+        __wake-all()
+    }
+
+    __wake-all() {
+        for (cv, _) in __sleepers {
+            cv.signal()
+        }
+    }
+
+    /// Wakes the threads whose streams made progress, and (when `handoff?`)
+    /// one more so that somebody keeps reading the socket.
+    __wake(handoff?: Bool) {
+        let woke = false
+        for (cv, st) in __sleepers {
+            if st.touched? || st.closed? || __dead? {
+                st.touched? = false
+                cv.signal()
+                woke = true
+            }
+        }
+        if handoff? && !woke && #__sleepers > 0 {
+            __sleepers[0].0.signal()
+        }
     }
 
     __flush(until: Float | nil) {
         let $s = __session or return
-        if __dead? {
+        if __dead? || nghttp2_session_want_write(s) == 0 {
             return
         }
-        let pend = Blob()
+        let pend = __pend
+        pend.clear()
         while true {
             current = self
             let n = nghttp2_session_mem_send(s, __out)
@@ -263,6 +291,10 @@ pub class H2Conn {
         }
         if #pend > 0 {
             __send(pend, until)
+            pend.clear()
+        }
+        if #pend > (1 << 20) {
+            __pend = Blob()
         }
     }
 
@@ -276,13 +308,16 @@ pub class H2Conn {
     }
 
     /// Drives the connection until `ready()` holds. Called with the lock held.
-    __wait(ready: () -> Bool, until: Float | nil, what: String) {
+    __wait(st: H2Stream, ready: () -> Bool, until: Float | nil, what: String) {
         while !ready() {
             if __dead? {
                 throw __error ?? ReadError('http: connection closed')
             }
             if __reading? {
-                __cv.wait(__lock, left(until) ?? 3600.0)
+                let cv = sleeper
+                __sleepers.push((cv, st))
+                cv.wait(__lock, left(until) ?? 3600.0)
+                __sleepers = [p for p in __sleepers if p.0 != cv]
                 if until != nil && left(until) == 0.0 && !ready() {
                     throw ReadTimeout("http: timed out waiting for {what} from {sock.host}")
                 }
@@ -303,7 +338,7 @@ pub class H2Conn {
             __reading? = false
 
             if let $e = failure {
-                __cv.broadcast()
+                __wake(true)
                 if e :: ReadTimeout {
                     throw ReadTimeout("http: timed out waiting for {what} from {sock.host}")
                 }
@@ -333,7 +368,10 @@ pub class H2Conn {
                 }
                 __flush(until)
             }
-            __cv.broadcast()
+            __wake(ready())
+        }
+        if !__reading? && #__sleepers > 0 {
+            __sleepers[0].0.signal()
         }
     }
 
@@ -349,7 +387,7 @@ pub class H2Conn {
             (':authority', req.headers['host'] ?? req.url.authority),
             (':path', req.url.target)
         ]
-        for (k, v) in req.headers {
+        for (k, v) in req.headers.items() {
             let name = k.lower()
             if HOP_BY_HOP.contains?(name) {
                 if name == 'te' && v.lower() == 'trailers' {
@@ -396,7 +434,7 @@ pub class H2Conn {
                     __resume(st)
                     __flush(deadline(t.write))
                     if st.pending > UPLOAD_HIGH {
-                        __wait(-> st.pending <= UPLOAD_HIGH / 2 || st.closed? || st.head?, deadline(t.write), 'flow-control credit')
+                        __wait(st, -> st.pending <= UPLOAD_HIGH / 2 || st.closed? || st.head?, deadline(t.write), 'flow-control credit')
                     }
                     if st.closed? || st.head? {
                         break
@@ -409,7 +447,7 @@ pub class H2Conn {
                 }
             }
 
-            __wait(-> st.head? || st.closed?, deadline(t.read), 'response headers')
+            __wait(st, -> st.head? || st.closed?, deadline(t.read), 'response headers')
 
             if !st.head? {
                 if st.error :: StaleConnection {
@@ -451,7 +489,7 @@ pub class H2Conn {
             if st.closed? {
                 throw st.error ?? ReadError('http: HTTP/2 stream closed before the body was complete')
             }
-            __wait(-> #st.body > 0 || st.end? || st.closed?, deadline(t.read), 'response body')
+            __wait(st, -> #st.body > 0 || st.end? || st.closed?, deadline(t.read), 'response body')
         }
         nil
     }
@@ -497,6 +535,7 @@ pub class H2Conn {
 
     cb-header(frame: Ptr, name: Ptr, namelen: Int, value: Ptr, valuelen: Int) -> Int {
         let $st = __streams[frame-id(frame)] or return 0
+        st.touched? = true
         let k = c.str(name, namelen)
         let v = c.str(value, valuelen)
         if k == ':status' {
@@ -538,6 +577,7 @@ pub class H2Conn {
         }
 
         let $st = __streams[id] or return 0
+        st.touched? = true
 
         if type == NGHTTP2_HEADERS {
             let code = st.status ?? 0
@@ -564,7 +604,10 @@ pub class H2Conn {
                     nghttp2_session_consume_connection(s, len)
                 }
             },
-            st => st.body.push(data, len)
+            st => {
+                st.body.push(data, len)
+                st.touched? = true
+            }
         }
         0
     }
@@ -572,6 +615,7 @@ pub class H2Conn {
     cb-close(id: Int, code: Int) -> Int {
         let $st = __streams[id] or return 0
         st.closed? = true
+        st.touched? = true
         if code != NGHTTP2_NO_ERROR && !st.end? && st.error == nil {
             st.error = (code == NGHTTP2_REFUSED_STREAM)
                 ? StaleConnection("http: {sock.host} refused the stream")
@@ -587,6 +631,7 @@ pub class H2Conn {
         let $st = __streams[id] or return NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE
         let n = min(length, st.pending)
         if n > 0 {
+            st.touched? = true
             memcpy(buf, st.out.ptr() + st.pos, n)
             st.pos += n
             if st.pos == #st.out {

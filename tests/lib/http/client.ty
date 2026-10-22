@@ -1302,3 +1302,22 @@ pub fn server-and-client-share-conventions() {
         assert(json.encode(http.Headers(%{'a': '1'})) == '{"a":"1"}')
     })
 }
+
+pub fn http2-connections-limit() {
+    serve(routes, fn (srv) {
+        let one = Client(base-url: srv.url, verify: CA)
+        assert(one.parallel(['/slow'] * 8, workers: 8).all?(r -> (r :: Response) && r.text == 'late'))
+        assert(one.transport.pool.connections == 1)
+        one.close()
+
+        let spread = Client(base-url: srv.url, verify: CA, limits: Limits(http2-connections: 3))
+        let t0 = time.now()
+        let rs = spread.parallel(['/slow'] * 12 + ['/big'] * 4, workers: 12)
+        assert(rs.all?(r -> (r :: Response) && r.ok?))
+        assert(rs.drop(12).all?(r -> #r.content == 3000000))
+        let n = spread.transport.pool.connections
+        assert(n >= 2 && n <= 3)
+        assert(time.now() - t0 < 3.0)
+        spread.close()
+    }, tls: tls(), threads: 4)
+}
