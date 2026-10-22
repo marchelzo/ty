@@ -1,0 +1,69 @@
+import http
+import os
+import ffi as c
+import ssl
+import ty.test.core (skip-file-unless)
+import _client (serve, Client, WsClient, get)
+
+#|if __linux__
+skip-file-unless(c.open('kqueue', versions: [0, nil], env: 'TY_LIBKQUEUE') != nil, 'libkqueue is not installed')
+#|]
+
+let (CERT, KEY) = ssl.self-signed()
+
+fn routes(srv) {
+    srv.get('/', (req, rsp) -> rsp.plain('kq'))
+    srv.post('/echo', (req, rsp) -> rsp.write(req.body ?? ''))
+    srv.get('/big', (req, rsp) -> rsp.write('k' * 1000000))
+    srv.get('/sleep', fn (req, rsp) {
+        http.sleep(0.05)
+        rsp.plain('slept')
+    })
+    srv.ws('/echo', fn (sock, req) {
+        while let $m = sock.recv() {
+            sock.send(m)
+        }
+    })
+}
+
+pub fn http1-on-kqueue() {
+    serve(routes, fn (srv) {
+        assert(srv.backend == 'kqueue')
+        let c = Client(srv.port)
+        for i in ..10 {
+            assert(c.get('/').body == 'kq')
+        }
+        c.request('POST', '/echo', 'e' * 200000)
+        assert(#c.response().body == 200000)
+        assert(#c.get('/big').body == 1000000)
+        assert(c.get('/sleep').body == 'slept')
+        c.close()
+    }, backend: 'kqueue', threads: 2)
+}
+
+pub fn websocket-on-kqueue() {
+    serve(routes, fn (srv) {
+        let w = WsClient(srv.port, '/echo')
+        w.send('ping')
+        assert(w.recv() == 'ping')
+        w.close()
+    }, backend: 'kqueue')
+}
+
+pub fn tls-on-kqueue() {
+    serve(routes, fn (srv) {
+        let s = ssl.connect('127.0.0.1', srv.port, ctx: ssl.Context.client(ca: CERT))
+        s.write('GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n')
+        assert(s.read-all().str!().ends?('kq'))
+        s.close()
+    }, backend: 'kqueue', tls: {cert: CERT, key: KEY})
+}
+
+pub fn timeouts-on-kqueue() {
+    serve(routes, fn (srv) {
+        let c = Client(srv.port)
+        c.send('GET / HTTP/1.1\r\n')
+        assert(c.response().status == 408)
+        c.close()
+    }, backend: 'kqueue', header-timeout: 0.2)
+}

@@ -1,0 +1,5 @@
+import ty.test.config (skip-dir)
+
+if !(__linux__ || __bsd__ || __apple__) {
+    skip-dir('http server backends need io_uring or kqueue')
+}

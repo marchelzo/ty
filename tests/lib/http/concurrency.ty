@@ -1,0 +1,161 @@
+import http
+import os
+import time
+import _client (serve, Client, WsClient, get)
+
+pub fn many-clients-many-threads() {
+    let hits = Atomic(0)
+    serve(fn (srv) {
+        srv.get('/n/<i>', fn (req, rsp, i) {
+            hits.fetch-add(1)
+            if int(i) % 7 == 0 {
+                http.sleep(0.005)
+            }
+            rsp.plain(i)
+        })
+        srv.post('/echo', (req, rsp) -> rsp.write(req.body ?? ''))
+    }, fn (srv) {
+        let workers = [Thread(fn () {
+            let c = Client(srv.port)
+            for j in ..50 {
+                let n = w * 1000 + j
+                assert(c.get("/n/{n}").body == str(n))
+                c.request('POST', '/echo', "body-{n}")
+                assert(c.response().body == "body-{n}")
+            }
+            c.close()
+        }) for w in ..16]
+        for t in workers {
+            t.join()
+        }
+        assert(hits.load() == 16 * 50)
+        assert(srv.requests-served >= 16 * 100)
+    }, threads: 4)
+}
+
+pub fn connection-churn() {
+    serve(fn (srv) {
+        srv.get('/', (req, rsp) -> rsp.plain('ok'))
+    }, fn (srv) {
+        let workers = [Thread(fn () {
+            for ..100 {
+                assert(get(srv.port, '/').body == 'ok')
+            }
+        }) for ..8]
+        for t in workers {
+            t.join()
+        }
+        let t0 = time.now()
+        while srv.active-connections > 0 && time.now() - t0 < 3.0 {
+            os.sleep(0.01)
+        }
+        assert(srv.active-connections == 0)
+    }, threads: 4)
+}
+
+pub fn blocking-offload-keeps-loop-responsive() {
+    serve(fn (srv) {
+        srv.get('/block', fn (req, rsp) {
+            rsp.plain(str(http.blocking(fn () { os.sleep(0.3); 'done' })))
+        })
+        srv.get('/fast', (req, rsp) -> rsp.plain('fast'))
+    }, fn (srv) {
+        let slow = Client(srv.port)
+        slow.request('GET', '/block')
+        let t0 = time.now()
+        assert(get(srv.port, '/fast').body == 'fast')
+        assert(time.now() - t0 < 0.2)
+        assert(slow.response().body == 'done')
+        slow.close()
+    }, threads: 1)
+}
+
+pub fn blocking-propagates-exceptions() {
+    serve(fn (srv) {
+        srv.get('/', fn (req, rsp) {
+            try {
+                http.blocking(fn () { throw RuntimeError('worker failed') })
+            } catch e {
+                rsp.plain("caught {e}")
+            }
+        })
+    }, fn (srv) {
+        assert(get(srv.port, '/').body.contains?('worker failed'))
+    })
+}
+
+pub fn spawned-tasks-and-sleep() {
+    let seen = Atomic(0)
+    serve(fn (srv) {
+        srv.get('/', fn (req, rsp) {
+            for ..3 {
+                http.spawn(fn () {
+                    http.sleep(0.01)
+                    seen.fetch-add(1)
+                })
+            }
+            http.sleep(0.05)
+            rsp.plain(str(seen.load()))
+        })
+    }, fn (srv) {
+        assert(get(srv.port, '/').body == '3')
+    }, threads: 1)
+}
+
+pub fn ws-and-http-share-loops() {
+    serve(fn (srv) {
+        srv.ws('/echo', fn (sock, req) {
+            while let $m = sock.recv() {
+                sock.send(m)
+            }
+        })
+        srv.get('/', (req, rsp) -> rsp.plain('ok'))
+    }, fn (srv) {
+        let socks = [WsClient(srv.port, '/echo') for ..20]
+        let workers = [Thread(fn () {
+            for j in ..20 {
+                socks[i].send("{i}:{j}")
+                assert(socks[i].recv() == "{i}:{j}")
+            }
+        }) for i in ..20]
+        for ..20 {
+            assert(get(srv.port, '/').body == 'ok')
+        }
+        for t in workers {
+            t.join()
+        }
+        for s in socks {
+            s.close()
+        }
+    }, threads: 2)
+}
+
+pub fn suspension-outside-a-task-is-an-error() {
+    let failed = false
+    try {
+        http.sleep(0.01)
+    } catch e {
+        failed = true
+    }
+    assert(failed)
+}
+
+pub fn concurrent-status-codes() {
+    serve(fn (srv) {
+        srv.get('/s/<n>', (req, rsp, n) -> int(n))
+    }, fn (srv) {
+        let codes = [200, 201, 202, 203, 204, 206, 226, 299, 400, 401, 403, 404, 409, 410, 418, 422, 429, 451, 499, 500, 502, 503, 599]
+        let workers = [Thread(fn () {
+            let c = Client(srv.port)
+            for j in ..40 {
+                let code = codes[(w * 7 + j) % #codes]
+                let r = c.get("/s/{code}")
+                assert(r.status == code)
+            }
+            c.close()
+        }) for w in ..12]
+        for t in workers {
+            t.join()
+        }
+    }, threads: 4)
+}

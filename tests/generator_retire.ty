@@ -1,0 +1,87 @@
+fn body*(x) { yield x + 1 }
+
+fn yielder*(n) {
+    for i in ..n {
+        yield i
+    }
+}
+
+fn rss-kb() -> Int {
+    let status = slurp('/proc/self/status')
+    int(status.match(/VmRSS:\s+(\d+)/)[1])
+}
+
+pub fn finished-generators-release-their-state() {
+    for i in ..20000 {
+        body(i)()
+    }
+
+    let before = rss-kb()
+
+    for i in ..200000 {
+        let g = body(i)
+        assert(g() == Some(i + 1))
+        assert(g() == None)
+        assert(g() == None)
+    }
+
+    assert(rss-kb() - before < 64 * 1024)
+}
+
+pub fn retired-generators-stay-finished() {
+    let g = yielder(3)
+    assert([*g] == [0, 1, 2])
+    assert(g() == None)
+    assert(g() == None)
+
+    let h = yielder(2)
+    assert(h() == Some(0))
+    assert(h() == Some(1))
+    assert(h() == None)
+    assert(h() == None)
+}
+
+pub fn retirement-under-try-and-nested-calls() {
+    fn helper(x) { x * 2 }
+
+    fn guarded*(n) {
+        try {
+            yield helper(n)
+        } finally {
+            ;
+        }
+    }
+
+    let g = guarded(5)
+    assert(g() == Some(10))
+    assert(g() == None)
+    assert(g() == None)
+}
+
+fn guarded-body*(t: _, f: _, args: _) {
+    try {
+        yield f(*args)
+    } catch e {
+        t[1] += 1
+    } finally {
+        t[0] += 1
+    }
+}
+
+pub fn generators-with-try-finally-release-their-state() {
+    let t = [0, 0]
+    for i in ..20000 {
+        guarded-body(t, \_ + 1, [i])()
+    }
+
+    let before = rss-kb()
+
+    for i in ..200000 {
+        let g = guarded-body(t, \_ + 1, [i])
+        assert(g() == Some(i + 1))
+        assert(g() == None)
+    }
+
+    assert(t[0] == 200000)
+    assert(rss-kb() - before < 64 * 1024)
+}

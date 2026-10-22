@@ -1,5 +1,6 @@
 import jit (kernel!)
-import llhttp (
+import json
+import http.form (
     HttpHeaders,
     HttpVersion,
     decode-query,
@@ -24,11 +25,15 @@ const CHUNKED           = 'chunked'
 const CLOSE             = 'close'
 const KEEP_ALIVE        = 'keep-alive'
 const CONTINUE          = '100-continue'
+const HOST              = 'host'
+const UPGRADE           = 'upgrade'
 
 const F_CHUNKED    = 1
 const F_CLOSE      = 2
 const F_KEEP_ALIVE = 4
 const F_CONTINUE   = 8
+const F_HOST       = 16
+const F_UPGRADE    = 32
 
 const M_OFF = 0
 const M_LEN = 1
@@ -229,6 +234,10 @@ kernel! fn scan-head(b: Blob, start: Int, end: Int, cls: Blob, out: Array[Int]) 
             } else if lower-eq?(b, v, vlen, KEEP_ALIVE, cls) {
                 fl = fl | F_KEEP_ALIVE
             }
+        } else if klen == 4 && lower-eq?(b, k, klen, HOST, cls) {
+            fl = fl | F_HOST
+        } else if klen == 7 && lower-eq?(b, k, klen, UPGRADE, cls) {
+            fl = fl | F_UPGRADE
         } else if klen == 6 && lower-eq?(b, k, klen, EXPECT, cls) {
             if lower-eq?(b, v, vlen, CONTINUE, cls) {
                 fl = fl | F_CONTINUE
@@ -340,43 +349,106 @@ pub use ParseResult = NeedMore[(Int | nil, Bool)] | Ready[(Request, Int)] | Inva
 
 const V10 = {major: 1, minor: 0}
 const V11 = {major: 1, minor: 1}
+const V20 = {major: 2, minor: 0}
+
+const MULTIPART = /^multipart\/form-data;\s*boundary="?([^";]+)"?/
 
 pub class Request {
-    method:  String
-    target:  String
-    url:     String
-    version: HttpVersion
-    body:    String | nil
-    files:   Dict[String, _]
+    method:   String
+    target:   String
+    url:      String
+    version:  HttpVersion
+    body:     String | nil
+    files:    Dict[String, _]
+    scheme:   String
+    remote:   String | nil
+    route:    String | nil
 
-    __head:    Blob
+    __head:    Blob | nil
     __base:    Int
     __flags:   Int
+    __ctype:   String | nil
     __query:   String | nil
     __headers: HttpHeaders | nil
     __params:  Dict[String, String | [String | nil] | nil] | nil
     __valid?:  Bool
+    __queue:   _
+    __served?: Bool
 
-    init(head: Blob, base: Int, body: String | nil) {
-        __head    = head
-        __base    = base
-        __flags   = __mark(FLAGS)
-        method    = head.str!(__mark(M_OFF), __mark(M_LEN))
-        target    = head.str!(__mark(T_OFF), __mark(T_LEN))
-        version   = (__mark(MINOR) == 0) ? V10 : V11
-        files     = %{}
-        self.body = body
+    init(
+        method: String,
+        target: String,
+        version: HttpVersion,
+        body: String | nil,
+        flags: Int = 0,
+        head: Blob | nil = nil,
+        base: Int = 0,
+        headers: HttpHeaders | nil = nil,
+        content-type: String | nil = nil
+    ) {
+        self.method  = method
+        self.target  = target
+        self.version = version
+        self.body    = body
+        files        = %{}
+        scheme       = 'http'
+        __flags      = flags
+        __head       = head
+        __base       = base
+        __headers    = headers
+        __ctype      = content-type
+        __queue      = nil
+        __served?    = false
 
         match target.bsearch('?') {
             nil => (url, __query) = (target, nil),
             i   => (url, __query) = (target.bslice(0, i), target.bslice(i + 1))
         }
 
-        __valid? = __decode-multipart()
+        __valid? = (body == nil) || __decode-multipart()
+    }
+
+    static parsed(head: Blob, base: Int, body: String | nil) -> Request {
+        let m = (i: Int) -> mark(head, base + i)
+        let ctype = match m(CTYPE) {
+            -1 => nil,
+            i  => head.str!(m(HEAD + i * 4 + 2), m(HEAD + i * 4 + 3))
+        }
+        Request(
+            head.str!(m(M_OFF), m(M_LEN)),
+            head.str!(m(T_OFF), m(T_LEN)),
+            (m(MINOR) == 0) ? V10 : V11,
+            body,
+            m(FLAGS),
+            head,
+            base,
+            nil,
+            ctype
+        )
+    }
+
+    static h2(
+        method: String,
+        target: String,
+        headers: HttpHeaders,
+        body: String | nil,
+        scheme: String
+    ) -> Request {
+        let ctype = match headers['content-type'] {
+            s: String => s,
+            [s, *]    => s,
+            _         => nil
+        }
+        let req = Request(method, target, V20, body, headers: headers, content-type: ctype)
+        req.scheme = scheme
+        req
     }
 
     __mark(i: Int) -> Int {
-        mark(__head, __base + i)
+        match __head {
+            nil  => -1,
+            head => mark(head, __base + i)
+        }
     }
 
     valid? -> Bool {
@@ -384,30 +456,80 @@ pub class Request {
     }
 
     keep-alive? -> Bool {
-        (version.minor == 0) ? (__flags & F_KEEP_ALIVE) != 0 : (__flags & F_CLOSE) == 0
+        match version.major {
+            2 => true,
+            _ => (version.minor == 0) ? (__flags & F_KEEP_ALIVE) != 0 : (__flags & F_CLOSE) == 0
+        }
+    }
+
+    expects-continue? -> Bool {
+        (__flags & F_CONTINUE) != 0
+    }
+
+    host? -> Bool {
+        (__head == nil) ? (headers['host'] != nil) : (__flags & F_HOST) != 0
+    }
+
+    upgrade? -> Bool {
+        (__head == nil) ? (headers['upgrade'] != nil) : (__flags & F_UPGRADE) != 0
     }
 
     headers -> HttpHeaders {
         __headers ?? (__headers = __decode-headers())
     }
 
+    header(name: String) -> String | nil {
+        let want = name.lower()
+
+        if __head == nil || __headers != nil {
+            let found = nil
+            for k, v in headers {
+                if k.lower() == want {
+                    let s = (v :: String) ? v : v.join(', ')
+                    found = (found == nil) ? s : "{found}, {s}"
+                }
+            }
+            return found
+        }
+
+        let $head = __head or return nil
+        let found = nil
+        for i in ..__mark(NHEAD) {
+            let o = HEAD + i * 4
+            if __mark(o + 1) == want.size() && head.str!(__mark(o), __mark(o + 1)).lower() == want {
+                let v = head.str!(__mark(o + 2), __mark(o + 3))
+                found = (found == nil) ? v : "{found}, {v}"
+            }
+        }
+        found
+    }
+
     params -> Dict[String, String | [String | nil] | nil] {
         __params ?? (__params = __decode-params())
     }
 
+    query -> String | nil {
+        __query
+    }
+
     content-type -> String | nil {
-        match __mark(CTYPE) {
-            -1 => nil,
-            i  => __head.str!(__mark(HEAD + i * 4 + 2), __mark(HEAD + i * 4 + 3))
+        __ctype
+    }
+
+    json() -> _ {
+        match body {
+            nil     => nil,
+            s       => json::parse(s)
         }
     }
 
     __decode-headers() -> HttpHeaders {
         let headers = %{}
+        let head = __head ?? return headers
         for i in ..__mark(NHEAD) {
             let o     = HEAD + i * 4
-            let name  = __head.str!(__mark(o), __mark(o + 1))
-            let value = __head.str!(__mark(o + 2), __mark(o + 3))
+            let name  = head.str!(__mark(o), __mark(o + 1))
+            let value = head.str!(__mark(o + 2), __mark(o + 3))
             match headers[name] {
                 nil               => headers[name] = value,
                 vs: Array[String] => vs.push(value),
@@ -426,11 +548,8 @@ pub class Request {
     }
 
     __decode-multipart() -> Bool {
-        if __mark(CTYPE) == -1 {
-            return true
-        }
-        let $type = content-type or return true
-        let [_, boundary] = type.match(/multipart\/form-data;\s*boundary=(.+)/) or return true
+        let $type = __ctype or return true
+        let [_, boundary] = type.match(MULTIPART) or return true
         let parts = multipart(boundary)
         parts()
         match parts(body ?? '') {
@@ -442,6 +561,37 @@ pub class Request {
             },
             _ => false
         }
+    }
+
+    streaming? -> Bool {
+        __queue != nil
+    }
+
+    attach-body(queue: _) {
+        __queue = queue
+    }
+
+    body-queue -> _ {
+        __queue
+    }
+
+    read(max: Int = 65536) -> Blob | nil {
+        if let $q = __queue {
+            return q.read(max)
+        }
+        if __served? || body == nil {
+            return nil
+        }
+        __served? = true
+        Blob(body)
+    }
+
+    read-all() -> Blob {
+        let out = Blob()
+        while let $chunk = read() {
+            out.push(chunk)
+        }
+        out
     }
 
     end() {
@@ -457,8 +607,8 @@ fn status-of(err: Int) -> Int {
     }
 }
 
-pub fn marks() -> Array[Int] {
-    [0] * (HEAD + 4 * MAX_HEADERS)
+pub fn marks(max-headers: Int = MAX_HEADERS) -> Array[Int] {
+    [0] * (HEAD + 4 * max-headers)
 }
 
 fn body-of(buf: Blob, at: Int, end: Int, marks: Array[Int]) -> (Int, String | nil) | Int {
@@ -476,7 +626,14 @@ fn body-of(buf: Blob, at: Int, end: Int, marks: Array[Int]) -> (Int, String | ni
     }
 }
 
-pub fn parse(buf: Blob, start: Int, end: Int, marks: Array[Int]) -> ParseResult {
+pub fn parse(
+    buf: Blob,
+    start: Int,
+    end: Int,
+    marks: Array[Int],
+    max-head: Int = MAX_HEAD,
+    max-body: Int = MAX_BODY
+) -> ParseResult {
     let hlen = scan-head(buf, start, end, CLASSES, marks)
 
     if hlen < 0 {
@@ -484,10 +641,14 @@ pub fn parse(buf: Blob, start: Int, end: Int, marks: Array[Int]) -> ParseResult 
     }
 
     if hlen == 0 {
-        return (end - start >= MAX_HEAD) ? Invalid(431) : NeedMore(nil, false)
+        return (end - start >= max-head) ? Invalid(431) : NeedMore(nil, false)
     }
 
-    if marks[CLEN] > MAX_BODY {
+    if hlen > max-head {
+        return Invalid(431)
+    }
+
+    if marks[CLEN] > max-body {
         return Invalid(413)
     }
 
@@ -496,16 +657,157 @@ pub fn parse(buf: Blob, start: Int, end: Int, marks: Array[Int]) -> ParseResult 
     match body-of(buf, start + hlen, end, marks) {
         -2 => Invalid(400),
         -1 => do {
-            (end - start - hlen >= MAX_BODY) ? Invalid(413) : NeedMore(nil, continue?)
+            (end - start - hlen >= max-body + max-head) ? Invalid(413) : NeedMore(nil, continue?)
         },
         n: Int => NeedMore(hlen + n, continue?),
+        (n, body) and body != nil && body.size() > max-body => Invalid(413),
         (n, body) => do {
             let k    = HEAD + 4 * marks[NHEAD]
             let base = (hlen + 3) / 4
             let head = Blob.zeros(4 * (base + k))
             pack-head(buf, start, hlen, marks, k, base, head)
-            let req = Request(head, base, body)
+            let req = Request.parsed(head, base, body)
             req.valid? ? Ready(req, hlen + n) : Invalid(400)
         }
+    }
+}
+
+pub tag Head;
+
+/// Parses only the request head. Returns `Head((req, hlen, length, chunked?))`,
+/// `NeedMore((nil, false))` or `Invalid(status)`. `length` is -1 when absent.
+pub fn parse-head(buf: Blob, start: Int, end: Int, marks: Array[Int], max-head: Int = MAX_HEAD) -> _ {
+    let hlen = scan-head(buf, start, end, CLASSES, marks)
+
+    if hlen < 0 {
+        return Invalid(status-of(hlen))
+    }
+
+    if hlen == 0 {
+        return (end - start >= max-head) ? Invalid(431) : NeedMore(nil, false)
+    }
+
+    if hlen > max-head {
+        return Invalid(431)
+    }
+
+    let k    = HEAD + 4 * marks[NHEAD]
+    let base = (hlen + 3) / 4
+    let head = Blob.zeros(4 * (base + k))
+    pack-head(buf, start, hlen, marks, k, base, head)
+
+    Head((Request.parsed(head, base, nil), hlen, marks[CLEN], (marks[FLAGS] & F_CHUNKED) != 0))
+}
+
+pub fn expects-continue?(marks: Array[Int]) -> Bool {
+    (marks[FLAGS] & F_CONTINUE) != 0
+}
+
+/// Incremental chunked-body decoder. `feed` consumes bytes from `buf`,
+/// appending payload to `out`; returns the number of bytes consumed, or -1
+/// on malformed input. `done?` becomes true after the last-chunk trailers.
+pub class Dechunker {
+    done?: Bool
+
+    __state: Int
+    __left:  Int
+    __size:  Int
+    __digits: Int
+    __line:  Int
+
+    init() {
+        done?    = false
+        __state  = 0
+        __left   = 0
+        __size   = 0
+        __digits = 0
+        __line   = 0
+    }
+
+    feed(buf: Blob, start: Int, end: Int, out: Blob) -> Int {
+        let i = start
+        while i < end && !done? {
+            let c = buf[i]
+            match __state {
+                0 => {
+                    if (CLASSES[c] & HEX) != 0 && __line == 0 {
+                        __size = __size * 16 + (((CLASSES[c] & DIGIT) != 0) ? c - 48 : (c | 32) - 87)
+                        __digits += 1
+                        if __digits > 15 {
+                            return -1
+                        }
+                    } else if c == 13 {
+                        __state = 1
+                    } else if __digits == 0 || (CLASSES[c] & FIELD) == 0 {
+                        return -1
+                    } else {
+                        __line = 1
+                    }
+                    i += 1
+                },
+                1 => {
+                    if c != 10 {
+                        return -1
+                    }
+                    i += 1
+                    __line = 0
+                    __digits = 0
+                    if __size == 0 {
+                        __state = 4
+                    } else {
+                        __left = __size
+                        __size = 0
+                        __state = 2
+                    }
+                },
+                2 => {
+                    let n = min(__left, end - i)
+                    out.push(buf.slice(i, n))
+                    __left -= n
+                    i += n
+                    if __left == 0 {
+                        __state = 3
+                    }
+                },
+                3 => {
+                    if __line == 0 {
+                        if c != 13 {
+                            return -1
+                        }
+                        __line = 1
+                    } else {
+                        if c != 10 {
+                            return -1
+                        }
+                        __line = 0
+                        __state = 0
+                    }
+                    i += 1
+                },
+                4 => {
+                    if c == 13 {
+                        __state = 5
+                    } else {
+                        __line = 1
+                        __state = 6
+                    }
+                    i += 1
+                },
+                5 => {
+                    if c != 10 {
+                        return -1
+                    }
+                    i += 1
+                    done? = true
+                },
+                6 => {
+                    if c == 10 {
+                        __state = 4
+                    }
+                    i += 1
+                }
+            }
+        }
+        i - start
     }
 }

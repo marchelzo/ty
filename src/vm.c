@@ -1785,6 +1785,45 @@ co_yield_value(Ty *ty)
         return true;
 }
 
+static void
+co_retire(Ty *ty)
+{
+        Generator *gen = GetCurrentGenerator(ty);
+
+        if (
+                (gen == NULL)
+             || (vN(FRAMES) != 1)
+             || (vN(ty->st->try_stack) > 0)
+             || (vN(DROP_STACK) > 0)
+        ) {
+                push(None);
+                DoYield(ty);
+                return;
+        }
+
+        gen->ip = code_of(&gen->f);
+
+        ty->st->stack = STACK;
+        SWAP(co_state *, gen->st, ty->st);
+        STACK = ty->st->stack;
+
+        vN(STACK) = vXx(FRAMES).fp;
+        IP = vXx(CALLS);
+
+        put(None);
+
+        xvP(ty->co_states, gen->st);
+        gen->st = NULL;
+
+        cothread_t co = gen->co;
+        gen->co = NULL;
+
+        xvP(CO_THREADS, co_active());
+        co_switch(co);
+
+        UNREACHABLE();
+}
+
 static _Thread_local isize DeoptTryBase = -1;
 
 enum { REENTRIES = 4 };
@@ -1968,9 +2007,8 @@ JitReturn:
                         goto JitReturn;
                 }
                 top->jit_resume = next_resume;
-                push(None);
-                CO_LOG("jit_yield_none", TERM(91;1), "yielding: %s", VSC(vvL(STACK)));
-                DoYield(ty);
+                CO_LOG("jit_yield_none", TERM(91;1), "retiring");
+                co_retire(ty);
                 CheckInterrupt(ty);
                 break;
 
@@ -5114,6 +5152,12 @@ vm_concat_strings(Ty *ty, int n)
 
         vN(STACK) = base;
         xvP(STACK, STRING(str, k));
+}
+
+void
+DoYieldNone(Ty *ty)
+{
+        co_retire(ty);
 }
 
 void
@@ -8713,8 +8757,7 @@ TargetMember:
 
                 CASE(YIELD_NONE)
                         if (vN(FRAMES) == 1) {
-                                push(None);
-                                DoYield(ty);
+                                co_retire(ty);
                                 CheckInterrupt(ty);
                         } else {
                                 push(NIL);

@@ -1,0 +1,286 @@
+import http
+import http.ws as ws
+import ssl
+import os
+import net
+import _client (serve, Client)
+
+let (CERT, KEY) = ssl.self-signed()
+
+fn routes(srv) {
+    srv.get('/', (req, rsp) -> rsp.plain("{req.scheme} {req.version.major}"))
+    srv.post('/len', (req, rsp) -> rsp.plain(str(#(req.body ?? ''))))
+    srv.get('/big', (req, rsp) -> rsp.write('t' * 2000000))
+}
+
+fn https(port: Int, request: String, alpn: Array[String] = ['http/1.1']) -> String {
+    let s = ssl.connect('127.0.0.1', port, ctx: ssl.Context.client(ca: CERT, alpn: alpn))
+    try {
+        s.write(request)
+        s.read-all().str!()
+    } finally {
+        s.close()
+    }
+}
+
+pub fn memory-bio-handshake() {
+    let sctx = ssl.Context.server(CERT, KEY, alpn: ['h2', 'http/1.1'])
+    let cctx = ssl.Context.client(ca: CERT, alpn: ['http/1.1'])
+    let s = sctx.session()
+    let c = cctx.session('localhost')
+    let buf = Blob()
+
+    for ..10 {
+        let a = c.handshake()
+        buf.clear()
+        c.drain(buf)
+        s.feed(buf)
+        let b = s.handshake()
+        buf.clear()
+        s.drain(buf)
+        c.feed(buf)
+        if a && b {
+            break
+        }
+    }
+
+    assert(s.handshaken? && c.handshaken?)
+    assert(s.alpn == 'http/1.1' && c.alpn == 'http/1.1')
+    assert(s.server-name == 'localhost')
+    assert(c.peer == '/CN=localhost')
+    assert(s.version == 'TLSv1.3')
+
+    c.write('ping')
+    buf.clear()
+    c.drain(buf)
+    s.feed(buf)
+    let out = Blob()
+    assert(s.read(out) == 4)
+    assert(out.str!() == 'ping')
+
+    s.write('pong' * 10000)
+    buf.clear()
+    s.drain(buf)
+    c.feed(buf)
+    let back = Blob()
+    while c.read(back) > 0 {
+        ;
+    }
+    assert(#back == 40000)
+
+    c.shutdown()
+    buf.clear()
+    c.drain(buf)
+    s.feed(buf)
+    let tail = Blob()
+    assert(s.read(tail) == -1)
+    assert(s.closed?)
+}
+
+pub fn certificate-verification() {
+    let (other, _) = ssl.self-signed('elsewhere')
+    let sctx = ssl.Context.server(CERT, KEY)
+    let s = sctx.session()
+    let c = ssl.Context.client(ca: other).session('localhost')
+    let buf = Blob()
+    let failed = false
+    try {
+        for ..10 {
+            c.handshake()
+            buf.clear()
+            c.drain(buf)
+            s.feed(buf)
+            try {
+                s.handshake()
+            } catch _: ssl.SSLError {
+            }
+            buf.clear()
+            s.drain(buf)
+            c.feed(buf)
+        }
+    } catch e: ssl.CertificateError {
+        failed = true
+    }
+    assert(failed)
+}
+
+pub fn hostname-verification() {
+    let s = ssl.Context.server(CERT, KEY).session()
+    let c = ssl.Context.client(ca: CERT).session('wrong.example')
+    let buf = Blob()
+    let failed = false
+    try {
+        for ..10 {
+            c.handshake()
+            buf.clear()
+            c.drain(buf)
+            s.feed(buf)
+            try {
+                s.handshake()
+            } catch _: ssl.SSLError {
+            }
+            buf.clear()
+            s.drain(buf)
+            c.feed(buf)
+        }
+    } catch e: ssl.CertificateError {
+        failed = true
+    }
+    assert(failed)
+}
+
+pub fn sni-selects-context() {
+    let (cert2, key2) = ssl.self-signed('other.test', san: ['DNS:other.test'])
+    let main = ssl.Context.server(CERT, KEY)
+    main.sni('other.test', ssl.Context.server(cert2, key2))
+
+    let check = fn (host: String, ca: String) -> String | nil {
+        let s = main.session()
+        let c = ssl.Context.client(ca: ca).session(host)
+        let buf = Blob()
+        for ..10 {
+            let a = c.handshake()
+            buf.clear()
+            c.drain(buf)
+            s.feed(buf)
+            let b = s.handshake()
+            buf.clear()
+            s.drain(buf)
+            c.feed(buf)
+            if a && b {
+                break
+            }
+        }
+        c.peer
+    }
+
+    assert(check('other.test', cert2) == '/CN=other.test')
+    assert(check('localhost', CERT) == '/CN=localhost')
+}
+
+pub fn pem-loading-errors() {
+    let failed = false
+    try {
+        ssl.Context.server('-----BEGIN CERTIFICATE-----\ngarbage\n-----END CERTIFICATE-----\n', KEY)
+    } catch _: ssl.SSLError {
+        failed = true
+    }
+    assert(failed)
+
+    let (_, wrong-key) = ssl.self-signed()
+    let mismatch = false
+    try {
+        ssl.Context.server(CERT, wrong-key)
+    } catch _: ssl.SSLError {
+        mismatch = true
+    }
+    assert(mismatch)
+}
+
+pub fn https-server() {
+    serve(routes, fn (srv) {
+        assert(srv.url.starts?('https://'))
+        let out = https(srv.port, 'GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n')
+        assert(out.ends?('https 1'))
+
+        let body = 'u' * 500000
+        let r = https(srv.port, "POST /len HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: {#body}\r\n\r\n{body}")
+        assert(r.ends?('500000'))
+
+        let big = https(srv.port, 'GET /big HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n')
+        assert(big.ends?('t' * 1000))
+        assert(big.contains?('Content-Length: 2000000'))
+    }, tls: {cert: CERT, key: KEY}, threads: 2)
+}
+
+pub fn https-keep-alive() {
+    serve(routes, fn (srv) {
+        let s = ssl.connect('127.0.0.1', srv.port, ctx: ssl.Context.client(ca: CERT))
+        for i in ..5 {
+            s.write('GET / HTTP/1.1\r\nHost: x\r\n\r\n')
+            let got = Blob()
+            while !got.str!().ends?('https 1') {
+                got.push(s.read()!)
+            }
+        }
+        s.close()
+    }, tls: {cert: CERT, key: KEY})
+}
+
+pub fn plaintext-to-tls-port-is-dropped() {
+    serve(routes, fn (srv) {
+        let c = Client(srv.port)
+        c.send('GET / HTTP/1.1\r\nHost: x\r\n\r\n')
+        assert(c.response() == nil)
+        c.close()
+        let out = https(srv.port, 'GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n')
+        assert(out.ends?('https 1'))
+    }, tls: {cert: CERT, key: KEY})
+}
+
+pub fn custom-context() {
+    let ctx = ssl.Context.server(CERT, KEY, alpn: ['http/1.1'], min-version: ssl.TLS1_3)
+    serve(routes, fn (srv) {
+        let out = https(srv.port, 'GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n')
+        assert(out.ends?('https 1'))
+
+        let old = ssl.Context.client(ca: CERT, max-version: ssl.TLS1_2)
+        let failed = false
+        try {
+            let s = ssl.connect('127.0.0.1', srv.port, ctx: old)
+            s.close()
+        } catch _: ssl.SSLError {
+            failed = true
+        }
+        assert(failed)
+    }, tls: ctx)
+}
+
+pub fn mutual-tls() {
+    let (ccert, ckey) = ssl.self-signed('client')
+    let ctx = ssl.Context.server(CERT, KEY, ca: ccert, verify: true)
+    serve(routes, fn (srv) {
+        let good = ssl.connect('127.0.0.1', srv.port, ctx: ssl.Context.client(ca: CERT, cert: ccert, key: ckey))
+        good.write('GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n')
+        assert(good.read-all().str!().ends?('https 1'))
+        good.close()
+
+        let rejected = false
+        try {
+            let bad = ssl.connect('127.0.0.1', srv.port, ctx: ssl.Context.client(ca: CERT))
+            bad.write('GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n')
+            rejected = #bad.read-all() == 0
+            bad.close()
+        } catch _: ssl.SSLError {
+            rejected = true
+        } catch _: OSError {
+            rejected = true
+        }
+        assert(rejected)
+    }, tls: ctx)
+}
+
+pub fn websocket-over-tls() {
+    serve(fn (srv) {
+        srv.ws('/echo', fn (sock, req) {
+            while let $m = sock.recv() {
+                sock.send("{req.scheme}:{m}")
+            }
+        })
+    }, fn (srv) {
+        let s = ssl.connect('127.0.0.1', srv.port, ctx: ssl.Context.client(ca: CERT))
+        s.write('GET /echo HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n')
+        let buf = Blob()
+        while buf.search('\r\n\r\n') == nil {
+            buf.push(s.read()!)
+        }
+        assert(buf.str!().starts?('HTTP/1.1 101'))
+        s.write(ws.frame(ws.OP_TEXT, 'secure', mask: Blob(9, 8, 7, 6)))
+        let reply = Blob()
+        while #reply < 2 || #reply < 2 + (reply[1] & 0x7F) {
+            reply.push(s.read()!)
+        }
+        assert(reply.str!(2, reply[1] & 0x7F) == 'https:secure')
+        s.close()
+    }, tls: {cert: CERT, key: KEY})
+}

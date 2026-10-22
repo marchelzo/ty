@@ -1,0 +1,316 @@
+import http
+import os
+import json
+import _client (serve, Client, get, dial, send, read-all, fd-closed?, xread)
+
+fn routes(srv) {
+    srv.get('/', (req, rsp) -> rsp.plain('root'))
+    srv.get('/hello/<name>', (req, rsp, name) -> rsp.plain("hello {name}"))
+    srv.get('/files/<path:.+>', (req, rsp, path) -> rsp.plain(path))
+    srv.get('/query', (req, rsp) -> rsp.json(req.params))
+    srv.post('/echo', fn (req, rsp) {
+        rsp.header('X-Length', #(req.body ?? ''))
+        rsp.write(req.body ?? '')
+    })
+    srv.post('/form', (req, rsp) -> rsp.json(req.params))
+    srv.post('/json', (req, rsp) -> rsp.json(req.json()))
+    srv.get('/status', (req, rsp) -> 201)
+    srv.get('/empty', (req, rsp) -> 204)
+    srv.get('/headers', fn (req, rsp) {
+        rsp.header('X-One', 1)
+        rsp.add-header('Set-Cookie', 'a=1')
+        rsp.add-header('Set-Cookie', 'b=2')
+        rsp.plain(req.header('x-custom') ?? 'none')
+    })
+    srv.get('/redirect', (req, rsp) -> rsp.redirect('/target'))
+    srv.get('/fail', (req, rsp) -> throw RuntimeError('boom'))
+    srv.get('/teapot', (req, rsp) -> throw http.HttpError(418, 'short and stout'))
+    srv.get('/stream', fn (req, rsp) {
+        let w = rsp.stream()
+        for i in ..4 {
+            w.write("part{i}.")
+        }
+    })
+    srv.put('/thing', (req, rsp) -> rsp.plain('put'))
+    srv.delete('/thing', (req, rsp) -> rsp.plain('deleted'))
+    srv.patch('/thing', (req, rsp) -> rsp.plain('patched'))
+}
+
+pub fn basic-routing() {
+    serve(routes, fn (srv) {
+        let p = srv.port
+        assert(get(p, '/').body == 'root')
+        assert(get(p, '/hello/world').body == 'hello world')
+        assert(get(p, '/hello/a%20b').body == 'hello a b')
+        assert(get(p, '/files/a/b/c.txt').body == 'a/b/c.txt')
+        assert(get(p, '/status').status == 201)
+        assert(get(p, '/missing').status == 404)
+        let r = get(p, '/redirect')
+        assert(r.status == 302)
+        assert(r.header('location') == '/target')
+    })
+}
+
+pub fn query-and-forms() {
+    serve(routes, fn (srv) {
+        let q = json.parse(get(srv.port, '/query?a=1&b=x+y&a=2').body)
+        assert(q['a'] == ['1', '2'])
+        assert(q['b'] == 'x y')
+
+        let c = Client(srv.port)
+        c.request('POST', '/form', 'k=v&n=%2F', %{'Content-Type': 'application/x-www-form-urlencoded'})
+        let f = json.parse(c.response().body)
+        assert(f['k'] == 'v' && f['n'] == '/')
+
+        c.request('POST', '/json', '{"x": [1, 2]}', %{'Content-Type': 'application/json'})
+        assert(json.parse(c.response().body)['x'] == [1, 2])
+        c.close()
+    })
+}
+
+pub fn methods-and-405() {
+    serve(routes, fn (srv) {
+        let c = Client(srv.port)
+        for (m, want) in [('PUT', 'put'), ('DELETE', 'deleted'), ('PATCH', 'patched')] {
+            c.request(m, '/thing')
+            assert(c.response().body == want)
+        }
+        c.request('POST', '/thing', '')
+        let r = c.response()
+        assert(r.status == 405)
+        assert(r.header('allow').contains?('PUT'))
+        c.close()
+    })
+}
+
+pub fn keep-alive-and-pipelining() {
+    serve(routes, fn (srv) {
+        let c = Client(srv.port)
+        for i in ..20 {
+            assert(c.get("/hello/{i}").body == "hello {i}")
+        }
+
+        c.send('GET /hello/a HTTP/1.1\r\nHost: x\r\n\r\nGET /hello/b HTTP/1.1\r\nHost: x\r\n\r\nPOST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\n\r\nxyzGET /hello/c HTTP/1.1\r\nHost: x\r\n\r\n')
+        assert(c.response().body == 'hello a')
+        assert(c.response().body == 'hello b')
+        assert(c.response().body == 'xyz')
+        assert(c.response().body == 'hello c')
+        c.close()
+    })
+}
+
+pub fn connection-close-and-http10() {
+    serve(routes, fn (srv) {
+        let c = Client(srv.port)
+        c.send('GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n')
+        let r = c.response()
+        assert(r.body == 'root')
+        assert(r.header('connection') == 'close')
+        assert(c.closed?())
+        c.close()
+
+        let d = Client(srv.port)
+        d.send('GET / HTTP/1.0\r\n\r\n')
+        assert(d.response().body == 'root')
+        assert(d.closed?())
+        d.close()
+
+        let k = Client(srv.port)
+        k.send('GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n')
+        let r2 = k.response()
+        assert(r2.header('connection') == 'keep-alive')
+        k.send('GET /hello/x HTTP/1.0\r\nConnection: keep-alive\r\n\r\n')
+        assert(k.response().body == 'hello x')
+        k.close()
+    })
+}
+
+pub fn request-bodies() {
+    serve(routes, fn (srv) {
+        let c = Client(srv.port)
+        let big = 'q' * 300000
+        c.request('POST', '/echo', big)
+        let r = c.response()
+        assert(r.header('x-length') == '300000')
+        assert(r.body == big)
+
+        c.send('POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n1;ext=1\r\n \r\n5\r\nworld\r\n0\r\nTrailer: x\r\n\r\n')
+        assert(c.response().body == 'hello world')
+
+        c.send('POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\n')
+        let cont = c.response()
+        assert(cont.status == 100)
+        c.send('abcde')
+        assert(c.response().body == 'abcde')
+        c.close()
+    })
+}
+
+pub fn head-and-bodiless() {
+    serve(routes, fn (srv) {
+        let c = Client(srv.port)
+        c.request('HEAD', '/hello/x')
+        let r = c.response(head?: true)
+        assert(r.status == 200)
+        assert(r.header('content-length') == '7')
+        c.request('GET', '/empty')
+        let e = c.response()
+        assert(e.status == 204)
+        assert(e.header('content-length') == nil)
+        assert(c.get('/').body == 'root')
+        c.close()
+    })
+}
+
+pub fn headers-roundtrip() {
+    serve(routes, fn (srv) {
+        let c = Client(srv.port)
+        c.send('GET /headers HTTP/1.1\r\nHost: x\r\nX-Custom: yes\r\n\r\n')
+        let buf = Blob()
+        os.sleep(0.2)
+        xread(c.fd, buf, 65536)
+        let text = buf.str!()
+        assert(text.contains?('X-One: 1\r\n'))
+        assert(text.contains?('Set-Cookie: a=1\r\n'))
+        assert(text.contains?('Set-Cookie: b=2\r\n'))
+        assert(text.contains?('Date: '))
+        assert(text.ends?('yes'))
+        c.close()
+    })
+}
+
+pub fn handler-errors() {
+    serve(routes, fn (srv) {
+        let r = get(srv.port, '/fail')
+        assert(r.status == 500)
+        assert(!r.body.contains?('boom'))
+        let t = get(srv.port, '/teapot')
+        assert(t.status == 418)
+        assert(t.body == 'short and stout')
+    })
+
+    serve(routes, fn (srv) {
+        let r = get(srv.port, '/fail')
+        assert(r.status == 500)
+        assert(r.body.contains?('boom'))
+    }, debug: true)
+}
+
+pub fn custom-not-found-and-error-handler() {
+    serve(fn (srv) {
+        routes(srv)
+        srv.not-found((req, rsp) -> rsp.plain("no {req.url}"))
+        srv.on-error((req, rsp, e) -> rsp.plain("caught {e}"))
+    }, fn (srv) {
+        let r = get(srv.port, '/nothing')
+        assert(r.status == 404)
+        assert(r.body == 'no /nothing')
+        let e = get(srv.port, '/fail')
+        assert(e.status == 500)
+        assert(e.body.contains?('caught'))
+    })
+}
+
+pub fn chunked-streaming-response() {
+    serve(routes, fn (srv) {
+        let c = Client(srv.port)
+        let r = c.get('/stream')
+        assert(r.header('transfer-encoding') == 'chunked')
+        assert(r.body == 'part0.part1.part2.part3.')
+        assert(c.get('/').body == 'root')
+        c.close()
+    })
+}
+
+pub fn malformed-requests() {
+    serve(routes, fn (srv) {
+        let cases = [
+            ('GARBAGE\r\n\r\n', 400),
+            ('GET / HTTP/1.1\r\n\r\n', 400),
+            ('GET / HTTP/2.0\r\nHost: x\r\n\r\n', 505),
+            ('GET / HTTP/1.1\r\nHost: x\r\nBad Header: y\r\n\r\n', 400),
+            ('POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n', 400),
+            ('POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: gzip\r\n\r\n', 501),
+            ('POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n', 400),
+            ('POST / HTTP/1.1\r\nHost: x\r\nContent-Length: abc\r\n\r\n', 400)
+        ]
+        for (raw, want) in cases {
+            let c = Client(srv.port)
+            c.send(raw)
+            let r = c.response()
+            assert(r != nil && r.status == want)
+            assert(r.header('connection') == 'close')
+            assert(c.closed?())
+            c.close()
+        }
+    })
+}
+
+pub fn size-limits() {
+    serve(routes, fn (srv) {
+        let c = Client(srv.port)
+        c.request('POST', '/echo', 'x' * 2000)
+        assert(c.response().status == 413)
+        c.close()
+
+        let d = Client(srv.port)
+        d.send("GET / HTTP/1.1\r\nHost: x\r\nX-Big: {'y' * 3000}\r\n\r\n")
+        assert(d.response().status == 431)
+        d.close()
+
+        let e = Client(srv.port)
+        e.send('GET / HTTP/1.1\r\nHost: x\r\n' + ["H{i}: v\r\n" for i in ..12].join('') + '\r\n')
+        assert(e.response().status == 431)
+        e.close()
+
+        let f = Client(srv.port)
+        f.send('POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n')
+        for ..5 {
+            f.send("200\r\n{'z' * 512}\r\n")
+        }
+        f.send('0\r\n\r\n')
+        assert(f.response().status == 413)
+        f.close()
+
+        assert(get(srv.port, '/').body == 'root')
+    }, max-body-size: 1024, max-header-size: 2048, max-headers: 10)
+}
+
+pub fn max-requests-per-connection() {
+    serve(routes, fn (srv) {
+        let c = Client(srv.port)
+        assert(c.get('/').header('connection') == nil)
+        assert(c.get('/').header('connection') == nil)
+        let r = c.get('/')
+        assert(r.header('connection') == 'close')
+        assert(c.closed?())
+        c.close()
+    }, max-requests-per-connection: 3)
+}
+
+pub fn add-routes-while-running() {
+    serve(routes, fn (srv) {
+        assert(get(srv.port, '/late').status == 404)
+        srv.get('/late', (req, rsp) -> rsp.plain('late'))
+        assert(get(srv.port, '/late').body == 'late')
+    })
+}
+
+pub fn stats-and-url() {
+    serve(routes, fn (srv) {
+        for ..5 {
+            get(srv.port, '/')
+        }
+        assert(srv.requests-served >= 5)
+        assert(srv.url.starts?('http://127.0.0.1:'))
+        assert(srv.running?)
+    })
+}
+
+pub fn decorator-style-arguments() {
+    serve(fn (srv) {
+        srv.get(fn (req, rsp) { rsp.plain('legacy') }, '/legacy')
+    }, fn (srv) {
+        assert(get(srv.port, '/legacy').body == 'legacy')
+    })
+}

@@ -1,0 +1,272 @@
+import http
+import http.ws as ws
+import http.deflate as deflate
+import os
+import time
+import _client (serve, WsClient, Client, KEY)
+
+fn routes(srv) {
+    srv.ws('/echo', fn (sock, req) {
+        while let $m = sock.recv() {
+            sock.send(m)
+        }
+    })
+
+    srv.ws('/room/<name>', fn (sock, req, name) {
+        sock.send("welcome {name} via {sock.protocol ?? "none"}")
+        sock.recv()
+    }, protocols: ['chat', 'superchat'])
+
+    srv.ws('/hangup', fn (sock, req) {
+        sock.send('bye')
+        sock.close(4000, 'done')
+    })
+
+    srv.ws('/crash', fn (sock, req) {
+        throw RuntimeError('handler blew up')
+    })
+
+    srv.ws('/flood', fn (sock, req) {
+        for i in ..200 {
+            sock.send('m' * 10000)
+        }
+        sock.recv()
+    })
+}
+
+pub fn echo-text-and-binary() {
+    serve(routes, fn (srv) {
+        let c = WsClient(srv.port, '/echo')
+        assert(c.accepted?)
+        assert(c.status.contains?('Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo='))
+        c.send('hello')
+        assert(c.recv() == 'hello')
+        c.send('ünïcödé ✓')
+        assert(c.recv() == 'ünïcödé ✓')
+        c.send(Blob(0, 1, 2, 255))
+        let b = c.recv()
+        assert(b :: Blob && b.hex() == '000102ff')
+        let big = 'L' * 300000
+        c.send(big)
+        assert(c.recv() == big)
+        c.close()
+    })
+}
+
+pub fn fragmentation-and-control-frames() {
+    serve(routes, fn (srv) {
+        let c = WsClient(srv.port, '/echo')
+        c.send-frame(ws.OP_TEXT, 'one-', fin: false)
+        c.send-frame(ws.OP_PING, 'are you there')
+        c.send-frame(ws.OP_CONT, 'two-', fin: false)
+        c.send-frame(ws.OP_CONT, 'three', fin: true)
+        let (op, payload) = c.frame()
+        assert(op == ws.OP_PONG && payload.str!() == 'are you there')
+        assert(c.recv() == 'one-two-three')
+        c.close()
+    })
+}
+
+pub fn close-handshake() {
+    serve(routes, fn (srv) {
+        let c = WsClient(srv.port, '/echo')
+        c.send-frame(ws.OP_CLOSE, Blob(0x03, 0xE8, 0x62, 0x79, 0x65))
+        assert(c.close-code() == 1000)
+        assert(c.frame() == nil)
+        c.close()
+
+        let h = WsClient(srv.port, '/hangup')
+        assert(h.recv() == 'bye')
+        assert(h.close-code() == 4000)
+        h.close()
+    })
+}
+
+pub fn protocol-violations() {
+    let cases = [
+        (fn (c) { c.send-frame(ws.OP_TEXT, Blob(0xC3, 0x28)) }, ws.CLOSE_INVALID_DATA),
+        (fn (c) { c.send-frame(ws.OP_CONT, 'orphan') }, ws.CLOSE_PROTOCOL_ERROR),
+        (fn (c) { c.send-frame(ws.OP_PING, 'x' * 200) }, ws.CLOSE_PROTOCOL_ERROR),
+        (fn (c) { c.send-frame(0x3, 'reserved') }, ws.CLOSE_PROTOCOL_ERROR),
+        (fn (c) { c.send-frame(ws.OP_CLOSE, Blob(0x03, 0xED)) }, ws.CLOSE_PROTOCOL_ERROR),
+        (fn (c) { os.write(c.fd, Blob(0x81, 0x02, 0x68, 0x69)) }, ws.CLOSE_PROTOCOL_ERROR),
+        (fn (c) { os.write(c.fd, Blob(0xC1, 0x80, 1, 2, 3, 4)) }, ws.CLOSE_PROTOCOL_ERROR),
+        (fn (c) { c.send('z' * 5000) }, ws.CLOSE_TOO_BIG)
+    ]
+
+    serve(routes, fn (srv) {
+        for (provoke, want) in cases {
+            let c = WsClient(srv.port, '/echo')
+            provoke(c)
+            assert(c.close-code() == want)
+            c.close()
+        }
+    }, ws-max-message: 4096)
+}
+
+pub fn subprotocols-and-params() {
+    serve(routes, fn (srv) {
+        let c = WsClient(srv.port, '/room/lobby', %{'Sec-WebSocket-Protocol': 'v1, superchat'})
+        assert(c.status.contains?('Sec-WebSocket-Protocol: superchat'))
+        assert(c.recv() == 'welcome lobby via superchat')
+        c.close()
+
+        let d = WsClient(srv.port, '/room/x')
+        assert(!d.status.contains?('Sec-WebSocket-Protocol'))
+        assert(d.recv() == 'welcome x via none')
+        d.close()
+    })
+}
+
+pub fn rejected-upgrades() {
+    serve(routes, fn (srv) {
+        let missing = WsClient(srv.port, '/nope')
+        assert(missing.status.starts?('HTTP/1.1 404'))
+        missing.close()
+
+        let c = Client(srv.port)
+        c.send('GET /echo HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 8\r\n\r\n')
+        let r = c.response()
+        assert(r.status == 426)
+        assert(r.header('sec-websocket-version') == '13')
+        c.close()
+
+        let d = Client(srv.port)
+        d.send('GET /echo HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\n\r\n')
+        assert(d.response().status == 400)
+        d.close()
+
+        let plain = Client(srv.port)
+        plain.request('GET', '/echo')
+        assert(plain.response().status == 404)
+        plain.close()
+    })
+}
+
+pub fn handler-exception-closes-with-1011() {
+    serve(routes, fn (srv) {
+        let c = WsClient(srv.port, '/crash')
+        assert(c.close-code() == ws.CLOSE_INTERNAL)
+        c.close()
+    })
+}
+
+pub fn broadcast-from-other-threads() {
+    let lock = Mutex()
+    let socks = []
+
+    serve(fn (srv) {
+        srv.ws('/sub', fn (sock, req) {
+            do {
+                let ^_ = lock.lock()
+                socks.push(sock)
+            }
+            sock.recv()
+        })
+    }, fn (srv) {
+        let clients = [WsClient(srv.port, '/sub') for ..6]
+        let t0 = time.now()
+        while time.now() - t0 < 2.0 && do { let ^_ = lock.lock(); #socks } < 6 {
+            os.sleep(0.01)
+        }
+
+        let senders = [Thread(fn () {
+            let all = do { let ^_ = lock.lock(); [*socks] }
+            for s in all {
+                assert(s.send("from {i}"))
+            }
+        }) for i in ..3]
+
+        for t in senders {
+            t.join()
+        }
+
+        for c in clients {
+            let got = [c.recv(), c.recv(), c.recv()].sort()
+            assert(got == ['from 0', 'from 1', 'from 2'])
+            c.close()
+        }
+    }, threads: 3)
+}
+
+pub fn server-ping-keepalive-and-idle-timeout() {
+    serve(routes, fn (srv) {
+        let c = WsClient(srv.port, '/echo')
+        let (op, _) = c.frame()
+        assert(op == ws.OP_PING)
+        let t0 = time.now()
+        let code = c.close-code()
+        assert(code == nil || code == ws.CLOSE_ABNORMAL)
+        assert(time.now() - t0 < 3.0)
+        c.close()
+    }, ws-ping-interval: 0.2, ws-idle-timeout: 0.6)
+}
+
+pub fn slow-reader-backpressure() {
+    serve(routes, fn (srv) {
+        let c = WsClient(srv.port, '/flood')
+        os.sleep(0.3)
+        let n = 0
+        while n < 200 {
+            let $m = c.recv() or break
+            assert(#m == 10000)
+            n += 1
+        }
+        assert(n == 200)
+        c.close()
+    }, write-high-water: 32 * 1024)
+}
+
+pub fn shutdown-sends-going-away() {
+    let srv = http.Server('127.0.0.1', 0, threads: 1)
+    routes(srv)
+    let t = Thread(srv.run)
+    os.sleep(0.1)
+    let c = WsClient(srv.port, '/echo')
+    c.send('x')
+    assert(c.recv() == 'x')
+    srv.stop()
+    assert(c.close-code() == ws.CLOSE_GOING_AWAY)
+    c.send-frame(ws.OP_CLOSE, Blob(0x03, 0xE9))
+    c.close()
+    t.join()
+    srv.close()
+}
+
+pub fn permessage-deflate() {
+    serve(routes, fn (srv) {
+        let c = WsClient(srv.port, '/echo', %{'Sec-WebSocket-Extensions': 'permessage-deflate; client_max_window_bits'})
+        assert(c.status.contains?('Sec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover; client_no_context_takeover'))
+        let pm = deflate.PerMessage()
+
+        let big = 'compress me please ' * 500
+        os.write(c.fd, ws.frame(ws.OP_TEXT, pm.compress(big), mask: KEY, rsv1: true))
+        let (op, payload) = c.frame()
+        assert(op == ws.OP_TEXT)
+        assert(#payload < #big / 10)
+        assert(pm.decompress(payload, 1 << 20).str!() == big)
+
+        c.send('tiny')
+        let (op2, p2) = c.frame()
+        assert(p2.str!() == 'tiny')
+
+        let half = pm.compress('fragmented ' * 100)
+        let cut = #half / 2
+        os.write(c.fd, ws.frame(ws.OP_TEXT, half.slice(0, cut), fin: false, mask: KEY, rsv1: true))
+        os.write(c.fd, ws.frame(ws.OP_CONT, half.slice(cut, #half - cut), mask: KEY))
+        let (_, p3) = c.frame()
+        assert(pm.decompress(p3, 1 << 20).str!() == 'fragmented ' * 100)
+        c.close()
+
+        let bomb = WsClient(srv.port, '/echo', %{'Sec-WebSocket-Extensions': 'permessage-deflate'})
+        os.write(bomb.fd, ws.frame(ws.OP_BINARY, pm.compress(Blob.zeros(100000)), mask: KEY, rsv1: true))
+        assert(bomb.close-code() == ws.CLOSE_TOO_BIG)
+        bomb.close()
+
+        let plain = WsClient(srv.port, '/echo')
+        assert(!plain.status.contains?('Sec-WebSocket-Extensions'))
+        os.write(plain.fd, ws.frame(ws.OP_TEXT, 'x', mask: KEY, rsv1: true))
+        assert(plain.close-code() == ws.CLOSE_PROTOCOL_ERROR)
+        plain.close()
+    }, ws-max-message: 50000)
+}

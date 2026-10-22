@@ -1,0 +1,1020 @@
+/**
+ * TLS via OpenSSL 3.
+ *
+ * `Context` holds certificates, verification settings, ALPN and SNI.
+ * `Session` is a socket-free TLS engine over memory BIOs for event loops,
+ * `Stream` is blocking TLS over a connected socket, and `connect` dials one.
+ *
+ * ```
+ * import ssl
+ *
+ * let s = ssl.connect('example.com', 443, alpn: ['http/1.1'])
+ * s.write('GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n')
+ * print(s.read-all().str())
+ * ```
+ *
+ * A Context may be shared between threads; a Session or Stream must be used
+ * by one thread at a time.
+ */
+import ffi as c (C!)
+import os
+import errno
+import net
+import time
+
+#|if __apple__
+const SSL_LIBRARIES = [
+    '/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib',
+    '/usr/local/opt/openssl@3/lib/libssl.3.dylib',
+    '/opt/local/lib/libssl.3.dylib',
+    'libssl.3.dylib'
+]
+const CRYPTO_LIBRARIES = [
+    '/opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib',
+    '/usr/local/opt/openssl@3/lib/libcrypto.3.dylib',
+    '/opt/local/lib/libcrypto.3.dylib',
+    'libcrypto.3.dylib'
+]
+#|else
+const SSL_LIBRARIES = ['ssl']
+const CRYPTO_LIBRARIES = ['crypto']
+#|]
+
+if not let $libcrypto = c.open(CRYPTO_LIBRARIES, versions: [3, nil], env: 'TY_LIBCRYPTO') {
+    throw RuntimeError('ssl: failed to load libcrypto (OpenSSL 3)')
+}
+
+if not let $libssl = c.open(SSL_LIBRARIES, versions: [3, nil], env: 'TY_LIBSSL') {
+    throw RuntimeError('ssl: failed to load libssl (OpenSSL 3)')
+}
+
+const size_t = c.u64
+
+C! libssl fn {
+    int OPENSSL_init_ssl(uint64_t opts, void *settings);
+
+    void *TLS_method(void);
+    void *TLS_server_method(void);
+    void *TLS_client_method(void);
+
+    void *SSL_CTX_new(void *method);
+    void SSL_CTX_free(void *ctx);
+    long SSL_CTX_ctrl(void *ctx, int cmd, long larg, void *parg);
+    long SSL_CTX_callback_ctrl(void *ctx, int cmd, void *fp);
+    uint64_t SSL_CTX_set_options(void *ctx, uint64_t op);
+    int SSL_CTX_use_certificate_chain_file(void *ctx, char const *file);
+    int SSL_CTX_use_PrivateKey_file(void *ctx, char const *file, int type);
+    int SSL_CTX_use_certificate(void *ctx, void *x509);
+    int SSL_CTX_use_PrivateKey(void *ctx, void *pkey);
+    int SSL_CTX_check_private_key(void *ctx);
+    int SSL_CTX_set_cipher_list(void *ctx, char const *str);
+    int SSL_CTX_set_ciphersuites(void *ctx, char const *str);
+    void SSL_CTX_set_verify(void *ctx, int mode, void *cb);
+    void SSL_CTX_set_verify_depth(void *ctx, int depth);
+    int SSL_CTX_set_default_verify_paths(void *ctx);
+    int SSL_CTX_load_verify_locations(void *ctx, char const *file, char const *path);
+    void SSL_CTX_set_alpn_select_cb(void *ctx, void *cb, void *arg);
+    int SSL_CTX_set_alpn_protos(void *ctx, char const *protos, unsigned len);
+    int SSL_CTX_set_session_id_context(void *ctx, char const *sid, unsigned len);
+    void *SSL_CTX_get_cert_store(void *ctx);
+    int SSL_select_next_proto(void *out, void *outlen, void const *server, unsigned server_len, void const *client, unsigned client_len);
+
+    void *SSL_new(void *ctx);
+    void SSL_free(void *ssl);
+    long SSL_ctrl(void *ssl, int cmd, long larg, void *parg);
+    void SSL_set_accept_state(void *ssl);
+    void SSL_set_connect_state(void *ssl);
+    void SSL_set_bio(void *ssl, void *rbio, void *wbio);
+    int SSL_set_fd(void *ssl, int fd);
+    int SSL_set1_host(void *ssl, char const *host);
+    void *SSL_set_SSL_CTX(void *ssl, void *ctx);
+    int SSL_do_handshake(void *ssl);
+    int SSL_is_init_finished(void *ssl);
+    int SSL_read_ex(void *ssl, void *buf, size_t num, size_t *readbytes);
+    int SSL_write_ex(void *ssl, void const *buf, size_t num, size_t *written);
+    int SSL_pending(void *ssl);
+    int SSL_get_error(void *ssl, int ret);
+    int SSL_shutdown(void *ssl);
+    int SSL_get_shutdown(void *ssl);
+    char const *SSL_get_version(void *ssl);
+    char const *SSL_get_servername(void *ssl, int type);
+    void *SSL_get_current_cipher(void *ssl);
+    char const *SSL_CIPHER_get_name(void *cipher);
+    long SSL_get_verify_result(void *ssl);
+    void *SSL_get1_peer_certificate(void *ssl);
+    void SSL_get0_alpn_selected(void *ssl, void *data, void *len);
+}
+
+C! libcrypto fn {
+    void *BIO_s_mem(void);
+    void *BIO_new(void *type);
+    void *BIO_new_mem_buf(void const *buf, int len);
+    int BIO_free(void *bio);
+    int BIO_read(void *bio, void *data, int len);
+    int BIO_write(void *bio, void const *data, int len);
+    long BIO_ctrl(void *bio, int cmd, long larg, void *parg);
+    size_t BIO_ctrl_pending(void *bio);
+
+    unsigned long ERR_get_error(void);
+    void ERR_clear_error(void);
+    void ERR_error_string_n(unsigned long e, char *buf, size_t len);
+
+    void *PEM_read_bio_X509(void *bio, void *x, void *cb, void *u);
+    void *PEM_read_bio_X509_AUX(void *bio, void *x, void *cb, void *u);
+    void *PEM_read_bio_PrivateKey(void *bio, void *x, void *cb, void *u);
+    int PEM_write_bio_X509(void *bio, void *x);
+    int PEM_write_bio_PrivateKey(void *bio, void *pkey, void *enc, void *kstr, int klen, void *cb, void *u);
+
+    void X509_free(void *x);
+    int X509_STORE_add_cert(void *store, void *x);
+    void *X509_new(void);
+    int X509_set_version(void *x, long version);
+    void *X509_get_serialNumber(void *x);
+    int ASN1_INTEGER_set(void *a, long v);
+    void *X509_getm_notBefore(void *x);
+    void *X509_getm_notAfter(void *x);
+    void *X509_gmtime_adj(void *s, long adj);
+    int X509_set_pubkey(void *x, void *pkey);
+    void *X509_get_subject_name(void *x);
+    void *X509_get_issuer_name(void *x);
+    int X509_set_issuer_name(void *x, void *name);
+    int X509_NAME_add_entry_by_txt(void *name, char const *field, int type, char const *bytes, int len, int loc, int set);
+    char *X509_NAME_oneline(void *name, char *buf, int size);
+    void *X509V3_EXT_conf_nid(void *conf, void *ctx, int nid, char const *value);
+    int X509_add_ext(void *x, void *ex, int loc);
+    void X509_EXTENSION_free(void *ex);
+    int X509_sign(void *x, void *pkey, void *md);
+    char const *X509_verify_cert_error_string(long n);
+
+    void *EVP_sha256(void);
+    void *EVP_PKEY_CTX_new_from_name(void *libctx, char const *name, char const *propquery);
+    void EVP_PKEY_CTX_free(void *ctx);
+    int EVP_PKEY_keygen_init(void *ctx);
+    int EVP_PKEY_CTX_set_group_name(void *ctx, char const *name);
+    int EVP_PKEY_generate(void *ctx, void *ppkey);
+    void EVP_PKEY_free(void *pkey);
+
+    void CRYPTO_free(void *p, char const *file, int line);
+}
+
+pub const TLS1_2 = 0x0303
+pub const TLS1_3 = 0x0304
+
+pub const VERIFY_NONE                 = 0x00
+pub const VERIFY_PEER                 = 0x01
+pub const VERIFY_FAIL_IF_NO_PEER_CERT = 0x02
+
+const SSL_ERROR_NONE        = 0
+const SSL_ERROR_SSL         = 1
+const SSL_ERROR_WANT_READ   = 2
+const SSL_ERROR_WANT_WRITE  = 3
+const SSL_ERROR_SYSCALL     = 5
+const SSL_ERROR_ZERO_RETURN = 6
+
+const SSL_FILETYPE_PEM = 1
+
+const SSL_CTRL_MODE                     = 33
+const SSL_CTRL_SET_SESS_CACHE_MODE      = 44
+const SSL_CTRL_SET_TLSEXT_SERVERNAME_CB = 53
+const SSL_CTRL_SET_TLSEXT_HOSTNAME      = 55
+const SSL_CTRL_CHAIN_CERT               = 89
+const SSL_CTRL_SET_MIN_PROTO_VERSION    = 123
+const SSL_CTRL_SET_MAX_PROTO_VERSION    = 124
+
+const SSL_MODE_ENABLE_PARTIAL_WRITE       = 0x01
+const SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER = 0x02
+const SSL_MODE_RELEASE_BUFFERS            = 0x10
+
+const SSL_OP_NO_COMPRESSION           = 1 << 17
+const SSL_OP_CIPHER_SERVER_PREFERENCE = 1 << 22
+const SSL_OP_NO_RENEGOTIATION         = 1 << 30
+
+const SSL_SESS_CACHE_SERVER = 0x0002
+
+const SSL_TLSEXT_ERR_OK    = 0
+const SSL_TLSEXT_ERR_NOACK = 3
+
+const TLSEXT_NAMETYPE_host_name = 0
+const OPENSSL_NPN_NEGOTIATED    = 1
+
+const BIO_C_SET_BUF_MEM_EOF_RETURN = 130
+
+const MBSTRING_ASC         = 0x1001
+const NID_subject_alt_name = 85
+
+const READ_CHUNK = 1 << 14
+
+const SEND_FLAGS = __apple__ ? 0 : (__bsd__ ? 0x20000 : 0x4000)
+
+C! fn {
+    long send(int fd, void const *buf, uint64_t n, int flags);
+    long recv(int fd, void *buf, uint64_t n, int flags);
+}
+
+let sys-send = send
+let sys-recv = recv
+
+OPENSSL_init_ssl(0, nil)
+
+pub class SSLError < RuntimeError {
+    code:    Int
+    reasons: Array[String]
+
+    init(what: String, code: Int = 0, reasons: Array[String] = drain-errors()) {
+        self.code    = code
+        self.reasons = reasons
+        super(reasons ? "{what}: {reasons.join('; ')}" : what)
+    }
+}
+
+pub class CertificateError < SSLError {
+    init(what: String, result: Int) {
+        super(what, result, [c.str(X509_verify_cert_error_string(result))])
+    }
+}
+
+fn drain-errors() -> Array[String] {
+    let reasons = []
+    let buf = c.new-auto(c.char, 256)
+    while let e = ERR_get_error() and e != 0 {
+        ERR_error_string_n(e, buf, 256)
+        reasons.push(c.str(buf))
+    }
+    reasons
+}
+
+fn mem-bio(data: String | Blob) -> Ptr {
+    let bio = BIO_new_mem_buf(data, data.size())
+    if bio == nil {
+        throw SSLError('BIO_new_mem_buf')
+    }
+    c.auto(bio, c.dlsym('BIO_free', libcrypto))
+}
+
+fn bio-contents(bio: Ptr) -> String {
+    let out = Blob()
+    let n = BIO_ctrl_pending(bio)
+    out.pad(n)
+    BIO_read(bio, out, n)
+    out.str!()
+}
+
+fn pem?(x: String | Blob) -> Bool {
+    let s = (x :: Blob) ? x.str!(0, min(#x, 4096)) : x
+    s.contains?('-----BEGIN ')
+}
+
+fn wire-protocols(protocols: Array[String]) -> Blob {
+    let b = Blob()
+    for p in protocols {
+        if p.size() == 0 || p.size() > 255 {
+            throw ValueError("ssl: invalid ALPN protocol name: '{p}'")
+        }
+        b.push(p.size())
+        b.push(p)
+    }
+    b
+}
+
+fn ctx-check!(what: String, rc: Int) {
+    if rc != 1 {
+        throw SSLError(what)
+    }
+}
+
+/// TLS configuration. `cert`/`key`/`ca` accept PEM text or file paths.
+/// Clients verify peers against the system store by default (`verify: false`
+/// disables it); servers request client certificates only with
+/// `verify: true`.
+pub class Context {
+    server?: Bool
+
+    __ctx:     Ptr
+    __alpn:    Blob | nil
+    __alpn-n:  Int
+    __alpn-cb: Ptr | nil
+    __sni:     Dict[String, Context]
+    __sni-fn:  ((String) -> Context | nil) | nil
+    __sni-cb:  Ptr | nil
+
+    init(
+        server: Bool = false,
+        cert: ?(String | Blob) = nil,
+        key: ?(String | Blob) = nil,
+        ca: ?(String | Blob) = nil,
+        ca-path: ?String = nil,
+        verify: ?Bool = nil,
+        alpn: Array[String] = [],
+        min-version: Int = TLS1_2,
+        max-version: Int = 0,
+        ciphers: ?String = nil,
+        ciphersuites: ?String = nil,
+        tickets: Bool = true
+    ) {
+        server?  = server
+        __alpn-n = 0
+        __sni    = %{}
+
+        let ctx = SSL_CTX_new(server ? TLS_server_method() : TLS_client_method())
+        if ctx == nil {
+            throw SSLError('SSL_CTX_new')
+        }
+        __ctx = c.auto(ctx, c.dlsym('SSL_CTX_free', libssl))
+
+        SSL_CTX_ctrl(__ctx, SSL_CTRL_SET_MIN_PROTO_VERSION, min-version, nil)
+        if max-version != 0 {
+            SSL_CTX_ctrl(__ctx, SSL_CTRL_SET_MAX_PROTO_VERSION, max-version, nil)
+        }
+
+        SSL_CTX_ctrl(
+            __ctx,
+            SSL_CTRL_MODE,
+            SSL_MODE_ENABLE_PARTIAL_WRITE | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER | SSL_MODE_RELEASE_BUFFERS,
+            nil
+        )
+
+        SSL_CTX_set_options(
+            __ctx,
+            SSL_OP_NO_COMPRESSION | SSL_OP_NO_RENEGOTIATION | (server ? SSL_OP_CIPHER_SERVER_PREFERENCE : 0)
+        )
+
+        if !tickets {
+            SSL_CTX_set_options(__ctx, 1 << 14)
+        }
+
+        if server {
+            SSL_CTX_ctrl(__ctx, SSL_CTRL_SET_SESS_CACHE_MODE, SSL_SESS_CACHE_SERVER, nil)
+            SSL_CTX_set_session_id_context(__ctx, 'ty-ssl', 6)
+        }
+
+        if ciphers != nil {
+            ctx-check!('SSL_CTX_set_cipher_list', SSL_CTX_set_cipher_list(__ctx, ciphers.cstr()))
+        }
+
+        if ciphersuites != nil {
+            ctx-check!('SSL_CTX_set_ciphersuites', SSL_CTX_set_ciphersuites(__ctx, ciphersuites.cstr()))
+        }
+
+        if cert != nil {
+            load-cert-chain(cert, key ?? cert)
+        }
+
+        if ca != nil || ca-path != nil {
+            load-verify(ca, ca-path)
+        } else if !server && verify != false {
+            ctx-check!('SSL_CTX_set_default_verify_paths', SSL_CTX_set_default_verify_paths(__ctx))
+        }
+
+        let mode = match (server, verify) {
+            (_, true)      => VERIFY_PEER | (server ? VERIFY_FAIL_IF_NO_PEER_CERT : 0),
+            (false, nil)   => VERIFY_PEER,
+            _              => VERIFY_NONE
+        }
+        SSL_CTX_set_verify(__ctx, mode, nil)
+
+        if alpn {
+            set-alpn(alpn)
+        }
+    }
+
+    static server(cert: String | Blob, key: ?(String | Blob) = nil, %kwargs) -> Context {
+        Context(server: true, cert: cert, key: key, **kwargs)
+    }
+
+    static client(%kwargs) -> Context {
+        Context(server: false, **kwargs)
+    }
+
+    ptr -> Ptr {
+        __ctx
+    }
+
+    load-cert-chain(cert: String | Blob, key: String | Blob = cert) {
+        ERR_clear_error()
+
+        if pem?(cert) {
+            let bio = mem-bio(cert)
+            let x509 = PEM_read_bio_X509_AUX(bio, nil, nil, nil)
+            if x509 == nil {
+                throw SSLError('ssl: invalid certificate PEM')
+            }
+            let rc = SSL_CTX_use_certificate(__ctx, x509)
+            X509_free(x509)
+            ctx-check!('SSL_CTX_use_certificate', rc)
+            while let $extra = PEM_read_bio_X509(bio, nil, nil, nil) {
+                let ok = SSL_CTX_ctrl(__ctx, SSL_CTRL_CHAIN_CERT, 1, extra)
+                X509_free(extra)
+                ctx-check!('SSL_CTX_add1_chain_cert', ok)
+            }
+            ERR_clear_error()
+        } else {
+            ctx-check!(
+                "SSL_CTX_use_certificate_chain_file('{cert}')",
+                SSL_CTX_use_certificate_chain_file(__ctx, str(cert).cstr())
+            )
+        }
+
+        if pem?(key) {
+            let bio = mem-bio(key)
+            let pkey = PEM_read_bio_PrivateKey(bio, nil, nil, nil)
+            if pkey == nil {
+                throw SSLError('ssl: invalid private key PEM')
+            }
+            let rc = SSL_CTX_use_PrivateKey(__ctx, pkey)
+            EVP_PKEY_free(pkey)
+            ctx-check!('SSL_CTX_use_PrivateKey', rc)
+        } else {
+            ctx-check!(
+                "SSL_CTX_use_PrivateKey_file('{key}')",
+                SSL_CTX_use_PrivateKey_file(__ctx, str(key).cstr(), SSL_FILETYPE_PEM)
+            )
+        }
+
+        ctx-check!('SSL_CTX_check_private_key', SSL_CTX_check_private_key(__ctx))
+    }
+
+    load-verify(ca: ?(String | Blob) = nil, ca-path: ?String = nil) {
+        ERR_clear_error()
+
+        if ca != nil && pem?(ca) {
+            let store = SSL_CTX_get_cert_store(__ctx)
+            let bio = mem-bio(ca)
+            let n = 0
+            while let $x509 = PEM_read_bio_X509(bio, nil, nil, nil) {
+                let rc = X509_STORE_add_cert(store, x509)
+                X509_free(x509)
+                ctx-check!('X509_STORE_add_cert', rc)
+                n += 1
+            }
+            ERR_clear_error()
+            if n == 0 {
+                throw SSLError('ssl: no certificates found in CA PEM')
+            }
+            if ca-path != nil {
+                ctx-check!(
+                    'SSL_CTX_load_verify_locations',
+                    SSL_CTX_load_verify_locations(__ctx, nil, ca-path.cstr())
+                )
+            }
+            return
+        }
+
+        ctx-check!(
+            'SSL_CTX_load_verify_locations',
+            SSL_CTX_load_verify_locations(
+                __ctx,
+                (ca == nil) ? nil : str(ca).cstr(),
+                (ca-path == nil) ? nil : ca-path.cstr()
+            )
+        )
+    }
+
+    set-alpn(protocols: Array[String]) {
+        let wire = wire-protocols(protocols)
+
+        if !server? {
+            if SSL_CTX_set_alpn_protos(__ctx, wire, #wire) != 0 {
+                throw SSLError('SSL_CTX_set_alpn_protos')
+            }
+            return
+        }
+
+        __alpn   = wire
+        __alpn-n = #wire
+
+        let protos = wire.ptr()
+        let n      = __alpn-n
+
+        C! closure select(ssl: c.ptr, out: c.ptr, outlen: c.ptr, client: c.ptr, client-n: c.uint, arg: c.ptr) -> c.int {
+            match SSL_select_next_proto(out, outlen, protos, n, client, client-n) {
+                OPENSSL_NPN_NEGOTIATED => SSL_TLSEXT_ERR_OK,
+                _                      => SSL_TLSEXT_ERR_NOACK
+            }
+        }
+
+        __alpn-cb = select
+        SSL_CTX_set_alpn_select_cb(__ctx, select, nil)
+    }
+
+    sni(host: String, ctx: Context) -> Context {
+        __sni[host.lower()] = ctx
+        __install-sni()
+        self
+    }
+
+    on-sni(f: (String) -> Context | nil) -> Context {
+        __sni-fn = f
+        __install-sni()
+        self
+    }
+
+    __install-sni() {
+        if __sni-cb != nil {
+            return
+        }
+
+        let table = __sni
+        let me    = self
+
+        C! closure select(ssl: c.ptr, alert: c.ptr, arg: c.ptr) -> c.int {
+            let name = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name)
+            if name != nil {
+                let host = c.str(name).lower()
+                let other = table[host] ?? (me.__sni-fn ?? (_ -> nil))(host)
+                if other != nil {
+                    SSL_set_SSL_CTX(ssl, other.ptr)
+                }
+            }
+            SSL_TLSEXT_ERR_OK
+        }
+
+        __sni-cb = select
+        SSL_CTX_callback_ctrl(__ctx, SSL_CTRL_SET_TLSEXT_SERVERNAME_CB, select)
+    }
+
+    session(host: ?String = nil) -> Session {
+        Session(self, host)
+    }
+
+    wrap(fd: Int, host: ?String = nil) -> Stream {
+        Stream(self, fd, host)
+    }
+}
+
+fn new-ssl(ctx: Context, host: ?String) -> Ptr {
+    let ssl = SSL_new(ctx.ptr)
+    if ssl == nil {
+        throw SSLError('SSL_new')
+    }
+    ssl = c.auto(ssl, c.dlsym('SSL_free', libssl))
+
+    if ctx.server? {
+        SSL_set_accept_state(ssl)
+    } else {
+        SSL_set_connect_state(ssl)
+        if host != nil {
+            SSL_ctrl(ssl, SSL_CTRL_SET_TLSEXT_HOSTNAME, TLSEXT_NAMETYPE_host_name, host.cstr())
+            SSL_set1_host(ssl, host.cstr())
+        }
+    }
+
+    ssl
+}
+
+fn alpn-of(ssl: Ptr) -> String | nil {
+    let data = c.new-auto(c.ptr)
+    let len  = c.new-auto(c.uint)
+    SSL_get0_alpn_selected(ssl, data, len)
+    let n = c.load(c.uint, len)
+    (n == 0) ? nil : c.str(c.load(c.ptr, data), n)
+}
+
+fn peer-subject(ssl: Ptr) -> String | nil {
+    let x509 = SSL_get1_peer_certificate(ssl)
+    if x509 == nil {
+        return nil
+    }
+    let buf = c.new-auto(c.char, 512)
+    X509_NAME_oneline(X509_get_subject_name(x509), buf, 512)
+    X509_free(x509)
+    c.str(buf)
+}
+
+/// TLS state machine over memory BIOs: feed it ciphertext, read plaintext,
+/// write plaintext, and drain ciphertext. It never touches a socket, so it
+/// works under any event loop (io_uring, kqueue). Not thread-safe: use one
+/// Session from one thread at a time.
+pub class Session {
+    __ctx:   Context
+    __ssl:   Ptr
+    __rbio:  Ptr
+    __wbio:  Ptr
+    __n:     Ptr
+    __eof?:  Bool
+    __done?: Bool
+
+    init(ctx: Context, host: ?String = nil) {
+        __ctx   = ctx
+        __ssl   = new-ssl(ctx, host)
+        __n     = c.new-auto(size_t)
+        __eof?  = false
+        __done? = false
+
+        __rbio = BIO_new(BIO_s_mem())
+        __wbio = BIO_new(BIO_s_mem())
+
+        if __rbio == nil || __wbio == nil {
+            throw SSLError('BIO_new')
+        }
+
+        BIO_ctrl(__rbio, BIO_C_SET_BUF_MEM_EOF_RETURN, -1, nil)
+        BIO_ctrl(__wbio, BIO_C_SET_BUF_MEM_EOF_RETURN, -1, nil)
+        SSL_set_bio(__ssl, __rbio, __wbio)
+    }
+
+    context -> Context {
+        __ctx
+    }
+
+    handshaken? -> Bool {
+        __done? || (__done? = SSL_is_init_finished(__ssl) == 1)
+    }
+
+    closed? -> Bool {
+        __eof?
+    }
+
+    alpn -> String | nil {
+        alpn-of(__ssl)
+    }
+
+    version -> String {
+        c.str(SSL_get_version(__ssl))
+    }
+
+    cipher -> String | nil {
+        let cipher = SSL_get_current_cipher(__ssl)
+        (cipher == nil) ? nil : c.str(SSL_CIPHER_get_name(cipher))
+    }
+
+    server-name -> String | nil {
+        let name = SSL_get_servername(__ssl, TLSEXT_NAMETYPE_host_name)
+        (name == nil) ? nil : c.str(name)
+    }
+
+    peer -> String | nil {
+        peer-subject(__ssl)
+    }
+
+    verify-result -> Int {
+        SSL_get_verify_result(__ssl)
+    }
+
+    feed(data: Blob | String | Ptr, n: ?Int = nil) -> Int {
+        let len = n ?? data.size()
+        if len == 0 {
+            return 0
+        }
+        let rc = BIO_write(__rbio, data, len)
+        if rc != len {
+            throw SSLError('BIO_write')
+        }
+        rc
+    }
+
+    feed-eof() {
+        BIO_ctrl(__rbio, BIO_C_SET_BUF_MEM_EOF_RETURN, 0, nil)
+    }
+
+    handshake() -> Bool {
+        if handshaken? {
+            return true
+        }
+
+        ERR_clear_error()
+
+        let rc = SSL_do_handshake(__ssl)
+        if rc == 1 {
+            __done? = true
+            return true
+        }
+
+        match SSL_get_error(__ssl, rc) {
+            SSL_ERROR_WANT_READ, SSL_ERROR_WANT_WRITE => false,
+            e => do {
+                let result = SSL_get_verify_result(__ssl)
+                if result != 0 {
+                    throw CertificateError('ssl: certificate verification failed', result)
+                }
+                throw SSLError('ssl: handshake failed', e)
+            }
+        }
+    }
+
+    read(out: Blob, max: Int = READ_CHUNK) -> Int {
+        let start = #out
+        let total = 0
+
+        ERR_clear_error()
+
+        while total < max {
+            out.pad(start + max)
+            let ok = SSL_read_ex(__ssl, out.ptr() + start + total, max - total, __n)
+            if ok == 1 {
+                total += c.load(size_t, __n)
+                continue
+            }
+            out.clear(start + total)
+            match SSL_get_error(__ssl, 0) {
+                SSL_ERROR_WANT_READ, SSL_ERROR_WANT_WRITE => {
+                    return total
+                },
+                SSL_ERROR_ZERO_RETURN => {
+                    __eof? = true
+                    return (total > 0) ? total : -1
+                },
+                SSL_ERROR_SYSCALL => {
+                    __eof? = true
+                    return (total > 0) ? total : -1
+                },
+                e => throw SSLError('ssl: read failed', e)
+            }
+        }
+
+        out.clear(start + total)
+        total
+    }
+
+    read-into(out: Blob, at: Int, max: Int) -> Int {
+        let total = 0
+
+        ERR_clear_error()
+
+        if #out < at + max {
+            out.pad(at + max)
+        }
+
+        while total < max {
+            if SSL_read_ex(__ssl, out.ptr() + at + total, max - total, __n) == 1 {
+                total += c.load(size_t, __n)
+                continue
+            }
+            match SSL_get_error(__ssl, 0) {
+                SSL_ERROR_WANT_READ, SSL_ERROR_WANT_WRITE => {
+                    return total
+                },
+                SSL_ERROR_ZERO_RETURN, SSL_ERROR_SYSCALL => {
+                    __eof? = true
+                    return (total > 0) ? total : -1
+                },
+                e => throw SSLError('ssl: read failed', e)
+            }
+        }
+
+        total
+    }
+
+    write(data: Blob | String, off: Int = 0, n: ?Int = nil) -> Int {
+        let len = n ?? (data.size() - off)
+        let blob = match data {
+            b: Blob => b,
+            s       => Blob(s)
+        }
+        let done = 0
+
+        ERR_clear_error()
+
+        while done < len {
+            if SSL_write_ex(__ssl, blob.ptr() + off + done, len - done, __n) == 1 {
+                done += c.load(size_t, __n)
+                continue
+            }
+            match SSL_get_error(__ssl, 0) {
+                SSL_ERROR_WANT_READ, SSL_ERROR_WANT_WRITE => {
+                    return done
+                },
+                e => throw SSLError('ssl: write failed', e)
+            }
+        }
+
+        done
+    }
+
+    pending -> Int {
+        BIO_ctrl_pending(__wbio)
+    }
+
+    buffered -> Int {
+        SSL_pending(__ssl)
+    }
+
+    drain(out: Blob) -> Int {
+        let n = BIO_ctrl_pending(__wbio)
+        if n == 0 {
+            return 0
+        }
+        let start = #out
+        out.pad(start + n)
+        let got = BIO_read(__wbio, out.ptr() + start, n)
+        out.clear(start + max(got, 0))
+        max(got, 0)
+    }
+
+    shutdown() {
+        ERR_clear_error()
+        if handshaken? {
+            SSL_shutdown(__ssl)
+        }
+        ERR_clear_error()
+    }
+}
+
+/// Blocking TLS over a connected socket. Uses MSG_NOSIGNAL (SO_NOSIGPIPE on
+/// macOS), so writing to a closed peer throws instead of raising SIGPIPE.
+pub class Stream {
+    fd: Int
+
+    __s:    Session
+    __buf:  Blob
+    __out:  Blob
+
+    init(ctx: Context, fd: Int, host: ?String = nil) {
+        self.fd = fd
+        __s     = Session(ctx, host)
+        __buf   = Blob.zeros(READ_CHUNK)
+        __out   = Blob()
+#|if __apple__
+        os.setsockopt(fd, 0xFFFF, 0x1022, 1)
+#|]
+    }
+
+    session -> Session {
+        __s
+    }
+
+    alpn -> String | nil {
+        __s.alpn
+    }
+
+    version -> String {
+        __s.version
+    }
+
+    cipher -> String | nil {
+        __s.cipher
+    }
+
+    peer -> String | nil {
+        __s.peer
+    }
+
+    __flush() {
+        __out.clear()
+        __s.drain(__out)
+        let off = 0
+        while off < #__out {
+            let n = sys-send(fd, __out.ptr() + off, #__out - off, SEND_FLAGS)
+            if n < 0 {
+                if errno.get() == errno.EINTR {
+                    continue
+                }
+                throw OSError('ssl: send')
+            }
+            off += n
+        }
+        __out.clear()
+    }
+
+    __fill() -> Bool {
+        while true {
+            let n = sys-recv(fd, __buf, #__buf, 0)
+            if n > 0 {
+                __s.feed(__buf, n)
+                return true
+            }
+            if n == 0 {
+                return false
+            }
+            if errno.get() != errno.EINTR {
+                throw OSError('ssl: recv')
+            }
+        }
+    }
+
+    handshake() -> Stream {
+        while true {
+            let done? = __s.handshake()
+            __flush()
+            if done? {
+                return self
+            }
+            if !__fill() {
+                throw SSLError('ssl: connection closed during handshake')
+            }
+        }
+    }
+
+    read(n: Int = READ_CHUNK) -> Blob | nil {
+        let out = Blob()
+        while true {
+            let k = __s.read(out, n)
+            __flush()
+            if k > 0 {
+                return out
+            }
+            if k < 0 || !__fill() {
+                return nil
+            }
+        }
+    }
+
+    read-all() -> Blob {
+        let out = Blob()
+        while let $chunk = read() {
+            out.push(chunk)
+        }
+        out
+    }
+
+    write(data: Blob | String) -> Int {
+        let n = __s.write(data)
+        __flush()
+        n
+    }
+
+    shutdown() {
+        try {
+            __s.shutdown()
+            __flush()
+        } catch _ {
+        }
+    }
+
+    close() {
+        if fd >= 0 {
+            shutdown()
+            os.close(fd)
+            fd = -1
+        }
+    }
+
+    __drop__ = use close
+}
+
+pub fn connect(
+    host: String,
+    port: Int = 443,
+    ctx: ?Context = nil,
+    alpn: Array[String] = [],
+    verify: Bool = true
+) -> Stream {
+    let ctx = ctx ?? Context(server: false, alpn: alpn, verify: verify)
+    let fd = net.dial('tcp', "{host}:{port}")
+    try {
+        Stream(ctx, fd, host).handshake()
+    } catch e {
+        os.close(fd)
+        throw e
+    }
+}
+
+/// Generates a self-signed P-256 certificate, returning PEM strings
+/// `(cert, key)`. Intended for development servers and tests.
+pub fn self-signed(
+    cn: String = 'localhost',
+    days: Int = 30,
+    san: Array[String] = ['DNS:localhost', 'IP:127.0.0.1', 'IP:::1']
+) -> (String, String) {
+    ERR_clear_error()
+
+    let kctx = EVP_PKEY_CTX_new_from_name(nil, 'EC'.cstr(), nil)
+    if kctx == nil {
+        throw SSLError('EVP_PKEY_CTX_new_from_name')
+    }
+    kctx = c.auto(kctx, c.dlsym('EVP_PKEY_CTX_free', libcrypto))
+
+    let slot = c.new-auto(c.ptr)
+    c.store(c.ptr, slot, nil)
+
+    if (
+        EVP_PKEY_keygen_init(kctx) != 1
+     || EVP_PKEY_CTX_set_group_name(kctx, 'P-256'.cstr()) != 1
+     || EVP_PKEY_generate(kctx, slot) != 1
+    ) {
+        throw SSLError('EVP_PKEY_generate')
+    }
+
+    let pkey = c.auto(c.load(c.ptr, slot), c.dlsym('EVP_PKEY_free', libcrypto))
+    let x509 = c.auto(X509_new(), c.dlsym('X509_free', libcrypto))
+
+    X509_set_version(x509, 2)
+    ASN1_INTEGER_set(X509_get_serialNumber(x509), ((os.getpid() << 16) ^ int(time.utc())) & 0x7FFFFFFF)
+    X509_gmtime_adj(X509_getm_notBefore(x509), -3600)
+    X509_gmtime_adj(X509_getm_notAfter(x509), days * 86400)
+    X509_set_pubkey(x509, pkey)
+
+    let name = X509_get_subject_name(x509)
+    X509_NAME_add_entry_by_txt(name, 'CN'.cstr(), MBSTRING_ASC, cn.cstr(), -1, -1, 0)
+    X509_set_issuer_name(x509, name)
+
+    if san {
+        let ext = X509V3_EXT_conf_nid(nil, nil, NID_subject_alt_name, san.join(',').cstr())
+        if ext == nil {
+            throw SSLError('X509V3_EXT_conf_nid')
+        }
+        X509_add_ext(x509, ext, -1)
+        X509_EXTENSION_free(ext)
+    }
+
+    if X509_sign(x509, pkey, EVP_sha256()) == 0 {
+        throw SSLError('X509_sign')
+    }
+
+    let cbio = c.auto(BIO_new(BIO_s_mem()), c.dlsym('BIO_free', libcrypto))
+    let kbio = c.auto(BIO_new(BIO_s_mem()), c.dlsym('BIO_free', libcrypto))
+
+    PEM_write_bio_X509(cbio, x509)
+    PEM_write_bio_PrivateKey(kbio, pkey, nil, nil, 0, nil, nil)
+
+    (bio-contents(cbio), bio-contents(kbio))
+}

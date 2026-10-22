@@ -1,0 +1,171 @@
+import http
+import os
+import time
+import ssl
+import _client (serve, Client, get, dial, fd-closed?)
+
+fn routes(srv) {
+    srv.get('/', (req, rsp) -> rsp.plain('ok'))
+    srv.get('/big', (req, rsp) -> rsp.write('b' * (8 * 1024 * 1024)))
+    srv.get('/slow', fn (req, rsp) {
+        http.sleep(0.3)
+        rsp.plain('slow done')
+    })
+}
+
+pub fn header-timeout-sends-408() {
+    serve(routes, fn (srv) {
+        let c = Client(srv.port)
+        let t0 = time.now()
+        c.send('GET / HTTP/1.1\r\nHost: x\r\n')
+        let r = c.response()
+        assert(r != nil && r.status == 408)
+        assert(time.now() - t0 >= 0.25)
+        assert(c.closed?())
+        c.close()
+    }, header-timeout: 0.3)
+}
+
+pub fn slowloris-trickle-is-cut-off() {
+    serve(routes, fn (srv) {
+        let c = Client(srv.port)
+        let t0 = time.now()
+        c.send('GET / HTTP/1.1\r\n')
+        let cut = false
+        for i in ..20 {
+            os.sleep(0.05)
+            if os.write(c.fd, "X-{i}: y\r\n") < 0 {
+                cut = true
+                break
+            }
+        }
+        let r = c.response()
+        assert(r == nil || r.status == 408)
+        assert(time.now() - t0 < 2.0)
+        c.close()
+    }, header-timeout: 0.4)
+}
+
+pub fn idle-keep-alive-timeout() {
+    serve(routes, fn (srv) {
+        let c = Client(srv.port)
+        assert(c.get('/').body == 'ok')
+        let t0 = time.now()
+        assert(c.closed?(3.0))
+        let dt = time.now() - t0
+        assert(dt >= 0.25 && dt < 2.0)
+        c.close()
+
+        let d = dial(srv.port)
+        assert(fd-closed?(d, 3.0))
+        os.close(d)
+    }, idle-timeout: 0.3, header-timeout: 5)
+}
+
+pub fn request-timeout-for-slow-body() {
+    serve(routes, fn (srv) {
+        let c = Client(srv.port)
+        c.send('POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\nabc')
+        let r = c.response()
+        assert(r != nil && r.status == 408)
+        c.close()
+    }, request-timeout: 0.3)
+}
+
+pub fn write-timeout-closes-stalled-reader() {
+    serve(routes, fn (srv) {
+        let fd = dial(srv.port)
+        os.setsockopt(fd, os.SOL_SOCKET, (__apple__ || __bsd__) ? 0x1002 : 8, 4096)
+        os.write(fd, 'GET /big HTTP/1.1\r\nHost: x\r\n\r\n')
+        os.sleep(0.3)
+        assert(srv.active-connections == 1)
+        let t0 = time.now()
+        while srv.active-connections > 0 && time.now() - t0 < 3.0 {
+            os.sleep(0.05)
+        }
+        assert(srv.active-connections == 0)
+        os.close(fd)
+    }, write-timeout: 0.5)
+}
+
+pub fn tls-handshake-timeout() {
+    let (cert, key) = ssl.self-signed()
+    serve(routes, fn (srv) {
+        let fd = dial(srv.port)
+        let t0 = time.now()
+        assert(fd-closed?(fd, 3.0))
+        assert(time.now() - t0 >= 0.25)
+        os.close(fd)
+    }, tls: {cert, key}, handshake-timeout: 0.3)
+}
+
+pub fn max-connections() {
+    serve(routes, fn (srv) {
+        let a = Client(srv.port)
+        let b = Client(srv.port)
+        assert(a.get('/').body == 'ok')
+        assert(b.get('/').body == 'ok')
+        let c = dial(srv.port)
+        assert(fd-closed?(c, 2.0))
+        os.close(c)
+        assert(srv.active-connections == 2)
+        a.close()
+        let t0 = time.now()
+        while srv.active-connections > 1 && time.now() - t0 < 2.0 {
+            os.sleep(0.02)
+        }
+        let d = Client(srv.port)
+        assert(d.get('/').body == 'ok')
+        b.close()
+        d.close()
+    }, max-connections: 2, threads: 1)
+}
+
+pub fn graceful-shutdown-finishes-inflight() {
+    let srv = http.Server('127.0.0.1', 0, threads: 2)
+    routes(srv)
+    let t = Thread(srv.run)
+    os.sleep(0.1)
+
+    let c = Client(srv.port)
+    let idle = Client(srv.port)
+    assert(idle.get('/').body == 'ok')
+
+    c.request('GET', '/slow')
+    os.sleep(0.05)
+    srv.stop()
+
+    let r = c.response()
+    assert(r.body == 'slow done')
+    assert(r.header('connection') == 'close')
+    assert(idle.closed?())
+    c.close()
+    idle.close()
+
+    t.join()
+    assert(!srv.running?)
+    srv.close()
+}
+
+pub fn stop-before-run() {
+    let srv = http.Server('127.0.0.1', 0, threads: 1)
+    srv.stop()
+    let t0 = time.now()
+    let t = Thread(srv.run)
+    t.join()
+    assert(time.now() - t0 < 2.0)
+    srv.close()
+}
+
+pub fn restart-after-stop() {
+    let srv = http.Server('127.0.0.1', 0, threads: 1)
+    routes(srv)
+    for ..2 {
+        let t = Thread(srv.run)
+        os.sleep(0.1)
+        assert(get(srv.port, '/').body == 'ok')
+        srv.stop()
+        t.join()
+    }
+    srv.close()
+}

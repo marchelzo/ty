@@ -1,0 +1,187 @@
+import ffi as c (C!)
+
+if not let $libz = c.open('z', versions: [1, nil], env: 'TY_LIBZ') {
+    throw RuntimeError('http.deflate: failed to load zlib')
+}
+
+C! struct ZStream {
+    void *next_in;
+    unsigned avail_in;
+    unsigned long total_in;
+    void *next_out;
+    unsigned avail_out;
+    unsigned long total_out;
+    char const *msg;
+    void *state;
+    void *zalloc;
+    void *zfree;
+    void *opaque;
+    int data_type;
+    unsigned long adler;
+    unsigned long reserved;
+}
+
+C! libz fn {
+    char const *zlibVersion(void);
+    int deflateInit2_(void *strm, int level, int method, int windowBits, int memLevel, int strategy, char const *version, int size);
+    int deflate(void *strm, int flush);
+    int deflateReset(void *strm);
+    int deflateEnd(void *strm);
+    int inflateInit2_(void *strm, int windowBits, char const *version, int size);
+    int inflate(void *strm, int flush);
+    int inflateReset(void *strm);
+    int inflateEnd(void *strm);
+}
+
+const Z_OK         = 0
+const Z_STREAM_END = 1
+const Z_BUF_ERROR  = -5
+const Z_SYNC_FLUSH = 2
+const Z_DEFLATED   = 8
+
+const TAIL  = Blob(0x00, 0x00, 0xFF, 0xFF)
+const CHUNK = 16384
+
+let VERSION = zlibVersion()
+
+pub class DeflateError < RuntimeError {
+    too-big?: Bool
+
+    init(what: String, too-big?: Bool = false) {
+        self.too-big? = too-big?
+        super("permessage-deflate: {what}")
+    }
+}
+
+/// Per-connection permessage-deflate state (RFC 7692) negotiated with
+/// no_context_takeover in both directions, so each message is independent.
+pub class PerMessage {
+    __def:  ZStream | nil
+    __inf:  ZStream | nil
+    __out:  Blob
+    level:  Int
+
+    init(level: Int = 6) {
+        self.level = level
+        __def = nil
+        __inf = nil
+        __out = Blob.zeros(CHUNK)
+    }
+
+    __deflater() -> ZStream {
+        if let $z = __def {
+            deflateReset(z.get())
+            return z
+        }
+        let z = ZStream()
+        if deflateInit2_(z.get(), level, Z_DEFLATED, -15, 8, 0, VERSION, c.size(ZStream_C)) != Z_OK {
+            throw DeflateError('deflateInit2 failed')
+        }
+        __def = z
+        z
+    }
+
+    __inflater() -> ZStream {
+        if let $z = __inf {
+            inflateReset(z.get())
+            return z
+        }
+        let z = ZStream()
+        if inflateInit2_(z.get(), -15, VERSION, c.size(ZStream_C)) != Z_OK {
+            throw DeflateError('inflateInit2 failed')
+        }
+        __inf = z
+        z
+    }
+
+    compress(data: String | Blob) -> Blob {
+        let input = (data :: Blob) ? data : Blob(data)
+        let z = __deflater()
+        let out = Blob()
+        z.next_in = input.ptr()
+        z.avail_in = #input
+        while true {
+            z.next_out = __out.ptr()
+            z.avail_out = CHUNK
+            let rc = deflate(z.get(), Z_SYNC_FLUSH)
+            if rc != Z_OK && rc != Z_BUF_ERROR {
+                throw DeflateError("deflate failed ({rc})")
+            }
+            out.push(__out.slice(0, CHUNK - z.avail_out))
+            if z.avail_out != 0 {
+                break
+            }
+        }
+        if #out >= 4 && out[#out - 4] == 0 && out[#out - 3] == 0 && out[#out - 2] == 0xFF && out[#out - 1] == 0xFF {
+            out.clear(#out - 4)
+        }
+        out
+    }
+
+    decompress(data: Blob, limit: Int) -> Blob {
+        let input = Blob(data)
+        input.push(TAIL)
+        let z = __inflater()
+        let out = Blob()
+        z.next_in = input.ptr()
+        z.avail_in = #input
+        while true {
+            z.next_out = __out.ptr()
+            z.avail_out = CHUNK
+            let rc = inflate(z.get(), Z_SYNC_FLUSH)
+            if rc != Z_OK && rc != Z_BUF_ERROR && rc != Z_STREAM_END {
+                throw DeflateError("inflate failed ({rc})")
+            }
+            out.push(__out.slice(0, CHUNK - z.avail_out))
+            if #out > limit {
+                throw DeflateError('message too big', true)
+            }
+            if z.avail_out != 0 || rc == Z_STREAM_END {
+                break
+            }
+        }
+        out
+    }
+
+    close() {
+        if let $z = __def {
+            deflateEnd(z.get())
+            __def = nil
+        }
+        if let $z = __inf {
+            inflateEnd(z.get())
+            __inf = nil
+        }
+    }
+}
+
+/// Picks a response for the client's Sec-WebSocket-Extensions offer, or nil.
+pub fn negotiate(offer: String | nil) -> String | nil {
+    let $text = offer or return nil
+    for ext in text.split(',') {
+        let parts = ext.split(';').map(\_.strip())
+        if parts[0] != 'permessage-deflate' {
+            continue
+        }
+        let ok = true
+        for p in parts.drop(1) {
+            let name = p.split('=')[0].strip()
+            match name {
+                'server_no_context_takeover', 'client_no_context_takeover', 'client_max_window_bits' => {},
+                'server_max_window_bits' => {
+                    let v = (p.split('=') + [''])[1].strip().sub('"', '')
+                    if v != '15' {
+                        ok = false
+                    }
+                },
+                _ => {
+                    ok = false
+                }
+            }
+        }
+        if ok {
+            return 'permessage-deflate; server_no_context_takeover; client_no_context_takeover'
+        }
+    }
+    nil
+}

@@ -85,6 +85,9 @@ CallMethod(Ty *ty, int m_id, int n, int nkw, bool b, bool exec);
 void
 DoYield(Ty *ty);
 
+void
+DoYieldNone(Ty *ty);
+
 extern _Thread_local Generator *InterruptedGenerator;
 
 void

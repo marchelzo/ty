@@ -2194,8 +2194,7 @@ jit_rt_yield_none(Ty *ty, Value *top)
                 xvP(STACK, NIL);
                 return -1;
         }
-        xvP(STACK, None);
-        DoYield(ty);
+        DoYieldNone(ty);
         CheckInterrupt(ty);
         return vvL(ty->st->frames)->fp;
 }

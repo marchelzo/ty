@@ -1,0 +1,652 @@
+import thread
+import os (ncpu)
+import json
+import log
+import http.status (status-name)
+
+pub class HttpError < RuntimeError {
+    status: Int
+    detail: String
+
+    init(status: Int, detail: ?String = nil) {
+        self.status = status
+        self.detail = detail ?? status-name(status)
+        super(self.detail)
+    }
+}
+
+pub class ConnectionClosed < RuntimeError {
+    init(what: String = 'connection closed') {
+        super(what)
+    }
+}
+
+pub class TimeoutError < RuntimeError {
+    init(what: String = 'operation timed out') {
+        super(what)
+    }
+}
+
+pub class CanceledError < RuntimeError {
+    init() {
+        super('task canceled')
+    }
+}
+
+pub class Config {
+    backend:                     String
+    threads:                     Int
+    backlog:                     Int
+    ring-entries:                Int
+    reuse-port:                  Bool
+    max-connections:             Int
+    max-header-size:             Int
+    max-headers:                 Int
+    max-body-size:               Int
+    max-requests-per-connection: Int
+    max-write-buffer:            Int
+    write-high-water:            Int
+    header-timeout:              Float
+    request-timeout:             Float
+    idle-timeout:                Float
+    write-timeout:               Float
+    handshake-timeout:           Float
+    linger-timeout:              Float
+    shutdown-timeout:            Float
+    ws-max-message:              Int
+    ws-compression:              Bool
+    ws-compress-min:             Int
+    ws-ping-interval:            Float
+    ws-idle-timeout:             Float
+    sse-keepalive:               Float
+    h2:                          Bool
+    h2-max-concurrent-streams:   Int
+    h2-initial-window:           Int
+    h2-max-frame:                Int
+    blocking-threads:            Int
+    server-name:                 String | nil
+    debug:                       Bool
+
+    init(
+        backend: String = 'auto',
+        threads: Int = ncpu(),
+        backlog: Int = 1024,
+        ring-entries: Int = 1024,
+        reuse-port: Bool = false,
+        max-connections: Int = 10000,
+        max-header-size: Int = 64 * 1024,
+        max-headers: Int = 100,
+        max-body-size: Int = 16 * 1024 * 1024,
+        max-requests-per-connection: Int = 0,
+        max-write-buffer: Int = 8 * 1024 * 1024,
+        write-high-water: Int = 256 * 1024,
+        header-timeout: Int | Float = 10,
+        request-timeout: Int | Float = 60,
+        idle-timeout: Int | Float = 60,
+        write-timeout: Int | Float = 60,
+        handshake-timeout: Int | Float = 10,
+        linger-timeout: Int | Float = 2,
+        shutdown-timeout: Int | Float = 10,
+        ws-max-message: Int = 16 * 1024 * 1024,
+        ws-compression: Bool = true,
+        ws-compress-min: Int = 256,
+        ws-ping-interval: Int | Float = 30,
+        ws-idle-timeout: Int | Float = 120,
+        sse-keepalive: Int | Float = 15,
+        h2: Bool = true,
+        h2-max-concurrent-streams: Int = 128,
+        h2-initial-window: Int = 1024 * 1024,
+        h2-max-frame: Int = 16384,
+        blocking-threads: Int = 16,
+        server-name: String | nil = nil,
+        debug: Bool = false
+    ) {
+        self.backend                     = backend
+        self.threads                     = max(threads, 1)
+        self.backlog                     = backlog
+        self.ring-entries                = ring-entries
+        self.reuse-port                  = reuse-port
+        self.max-connections             = max-connections
+        self.max-header-size             = max-header-size
+        self.max-headers                 = max-headers
+        self.max-body-size               = max-body-size
+        self.max-requests-per-connection = max-requests-per-connection
+        self.max-write-buffer            = max-write-buffer
+        self.write-high-water            = write-high-water
+        self.header-timeout              = float(header-timeout)
+        self.request-timeout             = float(request-timeout)
+        self.idle-timeout                = float(idle-timeout)
+        self.write-timeout               = float(write-timeout)
+        self.handshake-timeout           = float(handshake-timeout)
+        self.linger-timeout              = float(linger-timeout)
+        self.shutdown-timeout            = float(shutdown-timeout)
+        self.ws-max-message              = ws-max-message
+        self.ws-compression              = ws-compression
+        self.ws-compress-min             = ws-compress-min
+        self.ws-ping-interval            = float(ws-ping-interval)
+        self.ws-idle-timeout             = float(ws-idle-timeout)
+        self.sse-keepalive               = float(sse-keepalive)
+        self.h2                          = h2
+        self.h2-max-concurrent-streams   = h2-max-concurrent-streams
+        self.h2-initial-window           = h2-initial-window
+        self.h2-max-frame                = h2-max-frame
+        self.blocking-threads            = blocking-threads
+        self.server-name                 = server-name
+        self.debug                       = debug
+    }
+}
+
+pub tag Suspend;
+pub tag Raise;
+
+let __tls::current-task: Task | nil = nil
+let __tls::current-loop: _ = nil
+
+pub class Task {
+    loop:     _
+    name:     String
+    done?:    Bool
+    parked?:  Bool
+    canceled: Bool
+    gen:      _
+
+    init(loop: _, name: String) {
+        self.loop = loop
+        self.name = name
+        done?     = false
+        parked?   = false
+        canceled  = false
+        gen       = nil
+    }
+}
+
+pub fn task() -> Task | nil {
+    current-task
+}
+
+pub fn loop() -> _ {
+    current-loop
+}
+
+pub fn this-loop() -> _ {
+    current-loop
+}
+
+pub fn set-loop(l: _) {
+    current-loop = l
+}
+
+fn task-body*(task: Task, f: _, args: _, kwargs: _) {
+    try {
+        f(*args, **kwargs)
+    } catch _: CanceledError {
+    } catch _: ConnectionClosed {
+    } catch e {
+        log::error!("unhandled exception in task {task.name}: {e}\n{e.trace()}")
+    } finally {
+        task.done? = true
+    }
+}
+
+pub fn make-task(loop: _, name: String, f: _, args: _, kwargs: _) -> Task {
+    let t = Task(loop, name)
+    t.gen = task-body(t, f, args, kwargs)
+    t
+}
+
+pub fn step(t: Task, v: _ = nil) {
+    if t.done? {
+        return
+    }
+    let prev = current-task
+    current-task = t
+    t.parked? = false
+    try {
+        (t.gen)(v)
+    } finally {
+        current-task = prev
+    }
+}
+
+pub fn suspend() -> _ {
+    let $t = current-task or throw RuntimeError('http: suspension outside of a server task')
+    t.parked? = true
+    let v = yield Suspend
+    t.parked? = false
+    match v {
+        Raise(e) => throw e,
+        _        => v
+    }
+}
+
+pub fn in-task?(loop: _) -> Bool {
+    current-task != nil && current-task.loop == loop
+}
+
+pub fn on-loop?(loop: _) -> Bool {
+    current-loop == loop
+}
+
+fn header-safe!(s: String) -> String {
+    if s.contains?('\r') || s.contains?('\n') || s.contains?('\x00') {
+        throw ValueError("http: invalid character in header: {s.slice(0, 64)}")
+    }
+    s
+}
+
+pub const MODE_BUFFERED  = 0
+pub const MODE_STREAMING = 1
+pub const MODE_DONE      = 2
+
+pub class Response {
+    status-code:  Int
+    headers:      Dict[String, String | Array[String]]
+    body:         Blob
+    content-type: String | nil
+
+    __x:    _
+    __mode: Int
+
+    init(x: _) {
+        __x          = x
+        __mode       = MODE_BUFFERED
+        status-code  = 200
+        headers      = %{}
+        body         = Blob()
+        content-type = 'text/html; charset=utf-8'
+    }
+
+    exchange -> _ {
+        __x
+    }
+
+    mode -> Int {
+        __mode
+    }
+
+    started? -> Bool {
+        __mode != MODE_BUFFERED
+    }
+
+    status(c: Int | nil = nil) -> Int {
+        if c != nil {
+            if c < 100 || c > 999 {
+                throw ValueError("http: invalid status code: {c}")
+            }
+            status-code = c
+        }
+        status-code
+    }
+
+    __find(k: String) -> String | nil {
+        let want = k.lower()
+        for name, _ in headers {
+            if name.lower() == want {
+                return name
+            }
+        }
+        nil
+    }
+
+    header(k: String, v: _ = nil) -> _ {
+        if k.lower() == 'content-type' {
+            if v != nil {
+                content-type = header-safe!(str(v))
+            }
+            return content-type
+        }
+
+        if v == nil {
+            return match __find(k) {
+                nil  => nil,
+                name => headers[name]
+            }
+        }
+
+        if let $name = __find(k) {
+            headers.remove(name)
+        }
+
+        headers[header-safe!(k)] = header-safe!(str(v))
+    }
+
+    add-header(k: String, v: _) {
+        let name = __find(k) ?? header-safe!(k)
+        let value = header-safe!(str(v))
+        match headers[name] {
+            nil                => headers[name] = value,
+            vs: Array[String]  => vs.push(value),
+            one                => headers[name] = [one, value]
+        }
+    }
+
+    remove-header(k: String) {
+        if k.lower() == 'content-type' {
+            content-type = nil
+        } else if let $name = __find(k) {
+            headers.remove(name)
+        }
+    }
+
+    write(x: _) -> Response {
+        if __mode == MODE_STREAMING {
+            __x.writer().write(x)
+        } else {
+            body.push((x :: String | Blob) ? x : str(x))
+        }
+        self
+    }
+
+    json(x: _) -> Response {
+        body.push(json::encode(x))
+        content-type = 'application/json'
+        self
+    }
+
+    plain(x: _) -> Response {
+        body.push((x :: String | Blob) ? x : str(x))
+        content-type = 'text/plain; charset=utf-8'
+        self
+    }
+
+    html(x: _) -> Response {
+        body.push((x :: String | Blob) ? x : str(x))
+        content-type = 'text/html; charset=utf-8'
+        self
+    }
+
+    redirect(url: String, code: Int = 302) -> Response {
+        status-code = code
+        header('Location', url)
+        self
+    }
+
+    error(code: Int, message: ?String = nil) -> Response {
+        body.clear()
+        status-code  = code
+        content-type = 'text/plain; charset=utf-8'
+        body.push(message ?? status-name(code))
+        self
+    }
+
+    stream() -> BodyWriter {
+        if __mode == MODE_BUFFERED {
+            __mode = MODE_STREAMING
+            __x.start(self)
+        }
+        __x.writer()
+    }
+
+    events() -> EventStream {
+        if __mode == MODE_BUFFERED {
+            content-type = 'text/event-stream'
+            header('Cache-Control', 'no-cache')
+            header('X-Accel-Buffering', 'no')
+            __mode = MODE_STREAMING
+            __x.start(self)
+        }
+        __x.events()
+    }
+
+    finish() {
+        match __mode {
+            MODE_BUFFERED  => { __mode = MODE_DONE; __x.complete(self) },
+            MODE_STREAMING => { __mode = MODE_DONE; __x.writer().end() },
+            _              => {}
+        }
+    }
+
+    reset() {
+        if __mode == MODE_BUFFERED {
+            body.clear()
+            headers      = %{}
+            content-type = 'text/html; charset=utf-8'
+        }
+    }
+}
+
+/// Streaming response body. Every method may be called from any thread;
+/// calls from foreign threads are forwarded to the connection's event loop.
+/// Writes from a server task suspend while the peer is slow; writes from
+/// elsewhere never block, and a peer whose backlog exceeds
+/// `max-write-buffer` is disconnected.
+pub class BodyWriter {
+    __x: _
+
+    init(x: _) {
+        __x = x
+    }
+
+    closed? -> Bool {
+        __x.closed?
+    }
+
+    buffered -> Int {
+        __x.buffered
+    }
+
+    write(data: _) -> Bool {
+        let chunk = (data :: String | Blob) ? data : str(data)
+        let loop = __x.loop
+
+        if !on-loop?(loop) {
+            if __x.closed? {
+                return false
+            }
+            loop.post(-> write(chunk))
+            return true
+        }
+
+        if __x.closed? {
+            if in-task?(loop) {
+                throw ConnectionClosed()
+            }
+            return false
+        }
+
+        __x.send(chunk)
+
+        if in-task?(loop) {
+            if __x.buffered > loop.config.write-high-water {
+                __x.wait-drain()
+            }
+        } else if __x.buffered > loop.config.max-write-buffer {
+            log::warn!('closing slow stream (write buffer limit exceeded)')
+            __x.abort()
+            return false
+        }
+
+        true
+    }
+
+    flush() {
+        let loop = __x.loop
+        if in-task?(loop) && !__x.closed? {
+            __x.wait-drain(0)
+        }
+    }
+
+    end() {
+        let loop = __x.loop
+        if !on-loop?(loop) {
+            loop.post(-> __x.end())
+            return
+        }
+        __x.end()
+    }
+
+    wait() {
+        let loop = __x.loop
+        if !in-task?(loop) {
+            throw RuntimeError('http: BodyWriter.wait() must be called from the stream\'s own task')
+        }
+        if !__x.closed? {
+            __x.wait-closed()
+        }
+    }
+
+    on-close(f: () -> _) {
+        let loop = __x.loop
+        if !on-loop?(loop) {
+            loop.post(-> __x.on-close(f))
+            return
+        }
+        __x.on-close(f)
+    }
+}
+
+pub fn event-chunk(data: _, event: ?String = nil, id: _ = nil, retry: ?Int = nil) -> String {
+    let out = []
+
+    if event != nil {
+        out.push("event: {event.sub(/[\r\n]/, ' ')}\n")
+    }
+
+    if id != nil {
+        out.push("id: {str(id).sub(/[\r\n]/, ' ')}\n")
+    }
+
+    if retry != nil {
+        out.push("retry: {retry}\n")
+    }
+
+    let text = match data {
+        nil       => nil,
+        s: String => s,
+        b: Blob   => b.str!(),
+        x         => json::encode(x)
+    }
+
+    if text != nil {
+        for line in text.split(/\r\n|\r|\n/) {
+            out.push("data: {line}\n")
+        }
+    }
+
+    out.push('\n')
+    out.join('')
+}
+
+/// Server-Sent Events stream (text/event-stream). Thread-safe like
+/// BodyWriter.
+pub class EventStream < BodyWriter {
+    __ex: _
+
+    init(x: _) {
+        super(x)
+        __ex = x
+        let secs = x.loop.config.sse-keepalive
+        if secs > 0.0 {
+            __keepalive(secs)
+        }
+    }
+
+    __keepalive(secs: Float) {
+        let x = __ex
+        x.loop.timer(secs, fn () {
+            if !x.closed? {
+                if x.buffered == 0 {
+                    x.send(':\n\n')
+                }
+                __keepalive(secs)
+            }
+        })
+    }
+
+    send(data: _ = nil, event: ?String = nil, id: _ = nil, retry: ?Int = nil) -> Bool {
+        write(event-chunk(data, event, id, retry))
+    }
+
+    comment(text: String = '') -> Bool {
+        write(": {text.sub(/[\r\n]/, ' ')}\n\n")
+    }
+}
+
+/// Incoming request body for streaming routes. Filled by the connection's
+/// event loop; read from the handler's task.
+pub class BodyQueue {
+    loop:  _
+    total: Int
+
+    __buf:     Blob
+    __done?:   Bool
+    __error:   _
+    __waiting: Task | nil
+    __pull:    () -> _
+
+    init(loop: _, pull: () -> _) {
+        self.loop = loop
+        total     = 0
+        __buf     = Blob()
+        __done?   = false
+        __error   = nil
+        __waiting = nil
+        __pull    = pull
+    }
+
+    buffered -> Int {
+        #__buf
+    }
+
+    done? -> Bool {
+        __done? && #__buf == 0
+    }
+
+    complete? -> Bool {
+        __done?
+    }
+
+    push(data: Blob) {
+        __buf.push(data)
+        total += #data
+        __wake()
+    }
+
+    finish() {
+        __done? = true
+        __wake()
+    }
+
+    fail(e: _) {
+        if __error == nil {
+            __error = e
+        }
+        __done? = true
+        __wake()
+    }
+
+    __wake() {
+        if let $t = __waiting {
+            __waiting = nil
+            let l = loop
+            l.later(-> l.resume(t))
+        }
+    }
+
+    read(max: Int = 65536) -> Blob | nil {
+        if !in-task?(loop) {
+            throw RuntimeError('http: request bodies must be read from the handler task')
+        }
+        while #__buf == 0 {
+            if let $e = __error {
+                throw e
+            }
+            if __done? {
+                return nil
+            }
+            __pull()
+            if #__buf > 0 || __done? {
+                continue
+            }
+            __waiting = task()
+            suspend()
+        }
+        let n = min(max, #__buf)
+        let out = __buf.slice(0, n)
+        __buf.clear(0, n)
+        if !__done? {
+            __pull()
+        }
+        out
+    }
+}

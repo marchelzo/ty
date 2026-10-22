@@ -1,0 +1,1003 @@
+import os
+import errno
+import time
+import thread
+import log
+import ssl
+import ty.mod as tymod
+import http.core (
+    Config,
+    Task,
+    Raise,
+    CanceledError,
+    ConnectionClosed,
+    TimeoutError,
+    make-task,
+    step,
+    suspend,
+    task,
+    set-loop,
+    in-task?,
+    on-loop?
+)
+
+#|if __linux__
+import http.uring as uring
+#|]
+
+const OP_ACCEPT = 1
+const OP_RECV   = 2
+const OP_SEND   = 3
+const OP_WAKE   = 4
+const OP_CANCEL = 5
+
+const OP_BITS = 3
+const OP_MASK = 7
+
+const IPPROTO_TCP = 6
+const TCP_NODELAY = 1
+
+const BUF_SIZE = 16 * 1024
+const TLS_IN   = 32 * 1024
+const MIN_FREE = 4096
+
+pub const READ  = 0
+pub const WRITE = 1
+
+pub fn default-backend() -> String {
+#|if __linux__
+    'io_uring'
+#|else
+    'kqueue'
+#|]
+}
+
+pub fn make-backend(name: String, entries: Int, factory: _) -> _ {
+    if factory != nil {
+        return factory(entries)
+    }
+
+    let name = (name == 'auto') ? default-backend() : name
+    match name {
+        'io_uring' => do {
+#|if __linux__
+            uring.Backend(entries)
+#|else
+            throw RuntimeError('http: io_uring is only available on Linux')
+#|]
+        },
+        'kqueue' => (tymod.lookup(tymod.load('http/kqueue'), 'Backend'))(entries),
+        other    => throw ValueError("http: unknown backend: {other}")
+    }
+}
+
+pub class Timer {
+    deadline: Float
+    queued:   Float
+    active?:  Bool
+    f:        () -> _
+
+    init(f: () -> _) {
+        self.f   = f
+        deadline = 0.0
+        queued   = -1.0
+        active?  = false
+    }
+
+    cancel() {
+        active? = false
+    }
+}
+
+pub class Conn {
+    loop:      Loop
+    slot:      Int
+    fd:        Int
+    tls:       ssl.Session | nil
+    cin:       Blob
+    buf:       Blob
+    head:      Int
+    filled:    Int
+    out:       Blob
+    sent:      Int
+    pend:      Blob
+    proto:     _
+    requests:  Int
+    opened:    Float
+    reading?:  Bool
+    sending?:  Bool
+    dirty?:    Bool
+    eof?:      Bool
+    closing?:  Bool
+    closed?:   Bool
+    draining?: Bool
+    linger?:   Bool
+    waiters:   Array[Task]
+
+    __timers: Array[Timer]
+    __peer:   String | nil
+
+    init(loop: Loop, slot: Int) {
+        self.loop = loop
+        self.slot = slot
+        cin       = Blob()
+        buf       = Blob.zeros(BUF_SIZE)
+        out       = Blob()
+        pend      = Blob()
+        waiters   = []
+        __timers  = [
+            Timer(-> __expired(READ)),
+            Timer(-> __expired(WRITE))
+        ]
+        reset(-1)
+    }
+
+    reset(fd: Int) -> Conn {
+        self.fd   = fd
+        tls       = nil
+        head      = 0
+        filled    = 0
+        sent      = 0
+        proto     = nil
+        requests  = 0
+        opened    = loop.now
+        reading?  = false
+        sending?  = false
+        dirty?    = false
+        eof?      = false
+        closing?  = false
+        closed?   = false
+        draining? = false
+        linger?   = false
+        __peer    = nil
+        out.clear()
+        pend.clear()
+        waiters.clear()
+        if #buf > BUF_SIZE * 4 {
+            buf = Blob.zeros(BUF_SIZE)
+        }
+        if #cin > TLS_IN {
+            cin = Blob()
+        }
+        for t in __timers {
+            t.cancel()
+        }
+        self
+    }
+
+    config -> Config {
+        loop.config
+    }
+
+    peer -> String | nil {
+        if __peer == nil && fd >= 0 {
+            if let $addr = os.getpeername(fd) {
+                if let (host, port) = os.getnameinfo(addr, os.NI_NUMERICHOST | os.NI_NUMERICSERV) {
+                    __peer = host.contains?(':') ? "[{host}]:{port}" : "{host}:{port}"
+                }
+            }
+        }
+        __peer
+    }
+
+    available -> Int {
+        filled - head
+    }
+
+    buffered -> Int {
+        (#out - sent) + #pend
+    }
+
+    consume(n: Int) {
+        head += n
+        if head >= filled {
+            head = 0
+            filled = 0
+        }
+    }
+
+    room(total: Int | nil = nil) {
+        let used = filled - head
+        let want = max(total ?? 0, used + MIN_FREE)
+        let cap  = #buf
+
+        if head + want <= cap {
+            return
+        }
+
+        if head > 0 {
+            buf.clear(0, head)
+            (head, filled) = (0, used)
+        }
+
+        buf.pad((want > cap) ? max(want, 2 * cap) : cap)
+    }
+
+    want-read(total: Int | nil = nil) {
+        if reading? || eof? || closing? {
+            return
+        }
+
+        reading? = true
+
+        if tls != nil {
+            if #cin < TLS_IN {
+                cin.pad(TLS_IN)
+            }
+            loop.backend.recv(fd, cin.ptr(), #cin, (slot << OP_BITS) | OP_RECV)
+            return
+        }
+
+        room(total)
+        loop.backend.recv(fd, buf.ptr() + filled, #buf - filled, (slot << OP_BITS) | OP_RECV)
+    }
+
+    timeout(which: Int, seconds: Float) {
+        if seconds > 0.0 {
+            loop.arm(__timers[which], seconds)
+        } else {
+            __timers[which].cancel()
+        }
+    }
+
+    untimeout(which: Int) {
+        __timers[which].cancel()
+    }
+
+    __expired(which: Int) {
+        if closed? || closing? {
+            return
+        }
+
+        if linger? {
+            return close()
+        }
+
+        if which == WRITE {
+            log::debug!("write timeout on fd={fd}")
+            return close()
+        }
+
+        if proto != nil {
+            proto.on-timeout(which)
+        } else {
+            close()
+        }
+    }
+
+    write(data: String | Blob) {
+        if closing? || draining? {
+            return
+        }
+
+        if let $t = tls {
+            let n = data.size()
+            let off = 0
+            while off < n {
+                let k = t.write(data, off, n - off)
+                if k <= 0 {
+                    break
+                }
+                off += k
+            }
+            t.drain(pend)
+        } else {
+            pend.push(data)
+        }
+
+        if !dirty? && !sending? {
+            dirty? = true
+            loop.dirty.push(self)
+        }
+    }
+
+    flush() {
+        dirty? = false
+
+        if sending? || closing? || #pend == 0 {
+            return
+        }
+
+        (out, pend) = (pend, out)
+        pend.clear()
+        sent = 0
+        __send()
+    }
+
+    __send() {
+        sending? = true
+        loop.backend.send(fd, out.ptr() + sent, #out - sent, (slot << OP_BITS) | OP_SEND)
+        timeout(WRITE, loop.config.write-timeout)
+    }
+
+    on-sent(res: Int) {
+        sending? = false
+
+        if closing? {
+            return __maybe-release()
+        }
+
+        if res < 0 {
+            log::debug!("send failed on fd={fd}: {errno.str(-res)}")
+            return close()
+        }
+
+        sent += res
+
+        if sent < #out {
+            return __send()
+        }
+
+        out.clear()
+        sent = 0
+
+        if #pend > 0 {
+            return flush()
+        }
+
+        untimeout(WRITE)
+
+        if waiters {
+            let ws = waiters
+            waiters = []
+            for t in ws {
+                loop.resume(t)
+            }
+        }
+
+        if draining? {
+            return __shutdown-write()
+        }
+
+        if proto != nil {
+            proto.on-drain()
+        }
+    }
+
+    wait-drain(below: Int = 0) {
+        while !closed? && !closing? && buffered > below {
+            waiters.push(task()!)
+            suspend()
+        }
+        if closed? || closing? {
+            throw ConnectionClosed()
+        }
+    }
+
+    on-recv(res: Int) {
+        reading? = false
+
+        if closing? {
+            return __maybe-release()
+        }
+
+        if res <= 0 {
+            eof? = true
+            if linger? || draining? || proto == nil {
+                return close()
+            }
+            if res < 0 && res != -errno.ECONNRESET {
+                log::debug!("recv failed on fd={fd}: {errno.str(-res)}")
+            }
+            return proto.on-eof()
+        }
+
+        if linger? {
+            filled = 0
+            head = 0
+            return want-read()
+        }
+
+        if let $t = tls {
+            try {
+                __tls-input(t, res)
+            } catch e: ssl.SSLError {
+                log::debug!("TLS error on fd={fd}: {e}")
+                return close()
+            }
+            if closing? || proto == nil {
+                if !closing? {
+                    want-read()
+                }
+                return
+            }
+        } else {
+            filled += res
+        }
+
+        proto.on-data()
+
+        if eof? && !closing? && proto != nil {
+            proto.on-eof()
+        }
+    }
+
+    __tls-input(t: ssl.Session, n: Int) {
+        t.feed(cin, n)
+
+        if !t.handshaken? {
+            let done? = t.handshake()
+            t.drain(pend)
+            __mark-dirty()
+            if !done? {
+                return
+            }
+            untimeout(READ)
+            proto = loop.server.on-tls(self, t.alpn)
+        }
+
+        while true {
+            room()
+            let k = t.read-into(buf, filled, #buf - filled)
+            if k < 0 {
+                eof? = true
+                break
+            }
+            filled += k
+            if k == 0 {
+                break
+            }
+        }
+
+        if t.pending > 0 {
+            t.drain(pend)
+            __mark-dirty()
+        }
+    }
+
+    __mark-dirty() {
+        if #pend > 0 && !dirty? && !sending? {
+            dirty? = true
+            loop.dirty.push(self)
+        }
+    }
+
+    close-after-flush() {
+        if closing? || draining? {
+            return
+        }
+        if let $t = tls {
+            t.shutdown()
+            t.drain(pend)
+            __mark-dirty()
+        }
+        draining? = true
+        if !sending? && #pend == 0 {
+            __shutdown-write()
+        }
+    }
+
+    __shutdown-write() {
+        if eof? {
+            return close()
+        }
+        linger? = true
+        os.shutdown(fd, os.SHUT_WR)
+        timeout(READ, loop.config.linger-timeout)
+        want-read()
+    }
+
+    close() {
+        if closing? || closed? {
+            return
+        }
+
+        closing? = true
+
+        for t in __timers {
+            t.cancel()
+        }
+
+        if proto != nil {
+            let p = proto
+            try {
+                p.on-close()
+            } catch e {
+                log::error!("error while closing connection: {e}")
+            }
+        }
+
+        let ws = waiters
+        waiters = []
+        for t in ws {
+            loop.resume(t, Raise(ConnectionClosed()))
+        }
+
+        if reading? || sending? {
+            os.shutdown(fd, os.SHUT_RDWR)
+        }
+
+        __maybe-release()
+    }
+
+    __maybe-release() {
+        if reading? || sending? || closed? {
+            return
+        }
+        closed? = true
+        os.close(fd)
+        fd = -1
+        loop.release(self)
+    }
+}
+
+class Blocking {
+    __queue:   SharedQueue[_]
+    __threads: Array[Thread[_]]
+
+    init(n: Int) {
+        __queue   = SharedQueue()
+        __threads = [Thread(__work) for ..n]
+        for __threads {
+            it.detach()
+        }
+    }
+
+    __work() {
+        while true {
+            let (f, args, loop, t) = __queue.take()
+            let result = try {
+                Some(f(*args))
+            } catch e {
+                Raise(e)
+            }
+            loop.post(-> loop.resume(t, result))
+        }
+    }
+
+    submit(job: _) {
+        __queue.put(job)
+    }
+}
+
+let blocking-lock = Mutex()
+let blocking-pool: Blocking | nil = nil
+
+fn blocking-pool-of(n: Int) -> Blocking {
+    let ^_ = blocking-lock.lock()
+    blocking-pool ?? (blocking-pool = Blocking(n))
+}
+
+pub class Loop {
+    server:  _
+    config:  Config
+    index:   Int
+    backend: _
+    now:     Float
+    date:    String
+    dirty:   Array[Conn]
+
+    server-version: Int
+    server-routes:  _
+
+    __later:     Array[() -> _]
+
+    __listen:    Int
+    __slots:     Array[Conn | nil]
+    __free:      Array[Int]
+    __active:    Int
+    __timers:    Heap[(Float, Int, Timer)]
+    __mbox:      Array[() -> _]
+    __mtx:       Mutex
+    __thread:    Int
+    __accepting: Bool
+    __stopping:  Bool
+    __done:      Bool
+    __closed?:   Bool
+    __tseq:      Int
+    __tasks:     Set[Task]
+    __date-at:   Int
+    __backoff:   Timer
+
+    init(server: _, config: Config, index: Int, listen: Int) {
+        self.server  = server
+        self.config  = config
+        self.index   = index
+        backend      = make-backend(config.backend, config.ring-entries, server.backend-factory)
+        now          = time.now()
+        dirty        = []
+        server-version = -1
+        server-routes  = nil
+        __later        = []
+        __listen     = listen
+        __slots      = [nil]
+        __free       = []
+        __active     = 0
+        __timers     = Heap()
+        __mbox       = []
+        __mtx        = Mutex()
+        __thread     = -1
+        __accepting  = false
+        __stopping   = false
+        __done       = false
+        __closed?    = false
+        __tseq       = 0
+        __tasks      = Set()
+        __date-at    = 0
+        date         = ''
+        __backoff    = Timer(-> __arm-accept())
+        __tick-date()
+    }
+
+    active -> Int {
+        __active
+    }
+
+    stopping? -> Bool {
+        __stopping
+    }
+
+    owner? -> Bool {
+        thread.id() == __thread
+    }
+
+    __tick-date() {
+        let t = int(time.utc())
+        if t != __date-at {
+            __date-at = t
+            date = time.strftime('%a, %d %b %Y %H:%M:%S GMT', time.gmtime(t))
+        }
+    }
+
+    arm(t: Timer, seconds: Float) {
+        t.deadline = now + seconds
+        t.active?  = true
+        if t.queued < 0.0 || t.deadline < t.queued {
+            t.queued = t.deadline
+            __tseq += 1
+            __timers.push((t.deadline, __tseq, t))
+        }
+    }
+
+    timer(seconds: Int | Float, f: () -> _) -> Timer {
+        let t = Timer(f)
+        arm(t, float(seconds))
+        t
+    }
+
+    post(f: () -> _) -> Bool {
+        let ^_ = __mtx.lock()
+        if __closed? {
+            return false
+        }
+        __mbox.push(f)
+        if #__mbox == 1 {
+            backend.wake()
+        }
+        true
+    }
+
+    call(f: () -> _) {
+        if on-loop?(self) {
+            f()
+        } else {
+            post(f)
+        }
+    }
+
+    spawn(name: String, f: _, *args: _, %kwargs: _) -> Task {
+        let t = make-task(self, name, f, args, kwargs)
+        __tasks.insert(t)
+        __step(t, nil)
+        t
+    }
+
+    __step(t: Task, v: _) {
+        step(t, v)
+        if t.done? {
+            __tasks.remove(t)
+        }
+    }
+
+    resume(t: Task, v: _ = nil) {
+        if t.done? || !t.parked? {
+            return
+        }
+        if on-loop?(self) {
+            __step(t, v)
+        } else {
+            post(-> resume(t, v))
+        }
+    }
+
+    cancel(t: Task) {
+        if !t.done? && t.parked? {
+            t.canceled = true
+            __step(t, Raise(CanceledError()))
+        }
+    }
+
+    sleep(seconds: Int | Float) {
+        let $t = task() or throw RuntimeError('http.sleep() must be called from a server task')
+        let timer = self.timer(seconds, -> resume(t))
+        try {
+            suspend()
+        } finally {
+            timer.cancel()
+        }
+    }
+
+    blocking(f: _, *args: _) -> _ {
+        let $t = task() or throw RuntimeError('http.blocking() must be called from a server task')
+        blocking-pool-of(config.blocking-threads).submit((f, args, self, t))
+        match suspend() {
+            Some(x) => x,
+            other   => other
+        }
+    }
+
+    slot-proto(slot: Int) -> _ {
+        match __slots[slot] {
+            nil  => nil,
+            conn => conn.proto
+        }
+    }
+
+    __alloc-slot() -> Int {
+        if let Some(i) = __free.try-pop() {
+            return i
+        }
+        __slots.push(nil)
+        #__slots - 1
+    }
+
+    __open(fd: Int) {
+        let slot = __alloc-slot()
+        let conn = match __slots[slot] {
+            nil => Conn(self, slot),
+            c   => c
+        }
+        __slots[slot] = conn.reset(fd)
+        __active += 1
+
+        os.setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, 1)
+
+        if let $ctx = server.tls {
+            conn.tls = ctx.session()
+            conn.timeout(READ, config.handshake-timeout)
+            conn.want-read()
+        } else {
+            conn.proto = server.on-open(conn)
+        }
+    }
+
+    release(conn: Conn) {
+        __active -= 1
+        server.connection-closed()
+        __free.push(conn.slot)
+        if !__accepting && !__stopping {
+            __arm-accept()
+        }
+    }
+
+    __arm-accept() {
+        if __accepting || __stopping || __listen < 0 {
+            return
+        }
+        __accepting = true
+        backend.accept(__listen, OP_ACCEPT)
+    }
+
+    __accepted(res: Int) {
+        __accepting = false
+
+        if res < 0 {
+            match -res {
+                errno.ECANCELED, errno.EINVAL, errno.EBADF => {
+                    return
+                },
+                errno.EMFILE, errno.ENFILE, errno.ENOBUFS, errno.ENOMEM => {
+                    log::warn!("accept(): {errno.str(-res)}; backing off")
+                    arm(__backoff, 0.1)
+                    return
+                },
+                _ => {
+                    log::debug!("accept(): {errno.str(-res)}")
+                }
+            }
+            return __arm-accept()
+        }
+
+        if __stopping {
+            os.close(res)
+            return
+        }
+
+        if !server.connection-opened() {
+            os.close(res)
+            arm(__backoff, 0.05)
+            return
+        }
+
+        __open(res)
+        __arm-accept()
+    }
+
+    __guard(conn: Conn, e: _) {
+        log::error!("closing connection after internal error: {e}\n{e.trace()}")
+        try {
+            conn.close()
+        } catch e2 {
+            log::error!("error while closing connection: {e2}")
+        }
+    }
+
+    __dispatch(user: Int, res: Int, flags: Int) {
+        let slot = user >> OP_BITS
+        match user & OP_MASK {
+            OP_RECV => {
+                if let $conn = __slots[slot] {
+                    try {
+                        conn.on-recv(res)
+                    } catch e {
+                        __guard(conn, e)
+                    }
+                }
+            },
+            OP_SEND => {
+                if let $conn = __slots[slot] {
+                    try {
+                        conn.on-sent(res)
+                    } catch e {
+                        __guard(conn, e)
+                    }
+                }
+            },
+            OP_ACCEPT => __accepted(res),
+            OP_WAKE   => {
+                backend.woke()
+                backend.arm-wake(OP_WAKE)
+            },
+            _ => {}
+        }
+    }
+
+    __drain-mbox() {
+        while true {
+            let jobs = do {
+                let ^_ = __mtx.lock()
+                let jobs = __mbox
+                __mbox = []
+                jobs
+            }
+            if !jobs {
+                return
+            }
+            for f in jobs {
+                try {
+                    f()
+                } catch e {
+                    log::error!("error in posted callback: {e}\n{e.trace()}")
+                }
+            }
+        }
+    }
+
+    later(f: () -> _) {
+        __later.push(f)
+    }
+
+    __flush-dirty() {
+        while __later {
+            let fs = __later
+            __later = []
+            for f in fs {
+                try {
+                    f()
+                } catch e {
+                    log::error!("error in deferred callback: {e}\n{e.trace()}")
+                }
+            }
+        }
+        while dirty {
+            let ds = dirty
+            dirty = []
+            for c in ds {
+                c.flush()
+            }
+        }
+    }
+
+    __fire-timers() {
+        while #__timers > 0 && __timers.peek().0 <= now {
+            let (key, _, t) = __timers.pop()
+            if key == t.queued {
+                t.queued = -1.0
+            }
+            if !t.active? {
+                continue
+            }
+            if t.deadline > now {
+                if t.queued < 0.0 || t.deadline < t.queued {
+                    t.queued = t.deadline
+                    __tseq += 1
+                    __timers.push((t.deadline, __tseq, t))
+                }
+                continue
+            }
+            t.active? = false
+            try {
+                (t.f)()
+            } catch e {
+                log::error!("error in timer callback: {e}\n{e.trace()}")
+            }
+        }
+    }
+
+    __next-timeout() -> Float | nil {
+        if dirty || __mbox || __later {
+            return 0.0
+        }
+        if #__timers == 0 {
+            return 1.0
+        }
+        min(max(__timers.peek().0 - now, 0.0), 1.0)
+    }
+
+    __begin-stop() {
+        if __stopping {
+            return
+        }
+        __stopping = true
+
+        if __accepting {
+            backend.cancel(OP_ACCEPT)
+        }
+
+        for c in __slots {
+            if c != nil && !c.closing? && !c.closed? && c.fd >= 0 {
+                if c.proto == nil {
+                    c.close()
+                } else {
+                    c.proto.on-shutdown()
+                }
+            }
+        }
+
+        timer(config.shutdown-timeout, -> __force-stop())
+    }
+
+    __force-stop() {
+        for c in __slots {
+            if c != nil && !c.closing? && !c.closed? && c.fd >= 0 {
+                c.close()
+            }
+        }
+        for t in __tasks.to-array() {
+            cancel(t)
+        }
+    }
+
+    stop() {
+        post(-> __begin-stop())
+    }
+
+    run() {
+        __thread = thread.id()
+        set-loop(self)
+        backend.arm-wake(OP_WAKE)
+        __arm-accept()
+
+        try {
+            while !__done {
+                backend.wait(__next-timeout(), __dispatch)
+                now = time.now()
+                __tick-date()
+                __fire-timers()
+                __drain-mbox()
+                __flush-dirty()
+                if __stopping && __active == 0 && !__accepting {
+                    __done = true
+                }
+            }
+        } finally {
+            do {
+                let ^_ = __mtx.lock()
+                __closed? = true
+                __mbox = []
+            }
+            backend.close()
+            set-loop(nil)
+        }
+    }
+}

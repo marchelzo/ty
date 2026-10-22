@@ -1,0 +1,69 @@
+import io_uring (IoUring, IoUringError, IORING_FEAT_EXT_ARG, IORING_ASYNC_CANCEL_ALL)
+import os
+import errno
+
+const ACCEPT_FLAGS = 0x80000
+
+pub const NAME = 'io_uring'
+
+pub class Backend {
+    __ring:  IoUring
+    __wake:  Int
+    __wbuf:  Blob
+
+    init(entries: Int = 1024) {
+        __ring = IoUring(entries: entries, cq-size: entries * 4)
+        if (__ring.features & IORING_FEAT_EXT_ARG) == 0 {
+            __ring.close()
+            throw IoUringError(errno.ENOSYS, 'io_uring: kernel lacks IORING_FEAT_EXT_ARG')
+        }
+        __wake  = os.eventfd(0, os.EFD_NONBLOCK | os.EFD_CLOEXEC)
+        __wbuf  = Blob.zeros(8)
+    }
+
+    name -> String {
+        NAME
+    }
+
+    accept(fd: Int, user: Int) {
+        __ring.prep-accept(fd, nil, nil, ACCEPT_FLAGS, user)
+    }
+
+    recv(fd: Int, p: Ptr, n: Int, user: Int) {
+        __ring.prep-recv(fd, p, n, 0, user)
+    }
+
+    send(fd: Int, p: Ptr, n: Int, user: Int) {
+        __ring.prep-send(fd, p, n, os.MSG_NOSIGNAL, user)
+    }
+
+    cancel(user: Int) {
+        __ring.prep-cancel(user)
+    }
+
+    arm-wake(user: Int) {
+        __ring.prep-read(__wake, __wbuf, 8, 0, user)
+    }
+
+    woke() {
+    }
+
+    wake() {
+        os.write(__wake, Blob(1, 0, 0, 0, 0, 0, 0, 0))
+    }
+
+    wait(timeout: Float | nil, f: (Int, Int, Int) -> _) -> Int {
+        __ring.submit-and-wait(1, timeout)
+        __ring.each-cqe(f)
+    }
+
+    poll(f: (Int, Int, Int) -> _) -> Int {
+        __ring.submit()
+        __ring.each-cqe(f)
+    }
+
+    close() {
+        __ring.close()
+        os.close(__wake)
+    }
+}

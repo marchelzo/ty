@@ -1,0 +1,162 @@
+import path (Path)
+
+pub use HttpHeaders = Dict[String, String | [String]]
+pub use HttpStatus  = {code: Int, text: String}
+pub use HttpVersion = {major: Int, minor: Int}
+
+pub tag MultipartData;
+pub tag MultipartMore;
+pub tag MultipartError;
+
+pub fn multipart*(boundary: String) {
+    let files = %{}
+    let form  = %{}
+    let buf   = Blob()
+
+    let separator = "\r\n--{boundary}"
+    let initial   = separator + 2
+
+    let name     = nil
+    let data     = nil
+    let ^file    = nil
+    let path     = nil
+    let filename = nil
+    let mime     = nil
+
+    fn commit(chunk: Blob) {
+        if file != nil {
+            file.write(chunk)
+        } else if data != nil {
+            data.push(chunk)
+        } else if #chunk != 0 {
+            yield MultipartError
+        }
+    }
+
+    fn next-line() -> _ {
+        for (;;) {
+            while #buf < 2 {
+                buf.push(yield MultipartMore)
+            }
+            if let $i = buf.search('\r\n') {
+                let line = buf.splice(0, i + 2).str!().trim()
+                return line ?: line
+            } else {
+                commit(buf.splice(0, max(0, #buf - 2)))
+            }
+        }
+    }
+
+    fn seek(token) -> _ {
+        let size = token.size()
+        for (;;) {
+            while #buf < size + 2 {
+                buf.push(yield MultipartMore)
+            }
+            if let $i = buf.search(token) {
+                commit(buf.splice(0, i))
+                let end = buf.str!(size, 2)
+                buf.clear(0, size + 2)
+                return end
+            } else {
+                commit(buf.splice(0, #buf - size))
+            }
+        }
+    }
+
+    fn part() {
+        while let $line = next-line() {
+            if not let [k, v] = line.split(': ', 1) {
+                yield MultipartError
+            }
+            match k.lower() {
+                'content-disposition' => {
+                    let disposition: Dict[String, String] = %{k: v for [_, k, v] in v.scan(/(\w+)="([^"]+)"/)}
+
+                    name     = disposition['name']
+                    filename = disposition['filename']
+
+                    if name == nil {
+                        yield MultipartError
+                    }
+
+                    if filename != nil {
+                        path = Path.tmp().mktemp('upload')
+                        file = path.open('w+')
+                    } else {
+                        data = Blob()
+                    }
+                },
+
+                'content-type' => {
+                    mime = v
+                },
+
+                _ => {
+                    yield MultipartError
+                }
+            }
+        }
+
+        let end = seek(separator)
+
+        if file != nil {
+            file.close()
+            files[name] = {
+                name:     filename,
+                type:     mime,
+                path:     path
+            }
+            file     = nil
+            filename = nil
+            path     = nil
+            mime     = nil
+            name     = nil
+        } else if data != nil {
+            form[name] = data.str!()
+            data       = nil
+            name       = nil
+        } else {
+            yield MultipartError
+        }
+
+        end != '--'
+    }
+
+    if seek(initial) != '--' {
+        while part() {
+            ;
+        }
+    }
+
+    yield MultipartData(form, files)
+}
+
+pub fn urldecode(s: String) -> String {
+    s.sub('+', ' ')
+     .sub(/%[[:xdigit:]]{2}/, \chr(int(_[1;], 16)))
+     .sub('\r\n', '\n')
+     .sub('\r', '\n')
+}
+
+pub fn decode-query(query: String) -> Dict[String, String | Array[String | nil] | nil] {
+    let params = %{}
+
+    for [k, ?v] in query.split('&').map(p -> p.split('=', 1).map!(urldecode)) {
+        match params[k] {
+            nil         => { params[k] = v        },
+            one: String => { params[k] = [one, v] },
+            many        => { many.push(v)         }
+        }
+    }
+
+    params
+}
+
+pub fn urlencode(s: String) -> String {
+    s.sub(/[^A-Za-z0-9\-._~]/, (c: String) -> [*Blob(c)].map(b -> "%{b:02X}").join(''))
+}
+
+pub fn encode-query(params: Dict[String, _]) -> String {
+    [ "{urlencode(str(k))}={urlencode(str(v))}" for k, v in params ].join('&')
+}

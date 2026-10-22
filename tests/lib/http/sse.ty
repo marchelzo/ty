@@ -1,0 +1,145 @@
+import http
+import os
+import time
+import _client (serve, Client, xread)
+
+pub fn event-format() {
+    assert(http.event-chunk('hi') == 'data: hi\n\n')
+    assert(http.event-chunk("a\nb", event: 'x', id: 7, retry: 100) == 'event: x\nid: 7\nretry: 100\ndata: a\ndata: b\n\n')
+    assert(http.event-chunk(%{'k': 1}) == 'data: {"k":1}\n\n')
+    assert(http.event-chunk("x\r\ny", event: "bad\nname") == 'event: bad name\ndata: x\ndata: y\n\n')
+}
+
+pub fn events-from-handler() {
+    serve(fn (srv) {
+        srv.get('/events', fn (req, rsp) {
+            let es = rsp.events()
+            for i in ..3 {
+                es.send("tick {i}", event: 'tick', id: i)
+                http.sleep(0.02)
+            }
+        })
+    }, fn (srv) {
+        let c = Client(srv.port)
+        let r = c.get('/events')
+        assert(r.header('content-type') == 'text/event-stream')
+        assert(r.header('cache-control') == 'no-cache')
+        assert(r.body == 'event: tick\nid: 0\ndata: tick 0\n\nevent: tick\nid: 1\ndata: tick 1\n\nevent: tick\nid: 2\ndata: tick 2\n\n')
+        assert(c.get('/events').status == 200)
+        c.close()
+    })
+}
+
+pub fn push-from-other-thread-and-disconnect() {
+    let lock = Mutex()
+    let streams = []
+    let closed = Atomic(0)
+
+    serve(fn (srv) {
+        srv.get('/feed', fn (req, rsp) {
+            let es = rsp.events()
+            es.on-close(-> closed.fetch-add(1))
+            do {
+                let ^_ = lock.lock()
+                streams.push(es)
+            }
+            es.wait()
+        })
+    }, fn (srv) {
+        let c = Client(srv.port)
+        c.request('GET', '/feed')
+        let t0 = time.now()
+        while time.now() - t0 < 2.0 && do { let ^_ = lock.lock(); #streams } == 0 {
+            os.sleep(0.01)
+        }
+        let es = do { let ^_ = lock.lock(); streams[0] }
+
+        let pusher = Thread(fn () {
+            for i in ..3 {
+                assert(es.send("msg {i}"))
+            }
+        })
+        pusher.join()
+
+        let buf = Blob()
+        while !buf.str!().contains?('msg 2') {
+            xread(c.fd, buf, 4096)
+        }
+        assert(buf.str!().contains?('data: msg 0'))
+
+        c.close()
+        let t1 = time.now()
+        while closed.load() == 0 && time.now() - t1 < 2.0 {
+            os.sleep(0.01)
+        }
+        assert(closed.load() == 1)
+        assert(es.closed?)
+        assert(!es.send('too late'))
+    })
+}
+
+pub fn keepalive-comments() {
+    serve(fn (srv) {
+        srv.get('/quiet', fn (req, rsp) {
+            rsp.events().wait()
+        })
+    }, fn (srv) {
+        let c = Client(srv.port)
+        c.request('GET', '/quiet')
+        os.sleep(0.5)
+        let buf = Blob()
+        xread(c.fd, buf, 65536)
+        assert(buf.str!().contains?(':\n\n'))
+        c.close()
+    }, sse-keepalive: 0.1)
+}
+
+pub fn slow-consumer-is-dropped() {
+    let result = Atomic(0)
+    serve(fn (srv) {
+        srv.get('/firehose', fn (req, rsp) {
+            let es = rsp.events()
+            http.spawn(fn () {
+                http.sleep(0.05)
+            })
+            let t = Thread(fn () {
+                let chunk = 'x' * 65536
+                for i in ..400 {
+                    if !es.send(chunk) {
+                        result.store(1)
+                        return
+                    }
+                    os.sleep(0.001)
+                }
+            })
+            es.wait()
+            t.join()
+        })
+    }, fn (srv) {
+        let c = Client(srv.port)
+        os.setsockopt(c.fd, os.SOL_SOCKET, (__apple__ || __bsd__) ? 0x1002 : 8, 4096)
+        c.request('GET', '/firehose')
+        let t0 = time.now()
+        while result.load() == 0 && time.now() - t0 < 5.0 {
+            os.sleep(0.05)
+        }
+        assert(result.load() == 1)
+        c.close()
+    }, max-write-buffer: 1024 * 1024)
+}
+
+pub fn streaming-writer-backpressure() {
+    serve(fn (srv) {
+        srv.get('/download', fn (req, rsp) {
+            let w = rsp.stream()
+            for i in ..256 {
+                w.write('d' * 16384)
+            }
+        })
+    }, fn (srv) {
+        let c = Client(srv.port)
+        let r = c.get('/download')
+        assert(#r.body == 256 * 16384)
+        c.close()
+    }, write-high-water: 64 * 1024)
+}

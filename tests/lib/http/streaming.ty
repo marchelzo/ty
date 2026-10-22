@@ -1,0 +1,119 @@
+import http
+import hash
+import os
+import _client (serve, Client, get, curl, curl?, write-file)
+
+fn routes(srv) {
+    srv.post('/sha', fn (req, rsp) {
+        let h = hash.sha256()
+        let n = 0
+        let chunks = 0
+        while let $chunk = req.read(4096) {
+            h.update(chunk)
+            n += #chunk
+            chunks += 1
+        }
+        rsp.plain("{n} {chunks > 1} {h.hexdigest()}")
+    }, stream: true)
+
+    srv.post('/partial', fn (req, rsp) {
+        let first = req.read(10)
+        rsp.plain("got {#first}")
+    }, stream: true)
+
+    srv.post('/all', (req, rsp) -> rsp.plain(str(#req.read-all())), stream: true)
+
+    srv.post('/buffered', (req, rsp) -> rsp.plain("{#(req.body ?? '')} {#req.read-all()}"))
+}
+
+pub fn content-length-streaming() {
+    serve(routes, fn (srv) {
+        let data = 'abcdefgh' * 100000
+        let c = Client(srv.port)
+        c.request('POST', '/sha', data)
+        assert(c.response().body == "800000 true {hash.sha256(data).hexdigest()}")
+        assert(c.get('/missing').status == 404)
+        c.close()
+    })
+}
+
+pub fn chunked-streaming-and-keep-alive() {
+    serve(routes, fn (srv) {
+        let c = Client(srv.port)
+        c.send('POST /all HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n')
+        for i in ..20 {
+            c.send("1000\r\n{'q' * 4096}\r\n")
+            os.sleep(0.005)
+        }
+        c.send('0\r\n\r\n')
+        assert(c.response().body == str(20 * 4096))
+
+        c.request('POST', '/all', 'tail')
+        assert(c.response().body == '4')
+        c.close()
+    })
+}
+
+pub fn expect-continue-streaming() {
+    serve(routes, fn (srv) {
+        let c = Client(srv.port)
+        c.send('POST /all HTTP/1.1\r\nHost: x\r\nContent-Length: 6\r\nExpect: 100-continue\r\n\r\n')
+        assert(c.response().status == 100)
+        c.send('stream')
+        assert(c.response().body == '6')
+        c.close()
+    })
+}
+
+pub fn unread-body-closes-connection() {
+    serve(routes, fn (srv) {
+        let c = Client(srv.port)
+        c.request('POST', '/partial', 'p' * 500000)
+        let r = c.response()
+        assert(r.body == 'got 10')
+        assert(r.header('connection') == 'close')
+        c.close()
+    })
+}
+
+pub fn streaming-body-limit() {
+    serve(routes, fn (srv) {
+        let c = Client(srv.port)
+        c.request('POST', '/all', 'x' * 5000)
+        assert(c.response().status == 413)
+        c.close()
+
+        let d = Client(srv.port)
+        d.send('POST /all HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n')
+        for ..10 {
+            d.send("400\r\n{'z' * 1024}\r\n")
+        }
+        d.send('0\r\n\r\n')
+        let r = d.response()
+        assert(r == nil || r.status == 413)
+        d.close()
+    }, max-body-size: 4096)
+}
+
+pub fn non-streaming-routes-still-buffer() {
+    serve(routes, fn (srv) {
+        let c = Client(srv.port)
+        c.request('POST', '/buffered', 'hello')
+        assert(c.response().body == '5 5')
+        c.close()
+    })
+}
+
+pub fn streaming-over-h2() {
+    if !curl?() {
+        return
+    }
+    serve(routes, fn (srv) {
+        let file = "/tmp/ty-http-stream-{os.getpid()}"
+        let data = 'h2body' * 200000
+        write-file(file, data)
+        let out = curl('--http2-prior-knowledge', '--data-binary', "@{file}", "{srv.url}/sha")
+        os.unlink(file)
+        assert(out == "1200000 true {hash.sha256(data).hexdigest()}")
+    })
+}

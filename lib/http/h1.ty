@@ -1,0 +1,634 @@
+import log
+import http.core (
+    BodyWriter,
+    BodyQueue,
+    HttpError,
+    EventStream,
+    Response,
+    Raise,
+    ConnectionClosed,
+    task,
+    suspend
+)
+import http.wire as wire (Ready, NeedMore, Invalid, Head, Request, Dechunker)
+import http.status (status-name)
+import http.loop (Conn, READ, WRITE)
+
+const IDLE     = 0
+const BUSY     = 1
+const STREAM   = 2
+const SENDING  = 3
+const UPGRADED = 4
+
+const CONTINUE = Blob('HTTP/1.1 100 Continue\r\n\r\n')
+const PREFACE  = 'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n'
+
+const RESERVED = %{'content-length', 'transfer-encoding', 'connection', 'date'}
+
+const STATUS_LINES: Dict[Int, String] = %{
+    code: "HTTP/1.1 {code} {status-name(code)}\r\n" for code in 100..600
+}
+
+pub fn status-line(code: Int) -> String {
+    STATUS_LINES[code] ?? "HTTP/1.1 {code} {status-name(code)}\r\n"
+}
+
+fn bodiless?(code: Int) -> Bool {
+    code < 200 || code == 204 || code == 304
+}
+
+pub fn render-head(
+    out: Blob,
+    rsp: Response,
+    date: String,
+    server-name: String | nil,
+    length: Int | nil,
+    chunked?: Bool,
+    close?: Bool,
+    keep-alive?: Bool
+) {
+    let code = rsp.status-code
+    out.push(status-line(code))
+    out.push("Date: {date}\r\n")
+
+    if server-name != nil {
+        out.push("Server: {server-name}\r\n")
+    }
+
+    if !bodiless?(code) {
+        if rsp.content-type != nil {
+            out.push("Content-Type: {rsp.content-type}\r\n")
+        }
+        if chunked? {
+            out.push('Transfer-Encoding: chunked\r\n')
+        } else if length != nil {
+            out.push("Content-Length: {length}\r\n")
+        }
+    }
+
+    if close? {
+        out.push('Connection: close\r\n')
+    } else if keep-alive? {
+        out.push('Connection: keep-alive\r\n')
+    }
+
+    for k, v in rsp.headers {
+        if RESERVED.contains?(k.lower()) {
+            continue
+        }
+        match v {
+            s: String => out.push("{k}: {s}\r\n"),
+            vs        => for s in vs { out.push("{k}: {s}\r\n") }
+        }
+    }
+
+    out.push('\r\n')
+}
+
+pub class H1Exchange {
+    proto:   H1
+    request: Request
+    close?:  Bool
+    closed?: Bool
+
+    __head?:    Bool
+    __chunked?: Bool
+    __ended?:   Bool
+    __writer:   BodyWriter | nil
+    __closers:  Array[_]
+    __waiting:  Array[_]
+
+    init(proto: H1, request: Request, close?: Bool) {
+        self.proto   = proto
+        self.request = request
+        self.close?  = close?
+        closed?      = false
+        __head?      = request.method == 'HEAD'
+        __chunked?   = false
+        __ended?     = false
+        __writer     = nil
+        __closers    = []
+        __waiting    = []
+    }
+
+    loop -> _ {
+        proto.conn.loop
+    }
+
+    conn -> Conn {
+        proto.conn
+    }
+
+    protocol -> String {
+        (request.version.minor == 0) ? 'HTTP/1.0' : 'HTTP/1.1'
+    }
+
+    buffered -> Int {
+        proto.conn.buffered
+    }
+
+    __user-close?(rsp: Response) -> Bool {
+        if proto.closing? {
+            return true
+        }
+        match rsp.header('Connection') {
+            s: String => s.lower() == 'close',
+            _         => false
+        }
+    }
+
+    __keep-alive? -> Bool {
+        !close? && request.version.minor == 0
+    }
+
+    start(rsp: Response) {
+        if closed? {
+            throw ConnectionClosed()
+        }
+        let c = proto.conn
+        let v10? = request.version.minor == 0
+
+        close? = close? || __user-close?(rsp) || v10?
+        __chunked? = !v10? && !bodiless?(rsp.status-code) && !__head?
+
+        let out = Blob()
+        render-head(out, rsp, c.loop.date, c.config.server-name, nil, __chunked?, close?, false)
+        c.write(out)
+
+        proto.state = STREAM
+        c.untimeout(READ)
+        c.want-read()
+    }
+
+    complete(rsp: Response) {
+        if closed? {
+            return
+        }
+        let c = proto.conn
+        let code = rsp.status-code
+        let body = rsp.body
+
+        close? = close? || __user-close?(rsp)
+
+        let out = Blob()
+        render-head(
+            out,
+            rsp,
+            c.loop.date,
+            c.config.server-name,
+            #body,
+            false,
+            close?,
+            __keep-alive?
+        )
+
+        if !__head? && !bodiless?(code) {
+            out.push(body)
+        }
+
+        c.write(out)
+        __ended? = true
+        proto.response-written(self)
+    }
+
+    writer() -> BodyWriter {
+        __writer ?? (__writer = BodyWriter(self))
+    }
+
+    events() -> EventStream {
+        match __writer {
+            es: EventStream => es,
+            _               => (__writer = EventStream(self))
+        }
+    }
+
+    send(data: String | Blob) {
+        if closed? || __ended? || __head? {
+            return
+        }
+
+        let n = data.size()
+        if n == 0 {
+            return
+        }
+
+        let c = proto.conn
+        if __chunked? {
+            c.write("{n:x}\r\n")
+            c.write(data)
+            c.write('\r\n')
+        } else {
+            c.write(data)
+        }
+    }
+
+    end() {
+        if closed? || __ended? {
+            return
+        }
+        __ended? = true
+        if __chunked? {
+            proto.conn.write('0\r\n\r\n')
+        }
+        if !__chunked? && !__head? {
+            close? = true
+        }
+        proto.response-written(self)
+    }
+
+    abort() {
+        proto.conn.close()
+    }
+
+    wait-drain(below: Int = -1) {
+        let c = proto.conn
+        let limit = (below < 0) ? c.config.write-high-water / 2 : below
+        c.wait-drain(limit)
+    }
+
+    wait-closed() {
+        while !closed? {
+            __waiting.push(task()!)
+            suspend()
+        }
+    }
+
+    on-close(f: () -> _) {
+        if closed? {
+            f()
+        } else {
+            __closers.push(f)
+        }
+    }
+
+    closed() {
+        if closed? {
+            return
+        }
+        closed? = true
+
+        let cs = __closers
+        __closers = []
+        for f in cs {
+            try {
+                f()
+            } catch e {
+                log::error!("error in on-close callback: {e}")
+            }
+        }
+
+        let ws = __waiting
+        __waiting = []
+        for t in ws {
+            proto.conn.loop.resume(t)
+        }
+    }
+}
+
+class H1Body {
+    proto:     H1
+    queue:     BodyQueue
+    remaining: Int
+    dech:      Dechunker | nil
+
+    init(proto: H1, length: Int, chunked?: Bool) {
+        self.proto = proto
+        remaining  = length
+        dech       = chunked? ? Dechunker() : nil
+        queue      = BodyQueue(proto.conn.loop, -> pull())
+        if !chunked? && length <= 0 {
+            queue.finish()
+        }
+    }
+
+    complete? -> Bool {
+        queue.complete?
+    }
+
+    pump() {
+        let c = proto.conn
+        if queue.complete? || c.available == 0 {
+            return
+        }
+
+        if let $d = dech {
+            let out = Blob()
+            let n = d.feed(c.buf, c.head, c.filled, out)
+            if n < 0 {
+                queue.fail(HttpError(400, 'malformed chunked body'))
+                proto.abandon-body()
+                return
+            }
+            c.consume(n)
+            if queue.total + #out > c.config.max-body-size {
+                queue.fail(HttpError(413))
+                return proto.abandon-body()
+            }
+            if #out > 0 {
+                queue.push(out)
+            }
+            if d.done? {
+                queue.finish()
+            }
+        } else {
+            let n = min(c.available, remaining)
+            let chunk = c.buf.slice(c.head, n)
+            c.consume(n)
+            remaining -= n
+            queue.push(chunk)
+            if remaining == 0 {
+                queue.finish()
+            }
+        }
+    }
+
+    pull() {
+        pump()
+        let c = proto.conn
+        if !queue.complete? && !c.closing? && queue.buffered < c.config.write-high-water {
+            c.timeout(READ, c.config.request-timeout)
+            c.want-read()
+        }
+    }
+}
+
+pub class H1 {
+    conn:   Conn
+    server: _
+    state:  Int
+    x:      H1Exchange | nil
+    body:   H1Body | nil
+
+    __marks:      Array[Int]
+    __started?:   Bool
+    __headed?:    Bool
+    __continued?: Bool
+    __close?:     Bool
+
+    init(conn: Conn, server: _) {
+        self.conn   = conn
+        self.server = server
+        state       = IDLE
+        x           = nil
+        body        = nil
+        __marks     = wire.marks(conn.config.max-headers)
+        __started?  = false
+        __headed?   = false
+        __continued? = false
+        __close?    = false
+        __next()
+    }
+
+    on-data() {
+        match state {
+            IDLE => __parse(),
+            STREAM => {
+                if conn.available > conn.config.max-header-size {
+                    return
+                }
+                conn.want-read()
+            },
+            BUSY => {
+                if let $b = body {
+                    if !b.complete? {
+                        b.pull()
+                    }
+                }
+            },
+            _ => {}
+        }
+    }
+
+    abandon-body() {
+        __close? = true
+        if let $b = body {
+            if !b.complete? {
+                b.queue.fail(ConnectionClosed('request body abandoned'))
+            }
+        }
+    }
+
+    on-eof() {
+        if let $b = body {
+            if !b.complete? {
+                b.queue.fail(ConnectionClosed())
+            }
+        }
+        match state {
+            IDLE    => conn.close(),
+            STREAM  => conn.close(),
+            _       => { __close? = true }
+        }
+    }
+
+    on-drain() {
+        if state == SENDING {
+            __finished()
+        }
+    }
+
+    on-timeout(which: Int) {
+        if state == IDLE && __started? {
+            __error(408)
+        } else {
+            conn.close()
+        }
+    }
+
+    on-close() {
+        if let $b = body {
+            if !b.complete? {
+                b.queue.fail(ConnectionClosed())
+            }
+        }
+        if let $ex = x {
+            ex.closed()
+        }
+    }
+
+    closing? -> Bool {
+        __close? || (body != nil && !body.complete?)
+    }
+
+    on-shutdown() {
+        __close? = true
+        if state == IDLE && !__started? {
+            conn.close()
+        }
+    }
+
+    response-written(ex: H1Exchange) {
+        state = SENDING
+        if ex.close? {
+            __close? = true
+        }
+        if !conn.sending? && conn.buffered == 0 {
+            __finished()
+        }
+    }
+
+    __finished() {
+        if let $b = body {
+            body = nil
+            if !b.complete? {
+                b.queue.fail(ConnectionClosed('request body abandoned'))
+                __close? = true
+            }
+        }
+
+        if let $ex = x {
+            x = nil
+            ex.closed()
+        }
+
+        if __close? {
+            state = IDLE
+            return conn.close-after-flush()
+        }
+
+        state = IDLE
+        __next()
+    }
+
+    __next() {
+        __started?   = false
+        __headed?    = false
+        __continued? = false
+
+        if conn.available > 0 {
+            return __parse()
+        }
+
+        conn.timeout(READ, conn.config.idle-timeout)
+        conn.want-read()
+    }
+
+    __h2c?() -> Bool {
+        if conn.requests != 0 || conn.tls != nil || !server.h2? {
+            return false
+        }
+        let n = min(conn.available, PREFACE.size())
+        conn.buf.str!(conn.head, n) == PREFACE.slice(0, n) && n > 0
+    }
+
+    __parse() {
+        if conn.available == 0 {
+            return __next()
+        }
+
+        if !__started? {
+            __started? = true
+            conn.timeout(READ, conn.config.header-timeout)
+        }
+
+        if __h2c?() {
+            if conn.available < PREFACE.size() {
+                return conn.want-read()
+            }
+            conn.untimeout(READ)
+            state = UPGRADED
+            conn.proto = server.on-h2c(conn)
+            return conn.proto.on-data()
+        }
+
+        let cfg = conn.config
+
+        if server.streams? {
+            match wire.parse-head(conn.buf, conn.head, conn.filled, __marks, cfg.max-header-size) {
+                Head((req, hlen, length, chunked?)) and (length > 0 || chunked?) && server.streaming-route?(req.method, req.url, conn.loop) => {
+                    return __stream(req, hlen, length, chunked?)
+                },
+                NeedMore(*) => {
+                    return conn.want-read()
+                },
+                Invalid(status) => {
+                    return __error(status)
+                },
+                _ => {}
+            }
+        }
+
+        match wire.parse(conn.buf, conn.head, conn.filled, __marks, cfg.max-header-size, cfg.max-body-size) {
+            Ready(req, n) => {
+                conn.consume(n)
+                conn.untimeout(READ)
+                __dispatch(req)
+            },
+
+            NeedMore(total, continue?) => {
+                if total != nil && !__headed? {
+                    __headed? = true
+                    conn.timeout(READ, cfg.request-timeout)
+                }
+                if continue? && !__continued? {
+                    __continued? = true
+                    conn.write(CONTINUE)
+                }
+                conn.want-read(total)
+            },
+
+            Invalid(status) => __error(status)
+        }
+    }
+
+    __error(status: Int) {
+        let rsp = Response(nil)
+        rsp.error(status)
+        let out = Blob()
+        render-head(out, rsp, conn.loop.date, conn.config.server-name, #rsp.body, false, true, false)
+        out.push(rsp.body)
+        conn.write(out)
+        state = SENDING
+        __close? = true
+        conn.close-after-flush()
+    }
+
+    __stream(req: Request, hlen: Int, length: Int, chunked?: Bool) {
+        let cfg = conn.config
+        let continue? = wire.expects-continue?(__marks)
+
+        conn.consume(hlen)
+        conn.untimeout(READ)
+
+        if length > cfg.max-body-size {
+            return __error(413)
+        }
+
+        if continue? {
+            conn.write(CONTINUE)
+        }
+
+        let b = H1Body(self, length, chunked?)
+        body = b
+        req.attach-body(b.queue)
+        b.pump()
+        __dispatch(req)
+    }
+
+    __dispatch(req: Request) {
+        conn.requests += 1
+
+        req.remote = conn.peer
+        req.scheme = (conn.tls != nil) ? 'https' : 'http'
+
+        let limit = conn.config.max-requests-per-connection
+        let close? = __close?
+                  || !req.keep-alive?
+                  || conn.loop.stopping?
+                  || (limit > 0 && conn.requests >= limit)
+
+        if req.version.minor == 1 && !req.host? {
+            return __error(400)
+        }
+
+        if server.try-upgrade(conn, req) {
+            state = UPGRADED
+            return
+        }
+
+        state = BUSY
+        let ex = H1Exchange(self, req, close?)
+        x = ex
+        conn.loop.spawn("{req.method} {req.url}", server.serve, ex, req)
+    }
+}

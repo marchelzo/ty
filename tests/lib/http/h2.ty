@@ -1,0 +1,115 @@
+import http
+import ssl
+import os
+import ffi as c
+import ty.test.core (skip-file-unless)
+import _client (serve, curl, curl?, write-file)
+
+let (CERT, KEY) = ssl.self-signed()
+let CA = "/tmp/ty-http-h2-ca-{os.getpid()}.pem"
+write-file(CA, CERT)
+
+skip-file-unless(c.open('nghttp2', versions: [14, nil]) != nil, 'libnghttp2 is not installed')
+skip-file-unless(curl?(), 'curl with HTTP/2 support is not installed')
+
+fn routes(srv) {
+    srv.get('/', (req, rsp) -> rsp.plain("v{req.version.major} {req.scheme} {req.header('x-test') ?? '-'}"))
+    srv.post('/len', (req, rsp) -> rsp.plain(str(#(req.body ?? ''))))
+    srv.get('/big', (req, rsp) -> rsp.write('z' * 3000000))
+    srv.get('/user/<id>', (req, rsp, id) -> rsp.json({id, q: req.params}))
+    srv.get('/events', fn (req, rsp) {
+        let es = rsp.events()
+        for i in ..3 {
+            es.send("n{i}")
+            http.sleep(0.01)
+        }
+    })
+    srv.get('/slow/<n>', fn (req, rsp, n) {
+        http.sleep(0.2)
+        rsp.plain("slow {n}")
+    })
+    srv.get('/fail', (req, rsp) -> throw RuntimeError('nope'))
+    srv.get('/nobody', (req, rsp) -> 204)
+}
+
+pub fn alpn-negotiates-h2() {
+    serve(routes, fn (srv) {
+        let out = curl('--http2', '--cacert', CA, '-H', 'X-Test: yes', '-w', ' %{http_version}', "{srv.url}/")
+        assert(out == 'v2 https yes 2')
+    }, tls: {cert: CERT, key: KEY})
+}
+
+pub fn uploads-downloads-and-params() {
+    serve(routes, fn (srv) {
+        let u = srv.url
+        let file = "/tmp/ty-http-h2-up-{os.getpid()}"
+        write-file(file, 'p' * 2500000)
+        assert(curl('--http2', '--cacert', CA, '--data-binary', "@{file}", "{u}/len") == '2500000')
+        os.unlink(file)
+        assert(#curl('--http2', '--cacert', CA, "{u}/big") == 3000000)
+        assert(curl('--http2', '--cacert', CA, "{u}/user/42?x=1") == '{"id":"42","q":{"x":"1"}}')
+        assert(curl('--http2', '--cacert', CA, '-o', '/dev/null', '-w', '%{http_code}', "{u}/missing") == '404')
+        assert(curl('--http2', '--cacert', CA, '-o', '/dev/null', '-w', '%{http_code}', "{u}/fail") == '500')
+        assert(curl('--http2', '--cacert', CA, '-o', '/dev/null', '-w', '%{http_code}', "{u}/nobody") == '204')
+        let head = curl('--http2', '--cacert', CA, '-I', "{u}/big")
+        assert(head.contains?('content-length: 3000000'))
+    }, tls: {cert: CERT, key: KEY})
+}
+
+pub fn concurrent-streams-multiplex() {
+    serve(routes, fn (srv) {
+        let urls = ["{srv.url}/slow/{i}" for i in ..8]
+        let out = curl('--http2', '--cacert', CA, '--parallel', '--parallel-max', '8', *urls)
+        for i in ..8 {
+            assert(out.contains?("slow {i}"))
+        }
+        assert(srv.active-connections <= 1)
+    }, tls: {cert: CERT, key: KEY}, threads: 1)
+}
+
+pub fn sse-over-h2() {
+    serve(routes, fn (srv) {
+        assert(curl('--http2', '--cacert', CA, '-N', "{srv.url}/events") == 'data: n0\n\ndata: n1\n\ndata: n2\n\n')
+    }, tls: {cert: CERT, key: KEY})
+}
+
+pub fn cleartext-prior-knowledge() {
+    serve(routes, fn (srv) {
+        assert(curl('--http2-prior-knowledge', "{srv.url}/") == 'v2 http -')
+        assert(curl("{srv.url}/") == 'v1 http -')
+    })
+}
+
+pub fn body-limit-over-h2() {
+    serve(routes, fn (srv) {
+        let file = "/tmp/ty-http-h2-big-{os.getpid()}"
+        write-file(file, 'q' * 200000)
+        let code = curl('--http2', '--cacert', CA, '-o', '/dev/null', '-w', '%{http_code}', '--data-binary', "@{file}", "{srv.url}/len")
+        os.unlink(file)
+        assert(code == '413')
+        assert(curl('--http2', '--cacert', CA, "{srv.url}/") == 'v2 https -')
+    }, tls: {cert: CERT, key: KEY}, max-body-size: 100000)
+}
+
+pub fn h2-disabled-falls-back() {
+    serve(routes, fn (srv) {
+        assert(curl('--http2', '--cacert', CA, '-w', ' %{http_version}', "{srv.url}/") == 'v1 https - 1.1')
+    }, tls: {cert: CERT, key: KEY}, h2: false)
+}
+
+pub fn graceful-shutdown-over-h2() {
+    let srv = http.Server('127.0.0.1', 0, threads: 1, tls: {cert: CERT, key: KEY})
+    routes(srv)
+    let t = Thread(srv.run)
+    os.sleep(0.1)
+    let out = [nil]
+    let client = Thread(fn () {
+        out[0] = curl('--http2', '--cacert', CA, "{srv.url}/slow/9")
+    })
+    os.sleep(0.1)
+    srv.stop()
+    client.join()
+    t.join()
+    srv.close()
+    assert(out[0] == 'slow 9')
+}
