@@ -9,8 +9,8 @@ const cf = c.dlopen('/System/Library/Frameworks/CoreFoundation.framework/CoreFou
 const appsvcs = c.dlopen('/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices')
              ?? throw RuntimeError('apple: failed to load ApplicationServices')
 
-const iokit = c.dlopen('/System/Library/Frameworks/IOKit.framework/IOKit')
-           ?? throw RuntimeError('apple_iokit: failed to load IOKit')
+const iokit-lib = c.dlopen('/System/Library/Frameworks/IOKit.framework/IOKit')
+               ?? throw RuntimeError('apple_iokit: failed to load IOKit')
 
 const security = c.dlopen('/System/Library/Frameworks/Security.framework/Security')
               ?? throw RuntimeError('apple: failed to load Security')
@@ -216,7 +216,7 @@ C! pub appsvcs fn {
     );
 }
 
-C! pub iokit fn {
+C! pub iokit-lib fn {
     unsigned int IOPMAssertionCreateWithName(
         void *assertionType,
         unsigned int level,

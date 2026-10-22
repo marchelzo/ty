@@ -4746,7 +4746,14 @@ GetNamespace(Ty *ty, Namespace const *ns)
                 printf("new ns %s (scope=%s) added to %s\n", ns->id, scope_name(ty, sym->scope), scope_name(ty, scope));
 #endif
         } else if (!SymbolIsNamespace(sym)) {
-                return STATE.global;
+                STATE.start = ns->start;
+                STATE.end   = ns->start;
+                fail(
+                        "namespace %s%s%s%s conflicts with %s%s%s%s defined on line %u",
+                        TERM(1), TERM(93), ns->id, TERM(0),
+                        TERM(1), TERM(93), ns->id, TERM(0),
+                        sym->loc.line + 1
+                );
         }
 
         return sym->scope;

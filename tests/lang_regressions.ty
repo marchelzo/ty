@@ -76,7 +76,3 @@ pub fn jit-nil-interpolates-as-empty() {
     let out = fixture-output('jit-nil-interpolation', env=%{'TY_JIT_EAGER': '1'})
     assert(out == ['match 3', 'bad '])
 }
-
-pub fn namespace-after-unsettled-variable-merges() {
-    assert(fixture-output('namespace-after-variable') == ['true, 1'])
-}

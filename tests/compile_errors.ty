@@ -135,3 +135,10 @@ pub fn method-call-on-uninitialized-global() {
     assert(status != 0)
     assert('use of uninitialized variable ROWS' in err, err)
 }
+
+pub fn namespace-cannot-reuse-a-variable-name() {
+    let (status, err) = fixture('namespace_shadows_variable')
+    assert(status != 0)
+    assert(err.match?(/^CompileError: namespace k conflicts with k defined on line 3/), err)
+    assert('--> tests/fixtures/errors/namespace_shadows_variable.ty:5:4' in err, err)
+}

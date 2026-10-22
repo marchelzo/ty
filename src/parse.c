@@ -1337,6 +1337,7 @@ PushNS(Ty *ty, char *id, Token const *src, bool pub)
         ns->pub    = pub;
         ns->braced = true;
         ns->next   = CurrentNamespace;
+        ns->start  = src->start;
 
         if (
                 (src->start.s != NULL)
