@@ -837,6 +837,7 @@ token_slow(Ty *ty, int i)
                         LIKELY(t->type != TOKEN_DIRECTIVE)
                      || (tokenx(i + 1)->type != TOKEN_KEYWORD)
                      || t->pp
+                     || lex_state(ty)->in_pp
                 ) {
                         goto End;
                 }
@@ -9160,10 +9161,12 @@ pp_while(Ty *ty)
 static void
 pp_if(Ty *ty)
 {
-        LexState st0 = *lex_state(ty);
+        LexState lx0 = *lex_state(ty);
+        LexState st0 = lx0;
         st0.need_nl  = false;
 
         int very_start = TokenIndex;
+        int lex_level  = vN(state.stack);
 
         int depth = 0;
 
@@ -9289,6 +9292,12 @@ pp_if(Ty *ty)
         lex_in_pp(ty, false);
 
         vN(TOKENS) = TokenIndex;
+
+        if (vN(state.stack) < lex_level) {
+                vN(state.stack) = lex_level;
+                *lex_state(ty)  = lx0;
+        }
+
         lex_rewind(ty, &vvL(TOKENS)->end);
 
         if (take != NULL) {

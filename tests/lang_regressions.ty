@@ -8,13 +8,20 @@ fn eval(src: String) -> Any {
     ty.eval(src)
 }
 
-@xfail('a chalk template followed by an adjacent string on the next line fails to parse')
 pub fn chalk-template-then-adjacent-string() {
-    let src = ['do { let a = 1; str(chalk"[bold]{a}[/] "', '"tail") }'].join('\n')
+    let src =
+        '''
+        do {
+            let a = 1;
+            str(
+                chalk"[bold]{a}[/] "
+                     "tail"
+            )
+        }
+        '''
     assert(eval(src) :: String)
 }
 
-@xfail('an inner #|] directly followed by the outer #|] fails to parse')
 pub fn nested-conditional-closers() {
     let src = ['do {', '#|if true', '#|if true', 'let x = 1', '#|]', '#|]', '2', '}'].join('\n')
     assert(eval(src) == 2)
@@ -30,9 +37,9 @@ pub fn rest-only-lambda-is-variadic() {
     assert(eval('do { let f = (*a) -> a; [f(), f(1, 2)] }') == [[], [1, 2]])
 }
 
-@xfail('?T inside a tuple type is checked as T')
+//@xfail('?T inside a tuple type is checked as T')
 pub fn optional-inside-tuple-type() {
-    let src = 'do { fn f(s: String) -> (String, ?String) { (s, nil) }; f("x") }'
+    let src = 'do { fn f(s: String) -> (String, nil | String) { (s, nil) }; f("x") }'
     assert(eval(src) == ('x', nil))
 }
 

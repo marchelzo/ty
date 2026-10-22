@@ -12,7 +12,27 @@ const CLASS = [a-z
 const QUOTIENT = 9 / 3 / 3
 #|]
 
+#|if true
+#|if false
+const NESTED = 1
+#|else if true
+#|if true
+const NESTED = 2
+#|]
+#|else
+const NESTED = 3
+#|]
+const OUTER = NESTED * 10
+#|else
+const OUTER = 0
+#|]
+
 pub fn division_survives_skipped_brackets() {
     assert(HALF == 4)
     assert(QUOTIENT == 1)
+}
+
+pub fn nested_arms_keep_their_bounds() {
+    assert(NESTED == 2)
+    assert(OUTER == 20)
 }
