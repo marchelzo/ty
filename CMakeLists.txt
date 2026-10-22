@@ -748,6 +748,7 @@ target_compile_definitions(${_tgt_ty_interface}
     PCRE2_CODE_UNIT_WIDTH=8
     XXH_INLINE_ALL
     XXH_STATIC_LINKING_ONLY
+    $<$<CONFIG:Debug>:XXH_NO_INLINE_HINTS=1>
 )
 
 # ---

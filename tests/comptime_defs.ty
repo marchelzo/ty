@@ -30,6 +30,8 @@ macro twice(e) { double(e) }
 
 fn double(e) { $$[ $$e + $$e $$] }
 
+const TWICE = twice(5)
+
 const SUM = BEFORE + 1
 const BEFORE = ROWS.map(\_ * 2).sum()
 const ROWS = [1, 2, 3]
@@ -49,6 +51,10 @@ pub fn consts-used-at-compile-time-are-built-once() {
 
 pub fn macro-helpers-may-follow-the-macro() {
     assert(twice(21) == 42)
+}
+
+pub fn consts-may-be-initialized-by-macros() {
+    assert(TWICE == 10)
 }
 
 pub fn consts-initialize-in-dependency-order() {

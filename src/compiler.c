@@ -20135,11 +20135,11 @@ DeclareSymbols(Ty *ty, Stmt *stmt)
 static void
 DefinePending(Ty *ty)
 {
-        for (u32 i = 0; i < vN(STATE.pending); ++i) {
-                Stmt *stmt = v__(STATE.pending, i);
+        while (vN(STATE.pending) > 0) {
+                Stmt *stmt = v__(STATE.pending, 0);
+                vvXi(STATE.pending, 0);
                 DeclareSymbols(ty, stmt);
         }
-        v0(STATE.pending);
 }
 
 void
