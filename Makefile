@@ -51,10 +51,10 @@ define pgo-train
 endef
 else
 define pgo-train
--$(1) --test tests >$(2)/train.log 2>&1
+-$(1) --test --all tests >$(2)/train.log 2>&1
 -$(1) bench/richards.ty >>$(2)/train.log 2>&1
 -$(1) -j bench/richards.ty >>$(2)/train.log 2>&1
--$(1) perf/run.ty >>$(2)/train.log 2>&1
+-$(1) perf/run.ty run --no-save >>$(2)/train.log 2>&1
 endef
 endif
 
