@@ -100,6 +100,30 @@ pub fn builtin-modules-cannot-be-shadowed(t: Test) {
     assert(says(root, 'main.ty') == 'true')
 }
 
+pub fn shadowing-locals-are-named-when-lookups-fail(t: Test) {
+    let root = tree(t, %{
+        '__pkg__.ty': '',
+        'path.ty':    'pub fn mine() { 1 }',
+        'from.ty':    'import path (Path)',
+        'dot.ty':     'import path\nprint(path.Path)'
+    })
+    for file in ['from.ty', 'dot.ty'] {
+        let err = fails(root, file)
+        assert(err.contains?("hint: {root}/path.ty shadows the library module path"), err)
+    }
+}
+
+pub fn shadowed-locals-are-named-when-lookups-fail(t: Test) {
+    let root = tree(t, %{
+        'diff.ty':  'pub fn mine() { 1 }',
+        'main.ty':  'import diff (mine)',
+        'fixed.ty': 'import .diff (mine)\nprint(mine())'
+    })
+    let err = fails(root, 'main.ty')
+    assert(err.contains?("takes precedence over {root}/diff.ty; write `import .diff`"), err)
+    assert(says(root, 'fixed.ty') == '1')
+}
+
 pub fn super-stays-inside-the-filesystem-it-names(t: Test) {
     let root = tree(t, %{
         'pkg/__pkg__.ty': '',

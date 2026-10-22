@@ -34,6 +34,9 @@ mod_root(Ty *ty, char const *path);
 char const *
 mod_resolve(Ty *ty, char const *name, char const *from, bool library, ConstStringVector *tried);
 
+char const *
+mod_rival(Ty *ty, char const *name, char const *from, char const *path, bool *library);
+
 char *
 mod_name(Ty *ty, char const *dotted);
 

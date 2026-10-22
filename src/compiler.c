@@ -2743,6 +2743,61 @@ undefined_hint(Ty *ty, Scope const *scope, char const *word, u32 flags)
         return "";
 }
 
+static char const *
+dotted(Ty *ty, char const *name)
+{
+        char *out = afmt("%s", name);
+
+        for (char *c = out; *c != '\0'; ++c) {
+                if (*c == '/') {
+                        *c = '.';
+                }
+        }
+
+        return out;
+}
+
+static char const *
+shadow_hint(Ty *ty, Module const *mod)
+{
+        Module const *home = STATE.module;
+        bool library = false;
+        char const *rival;
+        char const *hint;
+
+        if (
+                (mod == NULL)
+             || (mod == GlobalModule)
+             || (mod->flags & MOD_BUILTIN)
+        ) {
+                return "";
+        }
+
+        rival = mod_rival(ty, mod->name, (home == NULL) ? NULL : home->path, mod->path, &library);
+
+        if (rival == NULL) {
+                return "";
+        }
+
+        hint = library
+             ? afmt(
+                        "\n\n  hint: %s shadows the library module %s (%s); rename it to import the library one",
+                        mod->path,
+                        dotted(ty, mod->name),
+                        rival
+               )
+             : afmt(
+                        "\n\n  hint: this is the library module %s, which takes precedence over %s; write `import .%s` to use that one",
+                        dotted(ty, mod->name),
+                        rival,
+                        dotted(ty, mod->name)
+               );
+
+        ty_free((void *)rival);
+
+        return hint;
+}
+
 static Symbol *
 getsymbol(Ty *ty, Scope const *scope, char const *name, u32 flags)
 {
@@ -3242,11 +3297,12 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e, bool st
                 if (!strict) return NULL;
                 STATE.end = e->end;
                 fail_or(
-                        "reference to undefined variable: %s%s%s%s",
+                        "reference to undefined variable: %s%s%s%s%s",
                         TERM(1),
                         TERM(93),
                         id,
-                        TERM(0)
+                        TERM(0),
+                        ScopeIsModule(left->scope) ? shadow_hint(ty, GetScopeModule(ty, left->scope)) : ""
                 ) {
                         sym = &UndefinedSymbol;
                 }
@@ -14377,7 +14433,12 @@ import_module(Ty *ty, Stmt const *s)
                         if (forgive) {
                                 continue;
                         }
-                        fail("module '%s' does not export '%s'", name, identifiers[i]);
+                        fail(
+                                "module '%s' does not export '%s'%s",
+                                name,
+                                identifiers[i],
+                                shadow_hint(ty, GetScopeModule(ty, module_scope))
+                        );
                 }
                 scope_insert_as(ty, STATE.global, s, aliases[i])->flags |= SYM_PUBLIC * pub;
         }

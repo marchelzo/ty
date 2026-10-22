@@ -398,6 +398,47 @@ mod_resolve(Ty *ty, char const *name, char const *from, bool library, ConstStrin
         }
 }
 
+char const *
+mod_rival(Ty *ty, char const *name, char const *from, char const *path, bool *library)
+{
+        char const *lib;
+        char const *own;
+        char const *rival = NULL;
+
+        if (
+                (path == NULL)
+             || s_eq_n(name, "./", 2)
+             || s_eq_n(name, "../", 3)
+        ) {
+                return NULL;
+        }
+
+        Package *pkg = mod_package(ty, from);
+
+        lib = ProbeSearchPath(ty, name, NULL);
+        own = ProbeDeps(pkg, name, NULL) ?: ProbeRoots(pkg, name, NULL);
+
+        bool rivals = (lib != NULL) && (own != NULL) && !s_eq(lib, own);
+
+        if (rivals && s_eq(path, own)) {
+                rival    = lib;
+                *library = true;
+        } else if (rivals && s_eq(path, lib)) {
+                rival    = own;
+                *library = false;
+        }
+
+        if (lib != rival) {
+                ty_free((void *)lib);
+        }
+
+        if (own != rival) {
+                ty_free((void *)own);
+        }
+
+        return rival;
+}
+
 char *
 mod_name(Ty *ty, char const *dotted)
 {
