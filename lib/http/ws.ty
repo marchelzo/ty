@@ -240,7 +240,7 @@ pub class WSProto {
                 conn.wait-drain(cfg.write-high-water / 2)
             }
         } else if conn.buffered > cfg.max-write-buffer {
-            log::warn!('closing slow websocket (write buffer limit exceeded)')
+            log::warn!('closing slow websocket: write buffer limit exceeded')
             conn.close()
             return false
         }
@@ -534,7 +534,7 @@ pub class WSProto {
             try {
                 f()
             } catch e {
-                log::error!("error in websocket on-close callback: {e}")
+                log::error!("error in websocket on-close callback", err: e)
             }
         }
 

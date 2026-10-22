@@ -1,5 +1,10 @@
 import log (..)
 import path (Path)
+import os
+import errno
+import json
+import sh
+import ty
 
 let calls = 0
 
@@ -12,8 +17,20 @@ fn messages(p: Path) -> Array[String] {
     p.read-text().lines().map(\_.split(': ')[-1])
 }
 
+fn fresh(level: Int | String = log.TRACE) -> log.MemorySink {
+    log.reset()
+    let mem = log.MemorySink()
+    log.configure(level: level, sinks: [mem])
+    mem
+}
+
+fn boom() {
+    throw RuntimeError('kaboom')
+}
+
 pub fn disabled-levels-skip-message-evaluation() {
     with p = Path.temp('ty-log-test', '.log') {
+        log.reset()
         logging({level: ERROR, path: str(p)})
         calls = 0
         debug!(expensive('debug-1'))
@@ -33,6 +50,7 @@ fn emit-debug(t: String) {
 
 pub fn runtime-level-changes-apply-to-existing-call-sites() {
     with p = Path.temp('ty-log-test', '.log') {
+        log.reset()
         logging({level: ERROR, path: str(p)})
         calls = 0
         emit-debug('a')
@@ -55,6 +73,7 @@ fn emit-info(t: String) {
 
 pub fn level-is-shared-with-other-threads() {
     with p = Path.temp('ty-log-test', '.log') {
+        log.reset()
         logging({level: ERROR, path: str(p)})
         calls = 0
         Thread(-> emit-info('t1')).join()
@@ -68,5 +87,559 @@ pub fn level-is-shared-with-other-threads() {
         Thread(-> emit-info('t3')).join()
         assert(calls == 1)
         assert(messages(p) == ['info-t2'])
+    }
+}
+
+fn site-probe(user-id: Int) {
+    info!("probe", user-id, n: 1 + 1, name: 'x')
+}
+
+pub fn fields-shorthand-and-call-site() {
+    let mem = fresh()
+    site-probe(7)
+    let [r] = mem.records
+    assert(r.msg == 'probe')
+    assert(r.module == __module__.replace('/', '.'))
+    assert(r.fields == [('user-id', 7), ('n', 2), ('name', 'x')])
+    assert(r.get('n') == 2)
+    assert(r.level == INFO)
+    assert(r.func == 'site-probe' || r.func == 'siteProbe')
+    assert(r.file != nil && r.file.ends?('log.ty'))
+    assert(r.line :: Int)
+}
+
+pub fn non-string-messages() {
+    let mem = fresh()
+    info!(42)
+    info!(nil)
+    info!()
+    assert(mem.messages() == ['42', '', ''])
+}
+
+pub fn err-field-captures-exception-and-trace() {
+    let mem = fresh()
+    try {
+        boom()
+    } catch e {
+        error!("failed", err: e, attempt: 2)
+    }
+    let [r] = mem.records
+    assert(r.err :: RuntimeError)
+    assert(r.err.what == 'kaboom')
+    assert(r.fields == [('attempt', 2)])
+    assert(#r.frames > 0)
+    assert(r.frames[0].func == 'boom')
+}
+
+pub fn err-without-active-throw-has-no-trace() {
+    let mem = fresh()
+    warn!("odd", err: RuntimeError('never thrown'))
+    let [r] = mem.records
+    assert(r.err :: RuntimeError)
+    assert(r.frames == [])
+}
+
+pub fn spans-nest-and-unwind() {
+    let mem = fresh()
+    with span!("outer", a: 1) {
+        with span!("inner", b: 2) {
+            info!("deep", c: 3)
+        }
+        info!("middle")
+    }
+    info!("top")
+    let [deep, middle, top] = mem.records
+    assert(deep.spans == ['outer', 'inner'])
+    assert(deep.fields == [('a', 1), ('b', 2), ('c', 3)])
+    assert(middle.spans == ['outer'])
+    assert(middle.fields == [('a', 1)])
+    assert(top.spans == [])
+    assert(log.current-span() == nil)
+}
+
+pub fn spans-unwind-on-exceptions() {
+    let mem = fresh()
+    try {
+        with span!("doomed") {
+            boom()
+        }
+    } catch _ {
+    }
+    info!("after")
+    assert(mem.records[0].spans == [])
+}
+
+pub fn span-functions() {
+    let mem = fresh()
+    log.in-span('job', -> info!("inside"), id: 5)
+    let g = log.span('manual', k: 'v')
+    info!("manual")
+    g.__drop__()
+    info!("outside")
+    let [a, b, c] = mem.records
+    assert(a.spans == ['job'])
+    assert(a.fields == [('id', 5)])
+    assert(b.spans == ['manual'])
+    assert(c.spans == [])
+}
+
+fn task*(name: String) {
+    with span!("task", name) {
+        info!("start")
+        yield nil
+        info!("resume")
+        for x in nested() {
+            info!("nested", x)
+        }
+    }
+}
+
+fn nested*() {
+    info!("nested start")
+    yield 1
+}
+
+pub fn spans-follow-coroutines() {
+    let mem = fresh()
+    let a = task('a')
+    let b = task('b')
+    a()
+    b()
+    info!("between")
+    a()
+    b()
+    let seen = mem.records.map(r -> (r.msg, r.get('name')))
+    assert(seen == [
+        ('start', 'a'),
+        ('start', 'b'),
+        ('between', nil),
+        ('resume', 'a'),
+        ('nested start', 'a'),
+        ('nested', 'a'),
+        ('resume', 'b'),
+        ('nested start', 'b'),
+        ('nested', 'b')
+    ])
+}
+
+pub fn spans-cross-threads-only-when-bound() {
+    let mem = fresh()
+    with span!("parent", rid: 9) {
+        Thread(log.bind-context(-> info!("bound"))).join()
+        Thread(-> info!("plain")).join()
+    }
+    let [bound, plain] = mem.records
+    assert(bound.get('rid') == 9)
+    assert(bound.thread != 0)
+    assert(plain.spans == [])
+}
+
+pub fn module-prefix-levels() {
+    log.reset()
+    log.configure(level: WARN, modules: %{'a': DEBUG, 'a.b': ERROR, 'a.b.c': 'trace'})
+    assert(log.enabled?(DEBUG, 'a'))
+    assert(log.enabled?(DEBUG, 'a.x.y'))
+    assert(!log.enabled?(WARN, 'a.b'))
+    assert(!log.enabled?(WARN, 'a.b.z'))
+    assert(log.enabled?(TRACE, 'a.b.c.d'))
+    assert(!log.enabled?(INFO, 'ab'))
+    assert(log.level-of('zzz') == WARN)
+    assert(log.level-of('a/b') == ERROR)
+
+    log.configure(modules: %{'a.b': nil})
+    assert(log.level-of('a.b') == DEBUG)
+
+    log.default-level('a.q', INFO)
+    assert(log.level-of('a.q') == DEBUG)
+    log.default-level('free', INFO)
+    assert(log.level-of('free') == INFO)
+}
+
+pub fn per-module-sinks() {
+    let root = fresh(INFO)
+    let side = log.MemorySink()
+    log.configure(modules: %{'svc.db': {level: DEBUG, sink: side}})
+    log.emit(DEBUG, 'query', module: 'svc.db.pool', sql: 'select 1')
+    log.emit(INFO, 'hello', module: 'svc.web')
+    assert(side.messages() == ['query'])
+    assert(side.records[0].fields == [('sql', 'select 1')])
+    assert(root.messages() == ['hello'])
+}
+
+pub fn sink-levels() {
+    log.reset()
+    let errors = log.MemorySink(level: ERROR)
+    let all = log.MemorySink()
+    log.configure(level: DEBUG, sinks: [errors, all])
+    debug!("d")
+    error!("e")
+    assert(errors.messages() == ['e'])
+    assert(all.messages() == ['d', 'e'])
+}
+
+pub fn level-specs() {
+    assert(log.parse-level('Warning') == WARN)
+    assert(log.parse-level('off') == OFF)
+    assert(log.parse-level('4') == DEBUG)
+    assert(log.parse-level('loud') == nil)
+    assert(log.parse-spec('info') == {level: INFO, modules: %{}})
+    let s = log.parse-spec('warn, http=debug ,http/loop=trace')!
+    assert(s.level == WARN)
+    assert(s.modules == %{'http': DEBUG, 'http.loop': TRACE})
+    assert(log.parse-spec('/var/log/app.log') == nil)
+    assert(log.parse-spec('a=b=c') == nil)
+    log.reset()
+    log.configure(spec: 'error,x=trace')
+    assert(log.level-of('x.y') == TRACE)
+    assert(log.level-of('y') == ERROR)
+}
+
+pub fn logfmt-output() {
+    with p = Path.temp('ty-log-test', '.log') {
+        log.reset()
+        log.configure(level: TRACE, sinks: [log.FileSink(p, format: 'logfmt')])
+        try {
+            boom()
+        } catch e {
+            error!("two words", path: '/a b', q: 'say "hi"', nl: "x\ny", n: 3, ok: true, none: nil, err: e)
+        }
+        info!("plain", k: 'v')
+        let [a, b] = p.read-text().lines()
+        assert(a.match?(/^time=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}(Z|[+-]\d\d:\d\d) level=error module=\S+ thread=T0 msg="two words" /))
+        assert(a.contains?(' path="/a b" q="say \\"hi\\"" nl="x\\ny" n=3 ok=true none=nil '))
+        assert(a.contains?(' err="RuntimeError: kaboom" trace="boom ('))
+        assert(b.ends?(' msg=plain k=v'))
+    }
+}
+
+pub fn json-output() {
+    with p = Path.temp('ty-log-test', '.log') {
+        log.reset()
+        log.configure(level: TRACE, sinks: [log.FileSink(p, format: 'json')], utc: true)
+        with span!("req", id: 'r1') {
+            try {
+                boom()
+            } catch e {
+                error!("bad", level: 'shadowed', f: print, xs: [1, 'two'], err: e)
+            }
+        }
+        log.configure(utc: false)
+        let d = json.parse(p.read-text().lines()[0])
+        assert(d['level'] == 'error')
+        assert(d['msg'] == 'bad')
+        assert(d['time'].match?(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/))
+        assert(d['span'] == ['req'])
+        assert(d['id'] == 'r1')
+        assert(d['field.level'] == 'shadowed')
+        assert(d['f'] :: String)
+        assert(d['xs'] == [1, 'two'])
+        assert(d['err']['type'] == 'RuntimeError')
+        assert(d['err']['msg'] == 'kaboom')
+        assert(d['err']['trace'][0]['func'] == 'boom')
+        assert(d['func'] != nil)
+        assert(d['line'] :: Int)
+    }
+}
+
+pub fn console-output-is-safe() {
+    with p = Path.temp('ty-log-test', '.log') {
+        log.reset()
+        log.configure(level: TRACE, sinks: [log.FileSink(p, format: 'console', color: false)])
+        warn!("evil \x1b[31m red", v: "a\x07b")
+        info!("first\nsecond", k: 1)
+        Thread(-> info!("threaded")).join()
+        let lines = p.read-text().lines()
+        assert(lines[0].contains?('evil \\x1b[31m red'))
+        assert(lines[0].contains?('v="a\\u0007b"'))
+        assert(!p.read-text().contains?("\x1b"))
+        assert(lines[1].match?(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3} INFO  \S+: first  k=1$/))
+        assert(lines[2] == '  │ second')
+        assert(lines[3].match?(/ INFO  \[T\d+\] \S+: threaded$/))
+    }
+}
+
+pub fn custom-format-and-validation() {
+    with p = Path.temp('ty-log-test', '.log') {
+        log.reset()
+        log.configure(level: INFO, sinks: [log.FileSink(p, format: r -> "{log.level-name(r.level)}|{r.msg}")])
+        info!("hi")
+        assert(p.read-text() == "info|hi\n")
+    }
+    let threw = false
+    try {
+        log.configure(format: 'yaml')
+    } catch _: ValueError {
+        threw = true
+    }
+    assert(threw)
+}
+
+fn spam(i: Int) {
+    warn!("spam", i, @every: 3600.0)
+}
+
+pub fn rate-limits() {
+    let mem = fresh()
+    for i in ..5 {
+        spam(i)
+    }
+    for i in ..3 {
+        info!("once", i, @once)
+    }
+    for i in ..4 {
+        info!("fast", i, @every: 0.02)
+        os.sleep(0.008)
+    }
+    assert(mem.records.filter(\_.msg == 'spam').map(&.fields) == [[('i', 0)]])
+    assert(mem.records.filter(\_.msg == 'once').map(&.fields) == [[('i', 0)]])
+    let fast = mem.records.filter(\_.msg == 'fast')
+    assert(#fast >= 2)
+    assert(fast[1].get('suppressed') :: Int)
+}
+
+pub fn logger-objects() {
+    let mem = fresh()
+    let lg = log.Logger('svc/api', region: 'eu')
+    lg.info("up", port: 80)
+    lg.bind(conn: 3).warn("slow")
+    lg.debug("hidden?")
+    log.configure(modules: %{'svc.api': WARN})
+    lg.info("filtered")
+    assert(!lg.enabled?(INFO))
+    let [up, slow, dbg] = mem.records
+    assert(up.module == 'svc.api')
+    assert(up.fields == [('region', 'eu'), ('port', 80)])
+    assert(slow.fields == [('region', 'eu'), ('conn', 3)])
+    assert(dbg.msg == 'hidden?')
+}
+
+pub fn capture-and-tap() {
+    log.reset()
+    log.configure(level: OFF, sinks: [])
+    let recs = log.capture(fn () {
+        debug!("seen", n: 1)
+        log.emit(TRACE, 'also', module: 'elsewhere')
+    })
+    assert(recs.map(&.msg) == ['seen', 'also'])
+    debug!("after capture")
+    assert(!log.enabled?(DEBUG))
+}
+
+pub fn stats-count-levels() {
+    fresh()
+    let before = log.stats()
+    error!("x")
+    warn!("y")
+    warn!("z")
+    let after = log.stats()
+    assert(after.emitted['error'] - before.emitted['error'] == 1)
+    assert(after.emitted['warn'] - before.emitted['warn'] == 2)
+}
+
+pub fn file-rotation-and-reopen() {
+    let dir = Path(os.mkdtemp('/tmp/ty-log-rot'))
+    let file = dir / 'app.log'
+    log.reset()
+    log.configure(level: INFO, sinks: [log.FileSink(file, format: 'logfmt', max-size: 400, keep: 2)])
+    for i in ..40 {
+        info!("rotating", i)
+    }
+    assert((dir / 'app.log.1').exists?)
+    assert((dir / 'app.log.2').exists?)
+    assert(!(dir / 'app.log.3').exists?)
+    assert(file.read-text().contains?('i=39'))
+
+    os.rename(str(file), str(dir / 'moved.log'))
+    log.reopen()
+    info!("fresh file")
+    assert(file.read-text().contains?('msg="fresh file"'))
+    assert(!(dir / 'moved.log').read-text().contains?('fresh'))
+    log.reset()
+    sh.sh("rm -rf '{dir}'")
+}
+
+pub fn async-writer() {
+    with p = Path.temp('ty-log-test', '.log') {
+        log.reset()
+        log.configure(level: INFO, sinks: [log.FileSink(p, format: 'logfmt')], async: 100000)
+        for i in ..2000 {
+            info!("queued", i)
+        }
+        log.flush()
+        let lines = p.read-text().lines()
+        assert(#lines == 2000)
+        assert(lines[-1].ends?('i=1999'))
+        log.configure(async: false)
+    }
+
+    with p = Path.temp('ty-log-test', '.log') {
+        log.reset()
+        let before = log.stats().dropped
+        log.configure(level: INFO, sinks: [log.FileSink(p, format: 'logfmt')], async: 4)
+        for i in ..5000 {
+            info!("burst", i)
+        }
+        log.flush()
+        let dropped = log.stats().dropped - before
+        let text = p.read-text()
+        assert(dropped > 0)
+        assert(text.contains?('dropped='))
+        assert(#text.lines().filter(\_.contains?('msg=burst')) == 5000 - dropped)
+        log.configure(async: false)
+    }
+    log.reset()
+}
+
+fn fake-socket(dir: Path) -> (Int, String) {
+    let addr = str(dir / 'sock')
+    let fd = os.socket(os.AF_UNIX, os.SOCK_DGRAM, 0)
+    assert(os.bind(fd, {family: os.AF_UNIX, path: addr}) == 0)
+    (fd, addr)
+}
+
+fn journal-fields(data: Blob) -> Dict[String, String] {
+    let out = %{}
+    let i = 0
+    while i < #data {
+        let j = i
+        while data[j] != 10 && data[j] != 61 {
+            j += 1
+        }
+        let name = data.slice(i, j - i).str()
+        if data[j] == 61 {
+            let k = j + 1
+            while data[k] != 10 {
+                k += 1
+            }
+            out[name] = data.slice(j + 1, k - j - 1).str()
+            i = k + 1
+        } else {
+            let n = c-u64(data, j + 1)
+            out[name] = data.slice(j + 9, n).str()
+            i = j + 9 + n + 1
+        }
+    }
+    out
+}
+
+fn c-u64(b: Blob, at: Int) -> Int {
+    let n = 0
+    for k in ..8 {
+        n = n | (b[at + k] << (8 * k))
+    }
+    n
+}
+
+pub fn journal-native-protocol() {
+    let dir = Path(os.mkdtemp('/tmp/ty-log-journal'))
+    let (fd, addr) = fake-socket(dir)
+    log.reset()
+    log.configure(level: DEBUG, sinks: [log.JournalSink(identifier: 'tytest', socket: addr)])
+    with span!("req", id: 4) {
+        try {
+            boom()
+        } catch e {
+            error!("broke", user-id: 7, note: "two\nlines", err: e)
+        }
+    }
+    let (data, _) = os.recvfrom(fd, 1 << 20, 0)
+    let f = journal-fields(data)
+    assert(f['MESSAGE'].starts?('broke id=4 user-id=7 note="two\\nlines" err="RuntimeError: kaboom"'))
+    assert(f['PRIORITY'] == '3')
+    assert(f['SYSLOG_IDENTIFIER'] == 'tytest')
+    assert(f['TY_MSG'] == 'broke')
+    assert(f['TY_SPAN'] == 'req')
+    assert(f['ID'] == '4')
+    assert(f['USER_ID'] == '7')
+    assert(f['NOTE'] == "two\nlines")
+    assert(f['ERROR'] == 'RuntimeError: kaboom')
+    assert(f['ERROR_TYPE'] == 'RuntimeError')
+    assert(f['TY_TRACE'].starts?('boom ('))
+    assert(f['CODE_FILE'].ends?('log.ty'))
+    assert(int(f['CODE_LINE'], 10) > 0)
+    os.close(fd)
+    log.reset()
+    sh.sh("rm -rf '{dir}'")
+}
+
+pub fn syslog-protocol() {
+    let dir = Path(os.mkdtemp('/tmp/ty-log-syslog'))
+    let (fd, addr) = fake-socket(dir)
+    log.reset()
+    log.configure(level: DEBUG, sinks: [log.SyslogSink(identifier: 'tyapp', facility: 3, socket: addr)])
+    error!("disk full", dev: 'sda')
+    let (data, _) = os.recvfrom(fd, 65536, 0)
+    let line = data.str()
+    assert(line.match?(/^<27>\w{3} [ \d]\d \d\d:\d\d:\d\d tyapp\[\d+\]: \S+: disk full dev=sda$/), line)
+    os.close(fd)
+    log.reset()
+    sh.sh("rm -rf '{dir}'")
+}
+
+pub fn datagram-sinks-fall-back() {
+    log.reset()
+    let before = log.stats().failures
+    log.configure(level: INFO, sinks: [log.JournalSink(socket: '/nonexistent/journal.sock')])
+    let (r, w) = os.pipe()
+    let saved = os.dup(2)
+    os.dup2(w, 2)
+    try {
+        info!("rescued", k: 1)
+    } finally {
+        os.dup2(saved, 2)
+        os.close(saved)
+        os.close(w)
+    }
+    let out = os.read(r, 4096).str()
+    os.close(r)
+    assert(out.contains?('rescued  k=1'))
+    assert(log.stats().failures > before)
+    log.reset()
+}
+
+pub fn forked-children-can-log() {
+    with p = Path.temp('ty-log-test', '.log') {
+        for async in [false, true] {
+            log.reset()
+            log.configure(level: INFO, sinks: [log.FileSink(p, format: 'logfmt')], async: async)
+            let pid = os.fork()
+            if pid == 0 {
+                info!("child", async)
+                log.flush()
+                os.exit(0)
+            }
+            os.wait(pid)
+            info!("parent", async)
+            log.flush()
+        }
+        log.reset()
+        let text = p.read-text()
+        assert(text.contains?('msg=child async=false'))
+        assert(text.contains?('msg=child async=true'))
+        assert(text.contains?('msg=parent async=true'))
+    }
+}
+
+pub fn environment-configuration() {
+    with p = Path.temp('ty-log-env', '.ty') {
+        p.write("import log (..)\nlet n = 0\nfn f(x) \{ n += 1; x \}\ndebug!(f('d'))\ninfo!(f('i'))\nwarn!(f('w'))\nprint(n)\n")
+        let run = fn (env: String) {
+            sh.sh("env {env} '{ty.executable}' '{p}'")
+        }
+        let r1 = run('TY_LOG=debug TY_LOG_MAX=info TY_LOG_FORMAT=logfmt')
+        assert(r1.stdout.trim() == '2')
+        assert(!r1.stderr.contains?('msg=d'))
+        assert(r1.stderr.contains?('level=info'))
+        assert(r1.stderr.contains?('msg=w'))
+
+        let r2 = run('TY_LOG=warn,main=error')
+        assert(r2.stdout.trim() == '0')
+        assert(r2.stderr == '')
+
+        with out = Path.temp('ty-log-env', '.log') {
+            let r3 = run("TY_LOG='{out}'")
+            assert(r3.stderr == '')
+            assert(out.read-text().contains?('w'))
+        }
     }
 }

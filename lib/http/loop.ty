@@ -252,7 +252,7 @@ pub class Conn {
         }
 
         if which == WRITE {
-            log::debug!("write timeout on fd={fd}")
+            log::debug!("write timeout", fd)
             return close()
         }
 
@@ -316,7 +316,7 @@ pub class Conn {
         }
 
         if res < 0 {
-            log::debug!("send failed on fd={fd}: {errno.str(-res)}")
+            log::debug!("send failed", fd, error: errno.str(-res))
             return close()
         }
 
@@ -375,7 +375,7 @@ pub class Conn {
                 return close()
             }
             if res < 0 && res != -errno.ECONNRESET {
-                log::debug!("recv failed on fd={fd}: {errno.str(-res)}")
+                log::debug!("recv failed", fd, error: errno.str(-res))
             }
             return proto.on-eof()
         }
@@ -390,7 +390,7 @@ pub class Conn {
             try {
                 __tls-input(t, res)
             } catch e: ssl.SSLError {
-                log::debug!("TLS error on fd={fd}: {e}")
+                log::debug!("TLS error", fd, err: e)
                 return close()
             }
             if closing? || proto == nil {
@@ -491,7 +491,7 @@ pub class Conn {
             try {
                 p.on-close()
             } catch e {
-                log::error!("error while closing connection: {e}")
+                log::error!("error while closing connection", err: e)
             }
         }
 
@@ -819,12 +819,12 @@ pub class Loop {
                     return
                 },
                 errno.EMFILE, errno.ENFILE, errno.ENOBUFS, errno.ENOMEM => {
-                    log::warn!("accept(): {errno.str(-res)}; backing off")
+                    log::warn!("accept() failed; backing off", error: errno.str(-res), @every: 1.0)
                     arm(__backoff, 0.1)
                     return
                 },
                 _ => {
-                    log::debug!("accept(): {errno.str(-res)}")
+                    log::debug!("accept() failed", error: errno.str(-res))
                 }
             }
             return __arm-accept()
@@ -849,11 +849,11 @@ pub class Loop {
     }
 
     __guard(conn: Conn, e: _) {
-        log::error!("closing connection after internal error: {e}\n{e.trace()}")
+        log::error!("closing connection after internal error", err: e)
         try {
             conn.close()
         } catch e2 {
-            log::error!("error while closing connection: {e2}")
+            log::error!("error while closing connection", err: e2)
         }
     }
 
@@ -907,7 +907,7 @@ pub class Loop {
                 try {
                     f()
                 } catch e {
-                    log::error!("error in posted callback: {e}\n{e.trace()}")
+                    log::error!("error in posted callback", err: e)
                 }
             }
         }
@@ -925,7 +925,7 @@ pub class Loop {
                 try {
                     f()
                 } catch e {
-                    log::error!("error in deferred callback: {e}\n{e.trace()}")
+                    log::error!("error in deferred callback", err: e)
                 }
             }
         }
@@ -959,7 +959,7 @@ pub class Loop {
             try {
                 (t.f)()
             } catch e {
-                log::error!("error in timer callback: {e}\n{e.trace()}")
+                log::error!("error in timer callback", err: e)
             }
         }
     }

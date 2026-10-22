@@ -287,7 +287,7 @@ pub class H1Exchange {
             try {
                 f()
             } catch e {
-                log::error!("error in on-close callback: {e}")
+                log::error!("error in on-close callback", err: e)
             }
         }
 

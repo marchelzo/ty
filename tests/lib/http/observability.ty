@@ -2,6 +2,7 @@ import http
 import os
 import json
 import time
+import log
 import _client (serve, Client, get, dial, WsClient, xread)
 
 fn read-lines(fd: Int, want: Int, limit: Float = 3.0) -> Array[String] {
@@ -158,6 +159,50 @@ pub fn access-log-callback() {
         let ^_ = lock.lock()
         seen.push(entry)
     })
+}
+
+pub fn access-log-through-log-module() {
+    let mem = log.MemorySink()
+    log.tap(mem)
+    try {
+        serve(fn (srv) {
+            srv.get('/hi', fn (req, rsp) {
+                log::info!("in handler", who: 'me')
+                rsp.plain('hi')
+            })
+            srv.get('/boom', (req, rsp) -> throw RuntimeError('kaboom'))
+        }, fn (srv) {
+            assert(get(srv.port, '/hi').body == 'hi')
+            assert(get(srv.port, '/boom').status == 500)
+            let t0 = time.now()
+            while #mem.snapshot().filter(\_.module == 'http.access') < 2 && time.now() - t0 < 2.0 {
+                os.sleep(0.01)
+            }
+        }, access-log: 'log')
+    } finally {
+        log.untap(mem)
+    }
+
+    let recs = mem.snapshot()
+    let access = recs.filter(\_.module == 'http.access')
+    assert(#access == 2)
+    assert(access[0].level == log.INFO)
+    assert(access[0].get('status') == 200)
+    assert(access[0].get('target') == '/hi')
+    assert(access[0].get('bytes') == 2)
+    assert(access[1].get('status') == 500)
+
+    let inside = recs.find(\_.msg == 'in handler')!
+    assert(inside.spans == ['request'])
+    assert(inside.get('who') == 'me')
+    assert(inside.get('req') == access[0].get('req'))
+
+    let failure = recs.find(\_.msg == 'exception while handling request')!
+    assert(failure.level == log.ERROR)
+    assert(failure.err :: RuntimeError)
+    assert(failure.get('req') == access[1].get('req'))
+    assert(failure.get('url') == '/boom')
+    assert(#failure.frames > 0)
 }
 
 pub fn stats-and-prometheus() {

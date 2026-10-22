@@ -331,6 +331,9 @@ void
 TyPostFork(Ty *ty);
 
 void
+TyRunForkHooks(Ty *ty);
+
+void
 TySyncThreadState(Ty *ty);
 
 noreturn void

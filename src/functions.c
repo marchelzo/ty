@@ -5525,6 +5525,7 @@ TY_BUILTIN_RAW(os_fork)
 
         case 0:
                 TyPostFork(ty);
+                TyRunForkHooks(ty);
         }
 
         return INTEGER(ret);
@@ -10071,15 +10072,31 @@ TY_BUILTIN_RAW(ty_tests)
 }
 
 // ty.trace() -> _
+// ty.trace(exc: _) -> _
 TY_BUILTIN_RAW(ty_trace)
 {
-        ASSERT_ARGC("ty.trace()", 0);
+        ASSERT_ARGC("ty.trace()", 0, 1);
 
         if (vN(ty->throw_stack) == 0) {
                 return NIL;
         }
 
         ThrowCtx *ctx = v_L(ty->throw_stack);
+
+        if (argc == 1) {
+                isize i = vN(ty->throw_stack);
+                while (
+                        (--i >= 0)
+                     && !value_test_equality(ty, &v__(ty->throw_stack, i)->exc, &ARG(0))
+                ) {
+                        continue;
+                }
+                if (i < 0) {
+                        return NIL;
+                }
+                ctx = v__(ty->throw_stack, i);
+        }
+
         ThrowCtx *clone = mAo0(sizeof (ThrowCtx), GC_ANY);
 
         for (int i = 0; i < vN(*ctx); ++i) {
@@ -10640,6 +10657,21 @@ TY_BUILTIN_RAW(ty_coro_raise)
 TY_BUILTIN_RAW(ty_coro_this)
 {
         return TyActiveGenerator(ty);
+}
+
+// ty/coro.context() -> _
+// ty/coro.context(ctx: _) -> _
+TY_BUILTIN_RAW(ty_coro_context)
+{
+        ASSERT_ARGC("ty.coro.context()", 0, 1);
+
+        Value old = ty->st->ctx;
+
+        if (argc == 1) {
+                ty->st->ctx = ARG(0);
+        }
+
+        return old;
 }
 
 // ty.eval(expr: prelude.Any, scope: ?Ptr[prelude.Any] = nil) -> _

@@ -2171,6 +2171,8 @@ mark_generator(Ty *ty, Value const *v)
         for (int i = 0; i < vN(st->gc_roots); ++i) {
                 MarkNext(ty, v_(st->gc_roots, i));
         }
+
+        MarkNext(ty, &st->ctx);
 }
 
 inline static void

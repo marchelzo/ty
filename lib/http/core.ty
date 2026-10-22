@@ -236,7 +236,7 @@ fn task-body*(task: Task, f: _, args: _, kwargs: _) {
     } catch _: CanceledError {
     } catch _: ConnectionClosed {
     } catch e {
-        log::error!("unhandled exception in task {task.name}: {e}\n{e.trace()}")
+        log::error!("unhandled exception in task", task: task.name, err: e)
     } finally {
         task.done? = true
     }
@@ -623,7 +623,7 @@ pub class BodyWriter {
                 __x.wait-drain()
             }
         } else if __x.buffered > loop.config.max-write-buffer {
-            log::warn!('closing slow stream (write buffer limit exceeded)')
+            log::warn!('closing slow stream: write buffer limit exceeded')
             __x.abort()
             return false
         }

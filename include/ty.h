@@ -470,6 +470,7 @@ typedef struct cothread_state {
         TryStack try_stack;
         ValueVector to_drop;
         GCRootSet gc_roots;
+        Value ctx;
         int exec_depth;
 } co_state;
 
@@ -847,6 +848,7 @@ typedef struct {
         int _readln;
         int env;
         int exit_hooks;
+        int fork_hooks;
         int interactive;
         int path;
         int pp;

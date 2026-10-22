@@ -308,6 +308,7 @@ InitializeTy(Ty *ty, ThreadGroup *group)
         ty->memory_limit = GC_INITIAL_LIMIT;
 
         ty->st = alloc0(sizeof *ty->st);
+        ty->st->ctx = NIL;
         ty->co_top = co_active();
 
         u64 seed = random();
@@ -1027,6 +1028,7 @@ add_builtins(Ty *ty, int ac, char **av)
 //---------------------------------------------------------------------------
         BUILTIN_NAMED_VAR(NULL, "__env",          env,         "Dict[String, String]"                          ) = DICT(env);
         BUILTIN_NAMED_VAR(NULL, "__EXIT_HOOKS__", exit_hooks,  NULL                                            ) = ARRAY(vA());
+        BUILTIN_NAMED_VAR(NULL, "__FORK_HOOKS__", fork_hooks,  NULL                                            ) = ARRAY(vA());
         BUILTIN_NAMED_VAR(NULL, "_readln",        _readln,     NULL                                            ) = NIL;
         BUILTIN_NAMED_VAR(NULL, "pretty",         pretty,      NULL                                            ) = NIL;
         BUILTIN_NAMED_VAR(NULL, "pp",             pp,          NULL                                            ) = NIL;
@@ -1621,6 +1623,7 @@ GetFreeCoState(Ty *ty)
                 v0(st->to_drop);
                 v0(st->gc_roots);
                 v0(st->try_stack);
+                st->ctx = NIL;
                 st->exec_depth = 0;
         } else {
                 st = alloc0(sizeof *st);
@@ -1673,6 +1676,7 @@ NewGenerator(Ty *ty, Value fun)
         gen->f = fun;
         gen->ip = code_of(&fun);
         gen->st = GetFreeCoState(ty);
+        gen->st->ctx = ty->st->ctx;
 
         xvP(gen->st->stack, GENERATOR(gen));
 
@@ -11317,6 +11321,7 @@ MarkStorage(Ty *ty)
         for (int i = 0; i < vN(DROP_STACK); ++i) {
                 value_mark(ty, v_(DROP_STACK, i));
         }
+        value_mark(ty, &ty->st->ctx);
         LOG_REACHED(" => drop_stack reached %llu", TotalReached);
 
         GCLOG("Marking %zu targets", vN(TARGETS));
@@ -12890,6 +12895,30 @@ TyPostFork(Ty *ty)
         TySpinLockInit(&ty->group->DLock);
         TySpinLockInit(ty->lock);
         TySpinLockLock(ty->lock);
+}
+
+void
+TyRunForkHooks(Ty *ty)
+{
+        int id = NAMES.fork_hooks;
+
+        if (
+                (id == -1)
+             || (Globals.items[id].type != VALUE_ARRAY)
+        ) {
+                return;
+        }
+
+        Array *hooks = v_(Globals, id)->array;
+
+        for (usize i = 0; i < vN(*hooks); ++i) {
+                if (TY_CATCH_ERROR()) {
+                        TY_CATCH();
+                } else {
+                        vmC(v_(*hooks, i), 0);
+                        TY_CATCH_END();
+                }
+        }
 }
 
 void

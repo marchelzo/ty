@@ -53,7 +53,7 @@
  * srv.health()                                        // GET /healthz
  * srv.metrics-endpoint()                              // GET /metrics (Prometheus)
  * srv.stats()                                         // counters as a Dict
- * http.Server(..., access-log: true | 'json' | fn (entry) { ... })
+ * http.Server(..., access-log: true | 'json' | 'log' | fn (entry) { ... })
  * ```
  *
  * Every request gets `req.id` (echoed as X-Request-Id; an incoming
@@ -150,6 +150,8 @@ const NO_PARAMS: Dict[String, String] = %{}
 const OVERLOADED = 'HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\nContent-Length: 19\r\nConnection: close\r\nRetry-After: 1\r\n\r\nService Unavailable'
 
 const REQUEST_ID = /^[A-Za-z0-9._:\-]{1,128}$/
+
+let ACCESS = log.Logger('http.access')
 
 fn compressible-type?(ctype: String) -> Bool {
     let t = ctype.split(';')[0].strip().lower()
@@ -332,10 +334,14 @@ pub class Server {
         __rid        = ssl.random-bytes(4).hex()
         __log-mtx    = Mutex()
 
+        if self.config.access-log == 'log' {
+            log.default-level('http.access', log.INFO)
+        }
+
         if self.config.h2 {
             match core.optional-module('http/h2', 'session') {
                 Ok(f)  => __h2 = f,
-                Err(e) => log::warn!("HTTP/2 disabled: {e}")
+                Err(e) => log::warn!("HTTP/2 disabled", err: e)
             }
         }
 
@@ -343,7 +349,7 @@ pub class Server {
             if let Err(why) = probe-uring() {
                 match core.optional-module('http/kqueue', 'Backend') {
                     Ok(f) => {
-                        log::warn!("io_uring unavailable ({why}); using kqueue via libkqueue")
+                        log::warn!("io_uring unavailable; using kqueue via libkqueue", reason: why)
                         self.config.backend = 'kqueue'
                     },
                     Err(_) => throw RuntimeError("http: io_uring is unavailable ({why}) and libkqueue is not installed")
@@ -627,6 +633,23 @@ pub class Server {
 
         let line = match config.access-log {
             nil, false => return,
+            'log' => do {
+                ACCESS.info(
+                    "{entry.method} {entry.target} {status}",
+                    method:   entry.method,
+                    target:   entry.target,
+                    route:    entry.route,
+                    status:   status,
+                    bytes:    bytes,
+                    ms:       seconds * 1000.0,
+                    remote:   entry.remote,
+                    protocol: entry.protocol,
+                    referer:  entry.referer,
+                    agent:    entry.agent,
+                    req:      entry.id
+                )
+                return
+            },
             'json'     => json.encode(entry),
             true, 'combined' => do {
                 let when = time.strftime('%d/%b/%Y:%H:%M:%S +0000', time.gmtime(int(entry.time)))
@@ -637,7 +660,7 @@ pub class Server {
                 try {
                     f(entry)
                 } catch e {
-                    log::error!("access-log callback failed: {e}")
+                    log::error!("access-log callback failed", err: e)
                 }
                 return
             }
@@ -808,7 +831,9 @@ pub class Server {
         m.in-flight.fetch-add(1)
 
         try {
-            status = __serve(x, req, rsp)
+            with log::span!("request", req: req.id) {
+                status = __serve(x, req, rsp)
+            }
         } finally {
             m.in-flight.fetch-sub(1)
             let dt = time.now() - req.start
@@ -844,7 +869,7 @@ pub class Server {
         } catch e {
             x.loop.metrics.errors.fetch-add(1)
             if rsp.started? {
-                log::error!("exception while streaming {req.method} {req.url} [{req.id}]: {e}\n{e.trace()}")
+                log::error!("exception while streaming response", method: req.method, url: req.url, err: e)
                 x.abort()
                 return 0
             }
@@ -854,11 +879,11 @@ pub class Server {
                 try {
                     handler(req, rsp, e)
                 } catch e2 {
-                    log::error!("error handler failed: {e2}")
+                    log::error!("error handler failed", err: e2)
                     rsp.error(500)
                 }
             } else {
-                log::error!("exception while handling {req.method} {req.url} [{req.id}]: {e}\n{e.trace()}")
+                log::error!("exception while handling request", method: req.method, url: req.url, err: e)
                 rsp.reset()
                 if config.debug {
                     rsp.error(500, "Exception: {e}\n\nBacktrace:\n{e.trace()}")
@@ -877,7 +902,7 @@ pub class Server {
         try {
             rsp.finish()
         } catch e {
-            log::error!("failed to finish response for {req.method} {req.url} [{req.id}]: {e}")
+            log::error!("failed to finish response", method: req.method, url: req.url, err: e)
             x.loop.metrics.errors.fetch-add(1)
             if rsp.started? || x.closed? {
                 x.abort()
@@ -975,7 +1000,7 @@ pub class Server {
         } catch _: core.ConnectionClosed {
         } catch _: core.CanceledError {
         } catch e {
-            log::error!("exception in websocket handler {req.url}: {e}\n{e.trace()}")
+            log::error!("exception in websocket handler", url: req.url, err: e)
             proto.start-close(wsock.CLOSE_INTERNAL, '')
         } finally {
             if !proto.closed? {
@@ -988,7 +1013,7 @@ pub class Server {
         try {
             loop.run()
         } catch e {
-            log::error!("event loop {loop.index} crashed: {e}\n{e.trace()}")
+            log::error!("event loop crashed", loop: loop.index, err: e)
             stop()
         }
     }

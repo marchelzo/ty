@@ -396,7 +396,7 @@ pub class FCGIApp {
                 Ok(fds) => {
                     for match fds {
                         (_, ev) and (ev & os.POLLIN) => {
-                            error!('Accepting connection!')
+                            debug!('accepting connection')
                             let (conn, addr) = os.accept(__socket)
                             __clients.push((conn, FCGIParser(conn)))
                         },
@@ -428,7 +428,7 @@ pub class FCGIApp {
                 Err(0) => (),
 
                 Err(err) => {
-                    error!("poll(): {err}")
+                    error!("poll() failed", error: errno.str(err))
                 }
             }
         }

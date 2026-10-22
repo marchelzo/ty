@@ -1,249 +1,1996 @@
+/**
+ * Structured logging.
+ *
+ * ```
+ * import log (..)
+ *
+ * info!("listening", host, port)
+ * warn!("slow request", path: req.path, ms: dt * 1000)
+ *
+ * try { work() } catch e { error!("job failed", job: id, err: e) }
+ *
+ * with span!("request", id: req.id) {
+ *     debug!("parsed headers", count: #req.headers)
+ * }
+ * ```
+ *
+ * The level macros are `trace!`, `debug!`, `info!`, `warn!`, `error!` and
+ * `critical!`. A disabled call costs one comparison and evaluates none of
+ * its arguments. After the message come `name: value` fields; a bare
+ * identifier is shorthand for `name: name`. `err: e` attaches an exception
+ * together with the trace of the throw being handled. `@every: secs`
+ * rate-limits a call site (the next record carries `suppressed=N`) and
+ * `@once` lets it fire a single time.
+ *
+ * Records are named after the module that logs them, as a dotted import
+ * path (`http.loop`). Levels and sinks are set per module prefix; the
+ * longest matching prefix wins:
+ *
+ * ```
+ * log.configure(
+ *     level:   log.INFO,
+ *     modules: %{'http': log.DEBUG, 'http.loop': {level: log.TRACE, path: 'loop.log'}},
+ *     sinks:   [log.StderrSink(), log.FileSink('/var/log/app.log', format: 'json', max-size: 64 << 20)],
+ *     async:   true,
+ *     hup:     true
+ * )
+ * ```
+ *
+ * Sinks: `StderrSink`, `StdoutSink`, `StreamSink(fd)`, `FileSink` (append
+ * mode, size-based rotation, reopened by `log.reopen()` or SIGHUP with
+ * `hup: true`), `JournalSink` (native systemd journal protocol; fields
+ * become journal fields; large entries go through a sealed memfd),
+ * `SyslogSink` (/dev/log), `CallbackSink(f)` and `MemorySink`. Every sink
+ * has its own `level`. Formats are `console` (colored on terminals),
+ * `logfmt`, `json`, or a function from `LogRecord` to `String`.
+ *
+ * Spans (`span!`, `log.span`, `log.in-span`) add their fields to every
+ * record logged inside them, from any module. They follow coroutines: an
+ * http handler or uv task keeps its spans while other tasks run on the
+ * same thread, and a coroutine starts with the spans of the code that
+ * created it. `log.bind-context(f)` carries them into another thread.
+ * The http server opens a `request` span carrying `req` (the request id)
+ * around every handler.
+ *
+ * `async: true` moves formatting and I/O to a background thread with a
+ * bounded queue; on overflow records are dropped and counted, and a
+ * `dropped N records` notice follows. The queue is drained at exit, on
+ * `log.flush()` and after every `critical!`. Forked children reset locks
+ * and restart the writer. `log.stats()` reports counts per level, drops and
+ * sink failures. Logging never throws: a failing sink reports to stderr
+ * (rate-limited), and datagram sinks fall back to stderr.
+ *
+ * For code without a fixed module, `log.Logger('name', k: v)` has the
+ * same methods as the macros plus `bind(k: v)`; `log.emit(level, msg,
+ * module: ...)` logs once. `log.capture(f)` returns the records logged
+ * while `f` runs, and `log.tap(sink)` adds a sink that sees everything.
+ *
+ * Environment (read at startup, restored by `log.reset()`):
+ *
+ *   TY_LOG          level spec: `info` or `warn,http=debug,http.loop=trace`
+ *                   (any other value is taken as a log file path)
+ *   TY_LOG_FILE     log to this file instead of stderr
+ *   TY_LOG_SINK     stderr | stdout | journal | syslog
+ *   TY_LOG_FORMAT   console | logfmt | json
+ *   TY_LOG_UTC      timestamps in UTC
+ *   TY_LOG_ASYNC    log from a background thread; the value is the queue size
+ *   TY_LOG_MAX      compile out every call site above this level
+ *
+ * When JOURNAL_STREAM says stderr is connected to the journal (any systemd
+ * service), the default sink is `JournalSink`. NO_COLOR and FORCE_COLOR
+ * are honored.
+ */
 import ty
 import ty.mod
+import ty.coro as co
+import ty.token as tok
+import ty.lex as lex
 import ty.parse as parse
-import ty.token (next)
-import os (..)
-import time
-import chalk
-import io
+import os
+import errno
+import time as tm
+import json
+import thread
+import ffi as c
 
+pub const OFF      = -1
 pub const CRITICAL = 0
 pub const ERROR    = 1
 pub const WARN     = 2
 pub const INFO     = 3
 pub const DEBUG    = 4
+pub const TRACE    = 5
 
-use LoggingConfig = {
-    ?level: ?Int,
-    ?path:  ?String
+const NAMES      = ['critical', 'error', 'warn', 'info', 'debug', 'trace']
+const LABELS     = ['CRIT ', 'ERROR', 'WARN ', 'INFO ', 'DEBUG', 'TRACE']
+const COLORS     = ["\x1b[1;91m", "\x1b[91m", "\x1b[93m", "\x1b[94m", "\x1b[95m", "\x1b[90m"]
+const PRIORITIES = [2, 3, 4, 6, 7, 7]
+
+const DIM   = "\x1b[2m"
+const BOLD  = "\x1b[1m"
+const CYAN  = "\x1b[36m"
+const RESET = "\x1b[0m"
+
+const BAR    = '  │ '
+const CTRL   = /[\x00-\x08\x0b-\x1f\x7f]/
+const UNSAFE = /[\s="\\\x00-\x1f\x7f]/
+const MAX_FRAMES = 40
+
+const SOL_SOCKET  = 1
+const SCM_RIGHTS  = 1
+const SO_SNDBUF   = 7
+const F_ADD_SEALS = 1033
+const SEAL_ALL    = 15
+const MFD_FLAGS   = 3
+
+const JOURNAL_SOCKET = '/run/systemd/journal/socket'
+const SYSLOG_SOCKET  = '/dev/log'
+
+const NO_SPANS: Array[String] = []
+const NO_FIELDS: Array[(String, _)] = []
+const MILLIS = ["{i:03}" for i in ..1000]
+
+const FORMATS = %{'console', 'logfmt', 'json'}
+
+const RESERVED = %{
+    'time', 'level', 'module', 'thread', 'msg', 'span',
+    'err', 'file', 'line', 'func', 'suppressed'
 }
 
-let levels = %{
-    CRITICAL: 'critical',
-    ERROR: 'error',
-    WARN: 'warn',
-    INFO: 'info',
-    DEBUG: 'debug'
+pub fn level-name(level: Int) -> String {
+    if level < 0 {
+        return 'off'
+    }
+    if level >= #NAMES {
+        return "level{level}"
+    }
+    NAMES[level]
 }
 
-fn log-open(path: ?String) {
-    path == nil ? 2 : open(path, O_RDWR | O_TRUNC | O_CREAT, 0644)
-}
-
-class LevelCell {
-    level: Int
-
-    init(level: Int) {
-        self.level = level
+pub fn parse-level(x: String | Int | nil) -> Int | nil {
+    if x == nil {
+        return nil
+    }
+    if x :: Int {
+        return x
+    }
+    match x.strip().lower() {
+        'off', 'none', 'quiet'               => OFF,
+        'critical', 'crit', 'fatal', 'panic' => CRITICAL,
+        'error', 'err'                       => ERROR,
+        'warn', 'warning'                    => WARN,
+        'info', 'notice'                     => INFO,
+        'debug'                              => DEBUG,
+        'trace', 'all'                       => TRACE,
+        s                                    => int(s, 10)
     }
 }
 
-let global-log-fds    = %{*: log-open(it)}
-let global-log-conf:   Dict[String, LoggingConfig] = %{}
-let global-log-levels: Dict[String, LevelCell]     = %{}
-let global-log-lock   = Mutex()
-
-fn _level(name: String) -> LevelCell {
-    with global-log-lock {
-        if let $cell = global-log-levels[name] {
-            return cell
+pub fn parse-spec(spec: String) -> {level: Int | nil, modules: Dict[String, Int]} | nil {
+    let level = nil
+    let modules = %{}
+    for part in spec.split(',') {
+        let item = part.strip()
+        if item == '' {
+            continue
         }
-        let cell = LevelCell(global-log-conf[name].?level ?? WARN)
-        global-log-levels[name] = cell
-        cell
+        let kv = item.split('=')
+        if #kv == 1 {
+            level = parse-level(kv[0]) ?? return nil
+        } else if #kv == 2 {
+            modules[module-key(kv[0])] = parse-level(kv[1]) ?? return nil
+        } else {
+            return nil
+        }
     }
+    {level, modules}
 }
 
-pub DEFAULT_LOG_PATH = getenv('TY_LOG')
+fn module-key(name: String) -> String {
+    safe-key(name.strip().replace('/', '.').replace('::', '.'))
+}
 
-pub class Logger {
-    __name:   String
-    __chalk:  chalk.Chalk
-    __prefix: (Int, Bool) -> _
-    __stack:  Array[String]
-    __indent: Int
-    __level:  LevelCell
-    __color:  Bool
-    __path:   String | nil
+fn covers?(prefix: String, name: String) -> Bool {
+    (prefix == '' || prefix == '*' || name == prefix || name.starts?("{prefix}."))
+}
+
+pub class LogRecord {
+    level:  Int
+    module: String
+    msg:    String
+    fields: Array[(String, _)]
+    spans:  Array[String]
+    time:   Int
+    thread: Int
+    tname:  String
+    file:   String | nil
+    line:   Int | nil
+    func:   String | nil
+    err:    _
+    trace:  _
 
     init(
-        name: String,
-        path: ?String,
-        chalk: chalk::Chalk = chalk::Chalk(),
-        level: ?LevelCell = nil
+        level:  Int,
+        module: String,
+        msg:    String,
+        fields: Array[(String, _)] = [],
+        spans:  Array[String] = NO_SPANS,
+        file:   String | nil = nil,
+        line:   Int | nil = nil,
+        func:   String | nil = nil,
+        err:    _ = nil,
+        trace:  _ = nil
     ) {
-        __name = name
-        __indent = 4
-        __level = level ?? LevelCell(WARN)
-        __stack = []
-        __chalk = chalk
-        __prefix = fn (level: Int, color: Bool) {
-            let t = time.utime()
-
-            let whole = time.strftime('%Y-%m-%d %H:%M:%S', t / 1000000)
-            let frac  = "{(t % 1000000) / 1000:03}"
-            let time-str = "{whole}.{frac}"
-
-            let threadName = (Thread.getName() ?? "T{Thread.id()}")
-            let levelName = "{"[{levels[level]}]":10}"
-
-            if color {
-                __chalk"[time]{time-str}[/] "
-                       "[{levels[level]}]{levelName}[/] "
-                       "[thread{Thread.id()}?]{"[{threadName}]":8}[/]"
-            } else {
-                "{time-str} {levelName} {"[{threadName}]":8}"
-            }
-        }
-
-        __chalk.critical = 'bright red bold underline'
-        __chalk.error    = 'bright red'
-        __chalk.warn     = 'bright yellow'
-        __chalk.info     = '#4989eb'
-        __chalk.debug    = '#ff45be'
-        __chalk.time     = '#10ccb9'
-        __chalk.name     = '#92e83c'
-
-        setup({path})
+        self.level  = level
+        self.module = module
+        self.msg    = msg
+        self.fields = fields
+        self.spans  = spans
+        self.time   = tm.utime()
+        self.thread = Thread.id()
+        self.tname  = thread-label()
+        self.file   = file
+        self.line   = line
+        self.func   = func
+        self.err    = err
+        self.trace  = trace
     }
 
-    setup(config: LoggingConfig) {
-        __path = config.?path ?? __path
-        __level.level = config.?level ?? __level.level
-
-        with global-log-lock {
-            __color = isatty(global-log-fds[__path])
-        }
-    }
-
-    setLevel(level: Int) {
-        __level.level = level
-    }
-
-    setPrefix(f) {
-        __prefix = f
-    }
-
-    log(level, msg) {
-        if __level.level >= level {
-            let name = #__stack == 0 ? __name : "{__name}[{__stack.join('.')}]"
-
-            let out = if __color {
-                __chalk"{(__prefix)(level, true)} [name]{name}[/]: {msg}\n"
-            } else {
-                "{(__prefix)(level, false)} {name}: {msg}\n"
-            }
-
-            with global-log-lock {
-                let fd = global-log-fds[__path]!
-                write(fd, "{out}")
+    get(key: String) -> _ {
+        for (k, v) in fields {
+            if k == key {
+                return v
             }
         }
     }
 
-    warn(msg) {
-        log(WARN, msg)
+    frames -> Array {
+        trace-frames(trace)
     }
 
-    error(msg) {
-        log(ERROR, msg)
-    }
-
-    info(msg) {
-        log(INFO, msg)
-    }
-
-    critical(msg) {
-        log(CRITICAL, msg)
-    }
-
-    debug(msg) {
-        log(DEBUG, msg)
-    }
-
-    push(name) {
-        __stack.push(name)
-    }
-
-    pop() {
-        __stack.pop()
+    __str__() -> String {
+        fmt-logfmt(self, true).str!().strip-right()
     }
 }
 
-class LogContextGuard {
-    __logger: Logger
+pub class LogSpan {
+    parent: LogSpan | nil
+    name:   String | nil
+    path:   Array[String]
+    fields: Array[(String, _)]
 
-    init(logger: Logger, name: String) {
-        __logger = logger
-        __logger.push(name)
+    init(parent: LogSpan | nil, name: String | nil, fields: Array[(String, _)]) {
+        self.parent = parent
+        self.name   = name
+        self.path   = (parent == nil) ? [] : parent.path
+        self.fields = (parent == nil) ? fields : (parent.fields + fields)
+        if name != nil {
+            self.path = self.path + [name]
+        }
+    }
+
+    enter() -> SpanGuard {
+        SpanGuard(self)
+    }
+
+    get(key: String) -> _ {
+        let i = #fields
+        while i > 0 {
+            i -= 1
+            if fields[i].0 == key {
+                return fields[i].1
+            }
+        }
+    }
+}
+
+pub class SpanGuard {
+    span:   LogSpan
+    __prev: _
+
+    init(span: LogSpan) {
+        self.span = span
+        __prev = co.context(span)
     }
 
     __drop__() {
-        __logger.pop()
+        co.context(__prev)
     }
 }
 
-let __tls::_loggers = nil
-let __tls::_chalk   = nil
+pub fn current-span() -> LogSpan | nil {
+    let s = co.context()
+    (s :: LogSpan) ? s : nil
+}
 
-fn _conf(name: String) {
-    with global-log-lock {
-        global-log-conf[name]
+fn pairs(d: Dict[String, _]) -> Array[(String, _)] {
+    d.list().map(kv -> (safe-key(kv.0), kv.1))
+}
+
+pub fn span(name: String | nil = nil, %fields) -> SpanGuard {
+    SpanGuard(LogSpan(current-span(), name, pairs(fields)))
+}
+
+pub fn in-span(name: String | nil, f: _, %fields) -> _ {
+    let g = SpanGuard(LogSpan(current-span(), name, pairs(fields)))
+    try {
+        f()
+    } finally {
+        g.__drop__()
     }
 }
 
-fn _get(name: String, path: ?String) -> Logger {
-    let loggers = _loggers ?? (_loggers = %{})
-
-    if let $logger = loggers[name] {
-        return logger
-    }
-
-    let chalk  = _chalk ?? (_chalk = chalk.Chalk())
-    let logger = Logger(name, path, chalk, _level(name))
-
-    if let $conf = _conf(name) {
-        logger.setup({path: conf.?path})
-    }
-
-    loggers[name] = logger
-    logger
-}
-
-fn _log(level, expr) {
-    let cell = _level(ty.mod.name())
-    $$[
-        ($$(ty.Value(cell)).level >= $${level})
-            ? $${_get}(__module__, $$::(DEFAULT_LOG_PATH)).log($${level}, $$expr)
-            : nil
-    $$]
-}
-
-fn _ctx(name) $$[
-    let ^_ = $$::(LogContextGuard)(
-        $${_get}(__module__, $$::(DEFAULT_LOG_PATH)),
-        $$name
-    )
-$$]
-
-pub macro    debug!(expr) { _log(DEBUG,    expr) }
-pub macro     info!(expr) { _log(INFO,     expr) }
-pub macro     warn!(expr) { _log(WARN,     expr) }
-pub macro    error!(expr) { _log(ERROR,    expr) }
-pub macro critical!(expr) { _log(CRITICAL, expr) }
-
-pub macro log-ctx(name) { _ctx(name) }
-
-fn _configure(name: String, config: LoggingConfig) {
-    _get(name, DEFAULT_LOG_PATH).setup(config)
-
-    with global-log-lock {
-        let old = global-log-conf[name]
-        global-log-conf[name] = {
-            level: config.?level ?? old.?level,
-            path:  config.?path  ?? old.?path
+pub fn bind-context(f: _) -> _ {
+    let ctx = co.context()
+    return fn (*args, %kwargs) {
+        let prev = co.context(ctx)
+        try {
+            f(*args, **kwargs)
+        } finally {
+            co.context(prev)
         }
     }
 }
 
-pub macro logging(config) = $${_configure}(__module__, $$config)
+fn open-span(name: _, keys: Array[String], vals: Array[_]) -> SpanGuard {
+    let fields = []
+    for k; i in keys {
+        fields.push((k, vals[i]))
+    }
+    SpanGuard(LogSpan(current-span(), (name == nil) ? nil : str(name), fields))
+}
+
+pub class LogRoute {
+    name:  String
+    level: Int
+    limit: Int
+    sinks: Array[_]
+
+    init(name: String) {
+        self.name  = name
+        self.level = OFF
+        self.limit = OFF
+        self.sinks = []
+    }
+}
+
+class Rule {
+    level: Int | nil
+    sinks: Array[_] | nil
+
+    init(level: Int | nil, sinks: Array[_] | nil) {
+        self.level = level
+        self.sinks = sinks
+    }
+}
+
+class Site {
+    route:   LogRoute
+    level:   Int
+    file:    String | nil
+    line:    Int | nil
+    keys:    Array[String]
+    every:   Float | nil
+    once:    Bool
+    next:    Float
+    skipped: Int
+    fired:   Bool
+
+    init(route: LogRoute, level: Int, file: String | nil, line: Int | nil, keys: Array[String], every: Float | nil, once: Bool) {
+        self.route   = route
+        self.level   = level
+        self.file    = file
+        self.line    = line
+        self.keys    = keys
+        self.every   = every
+        self.once    = once
+        self.next    = 0.0
+        self.skipped = 0
+        self.fired   = false
+    }
+}
+
+let LOCK = thread.mutex()
+
+let ROUTES: Dict[String, LogRoute] = %{}
+let RULES:  Dict[String, Rule]  = %{}
+let FILES:  Dict[String, _]     = %{}
+
+let ROOT_LEVEL     = WARN
+let SINKS          = []
+let TAPS           = []
+let UTC            = false
+let DEFAULT_FORMAT = 'console'
+let WRITER: Writer | nil = nil
+let ASYNC_CAP      = 8192
+let REOPEN_GEN     = 0
+let HUP_INSTALLED  = false
+let PID            = os.getpid()
+
+let COUNTS   = [Atomic() for _ in ..#NAMES]
+let FAILURES = Atomic()
+let DROPPED  = Atomic()
+
+let MAIN_THREAD = Thread.get-name()
+
+let __tls::tlabel:     String | nil = nil
+let __tls::clock-sec:  Int          = -1
+let __tls::clock-utc:  Bool         = false
+let __tls::clock-iso:  String       = ''
+let __tls::clock-text: String       = ''
+let __tls::clock-zone: String       = ''
+let __tls::jnames:     Dict[String, String] | nil = nil
+
+fn with-lock(f: _) -> _ {
+    thread.lock(LOCK)
+    try {
+        f()
+    } finally {
+        thread.unlock(LOCK)
+    }
+}
+
+fn thread-label() -> String {
+    if let $s = tlabel {
+        return s
+    }
+    let name = Thread.get-name()
+    let s = (Thread.id() != 0 && name != nil && name != MAIN_THREAD) ? safe-key(name) : "T{Thread.id()}"
+    tlabel = s
+    s
+}
+
+fn clock(sec: Int) {
+    if sec == clock-sec && UTC == clock-utc {
+        return
+    }
+    clock-sec = sec
+    clock-utc = UTC
+    if UTC {
+        clock-iso  = tm.strftime('%Y-%m-%dT%H:%M:%S', tm.gmtime(sec))
+        clock-zone = 'Z'
+    } else {
+        clock-iso  = tm.strftime('%Y-%m-%dT%H:%M:%S', sec)
+        let z = tm.strftime('%z', sec)
+        clock-zone = (#z == 5) ? "{z[0;3]}:{z[3;5]}" : z
+    }
+    clock-text = clock-iso.replace('T', ' ')
+}
+
+fn timestamp(us: Int) -> String {
+    clock(us / 1000000)
+    "{clock-iso}.{MILLIS[(us / 1000) % 1000]}{clock-zone}"
+}
+
+fn resolve(r: LogRoute) {
+    let level = ROOT_LEVEL
+    let sinks = SINKS
+    let lbest = -1
+    let sbest = -1
+    for prefix, rule in RULES {
+        if !covers?(prefix, r.name) {
+            continue
+        }
+        if rule.level != nil && #prefix > lbest {
+            level = rule.level
+            lbest = #prefix
+        }
+        if rule.sinks != nil && #prefix > sbest {
+            sinks = rule.sinks
+            sbest = #prefix
+        }
+    }
+    let cap = OFF
+    for s in sinks {
+        if s.level > cap {
+            cap = s.level
+        }
+    }
+    let limit = (level < cap) ? level : cap
+    let gate = limit
+    for s in TAPS {
+        if s.level > gate {
+            gate = s.level
+        }
+    }
+    r.sinks = sinks
+    r.limit = limit
+    r.level = gate
+}
+
+fn refresh() {
+    for _, r in ROUTES {
+        resolve(r)
+    }
+}
+
+pub fn route(name: String) -> LogRoute {
+    let key = module-key(name)
+    with-lock(fn () {
+        if let $r = ROUTES[key] {
+            return r
+        }
+        let r = LogRoute(key)
+        resolve(r)
+        ROUTES[key] = r
+        r
+    })
+}
+
+pub fn enabled?(level: Int, module: String = 'main') -> Bool {
+    route(module).level >= level
+}
+
+pub fn level-of(module: String = 'main') -> Int {
+    route(module).limit
+}
+
+fn auto-color(fd: Int) -> Bool {
+    if getenv('FORCE_COLOR') not in [nil, '', '0'] {
+        return true
+    }
+    if getenv('NO_COLOR') not in [nil, ''] || ty.color == 'never' {
+        return false
+    }
+    (ty.color == 'always') || (os.isatty(fd) && getenv('TERM') != 'dumb')
+}
+
+fn write-all(fd: Int, data: Blob) -> Bool {
+    let n = #data
+    let off = 0
+    let stalls = 0
+    while off < n {
+        let r = (off == 0) ? os.write(fd, data) : os.write(fd, data.slice(off, n - off))
+        if r > 0 {
+            off += r
+            continue
+        }
+        let e = errno.get()
+        if e == errno.EINTR {
+            continue
+        }
+        if e == errno.EAGAIN && stalls < 20 {
+            stalls += 1
+            os.poll([(fd, os.POLLOUT)], 0.1)
+            continue
+        }
+        return false
+    }
+    true
+}
+
+fn clean(s: String) -> String {
+    s.match?(CTRL) ? s.sub(CTRL, x -> "\\x{x.byte(0):02x}") : s
+}
+
+fn text(v: _) -> String {
+    (v :: String) ? v : str(v)
+}
+
+fn quote(s: String) -> String {
+    (s == '' || s.match?(UNSAFE)) ? json.encode(s) : s
+}
+
+fn value(v: _) -> String {
+    if v :: String {
+        return quote(v)
+    }
+    if (v :: Int) || (v :: Float) || (v :: Bool) || v == nil {
+        return str(v)
+    }
+    quote(str(v))
+}
+
+fn safe-key(k: String) -> String {
+    (k == '' || k.match?(UNSAFE)) ? k.sub(UNSAFE, '_') : k
+}
+
+fn json-value(v: _) -> String {
+    if v :: String {
+        return json.encode(v)
+    }
+    if v == nil {
+        return 'null'
+    }
+    if (v :: Int) || (v :: Bool) {
+        return str(v)
+    }
+    (try { json.encode(v) }) ?? json.encode(str(v))
+}
+
+fn err-type(e: _) -> String {
+    Class.name(type(e)) ?? 'Error'
+}
+
+fn err-msg(e: _) -> String {
+    (e :: BaseException) ? ((try { e.what }) ?? str(e)) : str(e)
+}
+
+fn describe(e: _) -> String {
+    (e :: BaseException) ? "{err-type(e)}: {err-msg(e)}" : str(e)
+}
+
+fn trace-frames(trace: _) -> Array {
+    if trace == nil {
+        return []
+    }
+    let fs = (try { ty.frames(trace) }) ?? []
+    let out = []
+    for f in fs.reverse() {
+        if #out >= MAX_FRAMES {
+            break
+        }
+        out.push(f)
+    }
+    out
+}
+
+fn frame-text(f: _, full: Bool) -> String {
+    let file = (f.file == nil) ? '?' : (full ? f.file : basename(f.file))
+    "{f.func ?? '(top)'} ({file}:{f.line})"
+}
+
+fn basename(path: String) -> String {
+    path.split('/')[-1]
+}
+
+fn color-of(level: Int) -> String {
+    (level >= 0 && level < #COLORS) ? COLORS[level] : ''
+}
+
+fn priority(level: Int) -> Int {
+    (level >= 0 && level < #PRIORITIES) ? PRIORITIES[level] : 7
+}
+
+fn fmt-console(rec: LogRecord, color: Bool, source: Bool) -> Blob {
+    let b = Blob()
+    let lv = rec.level
+    let label = (lv >= 0 && lv < #LABELS) ? LABELS[lv] : "L{lv}   "
+    clock(rec.time / 1000000)
+    let stamp = "{clock-text}.{MILLIS[(rec.time / 1000) % 1000]}"
+    let scope = (#rec.spans == 0) ? rec.module : "{rec.module}[{rec.spans.join('.')}]"
+    let lines = rec.msg.strip-right().split("\n")
+
+    if color {
+        b.push("{DIM}{stamp}{RESET} {color-of(lv)}{label}{RESET} ")
+        if rec.thread != 0 {
+            b.push("{DIM}[{rec.tname}]{RESET} ")
+        }
+        b.push("{CYAN}{scope}{RESET}: ")
+        b.push((lv <= ERROR) ? "{BOLD}{clean(lines[0])}{RESET}" : clean(lines[0]))
+    } else {
+        b.push("{stamp} {label} ")
+        if rec.thread != 0 {
+            b.push("[{rec.tname}] ")
+        }
+        b.push("{scope}: {clean(lines[0])}")
+    }
+
+    for (k, v); i in rec.fields {
+        let sep = (i == 0) ? '  ' : ' '
+        if color {
+            b.push("{sep}{DIM}{k}={RESET}{value(v)}")
+        } else {
+            b.push("{sep}{k}={value(v)}")
+        }
+    }
+
+    if source && rec.file != nil {
+        let loc = "{basename(rec.file)}:{rec.line}"
+        b.push(color ? "  {DIM}({loc}){RESET}" : "  ({loc})")
+    }
+
+    let bar = color ? "{DIM}{BAR}{RESET}" : BAR
+
+    for line in lines.drop(1) {
+        b.push("\n{bar}{clean(line)}")
+    }
+
+    if rec.err != nil {
+        let desc = clean(describe(rec.err)).split("\n")
+        for line in desc {
+            b.push(color ? "\n{bar}{COLORS[ERROR]}{line}{RESET}" : "\n{bar}{line}")
+        }
+        for f in trace-frames(rec.trace) {
+            b.push(color ? "\n{bar}{DIM}  at {frame-text(f, false)}{RESET}" : "\n{bar}  at {frame-text(f, false)}")
+        }
+    }
+
+    b.push("\n")
+    b
+}
+
+fn fmt-logfmt(rec: LogRecord, source: Bool) -> Blob {
+    let b = Blob()
+    b.push("time={timestamp(rec.time)} level={level-name(rec.level)} module={rec.module} thread={rec.tname} msg={quote(rec.msg)}")
+    if #rec.spans > 0 {
+        b.push(" span={quote(rec.spans.join('.'))}")
+    }
+    for (k, v) in rec.fields {
+        b.push(" {k}={value(v)}")
+    }
+    if rec.err != nil {
+        b.push(" err={quote(describe(rec.err))}")
+        let fs = trace-frames(rec.trace)
+        if #fs > 0 {
+            b.push(" trace={quote(fs.map(f -> frame-text(f, false)).join(' < '))}")
+        }
+    }
+    if source && rec.file != nil {
+        b.push(" file={quote(rec.file)} line={rec.line}")
+        if rec.func != nil {
+            b.push(" func={quote(rec.func)}")
+        }
+    }
+    b.push("\n")
+    b
+}
+
+fn fmt-json(rec: LogRecord, source: Bool) -> Blob {
+    let b = Blob()
+    b.push("\{\"time\":\"{timestamp(rec.time)}\",\"level\":\"{level-name(rec.level)}\",\"module\":{json.encode(rec.module)},\"thread\":{json.encode(rec.tname)},\"msg\":{json.encode(rec.msg)}")
+    if #rec.spans > 0 {
+        b.push(",\"span\":{json.encode(rec.spans)}")
+    }
+    for (k, v) in rec.fields {
+        let key = (k in RESERVED) ? "field.{k}" : k
+        b.push(",{json.encode(key)}:{json-value(v)}")
+    }
+    if rec.err != nil {
+        let e = rec.err
+        b.push(",\"err\":\{\"type\":{json.encode(err-type(e))},\"msg\":{json.encode(err-msg(e))}")
+        if e :: OSError {
+            b.push(",\"errno\":{e.code}")
+        }
+        let fs = trace-frames(rec.trace)
+        if #fs > 0 {
+            b.push(",\"trace\":[")
+            for f; i in fs {
+                if i > 0 {
+                    b.push(',')
+                }
+                b.push("\{\"func\":{json-value(f.func)},\"file\":{json-value(f.file)},\"line\":{f.line}\}")
+            }
+            b.push(']')
+        }
+        b.push('}')
+    }
+    if source && rec.file != nil {
+        b.push(",\"file\":{json.encode(rec.file)},\"line\":{rec.line ?? 0}")
+        if rec.func != nil {
+            b.push(",\"func\":{json.encode(rec.func)}")
+        }
+    }
+    b.push("\}\n")
+    b
+}
+
+fn clip(s: String, n: Int) -> String {
+    (#s > n) ? "{s[0;n]}…" : s
+}
+
+fn summary(rec: LogRecord) -> String {
+    let parts = [rec.msg.strip-right()]
+    for (k, v) in rec.fields {
+        parts.push("{k}={quote(clip(text(v), 256))}")
+    }
+    if rec.err != nil {
+        parts.push("err={quote(describe(rec.err))}")
+    }
+    parts.join(' ')
+}
+
+fn jname(k: String) -> String {
+    if jnames == nil {
+        jnames = %{}
+    }
+    let cache = (jnames)!
+    if let $n = cache[k] {
+        return n
+    }
+    let n = k.upper().sub(/[^A-Z0-9_]/, '_').sub(/^[_0-9]+/, '')
+    if n == '' || n.starts?('TY_') || n in ['MESSAGE', 'PRIORITY', 'SYSLOG_IDENTIFIER', 'CODE_FILE', 'CODE_LINE', 'CODE_FUNC', 'ERRNO'] {
+        n = "F_{n}"
+    }
+    if #n > 64 {
+        n = n[0;64]
+    }
+    cache[k] = n
+    n
+}
+
+fn jfield(b: Blob, name: String, value: String) {
+    if value.contains?("\n") {
+        b.push(name)
+        b.push("\n")
+        c.pack(b, '<Q', value.size())
+        b.push(value)
+        b.push("\n")
+    } else {
+        b.push("{name}={value}\n")
+    }
+}
+
+fn fmt-journal(rec: LogRecord, identifier: String) -> Blob {
+    let b = Blob()
+    let lv = rec.level
+    jfield(b, 'MESSAGE', summary(rec))
+    jfield(b, 'PRIORITY', str(priority(lv)))
+    jfield(b, 'SYSLOG_IDENTIFIER', identifier)
+    jfield(b, 'TY_MODULE', rec.module)
+    jfield(b, 'TY_LEVEL', level-name(lv))
+    jfield(b, 'TY_THREAD', rec.tname)
+    jfield(b, 'TY_MSG', rec.msg)
+    if #rec.spans > 0 {
+        jfield(b, 'TY_SPAN', rec.spans.join('.'))
+    }
+    if rec.file != nil {
+        jfield(b, 'CODE_FILE', rec.file)
+        jfield(b, 'CODE_LINE', str(rec.line ?? 0))
+    }
+    if rec.func != nil {
+        jfield(b, 'CODE_FUNC', rec.func)
+    }
+    for (k, v) in rec.fields {
+        jfield(b, jname(k), text(v))
+    }
+    if let $e = rec.err {
+        jfield(b, 'ERROR', describe(e))
+        jfield(b, 'ERROR_TYPE', err-type(e))
+        if e :: OSError {
+            jfield(b, 'ERRNO', str(e.code))
+        }
+        let fs = trace-frames(rec.trace)
+        if #fs > 0 {
+            jfield(b, 'TY_TRACE', fs.map(f -> frame-text(f, true)).join("\n"))
+        }
+    }
+    b
+}
+
+fn fmt-syslog(rec: LogRecord, identifier: String, facility: Int) -> Blob {
+    let sec = rec.time / 1000000
+    let pri = facility * 8 + priority(rec.level)
+    let when = UTC ? tm.strftime('%b %e %H:%M:%S', tm.gmtime(sec)) : tm.strftime('%b %e %H:%M:%S', sec)
+    let scope = (#rec.spans == 0) ? rec.module : "{rec.module}[{rec.spans.join('.')}]"
+    Blob("<{pri}>{when} {identifier}[{PID}]: {scope}: {clean(summary(rec).replace("\n", ' | '))}")
+}
+
+fn program() -> String {
+    let path = (try { ty.mod.path(ty.mod.get('main')) }) ?? (try { argv[0] }) ?? 'ty'
+    let base = basename(path)
+    base.ends?('.ty') ? base[0;#base - 3] : base
+}
+
+pub class Sink {
+    level:    Int
+    format:   _
+    color:    Bool
+    source:   Bool | nil
+    failures: Int
+    mtx:      _
+
+    init(level: Int | String = TRACE, format: _ = nil, color: Bool = false, source: Bool | nil = nil) {
+        self.level    = parse-level(level) ?? TRACE
+        self.format   = format
+        self.color    = color
+        self.source   = source
+        self.failures = 0
+        self.mtx      = thread.mutex()
+        check-format(format)
+    }
+
+    render(rec: LogRecord) -> Blob {
+        match format ?? DEFAULT_FORMAT {
+            'console' => fmt-console(rec, color, source ?? false),
+            'logfmt'  => fmt-logfmt(rec, source ?? false),
+            'json'    => fmt-json(rec, source ?? true),
+            f         => do {
+                let s = text(f(rec))
+                Blob(s.ends?("\n") ? s : "{s}\n")
+            }
+        }
+    }
+
+    emit(rec: LogRecord) {
+        match WRITER {
+            nil => commit(render(rec)),
+            w   => w.push(self, rec)
+        }
+    }
+
+    commit(data: Blob) {
+        thread.lock(mtx)
+        try {
+            if !write(data) {
+                failed("write failed: {errno.str(errno.get())}")
+            }
+        } catch e {
+            failed(e)
+        } finally {
+            thread.unlock(mtx)
+        }
+    }
+
+    write(data: Blob) -> Bool {
+        true
+    }
+
+    batch? -> Bool {
+        true
+    }
+
+    failed(why: _) {
+        failures += 1
+        FAILURES.fetch-add(1)
+        if failures == 1 || failures % 1000 == 0 {
+            os.write(2, "log: {Class.name(type(self))} sink: {describe(why)} ({failures} failure{(failures == 1) ? '' : 's'})\n")
+        }
+    }
+
+    flush() {}
+
+    reopen() {}
+
+    close() {}
+
+    after-fork() {
+        mtx = thread.mutex()
+    }
+}
+
+pub class StreamSink < Sink {
+    fd: Int
+
+    init(fd: Int, level: Int | String = TRACE, format: _ = nil, color: Bool | nil = nil, source: Bool | nil = nil) {
+        super(level, format, color ?? auto-color(fd), source)
+        self.fd = fd
+    }
+
+    write(data: Blob) -> Bool {
+        write-all(fd, data)
+    }
+}
+
+pub class StderrSink < StreamSink {
+    init(level: Int | String = TRACE, format: _ = nil, color: Bool | nil = nil, source: Bool | nil = nil) {
+        super(2, level, format, color, source)
+    }
+}
+
+pub class StdoutSink < StreamSink {
+    init(level: Int | String = TRACE, format: _ = nil, color: Bool | nil = nil, source: Bool | nil = nil) {
+        super(1, level, format, color, source)
+    }
+}
+
+pub class FileSink < StreamSink {
+    path:     String
+    max-size: Int | nil
+    keep:     Int
+    mode:     Int
+    size:     Int
+    __gen:    Int
+
+    init(
+        path:     _,
+        level:    Int | String = TRACE,
+        format:   _ = nil,
+        color:    Bool = false,
+        source:   Bool | nil = nil,
+        max-size: Int | nil = nil,
+        keep:     Int = 5,
+        mode:     Int = 0644
+    ) {
+        super(-1, level, format, color, source)
+        self.path     = str(path)
+        self.max-size = max-size
+        self.keep     = keep
+        self.mode     = mode
+        self.size     = 0
+        __gen         = REOPEN_GEN
+        open-file()
+    }
+
+    open-file() -> Bool {
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_CLOEXEC, mode)
+        if fd < 0 {
+            failed("open {path}: {errno.str(errno.get())}")
+            return false
+        }
+        size = os.fstat(fd).?size ?? 0
+        true
+    }
+
+    close-file() {
+        if fd >= 0 {
+            os.close(fd)
+            fd = -1
+        }
+    }
+
+    rotate() {
+        close-file()
+        let i = keep - 1
+        while i >= 1 {
+            os.rename("{path}.{i}", "{path}.{i + 1}")
+            i -= 1
+        }
+        if keep > 0 {
+            os.rename(path, "{path}.1")
+        } else {
+            os.unlink(path)
+        }
+        open-file()
+    }
+
+    write(data: Blob) -> Bool {
+        if __gen != REOPEN_GEN {
+            __gen = REOPEN_GEN
+            close-file()
+        }
+        if fd < 0 && !open-file() {
+            return true
+        }
+        if max-size != nil && size > 0 && size + #data > max-size {
+            rotate()
+            if fd < 0 {
+                return true
+            }
+        }
+        size += #data
+        write-all(fd, data)
+    }
+
+    reopen() {
+        thread.lock(mtx)
+        try {
+            close-file()
+            open-file()
+        } finally {
+            thread.unlock(mtx)
+        }
+    }
+
+    flush() {
+        thread.lock(mtx)
+        try {
+            if fd >= 0 {
+                os.fsync(fd)
+            }
+        } finally {
+            thread.unlock(mtx)
+        }
+    }
+
+    close() {
+        thread.lock(mtx)
+        try {
+            close-file()
+        } finally {
+            thread.unlock(mtx)
+        }
+    }
+}
+
+class DatagramSink < Sink {
+    socket:   String
+    sock:     Int
+    memfd-fn:  _
+    sendmsg-fn: _
+
+    init(socket: String, level: Int | String, source: Bool | nil) {
+        super(level, nil, false, source)
+        self.socket = socket
+        sock = -1
+        memfd-fn = nil
+        sendmsg-fn = nil
+    }
+
+    batch? -> Bool {
+        false
+    }
+
+    connect() -> Bool {
+        if sock >= 0 {
+            return true
+        }
+        let fd = os.socket(os.AF_UNIX, os.SOCK_DGRAM, 0)
+        if fd < 0 {
+            return false
+        }
+        os.fcntl(fd, os.F_SETFD, os.FD_CLOEXEC)
+        if os.connect(fd, {family: os.AF_UNIX, path: socket}) < 0 {
+            os.close(fd)
+            return false
+        }
+        sock = fd
+        true
+    }
+
+    disconnect() {
+        if sock >= 0 {
+            os.close(sock)
+            sock = -1
+        }
+    }
+
+    send(data: Blob) -> Bool {
+        for attempt in ..2 {
+            if !connect() {
+                return false
+            }
+            if os.sendto(sock, data, os.MSG_NOSIGNAL) >= 0 {
+                return true
+            }
+            let e = errno.get()
+            if e == errno.EMSGSIZE || e == errno.ENOBUFS {
+                return oversized(data)
+            }
+            if e != errno.EINTR {
+                disconnect()
+            }
+        }
+        false
+    }
+
+    oversized(data: Blob) -> Bool {
+        false
+    }
+
+    write(data: Blob) -> Bool {
+        send(data)
+    }
+
+    close() {
+        thread.lock(mtx)
+        try {
+            disconnect()
+        } finally {
+            thread.unlock(mtx)
+        }
+    }
+
+    emit(rec: LogRecord) {
+        let data = render(rec)
+        thread.lock(mtx)
+        let ok = try {
+            send(data)
+        } catch e {
+            false
+        } finally {
+            thread.unlock(mtx)
+        }
+        if !ok {
+            fallback(rec)
+        }
+    }
+
+    fallback(rec: LogRecord) {
+        failures += 1
+        FAILURES.fetch-add(1)
+        write-all(2, fmt-console(rec, false, false))
+    }
+}
+
+pub class JournalSink < DatagramSink {
+    identifier: String
+
+    init(level: Int | String = TRACE, identifier: String | nil = nil, socket: String = JOURNAL_SOCKET) {
+        super(socket, level, true)
+        self.identifier = identifier ?? program()
+    }
+
+    render(rec: LogRecord) -> Blob {
+        fmt-journal(rec, identifier)
+    }
+
+    connect() -> Bool {
+        if sock >= 0 {
+            return true
+        }
+        let fd = os.socket(os.AF_UNIX, os.SOCK_DGRAM, 0)
+        if fd < 0 {
+            return false
+        }
+        os.fcntl(fd, os.F_SETFD, os.FD_CLOEXEC)
+        if os.connect(fd, {family: os.AF_UNIX, path: socket}) < 0 {
+            os.close(fd)
+            return false
+        }
+        os.setsockopt(fd, SOL_SOCKET, SO_SNDBUF, c.pack(Blob(), '=i', 8 << 20))
+        sock = fd
+        true
+    }
+
+    oversized(data: Blob) -> Bool {
+        memfd-fn ?= c.wrap(nil, 'memfd_create', c.int, c.ptr, c.uint)
+        sendmsg-fn ?= c.wrap(nil, 'sendmsg', c.long, c.int, c.ptr, c.int)
+        if memfd-fn == nil || sendmsg-fn == nil {
+            return false
+        }
+        let mfd = memfd-fn('ty-log'.cstr(), MFD_FLAGS)
+        if mfd < 0 {
+            return false
+        }
+        try {
+            if !write-all(mfd, data) {
+                return false
+            }
+            os.fcntl(mfd, F_ADD_SEALS, SEAL_ALL)
+            let ctl = c.new-auto(c.u8, 24)
+            c.pack(ctl, '=QiiI4x', 20, SOL_SOCKET, SCM_RIGHTS, mfd)
+            let msg = c.new-auto(c.u8, 56)
+            c.pack(msg, '=QI4xQQQQi4x', 0, 0, 0, 0, int(ctl), 24, 0)
+            sendmsg-fn(sock, msg, os.MSG_NOSIGNAL) >= 0
+        } finally {
+            os.close(mfd)
+        }
+    }
+}
+
+pub class SyslogSink < DatagramSink {
+    identifier: String
+    facility:   Int
+
+    init(level: Int | String = TRACE, identifier: String | nil = nil, facility: Int = 1, socket: String = SYSLOG_SOCKET) {
+        super(socket, level, false)
+        self.identifier = identifier ?? program()
+        self.facility   = facility
+    }
+
+    render(rec: LogRecord) -> Blob {
+        fmt-syslog(rec, identifier, facility)
+    }
+
+    oversized(data: Blob) -> Bool {
+        (#data > 1024) && send(data.slice(0, 1024))
+    }
+}
+
+pub class CallbackSink < Sink {
+    __f: _
+
+    init(f: _, level: Int | String = TRACE) {
+        super(level)
+        __f = f
+    }
+
+    emit(rec: LogRecord) {
+        thread.lock(mtx)
+        try {
+            __f(rec)
+        } catch e {
+            failed(e)
+        } finally {
+            thread.unlock(mtx)
+        }
+    }
+}
+
+pub class MemorySink < Sink {
+    records: Array[LogRecord]
+    limit:   Int | nil
+
+    init(level: Int | String = TRACE, limit: Int | nil = nil) {
+        super(level)
+        self.records = []
+        self.limit   = limit
+    }
+
+    emit(rec: LogRecord) {
+        thread.lock(mtx)
+        records.push(rec)
+        if limit != nil && #records > limit {
+            records.pop(0)
+        }
+        thread.unlock(mtx)
+    }
+
+    snapshot() -> Array[LogRecord] {
+        thread.lock(mtx)
+        let out = [*records]
+        thread.unlock(mtx)
+        out
+    }
+
+    messages() -> Array[String] {
+        snapshot().map(&.msg)
+    }
+
+    clear() {
+        thread.lock(mtx)
+        records = []
+        thread.unlock(mtx)
+    }
+}
+
+class Writer {
+    __mtx:    Mutex
+    __more:   CondVar
+    __idle:   CondVar
+    __queue:  Array[(Sink, LogRecord)]
+    __cap:    Int
+    __busy:   Bool
+    __stop:   Bool
+    __lost:   Int
+    __thread: _
+
+    init(cap: Int) {
+        __mtx    = Mutex()
+        __more   = CondVar()
+        __idle   = CondVar()
+        __queue  = []
+        __cap    = cap
+        __busy   = false
+        __stop   = false
+        __lost   = 0
+        __thread = Thread(-> run(), name: 'ty-log')
+    }
+
+    push(sink: Sink, rec: LogRecord) {
+        thread.lock(__mtx.inner)
+        if __stop {
+            thread.unlock(__mtx.inner)
+            sink.commit(sink.render(rec))
+            return
+        }
+        if #__queue >= __cap {
+            __lost += 1
+            DROPPED.fetch-add(1)
+        } else {
+            __queue.push((sink, rec))
+            if #__queue == 1 {
+                __more.signal()
+            }
+        }
+        thread.unlock(__mtx.inner)
+    }
+
+    run() {
+        thread.lock(__mtx.inner)
+        while true {
+            while #__queue == 0 && !__stop {
+                __more.wait(__mtx)
+            }
+            if #__queue == 0 {
+                break
+            }
+            let batch = __queue
+            let lost = __lost
+            __queue = []
+            __lost = 0
+            __busy = true
+            thread.unlock(__mtx.inner)
+            try {
+                deliver(batch, lost)
+            } catch _ {
+            }
+            thread.lock(__mtx.inner)
+            __busy = false
+            if #__queue == 0 {
+                __idle.broadcast()
+            }
+        }
+        __idle.broadcast()
+        thread.unlock(__mtx.inner)
+    }
+
+    deliver(batch: Array[(Sink, LogRecord)], lost: Int) {
+        let i = 0
+        while i < #batch {
+            let sink = batch[i].0
+            let data = Blob()
+            while i < #batch && batch[i].0 == sink && #data < (1 << 20) {
+                try {
+                    data.push(sink.render(batch[i].1))
+                } catch e {
+                    sink.failed(e)
+                }
+                i += 1
+                if !sink.batch? {
+                    break
+                }
+            }
+            if #data > 0 {
+                sink.commit(data)
+            }
+        }
+        if lost > 0 {
+            let rec = LogRecord(WARN, 'log', "dropped {lost} record{(lost == 1) ? '' : 's'}: queue full", [('dropped', lost)])
+            let seen = []
+            for (sink, _) in batch {
+                if sink not in seen {
+                    seen.push(sink)
+                    sink.commit(sink.render(rec))
+                }
+            }
+        }
+    }
+
+    drain(timeout: Float = 5.0) {
+        thread.lock(__mtx.inner)
+        let deadline = tm.now() + timeout
+        while #__queue > 0 || __busy {
+            let left = deadline - tm.now()
+            if left <= 0.0 {
+                break
+            }
+            __idle.wait(__mtx, left)
+        }
+        thread.unlock(__mtx.inner)
+    }
+
+    stop() {
+        thread.lock(__mtx.inner)
+        __stop = true
+        __more.signal()
+        thread.unlock(__mtx.inner)
+        __thread.join()
+    }
+}
+
+fn deliver(route: LogRoute, rec: LogRecord) {
+    if rec.level >= 0 && rec.level < #COUNTS {
+        COUNTS[rec.level].fetch-add(1)
+    }
+    if rec.level <= route.limit {
+        for s in route.sinks {
+            if rec.level <= s.level {
+                try {
+                    s.emit(rec)
+                } catch e {
+                    s.failed(e)
+                }
+            }
+        }
+    }
+    for s in TAPS {
+        if rec.level <= s.level {
+            try {
+                s.emit(rec)
+            } catch e {
+                s.failed(e)
+            }
+        }
+    }
+    if rec.level == CRITICAL {
+        flush()
+    }
+}
+
+fn record(
+    route:  LogRoute,
+    level:  Int,
+    msg:    _,
+    keys:   Array[String],
+    vals:   Array[_],
+    extra:  Array[(String, _)],
+    file:   String | nil,
+    line:   Int | nil,
+    func:   _
+) -> LogRecord {
+    let span = current-span()
+    let fields = (span == nil) ? NO_FIELDS : span.fields
+    let err = nil
+    let own = []
+    for k; i in keys {
+        let v = vals[i]
+        if k == 'err' {
+            err = v
+        } else {
+            own.push((k, v))
+        }
+    }
+    for (k, v) in extra {
+        if k == 'err' {
+            err = v
+        } else {
+            own.push((k, v))
+        }
+    }
+    LogRecord(
+        level,
+        route.name,
+        (msg :: String) ? msg : ((msg == nil) ? '' : str(msg)),
+        (#own == 0) ? fields : (fields + own),
+        (span == nil) ? NO_SPANS : span.path,
+        file,
+        line,
+        (func :: String) ? func : nil,
+        err,
+        (err == nil) ? nil : ty.trace(err)
+    )
+}
+
+fn emit-site(site: Site, func: _, msg: _, *vals: _) {
+    if site.once {
+        if site.fired {
+            return
+        }
+        site.fired = true
+    }
+    let extra = []
+    if site.every != nil {
+        let now = tm.now(tm.CLOCK_MONOTONIC_COARSE)
+        if now < site.next {
+            site.skipped += 1
+            return
+        }
+        site.next = now + site.every
+        if site.skipped > 0 {
+            extra.push(('suppressed', site.skipped))
+            site.skipped = 0
+        }
+    }
+    deliver(site.route, record(site.route, site.level, msg, site.keys, vals, extra, site.file, site.line, func))
+}
+
+pub fn emit(level: Int, msg: _, module: String = 'main', %fields) {
+    let r = route(module)
+    if r.level >= level {
+        fields.remove('module')
+        deliver(r, record(r, level, msg, [], [], pairs(fields), nil, nil, nil))
+    }
+}
+
+pub class Logger {
+    name:    String
+    fields:  Array[(String, _)]
+    __route: LogRoute
+
+    init(name: String, %fields) {
+        self.name   = module-key(name)
+        self.fields = pairs(fields)
+        __route     = route(name)
+    }
+
+    enabled?(level: Int) -> Bool {
+        __route.level >= level
+    }
+
+    bind(%fields) -> Logger {
+        let l = Logger(name)
+        l.fields = self.fields + pairs(fields)
+        l
+    }
+
+    log(level: Int, msg: _, %fields) {
+        if __route.level >= level {
+            deliver(__route, record(__route, level, msg, [], [], self.fields + pairs(fields), nil, nil, nil))
+        }
+    }
+
+    trace(msg: _, %fields) {
+        log(TRACE, msg, **fields)
+    }
+
+    debug(msg: _, %fields) {
+        log(DEBUG, msg, **fields)
+    }
+
+    info(msg: _, %fields) {
+        log(INFO, msg, **fields)
+    }
+
+    warn(msg: _, %fields) {
+        log(WARN, msg, **fields)
+    }
+
+    error(msg: _, %fields) {
+        log(ERROR, msg, **fields)
+    }
+
+    critical(msg: _, %fields) {
+        log(CRITICAL, msg, **fields)
+    }
+}
+
+pub fn logger(name: String, %fields) -> Logger {
+    Logger(name, **fields)
+}
+
+fn as-sinks(x: _) -> Array {
+    match x {
+        nil      => [],
+        xs: Array => xs,
+        s        => [s]
+    }
+}
+
+fn file-sink(path: String) -> FileSink {
+    FILES[path] ?? (FILES[path] = FileSink(path))
+}
+
+fn rule-of(spec: _) -> Rule {
+    match spec {
+        nil => Rule(nil, nil),
+        r: Rule => r,
+        s: Sink => Rule(nil, [s]),
+        xs: Array => Rule(nil, xs),
+        {?level, ?path, ?sinks, ?sink, *} => do {
+            let out = as-sinks(sinks) + as-sinks(sink)
+            if path != nil {
+                out.push(file-sink(str(path)))
+            }
+            Rule(parse-level(level), (#out == 0) ? nil : out)
+        },
+        lv => Rule(parse-level(lv) ?? throw ValueError("log: bad level `{lv}`"), nil)
+    }
+}
+
+fn check-format(format: _) {
+    if (format :: String) && format not in FORMATS {
+        throw ValueError("log: unknown format `{format}` (expected console, logfmt or json)")
+    }
+}
+
+fn set-async(cap: Int | nil) {
+    let old = WRITER
+    if cap == nil {
+        WRITER = nil
+        if old != nil {
+            old.stop()
+        }
+    } else {
+        ASYNC_CAP = cap
+        if old == nil {
+            WRITER = Writer(cap)
+        }
+    }
+}
+
+fn install-hup() {
+    if HUP_INSTALLED {
+        return
+    }
+    HUP_INSTALLED = true
+    os.signal(os.SIGHUP, fn (*_) {
+        REOPEN_GEN += 1
+    })
+}
+
+pub fn configure(
+    level:   Int | String | nil = nil,
+    modules: Dict[String, _] | nil = nil,
+    sinks:   _ = nil,
+    sink:    Sink | nil = nil,
+    path:    _ = nil,
+    format:  _ = nil,
+    spec:    String | nil = nil,
+    utc:     Bool | nil = nil,
+    async:   Bool | Int | nil = nil,
+    hup:     Bool | nil = nil
+) {
+    let parsed = (spec == nil) ? nil : (parse-spec(spec) ?? throw ValueError("log: bad level spec `{spec}`"))
+    let rules = %{}
+    for name, r in modules ?? %{} {
+        rules[module-key(name)] = (r == nil) ? nil : rule-of(r)
+    }
+    let new-sinks = nil
+    if sinks != nil || sink != nil || path != nil {
+        new-sinks = as-sinks(sinks) + as-sinks(sink)
+        if path != nil {
+            new-sinks.push(file-sink(str(path)))
+        }
+    }
+    let lv = parse-level(level)
+    if level != nil && lv == nil {
+        throw ValueError("log: bad level `{level}`")
+    }
+    check-format(format)
+
+    with-lock(fn () {
+        if parsed != nil {
+            ROOT_LEVEL = parsed.level ?? ROOT_LEVEL
+            for name, l in parsed.modules {
+                let old = RULES[name]
+                RULES[name] = Rule(l, old.?sinks)
+            }
+        }
+        if lv != nil {
+            ROOT_LEVEL = lv
+        }
+        for name, r in rules {
+            if r == nil {
+                RULES.remove(name)
+            } else {
+                let old = RULES[name]
+                RULES[name] = Rule(r.level ?? old.?level, r.sinks ?? old.?sinks)
+            }
+        }
+        if new-sinks != nil {
+            SINKS = new-sinks
+        }
+        if format != nil {
+            DEFAULT_FORMAT = format
+        }
+        if utc != nil {
+            UTC = utc
+        }
+        refresh()
+    })
+
+    match async {
+        nil   => (),
+        false => set-async(nil),
+        true  => set-async(8192),
+        n     => set-async(n)
+    }
+
+    if hup == true {
+        install-hup()
+    }
+}
+
+pub fn set-level(level: Int | String, module: String | nil = nil) {
+    if module == nil {
+        configure(level: level)
+    } else {
+        configure(modules: %{module: level})
+    }
+}
+
+pub fn default-level(module: String, level: Int | String) {
+    let key = module-key(module)
+    with-lock(fn () {
+        for prefix, rule in RULES {
+            if rule.level != nil && covers?(prefix, key) {
+                return
+            }
+        }
+        RULES[key] = Rule(parse-level(level), RULES[key].?sinks)
+        refresh()
+    })
+}
+
+fn configure-module(name: String, config: _) {
+    let path = config.?path
+    let level = config.?level
+    with-lock(fn () {
+        let key = module-key(name)
+        let old = RULES[key]
+        let sinks = (path == nil) ? old.?sinks : [file-sink(str(path))]
+        RULES[key] = Rule(parse-level(level) ?? old.?level, sinks)
+        refresh()
+    })
+}
+
+pub fn tap(sink: Sink) -> Sink {
+    with-lock(fn () {
+        TAPS = TAPS + [sink]
+        refresh()
+    })
+    sink
+}
+
+pub fn untap(sink: Sink) {
+    with-lock(fn () {
+        TAPS = TAPS.filter(s -> s != sink)
+        refresh()
+    })
+}
+
+pub fn capture(f: _, level: Int | String = TRACE) -> Array[LogRecord] {
+    let mem = MemorySink(level)
+    tap(mem)
+    try {
+        f()
+    } finally {
+        untap(mem)
+    }
+    mem.records
+}
+
+pub fn sinks() -> Array[Sink] {
+    SINKS
+}
+
+pub fn flush() {
+    if let $w = WRITER {
+        w.drain()
+    }
+}
+
+pub fn reopen() {
+    REOPEN_GEN += 1
+    for _, f in FILES {
+        f.reopen()
+    }
+    for s in SINKS {
+        s.reopen()
+    }
+}
+
+pub fn stats() -> {emitted: Dict[String, Int], dropped: Int, failures: Int} {
+    let emitted = %{}
+    for a; i in COUNTS {
+        emitted[NAMES[i]] = a.load()
+    }
+    {emitted, dropped: DROPPED.load(), failures: FAILURES.load()}
+}
+
+fn journal-stream?() -> Bool {
+    let $spec = getenv('JOURNAL_STREAM') or return false
+    let $st = os.fstat(2) or return false
+    spec == "{st.dev}:{st.ino}"
+}
+
+fn default-sinks(legacy: String | nil) -> Array {
+    let file = getenv('TY_LOG_FILE') ?? legacy
+    match getenv('TY_LOG_SINK') {
+        'journal' => [JournalSink()],
+        'syslog'  => [SyslogSink()],
+        'stdout'  => [StdoutSink()],
+        'stderr'  => [StderrSink()],
+        _ => match file {
+            nil => journal-stream?() ? [JournalSink()] : [StderrSink()],
+            p   => [FileSink(p)]
+        }
+    }
+}
+
+fn after-fork() {
+    LOCK = thread.mutex()
+    PID = os.getpid()
+    for s in SINKS + TAPS {
+        s.after-fork()
+    }
+    for _, f in FILES {
+        f.after-fork()
+    }
+    if WRITER != nil {
+        WRITER = Writer(ASYNC_CAP)
+    }
+}
+
+pub fn reset() {
+    let env = getenv('TY_LOG')
+    let parsed = (env == nil) ? nil : parse-spec(env)
+    let legacy = (env != nil && parsed == nil) ? env : nil
+    set-async(nil)
+    with-lock(fn () {
+        RULES.clear()
+        ROOT_LEVEL = parsed.?level ?? WARN
+        for name, l in parsed.?modules ?? %{} {
+            RULES[name] = Rule(l, nil)
+        }
+        SINKS = default-sinks(legacy)
+        TAPS = []
+        DEFAULT_FORMAT = getenv('TY_LOG_FORMAT') ?? 'console'
+        if DEFAULT_FORMAT not in FORMATS {
+            DEFAULT_FORMAT = 'console'
+        }
+        UTC = getenv('TY_LOG_UTC') not in [nil, '', '0']
+        refresh()
+    })
+    match getenv('TY_LOG_ASYNC') {
+        nil, '', '0' => (),
+        s            => set-async(int(s, 10) ?? 8192)
+    }
+}
+
+pub DEFAULT_LOG_PATH = getenv('TY_LOG_FILE')
+
+reset()
+
+__EXIT_HOOKS__.push(fn () {
+    flush()
+    nil
+})
+
+__FORK_HOOKS__.push(after-fork)
+
+let COMPILE_MAX = parse-level(getenv('TY_LOG_MAX')) ?? TRACE
+
+fn raw(t: _) -> String {
+    lex.state().source.bslice(t.start.byte, t.end.byte - t.start.byte)
+}
+
+fn site-name() -> String {
+    module-key(ty.mod.name())
+}
+
+fn parse-args() -> {msg: _, keys: Array[String], vals: Array[_], opts: Dict[String, _], line: Int} {
+    let open = tok.next()
+    if open.type != '(' {
+        parse.fail("expected `(` after logging macro")
+    }
+    let msg = nil
+    let positional = 0
+    let keys = []
+    let vals = []
+    let opts = %{}
+    while tok.peek().type != ')' {
+        let t = tok.peek()
+        if t.type == '@' {
+            tok.next()
+            let name = raw(tok.next())
+            if tok.peek().type == ':' {
+                tok.next()
+                opts[name] = parse.expr(0)
+            } else {
+                opts[name] = ty.Bool(true)
+            }
+        } else if t.type == 'id' && t.module == nil && tok.peek(1).type == ':' {
+            let name = raw(tok.next())
+            tok.next()
+            keys.push(name)
+            vals.push(parse.expr(0))
+        } else if positional > 0 && t.type == 'id' && t.module == nil && tok.peek(1).type in [',', ')'] {
+            keys.push(raw(t))
+            vals.push(parse.expr(0))
+        } else if positional == 0 {
+            msg = parse.expr(0)
+            positional += 1
+        } else {
+            parse.fail("logging macros take one message followed by `name: value` fields")
+        }
+        match tok.peek().type {
+            ',' => tok.next(),
+            ')' => (),
+            t   => parse.fail("expected `,` or `)` in logging macro but found `{t}`")
+        }
+    }
+    tok.next()
+    {msg, keys, vals, opts, line: open.start.line + 1}
+}
+
+fn static-float(e: _) -> Float | nil {
+    match e {
+        nil => nil,
+        _   => float(ty.eval(e))
+    }
+}
+
+fn call(level: Int) -> _ {
+    let args = parse-args()
+    if level > COMPILE_MAX {
+        return $$[ nil $$]
+    }
+    let r = route(site-name())
+    let file = (try { ty.mod.path() }) ?? nil
+    let site = Site(
+        r,
+        level,
+        file,
+        args.line,
+        args.keys,
+        static-float(args.opts['every']),
+        args.opts['once'] != nil
+    )
+    let msg = args.msg ?? ty.String('')
+    let call = ty.Call(
+        func: ty.Value(emit-site),
+        args: [
+            ty.Arg(arg: ty.Value(site)),
+            ty.Arg(arg: $$[ __func__ $$]),
+            ty.Arg(arg: msg),
+            *[ty.Arg(arg: v) for v in args.vals]
+        ]
+    )
+    $$[ ($$(ty.Value(r)).level >= $${level}) ? $$call : nil $$]
+}
+
+fn span-call() -> _ {
+    let args = parse-args()
+    let vals = ty.Array([ty.ArrayItem(item: v) for v in args.vals])
+    $$[ $${open-span}($$(args.msg ?? $$[nil$$]), $${args.keys}, $$vals) $$]
+}
+
+pub macro    trace! { call(TRACE) }
+pub macro    debug! { call(DEBUG) }
+pub macro     info! { call(INFO) }
+pub macro     warn! { call(WARN) }
+pub macro    error! { call(ERROR) }
+pub macro critical! { call(CRITICAL) }
+
+pub macro span! { span-call() }
+
+pub macro log-ctx(name) $$[
+    let ^_ = $${open-span}($$name, [], [])
+$$]
+
+pub macro logging(config) {
+    $$[ $${configure-module}($${site-name()}, $$config) $$]
+}

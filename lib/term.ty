@@ -9,20 +9,11 @@ import base64
 import vt
 import time
 
-#|if getenv('TY_LOG') != nil
-    import log (..)
+import log (..)
 
-    let ppp = pretty@(*, color=false)
-
-    logging({level: DEBUG, path: './term.log'})
-#|else
-    macro warn!(msg) = do {}
-    macro error!(msg) = do {}
-    macro debug!(msg) = do {}
-    macro critical!(msg) = do {}
-
-    let ppp = (x -> "{x}")
-#|]
+fn ppp(x: _) -> String {
+    (pretty == nil) ? str(x) : pretty(x, color=false)
+}
 
 tag _TermStop;
 tag StatusAck;
@@ -1058,7 +1049,7 @@ pub class TermIO {
     }
 
     start(settle: Float = 0.0) {
-        warn!('Main: request start')
+        debug!('main: request start')
         write(__notif-w, 1)
         with __state.lock {
             while !__state.on {
@@ -1071,7 +1062,7 @@ pub class TermIO {
         if #__pointer > 0 {
             write(__fd, __pointer)
         }
-        warn!('Main: started')
+        debug!('main: started')
     }
 
     color(n: Int) -> (Int, Int, Int) | nil {
@@ -1084,18 +1075,18 @@ pub class TermIO {
     background -> (Int, Int, Int) | nil { color(11) }
 
     stop() {
-        warn!('Main: request stop')
+        debug!('main: request stop')
         write(__notif-w, 0)
         with __state.lock {
             while __state.on {
                 __state.cond.wait(__state.lock)
             }
         }
-        warn!('Main: stopped')
+        debug!('main: stopped')
     }
 
     __start() {
-        warn!('Reader: start')
+        debug!('reader: start')
         if (__saved-termios = tcgetattr(__fd)) == nil {
             throw OSError('tcgetattr()')
         }
@@ -1124,7 +1115,7 @@ pub class TermIO {
     }
 
     __stop() {
-        warn!('Reader: stop')
+        debug!('reader: stop')
         write(__fd, __exit)
         tcsetattr(__fd, TCSAFLUSH, __saved-termios)
         with __state.lock {
@@ -1145,7 +1136,7 @@ pub class TermIO {
 
         fn wait-for-resume() {
             for (;;) {
-                warn!('Reader: waiting for resume...')
+                trace!('reader: waiting for resume')
                 match poll([__notif-r], -1) {
                     Ok([(fd, ev)]) => {
                         if let $msg = read(fd, 512) and msg[-1] == 1 {
@@ -1157,11 +1148,11 @@ pub class TermIO {
                     _ => break
                 }
             }
-            warn!('Reader: resuming.')
+            trace!('reader: resuming')
         }
 
         fn more(ms: Int = -1) -> Bool {
-            warn!('Reader: polling...')
+            trace!('reader: polling')
 
             let fds: _ = while match poll([__notif-r, __fd], ms) {
                 Ok(fds)    => break fds,
@@ -1241,7 +1232,7 @@ pub class TermIO {
                     ;
                 }
                 break if closed?
-                debug!("Read: {ppp(buf.str!())}")
+                trace!("read", data: ppp(buf.str!()))
             }
 
             let j = i
@@ -1279,7 +1270,7 @@ pub class TermIO {
                 if s == ctlseq.paste-start {
                     do-paste()
                 } else if !ctlseq.decode(s, __ti-keys) {
-                    debug!("Unhandled: {ppp(s)}")
+                    debug!("unhandled input", data: ppp(s))
                 }
             }
         }
@@ -1313,7 +1304,7 @@ pub class TermIO {
             close()
         }
 
-        debug!("Event: {ppp(ev)}")
+        trace!("event", event: ppp(ev))
 
         ev
     }
@@ -1449,11 +1440,11 @@ pub class TermIO {
 
         if do-close? {
             __clear-reported()
-            critical!('Closing TermIO...')
+            debug!('closing TermIO')
             os::close(__notif-w)
             __reader.join()
             os::close(__notif-r)
-            critical!('TermIO closed.')
+            debug!('TermIO closed')
         }
     }
 }

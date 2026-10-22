@@ -249,7 +249,7 @@ pub class H2Exchange {
             try {
                 f()
             } catch e {
-                log::error!("error in on-close callback: {e}")
+                log::error!("error in on-close callback", err: e)
             }
         }
 
@@ -338,7 +338,7 @@ pub class H2 {
         while conn.buffered < high {
             let n = nghttp2_session_mem_send(s, __out)
             if n < 0 {
-                log::debug!("h2: mem_send failed: {strerror(n)}")
+                log::debug!("nghttp2_session_mem_send failed", error: strerror(n))
                 return conn.close()
             }
             if n == 0 {
@@ -594,7 +594,7 @@ pub class H2 {
 
         let rc = nghttp2_submit_response(__session, st.id, nva, n, prd)
         if rc != 0 {
-            log::debug!("h2: submit_response failed: {strerror(rc)}")
+            log::debug!("nghttp2_submit_response failed", error: strerror(rc))
             return reset(st, NGHTTP2_INTERNAL_ERROR)
         }
 
@@ -626,7 +626,7 @@ pub class H2 {
         if conn.available > 0 {
             let n = nghttp2_session_mem_recv(s, conn.buf.ptr() + conn.head, conn.available)
             if n < 0 {
-                log::debug!("h2: mem_recv failed: {strerror(n)}")
+                log::debug!("nghttp2_session_mem_recv failed", error: strerror(n))
                 __pump()
                 return conn.close-after-flush()
             }
