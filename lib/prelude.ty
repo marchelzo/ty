@@ -392,8 +392,8 @@ class Object {
         str(self)
     }
 
-    __fmt__(fmt) {
-        "{"{self}":{fmt}}"
+    __fmt__(spec) {
+        spec.match?(/\?$/) ? fmt("%{spec}", self) : "{"{self}":{spec}}"
     }
 
     __repr__() {
@@ -1634,7 +1634,7 @@ class String : Iterable[String], IntoPtr[Int], PathLike {
 
     __fmt__(spec, w, fun=id) {
         fun(
-            spec.match?(/[%[:alpha:]](?![<^>])/)
+            spec.match?(/[%?[:alpha:]](?![<^>])/)
           ? fmt("%{spec}", w if '*' in spec, self)
           : fmt("%{spec}s", w if '*' in spec, self)
         )
@@ -1810,7 +1810,7 @@ class Int : IntoPtr[_] {
     }
 
     __fmt__(spec: String, w: Int, n: ?Int) {
-        if spec.match?(/[%[:alpha:]]/) {
+        if spec.match?(/[%?[:alpha:]]/) {
             fmt("%{spec}", (n ?? w) if '*' in spec, self)
         } else {
             fmt("%{spec}d", (n ?? w) if '*' in spec, self)
@@ -1886,7 +1886,7 @@ class Float {
     }
 
     __fmt__(spec, w, n) {
-        if spec.match?(/[%[:alpha:]]/) {
+        if spec.match?(/[%?[:alpha:]]/) {
             fmt("%{spec}", (n ?? w) if '*' in spec, self)
         } else {
             fmt("%{spec}f", (n ?? w) if '*' in spec, self)

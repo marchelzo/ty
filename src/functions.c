@@ -1450,6 +1450,12 @@ MissingArgument:
 
                         Value arg = ARG(ai);
 
+                        if (t == '?') {
+                                arg = isatty(1) ? value_vshow_color(ty, &arg, TY_SHOW_REPR)
+                                                : value_vshow(ty, &arg, TY_SHOW_REPR);
+                                t   = 's';
+                        }
+
                         char b[256];
                         char scratch[256];
                         int si = 0;

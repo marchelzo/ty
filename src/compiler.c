@@ -7785,6 +7785,56 @@ emit_dynamic_regex(Ty *ty, Expr const *e)
         ESTR((e->re_flags != NULL) ? e->re_flags : "");
 }
 
+inline static bool
+spec_is_repr(Expr const *fmt)
+{
+        if (fmt->type != EXPRESSION_SPECIAL_STRING) {
+                return false;
+        }
+
+        Bytes const *last = vvL(fmt->strings);
+
+        return (last->length > 0)
+            && (last->data[last->length - 1] == '?');
+}
+
+inline static bool
+spec_has_star(Expr const *fmt)
+{
+        for (int i = 0; i < vN(fmt->strings); ++i) {
+                Bytes const *b = v_(fmt->strings, i);
+                if (memchr(b->data, '*', b->length) != NULL) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static void
+emit_repr_fmt(Ty *ty, Expr const *fmt, Expr const *ex, int width)
+{
+        Symbol const *sym = scope_lookup(ty, GlobalScope, "fmt");
+        bool star = spec_has_star(fmt);
+
+        INSN(STRING);
+        ESL(BYTES("%", 1));
+        EE(fmt);
+        INSN(CONCAT_STRINGS);
+        Ei32(2);
+        STK(-1);
+
+        if (star) {
+                INSN(INTEGER);
+                EiMAX(width);
+        }
+
+        EE(ex);
+
+        emit_load_instr(ty, sym->identifier, INSTR_LOAD_GLOBAL, sym->i);
+        ECALL(2 + star, 0);
+}
+
 static void
 emit_special_string(Ty *ty, Expr const *e)
 {
@@ -7810,6 +7860,8 @@ emit_special_string(Ty *ty, Expr const *e)
 
                 if (fmt == NULL) {
                         EE(ex);
+                } else if (spec_is_repr(fmt)) {
+                        emit_repr_fmt(ty, fmt, ex, width);
                 } else {
                         EE(fmt);
 
