@@ -53,10 +53,7 @@ mod_root(Ty *ty, char const *path)
         SCRATCH_RESTORE();
 
         if (root == NULL) {
-                root = (vN(paths) > 0) ? v_0(paths) : "/";
-                if (vN(paths) > 1) {
-                        vN(paths) = 1;
-                }
+                root = (vN(paths) > 0) ? ((vN(paths) = 1), v_0(paths)) : "/";
         }
 
         for (int i = 0; i < vN(paths); ++i) {
