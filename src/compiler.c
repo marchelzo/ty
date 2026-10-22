@@ -14347,31 +14347,6 @@ compiler_is_builtin_module(Ty *ty, char const *name)
         return BuiltinModule(ty, name) != NULL;
 }
 
-Module *
-compiler_load_manifest(Ty *ty, char const *path)
-{
-        Module *current = STATE.module;
-        u64 flags_before = (current != NULL) ? current->flags : 0;
-        Module *mod;
-
-        TY_BEGIN_LOADING();
-
-        if (TY_CATCH_ERROR()) {
-                if (current != NULL) {
-                        current->flags = flags_before;
-                }
-                TY_FINISH_LOADING();
-                TY_RETHROW();
-        }
-
-        mod = load_module_at(ty, "__pkg__", path, NULL);
-
-        TY_FINISH_LOADING();
-        TY_CATCH_END();
-
-        return mod;
-}
-
 bool
 compiler_import_module(Ty *ty, Stmt const *s)
 {

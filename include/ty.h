@@ -696,6 +696,7 @@ typedef struct ty0 {
 
         CompileState *compiler;
         PackageCache pkg;
+        PackageCache env;
 
         vec(TyTest) tests;
 } TY;

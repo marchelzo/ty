@@ -1,0 +1,150 @@
+pub class TarError < RuntimeError {
+    init(what: String) {
+        super("tpm: {what}")
+    }
+}
+
+pub class Entry {
+    name: String
+    data: Blob
+    mode: Int
+
+    init(name: String, data: Blob, mode: Int = 0o644) {
+        self.name = name
+        self.data = data
+        self.mode = mode
+    }
+}
+
+fn field(s: String | Blob, n: Int) -> Blob {
+    let b = Blob(s)
+    if #b > n {
+        throw TarError("tar field too long: {s}")
+    }
+    b + Blob.zeros(n - #b)
+}
+
+fn octal(x: Int, n: Int) -> Blob {
+    let digits = "{x:o}"
+    field('0'.repeat(n - 1 - #digits) + digits, n)
+}
+
+fn split-name(name: String) -> (String, String) {
+    let bytes = #Blob(name)
+    if bytes <= 100 {
+        return ('', name)
+    }
+    let parts = name.split('/')
+    for i in 1..#parts {
+        let prefix = parts[;i].join('/')
+        let rest   = parts[i;].join('/')
+        if #Blob(prefix) <= 155 && #Blob(rest) <= 100 {
+            return (prefix, rest)
+        }
+    }
+    throw TarError("path too long for a tar archive: {name}")
+}
+
+fn header(e: Entry) -> Blob {
+    let (prefix, name) = split-name(e.name)
+    let h = field(name, 100)
+          + octal(e.mode & 0o7777, 8)
+          + octal(0, 8)
+          + octal(0, 8)
+          + octal(#e.data, 12)
+          + octal(0, 12)
+          + Blob('        ')
+          + Blob('0')
+          + field('', 100)
+          + Blob('ustar', 0, '00')
+          + field('', 32)
+          + field('', 32)
+          + octal(0, 8)
+          + octal(0, 8)
+          + field(prefix, 155)
+          + Blob.zeros(12)
+    let sum = "{[*h].sum(0):o}"
+    h.slice(0, 148) + field('0'.repeat(6 - #sum) + sum, 7) + Blob(' ') + h.slice(156, 356)
+}
+
+pub fn pack(entries: Array[Entry]) -> Blob {
+    let out = Blob()
+    for e in entries.sort(by=\_.name) {
+        out.push(header(e))
+        out.push(e.data)
+        out.push(Blob.zeros((512 - #e.data % 512) % 512))
+    }
+    out.push(Blob.zeros(1024))
+    out
+}
+
+fn text(h: Blob, off: Int, n: Int) -> String {
+    let end = h.search(off, 0)
+    let stop = (end == nil || end > off + n) ? off + n : end
+    h.str(off, stop - off, lossy: true)
+}
+
+fn number(h: Blob, off: Int, n: Int) -> Int {
+    let s = text(h, off, n).trim()
+    (s == '') ? 0 : (int(s, 8) ?? throw TarError("bad number in tar header: {s}"))
+}
+
+fn safe(name: String) -> String {
+    let parts = name.split('/').filter(p -> p != '' && p != '.')
+    if name.starts?('/') || '..' in parts || #parts == 0 {
+        throw TarError("unsafe path in archive: {name}")
+    }
+    parts.join('/')
+}
+
+fn pax(data: Blob) -> Dict[String, String] {
+    let out = %{}
+    let i = 0
+    while i < #data {
+        let sp = data.search(i, ' ') ?? break
+        let n = int(data.str(i, sp - i), 10) ?? break
+        let record = data.str(sp + 1, n - (sp - i) - 2, lossy: true)
+        if let [_, k, v] = /^([^=]+)=(.*)$/s(record) {
+            out[k] = v
+        }
+        i += n
+    }
+    out
+}
+
+pub fn unpack(data: Blob) -> Array[Entry] {
+    let entries = []
+    let i = 0
+    let long = nil
+
+    while i + 512 <= #data {
+        let h = data.slice(i, 512)
+        if [*h].all?(\_ == 0) {
+            break
+        }
+
+        let size   = number(h, 124, 12)
+        let flag   = h[156]
+        let prefix = text(h, 345, 155)
+        let name   = long ?? ((prefix == '') ? text(h, 0, 100) : "{prefix}/{text(h, 0, 100)}")
+        let body   = data.slice(i + 512, size)
+
+        if #body != size {
+            throw TarError('truncated tar archive')
+        }
+
+        i += 512 + (size + 511) / 512 * 512
+        long = nil
+
+        match chr(flag) {
+            '0' or '\x00' => entries.push(Entry(safe(name), body, number(h, 100, 8))),
+            '5'           => (),
+            'L'           => long = body.str(0, body.search(0) ?? #body, lossy: true),
+            'x'           => long = pax(body)['path'],
+            'g'           => (),
+            c             => throw TarError("unsupported entry type `{c}` for {name}")
+        }
+    }
+
+    entries
+}

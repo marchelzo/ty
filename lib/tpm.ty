@@ -1,0 +1,471 @@
+import os
+import json
+import http.codec as codec
+import path (Path)
+import clap (clap!)
+import tpm.core as core (TpmError, fail, note, warn, real, cache-root, write-atomic)
+import tpm.semver (Version, Req, SemverError)
+import tpm.manifest as man (Manifest)
+import tpm.registry as registry (Registry)
+import tpm.resolve as resolve (Resolution, Options, Pkg)
+import tpm.lock as lock
+import tpm.env as env
+import tpm.build as build
+import tpm.store as store
+import tpm.tar as tar
+import tpm.edit (edit-entry, edit-dependencies)
+
+/// Create a ty.toml in DIR (default: the current directory)
+clap! Init {
+    /// Package name (default: the directory name)
+    name: String, short: 'n', long: 'name'
+    /// The directory to initialize
+    dir: String, pos: true, default: '.'
+}
+
+/// Add dependencies to ty.toml, then lock and sync
+clap! Add {
+    /// Use a local package directory
+    path: String, short: 'p', long: 'path'
+    /// Use a git repository
+    git: String, short: 'g', long: 'git'
+    /// The git revision (branch, tag or commit) to use with --git
+    rev: String, short: 'r', long: 'rev'
+    /// Import the dependency under NAME but take it from this package
+    package: String, long: 'package'
+    /// Registry URL (overrides [tpm] registry and TPM_REGISTRY)
+    registry: String, long: 'registry'
+    /// Do not touch the network
+    offline: Bool, long: 'offline'
+    /// The project directory (default: the nearest ty.toml)
+    project: String, short: 'C', long: 'project'
+    /// NAME, NAME@REQUIREMENT or NAME@VERSION
+    spec: String, pos: true, required: true
+    /// More dependencies to add (options must come before these)
+    more: [String], pos: true, repeat: true
+}
+
+/// Remove dependencies from ty.toml, then lock and sync
+clap! Remove {
+    /// Do not touch the network
+    offline: Bool, long: 'offline'
+    /// The project directory (default: the nearest ty.toml)
+    project: String, short: 'C', long: 'project'
+    /// The dependency to remove
+    name: String, pos: true, required: true
+    /// More dependencies to remove (options must come before these)
+    more: [String], pos: true, repeat: true
+}
+
+/// Resolve dependencies and write ty.lock
+clap! Lock {
+    /// Re-resolve every package to its newest allowed version
+    upgrade: Bool, short: 'U', long: 'upgrade'
+    /// Re-resolve only PACKAGE (repeatable)
+    upgrade-package: [String], short: 'P', long: 'upgrade-package', repeat: true
+    /// Registry URL (overrides [tpm] registry and TPM_REGISTRY)
+    registry: String, long: 'registry'
+    /// Do not touch the network
+    offline: Bool, long: 'offline'
+    /// The project directory (default: the nearest ty.toml)
+    project: String, short: 'C', long: 'project'
+}
+
+/// Make .ty/env.json match ty.lock, locking first if ty.toml changed
+clap! Sync {
+    /// Fail instead of updating ty.lock
+    frozen: Bool, long: 'frozen'
+    /// Do not touch the network
+    offline: Bool, long: 'offline'
+    /// Registry URL (overrides [tpm] registry and TPM_REGISTRY)
+    registry: String, long: 'registry'
+    /// Print nothing but errors
+    quiet: Bool, short: 'q', long: 'quiet'
+    /// Invoked by ty itself when it finds a stale environment
+    auto: Bool, long: 'auto', hidden: true
+    /// The project directory (default: the nearest ty.toml)
+    project: String, short: 'C', long: 'project'
+}
+
+/// Show the resolved dependency tree
+clap! Tree {
+    /// Do not touch the network
+    offline: Bool, long: 'offline'
+    /// The project directory (default: the nearest ty.toml)
+    project: String, short: 'C', long: 'project'
+}
+
+/// Build the package archive for this platform into dist/
+clap! Build {
+    /// Where to find the bundled native libraries and their dependencies (repeatable;
+    /// default: native/<os>-<arch>, then native/)
+    native-dir: [String], short: 'L', long: 'native-dir', repeat: true
+    /// Output directory (default: dist/)
+    out: String, short: 'o', long: 'out'
+    /// The project directory (default: the nearest ty.toml)
+    project: String, short: 'C', long: 'project'
+}
+
+/// Add built archives to a registry directory
+clap! Publish {
+    /// The registry directory (default: [tpm] registry or TPM_REGISTRY)
+    registry: String, long: 'registry'
+    /// The project directory (default: the nearest ty.toml)
+    project: String, short: 'C', long: 'project'
+    /// Archives to publish (default: this version's archives in dist/)
+    archives: [String], pos: true, repeat: true
+}
+
+/// Show or clear the package cache
+clap! Cache {
+    /// `dir` prints the cache directory; `clean` deletes it
+    action: String, pos: true, default: 'dir', check: ['dir', 'clean']
+}
+
+clap! Tpm {
+    /// Create a ty.toml
+    cmd init: Init
+
+    /// Add dependencies
+    cmd add: Add
+
+    /// Remove dependencies
+    cmd remove: Remove
+
+    /// Resolve dependencies and write ty.lock
+    cmd lock: Lock
+
+    /// Install what ty.lock describes into .ty/env.json
+    cmd sync: Sync
+
+    /// Show the dependency tree
+    cmd tree: Tree
+
+    group 'Publishing' {
+        /// Build the package archive
+        cmd build: Build
+
+        /// Add archives to a registry directory
+        cmd publish: Publish
+    }
+
+    /// Show or clear the package cache
+    cmd cache: Cache
+}
+
+fn project(dir: String | nil) -> Manifest {
+    let start = dir ?? os.getcwd()
+    match man.find(start) {
+        $found => man.load(found),
+        _      => fail("no {man.FILE} in {real(start)} or any parent directory (run `tpm init`)")
+    }
+}
+
+fn registry-url(m: Manifest, given: String | nil) -> String | nil {
+    [given, getenv('TPM_REGISTRY'), m.registry].find(r -> r != nil && r != '')
+}
+
+fn open-registry(m: Manifest, given: String | nil, offline: Bool) -> Registry | nil {
+    match registry-url(m, given) {
+        $url => Registry.open(url, m.dir, offline),
+        _    => nil
+    }
+}
+
+fn lock-project(m: Manifest, reg: Registry | nil, opts: Options) -> Resolution {
+    let file = m.dir / lock.FILE
+    let res = resolve.resolve(m, reg, lock.read(file), opts)
+    let rows = res.sorted.map(\_.locked(m.dir))
+    if !res.reused || !file.file? {
+        if lock.write(file, res.inputs, rows) {
+            note('Locked', "{#rows} package{(#rows == 1) ? '' : 's'}")
+        }
+    }
+    res
+}
+
+fn sync-project(m: Manifest, reg: Registry | nil, opts: Options) -> Resolution {
+    let res = lock-project(m, reg, opts)
+    env.write(res, reg, opts.offline)
+    res
+}
+
+fn describe(p: Pkg) -> String {
+    match p.source {
+        'path'     => "{p.name} {p.version} ({(p.manifest)!.dir})",
+        'git'      => "{p.name} {p.version} ({p.url}#{(p.commit)!.slice(0, 10)})",
+        _          => "{p.name} {p.version}"
+    }
+}
+
+const NAME = /^[a-z][a-z0-9_]*$/
+
+fn toml-string(s: String) -> String {
+    json.encode(s)
+}
+
+/// The `[dependencies]` value for an `add` request.
+fn dependency-value(opts: Add, alias: String, req: String | nil, reg: Registry | nil) -> String {
+    let fields = []
+
+    if opts.package != nil {
+        fields.push("package = {toml-string(opts.package)}")
+    }
+
+    if let $p = opts.path {
+        fields.push("path = {toml-string(p)}")
+    } else if let $g = opts.git {
+        fields.push("git = {toml-string(g)}")
+        if let $r = opts.rev {
+            fields.push("rev = {toml-string(r)}")
+        }
+    } else {
+        let package = opts.package ?? alias
+        let wanted = req ?? do {
+            let r = reg ?? fail("cannot pick a version of {package} without a registry; set [tpm] registry or TPM_REGISTRY")
+            let versions = r.entries(package).filter(e -> !e.yanked? && !e.version.pre?).map(\_.version)
+            match versions.max() {
+                $v => str(v),
+                _  => fail("{package} is not in the registry {r.url}")
+            }
+        }
+        try {
+            Req.parse(wanted)
+        } catch e: SemverError {
+            fail("{alias}: {e.what}")
+        }
+        if #fields == 0 {
+            return toml-string(wanted)
+        }
+        fields.push("version = {toml-string(wanted)}")
+    }
+
+    '{ ' + fields.join(', ') + ' }'
+}
+
+fn split-spec(spec: String) -> (String, String | nil) {
+    match spec.split('@') {
+        [name]      => (name, nil),
+        [name, req] => (name, req),
+        _           => fail("invalid dependency `{spec}` (use NAME or NAME@REQUIREMENT)")
+    }
+}
+
+fn add(opts: Add) {
+    let m = project(opts.project)
+    let specs = [opts.spec, *opts.more]
+    let sourced = opts.path != nil || opts.git != nil
+
+    if (opts.path != nil && opts.git != nil) || (opts.rev != nil && opts.git == nil) {
+        fail('give either --path or --git (with an optional --rev)')
+    }
+    if sourced && #specs != 1 {
+        fail('--path and --git take exactly one dependency name')
+    }
+
+    let reg = open-registry(m, opts.registry, opts.offline)
+    let text = m.file.read-text()
+
+    if opts.registry != nil && m.registry == nil && getenv('TPM_REGISTRY') in [nil, ''] {
+        text = edit-entry(text, 'tpm', 'registry', toml-string(opts.registry))
+    }
+
+    for spec in specs {
+        let (alias, req) = split-spec(spec)
+        if !alias.match?(NAME) {
+            fail("invalid dependency name `{alias}` (use lowercase letters, digits and `_`)")
+        }
+        if alias == m.name {
+            fail("{m.name} cannot depend on itself")
+        }
+        if sourced && req != nil {
+            fail("`{spec}`: a version requirement cannot be combined with --path or --git")
+        }
+        let value = dependency-value(opts, alias, req, reg)
+        text = edit-dependencies(text, alias, value)
+        note('Adding', "{alias} = {value}")
+    }
+
+    let edited = man.parse(text, m.file)
+    for spec in specs {
+        let (alias, _) = split-spec(spec)
+        if !edited.deps.any?(\_.alias == alias) {
+            fail("could not add {alias} to {m.file}")
+        }
+    }
+
+    resolve.resolve(edited, reg, lock.read(m.dir / lock.FILE), Options(offline: opts.offline))
+    write-atomic(m.file, text)
+    sync-project(man.load(m.dir), reg, Options(offline: opts.offline))
+}
+
+fn remove(opts: Remove) {
+    let m = project(opts.project)
+    let names = [opts.name, *opts.more]
+    let text = m.file.read-text()
+
+    for alias in names {
+        if !m.deps.any?(\_.alias == alias) {
+            fail("{alias} is not a dependency of {m.name}")
+        }
+        text = edit-dependencies(text, alias, nil)
+        note('Removing', alias)
+    }
+
+    let edited = man.parse(text, m.file)
+    for alias in names {
+        if edited.deps.any?(\_.alias == alias) {
+            fail("could not remove {alias} from {m.file}")
+        }
+    }
+
+    let reg = open-registry(edited, nil, opts.offline)
+    resolve.resolve(edited, reg, lock.read(m.dir / lock.FILE), Options(offline: opts.offline))
+    write-atomic(m.file, text)
+    sync-project(man.load(m.dir), reg, Options(offline: opts.offline))
+}
+
+fn init(opts: Init) {
+    let dir = real(opts.dir)
+    let file = dir / man.FILE
+    if file.exists? {
+        fail("{file} already exists")
+    }
+    let name = opts.name ?? dir.name.lower().sub(/[^a-z0-9_]/, '_')
+    if !name.match?(NAME) {
+        fail("invalid package name `{name}`; pick one with --name")
+    }
+    dir.mkdir(parents: true, exist-ok: true)
+    write-atomic(file, "[package]\nname = {toml-string(name)}\nversion = \"0.1.0\"\n\n[dependencies]\n")
+    note('Created', str(file))
+}
+
+fn print-deps(res: Resolution, p: Pkg, prefix: String, seen: Dict[String, Bool]) {
+    let deps = p.deps.sort(by=\_.alias)
+    for d; i in deps {
+        let last? = i == #deps - 1
+        let target = res.target(d)
+        let label = (d.alias == d.package) ? describe(target) : "{d.alias} → {describe(target)}"
+        let again = seen[target.name] != nil && #target.deps > 0
+        print("{prefix}{last? ? '└── ' : '├── '}{label}{again ? ' (*)' : ''}")
+        if !again {
+            seen[target.name] = true
+            print-deps(res, target, prefix + (last? ? '    ' : '│   '), seen)
+        }
+    }
+}
+
+fn tree(opts: Tree) {
+    let m = project(opts.project)
+    let res = resolve.resolve(m, open-registry(m, nil, opts.offline), lock.read(m.dir / lock.FILE), Options(offline: opts.offline))
+    print(describe(res.root))
+    print-deps(res, res.root, '', %{})
+}
+
+fn build-cmd(opts: Build) {
+    let m = project(opts.project)
+    let out = Path(opts.out ?? str(m.dir / 'dist'))
+    let (archive, info) = build.build(m, opts.native-dir.map(Path), out)
+    note('Built', "{archive} ({info['platform']})")
+}
+
+fn archive-meta(file: Path) -> Dict {
+    let entries = try {
+        tar.unpack(codec.decode('gzip', file.read-bytes()))
+    } catch e {
+        fail("{file}: not a package archive ({e})")
+    }
+    match entries.find(\_.name == store.META) {
+        $e => json.parse(e.data.str()),
+        _  => fail("{file}: no {store.META}; was it made by `tpm build`?")
+    }
+}
+
+fn publish(opts: Publish) {
+    let m = (opts.project == nil && #opts.archives > 0) ? nil : project(opts.project)
+    let url = [opts.registry, getenv('TPM_REGISTRY'), m.?registry].find(r -> r != nil && r != '') ?? fail('no registry given; use --registry DIR')
+    let reg = Registry.open(url, m.?dir ?? Path(os.getcwd()), false)
+    let dir = reg.local ?? fail("{url}: only local registry directories can be published to; publish into a checkout of the registry and upload it")
+
+    let archives = (#opts.archives > 0)
+                 ? opts.archives.map(Path)
+                 : ((m)!.dir / 'dist').glob("{(m)!.name}-{(m)!.version}-*.tar.gz")
+
+    if #archives == 0 {
+        fail('nothing to publish; run `tpm build` first')
+    }
+
+    for a in archives.sort(by=str) {
+        let info = archive-meta(a)
+        let rel = registry.publish(dir, info, a)
+        note('Published', "{info['name']} {info['version']} ({info['platform']}) as {rel}")
+    }
+}
+
+fn cache(opts: Cache) {
+    let root = cache-root()
+    match opts.action {
+        'dir'   => print(root),
+        'clean' => do {
+            for sub in ['store', 'downloads', 'index', 'git'] {
+                let d = root / sub
+                if d.exists? {
+                    for (p, _, _) in d.walk() {
+                        p.chmod(0o755)
+                    }
+                    d.rmtree(quiet: true)
+                }
+            }
+            note('Removed', str(root))
+        }
+    }
+}
+
+fn sync(opts: Sync) {
+    core.quiet? = opts.quiet
+    let m = project(opts.project)
+    let reg = open-registry(m, opts.registry, opts.offline)
+    let res = sync-project(m, reg, Options(offline: opts.offline, frozen: opts.frozen))
+    if !opts.auto {
+        note('Synced', "{#res.packages} package{(#res.packages == 1) ? '' : 's'} into {m.dir / env.FILE}")
+    }
+}
+
+fn dispatch(cmd: _) {
+    match cmd {
+        c: Init    => init(c),
+        c: Add     => add(c),
+        c: Remove  => remove(c),
+        c: Lock    => do {
+            let m = project(c.project)
+            let res = lock-project(m, open-registry(m, c.registry, c.offline), Options(
+                offline: c.offline,
+                upgrade: c.upgrade,
+                only: c.upgrade-package
+            ))
+            if res.reused {
+                note('Locked', "{#res.packages} packages (unchanged)")
+            }
+        },
+        c: Sync    => sync(c),
+        c: Tree    => tree(c),
+        c: Build   => build-cmd(c),
+        c: Publish => publish(c),
+        c: Cache   => cache(c),
+        _          => do {
+            Tpm.parse(['tpm', '--help'])
+        }
+    }
+}
+
+pub fn main() {
+    let (opts, _) = Tpm.parse(['tpm', *argv[1;]])
+    let status = try {
+        dispatch(opts.cmd)
+        0
+    } catch e: TpmError {
+        eprint("{core.paint('1;31', 'error')}: {e.what}")
+        1
+    }
+    os.exit(status)
+}

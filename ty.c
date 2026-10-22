@@ -181,6 +181,7 @@ usage(void)
                 "                        Format Ty sources (`ty --fmt --help` for options)\n"
                 "    --fix [OPTS] [PATH...]\n"
                 "                        Fix and tidy Ty sources (`ty --fix --help` for options)\n"
+                "    --pm COMMAND [OPTS] Manage packages; same as `tpm` (`ty --pm --help` for commands)\n"
                 "    --ls                Run the language server, reading requests from stdin and\n"
                 "                        writing responses to stdout\n",
                 stdout
@@ -590,6 +591,11 @@ static int
 ProcessArgs(char *argv[], bool first)
 {
         int argi = 1;
+
+        if (ToolArgIndex == 0) {
+                return argi;
+        }
+
         while (argv[argi] != NULL && argv[argi][0] == '-') {
                 if (s_eq(argv[argi], "--")) {
                         argi += 1;
@@ -629,6 +635,7 @@ ProcessArgs(char *argv[], bool first)
                         s_eq(argv[argi], "--lint")
                      || s_eq(argv[argi], "--fmt")
                      || s_eq(argv[argi], "--fix")
+                     || s_eq(argv[argi], "--pm")
                 ) {
                         ToolMode = argv[argi] + 2;
                         if (first) {
@@ -1178,6 +1185,13 @@ RunTestMode(void)
         exit(RunTestHarness(ty, TestRunnerArgs, TestRunnerArgc));
 }
 
+static char const *
+BaseName(char const *path)
+{
+        char const *slash = strrchr(path, '/');
+        return (slash == NULL) ? path : slash + 1;
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1193,6 +1207,11 @@ main(int argc, char **argv)
 #if defined(TY_PROFILE_TYPES) && 1
         atexit(xxx);
 #endif
+
+        if (argc > 0 && s_eq(BaseName(argv[0]), "tpm")) {
+                ToolMode     = "pm";
+                ToolArgIndex = 0;
+        }
 
         int nopt = (argc == 0) ? 0 : ProcessArgs(argv, true);
 
@@ -1261,6 +1280,9 @@ main(int argc, char **argv)
                 tool[0] = '\0';
                 if (s_eq(ToolMode, "prof-report")) {
                         ty_snprintf(tool + 1, sizeof tool - 1, "import prof\nprof.main()\n");
+                } else if (s_eq(ToolMode, "pm")) {
+                        ty_snprintf(tool + 1, sizeof tool - 1, "import tpm\ntpm.main()\n");
+                        compiler_library_imports(true);
                 } else {
                         ty_snprintf(tool + 1, sizeof tool - 1, "import syn.cli\nsyn.cli.main('%s')\n", ToolMode);
                 }

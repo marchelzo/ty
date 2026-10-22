@@ -1,0 +1,79 @@
+import ffi as c
+import ty
+import tpm.core (tool)
+
+const TAG = /^(linux|macos)-([a-z0-9_]+)-(?:glibc)?([0-9]+(?:\.[0-9]+)*)$/v
+
+pub class Platform {
+    os:      String
+    arch:    String
+    version: Array[Int]
+
+    init(os: String, arch: String, version: Array[Int]) {
+        self.os      = os
+        self.arch    = arch
+        self.version = version
+    }
+
+    static parse(s: String) -> Platform | nil {
+        let m = TAG(s) ?? return nil
+        let [_, os, arch, version] = m.groups
+        Platform(os, arch, version.split('.').map(int))
+    }
+
+    /// Whether an artifact built for `self` loads on `host`.
+    runs-on?(host: Platform) -> Bool {
+        os == host.os && arch == host.arch && version <= host.version
+    }
+
+    __str__() -> String {
+        let v = version.map(str).join('.')
+        (os == 'linux') ? "linux-{arch}-glibc{v}" : "{os}-{arch}-{v}"
+    }
+}
+
+fn glibc() -> Array[Int] | nil {
+    let f = c.dlsym('gnu_get_libc_version') ?? return nil
+    let v = c.as_str(c.call(c.cif(c.ptr), f))
+    v.split('.').map(int)
+}
+
+fn macos() -> Array[Int] {
+    tool(['sw_vers', '-productVersion'], 'detecting the macOS version').trim().split('.').map(int)
+}
+
+fn detect() -> Platform | nil {
+    match ty.platform {
+        'linux'  => match glibc() {
+            $v => Platform('linux', ty.arch, v),
+            _  => nil
+        },
+        'darwin' => Platform('macos', ty.arch, macos()),
+        _        => nil
+    }
+}
+
+const HOST = detect()
+
+/// The host as a platform tag. It is nil where native artifacts are unsupported (musl, Windows, ...).
+pub fn host() -> Platform | nil {
+    HOST
+}
+
+pub fn host-tag() -> String {
+    str(host() ?? 'unsupported')
+}
+
+/// Picks the artifact platform to install on `here`: the newest compatible native build, else `any`.
+pub fn best(tags: Array[String], here: Platform | nil = host()) -> String | nil {
+    let native = tags.filter(fn (t) {
+        match [Platform.parse(t), here] {
+            [p: Platform, h: Platform] => p.runs-on?(h),
+            _                          => false
+        }
+    })
+    match native.sort(by=t -> Platform.parse(t)!.version) {
+        [*_, t] => t,
+        []      => ('any' in tags) ? 'any' : nil
+    }
+}

@@ -1,0 +1,227 @@
+import ty
+import ty.test (Test, platform)
+import path (Path)
+import tpm.semver (version, req, Version, SemverError)
+import tpm.manifest as man
+import tpm.tar as tar
+import tpm.edit (edit-dependencies, edit-entry)
+import tpm.platform (Platform, best)
+import tpm.elf as elf
+import http.codec as codec
+
+fn matching(r: String, vs: Array[String]) -> Array[String] {
+    vs.filter(v -> req(r).matches?(version(v)))
+}
+
+const VERSIONS = [
+    '0.0.3', '0.0.4', '0.1.0', '0.2.3', '0.2.9', '0.3.0', '1.0.0', '1.2.0',
+    '1.2.3', '1.3.0-alpha.1', '1.3.0', '1.9.9', '2.0.0-rc.1', '2.0.0',
+]
+
+pub fn requirements-follow-cargo-semantics() {
+    let cases = [
+        ('0.2',          ['0.2.3', '0.2.9']),
+        ('^0.0.3',       ['0.0.3']),
+        ('1.2',          ['1.2.0', '1.2.3', '1.3.0', '1.9.9']),
+        ('~1.2',         ['1.2.0', '1.2.3']),
+        ('=1.2.3',       ['1.2.3']),
+        ('>=1.2, <2',    ['1.2.0', '1.2.3', '1.3.0', '1.9.9']),
+        ('1.*',          ['1.0.0', '1.2.0', '1.2.3', '1.3.0', '1.9.9']),
+        ('>1.2',         ['1.3.0', '1.9.9', '2.0.0']),
+        ('<=1.2',        ['0.0.3', '0.0.4', '0.1.0', '0.2.3', '0.2.9', '0.3.0', '1.0.0', '1.2.0', '1.2.3']),
+        ('^1.3.0-alpha', ['1.3.0-alpha.1', '1.3.0', '1.9.9']),
+    ]
+    for (r, want) in cases {
+        let got = matching(r, VERSIONS)
+        assert(got == want, "{r}: {got}")
+    }
+}
+
+pub fn prereleases-only-match-when-asked-for() {
+    assert(!('2.0.0-rc.1' in matching('*', VERSIONS)))
+    assert(!('1.3.0-alpha.1' in matching('^1.2', VERSIONS)))
+    assert(matching('2.0.0-rc.1', VERSIONS) == ['2.0.0-rc.1', '2.0.0'])
+}
+
+pub fn versions-order-by-precedence() {
+    let chain = ['1.0.0-alpha', '1.0.0-alpha.1', '1.0.0-alpha.beta', '1.0.0-beta', '1.0.0-beta.2', '1.0.0-beta.11', '1.0.0-rc.1', '1.0.0']
+    for i in 1..#chain {
+        assert(version(chain[i - 1]) < version(chain[i]), "{chain[i - 1]} < {chain[i]}")
+    }
+    assert(['1.10.0', '0.9.1', '1.2.0'].map(version).sort().map(str) == ['0.9.1', '1.2.0', '1.10.0'])
+    assert(str(version('1.2.3-rc.1+build.5')) == '1.2.3-rc.1+build.5')
+}
+
+pub fn bad-versions-are-rejected() {
+    for s in ['1.2', 'v1.2.3', '01.2.3', '1.2.3.4', ''] {
+        let ok = try {
+            version(s)
+            true
+        } catch _: SemverError {
+            false
+        }
+        assert(!ok, s)
+    }
+    for s in ['^x', '>=1.2,', '1.*.3'] {
+        let ok = try {
+            req(s)
+            true
+        } catch _: SemverError {
+            false
+        }
+        assert(!ok, s)
+    }
+}
+
+fn manifest(t: Test, text: String) -> man.Manifest {
+    let dir = t.tmp-dir() / 'pkg'
+    dir.mkdir(parents: true, exist-ok: true)
+    (dir / man.FILE).write(text)
+    man.load(dir)
+}
+
+pub fn manifests-describe-dependencies-and-natives(t: Test) {
+    let m = manifest(t, [
+        '[package]',
+        'name = "app"',
+        'version = "0.4.1"',
+        'roots = ["src"]',
+        '',
+        '[dependencies]',
+        'jpeg2 = "0.3"',
+        'util = { path = "../util" }',
+        'img = { package = "jpeg2", version = "~0.3.1" }',
+        'kit = { git = "https://example.org/kit.git", rev = "v1" }',
+        '',
+        '[native]',
+        'openjp2 = "libopenjp2.so.7"',
+        'GL = { system = "GL" }',
+    ].join('\n'))
+
+    assert(m.name == 'app' && str(m.version) == '0.4.1' && m.roots == ['src'])
+    assert(m.deps.map(\_.kind) == ['registry', 'path', 'registry', 'git'])
+    assert(m.deps[2].package == 'jpeg2' && str(m.deps[2].req) == '~0.3.1')
+    assert(m.deps[1].path == m.dir.parent / 'util')
+    assert(m.deps[3].rev == 'v1')
+    assert(m.bundled.map(\_.name) == ['openjp2'])
+    assert(m.natives.filter(\_.system?).map(\_.lib) == ['GL'])
+}
+
+pub fn manifests-default-their-name-and-version(t: Test) {
+    let m = manifest(t, '')
+    assert(m.name == 'pkg' && str(m.version) == '0.0.0' && m.roots == ['.'])
+}
+
+pub fn manifest-mistakes-are-reported(t: Test) {
+    let cases = [
+        ('[package]\nname = "Bad"',                       'invalid package name `Bad`'),
+        ('[dependencies]\nx = 3',                         'x: expected a version string or a table'),
+        ('[dependencies]\nx = { version = "1", path = "a" }', 'give exactly one of'),
+        ('[dependencies]\nx = { version = "1", tag = "a" }',  'unknown key `tag`'),
+        ('[dependencies]\nx = "^q"',                      'invalid version requirement'),
+        ('[package]\nroots = ["../x"]',                   'roots must stay inside the package'),
+        ('[package]\nroots = 42',                         'roots must be a string or an array of strings'),
+        ('[native]\nx = 4',                               'expected a library name'),
+        ('[package\nname = 1',                            'TOML'),
+    ]
+    for (text, want) in cases {
+        let err = try {
+            manifest(t, text)
+            ''
+        } catch e: man.ManifestError {
+            e.what
+        }
+        assert(err.contains?(want), "{text}: {err}")
+    }
+}
+
+pub fn native-keys-ignore-prefixes-and-versions() {
+    for name in ['openjp2', 'libopenjp2.so', 'libopenjp2.so.7', 'libopenjp2.2.5.0.dylib', '/usr/lib/libopenjp2.so.2.5.0'] {
+        assert(man.native-key(name) == 'openjp2', name)
+    }
+    assert(man.native-key('libfoo-1.2.so') == 'foo')
+}
+
+pub fn tar-archives-round-trip() {
+    let long = 'a/' + 'x'.repeat(120) + '/file.ty'
+    let entries = [
+        tar.Entry('ty.toml', Blob('[package]\n')),
+        tar.Entry('src/b.ty', Blob('print(1)\n')),
+        tar.Entry('native/libz.so', Blob(0, 1, 2), 0o755),
+        tar.Entry(long, Blob('long')),
+    ]
+    let back = tar.unpack(codec.decode('gzip', codec.encode('gzip', tar.pack(entries))))
+    assert(back.map(\_.name) == [long, 'native/libz.so', 'src/b.ty', 'ty.toml'])
+    assert(back.map(e -> e.data.str!()) == ['long', '\x00\x01\x02', 'print(1)\n', '[package]\n'])
+    assert(back[1].mode == 0o755 && back[3].mode == 0o644)
+}
+
+pub fn tar-paths-must-stay-inside() {
+    for name in ['../evil', '/etc/passwd', 'a/../../b'] {
+        let raw = tar.pack([tar.Entry('placeholder', Blob('x'))])
+        let bad = Blob(name) + Blob.zeros(100 - #Blob(name)) + raw.slice(100)
+        let sum = [*bad.slice(0, 148), *Blob('        '), *bad.slice(156, 356)].sum(0)
+        let digits = "{sum:o}"
+        let header = bad.slice(0, 148) + Blob('0'.repeat(6 - #digits) + digits, 0, ' ') + bad.slice(156)
+        let ok = try {
+            tar.unpack(header)
+            true
+        } catch _: tar.TarError {
+            false
+        }
+        assert(!ok, name)
+    }
+}
+
+pub fn dependency-edits-keep-the-rest-of-the-file() {
+    let text = [
+        '# my project',
+        '[package]',
+        'name = "app"  # the app',
+        '',
+        '[dependencies]',
+        'a = "1"   # pinned for reasons',
+        'b = { path = "../b" }',
+        '',
+        '[tpm]',
+        'registry = "x"',
+        '',
+    ].join('\n')
+
+    let added = edit-dependencies(text, 'c', '"2.0"')
+    assert(added == text.sub('b = { path = "../b" }\n', 'b = { path = "../b" }\nc = "2.0"\n'), added)
+
+    let replaced = edit-dependencies(text, 'a', '"1.5"')
+    assert(replaced == text.sub('a = "1"   # pinned for reasons', 'a = "1.5"'), replaced)
+
+    let removed = edit-dependencies(text, 'b', nil)
+    assert(removed == text.sub('b = { path = "../b" }\n', ''), removed)
+
+    let fresh = edit-dependencies('[package]\nname = "app"\n', 'a', '"1"')
+    assert(fresh == '[package]\nname = "app"\n\n[dependencies]\na = "1"\n', fresh)
+}
+
+pub fn platform-tags-pick-the-newest-compatible-build() {
+    let here = Platform.parse('linux-x86_64-glibc2.35')!
+    let tags = ['linux-x86_64-glibc2.17', 'linux-x86_64-glibc2.28', 'linux-x86_64-glibc2.39', 'linux-aarch64-glibc2.17', 'macos-aarch64-13.0']
+    assert(best(tags, here) == 'linux-x86_64-glibc2.28')
+    assert(best(['any', 'linux-aarch64-glibc2.17'], here) == 'any')
+    assert(best(['linux-x86_64-glibc2.39'], here) == nil)
+    assert(best(['any'], nil) == 'any')
+    assert(str(Platform.parse('macos-aarch64-14.2')!) == 'macos-aarch64-14.2')
+}
+
+@platform('linux')
+pub fn elf-objects-list-what-they-need() {
+    let obj = elf.read(ty.executable)
+    assert('libc.so.6' in obj.needed, obj.needed)
+    assert(obj.glibc != nil && obj.glibc >= [2, 2])
+    assert(elf.elf?(ty.executable) && !elf.elf?(__file__))
+}
+
+pub fn entries-can-be-set-in-any-table() {
+    let text = '[package]\nname = "app"\n\n[dependencies]\na = "1"\n'
+    assert(edit-entry(text, 'tpm', 'registry', '"https://r"') == text + '\n[tpm]\nregistry = "https://r"\n')
+    let old = '[tpm]\nregistry = "old"\n\n[dependencies]\n'
+    assert(edit-entry(old, 'tpm', 'registry', '"new"') == '[tpm]\nregistry = "new"\n\n[dependencies]\n')
+}

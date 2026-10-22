@@ -1,0 +1,143 @@
+import os
+import json
+import http.codec as codec
+import path (Path)
+import tpm.core (TpmError, fail, note, cache-root, sha256, real, read-json, write-json, tool, which?)
+import tpm.tar as tar
+import tpm.registry (Registry, Artifact)
+
+pub const META = 'tpm.json'
+
+pub fn store-dir() -> Path {
+    cache-root() / 'store'
+}
+
+fn mode-of(e: tar.Entry) -> Int {
+    ((e.mode & 0o111) != 0) ? 0o555 : 0o444
+}
+
+/// Extracts a .tar.gz package archive into `dest` (which must not exist yet).
+pub fn extract(archive: Blob, dest: Path) {
+    let entries = try {
+        tar.unpack(codec.decode('gzip', archive))
+    } catch e: tar.TarError {
+        throw TpmError("{dest}: {e.what}")
+    }
+
+    let tmp = dest.parent / ".{dest.name}.{os.getpid()}.tmp"
+    if tmp.exists? {
+        tmp.rmtree()
+    }
+
+    for e in entries {
+        let p = tmp / e.name
+        p.parent.mkdir(parents: true, exist-ok: true)
+        p.write(e.data)
+        p.chmod(mode-of(e))
+    }
+
+    write-standalone-env(tmp, dest)
+
+    if os.rename(str(tmp), str(dest)) != 0 {
+        tmp.rmtree(quiet: true)
+        if !dest.dir? {
+            fail("failed to install {dest}")
+        }
+    }
+}
+
+fn write-standalone-env(tmp: Path, dest: Path) {
+    let meta = read-json(tmp / META)
+    let natives = %{k: str(dest / v) for k, v in meta['natives'] ?? %{}}
+    write-json(tmp / '.ty' / 'env.json', %{
+        'version':  1,
+        'inputs':   [],
+        'packages': [%{
+            'dir':     str(dest),
+            'roots':   (meta['roots'] ?? ['.']).map(r -> str(dest / r)),
+            'deps':    %{},
+            'natives': natives
+        }]
+    })
+}
+
+/// The store directory holding `art`, downloading and unpacking it first if needed.
+pub fn fetch(registry: Registry, name: String, version: String, art: Artifact) -> Path {
+    let dest = store-dir() / art.sha256.slice(0, 32)
+    if (dest / META).file? {
+        return dest
+    }
+
+    let archive = cache-root() / 'downloads' / "{art.sha256}.tar.gz"
+    if !archive.file? || sha256(archive.read-bytes()) != art.sha256 {
+        note('Downloading', "{name} {version} ({art.platform})")
+        registry.download(art, archive)
+    }
+
+    dest.parent.mkdir(parents: true, exist-ok: true)
+    extract(archive.read-bytes(), dest)
+
+    let meta = read-json(dest / META)
+    if meta['name'] != name || meta['version'] != version {
+        throw TpmError("{art.url}: archive holds {meta['name']} {meta['version']}, expected {name} {version}")
+    }
+
+    dest
+}
+
+fn git(argv: Array[String], what: String, chdir: String | nil = nil) -> String {
+    if !which?('git') {
+        fail("{what}: git is not installed")
+    }
+    tool(['git', *argv], what, chdir: chdir).trim()
+}
+
+fn git-db(url: String) -> Path {
+    cache-root() / 'git' / 'db' / sha256(url).slice(0, 16)
+}
+
+fn has-commit?(db: Path, commit: String) -> Bool {
+    try {
+        git(['--git-dir', str(db), 'cat-file', '-e', commit + '^{commit}'], 'git')
+        true
+    } catch _: TpmError {
+        false
+    }
+}
+
+/// Resolves `rev` (or the default branch) of `url` to a commit, preferring `locked` when the
+/// repository still has it, and returns `(commit, checkout-dir)`.
+pub fn checkout(url: String, rev: String | nil, locked: String | nil, offline: Bool) -> (String, Path) {
+    let db = git-db(url)
+    let what = "fetching {url}"
+
+    if !db.dir? {
+        if offline {
+            fail("{url}: not in the cache, and --offline was given")
+        }
+        note('Cloning', url)
+        db.parent.mkdir(parents: true, exist-ok: true)
+        git(['clone', '--bare', '--quiet', url, str(db)], what)
+    } else if (locked == nil || !has-commit?(db, locked)) && !offline {
+        note('Fetching', url)
+        git(['--git-dir', str(db), 'fetch', '--quiet', '--force', '--tags', 'origin', '+refs/heads/*:refs/heads/*'], what)
+    }
+
+    let commit = (locked != nil && has-commit?(db, locked))
+               ? locked
+               : git(['--git-dir', str(db), 'rev-parse', '--verify', (rev ?? 'HEAD') + '^{commit}'], "resolving {url}#{rev ?? 'HEAD'}")
+
+    let dir = cache-root() / 'git' / 'checkouts' / sha256(url).slice(0, 16) / commit
+    if !dir.dir? {
+        let tmp = dir.parent / ".{commit}.{os.getpid()}.tmp"
+        dir.parent.mkdir(parents: true, exist-ok: true)
+        if tmp.exists? {
+            tmp.rmtree()
+        }
+        git(['clone', '--quiet', '--no-checkout', str(db), str(tmp)], what)
+        git(['-C', str(tmp), 'checkout', '--quiet', '--detach', commit], what)
+        tmp.rename(dir)
+    }
+
+    (commit, real(dir))
+}

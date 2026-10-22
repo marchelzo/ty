@@ -431,9 +431,6 @@ compiler_test_runner_failed(void);
 bool
 compiler_module_exists(Ty *ty, char const *name);
 
-Module *
-compiler_load_manifest(Ty *ty, char const *path);
-
 bool
 compiler_is_builtin_module(Ty *ty, char const *name);
 

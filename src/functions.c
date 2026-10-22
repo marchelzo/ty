@@ -11067,6 +11067,41 @@ TY_BUILTIN_RAW(ty_mod_which)
         return which;
 }
 
+// ty/mod.native(name: String, mod: ?Module = nil) -> String | nil
+TY_BUILTIN_RAW(ty_mod_native)
+{
+        ASSERT_ARGC("ty.mod.native()", 1, 2);
+
+        Value name = ARGx(0, VALUE_STRING);
+        Value from = (argc > 1) ? ARGx(1, VALUE_MODULE, VALUE_NIL) : NIL;
+        Module const *mod = (from.type == VALUE_NIL) ? vm_foreign_caller_module(ty) : from.mod;
+
+        if (
+                (mod == NULL)
+             || (mod->path == NULL)
+             || (strchr(mod->path, '/') == NULL)
+        ) {
+                return NIL;
+        }
+
+        char const *path = mod_native(mod_package(ty, mod->path), TY_TMP_C_STR(name));
+
+        return (path == NULL) ? NIL : vSsz(path);
+}
+
+// ty/mod.stamp(path: String) -> String | nil
+TY_BUILTIN_RAW(ty_mod_stamp)
+{
+        ASSERT_ARGC("ty.mod.stamp()", 1);
+
+        char *stamp = mod_stamp(TY_TMP_C_STR(ARGx(0, VALUE_STRING)));
+        Value v = (stamp == NULL) ? NIL : vSsz(stamp);
+
+        ty_free(stamp);
+
+        return v;
+}
+
 // ty/mod.compile(source: String, parent: ?Module = nil, path: String = '(repl)') -> Module
 TY_BUILTIN_RAW(ty_mod_compile)
 {

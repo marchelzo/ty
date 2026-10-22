@@ -1,3 +1,9 @@
+#include <errno.h>
+#include <spawn.h>
+#include <sys/wait.h>
+
+#include <xxhash.h>
+
 #include "mod.h"
 #include "ty.h"
 #include "table.h"
@@ -5,13 +11,23 @@
 #include "vm.h"
 #include "scope.h"
 #include "compiler.h"
+#include "dict.h"
+#include "json.h"
 
-#define MANIFEST "__pkg__.ty"
+#ifdef TY_EMBED_LIB
+#include "bundle.h"
+#endif
+
+#define MANIFEST "ty.toml"
+#define ENVFILE  ".ty/env.json"
+
+extern char **environ;
 
 void
 mod_init(TY *ty)
 {
         table_init(ty->ty, &ty->pkg);
+        table_init(ty->ty, &ty->env);
 }
 
 static Array *
@@ -94,6 +110,13 @@ NewPackage(Ty *ty, char const *dir, char const *manifest, u8 kind)
 }
 
 static Package *
+EnvPackage(Ty *ty, char const *dir)
+{
+        Value const *hit = table_look(ty, &ty->ty->env, dir);
+        return (hit == NULL) ? NULL : hit->ptr;
+}
+
+static Package *
 FindPackage(Ty *ty, char const *from)
 {
         char buf0[PATH_MAX + 1];
@@ -116,6 +139,9 @@ FindPackage(Ty *ty, char const *from)
         for (;;) {
                 dir = sfmt("%s", dir);
                 svP(seen, dir);
+                if ((pkg = EnvPackage(ty, dir)) != NULL) {
+                        break;
+                }
                 if (InSearchPath(ty, dir)) {
                         pkg = NewPackage(ty, start, NULL, PKG_LIBRARY);
                         vN(seen) = 1;
@@ -175,83 +201,282 @@ mod_kind_name(Package const *pkg)
         }
 }
 
-static char const *
-PackagePath(Ty *ty, Package const *pkg, char const *what, Value const *v)
+char const *
+mod_native(Package const *pkg, char const *name)
 {
-        char path[PATH_MAX + 1];
-        char real[PATH_MAX + 1];
-        char const *home = getenv("HOME");
-
-        if (v->type != VALUE_STRING) {
-                zP("%s: %s must hold strings, found %s", pkg->manifest, what, VSC(v));
+        for (int i = 0; i + 1 < vN(pkg->natives); i += 2) {
+                if (s_eq(v__(pkg->natives, i), name)) {
+                        return v__(pkg->natives, i + 1);
+                }
         }
 
-        int n = (int)sN(*v);
-        char const *s = (char const *)ss(*v);
+        return NULL;
+}
 
-        if (n > 0 && s[0] == '/') {
-                ty_snprintf(path, sizeof path, "%.*s", n, s);
-        } else if (n > 1 && s[0] == '~' && s[1] == '/' && home != NULL) {
-                ty_snprintf(path, sizeof path, "%s%.*s", home, n - 1, s + 1);
-        } else {
-                ty_snprintf(path, sizeof path, "%s/%.*s", pkg->dir, n, s);
+char *
+mod_stamp(char const *path)
+{
+        byte_vector data = {0};
+        char hex[17];
+
+        if (!xslurp(path, &data)) {
+                return NULL;
         }
 
-        return S2((realpath(path, real) != NULL) ? real : path);
+        ty_snprintf(hex, sizeof hex, "%016llx", (unsigned long long)XXH3_64bits(vv(data), vN(data)));
+        xvF(data);
+
+        return S2(hex);
 }
 
 static Value const *
-ManifestConstant(Ty *ty, Module const *mod, char const *name)
+Field(Ty *ty, Value const *v, char const *name)
 {
-        Symbol *sym = scope_local_lookup(ty, mod->scope, name);
-        return (sym == NULL) ? NULL : vm_global(ty, sym->i);
+        return (v->type == VALUE_DICT) ? dict_get_member(ty, v->dict, name) : NULL;
 }
 
-static void
-ReadRoots(Ty *ty, Package *pkg, Value const *roots)
+static bool
+IsA(Value const *v, int type)
 {
-        if (roots == NULL || roots->type == VALUE_NIL) {
-                return;
-        }
-
-        v0(pkg->roots);
-
-        switch (roots->type) {
-        case VALUE_STRING:
-                xvP(pkg->roots, PackagePath(ty, pkg, "ROOTS", roots));
-                break;
-
-        case VALUE_ARRAY:
-                for (int i = 0; i < vN(*roots->array); ++i) {
-                        xvP(pkg->roots, PackagePath(ty, pkg, "ROOTS", v_(*roots->array, i)));
-                }
-                break;
-
-        default:
-                zP("%s: ROOTS must be a String or Array[String], found %s", pkg->manifest, VSC(roots));
-        }
+        return (v != NULL) && (v->type == type);
 }
 
-static void
-ReadDeps(Ty *ty, Package *pkg, Value const *deps)
+static char const *
+EnvPath(char const *base, char const *s, char *buf)
 {
-        if (deps == NULL || deps->type == VALUE_NIL) {
-                return;
+        char joined[PATH_MAX + 1];
+
+        if (s[0] == '/') {
+                return s;
         }
 
-        if (deps->type != VALUE_DICT) {
-                zP("%s: DEPS must be a Dict[String, String], found %s", pkg->manifest, VSC(deps));
+        ty_snprintf(joined, sizeof joined, "%s/%s", base, s);
+
+        return (realpath(joined, buf) != NULL) ? buf : strcpy(buf, joined);
+}
+
+static bool
+SameStamp(Ty *ty, char const *base, Value const *input)
+{
+        char buf[PATH_MAX + 1];
+
+        if (
+                !IsA(input, VALUE_ARRAY)
+             || (vN(*input->array) != 2)
+             || !IsA(v_(*input->array, 0), VALUE_STRING)
+        ) {
+                return false;
         }
 
-        v0(pkg->deps);
+        Value const *want = v_(*input->array, 1);
+        char *have = mod_stamp(EnvPath(base, TY_TMP_C_STR(*v_(*input->array, 0)), buf));
+        bool same = IsA(want, VALUE_STRING) ? (have != NULL && vs_eq_z(*want, have))
+                  :                           (have == NULL);
 
-        dfor(deps->dict, {
-                if (key->type != VALUE_STRING) {
-                        zP("%s: DEPS must be keyed by strings, found %s", pkg->manifest, VSC(key));
+        ty_free(have);
+
+        return same;
+}
+
+static bool
+EnvFresh(Ty *ty, char const *base, Value const *env)
+{
+        char buf[PATH_MAX + 1];
+
+        Value const *version  = Field(ty, env, "version");
+        Value const *inputs   = Field(ty, env, "inputs");
+        Value const *packages = Field(ty, env, "packages");
+
+        if (
+                !IsA(version,  VALUE_INTEGER)
+             || !IsA(inputs,   VALUE_ARRAY)
+             || !IsA(packages, VALUE_ARRAY)
+             || (version->z != 1)
+        ) {
+                return false;
+        }
+
+        vfor(*inputs->array, {
+                if (!SameStamp(ty, base, it)) {
+                        return false;
                 }
-                xvP(pkg->deps, mod_name(ty, TY_TMP_C_STR(*key)));
-                xvP(pkg->deps, PackagePath(ty, pkg, "DEPS", val));
         });
+
+        vfor(*packages->array, {
+                Value const *dir = Field(ty, it, "dir");
+                if (!IsA(dir, VALUE_STRING) || access(EnvPath(base, TY_TMP_C_STR(*dir), buf), F_OK) != 0) {
+                        return false;
+                }
+        });
+
+        return true;
+}
+
+static Value
+ReadEnv(Ty *ty, char const *path)
+{
+        byte_vector text = {0};
+        Value env;
+
+        if (!xslurp(path, &text)) {
+                return NIL;
+        }
+
+        Value src = vSs(vv(text), vN(text));
+        xvF(text);
+
+        if (TY_CATCH_ERROR()) {
+                (void)TY_CATCH();
+                return NIL;
+        }
+
+        env = json_parse(ty, &src);
+
+        TY_CATCH_END();
+
+        return env;
+}
+
+static bool
+SyncEnv(Package const *pkg)
+{
+        char self[PATH_MAX + 1];
+        int status;
+        pid_t pid;
+        int n = 0;
+
+        if (getenv("TY_NO_SYNC") != NULL || !executable_path(self, sizeof self)) {
+                return false;
+        }
+
+#ifdef TY_EMBED_LIB
+        if (bundle_dir() != NULL) {
+                return false;
+        }
+#endif
+
+        while (environ[n] != NULL) {
+                n += 1;
+        }
+
+        char **envp = xmA((n + 2) * sizeof *envp);
+        memcpy(envp, environ, n * sizeof *envp);
+        envp[n]     = "TY_NO_SYNC=1";
+        envp[n + 1] = NULL;
+
+        char *argv[] = { self, "--pm", "sync", "--auto", "--project", (char *)pkg->dir, NULL };
+        int rc = posix_spawn(&pid, self, NULL, NULL, argv, envp);
+
+        xmF(envp);
+
+        if (rc != 0) {
+                return false;
+        }
+
+        while (waitpid(pid, &status, 0) < 0) {
+                if (errno != EINTR) {
+                        return false;
+                }
+        }
+
+        return WIFEXITED(status) && (WEXITSTATUS(status) == 0);
+}
+
+static void
+AdoptStrings(Ty *ty, char const *base, ConstStringVector *out, Value const *v)
+{
+        char buf[PATH_MAX + 1];
+
+        if (!IsA(v, VALUE_ARRAY)) {
+                return;
+        }
+
+        vfor(*v->array, {
+                if (it->type == VALUE_STRING) {
+                        xvP(*out, S2(EnvPath(base, TY_TMP_C_STR(*it), buf)));
+                }
+        });
+}
+
+static void
+AdoptPairs(Ty *ty, char const *base, ConstStringVector *out, Value const *v, bool modules)
+{
+        char buf[PATH_MAX + 1];
+
+        if (!IsA(v, VALUE_DICT)) {
+                return;
+        }
+
+        dfor(v->dict, {
+                if (key->type == VALUE_STRING && val->type == VALUE_STRING) {
+                        xvP(*out, modules ? mod_name(ty, TY_TMP_C_STR(*key)) : S2(TY_TMP_C_STR(*key)));
+                        xvP(*out, S2(EnvPath(base, TY_TMP_C_STR(*val), buf)));
+                }
+        });
+}
+
+static void
+AdoptEnvPackage(Ty *ty, char const *base, Package *pkg, Value const *entry)
+{
+        v0(pkg->roots);
+        v0(pkg->deps);
+        v0(pkg->natives);
+
+        AdoptStrings(ty, base, &pkg->roots,   Field(ty, entry, "roots"));
+        AdoptPairs(  ty, base, &pkg->deps,    Field(ty, entry, "deps"),    true);
+        AdoptPairs(  ty, base, &pkg->natives, Field(ty, entry, "natives"), false);
+
+        if (vN(pkg->roots) == 0) {
+                xvP(pkg->roots, pkg->dir);
+        }
+
+        pkg->read = true;
+}
+
+static void
+LoadEnv(Ty *ty, Package *pkg)
+{
+        char path[PATH_MAX + 1];
+        char manifest[PATH_MAX + 1];
+        char buf[PATH_MAX + 1];
+        Value env;
+
+        ty_snprintf(path, sizeof path, "%s/" ENVFILE, pkg->dir);
+
+        GC_STOP();
+
+        env = ReadEnv(ty, path);
+
+        if (!EnvFresh(ty, pkg->dir, &env)) {
+                bool synced = SyncEnv(pkg);
+                env = synced ? ReadEnv(ty, path) : NIL;
+                if (!synced || !EnvFresh(ty, pkg->dir, &env)) {
+                        GC_RESUME();
+                        if (getenv("TY_NO_SYNC") != NULL) {
+                                zP("%s: the package environment is out of date; run `tpm sync`", pkg->manifest);
+                        }
+                        zP("%s: `tpm sync` failed", pkg->manifest);
+                }
+        }
+
+        vfor(*Field(ty, &env, "packages")->array, {
+                Value const *dir = Field(ty, it, "dir");
+                if (!IsA(dir, VALUE_STRING)) {
+                        continue;
+                }
+                char const *d = EnvPath(pkg->dir, TY_TMP_C_STR(*dir), buf);
+                Package *p = s_eq(d, pkg->dir) ? pkg : EnvPackage(ty, d);
+                if (p == NULL) {
+                        ty_snprintf(manifest, sizeof manifest, "%s/" MANIFEST, d);
+                        p = NewPackage(ty, d, manifest, PKG_DECLARED);
+                } else if (p != pkg) {
+                        continue;
+                }
+                AdoptEnvPackage(ty, pkg->dir, p, it);
+                table_put(ty, &ty->ty->env, p->dir, &PTR(p));
+        });
+
+        GC_RESUME();
 }
 
 static void
@@ -268,10 +493,7 @@ PackageRead(Ty *ty, Package *pkg)
                 TY_RETHROW();
         }
 
-        Module *mod = compiler_load_manifest(ty, pkg->manifest);
-
-        ReadRoots(ty, pkg, ManifestConstant(ty, mod, "ROOTS"));
-        ReadDeps(ty, pkg, ManifestConstant(ty, mod, "DEPS"));
+        LoadEnv(ty, pkg);
 
         TY_CATCH_END();
 

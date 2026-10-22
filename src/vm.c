@@ -878,6 +878,34 @@ vm_caller_module(Ty *ty)
         return (e == NULL) ? NULL : e->mod;
 }
 
+Module *
+vm_foreign_caller_module(Ty *ty)
+{
+        co_state st = *ty->st;
+        char const *ip = IP;
+        Module *home = NULL;
+
+        while (ip != NULL) {
+                Frame const *frame = (vN(st.frames) > 0) ? vvL(st.frames) : NULL;
+                Expr const *e = compiler_find_expr(ty, jit_frame_ip(frame, ip) - 1);
+                Module *mod = (e == NULL) ? NULL : e->mod;
+
+                if (home == NULL) {
+                        home = mod;
+                } else if (mod != NULL && mod != home) {
+                        return mod;
+                }
+
+                if (vN(st.frames) == 0) {
+                        break;
+                }
+
+                ip = vXx(st.frames).ip;
+        }
+
+        return NULL;
+}
+
 static void
 AddSearchDir(Ty *ty, char const *dir)
 {

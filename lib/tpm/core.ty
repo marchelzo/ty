@@ -1,0 +1,102 @@
+import os
+import ty
+import hash
+import json
+import path (Path)
+import sh (run)
+
+pub class TpmError < RuntimeError {
+    init(what: String) {
+        super(what)
+    }
+}
+
+pub fn fail(what: String) -> _ {
+    throw TpmError(what)
+}
+
+const COLOR = getenv('NO_COLOR') == nil && (ty.color == 'always' || (ty.color == 'auto' && os.isatty(2)))
+
+pub __tls::quiet?: Bool = false
+
+pub fn paint(code: String, s: String) -> String {
+    COLOR ? "\x1b[{code}m{s}\x1b[0m" : s
+}
+
+pub fn note(verb: String, what: String) {
+    if !quiet? {
+        eprint("{paint('1;32', "{verb:>12}")} {what}")
+    }
+}
+
+pub fn warn(what: String) {
+    eprint("{paint('1;33', 'warning')}: {what}")
+}
+
+pub fn cache-root() -> Path {
+    if let $dir = getenv('TPM_CACHE') {
+        return Path(dir)
+    }
+    if let $xdg = getenv('XDG_CACHE_HOME') {
+        return Path(xdg) / 'ty'
+    }
+    Path.home() / '.cache' / 'ty'
+}
+
+pub fn sha256(data: Blob | String) -> String {
+    hash.sha256(Blob(data)).hexdigest()
+}
+
+pub fn sha256-file(p: Path) -> String {
+    hash.sha256-file(p)
+}
+
+/// `p` with symlinks resolved, or made absolute and normalized when it does not exist (yet).
+pub fn real(p: Path | String) -> Path {
+    if let $resolved = os.realpath(str(p)) {
+        return Path(resolved)
+    }
+    let parts = []
+    for part in str(Path(p).absolute).split('/') {
+        match part {
+            '' or '.' => (),
+            '..'      => parts.pop(),
+            _         => parts.push(part)
+        }
+    }
+    Path('/' + parts.join('/'))
+}
+
+pub fn write-atomic(p: Path, data: String | Blob) {
+    p.parent.mkdir(parents: true, exist-ok: true)
+    let tmp = p.parent / ".{p.name}.{os.getpid()}.tmp"
+    tmp.write(data)
+    if os.rename(str(tmp), str(p)) != 0 {
+        tmp.unlink(missing-ok: true)
+        fail("failed to write {p}")
+    }
+}
+
+pub fn read-json(p: Path) -> _ {
+    json.parse(p.read-text())
+}
+
+pub fn write-json(p: Path, value: _) {
+    write-atomic(p, json.encode(value) + '\n')
+}
+
+pub fn tool(argv: Array[String], what: String, chdir: String | nil = nil) -> String {
+    let r = try {
+        run(argv, chdir: chdir)
+    } catch e: OSError {
+        fail("{what}: could not run `{argv[0]}`: {e}")
+    }
+    if !r.ok? {
+        fail("{what}: `{argv.join(' ')}` failed:\n{r.stderr.trim()}")
+    }
+    r.stdout
+}
+
+pub fn which?(cmd: String) -> Bool {
+    (getenv('PATH') ?? '').split(':').any?(dir -> dir != '' && (Path(dir) / cmd).executable?)
+}

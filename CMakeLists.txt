@@ -682,7 +682,10 @@ else()
   target_link_libraries(${_tgt_ty_link} INTERFACE
     -Wl,--whole-archive unibilium -Wl,--no-whole-archive
   )
-  target_link_options(${_tgt_ty_link} INTERFACE -rdynamic)
+  target_link_options(${_tgt_ty_link} INTERFACE
+    -rdynamic
+    -Wl,--exclude-libs,libffi.a:libmimalloc.a:libpcre2-8.a:libsqlite3.a:libutf8proc.a:libxxhash.a:libdtoa.a:liblibco.a:libmd.a:libnsync.a
+  )
 endif()
 
 target_link_libraries(${_tgt_ty_interface} INTERFACE ${_tgt_ty_link})
@@ -764,6 +767,11 @@ include(GNUInstallDirs)
 install(TARGETS ${_tgt_ty}
   COMPONENT InstallComponentTy
   DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(CODE
+  "execute_process(COMMAND \"${CMAKE_COMMAND}\" -E create_symlink ty \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/tpm\")"
+  COMPONENT InstallComponentTy
 )
 
 if(NOT TY_EMBED_LIB)

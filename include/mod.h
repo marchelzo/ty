@@ -16,6 +16,7 @@ typedef struct package {
         char const *manifest;
         ConstStringVector roots;
         ConstStringVector deps;
+        ConstStringVector natives;
         u64 gen;
         u8 kind;
         bool read;
@@ -42,6 +43,12 @@ mod_name(Ty *ty, char const *dotted);
 
 char const *
 mod_kind_name(Package const *pkg);
+
+char const *
+mod_native(Package const *pkg, char const *name);
+
+char *
+mod_stamp(char const *path);
 
 #endif
 

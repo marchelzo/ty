@@ -1,0 +1,336 @@
+import os
+import json
+import http.codec as codec
+import path (Path)
+import tpm.core (TpmError, fail, note, warn, sha256, real, tool, which?)
+import tpm.manifest as man (Manifest, Native, native-key)
+import tpm.platform as plat (Platform)
+import tpm.store as store
+import tpm.tar as tar
+import tpm.elf as elf
+
+const SYSTEM_SONAMES = [
+    'linux-vdso.so.1',
+    'ld-linux-x86-64.so.2',
+    'ld-linux-aarch64.so.1',
+    'libc.so.6',
+    'libm.so.6',
+    'libmvec.so.1',
+    'libpthread.so.0',
+    'libdl.so.2',
+    'librt.so.1',
+    'libutil.so.1',
+    'libresolv.so.2',
+    'libanl.so.1',
+    'libgcc_s.so.1',
+    'libstdc++.so.6',
+]
+
+const SKIP_TOP = ['.git', '.ty', 'dist', 'native', man.FILE, 'ty.lock']
+
+const LINUX_DIRS = [
+    '/lib', '/usr/lib', '/lib64', '/usr/lib64', '/usr/local/lib',
+    '/lib/x86_64-linux-gnu', '/usr/lib/x86_64-linux-gnu',
+    '/lib/aarch64-linux-gnu', '/usr/lib/aarch64-linux-gnu',
+]
+
+fn package-files(m: Manifest) -> Array[String] {
+    let excludes = m.exclude.map(p -> glob(p.contains?('/') ? p : "**/{p}"))
+    let files = []
+    for (dir, _, names) in m.dir.walk() {
+        let rel-dir = dir.relative-to(m.dir)
+        let parts = str(rel-dir).split('/').filter(p -> p != '.' && p != '')
+        if #parts > 0 && (parts[0] in SKIP_TOP || parts.any?(\_.starts?('.'))) {
+            continue
+        }
+        for name in names {
+            let rel = (#parts == 0) ? name : "{parts.join('/')}/{name}"
+            if (#parts == 0 && name in SKIP_TOP) || name.starts?('.') || excludes.any?(re -> rel.match?(re)) {
+                continue
+            }
+            files.push(rel)
+        }
+    }
+    files.sort()
+}
+
+fn machine-arch(machine: Int) -> String {
+    match machine {
+        elf.EM_X86_64  => 'x86_64',
+        elf.EM_AARCH64 => 'aarch64',
+        n              => fail("unsupported ELF machine type {n}")
+    }
+}
+
+fn ldconfig() -> Dict[String, String] {
+    let out = %{}
+    for exe in ['/sbin/ldconfig', '/usr/sbin/ldconfig'] {
+        if !Path(exe).executable? {
+            continue
+        }
+        let text = try {
+            tool([exe, '-p'], 'listing system libraries')
+        } catch _: TpmError {
+            ''
+        }
+        for line in text.lines() {
+            if let [_, name, file] = /^\s*(\S+)\s.*=>\s*(\S+)\s*$/(line) {
+                out[name] ?= file
+            }
+        }
+        break
+    }
+    out
+}
+
+class Vendor {
+    dirs:    Array[Path]
+    system:  Array[String]
+    known:   Dict[String, String] | nil
+    files:   Dict[String, Path]
+    objects: Dict[String, elf.Elf]
+
+    init(dirs: Array[Path], system: Array[String]) {
+        self.dirs    = dirs
+        self.system  = system
+        self.known   = nil
+        self.files   = %{}
+        self.objects = %{}
+    }
+
+    system?(soname: String) -> Bool {
+        soname in SYSTEM_SONAMES || soname in system
+    }
+
+    find(soname: String, from: elf.Elf) -> Path {
+        let search = [*dirs.map(str), *from.search, *(getenv('LD_LIBRARY_PATH') ?? '').split(':').filter(\_ != ''), *LINUX_DIRS]
+        for d in search {
+            let p = Path(d) / soname
+            if p.file? {
+                return real(p)
+            }
+        }
+        known ?= ldconfig()
+        if let $file = (known)![soname] {
+            return real(file)
+        }
+        fail("{from.path} needs {soname}, which was not found (searched {search.join(', ')})")
+    }
+
+    add(file: Path) -> String {
+        let obj = elf.read(file)
+        let soname = obj.soname ?? file.name
+        if let $have = files[soname] {
+            if have != file && sha256(have.read-bytes()) != sha256(file.read-bytes()) {
+                fail("two different files provide {soname}: {have} and {file}")
+            }
+            return soname
+        }
+        files[soname] = file
+        objects[soname] = obj
+        for need in obj.needed if !system?(need) {
+            add(find(need, obj))
+        }
+        soname
+    }
+}
+
+fn hashed-name(soname: String, data: Blob) -> String {
+    let h = sha256(data).slice(0, 8)
+    match /^(.*?)(\.so(?:\..*)?)$/(soname) {
+        [_, base, suffix] => "{base}-{h}{suffix}",
+        _                 => "{soname}-{h}"
+    }
+}
+
+fn locate-native(n: Native, dirs: Array[Path]) -> Path {
+    let key = native-key(n.lib)
+    for d in dirs if d.dir? {
+        let hits = d.ls().filter(f -> f.name.match?(/\.so(\.[0-9.]+)?$|\.dylib$/) && native-key(f.name) == key)
+        if #hits > 0 {
+            return real(hits.sort(by=\#_.name)[0])
+        }
+    }
+    fail("[native] {n.name}: no lib{key} shared library in {dirs.map(str).join(', ')}")
+}
+
+fn vendor-linux(m: Manifest, dirs: Array[Path], stage: Path) -> (String, Dict[String, String]) {
+    if !which?('patchelf') {
+        fail("building packages with native libraries needs patchelf (https://github.com/NixOS/patchelf)")
+    }
+
+    let v = Vendor(dirs, m.system-libs)
+    let tops = %{n.name: v.add(locate-native(n, dirs)) for n in m.bundled}
+
+    let renamed = %{soname: hashed-name(soname, file.read-bytes()) for soname, file in v.files}
+    let out = stage / 'native'
+    out.mkdir(parents: true, exist-ok: true)
+
+    let arch = nil
+    let floor = [2, 17]
+
+    for soname, file in v.files {
+        let obj = v.objects[soname]!
+        let dest = out / (renamed[soname]!)
+        file.copy(dest)
+        dest.chmod(0o755)
+
+        let args = ['patchelf', '--set-soname', renamed[soname]!]
+        for need in obj.needed if renamed[need] != nil {
+            args += ['--replace-needed', need, renamed[need]!]
+        }
+        args += ['--set-rpath', '$ORIGIN', str(dest)]
+        tool(args, "patching {file.name}")
+
+        let fixed = elf.read(dest)
+        let want = obj.needed.map(n -> renamed[n] ?? n)
+        if fixed.soname != renamed[soname] || fixed.needed != want || fixed.runpath != '$ORIGIN' {
+            fail("patchelf did not rewrite {dest} as expected")
+        }
+
+        let a = machine-arch(fixed.machine)
+        if arch != nil && arch != a {
+            fail("bundled libraries mix architectures ({arch} and {a})")
+        }
+        arch = a
+        if let $g = fixed.glibc and g > floor {
+            floor = g
+        }
+
+        note('Vendored', "{soname} as native/{renamed[soname]}")
+    }
+
+    let platform = str(Platform('linux', (arch)!, floor.slice(0, 2)))
+    let table = %{key: "native/{renamed[soname]}" for key, soname in tops}
+
+    (platform, table)
+}
+
+fn otool-deps(file: Path) -> Array[String] {
+    tool(['otool', '-L', str(file)], "reading {file.name}")
+        .lines()
+        .drop(1)
+        .map(\_.trim().comb(/\s*\(.*$/))
+        .filter(\_ != '')
+}
+
+fn macos-min(file: Path) -> Array[Int] {
+    let text = tool(['otool', '-l', str(file)], "reading {file.name}")
+    match /\bminos\s+([0-9.]+)/v(text) {
+        $m => m.groups[1].split('.').map(int),
+        _  => [11, 0]
+    }
+}
+
+fn vendor-macos(m: Manifest, dirs: Array[Path], stage: Path) -> (String, Dict[String, String]) {
+    let out = stage / 'native'
+    out.mkdir(parents: true, exist-ok: true)
+
+    let files = %{}
+    let queue = m.bundled.map(n -> locate-native(n, dirs))
+    let tops = %{n.name: locate-native(n, dirs).name for n in m.bundled}
+
+    while #queue > 0 {
+        let file = queue.pop(0)
+        if files[file.name] != nil {
+            continue
+        }
+        files[file.name] = file
+        for dep in otool-deps(file) {
+            if dep.starts?('/usr/lib/') || dep.starts?('/System/') || Path(dep).name == file.name {
+                continue
+            }
+            let name = Path(dep).name
+            let local = dirs.map(\_ / name).find(\_.file?)
+            queue.push(real(local ?? (dep.starts?('/') ? Path(dep) : fail("{file} needs {dep}, which was not found"))))
+        }
+    }
+
+    let renamed = %{name: hashed-name(name, file.read-bytes()) for name, file in files}
+    let floor = [11, 0]
+
+    for name, file in files {
+        let dest = out / (renamed[name]!)
+        file.copy(dest)
+        dest.chmod(0o755)
+        let args = ['install_name_tool', '-id', "@loader_path/{renamed[name]}"]
+        for dep in otool-deps(file) {
+            if let $new = renamed[Path(dep).name] and Path(dep).name != name {
+                args += ['-change', dep, "@loader_path/{new}"]
+            }
+        }
+        tool([*args, str(dest)], "patching {name}")
+        tool(['codesign', '--force', '--sign', '-', str(dest)], "signing {name}")
+        let min = macos-min(dest)
+        if min > floor {
+            floor = min
+        }
+        note('Vendored', "{name} as native/{renamed[name]}")
+    }
+
+    let platform = str(Platform('macos', plat.host()!.arch, floor.slice(0, 2)))
+    let table = %{key: "native/{renamed[name]}" for key, name in tops}
+
+    (platform, table)
+}
+
+pub fn meta(m: Manifest, platform: String, natives: Dict[String, String]) -> Dict {
+    %{
+        'name':        m.name,
+        'version':     str(m.version),
+        'platform':    platform,
+        'description': m.description,
+        'roots':       m.roots,
+        'deps':        [
+            %{'name': d.alias, 'package': d.package, 'req': str((d.req)!)}
+            for d in m.deps.sort(by=\_.alias)
+        ],
+        'natives':     natives,
+        'system':      m.natives.filter(\_.system?).map(\_.lib),
+    }
+}
+
+/// Builds `dist/<name>-<version>-<platform>.tar.gz` for `m` and returns its path and metadata.
+pub fn build(m: Manifest, native-dirs: Array[Path], out: Path) -> (Path, Dict) {
+    for d in m.deps if d.kind != 'registry' {
+        fail("{m.file}: {d.kind} dependency `{d.alias}` cannot be published; depend on a registry version instead")
+    }
+
+    let here = plat.host()
+    let arch = (here == nil) ? 'unsupported' : "{here.os}-{here.arch}"
+    let dirs = (#native-dirs > 0) ? native-dirs.map(real) : [m.dir / 'native' / arch, m.dir / 'native']
+
+    let stage = Path(os.mkdtemp(str(Path.tmp() / 'tpm-build')))
+    let result = nil
+    try {
+        result = assemble(m, dirs, here, stage, out)
+    } finally {
+        stage.rmtree(quiet: true)
+    }
+    (result)!
+}
+
+fn assemble(m: Manifest, dirs: Array[Path], here: Platform | nil, stage: Path, out: Path) -> (Path, Dict) {
+    let (platform, natives) = match [#m.bundled, here.?os] {
+        [0, _]       => ('any', %{}),
+        [_, 'linux'] => vendor-linux(m, dirs, stage),
+        [_, 'macos'] => vendor-macos(m, dirs, stage),
+        _            => fail("packages with native libraries can only be built on Linux (glibc) or macOS")
+    }
+
+    let info = meta(m, platform, natives)
+    let entries = [tar.Entry(rel, (m.dir / rel).read-bytes(), (m.dir / rel).stat.mode) for rel in package-files(m)]
+    entries.push(tar.Entry(man.FILE, (m.dir / man.FILE).read-bytes()))
+    entries.push(tar.Entry(store.META, Blob(json.encode(info) + '\n')))
+    if (stage / 'native').dir? {
+        for f in (stage / 'native').ls() {
+            entries.push(tar.Entry("native/{f.name}", f.read-bytes(), 0o755))
+        }
+    }
+
+    let archive = out / "{m.name}-{m.version}-{platform}.tar.gz"
+    out.mkdir(parents: true, exist-ok: true)
+    archive.write(codec.encode('gzip', tar.pack(entries), 9))
+
+    (archive, info)
+}

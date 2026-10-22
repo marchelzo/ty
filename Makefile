@@ -74,6 +74,7 @@ CTEST := $(dir $(CMAKE))ctest
 
 all: $(OUT)
 	@cp $(OUT) ty.tmp && mv ty.tmp ty
+	@ln -sf ty tpm
 	@ln -sf $(BUILD)/compile_commands.json compile_commands.json
 
 _build/%/ty: _build/%/build.ninja FORCE

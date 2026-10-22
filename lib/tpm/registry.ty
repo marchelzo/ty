@@ -1,0 +1,246 @@
+import ty.mod as tymod
+import json
+import os
+import path (Path)
+import tpm.core (TpmError, fail, warn, cache-root, sha256, sha256-file, write-atomic, real)
+import tpm.semver (Version, Req)
+import tpm.manifest (Dep)
+
+pub class Artifact {
+    platform: String
+    url:      String
+    sha256:   String
+
+    init(platform: String, url: String, sha256: String) {
+        self.platform = platform
+        self.url      = url
+        self.sha256   = sha256
+    }
+
+    json() -> Dict[String, String] {
+        %{'platform': platform, 'url': url, 'sha256': sha256}
+    }
+}
+
+pub class Entry {
+    name:      String
+    version:   Version
+    deps:      Array[Dep]
+    natives:   Array[String]
+    artifacts: Array[Artifact]
+    yanked?:   Bool
+
+    init(name: String, version: Version, deps: Array[Dep], natives: Array[String], artifacts: Array[Artifact], yanked?: Bool = false) {
+        self.name      = name
+        self.version   = version
+        self.deps      = deps
+        self.natives   = natives
+        self.artifacts = artifacts
+        self.yanked?   = yanked?
+    }
+}
+
+fn bad-index(url: String, what: String) {
+    throw TpmError("{url}: malformed registry index: {what}")
+}
+
+fn entry(url: String, base: String, line: String) -> Entry {
+    let d = try {
+        json.parse(line)
+    } catch _ {
+        bad-index(url, 'invalid JSON')
+    }
+    if !(d :: Dict) || !(d['name'] :: String) || !(d['version'] :: String) {
+        bad-index(url, 'each line needs a name and a version')
+    }
+    let deps = [
+        Dep(dep['name'], dep['package'] ?? dep['name'], req: Req.parse(dep['req'] ?? '*'))
+        for dep in d['deps'] ?? []
+    ]
+    let artifacts = [
+        Artifact(a['platform'], absolute(base, a['url'] ?? a['file']), a['sha256'])
+        for a in d['artifacts'] ?? []
+    ]
+    let natives = match d['natives'] {
+        names: Array => names,
+        table: Dict  => table.keys(),
+        _            => []
+    }
+    Entry(d['name'], Version.parse(d['version']), deps, natives, artifacts, d['yanked'] ?? false)
+}
+
+fn absolute(base: String, file: String) -> String {
+    file.match?(/^[a-z][a-z0-9+.\-]*:\/\//) ? file : "{base}/{file}"
+}
+
+fn http() -> _ {
+    tymod.load('http/client')
+}
+
+pub class Registry {
+    url:     String
+    offline: Bool
+    __index: Dict[String, Array[Entry]]
+
+    init(url: String, offline: Bool = false) {
+        self.url     = url.comb(/\/+$/)
+        self.offline = offline
+        self.__index = %{}
+    }
+
+    /// `url` may be a plain path (relative to `base`), a file:// URL or an http(s):// URL.
+    static open(url: String, base: Path, offline: Bool = false) -> Registry {
+        if url.match?(/^https?:\/\//) || url.starts?('file://') {
+            return Registry(url, offline)
+        }
+        let p = url.starts?('/') ? Path(url) : base / url
+        Registry("file://{real(p)}", offline)
+    }
+
+    local -> Path | nil {
+        url.starts?('file://') ? Path(url.comb(/^file:\/\//)) : nil
+    }
+
+    cache-dir -> Path {
+        cache-root() / 'index' / sha256(url).slice(0, 16)
+    }
+
+    __read(rel: String) -> String | nil {
+        if let $dir = local {
+            let p = dir / rel
+            return p.file? ? p.read-text() : nil
+        }
+
+        let cached = cache-dir / rel
+        if offline {
+            return cached.file? ? cached.read-text() : nil
+        }
+
+        let client = http()
+        let get = client.get
+        let r = try {
+            get("{url}/{rel}", timeout: 30.0)
+        } catch e: client.RequestError {
+            if cached.file? {
+                warn("{url}: {e.what}; using the cached index")
+                return cached.read-text()
+            }
+            throw TpmError("{url}/{rel}: {e.what}")
+        }
+
+        match r.status-code {
+            200 => do {
+                let text = r.text
+                write-atomic(cached, text)
+                text
+            },
+            404 or 410 => nil,
+            code => throw TpmError("{url}/{rel}: HTTP {code}")
+        }
+    }
+
+    entries(name: String) -> Array[Entry] {
+        if let $known = __index[name] {
+            return known
+        }
+        let text = __read("index/{name}") ?? ''
+        let found = [
+            entry("{url}/index/{name}", url, line)
+            for line in text.lines()
+            if line.trim() != ''
+        ]
+        for e in found {
+            if e.name != name {
+                bad-index("{url}/index/{name}", "found an entry for `{e.name}`")
+            }
+        }
+        __index[name] = found
+        found
+    }
+
+    /// Downloads `art` to `dest` and checks its digest.
+    download(art: Artifact, dest: Path) {
+        dest.parent.mkdir(parents: true, exist-ok: true)
+        let tmp = dest.parent / ".{dest.name}.{os.getpid()}.part"
+
+        if art.url.starts?('file://') {
+            let src = Path(art.url.comb(/^file:\/\//))
+            if !src.file? {
+                throw TpmError("{art.url}: no such file")
+            }
+            src.copy(tmp)
+        } else if offline {
+            throw TpmError("{art.url}: not in the cache, and --offline was given")
+        } else {
+            let client = http()
+            let get = client.get
+            let r = try {
+                get(art.url, timeout: 300.0, follow-redirects: true)
+            } catch e: client.RequestError {
+                throw TpmError("{art.url}: {e.what}")
+            }
+            if r.status-code != 200 {
+                throw TpmError("{art.url}: HTTP {r.status-code}")
+            }
+            tmp.write(r.content)
+        }
+
+        let got = sha256-file(tmp)
+        if got != art.sha256 {
+            tmp.unlink(missing-ok: true)
+            throw TpmError("{art.url}: checksum mismatch (expected {art.sha256}, got {got})")
+        }
+
+        tmp.rename(dest)
+    }
+}
+
+/// Adds one built artifact to a local registry directory.
+pub fn publish(registry: Path, meta: Dict, archive: Path) -> String {
+    let name     = meta['name']
+    let version  = meta['version']
+    let platform = meta['platform']
+    let rel      = "files/{name}/{archive.name}"
+    let digest   = sha256-file(archive)
+    let index    = registry / 'index' / name
+
+    let lines = index.file? ? index.read-text().lines().filter(\_.trim() != '') : []
+    let entries = lines.map(json.parse)
+    let same = entries.filter(\_['version'] == version)
+
+    let art = %{'platform': platform, 'url': rel, 'sha256': digest}
+    let deps = meta['deps']
+
+    if let [e] = same {
+        if json.encode(e['deps']) != json.encode(deps) {
+            throw TpmError("{name} {version} is already published with different dependencies")
+        }
+        let arts = e['artifacts'] ?? []
+        if let $old = arts.find(\_['platform'] == platform) {
+            if old['sha256'] != digest {
+                throw TpmError("{name} {version} is already published for {platform}")
+            }
+            return rel
+        }
+        arts.push(art)
+        e['artifacts'] = arts
+    } else {
+        entries.push(%{
+            'name':      name,
+            'version':   version,
+            'deps':      deps,
+            'natives':   (meta['natives'] ?? %{}).keys().sort(),
+            'artifacts': [art],
+            'yanked':    false
+        })
+    }
+
+    let dest = registry / rel
+    dest.parent.mkdir(parents: true, exist-ok: true)
+    archive.copy(dest)
+
+    entries.sort!(by=\Version.parse(_['version']))
+    write-atomic(index, entries.map(json.encode).join('\n') + '\n')
+
+    rel
+}

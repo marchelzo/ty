@@ -666,7 +666,7 @@ bundle_preload(void)
                         if (B.natives[i].handle != NULL) {
                                 continue;
                         }
-                        B.natives[i].handle = dlopen(B.natives[i].path, RTLD_NOW | RTLD_GLOBAL);
+                        B.natives[i].handle = dlopen(B.natives[i].path, RTLD_NOW | RTLD_LOCAL);
                         progress |= (B.natives[i].handle != NULL);
                 }
         }

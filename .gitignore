@@ -22,6 +22,7 @@ nsync/out/
 compile_commands.json
 
 /ty
+/tpm
 
 *.log
 *.err

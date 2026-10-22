@@ -27,6 +27,8 @@
 #include "xd.h"
 #include "compiler.h"
 #include "mod.h"
+#include "dict.h"
+#include "json.h"
 #include "bundle.h"
 
 extern char **environ;
@@ -344,13 +346,12 @@ add_data(List *app, char const *path)
 }
 
 static bool
-place_app(List *app, Files *files, char *entry, usize cap)
+place_app(List *app, Files *files, char *entry, usize cap, char *root)
 {
         char rel[PATH_MAX];
-        char root[PATH_MAX];
         struct stat st;
 
-        ty_snprintf(root, sizeof root, "%s", app->items[0]);
+        ty_snprintf(root, PATH_MAX, "%s", app->items[0]);
         parent(root);
 
         for (int i = 1; i < app->n; ++i) {
@@ -385,11 +386,124 @@ add_packages(Ty *ty, List *app)
                 if (r == NULL) {
                         continue;
                 }
-                ty_snprintf(real, sizeof real, "%s/__pkg__.ty", r);
+                ty_snprintf(real, sizeof real, "%s/ty.toml", r);
                 if (regular(real) && !lhas(app, real)) {
                         lput(app, real);
                 }
         }
+}
+
+static void
+relative(char const *from, char const *to, char *out, usize cap)
+{
+        char dir[PATH_MAX];
+        usize n = 0;
+        int ups = 0;
+
+        ty_snprintf(dir, sizeof dir, "%s", from);
+
+        while (strcmp(dir, to) != 0 && under(to, dir) == NULL) {
+                parent(dir);
+                ups += 1;
+        }
+
+        char const *rest = (strcmp(dir, to) == 0) ? "" : under(to, dir);
+
+        for (int i = 0; i < ups; ++i) {
+                n += ty_snprintf(out + n, cap - n, "%s", (i + 1 < ups || *rest != '\0') ? "../" : "..");
+        }
+
+        ty_snprintf(out + n, cap - n, "%s", (n == 0 && *rest == '\0') ? "." : rest);
+}
+
+static bool
+holds_app(List const *app, char const *dir)
+{
+        for (int i = 0; i < app->n; ++i) {
+                if (under(app->items[i], dir) != NULL) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static void
+relocate(Ty *ty, Value *v, char const *project)
+{
+        char rel[PATH_MAX];
+
+        if (v->type == VALUE_STRING && sN(*v) > 0 && ss(*v)[0] == '/') {
+                relative(project, TY_TMP_C_STR(*v), rel, sizeof rel);
+                *v = vSsz(rel);
+        }
+}
+
+static bool
+relocated_env(Ty *ty, char const *project, List const *app, byte_vector *out)
+{
+        char path[PATH_MAX];
+        byte_vector text = {0};
+        Value env;
+
+        ty_snprintf(path, sizeof path, "%s/.ty/env.json", project);
+
+        if (!xslurp(path, &text)) {
+                return false;
+        }
+
+        GC_STOP();
+
+        Value src = vSs(vv(text), vN(text));
+        xvF(text);
+
+        if (TY_CATCH_ERROR()) {
+                (void)TY_CATCH();
+                GC_RESUME();
+                return false;
+        }
+
+        env = json_parse(ty, &src);
+
+        TY_CATCH_END();
+
+        Value *packages = (env.type == VALUE_DICT) ? dict_get_member(ty, env.dict, "packages") : NULL;
+
+        if (packages == NULL || packages->type != VALUE_ARRAY) {
+                GC_RESUME();
+                return false;
+        }
+
+        Array *kept = vA();
+
+        vfor(*packages->array, {
+                Value *dir   = (it->type == VALUE_DICT) ? dict_get_member(ty, it->dict, "dir")   : NULL;
+                Value *roots = (it->type == VALUE_DICT) ? dict_get_member(ty, it->dict, "roots") : NULL;
+                Value *deps  = (it->type == VALUE_DICT) ? dict_get_member(ty, it->dict, "deps")  : NULL;
+                if (
+                        (dir == NULL || dir->type != VALUE_STRING)
+                     || (!vs_eq_z(*dir, project) && !holds_app(app, TY_TMP_C_STR(*dir)))
+                ) {
+                        continue;
+                }
+                relocate(ty, dir, project);
+                if (roots != NULL && roots->type == VALUE_ARRAY) {
+                        vfor(*roots->array, relocate(ty, it, project));
+                }
+                if (deps != NULL && deps->type == VALUE_DICT) {
+                        dfor(deps->dict, relocate(ty, val, project));
+                }
+                vAp(kept, *it);
+        });
+
+        dict_put_member(ty, env.dict, "inputs",   ARRAY(vA()));
+        dict_put_member(ty, env.dict, "packages", ARRAY(kept));
+
+        bool ok = json_dump(ty, &env, out);
+
+        GC_RESUME();
+
+        return ok;
 }
 
 static void
@@ -809,6 +923,20 @@ order_natives(Files const *files, List *natives)
         *natives = out;
 }
 
+static void
+put_entry(Buf *out, char const *rel, u32 mode, void const *data, usize n)
+{
+        BundleEntry e = {
+                .len  = (u32)strlen(rel),
+                .mode = mode,
+                .size = n
+        };
+
+        bput(out, &e, sizeof e);
+        bput(out, rel, e.len);
+        bput(out, data, n);
+}
+
 static bool
 build_payload(Files const *files, Buf *out)
 {
@@ -822,15 +950,7 @@ build_payload(Files const *files, Buf *out)
                         return false;
                 }
 
-                BundleEntry e = {
-                        .len  = (u32)strlen(f->rel),
-                        .mode = f->mode,
-                        .size = n
-                };
-
-                bput(out, &e, sizeof e);
-                bput(out, f->rel, e.len);
-                bput(out, data, n);
+                put_entry(out, f->rel, f->mode, data, n);
         }
 
         return true;
@@ -1044,8 +1164,10 @@ bundle_create(Ty *ty, BundleSpec const *spec)
         Buf manifest = {0};
         Buf payload = {0};
         char entry[PATH_MAX];
+        char root[PATH_MAX];
         char a[PATH_MAX];
         char b[PATH_MAX];
+        byte_vector env = {0};
         char const *script = spec->script;
         char const *out = spec->out;
         char **flags = spec->flags;
@@ -1104,7 +1226,10 @@ bundle_create(Ty *ty, BundleSpec const *spec)
                 }
         }
 
-        if (!place_app(&app, &files, entry, sizeof entry)) {
+        char const *project = mod_root(ty, app.items[0]);
+        bool relocated = (project != NULL) && relocated_env(ty, project, &app, &env);
+
+        if (!place_app(&app, &files, entry, sizeof entry, root)) {
                 return 1;
         }
 
@@ -1144,6 +1269,18 @@ bundle_create(Ty *ty, BundleSpec const *spec)
 
         if (!build_payload(&files, &payload)) {
                 return 1;
+        }
+
+        if (relocated) {
+                char const *inner = under(project, root);
+                char rel[PATH_MAX];
+                if (inner == NULL) {
+                        ty_snprintf(rel, sizeof rel, "app/.ty/env.json");
+                } else {
+                        ty_snprintf(rel, sizeof rel, "app/%s/.ty/env.json", inner);
+                }
+                put_entry(&payload, rel, 0644, vv(env), vN(env));
+                xvF(env);
         }
 
         if (!write_bundle(out, &payload)) {

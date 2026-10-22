@@ -1,0 +1,252 @@
+pub class SemverError < ValueError {
+    init(what: String) {
+        super(what)
+    }
+}
+
+const VERSION = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z.\-]+))?(?:\+([0-9A-Za-z.\-]+))?$/v
+const PARTIAL = /^(0|[1-9][0-9]*)(?:\.(0|[1-9][0-9]*|\*))?(?:\.(0|[1-9][0-9]*|\*))?(?:-([0-9A-Za-z.\-]+))?$/v
+const OP      = /^(\^|~|=|>=|<=|>|<)?\s*(.*)$/v
+
+fn groups(re: _, s: String, n: Int) -> Array[String | nil] | nil {
+    let m = re(s) ?? return nil
+    let g = m.groups
+    g + [nil] * (n + 1 - #g)
+}
+
+fn identifiers(pre: String | nil) -> Array[String | Int] {
+    if pre == nil || pre == '' {
+        return []
+    }
+    pre.split('.').map(id -> id.match?(/^[0-9]+$/) ? int(id, 10) : id)
+}
+
+fn cmp-id(a: String | Int, b: String | Int) -> Int {
+    match [a, b] {
+        [x: Int, y: Int]       => x <=> y,
+        [_: Int, _]            => -1,
+        [_, _: Int]            => 1,
+        [x: String, y: String] => x <=> y,
+    }
+}
+
+fn cmp-pre(a: Array[String | Int], b: Array[String | Int]) -> Int {
+    if #a == 0 || #b == 0 {
+        return #b <=> #a
+    }
+    for x; i in a {
+        if i >= #b {
+            return 1
+        }
+        let c = cmp-id(x, b[i])
+        if c != 0 {
+            return c
+        }
+    }
+    #a <=> #b
+}
+
+pub class Version {
+    major: Int
+    minor: Int
+    patch: Int
+    pre:   Array[String | Int]
+    build: String | nil
+
+    init(major: Int, minor: Int, patch: Int, pre: Array[String | Int] = [], build: String | nil = nil) {
+        self.major = major
+        self.minor = minor
+        self.patch = patch
+        self.pre   = pre
+        self.build = build
+    }
+
+    static parse(s: String) -> Version {
+        match groups(VERSION, s.trim(), 5) {
+            [_, major, minor, patch, pre, build] => Version(
+                int(major, 10),
+                int(minor, 10),
+                int(patch, 10),
+                identifiers(pre),
+                build
+            ),
+            _ => throw SemverError("invalid version: `{s}`")
+        }
+    }
+
+    static valid?(s: String) -> Bool {
+        VERSION(s.trim()) != nil
+    }
+
+    pre? -> Bool {
+        #pre > 0
+    }
+
+    triple -> (Int, Int, Int) {
+        (major, minor, patch)
+    }
+
+    <=>(other: Version) -> Int {
+        [
+            major <=> other.major,
+            minor <=> other.minor,
+            patch <=> other.patch,
+            cmp-pre(pre, other.pre),
+        ].find(\_ != 0) ?? 0
+    }
+
+    ==(other: Any) -> Bool {
+        other :: Version && (self <=> other) == 0
+    }
+
+    __str__() -> String {
+        let s = "{major}.{minor}.{patch}"
+        if #pre > 0 {
+            s += "-{pre.map(str).join('.')}"
+        }
+        if build != nil {
+            s += "+{build}"
+        }
+        s
+    }
+}
+
+tag Bound;
+
+class Partial {
+    major: Int
+    minor: Int | nil
+    patch: Int | nil
+    pre:   Array[String | Int]
+
+    init(major: Int, minor: Int | nil, patch: Int | nil, pre: Array[String | Int]) {
+        self.major = major
+        self.minor = minor
+        self.patch = patch
+        self.pre   = pre
+    }
+
+    exact() -> Version {
+        Version(major, minor ?? 0, patch ?? 0, pre)
+    }
+}
+
+fn partial(s: String, req: String) -> Partial {
+    match groups(PARTIAL, s, 4) {
+        [_, major, minor, patch, pre] => do {
+            let num = x -> (x == nil || x == '*') ? nil : int(x, 10)
+            if minor == '*' && patch != nil && patch != '*' {
+                throw SemverError("invalid version requirement: `{req}`")
+            }
+            Partial(int(major, 10), num(minor), num(patch), identifiers(pre))
+        },
+        _ => throw SemverError("invalid version requirement: `{req}`")
+    }
+}
+
+fn below(p: Partial) -> Version {
+    match [p.minor, p.patch] {
+        [m: Int, q: Int] => Version(p.major, m, q + 1),
+        [m: Int, _]      => Version(p.major, m + 1, 0),
+        _                => Version(p.major + 1, 0, 0),
+    }
+}
+
+fn caret(p: Partial) -> Array[(String, Version)] {
+    let lo = p.exact()
+    let hi = match [p.major, p.minor, p.patch] {
+        [0, 0, q: Int] => Version(0, 0, q + 1),
+        [0, 0, _]      => Version(0, 1, 0),
+        [0, m: Int, _] => Version(0, m + 1, 0),
+        [0, _, _]      => Version(1, 0, 0),
+        _              => Version(p.major + 1, 0, 0),
+    }
+    [('>=', lo), ('<', hi)]
+}
+
+fn tilde(p: Partial) -> Array[(String, Version)] {
+    let hi = match p.minor {
+        m: Int => Version(p.major, m + 1, 0),
+        _      => Version(p.major + 1, 0, 0),
+    }
+    [('>=', p.exact()), ('<', hi)]
+}
+
+fn comparators(part: String, req: String) -> Array[(String, Version)] {
+    let [_, op, ?tail] = groups(OP, part, 2)!
+    let rest = (tail ?? '').trim()
+    let p = partial(rest, req)
+    let exact? = p.minor != nil && p.patch != nil
+
+    match op ?? '^' {
+        '^' and rest.contains?('*') => [('>=', p.exact()), ('<', below(p))],
+        '^'                         => caret(p),
+        '~'                         => tilde(p),
+        '=' and exact?              => [('=', p.exact())],
+        '='                         => [('>=', p.exact()), ('<', below(p))],
+        '>' and exact?              => [('>', p.exact())],
+        '>'                         => [('>=', below(p))],
+        '>='                        => [('>=', p.exact())],
+        '<'                         => [('<', p.exact())],
+        '<=' and exact?             => [('<=', p.exact())],
+        '<='                        => [('<', below(p))],
+    }
+}
+
+pub class Req {
+    source: String
+    bounds: Array[(String, Version)]
+
+    init(source: String, bounds: Array[(String, Version)]) {
+        self.source = source
+        self.bounds = bounds
+    }
+
+    static parse(s: String) -> Req {
+        let text = s.trim()
+        if text == '' || text == '*' {
+            return Req('*', [])
+        }
+        let bounds = []
+        for part in text.split(',').map(\_.trim()) {
+            if part == '' {
+                throw SemverError("invalid version requirement: `{s}`")
+            }
+            bounds += comparators(part, s)
+        }
+        Req(text, bounds)
+    }
+
+    static exact(v: Version) -> Req {
+        Req("={v}", [('=', v)])
+    }
+
+    matches?(v: Version) -> Bool {
+        if v.pre? && !bounds.any?(b -> b.1.pre? && b.1.triple == v.triple) {
+            return false
+        }
+        bounds.all?(fn (bound) {
+            let (op, b) = bound
+            let c = v <=> b
+            match op {
+                '='  => c == 0,
+                '>'  => c > 0,
+                '>=' => c >= 0,
+                '<'  => c < 0,
+                '<=' => c <= 0,
+            }
+        })
+    }
+
+    __str__() -> String {
+        source
+    }
+}
+
+pub fn version(s: String) -> Version {
+    Version.parse(s)
+}
+
+pub fn req(s: String) -> Req {
+    Req.parse(s)
+}

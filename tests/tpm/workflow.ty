@@ -1,0 +1,440 @@
+import ty
+import http
+import ty.test (Test, skip-if, platform)
+import path (Path)
+import json
+import http.codec as codec
+import super.support.process (run)
+import tpm.tar as tar
+import sh as shell
+
+class Space {
+    root:  Path
+    cache: Path
+
+    init(t: Test) {
+        root  = t.tmp-dir()
+        cache = root / 'cache'
+    }
+
+    env -> Dict[String, String] {
+        %{'TPM_CACHE': str(cache), 'TPM_REGISTRY': ''}
+    }
+
+    file(rel: String, text: String) -> Path {
+        let p = root / rel
+        p.parent.mkdir(parents: true, exist-ok: true)
+        p.write(text)
+        p
+    }
+
+    exec(dir: String, *args: String) -> {status: Int, stdout: String, stderr: String} {
+        let d = root / dir
+        d.mkdir(parents: true, exist-ok: true)
+        run(args, env: env, chdir: str(d))
+    }
+
+    ok(dir: String, *args: String) -> String {
+        let r = exec(dir, *args)
+        assert(r.status == 0, "{args.join(' ')} in {dir}:\n{r.stdout}\n{r.stderr}")
+        r.stdout.trim()
+    }
+
+    fails(dir: String, *args: String) -> String {
+        let r = exec(dir, *args)
+        assert(r.status != 0, "{args.join(' ')} in {dir} should have failed:\n{r.stdout}")
+        r.stderr
+    }
+
+    tpm(dir: String, *args: String) -> String {
+        ok(dir, '--pm', *args)
+    }
+
+    /// A pure-Ty package NAME VERSION whose `who()` names itself and the packages it uses.
+    package(name: String, version: String, deps: Dict[String, String] = %{}) -> String {
+        let dir = "src/{name}-{version}"
+        let lines = ['[package]', "name = \"{name}\"", "version = \"{version}\"", '', '[dependencies]']
+        for d, r in deps {
+            lines.push("{d} = \"{r}\"")
+        }
+        file("{dir}/ty.toml", lines.join('\n') + '\n')
+        let imports = deps.keys().map(\"import {_}").join('\n')
+        let parts = ["\"{name} {version}\"", *deps.keys().map(\"{_}.who()")].join(', ')
+        file("{dir}/{name}.ty", "{imports}\npub fn who() " + '{ [' + parts + '].join("; ") }\n')
+        dir
+    }
+
+    publish(dir: String) {
+        tpm(dir, 'build')
+        tpm(dir, 'publish', '--registry', str(root / 'registry'))
+    }
+
+    app(deps: Array[String], main: String) {
+        file('app/ty.toml', [
+            '[package]',
+            'name = "app"',
+            '',
+            '[dependencies]',
+            *deps,
+            '',
+            '[tpm]',
+            'registry = "../registry"',
+            '',
+        ].join('\n'))
+        file('app/main.ty', main)
+    }
+
+    locked(dir: String) -> Dict[String, String] {
+        let out = %{}
+        let name = nil
+        for line in (root / dir / 'ty.lock').read-text().lines() {
+            if let [_, k, v] = /^(name|version) = "(.*)"$/(line) {
+                if k == 'name' {
+                    name = v
+                } else {
+                    out[(name)!] = v
+                }
+            }
+        }
+        out
+    }
+}
+
+fn which?(cmd: String) -> Bool {
+    (getenv('PATH') ?? '').split(':').any?(dir -> dir != '' && (Path(dir) / cmd).executable?)
+}
+
+pub fn path-dependencies-can-be-added-and-removed(t: Test) {
+    let s = Space(t)
+    s.file('util/ty.toml', '[package]\nname = "util"\nversion = "0.2.0"\n')
+    s.file('util/util.ty', 'pub fn hello() { "hello from util" }\n')
+    s.tpm('app', 'init')
+    s.file('app/main.ty', 'import util\nprint(util.hello())\n')
+
+    s.tpm('app', 'add', 'util', '--path', '../util')
+    assert((s.root / 'app/ty.toml').read-text().contains?('util = { path = "../util" }'))
+    assert(s.ok('app', 'main.ty') == 'hello from util')
+    assert(s.locked('app') == %{'app': '0.1.0', 'util': '0.2.0'})
+
+    s.tpm('app', 'remove', 'util')
+    assert(!(s.root / 'app/ty.toml').read-text().contains?('util'))
+    assert(s.locked('app') == %{'app': '0.1.0'})
+    assert(s.fails('app', 'main.ty').contains?('failed to load module'))
+}
+
+pub fn the-resolver-backtracks-to-a-compatible-set(t: Test) {
+    let s = Space(t)
+    for v in ['1.0.0', '2.0.0', '2.1.0'] {
+        s.publish(s.package('z', v))
+    }
+    s.publish(s.package('x', '1.0.0', %{'z': '2'}))
+    s.publish(s.package('x', '1.1.0', %{'z': '1'}))
+
+    s.app(['x = "1"', 'z = "2"'], 'import x\nprint(x.who())\n')
+
+    assert(s.ok('app', 'main.ty') == 'x 1.0.0; z 2.1.0')
+    assert(s.locked('app') == %{'app': '0.0.0', 'x': '1.0.0', 'z': '2.1.0'})
+    assert(s.tpm('app', 'tree') == 'app 0.0.0\n├── x 1.0.0\n│   └── z 2.1.0\n└── z 2.1.0')
+}
+
+pub fn unsatisfiable-requirements-say-why(t: Test) {
+    let s = Space(t)
+    for v in ['1.0.0', '2.0.0'] {
+        s.publish(s.package('z', v))
+    }
+    s.app(['z = "3"'], 'import z\n')
+
+    let err = s.fails('app', '--pm', 'lock')
+    assert(err.contains?('no version of z matches 3 (required by `app`); available: 1.0.0, 2.0.0'), err)
+
+    s.app(['nope = "1"'], 'import nope\n')
+    assert(s.fails('app', '--pm', 'lock').contains?('nope is not in the registry'))
+}
+
+pub fn add-picks-the-newest-release(t: Test) {
+    let s = Space(t)
+    for v in ['1.0.0', '1.4.2', '2.0.0-beta.1'] {
+        s.publish(s.package('z', v))
+    }
+    s.app([], 'import z\nprint(z.who())\n')
+
+    s.tpm('app', 'add', 'z')
+    assert((s.root / 'app/ty.toml').read-text().contains?('z = "1.4.2"'))
+    assert(s.ok('app', 'main.ty') == 'z 1.4.2')
+
+    s.tpm('app', 'add', 'z@~1.0')
+    assert(s.ok('app', 'main.ty') == 'z 1.0.0')
+}
+
+pub fn locks-hold-versions-until-upgraded(t: Test) {
+    let s = Space(t)
+    s.publish(s.package('z', '2.0.0'))
+    s.app(['z = "2"'], 'import z\nprint(z.who())\n')
+    assert(s.ok('app', 'main.ty') == 'z 2.0.0')
+
+    s.publish(s.package('z', '2.1.0'))
+    s.tpm('app', 'lock')
+    assert(s.locked('app')['z'] == '2.0.0')
+
+    s.tpm('app', 'lock', '--upgrade-package', 'z')
+    assert(s.locked('app')['z'] == '2.1.0')
+    assert(s.ok('app', 'main.ty') == 'z 2.1.0')
+}
+
+pub fn locked-environments-need-no-registry(t: Test) {
+    let s = Space(t)
+    s.publish(s.package('z', '1.0.0'))
+    s.app(['z = "1"'], 'import z\nprint(z.who())\n')
+    assert(s.ok('app', 'main.ty') == 'z 1.0.0')
+
+    (s.root / 'registry').rmtree()
+    (s.root / 'app/.ty').rmtree()
+    assert(s.ok('app', 'main.ty') == 'z 1.0.0')
+
+    s.tpm('app', 'cache', 'clean')
+    let err = s.fails('app', 'main.ty')
+    assert(err.contains?('no such file'), err)
+    assert(err.contains?('`tpm sync` failed'), err)
+}
+
+pub fn frozen-syncs-refuse-a-stale-lock(t: Test) {
+    let s = Space(t)
+    s.publish(s.package('z', '1.0.0'))
+    s.app(['z = "1"'], 'import z\n')
+    assert(s.fails('app', '--pm', 'sync', '--frozen').contains?('is out of date'))
+    s.tpm('app', 'sync')
+    s.tpm('app', 'sync', '--frozen')
+
+    s.file('app/ty.toml', (s.root / 'app/ty.toml').read-text().sub('z = "1"', 'z = "1.0"'))
+    assert(s.fails('app', '--pm', 'sync', '--frozen').contains?('is out of date'))
+}
+
+pub fn stale-environments-can-be-refused(t: Test) {
+    let s = Space(t)
+    s.app([], 'import helper\nprint(helper.WORD)\n')
+    s.file('app/helper.ty', 'pub const WORD = "ran"\n')
+    assert(s.ok('app', 'main.ty') == 'ran')
+    s.file('app/ty.toml', (s.root / 'app/ty.toml').read-text() + '# edited\n')
+    let r = run(['main.ty'], env: %{**s.env, 'TY_NO_SYNC': '1'}, chdir: str(s.root / 'app'))
+    assert(r.status != 0 && r.stderr.contains?('the package environment is out of date; run `tpm sync`'), r.stderr)
+}
+
+fn archive-names(file: Path) -> Array[String] {
+    tar.unpack(codec.decode('gzip', file.read-bytes())).map(\_.name)
+}
+
+pub fn archives-hold-the-package-and-its-metadata(t: Test) {
+    let s = Space(t)
+    s.file('kit/ty.toml', '[package]\nname = "kit"\nversion = "0.1.0"\nroots = ["src"]\nexclude = ["tests/**", "*.tmp"]\n')
+    s.file('kit/src/kit.ty', 'pub fn f() { 1 }\n')
+    s.file('kit/src/kit/part.ty', 'pub fn g() { 2 }\n')
+    s.file('kit/README.md', 'kit\n')
+    s.file('kit/notes.tmp', 'scratch\n')
+    s.file('kit/tests/kit_test.ty', 'import kit\n')
+    s.file('kit/.secret', 'no\n')
+    s.file('kit/.git/HEAD', 'ref: x\n')
+    s.tpm('kit', 'build')
+
+    let archive = s.root / 'kit/dist/kit-0.1.0-any.tar.gz'
+    assert(archive-names(archive) == ['README.md', 'src/kit.ty', 'src/kit/part.ty', 'tpm.json', 'ty.toml'])
+
+    s.tpm('kit', 'publish', '--registry', '../registry')
+    s.tpm('kit', 'publish', '--registry', '../registry')
+    let index = (s.root / 'registry/index/kit').read-text().lines()
+    assert(#index == 1)
+    let entry = json.parse(index[0])
+    assert(entry['version'] == '0.1.0' && entry['artifacts'][0]['platform'] == 'any')
+
+    s.file('kit/src/kit.ty', 'pub fn f() { 3 }\n')
+    s.tpm('kit', 'build')
+    assert(s.fails('kit', '--pm', 'publish', '--registry', '../registry').contains?('kit 0.1.0 is already published for any'))
+
+    s.app(['kit = "0.1"'], 'import kit\nimport kit.part as part\nprint(kit.f(), part.g())\n')
+    assert(s.ok('app', 'main.ty') == '1, 2')
+}
+
+pub fn path-dependencies-cannot-be-published(t: Test) {
+    let s = Space(t)
+    s.file('util/ty.toml', '[package]\nname = "util"\n')
+    s.file('kit/ty.toml', '[package]\nname = "kit"\n\n[dependencies]\nutil = { path = "../util" }\n')
+    assert(s.fails('kit', '--pm', 'build').contains?('path dependency `util` cannot be published'))
+}
+
+const GREET_V1 = 'struct point { int x; };\nint greet_abi(void) { return 1; }\nint greet_sum(struct point const *p) { return p->x; }\n'
+const GREET_V2 = 'struct point { long pad; int x; };\nint greet_abi(void) { return 2; }\nint greet_sum(struct point const *p) { return (int)p->pad + p->x; }\n'
+const FANCY    = 'struct point { long pad; int x; };\nint greet_abi(void);\nint greet_sum(struct point const *p);\nint fancy_report(void) { struct point p = { 40, 2 }; return greet_abi() * 1000 + greet_sum(&p); }\n'
+
+fn cc(s: Space, out: String, src: String, *extra: String) {
+    let c = s.file("csrc/{Path(out).stem}.c", src)
+    let r = shell.run(['cc', '-shared', '-fPIC', '-o', str(s.root / out), str(c), *extra])
+    assert(r.ok?, r.stderr)
+}
+
+@platform('linux')
+@skip-if(-> !which?('cc') || !which?('patchelf'), 'needs cc and patchelf')
+pub fn bundled-natives-win-over-incompatible-system-copies(t: Test) {
+    let s = Space(t)
+    let native = 'greet/native/linux-x86_64'
+    (s.root / native).mkdir(parents: true)
+    (s.root / 'system').mkdir(parents: true)
+
+    cc(s, 'system/libgreet.so.1', GREET_V1, '-Wl,-soname,libgreet.so.1')
+    cc(s, "{native}/libgreet.so.1", GREET_V2, '-Wl,-soname,libgreet.so.1')
+    cc(s, "{native}/libfancy.so.1", FANCY, '-Wl,-soname,libfancy.so.1', "-L{s.root / native}", '-l:libgreet.so.1')
+
+    s.file('greet/ty.toml', '[package]\nname = "greet"\nversion = "1.0.0"\n\n[native]\nfancy = "fancy"\n')
+    s.file('greet/greet.ty', [
+        'import ffi as c (C!)',
+        'if not let $lib = c.open("fancy") {',
+        "    throw RuntimeError('greet: failed to load libfancy')",
+        '}',
+        'C! lib fn {',
+        '    int fancy_report(void);',
+        '}',
+        'pub fn report() -> Int { fancy_report() }',
+    ].join('\n') + '\n')
+    s.publish('greet')
+
+    let archive = (s.root / 'greet/dist').glob('*.tar.gz')[0]
+    let names = archive-names(archive)
+    assert(names.any?(\_.match?(/^native\/libfancy-[0-9a-f]{8}\.so\.1$/)), names)
+    assert(names.any?(\_.match?(/^native\/libgreet-[0-9a-f]{8}\.so\.1$/)), names)
+
+    s.file('app/sysload.ty', [
+        'import ffi as c',
+        "let system = c.dlopen('{s.root}/system/libgreet.so.1') ?? throw RuntimeError('no system libgreet')",
+        "let abi = c.wrap(system, 'greet_abi', c.int)",
+        'pub fn check() -> Int { abi() }',
+    ].join('\n') + '\n')
+    s.app(['greet = "1"'], [
+        'import sysload',
+        'import greet',
+        'import ffi as c',
+        "let raw = c.dlopen('{s.root}/{native}/libfancy.so.1')!",
+        "let unbundled = c.wrap(raw, 'fancy_report', c.int)",
+        'print(sysload.check(), greet.report(), unbundled())',
+    ].join('\n') + '\n')
+
+    assert(s.ok('app', 'main.ty') == '1, 2042, 1040')
+}
+
+@skip-if(-> !which?('git'), 'needs git')
+pub fn git-dependencies-pin-a-commit(t: Test) {
+    let s = Space(t)
+    let repo = s.root / 'kit-repo'
+    s.file('kit-repo/ty.toml', '[package]\nname = "kit"\nversion = "0.3.0"\n')
+    s.file('kit-repo/kit.ty', 'pub fn who() { "kit one" }\n')
+
+    let git = fn (*args: String) {
+        let r = shell.run(['git', '-C', str(repo), *args])
+        assert(r.ok?, r.stderr)
+        r.stdout.trim()
+    }
+
+    git('init', '--quiet')
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'add', '.')
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--quiet', '-m', 'one')
+    let first = git('rev-parse', 'HEAD')
+
+    s.app([], 'import kit\nprint(kit.who())\n')
+    s.tpm('app', 'add', 'kit', '--git', "file://{repo}")
+    assert(s.ok('app', 'main.ty') == 'kit one')
+    assert((s.root / 'app/ty.lock').read-text().contains?("source = \"git+file://{repo}#{first}\""))
+
+    s.file('kit-repo/kit.ty', 'pub fn who() { "kit two" }\n')
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--quiet', '-am', 'two')
+
+    (s.root / 'app/.ty').rmtree()
+    assert(s.ok('app', 'main.ty') == 'kit one')
+
+    s.tpm('app', 'lock', '--upgrade')
+    assert(s.ok('app', 'main.ty') == 'kit two')
+}
+
+fn bundler?() -> Bool {
+    run(['--help']).stdout.contains?('--bundle')
+}
+
+@platform('linux')
+@skip-if(-> !bundler?(), 'ty was built without the bundler')
+pub fn bundles-carry-their-environment(t: Test) {
+    let s = Space(t)
+    s.publish(s.package('z', '1.2.0'))
+    s.file('util/ty.toml', '[package]\nname = "util"\n')
+    s.file('util/util.ty', 'pub fn hello() { "util" }\n')
+    s.app(['z = "1"', 'util = { path = "../util" }'], 'import z\nimport util\nprint(z.who(), util.hello())\n')
+    assert(s.ok('app', 'main.ty') == 'z 1.2.0, util')
+
+    s.ok('app', '--bundle=../bundled', 'main.ty')
+    for gone in ['app', 'util', 'registry', 'cache'] {
+        (s.root / gone).rename(s.root / "{gone}.moved")
+    }
+
+    let r = shell.run([str(s.root / 'bundled')], env: %{'TPM_CACHE': str(s.root / 'empty')}, chdir: str(s.root))
+    assert(r.ok?, r.stderr)
+    assert(r.stdout.trim() == 'z 1.2.0, util', r.stdout)
+    assert(!(s.root / 'empty').exists?)
+}
+
+pub fn http-registries-work-and-are-cached-for-offline-use(t: Test) {
+    let s = Space(t)
+    s.publish(s.package('z', '1.0.0'))
+
+    let srv = http.Server('127.0.0.1', 0)
+    srv.static-files('/', str(s.root / 'registry'))
+    let thread = Thread(srv.run)
+
+    try {
+        s.app(['z = "1"'], 'import z\nprint(z.who())\n')
+        s.file('app/ty.toml', (s.root / 'app/ty.toml').read-text().sub('"../registry"', "\"http://127.0.0.1:{srv.port}\""))
+        assert(s.ok('app', 'main.ty') == 'z 1.0.0')
+        assert((s.root / 'app/ty.lock').read-text().contains?("url = \"http://127.0.0.1:{srv.port}/files/z/z-1.0.0-any.tar.gz\""))
+    } finally {
+        srv.stop()
+        thread.join()
+        srv.close()
+    }
+
+    (s.root / 'app/.ty').rmtree()
+    assert(s.ok('app', 'main.ty') == 'z 1.0.0')
+
+    let r = s.exec('app', '--pm', 'lock', '--upgrade')
+    assert(r.status == 0 && r.stderr.contains?('using the cached index'), r.stderr)
+    assert(s.locked('app')['z'] == '1.0.0')
+}
+
+pub fn add-remembers-the-registry-it-was-given(t: Test) {
+    let s = Space(t)
+    s.publish(s.package('z', '1.0.0'))
+    s.tpm('app', 'init')
+    s.file('app/main.ty', 'import z\nprint(z.who())\n')
+
+    s.tpm('app', 'add', '--registry', '../registry', 'z')
+    let text = (s.root / 'app/ty.toml').read-text()
+    assert(text.contains?('[tpm]\nregistry = "../registry"') && text.contains?('z = "1.0.0"'), text)
+
+    (s.root / 'app/.ty').rmtree()
+    (s.root / 'app/ty.lock').unlink()
+    assert(s.ok('app', 'main.ty') == 'z 1.0.0')
+}
+
+@platform('linux')
+@skip-if(-> !which?('cc'), 'needs cc')
+pub fn path-dependencies-use-their-own-native-builds(t: Test) {
+    let s = Space(t)
+    (s.root / 'solo/native/linux-x86_64').mkdir(parents: true)
+    cc(s, 'solo/native/linux-x86_64/libsolo.so', 'int solo(void) { return 7; }\n')
+    s.file('solo/ty.toml', '[package]\nname = "solo"\n\n[native]\nsolo = "solo"\n')
+    s.file('solo/solo.ty', [
+        'import ffi as c',
+        "let lib = c.open('solo') ?? throw RuntimeError('no libsolo')",
+        "let f = c.wrap(lib, 'solo', c.int)",
+        'pub fn value() -> Int { f() }',
+    ].join('\n') + '\n')
+    s.app(['solo = { path = "../solo" }'], 'import solo\nprint(solo.value())\n')
+    assert(s.ok('app', 'main.ty') == '7')
+
+    (s.root / 'solo/native/linux-x86_64/libsolo.so').unlink()
+    let err = s.fails('app', 'main.ty')
+    assert(err.contains?('the solo library bundled with this package'), err)
+}

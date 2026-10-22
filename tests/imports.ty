@@ -25,7 +25,7 @@ fn fails(root: Path, *args: String) -> String {
 }
 
 const GOAT_SHAPED = %{
-    '__pkg__.ty':              "pub const ROOTS = ['.', 'app']",
+    'ty.toml':                 "[package]\nroots = ['.', 'app']",
     'app/config.ty':           'print("loading config")\npub fn name() { "config" }',
     'app/journal.ty':          'import config\npub fn name() { "journal({config.name()})" }',
     'tests/support/helper.ty': 'pub fn name() { "helper" }',
@@ -34,10 +34,10 @@ const GOAT_SHAPED = %{
 
 pub fn same-names-in-different-packages-stay-apart(t: Test) {
     let root = tree(t, %{
-        'a/__pkg__.ty': '',
+        'a/ty.toml':    '',
         'a/util.ty':    'pub fn who() { "a" }',
         'a/lib.ty':     'import util\npub fn who() { util.who() }',
-        'b/__pkg__.ty': '',
+        'b/ty.toml':    '',
         'b/util.ty':    'pub fn who() { "b" }',
         'b/lib.ty':     'import util\npub fn who() { util.who() }',
         'main.ty':      'import a.lib as al\nimport b.lib as bl\nprint(al.who(), bl.who())'
@@ -57,9 +57,10 @@ pub fn eval-resolves-from-the-working-directory(t: Test) {
 
 pub fn deps-map-a-module-prefix(t: Test) {
     let root = tree(t, %{
-        '__pkg__.ty':         'pub const DEPS = %{"kit": "vendor/kit"}',
-        'vendor/kit.ty':      'pub fn name() { "kit" }',
-        'vendor/kit/part.ty': 'pub fn name() { "kit.part" }',
+        'ty.toml':                'dependencies.kit = { path = "vendor/kit" }',
+        'vendor/kit/ty.toml':     '[package]\nname = "kit"',
+        'vendor/kit/kit.ty':      'pub fn name() { "kit" }',
+        'vendor/kit/kit/part.ty': 'pub fn name() { "kit.part" }',
         'main.ty':            'import kit\nimport kit.part as part\nprint(kit.name(), part.name())'
     })
     assert(says(root, 'main.ty') == 'kit, kit.part')
@@ -76,8 +77,8 @@ pub fn dots-are-relative-to-the-importing-file(t: Test) {
 
 pub fn declared-packages-prefer-their-own-modules(t: Test) {
     let root = tree(t, %{
-        '__pkg__.ty': '',
-        'diff.ty':    'pub fn name() { "local" }',
+        'ty.toml': '',
+        'diff.ty': 'pub fn name() { "local" }',
         'main.ty':    'import diff\nprint(diff.name())'
     })
     assert(says(root, 'main.ty') == 'local')
@@ -93,8 +94,8 @@ pub fn plain-directories-keep-the-library-first(t: Test) {
 
 pub fn builtin-modules-cannot-be-shadowed(t: Test) {
     let root = tree(t, %{
-        '__pkg__.ty': '',
-        'os.ty':      'print("local os")',
+        'ty.toml': '',
+        'os.ty':   'print("local os")',
         'main.ty':    'import os\nprint(os.getpid() > 0)'
     })
     assert(says(root, 'main.ty') == 'true')
@@ -102,7 +103,7 @@ pub fn builtin-modules-cannot-be-shadowed(t: Test) {
 
 pub fn shadowing-locals-are-named-when-lookups-fail(t: Test) {
     let root = tree(t, %{
-        '__pkg__.ty': '',
+        'ty.toml':    '',
         'path.ty':    'pub fn mine() { 1 }',
         'from.ty':    'import path (Path)',
         'dot.ty':     'import path\nprint(path.Path)'
@@ -126,7 +127,7 @@ pub fn shadowed-locals-are-named-when-lookups-fail(t: Test) {
 
 pub fn super-stays-inside-the-filesystem-it-names(t: Test) {
     let root = tree(t, %{
-        'pkg/__pkg__.ty': '',
+        'pkg/ty.toml':    '',
         'pkg/main.ty':    'import super.doc'
     })
     let err = fails(root, 'pkg/main.ty')
@@ -143,15 +144,17 @@ pub fn failures-list-the-searched-paths(t: Test) {
 
 pub fn manifests-are-checked(t: Test) {
     let root = tree(t, %{
-        '__pkg__.ty': 'pub const ROOTS = 42',
+        'ty.toml':    '[package]\nroots = 42',
         'main.ty':    'import x'
     })
-    assert(fails(root, 'main.ty').contains?('ROOTS must be a String or Array[String], found 42'))
+    let err = fails(root, 'main.ty')
+    assert(err.contains?('[package] roots must be a string or an array of strings'), err)
+    assert(err.contains?('`tpm sync` failed'), err)
 }
 
 pub fn repositories-end-a-package(t: Test) {
     let root = tree(t, %{
-        '__pkg__.ty':    "pub const ROOTS = ['src']",
+        'ty.toml':       "[package]\nroots = ['src']",
         'vendor/.git':   'gitdir: elsewhere',
         'vendor/a.ty':   'import b\nprint(b.name())',
         'vendor/b.ty':   'pub fn name() { "b" }'
@@ -172,7 +175,7 @@ pub fn which-explains-a-resolution(t: Test) {
     let root = tree(t, GOAT_SHAPED)
     let out = says(root, '-e', 'which config app/journal.ty')
     assert(out.contains?("config → {root}/app/config.ty"), out)
-    assert(out.contains?("declared by {root}/__pkg__.ty"), out)
+    assert(out.contains?("declared by {root}/ty.toml"), out)
     assert(out.contains?("{root}/config.ty"), out)
 }
 

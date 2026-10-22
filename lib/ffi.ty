@@ -1,6 +1,7 @@
 import ffi as c
 import os
 import ty
+import ty.mod as tymod
 import ty.token (next, peek)
 import ty.parse (expr, stmt)
 import ty.lex as lex
@@ -1097,6 +1098,26 @@ fn library-file?(name: String) -> Bool {
     name.match?(/\.(?:so(?:\.[\w.]+)?|dylib|dll)$/)
 }
 
+/// The name a package's `[native]` table uses for `name`: `libopenjp2.so.7`, `openjp2` and
+/// `/opt/lib/libopenjp2.2.5.dylib` are all `openjp2`.
+pub fn library-key(name: String) -> String {
+    let base = name.comb(/^.*\//)
+    if library-file?(base) || base.match?(/\.(so|dylib|dll)\b/) {
+        base = base.comb(/\.(so|dylib|dll)(\..*)?$/).comb(/[-.][0-9][0-9.]*$/)
+    }
+    base.comb(/^lib/)
+}
+
+fn bundled(libs: Array[String]) -> Ptr[Any] | nil {
+    for lib in libs {
+        if let $path = tymod.native(library-key(lib)) {
+            return c.dlopen(path) ?? throw RuntimeError(
+                "ffi.open: cannot load {path}, the {lib} library bundled with this package: {c.dlerror() ?? 'unknown error'}"
+            )
+        }
+    }
+}
+
 fn library-names(lib: String, versions: Array[String | Int | nil]) -> Array[String] {
     if library-file?(lib) {
         return [lib]
@@ -1172,6 +1193,13 @@ pub fn open(
     env: ?String = nil
 ) -> Ptr[Any] | nil {
     let libs = (lib :: String) ? [lib] : lib
+
+    if env == nil || getenv(env) == nil {
+        if let $handle = bundled(libs) {
+            return handle
+        }
+    }
+
     let candidates = library-candidates(libs, versions ?? [nil], dirs.map(prelude::str), env)
 
     for candidates {

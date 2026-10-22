@@ -1,0 +1,67 @@
+const HEADER = /^\s*\[/
+
+fn header?(line: String, table: String) -> Bool {
+    line.match?(regex("^\\s*\\[\\s*{table}\\s*\\]\\s*(#.*)?$"))
+}
+
+fn entry-line?(line: String, key: String) -> Bool {
+    line.match?(regex("^\\s*(\"{key}\"|'{key}'|{key})\\s*="))
+}
+
+/// Sets (or, with a nil `value`, removes) `key` in the `[table]` of ty.toml's text, keeping
+/// everything else as it was. `value` is already TOML.
+pub fn edit-entry(text: String, table: String, key: String, value: String | nil) -> String {
+    let lines = text.lines()
+    let start = nil
+    for line; i in lines {
+        if header?(line, table) {
+            start = i
+            break
+        }
+    }
+
+    if start == nil {
+        if value == nil {
+            return text
+        }
+        let base = text.strip-right()
+        return "{base}{(base == '') ? '' : '\n\n'}[{table}]\n{key} = {value}\n"
+    }
+
+    let end = #lines
+    for i in (start + 1)..#lines {
+        if lines[i].match?(HEADER) {
+            end = i
+            break
+        }
+    }
+
+    let at = nil
+    for i in (start + 1)..end {
+        if entry-line?(lines[i], key) {
+            at = i
+            break
+        }
+    }
+
+    match [at, value] {
+        [i: Int, v: String] => lines[i] = "{key} = {v}",
+        [i: Int, nil]       => lines.pop(i),
+        [nil, v: String]    => do {
+            let last = start
+            for i in (start + 1)..end {
+                if lines[i].trim() != '' {
+                    last = i
+                }
+            }
+            lines.insert(last + 1, "{key} = {v}")
+        },
+        _ => ()
+    }
+
+    lines.join('\n') + (text.ends?('\n') ? '\n' : '')
+}
+
+pub fn edit-dependencies(text: String, alias: String, value: String | nil) -> String {
+    edit-entry(text, 'dependencies', alias, value)
+}

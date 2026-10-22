@@ -1,0 +1,139 @@
+import ffi as c
+import os
+import path (Path)
+
+pub class ElfError < RuntimeError {
+    init(path: String, what: String) {
+        super("tpm: {path}: {what}")
+    }
+}
+
+const MAGIC = Blob(0x7F, 'ELF')
+
+const DT_NULL    = 0
+const DT_NEEDED  = 1
+const DT_SONAME  = 14
+const DT_RPATH   = 15
+const DT_RUNPATH = 29
+
+const SHT_DYNAMIC = 6
+const SHT_VERNEED = 0x6FFFFFFE
+
+pub const EM_X86_64  = 62
+pub const EM_AARCH64 = 183
+
+pub class Elf {
+    path:     String
+    machine:  Int
+    soname:   String | nil
+    needed:   Array[String]
+    runpath:  String | nil
+    rpath:    String | nil
+    requires: Array[(String, String)]
+
+    init(path: String, machine: Int) {
+        self.path     = path
+        self.machine  = machine
+        self.soname   = nil
+        self.needed   = []
+        self.runpath  = nil
+        self.rpath    = nil
+        self.requires = []
+    }
+
+    /// The newest GLIBC_x.y symbol version this object needs, as `[x, y, z]`.
+    glibc -> Array[Int] | nil {
+        requires.map(\_.1)
+                .filter(/^GLIBC_[0-9.]+$/)
+                .map(v -> v.comb(/^GLIBC_/).split('.').map(int))
+                .max()
+    }
+
+    /// Directories from DT_RUNPATH (or DT_RPATH) with `$ORIGIN` expanded.
+    search -> Array[String] {
+        let origin = str(Path(path).parent)
+        (runpath ?? rpath ?? '').split(':')
+                                .filter(\_ != '')
+                                .map(\_.sub(/\$\{?ORIGIN\}?/, origin))
+    }
+}
+
+pub fn elf?(path: String | Path) -> Bool {
+    let fd = os.open(str(path), os.O_RDONLY)
+    if fd < 0 {
+        return false
+    }
+    let head = os.read(fd, 4)
+    os.close(fd)
+    head == MAGIC
+}
+
+fn cstr(data: Blob, off: Int) -> String {
+    let end = data.search(off, 0) ?? #data
+    data.str(off, end - off, lossy: true)
+}
+
+pub fn read(file: String | Path) -> Elf {
+    let path = str(file)
+    let data = Path(path).read-bytes()
+
+    if #data < 64 || data.slice(0, 4) != MAGIC {
+        throw ElfError(path, 'not an ELF file')
+    }
+
+    if data[4] != 2 || data[5] != 1 {
+        throw ElfError(path, 'only little-endian ELF64 objects are supported')
+    }
+
+    let (machine, shoff) = c.unpack('<18xH20xQ', data.slice(0, 48))
+    let (shentsize, shnum) = c.unpack('<58xHH', data.slice(0, 62))
+    let elf = Elf(path, machine)
+
+    let sections = [
+        c.unpack('<IIQQQQIIQQ', data.slice(shoff + i * shentsize, 64))
+        for i in ..shnum
+    ]
+
+    let strings = fn (link: Int) -> Int {
+        sections[link].4
+    }
+
+    for (_, kind, _, _, offset, size, link, info, _, _) in sections {
+        match kind {
+            SHT_DYNAMIC => {
+                let base = strings(link)
+                for i in ..(size / 16) {
+                    let (dt, val) = c.unpack('<qQ', data.slice(offset + 16 * i, 16))
+                    match dt {
+                        DT_NULL    => break,
+                        DT_NEEDED  => elf.needed.push(cstr(data, base + val)),
+                        DT_SONAME  => elf.soname  = cstr(data, base + val),
+                        DT_RUNPATH => elf.runpath = cstr(data, base + val),
+                        DT_RPATH   => elf.rpath   = cstr(data, base + val),
+                        _          => ()
+                    }
+                }
+            },
+
+            SHT_VERNEED => {
+                let base = strings(link)
+                let at = offset
+                for ..info {
+                    let (_, cnt, file, aux, next) = c.unpack('<HHIII', data.slice(at, 16))
+                    let name = cstr(data, base + file)
+                    let a = at + aux
+                    for ..cnt {
+                        let (_, _, _, vname, anext) = c.unpack('<IHHII', data.slice(a, 16))
+                        elf.requires.push((name, cstr(data, base + vname)))
+                        a += anext
+                    }
+                    at += next
+                }
+            },
+
+            _ => ()
+        }
+    }
+
+    elf
+}
