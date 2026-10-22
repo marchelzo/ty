@@ -5,6 +5,7 @@ import thread
 import log
 import ssl
 import ty.mod as tymod
+import http.metrics (Metrics)
 import http.core (
     Config,
     Task,
@@ -30,6 +31,7 @@ const OP_RECV   = 2
 const OP_SEND   = 3
 const OP_WAKE   = 4
 const OP_CANCEL = 5
+const OP_FILE   = 6
 
 const OP_BITS = 3
 const OP_MASK = 7
@@ -569,6 +571,8 @@ pub class Loop {
 
     server-version: Int
     server-routes:  _
+    request-seq:    Int
+    metrics:        Metrics
 
     __later:     Array[() -> _]
 
@@ -584,6 +588,8 @@ pub class Loop {
     __stopping:  Bool
     __done:      Bool
     __closed?:   Bool
+    __files:     Dict[Int, (Task | nil, Blob)]
+    __file-seq:  Int
     __tseq:      Int
     __tasks:     Set[Task]
     __date-at:   Int
@@ -598,6 +604,8 @@ pub class Loop {
         dirty        = []
         server-version = -1
         server-routes  = nil
+        request-seq    = 0
+        metrics        = Metrics()
         __later        = []
         __listen     = listen
         __slots      = [nil]
@@ -611,6 +619,8 @@ pub class Loop {
         __stopping   = false
         __done       = false
         __closed?    = false
+        __files      = %{}
+        __file-seq   = 0
         __tseq       = 0
         __tasks      = Set()
         __date-at    = 0
@@ -733,6 +743,36 @@ pub class Loop {
         }
     }
 
+    /// Reads up to `n` bytes of `fd` at `offset` without blocking the loop
+    /// (io_uring) and returns them; must run in a server task.
+    read-at(fd: Int, n: Int, offset: Int) -> Blob {
+        let $t = task() or throw RuntimeError('http: read-at() must be called from a server task')
+        let buf = Blob.zeros(n)
+        __file-seq += 1
+        let id = __file-seq
+        __files[id] = (t, buf)
+        backend.read(fd, buf.ptr(), n, offset, (id << OP_BITS) | OP_FILE)
+        let res = try {
+            suspend()
+        } catch e {
+            __files[id] = (nil, buf)
+            throw e
+        }
+        if res < 0 {
+            throw OSError("read: {errno.str(-res)}")
+        }
+        buf.clear(res)
+        buf
+    }
+
+    __file-done(id: Int, res: Int) {
+        let (t, _) = __files[id] ?? return
+        __files.remove(id)
+        if t != nil {
+            resume(t, res)
+        }
+    }
+
     __alloc-slot() -> Int {
         if let Some(i) = __free.try-pop() {
             return i
@@ -803,7 +843,10 @@ pub class Loop {
             return
         }
 
-        if !server.connection-opened() {
+        if !server.connection-opened(self) {
+            if let $msg = server.overload-response {
+                os.write(res, msg)
+            }
             os.close(res)
             arm(__backoff, 0.05)
             return
@@ -844,6 +887,7 @@ pub class Loop {
                 }
             },
             OP_ACCEPT => __accepted(res),
+            OP_FILE   => __file-done(slot, res),
             OP_WAKE   => {
                 backend.woke()
                 backend.arm-wake(OP_WAKE)

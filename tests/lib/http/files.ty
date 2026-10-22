@@ -1,0 +1,241 @@
+import http
+import hash
+import os
+import zlib
+import _client (serve, Client, get, curl, curl?, write-file)
+
+let ROOT = "/tmp/ty-http-files-{os.getpid()}"
+let OUTSIDE = "{ROOT}-outside"
+
+fn setup() {
+    for d in [ROOT, "{ROOT}/sub", "{ROOT}/empty", "{ROOT}/.hidden", OUTSIDE] {
+        os.mkdir(d, 0o755)
+    }
+    write-file("{ROOT}/index.html", '<h1>home</h1>')
+    write-file("{ROOT}/hello.txt", 'hello world\n')
+    write-file("{ROOT}/data.json", '{"a":1}')
+    write-file("{ROOT}/sub/index.html", 'sub index')
+    write-file("{ROOT}/sub/a b+c.txt", 'spaced')
+    write-file("{ROOT}/.env", 'SECRET=1')
+    write-file("{ROOT}/.hidden/x.txt", 'hidden')
+    write-file("{OUTSIDE}/secret.txt", 'outside')
+    os.symlink("{OUTSIDE}/secret.txt", "{ROOT}/escape.txt")
+    os.symlink("{ROOT}/hello.txt", "{ROOT}/link.txt")
+    let big = Blob()
+    for i in ..70000 {
+        big.push("line {i}\n")
+    }
+    write-file("{ROOT}/big.bin", big.str!())
+    write-file("{ROOT}/app.js", 'console.log(1)' * 100)
+    write-file("{ROOT}/app.js.gz", zlib.compress('console.log(1)' * 100).str!())
+}
+
+fn teardown() {
+    os.system("rm -rf {ROOT} {OUTSIDE}")
+}
+
+fn routes(srv) {
+    srv.static-files('/static', ROOT, max-age: 3600, precompressed: true)
+    srv.static-files('/spa', ROOT, fallback: 'index.html')
+    srv.get('/download', (req, rsp) -> rsp.file("{ROOT}/hello.txt", download: 'greeting.txt'))
+}
+
+fn files-test(f: _, %kwargs) {
+    setup()
+    try {
+        serve(routes, f, **kwargs)
+    } finally {
+        teardown()
+    }
+}
+
+pub fn serves-files-with-metadata() {
+    files-test(fn (srv) {
+        let c = Client(srv.port)
+        let r = c.get('/static/hello.txt')
+        assert(r.status == 200)
+        assert(r.body == 'hello world\n')
+        assert(r.header('content-type') == 'text/plain; charset=utf-8')
+        assert(r.header('content-length') == '12')
+        assert(r.header('cache-control') == 'public, max-age=3600')
+        assert(r.header('x-content-type-options') == 'nosniff')
+        assert(r.header('accept-ranges') == 'bytes')
+        assert(r.header('etag').starts?('W/"'))
+        assert(r.header('last-modified').ends?(' GMT'))
+
+        assert(c.get('/static/data.json').header('content-type') == 'application/json')
+        assert(c.get('/static/sub/a%20b+c.txt').body == 'spaced')
+        assert(c.get('/static/link.txt').body == 'hello world\n')
+        c.close()
+    })
+}
+
+pub fn conditional-requests() {
+    files-test(fn (srv) {
+        let c = Client(srv.port)
+        let r = c.get('/static/hello.txt')
+        let et = r.header('etag')
+        let lm = r.header('last-modified')
+
+        c.request('GET', '/static/hello.txt', nil, %{'If-None-Match': et})
+        let a = c.response()
+        assert(a.status == 304)
+        assert(a.body == '')
+        assert(a.header('etag') == et)
+
+        c.request('GET', '/static/hello.txt', nil, %{'If-None-Match': '"other", ' + et})
+        assert(c.response().status == 304)
+
+        c.request('GET', '/static/hello.txt', nil, %{'If-Modified-Since': lm})
+        assert(c.response().status == 304)
+
+        c.request('GET', '/static/hello.txt', nil, %{'If-Modified-Since': 'Thu, 01 Jan 1970 00:00:00 GMT'})
+        assert(c.response().status == 200)
+
+        c.request('GET', '/static/hello.txt', nil, %{'If-None-Match': '"nope"', 'If-Modified-Since': lm})
+        assert(c.response().status == 200)
+        c.close()
+    })
+}
+
+pub fn byte-ranges() {
+    files-test(fn (srv) {
+        let c = Client(srv.port)
+        let cases = [
+            ('bytes=0-4', 206, 'hello', 'bytes 0-4/12'),
+            ('bytes=6-', 206, 'world\n', 'bytes 6-11/12'),
+            ('bytes=-3', 206, 'ld\n', 'bytes 9-11/12'),
+            ('bytes=6-100', 206, 'world\n', 'bytes 6-11/12'),
+            ('bytes=0-1,4-5', 200, 'hello world\n', nil),
+            ('bytes=5-2', 200, 'hello world\n', nil),
+            ('lines=1-2', 200, 'hello world\n', nil)
+        ]
+        for (spec, status, body, range) in cases {
+            c.request('GET', '/static/hello.txt', nil, %{'Range': spec})
+            let r = c.response()
+            assert(r.status == status)
+            assert(r.body == body)
+            assert(r.header('content-range') == range)
+        }
+
+        c.request('GET', '/static/hello.txt', nil, %{'Range': 'bytes=50-'})
+        let bad = c.response()
+        assert(bad.status == 416)
+        assert(bad.header('content-range') == 'bytes */12')
+
+        let et = c.get('/static/hello.txt').header('etag')
+        c.request('GET', '/static/hello.txt', nil, %{'Range': 'bytes=0-4', 'If-Range': '"stale"'})
+        assert(c.response().status == 200)
+
+        c.request('GET', '/static/big.bin', nil, %{'Range': 'bytes=100000-100009'})
+        let big = c.response()
+        assert(big.status == 206)
+        assert(#big.body == 10)
+        c.close()
+    })
+}
+
+pub fn head-and-large-files() {
+    files-test(fn (srv) {
+        let c = Client(srv.port)
+        c.request('HEAD', '/static/big.bin')
+        let h = c.response(head?: true)
+        let size = os.stat("{ROOT}/big.bin").size
+        assert(h.status == 200)
+        assert(h.header('content-length') == str(size))
+        assert(h.header('transfer-encoding') == nil)
+
+        let r = c.get('/static/big.bin')
+        assert(#r.body == size)
+        assert(hash.sha256(r.body).hexdigest() == hash.sha256(slurp("{ROOT}/big.bin")).hexdigest())
+        assert(r.header('content-length') == str(size))
+
+        assert(c.get('/static/hello.txt').body == 'hello world\n')
+        c.close()
+    }, write-high-water: 64 * 1024)
+}
+
+pub fn directories() {
+    files-test(fn (srv) {
+        let c = Client(srv.port)
+        let r = c.get('/static/sub')
+        assert(r.status == 301)
+        assert(r.header('location') == '/static/sub/')
+        assert(c.get('/static/sub/').body == 'sub index')
+        assert(c.get('/static/').body == '<h1>home</h1>')
+        let top = c.get('/static')
+        assert(top.status == 301 && top.header('location') == '/static/')
+        assert(c.get('/static/empty/').status == 404)
+        c.close()
+    })
+}
+
+pub fn path-safety() {
+    files-test(fn (srv) {
+        let c = Client(srv.port)
+        for p in [
+            '/static/../outside/secret.txt',
+            '/static/%2e%2e/%2e%2e/etc/passwd',
+            '/static/sub/..%2f..%2fetc%2fpasswd',
+            '/static/escape.txt',
+            '/static/.env',
+            '/static/.hidden/x.txt',
+            '/static/hello.txt%00.png',
+            '/static/sub\\..\\hello.txt',
+            '/static/missing.txt'
+        ] {
+            c.send("GET {p} HTTP/1.1\r\nHost: x\r\n\r\n")
+            let r = c.response()
+            assert(r.status == 404 || r.status == 400)
+            assert(!r.body.contains?('outside') && !r.body.contains?('SECRET') && !r.body.contains?('hidden'))
+        }
+        c.request('POST', '/static/hello.txt', '')
+        assert(c.response().status == 405)
+        c.close()
+    })
+}
+
+pub fn precompressed-variants() {
+    files-test(fn (srv) {
+        let c = Client(srv.port)
+        c.request('GET', '/static/app.js', nil, %{'Accept-Encoding': 'gzip, deflate'})
+        let z = c.response()
+        assert(z.header('content-encoding') == 'gzip')
+        assert(z.header('vary') == 'Accept-Encoding')
+        assert(z.header('content-type') == 'text/javascript; charset=utf-8')
+        assert(#z.body < 1400)
+
+        c.request('GET', '/static/app.js', nil, %{'Accept-Encoding': 'gzip;q=0, br'})
+        let plain = c.response()
+        assert(plain.header('content-encoding') == nil)
+        assert(plain.body == 'console.log(1)' * 100)
+        assert(plain.header('etag') != z.header('etag'))
+        c.close()
+    })
+}
+
+pub fn spa-fallback-and-download() {
+    files-test(fn (srv) {
+        let c = Client(srv.port)
+        assert(c.get('/spa/some/client/route').body == '<h1>home</h1>')
+        assert(c.get('/spa/hello.txt').body == 'hello world\n')
+        let d = c.get('/download')
+        assert(d.body == 'hello world\n')
+        assert(d.header('content-disposition') == 'attachment; filename="greeting.txt"')
+        c.close()
+    })
+}
+
+pub fn large-file-over-h2() {
+    if !curl?() {
+        return
+    }
+    files-test(fn (srv) {
+        let out = "{ROOT}-dl"
+        curl('--http2-prior-knowledge', '-o', out, "{srv.url}/static/big.bin")
+        assert(hash.sha256(slurp(out)).hexdigest() == hash.sha256(slurp("{ROOT}/big.bin")).hexdigest())
+        os.unlink(out)
+        let range = curl('--http2-prior-knowledge', '-r', '0-3', "{srv.url}/static/hello.txt")
+        assert(range == 'hell')
+    })
+}

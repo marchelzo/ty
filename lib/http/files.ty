@@ -1,0 +1,384 @@
+import os
+import time
+import http.core (Response, HttpError, http-date, this-loop)
+import http.wire (Request)
+
+pub const MIME: Dict[String, String] = %{
+    'html':  'text/html; charset=utf-8',
+    'htm':   'text/html; charset=utf-8',
+    'css':   'text/css; charset=utf-8',
+    'js':    'text/javascript; charset=utf-8',
+    'mjs':   'text/javascript; charset=utf-8',
+    'json':  'application/json',
+    'map':   'application/json',
+    'xml':   'application/xml',
+    'txt':   'text/plain; charset=utf-8',
+    'md':    'text/markdown; charset=utf-8',
+    'csv':   'text/csv; charset=utf-8',
+    'svg':   'image/svg+xml',
+    'png':   'image/png',
+    'jpg':   'image/jpeg',
+    'jpeg':  'image/jpeg',
+    'gif':   'image/gif',
+    'webp':  'image/webp',
+    'avif':  'image/avif',
+    'ico':   'image/x-icon',
+    'bmp':   'image/bmp',
+    'woff':  'font/woff',
+    'woff2': 'font/woff2',
+    'ttf':   'font/ttf',
+    'otf':   'font/otf',
+    'wasm':  'application/wasm',
+    'pdf':   'application/pdf',
+    'zip':   'application/zip',
+    'gz':    'application/gzip',
+    'tar':   'application/x-tar',
+    'mp3':   'audio/mpeg',
+    'ogg':   'audio/ogg',
+    'wav':   'audio/wav',
+    'mp4':   'video/mp4',
+    'webm':  'video/webm',
+    'webmanifest': 'application/manifest+json'
+}
+
+const S_IFMT  = 0o170000
+const S_IFREG = 0o100000
+const S_IFDIR = 0o040000
+
+const INLINE_MAX = 64 * 1024
+const CHUNK      = 256 * 1024
+
+pub fn mime-of(path: String) -> String {
+    let base = path.split('/')[-1]
+    match base.searchr('.') {
+        nil => 'application/octet-stream',
+        i   => MIME[base.slice(i + 1).lower()] ?? 'application/octet-stream'
+    }
+}
+
+fn regular?(st: _) -> Bool {
+    (st.mode & S_IFMT) == S_IFREG
+}
+
+fn directory?(st: _) -> Bool {
+    (st.mode & S_IFMT) == S_IFDIR
+}
+
+fn etag-of(st: _, suffix: String) -> String {
+    let nanos = int(st.mtime * 1000000000.0)
+    "W/\"{st.size:x}-{nanos:x}{suffix}\""
+}
+
+fn parse-date(s: String) -> Int | nil {
+    try {
+        let tm = time.strptime(s, '%a, %d %b %Y %H:%M:%S GMT')
+        time.time(tm, utc: true)
+    } catch _ {
+        nil
+    }
+}
+
+fn etag-match?(header: String, etag: String) -> Bool {
+    let weak = (t: String) -> t.starts?('W/') ? t.slice(2) : t
+    let want = weak(etag)
+    for item in header.split(',') {
+        let t = item.strip()
+        if t == '*' || weak(t) == want {
+            return true
+        }
+    }
+    false
+}
+
+fn not-modified?(req: Request, etag: String, mtime: Int) -> Bool {
+    if req.method != 'GET' && req.method != 'HEAD' {
+        return false
+    }
+    if let $inm = req.header('if-none-match') {
+        return etag-match?(inm, etag)
+    }
+    if let $ims = req.header('if-modified-since') {
+        if let $t = parse-date(ims) {
+            return mtime <= t
+        }
+    }
+    false
+}
+
+pub tag Whole;
+pub tag Part;
+pub tag Unsatisfiable;
+
+fn range-of(req: Request, size: Int, etag: String, mtime: Int) -> _ {
+    let $spec = req.header('range') or return Whole
+    if req.method != 'GET' {
+        return Whole
+    }
+    if let $ir = req.header('if-range') {
+        let fresh = if ir.starts?('"') || ir.starts?('W/') {
+            !ir.starts?('W/') && !etag.starts?('W/') && ir == etag
+        } else {
+            parse-date(ir) == mtime
+        }
+        if !fresh {
+            return Whole
+        }
+    }
+    let [_, list] = spec.match(/^\s*bytes\s*=\s*(.+)$/) ?? return Whole
+    let ranges = list.split(',')
+    if #ranges != 1 {
+        return Whole
+    }
+    let r = ranges[0].strip()
+    let [_, a, b] = r.match(/^(\d*)-(\d*)$/) ?? return Whole
+    if a == '' && b == '' {
+        return Whole
+    }
+    let (start, end) = if a == '' {
+        let n = int(b)
+        if n == 0 {
+            return Unsatisfiable
+        }
+        (max(size - n, 0), size - 1)
+    } else {
+        let s = int(a)
+        let e = (b == '') ? size - 1 : min(int(b), size - 1)
+        if b != '' && int(b) < s {
+            return Whole
+        }
+        (s, e)
+    }
+    if start >= size || size == 0 {
+        return Unsatisfiable
+    }
+    Part((start, end))
+}
+
+fn accepts?(req: Request, coding: String) -> Bool {
+    let $ae = req.header('accept-encoding') or return false
+    for part in ae.split(',') {
+        let fields = part.split(';').map(\_.strip())
+        if fields[0].lower() == coding {
+            return !fields.drop(1).any?(\_.match?(/^q\s*=\s*0(\.0*)?$/))
+        }
+    }
+    false
+}
+
+/// Sends the file at `path` on `rsp`, honouring conditional requests
+/// (ETag / If-Modified-Since → 304), single byte ranges (206 / 416), HEAD,
+/// and precompressed `.br`/`.gz` siblings. Large files are read without
+/// blocking the event loop and written with backpressure.
+pub fn send-file(
+    req: Request,
+    rsp: Response,
+    path: String,
+    download: String | Bool | nil = nil,
+    content-type: String | nil = nil,
+    max-age: Int | nil = nil,
+    immutable: Bool = false,
+    precompressed: Bool = false,
+    etag: Bool = true,
+    last-modified: Bool = true
+) {
+    let $st0 = os.stat(path) or throw HttpError(404)
+    if !regular?(st0) {
+        throw HttpError(404)
+    }
+
+    let file = path
+    let st = st0
+    let coding = nil
+
+    if precompressed {
+        for (c, ext) in [('br', '.br'), ('gzip', '.gz')] {
+            if accepts?(req, c) {
+                if let $alt = os.stat(path + ext) {
+                    if regular?(alt) {
+                        file = path + ext
+                        st = alt
+                        coding = c
+                        break
+                    }
+                }
+            }
+        }
+        rsp.header('Vary', 'Accept-Encoding')
+    }
+
+    let mtime = int(st.mtime)
+    let et = etag-of(st, (coding == nil) ? '' : "-{coding}")
+
+    rsp.content-type = content-type ?? mime-of(path)
+    rsp.header('X-Content-Type-Options', 'nosniff')
+    rsp.header('Accept-Ranges', 'bytes')
+
+    if etag {
+        rsp.header('ETag', et)
+    }
+    if last-modified {
+        rsp.header('Last-Modified', http-date(mtime))
+    }
+    if max-age != nil {
+        rsp.header('Cache-Control', "public, max-age={max-age}{immutable ? ', immutable' : ''}")
+    }
+    if coding != nil {
+        rsp.header('Content-Encoding', coding)
+    }
+    match download {
+        nil, false => {},
+        true       => rsp.header('Content-Disposition', "attachment; filename=\"{path.split('/')[-1].sub('"', '')}\""),
+        name       => rsp.header('Content-Disposition', "attachment; filename=\"{str(name).sub('"', '')}\"")
+    }
+
+    if not-modified?(req, et, mtime) {
+        rsp.status(304)
+        return
+    }
+
+    let size = st.size
+    let (start, length) = match range-of(req, size, et, mtime) {
+        Part((a, b)) => do {
+            rsp.status(206)
+            rsp.header('Content-Range', "bytes {a}-{b}/{size}")
+            (a, b - a + 1)
+        },
+        Unsatisfiable => do {
+            rsp.header('Content-Range', "bytes */{size}")
+            rsp.error(416)
+            return
+        },
+        _ => (0, size)
+    }
+
+    let fd = os.open(file, os.O_RDONLY)
+    if fd < 0 {
+        throw HttpError(404)
+    }
+
+    try {
+        if length <= INLINE_MAX || req.method == 'HEAD' {
+            if req.method == 'HEAD' {
+                rsp.stream(length: length)
+                return
+            }
+            rsp.body.push(os.pread(fd, length, start))
+            return
+        }
+
+        let loop = this-loop()
+        let w = rsp.stream(length: length)
+        let off = start
+        let end = start + length
+        while off < end {
+            let n = min(CHUNK, end - off)
+            let chunk = loop.read-at(fd, n, off)
+            if #chunk == 0 {
+                break
+            }
+            if !w.write(chunk) {
+                break
+            }
+            off += #chunk
+        }
+    } finally {
+        os.close(fd)
+    }
+}
+
+/// Serves files below `root` for requests under a route prefix.
+pub class StaticFiles {
+    root:          String
+    index:         Array[String]
+    dotfiles:      String
+    fallback:      String | nil
+    options:       Dict[String, _]
+    symlinks:      Bool
+
+    init(
+        root: String,
+        index: Array[String] = ['index.html'],
+        dotfiles: String = 'ignore',
+        fallback: String | nil = nil,
+        follow-symlinks: Bool = false,
+        %options
+    ) {
+        let $real = os.realpath(root) or throw ValueError("http: static root does not exist: {root}")
+        self.root     = real
+        self.index    = index
+        self.dotfiles = dotfiles
+        self.fallback = fallback
+        self.symlinks = follow-symlinks
+        self.options  = options
+    }
+
+    __inside?(p: String) -> Bool {
+        p == root || p.starts?(root + '/')
+    }
+
+    __resolve(rel: String) -> String | nil {
+        if rel.contains?('\x00') || rel.contains?('\\') {
+            return nil
+        }
+        let parts = []
+        for seg in rel.split('/') {
+            if seg == '' || seg == '.' {
+                continue
+            }
+            if seg == '..' {
+                return nil
+            }
+            if seg.starts?('.') && dotfiles != 'allow' && seg != '.well-known' {
+                return nil
+            }
+            parts.push(seg)
+        }
+        let full = parts ? "{root}/{parts.join('/')}" : root
+        let $real = os.realpath(full) or return nil
+        if !__inside?(real) {
+            return nil
+        }
+        symlinks ? full : real
+    }
+
+    serve(req: Request, rsp: Response, rel: String) {
+        if req.method != 'GET' && req.method != 'HEAD' {
+            rsp.header('Allow', 'GET, HEAD')
+            rsp.error(405)
+            return
+        }
+
+        let target = __resolve(rel)
+
+        if let $p = target {
+            if let $st = os.stat(p) {
+                if directory?(st) {
+                    if !req.url.ends?('/') {
+                        rsp.redirect(req.url + '/' + ((req.query == nil) ? '' : "?{req.query}"), 301)
+                        return
+                    }
+                    for name in index {
+                        let candidate = "{p}/{name}"
+                        if let $ist = os.stat(candidate) {
+                            if regular?(ist) {
+                                return send-file(req, rsp, candidate, **options)
+                            }
+                        }
+                    }
+                } else if regular?(st) {
+                    return send-file(req, rsp, p, **options)
+                }
+            }
+        }
+
+        if let $fb = fallback {
+            return send-file(req, rsp, "{root}/{fb}", **options)
+        }
+
+        if dotfiles == 'deny' && rel.split('/').any?(\_.starts?('.')) {
+            throw HttpError(403)
+        }
+
+        throw HttpError(404)
+    }
+}

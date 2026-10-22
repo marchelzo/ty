@@ -24,6 +24,11 @@ C! fn {
     int accept(int fd, void *addr, void *addrlen);
 }
 
+C! fn {
+    long pread(int fd, void *buf, uint64_t n, long offset);
+}
+
+let sys-pread  = pread
 let sys-recv   = recv
 let sys-send   = send
 let sys-accept = accept
@@ -149,6 +154,11 @@ pub class Backend {
         }
         __ops[user] = (OP_SEND, fd, p, n)
         __change(fd, EVFILT_WRITE, EV_ADD | EV_ONESHOT, 0, user)
+    }
+
+    read(fd: Int, p: Ptr, n: Int, offset: Int, user: Int) {
+        let r = sys-pread(fd, p, n, offset)
+        __ready.push((user, (r >= 0) ? r : -errno.get()))
     }
 
     cancel(user: Int) {

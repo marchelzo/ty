@@ -615,7 +615,7 @@ blob_slice(Ty *ty, Value *blob, int argc, Value *kwargs)
         }
 
         if (n < 0) {
-                n += vN(*blob->blob);
+                n += vN(*blob->blob) - start;
         }
         if (n < 0) {
                 zP("count d out of range: %zd", n);
@@ -661,7 +661,7 @@ blob_splice(Ty *ty, Value *blob, int argc, Value *kwargs)
         }
 
         if (n < 0) {
-                n += vN(*blob->blob);
+                n += vN(*blob->blob) - start;
         }
         if (n < 0) {
                 bP("count out of range: %zd", n);

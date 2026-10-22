@@ -3,6 +3,7 @@ import os (ncpu)
 import json
 import log
 import http.status (status-name)
+import time
 
 pub class HttpError < RuntimeError {
     status: Int
@@ -66,6 +67,10 @@ pub class Config {
     blocking-threads:            Int
     server-name:                 String | nil
     debug:                       Bool
+    access-log:                  _
+    access-log-fd:               Int
+    request-id-header:           String | Bool
+    trust-request-id:            Bool
 
     init(
         backend: String = 'auto',
@@ -99,7 +104,11 @@ pub class Config {
         h2-max-frame: Int = 16384,
         blocking-threads: Int = 16,
         server-name: String | nil = nil,
-        debug: Bool = false
+        debug: Bool = false,
+        access-log: _ = nil,
+        access-log-fd: Int = 2,
+        request-id-header: String | Bool = 'X-Request-Id',
+        trust-request-id: Bool = true
     ) {
         self.backend                     = backend
         self.threads                     = max(threads, 1)
@@ -133,6 +142,10 @@ pub class Config {
         self.blocking-threads            = blocking-threads
         self.server-name                 = server-name
         self.debug                       = debug
+        self.access-log                  = access-log
+        self.access-log-fd               = access-log-fd
+        self.request-id-header           = request-id-header
+        self.trust-request-id            = trust-request-id
     }
 }
 
@@ -238,22 +251,158 @@ pub const MODE_BUFFERED  = 0
 pub const MODE_STREAMING = 1
 pub const MODE_DONE      = 2
 
-pub class Response {
-    status-code:  Int
-    headers:      Dict[String, String | Array[String]]
-    body:         Blob
-    content-type: String | nil
+pub fn http-date(t: Int | Float) -> String {
+    time.strftime('%a, %d %b %Y %H:%M:%S GMT', time.gmtime(int(t)))
+}
 
-    __x:    _
-    __mode: Int
+const COOKIE_NAME  = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
+const COOKIE_VALUE = /^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]*$/
+const COOKIE_ATTR  = /^[^;\x00-\x1F\x7F]*$/
+
+pub fn parse-cookies(header: String | nil) -> Dict[String, String] {
+    let out = %{}
+    let $h = header or return out
+    for part in h.split(';') {
+        let kv = part.split('=', 1)
+        if #kv != 2 {
+            continue
+        }
+        let k = kv[0].strip()
+        let v = kv[1].strip()
+        if v.size() >= 2 && v.starts?('"') && v.ends?('"') {
+            v = v[1;-1]
+        }
+        if k.size() > 0 && out[k] == nil {
+            out[k] = v
+        }
+    }
+    out
+}
+
+let file-sender: _ = nil
+
+pub fn set-file-sender(f: _) {
+    file-sender = f
+}
+
+pub class Response {
+    status-code:   Int
+    headers:       Dict[String, String | Array[String]]
+    body:          Blob
+    content-type:  String | nil
+    stream-length: Int | nil
+
+    __x:     _
+    __mode:  Int
+    __hooks: Array[_]
 
     init(x: _) {
-        __x          = x
-        __mode       = MODE_BUFFERED
-        status-code  = 200
-        headers      = %{}
-        body         = Blob()
-        content-type = 'text/html; charset=utf-8'
+        __x           = x
+        __mode        = MODE_BUFFERED
+        __hooks       = []
+        status-code   = 200
+        headers       = %{}
+        body          = Blob()
+        content-type  = 'text/html; charset=utf-8'
+        stream-length = nil
+    }
+
+    /// Runs `f(rsp)` just before the response head is sent.
+    on-headers(f: _) {
+        __hooks.push(f)
+    }
+
+    __fire() {
+        let hs = __hooks
+        __hooks = []
+        for f in hs {
+            f(self)
+        }
+    }
+
+    bytes -> Int {
+        match __mode {
+            MODE_BUFFERED => #body,
+            _             => (stream-length != nil && __x.request.method == 'HEAD') ? 0 : __bytes-streamed()
+        }
+    }
+
+    __bytes-streamed() -> Int {
+        if !__x.has-writer? {
+            return #body
+        }
+        __x.writer().bytes
+    }
+
+    set-cookie(
+        name: String,
+        value: String,
+        max-age: Int | nil = nil,
+        expires: Int | Float | nil = nil,
+        path: String | Bool = '/',
+        domain: String | nil = nil,
+        secure: Bool | nil = nil,
+        http-only: Bool = true,
+        same-site: String | Bool = 'Lax',
+        partitioned: Bool = false
+    ) -> Response {
+        if !name.match?(COOKIE_NAME) {
+            throw ValueError("http: invalid cookie name: {name}")
+        }
+        if !value.match?(COOKIE_VALUE) {
+            throw ValueError("http: invalid cookie value for {name} (use only cookie-octets; encode it first)")
+        }
+        let parts = ["{name}={value}"]
+        if max-age != nil {
+            parts.push("Max-Age={max-age}")
+        }
+        if expires != nil {
+            parts.push("Expires={http-date(expires)}")
+        }
+        for (attr, v) in [('Path', path), ('Domain', domain)] {
+            if v :: String {
+                if !v.match?(COOKIE_ATTR) {
+                    throw ValueError("http: invalid cookie {attr}: {v}")
+                }
+                parts.push("{attr}={v}")
+            }
+        }
+        let ss = (same-site :: String) ? same-site.lower() : nil
+        let sec = secure ?? (ss == 'none' || partitioned || (__x != nil && __x.request.scheme == 'https'))
+        if ss == 'none' && !sec {
+            throw ValueError('http: SameSite=None cookies must be Secure')
+        }
+        if sec {
+            parts.push('Secure')
+        }
+        if http-only {
+            parts.push('HttpOnly')
+        }
+        match ss {
+            nil      => {},
+            'lax'    => parts.push('SameSite=Lax'),
+            'strict' => parts.push('SameSite=Strict'),
+            'none'   => parts.push('SameSite=None'),
+            other    => throw ValueError("http: invalid SameSite: {same-site}")
+        }
+        if partitioned {
+            parts.push('Partitioned')
+        }
+        add-header('Set-Cookie', parts.join('; '))
+        self
+    }
+
+    clear-cookie(name: String, path: String | Bool = '/', domain: String | nil = nil) -> Response {
+        set-cookie(name, '', max-age: 0, expires: 0, path: path, domain: domain, http-only: false, same-site: false, secure: false)
+    }
+
+    /// Sends a file (see `http.send-file` for options).
+    file(path: String, %kwargs) -> Response {
+        if file-sender == nil {
+            throw RuntimeError('http: file sending is unavailable')
+        }
+        file-sender(__x.request, self, path, **kwargs)
+        self
     }
 
     exchange -> _ {
@@ -369,8 +518,12 @@ pub class Response {
         self
     }
 
-    stream() -> BodyWriter {
+    /// Starts a streamed body. With `length` the response carries a
+    /// Content-Length and must write exactly that many bytes.
+    stream(length: Int | nil = nil) -> BodyWriter {
         if __mode == MODE_BUFFERED {
+            stream-length = length
+            __fire()
             __mode = MODE_STREAMING
             __x.start(self)
         }
@@ -382,6 +535,7 @@ pub class Response {
             content-type = 'text/event-stream'
             header('Cache-Control', 'no-cache')
             header('X-Accel-Buffering', 'no')
+            __fire()
             __mode = MODE_STREAMING
             __x.start(self)
         }
@@ -390,7 +544,7 @@ pub class Response {
 
     finish() {
         match __mode {
-            MODE_BUFFERED  => { __mode = MODE_DONE; __x.complete(self) },
+            MODE_BUFFERED  => { __fire(); __mode = MODE_DONE; __x.complete(self) },
             MODE_STREAMING => { __mode = MODE_DONE; __x.writer().end() },
             _              => {}
         }
@@ -411,10 +565,13 @@ pub class Response {
 /// elsewhere never block, and a peer whose backlog exceeds
 /// `max-write-buffer` is disconnected.
 pub class BodyWriter {
+    bytes: Int
+
     __x: _
 
     init(x: _) {
-        __x = x
+        __x   = x
+        bytes = 0
     }
 
     closed? -> Bool {
@@ -444,6 +601,7 @@ pub class BodyWriter {
             return false
         }
 
+        bytes += chunk.size()
         __x.send(chunk)
 
         if in-task?(loop) {

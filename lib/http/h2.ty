@@ -328,7 +328,15 @@ pub class H2Exchange {
         if closed? {
             throw ConnectionClosed('stream closed')
         }
-        proto.submit(stream, rsp, rsp.status-code, nil, true)
+        let head? = request.method == 'HEAD'
+        if head? {
+            stream.eof? = true
+        }
+        proto.submit(stream, rsp, rsp.status-code, rsp.stream-length, !head?)
+    }
+
+    has-writer? -> Bool {
+        __writer != nil
     }
 
     complete(rsp: Response) {

@@ -42,6 +42,23 @@
  * headers and reads with `req.read(max)`. WebSockets negotiate
  * permessage-deflate (`ws-compression`).
  *
+ * Batteries:
+ *
+ * ```
+ * srv.use(fn (req, rsp, next) { ...; next(); ... })   // middleware
+ * srv.sessions('a long random secret')                 // req.session['user'] = 'alice'
+ * srv.static-files('/assets', './public', max-age: 3600, precompressed: true)
+ * srv.get('/report', (req, rsp) -> rsp.file('report.pdf', download: true))
+ * rsp.set-cookie('theme', 'dark', max-age: 86400); req.cookie('theme')
+ * srv.health()                                        // GET /healthz
+ * srv.metrics-endpoint()                              // GET /metrics (Prometheus)
+ * srv.stats()                                         // counters as a Dict
+ * http.Server(..., access-log: true | 'json' | fn (entry) { ... })
+ * ```
+ *
+ * Every request gets `req.id` (echoed as X-Request-Id; an incoming
+ * well-formed X-Request-Id is reused unless `trust-request-id: false`).
+ *
  * Every limit and timeout is a keyword argument of `Server` (see `Config`).
  */
 pub import http.core as core (
@@ -63,10 +80,14 @@ pub import http.form (
     HttpVersion,
     urldecode,
     urlencode,
+    percent-decode,
     decode-query,
     encode-query
 )
 pub import http.status (..)
+pub import http.files as files (send-file, StaticFiles, mime-of)
+pub import http.session (Sessions, Session, MemoryStore, sign, unsign)
+pub import http.metrics as metrics-mod (Metrics)
 
 import http.loop (Loop, Conn, default-backend, make-backend)
 import http.h1 (H1)
@@ -78,8 +99,13 @@ import log
 import ssl
 import ty.mod as tymod
 import http.deflate as deflate
+import time
 
 const NO_PARAMS: Dict[String, String] = %{}
+
+const OVERLOADED = 'HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\nContent-Length: 19\r\nConnection: close\r\nRetry-After: 1\r\n\r\nService Unavailable'
+
+const REQUEST_ID = /^[A-Za-z0-9._:\-]{1,128}$/
 
 let optional-lock = Mutex()
 let optional: Dict[String, _] = %{}
@@ -131,18 +157,21 @@ use Route = {
 };
 
 class Routes {
-    exact:   Dict[String, Dict[String, _]]
-    dynamic: Dict[String, Array[Route]]
+    exact:      Dict[String, Dict[String, _]]
+    dynamic:    Dict[String, Array[Route]]
+    middleware: Array[_]
 
     init() {
-        exact   = %{}
-        dynamic = %{}
+        exact      = %{}
+        dynamic    = %{}
+        middleware = []
     }
 
     copy() -> Routes {
         let r = Routes()
-        r.exact   = %{m: %{k: v for k, v in t} for m, t in exact}
-        r.dynamic = %{m: [*rs] for m, rs in dynamic}
+        r.exact      = %{m: %{k: v for k, v in t} for m, t in exact}
+        r.dynamic    = %{m: [*rs] for m, rs in dynamic}
+        r.middleware = [*middleware]
         r
     }
 
@@ -150,7 +179,7 @@ class Routes {
         if '<' not in route {
             let t = exact[method] ?? (exact[method] = %{})
             t[route] = fun
-            t[(route.size() > 1 && route.ends?('/')) ? route.slice(0, -1) : "{route}/"] = fun
+            t[(route.size() > 1 && route.ends?('/')) ? route[;-1] : "{route}/"] = fun
             return
         }
 
@@ -171,7 +200,7 @@ class Routes {
 
         for r in rs {
             if let $m = url.match(r.pattern) {
-                return (r.fun, %{r.params[i]: urldecode(m[i + 1]!) for i in ..#r.params}, r.route)
+                return (r.fun, %{r.params[i]: percent-decode(m[i + 1]!) for i in ..#r.params}, r.route)
             }
         }
 
@@ -234,6 +263,9 @@ pub class Server {
     __not-found:  _
     __on-error:   _
     __sock-protos: Dict[String, Array[String]]
+    __metrics:    Metrics
+    __rid:        String
+    __log-mtx:    Mutex
 
     init(
         *args,
@@ -257,6 +289,9 @@ pub class Server {
         __sock-protos = %{}
         __h2         = nil
         __backend    = nil
+        __metrics    = Metrics()
+        __rid        = ssl.random-bytes(4).hex()
+        __log-mtx    = Mutex()
 
         if self.config.h2 {
             match optional-module('http/h2', 'session') {
@@ -316,7 +351,7 @@ pub class Server {
 
     __listen(addr: String, port: Int) -> Int {
         let v6? = addr.contains?(':')
-        let host = (v6? && addr.starts?('[')) ? addr.slice(1, -1) : addr
+        let host = (v6? && addr.starts?('[')) ? addr[1;-1] : addr
 
         let $info = match getaddrinfo(host, str(port), v6? ? AF_INET6 : AF_INET, SOCK_STREAM, 0) {
             Ok([info, *]) => info,
@@ -395,12 +430,126 @@ pub class Server {
         __running.load() != 0
     }
 
-    connection-opened() -> Bool {
+    connection-opened(loop: Loop) -> Bool {
         if __active.fetch-add(1) >= config.max-connections {
             __active.fetch-sub(1)
+            loop.metrics.rejected.fetch-add(1)
             return false
         }
+        loop.metrics.connections-total.fetch-add(1)
         true
+    }
+
+    overload-response -> String | nil {
+        (tls == nil) ? OVERLOADED : nil
+    }
+
+    metrics -> Metrics {
+        let ^_ = __lock.lock()
+        metrics-mod.combine([__metrics, *__loops.map(&.metrics)])
+    }
+
+    /// Point-in-time counters (requests, responses by class, latency, bytes,
+    /// connections, websockets). Safe to call from any thread.
+    stats() -> Dict[String, _] {
+        metrics.snapshot(__active.load())
+    }
+
+    /// Adds middleware `f(req, rsp, next)`; call `next()` to continue to the
+    /// next middleware and finally the route. Runs in registration order.
+    use(f: (Request, Response, () -> _) -> _) -> _ {
+        __mutate((rs, _) -> rs.middleware.push(f))
+        f
+    }
+
+    /// Enables sessions (see `Sessions`); returns the Sessions object.
+    sessions(secret: String | Array[String], %kwargs) -> Sessions {
+        let s = Sessions(secret, **kwargs)
+        self.use(s.middleware)
+        s
+    }
+
+    /// Serves files from `dir` under `prefix` (see `StaticFiles` and
+    /// `send-file` for options such as `max-age`, `precompressed`, `index`,
+    /// `fallback`, `dotfiles`).
+    static-files(prefix: String, dir: String, %kwargs) -> StaticFiles {
+        let sf = StaticFiles(dir, **kwargs)
+        let p = prefix.sub(/\/+$/, '')
+        route('GET', (p == '') ? '/' : p, (req, rsp) -> sf.serve(req, rsp, ''))
+        route('GET', "{p}/<path:.*>", (req, rsp, path) -> sf.serve(req, rsp, path))
+        sf
+    }
+
+    /// Adds a health endpoint: 200 "ok", or 503 while draining or when
+    /// `check()` returns false.
+    health(path: String = '/healthz', check: (() -> Bool) | nil = nil) {
+        route('GET', path, fn (req, rsp) {
+            rsp.header('Cache-Control', 'no-store')
+            if stopping? || (check != nil && !check()) {
+                rsp.error(503, 'unavailable')
+            } else {
+                rsp.plain('ok')
+            }
+        })
+    }
+
+    /// Adds a Prometheus text-format endpoint for `metrics`.
+    metrics-endpoint(path: String = '/metrics') {
+        route('GET', path, fn (req, rsp) {
+            rsp.header('Cache-Control', 'no-store')
+            rsp.content-type = 'text/plain; version=0.0.4; charset=utf-8'
+            rsp.write(metrics.prometheus(__active.load()))
+        })
+    }
+
+    __request-id(req: Request, loop: Loop) -> String {
+        if config.trust-request-id {
+            if let $given = req.header('x-request-id') {
+                if given.match?(REQUEST_ID) {
+                    return given
+                }
+            }
+        }
+        loop.request-seq += 1
+        "{__rid}-{loop.index}-{loop.request-seq}"
+    }
+
+    __access(req: Request, rsp: Response, status: Int, seconds: Float, bytes: Int) {
+        let entry = {
+            id:       req.id,
+            time:     time.utc(),
+            remote:   req.remote,
+            method:   req.method,
+            target:   req.target,
+            route:    req.route,
+            protocol: (req.version.major == 2) ? 'HTTP/2' : "HTTP/1.{req.version.minor}",
+            status:   status,
+            bytes:    bytes,
+            seconds:  seconds,
+            referer:  req.header('referer'),
+            agent:    req.header('user-agent')
+        }
+
+        let line = match config.access-log {
+            nil, false => return,
+            'json'     => json.encode(entry),
+            true, 'combined' => do {
+                let when = time.strftime('%d/%b/%Y:%H:%M:%S +0000', time.gmtime(int(entry.time)))
+                let clean = (s: String | nil) -> (s ?? '-').sub(/["\\\x00-\x1F]/, '?')
+                "{entry.remote ?? '-'} - - [{when}] \"{clean(entry.method)} {clean(entry.target)} {entry.protocol}\" {status} {bytes} \"{clean(entry.referer)}\" \"{clean(entry.agent)}\" {int(seconds * 1000000.0)}us {entry.id}"
+            },
+            f => do {
+                try {
+                    f(entry)
+                } catch e {
+                    log::error!("access-log callback failed: {e}")
+                }
+                return
+            }
+        }
+
+        let ^_ = __log-mtx.lock()
+        os.write(config.access-log-fd, line + '\n')
     }
 
     connection-closed() {
@@ -488,6 +637,29 @@ pub class Server {
 
     __handle(req: Request, rsp: Response, loop: Loop) {
         let (routes, _) = __routes-for(loop)
+        let chain = routes.middleware
+
+        if !chain {
+            return __route(routes, req, rsp)
+        }
+
+        __chain(chain, 0, routes, req, rsp)
+    }
+
+    __chain(chain: Array[_], i: Int, routes: Routes, req: Request, rsp: Response) {
+        if i == #chain {
+            return __route(routes, req, rsp)
+        }
+        let called = [false]
+        chain[i](req, rsp, fn () {
+            if !called[0] {
+                called[0] = true
+                __chain(chain, i + 1, routes, req, rsp)
+            }
+        })
+    }
+
+    __route(routes: Routes, req: Request, rsp: Response) {
         let method = req.method
 
         let found = routes.find(method, req.url)
@@ -527,27 +699,59 @@ pub class Server {
     serve(x: _, req: Request) {
         let loop = x.loop
         let rsp = Response(x)
+        let status = 0
+
+        req.start = time.now()
+        req.id = __request-id(req, loop)
+
+        match config.request-id-header {
+            h: String => rsp.header(h, req.id),
+            _         => {}
+        }
+
+        let m = loop.metrics
+        m.in-flight.fetch-add(1)
+
+        try {
+            status = __serve(x, req, rsp)
+        } finally {
+            m.in-flight.fetch-sub(1)
+            let dt = time.now() - req.start
+            let sent = (status == 0) ? 0 : rsp.bytes
+            if status == 0 {
+                m.aborted.fetch-add(1)
+            }
+            m.observe((status == 0) ? 499 : status, dt, sent)
+            if config.access-log != nil && config.access-log != false {
+                __access(req, rsp, (status == 0) ? 499 : status, dt, sent)
+            }
+        }
+    }
+
+    __serve(x: _, req: Request, rsp: Response) -> Int {
+        let loop = x.loop
 
         try {
             __handle(req, rsp, loop)
         } catch e: core.ConnectionClosed {
             x.abort()
-            return
+            return 0
         } catch e: core.CanceledError {
             x.abort()
-            return
+            return 0
         } catch e: HttpError {
             if rsp.started? {
                 x.abort()
-                return
+                return 0
             }
             rsp.reset()
             rsp.error(e.status, e.detail)
         } catch e {
+            x.loop.metrics.errors.fetch-add(1)
             if rsp.started? {
-                log::error!("exception while streaming {req.method} {req.url}: {e}\n{e.trace()}")
+                log::error!("exception while streaming {req.method} {req.url} [{req.id}]: {e}\n{e.trace()}")
                 x.abort()
-                return
+                return 0
             }
             if let $handler = __on-error {
                 rsp.reset()
@@ -559,7 +763,7 @@ pub class Server {
                     rsp.error(500)
                 }
             } else {
-                log::error!("exception while handling {req.method} {req.url}: {e}\n{e.trace()}")
+                log::error!("exception while handling {req.method} {req.url} [{req.id}]: {e}\n{e.trace()}")
                 rsp.reset()
                 if config.debug {
                     rsp.error(500, "Exception: {e}\n\nBacktrace:\n{e.trace()}")
@@ -571,9 +775,25 @@ pub class Server {
 
         __served.fetch-add(1)
 
-        if !x.closed? {
+        if x.closed? {
+            return 0
+        }
+
+        try {
+            rsp.finish()
+        } catch e {
+            log::error!("failed to finish response for {req.method} {req.url} [{req.id}]: {e}")
+            x.loop.metrics.errors.fetch-add(1)
+            if rsp.started? || x.closed? {
+                x.abort()
+                return 0
+            }
+            rsp.reset()
+            rsp.error(500)
             rsp.finish()
         }
+
+        rsp.status-code
     }
 
     on-open(conn: Conn) -> _ {
@@ -636,6 +856,10 @@ pub class Server {
 
         conn.untimeout(0)
         let proto = wsock.WSProto(conn, req, protocol, (ext == nil) ? nil : deflate.PerMessage())
+        let wm = conn.loop.metrics
+        wm.websockets.fetch-add(1)
+        wm.websockets-total.fetch-add(1)
+        proto.on-close-callback(-> wm.websockets.fetch-sub(1))
         conn.proto = proto
 
         conn.loop.spawn("WS {req.url}", __run-socket, proto, handler, req, params)
@@ -707,6 +931,9 @@ pub class Server {
             }
             do {
                 let ^_ = __lock.lock()
+                for l in __loops {
+                    __metrics.add(l.metrics)
+                }
                 __loops = []
             }
             __stopping.store(0)
@@ -733,6 +960,8 @@ pub class Server {
         }
     }
 }
+
+core.set-file-sender(files.send-file)
 
 pub HttpServer   = Server
 pub HttpResponse = Response

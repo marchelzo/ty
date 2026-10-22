@@ -21,6 +21,7 @@ import os
 import errno
 import net
 import time
+import base64
 
 #|if __apple__
 const SSL_LIBRARIES = [
@@ -155,6 +156,10 @@ C! libcrypto fn {
     void EVP_PKEY_free(void *pkey);
 
     void CRYPTO_free(void *p, char const *file, int line);
+
+    int RAND_bytes(void *buf, int num);
+    void *HMAC(void *md, void const *key, int key_len, void const *d, size_t n, void *out, void *out_len);
+    int CRYPTO_memcmp(void const *a, void const *b, size_t len);
 }
 
 pub const TLS1_2 = 0x0303
@@ -1017,4 +1022,54 @@ pub fn self-signed(
     PEM_write_bio_PrivateKey(kbio, pkey, nil, nil, 0, nil, nil)
 
     (bio-contents(cbio), bio-contents(kbio))
+}
+
+/// `n` cryptographically secure random bytes.
+pub fn random-bytes(n: Int) -> Blob {
+    let out = Blob.zeros(n)
+    if n > 0 && RAND_bytes(out, n) != 1 {
+        throw SSLError('RAND_bytes')
+    }
+    out
+}
+
+/// HMAC-SHA256 of `data` keyed by `key` (32 bytes).
+pub fn hmac-sha256(key: String | Blob, data: String | Blob) -> Blob {
+    let out = Blob.zeros(32)
+    let n = c.new-auto(c.uint)
+    let k = (key :: Blob) ? key : Blob(key)
+    let d = (data :: Blob) ? data : Blob(data)
+    if HMAC(EVP_sha256(), k, #k, d, #d, out, n) == nil {
+        throw SSLError('HMAC')
+    }
+    out
+}
+
+/// Constant-time comparison of two byte strings.
+pub fn equal?(a: String | Blob, b: String | Blob) -> Bool {
+    let x = (a :: Blob) ? a : Blob(a)
+    let y = (b :: Blob) ? b : Blob(b)
+    #x == #y && CRYPTO_memcmp(x, y, #x) == 0
+}
+
+/// URL-safe base64 without padding.
+pub fn b64url(data: String | Blob) -> String {
+    let b = (data :: Blob) ? data : Blob(data)
+    b.base64().sub('+', '-').sub('/', '_').sub('=', '')
+}
+
+pub fn b64url-decode(s: String) -> Blob | nil {
+    if !s.match?(/^[A-Za-z0-9_-]*$/) {
+        return nil
+    }
+    let t = s.sub('-', '+').sub('_', '/')
+    let pad = (4 - t.size() % 4) % 4
+    if pad == 3 {
+        return nil
+    }
+    try {
+        base64.decode(t + '=' * pad)
+    } catch _ {
+        nil
+    }
 }

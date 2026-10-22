@@ -93,6 +93,7 @@ pub class H1Exchange {
 
     __head?:    Bool
     __chunked?: Bool
+    __length:   Int | nil
     __ended?:   Bool
     __writer:   BodyWriter | nil
     __closers:  Array[_]
@@ -105,6 +106,7 @@ pub class H1Exchange {
         closed?      = false
         __head?      = request.method == 'HEAD'
         __chunked?   = false
+        __length     = nil
         __ended?     = false
         __writer     = nil
         __closers    = []
@@ -147,12 +149,14 @@ pub class H1Exchange {
         }
         let c = proto.conn
         let v10? = request.version.minor == 0
+        let length = rsp.stream-length
 
-        close? = close? || __user-close?(rsp) || v10?
-        __chunked? = !v10? && !bodiless?(rsp.status-code) && !__head?
+        __length = length
+        close? = close? || __user-close?(rsp) || (v10? && (length == nil || __no-keep-alive?))
+        __chunked? = length == nil && !v10? && !bodiless?(rsp.status-code) && !__head?
 
         let out = Blob()
-        render-head(out, rsp, c.loop.date, c.config.server-name, nil, __chunked?, close?, false)
+        render-head(out, rsp, c.loop.date, c.config.server-name, length, __chunked?, close?, length != nil && __keep-alive?)
         c.write(out)
 
         proto.state = STREAM
@@ -231,9 +235,20 @@ pub class H1Exchange {
             proto.conn.write('0\r\n\r\n')
         }
         if !__chunked? && !__head? {
-            close? = true
+            match __length {
+                nil => close? = true,
+                n   => if writer().bytes != n { close? = true }
+            }
         }
         proto.response-written(self)
+    }
+
+    has-writer? -> Bool {
+        __writer != nil
+    }
+
+    __no-keep-alive? -> Bool {
+        (request.header('connection') ?? '').lower() != 'keep-alive'
     }
 
     abort() {

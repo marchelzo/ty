@@ -1,0 +1,93 @@
+import http.wire as wire (Ready, NeedMore, Invalid, Dechunker)
+
+let SEEDS = [
+    'GET /a?b=c HTTP/1.1\r\nHost: x\r\nX-A: 1\r\n\r\n',
+    'POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello',
+    'POST /c HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n',
+    'GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n',
+    'PUT /x HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 2\r\n\r\nok'
+]
+
+const ALPHABET = [0, 9, 10, 13, 32, 48, 58, 65, 97, 127, 128, 255]
+
+fn mutate(src: String) -> Blob {
+    let b = Blob(src)
+    for ..rand(1, 6) {
+        match rand(0, 4) {
+            0 => {
+                if #b > 0 {
+                    b[rand(0, #b)] = rand(0, 256)
+                }
+            },
+            1 => b.push(rand(0, #b + 1), rand(ALPHABET)),
+            2 => {
+                if #b > 1 {
+                    b.clear(rand(0, #b), 1)
+                }
+            },
+            _ => {
+                if #b > 2 {
+                    let i = rand(0, #b - 1)
+                    b.push(i, b.slice(i, rand(1, min(16, #b - i) + 1)))
+                }
+            }
+        }
+    }
+    b
+}
+
+fn outcome(r: _) -> String {
+    match r {
+        Ready((req, n)) => "ready {req.method} {req.target} {n} {req.body}",
+        Invalid(s)      => "invalid {s}",
+        _               => 'more'
+    }
+}
+
+pub fn parser-survives-mutations() {
+    for i in ..4000 {
+        let b = mutate(rand(SEEDS))
+        let whole = outcome(wire.parse(b, 0, #b, wire.marks(16), 4096, 4096))
+        if whole.starts?('ready') {
+            let k = rand(0, #b)
+            let prefix = outcome(wire.parse(b, 0, k, wire.marks(16), 4096, 4096))
+            assert(prefix == 'more' || prefix.starts?('invalid') || prefix == whole || prefix.starts?('ready'))
+        }
+    }
+}
+
+pub fn dechunker-is-split-invariant() {
+    for i in ..2000 {
+        let src = Blob()
+        let body = Blob()
+        for ..rand(0, 5) {
+            let n = rand(1, 40)
+            let piece = Blob(*[rand(0, 256) for ..n])
+            src.push("{n:x}\r\n")
+            src.push(piece)
+            src.push('\r\n')
+            body.push(piece)
+        }
+        src.push('0\r\n\r\n')
+
+        let out = Blob()
+        let d = Dechunker()
+        let pos = 0
+        while !d.done? && pos < #src {
+            let end = min(#src, pos + rand(1, 9))
+            let n = d.feed(src, pos, end, out)
+            assert(n >= 0)
+            pos += n
+            if n == 0 && end == #src {
+                break
+            }
+        }
+        assert(d.done?)
+        assert(out == body)
+
+        let bad = mutate(src.str!())
+        let d2 = Dechunker()
+        let sink = Blob()
+        d2.feed(bad, 0, #bad, sink)
+    }
+}

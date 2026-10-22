@@ -227,7 +227,7 @@ array_splice(Ty *ty, Value *array, int argc, Value *kwargs)
         }
 
         if (n < 0) {
-                n += vN(*array->array);
+                n += vN(*array->array) - min(i, vN(*array->array));
         }
         if (n < 0) {
                 bP("bad count: %"PRIiMAX, n);
@@ -440,7 +440,7 @@ array_slice(Ty *ty, Value *array, int argc, Value *kwargs)
         }
 
         if (n < 0) {
-                n += vN(*array->array);
+                n += vN(*array->array) - min(i, vN(*array->array));
         }
         if (n < 0) {
                 bP("bad count: %"PRIiMAX, n);

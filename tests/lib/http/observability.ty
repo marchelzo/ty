@@ -1,0 +1,243 @@
+import http
+import os
+import json
+import time
+import _client (serve, Client, get, dial, WsClient, xread)
+
+fn read-lines(fd: Int, want: Int, limit: Float = 3.0) -> Array[String] {
+    let buf = Blob()
+    let deadline = time.now() + limit
+    while time.now() < deadline {
+        let lines = buf.str!().split('\n').filter(\_.size() > 0)
+        if #lines >= want {
+            return lines
+        }
+        xread(fd, buf, 65536)
+    }
+    buf.str!().split('\n').filter(\_.size() > 0)
+}
+
+fn nonblocking-pipe() -> (Int, Int) {
+    let (r, w) = os.pipe()
+    os.fcntl(r, os.F_SETFL, os.fcntl(r, os.F_GETFL) | os.O_NONBLOCK)
+    (r, w)
+}
+
+pub fn request-ids() {
+    serve(fn (srv) {
+        srv.get('/', (req, rsp) -> rsp.plain(req.id ?? 'none'))
+    }, fn (srv) {
+        let c = Client(srv.port)
+        let a = c.get('/')
+        let b = c.get('/')
+        assert(a.body.match?(/^[0-9a-f]{8}-[0-9a-f]+-[0-9a-f]+$/))
+        assert(a.header('x-request-id') == a.body)
+        assert(a.body != b.body)
+
+        c.request('GET', '/', nil, %{'X-Request-Id': 'trace-abc.123'})
+        assert(c.response().body == 'trace-abc.123')
+
+        c.request('GET', '/', nil, %{'X-Request-Id': 'bad id with spaces'})
+        assert(c.response().body != 'bad id with spaces')
+        c.close()
+    })
+
+    serve(fn (srv) {
+        srv.get('/', (req, rsp) -> rsp.plain(req.id ?? 'none'))
+    }, fn (srv) {
+        let c = Client(srv.port)
+        c.request('GET', '/', nil, %{'X-Request-Id': 'from-client'})
+        let r = c.response()
+        assert(r.body != 'from-client')
+        assert(r.header('x-request-id') == nil)
+        c.close()
+    }, trust-request-id: false, request-id-header: false)
+}
+
+pub fn middleware-chain() {
+    let order = []
+    let lock = Mutex()
+    let note = (s: String) -> do { let ^_ = lock.lock(); order.push(s) }
+
+    serve(fn (srv) {
+        srv.use(fn (req, rsp, next) {
+            note('a-in')
+            rsp.header('X-A', '1')
+            next()
+            note("a-out {rsp.status-code}")
+        })
+        srv.use(fn (req, rsp, next) {
+            if req.url == '/blocked' {
+                rsp.error(403, 'nope')
+                return
+            }
+            note('b-in')
+            next()
+            next()
+        })
+        srv.get('/', fn (req, rsp) {
+            note('handler')
+            rsp.plain('ok')
+        })
+    }, fn (srv) {
+        let r = get(srv.port, '/')
+        assert(r.body == 'ok')
+        assert(r.header('x-a') == '1')
+        assert(order == ['a-in', 'b-in', 'handler', 'a-out 200'])
+
+        let blocked = get(srv.port, '/blocked')
+        assert(blocked.status == 403)
+        assert(blocked.body == 'nope')
+
+        let missing = get(srv.port, '/missing')
+        assert(missing.status == 404)
+        assert(missing.header('x-a') == '1')
+    })
+}
+
+pub fn access-log-combined-and-json() {
+    let (r, w) = nonblocking-pipe()
+    serve(fn (srv) {
+        srv.get('/hello', (req, rsp) -> rsp.plain('hi'))
+    }, fn (srv) {
+        let c = Client(srv.port)
+        c.request('GET', '/hello?x=1', nil, %{'User-Agent': 'tester "quoted"', 'Referer': 'http://ref/'})
+        c.response()
+        c.request('GET', '/nope')
+        c.response()
+        c.close()
+        let lines = read-lines(r, 2)
+        assert(#lines == 2)
+        assert(lines[0].match?(/^127\.0\.0\.1:\d+ - - \[\d\d\/\w{3}\/\d{4}:\d\d:\d\d:\d\d \+0000\] "GET \/hello\?x=1 HTTP\/1\.1" 200 2 "http:\/\/ref\/" "tester \?quoted\?" \d+us \S+$/))
+        assert(lines[1].contains?('"GET /nope HTTP/1.1" 404 '))
+    }, access-log: true, access-log-fd: w)
+    os.close(w)
+    os.close(r)
+
+    let (r2, w2) = nonblocking-pipe()
+    serve(fn (srv) {
+        srv.post('/p', (req, rsp) -> rsp.plain('done'))
+    }, fn (srv) {
+        let c = Client(srv.port)
+        c.request('POST', '/p', 'body')
+        c.response()
+        c.close()
+        let lines = read-lines(r2, 1)
+        let e = json.parse(lines[0])
+        assert(e['method'] == 'POST')
+        assert(e['status'] == 200)
+        assert(e['bytes'] == 4)
+        assert(e['route'] == '/p')
+        assert(e['seconds'] >= 0.0)
+        assert(e['id'] :: String)
+    }, access-log: 'json', access-log-fd: w2)
+    os.close(w2)
+    os.close(r2)
+}
+
+pub fn access-log-callback() {
+    let seen = []
+    let lock = Mutex()
+    serve(fn (srv) {
+        srv.get('/s', fn (req, rsp) {
+            let w = rsp.stream()
+            w.write('abc')
+            w.write('defg')
+        })
+    }, fn (srv) {
+        assert(get(srv.port, '/s').body == 'abcdefg')
+        let t0 = time.now()
+        while do { let ^_ = lock.lock(); #seen } == 0 && time.now() - t0 < 2.0 {
+            os.sleep(0.01)
+        }
+        let e = do { let ^_ = lock.lock(); seen[0] }
+        assert(e.status == 200)
+        assert(e.bytes == 7)
+        assert(e.target == '/s')
+    }, access-log: fn (entry) {
+        let ^_ = lock.lock()
+        seen.push(entry)
+    })
+}
+
+pub fn stats-and-prometheus() {
+    serve(fn (srv) {
+        srv.get('/ok', (req, rsp) -> rsp.plain('ok'))
+        srv.get('/boom', (req, rsp) -> throw RuntimeError('boom'))
+        srv.get('/slow', fn (req, rsp) {
+            http.sleep(0.03)
+            rsp.plain('slow')
+        })
+        srv.metrics-endpoint()
+        srv.health()
+    }, fn (srv) {
+        for ..3 {
+            get(srv.port, '/ok')
+        }
+        get(srv.port, '/boom')
+        get(srv.port, '/missing')
+        get(srv.port, '/slow')
+
+        let s = srv.stats()
+        assert(s['requests'] >= 6)
+        assert(s['responses']['2xx'] >= 4)
+        assert(s['responses']['4xx'] >= 1)
+        assert(s['responses']['5xx'] >= 1)
+        assert(s['errors'] == 1)
+        assert(s['bytes_out'] > 0)
+        assert(s['connections_total'] >= 6)
+
+        let text = get(srv.port, '/metrics').body
+        assert(text.contains?('# TYPE http_requests_total counter'))
+        assert(text.contains?('http_requests_total{code="2xx"}'))
+        assert(text.contains?('http_request_duration_seconds_bucket{le="+Inf"}'))
+        assert(text.match?(/http_request_duration_seconds_bucket\{le="0\.05"\} \d+/))
+        assert(text.contains?('http_handler_errors_total 1'))
+
+        let h = get(srv.port, '/healthz')
+        assert(h.status == 200 && h.body == 'ok')
+    })
+
+    serve(fn (srv) {
+        srv.health('/ready', check: -> false)
+    }, fn (srv) {
+        assert(get(srv.port, '/ready').status == 503)
+    })
+}
+
+pub fn websocket-gauge() {
+    serve(fn (srv) {
+        srv.ws('/ws', fn (sock, req) {
+            sock.recv()
+        })
+    }, fn (srv) {
+        let a = WsClient(srv.port, '/ws')
+        let b = WsClient(srv.port, '/ws')
+        os.sleep(0.1)
+        assert(srv.stats()['websockets'] == 2)
+        a.close()
+        b.close()
+        let t0 = time.now()
+        while srv.stats()['websockets'] > 0 && time.now() - t0 < 2.0 {
+            os.sleep(0.02)
+        }
+        assert(srv.stats()['websockets'] == 0)
+        assert(srv.stats()['websockets_total'] == 2)
+    })
+}
+
+pub fn overload-gets-503() {
+    serve(fn (srv) {
+        srv.get('/', (req, rsp) -> rsp.plain('ok'))
+    }, fn (srv) {
+        let a = Client(srv.port)
+        assert(a.get('/').body == 'ok')
+        let b = Client(srv.port)
+        let r = b.response()
+        assert(r != nil && r.status == 503)
+        assert(r.header('retry-after') == '1')
+        assert(srv.stats()['rejected'] >= 1)
+        a.close()
+        b.close()
+    }, max-connections: 1, threads: 1)
+}

@@ -160,3 +160,27 @@ pub fn urlencode(s: String) -> String {
 pub fn encode-query(params: Dict[String, _]) -> String {
     [ "{urlencode(str(k))}={urlencode(str(v))}" for k, v in params ].join('&')
 }
+
+/// Decodes %XX escapes only (no `+` → space), for URL paths.
+pub fn percent-decode(s: String) -> String {
+    if !s.contains?('%') {
+        return s
+    }
+    let out = Blob()
+    let b = Blob(s)
+    let i = 0
+    while i < #b {
+        let c = b[i]
+        if c == 37 && i + 2 < #b {
+            let h = s.bslice(i + 1, 2)
+            if h.match?(/^[0-9A-Fa-f]{2}$/) {
+                out.push(int(h, 16))
+                i += 3
+                continue
+            }
+        }
+        out.push(c)
+        i += 1
+    }
+    out.str!()
+}

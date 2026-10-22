@@ -1,5 +1,6 @@
 import jit (kernel!)
 import json
+import http.core (parse-cookies)
 import http.form (
     HttpHeaders,
     HttpVersion,
@@ -363,6 +364,9 @@ pub class Request {
     scheme:   String
     remote:   String | nil
     route:    String | nil
+    id:       String | nil
+    start:    Float
+    session:  _
 
     __head:    Blob | nil
     __base:    Int
@@ -374,6 +378,7 @@ pub class Request {
     __valid?:  Bool
     __queue:   _
     __served?: Bool
+    __cookies: Dict[String, String] | nil
 
     init(
         method: String,
@@ -392,6 +397,10 @@ pub class Request {
         self.body    = body
         files        = %{}
         scheme       = 'http'
+        id           = nil
+        start        = 0.0
+        session      = nil
+        __cookies    = nil
         __flags      = flags
         __head       = head
         __base       = base
@@ -561,6 +570,14 @@ pub class Request {
             },
             _ => false
         }
+    }
+
+    cookies -> Dict[String, String] {
+        __cookies ?? (__cookies = parse-cookies(header('cookie')))
+    }
+
+    cookie(name: String) -> String | nil {
+        cookies[name]
     }
 
     streaming? -> Bool {

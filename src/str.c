@@ -327,6 +327,11 @@ string_bslice(Ty *ty, Value *string, int argc, Value *kwargs)
         }
 
         i = min(max(i, 0), sN(*string));
+
+        if (n < 0) {
+                n += (isize)sN(*string) - i;
+        }
+
         n = min(max(n, 0), sN(*string) - i);
 
         return STRING_VIEW(*string, i, n);
@@ -406,7 +411,7 @@ string_slice(Ty *ty, Value *string, int argc, Value *kwargs)
                         i += ncp;
                 }
                 if (n < 0) {
-                        n += ncp;
+                        n += ncp - min(max(i, 0), ncp);
                 }
         }
 

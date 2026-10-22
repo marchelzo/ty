@@ -1,0 +1,208 @@
+import http
+import http.session as session
+import os
+import json
+import _client (serve, Client)
+
+const SECRET = 'correct horse battery staple'
+
+fn raw-headers(port: Int, path: String, cookie: String | nil = nil) -> (Int, Array[String], String) {
+    let c = Client(port)
+    let h = (cookie == nil) ? %{} : %{'Cookie': cookie}
+    c.request('GET', path, nil, h)
+    let fd = c.fd
+    let buf = Blob()
+    os.sleep(0.15)
+    os.read(fd, buf, 65536)
+    c.close()
+    let text = buf.str!()
+    let [head, body] = text.split('\r\n\r\n', 1)
+    let lines = head.split('\r\n')
+    let status = int(lines[0].split(' ')[1])
+    (status, lines.filter(\_.lower().starts?('set-cookie:')).map(\_.split(': ', 1)[1]), body)
+}
+
+fn cookie-value(lines: Array[String], name: String) -> String | nil {
+    for l in lines {
+        let nv = l.split(';')[0]
+        if nv.starts?("{name}=") {
+            return nv.slice(name.size() + 1)
+        }
+    }
+    nil
+}
+
+pub fn request-cookies() {
+    serve(fn (srv) {
+        srv.get('/', (req, rsp) -> rsp.json(req.cookies))
+        srv.get('/one', (req, rsp) -> rsp.plain(req.cookie('b') ?? 'none'))
+    }, fn (srv) {
+        let c = Client(srv.port)
+        c.request('GET', '/', nil, %{'Cookie': 'a=1; b="quoted"; a=2; bad; c=x=y'})
+        assert(json.parse(c.response().body) == %{'a': '1', 'b': 'quoted', 'c': 'x=y'})
+        c.request('GET', '/one', nil, %{'Cookie': 'b=2'})
+        assert(c.response().body == '2')
+        c.request('GET', '/one')
+        assert(c.response().body == 'none')
+        c.close()
+    })
+}
+
+pub fn set-cookie-attributes() {
+    serve(fn (srv) {
+        srv.get('/set', fn (req, rsp) {
+            rsp.set-cookie('a', '1')
+            rsp.set-cookie('b', 'two', max-age: 60, path: '/x', domain: 'example.com', same-site: 'Strict', secure: true)
+            rsp.set-cookie('c', 'x', http-only: false, same-site: false, expires: 0)
+            rsp.clear-cookie('old')
+            rsp.plain('ok')
+        })
+        srv.get('/bad-name', (req, rsp) -> rsp.set-cookie('a b', 'x'))
+        srv.get('/bad-value', (req, rsp) -> rsp.set-cookie('a', 'x;y'))
+        srv.get('/none-insecure', (req, rsp) -> rsp.set-cookie('a', 'x', same-site: 'None', secure: false))
+    }, fn (srv) {
+        let (status, lines, _) = raw-headers(srv.port, '/set')
+        assert(status == 200)
+        assert(lines[0] == 'a=1; Path=/; HttpOnly; SameSite=Lax')
+        assert(lines[1] == 'b=two; Max-Age=60; Path=/x; Domain=example.com; Secure; HttpOnly; SameSite=Strict')
+        assert(lines[2] == 'c=x; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/')
+        assert(lines[3].starts?('old=; Max-Age=0; Expires=Thu, 01 Jan 1970'))
+        for p in ['/bad-name', '/bad-value', '/none-insecure'] {
+            assert(raw-headers(srv.port, p).0 == 500)
+        }
+    })
+}
+
+pub fn signed-values() {
+    let secrets = [SECRET]
+    let v = session.sign('user:42', secrets)
+    assert(session.unsign(v, secrets) == 'user:42')
+    assert(session.unsign(v.sub('42', '43'), secrets) == nil)
+    assert(session.unsign(v + 'x', secrets) == nil)
+    assert(session.unsign('no-signature', secrets) == nil)
+    assert(session.unsign(v, ['another secret value!!', SECRET]) == 'user:42')
+    assert(session.unsign(v, ['another secret value!!']) == nil)
+}
+
+fn session-routes(srv) {
+    srv.get('/inc', fn (req, rsp) {
+        let n = req.session.get('n', 0) + 1
+        req.session['n'] = n
+        rsp.plain(str(n))
+    })
+    srv.get('/peek', (req, rsp) -> rsp.plain(str(req.session.get('n', 'none'))))
+    srv.get('/login', fn (req, rsp) {
+        req.session.regenerate()
+        req.session['user'] = 'alice'
+        rsp.plain('in')
+    })
+    srv.get('/logout', fn (req, rsp) {
+        req.session.destroy()
+        rsp.plain('out')
+    })
+    srv.get('/stream', fn (req, rsp) {
+        req.session['streamed'] = true
+        let w = rsp.stream()
+        w.write('s')
+    })
+    srv.get('/big', fn (req, rsp) {
+        req.session['blob'] = 'x' * 5000
+        rsp.plain('big')
+    })
+}
+
+pub fn cookie-store-sessions() {
+    let srv = http.Server('127.0.0.1', 0, threads: 2)
+    session-routes(srv)
+    srv.sessions(SECRET, max-age: 3600)
+    let t = Thread(srv.run)
+    os.sleep(0.1)
+    let p = srv.port
+
+    let (_, none, body0) = raw-headers(p, '/peek')
+    assert(body0 == 'none')
+    assert(#none == 0)
+
+    let (_, l1, b1) = raw-headers(p, '/inc')
+    assert(b1 == '1')
+    let c1 = cookie-value(l1, 'session')
+    assert(c1 != nil)
+    assert(l1[0].contains?('HttpOnly') && l1[0].contains?('SameSite=Lax') && l1[0].contains?('Max-Age=3600'))
+
+    let (_, l2, b2) = raw-headers(p, '/inc', "session={c1}")
+    assert(b2 == '2')
+    let c2 = cookie-value(l2, 'session')
+
+    let (_, _, b3) = raw-headers(p, '/peek', "session={c2}")
+    assert(b3 == '2')
+
+    let tampered = c2.slice(0, 5) + ((c2[5] == 'A') ? 'B' : 'A') + c2.slice(6)
+    let (_, _, b4) = raw-headers(p, '/peek', "session={tampered}")
+    assert(b4 == 'none')
+
+    let (_, l5, _) = raw-headers(p, '/stream', "session={c2}")
+    assert(cookie-value(l5, 'session') != nil)
+
+    let (_, l6, _) = raw-headers(p, '/logout', "session={c2}")
+    assert(l6[0].starts?('session=; Max-Age=0'))
+
+    let (s7, _, _) = raw-headers(p, '/big')
+    assert(s7 == 500)
+
+    srv.stop()
+    t.join()
+    srv.close()
+}
+
+pub fn memory-store-sessions() {
+    let store = http.MemoryStore()
+    let srv = http.Server('127.0.0.1', 0, threads: 2)
+    session-routes(srv)
+    srv.sessions([SECRET, 'previous secret value!!'], store: store)
+    let t = Thread(srv.run)
+    os.sleep(0.1)
+    let p = srv.port
+
+    let (_, l1, _) = raw-headers(p, '/inc')
+    let c1 = cookie-value(l1, 'session')!
+    assert(store.size == 1)
+    assert(c1.size() < 100)
+
+    let (_, _, b2) = raw-headers(p, '/inc', "session={c1}")
+    assert(b2 == '2')
+
+    let (_, l3, _) = raw-headers(p, '/login', "session={c1}")
+    let c3 = cookie-value(l3, 'session')!
+    assert(c3 != c1)
+    let (_, _, gone) = raw-headers(p, '/peek', "session={c1}")
+    assert(gone == 'none')
+    let (_, _, kept) = raw-headers(p, '/peek', "session={c3}")
+    assert(kept == '2')
+
+    let (s4, _, big) = raw-headers(p, '/big', "session={c3}")
+    assert(s4 == 200 && big == 'big')
+
+    let old = session.sign(c3.split('.')[0], ['previous secret value!!'])
+    let (_, _, rotated) = raw-headers(p, '/peek', "session={old}")
+    assert(rotated == '2')
+
+    let (_, l5, _) = raw-headers(p, '/logout', "session={c3}")
+    assert(l5[0].starts?('session=; Max-Age=0'))
+    assert(store.size == 0)
+
+    srv.stop()
+    t.join()
+    srv.close()
+}
+
+pub fn weak-secret-rejected() {
+    let srv = http.Server('127.0.0.1', 0, threads: 1)
+    let failed = false
+    try {
+        srv.sessions('short')
+    } catch _: ValueError {
+        failed = true
+    }
+    assert(failed)
+    srv.close()
+}
