@@ -31,3 +31,84 @@ pub fn blobs-concatenate-with-plus() {
     assert(head.list() == [1, 2])
     assert(str(typeof both) == 'Blob')
 }
+
+pub fn str-validates-utf8() {
+    let b = Blob('héllo €')
+    assert(b.str() == 'héllo €')
+    assert(b.str(0, 1) == 'h')
+    assert(b.str(1, 2) == 'é')
+    for args in [[], [1, 1], [2]] {
+        let threw = false
+        try {
+            b.str(*args)
+        } catch _: ValueError {
+            threw = true
+        }
+        assert(threw == (#args > 0))
+    }
+    assert(b.str!(1, 1).size() == 1)
+    let bad = Blob()
+    bad.push(0xC0)
+    bad.push(0x80)
+    let threw = false
+    try {
+        bad.str()
+    } catch _: ValueError {
+        threw = true
+    }
+    assert(threw)
+    assert(bad.str!().size() == 2)
+}
+
+fn bytes(*xs) -> Blob {
+    let b = Blob()
+    for x in xs {
+        b.push(x)
+    }
+    b
+}
+
+pub fn utf8-queries() {
+    let b = Blob('aé€')
+    assert(b.utf8?)
+    assert(b.utf8?(0, 3))
+    assert(!b.utf8?(0, 2))
+    assert(!b.utf8?(2))
+    assert(b.utf8-valid() == 6)
+    assert(b.utf8-valid(0, 5) == 3)
+    assert(b.utf8-tail() == 0)
+    assert(b.utf8-tail(0, 2) == 1)
+    assert(b.utf8-tail(0, 5) == 2)
+    assert(b.utf8-tail(2) == 0)
+
+    let bad = bytes(0x61, 0xFF, 0x62)
+    assert(!bad.utf8?)
+    assert(bad.utf8-valid() == 1)
+    assert(bytes(0x61, 0xFF).utf8-tail() == 0)
+    assert(bytes(0xF0, 0x9F, 0x98).utf8-tail() == 3)
+    assert(bytes(0xC0).utf8-tail() == 0)
+}
+
+pub fn str-lossy() {
+    assert(bytes(0x61, 0xFF, 0x62).str(lossy: true) == 'a\uFFFDb')
+    assert(bytes(0xF0, 0x9F, 0x98).str(lossy: true) == '\uFFFD')
+    assert(bytes(0xED, 0xA0, 0x80).str(lossy: true) == '\uFFFD\uFFFD\uFFFD')
+    assert(Blob('é').str(lossy: true) == 'é')
+}
+
+pub fn take-str-streams() {
+    let text = 'aé€😀 日本語'
+    let raw = Blob(text)
+    let pending = Blob()
+    let out = ''
+    for x in raw {
+        pending.push(x)
+        out += pending.take-str!()
+        assert(#pending < 4)
+    }
+    assert(out == text && #pending == 0)
+
+    let bad = bytes(0x61, 0xFF)
+    assert(try { bad.take-str!(); false } catch _: ValueError { true })
+    assert(#bad == 2)
+}

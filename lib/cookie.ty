@@ -387,7 +387,7 @@ fn windows-chrome-key(local-state: Path) -> Blob | nil {
     let state: _ = try { json.parse!(local-state.read-text()) } ?? return nil
     let encoded = try { state['os_crypt']['encrypted_key'] } ?? return nil
     let wrapped = try { base64.decode("{encoded}") } ?? return nil
-    if #wrapped < 6 || wrapped.slice(0, 5).str() != 'DPAPI' {
+    if #wrapped < 6 || wrapped.slice(0, 5).str!() != 'DPAPI' {
         return nil
     }
 

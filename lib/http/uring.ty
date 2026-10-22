@@ -1,4 +1,4 @@
-import io_uring (IoUring, IoUringError, IORING_FEAT_EXT_ARG, IORING_ASYNC_CANCEL_ALL)
+import io_uring (IoUring, IoUringError, IORING_FEAT_EXT_ARG)
 import os
 import errno
 

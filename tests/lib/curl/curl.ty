@@ -23,6 +23,25 @@ fn reply(fd: Int, body: String | Blob = '', status: Int = 200, headers = %{}) {
     os.write(fd, response, all=true)
 }
 
+fn trickle(fd: Int, body: String, content-type: String) {
+    let bytes = Blob(body)
+    os.write(fd, Blob([
+        'HTTP/1.1 200 OK',
+        "Content-Length: {#bytes}",
+        "Content-Type: {content-type}",
+        'Connection: close',
+        '',
+        ''
+    ].join('\r\n')), all=true)
+    let i = 0
+    while i < #bytes {
+        let n = min(3, #bytes - i)
+        os.write(fd, bytes[i;i + n], all=true)
+        os.sleep(0.005)
+        i += n
+    }
+}
+
 fn read-request(fd: Int) {
     let data = Blob()
     let header-end = -1
@@ -57,6 +76,8 @@ fn read-request(fd: Int) {
     let body = data.slice(payload-start, payload-size).str!()
     return {method, url, headers, body}
 }
+
+const SPLIT_TEXT = 'aé€😀\nzweite Zeile ü\n日本語'
 
 fn handle-client(fd: Int) {
     defer os.close(fd)
@@ -108,6 +129,10 @@ fn handle-client(fd: Int) {
             'Content-Type': 'application/json',
             'Content-Encoding': 'gzip'
         })
+    } else if request.method == 'GET' && path == '/split-text' {
+        trickle(fd, SPLIT_TEXT, 'text/plain; charset=utf-8')
+    } else if request.method == 'GET' && path == '/split-sse' {
+        trickle(fd, 'data: héllo €\n\ndata: 😀 done\n\n', 'text/event-stream')
     } else if request.method == 'GET' && path == '/' {
         reply(fd, 'ok')
     } else {
@@ -259,6 +284,14 @@ pub fn test-streaming-lines() {
 
     let lines = [*stream.lines()]
     assert(#lines > 0)
+}
+
+pub fn test-streaming-split-utf8() {
+    let lines = [*get-stream("{server-url}/split-text", proxy='').lines()]
+    assert(lines == SPLIT_TEXT.split('\n'))
+
+    let events = [*get-stream("{server-url}/split-sse", proxy='').events()]
+    assert(events.map(\_.data) == ['héllo €', '😀 done'])
 }
 
 pub fn test-stream-read-all() {

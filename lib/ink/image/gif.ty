@@ -250,7 +250,7 @@ class Decoder {
                 delay       = (cs < 2) ? 0.1 : float(cs) / 100.0
                 transparent = ((body[0] & 1) != 0) ? body[3] : -1
             },
-            0xFF and body[;11].str() == 'NETSCAPE2.0' && #body >= 14 => {
+            0xFF and body[;11].str!() == 'NETSCAPE2.0' && #body >= 14 => {
                 loops = body[12] | (body[13] << 8)
             },
             _ => ()

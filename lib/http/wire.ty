@@ -6,8 +6,7 @@ import http.form (
     HttpVersion,
     decode-query,
     multipart,
-    MultipartData,
-    MultipartMore
+    MultipartData
 )
 
 const TCHAR = 1
@@ -580,16 +579,8 @@ pub class Request {
         cookies[name]
     }
 
-    streaming? -> Bool {
-        __queue != nil
-    }
-
     attach-body(queue: _) {
         __queue = queue
-    }
-
-    body-queue -> _ {
-        __queue
     }
 
     read(max: Int = 65536) -> Blob | nil {

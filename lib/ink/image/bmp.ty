@@ -119,7 +119,7 @@ fn default-masks(bpp: Int) -> Array[Int] {
 }
 
 pub fn decode(data: Blob) -> Picture {
-    if #data < 26 || data[;2].str() != 'BM' {
+    if #data < 26 || data[;2].str!() != 'BM' {
         throw ImageError('BMP: bad signature')
     }
     let off = u32(data, 10)

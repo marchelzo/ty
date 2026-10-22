@@ -5,14 +5,13 @@ import http.core (
     HttpError,
     EventStream,
     Response,
-    Raise,
     ConnectionClosed,
     task,
     suspend
 )
 import http.wire as wire (Ready, NeedMore, Invalid, Head, Request, Dechunker)
 import http.status (status-name)
-import http.loop (Conn, READ, WRITE)
+import http.loop (Conn, READ)
 
 const IDLE     = 0
 const BUSY     = 1

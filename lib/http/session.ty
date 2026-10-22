@@ -1,6 +1,5 @@
 import json
 import time
-import log
 import ssl
 import http.core (Response)
 import http.wire (Request)

@@ -599,20 +599,6 @@ ns ctlseq {
         }
     }
 
-    pub fn partial-utf8(buf: Blob, i: Int, j: Int) -> Int {
-        let k = j
-
-        while k > i && j - k < 3 && (buf[k - 1] & 0xc0) == 0x80 {
-            k -= 1
-        }
-
-        return 0 if k == i
-
-        let have = j - k + 1
-
-        (utf8-len(buf[k - 1]) > have) ? have : 0
-    }
-
     fn csi-end(buf: Blob, j: Int) -> Int {
         let n = #buf
 
@@ -1263,7 +1249,7 @@ pub class TermIO {
                 j += 1
             }
 
-            let held = (j == #buf) ? ctlseq.partial-utf8(buf, i, j) : 0
+            let held = (j == #buf) ? buf.utf8-tail(i, j - i) : 0
 
             for buf.str!(i, j - i - held).chars() {
                 yield-basic(it)

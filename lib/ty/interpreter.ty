@@ -260,7 +260,7 @@ pub class Repl {
     }
 
     partial -> String {
-        __cell.?output.?str() ?? ''
+        __cell.?output.?str!() ?? ''
     }
 
     handoff() -> _ {
@@ -315,7 +315,7 @@ pub class Repl {
         } catch error {
             close()
             return {
-                output: cell.output.str(), value: nil, error: str(error),
+                output: cell.output.str!(), value: nil, error: str(error),
                 truncated: cell.truncated?, reset: true
             }
         }
@@ -361,7 +361,7 @@ pub class Repl {
                 {type: 'result', value, error, truncated, *} => do {
                     cell.truncated? = kernel.output(cell.output) || cell.truncated?
                     let failure = (error && cell.stopping) ? "{cell.stopping}; the cell was interrupted, and state from earlier cells is kept" : error
-                    return {output: cell.output.str(), value, error: failure,
+                    return {output: cell.output.str!(), value, error: failure,
                             truncated: cell.truncated? || truncated, reset: false}
                 },
                 nil => ()

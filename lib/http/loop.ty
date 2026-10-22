@@ -1,7 +1,6 @@
 import os
 import errno
 import time
-import thread
 import log
 import ssl
 import ty.mod as tymod
@@ -12,13 +11,11 @@ import http.core (
     Raise,
     CanceledError,
     ConnectionClosed,
-    TimeoutError,
     make-task,
     step,
     suspend,
     task,
     set-loop,
-    in-task?,
     on-loop?
 )
 
@@ -30,7 +27,6 @@ const OP_ACCEPT = 1
 const OP_RECV   = 2
 const OP_SEND   = 3
 const OP_WAKE   = 4
-const OP_CANCEL = 5
 const OP_FILE   = 6
 
 const OP_BITS = 3
@@ -583,7 +579,6 @@ pub class Loop {
     __timers:    Heap[(Float, Int, Timer)]
     __mbox:      Array[() -> _]
     __mtx:       Mutex
-    __thread:    Int
     __accepting: Bool
     __stopping:  Bool
     __done:      Bool
@@ -614,7 +609,6 @@ pub class Loop {
         __timers     = Heap()
         __mbox       = []
         __mtx        = Mutex()
-        __thread     = -1
         __accepting  = false
         __stopping   = false
         __done       = false
@@ -635,10 +629,6 @@ pub class Loop {
 
     stopping? -> Bool {
         __stopping
-    }
-
-    owner? -> Bool {
-        thread.id() == __thread
     }
 
     __tick-date() {
@@ -1017,7 +1007,6 @@ pub class Loop {
     }
 
     run() {
-        __thread = thread.id()
         set-loop(self)
         backend.arm-wake(OP_WAKE)
         __arm-accept()

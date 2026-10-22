@@ -259,8 +259,10 @@ pub fn truncate(s: String, limit: Int = OUTPUT_LIMIT) -> String {
         return s
     }
     let half = limit / 2
-    let head = b.str(0, half)
-    let tail = b.str(#b - half, half)
+    let h = half - b.utf8-tail(0, half)
+    let t = #b - half - b.utf8-tail(0, #b - half)
+    let head = b.str(0, h, lossy: true)
+    let tail = b.str(t, lossy: true)
     let gone = #b - Blob(head).size() - Blob(tail).size()
     "{head}\n[… {gone} bytes elided …]\n{tail}"
 }

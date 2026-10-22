@@ -1,8 +1,9 @@
 #include <limits.h>
-#include <utf8proc.h>
 
 #include "ty.h"
 #include "blob.h"
+#include "dict.h"
+#include "str.h"
 #include "value.h"
 #include "vm.h"
 #include "xd.h"
@@ -340,10 +341,10 @@ blob_xor(Ty *ty, Value *blob, int argc, Value *kwargs)
 }
 
 
-static Value
-blob_str(Ty *ty, Value *blob, int argc, Value *kwargs)
+static void
+blobspan(Ty *ty, Value *blob, int argc, char const *name, isize *pstart, isize *pn)
 {
-        ASSERT_ARGC("Blob.str()", 0, 1, 2);
+        ASSERT_ARGC(name, 0, 1, 2);
 
         isize start;
         isize n;
@@ -375,66 +376,133 @@ blob_str(Ty *ty, Value *blob, int argc, Value *kwargs)
                 bP("invalid argument(s): start=%zd, n=%zd, size=%zu", start, n, vN(*blob->blob));
         }
 
+        *pstart = start;
+        *pn     = n;
+}
 
-        u8 *str = value_string_alloc(ty, 2 * n);
+static noreturn void
+badutf8(Ty *ty, char const *name)
+{
+        Value exc = NewInstance(
+                CLASS_VALUE_ERROR,
+                xSz(name)
+        );
+        vmE(&exc);
+}
+
+static Value
+lossystr(Ty *ty, u8 const *s, isize n)
+{
+        u8 *str = value_string_alloc(ty, 3 * n);
         isize i = 0;
+        isize j = 0;
+        int st;
 
-        i32 cp;
-
-        while (n > 0) {
-                i32 sz = utf8proc_iterate(vv(*blob->blob) + start, n, &cp);
-                if (sz < 0) {
-                        if (v__(*blob->blob, start) < 0xC0) {
-                                str[i++] = 0xC2;
-                                str[i++] = v__(*blob->blob, start);
-                        }
-                        start += 1;
-                        n     -= 1;
-                } else {
-                        memcpy(str + i, vv(*blob->blob) + start, sz);
-                        start += sz;
-                        i     += sz;
-                        n     -= sz;
+        while (i < n) {
+                isize v = utf8valid(s + i, n - i);
+                memcpy(str + j, s + i, v);
+                i += v;
+                j += v;
+                if (i < n) {
+                        i += utf8seq(s + i, n - i, &st);
+                        str[j++] = 0xEF;
+                        str[j++] = 0xBF;
+                        str[j++] = 0xBD;
                 }
         }
 
-        return STRING(str, i);
+        return STRING(str, j);
+}
+
+static Value
+blob_str(Ty *ty, Value *blob, int argc, Value *kwargs)
+{
+        char const *_name__ = "Blob.str()";
+        isize start;
+        isize n;
+
+        Value lossy = KWARG("lossy", BOOLEAN);
+
+        blobspan(ty, blob, argc, _name__, &start, &n);
+
+        u8 const *s = vv(*blob->blob) + start;
+
+        if (utf8ok(s, n)) {
+                return vSs((char const *)s, n);
+        }
+
+        if (!IsNone(lossy) && lossy.boolean) {
+                return lossystr(ty, s, n);
+        }
+
+        badutf8(ty, "Blob.str(): invalid UTF-8");
+}
+
+static Value
+blob_is_utf8(Ty *ty, Value *blob, int argc, Value *kwargs)
+{
+        isize start;
+        isize n;
+
+        blobspan(ty, blob, argc, "Blob.utf8?()", &start, &n);
+
+        return BOOLEAN(utf8ok(vv(*blob->blob) + start, n));
+}
+
+static Value
+blob_utf8_valid(Ty *ty, Value *blob, int argc, Value *kwargs)
+{
+        isize start;
+        isize n;
+
+        blobspan(ty, blob, argc, "Blob.utf8-valid()", &start, &n);
+
+        return INTEGER(utf8valid(vv(*blob->blob) + start, n));
+}
+
+static Value
+blob_utf8_tail(Ty *ty, Value *blob, int argc, Value *kwargs)
+{
+        isize start;
+        isize n;
+
+        blobspan(ty, blob, argc, "Blob.utf8-tail()", &start, &n);
+
+        return INTEGER(utf8tail(vv(*blob->blob) + start, n));
+}
+
+static Value
+blob_take_str(Ty *ty, Value *blob, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("Blob.take-str!()", 0);
+
+        u8 const *s = vv(*blob->blob);
+        isize n = vN(*blob->blob);
+        isize v = utf8valid(s, n);
+        int st;
+
+        if (v < n) {
+                utf8seq(s + v, n - v, &st);
+                if (st != UTF8_SHORT) {
+                        badutf8(ty, "Blob.take-str!(): invalid UTF-8");
+                }
+        }
+
+        Value str = vSs((char const *)s, v);
+
+        memmove(vv(*blob->blob), vv(*blob->blob) + v, n - v);
+        vN(*blob->blob) -= v;
+
+        return str;
 }
 
 static Value
 blob_str_unsafe(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
-        ASSERT_ARGC("Blob.str!()", 0, 1, 2);
-
         isize start;
         isize n;
 
-        switch (argc) {
-        case 0:
-                start = 0;
-                n = vN(*blob->blob);
-                break;
-
-        case 1:
-                start = INT_ARG(0);
-                n = INT_MAX;
-                break;
-
-        case 2:
-                start = INT_ARG(0);
-                n = INT_ARG(1);
-                break;
-        }
-
-        if (start < 0) {
-                start += vN(*blob->blob);
-        }
-
-        n = max(0, min(n, vN(*blob->blob) - start));
-
-        if (start < 0 || (n + start) > vN(*blob->blob)) {
-                bP("invalid argument(s): start=%d, n=%d, size=%zu", start, n, vN(*blob->blob));
-        }
+        blobspan(ty, blob, argc, "Blob.str!()", &start, &n);
 
         return vSs((char const *)vv(*blob->blob) + start, n);
 }
@@ -766,25 +834,29 @@ blob_poke(Ty *ty, Value *blob, int argc, Value *kwargs)
 
 DEFINE_METHOD_TABLE(
         blob,
-        { .name = "clear",    .func = blob_clear        },
-        { .name = "fill",     .func = blob_fill         },
-        { .name = "get",      .func = blob_get          },
-        { .name = "hex",      .func = blob_hex          },
-        { .name = "pad",      .func = blob_pad          },
-        { .name = "peek",     .func = blob_peek         },
-        { .name = "poke",     .func = blob_poke         },
-        { .name = "ptr",      .func = blob_ptr          },
-        { .name = "push",     .func = blob_push         },
-        { .name = "reserve",  .func = blob_reserve      },
-        { .name = "search",   .func = blob_search       },
-        { .name = "searchr",  .func = blob_searchr      },
-        { .name = "shrink",   .func = blob_shrink       },
-        { .name = "size",     .func = blob_size         },
-        { .name = "slice",    .func = blob_slice        },
-        { .name = "splice",   .func = blob_splice       },
-        { .name = "str",      .func = blob_str          },
-        { .name = "str!",     .func = blob_str_unsafe   },
-        { .name = "xor",      .func = blob_xor          },
+        { .name = "clear",     .func = blob_clear      },
+        { .name = "fill",      .func = blob_fill       },
+        { .name = "get",       .func = blob_get        },
+        { .name = "hex",       .func = blob_hex        },
+        { .name = "pad",       .func = blob_pad        },
+        { .name = "peek",      .func = blob_peek       },
+        { .name = "poke",      .func = blob_poke       },
+        { .name = "ptr",       .func = blob_ptr        },
+        { .name = "push",      .func = blob_push       },
+        { .name = "reserve",   .func = blob_reserve    },
+        { .name = "search",    .func = blob_search     },
+        { .name = "searchr",   .func = blob_searchr    },
+        { .name = "shrink",    .func = blob_shrink     },
+        { .name = "size",      .func = blob_size       },
+        { .name = "slice",     .func = blob_slice      },
+        { .name = "splice",    .func = blob_splice     },
+        { .name = "str",       .func = blob_str        },
+        { .name = "str!",      .func = blob_str_unsafe },
+        { .name = "takeStr!",  .func = blob_take_str   },
+        { .name = "utf8?",     .func = blob_is_utf8    },
+        { .name = "utf8Tail",  .func = blob_utf8_tail  },
+        { .name = "utf8Valid", .func = blob_utf8_valid },
+        { .name = "xor",       .func = blob_xor        },
 );
 
 DEFINE_METHOD_LOOKUP(blob)

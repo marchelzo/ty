@@ -1,16 +1,14 @@
 import log
 import hash
-import jit (kernel!)
 import base64
 import http.core (
-    Raise,
     ConnectionClosed,
     task,
     suspend,
     in-task?,
     on-loop?
 )
-import http.loop (Conn, Timer, READ, WRITE)
+import http.loop (Conn, Timer, READ)
 import http.wire (Request)
 import http.deflate (PerMessage, DeflateError)
 
@@ -35,59 +33,6 @@ pub const CLOSE_TOO_BIG        = 1009
 pub const CLOSE_INTERNAL       = 1011
 
 const CLOSE_GRACE = 5.0
-
-kernel! fn utf8-ok?(b: Blob, off: Int, n: Int) -> Bool {
-    let i = off
-    let end = off + n
-    while i < end {
-        let c = b[i]
-        if c < 0x80 {
-            i += 1
-            continue
-        }
-        let need = 0
-        let lo = 0x80
-        let hi = 0xBF
-        if c >= 0xC2 && c <= 0xDF {
-            need = 1
-        } else if c >= 0xE0 && c <= 0xEF {
-            need = 2
-            if c == 0xE0 {
-                lo = 0xA0
-            } else if c == 0xED {
-                hi = 0x9F
-            }
-        } else if c >= 0xF0 && c <= 0xF4 {
-            need = 3
-            if c == 0xF0 {
-                lo = 0x90
-            } else if c == 0xF4 {
-                hi = 0x8F
-            }
-        } else {
-            return false
-        }
-        if i + need >= end {
-            return false
-        }
-        let d = b[i + 1]
-        if d < lo || d > hi {
-            return false
-        }
-        for k in 2..need + 1 {
-            let e = b[i + k]
-            if e < 0x80 || e > 0xBF {
-                return false
-            }
-        }
-        i += need + 1
-    }
-    true
-}
-
-pub fn valid-utf8?(b: Blob, off: Int = 0, n: Int = #b - off) -> Bool {
-    utf8-ok?(b, off, n)
-}
 
 pub fn accept-key(key: String) -> String {
     base64.encode(hash.sha1(key + GUID).digest())
@@ -372,11 +317,12 @@ pub class WSProto {
             }
         }
         if op == OP_TEXT {
-            if !utf8-ok?(payload, 0, #payload) {
+            let text = payload.str!()
+            if !text.utf8? {
                 __fail(CLOSE_INVALID_DATA, 'invalid UTF-8')
                 return false
             }
-            __deliver(payload.str!())
+            __deliver(text)
         } else {
             __deliver(payload)
         }
@@ -437,11 +383,11 @@ pub class WSProto {
                         __fail(CLOSE_PROTOCOL_ERROR, 'invalid close code')
                         return false
                     }
-                    if !utf8-ok?(payload, 2, #payload - 2) {
+                    reason = payload.str!(2, #payload - 2)
+                    if !reason.utf8? {
                         __fail(CLOSE_INVALID_DATA, 'invalid UTF-8')
                         return false
                     }
-                    reason = payload.str!(2, #payload - 2)
                 }
                 ws.close-code = code
                 ws.close-reason = reason

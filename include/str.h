@@ -14,6 +14,24 @@ typedef void StringEmit(Ty *, Bytes, StringPart, void *);
 void
 str_escape(Ty *ty, Bytes s, char quote, StringEmit *emit, void *ctx);
 
+enum {
+        UTF8_OK,
+        UTF8_SHORT,
+        UTF8_BAD
+};
+
+isize
+utf8seq(u8 const *s, isize n, int *st);
+
+isize
+utf8valid(u8 const *s, isize n);
+
+bool
+utf8ok(u8 const *s, isize n);
+
+isize
+utf8tail(u8 const *s, isize n);
+
 void
 build_string_method_table(void);
 

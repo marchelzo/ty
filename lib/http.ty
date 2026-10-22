@@ -94,10 +94,9 @@ import http.h1 (H1)
 import os hiding (sleep, spawn)
 import thread
 import json
-import net
 import log
 import ssl
-import ty.mod as tymod
+import ty.mod
 import http.deflate as deflate
 import time
 
@@ -115,7 +114,7 @@ fn optional-module(name: String, member: String) -> _ {
     match optional[name] {
         nil => {
             let found = try {
-                Ok(tymod.lookup(tymod.load(name), member))
+                Ok(ty.mod.lookup(ty.mod.load(name), member))
             } catch e {
                 Err(str(e))
             }
@@ -262,7 +261,6 @@ pub class Server {
     __backend:    _
     __not-found:  _
     __on-error:   _
-    __sock-protos: Dict[String, Array[String]]
     __metrics:    Metrics
     __rid:        String
     __log-mtx:    Mutex
@@ -271,7 +269,7 @@ pub class Server {
         *args,
         tls: ssl.Context | {cert: String | Blob, key: String | Blob} | nil = nil,
         config: Config | nil = nil,
-        %kwargs
+        %kwargs: Any
     ) {
         self.config  = config ?? Config(**kwargs)
         __routes     = Routes()
@@ -286,7 +284,6 @@ pub class Server {
         __streams    = Atomic(0)
         __not-found  = nil
         __on-error   = nil
-        __sock-protos = %{}
         __h2         = nil
         __backend    = nil
         __metrics    = Metrics()

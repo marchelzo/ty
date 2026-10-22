@@ -28,7 +28,7 @@ pub fn signal-name(sig: Int) -> String {
 
 pub fn tail-str(buf: Blob, limit: Int = TAIL_LIMIT) -> String {
     let n = min(#buf, limit)
-    buf.str(#buf - n, n)
+    buf.str!(#buf - n, n)
 }
 
 pub fn read-from(file: String, offset: Int) -> String {
@@ -42,7 +42,7 @@ pub fn read-from(file: String, offset: Int) -> String {
         break if #buf > 4 * TAIL_LIMIT
     }
     os.close(fd)
-    buf.str()
+    buf.str!()
 }
 
 pub fn merge(a: Dict[String, String], b: Dict[String, String]) -> Dict[String, String] {

@@ -1393,8 +1393,10 @@ pub class StreamResponse {
 
     lines*() {
         let buffer = ''
+        let pending = Blob()
         for chunks() {
-            buffer += it.str()
+            pending.push(it)
+            buffer += pending.take-str!()
             while let $i = buffer.search('\n') {
                 let line = buffer[;i]
                 buffer = buffer[i + 1;]
@@ -1404,6 +1406,7 @@ pub class StreamResponse {
                 yield line
             }
         }
+        buffer += pending.str()
         if buffer != '' {
             yield buffer
         }
@@ -1411,10 +1414,15 @@ pub class StreamResponse {
 
     events*() {
         let parser = SSEParser()
+        let pending = Blob()
         for chunk in chunks() {
-            for parser.feed(chunk.str()) {
+            pending.push(chunk)
+            for parser.feed(pending.take-str!()) {
                 yield it
             }
+        }
+        for parser.feed(pending.str()) {
+            yield it
         }
         if let $event = parser.flush() {
             yield event

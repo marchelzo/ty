@@ -439,6 +439,33 @@ pub fn bslice() {
     assert('abc'.bslice(3) == '')
 }
 
+pub fn utf8() {
+    let bytes = fn (*xs) {
+        let b = Blob()
+        for x in xs {
+            b.push(x)
+        }
+        b.str!()
+    }
+    assert(''.utf8?())
+    assert('plain ascii, longer than eight bytes'.utf8?())
+    assert('héllo wörld € 😀'.utf8?())
+    assert(bytes(0x00, 0x7F).utf8?())
+    assert(bytes(0xF4, 0x8F, 0xBF, 0xBF).utf8?())
+    assert(bytes(0xED, 0x9F, 0xBF).utf8?())
+    assert(!bytes(0x80).utf8?())
+    assert(!bytes(0xC0, 0x80).utf8?())
+    assert(!bytes(0xC1, 0xBF).utf8?())
+    assert(!bytes(0xE0, 0x9F, 0xBF).utf8?())
+    assert(!bytes(0xED, 0xA0, 0x80).utf8?())
+    assert(!bytes(0xF0, 0x8F, 0xBF, 0xBF).utf8?())
+    assert(!bytes(0xF4, 0x90, 0x80, 0x80).utf8?())
+    assert(!bytes(0xF5, 0x80, 0x80, 0x80).utf8?())
+    assert(!bytes(0xE2, 0x82).utf8?())
+    assert(!bytes(0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0xFF).utf8?())
+    assert(!bytes(0xE2, 0x28, 0xA1).utf8?())
+}
+
 pub fn slice-syntax() {
     assert('abcde'[0;3] == 'abc')
     assert('abcde'[1;3] == 'bc')
@@ -645,4 +672,25 @@ pub fn long-string() {
 pub fn multiline() {
     let ml = "hello\nworld"
     assert(ml.lines() == ['hello', 'world'])
+}
+
+pub fn utf8-ranges() {
+    let s = 'aé€'
+    assert(s.utf8?(0, 3))
+    assert(!s.utf8?(0, 2))
+    assert(!s.utf8?(2))
+    assert(s.utf8?(-3))
+    assert(s.utf8-valid() == 6)
+    assert(s.utf8-valid(0, 5) == 3)
+    assert(s.utf8-valid(1) == 5)
+    assert(s.utf8-tail() == 0)
+    assert(s.utf8-tail(0, 2) == 1)
+    assert(s.utf8-tail(0, 5) == 2)
+    let b = Blob('ok')
+    b.push(0xFF)
+    b.push('!')
+    let bad = b.str!()
+    assert(bad.utf8-valid() == 2)
+    assert(!bad.utf8?)
+    assert(bad.utf8?(3))
 }

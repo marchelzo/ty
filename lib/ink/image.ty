@@ -14,8 +14,8 @@ pub import ink.image.glyphs (PRESETS, glyphs)
 pub fn decode(data: Blob) -> Picture {
     match data {
         _ and #data >= 8 && data[;8] == png.SIGNATURE         => png.decode(data),
-        _ and #data >= 6 && data[;3].str() == 'GIF'         => gif.decode(data),
-        _ and #data >= 2 && data[;2].str() == 'BM'          => bmp.decode(data),
+        _ and #data >= 6 && data[;3].str!() == 'GIF'         => gif.decode(data),
+        _ and #data >= 2 && data[;2].str!() == 'BM'          => bmp.decode(data),
         _ => throw ImageError('unrecognized image format (expected PNG, GIF, or BMP)')
     }
 }

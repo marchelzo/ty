@@ -6,14 +6,13 @@ import http.core (
     HttpError,
     EventStream,
     Response,
-    Raise,
     ConnectionClosed,
     task,
     suspend,
     this-loop
 )
 import http.wire (Request)
-import http.loop (Conn, Loop, READ, WRITE)
+import http.loop (Conn, READ)
 
 #|if __apple__
 const LIBRARIES = [

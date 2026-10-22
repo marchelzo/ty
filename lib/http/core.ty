@@ -1,4 +1,3 @@
-import thread
 import os (ncpu)
 import json
 import log

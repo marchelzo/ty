@@ -296,6 +296,159 @@ string_size(Ty *ty, Value *string, int argc, Value *kwargs)
         return INTEGER(sN(*string));
 }
 
+isize
+utf8seq(u8 const *s, isize n, int *st)
+{
+        u8 c = s[0];
+        int need;
+        u8 lo = 0x80;
+        u8 hi = 0xBF;
+
+        if (c < 0x80) {
+                *st = UTF8_OK;
+                return 1;
+        }
+
+        if (c >= 0xC2 && c <= 0xDF) {
+                need = 1;
+        } else if (c >= 0xE0 && c <= 0xEF) {
+                need = 2;
+                if (c == 0xE0) {
+                        lo = 0xA0;
+                } else if (c == 0xED) {
+                        hi = 0x9F;
+                }
+        } else if (c >= 0xF0 && c <= 0xF4) {
+                need = 3;
+                if (c == 0xF0) {
+                        lo = 0x90;
+                } else if (c == 0xF4) {
+                        hi = 0x8F;
+                }
+        } else {
+                *st = UTF8_BAD;
+                return 1;
+        }
+
+        for (int k = 1; k <= need; ++k) {
+                if (k >= n) {
+                        *st = UTF8_SHORT;
+                        return k;
+                }
+                if (s[k] < lo || s[k] > hi) {
+                        *st = UTF8_BAD;
+                        return k;
+                }
+                lo = 0x80;
+                hi = 0xBF;
+        }
+
+        *st = UTF8_OK;
+        return need + 1;
+}
+
+isize
+utf8valid(u8 const *s, isize n)
+{
+        isize i = 0;
+        int st;
+
+        while (i < n) {
+                if (i + 8 <= n) {
+                        u64 w;
+                        memcpy(&w, s + i, sizeof w);
+                        if ((w & 0x8080808080808080ULL) == 0) {
+                                i += 8;
+                                continue;
+                        }
+                }
+
+                if (s[i] < 0x80) {
+                        i += 1;
+                        continue;
+                }
+
+                isize m = utf8seq(s + i, n - i, &st);
+                if (st != UTF8_OK) {
+                        break;
+                }
+
+                i += m;
+        }
+
+        return i;
+}
+
+bool
+utf8ok(u8 const *s, isize n)
+{
+        return utf8valid(s, n) == n;
+}
+
+isize
+utf8tail(u8 const *s, isize n)
+{
+        int st;
+
+        for (isize k = 1; k <= 3 && k <= n; ++k) {
+                if ((s[n - k] & 0xC0) == 0x80) {
+                        continue;
+                }
+                utf8seq(s + n - k, k, &st);
+                return (st == UTF8_SHORT) ? k : 0;
+        }
+
+        return 0;
+}
+
+static u8 const *
+strspan(Ty *ty, Value *string, int argc, char const *name, isize *pn)
+{
+        ASSERT_ARGC(name, 0, 1, 2);
+
+        isize start = (argc >= 1) ? INT_ARG(0) : 0;
+        isize n     = (argc >= 2) ? INT_ARG(1) : sN(*string);
+
+        if (start < 0) {
+                start += sN(*string);
+        }
+
+        if (start < 0 || start > sN(*string) || n < 0) {
+                bP("invalid argument(s): start=%zd, n=%zd, size=%zu", start, n, sN(*string));
+        }
+
+        *pn = min(n, sN(*string) - start);
+
+        return ss(*string) + start;
+}
+
+static Value
+string_is_utf8(Ty *ty, Value *string, int argc, Value *kwargs)
+{
+        isize n;
+        u8 const *s = strspan(ty, string, argc, "String.utf8?()", &n);
+
+        return BOOLEAN(utf8ok(s, n));
+}
+
+static Value
+string_utf8_valid(Ty *ty, Value *string, int argc, Value *kwargs)
+{
+        isize n;
+        u8 const *s = strspan(ty, string, argc, "String.utf8-valid()", &n);
+
+        return INTEGER(utf8valid(s, n));
+}
+
+static Value
+string_utf8_tail(Ty *ty, Value *string, int argc, Value *kwargs)
+{
+        isize n;
+        u8 const *s = strspan(ty, string, argc, "String.utf8-tail()", &n);
+
+        return INTEGER(utf8tail(s, n));
+}
+
 static Value
 string_bslice(Ty *ty, Value *string, int argc, Value *kwargs)
 {
@@ -3666,6 +3819,9 @@ DEFINE_METHOD_TABLE(
         { .name = "sub",       .func = string_replace          },
         { .name = "unchalk",   .func = string_unchalk          },
         { .name = "upper",     .func = string_upper            },
+        { .name = "utf8?",     .func = string_is_utf8          },
+        { .name = "utf8Tail",  .func = string_utf8_tail        },
+        { .name = "utf8Valid", .func = string_utf8_valid       },
         { .name = "width",     .func = string_width            },
         { .name = "words",     .func = string_words            },
         { .name = "wrap",      .func = string_wrap             },

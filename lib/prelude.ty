@@ -1431,6 +1431,11 @@ class String : Iterable[String], IntoPtr[Int], PathLike {
     slice(i: Int, j: ?Int, k: ?Int) -> String;
     bslice(i: Int, j: ?Int) -> String;
 
+    utf8?(i: ?Int = 0, n: ?Int = nil) -> Bool;
+    utf8? -> Bool { self.utf8?() }
+    utf8-valid(i: ?Int = 0, n: ?Int = nil) -> Int;
+    utf8-tail(i: ?Int = 0, n: ?Int = nil) -> Int;
+
     to-i -> Int { ::int(self, 0) }
 
     matches(pattern: RegexV) -> Array[RegexMatch];
@@ -2034,8 +2039,14 @@ class Blob : Iterable[Int], IntoPtr[Int], PathLike {
     search(needle: Int | String | Blob) -> Int | nil;
     search(off: Int, needle: Int | String | Blob) -> Int | nil;
 
-    str(i: ?Int = 0, n: ?Int = #self) -> String;
+    str(i: ?Int = 0, n: ?Int = #self, lossy: Bool = false) -> String;
     str!(i: ?Int = 0, n: ?Int = #self) -> String;
+    take-str!() -> String;
+
+    utf8?(i: ?Int = 0, n: ?Int = #self) -> Bool;
+    utf8? -> Bool { self.utf8?() }
+    utf8-valid(i: ?Int = 0, n: ?Int = #self) -> Int;
+    utf8-tail(i: ?Int = 0, n: ?Int = #self) -> Int;
 
     splice(i: ?Int = 0, n: Int = #self) -> Blob;
     slice(i: ?Int = 0, n: Int = #self) -> Blob;
