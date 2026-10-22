@@ -1,0 +1,511 @@
+import jit (kernel!)
+import llhttp (
+    HttpHeaders,
+    HttpVersion,
+    decode-query,
+    multipart,
+    MultipartData,
+    MultipartMore
+)
+
+const TCHAR = 1
+const VCHAR = 2
+const FIELD = 4
+const DIGIT = 8
+const HEX   = 16
+const UPPER = 32
+
+const CONTENT_LENGTH    = 'content-length'
+const TRANSFER_ENCODING = 'transfer-encoding'
+const CONNECTION        = 'connection'
+const EXPECT            = 'expect'
+const CONTENT_TYPE      = 'content-type'
+const CHUNKED           = 'chunked'
+const CLOSE             = 'close'
+const KEEP_ALIVE        = 'keep-alive'
+const CONTINUE          = '100-continue'
+
+const F_CHUNKED    = 1
+const F_CLOSE      = 2
+const F_KEEP_ALIVE = 4
+const F_CONTINUE   = 8
+
+const M_OFF = 0
+const M_LEN = 1
+const T_OFF = 2
+const T_LEN = 3
+const MINOR = 4
+const NHEAD = 5
+const CLEN  = 6
+const FLAGS = 7
+const CTYPE = 8
+const HEAD  = 9
+
+const E_REQUEST_LINE = -1
+const E_VERSION      = -2
+const E_HEADER       = -3
+const E_TOO_MANY     = -4
+const E_LENGTH       = -5
+const E_FRAMING      = -6
+
+pub const MAX_HEADERS = 100
+pub const MAX_HEAD    = 1 << 16
+pub const MAX_BODY    = 1 << 26
+
+let CLASSES = Blob.zeros(256)
+
+for c in 0..256 {
+    let ch = chr(c)
+    let visible? = c > 32 && c < 127
+    let tchar? = ch.match?(/^[!#$%&'*+\-.^_`|~0-9A-Za-z]$/) && c < 128
+    CLASSES[c] = (tchar? ? TCHAR : 0)
+               | (visible? ? VCHAR : 0)
+               | ((visible? || c >= 128 || c == 32 || c == 9) ? FIELD : 0)
+               | ((c >= 48 && c <= 57) ? DIGIT : 0)
+               | (ch.match?(/^[0-9A-Fa-f]$/) && c < 128 ? HEX : 0)
+               | ((c >= 65 && c <= 90) ? UPPER : 0)
+}
+
+kernel! fn lower-eq?(b: Blob, off: Int, len: Int, w: String, cls: Blob) -> Bool {
+    if len != w.size() {
+        return false
+    }
+    for k in ..len {
+        let c = b[off + k]
+        if (c | (cls[c] & UPPER)) != w.byte(k) {
+            return false
+        }
+    }
+    true
+}
+
+kernel! fn decimal(b: Blob, off: Int, len: Int, cls: Blob) -> Int {
+    if len == 0 || len > 15 {
+        return -1
+    }
+    let n = 0
+    for k in ..len {
+        let c = b[off + k]
+        if (cls[c] & DIGIT) == 0 {
+            return -1
+        }
+        n = n * 10 + c - 48
+    }
+    n
+}
+
+kernel! fn scan-head(b: Blob, start: Int, end: Int, cls: Blob, out: Array[Int]) -> Int {
+    let i = start
+    while i < end && (b[i] == 13 || b[i] == 10) {
+        i += 1
+    }
+
+    let m = i
+    while i < end && (cls[b[i]] & TCHAR) != 0 {
+        i += 1
+    }
+    if i == end {
+        return 0
+    }
+    if i == m || b[i] != 32 {
+        return E_REQUEST_LINE
+    }
+    out[M_OFF] = m
+    out[M_LEN] = i - m
+    i += 1
+
+    let t = i
+    while i < end && (cls[b[i]] & VCHAR) != 0 {
+        i += 1
+    }
+    if i == end {
+        return 0
+    }
+    if i == t || b[i] != 32 {
+        return E_REQUEST_LINE
+    }
+    out[T_OFF] = t
+    out[T_LEN] = i - t
+    i += 1
+
+    if end - i < 10 {
+        return 0
+    }
+    if b[i] != 72 || b[i + 1] != 84 || b[i + 2] != 84 || b[i + 3] != 80 || b[i + 4] != 47 {
+        return E_REQUEST_LINE
+    }
+    if (cls[b[i + 5]] & DIGIT) == 0 || b[i + 6] != 46 || (cls[b[i + 7]] & DIGIT) == 0 {
+        return E_REQUEST_LINE
+    }
+    if b[i + 8] != 13 || b[i + 9] != 10 {
+        return E_REQUEST_LINE
+    }
+    if b[i + 5] != 49 {
+        return E_VERSION
+    }
+    out[MINOR] = b[i + 7] - 48
+    i += 10
+
+    let n = 0
+    let length = -1
+    let fl = 0
+    let ctype = -1
+
+    while true {
+        if end - i < 2 {
+            return 0
+        }
+
+        if b[i] == 13 {
+            if b[i + 1] != 10 {
+                return E_HEADER
+            }
+            if (fl & F_CHUNKED) != 0 && length >= 0 {
+                return E_LENGTH
+            }
+            out[NHEAD] = n
+            out[CLEN] = length
+            out[FLAGS] = fl
+            out[CTYPE] = ctype
+            return i + 2 - start
+        }
+
+        let k = i
+        while i < end && (cls[b[i]] & TCHAR) != 0 {
+            i += 1
+        }
+        if i == end {
+            return 0
+        }
+        if i == k || b[i] != 58 {
+            return E_HEADER
+        }
+        let klen = i - k
+        i += 1
+
+        while i < end && (b[i] == 32 || b[i] == 9) {
+            i += 1
+        }
+        let v = i
+        let e = i
+        while i < end && (cls[b[i]] & FIELD) != 0 {
+            if b[i] != 32 && b[i] != 9 {
+                e = i + 1
+            }
+            i += 1
+        }
+        if end - i < 2 {
+            return 0
+        }
+        if b[i] != 13 || b[i + 1] != 10 {
+            return E_HEADER
+        }
+        i += 2
+
+        let o = HEAD + n * 4
+        if o + 4 > #out {
+            return E_TOO_MANY
+        }
+        out[o] = k
+        out[o + 1] = klen
+        out[o + 2] = v
+        out[o + 3] = e - v
+
+        let vlen = e - v
+        if klen == 14 && lower-eq?(b, k, klen, CONTENT_LENGTH, cls) {
+            let x = decimal(b, v, vlen, cls)
+            if x < 0 || (length >= 0 && x != length) {
+                return E_LENGTH
+            }
+            length = x
+        } else if klen == 17 && lower-eq?(b, k, klen, TRANSFER_ENCODING, cls) {
+            if (fl & F_CHUNKED) != 0 || !lower-eq?(b, v, vlen, CHUNKED, cls) {
+                return E_FRAMING
+            }
+            fl = fl | F_CHUNKED
+        } else if klen == 10 && lower-eq?(b, k, klen, CONNECTION, cls) {
+            if lower-eq?(b, v, vlen, CLOSE, cls) {
+                fl = fl | F_CLOSE
+            } else if lower-eq?(b, v, vlen, KEEP_ALIVE, cls) {
+                fl = fl | F_KEEP_ALIVE
+            }
+        } else if klen == 6 && lower-eq?(b, k, klen, EXPECT, cls) {
+            if lower-eq?(b, v, vlen, CONTINUE, cls) {
+                fl = fl | F_CONTINUE
+            }
+        } else if klen == 12 && lower-eq?(b, k, klen, CONTENT_TYPE, cls) {
+            ctype = n
+        }
+
+        n += 1
+    }
+
+    0
+}
+
+kernel! fn dechunk(b: Blob, start: Int, end: Int, cls: Blob, dst: Blob, out: Array[Int]) -> Int {
+    let i = start
+    let o = 0
+
+    while true {
+        let size = 0
+        let digits = 0
+        while i < end && (cls[b[i]] & HEX) != 0 {
+            let c = b[i]
+            size = size * 16 + (((cls[c] & DIGIT) != 0) ? c - 48 : (c | 32) - 87)
+            digits += 1
+            if digits > 15 {
+                return -1
+            }
+            i += 1
+        }
+        if i == end {
+            return 0
+        }
+        if digits == 0 {
+            return -1
+        }
+        while i < end && b[i] != 13 {
+            if (cls[b[i]] & FIELD) == 0 {
+                return -1
+            }
+            i += 1
+        }
+        if end - i < 2 {
+            return 0
+        }
+        if b[i + 1] != 10 {
+            return -1
+        }
+        i += 2
+
+        if size == 0 {
+            while true {
+                if end - i < 2 {
+                    return 0
+                }
+                if b[i] == 13 && b[i + 1] == 10 {
+                    out[0] = o
+                    return i + 2 - start
+                }
+                while i < end && b[i] != 13 {
+                    i += 1
+                }
+                if end - i < 2 {
+                    return 0
+                }
+                if b[i + 1] != 10 {
+                    return -1
+                }
+                i += 2
+            }
+        }
+
+        if end - i < size + 2 {
+            return 0
+        }
+        for k in ..size {
+            dst[o + k] = b[i + k]
+        }
+        o += size
+        i += size
+        if b[i] != 13 || b[i + 1] != 10 {
+            return -1
+        }
+        i += 2
+    }
+
+    0
+}
+
+kernel! fn pack-head(buf: Blob, start: Int, hlen: Int, marks: Array[Int], k: Int, base: Int, head: Blob) {
+    for i in ..hlen {
+        head[i] = buf[start + i]
+    }
+    for i in ..k {
+        let offset? = (i < HEAD) ? (i == M_OFF || i == T_OFF) : ((i - HEAD) & 1) == 0
+        head.i32[base + i] = offset? ? marks[i] - start : marks[i]
+    }
+}
+
+kernel! fn mark(head: Blob, i: Int) -> Int {
+    head.i32[i]
+}
+
+pub tag NeedMore;
+pub tag Ready;
+pub tag Invalid;
+
+pub use ParseResult = NeedMore[(Int | nil, Bool)] | Ready[(Request, Int)] | Invalid[Int];
+
+const V10 = {major: 1, minor: 0}
+const V11 = {major: 1, minor: 1}
+
+pub class Request {
+    method:  String
+    target:  String
+    url:     String
+    version: HttpVersion
+    body:    String | nil
+    files:   Dict[String, _]
+
+    __head:    Blob
+    __base:    Int
+    __flags:   Int
+    __query:   String | nil
+    __headers: HttpHeaders | nil
+    __params:  Dict[String, String | [String | nil] | nil] | nil
+    __valid?:  Bool
+
+    init(head: Blob, base: Int, body: String | nil) {
+        __head    = head
+        __base    = base
+        __flags   = __mark(FLAGS)
+        method    = head.str!(__mark(M_OFF), __mark(M_LEN))
+        target    = head.str!(__mark(T_OFF), __mark(T_LEN))
+        version   = (__mark(MINOR) == 0) ? V10 : V11
+        files     = %{}
+        self.body = body
+
+        match target.bsearch('?') {
+            nil => (url, __query) = (target, nil),
+            i   => (url, __query) = (target.bslice(0, i), target.bslice(i + 1))
+        }
+
+        __valid? = __decode-multipart()
+    }
+
+    __mark(i: Int) -> Int {
+        mark(__head, __base + i)
+    }
+
+    valid? -> Bool {
+        __valid?
+    }
+
+    keep-alive? -> Bool {
+        (version.minor == 0) ? (__flags & F_KEEP_ALIVE) != 0 : (__flags & F_CLOSE) == 0
+    }
+
+    headers -> HttpHeaders {
+        __headers ?? (__headers = __decode-headers())
+    }
+
+    params -> Dict[String, String | [String | nil] | nil] {
+        __params ?? (__params = __decode-params())
+    }
+
+    content-type -> String | nil {
+        match __mark(CTYPE) {
+            -1 => nil,
+            i  => __head.str!(__mark(HEAD + i * 4 + 2), __mark(HEAD + i * 4 + 3))
+        }
+    }
+
+    __decode-headers() -> HttpHeaders {
+        let headers = %{}
+        for i in ..__mark(NHEAD) {
+            let o     = HEAD + i * 4
+            let name  = __head.str!(__mark(o), __mark(o + 1))
+            let value = __head.str!(__mark(o + 2), __mark(o + 3))
+            match headers[name] {
+                nil               => headers[name] = value,
+                vs: Array[String] => vs.push(value),
+                v                 => headers[name] = [v, value]
+            }
+        }
+        headers
+    }
+
+    __decode-params() -> Dict[String, String | [String | nil] | nil] {
+        let params = (__query == nil) ? %{} : decode-query(__query)
+        if content-type == 'application/x-www-form-urlencoded' && body != nil {
+            params.update(decode-query(body))
+        }
+        params
+    }
+
+    __decode-multipart() -> Bool {
+        if __mark(CTYPE) == -1 {
+            return true
+        }
+        let $type = content-type or return true
+        let [_, boundary] = type.match(/multipart\/form-data;\s*boundary=(.+)/) or return true
+        let parts = multipart(boundary)
+        parts()
+        match parts(body ?? '') {
+            Some(MultipartData(form, files)) => do {
+                self.files.update(files)
+                params.update(form)
+                body = nil
+                true
+            },
+            _ => false
+        }
+    }
+
+    end() {
+    }
+}
+
+fn status-of(err: Int) -> Int {
+    match err {
+        E_VERSION  => 505,
+        E_TOO_MANY => 431,
+        E_FRAMING  => 501,
+        _          => 400
+    }
+}
+
+pub fn marks() -> Array[Int] {
+    [0] * (HEAD + 4 * MAX_HEADERS)
+}
+
+fn body-of(buf: Blob, at: Int, end: Int, marks: Array[Int]) -> (Int, String | nil) | Int {
+    if (marks[FLAGS] & F_CHUNKED) == 0 {
+        let n = max(marks[CLEN], 0)
+        return (end - at >= n) ? (n, (n == 0) ? nil : buf.str!(at, n)) : n
+    }
+
+    let dst = Blob.zeros(end - at)
+    let out = [0]
+    match dechunk(buf, at, end, CLASSES, dst, out) {
+        0  => -1,
+        -1 => -2,
+        n  => (n, dst.str!(0, out[0]))
+    }
+}
+
+pub fn parse(buf: Blob, start: Int, end: Int, marks: Array[Int]) -> ParseResult {
+    let hlen = scan-head(buf, start, end, CLASSES, marks)
+
+    if hlen < 0 {
+        return Invalid(status-of(hlen))
+    }
+
+    if hlen == 0 {
+        return (end - start >= MAX_HEAD) ? Invalid(431) : NeedMore(nil, false)
+    }
+
+    if marks[CLEN] > MAX_BODY {
+        return Invalid(413)
+    }
+
+    let continue? = (marks[FLAGS] & F_CONTINUE) != 0
+
+    match body-of(buf, start + hlen, end, marks) {
+        -2 => Invalid(400),
+        -1 => do {
+            (end - start - hlen >= MAX_BODY) ? Invalid(413) : NeedMore(nil, continue?)
+        },
+        n: Int => NeedMore(hlen + n, continue?),
+        (n, body) => do {
+            let k    = HEAD + 4 * marks[NHEAD]
+            let base = (hlen + 3) / 4
+            let head = Blob.zeros(4 * (base + k))
+            pack-head(buf, start, hlen, marks, k, base, head)
+            let req = Request(head, base, body)
+            req.valid? ? Ready(req, hlen + n) : Invalid(400)
+        }
+    }
+}

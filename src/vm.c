@@ -4738,7 +4738,10 @@ responds_to(Ty *ty, Value const *v, int i)
         }
 
         return (func != NULL)
-            || (class_lookup_method_i(ty, ClassOf(v), i) != NULL);
+            || (
+                        (ClassOf(v) != CLASS_TOP)
+                     && (class_lookup_method_i(ty, ClassOf(v), i) != NULL)
+               );
 }
 
 static char const *
@@ -5038,7 +5041,8 @@ QuietFailure:
                 xpush(NIL);
                 return false;
         } else {
-                zP("call to non-existent method '%s' on %s%s", KebabName(ty, M_NAME(i)), VSC(&value), method_hint(ty, &value, i));
+                char const *shown = VSC(&value);
+                zP("call to non-existent method '%s' on %s%s", KebabName(ty, M_NAME(i)), shown, method_hint(ty, &value, i));
         }
 }
 

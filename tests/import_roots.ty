@@ -1,0 +1,7 @@
+import fixtures.roots.deep.first as first
+import fixtures.roots.second as second
+
+pub fn imports-after-a-nested-one-still-resolve-from-their-own-file() {
+    assert(first.NAME == 'first, with helper')
+    assert(second.NAME == 'second')
+}

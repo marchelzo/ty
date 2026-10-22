@@ -1,0 +1,45 @@
+let registry = []
+
+fn mark(g, name) {
+    registry.push(name)
+    g
+}
+
+@mark('first')
+fn first() { later() }
+
+fn later() { 2 }
+
+let gen = registry.clone()
+
+@mark('second')
+fn second() { first() }
+
+pub fn decorators-run-in-program-order() {
+    assert(gen == ['first'])
+    assert(registry == ['first', 'second'])
+    assert(second() == 2)
+}
+
+let seen = []
+
+fn note(g, name) {
+    seen.push(name)
+    g
+}
+
+@note('int')
+fn over(x: Int) { x + 1 }
+
+@note('str')
+fn over(x: String) { "{x}!" }
+
+@note('bool')
+fn over(x: Bool) { !x }
+
+pub fn overloads-are-decorated-once() {
+    assert(seen == ['int', 'str', 'bool'])
+    assert(over(1) == 2)
+    assert(over('a') == 'a!')
+    assert(over(true) == false)
+}

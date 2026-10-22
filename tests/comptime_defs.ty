@@ -1,0 +1,57 @@
+import ty
+
+fn shout(s: String) -> String { s.upper() }
+fn shout(n: Int) -> Int { n * 2 }
+
+const SHOUTED = shout'hi'
+const EARLY   = later'xyz'
+
+fn later(s: String) -> Int { #s + BASE }
+
+const BASE = 10
+
+const BUILDS = [0]
+
+fn build() -> Dict[String, Int] {
+    BUILDS[0] += 1
+    %{'a': 1, 'b': 2}
+}
+
+const TABLE = build()
+
+fn fib(n: Int) -> Int { n < 2 ? n : fib(n - 1) + fib(n - 2) }
+
+fn tally(s: String) -> Int { TABLE[s] ?? fib(#s) }
+
+const A = tally'a'
+const Z = tally'zzzzzzz'
+
+macro twice(e) { double(e) }
+
+fn double(e) { $$[ $$e + $$e $$] }
+
+const SUM = BEFORE + 1
+const BEFORE = ROWS.map(\_ * 2).sum()
+const ROWS = [1, 2, 3]
+
+pub fn string-literals-see-module-functions() {
+    assert(SHOUTED == 'HI')
+    assert(EARLY == 13)
+    assert(shout(4) == 8)
+}
+
+pub fn consts-used-at-compile-time-are-built-once() {
+    assert(A == 1)
+    assert(Z == 13)
+    assert(BUILDS == [1])
+    assert(ty.same?(TABLE, TABLE))
+}
+
+pub fn macro-helpers-may-follow-the-macro() {
+    assert(twice(21) == 42)
+}
+
+pub fn consts-initialize-in-dependency-order() {
+    assert(SUM == 13)
+    assert(BEFORE == 12)
+}

@@ -512,6 +512,9 @@ tyexpr(Ty *ty, Expr const *e, u32 flags);
 bool
 tyeval(Ty *ty, Expr *e, Value *ret, Scope *scope);
 
+char const *
+CompilerComptimeUninit(Ty *ty, Symbol const *sym);
+
 Value
 tystmt(Ty *ty, Stmt *s, u32 flags);
 

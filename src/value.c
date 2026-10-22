@@ -667,8 +667,10 @@ value_hash(Ty *ty, Value const *val)
 static noreturn void
 uninit(Ty *ty, Symbol const *s)
 {
+        char const *why = CompilerComptimeUninit(ty, s);
+
         zP(
-                "use of uninitialized variable %s%s%s%s (defined at %s%s%s:%s%d%s:%s%d%s)",
+                "use of uninitialized variable %s%s%s%s (defined at %s%s%s:%s%d%s:%s%d%s)%s%s",
                 TERM(1),
                 TERM(93),
                 s->identifier,
@@ -681,7 +683,9 @@ uninit(Ty *ty, Symbol const *s)
                 TERM(0),
                 TERM(33),
                 s->loc.col + 1,
-                TERM(0)
+                TERM(0),
+                (why != NULL) ? " at compile time: " : "",
+                (why != NULL) ? why : ""
         );
 }
 

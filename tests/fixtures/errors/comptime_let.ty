@@ -1,0 +1,5 @@
+let scale = 3
+
+fn widen(s: String) { s * scale }
+
+const wide = widen'ab'

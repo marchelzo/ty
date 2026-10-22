@@ -114,3 +114,24 @@ pub fn lex-errors-are-syntax-errors() {
         assert('numeric literal' in ex.message, ex.message)
     }
 }
+
+pub fn comptime-let-explains-itself() {
+    let (status, err) = fixture('comptime_let')
+    assert(status != 0)
+    assert('use of uninitialized variable scale' in err, err)
+    assert('at compile time: it is a let binding' in err, err)
+    assert('note: while evaluating compile-time string literal' in err, err)
+}
+
+pub fn comptime-definition-failure-is-reported() {
+    let (status, err) = fixture('comptime_failed_def')
+    assert(status != 0)
+    assert('note: while defining TABLE at compile time' in err, err)
+    assert('note: while evaluating compile-time string literal' in err, err)
+}
+
+pub fn method-call-on-uninitialized-global() {
+    let (status, err) = fixture('uninit_method')
+    assert(status != 0)
+    assert('use of uninitialized variable ROWS' in err, err)
+}

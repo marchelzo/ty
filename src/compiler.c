@@ -512,6 +512,40 @@ void
 invoke_fun_macro(Ty *ty, Scope *, Expr *e);
 
 static void
+comptime_deps(Ty *ty, Expr *e);
+
+static bool
+comptime_settled(Stmt const *s);
+
+enum {
+        CT_BLOCKED,
+        CT_RUNTIME,
+        CT_DECLARED,
+        CT_DEFINING,
+        CT_DEFINED
+};
+
+typedef struct {
+        Stmt  *def;
+        Value *err;
+        Scope *fscope;
+        u8     state;
+        bool   deps;
+} ComptimeDef;
+
+static vec(ComptimeDef) ComptimeDefs;
+static i32 ComptimeDepth;
+
+static void
+emit_top_level(Ty *ty, Stmt **p, int start, Stmt const *result);
+
+static void
+define_macro_now(Ty *ty, Stmt *s);
+
+static void
+define_macro_late(Ty *ty, Stmt *s, Scope *fscope);
+
+static void
 emit_spread(Ty *ty, Expr const *e, bool nils);
 
 static Stmt **
@@ -1202,6 +1236,36 @@ is_proc_def(Stmt const *s)
         return (s->type == STATEMENT_FUNCTION_DEFINITION)
             || (s->type == STATEMENT_PATTERN_DEFINITION)
             || (s->type == STATEMENT_OPERATOR_DEFINITION);
+}
+
+static bool
+is_decorated_def(Stmt const *s)
+{
+        Expr const *f = s->value;
+
+        if (s->type != STATEMENT_FUNCTION_DEFINITION || f == NULL) {
+                return false;
+        }
+
+        if (vN(f->decorators) > 0) {
+                return true;
+        }
+
+        if (f->type == EXPRESSION_MULTI_FUNCTION) {
+                for (usize i = 0; i < vN(f->functions); ++i) {
+                        if (is_decorated_def((Stmt const *)v__(f->functions, i))) {
+                                return true;
+                        }
+                }
+        }
+
+        return false;
+}
+
+inline static bool
+is_hoistable(Stmt const *s)
+{
+        return is_proc_def(s) && !is_decorated_def(s);
 }
 
 char const *
@@ -4467,6 +4531,9 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
                 scope = SCOPE;
         }
 
+        DefinePending(ty);
+        comptime_deps(ty, e->function);
+
         add_location_info(ty);
         v00(STATE.expression_locations);
 
@@ -4512,10 +4579,12 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
         );
 
         u32 types = TYPES_OFF;
+        i32 depth = ComptimeDepth;
         Expr site = *e;
 
         if (TY_CATCH_ERROR()) {
                 TYPES_OFF = types;
+                ComptimeDepth = depth;
                 STATE.macro_scope = mscope;
                 RestoreContext(ty, ctx);
                 Value err = TyCatchWrap(
@@ -4534,6 +4603,7 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
         }
 
         Value v;
+        ComptimeDepth += 1;
         WITH_TYPES_OFF {
                 v = vmC(&m, vN(e->args));
         }
@@ -4550,6 +4620,7 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
         CloneContext(ty);
         STATE.origin = ContextList->e;
         Expr *expansion = cexpr(ty, &v);
+        ComptimeDepth -= 1;
         if (expansion != NULL) {
                 *e = *expansion;
         } else {
@@ -13607,6 +13678,7 @@ expand_prog(Ty *ty, Stmt **p)
 
                         avP(expanded, def);
 
+                        i += m - 1;
                 } else {
                         avP(expanded, p[i]);
                 }
@@ -13792,11 +13864,11 @@ compile_unit(Ty *ty, char const *source)
          */
         int end_of_defs = 0;
         for (int i = 0; p[i] != NULL; ++i) {
-                if (is_proc_def(p[i])) {
+                if (is_hoistable(p[i])) {
                         int j = i;
                         while (
                                 (j --> 0)
-                             && !is_proc_def(p[j])
+                             && !is_hoistable(p[j])
                              && (p[j]->type != STATEMENT_IMPORT)
                         ) {
                                 SWAP(Stmt *, p[j], p[j + 1]);
@@ -13820,9 +13892,7 @@ compile_unit(Ty *ty, char const *source)
                 }
         }
 
-        for (int i = end_of_defs; p[i] != NULL; ++i) {
-                emit_statement(ty, p[i], p[i] == result);
-        }
+        emit_top_level(ty, p, end_of_defs, result);
 
         if (HAVE_COMPILER_FLAG(RESULT) && result == NULL) {
                 INSN(NIL);
@@ -13859,9 +13929,12 @@ NoResolve:
 static Stmt **
 compile(Ty *ty, char const *source)
 {
+        i32 depth = ComptimeDepth;
+
         TyDiagPush(ty, AllowErrors ? DIAG_RECOVER : 0);
 
         if (TY_CATCH_ERROR()) {
+                ComptimeDepth = depth;
                 bool replaced;
                 Value err = TyDiagFail(ty, *vm_get(ty, 0), &replaced);
                 if (!replaced) {
@@ -18344,8 +18417,393 @@ TyToCExpr(Ty *ty, Value *v)
         return e;
 }
 
+static bool
+xtyeval(Ty *ty, Expr *e, Value *ret, Scope *scope, bool check);
+
+inline static ComptimeDef *
+comptime_def(Symbol const *sym)
+{
+        if (
+                (sym == NULL)
+             || !SymbolIsGlobal(sym)
+             || (sym->i < 0)
+             || (sym->i >= vN(ComptimeDefs))
+             || (v_(ComptimeDefs, sym->i)->def == NULL)
+        ) {
+                return NULL;
+        }
+
+        return v_(ComptimeDefs, sym->i);
+}
+
+static bool
+comptime_candidate(Stmt const *s)
+{
+        switch (s->type) {
+        case STATEMENT_FUNCTION_DEFINITION:
+        case STATEMENT_FUN_MACRO_DEFINITION:
+        case STATEMENT_DEFINITION:
+                return (s->target != NULL)
+                    && (s->target->type == EXPRESSION_IDENTIFIER)
+                    && (s->target->symbol != NULL)
+                    && (s->value != NULL);
+
+        default:
+                return false;
+        }
+}
+
+static bool
+comptime_eligible(Stmt const *s)
+{
+        if (!comptime_candidate(s)) {
+                return false;
+        }
+
+        switch (s->type) {
+        case STATEMENT_FUNCTION_DEFINITION:
+                return HasBody(s->value) && !is_decorated_def(s);
+
+        case STATEMENT_FUN_MACRO_DEFINITION:
+                return true;
+
+        case STATEMENT_DEFINITION:
+                return s->cnst;
+
+        default:
+                return false;
+        }
+}
+
+static bool
+comptime_unset(Symbol const *sym)
+{
+        return (sym->i >= vN(Globals))
+            || (v_(Globals, sym->i)->type == VALUE_UNINITIALIZED);
+}
+
+static void
+comptime_note(Ty *ty, Stmt *s, u8 state)
+{
+        Symbol const *sym = s->target->symbol;
+
+        if (!SymbolIsGlobal(sym) || !IsTopLevel(sym)) {
+                return;
+        }
+
+        while (vN(ComptimeDefs) <= sym->i) {
+                xvP(ComptimeDefs, ((ComptimeDef) {0}));
+        }
+
+        ComptimeDef *cd = v_(ComptimeDefs, sym->i);
+
+        if (
+                (cd->def != NULL)
+             && (cd->def != s)
+             && (cd->def->mod == s->mod)
+             && (s->value->type != EXPRESSION_MULTI_FUNCTION)
+             && (s->type != STATEMENT_FUN_MACRO_DEFINITION)
+             && comptime_unset(sym)
+        ) {
+                cd->state = CT_BLOCKED;
+                return;
+        }
+
+        cd->def    = s;
+        cd->err    = NULL;
+        cd->fscope = STATE.fscope;
+        cd->state  = comptime_eligible(s) ? state : CT_RUNTIME;
+        cd->deps   = (state == CT_DECLARED);
+}
+
+static bool
+comptime_settled(Stmt const *s)
+{
+        if (s->type != STATEMENT_DEFINITION || !comptime_eligible(s)) {
+                return false;
+        }
+
+        ComptimeDef const *cd = comptime_def(s->target->symbol);
+
+        return (cd != NULL)
+            && (cd->def == s)
+            && (cd->state == CT_DEFINED);
+}
+
+static void
+comptime_need(Ty *ty, Symbol *sym);
+
+static void
+comptime_define(Ty *ty, Symbol *sym, ComptimeDef *cd)
+{
+        Stmt *s = cd->def;
+        Expr *e = s->value;
+        Value v;
+
+        if (s->mod != STATE.module) {
+                return;
+        }
+
+        cd->state = CT_DEFINING;
+
+        if (s->type == STATEMENT_FUN_MACRO_DEFINITION) {
+                define_macro_late(ty, s, cd->fscope);
+                cd->state = CT_DEFINED;
+                cd->deps  = false;
+                comptime_need(ty, sym);
+                return;
+        }
+
+        if (e->type == EXPRESSION_MULTI_FUNCTION) {
+                for (usize i = 0; i < vN(e->functions); ++i) {
+                        Stmt *f = (Stmt *)v__(e->functions, i);
+                        comptime_need(ty, f->target->symbol);
+                        if (comptime_unset(f->target->symbol)) {
+                                cd->state = CT_DECLARED;
+                                return;
+                        }
+                }
+        }
+
+        if (e->xscope == NULL && e->type != EXPRESSION_MULTI_FUNCTION) {
+                e = xclone(ty, e);
+        }
+
+        if (!xtyeval(ty, e, &v, GetNamespace(ty, s->ns), false)) {
+                cd->err = xmA(sizeof *cd->err);
+                *cd->err = v;
+                gc_immortalize(ty, cd->err);
+                cd->state = CT_DECLARED;
+                return;
+        }
+
+        SeedGlobal(ty, sym, v);
+
+        cd->err   = NULL;
+        cd->state = CT_DEFINED;
+        cd->deps  = true;
+}
+
+char const *
+CompilerComptimeUninit(Ty *ty, Symbol const *sym)
+{
+        ComptimeDef const *cd = (ComptimeDepth > 0) ? comptime_def(sym) : NULL;
+
+        if (cd == NULL) {
+                return NULL;
+        }
+
+        if (cd->err != NULL) {
+                Value err = TyWrapError(
+                        ty,
+                        *cd->err,
+                        NIL,
+                        (Expr const *)cd->def,
+                        "defining %s at compile time",
+                        sym->identifier
+                );
+                vm_throw(ty, &err);
+        }
+
+        switch (cd->state) {
+        case CT_BLOCKED:
+                return "it is overloaded, and the overloads are only combined once the module is parsed";
+
+        case CT_RUNTIME:
+                if (cd->def->type == STATEMENT_FUNCTION_DEFINITION) {
+                        return "it is decorated, so it is only defined when the module runs";
+                }
+                return "it is a let binding, so it only has a value once the module runs; declare it with const to use it at compile time";
+
+        case CT_DEFINING:
+                return "it was used at compile time while its own definition was being evaluated";
+        }
+
+        return NULL;
+}
+
+static void
+comptime_need(Ty *ty, Symbol *sym)
+{
+        ComptimeDef *cd = comptime_def(sym);
+
+        if (cd == NULL) {
+                return;
+        }
+
+        switch (cd->state) {
+        case CT_DECLARED:
+                if (comptime_unset(sym)) {
+                        comptime_define(ty, sym, cd);
+                }
+                break;
+
+        case CT_DEFINED:
+                if (!cd->deps) {
+                        cd->deps = true;
+                        comptime_deps(ty, cd->def->value);
+                }
+                break;
+        }
+}
+
+typedef struct {
+        Ty *ty;
+        symbol_vector refs;
+} ComptimeRefs;
+
+static Expr *
+comptime_ref(Expr *e, Scope *scope, void *ctx)
+{
+        ComptimeRefs *cr = ctx;
+        Ty *ty = cr->ty;
+
+        if (e->type == EXPRESSION_IDENTIFIER && comptime_def(e->symbol) != NULL) {
+                avP(cr->refs, e->symbol);
+        }
+
+        return e;
+}
+
+static void
+comptime_deps(Ty *ty, Expr *e)
+{
+        ComptimeRefs cr = { .ty = ty };
+        VisitorCtx visitor = visit_identity(ty);
+
+        visitor.e_pre = comptime_ref;
+        visitor.user  = &cr;
+
+        (void)visit_expression(ty, e, NULL, &visitor);
+
+        for (usize i = 0; i < vN(cr.refs); ++i) {
+                comptime_need(ty, v__(cr.refs, i));
+        }
+}
+
+typedef struct {
+        Ty *ty;
+        Stmt **prog;
+        i32Vector *pos;
+        BoolVector *done;
+        BoolVector *seen;
+        Stmt const *result;
+} ConstOrder;
+
+static void
+emit_top(ConstOrder *co, int i);
+
+static Expr *
+const_ref(Expr *e, Scope *scope, void *ctx)
+{
+        ConstOrder *co = ctx;
+        Ty *ty = co->ty;
+
+        if (e->type != EXPRESSION_IDENTIFIER) {
+                return e;
+        }
+
+        ComptimeDef const *cd = comptime_def(e->symbol);
+
+        if (cd == NULL || e->symbol->i >= vN(*co->pos)) {
+                return e;
+        }
+
+        i32 j = v__(*co->pos, e->symbol->i);
+
+        if (j < 0 || co->prog[j] != cd->def) {
+                return e;
+        }
+
+        if (cd->def->type == STATEMENT_DEFINITION) {
+                emit_top(co, j);
+        } else if (!v__(*co->seen, j)) {
+                VisitorCtx visitor = visit_identity(ty);
+                v__(*co->seen, j) = true;
+                visitor.e_pre = const_ref;
+                visitor.user  = co;
+                (void)visit_expression(ty, cd->def->value, NULL, &visitor);
+        }
+
+        return e;
+}
+
+static void
+emit_top(ConstOrder *co, int i)
+{
+        Ty *ty = co->ty;
+        Stmt *s = co->prog[i];
+
+        if (v__(*co->done, i)) {
+                return;
+        }
+
+        v__(*co->done, i) = true;
+
+        if (s->type == STATEMENT_DEFINITION && s->cnst) {
+                VisitorCtx visitor = visit_identity(ty);
+                visitor.e_pre = const_ref;
+                visitor.user  = co;
+                (void)visit_expression(ty, s->value, NULL, &visitor);
+        }
+
+        if (!comptime_settled(s) || s == co->result) {
+                emit_statement(ty, s, s == co->result);
+        }
+}
+
+static void
+emit_top_level(Ty *ty, Stmt **p, int start, Stmt const *result)
+{
+        i32Vector pos  = {0};
+        BoolVector done = {0};
+        BoolVector seen = {0};
+        int n = 0;
+
+        while (p[n] != NULL) {
+                n += 1;
+        }
+
+        for (int i = 0; i < n; ++i) {
+                avP(done, i < start);
+                avP(seen, false);
+        }
+
+        while (vN(pos) < vN(ComptimeDefs)) {
+                avP(pos, -1);
+        }
+
+        for (int i = 0; i < n; ++i) {
+                if (comptime_candidate(p[i])) {
+                        Symbol const *sym = p[i]->target->symbol;
+                        if (SymbolIsGlobal(sym) && sym->i >= 0 && sym->i < vN(pos)) {
+                                v__(pos, sym->i) = i;
+                        }
+                }
+        }
+
+        ConstOrder co = {
+                .ty     = ty,
+                .prog   = p,
+                .pos    = &pos,
+                .done   = &done,
+                .seen   = &seen,
+                .result = result
+        };
+
+        for (int i = start; i < n; ++i) {
+                emit_top(&co, i);
+        }
+}
+
 bool
 tyeval(Ty *ty, Expr *e, Value *ret, Scope *scope)
+{
+        return xtyeval(ty, e, ret, scope, true);
+}
+
+static bool
+xtyeval(Ty *ty, Expr *e, Value *ret, Scope *scope, bool check)
 {
         if (scope == NULL) {
                 scope = STATE.global;
@@ -18367,6 +18825,7 @@ tyeval(Ty *ty, Expr *e, Value *ret, Scope *scope)
 
         STATE = freshstate(ty, mod);
         STATE.fscope = scope->function;
+        STATE._based = !check;
 
         EVAL_DEPTH += 1;
 
@@ -18382,7 +18841,25 @@ tyeval(Ty *ty, Expr *e, Value *ret, Scope *scope)
 
         if (e->xscope == NULL) {
                 symbolize_expression(ty, scope, e);
-                t2_check_expression(ty, e);
+                if (check) {
+                        t2_check_expression(ty, e);
+                }
+        }
+
+        TY_CATCH_END();
+
+        CompileState inner = STATE;
+        STATE = state;
+        comptime_deps(ty, e);
+        state = STATE;
+        STATE = inner;
+
+        if (TY_CATCH_ERROR()) {
+                ContextList = ctx;
+                *ret = TY_CATCH();
+                EVAL_DEPTH -= 1;
+                STATE = state;
+                return false;
         }
 
         EE(e);
@@ -18391,7 +18868,9 @@ tyeval(Ty *ty, Expr *e, Value *ret, Scope *scope)
 
         TY_CATCH_END();
 
+        ComptimeDepth += 1;
         bool ok = vm_try_exec(ty, vv(STATE.code), ret);
+        ComptimeDepth -= 1;
 
         EVAL_DEPTH -= 1;
 
@@ -18540,6 +19019,7 @@ xtyparse(
 
         symbolize_expression(ty, scope, e);
         DefinePending(ty);
+        comptime_deps(ty, e);
 
         //ScopeVector scopes = STATE.scopes;
         //v00(STATE.scopes);
@@ -18592,6 +19072,7 @@ xtyparse(
         Value expr;
 
         vmP(&vSelf);
+        ComptimeDepth += 1;
         WITH_TYPES_OFF {
                 expr = vmC(&m, 1);
         }
@@ -18601,6 +19082,7 @@ xtyparse(
         //STATE.scopes = scopes;
 
         Expr *_e = cexpr(ty, &expr);
+        ComptimeDepth -= 1;
 
         if (_e == NULL) {
                 _e = mknil(ty, *start, *end);
@@ -18628,6 +19110,7 @@ typarse(
 )
 {
         u32 types = TYPES_OFF;
+        i32 depth = ComptimeDepth;
         Location mstart = STATE.mstart;
         Location mend = STATE.mend;
         Scope *macro_scope = STATE.macro_scope;
@@ -18639,6 +19122,7 @@ typarse(
 
         if (TY_CATCH_ERROR()) {
                 TYPES_OFF = types;
+                ComptimeDepth = depth;
                 STATE.mstart = mstart;
                 STATE.mend = mend;
                 STATE.macro_scope = macro_scope;
@@ -19386,7 +19870,10 @@ DeclareSymbols(Ty *ty, Stmt *stmt)
                                 goto PartialResolve;
                         }
                 default:
-                        if (!stmt->cnst) {
+                        if (
+                                !stmt->cnst
+                             || !TryResolveExpr(ty, scope, xclone(ty, expr))
+                        ) {
                                 goto PartialResolve;
                         }
                 TryFullResolve:
@@ -19418,6 +19905,10 @@ DeclareSymbols(Ty *ty, Stmt *stmt)
                         }
                 }
                 break;
+        }
+
+        if (comptime_candidate(stmt)) {
+                comptime_note(ty, stmt, CT_DECLARED);
         }
 
         PopScope();
@@ -19487,6 +19978,62 @@ define_macro(Ty *ty, Stmt *s, bool fun)
 {
         DefinePending(ty);
 
+        if (fun) {
+                Scope *scope = GetNamespace(ty, s->ns);
+                u32 flags = STATE.flags;
+                STATE.flags |= TYC_EMIT;
+                symbolize_fun_decl(ty, scope, s, SYM_FUN_MACRO);
+                RedpillFun(ty, scope, s->value, false);
+                STATE.flags = flags;
+                comptime_note(ty, s, CT_DECLARED);
+                return;
+        }
+
+        define_macro_now(ty, s);
+}
+
+static void
+define_macro_late(Ty *ty, Stmt *s, Scope *fscope)
+{
+        CompileState outer = STATE;
+
+        STATE.func            = NULL;
+        STATE.fscope          = fscope;
+        STATE.implicit_fscope = NULL;
+        STATE.implicit_func   = NULL;
+        STATE.class           = NULL;
+        STATE.meth            = NULL;
+        STATE.self            = NULL;
+        STATE.function_depth  = 0;
+
+        v00(STATE.tries);
+        v00(STATE.scopes);
+        PushScope(STATE.global);
+
+        if (TY_CATCH_ERROR()) {
+                STATE = outer;
+                TY_RETHROW();
+        }
+
+        define_macro_now(ty, s);
+
+        TY_CATCH_END();
+
+        STATE.func            = outer.func;
+        STATE.fscope          = outer.fscope;
+        STATE.implicit_fscope = outer.implicit_fscope;
+        STATE.implicit_func   = outer.implicit_func;
+        STATE.class           = outer.class;
+        STATE.meth            = outer.meth;
+        STATE.self            = outer.self;
+        STATE.function_depth  = outer.function_depth;
+        STATE.tries           = outer.tries;
+        STATE.scopes          = outer.scopes;
+}
+
+static void
+define_macro_now(Ty *ty, Stmt *s)
+{
         u32 flags = STATE.flags;
         STATE.flags |= TYC_EMIT;
 

@@ -1,0 +1,7 @@
+fn table() -> Dict[String, Int] { throw 'no table today' }
+
+const TABLE = table()
+
+fn lookup(s: String) -> Int { TABLE[s] ?? 0 }
+
+const x = lookup'a'

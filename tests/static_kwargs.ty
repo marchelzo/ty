@@ -1,0 +1,84 @@
+import ty
+
+fn f(a, b = 'b', c = 'c', d = 'd') {
+    (a, b, c, d)
+}
+
+fn spread(a, *rest, k = 'k') {
+    (a, rest, k)
+}
+
+fn collect(a, %kw) {
+    (a, kw)
+}
+
+fn note(log: Array[Int], v: Int) -> Int {
+    log.push(v)
+    v
+}
+
+fn twice(g) {
+    return fn (*args, %kwargs) { g(*args, **kwargs) * 2 }
+}
+
+@twice
+fn decorated(x, y = 1) {
+    x + y
+}
+
+fn over(a: Int, b: Int = 1) { a + b }
+fn over(a: String, b: String = '!') { a + b }
+
+fn gen*(n, step = 1) {
+    for i in 0..n {
+        if i % step == 0 {
+            yield i
+        }
+    }
+}
+
+class Box {
+    log: Array[String]
+
+    init() {
+        log = []
+    }
+
+    __put(what: String, times: Int = 1, sep: String = ',') {
+        log.push(([what] * times).join(sep))
+    }
+
+    fill() {
+        __put('a', sep: '-', times: 2)
+        __put(what: 'b')
+        __put('c', sep: ';')
+        log
+    }
+}
+
+pub fn keywords-fill-the-right-slots() {
+    assert(f(1, c: 3) == (1, 'b', 3, 'd'))
+    assert(f(a: 1) == (1, 'b', 'c', 'd'))
+    assert(f(1, d: 4, b: 2) == (1, 2, 'c', 4))
+    assert(f(1, c: nil) == (1, 'b', 'c', 'd'))
+}
+
+pub fn side-effects-keep-source-order() {
+    let log = []
+    assert(f(note(log, 1), d: note(log, 4), b: note(log, 2)) == (1, 2, 'c', 4))
+    assert(log == [1, 4, 2])
+}
+
+pub fn private-methods() {
+    assert(Box().fill() == ['a-a', 'b', 'c'])
+}
+
+pub fn calls-that-stay-dynamic() {
+    assert(spread(1, 2, 3, k: 'z') == (1, [2, 3], 'z'))
+    assert(collect(1, x: 2) == (1, %{'x': 2}))
+    assert(decorated(1, y: 2) == 6)
+    assert(over(1, b: 2) == 3)
+    assert(over('a', b: '?') == 'a?')
+    assert([*gen(7, step: 3)] == [0, 3, 6])
+    assert(ty.parse('1 + 2', types: false) != nil)
+}

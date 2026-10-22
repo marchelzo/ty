@@ -1,0 +1,28 @@
+import io_uring (IoUring)
+import ffi as c
+import os
+import errno
+import path (Path)
+
+pub fn test-statx-no-follow-and-errors() {
+    with root = Path.tempdir() {
+        (root / 'file').write('payload')
+        assert(os.symlink('file', str(root / 'link')) == 0)
+        let names = ['file', 'link', 'missing'].map(n -> "{root}/{n}\0")
+        let buf = c.new-auto(c.u8, 3 * 256)
+        let ring = IoUring(4)
+        defer ring.close()
+        for name; i in names {
+            ring.prep-statx(os.AT_FDCWD, name, buf + 256 * i, 0x7ff,
+                flags=os.AT_SYMLINK_NOFOLLOW, user=i)
+        }
+        ring.submit-and-wait(3)
+        let seen = %{}
+        ring.each-cqe(fn (user, res, flags) { seen[user] = res })
+        assert(seen[0] == 0 && seen[1] == 0 && seen[2] == -errno.ENOENT)
+        assert((c.load(c.u16, buf + 28) & os.S_IFMT) == os.S_IFREG)
+        assert((c.load(c.u16, buf + 256 + 28) & os.S_IFMT) == os.S_IFLNK)
+        assert(c.load(c.u64, buf + 40) == 7)
+        assert(#names == 3) // retain pathname buffers through completion
+    }
+}

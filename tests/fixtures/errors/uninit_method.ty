@@ -1,0 +1,5 @@
+fn f() { ROWS.map(\_ * 2) }
+
+print(f())
+
+let ROWS = [1]

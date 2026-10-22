@@ -1,0 +1,3 @@
+import helper
+
+pub const NAME = "first, with {helper.NAME}"
