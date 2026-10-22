@@ -1,5 +1,7 @@
 _*
 
+!tests/**/_*.ty
+
 vcpkg_installed/
 vcpkg/
 
