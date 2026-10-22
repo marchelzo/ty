@@ -866,6 +866,31 @@ PopulateGlobals(Ty *ty)
         }
 }
 
+Module *
+vm_caller_module(Ty *ty)
+{
+        Frame const *top = (vN(FRAMES) > 0) ? vvL(FRAMES) : NULL;
+        char const *ip = (IP == NULL) ? NULL : jit_frame_ip(top, IP);
+        Expr const *e = (ip == NULL) ? NULL : compiler_find_expr(ty, ip - 1);
+
+        return (e == NULL) ? NULL : e->mod;
+}
+
+static void
+AddSearchDir(Ty *ty, char const *dir)
+{
+        Array *search = v_(Globals, NAMES.path)->array;
+
+        for (int i = 0; i < vN(*search); ++i) {
+                Value const *v = v_(*search, i);
+                if (v->type == VALUE_STRING && vs_eq_z(*v, dir)) {
+                        return;
+                }
+        }
+
+        vAp(search, vSzz(dir));
+}
+
 static void
 AddSearchDirs(Ty *ty, char const *dirs)
 {
@@ -886,7 +911,7 @@ AddSearchDirs(Ty *ty, char const *dirs)
                         memcpy(dir, p, n);
                         dir[n] = '\0';
                         if (realpath(dir, real) != NULL) {
-                                vAp(v_(Globals, NAMES.path)->array, vSzz(real));
+                                AddSearchDir(ty, real);
                         }
                 }
                 p += n;
@@ -1043,7 +1068,7 @@ add_builtins(Ty *ty, int ac, char **av)
 //---------------------------------------------------------------------------
 #define add(dir) do {                                             \
         if (realpath(dir, real) != NULL) {                        \
-                vAp(v_(Globals, NAMES.path)->array, vSzz(real));  \
+                AddSearchDir(ty, real);                           \
         }                                                         \
 } while (0)
 //---------------------------------------------------------------------------

@@ -243,6 +243,9 @@ vm_local(Ty *ty, int i);
 Value *
 vm_global(Ty *ty, int i);
 
+struct module *
+vm_caller_module(Ty *ty);
+
 void
 vm_to_string(Ty *ty, Value *v);
 

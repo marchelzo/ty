@@ -8253,6 +8253,17 @@ parse_try(Ty *ty)
         return s;
 }
 
+static int
+DotCount(int type)
+{
+        switch (type) {
+        case '.':               return 1;
+        case TOKEN_DOT_DOT:     return 2;
+        case TOKEN_DOT_DOT_DOT: return 3;
+        default:                return 0;
+        }
+}
+
 static Stmt *
 parse_import(Ty *ty)
 {
@@ -8266,6 +8277,20 @@ parse_import(Ty *ty)
         byte_vector module = {0};
 
         SCRATCH_SAVE();
+
+        int dots = 0;
+
+        for (int n; (n = DotCount(T0)) > 0; next()) {
+                dots += n;
+        }
+
+        if (dots > 0) {
+                sxdf(&module, "./");
+        }
+
+        while (--dots > 0) {
+                sxdf(&module, "../");
+        }
 
         while (try_consume(KEYWORD_SUPER)) {
                 consume('.');

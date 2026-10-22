@@ -56,7 +56,8 @@ enum {
         MOD_TYPE_ERR    = (1 << 2),
         MOD_COMPILE_ERR = (1 << 3),
         MOD_RESULT      = (1 << 4),
-        MOD_TESTS       = (1 << 5)
+        MOD_TESTS       = (1 << 5),
+        MOD_BUILTIN     = (1 << 6)
 };
 
 enum {
@@ -162,6 +163,7 @@ typedef struct module {
         char const *name;
         char const *path;
         char const *source;
+        struct module const *host;
         Stmt **prog;
         TokenVector tokens;
         Expr *last;
@@ -392,6 +394,7 @@ TyCompileModule(
         char const *source,
         char const *path,
         Module const *parent,
+        Module const *host,
         u32 flags
 );
 
@@ -427,6 +430,15 @@ compiler_test_runner_failed(void);
 
 bool
 compiler_module_exists(Ty *ty, char const *name);
+
+Module *
+compiler_load_manifest(Ty *ty, char const *path);
+
+bool
+compiler_is_builtin_module(Ty *ty, char const *name);
+
+void
+compiler_library_imports(bool on);
 
 int
 gettag(Ty *ty, char const *module, char const *name);

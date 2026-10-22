@@ -1,0 +1,360 @@
+import http
+import http.ws as ws
+import net
+import os
+import time
+import sh
+import ssl
+import errno
+
+os.signal(os.SIGPIPE, os.SIG_IGN)
+
+const SO_RCVTIMEO = (__apple__ || __bsd__) ? 0x1006 : 20
+
+pub fn serve(setup: _, f: _, %kwargs) {
+    let srv = http.Server('127.0.0.1', 0, **kwargs)
+    setup(srv)
+    let t = Thread(srv.run)
+    try {
+        wait-up(srv.port)
+        f(srv)
+    } finally {
+        srv.stop()
+        t.join()
+        srv.close()
+    }
+}
+
+fn wait-up(port: Int) {
+    for ..100 {
+        let fd = os.socket(os.AF_INET, os.SOCK_STREAM, 0)
+        let ok = match os.getaddrinfo('127.0.0.1', str(port), os.AF_INET, os.SOCK_STREAM, 0) {
+            Ok([addr, *]) => os.connect(fd, addr) == 0,
+            _             => false
+        }
+        os.close(fd)
+        if ok {
+            return
+        }
+        os.sleep(0.01)
+    }
+}
+
+pub fn xread(fd: Int, buf: Blob, n: Int) -> Int | nil {
+    for ..20 {
+        let k = os.read(fd, buf, n)
+        if (k == nil || k < 0) && errno.get() == errno.EINTR {
+            continue
+        }
+        return k
+    }
+    -1
+}
+
+pub fn dial(port: Int) -> Int {
+    let fd = net.dial('tcp', "127.0.0.1:{port}")
+    os.setsockopt(fd, os.SOL_SOCKET, SO_RCVTIMEO, Blob(5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+    fd
+}
+
+pub fn send(fd: Int, data: String | Blob) {
+    os.write(fd, data, all=true)
+}
+
+pub fn read-all(fd: Int, limit: Float = 5.0) -> String {
+    let buf = Blob()
+    let deadline = time.now() + limit
+    while time.now() < deadline {
+        let n = xread(fd, buf, 65536)
+        if n == nil || n <= 0 {
+            break
+        }
+    }
+    buf.str!()
+}
+
+pub fn fd-closed?(fd: Int, limit: Float = 5.0) -> Bool {
+    let buf = Blob()
+    let deadline = time.now() + limit
+    while time.now() < deadline {
+        let n = xread(fd, buf, 65536)
+        if n == 0 {
+            return true
+        }
+        if n == nil || n < 0 {
+            return false
+        }
+    }
+    false
+}
+
+pub class Reply {
+    status:  Int
+    headers: Dict[String, String]
+    body:    String
+
+    init(status: Int, headers: Dict[String, String], body: String) {
+        self.status  = status
+        self.headers = headers
+        self.body    = body
+    }
+
+    header(k: String) -> String | nil {
+        headers[k.lower()]
+    }
+}
+
+pub class Client {
+    fd:  Int
+    buf: Blob
+
+    init(port: Int) {
+        fd  = dial(port)
+        buf = Blob()
+    }
+
+    send(data: String | Blob) -> Client {
+        os.write(fd, data, all=true)
+        self
+    }
+
+    request(method: String, path: String, body: String | nil = nil, headers: Dict[String, String] = %{}) -> Client {
+        let lines = ["{method} {path} HTTP/1.1", 'Host: test']
+        for k, v in headers {
+            lines.push("{k}: {v}")
+        }
+        if body != nil {
+            lines.push("Content-Length: {body.size()}")
+        }
+        send(lines.join('\r\n') + '\r\n\r\n' + (body ?? ''))
+    }
+
+    __fill() -> Bool {
+        let n = xread(fd, buf, 65536)
+        n != nil && n > 0
+    }
+
+    __line() -> String | nil {
+        while true {
+            if let $i = buf.search('\r\n') {
+                let line = buf.str!(0, i)
+                buf.clear(0, i + 2)
+                return line
+            }
+            if !__fill() {
+                return nil
+            }
+        }
+    }
+
+    __take(n: Int) -> String {
+        while #buf < n {
+            if !__fill() {
+                break
+            }
+        }
+        let k = min(n, #buf)
+        let s = buf.str!(0, k)
+        buf.clear(0, k)
+        s
+    }
+
+    response(head?: Bool = false) -> Reply | nil {
+        let $status-line = __line() or return nil
+        let status = int(status-line.split(' ')[1])
+        let headers = %{}
+        while let $line = __line() and line != '' {
+            let [k, v] = line.split(': ', 1)
+            headers[k.lower()] = v
+        }
+
+        if status < 200 || head? || status == 204 || status == 304 {
+            return Reply(status, headers, '')
+        }
+
+        let body = if let $n = headers['content-length'] {
+            __take(int(n))
+        } else if headers['transfer-encoding'] == 'chunked' {
+            let out = ''
+            while let $size = __line() {
+                let n = int(size, 16)
+                if n == 0 {
+                    __line()
+                    break
+                }
+                out += __take(n)
+                __line()
+            }
+            out
+        } else {
+            let out = buf.str!()
+            buf.clear()
+            while __fill() {
+                out += buf.str!()
+                buf.clear()
+            }
+            out
+        }
+
+        Reply(status, headers, body)
+    }
+
+    get(path: String) -> Reply | nil {
+        request('GET', path)
+        response()
+    }
+
+    closed?(limit: Float = 5.0) -> Bool {
+        if #buf > 0 {
+            return false
+        }
+        fd-closed?(fd, limit)
+    }
+
+    close() {
+        if fd >= 0 {
+            os.close(fd)
+            fd = -1
+        }
+    }
+}
+
+pub fn get(port: Int, path: String) -> Reply | nil {
+    let c = Client(port)
+    try {
+        c.get(path)
+    } finally {
+        c.close()
+    }
+}
+
+pub const KEY = Blob(0x11, 0x22, 0x33, 0x44)
+
+pub class WsClient {
+    fd:     Int
+    buf:    Blob
+    status: String
+
+    init(port: Int, path: String, headers: Dict[String, String] = %{}) {
+        fd  = dial(port)
+        buf = Blob()
+        let lines = [
+            "GET {path} HTTP/1.1",
+            'Host: test',
+            'Upgrade: websocket',
+            'Connection: Upgrade',
+            'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+            'Sec-WebSocket-Version: 13'
+        ]
+        for k, v in headers {
+            lines.push("{k}: {v}")
+        }
+        os.write(fd, lines.join('\r\n') + '\r\n\r\n', all=true)
+        while buf.search('\r\n\r\n') == nil {
+            let n = xread(fd, buf, 4096)
+            if n == nil || n <= 0 {
+                break
+            }
+        }
+        let i: Int = buf.search('\r\n\r\n') ?? #buf
+        status = buf.str!(0, i)
+        buf.clear(0, min(i + 4, #buf))
+    }
+
+    accepted? -> Bool {
+        status.starts?('HTTP/1.1 101')
+    }
+
+    send-frame(op: Int, payload: String | Blob, fin: Bool = true) {
+        os.write(fd, ws.frame(op, payload, fin: fin, mask: KEY), all=true)
+    }
+
+    send(msg: String | Blob) {
+        send-frame((msg :: String) ? ws.OP_TEXT : ws.OP_BINARY, msg)
+    }
+
+    __need(n: Int) -> Bool {
+        while #buf < n {
+            let k = xread(fd, buf, 65536)
+            if k == nil || k <= 0 {
+                return false
+            }
+        }
+        true
+    }
+
+    frame() -> (Int, Blob) | nil {
+        if !__need(2) {
+            return nil
+        }
+        let n = buf[1] & 0x7F
+        let h = 2
+        if n == 126 {
+            if !__need(4) { return nil }
+            n = (buf[2] << 8) | buf[3]
+            h = 4
+        } else if n == 127 {
+            if !__need(10) { return nil }
+            n = 0
+            for i in ..8 {
+                n = (n << 8) | buf[2 + i]
+            }
+            h = 10
+        }
+        if !__need(h + n) {
+            return nil
+        }
+        let op = buf[0] & 0xF
+        let payload = buf.slice(h, n)
+        buf.clear(0, h + n)
+        (op, payload)
+    }
+
+    recv() -> String | Blob | nil {
+        while let (op, payload) = frame() {
+            match op {
+                ws.OP_TEXT   => return payload.str!(),
+                ws.OP_BINARY => return payload,
+                ws.OP_CLOSE  => return nil,
+                _            => continue
+            }
+        }
+        nil
+    }
+
+    close-code() -> Int | nil {
+        while let (op, payload) = frame() {
+            if op == ws.OP_CLOSE {
+                return (#payload >= 2) ? ((payload[0] << 8) | payload[1]) : ws.CLOSE_NO_STATUS
+            }
+        }
+        nil
+    }
+
+    close() {
+        if fd >= 0 {
+            os.close(fd)
+            fd = -1
+        }
+    }
+}
+
+pub fn curl?() -> Bool {
+    match sh.run(['curl', '--version'], timeout: 5) {
+        nil => false,
+        r   => r.ok? && r.stdout.contains?('HTTP2')
+    }
+}
+
+pub fn curl(*args: String) -> String {
+    match sh.run(['curl', '-s', '--max-time', '10', *args], timeout: 15) {
+        nil => '',
+        r   => r.stdout
+    }
+}
+
+pub fn write-file(path: String, data: String) {
+    let fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.write(fd, data, all=true)
+    os.close(fd)
+}

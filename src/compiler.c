@@ -429,6 +429,9 @@ static Module *
 GetModule(Ty *ty, char const *name);
 
 static Module *
+BuiltinModule(Ty *ty, char const *name);
+
+static Module *
 GetModuleImport(Ty *ty, Module const *mod, char const *name);
 
 static void
@@ -2229,53 +2232,86 @@ method_cmp(void const *a_, void const *b_)
         return (o != 0) ? o : (a->t - b->t);
 }
 
-static char *
-try_slurp_module(Ty *ty, char const *name, char const **path_out)
+static bool LibraryImports;
+
+void
+compiler_library_imports(bool on)
 {
-        char chad[PATH_MAX + 1];
-        char path[PATH_MAX + 1];
+        LibraryImports = on;
+}
 
-        char *source = NULL;
-        Array *search = v_(Globals, NAMES.path)->array;
+static bool
+ImportsFromLibrary(Ty *ty, char const *name)
+{
+        Module const *home = STATE.module;
 
-        for (int i = 0; i < vN(*search); ++i) {
-                ty_snprintf(path, sizeof path, "%s/%s.ty", ss(v__(*search, i)), name);
-                if ((source = slurp(path, NULL)) != NULL) {
-                        break;
-                }
+        return LibraryImports
+            || (BuiltinModule(ty, name) != NULL)
+            || (home != NULL && (home->flags & MOD_BUILTIN));
+}
+
+static char const *
+try_resolve_module(Ty *ty, char const *name, ConstStringVector *tried)
+{
+        Module const *home = STATE.module;
+        bool library = ImportsFromLibrary(ty, name);
+        char const *path = mod_resolve(ty, name, (home == NULL) ? NULL : home->path, library, tried);
+        Module const *host = (home == NULL) ? NULL : home->host;
+
+        for (; path == NULL && host != NULL; host = host->host) {
+                path = mod_resolve(ty, name, host->path, library, tried);
         }
 
-        if (source == NULL) {
-                char const *root = mod_root(ty, STATE.module->path);
-                if (root == NULL) {
-                        if ((root = getcwd(chad, sizeof chad)) == NULL) {
-                                return NULL;
-                        }
-                }
-                ty_snprintf(path, sizeof path, "%s/%s.ty", root, name);
-                if ((source = slurp(path, NULL)) == NULL) {
-                        return NULL;
-                }
+        return path;
+}
+
+static char const *
+searched(Ty *ty, ConstStringVector const *tried)
+{
+        byte_vector out = {0};
+
+        for (int i = 0; i < vN(*tried); ++i) {
+                sxdf(&out, (i == 0) ? "\n\n  searched: %s" : "\n            %s", v__(*tried, i));
         }
 
-        if (realpath(path, chad) == NULL) {
-                return NULL;
+        return (vN(out) == 0) ? "" : vv(out);
+}
+
+static char const *
+resolve_module(Ty *ty, char const *name)
+{
+        ConstStringVector tried = {0};
+        char const *path = try_resolve_module(ty, name, NULL);
+
+        if (path == NULL) {
+                try_resolve_module(ty, name, &tried);
+                char const *where = searched(ty, &tried);
+                vfor(tried, ty_free((void *)*it));
+                xvF(tried);
+                fail(
+                        "failed to load module: %s%s%s%s",
+                        TERM(93;1),
+                        name,
+                        TERM(0),
+                        where
+                );
         }
 
-        if (path_out != NULL) {
-                *path_out = S2(chad);
-        }
-
-        return source;
+        return path;
 }
 
 static char *
-slurp_module(Ty *ty, char const *name, char const **path)
+slurp_module(Ty *ty, char const *name, char const **path_out)
 {
-        char *source = try_slurp_module(ty, name, path);
+        char const *path = resolve_module(ty, name);
+        char *source = slurp(path, NULL);
 
         if (source == NULL) {
-                fail("failed to load module: %s%s%s", TERM(93;1), name, TERM(0));
+                fail("failed to read module %s%s%s: %s", TERM(93;1), path, TERM(0), strerror(errno));
+        }
+
+        if (path_out != NULL) {
+                *path_out = path;
         }
 
         return source;
@@ -13977,6 +14013,40 @@ GetModule(Ty *ty, char const *name)
         return NULL;
 }
 
+static Module *
+BuiltinModule(Ty *ty, char const *name)
+{
+        for (int i = 0; i < vN(modules); ++i) {
+                Module *mod = v__(modules, i);
+                if ((mod->flags & MOD_BUILTIN) && s_eq(mod->name, name)) {
+                        return mod;
+                }
+        }
+
+        return NULL;
+}
+
+static Module *
+ModuleSlot(Ty *ty, char const *name, char const *path)
+{
+        for (int i = 0; i < vN(modules); ++i) {
+                Module *mod = v__(modules, i);
+                if (!s_eq(mod->name, name)) {
+                        continue;
+                }
+                if (
+                        (mod->flags & MOD_BUILTIN)
+                     || (mod->path == NULL)
+                     || (path == NULL)
+                     || s_eq(mod->path, path)
+                ) {
+                        return mod;
+                }
+        }
+
+        return NULL;
+}
+
 Module *
 GetModuleByPath(Ty *ty, char const *path)
 {
@@ -14039,12 +14109,16 @@ NewModule(
         Scope *scope
 )
 {
-        Module *mod = GetModule(ty, name);
+        Module *mod = ModuleSlot(ty, name, path);
 
         if (mod == NULL) {
                 mod = amA0(sizeof *mod);
                 xvP(modules, mod);
                 TyImmortalizeArena(ty);
+        }
+
+        if (path != NULL && s_eq(path, "(built-in)")) {
+                mod->flags |= MOD_BUILTIN;
         }
 
         if (scope == NULL) {
@@ -14129,17 +14203,64 @@ load_module_source(
 }
 
 static Module *
-load_module(Ty *ty, char const *name, Scope *scope)
+load_module_at(Ty *ty, char const *name, char const *path, Scope *scope)
 {
-        char const *path;
-        char *source = slurp_module(ty, name, &path);
-
         Module *existing = GetModuleByPath(ty, path);
         if (existing != NULL) {
                 return existing;
         }
 
+        char *source = slurp(path, NULL);
+        if (source == NULL) {
+                fail("failed to read module %s%s%s: %s", TERM(93;1), path, TERM(0), strerror(errno));
+        }
+
         return load_module_source(ty, name, path, source, scope);
+}
+
+static Module *
+load_module(Ty *ty, char const *name, Scope *scope)
+{
+        char const *path = resolve_module(ty, name);
+        Module *existing = GetModuleByPath(ty, path);
+
+        if (existing != NULL) {
+                ty_free((void *)path);
+                return existing;
+        }
+
+        return load_module_at(ty, name, path, scope);
+}
+
+bool
+compiler_is_builtin_module(Ty *ty, char const *name)
+{
+        return BuiltinModule(ty, name) != NULL;
+}
+
+Module *
+compiler_load_manifest(Ty *ty, char const *path)
+{
+        Module *current = STATE.module;
+        u64 flags_before = (current != NULL) ? current->flags : 0;
+        Module *mod;
+
+        TY_BEGIN_LOADING();
+
+        if (TY_CATCH_ERROR()) {
+                if (current != NULL) {
+                        current->flags = flags_before;
+                }
+                TY_FINISH_LOADING();
+                TY_RETHROW();
+        }
+
+        mod = load_module_at(ty, "__pkg__", path, NULL);
+
+        TY_FINISH_LOADING();
+        TY_CATCH_END();
+
+        return mod;
 }
 
 bool
@@ -14178,7 +14299,8 @@ import_module(Ty *ty, Stmt const *s)
 
         void *ctx = PushContext(ty, s);
 
-        Scope *module_scope = get_module_scope(name);
+        Module *builtin = BuiltinModule(ty, name);
+        Scope *module_scope = (builtin == NULL) ? NULL : builtin->scope;
 
         /* First make sure we haven't already imported this module, or imported another module
          * with the same local alias. For example,
@@ -14435,7 +14557,14 @@ compiler_test_runner_failed(void)
 bool
 compiler_module_exists(Ty *ty, char const *name)
 {
-        return try_slurp_module(ty, name, NULL) != NULL;
+        if (BuiltinModule(ty, name) != NULL) {
+                return true;
+        }
+
+        char const *path = try_resolve_module(ty, name, NULL);
+        ty_free((void *)path);
+
+        return path != NULL;
 }
 
 Symbol *
@@ -22472,6 +22601,7 @@ CompileSource(
         char const *path,
         Scope *global,
         import_vector const *imports,
+        Module const *host,
         u32 flags
 )
 {
@@ -22487,6 +22617,7 @@ CompileSource(
         mod->name   = name;
         mod->path   = path;
         mod->source = source;
+        mod->host   = host;
         mod->scope  = scope_new(ty, mod->name, global, false);
 
         STATE = freshstate(ty, mod);
@@ -22544,7 +22675,7 @@ CompileSource(
 Module *
 TyCompileSource(Ty *ty, char const *source, Scope *global, u32 flags)
 {
-        return CompileSource(ty, source, "(tmp)", "(tmp)", global, NULL, flags);
+        return CompileSource(ty, source, "(tmp)", "(tmp)", global, NULL, NULL, flags);
 }
 
 Module *
@@ -22556,7 +22687,7 @@ TyCompileSourceAt(
         u32 flags
 )
 {
-        return CompileSource(ty, source, "(tmp)", path, global, NULL, flags);
+        return CompileSource(ty, source, "(tmp)", path, global, NULL, NULL, flags);
 }
 
 void
@@ -22571,6 +22702,7 @@ TyCompileModule(
         char const *source,
         char const *path,
         Module const *parent,
+        Module const *host,
         u32 flags
 )
 {
@@ -22590,6 +22722,7 @@ TyCompileModule(
                 ty, text + 1, name, path,
                 (parent == NULL) ? NULL : parent->scope,
                 (parent == NULL) ? NULL : &parent->imports,
+                host,
                 flags
         );
 
@@ -22619,7 +22752,15 @@ TyActiveModules(Ty *ty)
 Module *
 TyLoadModule(Ty *ty, char const *name, u32 flags)
 {
-        Module *mod = GetModule(ty, name);
+        Module *mod = BuiltinModule(ty, name);
+        if (mod != NULL) {
+                return mod;
+        }
+
+        char const *path = try_resolve_module(ty, name, NULL);
+        mod = (path == NULL) ? NULL : GetModuleByPath(ty, path);
+        ty_free((void *)path);
+
         if (mod != NULL) {
                 return mod;
         }
@@ -22841,8 +22982,8 @@ CompilerReloadModule(
 
         STATE = freshstate(ty, mod);
 
-        if (source == NULL) {
-                source = slurp_module(ty, mod->name, NULL);
+        if (source == NULL && (source = slurp(mod->path, NULL)) == NULL) {
+                fail("failed to read module %s%s%s: %s", TERM(93;1), mod->path, TERM(0), strerror(errno));
         }
 
         Stmt **prog = compile(ty, source);

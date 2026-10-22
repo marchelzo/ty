@@ -956,7 +956,7 @@ Serve(Ty *ty, Value req)
                 Compiled = true;
                 source   = TY_0_C_STR(v);
 
-                mod = TyCompileModule(ty, source, file, NULL, TYC_DEFAULT_FLAGS);
+                mod = TyCompileModule(ty, source, file, NULL, NULL, TYC_DEFAULT_FLAGS);
 
                 SendMeta(ty, mod);
 

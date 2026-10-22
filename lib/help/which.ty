@@ -1,0 +1,71 @@
+import ty
+import os
+import dirs
+import ty.mod
+import chalk (Chalk, escape)
+
+let ink = Chalk()
+
+ink.name  = 'b #7daea3'
+ink.label = '#847a6d'
+ink.path  = '#a9b665'
+ink.miss  = '#5a524c'
+ink.kind  = 'i #d3869b'
+ink.warn  = 'b #ea6962'
+
+fn plain?() -> Bool {
+    ty.color == 'never' || (ty.color == 'auto' && !os.isatty(1))
+}
+
+fn tilde(path: String) -> String {
+    escape(path.starts?("{dirs.HOME}/") ? "~{path.slice(#dirs.HOME)}" : path)
+}
+
+fn rows(label: String, items: Array[String]) -> Array[String] {
+    [
+        "  [label]{(i == 0 ? label : ''):<9}[/] {item}"
+        for item; i in items
+    ]
+}
+
+fn origin(w) -> String {
+    match w {
+        {kind: 'declared', manifest: $m, *} => "[kind]declared by[/] [path]{tilde(m)}[/]",
+        {kind, *}                           => "[kind]{kind}[/]"
+    }
+}
+
+fn verdict(name: String, w) -> String {
+    match w {
+        {path: $p, *}        => "[name]{escape(name)}[/] → [path]{tilde(p)}[/]",
+        {kind: 'builtin', *} => "[name]{escape(name)}[/] → [kind]built into the interpreter[/]",
+        _                    => "[name]{escape(name)}[/] [warn]not found[/]"
+    }
+}
+
+fn details(w) -> Array[String] {
+    match w {
+        {kind: 'builtin', path: nil, *} => [],
+        {kind: 'builtin', *}            => rows('searched', searched(w)),
+        _                               => [
+            *rows('package', ["[path]{tilde(w.package)}[/] {origin(w)}"]),
+            *rows('roots', w.roots.map(r -> "[path]{tilde(r)}[/]")),
+            *rows('searched', searched(w))
+        ]
+    }
+}
+
+fn searched(w) -> Array[String] {
+    let hit = (w.path != nil) ? #w.tried - 1 : -1
+    [
+        (i == hit) ? "[path]{tilde(p)}[/]" : "[miss]{tilde(p)}[/]"
+        for p; i in w.tried
+    ]
+}
+
+pub fn which(query: String) {
+    let [name, ?from] = query.words() or return eprint('usage: which <module> [<importing file>]')
+    let w = ty.mod.which(name, from)
+
+    print(ink.render([verdict(name, w), *details(w)].join('\n'), plain: plain?()))
+}

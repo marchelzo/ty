@@ -213,6 +213,30 @@ repl_exec(Ty *ty, char const *code)
         return vm_execute(ty, code, "(repl)");
 }
 
+static bool
+repl_import(Ty *ty, char const *code)
+{
+        compiler_library_imports(true);
+        bool ok = repl_exec(ty, code);
+        compiler_library_imports(false);
+        return ok;
+}
+
+static void
+repl_setup(Ty *ty, bool ok)
+{
+        if (!ok) {
+                fprintf(stderr, "%s\n", TyError(ty));
+        }
+}
+
+static bool
+import_help(Ty *ty)
+{
+        return help_imported
+            || (help_imported = repl_import(ty, "import help (help, grep)\nimport help.which (which)\n"));
+}
+
 static void
 dump_quoted(byte_vector *out, char const *s)
 {
@@ -256,21 +280,28 @@ execln(Ty *ty, char *line)
                         goto Bad;
                 }
         } else if (s_eq_n(line, "help ", 5) || s_eq(line, "help")) {
-                dump(&buffer, "%shelp(query: ", help_imported ? "" : "import help (help, grep)\n");
+                dump(&buffer, "help(query: ");
                 dump_quoted(&buffer, line + 4);
                 dump(&buffer, ");");
-                if (repl_exec(ty, v_(buffer, 1))) {
-                        help_imported = true;
+                if (import_help(ty) && repl_exec(ty, v_(buffer, 1))) {
                         goto End;
                 } else {
                         goto Bad;
                 }
         } else if (s_eq_n(line, "grep ", 5)) {
-                dump(&buffer, "%sgrep(", help_imported ? "" : "import help (help, grep)\n");
+                dump(&buffer, "grep(");
                 dump_quoted(&buffer, line + 5);
                 dump(&buffer, ");");
-                if (repl_exec(ty, v_(buffer, 1))) {
-                        help_imported = true;
+                if (import_help(ty) && repl_exec(ty, v_(buffer, 1))) {
+                        goto End;
+                } else {
+                        goto Bad;
+                }
+        } else if (s_eq_n(line, "which ", 6) || s_eq(line, "which")) {
+                dump(&buffer, "which(");
+                dump_quoted(&buffer, line + 5);
+                dump(&buffer, ");");
+                if (import_help(ty) && repl_exec(ty, v_(buffer, 1))) {
                         goto End;
                 } else {
                         goto Bad;
@@ -407,7 +438,7 @@ readln(Ty *ty)
 static void
 pollute_with_bloat(void)
 {
-        execln(
+        repl_setup(ty, repl_import(
                 ty,
                 "import pretty (..)           \n"
                 "import json                  \n"
@@ -429,7 +460,7 @@ pollute_with_bloat(void)
                 "import sh (sh)               \n"
                 "import date                  \n"
                 "import chalk (chalk as C)    \n"
-        );
+        ));
 
         print_function = "pp";
 }
@@ -455,8 +486,8 @@ repl(Ty *ty)
 
         if (!basic) {
                 pollute_with_bloat();
-                help_imported = execln(ty, "import help (help, grep)\n");
-                execln(ty, "import ty.repl\n");
+                repl_setup(ty, import_help(ty));
+                repl_setup(ty, repl_import(ty, "import ty.repl\n"));
 #if defined(TY_HAVE_VERSION_INFO) && defined(TY_HAVE_GIT_STATUS)
                 printf(
                         "ty %s (%s%.8s%s), built %s\n",

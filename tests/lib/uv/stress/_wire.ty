@@ -1,0 +1,58 @@
+import uv
+import os
+import ty
+
+pub SCALE = int(getenv('TY_STRESS_SCALE') ?? '3')
+
+pub fn payload(src: Int, dst: Int, seq: Int) -> String {
+    let reps = (seq % 17 == 3) ? 4000 + 97 * src : 1 + (seq * 7 + src * 3 + dst) % 60
+    "{src}.{dst}.{seq}-" * reps
+}
+
+pub fn port-of(sock: uv.UVSocket) -> Int {
+    let (_, port) = os.getnameinfo(sock.address, os.NI_NUMERICHOST | os.NI_NUMERICSERV)
+    int(port)
+}
+
+pub fn send-frame(stream: uv.UVStream, data: String) {
+    stream.write("{#data}\n{data}")
+}
+
+pub fn recv-frame(stream: uv.UVStream) -> String | nil {
+    let $header = stream.read-line() or return nil
+    let n    = int(header.strip()) ?? throw RuntimeError("bad frame header: {header}")
+    let body = stream.read(n)
+    (#body == n) ? body : throw RuntimeError("short frame: wanted {n}, got {#body}")
+}
+
+pub fn poll(ch: Channel) -> _ {
+    while true {
+        if let Some(x) = ch.recv(0) {
+            return x
+        }
+        uv.sleep(2)
+    }
+}
+
+pub fn churn-gc(every: Int) {
+    while true {
+        uv.sleep(every)
+        ty.gc()
+    }
+}
+
+pub fn quiesce() {
+    let lp = uv.loop()
+    for ..300 {
+        if lp.pending == 0 && #lp.handles() == 0 {
+            return
+        }
+        uv.sleep(10)
+    }
+    throw RuntimeError("loop did not drain: handles={lp.handles()} pending={lp.pending}")
+}
+
+pub fn blob-of(seed: Int, n: Int) -> String {
+    let unit = "<{seed}:{n}>"
+    (unit * (n / #unit + 1))[;n]
+}

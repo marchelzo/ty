@@ -17870,18 +17870,25 @@ import_definitions_in(
 static bool
 module_is_current(T2Checker const *checker, Module const *module)
 {
-        return (module != NULL)
-            && (
-                       (
-                               (module->name != NULL)
-                            && s_eq(module->name, checker->unit)
-                       )
-                    || (
-                               (module->path != NULL)
-                            && s_eq(module->path, checker->path)
-                       )
-               )
-        ;
+        if (module == NULL) {
+                return false;
+        }
+
+        if (
+                (module->path != NULL)
+             && (module->path[0] == '/')
+             && (checker->path[0] == '/')
+        ) {
+                return s_eq(module->path, checker->path);
+        }
+
+        return (
+                (module->name != NULL)
+             && s_eq(module->name, checker->unit)
+        ) || (
+                (module->path != NULL)
+             && s_eq(module->path, checker->path)
+        );
 }
 
 static u64

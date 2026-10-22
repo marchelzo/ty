@@ -1,0 +1,81 @@
+import uv
+import json
+import _wire as w
+
+let [_, port, me, peers, rounds, outdir] = argv
+let (port, me, peers, rounds) = (int(port), int(me), int(peers), int(rounds))
+
+fn crunch(seed: Int) -> Int {
+    let xs = [(seed * 7919 + i * 104729) % 1000003 for i in ..200000]
+    xs.sort!()
+    let ys = %{*: 0}
+    for x in xs {
+        ys[x % 4093] += x
+    }
+    (ys.values().sum() ?? 0) % 1000000007
+}
+
+fn send-all(sock: uv.UVSocket) -> Int {
+    let plan = [(dst, seq) for seq in ..rounds for dst in ..peers if dst != me]
+    let next = %{*: 0}
+    let sent = 0
+    for (dst, _) in plan.shuffle() {
+        let seq = next[dst]++
+        sock.write("TO {dst} {seq} {w.payload(me, dst, seq)}\n")
+        sent += 1
+        if rand(8) == 0 {
+            uv.sleep(rand(3))
+        }
+    }
+    sent
+}
+
+fn receive-all(sock: uv.UVSocket, log: Blob) -> Int {
+    let expected = (peers - 1) * rounds
+    let next     = %{*: 0}
+    let received = 0
+    while received < expected {
+        let line = sock.read-line() ?? throw RuntimeError("peer {me}: hub hung up after {received}/{expected}")
+        let [verb, src, seq, body] = line.strip().split(' ')
+        let (src, seq) = (int(src), int(seq))
+        if verb != 'FROM' || seq != next[src] || body != w.payload(src, me, seq) {
+            throw RuntimeError("peer {me}: bad message #{received} from {src}: seq {seq}, expected {next[src]}")
+        }
+        next[src] += 1
+        received += 1
+        log.push("{src} {seq} {#body}\n")
+    }
+    received
+}
+
+fn main() {
+    let worker = Thread(crunch, me)
+    let gc     = uv.spawn(w.churn-gc, 7)
+    let sock   = uv.dial('127.0.0.1', port)
+    let log    = Blob()
+
+    sock.write("HELLO {me}\n")
+    if sock.read-line() != "GO\n" {
+        throw RuntimeError("peer {me}: expected GO")
+    }
+
+    let counts = []
+    with uv.timeout(120000) {
+        counts = uv.gather([
+            -> send-all(sock),
+            -> receive-all(sock, log),
+        ])
+    }
+    let [sent, received] = counts
+
+    sock.write("BYE\n")
+    let rest = sock.read-all()
+    sock.close()
+    gc.close()
+
+    uv.spit("{outdir}/peer-{me}.log", log)
+
+    print(json.encode({id: me, sent, received, rest, crunched: worker.join()}))
+}
+
+uv.run(main)

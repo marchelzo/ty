@@ -114,6 +114,7 @@ extern char **environ;
 #include "object.h"
 #include "class.h"
 #include "compiler.h"
+#include "mod.h"
 #include "diag.h"
 #include "operators.h"
 #include "types2.h"
@@ -10971,6 +10972,63 @@ TY_BUILTIN_RAW(ty_mod_load)
         return MODULE(mod);
 }
 
+// ty/mod.which(name: String, from: ?String = nil) -> {path: String | nil, package: String, kind: String, manifest: String | nil, roots: Array[String], tried: Array[String]}
+TY_BUILTIN_RAW(ty_mod_which)
+{
+        ASSERT_ARGC("ty.mod.which()", 1, 2);
+
+        char real[PATH_MAX + 1];
+        char *name = mod_name(ty, TY_TMP_C_STR_A(ARGx(0, VALUE_STRING)));
+        Value from = (argc > 1) ? ARGx(1, VALUE_STRING, VALUE_NIL) : NIL;
+        char *home = S2N(
+                (from.type == VALUE_NIL)
+              ? CompilerCurrentModule(ty)->path
+              : TY_TMP_C_STR_B(from)
+        );
+
+        if (home != NULL && strchr(home, '/') != NULL && realpath(home, real) != NULL) {
+                ty_free(home);
+                home = S2(real);
+        }
+
+        ConstStringVector tried = {0};
+        bool library = compiler_is_builtin_module(ty, name);
+        char const *path = mod_resolve(ty, name, home, library, &tried);
+        Package const *pkg = mod_package(ty, home);
+
+        GC_STOP();
+
+        Array *roots = vA();
+        Array *seen = vA();
+
+        for (int i = 0; i < vN(pkg->roots); ++i) {
+                vAp(roots, vSsz(v__(pkg->roots, i)));
+        }
+
+        for (int i = 0; i < vN(tried); ++i) {
+                vAp(seen, vSsz(v__(tried, i)));
+                ty_free((void *)v__(tried, i));
+        }
+
+        Value which = vTn(
+                "path",     (path == NULL) ? NIL : vSsz(path),
+                "package",  vSsz(pkg->dir),
+                "kind",     vSsz(library ? "builtin" : mod_kind_name(pkg)),
+                "manifest", (pkg->manifest == NULL) ? NIL : vSsz(pkg->manifest),
+                "roots",    ARRAY(roots),
+                "tried",    ARRAY(seen)
+        );
+
+        GC_RESUME();
+
+        xvF(tried);
+        ty_free(name);
+        ty_free(home);
+        ty_free((void *)path);
+
+        return which;
+}
+
 // ty/mod.compile(source: String, parent: ?Module = nil, path: String = '(repl)') -> Module
 TY_BUILTIN_RAW(ty_mod_compile)
 {
@@ -10984,6 +11042,7 @@ TY_BUILTIN_RAW(ty_mod_compile)
         Module *mod = TyCompileModule(
                 ty, TY_0_C_STR(source), TY_C_STR(path),
                 (parent.type == VALUE_NIL) ? NULL : parent.mod,
+                vm_caller_module(ty),
                 TYC_DEFAULT_FLAGS | TYC_RESULT
         );
         GC_RESUME();
