@@ -8,7 +8,12 @@ pub class Recorder {
     __output: Path
     __stopped: Bool
 
-    init(helper-source: String | Path, output: String | Path, cancelled: _ = () -> false) {
+    init(
+        helper-source: String | Path,
+        output: String | Path,
+        cancelled: _ = () -> false,
+        skip: Float = 0.0
+    ) {
         let source = Path(helper-source).resolve
         __output = Path(output).absolute
         __temporary = __output.parent / ".{__output.name}.termrec-{os.getpid()}.mp4"
@@ -21,7 +26,7 @@ pub class Recorder {
         let helper = cached-helper(source)
         let shell-pid = os.getppid()
         __process = os.spawn(
-            [str(helper), str(__temporary), str(shell-pid)],
+            [str(helper), str(__temporary), str(shell-pid), str(skip)],
             stdout=os.SPAWN_PIPE,
             detach=true
         ) ?? throw RuntimeError('termrec: unable to start the capture helper')

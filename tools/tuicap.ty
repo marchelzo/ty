@@ -2350,12 +2350,8 @@ ns sys {
 }
 #|]
 
-fn utf8?(b: Blob) -> Bool {
-    b.str() == b.str!()
-}
-
 fn payload(b: Blob) -> Dict[String, String] {
-    utf8?(b) ? %{'text': b.str()} : %{'base64': base64.encode(b)}
+    b.utf8? ? %{'text': b.str()} : %{'base64': base64.encode(b)}
 }
 
 pub fn digest(state: Dict[String, _]) -> String {

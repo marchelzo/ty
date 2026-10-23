@@ -1097,7 +1097,8 @@ fn __proc-tasks(p: Process) {
     if bytes < 0 {
         throw OSError("proc_pidinfo({p.pid}, LISTTHREADS)")
     }
-    [Task(p, c.load(c.u64, buf + i * stride)) for i in ..(bytes / stride)]
+    let tids = [c.load(c.u64, buf + i * stride) for i in ..(bytes / stride)]
+    [Task(p, tid) for tid in tids if tid != 0]
 }
 
 fn __task-info(pid: Int, tid: Int) {

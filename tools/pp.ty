@@ -1,0 +1,247 @@
+#!/usr/bin/env ty
+
+import chalk (chalk, escape)
+import clap (clap!)
+import ffi as c (C!)
+import os
+import path (Path)
+import procs (Process)
+import term
+
+C! fn { void *getpwuid(unsigned int uid); }
+
+/**
+ * Show a one-line status summary for each matching process.
+ *
+ * QUERY made only of [b]\[a-zA-Z0-9._-][/] selects processes by exact name; anything
+ * else is a regex matched against the full command line. No QUERY shows everything.
+ *
+ *     tools/pp.ty fish
+ *     tools/pp.ty 'nvim.*\\.c'
+ */
+clap! Pp {
+    /// Process name, or a regex matched against full command lines
+    query: String, pos: true
+}
+
+use Row = {
+    pid:     Int,
+    user:    String | nil,
+    state:   String | nil,
+    cpu:     Float | nil,
+    rss:     Int | nil,
+    age:     Float | nil,
+    threads: Int | nil,
+    name:    String,
+    names:   Array[String],
+    argv:    Array[String],
+    cmd:     String
+}
+
+let STATES = %{
+    'R': ('●', 'green'),
+    'S': ('○', 'dim'),
+    'I': ('◌', 'dim'),
+    'D': ('◆', 'magenta'),
+    'T': ('■', 'yellow'),
+    't': ('■', 'yellow'),
+    'Z': ('✗', 'red')
+}
+
+let users: Dict[Int, String] = %{}
+
+fn safe(f: () -> Any) -> Any {
+    try {
+        return f()
+    } catch _: OSError { }
+}
+
+fn user-name(uid: Int) -> String {
+    users[uid] ?? (users[uid] = do {
+        let pw = getpwuid(uid)
+        pw ? c.str(c.load(c.ptr, pw)) : "{uid}"
+    })
+}
+
+fn state-of(p: Process) -> String | nil {
+    let $s = safe(-> p.state) or return nil
+    let ts = safe(-> p.tasks.map(&.state)) ?? []
+    return (s != 'R')   ? s
+         : ('R' in ts)  ? 'R'
+         : ('D' in ts)  ? 'D'
+         :                'S'
+}
+
+fn row(p: Process) -> Row {
+    let exe  = safe(-> p.exe)
+    let argv = safe(-> p.argv) ?? []
+    let arg0 = argv ? Path(argv[0]).name : nil
+    let name = safe(-> p.name) ?? exe.?name ?? arg0 ?? '?'
+    let cpu  = safe(-> p.cpu)
+    let uid  = safe(-> p.uid)
+
+    return {
+        pid:     p.pid,
+        user:    (uid == nil) ? nil : user-name(uid),
+        state:   state-of(p),
+        cpu:     cpu.?total,
+        rss:     safe(-> p.memory.resident),
+        age:     safe(-> p.age),
+        threads: safe(-> p.threads),
+        name:    name,
+        names:   [name, exe.?name, arg0].remove(nil),
+        argv:    argv,
+        cmd:     visible(argv ? argv.join(' ') : "{exe ?? "[{name}]"}")
+    }
+}
+
+fn visible(s: String) -> String {
+    s.sub(/[[:cntrl:]]/, m -> (m == "\n") ? '↵' : '·')
+}
+
+fn fmt-bytes(n: Int) -> String {
+    if n < 1024 {
+        return "{n}B"
+    }
+
+    let x = Float(n)
+    for unit in ['K', 'M', 'G', 'T'] {
+        x /= 1024.0
+        if x < 1000.0 {
+            return (x < 10.0) ? "{x:.1f}{unit}" : "{int(x)}{unit}"
+        }
+    }
+    "{int(x)}P"
+}
+
+fn fmt-cpu(s: Float) -> String {
+    let n = int(s)
+    return (n >= 3600) ? "{n / 3600}:{n / 60 % 60:02}:{n % 60:02}"
+         :               "{n / 60}:{s % 60.0:05.2f}"
+}
+
+fn fmt-age(s: Float) -> String {
+    let n = int(s)
+    return (n < 60)    ? "{n}s"
+         : (n < 3600)  ? "{n / 60}m{n % 60:02}s"
+         : (n < 86400) ? "{n / 3600}h{n / 60 % 60:02}m"
+         :               "{n / 86400}d{n / 3600 % 24:02}h"
+}
+
+fn cell(text: String | nil, width: Int, style: String, left?: Bool = false) -> String {
+    let s = text ?? '-'
+    let p = ' '.repeat(max(width - s.width(), 0))
+    let t = "[{text ? style : 'dim'}]{escape(s)}[/]"
+    left? ? "{t}{p}" : "{p}{t}"
+}
+
+fn rss-style(n: Int | nil) -> String {
+    let n = n ?? 0
+    return (n >= (1 << 30)) ? 'red'
+         : (n >= (1 << 28)) ? 'yellow'
+         : (n >= (1 << 20)) ? 'no-fg'
+         :                    'dim'
+}
+
+fn cpu-style(s: Float | nil) -> String {
+    let s = s ?? 0.0
+    return (s >= 3600.0) ? 'red'
+         : (s >= 60.0)   ? 'yellow'
+         : (s >= 1.0)    ? 'no-fg'
+         :                 'dim'
+}
+
+fn command(r: Row, re: Regex | nil) -> String {
+    let head   = r.argv ? visible(r.argv[0]) : r.cmd
+    let dir    = head.match(/^.*\//) ?? ''
+    let (a, b) = match (re && r.cmd.match(re)) {
+        m: RegexMatch => (m.start, m.end),
+        _             => (-1, -1)
+    }
+    let cuts   = [0, #dir, #head, a, b, #r.cmd].filter(\_ >= 0).sort().uniq()
+
+    fn paint(i: Int, j: Int) -> String {
+        let style = (a <= i && j <= b) ? 'b u magenta'
+                  : (i < #dir)         ? 'dim'
+                  : (i < #head)        ? 'b blue'
+                  :                      'no-fg'
+        "[{style}]{escape(r.cmd[i;j])}[/]"
+    }
+
+    [paint(i, j) for (i, j) in cuts.zip(cuts[1;]) if i < j].join()
+}
+
+fn render(rows: Array[Row], re: Regex | nil) {
+    let w-pid  = max(3, *rows.map(\"{_.pid}".width()))
+    let w-user = max(4, *rows.map(\(_.user ?? '-').width()))
+    let (_, cols) = term.size(1)
+
+    let header = [
+        cell('PID', w-pid, 'dim'),
+        cell('USER', w-user, 'dim', left?: true),
+        cell('S', 1, 'dim'),
+        cell('CPU', 9, 'dim'),
+        cell('MEM', 5, 'dim'),
+        cell('AGE', 7, 'dim'),
+        cell('THR', 3, 'dim'),
+        cell('COMMAND', 0, 'dim')
+    ].join('  ')
+    print(chalk.text(header))
+
+    for r in rows {
+        let (glyph, gstyle) = STATES[r.state ?? '?'] ?? ('·', 'dim')
+        let line = [
+            cell("{r.pid}", w-pid, 'b yellow'),
+            cell(r.user, w-user, (r.user == 'root') ? 'red' : "{r.user}?", left?: true),
+            "[{gstyle}]{glyph}[/]",
+            cell((r.cpu == nil) ? nil : fmt-cpu(r.cpu), 9, cpu-style(r.cpu)),
+            cell((r.rss == nil) ? nil : fmt-bytes(r.rss), 5, rss-style(r.rss)),
+            cell((r.age == nil) ? nil : fmt-age(r.age), 7, 'cyan'),
+            cell((r.threads == nil) ? nil : "{r.threads}", 3, 'dim'),
+            command(r, re)
+        ].join('  ')
+        let t = chalk.text(line)
+        print((cols > 0) ? t.clip(cols) : t)
+    }
+
+    let rss = rows.map(\_.rss ?? 0).sum() ?? 0
+    let n   = #rows
+    let hid = #rows.filter(\_.cpu == nil)
+    let extra = hid ? " · {hid} restricted" : ''
+    print(chalk"[dim]{n} process{(n == 1) ? '' : 'es'} · {fmt-bytes(rss)} resident{extra}[/]")
+}
+
+fn main() {
+    let (opts, _) = Pp.parse()
+    let me = os.getpid()
+
+    if !os.isatty(1) {
+        chalk.plain? = true
+    }
+
+    let q   = opts.query ?? ''
+    let re? = q.match?(/[^a-zA-Z0-9._-]/)
+    let re  = re? ? regex(q, 'v') : nil
+
+    if re? && re == nil {
+        eprint(chalk"[red]invalid regex:[/] [b]{q}[/]")
+        os.exit(2)
+    }
+
+    let keep? = match (opts.query, re) {
+        (nil, _) => (_ -> true),
+        (_, $re) => (r -> r.cmd.match?(re)),
+        _        => (r -> q in r.names)
+    }
+
+    let rows = [row(p) for p in procs.find() if p.pid != me].filter(keep?)
+
+    if !rows {
+        eprint(chalk"[red]no processes match[/] [b]{opts.query ?? ''}[/]")
+        os.exit(1)
+    }
+
+    render(rows, re)
+}
+
+main()
