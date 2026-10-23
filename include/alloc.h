@@ -62,4 +62,9 @@ DumpArenaStats(Ty *ty);
 void *
 AllocateScratch(Ty *ty, usize n);
 
+#if defined(TY_SYSMALLOC)
+void
+FreeArenaChunks(void *base);
+#endif
+
 #endif

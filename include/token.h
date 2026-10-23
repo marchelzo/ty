@@ -23,12 +23,12 @@ enum {
         TOKEN_DIV = '/',
 
         /*
-         * We start the enumeration constants slightly below INT_MAX so that they
-         * don't collide with any codepoints. This way, the type of an open parenthesis
-         * can literally be '(', which is a nice way to avoid verbose names like
-         * TOKEN_OPEN_PAREN.
+         * We start the enumeration constants slightly below 2^23 so that they
+         * don't collide with any codepoints and still fit in Token.type. This way,
+         * the type of an open parenthesis can literally be '(', which is a nice way
+         * to avoid verbose names like TOKEN_OPEN_PAREN.
          */
-        TOKEN_KEYWORD = INT_MAX - 4096,
+        TOKEN_KEYWORD = (1 << 23) - 4096,
         TOKEN_IDENTIFIER,
         TOKEN_STRING,
         TOKEN_SPECIAL_STRING,
@@ -100,11 +100,12 @@ enum {
 
 typedef struct token {
 
-        i32 type;
-        i8 pp;
-        i8 nl;
-        i8 ctx;
-        i8 tag;
+        i32  type : 24;
+        i32  tag  : 8;
+        i8   pp;
+        i8   nl;
+        i8   ctx;
+        bool raw;
 
         Location start;
         Location end;
@@ -170,7 +171,6 @@ typedef struct token {
                                 char *comment;
                                 char const *error;
                         };
-                        bool raw;
                 };
 
                 Expr *e;

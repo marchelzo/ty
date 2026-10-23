@@ -35,6 +35,9 @@ parse_next(Ty *ty);
 Module *
 TyParserModule(Ty *ty);
 
+Token *
+TokenAt(TokenVector const *ts, Location loc);
+
 TokenVector const *
 TyParserTokens(Ty *ty);
 
@@ -49,9 +52,6 @@ make_with(Ty *ty, struct expression *e, StmtVec defs, struct statement *body);
 
 char *
 gensym(Ty *ty);
-
-void
-parse_init(Ty *ty);
 
 void
 parse_reset(Ty *ty);

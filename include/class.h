@@ -91,6 +91,9 @@ trait_new(Ty *ty, Stmt *s);
 void
 class_mark(Ty *ty, int c);
 
+void
+class_mark_refs(Ty *ty);
+
 char const *
 class_name(Ty *ty, int class);
 
@@ -303,19 +306,19 @@ ClassFindInstMemberImmediate(Class const *c, char const *name)
                 return NULL;
         }
 
-        if ((member = FindMethodImmediate(&c->def->class.methods, name)) != NULL) {
+        if ((member = FindMethodImmediate(&sF(c->def, class).methods, name)) != NULL) {
                 return (Expr *)member;
         }
 
-        if ((member = FindMethodImmediate(&c->def->class.getters, name)) != NULL) {
+        if ((member = FindMethodImmediate(&sF(c->def, class).getters, name)) != NULL) {
                 return (Expr *)member;
         }
 
-        if ((member = FindMethodImmediate(&c->def->class.setters, name)) != NULL) {
+        if ((member = FindMethodImmediate(&sF(c->def, class).setters, name)) != NULL) {
                 return (Expr *)member;
         }
 
-        return FindFieldImmediate(&c->def->class.fields, name);
+        return FindFieldImmediate(&sF(c->def, class).fields, name);
 }
 
 inline static Expr *
@@ -343,7 +346,7 @@ ClassFindMemberImmediate(Class const *c, char const *name)
                 return NULL;
         }
 
-        return FindMethodImmediate(&c->def->class.s_methods, name);
+        return FindMethodImmediate(&sF(c->def, class).s_methods, name);
 }
 
 inline static char const *

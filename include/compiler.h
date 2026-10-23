@@ -313,6 +313,8 @@ typedef struct compiler_state {
 
         location_vector expression_locations;
         TokenVector source_tokens;
+
+        u32 nohints;
 } CompileState;
 
 void
@@ -587,6 +589,9 @@ source_lookup(Ty *ty, u32 src);
 
 void
 ForgetSourceNodesFrom(void const *base, usize len);
+
+void
+ForgetSourceNodesWhere(bool (*f)(void const *, void *), void *ctx);
 
 void
 try_symbolize_application(Ty *ty, Scope *scope, Expr *e);

@@ -1181,20 +1181,20 @@ builtin_jit_static_value(Ty *ty, int argc, Value *kwargs)
         }
 
         if (e->type == EXPRESSION_VALUE) {
-                return *e->v;
+                return *xF(e, v);
         }
 
-        bool named = (e->type == EXPRESSION_IDENTIFIER) && (e->symbol != NULL);
+        bool named = (e->type == EXPRESSION_IDENTIFIER) && (xF(e, symbol) != NULL);
 
         if (!named && !compiler_symbolize_expression(ty, e, NULL)) {
                 return NIL;
         }
 
-        if (e->type != EXPRESSION_IDENTIFIER || e->symbol == NULL) {
+        if (e->type != EXPRESSION_IDENTIFIER || xF(e, symbol) == NULL) {
                 return NIL;
         }
 
-        return global(ty, e->symbol);
+        return global(ty, xF(e, symbol));
 }
 
 Value

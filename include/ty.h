@@ -49,7 +49,7 @@ typedef vec(struct try *)   TryStack;
 typedef vec(Value)          ValueVector;
 typedef ValueVector         ValueStack;
 typedef vec(Class *)        ClassVector;
-typedef vec(Symbol *)       symbol_vector;
+typedef svec(Symbol *)       symbol_vector;
 typedef vec(TySavePoint *)  TySavePointVector;
 
 enum { INTERN_TABLE_SIZE = 256 };
@@ -70,12 +70,94 @@ typedef struct {
 } InternSet;
 
 typedef struct location {
-        u32 line;
-        u32 col;
         u32 byte;
-        u32 tok;
-        char const *s;
+        u32 src;
 } Location;
+
+typedef struct source {
+        char const *text;
+        u32         len;
+        u32         nl;
+        u32 const  *lines;
+        u64         hash;
+} Source;
+
+enum {
+        TY_SOURCE_PAGE_BITS = 12,
+        TY_SOURCE_PAGE_SIZE = 1 << TY_SOURCE_PAGE_BITS,
+        TY_SOURCE_PAGES     = 1 << 14
+};
+
+extern Source *SourcePages[TY_SOURCE_PAGES];
+
+u32
+SourceRegister(char const *text, usize len);
+
+u32
+SourceLineOf(Source const *src, u32 byte);
+
+inline static Source *
+SourceOf(u32 id)
+{
+        return &SourcePages[id >> TY_SOURCE_PAGE_BITS][id & (TY_SOURCE_PAGE_SIZE - 1)];
+}
+
+inline static char const *
+SourceText(u32 id)
+{
+        return (id == 0) ? NULL : SourceOf(id)->text;
+}
+
+inline static Location
+MkLoc(u32 src, u32 byte)
+{
+        return (Location) { .byte = byte, .src = src };
+}
+
+inline static char const *
+LocS(Location loc)
+{
+        return (loc.src == 0) ? NULL : SourceOf(loc.src)->text + loc.byte;
+}
+
+inline static u32
+LocLine(Location loc)
+{
+        return (loc.src == 0) ? 0 : SourceLineOf(SourceOf(loc.src), loc.byte);
+}
+
+inline static u32
+LocCol(Location loc)
+{
+        Source const *src;
+
+        if (loc.src == 0) {
+                return 0;
+        }
+
+        src = SourceOf(loc.src);
+
+        return loc.byte - src->lines[SourceLineOf(src, loc.byte)];
+}
+
+inline static bool
+LocSameLine(Location a, Location b)
+{
+        Source const *src;
+        u32 lo;
+        u32 hi;
+
+        if (a.src != b.src || a.src == 0) {
+                return LocLine(a) == LocLine(b);
+        }
+
+        src = SourceOf(a.src);
+        lo  = (a.byte < b.byte) ? a.byte : b.byte;
+        hi  = (a.byte < b.byte) ? b.byte : a.byte;
+        hi  = (hi > src->len) ? src->len : hi;
+
+        return (lo >= hi) || (memchr(src->text + lo, '\n', hi - lo) == NULL);
+}
 
 typedef struct {
         u64 key;
@@ -112,6 +194,10 @@ struct alloc {
 
 typedef struct arena Arena;
 
+enum {
+        ARENA_FREE_CLASSES = 16
+};
+
 struct arena {
         char *base;
         char *beg;
@@ -119,6 +205,8 @@ struct arena {
         Arena *next;
         bool gc;
         bool immortal;
+        u32 fmask;
+        void *free[ARENA_FREE_CLASSES];
 };
 
 typedef struct array {
@@ -399,6 +487,7 @@ struct value {
 
 struct object {
         bool          init;
+        bool          finalized;
         u32           nslot;
         Class         *class;
         struct itable *dynamic;
@@ -510,9 +599,10 @@ typedef struct thread_group {
         vec(TySpinLock *)    ThreadLocks;
         vec(TyThreadState *) ThreadStates;
 
-        TySpinLock DLock;
-        AllocList  DeadAllocs;
-        isize      DeadUsed;
+        TySpinLock  DLock;
+        AllocList   DeadAllocs;
+        isize       DeadUsed;
+        ValueVector Finalize;
 
         TySpinLock GCLock;
         int       *GCBlockedThreads;
@@ -919,10 +1009,10 @@ extern volatile bool GC_EVERY_ALLOC;
 #if defined(TY_TRACE_GC)
 extern _Thread_local u64 ThisReached;
 extern _Thread_local u64 TotalReached;
-#define MARK(v) do {                        \
+#define MARK(v) do {                              \
         gc_mark_alloc(ALLOC_OF(v), ty->gc_owner); \
-        ThisReached += ALLOC_OF(v)->size;  \
-        TotalReached += ALLOC_OF(v)->size; \
+        ThisReached += ALLOC_OF(v)->size;         \
+        TotalReached += ALLOC_OF(v)->size;        \
 } while (0)
 #define ADD_REACHED(n) do {          \
         ThisReached += (n);          \
@@ -936,7 +1026,7 @@ extern _Thread_local u64 TotalReached;
 } while (0)
 #define LOG_REACHED(...) XxLOG(__VA_ARGS__)
 #else
-#define MARK(v) do {                     \
+#define MARK(v) do {                              \
         gc_mark_alloc(ALLOC_OF(v), ty->gc_owner); \
 } while (0)
 #define ADD_REACHED(n)
@@ -944,9 +1034,9 @@ extern _Thread_local u64 TotalReached;
 #define RESET_TOTAL_REACHED()
 #define LOG_REACHED(...)
 #endif
-#define MARKED(v) (                                                     \
+#define MARKED(v) (                                                      \
         atomic_load_explicit(&(ALLOC_OF(v))->mark, memory_order_relaxed) \
-     != ty->gc_owner                                                    \
+     != ty->gc_owner                                                     \
 )
 
 #if defined(TY_GC_STATS)
@@ -1409,6 +1499,31 @@ enum {
 void *
 Allocate(Ty *ty, usize n);
 
+void *
+Reallocate(Ty *ty, void *p, usize old, usize n);
+
+void
+Release(Ty *ty, void *p, usize n);
+
+void *
+Regrow(Ty *ty, void *p, usize old, usize n);
+
+typedef struct {
+        void *blk;
+        char *beg;
+} TmpMark;
+
+void *
+AllocateTmp(usize n);
+
+TmpMark
+TmpSave(void);
+
+void
+TmpRestore(TmpMark m);
+
+#define tmA(n) AllocateTmp((n))
+
 inline static void *
 Allocate0(Ty *ty, usize n)
 {
@@ -1499,6 +1614,18 @@ RestoreScratch(Ty *ty, ScratchSave save)
         }
 
         SSS->beg = save.beg;
+}
+
+inline static void
+TrimScratch(Ty *ty, usize keep)
+{
+        while (
+                (S(arenas.count) > (usize)S(i))
+             && ((usize)(vvL(S(arenas))->end - vvL(S(arenas))->base) > keep)
+        ) {
+                xmF(vvL(S(arenas))->base);
+                S(arenas.count) -= 1;
+        }
 }
 
 inline static void
@@ -1848,7 +1975,7 @@ TyStrLen(Value const *str)
 #define sfmt(...) ((sfmt)(ty, __VA_ARGS__))
 #define vfmt(...) ((STRING_FORMAT)(ty, __VA_ARGS__))
 
-#define XPRINT_CTX(fmt, ...) do { \
+#define XPRINT_CTX(fmt, ...) do {                                                                 \
         Expr const *expr   = compiler_find_expr(ty, ty->ip - 1);                                  \
         char const *func   = (vN(ty->st->frames) > 0) ? name_of(&vvL(ty->st->frames)->f) : NULL;  \
         LOGX(                                                                                     \

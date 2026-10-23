@@ -679,10 +679,10 @@ uninit(Ty *ty, Symbol const *s)
                 s->mod->path,
                 TERM(0),
                 TERM(33),
-                s->loc.line + 1,
+                LocLine(s->loc) + 1,
                 TERM(0),
                 TERM(33),
-                s->loc.col + 1,
+                LocCol(s->loc) + 1,
                 TERM(0),
                 (why != NULL) ? " at compile time: " : "",
                 (why != NULL) ? why : ""
@@ -829,7 +829,7 @@ show_impl(
                                         "%s<ns %s'%s'%s>%s",
                                         TERM(93),
                                         TERM(95),
-                                        v.namespace->name,
+                                        xF(v.namespace, name),
                                         TERM(93),
                                         TERM(0)
                                 );
@@ -837,7 +837,7 @@ show_impl(
                                 sxdf(
                                         &buf,
                                         "<ns '%s'>",
-                                        v.namespace->name
+                                        xF(v.namespace, name)
                                 );
                         }
                         break;

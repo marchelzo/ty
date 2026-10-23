@@ -39,12 +39,12 @@ slot_label(BcLir const *c, i32 slot)
 
         if (
                 (e != NULL)
-             && (e->scope != NULL)
+             && (xF(e, scope) != NULL)
              && (slot >= 0)
-             && (slot < vN(e->scope->owned))
-             && (v__(e->scope->owned, slot) != NULL)
+             && (slot < vN(xF(e, scope)->owned))
+             && (v__(xF(e, scope)->owned, slot) != NULL)
         ) {
-                return v__(e->scope->owned, slot)->identifier;
+                return v__(xF(e, scope)->owned, slot)->identifier;
         }
 
         return "?";
@@ -1133,7 +1133,7 @@ vs_plan(BcLir *c, Ty *ty, Value const *f)
         Expr const *expr = expr_of(f);
 
         c->vs        = new(c, BcSlot, c->max_sp + 8);
-        c->hints     = (expr != NULL && !from_eval(f)) ? &expr->type_hints : NULL;
+        c->hints     = (expr != NULL && !from_eval(f)) ? &xF(expr, type_hints) : NULL;
         c->speculate = !c->dynamic
                     && !c->has_try
                     && (c->nresume == c->nosr)
@@ -1152,16 +1152,16 @@ vs_plan(BcLir *c, Ty *ty, Value const *f)
         c->proven_gen  = new(c, u32, c->bound);
         c->gen         = 1;
 
-        if (expr == NULL || expr->scope == NULL) {
+        if (expr == NULL || xF(expr, scope) == NULL) {
                 return true;
         }
 
-        c->hints = &expr->type_hints;
+        c->hints = &xF(expr, type_hints);
 
-        i32 n = min(c->bound, vN(expr->scope->owned));
+        i32 n = min(c->bound, vN(xF(expr, scope)->owned));
 
         for (i32 slot = 0; slot < n; ++slot) {
-                Symbol *sym = v__(expr->scope->owned, slot);
+                Symbol *sym = v__(xF(expr, scope)->owned, slot);
 
                 if (SymbolIsCaptured(sym)) {
                         continue;

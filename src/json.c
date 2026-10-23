@@ -1270,13 +1270,13 @@ static T2Type
 object_field_type(Ty *ty, T2Type receiver, Class *c, int id)
 {
         for (; c != NULL && c->def != NULL; c = c->super) {
-                ClassDefinition const *def = &c->def->class;
+                ClassDefinition const *def = &sF(c->def, class);
                 for (u32 i = 0; i < vN(def->fields); ++i) {
                         Expr const *field = v__(def->fields, i);
                         if (field->type == EXPRESSION_EQ) {
-                                field = field->target;
+                                field = xF(field, target);
                         }
-                        if (field->type == EXPRESSION_IDENTIFIER && M_ID(field->identifier) == id) {
+                        if (field->type == EXPRESSION_IDENTIFIER && M_ID(xF(field, identifier)) == id) {
                                 return t2_member_type(ty, receiver, field->_type);
                         }
                 }
@@ -2070,10 +2070,11 @@ dobj(JP *p, JNode *n, Value *out)
 
         if (n->obj.raw) {
                 o = mAo(sizeof (TyObject) + n->obj.nslot * sizeof (Value), GC_OBJECT);
-                o->init    = false;
-                o->class   = n->obj.c;
-                o->dynamic = NULL;
-                o->nslot   = n->obj.nslot;
+                o->init      = false;
+                o->finalized = false;
+                o->class     = n->obj.c;
+                o->dynamic   = NULL;
+                o->nslot     = n->obj.nslot;
         } else {
                 o = class_new_instance(ty, n->obj.class);
         }

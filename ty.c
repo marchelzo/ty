@@ -315,7 +315,8 @@ execln(Ty *ty, char *line)
                 if (prog == NULL || prog[0] == NULL) {
                         goto Bad;
                 }
-                Expr expr = { .type = EXPRESSION_STATEMENT, .statement = prog[0] };
+                Expr expr = { .type = EXPRESSION_STATEMENT };
+                xF(&expr, statement) = prog[0];
                 if (compiler_symbolize_expression(ty, &expr, NULL)) {
                         int rows;
                         int columns;
@@ -348,8 +349,8 @@ execln(Ty *ty, char *line)
 
                 Expr *pair = TyToCExpr(ty, vm_get(ty, -1));
 
-                T2Type t0 = t2_resolve(ty, v__(pair->es, 0));
-                T2Type t1 = t2_resolve(ty, v__(pair->es, 1));
+                T2Type t0 = t2_resolve(ty, v__(xF(pair, es), 0));
+                T2Type t1 = t2_resolve(ty, v__(xF(pair, es), 1));
 
                 bool related = (t0 == T2_TYPE_INVALID)
                             || (t1 == T2_TYPE_INVALID)

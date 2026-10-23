@@ -146,14 +146,14 @@ static Ty *ty = &vvv;
                 fprintf(                                    \
                         stderr,                             \
                         "[f=%zu fp=%zu sp=%zu]: %s   %s\n", \
-                        vN(FRAMES), \
-                        vN(FRAMES) ? vvL(FRAMES)->fp : 0, \
-                        vN(STACK), \
-                        GetInstructionName(IP[-1]), \
-                        vN(STACK) ? SHOW(top()) : "--" \
+                        vN(FRAMES),                         \
+                        vN(FRAMES) ? vvL(FRAMES)->fp : 0,   \
+                        vN(STACK),                          \
+                        GetInstructionName(IP[-1]),         \
+                        vN(STACK) ? SHOW(top()) : "--"      \
                 );
 #define YCASE(i) case INSTR_##i:
-#define CASE(i) \
+#define CASE(i)         \
         case INSTR_##i: \
                 CO_LOG(#i, TERM(93), "");
 #endif
@@ -549,15 +549,59 @@ NextGCPhase(Ty *ty, int phase, int n_running)
 }
 
 static void
-MarkPendingFFIAutoValues(Ty *marker, Ty *owner)
+MarkPendingFFIAutoValues(Ty *marker, AllocList const *allocs)
 {
-        for (usize i = 0; i < vN(owner->allocs); ++i) {
-                struct alloc *a = v__(owner->allocs, i);
+        for (usize i = 0; i < vN(*allocs); ++i) {
+                struct alloc *a = v__(*allocs, i);
                 if (a->type == GC_FFI_AUTO && !(a->mark & 1) && a->hard == 0) {
                         Value *values = (Value *)a->data;
                         value_mark(marker, &values[0]);
                         value_mark(marker, &values[1]);
                 }
+        }
+}
+
+static void
+QueueFinalizers(Ty *ty, AllocList const *allocs)
+{
+        for (usize i = 0; i < vN(*allocs); ++i) {
+                struct alloc *a = v__(*allocs, i);
+                TyObject     *o = (TyObject *)a->data;
+                Value         v;
+                if (
+                        (a->type == GC_OBJECT)
+                     && !(a->mark & 1)
+                     && (a->hard == 0)
+                     && !o->finalized
+                     && (class_get_finalizer(ty, o->class->i).type != VALUE_NONE)
+                ) {
+                        v = OBJECT(o, o->class->i);
+                        o->finalized = true;
+                        xvP(ty->group->Finalize, v);
+                        value_mark(ty, &v);
+                }
+        }
+}
+
+static void
+RunFinalizers(Ty *ty)
+{
+        for (;;) {
+                Value o = NIL;
+                Value f;
+                GC_STOP();
+                TySpinLockLock(&ty->group->DLock);
+                if (vN(ty->group->Finalize) > 0) {
+                        o = vXx(ty->group->Finalize);
+                }
+                TySpinLockUnlock(&ty->group->DLock);
+                if (o.type == VALUE_NIL) {
+                        GC_RESUME();
+                        break;
+                }
+                f = class_get_finalizer(ty, o.class);
+                vm_call_method(ty, &o, &f, 0);
+                GC_RESUME();
         }
 }
 
@@ -601,7 +645,7 @@ WaitGC(Ty *ty)
         }
 
         MarkStorage(ty);
-        MarkPendingFFIAutoValues(ty, ty);
+        MarkPendingFFIAutoValues(ty, &ty->allocs);
         ty->group->GCReadyCount += 1;
 
         WaitForGCPhase(ty, GC_PHASE_SWEEP);
@@ -706,9 +750,16 @@ DoGC(Ty *ty)
         MarkStorage(ty);
 
         for (int i = 0; i < nBlocked; ++i) {
-                MarkPendingFFIAutoValues(ty, v__(ty->group->TyList, blockedThreads[i]));
+                MarkPendingFFIAutoValues(ty, &v__(ty->group->TyList, blockedThreads[i])->allocs);
         }
-        MarkPendingFFIAutoValues(ty, ty);
+        MarkPendingFFIAutoValues(ty, &ty->allocs);
+
+        TySpinLockLock(&ty->group->DLock);
+        MarkPendingFFIAutoValues(ty, &ty->group->DeadAllocs);
+        for (int i = 0; i < vN(ty->group->Finalize); ++i) {
+                value_mark(ty, v_(ty->group->Finalize, i));
+        }
+        TySpinLockUnlock(&ty->group->DLock);
 
         if (ty->group == &MainGroup) {
                 GCLOG("Marking %zu global roots on thread %llu", vN(Globals), TID);
@@ -717,6 +768,8 @@ DoGC(Ty *ty)
                         value_mark(ty, v_(Globals, i));
                 }
                 LOG_REACHED(" => globals reached %llu", TotalReached);
+
+                class_mark_refs(ty);
 
                 RESET_TOTAL_REACHED();
                 GCRootSet *immortal = GCImmortalSet(ty);
@@ -731,6 +784,21 @@ DoGC(Ty *ty)
 
                 DebugMarkRoots(ty);
         }
+
+        while (ty->group->GCReadyCount < nRunning) {
+                ;
+        }
+
+        for (int i = 0; i < vN(ty->group->TyList); ++i) {
+                if (v__(ty->group->TyList, i) != ty) {
+                        QueueFinalizers(ty, &v__(ty->group->TyList, i)->allocs);
+                }
+        }
+        QueueFinalizers(ty, &ty->allocs);
+
+        TySpinLockLock(&ty->group->DLock);
+        QueueFinalizers(ty, &ty->group->DeadAllocs);
+        TySpinLockUnlock(&ty->group->DLock);
 
         NextGCPhase(ty, GC_PHASE_SWEEP, nRunning);
 
@@ -766,6 +834,8 @@ DoGC(Ty *ty)
         TySpinLockUnlock(&ty->group->Lock);
 
         GCLOG("Unlocked ThreadsLock and GCLock on thread %llu", TID);
+
+        RunFinalizers(ty);
 
 #if defined(TY_GC_STATS)
         u64 end = TyMonotonicTime();
@@ -1161,7 +1231,7 @@ SearchPathReady:
 //===========================================================================
 /* Add FFI types here because they aren't constant expressions on Windows. */
 //---------------------------------------------------------------------------
-#define BUILTIN_FFI_TYPE(name, ffi_type_ptr, t)                         \
+#define BUILTIN_FFI_TYPE(name, ffi_type_ptr, t)                            \
         compiler_introduce_symbol(ty, "ffi", name, "CType[" t "]", false); \
         xvP(Globals, PTR(ffi_type_ptr))
 //---------------------------------------------------------------------------
@@ -1312,8 +1382,8 @@ xprint_stack(Ty *ty, int n)
                 int off = i_abs - vvL(FRAMES)->fp;
 
                 Expr const *func = compiler_find_func(ty, IP);
-                char const *name = (func != NULL && vN(func->scope->owned) > off)
-                                 ? v_(func->scope->owned, off)[0]->identifier
+                char const *name = (func != NULL && vN(xF(func, scope)->owned) > off)
+                                 ? v_(xF(func, scope)->owned, off)[0]->identifier
                                  : NULL;
 
                 if (off == 0) {
@@ -1321,7 +1391,7 @@ xprint_stack(Ty *ty, int n)
                                 stderr,
                                 "%s%8.8s%s --> %s%8.8s%s = %s\n",
                                 TERM(95;1),
-                                (func == NULL ? "???" : func->name),
+                                (func == NULL ? "???" : xF(func, name)),
                                 TERM(0;92),
                                 TERM(33),
                                 name,
@@ -3824,7 +3894,7 @@ InertInit(Value const *init, int argc, Value const *kwargs)
         return (argc == 0)
             && ((kwargs == NULL) || IsNil(*kwargs))
             && (init->type == VALUE_FUNCTION)
-            && expr_of(init)->inert;
+            && xF(expr_of(init), inert);
 }
 
 static Value
@@ -7511,10 +7581,40 @@ Strict:
         put(v);
 }
 
+static _Thread_local VmSnippet Snippet;
+
+VmSnippet
+vm_snippet_begin(char const *code, usize n)
+{
+        VmSnippet outer = Snippet;
+
+        Snippet = (VmSnippet) {
+                .lo   = code,
+                .hi   = code + n,
+                .made = false
+        };
+
+        return outer;
+}
+
+bool
+vm_snippet_end(VmSnippet outer)
+{
+        bool made = Snippet.made;
+
+        Snippet = outer;
+
+        return made;
+}
+
 char *
 DoFunction(Ty *ty, char const *ip, Value *locals, Value **env)
 {
         Value v = {0};
+
+        if (UNLIKELY(Snippet.lo != NULL) && ip >= Snippet.lo && ip < Snippet.hi) {
+                Snippet.made = true;
+        }
 
         v.type = VALUE_FUNCTION;
 
@@ -7575,7 +7675,7 @@ DoFunction(Ty *ty, char const *ip, Value *locals, Value **env)
         }
 
         if (UNLIKELY(
-                expr_of(&v)->must_jit
+                xF(expr_of(&v), must_jit)
              && ((uptr)jit_of(&v) == JIT_UNSEEN)
              && !NoJIT
              && !DebugJitOff
@@ -7707,7 +7807,7 @@ ResolveTrace(Ty *ty, ThrowCtx const *ctx)
                 }
 
                 ValueVector localv = v__(ctx->locals, i);
-                Scope *scope = func->scope;
+                Scope *scope = xF(func, scope);
                 Dict *locals = dict_new(ty);
 
                 for (int i = 0; i < vN(scope->owned); ++i) {
@@ -9990,11 +10090,11 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
                         if (
                                 DetailedExceptions
                              && ((func = compiler_find_func(ty, ip - 1)) != NULL)
-                             && (func->scope != NULL)
-                             && (vN(func->scope->owned) > 0)
+                             && (xF(func, scope) != NULL)
+                             && (vN(xF(func, scope)->owned) > 0)
                         ) {
                                 ValueVector localv = v__(ctx->locals, i);
-                                Scope *scope = func->scope;
+                                Scope *scope = xF(func, scope);
 
                                 int max_width = 0;
                                 for (int i = 0; i < vN(scope->owned); ++i) {

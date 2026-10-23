@@ -306,10 +306,10 @@ adopt_hole_contents(SpanWalk *w)
                         continue;
                 }
                 Expr const *tmpl = v__(w->nodes, t).e;
-                if (hole->e->hole.i >= vN(tmpl->template.holes)) {
+                if (xF(hole->e, hole).i >= vN(xF(tmpl, template).holes)) {
                         continue;
                 }
-                Expr const *content = v__(tmpl->template.holes, hole->e->hole.i);
+                Expr const *content = v__(xF(tmpl, template).holes, xF(hole->e, hole).i);
                 for (i32 j = t + 1; j < vN(w->nodes); ++j) {
                         SpanNode *node = v_(w->nodes, j);
                         if (j != i && node->e == content && !node->target) {
@@ -327,7 +327,7 @@ adopt_hole_contents(SpanWalk *w)
                 Expr const *tmpl = v__(w->nodes, node->parent).e;
                 if (
                         (tmpl->type != EXPRESSION_TEMPLATE)
-                     || !contains_ptr(&tmpl->template.holes, node->e)
+                     || !contains_ptr(&xF(tmpl, template).holes, node->e)
                 ) {
                         continue;
                 }
@@ -342,14 +342,14 @@ pre_e(Expr *e, Scope *scope, void *u)
         Ty *ty = w->ty;
 
         if (e != NULL && e->type == EXPRESSION_TEMPLATE) {
-                for (usize i = 0; i < vN(e->template.exprs); ++i) {
-                        pset_add(ty, &w->xholes, v__(e->template.exprs, i));
+                for (usize i = 0; i < vN(xF(e, template).exprs); ++i) {
+                        pset_add(ty, &w->xholes, v__(xF(e, template).exprs, i));
                 }
         }
 
         if (e != NULL && e->type == EXPRESSION_FUNCTION) {
-                for (usize i = 0; i < vN(e->decorators); ++i) {
-                        pset_add(ty, &w->decorators, v__(e->decorators, i));
+                for (usize i = 0; i < vN(xF(e, decorators)); ++i) {
+                        pset_add(ty, &w->decorators, v__(xF(e, decorators), i));
                 }
         }
 
@@ -390,7 +390,7 @@ pre_s(Stmt *s, Scope *scope, void *u)
         case STATEMENT_OPERATOR_DEFINITION:
         case STATEMENT_MACRO_DEFINITION:
         case STATEMENT_FUN_MACRO_DEFINITION:
-                pset_add(ty, &w->targets, s->target);
+                pset_add(ty, &w->targets, sF(s, target));
                 break;
         }
 
@@ -409,10 +409,10 @@ post_s(Stmt *s, Scope *scope, void *u)
 static bool
 in_source(SpanCheck const *c, Expr const *e)
 {
-        return (e->start.s >= c->src)
-            && (e->end.s >= c->src)
-            && (e->start.s <= c->src + c->n)
-            && (e->end.s <= c->src + c->n)
+        return (LocS(e->start) >= c->src)
+            && (LocS(e->end) >= c->src)
+            && (LocS(e->start) <= c->src + c->n)
+            && (LocS(e->end) <= c->src + c->n)
             && (e->start.byte <= c->n)
             && (e->end.byte <= c->n);
 }
@@ -450,7 +450,7 @@ macro_output(SpanCheck const *c, Expr const *e)
                         (x == e)
                      || (
                                 (x->type == STATEMENT_EXPRESSION)
-                             && (((Stmt const *)x)->expression == e)
+                             && (sF(((Stmt const *)x), expression) == e)
                         )
                 ) {
                         return true;
@@ -468,7 +468,7 @@ report(Ty *ty, SpanCheck *c, char const *check, Expr const *e, Expr const *other
                 "kind",   xSz(kind_name(e)),
                 "start",  INTEGER(e->start.byte),
                 "end",    INTEGER(e->end.byte),
-                "line",   INTEGER(e->start.line + 1),
+                "line",   INTEGER(LocLine(e->start) + 1),
                 "other",  (other == NULL) ? NIL : xSz(kind_name(other))
         );
 
@@ -964,8 +964,8 @@ syntax_snapshot(Ty *ty, Module *mod)
                 i32 kind = extra_kind(x->kind);
                 if (
                         (kind == 0)
-                     || (x->start.s < mod->source)
-                     || (x->start.s > mod->source + c.n)
+                     || (LocS(x->start) < mod->source)
+                     || (LocS(x->start) > mod->source + c.n)
                      || (x->end.byte > c.n)
                      || (x->start.byte >= x->end.byte)
                 ) {
@@ -985,8 +985,8 @@ syntax_snapshot(Ty *ty, Module *mod)
                 MacroSpan const *m = v_(mod->macros, k);
                 if (
                         (strcmp(m->name, "$$[") == 0)
-                     || (m->start.s < mod->source)
-                     || (m->start.s > mod->source + c.n)
+                     || (LocS(m->start) < mod->source)
+                     || (LocS(m->start) > mod->source + c.n)
                      || (m->end.byte > c.n)
                      || (m->start.byte >= m->end.byte)
                 ) {
@@ -1115,8 +1115,8 @@ TY_BUILTIN_RAW(ty_syntax_macros)
         for (isize i = 0; i < vN(mod->macros); ++i) {
                 MacroSpan const *m = v_(mod->macros, i);
                 if (
-                        (m->start.s < mod->source)
-                     || (m->start.s > mod->source + n)
+                        (LocS(m->start) < mod->source)
+                     || (LocS(m->start) > mod->source + n)
                      || (m->end.byte > n)
                      || (m->start.byte >= m->end.byte)
                 ) {
@@ -1175,8 +1175,8 @@ TY_BUILTIN_RAW(ty_syntax_extras)
         for (isize i = 0; i < vN(mod->extras); ++i) {
                 SyntaxExtra const *x = v_(mod->extras, i);
                 if (
-                        (x->start.s < mod->source)
-                     || (x->start.s > mod->source + n)
+                        (LocS(x->start) < mod->source)
+                     || (LocS(x->start) > mod->source + n)
                      || (x->end.byte > n)
                      || (x->start.byte >= x->end.byte)
                 ) {
@@ -2260,8 +2260,8 @@ TY_BUILTIN_RAW(ty_syntax_members)
                 }
                 Array *members = vA();
                 vAp(out, ARRAY(members));
-                for (usize j = 0; j < vN(s->class.members); ++j) {
-                        Expr const *m = v__(s->class.members, j);
+                for (usize j = 0; j < vN(sF(s, class).members); ++j) {
+                        Expr const *m = v__(sF(s, class).members, j);
                         vAp(members, vTn(
                                 "kind",  xSz(kind_name(m)),
                                 "start", INTEGER(m->start.byte),
@@ -2370,8 +2370,8 @@ symbol_record(Ty *ty, Symbol const *sym, Module const *home)
                 "kind",     xSz(symbol_kind(sym)),
                 "module",   (mod == NULL || mod->name == NULL) ? NIL : xSz(mod->name),
                 "path",     (mod == NULL || mod->path == NULL) ? NIL : xSz(mod->path),
-                "line",     INTEGER(sym->loc.line + 1),
-                "col",      INTEGER(sym->loc.col + 1),
+                "line",     INTEGER(LocLine(sym->loc) + 1),
+                "col",      INTEGER(LocCol(sym->loc) + 1),
                 "byte",     INTEGER(sym->loc.byte),
                 "here",     BOOLEAN(home != NULL && mod == home),
                 "global",   BOOLEAN(SymbolIsGlobal(sym)),
@@ -2391,7 +2391,7 @@ expr_symbol(Expr const *e)
         case EXPRESSION_IDENTIFIER:
         case EXPRESSION_MATCH_REST:
         case EXPRESSION_PACK:
-                return e->symbol;
+                return xF(e, symbol);
 
         default:
                 return NULL;
@@ -2403,21 +2403,21 @@ callee_symbol(Expr const *e)
 {
         if (
                 (e->type != EXPRESSION_FUNCTION_CALL)
-             || (e->function == NULL)
-             || (e->function->type != EXPRESSION_IDENTIFIER)
+             || (xF(e, function) == NULL)
+             || (xF(e, function)->type != EXPRESSION_IDENTIFIER)
         ) {
                 return NULL;
         }
 
-        return e->function->symbol;
+        return xF(xF(e, function), symbol);
 }
 
 static Symbol *
 stmt_symbol(Stmt const *s)
 {
         switch (s->type) {
-        case STATEMENT_CLASS_DEFINITION: return s->class.var;
-        case STATEMENT_TAG_DEFINITION:   return s->tag.var;
+        case STATEMENT_CLASS_DEFINITION: return sF(s, class).var;
+        case STATEMENT_TAG_DEFINITION:   return sF(s, tag).var;
         default:                         return NULL;
         }
 }
@@ -2466,8 +2466,8 @@ param_symbol(Module const *mod, SyntaxNode const *param, Expr const *fn)
         usize n;
         char const *name = param_name(mod->source, param->start, param->end, &n);
 
-        for (usize i = 0; i < vN(fn->param_symbols); ++i) {
-                Symbol *sym = v__(fn->param_symbols, i);
+        for (usize i = 0; i < vN(xF(fn, param_symbols)); ++i) {
+                Symbol *sym = v__(xF(fn, param_symbols), i);
                 if (
                         (sym != NULL)
                      && (sym->identifier != NULL)
@@ -2503,8 +2503,8 @@ collect_e(Expr *e, Scope *scope, void *u)
         if (
                 (e == NULL)
              || pset_has(&r->seen, e)
-             || (e->start.s < r->src)
-             || (e->start.s > r->src + r->n)
+             || (LocS(e->start) < r->src)
+             || (LocS(e->start) > r->src + r->n)
              || (e->start.byte >= e->end.byte)
              || (e->end.byte > r->n)
         ) {
@@ -3358,8 +3358,8 @@ TY_BUILTIN_RAW(ty_syntax_tree)
                 SLOT(o, sl, SF_KIND)     = xSz(symbol_kind(sym));
                 SLOT(o, sl, SF_MODULE)   = (home == NULL || home->name == NULL) ? NIL : xSz(home->name);
                 SLOT(o, sl, SF_PATH)     = (home == NULL || home->path == NULL) ? NIL : xSz(home->path);
-                SLOT(o, sl, SF_LINE)     = INTEGER(sym->loc.line + 1);
-                SLOT(o, sl, SF_COL)      = INTEGER(sym->loc.col + 1);
+                SLOT(o, sl, SF_LINE)     = INTEGER(LocLine(sym->loc) + 1);
+                SLOT(o, sl, SF_COL)      = INTEGER(LocCol(sym->loc) + 1);
                 SLOT(o, sl, SF_BYTE)     = INTEGER(sym->loc.byte);
                 SLOT(o, sl, SF_HERE)     = BOOLEAN(home == mod);
                 SLOT(o, sl, SF_GLOBAL)   = BOOLEAN(SymbolIsGlobal(sym));
@@ -3853,15 +3853,15 @@ TY_BUILTIN_RAW(ty_syntax_member)
         }
 
         bool method = (e->type == EXPRESSION_FUNCTION);
-        Class const *owner = (method && e->class != NULL) ? e->class : t2_class_of(ty, (T2Type)t);
-        Module const *mod = source_module(ty, e->start.s);
+        Class const *owner = (method && xF(e, class) != NULL) ? xF(e, class) : t2_class_of(ty, (T2Type)t);
+        Module const *mod = source_module(ty, LocS(e->start));
 
         if (
                 (mod == NULL)
              && (home.type == VALUE_MODULE)
              && (home.mod->source != NULL)
-             && (e->start.s >= home.mod->source)
-             && (e->start.s <= home.mod->source + strlen(home.mod->source))
+             && (LocS(e->start) >= home.mod->source)
+             && (LocS(e->start) <= home.mod->source + strlen(home.mod->source))
         ) {
                 mod = home.mod;
         }
@@ -3871,10 +3871,10 @@ TY_BUILTIN_RAW(ty_syntax_member)
                 "kind",  xSz(method ? "method" : "field"),
                 "owner", (owner == NULL) ? NIL : xSz(class_name(ty, owner->i)),
                 "path",  (mod == NULL || mod->path == NULL) ? NIL : xSz(mod->path),
-                "line",  INTEGER(e->start.line + 1),
-                "col",   INTEGER(e->start.col + 1),
+                "line",  INTEGER(LocLine(e->start) + 1),
+                "col",   INTEGER(LocCol(e->start) + 1),
                 "byte",  INTEGER(e->start.byte),
                 "type",  INTEGER((e->_type == T2_TYPE_INVALID) ? -1 : (i64)e->_type),
-                "doc",   (method && e->doc != NULL) ? xSz(e->doc) : NIL
+                "doc",   (method && xF(e, doc) != NULL) ? xSz(xF(e, doc)) : NIL
         );
 }

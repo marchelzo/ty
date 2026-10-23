@@ -12,6 +12,7 @@
 #include "class.h"
 #include "ty/thread.h"
 #include "compiler.h"
+#include "alloc.h"
 #include "itable.h"
 #include "chan.h"
 #include "queue.h"
@@ -25,12 +26,40 @@ static TySpinLock ImmortalLock = TY_MUTEX_INIT;
 #define A_STORE(p, x) atomic_store_explicit((p), (x), memory_order_relaxed)
 
 inline static void
+finalize(Ty *ty, struct alloc *a)
+{
+        TyObject *obj = (TyObject *)a->data;
+        Value     o;
+        Value     f;
+
+        switch (a->type) {
+        case GC_OBJECT:
+                o = OBJECT(obj, obj->class->i);
+                f = class_get_finalizer(ty, o.class);
+                if (!obj->finalized && f.type != VALUE_NONE) {
+                        obj->finalized = true;
+                        vm_call_method(ty, &o, &f, 0);
+                }
+                break;
+
+        case GC_FFI_AUTO:
+                o = ((Value *)a->data)[1];
+                f = ((Value *)a->data)[0];
+                if (f.type == VALUE_PTR) {
+                        ((void (*)(void *))f.ptr)(o.ptr);
+                } else {
+                        vmP(&o);
+                        vmC(&f, 1);
+                }
+                break;
+        }
+}
+
+inline static void
 collect(Ty *ty, struct alloc *a)
 {
         void *p = a->data;
 
-        Value o;
-        Value finalizer;
         Regex *re;
         Thread *t;
         Generator *gen;
@@ -118,13 +147,9 @@ collect(Ty *ty, struct alloc *a)
                 break;
 
         case GC_OBJECT:
-                o = OBJECT((TyObject *)p, ((TyObject *)p)->class->i);
-                finalizer = class_get_finalizer(ty, o.class);
-                if (finalizer.type != VALUE_NONE) {
-                        vm_call_method(ty, &o, &finalizer, 0);
-                }
-                if (o.object->dynamic != NULL) {
-                        itable_release(ty, o.object->dynamic);
+                finalize(ty, a);
+                if (((TyObject *)p)->dynamic != NULL) {
+                        itable_release(ty, ((TyObject *)p)->dynamic);
                 }
                 break;
 
@@ -135,7 +160,11 @@ collect(Ty *ty, struct alloc *a)
                 break;
 
         case GC_ARENA:
+#if defined(TY_SYSMALLOC)
+                FreeArenaChunks(p);
+#else
                 ForgetSourceNodesFrom(p, a->size);
+#endif
                 break;
 
         case GC_FUN_INFO:
@@ -153,14 +182,7 @@ collect(Ty *ty, struct alloc *a)
                 break;
 
         case GC_FFI_AUTO:
-                finalizer = ((Value *)p)[0];
-                o = ((Value *)p)[1];
-                if (finalizer.type == VALUE_PTR) {
-                        ((void (*)(void *))finalizer.ptr)(o.ptr);
-                } else {
-                        vmP(&o);
-                        vmC(&finalizer, 1);
-                }
+                finalize(ty, a);
                 break;
         }
 }
@@ -234,9 +256,19 @@ GCSweep(Ty *ty, AllocList *allocs, isize *used)
                         !(A_LOAD(&v__(*allocs, i)->mark) & 1)
                      && (A_LOAD(&v__(*allocs, i)->hard) == 0)
                 ) {
+                        finalize(ty, v__(*allocs, i));
+                }
+        }
+        for (int i = 0; i < vN(*allocs); ++i) {
+                if (
+                        !(A_LOAD(&v__(*allocs, i)->mark) & 1)
+                     && (A_LOAD(&v__(*allocs, i)->hard) == 0)
+                ) {
                         *used -= min(v__(*allocs, i)->size, *used);
                         PROF_FREE(v__(*allocs, i));
-                        collect(ty, v__(*allocs, i));
+                        if (v__(*allocs, i)->type != GC_FFI_AUTO) {
+                                collect(ty, v__(*allocs, i));
+                        }
                         ty_free(v__(*allocs, i));
                 } else {
                         A_STORE(&v__(*allocs, i)->mark, A_LOAD(&v__(*allocs, i)->mark) & ~1);

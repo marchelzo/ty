@@ -165,11 +165,11 @@ VWrapError(
 
         Expr const *origin = (where != NULL) ? where->origin : NULL;
 
-        if (origin != NULL && origin->start.s != NULL) {
+        if (origin != NULL && LocS(origin->start) != NULL) {
                 vAp(locs.array, TyTraceEntryFor(ty, origin));
         }
 
-        if (where != NULL && where->start.s != NULL) {
+        if (where != NULL && LocS(where->start) != NULL) {
                 vAp(locs.array, TyTraceEntryFor(ty, where));
         }
 

@@ -225,6 +225,18 @@ vm_builtin_method_source(int class, char const *name, char const **file, int *li
 void
 vm_exec(Ty *ty, char *ip);
 
+typedef struct {
+        char const *lo;
+        char const *hi;
+        bool        made;
+} VmSnippet;
+
+VmSnippet
+vm_snippet_begin(char const *code, usize n);
+
+bool
+vm_snippet_end(VmSnippet outer);
+
 void
 vm_xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs);
 

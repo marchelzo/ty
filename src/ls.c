@@ -151,8 +151,8 @@ classify_identifier(Token const *t, char const *source)
         if (is_type_name(t->identifier))
                 return SEM_TYPE;
 
-        if (t->end.s != NULL && source != NULL) {
-                char const *p = t->end.s;
+        if (LocS(t->end) != NULL && source != NULL) {
+                char const *p = LocS(t->end);
                 while (*p == ' ' || *p == '\t') {
                         ++p;
                 }
@@ -186,8 +186,8 @@ EncodeTokens(Ty *ty, ValueVector *out, TokenVector const *tokens, char const *so
                 if (sem < 0)
                         continue;
 
-                i32 tline = (i32)t->start.line;
-                i32 tcol  = (i32)t->start.col;
+                i32 tline = (i32)LocLine(t->start);
+                i32 tcol  = (i32)LocCol(t->start);
                 i32 len   = (i32)(t->end.byte - t->start.byte);
 
                 if (len <= 0)
@@ -993,8 +993,8 @@ Serve(Ty *ty, Value req)
 
                 result = vTn(
                         "name",    xSz(sym->identifier),
-                        "line",    INTEGER(sym->loc.line),
-                        "col",     INTEGER(sym->loc.col),
+                        "line",    INTEGER(LocLine(sym->loc)),
+                        "col",     INTEGER(LocCol(sym->loc)),
                         "file",    xSz(sym->mod ? sym->mod->path : "<unknown>"),
                         "type",    ShowType(ty, HoverType(sym)),
                         "doc",     (sym->doc == NULL) ? NIL : xSz(sym->doc),
@@ -1025,7 +1025,7 @@ Serve(Ty *ty, Value req)
                 }
 
                 result = vTn(
-                        "source",      xSs(QueryExpr->start.s, QueryExpr->end.s - QueryExpr->start.s),
+                        "source",      xSs(LocS(QueryExpr->start), LocS(QueryExpr->end) - LocS(QueryExpr->start)),
                         "type",        xSz(t2_show(ty, QueryExpr->_type)),
                         "completions", ARRAY((Array *)&items)
                 );

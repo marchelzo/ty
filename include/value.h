@@ -1711,10 +1711,10 @@ FunDef(Ty *ty, Value const *f)
         defs = ARRAY(vA());
         gP(&defs);
 
-        for (int i = 0; i < vN(fun->functions); ++i) {
-                Expr *arm = v__(fun->functions, i);
+        for (int i = 0; i < vN(xF(fun, functions)); ++i) {
+                Expr *arm = v__(xF(fun, functions), i);
                 if (IsStmt(arm)) {
-                        arm = ((Stmt *)arm)->value;
+                        arm = sF(((Stmt *)arm), value);
                 }
                 if (HasBody(arm)) {
                         vAp(defs.array, ExprDef(ty, arm));
@@ -1737,10 +1737,9 @@ Value
 PrettySource(Ty *ty, Value const *v);
 
 static inline Value *
-NewZero(void)
+NewZero(Ty *ty)
 {
-        return alloc0(sizeof (struct alloc) + sizeof *NewZero())
-             + sizeof (struct alloc);
+        return mAo0(sizeof (Value), GC_VALUE);
 }
 
 #define PutMember(o, m, x) ((PutMember)(ty, (o), (m), (x)))

@@ -88,7 +88,7 @@ hint_class(BcLir *c, i32 offset)
                 return NULL;
         }
 
-        T2Type type = find_type_hint(&expr->type_hints, offset);
+        T2Type type = find_type_hint(&xF(expr, type_hints), offset);
 
         return (type == T2_TYPE_INVALID) ? NULL : expected_class_of(c->ctx, type);
 }

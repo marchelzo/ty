@@ -1383,7 +1383,7 @@ flow_special(BcLir *c, BcQueue *q, i32 at, i32 *sp, i32 *taken)
 
         case INSTR_RENDER_TEMPLATE: {
                 Expr const *expr  = peek(void const *, ip + 1);
-                i32         count = vN(expr->template.holes);
+                i32         count = vN(xF(expr, template).holes);
                 if (*sp < count) {
                         return FLOW_FAIL;
                 }
@@ -3139,7 +3139,7 @@ static void
 prof_site(BcLir *c, BcLirNode const *node, char const *ip, i32 off)
 {
         Expr const *at = compiler_find_expr(c->ctx, ip);
-        i32 line = (at != NULL) ? (i32)at->start.line : -1;
+        i32 line = (at != NULL) ? (i32)LocLine(at->start) : -1;
 
         if (node->label != LIR_NONE || line != c->prof_line || c->prof_expr == NULL) {
                 effect(c, LIR_SITE, (LirOpnd[]) { lir_i(off + 1) }, 1);
@@ -3436,8 +3436,8 @@ static void
 log_compile(Value const *f, BcLir const *c, LirCode *code, u64 begin, JitNotes notes)
 {
         Expr const *expr    = !from_eval(f) ? expr_of(f) : NULL;
-        char const *cls     = (expr != NULL && expr->class != NULL)
-                            ? expr->class->name
+        char const *cls     = (expr != NULL && xF(expr, class) != NULL)
+                            ? xF(expr, class)->name
                             : "";
         u64         elapsed = TyMonotonicTime() - begin;
 
@@ -3645,6 +3645,7 @@ jit_lower(Ty *ty, Value const *f)
         SCRATCH_SAVE();
         JitFn *fn = compile(ty, f, begin);
         SCRATCH_RESTORE();
+        TrimScratch(ty, 1 << 20);
 
         PROF_LEAVE();
 

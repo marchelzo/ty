@@ -39,7 +39,7 @@
 #define VA_SELECT_INNER(f, i) CAT(f##_, i)
 #define VA_SELECT(f, ...) VA_SELECT_INNER(f, VA_COUNT(__VA_ARGS__))(__VA_ARGS__)
 
-#if defined(TY_RELEASE)
+#if defined(TY_RELEASE) && !defined(TY_SYSMALLOC)
  #include <mimalloc.h>
  #define ty_malloc        mi_malloc
  #define ty_calloc        mi_calloc
@@ -178,18 +178,18 @@ typedef struct diag_sink        DiagSink;
 
 typedef vec(char)           byte_vector;
 typedef vec(bool)           BoolVector;
-typedef vec(int)            int_vector;
-typedef vec(i32)            i32Vector;
+typedef svec(int)            int_vector;
+typedef svec(i32)            i32Vector;
 typedef vec(i16)            i16Vector;
 typedef vec(u16)            u16Vector;
 typedef vec(u32)            U32Vector;
 typedef vec(u64)            u64Vector;
-typedef vec(char *)         StringVector;
-typedef vec(char const *)   ConstStringVector;
-typedef vec(Expr *)         ExprVec;
-typedef vec(Stmt *)         StmtVec;
-typedef vec(TypeBound)      TypeBoundVector;
-typedef vec(TypeHint)       TypeHintVector;
+typedef svec(char *)         StringVector;
+typedef svec(char const *)   ConstStringVector;
+typedef svec(Expr *)         ExprVec;
+typedef svec(Stmt *)         StmtVec;
+typedef svec(TypeBound)      TypeBoundVector;
+typedef svec(TypeHint)       TypeHintVector;
 typedef vec(Module *)       ModuleVector;
 
 #define m0(x) memset(&(x), 0, sizeof (x))
@@ -229,7 +229,17 @@ typedef vec(Module *)       ModuleVector;
 #define xmF(p)     ty_free((p))
 
 #define mresize(ptr, n) ((ptr) = mrealloc((ptr), (n)))
-#define Resize(p, n, m) ((p) = __builtin_memcpy(amA(n), (p), (m)))
+#define Resize(p, n, m) ((p) = Reallocate(ty, (p), (m), (n)))
+#define TmpResize(p, n, m) ((p) = __builtin_memcpy(tmA(n), (p), (m)))
+#define RegrowResize(p, n, m) ((p) = Regrow(ty, (p), (m), (n)))
+#define rvP(v, x)          vec_push_((v), (x), RegrowResize)
+#define rvPn(v, xs, n)     vec_push_n_((v), (xs), (n), RegrowResize)
+#define rvPv(v, u)         vec_push_n_((v), ((u).items), ((u).count), RegrowResize)
+#define rvI(v, x, i)       vec_insert_((v), (x), (i), RegrowResize)
+#define rvIn(v, xs, n, i)  vec_insert_n_((v), (xs), (n), (i), RegrowResize)
+#define tvP(v, x)          vec_push_((v), (x), TmpResize)
+#define tvPn(v, xs, n)     vec_push_n_((v), (xs), (n), TmpResize)
+#define tvI(v, x, i)       vec_insert_((v), (x), (i), TmpResize)
 #define resize_scratch(p, n, m) ((p) = __builtin_memcpy(smA(n), (p), (m)))
 
 #define vSs(s, n)  STRING_CLONE(ty, (s), (n))
@@ -293,20 +303,20 @@ typedef vec(Module *)       ModuleVector;
 #define vfor_2(      v, go) vfor_4(_vfi,   it, (v), go)
 #define vfor(...) VA_SELECT(vfor, __VA_ARGS__)
 
-#define dfor_4(_k, _v, _d, go) \
+#define dfor_4(_k, _v, _d, go)                                                                \
         for (DictItem *_d_item = DictFirst((_d)); _d_item != NULL; _d_item = _d_item->next) { \
-                Value *(_k) = &_d_item->k; (void)(_k);\
-                Value *(_v) = &_d_item->v; (void)(_v); \
-                go; \
+                Value *(_k) = &_d_item->k; (void)(_k);                                        \
+                Value *(_v) = &_d_item->v; (void)(_v);                                        \
+                go;                                                                           \
         }
 #define dfor_3(v, d, go) dfor_4(key, (v), (d), go)
 #define dfor_2(   d, go) dfor_4(key, val, (d), go)
 #define dfor(...) VA_SELECT(dfor, __VA_ARGS__)
 
-#define sfor_3(_x, _s, go) \
+#define sfor_3(_x, _s, go)                                                               \
         for (SetItem *_s_item = (_s)->first; _s_item != NULL; _s_item = _s_item->next) { \
-                Value *(_x) = &_s_item->k; (void)(_x); \
-                go; \
+                Value *(_x) = &_s_item->k; (void)(_x);                                   \
+                go;                                                                      \
         }
 #define sfor_2(    s, go) sfor_3(x, (s), go)
 #define sfor(...) VA_SELECT(sfor, __VA_ARGS__)

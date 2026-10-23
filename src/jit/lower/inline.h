@@ -66,11 +66,11 @@ param_class(BcLir *c, Value const *callee, i32 index)
 {
         Expr const *expr = expr_of(callee);
 
-        if (expr == NULL || expr->scope == NULL || index >= vN(expr->scope->owned)) {
+        if (expr == NULL || xF(expr, scope) == NULL || index >= vN(xF(expr, scope)->owned)) {
                 return NULL;
         }
 
-        return expected_class_of(c->ctx, v__(expr->scope->owned, index)->type);
+        return expected_class_of(c->ctx, v__(xF(expr, scope)->owned, index)->type);
 }
 
 static Class *

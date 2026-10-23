@@ -1,0 +1,96 @@
+import ty
+import ffi as c
+
+class Db {
+    __users: Int
+    __pad: Array[Int]
+
+    init() {
+        __users = 0
+        __pad   = [1, 2, 3]
+    }
+
+    acquire() { __users += 1 }
+    release() { __users -= 1 }
+
+    __free__() { __pad = [] }
+}
+
+class Con {
+    __db: Db
+
+    init(db: Db) {
+        __db = db
+        db.acquire()
+    }
+
+    __free__() { __db.release() }
+}
+
+let freed = [0, 0]
+
+class Left {
+    __right: Right | nil
+
+    init() { __right = nil }
+
+    link(r: Right) { __right = r }
+
+    __free__() { freed[0] += 1 }
+}
+
+class Right {
+    __left: Left
+
+    init(l: Left) { __left = l }
+
+    __free__() { freed[1] += 1 }
+}
+
+fn collect() {
+    for _ in ..4 {
+        ty.gc()
+    }
+}
+
+fn churn-connections() {
+    for _ in ..2000 {
+        let db = Db()
+        for _ in ..5 {
+            Con(db)
+        }
+    }
+}
+
+fn churn-closures() {
+    for _ in ..200 {
+        c.closure(c.int, c.int, x -> x + 1)
+    }
+}
+
+pub fn finalizer-can-touch-peer-dying-in-same-cycle() {
+    churn-connections()
+    collect()
+}
+
+pub fn finalizable-cycles-are-finalized() {
+    freed[0] = 0
+    freed[1] = 0
+
+    for _ in ..1000 {
+        let l = Left()
+        l.link(Right(l))
+    }
+
+    collect()
+
+    assert(freed[0] >= 999, "Left finalized {freed[0]} times")
+    assert(freed[1] >= 999, "Right finalized {freed[1]} times")
+}
+
+pub fn closures-from-exited-threads-are-freed() {
+    for t in [Thread(churn-closures) for _ in ..4] {
+        t.join()
+    }
+    collect()
+}

@@ -9755,6 +9755,21 @@ mdocs(Ty *ty, struct itable const *t, struct array *a)
         }
 }
 
+inline static char *
+OwnedCStr(Ty *ty, char const *s, usize n)
+{
+        if (s == NULL) {
+                return NULL;
+        }
+
+        char *new = mA(n + 1);
+
+        memcpy(new, s, n);
+        new[n] = '\0';
+
+        return new;
+}
+
 // setDoc[T](x: T, name: ?String, proto: ?String, doc: ?String) -> T
 TY_BUILTIN_RAW(set_doc)
 {
@@ -9766,20 +9781,23 @@ TY_BUILTIN_RAW(set_doc)
         Value doc   = KWARG("doc",   STRING, _NIL);
 
         if (f.xinfo == NULL) {
-                f.xinfo = mAo0(sizeof (FunUserInfo), GC_ANY);
+                f.xinfo = mAo0(sizeof (FunUserInfo), GC_FUN_INFO);
+        } else if (ALLOC_OF(f.xinfo)->type != GC_FUN_INFO) {
+                f.xinfo->name  = OwnedCStr(ty, f.xinfo->name,  (f.xinfo->name  == NULL) ? 0 : strlen(f.xinfo->name));
+                f.xinfo->proto = OwnedCStr(ty, f.xinfo->proto, (f.xinfo->proto == NULL) ? 0 : strlen(f.xinfo->proto));
+                f.xinfo->doc   = OwnedCStr(ty, f.xinfo->doc,   (f.xinfo->doc   == NULL) ? 0 : strlen(f.xinfo->doc));
+                ALLOC_OF(f.xinfo)->type = GC_FUN_INFO;
         }
 
-        if (name.type == VALUE_STRING) {
-                f.xinfo->name = TY_C_STR(name);
+#define X(field, v)                                                                   \
+        if ((v).type == VALUE_STRING) {                                               \
+                mF((void *)f.xinfo->field);                                           \
+                f.xinfo->field = OwnedCStr(ty, ss(v), sN(v));                         \
         }
-
-        if (proto.type == VALUE_STRING) {
-                f.xinfo->proto = TY_C_STR(proto);
-        }
-
-        if (doc.type == VALUE_STRING) {
-                f.xinfo->doc = TY_C_STR(doc);
-        }
+        X(name,  name);
+        X(proto, proto);
+        X(doc,   doc);
+#undef X
 
         return f;
 }
@@ -9930,8 +9948,8 @@ TY_BUILTIN_RAW(ty_bt)
                 entry.items[0] = *f;
                 entry.items[1] = xSz(name);
                 entry.items[2] = (e == NULL || e->mod == NULL) ? NIL : xSz(e->mod->path);
-                entry.items[3] = (e == NULL) ? NIL : INTEGER(e->start.line);
-                entry.items[4] = (e == NULL) ? NIL : INTEGER(e->start.col);
+                entry.items[3] = (e == NULL) ? NIL : INTEGER(LocLine(e->start));
+                entry.items[4] = (e == NULL) ? NIL : INTEGER(LocCol(e->start));
 
                 vAp(avFrames, entry);
         }
@@ -9976,12 +9994,12 @@ fun_params(Ty *ty, Expr const *fun, Array *params)
 {
         int required = 0;
 
-        for (int i = 0; i < vN(fun->params); ++i) {
-                vAp(params, vSsz(v__(fun->params, i)));
+        for (int i = 0; i < vN(xF(fun, params)); ++i) {
+                vAp(params, vSsz(v__(xF(fun, params), i)));
                 if (
-                        (i != fun->rest)
-                     && (i != fun->ikwargs)
-                     && (i >= vN(fun->dflts) || v__(fun->dflts, i) == NULL)
+                        (i != xF(fun, rest))
+                     && (i != xF(fun, ikwargs))
+                     && (i >= vN(xF(fun, dflts)) || v__(xF(fun, dflts), i) == NULL)
                 ) {
                         required += 1;
                 }
@@ -9996,7 +10014,7 @@ test_site(Ty *ty, TyTest const *test, usize n)
         Stmt const *def = test->def;
         Stmt const *first = def;
         Stmt const *last = def;
-        Expr const *fun = def->value;
+        Expr const *fun = sF(def, value);
         Module const *mod = def->mod;
         Array *params = vA();
         int required = 0;
@@ -10005,21 +10023,21 @@ test_site(Ty *ty, TyTest const *test, usize n)
 
         if (
                 (fun->type == EXPRESSION_MULTI_FUNCTION)
-             && (vN(fun->functions) > 0)
+             && (vN(xF(fun, functions)) > 0)
         ) {
-                first      = (Stmt const *)v__(fun->functions, 0);
-                last       = (Stmt const *)*vvL(fun->functions);
-                fun        = first->value;
+                first      = (Stmt const *)v__(xF(fun, functions), 0);
+                last       = (Stmt const *)*vvL(xF(fun, functions));
+                fun        = sF(first, value);
                 overloaded = true;
         }
 
-        char const *doc = (first->doc != NULL) ? first->doc : fun->doc;
+        char const *doc = (sF(first, doc) != NULL) ? sF(first, doc) : xF(fun, doc);
         Location start = first->start;
 
-        if (vN(fun->decorators) > 0) {
-                Expr const *deco = v__(fun->decorators, 0);
+        if (vN(xF(fun, decorators)) > 0) {
+                Expr const *deco = v__(xF(fun, decorators), 0);
                 if (
-                        (deco->start.s != NULL)
+                        (LocS(deco->start) != NULL)
                      && (deco->start.byte < start.byte)
                 ) {
                         start = deco->start;
@@ -10053,14 +10071,14 @@ test_site(Ty *ty, TyTest const *test, usize n)
                 "file",        (mod == NULL || mod->path == NULL) ? NIL : vSsz(mod->path),
                 "scopes",      test_scopes(ty, def->ns),
                 "name",        vSsz(test_src_name(test)),
-                "ident",       vSsz(def->target->identifier),
-                "line",        INTEGER(start.line + 1),
-                "col",         INTEGER(start.col + 1),
-                "endLine",     INTEGER(last->end.line + 1),
+                "ident",       vSsz(xF(sF(def, target), identifier)),
+                "line",        INTEGER(LocLine(start) + 1),
+                "col",         INTEGER(LocCol(start) + 1),
+                "endLine",     INTEGER(LocLine(last->end) + 1),
                 "doc",         (doc == NULL) ? NIL : vSsz(doc),
                 "params",      ARRAY(params),
                 "required",    INTEGER(required),
-                "generator?",  BOOLEAN(fun->star || fun->type == EXPRESSION_GENERATOR),
+                "generator?",  BOOLEAN(xF(fun, star) || fun->type == EXPRESSION_GENERATOR),
                 "public?",     BOOLEAN(test->pub),
                 "overloaded?", BOOLEAN(overloaded || sharing > 1),
                 "func",        func
@@ -10142,9 +10160,9 @@ trace_frame(Ty *ty, Expr const *e)
         }
 
         if (e->xfunc != NULL) {
-                func = e->xfunc->name;
-                if (e->xfunc->class != NULL) {
-                        cls = e->xfunc->class->name;
+                func = xF(e->xfunc, name);
+                if (xF(e->xfunc, class) != NULL) {
+                        cls = xF(e->xfunc, class)->name;
                 }
         }
 
@@ -10154,8 +10172,8 @@ trace_frame(Ty *ty, Expr const *e)
                 name = vSsz(KebabName(ty, func));
         }
 
-        if (e->start.s != NULL) {
-                src = e->start.s - e->start.col;
+        if (LocS(e->start) != NULL) {
+                src = LocS(e->start) - LocCol(e->start);
         }
 
         end = strchr(src, '\n');
@@ -10165,8 +10183,8 @@ trace_frame(Ty *ty, Expr const *e)
 
         return vTn(
                 "file", (e->mod == NULL || e->mod->path == NULL) ? NIL : vSsz(e->mod->path),
-                "line", INTEGER(e->start.line + 1),
-                "col",  INTEGER(e->start.col + 1),
+                "line", INTEGER(LocLine(e->start) + 1),
+                "col",  INTEGER(LocCol(e->start) + 1),
                 "func", name,
                 "src",  vSs(src, end - src)
         );
@@ -10200,7 +10218,7 @@ TY_BUILTIN_RAW(ty_signature)
         Value sig = vTn(
                 "params",     ARRAY(params),
                 "required",   INTEGER(required),
-                "generator?", BOOLEAN(fun->star || fun->type == EXPRESSION_GENERATOR)
+                "generator?", BOOLEAN(xF(fun, star) || fun->type == EXPRESSION_GENERATOR)
         );
 
         GC_RESUME();
@@ -10284,8 +10302,8 @@ static Value
 make_location(Ty *ty, Location const *loc)
 {
         return vTn(
-                "line", INTEGER(loc->line),
-                "col",  INTEGER(loc->col),
+                "line", INTEGER(LocLine(*loc)),
+                "col",  INTEGER(LocCol(*loc)),
                 "byte", INTEGER(loc->byte)
         );
 }
@@ -10830,8 +10848,8 @@ MethodSummary(Ty *ty, T2Type t0, Expr const *fun)
         T2Type u0 = t2_member_type(ty, t0, fun->_type);
 
         return vTn(
-                "name", vSsz(fun->name),
-                "doc", (fun->doc != NULL) ? vSsz(fun->doc) : NIL,
+                "name", vSsz(xF(fun, name)),
+                "doc", (xF(fun, doc) != NULL) ? vSsz(xF(fun, doc)) : NIL,
                 "type", t2_to_ty(ty, SimplifiedType(u0))
         );
 }
@@ -10884,8 +10902,8 @@ ClassSummary(Ty *ty, T2Type t0, ClassDefinition *def)
         for (int i = 0; i < vN(def->fields); ++i) {
                 Expr const *field = v__(def->fields, i);
                 char const *name = (field->type == EXPRESSION_IDENTIFIER)
-                                 ? field->identifier
-                                 : field->target->identifier;
+                                 ? xF(field, identifier)
+                                 : xF(xF(field, target), identifier);
                 T2Type u0 = t2_member_type(ty, t0, field->_type);
                 vAp(
                         fields,
@@ -10962,7 +10980,7 @@ ScopeDict(Ty *ty, Scope *scope, bool public_only)
                         Value entry;
                         if (SymbolIsClass(sym)) {
                                 Class *class = class_get(ty, sym->class);
-                                entry = ClassSummary(ty, T2_TYPE_INVALID, &class->def->class);
+                                entry = ClassSummary(ty, T2_TYPE_INVALID, &sF(class->def, class));
                         } else if (SymbolIsNamespace(sym)) {
                                 entry = ScopeDict(ty, sym->scope, public_only);
                         } else {
@@ -11300,11 +11318,11 @@ TY_BUILTIN_RAW(ty_mod_free)
         Arena old = NewArena(1 << 16);
         SCRATCH_SAVE();
         for (usize i = 0; mod->prog != NULL && mod->prog[i] != NULL; ++i) {
-                svP(block.statements, mod->prog[i]);
+                svP(sF(&block, statements), mod->prog[i]);
         }
         ExprVec free = CompilerFreeVars(ty, (Expr *)&block, mod->scope);
         for (usize i = 0; i < vN(free); ++i) {
-                char const *name = v__(free, i)->identifier;
+                char const *name = xF(v__(free, i), identifier);
                 if (!search_str(&seen, name)) {
                         svP(seen, (char *)name);
                         uvP(*names, vSsz(name));
@@ -11584,7 +11602,7 @@ TY_BUILTIN_RAW(ty_type_info)
                 t0 = t2_class_template(ty, class);
         }
 
-        return ClassSummary(ty, t0, &class->def->class);
+        return ClassSummary(ty, t0, &sF(class->def, class));
 }
 
 static u32
@@ -12107,8 +12125,8 @@ OperatorDefinition(Ty *ty, char const *name, i32 t1, i32 t2, i32 ref, Expr *expr
                 "right", OperandClass(ty, t2),
                 "value", (ref >= 0) ? *vm_global(ty, ref) : NIL,
                 "def",   TAGGED(TyExpr, def),
-                "proto", (expr->proto != NULL) ? vSsz(expr->proto) : NIL,
-                "doc",   (expr->doc != NULL) ? vSsz(expr->doc) : NIL,
+                "proto", (xF(expr, proto) != NULL) ? vSsz(xF(expr, proto)) : NIL,
+                "doc",   (xF(expr, doc) != NULL) ? vSsz(xF(expr, doc)) : NIL,
                 "type",  (expr->_type != T2_TYPE_INVALID) ? t2_to_ty(ty, expr->_type) : NIL
         );
 }
@@ -12167,7 +12185,7 @@ TY_BUILTIN_RAW(ty_get_source)
                 return BuiltinSource(ty, &expr);
         }
 
-        if (src == NULL || src->start.s == NULL || src->end.s == NULL) {
+        if (src == NULL || LocS(src->start) == NULL || LocS(src->end) == NULL) {
                 return NIL;
         }
 
@@ -12182,8 +12200,8 @@ TY_BUILTIN_RAW(ty_get_source)
                 "end",   make_location(ty, &src->end),
                 "file",  file,
                 "mod",   (src->mod != NULL) ? MODULE(src->mod) : NIL,
-                "prog",  xSz(src->start.s - src->start.byte),
-                "src",   xSs(src->start.s, src->end.s - src->start.s)
+                "prog",  xSz(LocS(src->start) - src->start.byte),
+                "src",   xSs(LocS(src->start), LocS(src->end) - LocS(src->start))
         );
 
         GC_RESUME();
@@ -12322,7 +12340,7 @@ TY_BUILTIN_RAW(parse_expr)
                 }
 
                 GC_STOP();
-                Expr *e = parsed.mod->prog[0]->expression;
+                Expr *e = sF(parsed.mod->prog[0], expression);
                 Value raw = PTR(e);
                 raw.src = source_register(ty, e);
                 Value expr = HAVE_FLAG("resolve") ? TAGGED(TyExpr, raw)
@@ -12484,16 +12502,16 @@ TY_BUILTIN_RAW(parse_show)
 
         if (
                 (src == NULL)
-             || (src->start.s == NULL)
-             || (src->end.s == NULL)
-             || (src->end.s < src->start.s)
+             || (LocS(src->start) == NULL)
+             || (LocS(src->end) == NULL)
+             || (LocS(src->end) < LocS(src->start))
         ) {
                 return NIL;
         }
 
-        usize n = strnlen(src->start.s, src->end.s - src->start.s);
+        usize n = strnlen(LocS(src->start), LocS(src->end) - LocS(src->start));
 
-        return vSs(src->start.s, n);
+        return vSs(LocS(src->start), n);
 }
 
 // ty/parse.highlight(mod: Module, start: Int, end: Int, theme: ?String = nil) -> _
