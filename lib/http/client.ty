@@ -83,9 +83,9 @@ const REDIRECTS  = %{301, 302, 303, 307, 308}
 
 /// Base class of every error raised while sending a request.
 pub class RequestError < RuntimeError {
-    request: _
+    request: Request | nil
 
-    init(what: String, request: _ = nil) {
+    init(what: String, request: Request | nil = nil) {
         self.request = request
         super(what)
     }
@@ -115,10 +115,10 @@ pub class DecodingError < RequestError {}
 
 /// Raised by `Response.raise-for-status()` for 4xx and 5xx responses.
 pub class HttpStatusError < RequestError {
-    response:    _
+    response:    Response
     status-code: Int
 
-    init(what: String, request: _, response: _) {
+    init(what: String, request: Request | nil, response: Response) {
         self.response    = response
         self.status-code = response.status-code
         super(what, request)
@@ -133,7 +133,9 @@ pub class StreamConsumed < RuntimeError {
 }
 
 
-fn seconds(x: _) -> Float | nil {
+use Seconds = Int | Float | Bool | nil
+
+fn seconds(x: Seconds) -> Float | nil {
     match x {
         nil, false => nil,
         n: Int     => float(n),
@@ -157,7 +159,13 @@ pub class Timeout {
     write:   Float | nil
     pool:    Float | nil
 
-    init(all: _ = 5.0, connect: _ = nil, read: _ = nil, write: _ = nil, pool: _ = nil) {
+    init(
+        all: Seconds = 5.0,
+        connect: Seconds = nil,
+        read: Seconds = nil,
+        write: Seconds = nil,
+        pool: Seconds = nil
+    ) {
         let base = seconds(all)
         self.connect = (connect == nil) ? base : seconds(connect)
         self.read    = (read == nil) ? base : seconds(read)
@@ -241,7 +249,7 @@ pub class Retry {
         self.retry-after = retry-after
     }
 
-    static of(x: _) -> Retry | nil {
+    static of(x: Retry | Int | Bool | nil) -> Retry | nil {
         match x {
             nil, false, 0 => nil,
             r: Retry      => r,
@@ -250,15 +258,13 @@ pub class Retry {
         }
     }
 
-    delay(attempt: Int, rsp: _ = nil) -> Float {
-        if retry-after && rsp != nil {
-            if let $ra = rsp.header('retry-after') {
-                if ra.match?(/^\d+$/) {
-                    return min(float(int(ra, 10)), max-backoff)
-                }
-                if let $t = wire-date(ra) {
-                    return max(0.0, min(float(t) - time.utc(), max-backoff))
-                }
+    delay(attempt: Int, rsp: Response | nil = nil) -> Float {
+        if retry-after and let $r = rsp and let $ra = r.header('retry-after') {
+            if ra.match?(/^\d+$/) {
+                return min(float(int(ra, 10)), max-backoff)
+            }
+            if let $t = wire-date(ra) {
+                return max(0.0, min(float(t) - time.utc(), max-backoff))
             }
         }
         min(backoff * float(1 << min(attempt, 20)) * (0.5 + rand()), max-backoff)
@@ -277,8 +283,8 @@ fn nap(secs: Float) {
     if secs <= 0.0 {
         return
     }
-    if core.task() != nil && core.loop() != nil {
-        core.loop().sleep(secs)
+    if core.task() != nil and let $l = core.loop() {
+        l.sleep(secs)
     } else {
         os.sleep(secs)
     }
@@ -317,12 +323,19 @@ fn wait-fd(fd: Int, events: Int, until: Float | nil) -> Bool {
 }
 
 
-fn body-of(x: _) -> Blob | nil {
+fn body-of(x: String | Blob | nil) -> Blob | nil {
     match x {
         nil       => nil,
         b: Blob   => b,
         s: String => Blob(s)
     }
+}
+
+pub use BodySource = Path | Iterable[String | Blob]
+
+pub trait Body {
+    read() -> Blob | nil;
+    close();
 }
 
 /// An outgoing request. `content` is a Blob when the body is in memory;
@@ -332,16 +345,16 @@ pub class Request {
     url:        URL
     headers:    Headers
     content:    Blob | nil
-    stream:     _
-    extensions: Dict[String, _]
+    stream:     BodySource | nil
+    extensions: Dict[String, String]
 
     init(
         method: String,
         url: String | URL,
         headers: _ = nil,
-        content: _ = nil,
-        stream: _ = nil,
-        extensions: Dict[String, _] = %{}
+        content: String | Blob | nil = nil,
+        stream: BodySource | nil = nil,
+        extensions: Dict[String, String] = %{}
     ) {
         self.method     = method.upper()
         self.url        = (url :: URL) ? url : URL(url)
@@ -422,9 +435,9 @@ pub class Response {
     request:      Request | nil
     history:      Array[Response]
     elapsed:      Float
-    extensions:   Dict[String, _]
+    extensions:   Dict[String, String]
 
-    __body:     _
+    __body:     Body | nil
     __content:  Blob | nil
     __decoder:  codec.Decoder | nil
     __started?: Bool
@@ -433,20 +446,20 @@ pub class Response {
     __off:      Int
     __limit:    Int | nil
     __start:    Float
-    __on-close: Array[_]
+    __on-close: Array[() -> _]
     __cookies:  Dict[String, String] | nil
 
     init(
         status-code: Int = 200,
         headers: _ = nil,
-        content: _ = nil,
+        content: String | Blob | nil = nil,
         text: String | nil = nil,
         json: _ = nil,
         http-version: String = 'HTTP/1.1',
         reason: String | nil = nil,
         url: String | URL | nil = nil,
         request: Request | nil = nil,
-        stream: _ = nil
+        stream: Body | nil = nil
     ) {
         self.status-code  = status-code
         self.reason       = reason ?? status-name(status-code)
@@ -489,7 +502,7 @@ pub class Response {
 
     /// Wires a transport body stream (an object with `read() -> Blob | nil`
     /// and `close()`) into the response; content decoding happens here.
-    attach(body: _, decode: Bool = true, limit: Int | nil = nil) -> Response {
+    attach(body: Body, decode: Bool = true, limit: Int | nil = nil) -> Response {
         __body = body
         __limit = limit
         __closed? = false
@@ -508,7 +521,7 @@ pub class Response {
     }
 
     /// The transport's body stream (nil once closed or fully in memory).
-    body-stream -> _ {
+    body-stream -> Body | nil {
         __body
     }
 
@@ -610,11 +623,12 @@ pub class Response {
     }
 
     __raw-chunk() -> Blob | nil {
-        if __closed? || __body == nil {
+        if __closed? {
             return nil
         }
+        let $body = __body or return nil
         let chunk = try {
-            __body.read()
+            body.read()
         } catch e {
             close()
             throw e
@@ -680,7 +694,7 @@ pub class Response {
                 return nil
             }
             let n = min(max, #b - __off)
-            let out = b.slice(__off, n)
+            let out = b[__off;__off + n]
             __off += n
             return out
         }
@@ -693,9 +707,7 @@ pub class Response {
             __pend = Blob()
             return out
         }
-        let out = __pend.slice(0, max)
-        __pend.clear(0, max)
-        out
+        __pend.splice(0, max)
     }
 
     /// Reads the rest of the decoded body. Before any `read()` this is the
@@ -714,7 +726,7 @@ pub class Response {
             return out
         }
         if let $b = __content {
-            let rest = b.slice(__off, #b - __off)
+            let rest = b[__off;]
             __off = #b
             return rest
         }
@@ -762,7 +774,7 @@ pub class Response {
 
     /// Decoded body chunks as they arrive (exactly `size` bytes each,
     /// except the last, when `size` is given).
-    bytes(size: Int | nil = nil) -> Chunks {
+    bytes(size: Int | nil = nil) -> Chunks[Blob] {
         if let $b = __content {
             let i = [0]
             return Chunks(fn () {
@@ -770,7 +782,7 @@ pub class Response {
                     return nil
                 }
                 let n = min(size ?? #b, #b - i[0])
-                let out = b.slice(i[0], n)
+                let out = b[i[0];i[0] + n]
                 i[0] += n
                 out
             })
@@ -791,15 +803,17 @@ pub class Response {
             if #pend == 0 {
                 return nil
             }
-            let n = min(size, #pend)
-            let out = pend.slice(0, n)
-            pend.clear(0, n)
+            if #pend > size {
+                return pend.splice(0, size)
+            }
+            let out = pend
+            pend = Blob()
             out
         })
     }
 
     /// Undecoded body chunks (as sent on the wire, minus framing).
-    raw() -> Chunks {
+    raw() -> Chunks[Blob] {
         if let $b = __content {
             let done = [false]
             return Chunks(fn () {
@@ -818,7 +832,7 @@ pub class Response {
     }
 
     /// Text chunks; multi-byte UTF-8 sequences are never split.
-    text-chunks() -> Chunks {
+    text-chunks() -> Chunks[String] {
         let src = bytes()
         let pend = Blob()
         Chunks(fn () {
@@ -844,9 +858,9 @@ pub class Response {
     }
 
     /// Lines of text without their terminators (`\n` or `\r\n`).
-    lines() -> Chunks {
+    lines() -> Chunks[String] {
         let src = text-chunks()
-        let queue = []
+        let queue: Array[String] = []
         let pend = ['']
         let done = [false]
         Chunks(fn () {
@@ -876,10 +890,10 @@ pub class Response {
     }
 
     /// Server-Sent Events from a text/event-stream body.
-    events() -> Chunks {
+    events() -> Chunks[Event] {
         let src = bytes()
         let p = sse.Parser()
-        let queue = []
+        let queue: Array[Event] = []
         let done = [false]
         Chunks(fn () {
             while #queue == 0 {
@@ -902,7 +916,7 @@ pub class Response {
 
     /// Streams the body to `path` (decoded unless `decode: false`), returning
     /// the number of bytes written.
-    save(path: String | Path, decode: Bool = true, progress: _ = nil) -> Int {
+    save(path: String | Path, decode: Bool = true, progress: Progress = nil) -> Int {
         let fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
         if fd < 0 {
             throw OSError("http: cannot open {path}")
@@ -1042,12 +1056,12 @@ fn utf8-boundary(b: Blob) -> Int {
 /// A lazy sequence produced by a `next()` function (nil ends it). Response
 /// streams use these instead of generators so that they can be iterated
 /// inside `http.Server` handlers, whose tasks are themselves coroutines.
-pub class Chunks : Iter[_] {
-    __f:     () -> _
+pub class Chunks[T] : Iter[T] {
+    __f:     () -> T | nil
     __close: (() -> _) | nil
     __done?: Bool
 
-    init(f: () -> _, close: (() -> _) | nil = nil) {
+    init(f: () -> T | nil, close: (() -> _) | nil = nil) {
         __f     = f
         __close = close
         __done? = false
@@ -1065,7 +1079,7 @@ pub class Chunks : Iter[_] {
         close()
     }
 
-    next() -> _ {
+    next() -> T | nil {
         if __done? {
             return nil
         }
@@ -1078,23 +1092,23 @@ pub class Chunks : Iter[_] {
         }
     }
 
-    __next__() -> _ {
+    __next__() -> Some[T] | None {
         match next() {
             nil => None,
             x   => Some(x)
         }
     }
 
-    __iter__() -> Chunks {
+    __iter__() -> Chunks[T] {
         self
     }
 }
 
 class EventState {
     rsp:       Response | nil
-    src:       _
-    parser:    _
-    queue:     Array[_]
+    src:       Chunks[Blob]
+    parser:    sse.Parser
+    queue:     Array[Event]
     last-id:   String | nil
     delay:     Float
     failures:  Int
@@ -1102,8 +1116,8 @@ class EventState {
 
     init(delay: Float) {
         rsp       = nil
-        src       = nil
-        parser    = nil
+        src       = Chunks(-> nil)
+        parser    = sse.Parser()
         queue     = []
         last-id   = nil
         self.delay = delay
@@ -1142,7 +1156,9 @@ fn latin1(b: Blob) -> String {
     out.str!()
 }
 
-fn progress-bar(spec: _, total: Int | nil, label: String) -> (Int, Bool) -> _ {
+use Progress = Bool | ((Int, Int | nil) -> _) | nil
+
+fn progress-bar(spec: Progress, total: Int | nil, label: String) -> (Int, Bool) -> _ {
     match spec {
         nil, false => (_, _) -> nil,
         f: Function => (n, done) -> f(n, total),
@@ -1183,8 +1199,13 @@ fn progress-bar(spec: _, total: Int | nil, label: String) -> (Int, Bool) -> _ {
 }
 
 
+pub trait Auth {
+    apply(req: Request) -> Request;
+    retry(req: Request, rsp: Response) -> Request | nil;
+}
+
 /// Basic authentication (RFC 7617).
-pub class BasicAuth {
+pub class BasicAuth : Auth {
     username: String
     password: String
 
@@ -1194,7 +1215,7 @@ pub class BasicAuth {
     }
 
     apply(req: Request) -> Request {
-        req.headers['Authorization'] = "Basic {base64(Blob("{username}:{password}"))}"
+        req.headers['Authorization'] = "Basic {b64.encode("{username}:{password}")}"
         req
     }
 
@@ -1204,7 +1225,7 @@ pub class BasicAuth {
 }
 
 /// `Authorization: Bearer <token>`.
-pub class BearerAuth {
+pub class BearerAuth : Auth {
     token: String
 
     init(token: String) {
@@ -1221,12 +1242,8 @@ pub class BearerAuth {
     }
 }
 
-fn base64(b: Blob) -> String {
-    b64.encode(b)
-}
-
 fn digest-hash(algorithm: String, s: String) -> String {
-    match algorithm.upper().sub(/-SESS$/, '') {
+    match algorithm.upper().comb(/-SESS$/) {
         'MD5'                => md5(s),
         'SHA-256', 'SHA256'  => sha256(s),
         other                => throw RequestError("http: unsupported digest algorithm {other}")
@@ -1244,7 +1261,7 @@ fn parse-challenge(header: String) -> Dict[String, String] {
 /// Digest authentication (RFC 7616): MD5, SHA-256 and their -sess
 /// variants, qop=auth. The first request goes out without credentials and
 /// is repeated once the server's challenge arrives.
-pub class DigestAuth {
+pub class DigestAuth : Auth {
     username: String
     password: String
 
@@ -1316,7 +1333,7 @@ pub class DigestAuth {
             return nil
         }
         let $www = rsp.headers.all('www-authenticate').find(\_.lower().starts?('digest')) or return nil
-        let ch = parse-challenge(www.slice(6))
+        let ch = parse-challenge(www.bslice(6))
         let stale? = (ch['stale'] ?? '').lower() == 'true'
         if req.headers['authorization'] != nil && !stale? {
             return nil
@@ -1329,10 +1346,10 @@ pub class DigestAuth {
 }
 
 /// Wraps a plain function `f(req) -> req` as an auth.
-class FunctionAuth {
-    f: _
+class FunctionAuth : Auth {
+    f: (Request) -> Request | nil
 
-    init(f: _) {
+    init(f: (Request) -> Request | nil) {
         self.f = f
     }
 
@@ -1345,7 +1362,7 @@ class FunctionAuth {
     }
 }
 
-fn auth-of(x: _) -> _ {
+fn auth-of(x: _) -> Auth | nil {
     match x {
         nil, false         => nil,
         (user, pass)       => BasicAuth(str(user), str(pass)),
@@ -1549,7 +1566,7 @@ pub class Socket {
     }
 
     /// Ciphertext (or plaintext without TLS) straight from the socket.
-    recv-raw(until: Float | nil, timeout-class: _ = ReadTimeout) -> Blob | nil {
+    recv-raw(until: Float | nil, timeout-class: (String) -> TimeoutError = ReadTimeout) -> Blob | nil {
         if __eof? {
             return nil
         }
@@ -1567,7 +1584,7 @@ pub class Socket {
         while true {
             let n = sys-recv(fd, __in, RECV_CHUNK, 0)
             if n > 0 {
-                return __in.slice(0, n)
+                return __in[;n]
             }
             if n == 0 {
                 __eof? = true
@@ -1627,7 +1644,7 @@ pub class Socket {
         } catch e: ssl.SSLError {
             throw ReadError("http: TLS error from {host}: {e}")
         }
-        (k < 0) ? nil : __plain.slice(0, k)
+        (k < 0) ? nil : __plain[;k]
     }
 
     /// The next plaintext chunk; nil at end of stream. One thread may read
@@ -1660,7 +1677,7 @@ pub class Socket {
         nil
     }
 
-    __flush(until: Float | nil, timeout-class: _) {
+    __flush(until: Float | nil, timeout-class: (String) -> TimeoutError) {
         let $s = tls or return
         __out.clear()
         s.drain(__out)
@@ -1668,13 +1685,14 @@ pub class Socket {
         __out.clear()
     }
 
-    __send-raw(data: Blob, until: Float | nil, timeout-class: _) {
+    __send-raw(data: String | Blob, until: Float | nil, timeout-class: (String) -> TimeoutError) {
         if let $l = lower {
             return l.send(data, until)
         }
+        let size = data.size()
         let off = 0
-        while off < #data {
-            let n = sys-send(fd, data.ptr() + off, #data - off, SEND_FLAGS)
+        while off < size {
+            let n = sys-send(fd, data.ptr() + off, size - off, SEND_FLAGS)
             if n >= 0 {
                 off += n
                 continue
@@ -1694,19 +1712,19 @@ pub class Socket {
     }
 
     send(data: String | Blob, until: Float | nil) {
-        let b = (data :: Blob) ? data : Blob(data)
-        let $s = tls or return __send-raw(b, until, WriteTimeout)
+        let $s = tls or return __send-raw(data, until, WriteTimeout)
         let ^_ = __tls-lock.lock()
+        let size = data.size()
         let off = 0
-        while off < #b {
+        while off < size {
             let n = try {
-                s.write(b, off, #b - off)
+                s.write-ptr(data.ptr() + off, size - off)
             } catch e: ssl.SSLError {
                 throw WriteError("http: TLS error writing to {host}: {e}")
             }
             off += n
             __flush(until, WriteTimeout)
-            if n == 0 && off < #b {
+            if n == 0 && off < size {
                 let $raw = recv-raw(until) or throw WriteError("http: {host} closed the connection")
                 s.feed(raw)
             }
@@ -1781,7 +1799,7 @@ fn head-bytes(req: Request, target: String, extra: Array[(String, String)]) -> B
     out
 }
 
-pub fn stream-chunks*(src: _) {
+pub fn stream-chunks*(src: BodySource) {
     match src {
         p: Path => {
             let fd = os.open(str(p), os.O_RDONLY)
@@ -1789,14 +1807,13 @@ pub fn stream-chunks*(src: _) {
                 throw OSError("http: cannot open {p}")
             }
             try {
-                let buf = Blob()
                 while true {
-                    buf.clear()
+                    let buf = Blob()
                     let n = os.read(fd, buf, FILE_CHUNK)
                     if n == nil || n <= 0 {
                         break
                     }
-                    yield Blob(buf)
+                    yield buf
                 }
             } finally {
                 os.close(fd)
@@ -1804,16 +1821,15 @@ pub fn stream-chunks*(src: _) {
         },
         it => {
             for chunk in it {
-                let b = (chunk :: Blob) ? chunk : Blob(str(chunk))
-                if #b > 0 {
-                    yield b
+                if chunk.size() > 0 {
+                    yield chunk
                 }
             }
         }
     }
 }
 
-fn stream-length(src: _) -> Int | nil {
+fn stream-length(src: BodySource) -> Int | nil {
     match src {
         p: Path => match os.stat(str(p)) {
             nil => nil,
@@ -1823,14 +1839,13 @@ fn stream-length(src: _) -> Int | nil {
     }
 }
 
-class H1Body {
+class H1Body : Body {
     conn:      H1Conn
     mode:      Int
     remaining: Int
     dech:      Dechunker | nil
     done?:     Bool
     reuse?:    Bool
-    until:     _
 
     init(conn: H1Conn, mode: Int, length: Int, reuse?: Bool) {
         self.conn   = conn
@@ -1872,7 +1887,7 @@ class H1Body {
                     },
                     2 => {
                         let n = min(avail, remaining)
-                        let out = c.buf.slice(c.pos, n)
+                        let out = c.buf[c.pos;c.pos + n]
                         c.consume(n)
                         remaining -= n
                         if remaining == 0 {
@@ -1882,7 +1897,7 @@ class H1Body {
                         return out
                     },
                     _ => {
-                        let out = c.buf.slice(c.pos, avail)
+                        let out = c.buf[c.pos;c.pos + avail]
                         c.consume(avail)
                         return out
                     }
@@ -1925,35 +1940,64 @@ class H1Body {
     }
 }
 
+pub use Exchange = (Int, String, Headers, String, Body)
+
+pub trait Connection {
+    key -> String;
+    requests -> Int;
+    http2? -> Bool;
+    protocol -> String;
+    reusable? -> Bool;
+    exchange(req: Request, t: Timeout, extra: Array[(String, String)] = []) -> Exchange;
+    close();
+}
+
+pub trait Multiplexed < Connection {
+    active -> Int;
+    usable? -> Bool;
+    idle? -> Bool;
+    reserve();
+    unreserve();
+}
+
 /// One HTTP/1.1 connection. Not shared: the pool hands it to one request
 /// at a time.
-pub class H1Conn {
-    sock:      Socket
-    key:       String
-    pool:      _
-    buf:       Blob
-    pos:       Int
-    marks:     Array[Int]
-    requests:  Int
+pub class H1Conn : Connection {
+    sock:       Socket
+    pool:       Pool | nil
+    buf:        Blob
+    pos:        Int
+    marks:      Array[Int]
     idle-since: Float
-    closed?:   Bool
-    forward?:  Bool
-    timeout:   Timeout
-    got?:      Bool
+    closed?:    Bool
+    forward?:   Bool
+    timeout:    Timeout
+    got?:       Bool
 
-    init(sock: Socket, key: String, pool: _, forward?: Bool = false) {
+    __key:      String
+    __requests: Int
+
+    init(sock: Socket, key: String, pool: Pool | nil, forward?: Bool = false) {
         self.sock     = sock
-        self.key      = key
         self.pool     = pool
         self.forward? = forward?
         buf           = Blob()
         pos           = 0
         marks         = wire.marks(256)
-        requests      = 0
         idle-since    = time.now()
         closed?       = false
         timeout       = Timeout()
         got?          = false
+        __key         = key
+        __requests    = 0
+    }
+
+    key -> String {
+        __key
+    }
+
+    requests -> Int {
+        __requests
     }
 
     http2? -> Bool {
@@ -1988,8 +2032,8 @@ pub class H1Conn {
 
     finished(reuse?: Bool) {
         let clean? = reuse? && !closed? && pos >= #buf
-        if pool != nil {
-            pool.release(self, clean?)
+        if let $p = pool {
+            p.release(self, clean?)
         } else if !reuse? {
             close()
         }
@@ -2004,14 +2048,14 @@ pub class H1Conn {
 
     /// Sends `req` and reads the response head. Returns
     /// `(status, reason, headers, version, body)`.
-    exchange(req: Request, t: Timeout, extra: Array[(String, String)] = []) -> _ {
+    exchange(req: Request, t: Timeout, extra: Array[(String, String)] = []) -> Exchange {
         timeout = t
-        requests += 1
+        __requests += 1
         got? = false
         try {
             __exchange(req, t, extra)
         } catch e: TransportError {
-            if requests > 1 && !got? && !(e :: TimeoutError) && !(e :: StaleConnection) {
+            if __requests > 1 && !got? && !(e :: TimeoutError) && !(e :: StaleConnection) {
                 close()
                 throw StaleConnection("http: kept-alive connection to {sock.host} failed: {e}")
             }
@@ -2019,7 +2063,7 @@ pub class H1Conn {
         }
     }
 
-    __exchange(req: Request, t: Timeout, extra: Array[(String, String)]) -> _ {
+    __exchange(req: Request, t: Timeout, extra: Array[(String, String)]) -> Exchange {
         let target = forward? ? str(req.url.without-credentials()) : req.url.target
         let wd = -> deadline(t.write)
 
@@ -2058,7 +2102,7 @@ pub class H1Conn {
             let chunked? = framing.any?(p -> p.0 == 'Transfer-Encoding')
             for chunk in stream-chunks(streamed) {
                 if chunked? {
-                    sock.send(Blob("{#chunk:x}\r\n").push(chunk).push('\r\n'), wd())
+                    sock.send(Blob("{chunk.size():x}\r\n").push(chunk).push('\r\n'), wd())
                 } else {
                     sock.send(chunk, wd())
                 }
@@ -2098,7 +2142,7 @@ pub class H1Conn {
                 },
                 NeedMore(_, _) => {
                     if !fill() {
-                        throw (requests > 1 && #buf == 0)
+                        throw (__requests > 1 && #buf == 0)
                             ? StaleConnection("http: {sock.host} closed the kept-alive connection")
                             : ProtocolError("http: {sock.host} closed the connection without sending a response")
                     }
@@ -2122,7 +2166,7 @@ pub class Pool {
     __lock:    Mutex
     __cv:      CondVar
     __idle:    Dict[String, Array[H1Conn]]
-    __h2:      Dict[String, Array[_]]
+    __h2:      Dict[String, Array[Multiplexed]]
     __total:   Int
     __probing: Dict[String, Bool]
     __proto:   Dict[String, String]
@@ -2150,9 +2194,9 @@ pub class Pool {
         __idle.values().map(\#_).sum(0)
     }
 
-    __usable-h2(key: String) -> _ {
+    __usable-h2(key: String) -> Multiplexed | nil {
         let conns = __h2[key] ?? return nil
-        let live = []
+        let live: Array[Multiplexed] = []
         for conn in conns {
             if conn.usable? {
                 live.push(conn)
@@ -2164,10 +2208,12 @@ pub class Pool {
             }
         }
         __h2[key] = live
-        let best = nil
+        let best: Multiplexed | nil = nil
+        let fewest = 0
         for conn in live {
-            if conn.usable? && (best == nil || conn.active < best.active) {
-                best = conn
+            if conn.usable? && (best == nil || conn.active < fewest) {
+                best   = conn
+                fewest = conn.active
             }
         }
         best
@@ -2187,7 +2233,7 @@ pub class Pool {
 
     /// Returns a connection for `key`, reusing an idle or multiplexed one
     /// when possible and calling `open()` otherwise.
-    acquire(key: String, open: () -> _, until: Float | nil, h2?: Bool) -> _ {
+    acquire(key: String, open: () -> Connection, until: Float | nil, h2?: Bool) -> Connection {
         let ^_ = __lock.lock()
         while true {
             if __closed? {
@@ -2246,10 +2292,10 @@ pub class Pool {
                     __probing.remove(key)
                 }
                 __proto[key] = conn.protocol
-                if conn.http2? {
+                if let m: Multiplexed = conn {
                     let list = __h2[key] ?? (__h2[key] = [])
-                    list.push(conn)
-                    conn.reserve()
+                    list.push(m)
+                    m.reserve()
                 }
                 __cv.broadcast()
                 return conn
@@ -2262,22 +2308,33 @@ pub class Pool {
         nil
     }
 
-    release(conn: _, reuse?: Bool) {
+    release(conn: Connection, reuse?: Bool) {
         let ^_ = __lock.lock()
+        match conn {
+            m: Multiplexed => __release-shared(m),
+            h: H1Conn      => __release-idle(h, reuse?)
+        }
+    }
+
+    __release-shared(conn: Multiplexed) {
         if __closed? {
-            if !conn.http2? || conn.idle? {
+            if conn.idle? {
                 conn.close()
             }
             return
         }
-        if conn.http2? {
-            conn.unreserve()
-            if !conn.usable? && conn.idle? {
-                __h2[conn.key] = (__h2[conn.key] ?? []).filter(\_ != conn)
-                __total -= 1
-                conn.close()
-            }
-            __cv.broadcast()
+        conn.unreserve()
+        if !conn.usable? && conn.idle? {
+            __h2[conn.key] = (__h2[conn.key] ?? []).filter(\_ != conn)
+            __total -= 1
+            conn.close()
+        }
+        __cv.broadcast()
+    }
+
+    __release-idle(conn: H1Conn, reuse?: Bool) {
+        if __closed? {
+            conn.close()
             return
         }
         let idle = __idle[conn.key] ?? (__idle[conn.key] = [])
@@ -2293,20 +2350,21 @@ pub class Pool {
     }
 
     /// Drops a connection that failed or was closed by the peer.
-    discard(conn: _) {
+    discard(conn: Connection) {
         let ^_ = __lock.lock()
         if __closed? {
             conn.close()
             return
         }
-        if conn.http2? {
-            let list = __h2[conn.key] ?? []
-            if list.contains?(conn) {
-                __h2[conn.key] = list.filter(\_ != conn)
-                __total -= 1
-            }
-        } else {
-            __total -= 1
+        match conn {
+            m: Multiplexed => {
+                let list = __h2[m.key] ?? []
+                if list.contains?(m) {
+                    __h2[m.key] = list.filter(\_ != m)
+                    __total -= 1
+                }
+            },
+            _ => __total -= 1
         }
         conn.close()
         __cv.broadcast()
@@ -2342,7 +2400,7 @@ fn no-proxy?(host: String, port: Int | nil, rules: String | nil) -> Bool {
         if rule == '*' {
             return true
         }
-        let r = rule.sub(/^\*?\./, '')
+        let r = rule.comb(/^\*?\./)
         let (rh, rp) = match r.match(/^(.*):(\d+)$/) {
             [_, h, p] => (h, int(p, 10)),
             _         => (r, nil)
@@ -2374,7 +2432,7 @@ fn env-proxy(scheme: String) -> String | nil {
 fn proxy-auth(proxy: URL) -> String | nil {
     match proxy.username {
         nil => nil,
-        u   => "Basic {base64(Blob("{form-decode(u)}:{form-decode(proxy.password ?? '')}"))}"
+        u   => "Basic {b64.encode("{form-decode(u)}:{form-decode(proxy.password ?? '')}")}"
     }
 }
 
@@ -2385,11 +2443,20 @@ fn form-decode(s: String) -> String {
 
 /// The default transport: pooled TCP/TLS connections speaking HTTP/1.1 or
 /// HTTP/2, with proxy support.
-pub class HTTPTransport {
+pub use Verify = Bool | String | ssl.Context
+pub use ClientCert = String | (String, String) | nil
+use H2Connect = (Socket, String, HTTPTransport, Timeout) -> Multiplexed
+
+pub trait Transport {
+    handle(req: Request, t: Timeout) -> Response;
+    close();
+}
+
+pub class HTTPTransport : Transport {
     http1:          Bool
     http2:          Bool
-    verify:         _
-    cert:           _
+    verify:         Verify
+    cert:           ClientCert
     retries:        Int
     proxy:          URL | nil
     trust-env:      Bool
@@ -2400,14 +2467,14 @@ pub class HTTPTransport {
     __ctx:     ssl.Context | nil
     __ctx-h1:  ssl.Context | nil
     __lock:    Mutex
-    __h2:      _
+    __h2:      H2Connect | nil
     __h2-err:  String | nil
 
     init(
         http1: Bool = true,
         http2: Bool = true,
-        verify: _ = true,
-        cert: _ = nil,
+        verify: Verify = true,
+        cert: ClientCert = nil,
         retries: Int = 0,
         proxy: String | URL | nil = nil,
         trust-env: Bool = true,
@@ -2435,7 +2502,7 @@ pub class HTTPTransport {
         __h2-err           = nil
     }
 
-    __h2-module() -> _ {
+    __h2-module() -> H2Connect | nil {
         if !http2 {
             return nil
         }
@@ -2517,7 +2584,7 @@ pub class HTTPTransport {
         }
     }
 
-    __open(url: URL, proxy: URL | nil, key: String, t: Timeout) -> _ {
+    __open(url: URL, proxy: URL | nil, key: String, t: Timeout) -> Connection {
         let until = deadline(t.connect)
         let host = url.host ?? throw UnsupportedProtocol("http: URL has no host: {url}")
         let port = url.effective-port ?? throw UnsupportedProtocol("http: URL has no port: {url}")
@@ -2612,13 +2679,9 @@ pub class HTTPTransport {
             throw ProxyError('http: SOCKS5 proxy rejected every authentication method')
         }
         if reply[1] == 2 {
-            let u = Blob(form-decode(user ?? ''))
-            let pw = Blob(form-decode(p.password ?? ''))
-            let msg = Blob(1, #u)
-            msg.push(u)
-            msg.push(#pw)
-            msg.push(pw)
-            s.send(msg, until)
+            let u = form-decode(user ?? '')
+            let pw = form-decode(p.password ?? '')
+            s.send(Blob(1, u.size()).push(u).push(pw.size()).push(pw), until)
             let ok = __read-exact(s, 2, until)
             if ok[1] != 0 {
                 throw ProxyError('http: SOCKS5 authentication failed')
@@ -2636,15 +2699,12 @@ pub class HTTPTransport {
             match os.getaddrinfo(host, port, os.AF_INET, os.SOCK_STREAM, 0) {
                 Ok([a, *]) => {
                     req.push(1)
-                    req.push(a.address.slice(4, 4))
+                    req.push(a.address.ptr() + 4, 4)
                 },
                 _ => throw ConnectError("http: cannot resolve {host}")
             }
         } else {
-            let h = Blob(host)
-            req.push(3)
-            req.push(#h)
-            req.push(h)
+            req.push(3).push(host.size()).push(host)
         }
         req.push(port >> 8)
         req.push(port & 0xFF)
@@ -2713,12 +2773,13 @@ pub class HTTPTransport {
 
         let attempt = 0
         while true {
-            let conn = nil
+            let conn: Connection | nil = nil
             let reused? = false
             try {
-                conn = pool.acquire(key, -> __open(url, proxy, key, t), deadline(t.pool), h2?)
-                reused? = conn.requests > (conn.http2? ? 1 : 0)
-                let (status, reason, headers, version, body) = conn.exchange(req, t, extra)
+                let c = pool.acquire(key, -> __open(url, proxy, key, t), deadline(t.pool), h2?)
+                conn = c
+                reused? = c.requests > (c.http2? ? 1 : 0)
+                let (status, reason, headers, version, body) = c.exchange(req, t, extra)
                 let rsp = Response(status, headers, http-version: version, reason: reason, url: url, request: req)
                 rsp.attach(body, decode: false)
                 return rsp
@@ -2760,7 +2821,7 @@ pub class HTTPTransport {
     }
 }
 
-class MemoryBody {
+class MemoryBody : Body {
     data: Blob | nil
 
     init(data: Blob) {
@@ -2781,10 +2842,10 @@ class MemoryBody {
 /// A transport that answers requests by calling `handler(req)`, for tests.
 /// The handler returns a `Response`, an Int status, a String/Blob body, a
 /// `(status, body)` / `(status, headers, body)` tuple, or a JSON-able value.
-pub class MockTransport {
-    handler: _
+pub class MockTransport : Transport {
+    handler: (Request) -> _
 
-    init(handler: _) {
+    init(handler: (Request) -> _) {
         self.handler = handler
     }
 
@@ -2818,18 +2879,17 @@ fn in-server-task?() -> Bool {
     core.task() != nil && core.loop() != nil
 }
 
-fn offload(f: () -> _) -> _ {
-    if in-server-task?() {
-        core.loop().blocking(f)
-    } else {
-        f()
+fn offload[a](f: () -> a) -> a {
+    if core.task() != nil and let $l = core.loop() {
+        return l.blocking(f)
     }
+    f()
 }
 
-class LoopBody {
-    inner: _
+class LoopBody : Body {
+    inner: Body
 
-    init(inner: _) {
+    init(inner: Body) {
         self.inner = inner
     }
 
@@ -2859,33 +2919,46 @@ fn merge-params(url: URL, params: _) -> URL {
     (params == nil) ? url : url.with(params: params)
 }
 
-fn hooks-of(x: _) -> Dict[String, Array[_]] {
-    let out = %{'request': [], 'response': []}
-    match x {
-        nil => {},
-        d: Dict => for k, v in d { out[k] = (v :: Array) ? [*v] : [v] },
-        r       => for k, v in members(r) { out[k] = (v :: Array) ? [*v] : [v] }
-    }
-    out
+pub use EventHooks = {
+    request:  Array[(Request) -> _],
+    response: Array[(Response) -> _]
 }
 
-fn trace-default(kind: String, x: _) {
+pub use Tracer = (String, Request | Response) -> _
+
+fn hook-list(v: _) -> Array[_] {
+    match v {
+        nil       => [],
+        vs: Array => [*vs],
+        f         => [f]
+    }
+}
+
+fn hooks-of(x: _) -> EventHooks {
+    let d = match x {
+        nil     => %{},
+        d: Dict => d,
+        r       => members(r)
+    }
+    {request: hook-list(d['request']), response: hook-list(d['response'])}
+}
+
+fn trace-default(kind: String, x: Request | Response) {
     let col = display.color?(2)
-    match kind {
-        'request' => {
-            let text = x.pretty(body: x.content != nil, color: col, limit: 2048)
+    match x {
+        req: Request => {
+            let text = req.pretty(body: req.content != nil, color: col, limit: 2048)
             os.write(2, text.split('\n').map(l -> "> {l}").join('\n') + '\n')
         },
-        'response' => {
-            let start = display.status-line(x.http-version, x.status-code, x.reason, col)
-            let lines = [start, *display.header-lines(x.headers.items(), col)]
+        rsp: Response => {
+            let start = display.status-line(rsp.http-version, rsp.status-code, rsp.reason, col)
+            let lines = [start, *display.header-lines(rsp.headers.items(), col)]
             os.write(2, lines.map(l -> "< {l}").join('\n') + '\n\n')
-        },
-        _ => {}
+        }
     }
 }
 
-fn trace-printer(spec: _) -> _ {
+fn trace-printer(spec: Bool | Tracer | nil) -> Tracer | nil {
     match spec {
         nil, false  => nil,
         f: Function => f,
@@ -2923,19 +2996,19 @@ pub class Client {
     headers:           Headers
     params:            _
     cookies:           CookieJar
-    auth:              _
+    auth:              Auth | nil
     timeout:           Timeout
     follow-redirects:  Bool
     max-redirects:     Int
-    event-hooks:       Dict[String, Array[_]]
+    event-hooks:       EventHooks
     transport:         _
-    mounts:            Dict[String, _]
+    mounts:            Dict[String, Transport]
     retry:             Retry | nil
     compress:          String | nil
     decode:            Bool
     max-response-size: Int | nil
     raise-for-status:  Bool
-    trace:             _
+    trace:             Tracer | nil
 
     __closed?: Bool
 
@@ -2950,24 +3023,24 @@ pub class Client {
         max-redirects: Int = 20,
         http1: Bool = true,
         http2: Bool = true,
-        verify: _ = true,
-        cert: _ = nil,
+        verify: Verify = true,
+        cert: ClientCert = nil,
         proxy: String | URL | nil = nil,
         trust-env: Bool = true,
         limits: Limits = Limits(),
         retries: Int = 0,
-        retry: _ = nil,
+        retry: Retry | Int | Bool | nil = nil,
         uds: String | nil = nil,
         local-address: String | nil = nil,
-        transport: _ = nil,
-        mounts: Dict[String, _] | nil = nil,
+        transport: Transport | nil = nil,
+        mounts: Dict[String, Transport] | nil = nil,
         event-hooks: _ = nil,
         user-agent: String = USER_AGENT,
         compress: String | nil = nil,
         decode: Bool = true,
         max-response-size: Int | nil = nil,
         raise-for-status: Bool = false,
-        trace: _ = false
+        trace: Bool | Tracer | nil = false
     ) {
         self.base-url = match base-url {
             nil       => nil,
@@ -3026,8 +3099,7 @@ pub class Client {
                 if u.absolute? {
                     u
                 } else {
-                    let s = str(u)
-                    b.join(s.starts?('/') ? s.slice(1) : s)
+                    b.join(str(u).comb(/^\//))
                 }
             }
         }
@@ -3037,7 +3109,7 @@ pub class Client {
     build-request(
         method: String,
         url: String | URL,
-        content: _ = nil,
+        content: String | Blob | BodySource | nil = nil,
         data: _ = nil,
         files: _ = nil,
         json: _ = nil,
@@ -3045,14 +3117,14 @@ pub class Client {
         headers: _ = nil,
         cookies: _ = nil,
         compress: String | nil = nil,
-        extensions: Dict[String, _] | nil = nil
+        extensions: Dict[String, String] | nil = nil
     ) -> Request {
         let u = merge-params(merge-params(__url(url), self.params), params)
         let hs = self.headers.copy()
         hs.update(headers)
 
         let body: Blob | nil = nil
-        let stream = nil
+        let stream: BodySource | nil = nil
 
         if json != nil {
             body = Blob(json::encode(json))
@@ -3102,9 +3174,9 @@ pub class Client {
         req
     }
 
-    __transport-for(url: URL) -> _ {
+    __transport-for(url: URL) -> Transport {
         let s = str(url)
-        let best = nil
+        let best: Transport | nil = nil
         let best-len = -1
         for prefix, t in mounts {
             if s.starts?(prefix) && prefix.size() > best-len {
@@ -3123,7 +3195,7 @@ pub class Client {
             }
         }
 
-        for f in event-hooks['request'] ?? [] {
+        for f in event-hooks.request {
             f(req)
         }
         if let $tr = trace {
@@ -3133,8 +3205,8 @@ pub class Client {
         let started = time.now()
         let tp = __transport-for(req.url)
         let rsp = in-server-task?() ? offload(-> tp.handle(req, t)) : tp.handle(req, t)
-        if in-server-task?() && rsp.body-stream != nil {
-            rsp.attach(LoopBody(rsp.body-stream), decode: false)
+        if in-server-task?() and let $body = rsp.body-stream {
+            rsp.attach(LoopBody(body), decode: false)
         }
         if decode {
             rsp.enable-decoding(max-response-size)
@@ -3149,7 +3221,7 @@ pub class Client {
         if let $tr = trace {
             tr('response', rsp)
         }
-        for f in event-hooks['response'] ?? [] {
+        for f in event-hooks.response {
             f(rsp)
         }
         rsp
@@ -3318,7 +3390,7 @@ pub class Client {
     request(
         method: String,
         url: String | URL,
-        content: _ = nil,
+        content: String | Blob | BodySource | nil = nil,
         data: _ = nil,
         files: _ = nil,
         json: _ = nil,
@@ -3330,7 +3402,7 @@ pub class Client {
         follow-redirects: Bool | nil = nil,
         stream: Bool = false,
         compress: String | nil = nil,
-        extensions: Dict[String, _] | nil = nil
+        extensions: Dict[String, String] | nil = nil
     ) -> Response {
         let req = build-request(
             method,
@@ -3365,7 +3437,7 @@ pub class Client {
     /// Downloads `url` to `path` (default: the URL's last path segment),
     /// with an optional progress bar on stderr (`progress: true`) or callback
     /// `f(bytes, total)`. Returns the path.
-    download(url: String | URL, path: String | Path | nil = nil, progress: _ = nil, %kwargs) -> Path {
+    download(url: String | URL, path: String | Path | nil = nil, progress: Progress = nil, %kwargs) -> Path {
         let rsp = request('GET', url, stream: true, **kwargs)
         try {
             rsp.raise-for-status()
@@ -3384,18 +3456,16 @@ pub class Client {
     /// the stream ends or fails, until `reconnect: false` or `max-retries`
     /// consecutive failures. `close()` the iterator when stopping early
     /// (or use it with `with`).
-    events(url: String | URL, reconnect: Bool = true, max-retries: Int | nil = nil, retry-delay: Int | Float = 3.0, %kwargs) -> Chunks {
+    events(url: String | URL, reconnect: Bool = true, max-retries: Int | nil = nil, retry-delay: Int | Float = 3.0, %kwargs) -> Chunks[Event] {
         let hs = Headers(kwargs['headers'])
         hs.set('Accept', 'text/event-stream')
         hs.set('Cache-Control', 'no-cache')
-        let opts = %{k: v for k, v in kwargs if k != 'headers'}
-        if opts['timeout'] == nil {
-            opts['timeout'] = Timeout(self.timeout.connect ?? 5.0, read: false)
-        }
+        let opts = %{k: v for k, v in kwargs if k != 'headers' && k != 'timeout'}
+        let timeout = kwargs['timeout'] ?? Timeout(self.timeout.connect ?? 5.0, read: false)
 
         let st = EventState(float(retry-delay))
 
-        let fail = fn (e: _) {
+        let fail = fn (e: TransportError) {
             st.close()
             st.failures += 1
             if !reconnect || (max-retries != nil && st.failures > max-retries) {
@@ -3423,7 +3493,7 @@ pub class Client {
                         hs.set('Last-Event-ID', id)
                     }
                     let rsp = try {
-                        request('GET', url, stream: true, headers: hs, **opts)
+                        request('GET', url, stream: true, headers: hs, timeout: timeout, **opts)
                     } catch e: TransportError {
                         fail(e)
                         continue
@@ -3558,7 +3628,7 @@ fn form-encode(d: _) -> String {
     out.join('&')
 }
 
-fn compress-stream*(src: _, coding: String) {
+fn compress-stream*(src: BodySource, coding: String) {
     let e = codec.encoder(coding)
     try {
         for chunk in stream-chunks(src) {
@@ -3629,6 +3699,6 @@ pub fn download(url: String | URL, path: String | Path | nil = nil, %kwargs) -> 
     shared().download(url, path, **kwargs)
 }
 
-pub fn events(url: String | URL, %kwargs) -> _ {
+pub fn events(url: String | URL, %kwargs) -> Chunks[Event] {
     shared().events(url, **kwargs)
 }

@@ -5,13 +5,16 @@ import log
 import ssl
 import ty.mod as tymod
 import http.metrics (Metrics)
+import http.backend (Backend)
+import http.wire (Request)
 import http.core (
     Config,
+    EventLoop,
+    Exchange,
     Task,
     Raise,
     CanceledError,
     ConnectionClosed,
-    make-task,
     step,
     suspend,
     task,
@@ -50,9 +53,40 @@ pub fn default-backend() -> String {
 #|]
 }
 
-pub fn make-backend(name: String, entries: Int, factory: _) -> _ {
-    if factory != nil {
-        return factory(entries)
+pub use BackendFactory = (Int) -> Backend;
+
+pub trait Proto {
+    on-data();
+    on-eof();
+    on-drain();
+    on-timeout(which: Int);
+    on-close();
+    on-shutdown();
+}
+
+pub trait LoopExchange < Exchange {
+    loop -> Loop;
+}
+
+pub trait Host {
+    tls -> ssl.Context | nil;
+    h2? -> Bool;
+    streams? -> Bool;
+    backend-factory -> BackendFactory | nil;
+    overload-response -> String | nil;
+    connection-opened(loop: Loop) -> Bool;
+    connection-closed();
+    on-open(conn: Conn) -> Proto;
+    on-tls(conn: Conn, alpn: String | nil) -> Proto;
+    on-h2c(conn: Conn) -> Proto;
+    try-upgrade(conn: Conn, req: Request) -> Bool;
+    streaming-route?(method: String, url: String) -> Bool;
+    serve(x: LoopExchange, req: Request);
+}
+
+pub fn make-backend(name: String, entries: Int, factory: BackendFactory | nil) -> Backend {
+    if let $f = factory {
+        return f(entries)
     }
 
     let name = (name == 'auto') ? default-backend() : name
@@ -99,7 +133,7 @@ pub class Conn {
     out:       Blob
     sent:      Int
     pend:      Blob
-    proto:     _
+    proto:     Proto | nil
     requests:  Int
     opened:    Float
     reading?:  Bool
@@ -256,8 +290,8 @@ pub class Conn {
             return close()
         }
 
-        if proto != nil {
-            proto.on-timeout(which)
+        if let $p = proto {
+            p.on-timeout(which)
         } else {
             close()
         }
@@ -269,24 +303,38 @@ pub class Conn {
         }
 
         if let $t = tls {
-            let n = data.size()
-            let off = 0
-            while off < n {
-                let k = t.write(data, off, n - off)
-                if k <= 0 {
-                    break
-                }
-                off += k
-            }
-            t.drain(pend)
+            __seal(t, data.ptr(), data.size())
         } else {
             pend.push(data)
         }
 
-        if !dirty? && !sending? {
-            dirty? = true
-            loop.dirty.push(self)
+        __mark-dirty()
+    }
+
+    write-raw(p: Ptr, n: Int) {
+        if closing? || draining? {
+            return
         }
+
+        if let $t = tls {
+            __seal(t, p, n)
+        } else {
+            pend.push(p, n)
+        }
+
+        __mark-dirty()
+    }
+
+    __seal(t: ssl.Session, p: Ptr, n: Int) {
+        let off = 0
+        while off < n {
+            let k = t.write-ptr(p + off, n - off)
+            if k <= 0 {
+                break
+            }
+            off += k
+        }
+        t.drain(pend)
     }
 
     flush() {
@@ -347,8 +395,8 @@ pub class Conn {
             return __shutdown-write()
         }
 
-        if proto != nil {
-            proto.on-drain()
+        if let $p = proto {
+            p.on-drain()
         }
     }
 
@@ -371,13 +419,14 @@ pub class Conn {
 
         if res <= 0 {
             eof? = true
-            if linger? || draining? || proto == nil {
+            let $p = proto or return close()
+            if linger? || draining? {
                 return close()
             }
             if res < 0 && res != -errno.ECONNRESET {
                 log::debug!("recv failed", fd, error: errno.str(-res))
             }
-            return proto.on-eof()
+            return p.on-eof()
         }
 
         if linger? {
@@ -403,10 +452,12 @@ pub class Conn {
             filled += res
         }
 
-        proto.on-data()
+        if let $p = proto {
+            p.on-data()
+        }
 
-        if eof? && !closing? && proto != nil {
-            proto.on-eof()
+        if let $p = proto and eof? && !closing? {
+            p.on-eof()
         }
     }
 
@@ -486,8 +537,7 @@ pub class Conn {
             t.cancel()
         }
 
-        if proto != nil {
-            let p = proto
+        if let $p = proto {
             try {
                 p.on-close()
             } catch e {
@@ -519,56 +569,18 @@ pub class Conn {
     }
 }
 
-class Blocking {
-    __queue:   SharedQueue[_]
-    __threads: Array[Thread[_]]
-
-    init(n: Int) {
-        __queue   = SharedQueue()
-        __threads = [Thread(__work) for ..n]
-        for __threads {
-            it.detach()
-        }
-    }
-
-    __work() {
-        while true {
-            let (f, args, loop, t) = __queue.take()
-            let result = try {
-                Some(f(*args))
-            } catch e {
-                Raise(e)
-            }
-            loop.post(-> loop.resume(t, result))
-        }
-    }
-
-    submit(job: _) {
-        __queue.put(job)
-    }
-}
-
-let blocking-lock = Mutex()
-let blocking-pool: Blocking | nil = nil
-
-fn blocking-pool-of(n: Int) -> Blocking {
-    let ^_ = blocking-lock.lock()
-    blocking-pool ?? (blocking-pool = Blocking(n))
-}
-
-pub class Loop {
-    server:  _
-    config:  Config
+pub class Loop : EventLoop {
+    server:  Host
     index:   Int
-    backend: _
+    backend: Backend
     now:     Float
     date:    String
     dirty:   Array[Conn]
 
-    server-version: Int
-    server-routes:  _
-    request-seq:    Int
-    metrics:        Metrics
+    request-seq: Int
+    metrics:     Metrics
+
+    __config:    Config
 
     __later:     Array[() -> _]
 
@@ -591,18 +603,16 @@ pub class Loop {
     __date-at:   Int
     __backoff:   Timer
 
-    init(server: _, config: Config, index: Int, listen: Int) {
+    init(server: Host, config: Config, index: Int, listen: Int) {
         self.server  = server
-        self.config  = config
         self.index   = index
         backend      = make-backend(config.backend, config.ring-entries, server.backend-factory)
         now          = time.now()
         dirty        = []
-        server-version = -1
-        server-routes  = nil
-        request-seq    = 0
-        metrics        = Metrics()
-        __later        = []
+        request-seq  = 0
+        metrics      = Metrics()
+        __config     = config
+        __later      = []
         __listen     = listen
         __slots      = [nil]
         __free       = []
@@ -623,6 +633,10 @@ pub class Loop {
         date         = ''
         __backoff    = Timer(-> __arm-accept())
         __tick-date()
+    }
+
+    config -> Config {
+        __config
     }
 
     active -> Int {
@@ -677,8 +691,8 @@ pub class Loop {
         }
     }
 
-    spawn(name: String, f: _, *args: _, %kwargs: _) -> Task {
-        let t = make-task(self, name, f, args, kwargs)
+    spawn(name: String, f: (*_) -> _, *args: _, %kwargs: _) -> Task {
+        let t = Task(self, name, f, args, kwargs)
         __tasks.insert(t)
         __step(t, nil)
         t
@@ -719,7 +733,7 @@ pub class Loop {
         }
     }
 
-    blocking(f: _, *args: _) -> _ {
+    blocking[a](f: (*_) -> a, *args: _) -> a {
         let $t = task() or throw RuntimeError('http.blocking() must be called from a server task')
         blocking-pool-of(config.blocking-threads).submit((f, args, self, t))
         match suspend() {
@@ -728,11 +742,8 @@ pub class Loop {
         }
     }
 
-    slot-proto(slot: Int) -> _ {
-        match __slots[slot] {
-            nil  => nil,
-            conn => conn.proto
-        }
+    slot-proto(slot: Int) -> Proto | nil {
+        __slots[slot].?proto
     }
 
     /// Reads up to `n` bytes of `fd` at `offset` without blocking the loop
@@ -848,7 +859,7 @@ pub class Loop {
         __arm-accept()
     }
 
-    __guard(conn: Conn, e: _) {
+    __guard(conn: Conn, e: RuntimeError) {
         log::error!("closing connection after internal error", err: e)
         try {
             conn.close()
@@ -986,10 +997,10 @@ pub class Loop {
 
         for c in __slots {
             if c != nil && !c.closing? && !c.closed? && c.fd >= 0 {
-                if c.proto == nil {
-                    c.close()
+                if let $p = c.proto {
+                    p.on-shutdown()
                 } else {
-                    c.proto.on-shutdown()
+                    c.close()
                 }
             }
         }
@@ -1040,4 +1051,43 @@ pub class Loop {
             set-loop(nil)
         }
     }
+}
+
+use Job = ((*_) -> _, Array[_], Loop, Task);
+
+class Blocking {
+    __queue:   SharedQueue[Job]
+    __threads: Array[Thread[nil]]
+
+    init(n: Int) {
+        __queue   = SharedQueue()
+        __threads = [Thread(__work) for ..n]
+        for __threads {
+            it.detach()
+        }
+    }
+
+    __work() {
+        while true {
+            let (f, args, loop, t) = __queue.take()
+            let result = try {
+                Some(f(*args))
+            } catch e {
+                Raise(e)
+            }
+            loop.post(-> loop.resume(t, result))
+        }
+    }
+
+    submit(job: Job) {
+        __queue.put(job)
+    }
+}
+
+let blocking-lock = Mutex()
+let blocking-pool: Blocking | nil = nil
+
+fn blocking-pool-of(n: Int) -> Blocking {
+    let ^_ = blocking-lock.lock()
+    blocking-pool ?? (blocking-pool = Blocking(n))
 }

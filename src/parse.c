@@ -4118,19 +4118,7 @@ parse_method_call(Ty *ty, Expr *e)
         return e;
 }
 
-inline static bool
-has_names(Expr const *e)
-{
-        for (int i = 0; e->names.count; ++i) {
-                if (e->names.items[i] != NULL) {
-                        return true;
-                }
-        }
-
-        return false;
-}
-
-static Expr *
+inline static Expr *
 prefix_parenthesis(Ty *ty)
 {
         /*
@@ -4341,33 +4329,24 @@ prefix_parenthesis(Ty *ty)
         } else {
                 consume(')');
 
-                if (e->type == EXPRESSION_TUPLE && !has_names(e)) {
-                        Expr *list = mkxpr(TUPLE);
-                        list->start = start;
-                        list->only_identifiers = false;
-                        avP(list->names, NULL);
-                        avP(list->required, true);
-                        avP(list->es, e);
-                        avP(list->tconds, NULL);
-                        return list;
-                } else {
-                        if (state.module != NULL && start.byte < e->start.byte) {
-                                avP(
-                                        state.module->extras,
-                                        ((SyntaxExtra) {
-                                                .kind        = "Paren",
-                                                .start       = start,
-                                                .end         = TEnd,
-                                                .inner_start = e->start,
-                                                .inner_end   = e->end,
-                                                .inner       = true
-                                        })
-                                );
-                        }
-                        e->start = start;
-                        e->end = TEnd;
-                        return e;
+                if (state.module != NULL && start.byte < e->start.byte) {
+                        avP(
+                                state.module->extras,
+                                ((SyntaxExtra) {
+                                        .kind        = "Paren",
+                                        .start       = start,
+                                        .end         = TEnd,
+                                        .inner_start = e->start,
+                                        .inner_end   = e->end,
+                                        .inner       = true
+                                })
+                        );
                 }
+
+                e->start = start;
+                e->end = TEnd;
+
+                return e;
         }
 }
 

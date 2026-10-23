@@ -4,6 +4,8 @@ import ssl
 import http.core (Response)
 import http.wire (Request)
 
+pub import http.store (Store, SessionData, MemoryStore, Session)
+
 const MAX_COOKIE = 4000
 
 /// Signs `value` with the first secret: `value.signature`.
@@ -13,9 +15,7 @@ pub fn sign(value: String, secrets: Array[String]) -> String {
 
 /// Returns the value of a string produced by `sign` if any secret verifies it.
 pub fn unsign(signed: String, secrets: Array[String]) -> String | nil {
-    let $i = signed.searchr('.') or return nil
-    let value = signed.slice(0, i)
-    let mac = signed.slice(i + 1)
+    let [_, value, mac] = signed.match(/^(.*)\.([^.]*)$/) ?? return nil
     for s in secrets {
         if ssl.equal?(ssl.b64url(ssl.hmac-sha256(s, value)), mac) {
             return value
@@ -28,161 +28,13 @@ pub fn new-id() -> String {
     ssl.b64url(ssl.random-bytes(24))
 }
 
-/// Server-side session storage kept in process memory. Thread-safe; data is
-/// stored as JSON so sessions never share mutable objects between threads.
-pub class MemoryStore {
-    max-sessions: Int
-
-    __mtx:  Mutex
-    __data: Dict[String, (Float, String)]
-    __ops:  Int
-
-    init(max-sessions: Int = 100000) {
-        self.max-sessions = max-sessions
-        __mtx  = Mutex()
-        __data = %{}
-        __ops  = 0
-    }
-
-    size -> Int {
-        let ^_ = __mtx.lock()
-        #__data
-    }
-
-    load(id: String) -> Dict[String, _] | nil {
-        let ^_ = __mtx.lock()
-        let (expires, text) = __data[id] ?? return nil
-        if expires < time.utc() {
-            __data.remove(id)
-            return nil
-        }
-        json.parse(text)
-    }
-
-    save(id: String, data: Dict[String, _], ttl: Float) {
-        let text = json.encode(data)
-        let ^_ = __mtx.lock()
-        __ops += 1
-        if __ops % 1024 == 0 || #__data >= max-sessions {
-            __purge()
-        }
-        if #__data >= max-sessions && __data[id] == nil {
-            throw RuntimeError('http: session store is full')
-        }
-        __data[id] = (time.utc() + ttl, text)
-    }
-
-    destroy(id: String) {
-        let ^_ = __mtx.lock()
-        __data.remove(id)
-    }
-
-    __purge() {
-        let now = time.utc()
-        let stale = [id for id, (exp, _) in __data if exp < now]
-        for id in stale {
-            __data.remove(id)
-        }
-    }
-}
-
-pub class Session {
-    id:         String | nil
-    new?:       Bool
-    dirty?:     Bool
-    destroyed?: Bool
-
-    __data:     Dict[String, _] | nil
-    __loader:   _
-    __rotate?:  Bool
-
-    init(loader: _) {
-        __loader   = loader
-        __data     = nil
-        __rotate?  = false
-        id         = nil
-        new?       = true
-        dirty?     = false
-        destroyed? = false
-    }
-
-    __load() -> Dict[String, _] {
-        if let $d = __data {
-            return d
-        }
-        let (id, data) = __loader()
-        self.id = id
-        new? = data == nil
-        let d = data ?? %{}
-        __data = d
-        d
-    }
-
-    loaded? -> Bool {
-        __data != nil
-    }
-
-    data -> Dict[String, _] {
-        __load()
-    }
-
-    get(key: String, default: _ = nil) -> _ {
-        __load()[key] ?? default
-    }
-
-    set(key: String, value: _) -> _ {
-        __load()[key] = value
-        dirty? = true
-        value
-    }
-
-    [](key: String) -> _ {
-        __load()[key]
-    }
-
-    []=(key: String, value: _) -> _ {
-        set(key, value)
-    }
-
-    contains?(key: String) -> Bool {
-        __load().contains?(key)
-    }
-
-    remove(key: String) {
-        __load().remove(key)
-        dirty? = true
-    }
-
-    clear() {
-        __data = %{}
-        dirty? = true
-    }
-
-    /// Issues a new session id keeping the data (use after login).
-    regenerate() {
-        __load()
-        __rotate? = true
-        dirty? = true
-    }
-
-    /// Deletes the session and expires its cookie.
-    destroy() {
-        __load()
-        destroyed? = true
-    }
-
-    rotate? -> Bool {
-        __rotate?
-    }
-}
-
 /// Session middleware. With the default cookie store all data lives in a
 /// signed (not encrypted) cookie, so clients can read but not alter it;
 /// pass `store: MemoryStore()` or your own store (`load`, `save`, `destroy`)
 /// to keep data server-side.
 pub class Sessions {
     secrets:   Array[String]
-    store:     _
+    store:     Store | nil
     name:      String
     max-age:   Int
     path:      String
@@ -193,7 +45,7 @@ pub class Sessions {
 
     init(
         secret: String | Array[String],
-        store: _ = nil,
+        store: Store | nil = nil,
         name: String = 'session',
         max-age: Int = 14 * 24 * 3600,
         path: String = '/',
@@ -216,7 +68,7 @@ pub class Sessions {
         self.rolling   = rolling
     }
 
-    __load(req: Request) -> (String | nil, Dict[String, _] | nil) {
+    __load(req: Request) -> (String | nil, SessionData | nil) {
         let $raw = req.cookie(name) or return (nil, nil)
         let $value = unsign(raw, secrets) or return (nil, nil)
 

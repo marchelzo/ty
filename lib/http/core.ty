@@ -4,6 +4,8 @@ import log
 import http.status (status-name)
 import time
 import ty.mod as tymod
+import http.codec (Encoder)
+import http.wire (Request, BodySource)
 
 pub import http.cookies (parse-cookies, http-date, format-set-cookie)
 pub import http.sse (event-chunk)
@@ -36,6 +38,23 @@ pub class CanceledError < RuntimeError {
         super('task canceled')
     }
 }
+
+pub use AccessEntry = {
+    id:       String | nil,
+    time:     Float,
+    remote:   String | nil,
+    method:   String,
+    target:   String,
+    route:    String | nil,
+    protocol: String,
+    status:   Int,
+    bytes:    Int,
+    seconds:  Float,
+    referer:  String | nil,
+    agent:    String | nil
+};
+
+pub use AccessLog = String | Bool | ((AccessEntry) -> _) | nil;
 
 pub class Config {
     backend:                     String
@@ -70,7 +89,7 @@ pub class Config {
     blocking-threads:            Int
     server-name:                 String | nil
     debug:                       Bool
-    access-log:                  _
+    access-log:                  AccessLog
     access-log-fd:               Int
     request-id-header:           String | Bool
     trust-request-id:            Bool
@@ -108,7 +127,7 @@ pub class Config {
         blocking-threads: Int = 16,
         server-name: String | nil = nil,
         debug: Bool = false,
-        access-log: _ = nil,
+        access-log: AccessLog = nil,
         access-log-fd: Int = 2,
         request-id-header: String | Bool = 'X-Request-Id',
         trust-request-id: Bool = true
@@ -152,11 +171,13 @@ pub class Config {
     }
 }
 
-let optional-lock = Mutex()
-let optional: Dict[String, _] = %{}
-let loader: SharedQueue[_] | nil = nil
+pub use Loaded = Ok[_] | Err[String];
 
-fn load-forever(q: SharedQueue[_]) {
+let optional-lock = Mutex()
+let optional: Dict[String, Loaded] = %{}
+let loader: SharedQueue[(String, String, SharedQueue[Loaded])] | nil = nil
+
+fn load-forever(q: SharedQueue[(String, String, SharedQueue[Loaded])]) {
     while true {
         let (name, member, reply) = q.take()
         let found = try {
@@ -172,7 +193,7 @@ fn load-forever(q: SharedQueue[_]) {
 /// features whose native libraries may be missing. Returns Ok(value) or
 /// Err(reason). Modules are compiled on one long-lived loader thread: code
 /// compiled on a thread that later exits would be freed with it.
-pub fn optional-module(name: String, member: String) -> _ {
+pub fn optional-module(name: String, member: String) -> Loaded {
     let ^_ = optional-lock.lock()
     if let $found = optional[name] {
         return found
@@ -193,44 +214,74 @@ pub fn optional-module(name: String, member: String) -> _ {
 pub tag Suspend;
 pub tag Raise;
 
-let __tls::current-task: Task | nil = nil
-let __tls::current-loop: _ = nil
+pub trait EventLoop {
+    config -> Config;
+    post(f: () -> _) -> Bool;
+    later(f: () -> _);
+    resume(t: Task, v: _ = nil);
+    timer(seconds: Int | Float, f: () -> _);
+    sleep(seconds: Int | Float);
+    blocking[a](f: (*_) -> a, *args: _) -> a;
+    spawn(name: String, f: (*_) -> _, *args: _, %kwargs: _) -> Task;
+    read-at(fd: Int, n: Int, offset: Int) -> Blob;
+}
+
+pub trait Exchange {
+    loop -> EventLoop;
+    request -> Request;
+    closed? -> Bool;
+    buffered -> Int;
+    has-writer? -> Bool;
+    writer() -> BodyWriter;
+    events() -> EventStream;
+    start(rsp: Response);
+    complete(rsp: Response);
+    send(data: String | Blob);
+    end();
+    abort();
+    wait-drain(below: Int = -1);
+    wait-closed();
+    on-close(f: () -> _);
+}
 
 pub class Task {
-    loop:     _
+    loop:     EventLoop
     name:     String
     done?:    Bool
     parked?:  Bool
     canceled: Bool
-    gen:      _
+    gen:      Generator[Suspend, _]
 
-    init(loop: _, name: String) {
+    init(loop: EventLoop, name: String, f: (*_) -> _, args: Array[_], kwargs: Dict[String, _]) {
         self.loop = loop
         self.name = name
         done?     = false
         parked?   = false
         canceled  = false
-        gen       = nil
+        gen       = task-body(self, f, args, kwargs)
     }
 }
+
+let __tls::current-task: Task | nil = nil
+let __tls::current-loop: EventLoop | nil = nil
 
 pub fn task() -> Task | nil {
     current-task
 }
 
-pub fn loop() -> _ {
+pub fn loop() -> EventLoop | nil {
     current-loop
 }
 
-pub fn this-loop() -> _ {
+pub fn this-loop() -> EventLoop | nil {
     current-loop
 }
 
-pub fn set-loop(l: _) {
+pub fn set-loop(l: EventLoop | nil) {
     current-loop = l
 }
 
-fn task-body*(task: Task, f: _, args: _, kwargs: _) {
+fn task-body*(task: Task, f: (*_) -> _, args: Array[_], kwargs: Dict[String, _]) {
     try {
         f(*args, **kwargs)
     } catch _: CanceledError {
@@ -240,12 +291,6 @@ fn task-body*(task: Task, f: _, args: _, kwargs: _) {
     } finally {
         task.done? = true
     }
-}
-
-pub fn make-task(loop: _, name: String, f: _, args: _, kwargs: _) -> Task {
-    let t = Task(loop, name)
-    t.gen = task-body(t, f, args, kwargs)
-    t
 }
 
 pub fn step(t: Task, v: _ = nil) {
@@ -273,17 +318,17 @@ pub fn suspend() -> _ {
     }
 }
 
-pub fn in-task?(loop: _) -> Bool {
+pub fn in-task?(loop: EventLoop) -> Bool {
     current-task != nil && current-task.loop == loop
 }
 
-pub fn on-loop?(loop: _) -> Bool {
+pub fn on-loop?(loop: EventLoop) -> Bool {
     current-loop == loop
 }
 
 fn header-safe!(s: String) -> String {
     if s.contains?('\r') || s.contains?('\n') || s.contains?('\x00') {
-        throw ValueError("http: invalid character in header: {s.slice(0, 64)}")
+        throw ValueError("http: invalid character in header: {s:.64}")
     }
     s
 }
@@ -292,12 +337,6 @@ pub const MODE_BUFFERED  = 0
 pub const MODE_STREAMING = 1
 pub const MODE_DONE      = 2
 
-let file-sender: _ = nil
-
-pub fn set-file-sender(f: _) {
-    file-sender = f
-}
-
 pub class Response {
     status-code:   Int
     headers:       Dict[String, String | Array[String]]
@@ -305,13 +344,13 @@ pub class Response {
     content-type:  String | nil
     stream-length: Int | nil
 
-    __x:         _
-    __encoder:   _
+    __x:         Exchange | nil
+    __encoder:   Encoder | nil
     __mode:      Int
-    __hooks:     Array[_]
+    __hooks:     Array[(Response) -> _]
     __streaming: Bool
 
-    init(x: _) {
+    init(x: Exchange | nil) {
         __x           = x
         __mode        = MODE_BUFFERED
         __hooks       = []
@@ -325,7 +364,7 @@ pub class Response {
     }
 
     /// Runs `f(rsp)` just before the response head is sent.
-    on-headers(f: _) {
+    on-headers(f: (Response) -> _) {
         __hooks.push(f)
     }
 
@@ -340,15 +379,15 @@ pub class Response {
     bytes -> Int {
         match __mode {
             MODE_BUFFERED => #body,
-            _             => (stream-length != nil && __x.request.method == 'HEAD') ? 0 : __bytes-streamed()
+            _             => (stream-length != nil && exchange.request.method == 'HEAD') ? 0 : __bytes-streamed()
         }
     }
 
     __bytes-streamed() -> Int {
-        if !__x.has-writer? {
+        if !exchange.has-writer? {
             return #body
         }
-        __x.writer().bytes
+        exchange.writer().bytes
     }
 
     set-cookie(
@@ -363,7 +402,7 @@ pub class Response {
         same-site: String | Bool = 'Lax',
         partitioned: Bool = false
     ) -> Response {
-        let https? = __x != nil && __x.request.scheme == 'https'
+        let https? = __x.?request.?scheme == 'https'
         let cookie = format-set-cookie(
             name,
             value,
@@ -386,20 +425,18 @@ pub class Response {
 
     /// Sends a file (see `http.send-file` for options).
     file(path: String, %kwargs) -> Response {
-        if file-sender == nil {
-            throw RuntimeError('http: file sending is unavailable')
-        }
-        file-sender(__x.request, self, path, **kwargs)
+        let $send = file-sender or throw RuntimeError('http: file sending is unavailable')
+        send(exchange.request, self, path, **kwargs)
         self
     }
 
-    exchange -> _ {
-        __x
+    exchange -> Exchange {
+        __x ?? throw RuntimeError('http: response is not attached to a connection')
     }
 
     /// Compresses a streamed body with `e` (an `http.codec` Encoder); set
     /// from an `on-headers` hook together with Content-Encoding.
-    compress-with(e: _) {
+    compress-with(e: Encoder) {
         __encoder = e
     }
 
@@ -437,7 +474,7 @@ pub class Response {
         nil
     }
 
-    header(k: String, v: _ = nil) -> _ {
+    header(k: String, v: Any = nil) -> String | Array[String] | nil {
         if k.lower() == 'content-type' {
             if v != nil {
                 content-type = header-safe!(str(v))
@@ -459,7 +496,7 @@ pub class Response {
         headers[header-safe!(k)] = header-safe!(str(v))
     }
 
-    add-header(k: String, v: _) {
+    add-header(k: String, v: Any) {
         let name = __find(k) ?? header-safe!(k)
         let value = header-safe!(str(v))
         match headers[name] {
@@ -477,28 +514,28 @@ pub class Response {
         }
     }
 
-    write(x: _) -> Response {
+    write(x: Any) -> Response {
         if __mode == MODE_STREAMING {
-            __x.writer().write(x)
+            exchange.writer().write(x)
         } else {
             body.push((x :: String | Blob) ? x : str(x))
         }
         self
     }
 
-    json(x: _) -> Response {
+    json(x: Any) -> Response {
         body.push(json::encode(x))
         content-type = 'application/json'
         self
     }
 
-    plain(x: _) -> Response {
+    plain(x: Any) -> Response {
         body.push((x :: String | Blob) ? x : str(x))
         content-type = 'text/plain; charset=utf-8'
         self
     }
 
-    html(x: _) -> Response {
+    html(x: Any) -> Response {
         body.push((x :: String | Blob) ? x : str(x))
         content-type = 'text/html; charset=utf-8'
         self
@@ -526,12 +563,12 @@ pub class Response {
             __streaming = true
             __fire()
             __mode = MODE_STREAMING
-            __x.start(self)
+            exchange.start(self)
             if let $e = __encoder {
-                __x.writer().encoder = e
+                exchange.writer().encoder = e
             }
         }
-        __x.writer()
+        exchange.writer()
     }
 
     events() -> EventStream {
@@ -542,15 +579,15 @@ pub class Response {
             __streaming = true
             __fire()
             __mode = MODE_STREAMING
-            __x.start(self)
+            exchange.start(self)
         }
-        __x.events()
+        exchange.events()
     }
 
     finish() {
         match __mode {
-            MODE_BUFFERED  => { __fire(); __mode = MODE_DONE; __x.complete(self) },
-            MODE_STREAMING => { __mode = MODE_DONE; __x.writer().end() },
+            MODE_BUFFERED  => { __fire(); __mode = MODE_DONE; exchange.complete(self) },
+            MODE_STREAMING => { __mode = MODE_DONE; exchange.writer().end() },
             _              => {}
         }
     }
@@ -564,6 +601,14 @@ pub class Response {
     }
 }
 
+pub use FileSender = (Request, Response, String, *_, **_) -> _;
+
+let file-sender: FileSender | nil = nil
+
+pub fn set-file-sender(f: FileSender) {
+    file-sender = f
+}
+
 /// Streaming response body. Every method may be called from any thread;
 /// calls from foreign threads are forwarded to the connection's event loop.
 /// Writes from a server task suspend while the peer is slow; writes from
@@ -571,11 +616,11 @@ pub class Response {
 /// `max-write-buffer` is disconnected.
 pub class BodyWriter {
     bytes:   Int
-    encoder: _
+    encoder: Encoder | nil
 
-    __x: _
+    __x: Exchange
 
-    init(x: _) {
+    init(x: Exchange) {
         __x     = x
         bytes   = 0
         encoder = nil
@@ -589,7 +634,7 @@ pub class BodyWriter {
         __x.buffered
     }
 
-    write(data: _) -> Bool {
+    write(data: Any) -> Bool {
         let chunk = (data :: String | Blob) ? data : str(data)
         let loop = __x.loop
 
@@ -682,9 +727,9 @@ pub class BodyWriter {
 /// Server-Sent Events stream (text/event-stream). Thread-safe like
 /// BodyWriter.
 pub class EventStream < BodyWriter {
-    __ex: _
+    __ex: Exchange
 
-    init(x: _) {
+    init(x: Exchange) {
         super(x)
         __ex = x
         let secs = x.loop.config.sse-keepalive
@@ -705,7 +750,7 @@ pub class EventStream < BodyWriter {
         })
     }
 
-    send(data: _ = nil, event: ?String = nil, id: _ = nil, retry: ?Int = nil) -> Bool {
+    send(data: Any = nil, event: ?String = nil, id: Any = nil, retry: ?Int = nil) -> Bool {
         write(event-chunk(data, event, id, retry))
     }
 
@@ -716,17 +761,17 @@ pub class EventStream < BodyWriter {
 
 /// Incoming request body for streaming routes. Filled by the connection's
 /// event loop; read from the handler's task.
-pub class BodyQueue {
-    loop:  _
+pub class BodyQueue : BodySource {
+    loop:  EventLoop
     total: Int
 
     __buf:     Blob
     __done?:   Bool
-    __error:   _
+    __error:   RuntimeError | nil
     __waiting: Task | nil
     __pull:    () -> _
 
-    init(loop: _, pull: () -> _) {
+    init(loop: EventLoop, pull: () -> _) {
         self.loop = loop
         total     = 0
         __buf     = Blob()
@@ -749,8 +794,18 @@ pub class BodyQueue {
     }
 
     push(data: Blob) {
-        __buf.push(data)
+        if #__buf == 0 {
+            __buf = data
+        } else {
+            __buf.push(data)
+        }
         total += #data
+        __wake()
+    }
+
+    push-raw(p: Ptr, n: Int) {
+        __buf.push(p, n)
+        total += n
         __wake()
     }
 
@@ -759,7 +814,7 @@ pub class BodyQueue {
         __wake()
     }
 
-    fail(e: _) {
+    fail(e: RuntimeError) {
         if __error == nil {
             __error = e
         }
@@ -793,9 +848,12 @@ pub class BodyQueue {
             __waiting = task()
             suspend()
         }
-        let n = min(max, #__buf)
-        let out = __buf.slice(0, n)
-        __buf.clear(0, n)
+        let out = __buf
+        if max < #out {
+            out = __buf.splice(0, max)
+        } else {
+            __buf = Blob()
+        }
         if !__done? {
             __pull()
         }

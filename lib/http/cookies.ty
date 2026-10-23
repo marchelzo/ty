@@ -5,6 +5,7 @@
 import time
 import path (Path)
 import http.url (URL)
+import http.headers (Headers)
 
 const COOKIE_NAME  = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
 const COOKIE_VALUE = /^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]*$/
@@ -14,6 +15,10 @@ const MONTHS = %{'jan': 0, 'feb': 1, 'mar': 2, 'apr': 3, 'may': 4, 'jun': 5, 'ju
 
 const MAX_COOKIES_PER_DOMAIN = 180
 const MAX_COOKIES            = 3000
+
+fn unquote(s: String) -> String {
+    s.sub(/^"(.*)"$/, &1)
+}
 
 /// Parses a request `Cookie` header into a name → value Dict (first
 /// occurrence wins, surrounding quotes are removed).
@@ -26,10 +31,7 @@ pub fn parse-cookies(header: String | nil) -> Dict[String, String] {
             continue
         }
         let k = kv[0].strip()
-        let v = kv[1].strip()
-        if v.size() >= 2 && v.starts?('"') && v.ends?('"') {
-            v = v[1;-1]
-        }
+        let v = unquote(kv[1].strip())
         if k.size() > 0 && out[k] == nil {
             out[k] = v
         }
@@ -129,7 +131,7 @@ pub fn parse-cookie-date(s: String) -> Int | nil {
             }
         }
         if month == nil {
-            if let $mon = MONTHS[token.slice(0, 3).lower()] {
+            if let $mon = MONTHS[token.lower().match(/^[a-z]{3}/) ?? ''] {
                 month = mon
                 continue
             }
@@ -185,7 +187,7 @@ pub class Cookie {
     ) {
         self.name       = name
         self.value      = value
-        self.domain     = domain.lower().sub(/^\./, '')
+        self.domain     = domain.lower().comb(/^\./)
         self.path       = path
         self.expires    = (expires == nil) ? nil : float(expires)
         self.secure?    = secure
@@ -228,7 +230,8 @@ pub fn domain-match?(host: String, domain: String) -> Bool {
 
 pub fn path-match?(request: String, cookie: String) -> Bool {
     request == cookie
- || (request.starts?(cookie) && (cookie.ends?('/') || request.slice(cookie.size(), 1) == '/'))
+ || (request.starts?(cookie) && cookie.ends?('/'))
+ || request.starts?("{cookie}/")
 }
 
 fn default-path(url: URL) -> String {
@@ -236,11 +239,8 @@ fn default-path(url: URL) -> String {
     if !p.starts?('/') {
         return '/'
     }
-    match p.search(/\/[^\/]*$/) {
-        nil => '/',
-        0   => '/',
-        i   => p.slice(0, i)
-    }
+    let dir = p.comb(/\/[^\/]*$/)
+    (dir == '') ? '/' : dir
 }
 
 /// Parses one `Set-Cookie` value received for `url` (RFC 6265 section 5.2
@@ -248,17 +248,15 @@ fn default-path(url: URL) -> String {
 pub fn parse-set-cookie(header: String, url: URL, now: Float = time.utc()) -> Cookie | nil {
     let parts = header.split(';')
     let pair = parts[0]
-    let $eq = pair.search('=') or return nil
-    let name = pair.slice(0, eq).strip()
-    let value = pair.slice(eq + 1).strip()
+    let [_, n, v] = pair.match(/^([^=]*)=(.*)$/) ?? return nil
+    let name = n.strip()
+    let value = v.strip()
 
     if name == '' || name.size() + value.size() > 4096 {
         return nil
     }
 
-    if value.size() >= 2 && value.starts?('"') && value.ends?('"') {
-        value = value.slice(1, value.size() - 2)
-    }
+    value = unquote(value)
 
     let expires = nil
     let max-age = nil
@@ -269,9 +267,9 @@ pub fn parse-set-cookie(header: String, url: URL, now: Float = time.utc()) -> Co
     let same-site = nil
 
     for attr in parts.drop(1) {
-        let (k, v) = match attr.search('=') {
-            nil => (attr.strip().lower(), ''),
-            i   => (attr.slice(0, i).strip().lower(), attr.slice(i + 1).strip())
+        let (k, v) = match attr.split('=', 1) {
+            [k, v] => (k.strip().lower(), v.strip()),
+            _      => (attr.strip().lower(), '')
         }
         match k {
             'expires' => {
@@ -284,7 +282,7 @@ pub fn parse-set-cookie(header: String, url: URL, now: Float = time.utc()) -> Co
             },
             'domain' => {
                 if v != '' {
-                    domain = v.sub(/^\./, '').lower()
+                    domain = v.comb(/^\./).lower()
                 }
             },
             'path' => {
@@ -349,11 +347,13 @@ pub fn parse-set-cookie(header: String, url: URL, now: Float = time.utc()) -> Co
 /// jar.header-for(URL('https://example.com/x'))   // 'session=abc'
 /// jar.save('cookies.txt')
 /// ```
+pub use CookieSource = CookieJar | Dict[String, _] | Array[Cookie] | nil
+
 pub class CookieJar {
     __cookies: Array[Cookie]
     __lock:    Mutex
 
-    init(src: _ = nil) {
+    init(src: CookieSource = nil) {
         __cookies = []
         __lock    = Mutex()
         match src {
@@ -464,7 +464,7 @@ pub class CookieJar {
     }
 
     /// Stores every `Set-Cookie` in `headers` received from `url`.
-    extract(headers: _, url: URL | String) {
+    extract(headers: Headers | Array[String], url: URL | String) {
         let u = (url :: URL) ? url : URL(url)
         let values = match headers {
             xs: Array => xs,
@@ -527,7 +527,7 @@ pub class CookieJar {
         let $text = slurp(path) or throw OSError("http: cannot read cookie file {path}")
         for raw in text.split(/\r?\n/) {
             let http-only = raw.starts?('#HttpOnly_')
-            let line = http-only ? raw.slice(10) : raw
+            let line = raw.comb(/^#HttpOnly_/)
             if line == '' || line.starts?('#') {
                 continue
             }

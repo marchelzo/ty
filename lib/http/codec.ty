@@ -315,7 +315,7 @@ class Inflater < Decoder {
                 }
                 let n = CHUNK - z.avail_out
                 if n > 0 {
-                    out.push(__buf.slice(0, n))
+                    out.push(__buf.ptr(), n)
                     total += n
                     if limit != nil && total > limit {
                         close()
@@ -391,9 +391,8 @@ class BrotliDecoder < Decoder {
     }
 
     feed(data: String | Blob) -> Blob {
-        let input = blob(data)
         let out = Blob()
-        if #input == 0 {
+        if data.size() == 0 {
             return out
         }
         __any? = true
@@ -401,15 +400,15 @@ class BrotliDecoder < Decoder {
         if __end? {
             throw CodecError(coding, 'data after end of stream')
         }
-        c.store(c.u64, __ain, #input)
-        c.store(c.ptr, __nin, input.ptr())
+        c.store(c.u64, __ain, data.size())
+        c.store(c.ptr, __nin, data.ptr())
         while true {
             c.store(c.u64, __aout, CHUNK)
             c.store(c.ptr, __nout, __buf.ptr())
             let rc = brdec.stream(s, __ain, __nin, __aout, __nout, nil)
             let n = CHUNK - c.load(c.u64, __aout)
             if n > 0 {
-                out.push(__buf.slice(0, n))
+                out.push(__buf.ptr(), n)
                 total += n
                 if limit != nil && total > limit {
                     close()
@@ -475,13 +474,12 @@ class ZstdDecoder < Decoder {
     }
 
     feed(data: String | Blob) -> Blob {
-        let input = blob(data)
         let out = Blob()
-        if #input == 0 {
+        if data.size() == 0 {
             return out
         }
         let $d = __d or throw CodecError(coding, 'decoder is closed')
-        c.pack(__in.ptr(), '=QQQ', int(input.ptr()), #input, 0)
+        c.pack(__in.ptr(), '=QQQ', int(data.ptr()), data.size(), 0)
         while true {
             c.pack(__out.ptr(), '=QQQ', int(__buf.ptr()), CHUNK, 0)
             let rc = zstd.decompress(d, __out.ptr(), __in.ptr())
@@ -493,7 +491,7 @@ class ZstdDecoder < Decoder {
             __left = rc
             let (_, _, n) = c.unpack('=QQQ', __out.ptr())
             if n > 0 {
-                out.push(__buf.slice(0, n))
+                out.push(__buf.ptr(), n)
                 total += n
                 if limit != nil && total > limit {
                     close()
@@ -636,11 +634,11 @@ class Deflater < Encoder {
         __z = z
     }
 
-    __run(input: Blob, mode: Int) -> Blob {
+    __run(input: String | Blob, mode: Int) -> Blob {
         let $z = __z or throw CodecError(coding, 'encoder is closed')
         let out = Blob()
         z.next_in = input.ptr()
-        z.avail_in = #input
+        z.avail_in = input.size()
         while true {
             z.next_out = __buf.ptr()
             z.avail_out = CHUNK
@@ -648,7 +646,7 @@ class Deflater < Encoder {
             if rc != Z_OK && rc != Z_STREAM_END && rc != Z_BUF_ERROR {
                 throw CodecError(coding, "deflate failed ({rc})")
             }
-            out.push(__buf.slice(0, CHUNK - z.avail_out))
+            out.push(__buf.ptr(), CHUNK - z.avail_out)
             if rc == Z_STREAM_END || (z.avail_out != 0 && z.avail_in == 0 && mode != Z_FINISH) {
                 break
             }
@@ -657,7 +655,7 @@ class Deflater < Encoder {
     }
 
     write(data: String | Blob, flush: Bool = false) -> Blob {
-        __run(blob(data), flush ? Z_SYNC_FLUSH : Z_NO_FLUSH)
+        __run(data, flush ? Z_SYNC_FLUSH : Z_NO_FLUSH)
     }
 
     reset() {
@@ -704,10 +702,10 @@ class BrotliEncoder < Encoder {
         __nout = c.new-auto(c.ptr)
     }
 
-    __run(input: Blob, op: Int) -> Blob {
+    __run(input: String | Blob, op: Int) -> Blob {
         let $s = __s or throw CodecError(coding, 'encoder is closed')
         let out = Blob()
-        c.store(c.u64, __ain, #input)
+        c.store(c.u64, __ain, input.size())
         c.store(c.ptr, __nin, input.ptr())
         while true {
             c.store(c.u64, __aout, CHUNK)
@@ -715,7 +713,7 @@ class BrotliEncoder < Encoder {
             if brenc.stream(s, op, __ain, __nin, __aout, __nout, nil) == 0 {
                 throw CodecError(coding, 'BrotliEncoderCompressStream failed')
             }
-            out.push(__buf.slice(0, CHUNK - c.load(c.u64, __aout)))
+            out.push(__buf.ptr(), CHUNK - c.load(c.u64, __aout))
             if c.load(c.u64, __ain) == 0 && brenc.more(s) == 0 {
                 break
             }
@@ -724,7 +722,7 @@ class BrotliEncoder < Encoder {
     }
 
     write(data: String | Blob, flush: Bool = false) -> Blob {
-        __run(blob(data), flush ? BROTLI_OP_FLUSH : BROTLI_OP_PROCESS)
+        __run(data, flush ? BROTLI_OP_FLUSH : BROTLI_OP_PROCESS)
     }
 
     finish() -> Blob {
@@ -759,10 +757,10 @@ class ZstdEncoder < Encoder {
         __out = Blob.zeros(24)
     }
 
-    __run(input: Blob, op: Int) -> Blob {
+    __run(input: String | Blob, op: Int) -> Blob {
         let $cc = __c or throw CodecError(coding, 'encoder is closed')
         let out = Blob()
-        c.pack(__in.ptr(), '=QQQ', int(input.ptr()), #input, 0)
+        c.pack(__in.ptr(), '=QQQ', int(input.ptr()), input.size(), 0)
         while true {
             c.pack(__out.ptr(), '=QQQ', int(__buf.ptr()), CHUNK, 0)
             let rc = zstd.compress(cc, __out.ptr(), __in.ptr(), op)
@@ -770,7 +768,7 @@ class ZstdEncoder < Encoder {
                 throw CodecError(coding, c.str(zstd.error(rc)))
             }
             let (_, _, n) = c.unpack('=QQQ', __out.ptr())
-            out.push(__buf.slice(0, n))
+            out.push(__buf.ptr(), n)
             let (_, size, pos) = c.unpack('=QQQ', __in.ptr())
             if (op == ZSTD_e_continue && pos == size) || (op != ZSTD_e_continue && rc == 0) {
                 break
@@ -780,7 +778,7 @@ class ZstdEncoder < Encoder {
     }
 
     write(data: String | Blob, flush: Bool = false) -> Blob {
-        __run(blob(data), flush ? ZSTD_e_flush : ZSTD_e_continue)
+        __run(data, flush ? ZSTD_e_flush : ZSTD_e_continue)
     }
 
     finish() -> Blob {

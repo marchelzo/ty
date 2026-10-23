@@ -1,12 +1,13 @@
 import io_uring (IoUring, IoUringError, IORING_FEAT_EXT_ARG)
 import os
 import errno
+import http.backend as backend
 
 const ACCEPT_FLAGS = 0x80000
 
 pub const NAME = 'io_uring'
 
-pub class Backend {
+pub class Backend : backend.Backend {
     __ring:  IoUring
     __wake:  Int
     __wbuf:  Blob

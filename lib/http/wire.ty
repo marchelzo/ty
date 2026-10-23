@@ -1,15 +1,21 @@
 import jit (kernel!)
 import json
-import http.core (parse-cookies)
+import http.cookies (parse-cookies)
 import http.headers (Headers)
 import http.display as display
 import http.form (
     HttpHeaders,
     HttpVersion,
+    Upload,
     decode-query,
     multipart,
     MultipartData
 )
+import http.store (Session)
+
+pub trait BodySource {
+    read(max: Int) -> Blob | nil;
+}
 
 const TCHAR = 1
 const VCHAR = 2
@@ -436,13 +442,13 @@ pub class Request {
     url:      String
     version:  HttpVersion
     body:     String | nil
-    files:    Dict[String, _]
+    files:    Dict[String, Upload]
     scheme:   String
     remote:   String | nil
     route:    String | nil
     id:       String | nil
     start:    Float
-    session:  _
+    session:  Session | nil
 
     __head:    Blob | nil
     __base:    Int
@@ -453,7 +459,7 @@ pub class Request {
     __hview:   Headers | nil
     __params:  Dict[String, String | [String | nil] | nil] | nil
     __valid?:  Bool
-    __queue:   _
+    __queue:   BodySource | nil
     __served?: Bool
     __cookies: Dict[String, String] | nil
 
@@ -681,7 +687,7 @@ pub class Request {
         print(pretty(**kwargs))
     }
 
-    attach-body(queue: _) {
+    attach-body(queue: BodySource) {
         __queue = queue
     }
 
@@ -786,7 +792,7 @@ pub tag Head;
 
 /// Parses only the request head. Returns `Head((req, hlen, length, chunked?))`,
 /// `NeedMore((nil, false))` or `Invalid(status)`. `length` is -1 when absent.
-pub fn parse-head(buf: Blob, start: Int, end: Int, marks: Array[Int], max-head: Int = MAX_HEAD) -> _ {
+pub fn parse-head(buf: Blob, start: Int, end: Int, marks: Array[Int], max-head: Int = MAX_HEAD) -> Head[(Request, Int, Int, Bool)] | NeedMore[(Int | nil, Bool)] | Invalid[Int] {
     let hlen = scan-head(buf, start, end, CLASSES, marks)
 
     if hlen < 0 {
@@ -872,7 +878,7 @@ pub class Dechunker {
                 },
                 2 => {
                     let n = min(__left, end - i)
-                    out.push(buf.slice(i, n))
+                    out.push(buf.ptr() + i, n)
                     __left -= n
                     i += n
                     if __left == 0 {

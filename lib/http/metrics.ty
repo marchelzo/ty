@@ -81,7 +81,7 @@ pub class Metrics {
         self
     }
 
-    snapshot(active-connections: Int = 0) -> Dict[String, _] {
+    snapshot(active-connections: Int = 0) -> Dict[String, Int | Float | Dict[String, Int]] {
         let n = requests.load()
         %{
             'requests':           n,

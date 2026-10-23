@@ -1,6 +1,7 @@
 import ffi as c (C!)
 import os
 import errno
+import http.backend as backend
 
 #|if __linux__
 if not let $libkqueue = c.open('kqueue', versions: [0, nil], env: 'TY_LIBKQUEUE') {
@@ -77,7 +78,7 @@ fn nonblocking(fd: Int) {
 #|]
 }
 
-pub class Backend {
+pub class Backend : backend.Backend {
     __kq:    Int
     __ch:    Blob
     __nch:   Int

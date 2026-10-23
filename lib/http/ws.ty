@@ -1,14 +1,16 @@
 import log
+import ffi as c
 import hash
 import base64
 import http.core (
     ConnectionClosed,
+    Task,
     task,
     suspend,
     in-task?,
     on-loop?
 )
-import http.loop (Conn, Timer, READ)
+import http.loop (Conn, Timer, Proto, READ)
 import http.wire (Request)
 import http.deflate (PerMessage, DeflateError)
 
@@ -138,15 +140,15 @@ pub class WebSocket {
     }
 }
 
-pub class WSProto {
+pub class WSProto : Proto {
     conn:    Conn
     ws:      WebSocket
     closed?: Bool
 
     __inbox:      Array[String | Blob]
     __inbox-size: Int
-    __waiting:    Array[_]
-    __closers:    Array[_]
+    __waiting:    Array[Task]
+    __closers:    Array[() -> _]
     __frag:       Blob | nil
     __frag-op:    Int
     __close-sent: Bool
@@ -252,7 +254,7 @@ pub class WSProto {
         if closed? || __close-sent {
             return false
         }
-        conn.write(frame(op, (data.size() > 125) ? Blob(data).slice(0, 125) : data))
+        conn.write(frame(op, (data.size() > 125) ? Blob(data).clear(125) : data))
         true
     }
 
@@ -262,8 +264,10 @@ pub class WSProto {
         }
 
         __close-sent = true
-        let payload = Blob((code >> 8) & 0xFF, code & 0xFF)
-        payload.push(Blob(reason).slice(0, 123))
+        let payload = Blob((code >> 8) & 0xFF, code & 0xFF).push(reason)
+        if #payload > 125 {
+            payload.clear(125)
+        }
         conn.write(frame(OP_CLOSE, payload))
         conn.timeout(READ, CLOSE_GRACE)
         __wake-all()
@@ -468,9 +472,9 @@ pub class WSProto {
                 return conn.want-read(total)
             }
 
-            let key = b.slice(h + hdr, 4)
-            let payload = b.slice(h + hdr + 4, len)
-            payload.xor(key)
+            let at = h + hdr + 4
+            let payload = b[at;at + len]
+            payload.xor(c.load(c.u32, b.ptr() + at - 4), 4)
             conn.consume(total)
 
             if __close-sent && op != OP_CLOSE {

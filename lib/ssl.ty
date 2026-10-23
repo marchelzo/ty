@@ -766,17 +766,18 @@ pub class Session {
     }
 
     write(data: Blob | String, off: Int = 0, n: ?Int = nil) -> Int {
-        let len = n ?? (data.size() - off)
-        let blob = match data {
-            b: Blob => b,
-            s       => Blob(s)
-        }
+        let blob = (data :: Blob) ? data : Blob(data)
+        let done = write-ptr(blob.ptr() + off, n ?? (#blob - off))
+        done
+    }
+
+    write-ptr(p: Ptr, len: Int) -> Int {
         let done = 0
 
         ERR_clear_error()
 
         while done < len {
-            if SSL_write_ex(__ssl, blob.ptr() + off + done, len - done, __n) == 1 {
+            if SSL_write_ex(__ssl, p + done, len - done, __n) == 1 {
                 done += c.load(size_t, __n)
                 continue
             }

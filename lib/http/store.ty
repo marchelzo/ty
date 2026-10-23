@@ -1,0 +1,158 @@
+import json
+import time
+
+pub use SessionData = Dict[String, _];
+
+pub trait Store {
+    load(id: String) -> SessionData | nil;
+    save(id: String, data: SessionData, ttl: Float);
+    destroy(id: String);
+}
+
+/// Server-side session storage kept in process memory. Thread-safe; data is
+/// stored as JSON so sessions never share mutable objects between threads.
+pub class MemoryStore : Store {
+    max-sessions: Int
+
+    __mtx:  Mutex
+    __data: Dict[String, (Float, String)]
+    __ops:  Int
+
+    init(max-sessions: Int = 100000) {
+        self.max-sessions = max-sessions
+        __mtx  = Mutex()
+        __data = %{}
+        __ops  = 0
+    }
+
+    size -> Int {
+        let ^_ = __mtx.lock()
+        #__data
+    }
+
+    load(id: String) -> SessionData | nil {
+        let ^_ = __mtx.lock()
+        let (expires, text) = __data[id] ?? return nil
+        if expires < time.utc() {
+            __data.remove(id)
+            return nil
+        }
+        json.parse(text)
+    }
+
+    save(id: String, data: SessionData, ttl: Float) {
+        let text = json.encode(data)
+        let ^_ = __mtx.lock()
+        __ops += 1
+        if __ops % 1024 == 0 || #__data >= max-sessions {
+            __purge()
+        }
+        if #__data >= max-sessions && __data[id] == nil {
+            throw RuntimeError('http: session store is full')
+        }
+        __data[id] = (time.utc() + ttl, text)
+    }
+
+    destroy(id: String) {
+        let ^_ = __mtx.lock()
+        __data.remove(id)
+    }
+
+    __purge() {
+        let now = time.utc()
+        let stale = [id for id, (exp, _) in __data if exp < now]
+        for id in stale {
+            __data.remove(id)
+        }
+    }
+}
+
+pub class Session {
+    id:         String | nil
+    new?:       Bool
+    dirty?:     Bool
+    destroyed?: Bool
+
+    __data:     SessionData | nil
+    __loader:   () -> (String | nil, SessionData | nil)
+    __rotate?:  Bool
+
+    init(loader: () -> (String | nil, SessionData | nil)) {
+        __loader   = loader
+        __data     = nil
+        __rotate?  = false
+        id         = nil
+        new?       = true
+        dirty?     = false
+        destroyed? = false
+    }
+
+    __load() -> SessionData {
+        if let $d = __data {
+            return d
+        }
+        let (id, data) = __loader()
+        self.id = id
+        new? = data == nil
+        let d = data ?? %{}
+        __data = d
+        d
+    }
+
+    loaded? -> Bool {
+        __data != nil
+    }
+
+    data -> SessionData {
+        __load()
+    }
+
+    get(key: String, default: _ = nil) -> _ {
+        __load()[key] ?? default
+    }
+
+    set[a](key: String, value: a) -> a {
+        __load()[key] = value
+        dirty? = true
+        value
+    }
+
+    [](key: String) -> _ {
+        __load()[key]
+    }
+
+    []=[a](key: String, value: a) -> a {
+        set(key, value)
+    }
+
+    contains?(key: String) -> Bool {
+        __load().contains?(key)
+    }
+
+    remove(key: String) {
+        __load().remove(key)
+        dirty? = true
+    }
+
+    clear() {
+        __data = %{}
+        dirty? = true
+    }
+
+    /// Issues a new session id keeping the data (use after login).
+    regenerate() {
+        __load()
+        __rotate? = true
+        dirty? = true
+    }
+
+    /// Deletes the session and expires its cookie.
+    destroy() {
+        __load()
+        destroyed? = true
+    }
+
+    rotate? -> Bool {
+        __rotate?
+    }
+}

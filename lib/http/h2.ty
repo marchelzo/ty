@@ -7,17 +7,18 @@ import http.core (
     EventStream,
     Response,
     ConnectionClosed,
+    Task,
     task,
     suspend,
     this-loop
 )
 import http.wire (Request)
-import http.loop (Conn, READ)
+import http.loop (Conn, Loop, LoopExchange, Host, Proto, READ)
 import http.nghttp2 (..)
 
 fn session-of(user: Ptr | nil) -> H2 | nil {
-    let $l = this-loop() or return nil
-    match l.slot-proto(int(user ?? 0)) {
+    let l = this-loop()
+    match (l :: Loop) ? l.slot-proto(int(user ?? 0)) : nil {
         h: H2 => h,
         _     => nil
     }
@@ -107,30 +108,38 @@ fn header-list(rsp: Response | nil, status: Int, length: Int | nil, date: String
     nv-list(pairs)
 }
 
-pub class H2Exchange {
+pub class H2Exchange : LoopExchange {
     proto:   H2
     stream:  Stream
-    request: Request
-    closed?: Bool
 
+    __request: Request
+    __closed?: Bool
     __writer:  BodyWriter | nil
-    __closers: Array[_]
-    __waiting: Array[_]
-    __drain:   Array[_]
+    __closers: Array[() -> _]
+    __waiting: Array[Task]
+    __drain:   Array[Task]
 
     init(proto: H2, stream: Stream, request: Request) {
         self.proto   = proto
         self.stream  = stream
-        self.request = request
-        closed?      = false
+        __request    = request
+        __closed?    = false
         __writer     = nil
         __closers    = []
         __waiting    = []
         __drain      = []
     }
 
-    loop -> _ {
+    loop -> Loop {
         proto.conn.loop
+    }
+
+    request -> Request {
+        __request
+    }
+
+    closed? -> Bool {
+        __closed?
     }
 
     protocol -> String {
@@ -238,10 +247,10 @@ pub class H2Exchange {
     }
 
     closed() {
-        if closed? {
+        if __closed? {
             return
         }
-        closed? = true
+        __closed? = true
 
         let cs = __closers
         __closers = []
@@ -262,9 +271,9 @@ pub class H2Exchange {
     }
 }
 
-pub class H2 {
+pub class H2 : Proto {
     conn:   Conn
-    server: _
+    server: Host
 
     __session:  Ptr | nil
     __streams:  Dict[Int, Stream]
@@ -273,7 +282,7 @@ pub class H2 {
     __goaway?:  Bool
     __dead?:    Bool
 
-    init(conn: Conn, server: _) {
+    init(conn: Conn, server: Host) {
         self.conn   = conn
         self.server = server
         __streams   = %{}
@@ -344,7 +353,7 @@ pub class H2 {
             if n == 0 {
                 break
             }
-            conn.write(Blob().push(c.load(c.ptr, __out), n))
+            conn.write-raw(c.load(c.ptr, __out), n)
         }
 
         for _, st in __streams {
@@ -426,7 +435,7 @@ pub class H2 {
                 reset(st, NGHTTP2_CANCEL)
                 return 0
             }
-            q.push(Blob().push(data, len))
+            q.push-raw(data, len)
             return 0
         }
         let body = st.body ?? (st.body = Blob())
@@ -461,7 +470,7 @@ pub class H2 {
              && !st.dispatched?
              && server.streams?
              && st.method != nil
-             && server.streaming-route?(st.method ?? '', __path-of(st), conn.loop)
+             && server.streaming-route?(st.method ?? '', __path-of(st))
             ) {
                 st.dispatched? = true
                 st.queue = BodyQueue(conn.loop, -> nil)
@@ -688,6 +697,6 @@ pub class H2 {
     }
 }
 
-pub fn session(conn: Conn, server: _) -> H2 {
+pub fn session(conn: Conn, server: Host) -> H2 {
     H2(conn, server)
 }

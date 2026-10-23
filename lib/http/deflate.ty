@@ -48,10 +48,9 @@ pub class PerMessage {
             d   => do { d.reset(); d }
         }
         d.limit = limit
-        let input = Blob(data)
-        input.push(TAIL)
         try {
-            d.feed(input)
+            let out = d.feed(data)
+            out.push(d.feed(TAIL))
         } catch err: CodecError {
             throw DeflateError(str(err), err.too-big?)
         }
@@ -83,7 +82,7 @@ pub fn negotiate(offer: String | nil) -> String | nil {
             match name {
                 'server_no_context_takeover', 'client_no_context_takeover', 'client_max_window_bits' => {},
                 'server_max_window_bits' => {
-                    let v = (p.split('=') + [''])[1].strip().sub('"', '')
+                    let v = (p.split('=') + [''])[1].strip().comb('"')
                     if v != '15' {
                         ok = false
                     }

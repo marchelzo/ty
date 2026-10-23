@@ -1,6 +1,6 @@
 fn header-safe!(s: String) -> String {
     if s.contains?('\r') || s.contains?('\n') || s.contains?('\x00') {
-        throw ValueError("http: invalid character in header: {s.slice(0, 64)}")
+        throw ValueError("http: invalid character in header: {s:.64}")
     }
     s
 }
@@ -22,10 +22,13 @@ fn kebab(name: String) -> String {
 ///
 /// Anything accepted by the constructor (a Dict, a record, an array of
 /// pairs, or another Headers) can be passed wherever headers are expected.
+pub use HeaderValue  = String | Int | Float | Bool | Array[String | Int | Float] | nil
+pub use HeaderSource = Headers | Dict[String, _] | Array[(String, _)] | nil
+
 pub class Headers {
     __items: Array[(String, String)]
 
-    init(src: _ = nil) {
+    init(src: HeaderSource = nil) {
         __items = []
         if src != nil {
             update(src)
@@ -39,7 +42,7 @@ pub class Headers {
         h
     }
 
-    static of(src: _) -> Headers {
+    static of(src: HeaderSource) -> Headers {
         match src {
             h: Headers => h,
             _          => Headers(src)
@@ -61,7 +64,7 @@ pub class Headers {
         get(name)
     }
 
-    []=(name: String, value: _) -> _ {
+    []=(name: String, value: HeaderValue) -> HeaderValue {
         set(name, value)
         value
     }
@@ -93,7 +96,7 @@ pub class Headers {
 
     /// Replaces every field named `name` with one field. `nil` removes it;
     /// an Array sets one field per element.
-    set(name: String, value: _) -> Headers {
+    set(name: String, value: HeaderValue) -> Headers {
         let want = name.lower()
         match __index(name) {
             nil => {
@@ -115,19 +118,19 @@ pub class Headers {
     }
 
     /// Sets `name` only when it is absent.
-    setdefault(name: String, value: _) -> Headers {
+    setdefault(name: String, value: HeaderValue) -> Headers {
         if !contains?(name) {
             __push(name, value)
         }
         self
     }
 
-    add(name: String, value: _) -> Headers {
+    add(name: String, value: HeaderValue) -> Headers {
         __push(name, value)
         self
     }
 
-    __push(name: String, value: _) {
+    __push(name: String, value: HeaderValue) {
         match value {
             vs: Array => for v in vs { __items.push((header-safe!(name), header-safe!(str(v)))) },
             v         => __items.push((header-safe!(name), header-safe!(str(v))))
@@ -145,7 +148,7 @@ pub class Headers {
     }
 
     /// Merges `other`, replacing fields that it names.
-    update(other: _) -> Headers {
+    update(other: HeaderSource) -> Headers {
         let fresh = match other {
             nil        => return self,
             h: Headers => h.__items,
@@ -168,7 +171,7 @@ pub class Headers {
         self
     }
 
-    __checked(pairs: Array) -> Array[(String, _)] {
+    __checked(pairs: Array[(String, _)]) -> Array[(String, String | nil)] {
         let out = []
         for (k, v) in pairs {
             let key = header-safe!(str(k))
@@ -182,7 +185,7 @@ pub class Headers {
     }
 
     /// Adds every field of `other`, keeping existing ones.
-    extend(other: _) -> Headers {
+    extend(other: HeaderSource) -> Headers {
         for (k, v) in Headers.of(other).items() {
             __items.push((k, v))
         }
@@ -234,7 +237,7 @@ pub class Headers {
         [v for (_, v) in __items]
     }
 
-    __json__() -> _ {
+    __json__() -> Dict[String, String | Array[String]] {
         let out = %{}
         for (k, v) in __items {
             match out[k] {
@@ -260,7 +263,7 @@ pub class Headers {
         #__items == 0
     }
 
-    ==(other: _) -> Bool {
+    ==(other: Any) -> Bool {
         match other {
             h: Headers => __items.map(p -> (p.0.lower(), p.1)) == h.items().map(p -> (p.0.lower(), p.1)),
             _          => false

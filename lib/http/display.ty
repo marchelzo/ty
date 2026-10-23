@@ -76,7 +76,7 @@ pub fn status-line(version: String, status: Int, reason: String | nil, color: Bo
 }
 
 /// `pairs` are `(name, value)` tuples (anything iterable that yields them).
-pub fn header-lines(pairs: _, color: Bool) -> Array[String] {
+pub fn header-lines(pairs: Array[(String, String)], color: Bool) -> Array[String] {
     let p = Paint(color)
     [ p.render("{p('name', name)}{p('punct', ':')} {p('value', value)}") for (name, value) in pairs ]
 }
@@ -162,7 +162,7 @@ fn clip(text: String, limit: Int | nil, p: Paint) -> String {
     match limit {
         nil => text,
         n and text.size() <= n => text,
-        n => text.slice(0, n) + '\n' + p.render(p('dim', "… {text.size() - n} more characters"))
+        n => text[;n] + '\n' + p.render(p('dim', "… {text.size() - n} more characters"))
     }
 }
 
@@ -206,7 +206,7 @@ pub fn body(data: Blob | String | nil, content-type: String | nil, color: Bool =
 }
 
 /// A full message: start line, headers, a blank line, and the body.
-pub fn message(start: String, headers: _, data: Blob | String | nil, content-type: String | nil, color: Bool, limit: Int | nil = 8192, body?: Bool = true) -> String {
+pub fn message(start: String, headers: Array[(String, String)], data: Blob | String | nil, content-type: String | nil, color: Bool, limit: Int | nil = 8192, body?: Bool = true) -> String {
     let lines = [start, *header-lines(headers, color)]
     let text = body? ? body(data, content-type, color, limit) : ''
     if text != '' {

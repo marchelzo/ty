@@ -40,26 +40,25 @@ pub const MIME: Dict[String, String] = %{
 }
 
 pub fn mime-of(path: String) -> String {
-    let base = path.split('/')[-1]
-    match base.searchr('.') {
-        nil => 'application/octet-stream',
-        i   => MIME[base.slice(i + 1).lower()] ?? 'application/octet-stream'
-    }
+    let [_, ext] = path.match(/\.([^.\/]*)$/) ?? return 'application/octet-stream'
+    MIME[ext.lower()] ?? 'application/octet-stream'
 }
 
 
 pub use HttpHeaders = Dict[String, String | [String]]
 pub use HttpStatus  = {code: Int, text: String}
 pub use HttpVersion = {major: Int, minor: Int}
+pub use Upload      = {name: String, type: String | nil, path: Path}
+pub use FormFields  = Dict[String, _] | Array[(String, _)]
 
 pub tag MultipartData;
 pub tag MultipartMore;
 pub tag MultipartError;
 
 pub fn multipart*(boundary: String) {
-    let files = %{}
-    let form  = %{}
-    let buf   = Blob()
+    let files: Dict[String, Upload] = %{}
+    let form:  Dict[String, String] = %{}
+    let buf = Blob()
 
     let separator = "\r\n--{boundary}"
     let initial   = separator + 2
@@ -81,7 +80,7 @@ pub fn multipart*(boundary: String) {
         }
     }
 
-    fn next-line() -> _ {
+    fn next-line() -> String | nil {
         for (;;) {
             while #buf < 2 {
                 buf.push(yield MultipartMore)
@@ -95,7 +94,7 @@ pub fn multipart*(boundary: String) {
         }
     }
 
-    fn seek(token) -> _ {
+    fn seek(token: String) -> String {
         let size = token.size()
         for (;;) {
             while #buf < size + 2 {
@@ -148,24 +147,22 @@ pub fn multipart*(boundary: String) {
 
         let end = seek(separator)
 
-        if file != nil {
-            file.close()
-            files[name] = {
-                name:     filename,
-                type:     mime,
-                path:     path
-            }
-            file     = nil
-            filename = nil
-            path     = nil
-            mime     = nil
-            name     = nil
-        } else if data != nil {
-            form[name] = data.str!()
-            data       = nil
-            name       = nil
-        } else {
-            yield MultipartError
+        match (file, data, name, filename, path) {
+            ($f, _, $n, $fname, $p) => do {
+                f.close()
+                files[n] = {name: fname, type: mime, path: p}
+                file     = nil
+                filename = nil
+                path     = nil
+                mime     = nil
+                name     = nil
+            },
+            (nil, $d, $n, _, _) => do {
+                form[n] = d.str!()
+                data    = nil
+                name    = nil
+            },
+            _ => yield MultipartError
         }
 
         end != '--'
@@ -182,7 +179,7 @@ pub fn multipart*(boundary: String) {
 
 pub fn urldecode(s: String) -> String {
     s.sub('+', ' ')
-     .sub(/%[[:xdigit:]]{2}/, \chr(int(_[1;], 16)))
+     .sub(/%([[:xdigit:]]{2})/, [_, h] -> chr(int(h, 16)))
      .sub('\r\n', '\n')
      .sub('\r', '\n')
 }
@@ -202,7 +199,7 @@ pub fn decode-query(query: String) -> Dict[String, String | Array[String | nil] 
 }
 
 pub fn urlencode(s: String) -> String {
-    s.sub(/[^A-Za-z0-9\-._~]/, (c: String) -> [*Blob(c)].map(b -> "%{b:02X}").join(''))
+    s.sub(/[^A-Za-z0-9\-._~]/, (c: String) -> c.bytes().map(b -> "%{b:02X}").join(''))
 }
 
 pub fn encode-query(params: Dict[String, _]) -> String {
@@ -211,26 +208,7 @@ pub fn encode-query(params: Dict[String, _]) -> String {
 
 /// Decodes %XX escapes only (no `+` → space), for URL paths.
 pub fn percent-decode(s: String) -> String {
-    if !s.contains?('%') {
-        return s
-    }
-    let out = Blob()
-    let b = Blob(s)
-    let i = 0
-    while i < #b {
-        let c = b[i]
-        if c == 37 && i + 2 < #b {
-            let h = s.bslice(i + 1, 2)
-            if h.match?(/^[0-9A-Fa-f]{2}$/) {
-                out.push(int(h, 16))
-                i += 3
-                continue
-            }
-        }
-        out.push(c)
-        i += 1
-    }
-    out.str!()
+    s.sub(/(?:%[0-9A-Fa-f]{2})+/, run -> Blob(*run.split('%').drop(1).map(int@(_, 16))).str!())
 }
 
 fn quote-param(s: String) -> String {
@@ -286,9 +264,9 @@ pub class FilePart {
 /// Encodes `fields` (name → value or array of values) and `files`
 /// (name → anything `FilePart.of` accepts, or an array of them) as
 /// multipart/form-data. Returns the body and its Content-Type.
-pub fn encode-multipart(fields: _ = nil, files: _ = nil, boundary: String = multipart-boundary()) -> (Blob, String) {
+pub fn encode-multipart(fields: FormFields | nil = nil, files: FormFields | nil = nil, boundary: String = multipart-boundary()) -> (Blob, String) {
     let out = Blob()
-    let pairs = fn (x: _) -> Array {
+    let pairs = fn (x: FormFields | nil) -> Array[(String, _)] {
         match x {
             nil      => [],
             d: Dict  => d.list(),

@@ -15,7 +15,7 @@ pub class InvalidURL < ValueError {
 }
 
 fn escape-bytes(c: String) -> String {
-    [*Blob(c)].map(b -> "%{b:02X}").join('')
+    c.bytes().map(b -> "%{b:02X}").join('')
 }
 
 pub fn quote(s: String, unsafe: RegexV | Regex = PATH_UNSAFE) -> String {
@@ -134,13 +134,12 @@ fn merge(base: URL, path: String) -> String {
     if base.host != nil && base.path == '' {
         return "/{path}"
     }
-    match base.path.search(/\/[^\/]*$/) {
-        nil => path,
-        i   => base.path.slice(0, i + 1) + path
-    }
+    "{base.path.comb(/[^\/]*$/)}{path}"
 }
 
-fn encode-params(params: _) -> String {
+pub use QueryParams = String | Dict[String, _] | Array[(String, _)]
+
+fn encode-params(params: QueryParams) -> String {
     let pairs = match params {
         s: String => return s,
         d: Dict   => d.list(),
@@ -186,7 +185,7 @@ pub class URL {
         port: Int | nil = nil,
         path: String | nil = nil,
         query: String | nil = nil,
-        params: _ = nil,
+        params: QueryParams | nil = nil,
         fragment: String | nil = nil,
         username: String | nil = nil,
         password: String | nil = nil
@@ -209,7 +208,7 @@ pub class URL {
             self.scheme = scheme.lower()
         }
         if host != nil {
-            self.host = idna(host.sub(/^\[|\]$/, ''))
+            self.host = idna(host.comb(/^\[|\]$/))
         }
         if port != nil {
             self.port = port
@@ -262,44 +261,33 @@ pub class URL {
 
         let $authority = auth or return
 
-        let hostport = match authority.search(/@[^@]*$/) {
-            nil => authority,
-            i   => do {
-                let userinfo = authority.slice(0, i)
-                match userinfo.search(':') {
-                    nil => username = quote(userinfo, USERINFO_UNSAFE),
-                    j   => {
-                        username = quote(userinfo.slice(0, j), USERINFO_UNSAFE)
-                        password = quote(userinfo.slice(j + 1), USERINFO_UNSAFE)
-                    }
-                }
-                authority.slice(i + 1)
-            }
+        let (userinfo, hostport) = match authority.split(/@(?=[^@]*$)/) {
+            [ui, hp] => (ui, hp),
+            _        => (nil, authority)
         }
 
-        if hostport.starts?('[') {
-            let $close = hostport.search(']') or throw InvalidURL(s)
-            host = hostport.slice(1, close - 1).lower()
-            let rest = hostport.slice(close + 1)
-            if rest != '' {
-                if !rest.match?(/^:\d*$/) {
-                    throw InvalidURL(s)
-                }
-                port = (rest == ':') ? nil : int(rest.slice(1), 10)
-            }
-        } else {
-            match hostport.search(/:[^:]*$/) {
-                nil => host = idna(percent-decode(hostport)),
-                i   => {
-                    let p = hostport.slice(i + 1)
-                    if !p.match?(/^\d*$/) {
-                        throw InvalidURL(s)
-                    }
-                    host = idna(percent-decode(hostport.slice(0, i)))
-                    port = (p == '') ? nil : int(p, 10)
-                }
-            }
+        let (user, pass) = match userinfo.?split(':', 1) {
+            [u, p] => (u, p),
+            [u]    => (u, nil),
+            _      => (nil, nil)
         }
+
+        username = (user == nil) ? nil : quote(user, USERINFO_UNSAFE)
+        password = (pass == nil) ? nil : quote(pass, USERINFO_UNSAFE)
+
+        let v6? = hostport.starts?('[')
+        let (h, p) = match hostport.match(v6? ? /^\[([^\]]*)\](?::([^:]*))?$/ : /^(.*?)(?::([^:]*))?$/) {
+            [_, h, p] => (h, p),
+            [_, h]    => (h, nil),
+            _         => throw InvalidURL(s)
+        }
+
+        if p != nil && !p.match?(/^\d*$/) {
+            throw InvalidURL(s)
+        }
+
+        host = v6? ? h.lower() : idna(percent-decode(h))
+        port = (p == nil || p == '') ? nil : int(p, 10)
 
         if host != nil && host.match?(/[\x00-\x20#\/<>?@\[\\\]^|]/) {
             throw InvalidURL(s)
@@ -361,7 +349,7 @@ pub class URL {
     }
 
     /// Decoded query parameters.
-    params -> Dict[String, _] {
+    params -> Dict[String, String | Array[String | nil] | nil] {
         (query == nil || query == '') ? %{} : decode-query(query)
     }
 
@@ -456,7 +444,7 @@ pub class URL {
         "URL('{self}')"
     }
 
-    ==(other: _) -> Bool {
+    ==(other: Any) -> Bool {
         match other {
             u: URL    => str(self) == str(u),
             s: String => str(self) == s,

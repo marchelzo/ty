@@ -34,7 +34,7 @@ pub class Event {
     }
 }
 
-pub fn event-chunk(data: _, event: ?String = nil, id: _ = nil, retry: ?Int = nil) -> String {
+pub fn event-chunk(data: _, event: ?String = nil, id: String | Int | nil = nil, retry: ?Int = nil) -> String {
     let out = []
 
     if event != nil {
@@ -145,13 +145,7 @@ pub class Parser {
         if line.starts?(':') {
             return
         }
-        let (field, value) = match line.search(':') {
-            nil => (line, ''),
-            i   => do {
-                let v = line.slice(i + 1)
-                (line.slice(0, i), v.starts?(' ') ? v.slice(1) : v)
-            }
-        }
+        let [_, field, value] = line.match(/^([^:]*):?\x20?(.*)$/) ?? return
         match field {
             'event' => __event = value,
             'data'  => {

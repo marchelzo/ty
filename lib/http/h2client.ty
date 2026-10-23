@@ -16,6 +16,11 @@ import http.nghttp2 (..)
 import http.headers (Headers)
 import http.status (status-name)
 import http.client as client (
+    Body,
+    Exchange,
+    HTTPTransport,
+    Multiplexed,
+    Request,
     Socket,
     Timeout,
     ReadError,
@@ -51,13 +56,13 @@ class H2Stream {
     body:      Blob
     end?:      Bool
     closed?:   Bool
-    error:     _
+    error:     BaseException | nil
     out:       Blob
     pos:       Int
     eof?:      Bool
     deferred?: Bool
     touched?:  Bool
-    keep:      _
+    keep:      (Blob, Blob, Blob | nil) | nil
 
     init() {
         id        = -1
@@ -82,7 +87,7 @@ class H2Stream {
     }
 }
 
-class H2Body {
+class H2Body : Body {
     conn:   H2Conn
     st:     H2Stream
     done?:  Bool
@@ -121,14 +126,15 @@ class H2Body {
     }
 }
 
-pub class H2Conn {
+pub class H2Conn : Multiplexed {
     sock:        Socket
-    key:         String
-    transport:   _
-    requests:    Int
-    active:      Int
+    transport:   HTTPTransport
     idle-since:  Float
     max-streams: Int
+
+    __key:      String
+    __requests: Int
+    __active:   Int
 
     __session:  Ptr | nil
     __lock:     Mutex
@@ -137,16 +143,16 @@ pub class H2Conn {
     __reading?: Bool
     __dead?:    Bool
     __goaway?:  Bool
-    __error:    _
+    __error:    BaseException | nil
     __out:      Ptr
     __pend:     Blob
 
-    init(sock: Socket, key: String, transport: _, t: Timeout) {
+    init(sock: Socket, key: String, transport: HTTPTransport, t: Timeout) {
         self.sock      = sock
-        self.key       = key
         self.transport = transport
-        requests       = 0
-        active         = 0
+        __key          = key
+        __requests     = 0
+        __active       = 0
         idle-since     = time.now()
         max-streams    = 100
         __lock         = Mutex()
@@ -186,6 +192,18 @@ pub class H2Conn {
         __flush(deadline(t.connect))
     }
 
+    key -> String {
+        __key
+    }
+
+    requests -> Int {
+        __requests
+    }
+
+    active -> Int {
+        __active
+    }
+
     http2? -> Bool {
         true
     }
@@ -207,13 +225,13 @@ pub class H2Conn {
     }
 
     reserve() {
-        active += 1
-        requests += 1
+        __active += 1
+        __requests += 1
     }
 
     unreserve() {
-        active = max(0, active - 1)
-        if active == 0 {
+        __active = max(0, __active - 1)
+        if __active == 0 {
             idle-since = time.now()
         }
     }
@@ -228,7 +246,7 @@ pub class H2Conn {
         sock.close()
     }
 
-    __die(e: _) {
+    __die(e: BaseException) {
         if __dead? {
             return
         }
@@ -327,8 +345,8 @@ pub class H2Conn {
             __reading? = true
             __flush(until)
             __lock.unlock()
-            let raw = nil
-            let failure = nil
+            let raw: Blob | nil = nil
+            let failure: BaseException | nil = nil
             try {
                 raw = sock.recv-raw(until)
             } catch e {
@@ -375,7 +393,7 @@ pub class H2Conn {
         }
     }
 
-    exchange(req: _, t: Timeout, extra: Array[(String, String)] = []) -> _ {
+    exchange(req: Request, t: Timeout, extra: Array[(String, String)] = []) -> Exchange {
         let ^_ = __lock.lock()
         if __dead? {
             throw StaleConnection("http: HTTP/2 connection to {sock.host} is closed")
@@ -526,9 +544,6 @@ pub class H2Conn {
         transport.pool.release(self, true)
     }
 
-    failed(e: _) {
-    }
-
     cb-begin(frame: Ptr) -> Int {
         0
     }
@@ -654,6 +669,6 @@ pub class H2Conn {
     }
 }
 
-pub fn connect(sock: Socket, key: String, transport: _, t: Timeout) -> H2Conn {
+pub fn connect(sock: Socket, key: String, transport: HTTPTransport, t: Timeout) -> H2Conn {
     H2Conn(sock, key, transport, t)
 }

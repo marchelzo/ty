@@ -6,12 +6,13 @@ import http.core (
     EventStream,
     Response,
     ConnectionClosed,
+    Task,
     task,
     suspend
 )
 import http.wire as wire (Ready, NeedMore, Invalid, Head, Request, Dechunker)
 import http.status (status-name)
-import http.loop (Conn, READ)
+import http.loop (Conn, Loop, LoopExchange, Host, Proto, READ)
 
 const IDLE     = 0
 const BUSY     = 1
@@ -36,6 +37,10 @@ fn bodiless?(code: Int) -> Bool {
     code < 200 || code == 204 || code == 304
 }
 
+fn push-header(out: Blob, k: String, v: String) {
+    out.push(k).push(': ').push(v).push('\r\n')
+}
+
 pub fn render-head(
     out: Blob,
     rsp: Response,
@@ -47,21 +52,20 @@ pub fn render-head(
     keep-alive?: Bool
 ) {
     let code = rsp.status-code
-    out.push(status-line(code))
-    out.push("Date: {date}\r\n")
+    out.push(status-line(code)).push('Date: ').push(date).push('\r\n')
 
-    if server-name != nil {
-        out.push("Server: {server-name}\r\n")
+    if let $name = server-name {
+        out.push('Server: ').push(name).push('\r\n')
     }
 
     if !bodiless?(code) {
-        if rsp.content-type != nil {
-            out.push("Content-Type: {rsp.content-type}\r\n")
+        if let $ctype = rsp.content-type {
+            out.push('Content-Type: ').push(ctype).push('\r\n')
         }
         if chunked? {
             out.push('Transfer-Encoding: chunked\r\n')
-        } else if length != nil {
-            out.push("Content-Length: {length}\r\n")
+        } else if let $n = length {
+            out.push('Content-Length: ').push(str(n)).push('\r\n')
         }
     }
 
@@ -76,33 +80,33 @@ pub fn render-head(
             continue
         }
         match v {
-            s: String => out.push("{k}: {s}\r\n"),
-            vs        => for s in vs { out.push("{k}: {s}\r\n") }
+            s: String => push-header(out, k, s),
+            vs        => vs.each(push-header@(out, k, _))
         }
     }
 
     out.push('\r\n')
 }
 
-pub class H1Exchange {
+pub class H1Exchange : LoopExchange {
     proto:   H1
-    request: Request
     close?:  Bool
-    closed?: Bool
 
+    __request:  Request
+    __closed?:  Bool
     __head?:    Bool
     __chunked?: Bool
     __length:   Int | nil
     __ended?:   Bool
     __writer:   BodyWriter | nil
-    __closers:  Array[_]
-    __waiting:  Array[_]
+    __closers:  Array[() -> _]
+    __waiting:  Array[Task]
 
     init(proto: H1, request: Request, close?: Bool) {
         self.proto   = proto
-        self.request = request
         self.close?  = close?
-        closed?      = false
+        __request    = request
+        __closed?    = false
         __head?      = request.method == 'HEAD'
         __chunked?   = false
         __length     = nil
@@ -112,8 +116,16 @@ pub class H1Exchange {
         __waiting    = []
     }
 
-    loop -> _ {
+    loop -> Loop {
         proto.conn.loop
+    }
+
+    request -> Request {
+        __request
+    }
+
+    closed? -> Bool {
+        __closed?
     }
 
     conn -> Conn {
@@ -154,7 +166,7 @@ pub class H1Exchange {
         close? = close? || __user-close?(rsp) || (v10? && (length == nil || __no-keep-alive?))
         __chunked? = length == nil && !v10? && !bodiless?(rsp.status-code) && !__head?
 
-        let out = Blob()
+        let out = proto.scratch.clear()
         render-head(out, rsp, c.loop.date, c.config.server-name, length, __chunked?, close?, length != nil && __keep-alive?)
         c.write(out)
 
@@ -173,7 +185,7 @@ pub class H1Exchange {
 
         close? = close? || __user-close?(rsp)
 
-        let out = Blob()
+        let out = proto.scratch.clear()
         render-head(
             out,
             rsp,
@@ -184,12 +196,11 @@ pub class H1Exchange {
             close?,
             __keep-alive?
         )
-
-        if !__head? && !bodiless?(code) {
-            out.push(body)
-        }
-
         c.write(out)
+
+        if !__head? && !bodiless?(code) && #body > 0 {
+            c.write(body)
+        }
         __ended? = true
         proto.response-written(self)
     }
@@ -276,10 +287,10 @@ pub class H1Exchange {
     }
 
     closed() {
-        if closed? {
+        if __closed? {
             return
         }
-        closed? = true
+        __closed? = true
 
         let cs = __closers
         __closers = []
@@ -346,10 +357,9 @@ class H1Body {
             }
         } else {
             let n = min(c.available, remaining)
-            let chunk = c.buf.slice(c.head, n)
+            queue.push-raw(c.buf.ptr() + c.head, n)
             c.consume(n)
             remaining -= n
-            queue.push(chunk)
             if remaining == 0 {
                 queue.finish()
             }
@@ -366,12 +376,13 @@ class H1Body {
     }
 }
 
-pub class H1 {
-    conn:   Conn
-    server: _
-    state:  Int
-    x:      H1Exchange | nil
-    body:   H1Body | nil
+pub class H1 : Proto {
+    conn:    Conn
+    server:  Host
+    state:   Int
+    x:       H1Exchange | nil
+    body:    H1Body | nil
+    scratch: Blob
 
     __marks:      Array[Int]
     __started?:   Bool
@@ -379,7 +390,7 @@ pub class H1 {
     __continued?: Bool
     __close?:     Bool
 
-    init(conn: Conn, server: _) {
+    init(conn: Conn, server: Host) {
         self.conn   = conn
         self.server = server
         state       = IDLE
@@ -390,6 +401,7 @@ pub class H1 {
         __headed?   = false
         __continued? = false
         __close?    = false
+        scratch     = Blob()
         __next()
     }
 
@@ -522,7 +534,7 @@ pub class H1 {
             return false
         }
         let n = min(conn.available, PREFACE.size())
-        conn.buf.str!(conn.head, n) == PREFACE.slice(0, n) && n > 0
+        n > 0 && PREFACE.starts?(conn.buf.str!(conn.head, n))
     }
 
     __parse() {
@@ -541,15 +553,16 @@ pub class H1 {
             }
             conn.untimeout(READ)
             state = UPGRADED
-            conn.proto = server.on-h2c(conn)
-            return conn.proto.on-data()
+            let p = server.on-h2c(conn)
+            conn.proto = p
+            return p.on-data()
         }
 
         let cfg = conn.config
 
         if server.streams? {
             match wire.parse-head(conn.buf, conn.head, conn.filled, __marks, cfg.max-header-size) {
-                Head((req, hlen, length, chunked?)) and (length > 0 || chunked?) && server.streaming-route?(req.method, req.url, conn.loop) => {
+                Head((req, hlen, length, chunked?)) and (length > 0 || chunked?) && server.streaming-route?(req.method, req.url) => {
                     return __stream(req, hlen, length, chunked?)
                 },
                 NeedMore(*) => {
@@ -588,10 +601,10 @@ pub class H1 {
     __error(status: Int) {
         let rsp = Response(nil)
         rsp.error(status)
-        let out = Blob()
+        let out = scratch.clear()
         render-head(out, rsp, conn.loop.date, conn.config.server-name, #rsp.body, false, true, false)
-        out.push(rsp.body)
         conn.write(out)
+        conn.write(rsp.body)
         state = SENDING
         __close? = true
         conn.close-after-flush()

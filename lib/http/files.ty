@@ -12,15 +12,15 @@ const S_IFDIR = 0o040000
 const INLINE_MAX = 64 * 1024
 const CHUNK      = 256 * 1024
 
-fn regular?(st: _) -> Bool {
+fn regular?(st: os.Stat) -> Bool {
     (st.mode & S_IFMT) == S_IFREG
 }
 
-fn directory?(st: _) -> Bool {
+fn directory?(st: os.Stat) -> Bool {
     (st.mode & S_IFMT) == S_IFDIR
 }
 
-fn etag-of(st: _, suffix: String) -> String {
+fn etag-of(st: os.Stat, suffix: String) -> String {
     let nanos = int(st.mtime * 1000000000.0)
     "W/\"{st.size:x}-{nanos:x}{suffix}\""
 }
@@ -35,7 +35,7 @@ fn parse-date(s: String) -> Int | nil {
 }
 
 fn etag-match?(header: String, etag: String) -> Bool {
-    let weak = (t: String) -> t.starts?('W/') ? t.slice(2) : t
+    let weak = (t: String) -> t.comb(/^W\//)
     let want = weak(etag)
     for item in header.split(',') {
         let t = item.strip()
@@ -65,7 +65,7 @@ pub tag Whole;
 pub tag Part;
 pub tag Unsatisfiable;
 
-fn range-of(req: Request, size: Int, etag: String, mtime: Int) -> _ {
+fn range-of(req: Request, size: Int, etag: String, mtime: Int) -> Whole | Part[(Int, Int)] | Unsatisfiable {
     let $spec = req.header('range') or return Whole
     if req.method != 'GET' {
         return Whole
@@ -183,8 +183,8 @@ pub fn send-file(
     }
     match download {
         nil, false => {},
-        true       => rsp.header('Content-Disposition', "attachment; filename=\"{path.split('/')[-1].sub('"', '')}\""),
-        name       => rsp.header('Content-Disposition', "attachment; filename=\"{str(name).sub('"', '')}\"")
+        true       => rsp.header('Content-Disposition', "attachment; filename=\"{path.split('/')[-1].comb('"')}\""),
+        name       => rsp.header('Content-Disposition', "attachment; filename=\"{str(name).comb('"')}\"")
     }
 
     if not-modified?(req, et, mtime) {
@@ -222,7 +222,7 @@ pub fn send-file(
             return
         }
 
-        let loop = this-loop()
+        let $loop = this-loop() or throw RuntimeError('http: send-file() must be called from a server task')
         let w = rsp.stream(length: length)
         let off = start
         let end = start + length
