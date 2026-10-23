@@ -7145,7 +7145,15 @@ TY_BUILTIN_RAW(os_signame)
                 return NIL;
         }
 
-#if defined(__GLIBC__) && !__GLIBC_PREREQ(2, 32)
+#if defined(__GLIBC__)
+#if __GLIBC_PREREQ(2, 32)
+#define TY_HAVE_SIGABBREV_NP
+#endif
+#endif
+
+#if defined(TY_HAVE_SIGABBREV_NP)
+        char const *name = sigabbrev_np(sig);
+#elif defined(__linux__)
 #define X(s) [SIG##s] = #s,
         static char const *const names[NSIG] = {
                 X(HUP)  X(INT)  X(QUIT) X(ILL)    X(TRAP)   X(ABRT) X(BUS)  X(FPE)
@@ -7155,8 +7163,6 @@ TY_BUILTIN_RAW(os_signame)
         };
 #undef X
         char const *name = names[sig];
-#elif defined(__linux__)
-        char const *name = sigabbrev_np(sig);
 #else
         char const *name = sys_signame[sig];
 #endif
