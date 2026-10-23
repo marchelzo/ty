@@ -158,7 +158,7 @@ pub fn tab-complete(before: String, after: String) -> CompletionAction {
     }
 
 
-    let (subject, prefix) = match before[-1] == '.' ?: expr {
+    let (subject, prefix) = match before[-1] != '.' ?: expr {
         ty.MemberAccess(o, m) => (o, m),
         _                     => (expr, '')
     }
