@@ -51,6 +51,9 @@ bundle_error(void);
 int
 bundle_flags(char const *const **out);
 
+int
+bundle_paths(char const *const **out);
+
 char const *
 bundle_native(char const *path);
 

@@ -1046,7 +1046,7 @@ codesign(char const *path, char const *ident)
 #endif
 
 static bool
-write_bundle(char const *out, Buf const *payload)
+write_bundle(char const *out, Buf const *payload, u64 flags)
 {
         char self[PATH_MAX];
         char tmp[PATH_MAX];
@@ -1099,7 +1099,7 @@ write_bundle(char const *out, Buf const *payload)
         t.offset = keep;
         t.size   = payload->n;
         t.hash   = XXH3_64bits(payload->data, payload->n);
-        t.flags  = TY_BUNDLE_RUN;
+        t.flags  = flags;
 
         ty_snprintf(tmp, sizeof tmp, "%s.tmp.%ld", out, (long)getpid());
 
@@ -1173,6 +1173,10 @@ bundle_create(Ty *ty, BundleSpec const *spec)
         char **flags = spec->flags;
         int nflags = spec->nflags;
 
+        if (script == NULL) {
+                goto Extras;
+        }
+
         if (out == NULL || *out == '\0') {
                 out = default_output(script);
         }
@@ -1208,6 +1212,8 @@ bundle_create(Ty *ty, BundleSpec const *spec)
                 return 1;
         }
 
+Extras:
+
         if (!collect_natives(&files, &natives, spec->natives, spec->nnatives)) {
                 return 1;
         }
@@ -1226,16 +1232,20 @@ bundle_create(Ty *ty, BundleSpec const *spec)
                 }
         }
 
-        char const *project = mod_root(ty, app.items[0]);
+        char const *project = (app.n > 0) ? mod_root(ty, app.items[0]) : NULL;
         bool relocated = (project != NULL) && relocated_env(ty, project, &app, &env);
 
-        if (!place_app(&app, &files, entry, sizeof entry, root)) {
+        if (app.n > 0 && !place_app(&app, &files, entry, sizeof entry, root)) {
                 return 1;
         }
 
-        bputs(&manifest, "entry\t");
-        bputs(&manifest, entry);
-        bputs(&manifest, "\n");
+        if (script != NULL) {
+                bputs(&manifest, "entry\t");
+                bputs(&manifest, entry);
+                bputs(&manifest, "\n");
+        } else if (app.n > 0) {
+                bputs(&manifest, "path\tapp\n");
+        }
 
         for (int i = 0; i < nflags; ++i) {
                 if (strpbrk(flags[i], "\t\n") != NULL) {
@@ -1283,7 +1293,7 @@ bundle_create(Ty *ty, BundleSpec const *spec)
                 xvF(env);
         }
 
-        if (!write_bundle(out, &payload)) {
+        if (!write_bundle(out, &payload, (script != NULL) ? TY_BUNDLE_RUN : 0)) {
                 return 1;
         }
 

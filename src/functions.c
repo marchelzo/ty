@@ -7145,7 +7145,17 @@ TY_BUILTIN_RAW(os_signame)
                 return NIL;
         }
 
-#if defined(__linux__)
+#if defined(__GLIBC__) && !__GLIBC_PREREQ(2, 32)
+#define X(s) [SIG##s] = #s,
+        static char const *const names[NSIG] = {
+                X(HUP)  X(INT)  X(QUIT) X(ILL)    X(TRAP)   X(ABRT) X(BUS)  X(FPE)
+                X(KILL) X(USR1) X(SEGV) X(USR2)   X(PIPE)   X(ALRM) X(TERM) X(STKFLT)
+                X(CHLD) X(CONT) X(STOP) X(TSTP)   X(TTIN)   X(TTOU) X(URG)  X(XCPU)
+                X(XFSZ) X(VTALRM)       X(PROF)   X(WINCH)  X(POLL) X(PWR)  X(SYS)
+        };
+#undef X
+        char const *name = names[sig];
+#elif defined(__linux__)
         char const *name = sigabbrev_np(sig);
 #else
         char const *name = sys_signame[sig];

@@ -1113,8 +1113,13 @@ add_builtins(Ty *ty, int ac, char **av)
 #ifdef TY_EMBED_LIB
         char const *bundle = bundle_dir();
         if (bundle != NULL) {
+                char const *const *extra;
+                int nextra = bundle_paths(&extra);
                 ty_snprintf(path, sizeof path, "%s/lib", bundle);
                 add(path);
+                for (int i = 0; i < nextra; ++i) {
+                        add(extra[i]);
+                }
                 if (embedded_lib_dir(path, sizeof path)) {
                         add(path);
                 }

@@ -376,6 +376,27 @@ pub fn bundles-carry-their-environment(t: Test) {
     assert(!(s.root / 'empty').exists?)
 }
 
+@platform('linux')
+@skip-if(-> !bundler?(), 'ty was built without the bundler')
+pub fn scriptless-bundles-are-still-ty(t: Test) {
+    let s = Space(t)
+    s.file('src/greet.ty', 'import kit.inner\npub fn hello() { "greet {kit.inner.x()}" }\n')
+    s.file('src/kit/inner.ty', 'pub fn x() { 42 }\n')
+    s.file('use/main.ty', 'import greet\nprint(greet.hello(), argv[1;])\n')
+
+    assert(s.fails('src', '--bundle').contains?('output name'))
+    s.ok('src', '--bundle=../tool', '--bundle-script=greet.ty')
+    (s.root / 'src').rename(s.root / 'src.moved')
+
+    let tool = str(s.root / 'tool')
+    let go = args -> shell.run([tool, *args], env: %{'TPM_CACHE': str(s.root / 'empty')}, chdir: str(s.root / 'use'))
+
+    for (args, want) in [(['main.ty', 'x'], "greet 42, ['x']"), (['-e', 'import greet; print(greet.hello())'], 'greet 42')] {
+        let r = go(args)
+        assert(r.ok? && r.stdout.trim() == want, r.stderr)
+    }
+}
+
 pub fn http-registries-work-and-are-cached-for-offline-use(t: Test) {
     let s = Space(t)
     s.publish(s.package('z', '1.0.0'))

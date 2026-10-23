@@ -668,8 +668,12 @@ target_link_libraries(${_tgt_ty_link}
 
 target_link_libraries(${_tgt_ty_link} INTERFACE nsync)
 
-if(BSD)
+if(BSD OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_link_libraries(${_tgt_ty_link} INTERFACE util)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_link_options(${_tgt_ty_link} INTERFACE -Wl,--as-needed)
 endif()
 
 if(APPLE)

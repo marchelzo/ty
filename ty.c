@@ -162,6 +162,8 @@ usage(void)
                 "    --bundle[=OUT] SCRIPT\n"
                 "                        Write a standalone executable OUT (default: SCRIPT without .ty)\n"
                 "                        that runs SCRIPT; ty options given alongside --bundle are kept\n"
+                "    --bundle=OUT        Without SCRIPT, write a ty executable OUT that still starts a\n"
+                "                        REPL or runs scripts, with the --bundle-* extras importable\n"
                 "    --bundle-native=LIB Also include native library LIB in the bundle (repeatable)\n"
                 "    --bundle-script=SCRIPT\n"
                 "                        Also include SCRIPT and everything it imports (repeatable)\n"
@@ -1039,14 +1041,19 @@ BundleArgv(int *argc, char **argv)
                 break;
         }
 
+        bundle_preload();
+
         char const *slash = strrchr(argv[0], '/');
-        entry = s_eq((slash != NULL) ? slash + 1 : argv[0], "ty") ? NULL : bundle_entry();
-        if (entry == NULL) {
-                bundle_preload();
+        if (s_eq((slash != NULL) ? slash + 1 : argv[0], "ty")) {
                 return argv;
         }
 
+        entry  = bundle_entry();
         nflags = bundle_flags(&flags);
+
+        if (entry == NULL && nflags == 0) {
+                return argv;
+        }
 
         char **out = xmA((*argc + nflags + 3) * sizeof *out);
 
@@ -1054,8 +1061,10 @@ BundleArgv(int *argc, char **argv)
         for (int i = 0; i < nflags; ++i) {
                 out[k++] = (char *)flags[i];
         }
-        out[k++] = "--";
-        out[k++] = (char *)entry;
+        if (entry != NULL) {
+                out[k++] = "--";
+                out[k++] = (char *)entry;
+        }
         for (int i = 1; i < *argc; ++i) {
                 out[k++] = argv[i];
         }
@@ -1063,8 +1072,7 @@ BundleArgv(int *argc, char **argv)
 
         *argc = k;
 
-        BundleRunning = true;
-        bundle_preload();
+        BundleRunning = (entry != NULL);
 
         return out;
 }
@@ -1073,10 +1081,16 @@ static noreturn void
 RunBundler(int argc, char **argv, int nopt)
 {
         char **flags = xmA((nopt + 1) * sizeof *flags);
+        char const *script = (nopt < argc) ? SourceFile : NULL;
         int nflags = 0;
 
-        if (SourceFile == NULL || s_eq(SourceFile, "/dev/stdin")) {
-                fprintf(stderr, "ty --bundle: missing script\n");
+        if (script != NULL && s_eq(script, "/dev/stdin")) {
+                fprintf(stderr, "ty --bundle: cannot bundle a script read from stdin\n");
+                exit(1);
+        }
+
+        if (script == NULL && *BundleOut == '\0') {
+                fprintf(stderr, "ty --bundle: an output name (--bundle=OUT) is required without a script\n");
                 exit(1);
         }
 
@@ -1102,7 +1116,7 @@ RunBundler(int argc, char **argv, int nopt)
         }
 
         BundleSpec spec = {
-                .script   = SourceFile,
+                .script   = script,
                 .out      = BundleOut,
                 .flags    = flags,
                 .nflags   = nflags,

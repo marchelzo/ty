@@ -48,6 +48,8 @@ static struct {
         char         ty[PATH_MAX];
         char const **args;
         int          nargs;
+        char const **paths;
+        int          npaths;
         Native      *natives;
         int          nnatives;
 } B;
@@ -435,6 +437,11 @@ read_manifest(void)
                 } else if (strcmp(line, "flag") == 0) {
                         B.args = realloc(B.args, (B.nargs + 1) * sizeof *B.args);
                         B.args[B.nargs++] = strdup(a);
+                } else if (strcmp(line, "path") == 0) {
+                        char *full = malloc(strlen(B.dir) + strlen(a) + 2);
+                        sprintf(full, "%s/%s", B.dir, a);
+                        B.paths = realloc(B.paths, (B.npaths + 1) * sizeof *B.paths);
+                        B.paths[B.npaths++] = full;
                 } else if (strcmp(line, "native") == 0) {
                         char *orig = strchr(a, '\t');
                         if (orig == NULL) {
@@ -607,6 +614,14 @@ bundle_flags(char const *const **out)
         bundle_init();
         *out = B.args;
         return B.nargs;
+}
+
+int
+bundle_paths(char const *const **out)
+{
+        bundle_init();
+        *out = B.paths;
+        return (B.state == BUNDLE_READY) ? B.npaths : 0;
 }
 
 static usize

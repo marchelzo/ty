@@ -190,6 +190,9 @@ JIT_BUILTINS(JIT_TABLE)
 #endif
 
 #if defined(__linux__)
+#ifndef AT_RECURSIVE
+#define AT_RECURSIVE 0x8000
+#endif
   { .module = "os",         .name = "AT_STATX_SYNC_AS_STAT",    .value = INT(AT_STATX_SYNC_AS_STAT)             } ,
   { .module = "os",         .name = "AT_STATX_FORCE_SYNC",      .value = INT(AT_STATX_FORCE_SYNC)               } ,
   { .module = "os",         .name = "AT_STATX_DONT_SYNC",       .value = INT(AT_STATX_DONT_SYNC)                } ,
